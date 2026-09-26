@@ -450,9 +450,10 @@ divide with a fraction (`:vel* 0.5`).
   `E_EVAL_NOT_LOWERABLE`. Scaling is orthogonal to `+` (additive): the MVP
   covers `(* signal $slot)` only, and it combines with `:pitch+` — the scaled
   signal is added to the note's own pitch offset.
-- Echo/delay taps are always relative, so an operator is **required**: bare
-  `:vel` raises `E_ECHO_OP_REQUIRED` / `E_DELAY_OP_REQUIRED` (the clear forms
-  `(delay none)` / `(delay :vel none)` excepted).
+- Echo/delay taps are always relative, so the keyword is `:vel+` or `:vel*`
+  and its value is the per-tap change (§12); bare `:vel` is
+  `E_ECHO_TARGET` / `E_DELAY_TARGET` (the clear forms `(delay none)` /
+  `(delay :vel none)` excepted).
 
 ### 7.1 Compile-time expressions
 
@@ -1044,33 +1045,44 @@ distinct seeds bake distinct data.
 
 ## 12. Echo and delay
 
-Both replay written notes relative to each note's own value; both require an
-operator on the target (§7). `:vel+` adds per tap (`note_vel + N·k`); `:vel*`
-multiplies (`note_vel · N^k`). Only `:vel` is supported as a target
-(`E_ECHO_TARGET` / `E_DELAY_TARGET` otherwise).
+Both replay written notes relative to each note's own value and read their
+arguments the same way: `[N] :vel+|:vel* V`. As everywhere (§7.0), the value
+after `:vel+` is what is added and after `:vel*` what multiplies — here per
+tap:
+
+| `V`              | Taps                                  | Tap k                          |
+| ---------------- | ------------------------------------- | ------------------------------ |
+| a number `step`  | `N` (required)                        | `vel + k·step` / `vel · step^k` |
+| `[d1 d2 …]`      | one per element (no `N`)              | `vel + dk` / `vel · dk`        |
+| `(curve …)`      | its `:len ÷` the spacing (no `N`)     | `vel + c(t)` / `vel · c(t)`    |
+
+The keyword is `:vel+` or `:vel*` (`E_ECHO_TARGET` / `E_DELAY_TARGET`); a
+number without `N`, or an `N` with a vector or a curve, is `E_ECHO_ARGS` /
+`E_DELAY_ARGS`. A curve needs its `:from` (§11).
 
 ### `(echo …)` — phrase-lengthening replay
 
 ```text
-(echo <:vel+|:vel*> <count> :by N [:back B])
+(echo [N] :vel+|:vel* V [:back B])
 ```
 
 One-shot at its position in the note stream (not sticky). Replays the single
 note `B` positions back (`:back 1` = the last note, the default; history depth
-9) `count` times; the taps occupy real time, so following notes shift back.
-Taps play at the **current** `:len`/`:gate` (mucom `\=` semantics), not the
-source note's.
+9); the taps are spaced by — and play at — the **current** `:len`/`:gate`
+(mucom `\=` semantics), not the source note's, and occupy real time, so
+following notes shift back.
 
 ```lisp
-(fm1 c (echo :vel+ 3 :by -1)          ; vel−1, −2, −3 decaying trail
-     c (echo :vel* 3 :by 0.7)         ; ×0.7, ×0.49, ×0.343
-     c e (echo :vel+ 1 :by -4 :back 2))  ; replay the c once at vel−4
+(fm1 c (echo 3 :vel+ -1)          ; vel−1, −2, −3 decaying trail
+     c (echo 3 :vel* 0.7)         ; ×0.7, ×0.49, ×0.343
+     c e (echo 1 :vel+ -4 :back 2)   ; replay the c once at vel−4
+     c (echo :vel+ [-1 -4 -8]))      ; three taps, written out
 ```
 
 ### `(delay …)` — compile-time overlay
 
 ```text
-(delay <:vel+|:vel*> <count|[list]|(curve …)> :by N :time T)
+(delay [N] :vel+|:vel* V :time T)
 (delay none)          ; clear
 (delay :vel none)     ; clear one target
 ```
@@ -1079,9 +1091,6 @@ Sticky track state: every following note emits echo copies at `+k·:time`, an
 overlay that fills the gaps the written part leaves — it does **not** lengthen
 the phrase.
 
-- 2nd argument: a **number** = tap count (pair with `:by`); a **`[list]`** =
-  explicit per-tap deltas (`:vel+`) or ratios (`:vel*`); a **`(curve …)`** = a
-  relative envelope, tap count = curve `:len ÷ :time`.
 - `:time T` — tap spacing (length token). Required (`E_DELAY_ARGS`).
 - Monophonic priority: written notes win — an echo tap overlapping any
   written note's sounding span is dropped.
@@ -1093,9 +1102,9 @@ the phrase.
   another channel.
 
 ```lisp
-(fm1 (delay :vel+ 3 :by -4 :time 1/8)
+(fm1 (delay 3 :vel+ -4 :time 1/8)
   c e g e)                                     ; phrase + 3 decaying repeats
-(fm2 :len 16 (delay :vel* (linear :from 0.8 :to 0 :len 4) :time 16)
+(fm2 :len 16 (delay :vel* (linear 0.8..0 :len 4) :time 16)
   c _ _ _ _)                                   ; four fading repeats in the rests
 ```
 

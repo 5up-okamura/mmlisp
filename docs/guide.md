@@ -574,17 +574,14 @@ note.) Taps are **relative** to each note's own value: an echo follows whatever
 velocity that note carries.
 
 ```text
-(delay <target> <count|list|curve> :by N :time T)
+(delay N :vel+ step :time T)      ; N taps, each `step` further (tap k = vel + k·step)
+(delay N :vel* ratio :time T)     ; N taps, each × ratio (tap k = vel · ratio^k)
+(delay :vel+ [d1 d2 …] :time T)   ; the taps themselves, each relative to the note
+(delay :vel* (curve …) :time T)   ; an envelope: its :len ÷ T taps
 ```
 
-- `<target>` — `:vel+` (additive deltas) or `:vel*` (multiplicative ratios);
-  the operator is required. (`:vol` is reserved, not yet supported.)
-- 2nd arg is polymorphic:
-  - a **number** = tap count (pair with `:by`),
-  - a **`[list]`** = explicit per-tap deltas (`:vel+`) or ratios (`:vel*`),
-  - a **`(curve …)`** = relative envelope; tap count = its `:len ÷ :time`.
-- `:by N` — per-tap step: on `:vel+`, tap k = note_vel + N·k; on `:vel*`,
-  tap k = note_vel · N^k.
+- `:vel+` adds, `:vel*` multiplies — the value after it is what each tap
+  changes, as everywhere else (§7.0 of the reference).
 - `:time T` — tap spacing (length token).
 
 `(delay ...)` is **sticky** track state that applies to following notes;
@@ -592,16 +589,16 @@ velocity that note carries.
 **overlay** that fills gaps — it does **not** lengthen the phrase.
 
 ```lisp
-(fm1 (delay :vel+ 3 :by -4 :time 1/8)
+(fm1 (delay 3 :vel+ -4 :time 1/8)
   c e g e)
 ```
 
 plays the phrase plus three decaying repeats (−4 vel each tap), spaced an eighth
-apart. Equivalent explicit form: `(delay :vel+ [-4 -8 -12] :time 1/8)`.
+apart. The same taps written out: `(delay :vel+ [-4 -8 -12] :time 1/8)`.
 
 ```lisp
-(fm1 (delay :vel+ 3 :by -1 :time 4t)  c e g e)   ; 3 echoes, −1 vel each, spaced 4t
-(fm1 :len 16 (delay :vel* (linear :from 0.8 :to 0 :len 4) :time 16)  c _ _ _ _)  ; ratio fade
+(fm1 (delay 3 :vel+ -1 :time 4t)  c e g e)   ; 3 echoes, −1 vel each, spaced 4t
+(fm1 :len 16 (delay :vel* (linear 0.8..0 :len 4) :time 16)  c _ _ _ _)  ; ratio fade
 ```
 
 The channel is monophonic: written notes take priority, so an echo overlapping a
@@ -616,20 +613,22 @@ occupy real time, so later notes shift back. This is the opposite of `(delay
 **one-shot** at its position (not sticky).
 
 ```text
-(echo <target> <count> :by N [:back B])
+(echo N :vel+ step [:back B])      ; N taps at the current :len, each `step` further
+(echo N :vel* ratio [:back B])
+(echo :vel+ [d1 d2 …] [:back B])   ; the taps themselves
+(echo :vel* (curve …) [:back B])   ; an envelope: its :len ÷ the current :len taps
 ```
 
-- `<target>` — `:vel+` (additive) / `:vel*` (multiplicative); the operator is
-  required.
-- `<count>` — number of taps. `:by N` — per-tap step (`:vel+` → note_vel + N·k;
-  `:vel*` → note_vel · N^k).
+- The value reads as in `(delay …)`; the taps are spaced by the current
+  `:len`.
 - `:back B` — replay the single note B positions back (`B=1` = the last note,
   the default).
 
 ```lisp
-(fm1 c (echo :vel+ 3 :by -1))         ; last note replayed at vel−1, −2, −3 (decaying trail)
-(fm1 c (echo :vel* 3 :by 0.7))        ; ×0.7, ×0.49, ×0.343
-(fm1 c e (echo :vel+ 1 :by -4 :back 2))  ; replay the note 2 back (c) once at vel−4
+(fm1 c (echo 3 :vel+ -1))         ; last note replayed at vel−1, −2, −3 (decaying trail)
+(fm1 c (echo 3 :vel* 0.7))        ; ×0.7, ×0.49, ×0.343
+(fm1 c e (echo 1 :vel+ -4 :back 2))  ; replay the note 2 back (c) once at vel−4
+(fm1 c (echo :vel+ [-1 -4 -8]))    ; three taps, written out
 ```
 
 ### Echoes inherit articulation
@@ -640,7 +639,7 @@ phrase with a 1-channel `:keyon` tail repeats with that tail.
 ```lisp
 (def echo-tail (macro :step 16 :vel [15 #rel 10 5 0] :keyon [0 #rel 1 1 1]))
 
-(fm1 echo-tail (delay :vel+ 4 :by -3 :time 4)
+(fm1 echo-tail (delay 4 :vel+ -3 :time 4)
   :len 16 c _ _ _ :len 4 _ _ _)
 ```
 
@@ -1113,8 +1112,8 @@ with `Tab` moving between the fields:
 | -------------- | ------------------------------------- |
 | `(x`           | `(x 4 )`                              |
 | `(go`          | `(go head)`                           |
-| `(echo`        | `(echo :vel+ 3 :by -1)`               |
-| `(delay`       | `(delay :vel+ 3 :by -4 :time 1/8)`    |
+| `(echo`        | `(echo 3 :vel+ -1)`               |
+| `(delay`       | `(delay 3 :vel+ -4 :time 1/8)`    |
 | `(def-val`     | `(def-val name 0 0..127)`             |
 | any curve head | `(linear 0..100 :len 8)`              |
 

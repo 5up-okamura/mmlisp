@@ -475,7 +475,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
 
     // Echo macro (¥/\, byte 0x5C). `\=n1,n2`: n1 = how many notes back to echo,
     // n2 = volume reduction. A trailing `\` is one echo tap of the single note
-    // n1 positions back at vel-n2 -> (echo :vel+ 1 :by -n2 :back n1). The compiler
+    // n1 positions back at vel-n2 -> (echo 1 :vel+ -n2 :back n1). The compiler
     // replays that note (absolute pitch, so octaves come out right) and lengthens.
     if (c === "¥" || c === "\\") {
       i++;
@@ -1013,9 +1013,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         // mucom `\` -> one echo tap of the single note `back` positions back at
         // vel - drop. Define each distinct echo once as (def ecN (echo …)) and
         // reference it by name — compact, like the LFO/envelope defs. Omit
-        // defaults (:by 0, :back 1).
-        let form = ":vel+ 1";
-        if (op.drop) form += ` :by ${-op.drop}`;
+        // the default :back 1.
+        let form = `1 :vel+ ${-(op.drop ?? 0)}`;
         if (op.back !== 1) form += ` :back ${op.back}`;
         if (ctx.echoRegistry) {
           let name = ctx.echoRegistry.get(form);

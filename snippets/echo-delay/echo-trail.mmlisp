@@ -4,7 +4,7 @@
 (import "presets/gm/set.mmlisp")
 
 (fm1 :tempo 120 :oct 5 :len 8 gm-vibes
-  c e g (echo :vel+ 3 :by -3)          ; g, then g at vel -3, -6, -9
-  :len 16 a g e (echo :vel* 4 :by 0.6) ; x0.6 per tap, as 16ths
-  :len 8 d e c (echo :vel+ 2 :by -4 :back 2)  ; :back 2 replays the e
+  c e g (echo 3 :vel+ -3)          ; g, then g at vel -3, -6, -9
+  :len 16 a g e (echo 4 :vel* 0.6) ; x0.6 per tap, as 16ths
+  :len 8 d e c (echo 2 :vel+ -4 :back 2)  ; :back 2 replays the e
   :len 2 c)

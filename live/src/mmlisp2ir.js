@@ -974,22 +974,72 @@ function tapValue(domain, by, k, srcVal, target) {
   return clampForTarget(target, v);
 }
 
+// The shared arguments of (echo …) and (delay …): `[N] :vel+|:vel* V`, then
+// `:key value` options. `:vel+` adds per tap and `:vel*` multiplies, relative
+// to the source note (§12). V is the per-tap step — a number, with N taps
+// (tap k is vel + k·V, or vel · V^k); the taps themselves — `[a b c]`, each
+// relative to the source; or an envelope — a curve whose taps are its :len ÷
+// the spacing. Returns { spec, opts } (spec as resolveDelayVels reads it) or
+// null after a diagnostic.
+function readTapArgs(form, items, env, ctx, diagnostics, trackName, src) {
+  const code = form === "echo" ? "E_ECHO" : "E_DELAY";
+  const fail = (suffix, msg) => {
+    pushDiag(diagnostics, "error", `${code}_${suffix}`, msg, src, trackName);
+    return null;
+  };
+  let j = 1;
+  const count = parseIntLike(atomValue(items[j]));
+  if (count !== null) j++;
+  const kw = atomValue(items[j]);
+  if (kw !== ":vel+" && kw !== ":vel*")
+    return fail("TARGET", `(${form} …) writes :vel+ (add per tap) or :vel* (multiply per tap), not ${kw ?? "nothing"}`);
+  const mode = kw === ":vel*" ? "mul" : "add";
+  const vNode = items[j + 1];
+  const opts = {};
+  for (let k = j + 2; k + 1 < items.length; k += 2) opts[atomValue(items[k])] = atomValue(items[k + 1]);
+  let spec;
+  if (vNode?.kind === "list" && vNode.bracket === "[]") {
+    if (count !== null)
+      return fail("ARGS", `(${form} …): a vector gives the taps itself — drop the count ${count}`);
+    const list = vNode.items.filter((n) => n.kind !== "comment").map((n) => parseNumberLike(atomValue(n)));
+    if (!list.length || list.some((v) => v === null))
+      return fail("ARGS", `(${form} …): a tap vector holds numbers`);
+    spec = { mode, type: "list", list };
+  } else {
+    const r = vNode ? evalValue(vNode, env, ctx) : null;
+    if (!r) return vNode ? null : fail("ARGS", `(${form} …) needs a value after ${kw}`);
+    if (r.kind === "signal") {
+      if (r.spec.steps || r.spec.stages)
+        return fail("ARGS", `(${form} …): the envelope is one curve`);
+      if (count !== null)
+        return fail("ARGS", `(${form} …): a curve gives the taps by its :len — drop the count ${count}`);
+      requireCurveFrom(r.spec, diagnostics, trackName, `(${form} …)`, src);
+      spec = { mode, type: "curve", ...r.spec };
+    } else {
+      if (count === null)
+        return fail("ARGS", `(${form} …): a per-tap step needs the tap count first — (${form} 3 ${kw} ${r.value}…)`);
+      spec = { mode, type: "param", count: Math.max(1, count), by: r.value };
+    }
+  }
+  return { spec, opts };
+}
+
 // (echo …): replay the single note `back` positions back (back=1 = the last
 // note), once per tap (1..count), each modulating `target` relative to that
 // note's own value. Advances trackState.tick so the phrase lengthens. This
 // matches mucom `\=n1,n2` (the note n1 back), where `back` = n1. v1 targets VEL.
-function emitEchoReplay(trackState, events, { domain, count, by, back }, src) {
+function emitEchoReplay(trackState, events, spec, back, src) {
   const hist = trackState.recentNotes || [];
-  if (!hist.length || count < 1) return;
+  if (!hist.length) return;
   const note = hist[Math.max(0, hist.length - back)]; // clamp to the oldest note
   if (!note) return;
   // mucom replays the echoed pitch at the *current* defaults (the `\` expansion
   // substitutes the bare note name, inheriting the current length `l` and gate
-  // `q`), not the source note's length/gate.
+  // `q`), not the source note's length/gate. The taps are spaced by that
+  // length, which is also what an envelope's tap count divides by.
   const len = trackState.defaultLength;
   const gate = trackState.defaultGate;
-  for (let k = 1; k <= count; k++) {
-    const vel = tapValue(domain, by, k, note.vel ?? 15, "VEL");
+  for (const vel of resolveDelayVels(spec, len, note.vel ?? 15) ?? []) {
     events.push({
       tick: trackState.tick,
       cmd: "NOTE_ON",
@@ -3547,7 +3597,8 @@ function compileChannelBody(
       if (head === "x") {
         const maybeCount = parseIntLike(atomValue(node.items[1]));
         const bodyStart = maybeCount !== null ? 2 : 1;
-        const loopId = `_x${loopCounter.count++}`;
+        // "(x N)" has a space and parens, so no `#name` can spell it (§13).
+        const loopId = `(x ${loopCounter.count++})`;
         const savedLoopId = trackState.currentLoopId;
         // Only counted loops support (break); inside an infinite (x …) it still
         // binds to the innermost COUNTED loop around it (§13).
@@ -3752,145 +3803,37 @@ function compileChannelBody(
         continue;
       }
 
-      // Echo: (echo <target> <count> :by N [:back B]) — inline note-replay that
-      // lengthens the phrase. Replays the single note B positions back (B=1 =
-      // the last note), relative to that note's value; :vel adds, :vel*
-      // multiplies. mucom `\=n1,n2` ≡ (echo :vel 1 :by -n2 :back n1).
-      if (head === "echo") {
-        const items = node.items;
-        const tgt = atomValue(items[1]) || ":vel";
-        const { stem, op } = opSuffix(tgt);
-        const param = stem.replace(/^:/, "");
-        let count = 1;
-        let j = 2;
-        const c0 = parseIntLike(atomValue(items[2]));
-        if (c0 !== null) {
-          count = Math.max(1, c0);
-          j = 3;
-        }
-        let by = 0;
-        let back = 1;
-        for (; j + 1 < items.length; j += 2) {
-          const key = atomValue(items[j]);
-          const val = atomValue(items[j + 1]);
-          if (key === ":by") by = parseFloat(val);
-          else if (key === ":back")
-            back = Math.max(1, parseIntLike(val) ?? 1);
-        }
-        if (param !== "vel") {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_ECHO_TARGET",
-            `(echo …) supports :vel+/:vel* for now (got ${tgt})`,
-            nodeSrc(items[0]),
-            trackName,
-          );
-        } else if (!op) {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_ECHO_OP_REQUIRED",
-            `(echo …) needs an operator: :vel+ (add) or :vel* (multiply)`,
-            nodeSrc(items[0]),
-            trackName,
-          );
-        } else {
-          emitEchoReplay(
-            trackState,
-            events,
-            { domain: op === "*" ? "mul" : "add", count, by, back },
-            nodeSrc(node),
-          );
-        }
-        i++;
-        continue;
-      }
-
-      // Delay: (delay <target> <count> :by N :time T) parametric, or
-      // (delay <target> [list|curve] :time T) explicit. Relative to the source
-      // note; sticky (applies to following notes). (delay none) / (delay :vel none)
-      // clear. Overlay/gap-filling (does not lengthen) via expandTrackDelays.
-      if (head === "delay") {
-        const items = node.items;
-        const a1 = atomValue(items[1]);
-        if (a1 === "none") {
+      // Echo: (echo [N] :vel+|:vel* V [:back B]) — replays the note B back
+      // (B=1 = the last) as taps that lengthen the phrase. mucom `\=n1,n2` ≡
+      // (echo 1 :vel+ -n2 :back n1).
+      // Delay: (delay [N] :vel+|:vel* V :time T) — sticky; every following
+      // note gets taps overlaid at +k·T (expandTrackDelays); (delay none) and
+      // (delay :vel none) clear it. Both read V the same way (readTapArgs).
+      if (head === "echo" || head === "delay") {
+        const items = node.items.filter((n) => n.kind !== "comment");
+        const isDelay = head === "delay";
+        if (isDelay && (atomValue(items[1]) === "none" ||
+          (/^:vel[+*]?$/.test(atomValue(items[1]) ?? "") && atomValue(items[2]) === "none"))) {
           trackState.delaySpec = null;
           trackState.delayTicks = 0;
           i++;
           continue;
         }
-        const { stem, op } = opSuffix(a1 || ":vel");
-        const param = stem.replace(/^:/, "");
-        const mode = op === "*" ? "mul" : "add";
-        const a2node = items[2];
-        const a2 = atomValue(a2node);
-        if (param !== "vel") {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_DELAY_TARGET",
-            `(delay …) supports :vel/:vel* for now (got ${a1})`,
-            nodeSrc(items[0]),
-            trackName,
-          );
-          i++;
-          continue;
-        }
-        if (a2 === "none") {
-          trackState.delaySpec = null;
-          trackState.delayTicks = 0;
-          i++;
-          continue;
-        }
-        // Setting (not clearing) a relative delay requires an operator.
-        if (!op) {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_DELAY_OP_REQUIRED",
-            `(delay …) needs an operator: :vel+ (add) or :vel* (multiply)`,
-            nodeSrc(items[0]),
-            trackName,
-          );
-          i++;
-          continue;
-        }
-        // 2nd arg: number = tap count (+:by); [list]/(curve) = explicit.
-        let spec = null;
-        if (a2node?.kind === "list" && a2node.bracket === "[]") {
-          const list = a2node.items
-            .filter((n) => n.kind !== "comment")
-            .map((n) => parseFloat(atomValue(n)))
-            .filter((v) => !isNaN(v));
-          spec = { mode, type: "list", list };
-        } else if (a2node?.kind === "list" && a2node.bracket === "()") {
-          const cv = parseCurveSpec(a2node, diagnostics, nodeSrc(node), trackName, true);
-          requireCurveFrom(cv, diagnostics, trackName, "a delay", nodeSrc(node));
-          if (cv) spec = { mode, type: "curve", ...cv };
-        } else if (parseIntLike(a2) !== null) {
-          spec = { mode, type: "param", count: Math.max(1, parseIntLike(a2)) };
-        }
-        let time = null;
-        for (let j = 3; j + 1 < items.length; j += 2) {
-          const key = atomValue(items[j]);
-          const val = atomValue(items[j + 1]);
-          if (key === ":by" && spec?.type === "param") spec.by = parseFloat(val);
-          else if (key === ":time")
-            time = parseLengthToken(val, null, trackState.currentTempo);
-        }
-        if (spec && time !== null && time > 0) {
-          trackState.delaySpec = spec;
-          trackState.delayTicks = time;
-        } else {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_DELAY_ARGS",
-            "(delay …) needs a count/[list]/(curve) and :time T",
-            nodeSrc(items[0]),
-            trackName,
-          );
+        const tap = readTapArgs(head, items, evalEnv,
+          makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs), diagnostics, trackName, nodeSrc(node));
+        if (tap && isDelay) {
+          const time = tap.opts[":time"];
+          const ticks = time == null ? null : parseLengthToken(time, null, trackState.currentTempo);
+          if (ticks > 0) {
+            trackState.delaySpec = tap.spec;
+            trackState.delayTicks = ticks;
+          } else {
+            pushDiag(diagnostics, "error", "E_DELAY_ARGS",
+              "(delay …) needs :time T, the spacing of its taps", nodeSrc(items[0]), trackName);
+          }
+        } else if (tap) {
+          const back = Math.max(1, parseIntLike(tap.opts[":back"]) ?? 1);
+          emitEchoReplay(trackState, events, tap.spec, back, nodeSrc(node));
         }
         i++;
         continue;
