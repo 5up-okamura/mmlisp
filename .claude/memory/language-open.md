@@ -84,14 +84,18 @@ them.
   note, inline sweeps (the preview now steps the driver's integers on the
   driver's event frames, and a note meets the sweep's value then; the driver
   no longer cancels loop sweeps at a note and a PARAM_SET ends its target's
-  sweep), the SW registration. Still open: a macro with a looping stage then
-  a release diverges (old all-stage spelling included); a **TEMPO_SWEEP** —
+  sweep), the SW registration, macro release timing (key-off mid-attack now
+  jumps to the release on its frame; the driver's PSG `:vel` release no
+  longer drones past its end). Still open: a **TEMPO_SWEEP** —
   the preview ramps tempo per scheduler pass in ticks, the driver per frame
   in integer increments — skews every later event by up to a frame
   (`m2-motion`); a `:master` sweep that starts on one track's setup frame
   composes a channel whose first note was scheduled earlier from that note's
   vel (frame 0 only); a PSG note with a vel macro under a running :vol or
-  :master sweep does not get the driver's in-frame double write.
+  :master sweep does not get the driver's in-frame double write; a macro
+  `:step` in ticks is not lowered (1f on the driver, `W_MMB_MACRO_STEP_TICK`
+  — `m3-psg-release`); a `:vel` macro's float levels (language.md: computed
+  values stay float) quantize to 16 steps on the driver.
 
 - Nf in one track converted at another track's mid-song tempo change (§4).
 - Tick-0 tempo written as an expression is not seen by the Nf prescan.

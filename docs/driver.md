@@ -1145,7 +1145,17 @@ In the frame loop (§4 step 3, after the sweep engines), each running macro:
    (level composition, cent pitch, pan snap, …), skipping the hold sentinel;
 2. advances `cursor` with the region rules — attack once, then the sustain
    region cycled while the note is keyed, jumping to the release region at
-   key-off, then playing release once and ending.
+   key-off (from wherever it is, attack included: release[0] lands on the
+   key-off's own frame), then playing release once and ending. A macro with
+   no release region ends at key-off; an empty attack/sustain (`[#rel …]`)
+   writes nothing until key-off.
+
+A `:vel` macro owns the note's level, so a note-on composes from the macro's
+first sample (the one that lands in the same frame), not from a stale velocity
+it would then overwrite; with no first sample (a leading hold) the note takes
+its own velocity. On PSG, whose level *is* the envelope, a `:vel` release is
+the note's decay: key-off leaves the attenuation to it rather than silencing
+the channel, and the step after the release's last sample silences it.
 
 An **override** pitch macro (`:pitch`/`:semi`, no `+`) writes the note pitch from
 the sample alone each frame and does **not** persist to the channel's sticky

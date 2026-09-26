@@ -157,7 +157,9 @@ typedef struct {
   uint8_t target, macro_id;
 } MMLMacroBind;
 
-enum { MML_MACRO_RUN = 0, MML_MACRO_HOLD = 1, MML_MACRO_RELEASE = 2 };
+/* TAIL: a PSG :vel release has played out; its next step silences the
+ * channel (the release was the note's decay, so key-off left the level). */
+enum { MML_MACRO_RUN = 0, MML_MACRO_HOLD = 1, MML_MACRO_RELEASE = 2, MML_MACRO_TAIL = 3 };
 
 typedef struct {
   uint8_t macro_id;

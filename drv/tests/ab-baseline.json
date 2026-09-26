@@ -97,9 +97,9 @@
   },
   "m3-macro-curve.mmlisp": {
     "ok": false,
-    "mismatches": 4,
+    "mismatches": 2,
     "compileErrors": 0,
-    "digest": "1ed560c9"
+    "digest": "cdecefdf"
   },
   "m3-macro-keyon.mmlisp": {
     "ok": false,
@@ -211,9 +211,9 @@
   },
   "m3-psg-release.mmlisp": {
     "ok": false,
-    "mismatches": 8,
+    "mismatches": 4,
     "compileErrors": 0,
-    "digest": "fd42b3f1"
+    "digest": "1f991cf1"
   },
   "m3-se-prio.mmlisp": {
     "ok": true,

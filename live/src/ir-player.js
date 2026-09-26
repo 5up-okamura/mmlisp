@@ -61,6 +61,18 @@ const DRIVER_SWEEP_CURVES = new Set([
   "ease-inout", "ease-inout-quad", "sin", "triangle", "square", "saw", "ramp",
 ]);
 
+// Whether a macro's first step writes nothing: a leading wait, a hold step, or
+// an empty attack/sustain (`[#rel …]`).
+function macroLeadsWithHold(spec) {
+  if (spec?.type === "steps") return spec.releaseIndex === 0 || spec.steps?.[0] == null;
+  const first = spec?.type === "stages" ? spec.stages?.[0] : spec;
+  if (!first) return false;
+  return (
+    (spec.type === "stages" && !first.curve) ||
+    !!first.waitKeyOff || Number(first.waitFrames ?? 0) > 0 || Number(first.waitTicks ?? 0) > 0
+  );
+}
+
 // Control-flow and timing events do not represent a sounding position, so they
 // must not move the editor playhead highlight. Without this, a zero-duration
 // loop (e.g. `#loop (go loop)` with no notes) fires MARKER/JUMP at the
@@ -2983,23 +2995,52 @@ export class IRPlayer {
       const { stages } = spec;
       if (!stages || stages.length === 0) return null;
 
+      // The release boundary, where export-mmb lowerStages puts it: the first
+      // (wait key-off), else the first curve stage after a looping one. At
+      // key-off the driver leaves attack/sustain for the release from wherever
+      // it is, on the key-off's own frame; a macro with no release stops there.
+      let rel = stages.length;
+      for (let i = 0, afterLoop = false; i < stages.length; i++) {
+        const st = stages[i];
+        if (st.waitKeyOff || (st.curve && afterLoop)) {
+          rel = i;
+          break;
+        }
+        if (st.curve && st.loop) afterLoop = true;
+      }
+      const offT = this._keyOffFrameTime(when, gateSecs);
+
       let t = when;
-      for (const stage of stages) {
+      for (let i = 0; i < stages.length; i++) {
+        const stage = stages[i];
+        const keyed = i < rel;
+        if (i === rel) {
+          if (offT === Infinity) break;
+          t = offT;
+        }
         // A :wait advances the time cursor. A pure wait stage (no curve) stops
         // here; a curve stage with :wait uses it as a pre-delay, then plays.
-        if (stage.waitKeyOff) t = Math.max(t, gateSecs);
+        if (stage.waitKeyOff) t = Math.max(t, offT);
         else if (stage.waitTicks != null)
           t += Math.max(0, Number(stage.waitTicks)) * this._secsPerTick;
         else if (stage.waitFrames != null) t += stage.waitFrames / 60;
+        if (keyed && t >= offT - 1e-9) {
+          i = rel - 1; // key-off during a wait: on to the release
+          continue;
+        }
         if (!stage.curve) continue; // pure wait stage
         // Regular curve stage (dynamic :from/:to/:rate resolved per note)
         const { curve = "linear", frames: rawFrames = 1, loop = false } = stage;
         const { from = 0, to = 0, params } = this._curveFields(stage, when);
         const baseFrames = this._resolveLenFrames(stage, rawFrames, when);
-        // For looping stages, run until gate (or next key-off boundary)
-        const budget = loop
-          ? Math.max(0, Math.floor((gateSecs - t) * 60))
-          : baseFrames;
+        // A looping stage runs until key-off; a keyed one-shot is cut there.
+        const untilOff =
+          offT === Infinity ? Infinity : Math.max(0, Math.round((offT - t) * 60));
+        const budget = !keyed
+          ? loop ? 0 : baseFrames
+          : loop
+            ? untilOff === Infinity ? Math.max(0, Math.floor((gateSecs - t) * 60)) : untilOff
+            : Math.min(baseFrames, untilOff);
         for (let frame = 0; frame < budget; frame += stepFrames) {
           const phase = loop
             ? (frame % baseFrames) / baseFrames
@@ -3012,6 +3053,7 @@ export class IRPlayer {
           );
         }
         t += budget / 60;
+        if (keyed && t >= offT - 1e-9) i = rel - 1; // key-off: on to the release
       }
       return Math.min(t, limitSecs);
     }
@@ -3069,9 +3111,13 @@ export class IRPlayer {
       // Attack + sustain loop until gate, advancing one step per :step interval.
       // An empty sustain section (`[#rel ...]`, releaseIndex 0) writes nothing
       // before key-off — the target keeps its current value until the release.
+      // Key-off leaves attack/sustain for the release on its own frame, as the
+      // driver does (see the stages form).
+      const offT = this._keyOffFrameTime(when, gateSecs);
+      const releaseAt = offT === Infinity ? gateSecs : offT;
       let t = when;
       let idx = 0;
-      while (sustainEnd > 0 && t < gateSecs) {
+      while (sustainEnd > 0 && t < releaseAt - 1e-9) {
         if (steps[idx] !== null && steps[idx] !== undefined)
           writeFn(steps[idx], t);
         idx++;
@@ -3087,7 +3133,7 @@ export class IRPlayer {
 
       // Release phase after gate (steps after :off), spaced by :step too
       if (releaseIndex !== null && releaseIndex < steps.length) {
-        t = gateSecs;
+        t = releaseAt;
         for (let ri = releaseIndex; ri < steps.length; ri++) {
           if (steps[ri] !== null && steps[ri] !== undefined)
             writeFn(steps[ri], t);
@@ -3099,6 +3145,15 @@ export class IRPlayer {
     }
 
     return null;
+  }
+
+  // The time of the driver frame a note's key-off lands in, for a macro that
+  // started with the note at `when` (the macro steps on the note's frames).
+  // Infinity for a held note.
+  _keyOffFrameTime(when, gateSecs) {
+    if (gateSecs > when + 1e8) return Infinity;
+    const k = this._eventFrame(gateSecs + KEY_OFF_LEAD_SECS) - this._eventFrame(when);
+    return when + Math.max(0, k) / 60;
   }
 
   // Schedule PAN and FM operator param macros embedded in NOTE_ON args.
@@ -3859,6 +3914,16 @@ export class IRPlayer {
       return this._composePsgAtt(velLevel, this._psgVolAtTime(psgCh, t), this._masterAt(t));
     };
 
+    // A macro with no first sample (a leading wait, `[#rel …]`) leaves the
+    // note's own level to the note-on, as the driver composes it.
+    if (macroLeadsWithHold(velMacro))
+      this._psgSetAtt(
+        psgCh,
+        this._composePsgAtt(
+          baseVel, this._psgVolAtNoteOn(psgCh, noteWhen), this._masterAtNoteOn(noteWhen),
+        ),
+        noteWhen,
+      );
     const silenceAt = this._scheduleMacro(
       velMacro,
       noteFrames,

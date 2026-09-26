@@ -344,6 +344,9 @@ MML_HOT uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
 
 static int fm3_op_for(const MMLSeq *s, int ch);
 static int macro_ch(int ch);
+static int vel_release_pending(const MMLSeq *s, int ch);
+static int macro_desc(const MMLSeq *s, int id, MMLMacro *m);
+static int macro_value(const MMLMacro *m, int idx, int *hold);
 
 /* Note-on velocity: the score's sticky base, or this note's own override
  * (NOTE_ON_EX bit0, which rides one note without becoming the base). Only the
@@ -357,12 +360,6 @@ static int macro_ch(int ch);
 static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
   uint8_t *vel = 0, base = 15;
   int op = fm3_op_for(s, ch);
-  if (ex_vel < 0) {
-    int mc = macro_ch(ch);
-    if (mc >= 0)
-      for (int i = 0; i < s->bind_count[mc]; i++)
-        if (s->binds[mc][i].target == T_VEL) return;
-  }
   if (op) { vel = &s->fm3_op_vel[op - 1]; base = s->fm3_op_vel_base[op - 1]; }
   else if (ch < 6) { vel = &s->fm[ch].vel; base = s->fm[ch].vel_base; }
   else if (ch < 10) { vel = &s->psg[ch - 6].vel; base = s->psg[ch - 6].vel_base; }
@@ -371,6 +368,24 @@ static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
     base = s->pcm[ch - CH_PCM1].vel_base;
   }
   if (!vel) return;
+  if (ex_vel < 0) {
+    int mc = macro_ch(ch);
+    if (mc >= 0)
+      for (int i = 0; i < s->bind_count[mc]; i++)
+        if (s->binds[mc][i].target == T_VEL) {
+          /* A bound :vel macro owns the level, and its first sample lands in
+           * this same frame: the note composes from that sample, so it writes
+           * no level the macro overwrites a moment later. With no first
+           * sample (a leading hold, `[#rel …]`) the note takes its own vel;
+           * an additive or scaled macro keeps the live one. */
+          MMLMacro d;
+          int hold = 1;
+          if (!macro_desc(s, s->binds[mc][i].macro_id, &d) || (d.flags & 6)) return;
+          int v = d.release == 0 ? 0 : macro_value(&d, 0, &hold);
+          *vel = hold ? base : (uint8_t)clampi(v, 0, 15);
+          return;
+        }
+  }
   *vel = ex_vel >= 0 ? (uint8_t)clampi(ex_vel, 0, 15) : base;
 }
 
@@ -509,7 +524,9 @@ static void channel_off(MMLSeq *s, int ch) {
     key_off(s, ch);
   } else if (ch < 10) {
     s->psg[ch - 6].keyed = 0;
-    if (s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
+    /* A :vel macro with a release is the note's decay: it takes the level from
+     * here (release[0] lands this frame) and silences at its end. */
+    if (s->psg[ch - 6].sounding && !vel_release_pending(s, ch)) write_psg_att(s, ch - 6, 15);
   }
 }
 
@@ -969,6 +986,22 @@ static int macro_value(const MMLMacro *m, int idx, int *hold) {
   return (int8_t)raw;
 }
 
+/* Whether a running :vel macro on the channel will play a release region at
+ * key-off — PSG key-off then leaves the level to it (channel_off). */
+static int vel_release_pending(const MMLSeq *s, int ch) {
+  int mc = macro_ch(ch);
+  if (mc < 0) return 0;
+  for (int i = 0; i < s->macro_slot_count[mc]; i++) {
+    const MMLMacroSlot *sl = &s->macro_slots[mc][i];
+    MMLMacro d;
+    if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) &&
+        macro_desc(s, sl->macro_id, &d) && d.target == T_VEL && d.release != 0xff &&
+        d.release < d.count)
+      return 1;
+  }
+  return 0;
+}
+
 /* Scaled-macro sample (§4.4): `(sample x depth) >> 8`, depth = the slot's low
  * byte. Magnitude-then-resign, so the truncation is toward zero and matches
  * sweep_value — all three players agree bit for bit. */
@@ -1023,6 +1056,9 @@ static void macro_trigger(MMLSeq *s, int ch) {
     sl->fresh = 1;
     sl->cursor = 0;
     sl->step_clock = 0;
+    /* An empty attack/sustain (`[#rel …]`) writes nothing until key-off. */
+    MMLMacro d;
+    if (macro_desc(s, sl->macro_id, &d) && d.release == 0) sl->state = MML_MACRO_HOLD;
   }
   s->macro_slot_count[ch] = s->bind_count[ch];
 }
@@ -1090,6 +1126,10 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
     return 0;
   }
   if (sl->state == MML_MACRO_HOLD) return 0; /* one-shot: hold, await key-off */
+  if (sl->state == MML_MACRO_TAIL) {
+    if (!keyed && s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
+    return 1;
+  }
 
   int hold;
   int v = macro_value(&d, (int)sl->cursor, &hold);
@@ -1135,7 +1175,14 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
     }
   } else {
     sl->cursor++;
-    if (sl->cursor >= (uint16_t)d.count) return 1; /* release finished */
+    if (sl->cursor >= (uint16_t)d.count) { /* release finished */
+      /* A PSG :vel release was the decay: silence the channel a step on. */
+      if (d.target == T_VEL && ch >= 6 && ch < 10 && !keyed) {
+        sl->state = MML_MACRO_TAIL;
+        return 0;
+      }
+      return 1;
+    }
   }
   return 0;
 }

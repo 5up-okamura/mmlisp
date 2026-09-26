@@ -743,8 +743,25 @@ export class DrvPlayer {
     if (channelId < 6) this._keyOff(channelId);
     else if (channelId < 10) {
       this._psg[channelId - 6].keyed = false;
-      if (this._psg[channelId - 6].sounding) this._writePsgAtt(channelId - 6, 15);
+      // A :vel macro with a release is the note's decay: it takes the level
+      // from here (release[0] lands this frame) and silences at its end.
+      if (this._psg[channelId - 6].sounding && !this._velReleasePending(channelId))
+        this._writePsgAtt(channelId - 6, 15);
     }
+  }
+
+  // Whether a running :vel macro on the channel will play a release region at
+  // key-off — PSG key-off then leaves the level to it (_channelOff).
+  _velReleasePending(ch) {
+    const mc = this._macroCh(ch);
+    if (mc < 0) return false;
+    return this._macroSlots[mc].some((slot) => {
+      const d = slot && this._macros[slot.descIdx];
+      return (
+        d && (slot.state === "run" || slot.state === "hold") &&
+        d.target === TARGET_ID.VEL && d.release !== 0xff && d.release < d.count
+      );
+    });
   }
 
   // ── FM3 independent-OP mode (driver.md §5.1 / opcodes.md 0xA3/0xA4) ────────
@@ -1327,24 +1344,36 @@ export class DrvPlayer {
   // note has nothing to overwrite it and this is what puts the score's
   // velocity back.
   _restoreVelBase(channelId, exVel = null) {
-    const mc = this._macroCh(channelId);
-    if (exVel == null && mc >= 0 && this._macroActive[mc]?.has(TARGET_ID.VEL)) return;
+    const clamp = (v) => (v < 0 ? 0 : v > 15 ? 15 : v);
     const op = this._fm3OpFor(channelId);
-    if (op) {
-      this._fm3OpVel[op - 1] =
-        exVel != null ? (exVel < 0 ? 0 : exVel > 15 ? 15 : exVel) : this._fm3OpVelBase[op - 1];
-      return;
-    }
-    const st =
-      channelId < 6
+    const st = op
+      ? null
+      : channelId < 6
         ? this._fm[channelId]
         : channelId < 10
           ? this._psg[channelId - 6]
           : channelId >= 20 && channelId <= 22
             ? this._pcmVoices[channelId - 20]
             : null;
-    if (!st) return;
-    st.vel = exVel != null ? (exVel < 0 ? 0 : exVel > 15 ? 15 : exVel) : st.velBase;
+    if (!op && !st) return;
+    const setVel = (v) => {
+      if (op) this._fm3OpVel[op - 1] = v;
+      else st.vel = v;
+    };
+    const mc = this._macroCh(channelId);
+    if (exVel == null && mc >= 0 && this._macroActive[mc]?.has(TARGET_ID.VEL)) {
+      // A bound :vel macro owns the level, and its first sample lands in this
+      // same frame: the note composes from that sample, so it writes no level
+      // the macro overwrites a moment later. With no first sample (a leading
+      // hold, `[#rel …]`) the note takes its own vel; an additive or scaled
+      // macro keeps the live one.
+      const d = this._macros[this._macroActive[mc].get(TARGET_ID.VEL)];
+      if (!d || d.flags & 6) return;
+      const v = d.release === 0 ? null : d.values[0];
+      setVel(v != null ? clamp(v) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
+      return;
+    }
+    setVel(exVel != null ? clamp(exVel) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
   }
 
   // ── PARAM_SET execution (opcodes.md §7 target table) ─────────────────────
@@ -1736,7 +1765,9 @@ export class DrvPlayer {
     const slots = [];
     for (const macroId of active.values()) {
       // `fresh`: this slot's first sample lands in the note's own frame.
-      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state: "run", fresh: true });
+      // An empty attack/sustain (`[#rel …]`) writes nothing until key-off.
+      const state = this._macros[macroId]?.release === 0 ? "hold" : "run";
+      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state, fresh: true });
     }
     this._macroSlots[mc] = slots;
   }
@@ -1800,6 +1831,10 @@ export class DrvPlayer {
       return false;
     }
     if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
+    if (slot.state === "tail") {
+      if (!keyed && this._psg[ch - 6].sounding) this._writePsgAtt(ch - 6, 15);
+      return true;
+    }
     let v = d.values[slot.cursor];
     if (v !== null && v !== undefined) {
       // Scaled macro (§4.4): a value slot is a per-frame depth knob. Multiply
@@ -1849,7 +1884,15 @@ export class DrvPlayer {
       }
     } else {
       slot.cursor++;
-      if (slot.cursor >= d.count) return true; // release finished
+      if (slot.cursor >= d.count) {
+        // Release finished. A PSG :vel release was the decay: silence the
+        // channel a step on (the "tail" state).
+        if (d.target === TARGET_ID.VEL && ch >= 6 && ch < 10 && !keyed) {
+          slot.state = "tail";
+          return false;
+        }
+        return true;
+      }
     }
     return false;
   }
