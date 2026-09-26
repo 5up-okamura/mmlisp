@@ -1,6 +1,3 @@
 [
-  "examples/source/ab-core.mmlisp",
-  "examples/source/import-demo.mmlisp",
-  "examples/source/voices-lib.mmlisp",
   "presets/waveforms/demo-acid.mmlisp"
 ]

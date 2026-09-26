@@ -1,10 +1,12 @@
 # examples
 
-Demo songs.
+Example scores.
 
-- `source/` — `.mmlisp` scores
-- `index.json` — the scores **File ▸ Browse…** offers (guide §25); add a new
-  one there to have it appear
+- `source/` — `.mmlisp` scores. `ab-core.mmlisp` is the driver's A/B and C
+  gate score (drv/tools); `import-demo.mmlisp` and `voices-lib.mmlisp` show
+  `(import …)`. They are test and reference material, not pieces to listen to.
+- `index.json` — the scores **File ▸ Browse…** offers (guide §25). List only
+  what is worth playing to someone; add a score there to have it appear.
 
 ## Presets
 
