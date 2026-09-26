@@ -1377,6 +1377,17 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
 }
 
 /* ── Note on (opcodes.md §3.1) ─────────────────────────────────────────────── */
+/* The stream's PARAM_SET VEL: the base and the live value, no write — the
+ * next note_on composes it (driver.md §7.1). */
+static void store_vel(MMLSeq *s, int ch, int value) {
+  uint8_t v = (uint8_t)clampi(value, 0, 15);
+  int op = fm3_op_for(s, ch);
+  if (op) s->fm3_op_vel[op - 1] = s->fm3_op_vel_base[op - 1] = v;
+  else if (ch < 6) s->fm[ch].vel = s->fm[ch].vel_base = v;
+  else if (ch < 10) s->psg[ch - 6].vel = s->psg[ch - 6].vel_base = v;
+  else if (ch >= CH_PCM1 && ch <= CH_PCM3) s->pcm[ch - CH_PCM1].vel = s->pcm[ch - CH_PCM1].vel_base = v;
+}
+
 /* `ex_vel` < 0 means "no per-note velocity" — take the sticky base. */
 static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_gate,
                     int has_ex_gate, int legato, int ex_vel) {
@@ -1621,7 +1632,13 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       }
       case OP_PARAM_SET: {
         uint8_t target = st[t->pc + 1];
-        if (target_wide(target)) {
+        if (target == T_VEL) {
+          /* The score's velocity is note-on scoped (language.md §5): stored
+           * here, composed by the next note_on, never applied to a note that
+           * is already sounding. The host's own writes stay immediate. */
+          store_vel(s, t->channel_id, (int8_t)st[t->pc + 2]);
+          t->pc += 3;
+        } else if (target_wide(target)) {
           param_set(s, t->channel_id, target, (int16_t)rd16(st, t->pc + 2));
           t->pc += 4;
         } else {

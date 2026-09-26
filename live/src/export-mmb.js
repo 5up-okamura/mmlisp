@@ -929,12 +929,13 @@ export function encodeMmb(ir, opts = {}) {
           //
           // VEL is deliberately NOT in that snapshot. Restoring it happens at
           // the JUMP, i.e. while the previous iteration's last note may still be
-          // sounding — and PARAM_SET VEL is the one sticky param the driver acts
-          // on immediately (it recomposes carrier TL, driver.md §7.1). A loop
-          // whose marker sits at the top of the track snapshots the encoder's
-          // *initial* vel 15, so the restore fired `VEL 15` into a note held
-          // across the loop: +21.8 dB on a sustained chord, for as long as the
-          // body took to reach its next note. That is the loop-point blast.
+          // sounding. The driver once recomposed carrier TL on PARAM_SET VEL, so
+          // a loop whose marker sits at the top of the track restored the
+          // encoder's *initial* vel 15 into a note held across the loop: +21.8
+          // dB on a sustained chord — the loop-point blast. The stream's VEL is
+          // now only stored until the next note-on (driver.md §7.1), and the
+          // exclusion stays so the body never leans on state from before the
+          // marker.
           //
           // Instead a loop target invalidates the tracking, so the body
           // re-asserts its own velocity at the note that needs it and depends on
