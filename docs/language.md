@@ -1451,31 +1451,53 @@ Parameters — a positional value fills the one marked *positional*
 (`(gain 6)` is `(gain :db 6)`); anything outside a range is
 `E_SAMPLE_FX_PARAM`:
 
-| Effect | Param | Value | Range | Default |
-| --- | --- | --- | --- | --- |
-| `gain` | `:db` | dB | any | required, *positional* |
-| `normalize` | `:peak` | dBFS | ≤ 0 | `0` |
-| `comp` | `:threshold` | dBFS | ≤ 0 | `-18` |
-| | `:ratio` | ratio (`4` = 4:1) | ≥ 1 | `4` |
-| | `:attack` | length | ≥ 0 (`0ms` = instant) | `0ms` |
-| | `:release` | length | ≥ 0 | `20ms` |
-| | `:knee` | dB (width) | ≥ 0 (`0` = hard knee) | `6` |
-| | `:makeup` | dB | any | `0` |
-| `limit` | `:ceiling` | dBFS | ≤ 0 | `0` |
-| | `:release` | length | ≥ 0 | `5ms` |
-| `crush` | `:bits` | integer | 1–8 | required, *positional* |
-| `fade` | `:len` | length | > 0 | required |
-| | `:at` | length, from the sample's start | ≥ 0 | `:len` before the end |
-| | `:curve` | a one-shot curve name (§11): `linear`, `ease-*` | not a looping curve | `linear` |
-| `reverb` | `:tail` | length added after the sample | > 0 | required |
-| | `:size` | room size (decay) | 0–1 | `0.5` |
-| | `:damp` | high-frequency damping (higher is darker) | 0–1 | `0.5` |
-| | `:mix` | wet share | 0–1 | `0.3` |
-| | `:predelay` | length before the reverb starts | ≥ 0 | `0ms` |
+| Effect | Param | Value | Range | Default | Does |
+| --- | --- | --- | --- | --- | --- |
+| `gain` | `:db` | dB | any | required, *positional* | Positive is louder, negative quieter. Nothing clips until the chain ends |
+| `normalize` | `:peak` | dBFS | ≤ 0 | `0` | Where the loudest point lands: `0` is full scale, `-1` leaves 1 dB of headroom |
+| `comp` | `:threshold` | dBFS | ≤ 0 | `-18` | The level above which it squeezes. Lower catches more of the sound — the body, not just the hit |
+| | `:ratio` | ratio (`4` = 4:1) | ≥ 1 | `4` | How hard: at 4, 4 dB over the threshold comes out as 1 dB over. `1` does nothing; `20` and up is close to a limiter |
+| | `:attack` | length | ≥ 0 (`0ms` = instant) | `0ms` | How fast it clamps down. `0ms` catches the transient; a few ms lets the click through (punchier, but a following `normalize` scales to that click) |
+| | `:release` | length | ≥ 0 | `20ms` | How fast it lets go. Shorter gives back more loudness between hits; on a low sound a very short one follows the waveform and adds grit |
+| | `:knee` | dB (width) | ≥ 0 (`0` = hard knee) | `6` | How gradually it starts around the threshold: `0` switches on at the threshold, wider eases in |
+| | `:makeup` | dB | any | `0` | Gain after compressing — the same as a `gain` after `comp` |
+| `limit` | `:ceiling` | dBFS | ≤ 0 | `0` | The level no peak passes (the lookahead is a fixed 2 ms, so it never overshoots) |
+| | `:release` | length | ≥ 0 | `5ms` | How fast the gain comes back after a peak. Shorter is louder; longer is smoother and quieter |
+| `crush` | `:bits` | integer | 1–8 | required, *positional* | The steps the wave keeps: `8` changes nothing (the bank is 8-bit), `4` is gritty, `1`–`2` near a square wave |
+| `fade` | `:len` | length | > 0 | required | How long the fade takes, from `:at` to silence |
+| | `:at` | length, from the sample's start | ≥ 0 | `:len` before the end | Where the fade starts. Everything after `:at` + `:len` is cut |
+| | `:curve` | a one-shot curve name — *Fade curves* below | not a looping curve | `linear` | The fade's shape |
+| `reverb` | `:tail` | length | > 0 | required | How much is added after the sample; the tail fades out over it. This is the bank cost |
+| | `:size` | 0–1 | 0–1 | `0.5` | Room size: higher decays longer (within `:tail`) |
+| | `:damp` | 0–1 | 0–1 | `0.5` | How fast the highs die away: higher is darker, lower brighter and more metallic |
+| | `:mix` | 0–1 | 0–1 | `0.3` | Wet share: `0` is the dry sample only, `1` the reverb only |
+| | `:predelay` | length | ≥ 0 | `0ms` | A gap before the reverb starts — keeps the hit clear of its room |
 
 Numbers are plain decimals (`-18`, `1.5`); lengths are §4 lengths (`60ms`,
-`16`, `4f`). The fade's gain is 1 − curve, so `ease-out-expo` drops fast and
-tails off like a natural decay.
+`16`, `4f`).
+
+**Fade curves.** `:curve` takes any one-shot curve of §11, and the fade's
+gain is **1 − curve**, so each shape reads as follows:
+
+| `:curve` | The level over the fade | For |
+| --- | --- | --- |
+| `linear` | Falls at an even rate | A plain fade |
+| `ease-out`, `ease-out-{sine,quad,cubic,quart,quint,expo,circ}` | Drops fast, then tails off — steeper from `sine` to `expo` (`expo` is at half level a tenth of the way in) | A natural decay: shortening a drum's or cymbal's tail |
+| `ease-in`, `ease-in-{sine,quad,cubic,quart,quint,expo,circ}` | Holds near full, then falls away at the end — sharper from `sine` to `expo` | Gate-like: keep the body, then cut |
+| `ease-inout`, `ease-inout-{sine,quad,cubic,quart,quint,expo,circ}` | S-shaped: slow, fast, slow | A smooth rounding-off |
+| `ease-in-back` | Swells about 10% above full, then falls | A lift before the cut |
+| `ease-out-back` | Drops fast, dips about 10% below zero (the wave flips phase), then settles to silence | A subtly odd decay |
+| `ease-inout-back` | Both of the above: a swell, then a dip past zero | — |
+| `ease-in-elastic` | Wobbles and swells up to about 1.4× near the end, then snaps to silence | Effects |
+| `ease-out-elastic` | Drops at once, then rings around zero with the phase flipping, dying away | Effects: a buzzing wobble |
+| `ease-inout-elastic` | Both of the above | — |
+| `ease-out-bounce` | Falls to near silence, bounces back up (to about 25%), falls again, smaller each time | A stutter or bouncing-ball decay |
+| `ease-in-bounce` | Small dips early, then one long fall | A fade with a flutter in it |
+| `ease-inout-bounce` | Both of the above | — |
+
+The `ease-in`, `ease-out` and `ease-inout` without a suffix are `quad`. A
+looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
+`perlin`, `brown`) is `E_SAMPLE_FX_PARAM`.
 
 - **Louder is two idioms.** A sample already at full scale (the presets are)
   gets louder only by bringing its body up to its peak:
