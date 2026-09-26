@@ -53,7 +53,7 @@ target's base (§7.0). The judgment-free half of that audit has landed (IR
 `E_PRIO_LAYER_LOOP`, the formatter's glued-keyword repair), and so have the
 first rulings: `#sus` / `#rel`, curve `:mode loop|shot`, one meaning per
 definition head (`def` = snippet only — a named macro is a snippet too;
-`def-voice` / `def-sample` / `def-val` = named data, a leading base name
+`def-fm` / `def-pcm` / `def-val` = named data, a leading base name
 replacing `:extend`), sample binding by name. **Decided:** no CALL/RET in the
 language — naming is a source convenience, sharing is the encoder's job
 (MACRO_TABLE / VOICE_TABLE dedup, the CALL/RET pass). **Decided, do not re-propose:** counted

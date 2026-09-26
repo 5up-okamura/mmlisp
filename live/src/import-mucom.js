@@ -1141,7 +1141,7 @@ function voiceToDef(label, v) {
       `:ks${n} ${clamp(o.ks, 0, 3)} :ml${n} ${clamp(o.ml, 0, 15)} :dt${n} ${clamp(o.dt, -3, 3)}`,
     );
   }
-  const def = `(def-voice @${label}\n  ${parts.join("\n  ")})`;
+  const def = `(def-fm @${label}\n  ${parts.join("\n  ")})`;
   const head = (v.comments || []).join("\n");
   return head ? `${head}\n${def}` : def;
 }
@@ -1350,7 +1350,7 @@ export function mucomToMmlisp(parsed) {
     for (const [, e] of [...pcmRegistry].sort((a, b) => a[0] - b[0])) {
       defLines.push(
         "",
-        `(def-sample ${e.label} :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
+        `(def-pcm ${e.label} :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
       );
     }
     lines.splice(lfoDefAnchor, 0, ...defLines);
@@ -1472,7 +1472,7 @@ function decodeMucomPcmForImport(pcmFile, pcmBytes) {
 }
 
 /**
- * Convert a standalone `.dat` voice bank into MMLisp `(def-voice @name …)` defs — a
+ * Convert a standalone `.dat` voice bank into MMLisp `(def-fm @name …)` defs — a
  * voice library, no song needed. Unnamed/empty slots are skipped.
  * @returns {{ source:string, warnings:string[] }}
  */
@@ -1506,7 +1506,7 @@ export function pcmBankToMmlisp(pcmBytes, bankName = "mucompcm.bin") {
     used.add(label);
     lines.push(
       "",
-      `(def-sample ${label} :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
+      `(def-pcm ${label} :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
     );
   }
   return {

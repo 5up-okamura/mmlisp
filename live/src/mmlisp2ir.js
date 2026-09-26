@@ -1590,7 +1590,7 @@ function resolveSampleEffects(node, bpm, diagnostics, src) {
   return chain;
 }
 
-// A def-sample's `:key value …` body. `base` is the sample it extends: the
+// A def-pcm's `:key value …` body. `base` is the sample it extends: the
 // child takes the base's file (still read from the base's folder), slice,
 // loop and effects and overrides the keys it writes (resolveSampleExtends).
 function parseSampleDef(bodyItems, base, diagnostics, src) {
@@ -1645,7 +1645,7 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
       diagnostics,
       "error",
       "E_SAMPLE_FILE",
-      "def-sample needs :file, or a base sample to extend",
+      "def-pcm needs :file, or a base sample to extend",
       src,
       null,
     );
@@ -1658,7 +1658,7 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
       diagnostics,
       "error",
       "E_SAMPLE_SLICE",
-      `def-sample :offset must be >= 0 (got ${sample.offset})`,
+      `def-pcm :offset must be >= 0 (got ${sample.offset})`,
       src,
       null,
     );
@@ -1668,7 +1668,7 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
       diagnostics,
       "error",
       "E_SAMPLE_SLICE",
-      `def-sample :frames must be > 0 (got ${sample.frames})`,
+      `def-pcm :frames must be > 0 (got ${sample.frames})`,
       src,
       null,
     );
@@ -4148,11 +4148,11 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
-    // (def-voice name [base] :alg 4 …) / (def-sample name [base] :file "…" …)
+    // (def-fm name [base] :alg 4 …) / (def-pcm name [base] :file "…" …)
     // — named data, like def-val. A leading name after the def's own is the
     // voice / sample it extends. Voices resolve in resolveVoices, samples in
     // resolveSampleExtends, once every def (imports included) is known.
-    if (head === "def-voice" || head === "def-sample") {
+    if (head === "def-fm" || head === "def-pcm") {
       const items = root.items.filter((n) => n.kind !== "comment");
       const name = atomValue(items[1]);
       if (!name || items[1].kind !== "atom" || isReservedHead(name)) {
@@ -4165,7 +4165,7 @@ function collectDefs(roots, diagnostics) {
       const baseTok = atomValue(items[2]);
       const base = baseTok && items[2].kind === "atom" && !baseTok.startsWith(":") ? baseTok : null;
       const body = items.slice(base ? 3 : 2);
-      if (head === "def-voice")
+      if (head === "def-fm")
         typedDefs.set(name, { tag: "voice", extends: base, items: body, src: nodeSrc(root) });
       else
         sampleDefs.set(name, {
@@ -4475,7 +4475,7 @@ function withImportEffect(bundle, effectNode) {
   return { ...bundle, sampleDefs };
 }
 
-// `(def-sample name base …)`: the child takes the base's file (still read from the
+// `(def-pcm name base …)`: the child takes the base's file (still read from the
 // base's folder), slice, loop and effects — the import's chain included — and
 // overrides the keys it writes. Runs once imports are merged, so a base may
 // come from an imported kit.

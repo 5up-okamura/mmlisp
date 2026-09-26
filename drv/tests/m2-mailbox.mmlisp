@@ -1,6 +1,6 @@
 ; M2 host mailbox commands (KEY_OFF / SET_PARAM / FADE_TRACK). The commands
 ; live in m2-mailbox.cmds.json and are injected by the verify harness.
-(def-voice v :alg 7 :fb 0
+(def-fm v :alg 7 :fb 0
   :ar1 31 :dr1 4 :sr1 1 :rr1 6 :sl1 2 :tl1 16 :ks1 0 :ml1 1 :dt1 0
   :ar2 31 :dr2 6 :sr2 1 :rr2 7 :sl2 2 :tl2 10 :ks2 0 :ml2 2 :dt2 0
   :ar3 31 :dr3 5 :sr3 1 :rr3 6 :sl3 2 :tl3 20 :ks3 0 :ml3 3 :dt3 0

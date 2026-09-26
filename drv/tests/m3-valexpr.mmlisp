@@ -6,7 +6,7 @@
 (def-val a 10 0..31)
 (def-val b 6 0..31)
 
-(def-voice lead :alg 4 :fb 3
+(def-fm lead :alg 4 :fb 3
   :ar1 20 :dr1 8 :sr1 2 :rr1 6 :sl1 3 :tl1 24 :ks1 1 :ml1 2 :dt1 0
   :ar2 24 :dr2 10 :sr2 3 :rr2 8 :sl2 4 :tl2 12 :ks2 0 :ml2 1 :dt2 0
   :ar3 22 :dr3 7 :sr3 2 :rr3 6 :sl3 2 :tl3 18 :ks3 0 :ml3 4 :dt3 0

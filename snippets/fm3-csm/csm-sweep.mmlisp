@@ -1,6 +1,6 @@
 ; CSM rate as a curve: :csm-rate takes Hz or any curve of Hz, so the buzz
 ; itself can sweep: a falling "power down", a rising alarm, a vibrato.
-(def-voice buzz init-fm :alg 7 :fb 0
+(def-fm buzz init-fm :alg 7 :fb 0
   :ar1 31 :dr1 12 :sl1 5 :rr1 8 :tl1 18 :ml1 2
   :ar2 31 :dr2 12 :sl2 5 :rr2 8 :tl2 22 :ml2 5
   :ar3 31 :dr3 12 :sl3 5 :rr3 8 :tl3 24 :ml3 9

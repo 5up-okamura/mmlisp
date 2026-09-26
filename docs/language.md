@@ -674,8 +674,8 @@ matching the live player only when the slot stays at its init.
 ## 9. `def` forms
 
 Each definition head means one thing. `def` names a **snippet** — any
-inline-writable notation, expanded where its name is written. `def-voice` and
-`def-sample` declare **named data** (an FM voice, a PCM sample), as `def-val`
+inline-writable notation, expanded where its name is written. `def-fm` and
+`def-pcm` declare **named data** (an FM voice, a PCM sample), as `def-val`
 declares a value slot (§8); a bare reference in a channel body applies them.
 Definitions are top-level forms and interleave freely
 with track forms (§1). `title` and `author` are reserved for file metadata
@@ -696,13 +696,13 @@ stream bytes is shared by the encoder's CALL/RET pass (opcodes.md §5.2). A `let
 | ------------------------------------- | --------------------------------------- |
 | `(def name item…)`                    | Snippet — inline expansion at the reference (snippets within snippets ≤ 16 deep, else `E_DEF_RECURSION`) |
 | `(def (name param…) item…)`           | Parametric snippet — call as `(name arg…)`; each `arg` node is substituted for its `param` in the body (§9.1) |
-| `(def-voice name :alg … :tl1 … …)`  | FM voice, keyword map                   |
-| `(def-voice name base :tl1 … …)`    | FM voice extending `base` (its keys override; a base that is not a voice, or a cycle, is `E_VOICE_EXTENDS`) |
-| `(def-sample name :file "…" …)`     | PCM sample (§16)                        |
-| `(def-sample name base …)`          | PCM sample extending another sample (§16) |
+| `(def-fm name :alg … :tl1 … …)`       | FM voice, keyword map                   |
+| `(def-fm name base :tl1 … …)`         | FM voice extending `base` (its keys override; a base that is not a voice, or a cycle, is `E_VOICE_EXTENDS`) |
+| `(def-pcm name :file "…" …)`          | PCM sample (§16)                        |
+| `(def-pcm name base …)`               | PCM sample extending another sample (§16) |
 | `(def name (macro :target spec …))`   | A snippet holding a macro form — written alone it applies the macro, and inside another `(macro name …)` it applies first, with its own `:step` |
 
-A `def-voice` holds the channel's `:alg :fb :ams :fms` and the operator
+A `def-fm` holds the channel's `:alg :fb :ams :fms` and the operator
 params `:ar1`…`:am4` — anything else is `E_VOICE_PARAM`. A value is anything
 that evaluates to a number (a literal, a snippet constant, an expression); a
 curve or a `$` value is `E_VOICE_VALUE`, since a voice is fixed data. A leading
@@ -713,7 +713,7 @@ built-in voice `init-fm` (ALG 7, AR 31, RR 15, ML 1, TL 0 on all operators)
 is always available:
 
 ```lisp
-(def-voice lead init-fm
+(def-fm lead init-fm
   :alg 4 :fb 3
   :tl1 30 :tl2 0 :tl3 30 :tl4 0)
 
@@ -721,7 +721,7 @@ is always available:
 ```
 
 Voice names are plain identifiers — no special prefix (a voice is recognized by
-its `def-voice` head, not a sigil). The mucom importer, whose voice names are
+its `def-fm` head, not a sigil). The mucom importer, whose voice names are
 machine-generated, prefixes them with `@` (e.g. `@1`, `@brass`) purely as a
 name-mangling safety measure — a numeric mucom voice id would otherwise be a
 length token, and a name colliding with a note token could not be referenced.
@@ -767,7 +767,7 @@ inline.
   Open Folder…), like a PCM `:file` (§16); a served or URL score resolves it
   from the server root. A path that cannot be read is `E_IMPORT_NOT_FOUND`.
 - **What is imported**: the four def namespaces — plain and parametric snippets
-  (`def`), FM voices (`def-voice`) and PCM samples (`def-sample`). Imports are
+  (`def`), FM voices (`def-fm`) and PCM samples (`def-pcm`). Imports are
   transitive (an imported file may itself `import`). An imported sample def
   keeps its own base directory, so its `:file` reads from the imported file's
   folder, not the score's (§16).
@@ -1213,7 +1213,7 @@ its own fader; on an algorithm where the operator modulates, its level is
 modulation depth rather than volume.
 
 ```lisp
-(def-voice kit init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)
+(def-fm kit init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)
 
 (fm3 kit)                     ; shared patch — no notes here
 (fm3-1 :oct 5 :len 8  c c)
@@ -1247,7 +1247,7 @@ Valid rate range: 52–53270 Hz, clamped with `W_CSM_RATE_CLAMPED`. A score
 with neither source produces no Timer A retrigger (fm3-csm plays silently).
 
 ```lisp
-(def-voice brass init-fm :alg 4 :tl1 24 :tl3 24)
+(def-fm brass init-fm :alg 4 :tl1 24 :tl3 24)
 
 (fm3-csm brass :oct 4 :len 2
   c _ e _ g _)
@@ -1259,15 +1259,15 @@ with neither source produces no Timer A retrigger (fm3-csm plays silently).
 
 ## 16. PCM
 
-Samples are declared with `(def-sample name …)` and bound to a track by
+Samples are declared with `(def-pcm name …)` and bound to a track by
 naming one in its body, before the notes — and again wherever the sound
 changes — as a voice is on FM. How many voices play at once is a whole-song choice (§1):
 
 ```lisp
 (def pcm-voices 3)
-(def-sample kick :file "sounds/kick.wav")
-(def-sample snare :file "sounds/snare.wav" :rate 11025)
-(def-sample pad :file "sounds/pad.wav" :loop-start 300ms :loop-len 100ms)
+(def-pcm kick :file "sounds/kick.wav")
+(def-pcm snare :file "sounds/snare.wav" :rate 11025)
+(def-pcm pad :file "sounds/pad.wav" :loop-start 300ms :loop-len 100ms)
 
 (pcm1 kick :tempo 120  :len 4  c _ c _)
 (pcm2 snare :len 4  _ c _ c)
@@ -1320,8 +1320,8 @@ kit in a single wav, or an imported instrument bank. Both count **frames**, not
 bytes, and a negative `:offset` or a non-positive `:frames` is `E_SAMPLE_SLICE`.
 
 ```lisp
-(def-sample kick :file "kit.wav" :offset 0    :frames 3904)
-(def-sample snare :file "kit.wav" :offset 3904 :frames 6400)
+(def-pcm kick :file "kit.wav" :offset 0    :frames 3904)
+(def-pcm snare :file "kit.wav" :offset 3904 :frames 6400)
 
 (pcm1 :len 8  kick c snare c  kick c c)
 ```
@@ -1359,7 +1359,7 @@ subfolder — `~/Desktop/mysong/` opens, `~/Desktop/` does not.
 Without a folder, `:file` falls back to the dev server's root, so absolute
 server paths (`/drv/tests/blip.wav`) and full URLs (CORS permitting) also work.
 
-**Dropping a wav** writes its def at the cursor — `(def-sample kick :file "…")`,
+**Dropping a wav** writes its def at the cursor — `(def-pcm kick :file "…")`,
 no `:rate`, so the wav's own rate stands. A wav dragged out of the opened folder
 gets the correct folder-relative path (`"sounds/kick.wav"`); one dragged from
 anywhere else gets its bare name and is decoded into memory, so it plays at once
@@ -1384,7 +1384,7 @@ unlike `:offset` / `:frames`, which cut a sample out of a file and have nothing
 to do with playback. On a def they set the sample's own sustain loop:
 
 ```lisp
-(def-sample pad :file "pad.wav" :loop-start 300ms :loop-len 100ms)
+(def-pcm pad :file "pad.wav" :loop-start 300ms :loop-len 100ms)
 ```
 
 On a track they set the loop of the notes that follow, like any track
@@ -1427,7 +1427,7 @@ never runs them, so they cost no Z80 time — only what they do to the bank
 (a fade saves bytes). Use them to make a sample hold its own against FM:
 
 ```lisp
-(def-sample snare :file "snare.wav"
+(def-pcm snare :file "snare.wav"
   :effect [(comp :threshold -20 :ratio 4 :attack 0ms :release 60ms)
            (gain 8)
            (limit)
@@ -1505,7 +1505,7 @@ tails off like a natural decay.
   against `:vel` / `:vol`.
 - **A kit, or a variant.** `(import "kit" :effect [...])` processes every
   sample of a kit (§9.2); its chain runs before each def's own.
-  `(def-sample snare-hot snare :effect [...])` is a variant of one sound: it
+  `(def-pcm snare-hot snare :effect [...])` is a variant of one sound: it
   takes the base's `:file` (still read from the base's folder), slice, loop
   points and effects — the import's chain included — and overrides the keys it
   writes; its own `:effect` replaces the base's, the import's stays in front.
