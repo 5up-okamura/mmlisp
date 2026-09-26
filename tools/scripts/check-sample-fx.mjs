@@ -99,6 +99,25 @@ const run = (x, chain) => {
   check("reverb :predelay holds the wet back", peak(late, 1, lead) === 0 && peak(late, lead) > 0);
 }
 
+// the documented loudness idioms make a full-scale drum LOUDER with the
+// defaults (comp alone, or a comp whose loss a small gain does not repay,
+// makes it quieter — the chain the docs once recommended)
+{
+  let seed = 1;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 31) - 1;
+  const n = Math.round(0.25 * RATE);
+  const drum = Float32Array.from({ length: n }, (_, i) => rnd() * Math.exp(-i / (0.04 * RATE)));
+  const gp = 1 / peak(drum);
+  for (let i = 0; i < n; i++) drum[i] *= gp; // full scale, as the presets are
+  const rms = (x) => { let q = 0; for (const v of x) q += v * v; return 10 * Math.log10(q / x.length); };
+  const chainOf = (fx) => compileMMLisp(`(def-pcm s :file "/x.wav" :effect [${fx}])`, "t.mmlisp").ir.metadata.samples[0].effect;
+  for (const fx of ["(comp :threshold -30 :ratio 8) (normalize)", "(gain 12) (limit)"]) {
+    const { y } = run(drum, chainOf(fx));
+    const up = rms(y) - rms(drum);
+    check(`${fx} is louder on a drum`, up > 3 && peak(y) <= 1 + 1e-6, `${up >= 0 ? "+" : ""}${up.toFixed(1)} dB`);
+  }
+}
+
 // the compiler: resolution and rejection
 {
   const ok = compileMMLisp(`(def pcm-voices 1)

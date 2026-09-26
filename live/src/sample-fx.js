@@ -26,8 +26,8 @@ export const SAMPLE_EFFECTS = {
     params: {
       threshold: { kind: "db", def: -18, max: 0 },
       ratio: { kind: "num", def: 4, min: 1 },
-      attack: { kind: "time", def: 0.005 },
-      release: { kind: "time", def: 0.08 },
+      attack: { kind: "time", def: 0 },
+      release: { kind: "time", def: 0.02 },
       knee: { kind: "db", def: 6, min: 0 },
       makeup: { kind: "db", def: 0 },
     },
@@ -35,7 +35,7 @@ export const SAMPLE_EFFECTS = {
   limit: {
     params: {
       ceiling: { kind: "db", def: 0, max: 0 },
-      release: { kind: "time", def: 0.05 },
+      release: { kind: "time", def: 0.005 },
     },
   },
   crush: { pos: "bits", params: { bits: { kind: "int", required: true, min: 1, max: 8 } } },

@@ -1428,9 +1428,8 @@ never runs them, so they cost no Z80 time — only what they do to the bank
 
 ```lisp
 (def-pcm snare :file "snare.wav"
-  :effect [(comp :threshold -20 :ratio 4 :attack 0ms :release 60ms)
-           (gain 8)
-           (limit)
+  :effect [(comp :threshold -30 :ratio 8)
+           (normalize)
            (fade :at 120ms :len 80ms :curve ease-out-expo)])
 ```
 
@@ -1458,12 +1457,12 @@ Parameters — a positional value fills the one marked *positional*
 | `normalize` | `:peak` | dBFS | ≤ 0 | `0` |
 | `comp` | `:threshold` | dBFS | ≤ 0 | `-18` |
 | | `:ratio` | ratio (`4` = 4:1) | ≥ 1 | `4` |
-| | `:attack` | length | ≥ 0 (`0ms` = instant) | `5ms` |
-| | `:release` | length | ≥ 0 | `80ms` |
+| | `:attack` | length | ≥ 0 (`0ms` = instant) | `0ms` |
+| | `:release` | length | ≥ 0 | `20ms` |
 | | `:knee` | dB (width) | ≥ 0 (`0` = hard knee) | `6` |
 | | `:makeup` | dB | any | `0` |
 | `limit` | `:ceiling` | dBFS | ≤ 0 | `0` |
-| | `:release` | length | ≥ 0 | `50ms` |
+| | `:release` | length | ≥ 0 | `5ms` |
 | `crush` | `:bits` | integer | 1–8 | required, *positional* |
 | `fade` | `:len` | length | > 0 | required |
 | | `:at` | length, from the sample's start | ≥ 0 | `:len` before the end |
@@ -1478,15 +1477,25 @@ Numbers are plain decimals (`-18`, `1.5`); lengths are §4 lengths (`60ms`,
 `16`, `4f`). The fade's gain is 1 − curve, so `ease-out-expo` drops fast and
 tails off like a natural decay.
 
+- **Louder is two idioms.** A sample already at full scale (the presets are)
+  gets louder only by bringing its body up to its peak:
+  `(comp :threshold -30 :ratio 8) (normalize)` — squeeze, then put the peak
+  back at full scale — or `(gain 12) (limit)` — push, then cap. Each is about
+  +4–6 dB of RMS on a drum. **`comp` alone makes a sample quieter**: it takes
+  level off the peaks and nothing puts it back, so end the chain with
+  `normalize` (a `gain` too small for what `comp` took, before a `limit`, ends
+  up quieter than the dry sample).
 - **Nothing clips inside the chain.** The one hard clip is the 8-bit quantize
   at its end, so a `gain` that overshoots is caught by a later `limit` or
   `normalize` — or clips there, which `crush` aside is rarely the sound you
-  want. `comp` takes level off; follow it with `gain` + `limit` (or
-  `normalize`) to bring the loudness back up.
-- **An instant attack for short hits.** With a slow `:attack` a drum's first
-  milliseconds pass the compressor uncompressed, and a following `normalize`
-  scales to that spike. `:attack 0ms`, or a `limit` in front of the
-  `normalize`, is what a short sample needs.
+  want.
+- **The defaults are for short hits**: an instant `:attack`, and releases
+  (`comp` 20 ms, `limit` 5 ms) fast enough to let go between a drum's
+  transient and its body. A slower `:release` holds the transient's reduction
+  over the body and gives back less loudness; a slower `:attack` lets the
+  transient through, and a following `normalize` scales to that spike. On a
+  long, low sound a fast release follows the waveform and adds grit — raise
+  it there.
 - **Times are the sample's own time**, like the def's loop points: a sample
   played an octave up plays its fade in half the time.
 - **A fade inside the loop** is baked into the bytes the loop repeats, so it

@@ -874,18 +874,20 @@ to the driver (language.md §16):
 
 ```lisp
 (def-pcm snare :file "sounds/snare.wav"
-  :effect [(comp :threshold -20 :ratio 4 :attack 0ms)   ; even out the body
-           (gain 8) (limit)                             ; bring it up, cap the peak
-           (fade :len 60ms :curve ease-out-expo)])     ; shorten the tail
+  :effect [(comp :threshold -30 :ratio 8)   ; squeeze the body up to the peak
+           (normalize)                        ; put the peak back at full scale
+           (fade :len 60ms :curve ease-out-expo)])  ; shorten the tail
 ```
 
-`(normalize)` scales a quiet file to full scale, `(crush 4)` is the lo-fi
+`comp` alone only takes level off — end the chain with `(normalize)` (or push
+with `gain` and cap with `(limit)`) to turn it into loudness. `(normalize)` on
+its own scales a quiet file to full scale, `(crush 4)` is the lo-fi
 step, and `(fade …)` cuts the sample where it ends — which also frees bank
 space. A whole kit takes one chain on its import, and one sound a variant of
 its own:
 
 ```lisp
-(import "presets/808/set.mmlisp" :effect [(comp :attack 0ms) (gain 6) (limit)])
+(import "presets/808/set.mmlisp" :effect [(gain 12) (limit)])
 (def-pcm snare-hot snare :effect [(fade :len 60ms)])
 ```
 
