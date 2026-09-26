@@ -603,6 +603,17 @@
       border: none;
     }
     input[type=range]:hover { border-color: var(--high); }
+    /* Touch: the panel's sliders are driven from JS (index.html,
+       setRangeFromX) through their whole .knob-wrap — a sideways drag sets the
+       value, up/down scrolls the panel — with a track and thumb big enough for
+       a finger. */
+    @media (pointer: coarse) {
+      .knob-wrap { touch-action: pan-y; }
+      .knob-wrap input[type=range] { pointer-events: none; }
+      input[type=range] { height: 20px; border-radius: 10px; }
+      input[type=range]::-webkit-slider-thumb { width: 17px; height: 17px; }
+      input[type=range]::-moz-range-thumb { width: 17px; height: 17px; }
+    }
 
     .op-grid {
       display: grid;
@@ -777,6 +788,7 @@
       touch-action: none;
     }
     .ch-knob:hover { border-color: var(--high); }
+    @media (pointer: coarse) { .ch-knob { width: 1.6rem; height: 1.6rem; } }
     .ch-vol-val {
       font-size: 0.55rem;
       color: var(--mid);
@@ -1138,5 +1150,43 @@
       font-size: 0.66rem;
       margin: 0.4rem 0 0;
       min-height: 1.1em;
+    }
+    .browse-title { display: flex; align-items: center; gap: 0.4rem; }
+    .browse-back, .browse-crumb { display: none; }
+    .browse-back {
+      background: none;
+      border: 1px solid var(--mid);
+      border-radius: 2px;
+      color: var(--foreground);
+      font: inherit;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0.1rem 0.55rem 0.2rem;
+      cursor: pointer;
+    }
+    /* Fingers: taller rows and buttons. */
+    @media (pointer: coarse) {
+      .browse-group, .browse-row { padding: 0.6rem 0.55rem; font-size: 0.8rem; }
+      .browse-mini { padding: 0.3rem 0.6rem; font-size: 0.72rem; }
+    }
+    /* Phone: one column at a time — the groups, then (.browse-picked) the
+       picked group's files full width, with ‹ to go back. */
+    @media (max-width: 600px) {
+      .browse-modal {
+        display: flex;
+        flex-direction: column;
+        width: calc(100vw - 1rem);
+        height: calc(100dvh - 1rem);
+        padding: 0.75rem;
+      }
+      .browse-body { flex: 1; min-height: 0; height: auto; }
+      .browse-groups { flex: 1 1 auto; }
+      .browse-items { display: none; }
+      .browse-picked .browse-groups { display: none; }
+      .browse-picked .browse-items { display: block; }
+      .browse-picked .browse-back { display: inline-block; }
+      .browse-picked .browse-crumb { display: inline; }
+      .browse-crumb::before { content: '\203A'; margin-right: 0.4rem; opacity: 0.6; }
+      .browse-crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     }
 
