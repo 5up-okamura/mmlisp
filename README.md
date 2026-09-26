@@ -45,7 +45,7 @@ game state at runtime.
 ## What it looks like
 
 ```lisp
-(def epiano :alg 4 :fb 2
+(def-voice epiano :alg 4 :fb 2
   :ar1 31 :dr1 8 :sr1 2 :rr1 8 :sl1 2 :tl1 28 :ks1 0 :ml1 2 :dt1 3
   :ar2 31 :dr2 12 :sr2 3 :rr2 8 :sl2 3 :tl2 4 :ks2 0 :ml2 1 :dt2 0
   :ar3 31 :dr3 8 :sr3 2 :rr3 8 :sl3 2 :tl3 32 :ks3 0 :ml3 6 :dt3 -3

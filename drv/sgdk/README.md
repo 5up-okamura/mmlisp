@@ -314,7 +314,7 @@ in between notes. The exporter refuses a bank whose samples reach that page.
 
 ### PCM sample banks
 
-A score with `def :sample` compiles to **two** blobs: the MMB and a `song.smp`
+A score with a `def-sample` compiles to **two** blobs: the MMB and a `song.smp`
 sidecar holding the raw 8-bit sample data (`docs/mmb.md` §10). Two things, both
 required:
 

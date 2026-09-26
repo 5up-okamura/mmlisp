@@ -813,7 +813,7 @@ Declare a runtime value slot with `(def-val ...)` and reference it with
 it is evaluated at the event, so the write tracks the slot live:
 
 ```lisp
-(fm1 :tl1 (- 40 (* $tension 0.2))   ; brightness follows tension every write
+(fm1 :tl1 (+ 20 (* $tension 0.2))   ; the level follows tension every write
      c e g e)
 ```
 
