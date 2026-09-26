@@ -1546,6 +1546,19 @@ function flattenPriorityLayers(head, layers, diagnostics) {
   // reuse for channel/scoreChannel; only its event list is rebuilt.
   layers.sort((a, b) => a.prio - b.prio);
 
+  // A counted loop is compiled once, so a layer's ticks after it are pass-1
+  // ticks while its neighbours' are real ones: merged by tick, every later
+  // event of the other layers lands in the wrong place.
+  if (layers.some((l) => l.trackData.events.some((e) => e.cmd === "LOOP_BEGIN"))) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_PRIO_LAYER_LOOP",
+      `a counted loop on a :prio-layered channel (${head}) cannot be merged with the other layers; write it out, or move it to its own channel`,
+      { line: 1, column: 1 },
+      head,
+    );
+  }
   if (layers.filter((l) => l.trackData.events.some((e) => PRIO_FLOW_CMDS.has(e.cmd))).length > 1) {
     pushDiag(
       diagnostics,

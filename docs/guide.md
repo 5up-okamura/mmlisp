@@ -748,9 +748,9 @@ values.
 ```
 
 The whole thing is resolved at compile time into a single event stream, so the
-player and driver still see one track per channel. Keep loops and heavy
-parameter automation on a single layer — flow control across `:prio` layers is
-not reconciled.
+player and driver still see one track per channel. Layers are straight
+lines: a counted loop on a layered channel is an error (write it out), and the
+song loop `(go …)` belongs on one layer only.
 
 ---
 

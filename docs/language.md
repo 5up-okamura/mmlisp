@@ -71,8 +71,11 @@ monophonic event stream:
 - A lower-priority note that starts while a higher-priority note is sounding
   is **dropped**; one interrupted mid-sustain is **cut** (gate truncated, no
   release tail).
-- Non-note events pass through in tick order. Loops/flow control across
-  layers are not reconciled (`W_PRIO_LAYER_FLOW`); keep loops on one layer.
+- Non-note events pass through in tick order. A counted loop — `(x N …)` or
+  `(go label N)` — on any layer of a layered channel is `E_PRIO_LAYER_LOOP`:
+  it is compiled once, so the layers' ticks after it no longer line up. An
+  infinite jump (the song loop) is fine on one layer; on more than one it is
+  not reconciled (`W_PRIO_LAYER_FLOW`).
 
 ```lisp
 (fm1 :prio 1 :len 4   c _ _ g _ _)                 ; lead — always sounds
