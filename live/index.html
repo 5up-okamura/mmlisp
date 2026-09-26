@@ -446,7 +446,10 @@
   <!-- Browse: the preset sets, the example scores and the snippets the app ships -->
   <div id="browseModal" class="modal-overlay" hidden>
     <div class="modal browse-modal" tabindex="-1">
-      <div class="modal-title">Browse</div>
+      <div class="modal-title browse-title">
+        <button class="browse-back" onclick="browseBack()" title="Back to the list of sets">‹</button>
+        <span>Browse</span><span class="browse-crumb" id="browseCrumb"></span>
+      </div>
       <div class="browse-body">
         <div class="browse-groups" id="browseGroups"></div>
         <div class="browse-items" id="browseItems"></div>
@@ -4151,6 +4154,13 @@
       setChannelVolLive(entry, vol);
     });
     window.addEventListener('pointerup', () => { _knobDrag = null; });
+    window.addEventListener('pointercancel', () => { _knobDrag = null; });
+    // The drag is vertical, so a finger on a knob must never pan the panel.
+    // .ch-knob has touch-action: none too; cancelling touchstart is the form
+    // every mobile browser honours.
+    document.getElementById('chStrips')?.addEventListener('touchstart', (e) => {
+      if (e.target.closest('.ch-knob')) e.preventDefault();
+    }, { passive: false });
 
     function onMaster(slider) {
       const val = parseInt(slider.value, 10);
@@ -4886,6 +4896,17 @@
       }
       renderBrowseGroups();
       await selectBrowseGroup(group ?? _browseSel ?? _browseCatalog.sets[0] ?? 'scores');
+      // A phone shows one column at a time: opened from File > Browse… it
+      // starts on the list of sets; a direct entry (Browse Snippets…) goes
+      // straight to its files.
+      if (!group) browseBack();
+    }
+
+    // On a narrow screen the two columns become two steps: picking a group
+    // shows its files full width, and ‹ comes back. The class does nothing on
+    // a wide screen, where both columns are always visible.
+    function browseBack() {
+      document.querySelector('#browseModal .browse-modal').classList.remove('browse-picked');
     }
 
     function closeBrowse() {
@@ -4916,6 +4937,9 @@
     async function selectBrowseGroup(key) {
       _browseSel = key;
       renderBrowseGroups();
+      document.querySelector('#browseModal .browse-modal').classList.add('browse-picked');
+      document.getElementById('browseCrumb').textContent =
+        key === 'scores' ? 'Scores' : key === 'snippets' ? 'Snippets' : browseSetName(key);
       const items = document.getElementById('browseItems');
       items.innerHTML = '';
       if (key === 'scores' || key === 'snippets') {
@@ -5423,6 +5447,7 @@
 
     window.openBrowse = openBrowse;
     window.closeBrowse = closeBrowse;
+    window.browseBack = browseBack;
 
     // Expose for inline handlers
     window.initAudio    = initAudio;
@@ -6609,8 +6634,9 @@
       if (_fmLiveRaf != null) { cancelAnimationFrame(_fmLiveRaf); _fmLiveRaf = null; }
     }
     document.getElementById('rightPanelBody')?.addEventListener('pointerdown', (e) => {
-      const el = e.target;
-      if (!el.matches?.('input[type=range]')) return;
+      // On a touch screen the range itself takes no touches; its .knob-wrap does.
+      const el = e.target.closest?.('.knob-wrap')?.querySelector('input[type=range]');
+      if (!el) return;
       // Only an FM-panel slider blocks the FM live refresh; only the tempo slider
       // blocks the tempo thumb. master/vol/lfo drags block neither, so e.g.
       // dragging MASTER still live-updates the FM TL sliders.
@@ -6618,6 +6644,58 @@
       if (el.id === 'sl-tempo') _tempoDragging = true;
     });
     window.addEventListener('pointerup', () => { _fmPanelDragging = false; _tempoDragging = false; });
+
+    // Touch sliders. A native range is fiddly under a finger — only its small
+    // thumb grabs, and a drag that wanders off horizontal scrolls the panel
+    // instead. On a touch screen the panel's ranges take no touches themselves
+    // (style.css, pointer: coarse); the whole .knob-wrap (label and track) is
+    // the target, and the first movement decides: sideways drives the slider,
+    // with the value following the finger's x, and up/down scrolls the panel as
+    // usual. Once a drag is the slider's, the page cannot pan until it lifts.
+    let _rangeTouch = null; // { wrap, input, id, x0, y0, claimed }
+    function setRangeFromX(input, x) {
+      const r = input.getBoundingClientRect();
+      const thumb = r.height - 3; // style.css: the thumb is 3px shy of the track
+      let t = (x - r.left - thumb / 2) / Math.max(1, r.width - thumb);
+      t = Math.max(0, Math.min(1, t));
+      if (getComputedStyle(input).direction === 'rtl') t = 1 - t;
+      const min = Number(input.min || 0), max = Number(input.max || 100);
+      const prev = input.value;
+      input.value = String(min + t * (max - min)); // the input snaps to its step
+      if (input.value !== prev) input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    document.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      const wrap = e.target.closest?.('.knob-wrap');
+      const input = wrap?.querySelector('input[type=range]');
+      if (!input || input.disabled || e.target.closest('.val')) return;
+      _rangeTouch = { wrap, input, id: e.pointerId, x0: e.clientX, y0: e.clientY, claimed: false };
+    });
+    document.addEventListener('pointermove', (e) => {
+      const t = _rangeTouch;
+      if (t?.id !== e.pointerId) return;
+      if (!t.claimed) {
+        const dx = Math.abs(e.clientX - t.x0), dy = Math.abs(e.clientY - t.y0);
+        if (dx < 6 && dy < 6) return;
+        if (dy >= dx) { _rangeTouch = null; return; } // a scroll: leave it be
+        t.claimed = true;
+        t.wrap.setPointerCapture?.(e.pointerId);
+      }
+      setRangeFromX(t.input, e.clientX);
+    });
+    // touch-action: pan-y already keeps a sideways start from panning; this
+    // covers browsers that honour it loosely.
+    document.addEventListener('touchmove', (e) => {
+      if (_rangeTouch?.claimed || _knobDrag) e.preventDefault();
+    }, { passive: false });
+    const endRangeTouch = (e) => {
+      const t = _rangeTouch;
+      if (t?.id !== e.pointerId) return;
+      if (t.claimed) t.input.dispatchEvent(new Event('change', { bubbles: true }));
+      _rangeTouch = null;
+    };
+    document.addEventListener('pointerup', endRangeTouch);
+    document.addEventListener('pointercancel', endRangeTouch);
 
     // TEMPO control: slider is limited to a common BPM range, but the number shows
     // the actual tempo (which the score may push beyond that range).
