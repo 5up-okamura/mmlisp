@@ -365,6 +365,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-sweep-from-current.mmlisp": {
+    "ok": false,
+    "mismatches": 62,
+    "compileErrors": 0,
+    "digest": "4f705fae"
+  },
   "m4-tl-compose.mmlisp": {
     "ok": false,
     "mismatches": 6,

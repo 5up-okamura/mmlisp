@@ -1117,7 +1117,9 @@ export class DrvPlayer {
           const flags = s[trk.pc + 3];
           // Dynamic endpoints (§4.6, note-on tier): flags bit1/bit2 mark from/to
           // as slot ids (in the field's low byte), read live at dispatch.
-          const from = flags & 2 ? this._readSlot(s[trk.pc + 4]) : i16(u16(s, trk.pc + 4));
+          // bit3: no :from — start where the parameter is now.
+          const from = flags & 8 ? this._readParam(trk.channelId, target)
+            : flags & 2 ? this._readSlot(s[trk.pc + 4]) : i16(u16(s, trk.pc + 4));
           const to = flags & 4 ? this._readSlot(s[trk.pc + 6]) : i16(u16(s, trk.pc + 6));
           const len = u16(s, trk.pc + 8);
           trk.pc += 10;
