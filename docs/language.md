@@ -285,8 +285,8 @@ frame before the tied end, so the tie stays connected. Absolute `:gate N` is
 unaffected by ties.
 
 `:tempo N` reanchors the timeline instantly; `:tempo (linear :from A :to B
-:len L)` emits `TEMPO_SWEEP` over `L` (any non-`const` curve name works —
-there is no curve literally named `curve`). Tempo changes apply to all tracks.
+:len L)` emits `TEMPO_SWEEP` over `L` (any curve name works — there is no
+curve literally named `curve`). Tempo changes apply to all tracks.
 Written in a track's leading position it sets the song's initial tempo (§1).
 `:tempo`/`:master` are global, so if two tracks write one at the same
 tick the **last writer wins** (track order); the tick-0 initial tempo resolves
@@ -844,19 +844,29 @@ macros stay unclamped until combined with the base).
 
 | Form                        | Meaning                                              |
 | --------------------------- | ---------------------------------------------------- |
-| `[v v v …]`                 | Step vector — one value per `:step`. A value is a number (rounded where it binds) or the target's symbol (`left`, `white2`); anything else is `E_MACRO_VALUE_INVALID` |
+| `[v v v …]`                 | Step vector — one value per `:step`. A value is a number (rounded where it binds), the target's symbol (`left`, `white2`) or a `let` name bound to a number; anything else is `E_MACRO_VALUE_INVALID` |
 | `[… #sus …]`                | `#sus` marks the sustain loop: steps from it cycle until key-off |
 | `[… #rel …]`                | `#rel` marks the release section: steps after it run after key-off |
 | `_` (inside a vector)       | Hold: advance one step, no write                     |
 | `(curve …)` (§11)           | Sampled every `:step`                                |
-| `[(stage) (stage) …]`       | Multi-stage: curve / `(wait N)` / `(wait key-off)` stages run sequentially |
+| `[v (curve …) (wait N) …]`  | A vector holding any stage runs its items in order — see below |
 | scalar (e.g. `1`, `left`)   | Constant signal, equivalent to `[#sus v]`           |
 | `none`                      | Clear the target's macro                             |
 
-Multi-stage rules: a stage that loops (loop-wave curve, or any curve with the
-`:mode loop`) runs until key-off — a modulated sustain; `(wait key-off)` holds
-the current value until key-off; `(wait N)` waits a length token. `(const V
-:len L)` is a flat stage holding positional value `V`.
+**One vector grammar.** A vector of values alone is a step vector (above). A
+vector holding any stage — a curve, `(wait …)`, arithmetic on a curve, or a
+`let` name bound to one — runs its items in order, one after another:
+
+- a number (or a `let` name bound to one) is one `:step` at that value, `_`
+  waits one step;
+- a curve runs for its `:len`; a curve that loops (a loop wave, or `:mode
+  loop`) runs until key-off — a modulated sustain;
+- `(wait N)` holds the current value for a length token, `(wait key-off)`
+  until key-off;
+- `#sus` makes the stage after it loop until key-off, and `#rel` is where the
+  release starts (as `(wait key-off)`).
+
+A flat run is a curve from a value to itself, `(linear 1..1 :len 8)`.
 
 ```lisp
 (def organ (macro :vel [
@@ -931,7 +941,6 @@ and `(delay …)`:
 ```text
 (curve-name :from A :to B :len L …optional-params)
 (curve-name A..B :len L …)        ; positional range sugar for :from/:to
-(const V :len L)                  ; flat segment — positional value
 ```
 
 `A..B` is shorthand for `:from A :to B` (signed decimals; `40..0` descends).
@@ -945,7 +954,7 @@ Combining it with an explicit `:from`/`:to`, or two ranges, is
 
 | Family      | Names                                                                 | Loops by default |
 | ----------- | --------------------------------------------------------------------- | ---------------- |
-| Linear      | `linear`, `const`                                                     | no               |
+| Linear      | `linear`                                                              | no               |
 | Easing      | `ease-in`, `ease-out`, `ease-inout` (quad aliases) and `ease-{in,out,inout}-{sine,quad,cubic,quart,quint,expo,circ,back,elastic,bounce}` | no |
 | Loop waves  | `sin`, `triangle`, `square`, `saw`, `ramp`                            | yes              |
 | Stochastic  | `noise`, `pink`, `perlin`, `brown`                                    | yes              |
@@ -1446,7 +1455,7 @@ Parameters — a positional value fills the one marked *positional*
 | `crush` | `:bits` | integer | 1–8 | required, *positional* |
 | `fade` | `:len` | length | > 0 | required |
 | | `:at` | length, from the sample's start | ≥ 0 | `:len` before the end |
-| | `:curve` | a one-shot curve name (§11): `linear`, `ease-*` | not `const` or a looping curve | `linear` |
+| | `:curve` | a one-shot curve name (§11): `linear`, `ease-*` | not a looping curve | `linear` |
 | `reverb` | `:tail` | length added after the sample | > 0 | required |
 | | `:size` | room size (decay) | 0–1 | `0.5` |
 | | `:damp` | high-frequency damping (higher is darker) | 0–1 | `0.5` |

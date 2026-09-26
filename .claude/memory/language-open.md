@@ -61,26 +61,23 @@ language — naming is a source convenience, sharing is the encoder's job
 mucom import; its post-merge rewrite is the feature's own cost. What is left
 changes syntax:
 
-3. **Duplicate spellings** — `o±N` / `v±N` beside `>` `<` `:oct+` `:vel+`;
-   `:oct*` (no musical meaning); hold as `:len 0` and `0f`/`0ms`; `(wait …)`
-   stage vs curve `:wait` (two parsers, one regex); inline `:csm-rate` vs the
-   `fm3-csm-rate` track (with a conflict error between them); def-val range
-   `A..B` / `:from :to` / `:min :max` (the last is directional despite its name).
-5. **§7.0 exceptions** — `:gate*`'s base is the note length and `:gate-` uses
-   the forbidden `-` (either document gate as the exception or type the
-   value); in `(echo :vel+ 3 :by -1)` the `3` is a count, not an addend
-   (proposal `(echo 3 :vel+ -1)`, dropping `:by` and the op-required errors).
-7. **`(glide T)` is a sticky setter spelled as a form**, and `(glide f5 32)`
-   mixes a one-shot start pitch into it by arity. Proposal: `:glide T`, and
-   `(glide f5)` as the one-shot.
-8. **Macro sequences** — a vector is stages only when every item is `(…)`, so
-   a `let`-bound curve cannot be a stage and `const` exists to fill the gap.
-9. **An omitted `:from`** is 0 in the spec, the current tempo on `:tempo`,
-   unity on a PSG VOL sweep; curve sampling is written out in several places.
-10. **Shuffle**: `_8` swings, `c8` does not (the code says the note side is
-    intended; the spec says "note/rest pairs").
-11. **`_xN` anchors of infinite `(x …)`** share the user label namespace
-    (`#_x0` collides with a confusing `E_MARKER_DUP`).
+5. **echo / delay** — in `(echo :vel+ 3 :by -1)` the `3` is a count, not an
+   addend. Proposal `(echo 3 :vel+ -1)` / `(delay 3 :vel* 0.7 :time 8)`, the
+   keyword's value being the per-tap step (a scalar, a vector of taps, or a
+   curve); drops `:by` and the op-required errors. Examples asked for.
+11. **`_xN` anchors of infinite `(x …)`** share the user label namespace.
+    Proposal: an internal id no `#name` can spell. Examples asked for.
+
+**Decided 2026-09-26, do not re-propose:** holds keep both `:len 0` (the
+track waits for the host) and `:gate 0` (it does not) — two features; the
+short relative forms `>` `<` `o±N` `v±N` stay (no free symbol pair for
+velocity); `:wait` (a curve's own start delay) and `(wait …)` (a stage) are
+different uses and both stay; `:csm-rate` and the `fm3-csm-rate` track differ in
+use and range and both stay; `(glide …)` stays a form (two arities); gate is
+§7.0's documented exception. Landed: `:oct*` and def-val `:min/:max` gone,
+written lengths swing, an omitted `:from` = the current value (inline sweeps;
+`E_CURVE_FROM` elsewhere), one macro-vector grammar (numbers and stages mix,
+`const` gone).
 
 Not a syntax question, but the next step of the value reader: `$` is still
 recognised outside the evaluator (the runtime linearizer and
@@ -88,6 +85,16 @@ recognised outside the evaluator (the runtime linearizer and
 them.
 
 ## 2. Judgment-free but larger
+
+- **Preview vs driver, pre-existing, found 2026-09-26** (each baselined or
+  seen in A/B, none caused by that day's work): `:vel` before the first note
+  — the preview writes carrier TL 0 at frame 0 and corrects it at frame 1;
+  inline PARAM_SWEEPs (TL / VOL / PSG level) diverge in their frame writes
+  (`m4-sweep-from-current` baselined at 62, the explicit-`:from` form
+  identical); a macro with a looping stage then a release diverges (old
+  all-stage spelling included).
+- The live app registers its service worker in a `load` listener at the end
+  of a module with top-level awaits, so on a fast load it never registers.
 
 - Nf in one track converted at another track's mid-song tempo change (§4).
 - Tick-0 tempo written as an expression is not seen by the Nf prescan.

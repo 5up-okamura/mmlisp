@@ -453,14 +453,16 @@ giving a modulated sustain (LFO). Loop-wave curves (`sin` `triangle` `square`
 `:mode loop` makes a non-loop curve cycle, e.g.
 `(ease-out :from 15 :to 0 :len 4 :mode loop)` as a pulsing sustain stage.
 
-### `(const V :len D)` — flat segment
+### Numbers and curves in one vector
 
-`const` holds a single value (the positional argument) for `:len`. Useful as a
-flat stage, or to retrigger for a fixed span after key-off without listing
-repeats — combined with `:step` it fires once per step (see §12):
+A vector can mix plain values with stages: a number is one `:step`, a curve
+runs for its `:len`. A flat run is a curve from a value to itself — combined
+with `:step` it fires once per step, e.g. to retrigger for a fixed span after
+key-off without listing repeats (see §12):
 
 ```lisp
-(def tail (macro :step 16 :keyon [(wait key-off) (const 1 :len 8)]))
+(def swell (macro :vel [15 12 (linear 12..0 :len 8f)]))   ; two steps, then a fade
+(def tail (macro :step 16 :keyon [(wait key-off) (linear 1..1 :len 8)]))
 
 (fm1 tail :len 4 c)   ; fire every :step across :len 8 after key-off
 ```
@@ -557,7 +559,7 @@ retriggers on the 1/16 grid.
 After KEY-OFF the note retriggers three times at 1/8 spacing, decaying via the
 phase-locked `:vel` release. (`:vel` floors at ~-30 dB; for a tail that fades to
 true silence, automate `:tl` to 127 instead — see §5.) For a long tail, replace
-the `1 1 1 …` list with `[(wait key-off) (const 1 :len N)]` — it fires once per
+the `1 1 1 …` list with `[(wait key-off) (linear 1..1 :len N)]` — it fires once per
 `:step` across `:len` without counting taps (see §10).
 
 Clear a macro with `none`: `(macro :semi none)`, or `(macro none)` clears all.
@@ -828,7 +830,7 @@ it is evaluated at the event, so the write tracks the slot live:
 
 ```lisp
 (def-val depth 128 0..255)                       ; 0 = off, 255 ≈ full
-(fm1 (macro :pitch (* (sin :rate 6) $depth)) c e g)  ; live vibrato depth
+(fm1 (macro :pitch (* (sin -40..40 :len 8f) $depth)) c e g)  ; live vibrato depth
 (fm2 (macro :tl1  (* (triangle 0..40 :len 8f) $depth)) c e g)  ; live tremolo
 ```
 
