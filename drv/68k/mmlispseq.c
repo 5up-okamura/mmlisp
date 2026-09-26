@@ -1638,7 +1638,9 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         uint8_t target = st[t->pc + 1], curve = st[t->pc + 2], flags = st[t->pc + 3];
         /* Dynamic endpoints: flags bit1/bit2 mark from/to as slot ids in the
          * field's low byte, read live at dispatch (the note-on tier). */
-        int from = (flags & 2) ? read_slot(s, st[t->pc + 4])
+        /* bit3: no :from — start where the parameter is now. */
+        int from = (flags & 8) ? read_param(s, t->channel_id, target)
+                 : (flags & 2) ? read_slot(s, st[t->pc + 4])
                                : (int16_t)rd16(st, t->pc + 4);
         int to = (flags & 4) ? read_slot(s, st[t->pc + 6])
                              : (int16_t)rd16(st, t->pc + 6);

@@ -1,0 +1,9 @@
+; M4 gate: an inline sweep with no :from starts where the parameter is now
+; (language.md §11). The MMB carries PARAM_SWEEP flags bit3 and the driver
+; reads the parameter at dispatch — here a TL, a channel VOL and a PSG level,
+; each set by a literal first, then swept from wherever that left it.
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 10
+  c2 :tl4 (linear :to 60 :len 2) c2 c2)
+(fm2 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 24 :ar4 31 :tl4 8 :vol 20
+  e2 :vol (linear :to 5 :len 2) e2 e2)
+(sqr1 :tempo 150 :vol 25 g2 :vol (linear :to 0 :len 2) g2 g2)

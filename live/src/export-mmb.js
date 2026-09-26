@@ -1087,6 +1087,12 @@ export function encodeMmb(ir, opts = {}) {
           let from = targetValue(a.target, a.from);
           let to = targetValue(a.target, a.to);
           let flags = a.loop ? 1 : 0;
+          // No :from (and no slot-fed one): bit3, start where the parameter
+          // is now — the driver reads it at dispatch (language.md §11).
+          if (a.from == null && a.dyn?.from == null) {
+            flags |= 8;
+            from = 0;
+          }
           if (a.dyn?.from != null) {
             const sid = slotId(a.dyn.from, label);
             if (sid != null) {

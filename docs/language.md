@@ -407,6 +407,14 @@ divide with a fraction (`:vel* 0.5`).
 | macro `:vel`        | `:vel [..]` | `:vel+ [..]`  | `:vel* [..]`   | per note-on (baked) |
 | macro `:pitch`/`:semi` | `:pitch [..]` | `:pitch+ [..]` | —          | per frame (additive over live offset) |
 | echo / delay        | —           | `:vel+`       | `:vel*`        | compile time |
+| gate (the exception) | `:gate 1/8` | —            | `:gate* 0.5`   | compile time, per note |
+
+- **Gate is the one exception.** Its base is not the current gate but each
+  note's own length — a gate is how much of *this* note sounds — so `:gate*
+  0.5` is half of every note, and `:gate- 12t` (the only `-` suffix) is every
+  note's length minus 12 ticks. A cut is always subtractive and a length is
+  never negative, which is why it is spelled `-` rather than `+` with a
+  negative length. There is no `:gate+`.
 
 - `vel`/`oct` have a compile-time base in the track state, so the IR carries
   plain absolute values.
@@ -956,12 +964,20 @@ function is.
 
 | Key      | Type          | Default | Meaning                                     |
 | -------- | ------------- | ------- | ------------------------------------------- |
-| `:from` `:to` | number   | 0       | Endpoints (accept `$slot`, §8)              |
+| `:from` `:to` | number   | see below | Endpoints (accept `$slot`, §8); `:to` defaults to 0 |
 | `:len`   | length token  | —       | Duration; ticks, or absolute frames with `Nf`; accepts `$slot` |
 | `:phase` | int 0–255     | `0`     | Start phase offset                          |
 | `:rate`  | number ≥ 0    | `1.0`   | Phase speed multiplier (relative to `:len`); `0` freezes the curve at its start phase; accepts `$slot` |
 | `:mode`  | `loop`/`shot` | per curve | Cycle until key-off, or play once         |
 | `:wait`  | length token or `key-off` | — | Delay before the curve starts    |
+
+An omitted **`:from`** means one thing: *start where the parameter is now.*
+That is only knowable where the curve runs against a live value — an inline
+sweep (`:tl1 (linear :to 60 :len 2)`, `:vol`, a PSG level, `:pitch`) reads the
+parameter when it starts, and `:tempo` starts from the tempo in force. A macro
+curve is baked per note, a `(delay …)` envelope and a PCM loop point are laid
+out at compile time, and arithmetic on a curve shifts its start — so those
+need the `:from` written (`E_CURVE_FROM`).
 
 ### Shape parameters
 

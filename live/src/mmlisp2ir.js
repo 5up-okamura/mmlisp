@@ -1802,6 +1802,16 @@ function detectScaledMacro(node) {
   return null;
 }
 
+// A curve that is not an inline sweep has no current value to start from —
+// a macro's table is baked per note, a delay's envelope and a PCM loop point
+// are lengths laid out at compile time — so its :from must be written (§11).
+function requireCurveFrom(spec, diagnostics, trackName, where, src = null) {
+  if (spec && !spec.steps && !spec.stages && spec.from === undefined && diagnostics)
+    pushDiag(diagnostics, "error", "E_CURVE_FROM",
+      `a curve in ${where} needs its :from (only an inline sweep starts from the current value)`,
+      src, trackName);
+}
+
 /**
  * Parse a :macro spec node for any target.
  * Accepts both step-vector [...] and curve (...) forms.
@@ -1865,7 +1875,10 @@ function parseMacroSpec(
         // Any other stage is a curve — a literal, a let name or arithmetic on
         // one; a plain step vector has no stage form.
         const r = evalMacroNode(stageNode);
-        if (r?.kind === "signal" && !r.spec.steps) stages.push(r.spec);
+        if (r?.kind === "signal" && !r.spec.steps) {
+          requireCurveFrom(r.spec, diagnostics, trackName, "a macro");
+          stages.push(r.spec);
+        }
         else if (r && diagnostics)
           pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID",
             "a stage is a curve or (wait …)", nodeSrc(stageNode), trackName);
@@ -1950,6 +1963,7 @@ function parseMacroSpec(
   // float step vector; a symbolic (affine-folded) curve stays a curve; a number
   // is a constant, held.
   function macroSpecOf(r) {
+    if (r.kind === "signal") requireCurveFrom(r.spec, diagnostics, trackName, "a macro");
     if (r.kind === "scalar")
       return { type: "steps", steps: [clampVal(r.value)], loopIndex: 0, releaseIndex: null };
     return r.spec.steps
@@ -3232,6 +3246,7 @@ function compileChannelBody(
                   true,
                   secOf,
                 );
+                requireCurveFrom(loopCurve, diagnostics, trackName, "a PCM loop point", nodeSrc(node));
                 if (loopCurve) {
                   push("PARAM_SWEEP", { target, ...loopCurve });
                   break;
@@ -3826,6 +3841,7 @@ function compileChannelBody(
           spec = { mode, type: "list", list };
         } else if (a2node?.kind === "list" && a2node.bracket === "()") {
           const cv = parseCurveSpec(a2node, diagnostics, nodeSrc(node), trackName, true);
+          requireCurveFrom(cv, diagnostics, trackName, "a delay", nodeSrc(node));
           if (cv) spec = { mode, type: "curve", ...cv };
         } else if (parseIntLike(a2) !== null) {
           spec = { mode, type: "param", count: Math.max(1, parseIntLike(a2)) };

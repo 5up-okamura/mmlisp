@@ -304,7 +304,7 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
 | ------------ | ------- | ----- | --- | ----------------------------------------------------------------- |
 | `target`     | string  | —     | yes | Canonical target (§7).                                            |
 | `curve`      | string  | —     | yes | Curve name (§6.4). `const` is pre-lowered to `linear` with `from == to`. |
-| `from`       | number  | target| no  | Start value. Absent ⇒ player uses 0.                              |
+| `from`       | number  | target| no  | Start value. Absent ⇒ the parameter's current value when the sweep starts (MMB `flags` bit3). |
 | `to`         | number  | target| yes | End value (0 if unspecified).                                     |
 | `frames`     | int     | ticks | no  | Sweep length. **In ticks** despite the name (the player converts ticks → 60 Hz frames at dispatch). |
 | `lenFrames`  | bool    | —     | no  | True when `:len` was written as `Nf` (absolute frames). **Ignored on PARAM_SWEEP by the player** — see §11. |
@@ -517,7 +517,7 @@ The curve-spec fields (shared verbatim with `PARAM_SWEEP` args §5.9):
 | Field        | Type    | Semantics                                                                       |
 | ------------ | ------- | --------------------------------------------------------------------------------|
 | `curve`      | string  | Curve name (§6.4).                                                               |
-| `from`       | number  | Start value (optional; player defaults 0). `const v` lowers to `linear` with `from == to == v`. |
+| `from`       | number  | Start value. Absent only on an inline `PARAM_SWEEP` (start from the current value); a macro curve always carries it (`E_CURVE_FROM`). `const v` lowers to `linear` with `from == to == v`. |
 | `to`         | number  | End value (always present; 0 default).                                           |
 | `frames`     | number  | `:len`. Ticks by default; absolute 60 Hz frames when `lenFrames` is true (`Nf`); placeholder `1` when `dyn.len` is set. |
 | `lenFrames`  | bool    | Present (true) only for `Nf` lengths.                                            |

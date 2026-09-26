@@ -3313,7 +3313,12 @@ export class IRPlayer {
     const target = (ev.args?.target ?? "").toUpperCase();
     // Dynamic :from/:to/:rate ($name) resolved once at sweep start.
     const df = this._curveFields(ev.args ?? {}, when);
-    const from = Number(df.from ?? 0);
+    // No :from: the sweep starts where the parameter is now (language.md §11).
+    const from = df.from != null
+      ? Number(df.from)
+      : target === "VOL"
+        ? this._fmVolAtTime(ch, when)
+        : this._readParam(ch, target, this._fm3OpOf(ev));
     const to = Number(df.to ?? 0);
     const curve = ev.args?.curve ?? "linear";
     const params = df.params;
@@ -3798,7 +3803,8 @@ export class IRPlayer {
           } else {
             // PARAM_SWEEP: store sweep state (same format as _fmVolSweep).
             // Hardware writes happen lazily at each NOTE_ON via _psgVolAtTime().
-            const from = Math.max(0, Math.min(31, Number(ev.args?.from ?? VOL_UNITY)));
+            // No :from: the sweep starts where the level is now (§11).
+            const from = Math.max(0, Math.min(31, Number(ev.args?.from ?? this._psgVolAtTime(psgCh, when))));
             const to = Math.max(0, Math.min(31, Number(ev.args?.to ?? from)));
             const curve = ev.args?.curve ?? "linear";
             const secsPerTick = this._secsPerTick;
@@ -3827,7 +3833,7 @@ export class IRPlayer {
             this._psgSetNoiseCfg(this._psgNoiseMode, when);
           }
         } else if (psgTarget === "NOTE_PITCH") {
-          const from = Number(ev.args?.from ?? ev.args?.value ?? 0);
+          const from = Number(ev.args?.from ?? ev.args?.value ?? this._psgPitchOffset[psgCh] ?? 0);
           const to = Number(ev.args?.to ?? from);
           const curve = ev.args?.curve ?? "linear";
           const secsPerTick = this._secsPerTick;

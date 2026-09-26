@@ -247,7 +247,9 @@ Notes:
   in 60 Hz frames; for loop-curve ids it is the period. `flags` bit0 = loop
   (run until PARAM_SWEEP_STOP / next note per IR semantics), **bit1 = `from`
   is a value-slot id** (in the field's low byte), **bit2 = `to` is a slot id**
-  — the driver reads the slot live at dispatch, replacing the field — bits3–7
+  — the driver reads the slot live at dispatch, replacing the field — **bit3
+  = no `from`: start at the parameter's current value** (the driver's read of
+  it at dispatch, the same read `PARAM_ADD` uses; the field is 0), bits4–7
   reserved 0. From/to are in target units, i16 regardless
   of target width (NOTE_PITCH cents need it; narrow targets just don't use the
   range). `:rate`/`:len` slots are not slot-fed; they bake to the init values.

@@ -55,7 +55,15 @@ const isSignal = (v) => v !== null && typeof v === "object";
 // affine transform of one signal (value = coeff·sample + offset). Only the four
 // affine operators reach here; `min`/`max`/etc. reject signals.
 function affineStart(v) {
+  requireFrom(v);
   return isSignal(v) ? { spec: v, coeff: 1, offset: 0 } : { spec: null, offset: v, coeff: 0 };
+}
+
+// A curve with no :from starts where its parameter is at run time (§11), a
+// value arithmetic cannot know — shifting or scaling it needs the :from.
+function requireFrom(v) {
+  if (isSignal(v) && !v.steps && !v.stages && v.from === undefined)
+    throw new EvalError("E_CURVE_FROM", "arithmetic on a curve needs its :from");
 }
 
 // ── Signal ⊕ signal materialization (design §2.3) ────────────────────────────
@@ -153,6 +161,7 @@ function materializeSignals(op, aSpec, bSpec, ctx) {
 }
 
 function affineCombine(op, acc, x, ctx) {
+  requireFrom(x);
   const accScalar = acc.spec === null;
   const xSignal = isSignal(x);
   if (accScalar && !xSignal) {
