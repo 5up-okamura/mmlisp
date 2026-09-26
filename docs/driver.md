@@ -965,7 +965,7 @@ Acceptance bands:
   is the tick-exact one. Scores for exact A/B (ab-core) put tempo
   changes on all-track note boundaries.
 
-`examples/source/ab-core.mmlisp` (exactly the M1 opcode set) diffs clean.
+`drv/tests/ab-core.mmlisp` (exactly the M1 opcode set) diffs clean.
 Songs using M2/M3 features (macros, sweeps, PCM, CSM) diverge by construction —
 the exporter pre-samples curves that `ir-player` evaluates in continuous time —
 so `npm run verify:ab` (`drv/tools/ab-gate.mjs`) is a *characterization* gate:

@@ -17,7 +17,7 @@ Run from tools directory:
 
 1. `npm run format:mmlisp`
 2. `npm run check:format:mmlisp`
-3. `npm run mmlisp2ir -- ../examples/source/ab-core.mmlisp --out /tmp/ab-core.ir.json`
+3. `npm run mmlisp2ir -- ../drv/tests/ab-core.mmlisp --out /tmp/ab-core.ir.json`
 4. `npm run verify-ir -- a.ir.json b.ir.json`
 5. `npm run check:mmlisp-strict`
 

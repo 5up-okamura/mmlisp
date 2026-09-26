@@ -25,19 +25,17 @@ import { fileURLToPath } from "node:url";
 import { abCompare } from "../../live/src/ab-compare.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, "..", "..");
 const baselinePath = join(here, "..", "tests", "ab-baseline.json");
 
-// Corpus: the trace-gate scores (drv/tests) plus the example song. Every score
-// the driver is verified against should also be watched on the ir↔drv axis.
-// Add a score here when you add a trace gate for it.
+// Corpus: the trace-gate scores (drv/tests). Every score the driver is
+// verified against should also be watched on the ir↔drv axis, so a score
+// added to drv/tests joins it.
 function corpus() {
   const list = [];
   const tdir = join(here, "..", "tests");
   for (const f of readdirSync(tdir).sort()) {
     if (f.endsWith(".mmlisp")) list.push(join(tdir, f));
   }
-  list.push(join(root, "examples", "source", "ab-core.mmlisp"));
   return list;
 }
 

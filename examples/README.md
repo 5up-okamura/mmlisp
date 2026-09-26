@@ -1,18 +1,16 @@
 # examples
 
-Example scores.
+`index.json` lists the songs **File ▸ Browse… ▸ Scores** offers (guide §25) —
+scores worth playing to someone. A directory cannot be listed over HTTP, so a
+song has to be named there to appear.
 
-- `source/` — `.mmlisp` scores. `ab-core.mmlisp` is the driver's A/B and C
-  gate score (drv/tools); `import-demo.mmlisp` and `voices-lib.mmlisp` show
-  `(import …)`. They are test and reference material, not pieces to listen to.
-- `index.json` — the scores **File ▸ Browse…** offers (guide §25). List only
-  what is worth playing to someone; add a score there to have it appear.
+The songs themselves live with what they show off: a preset set keeps its own
+demo, such as `presets/waveforms/demo-acid.mmlisp`. Scores that test the driver
+live in `drv/tests/`, and short scores that show how a feature is used live in
+[snippets](../snippets/README.md).
 
 ## Presets
 
 Voices and PCM samples live in their own sets under `presets/`:
 [gm](../presets/gm/README.md), [waveforms](../presets/waveforms/README.md),
 [808](../presets/808/README.md) and [gm-drums](../presets/gm-drums/README.md).
-Each set keeps its own demo score, such as
-`presets/waveforms/demo-acid.mmlisp`; this directory holds songs.
-Short one-technique scores live in [snippets](../snippets/README.md).

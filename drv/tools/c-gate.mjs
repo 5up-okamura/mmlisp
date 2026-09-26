@@ -48,7 +48,7 @@ for (let i = 2; i < process.argv.length; i++) {
     scores = scores.filter((s) => s !== process.argv[i + 1]);
   }
 }
-if (!scores.length && !bundles.length) scores = [join(here, "..", "..", "examples", "source", "ab-core.mmlisp")];
+if (!scores.length && !bundles.length) scores = [join(here, "..", "tests", "ab-core.mmlisp")];
 
 // ── Build ──────────────────────────────────────────────────────────────────
 // The generated tables go to a directory of the gate's own: this used to
