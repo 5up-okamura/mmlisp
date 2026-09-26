@@ -5046,7 +5046,7 @@
       for (const node of parse(text)) {
         if (!node || node.kind !== 'list') continue;
         const head = node.items?.[0];
-        if (!head || head.kind !== 'atom' || !/^def(-voice|-sample)?$/.test(head.value)) continue;
+        if (!head || head.kind !== 'atom' || !/^def(-fm|-pcm)?$/.test(head.value)) continue;
         const nameNode = node.items[1];
         if (!nameNode || nameNode.kind !== 'atom') continue;
         const name = nameNode.value;
