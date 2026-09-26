@@ -256,7 +256,7 @@ keywords at the form's first tick.
 
 | Keyword    | Value                     | Effect                                                   |
 | ---------- | ------------------------- | -------------------------------------------------------- |
-| `:oct`     | integer ≥ 0               | Octave (also `:oct+` / `:oct*`, §7)                      |
+| `:oct`     | integer ≥ 0               | Octave (also `:oct+`, §7)                                |
 | `:len`     | length token              | Default note length; `0` = hold, no timeline advance     |
 | `:gate`    | length token              | Absolute sounding time per slot; `0` = hold until runtime KEY-OFF |
 | `:gate*`   | ratio `0.0`–`1.0`         | Gate as a fraction of the note length (`1.0` = full; above 0 it keeps at least one tick) |
@@ -339,7 +339,8 @@ with `E_UNKNOWN_KEYWORD` rather than silently dropped.
 ### 5.2 Shuffle
 
 `:shuffle R` (51–90; `none` = straight) swings note/rest pairs whose nominal
-length equals `:shuffle-base` (default: eighth). The pair spans 2× the base;
+length — written (`c8`, `_8`) or the default — equals `:shuffle-base`
+(default: eighth). The pair spans 2× the base;
 the first beat takes `R` % of it. Each track sets its own swing, anywhere in
 the body; a change restarts the pairing, so the next swung note is a first
 beat. A value that is neither a number nor `none` is `E_SHUFFLE_INVALID`.
@@ -614,7 +615,7 @@ lowers to a param-opcode chain on the driver (§7.1.2).
 | ---------- | ---------------------------------------------------------------- |
 | `init`     | Positional default (integer). Omitted → defaults to the range start |
 | `A..B`     | Positional range sugar (§11) for the slider endpoints — the same `:from A :to B`, so `90..10` runs the slider downward |
-| `:from` / `:to` | Order-free directional endpoints — the live slider runs from A to B (either direction, negatives fine). `:min` / `:max` are accepted synonyms |
+| `:from` / `:to` | Order-free directional endpoints — the live slider runs from A to B (either direction, negatives fine); `A..B` positionally is the same |
 | `:step`    | Slider granularity, integer > 0 (default `1`)                    |
 | `:unit`    | `frame` (default) or `tick` — how the value is read when the slot feeds a curve `:len` |
 

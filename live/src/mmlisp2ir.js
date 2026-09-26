@@ -869,9 +869,8 @@ function emitEvalNote(node, trackState, events, diagnostics, trackName, typedDef
   const lengthTicks = hasLen
     ? resolveLengthNode(items[2], trackState.defaultLength, trackState, ctx, env)
     : trackState.defaultLength;
-  // An explicit per-note length skips shuffle (matching literal `c8`); a default
-  // length swings (matching a bare note).
-  const ticks = hasLen ? lengthTicks : resolveShuffleTicks(lengthTicks, trackState);
+  // Swing goes by the nominal length, written or default (§5.2).
+  const ticks = resolveShuffleTicks(lengthTicks, trackState);
   const { name, octave } = midiToNoteParts(midi);
   const savedOct = trackState.defaultOct;
   trackState.defaultOct = octave;
@@ -2912,18 +2911,15 @@ function compileChannelBody(
           const rawVal = atomValue(items[i]);
           switch (val) {
             case ":oct":
-            case ":oct+":
-            case ":oct*": {
-              // absolute / +add / *multiply against the running octave base
+            case ":oct+": {
+              // absolute / +add against the running octave base
               const { op } = opSuffix(val);
               const raw = compileTimeScalar(
                 items[i], rawVal, op, evalEnv, val, diagnostics, trackName, nodeSrc(node), typedDefs,
               );
               if (raw !== null && !Number.isNaN(raw)) {
                 const cur = trackState.defaultOct;
-                const next =
-                  op === "+" ? cur + raw : op === "*" ? cur * raw : raw;
-                trackState.defaultOct = Math.max(0, Math.round(next));
+                trackState.defaultOct = Math.max(0, Math.round(op === "+" ? cur + raw : raw));
               }
               break;
             }
@@ -3329,10 +3325,10 @@ function compileChannelBody(
       // Per-note length atom: c4, e8., f+12t, b-6f, a1/2
       if (isPerNoteLengthAtom(val)) {
         const { noteName, lengthStr } = parsePerNoteLength(val);
-        const perNoteTicks = parseLengthToken(
-          lengthStr,
-          trackState.defaultLength,
-          trackState.currentTempo,
+        // Swing goes by the nominal length, written or default (§5.2).
+        const perNoteTicks = resolveShuffleTicks(
+          parseLengthToken(lengthStr, trackState.defaultLength, trackState.currentTempo),
+          trackState,
         );
         emitNoteForTrack(
           trackState,
@@ -4215,8 +4211,8 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
-    // (def-val name init :min M :max X) — declare a runtime value slot (Tier
-    // 0/1 dynamic value). init is the default; :min/:max are the endpoints of
+    // (def-val name init A..B) — declare a runtime value slot (Tier 0/1
+    // dynamic value). init is the default; A..B (or :from/:to) are the ends of
     // the live control (the Dynamic Parameters sliders), not a bound on the
     // slot. Slots are indexed in declaration order.
     if (head === "def-val") {
@@ -4265,15 +4261,14 @@ function collectDefs(roots, diagnostics) {
           continue;
         }
         const v = parseIntLike(raw);
-        if (!new Set([":from", ":to", ":min", ":max", ":step"]).has(key)) { bad("unknown option"); continue; }
+        if (!new Set([":from", ":to", ":step"]).has(key)) { bad("unknown option"); continue; }
         if (v === null) { bad("must be an integer"); continue; }
-        // :min / :max are synonyms of :from / :to (the doc's table).
-        if (key === ":from" || key === ":min") from = v;
-        else if (key === ":to" || key === ":max") to = v;
+        if (key === ":from") from = v;
+        else if (key === ":to") to = v;
         else if (key === ":step") { if (v > 0) step = v; else bad("must be > 0"); }
       }
       // `:from`/`:to` are order-free directional endpoints (from = the start,
-      // so a slider runs from → to); `:min`/`:max` are accepted synonyms.
+      // so a slider runs from → to).
       let min;
       let max;
       let reversed = false;
