@@ -3,7 +3,7 @@
 ; sustain loop as a vibrato, a rest (release), re-trigger, and MACRO_CLEAR, on
 ; FM and PSG.
 (fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
-  (macro :pitch [0 :hold 40 0 -40 0]) :len 4
+  (macro :pitch [0 #sus 40 0 -40 0]) :len 4
   c _ e (macro :pitch none) g)
 (sqr1 :len 4
-  (macro :pitch [0 :hold 60 -60]) a c (macro :pitch none) e)
+  (macro :pitch [0 #sus 60 -60]) a c (macro :pitch none) e)

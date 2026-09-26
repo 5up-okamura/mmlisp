@@ -6,7 +6,7 @@
 
 (def (sparkle s)
   (macro :step 16 :keyon 1
-         :semi [:hold 0 7 12 16 19 12 7 4]
+         :semi [#sus 0 7 12 16 19 12 7 4]
          :pan (noise -1..1 :len 1 :seed s)))
 
 (fm1 :tempo 120 :oct 5 :len 1 gm-glock :vel 12

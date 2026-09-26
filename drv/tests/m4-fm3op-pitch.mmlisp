@@ -14,8 +14,8 @@
 (fm3-1 :oct 5 :len 4
   c (glide 8) e g (glide none) c)
 (fm3-2 :oct 4 :len 4
-  (macro :pitch [0 :hold 30 0 -30 0]) e _ c (macro :pitch none) e)
+  (macro :pitch [0 #sus 30 0 -30 0]) e _ c (macro :pitch none) e)
 (fm3-3 :oct 3 :len 2
-  (macro :semi [0 :hold 4 7]) c (macro :semi none) g)
+  (macro :semi [0 #sus 4 7]) c (macro :semi none) g)
 (fm3-4 :oct 4 :len 4
   :pitch -50 g c :pitch (ease-out :from -50 :to 50 :len 4) e g)

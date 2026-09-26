@@ -94,7 +94,7 @@ macro binds cleared, its running macro slots dropped and its sweep slots
 cancelled, along with the level reset above. Macros and sweeps are channel
 state, not track state, so without this an evicted part's vibrato would go on
 playing whatever took the channel. **Stopping** a track deliberately does not
-do this: a release-region macro (`:off`) runs entirely after key-off and *is*
+do this: a release-region macro (`#rel`) runs entirely after key-off and *is*
 the decay tail (§13.2). Claiming is the line, because the new owner is a
 different part.
 
@@ -1063,7 +1063,7 @@ long), and an unscaled `Nf` conversion (`m4-pal-frames`, caught by its pin).
 
 Macros (docs/language.md §10) are per-target parameter automation attached to
 notes. The rich authoring vocabulary — step vectors, curves, multi-stage,
-`:hold` sustain loops, `:off` release, `_` holds, the `:step` clock, symbolic
+`#sus` sustain loops, `#rel` release, `_` holds, the `:step` clock, symbolic
 coercion — is **lowered at compile time** to one uniform runtime shape (mmb.md
 §15): a per-`:step` value array in three regions (attack / sustain-loop /
 release). Curves and stages are pre-sampled; the driver never evaluates a curve
@@ -1240,7 +1240,7 @@ modulator. Gate: `m4-fm3op-level`.
 ## 14. PCM
 
 `pcm1`–`pcm3` are the language's PCM voices, played through the fm6 DAC.
-Samples are declared with `def :sample` and exported as a sample bank beside
+Samples are declared with `(def name (sample …))` and exported as a sample bank beside
 the MMB (mmb.md §10). A score's PCM voice count is the highest `pcmN` it uses;
 it is written in the MMB header and picks the engine image (§5).
 

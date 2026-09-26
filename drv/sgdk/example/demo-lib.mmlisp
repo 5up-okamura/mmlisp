@@ -19,5 +19,5 @@
   :ar4 31 :dr4 12 :sr4 0 :rr4 12 :sl4 5 :tl4 4  :ml4 1  :dt4 0)
 
 ; An imported sample def reads its :file from THIS file's directory.
-(def padsmp :sample :file "pad.wav" :loop-start 9ms :loop-end 36ms)
-(def blip   :sample :file "blip.wav")
+(def padsmp (sample :file "pad.wav" :loop-start 9ms :loop-end 36ms))
+(def blip   (sample :file "blip.wav"))

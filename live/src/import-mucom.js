@@ -1351,7 +1351,7 @@ export function mucomToMmlisp(parsed) {
     for (const [, e] of [...pcmRegistry].sort((a, b) => a[0] - b[0])) {
       defLines.push(
         "",
-        `(def ${e.label} :sample :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
+        `(def ${e.label} (sample :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames}))`,
       );
     }
     lines.splice(lfoDefAnchor, 0, ...defLines);
@@ -1507,7 +1507,7 @@ export function pcmBankToMmlisp(pcmBytes, bankName = "mucompcm.bin") {
     used.add(label);
     lines.push(
       "",
-      `(def ${label} :sample :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
+      `(def ${label} (sample :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames}))`,
     );
   }
   return {

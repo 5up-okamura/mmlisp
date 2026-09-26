@@ -8,7 +8,7 @@
 ; channel 3 would silence the other three with it. op3 rolls on a different
 ; :step so the two interleave, including a frame where both fire.
 ;
-; `[0 :hold 1]` (not a leading 1) because a macro's step 0 lands in the note's
+; `[0 #sus 1]` (not a leading 1) because a macro's step 0 lands in the note's
 ; own frame, where the driver re-attacks and the editor treats the sample as
 ; the note's own key-on — a divergence of its own, on every channel, that this
 ; gate is not the place to pin down.
@@ -19,6 +19,6 @@
   :ar4 31 :dr4 4 :sr4 0 :rr4 6 :sl4 1 :tl4 4  :ml4 1)
 (fm3 :tempo 120 kit)
 (fm3-1 :oct 5 :len 1  c)
-(fm3-2 :oct 4 :len 1  (macro :keyon [0 :hold 1] :step 4f) c)
-(fm3-3 :oct 3 :len 1  (macro :keyon [0 :hold 1] :step 6f) c)
+(fm3-2 :oct 4 :len 1  (macro :keyon [0 #sus 1] :step 4f) c)
+(fm3-3 :oct 3 :len 1  (macro :keyon [0 #sus 1] :step 6f) c)
 (fm3-4 :oct 4 :len 1  g)

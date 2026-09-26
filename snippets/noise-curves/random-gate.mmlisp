@@ -11,7 +11,7 @@
   (macro :step 16 :keyon (noise 0..1 :len 1 :seed 14 :hold 128))  b-)
 
 (fm2 :oct 5 :len 1 gm-kalimba :vel 12
-  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 21) :semi [:hold 0 7 12]) g
-  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 22) :semi [:hold 0 7 12]) g
-  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 23) :semi [:hold 0 7 12]) e-
-  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 24) :semi [:hold 0 7 12]) f)
+  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 21) :semi [#sus 0 7 12]) g
+  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 22) :semi [#sus 0 7 12]) g
+  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 23) :semi [#sus 0 7 12]) e-
+  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 24) :semi [#sus 0 7 12]) f)

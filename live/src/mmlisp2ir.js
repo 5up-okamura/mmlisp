@@ -657,19 +657,6 @@ function isPcmTrackName(name) {
   return /^pcm[1-3]$/.test(name);
 }
 
-function isLikelyPcmBodyToken(value) {
-  if (!value) return false;
-  if (value.startsWith(":")) return true;
-  if (value.startsWith("#")) return true;
-  if (value === "~" || value === ">" || value === "<" || value === "_")
-    return true;
-  if (value === "go" || value === "x" || value === "param-set") return true;
-  if (isRestAtom(value)) return true;
-  if (isNoteAtom(value)) return true;
-  if (isPerNoteLengthAtom(value)) return true;
-  return false;
-}
-
 function emitNoteForTrack(
   trackState,
   noteName,
@@ -729,16 +716,6 @@ function emitNoteForTrack(
       trackState.tick += lengthTicks;
       return;
     }
-    if (!trackState.sampleDefs?.has(trackState.pcmSampleName)) {
-      if (!reported.has(trackState.pcmSampleName)) {
-        reported.add(trackState.pcmSampleName);
-        pushDiag(diagnostics, "error", "E_PCM_SAMPLE_UNDEFINED",
-          `undefined sample def: ${trackState.pcmSampleName}`, src, trackName);
-      }
-      trackState.tick += lengthTicks;
-      return;
-    }
-
     const fullPitch = noteName + trackState.defaultOct;
     // Every note gets its own blob, baked at its own rate (driver.md §14.2);
     // the 32 KB bank is the only limit, so there is no practical-range clamp.
@@ -1709,11 +1686,16 @@ function resolveSampleEffects(node, bpm, diagnostics, src) {
   return chain;
 }
 
-// `first` is the first key: 3 for `(def name :sample …)`, 4 for a sample
-// `:extend`, whose :file comes from its base.
-function parseSampleDef(root, diagnostics, first = 3) {
+// `(sample [base] :key value …)`. A leading name is the sample it extends:
+// the child takes the base's file (still read from the base's folder), slice,
+// loop and effects and overrides the keys it writes (resolveSampleExtends).
+function parseSampleDef(root, diagnostics) {
   const bodyItems = root.items.filter((n) => n.kind !== "comment");
+  const baseTok = atomValue(bodyItems[1]);
+  const base = baseTok && !baseTok.startsWith(":") ? baseTok : null;
+  const first = base ? 2 : 1;
   const sample = {
+    extends: base,
     file: null,
     rate: null,
     offset: null,
@@ -1758,12 +1740,12 @@ function parseSampleDef(root, diagnostics, first = 3) {
     }
   }
 
-  if (!sample.file && first === 3) {
+  if (!sample.file && !base) {
     pushDiag(
       diagnostics,
       "error",
       "E_SAMPLE_FILE",
-      "def :sample requires :file",
+      "(sample …) needs :file, or a base sample to extend",
       nodeSrc(root),
       null,
     );
@@ -1776,7 +1758,7 @@ function parseSampleDef(root, diagnostics, first = 3) {
       diagnostics,
       "error",
       "E_SAMPLE_SLICE",
-      `def :sample :offset must be >= 0 (got ${sample.offset})`,
+      `(sample …) :offset must be >= 0 (got ${sample.offset})`,
       nodeSrc(root),
       null,
     );
@@ -1786,7 +1768,7 @@ function parseSampleDef(root, diagnostics, first = 3) {
       diagnostics,
       "error",
       "E_SAMPLE_SLICE",
-      `def :sample :frames must be > 0 (got ${sample.frames})`,
+      `(sample …) :frames must be > 0 (got ${sample.frames})`,
       nodeSrc(root),
       null,
     );
@@ -1960,7 +1942,7 @@ function parseMacroSpec(
       return { type: "stages", stages };
     }
 
-    // Step-vector form: [15 :hold 14 13 :off 11 9 7 5 3 0 _ ...]
+    // Step-vector form: [15 #sus 14 13 #rel 11 9 7 5 3 0 _ ...]
     // For MODE target, also accept noise mode symbols (white0-3, periodic0-3).
     // For PAN target, also accept pan symbols (left, center, right).
     const steps = [];
@@ -1968,11 +1950,11 @@ function parseMacroSpec(
     let releaseIndex = null;
     for (const item of items) {
       const val = atomValue(item);
-      if (val === ":hold") {
+      if (val === "#sus") {
         loopIndex = steps.length;
         continue;
       }
-      if (val === ":off") {
+      if (val === "#rel") {
         releaseIndex = steps.length;
         continue;
       }
@@ -2012,7 +1994,7 @@ function parseMacroSpec(
     return { ...macroSpecOf(r), scale: scaled.slot };
   }
   // Scalar constant: e.g. `:keyon 1`. A constant signal equivalent to
-  // `[:hold N]` (single value, looped). Mainly for :keyon (1 = fire every
+  // `[#sus N]` (single value, looped). Mainly for :keyon (1 = fire every
   // :step, 0 = never).
   const scalar = tokenValue(atomValue(node));
   if (scalar !== null) {
@@ -2141,7 +2123,7 @@ function parseCurveSpec(
   let waitTicks = null;
   let waitFrames = null;
   let waitKeyOff = false;
-  let forceLoop = false;
+  let loopMode = null; // :mode loop / shot; null = the curve's own (§11)
   const params = {};
   let hasParams = false;
   // v0.5 dynamic macro params: $name in :from/:to/:rate records a runtime slot
@@ -2273,10 +2255,23 @@ function parseCurveSpec(
       );
       continue;
     }
-    if (k === ":loop") {
-      // Value-less flag: force this curve to loop (forward), e.g. so an easing
-      // curve can be a cycling sustain stage.
-      forceLoop = true;
+    if (k === ":mode") {
+      // `:mode loop` cycles any curve (forward) — an easing curve as a
+      // cycling sustain stage; `:mode shot` plays a loop wave once.
+      const m = atomValue(node.items[j + 1]);
+      if (m === "loop" || m === "shot") loopMode = m === "loop";
+      else if (diagnostics)
+        pushDiag(diagnostics, "error", "E_CURVE_MODE",
+          `curve :mode takes loop or shot, not ${m ?? "nothing"}`,
+          src ?? nodeSrc(node), trackName);
+      j++;
+      continue;
+    }
+    if (k && k.startsWith(":") && j + 1 >= node.items.length) {
+      // Every curve param takes a value; a trailing keyword has none.
+      if (diagnostics)
+        pushDiag(diagnostics, "error", "E_CURVE_PARAM_UNKNOWN",
+          `curve param ${k} on ${head} has no value`, src ?? nodeSrc(node), trackName);
       continue;
     }
     if (k && k.startsWith(":") && j + 1 < node.items.length) {
@@ -2463,7 +2458,7 @@ function parseCurveSpec(
   const spec = {
     curve: isConst ? "linear" : head,
     to: to ?? 0,
-    loop: LOOP_CURVE_NAMES.has(head) || forceLoop,
+    loop: loopMode ?? LOOP_CURVE_NAMES.has(head),
   };
   if (from !== null && from !== undefined) spec.from = from;
   if (frames !== null && frames !== undefined) spec.frames = frames;
@@ -3242,25 +3237,6 @@ function compileChannelBody(
               }
               break;
             }
-            case ":sample": {
-              if (!trackState.isPcmTrack) {
-                wrongChannel(val, "pcm1-pcm3");
-                break;
-              }
-              if (rawVal) {
-                trackState.pcmSampleName = rawVal;
-              } else {
-                pushDiag(
-                  diagnostics,
-                  "error",
-                  "E_PCM_SAMPLE_REQUIRED",
-                  "pcm mode requires :sample <name>",
-                  nodeSrc(node),
-                  trackName,
-                );
-              }
-              break;
-            }
             case ":mode": {
               if (trackState.isNoiseTrack) {
                 if (rawVal in NOISE_MODE_MAP) {
@@ -3501,7 +3477,7 @@ function compileChannelBody(
         continue;
       }
 
-      // Bare identifier: sample symbol in PCM mode
+      // Bare identifier: a sample binds on a pcm track, as a voice does on FM
       if (trackState.isPcmTrack && trackState.sampleDefs?.has(val)) {
         trackState.pcmSampleName = val;
         i++;
@@ -4573,10 +4549,13 @@ function collectDefs(roots, diagnostics) {
         } else if (entries.length > 1) {
           typedDefs.set(name, { tag: "macro-list", entries, src });
         }
-      } else if (maybeTag === ":sample") {
-        const src = nodeSrc(root);
-        const sample = parseSampleDef(root, diagnostics);
-        sampleDefs.set(name, { tag: "sample", ...sample, src });
+      } else if (
+        macroFnNode?.kind === "list" &&
+        atomValue(macroFnNode.items?.[0]) === "sample"
+      ) {
+        // (def name (sample [base] :file "…" …))
+        const sample = parseSampleDef(macroFnNode, diagnostics);
+        sampleDefs.set(name, { tag: "sample", ...sample, src: nodeSrc(root) });
       } else if (maybeTag === ":extend") {
         // Keyword-map FM voice def with inheritance
         // (def child :extend base :alg 7 :tl1 20 ...)
@@ -4591,8 +4570,7 @@ function collectDefs(roots, diagnostics) {
             kwMap.set(canonicalTarget(kwSym), kwVal);
           }
         }
-        // `node`: the def may turn out to extend a SAMPLE (resolveSampleExtends).
-        typedDefs.set(name, { tag: "fm-kw", extends: baseName, kwMap, src, node: root });
+        typedDefs.set(name, { tag: "fm-kw", extends: baseName, kwMap, src });
       } else if (
         maybeTag?.startsWith(":alg") ||
         maybeTag?.startsWith(":fb") ||
@@ -4770,9 +4748,8 @@ function resolveImportFile(path, importSrc, importSources, diagnostics, cache, s
   const bundle = collectDefs(parse(text), diagnostics);
   warnImportIgnored(bundle, path, diagnostics, importSrc);
   // The set's own wav/ lives next to it, not next to the score that imports it
-  // — and so does a sample `:extend`'s own :file.
+  // — and so does an extending sample's own :file.
   for (const sample of bundle.sampleDefs.values()) sample.baseDir = selfDir;
-  for (const td of bundle.typedDefs.values()) if (td.node) td.baseDir = selfDir;
 
   // Resolve this file's own imports first (siblings merged strictly), then let
   // this file's defs overlay them.
@@ -4827,36 +4804,44 @@ function withImportEffect(bundle, effectNode) {
   return { ...bundle, sampleDefs };
 }
 
-// `(def child :extend base …)` on a SAMPLE base is a sample def: the child
-// takes the base's file (still read from the base's folder), slice, loop and
-// effects — the import's chain included — and overrides the keys it writes.
-// It is parsed as an FM voice until the base is known, since the def does not
-// say which kind it extends; a base that is not a sample leaves it one.
-function resolveSampleExtends(typedDefs, sampleDefs, diagnostics) {
+// `(sample base …)`: the child takes the base's file (still read from the
+// base's folder), slice, loop and effects — the import's chain included — and
+// overrides the keys it writes. Runs once imports are merged, so a base may
+// come from an imported kit.
+function resolveSampleExtends(sampleDefs, diagnostics) {
+  const done = new Set();
   const resolve = (name, seen) => {
-    if (sampleDefs.has(name)) return sampleDefs.get(name);
-    const td = typedDefs.get(name);
-    if (!td?.node || seen.has(name)) return null; // a cycle is the FM path's to report
+    const own = sampleDefs.get(name);
+    if (!own?.extends || done.has(name)) return own;
+    if (seen.has(name)) {
+      pushDiag(diagnostics, "error", "E_SAMPLE_EXTENDS",
+        `sample '${name}' extends itself`, own.src, null);
+      return null;
+    }
     seen.add(name);
-    const base = resolve(td.extends, seen);
-    if (!base) return null;
-    const own = parseSampleDef(td.node, diagnostics, 4);
-    const child = { ...base, src: td.src };
+    const base = sampleDefs.has(own.extends) ? resolve(own.extends, seen) : null;
+    done.add(name);
+    if (!base) {
+      if (!sampleDefs.has(own.extends))
+        pushDiag(diagnostics, "error", "E_SAMPLE_EXTENDS",
+          `'${own.extends}' is not a sample`, own.src, null);
+      return null;
+    }
+    const child = { ...base, src: own.src, extends: null };
     for (const k of ["rate", "offset", "frames", "loopStartTok", "effectNode"])
       if (own[k] !== null) child[k] = own[k];
     if (own.file !== null) {
       child.file = own.file;
-      child.baseDir = td.baseDir;
+      child.baseDir = own.baseDir;
     }
     if (own.loopEndTok !== null || own.loopLenTok !== null) {
       child.loopEndTok = own.loopEndTok;
       child.loopLenTok = own.loopLenTok;
     }
-    typedDefs.delete(name);
     sampleDefs.set(name, child);
     return child;
   };
-  for (const name of [...typedDefs.keys()]) resolve(name, new Set());
+  for (const name of [...sampleDefs.keys()]) resolve(name, new Set());
 }
 
 // Replace bare atoms matching a parameter name with the caller's argument node
@@ -4992,7 +4977,7 @@ function compileScore(src, filename, options, frameHz) {
       src: null,
     });
   }
-  resolveSampleExtends(typedDefs, sampleDefs, diagnostics);
+  resolveSampleExtends(sampleDefs, diagnostics);
   const roots = expandRoots(remaining, defs, paramDefs, diagnostics);
 
   // v0.6: 1 file = 1 score. There is no (score …) wrapper — the post-expand
@@ -5196,21 +5181,6 @@ function compileScore(src, filename, options, frameHz) {
 
     const isPcmTrack = isPcmTrackName(head);
 
-    let pcmSampleName = null;
-    let bodyStartIndex = 1;
-    if (isPcmTrack && node.items.length > 1) {
-      const maybeSample = node.items[1];
-      const sampleVal = atomValue(maybeSample);
-      if (
-        sampleVal &&
-        maybeSample.kind === "atom" &&
-        !isLikelyPcmBodyToken(sampleVal)
-      ) {
-        pcmSampleName = sampleVal;
-        bodyStartIndex = 2;
-      }
-    }
-
     // `:prio` is the one head option: it picks the layer (the timeline) the
     // form belongs to, so it must be read before the body. Everything else in
     // the form is body (language.md §5).
@@ -5218,7 +5188,7 @@ function compileScore(src, filename, options, frameHz) {
     // timeline); different prio values are independent parallel timelines on the
     // same physical channel, resolved by priority at the flatten post-pass.
     // Lower number = higher priority; default 8 (headroom on both sides).
-    let i = bodyStartIndex;
+    let i = 1;
     let prio = 8;
     if (atomValue(node.items[i]) === ":prio" && i + 1 < node.items.length) {
       const v = parseIntLike(atomValue(node.items[i + 1]));
@@ -5250,7 +5220,7 @@ function compileScore(src, filename, options, frameHz) {
         isPcmTrack,
         isFm6Track: head === "fm6",
         isNoiseTrack: head === "noise",
-        pcmSampleName,
+        pcmSampleName: null, // bound by a bare sample name in the body
         pcmMode: "shot",
         sampleDefs,
         hasInlineCsmRate: false,
@@ -5297,8 +5267,6 @@ function compileScore(src, filename, options, frameHz) {
 
       trackByKey.set(trackKey, { trackData, trackState, head, prio });
       trackOrder.push(trackKey);
-    } else if (isPcmTrack && pcmSampleName) {
-      trackByKey.get(trackKey).trackState.pcmSampleName = pcmSampleName;
     }
 
     const { trackData, trackState } = trackByKey.get(trackKey);

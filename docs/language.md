@@ -99,7 +99,7 @@ unaffected by layering.
 | `fm3-csm-rate`  | FM3 CSM Timer A         | Buzz frequency as notes / raw Hz                  |
 | `sqr1`–`sqr3`   | SN76489 square channels |                                                   |
 | `noise`         | SN76489 noise channel   | Modes `white0`–`white3`, `periodic0`–`periodic3`  |
-| `pcm1`–`pcm3`   | PCM on the fm6 DAC      | Sample symbol is the first positional argument    |
+| `pcm1`–`pcm3`   | PCM on the fm6 DAC      | A sample name in the body binds the sample (§16)  |
 
 Mode exclusivity (compile errors, score-wide):
 
@@ -245,10 +245,10 @@ of the same channel. Defaults:
 
 ### The head: `:prio`
 
-`:prio` is the one head option. It picks the layer the form belongs to (§1), so
-it must come right after the channel name (after a `pcm` track's sample, §16);
-anywhere else it is `E_UNKNOWN_KEYWORD`, and a value that is not a
-non-negative integer is `E_PRIO_INVALID`. Everything after it is body — `:oct`,
+`:prio` is the one head option. It picks the layer the form belongs to (§1),
+so it must come right after the channel name; anywhere else it is
+`E_UNKNOWN_KEYWORD`, and a value that is not a non-negative integer is
+`E_PRIO_INVALID`. Everything after it is body — `:oct`,
 `:len`, `:shuffle` and the rest at the start of a form are ordinary body
 keywords at the form's first tick.
 
@@ -267,7 +267,6 @@ keywords at the form's first tick.
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
 | `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`; `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
-| `:sample`  | sample def name           | Re-bind the PCM sample (PCM-active tracks)               |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:shuffle` | 51–90 or `none`           | Swing ratio (§5.2)                                       |
 | `:shuffle-base` | length token         | The swung length (default: eighth, §5.2)                 |
@@ -680,8 +679,8 @@ constant (`(def depth 40)`, usable inside expressions). A `let` is a **local**,
 | `(def (name param…) item…)`           | Parametric snippet — call as `(name arg…)`; each `arg` node is substituted for its `param` in the body (§9.1) |
 | `(def name :alg … :tl1 … …)`          | FM voice, keyword map                   |
 | `(def name :extend base :tl1 … …)`    | FM voice inheriting `base` (child keys override; unknown/non-voice base is `E_EXTENDS_BASE_UNKNOWN`, cycles `E_EXTENDS_CYCLE`) |
-| `(def name :sample :file "…" …)`      | PCM sample (§16)                        |
-| `(def name :extend sample …)`         | PCM sample inheriting a sample def (§16) |
+| `(def name (sample :file "…" …))`     | PCM sample (§16)                        |
+| `(def name (sample base …))`          | PCM sample extending another sample (§16) |
 | `(def name (macro :target spec …))`   | Macro preset — single or multi target   |
 | `(def name (macro :target none))`     | Clear-def — applying it clears that target's macro |
 
@@ -828,16 +827,16 @@ macros stay unclamped until combined with the base).
 | Form                        | Meaning                                              |
 | --------------------------- | ---------------------------------------------------- |
 | `[v v v …]`                 | Step vector — one value per `:step`. A value is a number (rounded where it binds) or the target's symbol (`left`, `white2`); anything else is `E_MACRO_VALUE_INVALID` |
-| `[… :hold …]`               | `:hold` marks the loop point: steps from it cycle until key-off |
-| `[… :off …]`                | `:off` marks the release section: steps after it run after key-off |
+| `[… #sus …]`                | `#sus` marks the sustain loop: steps from it cycle until key-off |
+| `[… #rel …]`                | `#rel` marks the release section: steps after it run after key-off |
 | `_` (inside a vector)       | Hold: advance one step, no write                     |
 | `(curve …)` (§11)           | Sampled every `:step`                                |
 | `[(stage) (stage) …]`       | Multi-stage: curve / `(wait N)` / `(wait key-off)` stages run sequentially |
-| scalar (e.g. `1`, `left`)   | Constant signal, equivalent to `[:hold v]`           |
+| scalar (e.g. `1`, `left`)   | Constant signal, equivalent to `[#sus v]`           |
 | `none`                      | Clear the target's macro                             |
 
 Multi-stage rules: a stage that loops (loop-wave curve, or any curve with the
-`:loop` flag) runs until key-off — a modulated sustain; `(wait key-off)` holds
+`:mode loop`) runs until key-off — a modulated sustain; `(wait key-off)` holds
 the current value until key-off; `(wait N)` waits a length token. `(const V
 :len L)` is a flat stage holding positional value `V`.
 
@@ -862,7 +861,7 @@ compose. Default: `1f` (one 60 Hz frame).
 - A step vector advances one step per `:step`; a curve is sampled-and-held
   every `:step` (coarse step = stepped LFO; default keeps curves smooth).
 - All targets in a macro share its one `:step` and stay phase-locked.
-- `:step` governs both the sustain loop and the `:off` release section.
+- `:step` governs both the `#sus` sustain loop and the `#rel` release section.
 - Each macro (and each def preset) carries its own step.
 
 ### Target groups
@@ -884,8 +883,8 @@ retriggers the envelope.
 retrigger (key-off then key-on across the player's `KEY_OFF_LEAD` gap,
 restarting the envelopes). The first sample at t = 0 coincides with the note's
 own attack and is a no-op, so a roll starts at the second step whether it is
-written `[0 :hold 1]` or `[1 1 1 …]`. Steps before `:off` loop until note-off (a roll);
-steps after `:off` fire after note-off (a one-channel echo tail). While a
+written `[0 #sus 1]` or `[1 1 1 …]`. Steps before `#rel` loop until note-off (a roll);
+steps after `#rel` fire after note-off (a one-channel echo tail). While a
 `:keyon` macro is active it owns the channel keying.
 
 | Form                           | Result                                    |
@@ -893,15 +892,15 @@ steps after `:off` fire after note-off (a one-channel echo tail). While a
 | `:keyon 1`                     | Fire every `:step`                        |
 | `:keyon 0`                     | Never fire (= omitting `:keyon`)          |
 | `:keyon [1]`                   | Nothing — step 0 is the note's own attack |
-| `:keyon [:hold 1 0]`           | Alternate steps                           |
+| `:keyon [#sus 1 0]`           | Alternate steps                           |
 | `:keyon (square 0..1 :duty 128 :len 8)` | Duty-gated regular retrigger (period: one 8th) |
 | `:keyon (noise :from 0 :to 1 :len 1)` | Probabilistic retrigger (~50 % per step) |
 
 ```lisp
 (fm1 (macro :step 32 :keyon 1) c)                            ; drum roll
-(fm2 (macro :step 1/16 :semi [:hold 0 4 7] :keyon 1) c)      ; retriggered arp
-(fm4 (macro :step 1/8 :keyon [0 :off 1 1 1]
-            :vel   [15 :off 11 7 3]) c)                     ; echo tail
+(fm2 (macro :step 1/16 :semi [#sus 0 4 7] :keyon 1) c)      ; retriggered arp
+(fm4 (macro :step 1/8 :keyon [0 #rel 1 1 1]
+            :vel   [15 #rel 11 7 3]) c)                     ; echo tail
 ```
 
 ---
@@ -933,8 +932,9 @@ Combining it with an explicit `:from`/`:to`, or two ranges, is
 | Loop waves  | `sin`, `triangle`, `square`, `saw`, `ramp`                            | yes              |
 | Stochastic  | `noise`, `pink`, `perlin`, `brown`                                    | yes              |
 
-Loop-wave and stochastic curves cycle until key-off; the value-less `:loop`
-flag forces any other curve to cycle (a looping sustain stage). Loop direction
+Loop-wave and stochastic curves cycle until key-off; `:mode loop` makes any
+other curve cycle (a looping sustain stage), and `:mode shot` plays a looping
+one once (a bad value is `E_CURVE_MODE`). Loop direction
 is forward only.
 
 `curve-name` above is a placeholder — write a real name from the table. A
@@ -950,7 +950,7 @@ function is.
 | `:len`   | length token  | —       | Duration; ticks, or absolute frames with `Nf`; accepts `$slot` |
 | `:phase` | int 0–255     | `0`     | Start phase offset                          |
 | `:rate`  | number ≥ 0    | `1.0`   | Phase speed multiplier (relative to `:len`); `0` freezes the curve at its start phase; accepts `$slot` |
-| `:loop`  | flag          | —       | Force looping                               |
+| `:mode`  | `loop`/`shot` | per curve | Cycle until key-off, or play once         |
 | `:wait`  | length token or `key-off` | — | Delay before the curve starts    |
 
 ### Shape parameters
@@ -1212,15 +1212,15 @@ with neither source produces no Timer A retrigger (fm3-csm plays silently).
 
 ## 16. PCM
 
-Samples are declared with `def :sample` and bound to a track as the first
-positional argument (or re-bound mid-track with `:sample name` / a bare
-sample symbol). How many voices play at once is a whole-song choice (§1):
+Samples are declared with `(def name (sample …))` and bound to a track by
+naming one in its body, before the notes — and again wherever the sound
+changes — as a voice is on FM. How many voices play at once is a whole-song choice (§1):
 
 ```lisp
 (def pcm-voices 3)
-(def kick  :sample :file "sounds/kick.wav")
-(def snare :sample :file "sounds/snare.wav" :rate 11025)
-(def pad   :sample :file "sounds/pad.wav" :loop-start 300ms :loop-len 100ms)
+(def kick  (sample :file "sounds/kick.wav"))
+(def snare (sample :file "sounds/snare.wav" :rate 11025))
+(def pad   (sample :file "sounds/pad.wav" :loop-start 300ms :loop-len 100ms))
 
 (pcm1 kick :tempo 120  :len 4  c _ c _)
 (pcm2 snare :len 4  _ c _ c)
@@ -1273,8 +1273,8 @@ kit in a single wav, or an imported instrument bank. Both count **frames**, not
 bytes, and a negative `:offset` or a non-positive `:frames` is `E_SAMPLE_SLICE`.
 
 ```lisp
-(def kick  :sample :file "kit.wav" :offset 0    :frames 3904)
-(def snare :sample :file "kit.wav" :offset 3904 :frames 6400)
+(def kick  (sample :file "kit.wav" :offset 0    :frames 3904))
+(def snare (sample :file "kit.wav" :offset 3904 :frames 6400))
 
 (pcm1 :len 8  kick c snare c  kick c c)
 ```
@@ -1312,7 +1312,7 @@ subfolder — `~/Desktop/mysong/` opens, `~/Desktop/` does not.
 Without a folder, `:file` falls back to the dev server's root, so absolute
 server paths (`/drv/tests/blip.wav`) and full URLs (CORS permitting) also work.
 
-**Dropping a wav** writes its def at the cursor — `(def kick :sample :file "…")`,
+**Dropping a wav** writes its def at the cursor — `(def kick (sample :file "…"))`,
 no `:rate`, so the wav's own rate stands. A wav dragged out of the opened folder
 gets the correct folder-relative path (`"sounds/kick.wav"`); one dragged from
 anywhere else gets its bare name and is decoded into memory, so it plays at once
@@ -1337,7 +1337,7 @@ unlike `:offset` / `:frames`, which cut a sample out of a file and have nothing
 to do with playback. On a def they set the sample's own sustain loop:
 
 ```lisp
-(def pad :sample :file "pad.wav" :loop-start 300ms :loop-len 100ms)
+(def pad (sample :file "pad.wav" :loop-start 300ms :loop-len 100ms))
 ```
 
 On a track they set the loop of the notes that follow, like any track
@@ -1380,11 +1380,11 @@ never runs them, so they cost no Z80 time — only what they do to the bank
 (a fade saves bytes). Use them to make a sample hold its own against FM:
 
 ```lisp
-(def snare :sample :file "snare.wav"
+(def snare (sample :file "snare.wav"
   :effect [(comp :threshold -20 :ratio 4 :attack 0ms :release 60ms)
            (gain 8)
            (limit)
-           (fade :at 120ms :len 80ms :curve ease-out-expo)])
+           (fade :at 120ms :len 80ms :curve ease-out-expo)]))
 ```
 
 Each effect is `(name :param value …)`; a param left out takes its default.
@@ -1445,10 +1445,11 @@ tails off like a natural decay.
   against `:vel` / `:vol`.
 - **A kit, or a variant.** `(import "kit" :effect [...])` processes every
   sample of a kit (§9.2); its chain runs before each def's own.
-  `(def snare-hot :extend snare :effect [...])` is a variant of one sound: it
+  `(def snare-hot (sample snare :effect [...]))` is a variant of one sound: it
   takes the base's `:file` (still read from the base's folder), slice, loop
   points and effects — the import's chain included — and overrides the keys it
   writes; its own `:effect` replaces the base's, the import's stays in front.
+  A base that is not a sample, or a cycle, is `E_SAMPLE_EXTENDS`.
   A variant is a def of its own, so playing both bakes both.
 - An unknown effect is `E_SAMPLE_FX_UNKNOWN`; a bad or unknown param, or a
   missing required one, is `E_SAMPLE_FX_PARAM`; `:effect` given anything but
@@ -1481,8 +1482,8 @@ tails off like a natural decay.
   silence from −36 dB rather than gliding there. That is the model, not a
   limitation to work around (driver.md §5). Automate `:vol` on FM or PSG when a
   fade has to be smooth.
-- A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; an unknown
-  sample name is `E_PCM_SAMPLE_UNDEFINED`. `:mode shot`/`loop`, `:sample` and
+- A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; a word that
+  names no def is `E_UNKNOWN_ATOM`. `:mode shot`/`loop` and
   the loop points on any other channel (fm6 included — it is FM only) are
   `E_UNSUPPORTED_TARGET`.
 
@@ -1498,7 +1499,7 @@ tails off like a natural decay.
 `:gate 0` keeps the channel in sync with others while holding; `:len 0` is a
 single indefinite hold (subsequent events land at the same tick). Both enable
 game-state-driven sounds: the note holds until the host sends `KEY_OFF` or
-`STOP_TRACK`, firing any `:off` release macros.
+`STOP_TRACK`, firing any `#rel` release macros.
 
 A hold is the one place a following note does **not** re-attack on FM: the
 channel is still keyed, so the next note moves the pitch and the envelope
@@ -1510,7 +1511,7 @@ it, and on PSG every note-on re-asserts its attenuation, so PSG re-attacks
 either way.
 
 ```lisp
-(sqr1 :len 0 (macro :vel [15 :hold 14 13 :off 8 4 0])
+(sqr1 :len 0 (macro :vel [15 #sus 14 13 #rel 8 4 0])
   c)
 ```
 

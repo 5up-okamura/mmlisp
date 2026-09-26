@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Checks the def :sample `:effect` chain (live/src/sample-fx.js): each effect
 // does what its name says on a synthetic signal, the compiler resolves and
-// rejects `:effect` forms, an import's chain and a sample `:extend` compose,
+// rejects `:effect` forms, an import's chain and an extending `(sample base …)` compose,
 // and the bank (and the keyboard audition's bank) bakes the processed signal.
 import { applySampleEffects } from "../../live/src/sample-fx.js";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
@@ -84,14 +84,14 @@ const run = (x, chain) => {
 // the compiler: resolution and rejection
 {
   const ok = compileMMLisp(`(def pcm-voices 1)
-(def s :sample :file "/x.wav" :effect [(gain 3) (comp :ratio 2 :attack 2ms) (fade :len 8)])
+(def s (sample :file "/x.wav" :effect [(gain 3) (comp :ratio 2 :attack 2ms) (fade :len 8)]))
 (pcm1 s :tempo 120 :len 4 c)`, "t.mmlisp");
   const fx = ok.ir.metadata.samples[0].effect;
   check("compiler resolves the chain",
     fx.length === 3 && fx[0].db === 3 && fx[1].attack === 0.002 && fx[1].threshold === -18
       && fx[2].len === 0.25 && fx[2].curve === "linear" && fx[2].at === null,
     JSON.stringify(fx));
-  const instant = compileMMLisp(`(def s :sample :file "/x.wav" :effect [(comp :attack 0ms) (fade :at 0ms :len 5ms)])`, "t.mmlisp");
+  const instant = compileMMLisp(`(def s (sample :file "/x.wav" :effect [(comp :attack 0ms) (fade :at 0ms :len 5ms)]))`, "t.mmlisp");
   check("an instant attack and a fade :at 0 are accepted",
     instant.diagnostics.length === 0 && instant.ir.metadata.samples[0].effect.length === 2,
     instant.diagnostics.map((d) => d.code).join(","));
@@ -107,7 +107,7 @@ const run = (x, chain) => {
     [":effect [(fade :len 0ms)]", "E_SAMPLE_FX_PARAM"],
   ];
   for (const [keys, code] of cases) {
-    const { diagnostics } = compileMMLisp(`(def s :sample :file "/x.wav" ${keys})`, "t.mmlisp");
+    const { diagnostics } = compileMMLisp(`(def s (sample :file "/x.wav" ${keys}))`, "t.mmlisp");
     const codes = diagnostics.filter((d) => d.severity === "error").map((d) => d.code);
     check(`${keys} -> ${code}`, codes.length === 1 && codes[0] === code, codes.join(","));
   }
@@ -118,7 +118,7 @@ const run = (x, chain) => {
 {
   const bank = (effect) => {
     const { ir } = compileMMLisp(`(def pcm-voices 1)
-(def s :sample :file "/x.wav" ${effect})
+(def s (sample :file "/x.wav" ${effect}))
 (pcm1 s :tempo 120 :len 4 c)`, "t.mmlisp");
     const { sampleBank } = encodeMmb(ir, { samples: { s: { data: tone(0.5, 0.1), baseRate: RATE } } });
     const bytes = sampleBank.bytes ?? sampleBank;
@@ -136,17 +136,17 @@ const run = (x, chain) => {
   check("baked entry shrinks with a fade", faded.len < plain.len / 2, `${plain.len} -> ${faded.len} B`);
 }
 
-// an import's :effect runs ahead of each def's own; a sample :extend inherits
+// an import's :effect runs ahead of each def's own; an extending sample inherits
 // file, slice and both chains, overriding what it writes
 {
-  const kit = `(def kick :sample :file "wav/kick.wav" :frames 900 :effect [(gain -3)])
-(def snare :sample :file "wav/snare.wav")
-(def snare-kit :extend snare :effect [(crush 6)])`;
+  const kit = `(def kick (sample :file "wav/kick.wav" :frames 900 :effect [(gain -3)]))
+(def snare (sample :file "wav/snare.wav"))
+(def snare-kit (sample snare :effect [(crush 6)]))`;
   const { ir, diagnostics } = compileMMLisp(`(def pcm-voices 1)
 (import "kit/set.mmlisp" :effect [(comp) (limit)])
-(def kick-short :extend kick :frames 400)
-(def snare-hot :extend snare :effect [(gain 3)])
-(def snare-own :extend snare :file "mine.wav")
+(def kick-short (sample kick :frames 400))
+(def snare-hot (sample snare :effect [(gain 3)]))
+(def snare-own (sample snare :file "mine.wav"))
 (def lead :extend init-fm :alg 4)
 (pcm1 kick :tempo 120 :len 4 c kick-short c snare-hot c snare-own c snare-kit c)
 (fm1 lead c)`, "t.mmlisp", { imports: new Map([["kit/set.mmlisp", kit]]) });
@@ -155,14 +155,14 @@ const run = (x, chain) => {
   check("import chain composes without errors", !diagnostics.some((d) => d.severity === "error"),
     diagnostics.map((d) => d.code).join(","));
   check("import chain runs before the def's", chain("kick") === "comp limit gain", chain("kick"));
-  check(":extend inherits the file and both chains",
+  check("(sample base …) inherits the file and both chains",
     by("kick-short")?.resolvedFile === "kit/wav/kick.wav" && chain("kick-short") === "comp limit gain",
     `${by("kick-short")?.resolvedFile} / ${chain("kick-short")}`);
-  check(":extend overrides what it writes", by("kick-short")?.frames === 400 && chain("snare-hot") === "comp limit gain",
+  check("(sample base …) overrides what it writes", by("kick-short")?.frames === 400 && chain("snare-hot") === "comp limit gain",
     `${by("kick-short")?.frames} / ${chain("snare-hot")}`);
-  check(":extend's own :file reads from its own folder", by("snare-own")?.resolvedFile === "mine.wav",
+  check("(sample base …)'s own :file reads from its own folder", by("snare-own")?.resolvedFile === "mine.wav",
     by("snare-own")?.resolvedFile);
-  check("an :extend inside the kit keeps the kit's chain", chain("snare-kit") === "comp limit crush", chain("snare-kit"));
+  check("an extending sample inside the kit keeps the kit's chain", chain("snare-kit") === "comp limit crush", chain("snare-kit"));
   check("an FM :extend stays an FM voice", !by("lead"));
   const src = { data: tone(0.2, 0.3), baseRate: RATE };
   const { sampleBank, entryIds } = bakeAuditionBank(ir, { kick: src }, "kick", 67);

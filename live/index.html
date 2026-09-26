@@ -1452,7 +1452,7 @@
       'ease-in-bounce','ease-out-bounce','ease-inout-bounce',
       'sin','triangle','square','saw','ramp',
       'noise','pink','perlin','brown',
-      // def :sample :effect [...] chain (§16)
+      // (sample … :effect [...]) chain (§16)
       'gain','normalize','comp','limit','crush','fade',
     ];
     const AC_TRACKS = [
@@ -1470,15 +1470,15 @@
       // global (written on a track; §1)
       ':tempo',':lfo-rate',
       // track / channel
-      ':ch',':prio',':oct',':oct+',':oct*',':len',':gate',':gate*',':gate-',
+      ':prio',':oct',':oct+',':oct*',':len',':gate',':gate*',':gate-',
       ':vel',':vel+',':vel*',':vol',':volume',
       ':master',':pan',':mode',':shuffle',':shuffle-base',
       // note dynamics / sequencer
       ':pitch',':pitch+',':semi',':semi+',':keyon',':by',':back',':time',
       ':tempo-scale',':csm-rate',
       // macro / voice / definitions
-      ':extend',':step',':loop',':loop-start',':loop-end',':loop-len',
-      ':file',':sample',':rate',
+      ':extend',':step',':loop-start',':loop-end',':loop-len',
+      ':file',':rate',
       // def-val (dynamic value slots)
       ':min',':max',':unit',
       // PCM / effects
@@ -1539,9 +1539,11 @@
           let kind;
           if (head === 'def-val') kind = 'val';
           else if (fnParen) kind = 'fn';
-          else if (next === ':sample') kind = 'sample';
           else if (/^:(alg|fb|extend|ar|dr|sr|rr|tl|sl|ml|dt|ks)/.test(next)) kind = 'voice';
-          else if (next === '' && listAfter) kind = /^\s*\(def[ \t]+\S+[ \t]+\(macro\b/.test(line) ? 'macro' : 'def';
+          else if (next === '' && listAfter) {
+            const ctor = /^\s*\(def[ \t]+\S+[ \t]+\((macro|sample)\b/.exec(line);
+            kind = ctor ? ctor[1] : 'def';
+          }
           else kind = 'def';
           // A kit names its samples after roles; the file says which sound.
           const file = kind === 'sample' && /:file\s+"(?:[^"]*\/)?([^"/]+?)(?:\.\w+)?"/.exec(line);
@@ -3276,9 +3278,9 @@
       const { path, inFolder } = await droppedPath(entry);
       const name = uniqueDefName(slugFromFileName(entry.file.name, 'sample'));
       // No :rate — the default is the wav's own rate, which is what we want.
-      insertTextAtCursor(`(def ${name} :sample :file ${JSON.stringify(path)})`);
+      insertTextAtCursor(`(def ${name} (sample :file ${JSON.stringify(path)}))`);
       if (inFolder) {
-        log(`Dropped ${path} as (def ${name} :sample …) — press Build to apply`, 'info');
+        log(`Dropped ${path} as (def ${name} (sample …)) — press Build to apply`, 'info');
         return;
       }
       // Outside the folder the path resolves to nothing, so decode now and seed
@@ -3293,7 +3295,7 @@
           data: audioBufferToMono(decoded),
           sampleRate: decoded.sampleRate,
         });
-        log(`Dropped ${path} as (def ${name} :sample …) — held in memory; put the wav next to the score and File > Open Folder… to keep it after a reload`, 'info');
+        log(`Dropped ${path} as (def ${name} (sample …)) — held in memory; put the wav next to the score and File > Open Folder… to keep it after a reload`, 'info');
       } catch (e) {
         log(`${path}: decode failed (${e?.message || e}) — the def was inserted but will not play until the wav is in the opened folder`, 'err');
       }
@@ -5035,19 +5037,15 @@
       return entry;
     }
 
-    // The `:file` of a sample def, or null when the def is not a sample.
+    // The `:file` of a `(def name (sample …))`, or null when the def is not a
+    // sample (or extends one without a file of its own).
     function sampleFileOfDefNode(node) {
-      let isSample = false;
-      let file = null;
-      for (let i = 2; i < node.items.length; i++) {
-        const it = node.items[i];
-        if (!it || it.kind !== 'atom') continue;
-        if (it.value === ':sample') isSample = true;
-        if (it.value === ':file' && node.items[i + 1]?.kind === 'string') {
-          file = node.items[i + 1].value;
-        }
-      }
-      return isSample ? file : null;
+      const ctor = node.items[2];
+      if (ctor?.kind !== 'list' || ctor.items[0]?.value !== 'sample') return null;
+      const items = ctor.items;
+      for (let i = 1; i + 1 < items.length; i++)
+        if (items[i].value === ':file' && items[i + 1].kind === 'string') return items[i + 1].value;
+      return null;
     }
 
     function renderBrowseSet(host, set) {
@@ -5712,32 +5710,17 @@
       };
     }
 
-    // The sample def under the cursor: `(def name :sample …)`, or a `:extend`
-    // of a sample (its base is a sample the last build knew, or a :sample /
-    // sample :extend in this text). What it sounds like is decided at the key,
-    // by compiling the text as it is then.
+    // The sample def under the cursor: `(def name (sample …))`. What it sounds
+    // like is decided at the key, by compiling the text as it is then.
     function findSampleDefAtCursor() {
       const state = editorView.state;
       const cursorLine = state.doc.lineAt(state.selection.main.head).number;
       let ast;
       try { ast = parse(state.doc.toString()); } catch { return null; }
-      const defs = new Map(); // name -> ':sample' | extend base
-      let hit = null;
       for (const root of ast) {
         const it = root.kind === 'list' ? root.items.filter((n) => n.kind !== 'comment') : [];
-        if (it[0]?.value !== 'def') continue;
-        const name = it[1]?.value, tag = it[2]?.value;
-        if (tag === ':sample') defs.set(name, ':sample');
-        else if (tag === ':extend') defs.set(name, it[3]?.value);
-        else continue;
-        if (root.line <= cursorLine && cursorLine <= (root.endLine ?? root.line)) hit = name;
-      }
-      if (!hit) return null;
-      const known = new Set((_lastGoodIR?.metadata?.samples ?? []).map((d) => d.name));
-      for (let n = hit, i = 0; n && i < 32; i++) {
-        const v = defs.get(n);
-        if (v === ':sample' || (v === undefined && known.has(n))) return hit;
-        n = v;
+        if (it[0]?.value !== 'def' || it[2]?.kind !== 'list' || it[2].items[0]?.value !== 'sample') continue;
+        if (root.line <= cursorLine && cursorLine <= (root.endLine ?? root.line)) return it[1]?.value ?? null;
       }
       return null;
     }

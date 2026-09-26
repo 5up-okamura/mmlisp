@@ -23,7 +23,7 @@
   :ar3 31 :dr3 12 :sr3 1 :rr3 8 :sl3 5 :tl3 24 :ks3 0 :ml3 1 :dt3 0
   :ar4 31 :dr4 11 :sr4 2 :rr4 9 :sl4 3 :tl4 6  :ks4 0 :ml4 1 :dt4 0)
 
-(def kit :sample :file "blip.wav")
+(def kit (sample :file "blip.wav"))
 
 (pcm1 kit :tempo 140 :oct 4 :len 8 :vel 15
   #loop  c c > c < c  c c > c < c  (go loop))

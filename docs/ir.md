@@ -77,7 +77,7 @@ One entry per `(def-val name …)`, in declaration order:
 Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 `step`/`reversed` are for the host UI (Dynamic Parameters panel).
 
-### 2.2 `metadata.samples[]` — PCM sample defs (`def name :sample …`)
+### 2.2 `metadata.samples[]` — PCM sample defs (`(def name (sample …))`)
 
 | Field          | Type        | Semantics                                          |
 | -------------- | ----------- | --------------------------------------------------- |
@@ -308,7 +308,7 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
 | `to`         | number  | target| yes | End value (0 if unspecified).                                     |
 | `frames`     | int     | ticks | no  | Sweep length. **In ticks** despite the name (the player converts ticks → 60 Hz frames at dispatch). |
 | `lenFrames`  | bool    | —     | no  | True when `:len` was written as `Nf` (absolute frames). **Ignored on PARAM_SWEEP by the player** — see §11. |
-| `loop`       | bool    | —     | yes | True for loop waveforms (`sin`/`triangle`/`square`/`saw`/`ramp`/`noise`/`pink`/`perlin`/`brown`) or an explicit `:loop` flag. |
+| `loop`       | bool    | —     | yes | True for loop waveforms (`sin`/`triangle`/`square`/`saw`/`ramp`/`noise`/`pink`/`perlin`/`brown`) or `:mode loop`; `:mode shot` clears it. |
 | `waitTicks` / `waitKeyOff` | int / bool | ticks | no | Pre-delay before the curve. **Ignored on PARAM_SWEEP** (macro-only) — see §11. |
 | `params`     | object  | —     | no  | Curve shape params (§6.4).                                        |
 | `dyn`        | object  | —     | no  | `{ from?, to?, rate?, len? }` slot refs; `from`/`to`/`rate` resolved at sweep start. **`from`/`to` are slot-fed in MMB too** (PARAM_SWEEP flags bit1/bit2, read live at dispatch — §4.6 note-on tier, opcodes.md); `rate`/`len` still bake to slot init on MMB — see §11. |
@@ -494,8 +494,8 @@ All spec kinds may carry:
 | Field          | Type            | Semantics                                                              |
 | -------------- | --------------- | ------------------------------------------------------------------------ |
 | `steps`        | (number\|null)[] | One value per step; `null` = hold (advance one step, no write). Floats allowed (post-scaling). |
-| `loopIndex`    | int\|null       | `:hold` position — sustain loops back here until gate. `null` = one-shot (hold last value). |
-| `releaseIndex` | int\|null       | `:off` position — steps from here play after key-off, spaced by `step`.  |
+| `loopIndex`    | int\|null       | `#sus` position — sustain loops back here until gate. `null` = one-shot (hold last value). |
+| `releaseIndex` | int\|null       | `#rel` position — steps from here play after key-off, spaced by `step`.  |
 | `src`          | object          | Source span of the `[...]` literal (playhead highlight). Scalar-constant sugar (`:keyon 1`) emits `steps:[v], loopIndex:0` without `src`. |
 
 Playback: attack runs from index 0; the sustain section (up to
@@ -521,7 +521,7 @@ The curve-spec fields (shared verbatim with `PARAM_SWEEP` args §5.9):
 | `to`         | number  | End value (always present; 0 default).                                           |
 | `frames`     | number  | `:len`. Ticks by default; absolute 60 Hz frames when `lenFrames` is true (`Nf`); placeholder `1` when `dyn.len` is set. |
 | `lenFrames`  | bool    | Present (true) only for `Nf` lengths.                                            |
-| `loop`       | bool    | Loop waveforms and `:loop`-flagged easings cycle until gate; non-loop curves clamp at phase 1 and hold. |
+| `loop`       | bool    | Loop waveforms and `:mode loop` easings cycle until gate; non-loop curves clamp at phase 1 and hold. |
 | `waitTicks`  | int     | Pre-delay in ticks before the curve starts (`:wait N`).                          |
 | `waitKeyOff` | bool    | Start at the key-off boundary (`:wait key-off`) — e.g. release envelopes.        |
 | `params`     | object  | Shape params (§6.4). Only emitted when non-empty.                                |

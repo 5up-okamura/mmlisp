@@ -248,7 +248,7 @@ section entirely**; it exists for hosts and tools.
 
 ## 10. SAMPLE_BANK (separate ROM bank)
 
-PCM data for `def :sample` (docs/language.md §9, §16). **This is not an MMB
+PCM data for `(sample …)` defs (docs/language.md §9, §16). **This is not an MMB
 section — it is its own 32 KB ROM bank**, so PCM blobs never crowd the MMB. The
 exporter (`encodeMmb`) returns it separately (`{ bytes, sampleBank }`); the host
 points the Z80's window at it (SGDK: `MMLisp_setSampleBank(song_smp)` after

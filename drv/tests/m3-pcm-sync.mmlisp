@@ -1,6 +1,6 @@
 ; PCM against FM on the same beat: fm1 keys on every quarter note and pcm1
 ; starts a sample on the same quarter notes. Graded by gate-score's SYNC row:
 ; the first DAC sample of each start against the fm1 key-on it goes with.
-(def blip :sample :file "blip.wav")
+(def blip (sample :file "blip.wav"))
 (fm1 :tempo 120 :oct 4 :len 4 :vel 12 :gate- 4t c c c c c c c c)
 (pcm1 blip :oct 4 :len 4 :vel 15 c c c c c c c c)

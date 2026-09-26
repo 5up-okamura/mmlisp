@@ -3034,7 +3034,7 @@ export class IRPlayer {
       const sustainEnd = releaseIndex ?? steps.length;
 
       // Attack + sustain loop until gate, advancing one step per :step interval.
-      // An empty sustain section (`[:off ...]`, releaseIndex 0) writes nothing
+      // An empty sustain section (`[#rel ...]`, releaseIndex 0) writes nothing
       // before key-off — the target keeps its current value until the release.
       let t = when;
       let idx = 0;

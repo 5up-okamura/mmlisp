@@ -438,8 +438,8 @@ Behavior:
 
 A **looping** curve stage runs until KEY-OFF instead of for a fixed `:len`,
 giving a modulated sustain (LFO). Loop-wave curves (`sin` `triangle` `square`
-`saw` `ramp`) loop by default; any other curve loops when you add the **`:loop`**
-flag:
+`saw` `ramp`) loop by default; any other curve loops with **`:mode loop`**
+(and `:mode shot` plays a loop wave once):
 
 ```lisp
 (def organ (macro :vel [
@@ -449,8 +449,8 @@ flag:
 ]))
 ```
 
-The value-less `:loop` flag forces a non-loop curve to cycle, e.g.
-`(ease-out :from 15 :to 0 :len 4 :loop)` as a pulsing sustain stage.
+`:mode loop` makes a non-loop curve cycle, e.g.
+`(ease-out :from 15 :to 0 :len 4 :mode loop)` as a pulsing sustain stage.
 
 ### `(const V :len D)` — flat segment
 
@@ -498,11 +498,11 @@ Step-vector macro targets for arpeggios, drum rolls, and per-note echo tails.
 ### `:semi` — semitone arpeggio
 
 Discrete semitone offsets (the counterpart to `:pitch`, which is continuous
-cents). On a sustained voice this is a classic arpeggio. `:hold` marks the loop
+cents). On a sustained voice this is a classic arpeggio. `#sus` marks the loop
 point.
 
 ```lisp
-(fm1 (macro :step 1/16  :semi [:hold 0 4 7])  c)   ; c–e–g, looping
+(fm1 (macro :step 1/16  :semi [#sus 0 4 7])  c)   ; c–e–g, looping
 ```
 
 ### `:keyon` — retrigger gate
@@ -512,10 +512,10 @@ the envelope). Accepts `0`/`1` step lists, a scalar, or a curve/stochastic
 signal.
 
 - `:keyon 1` — retrigger every step (drum roll)
-- `:keyon [0 :off 1 1 1]` — retrigger only in the release section (after KEY-OFF)
+- `:keyon [0 #rel 1 1 1]` — retrigger only in the release section (after KEY-OFF)
 
-`:keyon` honors `:off`: steps before `:off` loop until the gate (a roll that
-stops at KEY-OFF); steps after `:off` fire after KEY-OFF (a 1-channel echo
+`:keyon` honors `#rel`: steps before `#rel` loop until the gate (a roll that
+stops at KEY-OFF); steps after `#rel` fire after KEY-OFF (a 1-channel echo
 tail). While a `:keyon` macro is active it owns the channel keying — the note
 keys off after the last retrigger.
 
@@ -539,16 +539,16 @@ just a curve sampled at `:step`, so `:keyon (square …) :step 16` gates
 retriggers on the 1/16 grid.
 
 ```lisp
-(fm1 (macro :step 1/16 :semi [:hold 0 4 7])   ; arp on the 1/16 grid
-     (macro :step 1/8  :keyon [0 :off 1 1 1])  ; echo tail on the 1/8 grid
+(fm1 (macro :step 1/16 :semi [#sus 0 4 7])   ; arp on the 1/16 grid
+     (macro :step 1/8  :keyon [0 #rel 1 1 1])  ; echo tail on the 1/8 grid
      c)
 ```
 
 ### Echo-tail preset (1-channel delay on one note)
 
 ```lisp
-(def echo-tail (macro :step 1/8  :keyon [0 :off 1 1 1]
-                                 :vel   [15 :off 10 5 0]))
+(def echo-tail (macro :step 1/8  :keyon [0 #rel 1 1 1]
+                                 :vel   [15 #rel 10 5 0]))
 
 (fm1 echo-tail :len 8  c _ _ _)
 ```
@@ -635,7 +635,7 @@ Delay echoes carry the source's per-note macros (`:keyon`, `:semi`, …), so a
 phrase with a 1-channel `:keyon` tail repeats with that tail.
 
 ```lisp
-(def echo-tail (macro :step 16 :vel [15 :off 10 5 0] :keyon [0 :off 1 1 1]))
+(def echo-tail (macro :step 16 :vel [15 #rel 10 5 0] :keyon [0 #rel 1 1 1]))
 
 (fm1 echo-tail (delay :vel+ 4 :by -3 :time 4)
   :len 16 c _ _ _ :len 4 _ _ _)
@@ -649,7 +649,7 @@ velocity, lowered by the delay's per-tap step.
 ## 14. Noise Authoring (`noise` channel)
 
 ```lisp
-(def perc-buzz (macro :mode [white0 :hold periodic3]))
+(def perc-buzz (macro :mode [white0 #sus periodic3]))
 (def hh-env (macro :vel [15 9 4 0]))
 
 (noise :len 8 (macro perc-buzz hh-env)
@@ -705,7 +705,7 @@ operation is chosen by the keyword so the argument is never ambiguous:
 `:len 0` fires KEY-ON, holds indefinitely, and does not advance the timeline. Any subsequent notes in the same channel all land at tick 0. Useful for a single held note with a release macro:
 
 ```lisp
-(sqr1 :len 0 (macro :vel [15 :hold 14 13 :off 8 4 0])
+(sqr1 :len 0 (macro :vel [15 #sus 14 13 #rel 8 4 0])
   c)
 ```
 
@@ -842,12 +842,12 @@ the IR mapping).
 
 ## 19. PCM Samples
 
-Samples are defined with `def :sample`, then used as the first positional argument of `pcm1` / `pcm2` / `pcm3`.
+Samples are defined with `(def name (sample …))`, then named in a `pcm1` / `pcm2` / `pcm3` body — before the notes, and again wherever the sound changes — as a voice is on FM.
 
 ```lisp
 (def pcm-voices 2)
-(def kick  :sample :file "sounds/kick.wav")
-(def snare :sample :file "sounds/snare.wav" :rate 11025)
+(def kick  (sample :file "sounds/kick.wav"))
+(def snare (sample :file "sounds/snare.wav" :rate 11025))
 
 (pcm1 kick :tempo 120  :len 4  c _ c _)
 (pcm2 snare :len 4  _ c _ c)
@@ -871,10 +871,10 @@ thin; `:effect` processes it at compile time, in the order written, at no cost
 to the driver (language.md §16):
 
 ```lisp
-(def snare :sample :file "sounds/snare.wav"
+(def snare (sample :file "sounds/snare.wav"
   :effect [(comp :threshold -20 :ratio 4 :attack 0ms)   ; even out the body
            (gain 8) (limit)                             ; bring it up, cap the peak
-           (fade :len 60ms :curve ease-out-expo)])      ; shorten the tail
+           (fade :len 60ms :curve ease-out-expo)]))     ; shorten the tail
 ```
 
 `(normalize)` scales a quiet file to full scale, `(crush 4)` is the lo-fi
@@ -884,7 +884,7 @@ its own:
 
 ```lisp
 (import "presets/808/set.mmlisp" :effect [(comp :attack 0ms) (gain 6) (limit)])
-(def snare-hot :extend snare :effect [(fade :len 60ms)])
+(def snare-hot (sample snare :effect [(fade :len 60ms)]))
 ```
 
 **Put the cursor on a sample def to play it from the keyboard**, as with an FM
@@ -963,7 +963,7 @@ costs nothing at runtime (the values are baked at compile time).
 (def phrase c e g e)
 (def env (macro
   :vel [15 12 8 4 0]
-  :pan [:hold left center right center]))
+  :pan [#sus left center right center]))
 
 (fm1
   brass

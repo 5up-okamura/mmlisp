@@ -6,4 +6,4 @@
 ; keys off mid-note so the :off decay plays into the gap; two notes lock the
 ; re-key + second release.
 (sqr1 :tempo 120 :len 4 :gate* 0.5 :vel 15
-  (macro :step 1/16 :vel [15 :off 12 9 6 3 0]) c _ c _)
+  (macro :step 1/16 :vel [15 #rel 12 9 6 3 0]) c _ c _)
