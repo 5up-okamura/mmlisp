@@ -55,8 +55,8 @@ source file is a sequence of top-level forms, in source order:
   which track carries them. `:tempo` takes a BPM number or a curve
   (`TEMPO_SWEEP`, §5); the tempo at tick 0 also seeds `Nf` conversion (§4) for
   every track. Default 120.
-- **`:shuffle` / `:shuffle-base`** — per-track head options (§5.2); there is no
-  score-wide default.
+- **`:shuffle` / `:shuffle-base`** — per-track body keywords (§5.2); there is
+  no score-wide default.
 
 ### Channel forms: append and layer
 
@@ -240,12 +240,14 @@ of the same channel. Defaults:
 | `:shuffle` | off (`none`)       |
 | tempo      | 120 BPM            |
 
-### Head-only options
+### The head: `:prio`
 
-These are consumed as key/value pairs immediately after the channel name and
-must appear there (in the body they are `E_UNKNOWN_KEYWORD`): `:prio`,
-`:shuffle`, `:shuffle-base`. (`:oct` `:len` `:gate` `:gate*` `:gate-` `:vel` also parse in
-head position, and equally as body directives.)
+`:prio` is the one head option. It picks the layer the form belongs to (§1), so
+it must come right after the channel name (after a `pcm` track's sample, §16);
+anywhere else it is `E_UNKNOWN_KEYWORD`, and a value that is not a
+non-negative integer is `E_PRIO_INVALID`. Everything after it is body — `:oct`,
+`:len`, `:shuffle` and the rest at the start of a form are ordinary body
+keywords at the form's first tick.
 
 ### Body keywords
 
@@ -264,6 +266,8 @@ head position, and equally as body directives.)
 | `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`; `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
 | `:sample`  | sample def name           | Re-bind the PCM sample (PCM-active tracks)               |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
+| `:shuffle` | 51–90 or `none`           | Swing ratio (§5.2)                                       |
+| `:shuffle-base` | length token         | The swung length (default: eighth, §5.2)                 |
 | hardware params | value / curve / `none` / `$slot` | `:alg :fb :ams :fms :lfo-rate :tl1`–`:tl4` `:ar :dr :sr :rr :sl :ml :dt :ks :ssg :am`(1–4) — §5.1 |
 
 The gate family decides how *short* a note is inside its slot, never whether
@@ -317,15 +321,16 @@ read live from the register shadow.
 (`E_UNSUPPORTED_TARGET` for unknown targets).
 
 An inline `:keyword` that is neither a known directive nor a hardware param
-target (a typo, or a track-header option like `:ch` used mid-body) is rejected
+target (a typo, or the head option `:prio` used mid-body) is rejected
 with `E_UNKNOWN_KEYWORD` rather than silently dropped.
 
 ### 5.2 Shuffle
 
 `:shuffle R` (51–90; `none` = straight) swings note/rest pairs whose nominal
 length equals `:shuffle-base` (default: eighth). The pair spans 2× the base;
-the first beat takes `R` % of it. Per-track (head option): each track sets its
-own swing.
+the first beat takes `R` % of it. Each track sets its own swing, anywhere in
+the body; a change restarts the pairing, so the next swung note is a first
+beat. A value that is neither a number nor `none` is `E_SHUFFLE_INVALID`.
 
 ```lisp
 (sqr1 :shuffle 66 :len 8  c c c c)

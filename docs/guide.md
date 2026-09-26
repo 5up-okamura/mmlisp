@@ -162,8 +162,8 @@ Common modifiers:
   mutes**. Default (unset) = `31` (unity).
 - `:master N` — global master level (`0`–`31`); same fader as `:vol`; **`0`
   mutes**
-- `:shuffle N` — swing ratio (`51`–`90`; `none` = straight). Head-only: write it
-  right after the channel name, not mid-body; per-track (no score-wide default)
+- `:shuffle N` — swing ratio (`51`–`90`; `none` = straight); per-track (no
+  score-wide default)
 - `(glide T)` — portamento from the previous note over duration `T` (same
   length-token forms as `:len`); `(glide none)` disables.
 - `(glide from-pitch T)` — glide from an explicit start pitch. The start pitch is

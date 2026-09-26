@@ -104,20 +104,6 @@ const PARAM_SET_TARGETS = new Set([
   ...PCM_LOOP_TARGETS,
 ]);
 
-const TRACK_OPTION_KEYS = new Set([
-  ":ch",
-  ":prio",
-  ":oct",
-  ":len",
-  ":gate",
-  ":gate*",
-  ":gate-",
-  ":vel",
-  ":shuffle",
-  ":shuffle-base",
-]);
-// Options only the head reads (language.md §5 "Head-only options").
-const HEAD_ONLY_KEYS = new Set([":ch", ":prio", ":shuffle", ":shuffle-base"]);
 
 // Curve function names recognized in inline curve specs (PARAM_SWEEP authoring)
 const CURVE_NAMES = new Set([
@@ -3118,6 +3104,31 @@ function compileChannelBody(
               }
               break;
             }
+            case ":shuffle":
+            case ":shuffle-base": {
+              // Swing (§5.2): `none` or under 51 is straight. A change restarts
+              // the pair count, so the next swung note is a first beat.
+              if (val === ":shuffle") {
+                const v = rawVal === "none" ? 0 : parseIntLike(rawVal);
+                if (v === null) {
+                  pushDiag(diagnostics, "error", "E_SHUFFLE_INVALID",
+                    `:shuffle takes 51..90 or none, not ${rawVal ?? "a list"}`,
+                    nodeSrc(node), trackName);
+                  break;
+                }
+                trackState.shuffleRatio = v < 51 ? 0 : Math.min(90, v);
+              } else {
+                trackState.shuffleBase = resolveLengthNode(
+                  items[i],
+                  trackState.shuffleBase,
+                  trackState,
+                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
+                  evalEnv,
+                );
+              }
+              trackState.subBeatParity = 0;
+              break;
+            }
             case ":vel":
             case ":vel+":
             case ":vel*": {
@@ -5378,102 +5389,34 @@ function compileScore(src, filename, options, frameHz) {
       }
     }
 
-    // Collect inline options (key-value pairs immediately after the channel name).
-    // Only TRACK_OPTION_KEYS are consumed here; hardware param keys (:tl1, :ar1, etc.)
-    // and other modifiers (:vel, :master, etc.) are left in the body for compileChannelBody.
-    // Example: (fm1 :oct 4 :len 8 :vol 10  c d e f)
-    //                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ options
-    let i = bodyStartIndex;
-    const inlineOpts = {};
-    while (i + 1 < node.items.length) {
-      const key = atomValue(node.items[i]);
-      if (!TRACK_OPTION_KEYS.has(key)) break;
-      // A computed value (a list) is the body's to evaluate: the body parses
-      // every key that is also a body directive (:len, :gate, :oct, :vel …),
-      // so leave it there instead of reading an atom that is not one.
-      if (node.items[i + 1]?.kind === "list" && !HEAD_ONLY_KEYS.has(key)) break;
-      // …and so is an :oct / :vel that is not a plain integer (a let name, a
-      // `$slot`): the body resolves or reports it.
-      if ((key === ":oct" || key === ":vel") && parseIntLike(atomValue(node.items[i + 1])) === null) break;
-      inlineOpts[key] = atomValue(node.items[i + 1]);
-      i += 2;
-    }
-    // Body items start after the inline options
-    const bodyItems = node.items.slice(i);
-
+    // `:prio` is the one head option: it picks the layer (the timeline) the
+    // form belongs to, so it must be read before the body. Everything else in
+    // the form is body (language.md §5).
     // v0.5: :prio layers forms on the same channel. Same prio appends (one
     // timeline); different prio values are independent parallel timelines on the
     // same physical channel, resolved by priority at the flatten post-pass.
     // Lower number = higher priority; default 8 (headroom on both sides).
+    let i = bodyStartIndex;
     let prio = 8;
-    if (inlineOpts[":prio"] !== undefined) {
-      const v = parseIntLike(inlineOpts[":prio"]);
+    if (atomValue(node.items[i]) === ":prio" && i + 1 < node.items.length) {
+      const v = parseIntLike(atomValue(node.items[i + 1]));
       if (v !== null) prio = Math.max(0, v);
+      else
+        pushDiag(diagnostics, "error", "E_PRIO_INVALID",
+          `:prio takes a non-negative integer, not ${atomValue(node.items[i + 1]) ?? "a list"}`,
+          nodeSrc(node.items[i]), head);
+      i += 2;
     }
+    const bodyItems = node.items.slice(i);
     const trackKey = `${head}:${prio}`;
 
     if (!trackByKey.has(trackKey)) {
-      // Initialize defaults; inline options on the first form set the initial state
-      let defaultOct = 4;
-      let defaultLength = Math.round(WHOLE_TICKS / 8);
-      let defaultGate = null;
-      let defaultVol = 31; // v0.4: default vol is 31 (no attenuation)
-      let defaultVel = 15; // v0.4: default velocity 0-15
-      let shuffleRatio = 0; // v0.6: shuffle is per-track (no score-wide default)
-      let shuffleBase = Math.round(WHOLE_TICKS / 8);
-
-      if (inlineOpts[":oct"] !== undefined) {
-        const v = parseIntLike(inlineOpts[":oct"]);
-        if (v !== null) defaultOct = Math.max(0, v);
-      }
-      if (inlineOpts[":len"] !== undefined) {
-        defaultLength = parseLengthToken(
-          inlineOpts[":len"],
-          defaultLength,
-          scoreInitialBpm ?? 120,
-        );
-      }
-      for (const gk of [":gate", ":gate*", ":gate-"]) {
-        if (inlineOpts[gk] !== undefined) {
-          const g = parseGateFamily(gk, inlineOpts[gk], scoreInitialBpm ?? 120);
-          if (g !== null) defaultGate = g;
-          else gateInvalid(diagnostics, gk, inlineOpts[gk], nodeSrc(node), head);
-        }
-      }
-      if (inlineOpts[":vol"] !== undefined) {
-        const v = parseIntLike(inlineOpts[":vol"]);
-        if (v !== null) defaultVol = Math.max(0, Math.min(31, v));
-      }
-      if (inlineOpts[":vel"] !== undefined) {
-        const v = parseIntLike(inlineOpts[":vel"]);
-        if (v !== null) defaultVel = Math.max(0, Math.min(15, v));
-      }
-      if (inlineOpts[":shuffle"] !== undefined) {
-        // `none` = straight (off-unification: none = clear a feature).
-        if (inlineOpts[":shuffle"] === "none") {
-          shuffleRatio = 0;
-        } else {
-          const rawTrackShuffle = parseIntLike(inlineOpts[":shuffle"]);
-          if (rawTrackShuffle !== null) {
-            shuffleRatio =
-              rawTrackShuffle < 51 ? 0 : Math.min(90, rawTrackShuffle);
-          }
-        }
-      }
-      if (inlineOpts[":shuffle-base"] !== undefined) {
-        shuffleBase = parseLengthToken(
-          inlineOpts[":shuffle-base"],
-          shuffleBase,
-          scoreInitialBpm ?? 120,
-        );
-      }
-
       // All state is sticky and persists across consecutive forms of the same channel
       const trackState = {
         tick: 0,
-        defaultLength,
-        defaultOct,
-        defaultGate,
+        defaultLength: Math.round(WHOLE_TICKS / 8),
+        defaultOct: 4,
+        defaultGate: null,
         currentTempo: scoreInitialBpm ?? 120,
         initialBpm: scoreInitialBpm,
         isFm3OpTrack: /^fm3-[1-4]$/.test(head),
@@ -5490,8 +5433,7 @@ function compileScore(src, filename, options, frameHz) {
         sampleDefs,
         hasInlineCsmRate: false,
         hasCsmOn: false,
-        defaultVol,
-        defaultVel, // v0.4: per-note velocity, KEY-ON scoped, 0-15
+        defaultVel: 15, // per-note velocity, KEY-ON scoped, 0-15
         activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
         delayTicks: 0, // v0.5: (delay …) tap spacing in ticks (0 = off)
         delaySpec: null, // v0.5: (delay …) relative spec {mode,type,…} or null
@@ -5500,8 +5442,8 @@ function compileScore(src, filename, options, frameHz) {
         glideFrom: null, // v0.4: one-shot start pitch override for glide
         lastNotePitch: null, // v0.4: previous note's pitch for glide calculation
         lastCsmHz: null, // v0.5: previous fm3-csm-rate Hz for glide sweeps
-        shuffleRatio,
-        shuffleBase,
+        shuffleRatio: 0, // per-track swing, 0 = straight (§5.2)
+        shuffleBase: Math.round(WHOLE_TICKS / 8),
         subBeatParity: 0,
         currentLoopId: null, // id of innermost counted (x N ...) loop, for (break)
       };
@@ -5521,16 +5463,6 @@ function compileScore(src, filename, options, frameHz) {
         events: [],
       };
 
-      // Emit initial VOL event if :vol was explicitly specified
-      if (inlineOpts[":vol"] !== undefined) {
-        trackData.events.push({
-          tick: 0,
-          cmd: "PARAM_SET",
-          args: { target: "VOL", value: defaultVol },
-          src: nodeSrc(node),
-        });
-      }
-
       // Emit default NOISE_MODE (white0) for noise channel
       if (head === "noise") {
         trackData.events.push({
@@ -5543,66 +5475,8 @@ function compileScore(src, filename, options, frameHz) {
 
       trackByKey.set(trackKey, { trackData, trackState, head, prio });
       trackOrder.push(trackKey);
-    } else {
-      // Update sticky state from inline options on subsequent forms of the same channel
-      const { trackData, trackState } = trackByKey.get(trackKey);
-
-      if (isPcmTrack && pcmSampleName) {
-        trackState.pcmSampleName = pcmSampleName;
-      }
-
-      if (inlineOpts[":oct"] !== undefined) {
-        const v = parseIntLike(inlineOpts[":oct"]);
-        if (v !== null) trackState.defaultOct = Math.max(0, v);
-      }
-      if (inlineOpts[":len"] !== undefined) {
-        trackState.defaultLength = parseLengthToken(
-          inlineOpts[":len"],
-          trackState.defaultLength,
-          trackState.currentTempo,
-        );
-      }
-      for (const gk of [":gate", ":gate*", ":gate-"]) {
-        if (inlineOpts[gk] !== undefined) {
-          const g = parseGateFamily(gk, inlineOpts[gk], trackState.currentTempo);
-          if (g !== null) trackState.defaultGate = g;
-          else gateInvalid(diagnostics, gk, inlineOpts[gk], nodeSrc(node), head);
-        }
-      }
-      // A later form of the channel reads :shuffle / :shuffle-base exactly as
-      // the first one does (§5.2): `none` or under 51 is straight.
-      if (inlineOpts[":shuffle"] !== undefined) {
-        const raw = inlineOpts[":shuffle"];
-        const v = raw === "none" ? 0 : parseIntLike(raw);
-        if (v !== null) {
-          trackState.shuffleRatio = v < 51 ? 0 : Math.min(90, v);
-          trackState.subBeatParity = 0;
-        }
-      }
-      if (inlineOpts[":shuffle-base"] !== undefined) {
-        trackState.shuffleBase = parseLengthToken(
-          inlineOpts[":shuffle-base"],
-          trackState.shuffleBase,
-          trackState.currentTempo,
-        );
-        trackState.subBeatParity = 0;
-      }
-      if (inlineOpts[":vol"] !== undefined) {
-        const v = parseIntLike(inlineOpts[":vol"]);
-        if (v !== null) {
-          trackState.defaultVol = Math.max(0, Math.min(31, v));
-          trackData.events.push({
-            tick: trackState.tick,
-            cmd: "PARAM_SET",
-            args: { target: "VOL", value: trackState.defaultVol },
-            src: nodeSrc(node),
-          });
-        }
-      }
-      if (inlineOpts[":vel"] !== undefined) {
-        const v = parseIntLike(inlineOpts[":vel"]);
-        if (v !== null) trackState.defaultVel = Math.max(0, Math.min(15, v));
-      }
+    } else if (isPcmTrack && pcmSampleName) {
+      trackByKey.get(trackKey).trackState.pcmSampleName = pcmSampleName;
     }
 
     const { trackData, trackState } = trackByKey.get(trackKey);
