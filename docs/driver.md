@@ -316,7 +316,12 @@ this order and the 68k C reproduces it (§12):
    reloads `wait_ticks`). Key-offs scheduled by the gate rule fire on their
    tick inside this loop.
 3. **Engines, ascending channel index:** sweep interpolators, then macro
-   steppers (§13.3).
+   steppers (§13.3). A sweep takes its first step in the frame its
+   PARAM_SWEEP dispatched in, so a note in that frame composes from the level
+   before it. It runs its `len` (a loop curve, indefinitely) until a
+   PARAM_SET, PARAM_SWEEP or PARAM_SWEEP_STOP on its target frees the slot —
+   a note does not stop it (a timeline sweep is free of key-on, language.md
+   §5.1).
 4. **Close the frame** (§6.2): its register writes and PCM commands.
 
 Register writes are **appended to the frame as they are generated**, in
@@ -714,8 +719,10 @@ Rules:
 
 - **`vel_base`** — the score's sticky velocity. Written *only* by a
   `PARAM_SET VEL` out of the event stream — which **stores it and writes
-  nothing**: velocity is note-on scoped (language.md §5), so the next note-on
-  composes it and a note already sounding keeps its level, as in the preview.
+  nothing**, leaving the live `vel` alone: velocity is note-on scoped
+  (language.md §5), so the next note-on composes it, and a note already
+  sounding keeps its velocity through any `vol`/`master` recompose, as in the
+  preview.
   A host `SET_PARAM VEL` still applies at once.
 - **`vel`** — the live one that composes into TL / att / PCM shift. A `:vel`
   macro writes this every frame; it is the channel's envelope authority while

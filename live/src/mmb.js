@@ -316,6 +316,16 @@ export function sweepStep(len, loop) {
   return n <= 1 ? 0 : Math.min(0xffff, Math.floor(65536 / (n - 1)));
 }
 
+// The value a sweep slot writes on its `frame`-th frame (0 = the frame the
+// PARAM_SWEEP runs): the phase accumulates `sweepStep` per frame, and a
+// one-shot writes `to` exactly from its last frame on. The preview samples
+// sweeps through this so it steps the same integers as the driver.
+export function sweepFrameValue(id, from, to, len, loop, frame) {
+  if (!loop && frame >= len - 1) return to;
+  const phase16 = (frame * sweepStep(len, loop)) & 0xffff;
+  return sweepValue(from, to, curveUnit8(id, phase16 >> 8));
+}
+
 // ── PCM levels (driver.md §14.1) ──────────────────────────────────────────
 // A voice's level is a right shift of its 8-bit sample, on a 6 dB grid: the
 // engine reads the sample through one of eight level pages (the host picks

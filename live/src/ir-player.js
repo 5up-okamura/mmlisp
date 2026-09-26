@@ -27,7 +27,6 @@ import {
   velToPsgAtten,
   volToPsgOffset,
   VOL_UNITY,
-  sweepVolAtTime,
   sampleSweepPhase,
   sampleCurveUnit,
   OP_ADDR_OFFSET,
@@ -45,7 +44,7 @@ import {
   KEY_ORDER_EPS_SECS,
   HOLD_FRAMES,
 } from "./ir-utils.js";
-import { curveId, curveUnit8, sweepValue, sweepStep } from "./mmb.js";
+import { curveId, curveUnit8, sweepValue, sweepStep, sweepFrameValue } from "./mmb.js";
 import { engineImage } from "./engine-images.js";
 // The largest loop point a PCM loop target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
@@ -54,6 +53,13 @@ const PCM_LOOP_MAX = 0x7f00;
 // far too early to hear.
 const PCM_SWEEP_AFTER = 0.0005;
 const PCM_LOOP_WHICH = { LOOP_START: "START", LOOP_END: "END", LOOP_LEN: "LEN" };
+
+// The curve names the driver computes as written (driver.md §8); a sweep on
+// one of these previews the driver's integer steps (_sweepAt).
+const DRIVER_SWEEP_CURVES = new Set([
+  "linear", "ease-in", "ease-in-quad", "ease-out", "ease-out-quad",
+  "ease-inout", "ease-inout-quad", "sin", "triangle", "square", "saw", "ramp",
+]);
 
 // Control-flow and timing events do not represent a sounding position, so they
 // must not move the editor playhead highlight. Without this, a zero-duration
@@ -114,6 +120,7 @@ export class IRPlayer {
     this._tempoSweep = null;
     this._tempoOverride = false; // set once the tempo is dialled in live
     this._startAudioTime = 0;
+    this._frameOrigin = 0; // audio time of frame 0 (the sweep frame grid)
     this._audioContext = null;
     this._schedulerTimer = null;
     this._schedulerLookahead = 0.2; // seconds
@@ -144,6 +151,7 @@ export class IRPlayer {
     // Global YM2612 state
     this._lfoRate = 0; // 0 = off, 1-8 = rate index
     this._masterVol = VOL_UNITY; // 0 = silent, 31 = full (additive TL offset applied to all channels)
+    this._masterSweep = null; // a running :master sweep (its frames are scheduled up front)
     this._reg27 = 0;
 
     // Track → channel mapping (defaults to index 0 for demo)
@@ -170,6 +178,7 @@ export class IRPlayer {
     this._psgVol = new Array(4).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
     this._psgLastVel = new Array(4).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
     this._psgVolSweep = new Array(4).fill(null); // active VOL sweep state per PSG ch
+    this._psgKeyedUntil = new Array(4).fill(0); // when the current note keys off
     // Whether each PSG ch is currently sounding a note (att < 15). A PSG channel
     // drones whenever its attenuation is non-silent, regardless of frequency, so
     // master/vol recomputes must NOT re-write a non-silent att to an idle channel
@@ -183,6 +192,11 @@ export class IRPlayer {
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(6).fill(null);
+    // Inline sweeps on the other FM params, per channel: target → sweep. The
+    // sweep's frames are scheduled at once (leaving the shadow state at `to`),
+    // so later events on the channel first re-sync their state to the sweep's
+    // value at their own time (_syncParamSweeps).
+    this._paramSweeps = Array.from({ length: 6 }, () => new Map());
 
     // Mute / solo state keyed by track index (a track == one sounding channel,
     // e.g. fm3-1, pcm1). Solo overrides mute: when any track is soloed, only
@@ -300,6 +314,7 @@ export class IRPlayer {
     this._audioContext = audioContext;
     this._playing = true;
     this._startAudioTime = audioContext.currentTime + 0.05; // small startup offset
+    this._frameOrigin = this._startAudioTime;
 
     // Initialize all channels with default voices
     this._initDefaultVoices();
@@ -978,6 +993,7 @@ export class IRPlayer {
 
     try {
       this._audioContext = { currentTime: BASE, state: "running", resume() {} };
+      this._frameOrigin = BASE;
       this._playing = true;
       this._bpm = this._resolveInitialTempo(this._ir);
       this._tempoSweep = null;
@@ -1360,7 +1376,7 @@ export class IRPlayer {
   // instantaneous value here, exactly as a channel's does (_fmVolAtTime).
   _fm3OpVolAtTime(op, when) {
     const st = this._fm3Op[op - 1];
-    return st.volSweep ? sweepVolAtTime(st.volSweep, when) : st.vol;
+    return st.volSweep ? this._sweepVolAtTime(st.volSweep, when) : st.vol;
   }
   _fm3OpTl(op, when) {
     const st = this._fm3Op[op - 1];
@@ -1722,6 +1738,7 @@ export class IRPlayer {
   }
 
   _dispatchEvent(ev, when) {
+    this._syncMasterSweep(ev, when);
     if (this._dispatchGlobalEvent(ev, when)) return;
 
     // Route PSG events to PSG handler
@@ -1741,6 +1758,12 @@ export class IRPlayer {
     const ch = ev._chIndex ?? 0;
     const port = ch >= 3 ? 1 : 0;
     const chOffset = ch % 3;
+    this._syncParamSweeps(ch, port, chOffset, when);
+    // A write to a swept target ends that sweep (the driver frees its slot).
+    if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP_STOP")
+      this._paramSweeps[ch].delete(
+        this._paramSweepKey(ev, String(ev.args.target).toUpperCase()),
+      );
 
     switch (ev.cmd) {
       case "NOTE_ON": {
@@ -1796,6 +1819,7 @@ export class IRPlayer {
             const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
             this._write(port, opAddr, tl, when);
           }
+          this._followMasterSweep(ch, when);
         }
 
         // FM3 operator notes had their F-number written by FM3_OP_PITCH.
@@ -2630,6 +2654,7 @@ export class IRPlayer {
           const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
           this._write(port, opAddr, tl, when);
         }
+        this._followMasterSweep(ch, when);
         break;
       }
 
@@ -2646,7 +2671,7 @@ export class IRPlayer {
   // channels, PSG attenuation on all sounding PSG channels, and recomposes every
   // PCM soft-mix voice (the bit-shift attenuation rides master too). Reached from
   // a PARAM_SET MASTER on any track (FM/PSG/PCM), so all three stay in step.
-  _applyMasterChange(value, when) {
+  _applyMasterChange(value, when, F = this._eventFrame(when)) {
     const master = Math.max(0, Math.min(31, Math.round(value)));
     this._masterVol = master;
     // FM channels: update carrier TL
@@ -2660,7 +2685,7 @@ export class IRPlayer {
         const tl = this._carrierTl(
           cr.ops[opIdx],
           cr.vel ?? 15,
-          cr.vol ?? VOL_UNITY,
+          this._fmVolAtFrame(ci, F), // a running :vol sweep's level then
           master,
         );
         cr.ops[opIdx].tl = tl;
@@ -2671,10 +2696,12 @@ export class IRPlayer {
     // for channels currently sounding — re-writing a non-silent att to an idle
     // channel (e.g. at play start, before any note) would drone a tone.
     for (let psgCh = 0; psgCh < 4; psgCh++) {
-      if (!this._psgSounding[psgCh]) continue;
+      if (F >= this._eventFrame(this._psgKeyedUntil[psgCh])) continue; // not keyed
       const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
-      const vol = this._psgVolAtTime(psgCh, when); // 0-31
+      const vol = this._psgVolAtFrame(psgCh, F); // 0-31
+      const sounding = this._psgSounding[psgCh];
       this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
+      this._psgSounding[psgCh] = sounding; // may be ahead of time (a sweep frame)
     }
     // PCM voices ride master too: the voice model recomposes every voice.
     this._pcmEv(when, { kind: "master", value: master });
@@ -2821,9 +2848,15 @@ export class IRPlayer {
     return endTick;
   }
 
-  _resolveSweepBudgetFrames(ev) {
+  // Frames a sweep runs. Given its start time, counted on the driver's frame
+  // grid: every frame from the one it starts in up to the one its end falls in.
+  _resolveSweepBudgetFrames(ev, when = null) {
     const endTick = this._resolveSweepEndTick(ev);
     const secsPerTick = this._secsPerTick;
+    if (when != null) {
+      const endWhen = when + Math.max(0, endTick - ev.tick) * secsPerTick;
+      return Math.max(1, this._eventFrame(endWhen) - this._eventFrame(when));
+    }
     return Math.max(
       1,
       Math.floor(Math.max(0, endTick - ev.tick) * secsPerTick * 60),
@@ -2835,9 +2868,9 @@ export class IRPlayer {
   //   nonLoopStartFrame – absolute frame index at start of this iteration
   //   iterFrames        – how many frames to actually write (capped to remaining sweep)
   //   loopPhaseOffset   – phase offset for looping curves (sin/tri/saw/…)
-  _sweepFrameParams(ev, baseFrames, loop) {
+  _sweepFrameParams(ev, baseFrames, loop, when = null) {
     const secsPerTick = this._secsPerTick;
-    const budgetFrames = this._resolveSweepBudgetFrames(ev);
+    const budgetFrames = this._resolveSweepBudgetFrames(ev, when);
     const endTick = this._resolveSweepEndTick(ev);
     const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
     const spansLoopBoundary =
@@ -2854,7 +2887,7 @@ export class IRPlayer {
     const iterFrames = !loop
       ? Math.max(
           0,
-          Math.min(loopDurationFrames, baseFrames - nonLoopStartFrame),
+          Math.min(loopDurationFrames, budgetFrames, baseFrames - nonLoopStartFrame),
         )
       : budgetFrames;
     return { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset };
@@ -3147,15 +3180,14 @@ export class IRPlayer {
     if (!velMacro) return;
 
     const regs = this._chRegs[ch];
-    const baseVol = regs.vol ?? VOL_UNITY;
     const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       when,
       gateTicks,
     );
     // vel 15 = patch level, vel 0 = -30 dB floor. Float vel → finer TL than 16
-    // steps (rounded once inside _carrierTl).
-    const master = this._masterVol ?? VOL_UNITY;
+    // steps (rounded once inside _carrierTl). vol/master: their levels then
+    // (a running sweep's).
     this._scheduleMacro(
       velMacro,
       noteFrames,
@@ -3164,7 +3196,9 @@ export class IRPlayer {
       (v, t) => {
         const vel = clampForTarget("VEL", v);
         for (const opIdx of carriers) {
-          const tl = this._carrierTl(regs.ops[opIdx], vel, baseVol, master);
+          const tl = this._carrierTl(
+            regs.ops[opIdx], vel, this._fmVolAtTime(ch, t), this._masterAt(t),
+          );
           regs.ops[opIdx].tl = tl;
           this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, t);
         }
@@ -3332,7 +3366,7 @@ export class IRPlayer {
       : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
     const loop = !!ev.args?.loop;
     const { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset } =
-      this._sweepFrameParams(ev, baseFrames, loop);
+      this._sweepFrameParams(ev, baseFrames, loop, when);
 
     // NOTE_PITCH: must track future NOTE_ON base pitches so per-frame frequency
     // writes use the correct note at each point in time.
@@ -3363,22 +3397,18 @@ export class IRPlayer {
         nextNoteTick = Infinity;
       };
       advance();
+      const sw = {
+        from, to, curve, params, baseFrames, loop,
+        frameOffset: loopPhaseOffset, startWhen: when, startFrame: this._eventFrame(when),
+      };
       for (let frame = 0; frame < budgetFrames; frame++) {
         const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
         while (frameTick >= nextNoteTick) {
           baseMidi = nextNoteMidi;
           advance();
         }
-        const phase = sampleSweepPhase(
-          frame,
-          baseFrames,
-          loop,
-          loopPhaseOffset,
-        );
-        const centOffset = Math.round(
-          from + (to - from) * sampleCurveUnit(curve, phase, params),
-        );
-        const frameWhen = when + frame / 60;
+        const centOffset = Math.round(this._sweepAt(sw, loopPhaseOffset + frame));
+        const frameWhen = this._sweepFrameTime(sw, frame);
         if (frame === 0)
           this._pitchSweepOnset.set(opState ? `op:${op}` : `fm:${ch}`, {
             when,
@@ -3427,24 +3457,16 @@ export class IRPlayer {
       const volOp = this._fm3OpOf(ev);
       const groupSweep = !volOp && ch === 2 && this._reg27 & 0x40;
       const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
+      const sw = {
+        from, to, curve, params, baseFrames, loop,
+        frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
+        frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
+      };
       for (let i = 0; i < iterFrames; i++) {
-        const frame = !loop ? nonLoopStartFrame + i : i;
-        const phase = sampleSweepPhase(
-          frame,
-          baseFrames,
-          loop,
-          loopPhaseOffset,
-        );
-        const vol = Math.max(
-          0,
-          Math.min(
-            31,
-            from + (to - from) * sampleCurveUnit(curve, phase, params),
-          ),
-        );
+        const vol = Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + i)));
         const vel = regs.vel ?? 15;
-        const master = this._masterVol ?? VOL_UNITY;
-        const frameWhen = when + i / 60;
+        const frameWhen = this._sweepFrameTime(sw, i);
+        const master = this._masterAtFrame(sw.startFrame + i);
         if (volOp) {
           const st = this._fm3Op[volOp - 1];
           st.volSweep = null; // this sweep's own frames are the live value
@@ -3471,10 +3493,7 @@ export class IRPlayer {
       }
       if (volOp) {
         const st = this._fm3Op[volOp - 1];
-        st.volSweep = {
-          from, to, curve, params, baseFrames,
-          nonLoopOffset: nonLoopStartFrame, startWhen: when,
-        };
+        st.volSweep = sw;
         st.vol = to; // final value, for a later MASTER/group recompose
         return;
       }
@@ -3482,33 +3501,52 @@ export class IRPlayer {
         regs.vol = to;
         return;
       }
-      this._fmVolSweep[ch] = {
-        from,
-        to,
-        curve,
-        params,
-        baseFrames,
-        nonLoopOffset: nonLoopStartFrame,
-        startWhen: when,
+      this._fmVolSweep[ch] = sw;
+      regs.vol = to;
+      this._followMasterSweep(ch, when); // final value for MASTER recalc fallback
+      return;
+    }
+
+    // MASTER: every channel's level, stepped frame by frame; later events
+    // read it at their own time (_masterAt) and re-follow it (_followMasterSweep).
+    if (target === "MASTER") {
+      const ms = {
+        from, to, curve, params, baseFrames, loop,
+        frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
+        frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
+        prev: this._masterAt(when),
       };
-      regs.vol = to; // final value for MASTER recalc fallback
+      this._masterSweep = null;
+      for (let i = 0; i < iterFrames; i++) {
+        const t = this._sweepFrameTime(ms, i);
+        this._applyMasterChange(this._sweepAt(ms, ms.frameOffset + i), t, ms.startFrame + i);
+      }
+      this._masterSweep = iterFrames > 1 ? ms : null;
+      this._masterVol = this._masterAt(when);
       return;
     }
 
     // All other FM parameters: route through _applyParam (handles register encoding).
+    const sw = {
+      target, from, to, curve, params, baseFrames, loop,
+      frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
+      frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
+      trackIndex: ev._trackIndex,
+    };
     for (let i = 0; i < iterFrames; i++) {
-      const frame = !loop ? nonLoopStartFrame + i : i;
-      const phase = sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset);
-      const value = Math.round(
-        from + (to - from) * sampleCurveUnit(curve, phase, params),
-      );
       this._applyParam(
         ch,
         port,
         chOffset,
-        { cmd: "PARAM_SET", args: { target, value } },
-        when + i / 60,
+        { cmd: "PARAM_SET", args: { target, value: this._sweepAt(sw, sw.frameOffset + i) }, _trackIndex: ev._trackIndex },
+        this._sweepFrameTime(sw, i),
       );
+    }
+    // The frames above leave the state at the last one; put it back to the
+    // first so an event at this same time composes from what the chip holds.
+    if (iterFrames > 1) {
+      this._paramSweeps[ch].set(this._paramSweepKey(ev, target), sw);
+      this._syncParamSweeps(ch, port, chOffset, when);
     }
   }
 
@@ -3575,13 +3613,93 @@ export class IRPlayer {
   // Returns the current VOL (0-31) for a PSG channel at the given audio time,
   // sampling an active VOL sweep if present.
   _fmVolAtTime(ch, when) {
+    return this._fmVolAtFrame(ch, this._eventFrame(when));
+  }
+
+  _fmVolAtFrame(ch, F) {
     const sweep = this._fmVolSweep?.[ch];
-    return sweep ? sweepVolAtTime(sweep, when) : (this._chRegs[ch].vol ?? VOL_UNITY);
+    return sweep ? this._sweepVolAtFrame(sweep, F) : (this._chRegs[ch].vol ?? VOL_UNITY);
   }
 
   _psgVolAtTime(psgCh, when) {
+    return this._psgVolAtFrame(psgCh, this._eventFrame(when));
+  }
+
+  _psgVolAtFrame(psgCh, F) {
     const sweep = this._psgVolSweep?.[psgCh];
-    return sweep ? sweepVolAtTime(sweep, when) : (this._psgVol[psgCh] ?? VOL_UNITY);
+    return sweep ? this._sweepVolAtFrame(sweep, F) : (this._psgVol[psgCh] ?? VOL_UNITY);
+  }
+
+  _sweepVolAtFrame(sweep, F) {
+    return Math.max(0, Math.min(31, this._sweepAtFrame(sweep, F)));
+  }
+
+  // A sweep's value on its `frame`-th frame (0 = the frame it starts). The
+  // curves the driver computes (driver.md §8) step the driver's integers
+  // exactly; the rest (the wider easing families, the stochastic curves, a
+  // :phase/:rate) sample the float curve, which the driver lowers to a
+  // nearest shape.
+  _sweepAt(sw, frame) {
+    const id = DRIVER_SWEEP_CURVES.has(sw.curve) ? curveId(sw.curve) : null;
+    if (id != null && sw.params?.phase == null && sw.params?.rate == null)
+      return sweepFrameValue(
+        id, Math.round(sw.from), Math.round(sw.to), sw.baseFrames, !!sw.loop, frame,
+      );
+    const phase = sampleSweepPhase(frame, sw.baseFrames, !!sw.loop, 0);
+    return sw.from + (sw.to - sw.from) * sampleCurveUnit(sw.curve, phase, sw.params);
+  }
+
+  // The driver frame (0 = the song's start) an event at audio time `when`
+  // runs in. The driver takes a tick as the frame's tempo accumulator crosses
+  // it, so an event runs in the frame its NEXT tick starts in, less one — not
+  // simply the frame its time falls in. Sweeps step on these frames: a
+  // sweep's k-th frame is its start frame + k, written at that frame's time.
+  _eventFrame(when) {
+    return Math.ceil((when - this._frameOrigin) * 60 + this._secsPerTick * 60 - 1e-6) - 1;
+  }
+
+  _sweepFrameOf(sw, when) {
+    return this._eventFrame(when) - sw.startFrame;
+  }
+
+  _sweepFrameTime(sw, k) {
+    return Math.max(sw.startWhen, this._frameOrigin + (sw.startFrame + k) / 60);
+  }
+
+  // The sweep's value in driver frame F (held past a cut-short last frame),
+  // and at an event's time.
+  _sweepAtFrame(sw, F) {
+    let f = Math.max(0, F - sw.startFrame);
+    if (sw.frames != null) f = Math.min(f, sw.frames - 1);
+    return this._sweepAt(sw, (sw.frameOffset ?? 0) + f);
+  }
+
+  _sweepAtTime(sw, when) {
+    return this._sweepAtFrame(sw, this._eventFrame(when));
+  }
+
+  // Put each running inline sweep's shadow state back to its value at `when`
+  // (its frames were all scheduled up front, leaving the state at `to`), so an
+  // event composing from it — a NOTE_ON's carrier TL, a PARAM_ADD — reads what
+  // the chip holds then. The re-write is the value that frame writes anyway.
+  _syncParamSweeps(ch, port, chOffset, when) {
+    const sweeps = this._paramSweeps[ch];
+    if (!sweeps?.size) return;
+    for (const [key, sw] of sweeps) {
+      // Past its last frame the state is that frame's value, and stays.
+      const f = this._sweepFrameOf(sw, when);
+      if (f >= sw.frames - 1) sweeps.delete(key);
+      const frame = sw.frameOffset + Math.max(0, Math.min(sw.frames - 1, f));
+      this._applyParam(
+        ch, port, chOffset,
+        { args: { target: sw.target, value: this._sweepAt(sw, frame) }, _trackIndex: sw.trackIndex },
+        when,
+      );
+    }
+  }
+
+  _paramSweepKey(ev, target) {
+    return `${this._fm3OpOf(ev)}:${target}`;
   }
 
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
@@ -3614,14 +3732,106 @@ export class IRPlayer {
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
 
     // Compose vel / vol / master → PSG attenuation (additive dB model).
-    const vol = this._psgVolAtTime(psgCh, noteWhen);
-    const master = this._masterVol ?? VOL_UNITY;
+    const vol = this._psgVolAtNoteOn(psgCh, noteWhen);
+    const master = this._masterAtNoteOn(noteWhen);
     const att = this._composePsgAtt(baseVel, vol, master);
 
     this._psgSetAtt(psgCh, att, noteWhen);
+    // A running :vol sweep moves the level every frame the note is keyed.
+    this._psgVolSweepWrites(psgCh, noteWhen, this._psgKeyedUntil[psgCh], baseVel);
     // Silence at the gate boundary; offWhen is null when the note holds or slurs
     // into the next (legato).
     if (offWhen != null) this._psgSetAtt(psgCh, 15, offWhen);
+  }
+
+  // Write a PSG channel's :vol sweep frames in [fromWhen, untilWhen) — the
+  // span its note is keyed, as the driver re-composes the attenuation on each
+  // sweep frame of a keyed channel. The writes are ahead of time, so they
+  // leave the channel's sounding flag as it was.
+  _psgVolSweepWrites(psgCh, fromWhen, untilWhen, vel) {
+    const vs = this._psgVolSweep[psgCh];
+    const ms = this._masterSweep;
+    if (!vs && !ms) return;
+    const end = Math.max(
+      vs ? vs.startFrame + vs.frames : -Infinity,
+      ms ? ms.startFrame + ms.frames : -Infinity,
+    );
+    // The frame the note keys off in is not keyed at its sweep step.
+    const last = Math.min(end, this._eventFrame(untilWhen));
+    const sounding = this._psgSounding[psgCh];
+    for (let F = this._eventFrame(fromWhen); F < last; F++) {
+      const t = Math.max(fromWhen, this._frameOrigin + F / 60);
+      const att = this._composePsgAtt(vel, this._psgVolAtFrame(psgCh, F), this._masterAtFrame(F));
+      this._psgSetAtt(psgCh, att, t);
+    }
+    this._psgSounding[psgCh] = sounding;
+  }
+
+  // The level a PSG note-on composes. The driver runs a frame's notes before
+  // its sweep step, so a note meets the level the sweep wrote the frame
+  // before (the pre-sweep level on the sweep's own first frame), and that
+  // frame's sweep step follows it (_psgVolSweepWrites from the note).
+  // The master level at a time: a running :master sweep's value then.
+  _masterAt(when) {
+    return this._masterAtFrame(this._eventFrame(when));
+  }
+
+  _masterAtFrame(F) {
+    const ms = this._masterSweep;
+    if (!ms) return this._masterVol ?? VOL_UNITY;
+    return Math.max(0, Math.min(31, Math.round(this._sweepAtFrame(ms, F))));
+  }
+
+  // The master a PSG note-on composes: as its :vol, the value the sweep wrote
+  // the frame before (the driver steps sweeps after the frame's notes).
+  _masterAtNoteOn(when) {
+    const ms = this._masterSweep;
+    if (!ms) return this._masterVol ?? VOL_UNITY;
+    const f = this._sweepFrameOf(ms, when);
+    if (f <= 0) return ms.prev;
+    return Math.max(0, Math.min(31, Math.round(this._sweepAt(ms, ms.frameOffset + Math.min(f, ms.frames) - 1))));
+  }
+
+  // Before each event: the master state is the sweep's value at its time
+  // (the sweep's frames were scheduled at once); a PARAM_SET MASTER ends it.
+  _syncMasterSweep(ev, when) {
+    const ms = this._masterSweep;
+    if (!ms) return;
+    this._masterVol = this._masterAt(when);
+    const t = (ev.args?.target ?? "").toUpperCase();
+    if (
+      this._sweepFrameOf(ms, when) >= ms.frames - 1 ||
+      (t === "MASTER" && (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP_STOP"))
+    )
+      this._masterSweep = null;
+  }
+
+  // A channel whose level inputs just changed (a note's vel, its :vol) re-writes
+  // its carriers over the rest of a running :master sweep — the sweep's own
+  // frames were composed from the channel as it was when it started.
+  _followMasterSweep(ch, when) {
+    const ms = this._masterSweep;
+    if (!ms || (ch === 2 && this._reg27 & 0x40)) return;
+    const regs = this._chRegs[ch];
+    const port = ch >= 3 ? 1 : 0;
+    const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
+    for (let k = Math.max(0, this._sweepFrameOf(ms, when) + 1); k < ms.frames; k++) {
+      const t = this._sweepFrameTime(ms, k);
+      const F = ms.startFrame + k;
+      const master = this._masterAtFrame(F);
+      for (const opIdx of carriers) {
+        const tl = this._carrierTl(regs.ops[opIdx], regs.vel ?? 15, this._fmVolAtFrame(ch, F), master);
+        this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + (ch % 3), tl, t);
+      }
+    }
+  }
+
+  _psgVolAtNoteOn(psgCh, when) {
+    const sw = this._psgVolSweep[psgCh];
+    if (!sw) return this._psgVol[psgCh] ?? VOL_UNITY;
+    const f = this._sweepFrameOf(sw, when);
+    if (f <= 0) return sw.prev;
+    return Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + Math.min(f, sw.frames) - 1)));
   }
 
   _schedulePsgVelMacro(
@@ -3644,11 +3854,9 @@ export class IRPlayer {
     // The vel macro's output is the absolute velocity (0-15), matching FM and
     // the static-vel path; `:vel*` bakes any note-vel scaling in at compile
     // time, so the player must not scale again here.
-    const vol = this._psgVolAtTime(psgCh, noteWhen);
-    const master = this._masterVol ?? VOL_UNITY;
-    const velToAtt = (v) => {
+    const velToAtt = (v, t) => {
       const velLevel = clampForTarget("VEL", v);
-      return this._composePsgAtt(velLevel, vol, master);
+      return this._composePsgAtt(velLevel, this._psgVolAtTime(psgCh, t), this._masterAt(t));
     };
 
     const silenceAt = this._scheduleMacro(
@@ -3656,7 +3864,7 @@ export class IRPlayer {
       noteFrames,
       gateSecs,
       noteWhen,
-      (v, t) => this._psgSetAtt(psgCh, velToAtt(v), t),
+      (v, t) => this._psgSetAtt(psgCh, velToAtt(v, t), t),
       this._stepSecs(velMacro.step),
       limitSecs,
     );
@@ -3764,6 +3972,7 @@ export class IRPlayer {
           (ev.args?.gate != null || psgGateEnd < psgNextNote - 0.001)
             ? psgGateEnd
             : null;
+        this._psgKeyedUntil[psgCh] = psgOffWhen ?? psgNextNote;
         if (velMacro) {
           this._schedulePsgVelMacro(
             psgCh,
@@ -3801,26 +4010,34 @@ export class IRPlayer {
               );
             }
           } else {
-            // PARAM_SWEEP: store sweep state (same format as _fmVolSweep).
-            // Hardware writes happen lazily at each NOTE_ON via _psgVolAtTime().
+            // PARAM_SWEEP: store sweep state (same format as _fmVolSweep); a
+            // note samples it at its onset and writes its frames while keyed.
             // No :from: the sweep starts where the level is now (§11).
-            const from = Math.max(0, Math.min(31, Number(ev.args?.from ?? this._psgVolAtTime(psgCh, when))));
-            const to = Math.max(0, Math.min(31, Number(ev.args?.to ?? from)));
-            const curve = ev.args?.curve ?? "linear";
-            const secsPerTick = this._secsPerTick;
-            const baseFrames = Math.max(
-              1,
-              Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60),
-            );
+            const df = this._curveFields(ev.args ?? {}, when);
+            const prev = this._psgVolAtTime(psgCh, when);
+            const from = Math.max(0, Math.min(31, Number(df.from ?? prev)));
+            const to = Math.max(0, Math.min(31, Number(df.to ?? from)));
+            const baseFrames = ev.args?.lenFrames
+              ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
+              : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * this._secsPerTick * 60));
+            const loop = !!ev.args?.loop;
+            const { budgetFrames, nonLoopStartFrame, loopPhaseOffset } =
+              this._sweepFrameParams(ev, baseFrames, loop, when);
             this._psgVolSweep[psgCh] = {
-              from,
-              to,
-              curve,
-              baseFrames,
-              nonLoopOffset: 0,
+              from, to, curve: ev.args?.curve ?? "linear", params: df.params,
+              baseFrames, loop,
+              frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
+              // One-shot: its last frame writes `to`, and the level holds.
+              frames: loop
+                ? budgetFrames
+                : Math.min(budgetFrames, Math.max(1, baseFrames - nonLoopStartFrame)),
               startWhen: when,
+              startFrame: this._eventFrame(when),
+              prev,
             };
             this._psgVol[psgCh] = from; // initial value for MASTER recalc fallback
+            if (this._psgKeyedUntil[psgCh] > when)
+              this._psgVolSweepWrites(psgCh, when, this._psgKeyedUntil[psgCh], this._psgLastVel[psgCh] ?? 15);
           }
         } else if (psgTarget === "NOISE_MODE") {
           // Update the persistent noise mode. Re-asserted on every noise NOTE_ON;
@@ -3846,7 +4063,7 @@ export class IRPlayer {
           const framesPerTick = secsPerTick * 60;
           const { budgetFrames, loopPhaseOffset } =
             ev.cmd === "PARAM_SWEEP"
-              ? this._sweepFrameParams(ev, baseFrames, loop)
+              ? this._sweepFrameParams(ev, baseFrames, loop, when)
               : { budgetFrames: 1, loopPhaseOffset: 0 };
           const track =
             ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;

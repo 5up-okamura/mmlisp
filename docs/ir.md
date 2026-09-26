@@ -319,12 +319,16 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
   "from": -200, "to": 0, "frames": 12, "loop": false, "bounded": true } }
 ```
 
-Notes: the player samples the curve at 60 Hz. A non-`bounded` sweep runs until
+Notes: the player steps the curve once a driver frame, with the driver's
+integer math for the curves the driver computes (mmb.js `sweepFrameValue`;
+the other curves sample the float curve), so preview and driver step the same
+values on the same frames. A non-`bounded` sweep runs until
 the next `PARAM_SET`/`PARAM_SWEEP`/`PARAM_SWEEP_STOP` on the same target, else
 one structural-loop duration (loop waveforms are kept alive ~16 loop
 iterations so LFO-style sweeps persist). `NOTE_PITCH` sweeps track upcoming
-`NOTE_ON` base pitches per frame; `VOL` sweeps keep persistent state so
-note-ons sample the instantaneous volume.
+`NOTE_ON` base pitches per frame; `VOL`/`MASTER` sweeps and the other
+parameters keep sweep state, so a later event composes from the value the
+sweep holds at its time.
 
 ### 5.10 PARAM_SWEEP_STOP
 

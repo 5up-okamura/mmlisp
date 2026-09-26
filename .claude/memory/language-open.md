@@ -80,15 +80,18 @@ them.
 
 ## 2. Judgment-free but larger
 
-- **Preview vs driver, pre-existing, found 2026-09-26** (each baselined or
-  seen in A/B, none caused by that day's work): `:vel` before the first note
-  — the preview writes carrier TL 0 at frame 0 and corrects it at frame 1;
-  inline PARAM_SWEEPs (TL / VOL / PSG level) diverge in their frame writes
-  (`m4-sweep-from-current` baselined at 62, the explicit-`:from` form
-  identical); a macro with a looping stage then a release diverges (old
-  all-stage spelling included).
-- The live app registers its service worker in a `load` listener at the end
-  of a module with top-level awaits, so on a fast load it never registers.
+- **Preview vs driver, found 2026-09-26.** Fixed: `:vel` before the first
+  note, inline sweeps (the preview now steps the driver's integers on the
+  driver's event frames, and a note meets the sweep's value then; the driver
+  no longer cancels loop sweeps at a note and a PARAM_SET ends its target's
+  sweep), the SW registration. Still open: a macro with a looping stage then
+  a release diverges (old all-stage spelling included); a **TEMPO_SWEEP** —
+  the preview ramps tempo per scheduler pass in ticks, the driver per frame
+  in integer increments — skews every later event by up to a frame
+  (`m2-motion`); a `:master` sweep that starts on one track's setup frame
+  composes a channel whose first note was scheduled earlier from that note's
+  vel (frame 0 only); a PSG note with a vel macro under a running :vol or
+  :master sweep does not get the driver's in-frame double write.
 
 - Nf in one track converted at another track's mid-song tempo change (§4).
 - Tick-0 tempo written as an expression is not seen by the Nf prescan.
