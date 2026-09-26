@@ -168,6 +168,7 @@ typedef struct {
   uint8_t fresh; /* the note's own frame: a KEYON step here does not re-attack */
   uint16_t cursor;
   int16_t step_clock; /* frames left on this step; signed, a step of 0 free-runs */
+  uint16_t acc;       /* tick clock (flags bit3): the note's track accumulator, 8.8 */
 } MMLMacroSlot;
 
 /* One register write in the cap/spill queue: port 0/1 = YM part, 2 = PSG. */
@@ -292,6 +293,9 @@ typedef struct {
    * passes 0, which is what drv-player's _sampleBankBase models. */
   uint32_t sample_rom_base;
   uint16_t increment; /* 8.8, per song (driver.md §3.2) */
+  uint16_t frame_inc; /* this frame's share of it, for tick-clocked macros */
+  uint16_t cur_acc;   /* the dispatching track's accumulator after its tick */
+  uint16_t off_acc[MML_MACRO_CHANNELS]; /* cur_acc at each channel's last key-off */
 
   MMLTrack trk[MML_MAX_TRACKS];
   uint8_t track_count;

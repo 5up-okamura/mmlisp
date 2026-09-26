@@ -399,18 +399,16 @@ export function encodeMmb(ir, opts = {}) {
   // NOTE_SEMI, KEYON) and dynamic (val-slot) params are still dropped.
   const macroRegistry = new Map(); // canonical key → { id, target, flags, step, loopStart, release, values }
 
-  // :step clock → frames (default 1f). Tick units are not lowered yet.
-  const macroStepFrames = (spec, target, trackLabel) => {
-    if (spec.step?.unit === "frame") return Math.max(1, Math.min(255, spec.step.value));
-    if (spec.step?.unit === "tick") {
-      diag(
-        "warning",
-        "W_MMB_MACRO_STEP_TICK",
-        `${target} macro :step in ticks not lowered yet (M3 slice); using 1f`,
-        trackLabel,
-      );
-    }
-    return 1;
+  // The :step clock: frames (default 1f), or ticks of the note's track (flags
+  // bit3, driver.md §13.2) — a tick-clocked macro's lengths are ticks too
+  // (mmlisp2ir resolveMacroLen), so the units below are the clock's own.
+  const macroStep = (spec, target, trackLabel) => {
+    const tick = spec.step?.unit === "tick";
+    const v = spec.step?.unit ? Number(spec.step.value) : 1;
+    if (v > 255)
+      diag("warning", "W_MMB_MACRO_STEP_LONG",
+        `${target} macro :step of ${v} ${tick ? "ticks" : "frames"} cut to 255`, trackLabel);
+    return { step: Math.max(1, Math.min(255, Math.round(v))), tick };
   };
 
   // Sample one curve into an integer value array, clamped to the target.
@@ -427,7 +425,17 @@ export function encodeMmb(ir, opts = {}) {
 
   // Lower one IR macro spec → { flags, step, loopStart, release, values } | null.
   const lowerMacro = (spec, target, trackLabel) => {
-    const step = macroStepFrames(spec, target, trackLabel);
+    const { step, tick } = macroStep(spec, target, trackLabel);
+    const lowered = lowerMacroOn(spec, target, trackLabel, step, tick);
+    return lowered && { ...lowered, tick };
+  };
+
+  // A curve length in the clock's units: frames, or ticks for a tick clock
+  // (lenFrames then false). Null when it is not in them — no :len.
+  const clockLen = (o, tick) =>
+    o.frames == null || !!o.lenFrames === tick ? null : Math.max(1, Math.round(Number(o.frames)));
+
+  const lowerMacroOn = (spec, target, trackLabel, step, tick) => {
     const skip = (why) => {
       diag("warning", "W_MMB_MACRO_SKIPPED", `${target} macro ${why}; dropped`, trackLabel);
       return null;
@@ -455,17 +463,18 @@ export function encodeMmb(ir, opts = {}) {
       if (spec.dyn) return skip("has dynamic (val-slot) params (later M3 slice)");
       // Tick/Nf `:len` is resolved to a frame count upstream (mmlisp2ir
       // resolveMacroLen); a curve reaching here without one has no `:len`.
-      if (!spec.lenFrames) return skip("requires a :len");
+      const baseFrames = clockLen(spec, tick);
+      if (baseFrames == null) return skip("requires a :len");
       // `:wait N` (docs §11) is a pre-delay: hold the base value for waitFrames
       // (as `null` hold-sentinel steps) before the curve, so it lowers to the
       // same value blob shape the player/driver already skip. `:wait key-off` on
       // a single curve has no MMB form (release is a stages concept).
       if (spec.waitKeyOff)
         return skip("(:wait key-off) on a single curve is not lowered; use stages");
-      const waitSteps = Math.min(254, Math.max(0, Math.round(Number(spec.waitFrames ?? 0) / step)));
+      const wait = tick ? spec.waitTicks : spec.waitFrames;
+      const waitSteps = Math.min(254, Math.max(0, Math.round(Number(wait ?? 0) / step)));
       const hold = Array.from({ length: waitSteps }, () => null);
       const room = 255 - waitSteps;
-      const baseFrames = Math.max(1, Math.round(Number(spec.frames ?? 1)));
       // A curve is pre-sampled every `step` frames (driver.md §13). A loop curve
       // fills the sustain region (one period, cycled); a one-shot fills the
       // attack region and holds its last value. A wait prefix shifts loopStart
@@ -487,7 +496,7 @@ export function encodeMmb(ir, opts = {}) {
       return { step, loopStart: 0xff, release: 0xff, values: [...hold, ...values] };
     }
 
-    if (spec.type === "stages") return lowerStages(spec, target, trackLabel, step, skip);
+    if (spec.type === "stages") return lowerStages(spec, target, trackLabel, step, skip, tick);
 
     return skip(`(${spec?.type ?? "?"}) has no lowering`);
   };
@@ -498,7 +507,7 @@ export function encodeMmb(ir, opts = {}) {
   // key-off, so the stage after it is the release even without a
   // `(wait key-off)`. A wait on a curve stage is its pre-delay: the holds, then
   // the curve.
-  const lowerStages = (spec, target, trackLabel, step, skip) => {
+  const lowerStages = (spec, target, trackLabel, step, skip, tick) => {
     const values = [];
     let loopStart = 0xff;
     let release = 0xff;
@@ -508,16 +517,14 @@ export function encodeMmb(ir, opts = {}) {
         if (release === 0xff) release = values.length;
         afterLoop = false;
       } else if (stage.waitFrames != null || stage.waitTicks != null) {
-        if (stage.waitTicks != null && stage.waitFrames == null)
-          return skip("stage (wait N) in ticks not lowered yet (M3 slice)");
-        const frames = Math.max(0, Number(stage.waitFrames ?? 0));
-        for (let f = 0; f < frames; f += step) values.push(null); // hold sentinel
+        const units = Math.max(0, Number((tick ? stage.waitTicks : stage.waitFrames) ?? 0));
+        for (let f = 0; f < units; f += step) values.push(null); // hold sentinel
       }
       if (!stage.curve) continue;
       if (afterLoop && release === 0xff) release = values.length;
       if (stage.dyn) return skip("stage has dynamic (val-slot) params (later M3 slice)");
-      if (!stage.lenFrames) return skip("stage :len in ticks not lowered yet (M3 slice)");
-      const baseFrames = Math.max(1, Math.round(Number(stage.frames ?? 1)));
+      const baseFrames = clockLen(stage, tick);
+      if (baseFrames == null) return skip("stage has no :len on the macro's clock");
       if (stage.loop) {
         loopStart = values.length;
         afterLoop = true;
@@ -563,17 +570,20 @@ export function encodeMmb(ir, opts = {}) {
     // composes each sample with the channel's live pitch offset, driver.md §8);
     // bit2 = scaled (§4.4). The intern key folds in `flags` + the scale slot, so
     // additive/override/scaled and distinct slots intern separately.
+    // bit3 = the :step clock is the note's track ticks (driver.md §13.2).
     const flags =
       (target === "NOTE_PITCH" ? 1 : 0) |
       (spec.add ? 2 : 0) |
-      (scaleSlot != null ? 4 : 0);
+      (scaleSlot != null ? 4 : 0) |
+      (lowered.tick ? 8 : 0);
     const key = `${target}|${flags}|${scaleSlot ?? ""}|${lowered.step}|${lowered.loopStart}|${lowered.release}|${lowered.values
       .map((v) => (v == null ? "_" : v))
       .join(",")}`;
     const hit = macroRegistry.get(key);
     if (hit) return hit.id;
     const id = macroRegistry.size;
-    macroRegistry.set(key, { id, target, flags, scaleSlot, ...lowered });
+    const { tick: _tick, ...fields } = lowered;
+    macroRegistry.set(key, { id, target, flags, scaleSlot, ...fields });
     return id;
   };
 

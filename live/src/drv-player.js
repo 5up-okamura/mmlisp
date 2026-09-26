@@ -438,6 +438,8 @@ export class DrvPlayer {
     // The macro engine's channels: 0-9 and FM3's op2-4 as 10-12 (_macroCh).
     this._macroActive = Array.from({ length: MACRO_CHANNELS }, () => new Map()); // target → macro index
     this._macroSlots = Array.from({ length: MACRO_CHANNELS }, () => []); // running slots
+    this._curAcc = 0; // the dispatching track's accumulator after its tick
+    this._offAcc = new Array(MACRO_CHANNELS).fill(0); // _curAcc at each channel's last key-off
     // M3 dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
     // overwritten by SET_VAL. $time (slot 0xFF) reads the frame counter instead.
     this._valSlots = new Int16Array(16);
@@ -735,6 +737,9 @@ export class DrvPlayer {
   }
 
   _channelOff(channelId) {
+    // A tick-clocked release counts from the key-off's tick (§13.2).
+    const mc = this._macroCh(channelId);
+    if (mc >= 0) this._offAcc[mc] = this._curAcc;
     const op = this._fm3OpFor(channelId);
     if (op) {
       this._fm3KeyOp(op, false);
@@ -757,9 +762,12 @@ export class DrvPlayer {
     if (mc < 0) return false;
     return this._macroSlots[mc].some((slot) => {
       const d = slot && this._macros[slot.descIdx];
+      if (!d || d.target !== TARGET_ID.VEL) return false;
+      // ...or is playing it: a second key-off (a rest) must not cut it.
+      if (slot.state === "release") return true;
       return (
-        d && (slot.state === "run" || slot.state === "hold") &&
-        d.target === TARGET_ID.VEL && d.release !== 0xff && d.release < d.count
+        (slot.state === "run" || slot.state === "hold") &&
+        d.release !== 0xff && d.release < d.count
       );
     });
   }
@@ -912,7 +920,7 @@ export class DrvPlayer {
     // track skips it (its channel is keyed-off, so a retrigger would sound a
     // release tail); gate scheduling below still runs so the track keeps time.
     if ((fm3op || ch < 10) && audible) {
-      this._macroTrigger(ch);
+      this._macroTrigger(ch, trk.acc);
       // Past the frame's first sub-tick the step pass has already run, so the
       // first step fires HERE instead (driver.md §3.5). §13.1 requires it in the
       // same frame and after the note-on, and leaving it to sub-tick 0 of the
@@ -1763,8 +1771,10 @@ export class DrvPlayer {
   }
 
   // NOTE_ON re-instantiates every active macro into a fresh running slot
-  // (driver.md §13.1). Insertion order = MACRO_SET order (§13.3).
-  _macroTrigger(ch) {
+  // (driver.md §13.1). Insertion order = MACRO_SET order (§13.3). `acc` is the
+  // note's track accumulator after its tick: a tick-clocked slot counts the
+  // track's ticks from there (§13.2).
+  _macroTrigger(ch, acc = 0) {
     const mc = this._macroCh(ch);
     if (mc < 0) return;
     const active = this._macroActive[mc];
@@ -1773,7 +1783,7 @@ export class DrvPlayer {
       // `fresh`: this slot's first sample lands in the note's own frame.
       // An empty attack/sustain (`[#rel …]`) writes nothing until key-off.
       const state = this._macros[macroId]?.release === 0 ? "hold" : "run";
-      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state, fresh: true });
+      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state, fresh: true, acc });
     }
     this._macroSlots[mc] = slots;
   }
@@ -1819,6 +1829,12 @@ export class DrvPlayer {
   // One running slot, one frame. Returns true when the slot is finished.
   // Regions (mmb.md §15): attack [0..loopStart), sustain [loopStart..release)
   // cycled while keyed, release [release..count) once after key-off.
+  //
+  // The clock is frames, or (flags bit3) the ticks of the note's track: the
+  // slot runs its own copy of the track's accumulator from the note's tick, so
+  // its steps land on the track's beat grid whatever the tempo, and keep
+  // counting through a held note. stepClock is then ticks to the next step; a
+  // frame that crosses several steps takes each in turn.
   _stepMacro(ch, slot, keyed) {
     const d = this._macros[slot.descIdx];
     if (!d) return true;
@@ -1828,14 +1844,44 @@ export class DrvPlayer {
         slot.state = "release";
         slot.cursor = d.release;
         slot.stepClock = 0; // release[0] fires on the key-off frame
+        // ...and a tick clock restarts from the key-off's tick: this frame's
+        // ticks after it, less the share the next step adds back.
+        if (d.flags & 8) slot.acc = (this._offAcc[this._macroCh(ch)] - this._frameInc) & 0xffff;
       } else {
         return true; // no release section
       }
+    }
+    if (d.flags & 8) {
+      // The note's own frame already holds its ticks after the note.
+      if (!slot.fresh) slot.acc = (slot.acc + this._frameInc) & 0xffff;
+      const ticks = slot.acc >> 8;
+      slot.acc &= 0xff;
+      let n = 0;
+      if (slot.stepClock <= 0) {
+        n = 1; // due now: the note, a retrigger, the release
+        slot.stepClock = d.step;
+      }
+      slot.stepClock -= ticks;
+      while (slot.stepClock <= 0) {
+        n++;
+        slot.stepClock += d.step;
+      }
+      for (; n > 0; n--) if (this._macroSample(ch, slot, d, keyed)) return true;
+      return false;
     }
     if (slot.stepClock > 0) {
       slot.stepClock--;
       return false;
     }
+    const held = slot.state === "hold" || slot.state === "tail";
+    if (this._macroSample(ch, slot, d, keyed)) return true;
+    if (!held) slot.stepClock = d.step - 1;
+    return false;
+  }
+
+  // One step's sample of a running slot: write values[cursor] (skipping the
+  // hold sentinel) and advance by the region rules. True when finished.
+  _macroSample(ch, slot, d, keyed) {
     if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
     if (slot.state === "tail") {
       if (!keyed && this._psg[ch - 6].sounding) this._writePsgAtt(ch - 6, 15);
@@ -1880,7 +1926,6 @@ export class DrvPlayer {
       } else this._paramSet(ch, d.target, v, true); // macro owns the envelope
     }
     slot.fresh = false;
-    slot.stepClock = d.step - 1;
     if (slot.state === "run") {
       slot.cursor++;
       const sustainEnd = d.release === 0xff ? d.count : d.release;
@@ -2325,7 +2370,7 @@ export class DrvPlayer {
     const mc = this._macroCh(ch);
     if (mc >= 0 && snap.macros?.length) {
       for (const [target, macroId] of snap.macros) this._macroActive[mc].set(target, macroId);
-      this._macroTrigger(ch);
+      this._macroTrigger(ch, 0); // a tick clock starts on the tick
     }
   }
 
@@ -2493,6 +2538,7 @@ export class DrvPlayer {
     for (let sub = 0; sub < SLOT_SUBS; sub++) {
       this._sub = sub;
       const step = subIncrement(this._increment, sub, SLOT_SUBS);
+      if (sub === 0) this._frameInc = step; // a tick-clocked macro's share (§13.2)
       // 2. Per track, ascending index: accumulate and dispatch.
       for (const trk of this._trk) {
         if (!trk.running || trk.held) continue;
@@ -2508,6 +2554,7 @@ export class DrvPlayer {
         trk.acc += step;
         while (trk.acc >= 0x100) {
           trk.acc -= 0x100;
+          this._curAcc = trk.acc; // the tick's place in the frame, for a key-off
           // One tick: gate countdown, then wait countdown / dispatch.
           if (trk.gateLeft > 0) {
             trk.gateLeft--;
@@ -2544,6 +2591,7 @@ export class DrvPlayer {
       //    order; the sub-tick boundary is what buckets them into sub-slots.
       this._slotSink?.endSub();
     }
+    this._curAcc = 0; // a host key-off, between frames, lands on a frame's head
     this._frame++;
   }
 

@@ -210,10 +210,10 @@
     "digest": "811c9dc5"
   },
   "m3-psg-release.mmlisp": {
-    "ok": false,
-    "mismatches": 4,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "1f991cf1"
+    "digest": "811c9dc5"
   },
   "m3-se-prio.mmlisp": {
     "ok": true,
@@ -322,6 +322,12 @@
     "mismatches": 4,
     "compileErrors": 0,
     "digest": "abf0afd3"
+  },
+  "m4-macro-tick.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
   },
   "m4-pal-frames.mmlisp": {
     "ok": true,

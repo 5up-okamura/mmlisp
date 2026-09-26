@@ -515,6 +515,9 @@ static void key_off(MMLSeq *s, int ch) {
   ym_key(s, chkey);
 }
 static void channel_off(MMLSeq *s, int ch) {
+  /* A tick-clocked release counts from the key-off's tick (§13.2). */
+  int mc = macro_ch(ch);
+  if (mc >= 0) s->off_acc[mc] = s->cur_acc;
   int op = fm3_op_for(s, ch);
   if (op) {
     fm3_key_op(s, op, 0);
@@ -999,6 +1002,9 @@ static int vel_release_pending(const MMLSeq *s, int ch) {
   for (int i = 0; i < s->macro_slot_count[mc]; i++) {
     const MMLMacroSlot *sl = &s->macro_slots[mc][i];
     MMLMacro d;
+    /* ...or is playing it: a second key-off (a rest) must not cut it. */
+    if (sl->state == MML_MACRO_RELEASE && macro_desc(s, sl->macro_id, &d) && d.target == T_VEL)
+      return 1;
     if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) &&
         macro_desc(s, sl->macro_id, &d) && d.target == T_VEL && d.release != 0xff &&
         d.release < d.count)
@@ -1049,8 +1055,10 @@ static void macro_unbind(MMLSeq *s, int ch, uint8_t target) {
   }
 }
 
-/* NOTE_ON re-instantiates every bind into a fresh slot, in bind order (§13.1). */
-static void macro_trigger(MMLSeq *s, int ch) {
+/* NOTE_ON re-instantiates every bind into a fresh slot, in bind order (§13.1).
+ * `acc` is the note's track accumulator after its tick: a tick-clocked slot
+ * counts the track's ticks from there (§13.2). */
+static void macro_trigger(MMLSeq *s, int ch, uint16_t acc) {
   ch = macro_ch(ch);
   if (ch < 0) return;
   for (int i = 0; i < s->bind_count[ch]; i++) {
@@ -1061,6 +1069,7 @@ static void macro_trigger(MMLSeq *s, int ch) {
     sl->fresh = 1;
     sl->cursor = 0;
     sl->step_clock = 0;
+    sl->acc = acc;
     /* An empty attack/sustain (`[#rel …]`) writes nothing until key-off. */
     MMLMacro d;
     if (macro_desc(s, sl->macro_id, &d) && d.release == 0) sl->state = MML_MACRO_HOLD;
@@ -1110,26 +1119,11 @@ static void keyon_retrigger(MMLSeq *s, int ch) {
   }
 }
 
-/* One running slot, one frame. Returns 1 when the slot is finished.
- * Regions (mmb.md §15): attack [0..loop_start), sustain [loop_start..release)
- * cycled while keyed, release [release..count) once after key-off. */
-static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
-  MMLMacro d;
-  if (!macro_desc(s, sl->macro_id, &d)) return 1;
-  /* Key-off leaves attack/sustain for the release region — or ends the slot. */
-  if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) && !keyed) {
-    if (d.release != 0xff && d.release < d.count) {
-      sl->state = MML_MACRO_RELEASE;
-      sl->cursor = d.release;
-      sl->step_clock = 0; /* release[0] fires on the key-off frame */
-    } else {
-      return 1;
-    }
-  }
-  if (sl->step_clock > 0) {
-    sl->step_clock--;
-    return 0;
-  }
+/* One step's sample of a running slot: write values[cursor] (skipping the
+ * hold sentinel) and advance by the region rules. Returns 1 when the slot is
+ * finished. */
+static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp, int keyed) {
+  const MMLMacro d = *dp;
   if (sl->state == MML_MACRO_HOLD) return 0; /* one-shot: hold, await key-off */
   if (sl->state == MML_MACRO_TAIL) {
     if (!keyed && s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
@@ -1170,7 +1164,6 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
     }
   }
   sl->fresh = 0;
-  sl->step_clock = (int16_t)(d.step - 1);
   if (sl->state == MML_MACRO_RUN) {
     sl->cursor++;
     int sustain_end = d.release == 0xff ? d.count : d.release;
@@ -1189,6 +1182,60 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
       return 1;
     }
   }
+  return 0;
+}
+
+/* One running slot, one frame. Returns 1 when the slot is finished.
+ * Regions (mmb.md §15): attack [0..loop_start), sustain [loop_start..release)
+ * cycled while keyed, release [release..count) once after key-off.
+ *
+ * The clock is frames, or (flags bit3) the ticks of the note's track: the
+ * slot runs its own copy of the track's accumulator from the note's tick, so
+ * its steps land on the track's beat grid whatever the tempo, and keep
+ * counting through a held note. step_clock is then ticks to the next step;
+ * a frame that crosses several steps takes each in turn. */
+static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
+  MMLMacro d;
+  if (!macro_desc(s, sl->macro_id, &d)) return 1;
+  /* Key-off leaves attack/sustain for the release region — or ends the slot. */
+  if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) && !keyed) {
+    if (d.release != 0xff && d.release < d.count) {
+      sl->state = MML_MACRO_RELEASE;
+      sl->cursor = d.release;
+      sl->step_clock = 0; /* release[0] fires on the key-off frame */
+      /* ...and a tick clock restarts from the key-off's tick: this frame's
+       * ticks after it, less the share the next line adds back. */
+      if (d.flags & 8) sl->acc = (uint16_t)(s->off_acc[macro_ch(ch)] - s->frame_inc);
+    } else {
+      return 1;
+    }
+  }
+  if (d.flags & 8) {
+    /* The note's own frame already holds its ticks after the note. */
+    if (!sl->fresh) sl->acc = (uint16_t)(sl->acc + s->frame_inc);
+    int ticks = sl->acc >> 8;
+    sl->acc &= 0xff;
+    int n = 0;
+    if (sl->step_clock <= 0) { /* due now: the note, a retrigger, the release */
+      n = 1;
+      sl->step_clock = d.step;
+    }
+    sl->step_clock = (int16_t)(sl->step_clock - ticks);
+    while (sl->step_clock <= 0) {
+      n++;
+      sl->step_clock = (int16_t)(sl->step_clock + d.step);
+    }
+    for (; n > 0; n--)
+      if (macro_sample(s, ch, sl, &d, keyed)) return 1;
+    return 0;
+  }
+  if (sl->step_clock > 0) {
+    sl->step_clock--;
+    return 0;
+  }
+  int held = sl->state == MML_MACRO_HOLD || sl->state == MML_MACRO_TAIL;
+  if (macro_sample(s, ch, sl, &d, keyed)) return 1;
+  if (!held) sl->step_clock = (int16_t)(d.step - 1);
   return 0;
 }
 
@@ -1475,7 +1522,7 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
   /* Re-trigger the channel's bound macros (driver.md §13.1). Their first step
    * fires this frame in step 3, overriding the note-on's base level. */
   if (fm3op || ch < 10) {
-    macro_trigger(s, ch);
+    macro_trigger(s, ch, t->acc);
     /* Past the frame's first sub-tick the step pass has already run, so the
      * first step fires HERE instead (§3.5). §13.1 requires it in the same frame
      * and after the note-on; leaving it to sub-tick 0 of the next frame would
@@ -2085,6 +2132,7 @@ static void run_frame(MMLSeq *s) {
   for (int sub = 0; sub < MML_SLOT_SUBS; sub++) {
     s->sub = (uint8_t)sub;
     uint16_t step = sub_increment(s->increment, sub);
+    if (sub == 0) s->frame_inc = step; /* a tick-clocked macro's share (§13.2) */
     for (uint8_t i = 0; i < s->track_count; i++) {
       MMLTrack *t = &s->trk[i];
       if (!t->running || t->held) continue;
@@ -2114,6 +2162,7 @@ static void run_frame(MMLSeq *s) {
           t->wait -= k - 1;
         }
         t->acc -= 0x100;
+        s->cur_acc = t->acc; /* the tick's place in the frame, for a key-off */
         /* One tick: gate countdown first, then the wait countdown / dispatch. */
         if (t->gate_left > 0) {
           t->gate_left--;
@@ -2156,6 +2205,7 @@ static void run_frame(MMLSeq *s) {
     }
     s->sub_mark[sub] = mml_pending(s);
   }
+  s->cur_acc = 0; /* a host key-off, between frames, lands on a frame's head */
   s->frame++;
 }
 
@@ -2499,7 +2549,7 @@ static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
   if (mc >= 0 && sn->macro_count) {
     for (int i = 0; i < sn->macro_count; i++) s->binds[mc][i] = sn->macros[i];
     s->bind_count[mc] = sn->macro_count;
-    macro_trigger(s, ch);
+    macro_trigger(s, ch, 0); /* a tick clock starts on the tick */
   }
 }
 

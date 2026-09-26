@@ -87,9 +87,10 @@ can spell. Every item of this audit is now either landed or decided.
   (`m2-motion`); a `:master` sweep that starts on one track's setup frame
   composes a channel whose first note was scheduled earlier from that note's
   vel (frame 0 only); a PSG note with a vel macro under a running :vol or
-  :master sweep does not get the driver's in-frame double write; a macro
-  `:step` in ticks is not lowered (1f on the driver, `W_MMB_MACRO_STEP_TICK`
-  — `m3-psg-release`); a `:vel` macro's float levels (language.md: computed
+  :master sweep does not get the driver's in-frame double write; a
+  tick-clocked macro whose note spans a tempo change keeps the note-on tempo
+  in the preview (it schedules the note's macro ahead; the driver follows the
+  change); a `:vel` macro's float levels (language.md: computed
   values stay float) quantize to 16 steps on the driver.
 
 - Nf in one track converted at another track's mid-song tempo change (§4).

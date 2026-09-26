@@ -272,10 +272,10 @@ design:
   make it something else. Macro `:step`s written in frames, and `$time` (§6.4),
   follow the same rule.
 
-A tick-written macro `:len`/`:step` is resolved to frames at compile time, so
-it is converted on the target clock like a sweep; its rounding then happens on
-each standard independently (`:step 1/16` at 120 BPM is 7.5 NTSC frames → 8 and
-6.25 PAL frames → 6), which is a few percent on a long envelope.
+A macro with a tick-written `:step` runs on its track's tick clock (§13.2), so
+it lands on the beat on both standards. One with a frame `:step` resolves a
+tick-written `:len` to frames at compile time, on the target clock like a
+sweep, and the rounding happens on each standard independently.
 
 Not covered: **PCM pitch.** A bank is baked at the image's DAC rate, which
 comes from the Z80 clock, and the PAL Z80 runs 0.92% slower — so samples play
@@ -1112,9 +1112,10 @@ region; `(wait key-off)` marks the release boundary).
   retrigger re-keys **that operator's bit alone** (§13.4). PCM has no macro
   engine and no envelope to re-attack, so `:keyon` is dropped there by the
   exporter with `W_MMB_KEYON_UNSUPPORTED`.
-- Tick-unit `:step`/`:len` are resolved to a 60 Hz frame count at the note's
-  tempo when the macro is snapshotted (compiler side, like the `Nf` glide/delay
-  resolution), so both frame (`Nf`) and note-length macro clocks work.
+- A frame `:step` (`Nf`, the default `1f`) clocks the macro on 60 Hz frames,
+  its tick `:len`s resolved to frames at the note's tempo (compiler side). A
+  tick `:step` (`16`, `1/16`, `24t`) clocks it on the note's track ticks
+  (MACRO_TABLE `flags` bit3, §13.2), its lengths resolved to ticks.
 - Dynamic (val-slot) `:from`/`:to`/`:rate`/`:len` are dropped with a warning.
 
 The hard gate is C ≡ `drv-player` at zero tolerance; the `ir-player` A/B is
@@ -1156,6 +1157,16 @@ it would then overwrite; with no first sample (a leading hold) the note takes
 its own velocity. On PSG, whose level *is* the envelope, a `:vel` release is
 the note's decay: key-off leaves the attenuation to it rather than silencing
 the channel, and the step after the release's last sample silences it.
+
+**The clock.** A frame `:step` counts 60 Hz frames. A tick `:step` (MACRO_TABLE
+`flags` bit3) counts the ticks of the note's track: the slot takes the track's
+accumulator as it stands after the note's tick and adds the frame's tempo
+increment each frame, so its steps land on the track's own beat grid at any
+tempo — a 16th at 118 BPM is 7.63 frames, which a frame count would round to 8
+and drift a frame and a half per bar — and keep counting through a held note.
+A frame that crosses several steps takes each in turn. A release counts from
+the key-off's tick, its first step on the key-off's frame. Gate:
+`m4-macro-tick`.
 
 An **override** pitch macro (`:pitch`/`:semi`, no `+`) writes the note pitch from
 the sample alone each frame and does **not** persist to the channel's sticky

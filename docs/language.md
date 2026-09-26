@@ -890,6 +890,12 @@ identical. A macro takes at most one `:step`; a second is `E_MACRO_STEP_DUP`.
 For two different clocks in one note, write two `(macro …)` forms — they
 compose. Default: `1f` (one 60 Hz frame).
 
+A `:step` written as a note length or ticks (`16`, `1/16`, `24t`) is a **beat
+clock**: the macro steps on its track's ticks, so a 16th-note roll or arp stays
+on the beat at any tempo (a 16th at 118 BPM is 7.63 frames — rounding it to
+frames would drift). A `:step` in frames (`Nf`) is a **frame clock**, for LFO
+and envelope rates.
+
 - A step vector advances one step per `:step`; a curve is sampled-and-held
   every `:step` (coarse step = stepped LFO; default keeps curves smooth).
 - All targets in a macro share its one `:step` and stay phase-locked.

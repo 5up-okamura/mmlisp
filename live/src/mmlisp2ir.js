@@ -324,42 +324,35 @@ function ticksToFrames(ticks, bpm) {
   return Math.max(1, Math.round((ticks * compileFrameHz * 60) / (bpm * PPQN)));
 }
 
-// Resolve a macro spec's `:len`/`:wait` from ticks to frames at the note's
-// tempo, so the driver — which samples macros on the frame clock — gets an
-// absolute frame count (`lenFrames`). `Nf` lens are already frames. Returns a
-// copy; the shared def spec is left untouched. Mirrors the glide/delay Nf→tick
-// resolution done at compile time.
+// Resolve a macro spec's `:len`/`:wait` to the macro's clock at the note's
+// tempo. A frame `:step` (the default) clocks the macro on 60 Hz frames, so
+// every length becomes an absolute frame count (`lenFrames`). A tick `:step`
+// stays ticks: the driver then counts the note's track ticks (driver.md
+// §13.2), so the steps land on the beat, and every length becomes ticks.
+// Returns a copy; the shared def spec is left untouched.
 function resolveMacroLen(spec, bpm) {
   if (!spec || typeof spec !== "object" || bpm == null) return { ...spec };
   const out = { ...spec };
-  // `:step` in ticks → frames (the driver clocks macros on 60 Hz frames).
-  if (out.step?.unit === "tick") {
-    out.step = { unit: "frame", value: ticksToFrames(out.step.value, bpm) };
-  }
-  // A `:step Nf` is already frames of the target clock, so it passes through.
-  if (out.type === "curve") {
-    if (!out.lenFrames && out.frames != null) {
-      out.frames = ticksToFrames(out.frames, bpm);
-      out.lenFrames = true;
+  const ticks = out.step?.unit === "tick";
+  const len = (n, isFrames) =>
+    ticks ? (isFrames ? framesToTicks(n, bpm) : n) : isFrames ? n : ticksToFrames(n, bpm);
+  const resolve = (o) => {
+    if (o.frames != null && (o.type === "curve" || o.curve)) {
+      o.frames = len(o.frames, !!o.lenFrames);
+      o.lenFrames = !ticks;
     }
-    // `:wait N` is a pre-delay before the curve starts (docs §11); resolve it to
-    // frames so the MMB exporter can lower it to hold steps (mirrors stages).
-    if (out.waitTicks != null && out.waitFrames == null) {
-      out.waitFrames = ticksToFrames(out.waitTicks, bpm);
+    // `:wait N` is a pre-delay (docs §11): one unit, so the MMB exporter can
+    // lower it to hold steps.
+    if (ticks) {
+      if (o.waitTicks == null && o.waitFrames != null) o.waitTicks = framesToTicks(o.waitFrames, bpm);
+      delete o.waitFrames;
+    } else if (o.waitTicks != null && o.waitFrames == null) {
+      o.waitFrames = ticksToFrames(o.waitTicks, bpm);
     }
-  } else if (out.type === "stages") {
-    out.stages = (out.stages ?? []).map((st) => {
-      const s = { ...st };
-      if (s.curve && !s.lenFrames && s.frames != null) {
-        s.frames = ticksToFrames(s.frames, bpm);
-        s.lenFrames = true;
-      }
-      if (s.waitTicks != null && s.waitFrames == null) {
-        s.waitFrames = ticksToFrames(s.waitTicks, bpm);
-      }
-      return s;
-    });
-  }
+    return o;
+  };
+  if (out.type === "curve") resolve(out);
+  else if (out.type === "stages") out.stages = (out.stages ?? []).map((st) => resolve({ ...st }));
   return out;
 }
 

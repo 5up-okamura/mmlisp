@@ -3008,6 +3008,20 @@ export class IRPlayer {
     // every stepFrames; default 1f = 1 frame = 60 Hz (smooth, unchanged). A
     // coarser :step gives a stepped / sample-and-hold curve.
     const stepFrames = Math.max(1, Math.round(stepSecs * 60));
+    // The clock's unit: a 60 Hz frame, or — a tick :step — a tick of the
+    // note's track, the lengths then in ticks too (mmlisp2ir resolveMacroLen),
+    // so the steps land on the beat (driver.md §13.2). Lengths, budgets and
+    // steps below are counted in it.
+    const tickClock = spec.step?.unit === "tick";
+    const unitSecs = tickClock ? this._secsPerTick : 1 / 60;
+    const perSec = 1 / unitSecs;
+    const stepUnits = tickClock ? Math.max(1, Math.round(spec.step.value)) : stepFrames;
+    const lenUnits = (o, raw) =>
+      !tickClock
+        ? this._resolveLenFrames(o, raw, when)
+        : o.dyn?.len != null
+          ? this._resolveLenFrames(o, raw, when) / (60 * this._secsPerTick)
+          : Math.max(1, Math.round(Number(raw)));
 
     if (spec.type === "stages") {
       const { stages } = spec;
@@ -3027,6 +3041,9 @@ export class IRPlayer {
         if (st.curve && st.loop) afterLoop = true;
       }
       const offT = this._keyOffFrameTime(when, gateSecs);
+      // A sample in the key-off's frame is the release's: the driver leaves
+      // for it before that frame's step.
+      const offFrame = offT === Infinity ? Infinity : this._eventFrame(gateSecs + KEY_OFF_LEAD_SECS);
 
       let t = when;
       for (let i = 0; i < stages.length; i++) {
@@ -3034,7 +3051,9 @@ export class IRPlayer {
         const keyed = i < rel;
         if (i === rel) {
           if (offT === Infinity) break;
-          t = offT;
+          // A tick clock counts the release from the key-off's tick; its first
+          // sample still lands on the key-off's frame.
+          t = tickClock ? gateSecs + KEY_OFF_LEAD_SECS : offT;
         }
         // A :wait advances the time cursor. A pure wait stage (no curve) stops
         // here; a curve stage with :wait uses it as a pre-delay, then plays.
@@ -3050,16 +3069,21 @@ export class IRPlayer {
         // Regular curve stage (dynamic :from/:to/:rate resolved per note)
         const { curve = "linear", frames: rawFrames = 1, loop = false } = stage;
         const { from = 0, to = 0, params } = this._curveFields(stage, when);
-        const baseFrames = this._resolveLenFrames(stage, rawFrames, when);
+        const baseFrames = lenUnits(stage, rawFrames);
         // A looping stage runs until key-off; a keyed one-shot is cut there.
         const untilOff =
-          offT === Infinity ? Infinity : Math.max(0, Math.round((offT - t) * 60));
+          offT === Infinity ? Infinity : Math.max(0, Math.ceil((offT - t) * perSec) + stepUnits);
         const budget = !keyed
           ? loop ? 0 : baseFrames
           : loop
-            ? untilOff === Infinity ? Math.max(0, Math.floor((gateSecs - t) * 60)) : untilOff
+            ? untilOff === Infinity ? Math.max(0, Math.floor((gateSecs - t) * perSec)) : untilOff
             : Math.min(baseFrames, untilOff);
-        for (let frame = 0; frame < budget; frame += stepFrames) {
+        let cut = false;
+        for (let frame = 0; frame < budget; frame += stepUnits) {
+          if (keyed && this._eventFrame(t + frame * unitSecs) >= offFrame) {
+            cut = true;
+            break;
+          }
           const phase = loop
             ? (frame % baseFrames) / baseFrames
             : baseFrames <= 1
@@ -3067,11 +3091,11 @@ export class IRPlayer {
               : Math.min(1, frame / (baseFrames - 1));
           writeFn(
             from + (to - from) * sampleCurveUnit(curve, phase, params),
-            t + frame / 60,
+            keyed ? t + frame * unitSecs : Math.max(offT, t + frame * unitSecs),
           );
         }
-        t += budget / 60;
-        if (keyed && t >= offT - 1e-9) i = rel - 1; // key-off: on to the release
+        t = cut ? offT : t + budget * unitSecs;
+        if (keyed && (cut || t >= offT - 1e-9)) i = rel - 1; // key-off: on to the release
       }
       return Math.min(t, limitSecs);
     }
@@ -3088,25 +3112,27 @@ export class IRPlayer {
       const { from, to, params } = this._curveFields(spec, when);
       // :len → 60 Hz frames (ticks by default, `Nf` as absolute frames, or a
       // dynamic slot resolved by its unit).
-      const baseFrames = this._resolveLenFrames(spec, rawFrames, when);
+      const baseFrames = lenUnits(spec, rawFrames);
       const waitFrameOffset = waitKeyOff
-        ? Math.max(0, Math.round((gateSecs - when) * 60))
-        : waitFrames != null
-          ? Math.max(0, Math.round(Number(waitFrames)))
-          : Math.max(
-              0,
-              Math.round(Number(waitTicks ?? 0) * this._secsPerTick * 60),
-            );
+        ? Math.max(0, Math.round((gateSecs - when) * perSec))
+        : tickClock
+          ? Math.max(0, Math.round(Number(waitTicks ?? 0)))
+          : waitFrames != null
+            ? Math.max(0, Math.round(Number(waitFrames)))
+            : Math.max(
+                0,
+                Math.round(Number(waitTicks ?? 0) * this._secsPerTick * 60),
+              );
       const startWhen = waitKeyOff
         ? Math.max(when, gateSecs)
-        : when + waitFrameOffset / 60;
-      const remainingFrames = Math.max(0, noteFrames - waitFrameOffset);
+        : when + waitFrameOffset * unitSecs;
+      const remainingFrames = Math.max(0, (noteFrames / 60) * perSec - waitFrameOffset);
       const activeFrames = waitKeyOff
         ? baseFrames
         : loop
           ? remainingFrames
           : Math.min(remainingFrames, baseFrames);
-      for (let frame = 0; frame < activeFrames; frame += stepFrames) {
+      for (let frame = 0; frame < activeFrames; frame += stepUnits) {
         const phase = loop
           ? (frame % baseFrames) / baseFrames
           : baseFrames <= 1
@@ -3114,10 +3140,10 @@ export class IRPlayer {
             : Math.min(1, frame / (baseFrames - 1));
         writeFn(
           from + (to - from) * sampleCurveUnit(curve, phase, params),
-          startWhen + frame / 60,
+          startWhen + frame * unitSecs,
         );
       }
-      return Math.min(startWhen + activeFrames / 60, limitSecs);
+      return Math.min(startWhen + activeFrames * unitSecs, limitSecs);
     }
 
     if (spec.type === "steps") {
@@ -3133,9 +3159,14 @@ export class IRPlayer {
       // driver does (see the stages form).
       const offT = this._keyOffFrameTime(when, gateSecs);
       const releaseAt = offT === Infinity ? gateSecs : offT;
+      // A step in the key-off's frame is the release's (see the stages form).
+      const offFrame = offT === Infinity ? Infinity : this._eventFrame(gateSecs + KEY_OFF_LEAD_SECS);
       let t = when;
       let idx = 0;
-      while (sustainEnd > 0 && t < releaseAt - 1e-9) {
+      while (
+        sustainEnd > 0 &&
+        (offFrame === Infinity ? t < releaseAt - 1e-9 : this._eventFrame(t) < offFrame)
+      ) {
         if (steps[idx] !== null && steps[idx] !== undefined)
           writeFn(steps[idx], t);
         idx++;
@@ -3151,10 +3182,13 @@ export class IRPlayer {
 
       // Release phase after gate (steps after :off), spaced by :step too
       if (releaseIndex !== null && releaseIndex < steps.length) {
-        t = releaseAt;
+        // A tick clock counts the release from the key-off's tick; its first
+        // step still lands on the key-off's frame.
+        const tick = spec.step?.unit === "tick" && offT !== Infinity;
+        t = tick ? gateSecs + KEY_OFF_LEAD_SECS : releaseAt;
         for (let ri = releaseIndex; ri < steps.length; ri++) {
           if (steps[ri] !== null && steps[ri] !== undefined)
-            writeFn(steps[ri], t);
+            writeFn(steps[ri], tick ? Math.max(releaseAt, t) : t);
           t += stepSecs;
         }
         return Math.min(t, limitSecs); // time after last release write
@@ -3955,7 +3989,9 @@ export class IRPlayer {
     );
     // Silence at the macro tail. offWhen is null when the note holds or slurs
     // into the next (legato) — leave the tone sounding for the next note.
-    if (silenceAt !== null && offWhen != null) {
+    // A macro the next note cuts short (silenceAt = its limit) leaves the level
+    // to that note: no gap before it.
+    if (silenceAt !== null && offWhen != null && silenceAt < limitSecs - 1e-9) {
       this._psgSetAtt(psgCh, 15, silenceAt);
     }
   }

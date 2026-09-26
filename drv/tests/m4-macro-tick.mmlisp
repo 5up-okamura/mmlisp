@@ -1,0 +1,18 @@
+; M4 gate: a macro :step written in ticks runs on its track's tick clock, not
+; rounded to frames — a 16th at 118 BPM is 7.63 frames, and a keyon roll or an
+; arp on it stays on the beat through the bar and across a tempo change. Curve,
+; stages (with a release) and a step vector, on FM and PSG.
+(fm1 :tempo 118 :oct 3 :len 1
+  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 11)) c
+  :tempo 133
+  (macro :step 16 :keyon (square 0..1 :len 4)) c)
+
+(fm2 :oct 5 :len 2 :vel 12
+  (macro :step 16 :semi [#sus 0 7 12]) g e-)
+
+(sqr1 :oct 5 :len 4 :gate* 0.5
+  (macro :step 32 :vel [(linear 4..15 :len 8) (triangle 12..15 :len 16) #rel (linear 15..6 :len 8)])
+  c e g c)
+
+(sqr2 :oct 4 :len 8
+  (macro :step 16 :vel [15 #sus 13 11 #rel 8 5 2]) c _ e _ g _ _4)
