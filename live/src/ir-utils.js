@@ -261,20 +261,8 @@ export function volToPsgOffset(v) {
 }
 
 // ---------------------------------------------------------------------------
-// Vol sweep sampling + curve helpers
+// Sweep curve helpers
 // ---------------------------------------------------------------------------
-
-// Sample a vol sweep state { from, to, curve, baseFrames, nonLoopOffset, startWhen }
-// at the given audio time. Returns a clamped value in the same range as from/to.
-// Shared by _fmVolAtTime and _psgVolAtTime.
-export function sweepVolAtTime(sweep, when) {
-  const frameOffset = Math.max(0, (when - sweep.startWhen) * 60);
-  const frame = (sweep.nonLoopOffset ?? 0) + frameOffset;
-  const phase =
-    sweep.baseFrames <= 1 ? 1 : Math.min(1, frame / (sweep.baseFrames - 1));
-  const unit = sampleCurveUnit(sweep.curve, phase, sweep.params);
-  return Math.max(0, Math.min(31, sweep.from + (sweep.to - sweep.from) * unit));
-}
 
 // Compute sweep phase [0,1] for a given frame index.
 // loop=true wraps with loopPhaseOffset; loop=false clamps to 1.

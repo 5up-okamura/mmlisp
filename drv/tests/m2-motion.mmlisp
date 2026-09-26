@@ -1,5 +1,5 @@
 ; M2 "motion" stress — level fades (one-shot PARAM_SWEEP), a looping tremolo
-; (loop PARAM_SWEEP, cancelled by the next note), PARAM_ADD accents, and a
+; (loop PARAM_SWEEP, running across notes until the next write), PARAM_ADD accents, and a
 ; TEMPO_SWEEP ramp. Deliberately avoids NOTE_PITCH sweeps (glide/vibrato) —
 ; cent-interpolated pitch is the next increment.
 
@@ -19,7 +19,7 @@
   :master (ease-in 12..31 :len 180f)
   c e g e)
 
-; looping tremolo on VOL: a sine loop, re-triggered (cancelled) each note
+; looping tremolo on VOL: a sine loop, replaced by the next :vol sweep
 (sqr1 :oct 5 :len 2 :vel 11
   e :vol (sin 20..6 :len 20f) g
   b :vol (triangle 24..10 :len 16f) e)

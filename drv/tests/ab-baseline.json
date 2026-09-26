@@ -31,9 +31,9 @@
   },
   "m2-motion.mmlisp": {
     "ok": false,
-    "mismatches": 817,
+    "mismatches": 32,
     "compileErrors": 0,
-    "digest": "69072d21"
+    "digest": "4e80e58a"
   },
   "m2-pcm.mmlisp": {
     "ok": true,
@@ -49,9 +49,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 565,
+    "mismatches": 473,
     "compileErrors": 0,
-    "digest": "c5ebe693"
+    "digest": "f8db084a"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -60,10 +60,10 @@
     "digest": "811c9dc5"
   },
   "m3-dynsweep.mmlisp": {
-    "ok": false,
-    "mismatches": 128,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "9ea4b4d5"
+    "digest": "811c9dc5"
   },
   "m3-dynval.mmlisp": {
     "ok": false,
@@ -145,15 +145,15 @@
   },
   "m3-macro-vel-clear.mmlisp": {
     "ok": false,
-    "mismatches": 17,
+    "mismatches": 13,
     "compileErrors": 0,
-    "digest": "a176dc64"
+    "digest": "04fcfa2e"
   },
   "m3-macro-vel.mmlisp": {
-    "ok": false,
-    "mismatches": 4,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "3f1f91a4"
+    "digest": "811c9dc5"
   },
   "m3-macro.mmlisp": {
     "ok": true,
@@ -295,9 +295,9 @@
   },
   "m4-fm3op-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 21,
+    "mismatches": 23,
     "compileErrors": 0,
-    "digest": "376d6a7a"
+    "digest": "7c1c187b"
   },
   "m4-fm6-only.mmlisp": {
     "ok": true,
@@ -366,10 +366,10 @@
     "digest": "811c9dc5"
   },
   "m4-sweep-from-current.mmlisp": {
-    "ok": false,
-    "mismatches": 62,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "4f705fae"
+    "digest": "811c9dc5"
   },
   "m4-tl-compose.mmlisp": {
     "ok": false,
@@ -391,9 +391,9 @@
   },
   "p3-claim-evict.mmlisp": {
     "ok": false,
-    "mismatches": 494,
+    "mismatches": 266,
     "compileErrors": 0,
-    "digest": "ca2e3c15"
+    "digest": "4998f488"
   },
   "p3-claim-se-in-twin.mmlisp": {
     "ok": true,
@@ -403,9 +403,9 @@
   },
   "p3-claim-se-in.mmlisp": {
     "ok": false,
-    "mismatches": 494,
+    "mismatches": 266,
     "compileErrors": 0,
-    "digest": "ca2e3c15"
+    "digest": "4998f488"
   },
   "p3-claim-se-out-twin.mmlisp": {
     "ok": true,
@@ -415,9 +415,9 @@
   },
   "p3-claim-se-out.mmlisp": {
     "ok": false,
-    "mismatches": 132,
+    "mismatches": 120,
     "compileErrors": 0,
-    "digest": "424d3982"
+    "digest": "f2c59475"
   },
   "p3-lifecycle.mmlisp": {
     "ok": true,
@@ -475,9 +475,9 @@
   },
   "stress-m2skip.mmlisp": {
     "ok": false,
-    "mismatches": 303,
+    "mismatches": 18,
     "compileErrors": 0,
-    "digest": "f9c16753"
+    "digest": "64aa5c95"
   },
   "ab-core.mmlisp": {
     "ok": true,

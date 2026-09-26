@@ -244,8 +244,9 @@ the deduped MMB and requires an unchanged mismatch baseline.
 Notes:
 
 - **PARAM_SWEEP** is a fixed 9-byte payload. `len` is
-  in 60 Hz frames; for loop-curve ids it is the period. `flags` bit0 = loop
-  (run until PARAM_SWEEP_STOP / next note per IR semantics), **bit1 = `from`
+  in 60 Hz frames; for loop-curve ids it is the period. `flags` bit0 = loop (the
+  curve cycles; any sweep runs until the next PARAM_SET / PARAM_SWEEP /
+  PARAM_SWEEP_STOP on its target — notes do not stop it, language.md §5.1), **bit1 = `from`
   is a value-slot id** (in the field's low byte), **bit2 = `to` is a slot id**
   — the driver reads the slot live at dispatch, replacing the field — **bit3
   = no `from`: start at the parameter's current value** (the driver's read of

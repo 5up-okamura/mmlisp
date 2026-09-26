@@ -1,7 +1,7 @@
 ; M2b pitch-motion stress — cent-interpolated NOTE_PITCH on FM and PSG:
 ; inline :pitch constants (PARAM_SET NOTE_PITCH), one-shot pitch sweeps
 ; (glide-style PARAM_SWEEP NOTE_PITCH), and a looping vibrato (loop sweep on
-; NOTE_PITCH, cancelled by the next note).
+; NOTE_PITCH, running across notes until the next write).
 
 (def-voice lead :alg 4 :fb 3
   :ar1 31 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 24 :ks1 0 :ml1 2 :dt1 0

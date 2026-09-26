@@ -862,10 +862,6 @@ export class DrvPlayer {
     // the key and its macros (which gate on the keyed state). Always true during
     // the trace gate (nothing muted), so it doesn't affect verification.
     const audible = this._isTrackAudible(trk.index);
-    // A new note cancels loop sweeps on this channel (opcodes.md §6: loop
-    // sweeps "run until PARAM_SWEEP_STOP / next note"). One-shot sweeps
-    // (fades, glide) survive.
-    this._cancelLoopSweeps(ch);
     if (fm3op) {
       // FM3 independent-OP: the F-number was set by the preceding FM3_OP_PITCH.
       // The patch is the shared CH3's, but the LEVEL is this operator's own and
@@ -1098,7 +1094,10 @@ export class DrvPlayer {
           // here, composed by the next note-on, never applied to a note that
           // is already sounding. The host's own writes stay immediate.
           if (target === TARGET_ID.VEL) this._storeVel(trk.channelId, raw);
-          else this._paramSet(trk.channelId, target, raw);
+          else {
+            this._stopSweep(trk.channelId, target); // a write ends the target's sweep
+            this._paramSet(trk.channelId, target, raw);
+          }
           break;
         }
         case OPCODE.VOICE_SET: {
@@ -1420,15 +1419,17 @@ export class DrvPlayer {
 
   // The stream's PARAM_SET VEL: the base and the live value, no write — the
   // next note-on composes it (driver.md §7.1). Mirrors mmlispseq.c store_vel.
+  // Only the base: the sounding note keeps its velocity (a :vol or :master
+  // change recomposes it with that), and the next note-on takes the base up.
   _storeVel(channelId, value) {
     const v = value < 0 ? 0 : value > 15 ? 15 : value;
     const op = this._fm3OpFor(channelId);
-    if (op) this._fm3OpVel[op - 1] = this._fm3OpVelBase[op - 1] = v;
-    else if (channelId < 6) { const r = this._fm[channelId]; r.vel = r.velBase = v; }
-    else if (channelId < 10) { const st = this._psg[channelId - 6]; st.vel = st.velBase = v; }
+    if (op) this._fm3OpVelBase[op - 1] = v;
+    else if (channelId < 6) this._fm[channelId].velBase = v;
+    else if (channelId < 10) this._psg[channelId - 6].velBase = v;
     else if (channelId >= 20 && channelId <= 22) {
       const pv = this._pcmVoices[channelId - 20];
-      if (pv) pv.vel = pv.velBase = v;
+      if (pv) pv.velBase = v;
     }
   }
 
@@ -1715,15 +1716,6 @@ export class DrvPlayer {
     if (bank < 0) return;
     const slots = this._sweeps[bank];
     for (let i = 0; i < slots.length; i++) slots[i] = null;
-  }
-
-  _cancelLoopSweeps(ch) {
-    const bank = this._sweepBank(ch);
-    if (bank < 0) return;
-    const slots = this._sweeps[bank];
-    for (let i = 0; i < slots.length; i++) {
-      if (slots[i] && slots[i].loop) slots[i] = null;
-    }
   }
 
   // ── M3 macro engine (driver.md §13) ──────────────────────────────────────

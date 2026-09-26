@@ -908,9 +908,6 @@ static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
     if (s->sweeps[bank][i].active && s->sweeps[bank][i].target == target)
       s->sweeps[bank][i].active = 0;
 }
-/* A new note cancels LOOP sweeps on its channel (opcodes.md §6: loop sweeps
- * run "until PARAM_SWEEP_STOP / next note"). One-shots — fades, glides —
- * survive it. */
 /* CLAIMING A CHANNEL WIPES ITS MODULATORS (driver.md §2.2). Macro binds and
  * sweeps are channel state, not track state, and nothing but the stream's own
  * MACRO_CLEAR ever cleared them — so an evicted track's macro went on playing
@@ -927,13 +924,6 @@ static void clear_channel_modulators(MMLSeq *s, int ch) {
   int bank = sweep_bank(ch);
   if (bank < 0) return;
   for (int i = 0; i < 2; i++) s->sweeps[bank][i].active = 0;
-}
-
-static void cancel_loop_sweeps(MMLSeq *s, int ch) {
-  int bank = sweep_bank(ch);
-  if (bank < 0) return;
-  for (int i = 0; i < 2; i++)
-    if (s->sweeps[bank][i].active && s->sweeps[bank][i].loop) s->sweeps[bank][i].active = 0;
 }
 
 /* ── Macro engine (driver.md §13) ──────────────────────────────────────────
@@ -1380,12 +1370,14 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
 /* The stream's PARAM_SET VEL: the base and the live value, no write — the
  * next note_on composes it (driver.md §7.1). */
 static void store_vel(MMLSeq *s, int ch, int value) {
+  /* Only the base: the sounding note keeps its velocity (a vol or master
+   * change recomposes it with that), and the next note_on takes the base up. */
   uint8_t v = (uint8_t)clampi(value, 0, 15);
   int op = fm3_op_for(s, ch);
-  if (op) s->fm3_op_vel[op - 1] = s->fm3_op_vel_base[op - 1] = v;
-  else if (ch < 6) s->fm[ch].vel = s->fm[ch].vel_base = v;
-  else if (ch < 10) s->psg[ch - 6].vel = s->psg[ch - 6].vel_base = v;
-  else if (ch >= CH_PCM1 && ch <= CH_PCM3) s->pcm[ch - CH_PCM1].vel = s->pcm[ch - CH_PCM1].vel_base = v;
+  if (op) s->fm3_op_vel_base[op - 1] = v;
+  else if (ch < 6) s->fm[ch].vel_base = v;
+  else if (ch < 10) s->psg[ch - 6].vel_base = v;
+  else if (ch >= CH_PCM1 && ch <= CH_PCM3) s->pcm[ch - CH_PCM1].vel_base = v;
 }
 
 /* `ex_vel` < 0 means "no per-note velocity" — take the sticky base. */
@@ -1401,7 +1393,6 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
    * which is how a level macro anywhere in a loop left every following note at
    * full volume. ir-player does the same with `regs.vel = noteVel`. */
   restore_vel_base(s, ch, ex_vel);
-  cancel_loop_sweeps(s, ch);
   if (fm3op) {
     /* FM3 independent-OP: the F-number came from the preceding FM3_OP_PITCH.
      * The patch is the shared CH3's, but the LEVEL is this operator's own and
@@ -1639,9 +1630,11 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
           store_vel(s, t->channel_id, (int8_t)st[t->pc + 2]);
           t->pc += 3;
         } else if (target_wide(target)) {
+          stop_sweep(s, t->channel_id, target); /* a write ends the target's sweep */
           param_set(s, t->channel_id, target, (int16_t)rd16(st, t->pc + 2));
           t->pc += 4;
         } else {
+          stop_sweep(s, t->channel_id, target);
           param_set(s, t->channel_id, target, (int8_t)st[t->pc + 2]);
           t->pc += 3;
         }
