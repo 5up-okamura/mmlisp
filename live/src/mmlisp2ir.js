@@ -151,7 +151,6 @@ const CURVE_NAMES = new Set([
   "pink",
   "perlin",
   "brown",
-  "const", // constant value (positional arg); sugar for linear from = to
 ]);
 
 // Loop waveforms produce PARAM_SWEEP with loop:true; easing/linear produce loop:false
@@ -1644,7 +1643,7 @@ function resolveSampleEffects(node, bpm, diagnostics, src) {
         // an :at of 0 is instant / the start.
         if (v !== null && !(v > 0) && p.positive) v = null;
       } else if (p.kind === "curve") {
-        v = CURVE_NAMES.has(tok) && !LOOP_CURVE_NAMES.has(tok) && tok !== "const" ? tok : null;
+        v = CURVE_NAMES.has(tok) && !LOOP_CURVE_NAMES.has(tok) ? tok : null;
       } else {
         const n = typeof tok === "string" && /^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok) ? Number(tok) : null;
         v = n !== null && (p.kind !== "int" || Number.isInteger(n)) ? n : null;
@@ -1847,18 +1846,42 @@ function parseMacroSpec(
   if (node.kind === "list" && node.bracket === "[]") {
     const items = node.items.filter((n) => n.kind !== "comment");
 
-    // If all items are () expressions, treat as multi-stage sequential.
-    // (Parser stores the bracket as the open+close pair, "()", not "(".)
-    const allExprs =
-      items.length > 0 &&
-      items.every((it) => it.kind === "list" && it.bracket === "()");
-    if (allExprs) {
+    // A `let` name stands for its value: a number is a step, a curve a stage.
+    const boundOf = (it) =>
+      it.kind === "atom" && env ? lookupBound(env, atomValue(it)) : undefined;
+    const isStage = (it) =>
+      (it.kind === "list" && it.bracket === "()") ||
+      (boundOf(it) !== undefined && typeof boundOf(it) === "object");
+
+    // One grammar (language.md §10): a vector holding any stage is a stage
+    // list, and in it a number is a one-:step stage, `_` waits one step,
+    // `#rel` is where the release starts ((wait key-off)) and `#sus` makes the
+    // stage after it loop until key-off. A vector of values alone stays the
+    // step vector below.
+    if (items.some(isStage)) {
+      const oneStep = step ?? { unit: "frame", value: 1 };
+      const stepWait = () =>
+        oneStep.unit === "tick" ? { waitTicks: oneStep.value } : { waitFrames: oneStep.value };
+      const stepStage = (v) => ({
+        curve: "linear",
+        from: v,
+        to: v,
+        frames: oneStep.value,
+        ...(oneStep.unit === "tick" ? {} : { lenFrames: true }),
+        loop: false,
+      });
+      const bad = (it, msg) =>
+        diagnostics && pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID", msg, nodeSrc(it), trackName);
       const stages = [];
-      for (const stageNode of items) {
-        const head = atomValue(stageNode.items?.[0]);
-        if (head === "wait") {
+      let sus = null; // the #sus waiting for its stage
+      for (const it of items) {
+        const val = atomValue(it);
+        if (val === "#sus") { sus = it; continue; }
+        if (val === "#rel") { stages.push({ waitKeyOff: true }); continue; }
+        if (val === "_") { stages.push(stepWait()); continue; }
+        if (it.kind === "list" && atomValue(it.items?.[0]) === "wait") {
           // (wait key-off) or (wait N) or (wait Nf)
-          const arg = atomValue(stageNode.items?.[1]);
+          const arg = atomValue(it.items?.[1]);
           if (arg === "key-off") {
             stages.push({ waitKeyOff: true });
           } else if (/^\d+f$/.test(arg)) {
@@ -1872,17 +1895,29 @@ function parseMacroSpec(
           }
           continue;
         }
-        // Any other stage is a curve — a literal, a let name or arithmetic on
-        // one; a plain step vector has no stage form.
-        const r = evalMacroNode(stageNode);
-        if (r?.kind === "signal" && !r.spec.steps) {
-          requireCurveFrom(r.spec, diagnostics, trackName, "a macro");
-          stages.push(r.spec);
+        let spec = null;
+        if (isStage(it)) {
+          // A curve — a literal, a let name or arithmetic on one — or an
+          // expression that folds to a number (then one step).
+          const r = evalMacroNode(it);
+          if (r?.kind === "signal" && !r.spec.steps) spec = r.spec;
+          else if (r?.kind === "scalar") spec = stepStage(clampVal(r.value));
+          else if (r) bad(it, "a stage is a curve, a number or (wait …)");
+        } else {
+          const b = boundOf(it);
+          const n = typeof b === "number" ? Math.round(b) : tokenValue(val);
+          if (n !== null) spec = stepStage(clampVal(n));
+          else bad(it, `${val ?? "(…)"} is not a value for this macro`);
         }
-        else if (r && diagnostics)
-          pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID",
-            "a stage is a curve or (wait …)", nodeSrc(stageNode), trackName);
+        if (!spec) continue;
+        requireCurveFrom(spec, diagnostics, trackName, "a macro");
+        if (sus) {
+          spec = { ...spec, loop: true };
+          sus = null;
+        }
+        stages.push(spec);
       }
+      if (sus) bad(sus, "#sus needs a stage after it to loop");
       return { type: "stages", stages };
     }
 
@@ -1902,7 +1937,8 @@ function parseMacroSpec(
         releaseIndex = steps.length;
         continue;
       }
-      const n = tokenValue(val);
+      const b = boundOf(item);
+      const n = typeof b === "number" ? Math.round(b) : tokenValue(val);
       if (n !== null) {
         steps.push(clampVal(n));
       } else if (val === "_") {
@@ -2079,17 +2115,6 @@ function parseCurveSpec(
   const dynSrc = (v) =>
     typeof v === "string" && v.startsWith("$") ? v.slice(1) : null;
 
-  // `const` is sugar for a flat segment: the positional value becomes
-  // from = to, emitted as a (non-loop) linear curve (needs no new sampler).
-  const isConst = head === "const";
-  if (isConst) {
-    const cval = readScalar(atomValue(node.items[1]));
-    if (cval !== null) {
-      from = cval;
-      to = cval;
-    }
-  }
-
   const COMMON_PARAM_KEYS = new Set([":phase", ":rate", ":wait"]);
   const LOOP_WAVE_PARAM_KEYS = new Set([":duty", ":skew"]);
   const STOCHASTIC_PARAM_KEYS = new Set([
@@ -2154,7 +2179,7 @@ function parseCurveSpec(
   for (let j = 1; j < node.items.length; j++) {
     const k = atomValue(node.items[j]);
     // Positional range sugar: `(sin -1..1 :rate 6 :len 4)` sets from/to.
-    const range = !isConst && parseRangeToken(k);
+    const range = parseRangeToken(k);
     if (range && scalar) {
       if (diagnostics) {
         pushDiag(
@@ -2189,7 +2214,7 @@ function parseCurveSpec(
     }
     // A `..`-bearing token that is not a clean range is a range typo (no other
     // token contains `..`); flag it instead of silently ignoring it.
-    if (!isConst && typeof k === "string" && k.includes("..") && diagnostics) {
+    if (typeof k === "string" && k.includes("..") && diagnostics) {
       pushDiag(
         diagnostics,
         "error",
@@ -2401,7 +2426,7 @@ function parseCurveSpec(
   }
 
   const spec = {
-    curve: isConst ? "linear" : head,
+    curve: head,
     to: to ?? 0,
     loop: loopMode ?? LOOP_CURVE_NAMES.has(head),
   };

@@ -245,7 +245,7 @@ export const CURVE_ID = {
 // `saw`; `const` is a flat segment (linear). Unknown names fall back to linear.
 export function curveId(name) {
   const n = String(name || "");
-  if (n === "linear" || n === "const") return CURVE_ID.linear;
+  if (n === "linear") return CURVE_ID.linear;
   // ease-inout must be tested before ease-in ("ease-inout".startsWith("ease-in")).
   if (n.startsWith("ease-inout")) return CURVE_ID["ease-inout"];
   if (n.startsWith("ease-in")) return CURVE_ID["ease-in"];
