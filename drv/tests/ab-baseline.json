@@ -103,9 +103,9 @@
   },
   "m3-macro-keyon.mmlisp": {
     "ok": false,
-    "mismatches": 30,
+    "mismatches": 2,
     "compileErrors": 0,
-    "digest": "89942a1a"
+    "digest": "217097ac"
   },
   "m3-macro-multi.mmlisp": {
     "ok": false,

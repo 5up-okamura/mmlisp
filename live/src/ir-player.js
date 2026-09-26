@@ -1900,6 +1900,9 @@ export class IRPlayer {
             fm3Offset,
           );
         }
+        // A :keyon retrigger restarts the note's envelopes — level and timbre
+        // (driver.md §13.2) — while its :pitch / :semi run on (scheduled above).
+        this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, gateTicks, macroLimit);
         this._scheduleFmVelMacro(
           ch,
           port,
@@ -1918,6 +1921,7 @@ export class IRPlayer {
           gateTicks,
           macroLimit,
         );
+        this._envRetrigs = null;
         // Key on: all 4 operators (unless muted or vol=0).
         // YM2612: TL=127 gives totalAttn=1016 < 1023 (not silent at sustain),
         // so when a volume control is 0 we skip key-on entirely to guarantee
@@ -2943,15 +2947,25 @@ export class IRPlayer {
     stepSecs = 1 / 60,
     limitSecs = Infinity,
   ) {
-    const endTime = this._scheduleMacroImpl(
-      spec,
-      noteFrames,
-      gateSecs,
-      when,
-      writeFn,
-      stepSecs,
-      limitSecs,
+    // Restarted by the note's :keyon retriggers (set around an envelope's
+    // scheduling): one run per keyed segment, each cut at the next retrigger.
+    const retrigs = (this._envRetrigs ?? []).filter(
+      (r) => r > when + 1e-6 && r < gateSecs && r < limitSecs,
     );
+    const starts = [when, ...retrigs];
+    let endTime = null;
+    for (let i = 0; i < starts.length; i++) {
+      const at = starts[i];
+      endTime = this._scheduleMacroImpl(
+        spec,
+        Math.max(1, noteFrames - Math.round((at - when) * 60)),
+        gateSecs,
+        at,
+        writeFn,
+        stepSecs,
+        Math.min(limitSecs, starts[i + 1] ?? Infinity),
+      );
+    }
     if (spec?.src && this._onSeq) {
       const src = spec.src;
       const now = this._audioContext.currentTime;
@@ -3419,6 +3433,20 @@ export class IRPlayer {
       stepSecs,
       limitSecs,
     );
+  }
+
+  // The times a note's `:keyon` macro re-attacks it (every sample ≥ 0.5 but
+  // the first, which is the note's own attack).
+  _keyonRetrigTimes(keyonSpec, when, gateTicks, limitSecs = Infinity) {
+    if (!keyonSpec) return null;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const times = [];
+    this._scheduleMacroImpl(
+      keyonSpec, noteFrames, gateSecs, when,
+      (v, t) => { if (v >= 0.5 && t > when + 1e-6) times.push(t); },
+      this._stepSecs(keyonSpec.step), limitSecs,
+    );
+    return times;
   }
 
   // The gaps an FM3 operator's `:keyon` macro punches in its key interval.
@@ -4068,6 +4096,7 @@ export class IRPlayer {
           );
         } else {
           this._psgTriggerNoise(when);
+          this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);
           this._schedulePsgModeMacro(
             psgCh,
             ev.args?.noise_mode,
@@ -4075,6 +4104,7 @@ export class IRPlayer {
             psgGateTicks,
             psgMacroLimit,
           );
+          this._envRetrigs = null;
         }
         if (psgGateTicks === 0) {
           // Hold note: register for runtime key-off via triggerKeyOff(psgCh + 6)
@@ -4095,6 +4125,9 @@ export class IRPlayer {
             : null;
         this._psgKeyedUntil[psgCh] = psgOffWhen ?? psgNextNote;
         if (velMacro) {
+          // A :keyon retrigger restarts the level envelope (PSG has no
+          // hardware one: this is the whole of the retrigger).
+          this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);
           this._schedulePsgVelMacro(
             psgCh,
             velMacro,
@@ -4104,6 +4137,7 @@ export class IRPlayer {
             psgMacroLimit,
             psgOffWhen,
           );
+          this._envRetrigs = null;
         } else {
           this._schedulePsgEnvelope(psgCh, when, psgGateTicks, baseVel, psgOffWhen);
         }

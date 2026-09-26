@@ -1817,10 +1817,17 @@ export class DrvPlayer {
     if (slots.length === 0) return;
     const keyed = this._channelKeyed(ch);
     let dead = false;
-    for (let i = 0; i < slots.length; i++) {
-      if (this._stepMacro(ch, slots[i], keyed)) {
-        slots[i] = null;
-        dead = true;
+    // The KEYON slots step first, so an envelope a retrigger restarts takes
+    // its first step in the retrigger's own frame, whatever the bind order.
+    for (const pass of [true, false]) {
+      for (let i = 0; i < slots.length; i++) {
+        if (!slots[i]) continue;
+        const isKeyon = this._macros[slots[i].descIdx]?.target === TARGET_ID.KEYON;
+        if (isKeyon !== pass) continue;
+        if (this._stepMacro(ch, slots[i], keyed)) {
+          slots[i] = null;
+          dead = true;
+        }
       }
     }
     if (dead) this._macroSlots[mc] = slots.filter(Boolean);
@@ -1903,7 +1910,7 @@ export class DrvPlayer {
         // just attacked — re-attacking there is a write with nothing behind
         // it, so a leading nonzero step is a no-op (ir-player skips the t=0
         // sample the same way). Later steps are the roll.
-        if (v !== 0 && !slot.fresh) this._keyonRetrigger(ch);
+        if (v !== 0 && !slot.fresh) this._keyonRetrigger(ch, d.flags & 8 ? slot : null, d.step);
       } else if (d.target === TARGET_ID.NOTE_PITCH) {
         // Pitch macro: write the note pitch each frame WITHOUT storing back to
         // the sticky pitchCents (which holds the :pitch directive base). An
@@ -1949,18 +1956,27 @@ export class DrvPlayer {
   }
 
   // KEYON retrigger (driver.md §14): re-attack the note. Restart the channel's
-  // soft-envelope macros (every non-keyon running slot → attack) and, on FM,
+  // envelope macros (level and timbre slots → attack; :pitch/:semi run on) and, on FM,
   // re-key the hardware EG ($28). PSG has no hardware EG — the macro restart is
   // the whole effect.
-  _keyonRetrigger(ch) {
+  _keyonRetrigger(ch, src = null, srcStep = 0) {
     const mc = this._macroCh(ch);
     for (const s of mc < 0 ? [] : this._macroSlots[mc]) {
       if (!s) continue;
       const sd = this._macros[s.descIdx];
-      if (!sd || sd.target === TARGET_ID.KEYON) continue;
+      // :pitch and :semi run on: a retriggered arp keeps its place.
+      if (!sd || sd.target === TARGET_ID.KEYON || sd.target === TARGET_ID.NOTE_SEMI ||
+          sd.target === TARGET_ID.NOTE_PITCH) continue;
       s.cursor = 0;
       s.stepClock = 0;
       s.state = "run";
+      // A tick clock restarts on the retrigger's tick: the KEYON slot (tick
+      // clocked, stepped first this frame) is that many ticks past it, which
+      // this slot's own step then takes up, less the frame's share it adds.
+      if (src && sd.flags & 8) {
+        const past = Math.max(0, srcStep - src.stepClock);
+        s.acc = (src.acc + (past << 8) - this._frameInc) & 0xffff;
+      }
     }
     const op = this._fm3OpFor(ch);
     if (op) {

@@ -1094,20 +1094,30 @@ static void write_note_semi(MMLSeq *s, int ch, int semi, int add) {
   }
 }
 
-/* KEYON retrigger (driver.md §14): re-attack the note. Restart every other
- * running macro on the channel (they are the soft envelope) and, on FM, re-key
+/* KEYON retrigger (driver.md §14): re-attack the note. Restart the channel's
+ * envelope macros — level and timbre, the soft envelope — and, on FM, re-key
  * the hardware EG. PSG has no hardware EG, so there the macro restart is the
- * whole effect. */
-static void keyon_retrigger(MMLSeq *s, int ch) {
+ * whole effect. :pitch and :semi run on: a retriggered arp keeps its place. */
+static void keyon_retrigger(MMLSeq *s, int ch, const MMLMacroSlot *src, int src_step) {
   int mc = macro_ch(ch);
   for (int i = 0; mc >= 0 && i < s->macro_slot_count[mc]; i++) {
     MMLMacroSlot *sl = &s->macro_slots[mc][i];
     if (sl->dead) continue;
     MMLMacro d;
-    if (!macro_desc(s, sl->macro_id, &d) || d.target == T_KEYON) continue;
+    if (!macro_desc(s, sl->macro_id, &d) || d.target == T_KEYON ||
+        d.target == T_NOTE_SEMI || d.target == T_NOTE_PITCH)
+      continue;
     sl->cursor = 0;
     sl->step_clock = 0;
     sl->state = MML_MACRO_RUN;
+    /* A tick clock restarts on the retrigger's tick: the KEYON slot (tick
+     * clocked, stepped first this frame) is that many ticks past it, which
+     * this slot's own step then takes up, less the frame's share it adds. */
+    if (src && (d.flags & 8)) {
+      int past = src_step - src->step_clock;
+      if (past < 0) past = 0;
+      sl->acc = (uint16_t)(src->acc + (past << 8) - s->frame_inc);
+    }
   }
   int op = fm3_op_for(s, ch);
   if (op) {
@@ -1142,7 +1152,7 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp,
        * just attacked — re-attacking there is a write with nothing behind it,
        * so a leading nonzero step is a no-op (ir-player skips the t=0 sample
        * the same way). Later steps are the roll. */
-      if (v != 0 && !sl->fresh) keyon_retrigger(s, ch);
+      if (v != 0 && !sl->fresh) keyon_retrigger(s, ch, (d.flags & 8) ? sl : 0, d.step);
     } else if (d.target == T_NOTE_PITCH) {
       /* Pitch macro: write the register every frame but never store back to
        * pitch_cents, which holds the :pitch directive's base. An override macro
@@ -1249,11 +1259,19 @@ static void step_channel_macros(MMLSeq *s, int ch) {
   int keyed = channel_keyed(s, ch);
   int dead = 0;
   /* A KEYON step can reach back into this array (keyon_retrigger), so slots
-   * are marked dead in place and compacted only after the whole pass. */
-  for (int i = 0; i < n; i++) {
-    if (step_macro(s, ch, &s->macro_slots[mc][i], keyed)) {
-      s->macro_slots[mc][i].dead = 1;
-      dead = 1;
+   * are marked dead in place and compacted only after the whole pass. The
+   * KEYON slots step first, so an envelope a retrigger restarts takes its
+   * first step in the retrigger's own frame, whatever the bind order. */
+  for (int pass = 0; pass < 2; pass++) {
+    for (int i = 0; i < n; i++) {
+      MMLMacroSlot *sl = &s->macro_slots[mc][i];
+      MMLMacro d;
+      int is_keyon = macro_desc(s, sl->macro_id, &d) && d.target == T_KEYON;
+      if (sl->dead || is_keyon != (pass == 0)) continue;
+      if (step_macro(s, ch, sl, keyed)) {
+        sl->dead = 1;
+        dead = 1;
+      }
     }
   }
   if (!dead) return;

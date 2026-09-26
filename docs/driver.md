@@ -1105,9 +1105,12 @@ region; `(wait key-off)` marks the release boundary).
 - **KEYON** (macro-only target, retrigger; gated by `m3-macro-keyon`): a nonzero
   step re-attacks the note — except the **first** one, which lands in the note's
   own frame, where the note has just attacked; a leading `1` is a no-op and the
-  roll starts at the second step — it restarts the channel's non-keyon macro slots to
-  their attack (so soft-envelope `:vol`/`:pitch` macros replay) and, on FM,
-  re-keys the hardware EG (`$28` off→on). PSG has no hardware EG, so the
+  roll starts at the second step — it restarts the channel's envelope macro
+  slots to their attack (level and timbre: `:vel`/`:vol`/`:tl`… replay; `:pitch`
+  and `:semi` run on, so a retriggered arp keeps its place) and, on FM, re-keys
+  the hardware EG (`$28` off→on). KEYON slots step first in the frame, so a
+  restarted envelope takes its first step in the retrigger's frame, and a
+  tick-clocked one counts from the retrigger's tick. PSG has no hardware EG, so the
   soft-envelope restart is the whole effect. On an FM3 operator track the
   retrigger re-keys **that operator's bit alone** (§13.4). PCM has no macro
   engine and no envelope to re-attack, so `:keyon` is dropped there by the

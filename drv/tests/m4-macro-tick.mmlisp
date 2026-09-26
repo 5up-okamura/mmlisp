@@ -16,3 +16,11 @@
 
 (sqr2 :oct 4 :len 8
   (macro :step 16 :vel [15 #sus 13 11 #rel 8 5 2]) c _ e _ g _ _4)
+
+; A :keyon retrigger restarts the envelopes (:vel here) on its own tick, and
+; the arp (:semi) runs on through it.
+(fm4 :tempo 118 :oct 4 :len 1
+  (macro :step 1/16 :keyon (noise 0..1 :len 1 :seed 3) :vel [15 12 9 6 3] :semi [#sus 0 7 12]) c e)
+
+(sqr3 :oct 4 :len 2
+  (macro :step 1/16 :keyon [0 #sus 1 0] :vel [15 12 9 6 3]) c e)
