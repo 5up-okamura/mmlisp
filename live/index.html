@@ -506,6 +506,7 @@
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
+    import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey } from './src/import-fm-voices.js';
 
@@ -1516,11 +1517,6 @@
       'delay': 'delay ${1:3} :${2:vel+} ${3:-4} :time ${4:1/8}',
       'glide': 'glide ${1:1/8}',
       'const': 'const ${1:0} :len ${2:4}',
-      'gain': 'gain ${1:6}',
-      'comp': 'comp :threshold ${1:-18} :ratio ${2:4}',
-      'crush': 'crush ${1:4}',
-      'fade': 'fade :len ${1:100ms} :curve ${2:ease-out-expo}',
-      'reverb': 'reverb :tail ${1:250ms} :size ${2:0.5} :mix ${3:0.3}',
     };
     // Every curve head takes the same `A..B :len L` shape (§11), so generate
     // rather than list. `noise` is left out: as a head it is also a track name,
@@ -1528,6 +1524,25 @@
     for (const head of AC_FORMS) {
       if (!/^(linear|sin|triangle|square|saw|ramp|pink|perlin|brown|ease-)/.test(head)) continue;
       AC_SNIPPETS[head] = `${head} \${1:0}..\${2:100} :len \${3:8}`;
+    }
+    // An :effect writes out EVERY parameter, each a tab stop holding its
+    // default, so the list need not be remembered — generated from the table
+    // the compiler checks against, so a new param shows up here by itself. A
+    // required param has no default; it gets a usable example. A param whose
+    // default is not writable (fade :at, "`:len` before the end") is left out
+    // and named in the completion's detail instead.
+    const AC_FX_EXAMPLE = { 'gain.db': '6', 'crush.bits': '4', 'fade.len': '100ms', 'reverb.tail': '250ms' };
+    const AC_DETAIL = {};
+    for (const [name, fx] of Object.entries(SAMPLE_EFFECTS)) {
+      const stops = [], unwritten = [];
+      for (const [k, p] of Object.entries(fx.params)) {
+        const v = AC_FX_EXAMPLE[`${name}.${k}`]
+          ?? (p.def === null ? null : p.kind === 'time' ? `${Math.round(p.def * 1000)}ms` : String(p.def));
+        if (v === null) { unwritten.push(`:${k}`); continue; }
+        stops.push(`:${k} \${${stops.length + 1}:${v}}`);
+      }
+      AC_SNIPPETS[name] = [name, ...stops].join(' ');
+      AC_DETAIL[name] = unwritten.length ? `effect — also ${unwritten.join(' ')}` : 'effect';
     }
 
     // The names a score can use: its own defs and everything its imports
@@ -1598,7 +1613,7 @@
         const options = [...AC_FORMS, ...AC_TRACKS]
           .filter(s => s.startsWith(typed))
           .map(s => AC_SNIPPETS[s]
-            ? snippetCompletion(AC_SNIPPETS[s], { label: s, type: 'keyword' })
+            ? snippetCompletion(AC_SNIPPETS[s], { label: s, type: 'keyword', detail: AC_DETAIL[s] })
             : { label: s, type: 'keyword', apply: s + ' ' });
         for (const d of scoreDefNames(context.state))
           if (d.kind === 'fn' && d.name.startsWith(typed)) options.push(defCompletion(d));
