@@ -713,7 +713,10 @@ Rules:
 `vel` above is really **two** per-channel bytes, on FM, PSG and PCM alike:
 
 - **`vel_base`** — the score's sticky velocity. Written *only* by a
-  `PARAM_SET VEL` out of the event stream.
+  `PARAM_SET VEL` out of the event stream — which **stores it and writes
+  nothing**: velocity is note-on scoped (language.md §5), so the next note-on
+  composes it and a note already sounding keeps its level, as in the preview.
+  A host `SET_PARAM VEL` still applies at once.
 - **`vel`** — the live one that composes into TL / att / PCM shift. A `:vel`
   macro writes this every frame; it is the channel's envelope authority while
   it runs (§13.3).

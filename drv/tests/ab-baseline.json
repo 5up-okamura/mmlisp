@@ -19,15 +19,15 @@
   },
   "m2-csm.mmlisp": {
     "ok": false,
-    "mismatches": 76,
+    "mismatches": 68,
     "compileErrors": 0,
-    "digest": "0a59e7ac"
+    "digest": "31aa3761"
   },
   "m2-mailbox.mmlisp": {
-    "ok": false,
-    "mismatches": 8,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "318f1cbd"
+    "digest": "811c9dc5"
   },
   "m2-motion.mmlisp": {
     "ok": false,
@@ -49,9 +49,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 569,
+    "mismatches": 565,
     "compileErrors": 0,
-    "digest": "bdcd531f"
+    "digest": "c5ebe693"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -61,9 +61,9 @@
   },
   "m3-dynsweep.mmlisp": {
     "ok": false,
-    "mismatches": 132,
+    "mismatches": 128,
     "compileErrors": 0,
-    "digest": "374d2b5d"
+    "digest": "9ea4b4d5"
   },
   "m3-dynval.mmlisp": {
     "ok": false,
@@ -145,9 +145,9 @@
   },
   "m3-macro-vel-clear.mmlisp": {
     "ok": false,
-    "mismatches": 29,
+    "mismatches": 17,
     "compileErrors": 0,
-    "digest": "d7c95b37"
+    "digest": "a176dc64"
   },
   "m3-macro-vel.mmlisp": {
     "ok": false,
@@ -162,10 +162,10 @@
     "digest": "811c9dc5"
   },
   "m3-opparam.mmlisp": {
-    "ok": false,
-    "mismatches": 4,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "52f4e3d4"
+    "digest": "811c9dc5"
   },
   "m3-pcm-baked.mmlisp": {
     "ok": true,
@@ -192,10 +192,10 @@
     "digest": "811c9dc5"
   },
   "m3-pcm-sync.mmlisp": {
-    "ok": false,
-    "mismatches": 8,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "7572eb09"
+    "digest": "811c9dc5"
   },
   "m3-pcm-vol.mmlisp": {
     "ok": true,
@@ -216,16 +216,16 @@
     "digest": "fd42b3f1"
   },
   "m3-se-prio.mmlisp": {
-    "ok": false,
-    "mismatches": 8,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "8d95e6fb"
+    "digest": "811c9dc5"
   },
   "m3-se.mmlisp": {
-    "ok": false,
-    "mismatches": 8,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "8d95e6fb"
+    "digest": "811c9dc5"
   },
   "m3-slur.mmlisp": {
     "ok": true,
@@ -240,22 +240,22 @@
     "digest": "811c9dc5"
   },
   "m3-valexpr.mmlisp": {
-    "ok": false,
-    "mismatches": 4,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "52f4e3d4"
+    "digest": "811c9dc5"
   },
   "m3-voice-loop.mmlisp": {
     "ok": false,
-    "mismatches": 42,
+    "mismatches": 30,
     "compileErrors": 0,
-    "digest": "6f5bf2a1"
+    "digest": "aab2f5b3"
   },
   "m3-voice.mmlisp": {
-    "ok": false,
-    "mismatches": 12,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "a85f9be0"
+    "digest": "811c9dc5"
   },
   "m4-break-once.mmlisp": {
     "ok": true,
@@ -270,10 +270,10 @@
     "digest": "811c9dc5"
   },
   "m4-delay-prio.mmlisp": {
-    "ok": false,
-    "mismatches": 16,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "592bafb9"
+    "digest": "811c9dc5"
   },
   "m4-fm3-voice-track.mmlisp": {
     "ok": false,
@@ -306,16 +306,16 @@
     "digest": "811c9dc5"
   },
   "m4-gate0.mmlisp": {
-    "ok": false,
-    "mismatches": 8,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "7572eb09"
+    "digest": "811c9dc5"
   },
   "m4-loop-break-state.mmlisp": {
-    "ok": false,
-    "mismatches": 6,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "708ae200"
+    "digest": "811c9dc5"
   },
   "m4-macro-floor.mmlisp": {
     "ok": false,
@@ -384,22 +384,22 @@
     "digest": "8813c5a6"
   },
   "p3-claim-evict-twin.mmlisp": {
-    "ok": false,
-    "mismatches": 16,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "d8d72403"
+    "digest": "811c9dc5"
   },
   "p3-claim-evict.mmlisp": {
     "ok": false,
-    "mismatches": 502,
+    "mismatches": 494,
     "compileErrors": 0,
-    "digest": "1ca4e0b1"
+    "digest": "ca2e3c15"
   },
   "p3-claim-se-in-twin.mmlisp": {
-    "ok": false,
-    "mismatches": 8,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "e5a5d65b"
+    "digest": "811c9dc5"
   },
   "p3-claim-se-in.mmlisp": {
     "ok": false,
@@ -408,16 +408,16 @@
     "digest": "ca2e3c15"
   },
   "p3-claim-se-out-twin.mmlisp": {
-    "ok": false,
-    "mismatches": 8,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "e5a5d65b"
+    "digest": "811c9dc5"
   },
   "p3-claim-se-out.mmlisp": {
     "ok": false,
-    "mismatches": 140,
+    "mismatches": 132,
     "compileErrors": 0,
-    "digest": "b45b8f00"
+    "digest": "424d3982"
   },
   "p3-lifecycle.mmlisp": {
     "ok": true,
@@ -426,63 +426,63 @@
     "digest": "811c9dc5"
   },
   "p3-se-fade-twin.mmlisp": {
-    "ok": false,
-    "mismatches": 16,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "684546e2"
+    "digest": "811c9dc5"
   },
   "p3-se-fade.mmlisp": {
-    "ok": false,
-    "mismatches": 16,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "684546e2"
+    "digest": "811c9dc5"
   },
   "p3-se-overlap.mmlisp": {
-    "ok": false,
-    "mismatches": 8,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "e5a5d65b"
+    "digest": "811c9dc5"
   },
   "p3-se-stopped-twin.mmlisp": {
-    "ok": false,
-    "mismatches": 16,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "684546e2"
+    "digest": "811c9dc5"
   },
   "p3-se-stopped.mmlisp": {
-    "ok": false,
-    "mismatches": 16,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "684546e2"
+    "digest": "811c9dc5"
   },
   "p3-se-strand.mmlisp": {
-    "ok": false,
-    "mismatches": 16,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "684546e2"
+    "digest": "811c9dc5"
   },
   "stress-9ch.mmlisp": {
     "ok": false,
-    "mismatches": 39,
+    "mismatches": 23,
     "compileErrors": 0,
-    "digest": "081565e4"
+    "digest": "8f1e1616"
   },
   "stress-m1.mmlisp": {
     "ok": false,
-    "mismatches": 41,
+    "mismatches": 25,
     "compileErrors": 0,
-    "digest": "5eab5f2d"
+    "digest": "77b7f38b"
   },
   "stress-m2skip.mmlisp": {
     "ok": false,
-    "mismatches": 315,
+    "mismatches": 303,
     "compileErrors": 0,
-    "digest": "7e19c24d"
+    "digest": "f9c16753"
   },
   "ab-core.mmlisp": {
-    "ok": false,
-    "mismatches": 6,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "1e02c59c"
+    "digest": "811c9dc5"
   }
 }

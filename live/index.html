@@ -7106,10 +7106,12 @@
     // Register the service worker for installability + fast repeat loads. Do it
     // on load so it never competes with the initial render, and swallow errors
     // so an unsupported/insecure context leaves normal operation untouched.
+    // This runs after the module's top-level awaits, so on a fast load the
+    // 'load' event has already fired — register at once then.
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(() => {});
-      });
+      const registerSw = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
+      if (document.readyState === 'complete') registerSw();
+      else window.addEventListener('load', registerSw);
     }
   </script>
 </body>

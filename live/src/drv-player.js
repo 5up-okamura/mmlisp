@@ -1094,7 +1094,11 @@ export class DrvPlayer {
           const w = targetWidth(target);
           const raw = w === 2 ? i16(u16(s, trk.pc + 2)) : i8(s[trk.pc + 2]);
           trk.pc += 2 + w;
-          this._paramSet(trk.channelId, target, raw);
+          // The score's velocity is note-on scoped (language.md §5): stored
+          // here, composed by the next note-on, never applied to a note that
+          // is already sounding. The host's own writes stay immediate.
+          if (target === TARGET_ID.VEL) this._storeVel(trk.channelId, raw);
+          else this._paramSet(trk.channelId, target, raw);
           break;
         }
         case OPCODE.VOICE_SET: {
@@ -1412,6 +1416,20 @@ export class DrvPlayer {
     put(0xb0 + off, (regs.feedback << 3) | regs.algorithm, b0);
     regs.feedback = (b0 >> 3) & 0x07;
     regs.algorithm = b0 & 0x07;
+  }
+
+  // The stream's PARAM_SET VEL: the base and the live value, no write — the
+  // next note-on composes it (driver.md §7.1). Mirrors mmlispseq.c store_vel.
+  _storeVel(channelId, value) {
+    const v = value < 0 ? 0 : value > 15 ? 15 : value;
+    const op = this._fm3OpFor(channelId);
+    if (op) this._fm3OpVel[op - 1] = this._fm3OpVelBase[op - 1] = v;
+    else if (channelId < 6) { const r = this._fm[channelId]; r.vel = r.velBase = v; }
+    else if (channelId < 10) { const st = this._psg[channelId - 6]; st.vel = st.velBase = v; }
+    else if (channelId >= 20 && channelId <= 22) {
+      const pv = this._pcmVoices[channelId - 20];
+      if (pv) pv.vel = pv.velBase = v;
+    }
   }
 
   _paramSet(channelId, target, value, force = false) {
