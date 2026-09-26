@@ -11,7 +11,9 @@ the GM note the file is named for; toms run tom1-tom6, low to high.
 
 Muted and short articulations throughout: hand-muted snares, one muted low tom
 resampled across the six GM toms, and faded tails where the source has no muted
-take. Levels are untouched, so the kit is not balanced yet.
+take. Every file is peak-normalized to 0 dBFS, so each hit uses the full 8 bits and
+sits level with FM; the kit is not balanced between its sounds — set that with
+`:vel` / `:vol` or a per-sound `(gain …)` effect.
 
 ```
  35 kick2           51 ride            67 agogo-hi
