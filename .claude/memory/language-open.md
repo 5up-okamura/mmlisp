@@ -73,11 +73,6 @@ written lengths swing, an omitted `:from` = the current value (inline sweeps;
 number, a tap vector or a curve), compiler loop ids `(x N)` that no `#name`
 can spell. Every item of this audit is now either landed or decided.
 
-Not a syntax question, but the next step of the value reader: `$` is still
-recognised outside the evaluator (the runtime linearizer and
-`detectScaledMacro`). Making `$slot` a symbolic evaluator value would merge
-them.
-
 ## 2. Judgment-free but larger
 
 - **Preview vs driver, found 2026-09-26.** Fixed: `:vel` before the first
@@ -120,7 +115,11 @@ Compile-time eval was designed in two rounds; **round 2 reversed two of round
 
 **The governing constraint, still true of `mmlispseq.c` and stated in no doc:**
 eval is compile-time only and its output is static data. The driver gains **no
-evaluator — only readers and flags.**
+evaluator — only readers and flags.** Since 2026-09-26 a `$slot` is a value
+kind of the evaluator itself (mmlisp-eval.js `Runtime`: the opcode chain,
+kept symbolic like a signal), so the accumulator lowering and the scaled
+macro `(* signal $slot)` are its arithmetic — no separate linearizer or
+pattern detector in mmlisp2ir.
 
 The vision it serves: **`def-val` slots are the score's input ports, eval
 expressions are the wiring, and the sampling tiers are the rates** — the game

@@ -7,12 +7,11 @@
 // compileChannelBody (mmlisp2ir.js) at value positions, so it sees track state
 // and the lexical `let` environment.
 //
-// Step 1 covers scalar arithmetic only: `+ - * /`, `min max abs round floor`.
-// Later steps add curve builtins (signals), `let`/`note`/`ticks`/`frames`, and
-// the runtime value machine ($slot lowering). The seams designed here — the
-// env chain and the builtin registry — are what those steps extend; see
-// docs/language.md §7; the design rationale is
-// .claude/memory/language-open.md §5.
+// A value is a scalar, a signal (a curve kept symbolic) or a runtime value (a
+// `$slot`-bearing expression kept symbolic as the param-opcode chain that
+// computes it on the driver). The builtins are `+ - * /`, `min max abs round
+// floor`, the curves (via ctx), and `let`; docs/language.md §7, rationale in
+// .claude/memory/language-open.md §3.
 // ---------------------------------------------------------------------------
 
 import { sampleCurveUnit } from "./ir-utils.js";
@@ -44,11 +43,27 @@ function envLookup(env, name) {
 }
 
 // ── Value model ──────────────────────────────────────────────────────────
-// An eval value is a scalar (JS double) or a signal (a curve/stages/steps spec
+// An eval value is a scalar (JS double), a signal (a curve/stages/steps spec
 // object — the very object parseCurveSpec produces, kept symbolic so LUTs stay
-// byte-identical; design §2.2). Signals are opaque here except through the
-// ctx.mapMacroValues callback (owned by mmlisp2ir.js).
-const isSignal = (v) => v !== null && typeof v === "object";
+// byte-identical; design §2.2), or a Runtime. Signals are opaque here except
+// through ctx.foldSignal (owned by mmlisp2ir.js).
+//
+// A Runtime is a value that carries a `$` reference, so it is not known until
+// the driver runs (language.md §7.1.2). It stays symbolic as the chain of
+// param opcodes that computes it, the written parameter itself being the
+// accumulator: a seed — `set` (PARAM_SET), `fromval` (PARAM_FROM_VAL) or
+// `self` (the parameter's current value) — then `add`/`mul` constants and
+// `addval`/`mulval` slots. `ref` is set on a bare `$slot`, the only runtime
+// operand an ADD/MUL can take. The driver gains no evaluator: this is the
+// whole of what it runs.
+class Runtime {
+  constructor(steps, ref = null) {
+    this.steps = steps;
+    this.ref = ref;
+  }
+}
+const isRuntime = (v) => v instanceof Runtime;
+const isSignal = (v) => v !== null && typeof v === "object" && !isRuntime(v);
 
 // ── Affine arithmetic (scalar ⊕ signal stays symbolic; design §2.3) ──────────
 // A running accumulator is either a scalar (spec === null → value = k) or an
@@ -60,10 +75,17 @@ function affineStart(v) {
 }
 
 // A curve with no :from starts where its parameter is at run time (§11), a
-// value arithmetic cannot know — shifting or scaling it needs the :from.
+// value arithmetic cannot know — shifting or scaling it needs the :from. A
+// curve with `$` ends, or a scaled macro, is read at run time too.
 function requireFrom(v) {
-  if (isSignal(v) && !v.steps && !v.stages && v.from === undefined)
+  if (!isSignal(v)) return;
+  if (!v.steps && !v.stages && v.from === undefined)
     throw new EvalError("E_CURVE_FROM", "arithmetic on a curve needs its :from");
+  if (v.dyn)
+    throw new EvalError("E_EVAL_NOT_LOWERABLE", "arithmetic on a curve with $ ends has no lowering");
+  if (v.scale)
+    throw new EvalError("E_EVAL_NOT_LOWERABLE",
+      "a scaled macro (* signal $slot) takes no further arithmetic");
 }
 
 // ── Signal ⊕ signal materialization (design §2.3) ────────────────────────────
@@ -213,6 +235,108 @@ function affineFinish(acc, ctx) {
   return ctx.foldSignal(acc.spec, (v) => acc.coeff * v + acc.offset);
 }
 
+// ── Runtime arithmetic (language.md §7.1.2) ────────────────────────────────
+// One binary op with a Runtime operand, extending the accumulator chain; the
+// shapes with no opcode are E_EVAL_NOT_LOWERABLE (the honest list). A signal
+// times a bare slot is the scaled macro (§4.4): the signal, read with that
+// slot as a live depth.
+const NOT_LOWERABLE = (msg) => new EvalError("E_EVAL_NOT_LOWERABLE", msg);
+
+function rtChain(x) {
+  return isRuntime(x) ? x : new Runtime([{ op: "set", val: x }]);
+}
+
+function rtScale(chain, k) {
+  if (k === 1) return chain;
+  if (k < 0) throw NOT_LOWERABLE("multiply by a negative constant (PARAM_MUL factor is unsigned 8.8)");
+  const s = chain.steps;
+  if (s.length === 1 && s[0].op === "set") return new Runtime([{ op: "set", val: s[0].val * k }]);
+  return new Runtime([...s, { op: "mul", val: k }]);
+}
+
+function rtAppend(chain, term) {
+  if (term.const !== undefined) {
+    if (term.const === 0) return chain;
+    const s = chain.steps;
+    const last = s.at(-1);
+    if ((s.length === 1 && last.op === "set") || last.op === "add")
+      return new Runtime([...s.slice(0, -1), { op: last.op, val: last.val + term.const }]);
+    return new Runtime([...s, { op: "add", val: term.const }]);
+  }
+  return new Runtime([...chain.steps, { op: "addval", ref: term.slot }]);
+}
+
+function rtMulval(chain, ref, ctx) {
+  if (ctx.i16)
+    throw NOT_LOWERABLE("multiply by a $value on an i16 target (NOTE_PITCH/TEMPO_SCALE) is not sign-correct");
+  return new Runtime([...chain.steps, { op: "mulval", ref }]);
+}
+
+function runtimeBinary(op, a, b, ctx) {
+  if (isSignal(a) || isSignal(b)) {
+    const [sig, other] = isSignal(a) ? [a, b] : [b, a];
+    if (op === "*" && isRuntime(other) && other.ref !== null) {
+      requireFrom(sig);
+      return { ...sig, scale: other.ref };
+    }
+    throw NOT_LOWERABLE("a curve with a $value has no lowering but the scaled macro (* signal $slot)");
+  }
+  const bare = (x) => (isRuntime(x) && x.ref !== null ? x.ref : null);
+  const num = (x) => (isRuntime(x) ? null : x);
+  // A macro is baked per note: its only runtime read is the scaled macro. A
+  // number times a bare slot is that form with no signal to scale.
+  if (ctx.macro) {
+    if (op === "*" && ((num(a) !== null && bare(b) !== null) || (num(b) !== null && bare(a) !== null)))
+      throw new EvalError("E_EVAL_TYPE",
+        "a scaled macro `(* signal $slot)` needs a signal operand (a curve/LFO), not a scalar");
+    throw NOT_LOWERABLE("a macro reads a $value only as a scaled macro (* signal $slot)");
+  }
+  const ca = num(a), cb = num(b);
+  if (op === "*") {
+    if (ca !== null) return rtScale(rtChain(b), ca);
+    if (cb !== null) return rtScale(rtChain(a), cb);
+    if (bare(b) !== null) return rtMulval(a, bare(b), ctx);
+    if (bare(a) !== null) return rtMulval(b, bare(a), ctx);
+    throw NOT_LOWERABLE("product of two runtime sub-expressions needs a temporary (not built; §4.5)");
+  }
+  if (op === "/") {
+    if (cb === 0) throw new EvalError("E_EVAL_DIV_ZERO", "division by zero");
+    if (cb !== null) return rtScale(rtChain(a), 1 / cb);
+    throw NOT_LOWERABLE("divide by a runtime value has no opcode");
+  }
+  if (op === "+") {
+    const term = (x) => (num(x) !== null ? { const: x } : bare(x) !== null ? { slot: bare(x) } : null);
+    const tb = term(b);
+    if (tb) return rtAppend(rtChain(a), tb);
+    const ta = term(a);
+    if (ta) return rtAppend(rtChain(b), ta);
+    throw NOT_LOWERABLE("sum of two runtime sub-expressions needs a temporary (not built; §4.5)");
+  }
+  // op === "-"
+  if (cb !== null) return rtAppend(rtChain(a), { const: -cb });
+  if (bare(b) !== null)
+    throw NOT_LOWERABLE("subtract a runtime value has no SUB_VAL opcode (invert the slot's range instead)");
+  throw NOT_LOWERABLE("subtract-from a runtime value requires negation (not lowerable)");
+}
+
+// A left-to-right chain with a Runtime in it: `(+ a b c)` is `(+ (+ a b) c)`.
+// Pairs with no Runtime (a signal and a number before the `$`) combine as
+// usual.
+function runtimeFold(op, args, ctx) {
+  if (args.length === 1) {
+    if (op === "+" || op === "*") return args[0];
+    throw NOT_LOWERABLE(`unary ${op} of a runtime value requires negation (not lowerable)`);
+  }
+  let acc = args[0];
+  for (const x of args.slice(1)) {
+    acc =
+      isRuntime(acc) || isRuntime(x) || (acc?.scale && isSignal(acc))
+        ? runtimeBinary(op, acc, x, ctx)
+        : affineFinish(affineCombine(op, affineStart(acc), x, ctx), ctx);
+  }
+  return acc;
+}
+
 // ── Builtin registry ───────────────────────────────────────────────────────
 // One entry per evaluable head. `arity` is [min, max] (max null = variadic).
 // `apply(args, ctx)` receives already-evaluated operands (scalar or signal) and
@@ -222,6 +346,8 @@ const BUILTINS = new Map();
 
 const scalarsOnly = (name, args) => {
   for (const a of args) {
+    if (isRuntime(a))
+      throw NOT_LOWERABLE(`${name} with a runtime value has no param-opcode lowering`);
     if (isSignal(a)) {
       throw new EvalError(
         "E_EVAL_SIGNAL_NONAFFINE",
@@ -235,6 +361,7 @@ const scalarsOnly = (name, args) => {
 // Affine operators: fold a left-to-right chain, tracking one signal affinely
 // (or materializing when two signals meet — affineCombine handles both).
 const affineOp = (op, seed) => (args, ctx) => {
+  if (args.some(isRuntime)) return runtimeFold(op, args, ctx);
   let acc = seed !== undefined ? affineStart(seed) : affineStart(args[0]);
   const rest = seed !== undefined ? args : args.slice(1);
   for (const x of rest) acc = affineCombine(op, acc, x, ctx);
@@ -246,14 +373,14 @@ BUILTINS.set("*", { arity: [0, null], apply: affineOp("*", 1) });
 BUILTINS.set("-", {
   arity: [1, null],
   apply: (args, ctx) =>
-    args.length === 1
+    args.length === 1 && !isRuntime(args[0])
       ? affineFinish(affineCombine("-", affineStart(0), args[0], ctx), ctx) // negate
       : affineOp("-")(args, ctx),
 });
 BUILTINS.set("/", {
   arity: [1, null],
   apply: (args, ctx) =>
-    args.length === 1
+    args.length === 1 && !isRuntime(args[0])
       ? affineFinish(affineCombine("/", affineStart(1), args[0], ctx), ctx) // reciprocal
       : affineOp("/")(args, ctx),
 });
@@ -373,13 +500,20 @@ function evalNode(node, env, ctx) {
     }
     // Numeric literal.
     if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(v)) return Number(v);
-    // Runtime value reference — the value machine (a later step) lowers these;
-    // there is no runtime path yet, so fail explicitly rather than mis-fold.
+    // Runtime value reference: a Runtime where the position lowers one
+    // (ctx.resolveSlot), else an error rather than a mis-fold. `$<param>`
+    // naming the parameter being written reads that parameter (self).
     if (v.startsWith("$")) {
-      throw new EvalError(
-        "E_EVAL_NOT_LOWERABLE",
-        `runtime value ${v} cannot be used in a compile-time expression yet`,
-      );
+      if (!ctx.resolveSlot) {
+        throw new EvalError(
+          "E_EVAL_NOT_LOWERABLE",
+          `runtime value ${v} cannot be used in a compile-time expression`,
+        );
+      }
+      const name = v.slice(1);
+      if (name !== "time" && ctx.isSelf?.(name)) return new Runtime([{ op: "self" }]);
+      const ref = ctx.resolveSlot(v);
+      return new Runtime([{ op: "fromval", ref }], ref);
     }
     // Bound name (let, step 4) — env is empty until then.
     const bound = envLookup(env, v);
@@ -458,6 +592,7 @@ function evalNode(node, env, ctx) {
 export function evalValue(node, env, ctx) {
   try {
     const r = evalNode(node, env ?? makeEnv(null), { ...ctx, depth: 0 });
+    if (isRuntime(r)) return { kind: "runtime", steps: r.steps };
     return isSignal(r) ? { kind: "signal", spec: r } : { kind: "scalar", value: r };
   } catch (e) {
     if (e instanceof EvalError) {
@@ -475,6 +610,11 @@ export function evalValue(node, env, ctx) {
 export function evalScalarValue(node, env, ctx) {
   const r = evalValue(node, env, ctx);
   if (r === null) return null;
+  if (r.kind === "runtime") {
+    ctx.pushDiag(ctx.diagnostics, "error", "E_EVAL_TYPE",
+      "expected a number here, got a $value", ctx.src, ctx.trackName);
+    return null;
+  }
   if (r.kind === "signal") {
     ctx.pushDiag(
       ctx.diagnostics,
@@ -511,8 +651,8 @@ export function evalLengthValue(node, env, ctx) {
       throw new EvalError("E_EVAL_ARITY", `(${head} expr) takes one argument`);
     }
     const v = evalNode(items[1], env ?? makeEnv(null), { ...ctx, depth: 0 });
-    if (isSignal(v)) {
-      throw new EvalError("E_EVAL_TYPE", `(${head} …) needs a number, got a signal`);
+    if (isSignal(v) || isRuntime(v)) {
+      throw new EvalError("E_EVAL_TYPE", `(${head} …) needs a number, got a ${isRuntime(v) ? "$value" : "signal"}`);
     }
     return { unit: head === "frames" ? "frame" : "tick", value: Math.max(0, Math.round(v)) };
   } catch (e) {

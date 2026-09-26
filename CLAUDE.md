@@ -22,7 +22,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp2ir.js`                  | Compile AST → IR: voice resolution, macro parsing, event emit           |
 | `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
 | `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
-| `mmlisp-eval.js`                | Compile-time eval: `let`, expressions, the curve library                |
+| `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
 | `sample-fx.js`                  | A sample def's `:effect` chain, run on float when the bank is baked     |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
 | `synth-md.js`, `scope-trigger.js` | Chip wiring for the browser, and the oscilloscope's trigger           |

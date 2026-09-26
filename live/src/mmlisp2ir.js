@@ -1212,16 +1212,6 @@ function resolveValRef(raw, vals, diagnostics, trackName, src) {
   return name; // keep the IR well-formed; player treats a missing slot as 0
 }
 
-// ── Value-machine left-fold lowering (v0.6 §4.3) ──────────────────────────
-// A `$ref`-bearing hw-param expression lowers to a chain of the existing param
-// opcodes with the param itself as the accumulator: a seed (const→PARAM_SET,
-// $slot→PARAM_FROM_VAL, self-ref $P→none) then add/mul terms (PARAM_ADD /
-// PARAM_ADD/MUL with a {src} slot). Shapes that need a true temporary, a
-// subtract-from / divide-by / subtract-a-slot, a negative multiply, or ×$slot
-// on an i16 target are E_EVAL_NOT_LOWERABLE (the honest list). No new opcodes,
-// no new IR shapes — the exporter already lowers each event 1:1.
-const VALUE_ARITH = new Set(["+", "-", "*", "/"]);
-
 function exprHasValRef(node) {
   if (node?.kind === "atom")
     return typeof node.value === "string" && node.value.startsWith("$");
@@ -1229,146 +1219,27 @@ function exprHasValRef(node) {
   return false;
 }
 
-// Fold a subtree with no `$` reference to a number, or null (a signal, or not
-// evaluable). The real evaluator does it, so any builtin and any let name
-// folds; the linearizer only has to handle the `$`-carrying structure.
-const QUIET_EVAL_CTX = {
-  pushDiag: () => {},
-  diagnostics: null,
-  curveNames: CURVE_NAMES,
-  parseCurve: (n) => parseCurveSpec(n),
-  foldSignal: (spec, f) => foldCurveValues(spec, f),
-  isNoteStreamToken: (n) => isNoteStreamToken(n),
-  isDefName: () => false,
-  stepFrames: 1,
-};
-function constFoldExpr(node, env) {
-  if (exprHasValRef(node)) return null;
-  const r = evalValue(node, env, QUIET_EVAL_CTX);
-  return r?.kind === "scalar" ? r.value : null;
+// The eval ctx of a value position that lowers a `$` reference: the evaluator
+// keeps it symbolic as a param-opcode chain (mmlisp-eval.js Runtime), `$<param>`
+// naming `target` reads the parameter itself, and a `$name` resolves (and is
+// diagnosed) against the declared slots.
+function valueCtx(target, vals, diagnostics, trackName, src, typedDefs = null) {
+  return {
+    ...makeEvalCtx(diagnostics, trackName, src, typedDefs),
+    i16: target === "NOTE_PITCH" || target === "TEMPO_SCALE",
+    isSelf: (name) => target != null && canonicalTarget(":" + name) === target,
+    resolveSlot: (raw) => resolveValRef(raw, vals, diagnostics, trackName, src),
+  };
 }
 
-// Linearize a value expression into a step chain, or an {error}. `target` is the
-// canonical param being written (for self-ref detection and the i16 caveat).
-function linearizeValueExpr(node, target, env, vals, diagnostics, trackName, src) {
-  const i16 = target === "NOTE_PITCH" || target === "TEMPO_SCALE";
-  const err = (code, msg) => ({ error: { code, msg } });
-
-  // A leaf → {const}|{slot}|{self}|{error}|null (null = not a leaf).
-  const leaf = (n) => {
-    if (n?.kind !== "atom") return null;
-    const v = n.value;
-    if (typeof v === "string" && v.startsWith("$")) {
-      const name = v.slice(1);
-      // Self-ref: $<param> naming the target being written (canonicalTarget keys
-      // on the `:` keyword form). Seed nothing — start from the current value.
-      if (name !== "time" && canonicalTarget(":" + name) === target) return { self: true };
-      return { slot: resolveValRef(v, vals, diagnostics, trackName, src) };
-    }
-    return { error: err("E_EVAL_OPERAND", `not a value operand: ${v}`).error };
-  };
-  // A leaf usable as an additive term (const or plain slot); self/expr → null.
-  const addTerm = (n) => {
-    const c = constFoldExpr(n, env);
-    if (c !== null) return { const: c };
-    const lf = leaf(n);
-    return lf && lf.slot !== undefined ? { slot: lf.slot } : null;
-  };
-  const scale = (chain, k) => {
-    if (chain.error) return chain;
-    if (k === 1) return chain;
-    if (k < 0) return err("E_EVAL_NOT_LOWERABLE",
-      "multiply by a negative constant (PARAM_MUL factor is unsigned 8.8)");
-    const s = chain.steps;
-    if (s.length === 1 && s[0].op === "set") return { steps: [{ op: "set", val: s[0].val * k }] };
-    return { steps: [...s, { op: "mul", val: k }] };
-  };
-  const mulval = (chain, ref) => {
-    if (chain.error) return chain;
-    if (i16) return err("E_EVAL_NOT_LOWERABLE",
-      "multiply by a $value on an i16 target (NOTE_PITCH/TEMPO_SCALE) is not sign-correct");
-    return { steps: [...chain.steps, { op: "mulval", ref }] };
-  };
-  const append = (chain, term) => {
-    if (chain.error) return chain;
-    if (term.const !== undefined) {
-      if (term.const === 0) return chain;
-      const s = chain.steps;
-      const last = s.at(-1);
-      if ((s.length === 1 && last.op === "set") || last.op === "add")
-        return { steps: [...s.slice(0, -1), { op: last.op, val: last.val + term.const }] };
-      return { steps: [...s, { op: "add", val: term.const }] };
-    }
-    return { steps: [...chain.steps, { op: "addval", ref: term.slot }] };
-  };
-
-  const lin = (n) => {
-    const c = constFoldExpr(n, env);
-    if (c !== null) return { steps: [{ op: "set", val: c }] };
-    const lf = leaf(n);
-    if (lf) {
-      if (lf.error) return { error: lf.error };
-      if (lf.self) return { steps: [{ op: "self" }] };
-      return { steps: [{ op: "fromval", ref: lf.slot }] };
-    }
-    if (n?.kind !== "list" || n.bracket !== "()")
-      return err("E_EVAL_OPERAND", "unsupported value operand");
-    const items = n.items.filter((x) => x.kind !== "comment");
-    const head = atomValue(items[0]);
-    // (+ a b c) is (+ (+ a b) c): fold a variadic chain left into binary steps.
-    if (VALUE_ARITH.has(head) && items.length > 3)
-      return lin({ kind: "list", bracket: "()", items: [items[0], { kind: "list", bracket: "()", items: items.slice(0, -1) }, items.at(-1)] });
-    if (!VALUE_ARITH.has(head) || items.length !== 3)
-      return err("E_EVAL_NOT_LOWERABLE",
-        `${head} with a runtime value has no param-opcode lowering`);
-    const [, A, B] = items;
-    const ca = constFoldExpr(A, env), cb = constFoldExpr(B, env);
-    if (head === "*") {
-      if (ca !== null) return scale(lin(B), ca);
-      if (cb !== null) return scale(lin(A), cb);
-      const lb = leaf(B), la = leaf(A);
-      if (lb && lb.slot !== undefined) return mulval(lin(A), lb.slot);
-      if (la && la.slot !== undefined) return mulval(lin(B), la.slot);
-      return err("E_EVAL_NOT_LOWERABLE",
-        "product of two runtime sub-expressions needs a temporary (not built; §4.5)");
-    }
-    if (head === "/") {
-      if (cb === 0) return err("E_EVAL_DIV_ZERO", "division by zero");
-      if (cb !== null) return scale(lin(A), 1 / cb);
-      return err("E_EVAL_NOT_LOWERABLE", "divide by a runtime value has no opcode");
-    }
-    if (head === "+") {
-      const tb = addTerm(B); if (tb) return append(lin(A), tb);
-      const ta = addTerm(A); if (ta) return append(lin(B), ta);
-      return err("E_EVAL_NOT_LOWERABLE",
-        "sum of two runtime sub-expressions needs a temporary (not built; §4.5)");
-    }
-    // head === "-"
-    if (cb !== null) return append(lin(A), { const: -cb });
-    const lb = leaf(B);
-    if (lb && lb.slot !== undefined)
-      return err("E_EVAL_NOT_LOWERABLE",
-        "subtract a runtime value has no SUB_VAL opcode (invert the slot's range instead)");
-    return err("E_EVAL_NOT_LOWERABLE",
-      "subtract-from a runtime value requires negation (not lowerable)");
-  };
-
-  return lin(node);
-}
-
-// Emit a `$ref` value expression as its param-opcode chain, or diagnose why it
-// cannot lower. `push(cmd, args)` appends an IR event on the current target.
-function lowerValueExpr(node, target, push, env, vals, diagnostics, trackName, src) {
-  const r = linearizeValueExpr(node, target, env, vals, diagnostics, trackName, src);
-  if (r.error) {
-    pushDiag(diagnostics, "error", r.error.code, r.error.msg, src, trackName);
-    return;
-  }
-  const writes = r.steps.filter((s) => s.op !== "self").length;
+// Emit a runtime value's opcode chain on `target` (language.md §7.1.2): the
+// seed, then each term, the parameter itself the accumulator.
+function emitRuntime(steps, target, push, diagnostics, trackName, src) {
+  const writes = steps.filter((s) => s.op !== "self").length;
   if (writes > 6)
     pushDiag(diagnostics, "warning", "W_EVAL_CHAIN_LONG",
       `expression lowers to ${writes} register writes (§4.7)`, src, trackName);
-  for (const s of r.steps) {
+  for (const s of steps) {
     if (s.op === "self") continue;
     if (s.op === "set") push("PARAM_SET", { target, value: Math.round(s.val) });
     else if (s.op === "fromval") push("PARAM_FROM_VAL", { target, src: s.ref });
@@ -1385,24 +1256,23 @@ function lowerValueExpr(node, target, push, env, vals, diagnostics, trackName, s
 //   { kind: "none" }            — the word `none`
 //   { kind: "scalar", value }   — a number (literal, let name, expression)
 //   { kind: "signal", spec }    — a curve, or arithmetic on one
-//   { kind: "runtime", node }   — carries a `$` reference: lower it at run time
+//   { kind: "runtime", steps }  — carries a `$` reference: the opcode chain
+//                                 that computes it at run time (+ `node`)
 //   { kind: "symbol", value }   — any other bare word, for the position to name
-// or null after a diagnostic.
+// or null after a diagnostic. `ctx` is a valueCtx where a `$` can lower.
 function readValue(node, env, ctx) {
   if (node?.kind === "atom") {
     const v = node.value;
     if (v === "none") return { kind: "none" };
-    if (typeof v === "string" && v.startsWith("$")) return { kind: "runtime", node };
-    if (parseNumberLike(v) === null && lookupBound(env, v) === undefined)
+    if (
+      !(typeof v === "string" && v.startsWith("$")) &&
+      parseNumberLike(v) === null && lookupBound(env, v) === undefined
+    )
       return { kind: "symbol", value: v };
-  } else if (
-    node?.kind === "list" && node.bracket === "()" &&
-    !CURVE_NAMES.has(atomValue(node.items?.[0])) && exprHasValRef(node)
-  ) {
-    // A curve with `$` ends is a dynamic sweep, which the curve parser reads.
-    return { kind: "runtime", node };
   }
-  return evalValue(node, env, ctx);
+  const r = evalValue(node, env, ctx);
+  if (r?.kind === "runtime") r.node = node;
+  return r;
 }
 
 const atomNode = (value) => ({ kind: "atom", value: String(value) });
@@ -1442,11 +1312,15 @@ function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName,
     push("PARAM_SET", { target, value: Math.round(v.value) });
     return;
   }
-  const operand = v.kind === "scalar" ? atomNode(v.value) : v.node;
-  const expr = op
-    ? { kind: "list", bracket: "()", items: [atomNode(op), atomNode("$" + opSuffix(sym).stem.slice(1)), operand] }
-    : operand;
-  lowerValueExpr(expr, target, push, env, vals, diagnostics, trackName, src);
+  let steps = v.steps;
+  if (op) {
+    const operand = v.kind === "scalar" ? atomNode(v.value) : v.node;
+    const expr = { kind: "list", bracket: "()", items: [atomNode(op), atomNode("$" + opSuffix(sym).stem.slice(1)), operand] };
+    const r = evalValue(expr, env, valueCtx(target, vals, diagnostics, trackName, src));
+    if (!r) return;
+    steps = r.steps;
+  }
+  emitRuntime(steps, target, push, diagnostics, trackName, src);
 }
 
 // Target group: a [] vector of macro keywords in target position, e.g.
@@ -1827,30 +1701,6 @@ function extractMacroStep(items, diagnostics, trackName) {
   return step;
 }
 
-// A bare value-slot operand (`$depth`) → its FROM_VAL-form name ("depth", or
-// "$time" for the frame counter); null for anything that isn't a `$name` atom.
-function scaleSlotName(node) {
-  const v = atomValue(node);
-  if (typeof v !== "string" || !v.startsWith("$")) return null;
-  const name = v.slice(1);
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
-  return name === "time" ? "$time" : name;
-}
-
-// Recognize a scaled-macro expression `(* <signal> $slot)` (v0.6 §4.4): exactly
-// one bare value-slot operand and one non-slot operand. Returns
-// { signal, slot } (slot in FROM_VAL name form) or null. The caller evaluates
-// `signal` to a signal spec and attaches `spec.scale = slot`.
-function detectScaledMacro(node) {
-  const items = node.items?.filter((n) => n.kind !== "comment") ?? [];
-  if (atomValue(items[0]) !== "*" || items.length !== 3) return null;
-  const s1 = scaleSlotName(items[1]);
-  const s2 = scaleSlotName(items[2]);
-  if (s1 && !s2) return { slot: s1, signal: items[2] };
-  if (s2 && !s1) return { slot: s2, signal: items[1] };
-  return null;
-}
-
 // A curve that is not an inline sweep has no current value to start from —
 // a macro's table is baked per note, a delay's envelope and a PCM loop point
 // are lengths laid out at compile time — so its :from must be written (§11).
@@ -2004,24 +1854,21 @@ function parseMacroSpec(
     return { type: "steps", steps, loopIndex, releaseIndex, src: nodeSrc(node) };
   }
   // A curve, an expression or a `let` name (§7.2) evaluates to a signal or a
-  // number. Scaled macro (§4.4, frame tier): `(* <signal> $slot)` rides a value
-  // slot as a per-frame depth knob — the driver writes `(sample × slot) >> 8`
-  // each frame — so the slot is split off before the signal is evaluated, and
-  // `spec.scale` carries its name (exporter → MMB flags bit2 + a slot byte).
+  // number. Scaled macro (§4.4, frame tier): `(* <signal> $slot)` evaluates to
+  // the signal carrying `scale`, the slot it rides as a per-frame depth knob —
+  // the driver writes `(sample × slot) >> 8` each frame (exporter → MMB flags
+  // bit2 + a slot byte). A macro reads no other `$`.
   const bound =
     node.kind === "atom" && env && lookupBound(env, atomValue(node)) !== undefined;
   if (bound || (node.kind === "list" && node.bracket === "()")) {
-    const scaled = bound ? null : detectScaledMacro(node);
-    const r = evalMacroNode(scaled ? scaled.signal : node);
+    const r = evalMacroNode(node);
     if (!r) return null;
-    if (!scaled) return macroSpecOf(r);
-    if (r.kind !== "signal") {
-      pushDiag(diagnostics, "error", "E_EVAL_TYPE",
-        "a scaled macro `(* signal $slot)` needs a signal operand (a curve/LFO), not a scalar",
-        nodeSrc(node), trackName);
+    if (r.kind === "runtime") {
+      pushDiag(diagnostics, "error", "E_EVAL_NOT_LOWERABLE",
+        "a macro reads a $value only as a scaled macro (* signal $slot)", nodeSrc(node), trackName);
       return null;
     }
-    return { ...macroSpecOf(r), scale: scaled.slot };
+    return macroSpecOf(r);
   }
   // Scalar constant: e.g. `:keyon 1`. A constant signal equivalent to
   // `[#sus N]` (single value, looped). Mainly for :keyon (1 = fire every
@@ -2038,11 +1885,13 @@ function parseMacroSpec(
   return null;
 
   function evalMacroNode(n) {
-    return evalValue(
-      n,
-      env ?? makeEnv(null),
-      makeEvalCtx(diagnostics, trackName, nodeSrc(n), null, macroStepFramesForEval(step)),
-    );
+    return evalValue(n, env ?? makeEnv(null), {
+      ...makeEvalCtx(diagnostics, trackName, nodeSrc(n), null, macroStepFramesForEval(step)),
+      // A slot's name, in its FROM_VAL form; an unknown one degrades the
+      // scaled macro to a plain one at export.
+      macro: true,
+      resolveSlot: (raw) => (raw === "$time" ? "$time" : raw.slice(1)),
+    });
   }
 
   // An eval result as a macro spec. A materialized signal⊕signal result is a
@@ -2058,6 +1907,7 @@ function parseMacroSpec(
           steps: r.spec.steps,
           loopIndex: r.spec.loopIndex ?? null,
           releaseIndex: r.spec.releaseIndex ?? null,
+          ...(r.spec.scale ? { scale: r.spec.scale } : {}),
         }
       : { type: "curve", ...r.spec };
   }
@@ -3166,7 +3016,7 @@ function compileChannelBody(
               const valueNode = items[i];
               // A number is TEMPO_SET; a curve is a TEMPO_SWEEP below.
               const v = readValue(valueNode, evalEnv,
-                makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs));
+                valueCtx(null, vals, diagnostics, trackName, nodeSrc(node), typedDefs));
               if (!v) break;
               if (v.kind !== "scalar" && v.kind !== "signal") {
                 pushDiag(diagnostics, "error", "E_TEMPO_INVALID",
@@ -3341,7 +3191,7 @@ function compileChannelBody(
                 push("PARAM_SET", { target, value: sec });
                 break;
               }
-              writeParam(target, op, val, readValue(items[i], evalEnv, makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs)), push,
+              writeParam(target, op, val, readValue(items[i], evalEnv, valueCtx(target, vals, diagnostics, trackName, nodeSrc(node), typedDefs)), push,
                 evalEnv, vals, diagnostics, trackName, nodeSrc(node));
               break;
             }
@@ -3996,10 +3846,12 @@ function compileChannelBody(
       // Item-position `let` (§7): bind, then compile the body in the extended
       // env, spliced in place so sticky state behaves as if unwrapped.
       if (head === "let") {
+        // A binding may carry a `$` (a runtime value, lowered where it is
+        // written); with no parameter here, `$<param>` is not a self-read.
         const childEnv = evalLet(
           node,
           evalEnv,
-          makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
+          valueCtx(null, vals, diagnostics, trackName, nodeSrc(node), typedDefs),
         );
         if (childEnv) {
           compileChannelBody(

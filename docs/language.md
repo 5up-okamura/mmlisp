@@ -562,8 +562,11 @@ chip within the same frame; a later batched flush collapses them).
   state changes inside behave as if unwrapped.
 - **Value position**: the body is one expression (`:tl1 (let ((x 30)) (+ x 5))`);
   a bare bound name is also a value (`:vel v`).
-- **Bindable**: numbers and curves (a phrase/stream cannot be bound — use a
-  `def`, §9).
+- **Bindable**: numbers, curves and `$` expressions (a phrase/stream cannot be
+  bound — use a `def`, §9). A `$` expression stays a runtime value, lowered
+  where it is written (§7.1.2): `(let ((lvl (* $a 2))) :tl1 lvl …)`. A
+  self-read `$<param>` needs the parameter, so it binds only in a value-position
+  `let` (`:tl1 (let ((x $tl1)) (+ x 3))`).
 - **Names** must not be note/length tokens (so single letters `a`–`g`, `_`,
   `>`, `4t`, `v+` … are rejected — `E_LET_NAME`) and must not shadow a def
   (`E_LET_SHADOWS_DEF`). Use multi-letter words (`root`, `amp`, `base`).
