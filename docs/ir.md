@@ -232,7 +232,7 @@ the flattened runtime schedule.
 | Cmd      | Args                       | Semantics                                                                 |
 | -------- | -------------------------- | --------------------------------------------------------------------------- |
 | `MARKER` | `{ id }`                   | Label from `#name`, or the anchor of an uncounted `(x …)` (`"_xN"`) — a `JUMP` target; emits no stream bytes. |
-| `JUMP`   | `{ to }` or `{ to, repeat }` | `to`: marker id. A **backward** `JUMP` without `repeat` is the track's structural loop point. `{ to, repeat }` is transient: converted to `LOOP_BEGIN`/`LOOP_END` when a backward marker exists on the same track; if it survives (forward target), the player ignores the repeat. |
+| `JUMP`   | `{ to }`                   | `to`: marker id. A **backward** `JUMP` is the track's structural loop point. A counted `(go label N)` never reaches the IR as a `JUMP`: it becomes `LOOP_BEGIN`/`LOOP_END` (a forward one is `E_GO_FORWARD_COUNT` and dropped). |
 | `TRIG`   | `{ code }`                 | `(trig N)`: id 0..63 — a music→game sync point written to the track's status byte (opcodes.md §0x42). Never a jump target. |
 
 ```json

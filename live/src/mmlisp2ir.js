@@ -4258,10 +4258,9 @@ function validateTrack(track, diagnostics) {
       );
     } else if (j.args.repeat != null) {
       // A counted `(go label N)` whose marker is forward: convertCountedJumps
-      // only rewrites *backward* counted jumps into LOOP_BEGIN/LOOP_END, so this
-      // survived as a raw JUMP the player would loop with `repeat` ignored.
-      // Forward counted jumps are unsupported (only backward `(go head N)` and
-      // infinite `(go label)` are).
+      // only rewrites *backward* counted jumps into LOOP_BEGIN/LOOP_END, and a
+      // forward one has no meaning. Drop it, so every JUMP in the IR is plain.
+      track.events.splice(track.events.indexOf(j), 1);
       pushDiag(
         diagnostics,
         "error",

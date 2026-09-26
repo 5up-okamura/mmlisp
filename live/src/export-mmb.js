@@ -135,7 +135,7 @@ function planVoiceHoists(ir, plans) {
     const rejected = new Set();
     for (let j = 0; j < events.length; j++) {
       const ev = events[j];
-      if (ev.cmd !== "JUMP" || ev.args?.repeat != null) continue;
+      if (ev.cmd !== "JUMP") continue;
       const m = markerAt.get(ev.args?.to);
       if (m === undefined || m >= j) continue; // backward jumps only
       // The VOICE_SET has to sit immediately after the marker at the same tick:
@@ -914,16 +914,6 @@ export function encodeMmb(ir, opts = {}) {
         }
         case "JUMP": {
           syncClock(ev.tick);
-          if (a.repeat != null) {
-            // Forward counted go — a compile error upstream; never encodable.
-            diag(
-              "warning",
-              "W_MMB_JUMP_REPEAT_SKIPPED",
-              `counted JUMP to "${a.to}" not representable; dropped`,
-              label,
-            );
-            break;
-          }
           // Backward loop: re-establish the sticky state the loop body assumes
           // (the snapshot at its target marker) before jumping, so every
           // iteration replays identically. Emitted only for state that drifted.
