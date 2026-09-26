@@ -122,13 +122,12 @@ function planVoiceHoists(ir, plans) {
     if (!plan) continue;
     const events = tracks[ti].events ?? [];
 
-    // JUMP-target markers only — a `(trig N)` marker carries `code` and is never
-    // a target. First occurrence wins, matching the encoder's markerOffsets.
+    // First occurrence wins, matching the encoder's markerOffsets.
     const markerAt = new Map();
     events.forEach((ev, i) => {
       if (ev.cmd !== "MARKER") return;
       const id = ev.args?.id;
-      if (id == null || ev.args?.code != null || markerAt.has(id)) return;
+      if (id == null || markerAt.has(id)) return;
       markerAt.set(id, i);
     });
 
@@ -874,16 +873,15 @@ export function encodeMmb(ir, opts = {}) {
           breakFixups.get(a.id).push(at);
           break;
         }
+        case "TRIG":
+          // `(trig N)` writes the track's trig status byte for the game to
+          // read (opcodes.md §0x42).
+          syncClock(ev.tick);
+          stream.u8(OPCODE.TRIG);
+          stream.u8(a.code & 0x3f);
+          break;
         case "MARKER": {
           syncClock(ev.tick);
-          // `(trig N)`: the one marker with a runtime effect — it writes the
-          // track's trig status byte for the game to read (opcodes.md §0x42).
-          // Never a JUMP target, so it skips the label offset bookkeeping.
-          if (a.code != null) {
-            stream.u8(OPCODE.TRIG);
-            stream.u8(a.code & 0x3f);
-            break;
-          }
           // A LABEL emits nothing. JUMP carries a resolved offset and the
           // driver never searches markers, so the label's only job is to BE
           // that offset — recorded here, costing no stream bytes.

@@ -227,12 +227,13 @@ Notes: the player expands loops **structurally at load time**
 `LOOP_BREAK` truncates only the final pass. None of the three survive into
 the flattened runtime schedule.
 
-### 5.5 MARKER / JUMP
+### 5.5 MARKER / JUMP / TRIG
 
 | Cmd      | Args                       | Semantics                                                                 |
 | -------- | -------------------------- | --------------------------------------------------------------------------- |
-| `MARKER` | `{ id }` or `{ code }`     | `{ id }`: label from `#name`, or the anchor of an uncounted `(x …)` (`"_xN"`) — sequenced to a u8 and usable as a `JUMP` target. `{ code }`: an explicit id 0..63 from `(trig N)` — a music→game sync point, emitted verbatim, never a jump target. |
+| `MARKER` | `{ id }`                   | Label from `#name`, or the anchor of an uncounted `(x …)` (`"_xN"`) — a `JUMP` target; emits no stream bytes. |
 | `JUMP`   | `{ to }` or `{ to, repeat }` | `to`: marker id. A **backward** `JUMP` without `repeat` is the track's structural loop point. `{ to, repeat }` is transient: converted to `LOOP_BEGIN`/`LOOP_END` when a backward marker exists on the same track; if it survives (forward target), the player ignores the repeat. |
+| `TRIG`   | `{ code }`                 | `(trig N)`: id 0..63 — a music→game sync point written to the track's status byte (opcodes.md §0x42). Never a jump target. |
 
 ```json
 { "tick": 0,   "cmd": "MARKER", "args": { "id": "loop" } }

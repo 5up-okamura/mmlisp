@@ -27,6 +27,7 @@ const CONTROL_CMDS = new Set([
   "CALL",
   "RET",
   "MARKER",
+  "TRIG",
   "END_OF_TRACK",
 ]);
 

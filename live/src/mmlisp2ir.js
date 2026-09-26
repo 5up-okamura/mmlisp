@@ -3998,11 +3998,9 @@ function compileChannelBody(
         continue;
       }
 
-      // Trigger: (trig N) — a music→game sync point. Emits the MARKER opcode
-      // (0x42) with an explicit id N (0..63); the driver mirrors it into the
-      // track's 68k-readable status byte (MB_TSTAT, driver.md §6.1). Unlike a
-      // `#name` label it is never a JUMP target, so its id is emitted verbatim
-      // rather than sequenced. The game polls MB_TSTAT and reads N.
+      // Trigger: (trig N) — a music→game sync point. Emits TRIG with an
+      // explicit id N (0..63); the driver writes it into the track's
+      // 68k-readable status byte (opcodes.md §0x42) for the game to read.
       if (head === "trig") {
         if (node.items.length !== 2) {
           pushDiag(
@@ -4031,7 +4029,7 @@ function compileChannelBody(
         }
         events.push({
           tick: trackState.tick,
-          cmd: "MARKER",
+          cmd: "TRIG",
           args: { code },
           src: nodeSrc(node),
         });
@@ -4419,9 +4417,7 @@ function validateTrack(track, diagnostics) {
   const pendingJumps = [];
 
   for (const e of track.events) {
-    // `(trig N)` markers carry an explicit `code` and no label `id`; they are
-    // never JUMP targets, so they are exempt from the label-uniqueness check.
-    if (e.cmd === "MARKER" && e.args?.code == null) {
+    if (e.cmd === "MARKER") {
       const id = e.args?.id;
       if (markers.has(id)) {
         pushDiag(

@@ -61,6 +61,7 @@ const PCM_LOOP_WHICH = { LOOP_START: "START", LOOP_END: "END", LOOP_LEN: "LEN" }
 // scheduler's max rate and the highlight flickers on `go` / `#loop` / `score`.
 const PLAYHEAD_SKIP_CMDS = new Set([
   "MARKER",
+  "TRIG",
   "JUMP",
   "LOOP_BEGIN",
   "LOOP_END",
@@ -733,7 +734,7 @@ export class IRPlayer {
   }
 
   /**
-   * Register a callback fired when a `(trig N)` cue (IR MARKER) plays — the
+   * Register a callback fired when a `(trig N)` cue (IR TRIG) plays — the
    * moment a game polling the track's status byte would see it change.
    * @param {((trackIdx: number, code: number) => void) | null} fn
    */
@@ -858,7 +859,7 @@ export class IRPlayer {
           // past those events without dispatching.
           if (evTime >= this._dispatchFloor) {
             this._dispatchEvent(ev, evTime);
-            if (this._onTrig && ev.cmd === "MARKER") {
+            if (this._onTrig && ev.cmd === "TRIG") {
               const code = ev.args?.code;
               const delay = Math.max(0, evTime - now) * 1000;
               this._scheduleUiCallback(() => this._onTrig(tIdx, code), delay);
@@ -2204,6 +2205,7 @@ export class IRPlayer {
       }
 
       case "MARKER":
+      case "TRIG":
       case "LOOP_BEGIN":
       case "LOOP_END":
       case "REST":
