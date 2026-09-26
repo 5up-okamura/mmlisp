@@ -223,7 +223,7 @@ rewrites the backward `MARKER`+`JUMP{repeat}` pair into the same shape.
 ```
 
 Notes: the player expands loops **structurally at load time**
-(`_expandLoops`, nesting depth ≤ 8, missing `repeat` defaults to 2);
+(`_expandLoops`, nesting depth ≤ 8);
 `LOOP_BREAK` truncates only the final pass. None of the three survive into
 the flattened runtime schedule.
 

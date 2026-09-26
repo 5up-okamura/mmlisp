@@ -1662,7 +1662,7 @@ export class IRPlayer {
             k++;
           }
           const loopBody = evList.slice(j + 1, k);
-          const count = evList[k]?.args?.repeat ?? evList[k]?.args?.count ?? 2;
+          const count = evList[k]?.args?.repeat;
           const loopId = ev.args?.id;
 
           // Derive body duration from LOOP_BEGIN / LOOP_END ticks for accuracy.

@@ -1479,8 +1479,9 @@ tails off like a natural decay.
   limitation to work around (driver.md §5). Automate `:vol` on FM or PSG when a
   fade has to be smooth.
 - A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; an unknown
-  sample name is `E_PCM_SAMPLE_UNDEFINED`. `fm6 :mode shot`/`loop` is
-  `E_PCM_MODE_INVALID` — fm6 is FM only.
+  sample name is `E_PCM_SAMPLE_UNDEFINED`. `:mode shot`/`loop`, `:sample` and
+  the loop points on any other channel (fm6 included — it is FM only) are
+  `E_UNSUPPORTED_TARGET`.
 
 ---
 

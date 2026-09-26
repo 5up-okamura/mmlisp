@@ -656,10 +656,6 @@ function isPcmTrackName(name) {
   return /^pcm[1-3]$/.test(name);
 }
 
-function isTrackPcmActive(trackState) {
-  return !!trackState?.isPcmTrack;
-}
-
 function isLikelyPcmBodyToken(value) {
   if (!value) return false;
   if (value.startsWith(":")) return true;
@@ -721,7 +717,7 @@ function emitNoteForTrack(
     const head = trackState.tiedHead;
     if (head && head.ev.args.gate > 0) delete head.ev.args.gate;
   }
-  if (isTrackPcmActive(trackState)) {
+  if (trackState.isPcmTrack) {
     const reported = (trackState.pcmReported ??= new Set());
     if (!trackState.pcmSampleName) {
       if (!reported.has("")) {
@@ -3025,6 +3021,11 @@ function compileChannelBody(
       // Inline keyword modifier: :oct N, :len N, :gate N, :vol N, :tl1 30, etc.
       if (val.startsWith(":")) {
         i++;
+        // A keyword that exists, on a channel that has no such thing.
+        const wrongChannel = (kw, channels) =>
+          pushDiag(diagnostics, "error", "E_UNSUPPORTED_TARGET",
+            `${kw} is only for ${channels}, not ${String(trackName).split(":")[0]}`,
+            nodeSrc(node), trackName);
         if (i < items.length) {
           const rawVal = atomValue(items[i]);
           switch (val) {
@@ -3117,7 +3118,10 @@ function compileChannelBody(
               break;
             }
             case ":csm-rate": {
-              if (!trackState.isCsmTrack) break;
+              if (!trackState.isCsmTrack) {
+                wrongChannel(val, "fm3-csm");
+                break;
+              }
               const valueNode = items[i];
               const hz = parseNumberLike(rawVal);
               if (hz !== null) {
@@ -3238,7 +3242,10 @@ function compileChannelBody(
               break;
             }
             case ":sample": {
-              if (!isTrackPcmActive(trackState)) break;
+              if (!trackState.isPcmTrack) {
+                wrongChannel(val, "pcm1-pcm3");
+                break;
+              }
               if (rawVal) {
                 trackState.pcmSampleName = rawVal;
               } else {
@@ -3272,19 +3279,13 @@ function compileChannelBody(
                     trackName,
                   );
                 }
-              } else if (trackState.isPcmTrack && isPcmModeSymbol(rawVal)) {
+              } else if (!trackState.isPcmTrack) {
+                wrongChannel(val, "noise and pcm1-pcm3");
+              } else if (isPcmModeSymbol(rawVal)) {
                 trackState.pcmMode = rawVal;
               } else {
-                pushDiag(
-                  diagnostics,
-                  "error",
-                  "E_PCM_MODE_INVALID",
-                  trackState.isFm6Track
-                    ? "fm6 is FM only; use pcm1-3 for PCM"
-                    : "pcm :mode must be shot or loop",
-                  nodeSrc(node),
-                  trackName,
-                );
+                pushDiag(diagnostics, "error", "E_PCM_MODE_INVALID",
+                  "pcm :mode must be shot or loop", nodeSrc(node), trackName);
               }
               break;
             }
@@ -3348,14 +3349,7 @@ function compileChannelBody(
                 // The IR carries SECONDS; the exporter turns them into the
                 // engine's byte offsets at the image's rate (driver.md §5).
                 if (!trackState.isPcmTrack) {
-                  pushDiag(
-                    diagnostics,
-                    "error",
-                    "E_UNSUPPORTED_TARGET",
-                    `${val} is a PCM loop point; only pcm1-pcm3 have one`,
-                    nodeSrc(node),
-                    trackName,
-                  );
+                  wrongChannel(val, "pcm1-pcm3");
                   break;
                 }
                 if (op) {
@@ -3507,7 +3501,7 @@ function compileChannelBody(
       }
 
       // Bare identifier: sample symbol in PCM mode
-      if (isTrackPcmActive(trackState) && trackState.sampleDefs?.has(val)) {
+      if (trackState.isPcmTrack && trackState.sampleDefs?.has(val)) {
         trackState.pcmSampleName = val;
         i++;
         continue;
