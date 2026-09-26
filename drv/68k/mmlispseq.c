@@ -994,8 +994,9 @@ static int macro_value(const MMLMacro *m, int idx, int *hold) {
   return (int8_t)raw;
 }
 
-/* Whether a running :vel macro on the channel will play a release region at
- * key-off — PSG key-off then leaves the level to it (channel_off). */
+/* Whether a running level macro (:vel or :vol) on the channel will play a
+ * release region at key-off — PSG key-off then leaves the level to it
+ * (channel_off). */
 static int vel_release_pending(const MMLSeq *s, int ch) {
   int mc = macro_ch(ch);
   if (mc < 0) return 0;
@@ -1003,10 +1004,9 @@ static int vel_release_pending(const MMLSeq *s, int ch) {
     const MMLMacroSlot *sl = &s->macro_slots[mc][i];
     MMLMacro d;
     /* ...or is playing it: a second key-off (a rest) must not cut it. */
-    if (sl->state == MML_MACRO_RELEASE && macro_desc(s, sl->macro_id, &d) && d.target == T_VEL)
-      return 1;
-    if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) &&
-        macro_desc(s, sl->macro_id, &d) && d.target == T_VEL && d.release != 0xff &&
+    if (!macro_desc(s, sl->macro_id, &d) || (d.target != T_VEL && d.target != T_VOL)) continue;
+    if (sl->state == MML_MACRO_RELEASE) return 1;
+    if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) && d.release != 0xff &&
         d.release < d.count)
       return 1;
   }
@@ -1184,8 +1184,8 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp,
   } else {
     sl->cursor++;
     if (sl->cursor >= (uint16_t)d.count) { /* release finished */
-      /* A PSG :vel release was the decay: silence the channel a step on. */
-      if (d.target == T_VEL && ch >= 6 && ch < 10 && !keyed) {
+      /* A PSG level release was the decay: silence the channel a step on. */
+      if ((d.target == T_VEL || d.target == T_VOL) && ch >= 6 && ch < 10 && !keyed) {
         sl->state = MML_MACRO_TAIL;
         return 0;
       }

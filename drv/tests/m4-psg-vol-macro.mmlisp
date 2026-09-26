@@ -1,0 +1,11 @@
+; M4 gate: a PSG :vol macro. It composes the attenuation with the note's vel
+; (and a :vel macro's, each step composing with the other's value then), it
+; is the channel's :vol for the notes after it, and its release is the note's
+; decay: key-off leaves the level to it, and it silences the channel when it
+; ends — here above silence, where the tone used to drone on.
+(sqr1 :tempo 120 :len 4
+  (macro :vel [15 12 9] :vol [31 20 25 31]) c e
+  (macro :vol [31 #sus 28 #rel 26 24 22]) :gate* 0.5 c _ c)
+
+(sqr2 :len 4 :gate* 0.75
+  (macro :step 1/16 :keyon [0 #sus 1] :vol [31 #sus 26 22 #rel 18 14]) c e g)

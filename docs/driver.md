@@ -1157,9 +1157,10 @@ In the frame loop (§4 step 3, after the sweep engines), each running macro:
 A `:vel` macro owns the note's level, so a note-on composes from the macro's
 first sample (the one that lands in the same frame), not from a stale velocity
 it would then overwrite; with no first sample (a leading hold) the note takes
-its own velocity. On PSG, whose level *is* the envelope, a `:vel` release is
-the note's decay: key-off leaves the attenuation to it rather than silencing
-the channel, and the step after the release's last sample silences it.
+its own velocity. On PSG, whose level *is* the envelope, a `:vel` or `:vol`
+release is the note's decay: key-off leaves the attenuation to it rather than
+silencing the channel, and the step after the release's last sample silences
+it.
 
 **The clock.** A frame `:step` counts 60 Hz frames. A tick `:step` (MACRO_TABLE
 `flags` bit3) counts the ticks of the note's track: the slot takes the track's

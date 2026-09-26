@@ -755,14 +755,14 @@ export class DrvPlayer {
     }
   }
 
-  // Whether a running :vel macro on the channel will play a release region at
-  // key-off — PSG key-off then leaves the level to it (_channelOff).
+  // Whether a running level macro (:vel or :vol) on the channel will play a
+  // release region at key-off — PSG key-off then leaves the level to it (_channelOff).
   _velReleasePending(ch) {
     const mc = this._macroCh(ch);
     if (mc < 0) return false;
     return this._macroSlots[mc].some((slot) => {
       const d = slot && this._macros[slot.descIdx];
-      if (!d || d.target !== TARGET_ID.VEL) return false;
+      if (!d || (d.target !== TARGET_ID.VEL && d.target !== TARGET_ID.VOL)) return false;
       // ...or is playing it: a second key-off (a rest) must not cut it.
       if (slot.state === "release") return true;
       return (
@@ -1945,7 +1945,7 @@ export class DrvPlayer {
       if (slot.cursor >= d.count) {
         // Release finished. A PSG :vel release was the decay: silence the
         // channel a step on (the "tail" state).
-        if (d.target === TARGET_ID.VEL && ch >= 6 && ch < 10 && !keyed) {
+        if ((d.target === TARGET_ID.VEL || d.target === TARGET_ID.VOL) && ch >= 6 && ch < 10 && !keyed) {
           slot.state = "tail";
           return false;
         }

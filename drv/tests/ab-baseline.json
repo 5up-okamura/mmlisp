@@ -1,4 +1,10 @@
 {
+  "ab-core.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "budget-2v-baked.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -102,16 +108,16 @@
     "digest": "cdecefdf"
   },
   "m3-macro-keyon.mmlisp": {
-    "ok": false,
-    "mismatches": 2,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "217097ac"
+    "digest": "811c9dc5"
   },
   "m3-macro-multi.mmlisp": {
     "ok": false,
-    "mismatches": 218,
+    "mismatches": 216,
     "compileErrors": 0,
-    "digest": "97bbb8ea"
+    "digest": "dc9eb9d7"
   },
   "m3-macro-pitch.mmlisp": {
     "ok": true,
@@ -371,6 +377,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-psg-vol-macro.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-sweep-from-current.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -484,11 +496,5 @@
     "mismatches": 9,
     "compileErrors": 0,
     "digest": "3d22158f"
-  },
-  "ab-core.mmlisp": {
-    "ok": true,
-    "mismatches": 0,
-    "compileErrors": 0,
-    "digest": "811c9dc5"
   }
 }

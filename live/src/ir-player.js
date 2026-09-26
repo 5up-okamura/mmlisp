@@ -3971,54 +3971,77 @@ export class IRPlayer {
     return Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + Math.min(f, sw.frames) - 1)));
   }
 
-  _schedulePsgVelMacro(
+  // A PSG note's level macros, :vel and :vol: each composes the attenuation
+  // with the other's value at its time (and master), as the driver's writes
+  // through the one level path do. A :vol macro is the channel's :vol, so its
+  // last value stays for later notes.
+  _schedulePsgLevelMacros(
     psgCh,
     velMacro,
+    volMacro,
     noteWhen,
     gateTicks,
     baseVel = 15,
     limitSecs = Infinity,
     offWhen = null,
+    velFirst = true, // bind order: which of the two steps first in a frame
   ) {
-    if (!velMacro) return;
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
-
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
-      noteWhen,
-      gateTicks,
-    );
-
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
+    // Run each macro for its samples; the ends say when the level is done.
+    const run = (spec, target) => {
+      const out = [];
+      if (!spec) return { out, end: null };
+      const end = this._scheduleMacro(
+        spec, noteFrames, gateSecs, noteWhen,
+        (v, t) => out.push({ t, v: clampForTarget(target, v) }),
+        this._stepSecs(spec.step), limitSecs,
+      );
+      return { out, end };
+    };
     // The vel macro's output is the absolute velocity (0-15), matching FM and
     // the static-vel path; `:vel*` bakes any note-vel scaling in at compile
     // time, so the player must not scale again here.
-    const velToAtt = (v, t) => {
-      const velLevel = clampForTarget("VEL", v);
-      return this._composePsgAtt(velLevel, this._psgVolAtTime(psgCh, t), this._masterAt(t));
+    const vel = run(velMacro, "VEL");
+    const vol = run(volMacro, "VOL");
+    const at = (list, t, dflt) => {
+      let v = dflt;
+      for (const s of list) if (s.t <= t + 1e-9) v = s.v; else break;
+      return v;
     };
+    const velAt = (t) => at(vel.out, t, baseVel);
+    const volAt = (t) => at(vol.out, t, null) ?? this._psgVolAtTime(psgCh, t);
 
-    // A macro with no first sample (a leading wait, `[#rel …]`) leaves the
-    // note's own level to the note-on, as the driver composes it.
-    if (macroLeadsWithHold(velMacro))
-      this._psgSetAtt(
-        psgCh,
-        this._composePsgAtt(
-          baseVel, this._psgVolAtNoteOn(psgCh, noteWhen), this._masterAtNoteOn(noteWhen),
-        ),
-        noteWhen,
-      );
-    const silenceAt = this._scheduleMacro(
-      velMacro,
-      noteFrames,
-      gateSecs,
+    // The note-on composes from the macro's first :vel (a leading hold: the
+    // note's own) and the :vol the channel holds; the macros' samples follow.
+    const first = velMacro && !macroLeadsWithHold(velMacro) ? vel.out[0]?.v ?? baseVel : baseVel;
+    this._psgSetAtt(
+      psgCh,
+      this._composePsgAtt(first, this._psgVolAtNoteOn(psgCh, noteWhen), this._masterAtNoteOn(noteWhen)),
       noteWhen,
-      (v, t) => this._psgSetAtt(psgCh, velToAtt(v, t), t),
-      this._stepSecs(velMacro.step),
-      limitSecs,
     );
-    // Silence at the macro tail. offWhen is null when the note holds or slurs
-    // into the next (legato) — leave the tone sounding for the next note.
-    // A macro the next note cuts short (silenceAt = its limit) leaves the level
-    // to that note: no gap before it.
+    const times = [...new Set([...vel.out, ...vol.out].map((s) => s.t))].sort((x, y) => x - y);
+    const has = (list, t) => list.some((s) => Math.abs(s.t - t) < 1e-9);
+    for (const t of times) {
+      const master = this._masterAt(t);
+      // Both step here: the driver writes each in bind order, the first
+      // composing with the other's value before its own step.
+      if (has(vel.out, t) && has(vol.out, t)) {
+        const before = t - 1e-6;
+        this._psgSetAtt(psgCh, velFirst
+          ? this._composePsgAtt(velAt(t), volAt(before), master)
+          : this._composePsgAtt(velAt(before), volAt(t), master), t);
+      }
+      this._psgSetAtt(psgCh, this._composePsgAtt(velAt(t), volAt(t), master), t);
+    }
+    if (vol.out.length) this._psgVol[psgCh] = vol.out[vol.out.length - 1].v;
+
+    // Silence at the level's tail. offWhen is null when the note holds or slurs
+    // into the next (legato) — leave the tone sounding for the next note. A
+    // tail the next note cuts short (at its limit) leaves the level to that
+    // note: no gap before it.
+    const ends = [vel.end, vol.end].filter((e) => e !== null);
+    const silenceAt = ends.length ? Math.max(...ends) : null;
     if (silenceAt !== null && offWhen != null && silenceAt < limitSecs - 1e-9) {
       this._psgSetAtt(psgCh, 15, silenceAt);
     }
@@ -4124,18 +4147,22 @@ export class IRPlayer {
             ? psgGateEnd
             : null;
         this._psgKeyedUntil[psgCh] = psgOffWhen ?? psgNextNote;
-        if (velMacro) {
-          // A :keyon retrigger restarts the level envelope (PSG has no
+        const volMacro = ev.args?.vol ?? null;
+        if (velMacro || volMacro) {
+          // A :keyon retrigger restarts the level envelopes (PSG has no
           // hardware one: this is the whole of the retrigger).
           this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);
-          this._schedulePsgVelMacro(
+          this._schedulePsgLevelMacros(
             psgCh,
             velMacro,
+            volMacro,
             when,
             psgGateTicks,
             baseVel,
             psgMacroLimit,
             psgOffWhen,
+            Object.keys(ev.args).indexOf("velMacro") < Object.keys(ev.args).indexOf("vol") ||
+              !volMacro,
           );
           this._envRetrigs = null;
         } else {
