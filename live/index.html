@@ -1474,7 +1474,7 @@
       ':vel',':vel+',':vel*',':vol',':volume',
       ':master',':pan',':mode',':shuffle',':shuffle-base',
       // note dynamics / sequencer
-      ':pitch',':pitch+',':semi',':semi+',':keyon',':by',':back',':time',
+      ':pitch',':pitch+',':semi',':semi+',':keyon',':back',':time',
       ':tempo-scale',':csm-rate',
       // macro / voice / definitions
       ':step',':loop-start',':loop-end',':loop-len',
@@ -1509,8 +1509,8 @@
       'x': 'x ${1:4} ${2}',
       'go': 'go ${1:head}',
       'macro': 'macro :${1:vel} ${2}',
-      'echo': 'echo :${1:vel+} ${2:3} :by ${3:-1}',
-      'delay': 'delay :${1:vel+} ${2:3} :by ${3:-4} :time ${4:1/8}',
+      'echo': 'echo ${1:3} :${2:vel+} ${3:-1}',
+      'delay': 'delay ${1:3} :${2:vel+} ${3:-4} :time ${4:1/8}',
       'glide': 'glide ${1:1/8}',
       'const': 'const ${1:0} :len ${2:4}',
       'gain': 'gain ${1:6}',

@@ -44,7 +44,7 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
    machine all landed after that line was drawn. If they are v0.6, it is the
    version table's last row and the sentence under it.
 
-## 1b. Irregular rules, from the 2026-09-26 audit (each needs the user's call)
+## 1b. Irregular rules, from the 2026-09-26 audit — all landed or decided
 
 The rule behind all of them: `:key value` is a sticky parameter, `(form …)`
 an event or control, `#name` a position; an operator suffix combines with the
@@ -58,15 +58,7 @@ replacing `:extend`), sample binding by name. **Decided:** no CALL/RET in the
 language — naming is a source convenience, sharing is the encoder's job
 (MACRO_TABLE / VOICE_TABLE dedup, the CALL/RET pass). **Decided, do not re-propose:** counted
 `(go label N)` stays — flat, cross-form counted loops are wanted beyond the
-mucom import; its post-merge rewrite is the feature's own cost. What is left
-changes syntax:
-
-5. **echo / delay** — in `(echo :vel+ 3 :by -1)` the `3` is a count, not an
-   addend. Proposal `(echo 3 :vel+ -1)` / `(delay 3 :vel* 0.7 :time 8)`, the
-   keyword's value being the per-tap step (a scalar, a vector of taps, or a
-   curve); drops `:by` and the op-required errors. Examples asked for.
-11. **`_xN` anchors of infinite `(x …)`** share the user label namespace.
-    Proposal: an internal id no `#name` can spell. Examples asked for.
+mucom import; its post-merge rewrite is the feature's own cost.
 
 **Decided 2026-09-26, do not re-propose:** holds keep both `:len 0` (the
 track waits for the host) and `:gate 0` (it does not) — two features; the
@@ -77,7 +69,9 @@ use and range and both stay; `(glide …)` stays a form (two arities); gate is
 §7.0's documented exception. Landed: `:oct*` and def-val `:min/:max` gone,
 written lengths swing, an omitted `:from` = the current value (inline sweeps;
 `E_CURVE_FROM` elsewhere), one macro-vector grammar (numbers and stages mix,
-`const` gone).
+`const` gone), echo/delay as `[N] :vel+|:vel* V` (V the per-tap change: a
+number, a tap vector or a curve), compiler loop ids `(x N)` that no `#name`
+can spell. Every item of this audit is now either landed or decided.
 
 Not a syntax question, but the next step of the value reader: `$` is still
 recognised outside the evaluator (the runtime linearizer and

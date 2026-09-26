@@ -5,7 +5,7 @@
 
 (fm1 :tempo 110 :oct 5 gm-marimba
   ; dotted-eighth delay: 3 taps, each 4 velocity steps quieter
-  (delay :vel+ 3 :by -4 :time 8.)
+  (delay 3 :vel+ -4 :time 8.)
   :len 4 c _ g _ e _ d _
 
   ; a list gives each tap its own ratio

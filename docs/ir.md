@@ -212,14 +212,14 @@ rewrites the backward `MARKER`+`JUMP{repeat}` pair into the same shape.
 
 | Cmd          | Args                       | Semantics                                                    |
 | ------------ | -------------------------- | ------------------------------------------------------------- |
-| `LOOP_BEGIN` | `{ id }`                   | `id`: compiler-generated `"_xN"` or the user label.            |
+| `LOOP_BEGIN` | `{ id }`                   | `id`: compiler-generated `"(x N)"` (no `#name` can spell it) or the user label.            |
 | `LOOP_END`   | `{ id, repeat }`           | `repeat`: int ≥ 1 iteration count.                             |
 | `LOOP_BREAK` | `{ id }` (`id` may be null)| Final-pass exit point inside the loop body. `null` only if authored outside any counted loop (then inert). |
 
 ```json
-{ "tick": 0,  "cmd": "LOOP_BEGIN", "args": { "id": "_x0" } }
-{ "tick": 96, "cmd": "LOOP_END",   "args": { "id": "_x0", "repeat": 4 } }
-{ "tick": 48, "cmd": "LOOP_BREAK", "args": { "id": "_x0" } }
+{ "tick": 0,  "cmd": "LOOP_BEGIN", "args": { "id": "(x 0)" } }
+{ "tick": 96, "cmd": "LOOP_END",   "args": { "id": "(x 0)", "repeat": 4 } }
+{ "tick": 48, "cmd": "LOOP_BREAK", "args": { "id": "(x 0)" } }
 ```
 
 Notes: the player expands loops **structurally at load time**
@@ -231,7 +231,7 @@ the flattened runtime schedule.
 
 | Cmd      | Args                       | Semantics                                                                 |
 | -------- | -------------------------- | --------------------------------------------------------------------------- |
-| `MARKER` | `{ id }`                   | Label from `#name`, or the anchor of an uncounted `(x …)` (`"_xN"`) — a `JUMP` target; emits no stream bytes. |
+| `MARKER` | `{ id }`                   | Label from `#name`, or the anchor of an uncounted `(x …)` (`"(x N)"`) — a `JUMP` target; emits no stream bytes. |
 | `JUMP`   | `{ to }`                   | `to`: marker id. A **backward** `JUMP` is the track's structural loop point. A counted `(go label N)` never reaches the IR as a `JUMP`: it becomes `LOOP_BEGIN`/`LOOP_END` (a forward one is `E_GO_FORWARD_COUNT` and dropped). |
 | `TRIG`   | `{ code }`                 | `(trig N)`: id 0..63 — a music→game sync point written to the track's status byte (opcodes.md §0x42). Never a jump target. |
 
@@ -624,7 +624,7 @@ CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz).
 - **Determinism: same source → byte-identical IR.** No randomness (stochastic
   curves are playback-side fixed-seed LUTs), no timestamps, and `sortObject`
   alphabetizes every object key recursively before return. Generated loop ids
-  (`_x0`, `_x1`, …) come from a single per-compile counter in score order.
+  (`(x 0)`, `(x 1)`, …) come from a single per-compile counter in score order.
 - **Marker/loop id resolution.** Loop ids pair `LOOP_BEGIN`/`LOOP_END`;
   `LOOP_BREAK` binds to the innermost counted loop (a break authored under a
   `#label…(go label N)` loop gets its id assigned when `convertCountedJumps`

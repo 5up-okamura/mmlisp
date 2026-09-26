@@ -1,6 +1,6 @@
 ; M4 gate: one channel, overlapping timelines, one stream. Delay taps longer
 ; than the gap to the next tap, and :prio layers whose notes cross the other
 ; layer's rests, must keep their times on the MMB (no W_MMB_TICK_REGRESSION).
-(fm1 :tempo 120 :len 4 :vel 12 (delay :vel+ 3 :by -4 :time 1/8) c e g e)
+(fm1 :tempo 120 :len 4 :vel 12 (delay 3 :vel+ -4 :time 1/8) c e g e)
 (fm2 :prio 1 :len 4 :vel 12 c _ _ g _ _)
 (fm2 :prio 5 :len 16 :vel 9 e e e e e e e e e e e e)
