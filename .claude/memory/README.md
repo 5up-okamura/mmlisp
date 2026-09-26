@@ -33,7 +33,8 @@ Rules:
   shipped light engine, with their reasons, and what is still open.** Read
   before touching PCM in any layer.
 - [language-open.md](language-open.md) — **the language and IR: what is open.**
-  The questions from the 2026-09-18 audit that need the user's decision, the
+  The questions from the 2026-09-18 and 2026-09-26 audits that need the
+  user's decision (the latter: irregular syntax rules), the
   larger judgment-free items, and why compile-time eval and the value machine
   have their shape, with the risks that are still live.
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's

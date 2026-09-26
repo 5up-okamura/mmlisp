@@ -44,6 +44,57 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
    machine all landed after that line was drawn. If they are v0.6, it is the
    version table's last row and the sentence under it.
 
+## 1b. Irregular rules, from the 2026-09-26 audit (each needs the user's call)
+
+The rule behind all of them: `:key value` is a sticky parameter, `(form …)`
+an event or control, `#name` a position; an operator suffix combines with the
+target's base (§7.0). The judgment-free half of that audit has landed (IR
+`TRIG`, head = `:prio` only, one value reader, wrong-channel errors,
+`E_PRIO_LAYER_LOOP`, the formatter's glued-keyword repair). What is left
+changes syntax:
+
+1. **Valueless `:` tags** — the `:break` smell: the curve flag `:loop`,
+   `:hold` / `:off` inside step vectors, `(def k :sample :file …)`. The
+   formatter guesses "keyword followed by keyword" to cope. Proposal: `#loop`
+   / `#off` position markers in vectors, `(def k (sample …))` like
+   `(def x (macro …))`.
+2. **Three ways to bind a PCM sample** — head positional (needs the
+   `isLikelyPcmBodyToken` guess), `:sample name`, bare name in the body.
+   Proposal: bare name only, like an FM voice.
+3. **Duplicate spellings** — `o±N` / `v±N` beside `>` `<` `:oct+` `:vel+`;
+   `:oct*` (no musical meaning); hold as `:len 0` and `0f`/`0ms`; `(wait …)`
+   stage vs curve `:wait` (two parsers, one regex); inline `:csm-rate` vs the
+   `fm3-csm-rate` track (with a conflict error between them); def-val range
+   `A..B` / `:from :to` / `:min :max` (the last is directional despite its name).
+4. **Counted `(go label N)` exists for the mucom importer**, which puts each
+   source line in its own form. It costs the post-merge rewrite, deferred
+   `(break)` ids and `W_BREAK_OUTSIDE_LOOP`. Proposal: `(x N …)` only; the
+   importer joins a cross-line loop into one form.
+5. **§7.0 exceptions** — `:gate*`'s base is the note length and `:gate-` uses
+   the forbidden `-` (either document gate as the exception or type the
+   value); in `(echo :vel+ 3 :by -1)` the `3` is a count, not an addend
+   (proposal `(echo 3 :vel+ -1)`, dropping `:by` and the op-required errors).
+6. **`def` picks its kind by sniffing** — a voice is recognised by its first
+   keyword (`:alg :fb :ar …`), so `(def v :ml1 3 :alg 4)` is a snippet, and a
+   voice def drops non-literal values silently. Proposal: a voice is a
+   snippet; `:extend` becomes a leading reference.
+7. **`(glide T)` is a sticky setter spelled as a form**, and `(glide f5 32)`
+   mixes a one-shot start pitch into it by arity. Proposal: `:glide T`, and
+   `(glide f5)` as the one-shot.
+8. **Macro sequences** — a vector is stages only when every item is `(…)`, so
+   a `let`-bound curve cannot be a stage and `const` exists to fill the gap.
+9. **An omitted `:from`** is 0 in the spec, the current tempo on `:tempo`,
+   unity on a PSG VOL sweep; curve sampling is written out in several places.
+10. **Shuffle**: `_8` swings, `c8` does not (the code says the note side is
+    intended; the spec says "note/rest pairs").
+11. **`_xN` anchors of infinite `(x …)`** share the user label namespace
+    (`#_x0` collides with a confusing `E_MARKER_DUP`).
+
+Not a syntax question, but the next step of the value reader: `$` is still
+recognised outside the evaluator (the runtime linearizer and
+`detectScaledMacro`). Making `$slot` a symbolic evaluator value would merge
+them.
+
 ## 2. Judgment-free but larger
 
 - Nf in one track converted at another track's mid-song tempo change (§4).
