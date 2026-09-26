@@ -147,7 +147,7 @@ const run = (x, chain) => {
 (def kick-short (sample kick :frames 400))
 (def snare-hot (sample snare :effect [(gain 3)]))
 (def snare-own (sample snare :file "mine.wav"))
-(def lead :extend init-fm :alg 4)
+(def lead (voice init-fm :alg 4))
 (pcm1 kick :tempo 120 :len 4 c kick-short c snare-hot c snare-own c snare-kit c)
 (fm1 lead c)`, "t.mmlisp", { imports: new Map([["kit/set.mmlisp", kit]]) });
   const by = (n) => ir.metadata.samples.find((d) => d.name === n);

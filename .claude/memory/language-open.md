@@ -51,8 +51,9 @@ an event or control, `#name` a position; an operator suffix combines with the
 target's base (§7.0). The judgment-free half of that audit has landed (IR
 `TRIG`, head = `:prio` only, one value reader, wrong-channel errors,
 `E_PRIO_LAYER_LOOP`, the formatter's glued-keyword repair), and so have the
-first rulings: `#sus` / `#rel`, curve `:mode loop|shot`, `(sample …)` defs and
-sample binding by name. **Decided, do not re-propose:** counted
+first rulings: `#sus` / `#rel`, curve `:mode loop|shot`, `(sample …)` and
+`(voice …)` defs (a leading base name replaces `:extend`), sample binding by
+name. **Decided, do not re-propose:** counted
 `(go label N)` stays — flat, cross-form counted loops are wanted beyond the
 mucom import; its post-merge rewrite is the feature's own cost. What is left
 changes syntax:
@@ -66,12 +67,6 @@ changes syntax:
    the forbidden `-` (either document gate as the exception or type the
    value); in `(echo :vel+ 3 :by -1)` the `3` is a count, not an addend
    (proposal `(echo 3 :vel+ -1)`, dropping `:by` and the op-required errors).
-6. **`def` picks its kind by sniffing** — a voice is recognised by its first
-   keyword (`:alg :fb :ar …`), so `(def v :ml1 3 :alg 4)` is a snippet, and a
-   voice def drops non-literal values silently. Proposal: a voice is a
-   snippet; `:extend` becomes a leading reference (`(def lead init-fm …)`),
-   as a sample's already is. Explained to the user 2026-09-26; awaiting a
-   yes.
 7. **`(glide T)` is a sticky setter spelled as a form**, and `(glide f5 32)`
    mixes a one-shot start pitch into it by arity. Proposal: `:glide T`, and
    `(glide f5)` as the one-shot.
@@ -95,8 +90,7 @@ them.
 - Tick-0 tempo written as an expression is not seen by the Nf prescan.
 - Imports: a local def does not win over an import in another namespace
   (§9.2); nested import paths resolve from the folder root, `..` rejected.
-- Voice-def values must be integer literals (a `(def lvl 40)` constant or an
-  expression is dropped); E_LET_SHADOWS_DEF only for voice/macro defs.
+- E_LET_SHADOWS_DEF only for voice/macro defs (a snippet name gives E_LET_NAME).
 - Computed float levels on the driver (suspected: integer tables).
 
 ## 3. Why the value machine has this shape

@@ -2775,135 +2775,89 @@ function createInitFmKwMap() {
   return kwMap;
 }
 
-function getVecInts(vecNode) {
-  if (!vecNode || vecNode.kind !== "list") return [];
-  return vecNode.items.map((item) => parseIntLike(atomValue(item)) ?? 0);
+function emitVoice(td, tick, events, src) {
+  if (td.tag !== "voice") return false;
+  if (td.kwMap) emitVoiceFromKwMap(td.kwMap, tick, events, src);
+  return true;
 }
 
-function emitVoice(td, tick, events, src, typedDefs, diagnostics) {
-  if (td.tag === "fm") {
-    emitFmPatch(td, tick, events, src);
-    return true;
-  }
-  if (td.tag === "fm-kw") {
-    const kwMap = td.extends
-      ? resolveVoice(
-          td.extends,
-          typedDefs ?? new Map(),
-          diagnostics ?? [],
-          new Set(),
-        )
-      : new Map();
-    if (kwMap) {
-      // Merge child overrides on top of resolved base
-      const merged = new Map(kwMap);
-      for (const [k, v] of td.kwMap) merged.set(k, v);
-      emitVoiceFromKwMap(merged, tick, events, src);
-    } else {
-      // Base resolution failed; emit child keys only
-      emitVoiceFromKwMap(td.kwMap, tick, events, src);
+// The canonical targets a voice sets: the channel's ALG/FB/AMS/FMS and every
+// operator param — the registers VOICE_TABLE carries (mmb.md §11).
+const VOICE_KEYS = [
+  "FM_ALG",
+  "FM_FB",
+  "FM_AMS",
+  "FM_FMS",
+  ...[1, 2, 3, 4].flatMap((op) => FM_OP_PARAMS.map((p) => `FM_${p}${op}`)),
+];
+const VOICE_KEY_SET = new Set(VOICE_KEYS);
+
+// `(voice base :key value …)`: flatten each voice into one register map, the
+// base's first and the voice's own writes over it. A value is anything that
+// evaluates to a number — a literal, a snippet constant, an expression. Runs
+// once every def is known, so a base may come from an import.
+function resolveVoices(typedDefs, defs, paramDefs, diagnostics) {
+  const resolve = (name, seen) => {
+    const td = typedDefs.get(name);
+    if (td.kwMap || td.failed) return td.kwMap ?? null;
+    const err = (code, msg, src = td.src) => {
+      pushDiag(diagnostics, "error", code, msg, src, null);
+    };
+    let base = new Map();
+    if (td.extends) {
+      const b = typedDefs.get(td.extends);
+      if (b?.tag !== "voice") {
+        err("E_VOICE_EXTENDS", `'${td.extends}' is not a voice`);
+        td.failed = true;
+        return null;
+      }
+      if (seen.has(td.extends)) {
+        err("E_VOICE_EXTENDS", `voice '${name}' extends itself`);
+        td.failed = true;
+        return null;
+      }
+      base = resolve(td.extends, new Set([...seen, name]));
+      if (!base) {
+        td.failed = true;
+        return null;
+      }
     }
-    return true;
-  }
-  return false;
-}
-
-// Resolve :extends chain into a flat kwMap of canonical param names → number.
-// Returns null and emits a diagnostic on cycle/missing-base.
-function resolveVoice(name, typedDefs, diagnostics, seen = new Set()) {
-  if (seen.has(name)) {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_EXTENDS_CYCLE",
-      `cycle detected in :extends chain: ${name}`,
-      null,
-      null,
-    );
-    return null;
-  }
-  seen.add(name);
-  const td = typedDefs.get(name);
-  if (!td || td.tag !== "fm-kw") {
-    // Unknown or non-voice `:extend` base — error instead of silently emitting
-    // the child's own keys only (which leaves a half-set, broken patch).
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_EXTENDS_BASE_UNKNOWN",
-      `:extend base '${name}' is not a defined FM voice`,
-      null,
-      null,
-    );
-    return null;
-  }
-  const base = td.extends
-    ? resolveVoice(td.extends, typedDefs, diagnostics, seen)
-    : new Map();
-  if (base === null) return null;
-  // Child overrides parent
-  const merged = new Map(base);
-  for (const [k, v] of td.kwMap) merged.set(k, v);
-  return merged;
+    const kwMap = new Map(base);
+    const ctx = makeEvalCtx(diagnostics, null, td.src, typedDefs);
+    for (let k = 0; k < td.items.length; k += 2) {
+      const kw = atomValue(td.items[k]);
+      const target = kw?.startsWith(":") ? canonicalTarget(kw) : null;
+      if (!VOICE_KEY_SET.has(target)) {
+        err("E_VOICE_PARAM",
+          `${kw ?? "(…)"} is not an FM voice parameter (:alg :fb :ams :fms, :ar1 … :am4)`,
+          nodeSrc(td.items[k]));
+        continue;
+      }
+      if (k + 1 >= td.items.length) {
+        err("E_VOICE_VALUE", `${kw} has no value`, nodeSrc(td.items[k]));
+        continue;
+      }
+      // A snippet constant (`(def lvl 40)`) expands to its one node first.
+      const expanded = expandNode(td.items[k + 1], defs, paramDefs, 0, diagnostics);
+      const v = expanded.length === 1 && !exprHasValRef(expanded[0])
+        ? evalValue(expanded[0], makeEnv(null), ctx)
+        : null;
+      if (v?.kind === "scalar") kwMap.set(target, Math.round(v.value));
+      else if (v || expanded.length !== 1 || exprHasValRef(expanded[0]))
+        err("E_VOICE_VALUE", `${kw} takes a number — a voice is fixed data`,
+          nodeSrc(td.items[k + 1]));
+    }
+    td.kwMap = kwMap;
+    return kwMap;
+  };
+  for (const [name, td] of typedDefs) if (td.tag === "voice") resolve(name, new Set());
 }
 
 function emitVoiceFromKwMap(kwMap, tick, events, src) {
-  const EMIT_KEYS = [
-    "FM_ALG",
-    "FM_FB",
-    "FM_AMS",
-    "FM_FMS",
-    ...[1, 2, 3, 4].flatMap((op) => FM_OP_PARAMS.map((p) => `FM_${p}${op}`)),
-  ];
-  for (const target of EMIT_KEYS) {
+  for (const target of VOICE_KEYS) {
     const value = kwMap.get(target);
     if (value !== undefined)
       events.push({ tick, cmd: "PARAM_SET", args: { target, value }, src });
-  }
-}
-
-function emitFmPatch(td, tick, events, src) {
-  const chVals = getVecInts(td.algFb);
-  const [alg, fb] = chVals;
-  if (alg !== undefined)
-    events.push({
-      tick,
-      cmd: "PARAM_SET",
-      args: { target: "FM_ALG", value: alg },
-      src,
-    });
-  if (fb !== undefined)
-    events.push({
-      tick,
-      cmd: "PARAM_SET",
-      args: { target: "FM_FB", value: fb },
-      src,
-    });
-  if (chVals[2] !== undefined)
-    events.push({
-      tick,
-      cmd: "PARAM_SET",
-      args: { target: "FM_AMS", value: chVals[2] },
-      src,
-    });
-  if (chVals[3] !== undefined)
-    events.push({
-      tick,
-      cmd: "PARAM_SET",
-      args: { target: "FM_FMS", value: chVals[3] },
-      src,
-    });
-  for (let op = 0; op < 4; op++) {
-    const vals = getVecInts(td.ops[op]);
-    FM_OP_PARAMS.forEach((pname, pi) => {
-      if (vals[pi] !== undefined)
-        events.push({
-          tick,
-          cmd: "PARAM_SET",
-          args: { target: `FM_${pname}${op + 1}`, value: vals[pi] },
-          src,
-        });
-    });
   }
 }
 
@@ -3494,14 +3448,7 @@ function compileChannelBody(
             trackName,
           })
         ) {
-          emitVoice(
-            td,
-            trackState.tick,
-            events,
-            nodeSrc(node),
-            typedDefs,
-            diagnostics,
-          );
+          emitVoice(td, trackState.tick, events, nodeSrc(node));
         }
         i++;
         continue;
@@ -4555,43 +4502,21 @@ function collectDefs(roots, diagnostics) {
         // (def name (sample [base] :file "…" …))
         const sample = parseSampleDef(macroFnNode, diagnostics);
         sampleDefs.set(name, { tag: "sample", ...sample, src: nodeSrc(root) });
-      } else if (maybeTag === ":extend") {
-        // Keyword-map FM voice def with inheritance
-        // (def child :extend base :alg 7 :tl1 20 ...)
-        const src = nodeSrc(root);
-        const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        const baseName = atomValue(bodyItems[3]);
-        const kwMap = new Map();
-        for (let ki = 4; ki + 1 < bodyItems.length; ki += 2) {
-          const kwSym = atomValue(bodyItems[ki]);
-          const kwVal = parseIntLike(atomValue(bodyItems[ki + 1]));
-          if (kwSym?.startsWith(":") && kwVal !== null) {
-            kwMap.set(canonicalTarget(kwSym), kwVal);
-          }
-        }
-        typedDefs.set(name, { tag: "fm-kw", extends: baseName, kwMap, src });
       } else if (
-        maybeTag?.startsWith(":alg") ||
-        maybeTag?.startsWith(":fb") ||
-        maybeTag?.startsWith(":ar") ||
-        maybeTag?.startsWith(":tl") ||
-        maybeTag?.startsWith(":dr") ||
-        maybeTag?.startsWith(":sr") ||
-        maybeTag?.startsWith(":rr")
+        macroFnNode?.kind === "list" &&
+        atomValue(macroFnNode.items?.[0]) === "voice"
       ) {
-        // Keyword-map FM voice def without :fm tag (bare keyword form)
-        // (def my-patch :alg 7 :fb 0 :tl1 20 ...)
-        const src = nodeSrc(root);
-        const bodyItems = root.items.filter((n) => n.kind !== "comment");
-        const kwMap = new Map();
-        for (let ki = 2; ki + 1 < bodyItems.length; ki += 2) {
-          const kwSym = atomValue(bodyItems[ki]);
-          const kwVal = parseIntLike(atomValue(bodyItems[ki + 1]));
-          if (kwSym?.startsWith(":") && kwVal !== null) {
-            kwMap.set(canonicalTarget(kwSym), kwVal);
-          }
-        }
-        typedDefs.set(name, { tag: "fm-kw", extends: null, kwMap, src });
+        // (def name (voice [base] :alg 4 :tl1 20 …)) — resolved by
+        // resolveVoices once every def (imports included) is known.
+        const items = macroFnNode.items.filter((n) => n.kind !== "comment");
+        const baseTok = atomValue(items[1]);
+        const base = baseTok && !baseTok.startsWith(":") ? baseTok : null;
+        typedDefs.set(name, {
+          tag: "voice",
+          extends: base,
+          items: items.slice(base ? 2 : 1),
+          src: nodeSrc(root),
+        });
       } else {
         defs.set(
           name,
@@ -4970,12 +4895,14 @@ function compileScore(src, filename, options, frameHz) {
   }
   if (!typedDefs.has("init-fm")) {
     typedDefs.set("init-fm", {
-      tag: "fm-kw",
+      tag: "voice",
       extends: null,
+      items: [],
       kwMap: createInitFmKwMap(),
       src: null,
     });
   }
+  resolveVoices(typedDefs, defs, paramDefs, diagnostics);
   resolveSampleExtends(sampleDefs, diagnostics);
   const roots = expandRoots(remaining, defs, paramDefs, diagnostics);
 
@@ -4992,12 +4919,14 @@ function compileScore(src, filename, options, frameHz) {
   let scoreInitialBpm = null;
   for (const node of roots) {
     if (node?.kind !== "list" || node.items.length === 0) continue;
-    // PCM tracks carry the sample symbol as the first positional argument;
-    // the keyword run starts after it.
-    const start =
-      isPcmTrackName(atomValue(node.items[0])) && node.items.length > 2 ? 2 : 1;
-    for (let i = start; i + 1 < node.items.length; i += 2) {
+    // The leading run: `:key value` pairs, and the voice / sample names bound
+    // among them (they take no time).
+    for (let i = 1; i + 1 < node.items.length; i += 2) {
       const key = atomValue(node.items[i]);
+      if (typedDefs.has(key) || sampleDefs.has(key)) {
+        i--;
+        continue;
+      }
       if (typeof key !== "string" || !key.startsWith(":")) break;
       if (key !== ":tempo") continue;
       const valueNode = node.items[i + 1];

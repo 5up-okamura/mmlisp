@@ -494,7 +494,7 @@ function buildMmlispVoiceFromDmp(parsed, voiceName) {
   if (parsed.fms !== 0) header.push(`:fms ${parsed.fms}`);
 
   const lines = [
-    `(def ${voiceName}`,
+    `(def ${voiceName} (voice`,
     header.join(' '),
   ];
 
@@ -517,7 +517,7 @@ function buildMmlispVoiceFromDmp(parsed, voiceName) {
     if (op.am !== 0) parts.push(`:am${n} ${op.am}`);
     lines.push('  ' + parts.join(' '));
   }
-  lines.push(')');
+  lines.push('))');
   return lines.join('\n');
 }
 

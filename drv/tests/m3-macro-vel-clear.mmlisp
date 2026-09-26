@@ -13,11 +13,11 @@
 ;   sqr1 — the same on PSG (attenuation path)
 ;   fm2  — a vel macro that is never cleared: it owns the level throughout, and
 ;          the note-on must NOT add a base write the macro overwrites anyway
-(def lead :alg 4 :fb 3
+(def lead (voice :alg 4 :fb 3
   :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
   :ar2 31 :dr2 9 :sr2 2 :rr2 8 :sl2 2 :tl2 6 :ks2 0 :ml2 1 :dt2 0
   :ar3 26 :dr3 5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
-  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0))
 
 (fm1 lead :tempo 150 :oct 4 :len 4 :vel 6
   #loop

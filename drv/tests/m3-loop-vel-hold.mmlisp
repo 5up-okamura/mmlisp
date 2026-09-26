@@ -18,11 +18,11 @@
 ;   fm1 — that shape, with a long release ringing through the loop head
 ;   fm2 — the body changes vel mid-loop: iteration 2 must start from the body's
 ;         own velocity, not from whatever the tail left
-(def pad :alg 4 :fb 3
+(def pad (voice :alg 4 :fb 3
   :ar1 18 :dr1 4 :sr1 0 :rr1 1 :sl1 2 :tl1 22 :ks1 0 :ml1 1 :dt1 0
   :ar2 22 :dr2 4 :sr2 0 :rr2 1 :sl2 1 :tl2 16 :ks2 0 :ml2 1 :dt2 0
   :ar3 18 :dr3 4 :sr3 0 :rr3 1 :sl3 2 :tl3 23 :ks3 0 :ml3 2 :dt3 1
-  :ar4 22 :dr4 4 :sr4 0 :rr4 1 :sl4 1 :tl4 16 :ks4 0 :ml4 1 :dt4 0)
+  :ar4 22 :dr4 4 :sr4 0 :rr4 1 :sl4 1 :tl4 16 :ks4 0 :ml4 1 :dt4 0))
 
 (fm1 pad :tempo 120 :oct 3 :vel 4
   #loop

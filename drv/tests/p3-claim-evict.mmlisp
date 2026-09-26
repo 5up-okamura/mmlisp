@@ -4,8 +4,8 @@
 ; From that frame on the stream must equal p3-claim-evict-twin, which is this
 ; score with track 0's modulators removed. No SE is involved: plain eviction
 ; leaked both of these.
-(def v :alg 7 :fb 0 :ar1 31 :tl1 20 :ml1 1 :ar2 31 :tl2 20 :ml2 1 :ar3 31 :tl3 20 :ml3 1 :ar4 31 :tl4 8 :ml4 1)
-(def w :alg 7 :fb 0 :ar1 31 :tl1 4 :ml1 5 :ar2 31 :tl2 4 :ml2 5 :ar3 31 :tl3 4 :ml3 5 :ar4 31 :tl4 2 :ml4 5)
+(def v (voice :alg 7 :fb 0 :ar1 31 :tl1 20 :ml1 1 :ar2 31 :tl2 20 :ml2 1 :ar3 31 :tl3 20 :ml3 1 :ar4 31 :tl4 8 :ml4 1))
+(def w (voice :alg 7 :fb 0 :ar1 31 :tl1 4 :ml1 5 :ar2 31 :tl2 4 :ml2 5 :ar3 31 :tl3 4 :ml3 5 :ar4 31 :tl4 2 :ml4 5))
 (fm1 :tempo 120 v :oct 4 :len 1 :vel 12
   (macro :pitch (triangle -60..60 :len 8f))
   :vol (linear :from 31 :to 0 :len 300f)

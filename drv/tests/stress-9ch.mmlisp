@@ -11,17 +11,17 @@
 ;
 ; It is deliberately dense and deliberately loops for ever: what is being
 ; measured is the steady state of a full song, not a two-second gate.
-(def lead :alg 4 :fb 3
+(def lead (voice :alg 4 :fb 3
   :ar1 31 :dr1 6 :sr1 3 :rr1 7 :sl1 2 :tl1 14 :ks1 1 :ml1 1 :dt1 0
   :ar2 30 :dr2 8 :sr2 2 :rr2 8 :sl2 3 :tl2 18 :ks2 0 :ml2 2 :dt2 1
   :ar3 31 :dr3 7 :sr3 2 :rr3 7 :sl3 2 :tl3 22 :ks3 1 :ml3 1 :dt3 -1
-  :ar4 31 :dr4 9 :sr4 3 :rr4 9 :sl4 4 :tl4 4  :ks4 0 :ml4 1 :dt4 0)
+  :ar4 31 :dr4 9 :sr4 3 :rr4 9 :sl4 4 :tl4 4  :ks4 0 :ml4 1 :dt4 0))
 
-(def bass :alg 7 :fb 1
+(def bass (voice :alg 7 :fb 1
   :ar1 31 :dr1 10 :sr1 1 :rr1 8 :sl1 4 :tl1 8  :ks1 0 :ml1 1 :dt1 0
   :ar2 31 :dr2 12 :sr2 1 :rr2 8 :sl2 5 :tl2 24 :ks2 0 :ml2 1 :dt2 0
   :ar3 31 :dr3 12 :sr3 1 :rr3 8 :sl3 5 :tl3 24 :ks3 0 :ml3 1 :dt3 0
-  :ar4 31 :dr4 11 :sr4 2 :rr4 9 :sl4 3 :tl4 6  :ks4 0 :ml4 1 :dt4 0)
+  :ar4 31 :dr4 11 :sr4 2 :rr4 9 :sl4 3 :tl4 6  :ks4 0 :ml4 1 :dt4 0))
 
 (def kit (sample :file "blip.wav"))
 

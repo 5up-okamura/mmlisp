@@ -1142,7 +1142,7 @@ function voiceToDef(label, v) {
       `:ks${n} ${clamp(o.ks, 0, 3)} :ml${n} ${clamp(o.ml, 0, 15)} :dt${n} ${clamp(o.dt, -3, 3)}`,
     );
   }
-  const def = `(def @${label}\n  ${parts.join("\n  ")})`;
+  const def = `(def @${label} (voice\n  ${parts.join("\n  ")}))`;
   const head = (v.comments || []).join("\n");
   return head ? `${head}\n${def}` : def;
 }

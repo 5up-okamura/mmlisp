@@ -256,7 +256,7 @@ targets are compile diagnostics (`E_MARKER_DUP`, `E_JUMP_UNRESOLVED`).
 { "tick": 0, "cmd": "PARAM_SET", "args": { "target": "FM_TL1", "value": 32 } }
 ```
 
-Notes: voice defs (`(def name :alg …)` etc.) compile to a burst of same-tick
+Notes: voice defs (`(def name (voice :alg …))` etc.) compile to a burst of same-tick
 `PARAM_SET`s in a fixed key order (ALG, FB, AMS, FMS, then op1–4 ×
 AR,DR,SR,RR,SL,TL,KS,ML,DT,SSG,AMEN). `param-set` with an unsupported target
 emits a diagnostic **but still emits the event**; the player's default case
