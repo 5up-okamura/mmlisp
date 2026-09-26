@@ -475,9 +475,9 @@
   },
   "stress-m2skip.mmlisp": {
     "ok": false,
-    "mismatches": 18,
+    "mismatches": 9,
     "compileErrors": 0,
-    "digest": "64aa5c95"
+    "digest": "3d22158f"
   },
   "ab-core.mmlisp": {
     "ok": true,

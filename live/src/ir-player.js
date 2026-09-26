@@ -319,6 +319,7 @@ export class IRPlayer {
    */
   play(audioContext, options = {}) {
     if (!this._ir) throw new Error("No IR loaded");
+    this._resetSweepState();
 
     if (options.loop !== undefined) this._loop = options.loop;
 
@@ -368,6 +369,16 @@ export class IRPlayer {
     for (let psgCh = 0; psgCh < 4; psgCh++) {
       this._psgSetAtt(psgCh, 15);
     }
+  }
+
+  // Sweep and keyed-span state belongs to one run: it is kept in audio time,
+  // so a previous run's would read as running in this one.
+  _resetSweepState() {
+    this._fmVolSweep.fill(null);
+    this._psgVolSweep.fill(null);
+    this._psgKeyedUntil.fill(0);
+    this._masterSweep = null;
+    for (const m of this._paramSweeps) m.clear();
   }
 
   /** Returns true if playback is currently running. */
@@ -629,6 +640,7 @@ export class IRPlayer {
     const when = this._audioContext?.currentTime ?? 0;
     if (ch >= 6) {
       // PSG channels: silence by setting attenuation to 15 (max att = silent)
+      this._psgKeyedUntil[ch - 6] = Math.min(this._psgKeyedUntil[ch - 6], when);
       this._psgSetAtt(ch - 6, 15, when);
     } else {
       const port = ch >= 3 ? 1 : 0;
@@ -1006,6 +1018,7 @@ export class IRPlayer {
     try {
       this._audioContext = { currentTime: BASE, state: "running", resume() {} };
       this._frameOrigin = BASE;
+      this._resetSweepState();
       this._playing = true;
       this._bpm = this._resolveInitialTempo(this._ir);
       this._tempoSweep = null;
@@ -2683,7 +2696,7 @@ export class IRPlayer {
   // channels, PSG attenuation on all sounding PSG channels, and recomposes every
   // PCM soft-mix voice (the bit-shift attenuation rides master too). Reached from
   // a PARAM_SET MASTER on any track (FM/PSG/PCM), so all three stay in step.
-  _applyMasterChange(value, when, F = this._eventFrame(when)) {
+  _applyMasterChange(value, when, F = this._eventFrame(when), ahead = false) {
     const master = Math.max(0, Math.min(31, Math.round(value)));
     this._masterVol = master;
     // FM channels: update carrier TL
@@ -2708,7 +2721,12 @@ export class IRPlayer {
     // for channels currently sounding — re-writing a non-silent att to an idle
     // channel (e.g. at play start, before any note) would drone a tone.
     for (let psgCh = 0; psgCh < 4; psgCh++) {
-      if (F >= this._eventFrame(this._psgKeyedUntil[psgCh])) continue; // not keyed
+      // Not keyed then, or silent now: a sweep's frames are written ahead, and
+      // a held note's key-off (triggerKeyOff) is not known in advance.
+      // (A held note has no known key-off: nothing is written ahead to it.)
+      const until = this._psgKeyedUntil[psgCh];
+      if (!this._psgSounding[psgCh] || F >= this._eventFrame(until) || (ahead && !Number.isFinite(until)))
+        continue;
       const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
       const vol = this._psgVolAtFrame(psgCh, F); // 0-31
       const sounding = this._psgSounding[psgCh];
@@ -3574,7 +3592,7 @@ export class IRPlayer {
       this._masterSweep = null;
       for (let i = 0; i < iterFrames; i++) {
         const t = this._sweepFrameTime(ms, i);
-        this._applyMasterChange(this._sweepAt(ms, ms.frameOffset + i), t, ms.startFrame + i);
+        this._applyMasterChange(this._sweepAt(ms, ms.frameOffset + i), t, ms.startFrame + i, i > 0);
       }
       this._masterSweep = iterFrames > 1 ? ms : null;
       this._masterVol = this._masterAt(when);
@@ -3806,7 +3824,9 @@ export class IRPlayer {
   _psgVolSweepWrites(psgCh, fromWhen, untilWhen, vel) {
     const vs = this._psgVolSweep[psgCh];
     const ms = this._masterSweep;
-    if (!vs && !ms) return;
+    // A held note's key-off comes live (triggerKeyOff), after these frames
+    // would be queued: write none ahead rather than past its release.
+    if ((!vs && !ms) || !Number.isFinite(untilWhen)) return;
     const end = Math.max(
       vs ? vs.startFrame + vs.frames : -Infinity,
       ms ? ms.startFrame + ms.frames : -Infinity,

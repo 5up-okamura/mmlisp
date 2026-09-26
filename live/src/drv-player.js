@@ -1738,6 +1738,12 @@ export class DrvPlayer {
   _clearChannelModulators(ch) {
     const mc = this._macroCh(ch);
     if (mc >= 0) {
+      // A PSG :vel release was the channel's decay, and silenced it at its
+      // end: cut short, it would leave the tone at the level it had reached.
+      const p = ch - 6;
+      if (ch >= 6 && ch < 10 && !this._psg[p].keyed && this._psg[p].sounding &&
+          this._macroSlots[mc].length)
+        this._writePsgAtt(p, 15);
       this._macroActive[mc].clear();
       this._macroSlots[mc] = [];
     }

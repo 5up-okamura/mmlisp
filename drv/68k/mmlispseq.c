@@ -935,6 +935,11 @@ static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
 static void clear_channel_modulators(MMLSeq *s, int ch) {
   int mc = macro_ch(ch);
   if (mc >= 0) {
+    /* A PSG :vel release was the channel's decay, and silenced it at its
+     * end: cut short, it would leave the tone at the level it had reached. */
+    if (ch >= 6 && ch < 10 && !s->psg[ch - 6].keyed && s->psg[ch - 6].sounding &&
+        s->macro_slot_count[mc])
+      write_psg_att(s, ch - 6, 15);
     s->bind_count[mc] = 0;
     s->macro_slot_count[mc] = 0;
   }
