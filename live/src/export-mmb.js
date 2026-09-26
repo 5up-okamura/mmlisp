@@ -868,6 +868,7 @@ export function encodeMmb(ir, opts = {}) {
           loopState.get(a.id)?.breaks.push({ ...silentState(), velState });
           stream.u8(OPCODE.LOOP_BREAK);
           const at = stream.length;
+          evBounds[evBounds.length - 1].skipAt = at; // the dedup pass relinks it
           stream.u16(0); // patched at the matching LOOP_END
           if (!breakFixups.has(a.id)) breakFixups.set(a.id, []);
           breakFixups.get(a.id).push(at);

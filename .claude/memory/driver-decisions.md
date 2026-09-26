@@ -216,14 +216,13 @@ increment into C *after* it. Two engine build traps: **the image boots at level
   only ~4 bytes on the rarer *shared* looped phrase (33 vs 37) while taxing
   every ordinary loop 2 bytes. The count belongs to LOOP; CALL/RET stays
   count-less. The synergy is composition, not merger.
-- **The dedup pass factors only control-flow-free runs at loop depth 0.**
-  Lifting that so a *shared* looped phrase factors is measured and safe with one
-  addition — the encoder must track the real control-stack depth (LOOP and CALL
-  share the 4-entry stack) and factor inside a loop only when
-  `loop_depth + 1 ≤ 4` — and must be gated on occurrence count ≥ 2, because
-  wrapping a phrase used once would *add* bytes. Measured: two tracks each
-  `(x 8 phrase)` = 940 B and dedup saves 0; two sites with a 24-byte body go
-  54 → ~37.
+- **The dedup pass factors inside loops (since 2026-09-26)** where
+  `loop_depth + 1 ≤ 4` (LOOP and CALL share the 4-entry stack; a fragment
+  never CALLs). It needed one relink the depth-0 version never met: a
+  LOOP_BREAK's relative `skip` spans the loop body, so the exporter records
+  where each emitted skip sits and the pass recomputes it. Measured on the
+  repo: demo-acid 1012 → 646 B, the corpus 35.6 → 35.2 KB, every re-encoded
+  score's drv register trace identical to the depth-0 encoding.
 - **`(trig N)`'s status byte was shaped against a "a Z80-only driver exists some
   day" lens** (user, 2026-09-21). That ruled out a 68k-struct sentinel and a
   read-clears call: in a Z80-only build the game reads one byte through the

@@ -8,15 +8,18 @@
 // net — it replays the original IR through ir-player and the deduped MMB
 // through drv-player, so any behavioural change fails the baseline.
 //
-// Conservative first cut. A factored run must be:
+// A factored run must be:
 //   - control-flow-free (no LOOP_*/JUMP/CALL/RET/MARKER/END_OF_TRACK inside),
 //     so it can never escape and no JUMP can target its interior (every JUMP
 //     dest is a MARKER offset, and markers are excluded);
-//   - at loop depth 0 and within a single track, so a CALL adds exactly one
-//     control-stack entry (combined loop+call depth stays ≤ 4, driver.md §5.2).
+//   - within a single track, at a loop depth that leaves the CALL a slot:
+//     LOOP and CALL share the 4-entry control stack (driver.md §5.2), and a
+//     fragment never CALLs (its units are consumed once factored), so a CALL
+//     at depth d needs d + 1 ≤ 4. A phrase shared inside loops is factored too.
 //
-// The only absolute references into the stream are track eventOffsets and JUMP
-// dests; both are event boundaries and are relinked here.
+// References into the stream, relinked here: track eventOffsets and JUMP dests
+// (absolute, event boundaries), and LOOP_BREAK skips (relative, landing just
+// past a LOOP_END — which moves when the loop body shrinks).
 // ---------------------------------------------------------------------------
 
 const CONTROL_CMDS = new Set([
@@ -35,6 +38,9 @@ const CONTROL_CMDS = new Set([
 // after `k` CALLs (3 B each) + one fragment (`B` + 1 RET). Positive gain needs
 // `(k-1)*B > 3k + 1`; for k=2 that means B ≥ 8.
 const MIN_RUN_BYTES = 8;
+
+// Control-stack entries per track (driver.md §5.2), shared by LOOP and CALL.
+const CONTROL_STACK = 4;
 
 function bytesEqual(a, b) {
   if (a.length !== b.length) return false;
@@ -62,6 +68,7 @@ export function dedupEventStream(bytes, bounds, trackEntries, OPCODE) {
       bytes: bytes.slice(start, end),
       cmd: bounds[i].cmd,
       track: bounds[i].track,
+      skipAt: bounds[i].skipAt, // LOOP_BREAK: stream offset of its skip u16
       depth: 0,
       factorable: false,
       // rewrite state:
@@ -77,7 +84,7 @@ export function dedupEventStream(bytes, bounds, trackEntries, OPCODE) {
     if (u.cmd === "LOOP_END") depth = Math.max(0, depth - 1);
     u.depth = depth;
     if (u.cmd === "LOOP_BEGIN") depth++;
-    u.factorable = !CONTROL_CMDS.has(u.cmd) && u.depth === 0;
+    u.factorable = !CONTROL_CMDS.has(u.cmd) && u.depth + 1 <= CONTROL_STACK;
   }
 
   // Can a run of `runLen` units start at unit index `p`? All must be
@@ -243,7 +250,24 @@ export function dedupEventStream(bytes, bounds, trackEntries, OPCODE) {
     outBytes[newOff + jpos + 2] = (newDest >> 8) & 0xff;
   }
 
-  // Pass 5: relink track eventOffsets.
+  // Pass 5: relink LOOP_BREAK skips. The exporter records where each emitted
+  // break's skip sits (an inert break emits none); the skip is measured from
+  // the end of the instruction to just past the matching LOOP_END — the start
+  // of the next event, or of whatever now stands there.
+  for (const u of units) {
+    if (u.skipAt === undefined) continue;
+    const at = u.skipAt - u.origOffset; // within the unit
+    const origSkip = u.bytes[at] | (u.bytes[at + 1] << 8);
+    const origLand = u.skipAt + 2 + origSkip;
+    const newLand = remap.get(origLand);
+    if (newLand === undefined) continue; // an unresolved break (skip 0) stays
+    const newAt = remap.get(u.origOffset) + at;
+    const skip = newLand - (newAt + 2);
+    outBytes[newAt] = skip & 0xff;
+    outBytes[newAt + 1] = (skip >> 8) & 0xff;
+  }
+
+  // Pass 6: relink track eventOffsets.
   for (const te of trackEntries) {
     const n = remap.get(te.eventOffset);
     if (n !== undefined) te.eventOffset = n;

@@ -1,0 +1,15 @@
+; M4 gate: the dedup pass factors a phrase shared INSIDE loops (opcodes.md
+; §5.2). LOOP and CALL share the 4-entry control stack, so a CALL goes in only
+; where loop depth + 1 <= 4; and a (break) whose loop body shrinks must have
+; its relative skip relinked, or the last pass lands mid-stream.
+;
+; fm1: the phrase before and after a (break) — the skip spans a CALL.
+; fm2: the same phrase at loop depth 3 (a CALL makes the stack full, 4).
+; fm4: the phrase at depth 1 on the other port, another CALL site.
+(def ph c16 d16 e16 f16 g16 a16 b16 > c16 <)
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
+  (x 3 ph (break) ph e8) g2)
+(fm2 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 24 :ar4 31 :tl4 10
+  (x 2 (x 2 (x 2 ph c8))) g2)
+(fm4 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 22 :ar4 31 :tl4 9
+  (x 2 e4 ph (break) ph) c2)

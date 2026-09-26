@@ -201,9 +201,11 @@ size (gate uses the duration-operand length rules).
   pushing the return pointer on the track control stack. Shared-subsequence
   reference: emitted by the encode-time deduplication pass (`mmb-dedup.js`).
   Depth: CALL and LOOP entries share one 4-entry control stack (driver.md
-  §5.2, CALL entries tagged remaining = 0xFF); the encoder only factors
-  control-flow-free runs at loop depth 0, so a CALL adds exactly one entry
-  (combined depth stays ≤ 4). Gate: `m3-callret`.
+  §5.2, CALL entries tagged remaining = 0xFF); the encoder factors only
+  control-flow-free runs, and a fragment never CALLs, so a CALL adds exactly
+  one entry — it factors inside a loop only where `loop depth + 1 ≤ 4`. A
+  phrase shared inside loops is factored too, and a LOOP_BREAK whose loop
+  body shrinks has its `skip` relinked. Gate: `m3-callret`.
 - **RET 0x45** — pop the top (call-tagged) entry and continue at its return
   pointer.
 
