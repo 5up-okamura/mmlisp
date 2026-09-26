@@ -50,26 +50,18 @@ The rule behind all of them: `:key value` is a sticky parameter, `(form …)`
 an event or control, `#name` a position; an operator suffix combines with the
 target's base (§7.0). The judgment-free half of that audit has landed (IR
 `TRIG`, head = `:prio` only, one value reader, wrong-channel errors,
-`E_PRIO_LAYER_LOOP`, the formatter's glued-keyword repair). What is left
+`E_PRIO_LAYER_LOOP`, the formatter's glued-keyword repair), and so have the
+first rulings: `#sus` / `#rel`, curve `:mode loop|shot`, `(sample …)` defs and
+sample binding by name. **Decided, do not re-propose:** counted
+`(go label N)` stays — flat, cross-form counted loops are wanted beyond the
+mucom import; its post-merge rewrite is the feature's own cost. What is left
 changes syntax:
 
-1. **Valueless `:` tags** — the `:break` smell: the curve flag `:loop`,
-   `:hold` / `:off` inside step vectors, `(def k :sample :file …)`. The
-   formatter guesses "keyword followed by keyword" to cope. Proposal: `#loop`
-   / `#off` position markers in vectors, `(def k (sample …))` like
-   `(def x (macro …))`.
-2. **Three ways to bind a PCM sample** — head positional (needs the
-   `isLikelyPcmBodyToken` guess), `:sample name`, bare name in the body.
-   Proposal: bare name only, like an FM voice.
 3. **Duplicate spellings** — `o±N` / `v±N` beside `>` `<` `:oct+` `:vel+`;
    `:oct*` (no musical meaning); hold as `:len 0` and `0f`/`0ms`; `(wait …)`
    stage vs curve `:wait` (two parsers, one regex); inline `:csm-rate` vs the
    `fm3-csm-rate` track (with a conflict error between them); def-val range
    `A..B` / `:from :to` / `:min :max` (the last is directional despite its name).
-4. **Counted `(go label N)` exists for the mucom importer**, which puts each
-   source line in its own form. It costs the post-merge rewrite, deferred
-   `(break)` ids and `W_BREAK_OUTSIDE_LOOP`. Proposal: `(x N …)` only; the
-   importer joins a cross-line loop into one form.
 5. **§7.0 exceptions** — `:gate*`'s base is the note length and `:gate-` uses
    the forbidden `-` (either document gate as the exception or type the
    value); in `(echo :vel+ 3 :by -1)` the `3` is a count, not an addend
@@ -77,7 +69,9 @@ changes syntax:
 6. **`def` picks its kind by sniffing** — a voice is recognised by its first
    keyword (`:alg :fb :ar …`), so `(def v :ml1 3 :alg 4)` is a snippet, and a
    voice def drops non-literal values silently. Proposal: a voice is a
-   snippet; `:extend` becomes a leading reference.
+   snippet; `:extend` becomes a leading reference (`(def lead init-fm …)`),
+   as a sample's already is. Explained to the user 2026-09-26; awaiting a
+   yes.
 7. **`(glide T)` is a sticky setter spelled as a form**, and `(glide f5 32)`
    mixes a one-shot start pitch into it by arity. Proposal: `:glide T`, and
    `(glide f5)` as the one-shot.
