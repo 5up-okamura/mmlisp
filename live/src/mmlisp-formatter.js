@@ -12,27 +12,6 @@
 
 const INDENT = "  ";
 const MAX_INLINE_LENGTH = 72;
-const LABELLED_FORMS = new Set(["track"]);
-const KEYWORD_VALUE_KEYS = [
-  ":author",
-  ":title",
-  ":tempo",
-  ":loop",
-  ":loop-start",
-  ":loop-end",
-  ":loop-len",
-  ":prio",
-  ":len",
-  ":ch",
-  ":id",
-  ":oct",
-  ":gate",
-  ":shuffle",
-  ":csm-rate",
-  ":rate",
-  ":mode",
-];
-const COLLAPSE_STRING_KEYS = new Set([":title", ":author"]);
 
 function isKeyword(node) {
   return node && node.kind === "atom" && node.value.startsWith(":");
@@ -49,85 +28,6 @@ function sourceLine(node) {
 function isSameSourceLine(a, b) {
   const la = sourceLine(a);
   return la > 0 && la === sourceLine(b);
-}
-
-function cloneAtom(source, value) {
-  return {
-    kind: "atom",
-    value,
-    line: source.line,
-    column: source.column,
-  };
-}
-
-function normalizeListItems(items) {
-  const out = [];
-  for (const item of items) {
-    if (item.kind === "list") {
-      out.push({
-        ...item,
-        items: normalizeListItems(item.items),
-      });
-      continue;
-    }
-
-    // Collapse whitespace in the value of a COLLAPSE_STRING_KEYS keyword, once
-    // here so every downstream path (inline and multi-line) sees it normalized.
-    if (item.kind === "string") {
-      const prev = out[out.length - 1];
-      if (prev && prev.kind === "atom" && COLLAPSE_STRING_KEYS.has(prev.value)) {
-        out.push({ ...item, value: item.value.replace(/\s+/g, " ").trim() });
-      } else {
-        out.push(item);
-      }
-      continue;
-    }
-
-    if (item.kind !== "atom") {
-      out.push(item);
-      continue;
-    }
-
-    let split = false;
-    for (const key of KEYWORD_VALUE_KEYS) {
-      if (item.value === key || !item.value.startsWith(key)) {
-        continue;
-      }
-      const rest = item.value.slice(key.length);
-      if (!rest) {
-        continue;
-      }
-      // Only split when the remainder IS a value — a digit, `+`digit, `.`digit
-      // or a quoted string. Anything else is part of the keyword: a letter or
-      // hyphen continues its name, and `*` / `+` are the suffixes the language
-      // spells on the keyword itself (`:gate*`, `:oct*`, `:tl2+`), which must
-      // never be cut off from it.
-      if (!/^(?:\d|\+\d|\.\d|")/.test(rest)) {
-        continue;
-      }
-      out.push(cloneAtom(item, key));
-      out.push(cloneAtom(item, rest));
-      split = true;
-      break;
-    }
-
-    if (!split) {
-      out.push(item);
-    }
-  }
-  return out;
-}
-
-function normalizeRoots(roots) {
-  return roots.map((root) => {
-    if (root.kind !== "list") {
-      return root;
-    }
-    return {
-      ...root,
-      items: normalizeListItems(root.items),
-    };
-  });
 }
 
 function escapeString(value) {
@@ -336,25 +236,13 @@ function collectKeywordPairs(items, startIndex) {
   return { pairs, nextIndex: index };
 }
 
-function collectLeadArgs(items, startIndex, headSymbol) {
+function collectLeadArgs(items, startIndex) {
   const leadArgs = [];
   let index = startIndex;
   // Track the source line of the previous item to detect intentional line breaks.
   let prevLine = index > 0 ? items[index - 1].line || 0 : 0;
 
   while (index < items.length) {
-    if (
-      LABELLED_FORMS.has(headSymbol) &&
-      index === 1 &&
-      isKeyword(items[index]) &&
-      isKeyword(items[index + 1])
-    ) {
-      leadArgs.push(items[index]);
-      prevLine = items[index].line || prevLine;
-      index += 1;
-      continue;
-    }
-
     if (index + 1 < items.length && isKeyword(items[index])) {
       break;
     }
@@ -419,12 +307,9 @@ function formatList(node) {
   }
 
   const head = formatNode(node.items[headIndex]);
-  const headSymbol =
-    node.items[headIndex].kind === "atom" ? node.items[headIndex].value : "";
   const { leadArgs, nextIndex: pairStartIndex } = collectLeadArgs(
     node.items,
     headIndex + 1,
-    headSymbol,
   );
   const leadText = joinAtomsWithSourceSpacing(
     leadArgs.map((arg) => ({
@@ -621,7 +506,7 @@ function formatNode(node) {
  * @returns {string} Formatted source (always ends with a newline).
  */
 export function formatMMLisp(source, parse) {
-  const roots = normalizeRoots(parse(source));
+  const roots = parse(source);
 
   const endLineOf = (node) => node.endLine || node.line || 0;
 
