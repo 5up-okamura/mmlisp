@@ -12,11 +12,11 @@
 ; own frame, where the driver re-attacks and the editor treats the sample as
 ; the note's own key-on — a divergence of its own, on every channel, that this
 ; gate is not the place to pin down.
-(def kit (voice :alg 4 :fb 3
+(def-voice kit :alg 4 :fb 3
   :ar1 31 :dr1 4 :sr1 0 :rr1 6 :sl1 1 :tl1 24 :ml1 2
   :ar2 31 :dr2 9 :sr2 3 :rr2 9 :sl2 3 :tl2 8  :ml2 1
   :ar3 31 :dr3 9 :sr3 3 :rr3 9 :sl3 3 :tl3 28 :ml3 4
-  :ar4 31 :dr4 4 :sr4 0 :rr4 6 :sl4 1 :tl4 4  :ml4 1))
+  :ar4 31 :dr4 4 :sr4 0 :rr4 6 :sl4 1 :tl4 4  :ml4 1)
 (fm3 :tempo 120 kit)
 (fm3-1 :oct 5 :len 1  c)
 (fm3-2 :oct 4 :len 1  (macro :keyon [0 #sus 1] :step 4f) c)

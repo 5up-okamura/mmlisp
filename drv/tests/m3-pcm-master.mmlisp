@@ -15,7 +15,7 @@
 ; The last two rungs exercise the deepest chain slots, which nothing else does:
 ; the engine patches those slots into twenty inlined emit copies, and a slot it
 ; gets wrong is silent in every score that never reaches it.
-(def pad (sample :file "pad.wav" :loop-start 9ms :loop-end 36ms))
+(def-sample pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (pcm1 pad :mode loop :tempo 150 :oct 4 :len 8 :vel 15 :vol 31
    c :master 28 c :master 25 c :master 22 c :master 19 c :master 16 c
      :master 13 c :master 10 c :master 7 c :master 4 c :master 1 c :master 0 c)

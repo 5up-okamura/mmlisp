@@ -1240,7 +1240,7 @@ modulator. Gate: `m4-fm3op-level`.
 ## 14. PCM
 
 `pcm1`–`pcm3` are the language's PCM voices, played through the fm6 DAC.
-Samples are declared with `(def name (sample …))` and exported as a sample bank beside
+Samples are declared with `(def-sample name …)` and exported as a sample bank beside
 the MMB (mmb.md §10). A score's PCM voice count is the highest `pcmN` it uses;
 it is written in the MMB header and picks the engine image (§5).
 

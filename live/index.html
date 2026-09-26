@@ -1433,7 +1433,7 @@
     // Autocomplete
     // -----------------------------------------------------------------------
     const AC_FORMS = [
-      'def','def-val','import','t','x','go','param-set',
+      'def','def-val','def-voice','def-sample','import','t','x','go','param-set',
       'echo','delay','glide','macro',
       // compile-time eval heads (§7)
       'let','note','ticks','frames',
@@ -1452,7 +1452,7 @@
       'ease-in-bounce','ease-out-bounce','ease-inout-bounce',
       'sin','triangle','square','saw','ramp',
       'noise','pink','perlin','brown',
-      // (sample … :effect [...]) chain (§16)
+      // def-sample :effect [...] chain (§16)
       'gain','normalize','comp','limit','crush','fade',
     ];
     const AC_TRACKS = [
@@ -1502,6 +1502,8 @@
     const AC_SNIPPETS = {
       'def': 'def ${1:name} ${2}',
       'def-val': 'def-val ${1:name} ${2:0} ${3:0..127}',
+      'def-voice': 'def-voice ${1:name} init-fm ${2}',
+      'def-sample': 'def-sample ${1:name} :file "${2:sounds/kick.wav}"',
       'import': 'import "${1:voices.mmlisp}"',
       'x': 'x ${1:4} ${2}',
       'go': 'go ${1:head}',
@@ -1528,7 +1530,7 @@
     // top-level (def …) head for the name and what kind of thing it is, and
     // the comment line just above it for the description (a preset set says
     // what each voice is there: "GM 1 / MIDI 0: * GrandPiano").
-    const AC_DEF_RE = /^[ \t]*\((def-val|def)[ \t]+(\()?([^\s()]+)[ \t]*([^\s()]*)(\()?/;
+    const AC_DEF_RE = /^[ \t]*\((def-val|def-voice|def-sample|def)[ \t]+(\()?([^\s()]+)[ \t]*([^\s()]*)(\()?/;
     function scanDefNames(text, from) {
       const out = [];
       let comment = '';
@@ -1538,11 +1540,10 @@
           const [, head, fnParen, name, next, listAfter] = m;
           let kind;
           if (head === 'def-val') kind = 'val';
+          else if (head === 'def-voice') kind = 'voice';
+          else if (head === 'def-sample') kind = 'sample';
           else if (fnParen) kind = 'fn';
-          else if (next === '' && listAfter) {
-            const ctor = /^\s*\(def[ \t]+\S+[ \t]+\((macro|sample|voice)\b/.exec(line);
-            kind = ctor ? ctor[1] : 'def';
-          }
+          else if (next === '' && listAfter) kind = /^\s*\(def[ \t]+\S+[ \t]+\(macro\b/.test(line) ? 'macro' : 'def';
           else kind = 'def';
           // A kit names its samples after roles; the file says which sound.
           const file = kind === 'sample' && /:file\s+"(?:[^"]*\/)?([^"/]+?)(?:\.\w+)?"/.exec(line);
@@ -2085,12 +2086,12 @@
 
     const SNIPPET_TEXT = {
       fmVoice:
-`(def untitled (voice init-fm
+`(def-voice untitled init-fm
   :alg 7 :fb 0 :ams 0 :fms 0
   :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 0 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
   :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 0 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
   :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 0 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
-  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0))
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0)
 `,
     };
 
@@ -2103,13 +2104,13 @@
 (import "presets/waveforms/set.mmlisp")
 (import "presets/808/set.mmlisp") ; or "presets/gm-drums/set.mmlisp": the same names
 
-(def voice1 (voice init-fm
+(def-voice voice1 init-fm
   :alg 7 :fb 0
   :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 0 :ks1 0 :ml1 1 :dt1 0
   :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 0 :ks2 0 :ml2 1 :dt2 0
   :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 0 :ks3 0 :ml3 1 :dt3 0
   :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0
-))
+)
 
 (def env1 (macro :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
 (def env2 (macro :vel (linear 15..0 :len 16f)))
@@ -3277,9 +3278,9 @@
       const { path, inFolder } = await droppedPath(entry);
       const name = uniqueDefName(slugFromFileName(entry.file.name, 'sample'));
       // No :rate — the default is the wav's own rate, which is what we want.
-      insertTextAtCursor(`(def ${name} (sample :file ${JSON.stringify(path)}))`);
+      insertTextAtCursor(`(def-sample ${name} :file ${JSON.stringify(path)})`);
       if (inFolder) {
-        log(`Dropped ${path} as (def ${name} (sample …)) — press Build to apply`, 'info');
+        log(`Dropped ${path} as (def-sample ${name} …) — press Build to apply`, 'info');
         return;
       }
       // Outside the folder the path resolves to nothing, so decode now and seed
@@ -3294,7 +3295,7 @@
           data: audioBufferToMono(decoded),
           sampleRate: decoded.sampleRate,
         });
-        log(`Dropped ${path} as (def ${name} (sample …)) — held in memory; put the wav next to the score and File > Open Folder… to keep it after a reload`, 'info');
+        log(`Dropped ${path} as (def-sample ${name} …) — held in memory; put the wav next to the score and File > Open Folder… to keep it after a reload`, 'info');
       } catch (e) {
         log(`${path}: decode failed (${e?.message || e}) — the def was inserted but will not play until the wav is in the opened folder`, 'err');
       }
@@ -5019,7 +5020,7 @@
       for (const node of parse(text)) {
         if (!node || node.kind !== 'list') continue;
         const head = node.items?.[0];
-        if (!head || head.kind !== 'atom' || head.value !== 'def') continue;
+        if (!head || head.kind !== 'atom' || !/^def(-voice|-sample)?$/.test(head.value)) continue;
         const nameNode = node.items[1];
         if (!nameNode || nameNode.kind !== 'atom') continue;
         const name = nameNode.value;
@@ -5036,13 +5037,12 @@
       return entry;
     }
 
-    // The `:file` of a `(def name (sample …))`, or null when the def is not a
-    // sample (or extends one without a file of its own).
+    // The `:file` of a `(def-sample name …)`, or null when the node is not a
+    // sample def (or extends one without a file of its own).
     function sampleFileOfDefNode(node) {
-      const ctor = node.items[2];
-      if (ctor?.kind !== 'list' || ctor.items[0]?.value !== 'sample') return null;
-      const items = ctor.items;
-      for (let i = 1; i + 1 < items.length; i++)
+      if (node.items[0]?.value !== 'def-sample') return null;
+      const items = node.items;
+      for (let i = 2; i + 1 < items.length; i++)
         if (items[i].value === ':file' && items[i + 1].kind === 'string') return items[i + 1].value;
       return null;
     }
@@ -5609,22 +5609,15 @@
       return '';
     }
 
-    // `(def name (voice [base] :alg … ))` — the (voice …) form, or null.
-    function voiceFormOfDefNode(node) {
-      if (node?.kind !== 'list' || node.items?.[0]?.value !== 'def') return null;
-      const ctor = node.items[2];
-      return ctor?.kind === 'list' && ctor.items?.[0]?.value === 'voice' ? ctor : null;
-    }
-
     function isFmVoiceDefNode(node) {
-      return voiceFormOfDefNode(node) !== null;
+      return node?.kind === 'list' && node.items?.[0]?.value === 'def-voice';
     }
 
     function parseFmDefRegs(defNode) {
       const regs = defaultFmRegs();
       const kv = new Map();
-      const items = voiceFormOfDefNode(defNode)?.items ?? [];
-      for (let i = 1; i + 1 < items.length; i++) {
+      const items = isFmVoiceDefNode(defNode) ? defNode.items : [];
+      for (let i = 2; i + 1 < items.length; i++) {
         const k = items[i];
         const v = items[i + 1];
         if (!k || k.kind !== 'atom' || !k.value.startsWith(':')) continue;
@@ -5688,10 +5681,9 @@
       const to = state.doc.line(best.endLine ?? best.line).to;
       const nameNode = best.items[1];
       const name = nameNode && nameNode.kind === 'atom' ? nameNode.value : '';
-      // Where a new `:key value` goes: just inside the (voice …) form's `)`
-      // (endColumn is one past it, 1-based).
-      const voice = voiceFormOfDefNode(best);
-      const closeAt = state.doc.line(voice.endLine).from + voice.endColumn - 2;
+      // Where a new `:key value` goes: just inside the def's `)` (endColumn
+      // is one past it, 1-based).
+      const closeAt = state.doc.line(best.endLine).from + best.endColumn - 2;
       return {
         name,
         from,
@@ -5701,7 +5693,7 @@
       };
     }
 
-    // The sample def under the cursor: `(def name (sample …))`. What it sounds
+    // The sample def under the cursor: `(def-sample name …)`. What it sounds
     // like is decided at the key, by compiling the text as it is then.
     function findSampleDefAtCursor() {
       const state = editorView.state;
@@ -5710,7 +5702,7 @@
       try { ast = parse(state.doc.toString()); } catch { return null; }
       for (const root of ast) {
         const it = root.kind === 'list' ? root.items.filter((n) => n.kind !== 'comment') : [];
-        if (it[0]?.value !== 'def' || it[2]?.kind !== 'list' || it[2].items[0]?.value !== 'sample') continue;
+        if (it[0]?.value !== 'def-sample') continue;
         if (root.line <= cursorLine && cursorLine <= (root.endLine ?? root.line)) return it[1]?.value ?? null;
       }
       return null;
@@ -6320,7 +6312,7 @@
       return `:${m[1].toLowerCase()}${m[2]}`;
     }
 
-    // `closePos`: the (voice …) form's `)` within defText — a key the voice
+    // `closePos`: the def-voice's `)` within defText — a key the voice
     // does not write yet goes just inside it.
     function replaceOrInsertDefParam(defText, defKey, valueText, closePos) {
       const esc = defKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

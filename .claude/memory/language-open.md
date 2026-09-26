@@ -51,9 +51,12 @@ an event or control, `#name` a position; an operator suffix combines with the
 target's base (§7.0). The judgment-free half of that audit has landed (IR
 `TRIG`, head = `:prio` only, one value reader, wrong-channel errors,
 `E_PRIO_LAYER_LOOP`, the formatter's glued-keyword repair), and so have the
-first rulings: `#sus` / `#rel`, curve `:mode loop|shot`, `(sample …)` and
-`(voice …)` defs (a leading base name replaces `:extend`), sample binding by
-name. **Decided, do not re-propose:** counted
+first rulings: `#sus` / `#rel`, curve `:mode loop|shot`, one meaning per
+definition head (`def` = snippet only — a named macro is a snippet too;
+`def-voice` / `def-sample` / `def-val` = named data, a leading base name
+replacing `:extend`), sample binding by name. **Decided:** no CALL/RET in the
+language — naming is a source convenience, sharing is the encoder's job
+(MACRO_TABLE / VOICE_TABLE dedup, the CALL/RET pass). **Decided, do not re-propose:** counted
 `(go label N)` stays — flat, cross-form counted loops are wanted beyond the
 mucom import; its post-merge rewrite is the feature's own cost. What is left
 changes syntax:

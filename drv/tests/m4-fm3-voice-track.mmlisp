@@ -9,10 +9,10 @@
 ;
 ; op1 holds one whole note across both rests and the patch change; op2 plays
 ; through them so the change is audible on a keyed operator too.
-(def kit  (voice :alg 7 :ar1 31 :rr1 6 :tl1 20 :ar2 31 :rr2 6 :tl2 20
-          :ar3 31 :rr3 6 :tl3 20 :ar4 31 :rr4 6 :tl4 20))
-(def kit2 (voice :alg 7 :ar1 31 :rr1 6 :tl1 32 :ar2 31 :rr2 6 :tl2 12
-          :ar3 31 :rr3 6 :tl3 20 :ar4 31 :rr4 6 :tl4 20))
+(def-voice kit :alg 7 :ar1 31 :rr1 6 :tl1 20 :ar2 31 :rr2 6 :tl2 20
+          :ar3 31 :rr3 6 :tl3 20 :ar4 31 :rr4 6 :tl4 20)
+(def-voice kit2 :alg 7 :ar1 31 :rr1 6 :tl1 32 :ar2 31 :rr2 6 :tl2 12
+          :ar3 31 :rr3 6 :tl3 20 :ar4 31 :rr4 6 :tl4 20)
 (fm3 :tempo 120 kit :len 4 _ _ kit2 _ _)
 (fm3-1 :oct 5 :len 1  c)
 (fm3-2 :oct 4 :len 4  c e g c)

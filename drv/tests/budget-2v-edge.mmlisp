@@ -10,6 +10,6 @@
 ; So this one is tuned to STRADDLE it: two voices, one attenuated by a single
 ; 6 dB step (vel 12 -> shift 1, +1,460 cyc/frame). The model then predicts a
 ; clean frame at --pace 0 and an overrun at --pace 14, and the machine picks.
-(def pad (sample :file "pad.wav" :loop-start 9ms :loop-end 36ms))
+(def-sample pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (pcm1 pad :mode loop :tempo 120 :oct 4 :len 1 :vel 15   c c c c c c c c)
 (pcm2 pad :mode loop :tempo 120 :oct 5 :len 1 :vel 12   c c c c c c c c)

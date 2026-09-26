@@ -1,10 +1,10 @@
 ; FM3 as a thick pad on one channel: every operator gets its own pitch. Two
 ; carriers play the root a few cents apart, one plays the fifth and glides,
 ; and a shared vibrato (:pitch+) moves each operator around its own offset.
-(def pad4 (voice init-fm :alg 7 :fb 0
+(def-voice pad4 init-fm :alg 7 :fb 0
   :ar1 14 :ar2 14 :ar3 12 :ar4 10
   :tl1 12 :tl2 12 :tl3 16 :tl4 14
-  :rr1 5 :rr2 5 :rr3 5 :rr4 5))
+  :rr1 5 :rr2 5 :rr3 5 :rr4 5)
 
 (def drift (macro :pitch+ (sin -8..8 :len 2 :wait 8)))
 

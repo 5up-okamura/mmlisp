@@ -6,18 +6,18 @@
 
 ; Blunt, bright effect voices: fast attack, short release, so the steal and the
 ; hand-back are both unmistakable against a sustaining lead.
-(def bleep (voice :alg 7 :fb 6
+(def-voice bleep :alg 7 :fb 6
   :ar1 31 :dr1 12 :sr1 0 :rr1 12 :sl1 4 :tl1 10 :ml1 3 :dt1 0
   :ar2 31 :dr2 14 :sr2 0 :rr2 13 :sl2 5 :tl2 8  :ml2 7 :dt2 3
   :ar3 31 :dr3 11 :sr3 0 :rr3 12 :sl3 3 :tl3 12 :ml3 1 :dt3 0
-  :ar4 31 :dr4 15 :sr4 0 :rr4 14 :sl4 6 :tl4 6  :ml4 5 :dt4 -3))
+  :ar4 31 :dr4 15 :sr4 0 :rr4 14 :sl4 6 :tl4 6  :ml4 5 :dt4 -3)
 
-(def zap (voice :alg 7 :fb 2
+(def-voice zap :alg 7 :fb 2
   :ar1 31 :dr1 9  :sr1 0 :rr1 10 :sl1 3 :tl1 8  :ml1 11 :dt1 0
   :ar2 31 :dr2 10 :sr2 0 :rr2 11 :sl2 4 :tl2 6  :ml2 2  :dt2 -3
   :ar3 31 :dr3 8  :sr3 0 :rr3 10 :sl3 2 :tl3 10 :ml3 13 :dt3 3
-  :ar4 31 :dr4 12 :sr4 0 :rr4 12 :sl4 5 :tl4 4  :ml4 1  :dt4 0))
+  :ar4 31 :dr4 12 :sr4 0 :rr4 12 :sl4 5 :tl4 4  :ml4 1  :dt4 0)
 
 ; An imported sample def reads its :file from THIS file's directory.
-(def padsmp (sample :file "pad.wav" :loop-start 9ms :loop-end 36ms))
-(def blip   (sample :file "blip.wav"))
+(def-sample padsmp :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-sample blip :file "blip.wav")

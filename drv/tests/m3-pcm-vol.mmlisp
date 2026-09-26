@@ -5,7 +5,7 @@
 ; across the range (vel 15/9/6/0 → shift 0/2/3/5, covering the shift-0 fast path
 ; and the deepest attenuation) and runs a loop voice at a mid level so the shift is
 ; exercised across many mix ticks and survives a note boundary.
-(def blip (sample :file "blip.wav"))
-(def pad  (sample :file "pad.wav" :loop-start 9ms :loop-end 36ms))
+(def-sample blip :file "blip.wav")
+(def-sample pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (pcm1 blip :tempo 120 :oct 4 :len 4   :vel 15 c   :vel 9 c   :vel 6 c   :vel 0 c)
 (pcm2 pad  :mode loop :oct 4 :len 8    :vel 7 c)

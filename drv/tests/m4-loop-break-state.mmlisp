@@ -13,11 +13,11 @@
 ;   fm1 — VEL differs between the break point and the tail; slurred out of the loop
 ;   fm2 — GATE differs between the break point and the tail
 ;   fm3 — the tail changes GATE and VEL; pass 2 must start from the body's own
-(def brass (voice :alg 2 :fb 7
+(def-voice brass :alg 2 :fb 7
   :ar1 13 :dr1 14 :sr1 0 :rr1 3 :sl1 1 :tl1 23 :ks1 2 :ml1 1 :dt1 3
   :ar2 13 :dr2 14 :sr2 0 :rr2 10 :sl2 15 :tl2 40 :ks2 2 :ml2 7 :dt2 3
   :ar3 14 :dr3 14 :sr3 0 :rr3 3 :sl3 1 :tl3 38 :ks3 2 :ml3 1 :dt3 3
-  :ar4 19 :dr4 3 :sr4 0 :rr4 10 :sl4 0 :tl4 0 :ks4 1 :ml4 1 :dt4 3))
+  :ar4 19 :dr4 3 :sr4 0 :rr4 10 :sl4 0 :tl4 0 :ks4 1 :ml4 1 :dt4 3)
 
 (fm1 brass :tempo 120 :oct 4 :vel 12 :len 8
   (x 2 c :vel 9 d :vel 12 (break) e f ~) g2 a2)

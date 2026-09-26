@@ -2,11 +2,11 @@
 ; (:octaves adds ripple layers, :persistence sets how strong they are). On a
 ; modulator's TL it makes a pad whose colour breathes without ever looping
 ; in an obvious way. Compare with the plain sine on fm2.
-(def pad (voice init-fm :alg 4 :fb 5
+(def-voice pad init-fm :alg 4 :fb 5
   :ar1 10 :dr1 0 :tl1 32 :ml1 2
   :ar2 8  :dr2 0 :tl2 8  :ml2 1 :rr2 4
   :ar3 10 :dr3 0 :tl3 30 :ml3 3 :dt3 3
-  :ar4 8  :dr4 0 :tl4 10 :ml4 1 :rr4 4 :dt4 -3))
+  :ar4 8  :dr4 0 :tl4 10 :ml4 1 :rr4 4 :dt4 -3)
 
 (fm1 :tempo 80 :oct 3 :len 1 pad
   :tl1 (perlin 16..44 :len 4/1 :octaves 4 :persistence 0.6)

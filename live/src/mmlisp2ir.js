@@ -1585,24 +1585,6 @@ function flattenPriorityLayers(head, layers, diagnostics) {
   return base;
 }
 
-function applyTypedMacroDef(trackState, td, ctx) {
-  if (!td) return false;
-  if (td.tag === "macro") {
-    if (td.clear) clearMacroTarget(trackState, td.target);
-    else applyMacroEntryToState(trackState, td.target, td.spec, ctx);
-    return true;
-  }
-  if (td.tag === "macro-list") {
-    for (const entry of td.entries || []) {
-      if (!entry) continue;
-      if (entry.clear) clearMacroTarget(trackState, entry.target);
-      else applyMacroEntryToState(trackState, entry.target, entry.spec, ctx);
-    }
-    return true;
-  }
-  return false;
-}
-
 // `:effect [(name …) (name …)]` → the IR's resolved chain (docs/ir.md §2.2):
 // `{type, …params}` with every param filled in, times in seconds (at the
 // score's opening tempo, like the loop points) and levels in dB. The table
@@ -1686,14 +1668,10 @@ function resolveSampleEffects(node, bpm, diagnostics, src) {
   return chain;
 }
 
-// `(sample [base] :key value …)`. A leading name is the sample it extends:
-// the child takes the base's file (still read from the base's folder), slice,
+// A def-sample's `:key value …` body. `base` is the sample it extends: the
+// child takes the base's file (still read from the base's folder), slice,
 // loop and effects and overrides the keys it writes (resolveSampleExtends).
-function parseSampleDef(root, diagnostics) {
-  const bodyItems = root.items.filter((n) => n.kind !== "comment");
-  const baseTok = atomValue(bodyItems[1]);
-  const base = baseTok && !baseTok.startsWith(":") ? baseTok : null;
-  const first = base ? 2 : 1;
+function parseSampleDef(bodyItems, base, diagnostics, src) {
   const sample = {
     extends: base,
     file: null,
@@ -1709,7 +1687,7 @@ function parseSampleDef(root, diagnostics) {
     effect: [],
   };
 
-  for (let ki = first; ki + 1 < bodyItems.length; ki += 2) {
+  for (let ki = 0; ki + 1 < bodyItems.length; ki += 2) {
     const key = atomValue(bodyItems[ki]);
     const rawVal = atomValue(bodyItems[ki + 1]);
     if (key === ":effect") {
@@ -1745,8 +1723,8 @@ function parseSampleDef(root, diagnostics) {
       diagnostics,
       "error",
       "E_SAMPLE_FILE",
-      "(sample …) needs :file, or a base sample to extend",
-      nodeSrc(root),
+      "def-sample needs :file, or a base sample to extend",
+      src,
       null,
     );
   }
@@ -1758,8 +1736,8 @@ function parseSampleDef(root, diagnostics) {
       diagnostics,
       "error",
       "E_SAMPLE_SLICE",
-      `(sample …) :offset must be >= 0 (got ${sample.offset})`,
-      nodeSrc(root),
+      `def-sample :offset must be >= 0 (got ${sample.offset})`,
+      src,
       null,
     );
   }
@@ -1768,59 +1746,13 @@ function parseSampleDef(root, diagnostics) {
       diagnostics,
       "error",
       "E_SAMPLE_SLICE",
-      `(sample …) :frames must be > 0 (got ${sample.frames})`,
-      nodeSrc(root),
+      `def-sample :frames must be > 0 (got ${sample.frames})`,
+      src,
       null,
     );
   }
 
   return sample;
-}
-
-function collectMacroEntriesFromItems(items, diagnostics, trackName) {
-  const entries = [];
-  // :step is position-free — one per macro applies to every target, regardless
-  // of where it sits. Scan it out first; 2+ is an error (split into separate
-  // (macro …) forms for multiple clocks).
-  const macroStep = extractMacroStep(items, diagnostics, trackName);
-  for (let ki = 0; ki + 1 < items.length; ki += 2) {
-    // Target group: [:tl1 :tl2 ...] — expand to one entry per keyword,
-    // sharing a single parsed spec (pure sugar; per-keyword `*` still applies).
-    const group = macroTargetGroup(items[ki]);
-    const syms = group ?? [atomValue(items[ki])];
-    if (!group && !syms[0]?.startsWith(":")) continue;
-    if (syms[0] === ":step") continue; // handled by extractMacroStep
-    const isClear = atomValue(items[ki + 1]) === "none";
-    for (const sym of syms) {
-      // Trailing operator: `*` scales the target's static base, `+` adds to it
-      // (e.g. `:vel*`/`:vel+`), instead of replacing.
-      const { target: irTarget, op } = macroKeyword(sym);
-      // `:target none` is a clear directive — valid inline, so valid in a def too.
-      if (isClear) {
-        entries.push({ target: irTarget, clear: true });
-        continue;
-      }
-      // Parse per target so step values clamp to each target's own range —
-      // exactly equivalent to writing the :target spec pair per target.
-      // Relative (+/*) macros parse unclamped (signed offsets / ratios).
-      const spec = parseMacroSpec(
-        items[ki + 1],
-        irTarget,
-        diagnostics,
-        trackName,
-        !op,
-        null,
-        macroStep,
-      );
-      if (spec) {
-        if (op && !macroOpOk(irTarget, op, sym, diagnostics, trackName)) continue;
-        if (op) spec.op = op;
-        if (macroStep) spec.step = macroStep;
-        entries.push({ target: irTarget, spec });
-      }
-    }
-  }
-  return entries;
 }
 
 // Pull the single `:step` clock out of a macro's items (position-free). Returns
@@ -3440,16 +3372,7 @@ function compileChannelBody(
 
       // Bare identifier: typed def reference (voice/patch switch)
       if (typedDefs?.has(val)) {
-        const td = typedDefs.get(val);
-        if (
-          !applyTypedMacroDef(trackState, td, {
-            diagnostics,
-            src: nodeSrc(node),
-            trackName,
-          })
-        ) {
-          emitVoice(td, trackState.tick, events, nodeSrc(node));
-        }
+        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node));
         i++;
         continue;
       }
@@ -3969,11 +3892,14 @@ function compileChannelBody(
       // (macro none) clears all, (macro :vel none) clears one; bare def names and
       // def references may be mixed in. Runtime within-note envelope.
       if (head === "macro") {
-        const rest = node.items.slice(1).filter((n) => n.kind !== "comment");
+        // A named macro is a snippet, so `(macro pluck :pan …)` arrives as a
+        // `(macro …)` nested in this one: it applies first, with its own
+        // :step, as it would written on its own.
+        const applyMacroForm = (form) => {
+        const rest = form.items.slice(1).filter((n) => n.kind !== "comment");
         if (rest.length === 1 && atomValue(rest[0]) === "none") {
           trackState.activeMacros = {};
-          i++;
-          continue;
+          return;
         }
         let j = 0;
         // :step is position-free — one per macro applies to every target.
@@ -4021,15 +3947,18 @@ function compileChannelBody(
               }
               j += 2;
             } else j++;
-          } else if (sym && typedDefs?.has(sym)) {
-            applyTypedMacroDef(trackState, typedDefs.get(sym), {
-              diagnostics,
-              src: nodeSrc(node),
-              trackName,
-            });
+          } else if (rest[j].kind === "list" && atomValue(rest[j].items?.[0]) === "macro") {
+            applyMacroForm(rest[j]);
             j++;
-          } else j++;
+          } else {
+            pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID",
+              `${sym ?? "(…)"} is not a :target, a target group or a named macro`,
+              nodeSrc(rest[j]), trackName);
+            j++;
+          }
         }
+        };
+        applyMacroForm(node);
         i++;
         continue;
       }
@@ -4388,6 +4317,34 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
+    // (def-voice name [base] :alg 4 …) / (def-sample name [base] :file "…" …)
+    // — named data, like def-val. A leading name after the def's own is the
+    // voice / sample it extends. Voices resolve in resolveVoices, samples in
+    // resolveSampleExtends, once every def (imports included) is known.
+    if (head === "def-voice" || head === "def-sample") {
+      const items = root.items.filter((n) => n.kind !== "comment");
+      const name = atomValue(items[1]);
+      if (!name || items[1].kind !== "atom" || isReservedHead(name)) {
+        pushDiag(diagnostics, "error", name ? "E_DEF_RESERVED" : "E_DEF_NAME",
+          name ? `'${name}' is a reserved eval builtin and cannot be a def name`
+            : `${head} name must be a symbol`,
+          nodeSrc(root), null);
+        continue;
+      }
+      const baseTok = atomValue(items[2]);
+      const base = baseTok && items[2].kind === "atom" && !baseTok.startsWith(":") ? baseTok : null;
+      const body = items.slice(base ? 3 : 2);
+      if (head === "def-voice")
+        typedDefs.set(name, { tag: "voice", extends: base, items: body, src: nodeSrc(root) });
+      else
+        sampleDefs.set(name, {
+          tag: "sample",
+          ...parseSampleDef(body, base, diagnostics, nodeSrc(root)),
+          src: nodeSrc(root),
+        });
+      continue;
+    }
+
     if (head === "def") {
       // Parametric snippet def: (def (name param…) body…). Token substitution
       // only — no computation; params shadow note/length tokens inside the body.
@@ -4477,52 +4434,11 @@ function collectDefs(roots, diagnostics) {
         }
         continue;
       }
-      const maybeTag = atomValue(root.items[2]);
-      const macroFnNode = root.items[2];
-      if (
-        macroFnNode?.kind === "list" &&
-        atomValue(macroFnNode.items?.[0]) === "macro"
-      ) {
-        // (def name (macro :target spec …))
-        const src = nodeSrc(root);
-        const entries = collectMacroEntriesFromItems(
-          macroFnNode.items.slice(1).filter((n) => n.kind !== "comment"),
-          diagnostics,
-          name,
-        );
-        if (entries.length === 1) {
-          typedDefs.set(name, { tag: "macro", ...entries[0], src });
-        } else if (entries.length > 1) {
-          typedDefs.set(name, { tag: "macro-list", entries, src });
-        }
-      } else if (
-        macroFnNode?.kind === "list" &&
-        atomValue(macroFnNode.items?.[0]) === "sample"
-      ) {
-        // (def name (sample [base] :file "…" …))
-        const sample = parseSampleDef(macroFnNode, diagnostics);
-        sampleDefs.set(name, { tag: "sample", ...sample, src: nodeSrc(root) });
-      } else if (
-        macroFnNode?.kind === "list" &&
-        atomValue(macroFnNode.items?.[0]) === "voice"
-      ) {
-        // (def name (voice [base] :alg 4 :tl1 20 …)) — resolved by
-        // resolveVoices once every def (imports included) is known.
-        const items = macroFnNode.items.filter((n) => n.kind !== "comment");
-        const baseTok = atomValue(items[1]);
-        const base = baseTok && !baseTok.startsWith(":") ? baseTok : null;
-        typedDefs.set(name, {
-          tag: "voice",
-          extends: base,
-          items: items.slice(base ? 2 : 1),
-          src: nodeSrc(root),
-        });
-      } else {
-        defs.set(
-          name,
-          root.items.slice(2).filter((n) => n.kind !== "comment"),
-        );
-      }
+      // Anything else is a snippet: expanded where its name is written.
+      defs.set(
+        name,
+        root.items.slice(2).filter((n) => n.kind !== "comment"),
+      );
       continue;
     }
 
@@ -4728,7 +4644,7 @@ function withImportEffect(bundle, effectNode) {
   return { ...bundle, sampleDefs };
 }
 
-// `(sample base …)`: the child takes the base's file (still read from the
+// `(def-sample name base …)`: the child takes the base's file (still read from the
 // base's folder), slice, loop and effects — the import's chain included — and
 // overrides the keys it writes. Runs once imports are merged, so a base may
 // come from an imported kit.

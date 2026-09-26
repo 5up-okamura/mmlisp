@@ -13,7 +13,7 @@
 ;     RETARGET when the rounded block actually moves
 ;   - the release at each note's end, which turns the loop back into a shot
 (def pcm-voices 1)
-(def voice (sample :file "pcmbank.wav" :loop-start 200ms :loop-len 100ms))
+(def-sample voice :file "pcmbank.wav" :loop-start 200ms :loop-len 100ms)
 (pcm1 voice :mode loop :tempo 120 :oct 4 :len 2 :vel 15
   c
   :loop-len 30ms c

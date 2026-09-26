@@ -4,11 +4,11 @@
 ; that holds don't desync the decoder. Avoids NOTE_PITCH sweeps (glide/vibrato
 ; are M2b).
 
-(def organ (voice :alg 5 :fb 1
+(def-voice organ :alg 5 :fb 1
   :ar1 31 :dr1 4 :sr1 0 :rr1 6 :sl1 1 :tl1 18 :ks1 0 :ml1 1 :dt1 0
   :ar2 31 :dr2 5 :sr2 1 :rr2 7 :sl2 2 :tl2 8 :ks2 0 :ml2 2 :dt2 1
   :ar3 31 :dr3 5 :sr3 1 :rr3 7 :sl3 2 :tl3 10 :ks3 0 :ml3 4 :dt3 -1
-  :ar4 31 :dr4 6 :sr4 1 :rr4 8 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0))
+  :ar4 31 :dr4 6 :sr4 1 :rr4 8 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
 
 ; sweeps land as PARAM_SWEEP opcodes; the M1 decoder skips them and the
 ; notes around them must stay aligned with the reference

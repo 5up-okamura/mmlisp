@@ -6,11 +6,11 @@
 (def-val a 10 0..31)
 (def-val b 6 0..31)
 
-(def lead (voice :alg 4 :fb 3
+(def-voice lead :alg 4 :fb 3
   :ar1 20 :dr1 8 :sr1 2 :rr1 6 :sl1 3 :tl1 24 :ks1 1 :ml1 2 :dt1 0
   :ar2 24 :dr2 10 :sr2 3 :rr2 8 :sl2 4 :tl2 12 :ks2 0 :ml2 1 :dt2 0
   :ar3 22 :dr3 7 :sr3 2 :rr3 6 :sl3 2 :tl3 18 :ks3 0 :ml3 4 :dt3 0
-  :ar4 30 :dr4 12 :sr4 3 :rr4 9 :sl4 5 :tl4 6 :ks4 0 :ml4 1 :dt4 0))
+  :ar4 30 :dr4 12 :sr4 3 :rr4 9 :sl4 5 :tl4 6 :ks4 0 :ml4 1 :dt4 0)
 
 (fm1 :tempo 120 lead :oct 4 :len 4 :vel 13
   c :ar1 (+ $a (* $b 2)) e :dr1 (+ $a $b) g :sr1 (* $a 2) c

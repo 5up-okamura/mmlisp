@@ -1,5 +1,5 @@
 // FM single-voice patch importers — pure byte parsers for the DefleMask .dmp,
-// .tfi, .vgi, .opni and Furnace .fui formats, plus the MMLisp `(def …)` voice
+// .tfi, .vgi, .opni and Furnace .fui formats, plus the MMLisp `(def-voice …)`
 // text they lower to. Sibling of import-mucom.js. No DOM/app dependencies: the
 // UI glue (file pickers, editor insertion) stays in index.html, so this module
 // is unit-testable from node.
@@ -494,7 +494,7 @@ function buildMmlispVoiceFromDmp(parsed, voiceName) {
   if (parsed.fms !== 0) header.push(`:fms ${parsed.fms}`);
 
   const lines = [
-    `(def ${voiceName} (voice`,
+    `(def-voice ${voiceName}`,
     header.join(' '),
   ];
 
@@ -517,7 +517,7 @@ function buildMmlispVoiceFromDmp(parsed, voiceName) {
     if (op.am !== 0) parts.push(`:am${n} ${op.am}`);
     lines.push('  ' + parts.join(' '));
   }
-  lines.push('))');
+  lines.push(')');
   return lines.join('\n');
 }
 

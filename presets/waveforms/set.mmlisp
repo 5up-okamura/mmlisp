@@ -1,75 +1,59 @@
 ; Sustained FM waveforms, plus the two 303-inspired bass voices built on
 ; saw and square. One definition per distinct voice; see README.md.
 
-(def wave-sine
-  (voice :alg 7 :fb 0 :ams 0 :fms 0
-    :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 127 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
-    :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 127 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
-    :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 127 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
-    :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4  16 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
-  )
+(def-voice wave-sine :alg 7 :fb 0 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 127 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 127 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 127 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4  16 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
 )
 
-(def wave-triangle
-  (voice :alg 7 :fb 0 :ams 0 :fms 0
-    :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 16 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
-    :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 41 :ks2 0 :ml2 3 :dt2 0 :ssg2 0 :am2 0
-    :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 53 :ks3 0 :ml3 5 :dt3 0 :ssg3 0 :am3 0
-    :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 61 :ks4 0 :ml4 7 :dt4 0 :ssg4 0 :am4 0
-  )
+(def-voice wave-triangle :alg 7 :fb 0 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 16 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 41 :ks2 0 :ml2 3 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 53 :ks3 0 :ml3 5 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 61 :ks4 0 :ml4 7 :dt4 0 :ssg4 0 :am4 0
 )
 
-(def wave-saw
-  (voice :alg 0 :fb 7 :ams 0 :fms 0
-    :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 28 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
-    :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 32 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
-    :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 40 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
-    :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 16 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
-  )
+(def-voice wave-saw :alg 0 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 28 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 32 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 40 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 16 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
 )
 
-(def wave-square
-  (voice :alg 0 :fb 7 :ams 0 :fms 0
-    :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 28 :ks1 0 :ml1 2 :dt1 0 :ssg1 0 :am1 0
-    :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 32 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
-    :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 36 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
-    :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 16 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
-  )
+(def-voice wave-square :alg 0 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 28 :ks1 0 :ml1 2 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 32 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 36 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 16 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
 )
 
-(def wave-pulse-25
-  (voice :alg 5 :fb 7 :ams 0 :fms 0
-    :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 28 :ks1 0 :ml1 4 :dt1 0 :ssg1 0 :am1 0
-    :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 17 :ks2 0 :ml2 3 :dt2 0 :ssg2 0 :am2 0
-    :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 21 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
-    :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 37 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
-  )
+(def-voice wave-pulse-25 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 28 :ks1 0 :ml1 4 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 17 :ks2 0 :ml2 3 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 21 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 37 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
 )
 
-(def wave-pulse-12-approx
-  (voice :alg 7 :fb 0 :ams 0 :fms 0
-    :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 22 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
-    :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 23 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
-    :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 25 :ks3 0 :ml3 3 :dt3 0 :ssg3 0 :am3 0
-    :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 27 :ks4 0 :ml4 4 :dt4 0 :ssg4 0 :am4 0
-  )
+(def-voice wave-pulse-12-approx :alg 7 :fb 0 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 22 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 23 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 25 :ks3 0 :ml3 3 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 27 :ks4 0 :ml4 4 :dt4 0 :ssg4 0 :am4 0
 )
 
 ; TB-303-inspired bass: the saw/square shape with a decaying modulator.
-(def acid-saw
-  (voice :alg 0 :fb 7 :ams 0 :fms 0
-    :ar1 31 :dr1  6 :sr1 0 :rr1 12 :sl1 2 :tl1 30 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
-    :ar2 31 :dr2  9 :sr2 0 :rr2 12 :sl2 3 :tl2 34 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
-    :ar3 31 :dr3 14 :sr3 1 :rr3 12 :sl3 5 :tl3 40 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
-    :ar4 31 :dr4 10 :sr4 3 :rr4 12 :sl4 3 :tl4 18 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
-  )
+(def-voice acid-saw :alg 0 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  6 :sr1 0 :rr1 12 :sl1 2 :tl1 30 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2  9 :sr2 0 :rr2 12 :sl2 3 :tl2 34 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 14 :sr3 1 :rr3 12 :sl3 5 :tl3 40 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 10 :sr4 3 :rr4 12 :sl4 3 :tl4 18 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
 )
 
-(def acid-square
-  (voice :alg 0 :fb 7 :ams 0 :fms 0
-    :ar1 31 :dr1  6 :sr1 0 :rr1 12 :sl1 2 :tl1 30 :ks1 0 :ml1 2 :dt1 0 :ssg1 0 :am1 0
-    :ar2 31 :dr2  9 :sr2 0 :rr2 12 :sl2 3 :tl2 34 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
-    :ar3 31 :dr3 14 :sr3 1 :rr3 12 :sl3 5 :tl3 40 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
-    :ar4 31 :dr4 10 :sr4 3 :rr4 12 :sl4 3 :tl4 18 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
-  )
+(def-voice acid-square :alg 0 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  6 :sr1 0 :rr1 12 :sl1 2 :tl1 30 :ks1 0 :ml1 2 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2  9 :sr2 0 :rr2 12 :sl2 3 :tl2 34 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 14 :sr3 1 :rr3 12 :sl3 5 :tl3 40 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 10 :sr4 3 :rr4 12 :sl4 3 :tl4 18 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
 )

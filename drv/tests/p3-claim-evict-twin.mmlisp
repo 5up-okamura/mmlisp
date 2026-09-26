@@ -1,7 +1,7 @@
 ; The twin of p3-claim-evict: the same score with track 0's modulators removed.
 ; Not gated on its own — tools/claim-gate.mjs diffs the two.
-(def v (voice :alg 7 :fb 0 :ar1 31 :tl1 20 :ml1 1 :ar2 31 :tl2 20 :ml2 1 :ar3 31 :tl3 20 :ml3 1 :ar4 31 :tl4 8 :ml4 1))
-(def w (voice :alg 7 :fb 0 :ar1 31 :tl1 4 :ml1 5 :ar2 31 :tl2 4 :ml2 5 :ar3 31 :tl3 4 :ml3 5 :ar4 31 :tl4 2 :ml4 5))
+(def-voice v :alg 7 :fb 0 :ar1 31 :tl1 20 :ml1 1 :ar2 31 :tl2 20 :ml2 1 :ar3 31 :tl3 20 :ml3 1 :ar4 31 :tl4 8 :ml4 1)
+(def-voice w :alg 7 :fb 0 :ar1 31 :tl1 4 :ml1 5 :ar2 31 :tl2 4 :ml2 5 :ar3 31 :tl3 4 :ml3 5 :ar4 31 :tl4 2 :ml4 5)
 (fm1 :tempo 120 v :oct 4 :len 1 :vel 12
   c c c c)
 (fm2 v :oct 5 :len 1 :vel 12 c c)
