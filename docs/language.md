@@ -1102,10 +1102,12 @@ the phrase.
   (cross-track never drops), and reading does not clear it. `(trig N)` is never
   a jump target, so it is exempt from label uniqueness. Auto-numbered `(trig)`
   is not yet supported — give an explicit id.
-- **A loop replays baked notes; body state does not accumulate.** The body is
-  compiled **once**, so sticky state changed inside it (octave `>`/`<`, `:oct`,
-  `:vel`, `:len`, …) is baked into that single pass and does **not** carry from
-  one iteration to the next. `(x 4 c >)` plays `c c c c`, not an ascending run —
+- **A loop replays baked notes; compile-time state does not accumulate.** The
+  body is compiled **once**, so state the compiler resolves (octave `>`/`<`,
+  `:oct`, `:vel`, `:len`, `:gate`, …) is baked into that single pass and does
+  **not** carry from one iteration to the next. A register-relative write is
+  different: `:tl1+ 2` is a runtime `PARAM_ADD`, so `(x 3 :tl1+ 2 c)` adds 2
+  on every pass. `(x 4 c >)` plays `c c c c`, not an ascending run —
   the `>` shifts the octave only for whatever follows the loop. When a body has a
   non-zero net octave (or other sticky) change and is reused or followed by more
   notes, rebalance it explicitly, e.g. `(x 4 n > n <)`, so the state returns to
@@ -1326,8 +1328,9 @@ Full drop routing for every accepted format: `guide.md` §23.
 `:loop-start`, `:loop-end` and `:loop-len` say where a `loop` note repeats.
 They take **lengths** — the same grammar as `:len` and `:gate` (§4), including
 `Nms`, which is what you want when the point is a place in the wave rather than
-a place in the bar. `:loop-end` and `:loop-len` are two spellings of the same
-bound and the last one written wins.
+a place in the bar. `:loop-end` and `:loop-len` both set the far bound — one
+pins the end, the other the length, which differ once `:loop-start` moves (see
+below) — and the last one written is the one in force.
 
 They belong on a `def` and on a track, and they mean the same thing in both —
 unlike `:offset` / `:frames`, which cut a sample out of a file and have nothing

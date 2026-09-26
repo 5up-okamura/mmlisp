@@ -75,7 +75,8 @@ const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
 // The PCM loop points (docs/language.md §16). Their values are LENGTH TOKENS,
 // not plain numbers, and they drive the engine's block edge rather than a chip
 // register — so they are PARAM-legal (a literal or a curve) but not macro-legal.
-// LOOP_END and LOOP_LEN are two spellings of one bound; the last one wins.
+// LOOP_END and LOOP_LEN both set the far bound (pinning the end vs the length);
+// the last one written wins.
 const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
 const PCM_PITCH_KEYWORD = { NOTE_PITCH: ":pitch", NOTE_SEMI: ":semi" };
 
@@ -5070,8 +5071,8 @@ function compileScore(src, filename, options, frameHz) {
     const len = sec(sample.loopLenTok, ":loop-len");
     if (start === null && end === null && len === null) continue;
     sample.loopStartSec = start ?? 0;
-    // :loop-end and :loop-len are two spellings of the same bound; neither
-    // given means "to the end of the sample", which the exporter fills in.
+    // :loop-end and :loop-len both set the far bound; neither given means "to
+    // the end of the sample", which the exporter fills in.
     sample.loopEndSec = end ?? (len === null ? null : sample.loopStartSec + len);
     if (sample.loopEndSec !== null && sample.loopEndSec <= sample.loopStartSec) {
       pushDiag(
