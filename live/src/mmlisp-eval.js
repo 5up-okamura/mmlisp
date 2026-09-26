@@ -415,7 +415,7 @@ function evalNode(node, env, ctx) {
     if (!builtin) {
       throw new EvalError(
         "E_EVAL_UNKNOWN_HEAD",
-        `unknown expression head '${head ?? ""}'`,
+        `unknown function '${head ?? ""}' (not a curve or an expression)`,
       );
     }
     const operands = items.slice(1);

@@ -313,6 +313,16 @@ parameter write at the current tick:
 | `:tl1+ $x` / `:tl1* $x` | `PARAM_ADD` / `PARAM_MUL` with `{src}` | Slot-relative     |
 | `:tl1 (+ $a (* $b 2))` | opcode chain            | Runtime `$slot` expression (§7.1.2) |
 
+The value is read the same way in every row: a literal, a `let` name, an
+expression (§7.1), a curve, or anything carrying a `$` reference. An operator
+reads the parameter itself — `:tl1+ e` is `(+ $tl1 e)` and `:tl1* e` is
+`(* $tl1 e)` (§7.1.2) — so `:tl1+ (+ 2 3)` and a `let` name work, and a
+shape with no opcode (`:tl1* -1`, `:tl1+ (* $x 2)`) is `E_EVAL_NOT_LOWERABLE`.
+A curve has no operator form (`E_EVAL_TYPE`), and a bare word the parameter
+does not name (`:tl1 foo`) is `E_PARAM_VALUE`. `:vol` and `:master` are
+parameters like any other; values are clamped to the register's range where
+they are written, not in the IR.
+
 The read-modify-write forms (`+` / `*` / self-ref) work on **every** FM
 op-param (AR/DR/SR/RR/SL/KS/ML/DT/SSG/AMEN), not just level/TL — the base is
 read live from the register shadow.
@@ -510,7 +520,9 @@ the driver each time the write fires:
   value (read live — works on **every** FM op-param via the generic shadow
   read, not just level/TL).
 - **Terms**: `+ const` → `PARAM_ADD`; `+ $slot` → `PARAM_ADD` (slot); `× const`
-  → `PARAM_MUL`; `× $slot` → `PARAM_MUL` (slot). Constant sub-trees fold first.
+  → `PARAM_MUL`; `× $slot` → `PARAM_MUL` (slot). Constant sub-trees fold first
+  (any builtin or `let` name), and a variadic `(+ a b c)` chains as
+  `(+ (+ a b) c)`.
 
 Not every shape lowers to this accumulator form (`E_EVAL_NOT_LOWERABLE`, the
 honest list): subtract-from / divide-by a slot and subtracting a slot (no
@@ -924,7 +936,8 @@ is forward only.
 
 `curve-name` above is a placeholder — write a real name from the table. A
 `(…)` in a curve position whose head is not one of these names (a typo, or the
-literal word `curve`) is rejected with `E_UNKNOWN_CURVE`.
+literal word `curve`) is rejected with `E_EVAL_UNKNOWN_HEAD`, as any unknown
+function is.
 
 ### Common parameters (all curves)
 

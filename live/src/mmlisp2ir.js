@@ -1207,29 +1207,23 @@ function exprHasValRef(node) {
   return false;
 }
 
-// Fold a purely-constant subtree (numbers + let-bound scalars, no $ref) → number
-// | null. Keeps the linearizer from treating a computed constant as a term.
+// Fold a subtree with no `$` reference to a number, or null (a signal, or not
+// evaluable). The real evaluator does it, so any builtin and any let name
+// folds; the linearizer only has to handle the `$`-carrying structure.
+const QUIET_EVAL_CTX = {
+  pushDiag: () => {},
+  diagnostics: null,
+  curveNames: CURVE_NAMES,
+  parseCurve: (n) => parseCurveSpec(n),
+  foldSignal: (spec, f) => foldCurveValues(spec, f),
+  isNoteStreamToken: (n) => isNoteStreamToken(n),
+  isDefName: () => false,
+  stepFrames: 1,
+};
 function constFoldExpr(node, env) {
-  if (node?.kind === "atom") {
-    const n = parseNumberLike(node.value);
-    if (n !== null) return n;
-    const bound = lookupBound(env, node.value);
-    return typeof bound === "number" ? bound : null;
-  }
-  if (node?.kind === "list" && node.bracket === "()") {
-    const items = node.items.filter((x) => x.kind !== "comment");
-    const head = atomValue(items[0]);
-    if (VALUE_ARITH.has(head) && items.length === 3) {
-      const a = constFoldExpr(items[1], env);
-      const b = constFoldExpr(items[2], env);
-      if (a === null || b === null) return null;
-      if (head === "+") return a + b;
-      if (head === "-") return a - b;
-      if (head === "*") return a * b;
-      return b === 0 ? null : a / b;
-    }
-  }
-  return null;
+  if (exprHasValRef(node)) return null;
+  const r = evalValue(node, env, QUIET_EVAL_CTX);
+  return r?.kind === "scalar" ? r.value : null;
 }
 
 // Linearize a value expression into a step chain, or an {error}. `target` is the
@@ -1278,7 +1272,9 @@ function linearizeValueExpr(node, target, env, vals, diagnostics, trackName, src
     if (term.const !== undefined) {
       if (term.const === 0) return chain;
       const s = chain.steps;
-      if (s.length === 1 && s[0].op === "set") return { steps: [{ op: "set", val: s[0].val + term.const }] };
+      const last = s.at(-1);
+      if ((s.length === 1 && last.op === "set") || last.op === "add")
+        return { steps: [...s.slice(0, -1), { op: last.op, val: last.val + term.const }] };
       return { steps: [...s, { op: "add", val: term.const }] };
     }
     return { steps: [...chain.steps, { op: "addval", ref: term.slot }] };
@@ -1297,6 +1293,9 @@ function linearizeValueExpr(node, target, env, vals, diagnostics, trackName, src
       return err("E_EVAL_OPERAND", "unsupported value operand");
     const items = n.items.filter((x) => x.kind !== "comment");
     const head = atomValue(items[0]);
+    // (+ a b c) is (+ (+ a b) c): fold a variadic chain left into binary steps.
+    if (VALUE_ARITH.has(head) && items.length > 3)
+      return lin({ kind: "list", bracket: "()", items: [items[0], { kind: "list", bracket: "()", items: items.slice(0, -1) }, items.at(-1)] });
     if (!VALUE_ARITH.has(head) || items.length !== 3)
       return err("E_EVAL_NOT_LOWERABLE",
         `${head} with a runtime value has no param-opcode lowering`);
@@ -1358,23 +1357,74 @@ function lowerValueExpr(node, target, push, env, vals, diagnostics, trackName, s
   }
 }
 
-// A runtime value on a fader (`:vol $x`, `:master (+ $x 4)`): the same
-// PARAM_FROM_VAL / value-machine lowering every hardware param gets. Returns
-// false when the value is not runtime, leaving the literal/curve path to it.
-function lowerRuntimeFader(valueNode, rawVal, target, push, env, vals, diagnostics, trackName, src) {
-  if (
-    valueNode?.kind === "list" &&
-    valueNode.bracket === "()" &&
-    isEvalHead(atomValue(valueNode.items?.[0])) &&
-    exprHasValRef(valueNode)
+// Read a value-position node. Every parameter write reads its value here, so
+// a literal, a let name, an expression, a curve and a `$` reference mean the
+// same thing wherever a value goes. Returns
+//   { kind: "none" }            — the word `none`
+//   { kind: "scalar", value }   — a number (literal, let name, expression)
+//   { kind: "signal", spec }    — a curve, or arithmetic on one
+//   { kind: "runtime", node }   — carries a `$` reference: lower it at run time
+//   { kind: "symbol", value }   — any other bare word, for the position to name
+// or null after a diagnostic.
+function readValue(node, env, ctx) {
+  if (node?.kind === "atom") {
+    const v = node.value;
+    if (v === "none") return { kind: "none" };
+    if (typeof v === "string" && v.startsWith("$")) return { kind: "runtime", node };
+    if (parseNumberLike(v) === null && lookupBound(env, v) === undefined)
+      return { kind: "symbol", value: v };
+  } else if (
+    node?.kind === "list" && node.bracket === "()" &&
+    !CURVE_NAMES.has(atomValue(node.items?.[0])) && exprHasValRef(node)
   ) {
-    lowerValueExpr(valueNode, target, push, env, vals, diagnostics, trackName, src);
-    return true;
+    // A curve with `$` ends is a dynamic sweep, which the curve parser reads.
+    return { kind: "runtime", node };
   }
-  const ref = resolveValRef(rawVal, vals, diagnostics, trackName, src);
-  if (ref === null) return false;
-  push("PARAM_FROM_VAL", { target, src: ref });
-  return true;
+  return evalValue(node, env, ctx);
+}
+
+const atomNode = (value) => ({ kind: "atom", value: String(value) });
+
+// Write a hardware parameter from a readValue result. An operator reads the
+// parameter itself: `:tl1+ e` is `(+ $tl1 e)` and `:tl1* e` is `(* $tl1 e)`,
+// lowered like any other runtime expression (PARAM_ADD / PARAM_MUL).
+function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName, src) {
+  if (!v) return;
+  const err = (code, msg) => pushDiag(diagnostics, "error", code, msg, src, trackName);
+  if (v.kind === "none") {
+    // Stop a running inline PARAM_SWEEP, freezing the value.
+    if (op) err("E_PARAM_VALUE", `${sym} needs a number or a $value, not none`);
+    else push("PARAM_SWEEP_STOP", { target });
+    return;
+  }
+  if (v.kind === "symbol") {
+    if (!op && target === "PAN" && v.value in PAN_MAP)
+      push("PARAM_SET", { target, value: PAN_MAP[v.value] });
+    else
+      err("E_PARAM_VALUE",
+        `${sym} takes a number, a curve or a $value, not '${v.value}'`);
+    return;
+  }
+  if (v.kind === "signal") {
+    if (op)
+      err("E_EVAL_TYPE", `${sym} needs a number or a $value; a curve has no '${op}' form`);
+    else if (v.spec.steps)
+      // A materialized signal⊕signal step vector has no inline PARAM_SWEEP
+      // form — it's a macro-only shape.
+      err("E_EVAL_SIGNAL_SHAPE",
+        `signal arithmetic ${sym} is only valid in a (macro …), not an inline sweep`);
+    else push("PARAM_SWEEP", { target, ...v.spec });
+    return;
+  }
+  if (!op && v.kind === "scalar") {
+    push("PARAM_SET", { target, value: Math.round(v.value) });
+    return;
+  }
+  const operand = v.kind === "scalar" ? atomNode(v.value) : v.node;
+  const expr = op
+    ? { kind: "list", bracket: "()", items: [atomNode(op), atomNode("$" + opSuffix(sym).stem.slice(1)), operand] }
+    : operand;
+  lowerValueExpr(expr, target, push, env, vals, diagnostics, trackName, src);
 }
 
 // Target group: a [] vector of macro keywords in target position, e.g.
@@ -1889,14 +1939,13 @@ function parseMacroSpec(
           }
           continue;
         }
-        const curveSpec = parseCurveSpec(
-          stageNode,
-          diagnostics,
-          nodeSrc(stageNode),
-          trackName,
-          true,
-        );
-        if (curveSpec) stages.push(curveSpec);
+        // Any other stage is a curve — a literal, a let name or arithmetic on
+        // one; a plain step vector has no stage form.
+        const r = evalMacroNode(stageNode);
+        if (r?.kind === "signal" && !r.spec.steps) stages.push(r.spec);
+        else if (r && diagnostics)
+          pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID",
+            "a stage is a curve or (wait …)", nodeSrc(stageNode), trackName);
       }
       return { type: "stages", stages };
     }
@@ -1932,71 +1981,26 @@ function parseMacroSpec(
     // sounding step sequence during playback.
     return { type: "steps", steps, loopIndex, releaseIndex, src: nodeSrc(node) };
   }
-  // Curve form: (ease-out :from 15 :to 0 :len 1)
-  if (node.kind === "list" && node.bracket === "()") {
-    // Scaled macro (v0.6 §4.4, frame tier): `(macro :pitch (* (sin …) $depth))`
-    // rides a value slot as a per-frame depth knob — the driver writes
-    // `(sample × slot) >> 8` each frame. Detected here BEFORE evalValue, which
-    // would otherwise error E_EVAL_NOT_LOWERABLE on the bare `$slot`. Shape:
-    // `(* <signal> $slot)` (exactly two operands, one a value slot, one a
-    // signal). The signal folds to a symbolic/materialized spec; `spec.scale`
-    // carries the slot name (exporter → MMB flags bit2 + a slot byte).
-    const scaled = detectScaledMacro(node);
-    if (scaled) {
-      const r = evalValue(
-        scaled.signal,
-        env ?? makeEnv(null),
-        makeEvalCtx(
-          diagnostics,
-          trackName,
-          nodeSrc(node),
-          null,
-          macroStepFramesForEval(step),
-        ),
-      );
-      if (!r) return null;
-      if (r.kind !== "signal") {
-        pushDiag(
-          diagnostics,
-          "error",
-          "E_EVAL_TYPE",
-          "a scaled macro `(* signal $slot)` needs a signal operand (a curve/LFO), not a scalar",
-          nodeSrc(node),
-          trackName,
-        );
-        return null;
-      }
-      const base = r.spec.steps
-        ? {
-            type: "steps",
-            steps: r.spec.steps,
-            loopIndex: r.spec.loopIndex ?? null,
-            releaseIndex: r.spec.releaseIndex ?? null,
-          }
-        : { type: "curve", ...r.spec };
-      base.scale = scaled.slot;
-      return base;
+  // A curve, an expression or a `let` name (§7.2) evaluates to a signal or a
+  // number. Scaled macro (§4.4, frame tier): `(* <signal> $slot)` rides a value
+  // slot as a per-frame depth knob — the driver writes `(sample × slot) >> 8`
+  // each frame — so the slot is split off before the signal is evaluated, and
+  // `spec.scale` carries its name (exporter → MMB flags bit2 + a slot byte).
+  const bound =
+    node.kind === "atom" && env && lookupBound(env, atomValue(node)) !== undefined;
+  if (bound || (node.kind === "list" && node.bracket === "()")) {
+    const scaled = bound ? null : detectScaledMacro(node);
+    const r = evalMacroNode(scaled ? scaled.signal : node);
+    if (!r) return null;
+    if (!scaled) return macroSpecOf(r);
+    if (r.kind !== "signal") {
+      pushDiag(diagnostics, "error", "E_EVAL_TYPE",
+        "a scaled macro `(* signal $slot)` needs a signal operand (a curve/LFO), not a scalar",
+        nodeSrc(node), trackName);
+      return null;
     }
-    // Compile-time eval in macro position: `(macro :pitch (+ (sin …) 10))`
-    // folds affinely to a symbolic curve (byte-identical LUT), and a scalar
-    // expression becomes a constant signal. A bare curve head is disjoint from
-    // eval heads, so it falls through to parseCurveSpec unchanged.
-    if (isEvalHead(atomValue(node.items?.[0]))) {
-      return evalMacroValue(node);
-    }
-    const curveSpec = parseCurveSpec(
-      node,
-      diagnostics,
-      nodeSrc(node),
-      trackName,
-      true,
-    );
-    if (curveSpec) return { type: "curve", ...curveSpec };
+    return { ...macroSpecOf(r), scale: scaled.slot };
   }
-  // A `let`-bound name (a number or a curve, §7.2) evaluates like an
-  // expression would.
-  if (node.kind === "atom" && env && lookupBound(env, atomValue(node)) !== undefined)
-    return evalMacroValue(node);
   // Scalar constant: e.g. `:keyon 1`. A constant signal equivalent to
   // `[:hold N]` (single value, looped). Mainly for :keyon (1 = fire every
   // :step, 0 = never).
@@ -2011,37 +2015,28 @@ function parseMacroSpec(
   }
   return null;
 
-  function evalMacroValue(node) {
-      const r = evalValue(
-        node,
-        env ?? makeEnv(null),
-        makeEvalCtx(
-          diagnostics,
-          trackName,
-          nodeSrc(node),
-          null,
-          macroStepFramesForEval(step),
-        ),
-      );
-      if (!r) return null;
-      if (r.kind === "signal") {
-        // A materialized signal⊕signal result is a float step vector; a symbolic
-        // (affine-folded) curve stays a curve.
-        return r.spec.steps
-          ? {
-              type: "steps",
-              steps: r.spec.steps,
-              loopIndex: r.spec.loopIndex ?? null,
-              releaseIndex: r.spec.releaseIndex ?? null,
-            }
-          : { type: "curve", ...r.spec };
-      }
-      return {
-        type: "steps",
-        steps: [clampVal(r.value)],
-        loopIndex: 0,
-        releaseIndex: null,
-      };
+  function evalMacroNode(n) {
+    return evalValue(
+      n,
+      env ?? makeEnv(null),
+      makeEvalCtx(diagnostics, trackName, nodeSrc(n), null, macroStepFramesForEval(step)),
+    );
+  }
+
+  // An eval result as a macro spec. A materialized signal⊕signal result is a
+  // float step vector; a symbolic (affine-folded) curve stays a curve; a number
+  // is a constant, held.
+  function macroSpecOf(r) {
+    if (r.kind === "scalar")
+      return { type: "steps", steps: [clampVal(r.value)], loopIndex: 0, releaseIndex: null };
+    return r.spec.steps
+      ? {
+          type: "steps",
+          steps: r.spec.steps,
+          loopIndex: r.spec.loopIndex ?? null,
+          releaseIndex: r.spec.releaseIndex ?? null,
+        }
+      : { type: "curve", ...r.spec };
   }
 }
 
@@ -2120,8 +2115,8 @@ function parseCurveSpec(
       pushDiag(
         diagnostics,
         "error",
-        "E_UNKNOWN_CURVE",
-        `unknown curve function: ${head ?? "(empty)"}`,
+        "E_EVAL_UNKNOWN_HEAD",
+        `unknown function '${head ?? ""}' (not a curve or an expression)`,
         src ?? nodeSrc(node),
         trackName,
       );
@@ -3066,44 +3061,6 @@ function compileChannelBody(
               else gateInvalid(diagnostics, val, rawVal, nodeSrc(node), trackName);
               break;
             }
-            case ":vol": {
-              const valueNode = items[i];
-              const pushLevel = (cmd, args) =>
-                events.push({ tick: trackState.tick, cmd, args, src: nodeSrc(node) });
-              if (
-                lowerRuntimeFader(valueNode, rawVal, "VOL", pushLevel, evalEnv, vals,
-                  diagnostics, trackName, nodeSrc(node))
-              )
-                break;
-              const curveSpec = parseCurveSpec(
-                valueNode,
-                diagnostics,
-                nodeSrc(node),
-                trackName,
-                true,
-              );
-              if (curveSpec) {
-                events.push({
-                  tick: trackState.tick,
-                  cmd: "PARAM_SWEEP",
-                  args: { target: "VOL", ...curveSpec },
-                  src: nodeSrc(node),
-                });
-              } else {
-                const v = parseIntLike(rawVal);
-                if (v !== null) {
-                  // v0.4: :vol range is 0-31 (was 0-15)
-                  trackState.defaultVol = Math.max(0, Math.min(31, v));
-                  events.push({
-                    tick: trackState.tick,
-                    cmd: "PARAM_SET",
-                    args: { target: "VOL", value: trackState.defaultVol },
-                    src: nodeSrc(node),
-                  });
-                }
-              }
-              break;
-            }
             case ":shuffle":
             case ":shuffle-base": {
               // Swing (§5.2): `none` or under 51 is straight. A change restarts
@@ -3143,46 +3100,6 @@ function compileChannelBody(
                 const next =
                   op === "+" ? cur + raw : op === "*" ? cur * raw : raw;
                 trackState.defaultVel = Math.max(0, Math.min(15, Math.round(next)));
-              }
-              break;
-            }
-            case ":master": {
-              const valueNode = items[i];
-              const pushLevel = (cmd, args) =>
-                events.push({ tick: trackState.tick, cmd, args, src: nodeSrc(node) });
-              if (
-                lowerRuntimeFader(valueNode, rawVal, "MASTER", pushLevel, evalEnv, vals,
-                  diagnostics, trackName, nodeSrc(node))
-              )
-                break;
-              const curveSpec = parseCurveSpec(
-                valueNode,
-                diagnostics,
-                nodeSrc(node),
-                trackName,
-                true,
-              );
-              if (curveSpec) {
-                events.push({
-                  tick: trackState.tick,
-                  cmd: "PARAM_SWEEP",
-                  args: { target: "MASTER", ...curveSpec },
-                  src: nodeSrc(node),
-                });
-              } else {
-                // global master level, score-wide
-                const v = parseIntLike(rawVal);
-                if (v !== null) {
-                  events.push({
-                    tick: trackState.tick,
-                    cmd: "PARAM_SET",
-                    args: {
-                      target: "MASTER",
-                      value: Math.max(0, Math.min(31, v)),
-                    },
-                    src: nodeSrc(node),
-                  });
-                }
               }
               break;
             }
@@ -3263,12 +3180,16 @@ function compileChannelBody(
             }
             case ":tempo": {
               const valueNode = items[i];
-              // A number, or an expression that evaluates to one (§7); a curve
-              // is a TEMPO_SWEEP below.
-              const bpm = valueNode?.kind === "list" && isEvalHead(atomValue(valueNode.items?.[0]))
-                ? evalScalarValue(valueNode, evalEnv,
-                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs))
-                : parseNumberLike(rawVal);
+              // A number is TEMPO_SET; a curve is a TEMPO_SWEEP below.
+              const v = readValue(valueNode, evalEnv,
+                makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs));
+              if (!v) break;
+              if (v.kind !== "scalar" && v.kind !== "signal") {
+                pushDiag(diagnostics, "error", "E_TEMPO_INVALID",
+                  ":tempo takes a BPM number or a curve", nodeSrc(node), trackName);
+                break;
+              }
+              const bpm = v.kind === "scalar" ? v.value : null;
               if (bpm !== null && !(bpm > 0)) {
                 pushDiag(diagnostics, "error", "E_TEMPO_INVALID",
                   `:tempo must be above 0 BPM, not ${bpm}`, nodeSrc(node), trackName);
@@ -3464,115 +3385,8 @@ function compileChannelBody(
                 push("PARAM_SET", { target, value: sec });
                 break;
               }
-              // Dynamic value ($slot / $time) — runtime resolved.
-              const ref = resolveValRef(
-                rawVal,
-                vals,
-                diagnostics,
-                trackName,
-                nodeSrc(node),
-              );
-              if (ref !== null) {
-                if (op === "+") push("PARAM_ADD", { target, delta: { src: ref } });
-                else if (op === "*")
-                  push("PARAM_MUL", { target, factor: { src: ref } });
-                else push("PARAM_FROM_VAL", { target, src: ref });
-                break;
-              }
-              // Relative literal: :tl1+ 5 / :tl1* 0.5 → runtime read-modify-write.
-              if (op) {
-                const n = op === "*" ? parseFloat(rawVal) : parseIntLike(rawVal);
-                if (n !== null && !Number.isNaN(n)) {
-                  if (op === "*") push("PARAM_MUL", { target, factor: n });
-                  else push("PARAM_ADD", { target, delta: n });
-                }
-                break;
-              }
-              // Compile-time eval: a scalar expression folds to PARAM_SET
-              // (`:tl1 (+ 20 10)`); an expression producing a signal — e.g.
-              // affine `(+ (sin …) 10)` — folds to PARAM_SWEEP, byte-identical
-              // to the shifted literal curve. Eval-builtin heads are disjoint
-              // from curve names, so this precedes parseCurveSpec without
-              // disturbing bare-curve dispatch.
-              if (
-                !op &&
-                items[i]?.kind === "list" &&
-                items[i].bracket === "()" &&
-                isEvalHead(atomValue(items[i].items?.[0]))
-              ) {
-                // A `$ref`-bearing expression is a runtime value-machine write:
-                // lower it to a param-opcode chain (§4.3). Pure-scalar / signal
-                // expressions (no $ref) fold via evalValue as before.
-                if (exprHasValRef(items[i])) {
-                  lowerValueExpr(
-                    items[i],
-                    target,
-                    push,
-                    evalEnv,
-                    vals,
-                    diagnostics,
-                    trackName,
-                    nodeSrc(node),
-                  );
-                  break;
-                }
-                const r = evalValue(
-                  items[i],
-                  evalEnv,
-                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
-                );
-                if (r) {
-                  if (r.kind === "signal" && r.spec.steps) {
-                    // A materialized signal⊕signal step vector has no inline
-                    // PARAM_SWEEP form — it's a macro-only shape.
-                    pushDiag(
-                      diagnostics,
-                      "error",
-                      "E_EVAL_SIGNAL_SHAPE",
-                      `signal arithmetic ${val} is only valid in a (macro …), not an inline sweep`,
-                      nodeSrc(node),
-                      trackName,
-                    );
-                  } else if (r.kind === "signal") {
-                    push("PARAM_SWEEP", { target, ...r.spec });
-                  } else {
-                    push("PARAM_SET", { target, value: Math.round(r.value) });
-                  }
-                }
-                break;
-              }
-              // Bare let-bound name: `(let ((x 30)) :tl1 x …)` sets, and a bound
-              // curve `(let ((cv (linear …))) :tl1 cv …)` sweeps (§7.2).
-              if (!op && lookupBound(evalEnv, rawVal) !== undefined) {
-                const r = evalValue(
-                  items[i],
-                  evalEnv,
-                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
-                );
-                if (r?.kind === "signal" && r.spec.steps)
-                  pushDiag(diagnostics, "error", "E_EVAL_SIGNAL_SHAPE",
-                    `signal arithmetic ${val} is only valid in a (macro …), not an inline sweep`,
-                    nodeSrc(node), trackName);
-                else if (r?.kind === "signal") push("PARAM_SWEEP", { target, ...r.spec });
-                else if (r) push("PARAM_SET", { target, value: Math.round(r.value) });
-                break;
-              }
-              // Absolute: curve sweep or literal set.
-              const curveSpec = parseCurveSpec(
-                items[i],
-                diagnostics,
-                nodeSrc(node),
-                trackName,
-                true,
-              );
-              if (curveSpec) {
-                push("PARAM_SWEEP", { target, ...curveSpec });
-              } else {
-                let value = parseIntLike(rawVal);
-                if (value === null && target === "PAN" && rawVal in PAN_MAP)
-                  value = PAN_MAP[rawVal];
-                push("PARAM_SET", { target, value: value ?? 0 });
-              }
+              writeParam(target, op, val, readValue(items[i], evalEnv, makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs)), push,
+                evalEnv, vals, diagnostics, trackName, nodeSrc(node));
               break;
             }
           }
