@@ -399,7 +399,7 @@ name falls back to linear.
 | 5   | triangle   | loop waveform                                             |
 | 6   | square     | loop waveform (fixed 50% duty; `:duty` is authoring-side) |
 | 7   | saw        | loop waveform (`ramp` is an alias)                        |
-| 8–11 | noise, pink, perlin, brown | stochastic; emitted as the id, evaluated as linear (§8.1) |
+| 8–11 | noise, pink, perlin, brown | stochastic; macro-only — never reaches a sweep (§8.1) |
 | 12–255 | —       | reserved                                                  |
 
 Curve shapes are **computed**, not tabulated. `curveUnit8(id, t)` in
@@ -415,16 +415,16 @@ unit / 256)`, truncating toward zero. This is a fidelity reduction relative to
 the live player, which eases in floating point at 60 Hz; the A/B acceptance
 band covers it (driver.md §12.5).
 
-### 8.1 Stochastic curve ids on a sweep
+### 8.1 Stochastic curves are macro-only
 
-`curveId()` returns 8–11 for `noise` / `pink` / `perlin` / `brown` and the
-exporter writes them into PARAM_SWEEP / TEMPO_SWEEP / CSM_RATE unchanged. Both
-curve evaluators end in `default: return t`, so on the driver a sweep with one
-of these ids runs as a **linear ramp** over its length (and, as a loop curve,
-as a saw over its period) rather than as noise. The driver carries no random
-source.
+The driver carries no random source, so it cannot evaluate `noise` / `pink` /
+`perlin` / `brown` from a curve id: both curve evaluators end in `default:
+return t`, and ids 8–11 would run as a linear ramp (a saw, looping). The
+compiler therefore rejects a stochastic curve on an inline PARAM_SWEEP,
+TEMPO_SWEEP or CSM_RATE (`E_CURVE_MACRO_ONLY`, language.md §11), and these ids
+never reach a sweep.
 
-In a **macro** the same curve names are exact: the exporter samples them
+In a **macro** the curve names are exact: the exporter samples them
 through `sampleCurveUnit()` (`live/src/ir-utils.js`, seeded LUTs) and MACRO_TABLE
 stores the sampled values, so what the driver steps is the shape itself, not an
 id it has to evaluate.

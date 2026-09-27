@@ -5086,5 +5086,33 @@ function compileScore(src, filename, options, frameHz) {
     tracks,
   });
 
+  rejectInlineStochasticSweeps(tracks, diagnostics);
   return { ir, diagnostics, sourceMap: buildSourceMap(tracks) };
+}
+
+// A stochastic curve is data, not a formula: a macro samples it into the
+// table the driver steps, but an inline sweep carries only a curve id, and the
+// driver has no random source to evaluate one with — it would play a straight
+// ramp while the preview plays noise (opcodes.md §8.1). So the stochastic
+// curves are macro-only, and an inline one is an error rather than a sound
+// that changes on export.
+const STOCHASTIC_CURVE_NAMES = new Set(["noise", "pink", "perlin", "brown"]);
+const INLINE_SWEEP_CMDS = new Set(["PARAM_SWEEP", "TEMPO_SWEEP", "CSM_RATE"]);
+function rejectInlineStochasticSweeps(tracks, diagnostics) {
+  for (const track of tracks) {
+    for (const ev of track.events ?? []) {
+      if (!INLINE_SWEEP_CMDS.has(ev.cmd)) continue;
+      const curve = ev.args?.curve;
+      if (!STOCHASTIC_CURVE_NAMES.has(curve)) continue;
+      pushDiag(
+        diagnostics,
+        "error",
+        "E_CURVE_MACRO_ONLY",
+        `${curve} is macro-only: an inline sweep cannot carry its values, so the driver ` +
+          `would play a straight ramp. Use it in a (macro …).`,
+        ev.src,
+        track.scoreChannel ?? track.channel,
+      );
+    }
+  }
 }

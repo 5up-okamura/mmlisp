@@ -934,8 +934,12 @@ a reload once the wav actually sits next to the score.
 
 ## 20. Stochastic Curves
 
-The curve system includes `noise`, `pink`, `perlin`, and `brown`. They work
-anywhere a curve is accepted, including `(macro ...)` and `:tempo`.
+The curve system includes `noise`, `pink`, `perlin`, and `brown`. They are
+**macro-only**: a macro bakes their values into the table the driver plays,
+while an inline sweep (`:tl1 (brown …)`, `:tempo`, `:csm-rate`) would reach
+the driver as a bare curve id it cannot evaluate, so it is an error
+(`E_CURVE_MACRO_ONLY`). A macro restarts at each key-on, so the movement lives
+inside each note — a long note wanders furthest.
 
 They are **deterministic** — the same source always bakes the same sequence.
 Add `:seed N` to pick a different (statistically independent) sequence; the

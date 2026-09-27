@@ -948,7 +948,7 @@ steps after `#rel` fire after note-off (a one-channel echo tail). While a
 ## 11. Curves
 
 Curve forms appear in macros, inline parameter sweeps, `:tempo`, `:csm-rate`,
-and `(delay …)`:
+and `(delay …)` — except the stochastic curves, which are macro-only (below):
 
 ```text
 (curve-name :from A :to B :len L …optional-params)
@@ -970,6 +970,13 @@ Combining it with an explicit `:from`/`:to`, or two ranges, is
 | Easing      | `ease-in`, `ease-out`, `ease-inout` (quad aliases) and `ease-{in,out,inout}-{sine,quad,cubic,quart,quint,expo,circ,back,elastic,bounce}` | no |
 | Loop waves  | `sin`, `triangle`, `square`, `saw`, `ramp`                            | yes              |
 | Stochastic  | `noise`, `pink`, `perlin`, `brown`                                    | yes              |
+
+**The stochastic curves are macro-only.** A macro samples a curve into the
+table the driver steps, so noise arrives as its values; an inline sweep
+(`:tl1 (brown …)`, `:tempo`, `:csm-rate`) carries only a curve id, and the
+driver has no random source to evaluate one with. One written there is
+`E_CURVE_MACRO_ONLY` rather than noise in the preview and a straight ramp on
+the driver. `(delay …)` takes them: its envelope is sampled at compile time.
 
 Loop-wave and stochastic curves cycle until key-off; `:mode loop` makes any
 other curve cycle (a looping sustain stage), and `:mode shot` plays a looping
@@ -1037,7 +1044,8 @@ Stochastic curves (`noise`/`pink`/`perlin`/`brown`) default to seed `0xDEAD`, so
 a seedless source is always byte-identical. `:seed N` (any u32) regenerates a
 **statistically independent** sequence — unlike `:phase`, which shifts the same
 table. The seed is compile-time only (the driver replays the sampled values);
-distinct seeds bake distinct data.
+distinct seeds bake distinct data. A seed picks a character of movement, not
+a different run each playback: the same score always moves the same way.
 
 ```lisp
 (sqr1 (macro :pitch (noise :from -60 :to 60 :len 4f :seed 1))  c c c c)
