@@ -1,0 +1,28 @@
+; Sample effects: an :effect chain processes a sample when the bank is baked,
+; so it costs no driver time. snare-fx is a variant of the kit's snare, the
+; same wav through its own chain: 18 dB of gain, a 100 ms room (the reverb's
+; other parameters left at their defaults), then a limiter to catch the peaks
+; the gain pushed over. Two bars dry, two bars with the effected snare, then
+; both mixed: dry ghost notes around a wet backbeat. The dry and the wet snare
+; are two samples, so both are baked.
+(import "presets/808/set.mmlisp")
+(def pcm-voices 2)
+
+(def-pcm snare-fx snare :effect [(gain 18) (reverb :tail 100ms) (limit)])
+
+; one bar of 16ths; s is the snare to play
+(def (beat s) kick c _ _ _ s c _ _ kick c _ kick c _ _ s c _ _ _)
+
+; ghost notes are the dry snare, quieter; the backbeat is the wet one
+(def ghost :vel 8 snare)
+(def wet :vel 15 snare-fx)
+(def kk :vel 15 kick)
+(def mixed kk c _ ghost c _ wet c _ ghost c kk c _ kk c ghost c _ wet c _ _ ghost c)
+
+(pcm1 :tempo 100 :len 16
+  (beat snare) (beat snare)        ; dry
+  (beat snare-fx) (beat snare-fx)  ; effected
+  mixed mixed)                     ; both
+
+(pcm2 :len 8 :vel 10
+  (x 6 hat c c hat-open c hat c c c hat-open c hat c))
