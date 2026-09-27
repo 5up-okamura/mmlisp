@@ -1,0 +1,18 @@
+; Articulation: how much of each slot a note sounds. :gate* is a share of
+; every note's length, :gate- a fixed cut from the end, and ~ joins notes:
+; the same pitch is a tie (one note held longer), a different pitch a slur
+; (the frequency moves without a new attack). On FM the key-off before each
+; note is what makes it attack again, so even a full gate is not legato;
+; only a slur is.
+(import "presets/gm/set.mmlisp")
+
+(def phrase c d e f g f e d)
+
+(fm1 :tempo 104 :oct 4 :len 8 gm-synbrass2
+  :gate* 1   phrase                 ; full: every note still re-attacks
+  :gate* 0.3 phrase                 ; staccato
+  :gate- 32  phrase                 ; detached: each note loses a 32nd
+  :gate* 1
+  c ~ d ~ e ~ f  g ~ f ~ e ~ d      ; slurred in fours: one attack each
+  c4 ~ c8 d8 e4 ~ e4                ; ties: held across the beat
+  :len 2 c)

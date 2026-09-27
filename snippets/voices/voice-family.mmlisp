@@ -1,0 +1,21 @@
+; A family of voices from one patch. (def-fm name base ...) starts from the
+; base's parameters and overrides only what it writes, so a brighter, darker
+; or bell-like variant is one line. Naming a voice mid-track switches the
+; patch. This base is two modulator-carrier pairs (alg 4: op1 feeds op2, op3
+; feeds op4): the modulators' TL sets the brightness, their ML the overtones.
+(def-fm ep :alg 4 :fb 3
+  :ar1 31 :dr1 8 :sr1 2 :rr1 6 :sl1 3 :tl1 34 :ks1 1 :ml1 1 :dt1 1
+  :ar2 31 :dr2 5 :sr2 2 :rr2 6 :sl2 2 :tl2 4  :ks2 1 :ml2 1 :dt2 0
+  :ar3 31 :dr3 9 :sr3 2 :rr3 6 :sl3 3 :tl3 38 :ks3 1 :ml3 1 :dt3 -1
+  :ar4 31 :dr4 5 :sr4 2 :rr4 6 :sl4 2 :tl4 4  :ks4 1 :ml4 1 :dt4 0)
+
+(def-fm ep-bright ep :tl1 24 :tl3 28)          ; more modulation
+(def-fm ep-dark   ep :tl1 50 :tl3 52)          ; less
+(def-fm ep-bell   ep :ml1 7 :ml3 3 :tl1 36)    ; inharmonic overtones
+(def-fm ep-pluck  ep :dr2 12 :dr4 12 :sl2 8 :sl4 8)  ; a quick decay
+
+(def phrase :len 8 c e g > c < b g e g)
+
+(fm1 :tempo 108 :oct 4
+  ep phrase  ep-bright phrase  ep-dark phrase  ep-bell phrase  ep-pluck phrase
+  ep :len 2 c)

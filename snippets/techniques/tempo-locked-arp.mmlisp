@@ -1,0 +1,20 @@
+; A macro's :step is a clock. Written as a note length (16, 1/16, 24t) it
+; counts the track's ticks, so an arpeggio stays on the beat whatever the
+; tempo does; written in frames (Nf) it runs at a fixed rate, right for an
+; LFO but not for rhythm. The tempo speeds up, then slows down: the first
+; half's arp (a beat clock) stays with the hats, the second half's (7 frames,
+; a 16th at 128 BPM) drifts off them.
+(import "presets/gm/set.mmlisp")
+
+(def beat-arp  (macro :step 16 :semi [#sus 0 4 7 12] :keyon 1))
+(def frame-arp (macro :step 7f :semi [#sus 0 4 7 12] :keyon 1))
+
+(fm1 :tempo 100 :oct 4 :len 1 gm-harpsi
+  :tempo (linear 100..160 :len 4/1)
+  beat-arp  c a- f g
+  :tempo (linear 160..100 :len 4/1)
+  frame-arp c a- f g)
+
+(def hat (macro :vel [11 6 2 0]))
+(noise :len 16 hat
+  (x 128 c))

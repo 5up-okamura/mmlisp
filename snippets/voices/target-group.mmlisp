@@ -1,0 +1,16 @@
+; Target groups: [:tl1 :tl2 ...] in a macro applies one spec to several
+; targets at once. On an alg 7 organ every operator is a drawbar (ML 1, 2, 4,
+; 8 here), so a TL group is a swell on all of them, and a group on the upper
+; two alone makes the top of the sound shimmer while the body stays steady.
+(def-fm organ init-fm :alg 7 :fb 2
+  :ml1 1 :ml2 2 :ml3 4 :ml4 8
+  :tl1 8 :tl2 14 :tl3 20 :tl4 28
+  :rr1 6 :rr2 6 :rr3 6 :rr4 6)
+
+(fm1 :tempo 84 :oct 4 :len 1 organ
+  ; all four drawbars swell in together
+  (macro [:tl1 :tl2 :tl3 :tl4] (ease-out 70..12 :len 2)) c a-
+  ; the top two wobble, the lower two hold their voice levels
+  (macro [:tl1 :tl2 :tl3 :tl4] none)
+  (macro [:tl3 :tl4] (sin 14..40 :len 9f)) f g
+  (macro none) :len 2 c)

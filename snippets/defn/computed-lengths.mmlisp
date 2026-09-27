@@ -1,0 +1,19 @@
+; Lengths and pitches from arithmetic. In a length position (ticks n) is n
+; ticks (a quarter is 96) and (frames n) is n 60 Hz frames; (note n) plays
+; MIDI note n. Passed through a parametric def, one line computes each step:
+; a bouncing ball, each bounce 0.7 as long and a little higher.
+(def k 0.7)
+(def (bounce len pitch) (note pitch (ticks len)))
+
+(sqr1 :tempo 120 :vel 13
+  (macro :vel [15 11 8 5 3 1 0])
+  (bounce 192 72)
+  (bounce (* 192 k) 74)
+  (bounce (* 192 k k) 76)
+  (bounce (* 192 k k k) 78)
+  (bounce (* 192 k k k k) 80)
+  (bounce (* 192 k k k k k) 82)
+  (bounce (* 192 k k k k k k) 84)
+  (bounce (* 192 k k k k k k k) 86)
+  ; frames: an exact 60 Hz duration, whatever the tempo
+  _4 (note 96 (frames 3)) _ (note 96 (frames 3)) _4)

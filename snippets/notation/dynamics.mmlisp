@@ -1,0 +1,19 @@
+; Dynamics. :vel is each note's velocity (0-15), and :vel+ / v+ change it
+; relative to where it is; :vol is the channel fader and takes a curve, a
+; hairpin across notes. A :vel* macro shapes each note relative to its own
+; velocity, so one envelope follows every accent.
+(import "presets/gm/set.mmlisp")
+
+(fm1 :tempo 112 :oct 5 :len 8 gm-piano
+  ; accents on the beat
+  (x 2 :vel 15 c :vel 10 e g e  :vel 15 d :vel 10 f a f)
+  ; a crescendo note by note
+  :vel 5 c v+ d v+ e v+ f v+ g v+ a v+ b v+ > c <
+  ; a hairpin on the fader, over held notes
+  :vel 13 :vol (linear 10..31 :len 1) :len 2 e g
+  :vol (linear 31..10 :len 1) f d
+  ; one decay shape, scaled by each note's velocity
+  :vol 31 :len 8 (macro :vel* [1 0.8 0.6 0.5 0.4])
+  :vel 15 c :vel 8 e :vel 11 g :vel 6 e
+  :vel 15 d :vel 8 f :vel 11 a :vel 6 f
+  :vel 14 :len 2 c)
