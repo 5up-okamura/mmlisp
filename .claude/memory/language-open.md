@@ -20,11 +20,7 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
    notes.
 2. **`:vol* $slot`** (§8): preview multiplies by the slot as an integer,
    driver as 8.8 (`>> 8`) — which is the meaning?
-3. **`:keyon` + `:off`** (§10): driver's retrigger restarts every macro from
-   its attack (the doc's echo-tail vel replays 15); preview only re-keys $28;
-   PSG `:keyon` works on the driver only. The exporter comment says restarting
-   the soft envelopes is intended — which wins?
-4. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
+3. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
    Since 2026-09-24 this has teeth — Timer A really runs while CSM is on (it
    never did before: LOAD A was never set, so no CSM score had ever sounded),
    and a rest on `fm3-csm-rate` leaves it running at the last rate, so the
@@ -32,13 +28,13 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
    rate-track rest, or `:vol 0` meaning something to CSM (TL is the attack's
    start level in this mode, not an attenuation). The preview's mixer mute
    already holds Timer A; the language has no way to.
-5. **`:len 0` then more events** (§17): the IR/preview play them at the same
+4. **`:len 0` then more events** (§17): the IR/preview play them at the same
    tick; the driver waits for the host KEY_OFF.
-6. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
-7. **Note names vs defs** (§3): the doc says a def named like a note cannot be
+5. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
+6. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
-8. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
-9. **What the shipped eval work is called.** `docs/roadmap.md` frames v0.5 as
+7. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
+8. **What the shipped eval work is called.** `docs/roadmap.md` frames v0.5 as
    the baseline and says the numbered freezes stopped there, matching
    CLAUDE.md — but score removal, `import`, compile-time eval and the value
    machine all landed after that line was drawn. If they are v0.6, it is the
@@ -80,8 +76,11 @@ can spell. Every item of this audit is now either landed or decided.
   driver's event frames, and a note meets the sweep's value then; the driver
   no longer cancels loop sweeps at a note and a PARAM_SET ends its target's
   sweep), the SW registration, macro release timing (key-off mid-attack now
-  jumps to the release on its frame; the driver's PSG `:vel` release no
-  longer drones past its end). Still open: a **TEMPO_SWEEP** —
+  jumps to the release on its frame), the tick `:step` clock, the `:keyon`
+  restart (both since 2026-09-27, driver-decisions.md §9), the PSG `:vol`
+  macro in the preview, and four drones (a PSG `:vel`/`:vol` release ending
+  above silence, a claim mid-release, a `:master`/`:vol` sweep written ahead
+  over a held note's live key-off). Still open: a **TEMPO_SWEEP** —
   the preview ramps tempo per scheduler pass in ticks, the driver per frame
   in integer increments — skews every later event by up to a frame
   (`m2-motion`); a `:master` sweep that starts on one track's setup frame
@@ -91,7 +90,12 @@ can spell. Every item of this audit is now either landed or decided.
   tick-clocked macro whose note spans a tempo change keeps the note-on tempo
   in the preview (it schedules the note's macro ahead; the driver follows the
   change); a `:vel` macro's float levels (language.md: computed
-  values stay float) quantize to 16 steps on the driver.
+  values stay float) quantize to 16 steps on the driver; a `:keyon` retrigger
+  after key-off (an echo tail in `#rel`) restarts the envelopes on the driver
+  (into their release again) but not in the preview, which restarts them only
+  between note-on and key-off; a second preview run of a score on the same
+  player differs from the first in a modulator TL (45 scores, older than
+  2026-09-26 — state not reset between runs, not a drone).
 
 - Nf in one track converted at another track's mid-song tempo change (§4).
 - Tick-0 tempo written as an expression is not seen by the Nf prescan.

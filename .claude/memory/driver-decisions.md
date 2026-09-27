@@ -271,6 +271,23 @@ increment into C *after* it. Two engine build traps: **the image boots at level
   delayed by the same amount, which gives the same total delay. Two fixes do
   address it: priming at load (shipped, `fb4fd78`) and VSET bodies in the
   sample-bank ROM (open, `roadmap.md` #3).
+- **A tick-written macro `:step` runs on the track's tick clock** (user,
+  2026-09-27, chosen over an 8.8 fractional frame step). The frame rounding it
+  replaced drifted a keyon roll off the beat (a 16th at 118 BPM is 7.63
+  frames → 8, 6 frames a bar — `random-gate`). The 8.8 frame step would have
+  averaged right but jittered a frame per hit and ignored tempo changes; the
+  tick clock follows tempo sweeps and PAL for free. Cost: flags bit3, a 16-bit
+  accumulator per running slot, the note's track `acc` passed to the trigger.
+  `driver.md` §13.2, gate `m4-macro-tick`.
+- **A `:keyon` retrigger restarts the envelopes, not `:pitch`/`:semi`** (user,
+  2026-09-27, option "a" of three). Restarting every macro broke the
+  documented retriggered arp; restarting none left a per-hit level envelope
+  unplayed. KEYON slots step first in the frame so the restarted envelope
+  lands in the retrigger's frame whatever the bind order.
+- **Inline loop sweeps are not cancelled by a note** (2026-09-26): the spec
+  says a timeline sweep is free of key-on (language.md §5.1), and the
+  driver's cancel had made every inline loop sweep dead on arrival. A
+  PARAM_SET ends its target's sweep instead.
 - **A VBlank-only pump mode is wanted as an option**, because a game (racing,
   raster 3D) may need HBlank for itself. Shipped as
   `MMLisp_attachVBlankOnly`. The user's stated order is **correct playback
