@@ -2681,9 +2681,13 @@ export class DrvPlayer {
     // decay tail after the last key-off (an echo tail, a PSG fade) is part of
     // the song. The engine owns PCM playback, so a shot's tail is not the
     // sequencer's to wait for; `mml_done` in the C reads the same.
+    // ...nor a one-shot sweep (a closing fade, a last glide); a loop curve
+    // never ends, so it does not hold the song open.
     return (
       this._trk.every((t) => !t.running || t.held) &&
-      !this._macroSlots.some((ss) => ss.some((s) => s && (s.state === "release" || s.state === "tail")))
+      !this._macroSlots.some((ss) => ss.some((s) => s && (s.state === "release" || s.state === "tail"))) &&
+      !this._sweeps.some((ss) => ss.some((s) => s && !s.loop)) &&
+      !this._tempoSweep && !this._csmRateSweep
     );
   }
 

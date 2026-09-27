@@ -36,10 +36,10 @@
     "digest": "811c9dc5"
   },
   "m2-motion.mmlisp": {
-    "ok": false,
-    "mismatches": 4,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "0d274a04"
+    "digest": "811c9dc5"
   },
   "m2-pcm.mmlisp": {
     "ok": true,
@@ -55,9 +55,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 473,
+    "mismatches": 299,
     "compileErrors": 0,
-    "digest": "f8db084a"
+    "digest": "3c331309"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -323,6 +323,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-level-sweeps.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-loop-break-state.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -351,7 +357,7 @@
     "ok": false,
     "mismatches": 61,
     "compileErrors": 0,
-    "digest": "56a743f3"
+    "digest": "e6eea8cc"
   },
   "m4-pcm-2v-master.mmlisp": {
     "ok": true,
@@ -438,10 +444,10 @@
     "digest": "811c9dc5"
   },
   "p3-claim-se-out.mmlisp": {
-    "ok": false,
-    "mismatches": 120,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "f2c59475"
+    "digest": "811c9dc5"
   },
   "p3-lifecycle.mmlisp": {
     "ok": true,

@@ -2273,6 +2273,12 @@ int mml_done(const MMLSeq *s) {
       uint8_t st = s->macro_slots[mc][i].state;
       if (st == MML_MACRO_RELEASE || st == MML_MACRO_TAIL) return 0;
     }
+  /* ...nor a one-shot sweep (a closing fade, a last glide); a loop curve never
+   * ends, so it does not hold the song open. */
+  for (int b = 0; b < MML_SWEEP_BANKS; b++)
+    for (int i = 0; i < 2; i++)
+      if (s->sweeps[b][i].active && !s->sweeps[b][i].loop) return 0;
+  if (s->tempo_sweep.active || s->csm_sweep.active) return 0;
   return 1;
 }
 

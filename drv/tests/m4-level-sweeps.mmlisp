@@ -1,0 +1,10 @@
+; M4 gate: level sweeps meeting level macros, frame by frame in the driver's
+; order — a sweep steps first (while keyed), then the macros, each write
+; composing with the others' values then. A :master sweep written at the head
+; of a track that does not loop runs its full length (not a tick), and a
+; closing pitch sweep past the last note keeps the song open until it ends.
+(fm1 :tempo 120 :master (linear 31..12 :len 2) c1 :pitch (linear 0..700 :len 2) c4)
+
+(sqr1 (macro :vol [31 28 25 22]) c2 :vol 31 c2)
+
+(sqr2 :vol 31 c4 :vol (linear 31..10 :len 2) (macro :step 4f :vel [15 #sus 12 9]) c2 c4)

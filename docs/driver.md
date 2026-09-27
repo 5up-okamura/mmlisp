@@ -1111,7 +1111,8 @@ region; `(wait key-off)` marks the release boundary).
   the hardware EG (`$28` off→on). After key-off (a `#rel` echo tail) a tap only
   re-keys the EG — the envelopes play their release through the taps — and
   the KEYON slot's end keys the channel off a step after its last tap (the
-  TAIL state). `mml_done` waits for a release or tail still playing. KEYON
+  TAIL state). `mml_done` waits for a release or tail still playing, and for a one-shot sweep
+  (a closing fade or glide); a loop curve never ends and does not hold it. KEYON
   slots step first in the frame, so a
   restarted envelope takes its first step in the retrigger's frame, and a
   tick-clocked one counts from the retrigger's tick. PSG has no hardware EG, so the

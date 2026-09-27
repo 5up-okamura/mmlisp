@@ -913,17 +913,21 @@ export class IRPlayer {
     );
   }
 
+  // Dispatch every track's events up to `horizon` in time order across the
+  // tracks (ties by track order). A track at a time is not enough: an event
+  // with a global effect — a :master sweep, a tempo change — must find the
+  // other tracks' earlier events already dispatched and their later ones not.
   _scheduleTracks(now, horizon) {
-    for (const [tIdx, track] of this._tracks.entries()) {
-      // Inner guard handles multiple loop-restarts within one lookahead window
-      let guard = 0;
-      while (guard++ < 16) {
-        while (track.flatIndex < track.events.length) {
+    const restarts = new Array(this._tracks.length).fill(0);
+    // A track's next event time, restarting its loop when it runs out (at
+    // most 16 laps a call, for a zero-length loop); Infinity when it is done
+    // or held at the swap boundary.
+    const nextTime = (track, tIdx) => {
+      for (;;) {
+        if (track.flatIndex < track.events.length) {
           const ev = track.events[track.flatIndex];
           // Read secsPerTick live: a TEMPO_SET dispatched earlier in this very
-          // pass re-anchors audioTimeAtTick0 for the NEW tempo — mapping later
-          // events with a stale secsPerTick would schedule everything inside
-          // the lookahead window after a tempo change at the wrong time.
+          // pass re-anchors audioTimeAtTick0 for the NEW tempo.
           let evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
           if (
             this._drvSetupShift &&
@@ -932,51 +936,61 @@ export class IRPlayer {
           ) {
             evTime -= this._drvSetupShift; // leading setup: one frame earlier
           }
-          if (evTime > horizon) break;
           // Pending swap: stop the outgoing tracks at the swap boundary so they
           // never emit past it (the incoming IR takes over there).
-          if (evTime >= this._scheduleCapTime) break;
-
-          // After a swap commit, _dispatchFloor suppresses the incoming IR's
-          // loop catch-up so nothing is written before the boundary; advance
-          // past those events without dispatching.
-          if (evTime >= this._dispatchFloor) {
-            this._dispatchEvent(ev, evTime);
-            if (this._onTrig && ev.cmd === "TRIG") {
-              const code = ev.args?.code;
-              const delay = Math.max(0, evTime - now) * 1000;
-              this._scheduleUiCallback(() => this._onTrig(tIdx, code), delay);
-            }
-            if (
-              this._onLine &&
-              ev.src?.line != null &&
-              !PLAYHEAD_SKIP_CMDS.has(ev.cmd)
-            ) {
-              const src = ev.src;
-              const delay = Math.max(0, evTime - now) * 1000;
-              this._scheduleUiCallback(() => this._onLine(tIdx, src), delay);
-            }
-          }
-          track.flatIndex++;
+          return evTime >= this._scheduleCapTime ? Infinity : evTime;
         }
-
         // Per-track independent loop restart (only if source defines a loop)
         if (
           this._loop &&
           track.hasLoop &&
           track.events.length > 0 &&
-          track.flatIndex >= track.events.length
+          restarts[tIdx]++ < 16
         ) {
           track.loopCount++;
           track.audioTimeAtTick0 =
             track.startAudioTime +
             track.loopCount * track.loopDuration * this._secsPerTick;
           track.flatIndex = track.loopStartIndex ?? 0;
-          // Continue to schedule new-iteration events that fall within horizon
-        } else {
-          break;
+          continue;
+        }
+        return Infinity;
+      }
+    };
+    for (;;) {
+      let tIdx = -1;
+      let evTime = Infinity;
+      for (let i = 0; i < this._tracks.length; i++) {
+        const t = nextTime(this._tracks[i], i);
+        if (t < evTime) {
+          evTime = t;
+          tIdx = i;
         }
       }
+      if (tIdx < 0 || evTime > horizon) break;
+      const track = this._tracks[tIdx];
+      const ev = track.events[track.flatIndex];
+      // After a swap commit, _dispatchFloor suppresses the incoming IR's
+      // loop catch-up so nothing is written before the boundary; advance
+      // past those events without dispatching.
+      if (evTime >= this._dispatchFloor) {
+        this._dispatchEvent(ev, evTime);
+        if (this._onTrig && ev.cmd === "TRIG") {
+          const code = ev.args?.code;
+          const delay = Math.max(0, evTime - now) * 1000;
+          this._scheduleUiCallback(() => this._onTrig(tIdx, code), delay);
+        }
+        if (
+          this._onLine &&
+          ev.src?.line != null &&
+          !PLAYHEAD_SKIP_CMDS.has(ev.cmd)
+        ) {
+          const src = ev.src;
+          const delay = Math.max(0, evTime - now) * 1000;
+          this._scheduleUiCallback(() => this._onLine(tIdx, src), delay);
+        }
+      }
+      track.flatIndex++;
     }
   }
 
@@ -1277,6 +1291,8 @@ export class IRPlayer {
       return {
         events: trimmedEvents,
         // Where its tempo changes sit, for lengths spanning one (_timeAfterTicks).
+        // Where the track's last note or rest runs out.
+        endTick: trimmedEvents.reduce((m, e) => Math.max(m, e.tick + (Number(e.args?.length) || 0)), 0),
         tempoIdx: trimmedEvents.flatMap((e, i) => (e.cmd === "TEMPO_SET" && e.tick > 0 ? [i] : [])),
         tempoCut: trimmedEvents.flatMap((e, i) =>
           (e.cmd === "TEMPO_SET" || e.cmd === "TEMPO_SWEEP") && e.tick > 0 ? [i] : []),
@@ -2939,8 +2955,14 @@ export class IRPlayer {
 
     // Default sweep horizon is one structural loop. If sweep starts in the intro
     // section (before loopStartTick), it must at least survive until first jump.
-    let endTick =
-      track.hasLoop && ev.tick < loopStartTick
+    // A track that does not loop has no structural loop to bound it: as on
+    // the driver, a one-shot runs its length and a loop curve runs to the
+    // song's end.
+    let endTick = !track.hasLoop
+      ? isLoopCurve
+        ? Math.max(ev.tick + 1, ...this._tracks.map((t) => t.endTick ?? 0))
+        : Infinity
+      : ev.tick < loopStartTick
         ? jumpTick
         : ev.tick + loopDuration;
     let hasExplicitStop = false;
@@ -2991,7 +3013,10 @@ export class IRPlayer {
   //   loopPhaseOffset   – phase offset for looping curves (sin/tri/saw/…)
   _sweepFrameParams(ev, baseFrames, loop, when = null) {
     const secsPerTick = this._secsPerTick;
-    const budgetFrames = this._resolveSweepBudgetFrames(ev, when);
+    const budgetFrames = Math.min(
+      this._resolveSweepBudgetFrames(ev, when),
+      loop ? Infinity : Math.max(1, baseFrames), // an unbounded one-shot: its length
+    );
     const endTick = this._resolveSweepEndTick(ev);
     const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
     const spansLoopBoundary =
@@ -3000,7 +3025,7 @@ export class IRPlayer {
       loop && spansLoopBoundary && track != null
         ? track.loopCount * budgetFrames
         : 0;
-    const loopDurationFrames = track
+    const loopDurationFrames = track?.hasLoop
       ? Math.max(1, Math.floor((track.loopDuration ?? 1) * secsPerTick * 60))
       : budgetFrames;
     const loopCount = track?.loopCount ?? 0;
@@ -4118,19 +4143,51 @@ export class IRPlayer {
       this._composePsgAtt(first, this._psgVolAtNoteOn(psgCh, noteWhen), this._masterAtNoteOn(noteWhen)),
       noteWhen,
     );
-    const times = [...new Set([...vel.out, ...vol.out].map((s) => s.t))].sort((x, y) => x - y);
-    const has = (list, t) => list.some((s) => Math.abs(s.t - t) < 1e-9);
-    for (const t of times) {
-      const master = this._masterAt(t);
-      // Both step here: the driver writes each in bind order, the first
-      // composing with the other's value before its own step.
-      if (has(vel.out, t) && has(vol.out, t)) {
-        const before = t - 1e-6;
-        this._psgSetAtt(psgCh, velFirst
-          ? this._composePsgAtt(velAt(t), volAt(before), master)
-          : this._composePsgAtt(velAt(before), volAt(t), master), t);
+    // Frame by frame, in the driver's order: a running :vol or :master sweep
+    // steps first (while keyed), composing with the note's vel as it stands,
+    // then the macros' samples in bind order, each composing with the other's
+    // value then. Every write that changes the level is an edge on the chip.
+    const F0 = this._eventFrame(noteWhen);
+    const frameOf = (list) => {
+      const m = new Map();
+      for (const x of list) m.set(this._eventFrame(x.t), x);
+      return m;
+    };
+    const velF = frameOf(vel.out);
+    const volF = frameOf(vol.out);
+    const vs = this._psgVolSweep[psgCh];
+    const ms = this._masterSweep;
+    const keyEnd = this._eventFrame(this._psgKeyedUntil[psgCh]);
+    const sweepEnd = Math.max(
+      vs ? vs.startFrame + vs.frames : -Infinity,
+      ms ? ms.startFrame + ms.frames : -Infinity,
+    );
+    const lastF = Math.max(
+      ...[...velF.keys(), ...volF.keys()],
+      Math.min(Number.isFinite(keyEnd) ? keyEnd - 1 : F0, sweepEnd - 1),
+      F0,
+    );
+    let velLive = first;
+    let volNow = null; // the channel's :vol once a sweep step or the macro set it
+    const volAtF = (F) => volNow ?? this._psgVolAtFrame(psgCh, F);
+    const inSweep = (sw, F) => sw && F >= sw.startFrame && F < sw.startFrame + sw.frames;
+    for (let F = F0; F <= lastF; F++) {
+      const t = F === F0 ? noteWhen : Math.max(noteWhen, this._frameOrigin + F / 60);
+      const master = this._masterAtFrame(F);
+      const write = () => this._psgSetAtt(psgCh, this._composePsgAtt(velLive, volAtF(F), master), t);
+      const vsOn = inSweep(vs, F);
+      if (F < keyEnd && (vsOn || inSweep(ms, F))) {
+        if (vsOn) volNow = Math.max(0, Math.min(31, this._sweepAtFrame(vs, F)));
+        write();
       }
-      this._psgSetAtt(psgCh, this._composePsgAtt(velAt(t), volAt(t), master), t);
+      const order = velFirst ? [[velF, "vel"], [volF, "vol"]] : [[volF, "vol"], [velF, "vel"]];
+      for (const [m, which] of order) {
+        const x = m.get(F);
+        if (!x) continue;
+        if (which === "vel") velLive = x.v;
+        else volNow = x.v;
+        write();
+      }
     }
     if (vol.out.length) this._psgVol[psgCh] = vol.out[vol.out.length - 1].v;
 
