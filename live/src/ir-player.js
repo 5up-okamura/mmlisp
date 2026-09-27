@@ -22,6 +22,8 @@ import {
   pitchToMidi,
   midiToFnumBlock,
   velToTlAtten,
+  velFine,
+  sumLevelOffsets,
   volToTlOffset,
   volToLinearGain,
   velToPsgAtten,
@@ -1462,12 +1464,13 @@ export class IRPlayer {
   _fm3OpTl(op, when) {
     const st = this._fm3Op[op - 1];
     const regs = this._chRegs[2];
-    const offset =
-      velToTlAtten(st.vel) +
-      volToTlOffset(when === undefined ? st.vol : this._fm3OpVolAtTime(op, when)) +
-      volToTlOffset(regs.vol ?? VOL_UNITY) +
-      volToTlOffset(this._masterVol ?? VOL_UNITY);
-    return Math.max(0, Math.min(127, Math.round((regs.ops[op - 1].voicedTl ?? 0) + offset)));
+    const offset = sumLevelOffsets(
+      velToTlAtten(velFine(st.vel)),
+      volToTlOffset(when === undefined ? st.vol : this._fm3OpVolAtTime(op, when)),
+      volToTlOffset(regs.vol ?? VOL_UNITY),
+      volToTlOffset(this._masterVol ?? VOL_UNITY),
+    );
+    return Math.max(0, Math.min(127, Math.round(regs.ops[op - 1].voicedTl ?? 0) + offset));
   }
   _writeFm3OpTl(op, when) {
     const o = this._chRegs[2].ops[op - 1];
@@ -2913,13 +2916,14 @@ export class IRPlayer {
   // level), vel 0 = a ~-30 dB floor — it never mutes. True silence is a rest,
   // or vol/master 0 (handled as a hard mute at key-on time).
   _carrierTl(op, vel, vol, master) {
-    // Sum the signed dB offsets (float) on top of the voiced TL, then quantize
-    // once. vel attenuates (floors, never mutes); vol/master are bipolar
-    // (boost = negative offset, clamped at TL 0). Uniform across carriers, so
-    // the patch's per-carrier balance is preserved.
-    const offset =
-      velToTlAtten(vel) + volToTlOffset(vol) + volToTlOffset(master);
-    return Math.max(0, Math.min(127, Math.round((op.voicedTl ?? 0) + offset)));
+    // Sum the signed dB offsets on top of the voiced TL, then quantize once —
+    // in the driver's quarter steps, vel on its eighth grid. vel attenuates
+    // (floors, never mutes); vol/master are bipolar (boost = negative offset,
+    // clamped at TL 0). Uniform across carriers, so the patch's per-carrier
+    // balance is preserved.
+    const offset = sumLevelOffsets(
+      velToTlAtten(velFine(vel)), volToTlOffset(vol), volToTlOffset(master));
+    return Math.max(0, Math.min(127, Math.round(op.voicedTl ?? 0) + offset));
   }
 
   // Snap curve/function outputs to discrete hardware lanes when needed.
@@ -3860,12 +3864,12 @@ export class IRPlayer {
 
   // Compose vel (0-15) / vol / master (0-31) into a PSG attenuation (0=loud,
   // 15=silent) via the same additive dB-offset model as FM, quantized once to
-  // the 16-step attenuator. vol or master 0 is a hard mute.
+  // the 16-step attenuator as the driver does. vol or master 0 is a hard mute.
   _composePsgAtt(vel, vol, master) {
     if (vol <= 0 || master <= 0) return 15;
-    const att =
-      velToPsgAtten(vel) + volToPsgOffset(vol) + volToPsgOffset(master);
-    return Math.max(0, Math.min(15, Math.round(att)));
+    const att = sumLevelOffsets(
+      velToPsgAtten(velFine(vel)), volToPsgOffset(vol), volToPsgOffset(master));
+    return Math.max(0, Math.min(15, att));
   }
 
   // Returns the current VOL (0-31) for a PSG channel at the given audio time,

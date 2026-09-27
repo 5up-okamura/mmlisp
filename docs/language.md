@@ -380,9 +380,10 @@ own level and all four compose (§15).
   `31` = full, lower cuts. **`0` is a hard mute** (FM skips key-on, PSG goes
   to max attenuation). Their offsets add.
 
-Authored values are integers; computed values (macros, delay taps) stay float
-through the pipeline and reach the hardware's native resolution (FM TL 0.75
-dB steps; PSG capped at its 16-step attenuator). A `:vel` macro fades only to
+Authored values are integers; a computed velocity (a `:vel` macro, a delay
+tap's `:vel*`) keeps eighths of a step, and the level is quantized once, at the
+chip's own resolution — FM TL 0.75 dB steps, so a `:vel` fade moves smoothly;
+PSG its 2 dB attenuator; PCM its 6 dB mixer shift. A `:vel` macro fades only to
 the velocity floor — for a fade to true silence automate `:tl` (carrier TL →
 127) or use `:vol`.
 

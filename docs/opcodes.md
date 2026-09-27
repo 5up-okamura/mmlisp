@@ -141,6 +141,11 @@ shortening, an irregular gate. Bytes are spent only where a value changes,
 which is how the language already works (`:vel` and `:gate` are sticky track
 state in the compiler) and keeps NOTE_ON a two-field read in the decoder.
 
+Velocity on the wire — `PARAM_SET VEL`, NOTE_ON_EX's `vel`, a `VEL` macro's
+samples — is in **eighths of a step** (0..120; an authored `:vel 12` is 96),
+the unit the driver holds it in (driver.md §7.1). The host API's
+`mml_set_param(VEL)`, a relative write and a sweep speak whole steps 0..15.
+
 Defaults at track start are vel = 15 and gate = 8 — no attenuation, full length
 — matching the compiler's defaults, so the exporter emits an initial PARAM_SET
 only for a non-default value.
@@ -185,7 +190,7 @@ only thing that watches this rule.
 
 | Bit | Field     | Size    | Meaning                                        |
 | --- | --------- | ------- | ---------------------------------------------- |
-| 0   | vel       | u8      | velocity for this note only (state untouched)  |
+| 0   | vel       | u8      | velocity for this note only (state untouched), in eighths 0..120 |
 | 1   | gate      | dur enc | absolute gate in ticks **from note-on** for this note only (covers `:gate-` and irregular gates). Counted down across TIE segments — a gate resolved over a tied whole may exceed this NOTE_ON_EX's own `dur`, keying off mid-tie; it is **not** clamped to the first segment. A following REST cancels a still-counting gate |
 | 2   | macro_ref | u8      | per-note one-shot: trigger MACRO_TABLE[macro_ref] for this note only, without touching the sticky active set (mmb.md §15, opcodes.md §6) |
 | 3   | legato    | —       | slur: write the F-number / recompose levels / re-snapshot macros but **do not re-key** (leave `$28`, the FM EG or PSG tone carries over). No field. `X ~ Y` different-pitch (language.md §3.1). FM/PSG only |
@@ -321,7 +326,7 @@ same bounds.
 | 0x03 | TEMPO_SCALE | 2     | —              | assigned in both tables, emitted by nothing (§7.1) |
 | 0x04 | VOL         | 1     | 0..31          | composed → carrier TL / PSG att    |
 | 0x05 | MASTER      | 1     | 0..31          | composed → carrier TL / PSG att    |
-| 0x06 | VEL         | 1     | 0..15          | note-on state → composed level     |
+| 0x06 | VEL         | 1     | 0..120 (⅛ step) | note-on state → composed level     |
 | 0x07 | NOTE_SEMI   | 1     | −48..48        | key-on pitch offset (macro target) |
 | 0x08 | KEYON       | 1     | 0..1           | gate retrigger (macro target)      |
 | 0x09 | GATE        | 1     | 0..8           | note-off timing state (eighths of dur; §4) |

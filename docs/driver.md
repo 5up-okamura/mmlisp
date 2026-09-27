@@ -677,20 +677,26 @@ addition, quantization once at the write:
 
 ```
 FM  (per carrier op of the current ALG):
-    TL  = clamp(0, 127, voicedTL[op] + vel_tl[vel] + vol_tl[vol] + vol_tl[master])
+    off4 = vel_tl4[vel] + vol_tl4[vol] + vol_tl4[master]
+    TL   = clamp(0, 127, voicedTL[op] + round4(off4))
 PSG:
-    att = clamp(0, 15,  vel_psg[vel] + vol_psg[vol] + vol_psg[master])
+    off4 = vel_psg4[vel] + vol_psg4[vol] + vol_psg4[master]
+    att  = clamp(0, 15, round4(off4))
 ```
+
+Each offset is held in **quarter steps** of the chip's attenuator and the sum
+is rounded once (`round4(x) = (x ± 2) >> 2`, half away from zero), so the
+runtime stays integer-only and quantizes once, at the register. `vel` here is
+the live velocity **in eighths of a step** (0…120, §7.1).
 
 Offset tables in 68k ROM, **generated from the `ir-utils.js` constants**
 (`TL_DB_PER_STEP` 0.75, `PSG_DB_PER_STEP` 2, `VEL_DB_PER_STEP` 2,
-`VOL_STEP_DB` 2, `VOL_UNITY` 31):
+`VOL_STEP_DB` 2, `VOL_UNITY` 31, `VEL_FINE` 8):
 
-- `vel_tl[16]` = round((15 − v) × 2 / 0.75) =
-  `[40,37,35,32,29,27,24,21,19,16,13,11,8,5,3,0]` (v = 0…15)
-- `vol_tl[32]` = round((31 − v) × 2 / 0.75) — v = 31 → 0 … v = 1 → 80;
+- `vel_tl4[121]` = round(4 × (15 − v/8) × 2 / 0.75) (v = 0…120, eighths)
+- `vol_tl4[32]` = round(4 × (31 − v) × 2 / 0.75) — v = 31 → 0 … v = 1 → 320;
   **shared by vol and master** (their offsets add)
-- `vel_psg[16]` = 15 − v; `vol_psg[32]` = 31 − v
+- `vel_psg4[121]` = round(4 × (15 − v/8)); `vol_psg4[32]` = 4 × (31 − v)
 
 Rules:
 
@@ -709,13 +715,23 @@ Rules:
   not volume); CH3 in special mode composes all four, because each operator
   carries its own level (§13.4). Gate: `m4-tl-compose`.
 - **Same-table requirement:** the JS reference and the 68k C use these
-  byte-identical integer tables. The tables round per term, whereas
-  `ir-player.js` sums floats and quantizes once — a known divergence of at
-  most ±2 TL steps (±1.5 dB) / ±1 PSG step, inside the §12 acceptance band.
+  byte-identical integer tables, and `ir-player.js` composes the same way
+  (`sumLevelOffsets`: each term rounded to a quarter step, the sum rounded
+  once, vel on the eighth grid), so the preview's levels are the driver's.
 
 ### 7.1 Velocity is two values: a base and a live one
 
-`vel` above is really **two** per-channel bytes, on FM, PSG and PCM alike:
+`vel` above is really **two** per-channel bytes, on FM, PSG and PCM alike.
+On FM and PSG both are held **in eighths of a step** (0…120): the score's
+`:vel` is a whole step, scaled ×8 on its way in (`PARAM_SET VEL`,
+`NOTE_ON_EX`, a host `SET_PARAM VEL`), while a `:vel` macro's samples arrive
+in eighths already (mmb.md §MACRO_TABLE) — a computed fade moves by the
+chip's own resolution (0.75 dB on FM) instead of the 2 dB score step, and a
+PSG fade still lands on its 2 dB attenuator. A relative write (`PARAM_ADD`,
+a sweep's `from` read) reads the live value back as whole steps, rounded.
+PCM keeps whole steps (its level is a 6 dB shift); a macro's eighths are
+rounded to them.
+
 
 - **`vel_base`** — the score's sticky velocity. Written *only* by a
   `PARAM_SET VEL` out of the event stream — which **stores it and writes

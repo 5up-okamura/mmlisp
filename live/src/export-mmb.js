@@ -49,6 +49,8 @@ import {
   sampleCurveUnit,
   FRAME_HZ_NTSC,
   FRAME_HZ_PAL,
+  VEL_FINE,
+  VEL_FINE_MAX,
 } from "./ir-utils.js";
 
 // The loop-point targets, and the largest byte offset one can name: the bank's
@@ -411,6 +413,20 @@ export function encodeMmb(ir, opts = {}) {
     return { step: Math.max(1, Math.min(255, Math.round(v))), tick };
   };
 
+  // The score's velocity on the wire: eighths of a step, like a :vel macro's
+  // samples (driver.md §7.1) — an authored vel is a whole step, a delay tap's
+  // computed one need not be.
+  const velOnWire = (v) =>
+    Math.max(0, Math.min(VEL_FINE_MAX, Math.round(clampForTarget("VEL", Number(v ?? 15)) * VEL_FINE)));
+
+  // One macro sample on the wire: the target's integer, clamped. A :vel
+  // sample is in eighths of a step (driver.md §7.1) — the level tables are
+  // that fine, so a fade is not cut to the 16 score steps.
+  const macroSample = (target, v) =>
+    target === "VEL"
+      ? Math.max(0, Math.min(VEL_FINE_MAX, Math.round(clampForTarget(target, v) * VEL_FINE)))
+      : clampForTarget(target, Math.round(v));
+
   // Sample one curve into an integer value array, clamped to the target.
   const sampleCurveValues = (spec, target, count, phaseAt) => {
     const from = Number(spec.from ?? 0);
@@ -418,7 +434,7 @@ export function encodeMmb(ir, opts = {}) {
     const out = [];
     for (let i = 0; i < count; i++) {
       const unit = sampleCurveUnit(spec.curve ?? "linear", phaseAt(i), spec.params);
-      out.push(clampForTarget(target, Math.round(from + (to - from) * unit)));
+      out.push(macroSample(target, from + (to - from) * unit));
     }
     return out;
   };
@@ -447,7 +463,7 @@ export function encodeMmb(ir, opts = {}) {
       // float values a signal⊕signal materialization produces. Hold sentinels
       // (null) pass through untouched.
       const values = (spec.steps ?? []).map((v) =>
-        v == null ? null : clampForTarget(target, Math.round(v)),
+        v == null ? null : macroSample(target, v),
       );
       if (values.length === 0) return null;
       if (values.length > 255) return skip(`has ${values.length} steps, over the 255 a macro holds`);
@@ -633,7 +649,7 @@ export function encodeMmb(ir, opts = {}) {
 
     // Per-track encoder state.
     let clock = 0; // running tick position of the stream
-    let velState = 15; // sticky VEL (opcodes.md §4)
+    let velState = VEL_FINE_MAX; // sticky VEL (opcodes.md §4), in eighths
     let gateState = 8; // sticky GATE in eighths of dur
     const activeMacros = new Map(); // sticky active macro per target id (driver.md §13.1)
     const markerOffsets = new Map(); // marker string id → stream offset
@@ -774,7 +790,7 @@ export function encodeMmb(ir, opts = {}) {
               activeMacros.set(target, id);
             }
           }
-          const vel = a.vel ?? 15;
+          const vel = velOnWire(a.vel);
           if (vel !== velState) {
             emitParamState(TARGET_ID.VEL, vel);
             velState = vel;
@@ -1228,7 +1244,7 @@ export function encodeMmb(ir, opts = {}) {
             clock += a.length ?? 0;
             break;
           }
-          const vel = a.vel ?? 15;
+          const vel = velOnWire(a.vel);
           if (vel !== velState) {
             emitParamState(TARGET_ID.VEL, vel);
             velState = vel;

@@ -288,6 +288,16 @@ increment into C *after* it. Two engine build traps: **the image boots at level
   says a timeline sweep is free of key-on (language.md §5.1), and the
   driver's cancel had made every inline loop sweep dead on arrival. A
   PARAM_SET ends its target's sweep instead.
+- **Velocity is held in eighths of a step on FM and PSG** (user, 2026-09-27,
+  option "a" over rounding in the language). The design intent was "compute
+  fine, quantize once at the output", and the driver had cut a `:vel` macro
+  to 16 steps before the tables. Now the stream, the macro samples and
+  NOTE_ON_EX carry 0..120, the tables are 121 entries in quarter steps, and
+  the preview composes with the same quarter math (`sumLevelOffsets`,
+  `velFine`). Cost: ~420 bytes of ROM tables, no runtime cost. Asked whether
+  this is over-spec for the Mega Drive: no — the chip's TL already resolves
+  0.75 dB, and a fade stepping 2 dB is audible zipper noise. The host API and
+  relative writes stay in whole steps; PCM keeps whole steps (6 dB shift).
 - **A VBlank-only pump mode is wanted as an option**, because a game (racing,
   raster 3D) may need HBlank for itself. Shipped as
   `MMLisp_attachVBlankOnly`. The user's stated order is **correct playback

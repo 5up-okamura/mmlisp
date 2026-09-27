@@ -34,13 +34,7 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
 6. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
 7. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
-8. **Computed levels are float in the language, integer on the driver.**
-   language.md §5 says computed values (macros, delay taps) stay float to the
-   hardware's resolution (FM TL 0.75 dB); the driver quantizes a `:vel`
-   macro to its 16 velocity steps (≈2 dB). Refine the driver (a finer vel
-   scale in the tables), or round in the language (the preview then rounds
-   too)?
-9. **What the shipped eval work is called.** `docs/roadmap.md` frames v0.5 as
+8. **What the shipped eval work is called.** `docs/roadmap.md` frames v0.5 as
    the baseline and says the numbered freezes stopped there, matching
    CLAUDE.md — but score removal, `import`, compile-time eval and the value
    machine all landed after that line was drawn. If they are v0.6, it is the
@@ -83,7 +77,8 @@ can spell. Every item of this audit is now either landed or decided.
   macros and sweeps frame by frame, tempo sweeps and tempo quantization,
   cross-track event order, replay state). What the A/B still shows is the
   pitch model (float `pow` vs the driver's cent LUT, ±1 F-number — the
-  `m2b-pitch` residue) and the one open question in §1 (float levels).
+  `m2b-pitch` residue). Computed levels were decided: the driver holds
+  velocity in eighths (driver-decisions.md §9).
 
 ## 3. Why the value machine has this shape
 

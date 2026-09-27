@@ -218,6 +218,28 @@ export const TL_DB_PER_STEP = 0.75; // YM2612 TL — 128 steps over ~95 dB
 export const PSG_DB_PER_STEP = 2; // SN76489 attenuator — 16 steps
 // Velocity ladder (PMD / MDSDRV coarse-volume convention):
 export const VEL_DB_PER_STEP = 2;
+// The driver holds a live velocity in eighths of a step (0..15·8): a :vel
+// macro is computed, so it moves finer than the 16-step ladder, and composes
+// down to the chip's own resolution (FM TL 0.75 dB) — rounded once, at the
+// register (driver.md §7). An authored :vel is a whole step (×8).
+export const VEL_FINE = 8;
+export const VEL_FINE_MAX = 15 * VEL_FINE;
+
+/** A velocity as the driver holds it: 0..15 on the 1/VEL_FINE grid. */
+export function velFine(v) {
+  const q = Math.round(Number(v) * VEL_FINE) / VEL_FINE;
+  return q < 0 ? 0 : q > 15 ? 15 : q;
+}
+
+/**
+ * Sum level offsets (steps) the way the driver does: each held in quarter
+ * steps, the sum rounded once (half away from zero, via an arithmetic shift).
+ */
+export function sumLevelOffsets(...offs) {
+  let off4 = 0;
+  for (const o of offs) off4 += Math.round(o * 4);
+  return (off4 + (off4 >= 0 ? 2 : -2)) >> 2;
+}
 // vol/master mixer-fader (tunable): VOL_UNITY = 0 dB reference on the 0–31
 // scale. Unity sits at the top (31 = full, no attenuation), so vol/master is a
 // pure attenuator — lower values cut, matching the master fader.

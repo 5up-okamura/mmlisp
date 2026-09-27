@@ -80,9 +80,9 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* ── Constant tables (tables.c, generated) ────────────────────────────────── */
 extern const uint16_t MML_FNUM_BLOCK[128];
 extern const uint16_t MML_PSG_PERIOD[128];
-extern const int16_t MML_VEL_TL4[16];
+extern const int16_t MML_VEL_TL4[121];
 extern const int16_t MML_VOL_TL4[32];
-extern const int16_t MML_VEL_PSG4[16];
+extern const int16_t MML_VEL_PSG4[121];
 extern const int16_t MML_VOL_PSG4[32];
 extern const uint8_t MML_CARRIER_MASK[8];
 extern const uint8_t MML_OP_ADDR_OFFSET[4];

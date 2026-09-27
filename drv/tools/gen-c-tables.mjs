@@ -21,6 +21,8 @@ import {
   velToTlAtten,
   volToTlOffset,
   velToPsgAtten,
+  VEL_FINE,
+  VEL_FINE_MAX,
   volToPsgOffset,
   fmCarrierOpsForAlg,
   OP_ADDR_OFFSET,
@@ -84,9 +86,11 @@ for (let n = 0; n < 128; n++) {
 // Level offsets in QUARTER steps: composition sums them and rounds once, which
 // is how the runtime stays integer-only while matching the player's
 // float-sum-then-quantize inside the documented band (driver.md §7).
-const velTl4 = [...Array(16)].map((_, v) => Math.round(velToTlAtten(v) * 4));
+// Velocity in eighths of a step (VEL_FINE): a :vel macro moves finer than the
+// ladder (driver.md §7.1).
+const velTl4 = [...Array(VEL_FINE_MAX + 1)].map((_, v) => Math.round(velToTlAtten(v / VEL_FINE) * 4));
 const volTl4 = [...Array(32)].map((_, v) => Math.round(volToTlOffset(v) * 4));
-const velPsg4 = [...Array(16)].map((_, v) => Math.round(velToPsgAtten(v) * 4));
+const velPsg4 = [...Array(VEL_FINE_MAX + 1)].map((_, v) => Math.round(velToPsgAtten(v / VEL_FINE) * 4));
 const volPsg4 = [...Array(32)].map((_, v) => Math.round(volToPsgOffset(v) * 4));
 const carrierMask = [...Array(8)].map((_, alg) =>
   fmCarrierOpsForAlg(alg).reduce((m, op) => m | (1 << op), 0),
@@ -112,13 +116,13 @@ ${rows(psgPeriod, 8)}
 };
 
 /* Level offsets, quarter steps */
-const int16_t MML_VEL_TL4[16] = {
+const int16_t MML_VEL_TL4[121] = {
 ${rows(velTl4, 8)}
 };
 const int16_t MML_VOL_TL4[32] = {
 ${rows(volTl4, 8)}
 };
-const int16_t MML_VEL_PSG4[16] = {
+const int16_t MML_VEL_PSG4[121] = {
 ${rows(velPsg4, 8)}
 };
 const int16_t MML_VOL_PSG4[32] = {

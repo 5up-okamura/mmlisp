@@ -60,6 +60,8 @@ import {
   midiToPsgPeriod,
   midiToFnumBlock,
   velToTlAtten,
+  VEL_FINE,
+  VEL_FINE_MAX,
   volToTlOffset,
   velToPsgAtten,
   volToPsgOffset,
@@ -98,12 +100,13 @@ function buildLuts() {
   // composition sums them and rounds once (integer end result), matching the
   // player's float-sum-then-quantize within the documented ±2 TL band.
   // To keep the runtime integer-only the offsets are stored in 1/4 steps.
-  const velTl4 = new Int16Array(16);
-  for (let v = 0; v < 16; v++) velTl4[v] = Math.round(velToTlAtten(v) * 4);
+  // vel is indexed in eighths of a step (driver.md §7.1).
+  const velTl4 = new Int16Array(VEL_FINE_MAX + 1);
+  for (let v = 0; v <= VEL_FINE_MAX; v++) velTl4[v] = Math.round(velToTlAtten(v / VEL_FINE) * 4);
   const volTl4 = new Int16Array(32);
   for (let v = 0; v < 32; v++) volTl4[v] = Math.round(volToTlOffset(v) * 4);
-  const velPsg4 = new Int16Array(16);
-  for (let v = 0; v < 16; v++) velPsg4[v] = Math.round(velToPsgAtten(v) * 4);
+  const velPsg4 = new Int16Array(VEL_FINE_MAX + 1);
+  for (let v = 0; v <= VEL_FINE_MAX; v++) velPsg4[v] = Math.round(velToPsgAtten(v / VEL_FINE) * 4);
   const volPsg4 = new Int16Array(32);
   for (let v = 0; v < 32; v++) volPsg4[v] = Math.round(volToPsgOffset(v) * 4);
   return { fnumBlock, psgPeriod, velTl4, volTl4, velPsg4, volPsg4 };
@@ -142,8 +145,8 @@ function freshFmChannel() {
     // makes the note's own velocity land — the IR carries vel on every NOTE_ON,
     // the MMB carries it as change-only sticky state, so without the copy a
     // macro's last sample would stay the channel's velocity forever.
-    velBase: 15,
-    vel: 15,
+    velBase: VEL_FINE_MAX, // FM and PSG vel are in eighths of a step (§7.1)
+    vel: VEL_FINE_MAX,
     vol: VOL_UNITY,
     gate: 8, // eighths of dur (opcodes.md §4)
     pitchCents: 0, // PARAM_SET NOTE_PITCH offset
@@ -407,8 +410,8 @@ export class DrvPlayer {
     this._noiseMode = 4; // white0 — compiler emits an explicit tick-0 set anyway
     this._fm = Array.from({ length: 6 }, freshFmChannel);
     this._psg = Array.from({ length: 4 }, () => ({
-      velBase: 15, // score's sticky velocity; vel is the macro-driven live one
-      vel: 15,
+      velBase: VEL_FINE_MAX, // score's sticky velocity; vel is the macro-driven live one
+      vel: VEL_FINE_MAX,
       vol: VOL_UNITY,
       gate: 8,
       pitchCents: 0,
@@ -456,8 +459,8 @@ export class DrvPlayer {
     this._fm3OpCents = [0, 0, 0, 0];
     // ...and its own level, composed with the shared CH3's vol — the group
     // fader the note-less `(fm3 …)` track writes — and the global master.
-    this._fm3OpVel = [15, 15, 15, 15];
-    this._fm3OpVelBase = [15, 15, 15, 15];
+    this._fm3OpVel = [VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX];
+    this._fm3OpVelBase = [VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX];
     this._fm3OpVol = [VOL_UNITY, VOL_UNITY, VOL_UNITY, VOL_UNITY];
     // PCM voices (driver.md §14): pcm1–pcm3 (channels 20–22). The sequencer
     // does not model playback — the engine owns every pointer — it keeps what
@@ -1352,8 +1355,11 @@ export class DrvPlayer {
   // note has nothing to overwrite it and this is what puts the score's
   // velocity back.
   _restoreVelBase(channelId, exVel = null) {
-    const clamp = (v) => (v < 0 ? 0 : v > 15 ? 15 : v);
     const op = this._fm3OpFor(channelId);
+    // FM and PSG hold eighths; PCM whole steps.
+    const fine = channelId < 20;
+    const max = fine ? VEL_FINE_MAX : 15;
+    const clamp = (v) => (v < 0 ? 0 : v > max ? max : v);
     const st = op
       ? null
       : channelId < 6
@@ -1378,10 +1384,14 @@ export class DrvPlayer {
       const d = this._macros[this._macroActive[mc].get(TARGET_ID.VEL)];
       if (!d || d.flags & 6) return;
       const v = d.release === 0 ? null : d.values[0];
-      setVel(v != null ? clamp(v) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
+      setVel(v != null ? clamp(fine ? v : (v + VEL_FINE / 2) >> 3)
+        : op ? this._fm3OpVelBase[op - 1] : st.velBase);
       return;
     }
-    setVel(exVel != null ? clamp(exVel) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
+    // exVel is in eighths, as the stream carries it.
+    const ex8 = exVel == null ? null : exVel < 0 ? 0 : exVel > VEL_FINE_MAX ? VEL_FINE_MAX : exVel;
+    setVel(ex8 == null ? (op ? this._fm3OpVelBase[op - 1] : st.velBase)
+      : fine ? ex8 : (ex8 + VEL_FINE / 2) >> 3);
   }
 
   // ── PARAM_SET execution (opcodes.md §7 target table) ─────────────────────
@@ -1459,14 +1469,15 @@ export class DrvPlayer {
   // Only the base: the sounding note keeps its velocity (a :vol or :master
   // change recomposes it with that), and the next note-on takes the base up.
   _storeVel(channelId, value) {
-    const v = value < 0 ? 0 : value > 15 ? 15 : value;
+    // The stream's vel is in eighths (driver.md §7.1); PCM keeps whole steps.
+    const v = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
     const op = this._fm3OpFor(channelId);
     if (op) this._fm3OpVelBase[op - 1] = v;
     else if (channelId < 6) this._fm[channelId].velBase = v;
     else if (channelId < 10) this._psg[channelId - 6].velBase = v;
     else if (channelId >= 20 && channelId <= 22) {
       const pv = this._pcmVoices[channelId - 20];
-      if (pv) pv.velBase = v;
+      if (pv) pv.velBase = (v + VEL_FINE / 2) >> 3;
     }
   }
 
@@ -1475,6 +1486,12 @@ export class DrvPlayer {
     if (!name) {
       this._diag("W_DRV_UNKNOWN_TARGET", `PARAM_SET target 0x${target.toString(16)}`);
       return;
+    }
+    if (target === TARGET_ID.VEL) {
+      // A macro (force) writes eighths, the score and the host whole steps.
+      const pcm = channelId >= 20 && channelId <= 22;
+      if (pcm && force) value = (value + VEL_FINE / 2) >> 3;
+      else if (!pcm && !force) value *= VEL_FINE;
     }
     // Global targets first.
     if (target === TARGET_ID.MASTER) {
@@ -1517,7 +1534,7 @@ export class DrvPlayer {
       }
       if (op && (target === TARGET_ID.VEL || target === TARGET_ID.VOL)) {
         if (target === TARGET_ID.VEL) {
-          this._fm3OpVel[op - 1] = value < 0 ? 0 : value > 15 ? 15 : value;
+          this._fm3OpVel[op - 1] = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
           // score's vel; a macro moves only the live one
           if (!force) this._fm3OpVelBase[op - 1] = this._fm3OpVel[op - 1];
         } else {
@@ -1537,7 +1554,7 @@ export class DrvPlayer {
         // note (even if currently silent, so a vel macro can bring it back up).
         if (target === TARGET_ID.VOL) st.vol = value < 0 ? 0 : value > 31 ? 31 : value;
         else {
-          st.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+          st.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
           if (!force) st.velBase = st.vel; // score's vel; a macro moves only the live one
         }
         if (st.keyed || force) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
@@ -1587,7 +1604,7 @@ export class DrvPlayer {
       case target === TARGET_ID.VOL: {
         // vel and vol both compose into the carrier TL — recompose every carrier.
         if (target === TARGET_ID.VEL) {
-          regs.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+          regs.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
           if (!force) regs.velBase = regs.vel; // score's vel; a macro moves only the live one
         } else regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
         this._recomposeCarriers(ch);
@@ -2227,14 +2244,14 @@ export class DrvPlayer {
       // live vel alone would hand the next note the previous owner's velocity.
       if (ch < 6) {
         const r = this._fm[ch];
-        r.velBase = 15;
-        r.vel = 15;
+        r.velBase = VEL_FINE_MAX;
+        r.vel = VEL_FINE_MAX;
         r.vol = VOL_UNITY;
         r.gate = 8;
       } else {
         const p = this._psg[ch - 6];
-        p.velBase = 15;
-        p.vel = 15;
+        p.velBase = VEL_FINE_MAX;
+        p.vel = VEL_FINE_MAX;
         p.vol = VOL_UNITY;
         p.gate = 8;
       }
@@ -2515,14 +2532,15 @@ export class DrvPlayer {
       const op = this._fm3OpFor(ch);
       if (op) {
         if (target === TARGET_ID.NOTE_PITCH) return this._fm3OpCents[op - 1];
-        if (target === TARGET_ID.VEL) return this._fm3OpVel[op - 1];
+        if (target === TARGET_ID.VEL) return (this._fm3OpVel[op - 1] + VEL_FINE / 2) >> 3;
         if (target === TARGET_ID.VOL) return this._fm3OpVol[op - 1];
       }
     }
     if (target === TARGET_ID.VOL)
       return ch < 6 ? this._fm[ch].vol : ch < 10 ? this._psg[ch - 6].vol : 31;
     if (target === TARGET_ID.VEL)
-      return ch < 6 ? this._fm[ch].vel : ch < 10 ? this._psg[ch - 6].vel : 15;
+      return ((ch < 6 ? this._fm[ch].vel : ch < 10 ? this._psg[ch - 6].vel : VEL_FINE_MAX)
+        + VEL_FINE / 2) >> 3;
     if (target === TARGET_ID.GATE)
       return ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
     if (ch < 6) {

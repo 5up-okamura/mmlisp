@@ -446,6 +446,9 @@ Macro descriptor (8 bytes):
 | 0x06   | 2    | blob_offset | u16, into the blob region (relative to its start) |
 
 The value blob is `count` values, i8 (or i16 if `flags` bit0), little-endian.
+A `VEL` macro's values are **eighths of a step** (0…120; the exporter writes
+`round(v × 8)`), the unit the driver holds a live velocity in (driver.md §7.1);
+every other target's values are its own integers.
 A **scaled** macro (`flags` bit2) appends one `scale_slot` byte immediately
 after its `count` values (found at `blob_offset + count × width`); the
 descriptor stays 8 bytes. Each frame the driver reads that value slot and writes
