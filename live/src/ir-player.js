@@ -44,7 +44,10 @@ import {
   KEY_ORDER_EPS_SECS,
   HOLD_FRAMES,
 } from "./ir-utils.js";
-import { curveId, curveUnit8, sweepValue, sweepStep, sweepFrameValue } from "./mmb.js";
+import {
+  curveId, curveUnit8, sweepValue, sweepStep, sweepFrameValue,
+  bpmToTickIncrement, tickIncrementToBpm,
+} from "./mmb.js";
 import { engineImage } from "./engine-images.js";
 // The largest loop point a PCM loop target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
@@ -71,6 +74,12 @@ function macroLeadsWithHold(spec) {
     (spec.type === "stages" && !first.curve) ||
     !!first.waitKeyOff || Number(first.waitFrames ?? 0) > 0 || Number(first.waitTicks ?? 0) > 0
   );
+}
+
+// A tempo as the driver runs it: its tick increment, read back (the driver
+// has no fractional BPM — 120 is an increment of 819, 119.97 BPM).
+function drvBpm(bpm) {
+  return Number.isFinite(bpm) && bpm > 0 ? tickIncrementToBpm(bpmToTickIncrement(bpm)) : bpm;
 }
 
 // Control-flow and timing events do not represent a sounding position, so they
@@ -279,7 +288,7 @@ export class IRPlayer {
         if (Number.isFinite(v) && v > 0) bpm = v;
       }
     }
-    return bpm;
+    return drvBpm(bpm);
   }
 
   _loadIR(irObj) {
@@ -883,8 +892,28 @@ export class IRPlayer {
       this._dispatchFloor = -Infinity;
     }
 
-    this._updateTempoSweep(now);
+    // Tempo changes land inside the window — a sweep's frame steps, a track's
+    // TEMPO_SET/SWEEP: schedule up to each one, apply it, and go on, so every
+    // event (and every length measured from it) is placed under the tempo of
+    // its own time, whichever track the change is on.
+    for (let guard = 0; guard < 100000; guard++) {
+      const step = this._tempoSweep?.steps[0]?.when ?? Infinity;
+      const next = Math.min(step, this._nextTempoEventTime());
+      const cut = next < horizon ? next : horizon;
+      this._scheduleTracks(now, cut);
+      if (cut === horizon) break;
+      this._applyTempoSteps(cut);
+    }
 
+    // Playback is complete when no track will loop further and all are exhausted.
+    const willLoopAny = this._loop && this._tracks.some((t) => t.hasLoop);
+    return (
+      !willLoopAny &&
+      this._tracks.every((t) => t.flatIndex >= t.events.length)
+    );
+  }
+
+  _scheduleTracks(now, horizon) {
     for (const [tIdx, track] of this._tracks.entries()) {
       // Inner guard handles multiple loop-restarts within one lookahead window
       let guard = 0;
@@ -949,13 +978,6 @@ export class IRPlayer {
         }
       }
     }
-
-    // Playback is complete when no track will loop further and all are exhausted.
-    const willLoopAny = this._loop && this._tracks.some((t) => t.hasLoop);
-    return (
-      !willLoopAny &&
-      this._tracks.every((t) => t.flatIndex >= t.events.length)
-    );
   }
 
   /**
@@ -1254,6 +1276,10 @@ export class IRPlayer {
 
       return {
         events: trimmedEvents,
+        // Where its tempo changes sit, for lengths spanning one (_timeAfterTicks).
+        tempoIdx: trimmedEvents.flatMap((e, i) => (e.cmd === "TEMPO_SET" && e.tick > 0 ? [i] : [])),
+        tempoCut: trimmedEvents.flatMap((e, i) =>
+          (e.cmd === "TEMPO_SET" || e.cmd === "TEMPO_SWEEP") && e.tick > 0 ? [i] : []),
         loopDuration,
         loopStartTick,
         loopStartIndex,
@@ -1305,52 +1331,51 @@ export class IRPlayer {
     }
   }
 
+  // A tempo sweep steps the way the driver's does: the score's tempos as
+  // tick increments, the length as frames at the average tempo (export-mmb),
+  // one integer increment a frame — the sweep's k-th value is the tempo of the
+  // (k+1)-th frame after the one it dispatched in. The steps are laid out here
+  // and _scheduleStep applies each at its frame before scheduling past it.
   _startTempoSweep(args, changeTick, changeWhen) {
-    const from = Number.isFinite(Number(args?.from))
-      ? Number(args.from)
-      : this._bpm;
+    const from = Number.isFinite(Number(args?.from)) ? Number(args.from) : this._bpm;
     const to = Number.isFinite(Number(args?.to)) ? Number(args.to) : from;
-    const len = Math.max(1, Math.round(Number(args?.len ?? 1)));
-    const curve = args?.curve ?? "linear";
-
     if (!(from > 0) || !(to > 0)) return;
-
-    this._setTempoAtTick(from, changeTick, changeWhen);
-    this._tempoSweep = {
-      from,
-      to,
-      len,
-      curve,
-      params: args?.params,
-      startTick: changeTick,
-    };
+    const f = bpmToTickIncrement(from), t = bpmToTickIncrement(to);
+    const len = Math.max(1, Math.min(0xffff, Math.max(1, Math.round(
+      (Number(args?.len ?? 1) * 60 * 60) / (Math.max(1, (from + to) / 2) * this._ppqn)))));
+    const id = curveId(args?.curve ?? "linear");
+    const f0 = this._eventFrame(changeWhen);
+    const steps = [];
+    for (let k = 0; k < len; k++)
+      steps.push({
+        when: this._frameOrigin + (f0 + 1 + k) / 60,
+        bpm: tickIncrementToBpm(sweepFrameValue(id, f, t, len, false, k)),
+      });
+    this._tempoSweep = { steps };
   }
 
-  _updateTempoSweep(now) {
-    if (!this._tempoSweep || this._tracks.length === 0) return;
-
-    const t0 = this._tracks[0];
-    const currentTick = Math.max(
-      0,
-      (now - t0.audioTimeAtTick0) / this._secsPerTick,
-    );
-    const elapsedTicks = currentTick - this._tempoSweep.startTick;
-    const phase = Math.max(0, Math.min(1, elapsedTicks / this._tempoSweep.len));
-    const unit = sampleCurveUnit(
-      this._tempoSweep.curve,
-      phase,
-      this._tempoSweep.params,
-    );
-    const nextBpm =
-      this._tempoSweep.from +
-      (this._tempoSweep.to - this._tempoSweep.from) * unit;
-
-    this._setTempoAtTick(nextBpm, currentTick, now);
-
-    if (phase >= 1) {
-      this._setTempoAtTick(this._tempoSweep.to, currentTick, now);
-      this._tempoSweep = null;
+  // The time of the next TEMPO_SET / TEMPO_SWEEP any track will dispatch.
+  _nextTempoEventTime() {
+    let best = Infinity;
+    for (const track of this._tracks) {
+      for (const i of track.tempoCut ?? []) {
+        if (i < track.flatIndex) continue;
+        best = Math.min(best, track.audioTimeAtTick0 + track.events[i].tick * this._secsPerTick);
+        break;
+      }
     }
+    return best;
+  }
+
+  // Apply the tempo sweep's steps due by `until`: each re-anchors the tracks
+  // at its own time.
+  _applyTempoSteps(until) {
+    const sw = this._tempoSweep;
+    while (sw?.steps.length && sw.steps[0].when <= until) {
+      const st = sw.steps.shift();
+      if (st.bpm !== this._bpm) this._setTempoAtTick(st.bpm, null, st.when);
+    }
+    if (sw && !sw.steps.length) this._tempoSweep = null;
   }
 
   _timerAValueFromHz(hz) {
@@ -1952,7 +1977,7 @@ export class IRPlayer {
         // would swallow it. The one exception is a slur (`~`, NOTE_ON_EX bit3)
         // reaching this note at full gate: there the envelope is meant to
         // carry over.
-        const gateEndSecs = when + gateTicks * secsPerTick;
+        const gateEndSecs = this._timeAfterTicks(when, gateTicks);
         // `nextNote` is this tempo's projection of a future tick, so a tempo
         // sweep between here and there moves the real note-on. It decides which
         // of the two key-off paths below is taken — never a written time.
@@ -2256,7 +2281,7 @@ export class IRPlayer {
         // A loop re-fires the score's tick-0 TEMPO_SET on every lap, which would
         // otherwise snap the dialled-in tempo back each time round.
         if (this._tempoOverride) return true;
-        const bpm = Number(ev.args?.bpm);
+        const bpm = drvBpm(Number(ev.args?.bpm));
         if (Number.isFinite(bpm) && bpm > 0) {
           this._tempoSweep = null;
           if (bpm !== this._bpm) {
@@ -2767,16 +2792,62 @@ export class IRPlayer {
     if (gateTicks === 0) {
       return { noteFrames: HOLD_FRAMES, gateSecs: when + 1e9 };
     }
-    const secsPerTick = this._secsPerTick;
+    const gateEnd = this._timeAfterTicks(when, gateTicks);
     return {
-      noteFrames: Math.max(1, Math.floor(gateTicks * secsPerTick * 60)),
-      gateSecs: when + gateTicks * secsPerTick - KEY_OFF_LEAD_SECS,
+      noteFrames: Math.max(1, Math.floor((gateEnd - when) * 60 + 1e-6)),
+      gateSecs: gateEnd - KEY_OFF_LEAD_SECS,
     };
   }
 
   // Audio time of the next NOTE_ON on this event's track (the same channel), or
   // Infinity if none remain. Used as the monophonic-priority cutoff so a note's
   // macro tail (echo/retrigger) cannot bleed past the following note.
+  // The audio time `ticks` ticks after `when`, through the tempo changes
+  // known ahead of it: a running sweep's remaining steps and the TEMPO_SETs
+  // the tracks have yet to dispatch. A length in ticks (a gate, a tick-clocked
+  // macro's steps) that spans a change is then as long as the driver plays it
+  // — the driver counts ticks under whatever tempo each frame has.
+  _timeAfterTicks(when, ticks) {
+    if (!(ticks > 0)) return when;
+    let t = when;
+    let spt = this._secsPerTick; // the tempo now; a change before `when` rules there
+    let left = ticks;
+    for (const c of this._tempoChangesAhead()) {
+      if (c.when > t + 1e-9) {
+        const span = (c.when - t) / spt;
+        if (span >= left) break;
+        left -= span;
+        t = c.when;
+      }
+      spt = 60 / (c.bpm * this._ppqn);
+    }
+    return t + left * spt;
+  }
+
+  // The tempo changes still to come that are already known: the sweep's
+  // steps, and each track's next TEMPO_SETs at their projected times, in time
+  // order. Cached per scheduler state (a change dispatched moves them).
+  _tempoChangesAhead() {
+    const key = `${this._bpm}|${this._tempoSweep?.steps.length ?? 0}|${this._tracks.map((t) => t.flatIndex).join(",")}`;
+    if (this._tempoAheadKey !== key) {
+      const list = [...(this._tempoSweep?.steps ?? [])];
+      if (!this._tempoOverride) {
+        for (const track of this._tracks) {
+          for (const i of track.tempoIdx ?? []) {
+            if (i < track.flatIndex) continue; // flatIndex: the next to dispatch
+            const ev = track.events[i];
+            const bpm = drvBpm(Number(ev.args?.bpm));
+            if (bpm > 0) list.push({ when: track.audioTimeAtTick0 + ev.tick * this._secsPerTick, bpm });
+          }
+        }
+      }
+      list.sort((a, b) => a.when - b.when);
+      this._tempoAhead = list;
+      this._tempoAheadKey = key;
+    }
+    return this._tempoAhead;
+  }
+
   _nextNoteSecs(ev) {
     return this._nextNote(ev).secs;
   }
@@ -2788,11 +2859,12 @@ export class IRPlayer {
     const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
     if (!track) return { secs: Infinity, legato: false };
     const secsPerTick = this._secsPerTick;
+    const base = track.audioTimeAtTick0 + ev.tick * secsPerTick;
     for (let i = track.flatIndex + 1; i < track.events.length; i++) {
       const ne = track.events[i];
       if (ne.cmd === "NOTE_ON") {
         return {
-          secs: track.audioTimeAtTick0 + ne.tick * secsPerTick,
+          secs: this._timeAfterTicks(base, ne.tick - ev.tick),
           legato: !!ne.args?.legato,
         };
       }
@@ -3053,6 +3125,9 @@ export class IRPlayer {
     const unitSecs = tickClock ? this._secsPerTick : 1 / 60;
     const perSec = 1 / unitSecs;
     const stepUnits = tickClock ? Math.max(1, Math.round(spec.step.value)) : stepFrames;
+    // A time `u` units after `t0`: a tick clock counts through the tempo
+    // changes known ahead, as the driver's does.
+    const adv = (t0, u) => (tickClock ? this._timeAfterTicks(t0, u) : t0 + u * unitSecs);
     const lenUnits = (o, raw) =>
       !tickClock
         ? this._resolveLenFrames(o, raw, when)
@@ -3096,7 +3171,7 @@ export class IRPlayer {
         // here; a curve stage with :wait uses it as a pre-delay, then plays.
         if (stage.waitKeyOff) t = Math.max(t, offT);
         else if (stage.waitTicks != null)
-          t += Math.max(0, Number(stage.waitTicks)) * this._secsPerTick;
+          t = this._timeAfterTicks(t, Math.max(0, Number(stage.waitTicks)));
         else if (stage.waitFrames != null) t += stage.waitFrames / 60;
         if (keyed && t >= offT - 1e-9) {
           i = rel - 1; // key-off during a wait: on to the release
@@ -3117,7 +3192,7 @@ export class IRPlayer {
             : Math.min(baseFrames, untilOff);
         let cut = false;
         for (let frame = 0; frame < budget; frame += stepUnits) {
-          if (keyed && this._eventFrame(t + frame * unitSecs) >= offFrame) {
+          if (keyed && this._eventFrame(adv(t, frame)) >= offFrame) {
             cut = true;
             break;
           }
@@ -3128,10 +3203,10 @@ export class IRPlayer {
               : Math.min(1, frame / (baseFrames - 1));
           writeFn(
             from + (to - from) * sampleCurveUnit(curve, phase, params),
-            keyed ? t + frame * unitSecs : Math.max(offT, t + frame * unitSecs),
+            keyed ? adv(t, frame) : Math.max(offT, adv(t, frame)),
           );
         }
-        t = cut ? offT : t + budget * unitSecs;
+        t = cut ? offT : adv(t, budget);
         if (keyed && (cut || t >= offT - 1e-9)) i = rel - 1; // key-off: on to the release
       }
       return Math.min(t, limitSecs);
@@ -3162,7 +3237,7 @@ export class IRPlayer {
               );
       const startWhen = waitKeyOff
         ? Math.max(when, gateSecs)
-        : when + waitFrameOffset * unitSecs;
+        : adv(when, waitFrameOffset);
       const remainingFrames = Math.max(0, (noteFrames / 60) * perSec - waitFrameOffset);
       const activeFrames = waitKeyOff
         ? baseFrames
@@ -3177,10 +3252,10 @@ export class IRPlayer {
             : Math.min(1, frame / (baseFrames - 1));
         writeFn(
           from + (to - from) * sampleCurveUnit(curve, phase, params),
-          startWhen + frame * unitSecs,
+          adv(startWhen, frame),
         );
       }
-      return Math.min(startWhen + activeFrames * unitSecs, limitSecs);
+      return Math.min(adv(startWhen, activeFrames), limitSecs);
     }
 
     if (spec.type === "steps") {
@@ -3214,7 +3289,7 @@ export class IRPlayer {
             break; // one-shot: hold last attack step
           }
         }
-        t += stepSecs;
+        t = tickClock ? this._timeAfterTicks(t, stepUnits) : t + stepSecs;
       }
 
       // Release phase after gate (steps after :off), spaced by :step too
@@ -3226,7 +3301,7 @@ export class IRPlayer {
         for (let ri = releaseIndex; ri < steps.length; ri++) {
           if (steps[ri] !== null && steps[ri] !== undefined)
             writeFn(steps[ri], tick ? Math.max(releaseAt, t) : t);
-          t += stepSecs;
+          t = tickClock ? this._timeAfterTicks(t, stepUnits) : t + stepSecs;
         }
         return Math.min(t, limitSecs); // time after last release write
       }
@@ -4163,7 +4238,7 @@ export class IRPlayer {
         // the next note attacks from), a PSG note-on re-asserts its attenuation
         // and restarts its vel macro, so the attack is there either way and the
         // suppression only spares a needless gap; `~` holds the tone over.
-        const psgGateEnd = when + psgGateTicks * this._secsPerTick;
+        const psgGateEnd = this._timeAfterTicks(when, psgGateTicks);
         const psgOffWhen =
           psgGateTicks > 0 &&
           (ev.args?.gate != null || psgGateEnd < psgNextNote - 0.001)

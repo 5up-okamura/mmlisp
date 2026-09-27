@@ -210,9 +210,14 @@ export function abCompare(source, { maxSec = 30, filename = "ab.mmlisp" } = {}) 
   irp.loadJSON(ir);
   const capA = irp.captureRegisterLog({ maxSec });
   const framesA = irWritesToFrames(capA.writes);
+  // A looping capture ends where the loop restarts, and drops the restart's
+  // writes: compare up to the frame before it, which the driver's capture
+  // would otherwise carry into the window.
   const endFrame = Math.min(
     Math.ceil(maxSec * 60),
-    Math.ceil((capA.endSec > 0 ? capA.endSec : maxSec) * 60),
+    capA.loopStartSec != null && capA.endSec > 0
+      ? Math.round(capA.endSec * 60) - 1
+      : Math.ceil((capA.endSec > 0 ? capA.endSec : maxSec) * 60),
   );
 
   // B: MMB → DrvPlayer frame-stepped capture over the same horizon.
