@@ -34,7 +34,13 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
 6. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
 7. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
-8. **What the shipped eval work is called.** `docs/roadmap.md` frames v0.5 as
+8. **Computed levels are float in the language, integer on the driver.**
+   language.md §5 says computed values (macros, delay taps) stay float to the
+   hardware's resolution (FM TL 0.75 dB); the driver quantizes a `:vel`
+   macro to its 16 velocity steps (≈2 dB). Refine the driver (a finer vel
+   scale in the tables), or round in the language (the preview then rounds
+   too)?
+9. **What the shipped eval work is called.** `docs/roadmap.md` frames v0.5 as
    the baseline and says the numbered freezes stopped there, matching
    CLAUDE.md — but score removal, `import`, compile-time eval and the value
    machine all landed after that line was drawn. If they are v0.6, it is the
@@ -71,38 +77,13 @@ can spell. Every item of this audit is now either landed or decided.
 
 ## 2. Judgment-free but larger
 
-- **Preview vs driver, found 2026-09-26.** Fixed: `:vel` before the first
-  note, inline sweeps (the preview now steps the driver's integers on the
-  driver's event frames, and a note meets the sweep's value then; the driver
-  no longer cancels loop sweeps at a note and a PARAM_SET ends its target's
-  sweep), the SW registration, macro release timing (key-off mid-attack now
-  jumps to the release on its frame), the tick `:step` clock, the `:keyon`
-  restart (both since 2026-09-27, driver-decisions.md §9), the PSG `:vol`
-  macro in the preview, and four drones (a PSG `:vel`/`:vol` release ending
-  above silence, a claim mid-release, a `:master`/`:vol` sweep written ahead
-  over a held note's live key-off). Still open: a **TEMPO_SWEEP** —
-  the preview ramps tempo per scheduler pass in ticks, the driver per frame
-  in integer increments — skews every later event by up to a frame
-  (`m2-motion`); a `:master` sweep that starts on one track's setup frame
-  composes a channel whose first note was scheduled earlier from that note's
-  vel (frame 0 only); a PSG note with a vel macro under a running :vol or
-  :master sweep does not get the driver's in-frame double write; a
-  tick-clocked macro whose note spans a tempo change keeps the note-on tempo
-  in the preview (it schedules the note's macro ahead; the driver follows the
-  change); a `:vel` macro's float levels (language.md: computed
-  values stay float) quantize to 16 steps on the driver; a `:keyon` retrigger
-  after key-off (an echo tail in `#rel`) restarts the envelopes on the driver
-  (into their release again) but not in the preview, which restarts them only
-  between note-on and key-off; a second preview run of a score on the same
-  player differs from the first in a modulator TL (45 scores, older than
-  2026-09-26 — state not reset between runs, not a drone).
-
-- Nf in one track converted at another track's mid-song tempo change (§4).
-- Tick-0 tempo written as an expression is not seen by the Nf prescan.
-- Imports: a local def does not win over an import in another namespace
-  (§9.2); nested import paths resolve from the folder root, `..` rejected.
-- E_LET_SHADOWS_DEF only for voice/macro defs (a snippet name gives E_LET_NAME).
-- Computed float levels on the driver (suspected: integer tables).
+- **Preview vs driver.** The 2026-09-26/27 sweep closed every divergence
+  found (the repo carries each fix and its gate: the sweep engine, macro
+  releases and the tick clock, the keyon restart and echo tail, PSG level
+  macros and sweeps frame by frame, tempo sweeps and tempo quantization,
+  cross-track event order, replay state). What the A/B still shows is the
+  pitch model (float `pow` vs the driver's cent LUT, ±1 F-number — the
+  `m2b-pitch` residue) and the one open question in §1 (float levels).
 
 ## 3. Why the value machine has this shape
 
