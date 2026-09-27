@@ -1,7 +1,7 @@
 ; Tuplets: (t ...) shares ONE slot of the current :len among its elements,
 ; so (t c d e) at :len 4 is a quarter-note triplet's worth of eighths, and
-; (t c d e f g) a quintuplet. Rests go inside too, but not octave shifts:
-; set the octave before the tuplet. For a whole swung groove rather than a
+; (t c d e f g) a quintuplet. Rests go inside too, and so do > < o+ v+:
+; they take no share of the slot. For a whole swung groove rather than a
 ; figure, :shuffle is simpler.
 (import "presets/gm/set.mmlisp")
 
@@ -10,7 +10,7 @@
   c (t e g e) c (t d f d)             ; triplets inside the beat
   (t c _ c) (t e _ e) (t g _ g) g     ; triplets with rests: a shuffle figure
   c (t d e f g a) :len 2 b            ; a quintuplet run
-  (t b a g f e d) (t c d e f g a) > :len 2 c)  ; sextuplets
+  (t > c < b a g f e) (t d e f g a b) > :len 2 c)  ; sextuplets across the octave
 
 (fm2 :oct 3 :len 2 gm-marimba :vel 11
   c g  c g  c g  c g  f c)

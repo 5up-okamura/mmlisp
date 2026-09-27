@@ -188,8 +188,9 @@ Shorthands:
   c (t e g a) f)
 ```
 
-`(t e g a)` divides one `:len` slot among its elements using Bresenham
-distribution.
+`(t e g a)` divides one `:len` slot among its notes and rests using Bresenham
+distribution. Octave and velocity shifts (`>` `<` `o±N` `v±N`) may sit between
+them and take no share: `(t b > c d <)` is b4 c5 d5 in one slot.
 
 ### Counted loop
 

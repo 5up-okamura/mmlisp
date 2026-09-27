@@ -1936,6 +1936,25 @@ function isOctShiftAtom(val) {
   return typeof val === "string" && /^o[+\-]\d*$/.test(val);
 }
 
+// The state tokens that take no time: `>` `<` `o±N` `v±N`. Applies one to the
+// track state and returns true, or returns false for anything else. Shared by
+// the note stream and the tuplet, where they sit between the notes without
+// taking a share of the slot (§3).
+function applyTimelessStateToken(val, trackState) {
+  if (val === ">" || val === "<" || isOctShiftAtom(val)) {
+    const delta = val === ">" ? 1 : val === "<" ? -1
+      : (val[1] === "+" ? 1 : -1) * (val.length > 2 ? parseInt(val.slice(2), 10) : 1);
+    trackState.defaultOct = Math.max(0, trackState.defaultOct + delta);
+    return true;
+  }
+  if (isVelShiftAtom(val)) {
+    const delta = (val[1] === "+" ? 1 : -1) * (val.length > 2 ? parseInt(val.slice(2), 10) : 1);
+    trackState.defaultVel = Math.max(0, Math.min(15, trackState.defaultVel + delta));
+    return true;
+  }
+  return false;
+}
+
 // Per-note length atom: note name + any valid length token suffix.
 // Examples: c4, e8., f+12t, b-6f, a1/2
 function parsePerNoteLength(val) {
@@ -3196,22 +3215,8 @@ function compileChannelBody(
         continue;
       }
 
-      // Octave shift
-      if (val === ">") {
-        trackState.defaultOct = trackState.defaultOct + 1;
-        i++;
-        continue;
-      }
-      if (val === "<") {
-        trackState.defaultOct = Math.max(0, trackState.defaultOct - 1);
-        i++;
-        continue;
-      }
-      // Octave shift atom: o+, o-, o+2, o-2 (parallel to v±)
-      if (isOctShiftAtom(val)) {
-        const sign = val[1] === "+" ? 1 : -1;
-        const delta = val.length > 2 ? parseInt(val.slice(2), 10) : 1;
-        trackState.defaultOct = Math.max(0, trackState.defaultOct + sign * delta);
+      // Octave and velocity shifts: > < o± v±
+      if (applyTimelessStateToken(val, trackState)) {
         i++;
         continue;
       }
@@ -3241,18 +3246,6 @@ function compileChannelBody(
         });
         trackState.tick += ticks;
         trackState.tiedHead = null; // a rest ends the tied group
-        i++;
-        continue;
-      }
-
-      // Velocity shift: v+, v-, v+8, v-16
-      if (isVelShiftAtom(val)) {
-        const sign = val[1] === "+" ? 1 : -1;
-        const delta = val.length > 2 ? parseInt(val.slice(2), 10) : 1;
-        trackState.defaultVel = Math.max(
-          0,
-          Math.min(15, trackState.defaultVel + sign * delta),
-        );
         i++;
         continue;
       }
@@ -3367,19 +3360,24 @@ function compileChannelBody(
         continue;
       }
 
-      // Tuplet: (t elem …) divides one current :len slot among its elements
-      // using Bresenham distribution (remainders spread evenly).
+      // Tuplet: (t elem …) divides one current :len slot among its notes and
+      // rests using Bresenham distribution (remainders spread evenly). The
+      // timeless state tokens (> < o± v±) sit between them and take no share.
       if (head === "t") {
         const elems = node.items
           .slice(1)
           .filter((ev) => ev?.kind !== "comment");
-        const n = elems.length;
+        const takesSlot = (ev) => {
+          const v = atomValue(ev);
+          return v === "_" || isPerNoteLengthAtom(v) || isNoteAtom(v);
+        };
+        const n = elems.filter(takesSlot).length;
         if (n === 0) {
           pushDiag(
             diagnostics,
             "error",
             "E_TUPLET_EMPTY",
-            "(t …) needs at least one element",
+            "(t …) needs at least one note or rest",
             nodeSrc(node),
             trackName,
           );
@@ -3388,12 +3386,22 @@ function compileChannelBody(
         }
         const totalTicks = trackState.defaultLength;
         let acc = 0;
-        for (let j = 0; j < n; j++) {
+        for (const ev of elems) {
+          const evVal = atomValue(ev);
+          if (applyTimelessStateToken(evVal, trackState)) continue;
+          if (!takesSlot(ev)) {
+            pushUnknownDiag(
+              diagnostics,
+              "E_UNKNOWN_TUPLET_ELEM",
+              "Unknown tuplet element",
+              ev,
+              trackName,
+            );
+            continue;
+          }
           acc += totalTicks;
           const slotTicks = Math.floor(acc / n);
           acc -= slotTicks * n;
-          const ev = elems[j];
-          const evVal = atomValue(ev);
           if (evVal === "_") {
             events.push({
               tick: trackState.tick,
@@ -3413,7 +3421,7 @@ function compileChannelBody(
               nodeSrc(ev),
               trackName,
             );
-          } else if (isNoteAtom(evVal)) {
+          } else {
             emitNoteForTrack(
               trackState,
               evVal,
@@ -3421,14 +3429,6 @@ function compileChannelBody(
               events,
               diagnostics,
               nodeSrc(ev),
-              trackName,
-            );
-          } else {
-            pushUnknownDiag(
-              diagnostics,
-              "E_UNKNOWN_TUPLET_ELEM",
-              "Unknown tuplet element",
-              ev,
               trackName,
             );
           }

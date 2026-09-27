@@ -159,18 +159,22 @@ normal note. Encoded as `NOTE_ON_EX` bit3 (opcodes.md §5.1).
 
 ### Tuplets — `(t …)`
 
-`(t elem …)` divides **one** current `:len` slot among its elements
+`(t elem …)` divides **one** current `:len` slot among its notes and rests
 (Bresenham distribution, so remainders spread evenly):
 
 ```lisp
 (fm1 :len 4
   c (t e g a) f     ; triplet inside one quarter
-  (t c _ c))       ; rests allowed
+  (t c _ c)         ; rests allowed
+  (t b > c d <))    ; octave shifts too: b4 c5 d5
 ```
 
 Elements may be notes, per-note-length atoms (their suffix is ignored — the
-slot division wins), or `_` rests. Tuplets do not nest
-(`E_UNKNOWN_TUPLET_ELEM`); an empty `(t)` is `E_TUPLET_EMPTY`.
+slot division wins), or `_` rests; each takes an equal share. Between them go
+the state tokens that take no time — `>` `<` `o±N` `v±N` — which take no share
+and apply to the notes after them, inside the tuplet and on after it, as
+anywhere in the stream. Anything else, a nested tuplet included, is
+`E_UNKNOWN_TUPLET_ELEM`; a `(t)` with no note or rest is `E_TUPLET_EMPTY`.
 
 A bare note-headed list (the pre-v0.5 subgroup form `(e g a)`) is no longer a
 tuplet — it is rejected with `E_UNKNOWN_LIST`; the syntax is reserved.
