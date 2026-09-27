@@ -1,17 +1,56 @@
-; CSM: Timer A re-keys FM3 at an audio rate. The rate of that buzz is the
-; pitch you hear; the fm3-csm notes set where the operators ring, which is
-; heard as a formant, a vowel-like colour. fm3-csm-rate plays the melody as
-; notes (converted to Hz); fm3-csm moves the formant.
+; CSM as a voice. Timer A re-keys FM3 at an audio rate and every operator
+; rings, then dies away, at the note times its own ML. The buzz rate is the
+; pitch you hear; the four ringing frequencies are the formants, and the
+; formants are the vowel. So a vowel is a note (the base) plus four MLs, the
+; melody lives on fm3-csm-rate, and the noise channel adds the consonants.
+; A fast release (RR) keeps each ring short, which widens the formants from a
+; whistle into a vowel. Sings "a i u e o", then Sakura Sakura.
+
+; four carriers; the level falls with each formant, like a voice
 (def-fm vox init-fm :alg 7 :fb 0
-  :ar1 31 :dr1 10 :sr1 4 :rr1 8 :sl1 4 :tl1 20 :ml1 3
-  :ar2 31 :dr2 12 :sr2 5 :rr2 9 :sl2 5 :tl2 18 :ml2 5
-  :ar3 31 :dr3 10 :sr3 4 :rr3 8 :sl3 4 :tl3 22 :ml3 7
-  :ar4 31 :dr4 14 :sr4 6 :rr4 10 :sl4 6 :tl4 8 :ml4 2)
+  :ar1 31 :rr1 13 :tl1 4
+  :ar2 31 :rr2 14 :tl2 10
+  :ar3 31 :rr3 15 :tl3 18
+  :ar4 31 :rr4 15 :tl4 26)
 
-; the formant: a slow walk, "a... o... e..."
-(fm3-csm vox :tempo 100 :oct 3 :len 1 :vel 13
-  c a- f e-)
+; vowel = base note x ML per operator (formants F1-F4, in Hz)
+(def ah :oct 4 :ml1 2 :ml2 3 :ml3 7  :ml4 9  f+) ;  740 1110 2590 3330
+(def ee :oct 4 :ml1 1 :ml2 8 :ml3 11 :ml4 13 c+) ;  277 2217 3047 3600
+(def oo :oct 4 :ml1 1 :ml2 3 :ml3 8  :ml4 11 d)  ;  294  881 2350 3230
+(def eh :oct 4 :ml1 2 :ml2 7 :ml3 9  :ml4 12 c)  ;  523 1831 2355 3140
+(def oh :oct 4 :ml1 2 :ml2 3 :ml3 9  :ml4 12 c+) ;  554  831 2493 3325
 
-; the melody: notes on this track are Timer A rates
-(fm3-csm-rate :oct 3 :len 4
-  c e- g e- f a- > c < a- g f e- d c1)
+; a syllable swells in from a lower fader: the dip at each onset is what
+; separates syllables (a CSM note keys nothing, so there is no attack of its
+; own, and a :vel macro would not run on the driver)
+(def (sy v) :vol (linear 14..31 :len 16) v)
+
+(fm3-csm vox :tempo 80
+  :len 4 (sy ah) (sy ee) (sy oo) (sy eh) :len 1 (sy oh)                  ; a i u e o
+  :len 4 (sy ah) (sy oo) :len 2 (sy ah)  :len 4 (sy ah) (sy oo) :len 2 (sy ah) ; sa ku ra, sa ku ra
+  :len 4 (sy ah) (sy oh) (sy ee) (sy oh)  (sy oh) (sy ah) :len 2 (sy ah) ; ya yo i no so ra wa
+  :len 4 (sy ee) (sy ah) (sy ah) (sy oo)  (sy ah) (sy ee) :len 2 (sy ee) ; mi wa ta su ka gi ri
+  :len 4 (sy ah) (sy oo) :len 2 (sy ah)  :len 4 (sy ah) (sy oo) :len 2 (sy ah) ; sa ku ra, sa ku ra
+  :len 4 (sy ee) (sy ee) (sy oo) (sy ah)  :len 1 (sy oo))                ; mi ni yu ka n
+
+; the melody: notes here are Timer A rates, and glide slides between them
+(fm3-csm-rate :oct 3 :len 4 (glide 32)
+  a a a a :len 1 a
+  :len 4 a a :len 2 b  :len 4 a a :len 2 b
+  :len 4 a b > c < b  a b8 a8 :len 2 f
+  :len 4 e c e f  e e8 c8 :len 2 < b >
+  :len 4 a a :len 2 b  :len 4 a a :len 2 b
+  :len 4 e f b8 a8 f  :len 1 e)
+
+; consonants: a hiss for s, a click for k and t, a softer one for g
+(def sh :mode white0 (macro :vel [7 9 9 9 8 7 5 3 1 0]))
+(def kh :mode white1 (macro :vel [13 8 3 0]))
+(def gh :mode white1 (macro :vel [8 4 0]))
+
+(noise :len 4
+  _ _ _ _ :len 1 _
+  :len 4 sh c kh c :len 2 _  :len 4 sh c kh c :len 2 _  ; s k _, s k _
+  :len 4 _ _ _ _  sh c _ :len 2 _                  ; _ _ _ _ s _ _
+  :len 4 _ _ kh c sh c  kh c gh c :len 2 _         ; _ _ t s k g _
+  :len 4 sh c kh c :len 2 _  :len 4 sh c kh c :len 2 _
+  :len 4 _ _ _ kh c :len 1 _)                      ; _ _ _ k _
