@@ -2437,7 +2437,9 @@ function makeEvalCtx(diagnostics, trackName, src, typedDefs = null, stepFrames =
     parseCurve: (n) => parseCurveSpec(n, diagnostics, nodeSrc(n), trackName, false),
     foldSignal: foldCurveValues,
     isNoteStreamToken,
-    isDefName: (n) => !!typedDefs && typedDefs.has(n),
+    // A voice or a sample (the samples ride on the voice map, set once the
+    // defs are merged); snippet names are caught at expansion (expandNode).
+    isDefName: (n) => !!typedDefs && (typedDefs.has(n) || !!typedDefs.sampleNames?.has(n)),
     stepFrames, // frame :step for signal⊕signal materialization (0 = tick, unsupported)
   };
 }
@@ -4323,6 +4325,14 @@ function mergeImportsStrict(base, incoming, diagnostics, conflictSrc) {
 // win (the importing file overrides imported defaults). `originPath` tags each
 // entry so a later strict merge can tell diamonds from true conflicts.
 function overlayDefs(base, own, originPath) {
+  // The overlaying file wins a name in every namespace: a local def-fm `pad`
+  // hides an imported snippet `pad`, not just an imported def-fm `pad`.
+  for (const kind of IMPORT_DEF_KINDS)
+    for (const name of own[kind].keys())
+      for (const k of IMPORT_DEF_KINDS) {
+        base[k].delete(name);
+        base.origin[k].delete(name);
+      }
   for (const kind of IMPORT_DEF_KINDS) {
     for (const [name, def] of own[kind]) {
       base[kind].set(name, def);
@@ -4563,6 +4573,26 @@ function expandNode(node, defs, paramDefs, depth, diagnostics) {
       .get(head)
       .flatMap((n) => expandNode(n, defs, paramDefs, depth + 1, diagnostics));
 
+  // A `let` binding's name is a new name, not a reference: it is not expanded,
+  // and naming a snippet with it is E_LET_SHADOWS_DEF (a voice or a sample is
+  // caught where the let binds, mmlisp-eval.js).
+  if (head === "let" && node.items[1]?.kind === "list") {
+    const bindings = node.items[1].items.map((b) => {
+      const pair = b.kind === "list" ? b.items.filter((n) => n.kind !== "comment") : null;
+      const name = pair?.[0]?.kind === "atom" ? pair[0].value : null;
+      if (!name) return expandNode(b, defs, paramDefs, depth, diagnostics)[0] ?? b;
+      if (defs.has(name) || paramDefs.has(name))
+        pushDiag(diagnostics, "error", "E_LET_SHADOWS_DEF",
+          `let name '${name}' shadows a def`, nodeSrc(pair[0]), null);
+      return {
+        ...b,
+        items: b.items.flatMap((n) => (n === pair[0] ? [n] : expandNode(n, defs, paramDefs, depth, diagnostics))),
+      };
+    });
+    const rest = node.items.slice(2).flatMap((n) => expandNode(n, defs, paramDefs, depth, diagnostics));
+    return [{ ...node, items: [node.items[0], { ...node.items[1], items: bindings }, ...rest] }];
+  }
+
   const newItems = [];
   for (const item of node.items)
     newItems.push(...expandNode(item, defs, paramDefs, depth, diagnostics));
@@ -4597,13 +4627,51 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
   const prevHz = compileFrameHz;
   compileFrameHz = wantHz;
   try {
-    return compileScore(src, filename, options, wantHz);
+    // Tempo is song-wide, but each track converts its lengths (an `Nf` note,
+    // a `125ms` gate) at the tempo in force as it goes — and a track sees only
+    // its own :tempo writes. A song that changes tempo after tick 0 is compiled
+    // twice: the first pass finds every track's tempo changes, the second
+    // converts each length at the tempo the song has at its tick (§4).
+    const first = compileScore(src, filename, options, wantHz, null);
+    const tempoAt = songTempoMap(first.ir, first.openingBpm);
+    const { openingBpm: _o, ...result } = tempoAt
+      ? compileScore(src, filename, options, wantHz, tempoAt)
+      : first;
+    return result;
   } finally {
     compileFrameHz = prevHz;
   }
 }
 
-function compileScore(src, filename, options, frameHz) {
+// The song's tempo at a tick, from every track's TEMPO_SET / TEMPO_SWEEP
+// (a sweep counts at its end tempo from its start, as a track's own does),
+// last writer winning at a tick in track order — or null when nothing changes
+// the tempo after tick 0 and the song opens at the tempo the first pass read
+// ahead (`opening`: a tempo written as an expression, or in a let, is not).
+function songTempoMap(ir, opening) {
+  const changes = [];
+  (ir?.tracks ?? []).forEach((tr, ti) =>
+    (tr.events ?? []).forEach((ev, ei) => {
+      const bpm =
+        ev.cmd === "TEMPO_SET" ? Number(ev.args?.bpm)
+          : ev.cmd === "TEMPO_SWEEP" ? Number(ev.args?.to ?? ev.args?.from) : NaN;
+      if (bpm > 0) changes.push({ tick: ev.tick ?? 0, ti, ei, bpm });
+    }),
+  );
+  changes.sort((a, b) => a.tick - b.tick || a.ti - b.ti || a.ei - b.ei);
+  const atZero = changes.filter((c) => c.tick === 0).at(-1)?.bpm ?? 120;
+  if (!changes.some((c) => c.tick > 0) && atZero === opening) return null;
+  return (tick) => {
+    let bpm = null;
+    for (const c of changes) {
+      if (c.tick > tick) break;
+      bpm = c.bpm;
+    }
+    return bpm;
+  };
+}
+
+function compileScore(src, filename, options, frameHz, tempoAt) {
   const diagnostics = [];
   const parsed = parse(src);
   const {
@@ -4644,6 +4712,7 @@ function compileScore(src, filename, options, frameHz) {
   }
   resolveVoices(typedDefs, defs, paramDefs, diagnostics);
   resolveSampleExtends(sampleDefs, diagnostics);
+  typedDefs.sampleNames = sampleDefs; // for a let name shadowing a sample
   const roots = expandRoots(remaining, defs, paramDefs, diagnostics);
 
   // v0.6: 1 file = 1 score. There is no (score …) wrapper — the post-expand
@@ -4682,6 +4751,10 @@ function compileScore(src, filename, options, frameHz) {
       break;
     }
   }
+
+  // The second pass knows the tempo the song really opens at (one written as
+  // an expression or inside a let escapes the read-ahead above).
+  if (tempoAt) scoreInitialBpm = tempoAt(0) ?? scoreInitialBpm;
 
   // A def is parsed before any track, so a musical length inside one has no
   // tempo yet. Resolve the loop tokens here, at the tempo the score opens with.
@@ -4877,7 +4950,15 @@ function compileScore(src, filename, options, frameHz) {
         defaultLength: Math.round(WHOLE_TICKS / 8),
         defaultOct: 4,
         defaultGate: null,
-        currentTempo: scoreInitialBpm ?? 120,
+        // The tempo lengths convert at: the song's at this tick when the
+        // song-wide map is known (second pass), else this track's own.
+        ownTempo: scoreInitialBpm ?? 120,
+        get currentTempo() {
+          return (tempoAt && tempoAt(this.tick)) ?? this.ownTempo;
+        },
+        set currentTempo(v) {
+          this.ownTempo = v;
+        },
         initialBpm: scoreInitialBpm,
         isFm3OpTrack: /^fm3-[1-4]$/.test(head),
         fm3OpIndex: /^fm3-[1-4]$/.test(head)
@@ -5087,7 +5168,7 @@ function compileScore(src, filename, options, frameHz) {
   });
 
   rejectInlineStochasticSweeps(tracks, diagnostics);
-  return { ir, diagnostics, sourceMap: buildSourceMap(tracks) };
+  return { ir, diagnostics, sourceMap: buildSourceMap(tracks), openingBpm: scoreInitialBpm ?? 120 };
 }
 
 // A stochastic curve is data, not a formula: a macro samples it into the

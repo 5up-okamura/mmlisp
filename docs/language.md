@@ -220,8 +220,8 @@ In **structural** contexts that advance the musical timeline — note length,
 `:gate`, `~` (tie), rests, `(glide T)`, and `(delay … :time T)` — `Nf` is
 converted to ticks at the tempo active at compile time — on the target
 standard's clock, so `c16f` is sixteen frames there too. So `c16f` lasts
-16/60 s on NTSC at the tempo it was authored under; a mid-track `:tempo` change before the note
-is accounted for, but a **runtime** tempo change (live `setTempo`, or a
+16/60 s on NTSC at the tempo it was authored under; a `:tempo` change before the
+note — on any track, since tempo is song-wide — is accounted for, but a **runtime** tempo change (live `setTempo`, or a
 `TEMPO_SWEEP` spanning the note) scales it like any tick duration. Use `Nt` when
 you want an exact, tempo-proof tick count.
 
