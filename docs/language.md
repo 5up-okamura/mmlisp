@@ -924,7 +924,10 @@ restarting the envelopes: the FM EG and the note's level/timbre macros —
 its place). The first sample at t = 0 coincides with the note's
 own attack and is a no-op, so a roll starts at the second step whether it is
 written `[0 #sus 1]` or `[1 1 1 …]`. Steps before `#rel` loop until note-off (a roll);
-steps after `#rel` fire after note-off (a one-channel echo tail). While a
+steps after `#rel` fire after note-off (a one-channel echo tail): each tap
+re-keys the FM EG while the level macros play their own `#rel` through the
+taps — `:vel [15 #rel 11 7 3]` makes each tap quieter — and the channel keys
+off a step after the last tap. While a
 `:keyon` macro is active it owns the channel keying.
 
 | Form                           | Result                                    |

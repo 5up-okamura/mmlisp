@@ -319,7 +319,7 @@ export class IRPlayer {
    */
   play(audioContext, options = {}) {
     if (!this._ir) throw new Error("No IR loaded");
-    this._resetSweepState();
+    this._resetRunState();
 
     if (options.loop !== undefined) this._loop = options.loop;
 
@@ -371,9 +371,24 @@ export class IRPlayer {
     }
   }
 
-  // Sweep and keyed-span state belongs to one run: it is kept in audio time,
-  // so a previous run's would read as running in this one.
-  _resetSweepState() {
+  // The chip and channel state belongs to one run. A run's sticky state (a
+  // channel's :vol, :vel, pitch offset, the master level …) is where the
+  // previous run left it, so a second play of the same score started from
+  // there; sweeps and keyed spans are kept in audio time, so a previous run's
+  // would read as running in this one.
+  _resetRunState() {
+    this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
+    this._lfoRate = 0;
+    this._masterVol = VOL_UNITY;
+    this._reg27 = 0; // FM3 special / CSM mode
+    this._psgCurrentMidi.fill(60);
+    this._psgPitchOffset.fill(0);
+    this._pitchSweepOnset.clear();
+    this._psgVol.fill(VOL_UNITY);
+    this._psgLastVel.fill(15);
+    this._psgNoiseMode = 0b1_00;
+    this._holdChannels.clear();
+    this._loopCount.clear();
     this._fmVolSweep.fill(null);
     this._psgVolSweep.fill(null);
     this._psgKeyedUntil.fill(0);
@@ -1018,7 +1033,7 @@ export class IRPlayer {
     try {
       this._audioContext = { currentTime: BASE, state: "running", resume() {} };
       this._frameOrigin = BASE;
-      this._resetSweepState();
+      this._resetRunState();
       this._playing = true;
       this._bpm = this._resolveInitialTempo(this._ir);
       this._tempoSweep = null;
@@ -2949,23 +2964,31 @@ export class IRPlayer {
   ) {
     // Restarted by the note's :keyon retriggers (set around an envelope's
     // scheduling): one run per keyed segment, each cut at the next retrigger.
-    const retrigs = (this._envRetrigs ?? []).filter(
+    // A retrigger after key-off (an echo tail) leaves the release playing: the
+    // taps step through it.
+    const pre = (this._envRetrigs ?? []).filter(
       (r) => r > when + 1e-6 && r < gateSecs && r < limitSecs,
     );
-    const starts = [when, ...retrigs];
-    let endTime = null;
-    for (let i = 0; i < starts.length; i++) {
-      const at = starts[i];
-      endTime = this._scheduleMacroImpl(
+    const run = (at, gate, lim) => {
+      const w = [];
+      const end = this._scheduleMacroImpl(
         spec,
         Math.max(1, noteFrames - Math.round((at - when) * 60)),
-        gateSecs,
-        at,
-        writeFn,
-        stepSecs,
-        Math.min(limitSecs, starts[i + 1] ?? Infinity),
+        gate, at, (v, t) => w.push([v, t]), stepSecs, lim,
       );
+      return { w, end };
+    };
+    const flush = (seg, cut = Infinity) => {
+      for (const [v, t] of seg.w) if (t < cut - 1e-9) writeFn(v, t);
+    };
+    const starts = [when, ...pre];
+    let seg = null;
+    for (let i = 0; i < starts.length; i++) {
+      if (seg) flush(seg);
+      seg = run(starts[i], gateSecs, Math.min(limitSecs, starts[i + 1] ?? Infinity));
     }
+    flush(seg);
+    let endTime = seg.end;
     if (spec?.src && this._onSeq) {
       const src = spec.src;
       const now = this._audioContext.currentTime;

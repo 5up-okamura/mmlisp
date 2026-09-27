@@ -1,0 +1,11 @@
+; M4 gate: a :keyon echo tail — retriggers in the #rel section, after the
+; note's key-off. Each tap re-keys the FM EG while the envelopes play their
+; release through the taps (each tap quieter: vel 11, 7, 3), and the channel
+; keys off a step after the last tap, as the note's gate would. Before the
+; key-off a retrigger restarts the envelopes (:vel) and the arp runs on.
+(fm4 :tempo 120 (macro :step 1/8 :keyon [0 #rel 1 1 1] :vel [15 #rel 11 7 3]) c _1)
+
+(fm1 (macro :step 1/16 :keyon [0 #sus 1 #rel 1 1 1 1] :vel [15 12 #rel 9 6 3]
+            :semi [#sus 0 7]) :gate* 0.5 c2 _2)
+
+(sqr1 (macro :step 1/8 :keyon [0 #rel 1 1 1] :vel [15 #rel 11 7 3]) c _1)

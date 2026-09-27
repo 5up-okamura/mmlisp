@@ -1098,9 +1098,9 @@ static void write_note_semi(MMLSeq *s, int ch, int semi, int add) {
  * envelope macros — level and timbre, the soft envelope — and, on FM, re-key
  * the hardware EG. PSG has no hardware EG, so there the macro restart is the
  * whole effect. :pitch and :semi run on: a retriggered arp keeps its place. */
-static void keyon_retrigger(MMLSeq *s, int ch, const MMLMacroSlot *src, int src_step) {
+static void keyon_retrigger(MMLSeq *s, int ch, int restart, const MMLMacroSlot *src, int src_step) {
   int mc = macro_ch(ch);
-  for (int i = 0; mc >= 0 && i < s->macro_slot_count[mc]; i++) {
+  for (int i = 0; restart && mc >= 0 && i < s->macro_slot_count[mc]; i++) {
     MMLMacroSlot *sl = &s->macro_slots[mc][i];
     if (sl->dead) continue;
     MMLMacro d;
@@ -1136,7 +1136,8 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp,
   const MMLMacro d = *dp;
   if (sl->state == MML_MACRO_HOLD) return 0; /* one-shot: hold, await key-off */
   if (sl->state == MML_MACRO_TAIL) {
-    if (!keyed && s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
+    if (d.target == T_KEYON) channel_off(s, ch); /* the echo tail's last tap ends */
+    else if (!keyed && s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
     return 1;
   }
 
@@ -1152,7 +1153,10 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp,
        * just attacked — re-attacking there is a write with nothing behind it,
        * so a leading nonzero step is a no-op (ir-player skips the t=0 sample
        * the same way). Later steps are the roll. */
-      if (v != 0 && !sl->fresh) keyon_retrigger(s, ch, (d.flags & 8) ? sl : 0, d.step);
+      /* After key-off (an echo tail) the envelopes play their release through
+       * the taps: only the EG re-keys. */
+      if (v != 0 && !sl->fresh)
+        keyon_retrigger(s, ch, sl->state != MML_MACRO_RELEASE, (d.flags & 8) ? sl : 0, d.step);
     } else if (d.target == T_NOTE_PITCH) {
       /* Pitch macro: write the register every frame but never store back to
        * pitch_cents, which holds the :pitch directive's base. An override macro
@@ -1184,8 +1188,11 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp,
   } else {
     sl->cursor++;
     if (sl->cursor >= (uint16_t)d.count) { /* release finished */
-      /* A PSG level release was the decay: silence the channel a step on. */
-      if ((d.target == T_VEL || d.target == T_VOL) && ch >= 6 && ch < 10 && !keyed) {
+      /* A PSG level release was the decay: silence the channel a step on. A
+       * KEYON release (an echo tail) re-keyed the channel: key it off a step
+       * after its last tap, as the note's gate would. */
+      if (((d.target == T_VEL || d.target == T_VOL) && ch >= 6 && ch < 10 && !keyed) ||
+          d.target == T_KEYON) {
         sl->state = MML_MACRO_TAIL;
         return 0;
       }
@@ -2255,10 +2262,17 @@ uint8_t mml_track_id(const MMLSeq *s, uint8_t index) {
 }
 
 int mml_done(const MMLSeq *s) {
-  /* Every track idle or held. The engine owns PCM playback, so a shot's tail is
-   * not the sequencer's to wait for (drv-player _done reads the same). */
+  /* Every track idle or held, and no macro still playing a release — the
+   * decay tail after the last key-off (an echo tail, a PSG fade) is part of
+   * the song. The engine owns PCM playback, so a shot's tail is not the
+   * sequencer's to wait for (drv-player _done reads the same). */
   for (uint8_t i = 0; i < s->track_count; i++)
     if (s->trk[i].running && !s->trk[i].held) return 0;
+  for (int mc = 0; mc < MML_MACRO_CHANNELS; mc++)
+    for (int i = 0; i < s->macro_slot_count[mc]; i++) {
+      uint8_t st = s->macro_slots[mc][i].state;
+      if (st == MML_MACRO_RELEASE || st == MML_MACRO_TAIL) return 0;
+    }
   return 1;
 }
 

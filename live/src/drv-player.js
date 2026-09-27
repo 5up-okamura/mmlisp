@@ -1891,7 +1891,8 @@ export class DrvPlayer {
   _macroSample(ch, slot, d, keyed) {
     if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
     if (slot.state === "tail") {
-      if (!keyed && this._psg[ch - 6].sounding) this._writePsgAtt(ch - 6, 15);
+      if (d.target === TARGET_ID.KEYON) this._channelOff(ch); // the echo tail's last tap ends
+      else if (!keyed && this._psg[ch - 6].sounding) this._writePsgAtt(ch - 6, 15);
       return true;
     }
     let v = d.values[slot.cursor];
@@ -1910,7 +1911,10 @@ export class DrvPlayer {
         // just attacked — re-attacking there is a write with nothing behind
         // it, so a leading nonzero step is a no-op (ir-player skips the t=0
         // sample the same way). Later steps are the roll.
-        if (v !== 0 && !slot.fresh) this._keyonRetrigger(ch, d.flags & 8 ? slot : null, d.step);
+        // After key-off (an echo tail) the envelopes play their release
+        // through the taps: only the EG re-keys.
+        if (v !== 0 && !slot.fresh)
+          this._keyonRetrigger(ch, slot.state !== "release", d.flags & 8 ? slot : null, d.step);
       } else if (d.target === TARGET_ID.NOTE_PITCH) {
         // Pitch macro: write the note pitch each frame WITHOUT storing back to
         // the sticky pitchCents (which holds the :pitch directive base). An
@@ -1945,7 +1949,10 @@ export class DrvPlayer {
       if (slot.cursor >= d.count) {
         // Release finished. A PSG :vel release was the decay: silence the
         // channel a step on (the "tail" state).
-        if ((d.target === TARGET_ID.VEL || d.target === TARGET_ID.VOL) && ch >= 6 && ch < 10 && !keyed) {
+        // A KEYON release (an echo tail) re-keyed the channel: key it off a
+        // step after its last tap, as the note's gate would.
+        if (((d.target === TARGET_ID.VEL || d.target === TARGET_ID.VOL) && ch >= 6 && ch < 10 && !keyed) ||
+            d.target === TARGET_ID.KEYON) {
           slot.state = "tail";
           return false;
         }
@@ -1959,9 +1966,9 @@ export class DrvPlayer {
   // envelope macros (level and timbre slots → attack; :pitch/:semi run on) and, on FM,
   // re-key the hardware EG ($28). PSG has no hardware EG — the macro restart is
   // the whole effect.
-  _keyonRetrigger(ch, src = null, srcStep = 0) {
+  _keyonRetrigger(ch, restart = true, src = null, srcStep = 0) {
     const mc = this._macroCh(ch);
-    for (const s of mc < 0 ? [] : this._macroSlots[mc]) {
+    for (const s of mc < 0 || !restart ? [] : this._macroSlots[mc]) {
       if (!s) continue;
       const sd = this._macros[s.descIdx];
       // :pitch and :semi run on: a retriggered arp keeps its place.
@@ -2670,9 +2677,14 @@ export class DrvPlayer {
   }
 
   _done() {
-    // Every track idle or held. The engine owns PCM playback, so a shot's tail
-    // is not the sequencer's to wait for; `mml_done` in the C reads the same.
-    return this._trk.every((t) => !t.running || t.held);
+    // Every track idle or held, and no macro still playing a release — the
+    // decay tail after the last key-off (an echo tail, a PSG fade) is part of
+    // the song. The engine owns PCM playback, so a shot's tail is not the
+    // sequencer's to wait for; `mml_done` in the C reads the same.
+    return (
+      this._trk.every((t) => !t.running || t.held) &&
+      !this._macroSlots.some((ss) => ss.some((s) => s && (s.state === "release" || s.state === "tail")))
+    );
   }
 
   /**

@@ -1108,7 +1108,11 @@ region; `(wait key-off)` marks the release boundary).
   roll starts at the second step — it restarts the channel's envelope macro
   slots to their attack (level and timbre: `:vel`/`:vol`/`:tl`… replay; `:pitch`
   and `:semi` run on, so a retriggered arp keeps its place) and, on FM, re-keys
-  the hardware EG (`$28` off→on). KEYON slots step first in the frame, so a
+  the hardware EG (`$28` off→on). After key-off (a `#rel` echo tail) a tap only
+  re-keys the EG — the envelopes play their release through the taps — and
+  the KEYON slot's end keys the channel off a step after its last tap (the
+  TAIL state). `mml_done` waits for a release or tail still playing. KEYON
+  slots step first in the frame, so a
   restarted envelope takes its first step in the retrigger's frame, and a
   tick-clocked one counts from the retrigger's tick. PSG has no hardware EG, so the
   soft-envelope restart is the whole effect. On an FM3 operator track the
