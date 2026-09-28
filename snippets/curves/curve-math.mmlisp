@@ -1,19 +1,22 @@
-; Curves are values, and arithmetic composes them. A scalar shifts or scales
-; a curve for free, so one normalized shape serves at any depth. Two curves
-; combined are baked frame by frame at compile time: give both frame lengths
-; (Nf), and keep them both looping (or both one-shot).
-(import "presets/gm/set.mmlisp")
+; Curves are values, and arithmetic composes them. One slow shape, a siren
+; that rises and falls once a bar, heard five ways, a bar each, after the
+; plain note. The lengths are frames locked to the tempo (at 90, a bar is
+; 160f and an eighth 20f), so combined curves move with the beat.
+(import "presets/waveforms/set.mmlisp")
 
-(fm1 :tempo 90 :oct 5 :len 1 gm-violin
-  ; a normalized sine scaled to +-30 cents
-  (macro :pitch (* (sin -1..1 :len 12f) 30))
-  e d
-  ; two LFOs summed: 12 and 20 frames, a wobble that repeats every 60
-  (macro :pitch (+ (sin -20..20 :len 12f) (sin -14..14 :len 20f)))
-  c e)
+(def slow (sin -1..1 :len 160f))  ; normalized: -1..1, one cycle a bar
 
-; let names a curve once and reuses it at different depths
-(fm2 :oct 4 :len 1 gm-strings1 :vel 11
-  (let ((wobble (sin -1..1 :len 16f)))
-    (macro :pitch (* wobble 8)) c g
-    (macro :pitch (* wobble 40)) a- g))
+(fm1 :tempo 90 :oct 4 :len 1 wave-triangle
+  e  ; the plain note
+  ; 1. a scalar scales it: +-1 semitone
+  (macro :pitch (* slow 100)) e
+  ; 2. ...or +-a fifth, from the same shape
+  (macro :pitch (* slow 700)) e
+  ; 3. a scalar shifts it: the same siren an octave up
+  (macro :pitch (+ (* slow 700) 1200)) e
+  ; 4. two curves summed: an eighth-note swoop of +-20 semitones riding
+  ;    the siren
+  (macro :pitch (+ (* slow 700) (sin -2000..2000 :len 20f))) e
+  ; 5. two curves multiplied: an eighth-note warble on a steady note, its
+  ;    depth following a triangle from nothing up to +-2.5 octaves and back
+  (macro :pitch (* (triangle 0..1 :len 160f) (sin -3000..3000 :len 20f))) e)
