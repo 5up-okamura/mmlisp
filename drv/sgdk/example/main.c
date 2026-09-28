@@ -7,28 +7,30 @@
 //   src/mmlispseq_tables.c its constant tables ) drv/tools/install-sgdk.mjs
 //   src/mmlpairs.c        the slot -> pair converter
 //   inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlpairs.h  inc/mmlispdrv_bin.h (generated)
+//   inc/mmlisp_se.h       the score's def-se numbers (generated)
 //   inc/mml_rate.h        the sample clock — mmlispseq.h includes it
 //   res/song.res          the BIN resources: song.mmb, and song.smp for a PCM score
 //
 // Controls
 //   START     play the BGM; with several songs, the NEXT song
 //   DOWN      stop everything
-//   A / B     an FM effect, at a low and a high priority
-//   C         a PSG effect        UP     a PCM effect
+//   A B C UP  the score's effects 0-3 (the demo's: bleep and zap on FM at a
+//             low and a high priority, chirp on PSG, blip on PCM)
 //   LEFT/RIGHT  the score's value slots, held like a knob
 //
 // It is written to run with ANY score. The effect, value-slot and song-change
 // demos need scores that carry them, which is what example/demo.mmlisp and
-// demo-b.mmlisp are — two songs with a BGM on FM, PSG and PCM, one effect for
-// each kind, two value slots, and ONE sample bank between them
-// (example/demo.bundle.json, built by tools/bundle.mjs):
+// demo-b.mmlisp are — two songs with a BGM on FM, PSG and PCM, two value
+// slots, ONE sample bank between them, and the game's effects from
+// demo-se.mmlisp (example/demo.bundle.json, built by tools/bundle.mjs):
 //
 //   node drv/tools/install-sgdk.mjs <proj> --example --bundle drv/sgdk/example/demo.bundle.json
-//   make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_SE_TRACKS=4 -DMMLISP_PCM_SAMPLES=1 -DMMLISP_SONG_LIST=demo_mmb,demo_b_mmb"
+//   make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_PCM_SAMPLES=1 -DMMLISP_SONG_LIST=demo_mmb,demo_b_mmb"
 //
 #include <genesis.h>
 #include "mmlispdrv.h"
 #include "song.h"        // rescomp: `song_mmb` (and `song_smp` for a PCM score)
+#include "mmlisp_se.h"   // install-sgdk: SE_<NAME> and MMLISP_SE_COUNT, the def-se numbers
 
 // ── PCM scores ──────────────────────────────────────────────────────────────
 // A score with `def :sample` ships res/song.smp beside res/song.mmb, and needs
@@ -61,38 +63,18 @@ static const u8* const SONGS[] = { MMLISP_SONG_LIST };
 #define SONG_COUNT ((u8)(sizeof SONGS / sizeof SONGS[0]))
 
 // ── Sound effects (driver.md §2.5) ──────────────────────────────────────────
-// HOW MANY TRACKS AT THE END OF THE SCORE ARE SOUND EFFECTS. They are the ones
-// the BGM buttons must NOT start, and the ones A and B fire with
-// MMLisp_startSe. 0 — the default — means the score is all BGM and those two
-// buttons do nothing, which is what every other score in this repo wants.
+// The score's def-se forms, by number: install-sgdk writes inc/mmlisp_se.h
+// (SE_BLEEP … for the demo, the same numbers in every song of a bundle), and
+// MMLisp_playSe starts one — at the priority its def-se gives it. The buttons
+// below fire effects 0-3, whatever the score calls them, so this program runs
+// with any score; one with fewer effects leaves the extra buttons idle.
 //
-// The driver has no idea which track is an SE: `startTrack` and `startSe` are
-// two ways to start the same track, and which one a track deserves is the
-// game's knowledge, not the score's.
-#ifndef MMLISP_SE_TRACKS
-#define MMLISP_SE_TRACKS 0
-#endif
-
-// The priorities A and B fire at. Against an effect already sounding on that
-// channel the lower one is DROPPED — and dropping it leaves the one playing
-// completely alone — while the equal-or-higher one takes the channel over and
-// inherits its duty to hand the BGM back. Press A then B to hear the takeover,
-// B then A to hear the drop: in both cases the BGM's held note returns, re-keyed
-// mid-sustain, when the LAST effect ends.
-//
-// Priority only arbitrates BETWEEN EFFECTS ON ONE CHANNEL. The PSG and PCM
-// effects below sit on channels of their own, so they never meet these two and
-// their own priority is free.
-#define SE_PRIO_LOW  4
-#define SE_PRIO_HIGH 9
-#define SE_PRIO_ONE  5
-
-// Which effect each button fires, as an index into the run of effect tracks at
-// the end of the score. demo.mmlisp orders them FM, FM, PSG, PCM.
-#define SE_FM   0
-#define SE_FM2  1
-#define SE_PSG  2
-#define SE_PCM  3
+// The demo's are ordered to show the priority rule. bleep (4) and zap (9) both
+// take fm1: against an effect already sounding on the channel the lower one is
+// DROPPED — leaving the one playing alone — while the equal-or-higher one takes
+// the channel over and inherits its duty to hand the song back. Press A then B
+// to hear the takeover, B then A to hear the drop: in both cases the song's
+// held note returns, re-keyed mid-sustain, when the LAST effect ends.
 
 // ── Value slots (driver.md §6.4) ────────────────────────────────────────────
 // The score's `(def-val …)` declarations, in declaration order. demo.mmlisp
@@ -129,7 +111,7 @@ static const u8* const SONGS[] = { MMLISP_SONG_LIST };
 // The machine gate runs the ROM with no pad, so without this MMLisp_startSe
 // would never execute on a real 68000 — everything about effects would be
 // verified in the reference and in the host's C and nowhere else. With it,
-// each of the first MMLISP_SE_TRACKS effects is fired this many frames after
+// each of the first four effects is fired this many frames after
 // the BGM started, counted in frames the SEQUENCER rendered so that it lines
 // up with the reference's own timeline whatever the host's settle took.
 // sgdk-gate passes the same numbers to the reference as a command schedule.
@@ -165,27 +147,13 @@ static void drawHex(u32 value, u16 digits, u16 x, u16 y)
     VDP_drawText(hex, x, y);
 }
 
-// The BGM tracks: everything the score declares except the sound effects, which
-// sit at the end of the list.
-static u8 bgmTrackCount(void)
-{
-    u8 n = MMLisp_trackCount();
-#if MMLISP_SE_TRACKS
-    // >=, not >: a score that is ALL effect tracks has no BGM, and starting
-    // them here would start them with startTrack — evicting, never restoring.
-    return (n >= MMLISP_SE_TRACKS) ? (u8)(n - MMLISP_SE_TRACKS) : n;
-#else
-    return n;
-#endif
-}
-
 static void playBgm(void)
 {
-    // Every track in one frame. Each track's clock starts on the frame it was
-    // set up in, so spreading the starts would leave them permanently out of
-    // phase — and the setup frame is silent anyway (driver.md §4.2).
-    for (u8 i = 0; i < bgmTrackCount(); i++)
-        MMLisp_startTrack(MMLisp_trackId(i));
+    // Every track of the song in one frame — the effects' parts excepted, the
+    // game starts those. Each track's clock starts on the frame it was set up
+    // in, so spreading the starts would leave them permanently out of phase —
+    // and the setup frame is silent anyway (driver.md §4.2).
+    MMLisp_startSong();
 }
 
 static void stopAll(void)
@@ -209,19 +177,13 @@ static bool loadSong(u8 i)
     return MMLisp_loadScore(SONGS[i]);
 }
 
-// Fire the i-th sound-effect track. MMLisp_startSe, not startTrack: startTrack
-// would EVICT the BGM track on that channel and the music would never come
-// back, which is the whole difference between a scene change and an effect.
-static void fireSe(u8 i, u8 prio)
+// Fire effect i, if the score has one. An effect takes its channels from the
+// song without stopping it: the song's part there is suspended and comes back
+// when the effect ends — the whole difference between an effect and a scene
+// change (MMLisp_startTrack, which evicts).
+static void fireSe(u8 i)
 {
-#if MMLISP_SE_TRACKS
-    u8 n = MMLisp_trackCount();
-    if (i >= MMLISP_SE_TRACKS || n < MMLISP_SE_TRACKS) return;
-    MMLisp_startSe(MMLisp_trackId((u8)(n - MMLISP_SE_TRACKS + i)), prio);
-#else
-    (void)i;
-    (void)prio;
-#endif
+    if (i < MMLisp_seCount()) MMLisp_playSe(i);
 }
 
 // A held direction moves a slot every frame, so a full sweep takes about a
@@ -334,7 +296,6 @@ int main(bool hardReset)
     u16 loops = 0;
 #if MMLISP_SE_SCRIPT
     const u16 seAt[4] = { MMLISP_SE_AT0, MMLISP_SE_AT1, MMLISP_SE_AT2, MMLISP_SE_AT3 };
-    const u8  sePrio[4] = { SE_PRIO_LOW, SE_PRIO_HIGH, SE_PRIO_ONE, SE_PRIO_ONE };
     u16 seBase = 0;
     u8  seFired = 0;   // one bit per effect
 #endif
@@ -418,12 +379,12 @@ int main(bool hardReset)
 #if MMLISP_SE_SCRIPT
         {
             const u16 t = (u16)(MMLisp_renderedFrames() - seBase);
-            for (u8 i = 0; i < 4 && i < MMLISP_SE_TRACKS; i++)
+            for (u8 i = 0; i < 4 && i < MMLisp_seCount(); i++)
             {
                 if (seFired & (1 << i)) continue;
                 if (t < seAt[i]) continue;
                 seFired |= (u8)(1 << i);
-                fireSe(i, sePrio[i]);
+                fireSe(i);
             }
         }
 #endif
@@ -433,10 +394,10 @@ int main(bool hardReset)
         // picks up where it was. On PCM there is no owning track to suspend —
         // the effect overwrites the soft-mix voice, and the BGM's loop is
         // started again when it ends.
-        if (pressed & BUTTON_A)  fireSe(SE_FM,  SE_PRIO_LOW);
-        if (pressed & BUTTON_B)  fireSe(SE_FM2, SE_PRIO_HIGH);
-        if (pressed & BUTTON_C)  fireSe(SE_PSG, SE_PRIO_ONE);
-        if (pressed & BUTTON_UP) fireSe(SE_PCM, SE_PRIO_ONE);
+        if (pressed & BUTTON_A)  fireSe(0);
+        if (pressed & BUTTON_B)  fireSe(1);
+        if (pressed & BUTTON_C)  fireSe(2);
+        if (pressed & BUTTON_UP) fireSe(3);
 
         if (pressed & BUTTON_DOWN)
         {

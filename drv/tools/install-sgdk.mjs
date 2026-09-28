@@ -56,13 +56,12 @@ const USAGE = `usage: node tools/install-sgdk.mjs [<project-dir>] [options]
 
   --song <file.mmlisp>   compile the score into <project>/res/song.mmb
                          (plus song.smp when the score uses PCM samples)
-  --remap <t:ch,...>     point track t at channel ch in the built song.mmb:
-                         an SE track is authored on a spare channel (the
-                         compiler gives each channel one track) and pointed at
-                         the BGM channel it steals
+  --se <file.mmlisp>     with --song: the game's effects (def-se) — the score
+                         compiles as if it imported the file
   --bundle <manifest>    several scores against ONE sample bank (tools/bundle.mjs):
                          res/<name>.mmb per song and res/song.smp. Instead of
-                         --song; the manifest carries each song's remap
+                         --song; the manifest's "se" gives every song the effects
+  Both write inc/mmlisp_se.h: the score's def-se numbers, SE_<NAME>.
   --example              also seed src/main.c from example/main.c, if absent
   --no-build             skip the emit-bin.mjs regeneration step
   --dry-run              report what would change; write nothing
@@ -75,7 +74,7 @@ function fail(msg) {
 }
 
 // ---- args -----------------------------------------------------------------
-const opts = { build: true, dryRun: false, example: false, song: null, remap: null, bundle: null };
+const opts = { build: true, dryRun: false, example: false, song: null, se: null, bundle: null };
 let projectArg = process.env.MMLISP_SGDK_PROJECT ?? null;
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -85,8 +84,8 @@ for (let i = 0; i < argv.length; i++) {
     process.exit(0);
   } else if (a === "--song") {
     opts.song = argv[++i] ?? fail("--song needs a path");
-  } else if (a === "--remap") {
-    opts.remap = argv[++i] ?? fail("--remap needs track:channel pairs");
+  } else if (a === "--se") {
+    opts.se = argv[++i] ?? fail("--se needs a path");
   } else if (a === "--bundle") {
     opts.bundle = argv[++i] ?? fail("--bundle needs a manifest path");
   } else if (a === "--example") {
@@ -118,8 +117,9 @@ if (!["Makefile", "makefile", "GNUmakefile"].some((m) => existsSync(join(project
   );
 }
 if (opts.song && !existsSync(opts.song)) fail(`no such score: ${opts.song}`);
-if (opts.remap && !opts.song) fail("--remap needs --song: it rewrites the score being built");
-if (opts.bundle && (opts.song || opts.remap)) fail("--bundle replaces --song and --remap: the manifest names the scores and their remaps");
+if (opts.bundle && opts.song) fail("--bundle replaces --song: the manifest names the scores");
+if (opts.se && !opts.song) fail("--se goes with --song; a bundle's manifest names its own \"se\"");
+if (opts.se && !existsSync(opts.se)) fail(`no such effects file: ${opts.se}`);
 if (opts.bundle && !existsSync(opts.bundle)) fail(`no such manifest: ${opts.bundle}`);
 
 const dry = opts.dryRun ? "[dry-run] " : "";
@@ -188,16 +188,11 @@ for (const f of plan) {
 
 // ---- optional: compile the score ----------------------------------------
 let smpPath = null;
+let seList = []; // the score's effects (def-se), for inc/mmlisp_se.h
 if (opts.song) {
-  const { buildMmb, remapTrackChannels, parseRemap } = await import("./mmb-build.mjs");
-  const { bytes, sampleBank, ir, diagnostics } = buildMmb(opts.song);
-  if (opts.remap) {
-    let moved;
-    try { moved = remapTrackChannels(bytes, parseRemap(opts.remap)); }
-    catch (e) { fail(e.message); }
-    if (!moved.length) fail(`--remap ${opts.remap} matched no track id in the score`);
-    for (const m of moved) console.log(`    remap: track ${m.track} -> channel ${m.to} (authored on ${m.from})`);
-  }
+  const { buildMmb, seListOf } = await import("./mmb-build.mjs");
+  const { bytes, sampleBank, ir, diagnostics } = buildMmb(opts.song, { seFile: opts.se });
+  seList = seListOf(ir);
   const mmbPath = join(project, "res", "song.mmb");
   ensureDir(dirname(mmbPath));
   if (!opts.dryRun) writeFileSync(mmbPath, bytes);
@@ -206,17 +201,6 @@ if (opts.song) {
   const chans = (ir.tracks ?? []).map((t, i) => `${i}:${t.channel}`).join(" ");
   const trackCount = ir.tracks?.length ?? 0;
   console.log(`    ${trackCount} tracks — ${chans}`);
-  // The one host-side way left to lose a track without any error: starting a
-  // count of your own that stops short of this list. (The pre-split ceiling — a
-  // start burst deeper than the mailbox ring — is gone with the mailbox.)
-  const pcm = (ir.tracks ?? []).filter((t) => /^pcm/.test(t.channel)).length;
-  if (pcm) {
-    console.log(
-      `    ${pcm} PCM track${pcm > 1 ? "s" : ""} — start the WHOLE list` +
-        ` (MMLisp_trackCount/trackId), not a constant: PCM sits at the end,` +
-        ` so a short count silently drops it`,
-    );
-  }
   if (sampleBank?.length) {
     smpPath = join(project, "res", "song.smp");
     if (!opts.dryRun) writeFileSync(smpPath, sampleBank);
@@ -231,6 +215,7 @@ if (opts.bundle) {
   const { loadManifest, buildBundle, resLines, channelName } = await import("./bundle.mjs");
   const { manifest, baseDir } = loadManifest(opts.bundle);
   const bundle = buildBundle(manifest, { baseDir });
+  seList = bundle.se;
   // The seeded song.res declares "song.smp", and the uncommenting below keys
   // on that name; a manifest that renames the bank would leave the res
   // pointing at a file the build never writes. Rather than thread the name
@@ -245,10 +230,7 @@ if (opts.bundle) {
     const out = join(project, "res", `${s.name}.mmb`);
     if (!opts.dryRun) writeFileSync(out, s.bytes);
     console.log(`${dry}  > res/${s.name}.mmb  ${s.bytes.length} B  (${relative(process.cwd(), s.src)})`);
-    const chans = s.tracks.map((t) => {
-      const m = s.moved.find((x) => x.track === t.id);
-      return `${t.id}:${m ? `${channelName(m.from)}->` : ""}${channelName(t.channel)}`;
-    }).join(" ");
+    const chans = s.tracks.map((t) => `${t.id}:${channelName(t.channel)}`).join(" ");
     console.log(`    ${s.tracks.length} tracks — ${chans}`);
     for (const d of s.diagnostics) console.warn(`    ${d.severity}: ${d.message}`);
   }
@@ -275,6 +257,18 @@ if (opts.bundle) {
     if (!opts.dryRun) writeFileSync(resPath, res);
     console.log(`${dry}  ~ res/song.res  (declares the bundle's songs)`);
   }
+}
+
+// ---- the effects' numbers -------------------------------------------------
+// Written on every install, empty for a score without effects, so a program
+// can always `#include "mmlisp_se.h"` and test MMLISP_SE_COUNT.
+{
+  const { seHeader } = await import("./mmb-build.mjs");
+  const out = join(project, "inc", "mmlisp_se.h");
+  ensureDir(dirname(out));
+  if (!opts.dryRun) writeFileSync(out, seHeader(seList));
+  console.log(`${dry}  > inc/mmlisp_se.h  ${seList.length} effect${seList.length === 1 ? "" : "s"}` +
+    (seList.length ? ` — ${seList.map((e, i) => `${i}:${e.name}`).join(" ")}` : ""));
 }
 
 // ---- report --------------------------------------------------------------
@@ -363,12 +357,12 @@ if (bundleRes) {
     `\nNext: include "song.h" (rescomp generates it from res/song.res). The bundle's songs are ` +
       `${names.join(", ")} — one MMLisp_loadScore each, the bank published once with ` +
       `MMLisp_setSampleBank(song_smp). example/main.c cycles them with\n` +
-      `  make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_SE_TRACKS=4 -DMMLISP_PCM_SAMPLES=1 ` +
+      `  make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_PCM_SAMPLES=1 ` +
       `-DMMLISP_SONG_LIST=${names.join(",")}"`,
   );
 } else console.log(
   `\nNext: include "song.h" (rescomp generates it from res/song.res), then` +
-    ` MMLisp_init() → MMLisp_loadScore(song_mmb) → MMLisp_startTrack(id) per` +
-    ` track, and MMLisp_frame() once per vblank, last in your frame` +
+    ` MMLisp_init() → MMLisp_loadScore(song_mmb) → MMLisp_startSong(), effects with` +
+    ` MMLisp_playSe(SE_<NAME>) from "mmlisp_se.h", and MMLisp_frame() once per vblank, last in your frame` +
     ` (driver.md §6.6). Then \`make\`.`,
 );

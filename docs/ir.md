@@ -107,6 +107,7 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 | `channel`      | string | Physical channel name. FM3 variants (`fm3-1..4`, `fm3-csm`, `fm3-csm-rate`) collapse to `fm3`. |
 | `events`       | array  | Time-ordered event list (see §4).                                        |
 | `bars`         | array  | Optional. Bar markers (`|`) for the editor: `{ordinal, tick, line, column}` per marker. Inspection metadata only — no playback effect; absent when the track has no `|`. |
+| `se`           | object | Present on a sound effect's part (`def-se`, language.md §9.3): `{name, index, prio}` — the effect's name, its number (def-se order, imports first) and its default priority. These tracks follow the song's, run on the effect's own tempo (a TEMPO_SET at tick 0), and are not played with the song: the preview plays the song's tracks, or one effect's alone (`IRPlayer.loadJSON(ir, {se})`). |
 
 Tracks have no `name` field; the player routes purely by `channel`.
 

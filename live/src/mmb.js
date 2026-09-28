@@ -47,6 +47,7 @@ export const SECTION_ID = {
   VAL_TABLE: 0x0005,
   VOICE_TABLE: 0x0006,
   MACRO_TABLE: 0x0007,
+  SE_TABLE: 0x0008,
 };
 export const SECTION_FLAG = { REQUIRED: 1 << 0 };
 
@@ -55,7 +56,12 @@ export const TRACK_FLAG = {
   hasLoop: 1 << 0, // backward JUMP present (loops forever)
   isCsm: 1 << 1, // fm3-csm track, drives Timer A / CSM
   isFm3Op: 1 << 2, // fm3 independent-operator sub-track
+  isSe: 1 << 3, // a sound effect's part (def-se): started by the host, never with the song
 };
+
+// The tracks a sequencer holds (mmlispseq.h MML_MAX_TRACKS): a song's 16 —
+// one a channel — and as many effect parts again.
+export const MAX_TRACKS = 32;
 
 // Channel id map (mmb.md §6.1), keyed by the canonical hardware channel name.
 export const CHANNEL_ID = {

@@ -66,6 +66,15 @@ const DRIVER_SWEEP_CURVES = new Set([
   "ease-inout", "ease-inout-quad", "sin", "triangle", "square", "saw", "ramp",
 ]);
 
+// The tracks a playback takes from the IR: the song's (every track but an
+// effect's part), or one effect's parts alone — renumbered, since a track's
+// index is its id here.
+export function songOrEffectIr(ir, se) {
+  const tracks = (ir?.tracks ?? []).filter((t) => (se == null ? !t.se : t.se?.index === se));
+  if (tracks.length === (ir?.tracks ?? []).length) return ir;
+  return { ...ir, tracks: tracks.map((t, i) => ({ ...t, id: i })) };
+}
+
 // Whether a macro's first step writes nothing: a leading wait, a hold step, or
 // an empty attack/sustain (`[#rel …]`).
 function macroLeadsWithHold(spec) {
@@ -261,7 +270,7 @@ export class IRPlayer {
    */
   async loadURL(url) {
     const res = await fetch(url);
-    this._loadIR(await res.json());
+    this._loadIR(songOrEffectIr(await res.json(), null));
     return this;
   }
 
@@ -273,8 +282,15 @@ export class IRPlayer {
   /**
    * Load IR JSON directly from an object.
    */
-  loadJSON(irObj) {
-    this._loadIR(irObj);
+  /**
+   * Load a compiled IR. The song plays its own tracks — an effect's parts
+   * (def-se) are the game's to start, never the song's. `se` auditions one
+   * effect alone instead: its parts, and nothing of the song.
+   * @param {object} irObj
+   * @param {{se?: number|null}} [opts]
+   */
+  loadJSON(irObj, { se = null } = {}) {
+    this._loadIR(songOrEffectIr(irObj, se));
     return this;
   }
 

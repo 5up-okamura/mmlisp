@@ -1,0 +1,21 @@
+; P3 gate: sound effects as defs (def-se, driver.md §2.5). The song's tracks
+; start; the effects are started by NUMBER (PLAY_SE, p3-se-def.cmds.json),
+; never with the song:
+;   0 jump  one part on fm1, the song's lead's channel — no remap
+;   1 boom  two parts (fm1 + pcm1) under one number, its own tempo (150,
+;           against the song's 90), a tick-clocked :keyon roll on the PCM
+;           part that must count the EFFECT's ticks
+; jump plays at its own priority, then boom is fired over it at a host-given
+; one and stopped early (STOP_SE), which gives both channels back.
+(def pcm-voices 1)
+(def-pcm blip :file "blip.wav")
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+
+(def-se jump :prio 3 (fm1 :oct 5 :len 16 :vel 14 c e g > c))
+(def-se boom :prio 5 :tempo 150
+  (fm1 :oct 3 :len 4 c)
+  (pcm1 blip :oct 4 :len 4 (macro :step 1/32 :keyon [1 1 1 1 1 1]) c))
+
+(fm1 :tempo 90 :oct 4 :len 1 :vel 12 c e g)
+(sqr1 :oct 5 :len 2 e g e g)
+(pcm1 pad :mode loop :oct 4 :len 1 c c)

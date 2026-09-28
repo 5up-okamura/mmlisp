@@ -48,7 +48,9 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
  * 71.9% -> 78.6% at 1), so they were retired (2026-09-14). Must equal
  * live/src/slot-builder.js. */
 #define MML_SLOT_SUBS 1
-#define MML_MAX_TRACKS 16
+/* A song's tracks — one a channel, 16 at most — and as many sound-effect
+ * parts again (def-se, driver.md §2.5). live/src/mmb.js MAX_TRACKS. */
+#define MML_MAX_TRACKS 32
 #define MML_LOOP_DEPTH 4
 #define MML_WRITE_QUEUE 1024 /* spill headroom; a score head peaks near 150 */
 /* Macros bound per channel (driver.md §13.1 budgets 3 — one per target family;
@@ -271,6 +273,7 @@ typedef struct {
   uint16_t event_offset; /* stream start, for a restart */
   uint16_t pc;
   uint16_t acc;      /* 8.8 tick accumulator */
+  uint16_t inc;      /* an effect part's own tempo increment (the song's is s->increment) */
   int32_t wait;      /* ticks until the next timed dispatch */
   int32_t gate_left; /* -1 = none */
   uint8_t pending_off;
@@ -290,6 +293,8 @@ typedef struct {
   uint16_t voice_count;
   const uint8_t *macro_table; /* MACRO_TABLE section, descriptors then blob */
   uint16_t macro_count;
+  const uint8_t *se_table;    /* SE_TABLE entries {prio, first track, parts} (mmb.md §16) */
+  uint8_t se_count;
   /* SAMPLE_BANK (mmb.md §10) — a separate ROM bank, not an MMB section. Only
    * the entry table is the sequencer's business; the blob belongs to the Z80. */
   const uint8_t *sample_entries;
@@ -308,6 +313,9 @@ typedef struct {
   uint16_t frame_inc; /* this frame's share of it, for tick-clocked macros */
   uint16_t cur_acc;   /* the dispatching track's accumulator after its tick */
   uint16_t off_acc[MML_MACRO_CHANNELS]; /* cur_acc at each channel's last key-off */
+  /* The effect part whose note triggered a channel's macros (track index + 1,
+   * 0 = the song's): a tick-clocked macro counts that part's ticks. */
+  uint8_t mc_se[MML_MACRO_CHANNELS];
 
   MMLTrack trk[MML_MAX_TRACKS];
   uint8_t track_count;
@@ -421,6 +429,18 @@ void mml_start_track(MMLSeq *s, uint8_t track_id);
  * duty. A PCM SE overwrites the voice instead; a looping BGM note there is
  * restarted at SE-end. */
 void mml_start_se(MMLSeq *s, uint8_t track_id, uint8_t priority);
+
+/* A def-se by its number — its place in the score's SE_TABLE, the same in
+ * every song of a bundle (mmb.md §16). Every part starts as an SE, at the
+ * effect's own priority or `priority` when it is not MML_SE_PRIO_DEFAULT.
+ * Stop ends every part; playing is whether any part still runs. */
+#define MML_SE_PRIO_DEFAULT (-1)
+void mml_play_se(MMLSeq *s, uint8_t se, int priority);
+void mml_stop_se(MMLSeq *s, uint8_t se);
+int mml_se_playing(const MMLSeq *s, uint8_t se);
+uint8_t mml_se_count(const MMLSeq *s);
+/* Start the song: every track that is not an effect's part. */
+void mml_start_song(MMLSeq *s);
 
 /* Stop one track: key-off (the release tail runs out), free its channel, idle
  * the TCB. On an fm3-csm track this clears the CSM bit (§9). */

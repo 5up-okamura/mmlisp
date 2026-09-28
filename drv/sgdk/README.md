@@ -50,7 +50,9 @@ creates** the files that become yours to edit — `res/song.res` when the projec
 has none, and `src/main.c` only with `--example`. Your `main.c` is never
 touched. With `--song` it also compiles the score to `res/song.mmb` (plus
 `res/song.smp` for PCM scores) and prints the track ids `MMLisp_startTrack`
-takes. Set `MMLISP_SGDK_PROJECT` to skip the path argument; `--help` lists every
+takes; `--se se.mmlisp` gives the score the game's effects. Every install
+writes `inc/mmlisp_se.h`, the effects' `SE_<NAME>` numbers (empty for a score
+without any). Set `MMLISP_SGDK_PROJECT` to skip the path argument; `--help` lists every
 option.
 
 The project layout it produces:
@@ -62,6 +64,7 @@ src/mmlispseq.c           the sequencer
 src/mmlispseq_tables.c    its constant tables
 src/mmlpairs.c            the slot -> pair converter
 inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlpairs.h  inc/mmlispdrv_bin.h  inc/mml_rate.h
+inc/mmlisp_se.h           the effects' numbers (generated)
 res/song.res  res/song.mmb  [res/song.smp]
 ```
 
@@ -69,14 +72,15 @@ res/song.res  res/song.mmb  [res/song.smp]
 
 `example/main.c` plays any score, but only scores that carry effects and
 value slots can show them. `example/demo.mmlisp` and `demo-b.mmlisp` are two
-such songs — a looping BGM on FM, PSG and PCM, one effect for each of the
-three, two value slots — and `demo.bundle.json` builds them against ONE
-sample bank:
+such songs — a looping BGM on FM, PSG and PCM and two value slots — and
+`example/demo-se.mmlisp` is the game's effects, one for each of the three
+kinds of voice. `demo.bundle.json` builds the songs against ONE sample bank and
+gives both the effects:
 
 ```
 cd drv
 node tools/install-sgdk.mjs ~/path/to/project --example --bundle sgdk/example/demo.bundle.json
-make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_SE_TRACKS=4 -DMMLISP_PCM_SAMPLES=1 -DMMLISP_SONG_LIST=demo_mmb,demo_b_mmb"
+make -f $GDK/makefile.gen EXTRA_FLAGS="-DMMLISP_PCM_SAMPLES=1 -DMMLISP_SONG_LIST=demo_mmb,demo_b_mmb"
 ```
 
 (A fresh project gets its `song.res` seeded with the bundle's BIN lines and
@@ -86,10 +90,10 @@ the PCM switch set; an existing one is told what to add.)
 | ------ | ------------ |
 | START | start the BGM; pressed again, load and start the NEXT song |
 | DOWN | stop everything |
-| A | an FM effect at priority 4, stealing the lead's channel |
-| B | a second FM effect at priority 9, on the same channel |
-| C | a PSG effect, stealing the chord's channel |
-| UP | a PCM effect, overwriting the BGM's looping voice |
+| A | effect 0 — `bleep`, FM at priority 4, taking the lead's channel |
+| B | effect 1 — `zap`, FM at priority 9, on the same channel |
+| C | effect 2 — `chirp`, PSG, taking the chord's channel |
+| UP | effect 3 — `blip`, PCM, overwriting the BGM's looping voice |
 | LEFT / RIGHT | the value knob, held |
 
 Press A and the lead stops and the effect plays; when it ends the lead comes
@@ -110,23 +114,24 @@ through a scaled macro, while the bass changes level only at the next pass of
 its loop, because that one is read by an opcode in the event stream. That gap
 is where each slot is read, not latency.
 
-**The `remap` in the manifest** is how an effect track lands on a BGM channel:
-the compiler gives each channel one track, so the effect is written on a spare
-channel and pointed at the right one in the built MMB. The byte-for-byte gate
-runs on the bundled artifacts through the same function, so what you hear is
-what the gate compares.
+**The effects are defs** (`def-se`, docs/language.md §9.3): each part is
+written on the channel it takes from the song, and the game plays an effect by
+the number install-sgdk writes to `inc/mmlisp_se.h` — `MMLisp_playSe(SE_ZAP)`.
+The byte-for-byte gate runs on the bundled artifacts, so what you hear is what
+the gate compares.
 
 ### Several songs, one bank — `tools/bundle.mjs`
 
 A resident score is one MMB; a game with many songs has many. What they can
-share is the sample bank, and `bundle.mjs` is how: a manifest names the scores
-(and each one's effect-track remap), and the build emits one `.mmb` per song
-and one `song.smp` in which every sample any song plays is numbered once. Every
-song is encoded for the same PCM voice count, so a song change is a
-`MMLisp_loadScore` with no Z80 reboot behind it. Effect tracks are still
-written in each song — `import` shares defs (voices, samples), not tracks —
-which is a few lines per song; the samples, the part that costs ROM, are not
-repeated.
+share is the sample bank and the effects, and `bundle.mjs` is how: a manifest
+names the scores and the game's effects file, and the build emits one `.mmb`
+per song, one `song.smp` in which every sample any song plays is numbered once,
+and `mmlisp_se.h`. Every song is encoded for the same PCM voice count, so a
+song change is a `MMLisp_loadScore` with no Z80 reboot behind it. Every song
+compiles with the effects file as if it imported it, so the effects are
+written once and carry the same numbers in every song; the songs never name
+them. (A song's copy of the effects' control data is small; their samples,
+the part that costs ROM, are in the bank once.)
 
 ```
 node tools/install-sgdk.mjs ~/path/to/project --bundle songs.json
@@ -136,9 +141,10 @@ node tools/bundle.mjs songs.json out/          # or just the files
 ```json
 {
   "pcmVoices": 1,
+  "se": "se.mmlisp",
   "songs": [
-    { "src": "stage1.mmlisp", "name": "stage1", "remap": { "6": 0, "7": 0 } },
-    { "src": "boss.mmlisp",   "name": "boss",   "remap": { "6": 0, "7": 0 } }
+    { "src": "stage1.mmlisp", "name": "stage1" },
+    { "src": "boss.mmlisp",   "name": "boss" }
   ]
 }
 ```
@@ -180,7 +186,7 @@ if (!MMLisp_isReady()) { /* bring-up failed */ }
 MMLisp_setSampleBank(song_smp);      // PCM scores only
 MMLisp_loadScore(song_mmb);
 MMLisp_attachInterrupts();           // the pump: one grab from the VBlank callback
-for (u8 i = 0; i < MMLisp_trackCount(); i++) MMLisp_startTrack(MMLisp_trackId(i));
+MMLisp_startSong();                  // every track but the effects' parts
 
 while (TRUE) {
     /* … your game … */
@@ -245,19 +251,25 @@ while (TRUE) {
   Load during a transition and start once `MMLisp_isSettled()` is TRUE;
   starting sooner is still correct, the first notes just come later.
 
-- **Control.** `MMLisp_startTrack` / `stopTrack` / `keyOff` / `setParam` /
-  `fadeTrack` / `setVal` are plain calls into the sequencer. They take effect on
-  the next frame rendered and reach the chip within about a frame after that.
+- **Control.** `MMLisp_startSong` / `startTrack` / `stopTrack` / `keyOff` /
+  `setParam` / `fadeTrack` / `setVal` are plain calls into the sequencer. They
+  take effect on the next frame rendered and reach the chip within about a
+  frame after that. `MMLisp_startSong()` starts the song — every track but the
+  effects' parts.
 
-- **Sound effects: `MMLisp_startSe(track, priority)`.** An SE is a track of the
-  same score, started on a channel the BGM owns. The BGM track is suspended,
-  not evicted; when the SE ends (its own end, or `MMLisp_stopTrack` for a held
-  or looping one) the BGM resumes and the note it was holding is re-keyed. A
-  second SE on the same channel is dropped if its priority is lower than the
-  playing one's and replaces it otherwise; the BGM comes back after the last.
-  An SE track is authored in the score alongside the BGM, on a spare channel,
-  and pointed at the BGM's channel by the build (the bundle's `remap`, or
-  `--remap` for a single score).
+- **Sound effects: `MMLisp_playSe(SE_NAME)`.** An effect is a `def-se`
+  (docs/language.md §9.3) in the game's effects file, which the bundle's
+  `"se"` (or `install-sgdk --song … --se se.mmlisp`) compiles into every song;
+  `#include "mmlisp_se.h"` for the `SE_<NAME>` numbers. Each of its parts
+  plays on the channel it names: the song's part there is suspended, not
+  evicted, and when the effect ends (its own end, or `MMLisp_stopSe`) it
+  resumes with the note it was holding re-keyed. A second effect on the same
+  channel is dropped if its priority is lower than the playing one's and
+  replaces it otherwise; the song comes back after the last. The def-se gives
+  the priority; `MMLisp_playSePrio(se, p)` overrides it. `MMLisp_sePlaying(se)`
+  says whether it still runs. An effect keeps its own tempo, so it sounds the
+  same in every song. (`MMLisp_startSe(track, priority)` starts one track as
+  an effect — the primitive underneath.)
 
 - **Music → game: `MMLisp_trig(track)`.** The score marks a beat with
   `(trig N)`; this returns that track's status byte — the id in bits 5-0 under a
@@ -342,20 +354,6 @@ every PCM note is dropped and the DAC is never enabled, so it sounds like a
 missing part rather than like noise. Measured on a real 9-track import: 1 `$2A`
 write over 600 frames without the call, 94,851 with it. (Noise is what a *wrong*
 non-zero bank gives you.)
-
-One more way to silence PCM with no error at all: **start the whole track list,
-not a count of your own.** PCM tracks sit near the end of it, so a constant that
-stops short drops exactly them — and nothing reports it. Ask the MMB instead:
-
-```c
-for (u8 i = 0; i < MMLisp_trackCount(); i++)
-    MMLisp_startTrack(MMLisp_trackId(i));
-```
-
-This is the second-most-common way to lose PCM and it looks identical to the
-first (the missing sample bank): the song plays, the drums do not.
-`MMLisp_needsSampleBank()` tells the two apart — true means the bank, false with
-missing PCM means the count.
 
 ### Two SGDK-specific traps, both found on the first real build
 

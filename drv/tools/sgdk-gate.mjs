@@ -1,15 +1,14 @@
 // THE WHOLE THING, BUILT WITH SGDK AND RUN ON BLASTEM (R28 §63.6 step 4).
 //
-//   node tools/sgdk-gate.mjs [score.mmlisp] [--seconds N] [--se N]
-//                            [--remap t:ch,…] [--keep]
+//   node tools/sgdk-gate.mjs [score.mmlisp] [--seconds N] [--se effects.mmlisp] [--keep]
 //
-// --se N: the last N tracks of the score are SOUND EFFECTS. The ROM fires each
-// with MMLisp_startSe on the schedule below instead of starting it with the
-// BGM, and the reference is driven with the same schedule — so the suspend,
-// the priority arbitration and the restore are graded on the machine rather
-// than only in the two host players. With --remap those effect tracks are
-// pointed at the BGM's own channels, so what the machine runs is the whole
-// suspend and restore rather than an effect playing beside the music.
+// --se: give the score the game's effects (def-se, as a bundle's "se" does)
+// and fire the first four of them. The ROM plays
+// effect i with MMLisp_playSe on the schedule below, and the reference is
+// driven with the same schedule — so the suspend, the priority arbitration
+// and the restore are graded on the machine rather than only in the two host
+// players. An effect's part is written on the channel it takes from the song,
+// so what the machine runs is the whole suspend and restore.
 //
 // An SGDK project is made in a scratch directory with `install-sgdk`, the
 // example program on autoplay, and the score compiled in; it is built with the
@@ -31,7 +30,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildMmb, remapTrackChannels, parseRemap } from "./mmb-build.mjs";
+import { buildMmb, seListOf } from "./mmb-build.mjs";
 import { sgdkEnv, makeProject, runRom, dropProject } from "./sgdk-project.mjs";
 import { buildLightImage } from "./build-engine.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
@@ -51,21 +50,19 @@ const BURN = Number(arg("burn", 0));
 // Effects, and the frames after the BGM starts at which the ROM fires them.
 // example/main.c takes these as -DMMLISP_SE_AT<i> and counts the same frames
 // (rendered ones, so the host's settle does not shift them).
-const SE_TRACKS = Number(arg("se", 0));
+const SE_FILE = arg("se", null);
+const FIRE_SE = !!SE_FILE;
 const SE_AT = [90, 150, 210, 270];
-const SE_PRIO = [4, 9, 5, 5];   // SE_PRIO_LOW / _HIGH / _ONE in main.c
-const REMAP = arg("remap", null);
 const score = argv.find((a) => a.endsWith(".mmlisp")) ?? join(drv, "tests", "m2-pcm.mmlisp");
 
 const E = sgdkEnv("sgdk-gate");
 
 // ── the project ────────────────────────────────────────────────────────────
 let built;
-const seFlags = SE_TRACKS
-  ? ` -DMMLISP_SE_SCRIPT=1 -DMMLISP_SE_TRACKS=${SE_TRACKS}` +
-    SE_AT.map((f, i) => ` -DMMLISP_SE_AT${i}=${f}`).join("")
+const seFlags = FIRE_SE
+  ? " -DMMLISP_SE_SCRIPT=1" + SE_AT.map((f, i) => ` -DMMLISP_SE_AT${i}=${f}`).join("")
   : "";
-try { built = makeProject(E, score, { remap: REMAP, flags: `${BURN ? `-DMMLISP_BURN=${BURN}` : ""}${seFlags}`.trim() }); }
+try { built = makeProject(E, score, { seFile: SE_FILE, flags: `${BURN ? `-DMMLISP_BURN=${BURN}` : ""}${seFlags}`.trim() }); }
 catch (e) {
   console.error(e.output ?? e.message);
   console.error("FAIL: the SGDK build failed");
@@ -83,25 +80,21 @@ runRom(E, rom, { seconds: SECONDS, log, wav: log.replace(/\.log$/, ".wav") });
 const L = readProbe(readFileSync(log));
 
 // ── the reference driver's own stream ──────────────────────────────────────
-const { bytes: mmb, ir } = buildMmb(score);
-// The ROM's MMB was rewritten by install-sgdk; the reference reads the same
-// bytes or it is playing a different arrangement.
-if (REMAP) remapTrackChannels(mmb, parseRemap(REMAP));
+const { bytes: mmb, ir } = buildMmb(score, { seFile: SE_FILE });
 const player = new DrvPlayer();
 player.loadMMB(mmb, sampleBank);
 // The SGDK host primes at load and the example starts every track once the
 // load has gone out — the reference's prime mode. The idle frames between
 // change no write's order, only when it happens, so 0 of them will do here.
-// The ROM starts only the BGM tracks and fires the effects on the schedule
-// above; the reference has to do exactly that or the two streams are of
-// different music. `prime: 0` starts every track, so with effects in play the
-// capture is driven by an explicit command list instead.
-const seIds = [];
-for (let i = 0; i < SE_TRACKS; i++) seIds.push(ir.tracks[ir.tracks.length - SE_TRACKS + i].id);
+// The ROM starts the song (every track but the effects' parts) and fires the
+// effects on the schedule above; the reference has to do exactly that or the
+// two streams are of different music. `prime: 0` starts the song, so with
+// effects in play the capture is driven by an explicit command list instead.
 const commands = [];
-if (SE_TRACKS) {
-  for (let i = 0; i < ir.tracks.length - SE_TRACKS; i++) commands.push({ frame: 0, cmd: 1, a0: ir.tracks[i].id });
-  seIds.forEach((id, i) => commands.push({ frame: SE_AT[i], cmd: 7, a0: id, a1: SE_PRIO[i] }));
+if (FIRE_SE) {
+  for (const t of ir.tracks) if (!t.se) commands.push({ frame: 0, cmd: 1, a0: t.id });
+  seListOf(ir).slice(0, SE_AT.length).forEach((_, i) =>
+    commands.push({ frame: SE_AT[i], cmd: 9, a0: i })); // PLAY_SE at its own priority
 }
 // `prime: 0` either way: the SGDK host primes the score at load, so a
 // reference that did not would put the whole setup burst on the wire again at

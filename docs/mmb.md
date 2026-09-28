@@ -86,6 +86,7 @@ Section ids:
 | 0x0005 | VAL_TABLE   | optional (§8); M3 content, layout frozen now |
 | 0x0006 | VOICE_TABLE | optional (§11); M3 content, layout frozen now |
 | 0x0007 | MACRO_TABLE | optional (§15); M3 content, layout frozen now |
+| 0x0008 | SE_TABLE    | optional (§16); the score's sound effects (def-se) |
 
 Directory order is fixed: ascending id. A loader skips unknown section ids
 unless the entry's REQUIRED flag is set, in which case the load fails (§13).
@@ -113,7 +114,8 @@ Track flags:
 | 0   | hasLoop | Track contains a backward JUMP (loops forever)     |
 | 1   | isCsm   | fm3-csm track; drives Timer A / CSM (driver.md §9) |
 | 2   | isFm3Op | fm3 independent-operator sub-track (channel 16–19) |
-| 3–7 | —       | Reserved, must be 0                                |
+| 3   | isSe    | a sound effect's part (def-se, §16): started by the host by the effect's number, never with the song; its TEMPO_SET sets its own clock (driver.md §2.5) |
+| 4–7 | —       | Reserved, must be 0                                |
 
 `event_offset` is u16, and the encoder limits the whole MMB to 32 KB (§12).
 Larger songs are deferred behind the reserved WIDE_OFFSETS header flag (§4);
@@ -475,3 +477,19 @@ step vector or a multi-stage macro past 255 is dropped
 (`W_MMB_MACRO_SKIPPED`) — raise `:step` to fit. A multi-stage macro lowers as
 the editor plays it: a looping stage is the sustain, and the stage after it is
 the release even without a `(wait key-off)`.
+
+## 16. SE_TABLE Section (0x0008)
+
+The score's sound effects (`def-se`, language.md §9.3), by number — the
+number the host plays one by (`MMLisp_playSe`, driver.md §2.5):
+
+```
+se_count : u8
+entries  : se_count × 3 bytes — {prio u8, first_track u8, part_count u8}
+```
+
+An effect's parts are `part_count` consecutive tracks from `first_track`, each
+flagged `isSe` (§6) and on the channel it takes from the song. The compiler
+lays them out after the song's tracks, in def-se order (imports first), so a
+bundle whose songs carry the same effects file numbers them alike. `prio` is
+the def-se's `:prio`, the default the host may override.

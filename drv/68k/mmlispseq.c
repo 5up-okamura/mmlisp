@@ -39,7 +39,9 @@ static void mml_copy(uint8_t *dst, const uint8_t *src, uint16_t n) {
 #define SEC_VAL_TABLE 0x0005
 #define SEC_VOICE_TABLE 0x0006
 #define SEC_MACRO_TABLE 0x0007
+#define SEC_SE_TABLE 0x0008
 #define TRACK_FLAG_IS_CSM 0x02
+#define TRACK_FLAG_IS_SE 0x08
 
 /* PCM command opcodes (driver.md §6.3; slot-builder.js is the definition). */
 #define PCM_START 1
@@ -1085,9 +1087,10 @@ static void macro_unbind(MMLSeq *s, int ch, uint8_t target) {
 /* NOTE_ON re-instantiates every bind into a fresh slot, in bind order (§13.1).
  * `acc` is the note's track accumulator after its tick: a tick-clocked slot
  * counts the track's ticks from there (§13.2). */
-static void macro_trigger(MMLSeq *s, int ch, uint16_t acc) {
+static void macro_trigger(MMLSeq *s, int ch, uint16_t acc, const MMLTrack *t) {
   ch = macro_ch(ch);
   if (ch < 0) return;
+  s->mc_se[ch] = (uint8_t)(t && (t->flags & TRACK_FLAG_IS_SE) ? (t - s->trk) + 1 : 0);
   for (int i = 0; i < s->bind_count[ch]; i++) {
     MMLMacroSlot *sl = &s->macro_slots[ch][i];
     sl->macro_id = s->binds[ch][i].macro_id;
@@ -1125,6 +1128,13 @@ static void write_note_semi(MMLSeq *s, int ch, int semi, int add) {
  * envelope macros — level and timbre, the soft envelope — and, on FM, re-key
  * the hardware EG. PSG has no hardware EG, so there the macro restart is the
  * whole effect. :pitch and :semi run on: a retriggered arp keeps its place. */
+/* A channel's frame share of ticks for a tick-clocked macro (§13.2): the
+ * song's, or that of the effect part whose note triggered the macros. */
+static uint16_t chan_frame_inc(const MMLSeq *s, int mc) {
+  uint8_t k = s->mc_se[mc];
+  return k ? s->trk[k - 1].inc : s->frame_inc;
+}
+
 static void keyon_retrigger(MMLSeq *s, int ch, int restart, const MMLMacroSlot *src, int src_step) {
   int mc = macro_ch(ch);
   for (int i = 0; restart && mc >= 0 && i < s->macro_slot_count[mc]; i++) {
@@ -1143,7 +1153,7 @@ static void keyon_retrigger(MMLSeq *s, int ch, int restart, const MMLMacroSlot *
     if (src && (d.flags & 8)) {
       int past = src_step - src->step_clock;
       if (past < 0) past = 0;
-      sl->acc = (uint16_t)(src->acc + (past << 8) - s->frame_inc);
+      sl->acc = (uint16_t)(src->acc + (past << 8) - chan_frame_inc(s, mc));
     }
   }
   int op = fm3_op_for(s, ch);
@@ -1254,14 +1264,15 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
       sl->step_clock = 0; /* release[0] fires on the key-off frame */
       /* ...and a tick clock restarts from the key-off's tick: this frame's
        * ticks after it, less the share the next line adds back. */
-      if (d.flags & 8) sl->acc = (uint16_t)(s->off_acc[macro_ch(ch)] - s->frame_inc);
+      if (d.flags & 8)
+        sl->acc = (uint16_t)(s->off_acc[macro_ch(ch)] - chan_frame_inc(s, macro_ch(ch)));
     } else {
       return 1;
     }
   }
   if (d.flags & 8) {
     /* The note's own frame already holds its ticks after the note. */
-    if (!sl->fresh) sl->acc = (uint16_t)(sl->acc + s->frame_inc);
+    if (!sl->fresh) sl->acc = (uint16_t)(sl->acc + chan_frame_inc(s, macro_ch(ch)));
     int ticks = sl->acc >> 8;
     sl->acc &= 0xff;
     int n = 0;
@@ -1597,7 +1608,7 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
   /* Re-trigger the channel's bound macros (driver.md §13.1). Their first step
    * fires this frame in step 3, overriding the note-on's base level. */
   if (fm3op || ch < 10) {
-    macro_trigger(s, ch, t->acc);
+    macro_trigger(s, ch, t->acc, t);
     /* Past the frame's first sub-tick the step pass has already run, so the
      * first step fires HERE instead (§3.5). §13.1 requires it in the same frame
      * and after the note-on; leaving it to sub-tick 0 of the next frame would
@@ -1951,7 +1962,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         /* The entry carries the pitch; bit 7 of `note` says the note loops. */
         pcm_note_on(s, t->channel_id, sample_id, note & 0x80);
         /* Its macros re-instantiate as an FM/PSG note's do (driver.md §13.1). */
-        macro_trigger(s, t->channel_id, t->acc);
+        macro_trigger(s, t->channel_id, t->acc, t);
         if (s->sub > 0) step_channel_macros(s, t->channel_id);
         /* A held (dur 0) PCM note suspends the dispatcher like any hold; the
          * sample keeps feeding from step 3 either way. */
@@ -1987,8 +1998,10 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       }
       case OP_TEMPO_SET:
         /* Tempo is score-global: a TEMPO_SET on any track replaces the
-         * increment for every track of its MMB (driver.md §3.2). */
-        s->increment = rd16(st, t->pc + 1);
+         * increment for every track of its MMB (driver.md §3.2) — except an
+         * effect's, which sets its own part's clock, the same in every song. */
+        if (t->flags & TRACK_FLAG_IS_SE) t->inc = rd16(st, t->pc + 1);
+        else s->increment = rd16(st, t->pc + 1);
         t->pc += 3;
         break;
       default:
@@ -2223,7 +2236,7 @@ static void run_frame(MMLSeq *s) {
       } else if (t->armed_frame == s->frame) {
         continue; /* the armed frame is silent setup, at any sub-tick */
       }
-      t->acc = (uint16_t)(t->acc + step);
+      t->acc = (uint16_t)(t->acc + ((t->flags & TRACK_FLAG_IS_SE) ? sub_increment(t->inc, sub) : step));
       while (t->acc >= 0x100) {
         /* STRAIGHT TO THE NEXT TICK THAT DOES SOMETHING. A tick before the
          * gate or the wait reaches zero only counts both down, so k-1 of them
@@ -2418,6 +2431,10 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
       s->macro_table = mmb + off;
       s->macro_count = rd16(mmb, off);
     }
+    else if (id == SEC_SE_TABLE && size >= 1) {
+      s->se_count = mmb[off];
+      s->se_table = mmb + off + 1;
+    }
   }
   if (!track_table || !s->stream || track_table_len < 2) return -3;
 
@@ -2438,6 +2455,7 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   /* bpmToTickIncrement(120, frame_hz): round(120 * 96 * 256 / (hz * 60)). */
   s->increment = (uint16_t)((120u * 96u * 256u + (uint32_t)s->frame_hz * 30u)
                             / ((uint32_t)s->frame_hz * 60u));
+  for (uint8_t i = 0; i < s->track_count; i++) s->trk[i].inc = s->increment;
   s->master = VOL_UNITY;
   s->pcm_master_shift = 0;
   /* The engine resets its emit sites to unity, so 0 is what it already has:
@@ -2549,12 +2567,15 @@ void mml_command(MMLSeq *s, uint8_t cmd, uint8_t a0, uint8_t a1, uint8_t a2) {
     case 0x06: mml_set_val(s, a0, (int16_t)(a1 | (a2 << 8))); break;
     case 0x07: mml_start_se(s, a0, a1); break;
     case 0x08: mml_prime_tracks(s); break;
+    case 0x09: mml_play_se(s, a0, a2 ? a1 : MML_SE_PRIO_DEFAULT); break;
+    case 0x0a: mml_stop_se(s, a0); break;
     default: break;
   }
 }
 
 void mml_start_all(MMLSeq *s) {
   for (uint8_t i = 0; i < s->track_count; i++) {
+    if (s->trk[i].flags & TRACK_FLAG_IS_SE) continue; /* the game starts those */
     s->trk[i].running = 1;
     s->trk[i].armed = 1; /* the armed frame, driver.md §4.2 */
     s->trk[i].armed_frame = 0xffffffffu;
@@ -2640,7 +2661,7 @@ static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
   if (mc >= 0 && sn->macro_count) {
     for (int i = 0; i < sn->macro_count; i++) s->binds[mc][i] = sn->macros[i];
     s->bind_count[mc] = sn->macro_count;
-    macro_trigger(s, ch, 0); /* a tick clock starts on the tick */
+    macro_trigger(s, ch, 0, 0); /* a tick clock starts on the tick */
   }
 }
 
@@ -2677,7 +2698,7 @@ static void reclaim_se(MMLSeq *s, MMLTrack *se) {
     if (se->pcm_snap) {
       se->pcm_snap = 0;
       pcm_note_on(s, ch, se->pcm_snap_sample, se->pcm_snap_loop);
-      macro_trigger(s, ch, 0); /* a tick clock starts on the tick */
+      macro_trigger(s, ch, 0, 0); /* a tick clock starts on the tick */
     }
     return;
   }
@@ -2830,6 +2851,34 @@ void mml_start_se(MMLSeq *s, uint8_t track_id, uint8_t priority) {
   if (t) start_track_ex(s, t, 1, priority);
 }
 
+/* A def-se, by its number (mmb.md §16): every part starts as an SE at the
+ * effect's own priority, or the one the host passes. */
+void mml_play_se(MMLSeq *s, uint8_t se, int priority) {
+  if (se >= s->se_count) return;
+  const uint8_t *e = s->se_table + (uint32_t)se * 3;
+  uint8_t prio = priority == MML_SE_PRIO_DEFAULT ? e[0] : (uint8_t)priority;
+  for (uint8_t k = 0; k < e[2]; k++) mml_start_se(s, (uint8_t)(e[1] + k), prio);
+}
+void mml_stop_se(MMLSeq *s, uint8_t se) {
+  if (se >= s->se_count) return;
+  const uint8_t *e = s->se_table + (uint32_t)se * 3;
+  for (uint8_t k = 0; k < e[2]; k++) mml_stop_track(s, (uint8_t)(e[1] + k));
+}
+uint8_t mml_se_count(const MMLSeq *s) { return s->se_count; }
+void mml_start_song(MMLSeq *s) {
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (!(s->trk[i].flags & TRACK_FLAG_IS_SE)) start_track_ex(s, &s->trk[i], 0, 0);
+}
+int mml_se_playing(const MMLSeq *s, uint8_t se) {
+  if (se >= s->se_count) return 0;
+  const uint8_t *e = s->se_table + (uint32_t)se * 3;
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    const MMLTrack *t = &s->trk[i];
+    if (t->running && t->track_id >= e[1] && t->track_id < e[1] + e[2]) return 1;
+  }
+  return 0;
+}
+
 /* PRIME (host command 0x08): every idle track's leading setup, now.
  *
  * A track's first frame is its setup — VOICE_SET, PARAM_SETs — and every write
@@ -2849,7 +2898,7 @@ void mml_prime_tracks(MMLSeq *s) {
   for (uint8_t i = 0; i < s->track_count; i++) {
     MMLTrack *t = &s->trk[i];
     const int ch = t->channel_id;
-    if (ch >= 10 || (t->flags & TRACK_FLAG_IS_CSM) || t->running) continue;
+    if (ch >= 10 || (t->flags & (TRACK_FLAG_IS_CSM | TRACK_FLAG_IS_SE)) || t->running) continue;
     int owned = 0;
     for (uint8_t j = 0; j < s->track_count; j++)
       if (s->trk[j].running && s->trk[j].channel_id == ch) owned = 1;

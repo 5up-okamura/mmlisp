@@ -384,7 +384,13 @@ export class DrvPlayer {
       }
     }
 
-    this._song = { stream, tracks, valInits, samples, sampleData, macros, voices, pcmVoices };
+    // SE_TABLE (mmb.md §16): a def-se's number → {prio, first track, parts}.
+    const seTable = [];
+    const seSec = sections.get(SECTION_ID.SE_TABLE);
+    if (seSec)
+      for (let i = 0; i < seSec[0]; i++)
+        seTable.push({ prio: seSec[1 + i * 3], first: seSec[2 + i * 3], count: seSec[3 + i * 3] });
+    this._song = { stream, tracks, valInits, samples, sampleData, macros, voices, pcmVoices, seTable };
     return this;
   }
 
@@ -443,6 +449,9 @@ export class DrvPlayer {
     this._macroSlots = Array.from({ length: MACRO_CHANNELS }, () => []); // running slots
     this._curAcc = 0; // the dispatching track's accumulator after its tick
     this._offAcc = new Array(MACRO_CHANNELS).fill(0); // _curAcc at each channel's last key-off
+    // The effect part whose note triggered a channel's macros (track index + 1,
+    // 0 = the song's): a tick-clocked macro counts that part's ticks.
+    this._mcSe = new Array(MACRO_CHANNELS).fill(0);
     // M3 dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
     // overwritten by SET_VAL. $time (slot 0xFF) reads the frame counter instead.
     this._valSlots = new Int16Array(16);
@@ -488,18 +497,19 @@ export class DrvPlayer {
       eventOffset: t.eventOffset, // stream start, for START_TRACK re-init
       pc: t.eventOffset,
       acc: 0, // 8.8 fractional accumulator (low byte only is fractional)
+      inc: this._increment, // an effect part's own tempo increment (the song's is _increment)
       trigByte: 0, // the game-readable trig status byte (opcodes.md §0x42)
       wait: 0, // ticks until the next timed event resumes
       gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
       pendingOff: false, // full-gate key-off awaiting the next event
-      running: autoStart,
+      running: autoStart && !(t.flags & TRACK_FLAG.isSe), // the game starts an effect
       // ARMED (Z80 T_STATUS 2): the frame START_TRACK set this track up in. It
       // does not accumulate, so the setup frame — several tracks' worth of
       // overlay loads and voice applies, far more than a frame's cycles on the
       // Z80 — stays silent, and every track armed in it starts dispatching
       // together on the next frame (driver.md §4.2). autoStart mirrors the
       // harness posting START_TRACK for every track before frame 0.
-      armed: autoStart,
+      armed: autoStart && !(t.flags & TRACK_FLAG.isSe),
       // The frame the armed setup ran in. The armed frame advances no ticks at
       // ALL of its sub-ticks, not just the one that ran the setup (§3.5).
       armedFrame: -1,
@@ -931,7 +941,7 @@ export class DrvPlayer {
     // track skips it (its channel is keyed-off, so a retrigger would sound a
     // release tail); gate scheduling below still runs so the track keeps time.
     if ((fm3op || ch < 10) && audible) {
-      this._macroTrigger(ch, trk.acc);
+      this._macroTrigger(ch, trk.acc, trk);
       // Past the frame's first sub-tick the step pass has already run, so the
       // first step fires HERE instead (driver.md §3.5). §13.1 requires it in the
       // same frame and after the note-on, and leaving it to sub-tick 0 of the
@@ -1145,7 +1155,9 @@ export class DrvPlayer {
         case OPCODE.TEMPO_SET: {
           // A live tempo override wins over the score's own tempo events —
           // including the tick-0 one a loop replays (mirrors IRPlayer.setTempo).
-          if (!this._tempoOverride) this._increment = u16(s, trk.pc + 1);
+          // An effect's part sets its own clock, the same in every song.
+          if (trk.flags & TRACK_FLAG.isSe) trk.inc = u16(s, trk.pc + 1);
+          else if (!this._tempoOverride) this._increment = u16(s, trk.pc + 1);
           trk.pc += 3;
           break;
         }
@@ -1291,7 +1303,7 @@ export class DrvPlayer {
           // §13.1) — not a muted one's: a :keyon would re-START the voice.
           if (this._isTrackAudible(trk.index)) {
             this._pcmNoteOn(trk.channelId, sampleId, note);
-            this._macroTrigger(trk.channelId, trk.acc);
+            this._macroTrigger(trk.channelId, trk.acc, trk);
             if (this._sub > 0) this._stepChannelMacros(trk.channelId);
           } else this._macroSlots[this._macroCh(trk.channelId)] = [];
           // Held (dur 0) PCM suspends the dispatcher like any hold; otherwise
@@ -1782,6 +1794,12 @@ export class DrvPlayer {
   }
 
   // ── M3 macro engine (driver.md §13) ──────────────────────────────────────
+  // A channel's frame share of ticks for a tick-clocked macro (§13.2).
+  _chanFrameInc(mc) {
+    const k = this._mcSe[mc];
+    return k ? this._trk[k - 1].inc : this._frameInc;
+  }
+
   _channelKeyed(ch) {
     const op = this._fm3OpFor(ch);
     if (op) return (this._fm3OpMask & (0x10 << (op - 1))) !== 0;
@@ -1795,9 +1813,10 @@ export class DrvPlayer {
   // (driver.md §13.1). Insertion order = MACRO_SET order (§13.3). `acc` is the
   // note's track accumulator after its tick: a tick-clocked slot counts the
   // track's ticks from there (§13.2).
-  _macroTrigger(ch, acc = 0) {
+  _macroTrigger(ch, acc = 0, trk = null) {
     const mc = this._macroCh(ch);
     if (mc < 0) return;
+    this._mcSe[mc] = trk && trk.flags & TRACK_FLAG.isSe ? trk.index + 1 : 0;
     const active = this._macroActive[mc];
     const slots = [];
     for (const macroId of active.values()) {
@@ -1887,14 +1906,15 @@ export class DrvPlayer {
         slot.stepClock = 0; // release[0] fires on the key-off frame
         // ...and a tick clock restarts from the key-off's tick: this frame's
         // ticks after it, less the share the next step adds back.
-        if (d.flags & 8) slot.acc = (this._offAcc[this._macroCh(ch)] - this._frameInc) & 0xffff;
+        if (d.flags & 8)
+          slot.acc = (this._offAcc[this._macroCh(ch)] - this._chanFrameInc(this._macroCh(ch))) & 0xffff;
       } else {
         return true; // no release section
       }
     }
     if (d.flags & 8) {
       // The note's own frame already holds its ticks after the note.
-      if (!slot.fresh) slot.acc = (slot.acc + this._frameInc) & 0xffff;
+      if (!slot.fresh) slot.acc = (slot.acc + this._chanFrameInc(this._macroCh(ch))) & 0xffff;
       const ticks = slot.acc >> 8;
       slot.acc &= 0xff;
       let n = 0;
@@ -2016,7 +2036,7 @@ export class DrvPlayer {
       // this slot's own step then takes up, less the frame's share it adds.
       if (src && sd.flags & 8) {
         const past = Math.max(0, srcStep - src.stepClock);
-        s.acc = (src.acc + (past << 8) - this._frameInc) & 0xffff;
+        s.acc = (src.acc + (past << 8) - this._chanFrameInc(mc)) & 0xffff;
       }
     }
     const op = this._fm3OpFor(ch);
@@ -2164,6 +2184,12 @@ export class DrvPlayer {
       case 0x08: // PRIME — every idle track's leading setup, now
         this._prime();
         break;
+      case 0x09: // PLAY_SE (se, priority, a2 = 1: use a1, else the effect's own)
+        this._playSe(a0, a2 ? a1 : null);
+        break;
+      case 0x0a: // STOP_SE (se)
+        this._stopSe(a0);
+        break;
       default:
         break; // 0x01/0x02 START/STOP auto-driven; others reserved
     }
@@ -2191,13 +2217,30 @@ export class DrvPlayer {
   _prime() {
     for (const trk of this._trk) {
       const ch = trk.channelId;
-      if (ch >= 10 || (trk.flags & TRACK_FLAG.isCsm) || trk.running) continue;
+      if (ch >= 10 || (trk.flags & (TRACK_FLAG.isCsm | TRACK_FLAG.isSe)) || trk.running) continue;
       if (this._trk.some((t) => t.running && t.channelId === ch)) continue;
       this._startTrack(trk.trackId, false);
       this._dispatch(trk); // armed: the leading setup, up to the first note
       trk.running = false; // never keyed, so stopping writes nothing
       trk.armed = false;
     }
+  }
+
+  // A def-se by its number (mmb.md §16; mmlispseq.c mml_play_se): every part
+  // starts as an SE, at the effect's own priority or the host's.
+  _playSe(se, prio = null) {
+    const e = this._song?.seTable?.[se];
+    if (!e) return;
+    for (let k = 0; k < e.count; k++) this._startTrack(e.first + k, true, prio ?? e.prio);
+  }
+  _stopSe(se) {
+    const e = this._song?.seTable?.[se];
+    if (!e) return;
+    for (let k = 0; k < e.count; k++) this._mailboxStop(e.first + k);
+  }
+  _sePlaying(se) {
+    const e = this._song?.seTable?.[se];
+    return !!e && this._trk.some((t) => t.running && t.trackId >= e.first && t.trackId < e.first + e.count);
   }
 
   _stopTrack(t) {
@@ -2624,7 +2667,7 @@ export class DrvPlayer {
         } else if (trk.armedFrame === this._frame) {
           continue; // the armed frame is silent setup, at any sub-tick
         }
-        trk.acc += step;
+        trk.acc += trk.flags & TRACK_FLAG.isSe ? subIncrement(trk.inc, sub, SLOT_SUBS) : step;
         while (trk.acc >= 0x100) {
           trk.acc -= 0x100;
           this._curAcc = trk.acc; // the tick's place in the frame, for a key-off
@@ -2673,14 +2716,17 @@ export class DrvPlayer {
     return this._playing;
   }
 
-  play(audioContext) {
+  // `se` auditions one effect (def-se) alone: the song is not started, the
+  // effect is played as the game's PLAY_SE would.
+  play(audioContext, { se = null } = {}) {
     if (!this._song) throw new Error("No MMB loaded");
     this.stop();
     this._audioContext = audioContext ?? null;
     // Anchor the frame clock before _reset so the init writes carry the real
     // start time instead of a stale anchor from a previous run.
     this._startAudioTime = audioContext ? audioContext.currentTime + 0.05 : 0;
-    this._reset();
+    this._reset(se == null);
+    if (se != null) this._playSe(se);
     this._playing = true;
     if (!audioContext) return;
     const LOOKAHEAD = 0.2;
@@ -2839,8 +2885,10 @@ export class DrvPlayer {
         // With a schedule, the schedule does the starting — a host that fires
         // sound effects starts only its BGM tracks, and starting them all here
         // would be different music. Without one, priming is followed by the
-        // blanket start the SGDK example does.
-        if (!commands.length) for (const t of this._trk) this._startTrack(t.trackId, false);
+        // song's start the SGDK example does (MMLisp_startSong: not the
+        // effects' parts).
+        if (!commands.length)
+          for (const t of this._trk) if (!(t.flags & TRACK_FLAG.isSe)) this._startTrack(t.trackId, false);
       }
       let frames = 0;
       while (frames < maxFrames) {

@@ -134,13 +134,24 @@ void MMLisp_stopTrack(u8 track_id);
 // overwrites the voice; a looping BGM note there restarts at SE-end.
 void MMLisp_startSe(u8 track_id, u8 priority);
 
-// How many tracks the loaded score has, and the id of the i-th one:
-//
-//     for (u8 i = 0; i < MMLisp_trackCount(); i++)
-//         MMLisp_startTrack(MMLisp_trackId(i));
-//
-// A hardcoded count that stops short never starts the tail of the list, with
-// no error — and PCM tracks tend to sit at the end.
+// Start the song: every track of the loaded score except the effects' parts
+// (def-se). All in one frame, so the tracks start in phase.
+void MMLisp_startSong(void);
+
+// The score's SOUND EFFECTS (def-se, docs/language.md §9.3) by NUMBER — the
+// SE_<NAME> constants tools/install-sgdk.mjs writes to inc/mmlisp_se.h, the
+// same in every song of a bundle. Each of the effect's parts starts as an SE
+// (MMLisp_startSe above: the song's part on that channel is suspended and
+// comes back when the effect ends), at the priority the def-se gives it or at
+// `priority`. Stop ends every part early; playing is whether one still runs.
+void MMLisp_playSe(u8 se);
+void MMLisp_playSePrio(u8 se, u8 priority);
+void MMLisp_stopSe(u8 se);
+bool MMLisp_sePlaying(u8 se);
+u8 MMLisp_seCount(void);
+
+// How many tracks the loaded score has — the effects' parts included — and the
+// id of the i-th one. To start the song, MMLisp_startSong.
 u8 MMLisp_trackCount(void);
 u8 MMLisp_trackId(u8 index);
 

@@ -1,0 +1,45 @@
+; The game's sound effects — written once, and given to every song by the
+; bundle (demo.bundle.json "se": each song compiles as if it imported this
+; file). A def-se is a DEF: its parts are tracks the game starts by NUMBER —
+; SE_BLEEP, SE_ZAP, SE_CHIRP, SE_BLIP in the generated inc/mmlisp_se.h, in the
+; order below and the same in every song — never with the song. Each part is
+; written on the channel it takes from the song (driver.md §2.5): the song's
+; part there is suspended, and comes back when the effect ends.
+
+; Blunt, bright effect voices: fast attack, short release, so the steal and the
+; hand-back are both unmistakable against a sustaining lead.
+(def-fm se-bleep :alg 7 :fb 6
+  :ar1 31 :dr1 12 :sr1 0 :rr1 12 :sl1 4 :tl1 10 :ml1 3 :dt1 0
+  :ar2 31 :dr2 14 :sr2 0 :rr2 13 :sl2 5 :tl2 8  :ml2 7 :dt2 3
+  :ar3 31 :dr3 11 :sr3 0 :rr3 12 :sl3 3 :tl3 12 :ml3 1 :dt3 0
+  :ar4 31 :dr4 15 :sr4 0 :rr4 14 :sl4 6 :tl4 6  :ml4 5 :dt4 -3)
+
+(def-fm se-zap :alg 7 :fb 2
+  :ar1 31 :dr1 9  :sr1 0 :rr1 10 :sl1 3 :tl1 8  :ml1 11 :dt1 0
+  :ar2 31 :dr2 10 :sr2 0 :rr2 11 :sl2 4 :tl2 6  :ml2 2  :dt2 -3
+  :ar3 31 :dr3 8  :sr3 0 :rr3 10 :sl3 2 :tl3 10 :ml3 13 :dt3 3
+  :ar4 31 :dr4 12 :sr4 0 :rr4 12 :sl4 5 :tl4 4  :ml4 1  :dt4 0)
+
+; An imported sample def reads its :file from THIS file's directory.
+(def-pcm se-blip :file "blip.wav")
+
+; bleep — fm1 at a LOW priority. Short, so it hands the lead back on its end.
+(def-se bleep :prio 4
+  (fm1 se-bleep :oct 5 :len 16 :vel 15  g a > c))
+
+; zap — fm1 at a HIGH priority: it preempts a running bleep and inherits its
+; duty to restore the song's lead, so the lead returns after the LAST of the
+; two, not after the first.
+(def-se zap :prio 9
+  (fm1 se-zap :oct 6 :len 16 :vel 15  c < a > e < g))
+
+; chirp — the PSG effect, on sqr1.
+(def-se chirp :prio 5
+  (sqr1 :oct 6 :len 16 :vel 14  c e g > c))
+
+; blip — the PCM effect, on pcm1's voice. A soft-mix voice has no owning track,
+; so nothing is suspended: the note overwrites the voice, and the effect's end
+; starts the song's loop again (from the sample's head — the engine keeps no
+; position the host can read back).
+(def-se blip :prio 5
+  (pcm1 se-blip :oct 5 :len 8 :vel 15  c))

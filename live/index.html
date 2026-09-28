@@ -495,7 +495,7 @@
   </script>
 
 <script type="module">
-    import { IRPlayer } from './src/ir-player.js';
+    import { IRPlayer, songOrEffectIr } from './src/ir-player.js';
     import { DrvPlayer } from './src/drv-player.js';
     import { encodeMmb, collectPcmUsage, bakeAuditionBank } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
@@ -1437,7 +1437,7 @@
     // Autocomplete
     // -----------------------------------------------------------------------
     const AC_FORMS = [
-      'def','def-val','def-fm','def-pcm','import','t','x','go','param-set',
+      'def','def-val','def-fm','def-pcm','def-se','import','t','x','go','param-set',
       'echo','delay','glide','macro',
       // compile-time eval heads (§7)
       'let','note','ticks','frames',
@@ -1509,6 +1509,7 @@
       'def-val': 'def-val ${1:name} ${2:0} ${3:0..127}',
       'def-fm': 'def-fm ${1:name} init-fm ${2}',
       'def-pcm': 'def-pcm ${1:name} :file "${2:sounds/kick.wav}"',
+      'def-se': 'def-se ${1:name} :prio ${2:5} (${3:fm1} ${4})',
       'import': 'import "${1:voices.mmlisp}"',
       'x': 'x ${1:4} ${2}',
       'go': 'go ${1:head}',
@@ -4451,6 +4452,12 @@
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });
       }
+      // With the cursor in a (def-se …), Play auditions that effect alone —
+      // the song never starts its effects; the game does (driver.md §2.5).
+      const seName = _lastGoodIR ? findSeDefAtCursor() : null;
+      const seTrack = seName ? _lastGoodIR.tracks.find((t) => t.se?.name === seName) : null;
+      const se = seTrack ? seTrack.se.index : null;
+      const playIr = _lastGoodIR ? songOrEffectIr(_lastGoodIR, se) : null;
 
       // MMLispDRV reference backend: compile → MMB v0.3 → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
@@ -4486,17 +4493,17 @@
           player = new DrvPlayer(writeToWorklet);
           player.loadMMB(mmbBytes, mmbSampleBank);
           if (_lastGoodIR) {
-            buildChStrips(_lastGoodIR);
+            buildChStrips(playIr);
             renderDynParams(_lastGoodIR);
             rebuildVizNotes();
             applyPlayerChannelState(player); // re-apply persisted mute/solo
           }
-          player.play(audioCtx);
+          player.play(audioCtx, { se });
           // After play(): the driver's reset is a power-on, reseeding every value
           // slot from its def-val init, so the live slider values go in behind it
           // (the IR player seeds slots on load instead, hence the earlier call there).
           applyDynVals();
-          log('Playing (MMLispDRV reference)', 'info');
+          log(se != null ? `Playing effect ${seName} (MMLispDRV reference)` : 'Playing (MMLispDRV reference)', 'info');
           setPlayIcon(true);
           document.getElementById('btnPlay').classList.add('active');
           startFmLiveLoop();
@@ -4510,9 +4517,9 @@
       try {
         // Use last successfully compiled IR if available, else load from URL
         if (_lastGoodIR) {
-          player.loadJSON(_lastGoodIR);
+          player.loadJSON(_lastGoodIR, { se });
           await syncPcmBankToWorklet(_lastGoodIR);
-          log('Playing (compiled source)', 'info');
+          log(se != null ? `Playing effect ${seName}` : 'Playing (compiled source)', 'info');
         } else if (currentIrURL) {
           log('Loading ' + currentIrURL + '…');
           await player.loadURL(currentIrURL);
@@ -4535,7 +4542,7 @@
         applyPlayerChannelState(player);
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
         // Seek to cursor line if provided and source map available
-        if (fromLine != null && _lastSourceMap) {
+        if (fromLine != null && _lastSourceMap && se == null) {
           player.playFromLine(audioCtx, fromLine, _lastSourceMap);
         } else {
           player.play(audioCtx);
@@ -5745,6 +5752,20 @@
       for (const root of ast) {
         const it = root.kind === 'list' ? root.items.filter((n) => n.kind !== 'comment') : [];
         if (it[0]?.value !== 'def-pcm') continue;
+        if (root.line <= cursorLine && cursorLine <= (root.endLine ?? root.line)) return it[1]?.value ?? null;
+      }
+      return null;
+    }
+
+    // The (def-se name …) the cursor is in, or null: Play auditions it.
+    function findSeDefAtCursor() {
+      const state = editorView.state;
+      const cursorLine = state.doc.lineAt(state.selection.main.head).number;
+      let ast;
+      try { ast = parse(state.doc.toString()); } catch { return null; }
+      for (const root of ast) {
+        const it = root.kind === 'list' ? root.items.filter((n) => n.kind !== 'comment') : [];
+        if (it[0]?.value !== 'def-se') continue;
         if (root.line <= cursorLine && cursorLine <= (root.endLine ?? root.line)) return it[1]?.value ?? null;
       }
       return null;

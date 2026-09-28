@@ -391,6 +391,12 @@ void MMLisp_startSe(u8 track_id, u8 priority)
 {
     if (loaded) mml_start_se(&seq, track_id, priority);
 }
+void MMLisp_startSong(void)          { if (loaded) mml_start_song(&seq); }
+void MMLisp_playSe(u8 se)            { if (loaded) mml_play_se(&seq, se, MML_SE_PRIO_DEFAULT); }
+void MMLisp_playSePrio(u8 se, u8 priority) { if (loaded) mml_play_se(&seq, se, priority); }
+void MMLisp_stopSe(u8 se)            { if (loaded) mml_stop_se(&seq, se); }
+bool MMLisp_sePlaying(u8 se)         { return loaded && mml_se_playing(&seq, se); }
+u8 MMLisp_seCount(void)              { return loaded ? mml_se_count(&seq) : 0; }
 void MMLisp_keyOff(u8 channel_id)    { if (loaded) mml_key_off(&seq, channel_id); }
 
 void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value)

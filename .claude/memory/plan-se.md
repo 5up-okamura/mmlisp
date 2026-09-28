@@ -118,19 +118,24 @@ position and the note it shaped re-attacked.
 
 ## Still to do
 
-- **The bundler — DONE as `drv/tools/bundle.mjs` (2026-09-23)**, but not as
-  first imagined. What a game with many songs needed was not "BGM + SE in one
-  MMB" (one source plus `remap` does that) but "N scores over ONE sample bank",
-  see [plan-multi-score.md](plan-multi-score.md). The effect tracks are still
-  written in each song's source, on spare channels, and pointed at the BGM's
-  channels by the manifest's `remap`.
-- **Importable tracks — a language question, open.** `import` brings in defs
-  only, by design ("tracks are songs, not defs", language.md §9.2). A game
-  with twenty songs and thirty effects repeats thirty track lines per song.
-  Text concatenation at build time was rejected: it breaks `:file` and import
-  resolution relative to the effect file. If it is wanted, it is a language
-  form — `(import "se.mmlisp" :tracks)` or a new `include` — and needs the
-  user's ruling, not a tooling workaround.
+- **The bundler — DONE as `drv/tools/bundle.mjs` (2026-09-23)**: "N scores
+  over ONE sample bank", see [plan-multi-score.md](plan-multi-score.md).
+- **Effects shared across songs — DONE as `def-se` (2026-09-28).** The user:
+  "実際にゲームに使えるドライバーにしたいので解決は必要". What made it
+  necessary was more than repeated lines: an SE was addressed by TRACK ID, which
+  shifts with each song's track count, so a game could not hold a constant;
+  and a song using every channel had no spare one to author an SE on (and
+  16 tracks truncated silently). Rulings (user, three questions): the bundle
+  injects one effects file into every song (over each song importing it), one
+  effect may have several parts, the def-se carries a default priority the
+  host may override. Design choices of mine the user did not rule on: an
+  effect is a DEF (so `import` carries it, and "tracks are songs" stands);
+  a part is on the channel it takes — no remap, so remap left the bundle and
+  install-sgdk; an effect keeps its own tempo (per-track increment) so it
+  sounds alike in every song; FM3 op/CSM parts are refused (song-wide modes);
+  MML_MAX_TRACKS 16 → 32. Not built: an SGDK/BlastEm run of the new example
+  (no toolchain in the cloud container) — `npm run sgdk:gate:se` is updated
+  and waits for a machine that has one.
 - **Overlapping SEs on different channels** are already possible in the C —
   the snapshot lives on each suspended track, not in one slot — but no gate
   fires two at once. Add one when a score needs it.

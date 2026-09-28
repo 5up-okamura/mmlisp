@@ -26,6 +26,9 @@ const tmp = mkdtempSync(join(tmpdir(), "sgdklint-"));
 // `song.h` rescomp would generate.
 writeFileSync(join(tmp, "song.h"),
   "extern const u8 song_mmb[];\nextern const u8 song_smp[];\n");
+// …and of the `mmlisp_se.h` install-sgdk writes, from the demo's effects.
+writeFileSync(join(tmp, "mmlisp_se.h"),
+  "#define MMLISP_SE_COUNT 4\n#define SE_BLEEP 0\n#define SE_ZAP 1\n#define SE_CHIRP 2\n#define SE_BLIP 3\n");
 
 const cc = (src, extra = []) =>
   execFileSync(
@@ -60,10 +63,9 @@ try {
   // is the branch every PCM project turns on and nobody here tests by running.
   cc(join(drv, "sgdk", "example", "main.c"), [...exArgs, "-DMMLISP_PCM_SAMPLES=1"]);
   // …and the demo build, which is the one the README tells people to make:
-  // effects on, samples on. With MMLISP_SE_TRACKS at its default the effect
-  // buttons compile to nothing, so that path alone never type-checks fireSe.
+  // samples on, two songs, and the machine gate's effect script.
   cc(join(drv, "sgdk", "example", "main.c"),
-     [...exArgs, "-DMMLISP_PCM_SAMPLES=1", "-DMMLISP_SE_TRACKS=4", "-DMMLISP_SONG_LIST=song_mmb,song_mmb"]);
+     [...exArgs, "-DMMLISP_PCM_SAMPLES=1", "-DMMLISP_SE_SCRIPT=1", "-DMMLISP_SONG_LIST=song_mmb,song_mmb"]);
   console.log("ok    sgdk/example/main.c agrees with the host API (PCM, SE and bundle builds)");
   console.log("      (a type-check only — it says nothing about SGDK or hardware)");
 } catch (e) {

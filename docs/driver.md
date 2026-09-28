@@ -150,9 +150,24 @@ already running on the channel keep running while held.
 
 ### 2.5 Sound effects
 
-An SE is a short score in the same language, started as a track with
-`MMLisp_startSe(track, priority)` (§6.5) on a channel a BGM track owns. It is
-sequencer work — arbitration, suspend and restore — and lives on the 68000.
+An SE is a `(def-se name …)` (language.md §9.3): a short score in the same
+language whose **parts** are tracks of the score, each on the channel it takes
+from the song. The compiler lays them out after the song's tracks, flags them
+(`isSe`, mmb.md §6) and lists them in the SE_TABLE (mmb.md §16), so they are
+never started with the song (`MMLisp_startSong`) and the game plays one by
+**number** — `MMLisp_playSe(SE_JUMP)` (§6.5), the constant install-sgdk writes
+to `inc/mmlisp_se.h`. A bundle gives every song the same effects file
+(`"se"`), so the numbers are the same in every song. Every part starts as an
+SE at the def-se's `:prio`, or the one the host passes. It is sequencer work —
+arbitration, suspend and restore — and lives on the 68000.
+
+**An effect keeps its own clock.** A part's TEMPO_SET (the def-se's `:tempo`,
+120 by default, emitted at its tick 0) sets that track's own increment, not
+the song's, so an effect sounds the same in every song and under any tempo
+change; a tick-clocked macro on its channel counts the part's ticks (§13.2).
+
+`MMLisp_startSe(track, priority)` starts any one track as an SE — the
+primitive `MMLisp_playSe` is made of, and what the SE gates drive.
 
 **Suspend, not evict.** The BGM owner enters a fourth track state,
 **suspended**: it keeps its state, does not dispatch (its writes would land
@@ -172,7 +187,8 @@ envelope cannot resume mid-way, so the re-attack is the design.
 **Priority.** Against an SE already on the channel, a lower-priority SE is
 **dropped, without touching the one playing**; an equal or higher one
 preempts it and inherits its restore duty, so the BGM returns only after the
-**last** SE ends. Priorities are the host's own numbers, 0-255.
+**last** SE ends. Priorities are 0-255: the def-se's, or the host's. Each part
+of a multi-channel effect is arbitrated on its own channel.
 
 **PCM.** Soft-mix voices have no channel owner, so a PCM SE overwrites the
 voice. It takes the voice's macro binds as any claim does and keeps them on
@@ -194,9 +210,10 @@ the claim's level reset then replaces. So do not put an effect on a channel
 running a long sweep — that is an authoring rule, not a driver limit.
 
 Gates `tests/m3-se.mmlisp` (FM, PSG and PCM steals) and `m3-se-prio.mmlisp`
-(steal, preempt, drop, restore after the last) pin the lifecycle, and the
-`p3-claim-*` pairs pin the modulator rule (§12.2a). `drv/sgdk/example` plays
-all three kinds from a pad.
+(steal, preempt, drop, restore after the last) pin the lifecycle, the
+`p3-claim-*` pairs pin the modulator rule (§12.2a), and `p3-se-def` pins
+def-se: by number, two parts under one, its own tempo, stopped early.
+`drv/sgdk/example` plays all three kinds from a pad.
 
 ## 3. Timing
 
@@ -428,16 +445,17 @@ PCM voices have their own state (§14).
 | sweep engine | 2 slots × {target, curve, flags, phase, from, to, len, step} |
 | macro engine | 3 active-macro ids + 3 running slots × {descriptor idx, step clock, cursor, state} (§13) |
 
-**Track control block**, one per active track; `MML_MAX_TRACKS` = 16.
+**Track control block**, one per active track; `MML_MAX_TRACKS` = 32 — a
+song's 16 (one a channel) and as many effect parts again.
 
 | Field | Notes |
 | ----- | ----- |
 | status | idle / playing / armed / held / fading / suspended |
 | track id, channel id | |
-| flags | hasLoop / isCsm / isFm3Op |
+| flags | hasLoop / isCsm / isFm3Op / isSe |
 | stream pointer, stream base | 68k ROM pointers. JUMP/CALL destinations are relative to the base |
 | score pointer | the MMB this track belongs to (§2.3) |
-| tick accumulator, tempo increment | 8.8 (§3.1) |
+| tick accumulator, tempo increment | 8.8 (§3.1); an effect part keeps its own increment (§2.5) |
 | wait_ticks | until the next timed dispatch |
 | control stack | 4 × {ptr, count}; LOOP entries carry the remaining count, CALL entries are tagged |
 | fade counter | |
@@ -631,8 +649,10 @@ does all arithmetic; the sequencer only stores and applies (docs/language.md
 | `MMLisp_frame()` | once per frame in the main loop, after the control calls: render ahead (§3.1); takes no bus |
 | `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), reset the channel's level state (vel 15, vol 31, master 31, gate 8), and initialize declared val slots not yet host-written (mmb.md §8). Restarting an active track restarts it from the top. The track enters **armed** (§4.2) |
 | `MMLisp_stopTrack(track)` | key-off (the release tail runs out naturally), free the channel, idle the track. On an `fm3-csm` track this clears the CSM bit in `$27` (§9). Stopping an SE restores the BGM it displaced (§2.5) |
-| `MMLisp_startSe(track, priority)` | start the track as a sound effect (§2.5): the channel's owner is suspended and snapshotted rather than evicted, and restored when the SE ends. Against another SE, lower priority is dropped, equal or higher preempts |
-| `MMLisp_trackCount()` / `MMLisp_trackId(i)` | enumerate the loaded score's tracks — start them all by this list, not by a count of your own |
+| `MMLisp_startSong()` | start every track of the song — all but the effects' parts — in one frame |
+| `MMLisp_playSe(se)` / `MMLisp_playSePrio(se, priority)` | play a def-se by number (`SE_<NAME>` in `inc/mmlisp_se.h`): each part starts as `MMLisp_startSe` does, at the def-se's priority or `priority`. `MMLisp_stopSe(se)` ends every part, `MMLisp_sePlaying(se)` says whether one runs, `MMLisp_seCount()` how many the score has |
+| `MMLisp_startSe(track, priority)` | start one track as a sound effect (§2.5): the channel's owner is suspended and snapshotted rather than evicted, and restored when the SE ends. Against another SE, lower priority is dropped, equal or higher preempts |
+| `MMLisp_trackCount()` / `MMLisp_trackId(i)` | enumerate the loaded score's tracks |
 | `MMLisp_keyOff(channel)` | key-off one channel without stopping its track: releases a `len=0` hold (the dispatcher resumes) or truncates a sounding note |
 | `MMLisp_setParam(channel, target, value)` | one-shot absolute write of `target` (opcodes.md §7), as if a PARAM_SET arrived in the stream |
 | `MMLisp_fadeTrack(track, frames)` | step `master` down to 0 over `frames`, then stop |
@@ -871,14 +891,12 @@ three outcomes.
 - **One score resident at a time** (§2.3); songs share the sample bank
   through `bundle.mjs`, not the sequencer. Every song in a bundle plays on one
   engine image, and one 32 KB bank has to hold every sample all of them play.
-- **SE** (§2.5): an SE track is a track of the score it plays over, and the
-  compiler gives every track its own channel — so an SE is authored on a spare
-  channel and pointed at the BGM's in the built MMB (a bundle manifest's
-  `remap`, `install-sgdk --remap`, the gates' sidecar: all `remapTrackChannels`).
-  `import` brings in defs, not tracks, so a game with many songs repeats its
-  effect track lines in every song; the samples it does not repeat (§2.3). A
-  PCM SE restarts the BGM loop from the sample's head, not from where it was,
-  and a sweep in flight on a stolen channel is lost rather than resumed.
+- **SE** (§2.5): an effect's parts are tracks of the score it plays over, so
+  every song carries the game's effects (a bundle compiles each song with the
+  `"se"` file; the control data is small, the samples are shared). A PCM SE
+  restarts the BGM loop from the sample's head, not from where it was, and a
+  sweep in flight on a stolen channel is lost rather than resumed. FM3's
+  operator and CSM modes are song-wide, so an effect cannot use them.
 - **PAL:** supported by baking a second score (§3.3); one MMB plays correctly
   on one standard. PCM pitch is not corrected — a PAL bank would have to be
   re-baked at the PAL DAC rate, and is not.
@@ -1036,12 +1054,14 @@ reference's frames climbs (a lost frame). Grading starts at the LAST ready mark
 over it, so an earlier engine's samples are not this one's.
 
 **Sound effects are graded here too**, which is the only place they run on a
-68000: the example presses no buttons, so `--se N` has it fire the score's last
-N tracks with `MMLisp_startSe` on a fixed schedule, counted in frames the
-sequencer rendered so the host's settle does not shift them, and the reference
-is driven with the same schedule. `--remap` points those tracks at the BGM's
-own channels, so what the machine runs is the whole suspend and restore.
-`npm run sgdk:gate:se` is that run on `sgdk/example/demo.mmlisp`: FM, PSG and
+68000: the example presses no buttons, so `--se effects.mmlisp` gives the score
+those effects (as a bundle's `"se"` does) and has the ROM fire the first four
+with `MMLisp_playSe` on a fixed schedule, counted in frames the sequencer
+rendered so the host's settle does not shift them, and the reference is driven
+with the same schedule (PLAY_SE, host command `0x09`). The parts sit on the
+song's own channels, so what the machine runs is the whole suspend and restore.
+`npm run sgdk:gate:se` is that run on `sgdk/example/demo.mmlisp` with
+`demo-se.mmlisp`: FM, PSG and
 PCM effects, one preempted and one dropped by priority, every FM and PSG write
 in the reference's order and every DAC byte against the model.
 

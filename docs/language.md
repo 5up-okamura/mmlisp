@@ -682,6 +682,8 @@ Each definition head means one thing. `def` names a **snippet** — any
 inline-writable notation, expanded where its name is written. `def-fm` and
 `def-pcm` declare **named data** (an FM voice, a PCM sample), as `def-val`
 declares a value slot (§8); a bare reference in a channel body applies them.
+`def-se` declares a **sound effect** — tracks the game starts, not the song
+(§9.3).
 Definitions are top-level forms and interleave freely
 with track forms (§1). `title` and `author` are reserved for file metadata
 when given a string, and `pcm-voices` for the PCM voice count (§1). A def (or parametric def) named after an eval builtin
@@ -705,6 +707,7 @@ stream bytes is shared by the encoder's CALL/RET pass (opcodes.md §5.2). A `let
 | `(def-fm name base :tl1 … …)`         | FM voice extending `base` (its keys override; a base that is not a voice, or a cycle, is `E_VOICE_EXTENDS`) |
 | `(def-pcm name :file "…" …)`          | PCM sample (§16)                        |
 | `(def-pcm name base …)`               | PCM sample extending another sample (§16) |
+| `(def-se name [:prio N] [:tempo T] (ch …)…)` | Sound effect: parts the game plays by number (§9.3) |
 | `(def name (macro :target spec …))`   | A snippet holding a macro form — written alone it applies the macro, and inside another `(macro name …)` it applies first, with its own `:step` |
 
 A `def-fm` holds the channel's `:alg :fb :ams :fms` and the operator
@@ -771,8 +774,9 @@ inline.
   relative to the importing file — through the opened source folder (File >
   Open Folder…), like a PCM `:file` (§16); a served or URL score resolves it
   from the server root. A path that cannot be read is `E_IMPORT_NOT_FOUND`.
-- **What is imported**: the four def namespaces — plain and parametric snippets
-  (`def`), FM voices (`def-fm`) and PCM samples (`def-pcm`). Imports are
+- **What is imported**: the def namespaces — plain and parametric snippets
+  (`def`), FM voices (`def-fm`), PCM samples (`def-pcm`) and sound effects
+  (`def-se`, §9.3). Imports are
   transitive (an imported file may itself `import`). An imported sample def
   keeps its own base directory, so its `:file` reads from the imported file's
   folder, not the score's (§16).
@@ -802,6 +806,46 @@ are the same as for samples, below.
 
 This is the first increment of a fuller import/patch system (presets via
 `:from`, version pinning); the `(import "path")` surface stays as it grows.
+
+### 9.3 `def-se` — sound effects
+
+A game's sound effects are written once, as defs, and every song carries them.
+
+```lisp
+; se.mmlisp — the game's effects
+(def-fm bell :alg 7 :tl1 10 :tl2 8 :tl3 12 :tl4 6)
+(def-pcm crash :file "crash.wav")
+
+(def-se jump :prio 3
+  (fm1 bell :oct 5 :len 16 c e g > c))
+(def-se boom :prio 9 :tempo 150              ; two parts, one effect
+  (fm1 :oct 3 :len 4 c)
+  (pcm1 crash :len 4 (macro :step 1/32 :keyon [1 1 1 1]) c))
+```
+
+- **Parts.** Each part is a channel form, written on the channel the effect
+  **takes from the song** — `fm1` above is the song's lead's channel. When the
+  effect plays, the song's part there is suspended, and comes back re-keyed
+  when the effect ends (driver.md §2.5). One part a channel
+  (`E_SE_PART`); `fm3-1`…`fm3-4`, `fm3-csm` and `fm3-csm-rate` are song-wide
+  chip modes an effect cannot bring (`E_SE_PART`).
+- **Not the song's.** A part is compiled like any track, but it is never played
+  with the song. The game plays an effect by its **number** — its place among
+  the def-se forms, imports first. `tools/install-sgdk.mjs` writes the numbers
+  to `inc/mmlisp_se.h` as `SE_<NAME>` (`jump` → `SE_JUMP`), and
+  `MMLisp_playSe(SE_JUMP)` plays it (drv/sgdk/README.md).
+- **`:prio`** (0-255, default 0) is the effect's priority against another
+  effect on the same channel: a lower one is dropped, an equal or higher one
+  takes over. The game may pass its own (`MMLisp_playSePrio`).
+- **`:tempo`** (default 120) is the effect's own clock: an effect sounds the
+  same in every song and under any tempo the song sets.
+- **Every song carries the same effects.** A bundle's `"se"` file (and
+  `install-sgdk --se`) is compiled into every song as if it imported it, so
+  the numbers are the same in every song and a song never names an effect. A
+  song that defines a def-se of its own would move the numbers — the bundle
+  refuses it.
+- **Audition.** In the live editor, Play with the cursor inside a def-se plays
+  that effect alone.
 
 ---
 

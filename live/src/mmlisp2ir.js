@@ -4035,6 +4035,9 @@ function collectDefs(roots, diagnostics) {
   const paramDefs = new Map(); // (def (name param…) body…) parametric snippets
   const typedDefs = new Map();
   const sampleDefs = new Map();
+  // (def-se name [:prio N] [:tempo T] (channel body…)…) — a sound effect: its
+  // parts are tracks the host starts by the effect's number, not the song.
+  const seDefs = new Map();
   const vals = new Map(); // v0.5: (def-val name init) runtime value slots
   // v0.6: (def title/author "…"); D10: (def pcm-voices N) picks the engine image.
   const fileMeta = { title: null, author: null, pcmVoices: null };
@@ -4171,6 +4174,12 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
+    if (head === "def-se") {
+      const se = parseSeDef(root, diagnostics);
+      if (se) seDefs.set(se.name, se);
+      continue;
+    }
+
     // (def-fm name [base] :alg 4 …) / (def-pcm name [base] :file "…" …)
     // — named data, like def-val. A leading name after the def's own is the
     // voice / sample it extends. Voices resolve in resolveVoices, samples in
@@ -4299,13 +4308,77 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
-  return { defs, paramDefs, typedDefs, sampleDefs, vals, fileMeta, imports, remaining };
+  return { defs, paramDefs, typedDefs, sampleDefs, seDefs, vals, fileMeta, imports, remaining };
 }
 
-// v0.6 Phase 2: the four def namespaces `import` folds across files. def-val
+// The channels a sound effect may play on. FM3's operator and CSM modes are
+// song-wide chip modes ($27), so an effect cannot bring its own.
+const SE_CHANNELS = new Set([
+  "fm1", "fm2", "fm3", "fm4", "fm5", "fm6", "sqr1", "sqr2", "sqr3", "noise",
+  "pcm1", "pcm2", "pcm3",
+]);
+
+// (def-se name [:prio N] [:tempo T] (channel body…)…). The head options are
+// the effect's: :prio its default priority (0-255, the host may pass its
+// own), :tempo the clock its parts run on (default 120) — its own, so an
+// effect sounds the same in every song. Each part is a channel form, one per
+// channel, written on the channel it takes from the song.
+function parseSeDef(root, diagnostics) {
+  const items = root.items.filter((n) => n.kind !== "comment");
+  const name = atomValue(items[1]);
+  if (!name || items[1].kind !== "atom" || name.startsWith(":") || isReservedHead(name)) {
+    pushDiag(diagnostics, "error", name && isReservedHead(name) ? "E_DEF_RESERVED" : "E_DEF_NAME",
+      name && isReservedHead(name) ? `'${name}' is a reserved eval builtin and cannot be a def name`
+        : "def-se name must be a symbol", nodeSrc(root), null);
+    return null;
+  }
+  const se = { name, prio: 0, tempo: 120, parts: [], src: nodeSrc(root) };
+  let i = 2;
+  for (; i + 1 < items.length && items[i].kind === "atom"; i += 2) {
+    const key = atomValue(items[i]);
+    const v = parseNumberLike(atomValue(items[i + 1]));
+    if (key === ":prio" && Number.isInteger(v) && v >= 0 && v <= 255) se.prio = v;
+    else if (key === ":tempo" && v !== null && v > 0) se.tempo = v;
+    else {
+      pushDiag(diagnostics, "error", "E_SE_OPTION",
+        key === ":prio" ? `def-se :prio takes 0-255, not ${atomValue(items[i + 1]) ?? "a list"}`
+          : key === ":tempo" ? `def-se :tempo takes a BPM, not ${atomValue(items[i + 1]) ?? "a list"}`
+            : `def-se takes :prio and :tempo before its parts, not ${key}`,
+        nodeSrc(items[i]), null);
+    }
+  }
+  const seen = new Set();
+  for (const part of items.slice(i)) {
+    const head = part.kind === "list" ? atomValue(part.items[0]) : null;
+    if (!head || !SE_CHANNELS.has(head)) {
+      pushDiag(diagnostics, "error", "E_SE_PART",
+        head && /^fm3-/.test(head)
+          ? `(${head} …) cannot be an effect's part: FM3's operator and CSM modes belong to the song`
+          : `a def-se part is a channel form, e.g. (fm1 …), not ${head ? `(${head} …)` : "that"}`,
+        nodeSrc(part), null);
+      continue;
+    }
+    if (seen.has(head)) {
+      pushDiag(diagnostics, "error", "E_SE_PART",
+        `def-se ${name} has two parts on ${head}; an effect plays one part a channel`,
+        nodeSrc(part), null);
+      continue;
+    }
+    seen.add(head);
+    se.parts.push(part);
+  }
+  if (!se.parts.length) {
+    pushDiag(diagnostics, "error", "E_SE_PART", `def-se ${name} has no parts`, nodeSrc(root), null);
+    return null;
+  }
+  return se;
+}
+
+// v0.6 Phase 2: the def namespaces `import` folds across files. def-val
 // slots and tracks are deliberately NOT imported (a slot's index is the
-// importing file's host-visible layout; tracks are songs, not a library).
-const IMPORT_DEF_KINDS = ["defs", "paramDefs", "typedDefs", "sampleDefs"];
+// importing file's host-visible layout; tracks are songs, not a library) —
+// an effect is a def, so a game's set of them is one file every song shares.
+const IMPORT_DEF_KINDS = ["defs", "paramDefs", "typedDefs", "sampleDefs", "seDefs"];
 
 // Scan source text for its top-level (import "path") forms. Exported so the host
 // can drive async file resolution (recursing through nested imports) before the
@@ -4375,11 +4448,13 @@ function emptyImportBundle() {
     paramDefs: new Map(),
     typedDefs: new Map(),
     sampleDefs: new Map(),
+    seDefs: new Map(),
     origin: {
       defs: new Map(),
       paramDefs: new Map(),
       typedDefs: new Map(),
       sampleDefs: new Map(),
+      seDefs: new Map(),
     },
   };
 }
@@ -4679,7 +4754,7 @@ export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
 function songTempoMap(ir, opening) {
   const changes = [];
   (ir?.tracks ?? []).forEach((tr, ti) =>
-    (tr.events ?? []).forEach((ev, ei) => {
+    !tr.se && (tr.events ?? []).forEach((ev, ei) => {
       const bpm =
         ev.cmd === "TEMPO_SET" ? Number(ev.args?.bpm)
           : ev.cmd === "TEMPO_SWEEP" ? Number(ev.args?.to ?? ev.args?.from) : NaN;
@@ -4707,6 +4782,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     paramDefs,
     typedDefs,
     sampleDefs,
+    seDefs,
     vals,
     fileMeta,
     imports,
@@ -4722,7 +4798,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       diagnostics,
       dirnamePosix(normalizePathSeparators(filename)),
     );
-    const local = { defs, paramDefs, typedDefs, sampleDefs };
+    const local = { defs, paramDefs, typedDefs, sampleDefs, seDefs };
     overlayDefs(imported, local, filename); // local wins; `imported` = the union
     for (const kind of IMPORT_DEF_KINDS) {
       local[kind].clear();
@@ -4871,6 +4947,10 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     const head = atomValue(node.items[0]);
     if (head) channelHeads.add(head);
   }
+  // An effect's channels are the song's too: its PCM needs the voices, and
+  // fm6 is the DAC for an effect as for the song.
+  for (const se of seDefs.values())
+    for (const part of se.parts) channelHeads.add(atomValue(part.items[0]));
 
   const hasCsmMode =
     channelHeads.has("fm3-csm") || channelHeads.has("fm3-csm-rate");
@@ -4923,6 +5003,54 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     );
   }
 
+  // A track's compile state — all of it sticky, persisting across
+  // consecutive forms of the same channel. `tempoAt` is the song's tempo map
+  // (second pass), which an effect's parts do not follow: they run at their
+  // own tempo whatever the song does.
+  const makeTrackState = (head, bpm, initialBpm, tempoAt) => ({
+    tick: 0,
+    defaultLength: Math.round(WHOLE_TICKS / 8),
+    defaultOct: 4,
+    defaultGate: null,
+    // The tempo lengths convert at: the song's at this tick when the
+    // song-wide map is known (second pass), else this track's own.
+    ownTempo: bpm,
+    get currentTempo() {
+      return (tempoAt && tempoAt(this.tick)) ?? this.ownTempo;
+    },
+    set currentTempo(v) {
+      this.ownTempo = v;
+    },
+    initialBpm,
+    isFm3OpTrack: /^fm3-[1-4]$/.test(head),
+    fm3OpIndex: /^fm3-[1-4]$/.test(head)
+      ? parseInt(head.slice(4), 10)
+      : null,
+    isCsmTrack: head === "fm3-csm",
+    isCsmRateTrack: head === "fm3-csm-rate",
+    isPcmTrack: isPcmTrackName(head),
+    isFm6Track: head === "fm6",
+    isNoiseTrack: head === "noise",
+    pcmSampleName: null, // bound by a bare sample name in the body
+    pcmMode: "shot",
+    sampleDefs,
+    hasInlineCsmRate: false,
+    hasCsmOn: false,
+    defaultVel: 15, // per-note velocity, KEY-ON scoped, 0-15
+    activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
+    delayTicks: 0, // v0.5: (delay …) tap spacing in ticks (0 = off)
+    delaySpec: null, // v0.5: (delay …) relative spec {mode,type,…} or null
+
+    glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
+    glideFrom: null, // v0.4: one-shot start pitch override for glide
+    lastNotePitch: null, // v0.4: previous note's pitch for glide calculation
+    lastCsmHz: null, // v0.5: previous fm3-csm-rate Hz for glide sweeps
+    shuffleRatio: 0, // per-track swing, 0 = straight (§5.2)
+    shuffleBase: Math.round(WHOLE_TICKS / 8),
+    subBeatParity: 0,
+    currentLoopId: null, // id of innermost counted (x N ...) loop, for (break)
+  });
+
   const hasCompanionCsmRateTrack = channelHeads.has("fm3-csm-rate");
   let hasInlineCsmRate = false;
   const trackByKey = new Map();
@@ -4948,8 +5076,6 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       continue;
     }
 
-    const isPcmTrack = isPcmTrackName(head);
-
     // `:prio` is the one head option: it picks the layer (the timeline) the
     // form belongs to, so it must be read before the body. Everything else in
     // the form is body (language.md §5).
@@ -4973,49 +5099,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
 
     if (!trackByKey.has(trackKey)) {
       // All state is sticky and persists across consecutive forms of the same channel
-      const trackState = {
-        tick: 0,
-        defaultLength: Math.round(WHOLE_TICKS / 8),
-        defaultOct: 4,
-        defaultGate: null,
-        // The tempo lengths convert at: the song's at this tick when the
-        // song-wide map is known (second pass), else this track's own.
-        ownTempo: scoreInitialBpm ?? 120,
-        get currentTempo() {
-          return (tempoAt && tempoAt(this.tick)) ?? this.ownTempo;
-        },
-        set currentTempo(v) {
-          this.ownTempo = v;
-        },
-        initialBpm: scoreInitialBpm,
-        isFm3OpTrack: /^fm3-[1-4]$/.test(head),
-        fm3OpIndex: /^fm3-[1-4]$/.test(head)
-          ? parseInt(head.slice(4), 10)
-          : null,
-        isCsmTrack: head === "fm3-csm",
-        isCsmRateTrack: head === "fm3-csm-rate",
-        isPcmTrack,
-        isFm6Track: head === "fm6",
-        isNoiseTrack: head === "noise",
-        pcmSampleName: null, // bound by a bare sample name in the body
-        pcmMode: "shot",
-        sampleDefs,
-        hasInlineCsmRate: false,
-        hasCsmOn: false,
-        defaultVel: 15, // per-note velocity, KEY-ON scoped, 0-15
-        activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
-        delayTicks: 0, // v0.5: (delay …) tap spacing in ticks (0 = off)
-        delaySpec: null, // v0.5: (delay …) relative spec {mode,type,…} or null
-
-        glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
-        glideFrom: null, // v0.4: one-shot start pitch override for glide
-        lastNotePitch: null, // v0.4: previous note's pitch for glide calculation
-        lastCsmHz: null, // v0.5: previous fm3-csm-rate Hz for glide sweeps
-        shuffleRatio: 0, // per-track swing, 0 = straight (§5.2)
-        shuffleBase: Math.round(WHOLE_TICKS / 8),
-        subBeatParity: 0,
-        currentLoopId: null, // id of innermost counted (x N ...) loop, for (break)
-      };
+      const trackState = makeTrackState(head, scoreInitialBpm ?? 120, scoreInitialBpm, tempoAt);
 
       const trackData = {
         id: trackOrder.length,
@@ -5109,6 +5193,36 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         : flattenPriorityLayers(head, layers, diagnostics),
     );
   }
+
+  // Sound effects (def-se), after the song's tracks: each part is a track of
+  // its own on the channel it names — never merged into the song's timeline
+  // there, since it takes the channel from the song rather than joining it —
+  // on the effect's own clock, and marked with the effect's number (its
+  // place among the def-se forms, imports first), which is how the host
+  // starts it. The same set in every song gives the same numbers.
+  let seIndex = 0;
+  for (const se of seDefs.values()) {
+    for (const node of expandRoots(se.parts, defs, paramDefs, diagnostics)) {
+      const head = atomValue(node.items[0]);
+      const trackState = makeTrackState(head, se.tempo, se.tempo, null);
+      const trackData = {
+        id: 0,
+        scoreChannel: head,
+        channel: head,
+        se: { name: se.name, index: seIndex, prio: se.prio },
+        events: [{ tick: 0, cmd: "TEMPO_SET", args: { bpm: se.tempo }, src: se.src }],
+      };
+      if (head === "noise")
+        trackData.events.push({ tick: 0, cmd: "PARAM_SET",
+          args: { target: "NOISE_MODE", value: NOISE_MODE_MAP["white0"] }, src: se.src });
+      compileChannelBody(node.items.slice(1), trackState, trackData.events, diagnostics,
+        `se:${se.name}:${head}`, typedDefs, loopCounter, vals);
+      expandTrackDelays(trackData);
+      tracks.push(trackData);
+    }
+    seIndex++;
+  }
+
   tracks.forEach((t, idx) => {
     t.id = idx;
   });

@@ -59,8 +59,9 @@ Open (the limits themselves are `driver.md` §11 — keep the two in step):
 5. **PAL PCM pitch and SE rough edges.** A PAL bank would have to be re-baked
    at the PAL DAC rate, and is not. A PCM SE restarts a looping BGM note from
    the sample's head rather than where it was, and a sweep in flight on a
-   stolen channel is lost rather than resumed; the SE bundler is the open
-   design question (`.claude/memory/plan-se.md`).
+   stolen channel is lost rather than resumed. Effects themselves are
+   `def-se`, written once and given to every song by the bundle
+   (language.md §9.3).
 6. **A small Z80-only build** — sequencer and engine both on the Z80, for a
    game that cannot spare the 68000. Speculative; the measurements that moved
    the sequencer off the Z80 are in `.claude/memory/driver-decisions.md`.

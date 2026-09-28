@@ -30,11 +30,8 @@ export function sgdkEnv(tool) {
 
 /** Make and build the example project for `score`. `patch(proj)` runs after
  *  the install and before make (the profiler injects its marks there).
- *  `remap` is install-sgdk's `track:channel,…`, which points a sound-effect
- *  track at the channel it steals — the caller's reference has to be given the
- *  same one or the two are of different music.
  *  Returns { proj, rom, sampleBank } or throws with the build's output. */
-export function makeProject(E, score, { flags = "", patch, remap } = {}) {
+export function makeProject(E, score, { flags = "", patch, seFile } = {}) {
   const proj = mkdtempSync(join(tmpdir(), "mmlisp-sgdk-"));
   for (const d of ["src", "inc", "res"]) mkdirSync(join(proj, d));
   writeFileSync(join(proj, "Makefile"), `GDK ?= ${E.GDK}\nrelease:\n\t$(MAKE) -f $(GDK)/makefile.gen\n`);
@@ -43,9 +40,9 @@ export function makeProject(E, score, { flags = "", patch, remap } = {}) {
   const romHead = join(here, "sgdk-shim", "rom_header.c");
   if (existsSync(romHead)) copyFileSync(romHead, join(proj, "src", "rom_header.c"));
   execFileSync("node", [join(here, "install-sgdk.mjs"), proj, "--song", score, "--example",
-    ...(remap ? ["--remap", remap] : [])], { stdio: "pipe" });
+    ...(seFile ? ["--se", seFile] : [])], { stdio: "pipe" });
   if (patch) patch(proj);
-  const { sampleBank } = buildMmb(score);
+  const { sampleBank } = buildMmb(score, { seFile });
   const all = `-DMMLISP_AUTOPLAY=1 -DMMLISP_PCM_SAMPLES=${sampleBank ? 1 : 0} ${flags}`.trim();
   try {
     execFileSync("make", ["-f", join(E.GDK, "makefile.gen"), `EXTRA_FLAGS=${all}`], { cwd: proj, env: E.env, stdio: "pipe" });

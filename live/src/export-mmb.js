@@ -29,6 +29,7 @@ import {
   SECTION_ID,
   SECTION_FLAG,
   TRACK_FLAG,
+  MAX_TRACKS,
   OPCODE,
   TARGET_ID,
   targetWidth,
@@ -631,6 +632,7 @@ export function encodeMmb(ir, opts = {}) {
       flags |= TRACK_FLAG.isCsm;
     }
     if (channelId >= 16 && channelId <= 19) flags |= TRACK_FLAG.isFm3Op;
+    if (track.se) flags |= TRACK_FLAG.isSe;
 
     // Per-track encoder state.
     let clock = 0; // running tick position of the stream
@@ -1302,8 +1304,12 @@ export function encodeMmb(ir, opts = {}) {
       channelId,
       flags,
       eventOffset,
+      se: track.se ?? null,
     });
   }
+  if (trackEntries.length > MAX_TRACKS)
+    diag("error", "E_MMB_TRACKS",
+      `${trackEntries.length} tracks; the driver holds ${MAX_TRACKS} (a song's 16 and its effects' parts)`);
 
   // ── CALL/RET dedup (opcodes.md §5.2): factor repeated event runs. Pure
   // encode transform — trackEntries.eventOffset and JUMP dests are relinked in
@@ -1419,6 +1425,22 @@ export function encodeMmb(ir, opts = {}) {
       );
     }
     sections.push({ id: SECTION_ID.VAL_TABLE, flags: 0, payload: valTable.bytes });
+  }
+
+  // SE_TABLE (mmb.md §16): an effect's number → its parts, which the compiler
+  // lays out as consecutive tracks after the song's.
+  const seParts = trackEntries.filter((t) => t.se);
+  if (seParts.length > 0) {
+    const count = Math.max(...seParts.map((t) => t.se.index)) + 1;
+    const seTable = new Writer();
+    seTable.u8(count);
+    for (let i = 0; i < count; i++) {
+      const parts = seParts.filter((t) => t.se.index === i);
+      seTable.u8(parts[0]?.se.prio ?? 0);
+      seTable.u8(parts[0]?.trackId ?? 0);
+      seTable.u8(parts.length);
+    }
+    sections.push({ id: SECTION_ID.SE_TABLE, flags: 0, payload: seTable.bytes });
   }
 
   // MACRO_TABLE (mmb.md §15): interned macro descriptors + value blobs.

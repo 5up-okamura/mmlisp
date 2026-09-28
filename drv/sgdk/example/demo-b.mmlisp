@@ -1,8 +1,8 @@
 ; The SGDK example's second song — the same track layout and the same value
-; slots as demo.mmlisp (main.c relies on both: the last four tracks are the
-; effects, slot 0 is the vibrato depth, slot 1 the bass level), a different
-; tune. Its effect tracks are the same four lines as demo.mmlisp's; its samples
-; are the same two entries in the shared bank, not a second copy.
+; slots as demo.mmlisp (main.c relies on the slots: 0 is the vibrato depth, 1
+; the bass level), a different tune. Its effects are demo.mmlisp's, from the
+; same demo-se.mmlisp under the same numbers; its samples are the same entries
+; in the shared bank, not a second copy.
 
 (import "demo-lib.mmlisp")
 
@@ -57,16 +57,3 @@
 ; track 5 — pcm1, the held loop the PCM effect overwrites
 (pcm1 padsmp :mode loop :oct 3 :len 0 :vel 12
   a)
-
-; ── SE — the same four lines as demo.mmlisp ─────────────────────────────────
-(fm3 bleep :oct 5 :len 16 :vel 15
-  g a > c)
-
-(fm4 zap :oct 6 :len 16 :vel 15
-  c < a > e < g)
-
-(sqr2 :oct 6 :len 16 :vel 14
-  c e g > c)
-
-(pcm2 blip :oct 5 :len 8 :vel 15
-  c)

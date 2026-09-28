@@ -131,8 +131,9 @@ int main(int argc, char **argv) {
 
   unsigned char slot[MML_SLOT_SIZE];
   if (prime >= 0) {
-    /* The SGDK host's load: nothing started, PRIME, K idle frames, then
-     * START_TRACK for every track in order — the reference's
+    /* The SGDK host's load: nothing started, PRIME, K idle frames, then the
+     * song's start (every track but the effects' parts; with a command
+     * schedule, the schedule starts them) — the reference's
      * captureSlotLog({ prime: K }) does the same. */
     mml_prime_tracks(&seq);
     for (long k = 0; k < prime; k++) {
@@ -140,7 +141,7 @@ int main(int argc, char **argv) {
       emit_slot(slot, n);
       EMIT_TRIG();
     }
-    for (uint8_t i = 0; i < mml_track_count(&seq); i++) mml_start_track(&seq, mml_track_id(&seq, i));
+    if (!ncmds) mml_start_song(&seq);
   } else if (!idle) {
     mml_start_all(&seq);
   }

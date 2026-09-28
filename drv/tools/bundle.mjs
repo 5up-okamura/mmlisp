@@ -17,27 +17,26 @@
 //     "pcmVoices": 1,            optional: the image every song boots. Default:
 //                                the largest count any song needs
 //     "bank": "song.smp",        optional: the bank's file name (default song.smp)
+//     "se": "se.mmlisp",         optional: the game's sound effects (def-se,
+//                                language.md §9.3), imported into EVERY song so
+//                                each carries the same set under the same numbers
 //     "songs": [
 //       { "src": "stage1.mmlisp",          a score
-//         "name": "stage1",                its file / rescomp symbol (default: the
+//         "name": "stage1" }               its file / rescomp symbol (default: the
 //                                          source's basename)
-//         "remap": { "6": 0, "7": 0 } }    optional: track id -> channel id, the
-//                                          effect tracks' channels (mmb-build.mjs
-//                                          remapTrackChannels)
 //     ]
 //   }
 //
-// Out: <out-dir>/<name>.mmb per song and <out-dir>/<bank>, plus the BIN lines
-// a song.res needs. Each song's effect tracks are still authored IN that song
-// (the language imports defs, not tracks — language.md §9.2); what the bundle
-// removes is the per-song copy of the samples, which is the part that costs.
+// Out: <out-dir>/<name>.mmb per song, <out-dir>/<bank>, and mmlisp_se.h (the
+// SE_<NAME> numbers MMLisp_playSe takes), plus the BIN lines a song.res needs.
+// The songs never name the effects: the set is the game's, written once.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { encodeMmb, createSampleBankBuilder } from "../../live/src/export-mmb.js";
 import { engineImage } from "../../live/src/engine-images.js";
 import { loadSamplesForIr } from "./wav.mjs";
-import { remapTrackChannels, readImportSources } from "./mmb-build.mjs";
+import { readImportSources, seListOf, seHeader, withSeImport } from "./mmb-build.mjs";
 
 const SILENCE_PAGE = 0x7f00; // the bank's top page is silence (mmb.md §10)
 
@@ -106,7 +105,8 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
       throw new Error(`song name "${name}" is not a C identifier (it becomes the rescomp symbol)`);
     }
     if (!existsSync(src)) throw new Error(`no such score: ${src}`);
-    const text = readFileSync(src, "utf8");
+    // The game's effects come in as an import every song carries.
+    const text = withSeImport(src, readFileSync(src, "utf8"), manifest.se && resolve(baseDir, manifest.se));
     const { ir, diagnostics: cd } = compileMMLisp(text, src, { frameHz, imports: readImportSources(src, text) });
     const errors = cd.filter((d) => d.severity === "error");
     if (errors.length) {
@@ -114,12 +114,21 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     }
     const sampleDiags = [];
     const samples = (ir.metadata?.samples ?? []).length ? loadSamplesForIr(ir, sampleDiags) : {};
-    return { name, src, entry, ir, samples, diagnostics: [...cd, ...sampleDiags], needs: pcmVoicesNeeded(ir, entry.remap) };
+    return { name, src, entry, ir, samples, diagnostics: [...cd, ...sampleDiags], needs: pcmVoicesNeeded(ir) };
   });
   const names = new Set();
   for (const s of songs) {
     if (names.has(s.name)) throw new Error(`two songs are named "${s.name}"`);
     names.add(s.name);
+  }
+  // One set of effects, one numbering: a song that defines a def-se of its
+  // own would move every number after it, and the game's constants with them.
+  const se = seListOf(songs[0].ir);
+  for (const s of songs) {
+    const mine = seListOf(s.ir);
+    if (mine.map((e) => e.name).join() !== se.map((e) => e.name).join())
+      throw new Error(`${s.entry.src} carries effects [${mine.map((e) => e.name).join(", ")}], ` +
+        `not the bundle's [${se.map((e) => e.name).join(", ")}]: define def-se only in the "se" file`);
   }
 
   // ── one image for every song ───────────────────────────────────────────
@@ -146,15 +155,6 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
   for (const s of songs) {
     const { bytes, pcmEntryIds, diagnostics: ed } = encodeMmb(s.ir, { samples: s.samples, bankBuilder: builder });
     s.diagnostics.push(...ed);
-    if (s.entry.remap) {
-      const moved = remapTrackChannels(bytes, s.entry.remap);
-      const missed = Object.keys(s.entry.remap).filter((id) => !moved.some((m) => m.track === Number(id)));
-      if (missed.length) {
-        diag("warning", "W_BUNDLE_REMAP_UNUSED",
-          `remap names track ${missed.join(", ")}, which this score does not have`, s.name);
-      }
-      s.moved = moved;
-    }
     s.bytes = bytes;
     s.entryIds = pcmEntryIds ?? {};
     s.tracks = readTrackTable(bytes);
@@ -203,8 +203,9 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
   return {
     pcmVoices, rateHz, bank, entryCount, blobBytes: builder.blobLength,
     bankBytes: bankBytes.length, headroom: SILENCE_PAGE - bankBytes.length,
-    songs: songs.map(({ name, src, bytes, ir, tracks, entryIds, diagnostics, moved }) =>
-      ({ name, src, bytes, ir, tracks, entryIds, diagnostics, moved: moved ?? [] })),
+    songs: songs.map(({ name, src, bytes, ir, tracks, entryIds, diagnostics }) =>
+      ({ name, src, bytes, ir, tracks, entryIds, diagnostics })),
+    se,
     diagnostics,
   };
 }
@@ -229,18 +230,15 @@ const channelId = (name) => {
   return -1;
 };
 
-/* The PCM voices a song needs ONCE ITS TRACKS ARE WHERE THE REMAP PUTS THEM.
- * An effect authored on pcm2 and pointed at pcm1 plays on voice 0, so the
- * compiler's own count (the highest pcmN written, which is also what the IR's
- * metadata carries) would boot an image a voice too big. A `(def pcm-voices N)`
- * in a bundled score is superseded by the manifest's "pcmVoices". */
-function pcmVoicesNeeded(ir, remap) {
+/* The PCM voices a song needs: its highest pcmN, the effects' included. A
+ * `(def pcm-voices N)` in a bundled score is superseded by the manifest's
+ * "pcmVoices". */
+function pcmVoicesNeeded(ir) {
   let n = 0;
-  (ir.tracks ?? []).forEach((t, i) => {
-    const id = t.id ?? i;
-    const ch = remap?.[id] ?? channelId(t.channel ?? "");
+  for (const t of ir.tracks ?? []) {
+    const ch = channelId(t.channel ?? "");
     if (ch >= 20 && ch <= 22) n = Math.max(n, ch - 19);
-  });
+  }
   return n;
 }
 
@@ -258,10 +256,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   const bankName = manifest.bank ?? "song.smp";
   for (const s of bundle.songs) {
     writeFileSync(join(outDir, `${s.name}.mmb`), s.bytes);
-    const tracks = s.tracks.map((t) => {
-      const m = s.moved.find((x) => x.track === t.id);
-      return `${t.id}:${m ? `${channelName(m.from)}->` : ""}${channelName(t.channel)}`;
-    }).join(" ");
+    const tracks = s.tracks.map((t) => `${t.id}:${channelName(t.channel)}`).join(" ");
     console.log(`${s.name}.mmb  ${s.bytes.length} B  ${s.tracks.length} tracks — ${tracks}`);
     for (const d of s.diagnostics) console.warn(`    ${d.severity}: ${d.message}`);
   }
@@ -271,6 +266,10 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       `${bundle.headroom} B of headroom, baked for the ${bundle.pcmVoices}-voice image`);
   } else {
     console.log(`no PCM in any song: no bank (every song boots the ${Math.max(1, bundle.pcmVoices)}-voice image)`);
+  }
+  if (bundle.se.length) {
+    writeFileSync(join(outDir, "mmlisp_se.h"), seHeader(bundle.se));
+    console.log(`mmlisp_se.h  ${bundle.se.map((e, i) => `${i}:${e.name}`).join(" ")}`);
   }
   for (const d of bundle.diagnostics) console.warn(`  ${d.severity}: ${d.message}`);
   console.log(`\nres/song.res:\n  ${resLines(bundle, bankName).join("\n  ")}`);

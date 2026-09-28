@@ -1,35 +1,23 @@
-; The SGDK example's first song: a looping BGM, sound effects on all three
-; kinds of voice (FM, PSG and PCM), and two value slots the game drives from
-; the pad. demo-b.mmlisp is the second song; demo.bundle.json builds the two
-; against ONE sample bank (drv/tools/bundle.mjs):
+; The SGDK example's first song: a looping BGM, two value slots the game drives
+; from the pad, and — from demo-se.mmlisp, which the bundle gives every song —
+; sound effects on all three kinds of voice (FM, PSG and PCM). demo-b.mmlisp
+; is the second song; demo.bundle.json builds the two against ONE sample bank
+; (drv/tools/bundle.mjs):
 ;
 ;   node drv/tools/install-sgdk.mjs <proj> --example --bundle drv/sgdk/example/demo.bundle.json
 ;
-; THE SE TRACKS ARE AUTHORED ON SPARE CHANNELS ON PURPOSE. The compiler gives
-; each channel exactly one track — two blocks on one channel merge into a
-; single timeline — so a BGM track and an SE track cannot be written on the
-; same channel in one score. The bundle's `remap` points each effect track at
-; the channel it steals; a score built on its own gets there with
-; `install-sgdk --remap`, or a gate sidecar's `remapChannels`. All three are
-; the same function (tools/mmb-build.mjs remapTrackChannels).
+; This file never names an effect. They are the game's, written once in
+; demo-se.mmlisp as def-se forms, each part on the channel it takes from the
+; song (fm1, sqr1, pcm1 below), and started by number with MMLisp_playSe.
 ;
-; The effect voices and the samples come from demo-lib.mmlisp, which both songs
-; import: `import` brings in defs, not tracks (language.md §9.2), so the four
-; effect TRACK lines below are repeated in demo-b.mmlisp. Their samples are
-; not — the bundle numbers `padsmp` and `blip` once for both songs.
+; TRACKS, in declaration order — the song MMLisp_startSong starts:
 ;
-; TRACKS, in declaration order — the ids MMLisp_startTrack / startSe take:
-;
-;   0 fm1   BGM lead, whole notes      <- the FM effects steal this
+;   0 fm1   BGM lead, whole notes      <- bleep and zap take this
 ;   1 fm2   BGM bass, reads $lvl
-;   2 sqr1  BGM chord, whole notes     <- the PSG effect steals this
+;   2 sqr1  BGM chord, whole notes     <- chirp takes this
 ;   3 sqr3  BGM arp, vibrato on $vib
 ;   4 noise BGM hat
-;   5 pcm1  BGM loop, held             <- the PCM effect overwrites this voice
-;   6 fm3   SE  bleep   -> fm1
-;   7 fm4   SE  zap     -> fm1
-;   8 sqr2  SE  chirp   -> sqr1
-;   9 pcm2  SE  blip    -> pcm1
+;   5 pcm1  BGM loop, held             <- blip overwrites this voice
 ;
 ; VALUE SLOTS, in declaration order — the indices MMLisp_setVal takes. The two
 ; differ in WHEN the score reads them, which is the whole timing story of the
@@ -105,27 +93,4 @@
 ; re-triggers. That makes the PCM effect's steal and hand-back the only thing
 ; that ever moves this voice.
 (pcm1 padsmp :mode loop :oct 4 :len 0 :vel 12
-  c)
-
-; ── SE ──────────────────────────────────────────────────────────────────────
-; track 6 — "bleep", fired at a LOW priority. Short, so it hands the lead back
-; on its own END_OF_TRACK.
-(fm3 bleep :oct 5 :len 16 :vel 15
-  g a > c)
-
-; track 7 — "zap", fired at a HIGH priority: it preempts a running "bleep" and
-; inherits its duty to restore the BGM, so the lead returns after the LAST of
-; the two, not after the first.
-(fm4 zap :oct 6 :len 16 :vel 15
-  c < a > e < g)
-
-; track 8 — the PSG effect, pointed at sqr1.
-(sqr2 :oct 6 :len 16 :vel 14
-  c e g > c)
-
-; track 9 — the PCM effect, pointed at pcm1's voice. A soft-mix voice has no
-; owning track, so nothing is suspended: this note overwrites the voice, and
-; SE-end starts the BGM's loop again (from the sample's head — the engine keeps
-; no position the host can read back).
-(pcm2 blip :oct 5 :len 8 :vel 15
   c)

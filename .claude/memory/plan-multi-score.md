@@ -84,11 +84,8 @@ Decisions taken in the build, for whoever revisits them:
   now `MMLispStats.bank` (-3 = baked for another image) instead of silence.
 
 Control data is cheap — a demo song's MMB is under a kilobyte against the
-32 KB bank — so repeating a set of effect tracks in every song costs little.
-That repetition is the one thing left: **`import` brings in defs, not tracks**
-(language.md §9.2, by design), so a game repeats its effect track lines per
-song. Making tracks importable is a language decision, not a tooling one; it
-is recorded in `plan-se.md`.
+32 KB bank — so every song carrying the game's effects costs little: the
+bundle's `"se"` compiles one `def-se` file into every song (plan-se.md).
 
 A song change resets the val slots: `mml_load` zeroes the sequencer and
 re-seeds `VAL_TABLE`, so the game writes them again (the example does).
@@ -97,9 +94,8 @@ re-seeds `VAL_TABLE`, so the game writes them again (the example does).
 
 Two things, which may not need the same mechanism:
 
-1. **BGM + SE as separate files.** The samples: answered by the bundle. The
-   tracks: every song's source carries its effect track lines, a few per
-   effect, until tracks are importable.
+1. **BGM + SE as separate files.** Answered by the bundle: one bank, and one
+   `def-se` file every song is compiled with.
 2. **DJ-style transitions between songs** — one phrase retained, the next song
    at the same tempo, fade in. Within one MMB this works only within the
    channel budget above: both songs are resident on different channels, so each
