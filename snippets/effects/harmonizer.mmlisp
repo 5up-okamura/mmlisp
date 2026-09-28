@@ -9,6 +9,6 @@
   :len 8 (note (+ 71 k)) (note (+ 69 k)) (note (+ 67 k)) (note (+ 64 k))
   :len 2 (note (+ 67 k)))
 
-(fm1 :tempo 100 gm-flute (line 0) (line 0))
+(fm1 :tempo 150 gm-flute (line 0) (line 0))
 (fm2 gm-flute :vel 11 :len 1 _ _ (line 7))
 (fm3 gm-flute :vel 11 :len 1 _ _ (line -12))
