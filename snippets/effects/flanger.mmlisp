@@ -1,7 +1,8 @@
-; Flanger: the same sound twice, a hair out of tune, so the two beat against
-; each other; sweep the detune and the beating speeds up and slows down, the
-; jet-plane swoosh. fm2 doubles fm1 with a slow looping :pitch sweep of a few
-; cents; a bright saw gives the comb something to cut into.
+; Flanger: the same sound twice, out of tune, so the two beat against each
+; other; sweep the detune and the beating speeds up and slows down, the
+; jet-plane swoosh. fm2 doubles fm1 with a slow looping :pitch sweep up to 50
+; cents (much less and the change is hard to hear); a bright saw gives the
+; comb something to cut into.
 (import "presets/waveforms/set.mmlisp")
 
 (def riff :len 8 c c > c < c  e- c > c < b-)
@@ -9,5 +10,5 @@
 (fm1 :tempo 110 :oct 3 wave-saw :vel 13
   (x 4 riff))
 (fm2 :oct 3 wave-saw :vel 13
-  :pitch (triangle 1..9 :len 2/1)
+  :pitch (triangle 0..50 :len 2/1)
   (x 4 riff))
