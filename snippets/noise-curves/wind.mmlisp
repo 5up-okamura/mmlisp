@@ -1,0 +1,17 @@
+; Wind: brown noise is a random walk, so it wanders instead of jumping, the
+; way a gust rises and falls. The noise channel in white3 hisses at a rate set
+; by sqr3's tone; sqr3 stays silent (:vol 0) and only steers it. One brown
+; walk rides the hiss's level (:vel), another its pitch, so the wind swells
+; and whistles up and down. First two bars with noise for contrast: the same
+; ranges, jumping every eighth. A macro starts over with each note, so each
+; half is one long note carrying one walk; :step 2 because a macro holds 255
+; steps and the walk lasts 480 frames.
+
+; pitch source: the hiss follows sqr3's pitch
+(sqr3 :tempo 120 :oct 3 :vol 0
+  (macro :step 8 :pitch (noise -1200..1200 :len 2/1 :seed 7)) :len 2/1 c
+  (macro :step 2 :pitch (brown -1200..1200 :len 4/1 :seed 7)) :len 4/1 c)
+
+(noise :mode white3
+  (macro :step 8 :vel (noise 3..14 :len 2/1 :seed 3)) :len 2/1 c
+  (macro :step 2 :vel (brown 3..14 :len 4/1 :seed 3)) :len 4/1 c)

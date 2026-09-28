@@ -28,7 +28,7 @@
   "snippets/curves/easing-filter.mmlisp",
   "snippets/curves/lfo-shapes.mmlisp",
   "snippets/curves/curve-math.mmlisp",
-  "snippets/noise-curves/analog-drift.mmlisp",
+  "snippets/noise-curves/wind.mmlisp",
   "snippets/noise-curves/perlin-timbre.mmlisp",
   "snippets/noise-curves/random-pan.mmlisp",
   "snippets/noise-curves/random-gate.mmlisp",
