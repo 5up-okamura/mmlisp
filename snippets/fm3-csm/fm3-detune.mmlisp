@@ -1,9 +1,9 @@
 ; FM3 as a thick pad on one channel: every operator gets its own pitch. The
 ; progression plays twice: first the operators in plain unison, then pulled
-; apart. Two carriers play the root 50 cents apart and beat against each
-; other; the bass sits a little sharp; the fifth glides. Each detuned
-; operator also drifts on a vibrato of its own speed (:pitch+ adds to its
-; offset), so the beating never settles.
+; apart. Two carriers play the root a semitone apart (-50 and +50 cents) and
+; the bass sits 30 sharp; the fifth glides. Each detuned operator also swings
+; on a wide vibrato of its own speed (:pitch+ adds to its offset), so the
+; gap between them keeps opening and closing, from unison to a whole tone.
 (def-fm pad4 init-fm :alg 7 :fb 0
   :ar1 14 :ar2 14 :ar3 12 :ar4 10
   :tl1 12 :tl2 12 :tl3 16 :tl4 14
@@ -13,10 +13,10 @@
 
 (fm3 pad4)
 (fm3-1 :tempo 84 :oct 4 :len 1 chords
-  :pitch -25 (macro :pitch+ (sin -10..10 :len 1)) chords)
+  :pitch -50 (macro :pitch+ (sin -50..50 :len 1)) chords)
 (fm3-2 :oct 4 :len 1 chords
-  :pitch 25 (macro :pitch+ (sin -10..10 :len 3/2)) chords)
+  :pitch 50 (macro :pitch+ (sin -50..50 :len 3/2)) chords)
 (fm3-3 :oct 4 :len 1 g e- c d
   (glide 4) g e- c d)
 (fm3-4 :oct 3 :len 1 chords
-  :pitch 15 (macro :pitch+ (sin -8..8 :len 2)) chords)
+  :pitch 30 (macro :pitch+ (sin -30..30 :len 2)) chords)
