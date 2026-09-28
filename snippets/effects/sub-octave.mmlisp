@@ -11,6 +11,6 @@
 
 (def line :len 8 c _ c e-  _ f g _  b- _ g f  e- c < b- > c)
 
-(fm1 :tempo 100 :oct 3
+(fm1 :tempo 200 :oct 3
   bass (x 2 line)
   bass-sub (x 2 line))
