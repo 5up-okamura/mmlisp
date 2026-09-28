@@ -1,15 +1,22 @@
-; FM3 as a thick pad on one channel: every operator gets its own pitch. Two
-; carriers play the root a few cents apart, one plays the fifth and glides,
-; and a shared vibrato (:pitch+) moves each operator around its own offset.
+; FM3 as a thick pad on one channel: every operator gets its own pitch. The
+; progression plays twice: first the operators in plain unison, then pulled
+; apart. Two carriers play the root 50 cents apart and beat against each
+; other; the bass sits a little sharp; the fifth glides. Each detuned
+; operator also drifts on a vibrato of its own speed (:pitch+ adds to its
+; offset), so the beating never settles.
 (def-fm pad4 init-fm :alg 7 :fb 0
   :ar1 14 :ar2 14 :ar3 12 :ar4 10
   :tl1 12 :tl2 12 :tl3 16 :tl4 14
   :rr1 5 :rr2 5 :rr3 5 :rr4 5)
 
-(def drift (macro :pitch+ (sin -8..8 :len 2 :wait 8)))
+(def chords c a- f g)
 
 (fm3 pad4)
-(fm3-1 :tempo 84 :oct 4 :len 1 :pitch -9 drift  c a- f g)
-(fm3-2 :oct 4 :len 1 :pitch 9 drift            c a- f g)
-(fm3-3 :oct 4 :len 1 (glide 4)                 g e- c d)
-(fm3-4 :oct 3 :len 1 :pitch 4                  c a- f g)
+(fm3-1 :tempo 84 :oct 4 :len 1 chords
+  :pitch -25 (macro :pitch+ (sin -10..10 :len 1)) chords)
+(fm3-2 :oct 4 :len 1 chords
+  :pitch 25 (macro :pitch+ (sin -10..10 :len 3/2)) chords)
+(fm3-3 :oct 4 :len 1 g e- c d
+  (glide 4) g e- c d)
+(fm3-4 :oct 3 :len 1 chords
+  :pitch 15 (macro :pitch+ (sin -8..8 :len 2)) chords)
