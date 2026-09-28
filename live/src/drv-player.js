@@ -147,6 +147,9 @@ function freshFmChannel() {
     // macro's last sample would stay the channel's velocity forever.
     velBase: VEL_FINE_MAX, // FM and PSG vel are in eighths of a step (§7.1)
     vel: VEL_FINE_MAX,
+    // vol likewise (§7.2): volBase is the score's fader, vol the live level a
+    // :vol macro moves. A note-on puts the fader back; key-on mutes on it.
+    volBase: VOL_UNITY,
     vol: VOL_UNITY,
     gate: 8, // eighths of dur (opcodes.md §4)
     pitchCents: 0, // PARAM_SET NOTE_PITCH offset
@@ -417,6 +420,7 @@ export class DrvPlayer {
     this._psg = Array.from({ length: 4 }, () => ({
       velBase: VEL_FINE_MAX, // score's sticky velocity; vel is the macro-driven live one
       vel: VEL_FINE_MAX,
+      volBase: VOL_UNITY, // score's fader; vol is the macro-driven live one
       vol: VOL_UNITY,
       gate: 8,
       pitchCents: 0,
@@ -473,6 +477,7 @@ export class DrvPlayer {
     this._fm3OpVel = [VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX];
     this._fm3OpVelBase = [VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX];
     this._fm3OpVol = [VOL_UNITY, VOL_UNITY, VOL_UNITY, VOL_UNITY];
+    this._fm3OpVolBase = [VOL_UNITY, VOL_UNITY, VOL_UNITY, VOL_UNITY];
     // PCM voices (driver.md §14): pcm1–pcm3 (channels 20–22). The sequencer
     // does not model playback — the engine owns every pointer — it keeps what
     // its commands need: the note's blob, whether it loops, and the level.
@@ -721,8 +726,9 @@ export class DrvPlayer {
     const regs = this._fm[ch];
     const port = ch >= 3 ? 1 : 0;
     const chKey = (port << 2) | (ch % 3);
-    // vol/master 0 = hard mute: skip key-on entirely (language.md §6).
-    if (regs.vol === 0 || this._master === 0) return;
+    // vol/master 0 = hard mute: skip key-on entirely (language.md §6). The
+    // score's fader decides, not a :vol macro's level: a macro's 0 attenuates.
+    if (regs.volBase === 0 || this._master === 0) return;
     // CSM keys CH3 from Timer A's overflow; held on through $28 the operators
     // would see no edge and every retrigger would be lost.
     if (ch === 2 && this._reg27 & 0x80) return;
@@ -907,6 +913,7 @@ export class DrvPlayer {
     // song, which is how a level macro anywhere in a loop left every following
     // note at full volume. ir-player does the same with `regs.vel = noteVel`.
     this._restoreVelBase(ch, exVel);
+    this._restoreVolBase(ch);
     // Live mixer: a muted / non-soloed track advances but does not sound — skip
     // the key and its macros (which gate on the keyed state). Always true during
     // the trace gate (nothing muted), so it doesn't affect verification.
@@ -1416,6 +1423,40 @@ export class DrvPlayer {
     setVel(exVel != null ? clamp(exVel) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
   }
 
+  // Note-on volume: the score's fader (driver.md §7.2). A :vol macro moves the
+  // live level for its note only; the next note starts from the fader, so a
+  // macro that ended at 0 does not carry into it. As with vel, a bound :vol
+  // macro's first sample lands this frame and is taken instead, and an
+  // additive or scaled one keeps the live level. Mirrors mmlispseq.c
+  // restore_vol_base.
+  _restoreVolBase(channelId) {
+    const op = this._fm3OpFor(channelId);
+    const st = op
+      ? null
+      : channelId < 6
+        ? this._fm[channelId]
+        : channelId < 10
+          ? this._psg[channelId - 6]
+          : channelId >= 20 && channelId <= 22
+            ? this._pcmVoices[channelId - 20]
+            : null;
+    if (!op && !st) return;
+    const base = op ? this._fm3OpVolBase[op - 1] : st.volBase;
+    const setVol = (v) => {
+      if (op) this._fm3OpVol[op - 1] = v;
+      else st.vol = v;
+    };
+    const mc = this._macroCh(channelId);
+    if (mc >= 0 && this._macroActive[mc]?.has(TARGET_ID.VOL)) {
+      const d = this._macros[this._macroActive[mc].get(TARGET_ID.VOL)];
+      if (!d || d.flags & 6) return;
+      const v = d.release === 0 ? null : d.values[0];
+      setVol(v != null ? (v < 0 ? 0 : v > 31 ? 31 : v) : base);
+      return;
+    }
+    setVol(base);
+  }
+
   // ── PARAM_SET execution (opcodes.md §7 target table) ─────────────────────
   // `force` (macro-driven writes): a macro is the channel's envelope authority,
   // so its PSG attenuation writes must land even after key-off — the release
@@ -1560,6 +1601,7 @@ export class DrvPlayer {
           if (!force) this._fm3OpVelBase[op - 1] = this._fm3OpVel[op - 1];
         } else {
           this._fm3OpVol[op - 1] = value < 0 ? 0 : value > 31 ? 31 : value;
+          if (!force) this._fm3OpVolBase[op - 1] = this._fm3OpVol[op - 1];
         }
         this._writeFm3OpTl(op);
         return;
@@ -1573,8 +1615,10 @@ export class DrvPlayer {
       if (target === TARGET_ID.VOL || target === TARGET_ID.VEL) {
         // vel and vol both compose into the PSG attenuation — re-apply on a keyed
         // note (even if currently silent, so a vel macro can bring it back up).
-        if (target === TARGET_ID.VOL) st.vol = value < 0 ? 0 : value > 31 ? 31 : value;
-        else {
+        if (target === TARGET_ID.VOL) {
+          st.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+          if (!force) st.volBase = st.vol; // score's fader; a macro moves only the live one
+        } else {
           st.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
           if (!force) st.velBase = st.vel; // score's vel; a macro moves only the live one
         }
@@ -1596,8 +1640,10 @@ export class DrvPlayer {
       if (target === TARGET_ID.VEL) {
         v.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
         if (!force) v.velBase = v.vel; // score's vel; a macro moves only the live one
-      } else if (target === TARGET_ID.VOL) v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
-      else if (target >= TARGET_ID.LOOP_START && target <= TARGET_ID.LOOP_LEN) {
+      } else if (target === TARGET_ID.VOL) {
+        v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+        if (!force) v.volBase = v.vol; // score's fader; a macro moves only the live one
+      } else if (target >= TARGET_ID.LOOP_START && target <= TARGET_ID.LOOP_LEN) {
         this._pcm.loopParam(channelId - 20,
           ["START", "END", "LEN"][target - TARGET_ID.LOOP_START], value);
         return;
@@ -1627,7 +1673,10 @@ export class DrvPlayer {
         if (target === TARGET_ID.VEL) {
           regs.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
           if (!force) regs.velBase = regs.vel; // score's vel; a macro moves only the live one
-        } else regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+        } else {
+          regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+          if (!force) regs.volBase = regs.vol; // score's fader; a macro moves only the live one
+        }
         this._recomposeCarriers(ch);
         return;
       }
@@ -2145,6 +2194,7 @@ export class DrvPlayer {
     // The level is composed as for a voice that never started: the START
     // below carries it, so a PCM_VOL ahead of it would be spent for nothing.
     this._restoreVelBase(channelId);
+    this._restoreVolBase(channelId);
     v.started = false;
     this._pcm.composeShift(vi, this._master);
     // A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on. $2B is
@@ -2274,10 +2324,12 @@ export class DrvPlayer {
       this._fm3OpVelBase[op - 1] = VEL_FINE_MAX;
       this._fm3OpVel[op - 1] = VEL_FINE_MAX;
       this._fm3OpVol[op - 1] = VOL_UNITY;
+      this._fm3OpVolBase[op - 1] = VOL_UNITY;
     }
     const r = this._fm[2];
     r.velBase = VEL_FINE_MAX;
     r.vel = VEL_FINE_MAX;
+    r.volBase = VOL_UNITY;
     r.vol = VOL_UNITY;
     r.gate = 8;
     this._csmRateSweep = null;
@@ -2313,6 +2365,7 @@ export class DrvPlayer {
         opVelBase: [...this._fm3OpVelBase],
         opVel: [...this._fm3OpVel],
         opVol: [...this._fm3OpVol],
+        opVolBase: [...this._fm3OpVolBase],
         opBinds: [1, 2, 3, 4].map((op) => [...this._macroActive[this._macroCh(15 + op)]]),
         active: true,
       });
@@ -2336,6 +2389,7 @@ export class DrvPlayer {
     this._restorePatch(2, h.ch);
     r.velBase = h.ch.velBase;
     r.vel = h.ch.vel;
+    r.volBase = h.ch.volBase;
     r.vol = h.ch.vol;
     r.gate = h.ch.gate;
     r.pitchCents = h.ch.pitchCents;
@@ -2346,6 +2400,7 @@ export class DrvPlayer {
       this._fm3OpVelBase[i] = h.opVelBase[i];
       this._fm3OpVel[i] = h.opVel[i];
       this._fm3OpVol[i] = h.opVol[i];
+      this._fm3OpVolBase[i] = h.opVolBase[i];
     }
     this._recomposeCarriers(2);
     if (h.mode & 0x40) {
@@ -2469,12 +2524,14 @@ export class DrvPlayer {
         const r = this._fm[ch];
         r.velBase = VEL_FINE_MAX;
         r.vel = VEL_FINE_MAX;
+        r.volBase = VOL_UNITY;
         r.vol = VOL_UNITY;
         r.gate = 8;
       } else {
         const p = this._psg[ch - 6];
         p.velBase = VEL_FINE_MAX;
         p.vel = VEL_FINE_MAX;
+        p.volBase = VOL_UNITY;
         p.vol = VOL_UNITY;
         p.gate = 8;
       }
@@ -2574,6 +2631,7 @@ export class DrvPlayer {
         note: r.currentNote,
         velBase: r.velBase, // the score's vel, so the resumed track's next note is right
         vel: r.vel,
+        volBase: r.volBase,
         vol: r.vol,
         gate: r.gate,
         pitchCents: r.pitchCents,
@@ -2587,6 +2645,7 @@ export class DrvPlayer {
         note: st.currentNote,
         velBase: st.velBase,
         vel: st.vel,
+        volBase: st.volBase,
         vol: st.vol,
         gate: st.gate,
         pitchCents: st.pitchCents,
@@ -2621,6 +2680,7 @@ export class DrvPlayer {
       this._restorePatch(ch, snap);
       regs.velBase = snap.velBase;
       regs.vel = snap.vel;
+      regs.volBase = snap.volBase;
       regs.vol = snap.vol;
       regs.gate = snap.gate;
       regs.pitchCents = snap.pitchCents;
@@ -2643,6 +2703,7 @@ export class DrvPlayer {
       const st = this._psg[psgCh];
       st.velBase = snap.velBase;
       st.vel = snap.vel;
+      st.volBase = snap.volBase;
       st.vol = snap.vol;
       st.gate = snap.gate;
       st.pitchCents = snap.pitchCents;
@@ -2800,11 +2861,13 @@ export class DrvPlayer {
       if (op) {
         if (target === TARGET_ID.NOTE_PITCH) return this._fm3OpCents[op - 1];
         if (target === TARGET_ID.VEL) return (this._fm3OpVel[op - 1] + VEL_FINE / 2) >> 3;
-        if (target === TARGET_ID.VOL) return this._fm3OpVol[op - 1];
+        if (target === TARGET_ID.VOL) return this._fm3OpVolBase[op - 1];
       }
     }
+    // vol reads the fader (a relative write or a sweep from "now" moves the
+    // fader), not a :vol macro's live level (driver.md §7.2).
     if (target === TARGET_ID.VOL)
-      return ch < 6 ? this._fm[ch].vol : ch < 10 ? this._psg[ch - 6].vol : 31;
+      return ch < 6 ? this._fm[ch].volBase : ch < 10 ? this._psg[ch - 6].volBase : 31;
     if (target === TARGET_ID.VEL)
       return ((ch < 6 ? this._fm[ch].vel : ch < 10 ? this._psg[ch - 6].vel
         : ch >= 20 && ch <= 22 ? this._pcmVoices[ch - 20].vel : VEL_FINE_MAX)

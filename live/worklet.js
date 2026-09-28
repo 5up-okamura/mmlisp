@@ -10,7 +10,7 @@
  *   { type: 'pcm-set-bank', bank: Uint8Array|null, pcmVoices: 0-3, entryIds: {"name|midi": id} }
  *       — the score's baked sample bank (the one an export ships), which the
  *         IR preview plays through the driver's own engine model
- *   { type: 'pcm-ev', when, kind: 'on', voice, sample, midi, vel, track }
+ *   { type: 'pcm-ev', when, kind: 'on', voice, sample, midi, vel, vol, track }
  *   { type: 'pcm-ev', when, kind: 'off' | 'vol' | 'vel' | 'loop' | 'master', … }
  *       — the IR's PCM events, applied in time order to the sequencer's voice
  *         model (src/pcm-voices.js) — see _applyPcmEvent

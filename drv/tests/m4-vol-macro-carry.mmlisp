@@ -1,0 +1,12 @@
+; A/B + C gate: a :vol macro is its note's, the fader is the score's
+; (driver.md §7.2). A gate pattern that ends a note on a 0 step must not carry
+; into the next note: the next note starts from the fader (or its own macro's
+; first sample) and keys on. A macro starting at 0 fades a keyed note in
+; rather than muting it; only the score's :vol 0 (the fader) is a hard mute.
+(fm1 :tempo 120 :alg 7 :tl1 0 :tl2 0 :tl3 0 :tl4 0 :len 4
+  (macro :step 16 :vol [#sus 31 0]) c c
+  (macro none) c
+  (macro :vol [0 8 16 24 31]) c c)
+(sqr1 :len 4
+  (macro :step 16 :vol [#sus 31 0]) e e
+  (macro none) e e)

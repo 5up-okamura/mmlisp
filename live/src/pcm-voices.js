@@ -38,6 +38,7 @@ export function newPcmVoice() {
     len: 0, // …and its length in bytes (whole blocks)
     velBase: VEL_FINE_MAX, // score's sticky velocity; vel is the macro-driven live one
     vel: VEL_FINE_MAX, // per-voice velocity in eighths of a step (0-120); default = unattenuated
+    volBase: 31, // score's fader; vol is the macro-driven live one
     vol: 31, // per-voice volume 0-31 (raw); 31 = unity, 0 = hard mute
     shift: 0, // composed attenuation 0..4 from vel+vol; master is folded in by the host
     muted: false, // vol==0, master==0, or shift+master past PCM_TOTAL_MAX_SHIFT
@@ -264,6 +265,9 @@ export class PcmIrVoices {
         // vel rides the note: the exporter sends it as the sticky VEL the
         // driver's note-on restores (restore_vel_base).
         v.vel = v.velBase = velFine(ev.vel ?? 15) * VEL_FINE;
+        // A note starts from its :vol macro's first sample, else the fader
+        // (driver: restore_vol_base).
+        v.vol = ev.vol != null ? clamp(Number(ev.vol), 31) : v.volBase;
         v.started = false; // the START carries the level (driver: pcm_note_on)
         seq.composeShift(vi, this.master);
         this.voiceTrack[vi] = ev.track ?? null;
@@ -288,6 +292,7 @@ export class PcmIrVoices {
       case "vol":
         if (!v) return false;
         v.vol = clamp(Number(ev.value), 31);
+        if (!ev.macro) v.volBase = v.vol; // a macro moves only the live level
         seq.composeShift(vi, this.master);
         break;
       case "vel":

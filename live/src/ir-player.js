@@ -2333,6 +2333,10 @@ export class IRPlayer {
     const firstVel = velMacro && !macroLeadsWithHold(velMacro)
       ? levels.find((x) => x.kind === "vel")?.value ?? noteVel
       : noteVel;
+    // ...and at its :vol macro's first sample, else the fader (restore_vol_base).
+    const firstVol = volMacro && !macroLeadsWithHold(volMacro)
+      ? levels.find((x) => x.kind === "vol")?.value ?? null
+      : null;
     this._pcmEv(when, {
       kind: "on",
       voice,
@@ -2341,6 +2345,7 @@ export class IRPlayer {
       midi,
       mode: ev.args?.mode === "loop" ? "loop" : "shot",
       vel: firstVel,
+      vol: firstVol,
     });
     // A retrigger STARTs after its frame's level steps, so it carries them:
     // they ride its event instead of sending a level of their own.
@@ -2350,7 +2355,7 @@ export class IRPlayer {
     for (const x of levels) {
       const r = retrigs.get(this._eventFrame(x.t));
       if (r) r[x.kind] = x.value;
-      else this._pcmEv(x.t, { kind: x.kind, voice, value: x.value });
+      else this._pcmEv(x.t, { kind: x.kind, voice, value: x.value, macro: true });
     }
     for (const r of retrigs.values()) {
       const { t, ...fields } = r;
@@ -2777,27 +2782,37 @@ export class IRPlayer {
       }
 
       case "VOL": {
+        // A :vol MACRO moves the level of its own note only: it composes, but
+        // the channel's fader — what the next note starts from and what a
+        // hard mute reads — stays the score's (driver.md §7.2).
+        const fromMacro = !!ev.fromMacro;
         // FM3 independent-OP: :vol on an fm3-N track is THAT operator's fader;
         // on the shared (fm3 …) track it is the group fader over all four
         // (driver.md §13.4).
         const volOp = this._fm3OpOf(ev);
         if (volOp) {
           const st = this._fm3Op[volOp - 1];
-          st.volSweep = null; // a PARAM_SET overrides a running sweep
+          const keep = st.vol;
+          if (!fromMacro) st.volSweep = null; // a PARAM_SET overrides a running sweep
           st.vol = Math.max(0, Math.min(31, value));
           this._writeFm3OpTl(volOp, when);
+          if (fromMacro) st.vol = keep;
           break;
         }
         if (ch === 2 && this._reg27 & 0x40) {
+          const keep = regs.vol;
           regs.vol = Math.max(0, Math.min(31, value));
           this._recomposeFm3Ops(when);
+          if (fromMacro) regs.vol = keep;
           break;
         }
         // vol 0-31 (31=max, 0=silent). Apply to carrier operators.
         // Clear any active FM vol sweep (PARAM_SET overrides it).
-        this._fmVolSweep[ch] = null;
         const vol = Math.max(0, Math.min(31, value));
-        regs.vol = vol;
+        if (!fromMacro) {
+          this._fmVolSweep[ch] = null;
+          regs.vol = vol;
+        }
         const vel = this._fmLiveVelAt(ch, when);
         const master = this._masterVol ?? VOL_UNITY;
         const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
@@ -2807,7 +2822,7 @@ export class IRPlayer {
           const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
           this._write(port, opAddr, tl, when);
         }
-        this._followMasterSweep(ch, when);
+        if (!fromMacro) this._followMasterSweep(ch, when);
         break;
       }
 
@@ -2837,8 +2852,9 @@ export class IRPlayer {
       for (const opIdx of crs) {
         const tl = this._carrierTl(
           cr.ops[opIdx],
-          cr.vel ?? 15,
-          this._fmVolAtFrame(ci, F), // a running :vol sweep's level then
+          this._fmLiveVelAt(ci, when),
+          // a :vol macro's level then, else a running :vol sweep's
+          this._lineAt(this._fmLevelLines[ci]?.vol, when) ?? this._fmVolAtFrame(ci, F),
           master,
         );
         cr.ops[opIdx].tl = tl;
@@ -3471,6 +3487,7 @@ export class IRPlayer {
             {
               cmd: "PARAM_SET",
               args: { target: t, value: v },
+              fromMacro: true,
             },
             when,
           );
@@ -4249,9 +4266,14 @@ export class IRPlayer {
     // The note-on composes from the macro's first :vel (a leading hold: the
     // note's own) and the :vol the channel holds; the macros' samples follow.
     const first = velMacro && !macroLeadsWithHold(velMacro) ? vel.out[0]?.v ?? baseVel : baseVel;
+    // ...and the same for :vol: the note starts at its :vol macro's first
+    // sample, else at the fader (driver.md §7.2, restore_vol_base).
+    const firstVol = volMacro && !macroLeadsWithHold(volMacro) && vol.out.length
+      ? vol.out[0].v
+      : this._psgVolAtNoteOn(psgCh, noteWhen);
     this._psgSetAtt(
       psgCh,
-      this._composePsgAtt(first, this._psgVolAtNoteOn(psgCh, noteWhen), this._masterAtNoteOn(noteWhen)),
+      this._composePsgAtt(first, firstVol, this._masterAtNoteOn(noteWhen)),
       noteWhen,
     );
     // Frame by frame, in the driver's order: a running :vol or :master sweep
@@ -4300,7 +4322,8 @@ export class IRPlayer {
         write();
       }
     }
-    if (vol.out.length) this._psgVol[psgCh] = vol.out[vol.out.length - 1].v;
+    // The :vol macro was this note's; the channel's fader stays the score's,
+    // and the next note starts from it (driver.md §7.2).
 
     // Silence at the level's tail. offWhen is null when the note holds or slurs
     // into the next (legato) — leave the tone sounding for the next note. A

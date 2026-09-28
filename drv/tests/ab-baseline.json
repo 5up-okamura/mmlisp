@@ -431,6 +431,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-vol-macro-carry.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "p3-claim-evict-twin.mmlisp": {
     "ok": true,
     "mismatches": 0,

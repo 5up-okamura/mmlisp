@@ -399,6 +399,36 @@ static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
   *vel = ex_vel >= 0 ? (uint8_t)clampi(ex_vel, 0, VEL_MAX) : base;
 }
 
+/* Note-on volume: the score's fader (driver.md §7.2). A :vol macro moves the
+ * live level for its note only; the next note starts from the fader, so a
+ * macro that ended at 0 does not carry into it. As with vel, a bound :vol
+ * macro's first sample lands this frame and is taken instead, and an additive
+ * or scaled one keeps the live level. Mirrors drv-player.js _restoreVolBase. */
+static void restore_vol_base(MMLSeq *s, int ch) {
+  uint8_t *vol = 0, base = VOL_UNITY;
+  int op = fm3_op_for(s, ch);
+  if (op) { vol = &s->fm3_op_vol[op - 1]; base = s->fm3_op_vol_base[op - 1]; }
+  else if (ch < 6) { vol = &s->fm[ch].vol; base = s->fm[ch].vol_base; }
+  else if (ch < 10) { vol = &s->psg[ch - 6].vol; base = s->psg[ch - 6].vol_base; }
+  else if (ch >= CH_PCM1 && ch <= CH_PCM3) {
+    vol = &s->pcm[ch - CH_PCM1].vol;
+    base = s->pcm[ch - CH_PCM1].vol_base;
+  }
+  if (!vol) return;
+  int mc = macro_ch(ch);
+  if (mc >= 0)
+    for (int i = 0; i < s->bind_count[mc]; i++)
+      if (s->binds[mc][i].target == T_VOL) {
+        MMLMacro d;
+        int hold = 1;
+        if (!macro_desc(s, s->binds[mc][i].macro_id, &d) || (d.flags & 6)) return;
+        int v = d.release == 0 ? 0 : macro_value(&d, 0, &hold);
+        *vol = hold ? base : (uint8_t)clampi(v, 0, 31);
+        return;
+      }
+  *vol = base;
+}
+
 /* ── Pitch (driver.md §8) ─────────────────────────────────────────────────── */
 static void fold_cents(int *note, int *cents) {
   int c = *cents;
@@ -508,7 +538,9 @@ static void key_on(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0;
   uint8_t chkey = (uint8_t)((port << 2) | mod3(ch));
-  if (c->vol == 0 || s->master == 0) return; /* hard mute skips key-on */
+  /* Hard mute skips key-on — on the score's fader, not a :vol macro's level:
+   * a macro's 0 attenuates (language.md §6). */
+  if (c->vol_base == 0 || s->master == 0) return;
   /* CSM keys CH3 from Timer A's overflow, a key-on that lasts one sample and
    * falls back to $28. Held on through $28, the operators would see no edge
    * and every retrigger would be lost — so the note keys nothing here. */
@@ -685,6 +717,7 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
         if (!force) s->fm3_op_vel_base[op - 1] = s->fm3_op_vel[op - 1];
       } else {
         s->fm3_op_vol[op - 1] = (uint8_t)clampi(value, 0, 31);
+        if (!force) s->fm3_op_vol_base[op - 1] = s->fm3_op_vol[op - 1];
       }
       write_fm3_op_tl(s, op);
       return;
@@ -694,8 +727,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     int pc = ch - 6;
     MMLPsgCh *st = &s->psg[pc];
     if (target == T_VOL || target == T_VEL) {
-      if (target == T_VOL) st->vol = (uint8_t)clampi(value, 0, 31);
-      else {
+      if (target == T_VOL) {
+        st->vol = (uint8_t)clampi(value, 0, 31);
+        if (!force) st->vol_base = st->vol; /* score's fader; a macro moves only the live one */
+      } else {
         st->vel = (uint8_t)clampi(value, 0, VEL_MAX);
         if (!force) st->vel_base = st->vel; /* score's vel; a macro moves only the live one */
       }
@@ -714,7 +749,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     if (target == T_VEL) {
       v->vel = (uint8_t)clampi(value, 0, VEL_MAX);
       if (!force) v->vel_base = v->vel; /* score's vel; a macro moves only the live one */
-    } else if (target == T_VOL) v->vol = (uint8_t)clampi(value, 0, 31);
+    } else if (target == T_VOL) {
+      v->vol = (uint8_t)clampi(value, 0, 31);
+      if (!force) v->vol_base = v->vol; /* score's fader; a macro moves only the live one */
+    }
     else if (target >= T_LOOP_START && target <= T_LOOP_LEN) {
       /* THE LOOP POINTS, as byte offsets into the playing blob. :loop-len keeps
        * the length when the start moves; :loop-end pins the end instead. */
@@ -753,7 +791,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     if (target == T_VEL) {
       c->vel = (uint8_t)clampi(value, 0, VEL_MAX);
       if (!force) c->vel_base = c->vel; /* score's vel; a macro moves only the live one */
-    } else c->vol = (uint8_t)clampi(value, 0, 31);
+    } else {
+      c->vol = (uint8_t)clampi(value, 0, 31);
+      if (!force) c->vol_base = c->vol; /* score's fader; a macro moves only the live one */
+    }
     recompose_carriers(s, ch);
     return;
   }
@@ -843,11 +884,11 @@ static int read_param(const MMLSeq *s, int ch, int target) {
     if (op) {
       if (target == T_NOTE_PITCH) return s->fm3_op_cents[op - 1];
       if (target == T_VEL) return (s->fm3_op_vel[op - 1] + VEL_FINE / 2) >> 3;
-      if (target == T_VOL) return s->fm3_op_vol[op - 1];
+      if (target == T_VOL) return s->fm3_op_vol_base[op - 1];
     }
   }
   if (target == T_VOL)
-    return ch < 6 ? s->fm[ch].vol : ch < 10 ? s->psg[ch - 6].vol : 31;
+    return ch < 6 ? s->fm[ch].vol_base : ch < 10 ? s->psg[ch - 6].vol_base : 31;
   if (target == T_VEL)
     return ((ch < 6 ? s->fm[ch].vel : ch < 10 ? s->psg[ch - 6].vel
              : ch >= CH_PCM1 && ch <= CH_PCM3 ? s->pcm[ch - CH_PCM1].vel : VEL_MAX)
@@ -1437,6 +1478,7 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int loop) {
    * The level is composed as for a voice that never started: the START
    * below carries it, so a PCM_VOL ahead of it would be spent for nothing. */
   restore_vel_base(s, channel_id, -1);
+  restore_vol_base(s, channel_id);
   v->started = 0;
   pcm_compose_shift(s, vi);
   /* A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on: $2B is an
@@ -1582,6 +1624,7 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
    * which is how a level macro anywhere in a loop left every following note at
    * full volume. ir-player does the same with `regs.vel = noteVel`. */
   restore_vel_base(s, ch, ex_vel);
+  restore_vol_base(s, ch);
   if (fm3op) {
     /* FM3 independent-OP: the F-number came from the preceding FM3_OP_PITCH.
      * The patch is the shared CH3's, but the LEVEL is this operator's own and
@@ -2080,6 +2123,13 @@ static void process_fades(MMLSeq *s) {
  * longest PREFIX that fits the slot's bytes — the byte budget can bind before
  * the write budget when PCM commands are dense (three PCM_STARTs are 54 B).
  * What is not taken stays queued, in order, and leads the next frame. */
+/* An F-number high byte ($A4-$A6, $AC-$AE) whose low byte is the next write. */
+static int pitch_hi_pair(const MMLWrite *w, const MMLWrite *next) {
+  if (w->port == 2 || next->port != w->port) return 0;
+  int hi = (w->addr >= 0xa4 && w->addr <= 0xa6) || (w->addr >= 0xac && w->addr <= 0xae);
+  return hi && next->addr == (uint8_t)(w->addr - 4);
+}
+
 static uint16_t slot_take(const MMLSeq *s) {
   uint16_t queued = mml_pending(s);
   uint16_t take = queued < MML_SLOT_MAX_WRITES ? queued : MML_SLOT_MAX_WRITES;
@@ -2087,16 +2137,27 @@ static uint16_t slot_take(const MMLSeq *s) {
   uint32_t size = 2 + 3 * MML_SLOT_SUBS + s->pcm_len;
   /* If every write could be FM (two bytes each) and still fit, they all do:
    * the walk below is only for a slot that might not. */
-  if (size + 2u * take <= MML_SLOT_SIZE) return take;
-  uint16_t fit = 0, scan = s->q_tail;
-  for (uint16_t i = 0; i < take; i++) {
-    uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
-    if (size + cost > MML_SLOT_SIZE) break;
-    size += cost;
-    fit++;
-    scan = (uint16_t)((scan + 1) & (MML_WRITE_QUEUE - 1));
+  if (size + 2u * take > MML_SLOT_SIZE) {
+    uint16_t fit = 0, scan = s->q_tail;
+    for (uint16_t i = 0; i < take; i++) {
+      uint32_t cost = s->q[scan].port == 2 ? 1 : 2; /* PSG is a bare byte */
+      if (size + cost > MML_SLOT_SIZE) break;
+      size += cost;
+      fit++;
+      scan = (uint16_t)((scan + 1) & (MML_WRITE_QUEUE - 1));
+    }
+    take = fit;
   }
-  return fit;
+  /* THE CUT NEVER SPLITS AN F-NUMBER PAIR: $A4 only latches the high byte,
+   * $A0 writes both, and the transport sends them as one unit (mmlpairs.c).
+   * A cut between them held the high byte back with its low byte. Mirrors
+   * slot-builder.js endFrame. */
+  if (take > 0 && take < queued) {
+    const MMLWrite *w = &s->q[(s->q_tail + take - 1) & (MML_WRITE_QUEUE - 1)];
+    const MMLWrite *next = &s->q[(s->q_tail + take) & (MML_WRITE_QUEUE - 1)];
+    if (pitch_hi_pair(w, next)) take--;
+  }
+  return take;
 }
 
 /* Where sub-slot j's run ends, in writes from the frame's first: the last
@@ -2473,6 +2534,7 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     c->vel_base = VEL_MAX;
     c->vel = VEL_MAX;
     c->vol = VOL_UNITY;
+    c->vol_base = VOL_UNITY;
     c->gate = 8;
     c->current_note = 60;
     for (int o = 0; o < 4; o++) {
@@ -2485,12 +2547,14 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     s->fm3_op_vel_base[i] = VEL_MAX;
     s->fm3_op_vel[i] = VEL_MAX;
     s->fm3_op_vol[i] = VOL_UNITY;
+    s->fm3_op_vol_base[i] = VOL_UNITY;
     s->fm3_op_note[i] = 60;
   }
   for (int p = 0; p < 4; p++) {
     s->psg[p].vel_base = VEL_MAX;
     s->psg[p].vel = VEL_MAX;
     s->psg[p].vol = VOL_UNITY;
+    s->psg[p].vol_base = VOL_UNITY;
     s->psg[p].gate = 8;
     s->psg[p].current_note = 60;
   }
@@ -2498,6 +2562,7 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     s->pcm[v].vel_base = VEL_MAX;
     s->pcm[v].vel = VEL_MAX;
     s->pcm[v].vol = VOL_UNITY;
+    s->pcm[v].vol_base = VOL_UNITY;
     s->pcm[v].sent_shift = 0xff; /* no PCM_VOL sent yet */
   }
   emit_init_writes(s);
@@ -2617,6 +2682,7 @@ static void snapshot_channel(const MMLSeq *s, int ch, MMLChanSnap *sn) {
     sn->note = c->current_note;
     sn->vel_base = c->vel_base; /* the score's vel, so the resumed track's next note is right */
     sn->vel = c->vel;
+    sn->vol_base = c->vol_base;
     sn->vol = c->vol;
     sn->gate = c->gate;
     sn->pitch_cents = c->pitch_cents;
@@ -2626,6 +2692,7 @@ static void snapshot_channel(const MMLSeq *s, int ch, MMLChanSnap *sn) {
     sn->note = p->current_note;
     sn->vel_base = p->vel_base;
     sn->vel = p->vel;
+    sn->vol_base = p->vol_base;
     sn->vol = p->vol;
     sn->gate = p->gate;
     sn->pitch_cents = p->pitch_cents;
@@ -2658,6 +2725,7 @@ static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
     restore_patch(s, ch, sn);
     c->vel_base = sn->vel_base;
     c->vel = sn->vel;
+    c->vol_base = sn->vol_base;
     c->vol = sn->vol;
     c->gate = sn->gate;
     c->pitch_cents = sn->pitch_cents;
@@ -2673,6 +2741,7 @@ static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
     MMLPsgCh *p = &s->psg[pc];
     p->vel_base = sn->vel_base;
     p->vel = sn->vel;
+    p->vol_base = sn->vol_base;
     p->vol = sn->vol;
     p->gate = sn->gate;
     p->pitch_cents = sn->pitch_cents;
@@ -2735,10 +2804,12 @@ static void ch3_clear(MMLSeq *s) {
     s->fm3_op_vel_base[op - 1] = VEL_MAX;
     s->fm3_op_vel[op - 1] = VEL_MAX;
     s->fm3_op_vol[op - 1] = VOL_UNITY;
+    s->fm3_op_vol_base[op - 1] = VOL_UNITY;
   }
   s->fm[2].vel_base = VEL_MAX;
   s->fm[2].vel = VEL_MAX;
   s->fm[2].vol = VOL_UNITY;
+  s->fm[2].vol_base = VOL_UNITY;
   s->fm[2].gate = 8;
   s->csm_sweep.active = 0;
   set_reg27(s, (uint8_t)(s->reg27 & ~0xc0));
@@ -2781,6 +2852,7 @@ static int ch3_claim(MMLSeq *s, uint8_t se, uint8_t prio) {
       h->op_vel_base[i] = s->fm3_op_vel_base[i];
       h->op_vel[i] = s->fm3_op_vel[i];
       h->op_vol[i] = s->fm3_op_vol[i];
+      h->op_vol_base[i] = s->fm3_op_vol_base[i];
       int mc = macro_ch(16 + i);
       h->op_bind_count[i] = s->bind_count[mc];
       for (int k = 0; k < s->bind_count[mc]; k++) h->op_binds[i][k] = s->binds[mc][k];
@@ -2812,6 +2884,7 @@ static void ch3_restore(MMLSeq *s) {
   restore_patch(s, 2, &h->ch);
   c->vel_base = h->ch.vel_base;
   c->vel = h->ch.vel;
+  c->vol_base = h->ch.vol_base;
   c->vol = h->ch.vol;
   c->gate = h->ch.gate;
   c->pitch_cents = h->ch.pitch_cents;
@@ -2822,6 +2895,7 @@ static void ch3_restore(MMLSeq *s) {
     s->fm3_op_vel_base[i] = h->op_vel_base[i];
     s->fm3_op_vel[i] = h->op_vel[i];
     s->fm3_op_vol[i] = h->op_vol[i];
+    s->fm3_op_vol_base[i] = h->op_vol_base[i];
   }
   recompose_carriers(s, 2); /* the operators' own levels, in operator mode */
   if (h->mode & 0x40)
@@ -2989,11 +3063,13 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
       s->fm[ch].vel_base = VEL_MAX;
       s->fm[ch].vel = VEL_MAX;
       s->fm[ch].vol = VOL_UNITY;
+      s->fm[ch].vol_base = VOL_UNITY;
       s->fm[ch].gate = 8;
     } else {
       s->psg[ch - 6].vel_base = VEL_MAX;
       s->psg[ch - 6].vel = VEL_MAX;
       s->psg[ch - 6].vol = VOL_UNITY;
+      s->psg[ch - 6].vol_base = VOL_UNITY;
       s->psg[ch - 6].gate = 8;
     }
     /* …and its modulators, for the same reason: they belong to the part that

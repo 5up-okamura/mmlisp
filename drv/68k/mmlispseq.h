@@ -108,15 +108,17 @@ typedef struct {
   /* vel is TWO values (driver.md §7.1): vel_base is the score's sticky
    * velocity, written only by a PARAM_SET VEL out of the stream; vel is the
    * live one a macro drives. note_on copies base -> live. Both in eighths
-   * of a step (0..MML_VEL_MAX), on every channel kind. */
-  uint8_t vel_base, vel, vol, gate;
+   * of a step (0..MML_VEL_MAX), on every channel kind. vol likewise
+   * (§7.2): vol_base is the score's fader, vol the level a :vol macro moves;
+   * note_on puts the fader back, and key-on mutes on the fader. */
+  uint8_t vel_base, vel, vol_base, vol, gate;
   uint8_t current_note;
   int16_t pitch_cents;
   uint8_t keyed;
 } MMLFmCh;
 
 typedef struct {
-  uint8_t vel_base, vel, vol, gate;
+  uint8_t vel_base, vel, vol_base, vol, gate;
   uint8_t current_note;
   int16_t pitch_cents;
   uint8_t keyed;   /* a note is active */
@@ -204,7 +206,7 @@ typedef struct {
   uint8_t muted;
   uint16_t src;       /* the note's blob, as a window address */
   uint16_t len;       /* …and its length in bytes (whole blocks) */
-  uint8_t vel_base, vel, vol; /* vel in eighths of a step, as FM and PSG */
+  uint8_t vel_base, vel, vol_base, vol; /* vel in eighths of a step, as FM and PSG */
   uint8_t shift;      /* composed attenuation 0..4; master is folded in by the host */
   uint8_t sent_shift; /* last shift byte sent, 0xFF = none */
   /* THE LIVE LOOP, in baked bytes from the blob's start, unrounded — the note's
@@ -238,7 +240,7 @@ typedef struct {
   uint8_t kind;
   uint8_t patch[29];          /* FM only: the voice entry the shadow encodes */
   uint8_t ams, fms; int8_t pan; /* FM only: $B4 */
-  uint8_t note, vel_base, vel, vol, gate;
+  uint8_t note, vel_base, vel, vol_base, vol, gate;
   int16_t pitch_cents;
   /* The channel's MACRO BINDS, because claiming it wipes them (§2.2) and the
    * displaced part wants them back. A sweep in flight is not kept: it is a
@@ -262,7 +264,7 @@ typedef struct {
   uint8_t fm_keyed;     /* the shared channel was keyed (normal mode) */
   uint8_t op_mask;      /* the operators' key bits (operator mode) */
   MMLChanSnap ch;       /* the shared channel, and channel 2's binds */
-  uint8_t op_note[4], op_vel_base[4], op_vel[4], op_vol[4];
+  uint8_t op_note[4], op_vel_base[4], op_vel[4], op_vol_base[4], op_vol[4];
   int16_t op_cents[4];
   MMLMacroBind op_binds[4][MML_MACRO_BINDS];
   uint8_t op_bind_count[4];
@@ -370,7 +372,7 @@ typedef struct {
   /* ...and its own level. Composed with the shared CH3's vol — the group fader
    * the note-less `(fm3 …)` track writes — and the global master into that
    * operator's TL (driver.md §13.4). */
-  uint8_t fm3_op_vel[4], fm3_op_vel_base[4], fm3_op_vol[4];
+  uint8_t fm3_op_vel[4], fm3_op_vel_base[4], fm3_op_vol[4], fm3_op_vol_base[4];
   MMLPcmVoice pcm[MML_PCM_VOICES];
   uint8_t pcm_dac_on;  /* $2B sent: the score's first PCM note claims fm6 for good */
   MMLGlobalSweep tempo_sweep;

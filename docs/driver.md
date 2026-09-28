@@ -381,7 +381,11 @@ whose shared latch §8 describes.
 register writes (PSG + both YM ports). When a frame generates more, the excess
 stays **in order** in the sequencer's write queue and leads the next frame.
 Writes are never dropped and never reordered, so the chip state converges; a
-key-on in a write-dense frame can land a frame late. The reference implements
+key-on in a write-dense frame can land a frame late. **The cut never splits an
+F-number pair**: when the 95th write is an `$A4`–`$A6` / `$AC`–`$AE` high byte
+whose `$A0` low byte comes next, the high byte waits with it, since the
+transport sends the two as one unit (`mmlpairs.c`) and a low byte leading the
+next slot would be taken for the pair's second half. The reference implements
 the same cap and spill (`slot-builder.js`) so the §12 gate stays at zero
 tolerance.
 
@@ -801,6 +805,26 @@ copy, a macro's last sample would stay the channel's velocity.
 Gate: `m3-macro-vel-clear` (FM + PSG accent-then-clear at a loop head, plus a
 never-cleared macro that must not gain a write). `m3-macro-vel` pins the
 macro-owns-the-envelope side.
+
+### 7.2 Volume is two values: the fader and the live level
+
+`vol` is split the same way, on FM, PSG, PCM and the FM3 operators:
+
+- **`vol_base`** — the channel's **fader**: the score's `:vol`, a `:vol`
+  sweep, a host `SET_PARAM VOL` or fade. Written by every non-macro VOL write,
+  which also sets the live level.
+- **`vol`** — the live level that composes (§7). A `:vol` macro writes only
+  this: its level belongs to its note.
+
+**Every note-on puts the fader back** before composing, unless a `:vol` macro
+is bound, whose first sample lands in the same frame and is taken instead (an
+additive or scaled macro keeps the live level; a leading hold takes the
+fader). So a macro that ended its note on a 0 step does not carry into the
+next note. **The hard mute reads the fader**: FM skips key-on on `vol_base == 0`
+(or master 0), never on a macro's level — a macro's 0 attenuates like any other
+value (vol_tl4, about −62 dB), which is what lets a `:vol [0 8 16 …]` fade a
+keyed note in. A relative write, a sweep "from the current value" and a host
+fade read the fader. Gates: `m4-vol-macro-carry`, `m4-level-macros`.
 
 ## 8. Pitch Tables
 

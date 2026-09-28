@@ -383,6 +383,12 @@ own level and all four compose (§15).
 - **`:vol` / `:master` 0–31** — mixer-faders with unity (0 dB) at the top:
   `31` = full, lower cuts. **`0` is a hard mute** (FM skips key-on, PSG goes
   to max attenuation). Their offsets add.
+- **A `:vol` macro moves only its own note's level**: the
+  fader stays where the score set it, and the next note starts from it (or
+  from its own macro's first sample). So a gate pattern that ends a note on a
+  `0` step does not silence the next one, and a macro's `0` is a very low level
+  (about −62 dB on FM), not a mute — `:vol [0 8 16 24 31]` fades a note in.
+  The hard mute is the fader's.
 
 Authored values are integers; a computed velocity (a `:vel` macro, a delay
 tap's `:vel*`) keeps eighths of a step, and the level is quantized once, at the

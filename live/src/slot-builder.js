@@ -57,6 +57,13 @@ export const PCM_MASTER = 5;
 /** Command lengths by opcode; 0 = not a command. */
 export const PCM_LEN = [0, 9, 0, 3, 6, 2];
 
+// An F-number high byte ($A4-$A6, $AC-$AE) whose low byte is the next write.
+function isPitchHiWrite(w, next) {
+  if (!w || !next || w.port === 2 || next.port !== w.port) return false;
+  const hi = (w.addr >= 0xa4 && w.addr <= 0xa6) || (w.addr >= 0xac && w.addr <= 0xae);
+  return hi && next.addr === w.addr - 4;
+}
+
 export class SlotBuilder {
   constructor({ maxWrites = SLOT_MAX_WRITES, slotSize = SLOT_SIZE, subs = SLOT_SUBS } = {}) {
     this._maxWrites = maxWrites;
@@ -119,6 +126,16 @@ export class SlotBuilder {
       bytes = this._encode(this._queue.slice(0, take), marks);
       if (bytes.length <= this._slotSize || take === 0) break;
       take--;
+    }
+    // THE CUT NEVER SPLITS AN F-NUMBER PAIR. $A4 only latches the high byte;
+    // $A0 writes both, and the transport sends them as one unit (drv/68k/
+    // mmlpairs.c). A frame cut between them left the high byte at the end of
+    // one slot and its low byte leading the next, so hold the high byte back
+    // with it. Mirrors mmlispseq.c slot_take.
+    if (take > 0 && take < this._queue.length &&
+        isPitchHiWrite(this._queue[take - 1], this._queue[take])) {
+      take--;
+      bytes = this._encode(this._queue.slice(0, take), marks);
     }
     if (bytes.length > this._slotSize) {
       throw new Error(
