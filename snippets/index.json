@@ -23,6 +23,7 @@
   "snippets/fm3-csm/fm3-chord.mmlisp",
   "snippets/fm3-csm/fm3-detune.mmlisp",
   "snippets/fm3-csm/csm-voice.mmlisp",
+  "snippets/fm3-csm/daisy-bell.mmlisp",
   "snippets/fm3-csm/csm-sweep.mmlisp",
   "snippets/curves/easing-filter.mmlisp",
   "snippets/curves/lfo-shapes.mmlisp",
