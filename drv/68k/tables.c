@@ -46,7 +46,7 @@ const uint16_t MML_PSG_PERIOD[128] = {
 };
 
 /* Level offsets, quarter steps */
-const int16_t MML_VEL_TL4[121] = {
+const int16_t MML_VEL_TL4[MML_VEL_MAX + 1] = {
     160, 159, 157, 156, 155, 153, 152, 151,
     149, 148, 147, 145, 144, 143, 141, 140,
     139, 137, 136, 135, 133, 132, 131, 129,
@@ -70,7 +70,7 @@ const int16_t MML_VOL_TL4[32] = {
     160, 149, 139, 128, 117, 107, 96, 85,
     75, 64, 53, 43, 32, 21, 11, 0,
 };
-const int16_t MML_VEL_PSG4[121] = {
+const int16_t MML_VEL_PSG4[MML_VEL_MAX + 1] = {
     60, 60, 59, 59, 58, 58, 57, 57,
     56, 56, 55, 55, 54, 54, 53, 53,
     52, 52, 51, 51, 50, 50, 49, 49,

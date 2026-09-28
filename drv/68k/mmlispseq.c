@@ -54,11 +54,11 @@ static void mml_copy(uint8_t *dst, const uint8_t *src, uint16_t n) {
 #define DUR_HOLD 0x00
 #define DUR_EXT 0xff
 #define VOL_UNITY 31
-/* FM and PSG hold vel in eighths of a step (driver.md §7.1): a :vel macro's
- * samples arrive in eighths, the score's integer vel is scaled on the way in,
- * and the level tables are indexed by it. PCM keeps whole steps. */
-#define VEL_FINE 8
-#define VEL_MAX (15 * VEL_FINE)
+/* FM and PSG hold vel in eighths of a step (driver.md §7.1, mmlispseq.h
+ * MML_VEL_FINE): the stream carries eighths, a host write whole steps, and
+ * the level tables are indexed by it. PCM keeps whole steps. */
+#define VEL_FINE MML_VEL_FINE
+#define VEL_MAX MML_VEL_MAX
 
 /* Opcodes (opcodes.md) */
 enum {
@@ -364,14 +364,13 @@ static int macro_value(const MMLMacro *m, int idx, int *hold);
  * has nothing to overwrite it and this is what puts the score's velocity back. */
 static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
   uint8_t *vel = 0, base = VEL_MAX;
-  int op = fm3_op_for(s, ch), fine = 1;
+  int op = fm3_op_for(s, ch);
   if (op) { vel = &s->fm3_op_vel[op - 1]; base = s->fm3_op_vel_base[op - 1]; }
   else if (ch < 6) { vel = &s->fm[ch].vel; base = s->fm[ch].vel_base; }
   else if (ch < 10) { vel = &s->psg[ch - 6].vel; base = s->psg[ch - 6].vel_base; }
   else if (ch >= CH_PCM1 && ch <= CH_PCM3) {
     vel = &s->pcm[ch - CH_PCM1].vel;
     base = s->pcm[ch - CH_PCM1].vel_base;
-    fine = 0;
   }
   if (!vel) return;
   if (ex_vel < 0) {
@@ -388,15 +387,12 @@ static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
           int hold = 1;
           if (!macro_desc(s, s->binds[mc][i].macro_id, &d) || (d.flags & 6)) return;
           int v = d.release == 0 ? 0 : macro_value(&d, 0, &hold);
-          if (!fine) v = (v + VEL_FINE / 2) >> 3;
-          *vel = hold ? base : (uint8_t)clampi(v, 0, fine ? VEL_MAX : 15);
+          *vel = hold ? base : (uint8_t)clampi(v, 0, VEL_MAX);
           return;
         }
   }
-  if (ex_vel >= 0) { /* eighths, as the stream carries it */
-    ex_vel = clampi(ex_vel, 0, VEL_MAX);
-    *vel = (uint8_t)(fine ? ex_vel : (ex_vel + VEL_FINE / 2) >> 3);
-  } else *vel = base;
+  /* ex_vel is in eighths, as the stream carries it (FM and PSG notes only). */
+  *vel = ex_vel >= 0 ? (uint8_t)clampi(ex_vel, 0, VEL_MAX) : base;
 }
 
 /* ── Pitch (driver.md §8) ─────────────────────────────────────────────────── */
@@ -624,12 +620,9 @@ static void recompose_carriers(MMLSeq *s, int ch) {
 static void pcm_apply_loop(MMLSeq *s, int vi);
 
 static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
-  if (target == T_VEL) {
-    /* A macro (force) writes eighths, the score and the host whole steps. */
-    int pcm = ch >= CH_PCM1 && ch <= CH_PCM3;
-    if (pcm && force) value = (value + VEL_FINE / 2) >> 3;
-    else if (!pcm && !force) value *= VEL_FINE;
-  }
+  /* A macro (force) writes eighths, a host or relative write whole steps —
+   * scaled here on FM and PSG; PCM holds whole steps and has no macro engine. */
+  if (target == T_VEL && !force && !(ch >= CH_PCM1 && ch <= CH_PCM3)) value *= VEL_FINE;
   if (target == T_MASTER) {
     s->master = (uint8_t)clampi(value, 0, 31);
     for (int c = 0; c < 6; c++) recompose_carriers(s, c);

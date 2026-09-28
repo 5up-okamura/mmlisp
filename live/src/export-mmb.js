@@ -423,9 +423,7 @@ export function encodeMmb(ir, opts = {}) {
   // sample is in eighths of a step (driver.md §7.1) — the level tables are
   // that fine, so a fade is not cut to the 16 score steps.
   const macroSample = (target, v) =>
-    target === "VEL"
-      ? Math.max(0, Math.min(VEL_FINE_MAX, Math.round(clampForTarget(target, v) * VEL_FINE)))
-      : clampForTarget(target, Math.round(v));
+    target === "VEL" ? velOnWire(v) : clampForTarget(target, Math.round(v));
 
   // Sample one curve into an integer value array, clamped to the target.
   const sampleCurveValues = (spec, target, count, phaseAt) => {

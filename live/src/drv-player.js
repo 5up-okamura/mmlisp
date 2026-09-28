@@ -1355,11 +1355,8 @@ export class DrvPlayer {
   // note has nothing to overwrite it and this is what puts the score's
   // velocity back.
   _restoreVelBase(channelId, exVel = null) {
+    const clamp = (v) => (v < 0 ? 0 : v > VEL_FINE_MAX ? VEL_FINE_MAX : v);
     const op = this._fm3OpFor(channelId);
-    // FM and PSG hold eighths; PCM whole steps.
-    const fine = channelId < 20;
-    const max = fine ? VEL_FINE_MAX : 15;
-    const clamp = (v) => (v < 0 ? 0 : v > max ? max : v);
     const st = op
       ? null
       : channelId < 6
@@ -1384,14 +1381,11 @@ export class DrvPlayer {
       const d = this._macros[this._macroActive[mc].get(TARGET_ID.VEL)];
       if (!d || d.flags & 6) return;
       const v = d.release === 0 ? null : d.values[0];
-      setVel(v != null ? clamp(fine ? v : (v + VEL_FINE / 2) >> 3)
-        : op ? this._fm3OpVelBase[op - 1] : st.velBase);
+      setVel(v != null ? clamp(v) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
       return;
     }
-    // exVel is in eighths, as the stream carries it.
-    const ex8 = exVel == null ? null : exVel < 0 ? 0 : exVel > VEL_FINE_MAX ? VEL_FINE_MAX : exVel;
-    setVel(ex8 == null ? (op ? this._fm3OpVelBase[op - 1] : st.velBase)
-      : fine ? ex8 : (ex8 + VEL_FINE / 2) >> 3);
+    // exVel is in eighths, as the stream carries it (FM and PSG notes only).
+    setVel(exVel != null ? clamp(exVel) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
   }
 
   // ── PARAM_SET execution (opcodes.md §7 target table) ─────────────────────
@@ -1487,12 +1481,10 @@ export class DrvPlayer {
       this._diag("W_DRV_UNKNOWN_TARGET", `PARAM_SET target 0x${target.toString(16)}`);
       return;
     }
-    if (target === TARGET_ID.VEL) {
-      // A macro (force) writes eighths, the score and the host whole steps.
-      const pcm = channelId >= 20 && channelId <= 22;
-      if (pcm && force) value = (value + VEL_FINE / 2) >> 3;
-      else if (!pcm && !force) value *= VEL_FINE;
-    }
+    // A macro (force) writes eighths, a host or relative write whole steps —
+    // scaled here on FM and PSG; PCM holds whole steps and has no macro engine.
+    if (target === TARGET_ID.VEL && !force && !(channelId >= 20 && channelId <= 22))
+      value *= VEL_FINE;
     // Global targets first.
     if (target === TARGET_ID.MASTER) {
       this._master = value < 0 ? 0 : value > 31 ? 31 : value;

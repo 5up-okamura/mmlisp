@@ -23,6 +23,7 @@ import {
 } from "./mmb.js";
 import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
 import { pcmLoopPoints, pcmShotPoints, PCM_WINDOW } from "./pcm-model.js";
+import { velFine } from "./ir-utils.js";
 
 
 const u16le = (x) => [x & 0xff, (x >> 8) & 0xff];
@@ -248,7 +249,9 @@ export class PcmIrVoices {
         if (!entry || entry.len === 0) return false;
         // vel rides the note: the exporter sends it as the sticky VEL the
         // driver's note-on restores (restore_vel_base).
-        v.vel = v.velBase = clamp(Number(ev.vel ?? 15), 15);
+        // A computed vel (a delay tap) reaches the driver in eighths and is
+        // rounded to the whole step there: round the same way, eighths first.
+        v.vel = v.velBase = Math.round(velFine(ev.vel ?? 15));
         seq.composeShift(vi, this.master);
         this.voiceTrack[vi] = ev.track ?? null;
         seq.start(vi, entry, PCM_WINDOW + (entry.base & 0x7fff), ev.mode === "loop");
@@ -264,7 +267,7 @@ export class PcmIrVoices {
         break;
       case "vel":
         if (!v) return false;
-        v.vel = v.velBase = clamp(Number(ev.value), 15);
+        v.vel = v.velBase = Math.round(velFine(ev.value));
         seq.composeShift(vi, this.master);
         break;
       case "master":

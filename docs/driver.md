@@ -971,7 +971,7 @@ and repeats values; the sequencer is change-only and frame-quantized).
 Acceptance bands:
 
 - **±1 frame** timing skew on every state change and key edge.
-- **TL data ±2 steps** (integer offset tables vs float-sum-then-round);
+- **TL data exact** (both compose in the same quarter steps, §7);
   **F-number low byte ±1** (LUT cent interpolation vs float pow).
 - **$28 key edges compare per channel** — cross-channel write order
   within one frame is player-specific and carries no meaning.

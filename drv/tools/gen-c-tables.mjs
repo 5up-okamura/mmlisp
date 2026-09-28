@@ -116,13 +116,13 @@ ${rows(psgPeriod, 8)}
 };
 
 /* Level offsets, quarter steps */
-const int16_t MML_VEL_TL4[121] = {
+const int16_t MML_VEL_TL4[MML_VEL_MAX + 1] = {
 ${rows(velTl4, 8)}
 };
 const int16_t MML_VOL_TL4[32] = {
 ${rows(volTl4, 8)}
 };
-const int16_t MML_VEL_PSG4[121] = {
+const int16_t MML_VEL_PSG4[MML_VEL_MAX + 1] = {
 ${rows(velPsg4, 8)}
 };
 const int16_t MML_VOL_PSG4[32] = {
