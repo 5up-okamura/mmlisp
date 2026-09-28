@@ -20,7 +20,7 @@
 ; each syllable swells in from a lower fader
 (def (sy v) :vol (linear 14..31 :len 16) v)
 
-(fm3-csm vox :tempo 112
+(fm3-csm vox
   ; Dai-sy, Dai-sy, give me your an-swer, do
   :len 2. (sy ah) (sy ee) (sy ah) (sy ee)
   :len 4 (sy ee) (sy ee) (sy oh) :len 2 (sy ah) :len 4 (sy eh) :len 1. (sy oo)
