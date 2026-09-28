@@ -1,11 +1,13 @@
 ; Auto-wah: a filter that opens and closes on its own. On FM the modulator's
-; TL is the filter, so an LFO on it sweeps the brightness; on a note-length
-; clock the wah locks to the tempo. An eighth-note wah, then a slow one over
-; the bar.
+; TL is the filter, so a sin on it sweeps the brightness; on a note-length
+; clock the wah locks to the tempo. It is an inline sweep on the track, not a
+; macro: a macro starts over with every note, a sweep runs across them. :dr3 0
+; stops the voice's own pluck on that operator, so the wah is the only filter.
+; An eighth-note wah, then a slow one over the bar.
 (import "presets/waveforms/set.mmlisp")
 
 (def line :len 16 c c > c < c  e- c c > c <  c b- c g  f e- c c)
 
-(fm1 :tempo 112 :oct 2 acid-saw
-  (macro :tl3 (sin 12..56 :len 8))  (x 2 line)
-  (macro :tl3 (sin 12..56 :len 1))  (x 2 line))
+(fm1 :tempo 112 :oct 2 acid-saw :dr3 0
+  :tl3 (sin 12..56 :len 8)  (x 2 line)
+  :tl3 (sin 12..56 :len 1)  (x 2 line))
