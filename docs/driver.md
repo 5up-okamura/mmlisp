@@ -169,14 +169,19 @@ change; a tick-clocked macro on its channel counts the part's ticks (§13.2).
 **Suspend, not evict.** The BGM owner enters a fourth track state,
 **suspended**: it keeps its state, does not dispatch (its writes would land
 over the SE's) and does not own its channel. Its live channel state is
-snapshotted first — the essential fields only, since the FM patch is rebuilt
-from the voice id: FM voice id + note/vel/vol/gate/pitch; PSG note + level +
-pitch. The channel is silenced and the SE starts as any track does (armed,
+snapshotted first. FM: the **patch as the register shadow holds it** — the
+29 bytes of a VOICE_TABLE entry plus `$B4`, encoded from the structured shadow
+— and note/vel/vol/gate/pitch; PSG: note + level + pitch. The patch is taken
+from the shadow, not from the last VOICE_SET, because a channel's patch is
+whatever last wrote it: a partial `def-fm` (no voice entry), a mid-song `:tl1`
+or `:pan`. The channel is silenced and the SE starts as any track does (armed,
 level state reset).
 
 **Restore re-keys.** When the SE ends — its own END_OF_TRACK, or
 `MMLisp_stopTrack` for a held or looping SE — the owner is restored and
-resumes dispatching: VOICE_SET, carrier level, pitch, key-on, in that order.
+resumes dispatching: the patch (change-only against the structured shadow, as
+VOICE_SET applies a voice, then `$B4`), carrier level, pitch, key-on, in that
+order. Gate: `p3-se-patch` (claim-gate compares the patch before and after).
 A note that was sounding when the channel was stolen re-attacks mid-sustain
 rather than waiting for the next note-on, which would drop audio; an FM
 envelope cannot resume mid-way, so the re-attack is the design.
@@ -210,7 +215,7 @@ cents and binds; then CH3 is cleared — normal mode, levels reset, modulators
 gone, a CSM sweep stopped — and the effect sets the mode it needs itself (the
 compiler puts FM3_MODE `op` at the head of an effect with operator parts, and
 a CSM part carries its own CSM_ON/OFF). When the effect's **last** CH3 part
-ends, the snapshot is written back: mode, Timer A, VOICE_SET, the operators'
+ends, the snapshot is written back: mode, Timer A, the patch, the operators'
 pitches and levels, key-on. Priority is per group: a lower effect's CH3 parts
 are dropped (its other parts still play), an equal or higher one — or the same
 effect again — preempts and inherits the snapshot. A song START_TRACK on CH3
@@ -967,6 +972,10 @@ removed, and over the window where those modulators must not be heard the two
 slot streams must be byte-identical. Three cases: a plain eviction, a sound
 effect's claim, and its restore. The effects' notes are `Nf` lengths, so one
 window fits both video standards.
+It also checks, every frame of every schedule with an effect, that a part is
+suspended exactly while one running effect holds it (CH3's hold included), and
+that an effect's end leaves the channel's patch as it was before the claim
+(`p3-se-patch`: a patch no voice number could rebuild).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the

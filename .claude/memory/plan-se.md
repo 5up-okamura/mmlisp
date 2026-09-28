@@ -146,11 +146,13 @@ position and the note it shaped re-attacked.
   It also fixed an older hole: ch2 was never owned, so an SE on plain fm3
   did not suspend the song's fm3. Gates `p3-se-ch3`, `p3-se-ch3-op`
   (claim-gate invariant covers the hold; mutation-checked).
-- **Open: a restore rebuilds the patch from the voice id**, so a song patch
-  set by a partial `def-fm` (no VOICE_SET, voice 255) is not rebuilt after an
-  effect — true of every channel, found while writing the CH3 gates. Fix
-  idea: restore from the register shadow instead. Not raised with the user
-  yet as of this entry.
+- **Restore from the register shadow — DONE (2026-09-28).** A restore used
+  to rebuild the patch from the last VOICE_SET id, so a partial `def-fm`
+  (voice 255) or a mid-song `:tl1`/`:pan` did not come back after an effect.
+  The user: "レジスタの控えから戻す方法にしてください". The snapshot now
+  carries the patch encoded from the structured shadow (29-byte entry + $B4,
+  `restore_patch`); `voice_id` is gone. Gate `p3-se-patch` (claim-gate
+  PATCH_CASES; mutation-checked).
 - **Overlapping SEs on different channels** are already possible in the C —
   the snapshot lives on each suspended track, not in one slot — but no gate
   fires two at once. Add one when a score needs it.

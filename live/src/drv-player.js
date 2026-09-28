@@ -151,7 +151,6 @@ function freshFmChannel() {
     gate: 8, // eighths of dur (opcodes.md §4)
     pitchCents: 0, // PARAM_SET NOTE_PITCH offset
     currentNote: 60,
-    voiceId: 0xff, // last VOICE_SET id (mirrors CHS_VOICE); 0xFF = none, for SE restore
     keyed: false,
     ops: Array.from({ length: 4 }, () => ({
       voicedTl: 0,
@@ -1431,10 +1430,13 @@ export class DrvPlayer {
   _voiceSet(channelId, voiceId) {
     if (channelId >= 6) return;
     const entry = this._voices[voiceId];
-    if (!entry) return;
-    const ch = channelId;
+    if (entry) this._applyPatch(channelId, entry);
+  }
+
+  // A VOICE_TABLE-shaped entry onto an FM channel — a voice, or an SE
+  // snapshot's patch. Mirrors mmlispseq.c apply_patch.
+  _applyPatch(ch, entry) {
     const regs = this._fm[ch];
-    regs.voiceId = voiceId; // record for SE snapshot/restore (CHS_VOICE mirror)
     const port = ch >= 3 ? 1 : 0;
     const off = ch % 3;
     // Change-only against the structured shadow (not _shadow): the burst only
@@ -2331,7 +2333,7 @@ export class DrvPlayer {
     this._setReg27((this._reg27 & ~0xc0) | h.mode);
     if (h.mode & 0x80) this._writeTimerA(h.timerA);
     const r = this._fm[2];
-    if (h.ch.voiceId !== 0xff) this._voiceSet(2, h.ch.voiceId);
+    this._restorePatch(2, h.ch);
     r.velBase = h.ch.velBase;
     r.vel = h.ch.vel;
     r.vol = h.ch.vol;
@@ -2541,8 +2543,9 @@ export class DrvPlayer {
     }
   }
 
-  // Snapshot a channel's live state at suspend — essential fields only; the
-  // restore reconstructs the FM patch via VOICE_SET (design B). FM: voice id +
+  // Snapshot a channel's live state at suspend. FM: the PATCH as the register
+  // shadow holds it (a VOICE_TABLE-shaped entry plus $B4), so whatever set it —
+  // a voice, a partial def-fm, a mid-song :tl or :pan — comes back; and
   // note/vel/vol/gate/pitch, plus the MACRO BINDS, because claiming the channel
   // is about to wipe them and the displaced part wants them back. A sweep in
   // flight is NOT kept: it is a gesture with a position, and the note it was
@@ -2555,7 +2558,19 @@ export class DrvPlayer {
       return {
         macros,
         kind: "fm",
-        voiceId: r.voiceId,
+        patch: [
+          ...r.ops.map((o) => encode30(o)),
+          ...r.ops.map((o) => o.voicedTl),
+          ...r.ops.map((o) => (o.rs << 6) | o.ar),
+          ...r.ops.map((o) => encode60(o)),
+          ...r.ops.map((o) => o.d2r),
+          ...r.ops.map((o) => encode80(o)),
+          ...r.ops.map((o) => o.ssg),
+          encodeB0(r),
+        ],
+        ams: r.ams,
+        fms: r.fms,
+        pan: r.pan,
         note: r.currentNote,
         velBase: r.velBase, // the score's vel, so the resumed track's next note is right
         vel: r.vel,
@@ -2580,8 +2595,21 @@ export class DrvPlayer {
     return null;
   }
 
+  // The snapshot's patch back on the chip: the entry change-only against the
+  // structured shadow, as VOICE_SET does it, then $B4 the same way. Mirrors
+  // mmlispseq.c restore_patch.
+  _restorePatch(ch, snap) {
+    const r = this._fm[ch];
+    this._applyPatch(ch, snap.patch);
+    const old = encodeB4(r);
+    r.ams = snap.ams;
+    r.fms = snap.fms;
+    r.pan = snap.pan;
+    if (encodeB4(r) !== old) this._ym(ch >= 3 ? 1 : 0, 0xb4 + (ch % 3), encodeB4(r));
+  }
+
   // Restore a snapshotted channel and re-key its held note (design B). The write
-  // order — VOICE_SET, carrier level, pitch, re-key — is normative: the Z80
+  // order — the patch, carrier level, pitch, re-key — is normative: the Z80
   // mirror must emit the same registers in the same order.
   _restoreChannel(ch, snap) {
     if (!snap) return;
@@ -2590,7 +2618,7 @@ export class DrvPlayer {
     this._clearChannelModulators(ch);
     if (snap.kind === "fm") {
       const regs = this._fm[ch];
-      if (snap.voiceId !== 0xff) this._voiceSet(ch, snap.voiceId);
+      this._restorePatch(ch, snap);
       regs.velBase = snap.velBase;
       regs.vel = snap.vel;
       regs.vol = snap.vol;

@@ -111,6 +111,7 @@ function slots(stem) {
 const INVARIANT_SCORES = [
   "m3-se", "m3-se-prio", "p3-se-strand", "p3-se-fade", "p3-se-stopped",
   "p3-se-overlap", "p3-se-pcm-macro", "p3-se-def", "p3-se-ch3", "p3-se-ch3-op",
+  "p3-se-patch",
   "p3-claim-se-in", "p3-claim-se-out",
 ];
 
@@ -167,6 +168,45 @@ function checkInvariant(stem) {
   return null;
 }
 
+// ── The patch comes back ───────────────────────────────────────────────────
+// An effect's end puts back the patch the channel had — as the chip had it,
+// not as some voice number would rebuild it (§2.5). The song's patch in these
+// scores has no voice to rebuild from (a partial def-fm, then a mid-song :tl1
+// and :pan), so the register shadow of the channel's patch — $30-$9C and $B0/$B4,
+// with the carriers' composed $40 left out — must read the same the frame
+// before the claim and once the effect is over.
+const PATCH_CASES = [
+  { score: "p3-se-patch", port: 0, off: 0, before: 69, after: 199 },
+];
+
+function patchAt(stem, c) {
+  const { bytes: mmb, sampleBank } = buildMmb(join(tests, `${stem}.mmlisp`), { frameHz });
+  const sidecar = JSON.parse(readFileSync(join(tests, `${stem}.cmds.json`), "utf8"));
+  const drv = new DrvPlayer();
+  drv.loadMMB(mmb, sampleBank);
+  drv._audioContext = null;
+  drv._writeCb = () => {};
+  drv._reset(sidecar.autoStart !== false);
+  const read = () => {
+    const out = [];
+    for (let a = 0x30; a < 0xa0; a += 4) out.push(drv._shadow[c.port].get(a + c.off));
+    // $40 of a modulator is its raw level; a carrier's is composed, so compare
+    // the voiced level the structured shadow keeps instead.
+    out.push(...drv._fm[c.port * 3 + c.off].ops.map((o) => o.voicedTl));
+    out.push(drv._shadow[c.port].get(0xb0 + c.off), drv._shadow[c.port].get(0xb4 + c.off));
+    return out.join(",");
+  };
+  const snaps = {};
+  for (let f = 0; f <= c.after; f++) {
+    for (const cmd of sidecar.commands ?? []) {
+      if (cmd.frame === f) drv._applyMailbox(cmd.cmd, cmd.a0 ?? 0, cmd.a1 ?? 0, cmd.a2 ?? 0);
+    }
+    drv.stepFrame();
+    if (f === c.before || f === c.after) snaps[f] = read();
+  }
+  return snaps;
+}
+
 const hex = (s) => Array.from(s).map((x) => x.toString(16).padStart(2, "0")).join(" ");
 let failures = 0;
 for (const c of CASES) {
@@ -199,6 +239,18 @@ for (const stem of INVARIANT_SCORES) {
   }
 }
 
-const total = CASES.length + INVARIANT_SCORES.length;
+for (const c of PATCH_CASES) {
+  const s = patchAt(c.score, c);
+  if (s[c.before] === s[c.after]) {
+    console.log(`ok    ${c.score} — the effect's end puts the channel's patch back`);
+  } else {
+    failures++;
+    console.log(`FAIL  ${c.score} — the patch after the effect is not the one before it`);
+    console.log(`        f${c.before}: ${s[c.before]}`);
+    console.log(`        f${c.after}: ${s[c.after]}`);
+  }
+}
+
+const total = CASES.length + INVARIANT_SCORES.length + PATCH_CASES.length;
 console.log(`\n${total - failures} passed · ${failures} failed${pal ? " (PAL)" : ""}`);
 if (failures) process.exit(1);

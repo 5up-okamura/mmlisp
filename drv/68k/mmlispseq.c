@@ -1494,19 +1494,17 @@ static void pcm_restart(MMLSeq *s, int vi) {
 
 
 /* ── VOICE_SET (driver.md §10) ──────────────────────────────────────────────
- * Apply a 29-byte VOICE_TABLE entry: the register-order block that a
+ * Apply a 29-byte VOICE_TABLE entry (or an SE snapshot's patch, which has the
+ * same shape): the register-order block that a
  * full-voice PARAM_SET burst was coalesced into. Change-only is taken against
  * the STRUCTURED shadow, not the register shadow — the burst only wrote a
  * register some PARAM_SET touched, so e.g. $90/SSG (which the neutral patch
  * never writes) has to stay unwritten when the voice omits it. The old byte is
  * derived from the current op fields before they are overwritten.
  */
-static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
-  if (ch >= 6 || voice_id >= s->voice_count) return;
-  const uint8_t *e = s->voices + (uint32_t)voice_id * 29;
+static void apply_patch(MMLSeq *s, int ch, const uint8_t *e) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
-  c->voice_id = voice_id; /* what an SE restore rebuilds the patch from */
   /* TL goes out COMPOSED, not raw — op_level() holds that rule (§7). Raw would
    * step the level by up to +10 dB on whatever note is still sounding:
    * inaudible at track start (the armed frame keeps it silent) but audible at
@@ -1549,6 +1547,11 @@ static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
     ym(s, port, (uint8_t)(0xb0 + off), b0);
   c->feedback = (uint8_t)((b0 >> 3) & 7);
   c->algorithm = (uint8_t)(b0 & 7);
+}
+
+static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
+  if (ch >= 6 || voice_id >= s->voice_count) return;
+  apply_patch(s, ch, s->voices + (uint32_t)voice_id * 29);
 }
 
 /* ── Note on (opcodes.md §3.1) ─────────────────────────────────────────────── */
@@ -2472,7 +2475,6 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     c->vol = VOL_UNITY;
     c->gate = 8;
     c->current_note = 60;
-    c->voice_id = 0xff;
     for (int o = 0; o < 4; o++) {
       c->ops[o].ar = 31;
       c->ops[o].rr = 15;
@@ -2586,7 +2588,7 @@ void mml_start_all(MMLSeq *s) {
 
 /* ── SE: suspend and restore (driver.md §2.5) ──────────────────────────────
  * Mirrors drv-player _snapshotChannel / _restoreChannel / _reclaimSe. The
- * restore's write order — VOICE_SET, carrier level, pitch, re-key — is
+ * restore's write order — the patch, carrier level, pitch, re-key — is
  * normative: the gate diffs it byte for byte.
  */
 static void snapshot_channel(const MMLSeq *s, int ch, MMLChanSnap *sn) {
@@ -2596,7 +2598,22 @@ static void snapshot_channel(const MMLSeq *s, int ch, MMLChanSnap *sn) {
   if (ch < 6) {
     const MMLFmCh *c = &s->fm[ch];
     sn->kind = MML_SNAP_FM;
-    sn->voice_id = c->voice_id;
+    /* The patch as the register shadow holds it, in VOICE_TABLE order — the
+     * shadow is what the chip has, whatever wrote it. */
+    for (int op = 0; op < 4; op++) {
+      const MMLOp *o = &c->ops[op];
+      sn->patch[0 + op] = enc_30(o);
+      sn->patch[4 + op] = o->voiced_tl;
+      sn->patch[8 + op] = (uint8_t)((o->rs << 6) | o->ar);
+      sn->patch[12 + op] = enc_60(o);
+      sn->patch[16 + op] = o->d2r;
+      sn->patch[20 + op] = enc_80(o);
+      sn->patch[24 + op] = o->ssg;
+    }
+    sn->patch[28] = enc_b0(c);
+    sn->ams = c->ams;
+    sn->fms = c->fms;
+    sn->pan = c->pan;
     sn->note = c->current_note;
     sn->vel_base = c->vel_base; /* the score's vel, so the resumed track's next note is right */
     sn->vel = c->vel;
@@ -2606,7 +2623,6 @@ static void snapshot_channel(const MMLSeq *s, int ch, MMLChanSnap *sn) {
   } else if (ch < 10) {
     const MMLPsgCh *p = &s->psg[ch - 6];
     sn->kind = MML_SNAP_PSG;
-    sn->voice_id = 0xff;
     sn->note = p->current_note;
     sn->vel_base = p->vel_base;
     sn->vel = p->vel;
@@ -2618,6 +2634,18 @@ static void snapshot_channel(const MMLSeq *s, int ch, MMLChanSnap *sn) {
   }
 }
 
+/* The snapshot's patch back on the chip: the voice entry change-only against
+ * the structured shadow, as VOICE_SET does it, then $B4 the same way. */
+static void restore_patch(MMLSeq *s, int ch, const MMLChanSnap *sn) {
+  MMLFmCh *c = &s->fm[ch];
+  apply_patch(s, ch, sn->patch);
+  uint8_t old = enc_b4(c);
+  c->ams = sn->ams;
+  c->fms = sn->fms;
+  c->pan = sn->pan;
+  if (enc_b4(c) != old) ym(s, ch >= 3 ? 1 : 0, (uint8_t)(0xb4 + mod3(ch)), enc_b4(c));
+}
+
 /* Put a snapshotted channel back and re-key its note. An FM envelope cannot
  * resume mid-way, so the note re-attacks — which is the "don't drop the held
  * note" goal, not a compromise of it. */
@@ -2627,7 +2655,7 @@ static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
   clear_channel_modulators(s, ch);
   if (sn->kind == MML_SNAP_FM) {
     MMLFmCh *c = &s->fm[ch];
-    if (sn->voice_id != 0xff) voice_set(s, ch, sn->voice_id);
+    restore_patch(s, ch, sn);
     c->vel_base = sn->vel_base;
     c->vel = sn->vel;
     c->vol = sn->vol;
@@ -2781,7 +2809,7 @@ static void ch3_restore(MMLSeq *s) {
   set_reg27(s, (uint8_t)((s->reg27 & ~0xc0) | h->mode));
   if (h->mode & 0x80) write_timer_a(s, h->timer_a);
   MMLFmCh *c = &s->fm[2];
-  if (h->ch.voice_id != 0xff) voice_set(s, 2, h->ch.voice_id);
+  restore_patch(s, 2, &h->ch);
   c->vel_base = h->ch.vel_base;
   c->vel = h->ch.vel;
   c->vol = h->ch.vol;

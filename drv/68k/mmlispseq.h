@@ -113,7 +113,6 @@ typedef struct {
   uint8_t current_note;
   int16_t pitch_cents;
   uint8_t keyed;
-  uint8_t voice_id; /* last VOICE_SET id, 0xFF = none: the SE snapshot's patch */
 } MMLFmCh;
 
 typedef struct {
@@ -228,15 +227,17 @@ typedef struct {
 } MMLPcmVoice;
 
 /* ── SE (driver.md §2.5) ───────────────────────────────────────────────────
- * A channel's live state at the moment an SE steals it — the essential fields
- * only, because the FM patch is reconstructed by VOICE_SET from the voice id.
- * FM: voice + note/vel/vol/gate/pitch; PSG: note + level + pitch (the period
- * and attenuation are re-derived). Restore re-keys the note that was sounding.
+ * A channel's live state at the moment an SE steals it. FM: the PATCH as the
+ * channel's register shadow holds it — a VOICE_TABLE-shaped entry plus $B4 —
+ * so whatever set it (a voice, a partial def-fm, a mid-song :tl or :pan) comes
+ * back; and note/vel/vol/gate/pitch. PSG: note + level + pitch (the period and
+ * attenuation are re-derived). Restore re-keys the note that was sounding.
  * Mirrors drv-player _snapshotChannel / _restoreChannel. */
 enum { MML_SNAP_NONE = 0, MML_SNAP_FM = 1, MML_SNAP_PSG = 2 };
 typedef struct {
   uint8_t kind;
-  uint8_t voice_id; /* FM only; 0xFF = no VOICE_SET had run */
+  uint8_t patch[29];          /* FM only: the voice entry the shadow encodes */
+  uint8_t ams, fms; int8_t pan; /* FM only: $B4 */
   uint8_t note, vel_base, vel, vol, gate;
   int16_t pitch_cents;
   /* The channel's MACRO BINDS, because claiming it wipes them (§2.2) and the
