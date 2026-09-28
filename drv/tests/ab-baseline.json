@@ -323,6 +323,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-level-macros.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-level-sweeps.mmlisp": {
     "ok": true,
     "mismatches": 0,

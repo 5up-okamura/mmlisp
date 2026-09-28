@@ -224,6 +224,7 @@ export class IRPlayer {
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(6).fill(null);
+    this._fmLevelLines = new Array(6).fill(null); // a note's :vel/:vol macro timelines
     // Inline sweeps on the other FM params, per channel: target → sweep. The
     // sweep's frames are scheduled at once (leaving the shadow state at `to`),
     // so later events on the channel first re-sync their state to the sweep's
@@ -1981,6 +1982,7 @@ export class IRPlayer {
         // A :keyon retrigger restarts the note's envelopes — level and timbre
         // (driver.md §13.2) — while its :pitch / :semi run on (scheduled above).
         this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, gateTicks, macroLimit);
+        this._fmLevelLines[ch] = this._levelMacroLines(ev.args ?? {}, when, gateTicks, macroLimit);
         this._scheduleFmVelMacro(
           ch,
           port,
@@ -2796,7 +2798,7 @@ export class IRPlayer {
         this._fmVolSweep[ch] = null;
         const vol = Math.max(0, Math.min(31, value));
         regs.vol = vol;
-        const vel = regs.vel ?? 15;
+        const vel = this._fmLiveVelAt(ch, when);
         const master = this._masterVol ?? VOL_UNITY;
         const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
         for (const opIdx of carriers) {
@@ -3508,7 +3510,7 @@ export class IRPlayer {
         const vel = clampForTarget("VEL", v);
         for (const opIdx of carriers) {
           const tl = this._carrierTl(
-            regs.ops[opIdx], vel, this._fmVolAtTime(ch, t), this._masterAt(t),
+            regs.ops[opIdx], vel, this._fmLiveVolAt(ch, t), this._masterAt(t),
           );
           regs.ops[opIdx].tl = tl;
           this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, t);
@@ -3939,6 +3941,48 @@ export class IRPlayer {
   // sampling an active VOL sweep if present.
   _fmVolAtTime(ch, when) {
     return this._fmVolAtFrame(ch, this._eventFrame(when));
+  }
+
+  // A note's :vel and :vol macros are scheduled ahead, one after the other,
+  // but on the driver each frame composes the LIVE values of both (driver.md
+  // §7). So before either is written, the note-on samples both into timelines
+  // — [value, time] pairs, nothing written — and each write reads the other's
+  // value at its own time. Null where the note has no such macro.
+  _levelMacroLines(noteArgs, when, gateTicks, limitSecs) {
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const line = (spec, target) => {
+      if (!spec) return null;
+      const out = [];
+      const onSeq = this._onSeq;
+      this._onSeq = null; // a dry run: no UI callbacks
+      try {
+        this._scheduleMacro(spec, noteFrames, gateSecs, when,
+          (v, t) => out.push([clampForTarget(target, v), t]),
+          this._stepSecs(spec.step), limitSecs);
+      } finally {
+        this._onSeq = onSeq;
+      }
+      return out;
+    };
+    return { vel: line(noteArgs.velMacro, "VEL"), vol: line(noteArgs.vol, "VOL") };
+  }
+
+  // The latest sample at or before `t`, or null when the line has none yet.
+  _lineAt(line, t) {
+    let v = null;
+    for (const [value, at] of line ?? []) {
+      if (at > t + 1e-9) break;
+      v = value;
+    }
+    return v;
+  }
+
+  _fmLiveVelAt(ch, t) {
+    return this._lineAt(this._fmLevelLines[ch]?.vel, t) ?? this._chRegs[ch].vel ?? 15;
+  }
+
+  _fmLiveVolAt(ch, t) {
+    return this._lineAt(this._fmLevelLines[ch]?.vol, t) ?? this._fmVolAtTime(ch, t);
   }
 
   _fmVolAtFrame(ch, F) {

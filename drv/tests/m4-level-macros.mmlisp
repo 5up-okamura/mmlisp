@@ -1,0 +1,11 @@
+; A/B gate: a note's :vel and :vol macros compose their LIVE values every
+; frame (driver.md §7). The preview schedules each macro ahead on its own, so
+; each once composed with the other's value from before the note: the gate
+; closing with both at 0 sat at TL 83 instead of 123. Also a :vol write
+; landing under a running :vel macro, which composes with the macro's vel.
+; (Each gated note ends on an open step: a :vol macro that ends at 0 carries
+; into the next note's key-on on the driver, a separate open issue.)
+(fm1 :tempo 120 :alg 7 :tl1 0 :tl2 0 :tl3 0 :tl4 0 :len 2
+  (macro :step 16 :vol [#sus 31 0 31 31] :vel [#sus 15 0 15 15]) c c
+  (macro none) (macro :vel [15 12 9 6 3] :vol [31 20 10]) c e
+  (macro none) (macro :vel [15 13 11 9 7 5 3]) g :vol 20 _4 c)
