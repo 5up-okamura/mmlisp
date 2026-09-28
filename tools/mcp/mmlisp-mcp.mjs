@@ -1,0 +1,454 @@
+#!/usr/bin/env node
+// MMLisp MCP server — lets an AI client (Claude Code, Claude Desktop, any MCP
+// host) read the language, compile a score, see the diagnostics and render it
+// to WAV, through the same live/src modules the editor runs.
+//
+// Transport: MCP over stdio (newline-delimited JSON-RPC 2.0). No dependencies:
+// the protocol surface used here is small enough to speak directly.
+// stdout carries protocol messages only — everything else goes to stderr.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import readline from "node:readline";
+import { fileURLToPath } from "node:url";
+
+// A stray console.log in a toolchain module would corrupt the stream.
+console.log = console.info = console.debug = (...a) => console.error(...a);
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SRC = path.join(ROOT, "live", "src");
+const load = (file) => import(path.join(SRC, file));
+const { compileMMLisp, collectImports } = await load("mmlisp2ir.js");
+const { parse } = await load("mmlisp-parser.js");
+const { formatMMLisp } = await load("mmlisp-formatter.js");
+const { IRPlayer } = await load("ir-player.js");
+const { renderWav } = await load("export-wav.js");
+const { pitchToMidi } = await load("ir-utils.js");
+
+const DOCS = {
+  language: "docs/language.md",
+  guide: "docs/guide.md",
+  ir: "docs/ir.md",
+  roadmap: "docs/roadmap.md",
+};
+
+// ---------------------------------------------------------------------------
+// Score input and import resolution
+// ---------------------------------------------------------------------------
+
+// A score comes as `source` text or a `path`; its name is repo-relative when
+// it lives in the repo, so imports resolve as the live app resolves them.
+function readScore(args) {
+  if (typeof args.source === "string") {
+    return { src: args.source, name: args.filename || "untitled.mmlisp" };
+  }
+  if (typeof args.path === "string") {
+    const abs = path.resolve(ROOT, args.path);
+    const rel = path.relative(ROOT, abs);
+    const name = rel.startsWith("..") ? abs : rel.split(path.sep).join("/");
+    return { src: fs.readFileSync(abs, "utf8"), name };
+  }
+  throw new Error("give either `source` (score text) or `path` (a .mmlisp file)");
+}
+
+// Same rule as the live app's joinImportPath: a spec is relative to the folder
+// of the file that wrote it.
+function joinImportPath(fromPath, spec) {
+  if (path.isAbsolute(spec)) return spec;
+  const dir = fromPath.replace(/\\/g, "/").replace(/\/[^/]*$/, "");
+  const segs = (dir && dir !== fromPath ? dir + "/" + spec : spec).split("/");
+  const out = [];
+  for (const seg of segs) {
+    if (!seg || seg === ".") continue;
+    if (seg === ".." && out.length && out[out.length - 1] !== "..") out.pop();
+    else out.push(seg);
+  }
+  return (fromPath.startsWith("/") ? "/" : "") + out.join("/");
+}
+
+function readText(p) {
+  try {
+    return fs.readFileSync(path.resolve(ROOT, p), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+// The host side of (import "…"): read every imported file ahead of the
+// synchronous compile, following nested imports. A score given as text has no
+// folder, so its specs resolve against the repo root — `presets/…` works.
+function readImportSources(src, name) {
+  const map = new Map();
+  const seen = new Set();
+  const queue = collectImports(src).map((spec) => [joinImportPath(name, spec), spec]);
+  while (queue.length) {
+    const [p, spec] = queue.shift();
+    if (seen.has(p)) continue;
+    seen.add(p);
+    const text = readText(p) ?? readText(spec);
+    if (text == null) continue; // E_IMPORT_NOT_FOUND at compile
+    map.set(p, text);
+    for (const nested of collectImports(text)) {
+      const np = joinImportPath(p, nested);
+      if (!seen.has(np)) queue.push([np, nested]);
+    }
+  }
+  return map;
+}
+
+function compile(args) {
+  const { src, name } = readScore(args);
+  const frameHz = args.pal ? 50 : 60;
+  const result = compileMMLisp(src, name, { imports: readImportSources(src, name), frameHz });
+  return { ...result, src, name };
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+function sourceLine(src, line) {
+  return line ? (src.split("\n")[line - 1] ?? "").trimEnd() : "";
+}
+
+function formatDiagnostics(diags, src) {
+  return diags.map((d) => {
+    const where = d.line ? `${d.line}:${d.column ?? 1}` : "-";
+    const track = d.track ? ` [${d.track}]` : "";
+    const code = sourceLine(src, d.line);
+    return `${d.severity} ${d.code} at ${where}${track}: ${d.message}` + (code ? `\n    | ${code}` : "");
+  });
+}
+
+function trackSummary(ir) {
+  return (ir.tracks ?? []).map((t) => {
+    const ev = t.events ?? [];
+    const notes = ev.filter((e) => e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON");
+    const lastTick = ev.reduce((m, e) => Math.max(m, (e.tick ?? 0) + (e.args?.length ?? 0)), 0);
+    const pitched = notes.filter((e) => e.cmd === "NOTE_ON" && typeof e.args?.pitch === "string")
+      .map((e) => [pitchToMidi(e.args.pitch), e.args.pitch])
+      .filter(([m]) => Number.isFinite(m))
+      .sort((a, b) => a[0] - b[0]);
+    const range = pitched.length ? `, ${pitched[0][1]}..${pitched.at(-1)[1]}` : "";
+    const tag = t.se ? `se ${t.se}` : t.channel;
+    return `${tag}: ${notes.length} notes${range}, ${ev.length} events, ends tick ${lastTick}`;
+  });
+}
+
+function timing(ir) {
+  try {
+    const cap = new IRPlayer(() => {}).loadJSON(ir).captureRegisterLog();
+    const loop = cap.loopStartSec != null ? `, loops back to ${cap.loopStartSec.toFixed(2)} s` : ", one-shot";
+    const pcm = cap.pcmCount ? `, ${cap.pcmCount} PCM events` : "";
+    return `length ${cap.endSec.toFixed(2)} s${loop}${pcm}`;
+  } catch (e) {
+    return `timing unavailable: ${e.message}`;
+  }
+}
+
+function levels(wav) {
+  const dv = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
+  const n = (wav.byteLength - 44) >> 1;
+  let peak = 0, sum = 0, clipped = 0;
+  for (let i = 0; i < n; i++) {
+    const s = dv.getInt16(44 + i * 2, true) / 32768;
+    const a = Math.abs(s);
+    if (a > peak) peak = a;
+    if (a >= 0.999) clipped++;
+    sum += s * s;
+  }
+  const db = (x) => (x > 0 ? (20 * Math.log10(x)).toFixed(1) : "-inf");
+  return `peak ${db(peak)} dBFS, rms ${db(Math.sqrt(sum / Math.max(1, n)))} dBFS` +
+    (clipped ? `, ${clipped} clipped samples` : "") + (peak < 1e-4 ? " — SILENT" : "");
+}
+
+// ---------------------------------------------------------------------------
+// Docs, snippets, presets
+// ---------------------------------------------------------------------------
+
+function docSections(text) {
+  const lines = text.split("\n");
+  const heads = [];
+  let fence = false;
+  lines.forEach((l, i) => {
+    if (l.startsWith("```")) fence = !fence;
+    const m = !fence && /^(#{1,4})\s+(.*)$/.exec(l);
+    if (m) heads.push({ level: m[1].length, title: m[2], line: i });
+  });
+  return { lines, heads };
+}
+
+function readDoc({ doc = "language", section, query }) {
+  const file = DOCS[doc];
+  if (!file) throw new Error(`doc must be one of: ${Object.keys(DOCS).join(", ")}`);
+  const text = fs.readFileSync(path.join(ROOT, file), "utf8");
+  const { lines, heads } = docSections(text);
+  if (query) {
+    const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const hits = [];
+    lines.forEach((l, i) => {
+      if (!re.test(l)) return;
+      const h = [...heads].reverse().find((x) => x.line <= i);
+      hits.push(`${i + 1} [${h ? h.title : "-"}] ${l.trim()}`);
+    });
+    return hits.length ? hits.slice(0, 80).join("\n") + (hits.length > 80 ? `\n… ${hits.length - 80} more` : "") : "no match";
+  }
+  if (!section) {
+    return `${file} — pass \`section\` (a number like "10" or "9.2", or words from a title) to read one:\n` +
+      heads.map((h) => "  ".repeat(h.level - 1) + h.title).join("\n");
+  }
+  const s = String(section).toLowerCase();
+  const idx = heads.findIndex((h) => {
+    const t = h.title.toLowerCase();
+    return t.startsWith(s + ".") || t.startsWith(s + " ") || t === s;
+  });
+  const at = idx >= 0 ? idx : heads.findIndex((h) => h.title.toLowerCase().includes(s));
+  if (at < 0) throw new Error(`no section matching "${section}" in ${file}`);
+  const h = heads[at];
+  const end = heads.slice(at + 1).find((x) => x.level <= h.level);
+  return lines.slice(h.line, end ? end.line : lines.length).join("\n");
+}
+
+function leadingComment(text) {
+  const out = [];
+  for (const l of text.split("\n")) {
+    if (!l.startsWith(";")) break;
+    out.push(l.replace(/^;+\s?/, ""));
+  }
+  return out.join(" ");
+}
+
+function snippets({ path: p, query }) {
+  if (p) {
+    const rel = p.startsWith("snippets/") || p.startsWith("presets/") ? p : `snippets/${p}`;
+    const abs = path.resolve(ROOT, rel);
+    if (!abs.startsWith(ROOT + path.sep) || !abs.endsWith(".mmlisp")) throw new Error("not a .mmlisp file in the repository");
+    return fs.readFileSync(abs, "utf8");
+  }
+  const index = JSON.parse(fs.readFileSync(path.join(ROOT, "snippets/index.json"), "utf8"));
+  const examples = JSON.parse(fs.readFileSync(path.join(ROOT, "examples/index.json"), "utf8"));
+  const q = query?.toLowerCase();
+  const rows = [...index, ...examples]
+    .map((f) => {
+      const text = readText(f) ?? "";
+      return { f, about: leadingComment(text), text };
+    })
+    .filter((r) => !q || r.f.toLowerCase().includes(q) || r.text.toLowerCase().includes(q))
+    .map((r) => `${r.f}\n    ${r.about.slice(0, 240)}`);
+  return rows.length ? rows.join("\n") : "no match";
+}
+
+function presets({ set, query }) {
+  const sets = fs.readdirSync(path.join(ROOT, "presets"), { withFileTypes: true })
+    .filter((d) => d.isDirectory() && fs.existsSync(path.join(ROOT, "presets", d.name, "set.mmlisp")))
+    .map((d) => d.name);
+  if (!set) {
+    return sets.map((s) => {
+      const text = fs.readFileSync(path.join(ROOT, "presets", s, "set.mmlisp"), "utf8");
+      const kinds = {};
+      for (const m of text.matchAll(/^\((def-[a-z]+)\s/gm)) kinds[m[1]] = (kinds[m[1]] ?? 0) + 1;
+      const about = leadingComment(readText(`presets/${s}/README.md`)?.replace(/^#.*\n+/, "") ?? "") ||
+        (readText(`presets/${s}/README.md`) ?? "").split("\n").find((l) => l && !l.startsWith("#")) || "";
+      return `(import "presets/${s}/set.mmlisp")  — ${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(", ")}\n    ${about.slice(0, 200)}`;
+    }).join("\n");
+  }
+  if (!sets.includes(set)) throw new Error(`set must be one of: ${sets.join(", ")}`);
+  const text = fs.readFileSync(path.join(ROOT, "presets", set, "set.mmlisp"), "utf8");
+  const lines = text.split("\n");
+  const q = query?.toLowerCase();
+  const out = [];
+  lines.forEach((l, i) => {
+    const m = /^\((def-[a-z]+)\s+([^\s)]+)/.exec(l);
+    if (!m) return;
+    let note = "";
+    for (let j = i - 1; j >= 0 && lines[j].startsWith(";"); j--) note = lines[j].replace(/^;+\s?/, "");
+    const row = `${m[2]}  (${m[1]})${note ? "  ; " + note : ""}`;
+    if (!q || row.toLowerCase().includes(q)) out.push(row);
+  });
+  return `(import "presets/${set}/set.mmlisp")\n` + (out.join("\n") || "no match");
+}
+
+// ---------------------------------------------------------------------------
+// Tools
+// ---------------------------------------------------------------------------
+
+const scoreProps = {
+  source: { type: "string", description: "MMLisp score text. Imports like \"presets/gm/set.mmlisp\" resolve against the repository root." },
+  path: { type: "string", description: "A .mmlisp file instead of `source` (repo-relative or absolute)." },
+  filename: { type: "string", description: "Name reported for `source` (default untitled.mmlisp)." },
+};
+
+const TOOLS = [
+  {
+    name: "mmlisp_check",
+    description:
+      "Compile an MMLisp score with the real compiler and report diagnostics (with the offending source line), " +
+      "a per-track summary (notes, pitch range, events, end tick; a counted loop `(x N …)` is one pass in the IR) and the song length in seconds. " +
+      "Run this after every edit — a score with errors plays wrong or not at all.",
+    inputSchema: {
+      type: "object",
+      properties: { ...scoreProps, pal: { type: "boolean", description: "Compile for 50 Hz PAL (default 60 Hz NTSC)." } },
+    },
+    run(args) {
+      const { ir, diagnostics, src } = compile(args);
+      const errors = diagnostics.filter((d) => d.severity === "error").length;
+      const head = errors ? `${errors} error(s), ${diagnostics.length - errors} warning(s)` :
+        diagnostics.length ? `OK with ${diagnostics.length} warning(s)` : "OK";
+      return [head, ...formatDiagnostics(diagnostics, src), "", "tracks:", ...trackSummary(ir), timing(ir)].join("\n");
+    },
+  },
+  {
+    name: "mmlisp_ir",
+    description: "Compile a score and return its IR JSON (docs/ir.md), optionally only one track. Use to check exactly what a form compiled to.",
+    inputSchema: {
+      type: "object",
+      properties: { ...scoreProps, track: { type: "string", description: "Only this channel, e.g. \"fm1\"." } },
+    },
+    run(args) {
+      const { ir, diagnostics, src } = compile(args);
+      const out = args.track ? { ...ir, tracks: ir.tracks.filter((t) => t.channel === args.track) } : ir;
+      return formatDiagnostics(diagnostics, src).concat(JSON.stringify(out, null, 1)).join("\n");
+    },
+  },
+  {
+    name: "mmlisp_format",
+    description: "Format MMLisp source with the project formatter (same as the editor). Returns the formatted text; with `path` and write:true rewrites the file.",
+    inputSchema: {
+      type: "object",
+      properties: { ...scoreProps, write: { type: "boolean", description: "With `path`: write the result back." } },
+    },
+    run(args) {
+      const { src } = readScore(args);
+      const out = formatMMLisp(src, parse);
+      if (args.write && args.path) {
+        fs.writeFileSync(path.resolve(ROOT, args.path), out);
+        return out === src ? "already formatted" : `formatted ${args.path}`;
+      }
+      return out;
+    },
+  },
+  {
+    name: "mmlisp_render",
+    description:
+      "Render a score to a 48 kHz stereo WAV the user can listen to (FM + PSG through the Nuked cores, same DSP as the " +
+      "editor's WAV export; PCM/DAC tracks are not rendered). A looping song plays intro + 2 loops + 4 s fade. " +
+      "Returns the file path and levels (peak/RMS, clipping, silence) — a sanity check, since you cannot hear it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...scoreProps,
+        out: { type: "string", description: "Output .wav path (default: a file in the system temp dir)." },
+        lpf: { type: "boolean", description: "Apply the Mega Drive analog low-pass (default off)." },
+      },
+    },
+    async run(args) {
+      const { ir, diagnostics, src, name } = compile(args);
+      const errors = diagnostics.filter((d) => d.severity === "error");
+      if (errors.length) return { isError: true, text: ["not rendered — fix the errors first:", ...formatDiagnostics(errors, src)].join("\n") };
+      const player = new IRPlayer(() => {}).loadJSON(ir);
+      const wav = await renderWav(player, { lpfOn: !!args.lpf });
+      const out = args.out
+        ? path.resolve(ROOT, args.out)
+        : path.join(os.tmpdir(), "mmlisp-mcp", path.basename(name).replace(/\.mmlisp$/, "") + ".wav");
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      fs.writeFileSync(out, wav.bytes);
+      const pcm = wav.pcmCount ? `\nnote: ${wav.pcmCount} PCM events were not rendered (FM + PSG only)` : "";
+      return `wrote ${out}\n${wav.durationSec.toFixed(2)} s, ${levels(wav.bytes)}${pcm}`;
+    },
+  },
+  {
+    name: "mmlisp_docs",
+    description:
+      "Read the MMLisp documentation. doc: language (the reference, canonical), guide (the tutorial), ir, roadmap. " +
+      "With no section: the table of contents. section: a number (\"10\", \"9.2\") or title words. query: search lines.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        doc: { type: "string", enum: Object.keys(DOCS) },
+        section: { type: "string" },
+        query: { type: "string" },
+      },
+    },
+    run: readDoc,
+  },
+  {
+    name: "mmlisp_snippets",
+    description:
+      "Working example scores, one technique each (arps, echo, curves, FM3, PCM kits, song structure…). " +
+      "No args: list them with what each shows; query: filter by name or content; path: read one.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" }, path: { type: "string", description: "e.g. \"techniques/chip-arp.mmlisp\"" } },
+    },
+    run: snippets,
+  },
+  {
+    name: "mmlisp_presets",
+    description:
+      "Preset voice/sample sets a score can import. No args: the sets and their import lines. " +
+      "set: list its voice/sample names (e.g. gm, waveforms, 808, gm-drums); query: filter names.",
+    inputSchema: {
+      type: "object",
+      properties: { set: { type: "string" }, query: { type: "string" } },
+    },
+    run: presets,
+  },
+];
+
+const INSTRUCTIONS = `MMLisp is a Lisp-like DSL for Sega Mega Drive music (YM2612 FM fm1-fm6, PSG sqr1-3/noise, PCM).
+Workflow for writing a score:
+1. Read the reference before writing: mmlisp_docs (doc "language") — sections 1-5 cover the source model, channels, notes and lengths; the guide is the tutorial.
+2. Start from a similar snippet (mmlisp_snippets) and preset voices (mmlisp_presets) rather than inventing syntax.
+3. After every edit run mmlisp_check and fix every error; do not guess at syntax a diagnostic rejects — look it up.
+4. mmlisp_render writes a WAV for the user to listen to; its levels only tell you if something is silent or clipping.`;
+
+// ---------------------------------------------------------------------------
+// JSON-RPC over stdio
+// ---------------------------------------------------------------------------
+
+const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
+const reply = (id, result) => send({ jsonrpc: "2.0", id, result });
+const fail = (id, code, message) => send({ jsonrpc: "2.0", id, error: { code, message } });
+
+async function handle(msg) {
+  const { id, method, params = {} } = msg;
+  switch (method) {
+    case "initialize":
+      return reply(id, {
+        protocolVersion: params.protocolVersion ?? "2025-06-18",
+        capabilities: { tools: {} },
+        serverInfo: { name: "mmlisp", version: "0.1.0" },
+        instructions: INSTRUCTIONS,
+      });
+    case "ping":
+      return reply(id, {});
+    case "tools/list":
+      return reply(id, { tools: TOOLS.map(({ run: _r, ...t }) => t) });
+    case "tools/call": {
+      const tool = TOOLS.find((t) => t.name === params.name);
+      if (!tool) return fail(id, -32602, `unknown tool ${params.name}`);
+      try {
+        const r = await tool.run(params.arguments ?? {});
+        const { text, isError } = typeof r === "string" ? { text: r, isError: false } : r;
+        return reply(id, { content: [{ type: "text", text }], isError });
+      } catch (e) {
+        return reply(id, { content: [{ type: "text", text: String(e?.message ?? e) }], isError: true });
+      }
+    }
+    default:
+      if (id !== undefined && !method?.startsWith("notifications/")) fail(id, -32601, `method not found: ${method}`);
+  }
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    return fail(null, -32700, "parse error");
+  }
+  handle(msg).catch((e) => msg.id !== undefined && fail(msg.id, -32603, String(e?.message ?? e)));
+});

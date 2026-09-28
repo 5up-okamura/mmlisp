@@ -70,8 +70,11 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 ```
 
 The driver has gates — `cd drv && npm run verify:all` must be green — and
-`cd tools && npm run check:mmlisp-strict` checks the compiler. **The live app
-and the language have no automated suite:** verify those by playing them back
+`cd tools && npm run check:mmlisp-strict` checks the compiler. To write or
+check a score as an AI, use the `mmlisp` MCP server (`/.mcp.json`,
+`tools/mcp/README.md`): it compiles with diagnostics, renders WAV, and serves
+the docs and snippets. **The live app and the language have no automated
+suite:** verify those by playing them back
 in the live environment, and call it out when a change is hard to verify that
 way.
 

@@ -9,7 +9,8 @@
     "mmlisp2ir": "node scripts/mmlisp2ir.js",
     "verify-ir": "node scripts/verify-ir.js",
     "check:mmlisp-strict": "node scripts/check-mmlisp-strict.js",
-    "check:sample-fx": "node scripts/check-sample-fx.mjs"
+    "check:sample-fx": "node scripts/check-sample-fx.mjs",
+    "mcp": "node mcp/mmlisp-mcp.mjs"
   },
   "engines": {
     "node": ">=18"
