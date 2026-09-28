@@ -88,9 +88,17 @@ Constraints any scheme must meet:
 
 Next measurements, in order:
 
-1. **Is bounded jitter audible?** Render WAVs of the same PCM at a fixed rate
-   with jitter of ±N cycles (N = 0, 30, 100, 300) and let the user listen. The
-   answer chooses between 1 and 2 — a discriminating listening test.
+1. **Is bounded jitter audible?** Rendered 2026-09-28 by
+   `drv/tools/jitter-listen.mjs` (→ `drv/out/jitter/`, not checked in; the
+   header states the model). 14,375.68 Hz, 8-bit, each write late by U(0, N)
+   Z80 cycles, either always (`rand`) or only in the first 35% of each frame
+   (`frame`); the chip reads the DAC on its 53,267 Hz grid (67.2 cycles).
+   Jitter error, dB below signal: N=30 30.8, N=100 25.6, N=300 20.3 (8,638
+   samples overwritten unheard), N=600 17.6. **The chip's own grid against an
+   ideal hold is already 31.9 dB** — N≈30 is the level every driver on the
+   hardware lives with, though the grid's error is a fixed pattern and the
+   jitter's is noise. **Waiting on the user's listening verdict**; it chooses
+   between 1 and 2.
 2. **Poll-point overhead**: the longest poll-free path in the archived
    sequencer and the cycles polls add at the chosen N.
 3. Then the cut list in bytes (`npm run size` on the archive) against the
