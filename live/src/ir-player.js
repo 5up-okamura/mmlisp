@@ -225,6 +225,7 @@ export class IRPlayer {
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(6).fill(null);
     this._fmLevelLines = new Array(6).fill(null); // a note's :vel/:vol macro timelines
+    this._fm3LevelLines = new Array(4).fill(null); // ...an FM3 operator note's
     // Inline sweeps on the other FM params, per channel: target → sweep. The
     // sweep's frames are scheduled at once (leaving the shadow state at `to`),
     // so later events on the channel first re-sync their state to the sweep's
@@ -1481,21 +1482,45 @@ export class IRPlayer {
     const st = this._fm3Op[op - 1];
     return st.volSweep ? this._sweepVolAtTime(st.volSweep, when) : st.vol;
   }
-  _fm3OpTl(op, when) {
+  // `when` given: the operator's LIVE level then — its note's :vel/:vol macro
+  // samples (_fm3LevelLines), else its velocity and fader. `over` pins any of
+  // vel / vol / group / master for a caller that has its own value.
+  _fm3OpTl(op, when, over = {}) {
     const st = this._fm3Op[op - 1];
     const regs = this._chRegs[2];
+    const lines = when === undefined ? null : this._fm3LevelLines[op - 1];
+    const vel = over.vel ?? this._lineAt(lines?.vel, when) ?? st.vel;
+    const vol = over.vol ?? this._lineAt(lines?.vol, when)
+      ?? (when === undefined ? st.vol : this._fm3OpVolAtTime(op, when));
     const offset = sumLevelOffsets(
-      velToTlAtten(velFine(st.vel)),
-      volToTlOffset(when === undefined ? st.vol : this._fm3OpVolAtTime(op, when)),
-      volToTlOffset(regs.vol ?? VOL_UNITY),
-      volToTlOffset(this._masterVol ?? VOL_UNITY),
+      velToTlAtten(velFine(vel)),
+      volToTlOffset(vol),
+      volToTlOffset(over.group ?? regs.vol ?? VOL_UNITY),
+      volToTlOffset(over.master ?? this._masterVol ?? VOL_UNITY),
     );
     return Math.max(0, Math.min(127, Math.round(regs.ops[op - 1].voicedTl ?? 0) + offset));
   }
-  _writeFm3OpTl(op, when) {
+  _writeFm3OpTl(op, when, over = {}) {
     const o = this._chRegs[2].ops[op - 1];
-    o.tl = this._fm3OpTl(op, when);
+    o.tl = this._fm3OpTl(op, when, over);
     this._write(0, 0x40 + OP_ADDR_OFFSET[op - 1] + 2, o.tl, when);
+  }
+
+  // A channel's carriers at `when`, from the LIVE vel / vol (its note's level
+  // macros, else the note's velocity and the fader or its sweep) and master.
+  // `over` pins any of vel / vol / master for a caller that has its own value.
+  // The one place a normal channel's level is composed (§7).
+  _writeFmLevel(ch, when, over = {}) {
+    const regs = this._chRegs[ch];
+    const vel = over.vel ?? this._fmLiveVelAt(ch, when);
+    const vol = over.vol ?? this._fmLiveVolAt(ch, when);
+    const master = over.master ?? this._masterAt(when);
+    const port = ch >= 3 ? 1 : 0;
+    for (const opIdx of fmCarrierOpsForAlg(regs.algorithm ?? 0)) {
+      const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
+      regs.ops[opIdx].tl = tl;
+      this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + (ch % 3), tl, when);
+    }
   }
   _recomposeFm3Ops(when) {
     for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, when);
@@ -1518,8 +1543,8 @@ export class IRPlayer {
     }
     return this._carrierTl(
       op,
-      regs.vel ?? 15,
-      this._fmVolAtTime(ch, when),
+      this._fmLiveVelAt(ch, when),
+      this._fmLiveVolAt(ch, when),
       this._masterVol ?? VOL_UNITY,
     );
   }
@@ -1899,30 +1924,19 @@ export class IRPlayer {
         // attenuating from each operator's voiced TL. Runs on every note so
         // static :vel works and a previously attenuated note is reset; vel 15
         // / vol 31 / master 31 restores the voiced level.
+        // The previous note's level macros are done: this note starts from
+        // its own velocity and the fader (its macros are sampled below).
         if (isFm3OpNote) {
           // FM3 independent-OP: the note's velocity is THIS operator's, and it
           // composes into that operator's own TL — not the channel's carriers,
           // which belong to the other operators too (driver.md §13.4).
+          this._fm3LevelLines[fm3Op - 1] = null;
           this._fm3Op[fm3Op - 1].vel = ev.args?.vel ?? 15;
           this._writeFm3OpTl(fm3Op, when);
         } else {
-          const hasVol = regs?.vol != null || this._fmVolSweep[ch] != null;
-          const currentVol = hasVol ? this._fmVolAtTime(ch, when) : (regs.vol ?? VOL_UNITY);
-          const noteVel = ev.args?.vel ?? 15;
-          regs.vel = noteVel; // track sticky vel for later VOL/MASTER recalcs
-          const master = this._masterVol ?? VOL_UNITY;
-          const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
-          for (const opIdx of carriers) {
-            const tl = this._carrierTl(
-              regs.ops[opIdx],
-              noteVel,
-              currentVol,
-              master,
-            );
-            regs.ops[opIdx].tl = tl;
-            const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
-            this._write(port, opAddr, tl, when);
-          }
+          this._fmLevelLines[ch] = null;
+          regs.vel = ev.args?.vel ?? 15; // track sticky vel for later VOL/MASTER recalcs
+          this._writeFmLevel(ch, when, { master: this._masterVol ?? VOL_UNITY });
           this._followMasterSweep(ch, when);
         }
 
@@ -1982,16 +1996,10 @@ export class IRPlayer {
         // A :keyon retrigger restarts the note's envelopes — level and timbre
         // (driver.md §13.2) — while its :pitch / :semi run on (scheduled above).
         this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, gateTicks, macroLimit);
-        this._fmLevelLines[ch] = this._levelMacroLines(ev.args ?? {}, when, gateTicks, macroLimit);
-        this._scheduleFmVelMacro(
-          ch,
-          port,
-          chOffset,
-          ev.args?.velMacro,
-          when,
-          gateTicks,
-          macroLimit,
-        );
+        const levelLines = this._levelMacroLines(ev.args ?? {}, when, gateTicks, macroLimit);
+        if (isFm3OpNote) this._fm3LevelLines[fm3Op - 1] = levelLines;
+        else this._fmLevelLines[ch] = levelLines;
+        this._scheduleFmLevelMacros(ch, fm3Op, levelLines);
         this._scheduleFmOpMacros(
           ch,
           port,
@@ -2333,7 +2341,7 @@ export class IRPlayer {
     const firstVel = velMacro && !macroLeadsWithHold(velMacro)
       ? levels.find((x) => x.kind === "vel")?.value ?? noteVel
       : noteVel;
-    // ...and at its :vol macro's first sample, else the fader (restore_vol_base).
+    // ...and at its :vol macro's first sample, else the fader (restore_level_base).
     const firstVol = volMacro && !macroLeadsWithHold(volMacro)
       ? levels.find((x) => x.kind === "vol")?.value ?? null
       : null;
@@ -2782,47 +2790,28 @@ export class IRPlayer {
       }
 
       case "VOL": {
-        // A :vol MACRO moves the level of its own note only: it composes, but
-        // the channel's fader — what the next note starts from and what a
-        // hard mute reads — stays the score's (driver.md §7.2).
-        const fromMacro = !!ev.fromMacro;
+        // The score's fader (a :vol macro is the note's level instead, §7.2).
         // FM3 independent-OP: :vol on an fm3-N track is THAT operator's fader;
         // on the shared (fm3 …) track it is the group fader over all four
         // (driver.md §13.4).
+        const vol = Math.max(0, Math.min(31, value));
         const volOp = this._fm3OpOf(ev);
         if (volOp) {
           const st = this._fm3Op[volOp - 1];
-          const keep = st.vol;
-          if (!fromMacro) st.volSweep = null; // a PARAM_SET overrides a running sweep
-          st.vol = Math.max(0, Math.min(31, value));
+          st.volSweep = null; // a PARAM_SET overrides a running sweep
+          st.vol = vol;
           this._writeFm3OpTl(volOp, when);
-          if (fromMacro) st.vol = keep;
           break;
         }
         if (ch === 2 && this._reg27 & 0x40) {
-          const keep = regs.vol;
-          regs.vol = Math.max(0, Math.min(31, value));
+          regs.vol = vol;
           this._recomposeFm3Ops(when);
-          if (fromMacro) regs.vol = keep;
           break;
         }
-        // vol 0-31 (31=max, 0=silent). Apply to carrier operators.
-        // Clear any active FM vol sweep (PARAM_SET overrides it).
-        const vol = Math.max(0, Math.min(31, value));
-        if (!fromMacro) {
-          this._fmVolSweep[ch] = null;
-          regs.vol = vol;
-        }
-        const vel = this._fmLiveVelAt(ch, when);
-        const master = this._masterVol ?? VOL_UNITY;
-        const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
-        for (const opIdx of carriers) {
-          const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
-          regs.ops[opIdx].tl = tl;
-          const opAddr = 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset;
-          this._write(port, opAddr, tl, when);
-        }
-        if (!fromMacro) this._followMasterSweep(ch, when);
+        this._fmVolSweep[ch] = null; // a PARAM_SET overrides a running sweep
+        regs.vol = vol;
+        this._writeFmLevel(ch, when, { vol, master: this._masterVol ?? VOL_UNITY });
+        this._followMasterSweep(ch, when);
         break;
       }
 
@@ -2845,21 +2834,9 @@ export class IRPlayer {
     // FM channels: update carrier TL
     for (let ci = 0; ci < 6; ci++) {
       if (ci === 2 && this._reg27 & 0x40) { this._recomposeFm3Ops(when); continue; }
-      const cr = this._chRegs[ci];
-      const cp = ci >= 3 ? 1 : 0;
-      const co = ci % 3;
-      const crs = fmCarrierOpsForAlg(cr.algorithm ?? 0);
-      for (const opIdx of crs) {
-        const tl = this._carrierTl(
-          cr.ops[opIdx],
-          this._fmLiveVelAt(ci, when),
-          // a :vol macro's level then, else a running :vol sweep's
-          this._lineAt(this._fmLevelLines[ci]?.vol, when) ?? this._fmVolAtFrame(ci, F),
-          master,
-        );
-        cr.ops[opIdx].tl = tl;
-        this._write(cp, 0x40 + OP_ADDR_OFFSET[opIdx] + co, tl, when);
-      }
+      // a :vol macro's level then, else a running :vol sweep's at frame F
+      const vol = this._lineAt(this._fmLevelLines[ci]?.vol, when) ?? this._fmVolAtFrame(ci, F);
+      this._writeFmLevel(ci, when, { vol, master });
     }
     // PSG channels: recalculate attenuation from vel * vol * master, but only
     // for channels currently sounding — re-writing a non-silent att to an idle
@@ -3445,9 +3422,10 @@ export class IRPlayer {
       when,
       gateTicks,
     );
+    // :vel and :vol are the note's level, scheduled with it
+    // (_scheduleFmLevelMacros); these are the channel's other targets.
     const OP_MACRO_MAP = {
       pan: "PAN",
-      vol: "VOL",
       master: "MASTER",
       lfo_rate: "LFO_RATE",
       fm_alg: "FM_ALG",
@@ -3487,7 +3465,6 @@ export class IRPlayer {
             {
               cmd: "PARAM_SET",
               args: { target: t, value: v },
-              fromMacro: true,
             },
             when,
           );
@@ -3498,44 +3475,20 @@ export class IRPlayer {
     }
   }
 
-  _scheduleFmVelMacro(
-    ch,
-    port,
-    chOffset,
-    velMacro,
-    when,
-    gateTicks,
-    limitSecs = Infinity,
-  ) {
-    if (!velMacro) return;
-
-    const regs = this._chRegs[ch];
-    const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
-      when,
-      gateTicks,
-    );
-    // vel 15 = patch level, vel 0 = -30 dB floor. Float vel → finer TL than 16
-    // steps (rounded once inside _carrierTl). vol/master: their levels then
-    // (a running sweep's).
-    this._scheduleMacro(
-      velMacro,
-      noteFrames,
-      gateSecs,
-      when,
-      (v, t) => {
-        const vel = clampForTarget("VEL", v);
-        for (const opIdx of carriers) {
-          const tl = this._carrierTl(
-            regs.ops[opIdx], vel, this._fmLiveVolAt(ch, t), this._masterAt(t),
-          );
-          regs.ops[opIdx].tl = tl;
-          this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, tl, t);
-        }
-      },
-      this._stepSecs(velMacro.step),
-      limitSecs,
-    );
+  // A note's :vel and :vol macros, as one level: at every sample time of
+  // either, the note's level is recomposed from both lines' live values (the
+  // driver composes both every frame, §7). An FM3 operator's note writes that
+  // operator's TL; a channel's, its carriers.
+  _scheduleFmLevelMacros(ch, fm3Op, lines) {
+    const times = [...(lines.vel ?? []), ...(lines.vol ?? [])].map(([, t]) => t);
+    times.sort((a, b) => a - b);
+    let last = null;
+    for (const t of times) {
+      if (last !== null && t - last < 1e-9) continue;
+      last = t;
+      if (fm3Op) this._writeFm3OpTl(fm3Op, t);
+      else this._writeFmLevel(ch, t);
+    }
   }
 
   // Schedule a pitch macro for any channel (FM or PSG).
@@ -3800,7 +3753,6 @@ export class IRPlayer {
       // and moves all four.
       const volOp = this._fm3OpOf(ev);
       const groupSweep = !volOp && ch === 2 && this._reg27 & 0x40;
-      const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
       const sw = {
         from, to, curve, params, baseFrames, loop,
         frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
@@ -3808,32 +3760,17 @@ export class IRPlayer {
       };
       for (let i = 0; i < iterFrames; i++) {
         const vol = Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + i)));
-        const vel = regs.vel ?? 15;
         const frameWhen = this._sweepFrameTime(sw, i);
         const master = this._masterAtFrame(sw.startFrame + i);
         if (volOp) {
-          const st = this._fm3Op[volOp - 1];
-          st.volSweep = null; // this sweep's own frames are the live value
-          st.vol = vol;
-          const o = this._chRegs[2].ops[volOp - 1];
-          o.tl = this._fm3OpTl(volOp);
-          this._write(0, 0x40 + OP_ADDR_OFFSET[volOp - 1] + 2, o.tl, frameWhen);
+          this._writeFm3OpTl(volOp, frameWhen, { vol, master });
           continue;
         }
         if (groupSweep) {
-          regs.vol = vol;
-          this._recomposeFm3Ops(frameWhen);
+          for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, frameWhen, { group: vol, master });
           continue;
         }
-        for (const opIdx of carriers) {
-          const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
-          this._write(
-            port,
-            0x40 + OP_ADDR_OFFSET[opIdx] + chOffset,
-            tl,
-            frameWhen,
-          );
-        }
+        this._writeFmLevel(ch, frameWhen, { vol, master });
       }
       if (volOp) {
         const st = this._fm3Op[volOp - 1];
@@ -3986,6 +3923,7 @@ export class IRPlayer {
 
   // The latest sample at or before `t`, or null when the line has none yet.
   _lineAt(line, t) {
+    if (t === undefined) return null; // no time: the standing values
     let v = null;
     for (const [value, at] of line ?? []) {
       if (at > t + 1e-9) break;
@@ -4200,17 +4138,10 @@ export class IRPlayer {
   _followMasterSweep(ch, when) {
     const ms = this._masterSweep;
     if (!ms || (ch === 2 && this._reg27 & 0x40)) return;
-    const regs = this._chRegs[ch];
-    const port = ch >= 3 ? 1 : 0;
-    const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
     for (let k = Math.max(0, this._sweepFrameOf(ms, when) + 1); k < ms.frames; k++) {
       const t = this._sweepFrameTime(ms, k);
       const F = ms.startFrame + k;
-      const master = this._masterAtFrame(F);
-      for (const opIdx of carriers) {
-        const tl = this._carrierTl(regs.ops[opIdx], regs.vel ?? 15, this._fmVolAtFrame(ch, F), master);
-        this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + (ch % 3), tl, t);
-      }
+      this._writeFmLevel(ch, t, { vol: this._fmVolAtFrame(ch, F), master: this._masterAtFrame(F) });
     }
   }
 
@@ -4267,7 +4198,7 @@ export class IRPlayer {
     // note's own) and the :vol the channel holds; the macros' samples follow.
     const first = velMacro && !macroLeadsWithHold(velMacro) ? vel.out[0]?.v ?? baseVel : baseVel;
     // ...and the same for :vol: the note starts at its :vol macro's first
-    // sample, else at the fader (driver.md §7.2, restore_vol_base).
+    // sample, else at the fader (driver.md §7.2, restore_level_base).
     const firstVol = volMacro && !macroLeadsWithHold(volMacro) && vol.out.length
       ? vol.out[0].v
       : this._psgVolAtNoteOn(psgCh, noteWhen);

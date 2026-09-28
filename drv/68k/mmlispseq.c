@@ -357,77 +357,52 @@ static int macro_desc(const MMLSeq *s, int id, MMLMacro *m);
 static int macro_value(const MMLMacro *m, int idx, int *hold);
 static void pcm_apply_loop(MMLSeq *s, int vi);
 
-/* Note-on velocity: the score's sticky base, or this note's own override
- * (NOTE_ON_EX bit0, which rides one note without becoming the base). Only the
- * shadow moves — the caller recomposes carriers / att / shift right after.
- *
- * A channel with a VEL macro bound is skipped: the note-on retrigger
- * re-instantiates that bind and its attack sample lands in the same frame
- * (step 3), so restoring the base here would only add a register write that is
- * overwritten before it can be heard. When the bind is cleared, the next note
- * has nothing to overwrite it and this is what puts the score's velocity back. */
-static void restore_vel_base(MMLSeq *s, int ch, int ex_vel) {
-  uint8_t *vel = 0, base = VEL_MAX;
+/* A note-on's level: the live vel and vol go back to their bases — the
+ * score's sticky velocity (driver.md §7.1) and the fader (§7.2) — or to this
+ * note's own velocity (NOTE_ON_EX), so no macro of the previous note carries
+ * into it. Composition is left to the caller. `target` is T_VEL or T_VOL;
+ * `ex_vel` (T_VEL only, <0 = none) is in eighths, as the stream carries it.
+ * A bound VEL / VOL macro wins: the note-on retrigger re-instantiates it and
+ * its first sample lands in this same frame, so the note takes that sample
+ * rather than write a level overwritten a moment later — unless it has none
+ * (a leading hold, `[#rel …]`: the base), or is additive or scaled (the live
+ * level stays). Mirrors drv-player.js _restoreLevelBase. */
+static void restore_level_base(MMLSeq *s, int ch, int target, int ex_vel) {
+  int is_vel = target == T_VEL, max = is_vel ? VEL_MAX : 31;
+  uint8_t *live = 0, base = 0;
   int op = fm3_op_for(s, ch);
-  if (op) { vel = &s->fm3_op_vel[op - 1]; base = s->fm3_op_vel_base[op - 1]; }
-  else if (ch < 6) { vel = &s->fm[ch].vel; base = s->fm[ch].vel_base; }
-  else if (ch < 10) { vel = &s->psg[ch - 6].vel; base = s->psg[ch - 6].vel_base; }
-  else if (ch >= CH_PCM1 && ch <= CH_PCM3) {
-    vel = &s->pcm[ch - CH_PCM1].vel;
-    base = s->pcm[ch - CH_PCM1].vel_base;
+  if (op) {
+    live = is_vel ? &s->fm3_op_vel[op - 1] : &s->fm3_op_vol[op - 1];
+    base = is_vel ? s->fm3_op_vel_base[op - 1] : s->fm3_op_vol_base[op - 1];
+  } else if (ch < 6) {
+    live = is_vel ? &s->fm[ch].vel : &s->fm[ch].vol;
+    base = is_vel ? s->fm[ch].vel_base : s->fm[ch].vol_base;
+  } else if (ch < 10) {
+    MMLPsgCh *p = &s->psg[ch - 6];
+    live = is_vel ? &p->vel : &p->vol;
+    base = is_vel ? p->vel_base : p->vol_base;
+  } else if (ch >= CH_PCM1 && ch <= CH_PCM3) {
+    MMLPcmVoice *v = &s->pcm[ch - CH_PCM1];
+    live = is_vel ? &v->vel : &v->vol;
+    base = is_vel ? v->vel_base : v->vol_base;
   }
-  if (!vel) return;
+  if (!live) return;
   if (ex_vel < 0) {
     int mc = macro_ch(ch);
     if (mc >= 0)
       for (int i = 0; i < s->bind_count[mc]; i++)
-        if (s->binds[mc][i].target == T_VEL) {
-          /* A bound :vel macro owns the level, and its first sample lands in
-           * this same frame: the note composes from that sample, so it writes
-           * no level the macro overwrites a moment later. With no first
-           * sample (a leading hold, `[#rel …]`) the note takes its own vel;
-           * an additive or scaled macro keeps the live one. */
+        if (s->binds[mc][i].target == target) {
           MMLMacro d;
           int hold = 1;
           if (!macro_desc(s, s->binds[mc][i].macro_id, &d) || (d.flags & 6)) return;
           int v = d.release == 0 ? 0 : macro_value(&d, 0, &hold);
-          *vel = hold ? base : (uint8_t)clampi(v, 0, VEL_MAX);
+          *live = hold ? base : (uint8_t)clampi(v, 0, max);
           return;
         }
   }
-  /* ex_vel is in eighths, as the stream carries it (FM and PSG notes only). */
-  *vel = ex_vel >= 0 ? (uint8_t)clampi(ex_vel, 0, VEL_MAX) : base;
+  *live = ex_vel >= 0 ? (uint8_t)clampi(ex_vel, 0, max) : base;
 }
 
-/* Note-on volume: the score's fader (driver.md §7.2). A :vol macro moves the
- * live level for its note only; the next note starts from the fader, so a
- * macro that ended at 0 does not carry into it. As with vel, a bound :vol
- * macro's first sample lands this frame and is taken instead, and an additive
- * or scaled one keeps the live level. Mirrors drv-player.js _restoreVolBase. */
-static void restore_vol_base(MMLSeq *s, int ch) {
-  uint8_t *vol = 0, base = VOL_UNITY;
-  int op = fm3_op_for(s, ch);
-  if (op) { vol = &s->fm3_op_vol[op - 1]; base = s->fm3_op_vol_base[op - 1]; }
-  else if (ch < 6) { vol = &s->fm[ch].vol; base = s->fm[ch].vol_base; }
-  else if (ch < 10) { vol = &s->psg[ch - 6].vol; base = s->psg[ch - 6].vol_base; }
-  else if (ch >= CH_PCM1 && ch <= CH_PCM3) {
-    vol = &s->pcm[ch - CH_PCM1].vol;
-    base = s->pcm[ch - CH_PCM1].vol_base;
-  }
-  if (!vol) return;
-  int mc = macro_ch(ch);
-  if (mc >= 0)
-    for (int i = 0; i < s->bind_count[mc]; i++)
-      if (s->binds[mc][i].target == T_VOL) {
-        MMLMacro d;
-        int hold = 1;
-        if (!macro_desc(s, s->binds[mc][i].macro_id, &d) || (d.flags & 6)) return;
-        int v = d.release == 0 ? 0 : macro_value(&d, 0, &hold);
-        *vol = hold ? base : (uint8_t)clampi(v, 0, 31);
-        return;
-      }
-  *vol = base;
-}
 
 /* ── Pitch (driver.md §8) ─────────────────────────────────────────────────── */
 static void fold_cents(int *note, int *cents) {
@@ -1477,8 +1452,8 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int loop) {
   /* Same per-note velocity restore as the FM/PSG note_on (driver.md §7.1).
    * The level is composed as for a voice that never started: the START
    * below carries it, so a PCM_VOL ahead of it would be spent for nothing. */
-  restore_vel_base(s, channel_id, -1);
-  restore_vol_base(s, channel_id);
+  restore_level_base(s, channel_id, T_VEL, -1);
+  restore_level_base(s, channel_id, T_VOL, -1);
   v->started = 0;
   pcm_compose_shift(s, vi);
   /* A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on: $2B is an
@@ -1623,8 +1598,8 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
    * last sample would be the channel's velocity for the rest of the song,
    * which is how a level macro anywhere in a loop left every following note at
    * full volume. ir-player does the same with `regs.vel = noteVel`. */
-  restore_vel_base(s, ch, ex_vel);
-  restore_vol_base(s, ch);
+  restore_level_base(s, ch, T_VEL, ex_vel);
+  restore_level_base(s, ch, T_VOL, -1); /* and the fader (§7.2) */
   if (fm3op) {
     /* FM3 independent-OP: the F-number came from the preceding FM3_OP_PITCH.
      * The patch is the shared CH3's, but the LEVEL is this operator's own and

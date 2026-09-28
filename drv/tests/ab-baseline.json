@@ -293,6 +293,12 @@
     "compileErrors": 0,
     "digest": "a3d63836"
   },
+  "m4-fm3op-level-macros.mmlisp": {
+    "ok": false,
+    "mismatches": 19,
+    "compileErrors": 0,
+    "digest": "49b8fe0c"
+  },
   "m4-fm3op-level.mmlisp": {
     "ok": false,
     "mismatches": 11,

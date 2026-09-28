@@ -912,8 +912,8 @@ export class DrvPlayer {
     // macro's last sample would be the channel's velocity for the rest of the
     // song, which is how a level macro anywhere in a loop left every following
     // note at full volume. ir-player does the same with `regs.vel = noteVel`.
-    this._restoreVelBase(ch, exVel);
-    this._restoreVolBase(ch);
+    this._restoreLevelBase(ch, TARGET_ID.VEL, exVel);
+    this._restoreLevelBase(ch, TARGET_ID.VOL); // and the fader (§7.2)
     // Live mixer: a muted / non-soloed track advances but does not sound — skip
     // the key and its macros (which gate on the keyed state). Always true during
     // the trace gate (nothing muted), so it doesn't affect verification.
@@ -1379,18 +1379,21 @@ export class DrvPlayer {
     else if (channelId < 10) this._psg[channelId - 6][key] = value;
   }
 
-  // Note-on velocity: the score's sticky base, or this note's own override.
-  // Composition is left to the caller (it recomposes carriers / att / shift
-  // right after), so this only moves the shadow.
+  // A note-on's level: the live vel and vol go back to their bases — the
+  // score's sticky velocity (driver.md §7.1) and the fader (§7.2) — or to this
+  // note's own velocity (NOTE_ON_EX), so no macro of the previous note carries
+  // into it. Composition is left to the caller (it recomposes carriers / att /
+  // shift right after), so this only moves the shadow. Mirrors mmlispseq.c
+  // restore_level_base. `target` is VEL or VOL; `exVel` (VEL only) is
+  // NOTE_ON_EX's velocity, in eighths as the stream carries it.
   //
-  // A channel with a VEL macro bound is skipped: the note-on retrigger
-  // re-instantiates that bind and its attack sample lands in the same frame
-  // (step 3), so restoring the base here would only add a register write that
-  // is overwritten before it can be heard. When the bind is cleared, the next
-  // note has nothing to overwrite it and this is what puts the score's
-  // velocity back.
-  _restoreVelBase(channelId, exVel = null) {
-    const clamp = (v) => (v < 0 ? 0 : v > VEL_FINE_MAX ? VEL_FINE_MAX : v);
+  // A bound VEL / VOL macro wins: the note-on retrigger re-instantiates that
+  // bind and its first sample lands in the same frame (step 3), so the note
+  // takes that sample rather than write a level overwritten a moment later.
+  _restoreLevelBase(channelId, target, exVel = null) {
+    const isVel = target === TARGET_ID.VEL;
+    const max = isVel ? VEL_FINE_MAX : 31;
+    const clamp = (v) => (v < 0 ? 0 : v > max ? max : v);
     const op = this._fm3OpFor(channelId);
     const st = op
       ? null
@@ -1402,60 +1405,31 @@ export class DrvPlayer {
             ? this._pcmVoices[channelId - 20]
             : null;
     if (!op && !st) return;
-    const setVel = (v) => {
-      if (op) this._fm3OpVel[op - 1] = v;
-      else st.vel = v;
-    };
-    const mc = this._macroCh(channelId);
-    if (exVel == null && mc >= 0 && this._macroActive[mc]?.has(TARGET_ID.VEL)) {
-      // A bound :vel macro owns the level, and its first sample lands in this
-      // same frame: the note composes from that sample, so it writes no level
-      // the macro overwrites a moment later. With no first sample (a leading
-      // hold, `[#rel …]`) the note takes its own vel; an additive or scaled
-      // macro keeps the live one.
-      const d = this._macros[this._macroActive[mc].get(TARGET_ID.VEL)];
-      if (!d || d.flags & 6) return;
-      const v = d.release === 0 ? null : d.values[0];
-      setVel(v != null ? clamp(v) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
-      return;
-    }
-    // exVel is in eighths, as the stream carries it (FM and PSG notes only).
-    setVel(exVel != null ? clamp(exVel) : op ? this._fm3OpVelBase[op - 1] : st.velBase);
-  }
-
-  // Note-on volume: the score's fader (driver.md §7.2). A :vol macro moves the
-  // live level for its note only; the next note starts from the fader, so a
-  // macro that ended at 0 does not carry into it. As with vel, a bound :vol
-  // macro's first sample lands this frame and is taken instead, and an
-  // additive or scaled one keeps the live level. Mirrors mmlispseq.c
-  // restore_vol_base.
-  _restoreVolBase(channelId) {
-    const op = this._fm3OpFor(channelId);
-    const st = op
-      ? null
-      : channelId < 6
-        ? this._fm[channelId]
-        : channelId < 10
-          ? this._psg[channelId - 6]
-          : channelId >= 20 && channelId <= 22
-            ? this._pcmVoices[channelId - 20]
-            : null;
-    if (!op && !st) return;
-    const base = op ? this._fm3OpVolBase[op - 1] : st.volBase;
-    const setVol = (v) => {
-      if (op) this._fm3OpVol[op - 1] = v;
+    const base = op
+      ? (isVel ? this._fm3OpVelBase : this._fm3OpVolBase)[op - 1]
+      : isVel ? st.velBase : st.volBase;
+    const set = (v) => {
+      if (op) (isVel ? this._fm3OpVel : this._fm3OpVol)[op - 1] = v;
+      else if (isVel) st.vel = v;
       else st.vol = v;
     };
     const mc = this._macroCh(channelId);
-    if (mc >= 0 && this._macroActive[mc]?.has(TARGET_ID.VOL)) {
-      const d = this._macros[this._macroActive[mc].get(TARGET_ID.VOL)];
+    if (exVel == null && mc >= 0 && this._macroActive[mc]?.has(target)) {
+      // A bound level macro owns the level, and its first sample lands in this
+      // same frame: the note composes from that sample, so it writes no level
+      // the macro overwrites a moment later. With no first sample (a leading
+      // hold, `[#rel …]`) the note takes the base; an additive or scaled
+      // macro keeps the live one.
+      const d = this._macros[this._macroActive[mc].get(target)];
       if (!d || d.flags & 6) return;
       const v = d.release === 0 ? null : d.values[0];
-      setVol(v != null ? (v < 0 ? 0 : v > 31 ? 31 : v) : base);
+      set(v != null ? clamp(v) : base);
       return;
     }
-    setVol(base);
+    set(exVel != null ? clamp(exVel) : base);
   }
+
+
 
   // ── PARAM_SET execution (opcodes.md §7 target table) ─────────────────────
   // `force` (macro-driven writes): a macro is the channel's envelope authority,
@@ -2193,8 +2167,8 @@ export class DrvPlayer {
     // Same per-note velocity restore as the FM/PSG note-on (driver.md §7.1).
     // The level is composed as for a voice that never started: the START
     // below carries it, so a PCM_VOL ahead of it would be spent for nothing.
-    this._restoreVelBase(channelId);
-    this._restoreVolBase(channelId);
+    this._restoreLevelBase(channelId, TARGET_ID.VEL);
+    this._restoreLevelBase(channelId, TARGET_ID.VOL);
     v.started = false;
     this._pcm.composeShift(vi, this._master);
     // A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on. $2B is

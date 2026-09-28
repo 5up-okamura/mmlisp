@@ -263,10 +263,10 @@ export class PcmIrVoices {
         const entry = id == null ? null : this.bank.entries[id];
         if (!entry || entry.len === 0) return false;
         // vel rides the note: the exporter sends it as the sticky VEL the
-        // driver's note-on restores (restore_vel_base).
+        // driver's note-on restores (restore_level_base).
         v.vel = v.velBase = velFine(ev.vel ?? 15) * VEL_FINE;
         // A note starts from its :vol macro's first sample, else the fader
-        // (driver: restore_vol_base).
+        // (driver: restore_level_base).
         v.vol = ev.vol != null ? clamp(Number(ev.vol), 31) : v.volBase;
         v.started = false; // the START carries the level (driver: pcm_note_on)
         seq.composeShift(vi, this.master);

@@ -1,0 +1,13 @@
+; A/B + C gate: :vel and :vol macros on FM3 operator tracks are THAT operator's
+; level (driver.md §13.4, §7.2). The preview once sent an operator's :vol
+; macro to CH3's group fader, rewriting all four operators, and its :vel
+; macro to the channel's carriers. A gate that ends on 0 does not carry into
+; the operator's next note; a fade from 0 fades the note in.
+(def-fm kit :alg 7 :fb 0
+  :ar1 31 :rr1 6 :tl1 20 :ml1 1  :ar2 31 :rr2 6 :tl2 20 :ml2 2
+  :ar3 31 :rr3 6 :tl3 20 :ml3 4  :ar4 31 :rr4 6 :tl4 20 :ml4 8)
+(fm3 :tempo 120 kit)
+(fm3-1 :oct 5 :len 4 (macro :step 16 :vol [#sus 31 0]) c c (macro none) c c)
+(fm3-2 :oct 4 :len 4 (macro :step 16 :vel [#sus 15 0]) e e (macro none) e e)
+(fm3-3 :oct 3 :len 4 (macro :vol [0 8 16 24 31]) g g g g)
+(fm3-4 :oct 4 :len 4 (macro :step 16 :vol [#sus 31 0] :vel [#sus 15 0]) c c c c)
