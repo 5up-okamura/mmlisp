@@ -2049,7 +2049,7 @@ export class DrvPlayer {
   }
 
   // KEYON retrigger (driver.md §14): re-attack the note. Restart the channel's
-  // envelope macros (level and timbre slots → attack; :pitch/:semi run on) and, on FM,
+  // envelope macros (level and timbre slots → attack; :pitch/:semi/:pan run on) and, on FM,
   // re-key the hardware EG ($28). PSG has no hardware EG — the macro restart is
   // the whole effect.
   _keyonRetrigger(ch, restart = true, src = null, srcStep = 0) {
@@ -2057,9 +2057,10 @@ export class DrvPlayer {
     for (const s of mc < 0 || !restart ? [] : this._macroSlots[mc]) {
       if (!s) continue;
       const sd = this._macros[s.descIdx];
-      // :pitch and :semi run on: a retriggered arp keeps its place.
+      // :pitch and :semi run on: a retriggered arp keeps its place; so does
+      // :pan, a place rather than an envelope.
       if (!sd || sd.target === TARGET_ID.KEYON || sd.target === TARGET_ID.NOTE_SEMI ||
-          sd.target === TARGET_ID.NOTE_PITCH) continue;
+          sd.target === TARGET_ID.NOTE_PITCH || sd.target === TARGET_ID.PAN) continue;
       s.cursor = 0;
       s.stepClock = 0;
       s.state = "run";

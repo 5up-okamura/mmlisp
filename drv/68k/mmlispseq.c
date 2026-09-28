@@ -1149,7 +1149,8 @@ static void write_note_semi(MMLSeq *s, int ch, int semi, int add) {
 /* KEYON retrigger (driver.md §14): re-attack the note. Restart the channel's
  * envelope macros — level and timbre, the soft envelope — and, on FM, re-key
  * the hardware EG. PSG has no hardware EG, so there the macro restart is the
- * whole effect. :pitch and :semi run on: a retriggered arp keeps its place. */
+ * whole effect. :pitch and :semi run on: a retriggered arp keeps its place;
+ * so does :pan, a place rather than an envelope. */
 /* A channel's frame share of ticks for a tick-clocked macro (§13.2): the
  * song's, or that of the effect part whose note triggered the macros. */
 static uint16_t chan_frame_inc(const MMLSeq *s, int mc) {
@@ -1164,7 +1165,7 @@ static void keyon_retrigger(MMLSeq *s, int ch, int restart, const MMLMacroSlot *
     if (sl->dead) continue;
     MMLMacro d;
     if (!macro_desc(s, sl->macro_id, &d) || d.target == T_KEYON ||
-        d.target == T_NOTE_SEMI || d.target == T_NOTE_PITCH)
+        d.target == T_NOTE_SEMI || d.target == T_NOTE_PITCH || d.target == T_PAN)
       continue;
     sl->cursor = 0;
     sl->step_clock = 0;

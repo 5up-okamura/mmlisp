@@ -1967,7 +1967,8 @@ export class IRPlayer {
           );
         }
         // A :keyon retrigger restarts the note's envelopes — level and timbre
-        // (driver.md §13.2) — while its :pitch / :semi run on (scheduled above).
+        // (driver.md §13.2) — while its :pitch / :semi (scheduled above) and
+        // :pan run on.
         this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, gateTicks, macroLimit);
         const levelLines = this._levelMacroLines(ev.args ?? {}, when, gateTicks, macroLimit);
         if (isFm3OpNote) this._fm3LevelLines[fm3Op - 1] = levelLines;
@@ -3422,10 +3423,14 @@ export class IRPlayer {
         ]),
       ),
     };
+    const retrigs = this._envRetrigs;
     for (const [key, target] of Object.entries(OP_MACRO_MAP)) {
       const spec = noteArgs[key];
       if (!spec) continue;
       const t = target; // capture for closure
+      // :pan is a place, not an envelope: it runs on through a :keyon
+      // retrigger, as :pitch/:semi do (driver.md §14).
+      this._envRetrigs = key === "pan" ? null : retrigs;
       this._scheduleMacro(
         spec,
         noteFrames,
@@ -3447,6 +3452,7 @@ export class IRPlayer {
         limitSecs,
       );
     }
+    this._envRetrigs = retrigs;
   }
 
   // A note's :vel and :vol macros, as one level: at every sample time of

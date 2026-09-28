@@ -1,0 +1,5 @@
+; A/B + C gate: a :keyon retrigger restarts the envelopes but not :pan, which
+; runs on like :pitch/:semi (driver.md §14) — so a stepped pan keeps walking
+; under a roll instead of snapping back to its first step on every tap.
+(fm1 :tempo 120 :len 1
+  (macro :step 16 :keyon 1 :vel [15 12 9 6] :pan [#sus -1 0 1 0]) c e)

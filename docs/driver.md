@@ -1192,7 +1192,8 @@ region; `(wait key-off)` marks the release boundary).
   own frame, where the note has just attacked; a leading `1` is a no-op and the
   roll starts at the second step — it restarts the channel's envelope macro
   slots to their attack (level and timbre: `:vel`/`:vol`/`:tl`… replay; `:pitch`
-  and `:semi` run on, so a retriggered arp keeps its place) and, on FM, re-keys
+  and `:semi` run on, so a retriggered arp keeps its place, and so does `:pan`)
+  and, on FM, re-keys
   the hardware EG (`$28` off→on). After key-off (a `#rel` echo tail) a tap only
   re-keys the EG — the envelopes play their release through the taps — and
   the KEYON slot's end keys the channel off a step after its last tap (the

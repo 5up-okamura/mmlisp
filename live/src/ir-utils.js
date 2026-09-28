@@ -300,7 +300,12 @@ const STOCHASTIC_LUT_SEED = 0xdead;
 const STOCHASTIC_LUT_SIZE = 1024;
 
 function createSeededRng(seed) {
+  // Scramble the seed first (murmur3's finalizer): the LCG maps nearby seeds
+  // to nearby states, so seeds 1, 2, 3 would open on the same value.
   let state = seed >>> 0;
+  state = Math.imul(state ^ (state >>> 16), 0x85ebca6b) >>> 0;
+  state = Math.imul(state ^ (state >>> 13), 0xc2b2ae35) >>> 0;
+  state = (state ^ (state >>> 16)) >>> 0;
   return function next() {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
     return state / 0x100000000;

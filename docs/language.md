@@ -999,7 +999,7 @@ retriggers the envelope.
 retrigger (key-off then key-on across the player's `KEY_OFF_LEAD` gap,
 restarting the envelopes: the FM EG and the note's level/timbre macros —
 `:vel`, `:vol`, `:tl1`…; `:pitch` and `:semi` run on, so a retriggered arp keeps
-its place). The first sample at t = 0 coincides with the note's
+its place, and so does `:pan`, a place rather than an envelope). The first sample at t = 0 coincides with the note's
 own attack and is a no-op, so a roll starts at the second step whether it is
 written `[0 #sus 1]` or `[1 1 1 …]`. Steps before `#rel` loop until note-off (a roll);
 steps after `#rel` fire after note-off (a one-channel echo tail): each tap
@@ -1123,7 +1123,7 @@ See §7.1.1.
 
 Stochastic curves (`noise`/`pink`/`perlin`/`brown`) default to seed `0xDEAD`, so
 a seedless source is always byte-identical. `:seed N` (any u32) regenerates a
-**statistically independent** sequence — unlike `:phase`, which shifts the same
+**statistically independent** sequence, adjacent seeds included — unlike `:phase`, which shifts the same
 table. The seed is compile-time only (the driver replays the sampled values);
 distinct seeds bake distinct data. A seed picks a character of movement, not
 a different run each playback: the same score always moves the same way.
