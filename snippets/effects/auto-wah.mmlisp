@@ -1,0 +1,11 @@
+; Auto-wah: a filter that opens and closes on its own. On FM the modulator's
+; TL is the filter, so an LFO on it sweeps the brightness; on a note-length
+; clock the wah locks to the tempo. An eighth-note wah, then a slow one over
+; the bar.
+(import "presets/waveforms/set.mmlisp")
+
+(def line :len 16 c c > c < c  e- c c > c <  c b- c g  f e- c c)
+
+(fm1 :tempo 112 :oct 2 acid-saw
+  (macro :tl3 (sin 12..56 :len 8))  (x 2 line)
+  (macro :tl3 (sin 12..56 :len 1))  (x 2 line))

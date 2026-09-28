@@ -1,0 +1,19 @@
+; Tape stop: the machine loses power, and the music slows and sinks to a
+; halt. :tempo is global, so one curve slows every track; the FM parts also
+; sink in pitch with a :pitch sweep of the same length. A PCM voice cannot
+; bend (its pitch is baked), so the drums only slow down.
+(import "presets/gm/set.mmlisp")
+(import "presets/808/set.mmlisp")
+
+(def groove kick c _ hat c _ snare c _ hat c _)
+
+(fm1 :tempo 124 :oct 2 :len 8 gm-bass-syn1
+  c c > c < c  e- f g b-  c c > c < c  e- f g b-
+  :pitch (ease-in 0..-1200 :len 1)
+  :tempo (ease-in 124..24 :len 1)
+  c c > c < c  e- f g b-  :pitch 0 :len 2 _)
+(fm2 :oct 4 :len 4 gm-organ-rock :vel 11
+  c e- f g  c e- f g
+  :pitch (ease-in 0..-1200 :len 1)
+  c e- f g  _2)
+(pcm1 :len 8 (x 3 groove) _2)

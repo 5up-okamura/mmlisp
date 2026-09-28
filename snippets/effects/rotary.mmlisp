@@ -1,0 +1,17 @@
+; Rotary speaker: a spinning horn makes the pitch waver (the Doppler shift),
+; the level swell and fall, and the sound move from side to side, all at the
+; one rate. Three targets in one macro share its clock and stay in phase.
+; The slow "chorale" speed, then the fast "tremolo" speed.
+(def-fm organ init-fm :alg 7 :fb 2
+  :ml1 1 :ml2 2 :ml3 4 :ml4 8
+  :tl1 8 :tl2 14 :tl3 20 :tl4 28
+  :rr1 6 :rr2 6 :rr3 6 :rr4 6)
+
+(def chorale (macro :pitch+ (sin -6..6 :len 50f) :vel (sin 12..15 :len 50f)
+                    :pan (square -1..1 :len 50f)))
+(def tremolo (macro :pitch+ (sin -8..8 :len 8f) :vel (sin 10..15 :len 8f)
+                    :pan (square -1..1 :len 8f)))
+
+(fm1 :tempo 96 :oct 4 :len 1 organ
+  chorale c f
+  tremolo g c)

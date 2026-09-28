@@ -1,0 +1,20 @@
+; Sidechain pumping: the pad ducks under every kick and swells back, the
+; pulse of dance music. There is no compressor to listen to the kick, so the
+; duck is written in: a :vol curve at every beat, the same length as the beat.
+; Two bars plain, then two bars pumping. The pad notes are tied across the
+; beats (~), so the fader moves without a new attack.
+(import "presets/gm/set.mmlisp")
+(import "presets/808/set.mmlisp")
+
+(def (pump n) :vol (ease-out 6..31 :len 4) n)
+
+(fm1 :tempo 124 :oct 4 :len 4 gm-pad-warm
+  c ~ c ~ c ~ c  a- ~ a- ~ a- ~ a-
+  (pump c) ~ (pump c) ~ (pump c) ~ (pump c)
+  (pump a-) ~ (pump a-) ~ (pump a-) ~ (pump a-))
+(fm2 :oct 3 :len 4 gm-pad-warm :vel 12
+  g ~ g ~ g ~ g  e- ~ e- ~ e- ~ e-
+  (pump g) ~ (pump g) ~ (pump g) ~ (pump g)
+  (pump e-) ~ (pump e-) ~ (pump e-) ~ (pump e-))
+
+(pcm1 :len 4 (x 16 kick c))

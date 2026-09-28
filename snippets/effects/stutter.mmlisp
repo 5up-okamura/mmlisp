@@ -1,0 +1,21 @@
+; Stutter and beat repeat. On FM, :keyon re-attacks a held note on every step
+; of its clock: a 32nd-note roll that fades with a :vel vector. On PCM the
+; loop points move while the note sounds: a loop of the snare's first 32nd
+; repeats it, and a :loop-len curve tightens the repeat into a buzz, the
+; classic glitch fill.
+(import "presets/gm/set.mmlisp")
+(import "presets/808/set.mmlisp")
+
+(def roll (macro :step 32 :keyon 1 :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
+
+(fm1 :tempo 120 :oct 5 :len 8 gm-lead-square :vel 13
+  c e g e  c e g e
+  roll :len 2 g (macro none) :len 8 f e d c
+  :len 1 c)
+
+(pcm1 :len 8
+  kick c _ snare c _ kick c kick c snare c _
+  kick c _ snare c _ :mode loop :loop-start 0ms :loop-len 32 snare :len 4 c
+  :loop-len (linear :from 40ms :to 3ms :len 4) c :mode shot
+  :len 8 kick c _ snare c _ kick c kick c snare c _
+  :len 1 kick c)

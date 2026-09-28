@@ -1,0 +1,14 @@
+; Trance gate: a held chord chopped into a rhythm. A :vol step vector (the
+; channel fader) on a 16th-note beat clock (:step 16) opens and shuts the
+; note; #sus loops the pattern until the note ends, so one pattern gates any
+; length of note. Two bars held, then gated.
+(import "presets/gm/set.mmlisp")
+
+(def gate (macro :step 16 :vol [#sus 31 31 0 31  0 31 31 0  31 0 31 31  0 31 0 31]))
+
+(fm1 :tempo 136 :oct 4 :len 1 gm-synstr1
+  c a-
+  gate c a- f g)
+(fm2 :oct 3 :len 1 gm-synstr1 :vel 12
+  g e-
+  gate g e- c d)

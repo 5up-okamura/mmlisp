@@ -1,0 +1,14 @@
+; Harmonizer: the same line played again, shifted by a fixed interval. With
+; the line written as (note ...) numbers inside a parametric def, the shift
+; is one argument: a fifth above on fm2, an octave below on fm3.
+(import "presets/gm/set.mmlisp")
+
+(def (line k)
+  :len 8 (note (+ 67 k)) (note (+ 69 k)) (note (+ 71 k)) (note (+ 72 k))
+  :len 4 (note (+ 74 k)) (note (+ 72 k))
+  :len 8 (note (+ 71 k)) (note (+ 69 k)) (note (+ 67 k)) (note (+ 64 k))
+  :len 2 (note (+ 67 k)))
+
+(fm1 :tempo 100 gm-flute (line 0) (line 0))
+(fm2 gm-flute :vel 11 :len 1 _ _ (line 7))
+(fm3 gm-flute :vel 11 :len 1 _ _ (line -12))
