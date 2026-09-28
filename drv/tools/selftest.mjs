@@ -160,6 +160,22 @@ nn_ equ $1800
   for (let i = 0; i < 9; i++) got.push(cpu.step());
   check("(hl) operands cost their memory cycle", got, [4, 7, 7, 10, 4, 7, 11, 7, 13]);
 }
+// A block move is charged per byte: 21 for each iteration that repeats, 16 for
+// the last (and for a lone ldi). Until 2026-09-28 a whole ldir cost 16.
+{
+  const bytes = asm(`
+    org 0
+    ld bc,3
+    ldir
+    ldi
+`);
+  const mem = new Uint8Array(0x10000);
+  mem.set(bytes, 0);
+  const cpu = new Z80Cpu({ read: (a) => mem[a], write: (a, v) => { mem[a] = v; } });
+  const got = [];
+  for (let i = 0; i < 5; i++) got.push(cpu.step());
+  check("ldir is charged per byte", got, [10, 21, 21, 16, 16]);
+}
 
 // ── 2. behavioral runs ─────────────────────────────────────────────────────
 function run(src, { maxSteps = 200000, ram = 0x10000 } = {}) {

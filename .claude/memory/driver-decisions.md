@@ -133,6 +133,10 @@ All outside the code under test, all silent:
    under-charged model.** Fixed with a selftest pinning the documented counts.
    Treat any modelled figure from before commit `fcc8457` as uncalibrated — and
    do NOT assume BlastEm values or hand calculations share the error.
+   The same model charged a **whole `ldir` 16 cycles** until 2026-09-28 (now
+   21 a repeating byte, 16 the last, pinned by the selftest). Nothing shipped
+   uses `ldir`; the all-Z80 build's overlay loads did, and were free in every
+   profile taken of it.
 3. **A pad filler destroyed the sample in flight.** At 9,987.6 Hz the pads
    happened to be a bare `djnz` and nothing showed; at 3,329 Hz the tail took an
    `ld a,0` and **every other sample went out as zero**. It was caught only

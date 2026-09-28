@@ -61,22 +61,67 @@ mixer that killed the archive build. The blocker is structural: with no timer
 interrupt on the Z80, the DAC must be fed from inside the sequencer's own
 instruction stream at an even pace.
 
-## Open: the PCM scheme
+## Decided: poll points (2026-09-28, the user's listening verdict)
 
-Three candidates, not yet chosen:
+Listening set: `drv/tools/jitter-listen.mjs` (→ `drv/out/jitter/`, not checked
+in; its header states the model — 14,375.68 Hz, 8-bit, each write late by
+U(0, N) Z80 cycles, the chip reading the DAC on its 53,267 Hz / 67.2-cycle
+grid). Jitter error in dB below signal: N=30 30.8, 100 25.6, 300 20.3 (samples
+overwritten unheard), 600 17.6; the chip's own grid against an ideal hold is
+already 31.9. The user:
 
-1. **Constant-time lap (the shipped engine's shape).** Zero jitter; the
-   sequencer is rewritten as bounded micro-steps run in each slot's slack. The
-   largest rewrite.
-2. **Poll points (XGM2's shape).** The sequencer carries a DAC/poll point at
-   most every N cycles on every path — checkable by the generator's analyzer.
-   Samples come from a RAM ring filled in bulk. Pacing by polling a YM timer
-   flag gives an exact mean rate and jitter bounded by N; without it, jitter
-   and rate both follow the code.
-3. **Holes (MDSDRV's shape).** Rejected in practice by the archive build's
-   bring-up (a burst then 6 ms of one value: "never once good").
+- **N=100 is audible and acceptable.** So the scheme is **poll points**
+  (XGM2's shape), not the constant-time lap: the sequencer carries a poll at
+  most every ~100 cycles on every path.
+- **Drums are fine at every N, up to 600.** A drum-only score could run with
+  far sparser polls.
+- **`rand` (always jittered) sounds more natural than `frame` (jittered only
+  while the sequencer runs).** The 60 Hz on/off is what bothers the ear, not
+  the jitter. So **the idle loop must poll at the sequencer's spacing** and not
+  on a tight loop, keeping the jitter's statistics the same across the frame.
+  It costs nothing.
 
-Constraints any scheme must meet:
+Rejected: the constant-time lap (the largest rewrite, for a jitter the user
+accepts) and holes (the archive build's bring-up: "never once good").
+
+## Measurement: poll overhead on the archived sequencer (2026-09-28)
+
+Same method as above, with each executed instruction fed to a greedy
+placement: a poll goes at an instruction boundary whenever the next
+instruction would take the gap past P. It is a **lower bound** — a poll in
+real code sits at a fixed place and runs on every pass, so static placement
+will cost more (not yet measured; the engine generator's analyzer is the tool
+that would check it). Assumed costs, not measured: a poll that finds nothing
+due 24 cycles (`ld a,($4000)`, `rrca`, `jr c`), an output 60 (ring pop, `$2A`,
+timer re-arm through `$27`), a one-voice mix into the ring 30 a sample.
+
+| score | busy mean / p99 | polls a frame at P=100 mean / p99 | busy + polls mean / p99 |
+| --- | --- | --- | --- |
+| demo1 | 37.4 / 76.3 | 236 / 482 | 46.9 / 95.8 |
+| stress-9ch | 29.6 / 100 | 182 / 564 | 37.0 / 120.6 |
+| m3-voice-loop | 14.9 / 100 | 91 / 513 | 18.5 / 120.7 |
+| ab-core | 9.2 / 35.6 | 57 / 225 | 11.5 / 44.7 |
+
+P=150 cuts demo1's polls to 154 and P=249 to 91: polls are ~10% of a frame at
+P=100 — not where the cost is. **The PCM output itself is: 240 samples × 90 =
+36.1% of a frame at 14,375.68 Hz, 169 × 90 = 25.4% at 10,111.71 Hz.** demo1
+then totals ~72% mean at 10.1 kHz, ~83% at 14.4 kHz.
+
+- **A frame over 100% no longer breaks the audio** in this scheme — the polls
+  keep the DAC fed through it; only that frame's register writes land late,
+  and the driver catches up on the next vblank. XGM2 degrades the same way.
+- **The one obstacle: overlay loads.** `load_overlay` is a single `ldir` of
+  up to 5,749 cycles — the only uninterruptible stretch over 100 in the
+  corpus, 607 of them across it. Overlays must go (fit in RAM through the cut
+  list) or be copied in polled chunks.
+- **The CPU model charged a whole `ldir` 16 cycles** until this session
+  (fixed in `drv/tools/z80cpu.mjs`, pinned by the selftest). The shipped engine
+  uses no `ldir`, so nothing shipped moved; the archive's busy figures above
+  moved by ≤0.5 point on the means, and its overlay-load frames now clip.
+
+## Open
+
+Constraints the poll-point build must meet:
 
 - **The game's VDP DMA blocks the Z80's ROM window.** A 68k-heavy game DMAs a
   lot; the DAC must be fed from Z80 RAM (a ring ahead of it), and the ring's
@@ -86,20 +131,12 @@ Constraints any scheme must meet:
 - **8 KB RAM.** The archive build had ~20 B free; a ring, the PCM code and a
   render-ahead write list must be paid for with the cut list.
 
-Next measurements, in order:
+Next, in order:
 
-1. **Is bounded jitter audible?** Rendered 2026-09-28 by
-   `drv/tools/jitter-listen.mjs` (→ `drv/out/jitter/`, not checked in; the
-   header states the model). 14,375.68 Hz, 8-bit, each write late by U(0, N)
-   Z80 cycles, either always (`rand`) or only in the first 35% of each frame
-   (`frame`); the chip reads the DAC on its 53,267 Hz grid (67.2 cycles).
-   Jitter error, dB below signal: N=30 30.8, N=100 25.6, N=300 20.3 (8,638
-   samples overwritten unheard), N=600 17.6. **The chip's own grid against an
-   ideal hold is already 31.9 dB** — N≈30 is the level every driver on the
-   hardware lives with, though the grid's error is a fixed pattern and the
-   jitter's is noise. **Waiting on the user's listening verdict**; it chooses
-   between 1 and 2.
-2. **Poll-point overhead**: the longest poll-free path in the archived
-   sequencer and the cycles polls add at the chosen N.
-3. Then the cut list in bytes (`npm run size` on the archive) against the
-   RAM the chosen scheme needs.
+1. **The rate** — 10,111.71 Hz leaves ~28% of a frame for the sequencer's
+   growth since the pivot, 14,375.68 Hz ~17% (demo1). The user's call.
+2. **The cut list in bytes** (`npm run size` on the archive) against what the
+   build needs added: the ring, the poll/output code, no overlays or polled
+   overlay copies.
+3. **Static poll placement**: the real overhead, checked by an analyzer over
+   the sequencer's control-flow graph, not the greedy lower bound.

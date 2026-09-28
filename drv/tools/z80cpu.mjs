@@ -445,16 +445,18 @@ export class Z80Cpu {
     if ((op & 0xcf) === 0x4a) { this.hl = this.adc16(this.hl, this.getRP((op >> 4) & 3)); return 15; }
     if ((op & 0xcf) === 0x42) { this.hl = this.sbc16(this.hl, this.getRP((op >> 4) & 3)); return 15; }
     if (op === 0xa0 || op === 0xa8 || op === 0xb0 || op === 0xb8) {
-      // ldi / ldd / ldir / lddr
+      // ldi / ldd / ldir / lddr. A repeating form moves ONE byte a step and
+      // re-executes itself (PC back by 2), as the silicon does: 21 cycles an
+      // iteration that repeats, 16 for the last. Charging the whole run 16 had
+      // made every ldir look free (an overlay load of hundreds of bytes).
       const dir = op & 0x08 ? -1 : 1;
       const repeat = op & 0x10;
-      do {
-        this.write(this.de, this.read(this.hl));
-        this.hl = (this.hl + dir) & 0xffff;
-        this.de = (this.de + dir) & 0xffff;
-        this.bc = (this.bc - 1) & 0xffff;
-      } while (repeat && this.bc !== 0);
+      this.write(this.de, this.read(this.hl));
+      this.hl = (this.hl + dir) & 0xffff;
+      this.de = (this.de + dir) & 0xffff;
+      this.bc = (this.bc - 1) & 0xffff;
       this.f = (this.f & (FLAG_S | FLAG_Z | FLAG_C)) | (this.bc !== 0 ? FLAG_PV : 0);
+      if (repeat && this.bc !== 0) { this.pc = (this.pc - 2) & 0xffff; return 21; }
       return 16;
     }
     throw new Error(`unimplemented ED opcode 0x${op.toString(16)}`);
