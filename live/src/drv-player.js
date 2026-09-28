@@ -397,7 +397,7 @@ export class DrvPlayer {
   // ── Playback state reset (driver "power-on + START_TRACK all") ──────────
   // `autoStart`: true starts
   // every track from frame 0 (the M1 default); false leaves them idle so the
-  // host mailbox schedule drives START_TRACK / START_SE explicitly (the SE
+  // host mailbox schedule drives START_TRACK / PLAY_SE explicitly (the SE
   // gates — an effect track must not auto-start; driver.md §2.5).
   _reset(autoStart = true) {
     const song = this._song;
@@ -2157,7 +2157,7 @@ export class DrvPlayer {
   // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
   //    of a frame. When the harness auto-starts every track (the M1 default)
   //    START/STOP never arrive; with auto-start off (the SE gates, driver.md
-  //    §2.5) the schedule drives START_TRACK / START_SE / STOP_TRACK too.
+  //    §2.5) the schedule drives START_TRACK / PLAY_SE / STOP_TRACK too.
   _applyMailbox(cmd, a0, a1, a2) {
     switch (cmd) {
       case 0x01: // START_TRACK (track_id) — evict the channel's prior owner
@@ -2165,9 +2165,6 @@ export class DrvPlayer {
         break;
       case 0x02: // STOP_TRACK (track_id) — reclaim if it displaced a BGM owner
         this._mailboxStop(a0);
-        break;
-      case 0x07: // START_SE (track_id, priority) — steal a channel; a1 = priority
-        this._startTrack(a0, true, a1);
         break;
       case 0x03: // KEY_OFF (channel_id)
         this._mailboxKeyOff(a0);
@@ -2251,7 +2248,7 @@ export class DrvPlayer {
   }
 
   // ── Track lifecycle (driver.md §2.2, §2.5, §6.5) ─────────────────────────
-  // START_TRACK / START_SE. The MMB tracks already exist in `_trk` (built at
+  // START_TRACK / an effect's part (PLAY_SE). The MMB tracks already exist in `_trk` (built at
   // _reset); starting one re-inits its dispatch state and claims its channel.
   // With `asSe`, the channel's current owner is *suspended + snapshotted* (so
   // SE-end can restore it) instead of *evicted* — this is the whole SE story.
@@ -2336,7 +2333,7 @@ export class DrvPlayer {
     } else if (asSe && ch >= 20 && ch <= 22) {
       // PCM SE (driver.md §2.5): soft-mix voices have no channel ownership,
       // so nothing is suspended — the SE's PCM_NOTE_ON overwrites the voice slot.
-      // If a BGM loop is live there, keep its NOTE now, at START_SE and before
+      // If a BGM loop is live there, keep its NOTE now, at PLAY_SE and before
       // this frame's mixer pass, so SE-end can start it again.
       // The engine keeps no position the host can read back, so what SE-end
       // restores is the NOTE: a BGM loop starts again from its sample's head.

@@ -421,18 +421,15 @@ void mml_start_all(MMLSeq *s);
  * Starting an already-running track restarts it from the top. */
 void mml_start_track(MMLSeq *s, uint8_t track_id);
 
-/* Start one track as a sound effect (driver.md §2.5). Its channel's current
- * owner is SUSPENDED and its live state snapshotted, not evicted; the SE's
- * END_OF_TRACK or mml_stop_track restores the owner mid-note. Against an SE
- * already on the channel, `priority` decides: lower is dropped (the playing
- * SE is untouched), equal or higher preempts it and inherits its restore
- * duty. A PCM SE overwrites the voice instead; a looping BGM note there is
- * restarted at SE-end. */
-void mml_start_se(MMLSeq *s, uint8_t track_id, uint8_t priority);
-
 /* A def-se by its number — its place in the score's SE_TABLE, the same in
- * every song of a bundle (mmb.md §16). Every part starts as an SE, at the
- * effect's own priority or `priority` when it is not MML_SE_PRIO_DEFAULT.
+ * every song of a bundle (mmb.md §16) — at the effect's own priority or
+ * `priority` when it is not MML_SE_PRIO_DEFAULT (driver.md §2.5). On each part's
+ * channel the current owner is SUSPENDED and its live state snapshotted, not
+ * evicted; the part's END_OF_TRACK or mml_stop_se restores the owner
+ * mid-note. Against an effect already on the channel, the priority decides:
+ * lower is dropped (the playing one is untouched), equal or higher preempts
+ * it and inherits its restore duty. A PCM part overwrites the voice instead;
+ * a looping song note there is restarted at the effect's end.
  * Stop ends every part; playing is whether any part still runs. */
 #define MML_SE_PRIO_DEFAULT (-1)
 void mml_play_se(MMLSeq *s, uint8_t se, int priority);

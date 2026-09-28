@@ -1,5 +1,5 @@
 ; The DISPLACED part's modulators must not play the effect. The BGM on fm1 runs
-; a pitch macro and a volume sweep; an effect steals fm1 at frame 40. While the
+; a pitch macro and a volume sweep; an effect takes fm1 at frame 40. While the
 ; effect owns the channel the stream must equal p3-claim-se-in-twin, which is
 ; this score with the BGM's modulators removed. After the restore the two
 ; legitimately differ — the BGM's binds come back and re-trigger.
@@ -9,4 +9,4 @@
   (macro :pitch (triangle -60..60 :len 8f))
   :vol (linear :from 31 :to 0 :len 300f)
   c c c c)
-(fm2 w :oct 6 :len 8 :vel 15 g g)
+(def-se hit :prio 5 (fm1 w :oct 6 :len 8 :vel 15 g g))

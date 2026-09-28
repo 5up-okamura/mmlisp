@@ -121,18 +121,8 @@ void MMLisp_pump(void);
 void MMLisp_startTrack(u8 track_id);
 
 // Stop a track: key-off (the release tail runs out), free its channel, idle it.
-// Stopping a sound effect gives its channel back (see MMLisp_startSe).
+// Stopping an effect's part gives its channel back, as MMLisp_stopSe does.
 void MMLisp_stopTrack(u8 track_id);
-
-// Start a track as a SOUND EFFECT (driver.md §2.5). Unlike MMLisp_startTrack
-// it does not evict the channel's owner: the BGM track there is suspended with
-// its live state kept, and when the SE ends — its own END_OF_TRACK, or
-// MMLisp_stopTrack for a held or looping SE — the BGM resumes and its note is
-// re-keyed mid-sustain. Against an SE already on the channel `priority`
-// decides: a lower one is dropped and the playing SE is left alone, an equal
-// or higher one replaces it and the BGM returns after the LAST SE. A PCM SE
-// overwrites the voice; a looping BGM note there restarts at SE-end.
-void MMLisp_startSe(u8 track_id, u8 priority);
 
 // Start the song: every track of the loaded score except the effects' parts
 // (def-se). All in one frame, so the tracks start in phase.
@@ -140,10 +130,16 @@ void MMLisp_startSong(void);
 
 // The score's SOUND EFFECTS (def-se, docs/language.md §9.3) by NUMBER — the
 // SE_<NAME> constants tools/install-sgdk.mjs writes to inc/mmlisp_se.h, the
-// same in every song of a bundle. Each of the effect's parts starts as an SE
-// (MMLisp_startSe above: the song's part on that channel is suspended and
-// comes back when the effect ends), at the priority the def-se gives it or at
-// `priority`. Stop ends every part early; playing is whether one still runs.
+// same in every song of a bundle (driver.md §2.5). Unlike MMLisp_startTrack an
+// effect does not evict: on each of its parts' channels the song's part is
+// suspended with its live state kept, and when the effect ends — its own end,
+// or MMLisp_stopSe for a held or looping one — the song's part resumes and its
+// note is re-keyed mid-sustain. Against an effect already on the channel the
+// priority decides — the def-se's, or `priority`: a lower one is dropped and
+// the playing one left alone, an equal or higher one replaces it and the song
+// returns after the LAST effect. A PCM part overwrites the voice; a looping
+// song note there restarts when the effect ends. Playing is whether a part
+// still runs.
 void MMLisp_playSe(u8 se);
 void MMLisp_playSePrio(u8 se, u8 priority);
 void MMLisp_stopSe(u8 se);

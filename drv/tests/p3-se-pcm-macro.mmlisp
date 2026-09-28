@@ -12,6 +12,5 @@
   (macro :step 1/16 :keyon [1 1 1 1 1 1 1 1]) (macro :vel (linear 8..15 :len 4f))
   c c c c)
 
-; track 1 (se-pcm): authored on pcm2, remapped onto pcm1 — a blip with its own
-; decaying :vel, no roll.
-(pcm2 blip :oct 5 :len 8 (macro :vel [15 12 9 6 3]) c)
+; the effect (track 1): a blip on pcm1 with its own decaying :vel, no roll.
+(def-se hit (pcm1 blip :oct 5 :len 8 (macro :vel [15 12 9 6 3]) c))

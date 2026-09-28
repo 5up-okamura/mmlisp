@@ -166,9 +166,6 @@ arbitration, suspend and restore — and lives on the 68000.
 the song's, so an effect sounds the same in every song and under any tempo
 change; a tick-clocked macro on its channel counts the part's ticks (§13.2).
 
-`MMLisp_startSe(track, priority)` starts any one track as an SE — the
-primitive `MMLisp_playSe` is made of, and what the SE gates drive.
-
 **Suspend, not evict.** The BGM owner enters a fourth track state,
 **suspended**: it keeps its state, does not dispatch (its writes would land
 over the SE's) and does not own its channel. Its live channel state is
@@ -650,8 +647,7 @@ does all arithmetic; the sequencer only stores and applies (docs/language.md
 | `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), reset the channel's level state (vel 15, vol 31, master 31, gate 8), and initialize declared val slots not yet host-written (mmb.md §8). Restarting an active track restarts it from the top. The track enters **armed** (§4.2) |
 | `MMLisp_stopTrack(track)` | key-off (the release tail runs out naturally), free the channel, idle the track. On an `fm3-csm` track this clears the CSM bit in `$27` (§9). Stopping an SE restores the BGM it displaced (§2.5) |
 | `MMLisp_startSong()` | start every track of the song — all but the effects' parts — in one frame |
-| `MMLisp_playSe(se)` / `MMLisp_playSePrio(se, priority)` | play a def-se by number (`SE_<NAME>` in `inc/mmlisp_se.h`): each part starts as `MMLisp_startSe` does, at the def-se's priority or `priority`. `MMLisp_stopSe(se)` ends every part, `MMLisp_sePlaying(se)` says whether one runs, `MMLisp_seCount()` how many the score has |
-| `MMLisp_startSe(track, priority)` | start one track as a sound effect (§2.5): the channel's owner is suspended and snapshotted rather than evicted, and restored when the SE ends. Against another SE, lower priority is dropped, equal or higher preempts |
+| `MMLisp_playSe(se)` / `MMLisp_playSePrio(se, priority)` | play a def-se by number (`SE_<NAME>` in `inc/mmlisp_se.h`): each part takes its channel as below, at the def-se's priority or `priority`. `MMLisp_stopSe(se)` ends every part, `MMLisp_sePlaying(se)` says whether one runs, `MMLisp_seCount()` how many the score has |
 | `MMLisp_trackCount()` / `MMLisp_trackId(i)` | enumerate the loaded score's tracks |
 | `MMLisp_keyOff(channel)` | key-off one channel without stopping its track: releases a `len=0` hold (the dispatcher resumes) or truncates a sounding note |
 | `MMLisp_setParam(channel, target, value)` | one-shot absolute write of `target` (opcodes.md §7), as if a PARAM_SET arrived in the stream |

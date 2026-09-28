@@ -15,7 +15,7 @@
  *
  *
  * --idle starts nothing: every track waits for the command schedule, which is
- * how the SE gates fire START_TRACK / START_SE by hand (the reference's
+ * how the SE gates fire START_TRACK / PLAY_SE by hand (the reference's
  * autoStart: false).
  */
 #include <stdio.h>

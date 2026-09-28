@@ -2565,7 +2565,6 @@ void mml_command(MMLSeq *s, uint8_t cmd, uint8_t a0, uint8_t a1, uint8_t a2) {
     case 0x04: mml_set_param(s, a0, a1, (int8_t)a2); break;
     case 0x05: mml_fade_track(s, a0, a1); break;
     case 0x06: mml_set_val(s, a0, (int16_t)(a1 | (a2 << 8))); break;
-    case 0x07: mml_start_se(s, a0, a1); break;
     case 0x08: mml_prime_tracks(s); break;
     case 0x09: mml_play_se(s, a0, a2 ? a1 : MML_SE_PRIO_DEFAULT); break;
     case 0x0a: mml_stop_se(s, a0); break;
@@ -2719,8 +2718,9 @@ static void reclaim_se(MMLSeq *s, MMLTrack *se) {
 
 /* ── Track lifecycle (driver.md §6.5, §2.2, §2.5) ──────────────────────────
  * Ported from drv-player's _startTrack. START_TRACK evicts the channel's
- * owner (a scene transition); START_SE suspends and snapshots it instead, so
- * the SE's end can put it back — that difference is the whole SE story.
+ * owner (a scene transition); an effect's part (mml_play_se) suspends and
+ * snapshots it instead, so the effect's end can put it back — that difference
+ * is the whole SE story.
  */
 static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   int ch = t->channel_id;
@@ -2846,18 +2846,17 @@ void mml_start_track(MMLSeq *s, uint8_t track_id) {
   if (t) start_track_ex(s, t, 0, 0);
 }
 
-void mml_start_se(MMLSeq *s, uint8_t track_id, uint8_t priority) {
-  MMLTrack *t = track_by_id(s, track_id);
-  if (t) start_track_ex(s, t, 1, priority);
-}
-
-/* A def-se, by its number (mmb.md §16): every part starts as an SE at the
- * effect's own priority, or the one the host passes. */
+/* A def-se, by its number (mmb.md §16): every part starts as an SE — the
+ * channel's owner suspended, not evicted (driver.md §2.5) — at the effect's
+ * own priority, or the one the host passes. */
 void mml_play_se(MMLSeq *s, uint8_t se, int priority) {
   if (se >= s->se_count) return;
   const uint8_t *e = s->se_table + (uint32_t)se * 3;
   uint8_t prio = priority == MML_SE_PRIO_DEFAULT ? e[0] : (uint8_t)priority;
-  for (uint8_t k = 0; k < e[2]; k++) mml_start_se(s, (uint8_t)(e[1] + k), prio);
+  for (uint8_t k = 0; k < e[2]; k++) {
+    MMLTrack *t = track_by_id(s, (uint8_t)(e[1] + k));
+    if (t) start_track_ex(s, t, 1, prio);
+  }
 }
 void mml_stop_se(MMLSeq *s, uint8_t se) {
   if (se >= s->se_count) return;

@@ -2,7 +2,7 @@
 
 **Status (2026-09-22): SE is shipped on the driver.** `mmlispseq.c` carries the
 port (suspend / snapshot / restore, priority, the PCM overwrite, both reclaim
-hooks — END_OF_TRACK and stop-track), the SGDK host has `MMLisp_startSe`, and
+hooks — END_OF_TRACK and stop-track), the SGDK host has `MMLisp_playSe`, and
 `m3-se` / `m3-se-prio` are in the c-gate list, byte-identical in NTSC and PAL,
 and `drv/sgdk/example/demo.mmlisp` exercises all three kinds (FM steal with
 priority, PSG steal, PCM overwrite) from the SGDK example's own buttons.
@@ -111,10 +111,12 @@ position and the note it shaped re-attacked.
   not `velBase`; since every note-on copies base → live, the SE's first note
   took the BGM's velocity. Fixed in `drv-player.js` (the C had it right). Only
   an SE could expose it: START_TRACK gates always set their own velocity.
-- The gates' `.cmds.json` sidecar (`autoStart: false`, `remapChannels`,
-  `commands`) is applied by `c-gate.mjs` — the remap patches the MMB's track
-  table so both players read the same file, and `gate_main --idle` starts
-  nothing. It stands in for the bundler.
+- The gates' `.cmds.json` sidecar (`autoStart: false`, `commands`) is applied
+  by `c-gate.mjs`, and `gate_main --idle` starts nothing. Since 2026-09-28
+  every SE gate is a def-se score driven by PLAY_SE / STOP_SE (the old
+  track-id START_SE and the sidecar `remapChannels` are gone — the user:
+  "def-seに一本化したい / 古い実装は必要ない"); the conversion was checked
+  byte-identical, NTSC and PAL, on all fifteen scores.
 
 ## Still to do
 

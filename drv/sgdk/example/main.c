@@ -107,8 +107,8 @@ static const u8* const SONGS[] = { MMLISP_SONG_LIST };
 #define MMLISP_AUTOPLAY 0
 #endif
 
-// ── The headless effect script (sgdk-gate --se N) ───────────────────────────
-// The machine gate runs the ROM with no pad, so without this MMLisp_startSe
+// ── The headless effect script (sgdk-gate --se) ─────────────────────────────
+// The machine gate runs the ROM with no pad, so without this MMLisp_playSe
 // would never execute on a real 68000 — everything about effects would be
 // verified in the reference and in the host's C and nowhere else. With it,
 // each of the first four effects is fired this many frames after

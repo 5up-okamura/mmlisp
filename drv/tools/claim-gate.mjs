@@ -33,7 +33,7 @@
 // also make them PAL tests, which they are not (tools/pal-gate.mjs).
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildMmb, remapTrackChannels } from "./mmb-build.mjs";
+import { buildMmb } from "./mmb-build.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder } from "../../live/src/slot-builder.js";
 import { existsSync, readFileSync } from "node:fs";
@@ -85,7 +85,6 @@ function slots(stem) {
   const own = join(tests, `${stem}.cmds.json`);
   const shared = join(tests, `${stem.replace(/-twin$/, "")}.cmds.json`);
   const sidecar = JSON.parse(readFileSync(existsSync(own) ? own : shared, "utf8"));
-  if (sidecar.remapChannels) remapTrackChannels(mmb, sidecar.remapChannels);
   const drv = new DrvPlayer();
   drv.loadMMB(mmb, sampleBank);
   return drv.captureSlotLog({
@@ -116,7 +115,6 @@ function checkInvariant(stem) {
   const path = join(tests, `${stem}.mmlisp`);
   const { bytes: mmb, sampleBank } = buildMmb(path, { frameHz });
   const sidecar = JSON.parse(readFileSync(join(tests, `${stem}.cmds.json`), "utf8"));
-  if (sidecar.remapChannels) remapTrackChannels(mmb, sidecar.remapChannels);
   const drv = new DrvPlayer();
   drv.loadMMB(mmb, sampleBank);
   drv._slotSink = new SlotBuilder();

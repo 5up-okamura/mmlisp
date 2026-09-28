@@ -20,7 +20,7 @@ import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "no
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildMmb, remapTrackChannels } from "./mmb-build.mjs";
+import { buildMmb } from "./mmb-build.mjs";
 import { buildBundle, loadManifest } from "./bundle.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { SlotBuilder } from "../../live/src/slot-builder.js";
@@ -86,9 +86,7 @@ function parseStream(buf) {
 
 // ── What to gate ───────────────────────────────────────────────────────────
 // A job is one MMB + its bank + its sidecar. A score on its own is built here;
-// a bundle's songs come built, with the shared bank, and their channel remap
-// already applied by the manifest — a sidecar's `remapChannels` is ignored for
-// those, so one file owns that decision.
+// a bundle's songs come built, with the shared bank and the manifest's effects.
 const jobs = [];
 for (const score of scores) {
   const { bytes: mmb, sampleBank, diagnostics } = buildMmb(score, { frameHz });
@@ -96,7 +94,7 @@ for (const score of scores) {
     if (d.severity === "error") throw new Error(`${d.code}: ${d.message}`);
   }
   jobs.push({ name: basename(score), stem: basename(score, ".mmlisp"), mmb, sampleBank,
-    sidecar: score.replace(/\.mmlisp$/, ".cmds.json"), remapFromSidecar: true });
+    sidecar: score.replace(/\.mmlisp$/, ".cmds.json") });
 }
 for (const manifestPath of bundles) {
   const { manifest, baseDir } = loadManifest(manifestPath);
@@ -106,7 +104,7 @@ for (const manifestPath of bundles) {
   if (errs.length) throw new Error(`${manifestPath}: ${errs.map((d) => `${d.code}: ${d.message}`).join("; ")}`);
   for (const s of bundle.songs) {
     jobs.push({ name: `${basename(manifestPath)}:${s.name}`, stem: `${basename(manifestPath, ".json")}-${s.name}`,
-      mmb: s.bytes, sampleBank: bundle.bank, sidecar: s.src.replace(/\.mmlisp$/, ".cmds.json"), remapFromSidecar: false });
+      mmb: s.bytes, sampleBank: bundle.bank, sidecar: s.src.replace(/\.mmlisp$/, ".cmds.json") });
   }
 }
 
@@ -118,17 +116,12 @@ for (const job of jobs) {
   // Host commands are not in the stream, so a score may carry a sidecar
   // schedule — the same one the Z80 gates used. Both sides apply it at the top
   // of the matching frame. A plain array is the schedule; the SE gates carry
-  // an object: `autoStart: false` (nothing starts until the schedule says so),
-  // `remapChannels` (track id → channel id, patched into the MMB's track table
-  // so both players read the two-tracks-one-channel layout — driver.md §2.5),
+  // an object: `autoStart: false` (nothing starts until the schedule says so)
   // and `commands`.
   const cmdPath = job.sidecar;
   const sidecar = existsSync(cmdPath) ? JSON.parse(readFileSync(cmdPath, "utf8")) : [];
   const commands = Array.isArray(sidecar) ? sidecar : sidecar.commands ?? [];
   const autoStart = Array.isArray(sidecar) ? true : sidecar.autoStart !== false;
-  if (job.remapFromSidecar && !Array.isArray(sidecar) && sidecar.remapChannels) {
-    remapTrackChannels(mmb, sidecar.remapChannels);
-  }
   const mmbPath = join(tmp, `${job.stem}.mmb`);
   writeFileSync(mmbPath, mmb);
   // PCM scores carry their sample blobs in a separate ROM bank, not an MMB

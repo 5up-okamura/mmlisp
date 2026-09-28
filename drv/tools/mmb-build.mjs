@@ -98,34 +98,6 @@ export function seHeader(list) {
   return lines.join("\n");
 }
 
-/* Point tracks at other channels, in an already-built MMB (TRACK_TABLE: u16
- * count, then 5-byte entries of track id / channel id / flags / offset16).
- * `map` is keyed by TRACK ID. The gates' `.cmds.json` sidecars use it to lay
- * two tracks of one score on one channel, which is how they test starting a
- * TRACK as an effect (mml_start_se); a score's own effects are def-se, which
- * the compiler puts on their channels itself.
- */
-export function remapTrackChannels(mmb, map) {
-  const u16 = (o) => mmb[o] | (mmb[o + 1] << 8);
-  const u32 = (o) => (u16(o) | (u16(o + 2) << 16)) >>> 0;
-  const sections = u16(8), header = u16(10);
-  const moved = [];
-  for (let i = 0; i < sections; i++) {
-    const at = header + i * 12;
-    if (u16(at) !== 0x0001) continue; // SEC_TRACK_TABLE
-    const off = u32(at + 4);
-    const count = u16(off);
-    for (let k = 0; k < count; k++) {
-      const e = off + 2 + k * 5;
-      const to = map[mmb[e]];
-      if (to == null) continue;
-      moved.push({ track: mmb[e], from: mmb[e + 1], to });
-      mmb[e + 1] = to;
-    }
-  }
-  return moved;
-}
-
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   const [inPath, outPath] = process.argv.slice(2);
   if (!inPath || !outPath) {

@@ -1,12 +1,14 @@
-; SE suspend/restore gate (plan-se.md Step 2). A BGM FM track holds a sustained
-; note on fm1; an SE steals that channel mid-sustain via START_SE, plays a short
-; burst, then ends — and the BGM note must resume with its voice, level and
-; pitch restored and re-keyed. Both the initial START_TRACK (bgm) and the
-; mid-song START_SE (se) are host-driven from m3-se.cmds.json with auto-start
-; off, so the SE track stays idle until it is fired.
+; SE suspend/restore gate (plan-se.md). A BGM FM track holds a sustained note
+; on fm1; an effect takes that channel mid-sustain, plays a short burst, then
+; ends — and the BGM note must resume with its voice, level and pitch restored
+; and re-keyed. The same on sqr1 (PSG) and on pcm1's voice (PCM, which has no
+; owner to suspend: the effect overwrites the voice, and its end starts the
+; BGM's loop again). The song and the effects are host-driven from
+; m3-se.cmds.json with auto-start off.
 ;
 ; :vel < 15 on the BGM forces the carrier-TL attenuation path, so the restore
 ; must recompose the level (not just re-key) to match.
+(def pcm-voices 2)
 
 (def-fm bgm :alg 7 :fb 0
   :ar1 31 :dr1 4 :sr1 1 :rr1 6 :sl1 2 :tl1 16 :ks1 0 :ml1 1 :dt1 0
@@ -20,33 +22,19 @@
   :ar3 31 :dr3 2 :sr3 0 :rr3 4 :sl3 0 :tl3 10 :ks3 0 :ml3 2 :dt3 0
   :ar4 31 :dr4 4 :sr4 1 :rr4 6 :sl4 2 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
 
-; track 0 (bgm-fm): fm1 holds three whole notes — a long sustain the SE steals.
-(fm1 :tempo 120 bgm :oct 4 :len 1 :vel 12  c c c)
-
-; track 1 (se-fm): authored on fm2 so the compiler emits it as a separate track
-; (one channel = one track), then m3-se.cmds.json remaps its channel to fm1 so
-; it *shares* fm1 with the BGM — the two-tracks-on-one-channel layout the Step 3
-; bundler will produce. START_SE suspends the fm1 BGM owner and snapshots it; the
-; burst's END_OF_TRACK reclaims the channel and restores it.
-(fm2 sfx :oct 5 :len 8 :vel 15  g g)
-
-; track 2 (bgm-psg): sqr1 holds a sustained tone the PSG SE steals.
-(sqr1 :oct 5 :len 1 :vel 11  e e e)
-
-; track 3 (se-psg): authored on sqr2, remapped to sqr1 — a PSG SE that steals the
-; sqr1 BGM. It fires AFTER the fm SE has ended (non-overlapping), so the single
-; SE_SNAP slot suffices; restore re-writes the BGM's period + attenuation.
-(sqr2 :oct 6 :len 8 :vel 15  b b)
-
 (def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (def-pcm blip :file "blip.wav")
 
-; track 4 (bgm-pcm): pcm1 (soft-mix voice 0) plays a sustain-looping sample (a
-; never-ending loop, like m2-pcmloop — the gate frame count caps the horizon).
+; track 0: fm1 holds three whole notes — a long sustain the effect takes.
+(fm1 :tempo 120 bgm :oct 4 :len 1 :vel 12  c c c)
+; track 1: sqr1 holds a sustained tone.
+(sqr1 :oct 5 :len 1 :vel 11  e e e)
+; track 2: pcm1 plays a sustain-looping sample.
 (pcm1 pad :mode loop :oct 4 :len 1 :vel 12  c c c)
 
-; track 5 (se-pcm): a blip authored on pcm2, remapped to pcm1's channel so it
-; overwrites voice 0 — the PCM steal (design C). START_SE snapshots the live loop
-; voice struct; the SE's END_OF_TRACK writes it back so the loop resumes at its
-; frozen position (no dropout). Fires after the PSG SE (separate PCM_SNAP slot).
-(pcm2 blip :oct 5 :len 8 :vel 15  c)
+; effect 0 (track 3): an FM burst on fm1.
+(def-se fm (fm1 sfx :oct 5 :len 8 :vel 15  g g))
+; effect 1 (track 4): a PSG burst on sqr1, after the FM one has ended.
+(def-se psg (sqr1 :oct 6 :len 8 :vel 15  b b))
+; effect 2 (track 5): a blip over pcm1's looping voice.
+(def-se pcm (pcm1 blip :oct 5 :len 8 :vel 15  c))

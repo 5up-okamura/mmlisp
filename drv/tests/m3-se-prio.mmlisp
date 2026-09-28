@@ -1,5 +1,6 @@
-; SE priority gate (plan-se.md, N=1 + priority). A BGM on fm1 is stolen by SE-A
-; (low prio), which SE-B (high prio) preempts, and SE-C (lower than B) is dropped.
+; SE priority gate (plan-se.md). A BGM on fm1 is taken by effect A (priority
+; 5), which effect B (priority 10) preempts, and effect C (3, lower than B) is
+; dropped with B left alone. The BGM returns after the LAST effect.
 (def-fm bgm :alg 7 :fb 0
   :ar1 31 :dr1 4 :sr1 1 :rr1 6 :sl1 2 :tl1 16 :ks1 0 :ml1 1 :dt1 0
   :ar2 31 :dr2 6 :sr2 1 :rr2 7 :sl2 2 :tl2 10 :ks2 0 :ml2 2 :dt2 0
@@ -9,6 +10,6 @@
 (def-fm sb :alg 7 :fb 4  :ar1 31 :tl1 9 :ml1 3  :ar2 31 :tl2 5 :ml2 6  :ar3 31 :tl3 11 :ml3 2  :ar4 31 :tl4 3 :ml4 1)
 (def-fm sc :alg 7 :fb 6  :ar1 31 :tl1 7 :ml1 5  :ar2 31 :tl2 4 :ml2 7  :ar3 31 :tl3 12 :ml3 1  :ar4 31 :tl4 2 :ml4 1)
 (fm1 :tempo 120 bgm :oct 4 :len 1 :vel 12  c c c)   ; track 0
-(fm2 sa :oct 5 :len 2 :vel 15  g)                    ; track 1  SE-A
-(fm3 sb :oct 5 :len 2 :vel 15  a)                    ; track 2  SE-B
-(fm4 sc :oct 5 :len 2 :vel 15  b)                    ; track 3  SE-C
+(def-se a :prio 5  (fm1 sa :oct 5 :len 2 :vel 15  g))
+(def-se b :prio 10 (fm1 sb :oct 5 :len 2 :vel 15  a))
+(def-se c :prio 3  (fm1 sc :oct 5 :len 2 :vel 15  b))

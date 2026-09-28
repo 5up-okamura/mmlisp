@@ -268,8 +268,7 @@ while (TRUE) {
   replaces it otherwise; the song comes back after the last. The def-se gives
   the priority; `MMLisp_playSePrio(se, p)` overrides it. `MMLisp_sePlaying(se)`
   says whether it still runs. An effect keeps its own tempo, so it sounds the
-  same in every song. (`MMLisp_startSe(track, priority)` starts one track as
-  an effect — the primitive underneath.)
+  same in every song.
 
 - **Music → game: `MMLisp_trig(track)`.** The score marks a beat with
   `(trig N)`; this returns that track's status byte — the id in bits 5-0 under a
