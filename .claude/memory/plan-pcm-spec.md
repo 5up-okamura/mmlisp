@@ -60,6 +60,12 @@ PCM in any layer.
   BEFORE the def's — the user's call: the kit is evened out first, and a
   per-sound level survives a kit-wide normalize. PCM audition is the FM one:
   cursor on a sample def, play the keyboard; no panel (user: no new UI).
+- **Macros on PCM: `:keyon`, `:vel`, `:vol` (2026-09-28).** The user: "use
+  every feature the hardware allows; skip only what is hard" — a drum roll
+  was the case. Before this the PCM path silently dropped every macro. PCM
+  velocity went to eighths at the same time, like FM and PSG, which removed
+  every PCM special case. The other targets stay errors: a soft-mixed voice
+  has no register for them.
 - **One 32 KB bank a song (2026-09-17).** If ever needed: on `pcm1` only, the
   START piece writes the bank register (~100 cycles, blobs may not cross a
   32 KB boundary; ~14.4 → ~12 kHz). Two or three voices would need a per-block
@@ -77,8 +83,6 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
   BlastEm number; the host writes with `movep.l`. First hardware run decides
   whether the images keep the edge (`npm run light-study -- --target 0.95`
   prints the ladder with a margin).
-- **PCM SE** runs only in `drv-player.js`; the C sequencer and the SGDK host
-  have no SE yet ([[plan-se]]).
 - **Sample effects, second batch** — `hpf` / `lpf` (a low cut buys level
   headroom), `drive` (tanh saturation). Agreed with the first batch, not yet
   written. `reverb` is in (2026-09-26; `:tail` required, the user's OK on the

@@ -291,23 +291,14 @@ increment into C *after* it. Two engine build traps: **the image boots at level
 - **Velocity is held in eighths of a step on every channel** (user, 2026-09-27,
   option "a" over rounding in the language). The design intent was "compute
   fine, quantize once at the output", and the driver had cut a `:vel` macro
-  to 16 steps before the tables. Now the stream, the macro samples and
-  NOTE_ON_EX carry 0..120, the tables are 121 entries in quarter steps, and
-  the preview composes with the same quarter math (`sumLevelOffsets`,
-  `velFine`). Cost: ~420 bytes of ROM tables, no runtime cost. Asked whether
-  this is over-spec for the Mega Drive: no — the chip's TL already resolves
-  0.75 dB, and a fade stepping 2 dB is audible zipper noise. The host API and
-  relative writes stay in whole steps. PCM holds eighths too (2026-09-28): its
-  shift composes n/24 and rounds once, which removed every PCM special case.
-- **PCM takes macros: `:keyon`, `:vel`, `:vol`** (user, 2026-09-28: "use
-  every feature the hardware allows; skip only what is hard"). A drum roll is
-  the motivating case. The PCM path had silently dropped every macro. A keyon
-  step re-STARTs the blob after the frame's level steps (the START carries
-  the level; no PCM_VOL). Other targets are `E_PCM_MACRO_TARGET`. A PCM
-  key-off (REST, end, host KEY_OFF/STOP_TRACK, PCM_NOTE_OFF) is one path,
-  `channel_off`; it also fixed a `:len 0` loop that the host's KEY_OFF never
-  released. A PCM SE keeps the BGM's binds and gives them back at its end.
-  Gates: `m4-pcm-macro`, `m4-pcm-hold`, `p3-se-pcm-macro`.
+  to 16 steps before the tables (`driver.md` §7.1 has the mechanism). Cost:
+  ~420 bytes of ROM tables, no runtime cost. The user asked whether this is
+  over-spec for the Mega Drive: no — the chip's TL already resolves 0.75 dB,
+  and a fade stepping 2 dB is audible zipper noise.
+- **A PCM key-off is one path, `channel_off`** (2026-09-28, with PCM macros —
+  [[plan-pcm-spec]]). Before it, the loop release lived only in the
+  PCM_NOTE_OFF handler, so the host's KEY_OFF never let a `:len 0` loop go —
+  a bug no gate saw, because no gate sent KEY_OFF to a PCM channel.
 - **A VBlank-only pump mode is wanted as an option**, because a game (racing,
   raster 3D) may need HBlank for itself. Shipped as
   `MMLisp_attachVBlankOnly`. The user's stated order is **correct playback

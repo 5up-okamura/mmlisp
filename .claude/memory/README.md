@@ -33,10 +33,10 @@ Rules:
   shipped light engine, with their reasons, and what is still open.** Read
   before touching PCM in any layer.
 - [language-open.md](language-open.md) — **the language and IR: what is open.**
-  The questions from the 2026-09-18 and 2026-09-26 audits that need the
-  user's decision (the latter: irregular syntax rules), the
-  larger judgment-free items, and why compile-time eval and the value machine
-  have their shape, with the risks that are still live.
+  The seven questions that need the user's decision (the 2026-09-26
+  syntax audit is all landed or decided), the preview-vs-driver residue, and
+  why compile-time eval and the value machine have their shape, with the
+  risks that are still live.
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   Lisp input aids: the implementation deviations and their reasons (why no
   `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the

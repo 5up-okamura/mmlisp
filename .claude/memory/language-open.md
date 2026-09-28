@@ -34,11 +34,6 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
 6. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
 7. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
-8. **What the shipped eval work is called.** `docs/roadmap.md` frames v0.5 as
-   the baseline and says the numbered freezes stopped there, matching
-   CLAUDE.md — but score removal, `import`, compile-time eval and the value
-   machine all landed after that line was drawn. If they are v0.6, it is the
-   version table's last row and the sentence under it.
 
 ## 1b. Irregular rules, from the 2026-09-26 audit — all landed or decided
 
@@ -120,16 +115,14 @@ git; the ratio is not.
    to host-relative behaviour.
 2. **Multi-write chains touch the register between steps** — `W_EVAL_CHAIN_LONG`
    past about six ops.
-3. **Inline stochastic sweeps (curve ids 8–11) fall back to a linear ramp on the
-   driver** — a live ir↔drv divergence.
-4. **The signal-⊕ region model is deliberately restricted** (equal step, no
+3. **The signal-⊕ region model is deliberately restricted** (equal step, no
    loop⊕one-shot, single release). loop⊕one-shot is the designed first
    relaxation and the prerequisite for *baked* AM; runtime AM is the scaled-macro
    flag.
-5. **A second sigil (`@vel`) was considered and rejected** — more syntax for the
+4. **A second sigil (`@vel`) was considered and rejected** — more syntax for the
    same semantics. The `$` namespace carries several tiers and reserved-name
    checks keep them apart.
-6. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
+5. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
    F-number at note boundaries, proven scale-independent. This was the only
    record of it; the file it used to point at never existed.
 
