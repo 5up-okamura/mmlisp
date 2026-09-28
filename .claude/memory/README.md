@@ -38,6 +38,9 @@ Rules:
   syntax audit is all landed or decided), the preview-vs-driver residue, and
   why compile-time eval and the value machine have their shape, with the
   risks that are still live.
+- [plan-z80-only.md](plan-z80-only.md) — **a Z80-only build (roadmap Phase 3
+  #6): why the user wants it, the measured cost of the archived Z80 sequencer
+  with PCM off, and the open choice of PCM scheme.** Nothing is built.
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   Lisp input aids: the implementation deviations and their reasons (why no
   `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the
