@@ -73,6 +73,9 @@ const CASES = [
   },
 ];
 const MAX_FRAMES = 140;
+// The ledger is checked for longer: an effect that ends late (a CH3 hold in
+// p3-se-ch3 lasts to f151) must be seen giving its hold back.
+const INVARIANT_FRAMES = 240;
 
 function slots(stem) {
   const path = join(tests, `${stem}.mmlisp`);
@@ -107,7 +110,7 @@ function slots(stem) {
 // away (a claim, a preempt) has to keep it true.
 const INVARIANT_SCORES = [
   "m3-se", "m3-se-prio", "p3-se-strand", "p3-se-fade", "p3-se-stopped",
-  "p3-se-overlap", "p3-se-pcm-macro", "p3-se-def",
+  "p3-se-overlap", "p3-se-pcm-macro", "p3-se-def", "p3-se-ch3", "p3-se-ch3-op",
   "p3-claim-se-in", "p3-claim-se-out",
 ];
 
@@ -126,11 +129,26 @@ function checkInvariant(stem) {
     if (!byFrame.has(c.frame)) byFrame.set(c.frame, []);
     byFrame.get(c.frame).push(c);
   }
-  for (let f = 0; f < MAX_FRAMES; f++) {
+  for (let f = 0; f < INVARIANT_FRAMES; f++) {
     for (const c of byFrame.get(f) ?? []) drv._applyMailbox(c.cmd, c.a0 ?? 0, c.a1 ?? 0, c.a2 ?? 0);
     drv.stepFrame();
     drv._slotSink.endFrame();
+    // CH3 is held whole: while an effect holds it, the song's CH3 parts are
+    // suspended under that ONE hold, and the hold needs a running part of the
+    // effect there — else nothing will ever end it and give CH3 back.
+    const ch3 = drv._ch3;
+    const ch3Parts = drv._trk.filter((x) => x.isSe && x.running && drv._ch3Group(x.channelId));
+    if (ch3.active && !ch3Parts.some((x) => x.seIndex === ch3.se)) {
+      return `f${f}: effect ${ch3.se} holds CH3 with no part of it running there`;
+    }
+    if (!ch3.active && ch3Parts.length) {
+      return `f${f}: track ${ch3Parts[0].index} plays on CH3 as an effect with no hold`;
+    }
     for (const t of drv._trk) {
+      if (drv._ch3Group(t.channelId)) {
+        if (t.suspended && !ch3.active) return `f${f}: CH3 track ${t.index} is suspended with no effect holding CH3`;
+        continue;
+      }
       const holders = drv._trk.filter((x) => x.isSe && x.running && x.displaced === t.index);
       if (t.suspended && holders.length !== 1) {
         return `f${f}: track ${t.index} is suspended with ${holders.length} effects holding it`;

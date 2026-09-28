@@ -467,6 +467,18 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "p3-se-ch3-op.mmlisp": {
+    "ok": false,
+    "mismatches": 14,
+    "compileErrors": 0,
+    "digest": "2e2d7fe2"
+  },
+  "p3-se-ch3.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "p3-se-def.mmlisp": {
     "ok": true,
     "mismatches": 0,

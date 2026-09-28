@@ -4311,11 +4311,12 @@ function collectDefs(roots, diagnostics) {
   return { defs, paramDefs, typedDefs, sampleDefs, seDefs, vals, fileMeta, imports, remaining };
 }
 
-// The channels a sound effect may play on. FM3's operator and CSM modes are
-// song-wide chip modes ($27), so an effect cannot bring its own.
+// The channels a sound effect may play on — every one a song may. A part on
+// CH3 (fm3, fm3-1…fm3-4, fm3-csm, fm3-csm-rate) takes all of CH3 from the song,
+// its operator mode and CSM being chip-wide (driver.md §2.5).
 const SE_CHANNELS = new Set([
   "fm1", "fm2", "fm3", "fm4", "fm5", "fm6", "sqr1", "sqr2", "sqr3", "noise",
-  "pcm1", "pcm2", "pcm3",
+  "pcm1", "pcm2", "pcm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate",
 ]);
 
 // (def-se name [:prio N] [:tempo T] (channel body…)…). The head options are
@@ -4352,9 +4353,15 @@ function parseSeDef(root, diagnostics) {
     const head = part.kind === "list" ? atomValue(part.items[0]) : null;
     if (!head || !SE_CHANNELS.has(head)) {
       pushDiag(diagnostics, "error", "E_SE_PART",
-        head && /^fm3-/.test(head)
-          ? `(${head} …) cannot be an effect's part: FM3's operator and CSM modes belong to the song`
-          : `a def-se part is a channel form, e.g. (fm1 …), not ${head ? `(${head} …)` : "that"}`,
+        `a def-se part is a channel form, e.g. (fm1 …), not ${head ? `(${head} …)` : "that"}`,
+        nodeSrc(part), null);
+      continue;
+    }
+    // CH3 in CSM mode is not CH3 in operator mode: one effect picks one.
+    const csm = /^fm3-csm/.test(head);
+    if ([...seen].some((h) => /^fm3/.test(h) && /^fm3-csm/.test(h) !== csm)) {
+      pushDiag(diagnostics, "error", "E_SE_PART",
+        `def-se ${name}: fm3-csm/fm3-csm-rate cannot share an effect with fm3 or fm3-1…fm3-4`,
         nodeSrc(part), null);
       continue;
     }
@@ -4947,10 +4954,6 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     const head = atomValue(node.items[0]);
     if (head) channelHeads.add(head);
   }
-  // An effect's channels are the song's too: its PCM needs the voices, and
-  // fm6 is the DAC for an effect as for the song.
-  for (const se of seDefs.values())
-    for (const part of se.parts) channelHeads.add(atomValue(part.items[0]));
 
   const hasCsmMode =
     channelHeads.has("fm3-csm") || channelHeads.has("fm3-csm-rate");
@@ -4974,8 +4977,14 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // D10: the PCM voice count is the engine image, and the image is a whole-song
   // choice — one image plays 1, 2 or 3 voices at 14.4 / 10.1 / 6.7 kHz. The
   // score states it, or it is the highest pcmN track used.
+  // An effect's channels count here too: its PCM needs the voices, and fm6 is
+  // the DAC for an effect as for the song. (Its CH3 mode is its own — the
+  // FM3 checks above are the song's alone.)
+  const allHeads = new Set(channelHeads);
+  for (const se of seDefs.values())
+    for (const part of se.parts) allHeads.add(atomValue(part.items[0]));
   let pcmUsed = 0;
-  for (const head of channelHeads) {
+  for (const head of allHeads) {
     const m = /^pcm([1-3])$/.exec(head);
     if (m) pcmUsed = Math.max(pcmUsed, Number(m[1]));
   }
@@ -4992,7 +5001,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   }
   // D6: a score with PCM owns fm6 as the DAC for the whole song — the engine
   // writes $2B once and never gives the channel back.
-  if (pcmVoices > 0 && channelHeads.has("fm6")) {
+  if (pcmVoices > 0 && allHeads.has("fm6")) {
     pushDiag(
       diagnostics,
       "error",
@@ -5202,21 +5211,31 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // starts it. The same set in every song gives the same numbers.
   let seIndex = 0;
   for (const se of seDefs.values()) {
-    for (const node of expandRoots(se.parts, defs, paramDefs, diagnostics)) {
+    const parts = expandRoots(se.parts, defs, paramDefs, diagnostics);
+    // An effect with operator parts sets CH3's operator mode itself: taking
+    // CH3 leaves it in normal mode (driver.md §2.5), as a song starts.
+    let opMode = parts.some((n) => /^fm3-[1-4]$/.test(atomValue(n.items[0])));
+    for (const node of parts) {
       const head = atomValue(node.items[0]);
       const trackState = makeTrackState(head, se.tempo, se.tempo, null);
       const trackData = {
         id: 0,
         scoreChannel: head,
-        channel: head,
+        channel: /^fm3-/.test(head) ? "fm3" : head,
         se: { name: se.name, index: seIndex, prio: se.prio },
         events: [{ tick: 0, cmd: "TEMPO_SET", args: { bpm: se.tempo }, src: se.src }],
       };
+      if (opMode) {
+        trackData.events.push({ tick: 0, cmd: "FM3_MODE", args: { mode: "op" }, src: se.src });
+        opMode = false;
+      }
       if (head === "noise")
         trackData.events.push({ tick: 0, cmd: "PARAM_SET",
           args: { target: "NOISE_MODE", value: NOISE_MODE_MAP["white0"] }, src: se.src });
       compileChannelBody(node.items.slice(1), trackState, trackData.events, diagnostics,
         `se:${se.name}:${head}`, typedDefs, loopCounter, vals);
+      if (trackState.isCsmTrack && trackState.hasCsmOn)
+        trackData.events.push({ tick: trackState.tick, cmd: "CSM_OFF", args: {}, src: se.src });
       expandTrackDelays(trackData);
       tracks.push(trackData);
     }

@@ -134,10 +134,23 @@ position and the note it shaped re-attacked.
   effect is a DEF (so `import` carries it, and "tracks are songs" stands);
   a part is on the channel it takes — no remap, so remap left the bundle and
   install-sgdk; an effect keeps its own tempo (per-track increment) so it
-  sounds alike in every song; FM3 op/CSM parts are refused (song-wide modes);
+  sounds alike in every song; FM3 op/CSM parts were refused at first (song-wide modes) — superseded, see
+  CH3 below;
   MML_MAX_TRACKS 16 → 32. Not built: an SGDK/BlastEm run of the new example
   (no toolchain in the cloud container) — `npm run sgdk:gate:se` is updated
   and waits for a machine that has one.
+- **CH3 taken whole — DONE (2026-09-28).** The user, offered "take all of
+  CH3" vs. finer schemes: "3ch丸ごとで良いです". An effect's CH3 parts claim the
+  group (ch2 + fm3-1..4/csm/csm-rate) once; the snapshot is one `MMLCh3Snap`
+  on the sequencer (mode, Timer A, ch, per-op state/binds), not per track.
+  It also fixed an older hole: ch2 was never owned, so an SE on plain fm3
+  did not suspend the song's fm3. Gates `p3-se-ch3`, `p3-se-ch3-op`
+  (claim-gate invariant covers the hold; mutation-checked).
+- **Open: a restore rebuilds the patch from the voice id**, so a song patch
+  set by a partial `def-fm` (no VOICE_SET, voice 255) is not rebuilt after an
+  effect — true of every channel, found while writing the CH3 gates. Fix
+  idea: restore from the register shadow instead. Not raised with the user
+  yet as of this entry.
 - **Overlapping SEs on different channels** are already possible in the C —
   the snapshot lives on each suspended track, not in one slot — but no gate
   fires two at once. Add one when a score needs it.

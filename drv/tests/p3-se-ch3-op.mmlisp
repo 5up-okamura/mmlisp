@@ -1,0 +1,26 @@
+; P3 gate: p3-se-ch3 against a song that plays CH3 in OPERATOR mode — four
+; operator parts holding notes under the patch track. A normal-mode effect
+; and a CSM effect take CH3 in turn; each time the song gets its operator
+; mode back, its four pitches, levels and key bits, and its notes re-keyed.
+; (p3-se-ch3-op.cmds.json: blip at 30, buzz at 90.)
+(def-fm kit :alg 7 :fb 0
+  :ar1 31 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 10 :ml1 2 :ks1 0 :dt1 0
+  :ar2 31 :dr2 8 :sr2 2 :rr2 8 :sl2 2 :tl2 10 :ml2 1 :ks2 0 :dt2 0
+  :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 10 :ml3 4 :ks3 0 :dt3 0
+  :ar4 31 :dr4 9 :sr4 2 :rr4 9 :sl4 3 :tl4 10 :ml4 1 :ks4 0 :dt4 0)
+(def-fm buzz :alg 7 :fb 0
+  :ar1 31 :dr1 10 :sr1 4 :rr1 8 :sl1 4 :tl1 20 :ml1 3 :ks1 0 :dt1 0
+  :ar2 31 :dr2 12 :sr2 5 :rr2 9 :sl2 5 :tl2 18 :ml2 5 :ks2 0 :dt2 0
+  :ar3 31 :dr3 10 :sr3 4 :rr3 8 :sl3 4 :tl3 22 :ml3 7 :ks3 0 :dt3 0
+  :ar4 31 :dr4 14 :sr4 6 :rr4 10 :sl4 6 :tl4 8 :ml4 2 :ks4 0 :dt4 0)
+
+(fm3 :tempo 120 kit)                               ; track 0 — the patch
+(fm3-1 :oct 5 :len 1 :vel 12  c c c)                ; tracks 1-4 — the operators
+(fm3-2 :oct 4 :len 1 :vel 11  e e e)
+(fm3-3 :oct 4 :len 1 :vel 10  g g g)
+(fm3-4 :oct 3 :len 1 :vel 13  c c c)
+
+(def-se blip :prio 3
+  (fm3 kit :oct 6 :len 16  c e g))
+(def-se buzz :prio 5
+  (fm3-csm buzz :oct 3 :len 4 :vel 13 :csm-rate 440  c c))

@@ -461,6 +461,9 @@ export class DrvPlayer {
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
     this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
+    this._timerA = 0; // the Timer A period last written (the CSM rate)
+    // CH3 as an effect found it, while one holds it (mmlispseq.h MMLCh3Snap).
+    this._ch3 = { active: false };
     // FM3 independent-OP: each operator's own note and sticky :pitch offset
     // (index = op − 1); in special mode the operator's F-number is written from
     // these, not from _fm[2] (driver.md §13.4).
@@ -528,6 +531,7 @@ export class DrvPlayer {
       suspended: false,
       isSe: false,
       displaced: null, // owner track index this SE displaced (null = none)
+      seIndex: null, // the effect this part plays for (SE_TABLE number)
       snapshot: null, // channel state captured at suspend (owner tracks only)
       pcmSnap: null, // PCM SE (design C): stolen soft-mix voice struct to restore
       pcmSe: null, // PCM SE: {vi, binds} — the voice it took, and the BGM binds to hand back
@@ -2091,6 +2095,7 @@ export class DrvPlayer {
   }
 
   _writeTimerA(period) {
+    this._timerA = period; // what an effect that takes CH3 gives back
     this._ym(0, 0x24, (period >> 2) & 0xff);
     this._ym(0, 0x25, period & 0x03);
   }
@@ -2228,7 +2233,157 @@ export class DrvPlayer {
   _playSe(se, prio = null) {
     const e = this._song?.seTable?.[se];
     if (!e) return;
-    for (let k = 0; k < e.count; k++) this._startTrack(e.first + k, true, prio ?? e.prio);
+    const p = prio ?? e.prio;
+    // CH3 is claimed once for all of the effect's parts there; dropped, those
+    // parts do not start and the others still do.
+    let ch3 = null;
+    for (let k = 0; k < e.count; k++) {
+      const t = this._trk.find((x) => x.trackId === e.first + k);
+      if (!t) continue;
+      if (this._ch3Group(t.channelId)) {
+        if (ch3 === null) ch3 = this._ch3Claim(se, p);
+        if (!ch3) continue;
+      }
+      t.seIndex = se;
+      this._startTrack(t.trackId, true, p);
+    }
+  }
+
+  // ── CH3 taken whole (driver.md §2.5; mmlispseq.c ch3_*) ──────────────────
+  // CH3's operator mode and CSM are chip-wide, so an effect with any part on
+  // the shared channel (2) or an operator (16-19) takes all of it, suspends
+  // every song part there, and gives back the mode, the timer and the
+  // channel's state at its end.
+  _ch3Group(ch) {
+    return ch === 2 || (ch >= 16 && ch <= 19);
+  }
+  _ch3Silence() {
+    this._keyOff(2);
+    if (this._fm3OpMask) {
+      this._fm3OpMask = 0;
+      this._ymKey(0x02);
+    }
+  }
+  _ch3Clear() {
+    this._ch3Silence();
+    this._clearChannelModulators(2);
+    for (let op = 1; op <= 4; op++) {
+      this._clearChannelModulators(15 + op);
+      this._fm3OpVelBase[op - 1] = VEL_FINE_MAX;
+      this._fm3OpVel[op - 1] = VEL_FINE_MAX;
+      this._fm3OpVol[op - 1] = VOL_UNITY;
+    }
+    const r = this._fm[2];
+    r.velBase = VEL_FINE_MAX;
+    r.vel = VEL_FINE_MAX;
+    r.vol = VOL_UNITY;
+    r.gate = 8;
+    this._csmRateSweep = null;
+    this._setReg27(this._reg27 & ~0xc0);
+  }
+  // Effect `se` takes CH3 at `prio`; false = dropped (another effect holds it
+  // at a higher priority, and is left alone).
+  _ch3Claim(se, prio) {
+    const h = this._ch3;
+    if (h.active) {
+      if (h.se !== se && prio < h.prio) return false;
+      for (const o of this._trk) {
+        if (o.running && o.isSe && this._ch3Group(o.channelId)) {
+          o.running = false;
+          o.isSe = false;
+        }
+      }
+    } else {
+      for (const o of this._trk) {
+        if (o.running && !o.isSe && this._ch3Group(o.channelId)) {
+          o.running = false;
+          o.suspended = true;
+        }
+      }
+      Object.assign(h, {
+        mode: this._reg27 & 0xc0,
+        timerA: this._timerA,
+        fmKeyed: !!this._fm[2].keyed,
+        opMask: this._fm3OpMask,
+        ch: this._snapshotChannel(2),
+        opNote: [...this._fm3OpNote],
+        opCents: [...this._fm3OpCents],
+        opVelBase: [...this._fm3OpVelBase],
+        opVel: [...this._fm3OpVel],
+        opVol: [...this._fm3OpVol],
+        opBinds: [1, 2, 3, 4].map((op) => [...this._macroActive[this._macroCh(15 + op)]]),
+        active: true,
+      });
+    }
+    h.se = se;
+    h.prio = prio;
+    this._ch3Clear();
+    return true;
+  }
+  _ch3Restore() {
+    const h = this._ch3;
+    h.active = false;
+    const resumed = this._trk.some((o) => o.suspended && this._ch3Group(o.channelId));
+    this._ch3Silence();
+    this._clearChannelModulators(2);
+    for (let op = 1; op <= 4; op++) this._clearChannelModulators(15 + op);
+    this._csmRateSweep = null;
+    this._setReg27((this._reg27 & ~0xc0) | h.mode);
+    if (h.mode & 0x80) this._writeTimerA(h.timerA);
+    const r = this._fm[2];
+    if (h.ch.voiceId !== 0xff) this._voiceSet(2, h.ch.voiceId);
+    r.velBase = h.ch.velBase;
+    r.vel = h.ch.vel;
+    r.vol = h.ch.vol;
+    r.gate = h.ch.gate;
+    r.pitchCents = h.ch.pitchCents;
+    r.currentNote = h.ch.note;
+    for (let i = 0; i < 4; i++) {
+      this._fm3OpNote[i] = h.opNote[i];
+      this._fm3OpCents[i] = h.opCents[i];
+      this._fm3OpVelBase[i] = h.opVelBase[i];
+      this._fm3OpVel[i] = h.opVel[i];
+      this._fm3OpVol[i] = h.opVol[i];
+    }
+    this._recomposeCarriers(2);
+    if (h.mode & 0x40) {
+      for (let op = 1; op <= 4; op++) this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], this._fm3OpCents[op - 1]);
+    } else {
+      this._writeFmPitch(2, r.currentNote, r.pitchCents);
+    }
+    if (resumed) {
+      if (h.mode & 0x40) {
+        for (let op = 1; op <= 4; op++) if (h.opMask & (0x10 << (op - 1))) this._fm3KeyOp(op, true);
+      } else if (!(h.mode & 0x80) && h.fmKeyed) {
+        this._keyOn(2);
+      }
+    }
+    let mc = this._macroCh(2);
+    this._macroActive[mc] = new Map(h.ch.macros);
+    if (h.ch.macros.length) this._macroTrigger(2, 0);
+    for (let i = 0; i < 4; i++) {
+      mc = this._macroCh(16 + i);
+      this._macroActive[mc] = new Map(h.opBinds[i]);
+      if (h.opBinds[i].length) this._macroTrigger(16 + i, 0);
+    }
+    for (const o of this._trk) {
+      if (o.suspended && this._ch3Group(o.channelId)) {
+        o.suspended = false;
+        o.running = true;
+      }
+    }
+  }
+  _ch3Dissolve() {
+    this._ch3.active = false;
+    for (const o of this._trk) {
+      if (!this._ch3Group(o.channelId)) continue;
+      if (o.running && o.isSe) {
+        o.running = false;
+        o.isSe = false;
+      }
+      if (o.suspended) o.suspended = false;
+    }
+    this._ch3Silence();
   }
   _stopSe(se) {
     const e = this._song?.seTable?.[se];
@@ -2265,10 +2420,14 @@ export class DrvPlayer {
     trk.displaced = null;
     trk.pcmSnap = null;
     trk.pcmSe = null;
-    // Channel ownership: the current owner is the *other* running (non-suspended)
-    // track on this channel. ch2 is the FM3 shared channel (voice + op1 coexist);
-    // ids ≥ 10 (fm3-op/pcm) have no channel block — no owner to displace here.
-    if (ch < 10 && ch !== 2) {
+    if (!asSe) trk.seIndex = null;
+    // Channel ownership. CH3 — the shared channel 2 and the operator ids 16-19
+    // — is one unit, taken whole by an effect (_ch3Claim, from _playSe); a
+    // plain start there while an effect holds it ends the hold. PCM voices
+    // have no channel block, so no owner to displace.
+    if (this._ch3Group(ch)) {
+      if (!asSe && this._ch3.active) this._ch3Dissolve();
+    } else if (ch < 10) {
       // The channel's current owner (running, not suspended). For a register SE
       // it is either the BGM (fresh steal) or an already-playing SE (preempt).
       const owner = this._trk.find(
@@ -2501,6 +2660,15 @@ export class DrvPlayer {
   // track's END_OF_TRACK, at STOP_TRACK and at a fade's terminal stop.
   _reclaimSe(seTrk) {
     if (!seTrk.isSe) return;
+    if (this._ch3Group(seTrk.channelId)) {
+      // CH3 comes back when the holding effect's LAST part there has ended.
+      seTrk.isSe = false;
+      if (!this._ch3.active || this._ch3.se !== seTrk.seIndex) return;
+      if (this._trk.some((o) => o !== seTrk && o.running && o.isSe &&
+        this._ch3Group(o.channelId) && o.seIndex === seTrk.seIndex)) return;
+      this._ch3Restore();
+      return;
+    }
     // PCM (design C): the BGM loop the SE stole is started again. No owner track.
     // The voice's macro binds come back, and the looping BGM note starts
     // again with them, as a note-on.

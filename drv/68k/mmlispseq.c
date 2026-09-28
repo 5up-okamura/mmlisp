@@ -894,6 +894,7 @@ static void set_reg27(MMLSeq *s, uint8_t value) {
   ym(s, 0, 0x27, s->reg27);
 }
 static void write_timer_a(MMLSeq *s, int period) {
+  s->timer_a = (uint16_t)period; /* what an effect that takes CH3 gives back */
   ym(s, 0, 0x24, (uint8_t)((period >> 2) & 0xff));
   ym(s, 0, 0x25, (uint8_t)(period & 0x03));
 }
@@ -2450,6 +2451,7 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     s->trk[i].pc = s->trk[i].event_offset;
     s->trk[i].armed_frame = 0xffffffffu; /* never armed; frame 0 is a real one */
     s->trk[i].displaced = 0xff;
+    s->trk[i].se_index = 0xff;
   }
 
   /* bpmToTickIncrement(120, frame_hz): round(120 * 96 * 256 / (hz * 60)). */
@@ -2678,11 +2680,188 @@ static void release_suspended(MMLSeq *s, MMLTrack *t) {
     if (s->trk[i].is_se && s->trk[i].displaced == idx) s->trk[i].displaced = 0xff;
 }
 
+/* ── CH3 taken whole (driver.md §2.5, MMLCh3Snap) ───────────────────────────
+ * The shared channel (2) and the four operator ids (16-19) are one unit to an
+ * effect: CH3's operator mode and CSM are chip-wide, so an effect with any
+ * part there takes all of it, suspends every song part on it, and gives back
+ * the mode, the timer and the channel's state at its end. */
+static int ch3_group(int ch) { return ch == 2 || (ch >= 16 && ch <= 19); }
+
+/* Every key on CH3 off, in whatever mode it is in. */
+static void ch3_silence(MMLSeq *s) {
+  key_off(s, 2);
+  if (s->fm3_op_mask) {
+    s->fm3_op_mask = 0;
+    ym_key(s, 0x02);
+  }
+}
+
+/* What a claim of CH3 leaves: no keys, no modulators, the level state at its
+ * defaults, no CSM rate sweep, and the chip in normal mode — an effect's own
+ * parts switch the mode they need, as a song's do. */
+static void ch3_clear(MMLSeq *s) {
+  ch3_silence(s);
+  clear_channel_modulators(s, 2);
+  for (int op = 1; op <= 4; op++) {
+    clear_channel_modulators(s, 15 + op);
+    s->fm3_op_vel_base[op - 1] = VEL_MAX;
+    s->fm3_op_vel[op - 1] = VEL_MAX;
+    s->fm3_op_vol[op - 1] = VOL_UNITY;
+  }
+  s->fm[2].vel_base = VEL_MAX;
+  s->fm[2].vel = VEL_MAX;
+  s->fm[2].vol = VOL_UNITY;
+  s->fm[2].gate = 8;
+  s->csm_sweep.active = 0;
+  set_reg27(s, (uint8_t)(s->reg27 & ~0xc0));
+}
+
+/* Effect `se` takes CH3 at `prio`. 0 = dropped: another effect holds CH3 at a
+ * higher priority, and is left alone. */
+static int ch3_claim(MMLSeq *s, uint8_t se, uint8_t prio) {
+  MMLCh3Snap *h = &s->ch3;
+  if (h->active) {
+    /* Against the effect holding it: lower is dropped; equal or higher —
+     * itself played again included — stops its parts and inherits the hold,
+     * so the song comes back after the LAST effect. */
+    if (h->se != se && prio < h->prio) return 0;
+    for (uint8_t i = 0; i < s->track_count; i++) {
+      MMLTrack *o = &s->trk[i];
+      if (o->running && o->is_se && ch3_group(o->channel_id)) {
+        o->running = 0;
+        o->is_se = 0;
+      }
+    }
+  } else {
+    /* A fresh take: the song's parts on CH3 are suspended and CH3 as they
+     * left it is kept — before the clear below resets it. */
+    for (uint8_t i = 0; i < s->track_count; i++) {
+      MMLTrack *o = &s->trk[i];
+      if (o->running && !o->is_se && ch3_group(o->channel_id)) {
+        o->running = 0;
+        o->suspended = 1;
+      }
+    }
+    h->mode = (uint8_t)(s->reg27 & 0xc0);
+    h->timer_a = s->timer_a;
+    h->fm_keyed = s->fm[2].keyed;
+    h->op_mask = s->fm3_op_mask;
+    snapshot_channel(s, 2, &h->ch);
+    for (int i = 0; i < 4; i++) {
+      h->op_note[i] = s->fm3_op_note[i];
+      h->op_cents[i] = s->fm3_op_cents[i];
+      h->op_vel_base[i] = s->fm3_op_vel_base[i];
+      h->op_vel[i] = s->fm3_op_vel[i];
+      h->op_vol[i] = s->fm3_op_vol[i];
+      int mc = macro_ch(16 + i);
+      h->op_bind_count[i] = s->bind_count[mc];
+      for (int k = 0; k < s->bind_count[mc]; k++) h->op_binds[i][k] = s->binds[mc][k];
+    }
+    h->active = 1;
+  }
+  h->se = se;
+  h->prio = prio;
+  ch3_clear(s);
+  return 1;
+}
+
+/* The holding effect's last CH3 part has ended: CH3 goes back as the song had
+ * it — mode, timer, patch, levels, pitches — and its parts resume, the notes
+ * they were holding re-keyed (an envelope cannot resume mid-way). */
+static void ch3_restore(MMLSeq *s) {
+  MMLCh3Snap *h = &s->ch3;
+  h->active = 0;
+  int resumed = 0;
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (s->trk[i].suspended && ch3_group(s->trk[i].channel_id)) resumed = 1;
+  ch3_silence(s);
+  clear_channel_modulators(s, 2);
+  for (int op = 1; op <= 4; op++) clear_channel_modulators(s, 15 + op);
+  s->csm_sweep.active = 0;
+  set_reg27(s, (uint8_t)((s->reg27 & ~0xc0) | h->mode));
+  if (h->mode & 0x80) write_timer_a(s, h->timer_a);
+  MMLFmCh *c = &s->fm[2];
+  if (h->ch.voice_id != 0xff) voice_set(s, 2, h->ch.voice_id);
+  c->vel_base = h->ch.vel_base;
+  c->vel = h->ch.vel;
+  c->vol = h->ch.vol;
+  c->gate = h->ch.gate;
+  c->pitch_cents = h->ch.pitch_cents;
+  c->current_note = h->ch.note;
+  for (int i = 0; i < 4; i++) {
+    s->fm3_op_note[i] = h->op_note[i];
+    s->fm3_op_cents[i] = h->op_cents[i];
+    s->fm3_op_vel_base[i] = h->op_vel_base[i];
+    s->fm3_op_vel[i] = h->op_vel[i];
+    s->fm3_op_vol[i] = h->op_vol[i];
+  }
+  recompose_carriers(s, 2); /* the operators' own levels, in operator mode */
+  if (h->mode & 0x40)
+    for (int op = 1; op <= 4; op++) write_fm3_op_pitch(s, op, s->fm3_op_note[op - 1], s->fm3_op_cents[op - 1]);
+  else
+    write_fm_pitch(s, 2, c->current_note, c->pitch_cents); /* CSM: all four */
+  if (resumed) {
+    if (h->mode & 0x40) {
+      for (int op = 1; op <= 4; op++)
+        if (h->op_mask & (0x10 << (op - 1))) fm3_key_op(s, op, 1);
+    } else if (!(h->mode & 0x80) && h->fm_keyed) {
+      key_on(s, 2); /* CSM keys from Timer A, not $28 */
+    }
+  }
+  /* The binds come back and re-instantiate, as a note-on's would (§13.1). */
+  int mc = macro_ch(2);
+  for (int k = 0; k < h->ch.macro_count; k++) s->binds[mc][k] = h->ch.macros[k];
+  s->bind_count[mc] = h->ch.macro_count;
+  if (h->ch.macro_count) macro_trigger(s, 2, 0, 0);
+  for (int i = 0; i < 4; i++) {
+    mc = macro_ch(16 + i);
+    for (int k = 0; k < h->op_bind_count[i]; k++) s->binds[mc][k] = h->op_binds[i][k];
+    s->bind_count[mc] = h->op_bind_count[i];
+    if (h->op_bind_count[i]) macro_trigger(s, 16 + i, 0, 0);
+  }
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    MMLTrack *o = &s->trk[i];
+    if (o->suspended && ch3_group(o->channel_id)) {
+      o->suspended = 0;
+      o->running = 1;
+    }
+  }
+}
+
+/* A plain START_TRACK onto CH3 while an effect holds it is a scene change: the
+ * effect's parts stop and the suspended song parts lose CH3 for good. */
+static void ch3_dissolve(MMLSeq *s) {
+  s->ch3.active = 0;
+  for (uint8_t i = 0; i < s->track_count; i++) {
+    MMLTrack *o = &s->trk[i];
+    if (!ch3_group(o->channel_id)) continue;
+    if (o->running && o->is_se) {
+      o->running = 0;
+      o->is_se = 0;
+    }
+    if (o->suspended) o->suspended = 0;
+  }
+  ch3_silence(s);
+}
+
 /* SE-end: give back what the SE stole. Hooked at the SE track's END_OF_TRACK,
  * at mml_stop_track and at a fade's terminal stop (a held or looping SE ends
  * on one of the latter two). */
 static void reclaim_se(MMLSeq *s, MMLTrack *se) {
   if (!se->is_se) return;
+  if (ch3_group(se->channel_id)) {
+    /* CH3 comes back when the holding effect's LAST part there has ended. */
+    se->is_se = 0;
+    if (!s->ch3.active || s->ch3.se != se->se_index) return;
+    for (uint8_t i = 0; i < s->track_count; i++) {
+      const MMLTrack *o = &s->trk[i];
+      if (o != se && o->running && o->is_se && ch3_group(o->channel_id) &&
+          o->se_index == se->se_index)
+        return;
+    }
+    ch3_restore(s);
+    return;
+  }
   if (se->pcm_se) {
     /* PCM: the voice's macro binds come back, and the looping BGM note the SE
      * overwrote starts again with them, as a note-on. The engine keeps no
@@ -2731,10 +2910,14 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   t->displaced = 0xff;
   t->pcm_snap = 0;
   t->pcm_se = 0;
-  /* Channel ownership. ch2 is the FM3 shared channel — its voice track and op1
-   * coexist by design — and ids >= 10 (fm3-op, pcm) have no channel block, so
-   * neither has an owner to displace. */
-  if (ch < 10 && ch != 2) {
+  if (!as_se) t->se_index = 0xff;
+  /* Channel ownership. CH3 — the shared channel 2 and the operator ids 16-19 —
+   * is one unit, taken whole by an effect (ch3_claim, from mml_play_se); a
+   * plain start there while an effect holds it ends the hold. PCM voices have
+   * no channel block, so no owner to displace. */
+  if (ch3_group(ch)) {
+    if (!as_se && s->ch3.active) ch3_dissolve(s);
+  } else if (ch < 10) {
     /* The channel's current owner: running and not suspended. For an SE it is
      * either the BGM (a fresh steal) or an SE already playing (preempt). */
     MMLTrack *owner = 0;
@@ -2853,9 +3036,18 @@ void mml_play_se(MMLSeq *s, uint8_t se, int priority) {
   if (se >= s->se_count) return;
   const uint8_t *e = s->se_table + (uint32_t)se * 3;
   uint8_t prio = priority == MML_SE_PRIO_DEFAULT ? e[0] : (uint8_t)priority;
+  /* CH3 is claimed once for all of the effect's parts there; dropped, those
+   * parts do not start and the others still do. */
+  int ch3 = -1;
   for (uint8_t k = 0; k < e[2]; k++) {
     MMLTrack *t = track_by_id(s, (uint8_t)(e[1] + k));
-    if (t) start_track_ex(s, t, 1, prio);
+    if (!t) continue;
+    if (ch3_group(t->channel_id)) {
+      if (ch3 < 0) ch3 = ch3_claim(s, se, prio);
+      if (!ch3) continue;
+    }
+    t->se_index = se;
+    start_track_ex(s, t, 1, prio);
   }
 }
 void mml_stop_se(MMLSeq *s, uint8_t se) {

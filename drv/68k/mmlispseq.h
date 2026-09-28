@@ -246,6 +246,27 @@ typedef struct {
   uint8_t macro_count;
 } MMLChanSnap;
 
+/* CH3 TAKEN WHOLE (driver.md §2.5). CH3's operator mode and CSM are chip-wide
+ * settings ($27, Timer A), not one channel's, so an effect with a part on
+ * fm3, fm3-1…fm3-4, fm3-csm or fm3-csm-rate takes all of CH3 — every song part
+ * on it is suspended — and this is what its end puts back: the mode, the
+ * Timer A period, the shared channel's snapshot, and the four operators'
+ * notes, levels, key bits and macro binds. One hold at a time: an effect that
+ * preempts the holder inherits it. */
+typedef struct {
+  uint8_t active;       /* an effect holds CH3 */
+  uint8_t se, prio;     /* which effect (its SE_TABLE number), at what priority */
+  uint8_t mode;         /* $27 bits 7-6 as the song had them */
+  uint16_t timer_a;     /* the song's Timer A period */
+  uint8_t fm_keyed;     /* the shared channel was keyed (normal mode) */
+  uint8_t op_mask;      /* the operators' key bits (operator mode) */
+  MMLChanSnap ch;       /* the shared channel, and channel 2's binds */
+  uint8_t op_note[4], op_vel_base[4], op_vel[4], op_vol[4];
+  int16_t op_cents[4];
+  MMLMacroBind op_binds[4][MML_MACRO_BINDS];
+  uint8_t op_bind_count[4];
+} MMLCh3Snap;
+
 typedef struct {
   uint8_t running, armed, held;
   /* SUSPENDED (the fourth track state, beside idle/running/held): a BGM owner
@@ -258,6 +279,7 @@ typedef struct {
    * the suspended owner's track INDEX (0xFF = none); a preempting SE inherits
    * it from the SE it replaces, so only the LAST SE restores the BGM. */
   uint8_t is_se, se_prio;
+  uint8_t se_index; /* the effect this part plays for (SE_TABLE number), 0xFF = none */
   uint8_t displaced;
   /* A PCM SE: soft-mix voices have no owner track, so what is kept is the
    * looping BGM note the SE's PCM_NOTE_ON overwrote, restarted at SE-end, and
@@ -331,6 +353,8 @@ typedef struct {
   uint8_t lfo_rate;
   uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */
   uint8_t fm3_op_mask; /* FM3 independent-OP key bits (0x10..0x80 -> $28) */
+  uint16_t timer_a;    /* the Timer A period last written (the CSM rate) */
+  MMLCh3Snap ch3;      /* CH3 as an effect found it, while one holds it */
 
   MMLSweep sweeps[MML_SWEEP_BANKS][2];
   MMLMacroBind binds[MML_MACRO_CHANNELS][MML_MACRO_BINDS];

@@ -201,6 +201,24 @@ exactly a note-on with the snapshot's values (§13.1) rather than a macro
 resumed mid-step under an envelope that just re-attacked. The SE's own binds
 and sweeps go the same way at the restore.
 
+**CH3 is taken whole.** Channel 2 and its operator and CSM tracks
+(`fm3-1..4`, `fm3-csm`, `fm3-csm-rate`) share one mode register, Timer A and
+the channel's patch, so an effect cannot take one slot of it: its CH3 parts
+claim the **group** once. The claim suspends every song track there and
+snapshots the mode, Timer A, the channel and each operator's note, levels,
+cents and binds; then CH3 is cleared — normal mode, levels reset, modulators
+gone, a CSM sweep stopped — and the effect sets the mode it needs itself (the
+compiler puts FM3_MODE `op` at the head of an effect with operator parts, and
+a CSM part carries its own CSM_ON/OFF). When the effect's **last** CH3 part
+ends, the snapshot is written back: mode, Timer A, VOICE_SET, the operators'
+pitches and levels, key-on. Priority is per group: a lower effect's CH3 parts
+are dropped (its other parts still play), an equal or higher one — or the same
+effect again — preempts and inherits the snapshot. A song START_TRACK on CH3
+during a hold dissolves it (the song takes CH3 back, nothing is restored). One
+effect cannot mix CSM and operator parts: they are two modes of one register.
+Gates `p3-se-ch3` (normal-mode song; op, CSM, drop, preempt) and
+`p3-se-ch3-op` (op-mode song restored exactly).
+
 A **sweep in flight is not restored**: it is a gesture with a position, and its
 note has re-attacked. The channel keeps the value the sweep had reached, which
 the claim's level reset then replaces. So do not put an effect on a channel
@@ -891,8 +909,9 @@ three outcomes.
   every song carries the game's effects (a bundle compiles each song with the
   `"se"` file; the control data is small, the samples are shared). A PCM SE
   restarts the BGM loop from the sample's head, not from where it was, and a
-  sweep in flight on a stolen channel is lost rather than resumed. FM3's
-  operator and CSM modes are song-wide, so an effect cannot use them.
+  sweep in flight on a stolen channel is lost rather than resumed. An effect
+  on CH3 takes all of it — one effect's CH3 parts at a time, never shared
+  with the song's.
 - **PAL:** supported by baking a second score (§3.3); one MMB plays correctly
   on one standard. PCM pitch is not corrected — a PAL bank would have to be
   re-baked at the PAL DAC rate, and is not.

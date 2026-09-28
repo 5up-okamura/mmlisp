@@ -826,9 +826,32 @@ A game's sound effects are written once, as defs, and every song carries them.
 - **Parts.** Each part is a channel form, written on the channel the effect
   **takes from the song** — `fm1` above is the song's lead's channel. When the
   effect plays, the song's part there is suspended, and comes back re-keyed
-  when the effect ends (driver.md §2.5). One part a channel
-  (`E_SE_PART`); `fm3-1`…`fm3-4`, `fm3-csm` and `fm3-csm-rate` are song-wide
-  chip modes an effect cannot bring (`E_SE_PART`).
+  when the effect ends (driver.md §2.5). One part a channel (`E_SE_PART`).
+- **CH3 is taken whole.** CH3's operator mode (`fm3-1`…`fm3-4`) and CSM
+  (`fm3-csm`, `fm3-csm-rate`) are chip-wide, so an effect with any part on
+  CH3 — `fm3` included — takes all of it: every song part on CH3 is suspended,
+  the effect plays in whatever mode its own parts set (an effect with operator
+  parts switches CH3 into operator mode itself), and at its end the song gets
+  its mode, CSM rate, patch, levels and held notes back. One effect is either
+  CSM or not: `fm3-csm` parts cannot share an effect with `fm3` / `fm3-1`…
+  (`E_SE_PART`). A song's CH3 patch comes back only if it was set as a whole
+  voice — a `def-fm` with every key, which the exporter sends as one
+  VOICE_SET — as for every channel an effect takes.
+
+  ```lisp
+  (def-fm kit :alg 7 :fb 0
+    :ar1 31 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 10 :ml1 2 :ks1 0 :dt1 0
+    :ar2 31 :dr2 8 :sr2 2 :rr2 8 :sl2 2 :tl2 10 :ml2 1 :ks2 0 :dt2 0
+    :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 10 :ml3 4 :ks3 0 :dt3 0
+    :ar4 31 :dr4 9 :sr4 2 :rr4 9 :sl4 3 :tl4 10 :ml4 1 :ks4 0 :dt4 0)
+  (def-se chord :prio 5                      ; three pitches from one channel
+    (fm3 kit)
+    (fm3-1 :oct 5 :len 4 c e)
+    (fm3-2 :oct 5 :len 4 e g)
+    (fm3-3 :oct 5 :len 4 g b))
+  (def-se buzz :prio 5                       ; a CSM formant, its rate swept
+    (fm3-csm kit :oct 3 :len 4 :csm-rate 440 c :csm-rate (linear 440..880 :len 4) c))
+  ```
 - **Not the song's.** A part is compiled like any track, but it is never played
   with the song. The game plays an effect by its **number** — its place among
   the def-se forms, imports first. `tools/install-sgdk.mjs` writes the numbers
