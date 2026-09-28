@@ -78,10 +78,10 @@
     "digest": "d830bfc6"
   },
   "m3-fm3op.mmlisp": {
-    "ok": false,
-    "mismatches": 20,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "866b75bd"
+    "digest": "811c9dc5"
   },
   "m3-gate-tie.mmlisp": {
     "ok": true,
@@ -283,33 +283,39 @@
   },
   "m4-fm3-voice-track.mmlisp": {
     "ok": false,
-    "mismatches": 6,
+    "mismatches": 4,
     "compileErrors": 0,
-    "digest": "bfb069fb"
+    "digest": "76b5af14"
   },
   "m4-fm3op-keyon.mmlisp": {
-    "ok": false,
-    "mismatches": 241,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "a3d63836"
+    "digest": "811c9dc5"
   },
   "m4-fm3op-level-macros.mmlisp": {
-    "ok": false,
-    "mismatches": 19,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "49b8fe0c"
+    "digest": "811c9dc5"
   },
   "m4-fm3op-level.mmlisp": {
-    "ok": false,
-    "mismatches": 11,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "12300574"
+    "digest": "811c9dc5"
   },
   "m4-fm3op-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 23,
+    "mismatches": 3,
     "compileErrors": 0,
-    "digest": "7c1c187b"
+    "digest": "7da82f4b"
+  },
+  "m4-fm3op-timbre.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
   },
   "m4-fm6-only.mmlisp": {
     "ok": true,
@@ -427,9 +433,9 @@
   },
   "m4-tl-compose.mmlisp": {
     "ok": false,
-    "mismatches": 6,
+    "mismatches": 4,
     "compileErrors": 0,
-    "digest": "bfb069fb"
+    "digest": "76b5af14"
   },
   "m4-trig-loop.mmlisp": {
     "ok": true,
@@ -486,10 +492,10 @@
     "digest": "811c9dc5"
   },
   "p3-se-ch3-op.mmlisp": {
-    "ok": false,
-    "mismatches": 14,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "2e2d7fe2"
+    "digest": "811c9dc5"
   },
   "p3-se-ch3.mmlisp": {
     "ok": true,

@@ -133,6 +133,18 @@ function lcm(a, b) {
   return g ? (a / g) * b : a;
 }
 
+// The driver's order of FM3 key edges (IRPlayer._scheduleFm3OpKey): by frame,
+// then the tracks' dispatch before the macros, then track (or operator), then
+// time — where a key-off and a key-on at the same time go off first.
+function fm3KeyOrder(a, b) {
+  return (
+    a.frame - b.frame ||
+    a.phase - b.phase ||
+    a.order - b.order ||
+    (Math.abs(a.t - b.t) > 1e-6 ? a.t - b.t : a.on - b.on)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // IRPlayer
 // ---------------------------------------------------------------------------
@@ -242,13 +254,9 @@ export class IRPlayer {
     this._holdChannels = new Set();
 
     // FM3 independent-operator mode: each fm3-1..fm3-4 track keys a single
-    // operator of channel 3 via the shared 0x28 key register. Because the
-    // register holds the on/off state of all four operators at once, the
-    // per-operator NOTE_ON events must be merged into a combined mask instead
-    // of clobbering one another. We record each operator's [on, off) interval
-    // and recompute the combined key writes at every affected boundary.
-    // Entries: { opBit, on, off } where `off` is null for hold (len=0) notes.
-    this._fm3OpIntervals = [];
+    // operator of channel 3 via the shared 0x28 key register (see
+    // _scheduleFm3OpKey / _flushFm3Keys).
+    this._resetFm3Keys();
     // FM3 independent-OP: each operator's own note, sticky :pitch offset
     // and level (index = op − 1) — what its F-number and TL are written
     // from (driver.md §13.4).
@@ -361,8 +369,7 @@ export class IRPlayer {
     // Initialize all channels with default voices
     this._initDefaultVoices();
 
-    // Reset FM3 operator key-merge state for a fresh run
-    this._fm3OpIntervals = [];
+    this._resetFm3Keys();
     // FM3 independent-OP: each operator's own note, sticky :pitch offset
     // and level (index = op − 1) — what its F-number and TL are written
     // from (driver.md §13.4).
@@ -484,7 +491,7 @@ export class IRPlayer {
     const now = audioContext.currentTime;
     const secsPerTick = this._secsPerTick;
     const newTick0 = now + 0.025 - fromTick * secsPerTick;
-    this._fm3OpIntervals = [];
+    this._resetFm3Keys();
     // FM3 independent-OP: each operator's own note, sticky :pitch offset
     // and level (index = op − 1) — what its F-number and TL are written
     // from (driver.md §13.4).
@@ -693,12 +700,14 @@ export class IRPlayer {
       const port = ch >= 3 ? 1 : 0;
       const chOffset = ch % 3;
       const chKey = (port << 2) | chOffset;
-      if (ch === 2 && this._fm3OpIntervals.some((iv) => iv.off == null)) {
+      if (ch === 2 && this._fm3Held) {
         // Release only the held FM3 operators; any timed operators stay keyed.
-        this._fm3OpIntervals = this._fm3OpIntervals.filter(
-          (iv) => iv.off != null,
-        );
-        this._write(0, 0x28, (this._fm3MaskAt(when) & 0xf0) | chKey, when);
+        const held = this._fm3Held;
+        this._fm3Held = 0;
+        this._fm3KeyQueue = this._fm3KeyQueue.filter((e) => !(e.on && e.bit & held));
+        this._fm3Mask &= ~held;
+        this._fm3KeyLast = Math.max(when, this._fm3KeyLast);
+        this._write(0, 0x28, this._fm3Mask | chKey, this._fm3KeyLast);
       } else {
         this._write(0, 0x28, chKey, when);
       }
@@ -930,10 +939,13 @@ export class IRPlayer {
 
     // Playback is complete when no track will loop further and all are exhausted.
     const willLoopAny = this._loop && this._tracks.some((t) => t.hasLoop);
-    return (
+    const done =
       !willLoopAny &&
-      this._tracks.every((t) => t.flatIndex >= t.events.length)
-    );
+      this._tracks.every((t) => t.flatIndex >= t.events.length);
+    // Every event up to the horizon is dispatched, so the frames before the
+    // horizon's own have all their FM3 key edges.
+    this._flushFm3Keys(done ? Infinity : this._eventFrame(horizon) - 1);
+    return done;
   }
 
   // Dispatch every track's events up to `horizon` in time order across the
@@ -1099,7 +1111,7 @@ export class IRPlayer {
 
       this._initDefaultVoices(); // preamble register writes (when=undefined → sec 0)
 
-      this._fm3OpIntervals = [];
+      this._resetFm3Keys();
       // FM3 independent-OP: each operator's own note, sticky :pitch offset
       // and level (index = op − 1) — what its F-number and TL are written
       // from (driver.md §13.4).
@@ -1182,6 +1194,7 @@ export class IRPlayer {
 
         elapsed += stepSec;
       }
+      this._flushFm3Keys();
     } finally {
       this._write = saved.write;
       this._onLine = saved.onLine;
@@ -1599,103 +1612,63 @@ export class IRPlayer {
     }
   }
 
-  /**
-   * Combined FM3 operator key mask active at `time` (post-transition), i.e.
-   * the OR of every recorded operator interval whose [on, off) range contains
-   * `time`. A key-off at exactly `iv.off` is treated as already released.
-   */
-  _fm3MaskAt(time) {
-    let mask = 0;
-    for (const iv of this._fm3OpIntervals) {
-      if (time >= iv.on && (iv.off == null || time < iv.off)) {
-        mask |= iv.opBit;
-      }
-    }
-    return mask;
+  // FM3 operator keys share one register: $28 holds all four operators' bits,
+  // so every edge rewrites the whole mask. The driver keeps that mask and
+  // writes it on every edge (_fm3KeyOp), in its frame order: the tracks in
+  // ascending index — each tick's gate key-off, then its dispatch (a full-gate
+  // note's pending key-off, then the key-on) — and after them the macros, in
+  // ascending operator, where a :keyon retrigger is the operator's off and on
+  // (driver.md §13.4). The edges are queued with that order and written once
+  // no later dispatch can add to their frame (_flushFm3Keys), so the preview
+  // writes the driver's mask sequence.
+  _resetFm3Keys() {
+    this._fm3KeyQueue = [];
+    this._fm3Mask = 0; // the operator bits $28 holds
+    this._fm3Held = 0; // operators keyed by a hold (len 0) note
+    this._fm3KeyLast = -Infinity; // the last $28 write's time
   }
 
   /**
-   * Schedule a single FM3 operator's key-on/key-off, merging it with any other
-   * operators of channel 3 that overlap in time. Adding an operator only
-   * changes the combined mask during its own [on, off) span, so we recompute
-   * and re-emit the 0x28 register at every boundary inside that span. Because
-   * the worklet applies equal-time writes in insertion order (last wins),
-   * re-emitting supersedes the stale values written when earlier operators were
-   * scheduled, yielding the correct chord at each transition.
-   *
-   * A `:keyon` retrigger punches gaps in THIS operator's span: the note becomes
-   * several intervals instead of one, so the re-attack shows up in the merged
-   * mask as this operator's bit dropping and returning while every other
-   * operator's stays exactly as it was (driver.md §13.4).
-   *
+   * Queue one FM3 operator note's key edges.
    * @param {number} opBit  operator key bit (0x10=OP1 … 0x80=OP4)
    * @param {number} onTime audio time of key-on
    * @param {number|null} offTime audio time of key-off, or null for a hold note
-   * @param {{off: number, on: number}[]} retriggers gaps to punch, in time order
+   * @param {{off: number, on: number}[]} retriggers :keyon re-attacks, in time order
+   * @param {number} track  the note's track index (its dispatch order)
    */
-  _scheduleFm3OpKey(opBit, onTime, offTime, retriggers = []) {
-    const chKey = (0 << 2) | 2; // channel 3: port 0, channel offset 2
-
-    // Drop intervals that have fully elapsed so the list stays bounded across
-    // loops (keep a small margin so in-flight writes are not disturbed).
-    const now = this._audioContext?.currentTime ?? 0;
-    if (this._fm3OpIntervals.length > 0) {
-      this._fm3OpIntervals = this._fm3OpIntervals.filter(
-        (iv) => iv.off == null || iv.off >= now - 1,
-      );
-    }
-
-    // The previous note on THIS operator keys off before this one attacks. An
-    // operator note never slurs (the compiler gives `legato` to FM/PSG only,
-    // since the operators key independently), so the envelope always has to
-    // see the transition — and a full-gate note's interval would otherwise end
-    // exactly where this one starts, leaving the merged mask unchanged and no
-    // $28 write at all. Close it an ordering margin early, the same one a
-    // normal channel's deferred key-off uses (driver: resolve_pending_off).
-    let reKeyAt = null;
-    for (let i = this._fm3OpIntervals.length - 1; i >= 0; i--) {
-      const iv = this._fm3OpIntervals[i];
-      if (iv.opBit !== opBit) continue;
-      if (iv.off == null || iv.off > onTime - KEY_ORDER_EPS_SECS) {
-        reKeyAt = Math.max(iv.on, onTime - KEY_ORDER_EPS_SECS);
-        iv.off = reKeyAt;
-      }
-      break;
-    }
-
-    // One interval per keyed segment: [on, gap₁) [rekey₁, gap₂) … [rekeyₙ, off).
-    const segments = [];
-    let segOn = onTime;
+  _scheduleFm3OpKey(opBit, onTime, offTime, retriggers, track) {
+    const q = this._fm3KeyQueue;
+    const edge = (t, frame, phase, order, on) =>
+      q.push({ t, frame, phase, order, on, bit: opBit });
+    edge(onTime, this._eventFrame(onTime), 0, track, true);
+    // A full-gate note's key-off lands in the next note's dispatch, before its
+    // key-on: same frame, same track, earlier in the sort (_fm3KeyOrder).
+    if (offTime == null) this._fm3Held |= opBit;
+    else edge(offTime, this._eventFrame(offTime), 0, track, false);
+    const op = Math.log2(opBit) - 4;
     for (const r of retriggers) {
-      if (r.off <= segOn) continue; // a gap shorter than the write ordering
       if (offTime != null && r.on >= offTime) break;
-      segments.push({ on: segOn, off: r.off });
-      segOn = r.on;
+      const frame = this._eventFrame(r.on);
+      edge(r.off, frame, 1, op, false);
+      edge(r.on, frame, 1, op, true);
     }
-    segments.push({ on: segOn, off: offTime });
-    for (const seg of segments) {
-      this._fm3OpIntervals.push({ opBit, on: seg.on, off: seg.off });
-    }
+  }
 
-    // Collect every boundary affected by this note: its own endpoints plus any
-    // other operator transition that falls within this note's active span.
-    const within = (t) =>
-      t > onTime && (offTime == null || t < offTime);
-    const boundaries = new Set([onTime]);
-    if (reKeyAt != null) boundaries.add(reKeyAt);
-    if (offTime != null) boundaries.add(offTime);
-    for (const seg of segments) {
-      boundaries.add(seg.on);
-      if (seg.off != null) boundaries.add(seg.off);
+  // Write the queued FM3 key edges of every frame up to `uptoFrame`.
+  _flushFm3Keys(uptoFrame = Infinity) {
+    const q = this._fm3KeyQueue;
+    if (q.length === 0) return;
+    q.sort(fm3KeyOrder);
+    let n = 0;
+    for (; n < q.length && q[n].frame <= uptoFrame; n++) {
+      const e = q[n];
+      if (e.on) this._fm3Mask |= e.bit;
+      else this._fm3Mask &= ~e.bit;
+      // Never behind the previous write: the worklet applies them in time order.
+      this._fm3KeyLast = Math.max(e.t, this._fm3KeyLast);
+      this._write(0, 0x28, this._fm3Mask | 0x02, this._fm3KeyLast);
     }
-    for (const iv of this._fm3OpIntervals) {
-      if (within(iv.on)) boundaries.add(iv.on);
-      if (iv.off != null && within(iv.off)) boundaries.add(iv.off);
-    }
-
-    for (const t of boundaries) {
-      this._write(0, 0x28, this._fm3MaskAt(t) | chKey, t);
-    }
+    q.splice(0, n);
   }
 
   _applyCsmRate(ev, when) {
@@ -2061,6 +2034,7 @@ export class IRPlayer {
               when,
               offWhen,
               this._fm3KeyonGaps(ev.args?.keyon, when, gateTicks, macroLimit),
+              ev._trackIndex ?? 0,
             );
           } else {
             const keyOnByte = keyMask | chKey;

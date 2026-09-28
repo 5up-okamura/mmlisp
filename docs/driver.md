@@ -1329,20 +1329,28 @@ and the NOTE_PITCH / NOTE_SEMI macros. `FM3_OP_PITCH` itself writes the note
 with the operator's offset applied. For that, the operators have sweep banks
 and macro-engine channels of their own — banks 13–16 and macro channels 10–13.
 An operator is *keyed* for the macro engine
-when its own `$28` bit is set. Every other target on an operator track is the
-shared CH3's: levels and the patch are not per operator. Gate: `m4-fm3op-pitch`
+when its own `$28` bit is set. Gate: `m4-fm3op-pitch`
 (a glide on op1, a `:pitch` vibrato on op2, a `:semi` arpeggio on op3, a sticky
 `:pitch` plus an inline sweep on op4 — each on its own registers).
 
+**The patch is CH3's.** Past pitch and level (below), every target on an
+operator track — ALG, FB, any operator's TL/AR/DR/SR/RR/SL/KS/ML/DT/SSG/AM,
+pan, AMS/FMS — is the shared CH3's: a `PARAM_SET` / `PARAM_ADD`, sweep or
+macro on channel ids 16-19 writes channel 2's registers, exactly as if written
+on the `(fm3 …)` track. So `:tl2` on `fm3-2` is operator 2's voiced level and
+`:fb` on any `fm3-N` is the channel's feedback. Gate: `m4-fm3op-timbre`.
+
 **Keying is per operator too**, including `:keyon`: a retrigger drops and
 restores that operator's mask bit and re-emits `$28`, so the operators sounding
-alongside it are untouched. In the reference player this is one more interval
-in the key merge rather than a register write of its own — the note becomes
-`[on, gap₁) [rekey₁, gap₂) … [rekeyₙ, off)` and the merged mask follows.
-Consecutive operator notes re-attack for the same reason every FM note does
-(§17): an operator note never carries the legato flag, so the previous note's
-interval is closed an ordering margin before the next one's key-on and the
-envelope sees the transition.
+alongside it are untouched. Consecutive operator notes re-attack for the same
+reason every FM note does (§17): an operator note never carries the legato
+flag, so a full-gate note's key-off lands in the next note's dispatch, before
+its key-on, and the envelope sees the transition. Every edge rewrites the whole
+mask, so the order of the edges within a frame is the frame's `$28` sequence:
+the tracks in ascending index — each tick's gate key-off, then its dispatch —
+and then the macros in ascending operator, a retrigger being its off and on.
+The IR preview queues the key edges with that order and writes each frame's
+once no later dispatch can add to it, so it emits the same sequence.
 Gate: `m4-fm3op-keyon` (op2 and op3 rolling on different `:step` clocks under a
 held op1 and op4, including a frame where both fire).
 

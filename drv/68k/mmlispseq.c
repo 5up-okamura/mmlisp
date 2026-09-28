@@ -677,8 +677,8 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   }
   {
     /* FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
-     * F-number alone. Every other target on an operator track stays what it
-     * was — the level and patch are the shared CH3's (driver.md §13.4). */
+     * F-number alone, and :vel/:vol are its own level; the patch is the shared
+     * CH3's, below (driver.md §13.4). */
     int op = fm3_op_for(s, ch);
     if (op && target == T_NOTE_PITCH) {
       s->fm3_op_cents[op - 1] = (int16_t)value;
@@ -753,7 +753,11 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     pcm_compose_shift(s, ch - CH_PCM1);
     return;
   }
-  if (ch >= 6) return; /* fm3-op ids have no register param path */
+  /* An FM3 operator track's other targets are the shared CH3's — the patch
+   * (alg, fb, every operator's params), pan, the LFO bits: written on fm3-N
+   * they apply to fm3, as if written there (driver.md §13.4). */
+  if (ch >= 16 && ch <= 19) ch = 2;
+  if (ch >= 6) return;
 
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
@@ -870,8 +874,9 @@ static int read_param(const MMLSeq *s, int ch, int target) {
             + VEL_FINE / 2) >> 3;
   if (target == T_GATE)
     return ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
-  if (ch < 6) {
-    const MMLFmCh *c = &s->fm[ch];
+  int fc = ch >= 16 && ch <= 19 ? 2 : ch; /* an operator track's patch is CH3's */
+  if (fc < 6) {
+    const MMLFmCh *c = &s->fm[fc];
     if (target == T_NOTE_PITCH) return c->pitch_cents;
     if (target == T_FM_FB) return c->feedback;
     if (target == T_FM_ALG) return c->algorithm;

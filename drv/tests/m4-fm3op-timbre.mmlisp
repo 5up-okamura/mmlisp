@@ -1,0 +1,8 @@
+; A/B + C gate: a timbre parameter written on an FM3 operator track applies
+; to the shared CH3 patch, as if written on fm3 (driver.md §13.4) — inline,
+; relative and as a macro. The driver used to drop them.
+(fm3 init-fm)
+(fm3-1 :tempo 120 :len 4 c c c c)
+(fm3-2 :len 4 :tl2 30 (macro :tl2 [#sus 20 60]) e e :fb 5 e :tl2+ 4 e)
+(fm3-3 :len 4 g :ml3 3 g :ar3 20 g g)
+(fm3-4 :len 4 c c :alg 4 c c)

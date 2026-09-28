@@ -1559,8 +1559,8 @@ export class DrvPlayer {
     }
 
     // FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
-    // F-number alone. Every other target on an operator track stays what it
-    // was — the level and patch are the shared CH3's (driver.md §13.4).
+    // F-number alone, and :vel/:vol are its own level; the patch is the shared
+    // CH3's, below (driver.md §13.4).
     {
       const op = this._fm3OpFor(channelId);
       if (op && target === TARGET_ID.NOTE_PITCH) {
@@ -1625,10 +1625,13 @@ export class DrvPlayer {
       this._pcm.composeShift(channelId - 20, this._master);
       return;
     }
-    if (channelId >= 6) return; // fm3-op ids: no M1 param path
+    // An FM3 operator track's other targets are the shared CH3's — the patch
+    // (alg, fb, every operator's params), pan, the LFO bits: written on fm3-N
+    // they apply to fm3, as if written there (driver.md §13.4).
+    const ch = channelId >= 16 && channelId <= 19 ? 2 : channelId;
+    if (ch >= 6) return;
 
     // FM-channel targets.
-    const ch = channelId;
     const regs = this._fm[ch];
     const port = ch >= 3 ? 1 : 0;
     const off = ch % 3;
@@ -1677,7 +1680,7 @@ export class DrvPlayer {
       case target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4: {
         const { idx, op } = opFor(TARGET_ID.FM_TL1);
         op.voicedTl = value < 0 ? 0 : value > 127 ? 127 : value;
-        op.tl = this._opLevel(channelId, idx, regs.algorithm);
+        op.tl = this._opLevel(ch, idx, regs.algorithm);
         this._ym(port, 0x40 + OP_ADDR_OFFSET[idx] + off, op.tl);
         return;
       }
@@ -2848,8 +2851,9 @@ export class DrvPlayer {
         + VEL_FINE / 2) >> 3;
     if (target === TARGET_ID.GATE)
       return ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
-    if (ch < 6) {
-      const regs = this._fm[ch];
+    const fc = ch >= 16 && ch <= 19 ? 2 : ch; // an operator track's patch is CH3's
+    if (fc < 6) {
+      const regs = this._fm[fc];
       if (target === TARGET_ID.NOTE_PITCH) return regs.pitchCents;
       if (target === TARGET_ID.FM_FB) return regs.feedback;
       if (target === TARGET_ID.FM_ALG) return regs.algorithm;

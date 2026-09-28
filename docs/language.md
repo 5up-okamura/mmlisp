@@ -1305,7 +1305,9 @@ operator's F-number alone, `:keyon` re-attacks that operator alone — the other
 keep sounding — and `:vel`/`:vol` are that operator's own level. The `(fm3 …)`
 track keeps `:vol` as the **group fader** over all four, and `:master` is
 global as ever; the three compose on one dB ladder. The patch is the shared
-channel's. On alg 7 (four operators in parallel) each `fm3-N` is a voice with
+channel's: any other parameter written on an `fm3-N` track — `:alg`, `:fb`,
+an operator's `:tl2`/`:ar3`/`:ml4`…, `:pan` — inline, relative or as a macro,
+applies to the `fm3` patch as if written there. On alg 7 (four operators in parallel) each `fm3-N` is a voice with
 its own fader; on an algorithm where the operator modulates, its level is
 modulation depth rather than volume.
 
