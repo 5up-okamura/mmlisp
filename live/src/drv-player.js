@@ -80,7 +80,7 @@ import {
 const FRAMES_PER_SEC = 60;
 // The channels the macro engine runs on: 0-9 and FM3's four operators
 // (mmlispseq.h MML_MACRO_CHANNELS).
-const MACRO_CHANNELS = 14;
+const MACRO_CHANNELS = 17;
 const LOOP_STACK_DEPTH = 4; // driver.md §5.2
 
 // ── LUT construction (float math lives here and only here) ────────────────
@@ -520,7 +520,7 @@ export class DrvPlayer {
       displaced: null, // owner track index this SE displaced (null = none)
       snapshot: null, // channel state captured at suspend (owner tracks only)
       pcmSnap: null, // PCM SE (design C): stolen soft-mix voice struct to restore
-      pcmVi: 0, // which voice pcmSnap belongs to
+      pcmSe: null, // PCM SE: {vi, binds} — the voice it took, and the BGM binds to hand back
       sePrio: 0, // register-SE priority (for same-channel preempt/drop)
     }));
     this._emitInitWrites();
@@ -755,6 +755,13 @@ export class DrvPlayer {
       // from here (release[0] lands this frame) and silences at its end.
       if (this._psg[channelId - 6].sounding && !this._velReleasePending(channelId))
         this._writePsgAtt(channelId - 6, 15);
+    } else if (channelId >= 20 && channelId <= 22) {
+      // A PCM key-off (opcodes.md §6): a shot plays to its end regardless; a
+      // loop's release moves END to the sample's end and WRAP to silence, and
+      // the tail plays out. Either way the note's macros take their release —
+      // and a `:len 0` loop is let go by the host's KEY_OFF or STOP_TRACK.
+      this._pcmVoices[channelId - 20].keyed = false;
+      this._pcm.release(channelId - 20);
     }
   }
 
@@ -790,10 +797,11 @@ export class DrvPlayer {
   _macroCh(ch) {
     if (ch < 10) return ch;
     if (ch >= 16 && ch <= 19) return 10 + (ch - 16);
+    if (ch >= 20 && ch <= 22) return 14 + (ch - 20);
     return -1;
   }
   _macroChId(mc) {
-    return mc < 10 ? mc : 16 + (mc - 10);
+    return mc < 10 ? mc : mc < 14 ? 16 + (mc - 10) : 20 + (mc - 14);
   }
 
   _fm3KeyOp(op, on) {
@@ -1279,8 +1287,13 @@ export class DrvPlayer {
           trk.pc = dur.next;
           // Live mixer: a muted / non-soloed PCM track advances but starts no
           // voice (always audible during the trace gate, so A/B is unaffected).
-          if (this._isTrackAudible(trk.index))
+          // Its macros re-instantiate as an FM/PSG note's do (driver.md
+          // §13.1) — not a muted one's: a :keyon would re-START the voice.
+          if (this._isTrackAudible(trk.index)) {
             this._pcmNoteOn(trk.channelId, sampleId, note);
+            this._macroTrigger(trk.channelId, trk.acc);
+            if (this._sub > 0) this._stepChannelMacros(trk.channelId);
+          } else this._macroSlots[this._macroCh(trk.channelId)] = [];
           // Held (dur 0) PCM suspends the dispatcher like any hold; otherwise
           // advance the clock. The sample keeps feeding via step 3 regardless.
           if (dur.ticks === 0) {
@@ -1292,7 +1305,7 @@ export class DrvPlayer {
         }
         case OPCODE.PCM_NOTE_OFF:
           trk.pc += 1;
-          this._pcmNoteOff(trk.channelId);
+          this._channelOff(trk.channelId); // a PCM key-off: the loop's release
           break;
         case OPCODE.MACRO_SET: {
           const macroId = s[trk.pc + 1];
@@ -1463,7 +1476,7 @@ export class DrvPlayer {
   // Only the base: the sounding note keeps its velocity (a :vol or :master
   // change recomposes it with that), and the next note-on takes the base up.
   _storeVel(channelId, value) {
-    // The stream's vel is in eighths (driver.md §7.1); PCM keeps whole steps.
+    // The stream's vel is in eighths (driver.md §7.1).
     const v = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
     const op = this._fm3OpFor(channelId);
     if (op) this._fm3OpVelBase[op - 1] = v;
@@ -1471,7 +1484,7 @@ export class DrvPlayer {
     else if (channelId < 10) this._psg[channelId - 6].velBase = v;
     else if (channelId >= 20 && channelId <= 22) {
       const pv = this._pcmVoices[channelId - 20];
-      if (pv) pv.velBase = (v + VEL_FINE / 2) >> 3;
+      if (pv) pv.velBase = v;
     }
   }
 
@@ -1481,10 +1494,8 @@ export class DrvPlayer {
       this._diag("W_DRV_UNKNOWN_TARGET", `PARAM_SET target 0x${target.toString(16)}`);
       return;
     }
-    // A macro (force) writes eighths, a host or relative write whole steps —
-    // scaled here on FM and PSG; PCM holds whole steps and has no macro engine.
-    if (target === TARGET_ID.VEL && !force && !(channelId >= 20 && channelId <= 22))
-      value *= VEL_FINE;
+    // A macro (force) writes eighths, a host or relative write whole steps.
+    if (target === TARGET_ID.VEL && !force) value *= VEL_FINE;
     // Global targets first.
     if (target === TARGET_ID.MASTER) {
       this._master = value < 0 ? 0 : value > 31 ? 31 : value;
@@ -1565,7 +1576,7 @@ export class DrvPlayer {
       const v = this._pcmVoices[channelId - 20];
       if (!v) return;   // ditto
       if (target === TARGET_ID.VEL) {
-        v.vel = value < 0 ? 0 : value > 15 ? 15 : value;
+        v.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
         if (!force) v.velBase = v.vel; // score's vel; a macro moves only the live one
       } else if (target === TARGET_ID.VOL) v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
       else if (target >= TARGET_ID.LOOP_START && target <= TARGET_ID.LOOP_LEN) {
@@ -1776,6 +1787,7 @@ export class DrvPlayer {
     if (op) return (this._fm3OpMask & (0x10 << (op - 1))) !== 0;
     if (ch < 6) return this._fm[ch].keyed;
     if (ch < 10) return this._psg[ch - 6].keyed;
+    if (ch >= 20 && ch <= 22) return this._pcmVoices[ch - 20].keyed;
     return false;
   }
 
@@ -1826,9 +1838,17 @@ export class DrvPlayer {
     if (slots.length === 0) return;
     const keyed = this._channelKeyed(ch);
     let dead = false;
+    const pv = ch >= 20 && ch <= 22 ? this._pcmVoices[ch - 20] : null;
+    let started = false;
     // The KEYON slots step first, so an envelope a retrigger restarts takes
     // its first step in the retrigger's own frame, whatever the bind order.
     for (const pass of [true, false]) {
+      // A PCM retrigger's START carries the level its frame's steps set: they
+      // compose as for a voice not yet started, and send no PCM_VOL of their own.
+      if (!pass && pv?.retrig) {
+        started = pv.started;
+        pv.started = false;
+      }
       for (let i = 0; i < slots.length; i++) {
         if (!slots[i]) continue;
         const isKeyon = this._macros[slots[i].descIdx]?.target === TARGET_ID.KEYON;
@@ -1838,6 +1858,11 @@ export class DrvPlayer {
           dead = true;
         }
       }
+    }
+    if (pv?.retrig) {
+      pv.retrig = false;
+      pv.started = started;
+      this._pcm.restart(ch - 20);
     }
     if (dead) this._macroSlots[mc] = slots.filter(Boolean);
   }
@@ -2001,6 +2026,11 @@ export class DrvPlayer {
     } else if (ch < 6) {
       this._keyOff(ch);
       this._keyOn(ch);
+    } else if (ch >= 20 && ch <= 22) {
+      // PCM re-attacks by playing the blob from its start — once the frame's
+      // level steps are in, so the START carries the restarted envelope's
+      // level (_stepChannelMacros).
+      this._pcmVoices[ch - 20].retrig = true;
     }
   }
 
@@ -2085,7 +2115,10 @@ export class DrvPlayer {
     if (!s || s.len === 0) return;
     const v = this._pcmVoices[vi];
     // Same per-note velocity restore as the FM/PSG note-on (driver.md §7.1).
+    // The level is composed as for a voice that never started: the START
+    // below carries it, so a PCM_VOL ahead of it would be spent for nothing.
     this._restoreVelBase(channelId);
+    v.started = false;
     this._pcm.composeShift(vi, this._master);
     // A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on. $2B is
     // an ordinary register write, sent once; nothing ever turns it off again.
@@ -2094,16 +2127,12 @@ export class DrvPlayer {
       this._ym(0, 0x2b, 0x80);
     }
     v.sampleId = sampleId;
+    v.keyed = true;
+    v.retrig = false;
     this._pcm.start(vi, s, this._pcmSrc(s), (note & 0x80) !== 0);
   }
 
-  _pcmNoteOff(channelId) {
-    // A shot plays to its end regardless (opcodes.md §6). A loop's release
-    // moves END to the sample's end and WRAP to silence: the tail plays out.
-    const vi = channelId - 20;
-    if (vi < 0 || vi > 2) return;
-    this._pcm.release(vi);
-  }
+
 
   // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
   //    of a frame. When the harness auto-starts every track (the M1 default)
@@ -2195,6 +2224,7 @@ export class DrvPlayer {
     // owns it.
     trk.displaced = null;
     trk.pcmSnap = null;
+    trk.pcmSe = null;
     // Channel ownership: the current owner is the *other* running (non-suspended)
     // track on this channel. ch2 is the FM3 shared channel (voice + op1 coexist);
     // ids ≥ 10 (fm3-op/pcm) have no channel block — no owner to displace here.
@@ -2269,15 +2299,15 @@ export class DrvPlayer {
       // restores is the NOTE: a BGM loop starts again from its sample's head.
       const vi = ch - 20;
       const v = this._pcmVoices[vi];
-      // A voice has no macro channel, but it does have sweep slots — a BGM's
-      // `:loop-start` glide would go on retargeting the effect's sample. Same
-      // rule, at the point the effect takes the voice.
+      // The effect takes the voice's modulators — a BGM's `:loop-start` glide
+      // would go on retargeting the effect's sample, its :keyon on re-starting
+      // it — and keeps the BGM's binds to hand back at its end.
+      trk.pcmSe = { vi, binds: new Map(this._macroActive[this._macroCh(ch)]) };
       this._clearChannelModulators(ch);
       if (v.started && v.looping) {
         // The note, not the voice: the sample id and that it loops are all the
         // restart needs, and they are what the C keeps too.
         trk.pcmSnap = { sampleId: v.sampleId, looping: v.looping };
-        trk.pcmVi = vi;
       }
     }
     // Re-init the track's dispatch state.
@@ -2432,12 +2462,21 @@ export class DrvPlayer {
   _reclaimSe(seTrk) {
     if (!seTrk.isSe) return;
     // PCM (design C): the BGM loop the SE stole is started again. No owner track.
-    if (seTrk.pcmSnap != null) {
+    // The voice's macro binds come back, and the looping BGM note starts
+    // again with them, as a note-on.
+    if (seTrk.pcmSe != null) {
+      const { vi, binds } = seTrk.pcmSe;
+      const ch = 20 + vi, mc = this._macroCh(ch);
       const snap = seTrk.pcmSnap;
+      seTrk.pcmSe = null;
       seTrk.pcmSnap = null;
       seTrk.isSe = false;
-      if (snap.sampleId != null)
-        this._pcmNoteOn(20 + seTrk.pcmVi, snap.sampleId, snap.looping ? 0x80 | 60 : 60);
+      this._macroActive[mc] = new Map(binds);
+      this._macroSlots[mc] = []; // the effect's own envelopes end with it
+      if (snap != null && snap.sampleId != null) {
+        this._pcmNoteOn(ch, snap.sampleId, snap.looping ? 0x80 | 60 : 60);
+        this._macroTrigger(ch, 0); // a tick clock starts on the tick
+      }
       return;
     }
     if (seTrk.displaced == null) {
@@ -2531,7 +2570,8 @@ export class DrvPlayer {
     if (target === TARGET_ID.VOL)
       return ch < 6 ? this._fm[ch].vol : ch < 10 ? this._psg[ch - 6].vol : 31;
     if (target === TARGET_ID.VEL)
-      return ((ch < 6 ? this._fm[ch].vel : ch < 10 ? this._psg[ch - 6].vel : VEL_FINE_MAX)
+      return ((ch < 6 ? this._fm[ch].vel : ch < 10 ? this._psg[ch - 6].vel
+        : ch >= 20 && ch <= 22 ? this._pcmVoices[ch - 20].vel : VEL_FINE_MAX)
         + VEL_FINE / 2) >> 3;
     if (target === TARGET_ID.GATE)
       return ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
@@ -2952,6 +2992,8 @@ export class DrvPlayer {
         // PCM has no key: muting parks the voice on the silence page.
         const vi = trk.channelId - 20;
         const v = this._pcmVoices[vi];
+        v.keyed = false;
+        this._macroSlots[this._macroCh(trk.channelId)] = []; // no :keyon re-START
         if (v.started) {
           v.looping = false;
           this._pcmCmd([PCM_START, vi, 8, ...u16le(PCM_SILENCE_ADDR), ...u16le(0), ...u16le(PCM_SILENCE_ADDR)]);

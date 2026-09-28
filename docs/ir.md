@@ -445,6 +445,7 @@ Emitted immediately before each `NOTE_ON` on an `fm3-N` track (same tick).
 | `baseRate` | int    | Hz      | no  | Sample's source rate (from the sample def), when known.          |
 | `vel`      | int    | 0–15    | no  | Omitted when 15.                                                 |
 | `gate`     | int    | ticks   | no  | Present only when `< length`.                                    |
+| `keyon` / `velMacro` / `vol` | spec (§6) | — | no | The note's macros, as on NOTE_ON — the only three a pcm track takes. |
 
 ```json
 { "tick": 0, "cmd": "PCM_NOTE_ON", "args": { "sample": "kick", "pitch": "c4", "rate": 1,
@@ -461,7 +462,7 @@ until `PCM_NOTE_OFF`.
 | Arg      | Type   | Req | Semantics                                              |
 | -------- | ------ | --- | ------------------------------------------------------- |
 | `sample` | string | yes | Sample to stop.                                          |
-| `mode`   | string | yes | `"loop"` (only emitted for loop-mode notes with gate > 0, at `tick + gate`). |
+| `mode`   | string | yes | The note's `:mode`. Emitted at `tick + gate` for a loop note with gate > 0, and for a shot whose macros listen for a key-off with 0 < gate < length. |
 
 ```json
 { "tick": 36, "cmd": "PCM_NOTE_OFF", "args": { "sample": "pad", "mode": "loop" } }

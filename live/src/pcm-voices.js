@@ -23,7 +23,7 @@ import {
 } from "./mmb.js";
 import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
 import { pcmLoopPoints, pcmShotPoints, PCM_WINDOW } from "./pcm-model.js";
-import { velFine } from "./ir-utils.js";
+import { velFine, VEL_FINE, VEL_FINE_MAX } from "./ir-utils.js";
 
 
 const u16le = (x) => [x & 0xff, (x >> 8) & 0xff];
@@ -32,10 +32,12 @@ export function newPcmVoice() {
   return {
     started: false, // a START has been sent since load: PCM_VOL is worth sending
     looping: false, // the running note loops; a note-off sends its release
+    keyed: false, // a note is on, up to its note-off: a macro's release waits for it
+    retrig: false, // a :keyon step restarts the blob once the frame's levels are in
     src: 0, // the note's blob, as a window address
     len: 0, // …and its length in bytes (whole blocks)
-    velBase: 15, // score's sticky velocity; vel is the macro-driven live one
-    vel: 15, // per-voice velocity 0-15 (raw); default = unattenuated
+    velBase: VEL_FINE_MAX, // score's sticky velocity; vel is the macro-driven live one
+    vel: VEL_FINE_MAX, // per-voice velocity in eighths of a step (0-120); default = unattenuated
     vol: 31, // per-voice volume 0-31 (raw); 31 = unity, 0 = hard mute
     shift: 0, // composed attenuation 0..4 from vel+vol; master is folded in by the host
     muted: false, // vol==0, master==0, or shift+master past PCM_TOTAL_MAX_SHIFT
@@ -75,16 +77,17 @@ export class PcmVoices {
   }
 
   // Compose a voice's attenuation from vel + vol (driver.md §14.1). Both ride
-  // the FM/PSG 2 dB/step ladder; summing their "steps below unity" gives the
-  // attenuation, quantized to the 6 dB grid:
-  //   n = (15−vel) + (31−vol);  shift = min(PCM_MAX_SHIFT, round(n/3)).
+  // the FM/PSG 2 dB/step ladder; summing their "steps below unity" — in
+  // eighths, as vel is held — gives the attenuation, rounded once to the
+  // 6 dB grid:
+  //   n = (120−vel) + 8(31−vol);  shift = min(PCM_MAX_SHIFT, round(n/24)).
   // MASTER IS NOT IN HERE — the host folds it into each voice's level page.
   // What master still decides here is the MUTE: `master 0`, `vol 0`, and a
   // total past PCM_TOTAL_MAX_SHIFT are the hard mutes; vel alone never mutes.
   composeShift(vi, master) {
     const v = this.voices[vi];
-    const n = 15 - v.vel + (31 - v.vol);
-    const shift = Math.floor((n + 1) / 3); // round(n/3)
+    const n = VEL_FINE_MAX - v.vel + VEL_FINE * (31 - v.vol);
+    const shift = Math.floor((n + 12) / 24); // round(n/24)
     v.shift = shift > PCM_MAX_SHIFT ? PCM_MAX_SHIFT : shift;
     v.muted = v.vol === 0 || master === 0
       || v.shift + this.masterShift >= PCM_TOTAL_MAX_SHIFT;
@@ -169,9 +172,18 @@ export class PcmVoices {
       v.le = v.ls + v.llen;
       v.endFixed = false;
     }
+    this.restart(vi);
+  }
+
+  // START the voice's blob from its first byte, at the level and loop it
+  // holds now — a note, and a :keyon retrigger, which after a loop's release
+  // plays the blob once through, as the released note would.
+  restart(vi) {
+    const v = this.voices[vi];
+    if (!v.started) return;
     const pts = v.looping
-      ? pcmLoopPoints(v.src, entry.len, v.ls, v.le)
-      : pcmShotPoints(v.src, entry.len);
+      ? pcmLoopPoints(v.src, v.len, v.ls, v.le)
+      : pcmShotPoints(v.src, v.len);
     const byte = this.shiftByte(v);
     this.emit([PCM_START, vi, byte, ...u16le(v.src), ...u16le(pts.end), ...u16le(pts.wrap)]);
     v._sentShift = byte;
@@ -235,7 +247,9 @@ export class PcmIrVoices {
     this.voiceTrack = new Array(PCM_VOICES).fill(null);
   }
 
-  /** One event: {kind: on|off|vol|vel|master|loop, voice, …}. */
+  /** One event: {kind: on|off|retrig|vol|vel|master|loop, voice, …}. vel is
+   *  the score's, in steps; the voice holds it in eighths, as the driver. A
+   *  retrig carries its frame's level steps as `vel` / `vol`. */
   apply(ev) {
     const seq = this.seq;
     const vi = Number(ev.voice);
@@ -249,9 +263,8 @@ export class PcmIrVoices {
         if (!entry || entry.len === 0) return false;
         // vel rides the note: the exporter sends it as the sticky VEL the
         // driver's note-on restores (restore_vel_base).
-        // A computed vel (a delay tap) reaches the driver in eighths and is
-        // rounded to the whole step there: round the same way, eighths first.
-        v.vel = v.velBase = Math.round(velFine(ev.vel ?? 15));
+        v.vel = v.velBase = velFine(ev.vel ?? 15) * VEL_FINE;
+        v.started = false; // the START carries the level (driver: pcm_note_on)
         seq.composeShift(vi, this.master);
         this.voiceTrack[vi] = ev.track ?? null;
         seq.start(vi, entry, PCM_WINDOW + (entry.base & 0x7fff), ev.mode === "loop");
@@ -260,6 +273,18 @@ export class PcmIrVoices {
       case "off":
         if (v) seq.release(vi);
         break;
+      case "retrig": { // a :keyon step: the blob again from its start
+        if (!v) return false;
+        // The frame's level steps ride along; the START carries them.
+        const started = v.started;
+        v.started = false;
+        if (ev.vel != null) v.vel = velFine(ev.vel) * VEL_FINE;
+        if (ev.vol != null) v.vol = clamp(Number(ev.vol), 31);
+        seq.composeShift(vi, this.master);
+        v.started = started;
+        seq.restart(vi);
+        break;
+      }
       case "vol":
         if (!v) return false;
         v.vol = clamp(Number(ev.value), 31);
@@ -267,7 +292,7 @@ export class PcmIrVoices {
         break;
       case "vel":
         if (!v) return false;
-        v.vel = v.velBase = Math.round(velFine(ev.value));
+        v.vel = v.velBase = velFine(ev.value) * VEL_FINE;
         seq.composeShift(vi, this.master);
         break;
       case "master":

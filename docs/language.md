@@ -1586,7 +1586,7 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   def with no loop points loops the whole sample. Write `:mode shot` to go
   back.
   > A `shot` plays to its end regardless of the note's `length` / `gate`;
-  > only `loop` mode honors KEY-OFF.
+  > only `loop` mode's sound honors KEY-OFF (a shot's macros do, below).
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
 - `:vel`, `:vol`, `:master` compose through the standard level stack (§6), but a
   PCM voice's resolution is COARSER than FM's or PSG's: the mixer attenuates by
@@ -1597,6 +1597,21 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   silence from −36 dB rather than gliding there. That is the model, not a
   limitation to work around (driver.md §5). Automate `:vol` on FM or PSG when a
   fade has to be smooth.
+- **Macros** (§11) on a pcm track drive `:keyon`, `:vel` and `:vol`. A
+  `:keyon` step plays the blob again from its start — a roll, a flam, a
+  stutter — and restarts the note's `:vel` / `:vol` envelopes, as it re-attacks
+  an FM or PSG note; after key-off (an echo tail) it re-plays the released
+  blob once through. `:vel` and `:vol` move the voice's level on the 6 dB
+  ladder above. Every other target is a chip register a soft-mixed voice does
+  not have: `E_PCM_MACRO_TARGET` (the pitch ones stay `E_PCM_NO_PITCH`). A
+  shot's gate is its key-off for its macros — a release region starts there
+  while the blob plays on.
+
+  ```lisp
+  (def-pcm snare :file "sounds/snare.wav")
+  (pcm2 snare :len 4
+    c (macro :step 1/32 :keyon [1 1 1 1 1 1 1 1]) (macro :vel (linear 8..15 :len 4f)) c)
+  ```
 - A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; a word that
   names no def is `E_UNKNOWN_ATOM`. `:mode shot`/`loop` and
   the loop points on any other channel (fm6 included — it is FM only) are

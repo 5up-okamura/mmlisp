@@ -1,0 +1,18 @@
+; M4 gate: macros on a pcm track (driver.md §13). A PCM voice takes :keyon,
+; :vel and :vol; a :keyon step STARTs the blob again from its head.
+;   1  a :keyon roll (a drum roll): each retrigger restarts the :vel curve,
+;      and the START carries the level the frame's step set
+;   2  a :vel envelope with a release on a shot: the gate's PCM_NOTE_OFF keys
+;      the note off, and the release steps down while the blob plays on
+;   3  a loop note under a :vol tremolo, released at its gate
+;   4  an echo tail: :keyon taps after key-off re-START the (released) blob
+;   5  :vel* scales the envelope by the note's vel, and a tick clock
+(def pcm-voices 1)
+(def-pcm blip :file "blip.wav")
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(pcm1 blip :tempo 120 :oct 4 :len 4
+  (macro :step 1/32 :keyon [1 1 1 1 1 1 1 1]) (macro :vel (linear 6..15 :len 3f)) c
+  (macro :keyon none :vel [15 #rel 12 9 6 3]) :gate* 0.5 c
+  (macro :vel none :vol (triangle 20..31 :len 12f)) pad :mode loop :gate* 0.75 c
+  (macro :vol none :keyon [1 #rel 0 0 1 0 0 1]) blip :mode shot :gate* 0.25 c
+  (macro :keyon none :step 1/16 :vel* [15 10 5]) :vel 12 :gate* 1 c c)

@@ -80,7 +80,7 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* ── Constant tables (tables.c, generated) ────────────────────────────────── */
 extern const uint16_t MML_FNUM_BLOCK[128];
 extern const uint16_t MML_PSG_PERIOD[128];
-/* FM and PSG hold a velocity in eighths of a step (driver.md §7.1); the vel
+/* Every channel holds a velocity in eighths of a step (driver.md §7.1); the vel
  * tables are indexed by it. ir-utils.js VEL_FINE — tables.c sizes its arrays
  * from this, so a mismatch fails to compile. */
 #define MML_VEL_FINE 8
@@ -106,7 +106,7 @@ typedef struct {
   /* vel is TWO values (driver.md §7.1): vel_base is the score's sticky
    * velocity, written only by a PARAM_SET VEL out of the stream; vel is the
    * live one a macro drives. note_on copies base -> live. Both in eighths
-   * of a step (0..MML_VEL_MAX); PCM's are whole steps. */
+   * of a step (0..MML_VEL_MAX), on every channel kind. */
   uint8_t vel_base, vel, vol, gate;
   uint8_t current_note;
   int16_t pitch_cents;
@@ -127,9 +127,9 @@ typedef struct {
  * bends that operator alone (driver.md §13.4). sweep_bank() maps a channel id
  * to its bank. */
 #define MML_SWEEP_BANKS 17
-/* The channels the macro engine runs on: 0-9 and FM3's four operators
- * (macro_ch()). */
-#define MML_MACRO_CHANNELS 14
+/* The channels the macro engine runs on: 0-9, FM3's four operators and the
+ * three PCM voices (macro_ch()). */
+#define MML_MACRO_CHANNELS 17
 
 /* One sweep slot (driver.md §4 step 3). Two per channel, so a pitch glide and
  * a volume fade can run at once. */
@@ -197,11 +197,13 @@ typedef struct {
 typedef struct {
   uint8_t started;    /* a START has been sent since load: PCM_VOL is worth sending */
   uint8_t looping;    /* the running note loops */
+  uint8_t keyed;      /* a note is on, up to its note-off: a macro's release waits for it */
+  uint8_t retrig;     /* a :keyon step restarts the blob once the frame's levels are in */
   uint8_t sample_id;  /* the running note's sample: what an SE-end restarts */
   uint8_t muted;
   uint16_t src;       /* the note's blob, as a window address */
   uint16_t len;       /* …and its length in bytes (whole blocks) */
-  uint8_t vel_base, vel, vol;
+  uint8_t vel_base, vel, vol; /* vel in eighths of a step, as FM and PSG */
   uint8_t shift;      /* composed attenuation 0..4; master is folded in by the host */
   uint8_t sent_shift; /* last shift byte sent, 0xFF = none */
   /* THE LIVE LOOP, in baked bytes from the blob's start, unrounded — the note's
@@ -256,8 +258,12 @@ typedef struct {
   uint8_t is_se, se_prio;
   uint8_t displaced;
   /* A PCM SE: soft-mix voices have no owner track, so what is kept is the
-   * looping BGM note the SE's PCM_NOTE_ON overwrote, restarted at SE-end. */
+   * looping BGM note the SE's PCM_NOTE_ON overwrote, restarted at SE-end, and
+   * the voice's macro binds, which the SE's claim wiped and its end puts back.
+   * pcm_se marks an SE that took voice pcm_vi at all. */
   uint8_t pcm_snap, pcm_snap_sample, pcm_snap_loop, pcm_vi;
+  uint8_t pcm_se, pcm_bind_count;
+  MMLMacroBind pcm_binds[MML_MACRO_BINDS];
   /* The frame the armed setup ran in. The armed frame advances no ticks at ALL
    * of its sub-ticks, not only the one that ran the setup (driver.md §3.5). */
   uint32_t armed_frame;

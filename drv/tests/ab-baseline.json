@@ -371,6 +371,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-pcm-hold.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-pcm-loop-curve.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -384,6 +390,12 @@
     "digest": "811c9dc5"
   },
   "m4-pcm-loop.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m4-pcm-macro.mmlisp": {
     "ok": true,
     "mismatches": 0,
     "compileErrors": 0,
@@ -468,6 +480,12 @@
     "digest": "811c9dc5"
   },
   "p3-se-overlap.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "p3-se-pcm-macro.mmlisp": {
     "ok": true,
     "mismatches": 0,
     "compileErrors": 0,

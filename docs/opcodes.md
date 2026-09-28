@@ -294,7 +294,9 @@ Notes:
   Clear, the note is a shot and plays once, whatever the entry's loop.
   `dur = 0x00` holds until the host releases it. A loop note whose gate is
   shorter than its length ends `dur` at the gate, where its PCM_NOTE_OFF
-  stands, and the rest of the length is a REST.
+  stands, and the rest of the length is a REST. A shot takes the same
+  PCM_NOTE_OFF when its macros listen for a key-off (driver.md §14); its
+  sound plays on, only the key is off.
 - **MACRO_SET / MACRO_CLEAR** drive the macro engine (mmb.md §15,
   driver.md §13). Macros are sticky track state: `MACRO_SET {macro_id}` binds
   MACRO_TABLE[macro_id] as the active macro for its target (replacing any

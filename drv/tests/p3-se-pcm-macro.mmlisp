@@ -1,0 +1,17 @@
+; P3 gate: a PCM SE takes the voice's macros and gives them back. A BGM pcm1
+; part rolls (:keyon) under a :vel swell; an SE on the same voice brings its
+; own :vel envelope. At the SE's end the BGM's binds come back — its next
+; note rolls again — and the loop the SE overwrote starts again with them.
+; Both starts are host-driven (p3-se-pcm-macro.cmds.json, auto-start off).
+(def pcm-voices 2)
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-pcm blip :file "blip.wav")
+
+; track 0 (bgm-pcm): a looping pad that rolls on sixteenths.
+(pcm1 pad :tempo 120 :mode loop :oct 4 :len 2
+  (macro :step 1/16 :keyon [1 1 1 1 1 1 1 1]) (macro :vel (linear 8..15 :len 4f))
+  c c c c)
+
+; track 1 (se-pcm): authored on pcm2, remapped onto pcm1 — a blip with its own
+; decaying :vel, no roll.
+(pcm2 blip :oct 5 :len 8 (macro :vel [15 12 9 6 3]) c)

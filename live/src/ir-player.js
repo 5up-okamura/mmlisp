@@ -657,14 +657,17 @@ export class IRPlayer {
   }
 
   /**
-   * Trigger KEY-OFF for a hold note (len=0) on the given FM channel.
-   * @param {number} ch  0-5 FM channel index
+   * Trigger KEY-OFF for a hold note (len=0) on the given channel.
+   * @param {number} ch  0-5 FM, 6-9 PSG, 20-22 PCM
    */
   triggerKeyOff(ch) {
     if (!this._holdChannels.has(ch)) return;
     this._holdChannels.delete(ch);
     const when = this._audioContext?.currentTime ?? 0;
-    if (ch >= 6) {
+    if (ch >= 20) {
+      // PCM: the key-off releases a `:len 0` loop; its tail plays out.
+      this._pcmEv(when, { kind: "off", voice: ch - 20 });
+    } else if (ch >= 6) {
       // PSG channels: silence by setting attenuation to 15 (max att = silent)
       this._psgKeyedUntil[ch - 6] = Math.min(this._psgKeyedUntil[ch - 6], when);
       this._psgSetAtt(ch - 6, 15, when);
@@ -2279,18 +2282,62 @@ export class IRPlayer {
     const sample = String(ev.args?.sample ?? "").trim();
     if (!sample) return;
     const velRaw = Number(ev.args?.vel ?? 15);
+    const noteVel = Number.isFinite(velRaw) ? velRaw : 15;
+    const voice = ev._chIndex ?? 0;
     // The bank baked one blob per (sample, note); the worklet finds it by the
     // same MIDI number the exporter keyed it with (export-mmb.js midiNote).
     const midi = Math.max(0, Math.min(127, Math.round(pitchToMidi(ev.args?.pitch ?? "c4"))));
+
+    // The note's macros (driver.md §13): :vel and :vol are the voice's level,
+    // a :keyon step plays the blob again from its start. Each runs to the
+    // next note on the track, which re-instantiates them; a :keyon retrigger
+    // restarts the level envelopes, as it does on FM and PSG.
+    const { keyon, velMacro, vol: volMacro } = ev.args ?? {};
+    const lengthTicks = ev.args?.length ?? this._ppqn / 2;
+    const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const { secs: nextNote } = this._nextNote(ev);
+    const limit = Number.isFinite(nextNote) ? nextNote - KEY_OFF_LEAD_SECS : Infinity;
+    if (gateTicks === 0) this._holdChannels.add(20 + voice); // `:len 0`: waits for KEY_OFF
+    const levels = [];
+    this._envRetrigs = this._keyonRetrigTimes(keyon, when, gateTicks, limit);
+    for (const [spec, kind, target] of [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"]]) {
+      if (!spec) continue;
+      this._scheduleMacro(
+        spec, noteFrames, gateSecs, when,
+        (v, t) => levels.push({ t, kind, value: clampForTarget(target, v) }),
+        this._stepSecs(spec.step), limit,
+      );
+    }
+    this._envRetrigs = null;
+    // The note starts at its :vel macro's first sample, as the driver's
+    // note-on composes it (a leading hold: the note's own vel).
+    const firstVel = velMacro && !macroLeadsWithHold(velMacro)
+      ? levels.find((x) => x.kind === "vel")?.value ?? noteVel
+      : noteVel;
     this._pcmEv(when, {
       kind: "on",
-      voice: ev._chIndex ?? 0,
+      voice,
       track: ev._trackIndex ?? null,
       sample,
       midi,
       mode: ev.args?.mode === "loop" ? "loop" : "shot",
-      vel: Number.isFinite(velRaw) ? velRaw : 15,
+      vel: firstVel,
     });
+    // A retrigger STARTs after its frame's level steps, so it carries them:
+    // they ride its event instead of sending a level of their own.
+    const retrigs = new Map();
+    for (const t of this._keyonRetrigTimes(keyon, when, gateTicks, limit) ?? [])
+      retrigs.set(this._eventFrame(t), { t, kind: "retrig", voice });
+    for (const x of levels) {
+      const r = retrigs.get(this._eventFrame(x.t));
+      if (r) r[x.kind] = x.value;
+      else this._pcmEv(x.t, { kind: x.kind, voice, value: x.value });
+    }
+    for (const r of retrigs.values()) {
+      const { t, ...fields } = r;
+      this._pcmEv(t + PCM_SWEEP_AFTER, fields);
+    }
   }
 
   _dispatchGlobalEvent(ev, when) {
@@ -2881,7 +2928,7 @@ export class IRPlayer {
     const base = track.audioTimeAtTick0 + ev.tick * secsPerTick;
     for (let i = track.flatIndex + 1; i < track.events.length; i++) {
       const ne = track.events[i];
-      if (ne.cmd === "NOTE_ON") {
+      if (ne.cmd === "NOTE_ON" || ne.cmd === "PCM_NOTE_ON") {
         return {
           secs: this._timeAfterTicks(base, ne.tick - ev.tick),
           legato: !!ne.args?.legato,
@@ -2894,7 +2941,7 @@ export class IRPlayer {
     if (this._loop && track.hasLoop && track.loopDuration) {
       for (let i = track.loopStartIndex ?? 0; i < track.events.length; i++) {
         const ne = track.events[i];
-        if (ne.cmd === "NOTE_ON") {
+        if (ne.cmd === "NOTE_ON" || ne.cmd === "PCM_NOTE_ON") {
           return {
             secs:
               track.audioTimeAtTick0 +

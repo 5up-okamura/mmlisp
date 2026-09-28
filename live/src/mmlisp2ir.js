@@ -80,6 +80,12 @@ const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
 const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
 const PCM_PITCH_KEYWORD = { NOTE_PITCH: ":pitch", NOTE_SEMI: ":semi" };
 
+// What a (macro …) can drive on a pcm track: a retrigger (`:keyon` plays the
+// blob again from its start — a roll) and the voice's level. The rest are
+// chip registers a soft-mixed voice does not have.
+const PCM_MACRO_TARGETS = new Set(["KEYON", "VEL", "VOL"]);
+const PCM_MACRO_ARG_KEYS = ["keyon", "velMacro", "vol"];
+
 function pcmRejectsPitch(trackState, what, diagnostics, src, trackName) {
   if (!trackState?.isPcmTrack) return false;
   pushDiag(
@@ -729,6 +735,12 @@ function emitNoteForTrack(
       args.vel = trackState.defaultVel;
     }
     if (gateTicks < lengthTicks) args.gate = gateTicks;
+    // The note's macros, resolved as an FM/PSG note's are (a `:vel*` macro
+    // scaled by this note's vel, tick lengths at this tempo).
+    const withMacros = makeNoteArgs(fullPitch, lengthTicks, trackState.defaultGate,
+      trackState.defaultVel, trackState.activeMacros, trackState.currentTempo);
+    for (const key of PCM_MACRO_ARG_KEYS) if (withMacros[key]) args[key] = withMacros[key];
+    const hasMacros = PCM_MACRO_ARG_KEYS.some((key) => args[key]);
 
     const pcmEv = {
       tick: trackState.tick,
@@ -738,7 +750,10 @@ function emitNoteForTrack(
     };
     stampDelay(pcmEv, trackState);
     events.push(pcmEv);
-    if (mode === "loop" && gateTicks > 0) {
+    // The note's key-off: a loop's release, and where a shot's macros take
+    // theirs — a shot with none has nothing that listens, and at full gate the
+    // next note or rest keys it off anyway.
+    if (gateTicks > 0 && (mode === "loop" || (hasMacros && gateTicks < lengthTicks))) {
       events.push({
         tick: trackState.tick + gateTicks,
         cmd: "PCM_NOTE_OFF",
@@ -1056,6 +1071,18 @@ function applyMacroEntryToState(trackState, irTarget, spec, ctx) {
     )
   )
     return;
+  if (trackState?.isPcmTrack && !PCM_MACRO_TARGETS.has(irTarget)) {
+    pushDiag(
+      ctx?.diagnostics ?? [],
+      "error",
+      "E_PCM_MACRO_TARGET",
+      `(macro ${ctx?.keyword ?? irTarget} …) has no effect on a pcm track: ` +
+        "a PCM voice takes :keyon, :vel and :vol",
+      ctx?.src ?? { line: 1, column: 1 },
+      ctx?.trackName,
+    );
+    return;
+  }
   trackState.activeMacros[irTarget] = spec;
 }
 
@@ -3767,6 +3794,7 @@ function compileChannelBody(
                     diagnostics,
                     src: nodeSrc(node),
                     trackName,
+                    keyword: groupSym,
                   });
                 }
               }

@@ -558,21 +558,8 @@ export function encodeMmb(ir, opts = {}) {
     return { step, loopStart, release, values };
   };
 
-  const internMacro = (spec, target, trackLabel, channelId) => {
+  const internMacro = (spec, target, trackLabel) => {
     if (!spec || typeof spec !== "object") return null;
-    if (target === "KEYON" && channelId >= 20) {
-      // Retrigger re-attacks the note's envelopes (FM hardware EG via $28 +
-      // soft-env macros; PSG soft-env macros). PCM (20-22) has no macro engine
-      // and no envelope to re-attack. FM3 operator tracks DO retrigger — each
-      // re-keys its own $28 bit (driver.md §13.4).
-      diag(
-        "warning",
-        "W_MMB_KEYON_UNSUPPORTED",
-        `:keyon has no effect on a PCM track; dropped on ${trackLabel}`,
-        trackLabel,
-      );
-      return null;
-    }
     const lowered = lowerMacro(spec, target, trackLabel);
     if (!lowered) return null;
     // Scaled macro (v0.6 §4.4, frame tier): a value slot is a per-frame depth
@@ -732,6 +719,29 @@ export function encodeMmb(ir, opts = {}) {
         gateState = snap.gateState;
       }
     };
+    // Diff a note's snapshotted macros into sticky MACRO_SET / CLEAR.
+    const syncMacros = (a) => {
+      const desired = new Map(); // target → macro_id
+      for (const key of Object.keys(a)) {
+        if (!MACRO_ARG_KEYS.has(key)) continue;
+        const id = internMacro(a[key], macroKeyToTarget(key), label);
+        if (id != null) desired.set(macroKeyToTarget(key), id);
+      }
+      for (const target of [...activeMacros.keys()]) {
+        if (!desired.has(target)) {
+          stream.u8(OPCODE.MACRO_CLEAR);
+          stream.u8(TARGET_ID[target]);
+          activeMacros.delete(target);
+        }
+      }
+      for (const [target, id] of desired) {
+        if (activeMacros.get(target) !== id) {
+          stream.u8(OPCODE.MACRO_SET);
+          stream.u8(id);
+          activeMacros.set(target, id);
+        }
+      }
+    };
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
       let a = ev.args ?? {};
@@ -767,27 +777,7 @@ export function encodeMmb(ir, opts = {}) {
       switch (ev.cmd) {
         case "NOTE_ON": {
           syncClock(ev.tick);
-          // Diff this note's snapshotted macros into sticky MACRO_SET / CLEAR.
-          const desired = new Map(); // target → macro_id
-          for (const key of Object.keys(a)) {
-            if (!MACRO_ARG_KEYS.has(key)) continue;
-            const id = internMacro(a[key], macroKeyToTarget(key), label, channelId);
-            if (id != null) desired.set(macroKeyToTarget(key), id);
-          }
-          for (const target of [...activeMacros.keys()]) {
-            if (!desired.has(target)) {
-              stream.u8(OPCODE.MACRO_CLEAR);
-              stream.u8(TARGET_ID[target]);
-              activeMacros.delete(target);
-            }
-          }
-          for (const [target, id] of desired) {
-            if (activeMacros.get(target) !== id) {
-              stream.u8(OPCODE.MACRO_SET);
-              stream.u8(id);
-              activeMacros.set(target, id);
-            }
-          }
+          syncMacros(a);
           const vel = velOnWire(a.vel);
           if (vel !== velState) {
             emitParamState(TARGET_ID.VEL, vel);
@@ -1247,16 +1237,19 @@ export function encodeMmb(ir, opts = {}) {
             emitParamState(TARGET_ID.VEL, vel);
             velState = vel;
           }
+          syncMacros(a);
           stream.u8(OPCODE.PCM_NOTE_ON);
           stream.u8(sampleId);
           // Bit 7: the note loops (`:mode loop`). The entry already carries
           // the pitch; the low bits only name it.
           stream.u8((midiNote(a.pitch) & 0x7f) | (a.mode === "loop" ? 0x80 : 0));
-          // A loop note's release is a PCM_NOTE_OFF at its gate. A gate
-          // shorter than the note has to END the note's dur there, or the
-          // off waits for the note's end; the rest of the length becomes the
-          // REST the next event's syncClock writes.
-          const gated = a.mode === "loop" && a.gate > 0 && a.gate < (a.length ?? 0);
+          // A loop note's release — and a shot's key-off, when its macros
+          // listen for one (the compiler emits it then) — is a PCM_NOTE_OFF at
+          // its gate. A gate shorter than the note has to END the note's dur
+          // there, or the off waits for the note's end; the rest of the length
+          // becomes the REST the next event's syncClock writes.
+          const keysOff = a.mode === "loop" || Object.keys(a).some((k) => MACRO_ARG_KEYS.has(k));
+          const gated = keysOff && a.gate > 0 && a.gate < (a.length ?? 0);
           const dur = gated ? a.gate : a.length ?? 0;
           stream.raw(encodeDuration(dur));
           clock += dur;

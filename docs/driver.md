@@ -175,8 +175,10 @@ preempts it and inherits its restore duty, so the BGM returns only after the
 **last** SE ends. Priorities are the host's own numbers, 0-255.
 
 **PCM.** Soft-mix voices have no channel owner, so a PCM SE overwrites the
-voice. If a looping BGM note was live there, SE-end starts it again from the
-sample's head — deliberately not time-synced.
+voice. It takes the voice's macro binds as any claim does and keeps them on
+the SE track; SE-end puts them back, and if a looping BGM note was live there,
+starts it again from the sample's head — deliberately not time-synced — with
+them re-instantiated, as a note-on. Gate: `p3-se-pcm-macro`.
 
 **Modulators change hands with the channel.** The SE's claim wipes the
 channel's macro binds and sweeps like any claim (§2.2), so the displaced part's
@@ -721,16 +723,15 @@ Rules:
 
 ### 7.1 Velocity is two values: a base and a live one
 
-`vel` above is really **two** per-channel bytes, on FM, PSG and PCM alike.
-On FM and PSG both are held **in eighths of a step** (0…120): the score's
+`vel` above is really **two** per-channel bytes, on FM, PSG and PCM alike,
+both held **in eighths of a step** (0…120): the score's
 `:vel` is a whole step, scaled ×8 on its way in (`PARAM_SET VEL`,
 `NOTE_ON_EX`, a host `SET_PARAM VEL`), while a `:vel` macro's samples arrive
 in eighths already (mmb.md §MACRO_TABLE) — a computed fade moves by the
 chip's own resolution (0.75 dB on FM) instead of the 2 dB score step, and a
-PSG fade still lands on its 2 dB attenuator. A relative write (`PARAM_ADD`,
-a sweep's `from` read) reads the live value back as whole steps, rounded.
-PCM keeps whole steps (its level is a 6 dB shift); a macro's eighths are
-rounded to them.
+PSG fade still lands on its 2 dB attenuator, and a PCM one on its 6 dB shift
+(§14). A relative write (`PARAM_ADD`, a sweep's `from` read) reads the live
+value back as whole steps, rounded.
 
 
 - **`vel_base`** — the score's sticky velocity. Written *only* by a
@@ -1133,9 +1134,10 @@ region; `(wait key-off)` marks the release boundary).
   restarted envelope takes its first step in the retrigger's frame, and a
   tick-clocked one counts from the retrigger's tick. PSG has no hardware EG, so the
   soft-envelope restart is the whole effect. On an FM3 operator track the
-  retrigger re-keys **that operator's bit alone** (§13.4). PCM has no macro
-  engine and no envelope to re-attack, so `:keyon` is dropped there by the
-  exporter with `W_MMB_KEYON_UNSUPPORTED`.
+  retrigger re-keys **that operator's bit alone** (§13.4). A PCM voice (§14)
+  re-attacks by a `PCM_START` of its blob from the head, sent after the frame's
+  level steps so it carries the restarted envelope's level (no `PCM_VOL` of
+  its own); after key-off it re-plays the released blob once through.
 - A frame `:step` (`Nf`, the default `1f`) clocks the macro on 60 Hz frames,
   its tick `:len`s resolved to frames at the note's tempo (compiler side). A
   tick `:step` (`16`, `1/16`, `24t`) clocks it on the note's track ticks
@@ -1355,11 +1357,12 @@ sound — they are kept for the next loop note.
 
 **Per-channel volume (`:vel` + `:vol`).** `:vel` and `:vol` on a `pcmN` channel
 ride the FM/PSG velocity/fader ladder (2 dB/step). The sequencer composes them
-into one per-voice attenuation on the 6 dB grid:
+— in eighths of a step, as vel is held (§7.1) — into one per-voice
+attenuation on the 6 dB grid, rounded once:
 
 ```
-n = (15 − vel) + (31 − vol)
-shift = min(PCM_MAX_SHIFT, round(n / 3))    # PCM_MAX_SHIFT = 4
+n = (120 − vel) + 8 × (31 − vol)
+shift = min(PCM_MAX_SHIFT, round(n / 24))   # PCM_MAX_SHIFT = 4
 mute  = (vol == 0) || (master == 0)
         || (shift + master_shift >= PCM_TOTAL_MAX_SHIFT)    # = 7
 ```
@@ -1368,7 +1371,16 @@ so the same `:vel`/`:vol` mean the same loudness on a PCM voice as on FM/PSG.
 `vel` never mutes — `vol 0` is a hard mute, and so are the two master
 conditions (§14.1). The compose runs on the 68k once per `PARAM_SET VEL`/`VOL`
 (and for every voice on a `MASTER` change, because master decides the mute) and
-reaches the frame as `PCM_VOL`; `vel`/`vol` persist per voice.
+reaches the frame as `PCM_VOL`; `vel`/`vol` persist per voice. A note's level
+rides its `PCM_START`, so a note-on composes without a `PCM_VOL` of its own.
+
+**Macros and the key.** The macro engine runs on the three voices as on FM
+and PSG (§13): `:keyon`, `:vel` and `:vol`. A voice is **keyed** from its
+note-on to its key-off — a `PCM_NOTE_OFF`, a REST, the track's end, or the
+host's `KEY_OFF` / `STOP_TRACK` — and the key-off is where a macro's release
+region starts. The key-off also releases a loop (above), which is how a
+`:len 0` loop is let go. The compiler emits a shot's `PCM_NOTE_OFF` only when
+its macros listen for one and its gate is shorter than its length.
 
 ### 14.1 `:master` is folded into each voice
 
