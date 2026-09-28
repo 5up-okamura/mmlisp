@@ -131,12 +131,56 @@ Constraints the poll-point build must meet:
 - **8 KB RAM.** The archive build had ~20 B free; a ring, the PCM code and a
   render-ahead write list must be paid for with the cut list.
 
+## Decided: ~10 kHz (the user, 2026-09-28)
+
+Chosen over 14.4 kHz for the ~28% of a frame it leaves the sequencer. The exact
+rate follows from the pacing: **YM Timer A ticks once per FM output sample
+(53,267 Hz), so a Timer-A-paced rate is 53,267 / k — k = 5 gives 10,653.4 Hz**,
+not the shipped `pcm2`'s 10,111.71 (178 samples a frame, ~26.8% of it at the
+assumed 90 cycles a sample). Every sample then spans exactly five of the
+chip's DAC reads, so the grid's own error (31.9 dB in the listening set)
+disappears for on-time writes. Timer A reloads itself, so the mean rate is
+exact whenever the flag is re-armed; a poll later than one period (354 cycles)
+misses an overflow and slips one sample. The re-arm writes `$27`, which also
+holds the CH3 mode: write it from a shadow. Not yet put to the user as a
+change of number.
+
+## The RAM budget (2026-09-28, archive `npm run size` + its symbols)
+
+The archive's 8 KB: resident code 6,017 (39 free) · PCM voices 54 · overlay
+slot 274 · mailbox/globals 232 · channel state 640 (10 × 64) · TCBs 512
+(16 × 32) · register shadow 304 · SE/PCM snapshots 34 · stack 86.
+
+- **Overlays cost RAM only through the slot.** Cutting a cold feature (SE
+  restore, CSM setup, FM3 setup, VOICE_SET) frees ROM, not RAM, unless it
+  shrinks the largest overlay. RAM is bought back from HOT resident code
+  (by name, roughly: macro engine ~510, sweeps ~270, value machine ~240 + its
+  32 B of slots, PSG ~200, FM3/CSM ~130, old PCM mixer ~540) and from the
+  per-channel / per-track tables.
+- **Must add:** the sample ring (256 B, page-aligned), the polls (~1 KB inline
+  at 7 B a site for an estimated 100–150 sites; ~200 B as `rst` at +21 cycles
+  a poll; a mix of the two ~300 B), output + bulk mix + note setup replacing
+  the old mixer (roughly −200..−300 B net), a polled overlay copy, a DMA
+  flag. **Net: ~350–600 B to find**, before any post-pivot feature.
+- **Candidate sources:** the value machine (~270), FM3/CSM resident (~130),
+  macro slots 3 → 2 (~50 of state plus code), TCBs 16 → 12 (128). Together
+  ~580 — it closes on paper, with nothing left for the post-pivot features.
+- **Alternative to overlays: execute cold code in place from the ROM window.**
+  No slot (274 B back), no copy (the 5.7k-cycle obstacle gone), at the price
+  of window wait states on cold paths and of the code sharing the window's
+  bank with the MMB (and the samples, unless the refill switches banks).
+- **The DMA protocol is required, not optional.** A Z80 access to the 68k bus
+  during VDP DMA stops the Z80 itself, polls included, so the ring alone
+  cannot ride it out: the game must raise a flag around DMA and the driver
+  must keep off the window (play from the ring) while it is up. XGM2 has the
+  same protocol.
+
 Next, in order:
 
-1. **The rate** — 10,111.71 Hz leaves ~28% of a frame for the sequencer's
-   growth since the pivot, 14,375.68 Hz ~17% (demo1). The user's call.
-2. **The cut list in bytes** (`npm run size` on the archive) against what the
-   build needs added: the ring, the poll/output code, no overlays or polled
-   overlay copies.
-3. **Static poll placement**: the real overhead, checked by an analyzer over
-   the sequencer's control-flow graph, not the greedy lower bound.
+1. **A bench on the archive sequencer** — real polls (assembler-inserted),
+   the ring, Timer A output, one voice — in the machine model: the DAC write
+   gaps, the real poll count and cycles, the real bytes. Replaces every
+   "assumed" figure above with a measured one.
+2. **The post-pivot feature list** with Z80 size estimates, and the user's cut
+   decisions against the budget.
+3. Static poll placement checked by an analyzer over the sequencer's CFG.
