@@ -1,22 +1,17 @@
-; FM3 as a thick pad on one channel: every operator gets its own pitch. The
-; progression plays twice: first the operators in plain unison, then pulled
-; apart. Two carriers play the root a semitone apart (-50 and +50 cents) and
-; the bass sits 30 sharp; the fifth glides. Each detuned operator also swings
-; on a wide vibrato of its own speed (:pitch+ adds to its offset), so the
-; gap between them keeps opening and closing, from unison to a whole tone.
+; FM3 unison: in special mode each operator of CH3 takes its own pitch, so
+; one channel can be a four-voice unison. The same line twice: first all
+; four operators on one pitch (a plain voice), then spread -60, -20, +20
+; and +60 cents (one thick, beating voice).
 (def-fm pad4 init-fm :alg 7 :fb 0
-  :ar1 14 :ar2 14 :ar3 12 :ar4 10
-  :tl1 12 :tl2 12 :tl3 16 :tl4 14
-  :rr1 5 :rr2 5 :rr3 5 :rr4 5)
+  :ar1 20 :ar2 20 :ar3 20 :ar4 20
+  :tl1 14 :tl2 14 :tl3 14 :tl4 14
+  :rr1 6 :rr2 6 :rr3 6 :rr4 6
+)
 
-(def chords c a- f g)
+(def line :len 4 c e g > c < b g e d c1)
 
 (fm3 pad4)
-(fm3-1 :tempo 84 :oct 4 :len 1 chords
-  :pitch -50 (macro :pitch+ (sin -50..50 :len 1)) chords)
-(fm3-2 :oct 4 :len 1 chords
-  :pitch 50 (macro :pitch+ (sin -50..50 :len 3/2)) chords)
-(fm3-3 :oct 4 :len 1 g e- c d
-  (glide 4) g e- c d)
-(fm3-4 :oct 3 :len 1 chords
-  :pitch 30 (macro :pitch+ (sin -30..30 :len 2)) chords)
+(fm3-1 line :pitch -60 line)
+(fm3-2 line :pitch -20 line)
+(fm3-3 line :pitch 20 line)
+(fm3-4 line :pitch 60 line)
