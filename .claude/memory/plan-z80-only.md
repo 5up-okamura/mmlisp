@@ -1,4 +1,11 @@
-# A Z80-only MMLisp build — feasibility (started 2026-09-28)
+# A Z80-only MMLisp build — feasibility (started 2026-09-28; SET ASIDE the same day)
+
+**Set aside 2026-09-28**: with the cut list in view the user judged a Z80-only
+build would keep MMLisp as a production environment but lose most of what
+makes MMLispDRV distinctive (the value machine, zero-jitter DAC, CSM, full SE
+restore) — the space is one XGM2 and MDSDRV have already mapped. The chosen
+direction is [[plan-68k-optimization]]: keep the split, cut the 68000's share.
+Everything below stands as measured, for the day this is revisited.
 
 `roadmap.md` Phase 3 open #6. Nothing is built; this file holds the user's
 decisions so far and the measurements taken for them.

@@ -38,9 +38,17 @@ Rules:
   syntax audit is all landed or decided), the preview-vs-driver residue, and
   why compile-time eval and the value machine have their shape, with the
   risks that are still live.
+- [plan-68k-optimization.md](plan-68k-optimization.md) — **cutting the
+  68000's share: the issue list from reading the sequencer, converter and
+  host, ranked, with the two profile figures that must be re-measured first
+  and the pre-rendering design question.** The user's chosen direction;
+  nothing is implemented yet.
 - [plan-z80-only.md](plan-z80-only.md) — **a Z80-only build (roadmap Phase 3
-  #6): why the user wants it, the measured cost of the archived Z80 sequencer
-  with PCM off, and the open choice of PCM scheme.** Nothing is built.
+  #6): the measurements (the archived sequencer with PCM off, the jitter
+  listening set, poll overhead, the RAM budget) and the decisions taken
+  (poll points, ~10 kHz, Timer A) — SET ASIDE 2026-09-28** in favour of
+  plan-68k-optimization: the user judged the build would lose most of what
+  makes the driver distinctive. Kept for the day it is revisited.
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   Lisp input aids: the implementation deviations and their reasons (why no
   `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the
