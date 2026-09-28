@@ -1,0 +1,22 @@
+; Noise-synced pulse: in periodic3 mode the noise channel is clocked by sqr3's
+; tone, and its periodic mode repeats one short pulse every 16 steps: a thin
+; 1/16-duty pulse wave, four octaves below sqr3. So sqr3 plays the phrase at
+; :vol 0 (its pitch only, four octaves up) and the noise track keys the notes.
+; Anything that moves sqr3's pitch moves the pulse: here a glide into the
+; turnaround. The buzzy low pulse is the classic SN76489 bass.
+(def bass :len 8 a a > a < a  g g > g < g  f f > f < f  e e g+ b)
+
+; pitch source: silent, four octaves above what you hear (a6 -> a2)
+(sqr3 :tempo 132 :oct 6 :vol 0
+  bass bass bass
+  :len 8 a a > a < a  g g (glide 12) > g < g  f f > f < f  (glide none) e e g+ b)
+
+; the sound: one noise note per bass note, a short pluck on each
+(noise :mode periodic3 :len 8 (macro :vel [15 13 12 #sus 11])
+  (x 64 c))
+
+(sqr1 :oct 5 :len 4 :vel 11
+  _ e8 a8 > c < b  a2 _ g8 e8
+  f e8 d8 e c  < b2 > _ _
+  _ e8 a8 > c < b  a2 _ > c8 d8
+  e d8 c8 < b g+  a1)

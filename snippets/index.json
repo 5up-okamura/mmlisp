@@ -44,6 +44,7 @@
   "snippets/techniques/tempo-sweep.mmlisp",
   "snippets/techniques/prio-layer.mmlisp",
   "snippets/techniques/noise-drums.mmlisp",
+  "snippets/techniques/noise-bass.mmlisp",
   "snippets/techniques/pcm-kit.mmlisp",
   "snippets/techniques/sample-effects.mmlisp",
   "snippets/techniques/value-machine.mmlisp"
