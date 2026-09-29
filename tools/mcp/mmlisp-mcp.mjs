@@ -11,6 +11,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { spawn } from "node:child_process";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 // A stray console.log in a toolchain module would corrupt the stream.
@@ -27,6 +29,7 @@ const { renderWav } = await load("export-wav.js");
 const { pitchToMidi } = await load("ir-utils.js");
 
 const DOCS = {
+  cheatsheet: "docs/cheatsheet.md",
   language: "docs/language.md",
   guide: "docs/guide.md",
   ir: "docs/ir.md",
@@ -121,6 +124,34 @@ function formatDiagnostics(diags, src) {
   });
 }
 
+// Ticks a track takes to play once through, counted loops unrolled: the IR
+// holds one pass of an `(x N …)` body, so its last tick undercounts. A body
+// with a `(break)` stops there on its final pass.
+function playedTicks(ev, lastTick) {
+  const root = { begin: 0, end: lastTick, children: [] };
+  const stack = [root];
+  for (const e of ev) {
+    const top = stack[stack.length - 1];
+    if (e.cmd === "LOOP_BEGIN") {
+      const node = { id: e.args?.id, begin: e.tick, children: [] };
+      top.children.push(node);
+      stack.push(node);
+    } else if (e.cmd === "LOOP_END" && top.id === e.args?.id && stack.length > 1) {
+      Object.assign(top, { end: e.tick, repeat: e.args?.repeat ?? 1 });
+      stack.pop();
+    } else if (e.cmd === "LOOP_BREAK") {
+      const loop = stack.findLast((n) => n.id === e.args?.id);
+      if (loop) loop.brk = e.tick;
+    }
+  }
+  const body = (n, to) =>
+    to - n.begin + n.children
+      .filter((c) => c.end != null && c.end <= to)
+      .reduce((sum, c) => sum + loop(c) - (c.end - c.begin), 0);
+  const loop = (n) => (n.repeat - 1) * body(n, n.end) + body(n, n.brk ?? n.end);
+  return body(root, lastTick);
+}
+
 function trackSummary(ir) {
   return (ir.tracks ?? []).map((t) => {
     const ev = t.events ?? [];
@@ -131,8 +162,11 @@ function trackSummary(ir) {
       .filter(([m]) => Number.isFinite(m))
       .sort((a, b) => a[0] - b[0]);
     const range = pitched.length ? `, ${pitched[0][1]}..${pitched.at(-1)[1]}` : "";
-    const tag = t.se ? `se ${t.se}` : t.channel;
-    return `${tag}: ${notes.length} notes${range}, ${ev.length} events, ends tick ${lastTick}`;
+    const ticks = playedTicks(ev, lastTick);
+    const bars = ticks % 384 ? `${(ticks / 384).toFixed(2)} bars` : `${ticks / 384} bars`;
+    const again = ev.some((e) => e.cmd === "JUMP") ? ", then jumps back" : "";
+    const tag = t.se ? `se ${t.se}` : t.scoreChannel ?? t.channel;
+    return `${tag}: ${notes.length} notes written${range}; plays ${ticks} ticks (${bars} of 4/4)${again}`;
   });
 }
 
@@ -184,6 +218,7 @@ function readDoc({ doc = "language", section, query }) {
   if (!file) throw new Error(`doc must be one of: ${Object.keys(DOCS).join(", ")}`);
   const text = fs.readFileSync(path.join(ROOT, file), "utf8");
   const { lines, heads } = docSections(text);
+  if (doc === "cheatsheet" && !section && !query) return text; // short: all of it
   if (query) {
     const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     const hits = [];
@@ -270,6 +305,37 @@ function presets({ set, query }) {
 }
 
 // ---------------------------------------------------------------------------
+// MMLisp Live links — the format of the editor's File > Share… (#n=<name>&s=<data>,
+// the source deflate-raw + base64url). `n` is the compile name: a score from
+// the repository keeps its path so its imports resolve against its own folder
+// on the site, as they do here.
+// ---------------------------------------------------------------------------
+
+const LIVE_URL = process.env.MMLISP_LIVE_URL || "https://mmlisp.vercel.app/";
+
+function liveLink(src, name, base = LIVE_URL) {
+  const data = zlib.deflateRawSync(Buffer.from(src, "utf8"), { level: 9 }).toString("base64url");
+  const n = name && name !== "untitled.mmlisp"
+    ? (path.isAbsolute(name) ? path.basename(name) : name)
+    : null;
+  const head = n ? new URLSearchParams({ n }).toString() + "&" : "";
+  return base.replace(/#.*$/, "") + "#" + head + "s=" + data;
+}
+
+function openBrowser(url) {
+  const [cmd, args] =
+    process.platform === "darwin" ? ["open", [url]]
+      : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
+        : ["xdg-open", [url]];
+  try {
+    spawn(cmd, args, { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+    return "opened in the default browser";
+  } catch (e) {
+    return `could not open a browser: ${e.message}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
 
@@ -284,7 +350,7 @@ const TOOLS = [
     name: "mmlisp_check",
     description:
       "Compile an MMLisp score with the real compiler and report diagnostics (with the offending source line), " +
-      "a per-track summary (notes, pitch range, events, end tick; a counted loop `(x N …)` is one pass in the IR) and the song length in seconds. " +
+      "a per-track summary (notes written, pitch range, and how many ticks/bars the track plays with its loops unrolled — compare tracks to catch length drift) and the song length in seconds. " +
       "Run this after every edit — a score with errors plays wrong or not at all.",
     inputSchema: {
       type: "object",
@@ -358,10 +424,44 @@ const TOOLS = [
     },
   },
   {
+    name: "mmlisp_live",
+    description:
+      "Open a score in MMLisp Live, the browser editor: returns a share link carrying the score in its fragment " +
+      "(the same link File > Share… makes — nothing is uploaded). The user clicks it to play and keep editing. " +
+      "Imports resolve from the site, so presets work; local wav files and imports outside the repository do not travel. " +
+      "open:true also launches the default browser (when the server runs on the user's machine).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...scoreProps,
+        base: { type: "string", description: `Live app URL (default ${LIVE_URL}; env MMLISP_LIVE_URL). Local dev server: http://localhost:5173/live/` },
+        open: { type: "boolean", description: "Also open the link in the default browser." },
+      },
+    },
+    run(args) {
+      const { src, name } = readScore(args);
+      const link = liveLink(src, typeof args.source === "string" ? args.filename : name, args.base);
+      let broken;
+      try {
+        const n = compile(args).diagnostics.filter((d) => d.severity === "error").length;
+        broken = n && `${n} error(s)`;
+      } catch (e) {
+        broken = e.message;
+      }
+      const notes = [];
+      if (broken) notes.push(`warning: the score does not compile (${broken}) — run mmlisp_check`);
+      if (link.length > 8000) notes.push(`warning: the link is ${link.length} characters; some chat apps cut long links`);
+      if (args.open) notes.push(openBrowser(link));
+      return [link, ...notes].join("\n");
+    },
+  },
+  {
     name: "mmlisp_docs",
     description:
-      "Read the MMLisp documentation. doc: language (the reference, canonical), guide (the tutorial), ir, roadmap. " +
-      "With no section: the table of contents. section: a number (\"10\", \"9.2\") or title words. query: search lines.",
+      "Read the MMLisp documentation. doc: cheatsheet (the whole language on two pages — read it first), " +
+      "language (the reference, canonical), guide (the tutorial), ir, roadmap. " +
+      "cheatsheet with no section: all of it; any other doc with no section: its table of contents. " +
+      "section: a number (\"10\", \"9.2\") or title words. query: search lines.",
     inputSchema: {
       type: "object",
       properties: {
@@ -398,10 +498,12 @@ const TOOLS = [
 
 const INSTRUCTIONS = `MMLisp is a Lisp-like DSL for Sega Mega Drive music (YM2612 FM fm1-fm6, PSG sqr1-3/noise, PCM).
 Workflow for writing a score:
-1. Read the reference before writing: mmlisp_docs (doc "language") — sections 1-5 cover the source model, channels, notes and lengths; the guide is the tutorial.
+1. Before writing, read the cheat sheet: mmlisp_docs (doc "cheatsheet"). For anything it only names, read that section of the reference (doc "language", section "10" …).
 2. Start from a similar snippet (mmlisp_snippets) and preset voices (mmlisp_presets) rather than inventing syntax.
 3. After every edit run mmlisp_check and fix every error; do not guess at syntax a diagnostic rejects — look it up.
-4. mmlisp_render writes a WAV for the user to listen to; its levels only tell you if something is silent or clipping.`;
+4. Compare the tracks' lengths in mmlisp_check's summary — tracks that should line up must play the same number of ticks.
+5. To let the user hear it: mmlisp_live gives a link that opens the score in MMLisp Live (the editor, ready to play and edit);
+   mmlisp_render writes a WAV. You cannot hear either — render levels only tell you if something is silent or clipping.`;
 
 // ---------------------------------------------------------------------------
 // JSON-RPC over stdio

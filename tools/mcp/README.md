@@ -9,11 +9,12 @@ dependencies (Node 18+).
 
 | Tool              | What it does                                                                 |
 | ----------------- | ---------------------------------------------------------------------------- |
-| `mmlisp_check`    | Compile; diagnostics with the offending line, per-track summary, song length |
+| `mmlisp_check`    | Compile; diagnostics with the offending line, each track's length (loops unrolled), song length |
 | `mmlisp_ir`       | Compile and return the IR JSON (optionally one track)                        |
 | `mmlisp_format`   | The editor's formatter; with `path` + `write` rewrites the file              |
+| `mmlisp_live`     | A share link that opens the score in MMLisp Live, ready to play and edit     |
 | `mmlisp_render`   | WAV (FM + PSG, no PCM) and its levels — peak, RMS, clipping, silence         |
-| `mmlisp_docs`     | `language` / `guide` / `ir` / `roadmap`: contents, one section, or a search  |
+| `mmlisp_docs`     | `cheatsheet` whole; `language` / `guide` / `ir` / `roadmap`: contents, one section, or a search |
 | `mmlisp_snippets` | List the snippets with what each shows, filter, or read one                  |
 | `mmlisp_presets`  | The preset sets and their import lines, or a set's voice/sample names        |
 
@@ -44,9 +45,22 @@ claude mcp add mmlisp -- node /path/to/mmlisp/tools/mcp/mmlisp-mcp.mjs
 }
 ```
 
-The server's `instructions` tell the model the workflow: read the reference,
-start from a snippet and preset voices, run `mmlisp_check` after every edit,
-render for the user to listen.
+The server's `instructions` tell the model the workflow: read the cheat sheet
+(`docs/cheatsheet.md`), start from a snippet and preset voices, run
+`mmlisp_check` after every edit and compare the tracks' lengths, then hand the
+user a Live link or a WAV.
+
+## Sending a score to MMLisp Live
+
+`mmlisp_live` makes the link File > Share… makes: the source, deflate-raw +
+base64url, in the URL fragment — nothing is uploaded, and opening it loads the
+score as a new unsaved one with a Play button. It points at
+https://mmlisp.vercel.app/ unless `base` or the `MMLISP_LIVE_URL` environment
+variable says otherwise (`http://localhost:5173/live/` for `npm run serve`).
+`open: true` also launches the default browser, which only helps when the
+server runs on the user's machine. Imports resolve from the site, so the
+preset sets travel; a local wav or an import from outside the repository does
+not.
 
 ## Limits
 
