@@ -133,7 +133,8 @@ graded write by write and DAC byte by DAC byte in an emulator. See
 - `drv/` — MMLispDRV: the 68k sequencer, the Z80 engine generator, SGDK
   integration, and a first-party toolchain (assembler, Z80 emulator, gates)
 - `examples/` — demo songs and test assets
-- `tools/` — command-line compiler and validation scripts
+- `tools/` — command-line compiler and validation scripts, and the MCP server
+  that lets an AI client write and check scores ([tools/mcp](tools/mcp/README.md))
 - `presets/` — the voice and sample sets the app ships
 - `mmlisp-syntax/` — VS Code TextMate grammar for `.mmlisp`
 - `wasm/`, `third_party/` — the vendored YM2612 / PSG cores and their WASM build
@@ -149,6 +150,7 @@ File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 
 ## Documents
 
+- [docs/cheatsheet.md](docs/cheatsheet.md) — the language on two pages
 - [docs/language.md](docs/language.md) — canonical language reference
 - [docs/guide.md](docs/guide.md) — composer's guide (tutorial)
 - [docs/ir.md](docs/ir.md) — IR JSON reference (compiler output)

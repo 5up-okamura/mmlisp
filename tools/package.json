@@ -10,6 +10,7 @@
     "verify-ir": "node scripts/verify-ir.js",
     "check:mmlisp-strict": "node scripts/check-mmlisp-strict.js",
     "check:sample-fx": "node scripts/check-sample-fx.mjs",
+    "check:cheatsheet": "node scripts/check-cheatsheet.mjs",
     "mcp": "node mcp/mmlisp-mcp.mjs"
   },
   "engines": {

@@ -20,7 +20,8 @@ Run from tools directory:
 3. `npm run mmlisp2ir -- ../drv/tests/ab-core.mmlisp --out /tmp/ab-core.ir.json`
 4. `npm run verify-ir -- a.ir.json b.ir.json`
 5. `npm run check:mmlisp-strict`
-6. `npm run mcp` — the MMLisp MCP server for AI clients (see [mcp/README.md](mcp/README.md))
+6. `npm run check:cheatsheet` — the examples in docs/cheatsheet.md still compile
+7. `npm run mcp` — the MMLisp MCP server for AI clients (see [mcp/README.md](mcp/README.md))
 
 ## Notes
 

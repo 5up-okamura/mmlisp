@@ -4,7 +4,8 @@ Describes the current MMLisp language (v0.5 lineage).
 
 This is the canonical reference for the language as implemented by
 `live/src/mmlisp2ir.js`. For a learning-ordered introduction, see
-`docs/guide.md`. IR event shapes are noted where they define observable
+`docs/guide.md`; for the whole language on two pages, `docs/cheatsheet.md`.
+IR event shapes are noted where they define observable
 behavior; the full IR format lives in `docs/ir.md`.
 
 ---

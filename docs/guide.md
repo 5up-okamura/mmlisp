@@ -2,7 +2,7 @@
 
 Practical authoring guide for the current MMLisp language. This is the
 tutorial; the full reference (every keyword, range, and rule) is
-`docs/language.md`.
+`docs/language.md`, and `docs/cheatsheet.md` is all of it on two pages.
 
 ---
 
