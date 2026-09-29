@@ -2,10 +2,13 @@
 // name) and `s` (deflate-raw + base64url source) — stored under a short id in
 // Upstash Redis. Files starting with `_` are not routes.
 //
-// The id is derived from the content, so sharing the same score twice gives
-// the same link, and a stored link never changes what it plays.
+// The id is derived from the score itself — its name and its source text, not
+// the compressed bytes, which differ between browsers' deflate — so sharing
+// the same score twice gives the same link from anywhere, and a stored link
+// never changes what it plays.
 
 import { createHash } from 'node:crypto';
+import { inflateRawSync } from 'node:zlib';
 
 // Vercel's Upstash integration names the pair KV_* (or UPSTASH_REDIS_* when
 // created from Upstash's own console).
@@ -14,6 +17,7 @@ const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TO
 
 export const MAX_DATA = 96 * 1024; // base64url chars — ~72 KB compressed
 export const MAX_NAME = 200;
+const MAX_SOURCE = 1024 * 1024; // inflated bytes — a score, never a bomb
 export const ID_RE = /^[A-Za-z0-9_-]{8,16}$/;
 const DATA_RE = /^[A-Za-z0-9_-]+$/;
 const KEY = (id) => `share:${id}`;
@@ -40,15 +44,29 @@ export function validShare(n, s) {
   return { n: n || '', s };
 }
 
-// Store the share; returns its id. The id is a prefix of the content hash,
-// lengthened only on the (practically impossible) clash with another score.
-export async function putShare({ n, s }) {
-  const value = JSON.stringify({ n, s });
-  const hash = createHash('sha256').update(value).digest('base64url');
+// The score's identity: its name and source text. null when `s` does not
+// inflate to one.
+function identity({ n, s }) {
+  try {
+    const src = inflateRawSync(Buffer.from(s, 'base64url'), { maxOutputLength: MAX_SOURCE });
+    return createHash('sha256').update(n).update('\0').update(src).digest('base64url');
+  } catch {
+    return null;
+  }
+}
+
+// Store the share; returns its id, or null for data that is not a score. The
+// id is a prefix of the identity hash, lengthened only on the (practically
+// impossible) clash with a different score.
+export async function putShare(share) {
+  const hash = identity(share);
+  if (!hash) return null;
+  const value = JSON.stringify(share);
   for (let len = 8; len <= 16; len += 2) {
     const id = hash.slice(0, len);
     if ((await redis('SET', KEY(id), value, 'NX')) === 'OK') return id;
-    if ((await redis('GET', KEY(id))) === value) return id; // shared before
+    const stored = await redis('GET', KEY(id));
+    if (stored && identity(JSON.parse(stored)) === hash) return id; // shared before
   }
   throw new Error('no free id');
 }
