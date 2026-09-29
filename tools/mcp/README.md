@@ -97,7 +97,9 @@ Only MMLisp Live's pages may connect: the published app and `localhost` /
 admits another origin, such as a preview deployment. `MMLISP_BRIDGE_PORT`
 changes the port — for a second AI session, whose server finds 5190 taken;
 open the app with `?ai-bridge=<port>` to match. The server exits with its
-session, and the port is free again.
+session, and the port is free again; a server that found it taken keeps
+trying every 2 s and takes it then — so a reloaded session, whose new server
+starts before the old one exits, connects on its own.
 
 ## Limits
 

@@ -428,13 +428,18 @@ const bridgeServer = http.createServer(async (req, res) => {
   }
   res.writeHead(404).end();
 });
+// A taken port is usually the server of an AI session that is closing (a
+// reload starts this one before the old one exits), so keep trying for it.
 bridgeServer.on("error", (e) => {
   bridge.error = e.code === "EADDRINUSE"
-    ? `port ${BRIDGE_PORT} is taken — most likely by the MMLisp MCP server of another AI session. ` +
+    ? `port ${BRIDGE_PORT} is taken — most likely by the MMLisp MCP server of another AI session; this server takes it once that one exits. ` +
       "Close that session, or start this server with MMLISP_BRIDGE_PORT set to a free port and open MMLisp Live with ?ai-bridge=<that port>."
     : `the MMLisp Live bridge could not start: ${e.message}`;
+  if (e.code === "EADDRINUSE") setTimeout(listenBridge, 2000).unref();
 });
-bridgeServer.listen(BRIDGE_PORT, "127.0.0.1");
+bridgeServer.on("listening", () => { bridge.error = null; });
+const listenBridge = () => bridgeServer.listen(BRIDGE_PORT, "127.0.0.1");
+listenBridge();
 
 function bridgeConnectHint() {
   if (bridge.error) return bridge.error;
