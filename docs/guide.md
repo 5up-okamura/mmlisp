@@ -1249,3 +1249,21 @@ The link carries the score's text only. Preset sets and samples the app ships
 (`presets/…`, §25) and a Browse score's own folder resolve for everyone; imports
 and `.wav`s from a folder you opened or dropped in do not, and the Share dialog
 names any it finds. A score that fails to compile is flagged too.
+
+## 27. Writing with an AI
+
+An AI client on your computer — Claude Code or Claude Desktop, on your own
+subscription — can work on the score open in the editor: read it, change it,
+and play it, while you keep editing and listening in the same window. It needs
+the MMLisp MCP server (`tools/mcp/README.md`) registered with the client.
+
+Turn on **Tools > Connect to AI** (or open the app with `?ai-bridge=5190`);
+the log says when the AI is connected, and the choice is remembered. The
+browser may ask to let the site reach the local network — allow it. Then ask
+the AI in its own window: "add a bass line to fm2", "make the lead brighter".
+
+Each AI change is one entry in the log and one step of **Undo**, so a change
+you do not like is a Cmd/Ctrl+Z away. The AI can start playback too, but only
+after you have clicked the page once — before that it puts up a Play button for
+you. The connection stays on this computer (127.0.0.1), and turning the menu
+item off ends it.

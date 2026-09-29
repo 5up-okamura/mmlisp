@@ -239,6 +239,12 @@
             <button class="menu-item" onclick="insertSnippetFmVoice();closeMenus()">FM Voice Template</button>
           </div>
         </div>
+        <div class="menu-sep"></div>
+        <button class="menu-item" onclick="toggleAiBridge();closeMenus()"
+                title="Let an AI client on this computer (Claude Code or Claude Desktop with the MMLisp MCP server) read and edit this score and play it. Connects to 127.0.0.1 only; every AI edit is logged and undoable.">
+          <span>Connect to AI</span>
+          <span class="menu-item-shortcut" id="aiBridgeCheck"></span>
+        </button>
       </div>
     </div>
 
@@ -538,6 +544,7 @@
     import { parse } from './src/mmlisp-parser.js';
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
+    import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey } from './src/import-fm-voices.js';
 
     // -----------------------------------------------------------------------
@@ -5677,6 +5684,149 @@
     function playSharedScore() {
       hideSharedPlay();
       onPlay();
+    }
+
+    // -----------------------------------------------------------------------
+    // AI bridge (Tools > Connect to AI): an AI client on this computer — Claude
+    // Code or Claude Desktop running tools/mcp/mmlisp-mcp.mjs — reads and edits
+    // the score here and plays it, over 127.0.0.1 (src/ai-bridge.js). The ops
+    // below are all it can do: read, edit (one undoable step, logged), build,
+    // play, stop. Off until turned on; the choice is remembered, and
+    // ?ai-bridge=<port> in the URL turns it on for that port.
+    // -----------------------------------------------------------------------
+
+    function lineOf(pos) {
+      return editorView.state.doc.lineAt(pos).number;
+    }
+
+    // Everything the compiler says about the current text — warnings too, which
+    // compileNow() does not surface.
+    async function aiDiagnostics() {
+      const src = editorView.state.doc.toString();
+      await refreshImportSources(src);
+      try {
+        return compileMMLisp(src, _lastFileName, { imports: _importSources }).diagnostics.map((d) => ({
+          severity: d.severity, code: d.code, message: d.message, line: d.line, column: d.column, track: d.track,
+        }));
+      } catch (e) {
+        return [{ severity: 'error', code: 'E_PARSE', message: e.message }];
+      }
+    }
+
+    function aiPlaying() {
+      return !!(player && typeof player.isPlaying === 'function' && player.isPlaying());
+    }
+
+    const aiBridgeOps = {
+      status() {
+        return {
+          fileName: _lastFileName,
+          playing: aiPlaying(),
+          length: editorView.state.doc.length,
+          lines: editorView.state.doc.lines,
+          app: location.origin + location.pathname,
+        };
+      },
+
+      async read() {
+        const { doc, selection } = editorView.state;
+        const main = selection.main;
+        return {
+          fileName: _lastFileName,
+          text: doc.toString(),
+          cursorLine: lineOf(main.head),
+          selection: main.empty ? null : {
+            fromLine: lineOf(main.from), toLine: lineOf(main.to), text: doc.sliceString(main.from, main.to),
+          },
+          playing: aiPlaying(),
+          diagnostics: await aiDiagnostics(),
+        };
+      },
+
+      // `source` replaces the whole score; `edits` are [{find, replace}], each
+      // `find` an exact piece of the current text that occurs exactly once.
+      // Either way it is one change in the editor's history, so Undo reverts it.
+      async write({ source, edits, build = true }) {
+        const doc = editorView.state.doc.toString();
+        let changes;
+        if (typeof source === 'string') {
+          changes = [{ from: 0, to: doc.length, insert: source }];
+        } else if (Array.isArray(edits) && edits.length) {
+          changes = edits.map(({ find, replace }, i) => {
+            if (typeof find !== 'string' || !find || typeof replace !== 'string') {
+              throw new Error(`edit ${i + 1}: needs a non-empty "find" and a "replace" string`);
+            }
+            const at = doc.indexOf(find);
+            if (at < 0) throw new Error(`edit ${i + 1}: "find" does not occur in the score — read it again`);
+            if (doc.indexOf(find, at + 1) >= 0) throw new Error(`edit ${i + 1}: "find" occurs more than once — include more context`);
+            return { from: at, to: at + find.length, insert: replace };
+          }).sort((a, b) => a.from - b.from);
+          changes.forEach((c, i) => {
+            if (i && c.from < changes[i - 1].to) throw new Error('two edits overlap');
+          });
+        } else {
+          throw new Error('give "source" (the whole score) or "edits" ([{find, replace}])');
+        }
+        editorView.dispatch({ changes, userEvent: 'input.ai', scrollIntoView: true });
+        log(`AI edited the score (${typeof source === 'string' ? 'whole text' : changes.length + ' change(s)'}) — Undo reverts it`, 'info');
+        if (build) await buildAction(); // hot-swaps at the next bar when playing
+        return { applied: changes.length, lines: editorView.state.doc.lines, playing: aiPlaying(), diagnostics: await aiDiagnostics() };
+      },
+
+      // Audio may start only after the user has interacted with the page; until
+      // then the AI gets a Play button put up for the user instead.
+      async play({ line } = {}) {
+        const unlocked = audioCtx?.state === 'running' || navigator.userActivation?.hasBeenActive;
+        if (!unlocked) {
+          document.getElementById('sharedPlayLabel').textContent = 'Play';
+          document.getElementById('sharedPlay').hidden = false;
+          return { started: false, reason: 'the browser only starts audio after a click on the page — a Play button is up for the user' };
+        }
+        if (aiPlaying()) onStop();
+        await onPlay(Number.isInteger(line) ? line : null);
+        return { started: aiPlaying(), fromLine: Number.isInteger(line) ? line : null };
+      },
+
+      stop() {
+        if (aiPlaying()) onStop();
+        return { playing: false };
+      },
+    };
+
+    const aiBridge = createAiBridge({
+      port: Number(loadPref('aiBridgePort', AI_BRIDGE_DEFAULT_PORT)) || AI_BRIDGE_DEFAULT_PORT,
+      ops: aiBridgeOps,
+      onState(state, detail) {
+        const el = document.getElementById('aiBridgeCheck');
+        if (el) el.textContent = state === 'connected' ? '✓' : state === 'connecting' ? '…' : '';
+        if (detail) log('AI: ' + detail, 'info');
+        else if (state === 'connected') log(`AI connected (127.0.0.1:${aiBridge.port})`, 'info');
+        else if (state === 'off') log('AI disconnected', 'info');
+      },
+    });
+
+    function toggleAiBridge() {
+      if (aiBridge.state === 'off') {
+        savePref('aiBridge', 'on');
+        aiBridge.connect();
+        log(`AI: waiting for the MMLisp MCP server on 127.0.0.1:${aiBridge.port} (tools/mcp/README.md)`, 'info');
+      } else {
+        savePref('aiBridge', 'off');
+        aiBridge.disconnect();
+      }
+    }
+    window.toggleAiBridge = toggleAiBridge;
+
+    {
+      const q = new URLSearchParams(location.search).get('ai-bridge');
+      if (q != null) {
+        const port = Number(q) || AI_BRIDGE_DEFAULT_PORT;
+        savePref('aiBridge', 'on');
+        savePref('aiBridgePort', port);
+        aiBridge.connect(port);
+      } else if (loadPref('aiBridge', 'off') === 'on') {
+        aiBridge.connect();
+      }
     }
 
     window.openShare = openShare;

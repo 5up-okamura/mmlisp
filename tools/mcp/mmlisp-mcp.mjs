@@ -8,6 +8,7 @@
 // stdout carries protocol messages only — everything else goes to stderr.
 
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -336,6 +337,134 @@ function openBrowser(url) {
 }
 
 // ---------------------------------------------------------------------------
+// The MMLisp Live bridge: MMLisp Live (Tools > Connect to AI) connects to this
+// server on 127.0.0.1, so the AI edits the score open in the user's editor and
+// plays it (live/src/ai-bridge.js is the page's end). Requests go down one
+// Server-Sent Events stream, answers come back on POST /reply. Only the pages
+// of MMLisp Live may connect — the published app and local dev servers, by
+// Origin, and only through a 127.0.0.1/localhost Host (no DNS rebinding) — and
+// they can only answer the few ops the page defines: status, read, write,
+// play, stop.
+// ---------------------------------------------------------------------------
+
+const BRIDGE_PORT = Number(process.env.MMLISP_BRIDGE_PORT) || 5190;
+const BRIDGE_ORIGINS = (process.env.MMLISP_BRIDGE_ORIGINS ?? "")
+  .split(",").map((o) => o.trim()).filter(Boolean);
+const bridge = { client: null, pending: new Map(), nextId: 1, error: null };
+
+function bridgeOriginAllowed(origin) {
+  if (!origin) return false;
+  if (origin === new URL(LIVE_URL).origin || BRIDGE_ORIGINS.includes(origin)) return true;
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
+function readBody(req, limit = 16 << 20) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > limit) {
+        reject(new Error("body too large"));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+const bridgeServer = http.createServer(async (req, res) => {
+  const origin = req.headers.origin;
+  const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
+  if (!["127.0.0.1", "localhost"].includes(host) || !bridgeOriginAllowed(origin)) {
+    res.writeHead(403).end();
+    return;
+  }
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Methods": "GET, POST",
+      "Access-Control-Allow-Headers": "content-type",
+      // Chrome asks before a public site reaches the local machine.
+      "Access-Control-Allow-Private-Network": "true",
+      "Access-Control-Max-Age": "600",
+    }).end();
+    return;
+  }
+  const { pathname } = new URL(req.url, "http://127.0.0.1");
+  if (req.method === "GET" && pathname === "/events") {
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    res.write("retry: 2000\n\n");
+    // One editor at a time: the newest tab wins, the older one stands down.
+    if (bridge.client) {
+      bridge.client.write("event: replaced\ndata: {}\n\n");
+      bridge.client.end();
+    }
+    bridge.client = res;
+    const ping = setInterval(() => res.write(": ping\n\n"), 15000);
+    req.on("close", () => {
+      clearInterval(ping);
+      if (bridge.client === res) bridge.client = null;
+    });
+    return;
+  }
+  if (req.method === "POST" && pathname === "/reply") {
+    try {
+      const reply = JSON.parse(await readBody(req));
+      const waiter = bridge.pending.get(reply.id);
+      if (waiter) {
+        bridge.pending.delete(reply.id);
+        clearTimeout(waiter.timer);
+        if (reply.ok) waiter.resolve(reply.result);
+        else waiter.reject(new Error(reply.error ?? "MMLisp Live reported an error"));
+      }
+      res.writeHead(204).end();
+    } catch {
+      res.writeHead(400).end();
+    }
+    return;
+  }
+  res.writeHead(404).end();
+});
+bridgeServer.on("error", (e) => {
+  bridge.error = e.code === "EADDRINUSE"
+    ? `port ${BRIDGE_PORT} is taken — most likely by the MMLisp MCP server of another AI session. ` +
+      "Close that session, or start this server with MMLISP_BRIDGE_PORT set to a free port and open MMLisp Live with ?ai-bridge=<that port>."
+    : `the MMLisp Live bridge could not start: ${e.message}`;
+});
+bridgeServer.listen(BRIDGE_PORT, "127.0.0.1");
+
+function bridgeConnectHint() {
+  if (bridge.error) return bridge.error;
+  const url = new URL(LIVE_URL);
+  url.hash = "";
+  url.searchParams.set("ai-bridge", String(BRIDGE_PORT));
+  return "MMLisp Live is not connected. Ask the user to open " + url.href +
+    " — or, in an open MMLisp Live, turn on Tools > Connect to AI — on this computer, in Chrome or Edge (the browser may ask to allow access to the local network).";
+}
+
+function askLive(op, args = {}, timeoutMs = 20000) {
+  if (!bridge.client) return Promise.reject(new Error(bridgeConnectHint()));
+  const id = bridge.nextId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      bridge.pending.delete(id);
+      reject(new Error(`MMLisp Live did not answer '${op}' within ${timeoutMs / 1000} s — is the tab still open?`));
+    }, timeoutMs);
+    bridge.pending.set(id, { resolve, reject, timer });
+    bridge.client.write(`event: request\ndata: ${JSON.stringify({ id, op, args })}\n\n`);
+  });
+}
+
+function liveDiagnostics(diags, src = "") {
+  if (!diags?.length) return "diagnostics: none";
+  const errors = diags.filter((d) => d.severity === "error").length;
+  return [`diagnostics: ${errors} error(s), ${diags.length - errors} warning(s)`, ...formatDiagnostics(diags, src)].join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
 
@@ -456,6 +585,78 @@ const TOOLS = [
     },
   },
   {
+    name: "live_status",
+    description:
+      "Whether MMLisp Live (the user's browser editor) is connected to this server, and what it has open. " +
+      "When it is not, the answer says how the user connects it.",
+    inputSchema: { type: "object", properties: {} },
+    async run() {
+      const st = await askLive("status");
+      return `connected: ${st.app}\nfile: ${st.fileName} (${st.lines} lines)\nplaying: ${st.playing ? "yes" : "no"}`;
+    },
+  },
+  {
+    name: "live_read",
+    description:
+      "Read the score open in MMLisp Live: its exact text (copy `find` strings for live_write from here), the cursor line, " +
+      "the selection, whether it is playing, and the compiler's diagnostics. Read before editing — the user edits too.",
+    inputSchema: { type: "object", properties: {} },
+    async run() {
+      const r = await askLive("read");
+      const sel = r.selection ? `selection: lines ${r.selection.fromLine}-${r.selection.toLine}\n${r.selection.text}\n` : "selection: none\n";
+      return `file: ${r.fileName}, cursor line ${r.cursorLine}, playing: ${r.playing ? "yes" : "no"}\n${sel}` +
+        `${liveDiagnostics(r.diagnostics, r.text)}\n--- score ---\n${r.text}`;
+    },
+  },
+  {
+    name: "live_write",
+    description:
+      "Edit the score open in MMLisp Live. Prefer `edits`: [{find, replace}], each `find` an exact piece of the current text " +
+      "(from live_read) that occurs exactly once — the user's other edits survive. `source` replaces the whole score. " +
+      "The change is one undoable step in the editor, and is logged there. Then it builds (build:false to skip): " +
+      "while playing, the new score takes over at the next bar. Returns the diagnostics.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        edits: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { find: { type: "string" }, replace: { type: "string" } },
+            required: ["find", "replace"],
+          },
+        },
+        source: { type: "string", description: "The whole new score, instead of edits." },
+        build: { type: "boolean", description: "Build after editing (default true)." },
+      },
+    },
+    async run(args) {
+      if (typeof args.source !== "string" && !args.edits?.length) throw new Error("give `edits` or `source`");
+      const r = await askLive("write", { source: args.source, edits: args.edits, build: args.build ?? true });
+      return `applied ${r.applied} change(s); ${r.lines} lines; playing: ${r.playing ? "yes" : "no"}\n${liveDiagnostics(r.diagnostics)}`;
+    },
+  },
+  {
+    name: "live_play",
+    description:
+      "Start playback in MMLisp Live, from the top or from a source line. A browser starts audio only after the user has " +
+      "clicked the page once; until then a Play button is put up for them instead.",
+    inputSchema: { type: "object", properties: { line: { type: "integer", description: "1-based source line to start from." } } },
+    async run(args) {
+      const r = await askLive("play", { line: args.line }, 30000);
+      return r.started ? `playing${r.fromLine ? ` from line ${r.fromLine}` : ""}` : `not started: ${r.reason ?? "unknown"}`;
+    },
+  },
+  {
+    name: "live_stop",
+    description: "Stop playback in MMLisp Live.",
+    inputSchema: { type: "object", properties: {} },
+    async run() {
+      await askLive("stop");
+      return "stopped";
+    },
+  },
+  {
     name: "mmlisp_docs",
     description:
       "Read the MMLisp documentation. doc: cheatsheet (the whole language on two pages — read it first), " +
@@ -503,7 +704,9 @@ Workflow for writing a score:
 3. After every edit run mmlisp_check and fix every error; do not guess at syntax a diagnostic rejects — look it up.
 4. Compare the tracks' lengths in mmlisp_check's summary — tracks that should line up must play the same number of ticks.
 5. To let the user hear it: mmlisp_live gives a link that opens the score in MMLisp Live (the editor, ready to play and edit);
-   mmlisp_render writes a WAV. You cannot hear either — render levels only tell you if something is silent or clipping.`;
+   mmlisp_render writes a WAV. You cannot hear either — render levels only tell you if something is silent or clipping.
+6. When the user works in MMLisp Live with the AI connection on, work in their editor: live_read, then live_write with
+   small {find, replace} edits (each is one undoable step for them), and live_play. live_status says how to connect.`;
 
 // ---------------------------------------------------------------------------
 // JSON-RPC over stdio
@@ -544,6 +747,8 @@ async function handle(msg) {
 }
 
 const rl = readline.createInterface({ input: process.stdin });
+// The host closing stdin ends the session — and the bridge's port with it.
+rl.on("close", () => process.exit(0));
 rl.on("line", (line) => {
   if (!line.trim()) return;
   let msg;

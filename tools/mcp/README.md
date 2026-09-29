@@ -1,8 +1,9 @@
 # MMLisp MCP server
 
 `mmlisp-mcp.mjs` lets an AI client write MMLisp: it reads the docs, snippets
-and preset sets, compiles a score with the real compiler, and renders it to
-WAV — the same `live/src` modules the editor runs. MCP over stdio, no
+and preset sets, compiles a score with the real compiler, renders it to WAV —
+the same `live/src` modules the editor runs — and, connected to MMLisp Live,
+edits and plays the score open in the user's editor. MCP over stdio, no
 dependencies (Node 18+).
 
 ## Tools
@@ -15,6 +16,10 @@ dependencies (Node 18+).
 | `mmlisp_live`     | A share link that opens the score in MMLisp Live, ready to play and edit     |
 | `mmlisp_render`   | WAV (FM + PSG, no PCM) and its levels — peak, RMS, clipping, silence         |
 | `mmlisp_docs`     | `cheatsheet` whole; `language` / `guide` / `ir` / `roadmap`: contents, one section, or a search |
+| `live_status`     | Whether MMLisp Live is connected (below), and how the user connects it       |
+| `live_read`       | The score open in the user's editor: text, cursor, selection, diagnostics    |
+| `live_write`      | Edit it — `{find, replace}` edits or the whole text; one undoable step, then a build |
+| `live_play` / `live_stop` | Playback in the user's editor                                        |
 | `mmlisp_snippets` | List the snippets with what each shows, filter, or read one                  |
 | `mmlisp_presets`  | The preset sets and their import lines, or a set's voice/sample names        |
 
@@ -48,7 +53,7 @@ claude mcp add mmlisp -- node /path/to/mmlisp/tools/mcp/mmlisp-mcp.mjs
 The server's `instructions` tell the model the workflow: read the cheat sheet
 (`docs/cheatsheet.md`), start from a snippet and preset voices, run
 `mmlisp_check` after every edit and compare the tracks' lengths, then hand the
-user a Live link or a WAV.
+user a Live link or a WAV — or, with the bridge on, work in the user's editor.
 
 ## Sending a score to MMLisp Live
 
@@ -62,9 +67,44 @@ server runs on the user's machine. Imports resolve from the site, so the
 preset sets travel; a local wav or an import from outside the repository does
 not.
 
+## Working in the user's editor (the MMLisp Live bridge)
+
+With the bridge the AI works on the score open in MMLisp Live instead of a
+file: it reads what the user has, edits it, and plays it — while the user keeps
+editing, listening and undoing in the same window. It runs on the user's own
+AI subscription; the page never talks to a model.
+
+1. Run the AI client (Claude Code or Claude Desktop) with this server on the
+   same computer as the browser. The server listens on `127.0.0.1:5190`.
+2. In MMLisp Live, turn on **Tools > Connect to AI**, or open the app with
+   `?ai-bridge=5190` (https://mmlisp.vercel.app/?ai-bridge=5190). The choice is
+   remembered; the log says when the AI connects. Chrome and Edge may ask to let
+   the site reach the local network — allow it. (Safari refuses an `https` page
+   reaching `http://127.0.0.1`; use the local dev server there.)
+3. Ask the AI for music. It calls `live_read`, then `live_write` and
+   `live_play`.
+
+What the connection can do is exactly the page's five ops — status, read,
+write, play, stop (`live/src/ai-bridge.js`, wired in `live/index.html`). Every
+AI edit is logged in the app and is one step of the editor's Undo. Audio starts
+only after the user has clicked the page once; before that `live_play` puts up
+a Play button instead. One tab holds the connection: a newer tab takes it over,
+and the older one turns itself off.
+
+Only MMLisp Live's pages may connect: the published app and `localhost` /
+`127.0.0.1` dev servers, by `Origin`, reaching the server through a
+`127.0.0.1`/`localhost` `Host`. `MMLISP_BRIDGE_ORIGINS` (comma-separated)
+admits another origin, such as a preview deployment. `MMLISP_BRIDGE_PORT`
+changes the port — for a second AI session, whose server finds 5190 taken;
+open the app with `?ai-bridge=<port>` to match. The server exits with its
+session, and the port is free again.
+
 ## Limits
 
 - The WAV has no PCM (the editor's WAV export has the same scope); a PCM
   track's events are counted, not rendered.
 - The model cannot hear the result — levels only catch silence and clipping.
   Listening, and playing it in the live app, stays with the user.
+- The bridge needs the AI client and the browser on the same computer; a
+  cloud session's server cannot reach a local browser (use `mmlisp_live`
+  links there).

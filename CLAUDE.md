@@ -28,6 +28,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `synth-md.js`, `scope-trigger.js` | Chip wiring for the browser, and the oscilloscope's trigger           |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
+| `ai-bridge.js`                  | Tools > Connect to AI: the page's end of the link to the MCP server (`tools/mcp/`) |
 | `live/api/` (Vercel functions)  | Short share links: `/api/share` stores a score, `/s/<id>` opens it (Upstash Redis) |
 | `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `wasm/`) |
 
@@ -76,8 +77,9 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 The driver has gates — `cd drv && npm run verify:all` must be green — and
 `cd tools && npm run check:mmlisp-strict` checks the compiler. To write or
 check a score as an AI, use the `mmlisp` MCP server (`/.mcp.json`,
-`tools/mcp/README.md`): it compiles with diagnostics, renders WAV, and serves
-the docs and snippets. **The live app and the language have no automated
+`tools/mcp/README.md`): it compiles with diagnostics, renders WAV, serves the
+docs and snippets, and — with Tools > Connect to AI on — edits and plays the
+score open in the user's MMLisp Live. **The live app and the language have no automated
 suite:** verify those by playing them back
 in the live environment, and call it out when a change is hard to verify that
 way.

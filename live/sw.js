@@ -69,6 +69,9 @@ async function networkFirst(request) {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return; // let writes pass straight through
+  // An event stream never ends: caching one would hold it forever (the AI
+  // bridge's link to 127.0.0.1, src/ai-bridge.js). Let it through untouched.
+  if ((request.headers.get('accept') || '').includes('text/event-stream')) return;
 
   const sameOrigin = new URL(request.url).origin === self.location.origin;
   event.respondWith(

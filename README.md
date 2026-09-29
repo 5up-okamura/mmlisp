@@ -95,6 +95,9 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 - mucom88 `.muc` / `.dat` song and voice-bank import
 - VGM and WAV export; open/save `.mmlisp` sources with the File System
   Access API
+- Writing with an AI: Tools > Connect to AI lets Claude Code or Claude Desktop
+  (with the [MMLisp MCP server](tools/mcp/README.md)) read, edit and play the
+  open score — every change logged and undoable
 
 ```
 cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
