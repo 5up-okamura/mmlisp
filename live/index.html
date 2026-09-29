@@ -161,6 +161,9 @@
             <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">mucom88 PCM Bank WAV…</button>
           </div>
         </div>
+        <button class="menu-item" onclick="openShare();closeMenus()">
+          <span>Share…</span>
+        </button>
         <button class="menu-item" onclick="saveFile();closeMenus()">
           <span>Save</span>
           <span class="menu-item-shortcut" id="saveFileShortcut"></span>
@@ -263,6 +266,11 @@
     <div id="leftCol">
       <div id="editorWrap">
         <canvas id="vizCanvas"></canvas>
+        <!-- A shared link opens paused: audio needs a gesture before it may start -->
+        <button id="sharedPlay" type="button" hidden onclick="playSharedScore()">
+          <svg width="14" height="14" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
+          <span id="sharedPlayLabel">Play</span>
+        </button>
         <button id="bracketStatus" type="button" hidden
                 title="Jump to the first unmatched bracket"></button>
       </div>
@@ -457,6 +465,28 @@
       <div class="browse-note" id="browseNote"></div>
       <div class="modal-actions">
         <button class="tb-btn" onclick="closeBrowse()">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share: the score rides the link itself (#s=), so a post plays it live -->
+  <div id="shareModal" class="modal-overlay" hidden>
+    <div class="modal info-modal share-modal">
+      <div class="modal-title">Share</div>
+      <div class="info-body">
+        <p>Anyone opening this link gets this score in MMLisp Live, ready to
+        play. The source is in the link itself — nothing is uploaded.</p>
+        <input id="shareUrl" class="share-url" type="text" readonly
+          onfocus="this.select()" aria-label="Share link">
+        <p class="share-meta" id="shareMeta"></p>
+        <p class="share-warn" id="shareWarn" hidden></p>
+      </div>
+      <div class="modal-actions share-actions">
+        <button class="tb-btn" onclick="copyShareUrl()" id="shareCopyBtn">Copy link</button>
+        <button class="tb-btn" onclick="postShare('x')">Post on X</button>
+        <button class="tb-btn" onclick="postShare('bluesky')">Bluesky</button>
+        <button class="tb-btn" onclick="postShare('native')" id="shareNativeBtn" hidden>More…</button>
+        <button class="tb-btn" onclick="closeInfoModal('shareModal')">Done</button>
       </div>
     </div>
   </div>
@@ -2766,6 +2796,7 @@
         extensions: editorExtensions,
       }));
       syncBracketStatus(); // setState fires no doc-change update
+      hideSharedPlay(); // a shared score's prompt belongs to that score alone
     }
 
     function highlightTrackLine(trackIdx, src) {
@@ -3910,10 +3941,12 @@
       { name: 'B',  black: false },
     ];
 
-    // Load default source on startup. Its imports are fetched, so the compile
-    // waits for the rest of this module to have run.
+    // Load default source on startup — or the score a share link carries. Its
+    // imports are fetched, so the compile waits for the rest of this module to
+    // have run.
     setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
-    queueMicrotask(() => refreshImportsAndCompile());
+    queueMicrotask(() => (location.hash ? loadSharedFromHash() : refreshImportsAndCompile()));
+    window.addEventListener('hashchange', () => loadSharedFromHash());
 
     // -----------------------------------------------------------------------
     // Logging / status
@@ -4440,6 +4473,7 @@
     }
 
     async function onPlay(fromLine = null) {
+      hideSharedPlay();
       const ok = await initAudio();
       if (!ok) return;
       stopBrowseScorePreview(); // one score owns the chip at a time
@@ -4798,7 +4832,7 @@
     // Generic info modals (About / Licenses): open/close by id, close on overlay click.
     window.openInfoModal = (id) => { closeMenus(); document.getElementById(id).hidden = false; };
     window.closeInfoModal = (id) => { document.getElementById(id).hidden = true; };
-    for (const id of ['aboutModal', 'licenseModal']) {
+    for (const id of ['aboutModal', 'licenseModal', 'shareModal']) {
       document.getElementById(id).addEventListener('click', (e) => {
         if (e.target.id === id) window.closeInfoModal(id);
       });
@@ -5466,6 +5500,165 @@
         setBrowseNote(String(e.message));
       }
     }
+
+    // -----------------------------------------------------------------------
+    // Share (File > Share…): the score travels in the link's fragment,
+    // deflate-raw + base64url, so posting it needs no server and the fragment
+    // never reaches one. `n` keeps the compile name: a score from the served
+    // tree (Browse) resolves its imports and samples against its own folder
+    // there, exactly as it did for the sharer.
+    // -----------------------------------------------------------------------
+
+    function bytesToBase64Url(bytes) {
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      }
+      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function base64UrlToBytes(str) {
+      const bin = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }
+
+    async function pipeBytes(bytes, transform) {
+      const stream = new Blob([bytes]).stream().pipeThrough(transform);
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+
+    async function shareUrlFor(src, name) {
+      const packed = await pipeBytes(new TextEncoder().encode(src), new CompressionStream('deflate-raw'));
+      const params = new URLSearchParams();
+      if (name && name !== 'untitled.mmlisp') params.set('n', name);
+      // `s` last and unescaped: base64url is already fragment-safe.
+      const head = params.toString();
+      return location.origin + location.pathname + '#' + (head ? head + '&' : '') + 's=' + bytesToBase64Url(packed);
+    }
+
+    // Imports and samples the link cannot carry: those that resolved only from
+    // the opened folder or a drop, not from the served tree a viewer fetches.
+    async function unsharedFiles(ir) {
+      const paths = [..._importSources.keys()];
+      for (const d of ir?.metadata?.samples ?? []) {
+        const p = d.resolvedFile ?? d.file;
+        if (p) paths.push(p);
+      }
+      const missing = [];
+      for (const path of new Set(paths)) {
+        let served = false;
+        try { served = (await fetch(toFetchablePath(path), { method: 'HEAD' })).ok; } catch { /* not served */ }
+        if (!served) missing.push(path);
+      }
+      return missing;
+    }
+
+    let _shareUrl = '';
+    let _shareTitle = '';
+
+    async function openShare() {
+      if (currentIrURL && !_lastGoodIR) {
+        log('Share: a binary MMB has no source to share', 'err');
+        return;
+      }
+      const src = editorView.state.doc.toString();
+      const { ir, ok } = await refreshImportsAndCompile();
+      _shareTitle = (_sourceFileName || _lastFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
+      _shareUrl = await shareUrlFor(src, _lastFileName);
+      document.getElementById('shareUrl').value = _shareUrl;
+      document.getElementById('shareMeta').textContent =
+        `${_shareUrl.length.toLocaleString()} characters in the link · ${src.length.toLocaleString()} in the source`;
+      document.getElementById('shareNativeBtn').hidden = !navigator.share;
+      const warnEl = document.getElementById('shareWarn');
+      const warns = [];
+      if (!ok) warns.push('The score does not compile right now — it will not play for others either.');
+      const missing = ok ? await unsharedFiles(ir) : [];
+      if (missing.length) {
+        warns.push('Not included — local files the link cannot carry: ' + missing.join(', '));
+      }
+      if (_shareUrl.length > 8000) warns.push('This link is very long; some services may cut it off.');
+      warnEl.textContent = warns.join(' ');
+      warnEl.hidden = warns.length === 0;
+      document.getElementById('shareCopyBtn').textContent = 'Copy link';
+      window.openInfoModal('shareModal');
+      document.getElementById('shareUrl').select();
+    }
+
+    async function copyShareUrl() {
+      const btn = document.getElementById('shareCopyBtn');
+      try {
+        await navigator.clipboard.writeText(_shareUrl);
+      } catch {
+        const input = document.getElementById('shareUrl');
+        input.select();
+        document.execCommand('copy');
+      }
+      btn.textContent = 'Copied';
+      log('Share link copied', 'info');
+    }
+
+    function postShare(where) {
+      const text = `${_shareTitle} — MMLisp`;
+      if (where === 'native') {
+        navigator.share({ title: text, url: _shareUrl }).catch(() => { /* dismissed */ });
+        return;
+      }
+      const intent = where === 'x'
+        ? 'https://x.com/intent/post?' + new URLSearchParams({ text, url: _shareUrl })
+        : 'https://bsky.app/intent/compose?' + new URLSearchParams({ text: `${text}\n${_shareUrl}` });
+      window.open(intent, '_blank', 'noopener');
+    }
+
+    // Open the score a share link carries. It opens like a new, unsaved score
+    // (fresh mixer, no folder), stopped: a page may not start audio before a
+    // gesture, so the prompt over the editor is that gesture.
+    async function loadSharedFromHash() {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const data = params.get('s');
+      if (!data) return;
+      let src;
+      try {
+        src = new TextDecoder().decode(await pipeBytes(base64UrlToBytes(data), new DecompressionStream('deflate-raw')));
+      } catch (e) {
+        log('Share link: could not read the score (' + e.message + ')', 'err');
+        await refreshImportsAndCompile();
+        return;
+      }
+      const name = params.get('n') || 'untitled.mmlisp';
+      onStop();
+      clearSourceDir();
+      _sourceHandle = null;
+      _sourceFileName = name.split('/').pop();
+      currentIrURL = null;
+      _lastFileName = name;
+      _lastGoodIR = null;
+      _lastSourceMap = null;
+      _mutedChannels.clear();
+      _soloChannels.clear();
+      _channelVol.clear();
+      _masterVolUi = 31;
+      setEditorDoc(src);
+      await refreshImportsAndCompile();
+      log('Opened shared score ' + _sourceFileName, 'info');
+      document.getElementById('sharedPlayLabel').textContent = 'Play ' + _sourceFileName.replace(/\.mmlisp$/i, '');
+      document.getElementById('sharedPlay').hidden = false;
+    }
+
+    function hideSharedPlay() {
+      document.getElementById('sharedPlay').hidden = true;
+    }
+
+    function playSharedScore() {
+      hideSharedPlay();
+      onPlay();
+    }
+
+    window.openShare = openShare;
+    window.copyShareUrl = copyShareUrl;
+    window.postShare = postShare;
+    window.playSharedScore = playSharedScore;
 
     window.openBrowse = openBrowse;
     window.closeBrowse = closeBrowse;

@@ -1190,3 +1190,44 @@
       .browse-crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     }
 
+
+    /* Share: the link modal, and the play prompt a shared link opens with */
+    .share-modal { width: min(520px, 92vw); }
+    .share-url {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--background);
+      border: 1px solid var(--mid);
+      color: var(--foreground);
+      border-radius: 2px;
+      padding: 0.3rem 0.4rem;
+      font-family: inherit;
+      font-size: 0.72rem;
+    }
+    .share-meta { color: var(--mid); margin-top: 0.4rem !important; }
+    .share-warn { color: var(--error); }
+    .share-actions { flex-wrap: wrap; }
+    #sharedPlay {
+      position: absolute;
+      left: 50%;
+      bottom: 1.5rem;
+      transform: translateX(-50%);
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      max-width: calc(100% - 2rem);
+      padding: 0.6rem 1.2rem;
+      border: 1px solid var(--foreground);
+      border-radius: 4px;
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--background);
+      background: var(--foreground);
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #sharedPlay[hidden] { display: none; }

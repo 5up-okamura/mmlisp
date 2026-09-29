@@ -1224,3 +1224,21 @@ Two kits imported at once is `E_IMPORT_CONFLICT`, which is the point: they
 compete for the same names. A kit that lacks a sound the other has simply has
 no def of that name; fill the gap with an alias to one it does have
 (`(def clap snare)`), or copy the def line from the other kit's `set.mmlisp`.
+
+---
+
+## 26. Sharing a score
+
+`File > Share…` turns the open score into a link. The score itself rides in the
+link (compressed, after the `#`), so nothing is uploaded and the link keeps
+working as long as the app does. Copy it, or post it straight to X or Bluesky
+(**More…** opens the system share sheet where the browser has one).
+
+Whoever opens the link gets the score in the editor with a **Play** button over
+it — a browser only lets sound start after a tap. From there it is an ordinary
+unsaved score: they can edit it, play it, save it, or share their own version.
+
+The link carries the score's text only. Preset sets and samples the app ships
+(`presets/…`, §25) and a Browse score's own folder resolve for everyone; imports
+and `.wav`s from a folder you opened or dropped in do not, and the Share dialog
+names any it finds. A score that fails to compile is flagged too.
