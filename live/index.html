@@ -475,7 +475,7 @@
       <div class="modal-title">Share</div>
       <div class="info-body">
         <p>Anyone opening this link gets this score in MMLisp Live, ready to
-        play. The source is in the link itself — nothing is uploaded.</p>
+        play.</p>
         <input id="shareUrl" class="share-url" type="text" readonly
           onfocus="this.select()" aria-label="Share link">
         <p class="share-meta" id="shareMeta"></p>
@@ -5529,13 +5529,34 @@
       return new Uint8Array(await new Response(stream).arrayBuffer());
     }
 
-    async function shareUrlFor(src, name) {
+    async function shareFor(src, name) {
       const packed = await pipeBytes(new TextEncoder().encode(src), new CompressionStream('deflate-raw'));
+      const n = name && name !== 'untitled.mmlisp' ? name : '';
+      const s = bytesToBase64Url(packed);
       const params = new URLSearchParams();
-      if (name && name !== 'untitled.mmlisp') params.set('n', name);
+      if (n) params.set('n', n);
       // `s` last and unescaped: base64url is already fragment-safe.
       const head = params.toString();
-      return location.origin + location.pathname + '#' + (head ? head + '&' : '') + 's=' + bytesToBase64Url(packed);
+      return { n, s, url: location.origin + location.pathname + '#' + (head ? head + '&' : '') + 's=' + s };
+    }
+
+    // The short form (/s/<id>) from the deployment's share store (live/api/).
+    // null wherever there is none — the dev server, offline, an unconfigured
+    // store — and the long link, which needs no server, stands in.
+    async function shortShareUrl({ n, s }) {
+      try {
+        const res = await fetch('/api/share', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ n, s }),
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!res.ok) return null;
+        const { url } = await res.json();
+        return typeof url === 'string' ? url : null;
+      } catch {
+        return null;
+      }
     }
 
     // Imports and samples the link cannot carry: those that resolved only from
@@ -5566,10 +5587,13 @@
       const src = editorView.state.doc.toString();
       const { ir, ok } = await refreshImportsAndCompile();
       _shareTitle = (_sourceFileName || _lastFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
-      _shareUrl = await shareUrlFor(src, _lastFileName);
+      const share = await shareFor(src, _lastFileName);
+      const shortUrl = await shortShareUrl(share);
+      _shareUrl = shortUrl || share.url;
       document.getElementById('shareUrl').value = _shareUrl;
-      document.getElementById('shareMeta').textContent =
-        `${_shareUrl.length.toLocaleString()} characters in the link · ${src.length.toLocaleString()} in the source`;
+      document.getElementById('shareMeta').textContent = shortUrl
+        ? 'Short link — the score is stored on the server, unchanged for good.'
+        : `${_shareUrl.length.toLocaleString()} characters in the link · ${src.length.toLocaleString()} in the source`;
       document.getElementById('shareNativeBtn').hidden = !navigator.share;
       const warnEl = document.getElementById('shareWarn');
       const warns = [];
