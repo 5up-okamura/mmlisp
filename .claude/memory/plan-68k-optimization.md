@@ -217,8 +217,29 @@ answers exist:
    gates green after each (c-gate, c-gate:pal, claim-gate, pairs-gate,
    sgdk:lint, engine:score): `4c50af1` the track-id table, `f2a30c2` the
    live masks, `6622a3b` the port-1 stretch, `9ea61ec` the macro engine,
-   `fef512e` the op tables. **Not yet re-profiled** — the cloud has no SGDK;
-   the user runs `sgdk-profile --pc` on sin008 and the numbers go here.
+   `fef512e` the op tables.
+   **Re-profiled 2026-10-01 (`sin008`, `--pc`, 29 s):** idle 75.2% → 80.3%.
+   The driver (sum of its outer functions) 19.2% → 15.4%; the API polls
+   2.9% → 1.3%; together 22.1% → 16.7%. What moved: the sweep walk (−1.8,
+   run_frame 6.4 → 4.55%), fades (0.45 → 0.01), libgcc `__udivsi3`/`__modsi3`
+   (0.44 → 0.03), the KEYON-classify decode (`macro_desc` non-constprop
+   0.45 → 0). What did not: **the worst frame** (`--peak 3`: 89% → 86%,
+   the write path still ~29% of it — the port-1 stretch saves nothing in a
+   burst, where port 1 is spread across the frame); `macro_desc` in
+   `step_macro` (1.07%, one decode per step remains); `mmlp_plan` (1.5%).
+   `track_by_id` was still 1% after the table: `&trk[i]` is a `mulu.w`
+   (MMLTrack is 152 B) — `8d28b53` stores byte offsets instead. **That
+   commit also skips the KEYON pass on channels with no KEYON slot**
+   (`keyon_retrigger` is the only writer of a PCM `retrig`, so the skipped
+   pass could only skip slots) — two variables in one commit, message
+   names only the first; they sit in different functions, so `--pc` still
+   separates them.
+   Reading the generated code: `m68k-linux-gnu-gcc` (apt, the cloud) with
+   `-m68000 -O3 -fomit-frame-pointer` reproduces the SGDK build closely
+   enough to see instructions per line. The `--pc` line counts credit an
+   instruction's time to the NEXT instruction (a `lsr.w #8` is 22 cycles
+   and its successor's line collects it), so read per-line counts ±1
+   instruction; per-function totals hold.
    Left out of item 5 on purpose: `released` twice a pump (0.25%; caching
    it across plan and psg_take could take a frame's PSG bytes one grab
    later when frames_in advances between the two, a timing change the
