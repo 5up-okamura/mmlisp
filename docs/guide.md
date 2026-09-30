@@ -1230,7 +1230,7 @@ no def of that name; fill the gap with an alias to one it does have
 ## 26. Sharing a score
 
 `File > Share…` turns the open score into a short link (`/s/…`) for posting.
-Copy it, or post it straight to X or Bluesky (**More…** opens the system share
+Copy it, or post it straight to X (**More…** opens the system share
 sheet where the browser has one). The link's card on a timeline shows the
 score's name.
 

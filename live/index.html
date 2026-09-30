@@ -490,7 +490,6 @@
       <div class="modal-actions share-actions">
         <button class="tb-btn" onclick="copyShareUrl()" id="shareCopyBtn">Copy link</button>
         <button class="tb-btn" onclick="postShare('x')">Post on X</button>
-        <button class="tb-btn" onclick="postShare('bluesky')">Bluesky</button>
         <button class="tb-btn" onclick="postShare('native')" id="shareNativeBtn" hidden>More…</button>
         <button class="tb-btn" onclick="closeInfoModal('shareModal')">Done</button>
       </div>
@@ -5649,10 +5648,7 @@
         navigator.share({ title: text, url: _shareUrl }).catch(() => { /* dismissed */ });
         return;
       }
-      const intent = where === 'x'
-        ? 'https://x.com/intent/post?' + new URLSearchParams({ text, url: _shareUrl })
-        : 'https://bsky.app/intent/compose?' + new URLSearchParams({ text: `${text}\n${_shareUrl}` });
-      window.open(intent, '_blank', 'noopener');
+      window.open('https://x.com/intent/post?' + new URLSearchParams({ text, url: _shareUrl }), '_blank', 'noopener');
     }
 
     // Open the score a share link carries. It opens like a new, unsaved score
