@@ -39,8 +39,16 @@ export function makeProject(E, score, { flags = "", patch, seFile } = {}) {
   // scratch build if a template is beside this tool.
   const romHead = join(here, "sgdk-shim", "rom_header.c");
   if (existsSync(romHead)) copyFileSync(romHead, join(proj, "src", "rom_header.c"));
-  execFileSync("node", [join(here, "install-sgdk.mjs"), proj, "--song", score, "--example",
-    ...(seFile ? ["--se", seFile] : [])], { stdio: "pipe" });
+  try {
+    execFileSync("node", [join(here, "install-sgdk.mjs"), proj, "--song", score, "--example",
+      ...(seFile ? ["--se", seFile] : [])], { stdio: "pipe" });
+  } catch (e) {
+    // Its own message, as text: the raw error prints the pipes as Buffers.
+    const err = new Error("install-sgdk failed");
+    err.output = `${e.stdout?.toString() ?? ""}\n${e.stderr?.toString().slice(-3000) ?? ""}`;
+    err.proj = proj;
+    throw err;
+  }
   if (patch) patch(proj);
   const { sampleBank } = buildMmb(score, { seFile });
   const all = `-DMMLISP_AUTOPLAY=1 -DMMLISP_PCM_SAMPLES=${sampleBank ? 1 : 0} ${flags}`.trim();
