@@ -1343,7 +1343,13 @@ static void step_channel_macros(MMLSeq *s, int ch) {
    * are marked dead in place and compacted only after the whole pass. The
    * KEYON slots step first, so an envelope a retrigger restarts takes its
    * first step in the retrigger's own frame, whatever the bind order. */
-  for (int pass = 0; pass < 2; pass++) {
+  /* The KEYON pass only when the channel has a KEYON slot: nothing else sets
+   * a PCM retrig (keyon_retrigger is its one writer), so a pass that would
+   * only skip every slot is skipped whole. */
+  int first = 1;
+  for (int i = 0; i < n; i++)
+    if (s->macro_slots[mc][i].target == T_KEYON) { first = 0; break; }
+  for (int pass = first; pass < 2; pass++) {
     /* A PCM retrigger's START carries the level its frame's steps set: they
      * compose as for a voice not yet started, and send no PCM_VOL of their own. */
     if (pass == 1 && pv && pv->retrig) {
@@ -2499,11 +2505,11 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   uint16_t n = rd16(track_table, 0);
   if (n > MML_MAX_TRACKS) n = MML_MAX_TRACKS;
   s->track_count = (uint8_t)n;
-  for (int i = 0; i < 256; i++) s->track_index[i] = 0xff;
+  for (int i = 0; i < 256; i++) s->track_off[i] = 0xffff;
   for (uint16_t i = 0; i < n; i++) {
     uint32_t at = 2 + (uint32_t)i * 5;
     s->trk[i].track_id = track_table[at];
-    s->track_index[track_table[at]] = (uint8_t)i;
+    s->track_off[track_table[at]] = (uint16_t)((uint8_t *)&s->trk[i] - (uint8_t *)s->trk);
     s->trk[i].channel_id = track_table[at + 1];
     s->trk[i].flags = track_table[at + 2];
     s->trk[i].event_offset = rd16(track_table, at + 3);
@@ -3130,8 +3136,11 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
 }
 
 static MMLTrack *track_by_id(MMLSeq *s, uint8_t track_id) {
-  uint8_t i = s->track_index[track_id];
-  return i < s->track_count ? &s->trk[i] : 0;
+  /* No &trk[i]: MMLTrack is 152 bytes, so the index costs a mulu.w (~44
+   * cycles) every poll. A shift-free index test and a pointer walk from
+   * the table's byte offset instead. */
+  uint16_t off = s->track_off[track_id];
+  return off != 0xffff ? (MMLTrack *)((uint8_t *)s->trk + off) : 0;
 }
 const MMLTrack *mml_track_by_id(const MMLSeq *s, uint8_t track_id) {
   return track_by_id((MMLSeq *)s, track_id);
