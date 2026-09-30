@@ -175,6 +175,8 @@ typedef struct {
   uint8_t state; /* MML_MACRO_RUN / _HOLD / _RELEASE */
   uint8_t dead;  /* finished this frame; compacted after the pass */
   uint8_t fresh; /* the note's own frame: a KEYON step here does not re-attack */
+  uint8_t target; /* the descriptor's, kept from the instantiate: the frame sorts
+                   * KEYON slots first without decoding every slot again */
   uint16_t cursor;
   int16_t step_clock; /* frames left on this step; signed, a step of 0 free-runs */
   uint16_t acc;       /* tick clock (flags bit3): the note's track accumulator, 8.8 */

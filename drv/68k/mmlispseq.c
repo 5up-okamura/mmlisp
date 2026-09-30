@@ -350,8 +350,8 @@ MML_HOT uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
   return (uint8_t)clampi(att, 0, 15);
 }
 
-static int fm3_op_for(const MMLSeq *s, int ch);
-static int macro_ch(int ch);
+MML_HOT int fm3_op_for(const MMLSeq *s, int ch);
+MML_HOT int macro_ch(int ch);
 static int vel_release_pending(const MMLSeq *s, int ch);
 static int macro_desc(const MMLSeq *s, int id, MMLMacro *m);
 static int macro_value(const MMLMacro *m, int idx, int *hold);
@@ -483,7 +483,7 @@ static void write_noise_cfg(MMLSeq *s) {
  * F-numbers and key bits. The four operator tracks are channel ids 16-19;
  * channel 2 is the shared CH3 (patch + channel level).
  * Returns the 1-based operator, or 0 when this channel is an ordinary one. */
-static int fm3_op_for(const MMLSeq *s, int ch) {
+MML_HOT int fm3_op_for(const MMLSeq *s, int ch) {
   if (!(s->reg27 & 0x40)) return 0;
   if (ch >= 16 && ch <= 19) return ch - 15;
   return 0;
@@ -939,7 +939,7 @@ static int sweep_bank_ch(int bank) {
 }
 /* The macro engine's channel index: 0-9 are their own, FM3's four operators
  * (ids 16-19) are 10-13. -1 = no macro engine (PCM). */
-static int macro_ch(int ch) {
+MML_HOT int macro_ch(int ch) {
   if (ch < 10) return ch;
   if (ch >= 16 && ch <= 19) return 10 + (ch - 16);
   if (ch >= CH_PCM1 && ch <= CH_PCM3) return 14 + (ch - CH_PCM1);
@@ -1125,7 +1125,11 @@ static void macro_trigger(MMLSeq *s, int ch, uint16_t acc, const MMLTrack *t) {
     sl->acc = acc;
     /* An empty attack/sustain (`[#rel …]`) writes nothing until key-off. */
     MMLMacro d;
-    if (macro_desc(s, sl->macro_id, &d) && d.release == 0) sl->state = MML_MACRO_HOLD;
+    sl->target = 0xff; /* an unknown id: no slot is a KEYON one, and step_macro ends it */
+    if (macro_desc(s, sl->macro_id, &d)) {
+      sl->target = d.target;
+      if (d.release == 0) sl->state = MML_MACRO_HOLD;
+    }
   }
   s->macro_slot_count[ch] = s->bind_count[ch];
   if (s->bind_count[ch]) s->macro_live |= 1u << ch;
@@ -1200,22 +1204,22 @@ static void keyon_retrigger(MMLSeq *s, int ch, int restart, const MMLMacroSlot *
  * hold sentinel) and advance by the region rules. Returns 1 when the slot is
  * finished. */
 static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp, int keyed) {
-  const MMLMacro d = *dp;
+  const MMLMacro *d = dp; /* by pointer: a copy a step was 0.5% of the 68000 */
   if (sl->state == MML_MACRO_HOLD) return 0; /* one-shot: hold, await key-off */
   if (sl->state == MML_MACRO_TAIL) {
-    if (d.target == T_KEYON) channel_off(s, ch); /* the echo tail's last tap ends */
+    if (d->target == T_KEYON) channel_off(s, ch); /* the echo tail's last tap ends */
     else if (!keyed && s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
     return 1;
   }
 
   int hold;
-  int v = macro_value(&d, (int)sl->cursor, &hold);
+  int v = macro_value(d, (int)sl->cursor, &hold);
   if (!hold) {
-    if (d.has_scale) v = scale_macro_sample(v, read_slot(s, d.scale_slot));
-    int add = (d.flags & 2) != 0;
-    if (d.target == T_NOTE_SEMI) {
+    if (d->has_scale) v = scale_macro_sample(v, read_slot(s, d->scale_slot));
+    int add = (d->flags & 2) != 0;
+    if (d->target == T_NOTE_SEMI) {
       write_note_semi(s, ch, v, add);
-    } else if (d.target == T_KEYON) {
+    } else if (d->target == T_KEYON) {
       /* The first sample lands in the note's own frame, where the note has
        * just attacked — re-attacking there is a write with nothing behind it,
        * so a leading nonzero step is a no-op (ir-player skips the t=0 sample
@@ -1223,8 +1227,8 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp,
       /* After key-off (an echo tail) the envelopes play their release through
        * the taps: only the EG re-keys. */
       if (v != 0 && !sl->fresh)
-        keyon_retrigger(s, ch, sl->state != MML_MACRO_RELEASE, (d.flags & 8) ? sl : 0, d.step);
-    } else if (d.target == T_NOTE_PITCH) {
+        keyon_retrigger(s, ch, sl->state != MML_MACRO_RELEASE, (d->flags & 8) ? sl : 0, d->step);
+    } else if (d->target == T_NOTE_PITCH) {
       /* Pitch macro: write the register every frame but never store back to
        * pitch_cents, which holds the :pitch directive's base. An override macro
        * that clobbered it would leave a residual detune on every later note. */
@@ -1241,25 +1245,25 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp,
         write_psg_pitch(s, p, s->psg[p].current_note, base + v);
       }
     } else {
-      param_set_ex(s, ch, d.target, v, 1); /* the macro owns the envelope */
+      param_set_ex(s, ch, d->target, v, 1); /* the macro owns the envelope */
     }
   }
   sl->fresh = 0;
   if (sl->state == MML_MACRO_RUN) {
     sl->cursor++;
-    int sustain_end = d.release == 0xff ? d.count : d.release;
+    int sustain_end = d->release == 0xff ? d->count : d->release;
     if (sl->cursor >= (uint16_t)sustain_end) {
-      if (d.loop_start != 0xff) sl->cursor = d.loop_start; /* sustain loop */
+      if (d->loop_start != 0xff) sl->cursor = d->loop_start; /* sustain loop */
       else sl->state = MML_MACRO_HOLD;                     /* hold last value */
     }
   } else {
     sl->cursor++;
-    if (sl->cursor >= (uint16_t)d.count) { /* release finished */
+    if (sl->cursor >= (uint16_t)d->count) { /* release finished */
       /* A PSG level release was the decay: silence the channel a step on. A
        * KEYON release (an echo tail) re-keyed the channel: key it off a step
        * after its last tap, as the note's gate would. */
-      if (((d.target == T_VEL || d.target == T_VOL) && ch >= 6 && ch < 10 && !keyed) ||
-          d.target == T_KEYON) {
+      if (((d->target == T_VEL || d->target == T_VOL) && ch >= 6 && ch < 10 && !keyed) ||
+          d->target == T_KEYON) {
         sl->state = MML_MACRO_TAIL;
         return 0;
       }
@@ -1348,8 +1352,7 @@ static void step_channel_macros(MMLSeq *s, int ch) {
     }
     for (int i = 0; i < n; i++) {
       MMLMacroSlot *sl = &s->macro_slots[mc][i];
-      MMLMacro d;
-      int is_keyon = macro_desc(s, sl->macro_id, &d) && d.target == T_KEYON;
+      int is_keyon = sl->target == T_KEYON;
       if (sl->dead || is_keyon != (pass == 0)) continue;
       if (step_macro(s, ch, sl, keyed)) {
         sl->dead = 1;
