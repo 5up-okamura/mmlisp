@@ -63,22 +63,34 @@ searches over the tracks, called per track per frame by the example's status
 display — a game polling triggers does the same.
 
 The README's "pump ~10%" and "worst 116%" were wrong (voice_set is 36k a
-call, 4%); the p99s (render 414k = 46% in wrapper mode) still need `--peak 3`
-to be attributed — stalled time or a real frame.
+call, 4%). **`--pc --peak 3` (same run): the three heaviest renders average
+~795k master = ~89% of a frame, and they are real work, not a stall** —
+the samples spread over the driver's lines instead of pinning one PC. They
+are setup bursts (the song's start and/or a loop head: every track's voice
+and parameters at once, 600–700 writes in one frame): the write path
+(`view_body` 221 + `push` 172 + `q_push` 194 + `ym` 66 + `psg_push` 23 of
+2,384 samples = **28% of the frame**), `dispatch` 12%, `apply_patch` 5–11%,
+`fm3_op_for` alone 82 samples (called per write/note-on to test one bit).
+So §3 matters for the worst frame, not the average, and roadmap #3
+(VOICE_SET bodies in ROM) is the structural answer.
 
 **Ranking from the numbers (gain ÷ risk); none of 1–4 changes a register:**
 
 1. **O(1) API lookups** (3%): a track-id → index table.
 2. **No empty walks** (~3%): sweep banks, macro channels, fades, stopped
    tracks — walk the active set only (active lists or bitmasks).
-3. **Macro engine** (~2–3%): cache the decoded descriptor (or at least
+3. **The write path (§3)**: 1.1% steady, **28% of the worst frame**. One
+   walk in `view_body` first; then the sequencer pushing pairs directly.
+4. **Macro engine** (~2–3%): cache the decoded descriptor (or at least
    `is_keyon`) in the slot, make `fm3_op_for`/`channel_keyed`/`macro_ch`
-   channel properties, drop `macro_sample`'s struct copy. c-gate holds it.
-4. **Pump** (~0.8%): no libgcc in `staged_voice`/`gen_voice`, `released`
+   channel properties (`fm3_op_for` is also hot in the burst), drop
+   `macro_sample`'s struct copy. c-gate holds it.
+5. **Pump** (~0.8%): no libgcc in `staged_voice`/`gen_voice`, `released`
    once a pump, `since_add` only for PCM pairs.
-5. **The tick loop** (3.7%): real work; line by line after 1–4.
+6. **The tick loop** (3.7%): real work; line by line after 1–5.
+7. **VOICE_SET bodies in ROM** (roadmap #3): the worst frame's structural fix.
 
-Expected: 19.5% → 10–11% from 1–4. What is left is the sequencer doing its
+Expected: 19.5% → 10–11% from 1–5. What is left is the sequencer doing its
 job; below that is §4 (pre-rendering), a design decision.
 
 ## 1. The fixed per-frame cost (paid with nothing to do)
@@ -177,14 +189,15 @@ because it keeps every feature. What it costs and what it must keep:
 
 ## 5. The worst frame, and the render lead
 
-A voice change on several channels is the measured worst case. Whatever the
-re-profile finds, two structural answers exist:
+The measured worst case (§0) is the setup burst — every track's voice and
+parameters in one frame, ~89% of it — not a voice change. Two structural
+answers exist:
 
 - **VOICE_SET bodies in the sample-bank ROM** (roadmap #3): a voice change
   becomes one pair on the wire and one ROM pointer on the 68000, instead of
   ~30 composed writes a channel. Also the fix for the wire budget.
 - **Spread the frame.** The host already renders `MMLISP_LEAD` frames ahead;
-  a worst frame of 116% is absorbed by a lead of 2. That is latency on the
+  the measured worst frame (~89%) already fits a lead of 1; a lead of 2 buys margin. That is latency on the
   control calls, not CPU, and it is the cheapest knob of all.
 
 ## 6. The host side
@@ -199,8 +212,7 @@ re-profile finds, two structural answers exist:
 
 ## 7. Order of work (proposal)
 
-1. `--pc --peak 3` on `sin008` (still owed): the p99's identity.
-2. §0's ranking, items 1–4, **one variable per build**, `verify:all` green
+1. §0's ranking, items 1–5, **one variable per build**, `verify:all` green
    after each, `--pc` after each. Starts once the user's current fixes land.
-3. **Then decide §4** (pre-rendering) against what is left: if the steady
+2. **Then decide §4** (pre-rendering) against what is left: if the steady
    state is under the game's budget, §4 is not worth its ROM.
