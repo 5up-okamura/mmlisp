@@ -1,14 +1,13 @@
 # SE (sound effects) — the decisions behind it, and what is still open
 
-**Status (2026-09-22): SE is shipped on the driver.** `mmlispseq.c` carries the
-port (suspend / snapshot / restore, priority, the PCM overwrite, both reclaim
-hooks — END_OF_TRACK and stop-track), the SGDK host has `MMLisp_playSe`, and
-`m3-se` / `m3-se-prio` are in the c-gate list, byte-identical in NTSC and PAL,
-and `drv/sgdk/example/demo.mmlisp` exercises all three kinds (FM steal with
-priority, PSG steal, PCM overwrite) from the SGDK example's own buttons.
-The behaviour is `docs/driver.md` §2.5 and `drv-player.js` (`_startTrack` with
-`asSe`, `_snapshotChannel`, `_restoreChannel`, `_reclaimSe`); this file holds
-only what neither records.
+**Status (2026-09-30): SE is shipped and is `def-se` only.** An effect is a
+def the game plays by number (PLAY_SE / STOP_SE, `MMLisp_playSe`); its parts
+may sit on any channel, CH3's operator and CSM tracks included (CH3 is taken
+whole). Restore puts back what the chip had — the patch from the register
+shadow, the noise mode, CH3's mode and Timer A. The behaviour is
+`docs/driver.md` §2.5 and `language.md` §9.3; the code is `drv-player.js`
+(`_playSe`, `_snapshotChannel`, `_restoreChannel`, `_ch3Claim`…) and its C
+twin. This file holds only the reasons and rulings neither records.
 
 ## Why it is shaped this way (the user, 2026-07-19)
 
@@ -118,48 +117,45 @@ position and the note it shaped re-attacked.
   "def-seに一本化したい / 古い実装は必要ない"); the conversion was checked
   byte-identical, NTSC and PAL, on all fifteen scores.
 
-## Still to do
+## Rulings since def-se (the user, 2026-09-28 … 30)
 
-- **The bundler — DONE as `drv/tools/bundle.mjs` (2026-09-23)**: "N scores
-  over ONE sample bank", see [plan-multi-score.md](plan-multi-score.md).
-- **Effects shared across songs — DONE as `def-se` (2026-09-28).** The user:
-  "実際にゲームに使えるドライバーにしたいので解決は必要". What made it
-  necessary was more than repeated lines: an SE was addressed by TRACK ID, which
-  shifts with each song's track count, so a game could not hold a constant;
-  and a song using every channel had no spare one to author an SE on (and
-  16 tracks truncated silently). Rulings (user, three questions): the bundle
-  injects one effects file into every song (over each song importing it), one
-  effect may have several parts, the def-se carries a default priority the
-  host may override. Design choices of mine the user did not rule on: an
-  effect is a DEF (so `import` carries it, and "tracks are songs" stands);
-  a part is on the channel it takes — no remap, so remap left the bundle and
-  install-sgdk; an effect keeps its own tempo (per-track increment) so it
-  sounds alike in every song; FM3 op/CSM parts were refused at first (song-wide modes) — superseded, see
-  CH3 below;
-  MML_MAX_TRACKS 16 → 32. Not built: an SGDK/BlastEm run of the new example
-  (no toolchain in the cloud container) — `npm run sgdk:gate:se` is updated
-  and waits for a machine that has one.
-- **CH3 taken whole — DONE (2026-09-28).** The user, offered "take all of
-  CH3" vs. finer schemes: "3ch丸ごとで良いです". An effect's CH3 parts claim the
-  group (ch2 + fm3-1..4/csm/csm-rate) once; the snapshot is one `MMLCh3Snap`
-  on the sequencer (mode, Timer A, ch, per-op state/binds), not per track.
-  It also fixed an older hole: ch2 was never owned, so an SE on plain fm3
-  did not suspend the song's fm3. Gates `p3-se-ch3`, `p3-se-ch3-op`
-  (claim-gate invariant covers the hold; mutation-checked).
-- **Restore from the register shadow — DONE (2026-09-28).** A restore used
-  to rebuild the patch from the last VOICE_SET id, so a partial `def-fm`
-  (voice 255) or a mid-song `:tl1`/`:pan` did not come back after an effect.
-  The user: "レジスタの控えから戻す方法にしてください". The snapshot now
-  carries the patch encoded from the structured shadow (29-byte entry + $B4,
-  `restore_patch`); `voice_id` is gone. Gate `p3-se-patch` (claim-gate
-  PATCH_CASES; mutation-checked).
-- **Review fixes (2026-09-30).** The user, asked for remaining issues: fix
-  the noise mode (not restored after an effect; now in the PSG snapshot) and
-  a dissolved CSM hold (left CSM keying the song's fm3; dissolve now puts the
-  song's mode/Timer A back and stops CH3's modulators and sweep); and "SEでは
-  :master, :lfo-rateは使わない" — the compiler refuses them in a def-se. Gates
-  `p3-se-noise`, `p3-se-ch3-dissolve` (claim-gate STATE_CASES, mutation-checked).
-- **Overlapping SEs on different channels** are already possible in the C —
-  the snapshot lives on each suspended track, not in one slot — but no gate
-  fires two at once. Add one when a score needs it.
+What the docs state as fact, recorded here for WHO decided it and why:
+
+- **def-se, one way only.** "実際にゲームに使えるドライバーにしたいので解決は必要"
+  and "def-seに一本化したい / 古い実装は必要ない". What made it necessary was
+  more than repeated lines: an SE was addressed by TRACK ID, which shifts with
+  each song's track count, so a game could not hold a constant; and a song
+  using every channel had no spare one to author an SE on (16 tracks also
+  truncated silently → MML_MAX_TRACKS 32). Three rulings: the bundle injects
+  one effects file into every song (over each song importing it); one effect
+  may have several parts; the def-se carries a default priority the host may
+  override. Mine, not ruled on: an effect is a DEF (so `import` carries it and
+  "tracks are songs" stands); a part is on the channel it takes (no remap); an
+  effect keeps its own tempo so it sounds alike in every song.
+- **CH3 taken whole** — offered finer schemes, the user: "3ch丸ごとで良いです".
+  The snapshot is one `MMLCh3Snap` on the sequencer, not per track. It also
+  closed an older hole: ch2 had no owner, so an SE on plain fm3 never
+  suspended the song's fm3.
+- **Restore from the register shadow**, not a voice id: "レジスタの控えから
+  戻す方法にしてください". Found because partial `def-fm` voices (no VOICE_SET)
+  were not rebuilt; it also brought back mid-song `:tl`/`:pan`.
+- **2026-09-30 review**, asked "他に何か修正点は": the noise mode and a
+  dissolved CSM hold were fixed as bugs; for `:master`/`:lfo-rate`, offered
+  refuse-vs-restore, the user: "SEでは:master, :lfo-rateは使わない" — the
+  compiler refuses them (song-wide: the game's fader, the chip's one LFO).
+
+Every one of these is gated in `claim-gate` (invariant or before/after state
+case) and was checked by mutation — disabling the fix fails its case.
+
+## Open
+
+- **An SGDK/BlastEm run** of the def-se example has not happened (no
+  toolchain in the cloud container). `npm run sgdk:gate:se` is ready for a
+  machine that has one.
+- **Two effects at once on different channels** work (each suspended track
+  keeps its own snapshot) but no gate fires two together. Add one when a
+  score needs it.
 - **Time-synced PCM restore** (decision 6), if a composition ever needs it.
+- **Other song-wide state an effect could touch**, if the language grows
+  some: the rule is refuse it in def-se (as `:master`/`:lfo-rate`) unless it
+  belongs to a channel the effect takes, in which case the snapshot carries it.

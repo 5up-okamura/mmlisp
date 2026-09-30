@@ -23,8 +23,9 @@ Rules:
   gate could see, how this repo's gates fail, the C-port lessons, and the
   user's rulings on how to work here. The design itself is `docs/driver.md`.
 - [plan-se.md](plan-se.md) — **SE: the decisions behind the shipped design
-  (suspend/restore, the claim rule, `def-se` shared by every song), and what
-  is still open.** The behaviour itself is `driver.md` §2.5 and
+  (suspend/restore, the claim rule, `def-se` shared by every song, CH3 taken
+  whole, restore from the register shadow, no `:master`/`:lfo-rate` in an
+  effect), and what is still open.** The behaviour itself is `driver.md` §2.5 and
   `drv-player.js`; read this for why, not what.
 - [plan-multi-score.md](plan-multi-score.md) — **several songs: the shared
   sample bank is built (`bundle.mjs`); two scores RESIDENT at once is not.**

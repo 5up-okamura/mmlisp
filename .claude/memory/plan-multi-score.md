@@ -68,9 +68,10 @@ from 0, and the bank's rate stamp binding it to one engine image — is what
 `bundle.mjs` resolves: every score plans into one `createSampleBankBuilder`
 (entries deduplicated by content), and every score is encoded for the
 manifest's PCM voice count, so the stamp matches and a song change reboots
-nothing. The voice count is taken AFTER the effect remap (an effect authored on
-pcm2 and pointed at pcm1 needs one voice, not two), and a `(def pcm-voices N)`
-in a bundled score is superseded by the manifest.
+nothing. The voice count is the highest any song needs with the effects file
+compiled in (an effect's PCM part sits on the voice it takes, so it adds none
+unless it names a higher one), unless the manifest's `pcmVoices` sets it; a
+`(def pcm-voices N)` in a bundled score is superseded by the manifest.
 
 Decisions taken in the build, for whoever revisits them:
 - Content dedup is ON only for bundles; a score built alone keeps its bank
