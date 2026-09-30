@@ -378,24 +378,22 @@ frame coalescing (emitting each register once, at its final value) would save
 ~1% of writes and cost the zero-tolerance raw-equality gate, which is this
 project's strongest verification asset.
 
-The frame buckets writes into three runs (PSG, YM port 0, YM port 1), so
-cross-bucket ordering within a frame is not preserved. This is safe by
-construction: the two YM ports address disjoint channels, the PSG is a different
-chip, and everything whose ordering carries meaning is port-local — `$28` key
-edges, the `$22`/`$27`/`$2A`/`$2B` globals, and the `$A4`→`$A0` F-number pair
-whose shared latch §8 describes.
+**The host takes a frame whole and in order.** Everything the frame generated
+goes to the converter (§6.6) in the order it was made, with no per-frame cap:
+the wire paces itself at sixteen pairs a grab, so holding writes back a frame
+only delayed them. The converter keeps port 0 and the PSG in order and holds
+port 1 back to the frame's end, so a frame switches port once — **except at a
+`$28` that names fm4–6**: the key register is port 0 for every channel, while
+fm4–6's F-number, level and patch are port 1, so that key edge first sends the
+port-1 writes made before it. A note's pitch therefore always reaches the chip
+before its key-on. The other ordering constraints are port-local — the
+`$22`/`$27`/`$2A`/`$2B` globals and the `$A4`→`$A0` F-number pair whose shared
+latch §8 describes — and the converter keeps each pitch pair whole.
 
-**The write cap and spill.** A frame carries at most `SLOT_MAX_WRITES` = 95
-register writes (PSG + both YM ports). When a frame generates more, the excess
-stays **in order** in the sequencer's write queue and leads the next frame.
-Writes are never dropped and never reordered, so the chip state converges; a
-key-on in a write-dense frame can land a frame late. **The cut never splits an
-F-number pair**: when the 95th write is an `$A4`–`$A6` / `$AC`–`$AE` high byte
-whose `$A0` low byte comes next, the high byte waits with it, since the
-transport sends the two as one unit (`mmlpairs.c`) and a low byte leading the
-next slot would be taken for the pair's second half. The reference implements
-the same cap and spill (`slot-builder.js`) so the §12 gate stays at zero
-tolerance.
+**The slot, the gates' form.** `c-gate` (§12.2) compares the C and the
+reference through the §6.2 slot, which carries at most `SLOT_MAX_WRITES` = 95
+writes a frame (the rest leads the next slot, in order, never splitting an
+F-number pair) and buckets them by port. The SGDK host never builds one.
 
 **The 68000 never writes the YM2612.** Its writes reach the chip as pairs the
 engine executes (§5.1, §6.1); PSG bytes are written by the host directly
@@ -427,8 +425,8 @@ tempo-independent.
 the track is armed, at the first opcode that sounds or consumes time
 (`$10..$13`, and `PCM_NOTE_ON`): the leading VOICE_SET / PARAM_SET / macro binds run in the armed
 frame, the notes wait for the next one. The head of a score generates far more
-writes than the per-frame cap (§4), so it spills across several frames either
-way; arming keeps the voice applies ahead of the notes, so no note sounds under
+writes than the wire carries in a frame (sixteen pairs), so it takes several
+frames to reach the chip either way; arming keeps the voice applies ahead of the notes, so no note sounds under
 a half-applied patch.
 
 PCM tracks are armed like every other track, and the converter sends a frame's
@@ -627,23 +625,30 @@ port-0 upper. The producer therefore writes a pitch pair (`$A4..$A6` then
 
 ### 6.2 The frame format (the sequencer's output)
 
-The sequencer closes each frame as a **slot**: its register writes and its PCM
-commands. The SGDK host reads the frame in place (`mml_render_frame_view`,
-`MMLFrameView`); the byte encoding below is what the C and the JS reference
-produce for the host gate (`c-gate`, §12.2), and what `mmlpairs.c`'s JS twin
-consumes.
+The sequencer closes each frame as its register writes, in the order it made
+them, and its PCM commands. The SGDK host reads the frame in place
+(`mml_render_frame_view`, `MMLFrameView`, uncapped; §4). The gates hand frames
+over as bytes in two forms:
 
-```
-[u8 n_writes]                         ; frame total
-[u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
-{ [u8 n_psg] [val × n_psg]            ; SN76489
-  [u8 n_fm0] [{reg,val} × n_fm0]      ; YM2612 port 0
-  [u8 n_fm1] [{reg,val} × n_fm1] }    ; YM2612 port 1
-  × SLOT_SUBS                         ; = 1
-```
+- **The record** (`gate_main --frames`, `tools/pairs-model.mjs`
+  `FrameRecorder`, `mmlp_frame`) — the host's frame exactly:
 
-Length-prefixed runs keep the consumer free of per-write dispatch. Per port,
-the frame's writes are in generation order (§4).
+  ```
+  [u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
+  {port, reg, val} × n                  ; port 0/1 = YM2612, 2 = PSG; to the end
+  ```
+
+- **The slot** (`c-gate`, §12.2) — the same writes capped at 95 a frame and
+  bucketed by port:
+
+  ```
+  [u8 n_writes]                         ; frame total
+  [u8 n_pcm] [pcm command × n_pcm]      ; §6.3, variable length
+  { [u8 n_psg] [val × n_psg]            ; SN76489
+    [u8 n_fm0] [{reg,val} × n_fm0]      ; YM2612 port 0
+    [u8 n_fm1] [{reg,val} × n_fm1] }    ; YM2612 port 1
+    × SLOT_SUBS                         ; = 1
+  ```
 
 ### 6.3 PCM commands
 
@@ -699,7 +704,8 @@ Every control call takes effect on the next frame rendered (§3.4).
   commands first, as state stores — the voice's LEVEL page with the master
   folded in, only the staged bytes that changed (a repeated hit is one pair),
   then the generation, and `idleAfterGen` IDLE pairs before the next staged
-  store for that voice (§6.1) — then the FM writes, with a PORT pair where the
+  store for that voice (§6.1) — then the FM writes: port 0 in order, port 1
+  held to the frame's end or to an fm4–6 key edge (§4), a PORT pair where the
   port changes and each pitch pair kept whole. PSG bytes go to a queue the
   pumps write to `$C00011` one grab period late, so they land with the FM they
   were cued with. A command for a voice the booted image does not have is a
@@ -1011,12 +1017,14 @@ no voice number could rebuild), the noise mode (`p3-se-noise`), and CH3's mode
 after a dissolved hold (`p3-se-ch3-dissolve`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
-`npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the
-same slot streams into pairs and PSG bytes, byte for byte, over the same
+`npm run pairs-gate`: first the frames themselves — the C sequencer's
+records (`gate_main --frames`) against the reference's (`FrameRecorder`),
+byte for byte, which holds the write ORDER the converter depends on (the slot
+cannot: it buckets by port). Then the C converter and `tools/pairs-model.mjs`
+turn the same records into pairs and PSG bytes, byte for byte, over the same
 corpus — each with its own image's configuration — with late grabs injected,
-with render
-leads 0, 1 and 2 (which must give the same wire), with one and two grabs a
-frame, and through the frame-view path the SGDK host uses.
+with render leads 0, 1 and 2 (which must give the same wire), with one and two
+grabs a frame, and through the frame-view path the SGDK host uses.
 
 ### 12.4 The engine
 

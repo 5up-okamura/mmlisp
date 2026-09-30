@@ -209,6 +209,19 @@ the fix has to work from the sequencer's own order (the view queue), i.e.
 it belongs to §3's restructure: a `$28` for fm4–6 is a barrier — the
 port-1 writes before it go out before it.
 
+**FIXED 2026-10-01 (step 1 of §3, the user's go-ahead on all three
+decisions):** the host takes the frame uncapped and in sequencer order
+(`fill_view`), and `mmlpairs.c writes_body` holds port 1 to the frame's end
+or to an fm4–6 `$28`; PCM commands stay first in the frame. Re-measured on
+the corpus: 0 early key-ons (was 372), wire −0.09% (uncapped frames no longer
+split into extra port runs). The gates moved with it: `gate_main --frames`
+and `pairs-model.mjs FrameRecorder` produce frame records, pairs-gate holds
+the C records to the reference's byte for byte (the order c-gate cannot
+see), `mmlp_slot` is gone, engine:score and sgdk-gate grade against the
+records. `driver.md` §4/§6.2/§6.6/§12.3 rewritten. Still owed: hearing it
+(fm1 vs fm4) on BlastEm/hardware, and step 2 (the sequencer pushing pairs
+itself).
+
 ## 5. The worst frame, and the render lead
 
 The measured worst case (§0) is the setup burst — every track's voice and

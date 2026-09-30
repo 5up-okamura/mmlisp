@@ -1,9 +1,8 @@
-// The JS twin of 68k/mmlpairs.c — the slot stream turned into the pair
+// The JS twin of 68k/mmlpairs.c — the sequencer's frames turned into the pair
 // transport (R28 §63.3 D7) — written from the same rules and gated against it
 // byte for byte (tools/pairs-gate.mjs). It also feeds the JS machine in the
 // end-to-end model run, where the DAC and the FM writes of a real score are
 // graded against the reference driver's own stream.
-import { decodeSlot } from "../../live/src/slot-builder.js";
 
 export const MMLP_QUEUE = 1024, MMLP_PSG = 256, MMLP_AHEAD = 32;
 export const MMLP_FRAMES = 8, MMLP_AHEAD_ONE = 48, MMLP_VOICES = 3;
@@ -102,14 +101,30 @@ export class PairsModel {
       default: return;
     }
   }
-  slot(bytes) {
-    const d = decodeSlot(bytes);
-    // The frame's PCM commands, ahead of its register writes (the C has the note).
-    for (const c of d.pcm) this.pcm(c);
-    for (const sub of d.subs) {
-      for (const b of sub.psg) if (this.psg.length < MMLP_PSG - 1) { this.psg.push(b); this.psgIn++; }
-      for (const [reg, val] of sub.fm0) this.push(0, reg, val);
-      for (const [reg, val] of sub.fm1) this.push(1, reg, val);
+  /**
+   * One frame record (mmlpairs.h mmlp_frame; FrameRecorder below makes them):
+   * its PCM commands ahead of its register writes, then the writes — port 0
+   * and the PSG in order, port 1 held back to the frame's end or to a $28
+   * that names fm4-6 (mmlpairs.c writes_body has the reason).
+   */
+  frame(rec) {
+    let i = 1;
+    for (let n = rec[0] ?? 0; n > 0 && i < rec.length; n--) {
+      const len = PCM_LEN[rec[i]] ?? 0;
+      if (!len || i + len > rec.length) { i = -1; break; }   // malformed: no writes (the C has the note)
+      this.pcm(rec.subarray ? rec.subarray(i, i + len) : rec.slice(i, i + len));
+      i += len;
+    }
+    if (i >= 0) {
+      const held = [];
+      const flush = () => { for (const w of held) this.push(1, w[0], w[1]); held.length = 0; };
+      for (; i + 3 <= rec.length; i += 3) {
+        const port = rec[i], reg = rec[i + 1], val = rec[i + 2];
+        if (port === 2) { if (this.psg.length < MMLP_PSG - 1) { this.psg.push(val); this.psgIn++; } }
+        else if (port === 0) { if (reg === 0x28 && (val & 4)) flush(); this.push(0, reg, val); }
+        else held.push([reg, val]);
+      }
+      flush();
     }
     this.endQ[this.framesIn % MMLP_FRAMES] = this.qIn;
     this.endPsg[this.framesIn % MMLP_FRAMES] = this.psgIn;
@@ -198,3 +213,35 @@ export class PairsModel {
 
 /** mmlp_in_time: the engine moved by less than `dst` was ahead of it. */
 export const inTime = (loPrev, dst, loNow) => ((loNow - loPrev) & 0xff) < (((dst & 0xff) - loPrev) & 0xff);
+
+/**
+ * The pair host's frames from the JS reference: a builder for
+ * DrvPlayer.captureSlotLog in place of the SlotBuilder. Every write in the
+ * order the sequencer made it, and no cap — the frame the SGDK host takes
+ * (mmlispseq.c fill_view) — as mmlp_frame's record bytes, the same bytes
+ * gate_main --frames writes for the C.
+ */
+export class FrameRecorder {
+  constructor() { this._writes = []; this._pcm = []; this.spillPeak = 0; this.spillFrames = 0; }
+  write(port, addr, data) { this._writes.push(port, addr & 0xff, data & 0xff); }
+  pcm(bytes) { this._pcm.push(...bytes); this._npcm = (this._npcm ?? 0) + 1; }
+  endSub() {}
+  get pending() { return 0; }
+  endFrame() {
+    const rec = Uint8Array.from([this._npcm ?? 0, ...this._pcm, ...this._writes]);
+    this._writes = []; this._pcm = []; this._npcm = 0;
+    return rec;
+  }
+}
+
+/** A frame record's register writes, per port, in order: {fm0: [[reg, val]…], fm1, psg}. */
+export function recordWrites(rec) {
+  let i = 1;
+  for (let n = rec[0]; n > 0; n--) i += PCM_LEN[rec[i]];
+  const fm0 = [], fm1 = [], psg = [];
+  for (; i + 3 <= rec.length; i += 3) {
+    if (rec[i] === 2) psg.push(rec[i + 2]);
+    else (rec[i] === 0 ? fm0 : fm1).push([rec[i + 1], rec[i + 2]]);
+  }
+  return { fm0, fm1, psg };
+}

@@ -34,7 +34,7 @@ import { buildMmb, seListOf } from "./mmb-build.mjs";
 import { sgdkEnv, makeProject, runRom, dropProject } from "./sgdk-project.mjs";
 import { buildLightImage } from "./build-engine.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
-import { SlotBuilder, decodeSlot } from "../../live/src/slot-builder.js";
+import { FrameRecorder, recordWrites } from "./pairs-model.mjs";
 import { readProbe } from "./probe-analysis.mjs";
 import { PcmEngineModel, PCM_SILENCE_BYTE } from "../../live/src/pcm-model.js";
 import { scorePcmVoices } from "../../live/src/export-mmb.js";
@@ -99,14 +99,16 @@ if (FIRE_SE) {
 // `prime: 0` either way: the SGDK host primes the score at load, so a
 // reference that did not would put the whole setup burst on the wire again at
 // track start and every write after it would be out of step.
-const slots = player.captureSlotLog({
+// The frames the host takes (mmlispseq.c fill_view): every write in the
+// sequencer's order, uncapped — so each write's frame is the one it was made in.
+const frames = player.captureSlotLog({
   maxFrames: Math.round(SECONDS * 60) + 60,
   prime: 0,
   commands,
-  builder: new SlotBuilder(),
+  builder: new FrameRecorder(),
 }).slots;
 const want = [[], []], psgWant = [];
-slots.forEach((s, f) => { const d = decodeSlot(s); for (const [r, v] of d.fm0) want[0].push({ r, v, f }); for (const [r, v] of d.fm1) want[1].push({ r, v, f }); psgWant.push(...d.psg); });
+frames.forEach((r, f) => { const d = recordWrites(r); for (const [r, v] of d.fm0) want[0].push({ r, v, f }); for (const [r, v] of d.fm1) want[1].push({ r, v, f }); psgWant.push(...d.psg); });
 
 // ── grading ────────────────────────────────────────────────────────────────
 // The image the host booted is the one the score's header names.
