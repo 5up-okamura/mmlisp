@@ -4188,9 +4188,12 @@
         const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName, { imports: _importSources });
         const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
         // A preset set's samples are served from the site root, so they resolve
-        // whether or not the score has been saved anywhere.
+        // whether or not the score has been saved anywhere. So do those of a
+        // score from the served tree (Browse, a share link): its compile name
+        // is its path there, and its samples resolve against its folder.
         const hasSamples = sampleDefs.some(d => !/^presets\//.test(d.resolvedFile ?? d.file ?? ''));
-        const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL);
+        const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
+          Boolean(_sourceDir) || _lastFileName.includes('/');
         if (hasSamples && !hasSavedBase) {
           if (!_unsavedSamplePathWarned) {
             log('Sample paths may not resolve reliably until this source is saved (File > Save As...)', 'err');
