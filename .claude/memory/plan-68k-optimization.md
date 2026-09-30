@@ -33,6 +33,17 @@ before anything is optimized against them:
 Both need the user's machine (SGDK + probe BlastEm); the cloud has neither.
 **Profile the user's heaviest score, not the demo.**
 
+**Measured 2026-09-30, the user's `sin008` (147 frames, wrapper mode, master
+clocks a frame, frame = 896,040):** render p50 103k (11.5%) — run_frame 94k,
+of which process_macros 38.7k (4.3%), dispatch ~15.6k, note_on ~7k, and
+**run_frame's own body ~54k (6.0%)**: the track walk, sweeps, fades, key-off
+paths and `ym()`, none of them wrapped. view_body ~16k (1.8%). Pump p50 21k
+(2.4%) — the README's "pump ~10%" was wrong. Means: render 12.8% + pump 4.7%
+= 17.5%. The p99s (render 414k = 46%, mmlp_plan 193k = 22%) keep the shape
+§0 calls stalled time; voice_set is 36k a call (4%), so the "116%" was not a
+voice change. Next: `--pc` (line-level inside run_frame's 6%) and
+`--pc --peak 3` (the p99s), 20 s each.
+
 ## 1. The fixed per-frame cost (paid with nothing to do)
 
 `run_frame` walks every structure at its capacity every frame:
