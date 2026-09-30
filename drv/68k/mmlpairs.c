@@ -273,16 +273,22 @@ typedef char mmlp_queue_is_pow2[(MMLP_QUEUE & (MMLP_QUEUE - 1)) == 0 && (MMLP_PS
 
 MMLP_HOT int is_pitch_hi(uint8_t reg) { return (uint8_t)((reg & 0xf7) - 0xa4) <= 2; } /* $A4-$A6, $AC-$AE */
 /* The voice a staged store (SRC, END, WRAP) belongs to, or 0xff. */
+/* A state op's voice and its place in the voice's nine (op - 1 = 9v + k), as
+ * tables: `% 9` and `/ 9` on an int are libgcc calls on the 68000, and this
+ * ran once per pair planned. */
+static const uint8_t OP_VOICE[1 + 9 * MMLP_VOICES] = {
+  0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
+static const uint8_t OP_K[1 + 9 * MMLP_VOICES] = {
+  0xff, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8 };
 MMLP_HOT uint8_t staged_voice(const MMLPairsCfg *cfg, uint8_t op) {
   if (op == 0 || op >= (uint8_t)(1 + 9 * cfg->voices)) return 0xff;
-  const uint8_t k = (uint8_t)((op - 1) % 9);
-  return k >= 1 && k <= 6 ? (uint8_t)((op - 1) / 9) : 0xff;
+  const uint8_t k = OP_K[op];
+  return k >= 1 && k <= 6 ? OP_VOICE[op] : 0xff;
 }
 /* The voice a generation pair (START, RETARGET) belongs to, or 0xff. */
 MMLP_HOT uint8_t gen_voice(const MMLPairsCfg *cfg, uint8_t op) {
   if (op == 0 || op >= (uint8_t)(1 + 9 * cfg->voices)) return 0xff;
-  const uint8_t k = (uint8_t)((op - 1) % 9);
-  return k >= 7 ? (uint8_t)((op - 1) / 9) : 0xff;
+  return OP_K[op] >= 7 ? OP_VOICE[op] : 0xff;
 }
 MMLP_HOT void since_add(MMLPairs *p, uint16_t n) {
   for (uint8_t v = 0; v < MMLP_VOICES; v++)
