@@ -961,6 +961,7 @@ static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int lo
       if (!sl[i].active) { idx = i; break; }
   if (idx < 0) idx = 0; /* overflow: evict slot 0, deterministically */
   sl[idx].active = 1;
+  s->sweep_live |= 1u << bank;
   sl[idx].target = target;
   sl[idx].curve_id = curve;
   sl[idx].loop = (uint8_t)(loop ? 1 : 0);
@@ -1127,6 +1128,7 @@ static void macro_trigger(MMLSeq *s, int ch, uint16_t acc, const MMLTrack *t) {
     if (macro_desc(s, sl->macro_id, &d) && d.release == 0) sl->state = MML_MACRO_HOLD;
   }
   s->macro_slot_count[ch] = s->bind_count[ch];
+  if (s->bind_count[ch]) s->macro_live |= 1u << ch;
 }
 
 /* NOTE_SEMI apply: write the pitch register at (current note + semitones)
@@ -1373,8 +1375,11 @@ static void step_channel_macros(MMLSeq *s, int ch) {
 static void process_macros(MMLSeq *s) {
   /* The count is tested here, not only inside: the call's own entry and exit
    * cost the 68000 more than an empty channel's whole step. */
-  for (int mc = 0; mc < MML_MACRO_CHANNELS; mc++)
-    if (s->macro_slot_count[mc]) step_channel_macros(s, macro_ch_id(mc));
+  for (uint32_t live = s->macro_live, mc = 0; live; live >>= 1, mc++) {
+    if (!(live & 1)) continue;
+    if (s->macro_slot_count[mc]) step_channel_macros(s, macro_ch_id((int)mc));
+    if (!s->macro_slot_count[mc]) s->macro_live &= ~(1u << mc);
+  }
 }
 
 /* ── PCM voices (driver.md §14) ────────────────────────────────────────────
@@ -2079,9 +2084,10 @@ static void stop_track(MMLSeq *s, MMLTrack *t) {
   t->fading = 0;
 }
 static void process_fades(MMLSeq *s) {
-  for (uint8_t i = 0; i < s->track_count; i++) {
+  for (uint32_t live = s->fade_live, i = 0; live; live >>= 1, i++) {
+    if (!(live & 1)) continue;
     MMLTrack *t = &s->trk[i];
-    if (!t->fading) continue;
+    if (!t->fading) { s->fade_live &= ~(1u << i); continue; }
     t->fade_frame++;
     t->fade_err += t->fade_vol;
     while (t->fade_err >= (int32_t)t->fade_n) {
@@ -2320,14 +2326,17 @@ static void run_frame(MMLSeq *s) {
        * then the macros (same write path, §13.3), the global tempo and CSM-rate
        * sweeps, and the fades. Once a frame — subdividing them would multiply
        * 99% of the frame's write traffic by K (driver-decisions.md §3). */
-      for (int bank = 0; bank < MML_SWEEP_BANKS; bank++) {
-        int ch = sweep_bank_ch(bank);
+      for (uint32_t live = s->sweep_live, bank = 0; live; live >>= 1, bank++) {
+        if (!(live & 1)) continue;
+        int ch = sweep_bank_ch((int)bank);
         for (int i = 0; i < 2; i++) {
           MMLSweep *sl = &s->sweeps[bank][i];
           if (sl->active && process_sweep(s, ch, sl)) sl->active = 0;
         }
+        if (!s->sweeps[bank][0].active && !s->sweeps[bank][1].active)
+          s->sweep_live &= ~(1u << bank);
       }
-      process_macros(s);
+      if (s->macro_live) process_macros(s);
       if (s->tempo_sweep.active) {
         int v;
         if (process_global_sweep(&s->tempo_sweep, &v)) s->tempo_sweep.active = 0;
@@ -2597,6 +2606,7 @@ void mml_fade_track(MMLSeq *s, uint8_t track_id, uint16_t frames) {
     }
     /* Bresenham vol ramp to 0 over `frames`, then stop — division-free. */
     t->fading = 1;
+    s->fade_live |= 1u << i;
     t->fade_n = frames;
     t->fade_err = 0;
     t->fade_vol = read_param(s, t->channel_id, T_VOL);
