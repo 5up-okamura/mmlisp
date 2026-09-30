@@ -306,7 +306,7 @@
           </div>
           <div class="knob-wrap">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
-            <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onChParam('LFO_RATE', this)">
+            <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onLfo(this)">
           </div>
         </div>
         </div>
@@ -4019,13 +4019,13 @@
     //  - volKind/volIndex: where the live vol fader writes (FM channel / PSG ch /
     //    PCM track). fm3, fm3-1..4 and fm3-csm all share hardware FM3.
     //  - selIndex: hardware index driving the FM param panel (0-5 FM, 6-9 PSG,
-    //    null = no editable FM panel: pcm*, csm).
+    //    null = no editable FM panel: pcm*). csm edits CH3, the voice it keys.
     function channelRouting(head) {
       if (/^pcm[1-3]$/.test(head)) return { volKind: 'pcm', volIndex: null, selIndex: null };
       const psg = PSG_CH_NAME_TO_INDEX[head];
       if (psg != null) return { volKind: 'psg', volIndex: psg, selIndex: 6 + psg };
       const fm = /^fm3(-|$)/.test(head) ? CH_NAME_TO_INDEX.fm3 : (CH_NAME_TO_INDEX[head] ?? null);
-      return { volKind: 'fm', volIndex: fm, selIndex: head === 'fm3-csm' ? null : fm };
+      return { volKind: 'fm', volIndex: fm, selIndex: fm };
     }
 
     // Build the strip model from the IR's used channels, in canonical hardware
@@ -4217,6 +4217,19 @@
     document.getElementById('chStrips')?.addEventListener('touchstart', (e) => {
       if (e.target.closest('.ch-knob')) e.preventDefault();
     }, { passive: false });
+
+    // LFO rate is global ($22), not a channel parameter: it writes whatever the
+    // FM panel's mode is, and its thumb follows the player, not the panel regs.
+    function onLfo(slider) {
+      const val = parseInt(slider.value, 10);
+      setSliderDisplayValue(slider, val);
+      if (!player) initParamOnlyPlayer();
+      player?.setParam('LFO_RATE', val, 0);
+    }
+    window.onLfo = onLfo;
+    function syncLfoSlider() {
+      setSliderCached('sl-lfo', 'val-lfo', player?.getChRegs?.(0)?.lfoRate ?? 0);
+    }
 
     function onMaster(slider) {
       const val = parseInt(slider.value, 10);
@@ -6956,6 +6969,7 @@
       const mask = mode !== 'disabled' && player ? player.getOpMask(maskCh) : 0xf0;
       // Context (channel/def) changed → force a full repaint and cache reset.
       applyRegsToFmSliders(regs, mask, true);
+      syncLfoSlider();
     }
 
     // Apply a register snapshot to the FM panel sliders/checkboxes. Change-detected
@@ -6970,7 +6984,6 @@
       if (force) _fmSliderCache = {};
       setSliderCached('sl-alg', 'val-alg', regs.algorithm);
       setSliderCached('sl-fb',  'val-fb',  regs.feedback);
-      setSliderCached('sl-lfo', 'val-lfo', regs.lfoRate ?? 0);
       setSliderCached('sl-ams', 'val-ams', regs.ams ?? 0);
       setSliderCached('sl-fms', 'val-fms', regs.fms ?? 0);
       const algChanged = _fmSliderCache._alg !== regs.algorithm;
@@ -7027,6 +7040,7 @@
       if (!player) return;
       updateTempoDisplay(player.getBpm());
       updateChannelVu();
+      syncLfoSlider();
       if (_fmPanelDragging || !isFmChannel(selectedCh) || getFmParamMode() !== 'channel') return;
       applyRegsToFmSliders(player.getChRegs(selectedCh), player.getOpMask(selectedCh));
     }
