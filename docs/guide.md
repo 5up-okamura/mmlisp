@@ -1011,6 +1011,13 @@ While the score is playing, an edit hot-swaps at the next bar so you hear it
 immediately; stopped, changes apply on the next **Build**. Tap a bar marker `|`
 for its bar number and tick count (§4).
 
+### Font size
+
+`MMLisp > Font Size` sets the editor's text size in pixels, typed or stepped in
+the same popup as a panel value — anywhere from 8 to 96, so it can go large for a
+projector or a recording. It is remembered. On touch screens the text never
+goes below 16 px (smaller makes iOS zoom in when you tap the editor).
+
 ---
 
 ## 23. Dragging files into the live app

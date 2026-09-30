@@ -94,6 +94,10 @@
             <!-- Off / Piano Roll injected by buildVizMenu() -->
           </div>
         </div>
+        <button class="menu-item" id="fontSizeItem" onclick="openFontSizePopup()">
+          <span>Font Size</span>
+          <span class="menu-item-shortcut" id="fontSizeValue"></span>
+        </button>
         <div class="menu-wrap submenu-wrap" id="menuMMLispTheme">
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispTheme')">
             <span>Theme</span>
@@ -4396,6 +4400,33 @@
     // Module-scope functions aren't global; expose for the inline onclick.
     window.toggleAnalogLpf = toggleAnalogLpf;
     updateAnalogLpfCheck(); // reflect the restored state in the menu
+
+    // Editor font size (px), MMLisp > Font Size: the panel's number popup, so it
+    // is typed or stepped like any other value. Wide on purpose — a projector
+    // or a recording wants it huge. Touch layouts never go under 16px (iOS
+    // zooms a focused field below that; style.css).
+    const FONT_SIZE_MIN = 8, FONT_SIZE_MAX = 96, FONT_SIZE_DEFAULT = 13;
+    let _fontSize = FONT_SIZE_DEFAULT;
+    function applyFontSize(px) {
+      _fontSize = Math.round(Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Number(px) || FONT_SIZE_DEFAULT)));
+      document.documentElement.style.setProperty('--editor-font-size', _fontSize + 'px');
+      const el = document.getElementById('fontSizeValue');
+      if (el) el.textContent = _fontSize + ' px';
+      editorView?.requestMeasure();
+    }
+    function openFontSizePopup() {
+      closeMenus();
+      // No min/max here: the popup snaps the field to its range on every
+      // keystroke, which would turn the "2" of a typed "24" into 8.
+      // applyFontSize clamps instead.
+      openPanelValuePopup(document.querySelector('#menuMMLisp .menu-btn'), {
+        step: 1,
+        get: () => _fontSize,
+        set: (v) => { applyFontSize(v); savePref('fontSize', _fontSize); },
+      });
+    }
+    window.openFontSizePopup = openFontSizePopup;
+    applyFontSize(loadPref('fontSize', FONT_SIZE_DEFAULT));
 
     // MMLispDRV reference backend (Phase C A/B listening; docs/driver.md §12).
     let _drvBackend = loadPref('drvBackend', 'off') !== 'off';
