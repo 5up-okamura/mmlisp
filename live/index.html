@@ -4038,12 +4038,27 @@
       window.closeInfoModal('videoModal');
       const mime = videoMimeType();
       if (!mime) { log('Video: this browser cannot record video', 'err'); return; }
+      const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+      const title = (_sourceFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
+      // Where to save is asked now, on the Record click: a file picker needs a
+      // user gesture, and the recording ends long after this one.
+      let handle = null;
+      if (window.showSaveFilePicker) {
+        try {
+          handle = await window.showSaveFilePicker({
+            suggestedName: `${title}.${ext}`,
+            types: [{ description: 'Video', accept: { [mime.split(';')[0]]: ['.' + ext] } }],
+          });
+        } catch (e) {
+          if (e?.name !== 'AbortError') log('Video: ' + e.message, 'err');
+          return;
+        }
+      }
       if (!(await initAudio())) return;
 
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = VIDEO_SIZE;
       const ctx = canvas.getContext('2d');
-      const title = (_sourceFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
       const audioDest = audioCtx.createMediaStreamDestination();
       workletNode.connect(audioDest);
       const stream = new MediaStream([
@@ -4072,9 +4087,8 @@
           if (vizBefore === 'off') setVisualizer('off');
           _videoRec = null;
           if (rec.discard || !chunks.length) return;
-          const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
           const blob = new Blob(chunks, { type: mime.split(';')[0] });
-          await saveVideoBlob(blob, `${title}.${ext}`, ext);
+          await saveVideoBlob(blob, `${title}.${ext}`, handle);
         };
         recorder.stop();
         onStop();
@@ -4107,14 +4121,11 @@
       _videoRec?.finish?.();
     }
 
-    async function saveVideoBlob(blob, suggestedName, ext) {
-      const type = blob.type;
+    // Into the file picked on Record, or — without a picker — as a download,
+    // which needs no gesture.
+    async function saveVideoBlob(blob, name, handle) {
       try {
-        if (window.showSaveFilePicker) {
-          const handle = await window.showSaveFilePicker({
-            suggestedName,
-            types: [{ description: 'Video', accept: { [type]: ['.' + ext] } }],
-          });
+        if (handle) {
           const writable = await handle.createWritable();
           await writable.write(blob);
           await writable.close();
@@ -4122,13 +4133,13 @@
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = suggestedName;
+          a.download = name;
           a.click();
           setTimeout(() => URL.revokeObjectURL(url), 10000);
         }
-        log(`Exported ${suggestedName} (${(blob.size / 1e6).toFixed(1)} MB)`, 'info');
+        log(`Exported ${handle?.name || name} (${(blob.size / 1e6).toFixed(1)} MB)`, 'info');
       } catch (e) {
-        if (e?.name !== 'AbortError') log('Video save failed: ' + e.message, 'err');
+        log('Video save failed: ' + e.message, 'err');
       }
     }
 
