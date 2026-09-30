@@ -63,8 +63,9 @@ searches over the tracks, called per track per frame by the example's status
 display — a game polling triggers does the same.
 
 The README's "pump ~10%" and "worst 116%" were wrong (voice_set is 36k a
-call, 4%). **`--pc --peak 3` (same run): the three heaviest renders average
-~795k master = ~89% of a frame, and they are real work, not a stall** —
+call, 4%). **`--pc --peak 3` (same run): the three heaviest renders of 1,767 are
+91%, 120% and 72% of a frame (~89% mean) — three different places in the
+song, not the start alone — and they are real work, not a stall** —
 the samples spread over the driver's lines instead of pinning one PC. They
 are setup bursts (the song's start and/or a loop head: every track's voice
 and parameters at once, 600–700 writes in one frame): the write path
@@ -197,7 +198,7 @@ answers exist:
   becomes one pair on the wire and one ROM pointer on the 68000, instead of
   ~30 composed writes a channel. Also the fix for the wire budget.
 - **Spread the frame.** The host already renders `MMLISP_LEAD` frames ahead;
-  the measured worst frame (~89%) already fits a lead of 1; a lead of 2 buys margin. That is latency on the
+  the measured worst frame (120%, with light frames after it) loses nothing at a lead of 1; a lead of 2 buys margin for a game that is heavy in the same frame. That is latency on the
   control calls, not CPU, and it is the cheapest knob of all.
 
 ## 6. The host side
