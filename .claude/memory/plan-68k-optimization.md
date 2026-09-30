@@ -33,16 +33,53 @@ before anything is optimized against them:
 Both need the user's machine (SGDK + probe BlastEm); the cloud has neither.
 **Profile the user's heaviest score, not the demo.**
 
-**Measured 2026-09-30, the user's `sin008` (147 frames, wrapper mode, master
-clocks a frame, frame = 896,040):** render p50 103k (11.5%) — run_frame 94k,
-of which process_macros 38.7k (4.3%), dispatch ~15.6k, note_on ~7k, and
-**run_frame's own body ~54k (6.0%)**: the track walk, sweeps, fades, key-off
-paths and `ym()`, none of them wrapped. view_body ~16k (1.8%). Pump p50 21k
-(2.4%) — the README's "pump ~10%" was wrong. Means: render 12.8% + pump 4.7%
-= 17.5%. The p99s (render 414k = 46%, mmlp_plan 193k = 22%) keep the shape
-§0 calls stalled time; voice_set is 36k a call (4%), so the "116%" was not a
-voice change. Next: `--pc` (line-level inside run_frame's 6%) and
-`--pc --peak 3` (the p99s), 20 s each.
+**Measured 2026-09-30, `sin008`, `--pc` (29 s, 1,486,153 samples every
+1,000 master; the wrapper run before it agreed in shape but under-counts,
+since a wrapper sees only its own function's span):**
+
+| | of the 68000's time |
+| --- | --- |
+| `VDP_waitVBlank` (idle) | 75.2% |
+| example main.c, SGDK, text | ~2.5% |
+| **the driver** | **~19.5%** |
+| driver API polled by the example each frame (`MMLisp_trig`, `mml_track_id`) | ~3% |
+
+Inside the 19.5%, by source line:
+
+| block | share | what |
+| --- | --- | --- |
+| macro engine | ~6% | `step_channel_macros` 2.8, `macro_desc` **1.5** (the double decode, as read), `macro_sample` 0.8, `step_macro` 0.5, `fm3_op_for`+`channel_keyed`+`macro_ch` 0.6 |
+| the track tick loop (`run_frame` 2273–2315) | ~3.7% | real work: accumulators, gate/wait countdowns |
+| the sweep-bank walk (`run_frame` 2323/2327) | **~1.8%** | 17 banks × 2 slots tested a frame; `process_sweep` itself 0.08% — almost all of it is empty |
+| pump | ~2.6% | `mmlp_plan` 1.4, grab 0.3, `released` 0.25 (called twice a pump), **libgcc `__udivsi3`+`__modsi3` 0.45** (the int-promoted `% 9` / `/ 9` in `staged_voice`/`gen_voice` are the suspects) |
+| dispatch, note_on, level composition | ~1.7% | real work |
+| write path (`view_body`, `push`, `q_push`, `frame_publish`, `slot_take`, `mml_pending`) | ~1.1% | |
+| `process_macros`'s 17-channel scan (line 1377) | 0.74% | count tests only |
+| `process_fades`'s track scan (2082/2084) | 0.45% | flag tests only |
+| PCM | ~0.5% | |
+
+The API 3%: `MMLisp_trig` (2.2%) and `mml_track_id` (0.7%) are linear
+searches over the tracks, called per track per frame by the example's status
+display — a game polling triggers does the same.
+
+The README's "pump ~10%" and "worst 116%" were wrong (voice_set is 36k a
+call, 4%); the p99s (render 414k = 46% in wrapper mode) still need `--peak 3`
+to be attributed — stalled time or a real frame.
+
+**Ranking from the numbers (gain ÷ risk); none of 1–4 changes a register:**
+
+1. **O(1) API lookups** (3%): a track-id → index table.
+2. **No empty walks** (~3%): sweep banks, macro channels, fades, stopped
+   tracks — walk the active set only (active lists or bitmasks).
+3. **Macro engine** (~2–3%): cache the decoded descriptor (or at least
+   `is_keyon`) in the slot, make `fm3_op_for`/`channel_keyed`/`macro_ch`
+   channel properties, drop `macro_sample`'s struct copy. c-gate holds it.
+4. **Pump** (~0.8%): no libgcc in `staged_voice`/`gen_voice`, `released`
+   once a pump, `since_add` only for PCM pairs.
+5. **The tick loop** (3.7%): real work; line by line after 1–4.
+
+Expected: 19.5% → 10–11% from 1–4. What is left is the sequencer doing its
+job; below that is §4 (pre-rendering), a design decision.
 
 ## 1. The fixed per-frame cost (paid with nothing to do)
 
@@ -162,12 +199,8 @@ re-profile finds, two structural answers exist:
 
 ## 7. Order of work (proposal)
 
-1. **Re-profile on the user's machine, heaviest score**, `--pc` and
-   `--peak 3` — resolves §0's two anomalies and ranks §1–§3. Until then the
-   ranking above is a reading, not a measurement.
-2. **The macro engine's local fixes (§2)** — descriptor cache, no struct
-   copy, keyed/channel properties cached — one variable per build, c-gate
-   green after each, profile after each.
-3. **The write path (§3)**, single walk first.
-4. **Then decide §4** (pre-rendering) against the numbers 1–3 leave: if the
-   steady state is already under the game's budget, §4 is not worth its ROM.
+1. `--pc --peak 3` on `sin008` (still owed): the p99's identity.
+2. §0's ranking, items 1–4, **one variable per build**, `verify:all` green
+   after each, `--pc` after each. Starts once the user's current fixes land.
+3. **Then decide §4** (pre-rendering) against what is left: if the steady
+   state is under the game's budget, §4 is not worth its ROM.
