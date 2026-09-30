@@ -188,6 +188,27 @@ because it keeps every feature. What it costs and what it must keep:
   Which tracks qualify (static level+pitch macros only? sweeps too?), where
   the data lives, what a mixed frame looks like.
 
+## 3a. Found while designing §3: fm4–6 key-ons reach the chip before their pitch (2026-10-01)
+
+The slot format buckets a frame's writes by port (PSG, port 0, port 1) and
+`slot-builder.js` calls that "safe by construction" because "everything
+whose order carries meaning is port-0-local (the $28 key edges …)". **It is
+not:** `$28` is on port 0 for EVERY channel, while fm4–6's F-number, TL and
+patch are port 1. The sequencer writes a note's pitch then its key-on; the
+bucket moves the key-on ahead of the pitch. Measured on the c-gate corpus
+(drv-player write order vs the slot, 1,200 frames a score): **372 fm4–6
+key-ons ahead of their own channel's port-1 writes** — 744 pitch writes
+($A4/$A0), 67 patch, 22 TL — typically 3–7 pairs early, 2 by ≥16 pairs
+(m3-voice, 24). The engine takes ~1 pair per ms (8 expander steps a
+7.8 ms lap on pcm1), so an fm4–6 note attacks a few ms at the previous
+pitch/voice, and a frame or more in a burst. **A model prediction, not yet
+heard** — the discriminating check is the same phrase on fm1 and fm4. No
+gate sees it: c-gate and pairs-gate compare the bucketed form on both
+sides, ab-gate compares by frame. The slot format has lost the order, so
+the fix has to work from the sequencer's own order (the view queue), i.e.
+it belongs to §3's restructure: a `$28` for fm4–6 is a barrier — the
+port-1 writes before it go out before it.
+
 ## 5. The worst frame, and the render lead
 
 The measured worst case (§0) is the setup burst — every track's voice and
@@ -217,7 +238,9 @@ answers exist:
    gates green after each (c-gate, c-gate:pal, claim-gate, pairs-gate,
    sgdk:lint, engine:score): `4c50af1` the track-id table, `f2a30c2` the
    live masks, `6622a3b` the port-1 stretch, `9ea61ec` the macro engine,
-   `fef512e` the op tables.
+   `fef512e` the op tables. Then `8d28b53` (offsets + KEYON pass) and
+   `671bd2a` (the tick loop's uneventful frame taken before the loop) —
+   **not yet re-profiled**.
    **Re-profiled 2026-10-01 (`sin008`, `--pc`, 29 s):** idle 75.2% → 80.3%.
    The driver (sum of its outer functions) 19.2% → 15.4%; the API polls
    2.9% → 1.3%; together 22.1% → 16.7%. What moved: the sweep walk (−1.8,
