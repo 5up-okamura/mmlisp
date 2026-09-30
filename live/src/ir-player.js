@@ -405,6 +405,10 @@ export class IRPlayer {
     for (let psgCh = 0; psgCh < 4; psgCh++) {
       this._psgSetAtt(psgCh, 15);
     }
+    // CSM keys CH3 from Timer A, which no key-off reaches: clear the mode
+    // and the timer, or a stopped CSM voice keeps buzzing.
+    this._reg27 = 0;
+    this._write(0, 0x27, 0);
   }
 
   // The chip and channel state belongs to one run. A run's sticky state (a
