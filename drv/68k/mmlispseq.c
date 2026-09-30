@@ -2487,9 +2487,11 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   uint16_t n = rd16(track_table, 0);
   if (n > MML_MAX_TRACKS) n = MML_MAX_TRACKS;
   s->track_count = (uint8_t)n;
+  for (int i = 0; i < 256; i++) s->track_index[i] = 0xff;
   for (uint16_t i = 0; i < n; i++) {
     uint32_t at = 2 + (uint32_t)i * 5;
     s->trk[i].track_id = track_table[at];
+    s->track_index[track_table[at]] = (uint8_t)i;
     s->trk[i].channel_id = track_table[at + 1];
     s->trk[i].flags = track_table[at + 2];
     s->trk[i].event_offset = rd16(track_table, at + 3);
@@ -3115,9 +3117,11 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
 }
 
 static MMLTrack *track_by_id(MMLSeq *s, uint8_t track_id) {
-  for (uint8_t i = 0; i < s->track_count; i++)
-    if (s->trk[i].track_id == track_id) return &s->trk[i];
-  return 0;
+  uint8_t i = s->track_index[track_id];
+  return i < s->track_count ? &s->trk[i] : 0;
+}
+const MMLTrack *mml_track_by_id(const MMLSeq *s, uint8_t track_id) {
+  return track_by_id((MMLSeq *)s, track_id);
 }
 
 void mml_start_track(MMLSeq *s, uint8_t track_id) {

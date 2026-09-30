@@ -345,6 +345,10 @@ typedef struct {
 
   MMLTrack trk[MML_MAX_TRACKS];
   uint8_t track_count;
+  /* track id → index into trk, 0xff = no such track. A game polls
+   * MMLisp_trig / MMLisp_trackActive per track per frame; a scan of the
+   * tracks each time was 3% of the 68000 on a 9-track song. */
+  uint8_t track_index[256];
 
   MMLFmCh fm[6];
   MMLPsgCh psg[4];
@@ -511,6 +515,8 @@ uint16_t mml_pending(const MMLSeq *s);
  * tend to sit at the end. */
 uint8_t mml_track_count(const MMLSeq *s);
 uint8_t mml_track_id(const MMLSeq *s, uint8_t index);
+/* The track with this id, or NULL — one table read. */
+const MMLTrack *mml_track_by_id(const MMLSeq *s, uint8_t track_id);
 
 /* Every track idle or held. */
 int mml_done(const MMLSeq *s);

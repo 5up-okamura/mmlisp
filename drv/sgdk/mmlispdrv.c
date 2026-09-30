@@ -427,16 +427,14 @@ bool MMLisp_needsSampleBank(void)
 
 bool MMLisp_trackActive(u8 track_id)
 {
-    for (u8 i = 0; i < seq.track_count; i++)
-        if (seq.trk[i].track_id == track_id) return seq.trk[i].running != 0;
-    return FALSE;
+    const MMLTrack* t = mml_track_by_id(&seq, track_id);
+    return t ? t->running != 0 : FALSE;
 }
 
 u8 MMLisp_trig(u8 track_id)
 {
-    for (u8 i = 0; i < seq.track_count; i++)
-        if (seq.trk[i].track_id == track_id) return seq.trk[i].trig_byte;
-    return 0;
+    const MMLTrack* t = mml_track_by_id(&seq, track_id);
+    return t ? t->trig_byte : 0;
 }
 
 u8 MMLisp_scoreFrameHz(void)
