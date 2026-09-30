@@ -196,14 +196,21 @@ static void view_body(MMLPairs *p, const MMLFrameView *v) {
   for (uint8_t sub = 0; sub < MML_SLOT_SUBS; sub++) {
     const uint16_t end = v->end[sub];
     uint16_t at = (uint16_t)((v->first + done) & (MML_WRITE_QUEUE - 1));
+    /* The port-1 run is walked a second time, but only between the first and
+     * the last port-1 write the first walk saw: the sequencer emits a
+     * channel's writes together and the channels in order, so port 1 sits in
+     * one stretch of the frame, and a walk over the whole frame again was
+     * 9% of the worst frame (a setup burst, sgdk-profile --peak). */
+    uint16_t lo1 = end, hi1 = done;
     for (uint16_t i = done; i < end; i++) {
       const MMLWrite *w = &v->q[at];
       if (w->port == 2) psg_push(p, w->data);
       else if (w->port == 0) push(p, 0, w->addr, w->data);
+      else { if (i < lo1) lo1 = i; hi1 = (uint16_t)(i + 1); }
       at = (uint16_t)((at + 1) & (MML_WRITE_QUEUE - 1));
     }
-    at = (uint16_t)((v->first + done) & (MML_WRITE_QUEUE - 1));
-    for (uint16_t i = done; i < end; i++) {
+    at = (uint16_t)((v->first + lo1) & (MML_WRITE_QUEUE - 1));
+    for (uint16_t i = lo1; i < hi1; i++) {
       const MMLWrite *w = &v->q[at];
       if (w->port == 1) push(p, 1, w->addr, w->data);
       at = (uint16_t)((at + 1) & (MML_WRITE_QUEUE - 1));
