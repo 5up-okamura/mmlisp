@@ -1232,3 +1232,34 @@
       text-overflow: ellipsis;
     }
     #sharedPlay[hidden] { display: none; }
+
+    /* Video export: the length field, and the recording badge */
+    .video-field { display: flex; align-items: center; gap: 0.6rem; }
+    .video-field label { flex: 1; }
+    .video-field input { width: 6rem; }
+    #recBadge {
+      position: fixed;
+      top: 0.4rem;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 150;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.4rem 0.25rem 0.7rem;
+      border: 1px solid var(--error);
+      border-radius: 4px;
+      background: var(--background);
+      color: var(--foreground);
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+    }
+    #recBadge[hidden] { display: none; }
+    #recBadge .rec-dot {
+      width: 0.6rem;
+      height: 0.6rem;
+      border-radius: 50%;
+      background: var(--error);
+      animation: rec-blink 1s steps(2, start) infinite;
+    }
+    @keyframes rec-blink { to { visibility: hidden; } }

@@ -167,6 +167,7 @@
             <button class="menu-item" onclick="exportMmb();closeMenus()">MMB…</button>
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
             <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
+            <button class="menu-item" onclick="openVideoExport();closeMenus()">Video…</button>
             <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">mucom88 PCM Bank WAV…</button>
           </div>
         </div>
@@ -500,9 +501,36 @@
         <button class="tb-btn" onclick="copyShareUrl()" id="shareCopyBtn">Copy link</button>
         <button class="tb-btn" onclick="postShare('x')">Post on X</button>
         <button class="tb-btn" onclick="postShare('native')" id="shareNativeBtn" hidden>More…</button>
+        <button class="tb-btn" onclick="closeInfoModal('shareModal');openVideoExport()">Make video</button>
         <button class="tb-btn" onclick="closeInfoModal('shareModal')">Done</button>
       </div>
     </div>
+  </div>
+
+  <!-- Video export: records the editor while the score plays -->
+  <div id="videoModal" class="modal-overlay" hidden>
+    <div class="modal info-modal">
+      <div class="modal-title">Export Video</div>
+      <div class="info-body">
+        <p>Plays the score from the top and records the editor as it goes — the
+        visualizer behind it, the notes lighting up — into a square video with
+        its sound. Recording takes as long as the video; Stop ends it early.</p>
+        <p>Font Size and Follow Playback (MMLisp menu) frame the picture.</p>
+        <div class="video-field">
+          <label for="videoSeconds">Length (seconds)</label>
+          <input id="videoSeconds" class="share-url" type="number" min="1" max="140" step="1" value="30">
+        </div>
+        <p class="share-warn" id="videoWarn" hidden></p>
+      </div>
+      <div class="modal-actions">
+        <button class="tb-btn" onclick="closeInfoModal('videoModal')">Cancel</button>
+        <button class="tb-btn" onclick="startVideoExport()">Record</button>
+      </div>
+    </div>
+  </div>
+  <div id="recBadge" hidden>
+    <span class="rec-dot"></span><span id="recTime">0:00</span>
+    <button class="tb-btn" onclick="stopVideoExport()">Stop</button>
   </div>
 
   <!-- Early global diagnostics: surface otherwise-silent failures. On mobile
@@ -3855,6 +3883,259 @@
       }
     }
 
+    // -----------------------------------------------------------------------
+    // Video export (File > Export > Video…, Share > Make video): plays the
+    // score and records the editor in real time — what the screen shows,
+    // redrawn every frame onto a square canvas: the visualizer behind (the
+    // oscilloscope when it is off), the text in its theme colors and Font
+    // Size, the playhead outlines, a title and the site underneath. Follow
+    // Playback is the camera. The sound is the worklet's own output.
+    // MediaRecorder writes H.264 + AAC MP4 where the browser can (recent
+    // Chrome, Safari) — what X takes; elsewhere whatever it has, with a warning.
+    // -----------------------------------------------------------------------
+    const VIDEO_SIZE = 1080;
+    const VIDEO_FPS = 30;
+    const VIDEO_MAX_SEC = 140; // X's limit for a posted video
+    // X takes H.264 + AAC in MP4; the rest are fallbacks it may refuse.
+    const VIDEO_TYPES = [
+      'video/mp4;codecs=avc1.640028,mp4a.40.2',
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4',
+      'video/webm;codecs=vp9,opus',
+      'video/webm',
+    ];
+    const videoForX = (mime) => /avc1/.test(mime) && /mp4a/.test(mime);
+    let _videoRec = null;
+
+    function videoMimeType() {
+      if (typeof MediaRecorder === 'undefined') return null;
+      return VIDEO_TYPES.find((t) => MediaRecorder.isTypeSupported(t)) ?? null;
+    }
+
+    function openVideoExport() {
+      if (_videoRec) return;
+      const mime = videoMimeType();
+      const warn = document.getElementById('videoWarn');
+      warn.hidden = !!mime && videoForX(mime);
+      warn.textContent = !mime
+        ? 'This browser cannot record video.'
+        : 'This browser cannot record H.264 + AAC, which X requires — the video will play elsewhere, but for X use recent Chrome or Safari.';
+      window.openInfoModal('videoModal');
+    }
+
+    // The editor's visible text and playhead outlines, drawn in page
+    // coordinates (the caller maps the crop onto the canvas).
+    function drawEditorText(ctx, crop) {
+      const range = document.createRange();
+      const styleOf = new Map();
+      const style = (el) => {
+        let st = styleOf.get(el);
+        if (!st) {
+          const cs = getComputedStyle(el);
+          st = { color: cs.color, font: `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}` };
+          styleOf.set(el, st);
+        }
+        return st;
+      };
+      ctx.textBaseline = 'middle';
+      const put = (text, r, st) => {
+        if (r.bottom < crop.top || r.top > crop.bottom || r.right < crop.left || r.left > crop.right) return;
+        ctx.fillStyle = st.color;
+        ctx.font = st.font;
+        ctx.fillText(text, r.left, r.top + r.height / 2);
+      };
+      for (const line of editorView.contentDOM.querySelectorAll('.cm-line')) {
+        const lr = line.getBoundingClientRect();
+        if (lr.bottom < crop.top || lr.top > crop.bottom) continue;
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const text = node.nodeValue;
+          if (!text.trim()) continue;
+          const st = style(node.parentElement);
+          range.selectNodeContents(node);
+          const rects = range.getClientRects();
+          if (rects.length === 1) { put(text, rects[0], st); continue; }
+          // Soft-wrapped across lines: place it character by character.
+          for (let i = 0; i < text.length; i++) {
+            if (text[i] === ' ') continue;
+            range.setStart(node, i);
+            range.setEnd(node, i + 1);
+            put(text[i], range.getBoundingClientRect(), st);
+          }
+        }
+      }
+      const fg = getComputedStyle(document.documentElement).getPropertyValue('--foreground').trim() || '#fff';
+      ctx.strokeStyle = fg;
+      ctx.lineWidth = 1.5;
+      for (const m of document.querySelectorAll('.cm-playheadLayer > *')) {
+        const r = m.getBoundingClientRect();
+        if (r.bottom < crop.top || r.top > crop.bottom) continue;
+        ctx.strokeRect(r.left - 1, r.top, r.width + 2, r.height);
+      }
+    }
+
+    function drawVideoFrame(ctx, title) {
+      const S = VIDEO_SIZE;
+      const root = getComputedStyle(document.documentElement);
+      const bg = root.getPropertyValue('--background').trim() || '#000';
+      const fg = root.getPropertyValue('--foreground').trim() || '#fff';
+      // The crop: a square of the editor, starting at the text's left edge
+      // (no line numbers) and the top of the scroller.
+      const sr = editorView.scrollDOM.getBoundingClientRect();
+      const cr = editorView.contentDOM.getBoundingClientRect();
+      const left = Math.max(sr.left, cr.left - 6);
+      const side = Math.max(1, Math.min(sr.height, sr.right - left));
+      const crop = { left, top: sr.top, right: left + side, bottom: sr.top + side };
+      const k = S / side;
+
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, S, S);
+      const vc = document.getElementById('vizCanvas');
+      if (_vizMode !== 'off' && vc.width > 0) {
+        const vr = vc.getBoundingClientRect();
+        const sx = vc.width / vr.width, sy = vc.height / vr.height;
+        ctx.globalAlpha = 0.5; // as #vizCanvas is shown
+        ctx.drawImage(vc, (crop.left - vr.left) * sx, (crop.top - vr.top) * sy, side * sx, side * sy, 0, 0, S, S);
+        ctx.globalAlpha = 1;
+      }
+      ctx.save();
+      ctx.scale(k, k);
+      ctx.translate(-crop.left, -crop.top);
+      drawEditorText(ctx, crop);
+      ctx.restore();
+
+      // Title and footer, each on a solid band of the background that fades
+      // into the picture (stepped alpha: any theme color works, no parsing).
+      const veil = (solidFrom, solidTo, fadeTo) => {
+        ctx.fillStyle = bg;
+        ctx.globalAlpha = 0.94;
+        ctx.fillRect(0, Math.min(solidFrom, solidTo), S, Math.abs(solidTo - solidFrom));
+        const steps = 16;
+        for (let i = 0; i < steps; i++) {
+          ctx.globalAlpha = 0.94 * (1 - (i + 1) / (steps + 1));
+          const a = solidTo + ((fadeTo - solidTo) * i) / steps;
+          const b = solidTo + ((fadeTo - solidTo) * (i + 1)) / steps;
+          ctx.fillRect(0, Math.min(a, b), S, Math.abs(b - a) + 0.5);
+        }
+        ctx.globalAlpha = 1;
+      };
+      veil(0, 104, 160);
+      veil(S, S - 84, S - 130);
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = fg;
+      ctx.font = "700 46px 'Open Sans', sans-serif";
+      ctx.fillText(title, 44, 54, S - 88);
+      ctx.globalAlpha = 0.75;
+      ctx.font = "400 28px 'Open Sans', sans-serif";
+      ctx.fillText(`MMLisp · ${location.host}`, 44, S - 42, S - 88);
+      ctx.globalAlpha = 1;
+    }
+
+    async function startVideoExport() {
+      if (_videoRec) return;
+      const seconds = Math.round(Math.min(VIDEO_MAX_SEC, Math.max(1, Number(document.getElementById('videoSeconds').value) || 30)));
+      window.closeInfoModal('videoModal');
+      const mime = videoMimeType();
+      if (!mime) { log('Video: this browser cannot record video', 'err'); return; }
+      if (!(await initAudio())) return;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = VIDEO_SIZE;
+      const ctx = canvas.getContext('2d');
+      const title = (_sourceFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
+      const audioDest = audioCtx.createMediaStreamDestination();
+      workletNode.connect(audioDest);
+      const stream = new MediaStream([
+        ...canvas.captureStream(VIDEO_FPS).getVideoTracks(),
+        ...audioDest.stream.getAudioTracks(),
+      ]);
+      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
+      const chunks = [];
+      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      // No visualizer, no background: the oscilloscope stands in for the take.
+      const vizBefore = _vizMode;
+      if (_vizMode === 'off') setVisualizer('scope');
+
+      onStop();
+      drawVideoFrame(ctx, title);
+      const rec = { recorder, seconds, t0: 0, raf: 0, done: false, discard: false };
+      _videoRec = rec;
+      const finish = () => {
+        if (rec.done) return;
+        rec.done = true;
+        cancelAnimationFrame(rec.raf);
+        document.getElementById('recBadge').hidden = true;
+        recorder.onstop = async () => {
+          try { workletNode.disconnect(audioDest); } catch (_) {}
+          for (const t of stream.getTracks()) t.stop();
+          if (vizBefore === 'off') setVisualizer('off');
+          _videoRec = null;
+          if (rec.discard || !chunks.length) return;
+          const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+          const blob = new Blob(chunks, { type: mime.split(';')[0] });
+          await saveVideoBlob(blob, `${title}.${ext}`, ext);
+        };
+        recorder.stop();
+        onStop();
+      };
+      rec.finish = finish;
+
+      recorder.start(1000);
+      await onPlay();
+      if (!aiPlaying()) { // did not start (a compile error is in the log)
+        rec.discard = true;
+        finish();
+        return;
+      }
+      rec.t0 = performance.now();
+      document.getElementById('recBadge').hidden = false;
+      const timeText = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+      const frame = () => {
+        if (rec.done) return;
+        const elapsed = performance.now() - rec.t0;
+        drawVideoFrame(ctx, title);
+        document.getElementById('recTime').textContent = `${timeText(elapsed)} / ${timeText(seconds * 1000)}`;
+        if (elapsed >= seconds * 1000 || !aiPlaying()) { finish(); return; }
+        rec.raf = requestAnimationFrame(frame);
+      };
+      rec.raf = requestAnimationFrame(frame);
+      log(`Recording ${seconds}s of video…`, 'info');
+    }
+
+    function stopVideoExport() {
+      _videoRec?.finish?.();
+    }
+
+    async function saveVideoBlob(blob, suggestedName, ext) {
+      const type = blob.type;
+      try {
+        if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{ description: 'Video', accept: { [type]: ['.' + ext] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = suggestedName;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+        log(`Exported ${suggestedName} (${(blob.size / 1e6).toFixed(1)} MB)`, 'info');
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('Video save failed: ' + e.message, 'err');
+      }
+    }
+
+    window.openVideoExport = openVideoExport;
+    window.startVideoExport = startVideoExport;
+    window.stopVideoExport = stopVideoExport;
+
     async function saveFile() {
       if (!_sourceHandle) {
         await saveFileAs();
@@ -5000,7 +5281,7 @@
     // Generic info modals (About / Licenses): open/close by id, close on overlay click.
     window.openInfoModal = (id) => { closeMenus(); document.getElementById(id).hidden = false; };
     window.closeInfoModal = (id) => { document.getElementById(id).hidden = true; };
-    for (const id of ['aboutModal', 'licenseModal', 'shareModal']) {
+    for (const id of ['aboutModal', 'licenseModal', 'shareModal', 'videoModal']) {
       document.getElementById(id).addEventListener('click', (e) => {
         if (e.target.id === id) window.closeInfoModal(id);
       });

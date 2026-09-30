@@ -1284,3 +1284,19 @@ you do not like is a Cmd/Ctrl+Z away. The AI can start playback too, but only
 after you have clicked the page once — before that it puts up a Play button for
 you. The connection stays on this computer (127.0.0.1), and turning the menu
 item off ends it.
+
+### A video to post with it
+
+A link alone does not play on a timeline. `File > Export > Video…` (or **Make
+video** in the Share dialog) records the editor as the score plays — the
+visualizer behind the code, the notes lighting up — into a square 1080×1080
+video with its sound, the score's name on top and the site underneath. Post
+the video, and the link in a reply for anyone who wants to open it.
+
+It plays the score from the top for the length you set (30 seconds by default,
+up to 140, X's limit), in real time; **Stop** ends it early. What the editor
+shows is what the video shows, so frame it first: `MMLisp > Font Size` sets
+how much code fits, and `MMLisp > Follow Playback` moves the picture with the
+music (off, it stays where you left it). With the visualizer off, the
+oscilloscope stands in for the take. X takes H.264 video in MP4, which recent
+Chrome and Safari record; other browsers say so before recording.
