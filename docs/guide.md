@@ -1011,6 +1011,16 @@ While the score is playing, an edit hot-swaps at the next bar so you hear it
 immediately; stopped, changes apply on the next **Build**. Tap a bar marker `|`
 for its bar number and tick count (§4).
 
+### Following the playback
+
+`MMLisp > Follow Playback` keeps the highlighted notes in view while the score
+plays. The view stays put as long as they sit comfortably inside the editor —
+a looping pattern never moves it — and glides once one drifts toward the edge,
+turning the page so the notes land near the top. When the tracks are too far
+apart to show at once, it follows the biggest group that fits, the lowest
+track first. Scrolling, clicking or typing in the editor hands the view back
+to you for a few seconds.
+
 ### Font size
 
 `MMLisp > Font Size` sets the editor's text size in pixels, typed or stepped in

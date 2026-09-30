@@ -94,6 +94,11 @@
             <!-- Off / Piano Roll injected by buildVizMenu() -->
           </div>
         </div>
+        <button class="menu-item" onclick="toggleFollow();closeMenus()"
+                title="While playing, scroll to keep the highlighted notes in view">
+          <span>Follow Playback</span>
+          <span class="menu-item-shortcut" id="followCheck"></span>
+        </button>
         <button class="menu-item" id="fontSizeItem" onclick="openFontSizePopup()">
           <span>Font Size</span>
           <span class="menu-item-shortcut" id="fontSizeValue"></span>
@@ -696,6 +701,102 @@
         return markers;
       },
     });
+
+    // Follow Playback (MMLisp menu): while playing, keep the highlighted notes
+    // in view without chasing every one. Nothing moves while the highlights sit
+    // inside the band (the editor less FOLLOW_BAND at top and bottom); once one
+    // leaves it, the view glides to put them at the top of the band — so a
+    // looping pattern holds still, a melody turns the page, and the view
+    // travels at section changes. Highlights spread wider than the band: the
+    // largest group that fits is followed, the lowest track winning a tie. Scrolling, clicking or typing in the editor hands the view
+    // back for FOLLOW_HOLD_MS. The on/off pref is loaded with the others.
+    const FOLLOW_BAND = 0.2;
+    const FOLLOW_GLIDE_MS = 700;
+    const FOLLOW_HOLD_MS = 4000;
+    let _follow = false;
+    let _followHoldUntil = 0;
+    let _followRaf = 0;
+    let _followAnim = null; // { from, to, t0 } scrollTop glide in flight
+
+    function followSchedule(view) {
+      if (!_follow || _followRaf) return;
+      _followRaf = requestAnimationFrame(() => { _followRaf = 0; followCheck(view); });
+    }
+
+    function followCheck(view) {
+      if (!_follow || performance.now() < _followHoldUntil) return;
+      const v = view.state.field(playheadField);
+      const spans = [];
+      const addSpan = (r, k) => spans.push({
+        k, top: view.lineBlockAt(r.from).top, bottom: view.lineBlockAt(r.to).bottom,
+      });
+      for (const [k, r] of v.toks) addSpan(r, k);
+      for (const r of v.seqs.values()) addSpan(r, Infinity);
+      if (!spans.length) return;
+      const sc = view.scrollDOM;
+      const h = sc.clientHeight;
+      const band = h * FOLLOW_BAND;
+      const room = h - 2 * band;
+      // Block tops are document-relative; this puts them in scrollTop terms.
+      const offset = view.documentTop - sc.getBoundingClientRect().top + sc.scrollTop;
+      spans.sort((a, b) => a.top - b.top);
+      let best = null;
+      for (let i = 0; i < spans.length; i++) {
+        let bottom = spans[i].bottom, minK = spans[i].k, j = i;
+        while (j + 1 < spans.length && Math.max(bottom, spans[j + 1].bottom) - spans[i].top <= room) {
+          j++;
+          bottom = Math.max(bottom, spans[j].bottom);
+          minK = Math.min(minK, spans[j].k);
+        }
+        const n = j - i + 1;
+        if (!best || n > best.n || (n === best.n && minK < best.minK)) {
+          best = { n, minK, top: spans[i].top + offset, bottom: bottom + offset };
+        }
+      }
+      // Judge against where a glide in flight is heading, not where it is.
+      const at = _followAnim ? _followAnim.to : sc.scrollTop;
+      if (best.top >= at + band && best.bottom <= at + h - band) return;
+      const max = sc.scrollHeight - h;
+      // Page-turn: the group lands at the top of the band, leaving the rest of
+      // the view for what comes next rather than for what just played.
+      const target = Math.round(Math.max(0, Math.min(max, best.top - band)));
+      if (Math.abs(target - at) < 2) return;
+      followGlide(sc, target);
+    }
+
+    function followGlide(sc, to) {
+      const start = !_followAnim;
+      _followAnim = { from: sc.scrollTop, to, t0: performance.now() };
+      if (!start) return; // the running frame loop picks up the new target
+      const step = (now) => {
+        const a = _followAnim;
+        if (!a) return;
+        const p = Math.min(1, (now - a.t0) / FOLLOW_GLIDE_MS);
+        const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2; // ease in-out
+        sc.scrollTop = a.from + (a.to - a.from) * e;
+        if (p < 1) requestAnimationFrame(step);
+        else _followAnim = null;
+      };
+      requestAnimationFrame(step);
+    }
+
+    function followHold() {
+      _followHoldUntil = performance.now() + FOLLOW_HOLD_MS;
+      _followAnim = null;
+    }
+
+    const followPlayhead = [
+      EditorView.updateListener.of((u) => {
+        if (_follow && u.startState.field(playheadField) !== u.state.field(playheadField)) followSchedule(u.view);
+      }),
+      EditorView.domEventHandlers({
+        wheel: () => { followHold(); return false; },
+        touchstart: () => { followHold(); return false; },
+        mousedown: () => { followHold(); return false; },
+        // A shortcut (Cmd/Ctrl+Enter to play …) is not the user taking the view.
+        keydown: (e) => { if (!e.metaKey && !e.ctrlKey) followHold(); return false; },
+      }),
+    ];
 
     // Build-confirmation flash: rectangles fitted to each visible line's text
     // width (below the glyphs), filled and faded out via CSS. Driven by a plain
@@ -2684,6 +2785,7 @@
       mmlispMode,
       playheadField,
       playheadLayer,
+      followPlayhead,
       buildFlashLayer,
       bracketField,
       bracketLayer,
@@ -4427,6 +4529,22 @@
     }
     window.openFontSizePopup = openFontSizePopup;
     applyFontSize(loadPref('fontSize', FONT_SIZE_DEFAULT));
+
+    // Follow Playback (the logic sits with the playhead highlights).
+    _follow = loadPref('follow', 'off') !== 'off';
+    function updateFollowCheck() {
+      const el = document.getElementById('followCheck');
+      if (el) el.textContent = _follow ? '✓' : '';
+    }
+    function toggleFollow() {
+      _follow = !_follow;
+      _followHoldUntil = 0;
+      updateFollowCheck();
+      savePref('follow', _follow ? 'on' : 'off');
+      if (_follow) followSchedule(editorView);
+    }
+    window.toggleFollow = toggleFollow;
+    updateFollowCheck();
 
     // MMLispDRV reference backend (Phase C A/B listening; docs/driver.md §12).
     let _drvBackend = loadPref('drvBackend', 'off') !== 'off';
