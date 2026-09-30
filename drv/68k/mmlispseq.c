@@ -2298,6 +2298,20 @@ static void run_frame(MMLSeq *s) {
         continue; /* the armed frame is silent setup, at any sub-tick */
       }
       t->acc = (uint16_t)(t->acc + ((t->flags & TRACK_FLAG_IS_SE) ? sub_increment(t->inc, sub) : step));
+      {
+        /* THE COMMON FRAME: its ticks pass and neither the gate nor the wait
+         * runs out in them. What the loop below does in that case, without
+         * the loop — it was 4.5% of the 68000 on sin008 (sgdk-profile --pc),
+         * most of it frames like this one. */
+        const int32_t ticks = t->acc >> 8;
+        if (ticks && t->wait > ticks && (t->gate_left <= 0 || t->gate_left > ticks)) {
+          t->acc &= 0xff;
+          s->cur_acc = t->acc;
+          if (t->gate_left > 0) t->gate_left -= ticks;
+          t->wait -= ticks;
+          continue;
+        }
+      }
       while (t->acc >= 0x100) {
         /* STRAIGHT TO THE NEXT TICK THAT DOES SOMETHING. A tick before the
          * gate or the wait reaches zero only counts both down, so k-1 of them
