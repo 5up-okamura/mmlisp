@@ -213,7 +213,15 @@ answers exist:
 
 ## 7. Order of work (proposal)
 
-1. §0's ranking, items 1–5, **one variable per build**, `verify:all` green
-   after each, `--pc` after each. Starts once the user's current fixes land.
+1. §0's ranking, items 1–5 — **landed 2026-10-01 on main, one commit each**,
+   gates green after each (c-gate, c-gate:pal, claim-gate, pairs-gate,
+   sgdk:lint, engine:score): `4c50af1` the track-id table, `f2a30c2` the
+   live masks, `6622a3b` the port-1 stretch, `9ea61ec` the macro engine,
+   `fef512e` the op tables. **Not yet re-profiled** — the cloud has no SGDK;
+   the user runs `sgdk-profile --pc` on sin008 and the numbers go here.
+   Left out of item 5 on purpose: `released` twice a pump (0.25%; caching
+   it across plan and psg_take could take a frame's PSG bytes one grab
+   later when frames_in advances between the two, a timing change the
+   gates would have to re-baseline) and `since_add` (0.14%).
 2. **Then decide §4** (pre-rendering) against what is left: if the steady
    state is under the game's budget, §4 is not worth its ROM.
