@@ -1,0 +1,7 @@
+; P3 gate: the noise channel's mode is one register, and an effect that sets
+; its own gives the song's back at its end (driver.md §2.5). The song plays
+; periodic1, the effect white2. (p3-se-noise.cmds.json: hat at 40.)
+(noise :tempo 120 :mode periodic1 :len 4 :vel 12  c c c c c c c c)   ; track 0
+
+(def-se hat :prio 5
+  (noise :mode white2 :len 16  c c))

@@ -497,6 +497,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "p3-se-ch3-dissolve.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "p3-se-ch3-op.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -522,6 +528,12 @@
     "digest": "811c9dc5"
   },
   "p3-se-fade.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "p3-se-noise.mmlisp": {
     "ok": true,
     "mismatches": 0,
     "compileErrors": 0,

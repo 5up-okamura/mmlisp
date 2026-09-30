@@ -833,7 +833,10 @@ A game's sound effects are written once, as defs, and every song carries them.
 - **Parts.** Each part is a channel form, written on the channel the effect
   **takes from the song** — `fm1` above is the song's lead's channel. When the
   effect plays, the song's part there is suspended, and comes back re-keyed
-  when the effect ends (driver.md §2.5). One part a channel (`E_SE_PART`).
+  when the effect ends (driver.md §2.5) — patch, levels, pan and, on `noise`,
+  its mode, as they were. One part a channel (`E_SE_PART`).
+- **Not `:master` or `:lfo-rate`.** Those are the song's — the game's fader
+  and the chip's one LFO — so an effect does not write them (`E_SE_PART`).
 - **CH3 is taken whole.** CH3's operator mode (`fm3-1`…`fm3-4`) and CSM
   (`fm3-csm`, `fm3-csm-rate`) are chip-wide, so an effect with any part on
   CH3 — `fm3` included — takes all of it: every song part on CH3 is suspended,
@@ -841,9 +844,7 @@ A game's sound effects are written once, as defs, and every song carries them.
   parts switches CH3 into operator mode itself), and at its end the song gets
   its mode, CSM rate, patch, levels and held notes back. One effect is either
   CSM or not: `fm3-csm` parts cannot share an effect with `fm3` / `fm3-1`…
-  (`E_SE_PART`). A song's CH3 patch comes back only if it was set as a whole
-  voice — a `def-fm` with every key, which the exporter sends as one
-  VOICE_SET — as for every channel an effect takes.
+  (`E_SE_PART`).
 
   ```lisp
   (def-fm kit :alg 7 :fb 0

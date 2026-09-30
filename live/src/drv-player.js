@@ -2418,7 +2418,14 @@ export class DrvPlayer {
       }
       if (o.suspended) o.suspended = false;
     }
+    // What the effect set chip-wide does not outlive it (mmlispseq.c
+    // ch3_dissolve): the song's mode and Timer A, no modulators, no sweep.
     this._ch3Silence();
+    this._clearChannelModulators(2);
+    for (let op = 1; op <= 4; op++) this._clearChannelModulators(15 + op);
+    this._csmRateSweep = null;
+    this._setReg27((this._reg27 & ~0xc0) | this._ch3.mode);
+    if (this._ch3.mode & 0x80) this._writeTimerA(this._ch3.timerA);
   }
   _stopSe(se) {
     const e = this._song?.seTable?.[se];
@@ -2620,6 +2627,7 @@ export class DrvPlayer {
       return {
         macros,
         kind: "psg",
+        noiseMode: this._noiseMode,
         note: st.currentNote,
         velBase: st.velBase,
         vel: st.vel,
@@ -2687,8 +2695,10 @@ export class DrvPlayer {
       st.pitchCents = snap.pitchCents;
       st.currentNote = snap.note;
       st.keyed = true;
-      if (psgCh === 3) this._writeNoiseCfg();
-      else this._writePsgPitch(psgCh, snap.note, snap.pitchCents);
+      if (psgCh === 3) {
+        this._noiseMode = snap.noiseMode; // the effect set its own
+        this._writeNoiseCfg();
+      } else this._writePsgPitch(psgCh, snap.note, snap.pitchCents);
       this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
     }
     // The binds come back and are re-instantiated, in note-on order and at the

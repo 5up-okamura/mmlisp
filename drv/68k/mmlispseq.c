@@ -2670,6 +2670,7 @@ static void snapshot_channel(const MMLSeq *s, int ch, MMLChanSnap *sn) {
   } else if (ch < 10) {
     const MMLPsgCh *p = &s->psg[ch - 6];
     sn->kind = MML_SNAP_PSG;
+    sn->noise_mode = s->noise_mode;
     sn->note = p->current_note;
     sn->vel_base = p->vel_base;
     sn->vel = p->vel;
@@ -2728,8 +2729,10 @@ static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
     p->pitch_cents = sn->pitch_cents;
     p->current_note = sn->note;
     p->keyed = 1;
-    if (pc == 3) write_noise_cfg(s);
-    else write_psg_pitch(s, pc, sn->note, sn->pitch_cents);
+    if (pc == 3) {
+      s->noise_mode = sn->noise_mode; /* the effect set its own */
+      write_noise_cfg(s);
+    } else write_psg_pitch(s, pc, sn->note, sn->pitch_cents);
     write_psg_att(s, pc, psg_att(s, p->vel, p->vol));
   }
   /* The binds come back and are re-instantiated, in note-on order and at the
@@ -2912,7 +2915,10 @@ static void ch3_restore(MMLSeq *s) {
 }
 
 /* A plain START_TRACK onto CH3 while an effect holds it is a scene change: the
- * effect's parts stop and the suspended song parts lose CH3 for good. */
+ * effect's parts stop and the suspended song parts lose CH3 for good. What the
+ * effect set chip-wide does not outlive it: the song's mode and Timer A come
+ * back and CH3's modulators and CSM sweep stop — nothing is re-keyed, the
+ * track being started brings its own notes. */
 static void ch3_dissolve(MMLSeq *s) {
   s->ch3.active = 0;
   for (uint8_t i = 0; i < s->track_count; i++) {
@@ -2925,6 +2931,11 @@ static void ch3_dissolve(MMLSeq *s) {
     if (o->suspended) o->suspended = 0;
   }
   ch3_silence(s);
+  clear_channel_modulators(s, 2);
+  for (int op = 1; op <= 4; op++) clear_channel_modulators(s, 15 + op);
+  s->csm_sweep.active = 0;
+  set_reg27(s, (uint8_t)((s->reg27 & ~0xc0) | s->ch3.mode));
+  if (s->ch3.mode & 0x80) write_timer_a(s, s->ch3.timer_a);
 }
 
 /* SE-end: give back what the SE stole. Hooked at the SE track's END_OF_TRACK,

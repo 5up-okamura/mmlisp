@@ -153,6 +153,12 @@ position and the note it shaped re-attacked.
   carries the patch encoded from the structured shadow (29-byte entry + $B4,
   `restore_patch`); `voice_id` is gone. Gate `p3-se-patch` (claim-gate
   PATCH_CASES; mutation-checked).
+- **Review fixes (2026-09-30).** The user, asked for remaining issues: fix
+  the noise mode (not restored after an effect; now in the PSG snapshot) and
+  a dissolved CSM hold (left CSM keying the song's fm3; dissolve now puts the
+  song's mode/Timer A back and stops CH3's modulators and sweep); and "SEでは
+  :master, :lfo-rateは使わない" — the compiler refuses them in a def-se. Gates
+  `p3-se-noise`, `p3-se-ch3-dissolve` (claim-gate STATE_CASES, mutation-checked).
 - **Overlapping SEs on different channels** are already possible in the C —
   the snapshot lives on each suspended track, not in one slot — but no gate
   fires two at once. Add one when a score needs it.

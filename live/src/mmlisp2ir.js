@@ -4318,6 +4318,8 @@ const SE_CHANNELS = new Set([
   "fm1", "fm2", "fm3", "fm4", "fm5", "fm6", "sqr1", "sqr2", "sqr3", "noise",
   "pcm1", "pcm2", "pcm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate",
 ]);
+// What an effect may not write, by IR target: the source keyword to name.
+const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate" };
 
 // (def-se name [:prio N] [:tempo T] (channel body…)…). The head options are
 // the effect's: :prio its default priority (0-255, the host may pass its
@@ -5234,6 +5236,14 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
           args: { target: "NOISE_MODE", value: NOISE_MODE_MAP["white0"] }, src: se.src });
       compileChannelBody(node.items.slice(1), trackState, trackData.events, diagnostics,
         `se:${se.name}:${head}`, typedDefs, loopCounter, vals);
+      // :master and :lfo-rate are the song's, not a channel's — the game's
+      // fader and the chip's one LFO — and an effect's end would leave them
+      // as it set them. An effect does not write them (language.md §9.3).
+      for (const ev of trackData.events) {
+        const t = SE_FORBIDDEN_TARGETS[ev.args?.target];
+        if (t) pushDiag(diagnostics, "error", "E_SE_PART",
+          `def-se ${se.name}: ${t} is the song's, not an effect's`, ev.src ?? se.src, null);
+      }
       if (trackState.isCsmTrack && trackState.hasCsmOn)
         trackData.events.push({ tick: trackState.tick, cmd: "CSM_OFF", args: {}, src: se.src });
       expandTrackDelays(trackData);

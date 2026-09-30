@@ -171,7 +171,8 @@ change; a tick-clocked macro on its channel counts the part's ticks (§13.2).
 over the SE's) and does not own its channel. Its live channel state is
 snapshotted first. FM: the **patch as the register shadow holds it** — the
 29 bytes of a VOICE_TABLE entry plus `$B4`, encoded from the structured shadow
-— and note/vel/vol/gate/pitch; PSG: note + level + pitch. The patch is taken
+— and note/vel/vol/gate/pitch; PSG: note + level + pitch, and on noise the
+mode (one register, which an effect's noise part sets its own). The patch is taken
 from the shadow, not from the last VOICE_SET, because a channel's patch is
 whatever last wrote it: a partial `def-fm` (no voice entry), a mid-song `:tl1`
 or `:pan`. The channel is silenced and the SE starts as any track does (armed,
@@ -219,10 +220,17 @@ ends, the snapshot is written back: mode, Timer A, the patch, the operators'
 pitches and levels, key-on. Priority is per group: a lower effect's CH3 parts
 are dropped (its other parts still play), an equal or higher one — or the same
 effect again — preempts and inherits the snapshot. A song START_TRACK on CH3
-during a hold dissolves it (the song takes CH3 back, nothing is restored). One
+during a hold dissolves it: the effect's parts stop and the song takes CH3
+back without a restore — nothing is re-keyed, the started track brings its own
+notes — but the effect's chip-wide settings go with it: the song's mode and
+Timer A are put back and CH3's modulators and CSM sweep stop. One
 effect cannot mix CSM and operator parts: they are two modes of one register.
 Gates `p3-se-ch3` (normal-mode song; op, CSM, drop, preempt) and
-`p3-se-ch3-op` (op-mode song restored exactly).
+`p3-se-ch3-op` (op-mode song restored exactly), `p3-se-ch3-dissolve`.
+
+An effect does not write `:master` or `:lfo-rate` — the song's fader and the
+chip's one LFO, which nothing would put back — and the compiler refuses them
+in a def-se (`E_SE_PART`).
 
 A **sweep in flight is not restored**: it is a gesture with a position, and its
 note has re-attacked. The channel keeps the value the sweep had reached, which
@@ -998,8 +1006,9 @@ effect's claim, and its restore. The effects' notes are `Nf` lengths, so one
 window fits both video standards.
 It also checks, every frame of every schedule with an effect, that a part is
 suspended exactly while one running effect holds it (CH3's hold included), and
-that an effect's end leaves the channel's patch as it was before the claim
-(`p3-se-patch`: a patch no voice number could rebuild).
+that what an effect set comes back: the channel's patch (`p3-se-patch`, a patch
+no voice number could rebuild), the noise mode (`p3-se-noise`), and CH3's mode
+after a dissolved hold (`p3-se-ch3-dissolve`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: the C converter and `tools/pairs-model.mjs` turn the

@@ -111,7 +111,7 @@ function slots(stem) {
 const INVARIANT_SCORES = [
   "m3-se", "m3-se-prio", "p3-se-strand", "p3-se-fade", "p3-se-stopped",
   "p3-se-overlap", "p3-se-pcm-macro", "p3-se-def", "p3-se-ch3", "p3-se-ch3-op",
-  "p3-se-patch",
+  "p3-se-patch", "p3-se-noise", "p3-se-ch3-dissolve",
   "p3-claim-se-in", "p3-claim-se-out",
 ];
 
@@ -168,41 +168,50 @@ function checkInvariant(stem) {
   return null;
 }
 
-// ── The patch comes back ───────────────────────────────────────────────────
-// An effect's end puts back the patch the channel had — as the chip had it,
-// not as some voice number would rebuild it (§2.5). The song's patch in these
-// scores has no voice to rebuild from (a partial def-fm, then a mid-song :tl1
-// and :pan), so the register shadow of the channel's patch — $30-$9C and $B0/$B4,
-// with the carriers' composed $40 left out — must read the same the frame
-// before the claim and once the effect is over.
-const PATCH_CASES = [
-  { score: "p3-se-patch", port: 0, off: 0, before: 69, after: 199 },
+// ── What an effect set comes back ──────────────────────────────────────────
+// An effect's end puts back what the channel had — as the chip had it, not as
+// a voice number would rebuild it (§2.5) — and a scene change that dissolves a
+// CH3 hold does not leave the effect's chip-wide settings behind. Each case
+// reads that state the frame before the effect and once it is over; the two
+// must match.
+//   p3-se-patch: fm1's patch — $30-$9C, the voiced levels (a carrier's $40 is
+//     composed), $B0/$B4 — which no voice number could rebuild: a partial
+//     def-fm, then a mid-song :tl1 and :pan.
+//   p3-se-noise: the noise mode, one register the effect sets its own.
+//   p3-se-ch3-dissolve: CH3's mode and Timer A, and no CSM sweep, after the
+//     song restarts fm3 under a CSM effect.
+const patchOf = (port, off) => (drv) => {
+  const out = [];
+  for (let a = 0x30; a < 0xa0; a += 4) out.push(drv._shadow[port].get(a + off));
+  out.push(...drv._fm[port * 3 + off].ops.map((o) => o.voicedTl));
+  out.push(drv._shadow[port].get(0xb0 + off), drv._shadow[port].get(0xb4 + off));
+  return out.join(",");
+};
+const STATE_CASES = [
+  { score: "p3-se-patch", before: 69, after: 199, read: patchOf(0, 0),
+    what: "the effect's end puts the channel's patch back" },
+  { score: "p3-se-noise", before: 39, after: 119, read: (d) => `mode ${d._noiseMode}`,
+    what: "the effect's end puts the noise mode back" },
+  { score: "p3-se-ch3-dissolve", before: 29, after: 45,
+    read: (d) => `$27 ${d._reg27 & 0xc0} sweep ${!!d._csmRateSweep}`,
+    what: "a dissolved CH3 hold leaves no CSM behind" },
 ];
 
-function patchAt(stem, c) {
-  const { bytes: mmb, sampleBank } = buildMmb(join(tests, `${stem}.mmlisp`), { frameHz });
-  const sidecar = JSON.parse(readFileSync(join(tests, `${stem}.cmds.json`), "utf8"));
+function stateAt(c) {
+  const { bytes: mmb, sampleBank } = buildMmb(join(tests, `${c.score}.mmlisp`), { frameHz });
+  const sidecar = JSON.parse(readFileSync(join(tests, `${c.score}.cmds.json`), "utf8"));
   const drv = new DrvPlayer();
   drv.loadMMB(mmb, sampleBank);
   drv._audioContext = null;
   drv._writeCb = () => {};
   drv._reset(sidecar.autoStart !== false);
-  const read = () => {
-    const out = [];
-    for (let a = 0x30; a < 0xa0; a += 4) out.push(drv._shadow[c.port].get(a + c.off));
-    // $40 of a modulator is its raw level; a carrier's is composed, so compare
-    // the voiced level the structured shadow keeps instead.
-    out.push(...drv._fm[c.port * 3 + c.off].ops.map((o) => o.voicedTl));
-    out.push(drv._shadow[c.port].get(0xb0 + c.off), drv._shadow[c.port].get(0xb4 + c.off));
-    return out.join(",");
-  };
   const snaps = {};
   for (let f = 0; f <= c.after; f++) {
     for (const cmd of sidecar.commands ?? []) {
       if (cmd.frame === f) drv._applyMailbox(cmd.cmd, cmd.a0 ?? 0, cmd.a1 ?? 0, cmd.a2 ?? 0);
     }
     drv.stepFrame();
-    if (f === c.before || f === c.after) snaps[f] = read();
+    if (f === c.before || f === c.after) snaps[f] = c.read(drv);
   }
   return snaps;
 }
@@ -239,18 +248,18 @@ for (const stem of INVARIANT_SCORES) {
   }
 }
 
-for (const c of PATCH_CASES) {
-  const s = patchAt(c.score, c);
+for (const c of STATE_CASES) {
+  const s = stateAt(c);
   if (s[c.before] === s[c.after]) {
-    console.log(`ok    ${c.score} — the effect's end puts the channel's patch back`);
+    console.log(`ok    ${c.score} — ${c.what}`);
   } else {
     failures++;
-    console.log(`FAIL  ${c.score} — the patch after the effect is not the one before it`);
+    console.log(`FAIL  ${c.score} — ${c.what}`);
     console.log(`        f${c.before}: ${s[c.before]}`);
     console.log(`        f${c.after}: ${s[c.after]}`);
   }
 }
 
-const total = CASES.length + INVARIANT_SCORES.length + PATCH_CASES.length;
+const total = CASES.length + INVARIANT_SCORES.length + STATE_CASES.length;
 console.log(`\n${total - failures} passed · ${failures} failed${pal ? " (PAL)" : ""}`);
 if (failures) process.exit(1);
