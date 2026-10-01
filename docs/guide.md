@@ -1045,6 +1045,11 @@ formats `File > Import` accepts:
 | `.muc` / `.mml`                    | mucom88 import — drop its `.dat` / `.bin` alongside to get voices and drums in one go |
 | `.dat` / `.bin` alone              | mucom88 voice bank / PCM bank                              |
 
+A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
+from memory until it is saved: **Save** asks for it right after the score, in
+the score's folder with its name filled in, until it is written (also
+`File > Export > mucom88 PCM Bank WAV…`).
+
 Several files at once are fine. Everything except opening a document appends at
 the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press
 **Build** to apply them. Only one document can be open, so a multi-score drop

@@ -2532,6 +2532,7 @@
     // fresh user gesture and so can always open a picker.
     let _mucomSong = null; // { bytes, fileName, datBytes, pcmBytes }
     let _mucomPcm = null; // last decoded PCM bank { wav, wavFile, mono, rate, entries }
+    let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
 
     function loadMucomSource(source, warnings, fileName, label, pcm = null) {
       _sourceHandle = null;
@@ -2546,10 +2547,11 @@
       // folder — so seed the decode cache under the key `:file` resolves to (a
       // bare name, since there is no base dir). The song then plays immediately;
       // saving the wav beside the score is what makes it survive a reload.
-      _mucomPcm = pcm; // for File ▸ Export ▸ mucom88 PCM Bank WAV…
+      _mucomPcm = pcm; // for File ▸ Export ▸ mucom88 PCM Bank WAV…, and Save
+      _mucomPcmUnsaved = !!pcm;
       if (pcm) {
         _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate });
-        log(`mucom88: drums play from "${pcm.wavFile}" held in memory — File ▸ Export ▸ mucom88 PCM Bank WAV… next to the score (then Open Folder…) to keep them after a reload`, 'info');
+        log(`mucom88: drums play from "${pcm.wavFile}" held in memory — Save offers to write it next to the score`, 'info');
       }
       setEditorDoc(source);
       compileNow();
@@ -2674,21 +2676,8 @@
       }
       const pcm = _mucomPcm;
       const blob = new Blob([pcm.wav], { type: 'audio/wav' });
-      try {
-        if (window.showSaveFilePicker) {
-          const handle = await window.showSaveFilePicker({
-            suggestedName: pcm.wavFile,
-            types: [{ description: 'WAV audio', accept: { 'audio/wav': ['.wav'] } }],
-          });
-          const writable = await handle.createWritable();
-          await writable.write(blob);
-          await writable.close();
-          log(`mucom88: wrote ${pcm.wavFile} — File ▸ Open Folder… on its folder to keep the drums after a reload`, 'info');
-          return;
-        }
-      } catch (e) {
-        if (e && e.name === 'AbortError') return;
-        log(`mucom88: saving ${pcm.wavFile} failed: ${e?.message || e}`, 'err');
+      if (window.showSaveFilePicker) {
+        await writeMucomPcmWav(_sourceHandle);
         return;
       }
       const url = URL.createObjectURL(blob);
@@ -2698,6 +2687,51 @@
       a.click();
       URL.revokeObjectURL(url);
       log(`mucom88: downloaded ${pcm.wavFile} — move it next to the score`, 'info');
+    }
+
+    // The picker for the bank's wav. `startIn` is the saved score's handle when
+    // there is one: a file handle exposes no parent directory, so the wav cannot
+    // be written beside the score silently, but the picker then opens in that
+    // folder with the name filled in — one confirm, right place (the same deal
+    // as the .smp beside an exported .mmb). Returns true once the wav is written.
+    async function writeMucomPcmWav(startIn) {
+      const pcm = _mucomPcm;
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: pcm.wavFile,
+          ...(startIn ? { startIn } : {}),
+          types: [{ description: 'WAV audio', accept: { 'audio/wav': ['.wav'] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(new Blob([pcm.wav], { type: 'audio/wav' }));
+        await writable.close();
+        _mucomPcmUnsaved = false;
+        if (handle.name !== pcm.wavFile) {
+          log(`mucom88: wrote ${handle.name}, but the score's def-pcm read "${pcm.wavFile}" — rename it to match`, 'err');
+        } else {
+          log(`mucom88: wrote ${pcm.wavFile} — File ▸ Open Folder… on its folder to keep the drums after a reload`, 'info');
+        }
+        return true;
+      } catch (e) {
+        if (e?.name === 'AbortError') {
+          log(`mucom88: ${pcm.wavFile} not saved — the drums live only in memory until it is (File ▸ Export ▸ mucom88 PCM Bank WAV…)`, 'info');
+        } else {
+          // A picker opened without a fresh user gesture is refused (SecurityError).
+          log(`mucom88: saving ${pcm.wavFile} failed: ${e?.message || e} — use File ▸ Export ▸ mucom88 PCM Bank WAV…`, 'err');
+        }
+        return false;
+      }
+    }
+
+    // After the score is saved: if it plays a bank whose wav is still only in
+    // memory, ask for the wav too, in the score's folder. Asked until written —
+    // a wav left behind is what makes the drums vanish on a reload, and what let
+    // a stale wav of the same name stand in for it.
+    async function offerMucomPcmWav(scoreHandle) {
+      if (!_mucomPcm || !_mucomPcmUnsaved || !window.showSaveFilePicker) return;
+      const src = editorView.state.doc.toString();
+      if (!src.includes(`:file "${_mucomPcm.wavFile}"`)) return;
+      await writeMucomPcmWav(scoreHandle);
     }
 
     // Load a mucom PCM bank (part K drums). If a song was just imported,
@@ -3009,9 +3043,15 @@
       const offset = Number.isFinite(def?.offset) ? Math.max(0, def.offset) : 0;
       const want = Number.isFinite(def?.frames) ? Math.max(0, def.frames) : total - offset;
       if (offset === 0 && want >= total) return decoded; // whole file
-      if (offset >= total || want === 0) return null;
+      if (want === 0) return null;
+      // A slice past the file's end most often means the wav on disk is not the
+      // one the defs were written for (an older bank of the same name).
+      if (offset >= total) {
+        log(`PCM ${def?.name}: :offset ${offset} is past the end of ${def?.file ?? 'its file'} (${total} frames) — silent; is that wav the one this score was written for?`, 'err');
+        return null;
+      }
       if (offset + want > total) {
-        log(`PCM ${def?.name}: :offset ${offset} + :frames ${want} exceeds ${total} frames — clamped`, 'err');
+        log(`PCM ${def?.name}: :offset ${offset} + :frames ${want} exceeds ${total} frames of ${def?.file ?? 'its file'} — clamped; is that wav the one this score was written for?`, 'err');
       }
       return {
         data: decoded.data.slice(offset, Math.min(total, offset + want)),
@@ -3672,6 +3712,7 @@
       await writable.close();
       setSourceContextFromHandle(handle);
       log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
+      await offerMucomPcmWav(handle);
     }
 
     async function exportVgm() {
@@ -4158,6 +4199,7 @@
       await writable.close();
       setSourceContextFromHandle(_sourceHandle);
       log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
+      await offerMucomPcmWav(_sourceHandle);
     }
 
     function newFile() {
