@@ -253,14 +253,29 @@ export function dedupEventStream(bytes, bounds, trackEntries, OPCODE) {
   // Pass 5: relink LOOP_BREAK skips. The exporter records where each emitted
   // break's skip sits (an inert break emits none); the skip is measured from
   // the end of the instruction to just past the matching LOOP_END — the start
-  // of the next event, or of whatever now stands there.
+  // of the next event, or of whatever now stands there. The landing can also
+  // sit INSIDE the LOOP_END's own unit: where the paths into the join disagree,
+  // the exporter pins the state after the LOOP_END in the same event, and the
+  // break lands ahead of those pins. A LOOP_END unit is never factored, so it
+  // moves whole and the offset into it holds.
+  const landAt = (orig) => {
+    const hit = remap.get(orig);
+    if (hit !== undefined) return hit;
+    let k = units.length - 1;
+    while (k >= 0 && units[k].origOffset > orig) k--;
+    const v = units[k];
+    if (!v || v.removed || v.callTo >= 0 || orig >= v.origOffset + v.bytes.length) return undefined;
+    return remap.get(v.origOffset) + (orig - v.origOffset);
+  };
   for (const u of units) {
     if (u.skipAt === undefined) continue;
     const at = u.skipAt - u.origOffset; // within the unit
     const origSkip = u.bytes[at] | (u.bytes[at + 1] << 8);
+    if (origSkip === 0) continue; // an unresolved break (skip 0) stays
     const origLand = u.skipAt + 2 + origSkip;
-    const newLand = remap.get(origLand);
-    if (newLand === undefined) continue; // an unresolved break (skip 0) stays
+    const newLand = landAt(origLand);
+    // A skip left as it was would land mid-instruction in the shrunk stream.
+    if (newLand === undefined) throw new Error(`mmb-dedup: LOOP_BREAK at ${u.origOffset} lands at ${origLand}, which the factored stream no longer has`);
     const newAt = remap.get(u.origOffset) + at;
     const skip = newLand - (newAt + 2);
     outBytes[newAt] = skip & 0xff;

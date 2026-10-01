@@ -263,6 +263,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-break-join-dedup.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-break-once.mmlisp": {
     "ok": true,
     "mismatches": 0,

@@ -12,9 +12,10 @@
 // artifacts: each song's remapped MMB against the one shared sample bank, so
 // what is compared is what the ROM will carry.
 //
-// A score whose stream reaches an opcode the port does not decode yet stops
-// that track fail-safe (mmb.md §13) and is reported as PENDING rather than
-// silently passing on a truncated stream.
+// A score whose stream reaches an opcode the C does not decode stops that
+// track fail-safe (mmb.md §13), and that FAILS the score even when the
+// reference stops at the same byte: every opcode is ported, so a stop means the
+// stream itself is broken (a mis-linked skip lands mid-instruction).
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -109,7 +110,6 @@ for (const manifestPath of bundles) {
 }
 
 let failures = 0;
-let pending = 0;
 for (const job of jobs) {
   const { name, mmb, sampleBank } = job;
 
@@ -165,11 +165,8 @@ for (const job of jobs) {
   }
   const got = parseStream(out);
 
-  // Compare frame by frame. The C stops a track on an opcode it cannot decode
-  // yet, so a short stream is reported as pending work rather than a pass.
-  // How many leading frames are byte-identical. For a score the port cannot
-  // finish yet this is the meaningful number: it says exactly how far the port
-  // gets, and it regresses visibly if something breaks upstream of the stop.
+  // Compare frame by frame: how many leading frames are byte-identical, which
+  // for a score that stops says how far it got.
   const n = Math.min(got.length, ref.slots.length);
   let same = 0;
   let bad = null;
@@ -245,10 +242,8 @@ for (const job of jobs) {
 
   const bytes = ref.slots.reduce((t, s) => t + s.length, 0);
   if (incomplete) {
-    // Not a failure: the port simply has not reached this opcode yet, and it
-    // stops fail-safe rather than mis-decoding a length (mmb.md §13).
-    console.log(`PEND  ${name} — ${same}/${ref.slots.length} frames identical, then ${incomplete}`);
-    pending++;
+    console.log(`FAIL  ${name} — ${same}/${ref.slots.length} frames identical, then ${incomplete}`);
+    failures++;
   } else if (bad) {
     console.log(`FAIL  ${name} — ${bad}`);
     failures++;
@@ -260,6 +255,6 @@ for (const job of jobs) {
 ctab.dispose();
 if (!flags.includes("--keep")) rmSync(tmp, { recursive: true, force: true });
 console.log(
-  `\n${jobs.length - failures - pending} passed · ${pending} pending · ${failures} failed`,
+  `\n${jobs.length - failures} passed · ${failures} failed`,
 );
 if (failures) process.exit(1);

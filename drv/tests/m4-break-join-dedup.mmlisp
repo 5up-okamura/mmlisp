@@ -1,0 +1,10 @@
+; M4 gate: a (break) whose landing sits inside its LOOP_END's own event, with
+; the stream factored into CALLs between the two (opcodes.md §5.2). The paths
+; into the join disagree (the vel macro and :gate-), so the encoder pins the
+; state just past the LOOP_END in the same event, and the break lands ahead of
+; the pins. The body past the break repeats after the loop, so the dedup
+; factors it and the skip has to shrink with it — left as it was, the break
+; landed mid-instruction and the track stopped.
+(def env1 (macro :vel* [ (linear 15..11 :len 1t) (wait key-off) (linear 11..0 :len 65t) ]))
+(sqr1 :tempo 150 env1 :oct 4 :vel 12 :len 16 :gate- 10t
+  (x 3 c d e f (break) g a b > c < g a b > c <) g a b > c < g a b > c < c4)
