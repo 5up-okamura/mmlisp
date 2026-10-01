@@ -247,7 +247,7 @@ burst's first start from 8.7–10.2 frames to 2.3. Then the in-order uncapped
 frame and the fm4–6 barrier (`ac19c45`) went back on top: latency unchanged
 (2.0–3.8 on the corpus, sin008 1.97 mean / 3.02 worst over 141 starts), and
 `pairs-gate` now has a KEY ORDER check (0 early fm4–6 key-ons; it fails on the
-old bucketed order). **Owed: the user's BlastEm listen of the re-land.**
+old bucketed order). The user confirmed the re-land on BlastEm (sin008, 2026-10-01). §3a is done.
 
 ## 5. The worst frame, and the render lead
 
