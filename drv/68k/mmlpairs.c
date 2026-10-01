@@ -1,4 +1,4 @@
-/* MMLispDRV — slots into pairs (see mmlpairs.h). Portable C99, no SGDK. */
+/* MMLispDRV — frames into pairs (see mmlpairs.h). Portable C99, no SGDK. */
 #include "mmlpairs.h"
 #include "mmlispseq.h"
 
@@ -10,7 +10,7 @@
 #define MMLP_HOT static inline
 #endif
 
-/* The slot's PCM opcodes (driver.md §6.3), as mmlispseq.c emits them. */
+/* The frame's PCM opcodes (driver.md §6.3), as mmlispseq.c emits them. */
 #define PCM_START 1
 #define PCM_VOL 3
 #define PCM_RETARGET 4
@@ -58,7 +58,7 @@ void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg) {
 }
 
 /* The producer fills from its own cursor (q_work) and publishes q_head once,
- * at the end of a slot: an interrupt-side grab sees all of a frame's pairs or
+ * at the end of a frame: an interrupt-side grab sees all of a frame's pairs or
  * none of them, never a pitch pair's upper half without its lower. */
 MMLP_HOT void push(MMLPairs *p, uint8_t port, uint8_t op, uint8_t val) {
   uint16_t next = (uint16_t)((p->q_work + 1) & (MMLP_QUEUE - 1));
@@ -155,8 +155,6 @@ static void pcm_command(MMLPairs *p, const uint8_t *c) {
   }
 }
 
-static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len);
-
 static void frame_begin(MMLPairs *p) {
   p->q_work = p->q_head;
   p->l_work = p->l_head;
@@ -177,7 +175,7 @@ static void frame_publish(MMLPairs *p) {
   p->frames_in = (uint16_t)(p->frames_in + 1);
 }
 
-/* A slot's PCM commands, into the lane after the frame's $2B; `len` bounds
+/* A frame's PCM commands, into the lane after the frame's $2B; `len` bounds
  * the run. Returns the bytes used, or 0xffff for a malformed run. */
 static uint16_t pcm_run(MMLPairs *p, const uint8_t *c, uint16_t len, uint8_t npcm) {
   uint16_t i = 0;
@@ -196,46 +194,51 @@ MMLP_HOT void psg_push(MMLPairs *p, uint8_t b) {
   if (next != p->psg_tail) { p->psg[p->psg_work] = b; p->psg_work = next; }
 }
 
-void mmlp_slot(MMLPairs *p, const uint8_t *s, uint16_t len) {
-  frame_begin(p);
-  slot_body(p, s, len);
-  frame_publish(p);
+/* A frame's register writes, n of them in the order the sequencer made them,
+ * write i at base + ((first + i) & mask) * stride as {port, addr, data}.
+ *
+ * PORT 1 WAITS, PORT 0 AND THE PSG DO NOT — one port switch a frame instead of
+ * one per channel change — EXCEPT AT AN fm4-6 KEY EDGE. $28 is a port-0
+ * register for every channel, while fm4-6's F-number, level and patch are
+ * port 1; the sequencer writes a note's pitch before its key-on, and a key-on
+ * moved ahead of that pitch attacks at the previous note's (372 times on the
+ * c-gate corpus when every port-1 write waited for the frame's end). So a $28
+ * that names ch4-6 first sends the port-1 writes made before it. Everything
+ * else only ever moves port 1 later, which the two ports' disjoint channels
+ * make safe. The JS twin is tools/pairs-model.mjs frame(). */
+MMLP_HOT void port1_run(MMLPairs *p, const uint8_t *base, uint16_t first, uint16_t lo, uint16_t hi,
+                        uint16_t mask, uint16_t stride) {
+  for (uint16_t i = lo; i < hi; i++) {
+    const uint8_t *w = base + (uint16_t)((first + i) & mask) * stride;
+    if (w[0] == 1) push(p, 1, w[1], w[2]);
+  }
+}
+MMLP_HOT void writes_body(MMLPairs *p, const uint8_t *base, uint16_t first, uint16_t n,
+                          uint16_t mask, uint16_t stride) {
+  uint16_t lo = n, hi = 0;   /* the port-1 writes not yet sent: first and last + 1 */
+  for (uint16_t i = 0; i < n; i++) {
+    const uint8_t *w = base + (uint16_t)((first + i) & mask) * stride;
+    if (w[0] == 2) psg_push(p, w[2]);
+    else if (w[0] == 0) {
+      if (w[1] == 0x28 && (w[2] & 4) && lo < n) {
+        port1_run(p, base, first, lo, hi, mask, stride);
+        lo = n;
+      }
+      push0(p, w[1], w[2]);
+    } else {
+      if (lo == n) lo = i;
+      hi = (uint16_t)(i + 1);
+    }
+  }
+  if (lo < n) port1_run(p, base, first, lo, hi, mask, stride);
 }
 
-/* THE SAME FRAME, FROM THE SEQUENCER'S QUEUE. What mmlp_slot does with the
- * bytes of an encoded slot, done with the view the sequencer describes it by
- * (mmlispseq.h MMLFrameView): the PCM commands held, then per sub-slot the PSG
- * bytes and the port-0 writes in one pass and the port-1 writes in a second —
- * the order the slot's runs put them in. No slot is packed or parsed; the pair
- * gate runs both paths side by side on every score and requires the same
- * converter state after every frame. */
+/* THE SGDK HOST'S FRAME, straight from the sequencer's queue (mmlispseq.h
+ * MMLFrameView): its writes, then its PCM commands into the lane. */
 static void view_body(MMLPairs *p, const MMLFrameView *v) {
-  uint16_t done = 0;
-  for (uint8_t sub = 0; sub < MML_SLOT_SUBS; sub++) {
-    const uint16_t end = v->end[sub];
-    uint16_t at = (uint16_t)((v->first + done) & (MML_WRITE_QUEUE - 1));
-    /* The port-1 run is walked a second time, but only between the first and
-     * the last port-1 write the first walk saw: the sequencer emits a
-     * channel's writes together and the channels in order, so port 1 sits in
-     * one stretch of the frame, and a walk over the whole frame again was
-     * 9% of the worst frame (a setup burst, sgdk-profile --peak). */
-    uint16_t lo1 = end, hi1 = done;
-    for (uint16_t i = done; i < end; i++) {
-      const MMLWrite *w = &v->q[at];
-      if (w->port == 2) psg_push(p, w->data);
-      else if (w->port == 0) push0(p, w->addr, w->data);
-      else { if (i < lo1) lo1 = i; hi1 = (uint16_t)(i + 1); }
-      at = (uint16_t)((at + 1) & (MML_WRITE_QUEUE - 1));
-    }
-    at = (uint16_t)((v->first + lo1) & (MML_WRITE_QUEUE - 1));
-    for (uint16_t i = lo1; i < hi1; i++) {
-      const MMLWrite *w = &v->q[at];
-      if (w->port == 1) push(p, 1, w->addr, w->data);
-      at = (uint16_t)((at + 1) & (MML_WRITE_QUEUE - 1));
-    }
-    done = end;
-  }
-  /* The PCM commands go into the lane after the walk, so a $2B the frame
+  writes_body(p, (const uint8_t *)v->q, v->first, v->end[MML_SLOT_SUBS - 1],
+              MML_WRITE_QUEUE - 1, (uint16_t)sizeof(MMLWrite));
+  /* The PCM commands go into the lane after the writes, so a $2B the frame
    * turned the DAC on with leads its first start. */
   pcm_run(p, v->pcm, v->pcm_len, v->pcm_count);
 }
@@ -258,6 +261,26 @@ void mmlp_drain(MMLPairs *p, MMLSeq *s) {
   mml_view_done(s, &v);
 }
 
+/* The same frame from its record bytes (mmlpairs.h) — the gates' path. */
+void mmlp_frame(MMLPairs *p, const uint8_t *rec, uint16_t len) {
+  frame_begin(p);
+  if (len >= 1) {
+    /* The PCM run is measured first and taken last, as view_body does. */
+    uint16_t used = 0;
+    for (uint8_t k = rec[0]; k > 0 && used != 0xffff; k--) {
+      const uint8_t op = (uint16_t)(1 + used) < len ? rec[1 + used] : 0;
+      if (op > 5 || !PCM_LEN[op] || (uint16_t)(1 + used + PCM_LEN[op]) > len) used = 0xffff;
+      else used = (uint16_t)(used + PCM_LEN[op]);
+    }
+    if (used != 0xffff) {
+      const uint16_t at = (uint16_t)(1 + used);
+      writes_body(p, rec + at, 0, (uint16_t)((len - at) / 3), 0xffff, 3);
+      pcm_run(p, rec + 1, used, rec[0]);
+    }
+  }
+  frame_publish(p);
+}
+
 /* The number of released frames that are queued, and so the last one's index;
  * frames beyond MMLP_FRAMES back are sent regardless (the host never renders
  * that far ahead). */
@@ -267,36 +290,6 @@ static uint16_t released(const MMLPairs *p, uint16_t release) {
   uint16_t avail = release;
   if ((uint16_t)(in - avail) >= MMLP_FRAMES) avail = (uint16_t)(in - (MMLP_FRAMES - 1));
   return avail;
-}
-
-static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
-  uint16_t i = 0;
-  if (len < 2) return;
-  i += 1;                                   /* n_writes */
-  uint8_t npcm = s[i++];
-  /* The PCM run is measured first and taken last, as view_body does. */
-  const uint16_t at_pcm = i;
-  uint16_t used = 0;
-  for (uint8_t k = npcm; k > 0; k--) {
-    if (i + used >= len) return;
-    uint8_t op = s[i + used];
-    if (op > 5 || !PCM_LEN[op] || (uint16_t)(i + used + PCM_LEN[op]) > len) return;
-    used = (uint16_t)(used + PCM_LEN[op]);
-  }
-  i = (uint16_t)(i + used);
-  for (uint8_t sub = 0; sub < MML_SLOT_SUBS && i < len; sub++) {
-    uint8_t npsg = s[i++];
-    for (; npsg > 0 && i < len; npsg--) psg_push(p, s[i++]);
-    for (uint8_t port = 0; port < 2 && i < len; port++) {
-      uint8_t n = s[i++];
-      for (; n > 0 && i + 1 < len; n--) {
-        if (port) push(p, 1, s[i], s[i + 1]);
-        else push0(p, s[i], s[i + 1]);
-        i = (uint16_t)(i + 2);
-      }
-    }
-  }
-  pcm_run(p, s + at_pcm, used, npcm);
 }
 
 /* The queues wrap with a mask (an int `%` is a libgcc call on the 68000). */

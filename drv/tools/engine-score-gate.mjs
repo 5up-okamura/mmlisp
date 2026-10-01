@@ -1,11 +1,11 @@
 // REAL SCORES THROUGH THE LIGHT ENGINE IMAGES, in the JS instruction model
 // (docs/driver.md §12.4): the reference driver renders the
-// slots, the host model (tools/pairs-model.mjs — the twin of the 68000's
-// mmlpairs.c) turns them into pairs and PSG bytes twice a frame, the score's
+// frames, the host model (tools/pairs-model.mjs — the twin of the 68000's
+// mmlpairs.c) turns them into pairs and PSG bytes once a frame, the score's
 // engine image (pcm1/pcm2/pcm3, from the MMB header) consumes them, and five
 // things are graded:
 //
-//   WRITES  every FM register write the chip saw is the slot stream's, per port,
+//   WRITES  every FM register write the chip saw is the frames', per port,
 //           in order, and nothing else; the chip's settling table holds
 //   PSG     every PSG byte, in order
 //   VALUE   every DAC byte equals live/src/pcm-model.js driven by the pairs the
@@ -20,9 +20,8 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { buildLightImage } from "./build-engine.mjs";
-import { MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
+import { FrameRecorder, MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites } from "./pairs-model.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
-import { SlotBuilder, decodeSlot } from "../../live/src/slot-builder.js";
 import { headerPcmVoices } from "../../live/src/mmb.js";
 import { PcmEngineModel, PCM_SILENCE_BYTE } from "../../live/src/pcm-model.js";
 import { Machine, traceMeta } from "./machine.mjs";
@@ -60,7 +59,8 @@ function runScore(path) {
   const { cfg, descriptor: desc } = built;
   const player = new DrvPlayer();
   player.loadMMB(bytes, sampleBank);
-  const slots = player.captureSlotLog({ maxFrames: FRAMES, commands: [], builder: new SlotBuilder() }).slots;
+  // The frames the SGDK host takes: every write in the sequencer's order, uncapped.
+  const frames = player.captureSlotLog({ maxFrames: FRAMES, commands: [], builder: new FrameRecorder() }).slots;
   // The bank the window shows: the score's own, or silence.
   const bank = new Uint8Array(0x8000);
   if (sampleBank) bank.set(sampleBank.subarray(0, 0x8000), 0);
@@ -80,7 +80,7 @@ function runScore(path) {
   const psgOut = [];
   m.host = { every: frameCycles, fn: (ram, cycle) => {
     const t = tick++;
-    if (frame < slots.length) model.slot(slots[frame++]);
+    if (frame < frames.length) model.frame(frames[frame++]);
     if (t % 8 === 7) return [];
     const prev = fifoLo;
     const g = model.plan(prev);
@@ -93,16 +93,16 @@ function runScore(path) {
   } };
   m.hostNext = dac0 + frameCycles;
   // Run the frames plus a tail so the queue drains, then compare.
-  m.run(dac0 + (slots.length + 12) * cfg.frameCycles);
+  m.run(dac0 + (frames.length + 12) * cfg.frameCycles);
   const fails = [];
   const dac = m.trace.dacCycle, n = dac.length;
 
-  // ── WRITES: FM per port against the slot stream ─────────────────────
+  // ── WRITES: FM per port against the frames ──────────────────────────
   // The DAC enable ($2B) rides the PCM lane (mmlpairs.h), ahead of the FM
   // queue, so it is held to its own order: list 2.
   const want = [[], [], []];
-  for (const s of slots) {
-    const d = decodeSlot(s);
+  for (const f of frames) {
+    const d = recordWrites(f);
     for (const [r, v] of d.fm0) want[r === 0x2b ? 2 : 0].push({ reg: r, val: v });
     for (const [r, v] of d.fm1) want[1].push({ reg: r, val: v });
   }
@@ -126,7 +126,7 @@ function runScore(path) {
   if (model.fault) fails.push(`PAIRS ${model.fault} PCM commands for a voice the image does not have`);
 
   // ── PSG bytes, in order ───────────────────────────────────────────────
-  const psgWant = slots.flatMap((s) => decodeSlot(s).psg);
+  const psgWant = frames.flatMap((f) => recordWrites(f).psg);
   if (psgOut.length !== psgWant.length) fails.push(`PSG: ${psgOut.length} bytes written, the score has ${psgWant.length}`);
   for (let i = 0; i < Math.min(psgOut.length, psgWant.length); i++)
     if (psgOut[i].byte !== psgWant[i]) { fails.push(`PSG byte ${i}: ${psgOut[i].byte} for ${psgWant[i]}`); break; }
@@ -182,7 +182,7 @@ function runScore(path) {
   // matched per voice in order. A start that waits behind other pairs shows
   // up here and nowhere else: every other check grades WHAT was played.
   const cmds = Array.from({ length: desc.voices }, () => []);
-  slots.forEach((s, f) => { for (const x of decodeSlot(s).pcm) if (x[0] === 1 && x[1] < desc.voices) cmds[x[1]].push(f); });
+  frames.forEach((r, f) => { for (const x of recordPcm(r)) if (x[0] === 1 && x[1] < desc.voices) cmds[x[1]].push(f); });
   const applied = Array.from({ length: desc.voices }, () => []);
   for (const e of pcm.log) if (e.kind === "start") applied[e.v].push(e.slot);
   const latency = [];
@@ -199,7 +199,7 @@ function runScore(path) {
     if (off.length) fails.push(`SYNC ${off.length} PCM onsets outside -2..+5 ms of their key-on: ${off.map((x) => x.toFixed(1)).join(" ")}`);
   }
   return { fails, time, seen, want, psg: psgOut.length, starts: starts.length, model, dacOn,
-    slots: slots.length, sync, desc, latency };
+    slots: frames.length, sync, desc, latency };
 }
 
 let failed = 0;

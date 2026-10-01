@@ -239,6 +239,16 @@ counted that as "pending"; a stop now fails). The fm4–6 order fix can be
 re-landed on its merits, with the PCM lane and latency gate above.
 The user confirmed sin008 plays correctly on BlastEm after both fixes (2026-10-01).
 
+**Re-landed with the PCM lane, 2026-10-01.** First `4aac18f`: the converter
+keeps a PCM lane (state stores + `$2B`, which a start must not overtake) that
+a grab drains before the FM queue; `engine:score` grades LATENCY (each START
+command to the voice starting, ≤ 4 frames). On the old slot path that took a
+burst's first start from 8.7–10.2 frames to 2.3. Then the in-order uncapped
+frame and the fm4–6 barrier (`ac19c45`) went back on top: latency unchanged
+(2.0–3.8 on the corpus, sin008 1.97 mean / 3.02 worst over 141 starts), and
+`pairs-gate` now has a KEY ORDER check (0 early fm4–6 key-ons; it fails on the
+old bucketed order). **Owed: the user's BlastEm listen of the re-land.**
+
 ## 5. The worst frame, and the render lead
 
 The measured worst case (§0) is the setup burst — every track's voice and

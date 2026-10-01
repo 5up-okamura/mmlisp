@@ -1,12 +1,14 @@
-/* MMLispDRV — the slot stream turned into the pair transport (R28 §63.3 D7).
+/* MMLispDRV — the sequencer's frames turned into the pair transport (R28 §63.3 D7).
  *
- * The sequencer (mmlispseq.c) still renders one SLOT a frame — the write lists
- * per port and the PCM commands docs/driver.md §6.2 describes, gated against the
- * JS reference byte for byte. This module is what the host does with a slot
- * now that the Z80 consumes {op, val} PAIRS instead of slots:
+ * The sequencer (mmlispseq.c) renders each frame into a queue of register
+ * writes in the order it made them, and the PCM commands docs/driver.md §6.3
+ * describes. This module is what the host does with a frame now that the Z80
+ * consumes {op, val} PAIRS:
  *
- *   FM writes    -> pairs, with a PORT pair where the port changes and a
- *                   pitch pair ($A4-$A6 then $A0-$A2, either port) kept whole
+ *   FM writes    -> pairs, port 0 in order, port 1 held back to the frame's
+ *                   end or to an fm4-6 key edge (mmlpairs.c writes_body), a
+ *                   PORT pair where the port changes and a pitch pair
+ *                   ($A4-$A6 then $A0-$A2, either port) kept whole
  *   PCM commands -> pairs into the engine's state block (driver.md §6.1): a
  *                   start is the voice's level page (the master folded in),
  *                   the staged source, END and WRAP that changed, and a new
@@ -71,16 +73,16 @@ typedef struct {
   /* The pair queue: {port, reg, val} entries, port 0xff for a state store. */
   uint8_t q_port[MMLP_QUEUE], q_op[MMLP_QUEUE], q_val[MMLP_QUEUE];
   uint16_t q_head, q_tail;
-  uint16_t q_work;       /* the producer's cursor while a slot is taken apart */
+  uint16_t q_work;       /* the producer's cursor while a frame is taken in */
   /* The PCM lane, the same way: state stores (port 0xff) and $2B (port 0). */
   uint8_t l_port[MMLP_LANE], l_op[MMLP_LANE], l_val[MMLP_LANE];
   uint16_t l_head, l_tail, l_work;
   /* The PSG queue, released one grab late. */
   uint8_t psg[MMLP_PSG];
   uint16_t psg_head, psg_tail, psg_mark, psg_work;
-  /* FRAMES. Slot k is frame k; where each queued frame ends in both queues,
+  /* FRAMES. Where each queued frame ends in every queue,
    * so a grab sends only the frames whose time has come (mmlp_plan). */
-  uint16_t frames_in;               /* slots taken in: the next slot's frame number */
+  uint16_t frames_in;               /* frames taken in: the next frame's number */
   uint16_t end_q[MMLP_FRAMES], end_psg[MMLP_FRAMES], end_l[MMLP_FRAMES];
   /* The producer's state. */
   uint8_t chip_port;     /* the port the engine's RAW arm currently writes */
@@ -107,19 +109,22 @@ typedef struct {
 
 void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg);
 
-/* Take one rendered slot apart into the queues. ONE PRODUCER, ONE CONSUMER:
- * mmlp_slot may run in the main loop while mmlp_plan / mmlp_psg_take run from
- * an interrupt. The producer publishes a whole slot with one store per queue,
- * and each side writes only its own cursor, so no lock is needed on a single
- * CPU whose interrupts run to completion. Two consumers must not overlap (the
- * SGDK host keeps a flag for that). */
-void mmlp_slot(MMLPairs *p, const uint8_t *slot, uint16_t len);
-
-/* The same, straight from the sequencer: run one frame (or drain one) and take
- * it into the queues without encoding a slot — what the SGDK host does, and
- * equal to mml_render_frame + mmlp_slot state for state (pairs-gate). */
+/* Run one frame of the sequencer (or drain one) and take it into the queues —
+ * what the SGDK host does. ONE PRODUCER, ONE CONSUMER: this may run in the
+ * main loop while mmlp_plan / mmlp_psg_take run from an interrupt. The
+ * producer publishes a whole frame with one store per queue, and each side
+ * writes only its own cursor, so no lock is needed on a single CPU whose
+ * interrupts run to completion. Two consumers must not overlap (the SGDK host
+ * keeps a flag for that). */
 void mmlp_render(MMLPairs *p, MMLSeq *s);
 void mmlp_drain(MMLPairs *p, MMLSeq *s);
+
+/* The same frame from bytes — how the gates hand one over (drv/68k/gate_main
+ * --frames writes them; tools/pairs-model.mjs FrameRecorder makes them from
+ * the JS reference): [n_pcm] [the PCM commands] then {port, addr, data} per
+ * register write, in the sequencer's order, to the end of the record. Equal
+ * to mmlp_render state for state (pairs-gate). */
+void mmlp_frame(MMLPairs *p, const uint8_t *rec, uint16_t len);
 
 /* WHICH FRAMES MAY GO. `release` is how many frames' time has come: frames
  * 0 .. release-1 may be written, later ones wait even if they are queued. So

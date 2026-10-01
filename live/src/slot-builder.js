@@ -18,13 +18,13 @@
 // the sequencer; the host turns them into state-store pairs ahead of the
 // frame's register writes (drv/68k/mmlpairs.c).
 //
-// Length-prefixed runs so a consumer needs no per-write dispatch. Bucketing by
-// port loses cross-bucket ordering within a frame, which is safe by
-// construction: the two YM ports address disjoint channels, the PSG is a
-// different chip, and everything whose order carries meaning is port-0-local
-// (the $28 key edges, the $22/$27/$2B globals, and the $A4→$A0 F-number pair
-// whose shared latch driver.md §8 describes). Order within a port is kept, so
-// the transport only ever DELAYS a write.
+// THE SLOT IS THE GATES' FORM, NOT THE WIRE'S (driver.md §6.2). Bucketing by
+// port loses cross-port order within a frame, and that order matters: $28 is a
+// port-0 register for every channel, so a bucketed fm4-6 key-on lands ahead of
+// its own port-1 pitch. The SGDK host takes the frame uncapped and in order
+// instead (drv/68k/mmlpairs.c writes_body; its JS twin, pairs-model.mjs
+// FrameRecorder), and pairs-gate holds that order to this reference. c-gate
+// still compares the two sequencers through the slot.
 
 export const SLOT_SIZE = 256;
 
