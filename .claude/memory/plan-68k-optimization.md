@@ -252,8 +252,17 @@ answers exist:
    sgdk:lint, engine:score): `4c50af1` the track-id table, `f2a30c2` the
    live masks, `6622a3b` the port-1 stretch, `9ea61ec` the macro engine,
    `fef512e` the op tables. Then `8d28b53` (offsets + KEYON pass) and
-   `671bd2a` (the tick loop's uneventful frame taken before the loop) —
-   **not yet re-profiled**.
+   `671bd2a` (the tick loop's uneventful frame taken before the loop), then
+   `ac19c45` (§3a, the in-order frame). **Re-profiled 2026-10-01 (sin008,
+   `--pc`, 29 s):** idle 82.5%; driver 13.6% + API 1.0% = **14.6%** (from
+   22.1% at the start). run_frame 4.46% → 3.13% (the tick fast path).
+   Worst frames (`--peak 3`) unchanged at ~87% — the write path is still
+   ~30% of them (`q_push`, `writes_body`, `port1_run`, `push`). What is left,
+   by block: the macro engine ~4.5% (`step_channel_macros` 1.3,
+   `macro_desc` 1.04, `macro_sample` 0.58, `process_macros` 0.53 — its
+   `1u << mc` per channel is a variable 32-bit shift — `step_macro` 0.48,
+   `fm3_op_for` 0.40, `macro_ch` 0.18), run_frame 3.1%, the pump ~2.6%
+   (`mmlp_plan` 1.5), the write path ~1%.
    **Re-profiled 2026-10-01 (`sin008`, `--pc`, 29 s):** idle 75.2% → 80.3%.
    The driver (sum of its outer functions) 19.2% → 15.4%; the API polls
    2.9% → 1.3%; together 22.1% → 16.7%. What moved: the sweep walk (−1.8,
