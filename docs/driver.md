@@ -432,9 +432,10 @@ way; arming keeps the voice applies ahead of the notes, so no note sounds under
 a half-applied patch.
 
 PCM tracks are armed like every other track, and the converter sends a frame's
-PCM commands ahead of its register writes (§6.6), so a PCM hit and an FM hit
+PCM commands in a lane ahead of the FM queue (§6.6), so a PCM hit and an FM hit
 written on the same beat sound together (within ~1.5 ms in the score gate,
-`tests/m3-pcm-sync.mmlisp`).
+`tests/m3-pcm-sync.mmlisp`), and a hit in a burst's frame is not held back by
+the burst's FM writes.
 
 `drv-player.js` implements this (`armed`), and `ir-player.captureRegisterLog`
 mirrors it (`_drvSetupShift`) so the A/B gate compares like with like: the
@@ -695,12 +696,19 @@ Every control call takes effect on the next frame rendered (§3.4).
 
 ### 6.6 The host: converter, pumps and timing
 
-- **The converter** (`drv/68k/mmlpairs.c`) turns a frame into pairs: the PCM
-  commands first, as state stores — the voice's LEVEL page with the master
-  folded in, only the staged bytes that changed (a repeated hit is one pair),
-  then the generation, and `idleAfterGen` IDLE pairs before the next staged
-  store for that voice (§6.1) — then the FM writes, with a PORT pair where the
-  port changes and each pitch pair kept whole. PSG bytes go to a queue the
+- **The converter** (`drv/68k/mmlpairs.c`) turns a frame into pairs, in two
+  queues. **The PCM lane** holds the PCM commands as state stores — the
+  voice's LEVEL page with the master folded in, only the staged bytes that
+  changed (a repeated hit is one pair), then the generation, and
+  `idleAfterGen` IDLE pairs before the next staged store for that voice
+  (§6.1) — behind the frame's DAC enable (`$2B`, which a start must not
+  overtake). **The FM queue** holds the other register writes, with a PORT
+  pair where the port changes and each pitch pair kept whole. A grab drains
+  the released lane before any FM pair, so a start waits for the frames
+  before it but never behind an FM backlog: a voice change over six channels
+  is ~200 pairs, twelve grabs, and behind it a start waited 8–10 frames
+  (`engine:score` LATENCY now holds every start within 4, ~2.3 typical).
+  PSG bytes go to a queue the
   pumps write to `$C00011` one grab period late, so they land with the FM they
   were cued with. A command for a voice the booted image does not have is a
   fault (`MMLispStats.faults`).
@@ -1034,8 +1042,10 @@ as a state machine, driven by the pairs the expander actually consumed.
   the IDLE window allows. `npm run engine:gate:negatives` requires an uncosted
   instruction, a wrapping add and a missing IDLE window to fail it.
 - `npm run engine:score` — real scores through the image each names, driven by
-  the host model: every FM write per port in order, every PSG byte, every DAC
-  byte, the clock, and PCM-vs-FM sync.
+  the host model: every FM write per port in order (`$2B` in its own order, as
+  it rides the PCM lane), every PSG byte, every DAC byte, the clock, PCM-vs-FM
+  sync, and LATENCY — each START command, from its frame to the voice
+  starting, within 4 frames (§6.6).
 
 ### 12.5 `ir-player` A/B — characterization
 

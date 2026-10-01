@@ -68,10 +68,26 @@ MMLP_HOT void push(MMLPairs *p, uint8_t port, uint8_t op, uint8_t val) {
   p->q_val[p->q_work] = val;
   p->q_work = next;
 }
-MMLP_HOT void store(MMLPairs *p, uint8_t op, uint8_t val) { push(p, 0xff, op, val); }
+/* Into the PCM lane (mmlpairs.h): the state stores, and $2B. */
+MMLP_HOT void lane(MMLPairs *p, uint8_t port, uint8_t op, uint8_t val) {
+  uint16_t next = (uint16_t)((p->l_work + 1) & (MMLP_LANE - 1));
+  if (next == p->l_tail) { p->overflow++; return; }
+  p->l_port[p->l_work] = port;
+  p->l_op[p->l_work] = op;
+  p->l_val[p->l_work] = val;
+  p->l_work = next;
+}
+MMLP_HOT void store(MMLPairs *p, uint8_t op, uint8_t val) { lane(p, 0xff, op, val); }
+
+/* A port-0 write, into the FM queue — or the lane for the DAC enable. */
+MMLP_HOT void push0(MMLPairs *p, uint8_t addr, uint8_t data) {
+  if (addr == 0x2b) lane(p, 0, addr, data);
+  else push(p, 0, addr, data);
+}
 
 uint16_t mmlp_pending(const MMLPairs *p) {
-  return (uint16_t)((p->q_head + MMLP_QUEUE - p->q_tail) & (MMLP_QUEUE - 1));
+  return (uint16_t)(((p->q_head + MMLP_QUEUE - p->q_tail) & (MMLP_QUEUE - 1))
+                    + ((p->l_head + MMLP_LANE - p->l_tail) & (MMLP_LANE - 1)));
 }
 
 static uint16_t rd16le(const uint8_t *c) { return (uint16_t)(c[0] | (c[1] << 8)); }
@@ -143,6 +159,7 @@ static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len);
 
 static void frame_begin(MMLPairs *p) {
   p->q_work = p->q_head;
+  p->l_work = p->l_head;
   p->psg_work = p->psg_head;
 }
 
@@ -153,13 +170,15 @@ static void frame_begin(MMLPairs *p) {
 static void frame_publish(MMLPairs *p) {
   p->end_q[p->frames_in & (MMLP_FRAMES - 1)] = p->q_work;
   p->end_psg[p->frames_in & (MMLP_FRAMES - 1)] = p->psg_work;
+  p->end_l[p->frames_in & (MMLP_FRAMES - 1)] = p->l_work;
   p->psg_head = p->psg_work;
+  p->l_head = p->l_work;
   p->q_head = p->q_work;
   p->frames_in = (uint16_t)(p->frames_in + 1);
 }
 
-/* A slot's PCM commands, into pairs ahead of its register writes; `len`
- * bounds the run. Returns the bytes used, or 0xffff for a malformed run. */
+/* A slot's PCM commands, into the lane after the frame's $2B; `len` bounds
+ * the run. Returns the bytes used, or 0xffff for a malformed run. */
 static uint16_t pcm_run(MMLPairs *p, const uint8_t *c, uint16_t len, uint8_t npcm) {
   uint16_t i = 0;
   for (; npcm > 0 && i < len; npcm--) {
@@ -191,7 +210,6 @@ void mmlp_slot(MMLPairs *p, const uint8_t *s, uint16_t len) {
  * gate runs both paths side by side on every score and requires the same
  * converter state after every frame. */
 static void view_body(MMLPairs *p, const MMLFrameView *v) {
-  if (pcm_run(p, v->pcm, v->pcm_len, v->pcm_count) == 0xffff) return;
   uint16_t done = 0;
   for (uint8_t sub = 0; sub < MML_SLOT_SUBS; sub++) {
     const uint16_t end = v->end[sub];
@@ -205,7 +223,7 @@ static void view_body(MMLPairs *p, const MMLFrameView *v) {
     for (uint16_t i = done; i < end; i++) {
       const MMLWrite *w = &v->q[at];
       if (w->port == 2) psg_push(p, w->data);
-      else if (w->port == 0) push(p, 0, w->addr, w->data);
+      else if (w->port == 0) push0(p, w->addr, w->data);
       else { if (i < lo1) lo1 = i; hi1 = (uint16_t)(i + 1); }
       at = (uint16_t)((at + 1) & (MML_WRITE_QUEUE - 1));
     }
@@ -217,6 +235,9 @@ static void view_body(MMLPairs *p, const MMLFrameView *v) {
     }
     done = end;
   }
+  /* The PCM commands go into the lane after the walk, so a $2B the frame
+   * turned the DAC on with leads its first start. */
+  pcm_run(p, v->pcm, v->pcm_len, v->pcm_count);
 }
 
 void mmlp_render(MMLPairs *p, MMLSeq *s) {
@@ -253,23 +274,34 @@ static void slot_body(MMLPairs *p, const uint8_t *s, uint16_t len) {
   if (len < 2) return;
   i += 1;                                   /* n_writes */
   uint8_t npcm = s[i++];
-  uint16_t used = pcm_run(p, s + i, (uint16_t)(len - i), npcm);
-  if (used == 0xffff) return;
+  /* The PCM run is measured first and taken last, as view_body does. */
+  const uint16_t at_pcm = i;
+  uint16_t used = 0;
+  for (uint8_t k = npcm; k > 0; k--) {
+    if (i + used >= len) return;
+    uint8_t op = s[i + used];
+    if (op > 5 || !PCM_LEN[op] || (uint16_t)(i + used + PCM_LEN[op]) > len) return;
+    used = (uint16_t)(used + PCM_LEN[op]);
+  }
   i = (uint16_t)(i + used);
-  for (uint8_t sub = 0; sub < MML_SLOT_SUBS; sub++) {
-    if (i >= len) return;
+  for (uint8_t sub = 0; sub < MML_SLOT_SUBS && i < len; sub++) {
     uint8_t npsg = s[i++];
     for (; npsg > 0 && i < len; npsg--) psg_push(p, s[i++]);
-    for (uint8_t port = 0; port < 2; port++) {
-      if (i >= len) return;
+    for (uint8_t port = 0; port < 2 && i < len; port++) {
       uint8_t n = s[i++];
-      for (; n > 0 && i + 1 < len; n--) { push(p, port, s[i], s[i + 1]); i = (uint16_t)(i + 2); }
+      for (; n > 0 && i + 1 < len; n--) {
+        if (port) push(p, 1, s[i], s[i + 1]);
+        else push0(p, s[i], s[i + 1]);
+        i = (uint16_t)(i + 2);
+      }
     }
   }
+  pcm_run(p, s + at_pcm, used, npcm);
 }
 
 /* The queues wrap with a mask (an int `%` is a libgcc call on the 68000). */
-typedef char mmlp_queue_is_pow2[(MMLP_QUEUE & (MMLP_QUEUE - 1)) == 0 && (MMLP_PSG & (MMLP_PSG - 1)) == 0 ? 1 : -1];
+typedef char mmlp_queue_is_pow2[(MMLP_QUEUE & (MMLP_QUEUE - 1)) == 0 && (MMLP_PSG & (MMLP_PSG - 1)) == 0
+                                && (MMLP_LANE & (MMLP_LANE - 1)) == 0 ? 1 : -1];
 
 MMLP_HOT int is_pitch_hi(uint8_t reg) { return (uint8_t)((reg & 0xf7) - 0xa4) <= 2; } /* $A4-$A6, $AC-$AE */
 /* The voice a staged store (SRC, END, WRAP) belongs to, or 0xff. */
@@ -301,9 +333,11 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
    * time has come. */
   const uint16_t avail = released(p, release);
   const uint16_t lim = avail ? p->end_q[(avail - 1) & (MMLP_FRAMES - 1)] : p->q_tail;
+  const uint16_t llim = avail ? p->end_l[(avail - 1) & (MMLP_FRAMES - 1)] : p->l_tail;
   const uint8_t N = cfg->fifo_pairs, MASK = (uint8_t)(N - 1);
   p->grabs++;
   p->undo_tail = p->q_tail;
+  p->undo_ltail = p->l_tail;
   p->undo_port = p->chip_port;
   for (uint8_t v = 0; v < MMLP_VOICES; v++) p->undo_since[v] = p->since_gen[v];
   p->undo_n = 0;
@@ -326,9 +360,14 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
   p->head = h;
   p->head_valid = 1;
   uint16_t n = 0;
-  while (n < cfg->pairs_per_grab && p->q_tail != lim) {
-    uint16_t t = p->q_tail;
-    uint8_t port = p->q_port[t], op = p->q_op[t], val = p->q_val[t];
+  while (n < cfg->pairs_per_grab) {
+    /* THE LANE FIRST: every released PCM pair goes before any FM pair. */
+    const int from_lane = p->l_tail != llim;
+    if (!from_lane && p->q_tail == lim) break;
+    const uint16_t t = from_lane ? p->l_tail : p->q_tail;
+    const uint8_t port = from_lane ? p->l_port[t] : p->q_port[t];
+    const uint8_t op = from_lane ? p->l_op[t] : p->q_op[t];
+    const uint8_t val = from_lane ? p->l_val[t] : p->q_val[t];
     /* A GENERATION IS APPLIED AT THE VOICE'S NEXT BLOCK EDGES, not when its
      * pair is read: the staged bytes it names are read a few expander steps
      * later. A staged store for the same voice read in that window would be
@@ -345,7 +384,8 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
     uint16_t need = 1;
     int port_change = port != 0xff && port != p->chip_port;
     if (port_change) need++;
-    if (port != 0xff && is_pitch_hi(op)) need++;          /* the lower half rides along */
+    const int pitch = !from_lane && port != 0xff && is_pitch_hi(op);
+    if (pitch) need++;                                     /* the lower half rides along */
     if (n + need > cfg->pairs_per_grab) break;
     /* Counted from the head PLUS what this grab has already planned: checked
      * against the stale head, a second pair at position 126 went past the page
@@ -357,8 +397,9 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
       p->chip_port = port;
     }
     ops[n] = op; vals[n] = val; n++;
-    p->q_tail = (uint16_t)((t + 1) & (MMLP_QUEUE - 1));
-    if (port != 0xff && is_pitch_hi(op) && p->q_tail != lim) {
+    if (from_lane) p->l_tail = (uint16_t)((t + 1) & (MMLP_LANE - 1));
+    else p->q_tail = (uint16_t)((t + 1) & (MMLP_QUEUE - 1));
+    if (pitch && p->q_tail != lim) {
       uint16_t u = p->q_tail;
       ops[n] = p->q_op[u]; vals[n] = p->q_val[u]; n++;
       p->q_tail = (uint16_t)((u + 1) & (MMLP_QUEUE - 1));
@@ -379,6 +420,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
 
 void mmlp_abort(MMLPairs *p) {
   p->q_tail = p->undo_tail;
+  p->l_tail = p->undo_ltail;
   p->chip_port = p->undo_port;
   for (uint8_t v = 0; v < MMLP_VOICES; v++) p->since_gen[v] = p->undo_since[v];
   p->pairs_written = (uint16_t)(p->pairs_written - p->undo_n);

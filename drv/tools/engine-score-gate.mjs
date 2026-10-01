@@ -12,6 +12,8 @@
 //           expander actually consumed, in the slots it consumed them
 //   TIME    every DAC interval is its slot's length: the clock did not move
 //   SYNC    on m3-pcm-sync, each PCM onset against the fm1 key-on it goes with
+//   LATENCY every START command, from its frame to the voice starting, within
+//           LATENCY_MAX frames — a start must not wait behind the FM backlog
 //
 //   node tools/engine-score-gate.mjs [score.mmlisp …] [--frames N]
 import { basename, dirname, join } from "node:path";
@@ -38,6 +40,12 @@ if (!scores.length) scores = ["tests/m2-pcm.mmlisp", "tests/m4-fm6-only.mmlisp",
   "tests/m3-pcm-sync.mmlisp", "sgdk/example/demo.mmlisp",
   "tests/m4-pcm-loop.mmlisp", "tests/m4-pcm-2v-master.mmlisp", "tests/m4-pcm-3v.mmlisp", "tests/m4-pcm-loop-curve.mmlisp", "tests/m4-pcm-loop-mode.mmlisp"]
   .map((s) => join(drv, s));
+
+// The bound on LATENCY, in frames. A start's own path is about two (the frame,
+// the grab, the head's lead over the engine's read index); three voices starting
+// in one frame queue behind each other's pairs (m4-pcm-3v, 3.8). Behind a
+// burst's FM backlog, before the PCM lane, a start waited 8-10.
+const LATENCY_MAX = 4;
 
 const images = new Map();
 const imageFor = (voices) => {
@@ -90,21 +98,23 @@ function runScore(path) {
   const dac = m.trace.dacCycle, n = dac.length;
 
   // ── WRITES: FM per port against the slot stream ─────────────────────
-  const want = [[], []];
+  // The DAC enable ($2B) rides the PCM lane (mmlpairs.h), ahead of the FM
+  // queue, so it is held to its own order: list 2.
+  const want = [[], [], []];
   for (const s of slots) {
     const d = decodeSlot(s);
-    for (const [r, v] of d.fm0) want[0].push({ reg: r, val: v });
+    for (const [r, v] of d.fm0) want[r === 0x2b ? 2 : 0].push({ reg: r, val: v });
     for (const [r, v] of d.fm1) want[1].push({ reg: r, val: v });
   }
-  const seen = [[], []];
-  for (const [cycle, port, reg, val] of m.trace.ym) if (cycle >= dac0) seen[port].push({ reg, val });
-  for (const p of [0, 1]) {
+  const seen = [[], [], []];
+  for (const [cycle, port, reg, val] of m.trace.ym) if (cycle >= dac0) seen[port === 0 && reg === 0x2b ? 2 : port].push({ reg, val });
+  for (const p of [0, 1, 2]) {
     if (seen[p].length !== want[p].length)
-      fails.push(`WRITES port ${p}: the chip saw ${seen[p].length} writes, the score has ${want[p].length}`);
+      fails.push(`WRITES ${p === 2 ? "$2B" : `port ${p}`}: the chip saw ${seen[p].length} writes, the score has ${want[p].length}`);
     for (let i = 0; i < Math.min(seen[p].length, want[p].length); i++) {
       const a = seen[p][i], b = want[p][i];
       if (a.reg !== b.reg || a.val !== b.val) {
-        fails.push(`WRITES port ${p}, write ${i}: chip saw $${a.reg.toString(16)}=$${a.val.toString(16)},`
+        fails.push(`WRITES ${p === 2 ? "$2B" : `port ${p}`}, write ${i}: chip saw $${a.reg.toString(16)}=$${a.val.toString(16)},`
           + ` the score says $${b.reg.toString(16)}=$${b.val.toString(16)}`);
         break;
       }
@@ -166,12 +176,30 @@ function runScore(path) {
     const k = keyOns.reduce((b, c) => (Math.abs(c - t) < Math.abs(b - t) ? c : b), keyOns[0]);
     sync.push(((t - k) * cfg.machine.z80Div / cfg.machine.masterHz) * 1000);
   }
+  // ── LATENCY: each START command, from its frame to the voice starting ──
+  // The frame's host tick (the slot is taken in at tick f, which runs at
+  // dac0 + (f + 1) frames) to the DAC slot the engine applied the start in,
+  // matched per voice in order. A start that waits behind other pairs shows
+  // up here and nowhere else: every other check grades WHAT was played.
+  const cmds = Array.from({ length: desc.voices }, () => []);
+  slots.forEach((s, f) => { for (const x of decodeSlot(s).pcm) if (x[0] === 1 && x[1] < desc.voices) cmds[x[1]].push(f); });
+  const applied = Array.from({ length: desc.voices }, () => []);
+  for (const e of pcm.log) if (e.kind === "start") applied[e.v].push(e.slot);
+  const latency = [];
+  for (let v = 0; v < desc.voices; v++) {
+    if (applied[v].length !== cmds[v].length)
+      fails.push(`LATENCY voice ${v}: ${cmds[v].length} START commands, the engine started ${applied[v].length} times`);
+    for (let k = 0; k < Math.min(cmds[v].length, applied[v].length); k++)
+      latency.push((dac[applied[v][k]] - (dac0 + (cmds[v][k] + 1) * cfg.frameCycles)) / cfg.frameCycles);
+  }
+  const late = latency.filter((x) => x > LATENCY_MAX);
+  if (late.length) fails.push(`LATENCY ${late.length} starts later than ${LATENCY_MAX} frames: ${late.map((x) => x.toFixed(2)).join(" ")}`);
   if (basename(path) === "m3-pcm-sync.mmlisp") {
     const off = sync.slice(1).filter((x) => x < -2 || x > 5);
     if (off.length) fails.push(`SYNC ${off.length} PCM onsets outside -2..+5 ms of their key-on: ${off.map((x) => x.toFixed(1)).join(" ")}`);
   }
   return { fails, time, seen, want, psg: psgOut.length, starts: starts.length, model, dacOn,
-    slots: slots.length, sync, desc };
+    slots: slots.length, sync, desc, latency };
 }
 
 let failed = 0;
@@ -181,8 +209,12 @@ for (const score of scores) {
   if (r.fails.length) failed++;
   console.log(`${r.fails.length ? "FAIL" : "ok  "}  ${pad(basename(score, ".mmlisp"), 20)} pcm${r.desc.voices} ${r.slots} frames ·`
     + ` ${r.time.meanRateHz} Hz gap ${r.time.gapMin}..${r.time.gapMax}`
-    + ` · FM ${r.seen[0].length}+${r.seen[1].length} of ${r.want[0].length}+${r.want[1].length} · PSG ${r.psg}`
+    + ` · FM ${r.seen[0].length + r.seen[2].length}+${r.seen[1].length} of ${r.want[0].length + r.want[2].length}+${r.want[1].length} · PSG ${r.psg}`
     + ` · ${r.starts} PCM starts, ${r.dacOn} sounding DAC bytes · ${r.model.pairsWritten} pairs, ${r.model.grabs} grabs (${r.model.late} late)`);
+  if (r.latency.length) {
+    const worst = Math.max(...r.latency), mean = r.latency.reduce((a, b) => a + b, 0) / r.latency.length;
+    console.log(`      LATENCY start command → voice started: mean ${mean.toFixed(2)}, worst ${worst.toFixed(2)} frames over ${r.latency.length}`);
+  }
   if (r.sync.length && /m3-pcm-sync/.test(score)) console.log(`      SYNC pcm vs fm1 key-on: ${r.sync.map((x) => x.toFixed(1)).join(" ")} ms`);
   for (const f of r.fails.slice(0, 6)) console.log(`      ! ${f}`);
 }

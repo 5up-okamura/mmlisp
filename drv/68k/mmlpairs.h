@@ -17,6 +17,12 @@
  *   PSG bytes    -> a queue the host writes straight to $C00011, one grab
  *                   period late so they land with the FM they were cued with
  *
+ * THE PCM LANE. The PCM pairs (and the DAC enable, $2B, which a start must not
+ * overtake) go into a queue of their own that a grab drains BEFORE the FM
+ * queue, frame by frame: a drum's start waits for the frames before it, never
+ * behind a burst's FM backlog (a voice change over six channels is ~200 pairs,
+ * twelve grabs). The FM writes keep their order among themselves.
+ *
  * Portable C99 with no SGDK dependency, like the sequencer, so it is gated on
  * the host against its JS twin (tools/pairs-model.mjs, `npm run pairs-gate`).
  */
@@ -54,6 +60,7 @@ typedef struct {
 #define MMLP_VOICES 3
 
 #define MMLP_QUEUE 1024   /* pairs the host holds while the wire catches up */
+#define MMLP_LANE  256    /* the PCM lane's pairs */
 #define MMLP_PSG   256    /* PSG bytes held for one grab period */
 #define MMLP_FRAMES 8     /* frames queued ahead whose ends are remembered (a power of two) */
 #define MMLP_AHEAD_ONE 48 /* MMLPairsCfg.ahead for one grab a frame */
@@ -65,13 +72,16 @@ typedef struct {
   uint8_t q_port[MMLP_QUEUE], q_op[MMLP_QUEUE], q_val[MMLP_QUEUE];
   uint16_t q_head, q_tail;
   uint16_t q_work;       /* the producer's cursor while a slot is taken apart */
+  /* The PCM lane, the same way: state stores (port 0xff) and $2B (port 0). */
+  uint8_t l_port[MMLP_LANE], l_op[MMLP_LANE], l_val[MMLP_LANE];
+  uint16_t l_head, l_tail, l_work;
   /* The PSG queue, released one grab late. */
   uint8_t psg[MMLP_PSG];
   uint16_t psg_head, psg_tail, psg_mark, psg_work;
   /* FRAMES. Slot k is frame k; where each queued frame ends in both queues,
    * so a grab sends only the frames whose time has come (mmlp_plan). */
   uint16_t frames_in;               /* slots taken in: the next slot's frame number */
-  uint16_t end_q[MMLP_FRAMES], end_psg[MMLP_FRAMES];
+  uint16_t end_q[MMLP_FRAMES], end_psg[MMLP_FRAMES], end_l[MMLP_FRAMES];
   /* The producer's state. */
   uint8_t chip_port;     /* the port the engine's RAW arm currently writes */
   uint8_t head;          /* H: the next pair position in the page (0..127) */
@@ -91,7 +101,7 @@ typedef struct {
   uint16_t grabs, pairs_written;
   uint16_t late;           /* grabs that found the engine already past `dst` */
   /* What the last plan took, so a grab that turns out late can give it back. */
-  uint16_t undo_tail;
+  uint16_t undo_tail, undo_ltail;
   uint8_t undo_port, undo_n, undo_since[MMLP_VOICES];
 } MMLPairs;
 
@@ -153,7 +163,7 @@ void mmlp_abort(MMLPairs *p);
  * Returns how many were copied into `out` (at most `max`). */
 uint16_t mmlp_psg_take(MMLPairs *p, uint16_t release, uint8_t *out, uint16_t max);
 
-/* Pairs still waiting. */
+/* Pairs still waiting, in both queues. */
 uint16_t mmlp_pending(const MMLPairs *p);
 
 /* The rung page a voice's shift byte (8 = mute) and the master's shift name. */
