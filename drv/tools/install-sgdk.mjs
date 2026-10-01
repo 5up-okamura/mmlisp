@@ -192,6 +192,12 @@ let seList = []; // the score's effects (def-se), for inc/mmlisp_se.h
 if (opts.song) {
   const { buildMmb, seListOf } = await import("./mmb-build.mjs");
   const { bytes, sampleBank, ir, diagnostics } = buildMmb(opts.song, { seFile: opts.se });
+  // An export error is a score the driver cannot play as written (a note with
+  // no baked sample plays whatever entry it falls back to). Refuse it, as a
+  // bundle's errors are refused below, rather than install a ROM that sounds
+  // wrong with the reason scrolled past.
+  for (const d of diagnostics) console.warn(`    ${d.severity}: ${d.message}`);
+  if (diagnostics.some((d) => d.severity === "error")) fail("the score has errors (above)");
   seList = seListOf(ir);
   const mmbPath = join(project, "res", "song.mmb");
   ensureDir(dirname(mmbPath));
@@ -206,7 +212,6 @@ if (opts.song) {
     if (!opts.dryRun) writeFileSync(smpPath, sampleBank);
     console.log(`${dry}  > res/song.smp  ${sampleBank.length} B  (sample bank)`);
   }
-  for (const d of diagnostics) console.warn(`    ${d.severity}: ${d.message}`);
 }
 
 // ---- optional: a bundle of scores over one bank -------------------------
