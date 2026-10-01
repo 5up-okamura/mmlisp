@@ -237,6 +237,7 @@ saved with File > Export > mucom88 PCM Bank WAV). (2) An mmb-dedup bug: a
 and three other tracks stopped at frame 788 in both sequencers (the c-gate
 counted that as "pending"; a stop now fails). The fm4–6 order fix can be
 re-landed on its merits, with the PCM lane and latency gate above.
+The user confirmed sin008 plays correctly on BlastEm after both fixes (2026-10-01).
 
 ## 5. The worst frame, and the render lead
 
