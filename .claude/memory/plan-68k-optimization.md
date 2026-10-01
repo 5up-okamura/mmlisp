@@ -228,6 +228,16 @@ A re-land needs PCM ahead of the FM backlog by design (its own lane in the
 pair queue, released by frame like the rest), not by the cap. Even the old
 path delays a start 6–8 frames behind an unprimed burst.
 
+**The BlastEm report itself was not this** (found after the revert, `b54d937`):
+the user's sin008 had two faults of its own. (1) Its `shinobipcm.wav` was a
+stale 15,050-frame file while the defs slice up to frame 24,080, so hihat/
+tom/open-h baked empty (the mucom import keeps the WAV in memory; it must be
+saved with File > Export > mucom88 PCM Bank WAV). (2) An mmb-dedup bug: a
+`(break)` landing inside its LOOP_END's join pins was not relinked, so pcm1
+and three other tracks stopped at frame 788 in both sequencers (the c-gate
+counted that as "pending"; a stop now fails). The fm4–6 order fix can be
+re-landed on its merits, with the PCM lane and latency gate above.
+
 ## 5. The worst frame, and the render lead
 
 The measured worst case (§0) is the setup burst — every track's voice and
