@@ -1,6 +1,6 @@
 // Minimal WAV reader for the node toolchain: load a PCM WAV and downmix it to
 // mono float (-1..1), the form the bank builder takes (export-mmb.js): it runs
-// the def's `:effect` chain, bakes each note and quantizes to 8-bit once. The
+// the def's `:fx` chain, bakes each note and quantizes to 8-bit once. The
 // browser hands the builder the same thing from decodeAudioData, so the two
 // differ only in the decoder.
 import { readFileSync } from "node:fs";

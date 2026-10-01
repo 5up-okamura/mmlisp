@@ -291,14 +291,14 @@ Sample entry (24 bytes):
 | 0x02   | 2    | —          | reserved, 0                                  |
 | 0x04   | 4    | offset     | u32, blob start relative to the blob region (past the entry table) |
 | 0x08   | 4    | length     | u32, bytes — a whole number of 16-byte blocks |
-| 0x0C   | 4    | src_frames | u32, the source slice's frame count, after its `:effect` chain |
+| 0x0C   | 4    | src_frames | u32, the source slice's frame count, after its `:fx` chain |
 | 0x10   | 4    | loop_start | u32, baked byte offset into the blob, unrounded |
 | 0x14   | 4    | loop_end   | u32, baked byte offset into the blob, unrounded |
 
 ### 10.1 Pitch baking
 
 Every entry is baked for one note: the source slice, run through the def's
-`:effect` chain (language.md §16) in float, resampled (linear) to the rate at
+`:fx` chain (language.md §16) in float, resampled (linear) to the rate at
 which that note advances *exactly one byte a DAC sample* at the image's rate —
 `rate / 2^((note − 60) / 12)` — quantized to signed 8-bit once, and padded with
 silence to whole 16-byte blocks. The engine does not resample and has no octave step (driver.md §14.2),

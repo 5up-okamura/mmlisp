@@ -870,12 +870,12 @@ you play a sample at is baked separately, so a drum at four pitches costs four
 times its length.
 
 **Make it loud before it is baked.** An 8-bit sample next to FM tends to sound
-thin; `:effect` processes it at compile time, in the order written, at no cost
+thin; `:fx` processes it at compile time, in the order written, at no cost
 to the driver (language.md §16):
 
 ```lisp
 (def-pcm snare :file "sounds/snare.wav"
-  :effect [(comp :threshold -30 :ratio 8)   ; squeeze the body up to the peak
+  :fx [(comp :threshold -30 :ratio 8)   ; squeeze the body up to the peak
            (normalize)                        ; put the peak back at full scale
            (fade :len 60ms :curve ease-out-expo)])  ; shorten the tail
 ```
@@ -888,8 +888,8 @@ space. A whole kit takes one chain on its import, and one sound a variant of
 its own:
 
 ```lisp
-(import "presets/808/set.mmlisp" :effect [(gain 12) (limit)])
-(def-pcm snare-hot snare :effect [(fade :len 60ms)])
+(import "presets/808/set.mmlisp" :fx [(gain 12) (limit)])
+(def-pcm snare-hot snare :fx [(fade :len 60ms)])
 ```
 
 **Put the cursor on a sample def to play it from the keyboard**, as with an FM

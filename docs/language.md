@@ -791,9 +791,9 @@ inline.
   index is the importing file's host-visible layout, and tracks are songs, not
   a library, so both are ignored with a `W_IMPORT_IGNORED` warning. Import
   folds defs only.
-- **`:effect`**: `(import "path" :effect [...])` puts one effect chain (§16)
+- **`:fx`**: `(import "path" :fx [...])` puts one effect chain (§16)
   on every sample the import brings in — a whole kit processed at once. It
-  runs **before** each def's own `:effect`, so the kit is evened out first and
+  runs **before** each def's own `:fx`, so the kit is evened out first and
   a sound's own adjustment lands on top (a per-sound `gain` survives a
   kit-wide `normalize`). Nested imports stack outermost first. Other defs are
   untouched.
@@ -1409,9 +1409,9 @@ is never touched.
 | `:offset`     | Start frame within the file (default 0). See *Sample banks*   |
 | `:frames`     | Frame count (default: to the end of the file)                 |
 | `:loop-start` / `:loop-end` / `:loop-len` | Sustain loop, as LENGTHS (see below) |
-| `:effect`     | The processing chain, `[(effect …) …]` — see *Effects* below   |
+| `:fx`     | The processing chain, `[(effect …) …]` — see *Effects* below   |
 
-All conversion is compile-time: stereo is downmixed `(L+R)/2`, the `:effect`
+All conversion is compile-time: stereo is downmixed `(L+R)/2`, the `:fx`
 chain runs, and the data becomes raw 8-bit signed PCM.
 
 ### Sample banks (many samples in one file)
@@ -1522,14 +1522,14 @@ Three limits worth knowing:
 
 ### Effects
 
-A def's `:effect` takes a `[...]` of effects, applied **in order** to the
+A def's `:fx` takes a `[...]` of effects, applied **in order** to the
 sample when it is baked. They are compile-time sample processing: the driver
 never runs them, so they cost no Z80 time — only what they do to the bank
 (a fade saves bytes). Use them to make a sample hold its own against FM:
 
 ```lisp
 (def-pcm snare :file "snare.wav"
-  :effect [(comp :threshold -30 :ratio 8)
+  :fx [(comp :threshold -30 :ratio 8)
            (normalize)
            (fade :at 120ms :len 80ms :curve ease-out-expo)])
 ```
@@ -1635,16 +1635,16 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
 - **Loud samples overlap loud.** Voices are summed and hard-clipped (above),
   so a kit brought up to full scale distorts where hits overlap — trade that
   against `:vel` / `:vol`.
-- **A kit, or a variant.** `(import "kit" :effect [...])` processes every
+- **A kit, or a variant.** `(import "kit" :fx [...])` processes every
   sample of a kit (§9.2); its chain runs before each def's own.
-  `(def-pcm snare-hot snare :effect [...])` is a variant of one sound: it
+  `(def-pcm snare-hot snare :fx [...])` is a variant of one sound: it
   takes the base's `:file` (still read from the base's folder), slice, loop
   points and effects — the import's chain included — and overrides the keys it
-  writes; its own `:effect` replaces the base's, the import's stays in front.
+  writes; its own `:fx` replaces the base's, the import's stays in front.
   A base that is not a sample, or a cycle, is `E_SAMPLE_EXTENDS`.
   A variant is a def of its own, so playing both bakes both.
 - An unknown effect is `E_SAMPLE_FX_UNKNOWN`; a bad or unknown param, or a
-  missing required one, is `E_SAMPLE_FX_PARAM`; `:effect` given anything but
+  missing required one, is `E_SAMPLE_FX_PARAM`; `:fx` given anything but
   a `[...]` is `E_SAMPLE_FX`.
 
 ### Playback

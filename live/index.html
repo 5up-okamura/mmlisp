@@ -1625,7 +1625,7 @@
       'ease-in-bounce','ease-out-bounce','ease-inout-bounce',
       'sin','triangle','square','saw','ramp',
       'noise','pink','perlin','brown',
-      // def-pcm :effect [...] chain (§16)
+      // def-pcm :fx [...] chain (§16)
       'gain','normalize','comp','limit','crush','fade','reverb',
     ];
     const AC_TRACKS = [
@@ -1655,7 +1655,7 @@
       // def-val (dynamic value slots)
       ':unit',
       // PCM / effects
-      ':effect',':db',':peak',':threshold',':ratio',':attack',':release',
+      ':fx',':db',':peak',':threshold',':ratio',':attack',':release',
       ':knee',':makeup',':ceiling',':bits',':at',':curve',
       ':size',':damp',':mix',':predelay',':tail',
       // curve params
@@ -1695,7 +1695,7 @@
       if (!/^(linear|sin|triangle|square|saw|ramp|pink|perlin|brown|ease-)/.test(head)) continue;
       AC_SNIPPETS[head] = `${head} \${1:0}..\${2:100} :len \${3:8}`;
     }
-    // An :effect writes out EVERY parameter, each a tab stop holding its
+    // An :fx writes out EVERY parameter, each a tab stop holding its
     // default, so the list need not be remembered — generated from the table
     // the compiler checks against, so a new param shows up here by itself. A
     // required param has no default; it gets a usable example. A param whose
@@ -3148,7 +3148,7 @@
 
     // Sample blobs for encodeMmb's SAMPLE_BANK (export-mmb.js §10): each def's
     // decoded mono slice, float, keyed by sample name — the bank applies the
-    // def's :effect chain and quantizes. Without this the bank is omitted and the
+    // def's :fx chain and quantizes. Without this the bank is omitted and the
     // MMLispDRV backend (and any exported .mmb) has nothing to play. The loop
     // points are left to the IR metadata — the compiled truth; baseRate must be
     // supplied, since the exporter would otherwise fall back to 13000 Hz rather

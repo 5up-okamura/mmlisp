@@ -47,7 +47,7 @@ PCM in any layer.
   and PCM in one score is an error. "fm6 in the gaps" is gone.
 - **The browser sounds like the driver (D0).** "Otherwise this is not a
   production environment for this driver."
-- **Sample effects are a def's `:effect [...]` chain (2026-09-25).** The user
+- **Sample effects are a def's `:fx [...]` chain (2026-09-25).** The user
   asked for it because PCM sounds thin and weak next to FM, and wanted
   effects chained in order rather than one key each (`crush` replaced
   `:bit-depth`). All compile-time, run by the bank builder on float before
@@ -55,7 +55,7 @@ PCM in any layer.
   to move the resample to float at the same time). First batch: `gain`,
   `normalize`, `comp`, `limit`, `crush`, `fade`; the fade's shape is a §11
   easing name and it cuts the sample, which saves bank bytes.
-- **Kits and variants (2026-09-25).** `(import … :effect [...])` processes a
+- **Kits and variants (2026-09-25).** `(import … :fx [...])` processes a
   whole kit; `:extend` on a sample makes a variant. The import's chain runs
   BEFORE the def's — the user's call: the kit is evened out first, and a
   per-sound level survives a kit-wide normalize. PCM audition is the FM one:

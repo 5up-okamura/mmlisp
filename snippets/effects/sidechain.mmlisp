@@ -8,7 +8,7 @@
 (import "presets/gm/set.mmlisp")
 (import "presets/808/set.mmlisp")
 
-(def-pcm kick-hot kick :effect [(gain :db 30)])
+(def-pcm kick-hot kick :fx [(gain :db 30)])
 
 (def (pump n) :vol (ease-in 4..31 :len 8) n)
 

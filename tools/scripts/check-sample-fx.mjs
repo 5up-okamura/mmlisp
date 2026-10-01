@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Checks the def :sample `:effect` chain (live/src/sample-fx.js): each effect
+// Checks the def :sample `:fx` chain (live/src/sample-fx.js): each effect
 // does what its name says on a synthetic signal, the compiler resolves and
-// rejects `:effect` forms, an import's chain and an extending `(def-pcm name base …)` compose,
+// rejects `:fx` forms, an import's chain and an extending `(def-pcm name base …)` compose,
 // and the bank (and the keyboard audition's bank) bakes the processed signal.
 import { applySampleEffects } from "../../live/src/sample-fx.js";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
@@ -110,7 +110,7 @@ const run = (x, chain) => {
   const gp = 1 / peak(drum);
   for (let i = 0; i < n; i++) drum[i] *= gp; // full scale, as the presets are
   const rms = (x) => { let q = 0; for (const v of x) q += v * v; return 10 * Math.log10(q / x.length); };
-  const chainOf = (fx) => compileMMLisp(`(def-pcm s :file "/x.wav" :effect [${fx}])`, "t.mmlisp").ir.metadata.samples[0].effect;
+  const chainOf = (fx) => compileMMLisp(`(def-pcm s :file "/x.wav" :fx [${fx}])`, "t.mmlisp").ir.metadata.samples[0].fx;
   for (const fx of ["(comp :threshold -30 :ratio 8) (normalize)", "(gain 12) (limit)"]) {
     const { y } = run(drum, chainOf(fx));
     const up = rms(y) - rms(drum);
@@ -121,30 +121,30 @@ const run = (x, chain) => {
 // the compiler: resolution and rejection
 {
   const ok = compileMMLisp(`(def pcm-voices 1)
-(def-pcm s :file "/x.wav" :effect [(gain 3) (comp :ratio 2 :attack 2ms) (fade :len 8)])
+(def-pcm s :file "/x.wav" :fx [(gain 3) (comp :ratio 2 :attack 2ms) (fade :len 8)])
 (pcm1 s :tempo 120 :len 4 c)`, "t.mmlisp");
-  const fx = ok.ir.metadata.samples[0].effect;
+  const fx = ok.ir.metadata.samples[0].fx;
   check("compiler resolves the chain",
     fx.length === 3 && fx[0].db === 3 && fx[1].attack === 0.002 && fx[1].threshold === -18
       && fx[2].len === 0.25 && fx[2].curve === "linear" && fx[2].at === null,
     JSON.stringify(fx));
-  const instant = compileMMLisp(`(def-pcm s :file "/x.wav" :effect [(comp :attack 0ms) (fade :at 0ms :len 5ms)])`, "t.mmlisp");
+  const instant = compileMMLisp(`(def-pcm s :file "/x.wav" :fx [(comp :attack 0ms) (fade :at 0ms :len 5ms)])`, "t.mmlisp");
   check("an instant attack and a fade :at 0 are accepted",
-    instant.diagnostics.length === 0 && instant.ir.metadata.samples[0].effect.length === 2,
+    instant.diagnostics.length === 0 && instant.ir.metadata.samples[0].fx.length === 2,
     instant.diagnostics.map((d) => d.code).join(","));
   const cases = [
-    [":effect (gain 3)", "E_SAMPLE_FX"],
-    [":effect [(bogus)]", "E_SAMPLE_FX_UNKNOWN"],
-    [":effect [(reverb)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(reverb :tail 0ms)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(reverb :tail 100ms :size 2)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(gain)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(comp :ratio 0.5)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(comp :bogus 1)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(crush 9)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(fade :len 10ms :curve sin)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(normalize :peak 3)]", "E_SAMPLE_FX_PARAM"],
-    [":effect [(fade :len 0ms)]", "E_SAMPLE_FX_PARAM"],
+    [":fx (gain 3)", "E_SAMPLE_FX"],
+    [":fx [(bogus)]", "E_SAMPLE_FX_UNKNOWN"],
+    [":fx [(reverb)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(reverb :tail 0ms)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(reverb :tail 100ms :size 2)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(gain)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(comp :ratio 0.5)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(comp :bogus 1)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(crush 9)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(fade :len 10ms :curve sin)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(normalize :peak 3)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(fade :len 0ms)]", "E_SAMPLE_FX_PARAM"],
   ];
   for (const [keys, code] of cases) {
     const { diagnostics } = compileMMLisp(`(def-pcm s :file "/x.wav" ${keys})`, "t.mmlisp");
@@ -170,28 +170,28 @@ const run = (x, chain) => {
     return { len, peak: m };
   };
   const plain = bank("");
-  const norm = bank(":effect [(normalize)]");
-  const faded = bank(":effect [(fade :at 100ms :len 100ms)]");
+  const norm = bank(":fx [(normalize)]");
+  const faded = bank(":fx [(fade :at 100ms :len 100ms)]");
   check("baked bytes carry the normalize", plain.peak <= 13 && norm.peak >= 126, `${plain.peak} -> ${norm.peak}`);
   check("baked entry shrinks with a fade", faded.len < plain.len / 2, `${plain.len} -> ${faded.len} B`);
 }
 
-// an import's :effect runs ahead of each def's own; an extending sample inherits
+// an import's :fx runs ahead of each def's own; an extending sample inherits
 // file, slice and both chains, overriding what it writes
 {
-  const kit = `(def-pcm kick :file "wav/kick.wav" :frames 900 :effect [(gain -3)])
+  const kit = `(def-pcm kick :file "wav/kick.wav" :frames 900 :fx [(gain -3)])
 (def-pcm snare :file "wav/snare.wav")
-(def-pcm snare-kit snare :effect [(crush 6)])`;
+(def-pcm snare-kit snare :fx [(crush 6)])`;
   const { ir, diagnostics } = compileMMLisp(`(def pcm-voices 1)
-(import "kit/set.mmlisp" :effect [(comp) (limit)])
+(import "kit/set.mmlisp" :fx [(comp) (limit)])
 (def-pcm kick-short kick :frames 400)
-(def-pcm snare-hot snare :effect [(gain 3)])
+(def-pcm snare-hot snare :fx [(gain 3)])
 (def-pcm snare-own snare :file "mine.wav")
 (def-fm lead init-fm :alg 4)
 (pcm1 kick :tempo 120 :len 4 c kick-short c snare-hot c snare-own c snare-kit c)
 (fm1 lead c)`, "t.mmlisp", { imports: new Map([["kit/set.mmlisp", kit]]) });
   const by = (n) => ir.metadata.samples.find((d) => d.name === n);
-  const chain = (n) => by(n)?.effect.map((e) => e.type).join(" ");
+  const chain = (n) => by(n)?.fx.map((e) => e.type).join(" ");
   check("import chain composes without errors", !diagnostics.some((d) => d.severity === "error"),
     diagnostics.map((d) => d.code).join(","));
   check("import chain runs before the def's", chain("kick") === "comp limit gain", chain("kick"));

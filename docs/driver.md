@@ -1488,7 +1488,7 @@ subdivide finely on the way.
 ### 14.2 Pitch-baked samples
 
 The engine does not resample and has no octave step. The exporter runs each
-sample's `:effect` chain (language.md §16) — the driver has no effect of its
+sample's `:fx` chain (language.md §16) — the driver has no effect of its
 own, so every layer plays the same processed bytes — then resamples it at
 build time, once for every note it is played at, to the rate at
 which that note advances one byte a sample at the image's DAC rate, and pads

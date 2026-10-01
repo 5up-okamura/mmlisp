@@ -285,7 +285,7 @@ function midiNote(pitch) {
  *           samples?: Record<string, { data: Float32Array,
  *             baseRate?: number }> }} [opts]
  *   `samples` supplies each sample's decoded mono slice (-1..1, at baseRate)
- *   keyed by sample name; the bank applies the def's `:effect` chain, bakes
+ *   keyed by sample name; the bank applies the def's `:fx` chain, bakes
  *   and quantizes it. When given (and PCM events exist) a SAMPLE_BANK section
  *   is emitted.
  * @returns {{ bytes: Uint8Array, diagnostics: Array<{severity, code, message, track?}> }}
@@ -1598,7 +1598,7 @@ function resampleS8(data, from, to) {
 function warnFadeOverLoop(s, durSec, diag) {
   const ls = s.loopStartSec ?? 0;
   const le = s.loopEndSec ?? durSec;
-  for (const fx of s.effect ?? []) {
+  for (const fx of s.fx ?? []) {
     if (fx.type !== "fade") continue;
     const at = fx.at ?? Math.max(0, durSec - fx.len);
     if (at < le && at + fx.len > ls) {
@@ -1711,10 +1711,10 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
         const loopEndSec = s.loopEndSec;
         const hasLoop = loopStartSec != null || loopEndSec != null;
         const rate = blob?.baseRate ?? s.rate ?? 13000;
-        // The def's `:effect` chain, at the sample's own rate: its times are
+        // The def's `:fx` chain, at the sample's own rate: its times are
         // the sample's own time, like the loop points (sample-fx.js).
         const data = blob?.data?.length
-          ? applySampleEffects(blob.data, rate, s.effect, (code, msg) =>
+          ? applySampleEffects(blob.data, rate, s.fx, (code, msg) =>
               diag("warning", code, `sample "${s.name}": ${msg}`))
           : new Float32Array(0);
         if (hasLoop && data.length > 0) warnFadeOverLoop(s, data.length / rate, diag);

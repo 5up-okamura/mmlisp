@@ -1,4 +1,4 @@
-// Sample effects — the def's `:effect [...]` chain (docs/language.md §16).
+// Sample effects — the def's `:fx [...]` chain (docs/language.md §16).
 //
 // ALL COMPILE-TIME. The chain runs once per sample when the bank is baked
 // (export-mmb.js), on float data at the sample's own rate, before the per-note
@@ -7,7 +7,7 @@
 // bytes. That is the whole cost model — an effect costs bank bytes (a fade
 // SAVES them), never Z80 time.
 //
-// One table, two readers: the compiler validates `:effect` against
+// One table, two readers: the compiler validates `:fx` against
 // SAMPLE_EFFECTS and hands the IR a resolved list (times in seconds, levels in
 // dB), and applySampleEffects runs that list. Inside the chain nothing clips;
 // the quantize at the end is the one hard clip, so a `gain` that overshoots is
@@ -213,10 +213,10 @@ function reverb(x, { size, damp, mix, predelay, tail }, rate) {
 const APPLY = { gain, normalize, comp, limit, crush, fade, reverb };
 
 /**
- * Run a resolved `:effect` chain over one sample.
+ * Run a resolved `:fx` chain over one sample.
  * @param {Float32Array} data  mono, -1..1, at `rate` Hz (the sample's own rate)
  * @param {number} rate
- * @param {Array<{type: string}>} effects  metadata.samples[].effect (docs/ir.md §2.2)
+ * @param {Array<{type: string}>} effects  metadata.samples[].fx (docs/ir.md §2.2)
  * @param {(code: string, message: string) => void} [warn]
  * @returns {Float32Array} a new array (the input is not touched)
  */

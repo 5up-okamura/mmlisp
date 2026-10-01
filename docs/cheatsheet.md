@@ -159,7 +159,7 @@ start written (`40..0`, not `:to 0` alone).
 ```lisp
 (def pcm-voices 2)
 (def-pcm pad :file "pad.wav" :loop-start 300ms :loop-len 100ms
-  :effect [(normalize) (fade :at 400ms :len 200ms)])
+  :fx [(normalize) (fade :at 400ms :len 200ms)])
 (pcm1 :len 8 kick c snare c)            ; name the sample before its notes
 (pcm2 pad :mode loop :len 1 c)
 ```
