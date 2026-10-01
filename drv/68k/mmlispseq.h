@@ -40,7 +40,7 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 
 /* ── Build constants (driver.md §6.2) ─────────────────────────────────────── */
 #define MML_SLOT_SIZE 256
-#define MML_SLOT_MAX_WRITES 95 /* the slot's cap (driver.md §6.2) — the gates' form; the SGDK host takes frames uncapped */
+#define MML_SLOT_MAX_WRITES 95 /* what the settled mixer leaves, §5.3.1 */
 /* Sub-ticks per frame (driver.md §3.5). ONE: note onsets are on the 60 Hz
  * frame, as in most game drivers. Sub-ticks were adopted as nearly free; with
  * the pair engine they were not heard (a frame's writes leave together) and
@@ -497,13 +497,13 @@ uint32_t mml_render_frame(MMLSeq *s, uint8_t *slot_out);
  * the song is over. Returns the slot length in bytes. */
 uint32_t mml_drain_frame(MMLSeq *s, uint8_t *slot_out);
 
-/* THE FRAME AS A VIEW — the pair host's frame: its PCM commands and ALL of
- * its register writes, in the order the sequencer made them (entries first ..
- * first+end[j], wrapping at MML_WRITE_QUEUE). Unlike the slot it is neither
- * capped nor bucketed by port: the converter needs the order to keep an fm4-6
- * key edge behind its channel's port-1 writes (mmlpairs.c). The queue and the
- * PCM run stay as they are until mml_view_done; call it before the next
- * frame. */
+/* THE FRAME AS A VIEW — what mml_render_frame / mml_drain_frame would encode,
+ * described instead of written: the slot's PCM commands, and for each
+ * sub-slot the run of the write queue it takes (entries first .. first+end[j],
+ * wrapping at MML_WRITE_QUEUE; sub-slot j starts where j-1 ended). For a host
+ * whose consumer is on the 68000 side (the SGDK pair host) the bytes were
+ * only ever unpacked again. The queue and the PCM run stay as they are until
+ * mml_view_done; call it before the next frame. */
 typedef struct {
   const MMLWrite *q;
   uint16_t first;

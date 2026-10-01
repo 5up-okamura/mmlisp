@@ -47,35 +47,12 @@ static void emit_slot(const unsigned char *bytes, unsigned len) {
   fwrite(bytes, 1, len, stdout);
 }
 
-/* --frames: the pair host's frame instead of the slot — mmlpairs.h
- * mmlp_frame's record, [u16 len][n_pcm][PCM commands][{port, addr, data}...],
- * every write in the order the sequencer made it, uncapped. */
-static int frames_out = 0;
-static void emit_frame(MMLSeq *seq, int drain) {
-  MMLFrameView v;
-  if (drain) mml_drain_frame_view(seq, &v);
-  else mml_render_frame_view(seq, &v);
-  const uint16_t n = v.end[MML_SLOT_SUBS - 1];
-  const unsigned len = 1u + v.pcm_len + 3u * n;
-  fputc((int)(len & 0xff), stdout);
-  fputc((int)((len >> 8) & 0xff), stdout);
-  fputc(v.pcm_count, stdout);
-  fwrite(v.pcm, 1, v.pcm_len, stdout);
-  for (uint16_t i = 0; i < n; i++) {
-    const MMLWrite *w = &v.q[(uint16_t)(v.first + i) & (MML_WRITE_QUEUE - 1)];
-    fputc(w->port, stdout);
-    fputc(w->addr, stdout);
-    fputc(w->data, stdout);
-  }
-  mml_view_done(seq, &v);
-}
-
 
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr,
             "usage: gate_main <song.mmb> [max_frames] [--cmds f] [--samples f]"
-            " [--trig f] [--prime K] [--idle] [--frames]\n");
+            " [--trig f] [--prime K] [--idle]\n");
     return 2;
   }
   long max_frames = argc > 2 && argv[2][0] != '-' ? strtol(argv[2], NULL, 10) : 36000;
@@ -89,7 +66,6 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--prime") && i + 1 < argc)
       prime = strtol(argv[++i], NULL, 10);
     else if (!strcmp(argv[i], "--idle")) idle = 1;
-    else if (!strcmp(argv[i], "--frames")) frames_out = 1;
   }
   /* Host command schedule (KEY_OFF / SET_PARAM / FADE_TRACK / SET_VAL). */
   enum { MAX_CMDS = 256 };
@@ -161,8 +137,8 @@ int main(int argc, char **argv) {
      * captureSlotLog({ prime: K }) does the same. */
     mml_prime_tracks(&seq);
     for (long k = 0; k < prime; k++) {
-      if (frames_out) emit_frame(&seq, 0);
-      else emit_slot(slot, mml_render_frame(&seq, slot));
+      uint32_t n = mml_render_frame(&seq, slot);
+      emit_slot(slot, n);
       EMIT_TRIG();
     }
     if (!ncmds) mml_start_song(&seq);
@@ -175,8 +151,8 @@ int main(int argc, char **argv) {
       if (cmds[c].frame == i)
         mml_command(&seq, (uint8_t)cmds[c].cmd, (uint8_t)cmds[c].a0,
                     (uint8_t)cmds[c].a1, (uint8_t)cmds[c].a2);
-    if (frames_out) emit_frame(&seq, 0);
-    else emit_slot(slot, mml_render_frame(&seq, slot));
+    uint32_t n = mml_render_frame(&seq, slot);
+    emit_slot(slot, n);
     EMIT_TRIG();
     if (mml_done(&seq)) break;
   }
@@ -185,8 +161,8 @@ int main(int argc, char **argv) {
    * without running a frame: the song is over, and rendering one more would
    * invent traffic the reference never produces. */
   while (mml_pending(&seq)) {
-    if (frames_out) emit_frame(&seq, 1);
-    else emit_slot(slot, mml_drain_frame(&seq, slot));
+    uint32_t n = mml_drain_frame(&seq, slot);
+    emit_slot(slot, n);
   }
   fflush(stdout);
   if (trig_f) fclose(trig_f);

@@ -1,10 +1,10 @@
 /* Host harness for the pairs gate's VIEW check (tools/pairs-gate.mjs): the
  * SGDK host takes each frame into the converter straight from the sequencer
- * (mmlp_render); the rest of the gates follow the record path (gate_main
- * --frames + mmlp_frame), which pairs-gate holds to the JS reference. Here
- * the same score runs down both paths side by side — two sequencers, two
- * converters — and after every frame the two converters must be byte for
- * byte the same, and so must the two sequencers.
+ * (mmlp_render: no slot is packed or parsed); the rest of the gates follow the
+ * slot path (mml_render_frame + mmlp_slot), which c-gate and pairs-gate hold to
+ * the JS reference. Here the same score runs down both paths side by side —
+ * two sequencers, two converters — and after every frame the two converters
+ * must be byte for byte the same, and so must the two sequencers.
  *
  *   view_main <song.mmb> <frames> [--samples bank.smp] [--prime K]
  *             <fifo> <fifo_pairs> <ppg> <lut_page> <op_stride> <op_port> <voices> <idle_after_gen>
@@ -38,26 +38,6 @@ static int same(long frame, const char *what) {
   return 1;
 }
 
-/* One frame of seq_a as the record gate_main --frames writes, into pairs_a. */
-static uint8_t rec[1 + 256 + 3 * MML_WRITE_QUEUE];
-static void by_record(int drain) {
-  MMLFrameView v;
-  if (drain) mml_drain_frame_view(&seq_a, &v);
-  else mml_render_frame_view(&seq_a, &v);
-  const uint16_t n = v.end[MML_SLOT_SUBS - 1];
-  uint32_t len = 0;
-  rec[len++] = v.pcm_count;
-  for (uint16_t i = 0; i < v.pcm_len; i++) rec[len++] = v.pcm[i];
-  for (uint16_t i = 0; i < n; i++) {
-    const MMLWrite *w = &v.q[(uint16_t)(v.first + i) & (MML_WRITE_QUEUE - 1)];
-    rec[len++] = w->port;
-    rec[len++] = w->addr;
-    rec[len++] = w->data;
-  }
-  mml_view_done(&seq_a, &v);
-  mmlp_frame(&pairs_a, rec, (uint16_t)len);
-}
-
 int main(int argc, char **argv) {
   if (argc < 3) { fprintf(stderr, "usage: see the header comment\n"); return 2; }
   const char *smp_path = 0;
@@ -88,12 +68,13 @@ int main(int argc, char **argv) {
   }
   mmlp_init(&pairs_a, &cfg);
   mmlp_init(&pairs_b, &cfg);
+  uint8_t slot[MML_SLOT_SIZE];
   long f = 0;
   if (prime >= 0) {
     mml_prime_tracks(&seq_a);
     mml_prime_tracks(&seq_b);
     for (long k = 0; k < prime; k++, f++) {
-      by_record(0);
+      mmlp_slot(&pairs_a, slot, (uint16_t)mml_render_frame(&seq_a, slot));
       mmlp_render(&pairs_b, &seq_b);
       if (!same(f, "primed")) return 1;
     }
@@ -106,13 +87,13 @@ int main(int argc, char **argv) {
     mml_start_all(&seq_b);
   }
   for (long k = 0; k < frames; k++, f++) {
-    by_record(0);
+    mmlp_slot(&pairs_a, slot, (uint16_t)mml_render_frame(&seq_a, slot));
     mmlp_render(&pairs_b, &seq_b);
     if (!same(f, "render")) return 1;
     if (mml_done(&seq_a)) break;
   }
   while (mml_pending(&seq_a)) {
-    by_record(1);
+    mmlp_slot(&pairs_a, slot, (uint16_t)mml_drain_frame(&seq_a, slot));
     mmlp_drain(&pairs_b, &seq_b);
     if (!same(f++, "drain")) return 1;
   }

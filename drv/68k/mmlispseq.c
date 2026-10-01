@@ -2248,10 +2248,7 @@ static uint32_t encode_slot(MMLSeq *s, uint8_t *out) {
  * paths agree on every score). The queue is left as it is until the consumer
  * calls mml_view_done. */
 static void fill_view(MMLSeq *s, MMLFrameView *v) {
-  /* The whole queue: the 95-write cap is the slot format's (a frame's bytes
-   * bounded for the Z80 that read slots); the pair host's wire paces itself,
-   * sixteen pairs a grab, so capping here only delayed writes a frame more. */
-  const uint16_t take = mml_pending(s);
+  const uint16_t take = slot_take(s);
   v->q = s->q;
   v->first = s->q_tail;
   uint16_t done = 0;

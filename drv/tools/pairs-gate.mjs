@@ -3,17 +3,12 @@
 //
 //   node tools/pairs-gate.mjs [score.mmlisp …] [--frames N]
 //
-// Both sides take the SAME frames — the sequencer's, rendered by gate_main
-// --frames: every write in the sequencer's order, uncapped, as the SGDK host
-// takes them — and turn them into what the 68000 would put on the wire: for every grab the destination and the pair bytes, and the PSG
+// Both sides take the SAME slot stream — the sequencer's, rendered by gate_main
+// exactly as the c-gate does — and turn it into what the 68000 would put on
+// the wire: for every grab the destination and the pair bytes, and the PSG
 // bytes released. A modelled engine advances its published index by 17 pairs a
 // grab in both. The two streams have to be identical byte for byte; a
 // disagreement names the score, the grab and the first byte.
-//
-// The frames themselves are held to the JS reference first: drv-player's own
-// write order (FrameRecorder) against gate_main's, byte for byte. c-gate
-// compares the two sequencers through the slot, which buckets by port and so
-// cannot see the order the converter now depends on (an fm4-6 key edge).
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,8 +16,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { generatedTables } from "./c-tables.mjs";
-import { FrameRecorder, MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
-import { DrvPlayer } from "../../live/src/drv-player.js";
+import { MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
 import { engineImage } from "../../live/src/engine-images.js";
 import { headerPcmVoices } from "../../live/src/mmb.js";
 
@@ -59,8 +53,8 @@ const cfgOf = (mmb) => pairsCfgForImage(engineImage(headerPcmVoices(mmb[6] | (mm
 const cArgsOf = (cfg) => [cfg.fifo, cfg.fifoPairs, cfg.pairsPerGrab, cfg.lutPage, cfg.opStride, cfg.opPort,
   cfg.voices, cfg.idleAfterGen].map(String);
 
-/** The JS side: the same frames, the same modelled engine, the same records. */
-function jsStream(cfg, frames, lead = -1, pumps = 2) {
+/** The JS side: the same slots, the same modelled engine, the same records. */
+function jsStream(cfg, slots, lead = -1, pumps = 2) {
   const m = new PairsModel(pumps === 1 ? { ...cfg, ahead: MMLP_AHEAD_ONE } : cfg);
   const advance = pumps === 1 ? 34 : 17;
   const out = [];
@@ -76,31 +70,31 @@ function jsStream(cfg, frames, lead = -1, pumps = 2) {
     const psg = m.psgTake(256, release);
     out.push(0x50, psg.length, ...psg);
   };
-  if (lead < 0) for (const f of frames) { m.frame(f); for (let g = 0; g < pumps; g++) grab(); }
+  if (lead < 0) for (const s of slots) { m.slot(s); for (let g = 0; g < pumps; g++) grab(); }
   else {
     // The SGDK host's schedule (pairs_main.c has the note): queue `lead`
     // frames ahead, then two grabs passing the frame count.
     let i = 0, release = 0;
     for (;;) {
-      while (i < frames.length && m.framesIn < release + lead) m.frame(frames[i++]);
+      while (i < slots.length && m.framesIn < release + lead) m.slot(slots[i++]);
       release++;
       for (let g = 0; g < pumps; g++) grab(release);
-      if (i >= frames.length && release >= m.framesIn) break;
+      if (i >= slots.length && release >= m.framesIn) break;
     }
   }
   for (let g = 0; g < 4096 && m.pending; g++) grab();
   return { bytes: Uint8Array.from(out), model: m };
 }
 
-function parseFrames(buf) {
-  const out = [];
+function parseSlots(buf) {
+  const slots = [];
   for (let i = 0; i + 2 <= buf.length;) {
     const n = buf[i] | (buf[i + 1] << 8);
     i += 2;
-    out.push(buf.subarray(i, i + n));
+    slots.push(buf.subarray(i, i + n));
     i += n;
   }
-  return out;
+  return slots;
 }
 
 let failed = 0;
@@ -111,33 +105,22 @@ for (const score of scores) {
   const cfg = cfgOf(bytes), cArgs = cArgsOf(cfg);
   const mmb = join(tmp, `${name}.mmb`);
   writeFileSync(mmb, bytes);
-  const gateArgs = [mmb, String(FRAMES), "--frames"];
+  const gateArgs = [mmb, String(FRAMES)];
   if (sampleBank) { const smp = join(tmp, `${name}.smp`); writeFileSync(smp, sampleBank); gateArgs.push("--samples", smp); }
-  let framesBuf;
-  try { framesBuf = execFileSync(gateExe, gateArgs, { maxBuffer: 1 << 26 }); }
+  let slotsBuf;
+  try { slotsBuf = execFileSync(gateExe, gateArgs, { maxBuffer: 1 << 26 }); }
   catch (e) { console.log(`FAIL  ${pad(name, 24)} gate_main: ${e.stderr?.toString().trim()}`); failed++; continue; }
-  const framesFile = join(tmp, `${name}.frames`);
-  writeFileSync(framesFile, framesBuf);
-  const parsed = parseFrames(framesBuf);
+  const slotsFile = join(tmp, `${name}.slots`);
+  writeFileSync(slotsFile, slotsBuf);
+  // Three schedules: every slot sent as soon as it is queued, and the SGDK
+  // host's render-ahead of one and two frames with release by frame count.
+  const parsed = parseSlots(slotsBuf);
   const rows = [];
   let scoreBad = false;
-  // The frames against the JS reference's, in the sequencer's own order.
-  {
-    const drv = new DrvPlayer();
-    drv.loadMMB(bytes, sampleBank);
-    const ref = drv.captureSlotLog({ maxFrames: FRAMES, builder: new FrameRecorder() }).slots;
-    let bad = -1;
-    for (let f = 0; f < Math.max(ref.length, parsed.length) && bad < 0; f++)
-      if (!ref[f] || !parsed[f] || Buffer.compare(Buffer.from(ref[f]), Buffer.from(parsed[f])) !== 0) bad = f;
-    if (bad >= 0) { scoreBad = true; rows.push(`frames: C and the reference differ at frame ${bad} (${parsed.length} C, ${ref.length} JS)`); }
-    else rows.push(`frames ≡ ref`);
-  }
-  // Three schedules: every frame sent as soon as it is queued, and the SGDK
-  // host's render-ahead of one and two frames with release by frame count.
   let asap = null;
   for (const [lead, pumps] of [[-1, 2], [1, 2], [2, 2], [1, 1]]) {
     let cOut;
-    try { cOut = execFileSync(pairsExe, [framesFile, ...cArgs, String(lead), String(pumps)], { maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "pipe"] }); }
+    try { cOut = execFileSync(pairsExe, [slotsFile, ...cArgs, String(lead), String(pumps)], { maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "pipe"] }); }
     catch (e) { rows.push(`pairs_main (lead ${lead}): ${e.stderr?.toString().trim()}`); scoreBad = true; continue; }
     const js = jsStream(cfg, parsed, lead, pumps);
     let bad = -1;
@@ -159,13 +142,13 @@ for (const score of scores) {
       + (m.fault ? `, ${m.fault} FAULTS` : "")
       + (m.overflow ? `, ${m.overflow} OVERFLOW` : "") : ""));
   }
-  // THE SGDK HOST'S PATH (mmlp_render, straight from the queue) against the
-  // record path, state for state, plain and primed at load.
+  // THE SGDK HOST'S PATH (mmlp_render, no slot bytes) against the slot path,
+  // state for state, plain and primed at load.
   for (const prime of [-1, 12]) {
     const smpArgs = sampleBank ? ["--samples", join(tmp, `${name}.smp`)] : [];
     try {
       execFileSync(viewExe, [mmb, String(FRAMES), ...smpArgs, ...(prime >= 0 ? ["--prime", String(prime)] : []), ...cArgs], { stdio: "pipe" });
-      rows.push(prime < 0 ? "view ≡ record" : "primed");
+      rows.push(prime < 0 ? "view ≡ slot" : "primed");
     } catch (e) { scoreBad = true; rows.push(`view path: ${(e.stdout ?? "").toString().trim() || e.message}`); }
   }
   if (scoreBad) failed++;
