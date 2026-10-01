@@ -209,6 +209,25 @@ the fix has to work from the sequencer's own order (the view queue), i.e.
 it belongs to §3's restructure: a `$28` for fm4–6 is a barrier — the
 port-1 writes before it go out before it.
 
+**Landed (`ac19c45`) and REVERTED the same day (`465b303`), 2026-10-01.**
+The landing: the host took the frame uncapped and in sequencer order
+(`fill_view` with no cap), `mmlpairs.c writes_body` held port 1 to the
+frame's end or an fm4–6 `$28`, PCM commands first; gates moved to frame
+records (`gate_main --frames`, `pairs-model.mjs FrameRecorder`,
+`mmlp_frame`). On the corpus: 0 early key-ons (was 372), wire −0.09%,
+verify:all green. **The user heard it broken on BlastEm**: DAC attacks off
+their beat, and "too high" (not yet explained — may be a separate cause;
+the revert is the discriminating build). Cause of the timing, measured in
+the host model: uncapping put a burst's whole FM backlog in the pair queue
+at once, so later frames' PCM commands queued behind it — worst PCM-start
+latency stress-9ch 8 → 18 frames, demo 6 → 14, m3-pcm-sync 6 → 11. The
+95-write cap had been giving PCM priority by accident: the excess waited in
+the sequencer's queue and each frame's PCM went into the pair queue ahead
+of it. **No gate measures PCM-start latency** — add one before re-landing.
+A re-land needs PCM ahead of the FM backlog by design (its own lane in the
+pair queue, released by frame like the rest), not by the cap. Even the old
+path delays a start 6–8 frames behind an unprimed burst.
+
 ## 5. The worst frame, and the render lead
 
 The measured worst case (§0) is the setup burst — every track's voice and
@@ -240,7 +259,7 @@ answers exist:
    live masks, `6622a3b` the port-1 stretch, `9ea61ec` the macro engine,
    `fef512e` the op tables. Then `8d28b53` (offsets + KEYON pass) and
    `671bd2a` (the tick loop's uneventful frame taken before the loop), then
-   `ac19c45` (§3a, the in-order frame). **Re-profiled 2026-10-01 (sin008,
+   `ac19c45` (§3a, the in-order frame — since reverted, `465b303`). **Re-profiled 2026-10-01 (sin008,
    `--pc`, 29 s):** idle 82.5%; driver 13.6% + API 1.0% = **14.6%** (from
    22.1% at the start). run_frame 4.46% → 3.13% (the tick fast path).
    Worst frames (`--peak 3`) unchanged at ~87% — the write path is still
