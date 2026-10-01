@@ -316,5 +316,15 @@ answers exist:
    it across plan and psg_take could take a frame's PSG bytes one grab
    later when frames_in advances between the two, a timing change the
    gates would have to re-baseline) and `since_add` (0.14%).
+   **Macro engine round 2, 2026-10-01** (one commit, three changes in three
+   functions, so `--pc` separates them): the decoded descriptor lives in the
+   slot from the note's instantiate (`macro_desc` now runs only in
+   `macro_trigger`; slot 12 → 22 B, MMLSeq 13,322 → 14,682 B on the 68000);
+   `step_macro`/`step_channel_macros_mc` take the macro channel from the walk
+   instead of `macro_ch(ch)`, and `process_macros` clears with a walking bit;
+   `recompose_carriers` composes the level offset once a channel, not once a
+   carrier. c-gate byte-identical. **Owed: the user's `--pc` re-profile.**
+   Not done: a pitch cache for `fnum_block_for` (a vibrato changes the cents
+   every frame, so a last-value cache rarely hits).
 2. **Then decide §4** (pre-rendering) against what is left: if the steady
    state is under the game's budget, §4 is not worth its ROM.

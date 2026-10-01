@@ -338,10 +338,17 @@ static uint16_t sweep_step(int len, int loop) {
 /* ── Level model (driver.md §7) ────────────────────────────────────────────
  * Offsets are stored in quarter steps and summed before a single rounding, so
  * the runtime stays integer-only while landing inside the documented band. */
-MML_HOT uint8_t carrier_tl(const MMLSeq *s, uint8_t voiced_tl, uint8_t vel, uint8_t vol) {
+/* The composed offset in whole TL steps: the same for every carrier of a
+ * channel, so a channel composes it once (recompose_carriers). */
+MML_HOT int carrier_off(const MMLSeq *s, uint8_t vel, uint8_t vol) {
   int off4 = MML_VEL_TL4[vel] + MML_VOL_TL4[vol] + MML_VOL_TL4[s->master];
-  int tl = voiced_tl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
-  return (uint8_t)clampi(tl, 0, 127);
+  return (off4 + (off4 >= 0 ? 2 : -2)) >> 2;
+}
+MML_HOT uint8_t carrier_tl_off(uint8_t voiced_tl, int off) {
+  return (uint8_t)clampi(voiced_tl + off, 0, 127);
+}
+MML_HOT uint8_t carrier_tl(const MMLSeq *s, uint8_t voiced_tl, uint8_t vel, uint8_t vol) {
+  return carrier_tl_off(voiced_tl, carrier_off(s, vel, vol));
 }
 MML_HOT uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
   if (vol == 0 || s->master == 0) return 15; /* hard mute (language.md §6) */
@@ -624,9 +631,10 @@ static void recompose_carriers(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   uint8_t mask = MML_CARRIER_MASK[c->algorithm & 7];
-  for (int op = 0; op < 4; op++) {
-    if (!(mask & (1 << op))) continue;
-    uint8_t tl = carrier_tl(s, c->ops[op].voiced_tl, c->vel, c->vol);
+  const int lvl = carrier_off(s, c->vel, c->vol);
+  for (int op = 0; op < 4; op++, mask >>= 1) {
+    if (!(mask & 1)) continue;
+    uint8_t tl = carrier_tl_off(c->ops[op].voiced_tl, lvl);
     c->ops[op].tl = tl;
     ym(s, port, (uint8_t)(0x40 + MML_OP_ADDR_OFFSET[op] + off), tl);
   }
@@ -1007,9 +1015,9 @@ static void clear_channel_modulators(MMLSeq *s, int ch) {
  * (sticky, one bind per target), NOTE_ON re-instantiates every bind into a
  * fresh running slot, and step 3 advances each slot one frame.
  *
- * Descriptors are decoded from MACRO_TABLE on demand rather than copied at
- * load: on the target the table is ROM, and this keeps the RAM cost of a song
- * at its running slots alone.
+ * Descriptors are decoded from MACRO_TABLE when a note instantiates its slots,
+ * into the slots (the values stay in the table, ROM on the target): the RAM
+ * cost of a song is its running slots alone, and a step decodes nothing.
  */
 static int macro_desc(const MMLSeq *s, int id, MMLMacro *m) {
   if (!s->macro_table || id < 0 || id >= (int)s->macro_count) return 0;
@@ -1053,12 +1061,12 @@ static int vel_release_pending(const MMLSeq *s, int ch) {
   if (mc < 0) return 0;
   for (int i = 0; i < s->macro_slot_count[mc]; i++) {
     const MMLMacroSlot *sl = &s->macro_slots[mc][i];
-    MMLMacro d;
+    const MMLMacro *d = &sl->d;
     /* ...or is playing it: a second key-off (a rest) must not cut it. */
-    if (!macro_desc(s, sl->macro_id, &d) || (d.target != T_VEL && d.target != T_VOL)) continue;
+    if (!d->values || (d->target != T_VEL && d->target != T_VOL)) continue;
     if (sl->state == MML_MACRO_RELEASE) return 1;
-    if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) && d.release != 0xff &&
-        d.release < d.count)
+    if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) && d->release != 0xff &&
+        d->release < d->count)
       return 1;
   }
   return 0;
@@ -1124,11 +1132,11 @@ static void macro_trigger(MMLSeq *s, int ch, uint16_t acc, const MMLTrack *t) {
     sl->step_clock = 0;
     sl->acc = acc;
     /* An empty attack/sustain (`[#rel …]`) writes nothing until key-off. */
-    MMLMacro d;
-    sl->target = 0xff; /* an unknown id: no slot is a KEYON one, and step_macro ends it */
-    if (macro_desc(s, sl->macro_id, &d)) {
-      sl->target = d.target;
-      if (d.release == 0) sl->state = MML_MACRO_HOLD;
+    if (macro_desc(s, sl->macro_id, &sl->d)) {
+      if (sl->d.release == 0) sl->state = MML_MACRO_HOLD;
+    } else {
+      sl->d.target = 0xff; /* an unknown id: no slot is a KEYON one, and step_macro ends it */
+      sl->d.values = 0;
     }
   }
   s->macro_slot_count[ch] = s->bind_count[ch];
@@ -1169,9 +1177,9 @@ static void keyon_retrigger(MMLSeq *s, int ch, int restart, const MMLMacroSlot *
   for (int i = 0; restart && mc >= 0 && i < s->macro_slot_count[mc]; i++) {
     MMLMacroSlot *sl = &s->macro_slots[mc][i];
     if (sl->dead) continue;
-    MMLMacro d;
-    if (!macro_desc(s, sl->macro_id, &d) || d.target == T_KEYON ||
-        d.target == T_NOTE_SEMI || d.target == T_NOTE_PITCH || d.target == T_PAN)
+    const MMLMacro *d = &sl->d;
+    if (!d->values || d->target == T_KEYON ||
+        d->target == T_NOTE_SEMI || d->target == T_NOTE_PITCH || d->target == T_PAN)
       continue;
     sl->cursor = 0;
     sl->step_clock = 0;
@@ -1179,7 +1187,7 @@ static void keyon_retrigger(MMLSeq *s, int ch, int restart, const MMLMacroSlot *
     /* A tick clock restarts on the retrigger's tick: the KEYON slot (tick
      * clocked, stepped first this frame) is that many ticks past it, which
      * this slot's own step then takes up, less the frame's share it adds. */
-    if (src && (d.flags & 8)) {
+    if (src && (d->flags & 8)) {
       int past = src_step - src->step_clock;
       if (past < 0) past = 0;
       sl->acc = (uint16_t)(src->acc + (past << 8) - chan_frame_inc(s, mc));
@@ -1282,40 +1290,40 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp,
  * its steps land on the track's beat grid whatever the tempo, and keep
  * counting through a held note. step_clock is then ticks to the next step;
  * a frame that crosses several steps takes each in turn. */
-static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
-  MMLMacro d;
-  if (!macro_desc(s, sl->macro_id, &d)) return 1;
+static int step_macro(MMLSeq *s, int ch, int mc, MMLMacroSlot *sl, int keyed) {
+  const MMLMacro *d = &sl->d;
+  if (!d->values) return 1;
   /* Key-off leaves attack/sustain for the release region — or ends the slot. */
   if ((sl->state == MML_MACRO_RUN || sl->state == MML_MACRO_HOLD) && !keyed) {
-    if (d.release != 0xff && d.release < d.count) {
+    if (d->release != 0xff && d->release < d->count) {
       sl->state = MML_MACRO_RELEASE;
-      sl->cursor = d.release;
+      sl->cursor = d->release;
       sl->step_clock = 0; /* release[0] fires on the key-off frame */
       /* ...and a tick clock restarts from the key-off's tick: this frame's
        * ticks after it, less the share the next line adds back. */
-      if (d.flags & 8)
-        sl->acc = (uint16_t)(s->off_acc[macro_ch(ch)] - chan_frame_inc(s, macro_ch(ch)));
+      if (d->flags & 8)
+        sl->acc = (uint16_t)(s->off_acc[mc] - chan_frame_inc(s, mc));
     } else {
       return 1;
     }
   }
-  if (d.flags & 8) {
+  if (d->flags & 8) {
     /* The note's own frame already holds its ticks after the note. */
-    if (!sl->fresh) sl->acc = (uint16_t)(sl->acc + chan_frame_inc(s, macro_ch(ch)));
+    if (!sl->fresh) sl->acc = (uint16_t)(sl->acc + chan_frame_inc(s, mc));
     int ticks = sl->acc >> 8;
     sl->acc &= 0xff;
     int n = 0;
     if (sl->step_clock <= 0) { /* due now: the note, a retrigger, the release */
       n = 1;
-      sl->step_clock = d.step;
+      sl->step_clock = d->step;
     }
     sl->step_clock = (int16_t)(sl->step_clock - ticks);
     while (sl->step_clock <= 0) {
       n++;
-      sl->step_clock = (int16_t)(sl->step_clock + d.step);
+      sl->step_clock = (int16_t)(sl->step_clock + d->step);
     }
     for (; n > 0; n--)
-      if (macro_sample(s, ch, sl, &d, keyed)) return 1;
+      if (macro_sample(s, ch, sl, d, keyed)) return 1;
     return 0;
   }
   if (sl->step_clock > 0) {
@@ -1323,16 +1331,15 @@ static int step_macro(MMLSeq *s, int ch, MMLMacroSlot *sl, int keyed) {
     return 0;
   }
   int held = sl->state == MML_MACRO_HOLD || sl->state == MML_MACRO_TAIL;
-  if (macro_sample(s, ch, sl, &d, keyed)) return 1;
-  if (!held) sl->step_clock = (int16_t)(d.step - 1);
+  if (macro_sample(s, ch, sl, d, keyed)) return 1;
+  if (!held) sl->step_clock = (int16_t)(d->step - 1);
   return 0;
 }
 
 /* One channel's running slots, one step. Split out of process_macros because a
  * note-on past sub-tick 0 has to step its own channel on the spot (§3.5). */
-static void step_channel_macros(MMLSeq *s, int ch) {
-  int mc = macro_ch(ch);
-  if (mc < 0) return;
+/* `mc` is macro_ch(ch), which the frame's walk already has. */
+static void step_channel_macros_mc(MMLSeq *s, int ch, int mc) {
   int n = s->macro_slot_count[mc];
   if (!n) return;
   int keyed = channel_keyed(s, ch);
@@ -1348,7 +1355,7 @@ static void step_channel_macros(MMLSeq *s, int ch) {
    * only skip every slot is skipped whole. */
   int first = 1;
   for (int i = 0; i < n; i++)
-    if (s->macro_slots[mc][i].target == T_KEYON) { first = 0; break; }
+    if (s->macro_slots[mc][i].d.target == T_KEYON) { first = 0; break; }
   for (int pass = first; pass < 2; pass++) {
     /* A PCM retrigger's START carries the level its frame's steps set: they
      * compose as for a voice not yet started, and send no PCM_VOL of their own. */
@@ -1358,9 +1365,9 @@ static void step_channel_macros(MMLSeq *s, int ch) {
     }
     for (int i = 0; i < n; i++) {
       MMLMacroSlot *sl = &s->macro_slots[mc][i];
-      int is_keyon = sl->target == T_KEYON;
+      int is_keyon = sl->d.target == T_KEYON;
       if (sl->dead || is_keyon != (pass == 0)) continue;
-      if (step_macro(s, ch, sl, keyed)) {
+      if (step_macro(s, ch, mc, sl, keyed)) {
         sl->dead = 1;
         dead = 1;
       }
@@ -1381,13 +1388,20 @@ static void step_channel_macros(MMLSeq *s, int ch) {
   s->macro_slot_count[mc] = (uint8_t)w;
 }
 
+static void step_channel_macros(MMLSeq *s, int ch) {
+  int mc = macro_ch(ch);
+  if (mc >= 0) step_channel_macros_mc(s, ch, mc);
+}
+
 static void process_macros(MMLSeq *s) {
   /* The count is tested here, not only inside: the call's own entry and exit
-   * cost the 68000 more than an empty channel's whole step. */
-  for (uint32_t live = s->macro_live, mc = 0; live; live >>= 1, mc++) {
+   * cost the 68000 more than an empty channel's whole step. `bit` walks with
+   * `live`: a `1u << mc` is a variable 32-bit shift on the 68000. */
+  uint32_t bit = 1;
+  for (uint32_t live = s->macro_live, mc = 0; live; live >>= 1, bit <<= 1, mc++) {
     if (!(live & 1)) continue;
-    if (s->macro_slot_count[mc]) step_channel_macros(s, macro_ch_id((int)mc));
-    if (!s->macro_slot_count[mc]) s->macro_live &= ~(1u << mc);
+    if (s->macro_slot_count[mc]) step_channel_macros_mc(s, macro_ch_id((int)mc), (int)mc);
+    if (!s->macro_slot_count[mc]) s->macro_live &= ~bit;
   }
 }
 

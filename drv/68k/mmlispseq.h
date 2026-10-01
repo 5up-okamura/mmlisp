@@ -170,30 +170,31 @@ typedef struct {
  * channel (the release was the note's decay, so key-off left the level). */
 enum { MML_MACRO_RUN = 0, MML_MACRO_HOLD = 1, MML_MACRO_RELEASE = 2, MML_MACRO_TAIL = 3 };
 
+/* One descriptor, decoded from MACRO_TABLE (mmb.md §15): once a note, into
+ * the slot it instantiates — a decode every step was ~1% of the 68000. The
+ * values stay in the table, which is ROM on the target. */
+typedef struct {
+  uint8_t target, flags, step, loop_start, release, count;
+  const uint8_t *values;
+  uint8_t scale_slot, has_scale;
+} MMLMacro;
+
 typedef struct {
   uint8_t macro_id;
   uint8_t state; /* MML_MACRO_RUN / _HOLD / _RELEASE */
   uint8_t dead;  /* finished this frame; compacted after the pass */
   uint8_t fresh; /* the note's own frame: a KEYON step here does not re-attack */
-  uint8_t target; /* the descriptor's, kept from the instantiate: the frame sorts
-                   * KEYON slots first without decoding every slot again */
   uint16_t cursor;
   int16_t step_clock; /* frames left on this step; signed, a step of 0 free-runs */
   uint16_t acc;       /* tick clock (flags bit3): the note's track accumulator, 8.8 */
+  MMLMacro d;         /* the macro's descriptor, decoded at the instantiate;
+                       * values 0 = an unknown id (target 0xff), ended at its step */
 } MMLMacroSlot;
 
 /* One register write in the cap/spill queue: port 0/1 = YM part, 2 = PSG. */
 typedef struct {
   uint8_t port, addr, data;
 } MMLWrite;
-
-/* One descriptor, decoded from MACRO_TABLE on demand (mmb.md §15). Held by
- * pointer rather than copied: the table is ROM on the target. */
-typedef struct {
-  uint8_t target, flags, step, loop_start, release, count;
-  const uint8_t *values;
-  uint8_t scale_slot, has_scale;
-} MMLMacro;
 
 /* ── PCM voice (driver.md §14) ─────────────────────────────────────────────
  * The engine owns playback — every pointer is the Z80's — so the sequencer
