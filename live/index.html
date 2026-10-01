@@ -3199,7 +3199,7 @@
     function reportMmbDiagnostics(diags) {
       if (!diags?.length) return;
       for (const d of diags) {
-        log(`MMB: ${d.message}`, d.severity === 'warning' ? 'warn' : 'err');
+        log(`MMB: ${d.message}`, d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info');
       }
       console.warn('encodeMmb diagnostics:', diags);
     }
