@@ -4233,7 +4233,12 @@
         // whether or not the score has been saved anywhere. So do those of a
         // score from the served tree (Browse, a share link): its compile name
         // is its path there, and its samples resolve against its folder.
-        const hasSamples = sampleDefs.some(d => !/^presets\//.test(d.resolvedFile ?? d.file ?? ''));
+        // And a sample already held in memory (a mucom88 bank's wav, seeded at
+        // import) plays without any path resolving at all.
+        const hasSamples = sampleDefs.some((d) => {
+          const path = d.resolvedFile ?? d.file ?? '';
+          return !/^presets\//.test(path) && !_pcmSampleCache.has(path);
+        });
         const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
           Boolean(_sourceDir) || _lastFileName.includes('/');
         if (hasSamples && !hasSavedBase) {
