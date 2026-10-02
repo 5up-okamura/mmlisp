@@ -66,6 +66,31 @@ PCM in any layer.
   velocity went to eighths at the same time, like FM and PSG, which removed
   every PCM special case. The other targets stay errors: a soft-mixed voice
   has no register for them.
+- **The range a note plays is not a loop thing — `:pcm-start` /
+  `:pcm-end` / `:pcm-len` (decided 2026-10-03, NOT YET IMPLEMENTED).** The
+  user assumed a shot could already be given a start and an end, since a
+  loop can; it cannot — a shot plays the whole blob
+  (`pcm-voices.js` `pcmShotPoints`), the 2026-09-18 ruling having defined
+  loop points for loops only. The engine needs nothing: a shot's START/END
+  are sent per note exactly as a loop's are (WRAP stays the silence page).
+  So the three keys are RENAMED, on the def and the track alike, with the
+  same time values and the same live moves: `:loop-start` → `:pcm-start`,
+  `:loop-end` → `:pcm-end`, `:loop-len` → `:pcm-len`; `:mode loop` repeats
+  the range, `:mode shot` plays it once. The user chose the `pcm-` prefix
+  over a new word (`:span` was proposed for the length, since `:len` is the
+  note's): "avoid new words", and it matches `def-pcm` / `pcm1`.
+  `:offset` / `:frames` stay what they are — the bytes that go in the bank —
+  against a time range the note plays. No old names kept. Scope: the
+  compiler's keys and the IR fields (`loopStartSec` / `loopEndSec` →
+  `startSec` / `endSec`), `pcm-voices.js` and its C twin passing the range
+  to a shot, language §16 / ir.md / cheatsheet / guide, snippets and
+  presets that use the keys, the mucom importer if it writes them, and the
+  live editor's value classifier (it names these keys).
+  Why this came up: a reversed cymbal. A baked reverse (an fx or a key)
+  costs a second blob — 13 KB of 32 for a crash — which the user rejected;
+  reverse AT PLAYBACK costs no Z80 time (`dec` = `inc`) but is a new engine
+  mode (mirrored COMPARE/END contract) through every layer, and was set
+  aside, recorded under Open.
 - **One 32 KB bank a song (2026-09-17).** If ever needed: on `pcm1` only, the
   START piece writes the bank register (~100 cycles, blobs may not cross a
   32 KB boundary; ~14.4 → ~12 kHz). Two or three voices would need a per-block
@@ -88,5 +113,14 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
   written. `reverb` is in (2026-09-26; `:tail` required, the user's OK on the
   params), not yet listened to by the user. Nothing listened yet:
   the first batch wants a pass by ear in the live app.
+- **Reverse at playback** (2026-10-03): per-note direction, zero bank
+  cost and zero per-sample cost (`dec de` / `dec hl` cost what `inc` does;
+  the step opcode is one self-modifiable byte), but the block-edge pieces
+  assume a forward walk (COMPARE is pointer ≥ END, END is last byte + 1 −
+  16), so a backward voice is a new piece mirrored through the generator,
+  pcm-model.js, the worklet, drv-player.js, the C sequencer and the gates,
+  plus a language key and an IR field. Not worth it for one reversed
+  cymbal; worth revisiting if a composer wants direction as a performance
+  control, like the moving loop points.
 - **Not scheduled:** compile-time premix of overlapping pcm voices (D1 (C));
   measuring XGM2/MDSDRV ROMs on BlastEm as a yardstick.
