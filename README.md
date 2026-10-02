@@ -77,7 +77,8 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 
 `live/` hosts the full authoring workflow in the browser — no install:
 
-- CodeMirror editor with MMLisp syntax highlighting, template completions,
+- CodeMirror editor with MMLisp syntax highlighting, template completions, a
+  voice/sample picker in the completion list (`@`, or long-press a name),
   format-on-demand, structure help (bracket auto-close, enclosing-form
   highlight, unmatched-bracket marks, select-by-form), and find / replace with
   multi-cursor editing

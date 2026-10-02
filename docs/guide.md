@@ -991,7 +991,8 @@ Every adjustable value in the source can be nudged in place — no retyping. Thi
 covers keyword numbers (`:vel 12`, `:tl1 45`, `:pitch -40`, `:oct 4`), every
 note-length form (`8`, `8.`, `16t`, `16f`, `3/4`), note names (`c`, `c+`), the
 note + length compound (`c4`, `e8.` — the note and the length edit separately),
-and the `v±` / `o±` shifts.
+and the `v±` / `o±` shifts. A voice or sample name a track plays is a token
+too: long-pressing it opens the name list (Completions, below) on it.
 
 Hover a value to confirm it is editable: the whole token gets a dotted underline
 and a hint shows its range. Three ways to change it:
@@ -999,7 +1000,10 @@ and a hint shows its range. Three ways to change it:
 - **Long-press** the token (works with mouse and touch) to open a popup — a
   slider + `−`/`+` steppers for a bounded number, or a one-octave piano for a
   note (tap a key to audition and set it, staying in the current octave). The
-  popup stays open until you dismiss it (click away or `Esc`).
+  popup stays open until you dismiss it (click away or `Esc`). On a voice or
+  sample name it opens the name list instead, starting at that name: `↓` / `↑`
+  step through its neighbours in the set, sounding each, and the pick replaces
+  the name.
 - **Alt-drag** the token up/down to scrub it — up raises, down lowers, like a
   slider (hold `Shift` for a coarse step). Desktop only; the pointer turns into
   a resize cursor.
@@ -1157,15 +1161,36 @@ leaves valid source. Forms whose shape genuinely varies — a track, `t`, the
 eval heads — insert just the name, as before.
 
 Names complete too. Two characters of a word offer the voices, samples, macros
-and snippets the score can use — its own defs and everything its imports bring
-in — each labelled with its kind and the set it comes from, and with the
-comment above its def as the description (`gm-piano` — *GM 1 / MIDI 0:
-GrandPiano*; a kit's sample shows its file). A local def hides an imported one
-of the same name, as it does when compiling. `$` offers the `def-val` slots and
-`$time`, and `(` offers the parametric defs next to the forms. Notes stay
-quiet: one letter never opens the list. Imported names are read when the score
-compiles, so a newly typed `(import …)` joins the list after the next Play or
-Build.
+and snippets the score can use — its own defs, everything its imports bring
+in, and every preset set's voices and samples, imported or not — each labelled
+with its kind and the set it comes from, and with the comment above its def as
+the description (`gm-piano` — *GM 1 / MIDI 0: GrandPiano*; a kit's sample
+shows its file). What you type is matched anywhere in the name **or** the
+description, so `piano` finds `gm-piano` and `ride` every kit's ride. A local
+def hides an imported one of the same name, as it does when compiling. A name
+from a set the score does not import yet is marked `+ import`: picking it also
+writes that set's `(import …)` at the top (one undo takes both back out).
+`$` offers the `def-val` slots and `$time`, and `(` offers the parametric defs
+next to the forms. Notes stay quiet: one letter never opens the list, nor does
+a word that reads as music (`a-`, `e8.`, `v-2`).
+
+The list follows the track the cursor is in: an `fm…` track is offered FM
+voices, a `pcm…` track samples, a PSG track neither; outside a track, both.
+
+Typing `@` where no name is being written opens the whole list without
+knowing a single letter of a name; what follows narrows it, and the pick
+replaces the `@` too. `@` is an editor shortcut, not notation — but a mucom
+import names its voices `@1`, `@brass`, and those are in the list as typed, so
+writing `@12 c` by hand still works: the space closes the list and types on.
+
+The list never takes typing — letters go into the score and narrow it; Space,
+`(` and the like close it and are typed. Only `↑` / `↓`, `Enter` and `Esc`
+belong to it. Moving the selection with `↑` / `↓` auditions the highlighted
+voice or sample (as Browse's preview does), after a short pause so running
+down the list does not sound every row; a sample waits for playback to stop,
+since its preview reloads the PCM bank. Imported names are read when the score
+compiles, so a set of your own imported by hand joins the list after the next
+Play or Build; a preset set's names are there all along.
 
 A new score (**File ▸ New**) imports the `gm` and `waveforms` voice sets and
 the `tr808` kit without assigning any of them, so every preset name completes

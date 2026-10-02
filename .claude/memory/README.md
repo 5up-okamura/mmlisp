@@ -52,11 +52,10 @@ Rules:
   makes the driver distinctive. Kept for the day it is revisited — with a
   second shape seen 2026-10-02: MMLisp as the composing tool, a pre-rendered
   stream (XGM) plus a few live controls on the Z80.
-- [plan-voice-picker.md](plan-voice-picker.md) — **choosing a voice or
-  sample without knowing its name — decided 2026-10-03, not implemented.**
-  The completion strengthened (substring on name and description, every
-  preset set with auto-import, kind by track, audition on highlight), opened
-  by typing `@` or long-pressing a name; PSG envelopes left open.
+- [plan-voice-picker.md](plan-voice-picker.md) — **the editor's voice
+  picker — shipped 2026-10-03** (guide §22 has the behaviour): why it is the
+  completion list and not a panel, why every preset set, and what is open
+  (PSG envelopes, auditioning a score's own samples).
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   Lisp input aids: the implementation deviations and their reasons (why no
   `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the

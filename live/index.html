@@ -601,7 +601,7 @@
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = await import('https://esm.sh/@codemirror/language@6');
     const { tags } = await import('https://esm.sh/@lezer/highlight@1');
     const { history, historyKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = await import('https://esm.sh/@codemirror/commands@6');
-    const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
+    const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = await import('https://esm.sh/@codemirror/search@6');
 
     // Resolve a 1-based source span { line, column, endLine, endColumn } to a
@@ -1001,7 +1001,7 @@
           if (offset >= f && offset <= t) {
             const prev = items[i - 1];
             const kw = prev && prev.kind === 'atom' && prev.value.startsWith(':') ? prev.value : inheritedKw;
-            return { node: n, from: f, to: t, keyword: kw };
+            return { node: n, from: f, to: t, keyword: kw, prev: prev?.kind === 'atom' ? String(prev.value) : null };
           }
         } else if (n.kind === 'list') {
           const lf = doc.line(n.line).from + (n.column - 1);
@@ -1042,9 +1042,30 @@
       if (!roots) return null;
       const hit = findAtomAt(roots, doc, offset, null);
       if (!hit) return null;
-      const fields = fieldsForAtom(String(hit.node.value), hit.from, hit.to, hit.keyword);
+      const fields = fieldsForAtom(String(hit.node.value), hit.from, hit.to, hit.keyword)
+        ?? nameFields(state, hit);
       if (!fields) return null;
       return { tokenRange: [hit.from, hit.to], fields, keyword: hit.keyword };
+    }
+
+    // A written voice or sample name is a token too: its long-press opens the
+    // completion list on it (openNamePicker), so the pick replaces it. Not the
+    // name a def is defining.
+    const NAME_DEF_HEADS = new Set(['def', 'def-fm', 'def-pcm', 'def-val']);
+    let _nameKindsFor = [], _nameKinds = null;
+    function nameFields(state, hit) {
+      if (hit.prev && NAME_DEF_HEADS.has(hit.prev)) return null;
+      const key = [state.doc, _importSources, _acPresetDefs];
+      if (!_nameKinds || key.some((k, i) => k !== _nameKindsFor[i])) {
+        _nameKinds = new Map();
+        for (const d of [...scoreDefNames(state), ...(_acPresetDefs ?? [])])
+          if ((d.kind === 'voice' || d.kind === 'sample') && !_nameKinds.has(d.name)) _nameKinds.set(d.name, d.kind);
+        _nameKindsFor = key;
+      }
+      const name = String(hit.node.value);
+      const kind = _nameKinds.get(name);
+      if (!kind) return null;
+      return [{ kind: 'name', range: [hit.from, hit.to], value: name, label: kind, writeBack: (n) => n }];
     }
 
     // --- Applying edits (with debounced hot-swap while playing) ---
@@ -1082,6 +1103,7 @@
       const info = classifyToken(st, st.selection.main.head);
       if (!info) return false;
       const field = info.fields[0];
+      if (field.kind === 'name') return false;
       if (field.kind === 'pitch') { nudgePitch(field, dir); return true; }
       applyFieldEdit(field, field.value + dir * (field.step || 1) * (coarse ? 10 : 1));
       return true;
@@ -1389,6 +1411,7 @@
     function openTokenPopup(tokenStart) {
       const info = classifyToken(editorView.state, tokenStart);
       if (!info) return;
+      if (info.fields[0].kind === 'name') return openNamePicker(...info.tokenRange);
       const el = makePopupShell(info.tokenRange[0]);
       _popup = { el, tokenStart, kind: 'token' };
       info.fields.forEach((f, i) => {
@@ -1436,8 +1459,10 @@
           if (info) {
             range = info.tokenRange;
             const f = fieldAtOffset(info, pos);
-            canScrub = true;
-            hint = f.kind === 'pitch'
+            canScrub = f.kind !== 'name';
+            hint = f.kind === 'name'
+              ? `${f.label} ${f.value} · long-press for the list`
+              : f.kind === 'pitch'
               ? `note ${f.value.note} · long-press / Alt-drag`
               : `${f.label} ${fmtNum(f.value, f.isFloat)}${f.min != null ? ` · ${f.min}–${f.max}` : ''} · long-press / Alt-drag`;
           } else {
@@ -1481,7 +1506,7 @@
           const info = classifyToken(view.state, pos);
           if (info) {
             const field = fieldAtOffset(info, pos);
-            if (field.kind !== 'pitch') {
+            if (field.kind !== 'pitch' && field.kind !== 'name') {
               // Claim the gesture, but stay undecided until the pointer moves:
               // an Alt-drag scrubs, an Alt-click that never moves adds a cursor
               // here (pointerup). Without this, Alt over a value would be the
@@ -1764,7 +1789,8 @@
       if (!defs) {
         defs = [];
         for (const [path, text] of _importSources)
-          defs.push(...scanDefNames(text, path.replace(/\/set\.mmlisp$/, '').replace(/^.*\//, '')));
+          for (const d of scanDefNames(text, path.replace(/\/set\.mmlisp$/, '').replace(/^.*\//, '')))
+            defs.push({ ...d, path });
         _acImportDefs.set(_importSources, defs);
       }
       return defs;
@@ -1785,7 +1811,167 @@
       return out;
     }
 
+    // Every preset set's voices and samples, imported or not, so a name can be
+    // found before its set is: picking one writes the set's (import …) as
+    // well. Read once, from the set files Browse caches (never a sample's
+    // audio — that loads only when it is auditioned), then filtered per
+    // keystroke.
+    let _acPresetDefs = null;              // [{ name, kind, about, from, set }] once read
+    let _acPresetLoad = null;
+    function loadPresetDefNames() {
+      _acPresetLoad ??= (async () => {
+        try {
+          const { sets } = await loadBrowseCatalog();
+          const loaded = await Promise.all(sets.map((path) => loadBrowseSet(path)
+            .catch((e) => { log('Completion: ' + e.message, 'err'); return null; })));
+          _acPresetDefs = loaded.filter(Boolean).flatMap((set) =>
+            scanDefNames(set.text, browseSetName(set.path))
+              .filter((d) => d.kind === 'voice' || d.kind === 'sample')
+              .map((d) => ({ ...d, set: set.path })));
+        } catch (e) {
+          log('Completion: ' + e.message, 'err');
+          _acPresetDefs = [];
+        }
+      })();
+      return _acPresetLoad;
+    }
+    function withPresetNames(fn) {
+      return _acPresetDefs ? fn() : loadPresetDefNames().then(fn);
+    }
+
+    // The (import "…") paths the score writes. A scan, so an edit in progress
+    // (unbalanced parens) does not hide them, and an import typed since the
+    // last Build already counts.
+    function docImportSpecs(text) {
+      return new Set([...text.matchAll(/\(import\s+"([^"]+)"/g)].map((m) => m[1]));
+    }
+
+    // What kind of name the track at `pos` takes: an fm… track plays voices, a
+    // pcm… track samples, a PSG track neither (PSG has no voice def). Outside
+    // a track — a def, the top level — both.
+    const AC_TRACK_SET = new Set(AC_TRACKS);
+    function trackKindAt(text, pos) {
+      const open = [];
+      for (let i = 0; i < pos; i++) {
+        const ch = text[i];
+        if (ch === '"') { for (i++; i < pos && text[i] !== '"'; i++) if (text[i] === '\\') i++; }
+        else if (ch === ';') { while (i < pos && text[i] !== '\n') i++; }
+        else if (ch === '(') open.push(i);
+        else if (ch === ')') open.pop();
+      }
+      for (let k = open.length - 1; k >= 0; k--) {
+        const head = /^[^\s()[\]";]*/.exec(text.slice(open[k] + 1, open[k] + 32))[0];
+        if (AC_TRACK_SET.has(head)) return /^fm/.test(head) ? 'voice' : /^pcm/.test(head) ? 'sample' : 'psg';
+      }
+      return null;
+    }
+
+    // The names a bare word or `@` can become at `pos`: the score's own defs,
+    // its imports, then every preset set it does not import yet — each name
+    // once, the nearest winning, as when compiling. Voices and samples follow
+    // the track. `importSet` is the set a pick must import first, judged by
+    // the (import …) lines written now: the imports' text is re-read only on
+    // Build.
+    function pickableNames(state, pos) {
+      const text = state.doc.toString();
+      const track = trackKindAt(text, pos);
+      const fits = (d) => d.kind === 'voice' ? track !== 'sample' && track !== 'psg'
+        : d.kind === 'sample' ? track !== 'voice' && track !== 'psg'
+        : d.kind !== 'val' && d.kind !== 'fn';
+      const imported = docImportSpecs(text);
+      const seen = new Set();
+      const out = [];
+      for (const d of [...scoreDefNames(state), ..._acPresetDefs]) {
+        if (seen.has(d.name)) continue;
+        seen.add(d.name);
+        const set = d.set ?? (_browseSetCache.has(d.path) ? d.path : null);
+        if (fits(d)) out.push(set && !imported.has(set) ? { ...d, importSet: set } : d);
+      }
+      return out;
+    }
+
+    // Substring on the name and on its description, so `piano` finds gm-piano
+    // and `ride` every kit's ride. Prefix matches first, then the rest of the
+    // names, then descriptions; within each, the order above. A mucom score's
+    // `@12` is found by `@12` as typed (`@` is also the trigger) and by `12`.
+    function matchNames(names, typed) {
+      const q = typed.toLowerCase();
+      const ranked = [];
+      for (const d of names) {
+        const name = d.name.toLowerCase();
+        let rank;
+        if (name.startsWith(q) || name.startsWith('@' + q)) rank = 0;
+        else if (name.includes(q)) rank = 1;
+        else if (d.about.toLowerCase().includes(q)) rank = 2;
+        else continue;
+        ranked.push([rank, d]);
+      }
+      return ranked.sort((a, b) => a[0] - b[0]).map(([, d]) => d);
+    }
+
+    function nameCompletion(d) {
+      const c = defCompletion(d);
+      c.pick = d; // what ↑ / ↓ auditions
+      if (d.importSet) {
+        c.detail += ' \u00b7 + import';
+        c.apply = (view, completion, from, to) => applyWithImport(view, completion, from, to, d.importSet);
+      }
+      return c;
+    }
+
+    // A name from a set the score does not import yet brings the set's
+    // (import …) to the top with it, in one transaction — one undo takes both.
+    function applyWithImport(view, completion, from, to, path) {
+      const add = docImportSpecs(view.state.doc.toString()).has(path) ? '' : `(import "${path}")\n`;
+      view.dispatch({
+        changes: [...(add ? [{ from: 0, insert: add }] : []), { from, to, insert: completion.label }],
+        selection: { anchor: from + add.length + completion.label.length },
+        annotations: pickedCompletion.of(completion),
+        userEvent: 'input.complete',
+        scrollIntoView: true,
+      });
+    }
+
+    function nameResult(context, from, typed) {
+      return withPresetNames(() => {
+        const options = matchNames(pickableNames(context.state, from), typed).map(nameCompletion);
+        return options.length ? { from, options, filter: false } : null;
+      });
+    }
+
+    // A long-pressed voice or sample name (§22) opens the list on itself:
+    // every name of its kind its track takes, starting at the pressed one, so
+    // ↓ / ↑ step through its neighbours in the set; the pick replaces it.
+    // Typing ends that — the word then completes as any other.
+    let _acReplace = null;                 // { from, to, doc }
+    function openNamePicker(from, to) {
+      editorView.dispatch({ selection: { anchor: to } });
+      editorView.focus();
+      _acReplace = { from, to, doc: editorView.state.doc };
+      startCompletion(editorView);
+    }
+    function replaceResult(context, { from, to }) {
+      return withPresetNames(() => {
+        const name = context.state.sliceDoc(from, to);
+        const all = pickableNames(context.state, from);
+        const kind = all.find((d) => d.name === name)?.kind;
+        const names = all.filter((d) => d.kind === kind);
+        const at = Math.max(0, names.findIndex((d) => d.name === name));
+        const options = [...names.slice(at), ...names.slice(0, at)].map(nameCompletion);
+        return options.length ? { from, to, options, filter: false } : null;
+      });
+    }
+
+    // A word that reads as a note, a rest or a v± / o± shift never opens the
+    // list on its own: `a-`, `e8.`, `v-2` are music, not a name being typed.
+    const AC_MUSIC_WORD = /^([a-gr][+-]?[\d.]*|[vo][+-]\d*)$/;
+
     function mmlispCompletions(context) {
+      if (_acReplace) {
+        const r = _acReplace;
+        if (r.doc === context.state.doc && context.pos === r.to) return replaceResult(context, r);
+        _acReplace = null;
+      }
       // After '(' — suggest forms and track names, and the score's parametric defs
       const formMatch = context.matchBefore(/\([a-zA-Z0-9_-]*/);
       if (formMatch) {
@@ -1824,24 +2010,49 @@
         return { from: context.pos - typed.length, options };
       }
 
+      // `@` where no name is being written opens the whole list; what follows
+      // narrows it, and the pick replaces the `@` too. An editor trigger, not
+      // notation — a mucom score's voices are named `@1`, `@brass`, so those
+      // match as typed, and a space after `@12` closes the list and types on.
+      const at = context.matchBefore(/@[^\s()[\]";]*/);
+      if (at && !/;/.test(before)
+          && /^[\s([]?$/.test(at.from > 0 ? context.state.sliceDoc(at.from - 1, at.from) : ''))
+        return nameResult(context, at.from, at.text.slice(1));
+
       // A bare word — a voice, sample, macro or snippet name; `$` for a slot.
       // Two characters before it offers anything unasked, so typing notes (c,
       // e, a-) stays quiet. Not inside a comment.
       const word = context.matchBefore(/[$a-zA-Z][\w$-]*/);
-      if (word && (context.explicit || word.text.length >= 2)) {
+      if (word && (context.explicit || (word.text.length >= 2 && !AC_MUSIC_WORD.test(word.text)))) {
         if (/;/.test(before)) return null;
-        const slot = word.text.startsWith('$');
-        const typed = slot ? word.text.slice(1) : word.text;
+        if (!word.text.startsWith('$')) return nameResult(context, word.from, word.text);
+        const typed = word.text.slice(1);
         const options = scoreDefNames(context.state)
-          .filter(d => (slot ? d.kind === 'val' : d.kind !== 'val' && d.kind !== 'fn')
-            && d.name.startsWith(typed))
-          .map(d => defCompletion(d, slot ? '$' + d.name : d.name));
-        if (slot && 'time'.startsWith(typed)) options.push({ label: '$time', type: 'variable', detail: 'frames since track start' });
+          .filter(d => d.kind === 'val' && d.name.startsWith(typed))
+          .map(d => defCompletion(d, '$' + d.name));
+        if ('time'.startsWith(typed)) options.push({ label: '$time', type: 'variable', detail: 'frames since track start' });
         if (options.length === 0) return null;
         return { from: word.from, options };
       }
 
       return null;
+    }
+
+    // ↑ / ↓ through the list sounds the highlighted voice or sample, after a
+    // short pause so running down the list does not sound every row. Only a
+    // keyed move auditions — opening or narrowing the list stays quiet — and
+    // never Space, which types.
+    const AC_AUDITION_MS = 160;
+    let _acNavAt = -Infinity, _acAuditionTimer = null;
+    function noteCompletionNavKey(e) {
+      if (/^(ArrowUp|ArrowDown|PageUp|PageDown)$/.test(e.key)) _acNavAt = performance.now();
+    }
+    function auditionOnSelect(update) {
+      const c = selectedCompletion(update.state);
+      if (!c?.pick || c === selectedCompletion(update.startState)) return;
+      if (performance.now() - _acNavAt > 100) return;
+      clearTimeout(_acAuditionTimer);
+      _acAuditionTimer = setTimeout(() => auditionName(c.pick), AC_AUDITION_MS);
     }
 
     // MMLisp auto-indent service (Lisp-style: align to char after opening paren,
@@ -2952,6 +3163,7 @@
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged) syncBracketStatus();
         if (update.docChanged || update.selectionSet) syncParamUI();
+        auditionOnSelect(update);
       }),
     ];
 
@@ -2965,6 +3177,8 @@
 
     syncBracketStatus();
     initShortcutLabels();
+    // Capture, ahead of the completion keymap: marks a ↑ / ↓ as the user's.
+    editorView.dom.addEventListener('keydown', noteCompletionNavKey, true);
 
     // IR preset → MMLisp source URL mapping
     const SOURCE_FILE_TYPES = [
@@ -5462,7 +5676,15 @@
       // Take focus off the editor, so letters do not type into the score behind
       // the panel while you are picking a voice.
       document.querySelector('#browseModal .browse-modal').focus();
-      if (!_browseCatalog) {
+      await loadBrowseCatalog();
+      await selectBrowseTab(tab ?? _browseTab);
+    }
+
+    // Read once, by the panel or by the editor's completion (which lists
+    // every set's names), whichever asks first.
+    let _browseCatalogLoad = null;
+    function loadBrowseCatalog() {
+      _browseCatalogLoad ??= (async () => {
         const read = async (url) => {
           try { return JSON.parse(await fetchText(url)); }
           catch (e) { log('Browse: ' + e.message, 'err'); return []; }
@@ -5470,8 +5692,9 @@
         const [sets, scores, snippets] = await Promise.all(
           [read(BROWSE_SETS_INDEX), read(BROWSE_SCORES_INDEX), read(BROWSE_SNIPPETS_INDEX)]);
         _browseCatalog = { sets, scores, snippets };
-      }
-      await selectBrowseTab(tab ?? _browseTab);
+        return _browseCatalog;
+      })();
+      return _browseCatalogLoad;
     }
 
     // Presets is two columns, the sets and the picked set's contents; Scores
@@ -5641,7 +5864,12 @@
     async function loadBrowseSet(path) {
       const cached = _browseSetCache.get(path);
       if (cached) return cached;
-      const text = await fetchText(path);
+      const entry = browseSetFromText(path, await fetchText(path));
+      _browseSetCache.set(path, entry);
+      return entry;
+    }
+
+    function browseSetFromText(path, text) {
       const defs = [];
       for (const node of parse(text)) {
         if (!node || node.kind !== 'list') continue;
@@ -5658,9 +5886,7 @@
           defs.push({ name, kind: 'def', node });
         }
       }
-      const entry = { path, text, defs };
-      _browseSetCache.set(path, entry);
-      return entry;
+      return { path, text, defs };
     }
 
     // A lookup for parseFmDefRegs: the top-level def-fm of that name in `text`.
@@ -5826,6 +6052,27 @@
       if (def.kind === 'fm') return previewBrowseFm(def);
       if (def.kind === 'pcm') return previewBrowsePcm(set, def);
       setBrowseNote(`${def.name} is not a voice or a sample \u2014 nothing to sound.`);
+    }
+
+    // The completion list's audition (↑ / ↓ over a voice or sample): Browse's
+    // preview, on the def read from wherever the name lives — a preset set, an
+    // imported file, or the score itself.
+    async function auditionName(d) {
+      let set;
+      try {
+        if (d.set) set = await loadBrowseSet(d.set);
+        else if (d.path) set = browseSetFromText(d.path, _importSources.get(d.path) ?? '');
+        else set = browseSetFromText(null, editorView.state.doc.toString());
+      } catch { return; }
+      const def = set.defs.find((x) => x.name === d.name);
+      // A score's own sample resolves its :file against the score's folder,
+      // which the preview's stand-in score does not have.
+      if (!def || (def.kind === 'pcm' && !set.path)) return;
+      if (def.kind === 'pcm' && _fmLiveRaf != null) {
+        log('Stop playback to audition a sample \u2014 its preview reloads the PCM bank.', 'info');
+        return;
+      }
+      previewBrowseDef(set, def);
     }
 
     // Cancel whatever the panel has in flight. The FM run is a JS timer; the
