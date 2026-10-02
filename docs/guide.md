@@ -1100,6 +1100,17 @@ open there, innermost first. Reformatting (**Edit ▸ Format Source**,
 `Cmd/Ctrl+Shift+F`) is the fastest way to see whether the structure is really
 what you meant.
 
+### On a phone or tablet
+
+While the on-screen keyboard is up, a row of the symbols a score is written
+in sits just above it — `( ) : @ " - _ . [ ] < > + ~ # * $ / ; |`, the most
+used first. Tap one to type it; on a narrow screen, swipe the row sideways for
+the rest. A key types exactly as the keyboard would: `(`, `[` and `"` bring
+their closer, `)` steps over one already there, and `@` opens the voice list.
+The row is not shown with a hardware keyboard. iOS's Smart Punctuation is
+undone as you type — `“ ”` and `‘ ’` go back to `"` and `'`, and `—` back to
+`--`.
+
 ### Selecting by form
 
 `Alt+↑` grows the selection one step outward — the contents of the form the
