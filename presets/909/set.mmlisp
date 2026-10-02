@@ -1,0 +1,17 @@
+; TR-909 drum kit: role names, one sample each. See README.md for
+; provenance and licence. Kits share one vocabulary, so swapping this
+; import for another kit's swaps the sounds under the same names.
+
+(def-pcm kick2 :file "wav/035-acoustic-bass-drum.wav")
+(def-pcm kick :file "wav/036-bass-drum-1.wav")
+(def-pcm rim :file "wav/037-side-stick.wav")
+(def-pcm snare :file "wav/038-acoustic-snare.wav")
+(def-pcm clap :file "wav/039-hand-clap.wav")
+(def-pcm snare2 :file "wav/040-electric-snare.wav")
+(def-pcm hat :file "wav/042-closed-hi-hat.wav")
+(def-pcm tom3 :file "wav/045-low-tom.wav")
+(def-pcm hat-open :file "wav/046-open-hi-hat.wav")
+(def-pcm tom4 :file "wav/047-low-mid-tom.wav")
+(def-pcm crash :file "wav/049-crash-cymbal-1.wav")
+(def-pcm tom6 :file "wav/050-high-tom.wav")
+(def-pcm ride :file "wav/051-ride-cymbal-1.wav")

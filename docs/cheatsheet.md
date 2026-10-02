@@ -103,7 +103,7 @@ and a hold carry a note into the next.
 
 Naming a voice or sample in a track body switches to it. Preset sets:
 `presets/gm` (gm-piano … gm-gunshot), `presets/waveforms` (wave-sine,
-acid-saw, …), `presets/808` and `presets/gm-drums` (PCM kits).
+acid-saw, …), `presets/808`, `presets/909` and `presets/gm-drums` (PCM kits).
 
 ## Loops and flow (§13)
 

@@ -96,3 +96,16 @@ Licenses dialog links it.
 - Repository license: CC0-1.0, preserved in `presets/808/LICENSE-CC0.txt`.
 - Included: 22 GM-numbered WAVs, converted to 22,050 Hz / 16-bit mono with shortened, faded tails.
 - Conversion: channel mean, polyphase resampling, and faded tails.
+
+## TR-909 JGB samples
+
+- Source: https://freesound.org/people/altemark/packs/1643/ (TR-909 JGB pack).
+- Original recording: Janne G:son Berg, from his own TR-909; cut up and
+  published on Freesound by altemark.
+- License: CC BY 4.0, preserved in `presets/909/LICENSE-CC-BY-4.0.txt`.
+  Attribution is required when the samples are redistributed.
+- Included: 13 GM-numbered WAVs in `presets/909/`, converted to 22,050 Hz /
+  16-bit mono; the Freesound IDs of their sources are listed in
+  `presets/909/README.md`.
+- Conversion: 2:1 low-pass decimation, half-cosine-faded tails, and peak
+  normalization.
