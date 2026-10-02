@@ -618,6 +618,10 @@ export class IRPlayer {
     for (const [ti, psgCh] of this._psgTrackChannel) {
       if (!this._isTrackAudible(ti)) this._psgSetAtt(psgCh, 15, when);
     }
+    // PCM has no key: release an inaudible track's voice (its loop ends).
+    for (const [ti, voice] of this._pcmTrackChannel) {
+      if (!this._isTrackAudible(ti)) this._pcmEv(when, { kind: "off", voice });
+    }
     // CSM: Timer A keys CH3, so muting the CSM voice holds the timer instead.
     if (this._reg27 & 0x80) this._writeReg27(when);
   }
@@ -2021,7 +2025,16 @@ export class IRPlayer {
         // instead (below), where its real time is known.
         const deferOff = gateTicks > 0 && !slursIntoNext && abutsNext;
         let keyonEnd = null;
-        if (this._isTrackAudible(ev._trackIndex) && !isFmSilent) {
+        const keys = this._isTrackAudible(ev._trackIndex) && !isFmSilent;
+        // A note that keys nothing (muted / non-soloed track, or vol 0) keys
+        // the channel off instead: the previous note may have left its key-off
+        // to this one, and if it was queued before a mute or solo landed it
+        // would ring on forever.
+        if (!keys && !isFm3OpNote) {
+          this._pendingKeyOff[ch] = false;
+          if (!this._csmKeysCh3(chKey)) this._write(0, 0x28, chKey, when);
+        }
+        if (keys) {
           const hasEventMask = ev.args?.opMask !== undefined;
           let keyMask = this.getOpMask(ch);
           if (hasEventMask) {
@@ -2287,7 +2300,12 @@ export class IRPlayer {
     // A muted PCM track must not sound. PCM owns no FM/PSG channel, so there is
     // no key-off to suppress it after the fact (as _applyAudibility does for
     // those) — the note has to be dropped here, like FM/PSG NOTE_ON do.
-    if (!this._isTrackAudible(ev._trackIndex)) return;
+    // A voice started before a mute or solo landed is released here, where its
+    // next note would have replaced it; a loop would otherwise run on.
+    if (!this._isTrackAudible(ev._trackIndex)) {
+      this._pcmEv(when, { kind: "off", voice: ev._chIndex ?? 0 });
+      return;
+    }
     const sample = String(ev.args?.sample ?? "").trim();
     if (!sample) return;
     const velRaw = Number(ev.args?.vel ?? 15);
@@ -4285,7 +4303,15 @@ export class IRPlayer {
 
     switch (ev.cmd) {
       case "NOTE_ON": {
-        if (!this._isTrackAudible(ev._trackIndex)) break;
+        if (!this._isTrackAudible(ev._trackIndex)) {
+          // Silence the channel instead: the previous note's level (its tone
+          // past the gate when it runs into this one, or a release macro's
+          // tail) ends at this note-on, and if it was queued before a mute or
+          // solo landed it would drone on.
+          this._psgKeyedUntil[psgCh] = Math.min(this._psgKeyedUntil[psgCh], when);
+          this._psgSetAtt(psgCh, 15, when);
+          break;
+        }
 
         const isNoise = psgCh === 3;
         const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;

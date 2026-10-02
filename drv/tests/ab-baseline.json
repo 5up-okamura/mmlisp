@@ -73,9 +73,9 @@
   },
   "m3-dynval.mmlisp": {
     "ok": false,
-    "mismatches": 12,
+    "mismatches": 8,
     "compileErrors": 0,
-    "digest": "d830bfc6"
+    "digest": "c92bc635"
   },
   "m3-fm3op.mmlisp": {
     "ok": true,
@@ -469,9 +469,9 @@
   },
   "p3-claim-evict.mmlisp": {
     "ok": false,
-    "mismatches": 266,
+    "mismatches": 265,
     "compileErrors": 0,
-    "digest": "4998f488"
+    "digest": "62c87907"
   },
   "p3-claim-se-in-twin.mmlisp": {
     "ok": true,
@@ -481,9 +481,9 @@
   },
   "p3-claim-se-in.mmlisp": {
     "ok": false,
-    "mismatches": 266,
+    "mismatches": 265,
     "compileErrors": 0,
-    "digest": "4998f488"
+    "digest": "62c87907"
   },
   "p3-claim-se-out-twin.mmlisp": {
     "ok": true,
