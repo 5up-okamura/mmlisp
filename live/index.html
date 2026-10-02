@@ -1754,9 +1754,11 @@
     // bring in. A scan, not a parse — it runs on keystrokes — reading each
     // top-level (def …) head for the name and what kind of thing it is, and
     // the comment line just above it for the description (a preset set says
-    // what each voice is there: "GM 1 / MIDI 0: * GrandPiano").
+    // what each voice is there: "GM 1 / MIDI 0: * GrandPiano"). Given
+    // `imports`, the same pass collects the (import "…") paths written — so
+    // an edit in progress (unbalanced parens) does not hide them.
     const AC_DEF_RE = /^[ \t]*\((def-val|def-fm|def-pcm|def)[ \t]+(\()?([^\s()]+)[ \t]*([^\s()]*)(\()?/;
-    function scanDefNames(text, from) {
+    function scanDefNames(text, from, imports = null) {
       const out = [];
       let comment = '';
       for (const line of text.split('\n')) {
@@ -1778,6 +1780,8 @@
           comment = '';
           continue;
         }
+        const imp = imports && /^\s*\(import\s+"([^"]+)"/.exec(line);
+        if (imp) imports.add(imp[1]);
         const c = /^\s*;+\s?(.*)$/.exec(line);
         comment = c ? c[1].replace(/\*\s*/, '') : '';
       }
@@ -1800,10 +1804,10 @@
       const detail = d.kind + (d.from ? ` \u00b7 ${d.from}` : '');
       return { label, type: AC_DEF_TYPE[d.kind], detail, info: d.about || undefined, boost: d.from ? 0 : 1 };
     }
-    function scoreDefNames(state) {
+    function scoreDefNames(state, text = state.doc.toString(), imports = null) {
       const seen = new Set();
       const out = [];
-      for (const d of [...scanDefNames(state.doc.toString(), ''), ...importedDefNames()]) {
+      for (const d of [...scanDefNames(text, '', imports), ...importedDefNames()]) {
         if (seen.has(d.name)) continue; // a local def overrides an imported one
         seen.add(d.name);
         out.push(d);
@@ -1837,13 +1841,6 @@
     }
     function withPresetNames(fn) {
       return _acPresetDefs ? fn() : loadPresetDefNames().then(fn);
-    }
-
-    // The (import "…") paths the score writes. A scan, so an edit in progress
-    // (unbalanced parens) does not hide them, and an import typed since the
-    // last Build already counts.
-    function docImportSpecs(text) {
-      return new Set([...text.matchAll(/\(import\s+"([^"]+)"/g)].map((m) => m[1]));
     }
 
     // What kind of name the track at `pos` takes: an fm… track plays voices, a
@@ -1880,10 +1877,10 @@
         : d.kind === 'sample' ? track !== 'voice' && track !== 'psg'
         : d.kind !== 'val' && d.kind !== 'fn';
       const own = track === 'psg' ? 'macro' : track;
-      const imported = docImportSpecs(text);
+      const imported = new Set();
       const seen = new Set();
       const out = [];
-      for (const d of [...scoreDefNames(state), ..._acPresetDefs]) {
+      for (const d of [...scoreDefNames(state, text, imported), ..._acPresetDefs]) {
         if (seen.has(d.name)) continue;
         seen.add(d.name);
         const set = d.set ?? (_browseSetCache.has(d.path) ? d.path : null);
@@ -1924,7 +1921,8 @@
     // A name from a set the score does not import yet brings the set's
     // (import …) to the top with it, in one transaction — one undo takes both.
     function applyWithImport(view, completion, from, to, path) {
-      const add = docImportSpecs(view.state.doc.toString()).has(path) ? '' : `(import "${path}")\n`;
+      const line = `(import "${path}")`;
+      const add = view.state.doc.toString().includes(line) ? '' : line + '\n';
       view.dispatch({
         changes: [...(add ? [{ from: 0, insert: add }] : []), { from, to, insert: completion.label }],
         selection: { anchor: from + add.length + completion.label.length },
