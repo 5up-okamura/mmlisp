@@ -338,17 +338,10 @@ static uint16_t sweep_step(int len, int loop) {
 /* ── Level model (driver.md §7) ────────────────────────────────────────────
  * Offsets are stored in quarter steps and summed before a single rounding, so
  * the runtime stays integer-only while landing inside the documented band. */
-/* The composed offset in whole TL steps: the same for every carrier of a
- * channel, so a channel composes it once (recompose_carriers). */
-MML_HOT int carrier_off(const MMLSeq *s, uint8_t vel, uint8_t vol) {
-  int off4 = MML_VEL_TL4[vel] + MML_VOL_TL4[vol] + MML_VOL_TL4[s->master];
-  return (off4 + (off4 >= 0 ? 2 : -2)) >> 2;
-}
-MML_HOT uint8_t carrier_tl_off(uint8_t voiced_tl, int off) {
-  return (uint8_t)clampi(voiced_tl + off, 0, 127);
-}
 MML_HOT uint8_t carrier_tl(const MMLSeq *s, uint8_t voiced_tl, uint8_t vel, uint8_t vol) {
-  return carrier_tl_off(voiced_tl, carrier_off(s, vel, vol));
+  int off4 = MML_VEL_TL4[vel] + MML_VOL_TL4[vol] + MML_VOL_TL4[s->master];
+  int tl = voiced_tl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+  return (uint8_t)clampi(tl, 0, 127);
 }
 MML_HOT uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
   if (vol == 0 || s->master == 0) return 15; /* hard mute (language.md §6) */
@@ -631,10 +624,9 @@ static void recompose_carriers(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   uint8_t mask = MML_CARRIER_MASK[c->algorithm & 7];
-  const int lvl = carrier_off(s, c->vel, c->vol);
-  for (int op = 0; op < 4; op++, mask >>= 1) {
-    if (!(mask & 1)) continue;
-    uint8_t tl = carrier_tl_off(c->ops[op].voiced_tl, lvl);
+  for (int op = 0; op < 4; op++) {
+    if (!(mask & (1 << op))) continue;
+    uint8_t tl = carrier_tl(s, c->ops[op].voiced_tl, c->vel, c->vol);
     c->ops[op].tl = tl;
     ym(s, port, (uint8_t)(0x40 + MML_OP_ADDR_OFFSET[op] + off), tl);
   }
@@ -1338,8 +1330,9 @@ static int step_macro(MMLSeq *s, int ch, int mc, MMLMacroSlot *sl, int keyed) {
 
 /* One channel's running slots, one step. Split out of process_macros because a
  * note-on past sub-tick 0 has to step its own channel on the spot (§3.5). */
-/* `mc` is macro_ch(ch), which the frame's walk already has. */
-static void step_channel_macros_mc(MMLSeq *s, int ch, int mc) {
+static void step_channel_macros(MMLSeq *s, int ch) {
+  int mc = macro_ch(ch);
+  if (mc < 0) return;
   int n = s->macro_slot_count[mc];
   if (!n) return;
   int keyed = channel_keyed(s, ch);
@@ -1388,20 +1381,11 @@ static void step_channel_macros_mc(MMLSeq *s, int ch, int mc) {
   s->macro_slot_count[mc] = (uint8_t)w;
 }
 
-static void step_channel_macros(MMLSeq *s, int ch) {
-  int mc = macro_ch(ch);
-  if (mc >= 0) step_channel_macros_mc(s, ch, mc);
-}
-
 static void process_macros(MMLSeq *s) {
-  /* The count is tested here, not only inside: the call's own entry and exit
-   * cost the 68000 more than an empty channel's whole step. `bit` walks with
-   * `live`: a `1u << mc` is a variable 32-bit shift on the 68000. */
-  uint32_t bit = 1;
-  for (uint32_t live = s->macro_live, mc = 0; live; live >>= 1, bit <<= 1, mc++) {
+  for (uint32_t live = s->macro_live, mc = 0; live; live >>= 1, mc++) {
     if (!(live & 1)) continue;
-    if (s->macro_slot_count[mc]) step_channel_macros_mc(s, macro_ch_id((int)mc), (int)mc);
-    if (!s->macro_slot_count[mc]) s->macro_live &= ~bit;
+    if (s->macro_slot_count[mc]) step_channel_macros(s, macro_ch_id((int)mc));
+    if (!s->macro_slot_count[mc]) s->macro_live &= ~(1u << mc);
   }
 }
 
