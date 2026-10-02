@@ -105,6 +105,10 @@ const PLAYHEAD_SKIP_CMDS = new Set([
   "LOOP_END",
   "TEMPO_SET",
   "TEMPO_SWEEP",
+  // Implicit: CSM_ON rides the first note, and CSM_OFF closes the track with
+  // the whole track form as its src — highlighting it boxes the entire track.
+  "CSM_ON",
+  "CSM_OFF",
 ]);
 // Integer GCD/LCM, used to size the VGM loop window to the common period of
 // independently-looping tracks. Guards against zero/garbage durations.
