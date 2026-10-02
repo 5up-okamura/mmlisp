@@ -8,10 +8,7 @@ is only what the docs do not say.
 
 **An item is deleted from here as soon as it is fixed** and the repo carries
 both the outcome and the reason — a second copy of a settled thing can only
-rot. Six went that way on 2026-09-22 (fm3-N per-operator levels, `:tl` as a
-voiced level, abutting fm3-N notes, the `:keyon` leading step, `:gate 0`, the
-macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
-`docs/language.md` §10 / §17 and `docs/mmb.md` §15, each with its gate.
+rot.
 
 ## 1. Needs the user's decision (the driver sounds different from the editor)
 
@@ -43,34 +40,25 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
    microseconds at the wrong pitch — but the orders differ. Decide whether
    the sequencer should run a note's frame-0 macros before its key-on.
 
-## 1b. Irregular rules, from the 2026-09-26 audit — all landed or decided
+## 1b. Rulings from the 2026-09-26 syntax audit — do not re-propose
 
-The rule behind all of them: `:key value` is a sticky parameter, `(form …)`
-an event or control, `#name` a position; an operator suffix combines with the
-target's base (§7.0). The judgment-free half of that audit has landed (IR
-`TRIG`, head = `:prio` only, one value reader, wrong-channel errors,
-`E_PRIO_LAYER_LOOP`, the formatter's glued-keyword repair), and so have the
-first rulings: `#sus` / `#rel`, curve `:mode loop|shot`, one meaning per
-definition head (`def` = snippet only — a named macro is a snippet too;
-`def-fm` / `def-pcm` / `def-val` = named data, a leading base name
-replacing `:extend`), sample binding by name. **Decided:** no CALL/RET in the
-language — naming is a source convenience, sharing is the encoder's job
-(MACRO_TABLE / VOICE_TABLE dedup, the CALL/RET pass). **Decided, do not re-propose:** counted
-`(go label N)` stays — flat, cross-form counted loops are wanted beyond the
-mucom import; its post-merge rewrite is the feature's own cost.
+Every item of that audit has landed (the results are in `docs/language.md`)
+or was decided against changing. The rule behind it: `:key value` is a sticky
+parameter, `(form …)` an event or control, `#name` a position; an operator
+suffix combines with the target's base (§7.0). Kept as they are, by ruling:
 
-**Decided 2026-09-26, do not re-propose:** holds keep both `:len 0` (the
-track waits for the host) and `:gate 0` (it does not) — two features; the
-short relative forms `>` `<` `o±N` `v±N` stay (no free symbol pair for
-velocity); `:wait` (a curve's own start delay) and `(wait …)` (a stage) are
-different uses and both stay; `:csm-rate` and the `fm3-csm-rate` track differ in
-use and range and both stay; `(glide …)` stays a form (two arities); gate is
-§7.0's documented exception. Landed: `:oct*` and def-val `:min/:max` gone,
-written lengths swing, an omitted `:from` = the current value (inline sweeps;
-`E_CURVE_FROM` elsewhere), one macro-vector grammar (numbers and stages mix,
-`const` gone), echo/delay as `[N] :vel+|:vel* V` (V the per-tap change: a
-number, a tap vector or a curve), compiler loop ids `(x N)` that no `#name`
-can spell. Every item of this audit is now either landed or decided.
+- **No CALL/RET in the language** — naming is a source convenience, sharing is
+  the encoder's job (MACRO_TABLE / VOICE_TABLE dedup, the CALL/RET pass).
+- **Counted `(go label N)` stays** — flat, cross-form counted loops are wanted
+  beyond the mucom import; its post-merge rewrite is the feature's own cost.
+- **Holds keep both `:len 0`** (the track waits for the host) **and `:gate 0`**
+  (it does not) — two features.
+- **The short relative forms `>` `<` `o±N` `v±N` stay** (no free symbol pair
+  for velocity).
+- **`:wait` and `(wait …)` both stay** (a curve's own start delay vs a stage);
+  so do **`:csm-rate` and the `fm3-csm-rate` track** (different use and range).
+- **`(glide …)` stays a form** (two arities); gate is §7.0's documented
+  exception.
 
 ## 2. Judgment-free but larger
 

@@ -5,14 +5,10 @@ measurements that cost real work, and the user's rulings. **The design itself is
 `docs/driver.md`** — if a fact about the present is in both places, that one
 wins and this one is wrong.
 
-Merged 2026-09-22 from five files that had drifted (`z80-driver-status`,
-`plan-68k-split`, `plan-dac-stream`, `plan-subtick-timing`,
-`plan-driver-features`), each of which carried a "LANDED"/"SHIPPED" banner for a
-build that no longer exists. **Every byte budget, overlay table, `npm run size` /
-`budget` / `mixer` / `ring` / `baseline` figure and every `.z80` line reference
-in them described the all-Z80 build and is gone.** That build is tag
-`archive/all-z80`, the ring engine `archive/ring-engine`, the DAC research bench
-`archive/dac-stream-bench`.
+**A byte budget, overlay table, `npm run size` / `budget` / `mixer` / `ring`
+figure or `.z80` line reference from before 2026-09 describes the all-Z80
+build** (tag `archive/all-z80`; the ring engine is `archive/ring-engine`, the
+DAC bench `archive/dac-stream-bench`), not the shipped driver.
 
 Open work is `docs/roadmap.md` Phase 3 and `docs/driver.md` §11 — not here.
 

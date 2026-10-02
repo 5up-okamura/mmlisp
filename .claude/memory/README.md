@@ -29,14 +29,14 @@ Rules:
   `drv-player.js`; read this for why, not what.
 - [plan-multi-score.md](plan-multi-score.md) — **several songs: the shared
   sample bank is built (`bundle.mjs`); two scores RESIDENT at once is not.**
-  The channel budget that makes a score one song, the decisions inside the
-  bundle, and what moving the per-score state off the sequencer would cost.
+  What moving the per-score state off the sequencer would cost, and the
+  decisions inside the bundle.
 - [plan-pcm-spec.md](plan-pcm-spec.md) — **PCM: the user's decisions behind the
   shipped light engine, with their reasons, and what is still open.** Read
   before touching PCM in any layer.
 - [language-open.md](language-open.md) — **the language and IR: what is open.**
-  The seven questions that need the user's decision (the 2026-09-26
-  syntax audit is all landed or decided), the preview-vs-driver residue, and
+  The eight questions that need the user's decision, the 2026-09-26 syntax
+  audit's do-not-re-propose rulings, the preview-vs-driver residue, and
   why compile-time eval and the value machine have their shape, with the
   risks that are still live.
 - [plan-68k-optimization.md](plan-68k-optimization.md) — **cutting the
@@ -55,9 +55,11 @@ Rules:
 - [plan-voice-picker.md](plan-voice-picker.md) — **the editor's voice
   picker — shipped 2026-10-03** (guide §22 has the behaviour): why it is the
   completion list and not a panel, why every preset set, and what is open
-  (PSG envelopes, auditioning a score's own samples).
+  (auditioning a score's own samples), and why PSG envelopes are macros, not
+  a new def head.
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
-  Lisp input aids: the implementation deviations and their reasons (why no
-  `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the
-  Edit menu's measurement, and the standing decisions — never auto-repair
-  brackets, no full paredit, no rainbow parens.
+  input aids (all landed, guide §24 has the behaviour): why no
+  `@codemirror/lint` and the layer-only rule, which shortcuts Chrome steals,
+  Alt-click vs the value scrub, why the Edit menu, the touch symbol bar, and
+  the standing decisions — never auto-repair brackets, no full paredit, no
+  rainbow parens.

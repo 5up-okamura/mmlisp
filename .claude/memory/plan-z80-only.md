@@ -33,11 +33,9 @@ decisions so far and the measurements taken for them.
 ## Why (the user, 2026-09-28)
 
 The game side wants the whole 68000: heavy raster effects, 3D and coordinate
-math. The shipped split costs the 68000 **~28% of every frame on average and
-~116% in the worst render** on a six-channel song (`drv/sgdk/README.md`,
-`sgdk:profile`). That is the number that makes the question real. It has not
-been re-measured on the user's heavier scores (needs SGDK + probe BlastEm,
-not available in the cloud container).
+math. The split cost the 68000 **~28% of every frame on average and ~116% in
+the worst render** on a six-channel song when this was asked; the 68000 pass
+that followed brought sin008 to 16.3% ([[plan-68k-optimization]]).
 
 ## Decided
 
