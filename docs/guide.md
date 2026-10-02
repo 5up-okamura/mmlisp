@@ -1052,7 +1052,9 @@ the score's folder with its name filled in, until it is written (also
 drums arrives with its `fm6` lines commented out — on the Mega Drive fm6 is
 the DAC the drums play through; move them to a free channel to hear them.
 Drums that do not fit the 32 KB sample bank at full rate come with a
-`(def pcm-voices 2)` (or `3`) line, which bakes them at the lower rate.
+`(def pcm-voices 2)` (or `3`) line, which bakes them at the lower rate; a
+sample too big to fit even then is left out, its notes turned to rests, and
+the log names it.
 
 Several files at once are fine. Everything except opening a document appends at
 the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press

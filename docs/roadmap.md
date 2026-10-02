@@ -155,7 +155,9 @@ What the importer reproduces from the driver rather than approximates:
   or rest), a MMLisp shot plays to the end — so each sample's `:frames` is cut
   to the longest stretch the song plays of it. If the drums still overflow the
   32 KB bank at one voice's 14.4 kHz, the import sets `(def pcm-voices 2)` or
-  `3` for the lower rate they fit at (PCM-heavy songs may fit at none).
+  `3` for the lower rate they fit at. When none fits — a long melodic sample
+  baked once per pitch played, like THE SCHEME's guitar — the costliest sample
+  is dropped (its notes rest, with a warning) and the search starts over.
 
 Hardware limits, kept visible as warnings: SSG notes below A2 play an octave
 up (the PSG's floor); SSG levels under −30 dB hold at `:vel 1`; one noise

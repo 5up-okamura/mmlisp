@@ -13,7 +13,7 @@
 
 import { decodeMucomPcmBank } from "./mucom-pcm.js";
 import { encodeWav } from "./export-wav.js";
-import { VEL_DB_PER_STEP } from "./ir-utils.js";
+import { VEL_DB_PER_STEP, pitchToMidi } from "./ir-utils.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 import { encodeMmb } from "./export-mmb.js";
 
@@ -1272,7 +1272,7 @@ function renderOps(ops, ctx, out, depth = 0) {
     const op = ops[k];
     switch (op.t) {
       case "note":
-        if (mutedHere(ctx)) { ctx.pendingSlur = false; out.push(`_${op.len ?? ""}`); ctx.lastNote = { letter: op.letter, acc: op.acc }; break; }
+        if (mutedHere(ctx) || ctx.pcmMuted) { ctx.pendingSlur = false; out.push(`_${op.len ?? ""}`); ctx.lastNote = { letter: op.letter, acc: op.acc }; break; }
         noiseModeBeforeNote(ctx, out);
         envBeforeNote(ctx, out);
         lfoBeforeNote(ctx, out, op.letter, op.acc);
@@ -1295,7 +1295,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         ctx.keyShift = { ...(ctx.keyShift || { K: 0, k: 0 }), [op.which]: op.n };
         break;
       case "tie":
-        if (mutedHere(ctx)) { ctx.pendingSlur = false; out.push(`_${op.len ?? ""}`); break; }
+        if (mutedHere(ctx) || ctx.pcmMuted) { ctx.pendingSlur = false; out.push(`_${op.len ?? ""}`); break; }
         // mucom `^` ties to the SAME pitch as the previous note. MMLisp's `~`
         // is a connector to a note (X ~ Y); bare `~ <length>` is not valid, so
         // repeat the last note's pitch: `~ <pitch><len>` (same pitch = a tie).
@@ -1499,7 +1499,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.macroOps && ctx.macroOps.has(op.n)) {
           const m = scratchCtx(ctx);
           renderOps(ctx.macroOps.get(op.n), m, [], depth + 1);
-          for (const key of ["pcmSample", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "keyShift", "lastNote", "lfoPerPc", "lfoActive"]) ctx[key] = m[key];
+          for (const key of ["pcmSample", "pcmMuted", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "keyShift", "lastNote", "lfoPerPc", "lfoActive"]) ctx[key] = m[key];
         }
         // Reference a (def *n …); skip macros whose body had no supported content.
         if (ctx.usableMacros && ctx.usableMacros.has(op.n)) out.push(`*${op.n}`);
@@ -1514,9 +1514,13 @@ function renderOps(ops, ctx, out, depth = 0) {
         // is collected in pcmRegistry and spliced above the score.
         if (ctx.isPcm) {
           const entry = ctx.pcmEntries && ctx.pcmEntries.get(op.n);
-          if (entry) {
+          if (entry && ctx.pcmDrop?.has(entry.label)) {
+            ctx.pcmSample = null; // dropped to fit the bank (fitPcmBank): its notes rest
+            ctx.pcmMuted = true;
+          } else if (entry) {
             ctx.pcmRegistry.set(op.n, entry);
             ctx.pcmSample = op.n;
+            ctx.pcmMuted = false;
             out.push(entry.label);
           } else if (!ctx.warnedVoices.has(`pcm@${op.n}`)) {
             ctx.warnedVoices.add(`pcm@${op.n}`);
@@ -2072,7 +2076,7 @@ export function mucomToMmlisp(parsed) {
   const letterCtx = (key) => {
     const letter = key[0];
     if (!ctxByLetter.has(key)) {
-      ctxByLetter.set(key, { pcmUse, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
+      ctxByLetter.set(key, { pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
     return ctxByLetter.get(key);
   };
@@ -2309,26 +2313,32 @@ function mergeDatVoices(parsed, datVoices) {
  * K is dropped, since its `@n` would have no samples to name.
  */
 export function importMucom(bytes, datBytes = null, pcmBytes = null) {
-  const parsed = parseMucom(decodeMucText(bytes));
-  if (datBytes) mergeDatVoices(parsed, parseVoiceDat(datBytes));
-  if (pcmBytes) parsed.pcm = decodeMucomPcmForImport(parsed.meta.pcmFile, pcmBytes);
-  let out = mucomToMmlisp(parsed);
-  if (parsed.pcm) out = fitPcmBank(out, parsed.pcm);
+  const pcm = pcmBytes ? decodeMucomPcmForImport(parseMucom(decodeMucText(bytes)).meta.pcmFile, pcmBytes) : null;
+  // A fresh parse per render: rendering adds the noise copies to scoreItems.
+  const render = (pcmDrop) => {
+    const parsed = parseMucom(decodeMucText(bytes));
+    if (datBytes) mergeDatVoices(parsed, parseVoiceDat(datBytes));
+    if (pcm) Object.assign(parsed, { pcm, pcmDrop });
+    return mucomToMmlisp(parsed);
+  };
+  const out = pcm ? fitPcmBank(render, pcm) : render(null);
   // `pcm` rides along so the caller can save `wav` as `wavFile` beside the score
   // (what the emitted defs reference) and play `mono` before it exists on disk.
-  return parsed.pcm ? { ...out, pcm: parsed.pcm } : out;
+  return pcm ? { ...out, pcm } : out;
 }
 
-// The drums the score plays bake into one 32 KB bank (encodeMmb), at the rate
-// of the engine image the voice count picks: 14.4 kHz for one voice, 10.1 for
-// two, 6.7 for three. A mucom bank holds more than one voice's worth at
-// 14.4 kHz more often than not, and an over-full bank does not play at all,
-// so the import bakes it here and takes the first voice count it fits in —
-// trading rate for every drum sounding. Said in a warning and a comment.
-function fitPcmBank(out, pcm) {
-  const fits = (source) => {
+// The samples the score plays bake into one 32 KB bank (encodeMmb), one blob
+// per sample and pitch, at the rate of the engine image the voice count
+// picks: 14.4 kHz for one voice, 10.1 for two, 6.7 for three. An over-full
+// bank does not play at all, so the import bakes it here and takes the first
+// voice count it fits in — trading rate for every drum sounding. When none
+// fits — a long melodic sample played at several pitches, say — the sample
+// costing the most bytes is dropped (its notes become rests) and the count
+// search starts over. Said in warnings and a comment.
+function fitPcmBank(render, pcm) {
+  const bake = (source) => {
     const { ir, diagnostics } = compileMMLisp(source, "import.mmlisp", { imports: new Map(), frameHz: 60 });
-    if (diagnostics.some((d) => d.severity === "error")) return true; // not ours to judge here
+    if (diagnostics.some((d) => d.severity === "error")) return { ok: true }; // not ours to judge here
     const samples = {};
     for (const def of ir.metadata?.samples ?? []) {
       const at = def.offset ?? 0;
@@ -2336,22 +2346,52 @@ function fitPcmBank(out, pcm) {
     }
     try {
       encodeMmb(ir, { samples });
-      return true;
+      return { ok: true };
     } catch (e) {
-      if (e instanceof RangeError) return false;
-      throw e;
+      if (!(e instanceof RangeError)) throw e;
+      return { ok: false, ir };
     }
   };
-  if (fits(out.source)) return out;
-  for (const n of [2, 3]) {
-    const source = `; The drums fit the 32 KB sample bank at ${n} PCM voices' rate, not at 1's.\n(def pcm-voices ${n})\n\n${out.source}`;
-    if (fits(source)) {
-      out.warnings.push(`PCM: the drums exceed the 32 KB bank at 14.4 kHz; set (def pcm-voices ${n}) to bake them at the lower rate`);
-      return { ...out, source };
+  // Bytes a def bakes to: its frames per distinct pitch played, resampled.
+  const costliest = (ir) => {
+    const pitches = new Map();
+    for (const t of ir.tracks ?? []) for (const e of t.events ?? []) {
+      if (e.cmd !== "PCM_NOTE_ON") continue;
+      if (!pitches.has(e.args.sample)) pitches.set(e.args.sample, new Set());
+      pitches.get(e.args.sample).add(e.args.pitch);
     }
+    let worst = null;
+    for (const def of ir.metadata?.samples ?? []) {
+      const ps = pitches.get(def.name);
+      if (!ps) continue;
+      let bytes = 0;
+      for (const p of ps) bytes += (def.frames ?? 0) / 2 ** ((pitchToMidi(p) - 60) / 12);
+      if (!worst || bytes > worst.bytes) worst = { name: def.name, bytes };
+    }
+    return worst?.name;
+  };
+  const drop = new Set(); // sample labels
+  for (;;) {
+    const out = render(drop);
+    let last = null;
+    for (const n of [1, 2, 3]) {
+      const source = n === 1 ? out.source
+        : `; The PCM fits the 32 KB sample bank at ${n} PCM voices' rate, not at 1's.\n(def pcm-voices ${n})\n\n${out.source}`;
+      const r = bake(source);
+      if (r.ok) {
+        if (n > 1) out.warnings.push(`PCM: the samples exceed the 32 KB bank at 14.4 kHz; set (def pcm-voices ${n}) to bake them at the lower rate`);
+        if (drop.size) out.warnings.push(`PCM: ${[...drop].join(", ")} would not fit the 32 KB bank (one copy per pitch played); dropped — their notes are rests`);
+        return { ...out, source };
+      }
+      last = r.ir;
+    }
+    const worst = last && costliest(last);
+    if (!worst || drop.has(worst)) {
+      out.warnings.push("PCM: the samples exceed the 32 KB bank even at 3 voices' rate; shorten or drop samples (:frames)");
+      return out;
+    }
+    drop.add(worst);
   }
-  out.warnings.push("PCM: the drums exceed the 32 KB bank even at 3 voices' rate; shorten or drop samples (:frames)");
-  return out;
 }
 
 /**
