@@ -40,10 +40,10 @@ Rules:
   why compile-time eval and the value machine have their shape, with the
   risks that are still live.
 - [plan-68k-optimization.md](plan-68k-optimization.md) — **cutting the
-  68000's share: the issue list, the profiles, what landed and what was
-  undone for readability, the whole-pass result (sin008: 24.5% → 16.3%) —
-  CLOSED 2026-10-02**: the rest is the price of a live synth. Left for when
-  a game drops a frame: assembly for the hot paths only.
+  68000's share — CLOSED 2026-10-02**: the result (sin008: 24.5% → 16.3%),
+  what landed and what was undone for readability, the bugs found on the
+  way, how to measure, and what is left for when a game drops a frame
+  (assembly for the hot paths only).
 - [plan-z80-only.md](plan-z80-only.md) — **a Z80-only build (roadmap Phase 3
   #6): the measurements (the archived sequencer with PCM off, the jitter
   listening set, poll overhead, the RAM budget) and the decisions taken
