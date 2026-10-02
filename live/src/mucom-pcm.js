@@ -21,11 +21,15 @@ const DIR_ENTRY_SIZE = 32;
 const BODY_START = 0x400;
 
 /**
- * mucom resamples every source wav to 16 kHz when it converts to ADPCM, and
- * the decoded bank stays at that rate: it is the samples' source, and the MMB
- * exporter bakes each note from it at the engine image's own rate.
+ * The rate the decoded bank is labelled with: the rate the driver plays it at
+ * on o1 c, which MMLisp's C4 (`:oct 4`) reproduces. mucom resamples every
+ * source wav to 16 kHz, but plays o1 c at Delta-N 0x49BA+200 (music.asm
+ * PCMNMB — the +200 is in the table, a deliberate few cents sharp), on an OPNA
+ * clocked at 7.9872 MHz / 144: 16143.6 Hz. Labelling the bank 16 kHz would
+ * play every drum 15 cents flat and 1% long. The MMB exporter bakes each note
+ * from it at the engine image's own rate.
  */
-export const MUCOM_ADPCM_RATE = 16000;
+export const MUCOM_ADPCM_RATE = 16144;
 
 /** YM2608 ADPCM-B step-size table, indexed by the nibble magnitude (0-7). */
 const STEP_TABLE = [57, 57, 57, 57, 77, 102, 128, 153];
@@ -51,8 +55,12 @@ export function parseMucomPcmBank(bytes) {
     if (o + DIR_ENTRY_SIZE > bytes.length) break;
     if (bytes[o] === 0) continue; // empty slot
 
+    // Shift-JIS single bytes: ASCII, or half-width katakana (0xA1-0xDF).
     let name = "";
-    for (let k = 0; k < 16; k++) name += String.fromCharCode(bytes[o + k]);
+    for (let k = 0; k < 16; k++) {
+      const b = bytes[o + k];
+      name += b >= 0xa1 && b <= 0xdf ? String.fromCharCode(0xff61 + b - 0xa1) : String.fromCharCode(b);
+    }
     name = name.replace(/[\0\x20]+$/, ""); // padded with NUL or spaces
 
     const defaultVol = dv.getUint16(o + 0x1a, true); // pcmopt

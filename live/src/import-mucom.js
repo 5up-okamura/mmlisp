@@ -14,6 +14,8 @@
 import { decodeMucomPcmBank } from "./mucom-pcm.js";
 import { encodeWav } from "./export-wav.js";
 import { VEL_DB_PER_STEP } from "./ir-utils.js";
+import { compileMMLisp } from "./mmlisp2ir.js";
+import { encodeMmb } from "./export-mmb.js";
 
 const PPQN = 96; // must match mmlisp2ir.js
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
@@ -26,22 +28,54 @@ const SSG_PARTS = { D: "sqr1", E: "sqr2", F: "sqr3" };
 // Only routed when that bank was supplied — otherwise K is dropped (see below).
 const PCM_PARTS = { K: "pcm1" };
 
-// mucom `D` detune is an F-Number offset, not cents — its pitch shift in cents
-// is note-dependent. We approximate with a single representative factor per chip
-// from the empirical "units per semitone" (≈49 FM, ≈160 PSG): cents = D*100/units.
-// See https://est.ceres.ne.jp/2021/09/04/mucom88-detune/
-const FM_CENTS_PER_DETUNE = 100 / 49;
-const PSG_CENTS_PER_DETUNE = 100 / 160;
-// The software LFO (`M`) depth is calibrated on its own, NOT reused from the `D`
-// detune factors above. mucom's SSG LFO right-shifts its pitch offset by
-// (octave-1) before adding it to the tone period; that shift cancels the
-// period->cents nonlinearity, so the vibrato width stays roughly constant in
-// cents across octaves — a single cents-per-unit factor is structurally right,
-// and only the magnitude was wrong. The old code reused PSG_CENTS_PER_DETUNE
-// (0.625, a detune-specific value) and rendered the vibrato several times too
-// wide. Tuned by ear against a real mucom render (Koshiro arg006, an o4 part
-// with `M…,30,4` -> ~30 cents peak). One knob: raise/lower to taste.
-const SSG_LFO_CENTS_PER_UNIT = 30 / (30 * 4); // 0.25
+// mucom `D` detune is an offset on the same pitch word the software LFO moves
+// (F-number at the note's block on FM, the o1 period on SSG — negated there by
+// the compiler), so its size in cents depends on the note: D150 is 2.1
+// semitones on b but 4 on c. It goes through lfoCents like the LFO does.
+// Below this spread across the pitch classes one `:pitch` serves every note;
+// above it the part re-states `:pitch` per pitch class.
+const DETUNE_SPREAD_CENTS = 10;
+// The software LFO (`M`) is modelled from the driver itself (music.asm
+// PLLFO), not with a cents-per-unit factor: it adds a vector to the channel's
+// raw pitch word every few clocks, so its depth in cents depends on the note
+// and is far from linear once it is large — Koshiro uses `M1,1,-9,250` as a
+// long pitch dive, which a cents triangle turns into a ±46-semitone wobble.
+// The pitch words of one octave, per pitch class c..b (FM F-number at the
+// note's block; SSG tone period at o1, before the driver's octave shift).
+const FM_FNUM = [0x26a, 0x28f, 0x2b6, 0x2df, 0x30b, 0x339, 0x36a, 0x39e, 0x3d5, 0x410, 0x44e, 0x48f];
+const SSG_PERIOD = [0xee8, 0xe12, 0xd48, 0xc89, 0xbd5, 0xb2b, 0xa8a, 0x9f3, 0x964, 0x8dd, 0x85e, 0x7e6];
+// An LFO whose wave repeats within this many clocks is a vibrato: a looping
+// triangle. A slower one is a sweep (a dive, a rise), drawn as its exact curve
+// for as long as a note can plausibly last.
+const LFO_VIBRATO_MAX_PERIOD = 96;
+// A vibrato's depth differs per pitch class (the word moves the same, the
+// pitch does not); past this spread each pitch class gets its own triangle.
+const LFO_DEPTH_SPREAD_CENTS = 12;
+const LFO_SWEEP_MAX_CLOCKS = 1536; // how far a sweep curve is drawn
+const LFO_SWEEP_TOLERANCE = 4; // cents, piecewise-linear fit of the curve
+// The compiler's SSG presets, `@0`-`@15` on D-F (ssgdat.asm): the soft
+// envelope (E), the mix (as P: 1 tone, 2 noise) and an optional software LFO
+// as MML M delay,clock,vector,peak. The table stores the raw driver vector,
+// which the M command would have negated for SSG, so it is negated here.
+const SSG_PRESETS = [
+  { env: [255, 255, 255, 255, 0, 255], mix: 1 }, // normal
+  { env: [255, 255, 255, 200, 0, 10], mix: 1 },
+  { env: [255, 255, 255, 200, 1, 10], mix: 1 },
+  { env: [255, 255, 255, 190, 0, 10], mix: 1, lfo: [16, 1, -25, 4] },
+  { env: [255, 255, 255, 190, 1, 10], mix: 1, lfo: [16, 1, -25, 4] },
+  { env: [255, 255, 255, 170, 0, 10], mix: 1 },
+  { env: [40, 70, 14, 190, 0, 15], mix: 1, lfo: [16, 1, -24, 5] }, // Sega type
+  { env: [120, 30, 255, 255, 0, 10], mix: 1, lfo: [16, 1, -25, 4] }, // strings
+  { env: [255, 255, 255, 225, 8, 15], mix: 1 }, // piano / harp
+  { env: [255, 255, 255, 1, 255, 255], mix: 2 }, // closed hi-hat
+  { env: [255, 255, 255, 200, 8, 255], mix: 2 }, // open hi-hat
+  { env: [255, 255, 255, 220, 20, 8], mix: 1, lfo: [1, 1, -300, 255] }, // synth tom
+  { env: [255, 255, 255, 255, 0, 10], mix: 1, lfo: [1, 1, 400, 4] }, // UFO
+  { env: [255, 255, 255, 255, 0, 10], mix: 1, lfo: [1, 1, -80, 255] }, // falling
+  { env: [120, 80, 255, 255, 0, 255], mix: 1, lfo: [1, 1, 250, 1] }, // whistle
+  { env: [255, 255, 255, 220, 0, 255], mix: 1, lfo: [1, 1, -3000, 255] }, // bomb
+];
+
 // G is the OPNA's built-in rhythm generator: its sounds live in the chip's
 // rhythm ROM, not in the `#pcm` bank, so there is nothing to import them from.
 const DROP_PARTS = { G: "rhythm" };
@@ -142,33 +176,64 @@ function lengthClocks(num, dots, pct, wholeClocks) {
 // the note's current length by 1.5 per dot. lengthToken alone returns null when
 // num is absent, which silently dropped the dot (part ran short over the loop).
 function resolveLen(num, dots, pct, hasLen, state) {
-  if (!hasLen) return null;
+  if (!hasLen) return defaultLenToken(state);
   if (num == null && pct == null && dots > 0) {
     const def = state.defaultLen;
     if (!def) return null; // no l/% seen yet — emit bare (best effort, rare)
     // Plain fractional default: keep the readable `num.` form (e.g. l16 f. -> 16.).
-    if (def.num != null && !def.dots) return lengthToken(def.num, dots, null, state.wholeClocks);
+    if (def.num != null && !def.dots) {
+      const token = lengthToken(def.num, dots, null, state.wholeClocks);
+      return ditherClocks(lengthClocks(def.num, dots, null, state.wholeClocks), token, state);
+    }
     // Dotted or clock-set default: dot from its resolved clocks.
     let clocks = lengthClocks(def.num, def.dots, def.pct, state.wholeClocks);
     if (clocks == null) return null;
     let add = clocks;
     for (let d = 0; d < dots; d++) { add = Math.floor(add / 2); clocks += add; }
-    return lengthToken(null, 0, clocks, state.wholeClocks);
+    return ditherClocks(clocks, lengthToken(null, 0, clocks, state.wholeClocks), state);
   }
-  return lengthToken(num, dots, pct, state.wholeClocks);
+  return ditherClocks(lengthClocks(num, dots, pct, state.wholeClocks), lengthToken(num, dots, pct, state.wholeClocks), state);
+}
+
+// A clock count that is not a whole number of ticks (C112: a clock is 3.43
+// ticks) rounds on every note, and MMLisp keeps no remainder either, so a
+// part full of %1 or 32nds drifts from the others. Such a length is written
+// as Nt with the rounding carried note to note (state.tickErr), which keeps
+// the part's total exact — up to a tick per pass of a loop, which replays
+// its body's lengths.
+function ditherClocks(clocks, token, state) {
+  if (clocks == null) return token;
+  const exact = clocks * (WHOLE_TICKS / state.wholeClocks);
+  if (Number.isInteger(exact)) return token;
+  state.tickErr = state.tickErr ?? 0;
+  const ticks = Math.max(1, Math.round(exact + state.tickErr));
+  state.tickErr += exact - ticks;
+  return `${ticks}t`;
+}
+
+// A bare note plays the default length; when that is not a whole number of
+// ticks it is written out, dithered like any other (see ditherClocks).
+function defaultLenToken(state) {
+  const def = state.defaultLen;
+  if (!def) return null;
+  const clocks = lengthClocks(def.num, def.dots, def.pct, state.wholeClocks);
+  if (clocks == null || Number.isInteger(clocks * (WHOLE_TICKS / state.wholeClocks))) return null;
+  return ditherClocks(clocks, null, state);
 }
 
 // mucom `t` sets the OPNA Timer-B directly. The realtime tempo also depends on
 // the clock resolution C (note clocks per whole note), since note durations are
-// counted in those clocks. Derived from the driver itself (pc8801src muc88.asm):
-// SETTMP converts T(BPM)->Timer-B as Timer-B = 256 - 3.46*(60000/(T*C/4)), and
-// INIT sets the default C=128. Inverting: BPM = 830400 / ((256 - t) * C).
-// e.g. t202 -> 120 BPM at C128, but 80 BPM at C192.
+// counted in those clocks. One Timer-B unit is 1152 master cycles (7.9872 MHz,
+// prescaler 1/6 x 12 x 16) and the driver counts one clock every second
+// overflow, so a clock lasts (256 - t) * 2304 / 7987200 s and
+// BPM = 832000 / ((256 - t) * C) — t202 at C128 is 120.37 BPM, not a round 120
+// (muc88.asm SETTMP's 3.46 is the same constant, rounded). Kept to two
+// decimals: a rounded BPM drifts the song against the original by seconds.
 function timerBToBpm(t, wholeClocks) {
   t = Math.max(0, Math.min(255, t));
   const denom = (256 - t) * (wholeClocks || DEFAULT_WHOLE_CLOCKS);
   if (denom <= 0) return 120;
-  return Math.max(1, Math.round(830400 / denom));
+  return Math.max(1, Math.round((832000 / denom) * 100) / 100);
 }
 
 // --- MML body tokenizer -----------------------------------------------------
@@ -197,6 +262,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     stack[stack.length - 1].push(op);
   };
   const isSsg = partLetter in SSG_PARTS;
+  const partLetterIsPcm = partLetter in PCM_PARTS;
   // Loop-span state (absent for macro bodies, which are single-line -> all (x)).
   state.decisions = state.decisions || [];
   if (state.decisionIdx == null) state.decisionIdx = 0;
@@ -220,6 +286,16 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     else if (body[i] === "-") { sign = -1; i++; }
     const v = readInt();
     return v == null ? null : sign * v;
+  };
+  // A number in any form the driver's REDATA reads: decimal, $hex, negative.
+  const readNum = () => {
+    if (body[i] === "$") {
+      i++;
+      let h = "";
+      while (i < n && /[0-9a-fA-F]/.test(body[i])) h += body[i++];
+      return h ? parseInt(h, 16) : null;
+    }
+    return readSignedInt();
   };
   const readNumList = () => {
     const vals = [];
@@ -310,12 +386,35 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     // Whole-note clock resolution
     if (c === "C") { i++; const v = readInt(); if (v != null && v > 0) state.wholeClocks = v; continue; }
 
-    // Tempo: T<bpm> (collected globally); t<timer> deferred
-    if (c === "T") { i++; const v = readInt(); if (v != null) push({ t: "tempo", bpm: v }); continue; }
+    // Tempo: T<bpm> and t<timer>, both resolved to BPM once C is known
+    // `T<bpm>` is compiled into a Timer-B value (muc88.asm SETTMP: clock
+    // length 60000/(T*floor(C/4)) ms, rounded up, TB = 256 - 3.46*that), so it
+    // plays at that value's tempo, not at T itself.
+    if (c === "T") {
+      i++;
+      const v = readInt();
+      if (v != null && v > 0) {
+        const ms = Math.floor(60000 / (v * Math.floor(state.wholeClocks / 4))) + 1;
+        const timerB = 346 * ms >= 25600 ? 1 : Math.floor((25600 - 346 * ms) / 100);
+        const op = { t: "tempo", timerB, bpm: null };
+        push(op);
+        state.pendingTempos.push(op);
+      }
+      continue;
+    }
     if (c === "t") { i++; const v = readInt(); if (v != null) { const op = { t: "tempo", timerB: v, bpm: null }; push(op); state.pendingTempos.push(op); } continue; }
 
     // Volume: v<0-15>, ) raise, ( lower
-    if (c === "v") { i++; const v = readInt(); if (v != null) push({ t: "vel", v }); continue; }
+    // `v` is written plus the part's V offset (muc88.asm SETVOL; TOTALV). On K,
+    // `vm<n>` picks the ADPCM volume mode instead — nothing to carry over.
+    if (c === "v") {
+      i++;
+      if (body[i] === "m") { i++; readInt(); continue; }
+      const v = readInt();
+      if (v != null) push({ t: "vel", v: partLetterIsPcm ? v : v + (state.tvOfs ?? 0) });
+      continue;
+    }
+    if (c === "V") { i++; const v = readSignedInt(); if (v != null) state.tvOfs = v; continue; }
     if (c === ")") { i++; const v = readInt() ?? 1; push({ t: "velAdj", d: v }); continue; }
     if (c === "(") { i++; const v = readInt() ?? 1; push({ t: "velAdj", d: -v }); continue; }
 
@@ -335,13 +434,26 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
-    // Detune: D<n> absolute / D+<n> relative -> :pitch (value mapped 1:1)
+    // Detune: D<n> sets it, D<n>+ adds n to it (muc88.asm SETDT reads the
+    // number, then a trailing `+` marks it relative). Relative detune is a
+    // driver command, so inside a loop it accumulates on every pass.
     if (c === "D") {
       i++;
-      let rel = false, sign = 1;
+      if (body[i] === "+") i++; // `D+n` is not mucom syntax; read it as D n
+      const val = readSignedInt() ?? 0;
+      let rel = false;
       if (body[i] === "+") { rel = true; i++; }
-      else if (body[i] === "-") { sign = -1; i++; }
-      push({ t: "detune", val: sign * (readInt() ?? 0), rel });
+      push({ t: "detune", val, rel });
+      continue;
+    }
+
+    // Key shift: K<n> and k<n> each transpose the part by n semitones and the
+    // two add up (msub.asm KEYSIFT: SIFTDAT + SIFTDA2). The compiler applies it
+    // to every note it compiles, so it is compile-time state like the octave.
+    if (c === "K" || c === "k") {
+      i++;
+      const v = readSignedInt();
+      if (v != null) push({ t: "keyShift", which: c, n: v });
       continue;
     }
 
@@ -366,11 +478,25 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       }
       const v = readInt();
       if (v != null) {
-        if (isSsg) warnOnce(warn, "@ssg", "SSG voice/preset (@n on D-F) has no PSG equivalent; dropped");
-        else push({ t: "voice", n: v });
+        if (isSsg) {
+          // An SSG preset is three commands in one (muc88.asm STCL5): the
+          // envelope, the tone/noise mix, and for some a software LFO.
+          const pre = SSG_PRESETS[v & 15];
+          push({ t: "ssgEnv", al: pre.env[0], ar: pre.env[1], dr: pre.env[2], sl: pre.env[3], sr: pre.env[4], rr: pre.env[5], wholeClocks: state.wholeClocks });
+          push({ t: "mix", v: pre.mix });
+          if (pre.lfo) {
+            const [delay, clock, amp, amt] = pre.lfo;
+            Object.assign(state.lfo, { delay, clock, amp, amt, on: true });
+            push({ t: "lfoSet", lfo: { ...state.lfo }, wholeClocks: state.wholeClocks });
+          }
+        } else push({ t: "voice", n: v });
       }
       continue;
     }
+
+    // SSG mix P0-3 (off / tone / noise / both) and noise period w0-31.
+    if (c === "P" && isSsg) { i++; const v = readInt(); if (v != null) push({ t: "mix", v }); continue; }
+    if (c === "w" && isSsg) { i++; const v = readInt(); if (v != null) push({ t: "noiseFreq", n: v }); continue; }
 
     // Loops
     // Loop open. A single-line loop becomes a nested (x …) op; a loop that
@@ -422,7 +548,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else if (d === ".") { dots++; i++; hasLen = true; }
         else break;
       }
-      push({ t: "tie", len: hasLen ? lengthToken(num, dots, pct, state.wholeClocks) : null });
+      push({ t: "tie", len: resolveLen(num, dots, pct, hasLen, state) }); // `^.` dots the default length
       continue;
     }
     // Slur/tie `&`: connects the previous note to the next without a re-key.
@@ -466,8 +592,8 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else break;
       }
       const len = hasLen
-        ? lengthToken(num, dots, pct, state.wholeClocks)
-        : lengthToken(inNum, inDots, inPct, state.wholeClocks);
+        ? resolveLen(num, dots, pct, true, state)
+        : resolveLen(inNum, inDots, inPct, inNum != null || inDots > 0 || inPct != null, state);
       if (notes.length >= 2) push({ t: "porta", from: notes[0], to: notes[notes.length - 1], len });
       else if (notes.length === 1) push({ t: "note", letter: notes[0].letter, acc: notes[0].acc, len });
       continue;
@@ -523,19 +649,43 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
-    // Deferred / unsupported commands. Consume each command's FULL argument list
-    // so nothing leaks into note/length parsing (a leaked arg becomes a spurious
-    // note and drifts the channel). Arg shapes differ per command:
-    if ("RyKkSPwsV".includes(c)) {
+    // Reverb: R<n> sets the amount and turns it on, RF<0|1> switches it,
+    // Rm<n> picks a mode (muc88.asm SETRV).
+    if (c === "R") {
+      i++;
+      const sub = body[i] === "F" || body[i] === "m" ? body[i++] : null;
+      const v = readInt() ?? 0;
+      if (sub === "F") push({ t: "reverb", on: v !== 0 });
+      else if (sub == null) push({ t: "reverb", on: true, amt: v });
+      continue;
+    }
+    // Register write: yNN,op,value with NN one of DM TL KA DR SR SL SE (the
+    // operator's register in the channel), or y<reg>,<value> raw.
+    if (c === "y") {
+      i++;
+      let name = "";
+      while (i < n && /[A-Za-z]/.test(body[i])) name += body[i++];
+      if (body[i] === ",") i++;
+      const nums = [];
+      for (;;) {
+        const v = readNum();
+        if (v == null) break;
+        nums.push(v);
+        if (body[i] === ",") { i++; continue; }
+        break;
+      }
+      if (name && nums.length >= 2) push({ t: "opReg", name: name.toUpperCase(), op: nums[0], val: nums[1] });
+      else if (!name && nums.length >= 2) push({ t: "rawReg", reg: nums[0], val: nums[1] });
+      continue;
+    }
+
+    // Unsupported commands (S slot detune, s key-on revise; P/w outside SSG).
+    // Consume the FULL argument list so nothing leaks into note/length parsing
+    // (a leaked arg becomes a spurious note and drifts the channel).
+    if ("SPws".includes(c)) {
       i++;
       warnOnce(warn, c, `command '${c}' not supported; dropped`);
-      if (c === "y") {
-        // y<reg>,<n>,<n> — register may be a symbolic name (letters) or number
-        while (i < n && /[A-Za-z]/.test(body[i])) i++; // register name
-        while (i < n && /[0-9$+\-,.]/.test(body[i])) i++; // values
-      } else {
-        while (i < n && /[0-9$+\-,.]/.test(body[i])) i++;
-      }
+      while (i < n && /[0-9$+\-,.]/.test(body[i])) i++;
       continue;
     }
 
@@ -596,7 +746,7 @@ function scanLoopSpans(lines) {
     if (sc >= 0) body = body.slice(0, sc); // ignore brackets inside comments
     for (const letter of pm[1]) {
       if (letter in DROP_PARTS) continue;
-      if (!(letter in FM_PARTS) && !(letter in SSG_PARTS)) continue;
+      if (!(letter in FM_PARTS) && !(letter in SSG_PARTS) && !(letter in PCM_PARTS)) continue;
       let dec = decisions.get(letter);
       if (!dec) { dec = []; decisions.set(letter, dec); }
       let st = stacks.get(letter);
@@ -708,8 +858,23 @@ export function parseMucom(text) {
     const vm = trimmed.match(/^@(%?)(\d+)/);
     if (vm) {
       if (vm[1] === "%") {
-        warnOnce(warnings, "@%def", "register-dump voice defs (@%) not supported; dropped");
-        while (i < lines.length && /^[\s$0-9]/.test(lines[i]) && lines[i].trim() !== "") i++;
+        // @%n: the voice as the driver stores it, 6 rows of 4 register bytes
+        // (DT/ML, TL, KS/AR, AM/DR, SR, SL/RR in slot order 1,3,2,4) and FB/AL
+        // (expand.asm FV5) — a .dat record without its header and name.
+        const num = parseInt(vm[2], 10);
+        const name = (trimmed.match(/;\s*(\S+)/) || [])[1] || null;
+        let block = "";
+        while (i < lines.length && /^[\s$0-9]/.test(lines[i]) && lines[i].trim() !== "" && parseVoiceNumbers(block).length < 25) {
+          block += " " + lines[i].replace(/;.*$/, "");
+          i++;
+        }
+        const nums = parseVoiceNumbers(block);
+        if (nums.length >= 25) {
+          const rec = new Uint8Array(32);
+          nums.slice(0, 25).forEach((b, k) => { rec[k + 1] = b & 0xff; });
+          const v = parseVoiceDat(rec).get(0);
+          if (v) voices.set(num, { ...v, name, comments: pendingComments.splice(0) });
+        } else warnings.push(`voice @%${num}: expected 25 numbers, got ${nums.length}; skipped`);
         continue;
       }
       const num = parseInt(vm[2], 10);
@@ -818,47 +983,337 @@ function findFirstTempo(ops) {
 
 const ACC = (acc) => (acc > 0 ? "+" : acc < 0 ? "-" : "");
 
-// Emit `body` repeated `count` times as a compact (x N …). A `/` break in the
-// body becomes MMLisp `(break)` (final pass exits there). N==1 plays once (no
-// redundant `(x 1 …)`) — exiting at the break since it's the only/final pass.
-function emitLoop(out, count, body, ctx, depth) {
-  if (count <= 0) return;
-  if (count === 1) {
-    const bi = body.findIndex((o) => o.t === "loopBreak");
-    renderOps(bi >= 0 ? body.slice(0, bi) : body, ctx, out, depth);
-    return;
+// A note under the part's key shift (K/k). Untransposed it is written as the
+// author wrote it; transposed it is respelled with sharps, and a shift that
+// crosses an octave wraps the note in `>`/`<` so the running octave is left
+// untouched (the compiler shifts the note, never the octave).
+const SEMI = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
+const SHARP_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
+function shiftedNote(letter, acc, shift) {
+  if (!shift) return { name: `${letter}${ACC(acc)}`, dOct: 0 };
+  const n = SEMI[letter] + acc + shift;
+  const pc = ((n % 12) + 12) % 12;
+  return { name: SHARP_NAMES[pc], dOct: Math.floor(n / 12) }; // relative to this octave's c
+}
+// The SN76489's 10-bit period bottoms out at A2 (~109 Hz); the SSG goes down
+// to C1. A lower SSG note is played an octave (or two) up rather than pinned
+// to the PSG's floor, which would be a wrong pitch.
+const PSG_LOWEST_MIDI = 45;
+
+function noteToken(letter, acc, len, ctx) {
+  const shift = ctx.isPcm ? 0 : (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
+  let { name, dOct } = shiftedNote(letter, acc, shift);
+  if (ctx.isSsg && !ctx.isNoise) {
+    const midi = 12 * (ctx.oct + 1) + SEMI[letter] + acc + shift;
+    if (midi < PSG_LOWEST_MIDI) {
+      dOct += Math.ceil((PSG_LOWEST_MIDI - midi) / 12);
+      warnOnce(ctx.warnings, "psgLow", "SSG notes below A2 are out of the PSG's range; played an octave up");
+    }
   }
-  const inner = [];
-  renderOps(body, ctx, inner, depth + 1);
-  if (inner.length) out.push(`(x ${count} ${inner.join(" ")})`);
+  const rep = (ch, k) => Array(k).fill(ch).join(" ");
+  const up = dOct > 0 ? rep(">", dOct) : rep("<", -dOct);
+  const down = dOct > 0 ? rep("<", dOct) : rep(">", -dOct);
+  return `${up ? up + " " : ""}${name}${len ?? ""}${down ? " " + down : ""}`;
+}
+
+// --- software LFO -------------------------------------------------------------
+
+// The pitch-word offset after each clock of a note, as PLLFO runs it: at key-on
+// the delay and counter reload and the step count starts at half the peak;
+// after `delay` clocks, every `clock` clocks the vector is added, and when the
+// step count runs out the vector flips and the count reloads to the full
+// peak. A triangle in the raw word: centred, heading in the vector's sign.
+function lfoOffsets(lfo, clocks) {
+  const out = new Array(clocks);
+  let delay = lfo.delay, counter = lfo.clock, plc = lfo.amt >> 1, vec = lfo.amp, acc = 0;
+  for (let t = 0; t < clocks; t++) {
+    if (delay > 0) delay--;
+    else if (--counter <= 0) {
+      counter = lfo.clock;
+      if (plc === 0) { vec = -vec; plc = lfo.amt; }
+      plc--;
+      acc += vec;
+    }
+    out[t] = acc;
+  }
+  return out;
+}
+
+// Cents of an offset on pitch class `pc`. FM adds it to the 14-bit block and
+// F-number word, so it carries into the block (a dive below F-number 0 jumps
+// up an octave's worth); SSG subtracts it from the o1 period, which then
+// shifts — the compiler negates an SSG part's vector (muc88.asm SETMOD, as for
+// `D`), so a positive one raises the pitch on both chips.
+function lfoCents(isSsg, pc, off) {
+  if (isSsg) {
+    const p0 = SSG_PERIOD[pc], p = p0 - off;
+    return p <= 0 ? 4800 : 1200 * Math.log2(p0 / p);
+  }
+  const f0 = FM_FNUM[pc], v = f0 + off;
+  const blk = Math.floor(v / 2048), f = v - blk * 2048;
+  return f <= 0 ? -4800 : 1200 * Math.log2((f * 2 ** blk) / f0);
+}
+
+const lfoOff = (lfo) => !lfo.on || lfo.amp * lfo.amt === 0 || lfo.clock === 0;
+const lfoIsVibrato = (lfo) => 2 * lfo.amt * lfo.clock <= LFO_VIBRATO_MAX_PERIOD;
+
+// A vibrato's depth in cents on pitch class `pc` (null: the mean of all 12) —
+// the mean of the swing up and down, which differ once it is wide.
+function lfoDepth(lfo, isSsg, pc) {
+  const half = Math.abs(lfo.amp) * (lfo.amt >> 1 || 1);
+  const at = (k) => (Math.abs(lfoCents(isSsg, k, half)) + Math.abs(lfoCents(isSsg, k, -half))) / 2;
+  if (pc != null) return at(pc);
+  let sum = 0;
+  for (let k = 0; k < 12; k++) sum += at(k);
+  return sum / 12;
+}
+
+// Is the LFO drawn per pitch class (a sweep, or a vibrato whose depth varies
+// too much across the octave) rather than one spec for every note?
+function lfoPerPitchClass(lfo, isSsg) {
+  if (lfoOff(lfo)) return false;
+  if (!lfoIsVibrato(lfo)) return true;
+  const d = Array.from({ length: 12 }, (_, k) => lfoDepth(lfo, isSsg, k));
+  return Math.max(...d) - Math.min(...d) > LFO_DEPTH_SPREAD_CENTS;
+}
+
+// The (macro :pitch+ …) spec for a software LFO on pitch class `pc` (null: one
+// for every note). A vibrato is a looping triangle; a sweep is the exact curve,
+// fitted with linear segments. Lengths are whole-note fractions of the part's
+// clock (`3/112`), which an `Nt` could not hold for every C.
+function lfoSpec(lfo, isSsg, wholeClocks, pc) {
+  if (lfoOff(lfo)) return "none";
+  const len = (n) => `${n}/${wholeClocks}`;
+  if (lfoIsVibrato(lfo)) {
+    const cents = Math.max(1, Math.round(lfoDepth(lfo, isSsg, pc)));
+    const dir = lfo.amp > 0 ? 1 : -1; // a positive vector raises the pitch first
+    // :phase 64 starts the triangle at its centre, heading for :to — as PLLFO.
+    const tri = `(triangle ${-dir * cents}..${dir * cents} :len ${len(2 * lfo.amt * lfo.clock)} :phase 64)`;
+    const lead = lfo.delay + lfo.clock - 1; // clocks before the first step
+    return lead > 0 ? `[ (wait ${len(lead)}) ${tri} ]` : tri;
+  }
+  const n = LFO_SWEEP_MAX_CLOCKS;
+  const offs = lfoOffsets(lfo, n);
+  const c = offs.map((o) => Math.max(-4800, Math.min(4800, lfoCents(isSsg, pc ?? 0, o))));
+  const items = [];
+  let i = 0;
+  while (i < n && c[i] === 0) i++;
+  if (i > 0) items.push(`(wait ${len(i)})`);
+  // Greedy fit: extend each segment while every clock stays within tolerance.
+  let a = Math.max(0, i - 1);
+  while (a < n - 1) {
+    let b = a + 1;
+    for (let j = a + 2; j < n; j++) {
+      let ok = true;
+      for (let k = a + 1; k < j; k++) {
+        const y = c[a] + ((c[j] - c[a]) * (k - a)) / (j - a);
+        if (Math.abs(y - c[k]) > LFO_SWEEP_TOLERANCE) { ok = false; break; }
+      }
+      if (!ok) break;
+      b = j;
+    }
+    items.push(`(linear ${Math.round(c[a])}..${Math.round(c[b])} :len ${len(b - a)})`);
+    a = b;
+  }
+  return `[ ${items.join(" ")} ]`;
+}
+
+// Name an LFO spec once as (def lfoN (macro :pitch+ …)) and return the name.
+function lfoName(ctx, spec) {
+  let name = ctx.lfoRegistry.get(spec);
+  if (!name) {
+    name = spec === "none" ? "lfo-off" : `lfo${[...ctx.lfoRegistry.keys()].filter((k) => k !== "none").length + 1}`;
+    ctx.lfoRegistry.set(spec, name);
+  }
+  return name;
+}
+
+// Before a note: an LFO drawn per pitch class switches to this note's.
+function lfoBeforeNote(ctx, out, letter, acc) {
+  if (ctx.isNoise) return;
+  const sw = ctx.lfoPerPc;
+  // A slur keeps the running curve — unless an `M` came in between: the driver
+  // reloads the delay then and restarts the wave on the new pitch.
+  if (!sw || !ctx.lfoRegistry || (ctx.pendingSlur && !ctx.lfoChanged)) return;
+  ctx.lfoChanged = false;
+  const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
+  const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
+  const name = lfoName(ctx, lfoSpec(sw.lfo, ctx.isSsg, sw.wholeClocks, pc));
+  if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
+}
+
+// --- loops ------------------------------------------------------------------
+//
+// mucom compiles a loop body ONCE and the driver repeats the bytes, so state
+// splits in two:
+//   compile-time — octave, `l`, K/k, the note `^` repeats: every pass plays
+//     what the single compile produced, and after `]` the state is the full
+//     body's (even when the last pass left at `/`). MMLisp's (x …) bakes the
+//     same way, so these need nothing.
+//   runtime — `)`/`(`, `D n+`, `q`, a tie `&` carried into the next note: driver
+//     commands, so they act again on every pass (`[c)]4` is a crescendo) and
+//     the last pass stops at `/`. An (x …) body would replay pass one.
+// So a loop whose passes differ — its body renders differently from the state
+// the previous pass left, or it ends in a tie into the next pass — is written
+// out pass by pass. A tie INTO a loop only ties its first pass, so that pass is
+// peeled off. Between written-out passes the compile-time state is put back.
+
+const compileState = (ctx) => ({ oct: ctx.oct, len: ctx.len, keyShift: ctx.keyShift, lastNote: ctx.lastNote });
+
+function setCompileState(ctx, st, out) {
+  if (st.oct !== ctx.oct) { out.push(`:oct ${st.oct}`); ctx.oct = st.oct; }
+  if (st.len != null && st.len !== ctx.len) { out.push(`:len ${st.len}`); ctx.len = st.len; }
+  ctx.keyShift = st.keyShift;
+  ctx.lastNote = st.lastNote;
+}
+
+// A throwaway copy of a render context: trial renders must not register defs
+// or warnings the real render would then see as already done.
+function scratchCtx(ctx) {
+  const copy = (m) => (m ? new Map(m) : m);
+  return {
+    verbose: false,
+    ...ctx,
+    warnings: [],
+    warnedVoices: new Set(ctx.warnedVoices),
+    chain: null, // a trial must not patch the real output (finishChain)
+    crossActive: [...(ctx.crossActive || [])],
+    crossSnap: new Map(ctx.crossSnap || []),
+    newUnrollCross: null, // a trial decides nothing
+    lfoRegistry: copy(ctx.lfoRegistry),
+    envRegistry: copy(ctx.envRegistry),
+    echoRegistry: copy(ctx.echoRegistry),
+    pcmRegistry: copy(ctx.pcmRegistry),
+  };
+}
+
+// Bring the runtime state written into `out` from `ctx`'s to `st`'s.
+function setRuntimeState(ctx, st, out) {
+  if (st.vel != null && st.vel !== ctx.vel) pushVel(ctx, out, st.vel);
+  ctx.qCut = st.qCut;
+  ctx.reverb = st.reverb;
+  if (st.gateCut != null) emitGate(ctx, out);
+  if ((st.detune ?? 0) !== (ctx.detune ?? 0) && !ctx.isPcm) { ctx.detune = st.detune ?? 0; detuneChanged(ctx, out); }
+}
+
+// Would a loop across lines play differently pass to pass? The same trial
+// renderLoop makes, from the state its #label was reached in.
+function crossPassesDiffer(snap, tree, depth) {
+  if (snap.pendingSlur) return true; // tied into: only pass one is
+  const full = tree.filter((o) => o.t !== "loopBreak");
+  const a = scratchCtx(snap);
+  a.verbose = true;
+  const t1 = [];
+  renderOps(full, a, t1, depth + 1);
+  const b = scratchCtx(a);
+  setCompileState(b, compileState(snap), []);
+  const t2 = [];
+  renderOps(full, b, t2, depth + 1);
+  return !!a.pendingSlur || t1.join(" ") !== t2.join(" ");
+}
+
+function renderLoop(op, ctx, out, depth) {
+  const count = op.count;
+  if (count <= 0) return;
+  const bi = op.body.findIndex((o) => o.t === "loopBreak");
+  const full = bi >= 0 ? op.body.filter((_, k) => k !== bi) : op.body;
+  const head = bi >= 0 ? op.body.slice(0, bi) : op.body;
+  const ct0 = compileState(ctx);
+
+  // Trial: pass one from here, pass two from where pass one left the runtime
+  // state (compile-time state reset, as the compiler never re-reads the body).
+  // Rendered verbose — every state token written, even one that repeats the
+  // current value — so a token pass two merely elides does not count as a
+  // difference: (x …) replays pass one's tokens, which are then no-ops.
+  const a = scratchCtx(ctx);
+  a.verbose = true;
+  const t1 = [];
+  renderOps(full, a, t1, depth + 1);
+  const ctFull = compileState(a);
+  const b = scratchCtx(a);
+  setCompileState(b, ct0, []);
+  const t2 = [];
+  renderOps(full, b, t2, depth + 1);
+  const tiesOn = !!a.pendingSlur; // pass one ends in `&`: it slurs into pass two
+  const varies = t1.join(" ") !== t2.join(" ");
+
+  let linear = 0;
+  if (count > 1 && (varies || tiesOn)) linear = count;
+  else if (ctx.pendingSlur) linear = 1;
+
+  let k = 0;
+  for (; k < linear; k++) {
+    if (k > 0) setCompileState(ctx, ct0, out);
+    renderOps(k === count - 1 ? head : full, ctx, out, depth);
+  }
+  const rest = count - k;
+  if (rest === 1) {
+    if (k > 0) setCompileState(ctx, ct0, out);
+    renderOps(head, ctx, out, depth);
+  } else if (rest > 1) {
+    if (k > 0) setCompileState(ctx, ct0, out);
+    const inner = [];
+    renderOps(op.body, ctx, inner, depth + 1); // a `/` renders as (break)
+    if (inner.length) out.push(`(x ${rest} ${inner.join(" ")})`);
+    if (bi >= 0) {
+      // The last pass left at the break: the runtime state is the head's, not
+      // the full body's the (x …) left behind.
+      const h = scratchCtx(ctx);
+      setCompileState(h, ct0, []);
+      renderOps(head, h, [], depth + 1);
+      setRuntimeState(ctx, h, out);
+    }
+  }
+  setCompileState(ctx, ctFull, out);
 }
 
 function renderOps(ops, ctx, out, depth = 0) {
-  for (const op of ops) {
+  for (let k = 0; k < ops.length; k++) {
+    const op = ops[k];
     switch (op.t) {
       case "note":
-        out.push(`${op.letter}${ACC(op.acc)}${op.len ?? ""}`);
+        if (mutedHere(ctx)) { ctx.pendingSlur = false; out.push(`_${op.len ?? ""}`); ctx.lastNote = { letter: op.letter, acc: op.acc }; break; }
+        noiseModeBeforeNote(ctx, out);
+        envBeforeNote(ctx, out);
+        lfoBeforeNote(ctx, out, op.letter, op.acc);
+        detuneBeforeNote(ctx, out, op.letter, op.acc);
+        pcmNoteUse(ctx, op, ctx.pendingSlur);
+        if (ctx.pendingSlur) { flushSlur(ctx, out); continueChain(ctx); } else startChain(ctx, out);
+        if (!reverbNote(ctx, out, op, ops[k + 1])) out.push(noteToken(op.letter, op.acc, op.len, ctx));
         ctx.lastNote = { letter: op.letter, acc: op.acc };
+        ctx.velHist = [...(ctx.velHist || []).slice(-9), ctx.vel];
         break;
       case "rest":
+        // A rest ends a pending `&`: the next note keys on as usual. MMLisp's
+        // `~` would reach past the rest and slur into it instead.
+        ctx.pendingSlur = false;
+        finishChain(ctx, out);
         out.push(`_${op.len ?? ""}`);
         break;
+      case "keyShift":
+        // Compile-time, like the octave: K and k are separate registers that add.
+        ctx.keyShift = { ...(ctx.keyShift || { K: 0, k: 0 }), [op.which]: op.n };
+        break;
       case "tie":
+        if (mutedHere(ctx)) { ctx.pendingSlur = false; out.push(`_${op.len ?? ""}`); break; }
         // mucom `^` ties to the SAME pitch as the previous note. MMLisp's `~`
         // is a connector to a note (X ~ Y); bare `~ <length>` is not valid, so
         // repeat the last note's pitch: `~ <pitch><len>` (same pitch = a tie).
         if (ctx.lastNote) {
           const p = ctx.lastNote;
-          out.push(`~ ${p.letter}${ACC(p.acc)}${op.len ?? ""}`);
+          pcmNoteUse(ctx, { letter: p.letter, acc: p.acc, len: op.len }, true);
+          continueChain(ctx);
+          out.push(`~ ${noteToken(p.letter, p.acc, op.len, ctx)}`);
         } else {
           out.push("~"); // no preceding note (malformed) — best effort
         }
+        ctx.pendingSlur = false;
         break;
       case "slur":
-        // mucom `&` connector — legato to the next note (see the tokenizer).
-        // MMLisp's `~` attaches to the next real note, skipping state tokens,
-        // so a glide/octave/vel between `&` and the note stays intact.
-        out.push("~");
+        // mucom `&` connector — legato into the next note. MMLisp's `~` is the
+        // same, but it is written just before that note (flushSlur): a rest
+        // cancels it, and a loop that follows ties only its first pass in.
+        ctx.pendingSlur = true;
         break;
       case "bar":
         out.push("|"); // bar line — editorial marker, carried through verbatim
@@ -892,10 +1347,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.isPcm) { warnOnce(ctx.warnings, "pcmDetune", "part K: detune (D) not supported on PCM; dropped"); break; }
         // Track the raw mucom D value (so relative D+ accumulates), then map to
         // cents with the chip's representative factor.
-        const raw = op.rel ? (ctx.detune ?? 0) + op.val : op.val;
-        ctx.detune = raw;
-        const cents = Math.round(raw * (ctx.isSsg ? PSG_CENTS_PER_DETUNE : FM_CENTS_PER_DETUNE));
-        out.push(`:pitch ${cents}`);
+        ctx.detune = op.rel ? (ctx.detune ?? 0) + op.val : op.val;
+        detuneChanged(ctx, out);
         break;
       }
       case "lenSet":
@@ -905,14 +1358,29 @@ function renderOps(ops, ctx, out, depth = 0) {
       case "porta": {
         // mucom {from len to}: glide from the start pitch to the target over len.
         // (glide <from> <len>) — from needs an absolute octave (bare note = C4).
-        const fromOct = ctx.oct + op.from.bo;
-        const fromPitch = `${op.from.letter}${ACC(op.from.acc)}${fromOct}`;
+        if (mutedHere(ctx)) {
+          ctx.pendingSlur = false;
+          for (let s = op.to.bo; s > 0; s--) { out.push(">"); ctx.oct++; }
+          for (let s = op.to.bo; s < 0; s++) { out.push("<"); ctx.oct--; }
+          out.push(`_${op.len ?? ""}`);
+          ctx.lastNote = { letter: op.to.letter, acc: op.to.acc };
+          break;
+        }
+        noiseModeBeforeNote(ctx, out);
+        envBeforeNote(ctx, out);
+        lfoBeforeNote(ctx, out, op.to.letter, op.to.acc);
+        detuneBeforeNote(ctx, out, op.to.letter, op.to.acc);
+        const shift = ctx.isPcm ? 0 : (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
+        const from = shiftedNote(op.from.letter, op.from.acc, shift);
+        const fromPitch = `${from.name}${ctx.oct + op.from.bo + from.dOct}`;
         const len = op.len ?? ctx.len ?? "4";
+        if (ctx.pendingSlur) { flushSlur(ctx, out); continueChain(ctx); } else startChain(ctx, out);
         out.push(`(glide ${fromPitch} ${len})`);
         for (let s = op.to.bo; s > 0; s--) { out.push(">"); ctx.oct++; }
         for (let s = op.to.bo; s < 0; s++) { out.push("<"); ctx.oct--; }
-        out.push(`${op.to.letter}${ACC(op.to.acc)}${op.len ?? ""}`);
+        out.push(noteToken(op.to.letter, op.to.acc, op.len, ctx));
         out.push("(glide none)"); // one porta note only; following notes don't glide
+        ctx.lastNote = { letter: op.to.letter, acc: op.to.acc };
         break;
       }
       case "hwLfo":
@@ -924,97 +1392,96 @@ function renderOps(ops, ctx, out, depth = 0) {
         }
         break;
       case "lfoSet": {
-        // Software pitch LFO -> sticky :macro :pitch+. Additive (not override) so
-        // the vibrato rides a running glide/detune instead of clobbering it — a
-        // `:pitch` override would overwrite the portamento sweep on glided notes.
-        // From mucom's driver (LFOON/PLLFO, onitama/mucom88 ver1.2): the LFO
-        // integrates a per-step VECTOR (`amp`, a 16-bit velocity) onto the running
-        // F-number, one step every `clock` counter-ticks, reversing direction
-        // every `amt` steps (PEAK level). So the full triangle cycle spans
-        // `2*amt*clock` mucom-clocks and the peak deviation is `amp*amt/2` native
-        // units. NB the period is driven by `amt` (PEAK/step-count), NOT `amp`
-        // (the per-step velocity). Depth uses the ear-tuned SSG_LFO_CENTS_PER_UNIT
-        // (proportional to amp*amt; see its note).
+        // Software pitch LFO -> a sticky (macro :pitch+ …), additive so it rides
+        // a glide or detune. One spec for every note is named here; one drawn
+        // per pitch class is named per note (lfoBeforeNote).
         const lfo = op.lfo;
-        let spec;
-        if (!lfo.on || lfo.amp * lfo.amt === 0 || lfo.clock === 0) {
-          spec = "none"; // LFO off -> (def lfo-off :macro :pitch+ none)
-        } else {
-          const factor = WHOLE_TICKS / op.wholeClocks; // mucom clocks -> ticks
-          const cents = Math.round(lfo.amp * lfo.amt * (ctx.isSsg ? SSG_LFO_CENTS_PER_UNIT : FM_CENTS_PER_DETUNE));
-          const period = Math.max(1, Math.round(2 * lfo.amt * lfo.clock * factor));
-          const tri = `(triangle ${-cents}..${cents} :len ${period}t)`;
-          // delay>0: hold at the note's pitch for the delay, then the triangle loops.
-          spec = lfo.delay > 0
-            ? `[ (wait ${Math.max(1, Math.round(lfo.delay * factor))}t) ${tri} ]`
-            : tri;
+        if (ctx.isPcm || ctx.isNoise) break;
+        if (lfoPerPitchClass(lfo, ctx.isSsg)) {
+          ctx.lfoPerPc = { lfo, wholeClocks: op.wholeClocks };
+          ctx.lfoChanged = true;
+          break;
         }
-        // Define each distinct LFO (and the off-clear) once as (def … :macro
-        // :pitch+ …) and reference it by name — compact and readable.
+        ctx.lfoPerPc = null;
+        const spec = lfoSpec(lfo, ctx.isSsg, op.wholeClocks, null);
         if (ctx.lfoRegistry) {
-          let name = ctx.lfoRegistry.get(spec);
-          if (!name) {
-            name = spec === "none"
-              ? "lfo-off"
-              : `lfo${[...ctx.lfoRegistry.keys()].filter((k) => k !== "none").length + 1}`;
-            ctx.lfoRegistry.set(spec, name);
-          }
-          out.push(name); // bare reference — the def already carries :macro
+          const name = lfoName(ctx, spec);
+          if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
         } else {
           out.push(`(macro :pitch+ ${spec})`);
         }
         break;
       }
-      case "ssgEnv": {
-        // mucom E AL,AR,DR,SL,SR,RR -> sticky :macro :vel* ADSR. mucom scales the
-        // envelope by the note's volume (vol = env_level*(v+1)/256), so this maps
-        // to a multiplicative (0-1) vel macro: the note's :vel is the peak, the
-        // envelope is the shape. Rates are per-clock deltas, so a stage time =
-        // delta/rate clocks -> ticks. SR (slow sustain drift) is a flat hold.
-        const factor = WHOLE_TICKS / op.wholeClocks;
-        // Emit on the 0-15 vel scale (peak = 15). `:vel*` scales the macro by
-        // the note's vel/15 ratio, so peak 15 reproduces "the note's :vel is
-        // the envelope peak".
-        // Level on the 0-15 vel scale. Round to an integer: the vel domain is
-        // 0-15 and sub-integer values vanish under the final TL quantization.
-        const lv = (x) => Math.round((Math.max(0, Math.min(255, x)) / 255) * 15);
-        const tm = (delta, rate) => Math.max(1, Math.round((rate > 0 ? delta / rate : 0) * factor));
-        const al = lv(op.al), sl = lv(op.sl);
-        const stages = [];
-        if (al < 15) stages.push(`(linear ${al}..15 :len ${tm(255 - op.al, op.ar)}t)`);
-        stages.push(`(linear 15..${sl} :len ${tm(255 - op.sl, op.dr)}t)`);
-        stages.push("(wait key-off)");
-        stages.push(`(linear ${sl}..0 :len ${tm(op.sl, op.rr)}t)`);
-        const spec = `[ ${stages.join(" ")} ]`;
-        if (ctx.envRegistry) {
-          let name = ctx.envRegistry.get(spec);
-          if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
-          out.push(name); // bare reference — the def carries :macro :vel*
-        } else {
-          out.push(`(macro :vel* ${spec})`);
-        }
+      case "ssgEnv":
+        // The envelope is drawn per note level (envBeforeNote): see ssgEnvSpec.
+        ctx.ssgEnv = op;
+        ctx.envActive = null;
+        break;
+      case "opReg":
+      case "rawReg": {
+        // y: an FM register write, as the same parameter written inline. The
+        // voice's next @ rewrites it, as the driver's voice set does.
+        if (ctx.isSsg || ctx.isPcm) break;
+        // A carrier's TL is rewritten by the next note's volume (STVOL), so a
+        // y to it does not last; :tlN would. Dropped.
+        const tlOp = op.t === "opReg" ? (op.name === "TL" ? op.op : null)
+          : (op.reg & 0xf0) === 0x40 ? [1, 3, 2, 4][(op.reg >> 2) & 3] : null;
+        if (tlOp != null && ctx.voiceAlg != null && ALG_CARRIERS[ctx.voiceAlg].includes(tlOp)) break;
+        const toks = op.t === "opReg" ? opRegTokens(op.name, op.op, op.val) : rawRegTokens(op.reg, op.val);
+        if (toks) out.push(toks);
+        else warnOnce(ctx.warnings, `y${op.name ?? op.reg}`, `register write y${op.name ?? op.reg} has no MMLisp parameter; dropped`);
         break;
       }
+      case "mix":
+        // SSG P: 0 off, 1 tone, 2 noise, 3 both. Its notes sound on the PSG
+        // square while tone is on, and on the noise copy of the part while
+        // noise is on (mucomToMmlisp renders such a part twice).
+        ctx.mix = op.v;
+        break;
+      case "noiseFreq":
+        ctx.noiseW = op.n;
+        break;
       case "vel":
-        if (op.v !== ctx.vel) { out.push(`:vel ${velToken(op.v, ctx)}`); ctx.vel = op.v; }
+        if (op.v !== ctx.vel || ctx.verbose) pushVel(ctx, out, op.v);
         break;
-      case "gateCut": {
+      case "gateCut":
         // mucom q<n> -> :gate- (key off n clocks early); convert clocks to ticks.
-        const cut = Math.round(op.n * (WHOLE_TICKS / op.wholeClocks));
-        if (cut !== ctx.gateCut) { out.push(`:gate- ${cut}t`); ctx.gateCut = cut; }
+        ctx.qCut = Math.round(op.n * (WHOLE_TICKS / op.wholeClocks));
+        emitGate(ctx, out);
         break;
-      }
+      case "reverb":
+        // FM reverb (R n / RF 0|1): at the q point the driver does not key off
+        // but drops the level to (v+n)/2 and lets the note ring into the next
+        // (music.asm FMSUB0). So no gate cut while it is on, and each note is
+        // split at its q point into a tie whose tail is turned down with :vol
+        // (reverbNote). On SSG the envelope runs on past the q point at
+        // (level+n)/2 instead of releasing (SSSUBA / SOFEV7): kept ringing,
+        // without the drop.
+        if (ctx.isPcm) break;
+        ctx.reverb = op.on;
+        if (op.amt != null) ctx.reverbAmt = op.amt;
+        emitGate(ctx, out);
+        break;
       case "velAdj": {
         const nv = clamp((ctx.vel ?? (ctx.isPcm ? MUCOM_PCM_VEL_DEFAULT : 12)) + op.d, 0, ctx.isPcm ? MUCOM_PCM_VEL_MAX : 15);
-        if (nv !== ctx.vel) { out.push(`:vel ${velToken(nv, ctx)}`); ctx.vel = nv; }
+        if (nv !== ctx.vel || ctx.verbose) pushVel(ctx, out, nv);
         break;
       }
       case "echo": {
-        // mucom `\` -> one echo tap of the single note `back` positions back at
-        // vel - drop. Define each distinct echo once as (def ecN (echo …)) and
-        // reference it by name — compact, like the LFO/envelope defs. Omit
-        // the default :back 1.
-        let form = `1 :vel+ ${-(op.drop ?? 0)}`;
+        // mucom `\` -> one echo tap of the single note `back` positions back.
+        // The driver plays it at the CURRENT volume minus `drop` (music.asm:
+        // a relative -drop, the note, +drop), while MMLisp's :vel+ counts
+        // from the replayed note's own vel — so the offset is converted here
+        // from the vel each recent note was written at. Define each distinct
+        // echo once as (def ecN (echo …)) and reference it by name. Omit the
+        // default :back 1.
+        const hist = ctx.velHist || [];
+        const srcVel = hist[hist.length - op.back];
+        let plus = -(op.drop ?? 0);
+        if (srcVel != null && ctx.vel != null && !ctx.isPcm) {
+          plus = velToken(clamp(ctx.vel - (op.drop ?? 0), 0, 15), ctx) - velToken(srcVel, ctx);
+        }
+        let form = `1 :vel+ ${plus}`;
         if (op.back !== 1) form += ` :back ${op.back}`;
         if (ctx.echoRegistry) {
           let name = ctx.echoRegistry.get(form);
@@ -1026,6 +1493,14 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       }
       case "macroCall":
+        // A mucom macro is pasted text, and so is a (def *n …): whatever state
+        // its body sets carries on after the call. Track it, or a later `)`
+        // would count from a stale volume.
+        if (ctx.macroOps && ctx.macroOps.has(op.n)) {
+          const m = scratchCtx(ctx);
+          renderOps(ctx.macroOps.get(op.n), m, [], depth + 1);
+          for (const key of ["pcmSample", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "keyShift", "lastNote", "lfoPerPc", "lfoActive"]) ctx[key] = m[key];
+        }
         // Reference a (def *n …); skip macros whose body had no supported content.
         if (ctx.usableMacros && ctx.usableMacros.has(op.n)) out.push(`*${op.n}`);
         else if (!ctx.warnedVoices.has(`*${op.n}`)) {
@@ -1041,6 +1516,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           const entry = ctx.pcmEntries && ctx.pcmEntries.get(op.n);
           if (entry) {
             ctx.pcmRegistry.set(op.n, entry);
+            ctx.pcmSample = op.n;
             out.push(entry.label);
           } else if (!ctx.warnedVoices.has(`pcm@${op.n}`)) {
             ctx.warnedVoices.add(`pcm@${op.n}`);
@@ -1050,7 +1526,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         }
         // Only switch to voices actually defined in this file; an undefined
         // @N would be an "unknown token" error, so skip it (use the default).
-        if (ctx.definedVoices.has(op.n)) out.push(`@${ctx.voiceLabels.get(op.n)}`);
+        if (ctx.definedVoices.has(op.n)) { out.push(`@${ctx.voiceLabels.get(op.n)}`); ctx.voiceAlg = ctx.voiceAlgs?.get(op.n) ?? null; }
         else if (!ctx.warnedVoices.has(op.n)) {
           ctx.warnedVoices.add(op.n);
           ctx.warnings.push(`voice @${op.n} referenced but not defined in this file — using default voice`);
@@ -1060,7 +1536,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         // @"name": resolve to an inline voice of that name. External banks
         // (#voice xxx.dat) aren't loaded, so unknown names just keep the default.
         const label = ctx.voiceByName && ctx.voiceByName.get(op.name);
-        if (label) out.push(`@${label}`);
+        if (label) { out.push(`@${label}`); ctx.voiceAlg = ctx.voiceAlgByName?.get(op.name) ?? null; }
         else if (!ctx.warnedVoices.has(`"${op.name}"`)) {
           ctx.warnedVoices.add(`"${op.name}"`);
           ctx.warnings.push(`voice @"${op.name}" not defined in this file (external bank?) — using default voice`);
@@ -1068,31 +1544,61 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       }
       case "loopBreak":
-        // A break inside a single-line (x …) loop is consumed by the loop case
-        // (sliced out and expanded). A break that reaches here is inside a
-        // cross-line #label/(go) loop, where MMLisp's (break) does the job.
+        // Inside an (x …) body (depth > 0) or a #label/(go) loop MMLisp's
+        // (break) does the job. A loop across lines that is written out pass
+        // by pass has no break in pass one, which is never its last.
+        if (depth === 0 && ctx.unrollCross?.has(ctx.crossActive?.at(-1))) break;
         out.push("(break)");
         break;
-      case "loopMarker":
+      case "loopMarker": {
+        // Pass one of a loop across lines renders in place, over its lines.
+        // What it would repeat is judged at its (go) from a copy of the state
+        // here; one whose passes differ is re-rendered without the label and
+        // with passes two on written at the (go) (crossLoopPasses).
+        const snap = scratchCtx(ctx);
+        (ctx.crossSnap ||= new Map()).set(op.label, snap);
+        (ctx.crossActive ||= []).push(op.label);
+        if (ctx.unrollCross?.has(op.label)) break;
+        flushSlur(ctx, out); // into a kept #label loop every pass ties in — best effort
         out.push(`#${op.label}`);
         break;
-      case "loopGo":
+      }
+      case "loopGo": {
+        ctx.crossActive?.pop();
+        const snap = ctx.crossSnap?.get(op.label);
+        const tree = ctx.crossTrees?.get(op.label);
+        if (ctx.unrollCross?.has(op.label) && snap && tree) {
+          setCompileState(ctx, compileState(snap), out);
+          renderLoop({ t: "loop", count: op.count - 1, body: tree }, ctx, out, depth);
+          break;
+        }
+        if (snap && tree && op.count > 1 && ctx.newUnrollCross && crossPassesDiffer(snap, tree, depth)) {
+          ctx.newUnrollCross.add(op.label);
+        }
         out.push(`(go ${op.label} ${op.count})`);
         break;
+      }
       case "globalLoop":
-        // mucom allows one L per track; emit a single #loop label even if the
-        // source repeats it (a duplicate label would be invalid).
+        // A part loops to its LAST L: each one re-stores the loop address
+        // (muc88.asm SETJMP), so only that one becomes the #loop label. A tie
+        // into L only ties the first time through — a loop back lands past it
+        // — so it is dropped rather than tying every pass; the level chain
+        // ends.
+        if (--ctx.loopMarksLeft > 0) break;
+        ctx.pendingSlur = false;
+        finishChain(ctx, out);
         if (!ctx.hasGlobalLoop) { out.push("#loop"); ctx.hasGlobalLoop = true; }
         break;
       case "loop":
-        // Single-line loop -> (x N …); a `/` break in the body renders as (break).
-        emitLoop(out, op.count, op.body, ctx, depth);
+        // Single-line loop -> (x N …), or written out pass by pass (renderLoop).
+        renderLoop(op, ctx, out, depth);
         break;
       case "tempo":
         // Emit an inline :tempo only when it changes the running tempo. The
         // first tempo already rides the first playable form (ctx.tempo), so
         // it's not repeated inline; mid-song changes are emitted here.
-        if (op.bpm !== ctx.tempo) { out.push(`:tempo ${op.bpm}`); ctx.tempo = op.bpm; }
+        if (ctx.isNoise) break; // the square track carries it
+        if (op.bpm !== ctx.tempo || ctx.verbose) { out.push(`:tempo ${op.bpm}`); ctx.tempo = op.bpm; }
         break;
     }
   }
@@ -1100,12 +1606,266 @@ function renderOps(ops, ctx, out, depth = 0) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v | 0)); }
 
-// mucom velocity -> MMLisp :vel. FM/SSG share MMLisp's 0-15 one-to-one; K is
+const SSG_VEL_SCALE = 3 / VEL_DB_PER_STEP; // SSG dB per v step, in :vel steps
+
+// An SSG part that ever turns noise on renders twice: its square track keeps
+// the notes played with tone on, its noise copy (ctx.isNoise) the ones with
+// noise on; each rests through the other's.
+function mutedHere(ctx) {
+  if (!ctx.isSsg) return false;
+  const mix = ctx.mix ?? 1;
+  return ctx.isNoise ? !(mix & 2) : !(mix & 1);
+}
+
+// The noise copy's :mode, from the SSG noise period w0-31: the OPNA shifts its
+// noise at 124.8 kHz / w, the SN76489 at 7 / 3.5 / 1.7 kHz (white0-2) — the
+// nearest one, which is white0 for nearly every hi-hat.
+function noiseModeBeforeNote(ctx, out) {
+  if (!ctx.isNoise) return;
+  const f = 124800 / Math.max(1, ctx.noiseW ?? 0);
+  const rates = [6991, 3496, 1748];
+  let best = 0;
+  for (let k = 1; k < rates.length; k++) if (Math.abs(Math.log(f / rates[k])) < Math.abs(Math.log(f / rates[best]))) best = k;
+  const mode = `white${best}`;
+  if (mode !== ctx.noiseMode || ctx.verbose) { out.push(`:mode ${mode}`); ctx.noiseMode = mode; }
+}
+
+// --- level moves inside a tie ---------------------------------------------
+//
+// mucom's v ) ( write the carrier level at once, so `v1 c&[c&)]7` swells one
+// held note. MMLisp's :vel is taken at note-on and a tie continuation keeps
+// it; :vol (the fader, same 2 dB a step) moves a sounding note. So a run of
+// tied notes is a "chain": a level change made inside it is rewritten, once
+// the chain ends, as :vol under a :vel lifted to the chain's loudest level,
+// and the fader goes back to 31 for the next note. The tokens are patched in
+// place in the out arrays they were written to.
+function pushVel(ctx, out, v) {
+  out.push(`:vel ${velToken(v, ctx)}`);
+  ctx.vel = v;
+  if (ctx.chain) ctx.chain.cand.push({ arr: out, idx: out.length - 1, v });
+}
+
+function startChain(ctx, out) {
+  finishChain(ctx, out);
+  if (ctx.isPcm || ctx.vel == null) return;
+  ctx.chain = { arr: out, idx: out.length, base: ctx.vel, toks: [], cand: [] };
+}
+
+// A tie continues the chain: level changes since the last note belong to it.
+function continueChain(ctx) {
+  if (!ctx.chain) return;
+  ctx.chain.toks.push(...ctx.chain.cand);
+  ctx.chain.cand = [];
+}
+
+function finishChain(ctx, out) {
+  const ch = ctx.chain;
+  ctx.chain = null;
+  if (!ch || !ch.toks.length) return;
+  const top = Math.max(ch.base, ...ch.toks.map((t) => t.v));
+  // :vol is 2 dB a step, like :vel — so it moves as the written :vel would.
+  const vol = (v) => 31 - (velToken(top, ctx) - velToken(v, ctx));
+  ch.arr[ch.idx] = `:vel ${velToken(top, ctx)} :vol ${vol(ch.base)} ${ch.arr[ch.idx]}`;
+  for (const t of ch.toks) t.arr[t.idx] = `:vol ${vol(t.v)}`;
+  out.push(":vol 31");
+  // MMLisp's :vel is now `top` — unless a change after the chain re-set it.
+  if (!ch.cand.length && ctx.vel !== top) out.push(`:vel ${velToken(ctx.vel, ctx)}`);
+}
+
+// --- SSG soft envelope -------------------------------------------------------
+//
+// mucom E AL,AR,DR,SL,SR,RR (music.asm SOFENV): a 0-255 level starts at AL,
+// climbs AR a clock to 255, falls DR a clock to SL, then SR a clock towards 0
+// while held; key-off falls RR a clock. The register gets level*(v+1)/256 —
+// the level lands LINEARLY on the SSG's 3 dB volume steps, so in dB a decay
+// is deeper the louder the note. With :vel = 1.5(v+1) - 9 (velToken), the
+// played level is L*(vel+9) - 9 for L = level/255, and as a :vel* macro (the
+// note's vel times m/15) that is m = 15 (L(vel+9) - 9) / vel — affine in L, so
+// the envelope's straight stages stay straight, clipped where they reach 0.
+// One envelope therefore draws per :vel, named like the LFO's pitch classes.
+function ssgEnvSpec(op, wholeClocks, vel) {
+  const factor = WHOLE_TICKS / wholeClocks;
+  // The played :vel at level L, as a fraction of the note's: exact while it
+  // is 1 or more; below, the PSG has no step left (its 0 is off) while the
+  // SSG still sounds down to register 1, so it holds at :vel 1 until the SSG
+  // falls silent (L(v+1) < 1, v+1 = (vel+9)/1.5).
+  const L1 = 10 / (vel + 9), L0 = 1.5 / (vel + 9);
+  const played = (L) => (L >= L1 ? L * (vel + 9) - 9 : L >= L0 ? 1 : 0);
+  const m = (level) => Math.max(0, Math.min(15, Math.round((15 * played(level / 255)) / Math.max(1, vel))));
+  const items = [];
+  // A straight stage from level a to b over `clocks`, split where the played
+  // level changes regime: exact, then held at :vel 1, then silent.
+  const stage = (a, b, clocks) => {
+    if (clocks <= 0) return;
+    const total = Math.max(1, Math.round(clocks * factor));
+    const cuts = [L1 * 255, L0 * 255].filter((x) => (x - a) * (x - b) < 0).sort((x, y) => (a > b ? y - x : x - y));
+    const pts = [a, ...cuts, b];
+    let used = 0;
+    for (let k = 1; k < pts.length; k++) {
+      const [pa, pb] = [pts[k - 1], pts[k]];
+      const last = k === pts.length - 1;
+      const t = last ? total - used : Math.max(1, Math.round((total * Math.abs(pb - pa)) / Math.abs(b - a)));
+      if (t <= 0) continue;
+      const exact = (pa + pb) / 2 >= L1 * 255; // the piece lies in one regime
+      const [va, vb] = exact ? [m(pa), m(pb)] : [m((pa + pb) / 2), m((pa + pb) / 2)];
+      items.push(`(linear ${va}..${vb} :len ${t}t)`);
+      used += t;
+    }
+  };
+  const { al, ar, dr, sl, sr, rr } = op;
+  if (al < 255) {
+    if (ar > 0) stage(al, 255, (255 - al) / ar);
+    else items.push(`${Math.round(Math.max(0, m(al)))}`); // AR 0: it never rises
+  }
+  if (al >= 255 || ar > 0) {
+    if (sl < 255) stage(255, sl, dr > 0 ? (255 - sl) / dr : 0);
+    if (dr === 0 && sl < 255) items.push("15"); // DR 0: it holds at the top
+    else if (sr > 0 && sl > 0) stage(sl, 0, sl / sr);
+  }
+  // Key-off releases from wherever the level is; a macro curve needs its
+  // start written, so it is SL — exact for a note that reached the sustain
+  // and has not decayed far into it.
+  items.push("(wait key-off)");
+  if (sl > 0 && rr > 0) stage(sl, 0, sl / rr);
+  return `[ ${items.join(" ")} ]`;
+}
+
+// Before an SSG note: the envelope drawn for its :vel, if not already active.
+function envBeforeNote(ctx, out) {
+  const env = ctx.ssgEnv;
+  if (!env || !ctx.envRegistry) return;
+  const vel = velToken(ctx.vel ?? 15, ctx);
+  const spec = ssgEnvSpec(env, env.wholeClocks, vel);
+  let name = ctx.envRegistry.get(spec);
+  if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
+  if (name !== ctx.envActive || ctx.verbose) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
+}
+
+// Write a pending `&` as MMLisp's `~`, just before the note it slurs into.
+function flushSlur(ctx, out) {
+  if (ctx.pendingSlur) { out.push("~"); ctx.pendingSlur = false; }
+}
+
+// The parameters behind one operator register byte (yNN,op,value). `op` is
+// the MMLisp operator number: muc88.asm SETREG maps op 2 and 3 to their slot
+// offsets, so yTL,2 is the same operator as :tl2.
+function opRegTokens(name, opn, val) {
+  if (opn < 1 || opn > 4) return null;
+  const v = val & 0xff;
+  switch (name) {
+    case "DM": return `:dt${opn} ${dtFromReg((v >> 4) & 7)} :ml${opn} ${v & 15}`;
+    case "TL": return `:tl${opn} ${v & 127}`;
+    case "KA": return `:ks${opn} ${v >> 6} :ar${opn} ${v & 31}`;
+    case "DR": return `:dr${opn} ${v & 31}`;
+    case "SR": return `:sr${opn} ${v & 31}`;
+    case "SL": return `:sl${opn} ${v >> 4} :rr${opn} ${v & 15}`;
+    case "SE": return `:ssg${opn} ${v & 15}`;
+    default: return null;
+  }
+}
+
+// A raw y<reg>,<value>: the operator registers 0x30-0x9F (slot offsets 0, 4,
+// 8, 12 are operators 1, 3, 2, 4) and FB/AL at 0xB0.
+function rawRegTokens(reg, val) {
+  if (reg >= 0x30 && reg < 0xa0) {
+    const names = { 0x30: "DM", 0x40: "TL", 0x50: "KA", 0x60: "DR", 0x70: "SR", 0x80: "SL", 0x90: "SE" };
+    const opn = [1, 3, 2, 4][(reg >> 2) & 3];
+    return opRegTokens(names[reg & 0xf0], opn, val);
+  }
+  if ((reg & 0xfc) === 0xb0) return `:fb ${(val >> 3) & 7} :alg ${val & 7}`;
+  return null;
+}
+
+// Ticks of a length token as lengthToken writes them ("8", "8.", "12t").
+function tokenTicks(tok) {
+  if (tok == null) return null;
+  const t = /^(\d+)t$/.exec(tok);
+  if (t) return +t[1];
+  const m = /^(\d+)(\.*)$/.exec(tok);
+  if (!m) return null;
+  let ticks = WHOLE_TICKS / +m[1], add = ticks;
+  for (let d = 0; d < m[2].length; d++) { add /= 2; ticks += add; }
+  return Number.isInteger(ticks) ? ticks : null;
+}
+
+// An FM note under reverb: up to its q point at the note's level, then tied
+// on at the driver's reverb level, (v+4 + n) >> 1 on the FMVDAT index — the
+// :vol fader takes the difference, 2 dB a step like :vel. Not when the note
+// ties on (`&` next): the driver does nothing at its q point then.
+function reverbNote(ctx, out, op, next) {
+  if (!ctx.reverb || ctx.isSsg || ctx.isPcm || ctx.vel == null || !ctx.qCut || next?.t === "slur") return false;
+  const total = tokenTicks(op.len ?? ctx.len);
+  const cut = ctx.qCut;
+  if (total == null || total <= cut) return false;
+  const tailV = ((ctx.vel + 4 + (ctx.reverbAmt ?? 0)) >> 1) - 4;
+  const drop = Math.max(0, velToken(ctx.vel, ctx) - velToken(clamp(tailV, 0, 15), ctx));
+  if (!drop) return false;
+  out.push(noteToken(op.letter, op.acc, `${total - cut}t`, ctx));
+  out.push(`~ :vol ${31 - drop}`);
+  out.push(noteToken(op.letter, op.acc, `${cut}t`, ctx));
+  out.push(":vol 31");
+  return true;
+}
+
+// How far into its sample a K note plays. The driver stops the ADPCM at the
+// note's key-off — its q point, or the next note or rest (music.asm KEYOFF ->
+// PCMEND) — where a MMLisp shot plays to the sample's end. So each sample's
+// def is cut to the longest stretch the song ever plays of it (in source
+// frames: a note above C4 runs through it faster): the drums stop where
+// mucom's do, and the bank holds no sound that is never heard. Timed at the
+// song's slowest tempo, the safe side.
+function pcmNoteUse(ctx, op, continuation) {
+  if (!ctx.isPcm || !ctx.pcmUse || ctx.pcmSample == null) return;
+  const ticks = tokenTicks(op.len ?? ctx.len);
+  if (ticks == null) return;
+  if (!continuation || !ctx.pcmCur) {
+    const midi = 12 * (ctx.oct + 1) + SEMI[op.letter] + op.acc;
+    ctx.pcmCur = { sample: ctx.pcmSample, ticks: 0, ratio: 2 ** ((midi - 60) / 12) };
+  }
+  const cur = ctx.pcmCur;
+  cur.ticks += ticks;
+  const sec = (Math.max(1, cur.ticks - (ctx.qCut ?? 0)) * 60) / (ctx.pcmSlowestBpm * 96);
+  const frames = Math.ceil(sec * ctx.pcmRate * cur.ratio);
+  ctx.pcmUse.set(cur.sample, Math.max(ctx.pcmUse.get(cur.sample) ?? 0, frames));
+}
+
+// The :gate- in force: the part's q, or none while FM reverb holds notes on.
+function emitGate(ctx, out) {
+  const cut = ctx.reverb ? 0 : ctx.qCut ?? 0;
+  if (cut !== ctx.gateCut || ctx.verbose) { out.push(`:gate- ${cut}t`); ctx.gateCut = cut; }
+}
+
+// A new `D`: write the one `:pitch` that serves every note, or leave it to
+// detuneBeforeNote when the cents depend too much on the pitch class.
+function detuneChanged(ctx, out) {
+  if (ctx.isNoise) return;
+  const raw = ctx.detune ?? 0;
+  const cents = Array.from({ length: 12 }, (_, pc) => lfoCents(ctx.isSsg, pc, raw));
+  ctx.detunePerNote = Math.max(...cents) - Math.min(...cents) > DETUNE_SPREAD_CENTS;
+  if (ctx.detunePerNote) return;
+  const mean = Math.round(cents.reduce((a, b) => a + b, 0) / 12);
+  if (mean !== ctx.pitchOut || ctx.verbose) { out.push(`:pitch ${mean}`); ctx.pitchOut = mean; }
+}
+
+function detuneBeforeNote(ctx, out, letter, acc) {
+  if (!ctx.detunePerNote || ctx.isPcm || ctx.isNoise) return;
+  const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
+  const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
+  const cents = Math.round(lfoCents(ctx.isSsg, pc, ctx.detune ?? 0));
+  if (cents !== ctx.pitchOut || ctx.verbose) { out.push(`:pitch ${cents}`); ctx.pitchOut = cents; }
+}
+
+// mucom velocity -> MMLisp :vel. FM shares MMLisp's 2 dB ladder one-to-one
+// (mucom's FMVDAT steps the same); SSG is rescaled from 3 dB steps; K is
 // normalized against the song's own loudest drum (ctx.pcmVelMax), so that note
 // lands on :vel 15 and the rest keep their dB distance below it. `v` is a linear
 // amplitude, :vel is a 2 dB ladder, so the ratio becomes dB and the ladder
 // converts it to steps. Still lossy (16 steps), and v0 stays :vel 0.
 function velToken(v, ctx) {
+  // The SSG's volume steps are 3 dB (fmgen psg.cpp: two 1.5 dB table steps
+  // per value), the PSG's :vel 2 dB: keep the dB below full scale.
+  // :vel 0 is the PSG's off, so a quiet but audible v stays at :vel 1.
+  if (ctx.isSsg) return v <= 0 ? 0 : clamp(Math.round(15 - (15 - v) * SSG_VEL_SCALE), 1, 15);
   if (!ctx.isPcm) return clamp(v, 0, 15);
   const max = ctx.pcmVelMax || 0;
   if (v <= 0 || max <= 0) return 0;
@@ -1130,11 +1890,21 @@ function dtFromReg(r) {
   return r & 4 ? -(r & 3) : r & 3;
 }
 
-function voiceToDef(label, v) {
+// The carriers of each algorithm, by MMLisp operator number.
+const ALG_CARRIERS = [[4], [4], [4], [4], [2, 4], [2, 3, 4], [2, 3, 4], [1, 2, 3, 4]];
+// mucom never plays a voice's carrier levels: its volume writes every carrier
+// TL with one table value, FMVDAT[v+4] (music.asm STVOL/STV2), 2 at v15 and
+// about 2 dB a step below — the same ladder as :vel. So a song's voices get
+// their carrier TL set to that top value and :vel does the rest; kept as
+// stored, a voice with quiet carriers came out up to ~10 dB too soft.
+const MUCOM_CARRIER_TL = 2;
+
+function voiceToDef(label, v, { mucomLevels = false } = {}) {
   const parts = [`:alg ${clamp(v.alg, 0, 7)} :fb ${clamp(v.fb, 0, 7)}`];
+  const carriers = mucomLevels ? ALG_CARRIERS[clamp(v.alg, 0, 7)] : [];
   for (let op = 0; op < 4; op++) {
-    const o = v.ops[op];
     const n = op + 1;
+    const o = carriers.includes(n) ? { ...v.ops[op], tl: MUCOM_CARRIER_TL } : v.ops[op];
     parts.push(
       `:ar${n} ${clamp(o.ar, 0, 31)} :dr${n} ${clamp(o.dr, 0, 31)} :sr${n} ${clamp(o.sr, 0, 31)} ` +
       `:rr${n} ${clamp(o.rr, 0, 15)} :sl${n} ${clamp(o.sl, 0, 15)} :tl${n} ${clamp(o.tl, 0, 127)} ` +
@@ -1187,6 +1957,9 @@ export function mucomToMmlisp(parsed) {
   // 32, a song typically plays a handful) — the rule mergeDatVoices uses.
   const pcmEntries = new Map();
   const pcmRegistry = new Map();
+  const pcmUse = new Map(); // @n -> the most source frames a K note plays (pcmNoteUse)
+  const slowest = (ops) => ops.reduce((m, op) => Math.min(m, op.t === "tempo" && op.bpm ? op.bpm : op.t === "loop" ? slowest(op.body) : Infinity), Infinity);
+  const pcmSlowestBpm = Math.min(tempo ?? 120, ...scoreItems.filter((it) => it.kind === "form").map((it) => slowest(it.ops)));
   if (pcm) {
     const used = new Set([...voices.keys()].map((n) => `@${n}`));
     for (const e of pcm.entries) {
@@ -1198,13 +1971,16 @@ export function mucomToMmlisp(parsed) {
   }
   const definedVoices = new Set(voices.keys());
   const warnedVoices = new Set();
+  const macroOps = new Map([...(macros || new Map())].map(([n, m]) => [n, m.ops]));
+  const voiceAlgs = new Map([...voices].map(([n, v]) => [n, clamp(v.alg, 0, 7)]));
+  const voiceAlgByName = new Map([...voices].filter(([, v]) => v.name).map(([, v]) => [v.name, clamp(v.alg, 0, 7)]));
   const voiceLabels = buildVoiceLabels(voices);
   // name -> label, for @"name" voice selection (inline voices only)
   const voiceByName = new Map();
   for (const [num, v] of voices) if (v.name) voiceByName.set(v.name, voiceLabels.get(num));
 
   for (const [num, v] of [...voices.entries()].sort((a, b) => a[0] - b[0])) {
-    lines.push("", voiceToDef(voiceLabels.get(num), v));
+    lines.push("", voiceToDef(voiceLabels.get(num), v, { mucomLevels: true }));
   }
 
   // Distinct software-LFO specs collected during rendering -> emitted as
@@ -1291,15 +2067,42 @@ export function mucomToMmlisp(parsed) {
   // Each part line becomes one (chN …) form; they merge per channel, so the
   // author's line order can be preserved verbatim. State (octave/vel/detune)
   // flows per letter via a ctx kept across that part's lines.
+  // Keyed by part letter, or letter + "~noise" for an SSG part's noise copy.
   const ctxByLetter = new Map();
-  const letterCtx = (letter) => {
-    if (!ctxByLetter.has(letter)) {
-      ctxByLetter.set(letter, { vel: null, detune: 0, tempo, oct: letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
+  const letterCtx = (key) => {
+    const letter = key[0];
+    if (!ctxByLetter.has(key)) {
+      ctxByLetter.set(key, { pcmUse, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
-    return ctxByLetter.get(letter);
+    return ctxByLetter.get(key);
   };
 
+  // An SSG part that turns its noise on (P2/P3, or a hi-hat preset) gets a
+  // noise copy: every form again, on the noise channel, right after the
+  // original. Each copy plays only the notes made with noise on (mutedHere).
+  const usesNoise = (ops, seen = new Set()) => ops.some((op) =>
+    (op.t === "mix" && op.v & 2) ||
+    (op.t === "loop" && usesNoise(op.body, seen)) ||
+    (op.t === "macroCall" && !seen.has(op.n) && macroOps.has(op.n) && (seen.add(op.n), usesNoise(macroOps.get(op.n), seen))));
+  // The PSG has one noise channel and :prio layers cannot hold the parts'
+  // counted loops, so the first part to use noise gets it; the others' noise
+  // notes are dropped.
+  const noiseLetters = Object.keys(SSG_PARTS).filter((l) =>
+    scoreItems.some((it) => it.kind === "form" && it.letter === l && usesNoise(it.ops)));
+  if (noiseLetters.length > 1) {
+    warnings.push(`parts ${noiseLetters.join(", ")} all use SSG noise; the PSG has one noise channel, so only part ${noiseLetters[0]}'s noise is kept`);
+  }
+  const noiseLetter = noiseLetters[0];
+  if (noiseLetter) {
+    for (let k = scoreItems.length - 1; k >= 0; k--) {
+      const it = scoreItems[k];
+      if (it.kind !== "form" || it.letter !== noiseLetter) continue;
+      scoreItems.splice(k + 1, 0, { kind: "form", letter: it.letter, key: `${it.letter}~noise`, ch: "noise", ops: it.ops, comment: null });
+    }
+  }
+
   const forms = scoreItems.filter((it) => it.kind === "form" && !it.dropped);
+  const keyOf = (f) => f.key ?? f.letter;
 
   // Octave base per letter: mucom default o6 (= :oct 5 after the -1 shift),
   // unless that part opens with an absolute `o`.
@@ -1310,23 +2113,68 @@ export function mucomToMmlisp(parsed) {
     allOpsByLetter.set(f.letter, a);
   }
 
-  // Render in source order so per-letter state flows correctly.
-  for (const f of forms) {
-    const toks = [];
-    renderOps(f.ops, letterCtx(f.letter), toks);
-    f.text = toks.join(" ");
+  // Loops across lines, as trees: label -> the ops between its #label and its
+  // (go) over every line of the part, inner ones nested as loop ops.
+  const crossTrees = new Map();
+  for (const key of new Set(forms.map(keyOf))) {
+    const stack = [];
+    for (const f of forms) {
+      if (keyOf(f) !== key) continue;
+      for (const op of f.ops) {
+        if (op.t === "loopMarker") { stack.push({ label: op.label, items: [] }); continue; }
+        if (op.t === "loopGo" && stack.length) {
+          const top = stack.pop();
+          crossTrees.set(top.label, top.items);
+          if (stack.length) stack.at(-1).items.push({ t: "loop", count: op.count, body: top.items });
+          continue;
+        }
+        if (stack.length) stack.at(-1).items.push(op);
+      }
+    }
   }
 
-  // Per channel: #loop (or octave base) on the first playable form, (go loop)
-  // on the last. mucom songs loop from L if present (emitted inline) else start.
+  // How many L each part has: the last one is its loop point.
+  const loopMarks = new Map();
+  const countL = (ops) => ops.reduce((n, op) => n + (op.t === "globalLoop" ? 1 : op.t === "loop" ? countL(op.body) : 0), 0);
+  for (const f of forms) loopMarks.set(keyOf(f), (loopMarks.get(keyOf(f)) ?? 0) + countL(f.ops));
+
+  // Render in source order so per-letter state flows correctly. A second
+  // render writes out the loops across lines the first found to vary.
+  const unrollCross = new Set();
+  for (let phase = 0; phase < 2; phase++) {
+    const found = new Set();
+    ctxByLetter.clear();
+    lfoRegistry.clear();
+    envRegistry.clear();
+    echoRegistry.clear();
+    // Token arrays are joined only once every form is rendered: a level
+    // chain (finishChain) patches tokens it wrote lines earlier.
+    const lastToks = new Map();
+    for (const f of forms) {
+      const ctx = letterCtx(keyOf(f));
+      if (ctx.loopMarksLeft == null) ctx.loopMarksLeft = loopMarks.get(keyOf(f)) ?? 0;
+      Object.assign(ctx, { crossTrees, unrollCross, newUnrollCross: found });
+      f.toks = [];
+      renderOps(f.ops, ctx, f.toks);
+      lastToks.set(keyOf(f), f.toks);
+    }
+    for (const [key, toks] of lastToks) finishChain(letterCtx(key), toks);
+    for (const f of forms) { f.text = f.toks.join(" "); delete f.toks; }
+    if (!found.size) break;
+    for (const l of found) unrollCross.add(l);
+  }
+
+  // Per channel: the octave base on the first playable form, (go loop) on the
+  // last for a part with an L (its #loop is emitted inline, at the last L).
   const firstForm = new Map();
   const lastForm = new Map();
   for (const f of forms) {
     if (f.text === "") continue;
-    if (!firstForm.has(f.letter)) firstForm.set(f.letter, f);
-    lastForm.set(f.letter, f);
+    if (!firstForm.has(keyOf(f))) firstForm.set(keyOf(f), f);
+    lastForm.set(keyOf(f), f);
   }
-  for (const [letter, f] of firstForm) {
+  for (const [key, f] of firstForm) {
+    const letter = key[0];
     const prefix = [];
     // mucom default octave is o6; FM drops one (-> :oct 5), SSG/PSG keeps it; PCM
     // uses a native-reference default (see MUCOM_PCM_DEFAULT_OCT) instead of the
@@ -1335,10 +2183,11 @@ export function mucomToMmlisp(parsed) {
       const defOct = letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter);
       prefix.push(`:oct ${defOct}`);
     }
-    if (!letterCtx(letter).hasGlobalLoop) prefix.push("#loop");
     if (prefix.length) f.text = `${prefix.join(" ")} ${f.text}`.trim();
   }
-  for (const [, f] of lastForm) f.text = `${f.text} (go loop)`.trim();
+  // A part loops back to its L; one without L plays once and stops — its data
+  // ends with no loop address (music.asm FMSUB1 -> FMEND).
+  for (const [key, f] of lastForm) if (letterCtx(key).hasGlobalLoop) f.text = `${f.text} (go loop)`.trim();
 
   // Emit the discovered LFO / envelope / echo / PCM defs above the score (by name).
   if (lfoRegistry.size || envRegistry.size || echoRegistry.size || pcmRegistry.size) {
@@ -1350,16 +2199,27 @@ export function mucomToMmlisp(parsed) {
     for (const [, e] of [...pcmRegistry].sort((a, b) => a[0] - b[0])) {
       defLines.push(
         "",
-        `(def-pcm ${e.label} :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${e.frames})`,
+        `(def-pcm ${e.label} :file ${qstr(pcm.wavFile)} :rate ${pcm.rate} :offset ${e.offset} :frames ${Math.min(e.frames, pcmUse.get(e.index) ?? e.frames)})`,
       );
     }
     lines.splice(lfoDefAnchor, 0, ...defLines);
   }
 
+  // On the Mega Drive fm6 IS the DAC a PCM score plays through, so a song that
+  // uses both part J and ADPCM drums cannot keep both (E_FM6_DAC). The drums
+  // stay and J is kept as written but commented out, for the user to move to
+  // a free channel or to trade against the drums.
+  const pcmPlays = forms.some((f) => f.letter in PCM_PARTS && f.text !== "");
+  const fm6Forms = forms.filter((f) => f.ch === "fm6" && f.text !== "");
+  if (pcmPlays && fm6Forms.length) {
+    for (const f of fm6Forms) f.commentOut = true;
+    warnings.push("part J (fm6) is commented out: fm6 is the DAC while the PCM drums play — move it to a free fm channel, or drop the drums, to hear it");
+  }
+
   // Tempo rides the very first playable form (before its #loop/:oct prefix it
   // would also be fine — :tempo is score-global wherever it appears).
   const firstPlayable = scoreItems.find(
-    (it) => it.kind === "form" && !it.dropped && it.text !== "",
+    (it) => it.kind === "form" && !it.dropped && !it.commentOut && it.text !== "",
   );
   if (firstPlayable) {
     firstPlayable.text = `:tempo ${tempo ?? 120} ${firstPlayable.text}`.trim();
@@ -1371,7 +2231,8 @@ export function mucomToMmlisp(parsed) {
     if (it.kind === "comment") { lines.push(it.text); continue; }
     if (it.dropped) continue; // parsed for tempo only (part K with no #pcm bank)
     if (it.text === "") { if (it.comment) lines.push(it.comment); continue; }
-    lines.push(`(${it.ch} ${it.text})${it.comment ? `  ${it.comment}` : ""}`);
+    const form = `(${it.ch} ${it.text})${it.comment ? `  ${it.comment}` : ""}`;
+    lines.push(it.commentOut ? `; ${form}` : form);
   }
 
   lines.push("");
@@ -1406,8 +2267,15 @@ export function parseVoiceDat(bytes) {
         ml: dtml[p] & 0x0f, dt: dtFromReg((dtml[p] >> 4) & 0x07),
       });
     }
+    // Names are Shift-JIS single bytes: ASCII, or half-width katakana
+    // (0xA1-0xDF -> U+FF61-U+FF9F) as in @"ﾎﾟｰﾗﾍﾞ" — what decodeMucText makes of
+    // the same bytes in the song, so @"name" resolves.
     let name = "";
-    for (let k = 26; k < 32; k++) { const ch = at(o + k); if (ch >= 0x20 && ch < 0x7f) name += String.fromCharCode(ch); }
+    for (let k = 26; k < 32; k++) {
+      const ch = at(o + k);
+      if (ch >= 0x20 && ch < 0x7f) name += String.fromCharCode(ch);
+      else if (ch >= 0xa1 && ch <= 0xdf) name += String.fromCharCode(0xff61 + ch - 0xa1);
+    }
     voices.set(v, { fb: (fbal >> 3) & 0x07, alg: fbal & 0x07, ops, name: name.trim() || null });
   }
   return voices;
@@ -1444,10 +2312,46 @@ export function importMucom(bytes, datBytes = null, pcmBytes = null) {
   const parsed = parseMucom(decodeMucText(bytes));
   if (datBytes) mergeDatVoices(parsed, parseVoiceDat(datBytes));
   if (pcmBytes) parsed.pcm = decodeMucomPcmForImport(parsed.meta.pcmFile, pcmBytes);
-  const out = mucomToMmlisp(parsed);
+  let out = mucomToMmlisp(parsed);
+  if (parsed.pcm) out = fitPcmBank(out, parsed.pcm);
   // `pcm` rides along so the caller can save `wav` as `wavFile` beside the score
   // (what the emitted defs reference) and play `mono` before it exists on disk.
   return parsed.pcm ? { ...out, pcm: parsed.pcm } : out;
+}
+
+// The drums the score plays bake into one 32 KB bank (encodeMmb), at the rate
+// of the engine image the voice count picks: 14.4 kHz for one voice, 10.1 for
+// two, 6.7 for three. A mucom bank holds more than one voice's worth at
+// 14.4 kHz more often than not, and an over-full bank does not play at all,
+// so the import bakes it here and takes the first voice count it fits in —
+// trading rate for every drum sounding. Said in a warning and a comment.
+function fitPcmBank(out, pcm) {
+  const fits = (source) => {
+    const { ir, diagnostics } = compileMMLisp(source, "import.mmlisp", { imports: new Map(), frameHz: 60 });
+    if (diagnostics.some((d) => d.severity === "error")) return true; // not ours to judge here
+    const samples = {};
+    for (const def of ir.metadata?.samples ?? []) {
+      const at = def.offset ?? 0;
+      samples[def.name] = { data: pcm.mono.slice(at, at + (def.frames ?? pcm.mono.length - at)), baseRate: pcm.rate };
+    }
+    try {
+      encodeMmb(ir, { samples });
+      return true;
+    } catch (e) {
+      if (e instanceof RangeError) return false;
+      throw e;
+    }
+  };
+  if (fits(out.source)) return out;
+  for (const n of [2, 3]) {
+    const source = `; The drums fit the 32 KB sample bank at ${n} PCM voices' rate, not at 1's.\n(def pcm-voices ${n})\n\n${out.source}`;
+    if (fits(source)) {
+      out.warnings.push(`PCM: the drums exceed the 32 KB bank at 14.4 kHz; set (def pcm-voices ${n}) to bake them at the lower rate`);
+      return { ...out, source };
+    }
+  }
+  out.warnings.push("PCM: the drums exceed the 32 KB bank even at 3 voices' rate; shorten or drop samples (:frames)");
+  return out;
 }
 
 /**

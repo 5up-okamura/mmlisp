@@ -118,92 +118,81 @@ Still ahead:
 ## mucom88 Importer
 
 Converts a mucom88 `.muc` song (PC-8801 / YM2608 OPNA) to MMLisp source.
-Implementation: `live/src/import-mucom.js`. Pipeline: `.muc` → ops → MMLisp text
-→ (compiled by the normal toolchain).
+Implementation: `live/src/import-mucom.js` (+ `mucom-pcm.js` for the ADPCM
+bank). Pipeline: `.muc` → ops → MMLisp text → (compiled by the normal
+toolchain).
 
-Implemented: FM A–C / H–J → `fm1`–`fm6`, SSG D–F → `sqr1`–`sqr3`, ADPCM K →
-`pcm1` (part G, rhythm, is dropped); the `#pcm` bank decoded to one WAV that
-per-sample defs slice, with per-song level normalization; notes, lengths, dots,
-ties and slurs on mucom's clock grid; bar lines; octave and detune; velocity,
-pan and `q<n>` gate; SSG `E` envelopes as `:macro :vel*` ADSR defs; loops,
-breaks and the global `L` loop; inline, named and external `.dat` voices;
-macros; portamento, hardware LFO and software LFO; both tempo commands.
+Implemented: FM A–C / H–J → `fm1`–`fm6`, SSG D–F → `sqr1`–`sqr3` (the notes
+an SSG part plays with noise on go to `noise`), ADPCM K → `pcm1`; notes,
+lengths and ties on mucom's clock grid; loops, breaks and the last `L` as the
+loop point (a part without `L` plays once); key shift `K`/`k`; detune `D`
+(also relative `D n+`); `v`, `)`/`(`, `V`; `q`; reverb `R`; register writes
+`y`; SSG `E` envelopes and `@n` presets; `P`/`w`; inline, `@%` and `.dat`
+voices; macros; echo; portamento, hardware and software LFO; both tempo
+commands. A song using part J and the drums keeps J commented out: fm6 is the
+DAC while PCM plays.
 
-### Known divergence — FM volume is absolute in mucom, relative here
+What the importer reproduces from the driver rather than approximates:
 
-mucom's `v` **overwrites** the carrier TL: `STV2` (music.asm) indexes `FMVDAT`
-with `TOTALV + v` and writes that byte straight to each carrier's `0x40+op`
-register, so the voice's own carrier TL never takes part in the volume. MMLisp's
-`:vel` instead **attenuates from** the patch — `_carrierTl` is
-`voicedTl + velToTlAtten(vel)`.
+- **Loop passes.** mucom compiles a loop body once (octave, `l`, `K` are
+  baked, as in MMLisp) but `)`/`(`, `D n+`, `q` and ties are driver commands
+  that act on every pass. A loop whose passes would differ — and one tied into
+  or out of — is written out pass by pass, across lines too.
+- **Software LFO and detune** add to the raw pitch word (F-number with block
+  carry; SSG o1 period), so their cents depend on the note: a sweep such as
+  `M1,1,-9,250` is drawn per pitch class from the exact curve.
+- **Levels.** mucom writes every carrier TL from `FMVDAT[v+4]` and ignores the
+  voice's own, so voices are emitted with carrier TL 2 (the v15 value). A level
+  change during a tie moves `:vol`; reverb's tail is a tied note at `:vol`.
+  SSG volume steps are 3 dB (PSG `:vel` 2 dB), and its envelope lands linearly
+  on them, so each envelope is drawn per `:vel`.
+- **Tempo** is `BPM = 832000 / ((256 − t) × C)` (Timer-B 2304 cycles at
+  7.9872 MHz, one clock per two overflows), kept to two decimals; `T` goes
+  through the Timer-B value it compiles to.
+- **ADPCM pitch**: o1 c plays at Delta-N `0x49BA+200` = 16143.6 Hz, the bank's
+  labelled rate.
+- **Drum length**: the driver stops the ADPCM at key-off (q point, next note
+  or rest), a MMLisp shot plays to the end — so each sample's `:frames` is cut
+  to the longest stretch the song plays of it. If the drums still overflow the
+  32 KB bank at one voice's 14.4 kHz, the import sets `(def pcm-voices 2)` or
+  `3` for the lower rate they fit at (PCM-heavy songs may fit at none).
 
-The ladders agree, so this is not a decay problem: `FMVDAT` runs
-`2A,28,25,22,20,1D,1A,18,15,12,10,0D,0A,08,05,02`, i.e. steps of 2,3,3,2,… TL
-= 2.667 TL = **2 dB per step**, exactly `VEL_DB_PER_STEP`. Relative dynamics —
-including echo decay, where `\=n1,n2`'s n2 is a `v` delta — come out faithful.
+Hardware limits, kept visible as warnings: SSG notes below A2 play an octave
+up (the PSG's floor); SSG levels under −30 dB hold at `:vel 1`; one noise
+channel, so only the first part using noise keeps it; SSG reverb rings
+without its level drop.
 
-What differs is the **absolute** level: a voice with a quiet carrier TL plays
-that much quieter here than on mucom, which would have overridden it. Affects
-every imported FM track (not PCM: part K has its own level register). A fix
-belongs in the importer — compensating the emitted `:vel` for the voice's
-carrier TL — since MMLisp's relative model is deliberate, not an oversight.
+### Verification
 
-### Priority 1 — track alignment
+Checked against the real driver: mucom88 (`github.com/onitama/mucom88`, the
+CLI built from `src/` with `OS_SDL=0`) renders each song to VGM (`-x -o <name>.mub
+-b <name>.vgm`; it reads `.muc` as UTF-8 off Windows), and the YM2608 register
+log is compared with the import's `IRPlayer.captureRegisterLog` — per part:
+keyed state, pitch, carrier/PSG level; PCM key-ons and sample. On the songs
+checked (ACTRAISER stg001, BOSCONIAN bos010/011, MISTY BLUE hrock1, BARE
+KNUCKLE stk004/013 and bare03/04) FM parts match 98–100 % of sounding frames
+in pitch (92 % for one part made of long sweeps, fitted with linear
+segments), PCM key-ons all match.
 
-Goal: every track in a song has the same total tick length (so they don't drift
-apart over the loop). Current: **29 / 46** reference songs align exactly. Two
-remaining classes of drift:
+### Track alignment
 
-1. **Factor-rounding** — songs whose `C` doesn't divide the 384-tick grid
-   (e.g. `C112`: slp020, spread 2) accumulate per-note ±1-tick rounding in the
-   clocks→ticks step. Fix options: raise the tick grid to an LCM that covers the
-   common `C` values, or dither the clocks→ticks conversion with a running
-   remainder so the total stays exact.
-2. **Structural** — clean `C` but parts convert to different lengths. Either a
-   conversion bug or a genuinely different part length (intro / non-looping
-   tail). Needs per-song diagnosis. Remaining (spread in ticks):
-   `stk023 52 · sq1_112 144 · pcmt20 1080 · stk020 1536 · bare12 1584 ·
-   bare09 2304 · bare16 3192 · stk004 3840 · bos011 4416 · sq1_115 4608 ·
-   slp010 5712 · sq1_104 5760 · bare21 6144 · hrock1 6144 · stk027 9408 ·
-   disco1 10752`.
+Every part of 42 / 46 reference songs loops in the same period. The others:
+`stk023`, `bare12`, `slp010` end in short silent loops of different lengths
+(as in mucom); `bare21` drifts 16 ticks a loop — a loop body whose clocks are
+not a whole number of ticks at `C112` replays its rounded lengths (lengths are
+dithered note to note, which a replayed body cannot carry).
 
-Part K joins this picture rather than changing it: importing the PCM bank does
-**not** perturb any other track's period (verified with and without the bank),
-and the songs where `pcm1` disagrees are mostly ones whose parts already
-disagreed among themselves (`sq1_104` has seven distinct periods, `sq1_112`
-seven, `stk027` two). Worth a look once the classes above are understood:
-`pcm1` comes out shorter than every other part in all 10 affected songs, never
-longer, and in `stk004 25344/29184` and `disco1 24000/34752` the other parts do
-agree with each other — so K may lose time of its own on top of the general
-drift. `bare21`'s `12288/18432` is exactly 2/3.
+### Not yet imported
 
-Method: compare a drifting part against a parallel aligned part to locate the
-divergent measure; confirm against the raw MML clock count.
-
-### Priority 2 — currently-dropped mucom commands
-
-By musical impact (each maps onto existing MMLisp primitives):
-
-- **High**: `K`/`k` key shift (transpose).
-- **Medium**: `w` noise wave (PSG noise pitch); `J` tag jump
-  (→ `#label`/`(go)`); `P` mix port (SSG tone/noise enable); `V` total volume
-  offset.
-- **Low**: `s` shuffle / key-on revise; `y` register write; `S` SE detune;
-  `R` reverb.
-
-### Priority 3 — dropped channels (larger effort)
-
-- Part **G** rhythm (drums) → noise/PCM mapping + drum kit. Unlike part K there
-  is no data to import: the sounds are in the OPNA's rhythm ROM, so this needs a
-  drum kit from elsewhere.
-- `@%` register-dump voice format.
+- **`S` FM3 slot detune** (13 songs): maps onto `fm3-1`–`fm3-4` with a
+  per-operator `:pitch`, `:vel` on the carriers only.
+- `s` key-on revise (alternating length offset).
+- Part **G** rhythm: its sounds are the OPNA's rhythm ROM — no data to import.
 
 ### Reference
 
 - Driver source (authoritative): `github.com/onitama/mucom88` →
-  `pc8801src/ver1.2/{muc88,music,msub}.asm`. Command table: `msub.asm`. Tempo:
-  `SETTMP` (T→Timer-B) + `INIT` (default `C = 128`) in `muc88.asm`.
-- Tempo: `BPM = 830400 / ((256 − t) × C)`.
+  `pc8801src/ver1.2/{muc88,music,msub}.asm`. Command table: `msub.asm`.
 - Lengths: `floor(C / len)` clocks, each clock = `384 / C` ticks (PPQN 96).
 - License: mucom88 is CC BY-NC-SA 4.0; the importer only reads the format and
   bundles no mucom88 code/data (see README).
