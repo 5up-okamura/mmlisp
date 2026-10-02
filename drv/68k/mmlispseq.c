@@ -2299,46 +2299,25 @@ static void run_frame(MMLSeq *s) {
         continue; /* the armed frame is silent setup, at any sub-tick */
       }
       t->acc = (uint16_t)(t->acc + ((t->flags & TRACK_FLAG_IS_SE) ? sub_increment(t->inc, sub) : step));
-      {
-        /* THE COMMON FRAME: its ticks pass and neither the gate nor the wait
-         * runs out in them. What the loop below does in that case, without
-         * the loop — it was 4.5% of the 68000 on sin008 (sgdk-profile --pc),
-         * most of it frames like this one. */
-        const int32_t ticks = t->acc >> 8;
-        if (ticks && t->wait > ticks && (t->gate_left <= 0 || t->gate_left > ticks)) {
-          t->acc &= 0xff;
-          s->cur_acc = t->acc;
-          if (t->gate_left > 0) t->gate_left -= ticks;
-          t->wait -= ticks;
-          continue;
-        }
-      }
       while (t->acc >= 0x100) {
-        /* STRAIGHT TO THE NEXT TICK THAT DOES SOMETHING. A tick before the
-         * gate or the wait reaches zero only counts both down, so k-1 of them
-         * are taken at once: k is the first tick where the gate expires or
-         * the wait runs out (a zero wait dispatches on the first). Exactly the
-         * one-at-a-time walk, in one step. */
+        /* STRAIGHT TO THE NEXT TICK THAT DOES SOMETHING. The ticks before the
+         * gate or the wait runs out only count both down, so they go at once:
+         * k is the tick where one runs out (a zero wait dispatches on the
+         * first), or every tick in hand when neither does this frame. */
         int32_t k = t->acc >> 8;
         if (t->gate_left > 0 && t->gate_left < k) k = t->gate_left;
-        if (t->wait > 0) { if (t->wait < k) k = t->wait; }
-        else k = 1;
-        if (k > 1) {
-          t->acc = (uint16_t)(t->acc - ((uint16_t)(k - 1) << 8));
-          if (t->gate_left > 0) t->gate_left -= k - 1;
-          t->wait -= k - 1;
-        }
-        t->acc -= 0x100;
+        if (t->wait < k) k = t->wait > 0 ? t->wait : 1;
+        t->acc = (uint16_t)(t->acc - (k << 8));
         s->cur_acc = t->acc; /* the tick's place in the frame, for a key-off */
-        /* One tick: gate countdown first, then the wait countdown / dispatch. */
+        /* Gate countdown first, then the wait countdown / dispatch. */
         if (t->gate_left > 0) {
-          t->gate_left--;
+          t->gate_left -= k;
           if (t->gate_left == 0) {
             channel_off(s, t->channel_id);
             t->gate_left = -1;
           }
         }
-        if (t->wait > 0) t->wait--;
+        if (t->wait > 0) t->wait -= k;
         if (t->wait == 0) {
           dispatch(s, t);
           if (!t->running || t->held) break;
