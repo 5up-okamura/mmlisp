@@ -62,6 +62,26 @@ export function pcmShotPoints(src, len) {
 }
 
 /**
+ * A shot over [ls, le) in baked bytes of a `len`-byte blob at `src`: the
+ * note's range (`:pcm-start` / `:pcm-end`) played once. It is widened to
+ * whole blocks, never narrowed — the start down, the end up — so a shot plays
+ * at least its range, and the whole blob when the range is the whole sample
+ * (`le` = the unpadded length rounds up to the padded one):
+ *
+ *   ls' = 16·floor(ls/16), within 0..len−16
+ *   le' = 16·ceil(le/16), within ls'+16..len
+ *
+ * `start` is the window address the voice STARTs at.
+ */
+export function pcmRangePoints(src, len, ls, le) {
+  const ls2 = Math.min(len - PCM_BLOCK, Math.floor(Math.max(0, ls) / PCM_BLOCK) * PCM_BLOCK);
+  const le2 = Math.max(ls2 + PCM_BLOCK,
+    Math.min(len, Math.ceil(Math.max(0, le) / PCM_BLOCK) * PCM_BLOCK));
+  return { start: (src + ls2) & 0xffff, end: (src + le2 - PCM_BLOCK) & 0xffff,
+    wrap: PCM_SILENCE_ADDR };
+}
+
+/**
  * A loop over [ls, le) in baked bytes of a `len`-byte blob at `src`, rounded
  * so the first pass plays exactly [0, le') and every later pass [ls', le'),
  * both whole blocks:

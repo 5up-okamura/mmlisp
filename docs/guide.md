@@ -902,19 +902,23 @@ Two things a PCM voice cannot do: **bend** (a note picks a pre-baked blob, so
 and **fade smoothly** (the level ladder is 6 dB a step). Put a fade on FM or
 PSG when it has to be smooth.
 
+A note plays a **range** of its sample: `:pcm-start`, `:pcm-end` and
+`:pcm-len` take lengths — `300ms`, `16`, `6t` — on the sample def and on the
+track, and on the track they also take curves. A `shot` plays the range once
+(the tail of a crash, one word of a phrase); `:mode loop` repeats it. On a
+track they hold for the notes that follow, like any track parameter — and so
+does `:mode loop`, until a `:mode shot`.
+
 One thing it can do that nothing else on this machine does: **move its loop
-while the note sounds.** `:loop-start`, `:loop-end` and `:loop-len` take
-lengths — `300ms`, `16`, `6t` — on the sample def and on the track, and on the
-track they also take curves. On a track they hold for the notes that follow,
-like any track parameter — and so does `:mode loop`, until a `:mode shot`:
+while the note sounds**:
 
 ```lisp
 (pcm1 pad :mode loop :len 1
-  :loop-len 16                                   c   ; a 16th-note loop
-  :loop-len (linear :from 100ms :to 2ms :len 2)  c)  ; tightened to a buzz
+  :pcm-len 16                                   c   ; a 16th-note loop
+  :pcm-len (linear :from 100ms :to 2ms :len 2)  c)  ; tightened to a buzz
 ```
 
-The loop rounds to 16 bytes (1.11 ms at one voice), which is also the shortest
+The range rounds to 16 bytes (1.11 ms at one voice), which is also the shortest
 loop there is — so this is a rhythmic device, not a way to play pitches.
 language.md §16 has the rest.
 

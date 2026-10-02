@@ -50,8 +50,9 @@ track. The presence of any `fm3-1..fm3-4` track prepends a tick-0
 `FM3_MODE { mode: "op" }` into `tracks[0]` — the only compiler-injected init
 event.
 
-The PARAM targets `LOOP_START` / `LOOP_END` / `LOOP_LEN` (§5) carry a PCM
-loop point in **seconds**, and are the one target family whose IR value is not
+The PARAM targets `LOOP_START` / `LOOP_END` / `LOOP_LEN` (§5) — written
+`:pcm-start` / `:pcm-end` / `:pcm-len` — carry a point of a PCM note's range
+in **seconds**, and are the one target family whose IR value is not
 an integer: the MMB exporter multiplies by the engine image's rate to get the
 byte offset the driver wants. They are valid on `pcm1`–`pcm3` only.
 
@@ -86,8 +87,8 @@ Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
 | `resolvedFile` | string      | `file` resolved against the source file's directory.|
 | `rate`         | int\|null   | Source sample rate; also copied per-note as `baseRate`. |
 | `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
-| `loopStartSec`, `loopEndSec` | number\|null | Sustain loop, in SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. A null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |
-| `fx`           | array       | The sample's whole chain — its imports' `:fx` (outermost first), then the def's own — resolved: one `{type, …params}` per effect in order, every param filled in (defaults included), times in SECONDS (at the score's opening tempo, like the loop points), levels in dB. `gain {db}`, `normalize {peak}`, `comp {threshold, ratio, attack, release, knee, makeup}`, `limit {ceiling, release}`, `crush {bits}`, `fade {at\|null, len, curve}`, `reverb {size, damp, mix, predelay, tail}`. `[]` when the def has none. The exporter runs it (`live/src/sample-fx.js`) before baking. |
+| `startSec`, `endSec` | number\|null | The range a note plays (`:pcm-start` / `:pcm-end` / `:pcm-len`): once for a shot, repeated by a loop note. In SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. A null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |
+| `fx`           | array       | The sample's whole chain — its imports' `:fx` (outermost first), then the def's own — resolved: one `{type, …params}` per effect in order, every param filled in (defaults included), times in SECONDS (at the score's opening tempo, like the range), levels in dB. `gain {db}`, `normalize {peak}`, `comp {threshold, ratio, attack, release, knee, makeup}`, `limit {ceiling, release}`, `crush {bits}`, `fade {at\|null, len, curve}`, `reverb {size, damp, mix, predelay, tail}`. `[]` when the def has none. The exporter runs it (`live/src/sample-fx.js`) before baking. |
 
 ## 3. Track object
 

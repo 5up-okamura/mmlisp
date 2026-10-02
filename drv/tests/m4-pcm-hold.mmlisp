@@ -3,6 +3,6 @@
 ; the tail plays out (m4-pcm-hold.cmds.json). The fm1 rest keeps the song
 ; running past the command.
 (def pcm-voices 1)
-(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-pcm pad :file "pad.wav" :pcm-start 9ms :pcm-end 36ms)
 (pcm1 pad :tempo 120 :mode loop :oct 4 :len 0 c)
 (fm1 _1 _1)

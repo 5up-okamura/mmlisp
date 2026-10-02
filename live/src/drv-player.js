@@ -2542,7 +2542,7 @@ export class DrvPlayer {
       // restores is the NOTE: a BGM loop starts again from its sample's head.
       const vi = ch - 20;
       const v = this._pcmVoices[vi];
-      // The effect takes the voice's modulators — a BGM's `:loop-start` glide
+      // The effect takes the voice's modulators — a BGM's `:pcm-start` glide
       // would go on retargeting the effect's sample, its :keyon on re-starting
       // it — and keeps the BGM's binds to hand back at its end.
       trk.pcmSe = { vi, binds: new Map(this._macroActive[this._macroCh(ch)]) };
@@ -3289,6 +3289,7 @@ export class DrvPlayer {
         this._macroSlots[this._macroCh(trk.channelId)] = []; // no :keyon re-START
         if (v.started) {
           v.looping = false;
+          v.released = true;
           this._pcmCmd([PCM_START, vi, 8, ...u16le(PCM_SILENCE_ADDR), ...u16le(0), ...u16le(PCM_SILENCE_ADDR)]);
         }
       }

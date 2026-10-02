@@ -54,7 +54,7 @@ import {
   VEL_FINE_MAX,
 } from "./ir-utils.js";
 
-// The loop-point targets, and the largest byte offset one can name: the bank's
+// The PCM range targets (:pcm-start/-end/-len), and the largest byte offset one can name: the bank's
 // usable window (the top page is the silence a parked voice reads).
 const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
 const PCM_LOOP_MAX = 0x7f00;
@@ -1596,8 +1596,8 @@ function resampleS8(data, from, to) {
 // A fade inside the loop is baked into the bytes the loop repeats, so every
 // pass of the loop replays it — almost never what was meant.
 function warnFadeOverLoop(s, durSec, diag) {
-  const ls = s.loopStartSec ?? 0;
-  const le = s.loopEndSec ?? durSec;
+  const ls = s.startSec ?? 0;
+  const le = s.endSec ?? durSec;
   for (const fx of s.fx ?? []) {
     if (fx.type !== "fade") continue;
     const at = fx.at ?? Math.max(0, durSec - fx.len);
@@ -1704,12 +1704,12 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
             `no blob supplied for sample "${s.name}"; empty entry`,
           );
         }
-        // The def's loop points are SECONDS in the sample's own time (§16). Either
-        // bound alone is a loop: a missing start is the sample's start, a missing
-        // end its end.
-        const loopStartSec = s.loopStartSec;
-        const loopEndSec = s.loopEndSec;
-        const hasLoop = loopStartSec != null || loopEndSec != null;
+        // The def's range is SECONDS in the sample's own time (§16). Either
+        // bound alone is a range: a missing start is the sample's start, a
+        // missing end its end.
+        const startSec = s.startSec;
+        const endSec = s.endSec;
+        const hasLoop = startSec != null || endSec != null;
         const rate = blob?.baseRate ?? s.rate ?? 13000;
         // The def's `:fx` chain, at the sample's own rate: its times are
         // the sample's own time, like the loop points (sample-fx.js).
@@ -1732,31 +1732,32 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
         // resampled so that note advances one byte a sample at the image's rate.
         // The hash pool collapses whatever is genuinely identical.
         //
-        // A LOOP IS NOT UNROLLED. Its points are mapped through the same ratio and
-        // carried unrounded; the sequencer rounds them to whole blocks when it
-        // sends them, because the block is the engine's and the rounding has to
-        // be one function in one place (pcm-model.js pcmLoopPoints).
+        // A LOOP IS NOT UNROLLED. The range is mapped through the same ratio and
+        // carried unrounded; the sequencer rounds it to whole blocks when it
+        // sends it, because the block is the engine's and the rounding has to
+        // be one function in one place (pcm-model.js pcmLoopPoints /
+        // pcmRangePoints).
         bakedSources++;
         bakedSourceBytes += data.length;
         for (const n of notes) {
           const to = pcmBakeRateAt(n, rateHz);
           const raw = resampleS8(data, rate, to);
-          // Every entry carries a loop, because the NOTE decides whether it loops
-          // (`:mode loop`, PCM_NOTE_ON's note bit 7): a def with no loop points
-          // loops the whole sample. The flag records only that the def set some.
+          // Every entry carries a range, which a loop note repeats and a shot
+          // plays once (`:mode`, PCM_NOTE_ON's note bit 7): a def with none
+          // has the whole sample. The flag records only that the def set one.
           let ls = 0, le = raw.length, looped = hasLoop;
           if (hasLoop) {
             // A blob baked for note n plays `to` bytes a second, so a time in the
             // sample maps to a byte offset with one multiply — the same one the
-            // track's loop targets use, which is why the def and the track agree
+            // track's range targets use, which is why the def and the track agree
             // at C4 and part company exactly as much as the note transposes.
             const at = (sec) => Math.min(raw.length, Math.max(0, Math.round(sec * to)));
-            ls = at(loopStartSec ?? 0);
-            le = loopEndSec == null ? raw.length : at(loopEndSec);
+            ls = at(startSec ?? 0);
+            le = endSec == null ? raw.length : at(endSec);
             if (le <= ls) {
-              diag("warning", "W_MMB_BAKE_LOOP_EMPTY",
-                `sample "${s.name}" has a loop that resampled to ${le - ls} bytes `
-                  + `at note ${n}; a loop note loops the whole sample`);
+              diag("warning", "W_MMB_BAKE_RANGE_EMPTY",
+                `sample "${s.name}" has a range that resampled to ${le - ls} bytes `
+                  + `at note ${n}; the note plays the whole sample`);
               looped = false; ls = 0; le = raw.length;
             }
           }

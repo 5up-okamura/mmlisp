@@ -9,7 +9,7 @@
 ; one and stopped early (STOP_SE), which gives both channels back.
 (def pcm-voices 1)
 (def-pcm blip :file "blip.wav")
-(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-pcm pad :file "pad.wav" :pcm-start 9ms :pcm-end 36ms)
 
 (def-se jump :prio 3 (fm1 :oct 5 :len 16 :vel 14 c e g > c))
 (def-se boom :prio 5 :tempo 150

@@ -198,10 +198,11 @@ typedef struct {
 /* ── PCM voice (driver.md §14) ─────────────────────────────────────────────
  * The engine owns playback — every pointer is the Z80's — so the sequencer
  * keeps only what its commands need: the note's blob, whether it loops (a
- * note-off sends its release), the loop, and the level. */
+ * note-off sends its release), its range, and the level. */
 typedef struct {
   uint8_t started;    /* a START has been sent since load: PCM_VOL is worth sending */
   uint8_t looping;    /* the running note loops */
+  uint8_t released;   /* a loop note let go: its tail plays to the blob's end */
   uint8_t keyed;      /* a note is on, up to its note-off: a macro's release waits for it */
   uint8_t retrig;     /* a :keyon step restarts the blob once the frame's levels are in */
   uint8_t sample_id;  /* the running note's sample: what an SE-end restarts */
@@ -211,19 +212,20 @@ typedef struct {
   uint8_t vel_base, vel, vol_base, vol; /* vel in eighths of a step, as FM and PSG */
   uint8_t shift;      /* composed attenuation 0..4; master is folded in by the host */
   uint8_t sent_shift; /* last shift byte sent, 0xFF = none */
-  /* THE LIVE LOOP, in baked bytes from the blob's start, unrounded — the note's
-   * own points until a LOOP_START/LOOP_END/LOOP_LEN param moves them. The
-   * length is kept beside the end so that moving only the start slides a loop
-   * of the same length through the sample, which is the gesture that spelling
-   * exists for; :loop-end pins the end instead and sets end_fixed. */
+  /* THE LIVE RANGE, in baked bytes from the blob's start, unrounded — the
+   * note's own points until a LOOP_START/LOOP_END/LOOP_LEN param moves them. A
+   * loop note repeats it, a shot plays it once. The length is kept beside the
+   * end so that moving only the start slides a range of the same length
+   * through the sample, which is the gesture that spelling exists for;
+   * :pcm-end pins the end instead and sets end_fixed. */
   uint32_t ls, le, llen;
   uint8_t end_fixed;
   /* The last END/WRAP sent. A sweep runs every frame and mostly lands on the
    * same 16-byte block, so a RETARGET goes out only when the block changes. */
   uint16_t sent_end, sent_wrap;
   uint8_t sent_pts;
-  /* THE TRACK'S OWN LOOP WRITES, sticky like any other track parameter: a loop
-   * note starts from the def's loop with these laid over it, so a :loop-start
+  /* THE TRACK'S OWN RANGE WRITES, sticky like any other track parameter: a
+   * note starts from the def's range with these laid over it, so a :pcm-start
    * written before the note is the note's. o_kind: 0 none, else the last of
    * T_LOOP_END / T_LOOP_LEN written, with its value in o_bound. */
   uint8_t o_has_ls, o_kind;

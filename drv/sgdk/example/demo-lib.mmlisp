@@ -3,4 +3,4 @@
 ; bundle gives every song (demo.bundle.json "se").
 
 ; An imported sample def reads its :file from THIS file's directory.
-(def-pcm padsmp :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-pcm padsmp :file "pad.wav" :pcm-start 9ms :pcm-end 36ms)

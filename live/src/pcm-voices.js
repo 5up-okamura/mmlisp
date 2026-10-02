@@ -22,7 +22,7 @@ import {
   PCM_TOTAL_MAX_SHIFT,
 } from "./mmb.js";
 import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
-import { pcmLoopPoints, pcmShotPoints, PCM_WINDOW } from "./pcm-model.js";
+import { pcmLoopPoints, pcmRangePoints, pcmShotPoints, PCM_WINDOW } from "./pcm-model.js";
 import { velFine, VEL_FINE, VEL_FINE_MAX } from "./ir-utils.js";
 
 
@@ -32,6 +32,7 @@ export function newPcmVoice() {
   return {
     started: false, // a START has been sent since load: PCM_VOL is worth sending
     looping: false, // the running note loops; a note-off sends its release
+    released: false, // a loop note let go: its tail plays to the blob's end
     keyed: false, // a note is on, up to its note-off: a macro's release waits for it
     retrig: false, // a :keyon step restarts the blob once the frame's levels are in
     src: 0, // the note's blob, as a window address
@@ -43,19 +44,20 @@ export function newPcmVoice() {
     shift: 0, // composed attenuation 0..4 from vel+vol; master is folded in by the host
     muted: false, // vol==0, master==0, or shift+master past PCM_TOTAL_MAX_SHIFT
     _sentShift: 0xff,
-    // THE LIVE LOOP, in baked bytes from the blob's start, unrounded — the
+    // THE LIVE RANGE, in baked bytes from the blob's start, unrounded — the
     // note's own points until a LOOP_START/LOOP_END/LOOP_LEN param moves
-    // them. The length sits beside the end so that moving only the start
-    // slides a loop of the same length through the sample; :loop-end pins
-    // the end instead and sets endFixed.
+    // them. A loop note repeats it, a shot plays it once. The length sits
+    // beside the end so that moving only the start slides a range of the same
+    // length through the sample; :pcm-end pins the end instead and sets
+    // endFixed.
     ls: 0, le: 0, llen: 0, endFixed: false,
     // The last END/WRAP sent, so a swept loop point only costs a RETARGET
     // when it actually leaves its 16-byte block.
     sentEnd: 0, sentWrap: 0, sentPts: false,
-    // THE TRACK'S OWN LOOP WRITES, sticky like any other track parameter: a
-    // loop note starts from the def's loop with these laid over it, so a
-    // `:loop-start` written before the note is the note's. `oBound` is the
-    // last of :loop-end / :loop-len written (oKind "END" | "LEN" | null).
+    // THE TRACK'S OWN RANGE WRITES, sticky like any other track parameter: a
+    // note starts from the def's range with these laid over it, so a
+    // `:pcm-start` written before the note is the note's. `oBound` is the
+    // last of :pcm-end / :pcm-len written (oKind "END" | "LEN" | null).
     oHasLs: false, oLs: 0, oKind: null, oBound: 0,
   };
 }
@@ -133,34 +135,42 @@ export class PcmVoices {
     v.sentPts = true;
   }
 
-  // The live loop points → the engine's END/WRAP. A released voice is a shot
-  // from here on, so its loop params stop having an effect — which is what a
+  // The engine's START/END/WRAP for what the voice plays now: a loop note
+  // its loop; a shot its range, once; a released loop note the rest of the
+  // blob, so its range params stop having an effect — which is what a
   // release means.
+  points(v) {
+    if (v.looping) return { start: v.src, ...pcmLoopPoints(v.src, v.len, v.ls, v.le) };
+    if (v.released) return { start: v.src, ...pcmShotPoints(v.src, v.len) };
+    return pcmRangePoints(v.src, v.len, v.ls, v.le);
+  }
+
+  // The live range → the engine's END/WRAP. The pointer is the engine's, so
+  // a moved start reaches only the next START.
   applyLoop(vi) {
     const v = this.voices[vi];
     if (!v.started) return;
-    const pts = v.looping
-      ? pcmLoopPoints(v.src, v.len, v.ls, v.le)
-      : pcmShotPoints(v.src, v.len);
+    const pts = this.points(v);
     this.retarget(vi, pts.end, pts.wrap);
   }
 
   /**
    * Start a note on voice `vi`. The caller has already restored the velocity
    * and composed the level (composeShift), exactly as the sequencer does.
-   * @param entry {len, loopStart, loopEnd} — the note's bank entry; its loop is
-   *              the def's, or the whole sample when the def has none
+   * @param entry {len, loopStart, loopEnd} — the note's bank entry; its range
+   *              is the def's, or the whole sample when the def has none
    * @param src   the blob's window address
-   * @param loop  the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7); a
-   *              shot plays once whatever the def says
+   * @param loop  the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7) over
+   *              its range; a shot plays the range once
    */
   start(vi, entry, src, loop) {
     const v = this.voices[vi];
     v.started = true;
     v.looping = !!loop;
+    v.released = false;
     v.src = src;
     v.len = entry.len;
-    // The def's loop, with the track's own writes laid over it in the same
+    // The def's range, with the track's own writes laid over it in the same
     // terms a write during the note uses (loopParam).
     v.ls = v.oHasLs ? v.oLs : entry.loopStart;
     if (v.oKind === "END") {
@@ -176,17 +186,17 @@ export class PcmVoices {
     this.restart(vi);
   }
 
-  // START the voice's blob from its first byte, at the level and loop it
-  // holds now — a note, and a :keyon retrigger, which after a loop's release
-  // plays the blob once through, as the released note would.
+  // START the voice at the level and range it holds now — a note, and a
+  // :keyon retrigger. A loop starts from the blob's first byte (the first
+  // pass plays up to the loop), a shot from its range's start; after a
+  // loop's release a retrigger plays the blob once through, as the released
+  // note would.
   restart(vi) {
     const v = this.voices[vi];
     if (!v.started) return;
-    const pts = v.looping
-      ? pcmLoopPoints(v.src, v.len, v.ls, v.le)
-      : pcmShotPoints(v.src, v.len);
+    const pts = this.points(v);
     const byte = this.shiftByte(v);
-    this.emit([PCM_START, vi, byte, ...u16le(v.src), ...u16le(pts.end), ...u16le(pts.wrap)]);
+    this.emit([PCM_START, vi, byte, ...u16le(pts.start), ...u16le(pts.end), ...u16le(pts.wrap)]);
     v._sentShift = byte;
     v.sentEnd = pts.end;
     v.sentWrap = pts.wrap;
@@ -199,14 +209,15 @@ export class PcmVoices {
     const v = this.voices[vi];
     if (!v.started || !v.looping) return;
     v.looping = false;
+    v.released = true;
     this.applyLoop(vi);
   }
 
   /**
-   * THE LOOP POINTS, as byte offsets into the playing blob (opcodes.md §7).
-   * `which` is "START" | "END" | "LEN". :loop-len keeps the length when the
-   * start moves; :loop-end pins the end. The write is kept for the track's
-   * next notes too, and moves the running note's loop now.
+   * THE RANGE, as byte offsets into the playing blob (opcodes.md §7).
+   * `which` is "START" | "END" | "LEN". :pcm-len keeps the length when the
+   * start moves; :pcm-end pins the end. The write is kept for the track's
+   * next notes too, and moves the running note's end now.
    */
   loopParam(vi, which, value) {
     const v = this.voices[vi];

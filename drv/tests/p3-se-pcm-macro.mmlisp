@@ -4,7 +4,7 @@
 ; note rolls again — and the loop the SE overwrote starts again with them.
 ; Both starts are host-driven (p3-se-pcm-macro.cmds.json, auto-start off).
 (def pcm-voices 2)
-(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-pcm pad :file "pad.wav" :pcm-start 9ms :pcm-end 36ms)
 (def-pcm blip :file "blip.wav")
 
 ; track 0 (bgm-pcm): a looping pad that rolls on sixteenths.

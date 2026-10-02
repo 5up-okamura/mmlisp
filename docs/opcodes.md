@@ -289,9 +289,9 @@ Notes:
 - **PCM_NOTE_ON** plays `sample` (SAMPLE_BANK id). The exporter bakes one
   entry per (sample, note), so the id already carries the pitch and `note`'s
   low seven bits only name it (mmb.md §10.1). **Bit 7 of `note` says the note
-  loops** (`:mode loop`): it loops on the entry's loop, with the track's
+  loops** (`:mode loop`): it loops on the entry's range, with the track's
   LOOP_* writes laid over it, until PCM_NOTE_OFF, which plays its tail out.
-  Clear, the note is a shot and plays once, whatever the entry's loop.
+  Clear, the note is a shot and plays that range once.
   `dur = 0x00` holds until the host releases it. A loop note whose gate is
   shorter than its length ends `dur` at the gate, where its PCM_NOTE_OFF
   stands, and the rest of the length is a REST. A shot takes the same
@@ -350,21 +350,22 @@ same bounds.
 | 0x40 | PAN         | 1     | −1..1          | YM $B4 bits 7–6 (−1=L, 0=LR, 1=R)  |
 | 0x41 | LFO_RATE    | 1     | 0..8           | YM $22 (0=off, 1–8=rate index)     |
 | 0x42 | NOISE_MODE  | 1     | 0..7           | PSG $E0 noise control (FB bit + NF bits) |
-| 0x43 | LOOP_START  | 2     | 0..0x7F00      | PCM loop head → `PCM_RETARGET` WRAP |
-| 0x44 | LOOP_END    | 2     | 0..0x7F00      | PCM loop end → `PCM_RETARGET` END   |
-| 0x45 | LOOP_LEN    | 2     | 0..0x7F00      | PCM loop length; END = head + this  |
+| 0x43 | LOOP_START  | 2     | 0..0x7F00      | PCM range start (`:pcm-start`) → a loop's WRAP, a shot's next START |
+| 0x44 | LOOP_END    | 2     | 0..0x7F00      | PCM range end (`:pcm-end`) → `PCM_RETARGET` END |
+| 0x45 | LOOP_LEN    | 2     | 0..0x7F00      | PCM range length (`:pcm-len`); END = start + this |
 | 0x46–0xFF | —      | —     | —              | reserved                           |
 
 Per-op ids are consecutive op1→op4 within each parameter family (FM_TL1 = 0x11
 … FM_TL4 = 0x14).
 
-The three loop targets are **byte offsets into the playing blob**, not register
-values: the driver recomputes the voice's END/WRAP through the same rounding
-every note-on uses and sends one `PCM_RETARGET` — and only when the rounded
-16-byte block actually moves, so a swept loop point does not spend six bytes of
+The three range targets are **byte offsets into the playing blob**, not register
+values (they kept their names from when the range was a loop's alone): the
+driver recomputes the voice's END/WRAP through the same rounding every note-on
+uses and sends one `PCM_RETARGET` — and only when the rounded
+16-byte block actually moves, so a swept range point does not spend six bytes of
 every slot. They are valid on `pcm1`–`pcm3` only. `LOOP_LEN` keeps its length
-when `LOOP_START` moves; `LOOP_END` pins the end instead. A released voice
-ignores them — it is a shot from then on.
+when `LOOP_START` moves; `LOOP_END` pins the end instead. A released loop note
+ignores them — it plays its tail to the sample's end.
 
 ### 7.1 Ids with no emission path
 

@@ -1709,7 +1709,7 @@
       ':pitch',':pitch+',':semi',':semi+',':keyon',':back',':time',
       ':tempo-scale',':csm-rate',
       // macro / voice / definitions
-      ':step',':loop-start',':loop-end',':loop-len',
+      ':step',':pcm-start',':pcm-end',':pcm-len',
       ':file',':rate',
       // def-val (dynamic value slots)
       ':unit',
@@ -7249,7 +7249,7 @@
         if (!def) return;
         const samples = await pcmSampleBlobsForMmb(ir, new Set([name]));
         if (!samples) throw new Error(`"${name}" did not load`);
-        const loop = def.loopStartSec != null || def.loopEndSec != null;
+        const loop = def.startSec != null || def.endSec != null;
         if (seq !== _pcmAuditionSeq || (loop && _pcmReleasedSeq === seq)) return; // superseded or let go
         const { sampleBank, entryIds } = bakeAuditionBank(ir, samples, name, midi);
         workletNode.port.postMessage({

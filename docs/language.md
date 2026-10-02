@@ -1107,7 +1107,7 @@ An omitted **`:from`** means one thing: *start where the parameter is now.*
 That is only knowable where the curve runs against a live value — an inline
 sweep (`:tl1 (linear :to 60 :len 2)`, `:vol`, a PSG level, `:pitch`) reads the
 parameter when it starts, and `:tempo` starts from the tempo in force. A macro
-curve is baked per note, a `(delay …)` envelope and a PCM loop point are laid
+curve is baked per note, a `(delay …)` envelope and a PCM range point are laid
 out at compile time, and arithmetic on a curve shifts its start — so those
 need the `:from` written (`E_CURVE_FROM`).
 
@@ -1389,7 +1389,7 @@ changes — as a voice is on FM. How many voices play at once is a whole-song ch
 (def pcm-voices 3)
 (def-pcm kick :file "sounds/kick.wav")
 (def-pcm snare :file "sounds/snare.wav" :rate 11025)
-(def-pcm pad :file "sounds/pad.wav" :loop-start 300ms :loop-len 100ms)
+(def-pcm pad :file "sounds/pad.wav" :pcm-start 300ms :pcm-len 100ms)
 
 (pcm1 kick :tempo 120  :len 4  c _ c _)
 (pcm2 snare :len 4  _ c _ c)
@@ -1429,7 +1429,7 @@ is never touched.
 | `:rate`       | C4 playback rate in Hz (default: the WAV's native rate)        |
 | `:offset`     | Start frame within the file (default 0). See *Sample banks*   |
 | `:frames`     | Frame count (default: to the end of the file)                 |
-| `:loop-start` / `:loop-end` / `:loop-len` | Sustain loop, as LENGTHS (see below) |
+| `:pcm-start` / `:pcm-end` / `:pcm-len` | The range a note plays, as LENGTHS (see below) |
 | `:fx`     | The processing chain, `[(effect …) …]` — see *Effects* below   |
 
 All conversion is compile-time: stereo is downmixed `(L+R)/2`, the `:fx`
@@ -1449,8 +1449,8 @@ bytes, and a negative `:offset` or a non-positive `:frames` is `E_SAMPLE_SLICE`.
 ```
 
 The file is decoded once and shared by every def that slices it, so a bank costs
-no more than a single sample would. `:loop-start` / `:loop-end` are **relative to
-the slice**, not to the file — a def is one sample, so its loop points don't move
+no more than a single sample would. `:pcm-start` / `:pcm-end` are **relative to
+the slice**, not to the file — a def is one sample, so its range doesn't move
 when `:offset` changes.
 
 **A relative `:file` resolves against the file that defined it** — the score for
@@ -1492,53 +1492,66 @@ than left to break at export time.
 
 Full drop routing for every accepted format: `guide.md` §23.
 
-### The loop
+### The range
 
-`:loop-start`, `:loop-end` and `:loop-len` say where a `loop` note repeats.
-They take **lengths** — the same grammar as `:len` and `:gate` (§4), including
-`Nms`, which is what you want when the point is a place in the wave rather than
-a place in the bar. `:loop-end` and `:loop-len` both set the far bound — one
-pins the end, the other the length, which differ once `:loop-start` moves (see
-below) — and the last one written is the one in force.
+`:pcm-start`, `:pcm-end` and `:pcm-len` say which part of the sample a note
+plays: a `shot` plays the range once, a `loop` note repeats it (*Playback*,
+below). They take **lengths** — the same grammar as `:len` and `:gate` (§4),
+including `Nms`, which is what you want when the point is a place in the wave
+rather than a place in the bar. `:pcm-end` and `:pcm-len` both set the far
+bound — one pins the end, the other the length, which differ once `:pcm-start`
+moves (see below) — and the last one written is the one in force. With none
+set the range is the whole sample; a missing start is the sample's start, a
+missing end its end.
 
 They belong on a `def` and on a track, and they mean the same thing in both —
-unlike `:offset` / `:frames`, which cut a sample out of a file and have nothing
-to do with playback. On a def they set the sample's own sustain loop:
+unlike `:offset` / `:frames`, which cut a sample out of a file and decide the
+bytes that go into the bank. The range is what a note plays of those bytes. On
+a def it is the sample's own range:
 
 ```lisp
-(def-pcm pad :file "pad.wav" :loop-start 300ms :loop-len 100ms)
+(def-pcm pad :file "pad.wav" :pcm-start 300ms :pcm-len 100ms)
+(def-pcm crash-tail :file "crash.wav" :pcm-start 400ms) ; a shot from 400 ms on
 ```
 
-On a track they set the loop of the notes that follow, like any track
+On a track they set the range of the notes that follow, like any track
 parameter — laid over the def's, and kept until the next write — and they MOVE
 it while a note sounds, as a literal or as a curve, a thing no other Mega
 Drive driver offers:
 
 ```lisp
 (pcm1 pad :mode loop :len 1
-  :loop-start 300ms :loop-len 16                    c ; a 16th-note loop, head fixed
-  :loop-len (linear :from 100ms :to 2ms :len 2)     c ; tighten it to a buzz
-  :loop-len 100ms
-  :loop-start (linear :from 100ms :to 900ms :len 2) c) ; slide it through the sample
+  :pcm-start 300ms :pcm-len 16                    c ; a 16th-note loop, head fixed
+  :pcm-len (linear :from 100ms :to 2ms :len 2)    c ; tighten it to a buzz
+  :pcm-len 100ms
+  :pcm-start (linear :from 100ms :to 900ms :len 2) c) ; slide it through the sample
 ```
 
 A curve keeps its last value too: the second line ends at 2 ms, which is why
-the third sets `:loop-len` again. `:loop-len` holds the length when
-`:loop-start` moves — which is what the third line relies on. `:loop-end` pins the end instead, and then moving the
+the third sets `:pcm-len` again. `:pcm-len` holds the length when
+`:pcm-start` moves — which is what the third line relies on. `:pcm-end` pins the end instead, and then moving the
 start changes the length. A curve's ends are lengths too, so write `:from` and
 `:to` rather than the `A..B` range sugar (`8...4` would be unreadable).
 
 Three limits worth knowing:
 
-- **The engine rounds the loop to 16 bytes** — 1.11 ms at `pcm-voices 1`,
-  1.58 at 2, 2.40 at 3. That is also the shortest loop there is, so the
-  highest buzz `pcm1` reaches is about 900 Hz and the pitches below it are
-  `14375.7 / 16n` Hz. **This is a rhythmic device, not a pitch one.**
-- A note-off ends the loop: the voice plays its tail and parks. Loop writes
-  after that do not move the tail; they are kept for the next loop note.
+- **The engine rounds the range to 16 bytes** — 1.11 ms at `pcm-voices 1`,
+  1.58 at 2, 2.40 at 3. A loop's ends round to the nearest block, and that is
+  also the shortest loop there is, so the highest buzz `pcm1` reaches is about
+  900 Hz and the pitches below it are `14375.7 / 16n` Hz. **This is a
+  rhythmic device, not a pitch one.** A shot's range is widened to whole
+  blocks — the start down, the end up — so it plays at least what you wrote.
+- **A loop's first pass starts at the sample's start**: the attack plays up to
+  `:pcm-end`, then `[:pcm-start, :pcm-end)` repeats. A shot starts at
+  `:pcm-start`.
+- While a note sounds, a write moves its end (and a loop's head); a moved
+  `:pcm-start` reaches a shot at its next start (a note, or a `:keyon` step).
+- A note-off ends the loop: the voice plays its tail to the sample's end and
+  parks. Range writes after that do not move the tail; they are kept for the
+  next note.
 - **Frame of reference.** On a def the value is time in the sample's own
-  recording, so a loop stays where you set it however the note transposes. On a
-  track it is time as you HEAR it, so `:loop-len 16` is a 16th note at every
+  recording, so a range stays where you set it however the note transposes. On a
+  track it is time as you HEAR it, so `:pcm-len 16` is a 16th note at every
   pitch. At C4 the two coincide.
 
 ### Effects
@@ -1557,7 +1570,7 @@ never runs them, so they cost no Z80 time — only what they do to the bank
 
 Each effect is `(name :param value …)`; a param left out takes its default.
 Levels are dB (plain numbers), times are lengths (§4 — `Nms` is the usual
-choice, as for the loop points).
+choice, as for the range).
 
 | Effect | Does |
 | --- | --- |
@@ -1640,27 +1653,27 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   transient through, and a following `normalize` scales to that spike. On a
   long, low sound a fast release follows the waveform and adds grit — raise
   it there.
-- **Times are the sample's own time**, like the def's loop points: a sample
+- **Times are the sample's own time**, like the def's range: a sample
   played an octave up plays its fade in half the time.
 - **A fade inside the loop** is baked into the bytes the loop repeats, so it
   warns (`W_SAMPLE_FX_FADE_LOOP`); a fade that runs past the sample's end
-  warns `W_SAMPLE_FX_FADE_PAST_END`. A `loop` note on a def with no loop
-  points loops the whole sample, fade included.
+  warns `W_SAMPLE_FX_FADE_PAST_END`. A `loop` note on a def with no range
+  loops the whole sample, fade included.
 - **A reverb costs its `:tail` in bank bytes** — at `pcm-voices 1`, 250 ms
   is about 3.6 KB, per note the sample is played at — which is why the tail is
   yours to set. It is baked into each def, not a shared bus: **the next note on
   the same voice cuts it**, so it rings on spaced hits (a backbeat snare, an
   effect) and all but vanishes on a busy hat. Short rooms and plates (0.2–0.6
   s) suit 8 bits best; a long tail decays into quantization grain. A reverb on
-  a def with loop points extends the sample the loop can reach.
+  a def with a range extends the sample the range can reach.
 - **Loud samples overlap loud.** Voices are summed and hard-clipped (above),
   so a kit brought up to full scale distorts where hits overlap — trade that
   against `:vel` / `:vol`.
 - **A kit, or a variant.** `(import "kit" :fx [...])` processes every
   sample of a kit (§9.2); its chain runs before each def's own.
   `(def-pcm snare-hot snare :fx [...])` is a variant of one sound: it
-  takes the base's `:file` (still read from the base's folder), slice, loop
-  points and effects — the import's chain included — and overrides the keys it
+  takes the base's `:file` (still read from the base's folder), slice, range
+  and effects — the import's chain included — and overrides the keys it
   writes; its own `:fx` replaces the base's, the import's stays in front.
   A base that is not a sample, or a cycle, is `E_SAMPLE_EXTENDS`.
   A variant is a def of its own, so playing both bakes both.
@@ -1678,11 +1691,10 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   than silently dropped.
 - **`:mode`** is sticky track state like every other parameter — it holds
   until the next `:mode` — and it is the note, not the sample, that decides:
-  `shot` (the default) plays start→end once, even on a sample whose def has
-  loop points; `loop` plays the attack, cycles the loop until KEY-OFF (a
-  `PCM_NOTE_OFF` at the gate), then plays the release tail. A `loop` note on a
-  def with no loop points loops the whole sample. Write `:mode shot` to go
-  back.
+  `shot` (the default) plays the note's range once; `loop` plays the attack,
+  cycles the range until KEY-OFF (a `PCM_NOTE_OFF` at the gate), then plays
+  the release tail to the sample's end. A note on a def with no range plays —
+  or loops — the whole sample. Write `:mode shot` to go back.
   > A `shot` plays to its end regardless of the note's `length` / `gate`;
   > only `loop` mode's sound honors KEY-OFF (a shot's macros do, below).
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
@@ -1712,8 +1724,10 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   ```
 - A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; a word that
   names no def is `E_UNKNOWN_ATOM`. `:mode shot`/`loop` and
-  the loop points on any other channel (fm6 included — it is FM only) are
-  `E_UNSUPPORTED_TARGET`.
+  the range keys on any other channel (fm6 included — it is FM only) are
+  `E_UNSUPPORTED_TARGET`. A def-pcm key it does not have is
+  `E_UNKNOWN_KEYWORD`; a range that is not a length, or ends at or before it
+  starts, is `E_SAMPLE_RANGE`.
 
 ---
 

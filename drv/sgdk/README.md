@@ -495,8 +495,8 @@ Everything the language compiles to, except SE:
 - **PCM:** up to three sample voices on the `fm6` DAC, one engine image per
   count — `(def pcm-voices N)`: one voice at 14,376 Hz, two at 10,112 Hz, three
   at 6,653 Hz. Per-note level and a master level on the 6 dB grid, every note
-  baked at its own pitch, and loops whose points (`:loop-start`, `:loop-end`,
-  `:loop-len`) can move while the note plays — by a value, a sweep or a curve.
+  baked at its own pitch, and loops whose points (`:pcm-start`, `:pcm-end`,
+  `:pcm-len`) can move while the note plays — by a value, a sweep or a curve.
 
 ## Limits
 

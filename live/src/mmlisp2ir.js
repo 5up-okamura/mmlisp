@@ -72,12 +72,14 @@ const SUPPORTED_TARGETS = new Set([
 // drop it silently (plan-pcm-spec.md D5).
 const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
 
-// The PCM loop points (docs/language.md §16). Their values are LENGTH TOKENS,
-// not plain numbers, and they drive the engine's block edge rather than a chip
-// register — so they are PARAM-legal (a literal or a curve) but not macro-legal.
-// LOOP_END and LOOP_LEN both set the far bound (pinning the end vs the length);
-// the last one written wins.
-const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
+// The PCM range, :pcm-start / :pcm-end / :pcm-len (docs/language.md §16):
+// the part of the sample a note plays, and a loop note repeats. Their values
+// are LENGTH TOKENS, not plain numbers, and they drive the engine's block edge
+// rather than a chip register — so they are PARAM-legal (a literal or a curve)
+// but not macro-legal. LOOP_END and LOOP_LEN (the binary targets keep their
+// names) both set the far bound, pinning the end vs the length; the last one
+// written wins.
+const PCM_RANGE_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
 const PCM_PITCH_KEYWORD = { NOTE_PITCH: ":pitch", NOTE_SEMI: ":semi" };
 
 // What a (macro …) can drive on a pcm track: a retrigger (`:keyon` plays the
@@ -108,7 +110,7 @@ const PARAM_SET_TARGETS = new Set([
   ...[...SUPPORTED_TARGETS].filter(
     (t) => t !== "NOTE_SEMI" && t !== "KEYON" && t !== "VEL",
   ),
-  ...PCM_LOOP_TARGETS,
+  ...PCM_RANGE_TARGETS,
 ]);
 
 
@@ -311,7 +313,7 @@ function msToTicks(ms, bpm) {
 }
 
 // A length token as an absolute duration in SECONDS, without the detour through
-// ticks. The PCM loop points need this: a tick is 5.2 ms at 120 BPM, so
+// ticks. The PCM range needs this: a tick is 5.2 ms at 120 BPM, so
 // resolving `1ms` to ticks would round it away, while the engine can place a
 // loop 1.11 ms long (one 16-byte block at pcm1 — driver.md §5).
 export function lengthTokenSeconds(token, bpm = 120) {
@@ -1554,7 +1556,7 @@ function flattenPriorityLayers(head, layers, diagnostics) {
 
 // `:fx [(name …) (name …)]` → the IR's resolved chain (docs/ir.md §2.2):
 // `{type, …params}` with every param filled in, times in seconds (at the
-// score's opening tempo, like the loop points) and levels in dB. The table
+// score's opening tempo, like the range points) and levels in dB. The table
 // the params are checked against is sample-fx.js's, the same one that runs
 // them.
 function resolveSampleEffects(node, bpm, diagnostics, src) {
@@ -1645,11 +1647,11 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
     rate: null,
     offset: null,
     frames: null,
-    loopStartTok: null,
-    loopEndTok: null,
-    loopLenTok: null,
-    loopStartSec: null,
-    loopEndSec: null,
+    startTok: null,
+    endTok: null,
+    lenTok: null,
+    startSec: null,
+    endSec: null,
     fxNode: null,
     fx: [],
   };
@@ -1658,7 +1660,7 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
     const key = atomValue(bodyItems[ki]);
     const rawVal = atomValue(bodyItems[ki + 1]);
     if (key === ":fx") {
-      // Resolved with the loop points, once the score's opening tempo is known
+      // Resolved with the range points, once the score's opening tempo is known
       // (a fade `:len 8` is a musical length).
       sample.fxNode = bodyItems[ki + 1];
       continue;
@@ -1674,14 +1676,19 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
     } else if (key === ":frames") {
       const frames = parseIntLike(rawVal);
       if (frames !== null) sample.frames = frames;
-    } else if (key === ":loop-start") {
-      sample.loopStartTok = rawVal;
-    } else if (key === ":loop-end") {
-      sample.loopEndTok = rawVal;
-      sample.loopLenTok = null; // the two spell one bound; the last one wins
-    } else if (key === ":loop-len") {
-      sample.loopLenTok = rawVal;
-      sample.loopEndTok = null;
+    } else if (key === ":pcm-start") {
+      sample.startTok = rawVal;
+    } else if (key === ":pcm-end") {
+      sample.endTok = rawVal;
+      sample.lenTok = null; // the two spell one bound; the last one wins
+    } else if (key === ":pcm-len") {
+      sample.lenTok = rawVal;
+      sample.endTok = null;
+    } else {
+      // A key the def does not have would otherwise drop out silently — a
+      // typo, or a score still written with the old `:loop-*` names.
+      pushDiag(diagnostics, "error", "E_UNKNOWN_KEYWORD",
+        `def-pcm has no key ${key}`, nodeSrc(bodyItems[ki]) ?? src, null);
     }
   }
 
@@ -1697,7 +1704,7 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
   }
 
   // :offset / :frames slice one file into many samples (a bank). Frames, not
-  // bytes — like :loop-start/:loop-end, which stay relative to the slice.
+  // bytes — like :pcm-start/:pcm-end, which stay relative to the slice.
   if (sample.offset !== null && sample.offset < 0) {
     pushDiag(
       diagnostics,
@@ -1747,7 +1754,7 @@ function extractMacroStep(items, diagnostics, trackName) {
 }
 
 // A curve that is not an inline sweep has no current value to start from —
-// a macro's table is baked per note, a delay's envelope and a PCM loop point
+// a macro's table is baked per note, a delay's envelope and a PCM range point
 // are lengths laid out at compile time — so its :from must be written (§11).
 function requireCurveFrom(spec, diagnostics, trackName, where, src = null) {
   if (spec && !spec.steps && !spec.stages && spec.from === undefined && diagnostics)
@@ -2035,7 +2042,7 @@ function parseCurveSpec(
   trackName = null,
   requireCurve = false,
   // How a value in `:from` / `:to` (and `const`'s positional) is read. The PCM
-  // loop points pass a length-token reader here, so `(line :from 16 :to 64)`
+  // range points pass a length-token reader here, so `(line :from 16 :to 64)`
   // sweeps a 16th note down to a 64th instead of the bare numbers 16 and 64.
   scalar = null,
 ) {
@@ -2642,10 +2649,10 @@ export function canonicalTarget(symbol) {
     ":keyon": "KEYON",
     // LFO
     ":lfo-rate": "LFO_RATE",
-    // PCM loop points
-    ":loop-start": "LOOP_START",
-    ":loop-end": "LOOP_END",
-    ":loop-len": "LOOP_LEN",
+    // PCM range: the part of the sample a note plays (and a loop repeats)
+    ":pcm-start": "LOOP_START",
+    ":pcm-end": "LOOP_END",
+    ":pcm-len": "LOOP_LEN",
     // FM channel-level
     ":alg": "FM_ALG",
     ":fb": "FM_FB",
@@ -2669,9 +2676,11 @@ export function canonicalTarget(symbol) {
       return acc;
     }, {}),
   };
-  return (
-    map[symbol] || symbol.replace(/^:/, "").toUpperCase().replace(/-/g, "_")
-  );
+  if (map[symbol]) return map[symbol];
+  // The range targets keep their binary names, so the spelled-out fallback
+  // would let `:loop-start` through as an alias of `:pcm-start`: not a key.
+  const t = symbol.replace(/^:/, "").toUpperCase().replace(/-/g, "_");
+  return PCM_RANGE_TARGETS.has(t) ? null : t;
 }
 
 const FM_OP_PARAMS = [
@@ -3172,7 +3181,7 @@ function compileChannelBody(
               // or $value → runtime PARAM_ADD/PARAM_MUL/PARAM_FROM_VAL.
               const { stem, op } = opSuffix(val);
               const target = canonicalTarget(stem);
-              if (!SUPPORTED_TARGETS.has(target) && !PCM_LOOP_TARGETS.has(target)) {
+              if (!SUPPORTED_TARGETS.has(target) && !PCM_RANGE_TARGETS.has(target)) {
                 // Unrecognized `:keyword` — a typo or a stray track-header option
                 // used mid-body. Fail loudly instead of dropping it silently.
                 pushDiag(
@@ -3221,7 +3230,7 @@ function compileChannelBody(
                 push("PARAM_SWEEP_STOP", { target });
                 break;
               }
-              if (PCM_LOOP_TARGETS.has(target)) {
+              if (PCM_RANGE_TARGETS.has(target)) {
                 // A length everywhere: the literal, and both ends of a curve.
                 // The IR carries SECONDS; the exporter turns them into the
                 // engine's byte offsets at the image's rate (driver.md §5).
@@ -3242,7 +3251,7 @@ function compileChannelBody(
                 }
                 const secOf = (tok) =>
                   lengthTokenSeconds(tok, trackState.currentTempo);
-                const loopCurve = parseCurveSpec(
+                const rangeCurve = parseCurveSpec(
                   items[i],
                   diagnostics,
                   nodeSrc(node),
@@ -3250,9 +3259,9 @@ function compileChannelBody(
                   true,
                   secOf,
                 );
-                requireCurveFrom(loopCurve, diagnostics, trackName, "a PCM loop point", nodeSrc(node));
-                if (loopCurve) {
-                  push("PARAM_SWEEP", { target, ...loopCurve });
+                requireCurveFrom(rangeCurve, diagnostics, trackName, "a PCM range point", nodeSrc(node));
+                if (rangeCurve) {
+                  push("PARAM_SWEEP", { target, ...rangeCurve });
                   break;
                 }
                 const sec = secOf(rawVal);
@@ -3260,7 +3269,7 @@ function compileChannelBody(
                   pushDiag(
                     diagnostics,
                     "error",
-                    "E_PCM_LOOP_LENGTH",
+                    "E_PCM_RANGE_LENGTH",
                     `${val} needs a length (300ms, 16, 8., 6t, 3f): got ${rawVal}`,
                     nodeSrc(node),
                     trackName,
@@ -4652,15 +4661,15 @@ function resolveSampleExtends(sampleDefs, diagnostics) {
       return null;
     }
     const child = { ...base, src: own.src, extends: null };
-    for (const k of ["rate", "offset", "frames", "loopStartTok", "fxNode"])
+    for (const k of ["rate", "offset", "frames", "startTok", "fxNode"])
       if (own[k] !== null) child[k] = own[k];
     if (own.file !== null) {
       child.file = own.file;
       child.baseDir = own.baseDir;
     }
-    if (own.loopEndTok !== null || own.loopLenTok !== null) {
-      child.loopEndTok = own.loopEndTok;
-      child.loopLenTok = own.loopLenTok;
+    if (own.endTok !== null || own.lenTok !== null) {
+      child.endTok = own.endTok;
+      child.lenTok = own.lenTok;
     }
     sampleDefs.set(name, child);
     return child;
@@ -4934,8 +4943,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         pushDiag(
           diagnostics,
           "error",
-          "E_SAMPLE_LOOP",
-          `def :sample ${key} is not a length: ${tok}`,
+          "E_SAMPLE_RANGE",
+          `def-pcm ${key} is not a length: ${tok}`,
           sample.src ?? fileSrc,
           "global",
         );
@@ -4943,25 +4952,25 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       }
       return v;
     };
-    const start = sec(sample.loopStartTok, ":loop-start");
-    const end = sec(sample.loopEndTok, ":loop-end");
-    const len = sec(sample.loopLenTok, ":loop-len");
+    const start = sec(sample.startTok, ":pcm-start");
+    const end = sec(sample.endTok, ":pcm-end");
+    const len = sec(sample.lenTok, ":pcm-len");
     if (start === null && end === null && len === null) continue;
-    sample.loopStartSec = start ?? 0;
-    // :loop-end and :loop-len both set the far bound; neither given means "to
+    sample.startSec = start ?? 0;
+    // :pcm-end and :pcm-len both set the far bound; neither given means "to
     // the end of the sample", which the exporter fills in.
-    sample.loopEndSec = end ?? (len === null ? null : sample.loopStartSec + len);
-    if (sample.loopEndSec !== null && sample.loopEndSec <= sample.loopStartSec) {
+    sample.endSec = end ?? (len === null ? null : sample.startSec + len);
+    if (sample.endSec !== null && sample.endSec <= sample.startSec) {
       pushDiag(
         diagnostics,
         "error",
-        "E_SAMPLE_LOOP",
-        `def :sample loop ends at or before it starts (${sample.loopStartSec}s -> ${sample.loopEndSec}s)`,
+        "E_SAMPLE_RANGE",
+        `def-pcm range ends at or before it starts (${sample.startSec}s -> ${sample.endSec}s)`,
         sample.src ?? fileSrc,
         "global",
       );
-      sample.loopStartSec = null;
-      sample.loopEndSec = null;
+      sample.startSec = null;
+      sample.endSec = null;
     }
   }
 
@@ -5369,8 +5378,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         rate: sample.rate,
         offset: sample.offset,
         frames: sample.frames,
-        loopStartSec: sample.loopStartSec,
-        loopEndSec: sample.loopEndSec,
+        startSec: sample.startSec,
+        endSec: sample.endSec,
         fx: sample.fx,
       })),
     },

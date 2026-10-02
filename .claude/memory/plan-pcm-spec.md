@@ -67,30 +67,27 @@ PCM in any layer.
   every PCM special case. The other targets stay errors: a soft-mixed voice
   has no register for them.
 - **The range a note plays is not a loop thing — `:pcm-start` /
-  `:pcm-end` / `:pcm-len` (decided 2026-10-03, NOT YET IMPLEMENTED).** The
+  `:pcm-end` / `:pcm-len` (decided 2026-10-03, landed the same day).** The
   user assumed a shot could already be given a start and an end, since a
-  loop can; it cannot — a shot plays the whole blob
-  (`pcm-voices.js` `pcmShotPoints`), the 2026-09-18 ruling having defined
-  loop points for loops only. The engine needs nothing: a shot's START/END
-  are sent per note exactly as a loop's are (WRAP stays the silence page).
-  So the three keys are RENAMED, on the def and the track alike, with the
-  same time values and the same live moves: `:loop-start` → `:pcm-start`,
-  `:loop-end` → `:pcm-end`, `:loop-len` → `:pcm-len`; `:mode loop` repeats
-  the range, `:mode shot` plays it once. The user chose the `pcm-` prefix
+  loop can; it could not (the 2026-09-18 ruling had defined loop points for
+  loops only). The engine needed nothing. The user chose the `pcm-` prefix
   over a new word (`:span` was proposed for the length, since `:len` is the
-  note's): "avoid new words", and it matches `def-pcm` / `pcm1`.
-  `:offset` / `:frames` stay what they are — the bytes that go in the bank —
-  against a time range the note plays. No old names kept. Scope: the
-  compiler's keys and the IR fields (`loopStartSec` / `loopEndSec` →
-  `startSec` / `endSec`), `pcm-voices.js` and its C twin passing the range
-  to a shot, language §16 / ir.md / cheatsheet / guide, snippets and
-  presets that use the keys, the mucom importer if it writes them, and the
-  live editor's value classifier (it names these keys).
-  Why this came up: a reversed cymbal. A baked reverse (an fx or a key)
-  costs a second blob — 13 KB of 32 for a crash — which the user rejected;
-  reverse AT PLAYBACK costs no Z80 time (`dec` = `inc`) but is a new engine
-  mode (mirrored COMPARE/END contract) through every layer, and was set
-  aside, recorded under Open.
+  note's): "avoid new words", and it matches `def-pcm` / `pcm1`. `:offset` /
+  `:frames` stay what they are — the bytes that go in the bank — against a
+  time range the note plays. No old names kept: `:loop-*` is
+  `E_UNKNOWN_KEYWORD` on a def and a track. Why it came up: a reversed
+  cymbal — a baked reverse costs a second blob (13 KB of 32 for a crash),
+  which the user rejected; reverse at playback is under Open.
+  Choices made in the implementation, NOT yet confirmed by the user (the
+  decision did not say): (a) a loop note's first pass still starts at the
+  blob's start (attack, then the range repeats) — only a shot starts at
+  `:pcm-start`; (b) a shot's range is WIDENED to blocks (start floor, end
+  ceil — `pcmRangePoints`), where a loop rounds to nearest, so a whole-sample
+  shot still plays every byte; (c) a released loop note's tail still plays to
+  the blob's end, not to `:pcm-end`; (d) the binary/IR target names stay
+  `LOOP_START` / `LOOP_END` / `LOOP_LEN` (a `PCM_START` target would collide
+  with the slot command); (e) the editor's sample audition still plays a def
+  with a range as a loop, a def without as a shot.
 - **One 32 KB bank a song (2026-09-17).** If ever needed: on `pcm1` only, the
   START piece writes the bank register (~100 cycles, blobs may not cross a
   32 KB boundary; ~14.4 → ~12 kHz). Two or three voices would need a per-block
