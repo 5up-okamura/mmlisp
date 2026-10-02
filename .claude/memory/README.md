@@ -40,16 +40,18 @@ Rules:
   why compile-time eval and the value machine have their shape, with the
   risks that are still live.
 - [plan-68k-optimization.md](plan-68k-optimization.md) — **cutting the
-  68000's share: the issue list from reading the sequencer, converter and
-  host, ranked, with the two profile figures that must be re-measured first
-  and the pre-rendering design question.** The user's chosen direction;
-  nothing is implemented yet.
+  68000's share: the issue list, the profiles, what landed and what was
+  undone for readability, the whole-pass result (sin008: 24.5% → 16.3%) —
+  CLOSED 2026-10-02**: the rest is the price of a live synth. Left for when
+  a game drops a frame: assembly for the hot paths only.
 - [plan-z80-only.md](plan-z80-only.md) — **a Z80-only build (roadmap Phase 3
   #6): the measurements (the archived sequencer with PCM off, the jitter
   listening set, poll overhead, the RAM budget) and the decisions taken
   (poll points, ~10 kHz, Timer A) — SET ASIDE 2026-09-28** in favour of
   plan-68k-optimization: the user judged the build would lose most of what
-  makes the driver distinctive. Kept for the day it is revisited.
+  makes the driver distinctive. Kept for the day it is revisited — with a
+  second shape seen 2026-10-02: MMLisp as the composing tool, a pre-rendered
+  stream (XGM) plus a few live controls on the Z80.
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   Lisp input aids: the implementation deviations and their reasons (why no
   `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the

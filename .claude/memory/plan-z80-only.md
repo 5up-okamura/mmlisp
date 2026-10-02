@@ -7,6 +7,26 @@ restore) — the space is one XGM2 and MDSDRV have already mapped. The chosen
 direction is [[plan-68k-optimization]]: keep the split, cut the 68000's share.
 Everything below stands as measured, for the day this is revisited.
 
+## A second shape: MMLisp as the composing tool, a stream player on the Z80 (2026-10-02)
+
+After the 68000 pass closed ([[plan-68k-optimization]]), the user saw a Z80
+version differently: not this driver shrunk, but **MMLisp as the composing
+environment** with a pre-rendered output — XGM would do — and "subtract
+something, add a little": keep a few MMLisp-like live controls on top of the
+stream. The user likes the direction; nothing is decided or built.
+
+- **The path exists today**: Live's VGM export (`live/src/export-vgm.js`) →
+  SGDK's xgmtool → XGM. What is lost is runtime parameter motion (`$slot`,
+  macros reacting to the game); the language, preview and importers stay.
+- **The "little" to add on a pre-rendered stream**, each cheap on a Z80:
+  - per-channel level offsets: an add on the carrier TL writes passing
+    through (the player tracks each channel's ALG from the stream's $B0 to
+    know the carriers) — the game turns a part down;
+  - part swapping: the score exported as layered variant streams, switched
+    per channel by game state (drums come in for the battle) — interactive
+    music without runtime synthesis;
+  - `(trig N)` markers carried in the stream, so the game can sync to bars.
+
 `roadmap.md` Phase 3 open #6. Nothing is built; this file holds the user's
 decisions so far and the measurements taken for them.
 

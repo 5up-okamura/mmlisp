@@ -348,7 +348,12 @@ answers exist:
    pieces, control calls deferred to the next frame head) and was not worth
    it for a worst frame that is the setup burst (251 writes at f0 of sin008)
    plus one mid-song voice change (79 writes at 15 s, scorable around). Left
-   for when a game actually drops a frame: a per-frame-numbered
+   for when a game actually drops a frame: **hand-written assembly for the
+   hot paths only** (the macro step, the tick walk, `mmlp_plan`) with the C
+   kept as the reference and swapped out only in the SGDK build — the one
+   lever that keeps every feature; the gates then need a first-party 68000
+   emulator (the C runs on the host today) or a BlastEm A/B on the user's
+   machine; a per-frame-numbered
    `sgdk-profile` output to measure a mid-song burst alone, and step 2 (the
    sequencer pushing pairs directly, ~1–2%).
 2. **Then decide §4** (pre-rendering) against what is left: if the steady
