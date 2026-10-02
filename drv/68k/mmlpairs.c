@@ -175,18 +175,25 @@ static void frame_publish(MMLPairs *p) {
   p->frames_in = (uint16_t)(p->frames_in + 1);
 }
 
-/* A frame's PCM commands, into the lane after the frame's $2B; `len` bounds
- * the run. Returns the bytes used, or 0xffff for a malformed run. */
-static uint16_t pcm_run(MMLPairs *p, const uint8_t *c, uint16_t len, uint8_t npcm) {
+/* The bytes a run of `npcm` PCM commands takes, or 0xffff when it is
+ * malformed or overruns `len`. */
+static uint16_t pcm_size(const uint8_t *c, uint16_t len, uint8_t npcm) {
   uint16_t i = 0;
-  for (; npcm > 0 && i < len; npcm--) {
-    uint8_t op = c[i];
-    if (op > 5 || !PCM_LEN[op]) return 0xffff;   /* malformed: stop here */
-    if ((uint16_t)(i + PCM_LEN[op]) > len) return 0xffff;
-    pcm_command(p, c + i);
+  for (; npcm > 0; npcm--) {
+    const uint8_t op = i < len ? c[i] : 0;
+    if (op > 5 || !PCM_LEN[op] || (uint16_t)(i + PCM_LEN[op]) > len) return 0xffff;
     i = (uint16_t)(i + PCM_LEN[op]);
   }
   return i;
+}
+
+/* A frame's PCM commands (a run pcm_size accepted), into the lane after the
+ * frame's $2B. */
+static void pcm_run(MMLPairs *p, const uint8_t *c, uint8_t npcm) {
+  for (; npcm > 0; npcm--) {
+    pcm_command(p, c);
+    c += PCM_LEN[c[0]];
+  }
 }
 
 MMLP_HOT void psg_push(MMLPairs *p, uint8_t b) {
@@ -240,7 +247,7 @@ static void view_body(MMLPairs *p, const MMLFrameView *v) {
               MML_WRITE_QUEUE - 1, (uint16_t)sizeof(MMLWrite));
   /* The PCM commands go into the lane after the writes, so a $2B the frame
    * turned the DAC on with leads its first start. */
-  pcm_run(p, v->pcm, v->pcm_len, v->pcm_count);
+  if (pcm_size(v->pcm, v->pcm_len, v->pcm_count) != 0xffff) pcm_run(p, v->pcm, v->pcm_count);
 }
 
 void mmlp_render(MMLPairs *p, MMLSeq *s) {
@@ -266,16 +273,11 @@ void mmlp_frame(MMLPairs *p, const uint8_t *rec, uint16_t len) {
   frame_begin(p);
   if (len >= 1) {
     /* The PCM run is measured first and taken last, as view_body does. */
-    uint16_t used = 0;
-    for (uint8_t k = rec[0]; k > 0 && used != 0xffff; k--) {
-      const uint8_t op = (uint16_t)(1 + used) < len ? rec[1 + used] : 0;
-      if (op > 5 || !PCM_LEN[op] || (uint16_t)(1 + used + PCM_LEN[op]) > len) used = 0xffff;
-      else used = (uint16_t)(used + PCM_LEN[op]);
-    }
+    const uint16_t used = pcm_size(rec + 1, (uint16_t)(len - 1), rec[0]);
     if (used != 0xffff) {
       const uint16_t at = (uint16_t)(1 + used);
       writes_body(p, rec + at, 0, (uint16_t)((len - at) / 3), 0xffff, 3);
-      pcm_run(p, rec + 1, used, rec[0]);
+      pcm_run(p, rec + 1, rec[0]);
     }
   }
   frame_publish(p);
@@ -297,14 +299,13 @@ typedef char mmlp_queue_is_pow2[(MMLP_QUEUE & (MMLP_QUEUE - 1)) == 0 && (MMLP_PS
                                 && (MMLP_LANE & (MMLP_LANE - 1)) == 0 ? 1 : -1];
 
 MMLP_HOT int is_pitch_hi(uint8_t reg) { return (uint8_t)((reg & 0xf7) - 0xa4) <= 2; } /* $A4-$A6, $AC-$AE */
-/* The voice a staged store (SRC, END, WRAP) belongs to, or 0xff. */
 /* A state op's voice and its place in the voice's nine (op - 1 = 9v + k), as
- * tables: `% 9` and `/ 9` on an int are libgcc calls on the 68000, and this
- * ran once per pair planned. */
+ * tables: `% 9` and `/ 9` on an int are libgcc calls on the 68000. */
 static const uint8_t OP_VOICE[1 + 9 * MMLP_VOICES] = {
   0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
 static const uint8_t OP_K[1 + 9 * MMLP_VOICES] = {
   0xff, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8 };
+/* The voice a staged store (SRC, END, WRAP) belongs to, or 0xff. */
 MMLP_HOT uint8_t staged_voice(const MMLPairsCfg *cfg, uint8_t op) {
   if (op == 0 || op >= (uint8_t)(1 + 9 * cfg->voices)) return 0xff;
   const uint8_t k = OP_K[op];

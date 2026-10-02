@@ -170,9 +170,8 @@ typedef struct {
  * channel (the release was the note's decay, so key-off left the level). */
 enum { MML_MACRO_RUN = 0, MML_MACRO_HOLD = 1, MML_MACRO_RELEASE = 2, MML_MACRO_TAIL = 3 };
 
-/* One descriptor, decoded from MACRO_TABLE (mmb.md §15): once a note, into
- * the slot it instantiates — a decode every step was ~1% of the 68000. The
- * values stay in the table, which is ROM on the target. */
+/* One descriptor, decoded from MACRO_TABLE (mmb.md §15) once a note, into the
+ * slot it instantiates. The values stay in the table, ROM on the target. */
 typedef struct {
   uint8_t target, flags, step, loop_start, release, count;
   const uint8_t *values;
@@ -376,8 +375,7 @@ typedef struct {
    * fading. Set wherever the state is created, cleared by the frame's walk
    * when it finds nothing (a stale set bit costs one test, a stale clear bit
    * would skip real work — so the walks clear, never the state's other
-   * writers). Walking 17 banks, 17 channels and every track to find nothing
-   * was 3% of the 68000 (sgdk-profile --pc, sin008). */
+   * writers). */
   uint32_t sweep_live, macro_live, fade_live;
   /* FM3 independent-OP mode: each operator's own note and sticky :pitch
    * offset (index = op - 1). In special mode these, not fm[2]'s, are what the

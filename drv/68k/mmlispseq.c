@@ -1203,8 +1203,7 @@ static void keyon_retrigger(MMLSeq *s, int ch, int restart, const MMLMacroSlot *
 /* One step's sample of a running slot: write values[cursor] (skipping the
  * hold sentinel) and advance by the region rules. Returns 1 when the slot is
  * finished. */
-static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *dp, int keyed) {
-  const MMLMacro *d = dp; /* by pointer: a copy a step was 0.5% of the 68000 */
+static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *d, int keyed) {
   if (sl->state == MML_MACRO_HOLD) return 0; /* one-shot: hold, await key-off */
   if (sl->state == MML_MACRO_TAIL) {
     if (d->target == T_KEYON) channel_off(s, ch); /* the echo tail's last tap ends */
