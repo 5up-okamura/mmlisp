@@ -22,14 +22,15 @@ reasons the guide does not, and what is still open.
 - **Import judged by the written `(import …)` lines**, not `_importSources`:
   the latter is only re-read on Build, so after a new score it still holds the
   old score's sets.
+- **PSG gets macros, not a new def head.** A `def-env` / `def-macro` was
+  discussed 2026-10-03 for PSG envelopes and rejected: an envelope is already
+  `(def name (macro …))`, which 0914339 made the one form of a named macro,
+  and the only need was tooling — so the picker lists macro defs (first on a
+  PSG track, after voices or samples elsewhere), Browse auditions one on
+  sqr1, and `presets/envelopes` ships the set. Naming the head was hard
+  because the thing was not a new concept.
 
 ## Open
 
-- **PSG.** PSG has no voice def, but an envelope is a macro def
-  (`(def env1 (macro :vel […]))`), which the scan already tags `macro`.
-  Offering macro defs on `sqr…` / `noise` tracks — and a preset set of PSG
-  envelopes — would make this work for PSG too; but macros are not PSG-only,
-  so which ones to show is undecided. Today a PSG track gets no voices or
-  samples, only the score's other names.
 - A score's own `def-pcm` is not auditioned from the list: its `:file` is
   relative to the score's folder, which the preview's stand-in score lacks.

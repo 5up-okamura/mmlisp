@@ -1,0 +1,54 @@
+; Envelopes: named macros that give a PSG channel its shape — a decay, a
+; swell, a vibrato, a slide — since the PSG has no voice of its own. Each
+; is a plain (def name (macro …)), so it also works on an FM track, on top
+; of the voice. See README.md.
+
+; Pluck: a short decay, gone in six frames
+(def env-pluck (macro :vel [15 12 9 6 3 0]))
+
+; Pluck, longer: a 12-frame tail that drops fast, then lingers
+(def env-pluck-long (macro :vel [(ease-out :from 15 :to 0 :len 12f)]))
+
+; Stab: full for three frames, then cut
+(def env-stab (macro :vel [15 15 15 8 0]))
+
+; Bell: a slow exponential tail, half a second long
+(def env-bell (macro :vel [(ease-out-expo :from 15 :to 0 :len 30f)]))
+
+; Organ: full while held, a three-frame release after key-off
+(def env-organ (macro :vel [#sus 15 #rel 10 5 0]))
+
+; Pad: a 12-frame swell up to full, held, then a 12-frame fall
+(def env-pad
+  (macro :vel [(ease-in :from 0 :to 15 :len 12f) #sus 15 #rel (linear 15..0 :len 12f)]
+  )
+)
+
+; Tremolo: full and three-quarters, two frames each, while held
+(def env-tremolo (macro :step 2f :vel [#sus 15 15 11 11]))
+
+; Lead: a decay to two-thirds, then vibrato after eight frames
+(def env-lead
+  (macro :vel [15 14 13 12 11 #sus 10] :pitch [_ _ _ _ _ _ _ _ (sin -15..15 :rate 6)]
+  )
+)
+
+; Vibrato: full while held, a wide vibrato from the start
+(def env-vibrato (macro :vel [#sus 15] :pitch (sin -25..25 :rate 5)))
+
+; Slide up: the pitch rises three semitones into the note over four frames
+(def env-slide-up
+  (macro :vel [15 14 13 12 #sus 11] :pitch [-300 -200 -100 -50 0])
+)
+
+; Drop: the pitch falls an octave as the note dies — a tom, or a zap
+(def env-drop
+  (macro :vel [15 13 11 9 7 5 3 0] :pitch [0 -50 -100 -200 -300 -450 -600 -800]
+  )
+)
+
+; Hat: a four-frame tick, for the noise channel
+(def env-hat (macro :vel [12 7 3 0]))
+
+; Snare: an eleven-frame burst, for the noise channel
+(def env-snare (macro :vel [15 13 11 9 7 5 4 3 2 1 0]))

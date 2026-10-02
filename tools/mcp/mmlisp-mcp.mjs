@@ -283,7 +283,7 @@ function presets({ set, query }) {
     return sets.map((s) => {
       const text = fs.readFileSync(path.join(ROOT, "presets", s, "set.mmlisp"), "utf8");
       const kinds = {};
-      for (const m of text.matchAll(/^\((def-[a-z]+)\s/gm)) kinds[m[1]] = (kinds[m[1]] ?? 0) + 1;
+      for (const m of text.matchAll(/^\((def(?:-[a-z]+)?)\s/gm)) kinds[m[1]] = (kinds[m[1]] ?? 0) + 1;
       const about = leadingComment(readText(`presets/${s}/README.md`)?.replace(/^#.*\n+/, "") ?? "") ||
         (readText(`presets/${s}/README.md`) ?? "").split("\n").find((l) => l && !l.startsWith("#")) || "";
       return `(import "presets/${s}/set.mmlisp")  — ${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(", ")}\n    ${about.slice(0, 200)}`;
@@ -295,7 +295,7 @@ function presets({ set, query }) {
   const q = query?.toLowerCase();
   const out = [];
   lines.forEach((l, i) => {
-    const m = /^\((def-[a-z]+)\s+([^\s)]+)/.exec(l);
+    const m = /^\((def(?:-[a-z]+)?)\s+([^\s)]+)/.exec(l);
     if (!m) return;
     let note = "";
     for (let j = i - 1; j >= 0 && lines[j].startsWith(";"); j--) note = lines[j].replace(/^;+\s?/, "");
@@ -693,7 +693,7 @@ const TOOLS = [
     name: "mmlisp_presets",
     description:
       "Preset voice/sample sets a score can import. No args: the sets and their import lines. " +
-      "set: list its voice/sample names (e.g. gm, waveforms, tr808, tr909, gm-drums); query: filter names.",
+      "set: list its voice/sample/macro names (e.g. gm, waveforms, tr808, tr909, gm-drums, envelopes); query: filter names.",
     inputSchema: {
       type: "object",
       properties: { set: { type: "string" }, query: { type: "string" } },

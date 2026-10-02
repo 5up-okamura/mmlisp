@@ -1175,7 +1175,9 @@ next to the forms. Notes stay quiet: one letter never opens the list, nor does
 a word that reads as music (`a-`, `e8.`, `v-2`).
 
 The list follows the track the cursor is in: an `fm…` track is offered FM
-voices, a `pcm…` track samples, a PSG track neither; outside a track, both.
+voices, a `pcm…` track samples, a PSG track the macros — an envelope is the
+voice it does not have, and `presets/envelopes` ships a set of them; outside
+a track, everything. What the track plays comes first, the rest after.
 
 Typing `@` where no name is being written opens the whole list without
 knowing a single letter of a name; what follows narrows it, and the pick
@@ -1220,6 +1222,7 @@ read from the files themselves.
 | ------------------ | --------------------------------------- | ------------- |
 | an FM voice (`fm`) | one `len 4` c4 on FM1 — a `:key` voice (an FM drum) at its key | **Insert def** pastes the definition at the cursor, to edit as your own |
 | a sample (`pcm`)   | one c4, baked and played through the driver's own engine — what an export will sound like | — |
+| a macro (`macro`)  | a half-note c4 on sqr1 shaped by it, then a rest for its release | **Insert def** pastes the definition at the cursor |
 | a score            | plays it, without opening it            | **Open** puts it in the editor |
 | a snippet          | plays it, without opening it            | **Insert** puts it at the cursor; **Open** puts it in the editor |
 

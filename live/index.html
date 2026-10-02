@@ -1826,7 +1826,7 @@
             .catch((e) => { log('Completion: ' + e.message, 'err'); return null; })));
           _acPresetDefs = loaded.filter(Boolean).flatMap((set) =>
             scanDefNames(set.text, browseSetName(set.path))
-              .filter((d) => d.kind === 'voice' || d.kind === 'sample')
+              .filter((d) => d.kind === 'voice' || d.kind === 'sample' || d.kind === 'macro')
               .map((d) => ({ ...d, set: set.path })));
         } catch (e) {
           log('Completion: ' + e.message, 'err');
@@ -1847,8 +1847,8 @@
     }
 
     // What kind of name the track at `pos` takes: an fm… track plays voices, a
-    // pcm… track samples, a PSG track neither (PSG has no voice def). Outside
-    // a track — a def, the top level — both.
+    // pcm… track samples, a PSG track macros — an envelope is the voice it
+    // does not have. Outside a track — a def, the top level — everything.
     const AC_TRACK_SET = new Set(AC_TRACKS);
     function trackKindAt(text, pos) {
       const open = [];
@@ -1869,15 +1869,17 @@
     // The names a bare word or `@` can become at `pos`: the score's own defs,
     // its imports, then every preset set it does not import yet — each name
     // once, the nearest winning, as when compiling. Voices and samples follow
-    // the track. `importSet` is the set a pick must import first, judged by
-    // the (import …) lines written now: the imports' text is re-read only on
-    // Build.
+    // the track, and what the track plays — voices, samples, on PSG the
+    // macros — comes before the rest. `importSet` is the set a pick must
+    // import first, judged by the (import …) lines written now: the imports'
+    // text is re-read only on Build.
     function pickableNames(state, pos) {
       const text = state.doc.toString();
       const track = trackKindAt(text, pos);
       const fits = (d) => d.kind === 'voice' ? track !== 'sample' && track !== 'psg'
         : d.kind === 'sample' ? track !== 'voice' && track !== 'psg'
         : d.kind !== 'val' && d.kind !== 'fn';
+      const own = track === 'psg' ? 'macro' : track;
       const imported = docImportSpecs(text);
       const seen = new Set();
       const out = [];
@@ -1887,7 +1889,7 @@
         const set = d.set ?? (_browseSetCache.has(d.path) ? d.path : null);
         if (fits(d)) out.push(set && !imported.has(set) ? { ...d, importSet: set } : d);
       }
-      return out;
+      return own ? [...out.filter((d) => d.kind === own), ...out.filter((d) => d.kind !== own)] : out;
     }
 
     // Substring on the name and on its description, so `piano` finds gm-piano
@@ -5883,7 +5885,10 @@
         } else if (sampleFileOfDefNode(node)) {
           defs.push({ name, kind: 'pcm', node });
         } else {
-          defs.push({ name, kind: 'def', node });
+          // `(def name (macro …))` and nothing else: a named macro, an envelope.
+          const body = node.items[2];
+          const macro = node.items.length === 3 && body?.kind === 'list' && body.items?.[0]?.value === 'macro';
+          defs.push({ name, kind: macro ? 'macro' : 'def', node });
         }
       }
       return { path, text, defs };
@@ -5939,11 +5944,11 @@
         row.append(play, name, kind);
         row._browse = { set, def };
         row.addEventListener('click', () => highlightBrowseRow(browseRows().indexOf(row)));
-        if (def.kind === 'fm') {
-          // An FM def is self-contained text, so a copy can be pasted and then
-          // edited. A sample def is not: its `:file` is relative to the set's
-          // own folder (language.md §16), so importing is the only honest way
-          // to reach it from a score somewhere else.
+        if (def.kind === 'fm' || def.kind === 'macro') {
+          // An FM def or a macro is self-contained text, so a copy can be
+          // pasted and then edited. A sample def is not: its `:file` is
+          // relative to the set's own folder (language.md §16), so importing
+          // is the only honest way to reach it from a score somewhere else.
           const copy = document.createElement('button');
           copy.className = 'browse-mini';
           copy.textContent = 'Insert def';
@@ -6051,7 +6056,8 @@
     function previewBrowseDef(set, def) {
       if (def.kind === 'fm') return previewBrowseFm(def);
       if (def.kind === 'pcm') return previewBrowsePcm(set, def);
-      setBrowseNote(`${def.name} is not a voice or a sample \u2014 nothing to sound.`);
+      if (def.kind === 'macro') return previewBrowseMacro(set, def);
+      setBrowseNote(`${def.name} is not a voice, a sample or a macro \u2014 nothing to sound.`);
     }
 
     // The completion list's audition (↑ / ↓ over a voice or sample): Browse's
@@ -6148,6 +6154,16 @@
       }
     }
 
+    // A macro shapes a note, so sound one: the def's own lines, then a half
+    // note on sqr1 \u2014 the channel with no voice of its own, which is what an
+    // envelope is for \u2014 and a rest, so a release section is heard too. It
+    // plays on Browse's own player, as a score does.
+    async function previewBrowseMacro(set, def) {
+      const source = defSourceText(set, def) + `\n(sqr1 :oct 4 :len 2 :vel 15 ${def.name} c _)\n`;
+      if (await playBrowseSource(source, 'browse-preview.mmlisp', 'macro:' + def.name))
+        setBrowseNote(`${def.name} \u2014 c4 on sqr1`);
+    }
+
     // A SCORE PLAYS ON ITS OWN PLAYER, never through the editor's: the song
     // being written keeps its IR, its source map and its mixer state, and the
     // next Play or Build puts its PCM bank back (as a sample preview does).
@@ -6158,18 +6174,28 @@
         setBrowseNote('Stopped.');
         return;
       }
-      if (!(await initAudio())) return;
+      const ir = await playBrowseSource(file.text, browseCompileName(file), file.path);
+      if (!ir) return;
+      const sliders = ir.metadata?.vals?.length
+        ? ' Its sliders appear once you open it.' : '';
+      setBrowseNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
+    }
+
+    // Compile `text` under `name` and play it on Browse's player; `key` is
+    // what a second \u25b6 on the same thing stops. Returns the IR, or null when
+    // nothing played \u2014 the note then says why.
+    async function playBrowseSource(text, name, key) {
+      if (!(await initAudio())) return null;
       stopBrowsePreview();
       if (player) onStop();
       try {
-        const name = browseCompileName(file);
-        const imports = await readImportSources(file.text, name);
-        const { ir, diagnostics } = compileMMLisp(file.text, name, { imports });
+        const imports = await readImportSources(text, name);
+        const { ir, diagnostics } = compileMMLisp(text, name, { imports });
         const errors = diagnostics.filter((d) => d.severity === 'error');
         if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
         if (!ir.tracks.some((t) => t.events.some((e) => /NOTE_ON$/.test(e.cmd)))) {
           setBrowseNote('No tracks to play.');
-          return;
+          return null;
         }
         const p = new IRPlayer(writeToWorklet);
         p.loadJSON(ir);
@@ -6177,13 +6203,12 @@
         await syncPcmBankToWorklet(ir);
         p.play(audioCtx);
         _browseScorePlayer = p;
-        _browseScorePath = file.path;
-        const sliders = ir.metadata?.vals?.length
-          ? ' Its sliders appear once you open it.' : '';
-        setBrowseNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
+        _browseScorePath = key;
+        return ir;
       } catch (e) {
         log('Browse: ' + e.message, 'err');
         setBrowseNote(String(e.message));
+        return null;
       }
     }
 
@@ -6211,13 +6236,18 @@
       setBrowseNote(`Inserted ${line}`);
     }
 
-    function insertBrowseDefText(set, def) {
+    // The def's own lines of its set's text.
+    function defSourceText(set, def) {
       const lines = set.text.split('\n');
       const from = (def.node.line ?? 1) - 1;
       const to = (def.node.endLine ?? def.node.line ?? 1) - 1;
-      const text = lines.slice(from, to + 1).join('\n');
+      return lines.slice(from, to + 1).join('\n');
+    }
+
+    function insertBrowseDefText(set, def) {
+      const text = defSourceText(set, def);
       insertInlineTextAtCursor(text + '\n');
-      setBrowseNote(`Inserted ${def.name} (${to - from + 1} lines)`);
+      setBrowseNote(`Inserted ${def.name} (${text.split('\n').length} lines)`);
     }
 
     // A snippet's imports go to the top of the score, each once; the rest of

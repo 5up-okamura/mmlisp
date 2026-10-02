@@ -108,7 +108,8 @@ acid-saw, …), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5` and
 `gm-drums` (PCM kits: kick, snare, hat, …), and `presets/fm-drums` (FM drums
 on an fm track: fm-kick, fm-snare, fm-hat, … and fm-analog-kick, fm-elec-tom1,
 fm-symph-snare, … — `:key` voices: at `:oct 4`, `c` is the drum as tuned, and
-other notes retune it).
+other notes retune it), and `presets/envelopes` (macros that shape a PSG
+note: env-pluck, env-organ, env-vibrato, …; they work on FM too).
 
 ## Loops and flow (§13)
 
