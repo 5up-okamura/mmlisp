@@ -331,5 +331,14 @@ answers exist:
    14.6% is not comparable: the whole song costs ~17% on the same build.
    Not done: a pitch cache for `fnum_block_for` (a vibrato changes the cents
    every frame, so a last-value cache rarely hits).
+   **The whole pass, measured 2026-10-02** (sin008 played whole, the driver
+   files of `ba094a6` against `bf50bdc` with the same tools, `--pc` 30 s):
+   driver + API **24.5% → 16.3%**, idle 72.8% → 80.6%; run_frame 6.8 → 3.7,
+   the macro engine 7.0 → 4.8, the API polls 3.0 → 1.3. The worst frames
+   (`--peak 3`, the setup burst) only 98.8% → 94.0%. After the user's call
+   for readability over noise-level gains (2026-10-02), the cleanup commits
+   `e9b53c8`..`bf50bdc` undid the walking bit, the carrier split and the
+   byte-offset track table (`track_by_id` 0.6 → 0.84%, accepted) and folded
+   the tick fast path into the loop (run_frame faster, not slower).
 2. **Then decide §4** (pre-rendering) against what is left: if the steady
    state is under the game's budget, §4 is not worth its ROM.
