@@ -5622,7 +5622,7 @@
         if (!nameNode || nameNode.kind !== 'atom') continue;
         const name = nameNode.value;
         if (isFmVoiceDefNode(node)) {
-          defs.push({ name, kind: 'fm', regs: parseFmDefRegs(node), node });
+          defs.push({ name, kind: 'fm', regs: parseFmDefRegs(node, fmDefIn(text)), node });
         } else if (sampleFileOfDefNode(node)) {
           defs.push({ name, kind: 'pcm', node });
         } else {
@@ -5632,6 +5632,15 @@
       const entry = { path, text, defs };
       _browseSetCache.set(path, entry);
       return entry;
+    }
+
+    // A lookup for parseFmDefRegs: the top-level def-fm of that name in `text`.
+    function fmDefIn(text) {
+      let roots = null;
+      return (name) => {
+        try { roots ??= parse(text); } catch { roots = []; }
+        return roots.find((n) => isFmVoiceDefNode(n) && n.items[1]?.value === name) ?? null;
+      };
     }
 
     // The `:file` of a `(def-pcm name …)`, or null when the node is not a
@@ -5778,14 +5787,11 @@
 
     // ---- preview ----------------------------------------------------------
 
-    // A PREVIEW IS c AT OCTAVES 2-6, ONE `len 4` NOTE EACH. One note says
-    // nothing about an FM voice: key scaling, the modulator's ratio and a
-    // sample's baked rate all change with the octave, so the audition walks
-    // the range a part would actually be written in.
-    const PREVIEW_OCTAVES = [2, 3, 4, 5, 6];
+    // A PREVIEW IS ONE `len 4` c4: enough to tell a sound. Its range is the
+    // keyboard's to play, with the cursor on the def.
     const PREVIEW_NOTE_SEC = 0.5;          // len 4 at the default 120 BPM
-    const PREVIEW_GAP_SEC = 0.02;          // key-off before the next attack
-    const previewOctaveMidi = (oct) => (oct + 1) * 12;   // c of that octave
+    const PREVIEW_GAP_SEC = 0.02;          // key-off before the slot ends
+    const PREVIEW_MIDI = 60;
 
     function previewBrowseDef(set, def) {
       if (def.kind === 'fm') return previewBrowseFm(def);
@@ -5793,8 +5799,8 @@
       setBrowseNote(`${def.name} is not a voice or a sample \u2014 nothing to sound.`);
     }
 
-    // Cancel whatever the panel has in flight. The FM run is JS timers; the
-    // PCM run is already queued inside the worklet, so only a flush recalls it
+    // Cancel whatever the panel has in flight. The FM run is a JS timer; the
+    // PCM hit is already queued inside the worklet, so only a flush recalls it
     // (safe here because a sample preview refuses to start during playback).
     function stopBrowsePreview() {
       stopBrowseScorePreview();
@@ -5808,31 +5814,28 @@
     }
 
     // Same path the algorithm-diagram tap uses for the def under the cursor:
-    // push the registers onto the preview channel, then play the run. Timers
-    // rather than scheduled writes, so a second press can cancel the first
-    // without flushing a song that may be playing underneath.
+    // push the registers onto the preview channel, then play one c4 — which a
+    // `:key` voice sounds at its key. A timer rather than a scheduled write, so
+    // a second press can cancel the first without flushing a song that may be
+    // playing underneath.
     async function previewBrowseFm(def) {
+      const midi = def.regs.key ?? PREVIEW_MIDI;
       if (!(await initAudio())) return;
       initParamOnlyPlayer();
       applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH, def.regs);
       _kbAppliedDefSig = null; // the panel took the channel; let the keyboard re-push
       stopBrowsePreview();
-      PREVIEW_OCTAVES.forEach((oct, i) => {
-        const at = i * PREVIEW_NOTE_SEC * 1000;
-        _browsePreviewTimers.push(setTimeout(
-          () => previewNoteOn(CURSOR_DEF_PREVIEW_CH, previewOctaveMidi(oct)), at));
-        _browsePreviewTimers.push(setTimeout(
-          () => previewNoteOff(CURSOR_DEF_PREVIEW_CH),
-          at + (PREVIEW_NOTE_SEC - PREVIEW_GAP_SEC) * 1000));
-      });
-      setBrowseNote(`${def.name} \u2014 c2\u2026c6 on ${channelLabel(CURSOR_DEF_PREVIEW_CH)}`);
+      previewNoteOn(CURSOR_DEF_PREVIEW_CH, midi);
+      _browsePreviewTimers.push(setTimeout(
+        () => previewNoteOff(CURSOR_DEF_PREVIEW_CH), (PREVIEW_NOTE_SEC - PREVIEW_GAP_SEC) * 1000));
+      setBrowseNote(`${def.name} \u2014 c4${def.regs.key != null ? ` (:key ${def.regs.key})` : ''} on ${channelLabel(CURSOR_DEF_PREVIEW_CH)}`);
     }
 
     // A sample has no register form to push: it is bytes in a bank. So compile
-    // the score that plays the run and hand the worklet that bank — the
-    // export's own bake, at the engine's rate, one blob per octave. The score's
-    // bank is displaced until the next Play or Build re-syncs it, which is why
-    // this waits for playback to stop.
+    // the score that plays it once at c4 — its own rate — and hand the worklet
+    // that bank: the export's own bake. The score's bank is displaced until the
+    // next Play or Build re-syncs it, which is why this waits for playback to
+    // stop.
     async function previewBrowsePcm(set, def) {
       if (!(await initAudio())) return;
       if (_fmLiveRaf != null) {
@@ -5840,63 +5843,33 @@
         return;
       }
       stopBrowsePreview();
-      let octaves = [...PREVIEW_OCTAVES];
       try {
-        for (;;) {
-          try {
-            await playBrowsePcmRun(set, def, octaves);
-            break;
-          } catch (e) {
-            // THE LOW OCTAVES ARE THE BIG BLOBS. A note an octave down is
-            // twice the bytes, so a long sample cannot be baked five octaves
-            // deep into a 32 KB bank. Drop the lowest and try again rather
-            // than refuse to sound at all.
-            if (octaves.length > 1 && /sample bank is/.test(e.message)) {
-              octaves = octaves.slice(1);
-              continue;
-            }
-            throw e;
-          }
-        }
+        const source = `(import "${set.path}")\n(pcm1 :oct 4 :len 4 ${def.name} c)\n`;
+        const { ir, diagnostics } = compileMMLisp(source, 'browse-preview.mmlisp', {
+          imports: new Map([[set.path, set.text]]),
+        });
+        const errors = diagnostics.filter((d) => d.severity === 'error');
+        if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
+        const samples = await pcmSampleBlobsForMmb(ir);
+        if (!samples) throw new Error('sample did not load');
+        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
+        workletNode.port.postMessage({
+          type: 'pcm-set-bank',
+          bank: sampleBank ?? null,
+          pcmVoices: ir?.metadata?.pcmVoices ?? 1,
+          entryIds: pcmEntryIds ?? {},
+        });
+        workletNode.port.postMessage({
+          type: 'pcm-ev', when: audioCtx.currentTime + 0.05,
+          kind: 'on', voice: 0, track: 0, sample: def.name,
+          midi: PREVIEW_MIDI, mode: 'shot', vel: 15,
+        });
+        _browsePcmSounding = true;
+        setBrowseNote(`${def.name} \u2014 c4, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
       } catch (e) {
         log('Browse preview: ' + e.message, 'err');
         setBrowseNote(String(e.message));
       }
-    }
-
-    async function playBrowsePcmRun(set, def, octaves) {
-      const run = octaves.map(() => 'c').join(' > ');
-      const source = `(import "${set.path}")\n`
-        + `(pcm1 :oct ${octaves[0]} :len 4 ${def.name} ${run})\n`;
-      const { ir, diagnostics } = compileMMLisp(source, 'browse-preview.mmlisp', {
-        imports: new Map([[set.path, set.text]]),
-      });
-      const errors = diagnostics.filter((d) => d.severity === 'error');
-      if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
-      // decodePcmSample caches by path, so a retry with fewer octaves re-bakes
-      // without re-fetching the wav.
-      const samples = await pcmSampleBlobsForMmb(ir);
-      if (!samples) throw new Error('sample did not load');
-      const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
-      workletNode.port.postMessage({
-        type: 'pcm-set-bank',
-        bank: sampleBank ?? null,
-        pcmVoices: ir?.metadata?.pcmVoices ?? 1,
-        entryIds: pcmEntryIds ?? {},
-      });
-      const base = audioCtx.currentTime + 0.05;
-      octaves.forEach((oct, i) => {
-        workletNode.port.postMessage({
-          type: 'pcm-ev', when: base + i * PREVIEW_NOTE_SEC,
-          kind: 'on', voice: 0, track: 0, sample: def.name,
-          midi: previewOctaveMidi(oct), mode: 'shot', vel: 15,
-        });
-      });
-      _browsePcmSounding = true;
-      const range = octaves.length === PREVIEW_OCTAVES.length
-        ? 'c2\u2026c6'
-        : `c${octaves[0]}\u2026c${octaves[octaves.length - 1]} (the lower octaves do not fit the bank)`;
-      setBrowseNote(`${def.name} \u2014 ${range}, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
     }
 
     // A SCORE PLAYS ON ITS OWN PLAYER, never through the editor's: the song
@@ -6534,18 +6507,30 @@
       return node?.kind === 'list' && node.items?.[0]?.value === 'def-fm';
     }
 
-    function parseFmDefRegs(defNode) {
+    // `lookup(name)` finds the def-fm a voice extends, so a derived voice gets
+    // its base's registers under its own; a base out of reach is skipped.
+    // `regs.key` is the voice's `:key`.
+    function parseFmDefRegs(defNode, lookup = null) {
       const regs = defaultFmRegs();
       const kv = new Map();
-      const items = isFmVoiceDefNode(defNode) ? defNode.items : [];
-      for (let i = 2; i + 1 < items.length; i++) {
-        const k = items[i];
-        const v = items[i + 1];
-        if (!k || k.kind !== 'atom' || !k.value.startsWith(':')) continue;
-        if (!v || v.kind !== 'atom') continue;
-        const n = parseInt(v.value, 10);
-        if (Number.isFinite(n)) kv.set(k.value, n);
-      }
+      const collect = (node, seen) => {
+        const items = isFmVoiceDefNode(node) ? node.items : [];
+        const base = items[2];
+        if (lookup && base?.kind === 'atom' && !base.value.startsWith(':') && !seen.has(base.value)) {
+          const baseNode = lookup(base.value);
+          if (baseNode) collect(baseNode, new Set([...seen, base.value]));
+        }
+        for (let i = 2; i + 1 < items.length; i++) {
+          const k = items[i];
+          const v = items[i + 1];
+          if (!k || k.kind !== 'atom' || !k.value.startsWith(':')) continue;
+          if (!v || v.kind !== 'atom') continue;
+          const n = parseInt(v.value, 10);
+          if (Number.isFinite(n)) kv.set(k.value, n);
+        }
+      };
+      collect(defNode, new Set([defNode?.items?.[1]?.value]));
+      if (kv.has(':key')) regs.key = Math.max(0, Math.min(127, kv.get(':key')));
 
       if (kv.has(':alg')) regs.algorithm = kv.get(':alg');
       if (kv.has(':fb')) regs.feedback = kv.get(':fb');
@@ -6610,7 +6595,7 @@
         from,
         to,
         closeAt,
-        regs: parseFmDefRegs(best),
+        regs: parseFmDefRegs(best, fmDefIn(src)),
       };
     }
 
@@ -6865,7 +6850,15 @@
     // physical keyboard, algorithm-diagram tap) records the last-played pitch.
     function startPreviewNote(chIndex, midi) {
       _lastPreviewMidi = midi;
-      previewNoteOn(chIndex, midi);
+      previewNoteOn(chIndex, Math.max(0, Math.min(127, midi + previewKeyShift(chIndex))));
+    }
+
+    // A `:key` voice under the cursor moves what the keys play as the compiler
+    // moves its notes: c4 sounds at the key (language.md §9).
+    function previewKeyShift(chIndex) {
+      const t = getKeyboardTargetContext();
+      const key = t?.useCursorDef && t.chIndex === chIndex ? t.defCtx.regs.key : undefined;
+      return key == null ? 0 : key - 60;
     }
 
     function midiToStepToken(midi) {

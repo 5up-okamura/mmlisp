@@ -1191,16 +1191,14 @@ read from the files themselves.
 
 | Row                | ▶                                       | Other actions |
 | ------------------ | --------------------------------------- | ------------- |
-| an FM voice (`fm`) | c at octaves 2-6, one `len 4` note each, on FM1 | **Insert def** pastes the definition at the cursor, to edit as your own |
-| a sample (`pcm`)   | the same run, baked and played through the driver's own engine — what an export will sound like | — |
+| an FM voice (`fm`) | one `len 4` c4 on FM1 — a `:key` voice (an FM drum) at its key | **Insert def** pastes the definition at the cursor, to edit as your own |
+| a sample (`pcm`)   | one c4, baked and played through the driver's own engine — what an export will sound like | — |
 | a score            | plays it, without opening it            | **Open** puts it in the editor |
 | a snippet          | plays it, without opening it            | **Insert** puts it at the cursor; **Open** puts it in the editor |
 
-One note says nothing about a voice: key scaling, the modulator's ratio and a
-sample's baked rate all change with the octave, so the audition walks the range
-a part would actually be written in. A sample is baked once per note, and the
-low octaves are the big blobs — where five octaves of a long sample do not fit
-the 32 KB bank, the preview drops the lowest ones and says so.
+The audition is one note: enough to tell a sound, and a drum has only the one.
+To hear a voice or a sample across its range, put the cursor on its def and
+play the keyboard.
 
 The panel is driven from the keyboard: **↑↓** moves through the list, **←→**
 steps between sets, **Space** auditions the highlighted row (and stops a score
@@ -1252,6 +1250,24 @@ Two kits imported at once is `E_IMPORT_CONFLICT`, which is the point: they
 compete for the same names. A kit that lacks a sound the other has simply has
 no def of that name; fill the gap with an alias to one it does have
 (`(def clap snare)`), or copy the def line from the other kit's `set.mmlisp`.
+
+The FM drums (`presets/fm-drums`) use the same vocabulary with an `fm-`
+prefix — `fm-kick`, `fm-snare`, `fm-tom1` — so they import alongside a PCM
+kit: PCM kick and snare on `pcm1`, FM toms and cymbals on a spare FM channel.
+The set holds five kits in one: the standard kit under those names, and the
+drums of four more under `fm-std2-`, `fm-analog-`, `fm-elec-` and
+`fm-symph-`, to mix freely. Each FM drum is a voice with a `:key`
+(language.md §9): on a track at `:oct 4`, `c` plays it at the bank's pitch,
+and another note retunes it:
+
+```lisp
+(import "presets/tr808/set.mmlisp")
+(import "presets/fm-drums/set.mmlisp")
+(pcm1 :len 8 kick c4 hat c4 snare c4 hat c4)
+(fm5 :oct 4 :len 8 fm-tom3 c fm-tom4 c fm-tom6 c d fm-crash c2)
+```
+
+An FM drum rings until its note keys off, so a cymbal wants a long note.
 
 ---
 

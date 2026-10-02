@@ -34,6 +34,14 @@ macro hold sentinel); they live in `docs/driver.md` §7 / §13.4,
 6. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
 7. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
+8. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
+   driver** (seen 2026-10-03 while the FM drum kits briefly carried their
+   pitch as a `:semi` macro; they now use `def-fm :key`): `drv-player.js`
+   writes F-number at the note, key-on, then the macro's frame-0 pitch, all
+   in one frame; the preview writes the macro's pitch before the key-on. On
+   hardware that is the pair transport's spacing of two writes —
+   microseconds at the wrong pitch — but the orders differ. Decide whether
+   the sequencer should run a note's frame-0 macros before its key-on.
 
 ## 1b. Irregular rules, from the 2026-09-26 audit — all landed or decided
 

@@ -127,7 +127,8 @@ Details for FM3/CSM in §15, PCM in §16.
 | `v+N` / `v-N`  | Velocity shift (no number = ±1)                                |
 
 The sounding octave comes from the sticky `:oct` (C at `:oct 4` = middle C,
-MIDI 60). Enharmonic accidentals are equivalent (`c+` = `d-`).
+MIDI 60); a voice with a `:key` moves its notes from there (§9).
+Enharmonic accidentals are equivalent (`c+` = `d-`).
 
 Note names shadow definitions: a `def` named `a`–`g` (or anything that parses
 as a note/length token) cannot be referenced in a channel body.
@@ -712,13 +713,14 @@ stream bytes is shared by the encoder's CALL/RET pass (opcodes.md §5.2). A `let
 | `(def (name param…) item…)`           | Parametric snippet — call as `(name arg…)`; each `arg` node is substituted for its `param` in the body (§9.1) |
 | `(def-fm name :alg … :tl1 … …)`       | FM voice, keyword map                   |
 | `(def-fm name base :tl1 … …)`         | FM voice extending `base` (its keys override; a base that is not a voice, or a cycle, is `E_VOICE_EXTENDS`) |
+| `(def-fm name … :key N …)`            | FM voice that sounds c4 at MIDI note `N` — every note on it moves by `N − 60` (below) |
 | `(def-pcm name :file "…" …)`          | PCM sample (§16)                        |
 | `(def-pcm name base …)`               | PCM sample extending another sample (§16) |
 | `(def-se name [:prio N] [:tempo T] (ch …)…)` | Sound effect: parts the game plays by number (§9.3) |
 | `(def name (macro :target spec …))`   | A snippet holding a macro form — written alone it applies the macro, and inside another `(macro name …)` it applies first, with its own `:step` |
 
-A `def-fm` holds the channel's `:alg :fb :ams :fms` and the operator
-params `:ar1`…`:am4` — anything else is `E_VOICE_PARAM`. A value is anything
+A `def-fm` holds the channel's `:alg :fb :ams :fms`, the operator params
+`:ar1`…`:am4` and `:key` — anything else is `E_VOICE_PARAM`. A value is anything
 that evaluates to a number (a literal, a snippet constant, an expression); a
 curve or a `$` value is `E_VOICE_VALUE`, since a voice is fixed data. A leading
 name is the voice it extends: the base's params first, the voice's own over
@@ -733,6 +735,25 @@ is always available:
   :tl1 30 :tl2 0 :tl3 30 :tl4 0)
 
 (fm1 lead c e g e)
+```
+
+**`:key N`** gives a voice its own pitch: c4 sounds at MIDI note `N`
+(0–127, else `E_VOICE_VALUE`), and every note written on the voice moves by
+`N − 60`. It is how a percussion voice is tuned — `(def-fm kick … :key 35)`
+plays its bass drum when a track at `:oct 4` writes `c` — while a written
+`d` still sounds two semitones higher, as a drum retuned. The compiler moves
+the note itself, so ties, slurs, glides, `(note …)` and echoes all see the
+sounding pitch, and nothing reaches the IR or the driver but the moved
+note; a note moved outside 0–127 is `E_NOTE_RANGE`. Runtime pitch (`:semi`,
+`:pitch`, `(glide from …)`'s absolute start) is not moved. A voice that
+extends a `:key` voice inherits the key unless it sets its own, and
+switching to a voice without one ends the move.
+
+```lisp
+(def-fm tom-lo init-fm :alg 7 :key 41)
+(def-fm tom-hi tom-lo :key 48)
+
+(fm5 :oct 4 tom-lo c tom-hi c c d)      ; 41, 48, 48, 50
 ```
 
 Voice names are plain identifiers — no special prefix (a voice is recognized by

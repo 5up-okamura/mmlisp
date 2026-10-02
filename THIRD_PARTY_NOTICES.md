@@ -77,16 +77,21 @@ Licenses dialog links it.
 - Conversion: trimmed to the attack, shortened with a half-cosine fade, and
   resampled to 22,050 Hz; muted toms are pitch-shifted from one source hit.
 
-## libOPNMIDI XG GM melodic bank
+## libOPNMIDI XG bank (GM melodic voices and FM drum kits)
 
 - Upstream: https://github.com/Wohlstand/libOPNMIDI
 - Revision: `8e0a0a6ac97a21f22c4b4d53d67a8d916d8c487b`, `fm_banks/xg.wopn`.
 - Copyright (c) 2018-2026 Vitaliy Novichkov.
-- License: MIT; upstream notice and full license in `presets/gm/licenses/libopnmidi-xg.txt`.
-- Included: only 128 melodic programs from bank MSB 0 / LSB 0, converted to
-  `presets/gm/set.mmlisp`.
-- Voice definitions preserve the bank's register parameters. The original note
-  offsets and shared LFO rate are not applied.
+- License: MIT; upstream notice and full license in
+  `presets/gm/licenses/libopnmidi-xg.txt`, and a copy in
+  `presets/fm-drums/licenses/`.
+- Included: the 128 melodic programs of bank MSB 0 / LSB 0, converted to
+  `presets/gm/set.mmlisp`; and GM notes 35-81 of five percussion banks
+  (StandKit whole; of StndKit2, AnalgKit, ElctrKit and SymphKit the drums
+  that differ), converted to `presets/fm-drums/set.mmlisp`.
+- Voice definitions preserve the bank's register parameters; the shared LFO
+  rate is not applied. The melodic voices drop the bank's note offsets; a drum
+  keeps its fixed key as the voice's `:key`.
 
 ## TR-808 Fischer samples
 

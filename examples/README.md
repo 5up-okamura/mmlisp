@@ -15,5 +15,6 @@ Voices and PCM samples live in their own sets under `presets/`:
 [gm](../presets/gm/README.md), [waveforms](../presets/waveforms/README.md),
 [tr808](../presets/tr808/README.md), [tr909](../presets/tr909/README.md),
 [cr78](../presets/cr78/README.md), [dr220](../presets/dr220/README.md),
-[dx](../presets/dx/README.md), [rx5](../presets/rx5/README.md) and
-[gm-drums](../presets/gm-drums/README.md).
+[dx](../presets/dx/README.md), [rx5](../presets/rx5/README.md),
+[gm-drums](../presets/gm-drums/README.md), and the FM drums
+[fm-drums](../presets/fm-drums/README.md).

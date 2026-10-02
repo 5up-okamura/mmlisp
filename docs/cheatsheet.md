@@ -96,6 +96,7 @@ and a hold carry a note into the next.
 (def (beat n) (x 4 > n < n))            ; parametric: (beat c)
 (def-fm lead init-fm :alg 4 :fb 3 :tl1 30 :tl2 0 :tl3 30 :tl4 0)
 (def-fm lead-dark lead :fb 1)           ; extends lead
+(def-fm thud lead :key 35)              ; c4 sounds at MIDI 35, d two above
 (def-pcm hit :file "hit.wav")           ; relative to this file (§16)
 (def-val bright 20 0..40)               ; runtime slot, read as $bright (§8)
 (import "presets/gm/set.mmlisp")        ; another file's defs (§9.2)
@@ -104,7 +105,10 @@ and a hold carry a note into the next.
 Naming a voice or sample in a track body switches to it. Preset sets:
 `presets/gm` (gm-piano … gm-gunshot), `presets/waveforms` (wave-sine,
 acid-saw, …), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5` and
-`gm-drums` (PCM kits).
+`gm-drums` (PCM kits: kick, snare, hat, …), and `presets/fm-drums` (FM drums
+on an fm track: fm-kick, fm-snare, fm-hat, … and fm-analog-kick, fm-elec-tom1,
+fm-symph-snare, … — `:key` voices: at `:oct 4`, `c` is the drum as tuned, and
+other notes retune it).
 
 ## Loops and flow (§13)
 

@@ -664,6 +664,31 @@ function emitNoteForTrack(
   src,
   trackName,
 ) {
+  // A `:key` voice moves the written note by its key − 60 (§9). Done here, at
+  // the one entry every note takes, so ties, slurs, glides and echoes all see
+  // the sounding pitch, as if it had been written.
+  const shift = trackState.voiceKeyShift ?? 0;
+  if (shift !== 0 && !trackState.isPcmTrack && !trackState.isCsmRateTrack) {
+    const midi = pitchToMidi(noteName + trackState.defaultOct) + shift;
+    if (midi < 0 || midi > 127) {
+      pushDiag(diagnostics, "error", "E_NOTE_RANGE",
+        `note ${midi} out of MIDI range 0..127 (the voice's :key moves it by ${shift})`,
+        src, trackName);
+      trackState.tick += lengthTicks;
+      return;
+    }
+    const { name, octave } = midiToNoteParts(midi);
+    const savedOct = trackState.defaultOct;
+    trackState.voiceKeyShift = 0;
+    trackState.defaultOct = octave;
+    try {
+      emitNoteForTrack(trackState, name, lengthTicks, events, diagnostics, src, trackName);
+    } finally {
+      trackState.defaultOct = savedOct;
+      trackState.voiceKeyShift = shift;
+    }
+    return;
+  }
   // Slur/tie connector (X ~ Y): a pending `~` connects this note to the previous
   // one. Same pitch → TIE (extend the previous note; works on every channel).
   // Different pitch → legato (a NOTE_ON that updates the frequency without
@@ -2686,9 +2711,13 @@ function createInitFmKwMap() {
   return kwMap;
 }
 
-function emitVoice(td, tick, events, src) {
+function emitVoice(td, tick, events, src, trackState = null) {
   if (td.tag !== "voice") return false;
   if (td.kwMap) emitVoiceFromKwMap(td.kwMap, tick, events, src);
+  if (trackState) {
+    const key = td.kwMap?.get(VOICE_KEY);
+    trackState.voiceKeyShift = key === undefined ? 0 : key - 60;
+  }
   return true;
 }
 
@@ -2703,7 +2732,11 @@ const VOICE_KEYS = [
 ];
 const VOICE_KEY_SET = new Set(VOICE_KEYS);
 
-// `(voice base :key value …)`: flatten each voice into one register map, the
+// `:key N` is not a register: the compiler moves the voice's notes by N − 60
+// (emitNoteForTrack), so the IR and the driver never see it.
+const VOICE_KEY = "KEY";
+
+// `(voice base :param value …)`: flatten each voice into one register map, the
 // base's first and the voice's own writes over it. A value is anything that
 // evaluates to a number — a literal, a snippet constant, an expression. Runs
 // once every def is known, so a base may come from an import.
@@ -2737,10 +2770,11 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics) {
     const ctx = makeEvalCtx(diagnostics, null, td.src, typedDefs);
     for (let k = 0; k < td.items.length; k += 2) {
       const kw = atomValue(td.items[k]);
-      const target = kw?.startsWith(":") ? canonicalTarget(kw) : null;
-      if (!VOICE_KEY_SET.has(target)) {
+      const target = kw === ":key" ? VOICE_KEY
+        : kw?.startsWith(":") ? canonicalTarget(kw) : null;
+      if (target !== VOICE_KEY && !VOICE_KEY_SET.has(target)) {
         err("E_VOICE_PARAM",
-          `${kw ?? "(…)"} is not an FM voice parameter (:alg :fb :ams :fms, :ar1 … :am4)`,
+          `${kw ?? "(…)"} is not an FM voice parameter (:alg :fb :ams :fms, :ar1 … :am4, :key)`,
           nodeSrc(td.items[k]));
         continue;
       }
@@ -2753,7 +2787,11 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics) {
       const v = expanded.length === 1 && !exprHasValRef(expanded[0])
         ? evalValue(expanded[0], makeEnv(null), ctx)
         : null;
-      if (v?.kind === "scalar") kwMap.set(target, Math.round(v.value));
+      if (v?.kind === "scalar" && target === VOICE_KEY &&
+          (Math.round(v.value) < 0 || Math.round(v.value) > 127))
+        err("E_VOICE_VALUE", `:key takes a MIDI note 0..127, got ${Math.round(v.value)}`,
+          nodeSrc(td.items[k + 1]));
+      else if (v?.kind === "scalar") kwMap.set(target, Math.round(v.value));
       else if (v || expanded.length !== 1 || exprHasValRef(expanded[0]))
         err("E_VOICE_VALUE", `${kw} takes a number — a voice is fixed data`,
           nodeSrc(td.items[k + 1]));
@@ -3323,7 +3361,7 @@ function compileChannelBody(
 
       // Bare identifier: typed def reference (voice/patch switch)
       if (typedDefs?.has(val)) {
-        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node));
+        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node), trackState);
         i++;
         continue;
       }
@@ -5022,6 +5060,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     tick: 0,
     defaultLength: Math.round(WHOLE_TICKS / 8),
     defaultOct: 4,
+    voiceKeyShift: 0, // the current voice's `:key` − 60
     defaultGate: null,
     // The tempo lengths convert at: the song's at this tick when the
     // song-wide map is known (second pass), else this track's own.

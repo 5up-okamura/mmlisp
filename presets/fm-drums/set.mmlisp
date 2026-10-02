@@ -1,0 +1,669 @@
+; libOPNMIDI XG: GM percussion (notes 35-81) from five percussion banks.
+; MIT: Copyright (c) 2018-2026 Vitaliy Novichkov.
+; See licenses/libopnmidi-xg.txt and README.md.
+; Each drum is an FM voice whose :key is the bank's fixed key: written for
+; :oct 4, play c; other notes retune it. The standard kit is fm-<role>; the
+; other kits add only the drums that sound different, as fm-<kit>-<role>.
+; Drums with the same registers extend the first.
+
+; ---- Standard kit (StandKit): bank "XG #001 StandKit", MSB 0 / LSB 0 ----
+
+; GM 35 kick2: * BassDrum
+(def-fm fm-kick2 :key 35 :alg 2 :fb 4 :ams 0 :fms 0
+  :ar1 27 :dr1  0 :sr1 20 :rr1 7 :sl1  0 :tl1   0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2  0 :dr2 15 :sr2 12 :rr2 6 :sl2 15 :tl2 127 :ks2 0 :ml2 6 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3 11 :sr3 15 :rr3 5 :sl3 15 :tl3 127 :ks3 0 :ml3 5 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  0 :sr4 14 :rr4 7 :sl4  0 :tl4   0 :ks4 1 :ml4 1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 36 kick: * BassDrum
+(def-fm fm-kick :key 35 :alg 2 :fb 3 :ams 0 :fms 0
+  :ar1 26 :dr1  0 :sr1 20 :rr1 7 :sl1  0 :tl1   0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2  0 :dr2 15 :sr2 13 :rr2 6 :sl2 15 :tl2 127 :ks2 0 :ml2 6 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3 11 :sr3 15 :rr3 4 :sl3 15 :tl3 127 :ks3 0 :ml3 5 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  0 :sr4 14 :rr4 7 :sl4  0 :tl4   0 :ks4 1 :ml4 1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 37 rim: * StickSide
+(def-fm fm-rim :key 44 :alg 0 :fb 3 :ams 0 :fms 0
+  :ar1 31 :dr1 19 :sr1 0 :rr1 15 :sl1 15 :tl1 21 :ks1 0 :ml1 2 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 20 :sr2 0 :rr2 15 :sl2 15 :tl2 33 :ks2 2 :ml2 2 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 19 :sr3 0 :rr3 15 :sl3 15 :tl3 14 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 20 :sr4 0 :rr4 15 :sl4 15 :tl4  0 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 38 snare: Snare 8
+(def-fm fm-snare :key 50 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 20 :dr1  0 :sr1  5 :rr1 0 :sl1 0 :tl1 0 :ks1 0 :ml1 1 :dt1 1 :ssg1 0 :am1 0
+  :ar2 29 :dr2 31 :sr2 15 :rr2 7 :sl2 0 :tl2 0 :ks2 0 :ml2 0 :dt2 1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 23 :sr3 24 :rr3 9 :sl3 0 :tl3 0 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  0 :sr4 17 :rr4 9 :sl4 0 :tl4 0 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 39 clap: * HandClap (OPL3)
+(def-fm fm-clap :key 58 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1  0 :rr1 5 :sl1 0 :tl1 13 :ks1 2 :ml1 15 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 17 :sr2 15 :rr2 7 :sl2 2 :tl2 27 :ks2 0 :ml2 15 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 20 :sr3 16 :rr3 8 :sl3 0 :tl3  3 :ks3 0 :ml3  0 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  3 :sr4 18 :rr4 9 :sl4 0 :tl4  0 :ks4 0 :ml4  1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 40 snare2: Snare 8
+(def-fm fm-snare2 :key 52 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 20 :dr1  0 :sr1  6 :rr1 0 :sl1  0 :tl1 0 :ks1 0 :ml1 0 :dt1 1 :ssg1 0 :am1 0
+  :ar2 29 :dr2 16 :sr2 14 :rr2 7 :sl2 10 :tl2 0 :ks2 0 :ml2 0 :dt2 1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 23 :sr3 24 :rr3 9 :sl3  0 :tl3 0 :ks3 0 :ml3 3 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  0 :sr4 17 :rr4 9 :sl4  0 :tl4 0 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 41 tom1: * Low Floor Tom
+(def-fm fm-tom1 :key 20 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 30 :dr1 26 :sr1 3 :rr1 6 :sl1 15 :tl1 21 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
+  :ar2 30 :dr2 17 :sr2 3 :rr2 6 :sl2 15 :tl2  0 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 12 :sr3 1 :rr3 6 :sl3 15 :tl3  3 :ks3 1 :ml3 3 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4 3 :rr4 6 :sl4 15 :tl4  3 :ks4 0 :ml4 0 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 42 hat: * Closed Hat
+(def-fm fm-hat :key 70 :alg 2 :fb 7 :ams 3 :fms 3
+  :ar1 31 :dr1 14 :sr1 13 :rr1 4 :sl1 8 :tl1 25 :ks1 0 :ml1 15 :dt1  3 :ssg1 0 :am1 1
+  :ar2 31 :dr2 14 :sr2 13 :rr2 4 :sl2 9 :tl2 20 :ks2 0 :ml2 15 :dt2 -3 :ssg2 0 :am2 1
+  :ar3 31 :dr3 10 :sr3  8 :rr3 4 :sl3 6 :tl3  0 :ks3 1 :ml3  3 :dt3  3 :ssg3 0 :am3 0
+  :ar4 31 :dr4  9 :sr4  9 :rr4 5 :sl4 2 :tl4  0 :ks4 3 :ml4  1 :dt4 -3 :ssg4 0 :am4 0
+)
+
+; GM 43 tom2: * High Floor Tom
+(def-fm fm-tom2 :key 20 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 30 :dr1 26 :sr1  3 :rr1 6 :sl1 15 :tl1 22 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
+  :ar2 30 :dr2 17 :sr2 14 :rr2 6 :sl2 15 :tl2  0 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 12 :sr3  1 :rr3 6 :sl3 15 :tl3  3 :ks3 1 :ml3 4 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4  9 :rr4 6 :sl4 15 :tl4  3 :ks4 0 :ml4 0 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 44 hat-pedal: * PedalHihat
+(def-fm fm-hat-pedal :key 100 :alg 0 :fb 7 :ams 0 :fms 0
+  :ar1  7 :dr1 10 :sr1 28 :rr1 4 :sl1 11 :tl1 0 :ks1 1 :ml1 12 :dt1  3 :ssg1 0 :am1 0
+  :ar2  3 :dr2 10 :sr2 16 :rr2 7 :sl2 11 :tl2 0 :ks2 3 :ml2 10 :dt2 -3 :ssg2 0 :am2 1
+  :ar3 31 :dr3  0 :sr3  0 :rr3 4 :sl3  0 :tl3 0 :ks3 3 :ml3  3 :dt3  1 :ssg3 0 :am3 0
+  :ar4  4 :dr4 13 :sr4 29 :rr4 9 :sl4  5 :tl4 7 :ks4 3 :ml4  5 :dt4 -3 :ssg4 0 :am4 0
+)
+
+; GM 45 tom3: * Low Tom
+(def-fm fm-tom3 :key 24 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 30 :dr1 26 :sr1 3 :rr1 6 :sl1 15 :tl1 22 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
+  :ar2 30 :dr2 17 :sr2 3 :rr2 6 :sl2 15 :tl2  0 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 12 :sr3 1 :rr3 6 :sl3 15 :tl3  3 :ks3 1 :ml3 4 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4 3 :rr4 6 :sl4 15 :tl4  3 :ks4 0 :ml4 0 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 46 hat-open: * OpenHiHat
+(def-fm fm-hat-open :key 69 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 31 :dr1 14 :sr1 0 :rr1 0 :sl1 1 :tl1   0 :ks1 0 :ml1 9 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 23 :sr2 8 :rr2 4 :sl2 4 :tl2   8 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3 0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4 0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 47 tom4: * Low-med Tom
+(def-fm fm-tom4 :key 29 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 30 :dr1 26 :sr1 3 :rr1 6 :sl1 15 :tl1 22 :ks1 0 :ml1 0 :dt1  3 :ssg1 0 :am1 0
+  :ar2 30 :dr2 17 :sr2 3 :rr2 6 :sl2 15 :tl2  0 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 12 :sr3 1 :rr3 6 :sl3 15 :tl3  3 :ks3 1 :ml3 4 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4 3 :rr4 6 :sl4 15 :tl4  3 :ks4 0 :ml4 0 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 48 tom5: * High-med Tom
+(def-fm fm-tom5 :key 33 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 30 :dr1 24 :sr1 19 :rr1 6 :sl1 15 :tl1 22 :ks1 0 :ml1 0 :dt1  3 :ssg1 0 :am1 0
+  :ar2 30 :dr2 17 :sr2  3 :rr2 6 :sl2 15 :tl2  0 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 12 :sr3  1 :rr3 6 :sl3 15 :tl3  3 :ks3 1 :ml3 4 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4  3 :rr4 6 :sl4 15 :tl4  3 :ks4 0 :ml4 0 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 49 crash: * Crash (Animatics)
+(def-fm fm-crash :key 68 :alg 4 :fb 7 :ams 1 :fms 0
+  :ar1 31 :dr1 11 :sr1 0 :rr1 0 :sl1  4 :tl1 0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 11 :sr2 0 :rr2 6 :sl2 15 :tl2 0 :ks2 0 :ml2  3 :dt2  1 :ssg2 0 :am2 1
+  :ar3 31 :dr3 22 :sr3 7 :rr3 4 :sl3  3 :tl3 0 :ks3 0 :ml3  1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 27 :sr4 7 :rr4 6 :sl4 10 :tl4 0 :ks4 2 :ml4  7 :dt4  0 :ssg4 0 :am4 0
+)
+
+; GM 50 tom6: * High Tom
+(def-fm fm-tom6 fm-tom3 :key 36)
+
+; GM 51 ride: * RideCymbell1
+(def-fm fm-ride :key 76 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 31 :dr1 13 :sr1 0 :rr1 0 :sl1 1 :tl1   0 :ks1 0 :ml1 12 :dt1 0 :ssg1 0 :am1 0
+  :ar2 24 :dr2 21 :sr2 7 :rr2 4 :sl2 4 :tl2  12 :ks2 0 :ml2  3 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3 0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3  0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4 0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4  0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 52 china: * Chinese Crash (Animatics)
+(def-fm fm-china :key 65 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 31 :dr1  7 :sr1 0 :rr1 2 :sl1  5 :tl1 0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 12 :sr2 4 :rr2 4 :sl2  8 :tl2 0 :ks2 0 :ml2  3 :dt2  1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 21 :sr3 6 :rr3 3 :sl3  3 :tl3 0 :ks3 0 :ml3  1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 25 :sr4 6 :rr4 3 :sl4 10 :tl4 0 :ks4 2 :ml4  7 :dt4  0 :ssg4 0 :am4 0
+)
+
+; GM 53 ride-bell: * Ride Bell
+(def-fm fm-ride-bell :key 76 :alg 4 :fb 3 :ams 0 :fms 0
+  :ar1 31 :dr1  7 :sr1  7 :rr1 1 :sl1 14 :tl1   0 :ks1 0 :ml1 13 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 10 :sr2 18 :rr2 5 :sl2 14 :tl2  17 :ks2 0 :ml2 13 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3 0 :sl3  0 :tl3 127 :ks3 0 :ml3  0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4 0 :sl4  0 :tl4 127 :ks4 0 :ml4  0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 54 tamb: * Tamborine
+(def-fm fm-tamb :key 61 :alg 1 :fb 7 :ams 3 :fms 5
+  :ar1 31 :dr1  5 :sr1  2 :rr1 1 :sl1  8 :tl1 6 :ks1 1 :ml1  2 :dt1  2 :ssg1 0 :am1 0
+  :ar2 31 :dr2  5 :sr2  2 :rr2 3 :sl2  5 :tl2 1 :ks2 2 :ml2  4 :dt2  0 :ssg2 0 :am2 0
+  :ar3 22 :dr3 15 :sr3 12 :rr3 1 :sl3 10 :tl3 0 :ks3 2 :ml3  5 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 18 :dr4 13 :sr4 13 :rr4 6 :sl4 10 :tl4 8 :ks4 2 :ml4 14 :dt4  3 :ssg4 0 :am4 0
+)
+
+; GM 55 splash: * Splash Crash (Animatics)
+(def-fm fm-splash :key 84 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 31 :dr1  5 :sr1 6 :rr1 0 :sl1  5 :tl1 0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 11 :sr2 4 :rr2 5 :sl2  8 :tl2 0 :ks2 0 :ml2  3 :dt2  1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 21 :sr3 6 :rr3 3 :sl3  3 :tl3 0 :ks3 0 :ml3  1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 26 :sr4 6 :rr4 5 :sl4 10 :tl4 0 :ks4 2 :ml4  7 :dt4  0 :ssg4 0 :am4 0
+)
+
+; GM 56 cowbell: * CowBell
+(def-fm fm-cowbell :key 65 :alg 3 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 21 :sr1 19 :rr1 6 :sl1 2 :tl1  0 :ks1 0 :ml1 15 :dt1 2 :ssg1 0 :am1 0
+  :ar2 31 :dr2 21 :sr2 12 :rr2 6 :sl2 2 :tl2 35 :ks2 0 :ml2  8 :dt2 2 :ssg2 0 :am2 1
+  :ar3 31 :dr3 21 :sr3 13 :rr3 6 :sl3 3 :tl3 32 :ks3 0 :ml3  7 :dt3 3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 19 :sr4 16 :rr4 8 :sl4 2 :tl4  0 :ks4 0 :ml4  2 :dt4 3 :ssg4 0 :am4 0
+)
+
+; GM 57 crash2: * Crash 2 (Animatics)
+(def-fm fm-crash2 :key 70 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1 0 :rr1 0 :sl1  5 :tl1 0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 10 :sr2 4 :rr2 4 :sl2  8 :tl2 0 :ks2 0 :ml2  3 :dt2  1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 20 :sr3 6 :rr3 3 :sl3  3 :tl3 0 :ks3 0 :ml3  1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 25 :sr4 6 :rr4 4 :sl4 10 :tl4 0 :ks4 2 :ml4  7 :dt4  0 :ssg4 0 :am4 0
+)
+
+; GM 58 vibraslap: * VibeSlap
+(def-fm fm-vibraslap :key 28 :alg 4 :fb 6 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1 0 :rr1 0 :sl1  0 :tl1  8 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 10 :sr2 0 :rr2 5 :sl2 15 :tl2  0 :ks2 0 :ml2 0 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3  5 :sr3 0 :rr3 0 :sl3  0 :tl3  0 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 10 :sr4 0 :rr4 5 :sl4 15 :tl4 21 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 59 ride2: * RideCymbell2
+(def-fm fm-ride2 :key 81 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 31 :dr1 12 :sr1 0 :rr1 0 :sl1 1 :tl1   0 :ks1 0 :ml1 12 :dt1 0 :ssg1 0 :am1 0
+  :ar2 24 :dr2 20 :sr2 8 :rr2 4 :sl2 4 :tl2  11 :ks2 0 :ml2  3 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3 0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3  0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4 0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4  0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 60 bongo-hi: * HiBo
+(def-fm fm-bongo-hi :key 65 :alg 6 :fb 6 :ams 0 :fms 0
+  :ar1 28 :dr1 15 :sr1  0 :rr1 9 :sl1 15 :tl1 5 :ks1 2 :ml1 1 :dt1  0 :ssg1 0 :am1 0
+  :ar2 28 :dr2 20 :sr2  0 :rr2 9 :sl2 15 :tl2 0 :ks2 2 :ml2 0 :dt2  0 :ssg2 0 :am2 0
+  :ar3 23 :dr3 18 :sr3 10 :rr3 9 :sl3 15 :tl3 0 :ks3 0 :ml3 2 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 18 :dr4 18 :sr4 10 :rr4 9 :sl4 15 :tl4 4 :ks4 0 :ml4 3 :dt4  3 :ssg4 0 :am4 0
+)
+
+; GM 61 bongo-lo: * LoBo
+(def-fm fm-bongo-lo fm-bongo-hi :key 60)
+
+; GM 62 conga-mute: * MuHiCo
+(def-fm fm-conga-mute :key 44 :alg 6 :fb 6 :ams 0 :fms 0
+  :ar1 31 :dr1 15 :sr1  0 :rr1  9 :sl1 15 :tl1 7 :ks1 2 :ml1 1 :dt1  0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 18 :sr2  0 :rr2  9 :sl2 15 :tl2 0 :ks2 2 :ml2 1 :dt2  0 :ssg2 0 :am2 0
+  :ar3 30 :dr3 18 :sr3 10 :rr3  9 :sl3 15 :tl3 0 :ks3 0 :ml3 2 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 18 :dr4 22 :sr4 10 :rr4 10 :sl4 15 :tl4 0 :ks4 0 :ml4 2 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 63 conga-hi: * OpHiCo
+(def-fm fm-conga-hi :key 62 :alg 6 :fb 6 :ams 0 :fms 0
+  :ar1 28 :dr1 15 :sr1  0 :rr1  9 :sl1 15 :tl1 5 :ks1 2 :ml1 1 :dt1  0 :ssg1 0 :am1 0
+  :ar2 28 :dr2 23 :sr2  0 :rr2 10 :sl2 15 :tl2 0 :ks2 2 :ml2 0 :dt2  0 :ssg2 0 :am2 0
+  :ar3 23 :dr3 20 :sr3 12 :rr3 11 :sl3 15 :tl3 0 :ks3 0 :ml3 1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 18 :dr4 16 :sr4 12 :rr4  8 :sl4 15 :tl4 0 :ks4 0 :ml4 1 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 64 conga-lo: * LowCo
+(def-fm fm-conga-lo :key 56 :alg 6 :fb 6 :ams 0 :fms 0
+  :ar1 28 :dr1 15 :sr1  0 :rr1  9 :sl1 15 :tl1  5 :ks1 2 :ml1 1 :dt1  0 :ssg1 0 :am1 0
+  :ar2 28 :dr2 22 :sr2  0 :rr2 10 :sl2 15 :tl2  0 :ks2 2 :ml2 0 :dt2  0 :ssg2 0 :am2 0
+  :ar3 23 :dr3 20 :sr3 10 :rr3  9 :sl3 15 :tl3 13 :ks3 0 :ml3 2 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 18 :dr4 15 :sr4 10 :rr4  8 :sl4 15 :tl4  6 :ks4 0 :ml4 1 :dt4  3 :ssg4 0 :am4 0
+)
+
+; GM 65 timbale-hi: * HighTimbale
+(def-fm fm-timbale-hi :key 67 :alg 2 :fb 5 :ams 0 :fms 5
+  :ar1 31 :dr1 25 :sr1  8 :rr1  6 :sl1 12 :tl1  6 :ks1 2 :ml1 3 :dt1 1 :ssg1 0 :am1 0
+  :ar2 31 :dr2 25 :sr2  6 :rr2  6 :sl2 10 :tl2  5 :ks2 1 :ml2 6 :dt2 3 :ssg2 0 :am2 0
+  :ar3 31 :dr3 19 :sr3  5 :rr3 12 :sl3 11 :tl3 13 :ks3 1 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 15 :sr4 17 :rr4  6 :sl4  8 :tl4  0 :ks4 1 :ml4 2 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 66 timbale-lo: * LowTimbale
+(def-fm fm-timbale-lo :key 60 :alg 2 :fb 5 :ams 0 :fms 5
+  :ar1 31 :dr1 25 :sr1  8 :rr1 10 :sl1 12 :tl1  6 :ks1 2 :ml1 3 :dt1 1 :ssg1 0 :am1 0
+  :ar2 31 :dr2 25 :sr2  6 :rr2 12 :sl2 10 :tl2  5 :ks2 1 :ml2 6 :dt2 3 :ssg2 0 :am2 0
+  :ar3 31 :dr3 19 :sr3  5 :rr3 12 :sl3 11 :tl3 10 :ks3 1 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 15 :sr4 17 :rr4 12 :sl4  8 :tl4  0 :ks4 1 :ml4 2 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 67 agogo-hi: * HiAgogo
+(def-fm fm-agogo-hi :key 65 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  9 :sr1  9 :rr1 6 :sl1  8 :tl1 23 :ks1 2 :ml1 14 :dt1 3 :ssg1 0 :am1 0
+  :ar2 20 :dr2 16 :sr2 17 :rr2 8 :sl2 10 :tl2  0 :ks2 1 :ml2  4 :dt2 3 :ssg2 0 :am2 0
+  :ar3 31 :dr3  9 :sr3  9 :rr3 6 :sl3  8 :tl3 24 :ks3 2 :ml3 14 :dt3 0 :ssg3 0 :am3 0
+  :ar4 20 :dr4 16 :sr4 17 :rr4 8 :sl4 10 :tl4  0 :ks4 1 :ml4  4 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 68 agogo-lo: * LoAgogo
+(def-fm fm-agogo-lo :key 60 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  9 :sr1  9 :rr1 6 :sl1  8 :tl1 26 :ks1 2 :ml1 14 :dt1 3 :ssg1 0 :am1 0
+  :ar2 23 :dr2 16 :sr2 17 :rr2 8 :sl2 10 :tl2  0 :ks2 1 :ml2  4 :dt2 3 :ssg2 0 :am2 0
+  :ar3 31 :dr3  9 :sr3  9 :rr3 6 :sl3  8 :tl3 24 :ks3 2 :ml3 14 :dt3 0 :ssg3 0 :am3 0
+  :ar4 21 :dr4 16 :sr4 17 :rr4 8 :sl4 10 :tl4  0 :ks4 0 :ml4  4 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 69 cabasa: * Cabasa
+(def-fm fm-cabasa :key 67 :alg 1 :fb 6 :ams 3 :fms 5
+  :ar1 31 :dr1  5 :sr1  2 :rr1 1 :sl1  8 :tl1 6 :ks1 1 :ml1 15 :dt1  2 :ssg1 0 :am1 0
+  :ar2 31 :dr2  5 :sr2  2 :rr2 3 :sl2  5 :tl2 1 :ks2 2 :ml2 15 :dt2  0 :ssg2 0 :am2 0
+  :ar3 25 :dr3  5 :sr3  2 :rr3 1 :sl3  7 :tl3 2 :ks3 2 :ml3 13 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 13 :dr4 17 :sr4 11 :rr4 9 :sl4 10 :tl4 0 :ks4 2 :ml4  3 :dt4  3 :ssg4 0 :am4 0
+)
+
+; GM 70 maracas: * Maracas
+(def-fm fm-maracas :key 71 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 24 :dr1 14 :sr1 24 :rr1  9 :sl1 4 :tl1  0 :ks1 1 :ml1 15 :dt1 0 :ssg1 0 :am1 0
+  :ar2 14 :dr2 22 :sr2 25 :rr2 13 :sl2 8 :tl2  0 :ks2 2 :ml2  2 :dt2 0 :ssg2 0 :am2 0
+  :ar3 24 :dr3 16 :sr3 18 :rr3  9 :sl3 4 :tl3  0 :ks3 3 :ml3 15 :dt3 0 :ssg3 0 :am3 0
+  :ar4 18 :dr4 18 :sr4 18 :rr4  9 :sl4 6 :tl4 31 :ks4 0 :ml4 15 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 71 whistle: * ShortWhistle
+(def-fm fm-whistle :key 55 :alg 4 :fb 0 :ams 0 :fms 0
+  :ar1 18 :dr1 10 :sr1  0 :rr1 11 :sl1  0 :tl1  37 :ks1 0 :ml1  0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 18 :dr2 11 :sr2 22 :rr2 11 :sl2  2 :tl2   0 :ks2 0 :ml2 14 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3  0 :sl3 15 :tl3 127 :ks3 0 :ml3  0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4  0 :sl4 15 :tl4 127 :ks4 0 :ml4  0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 72 whistle-long: * LongWhistle
+(def-fm fm-whistle-long :key 51 :alg 4 :fb 0 :ams 0 :fms 0
+  :ar1 18 :dr1 10 :sr1  0 :rr1 11 :sl1  0 :tl1  37 :ks1 0 :ml1  0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 18 :dr2  8 :sr2 22 :rr2 11 :sl2  2 :tl2   0 :ks2 0 :ml2 14 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3  0 :sl3 15 :tl3 127 :ks3 0 :ml3  0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4  0 :sl4 15 :tl4 127 :ks4 0 :ml4  0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 73 guiro: * Short Guiro
+(def-fm fm-guiro :key 62 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 11 :sr1 10 :rr1 6 :sl1 0 :tl1   0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 15 :dr2 14 :sr2 16 :rr2 8 :sl2 1 :tl2   2 :ks2 0 :ml2 0 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 74 guiro-long: * Long Guiro
+(def-fm fm-guiro-long :key 62 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  9 :sr1  9 :rr1 6 :sl1 0 :tl1   0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 12 :dr2 14 :sr2 16 :rr2 8 :sl2 1 :tl2   7 :ks2 0 :ml2 0 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 75 claves: * WoodBlock
+(def-fm fm-claves :key 69 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 22 :sr1 22 :rr1 8 :sl1 12 :tl1 20 :ks1 0 :ml1  7 :dt1 1 :ssg1 0 :am1 0
+  :ar2 31 :dr2 18 :sr2 28 :rr2 8 :sl2 11 :tl2  0 :ks2 0 :ml2  5 :dt2 1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 25 :sr3 12 :rr3 8 :sl3 14 :tl3 10 :ks3 3 :ml3 14 :dt3 1 :ssg3 0 :am3 0
+  :ar4 31 :dr4 20 :sr4 13 :rr4 8 :sl4  1 :tl4  5 :ks4 3 :ml4  9 :dt4 1 :ssg4 0 :am4 0
+)
+
+; GM 76 woodblock-hi: * WoodBlock
+(def-fm fm-woodblock-hi :key 59 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 22 :sr1 22 :rr1 8 :sl1 12 :tl1 20 :ks1 0 :ml1  7 :dt1 1 :ssg1 0 :am1 0
+  :ar2 31 :dr2 18 :sr2 28 :rr2 8 :sl2 11 :tl2  0 :ks2 0 :ml2  5 :dt2 1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 25 :sr3 12 :rr3 8 :sl3 14 :tl3 10 :ks3 3 :ml3 14 :dt3 1 :ssg3 0 :am3 0
+  :ar4 31 :dr4 20 :sr4 13 :rr4 8 :sl4  1 :tl4  6 :ks4 3 :ml4  9 :dt4 1 :ssg4 0 :am4 0
+)
+
+; GM 77 woodblock-lo: * WoodBlock
+(def-fm fm-woodblock-lo fm-woodblock-hi :key 53)
+
+; GM 78 cuica-mute: * Mute Cuika
+(def-fm fm-cuica-mute :key 45 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 12 :dr1 15 :sr1 15 :rr1 7 :sl1 0 :tl1 39 :ks1 0 :ml1 2 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 14 :dr2  6 :sr2 17 :rr2 6 :sl2 0 :tl2  0 :ks2 1 :ml2 8 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 12 :dr3 15 :sr3 15 :rr3 7 :sl3 0 :tl3 27 :ks3 0 :ml3 1 :dt3  0 :ssg3 0 :am3 0
+  :ar4 14 :dr4  6 :sr4 17 :rr4 6 :sl4 0 :tl4  0 :ks4 2 :ml4 8 :dt4  0 :ssg4 0 :am4 0
+)
+
+; GM 79 cuica: * Open Cuika
+(def-fm fm-cuica :key 39 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 12 :dr1 15 :sr1 15 :rr1 7 :sl1  0 :tl1 38 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 0
+  :ar2 14 :dr2  6 :sr2 17 :rr2 6 :sl2  0 :tl2  0 :ks2 0 :ml2 4 :dt2 0 :ssg2 0 :am2 0
+  :ar3 12 :dr3  0 :sr3  0 :rr3 7 :sl3  0 :tl3 30 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 14 :dr4 15 :sr4 14 :rr4 6 :sl4 11 :tl4 23 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 80 triangle-mute: * MuteTriangle
+(def-fm fm-triangle-mute :key 99 :alg 4 :fb 4 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1  0 :rr1  0 :sl1 8 :tl1  26 :ks1 0 :ml1 3 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 15 :sr2 13 :rr2 11 :sl2 8 :tl2   0 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3  0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4  0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 81 triangle: * OpenTriangle
+(def-fm fm-triangle :key 99 :alg 4 :fb 4 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 0 :sl1 8 :tl1  26 :ks1 0 :ml1 3 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 8 :sr2 8 :rr2 5 :sl2 8 :tl2   0 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3 0 :sr3 0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4 0 :sr4 0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; ---- Second standard kit (StndKit2): bank "XG #002 StndKit2", MSB 1 / LSB 0 ----
+
+; GM 41 tom1: * Low Floor Tom
+(def-fm fm-std2-tom1 :key 20 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 30 :dr1 26 :sr1 3 :rr1 6 :sl1 15 :tl1 22 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
+  :ar2 30 :dr2 17 :sr2 3 :rr2 6 :sl2 15 :tl2  0 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 12 :sr3 1 :rr3 6 :sl3 15 :tl3  3 :ks3 1 :ml3 3 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4 3 :rr4 6 :sl4 15 :tl4  3 :ks4 0 :ml4 0 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 51 ride: * RideCymbell1
+(def-fm fm-std2-ride :key 76 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 31 :dr1 13 :sr1 0 :rr1 0 :sl1 1 :tl1   0 :ks1 0 :ml1 12 :dt1 0 :ssg1 0 :am1 0
+  :ar2 24 :dr2 21 :sr2 7 :rr2 4 :sl2 4 :tl2   0 :ks2 0 :ml2  3 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3 0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3  0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4 0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4  0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 73 guiro: * Short Guiro
+(def-fm fm-std2-guiro :key 62 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 11 :sr1 10 :rr1 6 :sl1 0 :tl1   0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 12 :dr2 14 :sr2 16 :rr2 8 :sl2 1 :tl2   2 :ks2 0 :ml2 0 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 74 guiro-long: * Long Guiro
+(def-fm fm-std2-guiro-long :key 62 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  9 :sr1  9 :rr1 6 :sl1 0 :tl1   0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2  9 :dr2 14 :sr2 16 :rr2 8 :sl2 1 :tl2   7 :ks2 0 :ml2 0 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 80 triangle-mute: * MuteTriangle
+(def-fm fm-std2-triangle-mute :key 99 :alg 4 :fb 4 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1  0 :rr1  0 :sl1 8 :tl1  26 :ks1 0 :ml1 3 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 14 :sr2 13 :rr2 11 :sl2 8 :tl2   0 :ks2 0 :ml2 2 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  0 :sr3  0 :rr3  0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4  0 :sr4  0 :rr4  0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; ---- Analog kit (AnalgKit): bank "XG #026 AnalgKit", MSB 25 / LSB 0 ----
+
+; GM 35 kick2: (unnamed)
+(def-fm fm-analog-kick2 :key 33 :alg 5 :fb 4 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1 23 :rr1 9 :sl1  0 :tl1   0 :ks1 0 :ml1 0 :dt1 3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 15 :sr2 12 :rr2 7 :sl2 15 :tl2 127 :ks2 0 :ml2 6 :dt2 3 :ssg2 0 :am2 0
+  :ar3 31 :dr3 17 :sr3 21 :rr3 7 :sl3 15 :tl3  21 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  0 :sr4 15 :rr4 7 :sl4  0 :tl4   0 :ks4 1 :ml4 1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 36 kick: (unnamed)
+(def-fm fm-analog-kick :key 33 :alg 5 :fb 4 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1 21 :rr1 9 :sl1  0 :tl1   0 :ks1 0 :ml1 0 :dt1 3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 15 :sr2 11 :rr2 7 :sl2 15 :tl2 127 :ks2 0 :ml2 6 :dt2 3 :ssg2 0 :am2 0
+  :ar3 31 :dr3 17 :sr3 21 :rr3 7 :sl3 15 :tl3  21 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  0 :sr4 13 :rr4 7 :sl4  0 :tl4   0 :ks4 1 :ml4 1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 38 snare: (unnamed)
+(def-fm fm-analog-snare :key 64 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1  0 :rr1 0 :sl1  0 :tl1 0 :ks1 0 :ml1 0 :dt1 1 :ssg1 0 :am1 0
+  :ar2 31 :dr2 18 :sr2 28 :rr2 9 :sl2 12 :tl2 0 :ks2 0 :ml2 0 :dt2 1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 23 :sr3 24 :rr3 9 :sl3  0 :tl3 0 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 20 :sr4 17 :rr4 9 :sl4  7 :tl4 0 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 39 clap: (unnamed)
+(def-fm fm-analog-clap :key 40 :alg 3 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 18 :sr1  0 :rr1  0 :sl1 15 :tl1 0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 17 :dr2 19 :sr2  0 :rr2 15 :sl2 15 :tl2 4 :ks2 2 :ml2 4 :dt2 0 :ssg2 0 :am2 0
+  :ar3 20 :dr3 22 :sr3  0 :rr3  0 :sl3 15 :tl3 5 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 22 :dr4 19 :sr4 16 :rr4 12 :sl4  9 :tl4 0 :ks4 0 :ml4 1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 40 snare2: (unnamed)
+(def-fm fm-analog-snare2 :key 64 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1  0 :rr1 0 :sl1  0 :tl1 0 :ks1 0 :ml1 0 :dt1 1 :ssg1 0 :am1 0
+  :ar2 31 :dr2 19 :sr2 28 :rr2 9 :sl2 14 :tl2 0 :ks2 0 :ml2 0 :dt2 1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 23 :sr3 24 :rr3 9 :sl3  0 :tl3 0 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 21 :sr4 17 :rr4 9 :sl4  7 :tl4 0 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 41 tom1: (unnamed)
+(def-fm fm-analog-tom1 :key 24 :alg 6 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 26 :sr1  3 :rr1 6 :sl1 15 :tl1  0 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 12 :sr2 16 :rr2 6 :sl2 10 :tl2 42 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 15 :sr3 16 :rr3 7 :sl3  8 :tl3  0 :ks3 1 :ml3 3 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4  3 :rr4 6 :sl4 15 :tl4  0 :ks4 0 :ml4 0 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 42 hat: (unnamed)
+(def-fm fm-analog-hat :key 76 :alg 4 :fb 6 :ams 0 :fms 0
+  :ar1 27 :dr1  0 :sr1 0 :rr1 15 :sl1  0 :tl1 2 :ks1 0 :ml1  0 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 19 :sr2 0 :rr2 15 :sl2 15 :tl2 3 :ks2 0 :ml2 15 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 31 :dr3  0 :sr3 0 :rr3 13 :sl3 15 :tl3 7 :ks3 0 :ml3  0 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 21 :dr4 18 :sr4 0 :rr4 15 :sl4 15 :tl4 7 :ks4 0 :ml4 15 :dt4 -3 :ssg4 0 :am4 0
+)
+
+; GM 43 tom2: (unnamed)
+(def-fm fm-analog-tom2 :key 28 :alg 6 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 26 :sr1  3 :rr1 6 :sl1 15 :tl1  0 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 12 :sr2 16 :rr2 6 :sl2 10 :tl2 42 :ks2 0 :ml2 0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 15 :sr3 16 :rr3 7 :sl3  8 :tl3  0 :ks3 1 :ml3 3 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4  3 :rr4 6 :sl4 15 :tl4  0 :ks4 0 :ml4 3 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 44 hat-pedal: * HHClosed 2
+(def-fm fm-analog-hat-pedal :key 76 :alg 4 :fb 6 :ams 0 :fms 0
+  :ar1 27 :dr1  0 :sr1  0 :rr1 0 :sl1  0 :tl1 7 :ks1 0 :ml1  0 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 16 :sr2 13 :rr2 7 :sl2  6 :tl2 6 :ks2 0 :ml2 15 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 31 :dr3  0 :sr3  0 :rr3 0 :sl3 15 :tl3 7 :ks3 0 :ml3  0 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 21 :dr4 14 :sr4 15 :rr4 7 :sl4  3 :tl4 7 :ks4 0 :ml4 15 :dt4 -3 :ssg4 0 :am4 0
+)
+
+; GM 45 tom3: Tom3
+(def-fm fm-analog-tom3 fm-analog-tom2 :key 30)
+
+; GM 46 hat-open: * HHOpen
+(def-fm fm-analog-hat-open :key 76 :alg 4 :fb 6 :ams 0 :fms 0
+  :ar1 27 :dr1  0 :sr1 0 :rr1 0 :sl1  0 :tl1 7 :ks1 0 :ml1  0 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 16 :sr2 9 :rr2 7 :sl2  6 :tl2 6 :ks2 0 :ml2 15 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 31 :dr3  0 :sr3 0 :rr3 0 :sl3 15 :tl3 7 :ks3 0 :ml3  0 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 21 :dr4 14 :sr4 9 :rr4 6 :sl4  3 :tl4 7 :ks4 0 :ml4 15 :dt4 -3 :ssg4 0 :am4 0
+)
+
+; GM 47 tom4: Tom4
+(def-fm fm-analog-tom4 fm-analog-tom2 :key 34)
+
+; GM 48 tom5: Tom5
+(def-fm fm-analog-tom5 fm-analog-tom2 :key 37)
+
+; GM 50 tom6: Tom6
+(def-fm fm-analog-tom6 :key 41 :alg 6 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 26 :sr1  3 :rr1 6 :sl1 15 :tl1  0 :ks1 0 :ml1 15 :dt1  3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 12 :sr2 16 :rr2 6 :sl2 10 :tl2 42 :ks2 0 :ml2  0 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 16 :sr3 18 :rr3 9 :sl3  8 :tl3  0 :ks3 1 :ml3  3 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4 19 :rr4 8 :sl4 15 :tl4  0 :ks4 0 :ml4  3 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 52 china: (unnamed)
+(def-fm fm-analog-china :key 65 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 31 :dr1  7 :sr1 0 :rr1 2 :sl1  5 :tl1 0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 12 :sr2 4 :rr2 4 :sl2  8 :tl2 0 :ks2 0 :ml2  3 :dt2  1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 21 :sr3 6 :rr3 3 :sl3  3 :tl3 0 :ks3 0 :ml3  1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 25 :sr4 6 :rr4 3 :sl4 10 :tl4 3 :ks4 2 :ml4  7 :dt4  0 :ssg4 0 :am4 0
+)
+
+; GM 56 cowbell: (unnamed)
+(def-fm fm-analog-cowbell :key 52 :alg 6 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 26 :sr1  3 :rr1 6 :sl1 15 :tl1  0 :ks1 0 :ml1 0 :dt1  3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 10 :sr2 23 :rr2 7 :sl2  2 :tl2 15 :ks2 0 :ml2 4 :dt2 -1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 13 :sr3 18 :rr3 7 :sl3  8 :tl3 15 :ks3 1 :ml3 2 :dt3  3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 13 :sr4 23 :rr4 7 :sl4 15 :tl4 15 :ks4 0 :ml4 4 :dt4 -3 :ssg4 0 :am4 0
+)
+
+; GM 62 conga-mute: CongaH
+(def-fm fm-analog-conga-mute :key 49 :alg 6 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 26 :sr1  3 :rr1 6 :sl1 15 :tl1  0 :ks1 0 :ml1 15 :dt1  3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 14 :sr2 24 :rr2 9 :sl2 10 :tl2 42 :ks2 0 :ml2  3 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 30 :dr3 16 :sr3 27 :rr3 9 :sl3  8 :tl3  0 :ks3 1 :ml3  3 :dt3  1 :ssg3 0 :am3 0
+  :ar4 30 :dr4 17 :sr4 25 :rr4 8 :sl4 15 :tl4  0 :ks4 0 :ml4  3 :dt4  1 :ssg4 0 :am4 0
+)
+
+; GM 63 conga-hi: CongaM
+(def-fm fm-analog-conga-hi fm-analog-conga-mute :key 41)
+
+; GM 64 conga-lo: CongaL
+(def-fm fm-analog-conga-lo fm-analog-conga-mute :key 36)
+
+; ---- Electric kit (ElctrKit): bank "XG #025 ElctrKit", MSB 24 / LSB 0 ----
+
+; GM 35 kick2: kick5_(c2)
+(def-fm fm-elec-kick2 :key 32 :alg 4 :fb 4 :ams 0 :fms 0
+  :ar1 31 :dr1 26 :sr1 19 :rr1 8 :sl1 0 :tl1 0 :ks1 0 :ml1 0 :dt1 0 :ssg1 7 :am1 0
+  :ar2 31 :dr2 31 :sr2 14 :rr2 7 :sl2 0 :tl2 0 :ks2 0 :ml2 0 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 19 :sr3 19 :rr3 8 :sl3 0 :tl3 6 :ks3 0 :ml3 1 :dt3 0 :ssg3 7 :am3 0
+  :ar4 31 :dr4 31 :sr4 14 :rr4 7 :sl4 0 :tl4 0 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 36 kick: kick6_(c2)
+(def-fm fm-elec-kick :key 36 :alg 5 :fb 4 :ams 0 :fms 0
+  :ar1 31 :dr1 31 :sr1 19 :rr1  6 :sl1 0 :tl1 0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 16 :sr2 11 :rr2 15 :sl2 6 :tl2 0 :ks2 0 :ml2 0 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 14 :sr3 11 :rr3 15 :sl3 6 :tl3 0 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 17 :sr4 11 :rr4 15 :sl4 6 :tl4 0 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 38 snare: Snare 8
+(def-fm fm-elec-snare :key 37 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1  8 :rr1 1 :sl1 0 :tl1 0 :ks1 0 :ml1 15 :dt1 1 :ssg1 0 :am1 0
+  :ar2 31 :dr2  1 :sr2 17 :rr2 8 :sl2 0 :tl2 0 :ks2 0 :ml2  2 :dt2 1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 23 :sr3 22 :rr3 9 :sl3 6 :tl3 0 :ks3 0 :ml3  2 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 14 :sr4 18 :rr4 8 :sl4 5 :tl4 0 :ks4 0 :ml4  1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 40 snare2: Snare 8
+(def-fm fm-elec-snare2 fm-elec-snare :key 46)
+
+; GM 41 tom1: Tom
+(def-fm fm-elec-tom1 :key 16 :alg 3 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  0 :sr1  0 :rr1  6 :sl1  0 :tl1  0 :ks1 1 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 23 :sr2 12 :rr2  6 :sl2  5 :tl2 40 :ks2 1 :ml2  8 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 31 :dr3 24 :sr3  0 :rr3 15 :sl3 15 :tl3 21 :ks3 1 :ml3  4 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 11 :sr4  0 :rr4  7 :sl4 15 :tl4  0 :ks4 1 :ml4  4 :dt4 -3 :ssg4 0 :am4 0
+)
+
+; GM 43 tom2: Tom
+(def-fm fm-elec-tom2 fm-elec-tom1 :key 20)
+
+; GM 45 tom3: Tom
+(def-fm fm-elec-tom3 fm-elec-tom1 :key 25)
+
+; GM 47 tom4: Tom
+(def-fm fm-elec-tom4 fm-elec-tom1 :key 31)
+
+; GM 48 tom5: Tom
+(def-fm fm-elec-tom5 fm-elec-tom1 :key 35)
+
+; GM 50 tom6: Tom
+(def-fm fm-elec-tom6 fm-elec-tom1 :key 37)
+
+; ---- Symphonic kit (SymphKit): bank "XG #049 SymphKit", MSB 48 / LSB 0 ----
+
+; GM 35 kick2: * Bass Drum M
+(def-fm fm-symph-kick2 :key 35 :alg 2 :fb 4 :ams 0 :fms 0
+  :ar1 27 :dr1  0 :sr1 19 :rr1 7 :sl1  0 :tl1   0 :ks1 0 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2  0 :dr2 15 :sr2 12 :rr2 6 :sl2 15 :tl2 127 :ks2 0 :ml2 6 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3  9 :sr3 15 :rr3 5 :sl3 15 :tl3 127 :ks3 0 :ml3 5 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  0 :sr4 11 :rr4 6 :sl4  0 :tl4   0 :ks4 1 :ml4 1 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 36 kick: * Gran Casa
+(def-fm fm-symph-kick :key 44 :alg 6 :fb 3 :ams 0 :fms 0
+  :ar1 31 :dr1 18 :sr1 18 :rr1  7 :sl1 0 :tl1 3 :ks1 2 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 16 :sr2 16 :rr2 11 :sl2 0 :tl2 2 :ks2 2 :ml2 1 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 16 :sr3 16 :rr3  6 :sl3 0 :tl3 0 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4 10 :sr4 15 :rr4  6 :sl4 9 :tl4 3 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 38 snare: Snare 8
+(def-fm fm-symph-snare :key 48 :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 20 :dr1  0 :sr1  8 :rr1 0 :sl1  0 :tl1 0 :ks1 0 :ml1 0 :dt1 1 :ssg1 0 :am1 0
+  :ar2 29 :dr2 16 :sr2 15 :rr2 8 :sl2 10 :tl2 0 :ks2 0 :ml2 0 :dt2 1 :ssg2 0 :am2 0
+  :ar3 31 :dr3 23 :sr3 25 :rr3 9 :sl3  0 :tl3 0 :ks3 0 :ml3 3 :dt3 0 :ssg3 0 :am3 0
+  :ar4 31 :dr4  0 :sr4 18 :rr4 9 :sl4  0 :tl4 0 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 40 snare2: Snare 8
+(def-fm fm-symph-snare2 fm-symph-snare :key 50)
+
+; GM 41 tom1: * Timpany
+(def-fm fm-symph-tom1 :key 41 :alg 4 :fb 1 :ams 0 :fms 0
+  :ar1 20 :dr1 14 :sr1 0 :rr1  7 :sl1 15 :tl1 10 :ks1 1 :ml1 0 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 10 :sr2 0 :rr2  5 :sl2 15 :tl2  0 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 0
+  :ar3 31 :dr3 13 :sr3 0 :rr3  9 :sl3 15 :tl3  0 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 15 :dr4 13 :sr4 0 :rr4 14 :sl4 15 :tl4 71 :ks4 0 :ml4 2 :dt4 0 :ssg4 0 :am4 0
+)
+
+; GM 43 tom2: * Timpany
+(def-fm fm-symph-tom2 fm-symph-tom1 :key 43)
+
+; GM 45 tom3: * Timpany
+(def-fm fm-symph-tom3 fm-symph-tom1 :key 45)
+
+; GM 47 tom4: * Timpany
+(def-fm fm-symph-tom4 fm-symph-tom1 :key 47)
+
+; GM 48 tom5: * Timpany
+(def-fm fm-symph-tom5 fm-symph-tom1 :key 48)
+
+; GM 50 tom6: * Timpany
+(def-fm fm-symph-tom6 fm-symph-tom1 :key 50)
+
+; GM 51 ride: * Hand Cym.Closed L
+(def-fm fm-symph-ride :key 79 :alg 4 :fb 7 :ams 1 :fms 0
+  :ar1 15 :dr1 11 :sr1 0 :rr1 0 :sl1  1 :tl1 0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 19 :dr2 11 :sr2 0 :rr2 6 :sl2 11 :tl2 0 :ks2 0 :ml2  3 :dt2  1 :ssg2 0 :am2 1
+  :ar3 20 :dr3 27 :sr3 7 :rr3 4 :sl3 15 :tl3 0 :ks3 0 :ml3  1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 27 :sr4 7 :rr4 6 :sl4 10 :tl4 0 :ks4 2 :ml4  7 :dt4  0 :ssg4 0 :am4 0
+)
+
+; GM 57 crash2: * Hand Cym.Open H
+(def-fm fm-symph-crash2 :key 70 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 26 :dr1  0 :sr1 0 :rr1 0 :sl1  5 :tl1 0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 16 :dr2 10 :sr2 4 :rr2 4 :sl2  8 :tl2 0 :ks2 0 :ml2  3 :dt2  1 :ssg2 0 :am2 0
+  :ar3 27 :dr3 20 :sr3 6 :rr3 3 :sl3  3 :tl3 0 :ks3 0 :ml3  1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 25 :sr4 6 :rr4 4 :sl4 10 :tl4 0 :ks4 2 :ml4  7 :dt4  0 :ssg4 0 :am4 0
+)
+
+; GM 59 ride2: * Hand Cym.Closed H
+(def-fm fm-symph-ride2 :key 63 :alg 4 :fb 5 :ams 0 :fms 0
+  :ar1 26 :dr1  7 :sr1 0 :rr1 0 :sl1  5 :tl1 0 :ks1 0 :ml1 15 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 16 :dr2 10 :sr2 4 :rr2 4 :sl2  8 :tl2 0 :ks2 0 :ml2  3 :dt2  1 :ssg2 0 :am2 0
+  :ar3 27 :dr3 20 :sr3 6 :rr3 3 :sl3  3 :tl3 0 :ks3 0 :ml3  1 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 25 :sr4 6 :rr4 4 :sl4 10 :tl4 0 :ks4 2 :ml4  7 :dt4  0 :ssg4 0 :am4 0
+)

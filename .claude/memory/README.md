@@ -52,11 +52,6 @@ Rules:
   makes the driver distinctive. Kept for the day it is revisited — with a
   second shape seen 2026-10-02: MMLisp as the composing tool, a pre-rendered
   stream (XGM) plus a few live controls on the Z80.
-- [plan-fm-drums.md](plan-fm-drums.md) — **FM drum kits from the XG bank's
-  percussion banks — decided 2026-10-03, not implemented.** Which banks exist,
-  the decisions (one set per kit, a drum is a `def` of voice + `:semi` macro,
-  `fm-` prefixed names so PCM and FM kits import together), and what to verify
-  first (how the bank's fixed pitch composes).
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   Lisp input aids: the implementation deviations and their reasons (why no
   `@codemirror/lint`, the layer-only rule, which shortcuts Chrome steals), the
