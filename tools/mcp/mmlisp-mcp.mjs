@@ -693,7 +693,7 @@ const TOOLS = [
     name: "mmlisp_presets",
     description:
       "Preset voice/sample sets a score can import. No args: the sets and their import lines. " +
-      "set: list its voice/sample names (e.g. gm, waveforms, 808, 909, gm-drums); query: filter names.",
+      "set: list its voice/sample names (e.g. gm, waveforms, tr808, tr909, gm-drums); query: filter names.",
     inputSchema: {
       type: "object",
       properties: { set: { type: "string" }, query: { type: "string" } },

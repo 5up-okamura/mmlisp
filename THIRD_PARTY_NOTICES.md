@@ -93,7 +93,7 @@ Licenses dialog links it.
 - Source: https://github.com/tidalcycles/sounds-tr808-fischer
 - Revision: `85fbecf1bec32553395625ea659e2a56dfd7c0e1`.
 - Original recording: Michael Fischer / Technopolis, 1994.
-- Repository license: CC0-1.0, preserved in `presets/808/LICENSE-CC0.txt`.
+- Repository license: CC0-1.0, preserved in `presets/tr808/LICENSE-CC0.txt`.
 - Included: 22 GM-numbered WAVs, converted to 22,050 Hz / 16-bit mono with shortened, faded tails.
 - Conversion: channel mean, polyphase resampling, and faded tails.
 
@@ -102,10 +102,48 @@ Licenses dialog links it.
 - Source: https://freesound.org/people/altemark/packs/1643/ (TR-909 JGB pack).
 - Original recording: Janne G:son Berg, from his own TR-909; cut up and
   published on Freesound by altemark.
-- License: CC BY 4.0, preserved in `presets/909/LICENSE-CC-BY-4.0.txt`.
+- License: CC BY 4.0, preserved in `presets/tr909/LICENSE-CC-BY-4.0.txt`.
   Attribution is required when the samples are redistributed.
-- Included: 13 GM-numbered WAVs in `presets/909/`, converted to 22,050 Hz /
+- Included: 13 GM-numbered WAVs in `presets/tr909/`, converted to 22,050 Hz /
   16-bit mono; the Freesound IDs of their sources are listed in
-  `presets/909/README.md`.
+  `presets/tr909/README.md`.
 - Conversion: 2:1 low-pass decimation, half-cosine-faded tails, and peak
   normalization.
+
+## CR-78 samples
+
+- Source: https://freesound.org/people/wikter/packs/40417/ (Roland CR78 sounds).
+- Recorded by wikter from a Roland CR-78.
+- License: CC0-1.0, preserved in `presets/cr78/LICENSE-CC0.txt`.
+- Included: 10 GM-numbered WAVs in `presets/cr78/`, converted to 22,050 Hz /
+  16-bit mono.
+- Conversion: resampling, a short end fade, and peak normalization.
+
+## DR-220E samples
+
+- Source: https://freesound.org/people/esnow/packs/31223/ (BOSS DR-220E Drum Machine).
+- Recorded by esnow from a Boss DR-220E.
+- License: CC0-1.0, preserved in `presets/dr220/LICENSE-CC0.txt`.
+- Included: 11 GM-numbered WAVs in `presets/dr220/`, converted to 22,050 Hz /
+  16-bit mono.
+- Conversion: resampling, half-cosine-faded tails, and peak normalization.
+
+## Oberheim DX samples
+
+- Source: https://freesound.org/people/oceansonmars/packs/39619/ (DX Drum Kit).
+- Recorded by oceansonmars from an Oberheim DX.
+- License: CC0-1.0, preserved in `presets/dx/LICENSE-CC0.txt`.
+- Included: 11 GM-numbered one-shots in `presets/dx/` (the pack's loops are
+  not), converted to 22,050 Hz / 16-bit mono.
+- Conversion: channel mix, resampling, leading-silence trim, a short end
+  fade, and peak normalization.
+
+## Yamaha RX5 samples
+
+- Source: https://github.com/MckAudio/MckSamplePacks (`RX5/`).
+- Recorded by MckAudio from a Yamaha RX5 with a ZOOM U-24.
+- License: CC0-1.0, preserved in `presets/rx5/LICENSE-CC0.txt`.
+- Included: 35 GM-numbered WAVs in `presets/rx5/`, converted to 22,050 Hz /
+  16-bit mono; two toms are pitched down from one source.
+- Conversion: resampling, leading-silence trim, half-cosine-faded tails, and
+  peak normalization.

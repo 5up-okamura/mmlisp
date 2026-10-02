@@ -82,9 +82,9 @@ function content() {
   const padLen = at(1.1);
   [0, -5, 3].forEach((s, k) => add(sampleAt("drv/tests/pad.wav", s), at(3.5 + k * 1.15), 0.6, padLen));
   // 7.5–14 s: groove, 120 BPM sixteenths, over the pad
-  const kick = sampleAt("presets/808/wav/036-bass-drum-1.wav");
-  const snare = sampleAt("presets/808/wav/038-acoustic-snare.wav");
-  const hat = sampleAt("presets/808/wav/042-closed-hi-hat.wav");
+  const kick = sampleAt("presets/tr808/wav/036-bass-drum-1.wav");
+  const snare = sampleAt("presets/tr808/wav/038-acoustic-snare.wav");
+  const hat = sampleAt("presets/tr808/wav/042-closed-hi-hat.wav");
   const pad = sampleAt("drv/tests/pad.wav", -12);
   const step = 0.125;
   for (let s = 0; s < 52; s++) {

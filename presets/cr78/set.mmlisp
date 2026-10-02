@@ -1,0 +1,14 @@
+; CR-78-style drum kit: role names, one sample each. See README.md for
+; provenance and licence. Kits share one vocabulary, so swapping this
+; import for another kit's swaps the sounds under the same names.
+
+(def-pcm kick :file "wav/036-bass-drum-1.wav")
+(def-pcm rim :file "wav/037-side-stick.wav")
+(def-pcm snare :file "wav/038-acoustic-snare.wav")
+(def-pcm hat :file "wav/042-closed-hi-hat.wav")
+(def-pcm crash :file "wav/049-crash-cymbal-1.wav")
+(def-pcm bongo-hi :file "wav/060-hi-bongo.wav")
+(def-pcm bongo-lo :file "wav/061-low-bongo.wav")
+(def-pcm conga-lo :file "wav/064-low-conga.wav")
+(def-pcm maracas :file "wav/070-maracas.wav")
+(def-pcm claves :file "wav/075-claves.wav")

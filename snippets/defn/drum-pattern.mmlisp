@@ -2,7 +2,7 @@
 ; switches the sample, so samples are ordinary arguments, and so is the name
 ; of another def: pass a different snare or a fill, and the bar changes while
 ; the groove stays the same.
-(import "presets/808/set.mmlisp")
+(import "presets/tr808/set.mmlisp")
 
 (def plain snare c _)
 (def roll tom1 c16 tom3 c16 tom5 c16 tom6 c16)

@@ -9,7 +9,7 @@ which wins wherever the two differ; the [guide](guide.md) is the tutorial.
 ```lisp
 (def title "First Song")
 (import "presets/gm/set.mmlisp")   ; 128 FM voices: gm-piano, gm-bass-syn1, ...
-(import "presets/808/set.mmlisp")  ; PCM drums: kick, snare, hat, clap, ...
+(import "presets/tr808/set.mmlisp")  ; PCM drums: kick, snare, hat, clap, ...
 (def pcm-voices 1)
 
 (def pluck (macro :vel [15 12 9 6 3]))  ; a velocity envelope, one step a frame
@@ -103,7 +103,8 @@ and a hold carry a note into the next.
 
 Naming a voice or sample in a track body switches to it. Preset sets:
 `presets/gm` (gm-piano … gm-gunshot), `presets/waveforms` (wave-sine,
-acid-saw, …), `presets/808`, `presets/909` and `presets/gm-drums` (PCM kits).
+acid-saw, …), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5` and
+`gm-drums` (PCM kits).
 
 ## Loops and flow (§13)
 

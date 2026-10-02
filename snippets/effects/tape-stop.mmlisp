@@ -3,7 +3,7 @@
 ; sink in pitch with a :pitch sweep of the same length. A PCM voice cannot
 ; bend (its pitch is baked), so the drums only slow down.
 (import "presets/gm/set.mmlisp")
-(import "presets/808/set.mmlisp")
+(import "presets/tr808/set.mmlisp")
 
 (def groove kick c _ hat c _ snare c _ hat c _)
 

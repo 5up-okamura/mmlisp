@@ -4,7 +4,7 @@
 ; repeats it, and a :loop-len curve tightens the repeat into a buzz, the
 ; classic glitch fill.
 (import "presets/gm/set.mmlisp")
-(import "presets/808/set.mmlisp")
+(import "presets/tr808/set.mmlisp")
 
 (def roll (macro :step 32 :keyon 1 :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
 

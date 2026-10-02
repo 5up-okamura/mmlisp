@@ -888,7 +888,7 @@ space. A whole kit takes one chain on its import, and one sound a variant of
 its own:
 
 ```lisp
-(import "presets/808/set.mmlisp" :fx [(gain 12) (limit)])
+(import "presets/tr808/set.mmlisp" :fx [(gain 12) (limit)])
 (def-pcm snare-hot snare :fx [(fade :len 60ms)])
 ```
 
@@ -1162,7 +1162,7 @@ compiles, so a newly typed `(import …)` joins the list after the next Play or
 Build.
 
 A new score (**File ▸ New**) imports the `gm` and `waveforms` voice sets and
-the `808` kit without assigning any of them, so every preset name completes
+the `tr808` kit without assigning any of them, so every preset name completes
 from the first keystroke. Only what a track plays reaches the song.
 
 ---
@@ -1237,7 +1237,7 @@ them — so changing which kit you import changes the sounds under the same
 names, and the score is untouched:
 
 ```lisp
-(import "presets/808/set.mmlisp")        ; ← swap this line for
+(import "presets/tr808/set.mmlisp")        ; ← swap this line for
 ; (import "presets/gm-drums/set.mmlisp") ;   this one
 (pcm1 :len 8 kick c4 hat c4 snare c4 hat c4)
 ```

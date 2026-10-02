@@ -2,7 +2,7 @@
 ; snare, hat...); only the samples you actually play are baked into the
 ; 32 KB bank. pcm-voices trades voices for quality: 1 voice plays at 14.4
 ; kHz, 2 at 10.1 kHz, 3 at 6.7 kHz.
-(import "presets/808/set.mmlisp")
+(import "presets/tr808/set.mmlisp")
 (import "presets/gm/set.mmlisp")
 (def pcm-voices 2)
 

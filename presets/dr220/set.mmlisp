@@ -1,0 +1,15 @@
+; DR-220E-style drum kit: role names, one sample each. See README.md for
+; provenance and licence. Kits share one vocabulary, so swapping this
+; import for another kit's swaps the sounds under the same names.
+
+(def-pcm kick :file "wav/036-bass-drum-1.wav")
+(def-pcm snare :file "wav/038-acoustic-snare.wav")
+(def-pcm clap :file "wav/039-hand-clap.wav")
+(def-pcm hat :file "wav/042-closed-hi-hat.wav")
+(def-pcm tom3 :file "wav/045-low-tom.wav")
+(def-pcm hat-open :file "wav/046-open-hi-hat.wav")
+(def-pcm tom4 :file "wav/047-low-mid-tom.wav")
+(def-pcm tom6 :file "wav/050-high-tom.wav")
+(def-pcm china :file "wav/052-chinese-cymbal.wav")
+(def-pcm ride-bell :file "wav/053-ride-bell.wav")
+(def-pcm cowbell :file "wav/056-cowbell.wav")

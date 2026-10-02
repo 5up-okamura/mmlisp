@@ -6,7 +6,7 @@
 ; then two bars pumping. The pad notes are tied across the beats (~), so the
 ; fader moves without a new attack.
 (import "presets/gm/set.mmlisp")
-(import "presets/808/set.mmlisp")
+(import "presets/tr808/set.mmlisp")
 
 (def-pcm kick-hot kick :fx [(gain :db 30)])
 
