@@ -1,7 +1,7 @@
 # Plan: editor input aids (live CodeMirror)
 
 Batches 1 and 2 **landed** 2026-07-31, batch 3 (find/replace + multiple
-cursors) 2026-09-21 — all in `live/index.html`, `live/style.css`,
+cursors) 2026-09-21, the touch symbol bar 2026-10-03 (`initSoftKeyBar`) — all in `live/index.html`, `live/style.css`,
 `docs/guide.md` §24, README. This file now only tracks what is left.
 
 ## Landed
@@ -77,10 +77,18 @@ Batch 3 (2026-09-21): find / replace and multiple cursors — `@codemirror/searc
   the occurrence commands, toggle comment, close brackets, format); Tools =
   what is done with the score (build, snippets).
 
+- **Touch symbol bar** (`#softKeyBar`, `initSoftKeyBar`): pinned to the soft
+  keyboard's top edge via `visualViewport`, shown only while it is up and the
+  editor has focus — so never with a hardware keyboard. Keys by measured
+  frequency in the shipped scores, `( ) : @` first, the rest scrolls; they type
+  through `insertBracket` / `input.type`, so pairing and the `@` voice list
+  behave as typed. Taps act on an un-moved `touchend` (cancelled, so the editor
+  keeps focus) — `touchstart` must stay passive or the row cannot scroll.
+  `undoSmartPunctuation` puts iOS curly quotes / em dash back. Not yet tried on
+  a real device.
+
 ## Still open
 
-- **Symbol bar for touch** — `(` `[` `:` are the painful keys on iPad, and the
-  value-editing UI is already tap-first. The only batch-1/2 item not done.
 - Possible follow-ups, not committed to: a token-level first step for
   `Alt-ArrowUp` (currently the first step is the enclosing form's contents),
   and snippets for `:param` completions.
