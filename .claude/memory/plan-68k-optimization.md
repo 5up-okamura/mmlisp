@@ -340,5 +340,16 @@ answers exist:
    `e9b53c8`..`bf50bdc` undid the walking bit, the carrier split and the
    byte-offset track table (`track_by_id` 0.6 → 0.84%, accepted) and folded
    the tick fast path into the loop (run_frame faster, not slower).
+   **Closed 2026-10-02, by the user's call.** The remaining 16% is spread
+   across the macro engine, the tick walk and the pump — the price of moving
+   parameters every frame, which is what this driver is for. §4
+   (pre-rendering macros) is XGM by another name and was rejected on those
+   grounds; §5's spread-the-frame needs a split render (one frame in budgeted
+   pieces, control calls deferred to the next frame head) and was not worth
+   it for a worst frame that is the setup burst (251 writes at f0 of sin008)
+   plus one mid-song voice change (79 writes at 15 s, scorable around). Left
+   for when a game actually drops a frame: a per-frame-numbered
+   `sgdk-profile` output to measure a mid-song burst alone, and step 2 (the
+   sequencer pushing pairs directly, ~1–2%).
 2. **Then decide §4** (pre-rendering) against what is left: if the steady
    state is under the game's budget, §4 is not worth its ROM.
