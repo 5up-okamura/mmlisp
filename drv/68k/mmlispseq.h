@@ -348,10 +348,9 @@ typedef struct {
 
   MMLTrack trk[MML_MAX_TRACKS];
   uint8_t track_count;
-  /* track id → byte offset of its entry in trk, 0xffff = no such track. A
-   * game polls MMLisp_trig / MMLisp_trackActive per track per frame; a scan
-   * of the tracks each time was 3% of the 68000 on a 9-track song. */
-  uint16_t track_off[256];
+  /* track id → its index in trk, 0xff = no such track: a game polls
+   * MMLisp_trig / MMLisp_trackActive per track per frame. */
+  uint8_t track_index[256];
 
   MMLFmCh fm[6];
   MMLPsgCh psg[4];
