@@ -4830,7 +4830,7 @@
 
     const ANALOG_LPF_CUTOFF = 3000;
     // 'off' | 'model1' (only Model 1 is modeled today; more may follow).
-    let analogLpfOn = loadPref('analogLpf', 'off') !== 'off';
+    let analogLpfOn = loadPref('analogLpf', 'model1') !== 'off';
     function updateAnalogLpfCheck() {
       const el = document.getElementById('analogLpfCheck');
       if (el) el.textContent = analogLpfOn ? '✓' : '';
@@ -4849,7 +4849,7 @@
     // is typed or stepped like any other value. Wide on purpose — a projector
     // or a recording wants it huge. Touch layouts never go under 16px (iOS
     // zooms a focused field below that; style.css).
-    const FONT_SIZE_MIN = 8, FONT_SIZE_MAX = 96, FONT_SIZE_DEFAULT = 13;
+    const FONT_SIZE_MIN = 8, FONT_SIZE_MAX = 96, FONT_SIZE_DEFAULT = 14;
     let _fontSize = FONT_SIZE_DEFAULT;
     function applyFontSize(px) {
       _fontSize = Math.round(Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Number(px) || FONT_SIZE_DEFAULT)));
@@ -4873,7 +4873,7 @@
     applyFontSize(loadPref('fontSize', FONT_SIZE_DEFAULT));
 
     // Follow Playback (the logic sits with the playhead highlights).
-    _follow = loadPref('follow', 'off') !== 'off';
+    _follow = loadPref('follow', 'on') !== 'off';
     function updateFollowCheck() {
       const el = document.getElementById('followCheck');
       if (el) el.textContent = _follow ? '✓' : '';
@@ -8079,7 +8079,7 @@
     initFileDrop();
 
     // Restore persisted visualizer selection.
-    setVisualizer(loadPref('visualizer', 'off'));
+    setVisualizer(loadPref('visualizer', 'scope'));
 
     _themeReady = true; // init done — applyColors may now repaint canvases on theme change
     log('Ready.', 'info');

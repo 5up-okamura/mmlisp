@@ -199,7 +199,7 @@
     #editorWrap.viz-on #vizCanvas { display: block; }
     #editorWrap .cm-editor {
       height: 100%;
-      font-size: var(--editor-font-size, 13px);
+      font-size: var(--editor-font-size, 14px);
       background: var(--background);
       position: relative;
       z-index: 1;
