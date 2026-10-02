@@ -323,7 +323,12 @@ answers exist:
    `step_macro`/`step_channel_macros_mc` take the macro channel from the walk
    instead of `macro_ch(ch)`, and `process_macros` clears with a walking bit;
    `recompose_carriers` composes the level offset once a channel, not once a
-   carrier. c-gate byte-identical. **Owed: the user's `--pc` re-profile.**
+   carrier. c-gate byte-identical. **Measured A/B (sin008, `--pc`, 30 s,
+   043880e vs 8a27775):** macro engine 5.85% → 4.79%, driver + API 17.0% →
+   16.0%, idle 80.2% → 81.1% (`macro_desc` 1.27 → 0.05). **Every profile
+   before 2026-10-01's dedup fix (`b54d937`) ran a broken sin008** — pcm1
+   and three FM/PSG tracks stopped at frame 788 (~13 s) — so the earlier
+   14.6% is not comparable: the whole song costs ~17% on the same build.
    Not done: a pitch cache for `fnum_block_for` (a vibrato changes the cents
    every frame, so a last-value cache rarely hits).
 2. **Then decide §4** (pre-rendering) against what is left: if the steady
