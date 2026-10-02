@@ -1077,11 +1077,34 @@
     /* Browse: preset sets and example scores */
     .browse-modal { width: min(720px, 92vw); }
     .browse-modal:focus { outline: none; }
+    .browse-tabs {
+      display: flex;
+      gap: 0.25rem;
+      margin-bottom: 0.5rem;
+    }
+    .browse-tab {
+      background: none;
+      border: 1px solid var(--mid);
+      border-radius: 3px;
+      color: var(--foreground);
+      font: inherit;
+      font-size: 0.72rem;
+      padding: 0.25rem 0.7rem;
+      cursor: pointer;
+    }
+    .browse-tab:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
+    .browse-tab.active {
+      background: color-mix(in srgb, var(--foreground) 28%, var(--background));
+      border-color: var(--foreground);
+      font-weight: bold;
+    }
     .browse-body {
       display: flex;
       gap: 0.6rem;
       height: min(420px, 60vh);
     }
+    /* Scores and Snippets are one list each: no column of sets beside it. */
+    .browse-solo .browse-groups { display: none; }
     .browse-groups {
       flex: 0 0 9.5rem;
       overflow-y: auto;
@@ -1167,6 +1190,7 @@
     }
     /* Fingers: taller rows and buttons. */
     @media (pointer: coarse) {
+      .browse-tab { padding: 0.5rem 0.9rem; font-size: 0.8rem; }
       .browse-group, .browse-row { padding: 0.6rem 0.55rem; font-size: 0.8rem; }
       .browse-mini { padding: 0.3rem 0.6rem; font-size: 0.72rem; }
     }
@@ -1184,7 +1208,7 @@
       .browse-groups { flex: 1 1 auto; }
       .browse-items { display: none; }
       .browse-picked .browse-groups { display: none; }
-      .browse-picked .browse-items { display: block; }
+      .browse-picked .browse-items, .browse-solo .browse-items { display: block; }
       .browse-picked .browse-back { display: inline-block; }
       .browse-picked .browse-crumb { display: inline; }
       .browse-crumb::before { content: '\203A'; margin-right: 0.4rem; opacity: 0.6; }

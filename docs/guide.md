@@ -1175,9 +1175,11 @@ from the first keystroke. Only what a track plays reaches the song.
 
 ## 25. Browsing what the app ships
 
-**File ▸ Browse…** lists the preset sets, the example scores and the snippets
-that come with the app, so picking a voice or trying a technique takes one
-click instead of a file dialog.
+**File ▸ Browse…** lists what comes with the app on three tabs — **Presets**
+(the voice and sample sets), **Scores** (the examples) and **Snippets** — so
+picking a voice or trying a technique takes one click instead of a file
+dialog. Presets has two columns, the sets and the picked set's contents;
+Scores and Snippets are one list each.
 
 Each preset set is one directory under `presets/`, and the list on the right is
 read straight out of the `set.mmlisp` a score would import — so a name in the
@@ -1200,8 +1202,8 @@ The audition is one note: enough to tell a sound, and a drum has only the one.
 To hear a voice or a sample across its range, put the cursor on its def and
 play the keyboard.
 
-The panel is driven from the keyboard: **↑↓** moves through the list, **←→**
-steps between sets, **Space** auditions the highlighted row (and stops a score
+The panel is driven from the keyboard: **Tab** / **Shift+Tab** switches tabs,
+**↑↓** moves through the list, **←→** steps between sets on Presets, **Space** auditions the highlighted row (and stops a score
 that is playing), **Enter** is its action — open the score, insert the snippet,
 paste the voice's definition, import the sample's set — and **Esc** closes.
 Everything is clickable too.
@@ -1216,7 +1218,7 @@ chip. **Insert** moves the snippet's `(import …)` lines to the top of the scor
 (skipping any already there) and puts the rest at the cursor, in one undo step.
 A snippet is written as if it sat next to a new score, so its imports read
 `presets/…` wherever it ends up. **Tools ▸ Snippets ▸ Browse Snippets…** opens
-the panel on this list.
+the panel on this tab.
 
 A `(trig N)` cue has no sound, so the log shows it as it passes — `trig 2 —
 fm1` — whether the score is playing from the editor or from the panel.

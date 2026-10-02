@@ -479,6 +479,11 @@
         <button class="browse-back" onclick="browseBack()" title="Back to the list of sets">‹</button>
         <span>Browse</span><span class="browse-crumb" id="browseCrumb"></span>
       </div>
+      <div class="browse-tabs" id="browseTabs">
+        <button class="browse-tab" data-tab="presets" onclick="selectBrowseTab('presets')">Presets</button>
+        <button class="browse-tab" data-tab="scores" onclick="selectBrowseTab('scores')">Scores</button>
+        <button class="browse-tab" data-tab="snippets" onclick="selectBrowseTab('snippets')">Snippets</button>
+      </div>
       <div class="browse-body">
         <div class="browse-groups" id="browseGroups"></div>
         <div class="browse-items" id="browseItems"></div>
@@ -5437,7 +5442,8 @@
     let _browseCatalog = null;              // { sets, scores, snippets: [path] }
     const _browseFileCache = new Map();     // score/snippet path -> { text, about }
     const _browseSetCache = new Map();      // set path -> { path, text, defs }
-    let _browseSel = null;                  // left-hand selection: a set path, or 'scores'
+    let _browseTab = 'presets';             // 'presets', 'scores' or 'snippets'
+    let _browseSel = null;                  // the set picked on the Presets tab
     let _browseRow = 0;                     // highlighted row in the right-hand list
     let _browsePreviewTimers = [];          // note on/off timers for the FM audition
     let _browsePcmSounding = false;         // the worklet holds a sample preview
@@ -5448,7 +5454,7 @@
       return res.text();
     }
 
-    async function openBrowse(group = null) {
+    async function openBrowse(tab = null) {
       document.getElementById('browseModal').hidden = false;
       // Capture phase, as the value popup does: the panel's arrows and space
       // must not also reach a slider or the piano keys underneath.
@@ -5465,17 +5471,31 @@
           [read(BROWSE_SETS_INDEX), read(BROWSE_SCORES_INDEX), read(BROWSE_SNIPPETS_INDEX)]);
         _browseCatalog = { sets, scores, snippets };
       }
-      renderBrowseGroups();
-      await selectBrowseGroup(group ?? _browseSel ?? _browseCatalog.sets[0] ?? 'scores');
-      // A phone shows one column at a time: opened from File > Browse… it
-      // starts on the list of sets; a direct entry (Browse Snippets…) goes
-      // straight to its files.
-      if (!group) browseBack();
+      await selectBrowseTab(tab ?? _browseTab);
     }
 
-    // On a narrow screen the two columns become two steps: picking a group
-    // shows its files full width, and ‹ comes back. The class does nothing on
-    // a wide screen, where both columns are always visible.
+    // Presets is two columns, the sets and the picked set's contents; Scores
+    // and Snippets are one list each, shown full width.
+    async function selectBrowseTab(tab) {
+      _browseTab = tab;
+      for (const b of document.querySelectorAll('#browseTabs .browse-tab'))
+        b.classList.toggle('active', b.dataset.tab === tab);
+      const modal = document.querySelector('#browseModal .browse-modal');
+      modal.classList.toggle('browse-solo', tab !== 'presets');
+      if (tab !== 'presets') {
+        modal.classList.remove('browse-picked');
+        return showBrowseItems(tab);
+      }
+      renderBrowseGroups();
+      const set = _browseSel ?? _browseCatalog.sets[0];
+      if (set) await selectBrowseGroup(set);
+      // A phone shows one column at a time and starts the tab on its sets.
+      browseBack();
+    }
+
+    // On a narrow screen the Presets tab's two columns become two steps:
+    // picking a set shows its contents full width, and ‹ comes back. The
+    // class does nothing on a wide screen, where both columns are visible.
     function browseBack() {
       document.querySelector('#browseModal .browse-modal').classList.remove('browse-picked');
     }
@@ -5501,16 +5521,18 @@
         host.appendChild(b);
       };
       for (const path of _browseCatalog.sets) add(path, browseSetName(path));
-      add('scores', 'Scores');
-      add('snippets', 'Snippets');
     }
 
-    async function selectBrowseGroup(key) {
-      _browseSel = key;
+    async function selectBrowseGroup(path) {
+      _browseSel = path;
       renderBrowseGroups();
       document.querySelector('#browseModal .browse-modal').classList.add('browse-picked');
-      document.getElementById('browseCrumb').textContent =
-        key === 'scores' ? 'Scores' : key === 'snippets' ? 'Snippets' : browseSetName(key);
+      document.getElementById('browseCrumb').textContent = browseSetName(path);
+      await showBrowseItems(path);
+    }
+
+    // Fill the right-hand list: a set's contents, or 'scores' / 'snippets'.
+    async function showBrowseItems(key) {
       const items = document.getElementById('browseItems');
       items.innerHTML = '';
       if (key === 'scores' || key === 'snippets') {
@@ -5530,11 +5552,11 @@
     }
 
     function browseKeyHint() {
-      if (_browseSel === 'scores')
-        return '\u2191\u2193 select \u00b7 Space play \u00b7 Enter open \u00b7 Esc close';
-      if (_browseSel === 'snippets')
-        return '\u2191\u2193 select \u00b7 Space play \u00b7 Enter insert \u00b7 Esc close';
-      return '\u2190\u2192 set \u00b7 \u2191\u2193 select \u00b7 Space preview \u00b7 Enter insert \u00b7 Esc close';
+      if (_browseTab === 'scores')
+        return 'Tab next tab \u00b7 \u2191\u2193 select \u00b7 Space play \u00b7 Enter open \u00b7 Esc close';
+      if (_browseTab === 'snippets')
+        return 'Tab next tab \u00b7 \u2191\u2193 select \u00b7 Space play \u00b7 Enter insert \u00b7 Esc close';
+      return 'Tab next tab \u00b7 \u2190\u2192 set \u00b7 \u2191\u2193 select \u00b7 Space preview \u00b7 Enter insert \u00b7 Esc close';
     }
 
     function browseRows() {
@@ -5560,17 +5582,24 @@
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const rows = browseRows();
       const sets = _browseCatalog?.sets ?? [];
-      const groups = [...sets, 'scores', 'snippets'];
+      const tabs = ['presets', 'scores', 'snippets'];
       const stop = () => { e.preventDefault(); e.stopPropagation(); };
       switch (e.key) {
         case 'ArrowDown': stop(); highlightBrowseRow(_browseRow + 1); return;
         case 'ArrowUp':   stop(); highlightBrowseRow(_browseRow - 1); return;
+        case 'Tab': {
+          stop();
+          const at = tabs.indexOf(_browseTab);
+          selectBrowseTab(tabs[(at + (e.shiftKey ? tabs.length - 1 : 1)) % tabs.length]);
+          return;
+        }
         case 'ArrowRight':
         case 'ArrowLeft': {
           stop();
-          const at = groups.indexOf(_browseSel);
-          const next = (at + (e.key === 'ArrowRight' ? 1 : groups.length - 1)) % groups.length;
-          selectBrowseGroup(groups[next]);
+          if (_browseTab !== 'presets' || sets.length === 0) return;
+          const at = sets.indexOf(_browseSel);
+          const next = (at + (e.key === 'ArrowRight' ? 1 : sets.length - 1)) % sets.length;
+          selectBrowseGroup(sets[next]);
           return;
         }
         case ' ': {
@@ -6315,6 +6344,7 @@
     window.openBrowse = openBrowse;
     window.closeBrowse = closeBrowse;
     window.browseBack = browseBack;
+    window.selectBrowseTab = selectBrowseTab;
 
     // Expose for inline handlers
     window.initAudio    = initAudio;
