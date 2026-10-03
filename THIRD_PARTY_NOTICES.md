@@ -65,6 +65,16 @@ Licenses dialog links it.
   take the wave period from the chip's pitch registers instead of estimating it
   by autocorrelation.
 
+## CodeMirror 6
+
+- Upstream: https://codemirror.net/ (`@codemirror/view`, `state`, `language`,
+  `commands`, `autocomplete`, `search`, and `@lezer/highlight`; the versions are
+  in the bundle's header comment).
+- Copyright (C) 2018-2021 Marijn Haverbeke and others.
+- License: MIT, preserved in `live/vendor/LICENSE-codemirror.txt`.
+- Included: `live/vendor/codemirror.js`, a minified bundle of those packages
+  built by `live/scripts/vendor/build.mjs` so the app runs offline.
+
 ## Virtuosity Drums
 
 - Upstream: https://github.com/sfzinstruments/virtuosity_drums

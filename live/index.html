@@ -456,8 +456,9 @@
           <a href="https://freesound.org/people/altemark/packs/1643/" target="_blank" rel="noopener">Source</a>
         </div>
         <div class="license-row">
-          <b>CodeMirror 6</b> — MIT ·
-          <a href="https://codemirror.net/LICENSE" target="_blank" rel="noopener">License</a>
+          <b>CodeMirror 6</b> — MIT · © Marijn Haverbeke and others<br>
+          <a href="./vendor/LICENSE-codemirror.txt" target="_blank" rel="noopener">License</a> ·
+          <a href="https://codemirror.net/" target="_blank" rel="noopener">Source</a>
         </div>
         <div class="license-row">
           <b>Open Sans</b> — Apache-2.0 ·
@@ -594,15 +595,16 @@
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey } from './src/import-fm-voices.js';
 
     // -----------------------------------------------------------------------
-    // CodeMirror 6 — loaded from CDN
+    // CodeMirror 6 — one vendored bundle (vendor/, built by scripts/vendor/)
     // -----------------------------------------------------------------------
-    const { EditorView, Decoration, lineNumbers, keymap, layer, RectangleMarker, drawSelection } = await import('https://esm.sh/@codemirror/view@6');
-    const { EditorState, EditorSelection, StateField, StateEffect } = await import('https://esm.sh/@codemirror/state@6');
-    const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = await import('https://esm.sh/@codemirror/language@6');
-    const { tags } = await import('https://esm.sh/@lezer/highlight@1');
-    const { history, historyKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = await import('https://esm.sh/@codemirror/commands@6');
-    const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
-    const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = await import('https://esm.sh/@codemirror/search@6');
+    const cm = await import('./vendor/codemirror.js');
+    const { EditorView, Decoration, lineNumbers, keymap, layer, RectangleMarker, drawSelection } = cm;
+    const { EditorState, EditorSelection, StateField, StateEffect } = cm;
+    const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
+    const { tags } = cm;
+    const { history, historyKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
+    const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
+    const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
 
     // Resolve a 1-based source span { line, column, endLine, endColumn } to a
     // [from, to) document offset range, clamped to the document.

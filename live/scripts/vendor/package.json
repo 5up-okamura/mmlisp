@@ -1,0 +1,19 @@
+{
+  "name": "mmlisp-live-vendor",
+  "private": true,
+  "type": "module",
+  "description": "Builds live/vendor/ (the CodeMirror bundle) — run when bumping it",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6",
+    "@codemirror/commands": "^6",
+    "@codemirror/language": "^6",
+    "@codemirror/search": "^6",
+    "@codemirror/state": "^6",
+    "@codemirror/view": "^6",
+    "@lezer/highlight": "^1",
+    "esbuild": "^0.28"
+  }
+}
