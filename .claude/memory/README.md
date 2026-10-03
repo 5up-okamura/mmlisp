@@ -60,6 +60,6 @@ Rules:
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   input aids (all landed, guide §24 has the behaviour): why no
   `@codemirror/lint` and the layer-only rule, which shortcuts Chrome steals,
-  Alt-click vs the value scrub, why the Edit menu, the touch symbol bar, and
+  Alt-click vs the value scrub, why the Edit menu, the removed touch symbol bar, and
   the standing decisions — never auto-repair brackets, no full paredit, no
   rainbow parens.

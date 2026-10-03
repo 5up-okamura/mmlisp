@@ -473,30 +473,6 @@
   </div>
 
   <!-- Browse: the preset sets, the example scores and the snippets the app ships -->
-  <!-- Soft-key bar: the score's symbols above the on-screen keyboard (initSoftKeyBar), most used first -->
-  <div id="softKeyBar" hidden>
-    <button type="button" class="soft-key" data-key="(">(</button>
-    <button type="button" class="soft-key" data-key=")">)</button>
-    <button type="button" class="soft-key" data-key=":">:</button>
-    <button type="button" class="soft-key" data-key="@">@</button>
-    <button type="button" class="soft-key" data-key="&quot;">&quot;</button>
-    <button type="button" class="soft-key" data-key="-">-</button>
-    <button type="button" class="soft-key" data-key="_">_</button>
-    <button type="button" class="soft-key" data-key=".">.</button>
-    <button type="button" class="soft-key" data-key="[">[</button>
-    <button type="button" class="soft-key" data-key="]">]</button>
-    <button type="button" class="soft-key" data-key="&lt;">&lt;</button>
-    <button type="button" class="soft-key" data-key="&gt;">&gt;</button>
-    <button type="button" class="soft-key" data-key="+">+</button>
-    <button type="button" class="soft-key" data-key="~">~</button>
-    <button type="button" class="soft-key" data-key="#">#</button>
-    <button type="button" class="soft-key" data-key="*">*</button>
-    <button type="button" class="soft-key" data-key="$">$</button>
-    <button type="button" class="soft-key" data-key="/">/</button>
-    <button type="button" class="soft-key" data-key=";">;</button>
-    <button type="button" class="soft-key" data-key="|">|</button>
-  </div>
-
   <div id="browseModal" class="modal-overlay" hidden>
     <div class="modal browse-modal" tabindex="-1">
       <div class="modal-title browse-title">
@@ -625,7 +601,7 @@
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = await import('https://esm.sh/@codemirror/language@6');
     const { tags } = await import('https://esm.sh/@lezer/highlight@1');
     const { history, historyKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = await import('https://esm.sh/@codemirror/commands@6');
-    const { autocompletion, closeBrackets, closeBracketsKeymap, insertBracket, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
+    const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = await import('https://esm.sh/@codemirror/autocomplete@6');
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = await import('https://esm.sh/@codemirror/search@6');
 
     // Resolve a 1-based source span { line, column, endLine, endColumn } to a
@@ -3086,27 +3062,6 @@
       '.cm-foldPlaceholder': { backgroundColor: 'transparent', color: 'var(--mid)', border: 'none' },
     }, { dark: true });
 
-    // iOS / iPadOS "Smart Punctuation" rewrites what the soft keyboard types:
-    // " becomes “ ”, ' becomes ‘ ’, and a second - turns the pair into —.
-    // None of those is MMLisp, so a typed one is put back the way it was keyed.
-    const SMART_PUNCT = { '\u201c': '"', '\u201d': '"', '\u2018': "'", '\u2019': "'", '\u2014': '--' };
-    const undoSmartPunctuation = EditorView.inputHandler.of((view, from, to, text) => {
-      const plain = text.replace(/[\u201c\u201d\u2018\u2019\u2014]/g, (c) => SMART_PUNCT[c]);
-      if (plain === text) return false;
-      view.dispatch(view.state.update({
-        changes: { from, to, insert: plain },
-        selection: { anchor: from + plain.length },
-        scrollIntoView: true,
-        userEvent: 'input.type',
-      }));
-      return true;
-    });
-
-    // The soft-key bar (below) sits over the bottom of the editor while it is
-    // up; keep the cursor clear of it.
-    let _softKeyCover = 0;
-    const softKeyScrollMargins = EditorView.scrollMargins.of(() => ({ bottom: _softKeyCover }));
-
     const editorExtensions = [
       editorTheme,
       syntaxHighlighting(mmlispHighlight),
@@ -3172,8 +3127,6 @@
       // Auto-close ( [ ", type over the closer, delete the pair on Backspace,
       // and wrap the selection when a bracket is typed with text selected.
       closeBrackets(),
-      undoSmartPunctuation,
-      softKeyScrollMargins,
       keymap.of([
         ...closeBracketsKeymap,
         indentWithTab,
@@ -3224,79 +3177,8 @@
 
     syncBracketStatus();
     initShortcutLabels();
-    initSoftKeyBar();
     // Capture, ahead of the completion keymap: marks a ↑ / ↓ as the user's.
     editorView.dom.addEventListener('keydown', noteCompletionNavKey, true);
-
-    // Soft-key bar: on a phone or tablet, the symbols a score is written in,
-    // which the on-screen keyboard keeps on its second and third pages, in a
-    // row pinned just above the keyboard while it is up. They run from the most
-    // used ( ) : — then @, which opens the voice list — on; what does not fit
-    // scrolls sideways. The keyboard is seen
-    // through the visual viewport, which shrinks when it opens; a hardware
-    // keyboard never shrinks it, so the bar stays away there.
-    function initSoftKeyBar() {
-      const bar = document.getElementById('softKeyBar');
-      if (!bar || !window.visualViewport || navigator.maxTouchPoints === 0) return;
-      const vv = window.visualViewport;
-      const press = (key) => {
-        const view = editorView;
-        // Brackets and quotes go through closeBrackets, as a typed one does.
-        const tr = '()[]"'.includes(key) ? insertBracket(view.state, key) : null;
-        view.dispatch(tr ?? view.state.update(view.state.replaceSelection(key),
-          { scrollIntoView: true, userEvent: 'input.type' }));
-      };
-      // A tap types the key; a drag scrolls the bar. Cancelling the touchend
-      // drops the emulated mousedown, so the editor keeps focus and the
-      // keyboard stays up. A trackpad click cancels its mousedown instead.
-      let touch = null;
-      bar.addEventListener('touchstart', (e) => {
-        const t = e.changedTouches[0];
-        touch = { key: e.target.closest('[data-key]')?.dataset.key, x: t.clientX, y: t.clientY };
-      }, { passive: true });
-      bar.addEventListener('touchmove', (e) => {
-        const t = e.changedTouches[0];
-        if (touch && Math.hypot(t.clientX - touch.x, t.clientY - touch.y) > 8) touch.key = null;
-      }, { passive: true });
-      bar.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        if (touch?.key) press(touch.key);
-        touch = null;
-      });
-      bar.addEventListener('touchcancel', () => { touch = null; });
-      bar.addEventListener('mousedown', (e) => e.preventDefault());
-      bar.addEventListener('click', (e) => {
-        const key = e.target.closest('[data-key]')?.dataset.key;
-        if (key) press(key);
-      });
-
-      let raf = 0;
-      const place = () => {
-        raf = 0;
-        const keyboard = window.innerHeight - vv.height * vv.scale > 120;
-        const show = keyboard && editorView.hasFocus;
-        const wasShown = !bar.hidden;
-        bar.hidden = !show;
-        if (!show) {
-          if (_softKeyCover) { _softKeyCover = 0; editorView.requestMeasure(); }
-          return;
-        }
-        // Fixed elements hang off the layout viewport; the keyboard's top edge
-        // is the visual viewport's bottom, wherever the page has panned to.
-        bar.style.transform = `translateY(${vv.offsetTop + vv.height - bar.offsetHeight}px)`;
-        const top = bar.getBoundingClientRect().top;
-        const cover = Math.max(0, Math.round(editorView.scrollDOM.getBoundingClientRect().bottom - top));
-        if (cover !== _softKeyCover || !wasShown) {
-          _softKeyCover = cover;
-          editorView.dispatch({ effects: EditorView.scrollIntoView(editorView.state.selection.main.head) });
-        }
-      };
-      const schedule = () => { if (!raf) raf = requestAnimationFrame(place); };
-      vv.addEventListener('resize', schedule);
-      vv.addEventListener('scroll', schedule);
-      editorView.contentDOM.addEventListener('focus', schedule);
-      editorView.contentDOM.addEventListener('blur', schedule);
-    }
 
     // IR preset → MMLisp source URL mapping
     const SOURCE_FILE_TYPES = [

@@ -1,7 +1,7 @@
 # Editor input aids (live CodeMirror) — the decisions behind them
 
 All landed (2026-07-31 brackets/snippets/selection, 2026-09-21 find/replace and
-multiple cursors, 2026-10-03 the touch symbol bar). What they do is
+multiple cursors; the 2026-10-03 touch symbol bar was removed). What they do is
 `docs/guide.md` §24; the code is `live/index.html` and `live/style.css`. This
 file keeps only why they have this shape, and what is not built.
 
@@ -32,12 +32,9 @@ file keeps only why they have this shape, and what is not built.
 - **The Edit menu exists because of undo on touch**, not width (the top bar
   had 55px to spare even at 360px). Edit = what changes the text; Tools = what
   is done with the score.
-- **Touch symbol bar**: placed from `visualViewport`, so it shows only while a
-  soft keyboard is up (never with a hardware one). Key order is measured
-  frequency in the shipped scores, `( ) : @` first. A tap acts on an un-moved
-  `touchend`, cancelled so the editor keeps focus — `touchstart` must stay
-  passive or the row cannot scroll. iOS Smart Punctuation is undone on input.
-  **Not yet tried on a real device.**
+- **Touch symbol bar: removed (2da1137 reverted) at the user's request** —
+  unstable on their iPad (landscape, home-screen web app, iPadOS 17.6.1).
+  Don't re-propose without a way to test on that device.
 
 ## Standing decisions
 
