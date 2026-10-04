@@ -13,20 +13,42 @@
       --high: color-mix(in srgb, var(--foreground) 45%, var(--contrast));     /* emphasis */
     }
     * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; overflow: hidden; }
+    /* The document never scrolls: html and body are pinned to the (layout)
+       viewport. iOS shortens that viewport while the on-screen keyboard is
+       up; a body sized in 100dvh then hung past it, the page became
+       scrollable, and an iPad left it scrolled after the keyboard closed.
+       (While the keyboard is up, watchSoftKeyboard in index.html pins the
+       app to the visible part of the screen.) */
+    html, body {
+      position: fixed;
+      inset: 0;
+      margin: 0;
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
     body {
       background: var(--background);
       color: var(--foreground);
       font-family: 'Open Sans', sans-serif;
       display: flex;
       flex-direction: column;
-      height: 100dvh;
       /* Standalone PWA: with viewport-fit=cover the layout fills the screen,
          so inset content past notches / the home indicator. env() is 0 in an
          ordinary browser window, leaving the desktop layout untouched. */
       padding: env(safe-area-inset-top) env(safe-area-inset-right)
                env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
+    /* On-screen keyboard up (watchSoftKeyboard, index.html): the app is
+       pinned to the part of the screen the keyboard leaves, and the console
+       gives its height to the editor. */
+    html.soft-kb body {
+      top: var(--kb-top);
+      bottom: auto;
+      height: var(--kb-h);
+      padding-bottom: 0;
+    }
+    html.soft-kb #hDivider,
+    html.soft-kb #consolePane { display: none; }
 
     /* ---- top bar ---- */
     #topbar {

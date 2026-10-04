@@ -3178,6 +3178,111 @@
     initShortcutLabels();
     // Capture, ahead of the completion keymap: marks a ↑ / ↓ as the user's.
     editorView.dom.addEventListener('keydown', noteCompletionNavKey, true);
+    watchSoftKeyboard();
+
+    // The on-screen keyboard covers the page, and iOS pans the view up to
+    // clear the cursor, taking the menu bar off the top. While the keyboard
+    // is up the app is pinned to the part of the screen it leaves (the visual
+    // viewport): the menu bar stays on top, the editor ends at the keyboard,
+    // and the console steps aside.
+    //
+    // The keyboard opening shows in the visual viewport on both devices: it
+    // falls well short of the full height of the screen at this width (the
+    // tallest seen, and in a home-screen app never less than the screen's own
+    // size, so a rotation with the keyboard up does not take the short view
+    // for the full one). Closing differs. An iPhone reports the visual
+    // viewport growing back. An iPad (iPadOS 17, home-screen app) sends no
+    // event and leaves the visual viewport's numbers stale; what moves there
+    // is innerHeight, which dips while the keyboard is up (by however far iOS
+    // scrolled the page for it) and comes back to full once it closes — not
+    // always, so this is the best sign found, not a sure one. With no event
+    // to wait for, the numbers are polled while the keyboard is up and for a
+    // moment after focus or a rotation.
+    function watchSoftKeyboard() {
+      const vv = window.visualViewport;
+      if (!vv || navigator.maxTouchPoints === 0) return;
+      const root = document.documentElement;
+      const fullAt = new Map();
+      // stale: released on the iPad's sign while its visual viewport still
+      // describes the keyboard; until a field is touched or focused again
+      // (the only way its keyboard comes back) that is not a keyboard.
+      let up = false, innerDipped = false, stale = false, pollUntil = 0, poll = 0, upWidth = 0;
+      // Only a home-screen app fills the screen; in a browser tab its bars
+      // make the screen's size no guide to the page's.
+      const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+      const innerAt = new Map(); // the tallest innerHeight seen at each width
+      const fullHeight = () => {
+        innerAt.set(innerWidth, Math.max(innerAt.get(innerWidth) ?? 0, innerHeight));
+        const long = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
+        const screenH = !standalone ? 0 : innerWidth >= long - 1 ? short : innerWidth >= short - 1 ? long : 0;
+        const full = Math.max(fullAt.get(innerWidth) ?? 0, innerHeight, screenH - 60);
+        fullAt.set(innerWidth, full);
+        return full;
+      };
+      const check = () => {
+        const full = fullHeight();
+        const vvShort = full - vv.height * vv.scale > 120;
+        let kb;
+        // A dip counts at the width it was seen at: after a rotation the
+        // tallest innerHeight there may not be known yet.
+        if (innerWidth !== upWidth) { upWidth = innerWidth; innerDipped = false; }
+        if (!up) {
+          kb = vvShort && !stale;
+        } else if (innerAt.get(innerWidth) - innerHeight > 2) { // seen dipping by 8 to 168
+          innerDipped = true;
+          kb = true;
+        } else {
+          // innerHeight back to full after dipping: the iPad has closed its
+          // keyboard, whatever the stale visual viewport still says.
+          kb = !innerDipped && vvShort;
+        }
+        if (kb) {
+          if (!up) {
+            up = true;
+            innerDipped = false;
+            // Keep polling for as long as the keyboard is up: an iPad's close
+            // comes with no event.
+            if (!poll) poll = setInterval(check, 250);
+            root.classList.add('soft-kb');
+            // The editor just got shorter: bring the cursor back into view.
+            requestAnimationFrame(() => editorView.dispatch({
+              effects: EditorView.scrollIntoView(editorView.state.selection.main.head, { y: 'nearest' }),
+            }));
+          }
+          root.style.setProperty('--kb-top', `${vv.offsetTop}px`);
+          root.style.setProperty('--kb-h', `${vv.height}px`);
+        } else if (up) {
+          stale = innerDipped;
+          up = false;
+          root.classList.remove('soft-kb');
+        }
+        // With the keyboard down the page has no business being scrolled (html
+        // and body are pinned), yet iOS leaves — or re-applies — the scroll it
+        // made for the keyboard; drawn in place but hit-tested at the scrolled
+        // position, taps then land off their target. Undo it whenever seen.
+        if (!up && Math.abs(vv.scale - 1) < 0.01 && Math.round(window.scrollY) !== 0) {
+          window.scrollTo(0, 0);
+        }
+        if (!up && performance.now() > pollUntil) { clearInterval(poll); poll = 0; }
+      };
+      const wake = () => {
+        pollUntil = performance.now() + 2000;
+        if (!poll) poll = setInterval(check, 250);
+        check();
+      };
+      window.addEventListener('resize', wake);
+      vv.addEventListener('resize', wake);
+      vv.addEventListener('scroll', check);
+      window.addEventListener('scroll', check);
+      const fresh = (e) => {
+        const el = e.target instanceof Element ? e.target : null;
+        if (el && (el.isContentEditable || el.closest('[contenteditable], textarea, input'))) stale = false;
+        wake();
+      };
+      document.addEventListener('focusin', fresh);
+      document.addEventListener('touchend', fresh, { passive: true });
+      check();
+    }
 
     // IR preset → MMLisp source URL mapping
     const SOURCE_FILE_TYPES = [
