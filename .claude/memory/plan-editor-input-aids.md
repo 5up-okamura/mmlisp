@@ -35,6 +35,29 @@ file keeps only why they have this shape, and what is not built.
 - **Touch symbol bar: removed (2da1137 reverted) at the user's request** —
   unstable on their iPad (landscape, home-screen web app, iPadOS 17.6.1).
   Don't re-propose without a way to test on that device.
+- **On-screen keyboard layout** (`watchSoftKeyboard`, `html.soft-kb`): html
+  and body are `position: fixed` (else an iPad leaves the page scrolled after
+  the keyboard closes); while the keyboard is up the body is pinned to the
+  visual viewport (else iOS pans the menu bar off) and the console hides.
+  Measured on the user's iPad (iPadOS 17.6.1, landscape, home-screen app):
+  opening fires `visualViewport` resize; **closing fires nothing**, keeps the
+  editor focused and leaves `visualViewport` stale; `innerHeight` dips while
+  the keyboard is up by however far iOS scrolled the page (8 to 168px seen)
+  and returns on close — the only close sign, so it is polled while up. iOS
+  can leave `scrollY` non-zero after close: drawn in place, hit-tested
+  off-target (taps on the editor hit the console), so it is reset whenever
+  the keyboard is down. The iPhone reports both open and close in the
+  visual viewport. Piano visibility above the keyboard depends on the right
+  panel's scroll position — accepted.
+- **Lessons from 2026-10-03/04** (keyboard work and the offline rollback):
+  check a commit's Vercel status before asking for a device test
+  (`api.github.com/repos/5up-okamura/mmlisp/commits/<sha>/status`) — a run of
+  failed deploys once meant four fixes never reached the device. **An
+  on-screen probe that rewrites itself every 300ms made the iPad lay the app
+  out at portrait size in landscape**; it was blamed on the offline change
+  and on the vendored font before the timing showed the probe. Prefer a
+  probe that writes only when the user asks (or on events), and suspect the
+  instrument first when a new symptom appears with it.
 
 ## Standing decisions
 
