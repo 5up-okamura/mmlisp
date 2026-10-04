@@ -150,8 +150,9 @@ published site through the tracked symlinks `live/examples` and `live/presets`.
 A new directory the app fetches from needs one too, or it resolves in
 development and 404s in production.
 
-The editor (CodeMirror) is vendored in `live/vendor/`, rebuilt by
-`live/scripts/vendor/` (`npm install && npm run build`) when bumping it.
+The editor (CodeMirror) and the UI font are vendored in `live/vendor/`,
+rebuilt by `live/scripts/vendor/` (`npm install && npm run build`) when
+bumping them.
 
 File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 

@@ -75,6 +75,15 @@ Licenses dialog links it.
 - Included: `live/vendor/codemirror.js`, a minified bundle of those packages
   built by `live/scripts/vendor/build.mjs` so the app runs offline.
 
+## Open Sans
+
+- Upstream: https://github.com/googlefonts/opensans, via `@fontsource/open-sans`.
+- Copyright 2020 The Open Sans Project Authors.
+- License: SIL Open Font License 1.1, preserved in
+  `live/vendor/fonts/LICENSE-open-sans.txt`.
+- Included: the unmodified latin and latin-ext WOFF2 files for weights 400,
+  600 and 700 in `live/vendor/fonts/`, with `live/vendor/open-sans.css`.
+
 ## Virtuosity Drums
 
 - Upstream: https://github.com/sfzinstruments/virtuosity_drums
