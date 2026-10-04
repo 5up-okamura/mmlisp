@@ -14,8 +14,9 @@
 // that went away on the next launch. Anything cross-origin stays
 // stale-while-revalidate.
 //
-// The cache is also filled ahead of use (precache below), so a preset, a
-// snippet or the synth's worklet works offline before it was ever opened.
+// The page fills this cache ahead of use on every launch (src/offline-cache.js),
+// so a preset, a snippet or the synth's worklet works offline before it was
+// ever opened.
 // Bump VERSION to drop the old cache on the next activation.
 const VERSION = 'mmlisp-v2';
 const CACHE = `mmlisp-${VERSION}`;
@@ -29,82 +30,8 @@ self.addEventListener('activate', (event) => {
     const keys = await caches.keys();
     await Promise.all(keys.map((k) => (k === CACHE ? null : caches.delete(k))));
     await self.clients.claim();
-    await precache();
   })());
 });
-
-// The page asks on every launch, so files added since (a new preset) are
-// fetched too; a file already cached is left to network-first to refresh.
-self.addEventListener('message', (event) => {
-  if (event.data === 'precache') event.waitUntil(precache());
-});
-
-// PRECACHE — every file the app can fetch, found by following references
-// rather than kept in a list: from the page and the worklet, their module
-// imports, stylesheets, fonts and icons; from the preset, snippet and example
-// indexes, each score's (import "…") — rooted at the app — and the samples
-// its :file names — relative to the score. A file already in the cache is not
-// fetched again, only read for its references. Best effort: a failure skips
-// that file, and the next launch tries again.
-const ROOTS = ['./', './index.html', './worklet.js', './manifest.webmanifest',
-  './presets/index.json', './snippets/index.json', './examples/index.json'];
-const TEXT = /\.(?:html|js|css|json|webmanifest|mmlisp)$|\/$/;
-
-function references(url, text) {
-  const out = [];
-  const add = (ref, base = url) => {
-    if (!ref || /^(?:[a-z]+:|\/\/|#)/i.test(ref)) return; // another origin, data:, mailto:, anchors
-    out.push(new URL(ref, base).href);
-  };
-  const path = new URL(url).pathname;
-  if (/\.m?js$|\.html$|\/$/.test(path)) {
-    for (const re of [/\bfrom\s*["']([^"']+)["']/g, /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-      /\bimport\s+["']([^"']+)["']/g, /addModule\(\s*["']([^"']+)["']/g]) {
-      for (const m of text.matchAll(re)) if (/^\.\.?\//.test(m[1])) add(m[1]);
-    }
-  }
-  if (/\.html$|\/$/.test(path)) {
-    for (const m of text.matchAll(/\b(?:src|href)="([^"]+)"/g)) add(m[1].split(/[?#]/)[0]);
-  }
-  if (/\.css$/.test(path)) {
-    for (const m of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) add(m[1]);
-  }
-  if (/\/index\.json$/.test(path)) {
-    try { for (const f of JSON.parse(text)) add(f, self.registration.scope); } catch (_) { /* not a list */ }
-  }
-  if (/\.webmanifest$/.test(path)) {
-    try { for (const icon of JSON.parse(text).icons || []) add(icon.src); } catch (_) { /* malformed */ }
-  }
-  if (/\.mmlisp$/.test(path)) {
-    for (const m of text.matchAll(/\(import\s+"([^"]+)"/g)) add(m[1], self.registration.scope);
-    for (const m of text.matchAll(/:file\s+"([^"]+)"/g)) add(m[1]);
-  }
-  return out;
-}
-
-let precaching = null;
-function precache() {
-  precaching ??= (async () => {
-    const cache = await caches.open(CACHE);
-    const queue = ROOTS.map((r) => new URL(r, self.registration.scope).href);
-    const seen = new Set();
-    while (queue.length) {
-      const url = queue.shift();
-      if (seen.has(url) || new URL(url).origin !== self.location.origin) continue;
-      seen.add(url);
-      try {
-        let response = await cache.match(url);
-        if (!response) {
-          response = await fetch(url);
-          if (!response.ok) continue;
-          await cache.put(url, response.clone());
-        }
-        if (TEXT.test(new URL(url).pathname)) queue.push(...references(url, await response.text()));
-      } catch (_) { /* offline or refused: next launch */ }
-    }
-  })().finally(() => { precaching = null; });
-  return precaching;
-}
 
 // Put a response in the cache, ignoring failures (opaque/partial/quota).
 async function put(request, response) {

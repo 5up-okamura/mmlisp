@@ -154,10 +154,11 @@ The editor (CodeMirror) and the UI font are vendored in `live/vendor/`,
 rebuilt by `live/scripts/vendor/` (`npm install && npm run build`) when
 bumping them.
 
-The installed app works offline: its service worker (`live/sw.js`) caches
-every file the app can fetch, found by following references from the page,
+The installed app works offline: on every launch it caches, through its
+service worker (`live/sw.js`), every file it can fetch
+(`live/src/offline-cache.js`), found by following references from the page,
 the worklet and the preset/snippet/example indexes — so a new file needs no
-list, only a reference from one of those.
+list, only a reference from one of those. The console says when it is ready.
 
 File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 

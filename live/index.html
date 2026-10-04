@@ -589,6 +589,7 @@
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
+    import { precacheApp } from './src/offline-cache.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey } from './src/import-fm-voices.js';
 
     // -----------------------------------------------------------------------
@@ -8498,11 +8499,19 @@
     // This runs after the module's top-level awaits, so on a fast load the
     // 'load' event has already fired — register at once then.
     if ('serviceWorker' in navigator) {
-      // Each launch asks the worker to fetch anything it does not hold yet
-      // (sw.js, precache), so the app keeps working offline.
+      // Each launch then fetches, through the worker, anything it does not
+      // hold yet (src/offline-cache.js), and says when the app is ready to
+      // run offline.
       const registerSw = () => navigator.serviceWorker.register('./sw.js')
-        .then(() => navigator.serviceWorker.ready)
-        .then((reg) => reg.active?.postMessage('precache'))
+        .then(async () => {
+          if (!navigator.serviceWorker.controller) {
+            await new Promise((ok) => navigator.serviceWorker.addEventListener('controllerchange', ok, { once: true }));
+          }
+          const { cached, missing } = await precacheApp();
+          log(missing
+            ? `Offline: ${cached} files ready, ${missing} not reachable (retried next launch)`
+            : `Offline: ready (${cached} files)`, missing ? 'warn' : 'info');
+        })
         .catch(() => {});
       if (document.readyState === 'complete') registerSw();
       else window.addEventListener('load', registerSw);
