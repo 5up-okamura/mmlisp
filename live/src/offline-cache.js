@@ -6,9 +6,9 @@
 //
 // No list is kept: files are found by following references — from the page
 // and the worklet, their module imports, stylesheets, fonts and icons; from
-// the preset, snippet and example indexes, each score's (import "…") — tried
-// against the score's own folder, then the app's, as the compiler resolves it
-// — and the samples its :file names, relative to the score. Each is
+// the preset, snippet and example indexes, each score's (import "…") — its
+// own folder's or the app's, as the compiler resolves it — and the samples
+// its :file names, relative to the score. Each is
 // fetched through the worker (sw.js), whose network-first handler stores it;
 // one already cached is only read for its references.
 
@@ -16,13 +16,14 @@ const ROOTS = ['./', './index.html', './worklet.js', './manifest.webmanifest',
   './presets/index.json', './snippets/index.json', './examples/index.json'];
 const TEXT = /\.(?:html|js|css|json|webmanifest|mmlisp)$|\/$/;
 
-// [url, optional]: an optional one (an import's other candidate) is not
-// missed when absent.
-function references(url, text, root) {
+// Each reference is a list of candidate URLs, tried in order until one is
+// found; only a reference none of whose candidates exists is missing.
+function references(url, text, root, listed) {
   const out = [];
-  const add = (ref, base = url, optional = false) => {
-    if (!ref || /^(?:[a-z]+:|\/\/|#)/i.test(ref)) return; // another origin, data:, mailto:, anchors
-    out.push([new URL(ref, base).href, optional]);
+  const resolve = (ref, base) => (!ref || /^(?:[a-z]+:|\/\/|#)/i.test(ref) ? null : new URL(ref, base).href);
+  const add = (ref, base = url) => { // another origin, data:, mailto: and anchors stay out
+    const href = resolve(ref, base);
+    if (href) out.push([href]);
   };
   const path = new URL(url).pathname;
   if (/\.m?js$|\.html$|\/$/.test(path)) {
@@ -38,13 +39,26 @@ function references(url, text, root) {
     for (const m of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) add(m[1]);
   }
   if (/\/index\.json$/.test(path)) {
-    try { for (const f of JSON.parse(text)) add(f, root); } catch (_) { /* not a list */ }
+    try {
+      for (const f of JSON.parse(text)) {
+        const href = resolve(f, root);
+        if (href) { listed.add(href); out.push([href]); }
+      }
+    } catch (_) { /* not a list */ }
   }
   if (/\.webmanifest$/.test(path)) {
     try { for (const icon of JSON.parse(text).icons || []) add(icon.src); } catch (_) { /* malformed */ }
   }
   if (/\.mmlisp$/.test(path)) {
-    for (const m of text.matchAll(/\(import\s+"([^"]+)"/g)) { add(m[1], url, true); add(m[1], root, true); }
+    // The score's own folder first, then the app's, as the compiler resolves
+    // an import. A candidate an index lists is known to exist and is taken
+    // alone, sparing a request for the other that would only 404 (a snippet
+    // imports "presets/gm/set.mmlisp", which is not under snippets/).
+    for (const m of text.matchAll(/\(import\s+"([^"]+)"/g)) {
+      const candidates = [resolve(m[1], url), resolve(m[1], root)].filter((c, i, a) => c && a.indexOf(c) === i);
+      const known = candidates.find((c) => listed.has(c));
+      if (candidates.length) out.push(known ? [known] : candidates);
+    }
     for (const m of text.matchAll(/:file\s+"([^"]+)"/g)) add(m[1]);
   }
   return out;
@@ -54,27 +68,36 @@ function references(url, text, root) {
 // paths of those that could not be fetched (offline, or gone) — the next
 // launch tries those again.
 export async function precacheApp(root = new URL('./', location.href).href) {
-  const queue = ROOTS.map((r) => [new URL(r, root).href, false]);
+  // The indexes come first in ROOTS, so every listed file is known before any
+  // score's imports are resolved.
+  const queue = ROOTS.map((r) => [new URL(r, root).href]);
   const seen = new Set();
+  const listed = new Set();
   const missing = [];
   const fetched = [];
   let cached = 0;
-  while (queue.length) {
-    const [url, optional] = queue.shift();
-    if (seen.has(url) || new URL(url).origin !== location.origin) continue;
-    seen.add(url);
-    try {
-      let response = await caches.match(url);
-      if (!response) {
-        response = await fetch(url);
-        if (response.ok) fetched.push(url);
-      }
-      if (!response.ok) { if (!optional) missing.push(url.slice(root.length)); continue; }
-      cached++;
-      if (TEXT.test(new URL(url).pathname)) queue.push(...references(url, await response.text(), root));
-    } catch (_) {
-      if (!optional) missing.push(url.slice(root.length));
+  const get = async (url) => {
+    let response = await caches.match(url);
+    if (!response) {
+      response = await fetch(url);
+      if (response.ok) fetched.push(url);
     }
+    return response.ok ? response : null;
+  };
+  while (queue.length) {
+    const candidates = queue.shift().filter((c) => new URL(c).origin === location.origin);
+    if (!candidates.length || candidates.some((c) => seen.has(c))) continue;
+    let url = null, response = null;
+    for (const c of candidates) {
+      seen.add(c);
+      try { response = await get(c); } catch (_) { response = null; }
+      if (response) { url = c; break; }
+    }
+    if (!response) { missing.push(candidates[candidates.length - 1].slice(root.length)); continue; }
+    cached++;
+    try {
+      if (TEXT.test(new URL(url).pathname)) queue.push(...references(url, await response.text(), root, listed));
+    } catch (_) { /* unreadable: its references wait for the next launch */ }
   }
   // What was fetched counts only once the worker has stored it: read the
   // cache back (after a moment for the last writes) rather than trust it.
