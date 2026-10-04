@@ -1407,54 +1407,66 @@ the MMB (mmb.md §10). A score's PCM voice count is the highest `pcmN` it uses;
 it is written in the MMB header and picks the engine image (§5).
 
 A `PCM_NOTE_ON` becomes a `PCM_START` in the frame (§6.3): where the note
-starts in its blob, END and WRAP. Every note has a RANGE (below); whether it
-loops over it is the NOTE's (`:mode loop`, bit 7 of the opcode's note byte),
-not the sample's. A shot plays its range once and parks. A looping note starts
-at the blob's start and loops; its `PCM_NOTE_OFF` becomes a `PCM_RETARGET` to
-the sample's end with WRAP at silence, so the tail plays out.
+starts in its blob, END and WRAP. Every note has four points (below): a RANGE
+and, inside it, a LOOP; whether it loops is the NOTE's (`:mode loop`, bit 7 of
+the opcode's note byte), not the sample's. A shot plays its range once and
+parks. A looping note starts at the range's start, runs into the loop and
+repeats it; its `PCM_NOTE_OFF` becomes a `PCM_RETARGET` to the range's end
+with WRAP at silence, so the tail plays out.
 
 **fm6.** A score's first PCM note sends `$2B = $80`, and nothing turns the DAC
 off again: a score that plays PCM owns fm6 as the DAC from then on. A score
 without PCM never writes it, and fm6 is FM.
 
-**The range** starts as the sample's `:pcm-start` / `:pcm-end` / `:pcm-len`
-(the whole sample when the def sets none), mapped to baked bytes by the
-exporter, with the track's own range writes laid over it, and rounded to whole
-blocks by the sequencer. A loop note rounds it to the nearest block
-(`pcm_loop_points`, twin of `live/src/pcm-model.js` `pcmLoopPoints`):
+**The four points** start as the sample's — the range `:pcm-start` /
+`:pcm-end` / `:pcm-len` (the whole sample when the def sets none) and the loop
+`:loop-start` / `:loop-end` / `:loop-len` (the range when the def sets none) —
+mapped to baked bytes by the exporter, with the track's own writes laid over
+them, clamped to `rs ≤ ls ≤ le ≤ re` within the blob, and rounded to whole
+blocks by the sequencer (`pcm_points`, twin of `live/src/pcm-model.js`
+`pcmNotePoints`). A shot, and a loop note once released, widen the range to
+whole blocks — the start down, the end up — so they play at least what was
+given, and the whole blob when the range is the whole sample
+(`pcm_range_points`, twin of `pcmRangePoints`):
+
+```
+rs' = 16·floor(rs/16), within 0..len−16
+re' = 16·ceil(re/16), within rs'+16..len
+START = src + rs',  END = src + re' − 16,  WRAP = silence
+```
+
+A held loop note rounds its loop to the nearest block (`pcm_loop_points`, twin
+of `pcmLoopPoints`) and starts at the range's start, or at the loop's when
+rounding put that earlier:
 
 ```
 le' = 16·round(le/16), within 16..len
 ls' = le' − 16·max(1, round((le − ls)/16)), at least 0
-START = src,  END = src + le' − 16,  WRAP = src + ls'
+START = src + min(16·floor(rs/16), ls'),  END = src + le' − 16,  WRAP = src + ls'
 ```
 
-so the first pass plays `[0, le')` and every later pass `[ls', le')`. On a
-one-cycle loop the rounding is a detune. A shot widens it to whole blocks — the
-start down, the end up — so it plays at least the range it was given, and the
-whole blob when the range is the whole sample (`pcm_range_points`, twin of
-`pcmRangePoints`):
+so the first pass plays `[rs', le')` and every later pass `[ls', le')`. On a
+one-cycle loop the rounding is a detune. The release is the shot's END and
+WRAP, sent as a RETARGET from wherever the pointer is.
 
-```
-ls' = 16·floor(ls/16), within 0..len−16
-le' = 16·ceil(le/16), within ls'+16..len
-START = src + ls',  END = src + le' − 16,  WRAP = silence
-```
-
-**A range point may be MOVED while the note sounds** — this is what the block
-edge's RETARGET exists for beyond the release. `PARAM_SET` / `PARAM_SWEEP` on
-`LOOP_START` (0x43), `LOOP_END` (0x44) or `LOOP_LEN` (0x45) carries a byte
-offset into the playing blob (opcodes.md §7); the voice keeps its live `ls` /
-`le` / `llen`, and a write recomputes END and WRAP through the same rounding
-and sends one `PCM_RETARGET`. `LOOP_LEN` holds the length when `LOOP_START`
-moves; `LOOP_END` pins the end. The pointer is the engine's, so a moved start
-reaches a shot only at its next START.
+**A point may be MOVED while the note sounds** — this is what the block edge's
+RETARGET exists for beyond the release. `PARAM_SET` / `PARAM_SWEEP` on
+`LOOP_START` / `LOOP_END` / `LOOP_LEN` (0x43–0x45) or `RANGE_START` /
+`RANGE_END` / `RANGE_LEN` (0x46–0x48) carries a byte offset into the playing
+blob (opcodes.md §7); the voice keeps each span as a start plus a bound and
+whether the bound is an END or a LEN (`rs`/`r_bound`/`r_kind`,
+`ls`/`l_bound`/`l_kind`), and a write recomputes END and WRAP through the same
+clamping and rounding and sends one `PCM_RETARGET`. A LEN holds the length
+when its start moves; an END pins the end. A loop point never written follows
+the range (`ls_set`, `l_kind` 0). The pointer is the engine's, so a moved
+range start reaches only the next START.
 
 A write is also KEPT, like any track parameter: the voice remembers the last
-start and the last bound (`o_ls`, `o_bound` and which of END/LEN it was), and
-each note starts from the def's range with them laid over it in the same
-terms. So `:pcm-start 100ms :pcm-len 16 c` sets the range of the note it
-precedes, and of the notes after it.
+start and the last bound of each span (`o_rs`, `o_r_bound`, `o_ls`,
+`o_l_bound` and their kinds), and each note starts from the def's points with
+them laid over it in the same terms — a def's bound counts as a length from
+the start it pairs with. So `:loop-start 100ms :loop-len 16 c` sets the loop
+of the note it precedes, and of the notes after it.
 
 Two things this needs, both of which the sequencer does:
 
@@ -1466,8 +1478,9 @@ Two things this needs, both of which the sequencer does:
   regardless would spend six bytes of every slot on it, sixty times a second.
   The voice remembers the last END/WRAP it sent (`sent_end`/`sent_wrap`).
 
-A released loop note plays its tail to the sample's end, so range writes after
-a note-off do not move its sound — they are kept for the next note.
+A released loop note plays on to its range's end, so after a note-off only
+`RANGE_END` / `RANGE_LEN` still move its sound; every write is kept for the
+next note.
 
 **Per-channel volume (`:vel` + `:vol`).** `:vel` and `:vol` on a `pcmN` channel
 ride the FM/PSG velocity/fader ladder (2 dB/step). The sequencer composes them

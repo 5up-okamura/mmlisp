@@ -79,7 +79,7 @@ function bankEntry(bank, id) {
   const off = u32(e + 4), len = u32(e + 8);
   return {
     flags: bank[e + 1], len, srcFrames: u32(e + 12),
-    loopStart: u32(e + 16), loopEnd: u32(e + 20),
+    points: [u16(e + 16), u16(e + 18), u16(e + 20), u16(e + 22)],
     blob: bank.subarray(base + off, base + off + len),
   };
 }
@@ -195,7 +195,7 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
       const mine = bankEntry(bank, id);
       const theirs = bankEntry(alone.sampleBank, alone.pcmEntryIds[key]);
       const ok = mine && theirs && mine.flags === theirs.flags && mine.len === theirs.len &&
-        mine.loopStart === theirs.loopStart && mine.loopEnd === theirs.loopEnd && sameBytes(mine.blob, theirs.blob);
+        mine.points.every((p, k) => p === theirs.points[k]) && sameBytes(mine.blob, theirs.blob);
       if (!ok) diag("error", "E_BUNDLE_ENTRY_MISMATCH", `sample entry ${key} differs from the song's own bank`, s.name);
     }
   }

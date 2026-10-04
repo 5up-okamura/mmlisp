@@ -66,28 +66,29 @@ PCM in any layer.
   velocity went to eighths at the same time, like FM and PSG, which removed
   every PCM special case. The other targets stay errors: a soft-mixed voice
   has no register for them.
-- **The range a note plays is not a loop thing — `:pcm-start` /
-  `:pcm-end` / `:pcm-len` (decided 2026-10-03, landed the same day).** The
-  user assumed a shot could already be given a start and an end, since a
-  loop can; it could not (the 2026-09-18 ruling had defined loop points for
-  loops only). The engine needed nothing. The user chose the `pcm-` prefix
-  over a new word (`:span` was proposed for the length, since `:len` is the
-  note's): "avoid new words", and it matches `def-pcm` / `pcm1`. `:offset` /
-  `:frames` stay what they are — the bytes that go in the bank — against a
-  time range the note plays. No old names kept: `:loop-*` is
-  `E_UNKNOWN_KEYWORD` on a def and a track. Why it came up: a reversed
-  cymbal — a baked reverse costs a second blob (13 KB of 32 for a crash),
-  which the user rejected; reverse at playback is under Open.
-  Choices made in the implementation, NOT yet confirmed by the user (the
-  decision did not say): (a) a loop note's first pass still starts at the
-  blob's start (attack, then the range repeats) — only a shot starts at
-  `:pcm-start`; (b) a shot's range is WIDENED to blocks (start floor, end
-  ceil — `pcmRangePoints`), where a loop rounds to nearest, so a whole-sample
-  shot still plays every byte; (c) a released loop note's tail still plays to
-  the blob's end, not to `:pcm-end`; (d) the binary/IR target names stay
-  `LOOP_START` / `LOOP_END` / `LOOP_LEN` (a `PCM_START` target would collide
-  with the slot command); (e) the editor's sample audition still plays a def
-  with a range as a loop, a def without as a shot.
+- **Four points a note: a range and a loop inside it (2026-10-03/04).**
+  `:pcm-start` ── `:loop-start` ═ `:loop-end` ── `:pcm-end`, each span with
+  its `…-len`. A shot plays the range once; a loop note starts at
+  `:pcm-start`, repeats the loop while held, and its release plays on to
+  `:pcm-end`. A loop point left out follows the range. How it got here: the
+  user assumed a shot could take a start and an end, as a loop could; the
+  `:loop-*` keys were first renamed to `:pcm-*` for both modes, and then —
+  asked whether a loop note should start at `:pcm-start` and release to
+  `:pcm-end` — the user named the sampler's four points ("pcm-start,
+  loop-start, loop-end, pcm-end"), which also answers where the head and tail
+  of a loop note go. Its own reasons: a loop note plays head, loop, tail; the
+  four absolute points read the same in either direction, so reverse at
+  playback (Open) would only swap which end a note enters. Names: the user
+  chose the `pcm-` prefix over a new word (`:span` was proposed) — "avoid new
+  words" — and `loop` was already a word (`:mode loop`); both lengths kept
+  (option 1, the user's pick) so the two spans read alike. The engine needs
+  nothing: START/END/WRAP per note and the release RETARGET already existed.
+  Settled with it: a range is widened to blocks (start floor, end ceil), a
+  loop rounds to nearest; the bank entry stays 24 bytes with u16 points and
+  flags for which loop points the def set; the targets are RANGE_* (new,
+  0x46–0x48) and LOOP_* (0x43–0x45). Why it came up at all: a reversed cymbal
+  — a baked reverse costs a second blob (13 KB of 32 for a crash), which the
+  user rejected.
 - **One 32 KB bank a song (2026-09-17).** If ever needed: on `pcm1` only, the
   START piece writes the bank register (~100 cycles, blobs may not cross a
   32 KB boundary; ~14.4 → ~12 kHz). Two or three voices would need a per-block

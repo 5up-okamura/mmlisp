@@ -40,6 +40,7 @@ import {
   pcmBakeRateAt,
   pcmBankStamp,
   PCM_BLOCK,
+  SAMPLE_FLAG,
   HEADER_PCM_VOICES_SHIFT,
   HEADER_FLAG,
 } from "./mmb.js";
@@ -54,9 +55,11 @@ import {
   VEL_FINE_MAX,
 } from "./ir-utils.js";
 
-// The PCM range targets (:pcm-start/-end/-len), and the largest byte offset one can name: the bank's
-// usable window (the top page is the silence a parked voice reads).
-const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN"]);
+// The PCM point targets (:loop-* and :pcm-*), and the largest byte offset one
+// can name: the bank's usable window (the top page is the silence a parked
+// voice reads).
+const PCM_LOOP_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN",
+  "RANGE_START", "RANGE_END", "RANGE_LEN"]);
 const PCM_LOOP_MAX = 0x7f00;
 import { dedupEventStream } from "./mmb-dedup.js";
 import { planVoices, VOICE_TARGETS } from "./mmb-voices.js";
@@ -372,7 +375,7 @@ export function encodeMmb(ir, opts = {}) {
     (ir.metadata?.samples ?? []).map((s, i) => [s.name, i]),
   );
 
-  // THE PCM LOOP POINTS travel as seconds in the IR and as byte offsets into
+  // THE PCM POINTS travel as seconds in the IR and as byte offsets into
   // the playing blob on the wire. The engine plays one byte a sample, so the
   // conversion is one multiply by the image's rate — no per-sample knowledge,
   // and the result is at most the usable window, so it fits i16.
@@ -1596,8 +1599,8 @@ function resampleS8(data, from, to) {
 // A fade inside the loop is baked into the bytes the loop repeats, so every
 // pass of the loop replays it — almost never what was meant.
 function warnFadeOverLoop(s, durSec, diag) {
-  const ls = s.startSec ?? 0;
-  const le = s.endSec ?? durSec;
+  const ls = s.loopStartSec ?? s.startSec ?? 0;
+  const le = s.loopEndSec ?? s.endSec ?? durSec;
   for (const fx of s.fx ?? []) {
     if (fx.type !== "fade") continue;
     const at = fx.at ?? Math.max(0, durSec - fx.len);
@@ -1659,7 +1662,7 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
   };
   const push = (row) => {
     if (dedup) {
-      const key = `${row.off}|${row.len}|${row.flags}|${row.loopStart}|${row.loopEnd}|${row.srcFrames}`;
+      const key = `${row.off}|${row.len}|${row.flags}|${row.rangeStart}|${row.rangeEnd}|${row.loopStart}|${row.loopEnd}|${row.srcFrames}`;
       const had = rowByKey.get(key);
       if (had !== undefined) return had;
       rows.push(row);
@@ -1692,7 +1695,7 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
           const empty = padBlock(new Uint8Array(0));
           fallbackFor.set(s.name, push({
             flags: 0, off: intern(empty), len: empty.length, srcFrames: 0,
-            loopStart: 0, loopEnd: 0,
+            rangeStart: 0, rangeEnd: 0, loopStart: 0, loopEnd: 0,
           }));
           continue;
         }
@@ -1704,12 +1707,14 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
             `no blob supplied for sample "${s.name}"; empty entry`,
           );
         }
-        // The def's range is SECONDS in the sample's own time (§16). Either
-        // bound alone is a range: a missing start is the sample's start, a
-        // missing end its end.
-        const startSec = s.startSec;
-        const endSec = s.endSec;
-        const hasLoop = startSec != null || endSec != null;
+        // The def's points are SECONDS in the sample's own time (§16): the
+        // range (:pcm-*) and the loop inside it (:loop-*). Either bound of the
+        // range alone is a range: a missing start is the sample's start, a
+        // missing end its end. A loop point the def leaves out follows the
+        // range.
+        const { startSec, endSec, loopStartSec, loopEndSec } = s;
+        const hasRange = startSec != null || endSec != null;
+        const hasPoints = hasRange || loopStartSec != null || loopEndSec != null;
         const rate = blob?.baseRate ?? s.rate ?? 13000;
         // The def's `:fx` chain, at the sample's own rate: its times are
         // the sample's own time, like the loop points (sample-fx.js).
@@ -1717,12 +1722,12 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
           ? applySampleEffects(blob.data, rate, s.fx, (code, msg) =>
               diag("warning", code, `sample "${s.name}": ${msg}`))
           : new Float32Array(0);
-        if (hasLoop && data.length > 0) warnFadeOverLoop(s, data.length / rate, diag);
+        if (hasPoints && data.length > 0) warnFadeOverLoop(s, data.length / rate, diag);
 
         if (data.length === 0) {
           fallbackFor.set(s.name, push({
             flags: 0, off: intern(padBlock(data)), len: padBlock(data).length, srcFrames: data.length,
-            loopStart: 0, loopEnd: data.length,
+            rangeStart: 0, rangeEnd: 0, loopStart: 0, loopEnd: 0,
           }));
           continue;
         }
@@ -1732,34 +1737,48 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
         // resampled so that note advances one byte a sample at the image's rate.
         // The hash pool collapses whatever is genuinely identical.
         //
-        // A LOOP IS NOT UNROLLED. The range is mapped through the same ratio and
-        // carried unrounded; the sequencer rounds it to whole blocks when it
-        // sends it, because the block is the engine's and the rounding has to
-        // be one function in one place (pcm-model.js pcmLoopPoints /
-        // pcmRangePoints).
+        // A LOOP IS NOT UNROLLED. The points are mapped through the same ratio
+        // and carried unrounded; the sequencer rounds them to whole blocks when
+        // it sends them, because the block is the engine's and the rounding has
+        // to be one function in one place (pcm-model.js pcmNotePoints).
         bakedSources++;
         bakedSourceBytes += data.length;
         for (const n of notes) {
           const to = pcmBakeRateAt(n, rateHz);
           const raw = resampleS8(data, rate, to);
-          // Every entry carries a range, which a loop note repeats and a shot
-          // plays once (`:mode`, PCM_NOTE_ON's note bit 7): a def with none
-          // has the whole sample. The flag records only that the def set one.
-          let ls = 0, le = raw.length, looped = hasLoop;
-          if (hasLoop) {
-            // A blob baked for note n plays `to` bytes a second, so a time in the
-            // sample maps to a byte offset with one multiply — the same one the
-            // track's range targets use, which is why the def and the track agree
-            // at C4 and part company exactly as much as the note transposes.
-            const at = (sec) => Math.min(raw.length, Math.max(0, Math.round(sec * to)));
-            ls = at(startSec ?? 0);
-            le = endSec == null ? raw.length : at(endSec);
-            if (le <= ls) {
+          // Every entry carries a range, which a shot plays once, and a loop
+          // inside it, which a held loop note repeats (`:mode`, PCM_NOTE_ON's
+          // note bit 7): a def with no range has the whole sample, a def with
+          // no loop the range. The flags record which points the def set.
+          //
+          // A blob baked for note n plays `to` bytes a second, so a time in the
+          // sample maps to a byte offset with one multiply — the same one the
+          // track's point targets use, which is why the def and the track agree
+          // at C4 and part company exactly as much as the note transposes.
+          const at = (sec) => Math.min(raw.length, Math.max(0, Math.round(sec * to)));
+          let flags = 0;
+          let rs = 0, re = raw.length;
+          if (hasRange) {
+            rs = at(startSec ?? 0);
+            re = endSec == null ? raw.length : at(endSec);
+            if (re <= rs) {
               diag("warning", "W_MMB_BAKE_RANGE_EMPTY",
-                `sample "${s.name}" has a range that resampled to ${le - ls} bytes `
+                `sample "${s.name}" has a range that resampled to ${re - rs} bytes `
                   + `at note ${n}; the note plays the whole sample`);
-              looped = false; ls = 0; le = raw.length;
-            }
+              rs = 0; re = raw.length;
+            } else flags |= SAMPLE_FLAG.range;
+          }
+          let ls = loopStartSec == null ? rs : Math.min(re, Math.max(rs, at(loopStartSec)));
+          let le = loopEndSec == null ? re : Math.min(re, Math.max(rs, at(loopEndSec)));
+          if (le <= ls) {
+            if (loopStartSec != null || loopEndSec != null)
+              diag("warning", "W_MMB_BAKE_LOOP_EMPTY",
+                `sample "${s.name}" has a loop that resampled to ${le - ls} bytes `
+                  + `at note ${n}; a loop note loops the whole range`);
+            ls = rs; le = re;
+          } else {
+            if (loopStartSec != null) flags |= SAMPLE_FLAG.loopStart;
+            if (loopEndSec != null) flags |= SAMPLE_FLAG.loopEnd;
           }
           const bytes = padBlock(raw);
           const before = blobBytes.length;
@@ -1767,8 +1786,8 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
           bakedBlobBytes += blobBytes.length - before;   // dedup hits cost nothing
           bakedEntries++;
           entryIdFor.set(`${s.name}|${n}`, push({
-            flags: looped ? 1 : 0, off, len: bytes.length, srcFrames: data.length,
-            loopStart: ls, loopEnd: le,
+            flags, off, len: bytes.length, srcFrames: data.length,
+            rangeStart: rs, rangeEnd: re, loopStart: ls, loopEnd: le,
           }));
         }
         // NO unbaked fallback entry. Every note this sample is played at came from
@@ -1839,8 +1858,10 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
         entries.u32(r.off);
         entries.u32(r.len);
         entries.u32(r.srcFrames);
-        entries.u32(r.loopStart);
-        entries.u32(r.loopEnd);
+        entries.u16(r.rangeStart);
+        entries.u16(r.rangeEnd);
+        entries.u16(r.loopStart);
+        entries.u16(r.loopEnd);
       });
       return { bytes: [...entries.bytes, ...blobBytes], entryCount: rows.length };
     },

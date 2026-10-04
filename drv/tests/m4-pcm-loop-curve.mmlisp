@@ -4,19 +4,19 @@
 ; curve, and each change is one PCM_RETARGET to the engine's block edge.
 ;
 ; What this locks:
-;   - a literal length (:pcm-len 30ms) against the def's own loop
+;   - a literal length (:loop-len 30ms) against the def's own loop
 ;   - a sweep that tightens the loop to the engine's floor (one 16-byte block,
 ;     1.11 ms at pcm1) — the sweep engine has to reach a PCM channel at all
 ;   - a sweep that slides the loop's head through the sample with its length
-;     held, which is what :pcm-len rather than :pcm-end buys
+;     held, which is what :loop-len rather than :loop-end buys
 ;   - the change-only guard: a sweep is recomputed every frame but only pays a
 ;     RETARGET when the rounded block actually moves
 ;   - the release at each note's end, which turns the loop back into a shot
 (def pcm-voices 1)
-(def-pcm voice :file "pcmbank.wav" :pcm-start 200ms :pcm-len 100ms)
+(def-pcm voice :file "pcmbank.wav" :loop-start 200ms :loop-len 100ms)
 (pcm1 voice :mode loop :tempo 120 :oct 4 :len 2 :vel 15
   c
-  :pcm-len 30ms c
-  :pcm-len (linear :from 100ms :to 2ms :len 2) c
-  :pcm-len 100ms
-  :pcm-start (linear :from 100ms :to 900ms :len 2) c)
+  :loop-len 30ms c
+  :loop-len (linear :from 100ms :to 2ms :len 2) c
+  :loop-len 100ms
+  :loop-start (linear :from 100ms :to 900ms :len 2) c)

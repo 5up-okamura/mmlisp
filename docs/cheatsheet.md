@@ -164,15 +164,17 @@ start written (`40..0`, not `:to 0` alone).
 
 ```lisp
 (def pcm-voices 2)
-(def-pcm pad :file "pad.wav" :pcm-start 300ms :pcm-len 100ms
+(def-pcm pad :file "pad.wav" :loop-start 300ms :loop-len 100ms
   :fx [(normalize) (fade :at 400ms :len 200ms)])
 (pcm1 :len 8 kick c snare c)            ; name the sample before its notes
 (pcm2 pad :mode loop :len 1 c)
 ```
 
-`:pcm-start` / `:pcm-end` / `:pcm-len` are the range a note plays — once for a
-`shot`, repeated for `:mode loop` (the attack plays from the start first) — on
-the def and the track, as lengths or curves.
+Four points, as lengths or curves, on the def and the track:
+`:pcm-start` ── `:loop-start` ═ `:loop-end` ── `:pcm-end`. A `shot` plays the
+range (`:pcm-*`) once; `:mode loop` plays from `:pcm-start`, repeats the loop
+(`:loop-*`, default: the whole range) while held, and runs on to `:pcm-end`
+after its note-off. `…-len` keeps the length when its start moves.
 
 A note's pitch picks a resampled copy, baked into the 32 KB bank — only what
 the score plays is baked. No pitch moves on PCM (`:pitch`, `(glide)`); levels

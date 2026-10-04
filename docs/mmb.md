@@ -287,13 +287,15 @@ Sample entry (24 bytes):
 | Offset | Size | Field      | Notes                                        |
 | ------ | ---- | ---------- | -------------------------------------------- |
 | 0x00   | 1    | sample_id  | u8, referenced by PCM_NOTE_ON                |
-| 0x01   | 1    | flags      | bit0 = the def set a range; bits1–7 reserved |
+| 0x01   | 1    | flags      | bit0 = the def set a range; bit1 = it set a loop start; bit2 = a loop end; bits3–7 reserved |
 | 0x02   | 2    | —          | reserved, 0                                  |
 | 0x04   | 4    | offset     | u32, blob start relative to the blob region (past the entry table) |
 | 0x08   | 4    | length     | u32, bytes — a whole number of 16-byte blocks |
 | 0x0C   | 4    | src_frames | u32, the source slice's frame count, after its `:fx` chain |
-| 0x10   | 4    | loop_start | u32, the range's start: baked byte offset into the blob, unrounded |
-| 0x14   | 4    | loop_end   | u32, the range's end: baked byte offset into the blob, unrounded |
+| 0x10   | 2    | range_start | u16, the range's start: baked byte offset into the blob, unrounded |
+| 0x12   | 2    | range_end   | u16, the range's end |
+| 0x14   | 2    | loop_start  | u16, the loop's start, inside the range |
+| 0x16   | 2    | loop_end    | u16, the loop's end, inside the range |
 
 ### 10.1 Pitch baking
 
@@ -305,13 +307,17 @@ silence to whole 16-byte blocks. The engine does not resample and has no octave 
 so a sample played at several notes occupies several ids, deduplicated by
 content hash.
 
-Every entry carries a range, which a loop note repeats and a shot plays once —
-the NOTE decides which (opcodes.md §6, PCM_NOTE_ON). The range is the def's
-`:pcm-start` / `:pcm-end` / `:pcm-len` — times in the sample's own recording —
-turned into byte offsets by the note's own bake rate, and stored unrounded; the
-sequencer rounds it to whole blocks when it sends it (driver.md §14). A def with
-no range, or a range that maps to nothing (`W_MMB_BAKE_RANGE_EMPTY`), stores
-the whole sample: `loop_start` 0, `loop_end` its baked length. `src_frames` is the source
+Every entry carries four points: the range a shot plays once, and the loop
+inside it a held loop note repeats — the NOTE decides which it is (opcodes.md
+§6, PCM_NOTE_ON). They are the def's `:pcm-*` and `:loop-*` — times in the
+sample's own recording — turned into byte offsets by the note's own bake rate,
+and stored unrounded; the sequencer rounds them to whole blocks when it sends
+them (driver.md §14). A def with no range, or a range that maps to nothing
+(`W_MMB_BAKE_RANGE_EMPTY`), stores the whole sample: `range_start` 0,
+`range_end` its baked length. A loop point the def did not set stores the
+range's (its flag clear, so a track's range write moves it too); a loop that
+maps to nothing (`W_MMB_BAKE_LOOP_EMPTY`) stores the whole range. Every point
+fits u16: a blob lies inside the 32 KB window. `src_frames` is the source
 slice's length after its effects (a fade shortens it), carried for tooling; nothing in the driver reads it.
 
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).

@@ -289,9 +289,10 @@ Notes:
 - **PCM_NOTE_ON** plays `sample` (SAMPLE_BANK id). The exporter bakes one
   entry per (sample, note), so the id already carries the pitch and `note`'s
   low seven bits only name it (mmb.md §10.1). **Bit 7 of `note` says the note
-  loops** (`:mode loop`): it loops on the entry's range, with the track's
-  LOOP_* writes laid over it, until PCM_NOTE_OFF, which plays its tail out.
-  Clear, the note is a shot and plays that range once.
+  loops** (`:mode loop`): it starts at the entry's range start and repeats
+  the entry's loop, with the track's RANGE_* / LOOP_* writes laid over them,
+  until PCM_NOTE_OFF, which plays on to the range's end. Clear, the note is a
+  shot and plays the range once.
   `dur = 0x00` holds until the host releases it. A loop note whose gate is
   shorter than its length ends `dur` at the gate, where its PCM_NOTE_OFF
   stands, and the rest of the length is a REST. A shot takes the same
@@ -350,22 +351,26 @@ same bounds.
 | 0x40 | PAN         | 1     | −1..1          | YM $B4 bits 7–6 (−1=L, 0=LR, 1=R)  |
 | 0x41 | LFO_RATE    | 1     | 0..8           | YM $22 (0=off, 1–8=rate index)     |
 | 0x42 | NOISE_MODE  | 1     | 0..7           | PSG $E0 noise control (FB bit + NF bits) |
-| 0x43 | LOOP_START  | 2     | 0..0x7F00      | PCM range start (`:pcm-start`) → a loop's WRAP, a shot's next START |
-| 0x44 | LOOP_END    | 2     | 0..0x7F00      | PCM range end (`:pcm-end`) → `PCM_RETARGET` END |
-| 0x45 | LOOP_LEN    | 2     | 0..0x7F00      | PCM range length (`:pcm-len`); END = start + this |
-| 0x46–0xFF | —      | —     | —              | reserved                           |
+| 0x43 | LOOP_START  | 2     | 0..0x7F00      | PCM loop start (`:loop-start`) → a held loop note's WRAP |
+| 0x44 | LOOP_END    | 2     | 0..0x7F00      | PCM loop end (`:loop-end`) → a held loop note's END |
+| 0x45 | LOOP_LEN    | 2     | 0..0x7F00      | PCM loop length (`:loop-len`); end = loop start + this |
+| 0x46 | RANGE_START | 2     | 0..0x7F00      | PCM range start (`:pcm-start`) → the next START |
+| 0x47 | RANGE_END   | 2     | 0..0x7F00      | PCM range end (`:pcm-end`) → a shot's, and a released loop note's, END |
+| 0x48 | RANGE_LEN   | 2     | 0..0x7F00      | PCM range length (`:pcm-len`); end = range start + this |
+| 0x49–0xFF | —      | —     | —              | reserved                           |
 
 Per-op ids are consecutive op1→op4 within each parameter family (FM_TL1 = 0x11
 … FM_TL4 = 0x14).
 
-The three range targets are **byte offsets into the playing blob**, not register
-values (they kept their names from when the range was a loop's alone): the
-driver recomputes the voice's END/WRAP through the same rounding every note-on
-uses and sends one `PCM_RETARGET` — and only when the rounded
-16-byte block actually moves, so a swept range point does not spend six bytes of
-every slot. They are valid on `pcm1`–`pcm3` only. `LOOP_LEN` keeps its length
-when `LOOP_START` moves; `LOOP_END` pins the end instead. A released loop note
-ignores them — it plays its tail to the sample's end.
+The six point targets are **byte offsets into the playing blob**, not register
+values: the driver clamps them into each other (range start ≤ loop start ≤
+loop end ≤ range end), recomputes the voice's END/WRAP through the same
+rounding every note-on uses and sends one `PCM_RETARGET` — and only when the
+rounded 16-byte block actually moves, so a swept point does not spend six
+bytes of every slot. They are valid on `pcm1`–`pcm3` only. An `…_LEN` keeps
+its length when its start moves; an `…_END` pins the end instead. A loop
+point never written follows the range. After a loop note's release only the
+range's end still moves it.
 
 ### 7.1 Ids with no emission path
 

@@ -11,7 +11,7 @@
  *       — the score's baked sample bank (the one an export ships), which the
  *         IR preview plays through the driver's own engine model
  *   { type: 'pcm-ev', when, kind: 'on', voice, sample, midi, vel, vol, track }
- *   { type: 'pcm-ev', when, kind: 'off' | 'vol' | 'vel' | 'loop' | 'master', … }
+ *   { type: 'pcm-ev', when, kind: 'off' | 'vol' | 'vel' | 'point' | 'master', … }
  *       — the IR's PCM events, applied in time order to the sequencer's voice
  *         model (src/pcm-voices.js) — see _applyPcmEvent
  *   { type: 'pcm-set-vol', track: number, gain: number }  — live UI mixer fader (separate from the score)

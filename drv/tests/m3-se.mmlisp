@@ -22,7 +22,7 @@
   :ar3 31 :dr3 2 :sr3 0 :rr3 4 :sl3 0 :tl3 10 :ks3 0 :ml3 2 :dt3 0
   :ar4 31 :dr4 4 :sr4 1 :rr4 6 :sl4 2 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
 
-(def-pcm pad :file "pad.wav" :pcm-start 9ms :pcm-end 36ms)
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (def-pcm blip :file "blip.wav")
 
 ; track 0: fm1 holds three whole notes — a long sustain the effect takes.

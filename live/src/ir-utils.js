@@ -66,9 +66,12 @@ export const MACRO_TARGET_RANGE = {
   // PSG noise mode (0-7 via `:mode` keyword on noise channel)
   NOISE_MODE: { min: 0, max: 7 },
 
-  // PCM range (:pcm-start/-end/-len), in SECONDS — the IR's unit for it (the MMB exporter
+  // PCM points (:pcm-* the range, :loop-* the loop), in SECONDS — the IR's unit (the MMB exporter
   // turns them into the engine's byte offsets). The ceiling is what one 32 KB
   // bank can hold at the slowest image, 4.89 s at pcm3; rounded up.
+  RANGE_START: { min: 0, max: 8 },
+  RANGE_END: { min: 0, max: 8 },
+  RANGE_LEN: { min: 0, max: 8 },
   LOOP_START: { min: 0, max: 8 },
   LOOP_END: { min: 0, max: 8 },
   LOOP_LEN: { min: 0, max: 8 },

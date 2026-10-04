@@ -9,7 +9,7 @@
 ;   5  :vel* scales the envelope by the note's vel, and a tick clock
 (def pcm-voices 1)
 (def-pcm blip :file "blip.wav")
-(def-pcm pad :file "pad.wav" :pcm-start 9ms :pcm-end 36ms)
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (pcm1 blip :tempo 120 :oct 4 :len 4
   (macro :step 1/32 :keyon [1 1 1 1 1 1 1 1]) (macro :vel (linear 6..15 :len 3f)) c
   (macro :keyon none :vel [15 #rel 12 9 6 3]) :gate* 0.5 c

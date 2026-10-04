@@ -206,21 +206,29 @@ export const TARGET_ID = {
   PAN: 0x40,
   LFO_RATE: 0x41,
   NOISE_MODE: 0x42,
-  // PCM loop points, as the engine's own byte offsets into the playing blob:
-  // one image plays one byte a sample, so a loop point is at most 32,512 and
-  // fits the same i16 every other wide target uses (docs/driver.md §5).
+  // A PCM note's points (language.md §16), as the engine's own byte offsets
+  // into the playing blob: the loop (:loop-*) and the range (:pcm-*). One
+  // image plays one byte a sample, so a point is at most 32,512 and fits the
+  // same i16 every other wide target uses (docs/driver.md §5).
   LOOP_START: 0x43,
   LOOP_END: 0x44,
   LOOP_LEN: 0x45,
+  RANGE_START: 0x46,
+  RANGE_END: 0x47,
+  RANGE_LEN: 0x48,
 };
 export const TARGET_NAME = Object.fromEntries(
   Object.entries(TARGET_ID).map(([name, id]) => [id, name]),
 );
 
+/** The six PCM point targets: a note's range and its loop (byte offsets). */
+export const PCM_POINT_TARGET_IDS = new Set([TARGET_ID.LOOP_START, TARGET_ID.LOOP_END,
+  TARGET_ID.LOOP_LEN, TARGET_ID.RANGE_START, TARGET_ID.RANGE_END, TARGET_ID.RANGE_LEN]);
+
 // i16 targets (mmb.md §7.4): NOTE_PITCH (cents), the reserved TEMPO_SCALE,
-// and the three PCM loop points (byte offsets). Every other target is i8.
+// and the six PCM points (byte offsets). Every other target is i8.
 const WIDE_TARGET_IDS = new Set([TARGET_ID.NOTE_PITCH, TARGET_ID.TEMPO_SCALE,
-  TARGET_ID.LOOP_START, TARGET_ID.LOOP_END, TARGET_ID.LOOP_LEN]);
+  ...PCM_POINT_TARGET_IDS]);
 
 // Byte width (1 = i8, 2 = i16) of a target's PARAM value, by target id.
 export function targetWidth(id) {
@@ -409,7 +417,7 @@ export function tickIncrementToBpm(inc, frameHz = FRAME_HZ_NTSC) {
 // The engine's block size and the bank's entry size are the engine model's
 // (live/src/pcm-model.js) and re-exported here, so the format tables and the
 // model it describes cannot drift apart.
-export { PCM_BLOCK, SAMPLE_ENTRY_SIZE } from "./pcm-model.js";
+export { PCM_BLOCK, SAMPLE_ENTRY_SIZE, SAMPLE_FLAG } from "./pcm-model.js";
 /** The rate to resample to so `note` advances one byte a sample at `rateHz`. */
 export function pcmBakeRateAt(note, rateHz) {
   return rateHz / Math.pow(2, (note - 60) / 12);

@@ -129,15 +129,25 @@ enum {
   T_NOISE_MODE = 0x42,
   T_LOOP_START = 0x43,
   T_LOOP_END = 0x44,
-  T_LOOP_LEN = 0x45
+  T_LOOP_LEN = 0x45,
+  T_RANGE_START = 0x46,
+  T_RANGE_END = 0x47,
+  T_RANGE_LEN = 0x48
 };
 
+/* The bank entry's flags (mmb.md §10): which points the def set. */
+enum { SF_RANGE = 1, SF_LOOP_START = 2, SF_LOOP_END = 4 };
+
+/* The six PCM points: a note's loop (:loop-*) and its range (:pcm-*). */
+static int target_point(int target) {
+  return target >= T_LOOP_START && target <= T_RANGE_LEN;
+}
+
 /* The i16 targets (mmb.md §7.4), mirroring WIDE_TARGET_IDS in
- * live/src/mmb.js: cents, the reserved tempo scale, and the PCM loop points
- * (byte offsets into a blob, up to the bank's 32 KB window). */
+ * live/src/mmb.js: cents, the reserved tempo scale, and the PCM points (byte
+ * offsets into a blob, up to the bank's 32 KB window). */
 static int target_wide(int target) {
-  return target == T_NOTE_PITCH || target == T_TEMPO_SCALE ||
-         (target >= T_LOOP_START && target <= T_LOOP_LEN);
+  return target == T_NOTE_PITCH || target == T_TEMPO_SCALE || target_point(target);
 }
 
 MML_HOT uint16_t rd16(const uint8_t *b, uint32_t o) {
@@ -549,14 +559,13 @@ static void channel_off(MMLSeq *s, int ch) {
     if (s->psg[ch - 6].sounding && !vel_release_pending(s, ch)) write_psg_att(s, ch - 6, 15);
   } else if (ch >= CH_PCM1 && ch <= CH_PCM3) {
     /* A PCM key-off (opcodes.md §6): a shot plays to its end regardless; a
-     * loop's release moves END to the sample's end and WRAP to silence, and
+     * loop's release moves END to the range's end and WRAP to silence, and
      * the tail plays out. Either way the note's macros take their release —
      * and a `:len 0` loop is let go by the host's KEY_OFF or STOP_TRACK. */
     MMLPcmVoice *v = &s->pcm[ch - CH_PCM1];
     v->keyed = 0;
     if (v->started && v->looping) {
       v->looping = 0;
-      v->released = 1;
       pcm_apply_loop(s, ch - CH_PCM1);
     }
   }
@@ -729,24 +738,19 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
       v->vol = (uint8_t)clampi(value, 0, 31);
       if (!force) v->vol_base = v->vol; /* score's fader; a macro moves only the live one */
     }
-    else if (target >= T_LOOP_START && target <= T_LOOP_LEN) {
-      /* THE RANGE, as byte offsets into the playing blob. :pcm-len keeps the
-       * length when the start moves; :pcm-end pins the end instead. */
+    else if (target_point(target)) {
+      /* A POINT, as a byte offset into the playing blob: an …_LEN keeps the
+       * length when its start moves; an …_END pins the end instead. Kept for
+       * the track's next notes too (pcm_note_on lays them over the def's). */
       uint32_t x = (uint32_t)clampi(value, 0, MML_PCM_WINDOW);
-      /* Kept for the track's next notes (pcm_note_on lays it over the def's). */
-      if (target == T_LOOP_START) { v->o_has_ls = 1; v->o_ls = x; }
-      else { v->o_kind = (uint8_t)target; v->o_bound = x; }
-      if (target == T_LOOP_START) {
-        v->ls = x;
-        if (!v->end_fixed) v->le = v->ls + v->llen;
-      } else if (target == T_LOOP_END) {
-        v->le = x;
-        v->end_fixed = 1;
-        v->llen = v->le > v->ls ? v->le - v->ls : 0;
+      if (target == T_RANGE_START) { v->o_has_rs = 1; v->o_rs = v->rs = x; }
+      else if (target == T_LOOP_START) { v->o_has_ls = 1; v->o_ls = v->ls = x; v->ls_set = 1; }
+      else if (target == T_RANGE_END || target == T_RANGE_LEN) {
+        v->o_r_kind = v->r_kind = (uint8_t)target;
+        v->o_r_bound = v->r_bound = x;
       } else {
-        v->llen = x;
-        v->end_fixed = 0;
-        v->le = v->ls + v->llen;
+        v->o_l_kind = v->l_kind = (uint8_t)target;
+        v->o_l_bound = v->l_bound = x;
       }
       pcm_apply_loop(s, ch - CH_PCM1);
       return;
@@ -1394,7 +1398,7 @@ static void process_macros(MMLSeq *s) {
  * arithmetic: where the blob is, where the voice wraps (END) and where it goes
  * then (WRAP). It never touches a sample byte and keeps no position — the
  * engine owns the pointer. The loop and shot contracts are
- * live/src/pcm-model.js, whose pcmLoopPoints / pcmRangePoints / pcmShotPoints
+ * live/src/pcm-model.js, whose pcmNotePoints / pcmLoopPoints / pcmRangePoints
  * these twin.
  */
 static const uint8_t *find_sample(const MMLSeq *s, int id) {
@@ -1403,12 +1407,6 @@ static const uint8_t *find_sample(const MMLSeq *s, int id) {
     if (e[0] == (uint8_t)id) return e;
   }
   return 0;
-}
-
-/* A shot of `len` bytes: play it once and park on the silence page. */
-static void pcm_shot_points(uint16_t src, uint16_t len, uint16_t *end, uint16_t *wrap) {
-  *end = (uint16_t)(src + len - MML_PCM_BLOCK);
-  *wrap = MML_PCM_SILENCE;
 }
 
 /* A shot over the range [ls, le) baked bytes, widened to whole blocks — the
@@ -1428,8 +1426,8 @@ static void pcm_range_points(uint16_t src, uint32_t len, uint32_t ls, uint32_t l
   *wrap = MML_PCM_SILENCE;
 }
 
-/* A loop over [ls, le) baked bytes, rounded to whole blocks so the first pass
- * plays [0, le') and every later pass [ls', le'):
+/* A loop over [ls, le) baked bytes, rounded to whole blocks so every pass
+ * plays [ls', le') after a first pass from the note's start up to le':
  *   le' = 16·round(le/16) within 16..len;  ls' = le' − 16·max(1, round((le−ls)/16)), ≥ 0
  * round is half-up, (x + 8) >> 4 — exactly pcmLoopPoints. */
 static void pcm_loop_points(uint16_t src, uint32_t len, uint32_t ls, uint32_t le,
@@ -1462,17 +1460,32 @@ static void pcm_retarget(MMLSeq *s, int vi, uint16_t end, uint16_t wrap) {
   v->sent_pts = 1;
 }
 
-/* The engine's START/END/WRAP for what the voice plays now: a loop note its
- * loop; a shot its range, once; a released loop note the rest of the blob, so
- * its range params stop having an effect, which is what a release means. */
-static void pcm_points(const MMLPcmVoice *v, uint16_t *start, uint16_t *end, uint16_t *wrap) {
-  *start = v->src;
-  if (v->looping) pcm_loop_points(v->src, v->len, v->ls, v->le, end, wrap);
-  else if (v->released) pcm_shot_points(v->src, v->len, end, wrap);
-  else pcm_range_points(v->src, v->len, v->ls, v->le, start, end, wrap);
+static uint32_t clampu(uint32_t x, uint32_t lo, uint32_t hi) {
+  return x < lo ? lo : x > hi ? hi : x;
 }
 
-/* The live range → the engine's END/WRAP. The pointer is the engine's, so a
+/* The engine's START/END/WRAP for what the voice plays now, from its four
+ * points clamped to rs ≤ ls ≤ le ≤ re within the blob: a shot, and a loop
+ * note once released, the range once; a held loop note from the range's start
+ * into its loop — exactly pcmNotePoints. */
+static void pcm_points(const MMLPcmVoice *v, uint16_t *start, uint16_t *end, uint16_t *wrap) {
+  uint32_t len = v->len;
+  uint32_t re = v->r_kind == T_RANGE_END ? v->r_bound : v->rs + v->r_bound;
+  uint32_t ls = v->ls_set ? v->ls : v->rs;
+  uint32_t le = v->l_kind == T_LOOP_END ? v->l_bound
+              : v->l_kind == T_LOOP_LEN ? ls + v->l_bound : re;
+  uint32_t RS = clampu(v->rs, 0, len), RE = clampu(re, RS, len);
+  if (!v->looping) {
+    pcm_range_points(v->src, len, RS, RE, start, end, wrap);
+    return;
+  }
+  uint32_t LS = clampu(ls, RS, RE), LE = clampu(le, LS, RE);
+  pcm_loop_points(v->src, len, LS, LE, end, wrap);
+  uint32_t s0 = (RS >> 4) << 4, lw = (uint16_t)(*wrap - v->src);
+  *start = (uint16_t)(v->src + (s0 < lw ? s0 : lw));
+}
+
+/* The live points → the engine's END/WRAP. The pointer is the engine's, so a
  * moved start reaches only the next START. */
 static void pcm_apply_loop(MMLSeq *s, int vi) {
   MMLPcmVoice *v = &s->pcm[vi];
@@ -1482,9 +1495,9 @@ static void pcm_apply_loop(MMLSeq *s, int vi) {
   pcm_retarget(s, vi, end, wrap);
 }
 
-/* `loop`: the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7) over its
- * range; a shot plays the range once. Every entry carries a range — the def's,
- * or the whole sample — so a note always has one. */
+/* `loop`: the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7); a shot
+ * plays the range once. Every entry carries a range — the def's, or the whole
+ * sample — and a loop, the def's or the range, so a note always has both. */
 static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int loop) {
   int vi = channel_id - CH_PCM1;
   if (vi < 0 || vi >= MML_PCM_VOICES) return;
@@ -1509,32 +1522,33 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int loop) {
   uint32_t abs = s->sample_rom_base + s->sample_blob_base + rd32(e, 4);
   v->started = 1;
   v->looping = (uint8_t)(loop != 0);
-  v->released = 0;
   v->sample_id = (uint8_t)sample_id;
   v->src = (uint16_t)(MML_PCM_WINDOW + (abs & 0x7fff));
   v->len = (uint16_t)len;
-  /* The def's range, with the track's own writes laid over it in the same terms
-   * a write during the note uses (the T_LOOP_* param path). */
-  uint32_t dls = rd32(e, 16), dle = rd32(e, 20);
+  /* The def's points, with the track's own writes laid over them. A def's
+   * bound is a length from the start it pairs with, so a track's start slides
+   * it, as a write during the note would (the point param path). */
+  uint8_t flags = e[1];
+  uint32_t drs = rd16(e, 16), dre = rd16(e, 18), dls = rd16(e, 20), dle = rd16(e, 22);
+  v->rs = v->o_has_rs ? v->o_rs : drs;
+  if (v->o_r_kind) { v->r_kind = v->o_r_kind; v->r_bound = v->o_r_bound; }
+  else { v->r_kind = T_RANGE_LEN; v->r_bound = dre > drs ? dre - drs : 0; }
+  v->ls_set = (uint8_t)(v->o_has_ls || (flags & SF_LOOP_START));
   v->ls = v->o_has_ls ? v->o_ls : dls;
-  if (v->o_kind == T_LOOP_END) {
-    v->le = v->o_bound;
-    v->end_fixed = 1;
-    v->llen = v->le > v->ls ? v->le - v->ls : 0;
-  } else {
-    v->llen = v->o_kind == T_LOOP_LEN ? v->o_bound : (dle > dls ? dle - dls : 0);
-    v->le = v->ls + v->llen;
-    v->end_fixed = 0;
-  }
+  if (v->o_l_kind) { v->l_kind = v->o_l_kind; v->l_bound = v->o_l_bound; }
+  else if (flags & SF_LOOP_END) {
+    uint32_t from = (flags & SF_LOOP_START) ? dls : drs;
+    v->l_kind = T_LOOP_LEN;
+    v->l_bound = dle > from ? dle - from : 0;
+  } else v->l_kind = 0;
   v->keyed = 1;
   v->retrig = 0;
   pcm_restart(s, vi);
 }
 
-/* START the voice at the level and range it holds now: a note-on, and a
- * :keyon retrigger. A loop starts from the blob's first byte (the first pass
- * plays up to the loop), a shot from its range's start; after a loop's release
- * a retrigger plays the blob once through, as the released note would. */
+/* START the voice at the level and points it holds now: a note-on, and a
+ * :keyon retrigger, which after a loop's release plays the range once, as the
+ * released note would. */
 static void pcm_restart(MMLSeq *s, int vi) {
   MMLPcmVoice *v = &s->pcm[vi];
   if (!v->started) return;

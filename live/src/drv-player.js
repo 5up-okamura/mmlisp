@@ -44,6 +44,7 @@ import {
   OPCODE_NAME,
   TARGET_ID,
   TARGET_NAME,
+  PCM_POINT_TARGET_IDS,
   targetWidth,
   readDuration,
   bpmToTickIncrement,
@@ -1617,9 +1618,8 @@ export class DrvPlayer {
       } else if (target === TARGET_ID.VOL) {
         v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
         if (!force) v.volBase = v.vol; // score's fader; a macro moves only the live one
-      } else if (target >= TARGET_ID.LOOP_START && target <= TARGET_ID.LOOP_LEN) {
-        this._pcm.loopParam(channelId - 20,
-          ["START", "END", "LEN"][target - TARGET_ID.LOOP_START], value);
+      } else if (PCM_POINT_TARGET_IDS.has(target)) {
+        this._pcm.pointParam(channelId - 20, TARGET_NAME[target], value);
         return;
       } else return;
       this._pcm.composeShift(channelId - 20, this._master);
@@ -3289,7 +3289,6 @@ export class DrvPlayer {
         this._macroSlots[this._macroCh(trk.channelId)] = []; // no :keyon re-START
         if (v.started) {
           v.looping = false;
-          v.released = true;
           this._pcmCmd([PCM_START, vi, 8, ...u16le(PCM_SILENCE_ADDR), ...u16le(0), ...u16le(PCM_SILENCE_ADDR)]);
         }
       }

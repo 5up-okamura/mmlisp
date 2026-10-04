@@ -22,7 +22,7 @@ import {
   PCM_TOTAL_MAX_SHIFT,
 } from "./mmb.js";
 import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
-import { pcmLoopPoints, pcmRangePoints, pcmShotPoints, PCM_WINDOW } from "./pcm-model.js";
+import { pcmNotePoints, PCM_WINDOW } from "./pcm-model.js";
 import { velFine, VEL_FINE, VEL_FINE_MAX } from "./ir-utils.js";
 
 
@@ -32,7 +32,6 @@ export function newPcmVoice() {
   return {
     started: false, // a START has been sent since load: PCM_VOL is worth sending
     looping: false, // the running note loops; a note-off sends its release
-    released: false, // a loop note let go: its tail plays to the blob's end
     keyed: false, // a note is on, up to its note-off: a macro's release waits for it
     retrig: false, // a :keyon step restarts the blob once the frame's levels are in
     src: 0, // the note's blob, as a window address
@@ -44,22 +43,33 @@ export function newPcmVoice() {
     shift: 0, // composed attenuation 0..4 from vel+vol; master is folded in by the host
     muted: false, // vol==0, master==0, or shift+master past PCM_TOTAL_MAX_SHIFT
     _sentShift: 0xff,
-    // THE LIVE RANGE, in baked bytes from the blob's start, unrounded — the
-    // note's own points until a LOOP_START/LOOP_END/LOOP_LEN param moves
-    // them. A loop note repeats it, a shot plays it once. The length sits
-    // beside the end so that moving only the start slides a range of the same
-    // length through the sample; :pcm-end pins the end instead and sets
-    // endFixed.
-    ls: 0, le: 0, llen: 0, endFixed: false,
-    // The last END/WRAP sent, so a swept loop point only costs a RETARGET
-    // when it actually leaves its 16-byte block.
+    // THE NOTE'S FOUR POINTS (language.md §16), in baked bytes from the
+    // blob's start, unrounded: the range a note plays and, inside it, the
+    // loop a held loop note repeats. Each is a start plus a bound, `kind`
+    // saying which the bound is: "END" pins the end, "LEN" keeps the length,
+    // so moving only the start slides a range of the same length through the
+    // sample. A loop start the def and the track never set follows the
+    // range's start (lsSet false), a loop bound never set its end (lKind
+    // null). pcm-model.js pcmNotePoints clamps them into each other.
+    rs: 0, rKind: "LEN", rBound: 0,
+    lsSet: false, ls: 0, lKind: null, lBound: 0,
+    // The last END/WRAP sent, so a swept point only costs a RETARGET when it
+    // actually leaves its 16-byte block.
     sentEnd: 0, sentWrap: 0, sentPts: false,
-    // THE TRACK'S OWN RANGE WRITES, sticky like any other track parameter: a
-    // note starts from the def's range with these laid over it, so a
-    // `:pcm-start` written before the note is the note's. `oBound` is the
-    // last of :pcm-end / :pcm-len written (oKind "END" | "LEN" | null).
-    oHasLs: false, oLs: 0, oKind: null, oBound: 0,
+    // THE TRACK'S OWN WRITES, sticky like any other track parameter: a note
+    // starts from the def's points with these laid over it, so a
+    // `:pcm-start` written before the note is the note's.
+    oHasRs: false, oRs: 0, oRKind: null, oRBound: 0,
+    oHasLs: false, oLs: 0, oLKind: null, oLBound: 0,
   };
+}
+
+/** A voice's four points, resolved: [rs, re, ls, le] in baked bytes, unclamped. */
+export function pcmVoicePoints(v) {
+  const re = v.rKind === "END" ? v.rBound : v.rs + v.rBound;
+  const ls = v.lsSet ? v.ls : v.rs;
+  const le = v.lKind === "END" ? v.lBound : v.lKind === "LEN" ? ls + v.lBound : re;
+  return [v.rs, re, ls, le];
 }
 
 export class PcmVoices {
@@ -135,17 +145,15 @@ export class PcmVoices {
     v.sentPts = true;
   }
 
-  // The engine's START/END/WRAP for what the voice plays now: a loop note
-  // its loop; a shot its range, once; a released loop note the rest of the
-  // blob, so its range params stop having an effect — which is what a
-  // release means.
+  // The engine's START/END/WRAP for what the voice plays now: a held loop
+  // note from the range's start into its loop; a shot, and a loop note once
+  // released, the range once.
   points(v) {
-    if (v.looping) return { start: v.src, ...pcmLoopPoints(v.src, v.len, v.ls, v.le) };
-    if (v.released) return { start: v.src, ...pcmShotPoints(v.src, v.len) };
-    return pcmRangePoints(v.src, v.len, v.ls, v.le);
+    const [rs, re, ls, le] = pcmVoicePoints(v);
+    return pcmNotePoints(v.src, v.len, rs, re, ls, le, v.looping);
   }
 
-  // The live range → the engine's END/WRAP. The pointer is the engine's, so
+  // The live points → the engine's END/WRAP. The pointer is the engine's, so
   // a moved start reaches only the next START.
   applyLoop(vi) {
     const v = this.voices[vi];
@@ -157,40 +165,37 @@ export class PcmVoices {
   /**
    * Start a note on voice `vi`. The caller has already restored the velocity
    * and composed the level (composeShift), exactly as the sequencer does.
-   * @param entry {len, loopStart, loopEnd} — the note's bank entry; its range
-   *              is the def's, or the whole sample when the def has none
+   * @param entry the note's bank entry (parsePcmBank): its range is the
+   *              def's, or the whole sample; its loop the def's, or the range
    * @param src   the blob's window address
-   * @param loop  the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7) over
-   *              its range; a shot plays the range once
+   * @param loop  the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7); a
+   *              shot plays the range once
    */
   start(vi, entry, src, loop) {
     const v = this.voices[vi];
     v.started = true;
     v.looping = !!loop;
-    v.released = false;
     v.src = src;
     v.len = entry.len;
-    // The def's range, with the track's own writes laid over it in the same
-    // terms a write during the note uses (loopParam).
+    // The def's points, with the track's own writes laid over them. A def's
+    // bound is a length from the start it pairs with, so a track's start
+    // slides it, as a write during the note would (pointParam).
+    v.rs = v.oHasRs ? v.oRs : entry.rangeStart;
+    if (v.oRKind) { v.rKind = v.oRKind; v.rBound = v.oRBound; }
+    else { v.rKind = "LEN"; v.rBound = Math.max(0, entry.rangeEnd - entry.rangeStart); }
+    v.lsSet = v.oHasLs || entry.loopStartSet;
     v.ls = v.oHasLs ? v.oLs : entry.loopStart;
-    if (v.oKind === "END") {
-      v.le = v.oBound;
-      v.endFixed = true;
-      v.llen = v.le > v.ls ? v.le - v.ls : 0;
-    } else {
-      v.llen = v.oKind === "LEN" ? v.oBound
-        : entry.loopEnd > entry.loopStart ? entry.loopEnd - entry.loopStart : 0;
-      v.le = v.ls + v.llen;
-      v.endFixed = false;
-    }
+    if (v.oLKind) { v.lKind = v.oLKind; v.lBound = v.oLBound; }
+    else if (entry.loopEndSet) {
+      v.lKind = "LEN";
+      v.lBound = Math.max(0, entry.loopEnd - (entry.loopStartSet ? entry.loopStart : entry.rangeStart));
+    } else v.lKind = null;
     this.restart(vi);
   }
 
-  // START the voice at the level and range it holds now — a note, and a
-  // :keyon retrigger. A loop starts from the blob's first byte (the first
-  // pass plays up to the loop), a shot from its range's start; after a
-  // loop's release a retrigger plays the blob once through, as the released
-  // note would.
+  // START the voice at the level and points it holds now — a note, and a
+  // :keyon retrigger, which after a loop's release plays the range once, as
+  // the released note would.
   restart(vi) {
     const v = this.voices[vi];
     if (!v.started) return;
@@ -204,37 +209,29 @@ export class PcmVoices {
   }
 
   // A shot plays to its end regardless (opcodes.md §6). A loop's release
-  // moves END to the sample's end and WRAP to silence: the tail plays out.
+  // moves END to the range's end and WRAP to silence: the tail plays out.
   release(vi) {
     const v = this.voices[vi];
     if (!v.started || !v.looping) return;
     v.looping = false;
-    v.released = true;
     this.applyLoop(vi);
   }
 
   /**
-   * THE RANGE, as byte offsets into the playing blob (opcodes.md §7).
-   * `which` is "START" | "END" | "LEN". :pcm-len keeps the length when the
-   * start moves; :pcm-end pins the end. The write is kept for the track's
-   * next notes too, and moves the running note's end now.
+   * A POINT, as a byte offset into the playing blob (opcodes.md §7).
+   * `target` is RANGE_START / RANGE_END / RANGE_LEN (:pcm-*) or LOOP_START /
+   * LOOP_END / LOOP_LEN (:loop-*). A …_LEN keeps the length when its start
+   * moves; an …_END pins the end. The write is kept for the track's next
+   * notes too, and moves the running note's points now.
    */
-  loopParam(vi, which, value) {
+  pointParam(vi, target, value) {
     const v = this.voices[vi];
     const x = value < 0 ? 0 : value > PCM_WINDOW ? PCM_WINDOW : value;
-    if (which === "START") { v.oHasLs = true; v.oLs = x; } else { v.oKind = which; v.oBound = x; }
-    if (which === "START") {
-      v.ls = x;
-      if (!v.endFixed) v.le = v.ls + v.llen;
-    } else if (which === "END") {
-      v.le = x;
-      v.endFixed = true;
-      v.llen = v.le > v.ls ? v.le - v.ls : 0;
-    } else {
-      v.llen = x;
-      v.endFixed = false;
-      v.le = v.ls + v.llen;
-    }
+    const kind = target.endsWith("_END") ? "END" : "LEN";
+    if (target === "RANGE_START") { v.oHasRs = true; v.oRs = x; v.rs = x; }
+    else if (target === "LOOP_START") { v.oHasLs = true; v.oLs = x; v.lsSet = true; v.ls = x; }
+    else if (target.startsWith("RANGE_")) { v.oRKind = v.rKind = kind; v.oRBound = v.rBound = x; }
+    else { v.oLKind = v.lKind = kind; v.oLBound = v.lBound = x; }
     this.applyLoop(vi);
   }
 }
@@ -259,7 +256,7 @@ export class PcmIrVoices {
     this.voiceTrack = new Array(PCM_VOICES).fill(null);
   }
 
-  /** One event: {kind: on|off|retrig|vol|vel|master|loop, voice, …}. vel is
+  /** One event: {kind: on|off|retrig|vol|vel|master|point, voice, …}. vel is
    *  the score's, in steps; the voice holds it in eighths, as the driver. A
    *  retrig carries its frame's level steps as `vel` / `vol`. */
   apply(ev) {
@@ -315,8 +312,8 @@ export class PcmIrVoices {
         this.master = clamp(Number(ev.value), 31);
         seq.setMaster(this.master);
         break;
-      case "loop":
-        if (v) seq.loopParam(vi, ev.which, Number(ev.value));
+      case "point":
+        if (v) seq.pointParam(vi, ev.target, Number(ev.value));
         break;
     }
     return false;

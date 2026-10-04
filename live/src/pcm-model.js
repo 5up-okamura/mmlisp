@@ -82,9 +82,28 @@ export function pcmRangePoints(src, len, ls, le) {
 }
 
 /**
+ * What a note plays, from its four points in baked bytes of a `len`-byte
+ * blob at `src` (language.md §16): the range [rs, re) and, inside it, the
+ * loop [ls, le). They are clamped to rs ≤ ls ≤ le ≤ re within the blob. A
+ * shot — and a loop note once released — plays the range once
+ * (pcmRangePoints). A held loop note starts at the range's start, plays on to
+ * the loop's end and wraps to the loop's start (pcmLoopPoints); its release
+ * moves END to the range's end, which is the shot's END.
+ */
+export function pcmNotePoints(src, len, rs, re, ls, le, looping) {
+  const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
+  const RS = clamp(rs, 0, len), RE = clamp(re, RS, len);
+  if (!looping) return pcmRangePoints(src, len, RS, RE);
+  const LS = clamp(ls, RS, RE), LE = clamp(le, LS, RE);
+  const lp = pcmLoopPoints(src, len, LS, LE);
+  const s0 = Math.min(Math.floor(RS / PCM_BLOCK) * PCM_BLOCK, lp.loopStart);
+  return { start: (src + s0) & 0xffff, end: lp.end, wrap: lp.wrap };
+}
+
+/**
  * A loop over [ls, le) in baked bytes of a `len`-byte blob at `src`, rounded
- * so the first pass plays exactly [0, le') and every later pass [ls', le'),
- * both whole blocks:
+ * so every pass plays [ls', le'), whole blocks, after a first pass that runs
+ * from the note's start up to le':
  *
  *   le' = 16·round(le/16), within 16..len
  *   ls' = le' − 16·max(1, round((le − ls)/16)), at least 0
@@ -269,10 +288,13 @@ export class PcmLiveEngine {
 }
 
 // ── The sample bank's directory (mmb.md §10) ──────────────────────────────
-// {stamp, entries[id] = {hasLoop, base, len, srcFrames, loopStart, loopEnd}}:
-// `base` is the blob's offset in the bank, so its window address is
-// PCM_WINDOW + ((bankBase * 0x8000 + base) & 0x7fff).
+// {stamp, entries[id] = {hasRange, base, len, srcFrames, rangeStart, rangeEnd,
+// loopStart, loopEnd, loopStartSet, loopEndSet}}: `base` is the blob's offset
+// in the bank, so its window address is
+// PCM_WINDOW + ((bankBase * 0x8000 + base) & 0x7fff). A loop point the def did
+// not set follows the range (…Set false).
 export const SAMPLE_ENTRY_SIZE = 24;
+export const SAMPLE_FLAG = { range: 1 << 0, loopStart: 1 << 1, loopEnd: 1 << 2 };
 export function parsePcmBank(bank) {
   const u16 = (o) => bank[o] | (bank[o + 1] << 8);
   const u32 = (o) => (bank[o] | (bank[o + 1] << 8) | (bank[o + 2] << 16) | (bank[o + 3] << 24)) >>> 0;
@@ -281,13 +303,18 @@ export function parsePcmBank(bank) {
   const entries = [];
   for (let i = 0; i < n; i++) {
     const e = 4 + i * SAMPLE_ENTRY_SIZE;
+    const flags = bank[e + 1];
     entries[bank[e]] = {
-      hasLoop: (bank[e + 1] & 1) !== 0,
+      hasRange: (flags & SAMPLE_FLAG.range) !== 0,
       base: blobBase + u32(e + 4),
       len: u32(e + 8),
       srcFrames: u32(e + 12),
-      loopStart: u32(e + 16),
-      loopEnd: u32(e + 20),
+      rangeStart: u16(e + 16),
+      rangeEnd: u16(e + 18),
+      loopStart: u16(e + 20),
+      loopEnd: u16(e + 22),
+      loopStartSet: (flags & SAMPLE_FLAG.loopStart) !== 0,
+      loopEndSet: (flags & SAMPLE_FLAG.loopEnd) !== 0,
     };
   }
   return { stamp: u16(2), entries };

@@ -902,10 +902,19 @@ Two things a PCM voice cannot do: **bend** (a note picks a pre-baked blob, so
 and **fade smoothly** (the level ladder is 6 dB a step). Put a fade on FM or
 PSG when it has to be smooth.
 
-A note plays a **range** of its sample: `:pcm-start`, `:pcm-end` and
-`:pcm-len` take lengths — `300ms`, `16`, `6t` — on the sample def and on the
-track, and on the track they also take curves. A `shot` plays the range once
-(the tail of a crash, one word of a phrase); `:mode loop` repeats it. On a
+A note plays between four points of its sample, the way a sampler does:
+
+```
+:pcm-start ── :loop-start ════ :loop-end ── :pcm-end
+```
+
+The **range** (`:pcm-start`, `:pcm-end`, `:pcm-len`) is what a note plays: a
+`shot` plays it once — the tail of a crash, one word of a phrase. The **loop**
+(`:loop-start`, `:loop-end`, `:loop-len`) sits inside it: `:mode loop` plays
+from the range's start, repeats the loop while the note is held, and after the
+note-off runs on to the range's end — attack, sustain, release. Leave the loop
+out and it is the whole range. All six take lengths — `300ms`, `16`, `6t` — on
+the sample def and on the track, and on the track they also take curves. On a
 track they hold for the notes that follow, like any track parameter — and so
 does `:mode loop`, until a `:mode shot`.
 
@@ -914,11 +923,11 @@ while the note sounds**:
 
 ```lisp
 (pcm1 pad :mode loop :len 1
-  :pcm-len 16                                   c   ; a 16th-note loop
-  :pcm-len (linear :from 100ms :to 2ms :len 2)  c)  ; tightened to a buzz
+  :loop-len 16                                   c   ; a 16th-note loop
+  :loop-len (linear :from 100ms :to 2ms :len 2)  c)  ; tightened to a buzz
 ```
 
-The range rounds to 16 bytes (1.11 ms at one voice), which is also the shortest
+The points round to 16 bytes (1.11 ms at one voice), which is also the shortest
 loop there is — so this is a rhythmic device, not a way to play pitches.
 language.md §16 has the rest.
 

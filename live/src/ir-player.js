@@ -51,13 +51,15 @@ import {
   bpmToTickIncrement, tickIncrementToBpm,
 } from "./mmb.js";
 import { engineImage } from "./engine-images.js";
-// The largest loop point a PCM loop target can name: the bank's usable window
+// The largest point a PCM point target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
 const PCM_LOOP_MAX = 0x7f00;
 // Half a millisecond: late enough to sort after every event of its frame,
 // far too early to hear.
 const PCM_SWEEP_AFTER = 0.0005;
-const PCM_LOOP_WHICH = { LOOP_START: "START", LOOP_END: "END", LOOP_LEN: "LEN" };
+// A PCM note's points (language.md §16): its loop (:loop-*) and its range (:pcm-*).
+const PCM_POINT_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN",
+  "RANGE_START", "RANGE_END", "RANGE_LEN"]);
 
 // The curve names the driver computes as written (driver.md §8); a sweep on
 // one of these previews the driver's integer steps (_sweepAt).
@@ -2234,7 +2236,7 @@ export class IRPlayer {
         break;
       }
       case "PARAM_SWEEP":
-        if (PCM_LOOP_WHICH[(ev.args?.target ?? "").toUpperCase()])
+        if (PCM_POINT_TARGETS.has((ev.args?.target ?? "").toUpperCase()))
           this._schedulePcmLoopSweep(voice, ev, when);
         break;
       default:
@@ -2246,7 +2248,7 @@ export class IRPlayer {
     this._write({ type: "pcm-ev", when, ...fields });
   }
 
-  // A loop point, from the IR's seconds to the engine's byte offset — the
+  // A point, from the IR's seconds to the engine's byte offset — the
   // same multiply and clamp the MMB exporter applies (export-mmb.js
   // targetValue), at the rate of the image the score names.
   _pcmLoopBytes(sec) {
@@ -2261,19 +2263,19 @@ export class IRPlayer {
       this._pcmEv(when, { kind: target === "VOL" ? "vol" : "vel", voice, value });
     } else if (target === "MASTER") {
       this._applyMasterChange(value, when);
-    } else if (PCM_LOOP_WHICH[target]) {
-      this._pcmEv(when, { kind: "loop", voice, which: PCM_LOOP_WHICH[target], value: this._pcmLoopBytes(value) });
+    } else if (PCM_POINT_TARGETS.has(target)) {
+      this._pcmEv(when, { kind: "point", voice, target, value: this._pcmLoopBytes(value) });
     }
     // everything else is FM/PSG-only
   }
 
-  // A swept loop point, stepped the way the driver steps it: integer from/to
+  // A swept point, stepped the way the driver steps it: integer from/to
   // in bytes, the curve lowered to the driver's eight shapes, one value a
   // frame (mmlispseq.c process_sweep, drv-player _processSweep). The worklet's
   // voice model sends a RETARGET only when the rounded block moves.
   _schedulePcmLoopSweep(voice, ev, when) {
     const a = ev.args ?? {};
-    const which = PCM_LOOP_WHICH[(a.target ?? "").toUpperCase()];
+    const target = (a.target ?? "").toUpperCase();
     const df = this._curveFields(a, when);
     const from = this._pcmLoopBytes(df.from), to = this._pcmLoopBytes(df.to);
     const len = a.lenFrames
@@ -2291,7 +2293,7 @@ export class IRPlayer {
       // + PCM_SWEEP_AFTER: the driver steps its sweeps AFTER the frame's
       // dispatch (driver.md §4 step 3), so a sweep that starts with a note
       // moves that note's loop, not the one before it.
-      this._pcmEv(when + f / 60 + PCM_SWEEP_AFTER, { kind: "loop", voice, which, value });
+      this._pcmEv(when + f / 60 + PCM_SWEEP_AFTER, { kind: "point", voice, target, value });
       if (last) break;
     }
   }
