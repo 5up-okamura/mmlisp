@@ -8508,9 +8508,10 @@
             await new Promise((ok) => navigator.serviceWorker.addEventListener('controllerchange', ok, { once: true }));
           }
           const { cached, missing } = await precacheApp();
-          log(missing
-            ? `Offline: ${cached} files ready, ${missing} not reachable (retried next launch)`
-            : `Offline: ready (${cached} files)`, missing ? 'warn' : 'info');
+          log(missing.length
+            ? `Offline: ${cached} files ready, ${missing.length} not reachable (retried next launch): `
+              + missing.slice(0, 3).join(', ') + (missing.length > 3 ? ', …' : '')
+            : `Offline: ready (${cached} files)`, missing.length ? 'warn' : 'info');
         })
         .catch(() => {});
       if (document.readyState === 'complete') registerSw();

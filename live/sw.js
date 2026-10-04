@@ -41,24 +41,32 @@ async function put(request, response) {
   } catch (_) { /* best effort */ }
 }
 
+// Both strategies hand the cache write to event.waitUntil: answering the
+// page does not keep the worker alive, and iOS stops it right after, so a
+// write left floating was lost — the page saw the file, the cache never got
+// it, and offline it was missing.
+
 // Serve cached copy immediately when present; refresh it in the background.
-async function staleWhileRevalidate(request) {
+async function staleWhileRevalidate(event) {
+  const { request } = event;
   const cached = await caches.match(request);
   const network = fetch(request)
     .then((response) => {
-      if (response && response.ok) put(request, response.clone());
+      if (response && response.ok) event.waitUntil(put(request, response.clone()));
       return response;
     })
     .catch(() => null);
+  event.waitUntil(network);
   return cached || (await network) || Response.error();
 }
 
 // Network-first; fall back to the cached copy (and, for a page load, to any
 // cached shell) when offline.
-async function networkFirst(request) {
+async function networkFirst(event) {
+  const { request } = event;
   try {
     const response = await fetch(request);
-    if (response && response.ok) put(request, response.clone());
+    if (response && response.ok) event.waitUntil(put(request, response.clone()));
     return response;
   } catch (_) {
     return (await caches.match(request)) ||
@@ -77,7 +85,7 @@ self.addEventListener('fetch', (event) => {
   const sameOrigin = new URL(request.url).origin === self.location.origin;
   event.respondWith(
     request.mode === 'navigate' || sameOrigin
-      ? networkFirst(request)
-      : staleWhileRevalidate(request),
+      ? networkFirst(event)
+      : staleWhileRevalidate(event),
   );
 });

@@ -50,24 +50,37 @@ function references(url, text, root) {
   return out;
 }
 
-// Resolves to { cached, missing }: files now held, and files that could not
-// be fetched (offline, or gone) — the next launch tries those again.
+// Resolves to { cached, missing }: the number of files now held, and the
+// paths of those that could not be fetched (offline, or gone) — the next
+// launch tries those again.
 export async function precacheApp(root = new URL('./', location.href).href) {
   const queue = ROOTS.map((r) => [new URL(r, root).href, false]);
   const seen = new Set();
-  let cached = 0, missing = 0;
+  const missing = [];
+  const fetched = [];
+  let cached = 0;
   while (queue.length) {
     const [url, optional] = queue.shift();
     if (seen.has(url) || new URL(url).origin !== location.origin) continue;
     seen.add(url);
     try {
-      const response = (await caches.match(url)) || (await fetch(url));
-      if (!response.ok) { if (!optional) missing++; continue; }
+      let response = await caches.match(url);
+      if (!response) {
+        response = await fetch(url);
+        if (response.ok) fetched.push(url);
+      }
+      if (!response.ok) { if (!optional) missing.push(url.slice(root.length)); continue; }
       cached++;
       if (TEXT.test(new URL(url).pathname)) queue.push(...references(url, await response.text(), root));
     } catch (_) {
-      if (!optional) missing++;
+      if (!optional) missing.push(url.slice(root.length));
     }
+  }
+  // What was fetched counts only once the worker has stored it: read the
+  // cache back (after a moment for the last writes) rather than trust it.
+  if (fetched.length) await new Promise((ok) => setTimeout(ok, 1000));
+  for (const url of fetched) {
+    if (!(await caches.match(url))) { cached--; missing.push(`${url.slice(root.length)} (not stored)`); }
   }
   return { cached, missing };
 }
