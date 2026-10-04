@@ -1047,6 +1047,11 @@ MIDI, and the menu is not shown there). The choice is remembered.
   written into the score the same way. A channel plays one note: the newest
   key sounds, and letting it go returns to the one still held. Rests and ties
   stay on the on-screen buttons.
+- **Step input writes octaves relatively**, from any keyboard: a note in
+  another octave than the one in force at the cursor gets `>` / `<` (or
+  `o+N` / `o-N` for a bigger jump) in front of it — never an `:oct`. The
+  octave in force is what the score has there, `:oct`, earlier shifts and a
+  `:key` voice included. The delete button takes back a shift or a `:vel` too.
 - **`Velocity`** makes how hard a key is struck matter: the preview sounds at
   that `vel` (127 → 15), and step input writes `:vel N` whenever it changes.
   Off, every key plays at the channel's level.

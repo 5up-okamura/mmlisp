@@ -4728,6 +4728,8 @@
     const _midiCcPending = new Map();      // slider key → latest CC value, applied once per frame
     let _midiCcRaf = 0;
     let _stepLastVel = null;               // the :vel step input last wrote (MIDI Velocity)
+    let _stepOct = null;                   // octave in force after the last step
+    let _stepPos = -1;                     // where that step left the cursor
     // Physical-keyboard piano, single-row DAW layout, keyed by e.code (layout-independent).
     // Semitone offset above the base octave's C.
     const KB_PHYSICAL_LAYOUT = {
@@ -7343,15 +7345,76 @@
       return _kbPcLikeQuery.matches ? 3 : 2;
     }
 
+    // STEP INPUT WRITES THE OCTAVE RELATIVELY: before a note in another octave
+    // than the one in force at the cursor it writes `>` / `<` (or `o+N` /
+    // `o-N` for a bigger jump), never an :oct. The octave in force is asked of
+    // the compiler — a probe note is compiled at the cursor — so :oct, earlier
+    // shifts, (note …) and loops all count; it is then carried along while the
+    // cursor stays where the last step left it.
+    function stepOctaveAtCursor() {
+      const state = editorView.state;
+      const sel = state.selection.main;
+      if (_stepOct != null && sel.empty && sel.head === _stepPos) return _stepOct;
+      const doc = state.doc.toString();
+      const line = state.doc.lineAt(sel.from);
+      const col = sel.from - line.from + 2; // the probe sits after a space
+      // The probe's pitch carries the octave plus whatever a :key voice moves
+      // it by; a second probe, (note 60), carries only that move.
+      const probe = (text) => {
+        try {
+          const src = doc.slice(0, sel.from) + ' ' + text + ' ' + doc.slice(sel.to);
+          const { ir } = compileMMLisp(src, _lastFileName, { imports: _importSources });
+          for (const tr of ir?.tracks ?? []) {
+            for (const ev of tr.events ?? []) {
+              if (ev.cmd === 'NOTE_ON' && ev.src?.line === line.number && ev.src.column === col) {
+                return pitchToMidi(ev.args?.pitch ?? 'c4');
+              }
+            }
+          }
+        } catch (_) { /* not a note position: no reference */ }
+        return null;
+      };
+      const c = probe('c');
+      if (c == null) return null;
+      const shift = (probe('(note 60)') ?? 60) - 60;
+      return Math.floor((c - shift) / 12) - 1;
+    }
+
+    // `vel` (MIDI Velocity on) writes a :vel when it changes.
+    function insertStepNote(midi, vel) {
+      const oct = Math.floor(midi / 12) - 1;
+      const cur = stepOctaveAtCursor();
+      const d = cur == null ? 0 : oct - cur;
+      if (vel != null && vel !== _stepLastVel) {
+        insertStepToken(`:vel ${vel}`);
+        _stepLastVel = vel;
+      }
+      if (d === 1) insertStepToken('>');
+      else if (d === -1) insertStepToken('<');
+      else if (d) insertStepToken(`o${d > 0 ? '+' : '-'}${Math.abs(d)}`);
+      insertStepToken(midiToStepToken(midi));
+      _stepOct = oct;
+      _stepPos = editorView.state.selection.main.head;
+    }
+
+    // Rest and tie keep the octave; their step moves the cursor with it.
+    function insertStepKeepOctave(token) {
+      const carried = _stepOct != null && editorView.state.selection.main.head === _stepPos;
+      insertStepToken(token);
+      if (carried) _stepPos = editorView.state.selection.main.head;
+    }
+
     function deletePreviousStepToken() {
       const state = editorView.state;
       const pos = state.selection.main.from;
       if (pos <= 0) return;
       const before = state.doc.sliceString(0, pos);
-      const tokenMatch = before.match(/([^\s]+)\s?$/);
+      const tokenMatch = before.match(/(:vel\s+\d+)\s?$/) ?? before.match(/([^\s]+)\s?$/);
       if (!tokenMatch) return;
       const token = tokenMatch[1];
-      if (!/^([a-g](\+)?|_|~)$/i.test(token)) return;
+      if (!/^([a-g](\+)?|_|~|[<>]|o[+-]\d*|:vel\s+\d+)$/i.test(token)) return;
+      _stepOct = null; // what is left decides the octave again
+      if (token.startsWith(':vel')) _stepLastVel = null;
       const fullMatch = tokenMatch[0];
       const from = pos - fullMatch.length;
       editorView.dispatch({
@@ -7484,7 +7547,7 @@
 
         startPreviewNote(target.chIndex, midi);
         if (_stepInputEnabled) {
-          insertStepToken(midiToStepToken(midi));
+          insertStepNote(midi);
         }
 
         btn.classList.add('down');
@@ -7549,6 +7612,7 @@
       recBtn?.addEventListener('click', () => {
         _stepInputEnabled = !_stepInputEnabled;
         _stepLastVel = null;
+        _stepOct = null;
         recBtn.classList.toggle('active', _stepInputEnabled);
         updateKeyboardUiState();
       });
@@ -7558,11 +7622,11 @@
       });
       restBtn?.addEventListener('click', () => {
         if (!_stepInputEnabled) return;
-        insertStepToken('_');
+        insertStepKeepOctave('_');
       });
       tieBtn?.addEventListener('click', () => {
         if (!_stepInputEnabled) return;
-        insertStepToken('~');
+        insertStepKeepOctave('~');
       });
       octDownBtn?.addEventListener('click', () => {
         if (_kbBaseOctave <= KB_MIN_BASE_OCT) return;
@@ -7640,7 +7704,7 @@
 
       ensurePreviewDefApplied(target);
       startPreviewNote(target.chIndex, midi);
-      if (_stepInputEnabled) insertStepToken(midiToStepToken(midi));
+      if (_stepInputEnabled) insertStepNote(midi);
     }
 
     function onPhysicalKeyUp(e) {
@@ -7771,16 +7835,12 @@
       held.push(entry);
       _midiHeld.set(target.chIndex, held);
       if (!(await initAudio())) return;
-      if (!_midiHeld.get(target.chIndex)?.includes(entry)) return; // released during init
-      ensurePreviewDefApplied(target);
-      startPreviewNote(target.chIndex, note, vel);
-      if (_stepInputEnabled) {
-        if (vel != null && vel !== _stepLastVel) {
-          insertStepToken(`:vel ${vel}`);
-          _stepLastVel = vel;
-        }
-        insertStepToken(midiToStepToken(note));
+      // A key let go while audio was starting is not sounded, but still written.
+      if (_midiHeld.get(target.chIndex)?.includes(entry)) {
+        ensurePreviewDefApplied(target);
+        startPreviewNote(target.chIndex, note, vel);
       }
+      if (_stepInputEnabled) insertStepNote(note, vel);
     }
 
     function onMidiNoteOff(note) {
