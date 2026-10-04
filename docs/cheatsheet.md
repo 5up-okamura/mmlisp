@@ -105,7 +105,10 @@ and a hold carry a note into the next.
 Naming a voice or sample in a track body switches to it. Preset sets:
 `presets/gm` (gm-piano … gm-gunshot), `presets/waveforms` (wave-sine,
 acid-saw, …), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5` and
-`gm-drums` (PCM kits: kick, snare, hat, …), and `presets/fm-drums` (FM drums
+`gm-drums` (PCM kits: kick, snare, hat, …), `presets/orch` (PCM
+orchestral sounds: orch-hit, timpani, …), `presets/sfx` (PCM voices and
+effects: hey, glass, zap, …), `presets/band` (PCM guitar and bass:
+guitar, guitar-down, bass-finger, …), and `presets/fm-drums` (FM drums
 on an fm track: fm-kick, fm-snare, fm-hat, … and fm-analog-kick, fm-elec-tom1,
 fm-symph-snare, … — `:key` voices: at `:oct 4`, `c` is the drum as tuned, and
 other notes retune it), and `presets/envelopes` (macros that shape a PSG

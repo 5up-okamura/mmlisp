@@ -167,7 +167,46 @@ Licenses dialog links it.
 - Source: https://github.com/MckAudio/MckSamplePacks (`RX5/`).
 - Recorded by MckAudio from a Yamaha RX5 with a ZOOM U-24.
 - License: CC0-1.0, preserved in `presets/rx5/LICENSE-CC0.txt`.
-- Included: 35 GM-numbered WAVs in `presets/rx5/`, converted to 22,050 Hz /
+- Included: 36 GM-numbered WAVs in `presets/rx5/`, converted to 22,050 Hz /
   16-bit mono; two toms are pitched down from one source.
 - Conversion: resampling, leading-silence trim, half-cosine-faded tails, and
   peak normalization.
+
+## Orchestral, effect, guitar and bass samples
+
+- Source: https://freesound.org/people/druidbloke/sounds/165599/ (A
+  recreation of the classic 80s orchestral stab),
+  https://github.com/MckAudio/MckSamplePacks (`RX5/MISC`, `RX5/PERC`), and
+  https://github.com/sgossner/VSCO-2-CE (Versilian Studios Chamber Orchestra
+  2 Community Edition).
+- Made by druidbloke as a recreation of the Fairlight ORCH5 stab; recorded by
+  MckAudio from a Yamaha RX5; recorded by Versilian Studios.
+- License: CC0-1.0, preserved in `presets/orch/LICENSE-CC0.txt`,
+  `presets/sfx/LICENSE-CC0.txt` and `presets/band/LICENSE-CC0.txt`.
+- Included: in `presets/orch/wav/`, `orch-hit.wav` (druidbloke),
+  `orch-hit2.wav` and `timpani.wav` (RX5) and `pizz.wav` (VSCO); in
+  `presets/sfx/wav/`, six RX5 voices and effects; in
+  `presets/band/wav/`, nine RX5 guitar and bass notes; all converted to
+  22,050 Hz / 16-bit mono.
+- Conversion: MP3 decode (orch-hit), resampling, a cut with a half-cosine
+  fade, and peak normalization.
+
+## Zap sample
+
+- Source: https://freesound.org/s/751110/ (Hiphop - Zap Lock Loop).
+- Made by kontraamusic.
+- License: CC BY 4.0, preserved in `presets/sfx/LICENSE-CC-BY-4.0.txt`.
+  Attribution: "Zap by kontraamusic (freesound.org), CC BY 4.0".
+- Included: the loop's first hit as `presets/sfx/wav/zap.wav`, converted to
+  22,050 Hz / 16-bit mono.
+- Conversion: channel mix, resampling, a cut to 0.15 s with a half-cosine
+  fade, and peak normalization.
+
+## Zap 2 sample
+
+- Source: https://freesound.org/s/82529/ (ROBO KISS).
+- Made by zgump.
+- License: CC0-1.0, preserved in `presets/sfx/LICENSE-CC0.txt`.
+- Included: `presets/sfx/wav/zap2.wav`, converted to 22,050 Hz / 16-bit mono.
+- Conversion: channel mix, resampling, a short end fade, and peak
+  normalization.

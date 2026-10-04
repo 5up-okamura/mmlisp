@@ -1,0 +1,8 @@
+; Orchestral PCM: hits, drums and strings only a sample can make. See
+; README.md for provenance and licence. The hits and timpani play as
+; recorded on c4; pizz plays the pitch written (it is a C5).
+
+(def-pcm orch-hit :file "wav/orch-hit.wav")
+(def-pcm orch-hit2 :file "wav/orch-hit2.wav")
+(def-pcm timpani :file "wav/timpani.wav")
+(def-pcm pizz :file "wav/pizz.wav" :rate 11025)

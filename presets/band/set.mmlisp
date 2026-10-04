@@ -1,0 +1,13 @@
+; Guitar and bass PCM from a Yamaha RX5. See README.md for provenance and
+; licence. Each note plays the pitch written (:rate tunes c4 to C4); the
+; strums are a G major chord and play as recorded on c4.
+
+(def-pcm guitar :file "wav/guitar.wav" :rate 44100)
+(def-pcm guitar-5th :file "wav/guitar-5th.wav" :rate 44100)
+(def-pcm guitar-down :file "wav/guitar-down.wav")
+(def-pcm guitar-up :file "wav/guitar-up.wav")
+(def-pcm bass-elec :file "wav/bass-elec.wav" :rate 88200)
+(def-pcm bass-elec-hi :file "wav/bass-elec-hi.wav" :rate 44100)
+(def-pcm bass-finger :file "wav/bass-finger.wav" :rate 104888)
+(def-pcm bass-pick :file "wav/bass-pick.wav" :rate 88200)
+(def-pcm bass-syn :file "wav/bass-syn.wav" :rate 88200)

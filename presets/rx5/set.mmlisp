@@ -37,3 +37,4 @@
 (def-pcm maracas :file "wav/070-maracas.wav")
 (def-pcm whistle :file "wav/071-short-whistle.wav")
 (def-pcm cuica :file "wav/079-open-cuica.wav")
+(def-pcm castanets :file "wav/085-castanets.wav")

@@ -16,6 +16,9 @@ Voices and PCM samples live in their own sets under `presets/`:
 [tr808](../presets/tr808/README.md), [tr909](../presets/tr909/README.md),
 [cr78](../presets/cr78/README.md), [dr220](../presets/dr220/README.md),
 [dx](../presets/dx/README.md), [rx5](../presets/rx5/README.md),
-[gm-drums](../presets/gm-drums/README.md), the FM drums
+[gm-drums](../presets/gm-drums/README.md), the orchestral samples
+[orch](../presets/orch/README.md), the voices and effects
+[sfx](../presets/sfx/README.md), the guitar and bass
+[band](../presets/band/README.md), the FM drums
 [fm-drums](../presets/fm-drums/README.md), and the PSG's envelopes
 [envelopes](../presets/envelopes/README.md).

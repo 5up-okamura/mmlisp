@@ -1,0 +1,11 @@
+; Sound effects and voices: PCM only a sample can make. See README.md for
+; provenance and licence. Each plays as recorded on c; other notes retune it.
+
+(def-pcm hey :file "wav/hey.wav")
+(def-pcm wao :file "wav/wao.wav")
+(def-pcm ooo :file "wav/ooo.wav")
+(def-pcm glass :file "wav/glass.wav")
+(def-pcm gun :file "wav/gun.wav")
+(def-pcm door :file "wav/door.wav")
+(def-pcm zap :file "wav/zap.wav")
+(def-pcm zap2 :file "wav/zap2.wav")
