@@ -95,6 +95,32 @@
           <span>Follow Playback</span>
           <span class="menu-item-shortcut" id="followCheck"></span>
         </button>
+        <div class="menu-wrap submenu-wrap" id="menuMMLispMidi" hidden>
+          <button class="menu-item" onclick="toggleSubmenu('menuMMLispMidi')">
+            <span>MIDI</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown">
+            <button class="menu-item" onclick="toggleMidi();closeMenus()"
+                    title="Play the preview from a MIDI keyboard (and step-input with it while REC is on). Every connected input listens.">
+              <span>MIDI Input</span>
+              <span class="menu-item-shortcut" id="midiCheck"></span>
+            </button>
+            <button class="menu-item" onclick="toggleMidiVelocity();closeMenus()"
+                    title="A key's velocity sets the preview's :vel, and step input writes :vel when it changes">
+              <span>Velocity</span>
+              <span class="menu-item-shortcut" id="midiVelocityCheck"></span>
+            </button>
+            <button class="menu-item" onclick="toggleMidiLearn();closeMenus()"
+                    title="Click a panel slider, then move a knob: that CC drives the slider. Delete removes the selected slider's CC; Esc ends.">
+              <span>MIDI Learn</span>
+              <span class="menu-item-shortcut" id="midiLearnCheck"></span>
+            </button>
+            <button class="menu-item" onclick="clearMidiAssignments();closeMenus()">
+              <span>Clear CC Assignments</span>
+            </button>
+          </div>
+        </div>
         <button class="menu-item" id="fontSizeItem" onclick="openFontSizePopup()">
           <span>Font Size</span>
           <span class="menu-item-shortcut" id="fontSizeValue"></span>
@@ -590,6 +616,7 @@
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { precacheApp } from './src/offline-cache.js';
+    import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey } from './src/import-fm-voices.js';
 
     // -----------------------------------------------------------------------
@@ -4690,6 +4717,17 @@
     let _lastPreviewMidi = 60;             // last previewed pitch (initial C4 = MIDI 60)
     let _algPreviewTimer = null;           // fixed-gate timer for the algorithm-diagram tap preview
     const PREVIEW_GATE_MS = 600;           // tap-preview note length (long enough to hear sustain/release)
+    // MIDI input (src/midi-input.js). Set up by initMidi() once prefs exist.
+    let _midi = null;                      // createMidiInput(), made on first enable
+    let _midiVelocity = false;             // key velocity → preview :vel and step input
+    let _midiLearn = false;                // MIDI Learn: click a slider, move a knob
+    let _midiLearnTarget = null;           // the slider the next CC is assigned to
+    let _midiCcMap = {};                   // "ch:cc" → slider key (pref 'midiCc')
+    let _midiDevices = '';                 // last logged device list
+    const _midiHeld = new Map();           // chIndex → held keys, oldest first: [{ note, vel }]
+    const _midiCcPending = new Map();      // slider key → latest CC value, applied once per frame
+    let _midiCcRaf = 0;
+    let _stepLastVel = null;               // the :vel step input last wrote (MIDI Velocity)
     // Physical-keyboard piano, single-row DAW layout, keyed by e.code (layout-independent).
     // Semitone offset above the base octave's C.
     const KB_PHYSICAL_LAYOUT = {
@@ -4903,9 +4941,11 @@
         wrap.innerHTML =
           `<div class="knob-label">${v.name} <span class="val" id="dynval-${v.name}">${cur}</span></div>` +
           `<input type="range" min="${v.min}" max="${v.max}" step="${v.step ?? 1}" value="${cur}"${rtl} ` +
+          `data-midi-key="val:${v.name}" ` +
           `oninput="onDynParam('${v.name}', this)">`;
         body.appendChild(wrap);
       }
+      refreshMidiBadges();
     }
 
     function onDynParam(name, el) {
@@ -7138,7 +7178,9 @@
       };
     }
 
-    function previewPsgNoteOn(chIndex, midi) {
+    // `vel` (0-15) is given only by a MIDI keyboard with Velocity on; without
+    // it a preview plays at the level the channel already has.
+    function previewPsgNoteOn(chIndex, midi, vel) {
       if (!player || typeof player._psgSetAtt !== 'function') return;
       const psgCh = chIndex - 6;
       const when = audioCtx?.currentTime;
@@ -7148,7 +7190,7 @@
         player._psgSetPitch(psgCh, midi, when);
       }
       // 0 = loudest attenuation, 15 = silent
-      player._psgSetAtt(psgCh, 0, when);
+      player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(vel, VOL_UNITY, VOL_UNITY), when);
     }
 
     function previewPsgNoteOff(chIndex) {
@@ -7157,8 +7199,10 @@
       player._psgSetAtt(psgCh, 15, audioCtx?.currentTime);
     }
 
-    function previewFmNoteOn(chIndex, midi) {
+    function previewFmNoteOn(chIndex, midi, vel) {
       const { fnum, block } = midiToFnumBlock(midi);
+      // The carriers' TL at this velocity, composed as a note's would be.
+      if (vel != null && player) player._writeFmLevel(chIndex, audioCtx?.currentTime, { vel });
       const { port, chOffset } = fmPortAndOffset(chIndex);
       const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
       const low = fnum & 0xff;
@@ -7183,20 +7227,20 @@
       writeToWorklet(0, 0x28, chKey);
     }
 
-    function previewNoteOn(chIndex, midi) {
+    function previewNoteOn(chIndex, midi, vel) {
       if (!workletNode) return;
-      if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOn(midi); return; }
+      if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOn(midi, vel); return; }
 
       // Keep FM preview deterministic by ensuring default regs/state exist.
       // PSG path already does this, so do the same before FM preview writes.
       initParamOnlyPlayer();
 
       if (isPsgPreviewChannel(chIndex)) {
-        previewPsgNoteOn(chIndex, midi);
+        previewPsgNoteOn(chIndex, midi, vel);
         return;
       }
 
-      previewFmNoteOn(chIndex, midi);
+      previewFmNoteOn(chIndex, midi, vel);
     }
 
     function previewNoteOff(chIndex) {
@@ -7220,7 +7264,7 @@
     // Play or Build puts the score's bank back.
     let _pcmAuditionSeq = 0;
     let _pcmReleasedSeq = 0;
-    async function previewPcmNoteOn(midi) {
+    async function previewPcmNoteOn(midi, vel = 15) {
       const name = _pcmCursorDef;
       if (!name) return;
       if (_fmLiveRaf != null) {
@@ -7244,7 +7288,7 @@
         });
         workletNode.port.postMessage({
           type: 'pcm-ev', kind: 'on', voice: 0, track: 0, sample: name, midi,
-          mode: loop ? 'loop' : 'shot', vel: 15,
+          mode: loop ? 'loop' : 'shot', vel,
         });
       } catch (e) {
         log('PCM audition: ' + e.message, 'err');
@@ -7258,9 +7302,9 @@
 
     // Single entry point for note-on so every preview surface (on-screen keyboard,
     // physical keyboard, algorithm-diagram tap) records the last-played pitch.
-    function startPreviewNote(chIndex, midi) {
+    function startPreviewNote(chIndex, midi, vel) {
       _lastPreviewMidi = midi;
-      previewNoteOn(chIndex, Math.max(0, Math.min(127, midi + previewKeyShift(chIndex))));
+      previewNoteOn(chIndex, Math.max(0, Math.min(127, midi + previewKeyShift(chIndex))), vel);
     }
 
     // A `:key` voice under the cursor moves what the keys play as the compiler
@@ -7504,6 +7548,7 @@
 
       recBtn?.addEventListener('click', () => {
         _stepInputEnabled = !_stepInputEnabled;
+        _stepLastVel = null;
         recBtn.classList.toggle('active', _stepInputEnabled);
         updateKeyboardUiState();
       });
@@ -7637,6 +7682,241 @@
         previewNoteOff(target.chIndex);
         _algPreviewTimer = null;
       }, PREVIEW_GATE_MS);
+    }
+
+    // -----------------------------------------------------------------------
+    // MIDI input: a keyboard plays where the on-screen keyboard plays (the
+    // same target, the same step input); a knob drives the panel slider MIDI
+    // Learn assigned it — an FM parameter writes where the panel writes (the
+    // selected channel, or the def under the cursor), a def-val slider moves
+    // its slot. Assignments are this browser's (pref 'midiCc'), never the
+    // score's: they describe the hardware on the desk, not the music.
+    // -----------------------------------------------------------------------
+    function initMidi() {
+      document.getElementById('menuMMLispMidi').hidden = !midiSupported;
+      if (!midiSupported) return;
+      _midiVelocity = loadPref('midiVelocity', 'off') === 'on';
+      const map = loadPref('midiCc', {});
+      _midiCcMap = map && typeof map === 'object' ? map : {};
+      updateMidiChecks();
+      refreshMidiBadges();
+      const panel = document.getElementById('rightPanel');
+      panel?.addEventListener('pointerdown', onMidiLearnPointerDown, true);
+      panel?.addEventListener('click', (e) => {
+        if (_midiLearn && e.target.closest('.knob-wrap')) { e.preventDefault(); e.stopPropagation(); }
+      }, true);
+      document.addEventListener('keydown', onMidiLearnKeyDown);
+      if (loadPref('midi', 'off') === 'on') enableMidi();
+    }
+
+    function updateMidiChecks() {
+      const set = (id, on) => { const el = document.getElementById(id); if (el) el.textContent = on ? '✓' : ''; };
+      set('midiCheck', !!_midi?.enabled);
+      set('midiVelocityCheck', _midiVelocity);
+      set('midiLearnCheck', _midiLearn);
+    }
+
+    async function enableMidi() {
+      _midi ??= createMidiInput({
+        noteOn: onMidiNoteOn,
+        noteOff: onMidiNoteOff,
+        cc: onMidiCc,
+        devices: (names) => {
+          const list = names.join(', ');
+          if (list === _midiDevices) return;
+          _midiDevices = list;
+          log(`MIDI: ${list || 'no input connected'}`, 'info');
+        },
+      });
+      try {
+        await _midi.enable();
+      } catch (e) {
+        log('MIDI: access refused (' + (e?.message || e) + ')', 'err');
+        savePref('midi', 'off');
+      }
+      updateMidiChecks();
+    }
+
+    function toggleMidi() {
+      if (_midi?.enabled) {
+        _midi.disable();
+        releaseAllMidiNotes();
+        if (_midiLearn) toggleMidiLearn();
+        savePref('midi', 'off');
+        updateMidiChecks();
+        return;
+      }
+      savePref('midi', 'on');
+      initAudio(); // the menu click is the user gesture audio needs; a MIDI key is not one
+      enableMidi();
+    }
+    window.toggleMidi = toggleMidi;
+
+    function toggleMidiVelocity() {
+      _midiVelocity = !_midiVelocity;
+      _stepLastVel = null;
+      savePref('midiVelocity', _midiVelocity ? 'on' : 'off');
+      updateMidiChecks();
+    }
+    window.toggleMidiVelocity = toggleMidiVelocity;
+
+    // A channel plays one note: the newest held key sounds, and letting it go
+    // falls back to the one held before it (legato), as a mono synth does.
+    async function onMidiNoteOn(note, vel127) {
+      const target = getKeyboardTargetContext();
+      if (!target) return;
+      const vel = _midiVelocity ? midiVelToVel(vel127) : undefined;
+      const held = (_midiHeld.get(target.chIndex) ?? []).filter((k) => k.note !== note);
+      const entry = { note, vel };
+      held.push(entry);
+      _midiHeld.set(target.chIndex, held);
+      if (!(await initAudio())) return;
+      if (!_midiHeld.get(target.chIndex)?.includes(entry)) return; // released during init
+      ensurePreviewDefApplied(target);
+      startPreviewNote(target.chIndex, note, vel);
+      if (_stepInputEnabled) {
+        if (vel != null && vel !== _stepLastVel) {
+          insertStepToken(`:vel ${vel}`);
+          _stepLastVel = vel;
+        }
+        insertStepToken(midiToStepToken(note));
+      }
+    }
+
+    function onMidiNoteOff(note) {
+      for (const [chIndex, held] of _midiHeld) {
+        const i = held.findIndex((k) => k.note === note);
+        if (i < 0) continue;
+        const wasSounding = i === held.length - 1;
+        held.splice(i, 1);
+        if (!wasSounding) continue;
+        const prev = held[held.length - 1];
+        if (prev) startPreviewNote(chIndex, prev.note, prev.vel);
+        else previewNoteOff(chIndex);
+      }
+    }
+
+    function releaseAllMidiNotes() {
+      for (const chIndex of _midiHeld.keys()) previewNoteOff(chIndex);
+      _midiHeld.clear();
+    }
+
+    // ---- CC → panel sliders ----
+    function midiSliderKey(el) {
+      return el.dataset.midiKey || el.id;
+    }
+    function midiSliderByKey(key) {
+      return document.querySelector(`#rightPanel input[type=range][data-midi-key="${CSS.escape(key)}"]`)
+        || document.getElementById(key);
+    }
+    function midiSliderName(el) {
+      const label = el.closest('.knob-wrap')?.querySelector('.knob-label')?.firstChild?.textContent.trim() ?? midiSliderKey(el);
+      const op = el.id.match(/^sl-op(\d)-/);
+      return op ? `OP${op[1]} ${label}` : label;
+    }
+    function midiCcLabel(id) {
+      const [ch, num] = id.split(':').map(Number);
+      return ch ? `CC${num}/${ch + 1}` : `CC${num}`;
+    }
+
+    function onMidiCc(num, value, ch) {
+      const id = `${ch}:${num}`;
+      if (_midiLearn && _midiLearnTarget) {
+        const key = midiSliderKey(_midiLearnTarget);
+        for (const k in _midiCcMap) if (_midiCcMap[k] === key) delete _midiCcMap[k];
+        _midiCcMap[id] = key;
+        savePref('midiCc', _midiCcMap);
+        log(`MIDI Learn: ${midiCcLabel(id)} → ${midiSliderName(_midiLearnTarget)}`, 'info');
+        setMidiLearnTarget(null);
+        refreshMidiBadges();
+        return;
+      }
+      const key = _midiCcMap[id];
+      if (!key) return;
+      // A knob sends far more often than a frame: only the latest value of
+      // each slider is applied, once per frame (an FM slider in def mode
+      // rewrites the source on every input).
+      _midiCcPending.set(key, value);
+      _midiCcRaf ||= requestAnimationFrame(flushMidiCc);
+    }
+
+    function flushMidiCc() {
+      _midiCcRaf = 0;
+      for (const [key, value] of _midiCcPending) {
+        const el = midiSliderByKey(key);
+        if (!el || el.disabled) continue;
+        const v = ccToSliderValue(value, Number(el.min), Number(el.max),
+          Number(el.step) || 1, getComputedStyle(el).direction === 'rtl');
+        if (Number(el.value) === v) continue;
+        el.value = String(v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      _midiCcPending.clear();
+    }
+
+    // The CC a slider answers to, shown in its label.
+    function refreshMidiBadges() {
+      document.querySelectorAll('#rightPanel .midi-cc').forEach((b) => b.remove());
+      for (const id in _midiCcMap) {
+        const label = midiSliderByKey(_midiCcMap[id])?.closest('.knob-wrap')?.querySelector('.knob-label');
+        if (!label) continue;
+        const badge = document.createElement('span');
+        badge.className = 'midi-cc';
+        badge.textContent = midiCcLabel(id);
+        label.insertBefore(badge, label.querySelector('.val'));
+      }
+    }
+
+    function clearMidiAssignments() {
+      _midiCcMap = {};
+      savePref('midiCc', _midiCcMap);
+      refreshMidiBadges();
+      log('MIDI: CC assignments cleared', 'info');
+    }
+    window.clearMidiAssignments = clearMidiAssignments;
+
+    // ---- MIDI Learn ----
+    function toggleMidiLearn() {
+      _midiLearn = !_midiLearn;
+      document.body.classList.toggle('midi-learn', _midiLearn);
+      setMidiLearnTarget(null);
+      updateMidiChecks();
+      if (_midiLearn) {
+        if (!_midi?.enabled) toggleMidi();
+        log('MIDI Learn: click a slider, then move a knob (Delete unassigns, Esc ends)', 'info');
+      }
+    }
+    window.toggleMidiLearn = toggleMidiLearn;
+
+    function setMidiLearnTarget(el) {
+      _midiLearnTarget?.closest('.knob-wrap')?.classList.remove('midi-learn-target');
+      _midiLearnTarget = el;
+      el?.closest('.knob-wrap')?.classList.add('midi-learn-target');
+    }
+
+    // While learning, a slider is picked, not moved: the press is taken before
+    // the slider (or the touch drag, or the value popup) sees it.
+    function onMidiLearnPointerDown(e) {
+      if (!_midiLearn) return;
+      const el = e.target.closest('.knob-wrap')?.querySelector('input[type=range]');
+      if (!el) return;
+      e.preventDefault();
+      e.stopPropagation();
+      document.activeElement?.blur(); // so Delete reaches the learn, not the editor
+      setMidiLearnTarget(el === _midiLearnTarget ? null : el);
+    }
+
+    function onMidiLearnKeyDown(e) {
+      if (!_midiLearn) return;
+      if (e.key === 'Escape') {
+        toggleMidiLearn();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && _midiLearnTarget && !isEditableTargetFocused()) {
+        e.preventDefault();
+        const key = midiSliderKey(_midiLearnTarget);
+        for (const k in _midiCcMap) if (_midiCcMap[k] === key) delete _midiCcMap[k];
+        savePref('midiCc', _midiCcMap);
+        refreshMidiBadges();
+      }
     }
 
     function fmParamToDefKey(paramName) {
@@ -8484,6 +8764,7 @@
     }
 
     initKeyboardControls();
+    initMidi();
     initFileDrop();
 
     // Restore persisted visualizer selection.

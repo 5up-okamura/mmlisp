@@ -1036,6 +1036,29 @@ the same popup as a panel value — anywhere from 8 to 96, so it can go large fo
 projector or a recording. It is remembered. On touch screens the text never
 goes below 16 px (smaller makes iOS zoom in when you tap the editor).
 
+### A MIDI keyboard and knobs
+
+`MMLisp > MIDI > MIDI Input` listens to every connected MIDI input (Chrome,
+Edge and Firefox; Safari, and so every iPad and iPhone browser, has no Web
+MIDI, and the menu is not shown there). The choice is remembered.
+
+- **Keys** play where the on-screen keyboard plays — the selected channel, or
+  the voice under the cursor — and with the step-input button (●) on they are
+  written into the score the same way. A channel plays one note: the newest
+  key sounds, and letting it go returns to the one still held. Rests and ties
+  stay on the on-screen buttons.
+- **`Velocity`** makes how hard a key is struck matter: the preview sounds at
+  that `vel` (127 → 15), and step input writes `:vel N` whenever it changes.
+  Off, every key plays at the channel's level.
+- **`MIDI Learn`** assigns knobs to the panel's sliders: click a slider (it
+  is picked, not moved), then turn a knob. The slider shows its CC
+  (`CC74`, or `CC74/2` on MIDI channel 2), and the knob then moves it across
+  its whole range. An FM parameter writes where the slider writes — the
+  selected channel live, or the `def-fm` under the cursor in the source — so
+  no `def-val` is needed; a Dynamic Parameters slider moves its slot. `Delete`
+  unassigns the picked slider, `Esc` ends. `Clear CC Assignments` removes them
+  all. Assignments belong to this browser, not to the score.
+
 ---
 
 ## 23. Dragging files into the live app
