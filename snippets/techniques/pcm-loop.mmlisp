@@ -1,0 +1,11 @@
+; A held PCM note can loop part of its sample. :mode loop plays up to
+; :loop-end, repeats [:loop-start, :loop-end) while held, then plays out the
+; tail. On a track the points move while the note sounds, even as curves:
+; tighten the loop to a buzz, then slide it through the sample.
+(import "presets/sfx/set.mmlisp")
+
+(pcm1 ooo :mode loop :len 1
+  :loop-start 50ms :loop-len 16                    c  ; a 16th-note loop
+  :loop-len (linear :from 100ms :to 2ms :len 1)    c  ; tighten it to a buzz
+  :loop-len 60ms
+  :loop-start (linear :from 20ms :to 200ms :len 1) c c) ; slide it through
