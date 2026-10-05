@@ -148,12 +148,19 @@
           <span>Open…</span>
           <span class="menu-item-shortcut" id="openFileShortcut"></span>
         </button>
+        <div class="menu-wrap submenu-wrap" id="menuOpenRecent" hidden>
+          <button class="menu-item" onclick="toggleSubmenu('menuOpenRecent')">
+            <span>Open Recent</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown" id="recentList"></div>
+        </div>
         <button class="menu-item" onclick="openBrowse();closeMenus()"
                 title="What the app ships: the preset voice/sample sets, the example scores and the snippets. Preview a voice or play a score, insert it, or open it.">
           <span>Browse…</span>
         </button>
         <button class="menu-item" onclick="openFolder();closeMenus()"
-                title="Open a score's folder so its relative :file samples (wav next to the score) load. Session-scoped: reopen after a reload. Chrome blocks Desktop/Documents themselves; use a subfolder.">
+                title="Open a score's folder so its relative :file samples (wav next to the score) load. After a reload, Open Recent brings a score back with its folder. Chrome blocks Desktop/Documents themselves; use a subfolder.">
           <span>Open Folder…</span>
           <span class="menu-item-shortcut" id="sourceDirLabel"></span>
         </button>
@@ -646,6 +653,7 @@
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
+    import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess } from './src/recent-files.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey } from './src/import-fm-voices.js';
 
     // -----------------------------------------------------------------------
@@ -3626,7 +3634,7 @@
     // Source folder (File > Open Folder…): the base a score's relative `:file`
     // sample paths resolve against. Deliberately session-scoped — a reload
     // starts clean rather than silently resolving samples against a folder from
-    // some earlier sitting.
+    // some earlier sitting; File > Open Recent brings one back on request.
     let _sourceDir = null;
     let _sourceDirScores = []; // .mmlisp handles in _sourceDir, for the File menu
     let _unsavedSamplePathWarned = false;
@@ -3938,6 +3946,7 @@
       _lastGoodIR = null;
       _lastSourceMap = null;
       setEditorDoc(src);
+      if (handle) rememberRecent(handle);
       await refreshImportsAndCompile();
     }
 
@@ -4072,6 +4081,99 @@
           closeMenus();
         };
         list.appendChild(b);
+      });
+    }
+
+    // ---- File > Open Recent (src/recent-files.js) ----
+    let _recent = [];
+
+    // A score inside the open folder is remembered with it, so reopening it
+    // restores the folder (and with it the samples).
+    async function rememberRecent(handle) {
+      if (!recentSupported) return;
+      let dir = null;
+      try { if (_sourceDir && (await _sourceDir.resolve(handle))) dir = _sourceDir; } catch (_) {}
+      _recent = await addRecent(handle, dir);
+      renderRecent();
+    }
+
+    function renderRecent() {
+      const wrap = document.getElementById('menuOpenRecent');
+      const list = document.getElementById('recentList');
+      if (!wrap || !list) return;
+      wrap.hidden = !recentSupported;
+      list.innerHTML = '';
+      const item = (label, hint, onclick) => {
+        const b = document.createElement('button');
+        b.className = 'menu-item';
+        const name = document.createElement('span');
+        name.textContent = label;
+        const mark = document.createElement('span');
+        mark.className = 'menu-item-shortcut';
+        mark.textContent = hint;
+        b.append(name, mark);
+        b.onclick = () => { closeMenus(); onclick(); };
+        list.appendChild(b);
+        return b;
+      };
+      if (!_recent.length) {
+        item('No Recent Scores', '', () => {}).disabled = true;
+        return;
+      }
+      for (const entry of _recent) item(entry.file.name, entry.dir ? entry.dir.name + '/' : '', () => openRecent(entry));
+      const sep = document.createElement('div');
+      sep.className = 'menu-sep';
+      list.appendChild(sep);
+      item('Clear Menu', '', async () => { _recent = await clearRecent(); renderRecent(); });
+    }
+
+    // The click is the gesture the browser needs to ask for access again; the
+    // folder is asked first, since its grant covers the score inside it.
+    async function openRecent(entry) {
+      try {
+        const dirOk = entry.dir ? await ensureReadAccess(entry.dir) : false;
+        if (!(await ensureReadAccess(entry.file))) {
+          log(`No access to ${entry.file.name}`, 'err');
+          return;
+        }
+        if (dirOk) {
+          if (!(_sourceDir && (await _sourceDir.isSameEntry(entry.dir)))) {
+            setSourceDir(entry.dir);
+            await refreshFolderScores();
+          }
+        } else if (_sourceDir && !(await _sourceDir.resolve(entry.file))) {
+          clearSourceDir();
+        }
+        await readFileHandle(entry.file);
+        renderFolderScores();
+        log(`Opened ${entry.file.name}` + (dirOk ? ` (folder ${entry.dir.name})` : ''), 'info');
+      } catch (e) {
+        // Moved, renamed or deleted since: it is no longer that score.
+        log(`Could not open ${entry.file.name}: ${e.message}`, 'err');
+        _recent = await removeRecent(entry.file);
+        renderRecent();
+      }
+    }
+
+    async function initRecent() {
+      if (!recentSupported) return;
+      _recent = await loadRecent();
+      renderRecent();
+    }
+
+    // A .mmlisp opened from the Finder / Explorer with the installed app
+    // (manifest file_handlers) arrives here, in a window of its own.
+    function initLaunchQueue() {
+      if (!('launchQueue' in window)) return;
+      window.launchQueue.setConsumer(async ({ files }) => {
+        const handle = files?.[0];
+        if (!handle || handle.kind !== 'file') return;
+        try {
+          await openScoreHandle(handle);
+          log(`Opened ${handle.name}`, 'info');
+        } catch (e) {
+          log(`Could not open ${handle.name}: ${e.message}`, 'err');
+        }
       });
     }
 
@@ -4348,6 +4450,7 @@
       await writable.close();
       setSourceContextFromHandle(handle);
       log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
+      rememberRecent(handle);
       await offerMucomPcmWav(handle);
     }
 
@@ -9123,6 +9226,8 @@
 
     initKeyboardControls();
     initMidi();
+    initRecent();
+    initLaunchQueue();
     initFileDrop();
 
     // Restore persisted visualizer selection.

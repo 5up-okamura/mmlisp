@@ -28,6 +28,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `synth-md.js`, `scope-trigger.js` | Chip wiring for the browser, and the oscilloscope's trigger           |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
+| `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB |
 | `midi-input.js`                | Web MIDI: keys play/step-input the preview, CCs drive panel sliders (MIDI Learn) |
 | `ai-bridge.js`                  | Tools > Connect to AI: the page's end of the link to the MCP server (`tools/mcp/`) |
 | `live/api/` (Vercel functions)  | Short share links: `/api/share` stores a score, `/s/<id>` opens it (Upstash Redis) |
