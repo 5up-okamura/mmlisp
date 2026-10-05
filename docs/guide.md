@@ -1075,6 +1075,20 @@ MIDI, and the menu is not shown there). The choice is remembered.
 
 ---
 
+### Reopening scores
+
+`File > Open Recent` lists the last ten scores opened or saved (Chrome and
+Edge; a browser without file handles has no such menu). A score opened from
+its folder (`File > Open Folder…`) comes back with the folder, so its samples
+play again. The browser may ask for access again the first time after a
+reload; an installed app can keep the grant. A score that has since moved or
+been deleted drops off the list when picked, and `Clear Menu` empties it.
+
+With the app installed from Chrome or Edge, a `.mmlisp` can also be opened
+from the Finder or Explorer (double-click, or Open With > MMLisp) — it opens
+in a window of its own, and Save writes back to that file. An app installed
+before this came in may need reinstalling to be offered for `.mmlisp`.
+
 ## 23. Dragging files into the live app
 
 Drop files anywhere on the window. They are routed by extension — the same
