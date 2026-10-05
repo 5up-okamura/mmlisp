@@ -63,7 +63,11 @@ export function barEnds(timeSigs, endTick) {
  * Write a track's body: the notes from 0 to `endTick`, with rests between,
  * split at every boundary (bar ends, marks, the loop point).
  *
- * @param notes  [{tick, len, midi, vel?, pre?: string[]}], sorted, no overlap
+ * @param notes  [{tick, len, midi, vel?, pre?: string[], state?: string[],
+ *                tieIn?}], sorted, no overlap. `pre` is written before the
+ *                note (a voice switch); `state` is every such switch in
+ *                force at it, restated at the loop point; `tieIn` ties the
+ *                note on from whatever the previous phrase left sounding.
  * @param opts   {bars: number[], endTick, loopTick, marks: [{tick, tokens}],
  *                defLen, oct, vel}
  * @returns {string[]} lines, one per bar
@@ -122,16 +126,15 @@ export function writeBody(notes, opts) {
       const n = notes[i++];
       held = n;
       const start = t; // a note quantized onto an earlier one starts here
-      if (n.pre?.length) {
-        line.push(...n.pre);
-        lastPre = n.pre;
-      }
+      if (n.pre?.length) line.push(...n.pre);
+      lastPre = n.state ?? n.pre ?? lastPre;
       if (n.vel != null && n.vel !== vel) {
         line.push(`:vel ${n.vel}`);
         vel = n.vel;
       }
       const end = Math.min(n.tick + n.len, b);
       if (end <= start) continue;
+      if (n.tieIn && start === 0) line.push("~");
       line.push(pitch(n.midi) + len(end - start));
       t = end;
     } else {
@@ -198,4 +201,74 @@ export function emitSong(song) {
     out[out.length - 1] += ")";
   }
   return out.join("\n") + "\n";
+}
+
+/**
+ * A tracker song, its patterns kept as phrases: each segment (one pattern
+ * of one channel, as the order list plays it) is written once as a
+ * `(def …)` that restates the state it relies on — voice, octave, velocity
+ * — and each track names its segments in order, a run of one as `(x n …)`.
+ * Segments that come out as the same text share one def.
+ *
+ * @param song {
+ *   header: string[]
+ *   tracks: [{channel, head: string[], loopIndex: number|null,
+ *             loopTokens?: string[]  written after #top (the tempo)
+ *             segments: [{label, len, bars, notes, marks?,
+ *                         state: {pre: string[], vel, oct}}]}]
+ * }
+ */
+export function emitPhrased(song) {
+  const out = [...song.header];
+  const forms = [];
+  for (const tr of song.tracks) {
+    const all = tr.segments.flatMap((sg) => sg.notes);
+    const defLen = commonLen(all, [], Infinity);
+    const byText = new Map();
+    const names = new Set();
+    const defs = [];
+    const order = [];
+    for (const sg of tr.segments) {
+      const { pre, vel, oct } = sg.state;
+      const body = writeBody(sg.notes, {
+        bars: sg.bars, endTick: sg.len, marks: sg.marks ?? [], defLen, oct, vel, pre,
+      });
+      const head = [...pre, `:oct ${oct}`, `:vel ${vel}`].join(" ");
+      const text = [head, ...body].join("\n  ");
+      let name = byText.get(text);
+      if (!name) {
+        const base = `${tr.channel}-${sg.label}`;
+        name = base;
+        for (let k = 2; names.has(name); k++) name = `${base}-${k}`;
+        names.add(name);
+        byText.set(text, name);
+        defs.push(`(def ${name}\n  ${text})`);
+      }
+      order.push(name);
+    }
+    if (!defs.length) continue;
+    out.push("", `; ${tr.channel}`, ...defs);
+    // The track: the phrases in order, repeats folded, the loop marked.
+    const items = [];
+    for (let i = 0; i < order.length; i++) {
+      if (i === tr.loopIndex) items.push(["#top", ...(tr.loopTokens ?? [])].join(" "));
+      let n = 1;
+      while (i + n < order.length && order[i + n] === order[i] && i + n !== tr.loopIndex) n++;
+      items.push(n > 1 ? `(x ${n} ${order[i]})` : order[i]);
+      i += n - 1;
+    }
+    if (tr.loopIndex != null) items.push("(go top)");
+    const lines = [];
+    let line = [];
+    for (const it of items) {
+      if (it.startsWith("#top") && line.length) { lines.push(line.join(" ")); line = []; }
+      line.push(it);
+      if (line.length >= 6) { lines.push(line.join(" ")); line = []; }
+    }
+    if (line.length) lines.push(line.join(" "));
+    forms.push("", `(${[tr.channel, ...tr.head, `:len ${lenToken(defLen)}`].join(" ")}`,
+      ...lines.map((l) => "  " + l));
+    forms[forms.length - 1] += ")";
+  }
+  return [...out, ...forms].join("\n") + "\n";
 }

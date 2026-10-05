@@ -54,7 +54,7 @@
        only tracks the Shift state. -->
   <div id="dropOverlay" hidden aria-hidden="true">
     <div class="drop-open">Drop to open — or import by extension<br>
-      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid — or a folder</span>
+      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf — or a folder</span>
     </div>
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
@@ -179,6 +179,7 @@
             <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 PCM Bank (.bin)…</button>
             <div class="menu-sep"></div>
             <button class="menu-item" onclick="importSong('midi');closeMenus()">MIDI (.mid)…</button>
+            <button class="menu-item" onclick="importSong('dmf');closeMenus()">DefleMask Module (.dmf)…</button>
             <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
           </div>
         </div>
@@ -629,6 +630,8 @@
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
+    import { parseDmf } from './src/import-dmf.js';
+    import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
     import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
@@ -2839,6 +2842,7 @@
     // converts with the options set there (.claude/memory/plan-importers.md).
     const SONG_IMPORTERS = {
       midi: { tag: 'MIDI', re: /\.(mid|midi|rmi|smf)$/i, exts: ['.mid', '.midi', '.rmi', '.smf'], run: importMidiBytes },
+      dmf: { tag: 'DefleMask', re: /\.dmf$/i, exts: ['.dmf'], run: async (bytes, name) => importTrackerSong(await parseDmf(bytes), name) },
     };
     function songImporterFor(name) {
       return Object.values(SONG_IMPORTERS).find((imp) => imp.re.test(name)) || null;
@@ -2896,6 +2900,35 @@
         grid: Number(got.fields.grid),
         bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
         loop: !!got.fields.loop,
+        fileName,
+      }, a);
+    }
+
+    // A tracker module (DMF, FUR): tempo, phrases, a destination per channel.
+    async function importTrackerSong(t, fileName) {
+      const a = analyzeTracker(t);
+      const def = defaultTrackerOptions(a);
+      const choices = ['drop', ...FM_DESTS, ...PSG_DESTS, 'noise'];
+      const played = a.channels.filter((c) => c.notes > 0);
+      const got = await showImportDialog({
+        title: `Import ${fileName}`,
+        summary: `${t.format} · ${t.system} · ${a.seq.length} orders of ${t.patLen} rows` +
+          (a.loopIndex > 0 ? `, looping from order ${a.seq[a.loopIndex].order}` : '') + '. ' +
+          'A channel with no notes is left out.',
+        fields: [
+          { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
+            hint: `${a.rowsPerBeat} rows a beat at ${a.framesPerRow} frames a row, ${t.hz} Hz` },
+          { key: 'phrases', label: 'One def per pattern (the tracks lay them out in order)', type: 'checkbox', value: def.phrases },
+        ],
+        rows: played.map((c) => ({ key: String(c.index), label: c.label, value: def.dest[c.index], choices })),
+      });
+      if (!got) return null;
+      const bpm = Number(got.fields.bpm);
+      const dest = {};
+      for (const c of a.channels) dest[c.index] = got.rows[String(c.index)] ?? 'drop';
+      return trackerToMmlisp(t, {
+        dest, phrases: !!got.fields.phrases,
+        bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
         fileName,
       }, a);
     }
@@ -4136,7 +4169,7 @@
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
             ? `${entry.file.name}: only .wav is accepted as a sample — the exporters read RIFF WAV only, so convert it first`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid)`,
+            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf)`,
           'err',
         );
       }

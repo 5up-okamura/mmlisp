@@ -1090,6 +1090,7 @@ formats `File > Import` accepts:
 | `.muc` / `.mml`                    | mucom88 import — drop its `.dat` / `.bin` alongside to get voices and drums in one go |
 | `.dat` / `.bin` alone              | mucom88 voice bank / PCM bank                              |
 | `.mid`                             | MIDI import, through the import dialog (below)             |
+| `.dmf`                             | DefleMask module import, through the import dialog (below) |
 
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
@@ -1115,6 +1116,19 @@ does not fit. **Enter** imports with the defaults. A program names its
 `:vel`, the loudest note at 15; pan (CC10) sets `:pan`; the sustain pedal
 holds notes. Pitch bend and other controllers are skipped, and the log says
 how many.
+
+A DefleMask module plays its order list as the tracker does — `0Bxx` jumps,
+`0Dxx` breaks, looping where it jumps back to (or to the start) — with a row
+a fixed number of ticks and the speed as `:tempo`. By default each pattern of
+each channel becomes a phrase `(def fm1-p03 …)` that restates its voice,
+octave and velocity, and each track names its phrases in order (`(x 2 …)`
+for a run); a note held into the next pattern starts that phrase with `~`.
+Untick **One def per pattern** for one long body instead. FM instruments
+become `def-fm`s; a volume or arpeggio macro becomes a `(macro …)` def; the
+volume column, pan (`08xy`), arpeggio (`00xy`), note cut (`ECxx`) and delay
+(`EDxx`) come along, and the log counts the effects that do not. On a
+non-Genesis system the channels play their notes on a `presets/waveforms`
+stand-in voice; sample channels are left out.
 
 Several files at once are fine. Everything except opening a document appends at
 the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press

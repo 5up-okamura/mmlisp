@@ -569,7 +569,16 @@ function detectFmImportFormatKey(fileName) {
   return null;
 }
 
+// A song importer's FM instrument (the raw register fields, operators in
+// hardware slot order, as every format here stores them) as a def-fm.
+function fmVoiceDef(voiceName, raw) {
+  const parsed = normalizeFmPatchFields({ ...raw, ops: raw.ops.slice(0, 4).map(normalizeFmOp) });
+  parsed.ops = slotToDisplayOps(parsed.ops);
+  return buildMmlispVoiceFromDmp(parsed, voiceName);
+}
+
 export {
+  fmVoiceDef,
   FM_IMPORT_FORMATS,
   buildMmlispVoiceFromDmp,
   slotToDisplayOps,
