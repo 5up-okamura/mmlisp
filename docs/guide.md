@@ -1091,6 +1091,7 @@ formats `File > Import` accepts:
 | `.dat` / `.bin` alone              | mucom88 voice bank / PCM bank                              |
 | `.mid`                             | MIDI import, through the import dialog (below)             |
 | `.dmf`                             | DefleMask module import, through the import dialog (below) |
+| `.vgm` / `.vgz`                    | VGM import, through the import dialog (below)              |
 
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
@@ -1129,6 +1130,20 @@ volume column, pan (`08xy`), arpeggio (`00xy`), note cut (`ECxx`) and delay
 (`EDxx`) come along, and the log counts the effects that do not. On a
 non-Genesis system the channels play their notes on a `presets/waveforms`
 stand-in voice; sample channels are left out.
+
+A VGM is a log of register writes, so its notes are rebuilt from them: a
+key-on starts a note, a key-off ends it, and on the YM2612, YM2203, YM2608,
+YM2610 and YM2151 the voice is the channel's registers at the key-on (DT2
+dropped on the YM2151). The carriers' TL is taken relative to the voice's
+loudest use and the rest becomes `:vel`. The SSG and the SN76489 become
+`sqr` and `noise` tracks; the YM2413 and the OPL chips give notes on a
+stand-in voice. A pitch moved during a note becomes a slur (`~`) when it
+lands on another semitone — untick it to keep only the struck pitch. The
+tempo is estimated from the onsets (the dialog shows how well they fit and
+the other readings, double or half); when no beat fits, the notes go on the
+frame grid (1/60 s = 4 ticks). The file's loop becomes `#top … (go top)`.
+DAC samples, a second chip and tempo changes within the song are not
+imported, and the log says so.
 
 Several files at once are fine. Everything except opening a document appends at
 the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press

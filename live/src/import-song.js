@@ -91,6 +91,7 @@ export function writeBody(notes, opts) {
   let bi = 0;
   let held = null; // the note still sounding at t, continued with a tie
   let lastPre = opts.pre ?? []; // the voice/sample switch in force
+  let lastEnd = null; // where the last note written ends
 
   const pitch = (midi) => {
     const o = octOf(midi);
@@ -122,6 +123,7 @@ export function writeBody(notes, opts) {
       const end = Math.min(held.tick + held.len, b);
       line.push(pitch(held.midi) + len(end - t));
       t = end;
+      lastEnd = end;
     } else if (i < notes.length && notes[i].tick <= t) {
       const n = notes[i++];
       held = n;
@@ -134,9 +136,11 @@ export function writeBody(notes, opts) {
       }
       const end = Math.min(n.tick + n.len, b);
       if (end <= start) continue;
-      if (n.tieIn && start === 0) line.push("~");
+      // Tied (or slurred) on from the note before, or from the phrase before.
+      if (n.tieIn && (start === 0 || lastEnd === start)) line.push("~");
       line.push(pitch(n.midi) + len(end - start));
       t = end;
+      lastEnd = end;
     } else {
       held = null;
       const end = Math.min(i < notes.length ? notes[i].tick : endTick, b);

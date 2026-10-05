@@ -54,7 +54,7 @@
        only tracks the Shift state. -->
   <div id="dropOverlay" hidden aria-hidden="true">
     <div class="drop-open">Drop to open — or import by extension<br>
-      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf — or a folder</span>
+      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf .vgm — or a folder</span>
     </div>
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
@@ -180,6 +180,7 @@
             <div class="menu-sep"></div>
             <button class="menu-item" onclick="importSong('midi');closeMenus()">MIDI (.mid)…</button>
             <button class="menu-item" onclick="importSong('dmf');closeMenus()">DefleMask Module (.dmf)…</button>
+            <button class="menu-item" onclick="importSong('vgm');closeMenus()">VGM (.vgm / .vgz)…</button>
             <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
           </div>
         </div>
@@ -631,6 +632,7 @@
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
+    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
     import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
@@ -2842,6 +2844,7 @@
     // converts with the options set there (.claude/memory/plan-importers.md).
     const SONG_IMPORTERS = {
       midi: { tag: 'MIDI', re: /\.(mid|midi|rmi|smf)$/i, exts: ['.mid', '.midi', '.rmi', '.smf'], run: importMidiBytes },
+      vgm: { tag: 'VGM', re: /\.(vgm|vgz)$/i, exts: ['.vgm', '.vgz'], run: importVgmBytes },
       dmf: { tag: 'DefleMask', re: /\.dmf$/i, exts: ['.dmf'], run: async (bytes, name) => importTrackerSong(await parseDmf(bytes), name) },
     };
     function songImporterFor(name) {
@@ -2929,6 +2932,42 @@
       return trackerToMmlisp(t, {
         dest, phrases: !!got.fields.phrases,
         bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
+        fileName,
+      }, a);
+    }
+
+    async function importVgmBytes(bytes, fileName) {
+      const parsed = await parseVgm(bytes);
+      const a = analyzeVgm(parsed);
+      const def = defaultVgmOptions(a);
+      const choices = ['drop', ...FM_DESTS, ...PSG_DESTS, 'noise'];
+      const g = a.grid;
+      const shown = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
+      const fields = [
+        { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: shown,
+          hint: g.frames ? 'no steady beat found — the frame grid is used'
+            : `estimated, onsets fit ${Math.round(g.fit * 100)}%` +
+              (g.candidates.length > 1 ? ` · also: ${g.candidates.filter((x) => Math.abs(x - g.bpm) > 0.01).join(', ')}` : '') },
+        { key: 'grid', label: 'Timing', type: 'select', value: def.grid,
+          choices: [['beats', 'the estimated beat'], ['frames', 'frames (1/60 s)']] },
+        { key: 'followPitch', label: 'A pitch moved during a note becomes a slur', type: 'checkbox', value: def.followPitch },
+      ];
+      if (parsed.loopSample != null) fields.push({ key: 'loop', label: 'Loop (from the file’s loop point)', type: 'checkbox', value: def.loop });
+      const got = await showImportDialog({
+        title: `Import ${fileName}`,
+        summary: `${parsed.chips.join(' + ')} · ${(parsed.totalSamples / 44100).toFixed(1)} s` +
+          `${parsed.title ? ' · ' + parsed.title : ''}. Notes are rebuilt from the register writes; one row per chip channel that plays.`,
+        fields,
+        rows: a.channels.map((c) => ({ key: c.key, label: c.label, value: def.dest[c.key], choices })),
+      });
+      if (!got) return null;
+      const bpm = Number(got.fields.bpm);
+      return vgmToMmlisp(parsed, {
+        dest: got.rows,
+        grid: got.fields.grid,
+        bpm: bpm > 0 && bpm !== shown ? bpm : null,
+        followPitch: !!got.fields.followPitch,
+        loop: !!got.fields.loop,
         fileName,
       }, a);
     }
@@ -4169,7 +4208,7 @@
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
             ? `${entry.file.name}: only .wav is accepted as a sample — the exporters read RIFF WAV only, so convert it first`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf)`,
+            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf .vgm)`,
           'err',
         );
       }
