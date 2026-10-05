@@ -649,6 +649,7 @@
     import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
+    import { decodeWav } from './src/wav-decode.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { precacheApp } from './src/offline-cache.js';
@@ -3659,23 +3660,9 @@
       return '/' + path;
     }
 
-    function audioBufferToMono(decoded) {
-      const channels = decoded.numberOfChannels;
-      const length = decoded.length;
-      const mono = new Float32Array(length);
-      if (channels <= 1) {
-        mono.set(decoded.getChannelData(0));
-      } else {
-        const left = decoded.getChannelData(0);
-        const right = decoded.getChannelData(1);
-        for (let i = 0; i < length; i++) mono[i] = (left[i] + right[i]) * 0.5;
-      }
-      return mono;
-    }
-
     // A def may slice one file into many samples (`:offset` / `:frames`, in
     // frames) — that is how an imported instrument bank becomes many defs off
-    // one wav. The decode is cached per path (one decodeAudioData per bank,
+    // one wav. The decode is cached per path (one decode per bank,
     // shared by every def), so the slice is applied per def here rather than
     // being cached. Copies with `.slice()` — never `.subarray()`: postMessage
     // structured-clones a view's whole backing buffer, which would ship the
@@ -3813,7 +3800,6 @@
     async function decodePcmSample(path) {
       const cached = _pcmSampleCache.get(path);
       if (cached) return cached;
-      if (!audioCtx) return null;
       let encoded = await sampleBytesFromSourceDir(path);
       if (!encoded) {
         const url = toFetchablePath(path);
@@ -3822,8 +3808,8 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         encoded = await res.arrayBuffer();
       }
-      const decoded = await audioCtx.decodeAudioData(encoded.slice(0));
-      const out = { data: audioBufferToMono(decoded), sampleRate: decoded.sampleRate };
+      // At the file's own rate: :offset / :frames count its frames (wav-decode.js).
+      const out = decodeWav(encoded);
       _pcmSampleCache.set(path, out);
       return out;
     }
@@ -4257,13 +4243,7 @@
       // at once, and moving the wav next to it is what survives a reload. Same
       // deal the mucom88 PCM bank gets in loadMucomSource.
       try {
-        if (!audioCtx) await initAudio();
-        if (!audioCtx) throw new Error('no AudioContext');
-        const decoded = await audioCtx.decodeAudioData(await entry.file.arrayBuffer());
-        _pcmSampleCache.set(path, {
-          data: audioBufferToMono(decoded),
-          sampleRate: decoded.sampleRate,
-        });
+        _pcmSampleCache.set(path, decodeWav(await entry.file.arrayBuffer()));
         log(`Dropped ${path} as (def-pcm ${name} …) — held in memory; put the wav next to the score and File > Open Folder… to keep it after a reload`, 'info');
       } catch (e) {
         log(`${path}: decode failed (${e?.message || e}) — the def was inserted but will not play until the wav is in the opened folder`, 'err');
