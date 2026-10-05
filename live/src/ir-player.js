@@ -178,6 +178,7 @@ export class IRPlayer {
     this._loop = true; // loop by default
     this._onLine = null; // (line: number) => void — called when an event fires
     this._onTrig = null; // (trackIdx, code) => void — a (trig N) cue plays
+    this._onRunStart = null; // () => void — after play()'s reset, before scheduling
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
     // Gapless swap (Build during playback): a swap requested by swapAtNextBar()
@@ -393,6 +394,7 @@ export class IRPlayer {
       t.flatIndex = 0;
     }
 
+    this._onRunStart?.();
     this._scheduleLoop();
   }
 
@@ -849,6 +851,16 @@ export class IRPlayer {
    */
   setOnTrig(fn) {
     this._onTrig = fn;
+  }
+
+  /**
+   * Register a callback fired by play() once the run state is reset and before
+   * the first event is scheduled: where a UI mixer (master, channel vol)
+   * re-applies itself, since the reset returns those levels to unity.
+   * @param {(() => void) | null} fn
+   */
+  setOnRunStart(fn) {
+    this._onRunStart = fn;
   }
 
   _scheduleUiCallback(fn, delayMs) {

@@ -206,6 +206,7 @@ export class DrvPlayer {
     this._song = null;
     this._playing = false;
     this._timer = null;
+    this._onRunStart = null; // () => void — after play()'s reset, before the first frame
     this._audioContext = null;
     this._startAudioTime = 0;
     this._diagnostics = [];
@@ -2961,6 +2962,12 @@ export class DrvPlayer {
     return this._playing;
   }
 
+  /** Same as IRPlayer.setOnRunStart: the reset is a power-on, so a UI mixer
+   *  re-applies itself here, before the first frame runs. */
+  setOnRunStart(fn) {
+    this._onRunStart = fn;
+  }
+
   // `se` auditions one effect (def-se) alone: the song is not started, the
   // effect is played as the game's PLAY_SE would.
   play(audioContext, { se = null } = {}) {
@@ -2971,6 +2978,7 @@ export class DrvPlayer {
     // start time instead of a stale anchor from a previous run.
     this._startAudioTime = audioContext ? audioContext.currentTime + 0.05 : 0;
     this._reset(se == null);
+    this._onRunStart?.();
     if (se != null) this._playSe(se);
     this._playing = true;
     if (!audioContext) return;

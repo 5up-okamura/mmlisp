@@ -5711,6 +5711,10 @@
             rebuildVizNotes();
             applyPlayerChannelState(player); // re-apply persisted mute/solo
           }
+          // play() resets the run (a power-on): the persisted mixer (mute/solo,
+          // vol, master) goes back in from its hook, ahead of the first frame.
+          const drv = player;
+          player.setOnRunStart(() => applyPlayerChannelState(drv));
           player.play(audioCtx, { se });
           // After play(): the driver's reset is a power-on, reseeding every value
           // slot from its def-val init, so the live slider values go in behind it
@@ -5752,7 +5756,11 @@
         buildChStrips(player._ir);
         renderDynParams(player._ir);
         applyDynVals();
-        applyPlayerChannelState(player);
+        applyPlayerChannelState(player); // playFromLine keeps the run state
+        // play() resets the run's levels to unity; the persisted mixer goes back
+        // in from its hook, before the first event is scheduled.
+        const irp = player;
+        player.setOnRunStart(() => applyPlayerChannelState(irp));
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
         // Seek to cursor line if provided and source map available
         if (fromLine != null && _lastSourceMap && se == null) {
