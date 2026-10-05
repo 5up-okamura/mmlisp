@@ -94,7 +94,9 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
   keyboard-driven step input
 - FM voice import: DefleMask DMP, Furnace FUI, TFI, VGI, OPNI
 - mucom88 `.muc` / `.dat` song and voice-bank import
-- VGM and WAV export; open/save `.mmlisp` sources with the File System
+- MIDI song import onto the GM voice set, with a dialog for tempo, quantize
+  and which part goes on which channel
+- VGM and WAV export, PCM included; open/save `.mmlisp` sources with the File System
   Access API
 - Writing with an AI: Tools > Connect to AI lets Claude Code or Claude Desktop
   (with the [MMLisp MCP server](tools/mcp/README.md)) read, edit and play the

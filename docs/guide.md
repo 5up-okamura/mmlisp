@@ -1089,6 +1089,7 @@ formats `File > Import` accepts:
 | `.dmp` `.fui` `.tfi` `.vgi` `.opni` | inserts the FM voice def                                  |
 | `.muc` / `.mml`                    | mucom88 import — drop its `.dat` / `.bin` alongside to get voices and drums in one go |
 | `.dat` / `.bin` alone              | mucom88 voice bank / PCM bank                              |
+| `.mid`                             | MIDI import, through the import dialog (below)             |
 
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
@@ -1100,6 +1101,20 @@ Drums that do not fit the 32 KB sample bank at full rate come with a
 `(def pcm-voices 2)` (or `3`) line, which bakes them at the lower rate; a
 sample too big to fit even then is left out, its notes turned to rests, and
 the log names it.
+
+**Song imports open a dialog first.** A MIDI file is read, then
+the dialog shows the tempo, the quantize grid (the coarsest one the notes sit
+on), the loop when the file marks one (CC111 or `loopStart` / `loopEnd`
+markers), and one row per source part with its destination. MIDI plays chords
+on one channel and a track plays one note, so a channel is split into lanes,
+one a track; the defaults put each channel's first lane on FM before any
+second lane, then the PSG, with channel 10 on `pcm1`–`pcm2`, and drop what
+does not fit. **Enter** imports with the defaults. A program names its
+`presets/gm` voice, played at the bank's own note offset; drums play
+`presets/gm-drums`. Velocity, volume (CC7) and expression (CC11) become
+`:vel`, the loudest note at 15; pan (CC10) sets `:pan`; the sustain pedal
+holds notes. Pitch bend and other controllers are skipped, and the log says
+how many.
 
 Several files at once are fine. Everything except opening a document appends at
 the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press

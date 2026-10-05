@@ -1315,3 +1315,19 @@
       animation: rec-blink 1s steps(2, start) infinite;
     }
     @keyframes rec-blink { to { visibility: hidden; } }
+
+    /* Song import options (showImportDialog) */
+    .import-modal { max-width: min(560px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
+    .import-summary { color: var(--foreground); font-size: 0.72rem; line-height: 1.5; margin-bottom: 0.75rem; }
+    .import-fields, .import-rows { display: flex; flex-direction: column; gap: 0.4rem; }
+    .import-rows { overflow-y: auto; margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); min-height: 0; }
+    .import-field, .import-row {
+      display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.15rem 0.75rem;
+      color: var(--foreground); font-size: 0.72rem;
+    }
+    .import-field small { grid-column: 1 / -1; color: var(--mid); font-size: 0.66rem; }
+    .import-field input[type=number], .import-field select, .import-row select {
+      background: var(--background); color: var(--foreground); border: 1px solid var(--mid);
+      border-radius: 2px; padding: 0.15rem 0.3rem; font-family: inherit; font-size: 0.72rem;
+    }
+    .import-field input[type=number] { width: 6rem; }

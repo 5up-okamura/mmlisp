@@ -54,7 +54,7 @@
        only tracks the Shift state. -->
   <div id="dropOverlay" hidden aria-hidden="true">
     <div class="drop-open">Drop to open — or import by extension<br>
-      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin — or a folder</span>
+      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid — or a folder</span>
     </div>
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
@@ -178,6 +178,7 @@
             <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voice Bank (.dat)…</button>
             <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 PCM Bank (.bin)…</button>
             <div class="menu-sep"></div>
+            <button class="menu-item" onclick="importSong('midi');closeMenus()">MIDI (.mid)…</button>
             <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
           </div>
         </div>
@@ -435,6 +436,20 @@
     </div>
   </div>
 
+  <!-- Song import options (showImportDialog) -->
+  <div id="importModal" class="modal-overlay" hidden>
+    <div class="modal import-modal" role="dialog" aria-labelledby="importModalTitle">
+      <div class="modal-title" id="importModalTitle"></div>
+      <div class="import-summary" id="importSummary"></div>
+      <div class="import-fields" id="importFields"></div>
+      <div class="import-rows" id="importRows"></div>
+      <div class="modal-actions">
+        <button class="tb-btn" id="importCancel">Cancel</button>
+        <button class="tb-btn" id="importOk">Import</button>
+      </div>
+    </div>
+  </div>
+
   <!-- About -->
   <div id="aboutModal" class="modal-overlay" hidden>
     <div class="modal info-modal">
@@ -614,6 +629,7 @@
     import { renderVgm } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
+    import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
     import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
@@ -2789,8 +2805,13 @@
     let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
 
     function loadMucomSource(source, warnings, fileName, label, pcm = null) {
+      loadImportedSource(source, warnings, fileName, label, { tag: 'mucom88', pcm });
+    }
+
+    // An imported song or bank becomes a new, unsaved document.
+    async function loadImportedSource(source, warnings, fileName, label, { tag, pcm = null }) {
       _sourceHandle = null;
-      _sourceFileName = (fileName || 'mucom').replace(/\.[^.]*$/, '') + '.mmlisp';
+      _sourceFileName = (fileName || tag).replace(/\.[^.]*$/, '') + '.mmlisp';
       clearSourceDir(); // imported score — the old folder is not its base
       currentIrURL = null;
       _lastFileName = _sourceFileName;
@@ -2808,9 +2829,165 @@
         log(`mucom88: drums play from "${pcm.wavFile}" held in memory — Save offers to write it next to the score`, 'info');
       }
       setEditorDoc(source);
-      compileNow();
+      await refreshImportsAndCompile(); // a song imports preset sets
       log(label, 'info');
-      for (const w of warnings) log(`mucom88: ${w}`, 'info');
+      for (const w of warnings) log(`${tag}: ${w}`, 'info');
+    }
+
+    // ── Song importers (MIDI, …) ──────────────────────────────────────────
+    // Each reads the file, shows what it found in the import dialog, and
+    // converts with the options set there (.claude/memory/plan-importers.md).
+    const SONG_IMPORTERS = {
+      midi: { tag: 'MIDI', re: /\.(mid|midi|rmi|smf)$/i, exts: ['.mid', '.midi', '.rmi', '.smf'], run: importMidiBytes },
+    };
+    function songImporterFor(name) {
+      return Object.values(SONG_IMPORTERS).find((imp) => imp.re.test(name)) || null;
+    }
+
+    async function importSong(kind) {
+      const imp = SONG_IMPORTERS[kind];
+      let file;
+      try {
+        file = await pickFileWithInput(imp.exts);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      await importSongFromFile(file, imp);
+    }
+
+    async function importSongFromFile(file, imp = songImporterFor(file.name)) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const res = await imp.run(bytes, file.name);
+        if (!res) return; // cancelled in the dialog
+        await loadImportedSource(res.source, res.warnings, file.name,
+          `Imported ${file.name} (${imp.tag}) — review and Build`, { tag: imp.tag });
+      } catch (e) {
+        log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
+      }
+    }
+
+    async function importMidiBytes(bytes, fileName) {
+      const parsed = parseMidi(bytes);
+      const a = analyzeMidi(parsed);
+      const def = defaultMidiOptions(a);
+      const melodic = ['drop', ...FM_DESTS, ...PSG_DESTS];
+      const drums = ['drop', ...PCM_DESTS];
+      const fields = [
+        { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
+          hint: a.tempos.length > 1 ? `the first of ${a.tempos.length} tempos — the rest scale with it` : '' },
+        { key: 'grid', label: 'Quantize', type: 'select', value: String(def.grid),
+          choices: GRIDS.map((g) => [String(g), gridLabel(g)]) },
+      ];
+      if (a.loop) fields.push({ key: 'loop', label: 'Loop (from the file’s loop point)', type: 'checkbox', value: def.loop });
+      const got = await showImportDialog({
+        title: `Import ${fileName}`,
+        summary: `${a.notes.length} notes on ${new Set(a.lanes.map((l) => l.ch)).size} channels. ` +
+          'A channel that plays chords is split into lanes, one a track; what does not fit is dropped.',
+        fields,
+        rows: a.lanes.map((l) => ({ key: l.key, label: l.label, value: def.dest[l.key], choices: l.drums ? drums : melodic })),
+      });
+      if (!got) return null;
+      const bpm = Number(got.fields.bpm);
+      return midiToMmlisp(parsed, {
+        dest: got.rows,
+        grid: Number(got.fields.grid),
+        bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
+        loop: !!got.fields.loop,
+        fileName,
+      }, a);
+    }
+
+    function gridLabel(g) {
+      const names = { 24: '16th', 16: '16th triplet', 12: '32nd', 8: '32nd triplet', 6: '64th' };
+      return `${names[g] ? names[g] + ' — ' : ''}${g} ticks`;
+    }
+
+    // The import dialog: a few fields, then one row per source part with its
+    // destination. Resolves {fields, rows} on Import (or Enter), null on
+    // Cancel (or Escape, or a click outside).
+    function showImportDialog({ title, summary = '', fields = [], rows = [] }) {
+      const modal = document.getElementById('importModal');
+      document.getElementById('importModalTitle').textContent = title;
+      document.getElementById('importSummary').textContent = summary;
+      const fieldBox = document.getElementById('importFields');
+      const rowBox = document.getElementById('importRows');
+      fieldBox.replaceChildren();
+      rowBox.replaceChildren();
+      const select = (choices, value) => {
+        const el = document.createElement('select');
+        for (const c of choices) {
+          const [v, text] = Array.isArray(c) ? c : [c, c];
+          const o = document.createElement('option');
+          o.value = v;
+          o.textContent = text;
+          el.append(o);
+        }
+        el.value = value;
+        return el;
+      };
+      const inputs = {};
+      for (const f of fields) {
+        const label = document.createElement('label');
+        label.className = 'import-field';
+        const span = document.createElement('span');
+        span.textContent = f.label;
+        let el;
+        if (f.type === 'select') el = select(f.choices, f.value);
+        else {
+          el = document.createElement('input');
+          el.type = f.type;
+          if (f.type === 'checkbox') el.checked = !!f.value;
+          else el.value = f.value;
+          if (f.type === 'number') el.step = 'any';
+        }
+        inputs[f.key] = el;
+        label.append(span, el);
+        if (f.hint) {
+          const h = document.createElement('small');
+          h.textContent = f.hint;
+          label.append(h);
+        }
+        fieldBox.append(label);
+      }
+      const rowInputs = {};
+      for (const r of rows) {
+        const label = document.createElement('label');
+        label.className = 'import-row';
+        const span = document.createElement('span');
+        span.textContent = r.label;
+        const el = select(r.choices, r.value);
+        rowInputs[r.key] = el;
+        label.append(span, el);
+        rowBox.append(label);
+      }
+      rowBox.hidden = rows.length === 0;
+      modal.hidden = false;
+      (rows.length ? rowBox : fieldBox).querySelector('select, input')?.focus();
+      return new Promise((resolve) => {
+        const done = (ok) => {
+          modal.hidden = true;
+          modal.removeEventListener('keydown', onKey);
+          modal.removeEventListener('click', onClick);
+          if (!ok) return resolve(null);
+          const out = { fields: {}, rows: {} };
+          for (const [k, el] of Object.entries(inputs)) out.fields[k] = el.type === 'checkbox' ? el.checked : el.value;
+          for (const [k, el] of Object.entries(rowInputs)) out.rows[k] = el.value;
+          resolve(out);
+        };
+        const onKey = (e) => {
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+          else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); done(true); }
+        };
+        const onClick = (e) => {
+          if (e.target === modal || e.target.id === 'importCancel') done(false);
+          else if (e.target.id === 'importOk') done(true);
+        };
+        modal.addEventListener('keydown', onKey);
+        modal.addEventListener('click', onClick);
+      });
     }
 
     // mucom88 .muc: convert the whole song to MMLisp source and load it as a
@@ -3041,6 +3218,7 @@
     window.importVgi = importVgi;
     window.importOpni = importOpni;
     window.importMucom88 = importMucom88;
+    window.importSong = importSong;
     window.importMucomVoiceBank = importMucomVoiceBank;
     window.importMucomPcmBank = importMucomPcmBank;
     window.exportMucomPcmWav = exportMucomPcmWav;
@@ -3833,6 +4011,7 @@
       if (detectFmImportFormatKey(name)) return 'fmvoice';
       if (/\.wav$/i.test(name)) return 'sample';
       if (/\.(muc|mml)$/i.test(name)) return 'mucom-song';
+      if (songImporterFor(name)) return 'song';
       if (/\.dat$/i.test(name)) return 'mucom-voices';
       if (/\.bin$/i.test(name)) return 'mucom-pcm';
       return null;
@@ -3957,7 +4136,7 @@
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
             ? `${entry.file.name}: only .wav is accepted as a sample — the exporters read RIFF WAV only, so convert it first`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin)`,
+            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid)`,
           'err',
         );
       }
@@ -3985,6 +4164,7 @@
           else if (kind === 'fmvoice') await importFmVoiceFromFile(entry.file, detectFmImportFormatKey(entry.file.name));
           else if (kind === 'mucom-voices') await importMucomVoiceBankFromFile(entry.file);
           else if (kind === 'mucom-pcm') await importMucomPcmBankFromFile(entry.file);
+          else if (kind === 'song') await importSongFromFile(entry.file);
           else if (kind === 'mmb') log(`${entry.file.name} ignored — only one document can be open at a time`, 'info');
         } catch (e) {
           log(`${entry.file.name}: ${e?.message || e}`, 'err');
