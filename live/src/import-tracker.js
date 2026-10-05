@@ -31,10 +31,12 @@ import { FM_DESTS, PSG_DESTS } from "./import-midi.js";
 // channel whose instruments are OPN voices; OPM / OPLL / wavetable channels
 // play their notes on a stand-in voice.
 export const CHANNEL_KINDS = {
-  fm: "FM", fm3op: "FM operator", opm: "OPM FM", opll: "OPLL FM",
+  fm: "FM", fm3op: "FM operator", opm: "OPM FM", opll: "OPLL FM", opl: "OPL FM",
   psg: "square", wave: "wavetable", noise: "noise", pcm: "sample",
 };
-const STAND_IN = { psg: "wave-square", wave: "wave-triangle", noise: "wave-square", opll: "wave-saw", pcm: "wave-saw", fm3op: "wave-sine" };
+const STAND_IN = { psg: "wave-square", wave: "wave-triangle", noise: "wave-square", opll: "wave-saw", opl: "wave-sine", pcm: "wave-saw", fm3op: "wave-sine" };
+// The volume column's top, where it is not the model's FM / PSG one.
+const VOL_MAX = { opl: 63 };
 
 // Furnace's internal DT (3 = none) → the register field.
 const DT_REG = [7, 6, 5, 0, 1, 2, 3, 4];
@@ -134,7 +136,7 @@ export function defaultTrackerOptions(a) {
   for (const ch of a.channels) {
     if (dest[ch.index] !== "drop" || ch.notes === 0) continue;
     if (ch.kind === "fm3op") dest[ch.index] = fm.shift() ?? "drop";
-    else if (ch.kind === "wave" || ch.kind === "opll") dest[ch.index] = fm.shift() ?? sqr.shift() ?? "drop";
+    else if (ch.kind === "wave" || ch.kind === "opll" || ch.kind === "opl") dest[ch.index] = fm.shift() ?? sqr.shift() ?? "drop";
   }
   return { dest, phrases: true, bpm: null };
 }
@@ -217,17 +219,22 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   for (const ch of used) {
     const chn = t.channels[ch.index];
     const onFm = ch.dest.startsWith("fm");
-    const volMax = ["fm", "opm", "fm3op"].includes(ch.kind) ? t.fmVolMax : t.psgVolMax;
+    const fmVol = ["fm", "opm", "fm3op"].includes(ch.kind);
+    const volMax = VOL_MAX[ch.kind] ?? (fmVol ? t.fmVolMax : t.psgVolMax);
     const velOf = (v) => {
       if (v < 0) return 15;
-      if (volMax === t.fmVolMax) return Math.max(0, Math.min(15, Math.round(15 - ((volMax - v) * 0.75) / 2)));
+      if (fmVol) return Math.max(0, Math.min(15, Math.round(15 - ((volMax - v) * 0.75) / 2)));
       return Math.max(0, Math.min(15, Math.round((v * 15) / volMax)));
     };
     const standIn = STAND_IN[ch.kind] ?? "wave-square";
-    // Sticky state: the voice (instrument), the pan, the arpeggio.
+    // Sticky state: the voice (instrument), the pan, the arpeggio. A channel
+    // that ever pans or arpeggiates states both from its first note, so a
+    // phrase reads the same wherever the order list plays it.
+    const uses = (code) => a.seq.some(({ order, rows }) =>
+      (chn.patterns.get(t.orders[order][ch.index]) ?? []).slice(0, rows).some((r) => r?.fx.some(([c]) => c === code)));
     let ins = -1;
     let vol = -1;
-    let pan = null;
+    let pan = onFm && uses(0x08) ? "center" : null;
     let arp = 0;
     let usedMacro = false;
     const voiceTokens = () => {
@@ -248,7 +255,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       return [e];
     };
     const arpToken = () => (arp ? `(macro :semi [#sus 0 ${arp >> 4} ${arp & 15}])` : "(macro :semi none)");
-    let usedArp = false;
+    let usedArp = uses(0x00);
     let cur = { voice: voiceTokens(), pan: null, arp: null };
     const flat = (st) => [...st.voice, ...(st.arp ? [st.arp] : []), ...(st.pan ? [st.pan] : [])];
 
@@ -302,7 +309,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           cur = st;
           const midi = row.note + 12;
           const v = velOf(vol);
-          if (v === 0 && volMax === t.psgVolMax && vol === 0) { sounding = null; continue; } // silent
+          if (!fmVol && vol === 0) { sounding = null; continue; } // silent
           sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st) };
           notes.push(sounding);
         } else if (cut != null && sounding) {
@@ -335,6 +342,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (!tracks.length) warnings.push("no notes to import");
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0))
     warnings.push("sample channels are not imported");
+  if (t.oldMacros) warnings.push("instrument macros of this old Furnace version are not imported");
 
   const header = [`; Imported from ${options.fileName ?? "a tracker module"} (${t.format}, ${t.system})`];
   if (t.title) header.push(`(def title ${qstr(t.title)})`);

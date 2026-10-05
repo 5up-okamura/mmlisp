@@ -1090,7 +1090,7 @@ formats `File > Import` accepts:
 | `.muc` / `.mml`                    | mucom88 import — drop its `.dat` / `.bin` alongside to get voices and drums in one go |
 | `.dat` / `.bin` alone              | mucom88 voice bank / PCM bank                              |
 | `.mid`                             | MIDI import, through the import dialog (below)             |
-| `.dmf`                             | DefleMask module import, through the import dialog (below) |
+| `.dmf` / `.fur`                    | DefleMask / Furnace module import, through the import dialog (below) |
 | `.vgm` / `.vgz`                    | VGM import, through the import dialog (below)              |
 
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
@@ -1118,7 +1118,7 @@ does not fit. **Enter** imports with the defaults. A program names its
 holds notes. Pitch bend and other controllers are skipped, and the log says
 how many.
 
-A DefleMask module plays its order list as the tracker does — `0Bxx` jumps,
+A DefleMask or Furnace module plays its order list as the tracker does — `0Bxx` jumps,
 `0Dxx` breaks, looping where it jumps back to (or to the start) — with a row
 a fixed number of ticks and the speed as `:tempo`. By default each pattern of
 each channel becomes a phrase `(def fm1-p03 …)` that restates its voice,
@@ -1129,7 +1129,8 @@ become `def-fm`s; a volume or arpeggio macro becomes a `(macro …)` def; the
 volume column, pan (`08xy`), arpeggio (`00xy`), note cut (`ECxx`) and delay
 (`EDxx`) come along, and the log counts the effects that do not. On a
 non-Genesis system the channels play their notes on a `presets/waveforms`
-stand-in voice; sample channels are left out.
+stand-in voice; sample channels are left out. Of a Furnace module, the first
+subsong is imported; a song on several chips lists every chip's channels.
 
 A VGM is a log of register writes, so its notes are rebuilt from them: a
 key-on starts a note, a key-off ends it, and on the YM2612, YM2203, YM2608,

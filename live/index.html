@@ -54,7 +54,7 @@
        only tracks the Shift state. -->
   <div id="dropOverlay" hidden aria-hidden="true">
     <div class="drop-open">Drop to open — or import by extension<br>
-      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf .vgm — or a folder</span>
+      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf .fur .vgm — or a folder</span>
     </div>
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
@@ -180,6 +180,7 @@
             <div class="menu-sep"></div>
             <button class="menu-item" onclick="importSong('midi');closeMenus()">MIDI (.mid)…</button>
             <button class="menu-item" onclick="importSong('dmf');closeMenus()">DefleMask Module (.dmf)…</button>
+            <button class="menu-item" onclick="importSong('fur');closeMenus()">Furnace Module (.fur)…</button>
             <button class="menu-item" onclick="importSong('vgm');closeMenus()">VGM (.vgm / .vgz)…</button>
             <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
           </div>
@@ -632,6 +633,7 @@
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
+    import { parseFur } from './src/import-fur.js';
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
@@ -2846,6 +2848,7 @@
       midi: { tag: 'MIDI', re: /\.(mid|midi|rmi|smf)$/i, exts: ['.mid', '.midi', '.rmi', '.smf'], run: importMidiBytes },
       vgm: { tag: 'VGM', re: /\.(vgm|vgz)$/i, exts: ['.vgm', '.vgz'], run: importVgmBytes },
       dmf: { tag: 'DefleMask', re: /\.dmf$/i, exts: ['.dmf'], run: async (bytes, name) => importTrackerSong(await parseDmf(bytes), name) },
+      fur: { tag: 'Furnace', re: /\.fur$/i, exts: ['.fur'], run: async (bytes, name) => importTrackerSong(await parseFur(bytes), name) },
     };
     function songImporterFor(name) {
       return Object.values(SONG_IMPORTERS).find((imp) => imp.re.test(name)) || null;
@@ -4208,7 +4211,7 @@
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
             ? `${entry.file.name}: only .wav is accepted as a sample — the exporters read RIFF WAV only, so convert it first`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf .vgm)`,
+            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf .fur .vgm)`,
           'err',
         );
       }
