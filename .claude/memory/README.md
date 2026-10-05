@@ -58,9 +58,9 @@ Rules:
   (auditioning a score's own samples), and why PSG envelopes are macros, not
   a new def head.
 - [plan-importers.md](plan-importers.md) — **song importers (MIDI, VGM,
-  DMF, FUR) and VGM export with PCM — decided 2026-10-05, not built**: the
-  order, the conversion dialog, tracker phrases as defs, VGM tempo
-  estimation, the mixed DAC stream.
+  DMF, FUR) and VGM export with PCM — built 2026-10-05**: the user's
+  decisions behind them, and what is open (the voice importers' DT bug,
+  VGM tempo changes, tracker pitch effects).
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   input aids (all landed, guide §24 has the behaviour): why no
   `@codemirror/lint` and the layer-only rule, which shortcuts Chrome steals,
