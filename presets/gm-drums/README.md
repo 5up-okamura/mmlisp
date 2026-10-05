@@ -9,11 +9,16 @@ at `9f04cf9a7345`, CC0 1.0 — [licence](LICENSE-CC0.txt).
 swapping the import swaps the sounds under the same names. The number is
 the GM note the file is named for; toms run tom1-tom6, low to high.
 
-Muted and short articulations throughout: hand-muted snares, one muted low tom
-resampled across the six GM toms, and faded tails where the source has no muted
-take. Every file is peak-normalized to 0 dBFS, so each hit uses the full 8 bits and
-sits level with FM; the kit is not balanced between its sounds — set that with
-`:vel` / `:vol` or a per-sound `(gain …)` effect.
+Short articulations throughout: one muted low tom resampled across the six GM
+toms, and faded tails where the source has no muted take. The snare is a full
+center hit (mid mic, top velocity), shortened to 0.26 s — the muted take it
+replaced was too thin to carry next to FM.
+
+Every file is louder than peak-normalizing alone would make it: a gain into a
+limiter is baked into the WAV, bringing the body of each hit (its first
+100 ms) toward a level by role — kicks about −6 dB RMS, snare and toms −9,
+hand percussion −11, cymbals −12 — at most 12 dB of gain, the peak just under
+full scale. Balance a score's drums further with `:vel` / `:vol`.
 
 ```
  35 kick2           51 ride            67 agogo-hi

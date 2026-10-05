@@ -92,9 +92,11 @@ Licenses dialog links it.
 - License: CC0-1.0, preserved in `presets/gm-drums/LICENSE-CC0.txt`.
 - Included: GM-selected, shortened derivatives in `presets/gm-drums/`
   (22,050 Hz, 16-bit mono; pitch-shifted muted toms and faded tails). The
-  unprocessed upstream WAVs are not vendored.
+  unprocessed upstream WAVs are not vendored. The snare is
+  `Samples/mid/snare/mid_snare_center_vl36.flac`.
 - Conversion: trimmed to the attack, shortened with a half-cosine fade, and
-  resampled to 22,050 Hz; muted toms are pitch-shifted from one source hit.
+  resampled to 22,050 Hz; muted toms are pitch-shifted from one source hit;
+  each hit is then raised by a gain (up to 12 dB) into a limiter.
 
 ## libOPNMIDI XG bank (GM melodic voices and FM drum kits)
 
