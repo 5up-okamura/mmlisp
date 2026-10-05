@@ -555,7 +555,7 @@ const TOOLS = [
       if (ir.metadata?.pcmVoices && sampleDefs.length) {
         const abs = sampleDefs.map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
         const samples = loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []);
-        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
+        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
         if (sampleBank) pcm = { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices: ir.metadata.pcmVoices };
       }
       const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm });

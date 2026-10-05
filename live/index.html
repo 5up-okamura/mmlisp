@@ -3887,7 +3887,7 @@
       const samples = await pcmSampleBlobsForMmb(ir);
       if (!samples) return clear();
       try {
-        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
+        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
         workletNode.port.postMessage({
           type: 'pcm-set-bank',
           bank: sampleBank ?? null,
@@ -4359,7 +4359,7 @@
       try {
         const samples = await pcmSampleBlobsForMmb(ir);
         if (!samples) return null;
-        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
+        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
         return sampleBank ? { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices } : null;
       } catch (e) {
         log(`${what} export: PCM bank failed: ${e.message}`, 'err');
@@ -6577,7 +6577,7 @@
         if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
         const samples = await pcmSampleBlobsForMmb(ir);
         if (!samples) throw new Error('sample did not load');
-        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
+        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
         workletNode.port.postMessage({
           type: 'pcm-set-bank',
           bank: sampleBank ?? null,

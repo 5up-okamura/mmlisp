@@ -2345,7 +2345,7 @@ function fitPcmBank(render, pcm) {
       samples[def.name] = { data: pcm.mono.slice(at, at + (def.frames ?? pcm.mono.length - at)), baseRate: pcm.rate };
     }
     try {
-      encodeMmb(ir, { samples });
+      encodeMmb(ir, { samples, dedup: false }); // does the bank fit
       return { ok: true };
     } catch (e) {
       if (!(e instanceof RangeError)) throw e;

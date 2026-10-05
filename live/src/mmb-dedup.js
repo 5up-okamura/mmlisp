@@ -117,23 +117,42 @@ export function dedupEventStream(bytes, bounds, trackEntries, OPCODE) {
   let calls = 0;
   let savedBytes = 0;
 
+  // Units by their bytes, each list ascending: the only j worth pairing with
+  // an i are the ones in its list (the search below visits them in the same
+  // order a scan of every j would, so the result is the same).
+  const sameBytes = new Map();
+  for (let k = 0; k < units.length; k++) {
+    const key = units[k].bytes.join(",");
+    if (!sameBytes.has(key)) sameBytes.set(key, []);
+    sameBytes.get(key).push(k);
+    units[k].peers = sameBytes.get(key);
+  }
+  // Can unit `p + t` extend a run started at `p` (its track, and free)?
+  const extends_ = (p, t) => {
+    if (p + t >= units.length) return false;
+    const u = units[p + t];
+    return u.factorable && !u.removed && u.callTo < 0 && u.track === units[p].track;
+  };
+
   for (;;) {
     // Find the pair (i, j) of factorable starts whose common run is longest
     // in bytes (event-aligned), non-overlapping.
     let best = null; // { i, runLen, byteLen }
     for (let i = 0; i < units.length; i++) {
       if (!runStartable(i, 1)) continue;
-      for (let j = i + 1; j < units.length; j++) {
+      for (const j of units[i].peers) {
+        if (j <= i) continue;
         if (!runStartable(j, 1)) continue;
-        if (!bytesEqual(units[i].bytes, units[j].bytes)) continue;
         // Extend the common run while both stay factorable, same-run, and
-        // the two windows do not overlap.
+        // the two windows do not overlap (one unit at a time: the run so far
+        // is already equal).
         let runLen = 0;
         while (
-          runStartable(i, runLen + 1) &&
-          runStartable(j, runLen + 1) &&
+          i + runLen + 1 <= units.length && j + runLen + 1 <= units.length &&
+          extends_(i, runLen) &&
+          extends_(j, runLen) &&
           j >= i + runLen + 1 &&
-          runsEqual(i, j, runLen + 1)
+          bytesEqual(units[i + runLen].bytes, units[j + runLen].bytes)
         ) {
           runLen++;
         }
