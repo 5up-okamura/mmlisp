@@ -1089,6 +1089,13 @@ from the Finder or Explorer (double-click, or Open With > MMLisp) — it opens
 in a window of its own, and Save writes back to that file. An app installed
 before this came in may need reinstalling to be offered for `.mmlisp`.
 
+A score opened on its own this way (or with `File > Open…`) comes with
+access to that one file only — not to the wavs and imports beside it, which
+the browser grants only from a click. When it needs them, a **Load samples
+from …'s folder** button appears over the editor: it opens the folder picker
+already in the score's folder, so one click on Open does it. From then on
+Open Recent brings the score back with its folder.
+
 ## 23. Dragging files into the live app
 
 Drop files anywhere on the window. They are routed by extension — the same

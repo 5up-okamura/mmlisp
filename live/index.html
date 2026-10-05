@@ -321,6 +321,11 @@
           <svg width="14" height="14" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
           <span id="sharedPlayLabel">Play</span>
         </button>
+        <!-- A score opened alone (double-click, Open…) cannot read the files
+             beside it until its folder is granted: that takes a click -->
+        <button id="folderAccess" type="button" hidden onclick="grantScoreFolder()">
+          <span id="folderAccessLabel">Load samples from this score's folder</span>
+        </button>
         <button id="bracketStatus" type="button" hidden
                 title="Jump to the first unmatched bracket"></button>
       </div>
@@ -4084,6 +4089,47 @@
       });
     }
 
+    // A score opened on its own — a double-click in the Finder, File > Open… —
+    // comes with access to that one file, not to the wavs and imports beside
+    // it, and the browser grants a folder only from a click. So when such a
+    // score needs its folder, a button offers the picker, already in that
+    // folder: one more click on Open.
+    function updateFolderAccessPrompt(src, hasSamples) {
+      const btn = document.getElementById('folderAccess');
+      if (!btn) return;
+      const localImports = /\(import\s+"(?!presets\/)[^"]+"/.test(src);
+      const show = Boolean(_sourceHandle) && !_sourceDir
+        && typeof window.showDirectoryPicker === 'function' && (hasSamples || localImports);
+      if (show) {
+        document.getElementById('folderAccessLabel').textContent =
+          `Load ${hasSamples ? 'samples' : 'imports'} from ${_sourceHandle.name}'s folder`;
+      }
+      btn.hidden = !show;
+    }
+
+    async function grantScoreFolder() {
+      const handle = _sourceHandle;
+      if (!handle) return;
+      let dir;
+      try {
+        dir = await window.showDirectoryPicker({ mode: 'read', startIn: handle });
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('Folder access failed: ' + e.message, 'err');
+        else log('No folder granted. Chrome refuses well-known folders (Desktop, Documents, …) — keep the score in a subfolder.', 'info');
+        return;
+      }
+      if (!(await dir.resolve(handle))) {
+        log(`${handle.name} is not inside ${dir.name} — pick the folder the score is in`, 'err');
+        return;
+      }
+      setSourceDir(dir);
+      await refreshFolderScores();
+      rememberRecent(handle); // Open Recent now brings the folder back with it
+      log(`Folder ${dir.name} opened for ${handle.name}`, 'info');
+      await refreshImportsAndCompile();
+    }
+    window.grantScoreFolder = grantScoreFolder;
+
     // ---- File > Open Recent (src/recent-files.js) ----
     let _recent = [];
 
@@ -4998,6 +5044,7 @@
         });
         const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
           Boolean(_sourceDir) || _lastFileName.includes('/');
+        updateFolderAccessPrompt(src, hasSamples);
         if (hasSamples && !hasSavedBase) {
           if (!_unsavedSamplePathWarned) {
             log('Sample paths may not resolve reliably until this source is saved (File > Save As...)', 'err');
