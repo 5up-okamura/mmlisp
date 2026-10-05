@@ -11,13 +11,22 @@
 //   wait n samples       -> 0x61 nn nn   (44100 Hz sample clock)
 //   end of data          -> 0x66
 //
-// DAC/PCM is out of scope here (FM + PSG only); the capture reports any
-// skipped PCM events so the caller can warn.
+// PCM: the score's PCM events run through the driver's own voice model and
+// engine (pcm-voices.js / pcm-model.js, as the browser worklet does), which
+// yields the mixed DAC byte stream the Z80 would play, one byte per engine
+// sample. That stream goes into one YM2612 PCM data block (0x67 0x66 0x00),
+// is played with 0x8n (DAC write from the data bank, then wait n) and
+// re-seeked with 0xE0 at the loop point. The stream is not compressible into
+// per-sample DAC stream control (0x90-0x95): the engine mixes several voices
+// in software, so only the mix is what the hardware hears.
 // ---------------------------------------------------------------------------
 
 // VGM timing is always referenced to a fixed 44100 Hz sample clock, regardless
 // of the chip clocks below.
 import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "./ir-utils.js";
+import { PcmLiveEngine, PCM_SILENCE_BYTE, parsePcmBank } from "./pcm-model.js";
+import { PcmIrVoices } from "./pcm-voices.js";
+import { engineImage } from "./engine-images.js";
 
 const VGM_SAMPLE_RATE = 44100;
 
@@ -28,6 +37,10 @@ const SN76489_FEEDBACK = 0x0009;
 const SN76489_SHIFT_WIDTH = 16;
 
 const VGM_VERSION = 0x00000150;
+// A one-shot score with PCM ends once the engine has been silent this long
+// after its last event (or at the cap).
+const PCM_TAIL_SILENCE_SEC = 0.05;
+const PCM_TAIL_MAX_SEC = 30;
 const DATA_START = 0x40; // header is 0x40 bytes for version 1.50
 
 /**
@@ -37,10 +50,13 @@ const DATA_START = 0x40; // header is 0x40 bytes for version 1.50
  *           loopStartSec: number|null, endSec: number }} capture
  * @param {{ title?: string, author?: string, system?: string,
  *           notes?: string }} [meta]
+ * @param {{ bytes: Uint8Array, rateHz: number, startSec: number }|null} [dac]
+ *        the mixed DAC stream from renderPcmDac, or null for none
  * @returns {Uint8Array}
  */
-export function encodeVgm(capture, meta = {}) {
-  const { writes, loopStartSec, endSec } = capture;
+export function encodeVgm(capture, meta = {}, dac = null) {
+  const { writes, loopStartSec } = capture;
+  const endSec = Math.max(capture.endSec, dac ? dac.startSec + dac.bytes.length / dac.rateHz : 0);
   const secToSample = (sec) => Math.max(0, Math.round(sec * VGM_SAMPLE_RATE));
 
   const endSample = secToSample(endSec);
@@ -54,10 +70,30 @@ export function encodeVgm(capture, meta = {}) {
     while (target > curSample) {
       const d = Math.min(0xffff, target - curSample);
       if (d <= 0) break;
-      data.push(0x61, d & 0xff, (d >> 8) & 0xff);
+      if (d <= 16) data.push(0x70 | (d - 1)); // short wait, 1-16 samples
+      else data.push(0x61, d & 0xff, (d >> 8) & 0xff);
       curSample += d;
     }
   };
+
+  // The DAC stream's bytes, as timed events among the register writes: the
+  // first claims the DAC (0x2B), every one is a 0x8n from the data bank.
+  let events = writes;
+  if (dac && dac.bytes.length) {
+    events = writes.map((w) => ({ ...w, s: secToSample(w.sec) }));
+    events.push({ s: secToSample(dac.startSec), port: 0, addr: 0x2b, data: 0x80, enable: true });
+    for (let k = 0; k < dac.bytes.length; k++)
+      events.push({ s: secToSample(dac.startSec + k / dac.rateHz), dacIndex: k });
+    // Stable: a register write at the same sample goes before the DAC byte.
+    events.sort((a, b) => a.s - b.s || (a.dacIndex != null) - (b.dacIndex != null));
+    // The data block, ahead of every command (VGM 1.50: type 0x00 = YM2612 PCM).
+    const n = dac.bytes.length;
+    data.push(0x67, 0x66, 0x00, n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff);
+    for (let k = 0; k < n; k++) data.push(dac.bytes[k]);
+    data.push(0xe0, 0, 0, 0, 0); // seek the data bank to its start
+  }
+  // The bank pointer each event leaves behind, for the seek at the loop point.
+  let dacNext = 0;
 
   const emitWrite = (w) => {
     if (w.port === 2) {
@@ -69,26 +105,44 @@ export function encodeVgm(capture, meta = {}) {
     }
   };
 
-  for (const w of writes) {
-    const sample = secToSample(w.sec);
+  const markLoop = () => {
+    waitUntil(loopSample);
+    loopOffsetInData = data.length;
+    // The data bank's pointer does not jump with the loop: re-seek it to
+    // where the stream stood at the loop point.
+    if (dac && dac.bytes.length) {
+      const p = dacNext;
+      data.push(0xe0, p & 0xff, (p >> 8) & 0xff, (p >> 16) & 0xff, (p >>> 24) & 0xff);
+    }
+  };
+
+  for (let i = 0; i < events.length; i++) {
+    const w = events[i];
+    const sample = w.s ?? secToSample(w.sec);
 
     // Mark the loop point exactly at loopSample so [loop, end) is a seamless
     // period: advance to the loop boundary, record the offset, then continue
     // to this write's own time.
-    if (loopSample != null && loopOffsetInData == null && sample >= loopSample) {
-      waitUntil(loopSample);
-      loopOffsetInData = data.length;
-    }
+    if (loopSample != null && loopOffsetInData == null && sample >= loopSample) markLoop();
 
     waitUntil(sample);
-    emitWrite(w);
+    if (w.dacIndex != null) {
+      // 0x8n writes the bank's next byte and waits n (0-15): fold the wait
+      // up to the next event in, unless the loop point falls inside it.
+      const next = events[i + 1];
+      let n = next ? Math.min(15, ((next.s ?? secToSample(next.sec)) - curSample)) : 0;
+      if (loopSample != null && loopOffsetInData == null && curSample + n > loopSample)
+        n = Math.max(0, loopSample - curSample);
+      data.push(0x80 | Math.max(0, n));
+      curSample += Math.max(0, n);
+      dacNext = w.dacIndex + 1;
+    } else {
+      emitWrite(w);
+    }
   }
 
   // A loop point at or past the last write (rare) still needs to be marked.
-  if (loopSample != null && loopOffsetInData == null) {
-    waitUntil(loopSample);
-    loopOffsetInData = data.length;
-  }
+  if (loopSample != null && loopOffsetInData == null) markLoop();
 
   // Pad to the total length, then terminate. For looping pieces this makes the
   // loop period exact; for one-shots it lets the final release ring out.
@@ -103,11 +157,68 @@ export function encodeVgm(capture, meta = {}) {
   });
 }
 
-/** Build a VGM file from an IRPlayer with IR loaded (capture + encode). */
-export function renderVgm(player, meta = {}) {
+/**
+ * The mixed DAC stream a score's PCM events make on the driver's engine:
+ * the events in time order through PcmIrVoices (the worklet's voice model)
+ * into PcmLiveEngine, one byte per engine sample, from the first note on.
+ * A looping capture renders to its end; a one-shot one until the engine has
+ * gone quiet after the last event.
+ *
+ * @param capture  captureRegisterLog's result (pcmEvents, loopStartSec, endSec)
+ * @param pcm      {bank: Uint8Array, entryIds, pcmVoices} — encodeMmb's
+ *                 sampleBank and pcmEntryIds, and the score's voice count
+ * @returns {{ bytes: Uint8Array, rateHz: number, startSec: number }|null}
+ */
+export function renderPcmDac(capture, pcm) {
+  const events = capture.pcmEvents
+    .map((e, i) => ({ ...e, i }))
+    .sort((x, y) => x.sec - y.sec || x.i - y.i);
+  if (!pcm?.bank?.length || !events.length) return null;
+  const img = engineImage(pcm.pcmVoices);
+  const window = new Uint8Array(0x8000);
+  window.set(pcm.bank.subarray(0, 0x8000));
+  const engine = new PcmLiveEngine(img, window);
+  const seq = new PcmIrVoices((c) => engine.apply(c), {
+    entries: parsePcmBank(pcm.bank).entries,
+    entryIds: pcm.entryIds ?? {},
+  });
+
+  // The DAC is claimed by the first note that starts, as on the driver.
+  let k = 0;
+  let startSec = null;
+  for (; k < events.length && startSec == null; k++) if (seq.apply(events[k])) startSec = events[k].sec;
+  if (startSec == null) return null;
+
+  const looping = capture.loopStartSec != null;
+  const lastEventSec = events[events.length - 1].sec;
+  const hardEnd = looping ? capture.endSec : Math.max(capture.endSec, lastEventSec) + PCM_TAIL_MAX_SEC;
+  const quietSamples = Math.ceil(PCM_TAIL_SILENCE_SEC * img.rateHz);
+  const out = [];
+  let quiet = 0;
+  for (let n = 0; ; n++) {
+    const sec = startSec + n / img.rateHz;
+    if (sec >= hardEnd) break;
+    for (; k < events.length && events[k].sec <= sec; k++) seq.apply(events[k]);
+    const b = engine.next();
+    out.push(b);
+    if (!looping && sec >= Math.max(capture.endSec, lastEventSec)) {
+      quiet = b === PCM_SILENCE_BYTE ? quiet + 1 : 0;
+      if (quiet >= quietSamples) break;
+    }
+  }
+  return { bytes: Uint8Array.from(out), rateHz: img.rateHz, startSec };
+}
+
+/**
+ * Build a VGM file from an IRPlayer with IR loaded (capture + encode).
+ * `pcm` ({bank, entryIds, pcmVoices}, see renderPcmDac) adds the PCM; without
+ * it the score's PCM events are skipped and counted in `pcmCount`.
+ */
+export function renderVgm(player, meta = {}, pcm = null) {
   const capture = player.captureRegisterLog();
-  const bytes = encodeVgm(capture, meta);
-  return { bytes, pcmCount: capture.pcmCount };
+  const dac = pcm ? renderPcmDac(capture, pcm) : null;
+  const bytes = encodeVgm(capture, meta, dac);
+  return { bytes, pcmCount: dac ? 0 : capture.pcmCount, dacBytes: dac ? dac.bytes.length : 0 };
 }
 
 function assembleVgm(data, gd3, { totalSamples, loopOffsetInData, loopSamples }) {

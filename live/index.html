@@ -175,9 +175,10 @@
             <button class="menu-item" onclick="importTfi();closeMenus()">TFI…</button>
             <button class="menu-item" onclick="importVgi();closeMenus()">VGI…</button>
             <button class="menu-item" onclick="importOpni();closeMenus()">OPNI…</button>
-            <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
             <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voice Bank (.dat)…</button>
             <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 PCM Bank (.bin)…</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -4076,6 +4077,22 @@
       await offerMucomPcmWav(handle);
     }
 
+    // The bank an .mmb would ship, for an export that plays the score's PCM
+    // through the driver's engine (export-vgm.js renderPcmDac); null = none.
+    async function exportPcmBank(ir, what) {
+      const pcmVoices = ir.metadata?.pcmVoices ?? 0;
+      if (!pcmVoices) return null;
+      try {
+        const samples = await pcmSampleBlobsForMmb(ir);
+        if (!samples) return null;
+        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
+        return sampleBank ? { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices } : null;
+      } catch (e) {
+        log(`${what} export: PCM bank failed: ${e.message}`, 'err');
+        return null;
+      }
+    }
+
     async function exportVgm() {
       const src = editorView.state.doc.toString();
       let ir;
@@ -4093,6 +4110,7 @@
         return;
       }
 
+      const pcm = await exportPcmBank(ir, 'VGM');
       let bytes, pcmCount;
       try {
         const offline = new IRPlayer(() => {});
@@ -4100,13 +4118,13 @@
         ({ bytes, pcmCount } = renderVgm(offline, {
           title: ir.metadata?.title,
           author: ir.metadata?.author,
-        }));
+        }, pcm));
       } catch (e) {
         log('VGM export failed: ' + e.message, 'err');
         return;
       }
       if (pcmCount > 0) {
-        log(`VGM export: skipped ${pcmCount} DAC/PCM event(s) (FM + PSG only)`, 'err');
+        log(`VGM export: skipped ${pcmCount} DAC/PCM event(s) — the samples did not load`, 'err');
       }
 
       const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
@@ -4245,18 +4263,19 @@
         return;
       }
 
+      const pcm = await exportPcmBank(ir, 'WAV');
       let bytes, pcmCount, durationSec;
       try {
         log('Rendering WAV…', 'info');
         const offline = new IRPlayer(() => {});
         offline.loadJSON(ir);
-        ({ bytes, pcmCount, durationSec } = await renderWav(offline, { lpfOn: analogLpfOn }));
+        ({ bytes, pcmCount, durationSec } = await renderWav(offline, { lpfOn: analogLpfOn, pcm }));
       } catch (e) {
         log('WAV export failed: ' + e.message, 'err');
         return;
       }
       if (pcmCount > 0) {
-        log(`WAV export: skipped ${pcmCount} DAC/PCM event(s) (FM + PSG only)`, 'err');
+        log(`WAV export: skipped ${pcmCount} DAC/PCM event(s) — the samples did not load`, 'err');
       }
 
       const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');

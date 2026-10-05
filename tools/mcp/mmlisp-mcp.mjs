@@ -27,6 +27,8 @@ const { parse } = await load("mmlisp-parser.js");
 const { formatMMLisp } = await load("mmlisp-formatter.js");
 const { IRPlayer } = await load("ir-player.js");
 const { renderWav } = await load("export-wav.js");
+const { encodeMmb } = await load("export-mmb.js");
+const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
 const { pitchToMidi } = await load("ir-utils.js");
 
 const DOCS = {
@@ -532,7 +534,7 @@ const TOOLS = [
     name: "mmlisp_render",
     description:
       "Render a score to a 48 kHz stereo WAV the user can listen to (FM + PSG through the Nuked cores, same DSP as the " +
-      "editor's WAV export; PCM/DAC tracks are not rendered). A looping song plays intro + 2 loops + 4 s fade. " +
+      "editor's WAV export; PCM plays through the driver's engine). A looping song plays intro + 2 loops + 4 s fade. " +
       "Returns the file path and levels (peak/RMS, clipping, silence) — a sanity check, since you cannot hear it.",
     inputSchema: {
       type: "object",
@@ -547,13 +549,22 @@ const TOOLS = [
       const errors = diagnostics.filter((d) => d.severity === "error");
       if (errors.length) return { isError: true, text: ["not rendered — fix the errors first:", ...formatDiagnostics(errors, src)].join("\n") };
       const player = new IRPlayer(() => {}).loadJSON(ir);
-      const wav = await renderWav(player, { lpfOn: !!args.lpf });
+      // PCM: the bank an .mmb would ship, its WAVs read from the repo.
+      let pcm = null;
+      const sampleDefs = ir.metadata?.samples ?? [];
+      if (ir.metadata?.pcmVoices && sampleDefs.length) {
+        const abs = sampleDefs.map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
+        const samples = loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []);
+        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples });
+        if (sampleBank) pcm = { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices: ir.metadata.pcmVoices };
+      }
+      const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm });
       const out = args.out
         ? path.resolve(ROOT, args.out)
         : path.join(os.tmpdir(), "mmlisp-mcp", path.basename(name).replace(/\.mmlisp$/, "") + ".wav");
       fs.mkdirSync(path.dirname(out), { recursive: true });
       fs.writeFileSync(out, wav.bytes);
-      const pcm = wav.pcmCount ? `\nnote: ${wav.pcmCount} PCM events were not rendered (FM + PSG only)` : "";
+      const pcm = wav.pcmCount ? `\nnote: ${wav.pcmCount} PCM events were not rendered (the samples did not load)` : "";
       return `wrote ${out}\n${wav.durationSec.toFixed(2)} s, ${levels(wav.bytes)}${pcm}`;
     },
   },

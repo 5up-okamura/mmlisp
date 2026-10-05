@@ -11,15 +11,18 @@
 // starts, and stop. Total = loopStart + 2*P + fadeSec (P = loop period). A
 // one-shot piece renders once with no fade.
 //
-// DAC/PCM is out of scope (FM + PSG only, mirroring VGM); captureRegisterLog
-// reports skipped DAC events via pcmCount.
+// PCM, given the score's bank: the same mixed DAC stream VGM export embeds
+// (export-vgm.js renderPcmDac), fed to the YM2612's DAC at the engine's rate
+// and tiled with the loop like the register writes. Without a bank the PCM
+// events are skipped and counted in pcmCount.
 //
 // The actual synthesis (FM resample, PSG decimate, mix, analog LPF) lives in
 // the shared MegaDriveSynth core (synth-md.js) — the same DSP that drives live
 // playback — so exports match what you hear by construction.
 // ---------------------------------------------------------------------------
 
-import { MegaDriveSynth } from "./synth-md.js";
+import { MegaDriveSynth, NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
+import { renderPcmDac } from "./export-vgm.js";
 
 const DEFAULT_SAMPLE_RATE = 48000; // match live AudioContext (and the LPF coeff)
 const DEFAULT_FADE_SEC = 4;
@@ -103,6 +106,7 @@ export async function renderSamples(
   totalFrames,
   sampleRate,
   lpfOn,
+  dac = null,
 ) {
   const synth = await MegaDriveSynth.create(sampleRate);
   synth.setLpf(lpfOn);
@@ -110,9 +114,25 @@ export async function renderSamples(
   const L = new Float32Array(totalFrames);
   const R = new Float32Array(totalFrames);
 
+  // The DAC stream (renderPcmDac), claimed at its first byte; past the
+  // captured loop end its time folds back into the loop body.
+  let getDacByte = null;
+  const dacStartFrame = dac ? Math.round(dac.startSec * sampleRate) : Infinity;
+  if (dac) {
+    let native = 0;
+    getDacByte = () => {
+      let t = dac.startSec + native++ / NUKED_NATIVE_SAMPLE_RATE;
+      if (dac.loopStartSec != null && t >= dac.endSec)
+        t = dac.loopStartSec + ((t - dac.loopStartSec) % (dac.endSec - dac.loopStartSec));
+      const k = Math.floor((t - dac.startSec) * dac.rateHz);
+      return k >= 0 && k < dac.bytes.length ? dac.bytes[k] : 0x80;
+    };
+  }
+
   let fmI = 0;
   let psgI = 0;
   synth.renderInto(L, R, totalFrames, (frame) => {
+    if (frame === dacStartFrame) synth.setDacEnabled(true);
     while (fmI < fmWrites.length && fmWrites[fmI].frame <= frame) {
       const op = fmWrites[fmI++];
       synth.writeYM(op.port, op.addr, op.data);
@@ -120,7 +140,7 @@ export async function renderSamples(
     while (psgI < psgWrites.length && psgWrites[psgI].frame <= frame) {
       synth.writePSG(psgWrites[psgI++].data);
     }
-  });
+  }, getDacByte);
 
   return { L, R };
 }
@@ -182,7 +202,9 @@ export function encodeWav(L, R, sampleRate) {
  * Render the loaded IR to WAV bytes (capture -> tile/fade -> synth -> encode).
  *
  * @param {IRPlayer} player  player with IR already loaded
- * @param {{ sampleRate?:number, lpfOn?:boolean, fadeSec?:number }} [opts]
+ * @param {{ sampleRate?:number, lpfOn?:boolean, fadeSec?:number,
+ *           pcm?:{bank:Uint8Array, entryIds:object, pcmVoices:number} }} [opts]
+ *        `pcm` is the score's bank (see export-vgm.js renderPcmDac)
  * @returns {Promise<{ bytes:Uint8Array, pcmCount:number, durationSec:number }>}
  */
 export async function renderWav(player, opts = {}) {
@@ -191,6 +213,10 @@ export async function renderWav(player, opts = {}) {
   const lpfOn = !!opts.lpfOn;
 
   const capture = player.captureRegisterLog();
+  const dac = opts.pcm ? renderPcmDac(capture, opts.pcm) : null;
+  // A one-shot PCM tail can outlast the last register write.
+  if (dac && capture.loopStartSec == null)
+    capture.endSec = Math.max(capture.endSec, dac.startSec + dac.bytes.length / dac.rateHz);
   const tl = buildTimeline(capture, sampleRate, fadeSec);
   const { L, R } = await renderSamples(
     tl.fmWrites,
@@ -198,10 +224,11 @@ export async function renderWav(player, opts = {}) {
     tl.totalFrames,
     sampleRate,
     lpfOn,
+    dac && { ...dac, loopStartSec: capture.loopStartSec, endSec: capture.endSec },
   );
   if (tl.fadeStartFrame != null) {
     applyFade(L, R, tl.fadeStartFrame, tl.totalFrames);
   }
   const bytes = encodeWav(L, R, sampleRate);
-  return { bytes, pcmCount: capture.pcmCount, durationSec: tl.totalFrames / sampleRate };
+  return { bytes, pcmCount: dac ? 0 : capture.pcmCount, durationSec: tl.totalFrames / sampleRate };
 }
