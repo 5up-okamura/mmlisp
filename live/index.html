@@ -2885,10 +2885,19 @@
       const def = defaultMidiOptions(a);
       const melodic = ['drop', ...FM_DESTS, ...PSG_DESTS];
       const drums = ['drop', ...PCM_DESTS];
+      const round = (x) => (Math.abs(x - Math.round(x)) < 0.1 ? Math.round(x) : +x.toFixed(2));
+      const fileBpm = round(a.bpm);
+      const beatBpm = round(a.beat.bpm);
+      const shownFor = (timing) => (timing === 'beats' ? beatBpm : fileBpm);
       const fields = [
-        { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
-          hint: a.tempos.length > 1 ? `the first of ${a.tempos.length} tempos — the rest scale with it` : '' },
-        { key: 'grid', label: 'Quantize', type: 'select', value: String(def.grid),
+        { key: 'timing', label: 'Timing', type: 'select', value: def.timing,
+          choices: [['file', 'the file’s tempo map'], ['beats', 'the beat estimated from the notes']],
+          hint: (a.fileGrid.fits ? '' : 'the notes do not sit on the file’s beat · ') +
+            `file: ${fileBpm} BPM at the first note` +
+            (a.beat.frames ? '' : ` · estimated: ${beatBpm} BPM (fit ${Math.round(a.beat.fit * 100)}%)`) },
+        { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: shownFor(def.timing),
+          hint: 'left as it is, the chosen timing’s own tempo' + (a.beat.frames ? '' : readingsHint(a.beat)) },
+        { key: 'grid', label: 'Quantize (file timing)', type: 'select', value: String(def.grid),
           choices: GRIDS.map((g) => [String(g), gridLabel(g)]) },
       ];
       if (a.loop) fields.push({ key: 'loop', label: 'Loop (from the file’s loop point)', type: 'checkbox', value: def.loop });
@@ -2901,10 +2910,14 @@
       });
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
+      const timing = got.fields.timing;
+      // An untouched field (either mode's default) is no override.
+      const untouched = bpm === fileBpm || bpm === beatBpm || !(bpm > 0);
       return midiToMmlisp(parsed, {
         dest: got.rows,
         grid: Number(got.fields.grid),
-        bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
+        timing,
+        bpm: untouched ? null : bpm,
         loop: !!got.fields.loop,
         fileName,
       }, a);
@@ -2950,7 +2963,7 @@
         { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: shown,
           hint: g.frames ? 'no steady beat found — the frame grid is used'
             : `estimated, onsets fit ${Math.round(g.fit * 100)}%` +
-              (g.candidates.length > 1 ? ` · also: ${g.candidates.filter((x) => Math.abs(x - g.bpm) > 0.01).join(', ')}` : '') },
+              readingsHint(g) },
         { key: 'grid', label: 'Timing', type: 'select', value: def.grid,
           choices: [['beats', 'the estimated beat'], ['frames', 'frames (1/60 s)']] },
         { key: 'followPitch', label: 'A pitch moved during a note becomes a slur', type: 'checkbox', value: def.followPitch },
@@ -2973,6 +2986,12 @@
         loop: !!got.fields.loop,
         fileName,
       }, a);
+    }
+
+    // The estimated unit read as other notes; typing one keeps the unit.
+    function readingsHint(g) {
+      const other = (g.readings ?? []).map((r) => +r.bpm.toFixed(2)).filter((x) => Math.abs(x - g.bpm) > 0.01);
+      return other.length ? ` · the beat read otherwise: ${other.join(', ')}` : '';
     }
 
     function gridLabel(g) {

@@ -23,7 +23,7 @@
 //   midiToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { PPQN, barEnds, emitSong, qstr } from "./import-song.js";
+import { PPQN, RATE, barEnds, emitSong, qstr, estimateGrid, regrid } from "./import-song.js";
 
 // presets/gm, in program order (README.md), and the bank's note offsets
 // (xg.wopn, melodic bank MSB 0 / LSB 0): the voice sounds `offset`
@@ -286,27 +286,51 @@ export function analyzeMidi(parsed) {
       });
     }
   }
-  return {
-    title, division: parsed.division, tempos, timeSigs, notes, lanes, counts,
-    loop: loopStart != null ? { start: loopStart, end: loopEnd } : null,
-    bpm: 60e6 / tempos[0].usPerQ,
+  // Seconds, through the tempo map.
+  const marks = [];
+  let at = 0;
+  for (let i = 0; i < tempos.length; i++) {
+    if (i > 0) at += ((tempos[i].tick - tempos[i - 1].tick) * tempos[i - 1].usPerQ) / parsed.division / 1e6;
+    marks.push({ tick: tempos[i].tick, sec: at, usPerQ: tempos[i].usPerQ });
+  }
+  const secOf = (tick) => {
+    let m = marks[0];
+    for (const x of marks) if (x.tick <= tick) m = x;
+    return m.sec + ((tick - m.tick) * m.usPerQ) / parsed.division / 1e6;
   };
+  // The tempo the music starts at: a file may run a silent setup section at
+  // a tempo of its own before the first note.
+  const firstTick = notes.length ? Math.min(...notes.map((n) => n.tick)) : 0;
+  const atFirst = tempos.filter((t) => t.tick <= firstTick).pop() ?? tempos[0];
+  const a = {
+    title, division: parsed.division, tempos, timeSigs, notes, lanes, counts, secOf, firstTick,
+    loop: loopStart != null ? { start: loopStart, end: loopEnd } : null,
+    bpm: 60e6 / atFirst.usPerQ,
+  };
+  a.fileGrid = detectGrid(a);
+  a.beat = estimateGrid(notes.map((n) => secOf(n.tick) * RATE));
+  return a;
 }
 
 /** dB of a 0-127 MIDI level (GM: 40 log10). */
 const gainDb = (v) => (v <= 0 ? -96 : 40 * Math.log10(v / 127));
 
-/** The coarsest grid the onsets sit on within a tick; a played file gets 32nds. */
+/**
+ * The coarsest grid the onsets sit on within a tick. `fits` is false when
+ * only a grid finer than a 64th does — the file's ticks are not its beat (a
+ * recorded performance, a conversion from a log) and the beat has to be
+ * estimated from the notes' times instead.
+ */
 export function detectGrid(analysis) {
   const k = PPQN / analysis.division;
   const ticks = analysis.notes.map((n) => n.tick * k);
-  if (!ticks.length) return 12;
+  if (!ticks.length) return { grid: 12, fits: true };
   for (const g of GRIDS) {
     let err = 0;
     for (const t of ticks) err += Math.abs(t - Math.round(t / g) * g);
-    if (err / ticks.length <= 1) return g;
+    if (err / ticks.length <= 1) return { grid: g, fits: g >= 6 };
   }
-  return 12;
+  return { grid: 12, fits: false };
 }
 
 /**
@@ -323,21 +347,40 @@ export function defaultMidiOptions(analysis) {
   drums.forEach((l, i) => { dest[l.key] = i < pcmVoices ? PCM_DESTS[i] : "drop"; });
   const free = [...(pcmVoices ? FM_DESTS.slice(0, 5) : FM_DESTS), ...PSG_DESTS];
   melodic.forEach((l) => { dest[l.key] = free.shift() ?? "drop"; });
-  return { dest, grid: detectGrid(analysis), bpm: null, loop: !!analysis.loop };
+  const timing = analysis.fileGrid.fits || analysis.beat.frames ? "file" : "beats";
+  return { dest, grid: analysis.fileGrid.grid, timing, bpm: null, loop: !!analysis.loop };
 }
 
 // ── The score ────────────────────────────────────────────────────────────
 
 /**
- * @param options {dest: {laneKey: channel|"drop"}, grid, bpm?: number|null
- *                 (replaces the first tempo, scaling the rest), loop: bool,
- *                 fileName?}
+ * @param options {dest: {laneKey: channel|"drop"}, grid, bpm?: number|null,
+ *                 timing: "file" (the file's ticks and tempo map, quantized
+ *                 to `grid`; `bpm` scales the map) | "beats" (the beat
+ *                 estimated from the notes' times; `bpm` replaces it),
+ *                 loop: bool, fileName?}
  */
 export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const warnings = [];
   const k = PPQN / analysis.division;
-  const g = Math.max(1, options.grid | 0);
-  const q = (t) => Math.round((t * k) / g) * g;
+  const beats = options.timing === "beats";
+  // q: a file tick → a score tick. Either way the song starts at the first
+  // note's bar (file) or step (beats): a silent lead-in is not written.
+  let g, q, beat = null;
+  if (beats) {
+    beat = analysis.beat;
+    if (options.bpm > 0) beat = regrid(beat, options.bpm);
+    g = beat.unitTicks;
+    q = (t) => Math.max(0, Math.round((analysis.secOf(t) * RATE - beat.origin) / beat.unit) * g);
+    warnings.push(`timed by the estimated beat (${beat.bpm.toFixed(1)} BPM, onsets fit ${Math.round(beat.fit * 100)}%) — the file's tempo map is not used`);
+  } else {
+    g = Math.max(1, options.grid | 0);
+    const sig = analysis.timeSigs.filter((x) => x.tick <= analysis.firstTick).pop() ?? { num: 4, den: 4 };
+    const bar = Math.max(1, Math.round((PPQN * 4 * sig.num) / sig.den));
+    const first = Math.round((analysis.firstTick * k) / g) * g;
+    const lead = Math.floor(first / bar) * bar;
+    q = (t) => Math.max(0, Math.round((t * k) / g) * g - lead);
+  }
   const dest = options.dest ?? {};
 
   // Channels: each used once; a second lane sent to the same one is dropped.
@@ -373,7 +416,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const loop = options.loop && analysis.loop ? analysis.loop : null;
   let endTick = Math.max(0, ...kept.map((n) => q(n.end)));
   if (loop?.end != null) endTick = q(loop.end);
-  const timeSigs = analysis.timeSigs.map((s) => ({ ...s, tick: q(s.tick) }));
+  const timeSigs = beats ? [] : analysis.timeSigs.map((s) => ({ ...s, tick: q(s.tick) }));
   const bars = barEnds(timeSigs, Math.max(1, endTick));
   endTick = bars.length ? bars[bars.length - 1] : endTick;
   const loopTick = loop ? q(loop.start) : null;
@@ -385,15 +428,20 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     return `:tempo ${Number.isInteger(bpm) ? bpm : +bpm.toFixed(2)}`;
   };
   const tempoMarks = [];
-  for (const t of analysis.tempos) {
-    const tick = q(t.tick);
+  if (beats) {
+    const bpm = Math.abs(beat.bpm - Math.round(beat.bpm)) < 0.1 ? Math.round(beat.bpm) : +beat.bpm.toFixed(2);
+    tempoMarks.push({ tick: 0, tokens: [`:tempo ${bpm}`] });
+  } else for (const t of analysis.tempos) {
+    // A tempo set before the first note (a setup section's) gives way to
+    // the one the music starts at.
+    const tick = t.tick <= analysis.firstTick ? 0 : q(t.tick);
     if (tick >= endTick && tick > 0) continue;
     const prev = tempoMarks.findIndex((m) => m.tick === tick);
     if (prev >= 0) tempoMarks.splice(prev, 1);
     tempoMarks.push({ tick, tokens: [bpmToken(t.usPerQ)] });
   }
   // `(go top)` keeps the end's tempo: restate the loop's own.
-  if (loopTick != null && !tempoMarks.some((m) => m.tick === loopTick)
+  if (!beats && loopTick != null && !tempoMarks.some((m) => m.tick === loopTick)
     && tempoMarks.some((m) => m.tick > loopTick)) {
     const inForce = analysis.tempos.filter((t) => q(t.tick) <= loopTick).pop();
     tempoMarks.push({ tick: loopTick, tokens: [bpmToken(inForce.usPerQ)] });

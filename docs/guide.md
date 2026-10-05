@@ -1105,8 +1105,8 @@ sample too big to fit even then is left out, its notes turned to rests, and
 the log names it.
 
 **Song imports open a dialog first.** A MIDI file is read, then
-the dialog shows the tempo, the quantize grid (the coarsest one the notes sit
-on), the loop when the file marks one (CC111 or `loopStart` / `loopEnd`
+the dialog shows its timing, the tempo, the quantize grid (the coarsest one
+the notes sit on), the loop when the file marks one (CC111 or `loopStart` / `loopEnd`
 markers), and one row per source part with its destination. MIDI plays chords
 on one channel and a track plays one note, so a channel is split into lanes,
 one a track; the defaults put each channel's first lane on FM before any
@@ -1116,7 +1116,11 @@ does not fit. **Enter** imports with the defaults. A program names its
 `presets/gm-drums`. Velocity, volume (CC7) and expression (CC11) become
 `:vel`, the loudest note at 15; pan (CC10) sets `:pan`; the sustain pedal
 holds notes. Pitch bend and other controllers are skipped, and the log says
-how many.
+how many. The music starts at the first note: a silent setup section before
+it, and the tempo it runs at, are left out. When the notes do not sit on the
+file's own beat (a recorded performance, a file converted from a log), the
+timing is the beat estimated from the notes' times, as for a VGM, instead of
+the file's tempo map; **Timing** switches between the two.
 
 A DefleMask or Furnace module plays its order list as the tracker does — `0Bxx` jumps,
 `0Dxx` breaks, looping where it jumps back to (or to the start) — with a row
@@ -1141,7 +1145,8 @@ loudest use and the rest becomes `:vel`. The SSG and the SN76489 become
 stand-in voice. A pitch moved during a note becomes a slur (`~`) when it
 lands on another semitone — untick it to keep only the struck pitch. The
 tempo is estimated from the onsets (the dialog shows how well they fit and
-the other readings, double or half); when no beat fits, the notes go on the
+the other readings, double or half — typing one keeps the measured beat and
+reads it so); when no beat fits, the notes go on the
 frame grid (1/60 s = 4 ticks). The file's loop becomes `#top … (go top)`.
 DAC samples, a second chip and tempo changes within the song are not
 imported, and the log says so.

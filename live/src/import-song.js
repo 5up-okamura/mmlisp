@@ -14,6 +14,8 @@
 // ---------------------------------------------------------------------------
 
 export const PPQN = 96; // must match mmlisp2ir.js
+/** The time base estimateGrid works in: onsets in samples at this rate. */
+export const RATE = 44100;
 export const WHOLE = PPQN * 4;
 
 const NOTE_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
@@ -275,4 +277,110 @@ export function emitPhrased(song) {
     forms[forms.length - 1] += ")";
   }
   return [...out, ...forms].join("\n") + "\n";
+}
+
+// ── Tempo ────────────────────────────────────────────────────────────────
+
+/**
+ * The grid the onsets sit on. `unit` is in samples; `unitTicks` what it is
+ * in the score (24 = a 16th); `origin` the phase. Falls back to the frame
+ * grid when no unit fits the onsets well.
+ */
+export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
+  const frame = { unit: RATE / frameRate, unitTicks: 4, origin: 0, fit: 1, frames: true };
+  frame.bpm = (60 * RATE) / (frame.unit * (96 / frame.unitTicks));
+  const onsets = [...new Set(onsetsIn.map((t) => Math.round(t)))].sort((a, b) => a - b);
+  // Notes struck within 8 ms are one onset (a chord, however loosely played).
+  const merged = [];
+  for (const t of onsets) if (!merged.length || t - merged[merged.length - 1] > RATE * 0.008) merged.push(t);
+  if (merged.length < 8) return { ...frame, readings: [], onsets: merged };
+  const t0 = merged[0];
+
+  // How tightly the onsets gather on a grid of `u`: the length of their
+  // mean phase vector (1 = every onset on the grid). Unlike a ratio of the
+  // gaps, a few onsets a hair off (a flam, a loose chord) only shave it.
+  const fitOf = (u, upTo = merged.length) => {
+    let x = 0, y = 0;
+    for (let i = 0; i < upTo; i++) {
+      const a = (2 * Math.PI * (merged[i] - t0)) / u;
+      x += Math.cos(a); y += Math.sin(a);
+    }
+    return Math.hypot(x, y) / upTo;
+  };
+  // A unit off by a hair drifts off the beat over a long song: refine it on
+  // a growing span of onsets, the search narrowing as the span grows.
+  const refine = (u0) => {
+    let u = u0, range = 0.03;
+    for (let span = RATE * 4; ; span *= 2) {
+      const upTo = merged.findIndex((t) => t - t0 > span);
+      const n = upTo < 0 ? merged.length : Math.max(8, upTo);
+      let best = u, bestFit = -1;
+      for (let j = -20; j <= 20; j++) {
+        const c = u * (1 + (range * j) / 20);
+        const f = fitOf(c, n);
+        if (f > bestFit) { bestFit = f; best = c; }
+      }
+      u = best;
+      range /= 10;
+      if (upTo < 0 && range < 1e-6) break;
+      if (upTo < 0) continue;
+    }
+    return u;
+  };
+
+  // Candidates: the common gaps and their halves, thirds and quarters.
+  const hist = new Map();
+  for (let i = 1; i < merged.length; i++) {
+    const k = Math.round((merged[i] - merged[i - 1]) / 32) * 32;
+    hist.set(k, (hist.get(k) ?? 0) + 1);
+  }
+  const common = [...hist].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
+  const cands = [];
+  for (const k of common) for (const div of [1, 2, 3, 4, 6, 8]) {
+    const u = k / div;
+    if (u >= RATE * 0.025 && u <= RATE * 0.75 && !cands.some((c) => Math.abs(c - u) / u < 0.02)) cands.push(u);
+  }
+  // The coarsest unit the onsets gather on nearly as well as on the best.
+  const scored = cands.map((u0) => { const u = refine(u0); return { u, fit: fitOf(u) }; })
+    .sort((a, b) => b.u - a.u);
+  const top = Math.max(...scored.map((x) => x.fit));
+  const best = scored.find((x) => x.fit >= Math.max(0.75, 0.9 * top));
+  if (!best) return { ...frame, readings: [], onsets: merged };
+  const unit = best.u;
+
+  // The unit as a note: whatever puts the beat in 80-160 BPM, a 16th first.
+  const asNote = [[4, 24], [2, 48], [8, 12], [3, 32], [6, 16], [1, 96], [16, 6]];
+  const options = asNote.map(([perBeat, ticks]) => ({ unitTicks: ticks, bpm: (60 * RATE) / (unit * perBeat) }));
+  const pick = options.find((o) => o.bpm >= 80 && o.bpm <= 160) ?? options[0];
+  return {
+    unit, unitTicks: pick.unitTicks, origin: phaseOf(merged, unit), onsets: merged, fit: best.fit, frames: false, bpm: pick.bpm,
+    // The same unit read as other notes: double, half, … the tempo.
+    readings: options.filter((o) => o.bpm >= 40 && o.bpm <= 320),
+  };
+}
+
+/**
+ * A grid at a tempo set by hand. A tempo that is another reading of the
+ * estimated unit (double, half, …) keeps the unit and reads it so; any other
+ * tempo stretches the unit, read as before.
+ */
+export function regrid(g, bpm) {
+  const r = (g.readings ?? []).find((o) => Math.abs(o.bpm - bpm) / bpm < 0.005);
+  if (r) return { ...g, unitTicks: r.unitTicks, bpm };
+  const unit = (60 * RATE) / (bpm * (96 / g.unitTicks));
+  return { ...g, unit, bpm, origin: g.frames ? 0 : phaseOf(g.onsets ?? [], unit) };
+}
+
+/** Where the grid of `unit` starts: the onsets' circular mean against it. */
+export function phaseOf(onsets, unit) {
+  let sx = 0, sy = 0;
+  for (const t of onsets) {
+    const a = (2 * Math.PI * (t % unit)) / unit;
+    sx += Math.cos(a); sy += Math.sin(a);
+  }
+  let origin = ((Math.atan2(sy, sx) / (2 * Math.PI)) * unit + unit) % unit;
+  // The grid starts at the first onset's own step: a silent lead-in (a
+  // MIDI file's setup section, a VGM's pause) is not written as rests.
+  if (onsets.length) origin += unit * Math.round((onsets[0] - origin) / unit);
+  return origin;
 }

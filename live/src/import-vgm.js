@@ -27,11 +27,10 @@
 //   vgmToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { emitSong, qstr, barEnds } from "./import-song.js";
+import { emitSong, qstr, barEnds, estimateGrid, regrid, RATE } from "./import-song.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { FM_DESTS, PSG_DESTS } from "./import-midi.js";
 
-const RATE = 44100;
 const CARRIERS = [[3], [3], [3], [3], [2, 3], [1, 2, 3], [1, 2, 3], [0, 1, 2, 3]]; // by ALG, in slot order
 const STAND_IN = { psg: "wave-square", noise: "wave-square", opl: "wave-sine", opll: "wave-saw" };
 
@@ -480,84 +479,6 @@ function notesOf(events, followPitch) {
   return out.filter((n) => n.end > n.t && n.pitch != null && n.pitch > 0 && n.pitch < 128);
 }
 
-// ── Tempo ────────────────────────────────────────────────────────────────
-
-/**
- * The grid the onsets sit on. `unit` is in samples; `unitTicks` what it is
- * in the score (24 = a 16th); `origin` the phase. Falls back to the frame
- * grid when no unit fits the onsets well.
- */
-export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
-  const frame = { unit: RATE / frameRate, unitTicks: 4, origin: 0, fit: 1, frames: true };
-  frame.bpm = (60 * RATE) / (frame.unit * (96 / frame.unitTicks));
-  const onsets = [...new Set(onsetsIn.map((t) => Math.round(t)))].sort((a, b) => a - b);
-  const merged = [];
-  for (const t of onsets) if (!merged.length || t - merged[merged.length - 1] > RATE * 0.008) merged.push(t);
-  if (merged.length < 8) return { ...frame, candidates: [], onsets: merged };
-  const iois = [];
-  for (let i = 1; i < merged.length; i++) iois.push(merged[i] - merged[i - 1]);
-
-  const fitOf = (u) => {
-    let s = 0;
-    for (const d of iois) {
-      const x = d / u;
-      s += x < 0.5 ? 0 : 1 - 2 * Math.abs(x - Math.round(x));
-    }
-    return s / iois.length;
-  };
-  // Candidates: the common IOIs and their halves, thirds and quarters.
-  const hist = new Map();
-  for (const d of iois) {
-    const k = Math.round(d / 32) * 32;
-    hist.set(k, (hist.get(k) ?? 0) + 1);
-  }
-  const common = [...hist].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
-  const cands = new Set();
-  for (const k of common) for (const div of [1, 2, 3, 4, 6, 8]) {
-    const u = k / div;
-    if (u >= RATE * 0.04 && u <= RATE * 0.75) cands.add(u);
-  }
-  // Refine each to the IOIs' own mean multiple, then keep the coarsest that fits.
-  const scored = [];
-  for (const u0 of cands) {
-    let num = 0, den = 0;
-    for (const d of iois) {
-      const m = Math.round(d / u0);
-      if (m >= 1 && m <= 16) { num += d * m; den += m * m; }
-    }
-    const u = den ? num / den : u0;
-    scored.push({ u, fit: fitOf(u) });
-  }
-  scored.sort((a, b) => b.u - a.u);
-  const best = scored.find((s) => s.fit >= 0.88);
-  if (!best) return { ...frame, candidates: [], onsets: merged };
-  const unit = best.u;
-
-  // The unit as a note: whatever puts the beat in 80-160 BPM, a 16th first.
-  const asNote = [[4, 24], [2, 48], [8, 12], [3, 32], [6, 16], [1, 96], [16, 6]];
-  const options = asNote.map(([perBeat, ticks]) => ({ perBeat, unitTicks: ticks, bpm: (60 * RATE) / (unit * perBeat) }));
-  const pick = options.find((o) => o.bpm >= 80 && o.bpm <= 160) ?? options[0];
-
-  return {
-    unit, unitTicks: pick.unitTicks, origin: phaseOf(merged, unit), onsets: merged, fit: best.fit, frames: false, bpm: pick.bpm,
-    candidates: options.filter((o) => o.bpm >= 40 && o.bpm <= 320).map((o) => +o.bpm.toFixed(2)),
-  };
-}
-
-/** Where the grid of `unit` starts: the onsets' circular mean against it. */
-function phaseOf(onsets, unit) {
-  let sx = 0, sy = 0;
-  for (const t of onsets) {
-    const a = (2 * Math.PI * (t % unit)) / unit;
-    sx += Math.cos(a); sy += Math.sin(a);
-  }
-  let origin = ((Math.atan2(sy, sx) / (2 * Math.PI)) * unit + unit) % unit;
-  // The first onset rounds to tick 0 or later.
-  if (onsets.length && origin > onsets[0] + unit / 2)
-    origin -= unit * Math.ceil((origin - onsets[0] - unit / 2) / unit);
-  return origin;
-}
-
 // ── What is in it ────────────────────────────────────────────────────────
 
 export function analyzeVgm(parsed, { followPitch = true } = {}) {
@@ -606,12 +527,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   if (options.grid === "frames") {
     g = { unit: RATE / a.frameRate, unitTicks: 4, origin: 0, frames: true, bpm: (60 * a.frameRate) / 24 };
   }
-  if (options.bpm > 0 && Math.abs(options.bpm - g.bpm) > 1e-6) {
-    // Same reading of the unit, a new length: re-phase against the onsets.
-    const perBeat = 96 / g.unitTicks;
-    const unit = (60 * RATE) / (options.bpm * perBeat);
-    g = { ...g, unit, bpm: options.bpm, origin: g.frames ? 0 : phaseOf(a.grid.onsets ?? [], unit) };
-  }
+  if (options.bpm > 0 && Math.abs(options.bpm - g.bpm) > 1e-6) g = regrid(g, options.bpm);
   const tickOf = (t) => Math.max(0, Math.round((t - g.origin) / g.unit) * g.unitTicks);
   if (!g.frames && a.grid.fit < 0.95)
     warnings.push(`the notes fit the ${g.bpm.toFixed(1)} BPM grid loosely (${Math.round(a.grid.fit * 100)}%) — try the frame grid if it sounds off`);
