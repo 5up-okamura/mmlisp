@@ -1,3 +1,4 @@
+import { bankedEngineImage } from "./src/engine-banked-images.js";
 /**
  * AudioWorkletProcessor for YM2612 playback.
  *
@@ -350,8 +351,8 @@ class YM2612Processor extends AudioWorkletProcessor {
     }
     const window = new Uint8Array(0x8000);
     window.set(bank.subarray(0, 0x8000));
-    const { entries } = parsePcmBank(bank);
-    this._pcmBank = { window, entries, entryIds: msg.entryIds ?? {}, img: engineImage(voices) };
+    const { entries, multibank } = parsePcmBank(bank);
+    this._pcmBank = { window: multibank ? bank : window, entries, multibank, entryIds: msg.entryIds ?? {}, img: multibank ? bankedEngineImage(voices) : engineImage(voices) };
     this._pcmRestart();
   }
 

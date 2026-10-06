@@ -20,7 +20,7 @@ import { pcmBankStamp } from "../../live/src/mmb.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, "..", "sgdk", "mmlispdrv_bin.h");
-export const PROTO_VER = 12;
+export const PROTO_VER = 13;
 
 export function headerSource() {
   const imgs = [1, 2, 3].map((v) => buildLightImage(v));

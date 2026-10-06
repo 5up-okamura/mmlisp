@@ -354,7 +354,10 @@ export function encodeMmb(ir, opts = {}) {
   // the compiler states it, otherwise the highest pcmN channel it uses — and
   // the bank is baked at that image's rate.
   const pcmVoices = scorePcmVoices(ir);
-  const rateHz = engineImage(pcmVoices).rateHz;
+  const multibank = !!opts.multibank;
+  if (multibank && (pcmVoices > 2 || frameHz !== 60))
+    throw new RangeError("multibank PCM supports 1–2 voices and NTSC only");
+  const rateHz = engineImage(multibank ? 2 : pcmVoices).rateHz;
   // A BUNDLE (drv/tools/bundle.mjs) hands every score the same builder, so N
   // songs plan into one bank and this score emits none of its own. The bank is
   // baked at one image's rate and a score names its image by its voice count,
@@ -1391,8 +1394,13 @@ export function encodeMmb(ir, opts = {}) {
     // $7FFF must be zero (the bank holds signed bytes; 0 is silence) — whatever
     // rescomp happens to place after the blob in ROM is not. That is why the
     // payload may reach $7F00 only, and why the file is padded to $8000.
+    if (multibank) {
+      sampleBank = packBankedSamples(Uint8Array.from(bankPlan.bytes));
+    } else {
     const SILENCE_PAGE = 0x7f00;
     if (bankPlan.bytes.length > SILENCE_PAGE) {
+      if (opts.multibank !== false && pcmVoices <= 2 && frameHz === 60)
+        return encodeMmb(ir, { ...opts, multibank: true });
       throw new RangeError(
         `sample bank is ${bankPlan.bytes.length} bytes; exceeds the ${SILENCE_PAGE} bytes ` +
           `below the 32KB window's silence page by ${bankPlan.bytes.length - SILENCE_PAGE}`,
@@ -1400,6 +1408,7 @@ export function encodeMmb(ir, opts = {}) {
     }
     sampleBank = new Uint8Array(0x8000);
     sampleBank.set(bankPlan.bytes, 0);
+    }
   } else if (usesPcm) {
     diag(
       "warning",
@@ -1465,6 +1474,7 @@ export function encodeMmb(ir, opts = {}) {
   // numbers were baked for 50 Hz; bits 2-3 the PCM voice count
   file.u16(
     ((pcmVoices & 3) << HEADER_PCM_VOICES_SHIFT) |
+      (multibank ? HEADER_FLAG.MULTIBANK_PCM : 0) |
       (frameHz === FRAME_HZ_PAL ? HEADER_FLAG.PAL_TIMEBASE : 0),
   );
   file.u16(sections.length);
@@ -1889,4 +1899,38 @@ export function bakeAuditionBank(ir, blobs, name, midi) {
   const sampleBank = new Uint8Array(0x8000);
   sampleBank.set(bytes, 0);
   return { sampleBank, entryIds };
+}
+
+
+/** Banked .smp: directory in bank 0, blobs in whole 32 KiB banks.
+ * Stamp bit 15 distinguishes it; entry offsets are relative to bank 1.
+ * Every bank reserves its final 256 bytes as silence. */
+export function packBankedSamples(flat) {
+  const view = new DataView(flat.buffer, flat.byteOffset, flat.byteLength);
+  const n = view.getUint16(0, true), tableEnd = 4 + n * 24;
+  if (n > 256 || tableEnd > flat.length) throw new RangeError("invalid sample directory");
+  const rows = [], shared = new Map();
+  let cursor = 0;
+  for (let i = 0; i < n; i++) {
+    const at = 4 + i * 24, off = view.getUint32(at + 4, true), len = view.getUint32(at + 8, true);
+    if (!len || len > 0x7f00 || len % 16 || tableEnd + off + len > flat.length)
+      throw new RangeError("each baked PCM blob must fit below a bank's silence page (32512 bytes)");
+    const key = `${off}:${len}`;
+    let dst = shared.get(key);
+    if (dst === undefined) {
+      if ((cursor & 0x7fff) + len > 0x7f00) cursor = (cursor + 0x7fff) & ~0x7fff;
+      dst = cursor; cursor += len; shared.set(key, dst);
+    }
+    rows.push({at, off, len, dst});
+  }
+  const size = 0x8000 + Math.ceil(cursor / 0x8000) * 0x8000;
+  if (size > 0x400000) throw new RangeError("PCM bank image exceeds the 4 MiB cartridge aperture");
+  const bank = new Uint8Array(size), out = new DataView(bank.buffer);
+  bank.set(flat.subarray(0, tableEnd));
+  out.setUint16(2, view.getUint16(2, true) | 0x8000, true);
+  for (const r of rows) {
+    out.setUint32(r.at + 4, r.dst, true);
+    bank.set(flat.subarray(tableEnd + r.off, tableEnd + r.off + r.len), 0x8000 + r.dst);
+  }
+  return bank;
 }

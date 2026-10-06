@@ -33,7 +33,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { encodeMmb, createSampleBankBuilder } from "../../live/src/export-mmb.js";
+import { encodeMmb, createSampleBankBuilder, packBankedSamples } from "../../live/src/export-mmb.js";
 import { engineImage } from "../../live/src/engine-images.js";
 import { loadSamplesForIr } from "./wav.mjs";
 import { readImportSources, seListOf, seHeader, withSeImport } from "./mmb-build.mjs";
@@ -75,7 +75,7 @@ function bankEntry(bank, id) {
   const count = u16(0);
   if (id >= count) return null;
   const e = 4 + id * 24;
-  const base = 4 + count * 24;
+  const base = (u16(2) & 0x8000) ? 0x8000 : 4 + count * 24;
   const off = u32(e + 4), len = u32(e + 8);
   return {
     flags: bank[e + 1], len, srcFrames: u32(e + 12),
@@ -147,13 +147,16 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     }
     s.ir.metadata = { ...(s.ir.metadata ?? {}), pcmVoices };
   }
-  const rateHz = engineImage(pcmVoices).rateHz;
+  const multibank = !!manifest.multibank;
+  if (multibank && (pcmVoices > 2 || songs.some(s => s.ir.metadata.frameHz !== 60)))
+    throw new RangeError("multibank bundles require NTSC and at most two PCM voices");
+  const rateHz = engineImage(multibank ? 2 : pcmVoices).rateHz;
   const builder = createSampleBankBuilder(rateHz, { dedup: true });
 
   // ── encode each score into the shared plan ─────────────────────────────
   let anyPcm = false;
   for (const s of songs) {
-    const { bytes, pcmEntryIds, diagnostics: ed } = encodeMmb(s.ir, { samples: s.samples, bankBuilder: builder });
+    const { bytes, pcmEntryIds, diagnostics: ed } = encodeMmb(s.ir, { samples: s.samples, bankBuilder: builder, multibank });
     s.diagnostics.push(...ed);
     s.bytes = bytes;
     s.entryIds = pcmEntryIds ?? {};
@@ -164,14 +167,24 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     // every song — a bundle build is 2N of them — and it is worth it: nothing
     // else can tell "the bundle moved the ids" from "the bundle changed the
     // sound", which is the one thing a shared bank could silently do.
-    s.alone = encodeMmb(s.ir, { samples: s.samples });
+    try { s.alone = encodeMmb(s.ir, { samples: s.samples, multibank }); }
+    catch (e) {
+      if (manifest.multibank === undefined && !multibank && pcmVoices <= 2 &&
+          songs.every(song => song.ir.metadata.frameHz === 60) && e instanceof RangeError && /exceeds/.test(e.message))
+        return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz });
+      throw e;
+    }
   }
 
   // ── finish the bank ────────────────────────────────────────────────────
   let bank = null;
   const { bytes: bankBytes, entryCount } = builder.finish(diag);
   if (anyPcm) {
+    if (multibank) bank = packBankedSamples(Uint8Array.from(bankBytes));
+    else {
     if (bankBytes.length > SILENCE_PAGE) {
+      if (manifest.multibank === undefined && pcmVoices <= 2 && songs.every(song => song.ir.metadata.frameHz === 60))
+        return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz });
       throw new RangeError(
         `the shared bank is ${bankBytes.length} bytes; exceeds the ${SILENCE_PAGE} bytes below the ` +
           `32KB window's silence page by ${bankBytes.length - SILENCE_PAGE}. Fewer or shorter samples, ` +
@@ -180,6 +193,7 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     }
     bank = new Uint8Array(0x8000);
     bank.set(bankBytes, 0);
+    }
   }
 
   // ── self-test: bundling moved ids, never sounds ────────────────────────
@@ -202,7 +216,7 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
 
   return {
     pcmVoices, rateHz, bank, entryCount, blobBytes: builder.blobLength,
-    bankBytes: bankBytes.length, headroom: SILENCE_PAGE - bankBytes.length,
+    bankBytes: bankBytes.length, headroom: multibank ? (bank?.length ?? 0) - 0x8000 - builder.blobLength : SILENCE_PAGE - bankBytes.length,
     songs: songs.map(({ name, src, bytes, ir, tracks, entryIds, diagnostics }) =>
       ({ name, src, bytes, ir, tracks, entryIds, diagnostics })),
     se,

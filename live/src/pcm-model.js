@@ -21,6 +21,7 @@
 // (`lutPage + k`, k = 0 silence .. 7 unity).
 // ---------------------------------------------------------------------------
 
+import { MultibankModel } from "./pcm-banked-model.js";
 import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER } from "./slot-builder.js";
 
 export const PCM_WINDOW = 0x8000;
@@ -245,7 +246,9 @@ export class PcmEngineModel {
 
 export class PcmLiveEngine {
   constructor(image, bank) {
-    this.model = new PcmEngineModel(image, bank);
+    this.model = image.multibank
+      ? new MultibankModel({ actions: image.actions, cfg: { voices: image.voices } }, bank)
+      : new PcmEngineModel(image, bank);
     this.img = image;
     this.masterShift = 0;
     this.shiftByte = new Array(image.voices).fill(0);
@@ -262,11 +265,12 @@ export class PcmLiveEngine {
     const put16 = (name, vi, x) => { m.store(pcmOp(name, vi), x & 0xff); m.store(pcmOp(name, vi) + 1, (x >> 8) & 0xff); };
     const w = (k) => c[k] | (c[k + 1] << 8);
     const bump = (name, vi) => { const op = pcmOp(name, vi); m.store(op, (m.state[op] + 1) & 0xff); };
-    if (c[0] === PCM_START && c[1] < V) {
+    if ((c[0] === PCM_START || c[0] === 6) && c[1] < V) {
       this.started[c[1]] = true;
       this.shiftByte[c[1]] = c[2];
       m.store(pcmOp("LEVEL", c[1]), this.page(c[2]));
       put16("SRC", c[1], w(3)); put16("END", c[1], w(5)); put16("WRAP", c[1], w(7));
+      if (c[0] === 6) { m.store(0x1c + 2*c[1], c[9]); m.store(0x1d + 2*c[1], c[10]); }
       bump("START", c[1]);
     } else if (c[0] === PCM_RETARGET && c[1] < V) {
       put16("END", c[1], w(2)); put16("WRAP", c[1], w(4));
@@ -299,11 +303,21 @@ export function parsePcmBank(bank) {
   const u16 = (o) => bank[o] | (bank[o + 1] << 8);
   const u32 = (o) => (bank[o] | (bank[o + 1] << 8) | (bank[o + 2] << 16) | (bank[o + 3] << 24)) >>> 0;
   const n = u16(0);
-  const blobBase = 4 + n * SAMPLE_ENTRY_SIZE;
+  const multibank = (u16(2) & 0x8000) !== 0;
+  const blobBase = multibank ? 0x8000 : 4 + n * SAMPLE_ENTRY_SIZE;
+  if (bank.length < 4 || n > 256 || 4 + n * SAMPLE_ENTRY_SIZE > bank.length)
+    throw new RangeError("invalid PCM sample directory");
+  if (multibank && ((bank.length & 0x7fff) || bank.length > 0x400000))
+    throw new RangeError("banked PCM image must contain whole 32 KiB banks");
   const entries = [];
   for (let i = 0; i < n; i++) {
     const e = 4 + i * SAMPLE_ENTRY_SIZE;
     const flags = bank[e + 1];
+    const base = blobBase + u32(e + 4), len = u32(e + 8);
+    if (multibank && bank[e] !== i) throw new RangeError("invalid banked PCM entry id");
+    if (multibank && (!len || len > 0x7f00 || (len & 15) ||
+        (base & 0x7fff) + len > 0x7f00 || base + len > bank.length))
+      throw new RangeError("PCM blob crosses a bank or the image boundary");
     entries[bank[e]] = {
       hasRange: (flags & SAMPLE_FLAG.range) !== 0,
       base: blobBase + u32(e + 4),
@@ -317,5 +331,5 @@ export function parsePcmBank(bank) {
       loopEndSet: (flags & SAMPLE_FLAG.loopEnd) !== 0,
     };
   }
-  return { stamp: u16(2), entries };
+  return { stamp: u16(2) & 0x7fff, entries, multibank };
 }

@@ -636,7 +636,7 @@
     import { DrvPlayer } from './src/drv-player.js';
     import { encodeMmb, collectPcmUsage, bakeAuditionBank } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
-    import { renderVgm } from './src/export-vgm.js';
+    import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
@@ -3882,6 +3882,7 @@
       if (!samples) return clear();
       try {
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
+        configurePcmRate(player, { bank: sampleBank, pcmVoices });
         workletNode.port.postMessage({
           type: 'pcm-set-bank',
           bank: sampleBank ?? null,

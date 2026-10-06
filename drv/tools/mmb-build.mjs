@@ -42,7 +42,7 @@ export function withSeImport(sourcePath, src, seFile) {
 // 60 for NTSC, 50 for PAL. It has to be given to the COMPILER, not the
 // exporter — an `Nf` duration is already ticks by the time the IR exists.
 // `seFile` gives the score the game's effects (withSeImport).
-export function buildMmb(sourcePath, { frameHz, seFile } = {}) {
+export function buildMmb(sourcePath, { frameHz, seFile, multibank } = {}) {
   const src = withSeImport(sourcePath, readFileSync(sourcePath, "utf8"), seFile);
   const imports = readImportSources(sourcePath, src);
   const { ir, diagnostics } = compileMMLisp(src, sourcePath, { frameHz, imports });
@@ -54,7 +54,7 @@ export function buildMmb(sourcePath, { frameHz, seFile } = {}) {
   }
   // PCM songs need the sample blobs (SAMPLE_BANK); load the WAVs the compiler
   // resolved. Non-PCM songs skip this entirely.
-  const opts = {};
+  const opts = { multibank };
   const sampleDiags = [];
   if ((ir.metadata?.samples ?? []).length) {
     opts.samples = loadSamplesForIr(ir, sampleDiags);
@@ -104,7 +104,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     console.error("usage: node mmb-build.mjs <in.mmlisp> <out.mmb>");
     process.exit(2);
   }
-  const { bytes, sampleBank, diagnostics } = buildMmb(inPath);
+  const { bytes, sampleBank, diagnostics } = buildMmb(inPath, { multibank: process.argv.includes("--multibank") ? true : undefined });
   writeFileSync(outPath, bytes);
   console.log(`${outPath}: ${bytes.length} bytes`);
   if (sampleBank && sampleBank.length) {

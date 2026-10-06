@@ -57,6 +57,7 @@ typedef struct {
   uint8_t ahead;         /* pairs ahead of the last-read index a grab writes at;
                             0 = MMLP_AHEAD (two grabs a frame). One grab a frame
                             needs MMLP_AHEAD_ONE (mmlpairs.c has the arithmetic) */
+  uint8_t banked;        /* block-banked image: fresh index, unified ordered queue */
 } MMLPairsCfg;
 
 #define MMLP_VOICES 3
@@ -87,7 +88,9 @@ typedef struct {
   /* The producer's state. */
   uint8_t chip_port;     /* the port the engine's RAW arm currently writes */
   uint8_t head;          /* H: the next pair position in the page (0..127) */
+  uint8_t last_fifo;
   uint8_t head_valid;    /* H has been placed relative to a read index */
+  uint8_t fm_mod[6];
   uint8_t master_shift;  /* the last PCM_MASTER */
   /* Per voice: the last shift byte (0xFF = none yet), the level page sent, the
    * staged bytes as last sent (src, end, wrap; lo/hi) once a start has sent them
@@ -95,6 +98,8 @@ typedef struct {
    * generation pair (saturating). */
   uint8_t shift[MMLP_VOICES], page[MMLP_VOICES];
   uint8_t staged[MMLP_VOICES][6], staged_valid[MMLP_VOICES];
+  uint16_t bank[MMLP_VOICES];
+  uint8_t bank_valid[MMLP_VOICES];
   uint8_t start_gen[MMLP_VOICES], end_gen[MMLP_VOICES];
   uint8_t since_gen[MMLP_VOICES];
   /* Counters a host can show. */

@@ -1,3 +1,4 @@
+import { bankedEngineImage } from "./engine-banked-images.js";
 // ---------------------------------------------------------------------------
 // MMLispDRV reference player — MMB v0.3 decoder + Z80-constrained scheduler.
 //
@@ -241,6 +242,8 @@ export class DrvPlayer {
     // Bits 2-3 of the flags: the PCM voice count, i.e. which engine image the
     // score plays on and the rate its bank is baked at (mmb.md §4).
     const pcmVoices = headerPcmVoices(u16(b, 6));
+    const pcmBanked = (u16(b, 6) & 0x10) !== 0;
+    if (pcmBanked && (pcmVoices > 2 || (u16(b, 6) & 2))) throw new RangeError("unsupported banked PCM image");
     // Bit 1: the frame clock this score's numbers were baked for (mmb.md §4).
     // The dispatcher never reads it — it counts frames — but the tempo
     // readback and a live tempo override have to speak the score's own clock.
@@ -322,12 +325,14 @@ export class DrvPlayer {
     if (sampleBank) {
       sampleData = sampleBank;
       // The engine model reads the bank; this player only grades the stamp.
-      const { stamp, entries } = parsePcmBank(sampleBank);
+      const { stamp, entries, multibank } = parsePcmBank(sampleBank);
+      if (multibank !== pcmBanked) throw new RangeError("PCM bank format does not match the score");
       // The bank stamps the image rate its blobs were baked at (mmb.md §10).
       // Baked data is bound to that rate: played under another the pitch is
       // quietly wrong, so the mismatch is reported here rather than heard.
-      const want = pcmBankStamp(engineImage(pcmVoices).rateHz);
+      const want = pcmBankStamp(engineImage(pcmBanked ? 2 : pcmVoices).rateHz);
       if (stamp !== want) {
+        if (pcmBanked) throw new RangeError(`banked PCM stamp ${stamp} does not match ${want}`);
         this._diagnostics.push({
           severity: "error",
           code: "E_MMB_BAKE_RATE",
@@ -394,7 +399,7 @@ export class DrvPlayer {
     if (seSec)
       for (let i = 0; i < seSec[0]; i++)
         seTable.push({ prio: seSec[1 + i * 3], first: seSec[2 + i * 3], count: seSec[3 + i * 3] });
-    this._song = { stream, tracks, valInits, samples, sampleData, macros, voices, pcmVoices, seTable };
+    this._song = { stream, tracks, valInits, samples, sampleData, macros, voices, pcmVoices, pcmBanked, seTable };
     return this;
   }
 
@@ -489,7 +494,7 @@ export class DrvPlayer {
     // Live playback of a PCM score runs the engine model for the DAC bytes;
     // an offline capture (no audio context) compares commands and builds none.
     this._pcmModel = this._audioContext && song?.sampleData && song.pcmVoices
-      ? new PcmLiveEngine(engineImage(song.pcmVoices), song.sampleData)
+      ? new PcmLiveEngine(song.pcmBanked ? bankedEngineImage(song.pcmVoices) : engineImage(song.pcmVoices), song.sampleData)
       : null;
     this._pcmSampleRem = 0;
     this._pcmSampleIndex = 0;
@@ -2151,7 +2156,7 @@ export class DrvPlayer {
   // value — the waveform would come out as a click.
   _whenSample(sampleIndex) {
     if (!this._audioContext) return undefined;
-    const img = engineImage(this._song?.pcmVoices ?? 1);
+    const img = this._song?.pcmBanked ? bankedEngineImage(this._song.pcmVoices) : engineImage(this._song?.pcmVoices ?? 1);
     return this._startAudioTime + (sampleIndex * img.periodMaster) / (FRAMES_PER_SEC * FRAME_MASTER);
   }
 
@@ -2821,6 +2826,11 @@ export class DrvPlayer {
   // Every field is resolved HERE, on the sequencer side: the host turns a
   // command into state-store pairs and the engine does no per-note arithmetic.
   _pcmCmd(bytes) {
+    if (this._song?.pcmBanked && bytes[0] === PCM_START) {
+      const v = this._pcmVoices[bytes[1]], sample = this._song.samples[v.sampleId];
+      const bank = this._sampleBankBase + Math.floor((sample?.base ?? 0) / 0x8000);
+      bytes = [6, ...bytes.slice(1), ...u16le(bank)];
+    }
     if (this._slotSink) this._slotSink.pcm(bytes);
     if (this._pcmModel) this._pcmModel.apply(bytes);
   }

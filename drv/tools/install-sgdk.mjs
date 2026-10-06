@@ -35,6 +35,7 @@ const sgdkDir = join(drvRoot, "sgdk");
 const FILES = [
   { src: "mmlispdrv.c", dest: "src/mmlispdrv.c", own: "driver" },
   { src: "mmlispdrv.h", dest: "inc/mmlispdrv.h", own: "driver" },
+  { src: "mmlispdrv_banked_bin.h", dest: "inc/mmlispdrv_banked_bin.h", own: "driver" },
   { src: "mmlispdrv_bin.h", dest: "inc/mmlispdrv_bin.h", own: "driver" },
   { src: "../68k/mmlispseq.c", dest: "src/mmlispseq.c", own: "driver" },
   { src: "../68k/mmlispseq.h", dest: "inc/mmlispseq.h", own: "driver" },
@@ -54,6 +55,7 @@ const USAGE = `usage: node tools/install-sgdk.mjs [<project-dir>] [options]
 
   <project-dir>          SGDK project root (default: $MMLISP_SGDK_PROJECT)
 
+  --multibank           use banked PCM even when samples fit in 32 KiB (NTSC, 1–2 voices)
   --song <file.mmlisp>   compile the score into <project>/res/song.mmb
                          (plus song.smp when the score uses PCM samples)
   --se <file.mmlisp>     with --song: the game's effects (def-se) — the score
@@ -84,6 +86,8 @@ for (let i = 0; i < argv.length; i++) {
     process.exit(0);
   } else if (a === "--song") {
     opts.song = argv[++i] ?? fail("--song needs a path");
+  } else if (a === "--multibank") {
+    opts.multibank = true;
   } else if (a === "--se") {
     opts.se = argv[++i] ?? fail("--se needs a path");
   } else if (a === "--bundle") {
@@ -144,6 +148,14 @@ if (opts.build) {
   } else {
     console.log("  engine images up to date");
   }
+  const { bankedSources } = await import("./emit-banked.mjs");
+  for (const [name, source] of bankedSources()) {
+    const path = resolve(here, "../..", name);
+    if (readFileSync(path, "utf8") !== source) {
+      if (opts.dryRun) console.log(`${dry}${name} is stale — would regenerate`);
+      else { writeFileSync(path, source); console.log(`  regenerated ${name}`); }
+    }
+  }
   if (!opts.dryRun) {
     const { execFileSync } = await import("node:child_process");
     execFileSync("node", [join(here, "gen-c-tables.mjs")], { stdio: "pipe" });
@@ -191,7 +203,7 @@ let smpPath = null;
 let seList = []; // the score's effects (def-se), for inc/mmlisp_se.h
 if (opts.song) {
   const { buildMmb, seListOf } = await import("./mmb-build.mjs");
-  const { bytes, sampleBank, ir, diagnostics } = buildMmb(opts.song, { seFile: opts.se });
+  const { bytes, sampleBank, ir, diagnostics } = buildMmb(opts.song, { seFile: opts.se, multibank: opts.multibank });
   // An export error is a score the driver cannot play as written (a note with
   // no baked sample plays whatever entry it falls back to). Refuse it, as a
   // bundle's errors are refused below, rather than install a ROM that sounds
@@ -219,7 +231,7 @@ let bundleRes = null; // the BIN lines the bundle needs
 if (opts.bundle) {
   const { loadManifest, buildBundle, resLines, channelName } = await import("./bundle.mjs");
   const { manifest, baseDir } = loadManifest(opts.bundle);
-  const bundle = buildBundle(manifest, { baseDir });
+  const bundle = buildBundle(opts.multibank ? { ...manifest, multibank: true } : manifest, { baseDir });
   seList = bundle.se;
   // The seeded song.res declares "song.smp", and the uncommenting below keys
   // on that name; a manifest that renames the bank would leave the res

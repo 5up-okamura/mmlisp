@@ -176,6 +176,7 @@ export class PcmVoices {
     v.started = true;
     v.looping = !!loop;
     v.src = src;
+    v.bank = Math.floor(entry.base / 0x8000);
     v.len = entry.len;
     // The def's points, with the track's own writes laid over them. A def's
     // bound is a length from the start it pairs with, so a track's start
@@ -249,7 +250,13 @@ export class PcmIrVoices {
    *              exporter's `${sample}|${midi}` → entry id map
    */
   constructor(emit, bank) {
-    this.seq = new PcmVoices(emit);
+    this.seq = new PcmVoices(c => {
+      if (bank.multibank && c[0] === PCM_START) {
+        const b = this.seq.voices[c[1]].bank;
+        c = [6, ...c.slice(1), b & 255, b >> 8];
+      }
+      emit(c);
+    });
     this.bank = bank;
     this.master = 31;
     /** The track each voice last played, for the editor's per-track faders. */

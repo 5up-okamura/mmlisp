@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { MegaDriveSynth, NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
-import { renderPcmDac } from "./export-vgm.js";
+import { renderPcmDac, configurePcmRate } from "./export-vgm.js";
 
 const DEFAULT_SAMPLE_RATE = 48000; // match live AudioContext (and the LPF coeff)
 const DEFAULT_FADE_SEC = 4;
@@ -212,6 +212,7 @@ export async function renderWav(player, opts = {}) {
   const fadeSec = opts.fadeSec ?? DEFAULT_FADE_SEC;
   const lpfOn = !!opts.lpfOn;
 
+  configurePcmRate(player, opts.pcm);
   const capture = player.captureRegisterLog();
   const dac = opts.pcm ? renderPcmDac(capture, opts.pcm) : null;
   // A one-shot PCM tail can outlast the last register write.

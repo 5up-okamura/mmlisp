@@ -865,9 +865,11 @@ Samples are defined with `(def-pcm name …)`, then named in a `pcm1` / `pcm2` /
 choice, and it buys quality: one voice plays at 14.4 kHz, two at 10.1 kHz,
 three at 6.7 kHz. Leave it out and it is the highest `pcmN` track you wrote,
 so an idle third track costs the other two their bandwidth. The samples all
-share one 32 KB bank — 2.3 seconds at one voice, 4.9 at three — and every note
-you play a sample at is baked separately, so a drum at four pitches costs four
-times its length.
+share the available sample storage, and every note you play a sample at is
+baked separately. Single-bank profiles hold about 2.3 seconds at one voice or
+4.9 seconds at three. NTSC songs with one or two voices automatically expand
+to [multi-bank PCM](pcm-multibank.md) when needed, both at 10.1 kHz. This expands
+total storage; an individual baked sample must still fit within 32,512 bytes.
 
 **Make it loud before it is baked.** An 8-bit sample next to FM tends to sound
 thin; `:fx` processes it at compile time, in the order written, at no cost
@@ -1113,10 +1115,11 @@ the score's folder with its name filled in, until it is written (also
 `File > Export > mucom88 PCM Bank WAV…`). A song that uses both part J and the
 drums arrives with its `fm6` lines commented out — on the Mega Drive fm6 is
 the DAC the drums play through; move them to a free channel to hear them.
-Drums that do not fit the 32 KB sample bank at full rate come with a
-`(def pcm-voices 2)` (or `3`) line, which bakes them at the lower rate; a
-sample too big to fit even then is left out, its notes turned to rests, and
-the log names it.
+NTSC drum libraries with one or two PCM voices can expand to multiple sample
+banks automatically. If an individual baked sample is still too large, the
+importer can select a lower-rate voice profile with `(def pcm-voices 2)` or
+`3`. A sample that cannot fit even then is omitted, its notes become rests,
+and the log identifies it.
 
 **Song imports open a dialog first.** A MIDI file is read, then
 the dialog shows its timing, the tempo, the quantize grid (the coarsest one

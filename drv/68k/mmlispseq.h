@@ -206,6 +206,7 @@ typedef struct {
   uint8_t retrig;     /* a :keyon step restarts the blob once the frame's levels are in */
   uint8_t sample_id;  /* the running note's sample: what an SE-end restarts */
   uint8_t muted;
+  uint16_t bank;      /* absolute ROM bank, banked PCM only */
   uint16_t src;       /* the note's blob, as a window address */
   uint16_t len;       /* …and its length in bytes (whole blocks) */
   uint8_t vel_base, vel, vol_base, vol; /* vel in eighths of a step, as FM and PSG */
@@ -333,6 +334,7 @@ typedef struct {
   /* The score's PCM voice count (MMB header flags bits 2-3): which engine image
    * plays it, and so the rate stamp its bank must carry. */
   uint8_t pcm_voices;
+  uint8_t pcm_banked;
   uint8_t frame_hz; /* 60 or 50 — the clock the score's numbers were baked for */
   /* Where the bank sits in the 68k ADDRESS SPACE. The Z80 reaches samples
    * through its 32 KB window, so PCM_START must carry an absolute {bank,

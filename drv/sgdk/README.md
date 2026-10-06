@@ -524,3 +524,8 @@ Everything the language compiles to, except SE:
   binding slot and run the DAC a little slow.
 
 The design is `docs/driver.md`; building and the gates are `drv/README.md`.
+
+
+## Multi-bank PCM
+
+Export and bundle builds automatically expand NTSC scores with one or two PCM voices when samples exceed 32 KiB. To select the new engine for smaller songs, add `--multibank` to the installer. Use MMB/SMP files generated together, loading them with `MMLisp_setSampleBank` and `MMLisp_loadScore`. The installer also updates `mmlispdrv_banked_bin.h`. Both voice profiles run at 10.1 kHz, with at most 256 entries and 32,512 bytes per individual blob. The new format does not support three voices or PAL. See [usage and validation](../../docs/pcm-multibank.md).

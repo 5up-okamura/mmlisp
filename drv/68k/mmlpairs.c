@@ -15,7 +15,7 @@
 #define PCM_VOL 3
 #define PCM_RETARGET 4
 #define PCM_MASTER 5
-static const uint8_t PCM_LEN[6] = {0, 9, 0, 3, 6, 2};
+static const uint8_t PCM_LEN[7] = {0, 9, 0, 3, 6, 2, 11};
 
 /* The state block's ops (driver.md §6.1), for voice v. */
 #define OP_IDLE 0
@@ -50,6 +50,8 @@ void mmlp_init(MMLPairs *p, const MMLPairsCfg *cfg) {
   p->cfg = c;
   if (p->cfg.voices > MMLP_VOICES) p->cfg.voices = MMLP_VOICES;
   p->head_valid = 0;
+  p->last_fifo = 0xff;
+  for (uint8_t ch=0; ch<6; ch++) p->fm_mod[ch] = 0xff;
   for (uint8_t v = 0; v < MMLP_VOICES; v++) {
     p->shift[v] = 0xff;
     p->page[v] = 0xff;
@@ -77,11 +79,13 @@ MMLP_HOT void lane(MMLPairs *p, uint8_t port, uint8_t op, uint8_t val) {
   p->l_val[p->l_work] = val;
   p->l_work = next;
 }
-MMLP_HOT void store(MMLPairs *p, uint8_t op, uint8_t val) { lane(p, 0xff, op, val); }
+MMLP_HOT void store(MMLPairs *p, uint8_t op, uint8_t val) {
+  if (p->cfg.banked) push(p, 0xff, op, val); else lane(p, 0xff, op, val);
+}
 
 /* A port-0 write, into the FM queue — or the lane for the DAC enable. */
 MMLP_HOT void push0(MMLPairs *p, uint8_t addr, uint8_t data) {
-  if (addr == 0x2b) lane(p, 0, addr, data);
+  if (addr == 0x2b && !p->cfg.banked) lane(p, 0, addr, data);
   else push(p, 0, addr, data);
 }
 
@@ -111,6 +115,7 @@ static void level(MMLPairs *p, uint8_t v) {
 static void pcm_command(MMLPairs *p, const uint8_t *c) {
   const MMLPairsCfg *cfg = &p->cfg;
   switch (c[0]) {
+  case 6:
   case PCM_START: {
     uint8_t v = c[1];
     if (v >= cfg->voices) { p->fault++; return; }
@@ -123,6 +128,15 @@ static void pcm_command(MMLPairs *p, const uint8_t *c) {
     const uint8_t vals[6] = {(uint8_t)src, (uint8_t)(src >> 8), (uint8_t)end, (uint8_t)(end >> 8),
                              (uint8_t)wrap, (uint8_t)(wrap >> 8)};
     stage(p, v, 0, vals, 6);
+    if (c[0] == 6) {
+      if (v > 1) { p->fault++; return; }
+      uint16_t bank = rd16le(c + 9);
+      if (!p->bank_valid[v] || p->bank[v] != bank) {
+        store(p, (uint8_t)(0x1c + 2*v), (uint8_t)bank);
+        store(p, (uint8_t)(0x1d + 2*v), (uint8_t)(bank >> 8));
+        p->bank[v] = bank; p->bank_valid[v] = 1;
+      }
+    }
     p->staged_valid[v] = 1;
     p->start_gen[v] = (uint8_t)(p->start_gen[v] + 1);
     store(p, OP_START(v), p->start_gen[v]);
@@ -181,7 +195,7 @@ static uint16_t pcm_size(const uint8_t *c, uint16_t len, uint8_t npcm) {
   uint16_t i = 0;
   for (; npcm > 0; npcm--) {
     const uint8_t op = i < len ? c[i] : 0;
-    if (op > 5 || !PCM_LEN[op] || (uint16_t)(i + PCM_LEN[op]) > len) return 0xffff;
+    if (op > 6 || !PCM_LEN[op] || (uint16_t)(i + PCM_LEN[op]) > len) return 0xffff;
     i = (uint16_t)(i + PCM_LEN[op]);
   }
   return i;
@@ -240,9 +254,89 @@ MMLP_HOT void writes_body(MMLPairs *p, const uint8_t *base, uint16_t first, uint
   if (lo < n) port1_run(p, base, first, lo, hi, mask, stride);
 }
 
+/* Ordinary independent FM channels may move ahead of bulk patch uploads.
+ * Keep each channel's writes and complete pitch-latch pairs in order. */
+MMLP_HOT uint8_t fm_channel(const MMLWrite *w) {
+  if (w->port > 1) return 0xff;
+  if (w->port == 0 && w->addr == 0x28 && (w->data & 3) < 3)
+    return (uint8_t)((w->data & 3) + ((w->data & 4) ? 3 : 0));
+  if (((w->addr >= 0x30 && w->addr <= 0x9e) ||
+       (w->addr >= 0xa0 && w->addr <= 0xa6) || (w->addr >= 0xb0 && w->addr <= 0xb6)) && (w->addr & 3) < 3)
+    return (uint8_t)(3*w->port + (w->addr & 3));
+  return 0xff;
+}
+MMLP_HOT const MMLWrite *view_write(const MMLFrameView *v, uint16_t i) {
+  return &v->q[(v->first+i) & (MML_WRITE_QUEUE-1)];
+}
+static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
+  uint16_t n=v->end[MML_SLOT_SUBS-1], counts[6]={0,0,0,0,0,0};
+  uint8_t eligible=0, moved=0, intermediate=0, previous[6];
+  int safe=1;
+  for (uint8_t ch=0; ch<6; ch++) previous[ch]=p->fm_mod[ch];
+  for (uint16_t i=0; i<n; i++) {
+    const MMLWrite *w=view_write(v,i); uint8_t ch=fm_channel(w);
+    if (ch<6) counts[ch]++;
+    if (w->port>1) continue;
+    if (w->addr>=0xb4 && w->addr<=0xb6) {
+      uint8_t m=w->data & 0x37; p->fm_mod[3*w->port+(w->addr&3)]=m;
+      if (m) intermediate |= (uint8_t)(1u << (3*w->port+(w->addr&3)));
+    }
+    if (w->addr<0x30 && w->addr!=0x22 && w->addr!=0x24 && w->addr!=0x25 &&
+        w->addr!=0x26 && w->addr!=0x27 && w->addr!=0x28 && w->addr!=0x2b) safe=0;
+    if (w->addr>=0xa4 && w->addr<=0xa6 && (i+1>=n || view_write(v,i+1)->port!=w->port || view_write(v,i+1)->addr!=w->addr-4)) safe=0;
+    if (w->addr>=0xa0 && w->addr<=0xa2 && (!i || view_write(v,i-1)->port!=w->port || view_write(v,i-1)->addr!=w->addr+4)) safe=0;
+  }
+  if (safe) for (uint8_t ch=0; ch<6; ch++)
+    if (ch!=2 && ch!=5 && counts[ch] && counts[ch]<=8 && previous[ch]==0 && p->fm_mod[ch]==0 && !(intermediate&(1u<<ch))) eligible |= (uint8_t)(1u<<ch);
+  /* Smallest group first, ties in channel order. */
+  for (uint8_t size=1; size<=8; size++) for (uint8_t ch=0; ch<6; ch++)
+    if ((eligible&(1u<<ch)) && counts[ch]==size) {
+      for (uint16_t i=0; i<n; i++) {
+        const MMLWrite *w=view_write(v,i);
+        if (fm_channel(w)==ch) { if (w->port==0) push0(p,w->addr,w->data); else push(p,1,w->addr,w->data); }
+      }
+      moved |= (uint8_t)(1u<<ch);
+    }
+  /* Remaining writes keep the legacy port-1 deferral and key-edge rule. */
+  uint16_t lo=n, hi=0;
+  for (uint16_t i=0; i<=n; i++) {
+    const MMLWrite *w=i<n ? view_write(v,i) : 0;
+    if (w && fm_channel(w)<6 && (moved&(1u<<fm_channel(w)))) continue;
+    if (!w || (w->port==0 && w->addr==0x28 && (w->data&4))) {
+      for (uint16_t k=lo; k<hi; k++) {
+        const MMLWrite *other=view_write(v,k); uint8_t ch=fm_channel(other);
+        if (other->port==1 && !(ch<6 && (moved&(1u<<ch)))) push(p,1,other->addr,other->data);
+      }
+      lo=n; hi=0;
+    }
+    if (!w) break;
+    if (w->port==2) psg_push(p,w->data);
+    else if (!w->port) push0(p,w->addr,w->data);
+    else { if (lo==n) lo=i; hi=i+1; }
+  }
+}
+
 /* THE SGDK HOST'S FRAME, straight from the sequencer's queue (mmlispseq.h
  * MMLFrameView): its writes, then its PCM commands into the lane. */
 static void view_body(MMLPairs *p, const MMLFrameView *v) {
+  if (p->cfg.banked) {
+    uint16_t count = v->end[MML_SLOT_SUBS - 1];
+    int short_note = 1;
+    int global = 0;
+    uint16_t fm_count = 0;
+    for (uint16_t i=0; i<count; i++) {
+      const MMLWrite *w = &v->q[(v->first + i) & (MML_WRITE_QUEUE - 1)];
+      if (w->port != 2) fm_count++;
+      if (w->port != 2 && w->addr < 0x30 && w->addr != 0x28) { short_note = 0; global = 1; }
+    }
+    short_note = short_note && fm_count <= 8;
+    if (!short_note && !global && pcm_size(v->pcm, v->pcm_len, v->pcm_count) != 0xffff)
+      pcm_run(p, v->pcm, v->pcm_count);
+    banked_writes(p, v);
+    if ((short_note || global) && pcm_size(v->pcm, v->pcm_len, v->pcm_count) != 0xffff)
+      pcm_run(p, v->pcm, v->pcm_count);
+    return;
+  }
   writes_body(p, (const uint8_t *)v->q, v->first, v->end[MML_SLOT_SUBS - 1],
               MML_WRITE_QUEUE - 1, (uint16_t)sizeof(MMLWrite));
   /* The PCM commands go into the lane after the writes, so a $2B the frame
@@ -307,9 +401,10 @@ static const uint8_t OP_K[1 + 9 * MMLP_VOICES] = {
   0xff, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8 };
 /* The voice a staged store (SRC, END, WRAP) belongs to, or 0xff. */
 MMLP_HOT uint8_t staged_voice(const MMLPairsCfg *cfg, uint8_t op) {
+  if (cfg->voices <= 2 && op >= 0x1c && op <= 0x1f) return (uint8_t)((op - 0x1c) >> 1);
   if (op == 0 || op >= (uint8_t)(1 + 9 * cfg->voices)) return 0xff;
   const uint8_t k = OP_K[op];
-  return k >= 1 && k <= 6 ? OP_VOICE[op] : 0xff;
+  return k >= 1 && (k <= 6 || cfg->banked) ? OP_VOICE[op] : 0xff;
 }
 /* The voice a generation pair (START, RETARGET) belongs to, or 0xff. */
 MMLP_HOT uint8_t gen_voice(const MMLPairsCfg *cfg, uint8_t op) {
@@ -339,12 +434,15 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
    * more than the consumer takes between grabs — and never behind the pairs
    * written last time that it may not have reached yet. */
   if (fifo_lo == 0xff) { *dst = 0; return 0; }            /* no index yet */
+  if (cfg->banked && p->head_valid && p->last_fifo != 0xff &&
+      (uint8_t)(fifo_lo - p->last_fifo) >= (uint8_t)(2*p->head - p->last_fifo)) p->head_valid = 0;
+  p->last_fifo = fifo_lo;
   uint8_t c = (uint8_t)((fifo_lo >> 1) & MASK);
   uint8_t h = (uint8_t)((c + (cfg->ahead ? cfg->ahead : MMLP_AHEAD)) & MASK);
   if (p->head_valid) {
     uint8_t d_old = (uint8_t)((p->head - c) & MASK);
     uint8_t d_new = (uint8_t)((h - c) & MASK);
-    if (d_old > d_new && d_old < 64) h = p->head;
+    if (d_old > d_new && (cfg->banked || d_old < 64)) h = p->head;
   }
   /* A grab writes pairs_per_grab pairs, always — the real ones, then IDLE —
    * and never across the page end. So a head too near the end moves to 0: the
@@ -354,6 +452,12 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
   p->head = h;
   p->head_valid = 1;
   uint16_t n = 0;
+  /* A physical grab also writes its IDLE padding. Reserve the whole grab,
+   * otherwise a short plan near a full ring overwrites unread commands. */
+  if (cfg->banked && (uint16_t)(((p->head - c) & MASK) + cfg->pairs_per_grab) > N) {
+    *dst = (uint16_t)(cfg->fifo + 2*p->head);
+    return 0;
+  }
   while (n < cfg->pairs_per_grab) {
     /* THE LANE FIRST: every released PCM pair goes before any FM pair. */
     const int from_lane = p->l_tail != llim;
@@ -425,6 +529,10 @@ void mmlp_abort(MMLPairs *p) {
 
 uint16_t mmlp_psg_take(MMLPairs *p, uint16_t release, uint8_t *out, uint16_t max) {
   uint16_t n = 0;
+  if (p->cfg.banked) {
+    const uint16_t now = released(p, release);
+    if (now) p->psg_mark = p->end_psg[(now - 1) & (MMLP_FRAMES - 1)];
+  }
   while (p->psg_tail != p->psg_mark && n < max) {
     out[n++] = p->psg[p->psg_tail];
     p->psg_tail = (uint16_t)((p->psg_tail + 1) & (MMLP_PSG - 1));

@@ -45,7 +45,9 @@ source file is a sequence of top-level forms, in source order:
 - **`(def pcm-voices N)`** — how many PCM voices the driver plays, 0–3. This is
   a whole-song choice: it picks the engine image, and with it the DAC rate
   (1 voice 14.4 kHz, 2 voices 10.1 kHz, 3 voices 6.7 kHz) and how much sample
-  data fits in the song's 32 KB bank (2.3 / 3.2 / 4.9 seconds). Fewer voices
+  data fits in a single bank (2.3 / 3.2 / 4.9 seconds). NTSC scores with one
+  or two voices automatically use multi-bank PCM when needed, both at
+  10.1 kHz; see [Multi-bank PCM](pcm-multibank.md). Fewer voices
   buy a higher rate, so state the number you actually need. Omitted, it is the
   highest `pcmN` track the score uses; a `pcmM` track above the stated number
   is `E_PCM_VOICES`, and a value outside 0–3 is the same error. Unlike
@@ -1407,8 +1409,12 @@ carries one engine image per voice count, and the image is what sets the rate:
 | 2 | 10,111.7 Hz | 3.22 s |
 | 3 | 6,653.4 Hz | 4.89 s |
 
-The bank is one 32 KB window a song, and every note a sample is played at is
-baked into it separately, so the seconds above are the total of all of them.
+The table describes the default single-bank profiles. Every note a sample is
+played at is baked separately, so the listed seconds are shared across all
+baked copies. NTSC scores with one or two voices can exceed this combined
+capacity using [multi-bank PCM](pcm-multibank.md); both banked profiles run at
+10.1 kHz. Each baked blob must still fit within 32,512 bytes, and the maximum
+of 256 entries remains.
 **Only what the score plays is baked.** A def the score never sounds — most of
 a drum kit, every time you import one — declares a name and costs no bank
 bytes, so importing a whole set is free until you write the note.

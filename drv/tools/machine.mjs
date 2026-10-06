@@ -28,7 +28,7 @@ const RAM_SIZE = 0x2000;
 
 export class Machine {
   constructor(cfg, { bytes, symbols }, { wave = null, grabs = [], rom = null, pokes = [],
-    watch = [], vdp = null, host = null } = {}) {
+    watch = [], vdp = null, host = null, bankedRom = false, bank = 0 } = {}) {
     this.cfg = cfg;
     this.symbols = symbols;
     this.ram = new Uint8Array(RAM_SIZE);
@@ -38,6 +38,10 @@ export class Machine {
     // $8000 bank window. On silicon that read pays bus arbitration this model
     // does not charge — the one instruction in the mix that is exposed to it.
     this.rom = rom;
+    // Legacy gates pass an already selected 32 KiB window. Experiments can
+    // instead pass the full ROM and exercise the real nine-bit serial latch.
+    this.bankedRom = bankedRom;
+    this.bank = bank & 0x1ff;
     // The host's writes into Z80 RAM, scheduled by cycle. This is the 68000
     // poking a level, WITHOUT the bus grab it would really cost: §3.6 is P3's
     // question and this is not an answer to it.
@@ -96,6 +100,7 @@ export class Machine {
       grabs: [],                        // 68000 bus held: [start, end]
       vdpRead: [],                      // cycle, addr, value — the observer's reads
       stray: [],                        // writes to no device — a value fault
+      bank: [],                         // cycle, serial bit, resulting latch
     };
     this.grabs = [...grabs].sort((a, b) => a.at - b.at);
     this.grabIdx = 0;
@@ -141,6 +146,7 @@ export class Machine {
       // the model reports a rate 1.65% faster than the emulator does at two
       // voices, and the schedule that looks exact here arrives slow there.
       this.windowReads++;
+      if (this.bankedRom) return this.rom?.[this.bank * 0x8000 + a - 0x8000] ?? 0xff;
       return this.rom ? this.rom[(a - 0x8000) % this.rom.length] : 0xff;
     }
     return 0xff;
@@ -167,7 +173,12 @@ export class Machine {
       this.chipWrite(port, reg, d);
       return;
     }
-    if (a === YM.bank || a === YM.psg) return;
+    if (a === YM.bank) {
+      this.bank = (this.bank >> 1) | ((d & 1) << 8);
+      this.trace.bank.push([this.instrStart, d & 1, this.bank]);
+      return;
+    }
+    if (a === YM.psg) return;
     this.trace.stray.push([this.instrStart, a, d, "write outside every device"]);
   }
 

@@ -30,6 +30,7 @@ export const HEADER_SIZE = 12;
 export const HEADER_FLAG = {
   WIDE_OFFSETS: 1 << 0,
   PAL_TIMEBASE: 1 << 1,
+  MULTIBANK_PCM: 1 << 4,
 };
 export const HEADER_PCM_VOICES_SHIFT = 2;
 export const HEADER_PCM_VOICES_MASK = 0x03;

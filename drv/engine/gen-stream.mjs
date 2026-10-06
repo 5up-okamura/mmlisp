@@ -434,7 +434,7 @@ let edgeSeq = 0;
  * over the pad at 12, the pad at 0), and the taken path costs the same by the
  * arithmetic above. Both are checked by running them, not by trusting this.
  */
-function balanced(cc, arm0, what) {
+export function balanced(cc, arm0, what) {
   const n = edgeSeq++;
   const skip = `pcmsk${n}`, done = `pcmdn${n}`;
   // The no-clobber fillers cost 4, 10 and 12, so the pad can only reach an

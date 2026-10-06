@@ -62,7 +62,8 @@ Header flags:
 | 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed 32 KB. Must be 0; loaders reject it (see §12). |
 | 1    | PAL_TIMEBASE | The score's frame-counted numbers — the tempo increment and every macro, sweep and delay length — were baked for a **50 Hz** frame clock (driver.md §3.3). The driver reads no frame rate, so this is what tells a host which machine the score belongs on. |
 | 2–3  | PCM_VOICES   | The score's PCM voice count, 0–3: which engine image plays it (driver.md §5) and so the rate its sample bank is baked at (§10). |
-| 4–15 | —            | Reserved, must be 0.                                 |
+| 4 | MULTIBANK_PCM | Selects NTSC multi-bank PCM for one or two voices, both at 10,111.71 Hz (§10.3). |
+| 5–15 | — | Reserved, must be 0. |
 
 ## 5. Section Directory
 
@@ -251,7 +252,9 @@ section entirely**; it exists for hosts and tools.
 ## 10. SAMPLE_BANK (separate ROM bank)
 
 PCM data for `def-pcm` defs (docs/language.md §9, §16). **This is not an MMB
-section — it is its own 32 KB ROM bank**, so PCM blobs never crowd the MMB. The
+section — it is a separate ROM resource**, so PCM blobs never crowd the MMB.
+The default format occupies one 32 KB bank; the multi-bank format is described
+in §10.3. The
 exporter (`encodeMmb`) returns it separately (`{ bytes, sampleBank }`); the host
 points the Z80's window at it (SGDK: `MMLisp_setSampleBank(song_smp)` after
 `MMLisp_init`, which also hands the sequencer the directory); the engine then
@@ -259,7 +262,7 @@ reads sample bytes through the window (driver.md §5.4). Section id 0x0004 is
 unused. Both exporters write the bank as a `.smp` sidecar next to the `.mmb`
 (`drv/tools/mmb-build.mjs` by name, the live app's File > Export > MMB… by a
 second save dialog opened in the `.mmb`'s folder) — a PCM song is the pair.
-Structure:
+Default single-bank structure:
 
 ```
 entry_count : u16
@@ -321,9 +324,11 @@ fits u16: a blob lies inside the 32 KB window. `src_frames` is the source
 slice's length after its effects (a fade shortens it), carried for tooling; nothing in the driver reads it.
 
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
-The **bank image (entry table + blobs) must fit one 32 KB window, below its
+In the default format, the **bank image (entry table + blobs) must fit one 32 KB window, below its
 silent top page**: the engine addresses a sample by its 16-bit window address.
-`encodeMmb` refuses a larger bank; a score references one bank.
+`encodeMmb` automatically selects §10.3 for a larger NTSC bank with one or two
+PCM voices, unless multi-bank output is explicitly disabled. Other profiles
+retain the single-bank limit.
 
 ### 10.2 One bank for several scores
 
@@ -333,10 +338,14 @@ entry ids, and the host re-publishes whatever bank it holds on every load
 `createSampleBankBuilder` in `export-mmb.js` plans every score's `(sample,
 note)` pairs into the same entry table, deduplicated by content (bytes, flags,
 range), and hands each score the ids it ends up with. Two conditions,
-both enforced by the bundle: every score is encoded for the **same PCM voice
-count** (the `bake_stamp` names one image, and a score boots the image its
-header names), and the union of everything the scores play fits the one
-window. A score built on its own keeps the bank it always had, byte for byte.
+both enforced by the bundle: every score uses the **same PCM voice count
+and engine profile**, and the combined library fits that profile's capacity.
+Single-bank bundles must fit one window; eligible NTSC bundles can expand to
+§10.3. Standalone single-bank exports that fit remain byte-identical.
+
+### 10.3 Multi-bank sample resources
+
+Header flags bit 4 (`MULTIBANK_PCM`) selects the block-rendering engine for NTSC scores with one or two PCM voices. Bit 15 of the SMP rate stamp identifies the multi-bank format; the lower 15 bits contain 10112. The directory occupies the first 32 KiB, and offsets in its 24-byte entries are relative to the following 32 KiB boundary. Files contain whole 32 KiB banks, each with a final 256-byte silence page. Blobs are aligned to 16 bytes and cannot cross banks. The loader rejects mismatched score/sample formats and rates. See [Multi-bank PCM](pcm-multibank.md) for details.
 
 ## 11. VOICE_TABLE Section (0x0006)
 

@@ -96,3 +96,21 @@ The toolchain has no binary dependencies: the whole verify loop runs wherever
 node runs. The assembler and the emulator reject anything outside their subset
 (unknown mnemonic at assembly, unknown opcode at execution), so they cannot
 silently diverge.
+
+## Multi-bank PCM tools
+
+For export, browser playback, capacity limits, and SGDK usage, see
+[Multi-bank PCM](../docs/pcm-multibank.md).
+
+```sh
+npm run banked:gate
+npm run banked:sgdk -- tests/multibank.mmlisp --seconds 8
+npm run multibank:gate
+npm run multibank:render -- tests/multibank.mmlisp --seconds 6 --out out/multibank
+npm run multibank:rom
+```
+
+`banked:gate` checks the sample format and C/JavaScript sequencers.
+`banked:sgdk` checks the normal SGDK driver. The `multibank:*` tools exercise
+the standalone prototype. ROM tests require SGDK and the patched BlastEm;
+they produce recordings and reports under `out/`.

@@ -6,7 +6,7 @@
 
 export const MMLP_QUEUE = 1024, MMLP_LANE = 256, MMLP_PSG = 256, MMLP_AHEAD = 32;
 export const MMLP_FRAMES = 8, MMLP_AHEAD_ONE = 48, MMLP_VOICES = 3;
-const PCM_LEN = [0, 9, 0, 3, 6, 2];
+const PCM_LEN = [0, 9, 0, 3, 6, 2, 11];
 const isPitchHi = (r) => (r >= 0xa4 && r <= 0xa6) || (r >= 0xac && r <= 0xae);
 const OP_IDLE = 0, OP_PORT = 0x20;
 const OP_LEVEL = (v) => 1 + 9 * v, OP_SRC = (v) => 2 + 9 * v;

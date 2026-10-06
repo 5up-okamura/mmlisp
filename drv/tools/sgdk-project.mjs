@@ -31,7 +31,7 @@ export function sgdkEnv(tool) {
 /** Make and build the example project for `score`. `patch(proj)` runs after
  *  the install and before make (the profiler injects its marks there).
  *  Returns { proj, rom, sampleBank } or throws with the build's output. */
-export function makeProject(E, score, { flags = "", patch, seFile } = {}) {
+export function makeProject(E, score, { flags = "", patch, seFile, multibank } = {}) {
   const proj = mkdtempSync(join(tmpdir(), "mmlisp-sgdk-"));
   for (const d of ["src", "inc", "res"]) mkdirSync(join(proj, d));
   writeFileSync(join(proj, "Makefile"), `GDK ?= ${E.GDK}\nrelease:\n\t$(MAKE) -f $(GDK)/makefile.gen\n`);
@@ -41,7 +41,7 @@ export function makeProject(E, score, { flags = "", patch, seFile } = {}) {
   if (existsSync(romHead)) copyFileSync(romHead, join(proj, "src", "rom_header.c"));
   try {
     execFileSync("node", [join(here, "install-sgdk.mjs"), proj, "--song", score, "--example",
-      ...(seFile ? ["--se", seFile] : [])], { stdio: "pipe" });
+      ...(seFile ? ["--se", seFile] : []), ...(multibank ? ["--multibank"] : [])], { stdio: "pipe" });
   } catch (e) {
     // Its own message, as text: the raw error prints the pipes as Buffers.
     const err = new Error("install-sgdk failed");
@@ -50,7 +50,7 @@ export function makeProject(E, score, { flags = "", patch, seFile } = {}) {
     throw err;
   }
   if (patch) patch(proj);
-  const { sampleBank } = buildMmb(score, { seFile });
+  const { sampleBank } = buildMmb(score, { seFile, multibank });
   const all = `-DMMLISP_AUTOPLAY=1 -DMMLISP_PCM_SAMPLES=${sampleBank ? 1 : 0} ${flags}`.trim();
   try {
     execFileSync("make", ["-f", join(E.GDK, "makefile.gen"), `EXTRA_FLAGS=${all}`], { cwd: proj, env: E.env, stdio: "pipe" });

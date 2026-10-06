@@ -23,6 +23,7 @@
 #include "mmlispdrv.h"
 #include "mmlispseq.h"
 #include "mmlpairs.h"
+#include "mmlispdrv_banked_bin.h"
 #include "mmlispdrv_bin.h"   // generated: the images, MMLISPDRV_IMAGES[], the ABI constants
 
 // ── Z80 address space, as seen from the 68000 ───────────────────────────────
@@ -69,7 +70,9 @@ static MMLPairsCfg PAIRS_CFG = {
     1,   // voices: the booted image's (bootImage)
     1,   // idle_after_gen: likewise
     MMLP_AHEAD_ONE,  // ahead: a whole frame of the engine's reading between grabs
+    0,              // banked image selected by the score
 };
+static u8         bankedImage = 0;
 static u8         image = 0;           // PCM voices of the booted image, 0 = none yet
 
 // ── Bring-up ───────────────────────────────────────────────────────────────
@@ -82,7 +85,10 @@ static u8         image = 0;           // PCM voices of the booted image, 0 = no
 static void writeBankRegister(void);
 static void bootImage(u8 voices)
 {
-    const MMLispDrvImage* img = &MMLISPDRV_IMAGES[voices - 1];
+    const MMLispDrvImage* img = seq.pcm_banked ? &MMLISPDRV_BANKED_IMAGES[voices - 1] : &MMLISPDRV_IMAGES[voices - 1];
+    bankedImage = seq.pcm_banked;
+    PAIRS_CFG.banked = bankedImage;
+    PAIRS_CFG.ahead = bankedImage ? 32 : MMLP_AHEAD_ONE;
     ready = FALSE;
     image = voices;
     PAIRS_CFG.voices = img->voices;
@@ -141,6 +147,7 @@ void MMLisp_setSampleBank(const u8* smp)
 
 static void writeBankRegister(void)
 {
+    if (bankedImage) return;
     // The Z80 reads the bank through its $8000 window, whose 32 KB bank is the
     // nine-bit register at $A06000 — written one bit at a time, LSB (A15)
     // first, and only with the bus held, since the register is in the Z80's
@@ -186,7 +193,7 @@ bool MMLisp_loadScore(const u8* mmb)
     // Booting another one resets the Z80, which is why it happens here, before
     // anything is primed onto the wire.
     u8 want = (loaded && seq.pcm_voices) ? seq.pcm_voices : 1;
-    if (want != image) bootImage(want);
+    if (want != image || bankedImage != seq.pcm_banked) bootImage(want);
     // Re-publish the bank to the new score. A bank is baked for one engine
     // image, and a score names its image; a bundle (tools/bundle.mjs) gives
     // every song the same one, so this cannot fail for bundled songs. It is
@@ -308,6 +315,10 @@ static void pump(u16 release)
     // Everything that can be decided before the bus is taken is (R20 §48.4):
     // which pairs, where they go, and the registers they are stored from.
     u16 dst = 0;
+    if (bankedImage) {
+        static GrabBlock pollBlock;
+        fifoLo = (u8)grab(&pollBlock, MMLISPDRV_FIFO);
+    }
     static GrabBlock blk;        // static: the planner's arrays, the grab's registers
     blk.prev = fifoLo;
     const u16 n = mmlp_plan(&pairs, fifoLo, release, blk.ops, blk.vals, &dst);
@@ -341,14 +352,16 @@ static u16 due(void) { return (u16)(vtimer - frameBase); }
 
 void MMLisp_pump(void)
 {
-    pump(due());
+    const u16 release = due();
+    for (u16 i=0; i<(bankedImage ? 5 : 1); i++) pump(release);
 }
 
 // The frame's grab, from the vertical interrupt. It carries the frame whose
 // time has just come, so the music's tempo is the video clock's.
 static void vblankPump(void)
 {
-    pump(due());
+    const u16 release = due();
+    for (u16 i=0; i<(bankedImage ? 5 : 1); i++) pump(release);
 }
 
 void MMLisp_attachInterrupts(void)

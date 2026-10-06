@@ -55,7 +55,8 @@ export const PCM_VOL = 3;
 export const PCM_RETARGET = 4;
 export const PCM_MASTER = 5;
 /** Command lengths by opcode; 0 = not a command. */
-export const PCM_LEN = [0, 9, 0, 3, 6, 2];
+export const PCM_START_BANKED = 6;
+export const PCM_LEN = [0, 9, 0, 3, 6, 2, 11];
 
 // An F-number high byte ($A4-$A6, $AC-$AE) whose low byte is the next write.
 function isPitchHiWrite(w, next) {

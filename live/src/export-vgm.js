@@ -1,3 +1,4 @@
+import { bankedEngineImage } from "./engine-banked-images.js";
 // ---------------------------------------------------------------------------
 // VGM export
 //
@@ -174,12 +175,14 @@ export function renderPcmDac(capture, pcm) {
     .map((e, i) => ({ ...e, i }))
     .sort((x, y) => x.sec - y.sec || x.i - y.i);
   if (!pcm?.bank?.length || !events.length) return null;
-  const img = engineImage(pcm.pcmVoices);
+  const parsed = parsePcmBank(pcm.bank);
+  const img = parsed.multibank ? bankedEngineImage(pcm.pcmVoices) : engineImage(pcm.pcmVoices);
   const window = new Uint8Array(0x8000);
   window.set(pcm.bank.subarray(0, 0x8000));
-  const engine = new PcmLiveEngine(img, window);
+  const engine = new PcmLiveEngine(img, parsed.multibank ? pcm.bank : window);
   const seq = new PcmIrVoices((c) => engine.apply(c), {
-    entries: parsePcmBank(pcm.bank).entries,
+    entries: parsed.entries,
+    multibank: parsed.multibank,
     entryIds: pcm.entryIds ?? {},
   });
 
@@ -214,7 +217,15 @@ export function renderPcmDac(capture, pcm) {
  * `pcm` ({bank, entryIds, pcmVoices}, see renderPcmDac) adds the PCM; without
  * it the score's PCM events are skipped and counted in `pcmCount`.
  */
+export function configurePcmRate(player, pcm) {
+  if (!pcm?.bank) return;
+  const parsed = parsePcmBank(pcm.bank);
+  const img = parsed.multibank ? bankedEngineImage(pcm.pcmVoices) : engineImage(pcm.pcmVoices);
+  player?.setPcmBankRate?.(img.rateHz);
+}
+
 export function renderVgm(player, meta = {}, pcm = null) {
+  configurePcmRate(player, pcm);
   const capture = player.captureRegisterLog();
   const dac = pcm ? renderPcmDac(capture, pcm) : null;
   const bytes = encodeVgm(capture, meta, dac);

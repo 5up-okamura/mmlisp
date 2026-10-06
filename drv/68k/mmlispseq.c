@@ -1523,6 +1523,7 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int loop) {
   v->started = 1;
   v->looping = (uint8_t)(loop != 0);
   v->sample_id = (uint8_t)sample_id;
+  v->bank = (uint16_t)(abs >> 15);
   v->src = (uint16_t)(MML_PCM_WINDOW + (abs & 0x7fff));
   v->len = (uint16_t)len;
   /* The def's points, with the track's own writes laid over them. A def's
@@ -1554,14 +1555,15 @@ static void pcm_restart(MMLSeq *s, int vi) {
   if (!v->started) return;
   uint16_t start, end, wrap;
   pcm_points(v, &start, &end, &wrap);
-  uint8_t c[9];
-  c[0] = PCM_START;
+  uint8_t c[11];
+  c[0] = s->pcm_banked ? 6 : PCM_START;
   c[1] = (uint8_t)vi;
   c[2] = pcm_shift_byte(v);
   put16(c + 3, start);
   put16(c + 5, end);
   put16(c + 7, wrap);
-  pcm_emit(s, c, 9);
+  put16(c + 9, v->bank);
+  pcm_emit(s, c, s->pcm_banked ? 11 : 9);
   v->sent_shift = c[2];
   v->sent_end = end;
   v->sent_wrap = wrap;
@@ -2502,6 +2504,8 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   uint16_t section_count = rd16(mmb, 8), header_size = rd16(mmb, 10);
   /* Header flags bits 2-3: the score's PCM voice count (mmb.md §4). */
   s->pcm_voices = (uint8_t)((rd16(mmb, 6) >> 2) & 3);
+  s->pcm_banked = (uint8_t)((rd16(mmb, 6) & 0x10) != 0);
+  if (s->pcm_banked && (s->pcm_voices > 2 || (rd16(mmb, 6) & 2))) return -1;
   /* Bit 1, PAL_TIMEBASE: the frame clock this score's numbers were baked for
    * (driver.md §3.3). The dispatcher never reads it — it counts frames, and
    * every frame-counted number already arrives baked — but the increment it
@@ -2606,18 +2610,31 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
 }
 
 int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_base) {
+  s->sample_count = 0;
+  s->sample_entries = 0;
   if (!bank || (len && len < 4)) return -1;
   uint16_t n = rd16(bank, 0);
   /* The bank stamps the image rate its blobs were baked at (mmb.md §10). Baked
    * data is bound to that rate; under another the pitch is quietly wrong, so a
    * bank baked for a different engine image is refused here, not heard later. */
   static const uint16_t STAMP[4] = {MML_PCM_STAMP_1, MML_PCM_STAMP_1, MML_PCM_STAMP_2, MML_PCM_STAMP_3};
-  if (rd16(bank, 2) != STAMP[s->pcm_voices & 3]) return -3;
+  if ((rd16(bank, 2) & 0x8000) != (s->pcm_banked ? 0x8000 : 0)) return -3;
+  if ((rd16(bank, 2) & 0x7fff) != STAMP[s->pcm_banked ? 2 : (s->pcm_voices & 3)]) return -3;
   if (len && 4 + (uint32_t)n * MML_SAMPLE_ENTRY > len) return -2;
+  if (n > 256 || (s->pcm_banked && ((rom_base & 0x7fff) || (len && (len & 0x7fff))))) return -2;
+  const uint32_t blobs = s->pcm_banked ? 0x8000 : 4 + (uint32_t)n * MML_SAMPLE_ENTRY;
+  for (uint16_t i = 0; i < n; i++) {
+    const uint8_t *e = bank + 4 + (uint32_t)i * MML_SAMPLE_ENTRY;
+    const uint32_t off = rd32(e, 4), size = rd32(e, 8);
+    if (s->pcm_banked && (e[0] != i || !size || size > 0x7f00 || (size & 15) ||
+        (off & 0x7fff) + size > 0x7f00 ||
+        off > 0x400000 || rom_base + blobs + off + size > 0x400000 ||
+        (len && (blobs > len || off > len - blobs || size > len - blobs - off)))) return -2;
+  }
   s->sample_count = n;
   s->sample_entries = bank + 4;
   /* Entry offsets are relative to the blob region, which follows the table. */
-  s->sample_blob_base = 4 + (uint32_t)n * MML_SAMPLE_ENTRY;
+  s->sample_blob_base = blobs;
   s->sample_rom_base = rom_base;
   return 0;
 }

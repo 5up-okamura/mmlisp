@@ -31,6 +31,10 @@ Rules:
   sample bank is built (`bundle.mjs`); two scores RESIDENT at once is not.**
   What moving the per-score state off the sequencer would cost, and the
   decisions inside the bundle.
+- [plan-pcm-multibank.md](plan-pcm-multibank.md) — **multi-bank PCM, in progress**:
+  the user's capacity-first choice, investigation and prototype listening history,
+  integrated-driver measurements, and remaining timing/PAL/three-voice work.
+  User documentation is `docs/pcm-multibank.md`.
 - [plan-pcm-spec.md](plan-pcm-spec.md) — **PCM: the user's decisions behind the
   shipped light engine, with their reasons, and what is still open.** Read
   before touching PCM in any layer.
