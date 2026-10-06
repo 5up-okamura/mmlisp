@@ -109,6 +109,7 @@ typedef struct {
   uint16_t late;           /* grabs that found the engine already past `dst` */
   /* What the last plan took, so a grab that turns out late can give it back. */
   uint16_t undo_tail, undo_ltail;
+  uint8_t undo_head, undo_head_valid;
   uint8_t undo_port, undo_n, undo_since[MMLP_VOICES];
 } MMLPairs;
 

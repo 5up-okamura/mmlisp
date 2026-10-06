@@ -11,10 +11,11 @@ export { MultibankModel } from "../../live/src/pcm-banked-model.js";
 export class MultibankPairs {
   constructor(idleAfterGen) {
     this.idle = idleAfterGen;
-    this.startGen = [0, 0]; this.endGen = [0, 0];
-    this.shift = [8, 8]; this.master = 0;
-    this.staged = new Array(32).fill(-1);
-    this.banks = [-1, -1];
+    this.startGen = [0, 0, 0]; this.endGen = [0, 0, 0];
+    this.shift = [8, 8, 8]; this.master = 0;
+    this.staged = new Array(34).fill(-1);
+    this.banks = [-1, -1, -1];
+    this.started = [false,false,false];
   }
   pcm(c) {
     const out = [];
@@ -27,14 +28,15 @@ export class MultibankPairs {
       ? 0 : 7 - this.shift[v] - this.master));
     const fence = () => { for (let i = 0; i < this.idle; i++) out.push([0, 0]); };
     const v = c[1];
-    if (c[0] !== 5 && (!Number.isInteger(v) || v < 0 || v > 1)) throw new Error("multibank supports pcm1/pcm2 only");
+    if (c[0] !== 5 && (!Number.isInteger(v) || v < 0 || v > 2)) throw new Error("multibank supports pcm1–pcm3");
     switch (c[0]) {
       case 1:
         if (c.length !== 11 || (c[9] | c[10] << 8) > 511) throw new Error("PCM_START needs a nine-bit ROM bank");
-        this.shift[v] = c[2]; level(v);
+        this.started[v] = true; this.shift[v] = c[2]; level(v);
         word("SRC", v, c[3], c[4]); word("END", v, c[5], c[6]); word("WRAP", v, c[7], c[8]);
         if (this.banks[v] !== (c[9] | c[10] << 8)) {
-          out.push([MB.bankOp[v], c[9]], [MB.bankOp[v] + 1, c[10]]);
+          if (v===2 && (c[9] | c[10]<<8)>127) throw new RangeError("PCM bank exceeds the 4 MiB aperture");
+          out.push([MB.bankOp[v],c[9]]); if(v!==2) out.push([MB.bankOp[v]+1,c[10]]);
           this.banks[v] = c[9] | c[10] << 8;
         }
         store("START", v, this.startGen[v] = (this.startGen[v] + 1) & 255); fence();
@@ -44,7 +46,7 @@ export class MultibankPairs {
         store("RETARGET", v, this.endGen[v] = (this.endGen[v] + 1) & 255); fence();
         break;
       case 3: this.shift[v] = c[2]; level(v); break;
-      case 5: this.master = c[1]; level(0); level(1); break;
+      case 5: this.master = c[1]; level(0); level(1); if(this.started[2]) level(2); break;
       default: throw new Error(`unknown PCM command ${c[0]}`);
     }
     return out;

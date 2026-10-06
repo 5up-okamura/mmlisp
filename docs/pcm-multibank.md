@@ -1,10 +1,10 @@
 # Multi-bank PCM
 
-A song can use more than 32 KiB of PCM sample data, with one or two voices playing samples from different banks simultaneously. Pitch remains baked into a separate sample for each note; runtime pitch changes are not supported.
+A song can use more than 32 KiB of PCM sample data, with up to three voices playing samples from different banks simultaneously. Pitch remains baked into a separate sample for each note; runtime pitch changes are not supported.
 
 ## Exporting a song
 
-For songs with one or two PCM voices, MMB export automatically selects the multi-bank format when the samples exceed the single-bank capacity. Smaller songs retain their normal format and sample rate. Browser preview and WAV/VGM export also support multi-bank samples.
+For NTSC songs with up to three PCM voices or PAL songs with one or two voices, MMB export automatically selects the multi-bank format when the samples exceed the single-bank capacity. Smaller songs retain their normal format and sample rate. Browser preview and WAV/VGM export also support multi-bank samples.
 
 ```sh
 cd drv
@@ -19,7 +19,7 @@ To choose the multi-bank engine even when the samples fit in one bank:
 node tools/mmb-build.mjs path/to/song.mmlisp out/song.mmb --multibank
 ```
 
-Both multi-bank voice counts run at about 10.1 kHz on NTSC and 10.0 kHz on PAL. Switching from the default one-voice engine at 14,375.683 Hz rebakes the samples at the lower rate, so do not reuse its old SMP file.
+One and two voices run at about 10.1 kHz on NTSC and 10.0 kHz on PAL. The NTSC three-voice engine runs at about 6.7 kHz. Switching from the default one-voice engine at 14,375.683 Hz rebakes the samples at the lower rate, so do not reuse its old SMP file.
 
 ## Using the SGDK driver
 
@@ -72,13 +72,13 @@ The `encodeMmb` and `buildMmb` APIs accept the equivalent `multibank: true/false
 
 ## Capacity and playback limits
 
-- Multi-bank playback supports NTSC and PAL with one or two PCM voices. Three-voice songs continue to use the single-bank format.
+- Multi-bank playback supports up to three voices on NTSC and up to two on PAL. PAL three-voice songs still use the single-bank format.
 - At most 256 sample entries are available. Each note-specific baked copy counts as an entry; identical blobs can share storage.
 - Each individual baked blob must fit within 32,512 bytes. A long sample cannot span banks, even when the combined library has room.
 - Samples retain 16-byte loop granularity. Loops, release, volume, master attenuation, and retriggers remain available.
 - The sample directory occupies one 32 KiB bank. Sample banks also reserve their final 256 bytes for silence. The complete SMP file therefore includes padding beyond the actual sample bytes.
 - All resources must fit in the driver's 4 MiB ROM aperture, including score data, code, and the sample directory.
-- The additional engine images occupy 27,648 bytes of ROM in total. Only the selected image is uploaded to the Z80.
+- The additional engine images occupy 34,560 bytes of ROM in total. Only the selected image is uploaded to the Z80.
 
 Dense FM instrument changes can still delay note onsets. Multi-bank playback does not guarantee perfectly simultaneous onsets; check timing in the target application. Real hardware and heavy DMA workloads have not yet been validated.
 

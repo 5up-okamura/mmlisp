@@ -356,8 +356,8 @@ export function encodeMmb(ir, opts = {}) {
   // the bank is baked at that image's rate.
   const pcmVoices = scorePcmVoices(ir);
   const multibank = !!opts.multibank;
-  if (multibank && pcmVoices > 2)
-    throw new RangeError("multibank PCM supports 1–2 voices");
+  if (multibank && pcmVoices > 3)
+    throw new RangeError("multibank PCM supports 1–3 voices");
   const rateHz = (multibank ? bankedEngineImage(Math.max(1,pcmVoices),frameHz) : engineImage(pcmVoices)).rateHz;
   // A BUNDLE (drv/tools/bundle.mjs) hands every score the same builder, so N
   // songs plan into one bank and this score emits none of its own. The bank is
@@ -1400,7 +1400,7 @@ export function encodeMmb(ir, opts = {}) {
     } else {
     const SILENCE_PAGE = 0x7f00;
     if (bankPlan.bytes.length > SILENCE_PAGE) {
-      if (opts.multibank !== false && pcmVoices <= 2)
+      if (opts.multibank !== false && (pcmVoices <= 2 || frameHz === 60))
         return encodeMmb(ir, { ...opts, multibank: true });
       throw new RangeError(
         `sample bank is ${bankPlan.bytes.length} bytes; exceeds the ${SILENCE_PAGE} bytes ` +

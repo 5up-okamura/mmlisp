@@ -378,3 +378,24 @@ FM/PSG, bus loss 0.615%. Reports are in drv/out/banked-pal-two and
 drv/out/sin008/pal-one, pal-two. Region options explicitly force BlastEm to E.
 C/JS format and command gates, generation/publication safety, and mirrors pass.
 NTSC three-voice and PAL three-voice milestones follow next.
+
+
+## NTSC three-voice milestone (2026-10-07)
+
+The third voice is integrated with the standard sequencer, host, browser
+models, and exporter. Its 48-sample lap fits 12 pairs at 538 cycles,
+6,653.429 Hz. Code uses 3,289 bytes; the generation fence is three pairs.
+The third voice stages bank byte 0x21 within the 4 MiB aperture.
+
+The three-bank fixture bakes 53,616 bytes into a 131,072-byte SMP. BlastEm
+matched 48,630 DAC values, twelve starts, FM and PSG. Instruction tests pass
+for three-voice shots, loops, levels, retriggers and dense wire traffic.
+The real-song three-voice copy initially lost the port switch during setup:
+a pending FIFO head at 114 wrapped to zero while the consumer was near zero,
+then a rejected transfer discarded the older pending head. Later transfers
+overwrote unread FM commands. The planner now refuses a wrap that moves
+backward across pending data and restores a still-pending head on abort.
+Both paths have regression tests. The corrected twelve-second run matches
+75,054 DAC values, 197 starts and all FM/PSG; FM maximum interval error is
+28.46 ms. Artifact: drv/out/sin008/ntsc-three-fixed.
+PAL three-voice is the next milestone.

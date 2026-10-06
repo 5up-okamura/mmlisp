@@ -21,7 +21,7 @@
 // (`lutPage + k`, k = 0 silence .. 7 unity).
 // ---------------------------------------------------------------------------
 
-import { MultibankModel } from "./pcm-banked-model.js";
+import { MultibankModel, pcmBankOp } from "./pcm-banked-model.js";
 import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER } from "./slot-builder.js";
 
 export const PCM_WINDOW = 0x8000;
@@ -270,7 +270,7 @@ export class PcmLiveEngine {
       this.shiftByte[c[1]] = c[2];
       m.store(pcmOp("LEVEL", c[1]), this.page(c[2]));
       put16("SRC", c[1], w(3)); put16("END", c[1], w(5)); put16("WRAP", c[1], w(7));
-      if (c[0] === 6) { m.store(0x1c + 2*c[1], c[9]); m.store(0x1d + 2*c[1], c[10]); }
+      if (c[0] === 6) { if (c[1] === 2 && w(9) > 127) throw new RangeError("PCM bank exceeds the 4 MiB aperture"); m.store(pcmBankOp(c[1]), c[9]); if (c[1] !== 2) m.store(pcmBankOp(c[1])+1, c[10]); }
       bump("START", c[1]);
     } else if (c[0] === PCM_RETARGET && c[1] < V) {
       put16("END", c[1], w(2)); put16("WRAP", c[1], w(4));

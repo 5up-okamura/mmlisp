@@ -62,7 +62,7 @@ Header flags:
 | 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed 32 KB. Must be 0; loaders reject it (see §12). |
 | 1    | PAL_TIMEBASE | The score's frame-counted numbers — the tempo increment and every macro, sweep and delay length — were baked for a **50 Hz** frame clock (driver.md §3.3). The driver reads no frame rate, so this is what tells a host which machine the score belongs on. |
 | 2–3  | PCM_VOICES   | The score's PCM voice count, 0–3: which engine image plays it (driver.md §5) and so the rate its sample bank is baked at (§10). |
-| 4 | MULTIBANK_PCM | Selects multi-bank PCM for one or two voices; PAL_TIMEBASE selects the region-specific engine (§10.3). |
+| 4 | MULTIBANK_PCM | Selects multi-bank PCM for up to three NTSC voices or two PAL voices; PAL_TIMEBASE selects the region-specific engine (§10.3). |
 | 5–15 | — | Reserved, must be 0. |
 
 ## 5. Section Directory
@@ -326,8 +326,7 @@ slice's length after its effects (a fade shortens it), carried for tooling; noth
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
 In the default format, the **bank image (entry table + blobs) must fit one 32 KB window, below its
 silent top page**: the engine addresses a sample by its 16-bit window address.
-`encodeMmb` automatically selects §10.3 for a larger bank with one or two
-PCM voices, unless multi-bank output is explicitly disabled. Other profiles
+`encodeMmb` automatically selects §10.3 for a larger eligible bank (up to three NTSC voices or two PAL voices), unless multi-bank output is explicitly disabled. Other profiles
 retain the single-bank limit.
 
 ### 10.2 One bank for several scores
@@ -345,7 +344,7 @@ Single-bank bundles must fit one window; eligible bundles can expand to
 
 ### 10.3 Multi-bank sample resources
 
-Header flags bit 4 (`MULTIBANK_PCM`) selects the block-rendering engine for NTSC and PAL scores with one or two PCM voices. Bit 15 of the SMP rate stamp identifies the multi-bank format; the lower 15 bits contain 10112 on NTSC or 10019 on PAL. The directory occupies the first 32 KiB, and offsets in its 24-byte entries are relative to the following 32 KiB boundary. Files contain whole 32 KiB banks, each with a final 256-byte silence page. Blobs are aligned to 16 bytes and cannot cross banks. The loader rejects mismatched score/sample formats and rates. See [Multi-bank PCM](pcm-multibank.md) for details.
+Header flags bit 4 (`MULTIBANK_PCM`) selects the block-rendering engine for NTSC scores with up to three PCM voices or PAL scores with up to two. Bit 15 of the SMP rate stamp identifies the multi-bank format; the lower 15 bits contain 10112 on NTSC or 10019 on PAL. The directory occupies the first 32 KiB, and offsets in its 24-byte entries are relative to the following 32 KiB boundary. Files contain whole 32 KiB banks, each with a final 256-byte silence page. Blobs are aligned to 16 bytes and cannot cross banks. The loader rejects mismatched score/sample formats and rates. The first two voices stage bank words at STORE ops `0x1c/0x1d` and `0x1e/0x1f`; the third stages its bank byte at `0x21`. The third bank has no high byte because the supported 4 MiB aperture needs only seven bank bits. Protocol version 14 includes this assignment. See [Multi-bank PCM](pcm-multibank.md) for details.
 
 ## 11. VOICE_TABLE Section (0x0006)
 

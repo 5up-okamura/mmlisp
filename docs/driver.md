@@ -509,6 +509,7 @@ expander steps.
 | `pcm3` | 3 | 538 | 6,653.43 Hz | 48 | 8 | 5 |
 | banked, 1 voice | 1 | 354 | 10,111.71 Hz | 80 | 55 | 10 |
 | banked, 2 voices | 2 | 354 | 10,111.71 Hz | 80 | 15 | 2 |
+| banked, 3 voices | 3 | 538 | 6,653.43 Hz | 48 | 12 | 3 |
 | banked PAL, 1 voice | 1 | 354 | 10,019.47 Hz | 80 | 48 | 9 |
 | banked PAL, 2 voices | 2 | 354 | 10,019.47 Hz | 80 | 15 | 2 |
 
@@ -590,7 +591,7 @@ the bank) is the silence a parked voice reads; the exporter refuses a bank
 whose samples reach it. MMB data never goes through the window — the 68000
 reads it directly.
 
-For scores with one or two PCM voices, export automatically selects
+For NTSC scores with up to three PCM voices or PAL scores with up to two, export automatically selects
 multi-bank samples when the library exceeds the single-bank limit. Both
 banked voice counts run at 10,111.71 Hz on NTSC or 10,019.47 Hz on PAL. Each individual blob still fits below a
 bank's silence page; the combined library occupies multiple banks. The SMP
@@ -971,8 +972,7 @@ three outcomes.
 
 ## 11. Current Limits
 
-- **PCM:** one to three voices, with a 32 KB single-bank profile or NTSC/PAL
-  multi-bank playback for one or two voices (§5.4); no runtime pitch. A loop point lands on the engine's 16-byte
+- **PCM:** one to three voices, with a 32 KB single-bank profile or multi-bank playback for up to three NTSC voices or two PAL voices (§5.4); no runtime pitch. A loop point lands on the engine's 16-byte
   block, so the shortest loop is one block (1.1 ms at `pcm1`, 2.4 ms at
   `pcm3`).
 - **Wire:** the single-bank host sends 960 pairs a second. The banked host

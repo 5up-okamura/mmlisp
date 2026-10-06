@@ -1,4 +1,4 @@
-// One/two-voice block renderer for the banked MMB profile. Legacy images keep
+// One-to-three-voice block renderer for the banked MMB profile. Legacy images keep
 // using gen-stream.mjs. A block is built voice by voice, with a complete ROM
 // bank selection between voices. The DAC consumes an older, finished block.
 //
@@ -10,10 +10,10 @@ import { op, cost, laySlot, placementTable } from "./schedule.mjs";
 import { buildClamp, buildRungs } from "./lut.mjs";
 
 export const MB = Object.freeze({
-  voices: 2, block: 16, lead: 32,
-  // These four STORE opcodes are unused in a two-voice light image.
-  bankOp: [0x1c, 0x1e],
-  ptr: [0x1e00, 0x1e02], bank: [0x1e04, 0x1e06], target: 0x1e08,
+  voices: 3, block: 16, lead: 32,
+  // Voice 2 uses the spare STORE at $21; its bank is within the 4 MiB aperture.
+  bankOp: [0x1c, 0x1e, 0x21],
+  ptr: [0x1e00, 0x1e02, 0x1e0a], bank: [0x1e04, 0x1e06, 0x1e0c], target: 0x1e08,
 });
 const hx = (x) => `$${x.toString(16)}`;
 
@@ -21,12 +21,12 @@ export function multibankConfig(period = 354, xpSteps = 15, voices = 2, machine 
   return buildConfig({ machine, voices, loops: true, stepVoices: 0,
     complete: true, pairs: true, signedSource: true, production: true,
     workTarget: 1, meanTarget: 1, sampleMaster: period * 15,
-    lapBlocks: 5, xpSteps, lead: MB.lead });
+    lapBlocks: voices === 3 ? 3 : 5, xpSteps, lead: MB.lead });
 }
 
 export function generateMultibank(cfg = multibankConfig()) {
-  if (![1, 2].includes(cfg.voices) || cfg.cycleSlots !== 80 || cfg.groupSlots !== 1)
-    throw new Error("multibank prototype requires one or two voices and 80 equal slots");
+  if (![1, 2, 3].includes(cfg.voices) || cfg.cycleSlots !== (cfg.voices === 3 ? 48 : 80) || cfg.groupSlots !== 1)
+    throw new Error("multibank prototype requires one to three voices and equal output slots");
   const base = pcm1Base(cfg);
   const state = (key, v) => hx(base + PCMN_L[key](v));
   const routines = [], jobs = [];
@@ -43,7 +43,7 @@ export function generateMultibank(cfg = multibankConfig()) {
   };
   const mixers = [];
   const samples = (v) => {
-    const max = v ? 3 : 6;
+    const max = v ? (cfg.voices === 3 ? 5 : 3) : 6;
     const term = (i) => [op("ld a,(de)", 7 + cfg.windowWait), op("inc de", 6),
       op("ld l,a", 4), op([`mb_level_${v}_${i}:`, "ld h,$13"], 7), op("ld a,(hl)", 7),
       ...(v ? [op("ld l,a", 4), op("ld a,(bc)", 7), op("add a,l", 4),
@@ -78,7 +78,8 @@ export function generateMultibank(cfg = multibankConfig()) {
       op(`ld a,(${state("startMask", v)})`, 13), op("or a", 4),
       ...balanced("z", [op(`ld hl,(${state("stSrc", v)})`, 16),
         op(`ld (${hx(MB.ptr[v])}),hl`, 16),
-        op(`ld hl,(${hx(base + MB.bankOp[v])})`, 16),
+        ...(v === 2 ? [op(`ld a,(${hx(base + MB.bankOp[v])})`,13),
+          op("ld l,a",4), op("ld h,0",7)] : [op(`ld hl,(${hx(base + MB.bankOp[v])})`,16)]),
         op(`ld (${hx(MB.bank[v])}),hl`, 16)], `mb start ${v}`), op("exx", 4)], { kind: "start", v })]);
     const max = samples(v);
     jobs.push([op(`ld a,(${state("level", v)})`, 13, { action: { kind: "level", v } }),
@@ -155,14 +156,15 @@ export function generateMultibank(cfg = multibankConfig()) {
   const candidates = tokens.map((_, i) => prefixes(i));
   candidates.push(new Map([[tokens.length, { cycles: 0, ops: [] }]]));
   const work = [], sites = [];
-  const stepsPerBlock = cfg.xpSteps === 8 ? [2, 1, 2, 1, 2]
-    : Array.from({ length: 5 }, (_, b) => Math.round((b + 1) * cfg.xpSteps / 5) - Math.round(b * cfg.xpSteps / 5));
-  for (let block = 0; block < 5; block++) {
+  const lapSamples = cfg.cycleSlots, blocks = lapSamples / 16;
+  const stepsPerBlock = cfg.xpSteps === 8 && blocks === 5 ? [2, 1, 2, 1, 2]
+    : Array.from({ length: blocks }, (_, b) => Math.round((b + 1) * cfg.xpSteps / blocks) - Math.round(b * cfg.xpSteps / blocks));
+  for (let block = 0; block < blocks; block++) {
     const need = 2 * stepsPerBlock[block];
     let frontier = new Map([["0:0", { pos: 0, piece: 0, path: [], used: 0 }]]);
     for (let slot = 0; slot < 16; slot++) {
       const next = new Map();
-      const capacity = cfg.periodCycles - 18 - (block === 4 && slot === 15 ? 10 : 0);
+      const capacity = cfg.periodCycles - 18 - (block === blocks - 1 && slot === 15 ? 10 : 0);
       for (const st of frontier.values()) for (const take of [0, 1, 2]) {
         if (st.piece + take > need) continue;
         if (need - st.piece - take > 2 * (15 - slot)) continue;
@@ -214,7 +216,7 @@ export function generateMultibank(cfg = multibankConfig()) {
     "ld a,$2a", "ld ($4000),a", "ld hl,$1c00", "ld de,$4001", "ld a,(hl)", "inc l", "stream:");
   const slots = work.map((ops, i) => laySlot({ index: i, cycles: cfg.periodCycles,
     dacWrite: op("ld (de),a", 7), work: ops,
-    tail: [op("ld a,(hl)", 7), op("inc l", 4), ...(i === 79 ? [op("jp stream", 10)] : [])],
+    tail: [op("ld a,(hl)", 7), op("inc l", 4), ...(i === lapSamples - 1 ? [op("jp stream", 10)] : [])],
     fill: { dead: ["a", "b", "bc"] } }));
   for (let i = 0; i < slots.length; i++) {
     lines.push(`slot${i}:`);
@@ -228,16 +230,16 @@ export function generateMultibank(cfg = multibankConfig()) {
   const actions = work.map((ops) => ops.flatMap((o) => o.action ? [o.action] : []));
   const at = (kind, v) => actions.flatMap((aa, slot) => aa.some((a) => a.kind === kind && a.v === v) ? [slot] : []);
   const nextAt = (slots, after, strict = true) => {
-    for (let lap = Math.floor(after / 80); ; lap++)
-      for (const s of slots) if (lap * 80 + s >= after + (strict ? 1 : 0)) return lap * 80 + s;
+    for (let lap = Math.floor(after / lapSamples); ; lap++)
+      for (const s of slots) if (lap * lapSamples + s >= after + (strict ? 1 : 0)) return lap * lapSamples + s;
   };
   let idleAfterGen = 0;
   for (const { a } of sites) for (let v = 0; v < cfg.voices; v++) for (const start of [false, true]) {
     const seen = nextAt(at(start ? "genStart" : "genEnd", v), a);
     const applied = nextAt(at(start ? "start" : "apply", v), seen, false);
     let between = 0;
-    for (let lap = Math.floor(a / 80); lap * 80 <= applied; lap++)
-      for (const site of sites) if (lap * 80 + site.a > a && lap * 80 + site.a < applied) between++;
+    for (let lap = Math.floor(a / lapSamples); lap * lapSamples <= applied; lap++)
+      for (const site of sites) if (lap * lapSamples + site.a > a && lap * lapSamples + site.a < applied) between++;
     idleAfterGen = Math.max(idleAfterGen, between);
   }
   return { text: lines.join("\n") + "\n", slots, placement: placementTable(slots), sites,

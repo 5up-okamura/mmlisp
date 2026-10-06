@@ -461,6 +461,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "multibank-3v.mmlisp": {
+    "ok": false,
+    "mismatches": 2,
+    "compileErrors": 0,
+    "digest": "4ada7941"
+  },
   "multibank.mmlisp": {
     "ok": true,
     "mismatches": 0,

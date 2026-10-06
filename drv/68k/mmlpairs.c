@@ -129,11 +129,11 @@ static void pcm_command(MMLPairs *p, const uint8_t *c) {
                              (uint8_t)wrap, (uint8_t)(wrap >> 8)};
     stage(p, v, 0, vals, 6);
     if (c[0] == 6) {
-      if (v > 1) { p->fault++; return; }
+      if (v > 2 || (v == 2 && rd16le(c + 9) > 127)) { p->fault++; return; }
       uint16_t bank = rd16le(c + 9);
       if (!p->bank_valid[v] || p->bank[v] != bank) {
-        store(p, (uint8_t)(0x1c + 2*v), (uint8_t)bank);
-        store(p, (uint8_t)(0x1d + 2*v), (uint8_t)(bank >> 8));
+        store(p, v == 2 ? 0x21 : (uint8_t)(0x1c + 2*v), (uint8_t)bank);
+        if (v != 2) store(p, (uint8_t)(0x1d + 2*v), (uint8_t)(bank >> 8));
         p->bank[v] = bank; p->bank_valid[v] = 1;
       }
     }
@@ -401,7 +401,8 @@ static const uint8_t OP_K[1 + 9 * MMLP_VOICES] = {
   0xff, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8 };
 /* The voice a staged store (SRC, END, WRAP) belongs to, or 0xff. */
 MMLP_HOT uint8_t staged_voice(const MMLPairsCfg *cfg, uint8_t op) {
-  if (cfg->voices <= 2 && op >= 0x1c && op <= 0x1f) return (uint8_t)((op - 0x1c) >> 1);
+  if (cfg->banked && op == 0x21) return 2;
+  if (cfg->banked && op >= 0x1c && op <= 0x1f) return (uint8_t)((op - 0x1c) >> 1);
   if (op == 0 || op >= (uint8_t)(1 + 9 * cfg->voices)) return 0xff;
   const uint8_t k = OP_K[op];
   return k >= 1 && (k <= 6 || cfg->banked) ? OP_VOICE[op] : 0xff;
@@ -437,6 +438,7 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
   if (cfg->banked && p->head_valid && p->last_fifo != 0xff &&
       (uint8_t)(fifo_lo - p->last_fifo) >= (uint8_t)(2*p->head - p->last_fifo)) p->head_valid = 0;
   p->last_fifo = fifo_lo;
+  p->undo_head = p->head; p->undo_head_valid = p->head_valid;
   uint8_t c = (uint8_t)((fifo_lo >> 1) & MASK);
   uint8_t h = (uint8_t)((c + (cfg->ahead ? cfg->ahead : MMLP_AHEAD)) & MASK);
   if (p->head_valid) {
@@ -448,7 +450,15 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
    * and never across the page end. So a head too near the end moves to 0: the
    * few pairs skipped are idle, and the engine reads them before position 0,
    * so nothing is read out of order. */
-  if ((uint16_t)h + cfg->pairs_per_grab > N) h = 0;
+  if ((uint16_t)h + cfg->pairs_per_grab > N) {
+    /* Wrapping must not jump backwards into earlier unread transfers. A late
+     * copy at that destination would otherwise discard the pending head. */
+    if (cfg->banked && ((N-c)&MASK) < ((h-c)&MASK)) {
+      *dst = (uint16_t)(cfg->fifo + 2*h);
+      return 0;
+    }
+    h = 0;
+  }
   p->head = h;
   p->head_valid = 1;
   uint16_t n = 0;
@@ -523,7 +533,8 @@ void mmlp_abort(MMLPairs *p) {
   for (uint8_t v = 0; v < MMLP_VOICES; v++) p->since_gen[v] = p->undo_since[v];
   p->pairs_written = (uint16_t)(p->pairs_written - p->undo_n);
   p->undo_n = 0;
-  p->head_valid = 0;
+  if (p->cfg.banked) { p->head = p->undo_head; p->head_valid = p->undo_head_valid; }
+  else p->head_valid = 0;
   p->late++;
 }
 

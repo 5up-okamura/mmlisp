@@ -5,9 +5,11 @@ import { assemble } from "./z80asm.mjs";
 import { multibankConfig, generateMultibank } from "../engine/gen-multibank.mjs";
 
 import { NTSC, PAL } from "../engine/config.mjs";
-export function buildMultibankImage({ period = 354, fault = null, xpSteps, voices = 2, frameHz = 60 } = {}) {
+export function buildMultibankImage({ period, fault = null, xpSteps, voices = 2, frameHz = 60 } = {}) {
   if (![50,60].includes(frameHz)) throw new RangeError("banked frame rate must be 50 or 60");
-  xpSteps ??= voices === 1 ? (frameHz === 50 ? 48 : 55) : 15;
+  period ??= voices === 3 ? 538 : 354;
+  if (voices === 3 && frameHz === 50) throw new RangeError("PAL three-voice PCM is not enabled yet");
+  xpSteps ??= voices === 1 ? (frameHz === 50 ? 48 : 55) : (voices === 3 ? 12 : 15);
   const cfg = multibankConfig(period, xpSteps, voices, frameHz === 50 ? PAL : NTSC), gen = generateMultibank(cfg);
   let source = gen.text;
   if (fault === "timing") source = source.replace("slot0:\n", "slot0:\nnop\n");

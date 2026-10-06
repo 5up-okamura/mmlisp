@@ -243,7 +243,7 @@ export class DrvPlayer {
     // score plays on and the rate its bank is baked at (mmb.md §4).
     const pcmVoices = headerPcmVoices(u16(b, 6));
     const pcmBanked = (u16(b, 6) & 0x10) !== 0;
-    if (pcmBanked && pcmVoices > 2) throw new RangeError("unsupported banked PCM image");
+    if (pcmBanked && (pcmVoices > 3 || (pcmVoices===3 && (u16(b,6)&2)))) throw new RangeError("unsupported banked PCM image");
     // Bit 1: the frame clock this score's numbers were baked for (mmb.md §4).
     // The dispatcher never reads it — it counts frames — but the tempo
     // readback and a live tempo override have to speak the score's own clock.

@@ -54,7 +54,7 @@ export function runMultibank(built, rom, items, { seconds = 2, fault = null } = 
   }
   const allowed = new Set(gen.sites.map((x) => x.a));
   for (const [slot, pair] of consumed)
-    if (!allowed.has(slot % 80) || pair.includes(null)) { fail.push(`PAIRS malformed read at slot ${slot}`); break; }
+    if (!allowed.has(slot % cfg.cycleSlots) || pair.includes(null)) { fail.push(`PAIRS malformed read at slot ${slot}`); break; }
   const sent = written.filter((p) => p[0]), read = [...consumed.values()].filter((p) => p[0]);
   if (q !== queue.length || JSON.stringify(sent) !== JSON.stringify(read)) fail.push("PAIRS lost, reordered or undrained commands");
   const ref = new MultibankModel(gen, rom);
@@ -66,7 +66,7 @@ export function runMultibank(built, rom, items, { seconds = 2, fault = null } = 
       fail.push(`VALUE slot ${slot}: got ${m.trace.dacValue[slot]}, expected ${reference[slot]}`);
   }
   if (diffs > 3) fail.push(`VALUE ${diffs} bytes differ`);
-  for (let v = 0; v < 2; v++) {
+  for (let v = 0; v < cfg.voices; v++) {
     const intents = items.filter((i) => i.intent?.v === v).map((i) => i.intent);
     const got = ref.log.filter((i) => i.v === v).map(({ slot, ...i }) => i);
     if (JSON.stringify(intents) !== JSON.stringify(got)) fail.push(`INTENT voice ${v}: ${JSON.stringify(got).slice(0,240)}`);

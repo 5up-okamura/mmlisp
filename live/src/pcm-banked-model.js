@@ -1,3 +1,4 @@
+export const pcmBankOp = v => v === 2 ? 0x21 : 0x1c + 2*v;
 // Arithmetic model of the generated block renderer, shared by live playback
 // and the instruction gate. Timing actions come from the generated image.
 const pcmOp = (name, v) => ({LEVEL:1,SRC:2,END:4,WRAP:6,START:8,RETARGET:9}[name] + 9*v);
@@ -6,20 +7,20 @@ export class MultibankModel {
   constructor(gen, rom) {
     this.gen = gen;
     this.rom = rom;
-    this.state = new Uint8Array(32);
-    this.voices = Array.from({ length: 2 }, () => ({ ptr: 0xff00, bank: 0,
+    this.state = new Uint8Array(34);
+    this.voices = Array.from({ length: gen.cfg.voices }, () => ({ ptr: 0xff00, bank: 0,
       end: 0, wrap: 0xff00, startGen: 0, endGen: 0, start: false, apply: false, park: false, page: 0, out: 0 }));
     this.ring = new Uint8Array(256).fill(128);
     this.target = 32;
     this.log = [];
     this.slotIndex = 0;
   }
-  store(op, value) { if (op < 32) this.state[op] = value; }
+  store(op, value) { if (op < 34 && op !== 0x20) this.state[op] = value; }
   word(at) { return this.state[at] | this.state[at + 1] << 8; }
   slot(pair) {
     const s = this.slotIndex++;
     const output = this.ring[s & 255];
-    for (const a of this.gen.actions[s % 80]) {
+    for (const a of this.gen.actions[s % this.gen.actions.length]) {
       const v = this.voices[a.v], k = a.v;
       switch (a.kind) {
         case "genStart": {
@@ -40,7 +41,7 @@ export class MultibankModel {
           break;
         case "start":
           if (v.start) {
-            v.ptr = this.word(pcmOp("SRC", k)); v.bank = this.word(0x1c + 2*k);
+            v.ptr = this.word(pcmOp("SRC", k)); v.bank = (k === 2 ? this.state[pcmBankOp(k)] : this.word(pcmBankOp(k)));
             this.log.push({ kind: "start", v: k, src: v.ptr, bank: v.bank, end: v.end, wrap: v.wrap, slot: s });
           }
           break;
@@ -65,7 +66,7 @@ export class MultibankModel {
         default: throw new Error(`unknown model action ${a.kind}`);
       }
     }
-    if (pair && pair[0] < 32) this.state[pair[0]] = pair[1];
+    if (pair) this.store(pair[0], pair[1]);
     return output;
   }
 }

@@ -1,0 +1,11 @@
+; Three overlapping pitch-baked blobs occupy different ROM banks.
+(def pcm-voices 3)
+(def-pcm bank :file "pcmbank.wav" :loop-start 150ms :loop-end 450ms)
+(fm1 :tempo 120 :oct 4 :len 8 :vel 10 (x 4 c e g c))
+(sqr1 :oct 5 :len 8 :vel 5 (x 4 c _ e _))
+(pcm1 bank :tempo 120 :oct 3 :len 4 :mode loop :vel 12
+  c :vel 8 d :master 25 c :master 31 d)
+(pcm2 bank :tempo 120 :oct 3 :len 4 :mode loop :vel 10
+  d e :mode shot d e)
+(pcm3 bank :tempo 120 :oct 3 :len 4 :mode loop :vel 9
+  e c :loop-len 16ms d :mode shot e)

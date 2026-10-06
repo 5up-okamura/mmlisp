@@ -39,7 +39,7 @@ const L=readProbe(readFileSync(join(out,'probe.bin'))),rom=readFileSync(p.rom),f
 const ready=L.ramWrites.filter(w=>w.region==='glob'&&w.addr===0x6e&&w.value===0xd2).at(-1);
 if(!ready)throw new Error('banked engine did not boot');
 const dac=L.dac.filter(d=>d.time>ready.time),stores=new Map();let si=0;
-for(const w of L.ramWrites){if(w.region!=='glob'||w.addr<0x30||w.addr>=0x50||w.time<dac[0].time)continue;while(si+1<dac.length&&dac[si+1].time<=w.time)si++;if(stores.has(si))fail.push('multiple stores in a DAC slot');stores.set(si,[w.addr-0x30,w.value]);}
+for(const w of L.ramWrites){if(w.region!=='glob'||w.addr<0x30||w.addr>=0x52||w.time<dac[0].time)continue;while(si+1<dac.length&&dac[si+1].time<=w.time)si++;if(stores.has(si))fail.push('multiple stores in a DAC slot');stores.set(si,[w.addr-0x30,w.value]);}
 const model=new MultibankModel(image.gen,rom);let mismatch=0;
 for(let i=0;i<dac.length;i++)if(model.slot(stores.get(i))!==dac[i].value)mismatch++;
 if(mismatch)fail.push(`${mismatch} DAC mismatches`);if(!dac.some(d=>d.value!==128))fail.push('silent PCM');

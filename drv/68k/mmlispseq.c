@@ -2505,7 +2505,8 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   /* Header flags bits 2-3: the score's PCM voice count (mmb.md §4). */
   s->pcm_voices = (uint8_t)((rd16(mmb, 6) >> 2) & 3);
   s->pcm_banked = (uint8_t)((rd16(mmb, 6) & 0x10) != 0);
-  if (s->pcm_banked && s->pcm_voices > MML_BANKED_VOICES) return -1;
+  if (s->pcm_banked && (s->pcm_voices > MML_BANKED_VOICES ||
+      !MML_BANKED_STAMPS[(rd16(mmb,6)&2)!=0][s->pcm_voices ? s->pcm_voices-1 : 0])) return -1;
   /* Bit 1, PAL_TIMEBASE: the frame clock this score's numbers were baked for
    * (driver.md §3.3). The dispatcher never reads it — it counts frames, and
    * every frame-counted number already arrives baked — but the increment it

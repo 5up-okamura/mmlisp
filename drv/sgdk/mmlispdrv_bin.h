@@ -7,7 +7,7 @@
 #include <types.h>
 
 // RATE-STAMPS 14376 10112 6653 — the images' DAC rates (tools/rate-mirrors.mjs).
-#define MMLISPDRV_PROTO_VER      13
+#define MMLISPDRV_PROTO_VER      14
 #define MMLISPDRV_BIN_SIZE       6912
 
 // The pair page (driver.md §6.1): 128 {op, val} pairs the 68000 writes and the

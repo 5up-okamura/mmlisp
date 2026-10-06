@@ -44,7 +44,8 @@ assert.throws(()=>buildMmb('tests/multibank.mmlisp',{multibank:false}),/exceeds/
 assert.equal(buildMmb('tests/m3-pcm-baked.mmlisp').bytes[6]&0x10,0);
 gate('tests/multibank.mmlisp',2,{frameHz:50});gate('tests/m3-pcm-baked.mmlisp',1,{frameHz:50});gate('tests/p3-se-pcm-macro.mmlisp',2,{...JSON.parse(readFileSync('tests/p3-se-pcm-macro.cmds.json')),frameHz:50});
 assert.ok(buildMmb('tests/multibank.mmlisp',{frameHz:50}).bytes[6]&0x10);
-assert.throws(()=>buildMmb('tests/m4-pcm-3v.mmlisp',{multibank:true}),/1–2/);
+gate('tests/m4-pcm-3v.mmlisp',3);gate('tests/multibank-3v.mmlisp',3);
+assert.throws(()=>buildMmb('tests/multibank-3v.mmlisp',{multibank:true,frameHz:50}),/unsupported/);
 const wrongRate=big.sampleBank.slice();new DataView(wrongRate.buffer).setUint16(2,0x8000|14376,true);
 assert.throws(()=>new DrvPlayer().loadMMB(big.bytes,wrongRate),/stamp/);
 const bad=big.sampleBank.slice();new DataView(bad.buffer).setUint32(8,0x7ef0,true);assert.throws(()=>parsePcmBank(bad),/crosses/);

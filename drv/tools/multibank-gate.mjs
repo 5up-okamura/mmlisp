@@ -55,7 +55,7 @@ const samples = [
 ];
 for (const s of samples) for (let i = 0; i < s.len; i++) rom[s.bank * 0x8000 + s.src - 0x8000 + i] = s.wave(i) & 255;
 
-function script(kind, idle = built.gen.idleAfterGen) {
+function script(kind, idle = built.gen.idleAfterGen, voices = 2) {
   const pairs = new MultibankPairs(idle), out = [];
   const add = (frame, c, intent) => out.push({ frame, pairs: pairs.pcm(c), intent });
   const points = (s, loop) => loop ? pcmLoopPoints(s.src, s.len, ...loop) : pcmShotPoints(s.src, s.len);
@@ -71,15 +71,18 @@ function script(kind, idle = built.gen.idleAfterGen) {
   if (kind !== "idle") {
     start(1, 0, 0, kind === "shots" ? null : [32, 1600]);
     start(1, 1, 1, kind === "shots" ? null : [64, 2048]);
+    if(voices===3) start(1,2,0,kind === "shots" ? null : [0,16]);
   }
   if (["loops", "adjacent"].includes(kind)) {
     retarget(10, 0, 0, [160, 176]); retarget(10, 1, 1, [32, 48]);
+    if(voices===3) retarget(10,2,0,[32,64]);
     retarget(20, 0, 0, [0, 512]); retarget(20, 1, 1, [0, 1024]);
     // Release to the tail; a new source/bank then steals voice zero.
     retarget(30, 0, 0, null); start(35, 0, 2, null);
     retarget(35, 1, 1, null);
   }
   if (kind === "levels") for (let f = 5; f < 50; f += 5) {
+    if(voices===3) add(f,[3,2,(f+3)%7]);
     add(f, [3, 0, f % 7]); add(f, [3, 1, (f + 2) % 7]); add(f, [5, f % 4]);
   }
   if (kind === "adjacent") for (let f = 40; f < 60; f += 2) {
@@ -116,6 +119,15 @@ for (const kind of ["shots", "loops", "adjacent", "wire"]) {
   assert.equal(run.fail.length, 0, `pcm1 ${kind}: ${run.fail.join("; ")}`);
   console.log(`ok pcm1 ${kind}: 55 pairs / 80 samples, gap ${run.time.gapMin}..${run.time.gapMax}`);
 }
+// Three voices use a shorter lap and an independent single-byte bank store.
+const trio = buildMultibankImage({voices:3});
+for (const kind of ["shots", "loops", "levels", "adjacent", "wire"]) {
+  const items = script(kind,trio.gen.idleAfterGen,3);
+  const run=runMultibank(trio,rom,items,{seconds:6});
+  assert.equal(run.fail.length,0,`pcm3 ${kind}: ${run.fail.join("; ")}`);
+  console.log(`ok pcm3 ${kind}: ${trio.cfg.xpSteps} pairs / ${trio.cfg.cycleSlots} samples`);
+}
+
 const scorePath = fileURLToPath(new URL("../tests/multibank.mmlisp", import.meta.url));
 assert.throws(() => buildMmb(scorePath, { multibank: false }), /exceeds.*32512/);
 const score = buildMultibankScore(scorePath, { frames: 360, idleAfterGen: built.gen.idleAfterGen });
