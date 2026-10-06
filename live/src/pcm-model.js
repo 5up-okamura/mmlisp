@@ -266,11 +266,12 @@ export class PcmLiveEngine {
     const w = (k) => c[k] | (c[k + 1] << 8);
     const bump = (name, vi) => { const op = pcmOp(name, vi); m.store(op, (m.state[op] + 1) & 0xff); };
     if ((c[0] === PCM_START || c[0] === 6) && c[1] < V) {
+      if (c[0] === 6 && c[1] === 2 && w(9) > 127) throw new RangeError("PCM bank exceeds the 4 MiB aperture");
       this.started[c[1]] = true;
       this.shiftByte[c[1]] = c[2];
       m.store(pcmOp("LEVEL", c[1]), this.page(c[2]));
       put16("SRC", c[1], w(3)); put16("END", c[1], w(5)); put16("WRAP", c[1], w(7));
-      if (c[0] === 6) { if (c[1] === 2 && w(9) > 127) throw new RangeError("PCM bank exceeds the 4 MiB aperture"); m.store(pcmBankOp(c[1]), c[9]); if (c[1] !== 2) m.store(pcmBankOp(c[1])+1, c[10]); }
+      if (c[0] === 6) { m.store(pcmBankOp(c[1]), c[9]); if (c[1] !== 2) m.store(pcmBankOp(c[1])+1, c[10]); }
       bump("START", c[1]);
     } else if (c[0] === PCM_RETARGET && c[1] < V) {
       put16("END", c[1], w(2)); put16("WRAP", c[1], w(4));

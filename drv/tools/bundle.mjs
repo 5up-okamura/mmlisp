@@ -170,7 +170,7 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     // sound", which is the one thing a shared bank could silently do.
     try { s.alone = encodeMmb(s.ir, { samples: s.samples, multibank }); }
     catch (e) {
-      if (manifest.multibank === undefined && !multibank && (pcmVoices <= 2 || songs[0].ir.metadata.frameHz === 60) && e instanceof RangeError && /exceeds/.test(e.message))
+      if (manifest.multibank === undefined && !multibank && pcmVoices <= 3 && e instanceof RangeError && /exceeds/.test(e.message))
         return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz });
       throw e;
     }
@@ -183,7 +183,7 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     if (multibank) bank = packBankedSamples(Uint8Array.from(bankBytes));
     else {
     if (bankBytes.length > SILENCE_PAGE) {
-      if (manifest.multibank === undefined && (pcmVoices <= 2 || songs[0].ir.metadata.frameHz === 60))
+      if (manifest.multibank === undefined && pcmVoices <= 3)
         return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz });
       throw new RangeError(
         `the shared bank is ${bankBytes.length} bytes; exceeds the ${SILENCE_PAGE} bytes below the ` +

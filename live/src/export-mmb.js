@@ -1400,7 +1400,7 @@ export function encodeMmb(ir, opts = {}) {
     } else {
     const SILENCE_PAGE = 0x7f00;
     if (bankPlan.bytes.length > SILENCE_PAGE) {
-      if (opts.multibank !== false && (pcmVoices <= 2 || frameHz === 60))
+      if (opts.multibank !== false && pcmVoices <= 3)
         return encodeMmb(ir, { ...opts, multibank: true });
       throw new RangeError(
         `sample bank is ${bankPlan.bytes.length} bytes; exceeds the ${SILENCE_PAGE} bytes ` +

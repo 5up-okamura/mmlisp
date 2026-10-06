@@ -399,3 +399,31 @@ Both paths have regression tests. The corrected twelve-second run matches
 75,054 DAC values, 197 starts and all FM/PSG; FM maximum interval error is
 28.46 ms. Artifact: drv/out/sin008/ntsc-three-fixed.
 PAL three-voice is the next milestone.
+
+
+## PAL three-voice and final validation (2026-10-07)
+
+PAL three-voice playback is implemented at 6,592.738 Hz with the same
+48-sample/12-pair instruction schedule as NTSC. The PAL three-bank fixture
+matched 48,520 DAC values and twelve starts; the real-song copy matched
+74,857 values and 197 starts, including FM/PSG, over twelve seconds. FM
+maximum interval error for that copy was 13.28 ms, bus loss 0.624%.
+Artifact paths: drv/out/banked-pal-three and drv/out/sin008/pal-three.
+
+The final normal-driver matrix explicitly validates all six region/voice
+profiles, including chip settling and frequency-latch safety, minimum FM/PSG
+completion inferred from consumed PCM starts, and full observed command
+prefixes. Reports: drv/out/banked-final-{60,50}-{1,2,3}.
+Exact duplicate PAL/NTSC binaries are shared in the C header: six profiles
+use four images rather than six. Generated descriptors and C stamps remain
+region-specific. VGM PCM rendering passes for three voices in both regions.
+
+Remaining items outside these milestones: real hardware and DMA-heavy games,
+cross-bank single-sample streaming, and further timing improvements. Keep
+residual jitter measurements separate from waveform/command correctness.
+
+All three requested milestones are complete. The full `npm run verify:all`
+regression suite and both banked gates pass. After image deduplication,
+mirrors, SGDK type checks and the PAL three-voice native fixture pass again
+(`drv/out/banked-pal-three-final`). PAL 1–2 was committed as `55e5523`;
+NTSC 3 was committed as `7706513`; PAL 3 is the final milestone commit.

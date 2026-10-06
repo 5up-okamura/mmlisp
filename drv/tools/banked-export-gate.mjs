@@ -45,7 +45,8 @@ assert.equal(buildMmb('tests/m3-pcm-baked.mmlisp').bytes[6]&0x10,0);
 gate('tests/multibank.mmlisp',2,{frameHz:50});gate('tests/m3-pcm-baked.mmlisp',1,{frameHz:50});gate('tests/p3-se-pcm-macro.mmlisp',2,{...JSON.parse(readFileSync('tests/p3-se-pcm-macro.cmds.json')),frameHz:50});
 assert.ok(buildMmb('tests/multibank.mmlisp',{frameHz:50}).bytes[6]&0x10);
 gate('tests/m4-pcm-3v.mmlisp',3);gate('tests/multibank-3v.mmlisp',3);
-assert.throws(()=>buildMmb('tests/multibank-3v.mmlisp',{multibank:true,frameHz:50}),/unsupported/);
+gate('tests/multibank-3v.mmlisp',3,{frameHz:50});gate('tests/m4-pcm-3v.mmlisp',3,{frameHz:50});
+assert.ok(buildMmb('tests/multibank-3v.mmlisp',{frameHz:50}).bytes[6]&0x10);
 const wrongRate=big.sampleBank.slice();new DataView(wrongRate.buffer).setUint16(2,0x8000|14376,true);
 assert.throws(()=>new DrvPlayer().loadMMB(big.bytes,wrongRate),/stamp/);
 const bad=big.sampleBank.slice();new DataView(bad.buffer).setUint32(8,0x7ef0,true);assert.throws(()=>parsePcmBank(bad),/crosses/);
@@ -54,7 +55,7 @@ assert.throws(()=>execFileSync(exe,[join(out,'song.mmb'),'1','--samples',join(ou
 const bundle=buildBundle({multibank:true,pcmVoices:2,songs:[{name:'a',src:'tests/multibank.mmlisp'},{name:'b',src:'tests/multibank.mmlisp'}]},{baseDir:resolve('.')});
 assert.ok(bundle.bank.length>32768);assert.ok(!bundle.diagnostics.some(d=>d.severity==='error'));
 assert.ok(buildBundle({pcmVoices:2,songs:[{name:'auto',src:'tests/multibank.mmlisp'}]},{baseDir:resolve('.')}).bank.length>32768);
-for(const hz of [60,50]) for(const voices of [1,2]) {
+for(const hz of [60,50]) for(const voices of [1,2,3]) {
  const {buildMultibankImage}=await import('./build-multibank.mjs');
  const image=buildMultibankImage({voices,frameHz:hz}),sites=new Set(image.gen.sites.map(x=>x.a));
  const window=Math.ceil(image.cfg.machine.frameMaster/(15*image.cfg.periodCycles))+1;

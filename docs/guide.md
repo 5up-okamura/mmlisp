@@ -867,8 +867,8 @@ three at 6.7 kHz. Leave it out and it is the highest `pcmN` track you wrote,
 so an idle third track costs the other two their bandwidth. The samples all
 share the available sample storage, and every note you play a sample at is
 baked separately. Single-bank profiles hold about 2.3 seconds at one voice or
-4.9 seconds at three. NTSC and PAL songs with one or two voices automatically expand
-to [multi-bank PCM](pcm-multibank.md) when needed, both at about 10.1 kHz on NTSC or 10.0 kHz on PAL. This expands
+4.9 seconds at three. NTSC and PAL songs with up to three voices automatically expand
+to [multi-bank PCM](pcm-multibank.md) when needed, at about 10.1/10.0 kHz for one or two voices and 6.65/6.59 kHz for three (NTSC/PAL). This expands
 total storage; an individual baked sample must still fit within 32,512 bytes.
 
 **Make it loud before it is baked.** An 8-bit sample next to FM tends to sound
@@ -1122,7 +1122,7 @@ the score's folder with its name filled in, until it is written (also
 `File > Export > mucom88 PCM Bank WAV…`). A song that uses both part J and the
 drums arrives with its `fm6` lines commented out — on the Mega Drive fm6 is
 the DAC the drums play through; move them to a free channel to hear them.
-NTSC and PAL drum libraries with one or two PCM voices can expand to multiple sample
+NTSC and PAL drum libraries with up to three PCM voices can expand to multiple sample
 banks automatically. If an individual baked sample is still too large, the
 importer can select a lower-rate voice profile with `(def pcm-voices 2)` or
 `3`. A sample that cannot fit even then is omitted, its notes become rests,

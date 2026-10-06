@@ -3,6 +3,7 @@ import {readFileSync,writeFileSync,mkdirSync,copyFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {makeProject,sgdkEnv,runRom} from './sgdk-project.mjs';
 import {buildMmb} from './mmb-build.mjs';
+import {checkWriteStream} from '../engine/analyze.mjs';
 import {prioritizeFmNotes} from './multibank-score.mjs';
 import {buildMultibankImage} from './build-multibank.mjs';
 import {MultibankModel} from './multibank-model.mjs';
@@ -47,29 +48,39 @@ const player=new DrvPlayer();player.loadMMB(b.bytes,b.sampleBank);
 const frames=player.captureSlotLog({maxFrames:Math.ceil(seconds*frameHz)+frameHz,prime:0,builder:new FrameRecorder()}).slots;
 const sampleAt=rom.indexOf(Buffer.from(b.sampleBank));
 if(sampleAt < 0 || (sampleAt & 0x7fff)) fail.push('sample resource missing or unaligned');
-const wantedStarts = frames.flatMap(recordPcm).filter(c => c[0] === 6);
+const wantedStarts = frames.flatMap((rec,frame)=>recordPcm(rec).map(c=>Object.assign(c,{frame}))).filter(c => c[0] === 6);
+let completedThrough=0;
 for(let v=0;v<voices;v++) {
  const expected=wantedStarts.filter(c=>c[1]===v), actual=model.log.filter(e=>e.kind==='start'&&e.v===v);
  if(!actual.length) fail.push(`voice ${v} never started`);
+ if(actual.length && expected[actual.length-1]) completedThrough=Math.max(completedThrough,expected[actual.length-1].frame-1);
  for(let i=0;i<actual.length;i++) {
   const c=expected[i], a=actual[i];
   if(!c || a.src !== (c[3]|c[4]<<8) || a.bank !== (c[9]|c[10]<<8) + (sampleAt>>15)
     || a.end !== (c[5]|c[6]<<8) || a.wrap !== (c[7]|c[8]<<8)) {fail.push(`voice ${v} start ${i} intent mismatch`);break;}
  }
 }
-const want=[[],[]],psg=[];
+const want=[[],[]],psg=[],psgFrames=[];
 const modulation=new Array(6).fill(null);
 for(let frame=0;frame<frames.length;frame++) {
  const rec=frames[frame], pcm=recordPcm(rec), writes=[];
  for(let at=1+pcm.reduce((n,c)=>n+c.length,0);at+3<=rec.length;at+=3) writes.push([...rec.slice(at,at+3)]);
  for(const [port,reg,value] of prioritizeFmNotes(writes,modulation)) {
-  if(port===2) psg.push(value);else want[port].push([reg,value,frame]);
+  if(port===2) {psg.push(value);psgFrames.push(frame);}else want[port].push([reg,value,frame]);
  }
 }
-const latch=[0,0],seen=[[],[]];
-for(const e of L.ymZ80){if(e.read)continue;if(e.kind==='addr')latch[e.part]=e.byte;else if(e.time>ready.time&&!(e.part===0&&latch[0]===0x2a))seen[e.part].push([latch[e.part],e.byte,e.time]);}
+const latch=[0,0],seen=[[],[]],ymStream=[];
+for(const e of L.ymZ80){if(e.read)continue;if(e.kind==='addr')latch[e.part]=e.byte;
+ if(e.time>ready.time)ymStream.push({cycle:e.time/15,port:e.part,reg:latch[e.part],kind:e.kind});
+ if(e.kind==='data' &&(e.time>ready.time&&!(e.part===0&&latch[0]===0x2a)))seen[e.part].push([latch[e.part],e.byte,e.time]);}
 for(let port=0;port<2;port++)for(let i=0;i<seen[port].length;i++){let w=want[port][i],g=seen[port][i];if(!w||g[0]!==w[0]||g[1]!==w[1]){fail.push(`FM port ${port} write ${i}: ${JSON.stringify(g)} vs ${JSON.stringify(w)}`);break;}}
-const gotPsg=L.psg68k.filter(e=>e.time>ready.time);for(let i=0;i<gotPsg.length;i++)if(gotPsg[i].value!==psg[i]){fail.push(`PSG write ${i}`);break;}
+fail.push(...checkWriteStream(ymStream).problems.slice(0,5));
+for(let port=0;port<2;port++) {
+ const minimum=want[port].filter(w=>w[2]<=completedThrough).length;
+ if(seen[port].length<minimum)fail.push(`FM port ${port}: ${minimum-seen[port].length} writes missing before completed PCM frame ${completedThrough}`);
+}
+const gotPsg=L.psg68k.filter(e=>e.time>ready.time);if(gotPsg.length<psgFrames.filter(f=>f<=completedThrough).length)fail.push("PSG writes missing before the completed PCM frame");
+for(let i=0;i<gotPsg.length;i++)if(gotPsg[i].value!==psg[i]){fail.push(`PSG write ${i}`);break;}
 const span=dac.at(-1).time-dac[0].time,held=L.stops.filter(([a])=>a>=dac[0].time&&a<=dac.at(-1).time).reduce((sum,[a,z])=>sum+z-a,0);
 const rate=(dac.length-1)*image.cfg.machine.masterHz/(span-held),loss=100*held/span;
 if(Math.abs(rate/image.cfg.rateHz-1)>.002)fail.push('DAC running rate drift');if(loss>1.5)fail.push('excessive bus loss');

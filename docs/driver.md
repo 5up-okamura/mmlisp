@@ -512,6 +512,7 @@ expander steps.
 | banked, 3 voices | 3 | 538 | 6,653.43 Hz | 48 | 12 | 3 |
 | banked PAL, 1 voice | 1 | 354 | 10,019.47 Hz | 80 | 48 | 9 |
 | banked PAL, 2 voices | 2 | 354 | 10,019.47 Hz | 80 | 15 | 2 |
+| banked PAL, 3 voices | 3 | 538 | 6,592.74 Hz | 48 | 12 | 3 |
 
 The MMB header MULTIBANK_PCM flag selects the banked profiles, for the score's NTSC or PAL timebase. Otherwise the voice count selects `pcm1`–`pcm3`. A score without
 PCM normally plays on `pcm1`, which is also its FM/PSG writer.
@@ -591,9 +592,10 @@ the bank) is the silence a parked voice reads; the exporter refuses a bank
 whose samples reach it. MMB data never goes through the window — the 68000
 reads it directly.
 
-For NTSC scores with up to three PCM voices or PAL scores with up to two, export automatically selects
-multi-bank samples when the library exceeds the single-bank limit. Both
-banked voice counts run at 10,111.71 Hz on NTSC or 10,019.47 Hz on PAL. Each individual blob still fits below a
+For NTSC and PAL scores with up to three PCM voices, export automatically selects
+multi-bank samples when the library exceeds the single-bank limit. One/two
+banked voices run at 10,111.71 Hz on NTSC or 10,019.47 Hz on PAL; three voices
+run at 6,653.43 Hz or 6,592.74 Hz respectively. Each individual blob still fits below a
 bank's silence page; the combined library occupies multiple banks. The SMP
 starts with a directory bank, and the sequencer resolves each entry to an
 absolute ROM bank plus a window address. The engine stages the bank with the
@@ -972,7 +974,7 @@ three outcomes.
 
 ## 11. Current Limits
 
-- **PCM:** one to three voices, with a 32 KB single-bank profile or multi-bank playback for up to three NTSC voices or two PAL voices (§5.4); no runtime pitch. A loop point lands on the engine's 16-byte
+- **PCM:** one to three voices, with a 32 KB single-bank profile or multi-bank playback for up to three voices on NTSC or PAL (§5.4); no runtime pitch. A loop point lands on the engine's 16-byte
   block, so the shortest loop is one block (1.1 ms at `pcm1`, 2.4 ms at
   `pcm3`).
 - **Wire:** the single-bank host sends 960 pairs a second. The banked host
@@ -992,8 +994,8 @@ three outcomes.
   on CH3 takes all of it — one effect's CH3 parts at a time, never shared
   with the song's.
 - **PAL:** supported by baking a second score (§3.3); one MMB plays correctly
-  on one standard. PCM pitch is not corrected — a PAL bank would have to be
-  re-baked at the PAL DAC rate, and is not.
+  on one standard. Banked PCM samples are baked at the selected NTSC or PAL
+  DAC rate. Legacy single-bank PCM retains its existing regional pitch difference.
 - **Not yet run on hardware.** The images are graded in the JS machine
   (§12.4) and on BlastEm (§12.7); the slot that binds each rate has no margin,
   and the one wait the model charges from measurement — a read through the 68k

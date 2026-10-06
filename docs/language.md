@@ -46,8 +46,8 @@ source file is a sequence of top-level forms, in source order:
   a whole-song choice: it picks the engine image, and with it the DAC rate
   (1 voice 14.4 kHz, 2 voices 10.1 kHz, 3 voices 6.7 kHz) and how much sample
   data fits in a single bank (2.3 / 3.2 / 4.9 seconds). NTSC and PAL scores with one
-  or two voices automatically use multi-bank PCM when needed, both at
-  about 10.1 kHz on NTSC or 10.0 kHz on PAL; see [Multi-bank PCM](pcm-multibank.md). Fewer voices
+  to three voices automatically use multi-bank PCM when needed, both at
+  about 10.1/10.0 kHz for one or two voices and 6.65/6.59 kHz for three (NTSC/PAL); see [Multi-bank PCM](pcm-multibank.md). Fewer voices
   buy a higher rate, so state the number you actually need. Omitted, it is the
   highest `pcmN` track the score uses; a `pcmM` track above the stated number
   is `E_PCM_VOICES`, and a value outside 0–3 is the same error. Unlike
@@ -1411,7 +1411,7 @@ carries one engine image per voice count, and the image is what sets the rate:
 
 The table describes the default single-bank profiles. Every note a sample is
 played at is baked separately, so the listed seconds are shared across all
-baked copies. NTSC and PAL scores with one or two voices can exceed this combined
+baked copies. NTSC and PAL scores with up to three voices can exceed this combined
 capacity using [multi-bank PCM](pcm-multibank.md); both banked profiles run at
 about 10.1 kHz on NTSC or 10.0 kHz on PAL. Each baked blob must still fit within 32,512 bytes, and the maximum
 of 256 entries remains.

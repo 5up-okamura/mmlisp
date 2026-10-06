@@ -4,6 +4,6 @@
 #define MML_BANKED_VOICES 3
 static const unsigned short MML_BANKED_STAMPS[2][3] = {
  {10112,10112,6653},
- {10019,10019,0}
+ {10019,10019,6593}
 };
 #endif

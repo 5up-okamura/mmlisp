@@ -119,6 +119,7 @@ static void pcm_command(MMLPairs *p, const uint8_t *c) {
   case PCM_START: {
     uint8_t v = c[1];
     if (v >= cfg->voices) { p->fault++; return; }
+    if (c[0] == 6 && (v > 2 || (v == 2 && rd16le(c + 9) > 127))) { p->fault++; return; }
     p->shift[v] = c[2];
     level(p, v);
     /* ONLY WHAT CHANGED. The staged bytes are the host's alone (the engine reads
@@ -129,7 +130,6 @@ static void pcm_command(MMLPairs *p, const uint8_t *c) {
                              (uint8_t)wrap, (uint8_t)(wrap >> 8)};
     stage(p, v, 0, vals, 6);
     if (c[0] == 6) {
-      if (v > 2 || (v == 2 && rd16le(c + 9) > 127)) { p->fault++; return; }
       uint16_t bank = rd16le(c + 9);
       if (!p->bank_valid[v] || p->bank[v] != bank) {
         store(p, v == 2 ? 0x21 : (uint8_t)(0x1c + 2*v), (uint8_t)bank);

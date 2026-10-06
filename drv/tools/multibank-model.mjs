@@ -32,10 +32,10 @@ export class MultibankPairs {
     switch (c[0]) {
       case 1:
         if (c.length !== 11 || (c[9] | c[10] << 8) > 511) throw new Error("PCM_START needs a nine-bit ROM bank");
+        if (v===2 && (c[9] | c[10]<<8)>127) throw new RangeError("PCM bank exceeds the 4 MiB aperture");
         this.started[v] = true; this.shift[v] = c[2]; level(v);
         word("SRC", v, c[3], c[4]); word("END", v, c[5], c[6]); word("WRAP", v, c[7], c[8]);
         if (this.banks[v] !== (c[9] | c[10] << 8)) {
-          if (v===2 && (c[9] | c[10]<<8)>127) throw new RangeError("PCM bank exceeds the 4 MiB aperture");
           out.push([MB.bankOp[v],c[9]]); if(v!==2) out.push([MB.bankOp[v]+1,c[10]]);
           this.banks[v] = c[9] | c[10] << 8;
         }

@@ -33,5 +33,13 @@ int main(void) {
   assert(mmlp_plan(&p,20,1,ops,vals,&dst)==1);
   mmlp_abort(&p);
   assert(p.head==80 && p.head_valid && p.q_tail==0);
+  cfg.voices=3;
+  mmlp_init(&p,&cfg);
+  uint8_t note[] = {1,6,2,0,0,0x81,0x10,0x81,0,0xff,128,0};
+  mmlp_frame(&p,note,sizeof(note));
+  assert(p.fault==1 && p.q_head==0 && p.start_gen[2]==0);
+  note[10]=127;
+  mmlp_frame(&p,note,sizeof(note));
+  assert(p.q_head==9 && p.q_op[7]==0x21 && p.q_val[7]==127 && p.q_op[8]==26);
   return 0;
 }
