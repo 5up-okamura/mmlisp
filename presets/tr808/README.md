@@ -11,10 +11,14 @@ the GM note the file is named for; toms run tom1-tom6, low to high.
 
 One representative knob setting per instrument; the six GM toms use the low,
 mid and high drums at TUNING 2.5 and 7.5, with no digital pitch change. Long
-hits are shortened with a half-cosine fade; there are no loops. Every file is
-peak-normalized to 0 dBFS, so each hit uses the full 8 bits and sits level with
-FM; the kit is not balanced between its sounds — set that with `:vel` / `:vol`
-or a per-sound `(gain …)` effect.
+hits are shortened with a half-cosine fade; there are no loops.
+Levels are set by role and baked into the WAV: each file's loudest 50 ms
+sits at a fixed RMS — kick, snare and clap −3 dB, toms −5, rim and hand
+percussion −8, hi-hats −9, cymbals −10. A sound quieter than its level is
+driven up with a gain into a limiter and then a hard clip (the density of
+classic game PCM, a little grit by design); a louder one is turned down.
+Balance a score further with `:vel` / `:vol` or a per-sound `(gain …)`
+effect.
 
 ```
  35 kick2        43 tom2         57 crash2

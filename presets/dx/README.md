@@ -14,9 +14,14 @@ The pack files its sounds loosely — its snare_04 is a clap, and three of its
 own character, run tom1-tom5 from low to high by pitch (about 126, 137, 140,
 174 and 180 Hz); there is no tom6. Every file keeps its recorded length
 with only a few milliseconds of fade, and the silence before each hit is
-trimmed. Every file is peak-normalized to 0 dBFS, so each hit
-uses the full 8 bits and sits level with FM; the kit is not balanced between
-its sounds — set that with `:vel` / `:vol` or a per-sound `(gain …)` effect.
+trimmed.
+Levels are set by role and baked into the WAV: each file's loudest 50 ms
+sits at a fixed RMS — kick, snare and clap −3 dB, toms −5, rim and hand
+percussion −8, hi-hats −9, cymbals −10. A sound quieter than its level is
+driven up with a gain into a limiter and then a hard clip (the density of
+classic game PCM, a little grit by design); a louder one is turned down.
+Balance a score further with `:vel` / `:vol` or a per-sound `(gain …)`
+effect.
 
 ```
  35 kick2        39 clap         43 tom2         47 tom4
@@ -30,7 +35,7 @@ dxclosedhat_01 709704, dxsnare_02 709714 (tom2), dxtom_02 709719 (tom3),
 dxopenhat 709712, dxsnare_05 709717 (tom4), dxtom_01 709718 (tom5).
 
 Changes from the source: stereo mixed to mono, resampled from 44.1 kHz,
-leading silence trimmed, short end fade, and peak-normalized.
+leading silence trimmed, short end fade, and set to a level by role.
 
 The pack has no rim, cymbal or percussion one-shots, so those GM notes are
 absent rather than filled from another instrument: 37, 40, 44, 49-81.

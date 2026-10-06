@@ -1,4 +1,4 @@
-# GM muted drum kit
+# GM acoustic drum kit
 
 42 one-shots from Virtuosity Drums (Versilian Studios and Karoryfer Samples,
 drummer Austin McMahon), [upstream](https://github.com/sfzinstruments/virtuosity_drums)
@@ -9,16 +9,20 @@ at `9f04cf9a7345`, CC0 1.0 — [licence](LICENSE-CC0.txt).
 swapping the import swaps the sounds under the same names. The number is
 the GM note the file is named for; toms run tom1-tom6, low to high.
 
-Short articulations throughout: one muted low tom resampled across the six GM
-toms, and faded tails where the source has no muted take. The snare is a full
-center hit (mid mic, top velocity), shortened to 0.26 s — the muted take it
-replaced was too thin to carry next to FM.
+The snare and toms are open center hits on the mid mic, left to ring: the
+snare is the top velocity, shortened to 0.4 s; tom1-tom3 are the low tom and
+tom4-tom6 the high tom, each played 2 semitones down, as recorded and 3 up
+(about 102, 114, 136, 162, 181 and 215 Hz), shortened to 0.5-0.35 s. The
+rest are short articulations, with faded tails where the source has no
+muted take.
 
-Every file is louder than peak-normalizing alone would make it: a gain into a
-limiter is baked into the WAV, bringing the body of each hit (its first
-100 ms) toward a level by role — kicks about −6 dB RMS, snare and toms −9,
-hand percussion −11, cymbals −12 — at most 12 dB of gain, the peak just under
-full scale. Balance a score's drums further with `:vel` / `:vol`.
+Levels are set by role and baked into the WAV: each file's loudest 50 ms
+sits at a fixed RMS — kick, snare and clap −3 dB, toms −5, rim and hand
+percussion −8, hi-hats −9, cymbals −10. A sound quieter than its level is
+driven up with a gain into a limiter and then a hard clip (the density of
+classic game PCM, a little grit by design); a louder one is turned down.
+Balance a score further with `:vel` / `:vol` or a per-sound `(gain …)`
+effect.
 
 ```
  35 kick2           51 ride            67 agogo-hi
