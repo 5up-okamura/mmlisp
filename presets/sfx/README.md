@@ -1,8 +1,12 @@
 # Sound effects and voices
 
 Shouts and effects FM cannot make, as PCM. 22,050 Hz, signed 16-bit mono.
-Each file is peak-normalized to 0 dBFS; set levels with `:vel` / `:vol` or
-a per-sound `(gain …)` effect.
+Levels are set per sound and baked into the WAV: each file's loudest
+50 ms sits at a fixed RMS — gun −5 dB, the shouts, door and zaps −6, glass −8.
+The kits' drums run from −3 (kick and snare) to −10 (cymbals). A sound
+quieter than its level is driven up with a gain into a limiter and then a
+hard clip; a louder one is turned down. Balance a score further with
+`:vel` / `:vol` or a per-sound `(gain …)` effect.
 
 ```
 hey      a shouted "hey!"       0.35 s

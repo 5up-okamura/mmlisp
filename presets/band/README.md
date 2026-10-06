@@ -1,8 +1,12 @@
 # Guitar and bass samples
 
 The RX5's guitar and bass one-shots, as PCM. 22,050 Hz, signed 16-bit mono.
-Each file is peak-normalized to 0 dBFS; set levels with `:vel` / `:vol` or
-a per-sound `(gain …)` effect.
+Levels are set per sound and baked into the WAV: each file's loudest
+50 ms sits at a fixed RMS — basses −5 dB, guitars −7.
+The kits' drums run from −3 (kick and snare) to −10 (cymbals). A sound
+quieter than its level is driven up with a gain into a limiter and then a
+hard clip; a louder one is turned down. Balance a score further with
+`:vel` / `:vol` or a per-sound `(gain …)` effect.
 
 ```
                recorded at                    length

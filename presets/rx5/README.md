@@ -15,9 +15,14 @@ Tom 1 sit on tom3-tom6; tom1 and tom2 are Tom 4 played 6 and 3 semitones
 lower, which is how the RX5 itself retunes a voice. The pedal hi-hat is the
 jazz kit's, the ride 2 is the flat ride, and maracas is the RX5's shaker.
 Long hits are shortened with a half-cosine fade and cymbals end at 0.6 s;
-there are no loops. Every file is peak-normalized to 0 dBFS, so each hit
-uses the full 8 bits and sits level with FM; the kit is not balanced between
-its sounds — set that with `:vel` / `:vol` or a per-sound `(gain …)` effect.
+there are no loops.
+Levels are set by role and baked into the WAV: each file's loudest 50 ms
+sits at a fixed RMS — kick, snare and clap −3 dB, toms −5, rim and hand
+percussion −8, hi-hats −9, cymbals −10. A sound quieter than its level is
+driven up with a gain into a limiter and then a hard clip (the density of
+classic game PCM, a little grit by design); a louder one is turned down.
+Balance a score further with `:vel` / `:vol` or a per-sound `(gain …)`
+effect.
 
 ```
  35 kick2        46 hat-open     56 cowbell      66 timbale-lo
@@ -42,8 +47,7 @@ congas, PERC/010-011 timbales, PERC/012-013 agogos, PERC/004 shaker,
 PERC/016 whistle, PERC/014 cuica, PERC/015 castanet.
 
 Changes from the source: resampled from 48 kHz (two toms also pitched down),
-leading silence trimmed, shortened with a half-cosine fade, and
-peak-normalized.
+leading silence trimmed, shortened with a half-cosine fade, and set to a level by role.
 
 The RX5 has no second crash, vibraslap, cabasa, guiro, claves, wood block,
 muted cuica or triangle, and one whistle, so those GM notes are absent

@@ -14,10 +14,14 @@ the GM note the file is named for.
 
 The 909's three toms sit on GM's low, low-mid and high tom (tom3, tom4,
 tom6). Note 35 is a second bass-drum setting and 40 a short snare.
-Long hits are shortened with a half-cosine fade; there are no loops. Every
-file is peak-normalized to 0 dBFS, so each hit uses the full 8 bits and sits
-level with FM; the kit is not balanced between its sounds — set that with
-`:vel` / `:vol` or a per-sound `(gain …)` effect.
+Long hits are shortened with a half-cosine fade; there are no loops.
+Levels are set by role and baked into the WAV: each file's loudest 50 ms
+sits at a fixed RMS — kick, snare and clap −3 dB, toms −5, rim and hand
+percussion −8, hi-hats −9, cymbals −10. A sound quieter than its level is
+driven up with a gain into a limiter and then a hard clip (the density of
+classic game PCM, a little grit by design); a louder one is turned down.
+Balance a score further with `:vel` / `:vol` or a per-sound `(gain …)`
+effect.
 
 ```
  35 kick2        40 snare2       47 tom4
@@ -32,7 +36,7 @@ Source files (Freesound IDs): bd07 26493, bd01 26486, rs01 26670, sn01
 26644, mt01 26620, ht01 26574, ride06 26663.
 
 Changes from the source: 2:1 low-pass decimation from 44.1 kHz, shortened
-with a half-cosine fade, and peak-normalized.
+with a half-cosine fade, and set to a level by role.
 
 A TR-909 has three toms and no pedal hi-hat, cowbell or Latin percussion, so
 those GM notes are absent rather than filled from another instrument: 41, 43,

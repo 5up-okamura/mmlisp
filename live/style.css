@@ -1260,7 +1260,7 @@
     .share-meta { color: var(--mid); margin-top: 0.4rem !important; }
     .share-warn { color: var(--error); }
     .share-actions { flex-wrap: wrap; }
-    #sharedPlay {
+    #sharedPlay, #folderAccess {
       position: absolute;
       left: 50%;
       bottom: 1.5rem;
@@ -1283,7 +1283,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    #sharedPlay[hidden] { display: none; }
+    #sharedPlay[hidden], #folderAccess[hidden] { display: none; }
 
     /* Video export: the length field, and the recording badge */
     .video-field { display: flex; align-items: center; gap: 0.6rem; }

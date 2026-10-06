@@ -91,12 +91,15 @@ Licenses dialog links it.
 - Creators: Versilian Studios and Karoryfer Samples; drummer Austin McMahon.
 - License: CC0-1.0, preserved in `presets/gm-drums/LICENSE-CC0.txt`.
 - Included: GM-selected, shortened derivatives in `presets/gm-drums/`
-  (22,050 Hz, 16-bit mono; pitch-shifted muted toms and faded tails). The
+  (22,050 Hz, 16-bit mono; pitch-shifted toms and faded tails). The
   unprocessed upstream WAVs are not vendored. The snare is
   `Samples/mid/snare/mid_snare_center_vl36.flac`.
 - Conversion: trimmed to the attack, shortened with a half-cosine fade, and
-  resampled to 22,050 Hz; muted toms are pitch-shifted from one source hit;
-  each hit is then raised by a gain (up to 12 dB) into a limiter.
+  resampled to 22,050 Hz; the toms are pitch-shifted from the low and
+  high tom (`Samples/mid/ltom/mid_ltom_center_vl14.flac`,
+  `Samples/mid/htom/mid_htom_center_vl14.flac`);
+  each hit is then set to a level by role
+  (a limiter and clip to raise, a gain to lower).
 
 ## libOPNMIDI XG bank (GM melodic voices and FM drum kits)
 
@@ -121,7 +124,8 @@ Licenses dialog links it.
 - Original recording: Michael Fischer / Technopolis, 1994.
 - Repository license: CC0-1.0, preserved in `presets/tr808/LICENSE-CC0.txt`.
 - Included: 22 GM-numbered WAVs, converted to 22,050 Hz / 16-bit mono with shortened, faded tails.
-- Conversion: channel mean, polyphase resampling, and faded tails.
+- Conversion: channel mean, polyphase resampling, faded tails, and a
+  level set by role (a limiter and clip to raise, a gain to lower).
 
 ## TR-909 JGB samples
 
@@ -133,8 +137,8 @@ Licenses dialog links it.
 - Included: 13 GM-numbered WAVs in `presets/tr909/`, converted to 22,050 Hz /
   16-bit mono; the Freesound IDs of their sources are listed in
   `presets/tr909/README.md`.
-- Conversion: 2:1 low-pass decimation, half-cosine-faded tails, and peak
-  normalization.
+- Conversion: 2:1 low-pass decimation, half-cosine-faded tails, and a level set by role (a
+  limiter and clip to raise, a gain to lower).
 
 ## CR-78 samples
 
@@ -143,7 +147,8 @@ Licenses dialog links it.
 - License: CC0-1.0, preserved in `presets/cr78/LICENSE-CC0.txt`.
 - Included: 10 GM-numbered WAVs in `presets/cr78/`, converted to 22,050 Hz /
   16-bit mono.
-- Conversion: resampling, a short end fade, and peak normalization.
+- Conversion: resampling, a short end fade, and a level set by role (a
+  limiter and clip to raise, a gain to lower).
 
 ## DR-220E samples
 
@@ -152,7 +157,8 @@ Licenses dialog links it.
 - License: CC0-1.0, preserved in `presets/dr220/LICENSE-CC0.txt`.
 - Included: 11 GM-numbered WAVs in `presets/dr220/`, converted to 22,050 Hz /
   16-bit mono.
-- Conversion: resampling, half-cosine-faded tails, and peak normalization.
+- Conversion: resampling, half-cosine-faded tails, and a level set by role (a
+  limiter and clip to raise, a gain to lower).
 
 ## Oberheim DX samples
 
@@ -162,7 +168,8 @@ Licenses dialog links it.
 - Included: 11 GM-numbered one-shots in `presets/dx/` (the pack's loops are
   not), converted to 22,050 Hz / 16-bit mono.
 - Conversion: channel mix, resampling, leading-silence trim, a short end
-  fade, and peak normalization.
+  fade, and a level set by role (a
+  limiter and clip to raise, a gain to lower).
 
 ## Yamaha RX5 samples
 
@@ -172,7 +179,8 @@ Licenses dialog links it.
 - Included: 36 GM-numbered WAVs in `presets/rx5/`, converted to 22,050 Hz /
   16-bit mono; two toms are pitched down from one source.
 - Conversion: resampling, leading-silence trim, half-cosine-faded tails, and
-  peak normalization.
+  a level set by role (a
+  limiter and clip to raise, a gain to lower).
 
 ## Orchestral, effect, guitar and bass samples
 
@@ -191,7 +199,8 @@ Licenses dialog links it.
   `presets/band/wav/`, nine RX5 guitar and bass notes; all converted to
   22,050 Hz / 16-bit mono.
 - Conversion: MP3 decode (orch-hit), resampling, a cut with a half-cosine
-  fade, and peak normalization.
+  fade, and a level set by role (a
+  limiter and clip to raise, a gain to lower).
 
 ## Zap sample
 
@@ -202,7 +211,8 @@ Licenses dialog links it.
 - Included: the loop's first hit as `presets/sfx/wav/zap.wav`, converted to
   22,050 Hz / 16-bit mono.
 - Conversion: channel mix, resampling, a cut to 0.15 s with a half-cosine
-  fade, and peak normalization.
+  fade, and a level set by role (a
+  limiter and clip to raise, a gain to lower).
 
 ## Zap 2 sample
 
@@ -210,5 +220,5 @@ Licenses dialog links it.
 - Made by zgump.
 - License: CC0-1.0, preserved in `presets/sfx/LICENSE-CC0.txt`.
 - Included: `presets/sfx/wav/zap2.wav`, converted to 22,050 Hz / 16-bit mono.
-- Conversion: channel mix, resampling, a short end fade, and peak
-  normalization.
+- Conversion: channel mix, resampling, a short end fade, and a level set by role (a
+  limiter and clip to raise, a gain to lower).
