@@ -72,14 +72,19 @@
           <span>Licenses</span>
         </button>
         <div class="menu-sep"></div>
-        <button class="menu-item" onclick="toggleAnalogLpf();closeMenus()">
-          <span>Analog LPF</span>
-          <span class="menu-item-shortcut" id="analogLpfCheck"></span>
-        </button>
-        <button class="menu-item" onclick="toggleDrvBackend();closeMenus()"
-                title="Play through the MMLispDRV reference decoder (MMB v0.3) instead of the IR player">
-          <span>MMLispDRV Backend</span>
-          <span class="menu-item-shortcut" id="drvBackendCheck"></span>
+        <!-- look and display -->
+        <div class="menu-wrap submenu-wrap" id="menuMMLispTheme">
+          <button class="menu-item" onclick="toggleSubmenu('menuMMLispTheme')">
+            <span>Theme</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown" id="themeMenuList">
+            <!-- preset items + Custom… injected by buildThemeMenu() -->
+          </div>
+        </div>
+        <button class="menu-item" id="fontSizeItem" onclick="openFontSizePopup()">
+          <span>Font Size</span>
+          <span class="menu-item-shortcut" id="fontSizeValue"></span>
         </button>
         <div class="menu-wrap submenu-wrap" id="menuMMLispViz">
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispViz')">
@@ -94,6 +99,12 @@
                 title="While playing, scroll to keep the highlighted notes in view">
           <span>Follow Playback</span>
           <span class="menu-item-shortcut" id="followCheck"></span>
+        </button>
+        <div class="menu-sep"></div>
+        <!-- sound and input -->
+        <button class="menu-item" onclick="toggleAnalogLpf();closeMenus()">
+          <span>Analog LPF</span>
+          <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
         <div class="menu-wrap submenu-wrap" id="menuMMLispMidi" hidden>
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispMidi')">
@@ -119,19 +130,6 @@
             <button class="menu-item" onclick="clearMidiAssignments();closeMenus()">
               <span>Clear CC Assignments</span>
             </button>
-          </div>
-        </div>
-        <button class="menu-item" id="fontSizeItem" onclick="openFontSizePopup()">
-          <span>Font Size</span>
-          <span class="menu-item-shortcut" id="fontSizeValue"></span>
-        </button>
-        <div class="menu-wrap submenu-wrap" id="menuMMLispTheme">
-          <button class="menu-item" onclick="toggleSubmenu('menuMMLispTheme')">
-            <span>Theme</span>
-            <span class="submenu-arrow" aria-hidden="true"></span>
-          </button>
-          <div class="menu-dropdown submenu-dropdown" id="themeMenuList">
-            <!-- preset items + Custom… injected by buildThemeMenu() -->
           </div>
         </div>
       </div>
@@ -283,6 +281,12 @@
             <button class="menu-item" onclick="insertSnippetFmVoice();closeMenus()">FM Voice Template</button>
           </div>
         </div>
+        <div class="menu-sep"></div>
+        <button class="menu-item" onclick="toggleDrvBackend();closeMenus()"
+                title="Play through the MMLispDRV reference decoder (MMB v0.3) instead of the IR player">
+          <span>MMLispDRV Backend</span>
+          <span class="menu-item-shortcut" id="drvBackendCheck"></span>
+        </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleAiBridge();closeMenus()"
                 title="Let an AI client on this computer (Claude Code or Claude Desktop with the MMLisp MCP server) read and edit this score and play it. Connects to 127.0.0.1 only; every AI edit is logged and undoable.">
