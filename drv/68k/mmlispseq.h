@@ -72,6 +72,7 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* The engine images' rate stamps (MML_PCM_STAMP_1..3), which a sample bank
  * baked for the image must carry. Generated from live/src/engine-images.js. */
 #include "mml_rate.h"
+#include "mml_banked_rate.h"
 /* One v0.3 sample-bank entry (mmb.md §10). */
 #define MML_SAMPLE_ENTRY 24
 /* A block of the engine, and the window a voice reads through. */

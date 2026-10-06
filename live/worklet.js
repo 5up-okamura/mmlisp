@@ -352,7 +352,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     const window = new Uint8Array(0x8000);
     window.set(bank.subarray(0, 0x8000));
     const { entries, multibank } = parsePcmBank(bank);
-    this._pcmBank = { window: multibank ? bank : window, entries, multibank, entryIds: msg.entryIds ?? {}, img: multibank ? bankedEngineImage(voices) : engineImage(voices) };
+    this._pcmBank = { window: multibank ? bank : window, entries, multibank, entryIds: msg.entryIds ?? {}, img: multibank ? bankedEngineImage(voices,msg.frameHz ?? 60) : engineImage(voices) };
     this._pcmRestart();
   }
 

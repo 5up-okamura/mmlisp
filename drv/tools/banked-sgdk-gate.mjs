@@ -13,10 +13,11 @@ const args=process.argv.slice(2),opt=(k,d)=>args.includes(k)?args[args.indexOf(k
 const file=resolve(args.find(s=>s.endsWith('.mmlisp'))??'tests/multibank.mmlisp');
 const seconds=Number(opt('--seconds',8)),out=resolve(opt('--out','out/banked-sgdk'));
 if(!Number.isFinite(seconds)||seconds<3||seconds>60)throw new RangeError('seconds must be 3..60');
+const frameHz=args.includes("--pal")?50:60;
 mkdirSync(out,{recursive:true});
-const E=sgdkEnv('banked-sgdk'),b=buildMmb(file,{multibank:true});
-const voices=(b.bytes[6]>>2)&3,image=buildMultibankImage({voices,xpSteps:voices===1?55:15});
-const p=makeProject(E,file,{multibank:true,patch:args.includes('--minimal') ? proj => {
+const E=sgdkEnv('banked-sgdk'),b=buildMmb(file,{multibank:true,frameHz});
+const voices=(b.bytes[6]>>2)&3,image=buildMultibankImage({voices,frameHz});
+const p=makeProject(E,file,{multibank:true,frameHz,patch:args.includes('--minimal') ? proj => {
  writeFileSync(join(proj,'src/main.c'), `#include <genesis.h>
 #include "mmlispdrv.h"
 #include "song.h"
@@ -33,7 +34,7 @@ int main(bool hard) {
 }
 `);
 } : undefined});copyFileSync(p.rom,join(out,'rom.bin'));
-if(!runRom(E,p.rom,{seconds,log:join(out,'probe.bin'),wav:join(out,'audio.wav')}))throw new Error('BlastEm failed');
+if(!runRom(E,p.rom,{seconds,frameHz,log:join(out,'probe.bin'),wav:join(out,'audio.wav')}))throw new Error('BlastEm failed');
 const L=readProbe(readFileSync(join(out,'probe.bin'))),rom=readFileSync(p.rom),fail=[];
 const ready=L.ramWrites.filter(w=>w.region==='glob'&&w.addr===0x6e&&w.value===0xd2).at(-1);
 if(!ready)throw new Error('banked engine did not boot');
@@ -43,7 +44,7 @@ const model=new MultibankModel(image.gen,rom);let mismatch=0;
 for(let i=0;i<dac.length;i++)if(model.slot(stores.get(i))!==dac[i].value)mismatch++;
 if(mismatch)fail.push(`${mismatch} DAC mismatches`);if(!dac.some(d=>d.value!==128))fail.push('silent PCM');
 const player=new DrvPlayer();player.loadMMB(b.bytes,b.sampleBank);
-const frames=player.captureSlotLog({maxFrames:Math.ceil(seconds*60)+60,prime:0,builder:new FrameRecorder()}).slots;
+const frames=player.captureSlotLog({maxFrames:Math.ceil(seconds*frameHz)+frameHz,prime:0,builder:new FrameRecorder()}).slots;
 const sampleAt=rom.indexOf(Buffer.from(b.sampleBank));
 if(sampleAt < 0 || (sampleAt & 0x7fff)) fail.push('sample resource missing or unaligned');
 const wantedStarts = frames.flatMap(recordPcm).filter(c => c[0] === 6);
@@ -77,12 +78,12 @@ for(let i=0;i<seen[0].length;i++) {
  const [reg,value,time]=seen[0][i],frame=want[0][i]?.[2];
  if(reg!==0x28 || !(value&0xf0) || frame===undefined) continue;
  const channel=(value&3)+((value&4)?3:0),old=previousKeys.get(channel);
- if(old && old.frame>60 && frame>old.frame) intervals.push({channel:channel+1,frame,
+ if(old && old.frame>frameHz && frame>old.frame) intervals.push({channel:channel+1,frame,
   errorMs:(time-old.time-(frame-old.frame)*image.cfg.machine.frameMaster)*1000/image.cfg.machine.masterHz});
  previousKeys.set(channel,{frame,time});
 }
 const sorted=intervals.map(r=>Math.abs(r.errorMs)).sort((a,b)=>a-b);
 const fmTiming={count:sorted.length,p95Ms:sorted[Math.floor((sorted.length-1)*.95)]??null,maxMs:sorted.at(-1)??null,
  worstIntervals:intervals.sort((a,b)=>Math.abs(b.errorMs)-Math.abs(a.errorMs)).slice(0,10)};
-const report={file,seconds,integrated:true,testApp:args.includes('--minimal')?'minimal':'sgdk-example',project:p.proj,voices,sampleBankBytes:b.sampleBank.length,samples:dac.length,mismatch,starts:model.log.filter(e=>e.kind==='start').length,fmWrites:seen.map(x=>x.length),psgWrites:gotPsg.length,rate,busLossPct:loss,fmTiming,fail};
+const report={file,seconds,frameHz,integrated:true,testApp:args.includes('--minimal')?'minimal':'sgdk-example',project:p.proj,voices,sampleBankBytes:b.sampleBank.length,samples:dac.length,mismatch,starts:model.log.filter(e=>e.kind==='start').length,fmWrites:seen.map(x=>x.length),psgWrites:gotPsg.length,rate,busLossPct:loss,fmTiming,fail};
 writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));if(fail.length)process.exitCode=1;

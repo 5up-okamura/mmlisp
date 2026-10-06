@@ -1,10 +1,10 @@
 # Multi-bank PCM — development record and remaining work
 
-Work in progress on `codex/pcm-multibank`, 2026-10-06. The user requested
+Work in progress on `feat/pcm-multibank`, 2026-10-07. The user requested
 undoing commit `28062a0`, translating Markdown to English, and moving development
 records out of user documentation. After those changes and the PAL/three-voice
 feasibility review, the user explicitly requested committing the current work.
-PAL and three-voice playback remain unimplemented.
+The user authorized continued work through PAL 1–2, NTSC 3, and PAL 3, with a commit after each milestone. Source comments and documentation are English.
 
 The current user-facing behavior belongs in [Multi-bank PCM](../../docs/pcm-multibank.md),
 [MMB](../../docs/mmb.md), and [the driver specification](../../docs/driver.md).
@@ -361,3 +361,20 @@ public ABI: it requires updating sequencer/host fencing, models, descriptors,
 loaders, and format checks. No third-voice waveform, intent, loop, saturation,
 SE, or BlastEm gate was run. Assembly and placement establish a promising
 starting point, not completed or validated playback support.
+
+
+## PAL one/two-voice milestone (2026-10-07)
+
+Region-specific samples, generated rate tables, engine selection, 50 Hz export,
+installer/bundle flags, live models, and actual PAL ROM validation are implemented.
+The PAL clock model follows the patched BlastEm core (53,203,395 master Hz,
+313 lines/frame); one voice uses 48 expander pairs/lap to keep published FIFO
+observations below one ring wrap. Its PCM rate is 10,019.472 Hz.
+
+PAL two-bank fixture: 73,741 matching DAC values and ten matching sample starts.
+PAL sin008 one voice, twelve seconds: 113,804 DAC values, 54 starts, matching
+FM/PSG, bus loss 0.591%. Two voices: 113,776 values, 102 starts, matching
+FM/PSG, bus loss 0.615%. Reports are in drv/out/banked-pal-two and
+drv/out/sin008/pal-one, pal-two. Region options explicitly force BlastEm to E.
+C/JS format and command gates, generation/publication safety, and mirrors pass.
+NTSC three-voice and PAL three-voice milestones follow next.

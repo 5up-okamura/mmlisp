@@ -2505,7 +2505,7 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
   /* Header flags bits 2-3: the score's PCM voice count (mmb.md §4). */
   s->pcm_voices = (uint8_t)((rd16(mmb, 6) >> 2) & 3);
   s->pcm_banked = (uint8_t)((rd16(mmb, 6) & 0x10) != 0);
-  if (s->pcm_banked && (s->pcm_voices > 2 || (rd16(mmb, 6) & 2))) return -1;
+  if (s->pcm_banked && s->pcm_voices > MML_BANKED_VOICES) return -1;
   /* Bit 1, PAL_TIMEBASE: the frame clock this score's numbers were baked for
    * (driver.md §3.3). The dispatcher never reads it — it counts frames, and
    * every frame-counted number already arrives baked — but the increment it
@@ -2619,7 +2619,7 @@ int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_
    * bank baked for a different engine image is refused here, not heard later. */
   static const uint16_t STAMP[4] = {MML_PCM_STAMP_1, MML_PCM_STAMP_1, MML_PCM_STAMP_2, MML_PCM_STAMP_3};
   if ((rd16(bank, 2) & 0x8000) != (s->pcm_banked ? 0x8000 : 0)) return -3;
-  if ((rd16(bank, 2) & 0x7fff) != STAMP[s->pcm_banked ? 2 : (s->pcm_voices & 3)]) return -3;
+  if ((rd16(bank, 2) & 0x7fff) != (s->pcm_banked ? MML_BANKED_STAMPS[s->frame_hz == 50][s->pcm_voices ? s->pcm_voices-1 : 0] : STAMP[s->pcm_voices & 3])) return -3;
   if (len && 4 + (uint32_t)n * MML_SAMPLE_ENTRY > len) return -2;
   if (n > 256 || (s->pcm_banked && ((rom_base & 0x7fff) || (len && (len & 0x7fff))))) return -2;
   const uint32_t blobs = s->pcm_banked ? 0x8000 : 4 + (uint32_t)n * MML_SAMPLE_ENTRY;

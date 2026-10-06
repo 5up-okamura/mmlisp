@@ -24,6 +24,9 @@ export const NTSC = {
   intPulseZ80: 228,     // /INT is asserted for ONE scanline, then dropped
 };
 
+// PAL timing used by the BlastEm machine model. The video frame has 313 lines.
+export const PAL = { ...NTSC, region: "pal", masterHz: 53203395, frameMaster: 313 * 3420 };
+
 // ── YM2612 registers and ports ─────────────────────────────────────────────
 export const YM = {
   addr0: 0x4000, data0: 0x4001, addr1: 0x4002, data1: 0x4003,

@@ -1,3 +1,4 @@
+import { bankedEngineImage } from "../../live/src/engine-banked-images.js";
 // Build several scores against ONE sample bank — how a game with many songs
 // ships its PCM once.
 //
@@ -148,9 +149,9 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     s.ir.metadata = { ...(s.ir.metadata ?? {}), pcmVoices };
   }
   const multibank = !!manifest.multibank;
-  if (multibank && (pcmVoices > 2 || songs.some(s => s.ir.metadata.frameHz !== 60)))
-    throw new RangeError("multibank bundles require NTSC and at most two PCM voices");
-  const rateHz = engineImage(multibank ? 2 : pcmVoices).rateHz;
+  if (multibank && pcmVoices > 2)
+    throw new RangeError("multibank bundles require at most two PCM voices");
+  const rateHz = (multibank ? bankedEngineImage(Math.max(1,pcmVoices),songs[0].ir.metadata.frameHz) : engineImage(pcmVoices)).rateHz;
   const builder = createSampleBankBuilder(rateHz, { dedup: true });
 
   // ── encode each score into the shared plan ─────────────────────────────
@@ -169,8 +170,7 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     // sound", which is the one thing a shared bank could silently do.
     try { s.alone = encodeMmb(s.ir, { samples: s.samples, multibank }); }
     catch (e) {
-      if (manifest.multibank === undefined && !multibank && pcmVoices <= 2 &&
-          songs.every(song => song.ir.metadata.frameHz === 60) && e instanceof RangeError && /exceeds/.test(e.message))
+      if (manifest.multibank === undefined && !multibank && pcmVoices <= 2 && e instanceof RangeError && /exceeds/.test(e.message))
         return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz });
       throw e;
     }
@@ -183,7 +183,7 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     if (multibank) bank = packBankedSamples(Uint8Array.from(bankBytes));
     else {
     if (bankBytes.length > SILENCE_PAGE) {
-      if (manifest.multibank === undefined && pcmVoices <= 2 && songs.every(song => song.ir.metadata.frameHz === 60))
+      if (manifest.multibank === undefined && pcmVoices <= 2)
         return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz });
       throw new RangeError(
         `the shared bank is ${bankBytes.length} bytes; exceeds the ${SILENCE_PAGE} bytes below the ` +

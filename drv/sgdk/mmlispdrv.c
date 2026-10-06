@@ -73,6 +73,7 @@ static MMLPairsCfg PAIRS_CFG = {
     0,              // banked image selected by the score
 };
 static u8         bankedImage = 0;
+static u8         bankedFrameHz = 60;
 static u8         image = 0;           // PCM voices of the booted image, 0 = none yet
 
 // ── Bring-up ───────────────────────────────────────────────────────────────
@@ -85,8 +86,9 @@ static u8         image = 0;           // PCM voices of the booted image, 0 = no
 static void writeBankRegister(void);
 static void bootImage(u8 voices)
 {
-    const MMLispDrvImage* img = seq.pcm_banked ? &MMLISPDRV_BANKED_IMAGES[voices - 1] : &MMLISPDRV_IMAGES[voices - 1];
+    const MMLispDrvImage* img = seq.pcm_banked ? (seq.frame_hz == 50 ? &MMLISPDRV_BANKED_IMAGES_PAL[voices - 1] : &MMLISPDRV_BANKED_IMAGES[voices - 1]) : &MMLISPDRV_IMAGES[voices - 1];
     bankedImage = seq.pcm_banked;
+    bankedFrameHz = seq.frame_hz;
     PAIRS_CFG.banked = bankedImage;
     PAIRS_CFG.ahead = bankedImage ? 32 : MMLP_AHEAD_ONE;
     ready = FALSE;
@@ -193,7 +195,7 @@ bool MMLisp_loadScore(const u8* mmb)
     // Booting another one resets the Z80, which is why it happens here, before
     // anything is primed onto the wire.
     u8 want = (loaded && seq.pcm_voices) ? seq.pcm_voices : 1;
-    if (want != image || bankedImage != seq.pcm_banked) bootImage(want);
+    if (want != image || bankedImage != seq.pcm_banked || (seq.pcm_banked && bankedFrameHz != seq.frame_hz)) bootImage(want);
     // Re-publish the bank to the new score. A bank is baked for one engine
     // image, and a score names its image; a bundle (tools/bundle.mjs) gives
     // every song the same one, so this cannot fail for bundled songs. It is

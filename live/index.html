@@ -3891,11 +3891,12 @@
       if (!samples) return clear();
       try {
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
-        configurePcmRate(player, { bank: sampleBank, pcmVoices });
+        configurePcmRate(player, { bank: sampleBank, pcmVoices, frameHz: ir.metadata?.frameHz ?? 60 });
         workletNode.port.postMessage({
           type: 'pcm-set-bank',
           bank: sampleBank ?? null,
           pcmVoices,
+          frameHz: ir.metadata?.frameHz ?? 60,
           entryIds: pcmEntryIds ?? {},
         });
       } catch (e) {
@@ -4494,7 +4495,7 @@
         const samples = await pcmSampleBlobsForMmb(ir);
         if (!samples) return null;
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
-        return sampleBank ? { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices } : null;
+        return sampleBank ? { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices, frameHz: ir.metadata?.frameHz ?? 60 } : null;
       } catch (e) {
         log(`${what} export: PCM bank failed: ${e.message}`, 'err');
         return null;

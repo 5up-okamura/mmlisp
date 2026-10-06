@@ -31,7 +31,7 @@ export function sgdkEnv(tool) {
 /** Make and build the example project for `score`. `patch(proj)` runs after
  *  the install and before make (the profiler injects its marks there).
  *  Returns { proj, rom, sampleBank } or throws with the build's output. */
-export function makeProject(E, score, { flags = "", patch, seFile, multibank } = {}) {
+export function makeProject(E, score, { flags = "", patch, seFile, multibank, frameHz } = {}) {
   const proj = mkdtempSync(join(tmpdir(), "mmlisp-sgdk-"));
   for (const d of ["src", "inc", "res"]) mkdirSync(join(proj, d));
   writeFileSync(join(proj, "Makefile"), `GDK ?= ${E.GDK}\nrelease:\n\t$(MAKE) -f $(GDK)/makefile.gen\n`);
@@ -41,7 +41,7 @@ export function makeProject(E, score, { flags = "", patch, seFile, multibank } =
   if (existsSync(romHead)) copyFileSync(romHead, join(proj, "src", "rom_header.c"));
   try {
     execFileSync("node", [join(here, "install-sgdk.mjs"), proj, "--song", score, "--example",
-      ...(seFile ? ["--se", seFile] : []), ...(multibank ? ["--multibank"] : [])], { stdio: "pipe" });
+      ...(seFile ? ["--se", seFile] : []), ...(multibank ? ["--multibank"] : []), ...(frameHz === 50 ? ["--pal"] : [])], { stdio: "pipe" });
   } catch (e) {
     // Its own message, as text: the raw error prints the pipes as Buffers.
     const err = new Error("install-sgdk failed");
@@ -50,7 +50,7 @@ export function makeProject(E, score, { flags = "", patch, seFile, multibank } =
     throw err;
   }
   if (patch) patch(proj);
-  const { sampleBank } = buildMmb(score, { seFile, multibank });
+  const { sampleBank } = buildMmb(score, { seFile, multibank, frameHz });
   const all = `-DMMLISP_AUTOPLAY=1 -DMMLISP_PCM_SAMPLES=${sampleBank ? 1 : 0} ${flags}`.trim();
   try {
     execFileSync("make", ["-f", join(E.GDK, "makefile.gen"), `EXTRA_FLAGS=${all}`], { cwd: proj, env: E.env, stdio: "pipe" });
@@ -64,9 +64,10 @@ export function makeProject(E, score, { flags = "", patch, seFile, multibank } =
 }
 
 /** Run a ROM for `seconds` with the probe log (and optionally a WAV). */
-export function runRom(E, rom, { seconds, log, wav, env = {} }) {
+export function runRom(E, rom, { seconds, log, wav, env = {}, frameHz = 60 }) {
   rmSync(log, { force: true });
-  const args = ["--core", E.core, "--rom", rom, "--frames", String(Math.round(seconds * 60))];
+  const args = ["--core", E.core, "--rom", rom, "--frames", String(Math.round(seconds * frameHz))];
+  if (frameHz === 50) args.push("--opt", "blastem_region=E", "--opt", "blastem_force_region=on");
   if (wav) args.push("--wav", wav);
   try {
     execFileSync(E.host, args, { env: { ...process.env, ...env, MMLISP_PROBE_LOG: log }, stdio: ["ignore", "pipe", "pipe"],

@@ -176,7 +176,7 @@ export function renderPcmDac(capture, pcm) {
     .sort((x, y) => x.sec - y.sec || x.i - y.i);
   if (!pcm?.bank?.length || !events.length) return null;
   const parsed = parsePcmBank(pcm.bank);
-  const img = parsed.multibank ? bankedEngineImage(pcm.pcmVoices) : engineImage(pcm.pcmVoices);
+  const img = parsed.multibank ? bankedEngineImage(pcm.pcmVoices,pcm.frameHz ?? 60) : engineImage(pcm.pcmVoices);
   const window = new Uint8Array(0x8000);
   window.set(pcm.bank.subarray(0, 0x8000));
   const engine = new PcmLiveEngine(img, parsed.multibank ? pcm.bank : window);
@@ -220,7 +220,7 @@ export function renderPcmDac(capture, pcm) {
 export function configurePcmRate(player, pcm) {
   if (!pcm?.bank) return;
   const parsed = parsePcmBank(pcm.bank);
-  const img = parsed.multibank ? bankedEngineImage(pcm.pcmVoices) : engineImage(pcm.pcmVoices);
+  const img = parsed.multibank ? bankedEngineImage(pcm.pcmVoices,pcm.frameHz ?? 60) : engineImage(pcm.pcmVoices);
   player?.setPcmBankRate?.(img.rateHz);
 }
 

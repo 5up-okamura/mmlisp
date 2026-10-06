@@ -61,7 +61,7 @@ bus stop, and no stop is repaid (§5.1). The PSG is on the VDP's bus, so the
 
 **8-bit DAC output** (YM2612), **one to three PCM voices** (one engine image
 per count, §5), **no runtime pitch** (PCM is baked per note at the image's
-rate by the exporter, §14.2), **single-bank or NTSC multi-bank samples** (§5.4), and
+rate by the exporter, §14.2), **single-bank or multi-bank samples** (§5.4), and
 **bus stops**: the 68000's grabs and SGDK's own halts around joypad reads and
 VBlank DMA stop the Z80, and the DAC runs slow by the time the bus was held
 (`drv/sgdk/README.md`, "Bus stops that are not the driver's").
@@ -509,9 +509,10 @@ expander steps.
 | `pcm3` | 3 | 538 | 6,653.43 Hz | 48 | 8 | 5 |
 | banked, 1 voice | 1 | 354 | 10,111.71 Hz | 80 | 55 | 10 |
 | banked, 2 voices | 2 | 354 | 10,111.71 Hz | 80 | 15 | 2 |
+| banked PAL, 1 voice | 1 | 354 | 10,019.47 Hz | 80 | 48 | 9 |
+| banked PAL, 2 voices | 2 | 354 | 10,019.47 Hz | 80 | 15 | 2 |
 
-The MMB header MULTIBANK_PCM flag selects the banked profiles, which support
-NTSC only. Otherwise the voice count selects `pcm1`–`pcm3`. A score without
+The MMB header MULTIBANK_PCM flag selects the banked profiles, for the score's NTSC or PAL timebase. Otherwise the voice count selects `pcm1`–`pcm3`. A score without
 PCM normally plays on `pcm1`, which is also its FM/PSG writer.
 
 ### 5.1 The clock — an unrolled lap of constant-time slots
@@ -589,9 +590,9 @@ the bank) is the silence a parked voice reads; the exporter refuses a bank
 whose samples reach it. MMB data never goes through the window — the 68000
 reads it directly.
 
-For NTSC scores with one or two PCM voices, export automatically selects
+For scores with one or two PCM voices, export automatically selects
 multi-bank samples when the library exceeds the single-bank limit. Both
-banked engines run at 10,111.71 Hz. Each individual blob still fits below a
+banked voice counts run at 10,111.71 Hz on NTSC or 10,019.47 Hz on PAL. Each individual blob still fits below a
 bank's silence page; the combined library occupies multiple banks. The SMP
 starts with a directory bank, and the sequencer resolves each entry to an
 absolute ROM bank plus a window address. The engine stages the bank with the
@@ -970,7 +971,7 @@ three outcomes.
 
 ## 11. Current Limits
 
-- **PCM:** one to three voices, with a 32 KB single-bank profile or NTSC
+- **PCM:** one to three voices, with a 32 KB single-bank profile or NTSC/PAL
   multi-bank playback for one or two voices (§5.4); no runtime pitch. A loop point lands on the engine's 16-byte
   block, so the shortest loop is one block (1.1 ms at `pcm1`, 2.4 ms at
   `pcm3`).
@@ -982,7 +983,7 @@ three outcomes.
 - **One score resident at a time** (§2.3); songs share the sample bank
   through `bundle.mjs`, not the sequencer. Every song in a bundle plays on one
   engine profile. The shared library has the selected profile's sample limits;
-  eligible NTSC bundles automatically expand to multiple banks.
+  eligible bundles automatically expand to multiple banks.
 - **SE** (§2.5): an effect's parts are tracks of the score it plays over, so
   every song carries the game's effects (a bundle compiles each song with the
   `"se"` file; the control data is small, the samples are shared). A PCM SE

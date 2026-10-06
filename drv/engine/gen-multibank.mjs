@@ -4,7 +4,7 @@
 //
 // Samples remain pre-baked signed bytes; END/WRAP retain the 16-byte contract.
 // Each individual blob stays inside a bank; the combined library need not.
-import { buildConfig, PCMN_L, pcm1Base } from "./config.mjs";
+import { buildConfig, PCMN_L, pcm1Base, NTSC } from "./config.mjs";
 import { balanced, expanderCost } from "./gen-stream.mjs";
 import { op, cost, laySlot, placementTable } from "./schedule.mjs";
 import { buildClamp, buildRungs } from "./lut.mjs";
@@ -17,8 +17,8 @@ export const MB = Object.freeze({
 });
 const hx = (x) => `$${x.toString(16)}`;
 
-export function multibankConfig(period = 354, xpSteps = 15, voices = 2) {
-  return buildConfig({ voices, loops: true, stepVoices: 0,
+export function multibankConfig(period = 354, xpSteps = 15, voices = 2, machine = NTSC) {
+  return buildConfig({ machine, voices, loops: true, stepVoices: 0,
     complete: true, pairs: true, signedSource: true, production: true,
     workTarget: 1, meanTarget: 1, sampleMaster: period * 15,
     lapBlocks: 5, xpSteps, lead: MB.lead });

@@ -104,7 +104,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     console.error("usage: node mmb-build.mjs <in.mmlisp> <out.mmb>");
     process.exit(2);
   }
-  const { bytes, sampleBank, diagnostics } = buildMmb(inPath, { multibank: process.argv.includes("--multibank") ? true : undefined });
+  const { bytes, sampleBank, diagnostics } = buildMmb(inPath, { multibank: process.argv.includes("--multibank") ? true : undefined, frameHz: process.argv.includes("--pal") ? 50 : undefined });
   writeFileSync(outPath, bytes);
   console.log(`${outPath}: ${bytes.length} bytes`);
   if (sampleBank && sampleBank.length) {

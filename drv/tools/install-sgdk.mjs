@@ -42,6 +42,7 @@ const FILES = [
   // mmlispseq.h includes this one, so it has to land beside it in inc/.
   // Leaving it out is not a link error, it is `#include "mml_rate.h"` failing
   // at mmlispseq.h:89 in a project that was building a moment earlier.
+  { src: "../68k/mml_banked_rate.h", dest: "inc/mml_banked_rate.h", own: "driver" },
   { src: "../68k/mml_rate.h", dest: "inc/mml_rate.h", own: "driver" },
   { src: "../68k/tables.c", dest: "src/mmlispseq_tables.c", own: "driver" },
   // The slot -> pair converter (R28 §63.3 D7): portable C, gated on the host
@@ -55,7 +56,8 @@ const USAGE = `usage: node tools/install-sgdk.mjs [<project-dir>] [options]
 
   <project-dir>          SGDK project root (default: $MMLISP_SGDK_PROJECT)
 
-  --multibank           use banked PCM even when samples fit in 32 KiB (NTSC, 1–2 voices)
+  --pal                 compile the score or bundle for PAL (50 Hz)
+  --multibank           use banked PCM even when samples fit in 32 KiB (1–2 voices)
   --song <file.mmlisp>   compile the score into <project>/res/song.mmb
                          (plus song.smp when the score uses PCM samples)
   --se <file.mmlisp>     with --song: the game's effects (def-se) — the score
@@ -86,6 +88,8 @@ for (let i = 0; i < argv.length; i++) {
     process.exit(0);
   } else if (a === "--song") {
     opts.song = argv[++i] ?? fail("--song needs a path");
+  } else if (a === "--pal") {
+    opts.frameHz = 50;
   } else if (a === "--multibank") {
     opts.multibank = true;
   } else if (a === "--se") {
@@ -203,7 +207,7 @@ let smpPath = null;
 let seList = []; // the score's effects (def-se), for inc/mmlisp_se.h
 if (opts.song) {
   const { buildMmb, seListOf } = await import("./mmb-build.mjs");
-  const { bytes, sampleBank, ir, diagnostics } = buildMmb(opts.song, { seFile: opts.se, multibank: opts.multibank });
+  const { bytes, sampleBank, ir, diagnostics } = buildMmb(opts.song, { seFile: opts.se, multibank: opts.multibank, frameHz: opts.frameHz });
   // An export error is a score the driver cannot play as written (a note with
   // no baked sample plays whatever entry it falls back to). Refuse it, as a
   // bundle's errors are refused below, rather than install a ROM that sounds
@@ -231,7 +235,7 @@ let bundleRes = null; // the BIN lines the bundle needs
 if (opts.bundle) {
   const { loadManifest, buildBundle, resLines, channelName } = await import("./bundle.mjs");
   const { manifest, baseDir } = loadManifest(opts.bundle);
-  const bundle = buildBundle(opts.multibank ? { ...manifest, multibank: true } : manifest, { baseDir });
+  const bundle = buildBundle(opts.multibank ? { ...manifest, multibank: true } : manifest, { baseDir, frameHz: opts.frameHz });
   seList = bundle.se;
   // The seeded song.res declares "song.smp", and the uncommenting below keys
   // on that name; a manifest that renames the bank would leave the res

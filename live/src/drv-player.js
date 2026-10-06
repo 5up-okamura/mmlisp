@@ -243,7 +243,7 @@ export class DrvPlayer {
     // score plays on and the rate its bank is baked at (mmb.md §4).
     const pcmVoices = headerPcmVoices(u16(b, 6));
     const pcmBanked = (u16(b, 6) & 0x10) !== 0;
-    if (pcmBanked && (pcmVoices > 2 || (u16(b, 6) & 2))) throw new RangeError("unsupported banked PCM image");
+    if (pcmBanked && pcmVoices > 2) throw new RangeError("unsupported banked PCM image");
     // Bit 1: the frame clock this score's numbers were baked for (mmb.md §4).
     // The dispatcher never reads it — it counts frames — but the tempo
     // readback and a live tempo override have to speak the score's own clock.
@@ -330,7 +330,7 @@ export class DrvPlayer {
       // The bank stamps the image rate its blobs were baked at (mmb.md §10).
       // Baked data is bound to that rate: played under another the pitch is
       // quietly wrong, so the mismatch is reported here rather than heard.
-      const want = pcmBankStamp(engineImage(pcmBanked ? 2 : pcmVoices).rateHz);
+      const want = pcmBankStamp((pcmBanked ? bankedEngineImage(Math.max(1,pcmVoices),this._frameHz) : engineImage(pcmVoices)).rateHz);
       if (stamp !== want) {
         if (pcmBanked) throw new RangeError(`banked PCM stamp ${stamp} does not match ${want}`);
         this._diagnostics.push({
@@ -494,7 +494,7 @@ export class DrvPlayer {
     // Live playback of a PCM score runs the engine model for the DAC bytes;
     // an offline capture (no audio context) compares commands and builds none.
     this._pcmModel = this._audioContext && song?.sampleData && song.pcmVoices
-      ? new PcmLiveEngine(song.pcmBanked ? bankedEngineImage(song.pcmVoices) : engineImage(song.pcmVoices), song.sampleData)
+      ? new PcmLiveEngine(song.pcmBanked ? bankedEngineImage(song.pcmVoices,this._frameHz) : engineImage(song.pcmVoices), song.sampleData)
       : null;
     this._pcmSampleRem = 0;
     this._pcmSampleIndex = 0;
@@ -563,7 +563,7 @@ export class DrvPlayer {
   _when() {
     return this._audioContext
       ? this._startAudioTime +
-          (this._frame + this._sub / SLOT_SUBS) / FRAMES_PER_SEC
+          (this._frame + this._sub / SLOT_SUBS) / this._frameHz
       : undefined;
   }
   // YM parameter write, change-only via the shadow file.
@@ -2156,7 +2156,8 @@ export class DrvPlayer {
   // value — the waveform would come out as a click.
   _whenSample(sampleIndex) {
     if (!this._audioContext) return undefined;
-    const img = this._song?.pcmBanked ? bankedEngineImage(this._song.pcmVoices) : engineImage(this._song?.pcmVoices ?? 1);
+    const img = this._song?.pcmBanked ? bankedEngineImage(this._song.pcmVoices,this._frameHz) : engineImage(this._song?.pcmVoices ?? 1);
+    if (img.multibank) return this._startAudioTime + sampleIndex / img.rateHz;
     return this._startAudioTime + (sampleIndex * img.periodMaster) / (FRAMES_PER_SEC * FRAME_MASTER);
   }
 
@@ -2844,7 +2845,7 @@ export class DrvPlayer {
   _pcmFrame() {
     if (!this._pcmModel) return;
     const img = this._pcmModel.img;
-    this._pcmSampleRem += FRAME_MASTER;
+    this._pcmSampleRem += img.multibank ? img.masterHz / this._frameHz : FRAME_MASTER;
     while (this._pcmSampleRem >= img.periodMaster) {
       this._pcmSampleRem -= img.periodMaster;
       const byte = this._pcmModel.next();
@@ -2997,7 +2998,7 @@ export class DrvPlayer {
       if (!this._playing) return;
       const now = audioContext.currentTime;
       while (
-        this._startAudioTime + this._frame / FRAMES_PER_SEC <
+        this._startAudioTime + this._frame / this._frameHz <
         now + LOOKAHEAD
       ) {
         this.stepFrame();
