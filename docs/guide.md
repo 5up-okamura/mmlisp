@@ -1328,7 +1328,8 @@ What the panel offers comes from three files, `presets/index.json`,
 `examples/index.json` and `snippets/index.json`, each a plain list of paths — a
 directory cannot be listed over HTTP, so a new set, example or snippet has to
 be named in one of them to show up. They hold paths and nothing else: the names, kinds and contents are
-read from the files themselves.
+read from the files themselves. The panel shows them in the order listed; presets are kept in
+alphabetical order of their directory names.
 
 | Row                | ▶                                       | Other actions |
 | ------------------ | --------------------------------------- | ------------- |
