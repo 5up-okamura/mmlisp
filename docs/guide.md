@@ -1200,12 +1200,16 @@ a file without one (a jingle) can loop whole — the box is offered unticked.
 DAC samples, a second chip and tempo changes within the song are not
 imported, and the log says so. A header that gives a chip no clock gets the
 chip's usual one (some arrangements leave it 0). A driver whose timer drifts
-is followed onset by onset, so its bars stay bars.
+is followed onset by onset, so its bars stay bars; a part a little off the
+beat (a late echo) is put on the nearest step without moving it.
 
 **A MIDI or VGM import is structured** (untick **Fold repeats** for one bar
 after another): bars that repeat back to back become `(x n …)`, a run that
 comes round once more cut short becomes `(x n A (break) B)`, and a run that
-comes back elsewhere becomes a `(def fm1-a …)` named in place. Bars match when
+comes back elsewhere becomes a `(def fm1-a …)` named in place. A part that
+plays behind the beat (an echo a 16th late) has every bar tied on from the
+last; its repeats fold as `~ (x n … ~)` — the `~` before the loop ties the
+first pass on, the one ending it each pass into the next. Bars match when
 they play the same — velocity compared at its 16 steps. A def states the
 voice, octave and velocity it starts with; a loop body states a voice only
 where one changes — on the way in, or coming back round from its end. Where the file

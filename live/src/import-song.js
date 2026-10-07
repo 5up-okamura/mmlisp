@@ -389,22 +389,49 @@ export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
     fixedU = bestU;
     if (upTo < 0) break;
   }
-  if (phaseFit(fixedU) >= 0.7) {
-    const origin = merged[0];
-    const units = (t) => Math.round((t - origin) / fixedU);
-    return readingsOf(fixedU, { fit: best.fit, frames: false, units });
+  // The doubling can settle on a near grid when some onsets sit off it (a
+  // part played a little late): a fine look over the whole song as well.
+  let scanU = fixedU;
+  for (let j = -200, f0 = phaseFit(fixedU); j <= 200; j++) {
+    const c = fixedU * (1 + (0.02 * j) / 200);
+    const f = phaseFit(c);
+    if (f > f0) { f0 = f; scanU = c; }
   }
+  // Count of the gaps a grid gives half a unit more or less than they last.
+  const misses = ({ u, units: f }) => {
+    let n = 0;
+    for (let i = 1; i < merged.length; i++)
+      if (Math.abs(f(merged[i]) - f(merged[i - 1]) - (merged[i] - merged[i - 1]) / u) > 0.5) n++;
+    return n;
+  };
+  // A fixed grid. Its phase: the first onset's (which may be late), the
+  // onsets' mean (which a shuffle splits) or where most of them sit — the
+  // one that keeps the gaps best.
+  const fixedGrid = (u) => {
+    if (phaseFit(u) < 0.7) return null;
+    const phases = merged.map((t) => (((t - merged[0]) / u) % 1 + 1) % 1);
+    let x = 0, y = 0;
+    for (const ph of phases) { x += Math.cos(2 * Math.PI * ph); y += Math.sin(2 * Math.PI * ph); }
+    const BINS = 20;
+    const count = new Array(BINS).fill(0);
+    for (const ph of phases) count[Math.floor(ph * BINS) % BINS]++;
+    const top = count.indexOf(Math.max(...count));
+    const at = (ph) => { const o = merged[0] + (ph - Math.round(ph)) * u; return { u, units: (t) => Math.round((t - o) / u) }; };
+    return [at(0), at(Math.atan2(y, x) / (2 * Math.PI)), at((top + 0.5) / BINS)]
+      .map((gr) => ({ gr, n: misses(gr) })).reduce((p, q) => (q.n < p.n ? q : p)).gr;
+  };
 
-  // Walk: each onset's unit, the unit's length following as it goes.
+  // Walk: each onset's unit, the unit's length following as it goes. A gap
+  // under half a unit (a part played a little late) is the same unit.
   const at = [0];
   const len = [unit];
   let u = unit;
   for (let i = 1; i < merged.length; i++) {
     const d = merged[i] - merged[i - 1];
-    const k = Math.max(1, Math.round(d / u));
+    const k = Math.round(d / u);
     at.push(at[i - 1] + k);
     // A little of each gap's own unit, never far from the song's.
-    u = Math.min(unit * 1.1, Math.max(unit * 0.9, u + 0.1 * (d / k - u)));
+    if (k > 0) u = Math.min(unit * 1.1, Math.max(unit * 0.9, u + 0.1 * (d / k - u)));
     len.push(u);
   }
   const units = (t) => {
@@ -414,7 +441,11 @@ export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
     return at[lo] + Math.round((t - merged[lo]) / len[lo]);
   };
 
-  return readingsOf(unit, { fit: best.fit, frames: false, units });
+  // Whichever grid keeps the onsets' gaps best, a fixed one on a tie (a
+  // timer that drifts loses count on any fixed grid).
+  const grids = [fixedGrid(fixedU), fixedGrid(scanU), { u: unit, units }].filter(Boolean);
+  const pick = grids.map((gr) => ({ gr, n: misses(gr) })).reduce((a, b) => (b.n < a.n ? b : a)).gr;
+  return readingsOf(pick.u, { fit: best.fit, frames: false, units: pick.units });
 }
 
 // The unit as a note: whatever puts the beat in 80-160 BPM, a 16th first;
@@ -518,13 +549,29 @@ function foldRepeats(items) {
     const out = [];
     for (let i = 0; i < items.length; ) {
       let best = null;
-      if (headOk(items[i])) {
+      // A run that starts tied on (a part played behind the beat) folds as
+      // `~ (x n … ~)`: the `~` before it ties the first pass on, the one
+      // ending it each pass into the next — and the last into the bar after
+      // the loop, so that one must start tied on as well.
+      const tieLed = items[i].k === "u" && items[i].tieHead;
+      if (headOk(items[i]) || tieLed) {
         for (let L = 1; L <= MAX_BLOCK && i + L <= items.length; L++) {
+          if (items[i + L - 1].tieLoop) continue; // it must stay before the bar it ties into
           let n = 1;
           while (i + (n + 1) * L <= items.length && sameRun(items, i, i + n * L, L)) n++;
           let k = 0;
-          while (k < L - 1 && i + n * L + k < items.length && items[i + n * L + k].key === items[i + k].key) k++;
+          while (!tieLed && k < L - 1 && i + n * L + k < items.length && items[i + n * L + k].key === items[i + k].key) k++;
+          if (k && items[i + k - 1].tieLoop) k = 0;
           if (n < 2 && k === 0) continue;
+          if (tieLed && !(items[i + n * L]?.k === "u" && items[i + n * L].tieHead)) continue;
+          // Tie or slur is settled once, from the text: coming back round
+          // from the body's end must be the same kind as coming in.
+          if (tieLed) {
+            const h = items[i].pieces[0].midi;
+            const before = i > 0 ? lastPiece(items.slice(0, i)) : null;
+            const end = lastPiece(items.slice(i, i + L));
+            if (!before || !end || (before.midi === h) !== (end.midi === h)) continue;
+          }
           // What the fold saves: the passes not written out.
           const saved = (n - 1) * sizeOf(items, i, L) + sizeOf(items, i, k);
           if (saved >= 1 && (!best || saved > best.saved)) best = { L, n, k, saved };
@@ -534,8 +581,8 @@ function foldRepeats(items) {
       const block = items.slice(i, i + best.L);
       const count = best.n + (best.k ? 1 : 0);
       const brk = best.k || null;
-      out.push({ k: "x", count, brk, block, first: block[0], size: sizeOf(items, i, best.L),
-        key: `x${count}/${brk}[${block.map((b) => b.key).join(",")}]` });
+      out.push({ k: "x", count, brk, block, first: block[0], size: sizeOf(items, i, best.L), tieLoop: tieLed,
+        key: `x${count}/${brk}${tieLed ? "~" : ""}[${block.map((b) => b.key).join(",")}]` });
       i += best.n * best.L + best.k;
       changed = true;
     }
@@ -556,6 +603,7 @@ function extractDefs(lists, prefix) {
         for (let m = 1; m <= MAX_BLOCK && p + m <= items.length; m++) {
           key += (m > 1 ? "," : "") + items[p + m - 1].key;
           if (m === 1 && items[p].k === "d") continue; // a def of one def is no phrase
+          if (items[p + m - 1].tieLoop) continue; // it must stay before the bar it ties into
           if (!occ.has(key)) occ.set(key, []);
           occ.get(key).push({ li, p, m });
         }
@@ -714,14 +762,17 @@ export function emitStructured(song) {
     // only the part before its (break) is written here. `full`: state it all.
     const writeItems = (items, st, atHead, whole = items, around = null, full = false, start = false) => {
       const lines = [];
+      // A unit after a `~ (x … ~)` is tied on by the loop's last `~`.
+      const untie = (u) => ({ ...u, pieces: u.pieces.map((p, i) => (i === 0 ? { ...p, tieIn: false } : p)) });
       items.forEach((it, idx) => {
+        if (idx > 0 && items[idx - 1].tieLoop && it.k === "u") it = untie(it);
         let prefix = [];
         // A block's head restates the first note it plays, whatever comes
         // first — a rest-only loop or a def tells the next note nothing.
         if (atHead && idx === 0) ({ tokens: prefix, st } = head(whole, st, around, full, start));
         let got;
         if (it.k === "u") got = writeUnit(it, st);
-        else if (it.k === "d") got = { lines: [it.def.name], st: defEnd.get(it.def.name) };
+        else if (it.k === "d") got = { lines: [it.def.name], st: defEnd.get(it.def.name) ?? st };
         else {
           const blockKey = it.block.map((b) => b.key).join(",");
           const asDef = byRun.get(blockKey);
@@ -729,8 +780,14 @@ export function emitStructured(song) {
           let after;
           if (asDef) {
             inner.push(asDef.name);
-            after = defEnd.get(asDef.name);
+            after = defEnd.get(asDef.name) ?? st;
             if (it.brk) throw new Error("internal: a break inside a def block");
+          } else if (it.tieLoop) {
+            const block = [untie(it.block[0]), ...it.block.slice(1)];
+            const a = writeItems(block, st, true, block, lastPiece(block));
+            inner.push(...a.lines);
+            inner[inner.length - 1] += " ~";
+            after = a.st;
           } else {
             const front = it.block.slice(0, it.brk ?? it.block.length);
             const a = writeItems(front, st, true, it.block, lastPiece(it.block));
@@ -750,7 +807,9 @@ export function emitStructured(song) {
                 : b.st.st.every(baked) ? b.st : { ...b.st, st: [] };
             }
           }
-          got = { lines: [`(x ${it.count}`, ...inner.map((l) => "  " + l)], st: after };
+          // Tied on by its own `~` — or by the loop before's last one.
+          const tieOn = it.tieLoop && !(idx > 0 && items[idx - 1].tieLoop);
+          got = { lines: [`${tieOn ? "~ " : ""}(x ${it.count}`, ...inner.map((l) => "  " + l)], st: after };
           got.lines[got.lines.length - 1] += ")";
         }
         if (prefix.length) got.lines[0] = `${prefix.join(" ")} ${got.lines[0]}`;
@@ -770,7 +829,8 @@ export function emitStructured(song) {
       byRun.delete(d.runKey);
       const w = writeItems(d.items, zero, true, d.items, null, true);
       byRun.set(d.runKey, d);
-      defEnd.set(d.name, w.st);
+      // A def of rests leaves the state as it found it (it is played in place).
+      if (lastPiece(d.items)) defEnd.set(d.name, w.st);
       defTexts.push(`(def ${d.name}\n${w.lines.map((l) => "  " + l).join("\n")})`);
     }
     if (defTexts.length) out.push("", `; ${tr.channel}`, ...defTexts);
