@@ -3656,11 +3656,14 @@
       hideSharedPlay(); // a shared score's prompt belongs to that score alone
     }
 
+    // A position from an imported file (a preset's macro, a def written
+    // there) is a place in that file, not in the score: nothing to outline.
     function highlightTrackLine(trackIdx, src) {
-      editorView.dispatch({ effects: setTrackLine.of({ trackIdx, src }) });
+      editorView.dispatch({ effects: setTrackLine.of({ trackIdx, src: src?.file ? null : src }) });
     }
 
     function highlightSeq(show, src) {
+      if (src?.file) return;
       editorView.dispatch({ effects: setSeq.of({ show, src }) });
     }
 

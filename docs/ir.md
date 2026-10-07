@@ -145,7 +145,7 @@ Every event is:
 | `tick` | Absolute PPQN-96 tick from track start. Non-decreasing within a track.            |
 | `cmd`  | Command name (catalog in §5).                                                     |
 | `args` | Command-specific payload. Always an object (possibly `{}`).                       |
-| `src`  | 1-based source span of the emitting token (`endColumn` is one past the end). Debug/editor aid only — drop it for MMB. |
+| `src`  | 1-based source span of the emitting token (`endColumn` is one past the end), plus `file` (the import path) when the token is in an imported file — a span in that file, not in the score. Debug/editor aid only — drop it for MMB. |
 
 ## 5. Event catalog
 

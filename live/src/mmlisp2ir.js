@@ -2914,8 +2914,16 @@ function pushDiag(diagnostics, severity, code, message, src, track) {
 // Source span for a node: { line, column } start plus { endLine, endColumn }
 // end, all 1-based; endColumn is one past the last character. Lists carry their
 // own end (from the parser); atom-likes span their literal text on one line.
+function markFile(node, file) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) { for (const n of node) markFile(n, file); return; }
+  if (node.line != null) node.file = file;
+  if (node.items) markFile(node.items, file);
+}
+
 function nodeSrc(node) {
   const src = { line: node.line, column: node.column };
+  if (node.file) src.file = node.file;
   if (node.kind === "list") {
     src.endLine = node.endLine ?? node.line;
     src.endColumn = node.endColumn ?? node.column + 1;
@@ -4660,7 +4668,11 @@ function resolveImportFile(path, importSrc, importSources, diagnostics, cache, s
     return empty;
   }
 
-  const bundle = collectDefs(parse(text), diagnostics);
+  // Its nodes say which file they are from, so a position taken from one
+  // (an event's src) is not read as a place in the score.
+  const ast = parse(text);
+  markFile(ast, path);
+  const bundle = collectDefs(ast, diagnostics);
   warnImportIgnored(bundle, path, diagnostics, importSrc);
   // The set's own wav/ lives next to it, not next to the score that imports it
   // — and so does an extending sample's own :file.
