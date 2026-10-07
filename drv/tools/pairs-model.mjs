@@ -127,13 +127,20 @@ export class PairsModel {
     if (i >= 0) {
       const held = [];
       const flush = () => { for (const w of held) this.push(1, w[0], w[1]); held.length = 0; };
+      const ons = this.keyOnsLast(rec, i);
       for (; i + 3 <= rec.length; i += 3) {
         const port = rec[i], reg = rec[i + 1], val = rec[i + 2];
         if (port === 2) { if (this.psg.length < MMLP_PSG - 1) { this.psg.push(val); this.psgIn++; } }
-        else if (port === 0) { if (reg === 0x28 && (val & 4)) flush(); this.push0(reg, val); }
+        else if (port === 0) {
+          if (reg === 0x27) this.mode27 = val;
+          if (ons?.has(i)) continue;
+          if (reg === 0x28 && (val & 4)) flush();
+          this.push0(reg, val);
+        }
         else held.push([reg, val]);
       }
       flush();
+      if (ons) for (const at of ons) this.push0(0x28, rec[at + 2]);
       // The PCM commands last, into the lane behind the frame's $2B (the C has the note).
       for (const c of pcm) this.pcm(c);
     }
@@ -141,6 +148,27 @@ export class PairsModel {
     this.endPsg[this.framesIn % MMLP_FRAMES] = this.psgIn;
     this.endL[this.framesIn % MMLP_FRAMES] = this.lIn;
     this.framesIn++;
+  }
+  /** KEY-ONS LAST (mmlpairs.c keyons_last): the record offsets of the frame's
+   * key-ons that go out after its other writes, so a chord keys within a few
+   * pairs instead of behind every pitch and level of the frame. Each channel's
+   * own writes still precede its key-on. Nothing moves in a frame that writes
+   * $27 or while CH3 is in special or CSM mode, and a key-on with a later $28
+   * for its channel in the same frame stays where it is. */
+  keyOnsLast(rec, at) {
+    if ((this.mode27 ?? 0) & 0xc0) return null;
+    const ons = [];
+    for (let i = at; i + 3 <= rec.length; i += 3) {
+      if (rec[i] !== 0) continue;
+      if (rec[i + 1] === 0x27) return null;
+      if (rec[i + 1] === 0x28) ons.push(i);
+    }
+    const moved = new Set();
+    ons.forEach((i, k) => {
+      const ch = rec[i + 2] & 7;
+      if ((rec[i + 2] & 0xf0) && !ons.slice(k + 1).some((j) => (rec[j + 2] & 7) === ch)) moved.add(i);
+    });
+    return moved.size ? moved : null;
   }
   /** How many released frames are queued (mmlpairs.c released()). */
   released(release) {
@@ -258,6 +286,27 @@ export function recordPcm(rec) {
   let i = 1;
   for (let n = rec[0]; n > 0; n--) { out.push(rec.slice(i, i + PCM_LEN[rec[i]])); i += PCM_LEN[rec[i]]; }
   return out;
+}
+
+/** Each frame's register writes in the order the chip receives them on its
+ * port (recordWrites, with the converter's key-ons moved to the end of port 0
+ * by the rule in PairsModel.keyOnsLast) — what a gate grading the chip's write
+ * stream must expect. */
+export function recordWritesOnWire(frames) {
+  let mode27 = 0;
+  return frames.map((rec) => {
+    const d = recordWrites(rec);
+    const set27 = d.fm0.filter(([r]) => r === 0x27);
+    let moved = new Set();
+    if (!(mode27 & 0xc0) && !set27.length) {
+      const last = new Map();
+      d.fm0.forEach(([r, v], i) => { if (r === 0x28) last.set(v & 7, i); });
+      for (const i of last.values()) if (d.fm0[i][1] & 0xf0) moved.add(i);
+    }
+    if (set27.length) mode27 = set27.at(-1)[1];
+    const fm0 = [...d.fm0.filter((_, i) => !moved.has(i)), ...[...moved].sort((a, b) => a - b).map((i) => d.fm0[i])];
+    return { ...d, fm0 };
+  });
 }
 
 /** A frame record's register writes, per port, in order: {fm0: [[reg, val]…], fm1, psg}. */

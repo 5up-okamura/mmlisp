@@ -742,6 +742,27 @@ is always available:
 (fm1 lead c e g e)
 ```
 
+**A voice change is sent ahead of its note.** A voice is about 36 register
+writes, and the chip takes them a few per millisecond; sent with the note, they
+would delay that note and every other channel's note in the same frame. So the
+compiler moves a voice written before a note into the silence before it,
+together with the channel's own `:vel`, `:vol`, `:pan` and `:pitch` written
+there (`:lfo-rate` and `:master` stay with the note):
+
+- after a rest, the voice goes in about 80 ms (four PAL frames) before the
+  note;
+- after a note that runs into the next one, that note is **cut about 40 ms
+  short** (two PAL frames, the same ticks on either standard) to make the
+  silence; a `:gate-`/`:gate*` that already leaves one is
+  used as it is;
+- after a counted loop that ends in a rest, `(x N … _)`, the loop's last pass
+  leaves the rest out and it is played after the loop, so the voice can go in.
+
+Nothing moves inside a slur (`c ~ lead e`), across a `#label` or `(go …)`, at a
+track's start (it is sent at load, driver.md §4.1), on an `fm3-N` operator
+track or with CSM, or in an effect's part. Note onsets never move. The editor
+plays the same moved stream as the driver.
+
 **`:key N`** gives a voice its own pitch: c4 sounds at MIDI note `N`
 (0–127, else `E_VOICE_VALUE`), and every note written on the voice moves by
 `N − 60`. It is how a percussion voice is tuned — `(def-fm kick … :key 35)`

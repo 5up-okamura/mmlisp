@@ -20,7 +20,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { buildLightImage } from "./build-engine.mjs";
-import { FrameRecorder, MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites } from "./pairs-model.mjs";
+import { FrameRecorder, MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites, recordWritesOnWire } from "./pairs-model.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { headerPcmVoices } from "../../live/src/mmb.js";
 import { PcmEngineModel, PCM_SILENCE_BYTE } from "../../live/src/pcm-model.js";
@@ -101,8 +101,7 @@ function runScore(path) {
   // The DAC enable ($2B) rides the PCM lane (mmlpairs.h), ahead of the FM
   // queue, so it is held to its own order: list 2.
   const want = [[], [], []];
-  for (const f of frames) {
-    const d = recordWrites(f);
+  for (const d of recordWritesOnWire(frames)) {
     for (const [r, v] of d.fm0) want[r === 0x2b ? 2 : 0].push({ reg: r, val: v });
     for (const [r, v] of d.fm1) want[1].push({ reg: r, val: v });
   }

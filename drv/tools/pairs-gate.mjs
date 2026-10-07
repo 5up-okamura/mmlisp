@@ -111,11 +111,15 @@ function keyOrder(cfg, frames) {
     for (let n = r[0]; n > 0; n--) i += [0, 9, 0, 3, 6, 2][r[i]];
     for (; i + 3 <= r.length; i += 3)
       if (r[i] < 2 && !(r[i] === 0 && r[i + 1] === 0x2b)) seq.push({ port: r[i], op: r[i + 1], val: r[i + 2] });
-    // The j-th write of port p in the sequencer's order is the j-th port-p entry out.
-    const outIdx = [[], []];
-    out.forEach((e, j) => { if (e.port === 0 || e.port === 1) outIdx[e.port].push(j); });
-    const cnt = [0, 0];
-    const at = seq.map((w) => outIdx[w.port][cnt[w.port]++]);
+    // Each write's place in the output: the first unclaimed entry of its port
+    // with its register and value (a frame's key-ons leave last, so port 0 is
+    // not in the sequencer's order).
+    const used = new Set();
+    const at = seq.map((w) => {
+      const j = out.findIndex((e, n) => !used.has(n) && e.port === w.port && e.op === w.op && e.val === w.val);
+      used.add(j);
+      return j;
+    });
     seq.forEach((w, k) => {
       if (w.port !== 0 || w.op !== 0x28 || !(w.val & 0xf0) || (w.val & 7) < 4) return;
       keyons++;

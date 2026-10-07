@@ -91,6 +91,7 @@ typedef struct {
   uint8_t last_fifo;
   uint8_t head_valid;    /* H has been placed relative to a read index */
   uint8_t fm_mod[6];
+  uint8_t mode27;        /* the last $27 seen: CH3 special/CSM bits 6-7 */
   uint8_t master_shift;  /* the last PCM_MASTER */
   /* Per voice: the last shift byte (0xFF = none yet), the level page sent, the
    * staged bytes as last sent (src, end, wrap; lo/hi) once a start has sent them

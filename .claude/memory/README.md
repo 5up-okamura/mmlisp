@@ -37,6 +37,11 @@ Rules:
   timing measurements they rest on; and what is open (onset jitter under write
   bursts, with the recommended order of attack; real hardware; no JS twin for
   the banked converter). The behaviour is `docs/pcm-multibank.md`.
+- [plan-onset-jitter.md](plan-onset-jitter.md) — **tempo wobble under write
+  bursts**: the voice hoist and key-ons last are built (sin008's worst onset
+  91 → 29 ms, chord spread 33 → 4 ms on BlastEm); tail cut off (no audible
+  difference); PCM STAGE, the FM3 rule and key-ons last on the banked
+  converter are open; no transport increase; the measurements.
 - [plan-pcm-spec.md](plan-pcm-spec.md) — **PCM: the user's decisions behind the
   shipped light engine, with their reasons, and what is still open.** Read
   before touching PCM in any layer.

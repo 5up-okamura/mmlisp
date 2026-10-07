@@ -42,10 +42,10 @@ export function withSeImport(sourcePath, src, seFile) {
 // 60 for NTSC, 50 for PAL. It has to be given to the COMPILER, not the
 // exporter — an `Nf` duration is already ticks by the time the IR exists.
 // `seFile` gives the score the game's effects (withSeImport).
-export function buildMmb(sourcePath, { frameHz, seFile, multibank } = {}) {
+export function buildMmb(sourcePath, { frameHz, seFile, multibank, voiceHoist } = {}) {
   const src = withSeImport(sourcePath, readFileSync(sourcePath, "utf8"), seFile);
   const imports = readImportSources(sourcePath, src);
-  const { ir, diagnostics } = compileMMLisp(src, sourcePath, { frameHz, imports });
+  const { ir, diagnostics } = compileMMLisp(src, sourcePath, { frameHz, imports, voiceHoist });
   const errors = diagnostics.filter((d) => d.severity === "error");
   if (errors.length) {
     throw new Error(

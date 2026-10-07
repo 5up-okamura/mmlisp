@@ -234,13 +234,44 @@ MMLP_HOT void port1_run(MMLPairs *p, const uint8_t *base, uint16_t first, uint16
     if (w[0] == 1) push(p, 1, w[1], w[2]);
   }
 }
+/* KEY-ONS LAST (the JS twin is pairs-model.mjs keyOnsLast): the frame's key-ons
+ * go out after its other writes, so a chord keys within a few pairs instead of
+ * behind every pitch and level of the frame (the per-channel order — patch,
+ * pitch, level, key-on — holds). Nothing moves in a frame that writes $27 or
+ * while CH3 is in special or CSM mode, and only a channel's LAST $28 in the
+ * frame moves, and only when it keys on: a key-off never moves. `last[ch]` is
+ * that write's index, 0xffff for none. Returns 0 when nothing moves. The
+ * banked converter (banked_writes) orders its frames by its own rule. */
+static uint8_t keyons_last(MMLPairs *p, const uint8_t *base, uint16_t first, uint16_t n,
+                           uint16_t mask, uint16_t stride, uint16_t last[8]) {
+  if (p->mode27 & 0xc0) return 0;
+  for (uint8_t ch = 0; ch < 8; ch++) last[ch] = 0xffff;
+  for (uint16_t i = 0; i < n; i++) {
+    const uint8_t *w = base + (uint16_t)((first + i) & mask) * stride;
+    if (w[0] != 0) continue;
+    if (w[1] == 0x27) return 0;
+    if (w[1] == 0x28) last[w[2] & 7] = i;
+  }
+  uint8_t any = 0;
+  for (uint8_t ch = 0; ch < 8; ch++) {
+    if (last[ch] == 0xffff) continue;
+    const uint8_t *w = base + (uint16_t)((first + last[ch]) & mask) * stride;
+    if (w[2] & 0xf0) any = 1; else last[ch] = 0xffff;
+  }
+  return any;
+}
+
 MMLP_HOT void writes_body(MMLPairs *p, const uint8_t *base, uint16_t first, uint16_t n,
                           uint16_t mask, uint16_t stride) {
   uint16_t lo = n, hi = 0;   /* the port-1 writes not yet sent: first and last + 1 */
+  uint16_t last[8];
+  const uint8_t moving = keyons_last(p, base, first, n, mask, stride, last);
   for (uint16_t i = 0; i < n; i++) {
     const uint8_t *w = base + (uint16_t)((first + i) & mask) * stride;
     if (w[0] == 2) psg_push(p, w[2]);
     else if (w[0] == 0) {
+      if (w[1] == 0x27) p->mode27 = w[2];
+      if (moving && w[1] == 0x28 && last[w[2] & 7] == i) continue;
       if (w[1] == 0x28 && (w[2] & 4) && lo < n) {
         port1_run(p, base, first, lo, hi, mask, stride);
         lo = n;
@@ -252,6 +283,11 @@ MMLP_HOT void writes_body(MMLPairs *p, const uint8_t *base, uint16_t first, uint
     }
   }
   if (lo < n) port1_run(p, base, first, lo, hi, mask, stride);
+  if (moving)
+    for (uint16_t i = 0; i < n; i++) {
+      const uint8_t *w = base + (uint16_t)((first + i) & mask) * stride;
+      if (w[0] == 0 && w[1] == 0x28 && last[w[2] & 7] == i) push0(p, 0x28, w[2]);
+    }
 }
 
 /* Ordinary independent FM channels may move ahead of bulk patch uploads.

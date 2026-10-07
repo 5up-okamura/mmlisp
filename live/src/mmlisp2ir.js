@@ -9,6 +9,7 @@
  * Errors in diagnostics have: { severity, code, message, line, column, track }
  */
 
+import { hoistVoiceChanges } from "./voice-hoist.js";
 import { parse } from "./mmlisp-parser.js";
 import {
   clampForTarget,
@@ -5421,6 +5422,11 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     if (stray.length) track.events = track.events.filter((ev) => !stray.includes(ev));
   }
   for (const track of tracks) validateTrack(track, diagnostics);
+  // Voice changes move into the silence before their note (voice-hoist.js), so
+  // a voice's ~36 writes do not share the note's frame on the driver's wire.
+  // `options.voiceHoist`: false turns it off; an object sets its windows.
+  if (options.voiceHoist !== false)
+    hoistVoiceChanges(tracks, { ppqn: PPQN, ...(options.voiceHoist ?? {}) });
 
   // v0.6: tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
   // emit their own tick-0 events); the only derived init event is FM3 op mode.

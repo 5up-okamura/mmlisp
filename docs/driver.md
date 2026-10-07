@@ -349,6 +349,20 @@ operation; the lead is what absorbs a heavy frame of the game or of the music
 Note onsets fall on the 60 Hz frame. The slot format keeps a sub-tick count,
 `SLOT_SUBS`, as a format parameter fixed at 1 (§6.2).
 
+What moves an onset off its frame is the pair wire: the Z80 sends a frame's
+writes one by one, so a key-on waits behind the writes queued before it (16
+pairs a frame on the single-bank host, §6.6). The largest burst is a voice
+change, ~36 writes a channel, so the compiler sends a voice ahead of its note,
+in the silence before it (`live/src/voice-hoist.js`, language.md §9): the
+note's frame keeps its pitch, key-on and level writes. Within a frame, the
+single-bank converter sends the key-ons last (`mmlpairs.c` keyons_last), so a
+chord keys within a few pairs (~3 ms) instead of behind every pitch and level
+write of the frame; each channel's own writes still precede its key-on, a
+key-off never moves, and a frame that writes `$27` or has CH3 in special or
+CSM mode keeps its order. The banked converter orders its frames by its own
+rule (§5.4). `tools/onset-timing.mjs` reports each key-on's lag on the light
+images and the frames behind the late ones.
+
 ## 4. The 68k Frame — rendering one frame
 
 Frame order is **fixed and normative** — `drv-player.js` implements exactly

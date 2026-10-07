@@ -455,6 +455,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-voice-hoist.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-vol-macro-carry.mmlisp": {
     "ok": true,
     "mismatches": 0,

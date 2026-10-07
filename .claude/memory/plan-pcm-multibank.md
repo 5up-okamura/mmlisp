@@ -77,17 +77,11 @@ measurements the decisions rest on, and what is still open.
 ## Open
 
 - **Onset jitter under write bursts** — what the user hears as tempo wobble
-  where several channels change voice or play at once. Why: pairs carry no
-  deadline, so rendering ahead (`MMLISP_LEAD`) does not spread writes; the
-  host may not send a future frame; once released the Z80 executes pairs
-  serially with no atomic key-on commit; the single-bank images' expander
-  capacity. Recommended order: raise single-bank service and host capacity
-  (above); make ordinary-FM3 eligibility mode-aware (needs CH3's mode, `$27`
-  barriers, the chip-wide pitch latch kept); measure physical-copy waste
-  (full/wrap/late/empty reasons) before adapting grab sizes; only then
-  deadline-tagged preparation — unsafe as a blanket rule, since a key-off or a
-  rest does not prove silence (release envelopes, release macros, LFO/CSM
-  and SE takeover) and nothing observes the hardware envelope.
+  where several channels change voice or play at once: decided in
+  `plan-onset-jitter.md` (no transport increase; fewer pairs ahead of each
+  key-on instead). Why it happens: pairs carry no deadline, so rendering
+  ahead (`MMLISP_LEAD`) does not spread writes; the host may not send a
+  future frame; once released the Z80 executes pairs serially.
 - **Not run on real hardware**; heavy DMA / game workloads not measured.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`: it is
   covered by `tests/banked-pairs.c`, the BlastEm run (`banked:sgdk`) and
