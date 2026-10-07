@@ -1173,7 +1173,11 @@ for a run); a note held into the next pattern starts that phrase with `~`.
 Untick **One def per pattern** for one long body instead. FM instruments
 become `def-fm`s; a volume or arpeggio macro becomes a `(macro …)` def; the
 volume column, pan (`08xy`), arpeggio (`00xy`), note cut (`ECxx`) and delay
-(`EDxx`) come along, and the log counts the effects that do not. On a
+(`EDxx`) come along, and so do the pitch effects, as `:pitch` macros: a
+vibrato (`04xy`) is a shared `(def vib-xy (macro :pitch (sin …)))`, a slide
+(`01xx`/`02xx`, `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a
+slur that glides in, and fine tune (`E5xx`) an offset rounded to 10 cents.
+The log counts the effects that do not come along. On a
 non-Genesis system the channels play their notes on a `presets/waveforms`
 stand-in voice; sample channels are left out. Of a Furnace module, the first
 subsong is imported; a song on several chips lists every chip's channels.

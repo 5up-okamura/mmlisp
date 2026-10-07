@@ -19,8 +19,10 @@
 //
 // Kept: notes and note-offs, instruments (FM → def-fm, a volume/arpeggio
 // macro → a `(macro …)` def), the volume column, speed (09xx/0Fxx), pan
-// (08xy), arpeggio (00xy), note cut (ECxx) and delay (EDxx). Everything else
-// is counted and reported.
+// (08xy), arpeggio (00xy), note cut (ECxx) and delay (EDxx), and the pitch
+// effects as `:pitch` macros — vibrato (04xy) a shared `(def vib-xy …)` of a
+// sine, slides (01xx/02xx, E1xy/E2xy) and portamento (03xx, a slur) a line,
+// fine tune (E5xx) an offset. Everything else is counted and reported.
 // ---------------------------------------------------------------------------
 
 import { PPQN, emitSong, emitPhrased, qstr } from "./import-song.js";
@@ -37,6 +39,9 @@ export const CHANNEL_KINDS = {
 const STAND_IN = { psg: "wave-square", wave: "wave-triangle", noise: "wave-square", opll: "wave-saw", opl: "wave-sine", pcm: "wave-saw", fm3op: "wave-sine" };
 // The volume column's top, where it is not the model's FM / PSG one.
 const VOL_MAX = { opl: 63 };
+
+const PITCH_NONE = "(macro :pitch none)";
+const PITCH_CODES = new Set([0x01, 0x02, 0x03, 0x04, 0xe1, 0xe2, 0xe5]);
 
 // Furnace's internal DT (3 = none) → the register field.
 const DT_REG = [7, 6, 5, 0, 1, 2, 3, 4];
@@ -214,6 +219,57 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   };
   const standIns = new Set();
 
+  // Pitch effects → one `:pitch` macro a note. A tracker tick is a frame at
+  // the song's rate; a slide moves `speed × pitchSlideSpeed` 128ths of a
+  // semitone a tick (Furnace's linear pitch, as it plays a DMF too); a
+  // vibrato runs a 64-step sine `x` steps a tick, `y` 16ths of a semitone deep.
+  const pss = t.pitchSlideSpeed ?? 4;
+  if (t.linearPitch === false && used.length)
+    warnings.push("the song's pitch is not linear: slides and portamento are approximated");
+  const frames = (scoreTicks) => Math.max(1, Math.round((scoreTicks / ticksPerFrame) * 60 / t.hz));
+  const slideCents = (speed) => (speed * pss * 100) / 128; // a tracker tick
+  let vibUnderSlide = 0;
+  const vibDef = ({ x, y }, d) => {
+    const depth = Math.round((y * 127 * 100) / (16 * 128));
+    const period = Math.max(1, Math.round((64 / x) * 60 / t.hz));
+    const key = `vib:${x}:${y}:${d}`;
+    if (!defs.has(key)) {
+      const name = uniq(`vib-${x.toString(16)}${y.toString(16)}${d ? (d > 0 ? `+${d}` : d) : ""}`);
+      defs.set(key, { name, text: `(def ${name} (macro :pitch (sin ${d - depth}..${d + depth} :len ${period}f)))` });
+    }
+    return defs.get(key).name;
+  };
+  const pitchToken = (n) => {
+    const p = n.p;
+    if (!p) return null;
+    const d = p.detune;
+    const line = (from, to, scoreTicks, wait) =>
+      `(macro :pitch (linear ${from}..${to} :len ${frames(scoreTicks)}f${wait ? ` :wait ${frames(wait)}f` : ""}))`;
+    if (p.porta) {
+      const D = (p.porta.from - n.midi) * 100;
+      return line(D + d, d, (Math.abs(D) / slideCents(p.porta.speed)) * ticksPerFrame);
+    }
+    const sl = p.slides[0];
+    if (sl) {
+      if (p.vib || p.vibLater) vibUnderSlide++;
+      if (sl.semis) {
+        const C = sl.dir * sl.semis * 100;
+        return line(d, d + C, (Math.abs(C) / slideCents(sl.speed)) * ticksPerFrame, sl.off);
+      }
+      const span = Math.max(1, (sl.end ?? n.len) - sl.off);
+      const C = Math.round(sl.dir * slideCents(sl.speed) * (span / ticksPerFrame));
+      return line(d, d + C, span, sl.off);
+    }
+    if (p.vib) return vibDef(p.vib, d);
+    if (p.vibLater) {
+      const { x, y, off } = p.vibLater;
+      const depth = Math.round((y * 127 * 100) / (16 * 128));
+      const period = Math.max(1, Math.round((64 / x) * 60 / t.hz));
+      return `(macro :pitch (sin ${d - depth}..${d + depth} :len ${period}f :wait ${frames(off)}f))`;
+    }
+    return d ? `(macro :pitch ${d})` : null;
+  };
+
   const tracks = [];
   let tempoTrack = true;
   for (const ch of used) {
@@ -257,6 +313,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const arpToken = () => (arp ? `(macro :semi [#sus 0 ${arp >> 4} ${arp & 15}])` : "(macro :semi none)");
     let usedArp = uses(0x00);
     let cur = { voice: voiceTokens(), pan: null, arp: null };
+    // Pitch effects: the vibrato and fine tune in force, and each note's
+    // own (worked into a `:pitch` macro once its length is known).
+    let vib = null;
+    let detune = 0;
+    let lastMidi = null;
     const flat = (st) => [...st.voice, ...(st.arp ? [st.arp] : []), ...(st.pan ? [st.pan] : [])];
 
     const notes = [];
@@ -271,8 +332,22 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         let delay = 0;
         let cut = null;
         let speedChanged = false;
-        for (const [code, val] of row.fx) {
-          if (code === 0x08 && onFm && val >= 0) {
+        const rp = {}; // this row's pitch effects
+        for (const [code, v] of row.fx) {
+          // An effect with no value is 00 (Furnace reads it so).
+          const val = v < 0 && PITCH_CODES.has(code) ? 0 : v;
+          if (code === 0x04 && val >= 0) {
+            vib = val >> 4 && val & 15 ? { x: val >> 4, y: val & 15 } : null;
+            rp.vib = true;
+          } else if ((code === 0x01 || code === 0x02) && val >= 0) {
+            rp.slide = val ? { dir: code === 0x01 ? 1 : -1, speed: val } : { stop: true };
+          } else if ((code === 0xe1 || code === 0xe2) && val >= 0) {
+            if (val & 15 && val >> 4) rp.slide = { dir: code === 0xe1 ? 1 : -1, speed: (val >> 4) * 4, semis: val & 15 };
+          } else if (code === 0x03 && val >= 0) { if (val) rp.porta = val; }
+          // Fine tune, to 10 cents (a song tuned note by note — a VGM
+          // conversion — would otherwise name an offset on every note).
+          else if (code === 0xe5 && val >= 0) detune = v < 0 ? 0 : Math.round((val - 0x80) * 100 / 128 / 10) * 10 || 0;
+          else if (code === 0x08 && onFm && val >= 0) {
             pan = (val >> 4) && (val & 15) ? "center" : val >> 4 ? "left" : val & 15 ? "right" : "center";
           } else if (code === 0x00 && val >= 0) { arp = val; usedArp = true; }
           else if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
@@ -294,6 +369,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           sounding = null;
         } else if (typeof row.note === "number") {
           const start = at + Math.min(delay, rowTicks - 1);
+          const legatoFrom = rp.porta && sounding && lastMidi != null ? lastMidi : null;
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, start);
           const st = {
             voice: voiceTokens(),
@@ -310,18 +386,44 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           const midi = row.note + 12;
           const v = velOf(vol);
           if (!fmVol && vol === 0) { sounding = null; continue; } // silent
-          sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st) };
+          sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st),
+            voiceChanged,
+            p: { vib: vib && { ...vib }, detune, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
+              slides: rp.slide && !rp.slide.stop ? [{ ...rp.slide, off: 0 }] : [], vibLater: null } };
+          if (legatoFrom != null) sounding.tieIn = true;
           notes.push(sounding);
-        } else if (cut != null && sounding) {
-          sounding.end = Math.min(sounding.end ?? Infinity, at + Math.max(1, cut));
+          lastMidi = midi;
+        } else {
+          if (cut != null && sounding) sounding.end = Math.min(sounding.end ?? Infinity, at + Math.max(1, cut));
+          // Pitch effects inside a note: from where they start in it.
+          if (sounding) {
+            const off = at - sounding.tick;
+            const ps = sounding.p;
+            if (rp.vib && !ps.vib && !ps.vibLater && vib) ps.vibLater = { ...vib, off };
+            if (rp.slide?.stop) { const sl = ps.slides[ps.slides.length - 1]; if (sl && sl.end == null) sl.end = off; }
+            else if (rp.slide) ps.slides.push({ ...rp.slide, off });
+          }
         }
       }
     });
     for (let i = 0; i < notes.length; i++) {
       const next = i + 1 < notes.length ? notes[i + 1].tick : endTick;
       notes[i].len = Math.max(1, Math.min(notes[i].end ?? next, next, endTick) - notes[i].tick);
+      // A portamento only slurs from a note still sounding.
+      if (notes[i].tieIn && !(i > 0 && notes[i - 1].tick + notes[i - 1].len === notes[i].tick)) notes[i].tieIn = false;
     }
     if (!notes.length) continue;
+    // The pitch macros, stated as a switch: `(macro :pitch none)` after one.
+    const toks = notes.map((n) => pitchToken(n));
+    if (toks.some(Boolean)) {
+      let curP = null;
+      notes.forEach((n, i) => {
+        const tok = toks[i] ?? PITCH_NONE;
+        if ((tok !== curP && !(curP == null && tok === PITCH_NONE)) || (n.voiceChanged && tok !== PITCH_NONE)) n.pre.push(tok);
+        n.state = [...n.state, tok];
+        curP = tok;
+      });
+    }
     tracks.push({ ch, notes, marks });
     if (tempoTrack) tempoTrack = false;
   }
@@ -339,6 +441,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   }
 
   for (const [k, n] of fxSkipped) warnings.push(`effect ${k} skipped (${n}×)`);
+  if (vibUnderSlide) warnings.push(`a vibrato under a slide is dropped for that note (${vibUnderSlide}×)`);
   if (!tracks.length) warnings.push("no notes to import");
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0))
     warnings.push("sample channels are not imported");

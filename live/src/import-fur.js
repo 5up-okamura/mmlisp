@@ -23,7 +23,8 @@ const FUR_SYSTEMS = {
   0x83: () => named("YM2612", k("fm", 6, "FM")),
   0xa0: () => [...opn3op("YM2612"), ...named("YM2612", k("fm", 3, "FM").map((c, i) => ({ ...c, name: `FM${i + 4}` })))],
   0xbe: () => [...named("YM2612", k("fm", 5, "FM")), ...k("pcm", 2, "DAC")],
-  0xbd: () => [...opn3op("YM2612"), { kind: "fm", name: "YM2612 FM4" }, { kind: "fm", name: "YM2612 FM5" }, ...k("pcm", 2, "DAC")],
+  0xbd: () => [...opn3op("YM2612"), { kind: "fm", name: "YM2612 FM4" }, { kind: "fm", name: "YM2612 FM5" }, ...k("pcm", 2, "DAC"),
+    { kind: "pcm", name: "CSM" }],
   0xc1: () => [...opn3op("YM2612"), ...named("YM2612", k("fm", 3, "FM").map((c, i) => ({ ...c, name: `FM${i + 4}` }))), { kind: "pcm", name: "CSM" }],
   0x03: () => named("SN76489", SN),
   0xbf: () => named("T6W28", SN),
@@ -123,6 +124,9 @@ export async function parseFur(bytes) {
 
   let title, author, chans, hz, speeds, patLen, ordersLen, hilightA, hilightB, vtN = 1, vtD = 1;
   let orders, insPtr = [], patPtr = [];
+  // Pitch: linear (1/128 semitone steps) unless the song says not, and the
+  // multiplier on slide speeds (compat flags).
+  let linearPitch = 1, pitchSlideSpeed = 4, cflgPtr = 0;
   const channels = [];
   const effectCols = [];
 
@@ -153,6 +157,7 @@ export async function parseFur(bytes) {
       if (type === 1) subPtr.push(...ptrs); // subsongs
       else if (type === 4) insPtr = ptrs; // instruments
       else if (type === 7) patPtr = ptrs; // patterns
+      else if (type === 8) cflgPtr = ptrs[0] ?? 0; // compat flags
     }
     if (!subPtr.length) throw new Error("FUR: no song");
     p = subPtr[0];
@@ -191,6 +196,7 @@ export async function parseFur(bytes) {
     p += 32 + 32 + 128; // chip volumes, pans, flag pointers
     title = str(); author = str();
     p += 4; // tuning
+    if (version >= 37) linearPitch = u8[p + 1];
     p += 20; // compatibility flags
     for (let i = 0; i < insLen; i++) insPtr.push(i32());
     p += 4 * (waveLen + sampleLen);
@@ -208,7 +214,7 @@ export async function parseFur(bytes) {
           str();
         }
         if (version >= 59) p += 4;
-        if (version >= 70) p += 28;
+        if (version >= 70) { if (version >= 94) pitchSlideSpeed = u8[p + 13] || 4; p += 28; }
         vtN = s16() || 1; vtD = s16() || 1;
       } catch { vtN = vtD = 1; }
     }
@@ -372,6 +378,18 @@ export async function parseFur(bytes) {
     return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed };
   }
 
+  if (cflgPtr) {
+    // "CFLG", a size, then `key=value` lines.
+    p = cflgPtr;
+    if (magic() === "CFLG") {
+      p += 8;
+      for (const line of str().split("\n")) {
+        const [k, v] = line.split("=");
+        if (k === "linearPitch") linearPitch = +v;
+        if (k === "pitchSlideSpeed") pitchSlideSpeed = +v || 4;
+      }
+    }
+  }
   if (channels.length !== chans) throw new Error(`FUR: ${chans} channels in the song, ${channels.length} in its chips`);
   return {
     format: "Furnace", system: describe(channels), title, author,
@@ -382,6 +400,7 @@ export async function parseFur(bytes) {
     instruments,
     fmVolMax: 127, psgVolMax: 15,
     oldMacros: instruments.some((x) => x.oldMacros),
+    linearPitch: linearPitch > 0, pitchSlideSpeed,
   };
 }
 

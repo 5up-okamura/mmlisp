@@ -37,7 +37,10 @@ Done: (1) structure (3775f6d, 55ae5dd); (2) VGM envelopes — PSG level and FM
 carrier TL during a note → `:vel+` defs with `#sus`/`#rel`, the PSG note
 keyed off where its release starts. Shapes are matched exactly (a cut-short
 note names the one it starts); TwinBee still gives ~26 — rounding near
-shapes together is the next lever if the user wants fewer. Next: (3) pitch.
+shapes together is the next lever if the user wants fewer. (3) pitch:
+trackers done (04/01/02/03/E1/E2/E5 → :pitch macros; Furnace's rules
+rounded: a slide stops at the next note, 03 is row-only, a vibrato under a
+slide is dropped; E5 to 10 cents). Next: VGM vibrato, MIDI bend + CC1.
 
 ## Open
 
@@ -49,6 +52,6 @@ shapes together is the next lever if the user wants fewer. Next: (3) pitch.
   VGI/OPNI unverified.
 - VGM: tempo changes within a song (one grid for the whole file), DAC sample
   import, second chips.
-- Trackers: pitch effects (01-04 slides/vibrato, E1/E2), sample channels,
+- Trackers: sample channels,
   macros of old (pre-INS2) Furnace instruments, subsongs after the first.
 - MIDI: pitch bend, per-note pan/CC changes after the first.

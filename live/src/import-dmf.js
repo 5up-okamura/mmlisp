@@ -152,6 +152,7 @@ export async function parseDmf(bytes) {
     speeds: [speed1 * (timeBase + 1), speed2 * (timeBase + 1)],
     patLen, orders, channels, instruments,
     fmVolMax: 127, psgVolMax: 15,
+    linearPitch: true, pitchSlideSpeed: 4, // as Furnace plays a DMF
   };
 }
 
