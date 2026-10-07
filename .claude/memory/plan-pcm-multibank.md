@@ -427,3 +427,112 @@ regression suite and both banked gates pass. After image deduplication,
 mirrors, SGDK type checks and the PAL three-voice native fixture pass again
 (`drv/out/banked-pal-three-final`). PAL 1–2 was committed as `55e5523`;
 NTSC 3 was committed as `7706513`; PAL 3 is the final milestone commit.
+
+## Optimization investigation (2026-10-07)
+
+Requested scope: investigate runtime and memory improvements after `7004739`.
+Production sources remain unchanged. Experiments live under ignored
+`drv/out/optimization-study/`; this entry preserves their findings.
+
+### Recommended first: avoid the redundant empty transfer poll
+
+`drv/sgdk/mmlispdrv.c:pump` currently performs a fresh FIFO poll before
+planning, then another grab even when `mmlp_plan` returns zero. Five pumps
+per frame can therefore request the bus ten times even without payload.
+A scratch SGDK build changed only the second grab to
+`bankedImage && !n ? fifoLo : grab(&blk, dst)`. The first fresh observation,
+nonempty transfer deadline check, planner bookkeeping and PSG drain remain.
+
+Controlled twelve-second NTSC three-voice comparison on the sin008 stress
+copy, with the current normal SGDK example and forced multi-bank export:
+
+| Measurement | Current | Scratch empty-poll change |
+| --- | ---: | ---: |
+| Z80 stopped time / observed DAC span | 0.731476% | 0.455570% |
+| Matching DAC values | 75,055 | 75,263 |
+| PCM starts | 197 | 197 |
+| FM writes, ports 0 / 1 | 660 / 90 | 660 / 90 |
+| PSG writes | 613 | 613 |
+| FM interval error p95 | 24.161 ms | 16.254 ms |
+| FM interval error maximum | 28.452 ms | 20.567 ms |
+
+Both native gates pass, including waveform, command intent, FM/PSG prefixes,
+chip settling and pitch-latch checks. Running DAC rate remains 6,653.428 Hz.
+This removes about 38% of measured bus-stop time, not 38% of CPU load or
+song duration. The observed timing improvement is one workload, not a bound.
+Reports: `baseline/report.json` and `idle-poll/report.json` beneath the study
+directory. All six profiles, lifecycle and FIFO safety still need validation
+before integration. Further stopping of empty pump iterations needs a distinct
+reason for no progress (empty versus full FIFO) and preserved PSG handling;
+blindly reducing the five-transfer cap could worsen dense music.
+
+### ROM: share tables and omit zero padding
+
+All seven emitted images (three single-bank plus four unique banked binaries)
+contain byte-identical 2,560-byte clamp/level tables at offset 0x1100. Keeping
+one table block saves exactly 15,360 ROM bytes before descriptor/loader costs
+when all profiles are linked. The four banked images alone account for 7,680
+bytes of this duplicate storage. The previous PAL/NTSC whole-image sharing
+has already been applied; this is additional sharing across distinct images.
+
+There is also roughly 10 KiB of zero padding before the tables across the
+seven images. Emit separate code spans and the shared tables; after clearing
+Z80 RAM, upload code at zero and tables at 0x1100. Use assembler code-end
+symbols, not trailing-zero heuristics, for actual span lengths. This preserves
+Z80 addresses and steady-state timing while reducing ROM and boot copy work.
+It does not reduce Z80 RAM. Check generated mirrors and both initial load and
+profile-switch playback. Exact table equality was checked by `memory.mjs`.
+
+### 68k CPU: reduce repeated FM classification
+
+An instrumented twelve-second NTSC three-voice run (`profile.log`) measured
+`pump` at 17.7% of elapsed 68k time, including `mmlp_plan` at 9.5%;
+`mmlp_render` at 19.1%, including `banked_writes` at 4.3%. Do not add nested
+shares. Wrappers add overhead, so these are prioritization measurements.
+
+`banked_writes` scans the same frame once for safety/counts, once per eligible
+channel (up to four), and again for remaining writes/port deferral. Keeping
+indices for the small eligible groups could remove repeated full-frame
+classification while preserving modulation barriers, channel order and
+adjacent pitch-latch pairs. A six-channel/eight-index u16 scratch array would
+cost 96 bytes; benchmark against the current path before adopting it.
+
+The existing `MMLPairs` instance is 4,256 bytes in the m68k link map. Its
+separate single-bank PCM lane uses 768 payload bytes that banked playback does
+not use. Removing that lane is only a saving for a banked-only build or a
+carefully redesigned representation; the shipped host switches between both
+profiles, so this is lower priority than ROM sharing. Do not shrink queues
+without measuring occupancy during initialization, dense patches and SE.
+
+### Z80 throughput: promising placement, unresolved latency tradeoff
+
+An in-memory generator variant inlined expander B for three voices, as the
+two-voice engine already does, keeping the 538-cycle DAC period:
+
+| Layout | Pairs / 48 samples | Code bytes | Mean scheduled work | Generation fence |
+| --- | ---: | ---: | ---: | ---: |
+| Current | 12 | 3,289 | 92.8% | 3 |
+| Inline B | 12 | 3,403 | 91.5% | 4 |
+| Inline B | 13 | 3,421 | 92.3% | 5 |
+
+Thirteen pairs fit the 4,352-byte code allocation and provide 8.3% higher raw
+pair throughput; fourteen and fifteen failed placement. The larger required
+fence may offset the gain for repeated PCM starts. This is assembly/schedule
+feasibility only: no instruction or native playback validation was performed
+for these candidate images. Keep the original rate and prioritize measured
+end-to-end latency over the raw pair count.
+
+### Sample packing: lower priority for measured scores
+
+`packBankedSamples` uses sequential next-fit placement. Sorting unique blobs
+by decreasing length and filling earlier banks can reduce fragmentation
+without changing sample IDs or the banked format. A valid size pattern
+20,000 / 20,000 / 12,000 / 12,000 bytes takes three data banks today and two
+with better packing, saving 32 KiB. Existing one/two/three-voice fixtures and
+both real-song three-voice samples gained zero banks in the placement study;
+the real song's 9,152 NTSC payload bytes already fit one data bank. The fixed
+32 KiB directory bank is format overhead, not removable by packing alone.
+
+Suggested implementation order: redundant empty poll, shared ROM tables/code
+spans, measured FM grouping optimization, then optional sample packing.
+Leave the Z80 throughput change as a separate timing experiment.
