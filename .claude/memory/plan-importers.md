@@ -33,6 +33,12 @@ Order: (1) structure MIDI/VGM, (2) envelopes (VGM PSG, FM carrier TL),
   share defs.
 - **MIDI modulation (CC1): fixed mapping** (depth/rate decided by us).
 
+Done: (1) structure (3775f6d, c79bfac); (2) VGM envelopes — PSG level and FM
+carrier TL during a note → `:vel+` defs with `#sus`/`#rel`, the PSG note
+keyed off where its release starts. Shapes are matched exactly (a cut-short
+note names the one it starts); TwinBee still gives ~26 — rounding near
+shapes together is the next lever if the user wants fewer. Next: (3) pitch.
+
 ## Open
 
 - **DT in the voice importers (found 2026-10-05, not fixed):** Furnace's

@@ -1185,7 +1185,13 @@ dropped on the YM2151). The carriers' TL is taken relative to the voice's
 loudest use and the rest becomes `:vel`. The SSG and the SN76489 become
 `sqr` and `noise` tracks; the YM2413 and the OPL chips give notes on a
 stand-in voice. A pitch moved during a note becomes a slur (`~`) when it
-lands on another semitone — untick it to keep only the struck pitch. The
+lands on another semitone — untick it to keep only the struck pitch. A
+level that moves during a note — the driver's envelope on the PSG, a carrier
+TL it steps on the FM — becomes a `:vel+` macro in a shared def (`(def env-01
+(macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`), the note's `:vel` its loudest
+point: a level held four frames or more is the `#sus`, and on the PSG what
+follows it is the release, so the note is keyed off there and plays it as
+`#rel`. A note cut short names the shape it is the start of. The
 tempo is estimated from the onsets (the dialog shows how well they fit and
 the other readings, double or half — typing one keeps the measured beat and
 reads it so); when no beat fits, the notes go on the

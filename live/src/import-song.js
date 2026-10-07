@@ -197,7 +197,16 @@ export function commonLen(notes, bars, endTick) {
  *   tracks: [{channel, head: string[], notes, marks?, vel?}]
  * }
  */
+// The compiler's octaves run 0 up: a note below (a slide's tail, a deep
+// drum sweep) is folded up an octave at a time — written as it is, every
+// relative octave after it would land one too high.
+const playable = (m) => (m == null ? m : m < 12 ? playable(m + 12) : m > 127 ? playable(m - 12) : m);
+const inRange = (notes) => (notes.every((n) => n.midi == null || (n.midi >= 12 && n.midi <= 127)) ? notes
+  : notes.map((n) => ({ ...n, midi: playable(n.midi) })));
+const songInRange = (song) => ({ ...song, tracks: song.tracks.map((tr) => ({ ...tr, notes: inRange(tr.notes) })) });
+
 export function emitSong(song) {
+  song = songInRange(song);
   const out = [...song.header];
   for (const tr of song.tracks) {
     const notes = tr.notes;
@@ -234,6 +243,7 @@ export function emitSong(song) {
  * }
  */
 export function emitPhrased(song) {
+  song = { ...song, tracks: song.tracks.map((tr) => ({ ...tr, segments: tr.segments.map((sg) => ({ ...sg, notes: inRange(sg.notes) })) })) };
   const out = [...song.header];
   const forms = [];
   for (const tr of song.tracks) {
@@ -440,21 +450,20 @@ export function regrid(g, bpm) {
 
 const MAX_BLOCK = 16; // units in one repeated block or phrase
 
+// A switch's kind: a keyword by its name, a macro (or an `env-` def, an
+// imported envelope) by its target, any other name — the voice or the
+// sample — as "name".
+const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0]
+  : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}`
+    : /^env-\d/.test(t) ? "macro:vel" : "name";
+
 // The switches a note needs written, given those in force: by kind — a
 // keyword (`:pan`, `:mode`) by its name, a macro by its target, a bare name
 // (a voice, a sample, an envelope def) by its place — only what changed.
 // With nothing known in force (after a loop's break), all of them.
 function stateChange(from, to) {
   if (!from.length) return to;
-  const kind = (toks) => {
-    const m = new Map();
-    let bare = 0;
-    for (const t of toks) {
-      const k = t.startsWith(":") ? t.split(" ")[0] : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}` : `bare${bare++}`;
-      m.set(k, t);
-    }
-    return m;
-  };
+  const kind = (toks) => new Map(toks.map((t) => [switchKind(t), t]));
   const a = kind(from), b = kind(to);
   // A different set of kinds (a macro appears or goes): write them all.
   if (a.size !== b.size || [...b.keys()].some((k) => !a.has(k))) return to;
@@ -633,6 +642,7 @@ function planTrack(tr, bars, endTick, loopTick) {
  * `|` is editorial, so this changes only how the score reads.
  */
 export function bestBars(song) {
+  song = songInRange(song);
   const { endTick, loopTick = null } = song;
   let best = null;
   for (const bar of [384, 768, 192, 576, 288]) {
@@ -651,6 +661,7 @@ export function bestBars(song) {
 }
 
 export function emitStructured(song) {
+  song = songInRange(song);
   const out = [...song.header];
   const forms = [];
   const loopTick = song.loopTick ?? null;
@@ -658,9 +669,10 @@ export function emitStructured(song) {
     const defLen = commonLen(tr.notes, song.bars, song.endTick);
     const { segs, lists, defs } = planTrack(tr, song.bars, song.endTick, loopTick);
     const byRun = new Map(defs.map((d) => [d.runKey, d]));
-    // A PCM track's switches are samples, which the compiler binds to the
-    // notes as it goes (like the octave), not writes the chip gets.
-    const baked = tr.channel.startsWith("pcm");
+    // Switches the compiler binds to the notes as it goes (like the octave),
+    // not writes the chip gets: a macro, and a PCM track's sample.
+    const pcm = tr.channel.startsWith("pcm");
+    const baked = (t) => { const k = switchKind(t); return k.startsWith("macro") || (pcm && k === "name"); };
 
     // Writing: the state carried from item to item, restated at a head.
     const writeUnit = (u, st) => {
@@ -681,14 +693,18 @@ export function emitStructured(song) {
     // with hold on every pass — but a switch (a voice, a pan) is a write the
     // chip gets when played: the head writes those the first note needs on
     // the way in or coming back round from `around`, the body's last note.
-    const head = (items, st, around, whole) => {
+    const head = (items, st, around, whole, start) => {
       let p = null;
       for (const it of items) if ((p = firstPiece(it))) break;
       if (!p) return { tokens: [], st };
       const oct = octOf(p.midi);
-      if (whole) return { tokens: [...p.st, `:oct ${oct}`, `:vel ${p.vel}`], st: { oct, vel: p.vel, st: p.st } };
+      if (whole) {
+        // At the track's start there is no macro to clear.
+        const sw = start ? p.st.filter((t) => !/^\(macro :[a-z+*-]+ none\)$/.test(t)) : p.st;
+        return { tokens: [...sw, `:oct ${oct}`, `:vel ${p.vel}`], st: { oct, vel: p.vel, st: p.st } };
+      }
       const sw = st.st.length ? stateChange(st.st, p.st) : p.st;
-      const back = around && !baked ? stateChange(around.st, p.st) : [];
+      const back = around ? stateChange(around.st, p.st).filter((t) => !baked(t)) : [];
       const tokens = p.st.filter((t) => sw.includes(t) || back.includes(t));
       if (oct !== st.oct) tokens.push(`:oct ${oct}`);
       return { tokens, st: { ...st, oct, st: p.st } };
@@ -696,13 +712,13 @@ export function emitStructured(song) {
     const defEnd = new Map();
     // `whole`: the run the head restates for — a loop's whole block, though
     // only the part before its (break) is written here. `full`: state it all.
-    const writeItems = (items, st, atHead, whole = items, around = null, full = false) => {
+    const writeItems = (items, st, atHead, whole = items, around = null, full = false, start = false) => {
       const lines = [];
       items.forEach((it, idx) => {
         let prefix = [];
         // A block's head restates the first note it plays, whatever comes
         // first — a rest-only loop or a def tells the next note nothing.
-        if (atHead && idx === 0) ({ tokens: prefix, st } = head(whole, st, around, full));
+        if (atHead && idx === 0) ({ tokens: prefix, st } = head(whole, st, around, full, start));
         let got;
         if (it.k === "u") got = writeUnit(it, st);
         else if (it.k === "d") got = { lines: [it.def.name], st: defEnd.get(it.def.name) };
@@ -729,8 +745,9 @@ export function emitStructured(song) {
               // stops at the break. The switches written to the chip are the
               // ones the last pass played — the front's last note's (unknown
               // when the front is all rests: then the next note states them).
-              if (!baked) after = { ...b.st, st: lastPiece(front)?.st ?? [] };
-              else after = b.st;
+              const rt = lastPiece(front)?.st;
+              after = rt ? { ...b.st, st: [...b.st.st.filter(baked), ...rt.filter((t) => !baked(t))] }
+                : b.st.st.every(baked) ? b.st : { ...b.st, st: [] };
             }
           }
           got = { lines: [`(x ${it.count}`, ...inner.map((l) => "  " + l)], st: after };
@@ -765,7 +782,7 @@ export function emitStructured(song) {
     const end = lastPiece(lists.flat());
     segs.forEach((_, si) => {
       const top = segs.length > 1 ? si === 1 : loopTick === 0;
-      const w = writeItems(lists[si], st, true, lists[si], top ? end : null, si === 0);
+      const w = writeItems(lists[si], st, true, lists[si], top ? end : null, si === 0, si === 0);
       if (top) w.lines[0] = `#top ${w.lines[0]}`;
       body.push(...w.lines);
       st = w.st;

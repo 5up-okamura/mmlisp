@@ -46,7 +46,8 @@ const pitchOf = (hz) => (hz > 0 ? 69 + 12 * Math.log2(hz / 440) : null);
 // ── Chips ─────────────────────────────────────────────────────────────────
 // Each chip model keeps its registers and calls `ev(channelKey, event)`:
 //   {t, kind: "on", pitch, vel?, voice?, pan?, mode?} | {t, kind: "off"}
-//   | {t, kind: "pitch", pitch} | {t, kind: "vel", vel}
+//   | {t, kind: "pitch", pitch} | {t, kind: "vel", vel} (a PSG's level)
+//   | {t, kind: "tl", tl} (an FM channel's loudest carrier TL, while keyed)
 
 function opnChip(name, clock, divisor, { ssgDiv, channels = 6, ev }) {
   const regs = [new Uint8Array(256), new Uint8Array(256)];
@@ -81,6 +82,11 @@ function opnChip(name, clock, divisor, { ssgDiv, channels = 6, ev }) {
       pan: (b4 >> 6) === 2 ? "left" : (b4 >> 6) === 1 ? "right" : "center",
     };
   };
+  const carrierTl = (c) => {
+    const { port, i } = chOf(c);
+    const r = regs[port];
+    return Math.min(...CARRIERS[r[0xb0 + i] & 7].map((s) => r[0x40 + 4 * s + i] & 127));
+  };
   const key = (c) => `${name} FM${c + 1}`;
   return {
     name,
@@ -102,6 +108,10 @@ function opnChip(name, clock, divisor, { ssgDiv, channels = 6, ev }) {
         return;
       }
       regs[port][a] = d;
+      if (a >= 0x40 && a < 0x50 && (a & 3) !== 3) {
+        const c = (a & 3) + port * 3;
+        if (keyed[c]) ev(key(c), { t, kind: "tl", tl: carrierTl(c) });
+      }
       if (a >= 0xa4 && a <= 0xa6) hiLatch[port][a - 0xa4] = d;
       if (a >= 0xa0 && a <= 0xa2) {
         regs[port][0xa4 + a - 0xa0] = hiLatch[port][a - 0xa0];
@@ -155,6 +165,10 @@ function opmChip(clock, { ev }) {
         return;
       }
       r[a] = d;
+      if (a >= 0x60 && a < 0x80 && keyed[a & 7]) {
+        const c = a & 7;
+        ev(key(c), { t, kind: "tl", tl: Math.min(...CARRIERS[r[0x20 + c] & 7].map((s) => r[0x60 + 8 * s + c] & 127)) });
+      }
       if (a >= 0x28 && a < 0x38) {
         const c = a & 7;
         if (keyed[c]) ev(key(c), { t, kind: "pitch", pitch: pitch(c) });
@@ -470,31 +484,143 @@ export async function parseVgm(bytes) {
 
 // ── Notes ─────────────────────────────────────────────────────────────────
 
-/** One channel's events → notes in samples: {t, end, pitch, vel, voice?, pan?, mode?, slur?}. */
+/**
+ * One channel's events → notes in samples: {t, end, pitch, vel, voice?, pan?,
+ * mode?, slur?, levels}. `levels`: [t, level] — the PSG level or the FM
+ * carrier TL as it moves during the note (`lv0`: where a slurred note starts;
+ * an FM note's otherwise is its voice's).
+ */
 function notesOf(events, followPitch) {
   const out = [];
   let cur = null;
   const close = (t) => { if (cur) { cur.end = t; out.push(cur); cur = null; } };
+  const level = () => (cur.levels.length ? cur.levels[cur.levels.length - 1][1] : cur.lv0);
   for (const e of events) {
     if (e.kind === "on" || (e.kind === "retrig" && cur)) {
       const base = cur ?? {};
       close(e.t);
       if (e.pitch == null && base.pitch == null) continue;
       cur = { t: e.t, pitch: e.pitch ?? base.pitch, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
-        pan: e.pan ?? base.pan, mode: e.mode ?? base.mode };
+        pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, levels: [] };
+      if (!cur.voice) cur.lv0 = cur.vel;
     } else if (e.kind === "off") close(e.t);
     else if (!cur) continue;
     else if (e.kind === "pitch" && e.pitch != null) {
       if (followPitch && Math.round(e.pitch) !== Math.round(cur.pitch)) {
-        const next = { ...cur, t: e.t, pitch: e.pitch, slur: true };
+        const next = { ...cur, t: e.t, pitch: e.pitch, slur: true, lv0: level(), levels: [] };
         close(e.t);
         cur = next;
       }
-    } else if (e.kind === "vel" && e.t - cur.t < 0.05 * RATE) cur.vel = Math.max(cur.vel, e.vel);
+    } else if (e.kind === "vel" || e.kind === "tl") cur.levels.push([e.t, e.vel ?? e.tl]);
     else if (e.kind === "mode") cur.mode = e.mode;
   }
   if (cur) { cur.end = Infinity; out.push(cur); }
-  return out.filter((n) => n.end > n.t && n.pitch != null && n.pitch > 0 && n.pitch < 128);
+  // A pitch written in a note's last frame or so, the note let go right
+  // after (a driver resetting the period as it releases), is not a note.
+  const kept = [];
+  for (let i = out.length - 1; i >= 0; i--) {
+    const n = out[i];
+    const next = kept[kept.length - 1];
+    if (n.slur && n.end - n.t < 2 * FRAME && !(next?.slur && next.t === n.end)) continue;
+    kept.push(n);
+  }
+  return kept.reverse().filter((n) => n.end > n.t && n.pitch != null && n.pitch > 0 && n.pitch < 128);
+}
+
+// ── Envelopes ─────────────────────────────────────────────────────────────
+
+const FRAME = RATE / 60;
+const MAX_ENV = 256; // frames an envelope follows; a level held after it is held on
+const ENV_NONE = "(macro :vel none)";
+
+/** A note's level frame by frame (sampled mid-frame), from `start`. */
+function levelFrames(n, start, endT) {
+  const frames = Math.max(1, Math.min(MAX_ENV, Math.round((endT - n.t) / FRAME)));
+  const out = [];
+  let v = start;
+  let k = 0;
+  for (let f = 0; f < frames; f++) {
+    const at = n.t + (f + 0.5) * FRAME;
+    while (k < n.levels.length && n.levels[k][0] <= at) v = n.levels[k++][1];
+    out.push(v);
+  }
+  return out;
+}
+
+/**
+ * The notes' envelopes (`env`: :vel+ offsets a frame) → shared defs. A
+ * driver's envelope is a way in, a level it holds, and a way out once the
+ * note is let go: a run held four frames or more is that level (`#sus`),
+ * and on the PSG what comes after it is the release (`#rel`) — the note is
+ * keyed off where it starts, so notes of any length share the shape. A note
+ * cut short plays the start of a longer one's, so it names that: the most
+ * used shape it is the start of. Sets `envName` (and `relFrame`, where the
+ * note is let go) on the notes that move; returns the defs.
+ */
+function assignEnvelopes(notes) {
+  const moving = notes.filter((n) => n.env?.some((v) => v !== 0));
+  for (const n of moving) n.shape = shapeOf(n.env, n.canRelease);
+  const fits = (n, c) => {
+    if (n.shape.rel) return !!c.rel && same(n.shape.head, c.head) && n.shape.sus === c.sus && same(n.shape.rel, c.rel);
+    return n.env.every((v, f) => v === (f < c.head.length ? c.head[f] : c.sus));
+  };
+  const shapes = [];
+  // Whole shapes first, longest first: a shorter note may be the start of one.
+  const order = [...moving].sort((x, y) => (y.shape.rel ? 1 : 0) - (x.shape.rel ? 1 : 0) || y.env.length - x.env.length);
+  for (const n of order) {
+    let c = shapes.find((sh) => fits(n, sh));
+    if (!c) shapes.push((c = { ...n.shape, uses: 0 }));
+    c.uses++;
+  }
+  shapes.sort((x, y) => y.uses - x.uses || x.head.length - y.head.length);
+  const named = new Map();
+  for (const n of moving) {
+    const c = shapes.find((sh) => fits(n, sh));
+    if (!named.has(c)) named.set(c, `env-${String(named.size + 1).padStart(2, "0")}`);
+    n.envName = named.get(c);
+    if (n.shape.rel) n.relFrame = n.shape.relAt;
+  }
+  return [...named].map(([c, name]) => envDef(name, c));
+}
+
+const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+/** An envelope's way in, the level it holds, and (`release`) its way out. */
+function shapeOf(env, release) {
+  let best = null;
+  for (let i = 0; i < env.length; ) {
+    let j = i + 1;
+    while (j < env.length && env[j] === env[i]) j++;
+    if (j - i >= 4 && (!best || j - i > best.e - best.s)) best = { s: i, e: j };
+    i = j;
+  }
+  if (best && release && best.e < env.length)
+    return { head: env.slice(0, best.s), sus: env[best.s], rel: env.slice(best.e), relAt: best.e };
+  // Held to the end: the run it ends on is the level.
+  let L = env.length;
+  while (L > 1 && env[L - 2] === env[L - 1]) L--;
+  return { head: env.slice(0, L - 1), sus: env[L - 1], rel: null };
+}
+
+/**
+ * `(def env-01 (macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`, on a coarser
+ * `:step` when every change is.
+ */
+function envDef(name, { head, sus, rel }) {
+  const runs = (a) => {
+    const out = [];
+    for (const v of a) {
+      if (out.length && out[out.length - 1][0] === v) out[out.length - 1][1]++;
+      else out.push([v, 1]);
+    }
+    return out;
+  };
+  const parts = [runs(head), runs(rel ?? [])];
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const step = parts.flat().reduce((g, [, k]) => gcd(g, k), 0) || 1;
+  const vals = (r) => r.flatMap(([v, k]) => new Array(k / step).fill(v));
+  const body = [...vals(parts[0]), "#sus", sus, ...(rel ? ["#rel", ...vals(parts[1])] : [])];
+  return `(def ${name} (macro${step > 1 ? ` :step ${step}f` : ""} :vel+ [${body.join(" ")}]))`;
 }
 
 // ── What is in it ────────────────────────────────────────────────────────
@@ -584,15 +710,29 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       const end = n.end === Infinity ? endTick : Math.min(endTick, tickOf(n.end));
       if (tick >= endTick) break;
       const note = { tick, len: Math.max(1, end - tick), midi: Math.round(n.pitch), vel: n.vel, tieIn: n.slur };
+      const endT = n.end === Infinity ? parsed.totalSamples : n.end;
       let voice = null;
       if (onFm && n.voice) {
         const vk = voiceKey(n.voice);
-        if (!voices.has(vk.key)) voices.set(vk.key, { name: `voice-${String(++vn).padStart(2, "0")}`, ops: vk.ops, v: n.voice, base: vk.minTl });
+        // Its level: the loudest the carriers get, and the way there and
+        // after as a `:vel+` envelope (0.75 dB a TL step, 2 dB a :vel step).
+        const tls = levelFrames(n, n.lv0 ?? vk.minTl, endT);
+        const peak = Math.min(...tls);
+        note.env = tls.map((tl) => -Math.round(((tl - peak) * 0.75) / 2));
+        if (!voices.has(vk.key)) voices.set(vk.key, { name: `voice-${String(++vn).padStart(2, "0")}`, ops: vk.ops, v: n.voice, base: peak });
         const rec = voices.get(vk.key);
-        rec.base = Math.min(rec.base, vk.minTl);
+        rec.base = Math.min(rec.base, peak);
         note.voiceRec = rec;
-        note.minTl = vk.minTl;
-      } else if (onFm) {
+        note.minTl = peak;
+      } else if (!n.voice && n.levels.length) {
+        // A PSG note: its loudest level, and the envelope around it.
+        const lv = levelFrames(n, n.lv0, endT);
+        note.vel = Math.max(...lv);
+        note.env = lv.map((v) => v - note.vel);
+        note.t0 = n.t;
+        note.canRelease = true;
+      }
+      if (onFm && !n.voice) {
         voice = STAND_IN[ch.kind] ?? "wave-square";
         standIns.add(voice);
       }
@@ -611,6 +751,14 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     tracks.push({ ch, d, notes });
   }
 
+  // A note slurred on into the next keeps its whole envelope.
+  for (const tr of tracks)
+    tr.notes.forEach((n, i) => { if (tr.notes[i + 1]?.tieIn) n.canRelease = false; });
+  const envs = assignEnvelopes(tracks.flatMap((tr) => tr.notes));
+  // A released note is keyed off where its release starts.
+  for (const tr of tracks)
+    for (const n of tr.notes) if (n.relFrame != null) n.len = Math.max(1, Math.min(n.len, tickOf(n.t0 + n.relFrame * FRAME) - n.tick));
+
   // Lengths and slurs first: a gap under half a unit is held through
   // (legato), and a slur only stays one when its note runs into it.
   for (const tr of tracks) {
@@ -623,18 +771,24 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   }
   // Then levels and state, now that every voice's base is known. A slur
   // keeps the voice it slides on.
+  // A track with any envelope states one for every note — `(macro :vel
+  // none)` where there is none, since a macro stays until cleared.
   for (const tr of tracks) {
-    let cur = { voice: null, pan: null, mode: null };
+    let cur = { voice: null, env: null, pan: null, mode: null };
+    const anyEnv = tr.notes.some((n) => n.envName);
     for (const n of tr.notes) {
       if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - n.voiceRec.base) * 0.75) / 2)));
       const st = {
         voice: n.tieIn && cur.voice ? cur.voice : n.voiceRec ? n.voiceRec.name : n.stand,
+        env: n.envName ?? (anyEnv ? ENV_NONE : null),
         pan: n.pan ? `:pan ${n.pan}` : null,
         mode: n.mode ? `:mode ${n.mode}` : null,
       };
       n.pre = [];
-      for (const k of ["voice", "pan", "mode"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
-      n.state = [st.voice, st.pan, st.mode].filter(Boolean);
+      for (const k of ["voice", "env", "pan", "mode"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
+      // Nothing to clear before the first envelope.
+      if (cur.env == null && st.env === ENV_NONE) n.pre = n.pre.filter((t) => t !== ENV_NONE);
+      n.state = [st.voice, st.env, st.pan, st.mode].filter(Boolean);
       cur = st;
     }
   }
@@ -661,6 +815,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   if (title) header.push(`(def title ${qstr(title)})`);
   if (parsed.author) header.push(`(def author ${qstr(parsed.author)})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
+  if (envs.length) header.push("", ...envs);
   for (const rec of voices.values()) {
     const car = CARRIERS[rec.v.alg];
     const ops = rec.ops.map((o, s) => (car.includes(s) ? { ...o, tl: Math.min(127, o.tl + rec.base) } : o));
