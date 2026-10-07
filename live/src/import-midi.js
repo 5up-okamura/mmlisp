@@ -17,7 +17,7 @@
 // read frame by frame through each note and drawn as a `:pitch` macro — a
 // vibrato or a few lines, shared as defs (import-song.js assignBends); the
 // modulation wheel (CC1) is a vibrato on a fixed mapping: 127 → ±50 cents
-// at 5.5 Hz. The other controllers are skipped and reported. A loop marked the RPG Maker way (CC111) or with
+// at 5.5 Hz, coming in 12 frames (0.2 s) into the note. The other controllers are skipped and reported. A loop marked the RPG Maker way (CC111) or with
 // `loopStart` / `loopEnd` markers becomes `#top … (go top)`; without one the
 // whole song loops (unless the dialog says not to).
 //
@@ -479,6 +479,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   // modulation wheel's vibrato.
   const secOfBend = analysis.bends.map((list) => list.map(([t, c]) => [analysis.secOf(t), c]));
   const valueAt = (list, sec) => { let v = 0; for (const [t, x] of list) { if (t > sec) break; v = x; } return v; };
+  const MOD_WAIT = 12; // frames before the wheel's vibrato starts (0.2 s)
   const pitchOf = (n, note) => {
     const s0 = analysis.secOf(n.tick), s1 = analysis.secOf(n.end);
     const F = Math.max(1, Math.min(600, Math.round((s1 - s0) * 60)));
@@ -491,9 +492,10 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     note.midi += shift;
     const rel = c.map((v) => Math.round((v - shift * 100) / 5) * 5);
     if (Math.max(...rel) - Math.min(...rel) > 30) { note.bend = rel; return; }
-    // The wheel: at the note's start, or from where it comes in.
+    // The wheel: on at the note's start, a delayed vibrato (a held note
+    // starts to wobble, a short one never does); else from where it comes in.
     const mods = analysis.mods[n.ch].map(([t, v]) => [analysis.secOf(t), v]);
-    let m = valueAt(mods, s0), wait = 0;
+    let m = valueAt(mods, s0), wait = MOD_WAIT;
     if (!m) {
       const later = mods.find(([t, v]) => t > s0 && t < s1 && v > 0);
       if (later) { m = later[1]; wait = Math.round(((later[0] - s0) * 60) / 2) * 2; }

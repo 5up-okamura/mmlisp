@@ -1160,7 +1160,8 @@ does not fit. **Enter** imports with the defaults. A program names its
 holds notes. Pitch bend (its range from RPN 0) becomes a `:pitch` macro on
 the notes it moves — a vibrato or a few lines, shared as `vib-…` / `bend-NN`
 defs as a VGM's are (below); the modulation wheel (CC1) is a vibrato on a
-fixed mapping, 127 → ±50 cents at 5.5 Hz. Other controllers are skipped, and
+fixed mapping, 127 → ±50 cents at 5.5 Hz, coming in 12 frames (0.2 s) into
+the note — a held note starts to wobble, a short one stays still. Other controllers are skipped, and
 the log says how many. The music starts at the first note: a silent setup section before
 it, and the tempo it runs at, are left out. When the notes do not sit on the
 file's own beat (a recorded performance, a file converted from a log), the
