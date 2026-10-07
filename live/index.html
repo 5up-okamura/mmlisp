@@ -348,7 +348,7 @@
       <div class="rack-section">
         <div class="rack-title">Global</div>
         <div class="rack-body">
-        <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)">
+        <div class="param-grid" style="grid-template-columns: repeat(3, 1fr)">
           <div class="knob-wrap">
             <div class="knob-label">MASTER <span class="val" id="val-master">31</span></div>
             <input type="range" id="sl-master" min="0" max="31" value="31" oninput="onMaster(this)">
@@ -360,6 +360,15 @@
           <div class="knob-wrap">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
             <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onLfo(this)">
+          </div>
+        </div>
+        <!-- Song position: one pass of the song (intro + one loop), the loop
+             start marked; drag or tap to seek (initTimeBar). -->
+        <div class="knob-wrap time-wrap">
+          <div class="knob-label">TIME <span class="time-val" id="val-time">0:00.0</span></div>
+          <div class="time-track">
+            <input type="range" id="sl-time" min="0" max="1" step="0.01" value="0" disabled>
+            <div class="time-loop" id="time-loop" hidden></div>
           </div>
         </div>
         </div>
@@ -3403,7 +3412,16 @@
       hoverField,
       barField,
       EditorView.domEventHandlers(valueEditHandlers),
-      lineNumbers(),
+      // A tap on a line number plays from that line's first note — chased, so
+      // it sounds as the song reaches it; a line with no note does nothing.
+      lineNumbers({
+        domEventHandlers: {
+          click(view, block) {
+            onPlay(view.state.doc.lineAt(block.from).number, { exactLine: true });
+            return true;
+          },
+        },
+      }),
       codeFolding({
         preparePlaceholder: (state, range) => summarizeFoldHead(state, range),
         placeholderDOM: (_view, onclick, summary) => {
@@ -5790,7 +5808,10 @@
       }
     }
 
-    async function onPlay(fromLine = null) {
+    // fromLine: play from that line's first note (the nearest line above with
+    // one, unless `exactLine`, when a line with no note plays nothing);
+    // fromSec: from that far into the song. Both chase the run (IRPlayer.seek).
+    async function onPlay(fromLine = null, { fromSec = null, exactLine = false } = {}) {
       hideSharedPlay();
       const ok = await initAudio();
       if (!ok) return;
@@ -5800,6 +5821,7 @@
       // keeps the last good IR; only binary/URL presets with no editable source
       // (currentIrURL set, nothing compiled yet) are left to the loader below.
       if (_lastGoodIR || !currentIrURL) await refreshImportsAndCompile();
+      if (exactLine && !_lastSourceMap?.some((e) => e.line === fromLine)) return;
       if (player) {
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });
@@ -5855,6 +5877,7 @@
           const drv = player;
           player.setOnRunStart(() => applyPlayerChannelState(drv));
           player.play(audioCtx, { se });
+          measureTimeBar(player); // no seek on the reference driver: the bar is off
           // After play(): the driver's reset is a power-on, reseeding every value
           // slot from its def-val init, so the live slider values go in behind it
           // (the IR player seeds slots on load instead, hence the earlier call there).
@@ -5901,12 +5924,17 @@
         const irp = player;
         player.setOnRunStart(() => applyPlayerChannelState(irp));
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
-        // Seek to cursor line if provided and source map available
-        if (fromLine != null && _lastSourceMap && se == null) {
+        // From a point in the song, chased; an effect always plays from its top.
+        if (fromSec != null && se == null) {
+          player.seek(audioCtx, { sec: fromSec });
+        } else if (fromLine != null && _lastSourceMap && se == null) {
           player.playFromLine(audioCtx, fromLine, _lastSourceMap);
         } else {
           player.play(audioCtx);
         }
+        _paused = false;
+        _vizFrozen = null;
+        measureTimeBar(player);
         setPlayIcon(true);
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
@@ -5932,6 +5960,7 @@
       player?.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
+      showTime(0);
       log('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
       setPlayIcon(false);
@@ -6176,14 +6205,14 @@
     // Keyboard shortcuts: Cmd+Enter = play/pause toggle, Cmd+. = full stop
     // -----------------------------------------------------------------------
     let _paused = false;
-    let _pausedTick = 0;
+    let _pausedSec = 0; // where pause left the song (IRPlayer.positionSec)
     let _vizFrozen = null; // per-track frozen clocks while paused (piano roll holds in place)
 
     function onPause() {
       if (!player || !player.isPlaying()) return;
-      // The MMLispDRV reference has no tick-seek; pause degrades to stop.
-      if (typeof player.currentTick !== 'function') { onStop(); return; }
-      _pausedTick = player.currentTick();
+      // The MMLispDRV reference cannot seek; pause degrades to stop.
+      if (!(player instanceof IRPlayer)) { onStop(); return; }
+      _pausedSec = player.positionSec();
       // Freeze each track's playhead so the piano roll stops in place (not reset).
       _vizFrozen = new Map(_vizNotes.map((cell) => [cell.trackIndex, player.trackClock(cell.trackIndex)]));
       player.stop();
@@ -6196,7 +6225,9 @@
 
     function onResume() {
       if (!player || !_paused) return;
-      player.playFromTick(audioCtx, _pausedTick);
+      // Resume is a seek back to where pause left it: the song's clock and state
+      // pick up from there.
+      player.seek(audioCtx, { sec: _pausedSec });
       _paused = false;
       _vizFrozen = null;
       log('Resumed', 'info');
@@ -6227,7 +6258,7 @@
       } else if (e.key === '.') {
         e.preventDefault();
         _paused = false;
-        _pausedTick = 0;
+        _pausedSec = 0;
         onStop();
       }
     });
@@ -8719,6 +8750,7 @@
       _fmLiveLast = ts;
       if (!player) return;
       updateTempoDisplay(player.getBpm());
+      if (player instanceof IRPlayer && player.isPlaying()) showTime(player.positionSec());
       updateChannelVu();
       syncLfoSlider();
       if (_fmPanelDragging || !isFmChannel(selectedCh) || getFmParamMode() !== 'channel') return;
@@ -8727,6 +8759,96 @@
     function startFmLiveLoop() {
       if (_fmLiveRaf == null) _fmLiveRaf = requestAnimationFrame(liveTick);
     }
+
+    // TIME (Global): where the song is. The bar spans one pass — the intro and
+    // one loop, as the VGM export bounds it (captureRegisterLog) — with the
+    // loop start marked; past the end the position wraps to the loop start.
+    // Dragging or tapping seeks (IRPlayer.seek: chased, so the point sounds as
+    // the song left it), and a drag re-seeks every TIME_SCRUB_MS so the point
+    // can be found by ear. Stopped, a seek starts playback there. The MMLispDRV
+    // reference cannot seek: the bar is off while it plays.
+    const TIME_SCRUB_MS = 120;
+    let _timeSpan = null;      // { ir, loopStart, end } of the IR the bar measures
+    let _timeDragging = false;
+    let _timeScrubAt = 0;
+    let _timeStarting = false; // a seek from stopped is starting playback
+
+    function fmtTime(sec) {
+      const m = Math.floor(sec / 60), s = sec - m * 60;
+      return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+    }
+    function placeLoopMark() {
+      const mark = document.getElementById('time-loop');
+      const sl = document.getElementById('sl-time');
+      if (!_timeSpan || !(_timeSpan.loopStart > 0) || !(_timeSpan.end > 0)) { mark.hidden = true; return; }
+      const thumb = sl.offsetHeight - 3; // the thumb is 3px shy of the track (style.css)
+      mark.hidden = false;
+      mark.style.left = `${thumb / 2 + (_timeSpan.loopStart / _timeSpan.end) * Math.max(0, sl.offsetWidth - thumb)}px`;
+    }
+    // Measure the playing IR once (a probe player, so the run is untouched).
+    function measureTimeBar(p) {
+      const sl = document.getElementById('sl-time');
+      const ir = p?._ir;
+      sl.disabled = !(p instanceof IRPlayer) || !ir;
+      if (sl.disabled) { _timeSpan = null; placeLoopMark(); showTime(0); return; }
+      if (_timeSpan?.ir !== ir) {
+        let loopStart = null, end = 0;
+        try {
+          const probe = new IRPlayer(() => {});
+          probe.loadJSON(ir);
+          const cap = probe.captureRegisterLog();
+          loopStart = cap.loopStartSec;
+          end = cap.endSec;
+        } catch (_) { /* unmeasured: the bar shows time but has no length */ }
+        _timeSpan = { ir, loopStart, end };
+        sl.max = String(Math.max(0.01, end));
+      }
+      placeLoopMark();
+    }
+    // The position as the bar shows it: wrapped into the loop once past one pass.
+    function showTime(pos) {
+      const span = _timeSpan;
+      if (span?.end > 0 && pos > span.end) {
+        pos = span.loopStart != null && span.end > span.loopStart
+          ? span.loopStart + ((pos - span.loopStart) % (span.end - span.loopStart))
+          : span.end;
+      }
+      if (!_timeDragging) document.getElementById('sl-time').value = String(pos);
+      document.getElementById('val-time').textContent =
+        span?.end > 0 ? `${fmtTime(pos)} / ${fmtTime(span.end)}` : fmtTime(pos);
+    }
+    async function seekTo(sec) {
+      if (player instanceof IRPlayer && (player.isPlaying() || _paused) && player._ir) {
+        player.stop();
+        workletNode?.port.postMessage({ type: 'flush' });
+        player.seek(audioCtx, { sec });
+        _paused = false;
+        _vizFrozen = null;
+        setPlayIcon(true);
+        document.getElementById('btnPlay').classList.add('active');
+        startFmLiveLoop();
+      } else if (!_timeStarting) {
+        _timeStarting = true;
+        try { await onPlay(null, { fromSec: sec }); } finally { _timeStarting = false; }
+      }
+    }
+    function initTimeBar() {
+      const sl = document.getElementById('sl-time');
+      sl.disabled = false; // until a reference-driver run turns it off
+      const seekHere = () => seekTo(Number(sl.value));
+      sl.addEventListener('input', () => {
+        _timeDragging = true;
+        document.getElementById('val-time').textContent = fmtTime(Number(sl.value))
+          + (_timeSpan?.end > 0 ? ` / ${fmtTime(_timeSpan.end)}` : '');
+        const now = performance.now();
+        if (now - _timeScrubAt < TIME_SCRUB_MS) return;
+        _timeScrubAt = now;
+        seekHere();
+      });
+      sl.addEventListener('change', () => { _timeDragging = false; _timeScrubAt = 0; seekHere(); });
+      window.addEventListener('resize', placeLoopMark);
+    }
+    initTimeBar();
     function stopFmLiveLoop() {
       if (_fmLiveRaf != null) { cancelAnimationFrame(_fmLiveRaf); _fmLiveRaf = null; }
     }
@@ -8788,7 +8910,10 @@
     const endRangeTouch = (e) => {
       const t = _rangeTouch;
       if (t?.id !== e.pointerId) return;
-      if (t.claimed) t.input.dispatchEvent(new Event('change', { bubbles: true }));
+      // TIME also takes a tap, as a seek bar does; the others move only on a
+      // sideways drag, so a touch meant as a scroll never changes a value.
+      if (!t.claimed && t.input.id === 'sl-time' && e.type === 'pointerup') setRangeFromX(t.input, e.clientX);
+      if (t.claimed || t.input.id === 'sl-time') t.input.dispatchEvent(new Event('change', { bubbles: true }));
       _rangeTouch = null;
     };
     document.addEventListener('pointerup', endRangeTouch);
