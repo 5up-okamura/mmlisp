@@ -820,8 +820,10 @@
     // leaves it, the view glides to put them at the top of the band — so a
     // looping pattern holds still, a melody turns the page, and the view
     // travels at section changes. Highlights spread wider than the band: the
-    // largest group that fits is followed, the lowest track winning a tie. Scrolling, clicking or typing in the editor hands the view
-    // back for FOLLOW_HOLD_MS. The on/off pref is loaded with the others.
+    // view holds while any of them is on screen above the bottom band, and only
+    // then turns to the largest group that fits, the lowest track winning a
+    // tie. Scrolling, clicking or typing in the editor hands the view back for
+    // FOLLOW_HOLD_MS. The on/off pref is loaded with the others.
     const FOLLOW_BAND = 0.2;
     const FOLLOW_GLIDE_MS = 700;
     const FOLLOW_HOLD_MS = 4000;
@@ -868,6 +870,9 @@
       // Judge against where a glide in flight is heading, not where it is.
       const at = _followAnim ? _followAnim.to : sc.scrollTop;
       if (best.top >= at + band && best.bottom <= at + h - band) return;
+      // A highlight already on screen, and not yet at the bottom band, is
+      // being followed: do not leave it for a larger group elsewhere.
+      if (spans.some((sp) => sp.top + offset >= at && sp.bottom + offset <= at + h - band)) return;
       const max = sc.scrollHeight - h;
       // Page-turn: the group lands at the top of the band, leaving the rest of
       // the view for what comes next rather than for what just played.
