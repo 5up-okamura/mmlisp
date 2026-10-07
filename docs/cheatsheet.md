@@ -62,7 +62,7 @@ channel name they layer, lower number winning (§1).
 | `c6t` `c16f` `c125ms` | ticks (quarter = 96), frames (1/60 s), milliseconds |
 | `>` `<` `o+2` `o-1` | octave up / down / by N — sticky |
 | `v+2` `v-1` | velocity up / down — sticky |
-| `c ~ c` | tie: one attack, held |
+| `c ~ c` | tie: one attack, held (PCM too) |
 | `c ~ e` | slur: moves pitch without a new attack (FM/PSG) |
 | `(t c e g)` | tuplet: the three share one `:len` slot |
 | <code>&#124;</code> | bar marker, end of each bar: checks lengths, plays nothing (§18) |

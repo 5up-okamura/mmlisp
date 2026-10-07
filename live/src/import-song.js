@@ -81,8 +81,8 @@ export function writeBody(notes, opts) {
   for (const m of marks) bounds.add(m.tick);
   if (loopTick != null) bounds.add(loopTick);
   const sortedBounds = [...bounds].filter((b) => b > 0 && b <= endTick).sort((a, b) => a - b);
-  // A PCM track takes no ties — the compiler strikes the sample again — so
-  // a note there ends at the next bound (a shot plays out whatever its length).
+  // A PCM track's notes are shots, which play out whatever their length, so
+  // a note there ends at the next bound rather than tie across it.
   if (opts.noTie) {
     notes = notes.map((n) => {
       const b = sortedBounds.find((x) => x > n.tick) ?? endTick;
@@ -482,7 +482,7 @@ function unitsOf(tr, bars, endTick, loopTick) {
       const s = Math.max(n.tick, a);
       const e = Math.min(n.tick + n.len, b);
       if (e <= s) continue;
-      // No ties on PCM (writeBody noTie): what runs over the cut is let go.
+      // No ties on PCM (writeBody noTie): a shot's tail over the cut is let go.
       if (n.tick < a && tr.channel.startsWith("pcm")) continue;
       // Carried over the cut: tied on — except into the loop, which starts over.
       const tieIn = n.tick < a ? a !== loopTick : !!n.tieIn && (n.tick > a || a !== loopTick);

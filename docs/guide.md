@@ -1202,8 +1202,8 @@ comes back elsewhere becomes a `(def fm1-a …)` named in place. Bars match when
 they play the same — velocity compared at its 16 steps. Each loop body and
 def restates the voice, octave and velocity it starts with. Where the file
 gives no bars (a VGM, a MIDI file timed by its notes), they are placed — bar
-length and pickup — where the song folds most. On a PCM track a hit is never
-tied over a bar line: the compiler strikes a tied sample again.
+length and pickup — where the song folds most. On a PCM track a hit is cut at
+the bar line rather than tied over it: a shot plays out whatever its length.
 
 Several files at once are fine. Everything except opening a document appends at
 the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press

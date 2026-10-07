@@ -697,7 +697,23 @@ function emitNoteForTrack(
   // Different pitch → legato (a NOTE_ON that updates the frequency without
   // re-keying), applied on the standard FM/PSG note path below.
   let legato = false;
-  if (trackState.pendingLegato) {
+  if (trackState.pendingLegato && trackState.isPcmTrack) {
+    // A tie on a sample holds the note: the same sample at the same pitch is
+    // waited out as a TIE, not struck again. Anything else (a slur — PCM has
+    // no pitch moves — or another sample) is a new hit.
+    trackState.pendingLegato = false;
+    const h = trackState.pcmTiedHead;
+    const fullPitch = noteName + trackState.defaultOct;
+    if (h && h.sample === trackState.pcmSampleName && pitchToMidi(h.pitch) === pitchToMidi(fullPitch)) {
+      const tie = { tick: trackState.tick, cmd: "TIE", args: { length: lengthTicks }, src };
+      events.push(tie);
+      h.segs.push(tie);
+      h.total += lengthTicks;
+      placePcmTieOff(h, events);
+      trackState.tick += lengthTicks;
+      return;
+    }
+  } else if (trackState.pendingLegato) {
     trackState.pendingLegato = false;
     const cmpPitch = noteName + trackState.defaultOct;
     const prev = trackState.lastNotePitch;
@@ -781,14 +797,21 @@ function emitNoteForTrack(
     // The note's key-off: a loop's release, and where a shot's macros take
     // theirs — a shot with none has nothing that listens, and at full gate the
     // next note or rest keys it off anyway.
+    let off = null;
     if (gateTicks > 0 && (mode === "loop" || (hasMacros && gateTicks < lengthTicks))) {
-      events.push({
+      off = {
         tick: trackState.tick + gateTicks,
         cmd: "PCM_NOTE_OFF",
         args: { sample: trackState.pcmSampleName, mode },
         src,
-      });
+      };
+      events.push(off);
     }
+    // The head a `~` ties on to (placePcmTieOff).
+    trackState.pcmTiedHead = {
+      ev: pcmEv, off, segs: [pcmEv], total: lengthTicks, gateSpec: trackState.defaultGate,
+      sample: trackState.pcmSampleName, pitch: fullPitch, loop: mode === "loop", hasMacros,
+    };
     trackState.tick += lengthTicks;
     return;
   }
@@ -991,6 +1014,48 @@ function emitGlideIfNeeded(trackState, newPitch, events, glideTicks, nodeSrc) {
 /**
  * v0.4: Update lastNotePitch after emitting NOTE_ON.
  */
+// A PCM note tied on (`c ~ c`): its key-off moves to the gate of the whole
+// tied length, as an FM note's does. The off is an event of its own, so it
+// goes where that gate lands — in the head (the head's own gate, which ends
+// its duration there), or inside a TIE, which is split around it.
+function placePcmTieOff(h, events) {
+  if (h.off) {
+    const at = events.indexOf(h.off);
+    if (at >= 0) events.splice(at, 1);
+    h.off = null;
+  }
+  const head = h.ev;
+  const gate = resolveGateTicks(h.gateSpec, h.total);
+  delete head.args.gate;
+  if (!(gate > 0 && (h.loop || (h.hasMacros && gate < h.total)))) return;
+  const offTick = head.tick + gate;
+  const off = { tick: offTick, cmd: "PCM_NOTE_OFF", args: { sample: h.sample, mode: h.loop ? "loop" : head.args.mode }, src: head.src };
+  h.off = off;
+  if (gate < head.args.length) {
+    head.args.gate = gate;
+    events.splice(events.indexOf(head) + 1, 0, off);
+    return;
+  }
+  for (let k = 1; k < h.segs.length; k++) {
+    const seg = h.segs[k];
+    const end = seg.tick + seg.args.length;
+    if (offTick > end || (offTick === end && k < h.segs.length - 1)) continue;
+    const at = events.indexOf(seg);
+    if (offTick <= seg.tick) {
+      events.splice(at, 0, off);
+    } else if (offTick >= end) {
+      events.splice(at + 1, 0, off);
+    } else {
+      // Inside this TIE: wait to the off, release, wait out the rest.
+      const rest = { tick: offTick, cmd: "TIE", args: { length: end - offTick }, src: seg.src };
+      seg.args.length = offTick - seg.tick;
+      events.splice(at + 1, 0, off, rest);
+      h.segs.splice(k + 1, 0, rest);
+    }
+    return;
+  }
+}
+
 function updateLastNotePitch(trackState, pitch) {
   trackState.lastNotePitch = pitch;
 }
@@ -3335,6 +3400,7 @@ function compileChannelBody(
         });
         trackState.tick += ticks;
         trackState.tiedHead = null; // a rest ends the tied group
+        trackState.pcmTiedHead = null;
         i++;
         continue;
       }

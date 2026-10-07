@@ -143,6 +143,9 @@ note keeps its own length, so `~` takes none.
 
 - **Same pitch → tie.** `c ~ c` (or `g8 ~ g8`) extends the first note by the
   second's length — one attack, held longer. Equivalent to a longer length token.
+  On a PCM track too: the same sample at the same pitch is not struck again —
+  a shot plays on, a `:mode loop` note keeps looping and releases at the gate
+  of the whole tied length. A slur, or another sample, strikes anew.
 - **Different pitch → slur (legato).** `c ~ e` moves the frequency to `e`
   **without re-keying** — the FM envelope (or the PSG tone) carries over from
   `c`, no new attack. Chains: `c ~ d ~ e` is one attack gliding through all three.
