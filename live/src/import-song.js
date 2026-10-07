@@ -502,7 +502,7 @@ function stateChange(from, to) {
 }
 
 /** Cut a track into units at the bar ends and the loop point. */
-function unitsOf(tr, bars, endTick, loopTick) {
+function unitsOf(tr, bars, endTick, loopTick, intern = new Map()) {
   let running = tr.head ?? [];
   const notes = tr.notes.map((n) => {
     if (n.state) running = n.state;
@@ -530,8 +530,11 @@ function unitsOf(tr, bars, endTick, loopTick) {
     }
     const marks = (tr.marks ?? []).filter((m) => m.tick >= a && m.tick < b).map((m) => ({ ...m, tick: m.tick - a }));
     const tieHead = pieces.length > 0 && pieces[0].tick === 0 && pieces[0].tieIn;
-    const key = JSON.stringify([b - a, pieces.map((p) => [p.tick, p.len, p.midi, p.vel, p.st.join(" "), p.tieIn ? 1 : 0]),
+    // What it plays, as a short id (runs of them are compared and joined).
+    const full = JSON.stringify([b - a, pieces.map((p) => [p.tick, p.len, p.midi, p.vel, p.st.join(" "), p.tieIn ? 1 : 0]),
       marks.map((m) => [m.tick, m.tokens.join(" ")])]);
+    if (!intern.has(full)) intern.set(full, `u${intern.size}`);
+    const key = intern.get(full);
     units.push({ k: "u", start: a, len: b - a, pieces, marks, key, size: 1, tieHead });
     a = b;
   }
@@ -863,7 +866,7 @@ export function emitStructured(song) {
 
 // A wobble: swings around a centre, at least three (a cycle and a half),
 // each a like length — after a wait that may hold the note still first.
-export function vibratoOf(c) {
+function vibratoOf(c) {
   const sorted = [...c].sort((a, b) => a - b);
   const centre = sorted[sorted.length >> 1];
   const d = c.map((v) => v - centre);
@@ -900,7 +903,7 @@ export function vibratoOf(c) {
 
 // A few straight lines through the pitch: the fewest (up to six) within
 // 15 cents of it, else within more.
-export function linesOf(c) {
+function linesOf(c) {
   for (const tol of [15, 25, 40, 60, 100]) {
     const pts = simplify(c, tol);
     if (pts.length <= 7) return { kind: "lines", pts: pts.map((f) => [f, Math.round(c[f] / 5) * 5]) };
@@ -981,7 +984,7 @@ export function assignBends(notes) {
 }
 
 /** A bend as a `:pitch` macro spec (what follows `(macro :pitch `). */
-export function bendSpec(b) {
+function bendSpec(b) {
   if (b.kind === "vib")
     return `(sin ${b.centre - b.depth}..${b.centre + b.depth} :len ${b.period}f${b.wait ? ` :wait ${b.wait}f` : ""})`;
   if (b.kind === "steps") return `[${b.values.join(" ")}]`;

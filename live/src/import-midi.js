@@ -489,7 +489,14 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   // spends the most frames at, a move of 30 cents or less dropped — else the
   // modulation wheel's vibrato.
   const secOfBend = analysis.bends.map((list) => list.map(([t, c]) => [analysis.secOf(t), c]));
-  const valueAt = (list, sec) => { let v = 0; for (const [t, x] of list) { if (t > sec) break; v = x; } return v; };
+  const secOfMod = analysis.mods.map((list) => list.map(([t, v]) => [analysis.secOf(t), v]));
+  // The value in force at `sec` (the lists are in time order).
+  const valueAt = (list, sec) => {
+    let lo = 0, hi = list.length - 1;
+    if (hi < 0 || list[0][0] > sec) return 0;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (list[mid][0] <= sec) lo = mid; else hi = mid - 1; }
+    return list[lo][1];
+  };
   const MOD_WAIT = 12; // frames before the wheel's vibrato starts (0.2 s)
   const pitchOf = (n, note) => {
     const s0 = analysis.secOf(n.tick), s1 = analysis.secOf(n.end);
@@ -505,7 +512,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     if (Math.max(...rel) - Math.min(...rel) > 30) { note.bend = rel; return; }
     // The wheel: on at the note's start, a delayed vibrato (a held note
     // starts to wobble, a short one never does); else from where it comes in.
-    const mods = analysis.mods[n.ch].map(([t, v]) => [analysis.secOf(t), v]);
+    const mods = secOfMod[n.ch];
     let m = valueAt(mods, s0), wait = MOD_WAIT;
     if (!m) {
       const later = mods.find(([t, v]) => t > s0 && t < s1 && v > 0);

@@ -603,7 +603,7 @@ function notesOf(events, followPitch, endT, tune = 0) {
  * part of the chip. In semitones, 0 when within 15 cents. Each part is taken
  * back onto the grid.
  */
-export function tuningOf(parsed) {
+function tuningOf(parsed) {
   const by = new Map();
   for (const [key, events] of parsed.events) {
     const chip = group(key);
