@@ -883,6 +883,8 @@ function emitNoteForTrack(
   // Legato slur: frequency changes, the operator is not re-keyed (§ tie/slur).
   // FM3-op notes have their own per-operator keying, so legato is FM/PSG only.
   if (legato && !trackState.isFm3OpTrack) noteEv.args.legato = true;
+  // The voice the note plays, for a def-mod :voice (a pcm note names its sample).
+  if (trackState.voiceName) noteEv._voice = trackState.voiceName;
   stampDelay(noteEv, trackState);
   events.push(noteEv);
   // Head of a (possibly) tied group: a following TIE re-resolves a relative gate
@@ -1516,7 +1518,7 @@ function expandTrackDelays(track) {
       }
       if (dv === 15) delete args.vel;
       else args.vel = dv;
-      echoes.push({ tick, cmd: ev.cmd, args, src: ev.src });
+      echoes.push({ tick, cmd: ev.cmd, args, src: ev.src, _voice: ev._voice });
     }
   }
   for (const e of events) delete e._delay;
@@ -1619,6 +1621,122 @@ function flattenPriorityLayers(head, layers, diagnostics) {
     .filter((ev) => !drop.has(ev) && ev.cmd !== "REST")
     .sort((a, b) => a.tick - b.tick);
   return base;
+}
+
+// (def-mod [:ch c|[c…]] [:voice v|[v…]] action…) — a score-wide rewrite of
+// the notes it selects (language.md §9.4): `:keyon off` turns them into rests,
+// `:vel` / `:vel+` / `:vel*` move their velocity (clamped to 0–15). Read after
+// the defs are expanded, so a def can name a list of targets.
+const MOD_VEL_OPS = { ":vel": "=", ":vel+": "+", ":vel*": "*" };
+function parseModDef(root, channelNames, typedDefs, sampleDefs, diagnostics) {
+  const items = root.items.filter((n) => n.kind !== "comment");
+  const src = nodeSrc(root);
+  const err = (code, msg, at = src) => pushDiag(diagnostics, "error", code, `def-mod: ${msg}`, at, "global");
+  const mod = { ch: null, voice: null, keyonOff: false, vel: [] };
+  let ok = true;
+  for (let k = 1; k < items.length; k += 2) {
+    const key = atomValue(items[k]);
+    const valueNode = items[k + 1];
+    if (!valueNode) {
+      err("E_MOD_OPTION", `${key ?? "a value"} needs a value`, nodeSrc(items[k]));
+      ok = false;
+      break;
+    }
+    if (key === ":ch" || key === ":voice") {
+      const names = valueNode.kind === "list" && valueNode.bracket === "[]"
+        ? valueNode.items.filter((n) => n.kind !== "comment")
+        : [valueNode];
+      const set = (key === ":ch" ? mod.ch : mod.voice) ?? new Set();
+      for (const n of names) {
+        const name = n.kind === "atom" ? n.value : null;
+        const known = key === ":ch"
+          ? channelNames.includes(name)
+          : typedDefs.get(name)?.tag === "voice" || sampleDefs.has(name);
+        if (!known) {
+          err("E_MOD_TARGET", key === ":ch"
+            ? `${name ?? "a list"} is not a channel name`
+            : `${name ?? "a list"} is not a def-fm voice or a def-pcm sample`, nodeSrc(n));
+          ok = false;
+          continue;
+        }
+        set.add(name);
+      }
+      if (key === ":ch") mod.ch = set;
+      else mod.voice = set;
+    } else if (key === ":keyon") {
+      if (atomValue(valueNode) === "off") mod.keyonOff = true;
+      else {
+        err("E_MOD_OPTION", `:keyon takes off, not ${atomValue(valueNode) ?? "a list"}`, nodeSrc(valueNode));
+        ok = false;
+      }
+    } else if (MOD_VEL_OPS[key]) {
+      const value = parseNumberLike(atomValue(valueNode));
+      if (value === null) {
+        err("E_MOD_OPTION", `${key} takes a number, not ${atomValue(valueNode) ?? "a list"}`, nodeSrc(valueNode));
+        ok = false;
+      } else mod.vel.push({ op: MOD_VEL_OPS[key], value });
+    } else {
+      err("E_MOD_OPTION", `unknown option ${key ?? describeNodeToken(items[k])} (takes :ch :voice :keyon :vel :vel+ :vel*)`,
+        nodeSrc(items[k]));
+      ok = false;
+    }
+  }
+  if (ok && !mod.keyonOff && mod.vel.length === 0) {
+    err("E_MOD_OPTION", "nothing to do: give :keyon off or :vel / :vel+ / :vel*");
+    ok = false;
+  }
+  return ok ? mod : null;
+}
+
+// A note's velocity — `vel` and every value of its vel macro — through a
+// mod's ops in written order, each clamped. `:vel V` sets the note's vel and
+// moves its envelope by the same step, so the shape survives.
+function applyModVel(args, ops) {
+  let v = args.vel ?? 15;
+  let macro = args.velMacro;
+  for (const { op, value } of ops) {
+    const next = op === "+" ? v + value : op === "*" ? v * value : value;
+    if (macro)
+      macro = mapMacroValues(macro, (x) =>
+        clampForTarget("VEL", op === "*" ? x * value : x + (op === "+" ? value : value - v)));
+    v = clampForTarget("VEL", next);
+  }
+  if (v === 15) delete args.vel;
+  else args.vel = v;
+  if (macro) args.velMacro = macro;
+}
+
+// Apply the score's def-mods to one layer's events (head = its channel name).
+// Runs after the delay expansion, so echoes are notes like any other, and
+// before the :prio merge, so a removed note leaves its time to a lower layer.
+function applyMods(events, head, mods) {
+  const mine = mods.filter((m) => !m.ch || m.ch.has(head));
+  if (mine.length === 0) return events;
+  const voiceOf = (ev) => (ev.cmd.startsWith("PCM_") ? ev.args.sample : ev._voice ?? null);
+  const hits = (ev) => mine.filter((m) => !m.voice || m.voice.has(voiceOf(ev)));
+  const out = [];
+  let dropped = false; // the last note was removed: its ties go with it
+  for (const ev of events) {
+    if (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") {
+      const ms = hits(ev);
+      if (ms.some((m) => m.keyonOff)) {
+        out.push({ tick: ev.tick, cmd: "REST", args: { length: ev.args.length }, src: ev.src });
+        dropped = true;
+        continue;
+      }
+      // A slur from a removed note has nothing to slur from.
+      if (dropped) delete ev.args.legato;
+      dropped = false;
+      for (const m of ms) if (m.vel.length) applyModVel(ev.args, m.vel);
+    } else if (ev.cmd === "TIE" && dropped) {
+      out.push({ tick: ev.tick, cmd: "REST", args: { length: ev.args.length }, src: ev.src });
+      continue;
+    } else if (ev.cmd === "PCM_NOTE_OFF" && hits(ev).some((m) => m.keyonOff)) {
+      continue;
+    }
+    out.push(ev);
+  }
+  return out;
 }
 
 // `:fx [(name …) (name …)]` → the IR's resolved chain (docs/ir.md §2.2):
@@ -3460,7 +3578,9 @@ function compileChannelBody(
 
       // Bare identifier: typed def reference (voice/patch switch)
       if (typedDefs?.has(val)) {
-        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node), trackState);
+        if (emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node), trackState))
+          trackState.voiceName = val; // what a def-mod :voice matches
+
         i++;
         continue;
       }
@@ -4179,6 +4299,7 @@ function collectDefs(roots, diagnostics) {
   // v0.6: (def title/author "…"); D10: (def pcm-voices N) picks the engine image.
   const fileMeta = { title: null, author: null, pcmVoices: null };
   const imports = []; // v0.6 Phase 2: (import "path") — [{path, src}]
+  const mods = []; // (def-mod …) forms, read once the defs are known (parseModDef)
   const remaining = [];
 
   for (const root of roots) {
@@ -4308,6 +4429,11 @@ function collectDefs(roots, diagnostics) {
           reversed,
           unit,
         });
+      continue;
+    }
+
+    if (head === "def-mod") {
+      mods.push(root);
       continue;
     }
 
@@ -4445,7 +4571,7 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
-  return { defs, paramDefs, typedDefs, sampleDefs, seDefs, vals, fileMeta, imports, remaining };
+  return { defs, paramDefs, typedDefs, sampleDefs, seDefs, vals, fileMeta, imports, mods, remaining };
 }
 
 // The channels a sound effect may play on — every one a song may. A part on
@@ -4614,6 +4740,16 @@ function warnImportIgnored(bundle, importPath, diagnostics, importSrc) {
       "warning",
       "W_IMPORT_IGNORED",
       `imported file '${importPath}' declares def-val slots; import folds defs only, so they are ignored`,
+      importSrc,
+      null,
+    );
+  }
+  if (bundle.mods.length > 0) {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_IMPORT_IGNORED",
+      `imported file '${importPath}' contains def-mod forms; a modifier is the importing score's own, so they are ignored`,
       importSrc,
       null,
     );
@@ -4940,6 +5076,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     vals,
     fileMeta,
     imports,
+    mods: modForms,
     remaining,
   } = collectDefs(parsed, diagnostics);
   // v0.6 Phase 2: fold imported defs in *under* this file's own — imports are
@@ -5347,8 +5484,14 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
 
   // Expand :delay echoes per prio-layer (each layer is its own linear timeline),
   // then merge layers that share a physical channel (same head) into one track.
+  // def-mod: after the echoes exist, before the layers merge (applyMods).
+  const mods = expandRoots(modForms, defs, paramDefs, diagnostics)
+    .map((root) => parseModDef(root, CHANNEL_NAMES, typedDefs, sampleDefs, diagnostics))
+    .filter(Boolean);
   for (const key of trackOrder) {
-    expandTrackDelays(trackByKey.get(key).trackData);
+    const { trackData, head } = trackByKey.get(key);
+    expandTrackDelays(trackData);
+    if (mods.length) trackData.events = applyMods(trackData.events, head, mods);
   }
 
   const layersByHead = new Map();
@@ -5417,6 +5560,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
 
   tracks.forEach((t, idx) => {
     t.id = idx;
+    for (const ev of t.events) delete ev._voice;
   });
 
   for (const track of tracks) convertCountedJumps(track);

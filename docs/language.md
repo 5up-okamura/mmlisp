@@ -19,6 +19,7 @@ source file is a sequence of top-level forms, in source order:
 | ----------------- | ------------------------------------------------ |
 | `(def name …)`    | Named definition (snippet, voice, sample, macro) |
 | `(def-val name …)`| Runtime value slot declaration                   |
+| `(def-mod …)`     | Score-wide note modifier (§9.4)                  |
 | `(import "…")`    | Fold another file's defs in at compile time (§9.2) |
 | `(channel …)`     | Track form — any list whose head is a channel name (§2) |
 
@@ -696,7 +697,7 @@ inline-writable notation, expanded where its name is written. `def-fm` and
 `def-pcm` declare **named data** (an FM voice, a PCM sample), as `def-val`
 declares a value slot (§8); a bare reference in a channel body applies them.
 `def-se` declares a **sound effect** — tracks the game starts, not the song
-(§9.3).
+(§9.3). `def-mod` rewrites the notes it selects across the whole score (§9.4).
 Definitions are top-level forms and interleave freely
 with track forms (§1). `title` and `author` are reserved for file metadata
 when given a string, and `pcm-voices` for the PCM voice count (§1). A def (or parametric def) named after an eval builtin
@@ -722,6 +723,7 @@ stream bytes is shared by the encoder's CALL/RET pass (opcodes.md §5.2). A `let
 | `(def-pcm name :file "…" …)`          | PCM sample (§16)                        |
 | `(def-pcm name base …)`               | PCM sample extending another sample (§16) |
 | `(def-se name [:prio N] [:tempo T] (ch …)…)` | Sound effect: parts the game plays by number (§9.3) |
+| `(def-mod [:ch …] [:voice …] action…)` | Score-wide modifier: silence or re-level the notes it selects (§9.4) |
 | `(def name (macro :target spec …))`   | A snippet holding a macro form — written alone it applies the macro, and inside another `(macro name …)` it applies first, with its own `:step` |
 
 A `def-fm` holds the channel's `:alg :fb :ams :fms`, the operator params
@@ -924,6 +926,54 @@ A game's sound effects are written once, as defs, and every song carries them.
   refuses it.
 - **Audition.** In the live editor, Play with the cursor inside a def-se plays
   that effect alone.
+
+### 9.4 `def-mod` — score-wide modifiers
+
+A `def-mod` changes every note it selects, wherever the note is written —
+without touching the tracks. It is for trying things out: silence a part to
+play it yourself on the MIDI keyboard over the rest of the song, or move the
+hi-hats of an imported MIDI file down together.
+
+```lisp
+(def-mod :ch fm2 :keyon off)                        ; play fm2 yourself
+(def-mod :ch [pcm1 pcm2] :keyon off)
+(def-mod :voice [hat hat-open hat-pedal] :vel+ -3)
+(def-mod :voice [hat hat-open] :vel* 0.5 :vel+ 7)   ; the hats' range → 7–14.5
+(def hats [hat hat-open hat-pedal])
+(def-mod :voice hats :vel 11)                       ; a def can name the list
+```
+
+A def-mod has no name — a comment says what it is for, and deleting or
+commenting it out turns it off.
+
+- **Selecting.** `:ch` names channels (`fm1`…`pcm3`, `fm3-1`, …, as the track
+  forms are headed), `:voice` the `def-fm` voices and `def-pcm` samples the
+  notes play. Each takes one name or a `[…]` list (any one of them); given
+  both, a note must match both. Neither selects every note. A voice matches
+  the notes played while the track has that name bound — not the voices that
+  extend it. A name that is neither is `E_MOD_TARGET`.
+- **`:keyon off`** turns each selected note into a rest of its length, with
+  its ties. Everything else on the track stays — voice changes, `:vol`, pan,
+  sweeps, loops, labels, and the song-wide `:tempo` / `:master` it carries — so
+  the channel keeps following the part, and a key played on it in the live
+  editor sounds in the part's voice. A track left with no notes is a free
+  channel to the live keyboard, which takes it first when it is the target.
+- **`:vel` / `:vel+` / `:vel*`** set, add to or scale each selected note's
+  velocity, in the order written, and clamp the result to 0–15 without a
+  diagnostic. A vel macro moves with its note: `+` and `*` apply to every
+  value, `:vel V` shifts the envelope by the step it moves the note. 15 is the
+  voice's own level, so a mod cannot boost past it — a louder sample is
+  `:fx [(gain 6)]` on its def-pcm (§16). PCM levels move in 6 dB steps, so
+  velocities three apart play alike there.
+- **Order.** Mods apply after everything the tracks write (inline `:vel`,
+  macros), in source order. Echo and delay taps (§12) are notes like any
+  other; on a `:prio`-layered channel (§1) a mod applies to each layer before
+  they merge, so a silenced note leaves its time to a lower layer.
+- **Scope.** The song's tracks only — not the parts of a `def-se`. An imported
+  file's def-mods are ignored (`W_IMPORT_IGNORED`): a modifier is the score's
+  own. Mods are compile-time only — every output (preview, WAV, VGM, MMB)
+  carries their result and the driver never sees one.
+- Any other option is `E_MOD_OPTION`, as is a def-mod with no action.
 
 ---
 

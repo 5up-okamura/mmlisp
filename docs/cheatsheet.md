@@ -100,6 +100,8 @@ and a hold carry a note into the next.
 (def-pcm hit :file "hit.wav")           ; relative to this file (§16)
 (def-val bright 20 0..40)               ; runtime slot, read as $bright (§8)
 (import "presets/gm/set.mmlisp")        ; another file's defs (§9.2)
+(def-mod :ch fm2 :keyon off)            ; score-wide: fm2's notes become rests (§9.4)
+(def-mod :voice [hat hat-open] :vel+ -3) ; every note on these, quieter (clamped 0–15)
 ```
 
 Naming a voice or sample in a track body switches to it. An FM voice change

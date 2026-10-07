@@ -8198,11 +8198,14 @@
       if (_fmLiveRaf != null) {
         for (const tr of _lastGoodIR?.tracks ?? []) {
           if (tr.se) continue;
+          if (/^fm3-/.test(tr.scoreChannel ?? '')) used.add(2);
+          // A track with no notes (a def-mod :keyon off) leaves its channel to
+          // the keys — they take it first when it is the target.
+          if (!tr.events?.some((e) => e.cmd === 'NOTE_ON')) continue;
           const fm = CH_NAME_TO_INDEX[tr.channel];
           const psg = PSG_CH_NAME_TO_INDEX[tr.channel];
           if (fm != null) used.add(fm);
           else if (psg != null) used.add(6 + psg);
-          if (/^fm3-/.test(tr.scoreChannel ?? '')) used.add(2);
         }
       }
       const free = kind.filter((c) => !used.has(c));
