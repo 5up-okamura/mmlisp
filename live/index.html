@@ -157,6 +157,7 @@
                 title="What the app ships: the preset voice/sample sets, the example scores and the snippets. Preview a voice or play a score, insert it, or open it.">
           <span>Browse…</span>
         </button>
+        <div class="menu-sep"></div>
         <button class="menu-item" onclick="openFolder();closeMenus()"
                 title="Open a score's folder so its relative :file samples (wav next to the score) load. After a reload, Open Recent brings a score back with its folder. Chrome blocks Desktop/Documents themselves; use a subfolder.">
           <span>Open Folder…</span>
@@ -169,6 +170,16 @@
           </button>
           <div class="menu-dropdown submenu-dropdown" id="folderScoresList"></div>
         </div>
+        <div class="menu-sep"></div>
+        <button class="menu-item" onclick="saveFile();closeMenus()">
+          <span>Save</span>
+          <span class="menu-item-shortcut" id="saveFileShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="saveFileAs();closeMenus()">
+          <span>Save As…</span>
+          <span class="menu-item-shortcut" id="saveFileAsShortcut"></span>
+        </button>
+        <div class="menu-sep"></div>
         <div class="menu-wrap submenu-wrap" id="menuImport">
           <button class="menu-item" onclick="toggleSubmenu('menuImport')">
             <span>Import</span>
@@ -203,16 +214,9 @@
             <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">Imported PCM Bank WAV…</button>
           </div>
         </div>
+        <div class="menu-sep"></div>
         <button class="menu-item" onclick="openShare();closeMenus()">
           <span>Share…</span>
-        </button>
-        <button class="menu-item" onclick="saveFile();closeMenus()">
-          <span>Save</span>
-          <span class="menu-item-shortcut" id="saveFileShortcut"></span>
-        </button>
-        <button class="menu-item" onclick="saveFileAs();closeMenus()">
-          <span>Save As…</span>
-          <span class="menu-item-shortcut" id="saveFileAsShortcut"></span>
         </button>
       </div>
     </div>
