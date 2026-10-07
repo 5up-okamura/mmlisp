@@ -13,8 +13,11 @@
 //
 // Volume (CC7), expression (CC11) and velocity fold into `:vel`; the song's
 // loudest note lands on 15. Pan (CC10) sets an FM track's `:pan`. The
-// sustain pedal (CC64) holds notes. Pitch bend and the other controllers are
-// skipped and reported. A loop marked the RPG Maker way (CC111) or with
+// sustain pedal (CC64) holds notes. Pitch bend (its range from RPN 0) is
+// read frame by frame through each note and drawn as a `:pitch` macro — a
+// vibrato or a few lines, shared as defs (import-song.js assignBends); the
+// modulation wheel (CC1) is a vibrato on a fixed mapping: 127 → ±50 cents
+// at 5.5 Hz. The other controllers are skipped and reported. A loop marked the RPG Maker way (CC111) or with
 // `loopStart` / `loopEnd` markers becomes `#top … (go top)`; without one the
 // whole song loops (unless the dialog says not to).
 //
@@ -24,7 +27,8 @@
 //   midiToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimateGrid, regrid } from "./import-song.js";
+import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimateGrid, regrid,
+  assignBends, PITCH_NONE } from "./import-song.js";
 
 // presets/gm, in program order (README.md), and the bank's note offsets
 // (xg.wopn, melodic bank MSB 0 / LSB 0): the voice sounds `offset`
@@ -191,6 +195,13 @@ export function analyzeMidi(parsed) {
   let loopStart = null;
   let loopEnd = null;
   const counts = { bend: 0, cc: new Map() };
+  // Pitch bend in cents, through each channel's range (RPN 0, ±2 semitones
+  // until set), and the modulation wheel: [tick, value] a channel.
+  const bends = Array.from({ length: 16 }, () => [[0, 0]]);
+  const mods = Array.from({ length: 16 }, () => [[0, 0]]);
+  const range = new Array(16).fill(200);
+  const rpn = Array.from({ length: 16 }, () => [127, 127]);
+  const raw = new Array(16).fill(0);
   const program = new Array(16).fill(0);
   const vol = new Array(16).fill(100);
   const expr = new Array(16).fill(127);
@@ -211,9 +222,19 @@ export function analyzeMidi(parsed) {
         else if (/^loop\s*end$/i.test(e.text) && loopEnd == null) loopEnd = e.tick;
         break;
       case "pc": program[e.ch] = e.a; break;
-      case "bend": if (e.value !== 0) counts.bend++; break;
+      case "bend":
+        if (e.value !== 0) counts.bend++;
+        raw[e.ch] = e.value;
+        bends[e.ch].push([e.tick, (e.value / 8192) * range[e.ch]]);
+        break;
       case "cc":
-        if (e.a === 7) vol[e.ch] = e.b;
+        if (e.a === 101) rpn[e.ch][0] = e.b;
+        else if (e.a === 100) rpn[e.ch][1] = e.b;
+        else if ((e.a === 6 || e.a === 38) && rpn[e.ch][0] === 0 && rpn[e.ch][1] === 0) {
+          range[e.ch] = e.a === 6 ? e.b * 100 + (range[e.ch] % 100) : Math.floor(range[e.ch] / 100) * 100 + e.b;
+          bends[e.ch].push([e.tick, (raw[e.ch] / 8192) * range[e.ch]]);
+        } else if (e.a === 1) mods[e.ch].push([e.tick, e.b]);
+        else if (e.a === 7) vol[e.ch] = e.b;
         else if (e.a === 11) expr[e.ch] = e.b;
         else if (e.a === 10) pan[e.ch] ??= e.b;
         else if (e.a === 111) loopStart ??= e.tick;
@@ -304,7 +325,7 @@ export function analyzeMidi(parsed) {
   const firstTick = notes.length ? Math.min(...notes.map((n) => n.tick)) : 0;
   const atFirst = tempos.filter((t) => t.tick <= firstTick).pop() ?? tempos[0];
   const a = {
-    title, division: parsed.division, tempos, timeSigs, notes, lanes, counts, secOf, firstTick,
+    title, division: parsed.division, tempos, timeSigs, notes, lanes, counts, secOf, firstTick, bends, mods,
     loop: loopStart != null ? { start: loopStart, end: loopEnd } : null,
     bpm: 60e6 / atFirst.usPerQ,
   };
@@ -452,6 +473,35 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   // Tracks in channel order.
   const order = [...FM_DESTS, ...PSG_DESTS, "noise", ...PCM_DESTS];
   const tracks = [];
+  // A note's pitch as it plays: the bend, a frame (1/60 s) each, from where
+  // it is struck to where it ends — its own key moved to the semitone it
+  // spends the most frames at, a move of 30 cents or less dropped — else the
+  // modulation wheel's vibrato.
+  const secOfBend = analysis.bends.map((list) => list.map(([t, c]) => [analysis.secOf(t), c]));
+  const valueAt = (list, sec) => { let v = 0; for (const [t, x] of list) { if (t > sec) break; v = x; } return v; };
+  const pitchOf = (n, note) => {
+    const s0 = analysis.secOf(n.tick), s1 = analysis.secOf(n.end);
+    const F = Math.max(1, Math.min(600, Math.round((s1 - s0) * 60)));
+    const list = secOfBend[n.ch];
+    const c = [];
+    for (let f = 0; f < F; f++) c.push(valueAt(list, s0 + (f + 0.5) / 60));
+    const at = new Map();
+    for (const v of c) { const k = Math.round(v / 100); at.set(k, (at.get(k) ?? 0) + 1); }
+    const shift = [...at].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+    note.midi += shift;
+    const rel = c.map((v) => Math.round((v - shift * 100) / 5) * 5);
+    if (Math.max(...rel) - Math.min(...rel) > 30) { note.bend = rel; return; }
+    // The wheel: at the note's start, or from where it comes in.
+    const mods = analysis.mods[n.ch].map(([t, v]) => [analysis.secOf(t), v]);
+    let m = valueAt(mods, s0), wait = 0;
+    if (!m) {
+      const later = mods.find(([t, v]) => t > s0 && t < s1 && v > 0);
+      if (later) { m = later[1]; wait = Math.round(((later[0] - s0) * 60) / 2) * 2; }
+    }
+    const depth = Math.round((m / 127) * 50 / 10) * 10;
+    if (depth > 0) note.vib = { kind: "vib", centre: 0, depth, period: 11, wait };
+  };
+  const laneNotes = [];
   for (const [key, d] of [...laneDest].sort((a, b) => order.indexOf(a[1]) - order.indexOf(b[1]))) {
     const lane = analysis.lanes.find((l) => l.key === key);
     const fm = d.startsWith("fm");
@@ -472,7 +522,9 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
       } else {
         note.midi = n.key + (fm ? GM_NOTE_OFFSETS[n.program] : 0);
         if (fm && GM_VOICES[n.program] !== cur) { note.pre = [GM_VOICES[n.program]]; cur = GM_VOICES[n.program]; }
+        pitchOf(n, note);
       }
+      note.voice = cur;
       note.midi = Math.max(0, Math.min(127, note.midi));
       const prev = notes[notes.length - 1];
       if (prev && prev.tick === tick) {
@@ -489,7 +541,8 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
       if (lane.drums || next - (notes[i].tick + notes[i].len) <= g) notes[i].len = next - notes[i].tick;
     }
     if (!notes.length) continue;
-    // The first note's switch goes in the head.
+    laneNotes.push(notes);
+    // The first note's switch goes in the head (its pitch, below).
     const head = notes[0].pre ?? [];
     delete notes[0].pre;
     if (fm && lane.pan != null) head.push(`:pan ${lane.pan < 43 ? "left" : lane.pan > 85 ? "right" : "center"}`);
@@ -498,7 +551,22 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   if (tracks.length) tracks[0].marks = tempoMarks;
   else warnings.push("no notes to import");
 
-  if (analysis.counts.bend) warnings.push(`pitch bend skipped (${analysis.counts.bend} events)`);
+  // Bends and modulation → `:pitch`, stated as a switch beside the voice;
+  // `(macro :pitch none)` after one.
+  const bendDefs = assignBends(laneNotes.flat());
+  for (const [i, notes] of laneNotes.entries()) {
+    if (!notes.some((n) => n.bendName)) continue;
+    let curP = null;
+    notes.forEach((n, j) => {
+      const tok = n.bendName ?? PITCH_NONE;
+      n.state = [...(n.voice ? [n.voice] : []), ...tracks[i].head.filter((t) => t.startsWith(":pan")), tok];
+      if (tok !== curP && !(curP == null && tok === PITCH_NONE)) {
+        if (j === 0) tracks[i].head.push(tok);
+        else n.pre = [...(n.pre ?? []), tok];
+      }
+      curP = tok;
+    });
+  }
   const ccs = [...analysis.counts.cc].map(([c, n]) => `CC${c}×${n}`);
   if (ccs.length) warnings.push(`controllers skipped: ${ccs.join(", ")}`);
 
@@ -506,6 +574,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   if (analysis.title) header.push(`(def title ${qstr(analysis.title)})`);
   if (tracks.some((t) => t.channel.startsWith("fm"))) header.push('(import "presets/gm/set.mmlisp")');
   if (pcmUsed) header.push('(import "presets/gm-drums/set.mmlisp")', `(def pcm-voices ${pcmUsed})`);
+  if (bendDefs.length) header.push("", ...bendDefs);
 
   // Timed by its notes, the file's bars say nothing: place them where the
   // song folds most.

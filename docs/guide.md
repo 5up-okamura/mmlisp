@@ -1157,8 +1157,11 @@ does not fit. **Enter** imports with the defaults. A program names its
 `presets/gm` voice, played at the bank's own note offset; drums play
 `presets/gm-drums`. Velocity, volume (CC7) and expression (CC11) become
 `:vel`, the loudest note at 15; pan (CC10) sets `:pan`; the sustain pedal
-holds notes. Pitch bend and other controllers are skipped, and the log says
-how many. The music starts at the first note: a silent setup section before
+holds notes. Pitch bend (its range from RPN 0) becomes a `:pitch` macro on
+the notes it moves — a vibrato or a few lines, shared as `vib-…` / `bend-NN`
+defs as a VGM's are (below); the modulation wheel (CC1) is a vibrato on a
+fixed mapping, 127 → ±50 cents at 5.5 Hz. Other controllers are skipped, and
+the log says how many. The music starts at the first note: a silent setup section before
 it, and the tempo it runs at, are left out. When the notes do not sit on the
 file's own beat (a recorded performance, a file converted from a log), the
 timing is the beat estimated from the notes' times, as for a VGM, instead of

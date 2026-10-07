@@ -28,7 +28,8 @@
 //   vgmToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE } from "./import-song.js";
+import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE,
+  assignBends, PITCH_NONE } from "./import-song.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { FM_DESTS, PSG_DESTS } from "./import-midi.js";
 
@@ -605,144 +606,6 @@ function pitchShape(n, endT) {
   return segs;
 }
 
-// A wobble: swings around a centre, at least three (a cycle and a half),
-// each a like length — after a wait that may hold the note still first.
-function vibratoOf(c) {
-  const sorted = [...c].sort((a, b) => a - b);
-  const centre = sorted[sorted.length >> 1];
-  const d = c.map((v) => v - centre);
-  const swings = []; // [frame, sign]
-  let sign = 0;
-  for (let f = 0; f < d.length; f++) {
-    if (Math.abs(d[f]) < 6) continue;
-    const sg = Math.sign(d[f]);
-    if (sg !== sign) { swings.push(f); sign = sg; }
-  }
-  if (swings.length < 3) return null;
-  const halves = [];
-  for (let i = 1; i < swings.length; i++) halves.push(swings[i] - swings[i - 1]);
-  const hs = [...halves].sort((a, b) => a - b);
-  const half = hs[hs.length >> 1];
-  if (half < 1 || halves.some((h) => h > half * 1.6 + 1 || h < half * 0.5 - 1)) return null;
-  // Depth: the swings' peaks.
-  const peaks = [];
-  for (let i = 0; i < swings.length; i++) {
-    const a = swings[i], b = swings[i + 1] ?? d.length;
-    let m = 0;
-    for (let f = a; f < b; f++) m = Math.max(m, Math.abs(d[f]));
-    peaks.push(m);
-  }
-  const ps = [...peaks].sort((a, b) => a - b);
-  const depth = Math.max(20, Math.round(ps[ps.length >> 1] / 20) * 20);
-  // Before the wobble: held where the note starts.
-  const wait = Math.max(0, swings[0] - Math.round(half / 2));
-  if (c.slice(0, wait).some((v) => Math.abs(v - c[0]) > 15)) return null;
-  const mid = Math.round(centre / 10) * 10;
-  return { kind: "vib", centre: Math.abs(mid) <= 20 ? 0 : mid, depth, period: Math.max(2, 2 * half),
-    wait: Math.round(wait / 2) * 2 };
-}
-
-// A few straight lines through the pitch: the fewest (up to six) within
-// 15 cents of it, else within more.
-function linesOf(c) {
-  for (const tol of [15, 25, 40, 60, 100]) {
-    const pts = simplify(c, tol);
-    if (pts.length <= 7) return { kind: "lines", pts: pts.map((f) => [f, Math.round(c[f] / 5) * 5]) };
-  }
-  // Too busy to draw in lines: step it, a frame a value.
-  return { kind: "steps", values: c.map((v) => Math.round(v / 5) * 5) };
-}
-
-/** Douglas–Peucker over frames: the frames a polyline keeps. */
-function simplify(c, tol) {
-  const keep = new Set([0, c.length - 1]);
-  const rec = (a, b) => {
-    let worst = -1, at = -1;
-    for (let f = a + 1; f < b; f++) {
-      const line = c[a] + ((c[b] - c[a]) * (f - a)) / (b - a);
-      const e = Math.abs(c[f] - line);
-      if (e > worst) { worst = e; at = f; }
-    }
-    if (worst > tol) { keep.add(at); rec(a, at); rec(at, b); }
-  };
-  rec(0, c.length - 1);
-  return [...keep].sort((a, b) => a - b);
-}
-
-const PITCH_NONE = "(macro :pitch none)";
-
-/**
- * The notes' bends (`bend`: cents a frame) → `:pitch` macros. A vibrato is
- * a def by its depth and period (`vib-…`), so notes share it. Any other
- * shape is drawn in lines; a note cut short plays the start of a longer
- * one's (within 10 cents a frame), so it names that; a shape two notes play
- * is a def (`bend-NN`), one only one plays is written on the note. Sets
- * `bendName`; returns the defs.
- */
-function assignBends(notes) {
-  const defs = [];
-  const vibs = new Map();
-  const shapes = [];
-  const fits = (a, c) => a.every((v, f) => Math.abs(v - c[Math.min(f, c.length - 1)]) <= 10);
-  const others = [];
-  for (const n of notes) {
-    if (!n.bend) continue;
-    const v = vibratoOf(n.bend);
-    if (v) {
-      const spec = bendSpec(v);
-      if (!vibs.has(spec)) {
-        const name = `vib-${v.depth}-${v.period}${v.wait ? `-w${v.wait}` : ""}${v.centre ? `${v.centre > 0 ? "+" : ""}${v.centre}` : ""}`;
-        vibs.set(spec, name);
-        defs.push(`(def ${name} (macro :pitch ${spec}))`);
-      }
-      n.bendName = vibs.get(spec);
-    } else others.push(n);
-  }
-  for (const n of [...others].sort((x, y) => y.bend.length - x.bend.length)) {
-    let c = shapes.find((sh) => fits(n.bend, sh.frames));
-    if (!c) shapes.push((c = { frames: n.bend, notes: [] }));
-    c.notes.push(n);
-  }
-  let k = 0;
-  for (const c of shapes) {
-    const lines = linesOf(c.frames);
-    // Drawn, it moves 30 cents or less: none.
-    const vals = lines.kind === "lines" ? lines.pts.map(([, v]) => v) : lines.values;
-    if (Math.max(...vals) - Math.min(...vals) <= 30) continue;
-    const spec = bendSpec(lines);
-    if (!spec) continue;
-    let tok = `(macro :pitch ${spec})`;
-    if (c.notes.length >= 2) {
-      const name = `bend-${String(++k).padStart(2, "0")}`;
-      defs.push(`(def ${name} ${tok})`);
-      tok = name;
-    }
-    for (const n of c.notes) n.bendName = tok;
-  }
-  return defs;
-}
-
-/** A bend as a `:pitch` macro spec (what follows `(macro :pitch `). */
-function bendSpec(b) {
-  if (b.kind === "vib")
-    return `(sin ${b.centre - b.depth}..${b.centre + b.depth} :len ${b.period}f${b.wait ? ` :wait ${b.wait}f` : ""})`;
-  if (b.kind === "steps") return `[${b.values.join(" ")}]`;
-  // Lines: a stage each; a level held is a wait.
-  const st = [];
-  const { pts } = b;
-  for (let i = 0; i + 1 < pts.length; i++) {
-    const [f0, v0] = pts[i], [f1, v1] = pts[i + 1];
-    const len = f1 - f0;
-    if (v0 === v1 && (i > 0 || v0 === 0)) st.push(`(wait ${len}f)`);
-    else st.push(`(linear ${v0}..${v1} :len ${len}f)`);
-  }
-  while (st.length && st[st.length - 1].startsWith("(wait")) st.pop(); // the last value holds
-  if (!st.length) return null;
-  // One line after a wait reads best as the line with its own `:wait`.
-  if (st.length === 2 && st[0].startsWith("(wait") && st[1].startsWith("(linear"))
-    return st[1].replace(/\)$/, ` :wait ${st[0].match(/\d+/)[0]}f)`);
-  return st.length === 1 ? st[0] : `[${st.join(" ")}]`;
-}
 
 // ── Envelopes ─────────────────────────────────────────────────────────────
 

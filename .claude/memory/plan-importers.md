@@ -41,8 +41,9 @@ shapes together is the next lever if the user wants fewer. (3) pitch:
 trackers done (04/01/02/03/E1/E2/E5 → :pitch macros; Furnace's rules
 rounded: a slide stops at the next note, 03 is row-only, a vibrato under a
 slide is dropped; E5 to 10 cents); VGM done (jump that stays 4 frames =
-slur, else vib-/bend- defs; per-part tuning back to A440). Next: MIDI bend
-+ CC1. A bass of per-note pitch falls (Dungeon fm1) still names a bend per
+slur, else vib-/bend- defs; per-part tuning back to A440); MIDI done (bend
+through RPN 0 → the same shapes; CC1 → vib, 127 = ±50 cents, 11 frames).
+Round 2 is complete. A bass of per-note pitch falls (Dungeon fm1) still names a bend per
 pitch — the falls differ in cents; sharing them would need fnum-relative
 shapes.
 
@@ -58,4 +59,4 @@ shapes.
   import, second chips.
 - Trackers: sample channels,
   macros of old (pre-INS2) Furnace instruments, subsongs after the first.
-- MIDI: pitch bend, per-note pan/CC changes after the first.
+- MIDI: per-note pan/CC changes after the first.
