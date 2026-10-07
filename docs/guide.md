@@ -1157,7 +1157,9 @@ does not fit. **Enter** imports with the defaults. A program names its
 `presets/gm` voice, played at the bank's own note offset; drums play
 `presets/gm-drums`. Velocity, volume (CC7) and expression (CC11) become
 `:vel`, the loudest note at 15; pan (CC10) sets `:pan`; the sustain pedal
-holds notes. Pitch bend (its range from RPN 0) becomes a `:pitch` macro on
+holds notes. A part sent to a PSG channel takes the envelope of its program's
+family from `presets/envelopes` (piano → `env-piano`, organ → `env-organ`,
+strings and pads → `env-pad`, brass → `env-brass`, leads → `env-lead`, …). Pitch bend (its range from RPN 0) becomes a `:pitch` macro on
 the notes it moves — a vibrato or a few lines, shared as `vib-…` / `bend-NN`
 defs as a VGM's are (below); the modulation wheel (CC1) is a vibrato on a
 fixed mapping, 127 → ±50 cents at 5.5 Hz, coming in 12 frames (0.2 s) into

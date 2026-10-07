@@ -44,7 +44,10 @@ slide is dropped; E5 to 10 cents); VGM done (jump that stays 4 frames =
 slur, else vib-/bend- defs; per-part tuning back to A440); MIDI done (bend
 through RPN 0 → the same shapes; CC1 → vib, 127 = ±50 cents, 11 frames, from 12 frames in — the user
 found an undelayed one wobbling throughout).
-Round 2 is complete. A bass of per-note pitch falls (Dungeon fm1) still names a bend per
+Round 2 is complete. MIDI parts on the PSG take a presets/envelopes shape
+by GM family (user, 2026-10-07: the presets were reworked for it — level
+shapes are :vel+ so dynamics survive, pitch shapes split out as vib /
+vib-delay / slide-up / drop). A bass of per-note pitch falls (Dungeon fm1) still names a bend per
 pitch — the falls differ in cents; sharing them would need fnum-relative
 shapes.
 

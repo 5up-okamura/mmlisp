@@ -13,13 +13,15 @@
 //
 // Volume (CC7), expression (CC11) and velocity fold into `:vel`; the song's
 // loudest note lands on 15. Pan (CC10) sets an FM track's `:pan`. The
-// sustain pedal (CC64) holds notes. Pitch bend (its range from RPN 0) is
-// read frame by frame through each note and drawn as a `:pitch` macro — a
-// vibrato or a few lines, shared as defs (import-song.js assignBends); the
-// modulation wheel (CC1) is a vibrato on a fixed mapping: 127 → ±50 cents
-// at 5.5 Hz, coming in 12 frames (0.2 s) into the note. The other controllers are skipped and reported. A loop marked the RPG Maker way (CC111) or with
-// `loopStart` / `loopEnd` markers becomes `#top … (go top)`; without one the
-// whole song loops (unless the dialog says not to).
+// sustain pedal (CC64) holds notes. A part sent to the PSG takes the
+// envelope of its program's family from presets/envelopes. Pitch bend (its
+// range from RPN 0) is read frame by frame through each note and drawn as a
+// `:pitch` macro — a vibrato or a few lines, shared as defs (import-song.js
+// assignBends); the modulation wheel (CC1) is a vibrato on a fixed mapping:
+// 127 → ±50 cents at 5.5 Hz, coming in 12 frames (0.2 s) into the note. The
+// other controllers are skipped and reported. A loop marked the RPG Maker
+// way (CC111) or with `loopStart` / `loopEnd` markers becomes `#top … (go
+// top)`; without one the whole song loops (unless the dialog says not to).
 //
 //   parseMidi(bytes)                  → the file's events
 //   analyzeMidi(parsed)               → what the import dialog shows
@@ -73,6 +75,15 @@ const DRUM_KEY = 60; // a PCM note at c4 plays the sample as recorded
 
 export const FM_DESTS = ["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"];
 export const PSG_DESTS = ["sqr1", "sqr2", "sqr3"];
+
+// A GM program on the PSG: its family's envelope (presets/envelopes), the
+// level shape the voice would have had — fixed by family (user, 2026-10-07).
+const PSG_ENV_BY_FAMILY = [
+  "env-piano", "env-bell", "env-organ", "env-guitar", "env-guitar", "env-pad", "env-pad", "env-brass",
+  "env-lead", "env-lead", "env-lead", "env-pad", "env-pad", "env-guitar", "env-pluck", "env-organ",
+];
+const PSG_ENV_BY_PROGRAM = { 45: "env-pluck-long", 47: "env-bell", 55: "env-stab" }; // pizzicato, timpani, orchestra hit
+const psgEnvOf = (program) => PSG_ENV_BY_PROGRAM[program] ?? PSG_ENV_BY_FAMILY[program >> 3];
 export const PCM_DESTS = ["pcm1", "pcm2", "pcm3"];
 // Quantize grids, coarsest first: 16th, 16th triplet, 32nd, 32nd triplet, 64th…
 export const GRIDS = [24, 16, 12, 8, 6, 4, 3, 2, 1];
@@ -504,6 +515,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     if (depth > 0) note.vib = { kind: "vib", centre: 0, depth, period: 11, wait };
   };
   const laneNotes = [];
+  let usedPsgEnv = false;
   for (const [key, d] of [...laneDest].sort((a, b) => order.indexOf(a[1]) - order.indexOf(b[1]))) {
     const lane = analysis.lanes.find((l) => l.key === key);
     const fm = d.startsWith("fm");
@@ -524,6 +536,8 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
       } else {
         note.midi = n.key + (fm ? GM_NOTE_OFFSETS[n.program] : 0);
         if (fm && GM_VOICES[n.program] !== cur) { note.pre = [GM_VOICES[n.program]]; cur = GM_VOICES[n.program]; }
+        // The PSG has no voice: the program's family picks its envelope.
+        if (!fm && psgEnvOf(n.program) !== cur) { cur = psgEnvOf(n.program); note.pre = [cur]; usedPsgEnv = true; }
         pitchOf(n, note);
       }
       note.voice = cur;
@@ -575,6 +589,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const header = [`; Imported from ${options.fileName ?? "a MIDI file"} (MIDI)`];
   if (analysis.title) header.push(`(def title ${qstr(analysis.title)})`);
   if (tracks.some((t) => t.channel.startsWith("fm"))) header.push('(import "presets/gm/set.mmlisp")');
+  if (usedPsgEnv) header.push('(import "presets/envelopes/set.mmlisp")');
   if (pcmUsed) header.push('(import "presets/gm-drums/set.mmlisp")', `(def pcm-voices ${pcmUsed})`);
   if (bendDefs.length) header.push("", ...bendDefs);
 

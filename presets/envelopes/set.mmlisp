@@ -1,54 +1,63 @@
-; Envelopes: named macros that give a PSG channel its shape — a decay, a
-; swell, a vibrato, a slide — since the PSG has no voice of its own. Each
-; is a plain (def name (macro …)), so it also works on an FM track, on top
-; of the voice. See README.md.
+; Envelopes: named macros that give a PSG channel its shape, since the PSG
+; has no voice of its own. Each is a plain (def name (macro …)), so it also
+; works on an FM track, on top of the voice. See README.md.
+;
+; The level shapes (env-…) are :vel+ — offsets from the note's own :vel, so
+; a quiet note and a loud one share a shape (0 is the note's level, -15
+; reaches silence on the PSG). The pitch shapes (vib…, slide-up, drop) set
+; only :pitch, so one combines with any level shape: `sqr1 env-pluck vib c`.
+
+; ── Level ────────────────────────────────────────────────────────────────
 
 ; Pluck: a short decay, gone in six frames
-(def env-pluck (macro :vel [15 12 9 6 3 0]))
+(def env-pluck (macro :vel+ [0 -3 -6 -9 -12 -15]))
 
 ; Pluck, longer: a 12-frame tail that drops fast, then lingers
-(def env-pluck-long (macro :vel [(ease-out :from 15 :to 0 :len 12f)]))
+(def env-pluck-long (macro :vel+ [(ease-out 0..-15 :len 12f)]))
 
 ; Stab: full for three frames, then cut
-(def env-stab (macro :vel [15 15 15 8 0]))
+(def env-stab (macro :vel+ [0 0 0 -7 -15]))
 
 ; Bell: a slow exponential tail, half a second long
-(def env-bell (macro :vel [(ease-out-expo :from 15 :to 0 :len 30f)]))
+(def env-bell (macro :vel+ [(ease-out-expo 0..-15 :len 30f)]))
+
+; Piano: a long decay that settles, then a short release
+(def env-piano (macro :vel+ [(ease-out 0..-9 :len 45f) #sus -9 #rel (linear -9..-15 :len 6f)]))
+
+; Guitar: a quicker decay that settles lower, then a short release
+(def env-guitar (macro :vel+ [(ease-out 0..-10 :len 24f) #sus -10 #rel -13 -15]))
 
 ; Organ: full while held, a three-frame release after key-off
-(def env-organ (macro :vel [#sus 15 #rel 10 5 0]))
+(def env-organ (macro :vel+ [#sus 0 #rel -5 -10 -15]))
+
+; Brass: a little swell into full, held, a short release
+(def env-brass (macro :vel+ [-4 -3 -2 -1 #sus 0 #rel -5 -10 -15]))
+
+; Lead: a decay to two-thirds, held, a short release
+(def env-lead (macro :vel+ [0 -1 -2 -3 -4 #sus -5 #rel -10 -15]))
 
 ; Pad: a 12-frame swell up to full, held, then a 12-frame fall
-(def env-pad
-  (macro :vel [(ease-in :from 0 :to 15 :len 12f) #sus 15 #rel (linear 15..0 :len 12f)]
-  )
-)
+(def env-pad (macro :vel+ [(ease-in -15..0 :len 12f) #sus 0 #rel (linear 0..-15 :len 12f)]))
 
 ; Tremolo: full and three-quarters, two frames each, while held
-(def env-tremolo (macro :step 2f :vel [#sus 15 15 11 11]))
-
-; Lead: a decay to two-thirds, then vibrato after eight frames
-(def env-lead
-  (macro :vel [15 14 13 12 11 #sus 10] :pitch [_ _ _ _ _ _ _ _ (sin -15..15 :rate 6)]
-  )
-)
-
-; Vibrato: full while held, a wide vibrato from the start
-(def env-vibrato (macro :vel [#sus 15] :pitch (sin -25..25 :rate 5)))
-
-; Slide up: the pitch rises three semitones into the note over four frames
-(def env-slide-up
-  (macro :vel [15 14 13 12 #sus 11] :pitch [-300 -200 -100 -50 0])
-)
-
-; Drop: the pitch falls an octave as the note dies — a tom, or a zap
-(def env-drop
-  (macro :vel [15 13 11 9 7 5 3 0] :pitch [0 -50 -100 -200 -300 -450 -600 -800]
-  )
-)
+(def env-tremolo (macro :step 2f :vel+ [#sus 0 -4]))
 
 ; Hat: a four-frame tick, for the noise channel
-(def env-hat (macro :vel [12 7 3 0]))
+(def env-hat (macro :vel+ [0 -5 -9 -15]))
 
 ; Snare: an eleven-frame burst, for the noise channel
-(def env-snare (macro :vel [15 13 11 9 7 5 4 3 2 1 0]))
+(def env-snare (macro :vel+ [0 -2 -4 -6 -8 -10 -11 -12 -13 -14 -15]))
+
+; ── Pitch ────────────────────────────────────────────────────────────────
+
+; Vibrato: ±25 cents, five a second, from the start
+(def vib (macro :pitch (sin -25..25 :len 12f)))
+
+; Vibrato, delayed: ±15 cents after eight frames, as a held lead note
+(def vib-delay (macro :pitch (sin -15..15 :len 10f :wait 8f)))
+
+; Slide up: the pitch rises three semitones into the note over four frames
+(def slide-up (macro :pitch [-300 -200 -100 -50 0]))
+
+; Drop: the pitch falls an octave over eight frames — a tom, or a zap
+(def drop (macro :pitch [0 -50 -100 -200 -300 -450 -600 -800]))

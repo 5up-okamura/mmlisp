@@ -486,7 +486,7 @@ const MAX_BLOCK = 16; // units in one repeated block or phrase
 // — the voice or the sample — as "name".
 const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0]
   : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}`
-    : /^env-\d/.test(t) ? "macro:vel" : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";
+    : /^env-/.test(t) ? "macro:vel" : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";
 
 // The switches a note needs written, given those in force: by kind — a
 // keyword (`:pan`, `:mode`) by its name, a macro by its target, a bare name
