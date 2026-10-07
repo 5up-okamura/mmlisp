@@ -4571,7 +4571,7 @@
         offline.loadJSON(ir);
         ({ bytes, pcmCount } = renderVgm(offline, {
           title: ir.metadata?.title,
-          author: ir.metadata?.author,
+          composer: ir.metadata?.composer,
         }, pcm));
       } catch (e) {
         log('VGM export failed: ' + e.message, 'err');

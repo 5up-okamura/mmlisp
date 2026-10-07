@@ -19,7 +19,7 @@ export const FIFO_PAIRS = 128;
 
 // ── THE LIGHT IMAGES (docs/driver.md §5) ────────────
 //
-// One image per PCM voice count, chosen by the score's `(def pcm-voices N)`.
+// One image per PCM voice count, chosen by the score's `(def-score :pcm-voices N)`.
 // No phase decode, no corrector, no protocol — `generate()` alone — the rung
 // levels, no octave step, the loop-capable six-piece edge. The periods are the
 // highest the generator places at the 100% work ceiling (the user's choice),

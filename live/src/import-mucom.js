@@ -2056,12 +2056,12 @@ export function mucomToMmlisp(parsed) {
   }
 
   // #composer + #author, joined with " | " — but de-duplicated when identical.
-  // v0.6: no (score …) wrapper — title/author are the reserved metadata defs,
-  // and the tempo (score-global) rides the first playable form below.
-  const author = [...new Set([meta.composer, meta.author].filter(Boolean))].join(" | ");
+  // They go in (def-score …); the tempo (score-global) rides the first
+  // playable form below.
+  const composer = [...new Set([meta.composer, meta.author].filter(Boolean))].join(" | ");
   const metaDefs = [];
-  if (meta.title) metaDefs.push(`(def title ${qstr(meta.title)})`);
-  if (author) metaDefs.push(`(def author ${qstr(author)})`);
+  const score = [meta.title && `:title ${qstr(meta.title)}`, composer && `:composer ${qstr(composer)}`].filter(Boolean);
+  if (score.length) metaDefs.push(`(def-score ${score.join(" ")})`);
   // LFO defs (if any) are spliced in here once rendering has discovered them.
   const lfoDefAnchor = lines.length;
   lines.push("");
@@ -2376,10 +2376,10 @@ function fitPcmBank(render, pcm) {
     let last = null;
     for (const n of [1, 2, 3]) {
       const source = n === 1 ? out.source
-        : `; The PCM fits the 32 KB sample bank at ${n} PCM voices' rate, not at 1's.\n(def pcm-voices ${n})\n\n${out.source}`;
+        : `; The PCM fits the 32 KB sample bank at ${n} PCM voices' rate, not at 1's.\n(def-score :pcm-voices ${n})\n\n${out.source}`;
       const r = bake(source);
       if (r.ok) {
-        if (n > 1) out.warnings.push(`PCM: the samples exceed the 32 KB bank at 14.4 kHz; set (def pcm-voices ${n}) to bake them at the lower rate`);
+        if (n > 1) out.warnings.push(`PCM: the samples exceed the 32 KB bank at 14.4 kHz; set (def-score :pcm-voices ${n}) to bake them at the lower rate`);
         if (drop.size) out.warnings.push(`PCM: ${[...drop].join(", ")} would not fit the 32 KB bank (one copy per pitch played); dropped — their notes are rests`);
         return { ...out, source };
       }

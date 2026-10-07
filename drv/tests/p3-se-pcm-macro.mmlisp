@@ -3,7 +3,7 @@
 ; own :vel envelope. At the SE's end the BGM's binds come back — its next
 ; note rolls again — and the loop the SE overwrote starts again with them.
 ; Both starts are host-driven (p3-se-pcm-macro.cmds.json, auto-start off).
-(def pcm-voices 2)
+(def-score :pcm-voices 2)
 (def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (def-pcm blip :file "blip.wav")
 

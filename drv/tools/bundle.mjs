@@ -246,7 +246,7 @@ const channelId = (name) => {
 };
 
 /* The PCM voices a song needs: its highest pcmN, the effects' included. A
- * `(def pcm-voices N)` in a bundled score is superseded by the manifest's
+ * `(def-score :pcm-voices N)` in a bundled score is superseded by the manifest's
  * "pcmVoices". */
 function pcmVoicesNeeded(ir) {
   let n = 0;

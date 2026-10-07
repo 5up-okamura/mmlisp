@@ -499,7 +499,7 @@ Everything the language compiles to, except SE:
   the built-in `$time`. E.g. a live filter/LFO-depth slider, or game-state
   timbre.
 - **PCM:** up to three sample voices on the `fm6` DAC, one engine image per
-  count — `(def pcm-voices N)`: one voice at 14,376 Hz, two at 10,112 Hz, three
+  count — `(def-score :pcm-voices N)`: one voice at 14,376 Hz, two at 10,112 Hz, three
   at 6,653 Hz. Per-note level and a master level on the 6 dB grid, every note
   baked at its own pitch, and four points per note — a range (`:pcm-start`,
   `:pcm-end`, `:pcm-len`) and a loop inside it (`:loop-start`, `:loop-end`,

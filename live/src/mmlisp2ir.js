@@ -4296,8 +4296,8 @@ function collectDefs(roots, diagnostics) {
   // parts are tracks the host starts by the effect's number, not the song.
   const seDefs = new Map();
   const vals = new Map(); // v0.5: (def-val name init) runtime value slots
-  // v0.6: (def title/author "…"); D10: (def pcm-voices N) picks the engine image.
-  const fileMeta = { title: null, author: null, pcmVoices: null };
+  // (def-score :title "…" :composer "…" :pcm-voices N) — the score's settings.
+  const fileMeta = { title: null, composer: null, pcmVoices: null };
   const imports = []; // v0.6 Phase 2: (import "path") — [{path, src}]
   const mods = []; // (def-mod …) forms, read once the defs are known (parseModDef)
   const remaining = [];
@@ -4437,6 +4437,11 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
+    if (head === "def-score") {
+      parseScoreDef(root, fileMeta, diagnostics);
+      continue;
+    }
+
     if (head === "def-se") {
       const se = parseSeDef(root, diagnostics);
       if (se) seDefs.set(se.name, se);
@@ -4531,33 +4536,14 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
-      // Reserved file-metadata defs (v0.6, replaces the score option tier):
-      // (def title "…") / (def author "…"). Only the string form is metadata;
-      // any other value keeps the name available as an ordinary def.
-      if (
-        (name === "title" || name === "author") &&
-        root.items[2]?.kind === "string"
-      ) {
-        fileMeta[name] = root.items[2].value;
-        continue;
-      }
-      // (def pcm-voices N) — how many PCM voices the driver plays, which picks
-      // the engine image and with it the DAC rate (driver.md §5). Reserved:
-      // unlike title/author there is no ordinary-def fallback for the name.
-      if (name === "pcm-voices") {
-        const n = parseIntLike(atomValue(root.items[2]));
-        if (n === null || n < 0 || n > 3) {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_PCM_VOICES",
-            `(def pcm-voices N) takes 0-3 (got ${atomValue(root.items[2]) ?? "nothing"})`,
-            nodeSrc(root),
-            "global",
-          );
-        } else {
-          fileMeta.pcmVoices = n;
-        }
+      // The settings moved to (def-score …): the old shapes say so instead of
+      // turning into a snippet nobody reads, which would lose them silently.
+      const old = name === "pcm-voices" || name === "author" || name === "title"
+        ? root.items.filter((n) => n.kind !== "comment").slice(2) : null;
+      if (old?.length === 1 && (name === "pcm-voices" || old[0].kind === "string")) {
+        const key = name === "author" ? "composer" : name;
+        pushDiag(diagnostics, "error", "E_SCORE_MOVED",
+          `(def ${name} …) is now (def-score :${key} …)`, nodeSrc(root), "global");
         continue;
       }
       // Anything else is a snippet: expanded where its name is written.
@@ -4589,6 +4575,42 @@ const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate" };
 // own), :tempo the clock its parts run on (default 120) — its own, so an
 // effect sounds the same in every song. Each part is a channel form, one per
 // channel, written on the channel it takes from the song.
+// (def-score :title "…" :composer "…" :pcm-voices N) — the whole score's
+// settings (language.md §1). Several forms combine; a key given twice is an
+// error, as is one it does not know.
+function parseScoreDef(root, fileMeta, diagnostics) {
+  const items = root.items.filter((n) => n.kind !== "comment");
+  const err = (msg, at) =>
+    pushDiag(diagnostics, "error", "E_SCORE_OPTION", `def-score: ${msg}`, nodeSrc(at ?? root), "global");
+  for (let k = 1; k < items.length; k += 2) {
+    const key = atomValue(items[k]);
+    const v = items[k + 1];
+    const field = { ":title": "title", ":composer": "composer", ":pcm-voices": "pcmVoices" }[key];
+    if (!field) {
+      err(`unknown option ${key ?? describeNodeToken(items[k])} (takes :title :composer :pcm-voices)`, items[k]);
+      continue;
+    }
+    if (!v) {
+      err(`${key} needs a value`, items[k]);
+      continue;
+    }
+    if (fileMeta[field] !== null) {
+      err(`${key} is given twice`, items[k]);
+      continue;
+    }
+    if (field === "pcmVoices") {
+      // How many PCM voices the driver plays: it picks the engine image and
+      // with it the DAC rate (driver.md §5).
+      const n = parseIntLike(atomValue(v));
+      if (n === null || n < 0 || n > 3)
+        pushDiag(diagnostics, "error", "E_PCM_VOICES",
+          `def-score :pcm-voices takes 0-3 (got ${atomValue(v) ?? "a list"})`, nodeSrc(v), "global");
+      else fileMeta.pcmVoices = n;
+    } else if (v.kind === "string") fileMeta[field] = v.value;
+    else err(`${key} takes a string`, v);
+  }
+}
+
 function parseSeDef(root, diagnostics) {
   const items = root.items.filter((n) => n.kind !== "comment");
   const name = atomValue(items[1]);
@@ -4740,6 +4762,16 @@ function warnImportIgnored(bundle, importPath, diagnostics, importSrc) {
       "warning",
       "W_IMPORT_IGNORED",
       `imported file '${importPath}' declares def-val slots; import folds defs only, so they are ignored`,
+      importSrc,
+      null,
+    );
+  }
+  if (Object.values(bundle.fileMeta).some((v) => v !== null)) {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_IMPORT_IGNORED",
+      `imported file '${importPath}' has a def-score; the settings are the importing score's own, so they are ignored`,
       importSrc,
       null,
     );
@@ -5112,7 +5144,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
 
   // v0.6: 1 file = 1 score. There is no (score …) wrapper — the post-expand
   // root list *is* the score body: def/track forms interleave freely in source
-  // order. File metadata comes from the reserved (def title/author "…") forms.
+  // order. File metadata comes from (def-score …).
   const fileSrc = roots.length > 0 ? nodeSrc(roots[0]) : { line: 1, column: 1 };
 
   // The tempo active at tick 0 seeds every track's currentTempo (tempo is
@@ -5294,7 +5326,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       diagnostics,
       "error",
       "E_PCM_VOICES",
-      `pcm${pcmUsed} needs (def pcm-voices ${pcmUsed}); this score declares ${pcmVoices}`,
+      `pcm${pcmUsed} needs (def-score :pcm-voices ${pcmUsed}); this score declares ${pcmVoices}`,
       fileSrc,
       "global",
     );
@@ -5618,7 +5650,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     ppqn: PPQN,
     metadata: {
       title: fileMeta.title || filename,
-      author: fileMeta.author || "unknown",
+      composer: fileMeta.composer || "unknown",
       source: filename,
       pcmVoices,
       // The frame clock every `Nf`, macro step and sweep length in this IR was

@@ -7,7 +7,7 @@
 ;           part that must count the EFFECT's ticks
 ; jump plays at its own priority, then boom is fired over it at a host-given
 ; one and stopped early (STOP_SE), which gives both channels back.
-(def pcm-voices 1)
+(def-score :pcm-voices 1)
 (def-pcm blip :file "blip.wav")
 (def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 

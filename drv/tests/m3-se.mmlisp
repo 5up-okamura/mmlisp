@@ -8,7 +8,7 @@
 ;
 ; :vel < 15 on the BGM forces the carrier-TL attenuation path, so the restore
 ; must recompose the level (not just re-key) to match.
-(def pcm-voices 2)
+(def-score :pcm-voices 2)
 
 (def-fm bgm :alg 7 :fb 0
   :ar1 31 :dr1 4 :sr1 1 :rr1 6 :sl1 2 :tl1 16 :ks1 0 :ml1 1 :dt1 0

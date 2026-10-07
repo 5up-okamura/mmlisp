@@ -1,5 +1,5 @@
 ; Four slices require three data banks in definition order, but fit in two.
-(def pcm-voices 2)
+(def-score :pcm-voices 2)
 (def-pcm longA :file "pcmbank.wav" :offset 0 :frames 9885
   :loop-start 50ms :loop-end 200ms)
 (def-pcm longB :file "pcmbank.wav" :offset 1000 :frames 9885

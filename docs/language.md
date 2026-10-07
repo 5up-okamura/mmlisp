@@ -19,6 +19,7 @@ source file is a sequence of top-level forms, in source order:
 | ----------------- | ------------------------------------------------ |
 | `(def name …)`    | Named definition (snippet, voice, sample, macro) |
 | `(def-val name …)`| Runtime value slot declaration                   |
+| `(def-score …)`   | The score's settings: title, composer, PCM voices |
 | `(def-mod …)`     | Score-wide note modifier (§9.4)                  |
 | `(import "…")`    | Fold another file's defs in at compile time (§9.2) |
 | `(channel …)`     | Track form — any list whose head is a channel name (§2) |
@@ -30,20 +31,24 @@ source file is a sequence of top-level forms, in source order:
   precede its first use. Any other top-level list head (usually a channel-name
   typo) is `E_UNKNOWN_TOPLEVEL_FORM`.
 
-### File metadata and global options
+### Score settings and global options
 
 ```lisp
-(def title "Song")
-(def author "Me")
-(def pcm-voices 2)
+(def-score :title "Song" :composer "Me" :pcm-voices 2)
 
 (fm1 :tempo 140 :lfo-rate 5 c e g e)
 ```
 
-- **`(def title "…")` / `(def author "…")`** — reserved defs carrying the file
-  metadata (only the string form is special; the names stay usable as ordinary
-  defs otherwise).
-- **`(def pcm-voices N)`** — how many PCM voices the driver plays, 0–3. This is
+`(def-score …)` holds the settings the whole score has one of. Every key is
+optional; several `def-score` forms combine, a key given twice is
+`E_SCORE_OPTION`, and so is a key it does not know. An imported file's
+`def-score` is not imported (§9.2) — the settings are the score's own. The old
+reserved defs `(def title "…")`, `(def author "…")` and `(def pcm-voices N)`
+are `E_SCORE_MOVED`.
+
+- **`:title "…"` / `:composer "…"`** — the file metadata (IR `metadata.title` /
+  `metadata.composer`, the MMB metadata section, the VGM GD3 tag).
+- **`:pcm-voices N`** — how many PCM voices the driver plays, 0–3. This is
   a whole-song choice: it picks the engine image, and with it the DAC rate
   (1 voice 14.4 kHz, 2 voices 10.1 kHz, 3 voices 6.7 kHz) and how much sample
   data fits in a single bank (2.3 / 3.2 / 4.9 seconds). NTSC and PAL scores with one
@@ -51,9 +56,8 @@ source file is a sequence of top-level forms, in source order:
   about 10.1/10.0 kHz for one or two voices and 6.65/6.59 kHz for three (NTSC/PAL); see [Multi-bank PCM](pcm-multibank.md). Fewer voices
   buy a higher rate, so state the number you actually need. Omitted, it is the
   highest `pcmN` track the score uses; a `pcmM` track above the stated number
-  is `E_PCM_VOICES`, and a value outside 0–3 is the same error. Unlike
-  `title`/`author` the name is reserved outright — there is no ordinary-def
-  fallback for it. See §16 and driver.md §5.
+  is `E_PCM_VOICES`, and a value outside 0–3 is the same error. See §16 and
+  driver.md §5.
 - **`:tempo` / `:lfo-rate`** — score-global effects, written on any track
   (leading position or mid-body); they apply to the whole song regardless of
   which track carries them. `:tempo` takes a BPM number or a curve
@@ -699,8 +703,7 @@ declares a value slot (§8); a bare reference in a channel body applies them.
 `def-se` declares a **sound effect** — tracks the game starts, not the song
 (§9.3). `def-mod` rewrites the notes it selects across the whole score (§9.4).
 Definitions are top-level forms and interleave freely
-with track forms (§1). `title` and `author` are reserved for file metadata
-when given a string, and `pcm-voices` for the PCM voice count (§1). A def (or parametric def) named after an eval builtin
+with track forms (§1); the score's own settings are `def-score` (§1). A def (or parametric def) named after an eval builtin
 (`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `round`, `floor`, `let`, `note`,
 `ticks`, `frames`) is rejected with `E_DEF_RESERVED`.
 
@@ -836,9 +839,10 @@ inline.
   transitive (an imported file may itself `import`). An imported sample def
   keeps its own base directory, so its `:file` reads from the imported file's
   folder, not the score's (§16).
-- **What is not imported**: `def-val` slots and track/other forms. A slot's
-  index is the importing file's host-visible layout, and tracks are songs, not
-  a library, so both are ignored with a `W_IMPORT_IGNORED` warning. Import
+- **What is not imported**: `def-val` slots, `def-score`, `def-mod` and
+  track/other forms. A slot's index is the importing file's host-visible
+  layout, the settings and modifiers are the score's own, and tracks are songs,
+  not a library, so all are ignored with a `W_IMPORT_IGNORED` warning. Import
   folds defs only.
 - **`:fx`**: `(import "path" :fx [...])` puts one effect chain (§16)
   on every sample the import brings in — a whole kit processed at once. It
@@ -1462,7 +1466,7 @@ naming one in its body, before the notes — and again wherever the sound
 changes — as a voice is on FM. How many voices play at once is a whole-song choice (§1):
 
 ```lisp
-(def pcm-voices 3)
+(def-score :pcm-voices 3)
 (def-pcm kick :file "sounds/kick.wav")
 (def-pcm snare :file "sounds/snare.wav" :rate 11025)
 (def-pcm pad :file "sounds/pad.wav" :loop-start 300ms :loop-len 100ms)

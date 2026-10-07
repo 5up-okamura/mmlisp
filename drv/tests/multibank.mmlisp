@@ -1,6 +1,6 @@
 ; Experimental: three baked notes of the 1.5-second fixture exceed 32 KiB.
 ; pcm1/pcm2 overlap samples whose bank-relative addresses can be identical.
-(def pcm-voices 2)
+(def-score :pcm-voices 2)
 (def-pcm bank :file "pcmbank.wav" :loop-start 150ms :loop-end 450ms)
 (fm1 :tempo 120 :oct 4 :len 8 :vel 10
   c e g c c e g c c e g c c e g c c e g c)

@@ -999,12 +999,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
 
   const header = [`; Imported from ${options.fileName ?? "a VGM file"} (VGM: ${parsed.chips.join(", ")})`];
   const title = [parsed.title, parsed.game && parsed.title ? `(${parsed.game})` : parsed.game].filter(Boolean).join(" ");
-  if (title) header.push(`(def title ${qstr(title)})`);
-  if (parsed.author) header.push(`(def author ${qstr(parsed.author)})`);
+  const score = [title && `:title ${qstr(title)}`, parsed.author && `:composer ${qstr(parsed.author)}`,
+    dacOut && ":pcm-voices 1"].filter(Boolean);
+  if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   if (envs.length) header.push("", ...envs);
   if (bends.length) header.push("", ...bends);
-  if (dacOut) header.push("", "(def pcm-voices 1)", ...dacOut.defs);
+  if (dacOut) header.push("", ...dacOut.defs);
   for (const rec of voices.values()) {
     const car = CARRIERS[rec.v.alg];
     const ops = rec.ops.map((o, s) => (car.includes(s) ? { ...o, tl: Math.min(127, o.tl + rec.base) } : o));

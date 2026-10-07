@@ -7,7 +7,7 @@
 ;   3  a loop note under a :vol tremolo, released at its gate
 ;   4  an echo tail: :keyon taps after key-off re-START the (released) blob
 ;   5  :vel* scales the envelope by the note's vel, and a tick clock
-(def pcm-voices 1)
+(def-score :pcm-voices 1)
 (def-pcm blip :file "blip.wav")
 (def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (pcm1 blip :tempo 120 :oct 4 :len 4

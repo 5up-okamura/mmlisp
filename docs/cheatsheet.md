@@ -7,10 +7,9 @@ which wins wherever the two differ; the [guide](guide.md) is the tutorial.
 ## A whole song
 
 ```lisp
-(def title "First Song")
+(def-score :title "First Song" :pcm-voices 1)  ; the score's settings (§1)
 (import "presets/gm/set.mmlisp")   ; 128 FM voices: gm-piano, gm-bass-syn1, ...
 (import "presets/tr808/set.mmlisp")  ; PCM drums: kick, snare, hat, clap, ...
-(def pcm-voices 1)
 
 (def pluck (macro :vel [15 12 9 6 3]))  ; a velocity envelope, one step a frame
 (def riff c e g > c < b g e d)          ; a phrase: 8 eighths = 1 bar
@@ -45,7 +44,7 @@ then jumps back to `#top`. `;` starts a comment.
 | `fm1`–`fm6` | YM2612 FM | `fm6` is taken by the DAC in a score that plays PCM |
 | `sqr1`–`sqr3` | PSG square | |
 | `noise` | PSG noise | `:mode white0`–`white3` / `periodic0`–`periodic3` |
-| `pcm1`–`pcm3` | samples on the fm6 DAC | `(def pcm-voices N)`: 1 = 14.4 kHz, 2 = 10.1, 3 = 6.7 |
+| `pcm1`–`pcm3` | samples on the fm6 DAC | `(def-score :pcm-voices N)`: 1 = 14.4 kHz, 2 = 10.1, 3 = 6.7 |
 | `fm3-1`–`fm3-4` | FM3, one pitch per operator | patch from a note-less `(fm3 voice)` (§15) |
 | `fm3-csm`, `fm3-csm-rate` | FM3 CSM | pitch = formant, rate track = buzz (§15) |
 
@@ -171,7 +170,7 @@ start written (`40..0`, not `:to 0` alone).
 ## PCM (§16)
 
 ```lisp
-(def pcm-voices 2)
+(def-score :pcm-voices 2)
 (def-pcm pad :file "pad.wav" :loop-start 300ms :loop-len 100ms
   :fx [(normalize) (fade :at 400ms :len 200ms)])
 (pcm1 :len 8 kick c snare c)            ; name the sample before its notes

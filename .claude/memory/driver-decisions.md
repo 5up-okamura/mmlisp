@@ -52,7 +52,7 @@ measurement — recorded because the arguments for them will be made again:
 | # | decided | what happened |
 | --- | --- | --- |
 | 2 | the Z80 keeps the clock; the 68k fills a ring it consumes per vblank | **reversed** — no interrupt, no timer; the 68000 pumps pairs and writes PSG itself (`driver.md` §5.1, §6.6) |
-| 4 | PCM voice count fixed at 3 | **reversed** — one image per count 1–3, `(def pcm-voices N)` |
+| 4 | PCM voice count fixed at 3 | **reversed** — one image per count 1–3, `(def-score :pcm-voices N)` |
 | 5 | no compile-time pre-resampling; per-note pitch is worth the cycles | **reversed** — every sample is baked per note at build time, no runtime pitch (`driver.md` §14.2) |
 | 6 | ring depth 2, a per-game knob | **reversed** — there is no ring |
 | 7 | 8-bit saturating mix, 3 voices, 10.5 kHz, "the rate stays a knob" | **reversed** — three generated images at 14,375.68 / 10,111.71 / 6,653.43 Hz, derived by `npm run light-study` from a slot work ceiling |

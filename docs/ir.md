@@ -28,7 +28,7 @@ asymmetries matter for the Z80 driver.
   "version": 1,
   "ppqn": 96,
   "metadata": {
-    "title": "...", "author": "...", "source": "song.mmlisp", "pcmVoices": 2,
+    "title": "...", "composer": "...", "source": "song.mmlisp", "pcmVoices": 2,
     "vals": [ ... ], "samples": [ ... ]
   },
   "tracks": [ ... ]
@@ -59,7 +59,7 @@ an integer: the MMB exporter multiplies by the engine image's rate to get the
 byte offset the driver wants. They are valid on `pcm1`–`pcm3` only.
 
 `metadata.pcmVoices` is how many PCM voices the driver plays, 0–3, from
-`(def pcm-voices N)` or the highest `pcmN` track the score uses. It picks the
+`(def-score :pcm-voices N)` or the highest `pcmN` track the score uses. It picks the
 engine image and with it the DAC rate, so the MMB exporter reads it before it
 bakes a single sample (driver.md §5, mmb.md §10).
 
@@ -691,7 +691,7 @@ CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz).
 {
   "version": 1,
   "ppqn": 96,
-  "metadata": { "title": "demo", "author": "unknown", "source": "demo.mmlisp", "vals": [], "samples": [] },
+  "metadata": { "title": "demo", "composer": "unknown", "source": "demo.mmlisp", "vals": [], "samples": [] },
   "tracks": [ {
     "id": 0, "scoreChannel": "fm1", "channel": "fm1",
     "events": [

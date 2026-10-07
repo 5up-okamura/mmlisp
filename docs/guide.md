@@ -15,7 +15,7 @@ tutorial; the full reference (every keyword, range, and rule) is
 - The file is the score — no wrapper form. Channel forms are written directly
   at top level as `(fm1 ...)`, `(sqr1 ...)`, `(noise ...)`.
 - Notes/rests/modifiers are written inline in the channel body.
-- File metadata is the reserved defs `(def title "…")` / `(def author "…")`;
+- File metadata is `(def-score :title "…" :composer "…")`;
   global `:tempo` / `:lfo-rate` are written on any track (see
   `docs/language.md` §1).
 
@@ -848,7 +848,7 @@ the IR mapping).
 Samples are defined with `(def-pcm name …)`, then named in a `pcm1` / `pcm2` / `pcm3` body — before the notes, and again wherever the sound changes — as a voice is on FM.
 
 ```lisp
-(def pcm-voices 2)
+(def-score :pcm-voices 2)
 (def-pcm kick :file "sounds/kick.wav")
 (def-pcm snare :file "sounds/snare.wav" :rate 11025)
 
@@ -861,7 +861,7 @@ Samples are defined with `(def-pcm name …)`, then named in a `pcm1` / `pcm2` /
 - Stereo WAV files are downmixed to mono at compile time.
 - WAV data is converted to 8-bit signed PCM at compile time.
 
-**Decide how many voices you need first.** `(def pcm-voices N)` is a whole-song
+**Decide how many voices you need first.** `(def-score :pcm-voices N)` is a whole-song
 choice, and it buys quality: one voice plays at 14.4 kHz, two at 10.1 kHz,
 three at 6.7 kHz. Leave it out and it is the highest `pcmN` track you wrote,
 so an idle third track costs the other two their bandwidth. The samples all
@@ -1154,7 +1154,7 @@ way (below). A song that uses both part J and the drums arrives with its
 through; move them to a free channel to hear them. NTSC and PAL drum
 libraries with up to three PCM voices can expand to multiple sample banks
 automatically. If an individual baked sample is still too large, the
-importer can select a lower-rate voice profile with `(def pcm-voices 2)` or
+importer can select a lower-rate voice profile with `(def-score :pcm-voices 2)` or
 `3`. A sample that cannot fit even then is omitted, its notes become rests,
 and the log identifies it.
 

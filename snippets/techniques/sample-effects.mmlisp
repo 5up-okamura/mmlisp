@@ -6,7 +6,7 @@
 ; both mixed: dry ghost notes around a wet backbeat. The dry and the wet snare
 ; are two samples, so both are baked.
 (import "presets/tr808/set.mmlisp")
-(def pcm-voices 2)
+(def-score :pcm-voices 2)
 
 (def-pcm snare-fx snare :fx [(gain 18) (reverb :tail 100ms) (limit)])
 

@@ -17,9 +17,9 @@ PCM in any layer.
   clamp (the bank is the only limit); pitch on a PCM track is a score error.
   The octave-by-shift key D5 had agreed was DROPPED with D10: the images have
   no 2^k step.
-- **Voice count per score (D8/D10)**: `(def pcm-voices N)`, one engine image
-  per count. The user chose the language form after the `(def title …)`
-  precedent.
+- **Voice count per score (D8/D10)**: `(def-score :pcm-voices N)`, one engine image
+  per count (the settings moved from reserved defs into `def-score`
+  on 2026-10-07).
 - **Levels on the 6 dB grid, as TABLES (D4).** The user had decided bit shifts
   were enough (2026-08-12); the 15-page linear LUT the one-voice engine shipped
   contradicted that without being flagged, and the user objected. Tables of

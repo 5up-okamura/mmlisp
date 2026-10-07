@@ -2,7 +2,7 @@
 ; §17), which releases it — END to the sample's end, WRAP to silence — and
 ; the tail plays out (m4-pcm-hold.cmds.json). The fm1 rest keeps the song
 ; running past the command.
-(def pcm-voices 1)
+(def-score :pcm-voices 1)
 (def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (pcm1 pad :tempo 120 :mode loop :oct 4 :len 0 c)
 (fm1 _1 _1)

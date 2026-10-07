@@ -69,7 +69,7 @@ assert.equal(tiedBank.length,3*32768);
 assert.deepEqual(Array.from({length:5},(_,i)=>tv.getUint32(8+i*24,true)),[0,12000,32768,52768,12000]);
 const monoPath=join(out,'large-one.mmlisp');
 writeFileSync(monoPath,readFileSync('tests/multibank.mmlisp','utf8')
- .replace('(def pcm-voices 2)','(def pcm-voices 1)')
+ .replace('(def-score :pcm-voices 2)','(def-score :pcm-voices 1)')
  .replace('"pcmbank.wav"',JSON.stringify(resolve('tests/pcmbank.wav'))).replace(/\(pcm2[\s\S]*$/,''));
 const mono=buildMmb(monoPath);assert.equal((mono.bytes[6]>>2)&3,1);assert.ok(mono.bytes[6]&0x10);assert.equal(parsePcmBank(mono.sampleBank).stamp,10112);
 assert.equal(buildMmb('tests/multibank.mmlisp').bytes[6]&0x10,0x10);

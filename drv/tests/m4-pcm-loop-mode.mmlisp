@@ -12,7 +12,7 @@
 ;   8  :loop-end pins the loop's end; the loop start written earlier holds
 ;   9  :pcm-start moves where the note starts; the loop stays
 ;  10  :mode shot, written, plays the track's range once
-(def pcm-voices 1)
+(def-score :pcm-voices 1)
 (def-pcm pad :file "pad.wav" :pcm-start 16ms :pcm-end 45ms)
 (def-pcm voice :file "pcmbank.wav")
 (def-pcm strings :file "pcmbank.wav"

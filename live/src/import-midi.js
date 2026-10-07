@@ -594,10 +594,11 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   if (ccs.length) warnings.push(`controllers skipped: ${ccs.join(", ")}`);
 
   const header = [`; Imported from ${options.fileName ?? "a MIDI file"} (MIDI)`];
-  if (analysis.title) header.push(`(def title ${qstr(analysis.title)})`);
+  const score = [analysis.title && `:title ${qstr(analysis.title)}`, pcmUsed && `:pcm-voices ${pcmUsed}`].filter(Boolean);
+  if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (tracks.some((t) => t.channel.startsWith("fm"))) header.push('(import "presets/gm/set.mmlisp")');
   if (usedPsgEnv) header.push('(import "presets/envelopes/set.mmlisp")');
-  if (pcmUsed) header.push('(import "presets/gm-drums/set.mmlisp")', `(def pcm-voices ${pcmUsed})`);
+  if (pcmUsed) header.push('(import "presets/gm-drums/set.mmlisp")');
   if (bendDefs.length) header.push("", ...bendDefs);
 
   // Timed by its notes, the file's bars say nothing: place them where the

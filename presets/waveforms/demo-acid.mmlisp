@@ -1,5 +1,5 @@
 (import "set.mmlisp")
-(def title "303-inspired FM bass")
+(def-score :title "303-inspired FM bass")
 ; One slider: right = brighter (smaller modulator attenuation).
 (def-val color 8 16..0 :step 1)
 

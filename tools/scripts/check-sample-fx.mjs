@@ -120,7 +120,7 @@ const run = (x, chain) => {
 
 // the compiler: resolution and rejection
 {
-  const ok = compileMMLisp(`(def pcm-voices 1)
+  const ok = compileMMLisp(`(def-score :pcm-voices 1)
 (def-pcm s :file "/x.wav" :fx [(gain 3) (comp :ratio 2 :attack 2ms) (fade :len 8)])
 (pcm1 s :tempo 120 :len 4 c)`, "t.mmlisp");
   const fx = ok.ir.metadata.samples[0].fx;
@@ -157,7 +157,7 @@ const run = (x, chain) => {
 // reaches full scale in the baked bytes, and a fade shortens the entry
 {
   const bank = (effect) => {
-    const { ir } = compileMMLisp(`(def pcm-voices 1)
+    const { ir } = compileMMLisp(`(def-score :pcm-voices 1)
 (def-pcm s :file "/x.wav" ${effect})
 (pcm1 s :tempo 120 :len 4 c)`, "t.mmlisp");
     const { sampleBank } = encodeMmb(ir, { samples: { s: { data: tone(0.5, 0.1), baseRate: RATE } } });
@@ -182,7 +182,7 @@ const run = (x, chain) => {
   const kit = `(def-pcm kick :file "wav/kick.wav" :frames 900 :fx [(gain -3)])
 (def-pcm snare :file "wav/snare.wav")
 (def-pcm snare-kit snare :fx [(crush 6)])`;
-  const { ir, diagnostics } = compileMMLisp(`(def pcm-voices 1)
+  const { ir, diagnostics } = compileMMLisp(`(def-score :pcm-voices 1)
 (import "kit/set.mmlisp" :fx [(comp) (limit)])
 (def-pcm kick-short kick :frames 400)
 (def-pcm snare-hot snare :fx [(gain 3)])

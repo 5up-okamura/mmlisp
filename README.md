@@ -26,7 +26,7 @@ game state at runtime.
   chiptune arpeggios (`:semi`) and drum rolls (`:keyon`) — advanced YM2612
   techniques you write, not hand-poke.
 - **PCM on the DAC.** `pcm1`–`pcm3` play samples through the fm6 DAC, in the
-  browser and on the driver alike — `(def pcm-voices N)` picks the engine, one
+  browser and on the driver alike — `(def-score :pcm-voices N)` picks the engine, one
   voice at 14,376 Hz, two at 10,112 Hz, three at 6,653 Hz.
 - **Interactive by design.** Tracks start / stop / layer / fade at runtime, and
   `def-val` slots let game code drive parameters live via `$name` — built for
@@ -117,7 +117,7 @@ register writes, which it hands to the Z80 in one short bus grab a frame. The
 **Z80** keeps a fixed DAC clock from its own instruction stream, mixes up to
 three PCM voices on it, and puts the FM writes on the YM2612 between samples
 ([docs/driver.md](docs/driver.md)). A score picks its engine image with
-`(def pcm-voices N)`: one voice at 14,376 Hz, two at 10,112 Hz, three at
+`(def-score :pcm-voices N)`: one voice at 14,376 Hz, two at 10,112 Hz, three at
 6,653 Hz.
 
 It plays FM + PSG voices and the full level model, motion (sweeps / glide /
