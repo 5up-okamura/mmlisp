@@ -15,7 +15,8 @@
 // loudest note lands on 15. Pan (CC10) sets an FM track's `:pan`. The
 // sustain pedal (CC64) holds notes. Pitch bend and the other controllers are
 // skipped and reported. A loop marked the RPG Maker way (CC111) or with
-// `loopStart` / `loopEnd` markers becomes `#top … (go top)`.
+// `loopStart` / `loopEnd` markers becomes `#top … (go top)`; without one the
+// whole song loops (unless the dialog says not to).
 //
 //   parseMidi(bytes)                  → the file's events
 //   analyzeMidi(parsed)               → what the import dialog shows
@@ -348,7 +349,7 @@ export function defaultMidiOptions(analysis) {
   const free = [...(pcmVoices ? FM_DESTS.slice(0, 5) : FM_DESTS), ...PSG_DESTS];
   melodic.forEach((l) => { dest[l.key] = free.shift() ?? "drop"; });
   const timing = analysis.fileGrid.fits || analysis.beat.frames ? "file" : "beats";
-  return { dest, grid: analysis.fileGrid.grid, timing, bpm: null, loop: !!analysis.loop };
+  return { dest, grid: analysis.fileGrid.grid, timing, bpm: null, loop: true };
 }
 
 // ── The score ────────────────────────────────────────────────────────────
@@ -412,8 +413,9 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const top = Math.max(-96, ...kept.map((n) => n.level));
   const velOf = (n) => Math.max(0, Math.min(15, Math.round(15 + (n.level - top) / 2)));
 
-  // The song: its end on a bar, the loop.
-  const loop = options.loop && analysis.loop ? analysis.loop : null;
+  // The song: its end on a bar, the loop — the file's, or with none marked
+  // the whole song.
+  const loop = !options.loop ? null : analysis.loop ?? { start: 0, end: null };
   let endTick = Math.max(0, ...kept.map((n) => q(n.end)));
   if (loop?.end != null) endTick = q(loop.end);
   const timeSigs = beats ? [] : analysis.timeSigs.map((s) => ({ ...s, tick: q(s.tick) }));

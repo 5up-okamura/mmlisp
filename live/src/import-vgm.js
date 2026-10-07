@@ -637,7 +637,9 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   }
   const frameRate = 60;
   const grid = estimateGrid(onsets, { frameRate });
-  return { channels, grid, frameRate, followPitch };
+  // A file without a loop point says it does not loop (a jingle).
+  const fileLoop = parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
+  return { channels, grid, frameRate, followPitch, fileLoop };
 }
 
 export function defaultVgmOptions(a) {
@@ -655,7 +657,7 @@ export function defaultVgmOptions(a) {
     else d = fm.shift() ?? sqr.shift() ?? "drop";
     dest[ch.key] = d;
   }
-  return { dest, bpm: null, grid: a.grid.frames ? "frames" : "beats", followPitch: a.followPitch, loop: true };
+  return { dest, bpm: null, grid: a.grid.frames ? "frames" : "beats", followPitch: a.followPitch, loop: a.fileLoop };
 }
 
 /**
@@ -680,11 +682,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
 
   const dest = options.dest ?? {};
   const taken = new Set();
-  const loop = options.loop && parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
+  // The file's loop, or (asked for, the file marking none) the whole song.
+  const fileLoop = a.fileLoop;
+  const loop = !!options.loop;
   const endTick0 = tickOf(parsed.totalSamples);
   const bars = barEnds([], Math.max(1, endTick0));
   const endTick = bars[bars.length - 1];
-  const loopTick = loop ? tickOf(parsed.loopSample) : null;
+  const loopTick = !loop ? null : fileLoop ? tickOf(parsed.loopSample) : 0;
 
   // Voices: a key per register set with the carriers relative to their loudest.
   const voices = new Map(); // key → {name, raw, base}

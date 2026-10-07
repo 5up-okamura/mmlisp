@@ -2932,7 +2932,7 @@
         { key: 'grid', label: 'Quantize (file timing)', type: 'select', value: String(def.grid),
           choices: GRIDS.map((g) => [String(g), gridLabel(g)]) },
       ];
-      if (a.loop) fields.push({ key: 'loop', label: 'Loop (from the file’s loop point)', type: 'checkbox', value: def.loop });
+      fields.push({ key: 'loop', label: a.loop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: def.loop });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
@@ -3002,7 +3002,7 @@
           choices: [['beats', 'the estimated beat'], ['frames', 'frames (1/60 s)']] },
         { key: 'followPitch', label: 'A pitch moved during a note becomes a slur', type: 'checkbox', value: def.followPitch },
       ];
-      if (parsed.loopSample != null) fields.push({ key: 'loop', label: 'Loop (from the file’s loop point)', type: 'checkbox', value: def.loop });
+      fields.push({ key: 'loop', label: a.fileLoop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: def.loop });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
         title: `Import ${fileName}`,

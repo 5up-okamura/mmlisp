@@ -1148,8 +1148,8 @@ and the log identifies it.
 
 **Song imports open a dialog first.** A MIDI file is read, then
 the dialog shows its timing, the tempo, the quantize grid (the coarsest one
-the notes sit on), the loop when the file marks one (CC111 or `loopStart` / `loopEnd`
-markers), and one row per source part with its destination. MIDI plays chords
+the notes sit on), the loop — the file's when it marks one (CC111 or
+`loopStart` / `loopEnd` markers), else the whole song — and one row per source part with its destination. MIDI plays chords
 on one channel and a track plays one note, so a channel is split into lanes,
 one a track; the defaults put each channel's first lane on FM before any
 second lane, then the PSG, with channel 10 on `pcm1`–`pcm2`, and drop what
@@ -1195,7 +1195,8 @@ follows it is the release, so the note is keyed off there and plays it as
 tempo is estimated from the onsets (the dialog shows how well they fit and
 the other readings, double or half — typing one keeps the measured beat and
 reads it so); when no beat fits, the notes go on the
-frame grid (1/60 s = 4 ticks). The file's loop becomes `#top … (go top)`.
+frame grid (1/60 s = 4 ticks). The file's loop becomes `#top … (go top)`;
+a file without one (a jingle) can loop whole — the box is offered unticked.
 DAC samples, a second chip and tempo changes within the song are not
 imported, and the log says so. A header that gives a chip no clock gets the
 chip's usual one (some arrangements leave it 0). A driver whose timer drifts
