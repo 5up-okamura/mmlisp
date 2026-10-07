@@ -628,3 +628,102 @@ jitter remains workload/phase-dependent even when CPU and bus time improve.
 No Z80 instruction-schedule/rate change was adopted. The inline-B/13-pair
 candidate remains an unvalidated experiment with a longer generation fence;
 its raw throughput gain does not establish better PCM onset latency.
+
+## Implementation audit: burst-related timing (2026-10-07)
+
+The user clarified that this is an implementation investigation, not analysis
+or modification of sin008. NTSC is confirmed; voice count and export profile
+are not confirmed. Song-specific diagnosis is outside this audit's conclusion.
+Production code is unchanged. Scratch probes are in `drv/out/timing-study`.
+
+### Existing constraints and already implemented suppression
+
+`mmlispdrv.c:MMLisp_frame` renders one frame ahead, but `mmlpairs.c:released`
+and `mmlp_plan` prohibit sending future-frame writes. Pairs carry op/value,
+not an execution deadline. Consequently increasing `MMLISP_LEAD` alone does
+not spread chip writes ahead of a burst. Once released, the Z80 executes pairs
+serially; there is no atomic frame/key-on commit.
+
+`mmlispseq.c:apply_patch` compares structured operator state, then `ym` applies
+a register shadow. Unchanged patch values are already suppressed. Pitch high
+and low writes intentionally use the always-write path because the chip shares
+pitch latches. Blanket register coalescing or dropping repeated high bytes is
+not a safe generic optimization.
+
+For NTSC, nominal Z80 pair service rates are:
+
+| Profile | 1 voice | 2 voices | 3 voices |
+| --- | ---: | ---: | ---: |
+| Single-bank | 1,026.8/s | 1,011.2/s | 1,108.9/s |
+| Multi-bank | 6,951.8/s | 1,895.9/s | 1,663.4/s |
+
+The host separately caps copies at 16 pairs/video frame for single-bank and
+80 for banked: about 958.8/s and 4,793.8/s at the modeled NTSC video clock.
+These are raw capacities, not useful FM writes: port changes, PCM state,
+generation fences and idle slots also consume pairs. For example, 29 writes
+alone consume approximately 17.4 ms of average banked three-voice service;
+this is a throughput estimate, not a measured onset delay.
+
+### High-value candidate: single-bank command capacity at unchanged PCM rates
+
+Generated and assembled current single-bank schedules with larger xpSteps,
+using the existing 100% slot-work ceiling. No production image was changed.
+
+| Voices | Pairs/lap, current -> candidate | Raw pairs/s, current -> candidate | PCM Hz | Code bytes, current -> candidate | Candidate generation fence |
+| --- | --- | --- | ---: | --- | ---: |
+| 1 | 8 -> 32 | 1,026.8 -> 4,107.3 | 14,375.683 | 2,554 -> 2,650 | 4 |
+| 2 | 8 -> 10 | 1,011.2 -> 1,264.0 | 10,111.709 | 2,790 -> 2,770 | 1 |
+| 3 | 8 -> 9 | 1,108.9 -> 1,247.5 | 6,653.429 | 2,326 -> 2,326 | 5 |
+
+All fit the existing 4,352-byte code allocation. Conservative published FIFO
+read peaks per NTSC frame are 70 / 22 / 22, below the 128-pair wrap boundary.
+The one-voice candidate is not a proven maximum; 32 was a tested useful point.
+Two voices at twelve steps and three at ten failed the existing placement.
+
+Adoption requires increasing single-bank host transfer capacity and applying
+fresh-index, pending-head, wrap and abort safety to that transport while
+preserving its PCM lane and command semantics. Merely changing xpSteps leaves
+the host's 16-pair/frame limit binding. Recompute fences and mirrors; validate
+instruction timing, YM settling, frame publication, PCM/SE lifecycle and native
+playback. Assembly/placement success is feasibility, not audio validation.
+Scripts: `wire-capacity.mjs`, `wire-capacity.json`; final three-voice nine-step
+candidate was also assembled and its descriptor inspected separately.
+
+### Ordering candidate: ordinary FM3 is excluded unconditionally
+
+`banked_writes` permits small groups only on channels other than FM3 and FM6.
+It does not distinguish ordinary FM3 from special/CSM operation here. An
+isolated C probe using the actual converter, a 29-register FM1 patch and a
+three-write independent note gives key-on queue index 2 for FM2 but index 31
+for FM3. Both cases have 32 writes; the note channel is the only difference.
+That is 29 pairs of avoidable waiting if ordinary FM3 can safely qualify.
+The source seq is in normal mode, but the converter currently receives no
+mode distinction for this eligibility test. `queue-study.c` records the probe.
+
+A mode-aware rule needs known CH3 mode, barriers for $27 transitions and the
+special pitch/timer operations, and preservation of chip-wide pitch-latch
+ordering. Do not simply remove the exclusion. Cross-frame priority would need
+additional dependency tracking; today's priority is confined to one frame.
+
+### Larger transport changes and their limits
+
+- Adaptive physical copy sizes could reduce idle padding and page-tail waste
+  from the fixed 16-pair grab. Measure full/wrap/late/empty reasons first;
+  preserve indivisible pitch pairs and actual copied-area reservation.
+- Reducing the fixed ahead distance with fresh-index timing bounds may reduce
+  baseline latency, but does not increase service throughput or by itself
+  eliminate burst-dependent jitter. A larger FIFO similarly absorbs backlog
+  without making writes reach the chip sooner.
+- Deadline-tagged preparation/trigger batches could exploit rendering ahead.
+  This is a protocol/scheduling change, not an extra pump call or lead setting.
+  Sending patch data earlier is only safe when it cannot change audible sound.
+  A key-off or a rest does not prove silence: the FM release envelope and
+  release macros can still sound. Existing state does not observe hardware
+  envelope completion, and global LFO/CSM and SE takeover add dependencies.
+  Thus unrestricted patch preloading is not the recommended first step.
+
+Recommended order: raise single-bank service/host capacity where applicable;
+make ordinary-FM3 priority mode-aware; measure and reduce physical-copy waste;
+consider deadline-based preparation only if those changes leave unacceptable
+jitter. The banked three-voice inline-B candidate remains a separate tradeoff
+(13 rather than 12 pairs with a longer generation fence), as recorded above.
