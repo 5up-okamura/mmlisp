@@ -5072,8 +5072,12 @@
         buildChStrips(ir);
         renderDynParams(ir);
         if (_vizMode !== 'off' && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
-        // When not playing, show the score's starting tempo (the loop drives it live).
-        if (_fmLiveRaf == null) updateTempoDisplay(irInitialBpm(ir));
+        // When not playing, show the score's starting tempo (the loop drives it live),
+        // and measure TIME's bar for it (after the build, off its path).
+        if (_fmLiveRaf == null) {
+          updateTempoDisplay(irInitialBpm(ir));
+          setTimeout(() => { if (_fmLiveRaf == null && _lastGoodIR === ir) refreshTimeBar(ir); });
+        }
         // Anchor playhead highlights to the document this IR was compiled from.
         // Later edits (without rebuild) are mapped from here so highlights track
         // the text. Edits compose into the field even while stopped.
@@ -5877,7 +5881,7 @@
           const drv = player;
           player.setOnRunStart(() => applyPlayerChannelState(drv));
           player.play(audioCtx, { se });
-          measureTimeBar(player); // no seek on the reference driver: the bar is off
+          refreshTimeBar(player._ir ?? _lastGoodIR, false); // the reference driver cannot seek
           // After play(): the driver's reset is a power-on, reseeding every value
           // slot from its def-val init, so the live slider values go in behind it
           // (the IR player seeds slots on load instead, hence the earlier call there).
@@ -5934,7 +5938,7 @@
         }
         _paused = false;
         _vizFrozen = null;
-        measureTimeBar(player);
+        refreshTimeBar(player._ir);
         setPlayIcon(true);
         document.getElementById('btnPlay').classList.add('active');
         document.getElementById('btnStop').disabled = false;
@@ -8750,7 +8754,10 @@
       _fmLiveLast = ts;
       if (!player) return;
       updateTempoDisplay(player.getBpm());
-      if (player instanceof IRPlayer && player.isPlaying()) showTime(player.positionSec());
+      if (player instanceof IRPlayer && player.isPlaying()) {
+        refreshTimeBar(player._ir); // a hot-swapped edit is a new song to measure
+        showTime(player.positionSec());
+      }
       updateChannelVu();
       syncLfoSlider();
       if (_fmPanelDragging || !isFmChannel(selectedCh) || getFmParamMode() !== 'channel') return;
@@ -8780,19 +8787,23 @@
     function placeLoopMark() {
       const mark = document.getElementById('time-loop');
       const sl = document.getElementById('sl-time');
-      if (!_timeSpan || !(_timeSpan.loopStart > 0) || !(_timeSpan.end > 0)) { mark.hidden = true; return; }
+      if (!(_timeSpan?.loopStart > 0) || !(_timeSpan.end > 0)) { mark.hidden = true; return; }
       const thumb = sl.offsetHeight - 3; // the thumb is 3px shy of the track (style.css)
       mark.hidden = false;
       mark.style.left = `${thumb / 2 + (_timeSpan.loopStart / _timeSpan.end) * Math.max(0, sl.offsetWidth - thumb)}px`;
     }
-    // Measure the playing IR once (a probe player, so the run is untouched).
-    function measureTimeBar(p) {
+    // The bar follows one IR — the playing one; stopped, the last compiled —
+    // measured once, by a probe player, so a run is never touched. A score
+    // with no note has nothing to seek, and the reference driver cannot: the
+    // bar is off for both.
+    const hasNotes = (ir) => (ir?.tracks ?? []).some((t) =>
+      (t.events ?? []).some((e) => e.cmd === 'NOTE_ON' || e.cmd === 'PCM_NOTE_ON'));
+    function refreshTimeBar(ir, seekable = true) {
       const sl = document.getElementById('sl-time');
-      const ir = p?._ir;
-      sl.disabled = !(p instanceof IRPlayer) || !ir;
-      if (sl.disabled) { _timeSpan = null; placeLoopMark(); showTime(0); return; }
-      if (_timeSpan?.ir !== ir) {
-        let loopStart = null, end = 0;
+      if (_timeSpan?.ir === ir && _timeSpan.seekable === seekable) return;
+      let loopStart = null, end = 0;
+      const on = seekable && hasNotes(ir);
+      if (on) {
         try {
           const probe = new IRPlayer(() => {});
           probe.loadJSON(ir);
@@ -8800,10 +8811,12 @@
           loopStart = cap.loopStartSec;
           end = cap.endSec;
         } catch (_) { /* unmeasured: the bar shows time but has no length */ }
-        _timeSpan = { ir, loopStart, end };
-        sl.max = String(Math.max(0.01, end));
       }
+      _timeSpan = { ir, seekable, loopStart, end };
+      sl.disabled = !on;
+      sl.max = String(Math.max(0.01, end));
       placeLoopMark();
+      if (!on || !player?.isPlaying?.()) showTime(0);
     }
     // The position as the bar shows it: wrapped into the loop once past one pass.
     function showTime(pos) {
@@ -8834,7 +8847,6 @@
     }
     function initTimeBar() {
       const sl = document.getElementById('sl-time');
-      sl.disabled = false; // until a reference-driver run turns it off
       const seekHere = () => seekTo(Number(sl.value));
       sl.addEventListener('input', () => {
         _timeDragging = true;

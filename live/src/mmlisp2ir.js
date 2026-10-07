@@ -5210,13 +5210,14 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         events: [],
       };
 
-      // Emit default NOISE_MODE (white0) for noise channel
+      // Emit default NOISE_MODE (white0) for noise channel. No src: nothing in
+      // the score wrote it, and a src (the whole track form) would light the
+      // form up as the playhead, and lasting, on a track with no notes.
       if (head === "noise") {
         trackData.events.push({
           tick: 0,
           cmd: "PARAM_SET",
           args: { target: "NOISE_MODE", value: NOISE_MODE_MAP["white0"] },
-          src: nodeSrc(node),
         });
       }
 
