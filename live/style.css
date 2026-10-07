@@ -13,6 +13,14 @@
       --high: color-mix(in srgb, var(--foreground) 45%, var(--contrast));     /* emphasis */
     }
     * { box-sizing: border-box; }
+    /* Only the score and the console are text to select: line numbers, menus,
+       labels and panels are not, so a drag or long-press never grabs them.
+       Fields stay selectable — Safari will not type into one that is not. */
+    body { -webkit-user-select: none; user-select: none; }
+    .cm-content, #log, input, textarea {
+      -webkit-user-select: text;
+      user-select: text;
+    }
     /* The document never scrolls: html and body are pinned to the (layout)
        viewport. iOS shortens that viewport while the on-screen keyboard is
        up; a body sized in 100dvh then hung past it, the page became
