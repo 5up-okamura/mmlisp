@@ -245,7 +245,7 @@ value_len : u16
 value     : value_len bytes, UTF-8
 ```
 
-Required keys: `title`, `composer`, `compiler_version`. Optional keys include
+Required keys: `title`, `composer`, `author`, `compiler_version`. Optional keys include
 `bpm` (display-only, see §7.5) and val-slot names. **The driver ignores this
 section entirely**; it exists for hosts and tools.
 

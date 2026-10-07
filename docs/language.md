@@ -19,7 +19,7 @@ source file is a sequence of top-level forms, in source order:
 | ----------------- | ------------------------------------------------ |
 | `(def name …)`    | Named definition (snippet, voice, sample, macro) |
 | `(def-val name …)`| Runtime value slot declaration                   |
-| `(def-score …)`   | The score's settings: title, composer, PCM voices |
+| `(def-score …)`   | The score's settings: title, composer, author, PCM voices |
 | `(def-mod …)`     | Score-wide note modifier (§9.4)                  |
 | `(import "…")`    | Fold another file's defs in at compile time (§9.2) |
 | `(channel …)`     | Track form — any list whose head is a channel name (§2) |
@@ -34,7 +34,7 @@ source file is a sequence of top-level forms, in source order:
 ### Score settings and global options
 
 ```lisp
-(def-score :title "Song" :composer "Me" :pcm-voices 2)
+(def-score :title "Song" :composer "Me" :author "Me" :pcm-voices 2)
 
 (fm1 :tempo 140 :lfo-rate 5 c e g e)
 ```
@@ -46,8 +46,10 @@ optional; several `def-score` forms combine, a key given twice is
 reserved defs `(def title "…")`, `(def author "…")` and `(def pcm-voices N)`
 are `E_SCORE_MOVED`.
 
-- **`:title "…"` / `:composer "…"`** — the file metadata (IR `metadata.title` /
-  `metadata.composer`, the MMB metadata section, the VGM GD3 tag).
+- **`:title "…"` / `:composer "…"` / `:author "…"`** — the file metadata: who
+  wrote the music and who wrote this score of it (an arrangement, a port). IR
+  `metadata.title` / `composer` / `author` and the MMB metadata section carry
+  all three; the VGM GD3 tag has one name, the composer (else the author).
 - **`:pcm-voices N`** — how many PCM voices the driver plays, 0–3. This is
   a whole-song choice: it picks the engine image, and with it the DAC rate
   (1 voice 14.4 kHz, 2 voices 10.1 kHz, 3 voices 6.7 kHz) and how much sample

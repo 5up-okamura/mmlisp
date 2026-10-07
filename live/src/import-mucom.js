@@ -2055,12 +2055,12 @@ export function mucomToMmlisp(parsed) {
     lines.push("", (head ? head + "\n" : "") + `(def *${mn} ${content})`);
   }
 
-  // #composer + #author, joined with " | " — but de-duplicated when identical.
   // They go in (def-score …); the tempo (score-global) rides the first
   // playable form below.
-  const composer = [...new Set([meta.composer, meta.author].filter(Boolean))].join(" | ");
+  // #title / #composer / #author map one to one.
   const metaDefs = [];
-  const score = [meta.title && `:title ${qstr(meta.title)}`, composer && `:composer ${qstr(composer)}`].filter(Boolean);
+  const score = [meta.title && `:title ${qstr(meta.title)}`, meta.composer && `:composer ${qstr(meta.composer)}`,
+    meta.author && `:author ${qstr(meta.author)}`].filter(Boolean);
   if (score.length) metaDefs.push(`(def-score ${score.join(" ")})`);
   // LFO defs (if any) are spliced in here once rendering has discovered them.
   const lfoDefAnchor = lines.length;

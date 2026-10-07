@@ -448,7 +448,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (t.oldMacros) warnings.push("instrument macros of this old Furnace version are not imported");
 
   const header = [`; Imported from ${options.fileName ?? "a tracker module"} (${t.format}, ${t.system})`];
-  const score = [t.title && `:title ${qstr(t.title)}`, t.author && `:composer ${qstr(t.author)}`].filter(Boolean);
+  const score = [t.title && `:title ${qstr(t.title)}`, t.author && `:author ${qstr(t.author)}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   for (const d of defs.values()) header.push("", d.text);

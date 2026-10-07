@@ -4296,8 +4296,8 @@ function collectDefs(roots, diagnostics) {
   // parts are tracks the host starts by the effect's number, not the song.
   const seDefs = new Map();
   const vals = new Map(); // v0.5: (def-val name init) runtime value slots
-  // (def-score :title "…" :composer "…" :pcm-voices N) — the score's settings.
-  const fileMeta = { title: null, composer: null, pcmVoices: null };
+  // (def-score :title "…" :composer "…" :author "…" :pcm-voices N) — the score's settings.
+  const fileMeta = { title: null, composer: null, author: null, pcmVoices: null };
   const imports = []; // v0.6 Phase 2: (import "path") — [{path, src}]
   const mods = []; // (def-mod …) forms, read once the defs are known (parseModDef)
   const remaining = [];
@@ -4541,9 +4541,8 @@ function collectDefs(roots, diagnostics) {
       const old = name === "pcm-voices" || name === "author" || name === "title"
         ? root.items.filter((n) => n.kind !== "comment").slice(2) : null;
       if (old?.length === 1 && (name === "pcm-voices" || old[0].kind === "string")) {
-        const key = name === "author" ? "composer" : name;
         pushDiag(diagnostics, "error", "E_SCORE_MOVED",
-          `(def ${name} …) is now (def-score :${key} …)`, nodeSrc(root), "global");
+          `(def ${name} …) is now (def-score :${name} …)`, nodeSrc(root), "global");
         continue;
       }
       // Anything else is a snippet: expanded where its name is written.
@@ -4575,7 +4574,7 @@ const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate" };
 // own), :tempo the clock its parts run on (default 120) — its own, so an
 // effect sounds the same in every song. Each part is a channel form, one per
 // channel, written on the channel it takes from the song.
-// (def-score :title "…" :composer "…" :pcm-voices N) — the whole score's
+// (def-score :title "…" :composer "…" :author "…" :pcm-voices N) — the whole score's
 // settings (language.md §1). Several forms combine; a key given twice is an
 // error, as is one it does not know.
 function parseScoreDef(root, fileMeta, diagnostics) {
@@ -4585,9 +4584,9 @@ function parseScoreDef(root, fileMeta, diagnostics) {
   for (let k = 1; k < items.length; k += 2) {
     const key = atomValue(items[k]);
     const v = items[k + 1];
-    const field = { ":title": "title", ":composer": "composer", ":pcm-voices": "pcmVoices" }[key];
+    const field = { ":title": "title", ":composer": "composer", ":author": "author", ":pcm-voices": "pcmVoices" }[key];
     if (!field) {
-      err(`unknown option ${key ?? describeNodeToken(items[k])} (takes :title :composer :pcm-voices)`, items[k]);
+      err(`unknown option ${key ?? describeNodeToken(items[k])} (takes :title :composer :author :pcm-voices)`, items[k]);
       continue;
     }
     if (!v) {
@@ -5650,7 +5649,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     ppqn: PPQN,
     metadata: {
       title: fileMeta.title || filename,
-      composer: fileMeta.composer || "unknown",
+      composer: fileMeta.composer ?? "",
+      author: fileMeta.author ?? "",
       source: filename,
       pcmVoices,
       // The frame clock every `Nf`, macro step and sweep length in this IR was

@@ -4572,6 +4572,7 @@
         ({ bytes, pcmCount } = renderVgm(offline, {
           title: ir.metadata?.title,
           composer: ir.metadata?.composer,
+          author: ir.metadata?.author,
         }, pcm));
       } catch (e) {
         log('VGM export failed: ' + e.message, 'err');

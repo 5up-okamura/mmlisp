@@ -49,7 +49,7 @@ const DATA_START = 0x40; // header is 0x40 bytes for version 1.50
  *
  * @param {{ writes: Array<{sec:number,port:number,addr:number,data:number}>,
  *           loopStartSec: number|null, endSec: number }} capture
- * @param {{ title?: string, composer?: string, system?: string,
+ * @param {{ title?: string, composer?: string, author?: string, system?: string,
  *           notes?: string }} [meta]
  * @param {{ bytes: Uint8Array, rateHz: number, startSec: number }|null} [dac]
  *        the mixed DAC stream from renderPcmDac, or null for none
@@ -284,7 +284,7 @@ function buildGd3(meta) {
     "", // game name (Japanese)
     meta.system ?? "Sega Mega Drive", // system name (English)
     "", // system name (Japanese)
-    meta.composer ?? "", // author (English): the composer
+    meta.composer || meta.author || "", // author (English): GD3's one name, the composer first
     "", // author (Japanese)
     "", // release date
     "MMLisp", // VGM creator

@@ -28,7 +28,7 @@ asymmetries matter for the Z80 driver.
   "version": 1,
   "ppqn": 96,
   "metadata": {
-    "title": "...", "composer": "...", "source": "song.mmlisp", "pcmVoices": 2,
+    "title": "...", "composer": "...", "author": "...", "source": "song.mmlisp", "pcmVoices": 2,
     "vals": [ ... ], "samples": [ ... ]
   },
   "tracks": [ ... ]
@@ -691,7 +691,7 @@ CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz).
 {
   "version": 1,
   "ppqn": 96,
-  "metadata": { "title": "demo", "composer": "unknown", "source": "demo.mmlisp", "vals": [], "samples": [] },
+  "metadata": { "title": "demo", "composer": "", "author": "", "source": "demo.mmlisp", "vals": [], "samples": [] },
   "tracks": [ {
     "id": 0, "scoreChannel": "fm1", "channel": "fm1",
     "events": [

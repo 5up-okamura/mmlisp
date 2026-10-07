@@ -15,7 +15,7 @@ tutorial; the full reference (every keyword, range, and rule) is
 - The file is the score — no wrapper form. Channel forms are written directly
   at top level as `(fm1 ...)`, `(sqr1 ...)`, `(noise ...)`.
 - Notes/rests/modifiers are written inline in the channel body.
-- File metadata is `(def-score :title "…" :composer "…")`;
+- File metadata is `(def-score :title "…" :composer "…" :author "…")`;
   global `:tempo` / `:lfo-rate` are written on any track (see
   `docs/language.md` §1).
 
