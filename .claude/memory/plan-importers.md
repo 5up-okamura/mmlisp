@@ -1,55 +1,42 @@
-# Song importers and VGM export with PCM — what is left
+# Song importers — the user's decisions, and what is open
 
-Built 2026-10-05 (commits b949f94 … 13aff2b): VGM/WAV export carry PCM (the
-mixed DAC stream), and MIDI, DMF, VGM and FUR import through one dialog. The
-behaviour is in `docs/guide.md` §23; the code is `live/src/import-*.js`
-(`import-song.js` is the shared back end, `import-tracker.js` the DMF/FUR
-converter). Delete this file once the open items below are settled.
+The importers (MIDI, VGM with the YM2612 DAC, DefleMask / Furnace) and VGM
+export with PCM are built; the behaviour is `docs/guide.md` §23, the code
+`live/src/import-*.js` (`import-song.js` the shared back end). This file
+keeps why they are shaped as they are and what is left. Delete it once the
+open items are settled or dropped.
 
-## Decisions behind it (user, 2026-10-05)
+## Decisions (user)
 
-- A conversion dialog, defaults right so Enter alone imports; only what a
-  user changes per file (destinations, tempo, timing).
-- MIDI: cut lanes from the most polyphonic channels first; apply the GM
-  bank's note offsets at import (the preset set does not).
-- VGM: estimate the tempo (not a fixed frame grid); frames are the fallback.
-- Trackers: each pattern a `(def …)` phrase, the tracks naming them in order;
-  a phrase restates the state it relies on.
-- VGM export PCM: the mixed DAC stream as one data block + `0x8n`, not DAC
-  stream control (the engine mixes voices in software).
-
-## Round 2 — structure and expression (user, 2026-10-07)
-
-Order: (1) structure MIDI/VGM, (2) envelopes (VGM PSG, FM carrier TL),
-(3) pitch: trackers → VGM → MIDI. Decisions:
-
-- **Structure over exactness.** "The more structured, the easier to grasp."
-  Repeats become `(x n …)`, including the `(x n A (break) B)` form (A B A B
-  A); a run used again elsewhere becomes a `(def …)`. Exact matches only (no
-  transposed repeats yet). Compare velocity at MMLisp's 16 steps — finer
-  differences mean nothing.
-- **Vibrato as a function, wobble rounded:** a `(macro :pitch (sin …))` in a
-  `(def …)` beats a faithful per-frame array; round depth/rate so notes
-  share defs.
-- **MIDI modulation (CC1): fixed mapping** (depth/rate decided by us).
-
-Done: (1) structure (3775f6d, 55ae5dd); (2) VGM envelopes — PSG level and FM
-carrier TL during a note → `:vel+` defs with `#sus`/`#rel`, the PSG note
-keyed off where its release starts. Shapes are matched exactly (a cut-short
-note names the one it starts); TwinBee still gives ~26 — rounding near
-shapes together is the next lever if the user wants fewer. (3) pitch:
-trackers done (04/01/02/03/E1/E2/E5 → :pitch macros; Furnace's rules
-rounded: a slide stops at the next note, 03 is row-only, a vibrato under a
-slide is dropped; E5 to 10 cents); VGM done (jump that stays 4 frames =
-slur, else vib-/bend- defs; per-part tuning back to A440); MIDI done (bend
-through RPN 0 → the same shapes; CC1 → vib, 127 = ±50 cents, 11 frames, from 12 frames in — the user
-found an undelayed one wobbling throughout).
-Round 2 is complete. MIDI parts on the PSG take a presets/envelopes shape
-by GM family (user, 2026-10-07: the presets were reworked for it — level
-shapes are :vel+ so dynamics survive, pitch shapes split out as vib /
-vib-delay / slide-up / drop). A bass of per-note pitch falls (Dungeon fm1) still names a bend per
-pitch — the falls differ in cents; sharing them would need fnum-relative
-shapes.
+- **A dialog, defaults right** (2026-10-05): Enter alone imports; only what
+  a user changes per file (destinations, tempo, timing, loop).
+- **MIDI lanes** (2026-10-05): cut from the most polyphonic channels first;
+  the GM bank's note offsets applied at import (the preset set does not).
+- **VGM tempo is estimated** (2026-10-05), not a fixed frame grid; frames
+  are the fallback.
+- **Trackers: a pattern is a phrase def** (2026-10-05), the tracks naming
+  them in order; a phrase restates the state it relies on.
+- **VGM export PCM** (2026-10-05): the mixed DAC stream as one data block +
+  `0x8n`, not DAC stream control (the engine mixes voices in software).
+- **Structure over exactness** (2026-10-07): "the more structured, the
+  easier to grasp." Repeats fold into `(x n …)` and `(x n A (break) B)`, a
+  run used again elsewhere into a def; exact matches only (no transposed
+  repeats yet), velocity compared at MMLisp's 16 steps.
+- **Vibrato as a function, wobble rounded** (2026-10-07): a `(macro :pitch
+  (sin …))` def beats a faithful per-frame array; depth and period are
+  rounded so notes share defs. The same holds for tracker fine tune (E5xx to
+  10 cents — DMF conversions tune every note).
+- **MIDI modulation (CC1) is a fixed mapping** (2026-10-07), decided by us:
+  127 → ±50 cents at 5.5 Hz, from 12 frames into the note (the user found an
+  undelayed one wobbling throughout).
+- **The envelope presets serve imports** (2026-10-07): level shapes are
+  `:vel+` so a note's dynamics survive, pitch shapes are separate (vib,
+  vib-delay, slide-up, drop) so they combine; a MIDI part on the PSG takes
+  its GM family's shape.
+- **The YM2612 DAC: one bank wav** (2026-10-07), as mucom's PCM bank — each
+  start offset a `dac-NN` def slicing it; DAC stream control read as well.
+- **A song without a loop point loops whole** on request (2026-10-07):
+  ticked by default for MIDI, unticked for VGM (a jingle).
 
 ## Open
 
@@ -59,12 +46,19 @@ shapes.
   `import-fm-voices.js` reads them as the register field. DMF/FUR song import
   converts (`import-tracker.js` DT_REG); the single-voice imports do not.
   VGI/OPNI unverified.
-- VGM: tempo changes within a song (one grid for the whole file), second
-  chips, other chips' PCM (SegaPCM, YM2610 ADPCM, OKI…). The YM2612 DAC is
-  in (2026-10-07: one bank wav, dac-NN defs by seek offset, rate by the
-  majority of hits); a driver's own mix of several samples cannot be split.
-  Dino Land's title (Genesis) estimates a 64th-note grid for the whole song
-  — a tempo problem, not the DAC's.
-- Trackers: sample channels,
-  macros of old (pre-INS2) Furnace instruments, subsongs after the first.
-- MIDI: per-note pan/CC changes after the first.
+- **VGM**: tempo changes within a song (one grid for the whole file); second
+  chips; other chips' PCM (SegaPCM, YM2610 ADPCM, OKI…). Dino Land's title
+  theme (Genesis) estimates a 64th-note grid for the whole song.
+- **Fewer shapes** if the user wants them: VGM envelopes and bends match
+  exactly (TwinBee gives ~26 envelopes); rounding near shapes together is
+  the lever. A bass of per-note pitch falls (Dungeon fm1) names a bend per
+  pitch — the driver steps F-numbers, so the falls differ in cents.
+- **Trackers**: sample channels, macros of old (pre-INS2) Furnace
+  instruments, subsongs after the first; Furnace's slide/porta compat rules
+  are rounded (a slide stops at the next note, 03xx is row-only, a vibrato
+  under a slide is dropped).
+- **MIDI**: per-note pan/CC changes after the first.
+- **Structured vs flat**: a structured import writes a voice's TL at a block
+  head, during the rest before the note, where the flat one writes it at the
+  note — the same key-ons, a different release tail. Seen in the
+  flat-vs-structured register comparison; not judged audible.

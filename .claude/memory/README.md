@@ -68,10 +68,12 @@ Rules:
   completion list and not a panel, why every preset set, and what is open
   (auditioning a score's own samples), and why PSG envelopes are macros, not
   a new def head.
-- [plan-importers.md](plan-importers.md) — **song importers (MIDI, VGM,
-  DMF, FUR) and VGM export with PCM — built 2026-10-05**: the user's
-  decisions behind them, and what is open (the voice importers' DT bug,
-  VGM tempo changes, tracker pitch effects).
+- [plan-importers.md](plan-importers.md) — **song importers (MIDI, VGM with
+  the YM2612 DAC, DMF, FUR) and VGM export with PCM — built**: the user's
+  decisions behind them (structure over exactness, rounded vibrato, the
+  fixed CC1 mapping, the envelope presets serving imports, one DAC bank
+  wav), and what is open (the voice importers' DT bug, VGM tempo changes
+  and other chips' PCM, fewer shapes).
 - [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
   input aids (all landed, guide §24 has the behaviour): why no
   `@codemirror/lint` and the layer-only rule, which shortcuts Chrome steals,

@@ -27,6 +27,9 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp-formatter.js`           | Source formatter                                                        |
 | `synth-md.js`, `scope-trigger.js` | Chip wiring for the browser, and the oscilloscope's trigger           |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
+| `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC), DefleMask / Furnace |
+| `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
+| `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB |
 | `midi-input.js`                | Web MIDI: keys play/step-input the preview, CCs drive panel sliders (MIDI Learn) |

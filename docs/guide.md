@@ -1137,109 +1137,127 @@ formats `File > Import` accepts:
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
 the score's folder with its name filled in, until it is written (also
-`File > Export > Imported PCM Bank WAV…`). A song that uses both part J and the
-drums arrives with its `fm6` lines commented out — on the Mega Drive fm6 is
-the DAC the drums play through; move them to a free channel to hear them.
-NTSC and PAL drum libraries with up to three PCM voices can expand to multiple sample
-banks automatically. If an individual baked sample is still too large, the
+`File > Export > Imported PCM Bank WAV…`); a VGM's DAC samples arrive the same
+way (below). A song that uses both part J and the drums arrives with its
+`fm6` lines commented out — on the Mega Drive fm6 is the DAC the drums play
+through; move them to a free channel to hear them. NTSC and PAL drum
+libraries with up to three PCM voices can expand to multiple sample banks
+automatically. If an individual baked sample is still too large, the
 importer can select a lower-rate voice profile with `(def pcm-voices 2)` or
 `3`. A sample that cannot fit even then is omitted, its notes become rests,
 and the log identifies it.
 
-**Song imports open a dialog first.** A MIDI file is read, then
-the dialog shows its timing, the tempo, the quantize grid (the coarsest one
-the notes sit on), the loop — the file's when it marks one (CC111 or
-`loopStart` / `loopEnd` markers), else the whole song — and one row per source part with its destination. MIDI plays chords
-on one channel and a track plays one note, so a channel is split into lanes,
-one a track; the defaults put each channel's first lane on FM before any
-second lane, then the PSG, with channel 10 on `pcm1`–`pcm2`, and drop what
-does not fit. **Enter** imports with the defaults. A program names its
-`presets/gm` voice, played at the bank's own note offset; drums play
-`presets/gm-drums`. Velocity, volume (CC7) and expression (CC11) become
-`:vel`, the loudest note at 15; pan (CC10) sets `:pan`; the sustain pedal
-holds notes. A part sent to a PSG channel takes the envelope of its program's
-family from `presets/envelopes` (piano → `env-piano`, organ → `env-organ`,
-strings and pads → `env-pad`, brass → `env-brass`, leads → `env-lead`, …). Pitch bend (its range from RPN 0) becomes a `:pitch` macro on
-the notes it moves — a vibrato or a few lines, shared as `vib-…` / `bend-NN`
-defs as a VGM's are (below); the modulation wheel (CC1) is a vibrato on a
-fixed mapping, 127 → ±50 cents at 5.5 Hz, coming in 12 frames (0.2 s) into
-the note — a held note starts to wobble, a short one stays still. Other controllers are skipped, and
-the log says how many. The music starts at the first note: a silent setup section before
-it, and the tempo it runs at, are left out. When the notes do not sit on the
-file's own beat (a recorded performance, a file converted from a log), the
-timing is the beat estimated from the notes' times, as for a VGM, instead of
-the file's tempo map; **Timing** switches between the two.
+### Song imports: MIDI, DefleMask / Furnace, VGM
 
-A DefleMask or Furnace module plays its order list as the tracker does — `0Bxx` jumps,
-`0Dxx` breaks, looping where it jumps back to (or to the start) — with a row
-a fixed number of ticks and the speed as `:tempo`. By default each pattern of
-each channel becomes a phrase `(def fm1-p03 …)` that restates its voice,
-octave and velocity, and each track names its phrases in order (`(x 2 …)`
-for a run); a note held into the next pattern starts that phrase with `~`.
-Untick **One def per pattern** for one long body instead. FM instruments
-become `def-fm`s; a volume or arpeggio macro becomes a `(macro …)` def; the
-volume column, pan (`08xy`), arpeggio (`00xy`), note cut (`ECxx`) and delay
-(`EDxx`) come along, and so do the pitch effects, as `:pitch` macros: a
-vibrato (`04xy`) is a shared `(def vib-xy (macro :pitch (sin …)))`, a slide
-(`01xx`/`02xx`, `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a
-slur that glides in, and fine tune (`E5xx`) an offset rounded to 10 cents.
-The log counts the effects that do not come along. On a
-non-Genesis system the channels play their notes on a `presets/waveforms`
-stand-in voice; sample channels are left out. Of a Furnace module, the first
-subsong is imported; a song on several chips lists every chip's channels.
+**A song import opens a dialog first**: what the file holds, the timing and
+tempo, the loop, and one row per source part with its destination.
+**Enter** imports with the defaults. The loop is the file's own when it marks
+one; otherwise the box loops the whole song — ticked for a MIDI file (they
+rarely mark one), unticked for a VGM (one without a loop point is usually a
+jingle).
 
-A VGM is a log of register writes, so its notes are rebuilt from them: a
-key-on starts a note, a key-off ends it, and on the YM2612, YM2203, YM2608,
-YM2610 and YM2151 the voice is the channel's registers at the key-on (DT2
-dropped on the YM2151). The carriers' TL is taken relative to the voice's
-loudest use and the rest becomes `:vel`. The SSG and the SN76489 become
-`sqr` and `noise` tracks; the YM2413 and the OPL chips give notes on a
-stand-in voice. A chip tuned off A440 on the whole (an arcade board's clock)
-is taken back onto the semitones. A pitch moved during a note is followed —
-untick it to keep only the struck pitch: a jump it then stays at is a new
-note, slurred (`~`); a wobble is a vibrato, a shared `(def vib-40-10 (macro
-:pitch (sin -40..40 :len 10f)))` (depth to 20 cents, period to the frame);
-any other move — a scoop, a fall — a few `linear` lines, a `(def bend-NN
-…)` once two notes share it (a note cut short shares a longer one's). A
-level that moves during a note — the driver's envelope on the PSG, a carrier
-TL it steps on the FM — becomes a `:vel+` macro in a shared def (`(def env-01
-(macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`), the note's `:vel` its loudest
-point: a level held four frames or more is the `#sus`, and on the PSG what
-follows it is the release, so the note is keyed off there and plays it as
-`#rel`. A note cut short names the shape it is the start of. The
-tempo is estimated from the onsets (the dialog shows how well they fit and
-the other readings, double or half — typing one keeps the measured beat and
-reads it so); when no beat fits, the notes go on the
-frame grid (1/60 s = 4 ticks). The file's loop becomes `#top … (go top)`;
-a file without one (a jingle) can loop whole — the box is offered unticked.
-The YM2612's DAC comes in as a `pcm1` track (the `YM2612 DAC` row): the
-VGM's PCM data bank becomes one wav, `<song>-dac.wav`, held in memory until
-Save offers to write it beside the score, and each place the driver starts
-a sample from is a `(def-pcm dac-NN … :offset … :frames …)` slicing it, at
-the rate most of its hits play (`:rate`); a hit at another rate is that many
-semitones off, and each hit lasts to the next. Seeks with `8n` writes and DAC
-stream control both read; a DAC written byte by byte, without a data bank,
-does not — nor can a driver's own mix of several samples be split again.
-FM6 is the DAC then, so its track is dropped. Other chips' PCM, a second
-chip and tempo changes within the song are not imported, and the log says
-so. A header that gives a chip no clock gets the
-chip's usual one (some arrangements leave it 0). A driver whose timer drifts
-is followed onset by onset, so its bars stay bars; a part a little off the
-beat (a late echo) is put on the nearest step without moving it.
+**MIDI.** The dialog shows the quantize grid (the coarsest one the notes sit
+on) and the loop marked with CC111 or `loopStart` / `loopEnd` markers. MIDI
+plays chords on one channel and a track plays one note, so a channel is
+split into lanes, one a track; the defaults put each channel's first lane on
+FM before any second lane, then the PSG, with channel 10 on `pcm1`–`pcm2`,
+and drop what does not fit.
+
+- A program names its `presets/gm` voice, played at the bank's own note
+  offset; drums play `presets/gm-drums`. A part sent to a PSG channel takes
+  the envelope of its program's family from `presets/envelopes` (piano →
+  `env-piano`, organ → `env-organ`, strings and pads → `env-pad`, brass →
+  `env-brass`, leads → `env-lead`, …).
+- Velocity, volume (CC7) and expression (CC11) become `:vel`, the loudest
+  note at 15; pan (CC10) sets `:pan`; the sustain pedal holds notes.
+- Pitch bend (its range from RPN 0) becomes a `:pitch` macro on the notes it
+  moves — a vibrato or a few lines, shared as `vib-…` / `bend-NN` defs as a
+  VGM's are (below). The modulation wheel (CC1) is a vibrato on a fixed
+  mapping, 127 → ±50 cents at 5.5 Hz, coming in 12 frames (0.2 s) into the
+  note — a held note starts to wobble, a short one stays still. Other
+  controllers are skipped, and the log says how many.
+- The music starts at the first note: a silent setup section before it, and
+  the tempo it runs at, are left out. When the notes do not sit on the
+  file's own beat (a recorded performance, a file converted from a log), the
+  timing is the beat estimated from the notes' times, as for a VGM, instead
+  of the file's tempo map; **Timing** switches between the two.
+
+**DefleMask and Furnace.** A module plays its order list as the tracker does
+— `0Bxx` jumps, `0Dxx` breaks, looping where it jumps back to (or to the
+start) — with a row a fixed number of ticks and the speed as `:tempo`. By
+default each pattern of each channel becomes a phrase `(def fm1-p03 …)` that
+restates its voice, octave and velocity, and each track names its phrases in
+order (`(x 2 …)` for a run); a note held into the next pattern starts that
+phrase with `~`. Untick **One def per pattern** for one long body instead.
+
+- FM instruments become `def-fm`s; a volume or arpeggio macro becomes a
+  `(macro …)` def. The volume column, pan (`08xy`), arpeggio (`00xy`), note
+  cut (`ECxx`) and delay (`EDxx`) come along.
+- The pitch effects come along as `:pitch` macros: a vibrato (`04xy`) is a
+  shared `(def vib-xy (macro :pitch (sin …)))`, a slide (`01xx`/`02xx`,
+  `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a slur that glides
+  in, and fine tune (`E5xx`) an offset rounded to 10 cents.
+- The log counts the effects that do not come along. On a non-Genesis
+  system the channels play their notes on a `presets/waveforms` stand-in
+  voice; sample channels are left out. Of a Furnace module, the first
+  subsong is imported; a song on several chips lists every chip's channels.
+
+**VGM.** A VGM is a log of register writes, so its notes are rebuilt from
+them: a key-on starts a note, a key-off ends it.
+
+- On the YM2612, YM2203, YM2608, YM2610 and YM2151 the voice is the
+  channel's registers at the key-on (DT2 dropped on the YM2151). The
+  carriers' TL is taken relative to the voice's loudest use and the rest
+  becomes `:vel`. The SSG and the SN76489 become `sqr` and `noise` tracks;
+  the YM2413 and the OPL chips give notes on a stand-in voice. A chip tuned
+  off A440 on the whole (an arcade board's clock) is taken back onto the
+  semitones; a header that gives a chip no clock gets the chip's usual one
+  (some arrangements leave it 0).
+- A pitch moved during a note is followed — untick it to keep only the
+  struck pitch. A jump it then stays at is a new note, slurred (`~`); a
+  wobble is a vibrato, a shared `(def vib-40-10 (macro :pitch (sin -40..40
+  :len 10f)))` (depth to 20 cents, period to the frame); any other move — a
+  scoop, a fall — a few `linear` lines, a `(def bend-NN …)` once two notes
+  share it (a note cut short shares a longer one's).
+- A level that moves during a note — the driver's envelope on the PSG, a
+  carrier TL it steps on the FM — becomes a `:vel+` macro in a shared def
+  (`(def env-01 (macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`), the note's
+  `:vel` its loudest point. A level held four frames or more is the `#sus`,
+  and on the PSG what follows it is the release, so the note is keyed off
+  there and plays it as `#rel`. A note cut short names the shape it is the
+  start of.
+- The tempo is estimated from the onsets (the dialog shows how well they fit
+  and the other readings, double or half — typing one keeps the measured
+  beat and reads it so); when no beat fits, the notes go on the frame grid
+  (1/60 s = 4 ticks). A driver whose timer drifts is followed onset by onset,
+  so its bars stay bars; a part a little off the beat (a late echo) is put
+  on the nearest step without moving it. The file's loop becomes `#top …
+  (go top)`.
+- The YM2612's DAC comes in as a `pcm1` track (the `YM2612 DAC` row). The
+  VGM's PCM data bank becomes one wav, `<song>-dac.wav`, and each place the
+  driver starts a sample from is a `(def-pcm dac-NN … :offset … :frames …)`
+  slicing it, at the rate most of its hits play (`:rate`); a hit at another
+  rate is that many semitones off, and each hit lasts to the next. Seeks with
+  `8n` writes and DAC stream control both read; a DAC written byte by byte,
+  without a data bank, does not — nor can a driver's own mix of several
+  samples be split again. FM6 is the DAC then, so its track is dropped.
+- Other chips' PCM, a second chip and tempo changes within the song are not
+  imported, and the log says so.
 
 **A MIDI or VGM import is structured** (untick **Fold repeats** for one bar
 after another): bars that repeat back to back become `(x n …)`, a run that
 comes round once more cut short becomes `(x n A (break) B)`, and a run that
-comes back elsewhere becomes a `(def fm1-a …)` named in place. A part that
+comes back elsewhere becomes a `(def fm1-a …)` named in place. Bars match
+when they play the same — velocity compared at its 16 steps. A part that
 plays behind the beat (an echo a 16th late) has every bar tied on from the
 last; its repeats fold as `~ (x n … ~)` — the `~` before the loop ties the
-first pass on, the one ending it each pass into the next. Bars match when
-they play the same — velocity compared at its 16 steps. A def states the
+first pass on, the one ending it each pass into the next. A def states the
 voice, octave and velocity it starts with; a loop body states a voice only
-where one changes — on the way in, or coming back round from its end. Where the file
-gives no bars (a VGM, a MIDI file timed by its notes), they are placed — bar
-length and pickup — where the song folds most. On a PCM track a hit is cut at
-the bar line rather than tied over it: a shot plays out whatever its length.
+where one changes — on the way in, or coming back round from its end. Where
+the file gives no bars (a VGM, a MIDI file timed by its notes), they are
+placed — bar length and pickup — where the song folds most. On a PCM track
+a hit is cut at the bar line rather than tied over it: a shot plays out
+whatever its length.
 
 Several files at once are fine. Everything except opening a document appends at
 the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press
