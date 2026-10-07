@@ -13,6 +13,14 @@
       --high: color-mix(in srgb, var(--foreground) 45%, var(--contrast));     /* emphasis */
     }
     * { box-sizing: border-box; }
+    /* Only the score and the console are text to select: line numbers, menus,
+       labels and panels are not, so a drag or long-press never grabs them.
+       Fields stay selectable — Safari will not type into one that is not. */
+    body { -webkit-user-select: none; user-select: none; }
+    .cm-content, #log, input, textarea {
+      -webkit-user-select: text;
+      user-select: text;
+    }
     /* The document never scrolls: html and body are pinned to the (layout)
        viewport. iOS shortens that viewport while the on-screen keyboard is
        up; a body sized in 100dvh then hung past it, the page became
@@ -626,6 +634,18 @@
       border: none;
     }
     input[type=range]:hover { border-color: var(--high); }
+    input[type=range]:disabled { opacity: 0.4; cursor: default; }
+    /* TIME (Global): the song's position, full width; the loop start marked. */
+    .time-val { color: var(--foreground); font-variant-numeric: tabular-nums; }
+    .time-track { position: relative; }
+    .time-loop {
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      width: 1px;
+      background: var(--accent);
+      pointer-events: none;
+    }
     /* MIDI: the CC a slider answers to; MIDI Learn picks a slider by its
        whole .knob-wrap, so the range itself takes no press while learning. */
     .knob-label .midi-cc { color: var(--accent); margin-left: auto; margin-right: 0.3em; }

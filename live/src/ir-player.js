@@ -187,6 +187,7 @@ export class IRPlayer {
     // _scheduleCapTime; after commit, _dispatchFloor suppresses any new write
     // before the boundary so the new IR starts exactly on the boundary.
     this._pendingSwap = null; // { irObj, boundaryTick, boundaryTime } | null
+    this._chaseWatch = null; // seek(): { line, time } while a chase looks for a line
     this._scheduleCapTime = Infinity; // audio time; old tracks don't schedule past this
     this._dispatchFloor = -Infinity; // audio time; events before this are skipped (not dispatched)
     // Capture-only (see captureRegisterLog): seconds to pull a track's LEADING
@@ -455,18 +456,6 @@ export class IRPlayer {
   }
 
   /**
-   * Returns the current playback position in ticks (track-0 clock).
-   * Returns 0 if not playing.
-   */
-  currentTick() {
-    if (!this._playing || this._tracks.length === 0) return 0;
-    const t0 = this._tracks[0];
-    const now = this._audioContext.currentTime;
-    const secsPerTick = this._secsPerTick;
-    return Math.max(0, Math.floor((now - t0.audioTimeAtTick0) / secsPerTick));
-  }
-
-  /**
    * Expanded event list for a track — counted `(x N …)` loops unrolled — for
    * visualizers. While playing returns the already-expanded scheduler events;
    * otherwise expands the IR on demand. Ticks align with trackClock().
@@ -496,50 +485,16 @@ export class IRPlayer {
   }
 
   /**
-   * Resume playback from an explicit tick position (pause/resume).
-   * @param {AudioContext} audioContext
-   * @param {number} fromTick  PPQN tick to resume from
-   */
-  playFromTick(audioContext, fromTick) {
-    if (!this._ir) throw new Error("No IR loaded");
-    this._clearPendingUiTimers();
-    this._audioContext = audioContext;
-    this._playing = true;
-    const now = audioContext.currentTime;
-    const secsPerTick = this._secsPerTick;
-    const newTick0 = now + 0.025 - fromTick * secsPerTick;
-    this._resetFm3Keys();
-    // FM3 independent-OP: each operator's own note, sticky :pitch offset
-    // and level (index = op − 1) — what its F-number and TL are written
-    // from (driver.md §13.4).
-    this._fm3Op = Array.from({ length: 4 }, () => ({
-      midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
-    }));
-    this._pendingKeyOff.fill(false);
-    this._tracks = this._flattenTracks();
-    for (const t of this._tracks) {
-      t.audioTimeAtTick0 = newTick0;
-      t.startAudioTime = newTick0;
-      t.loopCount = 0;
-      t.flatIndex = 0;
-      while (
-        t.flatIndex < t.events.length &&
-        t.events[t.flatIndex].tick < fromTick
-      ) {
-        t.flatIndex++;
-      }
-    }
-    this._scheduleLoop();
-  }
-
-  /**
-   * Seek to the nearest event at or before the given source line, then play.
+   * Play from the first event of a source line — the nearest line at or above
+   * it that has one; its first pass, a line in a loop body included — as
+   * seek() does: chased, so the line sounds as it does when the song reaches
+   * it.
    * @param {AudioContext} audioContext
    * @param {number} cursorLine  1-based source line number
    * @param {Array<{line:number,tick:number}>} sourceMap  from compileMMLisp()
    */
   playFromLine(audioContext, cursorLine, sourceMap) {
-    let tick = 0;
+    let line = null;
     if (sourceMap && sourceMap.length > 0) {
       // Binary search: last entry with line <= cursorLine
       let lo = 0,
@@ -552,10 +507,129 @@ export class IRPlayer {
           lo = mid + 1;
         } else hi = mid - 1;
       }
-      if (found >= 0) tick = sourceMap[found].tick;
+      if (found >= 0) line = sourceMap[found].line;
     }
-    this._initDefaultVoices();
-    this.playFromTick(audioContext, tick);
+    this.seek(audioContext, line == null ? { sec: 0 } : { line });
+  }
+
+  /**
+   * Play from a point in the song — `sec` seconds from the top, or the first
+   * time an event of source `line` plays — as if it had played up to there. The run
+   * is CHASED: every event before the point is dispatched against a clock set
+   * that far in the past, its register writes held back, so voices, params,
+   * tempo, macros and sweeps stand exactly where playing from the top would
+   * have left them. The chip then gets the held writes at once, without their key-ons,
+   * and every channel keyed off — nothing sounds across the seek — and
+   * playback goes on live. The UI callbacks stay silent through the chase.
+   * The caller flushes writes the worklet already holds from the old run.
+   * @param {AudioContext} audioContext
+   * @param {{sec?: number, line?: number}} at
+   * @returns {number} the point's time from the top, in seconds
+   */
+  seek(audioContext, { sec = null, line = null } = {}) {
+    if (!this._ir) throw new Error("No IR loaded");
+    this.stop();
+    // A line names no time until the song is run to it: find that first, and
+    // stop just short of its event, so the event itself plays live.
+    if (sec == null) {
+      const found = this._chase(audioContext, 0, null, line).lineSec;
+      sec = found == null ? 0 : Math.max(0, found - 0.005);
+    }
+    const at = audioContext.currentTime + 0.05;
+    const { held } = this._chase(audioContext, at - Math.max(0, sec), at, null);
+
+    // The held writes, in time order, as one burst at the seek point.
+    held.sort((a, b) => (a.when ?? -Infinity) - (b.when ?? -Infinity));
+    const pcmVoices = this._ir?.metadata?.pcmVoices ?? 0;
+    for (const w of held) {
+      if (w.when != null && w.when > at) continue; // past the point: the live run writes it
+      if (w.msg) {
+        // PCM: levels carry over; notes, their loop points and offs do not.
+        const k = w.msg.kind;
+        if (k === "vol" || k === "vel" || k === "master") this._write({ ...w.msg, when: at });
+        continue;
+      }
+      if (w.port === 0 && w.addr === 0x28 && (w.data & 0xf0)) continue; // a key-on
+      this._write(w.port, w.addr, w.data, at);
+    }
+    for (let ch = 0; ch < 6; ch++) this._writeKeyOff(ch);
+    for (let psgCh = 0; psgCh < 4; psgCh++) this._psgSetAtt(psgCh, 15, at);
+    for (let v = 0; v < pcmVoices; v++) this._pcmEv(at, { kind: "off", voice: v });
+
+    this._audioContext = audioContext;
+    this._onRunStart?.();
+    this._scheduleLoop();
+    return sec;
+  }
+
+  // Run the song from the top against a stand-in clock that starts at
+  // `start`, with every write held instead of sent and the UI callbacks
+  // silenced, until the clock reaches `until` or an event of source
+  // `watchLine` is dispatched. The run's state is left as the chase leaves
+  // it; the real write path and callbacks come back. Returns the held writes
+  // and, when watching, that event's time from `start` (null if none plays).
+  _chase(audioContext, start, until, watchLine) {
+    const saved = { write: this._write, onLine: this._onLine, onSeq: this._onSeq, onTrig: this._onTrig };
+    const held = [];
+    this._onLine = this._onSeq = this._onTrig = null;
+    this._write = (portOrMsg, addr, data, when) => {
+      if (portOrMsg && typeof portOrMsg === "object") held.push({ msg: portOrMsg, when: portOrMsg.when });
+      else held.push({ port: portOrMsg | 0, addr: addr & 0xff, data: data & 0xff, when });
+    };
+    const clock = { currentTime: start, state: "running", resume() {} };
+    const STEP = 0.01;
+    const END = start + 1200; // the longest a capture runs (captureRegisterLog)
+    let t = start;
+    try {
+      this._clearPendingUiTimers();
+      this._resetRunState();
+      this._pendingSwap = null;
+      // The song's own tempo from the top (a run leaves _bpm where its last
+      // tempo change put it); a tempo dialled in live stays.
+      if (!this._tempoOverride) this._bpm = this._resolveInitialTempo(this._ir);
+      this._tempoSweep = null;
+      this._audioContext = clock;
+      this._playing = true;
+      this._startAudioTime = start;
+      this._frameOrigin = start;
+      this._initDefaultVoices();
+      this._resetFm3Keys();
+      this._fm3Op = Array.from({ length: 4 }, () => ({
+        midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+      }));
+      this._pendingKeyOff.fill(false);
+      this._tracks = this._flattenTracks();
+      for (const tr of this._tracks) {
+        tr.audioTimeAtTick0 = start;
+        tr.startAudioTime = start;
+        tr.loopCount = 0;
+        tr.flatIndex = 0;
+      }
+      this._chaseWatch = watchLine == null ? null : { line: watchLine, time: null };
+      for (;;) {
+        const h = until == null ? t + STEP : Math.min(t + STEP, until);
+        clock.currentTime = t;
+        const done = this._scheduleStep(t, h);
+        t = h;
+        if (until != null && t >= until) break;
+        if (this._chaseWatch?.time != null) break;
+        if (done || t >= END) break;
+      }
+    } finally {
+      this._write = saved.write;
+      this._onLine = saved.onLine;
+      this._onSeq = saved.onSeq;
+      this._onTrig = saved.onTrig;
+    }
+    const watched = this._chaseWatch?.time;
+    this._chaseWatch = null;
+    return { held, lineSec: watched == null ? null : watched - start };
+  }
+
+  /** Seconds since the top of the song (seek() included); 0 when stopped. */
+  positionSec() {
+    if (!this._playing || !this._audioContext) return 0;
+    return Math.max(0, this._audioContext.currentTime - this._startAudioTime);
   }
 
   /** Toggle looping at any time. */
@@ -1040,6 +1114,10 @@ export class IRPlayer {
       // loop catch-up so nothing is written before the boundary; advance
       // past those events without dispatching.
       if (evTime >= this._dispatchFloor) {
+        // seek() to a line: note when the line first plays (see _chase) — a
+        // label's line (#top) counts, so it plays from the label.
+        const w = this._chaseWatch;
+        if (w && w.time == null && ev.src?.line === w.line) w.time = evTime;
         this._dispatchEvent(ev, evTime);
         if (this._onTrig && ev.cmd === "TRIG") {
           const code = ev.args?.code;

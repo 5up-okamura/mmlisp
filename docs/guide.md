@@ -1036,9 +1036,27 @@ for its bar number and tick count (§4).
 plays. The view stays put as long as they sit comfortably inside the editor —
 a looping pattern never moves it — and glides once one drifts toward the edge,
 turning the page so the notes land near the top. When the tracks are too far
-apart to show at once, it follows the biggest group that fits, the lowest
-track first. Scrolling, clicking or typing in the editor hands the view back
-to you for a few seconds.
+apart to show at once, it stays with any highlight already on screen, and only
+once none is left there turns to the biggest group that fits, the lowest track
+first. Scrolling, clicking or typing in the editor hands the view back to you
+for a few seconds.
+
+### Playing from a point
+
+**TIME**, under Global in the panel, shows where the song is, and its bar spans
+one pass of it: the intro and one time round the loop, the loop's start marked
+on the bar. Past the end the position carries on from the loop start, as the
+song does. Tap or drag the bar to play from there; while you drag, it keeps
+playing a moment from under your finger, so the spot can be found by ear.
+Stopped, it starts playback at that point.
+
+**Tap a line number** to play from that line's first note — for a line in a
+loop, the first time round. A label's line (`#top`) plays from the label; a line
+with no note (a def, a comment) does nothing.
+
+Either way the song is played up to the point without a sound, in an instant,
+so it arrives as it would have: the voice, `:vol`, tempo and every other change
+before the point are in place, not just the notes after it.
 
 ### Font size
 
