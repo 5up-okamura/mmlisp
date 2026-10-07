@@ -1065,6 +1065,18 @@ the same popup as a panel value — anywhere from 8 to 96, so it can go large fo
 projector or a recording. It is remembered. On touch screens the text never
 goes below 16 px (smaller makes iOS zoom in when you tap the editor).
 
+### Chords on the keyboards
+
+Every keyboard — on screen, the computer's, MIDI — is polyphonic: each held
+key takes a channel of its own, with the voice copied onto it. An FM voice
+has the six FM channels, a PSG one the three square channels; a sample and
+the noise channel play one note. While the score is stopped all of them are
+free; while it plays, only the channels it has no track on (CH3 as a whole
+once the score uses `fm3-1`… or `fm3-csm`), so you can play along over it —
+and when none is free the keys play on the target channel itself, over the
+score's own writes there. With every channel held, the oldest key gives its
+channel to the newest.
+
 ### A MIDI keyboard and knobs
 
 `MMLisp > MIDI > MIDI Input` listens to every connected MIDI input (Chrome,
@@ -1073,9 +1085,8 @@ MIDI, and the menu is not shown there). The choice is remembered.
 
 - **Keys** play where the on-screen keyboard plays — the selected channel, or
   the voice under the cursor — and with the step-input button (●) on they are
-  written into the score the same way. A channel plays one note: the newest
-  key sounds, and letting it go returns to the one still held. Rests and ties
-  stay on the on-screen buttons.
+  written into the score the same way. Rests and ties stay on the on-screen
+  buttons.
 - **Step input writes octaves relatively**, from any keyboard: a note in
   another octave than the one in force at the cursor gets `>` / `<` (or
   `o+N` / `o-N` for a bigger jump) in front of it — never an `:oct`. The

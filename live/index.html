@@ -5207,7 +5207,7 @@
     let _midiLearnTarget = null;           // the slider the next CC is assigned to
     let _midiCcMap = {};                   // "ch:cc" → slider key (pref 'midiCc')
     let _midiDevices = '';                 // last logged device list
-    const _midiHeld = new Map();           // chIndex → held keys, oldest first: [{ note, vel }]
+    const _midiHeld = new Map();           // MIDI note → { voice } while the key is held
     const _midiCcPending = new Map();      // slider key → latest CC value, applied once per frame
     let _midiCcRaf = 0;
     let _stepLastVel = null;               // the :vel step input last wrote (MIDI Velocity)
@@ -7808,9 +7808,9 @@
 
     // Single entry point for note-on so every preview surface (on-screen keyboard,
     // physical keyboard, algorithm-diagram tap) records the last-played pitch.
-    function startPreviewNote(chIndex, midi, vel) {
+    function startPreviewNote(chIndex, midi, vel, shift = previewKeyShift(chIndex)) {
       _lastPreviewMidi = midi;
-      previewNoteOn(chIndex, Math.max(0, Math.min(127, midi + previewKeyShift(chIndex))), vel);
+      previewNoteOn(chIndex, Math.max(0, Math.min(127, midi + shift)), vel);
     }
 
     // A `:key` voice under the cursor moves what the keys play as the compiler
@@ -7950,9 +7950,7 @@
       const releasePointer = (pointerId) => {
         const info = _kbPointerMap.get(pointerId);
         if (!info) return;
-        if (info.midi != null) {
-          previewNoteOff(info.chIndex);
-        }
+        if (info.midi != null) previewRelease(info.voice);
         info.btn?.classList.remove('down');
         _kbPointerMap.delete(pointerId);
       };
@@ -7964,7 +7962,7 @@
         const nextBtn = keyAtPoint(e.clientX, e.clientY);
         if (!nextBtn) {
           if (info.midi != null) {
-            previewNoteOff(info.chIndex);
+            previewRelease(info.voice);
             info.btn?.classList.remove('down');
             info.btn = null;
             info.midi = null;
@@ -7975,12 +7973,12 @@
         const nextMidi = Number(nextBtn.dataset.midi);
         if (!Number.isFinite(nextMidi) || nextMidi === info.midi) return;
 
-        if (info.midi != null) {
-          previewNoteOff(info.chIndex);
-        }
+        if (info.midi != null) previewRelease(info.voice);
         info.btn?.classList.remove('down');
 
-        startPreviewNote(info.chIndex, nextMidi);
+        const target = getKeyboardTargetContext();
+        if (!target) return;
+        info.voice = previewTake(target, nextMidi);
         nextBtn.classList.add('down');
 
         info.btn = nextBtn;
@@ -8041,21 +8039,13 @@
         const ok = await initAudio();
         if (!ok) return;
 
-        if (target.useCursorDef) {
-          const sig = JSON.stringify(target.defCtx.regs);
-          if (_kbAppliedDefSig !== sig) {
-            applyFmRegsToChannel(target.chIndex, target.defCtx.regs);
-            _kbAppliedDefSig = sig;
-          }
-        }
-
-        startPreviewNote(target.chIndex, midi);
+        const voice = previewTake(target, midi);
         if (_stepInputEnabled) {
           insertStepNote(midi);
         }
 
         btn.classList.add('down');
-        _kbPointerMap.set(e.pointerId, { btn, midi, chIndex: target.chIndex });
+        _kbPointerMap.set(e.pointerId, { btn, midi, voice });
         if (typeof keysEl.setPointerCapture === 'function') {
           keysEl.setPointerCapture(e.pointerId);
         }
@@ -8186,6 +8176,66 @@
       }
     }
 
+    // POLYPHONIC PREVIEW: a held key takes a channel of its own. The three
+    // keyboards share one pool — the target channel, and every channel of its
+    // kind the song leaves free: all of them while stopped, the trackless ones
+    // while it plays (CH3 as a whole once the song puts it in its operator or
+    // CSM mode). The target's patch and op mask are copied onto a pool channel
+    // as a key takes it, through the player, so its shadow stays true. With
+    // every pool channel held, the oldest key gives its channel up; with no
+    // free channel the target itself is played, over the song's own writes
+    // (the sequencer keeps writing it — a real take-over is driver.md §2.5's
+    // suspend, which the preview does not have). A sample (one bank) and the
+    // noise channel stay one voice.
+    const _previewVoices = new Map(); // chIndex → the voice (key) holding it
+    let _previewSeq = 0;
+
+    function previewPool(target) {
+      const t = target.chIndex;
+      if (t === PCM_PREVIEW_CH || t === 9) return [t];
+      const kind = isFmChannel(t) ? [0, 1, 2, 3, 4, 5] : [6, 7, 8];
+      const used = new Set();
+      if (_fmLiveRaf != null) {
+        for (const tr of _lastGoodIR?.tracks ?? []) {
+          if (tr.se) continue;
+          const fm = CH_NAME_TO_INDEX[tr.channel];
+          const psg = PSG_CH_NAME_TO_INDEX[tr.channel];
+          if (fm != null) used.add(fm);
+          else if (psg != null) used.add(6 + psg);
+          if (/^fm3-/.test(tr.scoreChannel ?? '')) used.add(2);
+        }
+      }
+      const free = kind.filter((c) => !used.has(c));
+      return free.includes(t) ? [t, ...free.filter((c) => c !== t)] : [...free, t];
+    }
+
+    function previewTake(target, midi, vel) {
+      const pool = previewPool(target);
+      let ch = pool.find((c) => !_previewVoices.has(c));
+      if (ch == null) {
+        ch = pool.reduce((a, b) => (_previewVoices.get(a).seq <= _previewVoices.get(b).seq ? a : b));
+        _previewVoices.get(ch).ch = null; // its key no longer holds a channel
+        previewNoteOff(ch);
+      }
+      if (ch === target.chIndex) {
+        ensurePreviewDefApplied(target);
+      } else if (isFmChannel(ch)) {
+        const regs = target.useCursorDef ? target.defCtx.regs : player?.getChRegs(target.chIndex);
+        if (regs) applyFmRegsToChannel(ch, { ...regs, ops: regs.ops.map((o) => ({ ...o, tl: o.voicedTl ?? o.tl })) });
+        player?.setOpMask?.(ch, player.getOpMask(target.chIndex));
+      }
+      const voice = { ch, seq: ++_previewSeq };
+      _previewVoices.set(ch, voice);
+      startPreviewNote(ch, midi, vel, previewKeyShift(target.chIndex));
+      return voice;
+    }
+
+    function previewRelease(voice) {
+      if (voice?.ch == null || _previewVoices.get(voice.ch) !== voice) return;
+      _previewVoices.delete(voice.ch);
+      previewNoteOff(voice.ch);
+    }
+
     async function onPhysicalKeyDown(e) {
       if (e.metaKey || e.ctrlKey || e.altKey) return; // leave modifier shortcuts alone
       if (e.repeat) return;                            // ignore auto-repeat
@@ -8200,14 +8250,13 @@
       const midi = (_kbBaseOctave + 1) * 12 + semi;
 
       // Reserve the slot before the async init so a keyup during init can cancel it.
-      const entry = { chIndex: target.chIndex, midi };
+      const entry = { voice: null, midi };
       _kbPhysicalMap.set(e.code, entry);
       const ok = await initAudio();
       if (!ok) { _kbPhysicalMap.delete(e.code); return; }
       if (_kbPhysicalMap.get(e.code) !== entry) return; // released during init
 
-      ensurePreviewDefApplied(target);
-      startPreviewNote(target.chIndex, midi);
+      entry.voice = previewTake(target, midi);
       if (_stepInputEnabled) insertStepNote(midi);
     }
 
@@ -8215,11 +8264,11 @@
       const info = _kbPhysicalMap.get(e.code);
       if (!info) return;
       _kbPhysicalMap.delete(e.code);
-      previewNoteOff(info.chIndex);
+      previewRelease(info.voice);
     }
 
     function releaseAllPhysicalNotes() {
-      for (const info of _kbPhysicalMap.values()) previewNoteOff(info.chIndex);
+      for (const info of _kbPhysicalMap.values()) previewRelease(info.voice);
       _kbPhysicalMap.clear();
     }
 
@@ -8328,40 +8377,29 @@
     }
     window.toggleMidiVelocity = toggleMidiVelocity;
 
-    // A channel plays one note: the newest held key sounds, and letting it go
-    // falls back to the one held before it (legato), as a mono synth does.
+    // Each held key is a voice of the polyphonic preview (previewTake).
     async function onMidiNoteOn(note, vel127) {
       const target = getKeyboardTargetContext();
       if (!target) return;
       const vel = _midiVelocity ? midiVelToVel(vel127) : undefined;
-      const held = (_midiHeld.get(target.chIndex) ?? []).filter((k) => k.note !== note);
-      const entry = { note, vel };
-      held.push(entry);
-      _midiHeld.set(target.chIndex, held);
+      previewRelease(_midiHeld.get(note)?.voice); // the same key again: retrigger
+      const entry = { voice: null };
+      _midiHeld.set(note, entry);
       if (!(await initAudio())) return;
       // A key let go while audio was starting is not sounded, but still written.
-      if (_midiHeld.get(target.chIndex)?.includes(entry)) {
-        ensurePreviewDefApplied(target);
-        startPreviewNote(target.chIndex, note, vel);
-      }
+      if (_midiHeld.get(note) === entry) entry.voice = previewTake(target, note, vel);
       if (_stepInputEnabled) insertStepNote(note, vel);
     }
 
     function onMidiNoteOff(note) {
-      for (const [chIndex, held] of _midiHeld) {
-        const i = held.findIndex((k) => k.note === note);
-        if (i < 0) continue;
-        const wasSounding = i === held.length - 1;
-        held.splice(i, 1);
-        if (!wasSounding) continue;
-        const prev = held[held.length - 1];
-        if (prev) startPreviewNote(chIndex, prev.note, prev.vel);
-        else previewNoteOff(chIndex);
-      }
+      const entry = _midiHeld.get(note);
+      if (!entry) return;
+      _midiHeld.delete(note);
+      previewRelease(entry.voice);
     }
 
     function releaseAllMidiNotes() {
-      for (const chIndex of _midiHeld.keys()) previewNoteOff(chIndex);
+      for (const entry of _midiHeld.values()) previewRelease(entry.voice);
       _midiHeld.clear();
     }
 
