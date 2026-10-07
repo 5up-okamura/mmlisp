@@ -59,8 +59,12 @@ shapes.
   `import-fm-voices.js` reads them as the register field. DMF/FUR song import
   converts (`import-tracker.js` DT_REG); the single-voice imports do not.
   VGI/OPNI unverified.
-- VGM: tempo changes within a song (one grid for the whole file), DAC sample
-  import, second chips.
+- VGM: tempo changes within a song (one grid for the whole file), second
+  chips, other chips' PCM (SegaPCM, YM2610 ADPCM, OKI…). The YM2612 DAC is
+  in (2026-10-07: one bank wav, dac-NN defs by seek offset, rate by the
+  majority of hits); a driver's own mix of several samples cannot be split.
+  Dino Land's title (Genesis) estimates a 64th-note grid for the whole song
+  — a tempo problem, not the DAC's.
 - Trackers: sample channels,
   macros of old (pre-INS2) Furnace instruments, subsongs after the first.
 - MIDI: per-note pan/CC changes after the first.

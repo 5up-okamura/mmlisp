@@ -1137,7 +1137,7 @@ formats `File > Import` accepts:
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
 the score's folder with its name filled in, until it is written (also
-`File > Export > mucom88 PCM Bank WAV…`). A song that uses both part J and the
+`File > Export > Imported PCM Bank WAV…`). A song that uses both part J and the
 drums arrives with its `fm6` lines commented out — on the Mega Drive fm6 is
 the DAC the drums play through; move them to a free channel to hear them.
 NTSC and PAL drum libraries with up to three PCM voices can expand to multiple sample
@@ -1212,8 +1212,17 @@ the other readings, double or half — typing one keeps the measured beat and
 reads it so); when no beat fits, the notes go on the
 frame grid (1/60 s = 4 ticks). The file's loop becomes `#top … (go top)`;
 a file without one (a jingle) can loop whole — the box is offered unticked.
-DAC samples, a second chip and tempo changes within the song are not
-imported, and the log says so. A header that gives a chip no clock gets the
+The YM2612's DAC comes in as a `pcm1` track (the `YM2612 DAC` row): the
+VGM's PCM data bank becomes one wav, `<song>-dac.wav`, held in memory until
+Save offers to write it beside the score, and each place the driver starts
+a sample from is a `(def-pcm dac-NN … :offset … :frames …)` slicing it, at
+the rate most of its hits play (`:rate`); a hit at another rate is that many
+semitones off, and each hit lasts to the next. Seeks with `8n` writes and DAC
+stream control both read; a DAC written byte by byte, without a data bank,
+does not — nor can a driver's own mix of several samples be split again.
+FM6 is the DAC then, so its track is dropped. Other chips' PCM, a second
+chip and tempo changes within the song are not imported, and the log says
+so. A header that gives a chip no clock gets the
 chip's usual one (some arrangements leave it 0). A driver whose timer drifts
 is followed onset by onset, so its bars stay bars; a part a little off the
 beat (a late echo) is put on the nearest step without moving it.

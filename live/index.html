@@ -200,7 +200,7 @@
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
             <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
             <button class="menu-item" onclick="openVideoExport();closeMenus()">Video…</button>
-            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">mucom88 PCM Bank WAV…</button>
+            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">Imported PCM Bank WAV…</button>
           </div>
         </div>
         <button class="menu-item" onclick="openShare();closeMenus()">
@@ -2861,11 +2861,11 @@
       // folder — so seed the decode cache under the key `:file` resolves to (a
       // bare name, since there is no base dir). The song then plays immediately;
       // saving the wav beside the score is what makes it survive a reload.
-      _mucomPcm = pcm; // for File ▸ Export ▸ mucom88 PCM Bank WAV…, and Save
+      _mucomPcm = pcm; // for File ▸ Export ▸ Imported PCM Bank WAV…, and Save
       _mucomPcmUnsaved = !!pcm;
       if (pcm) {
         _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate });
-        log(`mucom88: drums play from "${pcm.wavFile}" held in memory — Save offers to write it next to the score`, 'info');
+        log(`${pcm.tag ?? 'mucom88'}: samples play from "${pcm.wavFile}" held in memory — Save offers to write it next to the score`, 'info');
       }
       setEditorDoc(source);
       await refreshImportsAndCompile(); // a song imports preset sets
@@ -2905,7 +2905,7 @@
         const res = await imp.run(bytes, file.name);
         if (!res) return; // cancelled in the dialog
         await loadImportedSource(res.source, res.warnings, file.name,
-          `Imported ${file.name} (${imp.tag}) — review and Build`, { tag: imp.tag });
+          `Imported ${file.name} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null });
       } catch (e) {
         log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
       }
@@ -2962,6 +2962,7 @@
       const a = analyzeTracker(t);
       const def = defaultTrackerOptions(a);
       const choices = ['drop', ...FM_DESTS, ...PSG_DESTS, 'noise'];
+      const pcmChoices = ['drop', 'pcm1'];
       const played = a.channels.filter((c) => c.notes > 0);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
@@ -2991,6 +2992,7 @@
       const a = analyzeVgm(parsed);
       const def = defaultVgmOptions(a);
       const choices = ['drop', ...FM_DESTS, ...PSG_DESTS, 'noise'];
+      const pcmChoices = ['drop', 'pcm1'];
       const g = a.grid;
       const shown = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
       const fields = [
@@ -3009,7 +3011,7 @@
         summary: `${parsed.chips.join(' + ')} · ${(parsed.totalSamples / 44100).toFixed(1)} s` +
           `${parsed.title ? ' · ' + parsed.title : ''}. Notes are rebuilt from the register writes; one row per chip channel that plays.`,
         fields,
-        rows: a.channels.map((c) => ({ key: c.key, label: c.label, value: def.dest[c.key], choices })),
+        rows: a.channels.map((c) => ({ key: c.key, label: c.label, value: def.dest[c.key], choices: c.kind === 'pcm' ? pcmChoices : choices })),
       });
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
@@ -3236,7 +3238,7 @@
     // file lands where they choose (next to the score).
     async function exportMucomPcmWav() {
       if (!_mucomPcm) {
-        log('mucom88: no PCM bank loaded — import a .muc with its .bin, or the .bin on its own', 'err');
+        log('no imported PCM bank — import a .muc with its .bin, the .bin on its own, or a VGM that plays the DAC', 'err');
         return;
       }
       const pcm = _mucomPcm;
@@ -3251,7 +3253,7 @@
       a.download = pcm.wavFile;
       a.click();
       URL.revokeObjectURL(url);
-      log(`mucom88: downloaded ${pcm.wavFile} — move it next to the score`, 'info');
+      log(`${pcm.tag ?? 'mucom88'}: downloaded ${pcm.wavFile} — move it next to the score`, 'info');
     }
 
     // The picker for the bank's wav. `startIn` is the saved score's handle when
@@ -3272,17 +3274,17 @@
         await writable.close();
         _mucomPcmUnsaved = false;
         if (handle.name !== pcm.wavFile) {
-          log(`mucom88: wrote ${handle.name}, but the score's def-pcm read "${pcm.wavFile}" — rename it to match`, 'err');
+          log(`${pcm.tag ?? 'mucom88'}: wrote ${handle.name}, but the score's def-pcm read "${pcm.wavFile}" — rename it to match`, 'err');
         } else {
-          log(`mucom88: wrote ${pcm.wavFile} — File ▸ Open Folder… on its folder to keep the drums after a reload`, 'info');
+          log(`${pcm.tag ?? 'mucom88'}: wrote ${pcm.wavFile} — File ▸ Open Folder… on its folder to keep the samples after a reload`, 'info');
         }
         return true;
       } catch (e) {
         if (e?.name === 'AbortError') {
-          log(`mucom88: ${pcm.wavFile} not saved — the drums live only in memory until it is (File ▸ Export ▸ mucom88 PCM Bank WAV…)`, 'info');
+          log(`${pcm.tag ?? 'mucom88'}: ${pcm.wavFile} not saved — the samples live only in memory until it is (File ▸ Export ▸ Imported PCM Bank WAV…)`, 'info');
         } else {
           // A picker opened without a fresh user gesture is refused (SecurityError).
-          log(`mucom88: saving ${pcm.wavFile} failed: ${e?.message || e} — use File ▸ Export ▸ mucom88 PCM Bank WAV…`, 'err');
+          log(`${pcm.tag ?? 'mucom88'}: saving ${pcm.wavFile} failed: ${e?.message || e} — use File ▸ Export ▸ Imported PCM Bank WAV…`, 'err');
         }
         return false;
       }

@@ -15,8 +15,9 @@
 // carriers are taken relative to their loudest use and the rest becomes
 // `:vel`, a level moving during a note a `:vel+` envelope. Pitch moved
 // during a note: a jump it stays at becomes a slur to a new note, a vibrato
-// or a bend a `:pitch` macro (pitchShape). DAC/PCM and the other chips are
-// reported, not imported.
+// or a bend a `:pitch` macro (pitchShape). The YM2612's DAC, played from a
+// data bank (seeks + 8n, or DAC stream control), is a PCM track over one wav
+// of the bank (dacTrack); other chips' PCM is reported, not imported.
 //
 // The tempo is estimated (estimateGrid): the onsets' common unit, read as a
 // 16th (or whatever puts the tempo in a musical range), with a frame grid
@@ -31,6 +32,7 @@
 import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE,
   assignBends, PITCH_NONE } from "./import-song.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
+import { encodeWav } from "./export-wav.js";
 import { FM_DESTS, PSG_DESTS } from "./import-midi.js";
 
 const CARRIERS = [[3], [3], [3], [3], [2, 3], [1, 2, 3], [1, 2, 3], [0, 1, 2, 3]]; // by ALG, in slot order
@@ -348,7 +350,8 @@ function oplChip(name, clock, divisor, { ev }) {
 
 /**
  * @returns {Promise<{ chips: string[], skipped: Map<string, number>, events: Map<key, ev[]>,
- *   kinds: Map<key, kind>, totalSamples, loopSample, title, author, game, system, dac: boolean }>}
+ *   kinds: Map<key, kind>, totalSamples, loopSample, title, author, game, system, dac: boolean,
+ *   dacBank: Uint8Array, dacHits: [{t, offset, bytes, rate}] }>}
  */
 export async function parseVgm(bytes) {
   const u8 = await gunzip(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
@@ -412,6 +415,32 @@ export async function parseVgm(bytes) {
   let t = 0;
   let loopSample = null;
   let dac = false;
+  // The YM2612's DAC: the PCM data bank (data blocks of type 0, appended),
+  // and each hit played from it — {t, offset, bytes, rate}. A hit is what a
+  // seek (E0) or a stream start (0x93 / 0x95) begins; its rate is the pace
+  // the bytes go out at.
+  const bankParts = [];
+  let bankLen = 0;
+  const blocks = []; // type-0 blocks: [offset, size] (a stream's block id)
+  const hits = [];
+  let pos = null; // the 8n read position
+  let hit = null; // the hit the 8n writes are playing
+  // A hit's rate: its bytes over the time they took (a VGM waits whole
+  // samples, so one gap alone reads 44100/k).
+  const closeHit = () => {
+    if (hit && hit.bytes > 1 && hit.last > hit.t)
+      hits.push({ t: hit.t, offset: hit.offset, bytes: hit.bytes, rate: (RATE * (hit.bytes - 1)) / (hit.last - hit.t) });
+    hit = null;
+  };
+  const streams = new Map(); // id → {dac, freq, hit}
+  const stream = (id) => { if (!streams.has(id)) streams.set(id, { dac: false, freq: 0, hit: null }); return streams.get(id); };
+  const endStream = (st, at) => {
+    const h = st.hit;
+    if (!h) return;
+    const bytes = Math.min(h.bytes, Math.floor(((at - h.t) * h.rate) / RATE));
+    if (bytes > 0) hits.push({ ...h, bytes });
+    st.hit = null;
+  };
   const LEN = { 0x30: 2, 0x3f: 2, 0x4f: 2, 0x50: 2, 0x94: 2 };
   while (p < u8.length) {
     if (p === loopOffset) loopSample = t;
@@ -421,8 +450,55 @@ export async function parseVgm(bytes) {
     if (c === 0x62) { t += 735; p++; continue; }
     if (c === 0x63) { t += 882; p++; continue; }
     if ((c & 0xf0) === 0x70) { t += (c & 15) + 1; p++; continue; }
-    if ((c & 0xf0) === 0x80) { t += c & 15; dac = true; p++; continue; }
-    if (c === 0x67) { p += 7 + u32(p + 3); continue; }
+    if ((c & 0xf0) === 0x80) {
+      if (pos != null && pos < bankLen) {
+        if (!hit || t - hit.last > 2 * 735) { closeHit(); hit = { t, offset: pos, bytes: 0, last: t }; }
+        hit.last = t;
+        hit.bytes++;
+        pos++;
+      }
+      t += c & 15; dac = true; p++; continue;
+    }
+    if (c === 0xe0) { closeHit(); pos = u32(p + 1); p += 5; continue; }
+    if (c === 0x67) {
+      const type = u8[p + 2];
+      const size = u32(p + 3) & 0x7fffffff;
+      if (type === 0) {
+        blocks.push([bankLen, size]);
+        bankParts.push(u8.subarray(p + 7, p + 7 + size));
+        bankLen += size;
+      }
+      p += 7 + size; continue;
+    }
+    // DAC stream control onto the YM2612's DAC (register 2A).
+    if (c === 0x90) { stream(u8[p + 1]).dac = u8[p + 2] === 0x02 && u8[p + 4] === 0x2a; p += 5; continue; }
+    if (c === 0x91) { p += 5; continue; }
+    if (c === 0x92) { stream(u8[p + 1]).freq = u32(p + 2); p += 6; continue; }
+    if (c === 0x93 || c === 0x95) {
+      const st = stream(u8[p + 1]);
+      endStream(st, t);
+      let offset, bytes;
+      if (c === 0x93) {
+        offset = u32(p + 2);
+        const mode = u8[p + 6] & 0x0f, len = u32(p + 7);
+        bytes = mode === 1 ? len : mode === 2 ? Math.round((len * st.freq) / 1000) : bankLen - offset;
+        p += 11;
+      } else {
+        const b = blocks[u8[p + 2] | (u8[p + 3] << 8)];
+        [offset, bytes] = b ?? [0, 0];
+        p += 5;
+      }
+      if (st.dac && st.freq > 0 && offset < bankLen && bytes > 0) {
+        st.hit = { t, offset, bytes: Math.min(bytes, bankLen - offset), rate: st.freq };
+        dac = true;
+      }
+      continue;
+    }
+    if (c === 0x94) {
+      if (u8[p + 1] === 0xff) for (const st of streams.values()) endStream(st, t);
+      else endStream(stream(u8[p + 1]), t);
+      p += 2; continue;
+    }
     if (c === 0x68) { p += 12; continue; }
     if (c === 0x50) { chip("sn").write(u8[p + 1], t); p += 2; continue; }
     if (c === 0x51) { chip("opll").write(u8[p + 1], u8[p + 2], t); p += 3; continue; }
@@ -442,13 +518,6 @@ export async function parseVgm(bytes) {
       if (!(u8[p + 1] & 0x80)) chip("ay").write(u8[p + 1], u8[p + 2], t);
       p += 3; continue;
     }
-    if (c === 0x90) { p += 5; continue; }
-    if (c === 0x91) { p += 5; continue; }
-    if (c === 0x92) { p += 6; continue; }
-    if (c === 0x93) { dac = true; p += 11; continue; }
-    if (c === 0x94) { p += 2; continue; }
-    if (c === 0x95) { dac = true; p += 5; continue; }
-    if (c === 0xe0) { p += 5; continue; }
     // Everything else, by the command ranges' fixed lengths.
     let n;
     if (c >= 0x30 && c <= 0x3f) n = 2;
@@ -461,6 +530,15 @@ export async function parseVgm(bytes) {
     p += n;
   }
   const end = Math.max(t, totalSamples);
+  closeHit();
+  for (const st of streams.values()) endStream(st, end);
+  hits.sort((a, b) => a.t - b.t);
+  // A hit cut off within 10 ms by the next (a driver starting one sample and
+  // at once another) is not one.
+  for (let i = hits.length - 2; i >= 0; i--)
+    if (hits[i + 1].t - hits[i].t < 0.01 * RATE && (hits[i].bytes / hits[i].rate) < 0.01) hits.splice(i, 1);
+  const bank = new Uint8Array(bankLen);
+  { let o = 0; for (const part of bankParts) { bank.set(part, o); o += part.length; } }
   if (made.get("opn2")?.dacUsed) dac = true;
 
   // GD3: track, game, system, author (English, or Japanese when that is all).
@@ -481,7 +559,8 @@ export async function parseVgm(bytes) {
     system = s[4] || s[5] || null;
     author = s[6] || s[7] || null;
   }
-  return { chips, skipped, clockNotes, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac };
+  return { chips, skipped, clockNotes, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac,
+    dacBank: bank, dacHits: hits };
 }
 
 // ── Notes ─────────────────────────────────────────────────────────────────
@@ -718,6 +797,12 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   }
   const frameRate = 60;
   const grid = estimateGrid(onsets, { frameRate });
+  // The DAC: one channel of sample hits.
+  if (parsed.dacHits?.length) {
+    channels.push({ key: DAC_KEY, kind: "pcm", notes: parsed.dacHits.length,
+      label: `${DAC_KEY} · ${parsed.dacHits.length} hits, ${new Set(parsed.dacHits.map((h) => h.offset)).size} samples` });
+    for (const h of parsed.dacHits) onsets.push(h.t);
+  }
   // A file without a loop point says it does not loop (a jingle).
   const fileLoop = parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
   return { channels, grid, frameRate, followPitch, fileLoop };
@@ -728,13 +813,14 @@ export function defaultVgmOptions(a) {
   const sqr = [...PSG_DESTS];
   let noise = "noise";
   const dest = {};
-  const order = ["fm", "opm", "psg", "noise", "opl", "opll"];
+  const order = ["fm", "opm", "psg", "noise", "pcm", "opl", "opll"];
   const sorted = [...a.channels].sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind) || y.notes - x.notes);
   for (const ch of sorted) {
     let d = "drop";
     if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? "drop";
     else if (ch.kind === "psg") d = sqr.shift() ?? "drop";
     else if (ch.kind === "noise") { d = noise ?? "drop"; noise = null; }
+    else if (ch.kind === "pcm") d = "pcm1";
     else d = fm.shift() ?? sqr.shift() ?? "drop";
     dest[ch.key] = d;
   }
@@ -785,7 +871,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const tracks = [];
   for (const ch of a.channels) {
     const d = dest[ch.key] ?? "drop";
-    if (d === "drop") continue;
+    if (d === "drop" || ch.kind === "pcm") continue; // the DAC: below
     if (taken.has(d)) { warnings.push(`${ch.key}: ${d} is already taken — dropped`); continue; }
     taken.add(d);
     const onFm = d.startsWith("fm");
@@ -884,6 +970,15 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     }
   }
 
+  // The DAC, to a PCM track: the data bank one wav, each sample a def that
+  // slices it — so with DAC on, FM6 is not there to play.
+  const dacDest = dest[DAC_KEY] ?? "drop";
+  const dacOut = dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName) : null;
+  if (dacOut) {
+    const fm6 = tracks.findIndex((tr) => tr.d === "fm6");
+    if (fm6 >= 0) { warnings.push(`${tracks[fm6].ch.key}: fm6 is the DAC in a score with PCM — dropped`); tracks.splice(fm6, 1); }
+  }
+
   const order = [...FM_DESTS, ...PSG_DESTS, "noise"];
   tracks.sort((x, y) => order.indexOf(x.d) - order.indexOf(y.d));
   const out = tracks.map(({ d, notes }) => {
@@ -891,13 +986,14 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     notes[0] = { ...notes[0], pre: undefined };
     return { channel: d, head, notes, marks: [] };
   });
+  if (dacOut) out.push(dacOut.track);
   // Within a tenth of a whole tempo, the tempo is written whole (the grid
   // keeps the measured one).
   const bpm = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
   if (out.length) out[0].marks.push({ tick: 0, tokens: [`:tempo ${bpm}`] });
   else warnings.push("no notes to import");
 
-  if (parsed.dac) warnings.push("YM2612 DAC (PCM) is not imported");
+  if (parsed.dac && !parsed.dacHits?.length) warnings.push("YM2612 DAC written directly (not from a data bank) is not imported");
   warnings.push(...parsed.clockNotes);
   for (const [k, n] of parsed.skipped) warnings.push(`${k} skipped (${n}×)`);
 
@@ -908,12 +1004,75 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   if (envs.length) header.push("", ...envs);
   if (bends.length) header.push("", ...bends);
+  if (dacOut) header.push("", "(def pcm-voices 1)", ...dacOut.defs);
   for (const rec of voices.values()) {
     const car = CARRIERS[rec.v.alg];
     const ops = rec.ops.map((o, s) => (car.includes(s) ? { ...o, tl: Math.min(127, o.tl + rec.base) } : o));
     header.push("", fmVoiceDef(rec.name, { alg: rec.v.alg, fb: rec.v.fb, ams: rec.v.ams, fms: rec.v.fms, ops }));
   }
   const song = { header, bars, endTick, loopTick, tracks: out };
-  if (options.structure === false) return { source: emitSong(song), warnings };
-  return { source: emitStructured({ ...song, bars: bestBars(song) }), warnings };
+  const pcm = dacOut?.pcm ?? null;
+  if (options.structure === false) return { source: emitSong(song), warnings, pcm };
+  return { source: emitStructured({ ...song, bars: bestBars(song) }), warnings, pcm };
+}
+
+// ── The DAC ───────────────────────────────────────────────────────────────
+
+const DAC_KEY = "YM2612 DAC";
+
+/**
+ * The DAC's hits → a PCM track. The data bank (8-bit unsigned) becomes one
+ * wav; each place a hit starts from is a sample — `(def-pcm dac-NN :offset
+ * … :frames …)`, running to where the next one starts or as far as it is
+ * played (trailing silence cut), at the rate most of its hits go: its
+ * `:rate`, the C4 the notes play from. A hit at another rate is that many
+ * semitones off it (under half of one is none).
+ */
+function dacTrack(parsed, channel, tickOf, endTick, fileName) {
+  const { dacBank: bank, dacHits: hits } = parsed;
+  const starts = [...new Set(hits.map((h) => h.offset))].sort((a, b) => a - b);
+  const base = String(fileName || "vgm").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
+  const wavFile = `${base}-dac.wav`;
+  const samples = new Map();
+  starts.forEach((offset, i) => {
+    const mine = hits.filter((h) => h.offset === offset);
+    const limit = (starts[i + 1] ?? bank.length) - offset;
+    let frames = Math.min(limit, Math.max(...mine.map((h) => h.bytes)));
+    while (frames > 1 && Math.abs(bank[offset + frames - 1] - 128) <= 2) frames--;
+    // The rate most of its hits go, to a percent.
+    const count = new Map();
+    for (const h of mine) { const r = Math.round(h.rate / 50) * 50; count.set(r, (count.get(r) ?? 0) + 1); }
+    const rate = [...count].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+    samples.set(offset, { name: `dac-${String(i + 1).padStart(2, "0")}`, offset, frames, rate });
+  });
+  const notes = [];
+  for (const h of hits) {
+    const sm = samples.get(h.offset);
+    const tick = tickOf(h.t);
+    if (tick >= endTick) break;
+    const end = Math.min(endTick, tickOf(h.t + (Math.min(h.bytes, sm.frames) / h.rate) * RATE));
+    const semis = Math.round(12 * Math.log2(h.rate / sm.rate));
+    const note = { tick, len: Math.max(1, end - tick), midi: 60 + semis, vel: 15, state: [sm.name] };
+    // One DAC: a hit cuts the one before; two on one step, the later wins.
+    const prev = notes[notes.length - 1];
+    if (prev && prev.tick >= tick) notes.pop();
+    else if (prev && prev.tick + prev.len > tick) prev.len = tick - prev.tick;
+    notes.push(note);
+  }
+  // A shot plays out whatever its length: a hit lasts to the next one (the
+  // last, its sample), so the track reads in steps, not in sample lengths.
+  notes.forEach((n, i) => { if (i + 1 < notes.length) n.len = notes[i + 1].tick - n.tick; });
+  let cur = null;
+  for (const n of notes) { if (n.state[0] !== cur) n.pre = [n.state[0]]; cur = n.state[0]; }
+  const head = notes[0]?.pre ?? [];
+  if (notes[0]) notes[0] = { ...notes[0], pre: undefined };
+  const mono = Float32Array.from(bank, (v) => (v - 128) / 128);
+  const wavRate = [...samples.values()][0]?.rate ?? 8000;
+  const defs = [...samples.values()].map((sm) =>
+    `(def-pcm ${sm.name} :file ${qstr(wavFile)} :rate ${sm.rate} :offset ${sm.offset} :frames ${sm.frames})`);
+  return {
+    track: { channel, head, notes, marks: [] },
+    defs,
+    pcm: { wavFile, rate: wavRate, mono, wav: encodeWav(mono, null, wavRate), entries: [...samples.values()], tag: "VGM" },
+  };
 }
