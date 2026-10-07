@@ -2607,6 +2607,12 @@
 (import "presets/waveforms/set.mmlisp")
 (import "presets/tr808/set.mmlisp") ; or "presets/gm-drums/set.mmlisp": the same names
 
+(def-score :title "" :composer "" :author "" :pcm-voices 1)
+
+; Score-wide modifiers — uncomment one to try it:
+; (def-mod :ch fm1 :keyon off)            ; fm1's notes rest: play the part yourself
+; (def-mod :voice [kick snare] :vel+ -2)  ; every kick and snare, quieter
+
 (def-fm voice1 init-fm
   :alg 7 :fb 0
   :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 0 :ks1 0 :ml1 1 :dt1 0
@@ -2615,10 +2621,9 @@
   :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0
 )
 
-(def env1 (macro :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
-(def env2 (macro :vel (linear 15..0 :len 16f)))
-(def lfo (macro :pitch (sin -20..20 :len 16 :wait 8)))
-(def down (macro :pitch (linear 0..-2400 :len 16f)))
+; Macros: name one in a track before its notes — (fm1 voice1 env c e g)
+(def env (macro :vel [15 13 11 9 7 5 3 1]))               ; a step per frame
+(def vib (macro :pitch (sin -20..20 :len 16 :wait 8)))    ; a curve: vibrato after an 8th
 
 ; FM
 (fm1 :tempo 120
@@ -2641,10 +2646,11 @@
   #top
   (go top)
 )
-(fm6
-  #top
-  (go top)
-)
+; fm6 is the DAC while the score plays PCM
+; (fm6
+;   #top
+;   (go top)
+; )
 
 ; FM3
 ; (fm3-1
@@ -2675,10 +2681,10 @@
 ; )
 
 ; PCM
-; (pcm1
-;   #top
-;   (go top)
-; )
+(pcm1
+  #top
+  (go top)
+)
 ; (pcm2
 ;   #top
 ;   (go top)
