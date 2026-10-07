@@ -595,6 +595,22 @@ function firstPiece(it) {
 }
 
 /**
+ * The last note a run of items plays: what a loop goes back round with. A
+ * loop with a (break) is left from the break, so its last note is the
+ * front's (or, the front all rests, the tail's from the pass before).
+ */
+function lastPiece(items) {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    const p = it.k === "u" ? it.pieces[it.pieces.length - 1]
+      : it.k === "d" ? lastPiece(it.def.items)
+        : (it.brk && lastPiece(it.block.slice(0, it.brk))) || lastPiece(it.block);
+    if (p) return p;
+  }
+  return null;
+}
+
+/**
  * The whole score, structured. Same input as emitSong; a track's notes may
  * carry `state` (every switch in force) or only `pre` (a voice switch).
  */
@@ -642,6 +658,9 @@ export function emitStructured(song) {
     const defLen = commonLen(tr.notes, song.bars, song.endTick);
     const { segs, lists, defs } = planTrack(tr, song.bars, song.endTick, loopTick);
     const byRun = new Map(defs.map((d) => [d.runKey, d]));
+    // A PCM track's switches are samples, which the compiler binds to the
+    // notes as it goes (like the octave), not writes the chip gets.
+    const baked = tr.channel.startsWith("pcm");
 
     // Writing: the state carried from item to item, restated at a head.
     const writeUnit = (u, st) => {
@@ -657,22 +676,33 @@ export function emitStructured(song) {
       return { lines, st: next };
     };
     // The first note anywhere in a run (a block may open on a rest bar).
-    const head = (items, st) => {
+    // A def plays wherever it is named, so its head states everything. A
+    // loop's body is compiled once — the octave and velocity it was entered
+    // with hold on every pass — but a switch (a voice, a pan) is a write the
+    // chip gets when played: the head writes those the first note needs on
+    // the way in or coming back round from `around`, the body's last note.
+    const head = (items, st, around, whole) => {
       let p = null;
       for (const it of items) if ((p = firstPiece(it))) break;
       if (!p) return { tokens: [], st };
-      return { tokens: [...p.st, `:oct ${octOf(p.midi)}`, `:vel ${p.vel}`], st: { oct: octOf(p.midi), vel: p.vel, st: p.st } };
+      const oct = octOf(p.midi);
+      if (whole) return { tokens: [...p.st, `:oct ${oct}`, `:vel ${p.vel}`], st: { oct, vel: p.vel, st: p.st } };
+      const sw = st.st.length ? stateChange(st.st, p.st) : p.st;
+      const back = around && !baked ? stateChange(around.st, p.st) : [];
+      const tokens = p.st.filter((t) => sw.includes(t) || back.includes(t));
+      if (oct !== st.oct) tokens.push(`:oct ${oct}`);
+      return { tokens, st: { ...st, oct, st: p.st } };
     };
     const defEnd = new Map();
     // `whole`: the run the head restates for — a loop's whole block, though
-    // only the part before its (break) is written here.
-    const writeItems = (items, st, atHead, whole = items) => {
+    // only the part before its (break) is written here. `full`: state it all.
+    const writeItems = (items, st, atHead, whole = items, around = null, full = false) => {
       const lines = [];
       items.forEach((it, idx) => {
         let prefix = [];
         // A block's head restates the first note it plays, whatever comes
         // first — a rest-only loop or a def tells the next note nothing.
-        if (atHead && idx === 0) ({ tokens: prefix, st } = head(whole, st));
+        if (atHead && idx === 0) ({ tokens: prefix, st } = head(whole, st, around, full));
         let got;
         if (it.k === "u") got = writeUnit(it, st);
         else if (it.k === "d") got = { lines: [it.def.name], st: defEnd.get(it.def.name) };
@@ -686,7 +716,8 @@ export function emitStructured(song) {
             after = defEnd.get(asDef.name);
             if (it.brk) throw new Error("internal: a break inside a def block");
           } else {
-            const a = writeItems(it.block.slice(0, it.brk ?? it.block.length), st, true, it.block);
+            const front = it.block.slice(0, it.brk ?? it.block.length);
+            const a = writeItems(front, st, true, it.block, lastPiece(it.block));
             inner.push(...a.lines);
             after = a.st;
             if (it.brk) {
@@ -695,10 +726,11 @@ export function emitStructured(song) {
               inner.push(...b.lines);
               // The body is compiled once: after the loop the octave and
               // velocity are where its end leaves them, though the last pass
-              // stops at the break. A voice switch is a write the chip gets
-              // only when played — the last pass did not reach B's — so the
-              // next note states its voice again.
-              after = { ...b.st, st: [] };
+              // stops at the break. The switches written to the chip are the
+              // ones the last pass played — the front's last note's (unknown
+              // when the front is all rests: then the next note states them).
+              if (!baked) after = { ...b.st, st: lastPiece(front)?.st ?? [] };
+              else after = b.st;
             }
           }
           got = { lines: [`(x ${it.count}`, ...inner.map((l) => "  " + l)], st: after };
@@ -719,7 +751,7 @@ export function emitStructured(song) {
       // A block that is exactly this def's run is written as the def; the
       // def's own items must not name it.
       byRun.delete(d.runKey);
-      const w = writeItems(d.items, zero, true);
+      const w = writeItems(d.items, zero, true, d.items, null, true);
       byRun.set(d.runKey, d);
       defEnd.set(d.name, w.st);
       defTexts.push(`(def ${d.name}\n${w.lines.map((l) => "  " + l).join("\n")})`);
@@ -728,10 +760,13 @@ export function emitStructured(song) {
 
     const body = [];
     let st = zero;
+    // The track opens stating everything; the loop point (`#top`) is come
+    // back to from the end.
+    const end = lastPiece(lists.flat());
     segs.forEach((_, si) => {
-      const w = writeItems(lists[si], st, true);
-      if (segs.length > 1 && si === 1) w.lines[0] = `#top ${w.lines[0]}`;
-      else if (segs.length === 1 && loopTick === 0) w.lines[0] = `#top ${w.lines[0]}`;
+      const top = segs.length > 1 ? si === 1 : loopTick === 0;
+      const w = writeItems(lists[si], st, true, lists[si], top ? end : null, si === 0);
+      if (top) w.lines[0] = `#top ${w.lines[0]}`;
       body.push(...w.lines);
       st = w.st;
     });

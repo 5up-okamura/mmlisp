@@ -1199,8 +1199,9 @@ is followed onset by onset, so its bars stay bars.
 after another): bars that repeat back to back become `(x n …)`, a run that
 comes round once more cut short becomes `(x n A (break) B)`, and a run that
 comes back elsewhere becomes a `(def fm1-a …)` named in place. Bars match when
-they play the same — velocity compared at its 16 steps. Each loop body and
-def restates the voice, octave and velocity it starts with. Where the file
+they play the same — velocity compared at its 16 steps. A def states the
+voice, octave and velocity it starts with; a loop body states a voice only
+where one changes — on the way in, or coming back round from its end. Where the file
 gives no bars (a VGM, a MIDI file timed by its notes), they are placed — bar
 length and pickup — where the song folds most. On a PCM track a hit is cut at
 the bar line rather than tied over it: a shot plays out whatever its length.
