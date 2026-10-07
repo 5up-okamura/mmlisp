@@ -603,3 +603,28 @@ fixture, synthetic relocation with an alias and all entry metadata, silence
 pages and unchanged offsets when packing ties. The added A/B baseline entry
 has zero mismatches; all existing 102 entries are unchanged.
 Reports: `drv/out/optimization-study/packed-{ntsc,pal}`.
+
+## Final optimization validation (2026-10-07)
+
+All four implementation milestones are committed: `1c673cd` (empty grabs),
+`206b585` (shared tables/code spans), `0a97912` (FM classification), and
+`9b98c54` (sample placement). The final `npm run verify:all`, banked portable
+checks and instruction-level multi-bank gates pass. All 103 corpus scores
+match their A/B baseline (89 clean, 14 with previously known divergences).
+All six final native region/voice runs pass, including the relocated four-slice
+fixture for two voices: `drv/out/optimization-study/final-{ntsc,pal}-{1,2,3}`.
+The additional standalone single-bank SGDK FM-prefix diagnostic limitation
+recorded above remains; do not conflate it with the passing regression suite.
+
+Final NTSC real-song three-voice run: 75,362 matching DAC values, bus loss
+0.453913%, FM interval p95 13.213 ms and maximum 20.179 ms. Final PAL:
+75,141 values, bus loss 0.394621%, p95 14.907 ms and maximum 31.730 ms.
+A controlled PAL scratch build restoring only the pre-classification converter
+at `206b585` has the same 75,141 values, p95 14.895 ms and maximum 31.747 ms;
+the classifier change does not account for the larger PAL outlier compared
+with the earlier milestone's differently phased run. Dense-command onset
+jitter remains workload/phase-dependent even when CPU and bus time improve.
+
+No Z80 instruction-schedule/rate change was adopted. The inline-B/13-pair
+candidate remains an unvalidated experiment with a longer generation fence;
+its raw throughput gain does not establish better PCM onset latency.
