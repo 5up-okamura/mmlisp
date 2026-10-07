@@ -552,8 +552,11 @@ The same for the three images.
 | globals | `$1F00–$1F7F` | the PCM state block at `$1F30` (`MMLISPDRV_STATE`, §6.1), the pair index at `$1F6D` (`FIFO_LO`), the ready mark at `$1F6E` (`0xD2`) |
 | stack | `$1F80–$1FFF` | |
 
-An image is 6,912 bytes uploaded at `$0000`: the code, the clamp and the rung
-pages. `MMLISPDRV_PROTO_VER` (12) names the layout.
+The host clears Z80 RAM, uploads the selected code span at `$0000`, and
+uploads one shared 2,560-byte clamp/rung table block at `$1100`. Zero padding
+is omitted from ROM and transfers. The seven distinct code spans plus the
+shared tables occupy 22,511 ROM bytes, excluding descriptors. The assembled
+RAM image still ends at `$1AFF`; `MMLISPDRV_PROTO_VER` (14) names the layout.
 
 ### 5.3 The PCM voices
 

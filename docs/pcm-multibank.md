@@ -78,7 +78,7 @@ The `encodeMmb` and `buildMmb` APIs accept the equivalent `multibank: true/false
 - Samples retain 16-byte loop granularity. Loops, release, volume, master attenuation, and retriggers remain available.
 - The sample directory occupies one 32 KiB bank. Sample banks also reserve their final 256 bytes for silence. The complete SMP file therefore includes padding beyond the actual sample bytes.
 - All resources must fit in the driver's 4 MiB ROM aperture, including score data, code, and the sample directory.
-- The four distinct engine images occupy 27,648 bytes of ROM in total; identical PAL/NTSC binaries share storage. Only the selected image is uploaded to the Z80.
+- The four distinct banked code spans occupy 12,281 ROM bytes and share a 2,560-byte table block with the single-bank profiles. Identical PAL/NTSC code shares storage. Only the selected code and the shared tables are uploaded to the Z80.
 
 Dense FM instrument changes can still delay note onsets. Multi-bank playback does not guarantee perfectly simultaneous onsets; check timing in the target application. Real hardware and heavy DMA workloads have not yet been validated.
 

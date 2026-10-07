@@ -543,3 +543,24 @@ The banked host now skips its second grab when the plan is empty. All six
 NTSC/PAL voice profiles pass native playback checks under
 `drv/out/optimization-study/empty-poll-{ntsc,pal}-{1,2,3}`. SGDK type checks,
 the pair corpus and banked C/JS priming/SE/FIFO gates also pass.
+
+## Optimization implementation: ROM spans (2026-10-07)
+
+The C headers now store exact assembler code spans and a single common
+2,560-byte table block. The host clears RAM and uploads code at zero and the
+common tables at 0x1100. `engine-rom.mjs` rejects nonzero omitted padding or
+any mismatch in shared tables, protecting future generator changes.
+The seven code spans plus tables use 22,511 bytes rather than 48,384:
+25,873 bytes saved before descriptor costs. Banked code alone is 12,281
+bytes. Z80 instructions, addresses, rates and state protocol remain unchanged.
+
+Mirrors and SGDK type checks pass. All six normal native banked profiles
+pass under `drv/out/optimization-study/rom-{ntsc,pal}-{1,2,3}`; each run also
+boots the single-bank pcm1 image before switching. The standalone single-bank
+three-voice gate reports all DAC values matching the independent model and
+correct runtime rate. Its FM prefix check fails on the existing initial
+$2b=$0 write versus expected $b0=$7; an isolated build using the pre-change
+headers/host at `1c673cd` reproduces the identical failure. The single-bank
+SE diagnostic also reports matching DAC values and this same FM prefix
+failure. Logs: `rom-single-three.log`, `rom-single-three-baseline.log`,
+`rom-single-se.log`. Do not report those standalone gates as passing.

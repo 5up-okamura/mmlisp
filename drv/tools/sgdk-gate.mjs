@@ -120,7 +120,7 @@ const errors = [];
 // the score's own image over it, so a pcm2/pcm3 score has a first engine whose
 // samples are another image's. The engine writes its ready mark once per boot,
 // so the last one is where this run's engine begins. The upload that precedes
-// it holds the bus for about 5M master (6,912 bytes through the Z80 window);
+// it clears RAM and uploads code plus the shared tables through the Z80 window;
 // that is a load, not a runtime stop, and it is outside the graded span.
 const STATE_OFF = desc.state & 0xff;
 const readyMarks = L.ramWrites.filter((w) => w.region === "glob"

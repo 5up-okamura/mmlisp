@@ -197,8 +197,8 @@ while (TRUE) {
 
 ## How it works
 
-- **Loading.** `MMLisp_init()` uploads the one-voice engine image (6,912 B:
-  code, the clamp table, the 8 rung pages) to Z80 RAM at 0x0000, pulses reset
+- **Loading.** `MMLisp_init()` clears Z80 RAM and uploads the one-voice code
+  at 0x0000 and the shared 2,560-byte clamp/rung tables at 0x1100, pulses reset
   and polls the engine's ready mark (`MMLISPDRV_READY` reads `0xD2`) for up to
   a second. `MMLisp_loadScore()` boots the image the score's MMB header names
   (its PCM voice count) when that is another one, and re-applies the sample
@@ -308,9 +308,9 @@ Stops up to 200 µs twice a frame were judged inaudible on drum PCM
 (`.claude/memory/plan-pcm-spec.md`, D9), so this is well inside the verdict.
 
 **A score load is a long stop, on purpose**: `MMLisp_loadScore` boots the
-score's own engine image, and uploading 6,912 bytes through the Z80 window
-holds the bus for about 5M master (~0.95 s of Z80 time, though the 68000 spends
-far less). The Z80 is stopped and in reset for it, so nothing is playing —
+score's own engine image, clears Z80 RAM and uploads its code and shared tables
+through the Z80 window. The transfer size depends on the selected profile.
+The Z80 is stopped and in reset for it, so nothing is playing —
 load during a screen transition, as the header says.
 
 ### Banking

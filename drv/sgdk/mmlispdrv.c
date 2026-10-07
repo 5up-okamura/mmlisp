@@ -101,7 +101,8 @@ static void bootImage(u8 voices)
     SYS_disableInts();
     Z80_requestBus(TRUE);
     Z80_clear();
-    Z80_upload(0, img->bin, MMLISPDRV_BIN_SIZE);
+    Z80_upload(0, img->bin, img->codeSize);
+    Z80_upload(MMLISPDRV_TABLES_ADDR, mmlispdrv_tables, MMLISPDRV_TABLES_SIZE);
     // The ready mark cleared, so the poll below cannot see a stale byte.
     *Z80_RAM_AT(MMLISPDRV_READY) = 0;
     Z80_startReset();
