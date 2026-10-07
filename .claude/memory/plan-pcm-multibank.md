@@ -564,3 +564,24 @@ headers/host at `1c673cd` reproduces the identical failure. The single-bank
 SE diagnostic also reports matching DAC values and this same FM prefix
 failure. Logs: `rom-single-three.log`, `rom-single-three-baseline.log`,
 `rom-single-se.log`. Do not report those standalone gates as passing.
+
+## Optimization implementation: FM classification (2026-10-07)
+
+Index-caching variants were measured and discarded: the first added 96 scratch
+bytes and improved p99 but regressed ordinary frames and total time; a second
+extra-pass variant still regressed median/mean. The selected change only
+classifies remaining writes when a channel actually moved, caches that result,
+and avoids classifying non-port-1 writes in the deferred port-1 run.
+It adds no arrays or persistent memory and preserves the original grouping.
+
+Instrumented sin008 three-voice twelve-second comparison after ROM compaction:
+`banked_writes` median 29,190 -> 28,336 master clocks (2.9% reduction),
+share of elapsed 68k time 4.3% -> 4.1%; render share 19.1% -> 18.9%.
+Initial-frame `banked_writes` maximum 1,766,270 -> 1,353,625 clocks.
+Wrappers and nested IRQ timing limit these measurements; do not present the
+initial-frame reduction as a guaranteed per-frame speedup. Logs: `fm-before.log`
+and `fm-skip.log` under the study directory. NTSC/PAL real-song three-voice
+native runs and banked portable gates pass (`fm-skip-{ntsc,pal}`).
+The pair test additionally checks a wrapped frame with a nine-write bulk patch,
+two short channel groups, adjacent pitch pairs, PSG, and a no-reorder case
+with unknown modulation.

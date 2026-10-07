@@ -301,11 +301,17 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
   uint16_t lo=n, hi=0;
   for (uint16_t i=0; i<=n; i++) {
     const MMLWrite *w=i<n ? view_write(v,i) : 0;
-    if (w && fm_channel(w)<6 && (moved&(1u<<fm_channel(w)))) continue;
+    if (moved && w) {
+      const uint8_t ch=fm_channel(w);
+      if (ch<6 && (moved&(1u<<ch))) continue;
+    }
     if (!w || (w->port==0 && w->addr==0x28 && (w->data&4))) {
       for (uint16_t k=lo; k<hi; k++) {
-        const MMLWrite *other=view_write(v,k); uint8_t ch=fm_channel(other);
-        if (other->port==1 && !(ch<6 && (moved&(1u<<ch)))) push(p,1,other->addr,other->data);
+        const MMLWrite *other=view_write(v,k);
+        if (other->port==1) {
+          uint8_t ch=moved ? fm_channel(other) : 0xff;
+          if (!(ch<6 && (moved&(1u<<ch)))) push(p,1,other->addr,other->data);
+        }
       }
       lo=n; hi=0;
     }
