@@ -324,9 +324,9 @@ static void pump(u16 release)
     static GrabBlock blk;        // static: the planner's arrays, the grab's registers
     blk.prev = fifoLo;
     const u16 n = mmlp_plan(&pairs, fifoLo, release, blk.ops, blk.vals, &dst);
-    // Nothing planned: the grab only reads the index (dist 0 is always late).
+    // A banked pump already read a fresh index; an empty plan needs no second grab.
     blk.dist = n ? (u8)((u8)dst - fifoLo) : 0;
-    const u16 got = grab(&blk, dst);
+    const u16 got = bankedImage && !n ? fifoLo : grab(&blk, dst);
     fifoLo = (u8)got;
     // A late grab gives its pairs back; everything written before them has
     // been consumed, so the next plan starts from the index just read.

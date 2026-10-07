@@ -536,3 +536,10 @@ the real song's 9,152 NTSC payload bytes already fit one data bank. The fixed
 Suggested implementation order: redundant empty poll, shared ROM tables/code
 spans, measured FM grouping optimization, then optional sample packing.
 Leave the Z80 throughput change as a separate timing experiment.
+
+## Optimization implementation: empty transfers (2026-10-07)
+
+The banked host now skips its second grab when the plan is empty. All six
+NTSC/PAL voice profiles pass native playback checks under
+`drv/out/optimization-study/empty-poll-{ntsc,pal}-{1,2,3}`. SGDK type checks,
+the pair corpus and banked C/JS priming/SE/FIFO gates also pass.

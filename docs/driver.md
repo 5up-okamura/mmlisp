@@ -606,7 +606,8 @@ The loading API and 32 KB resource alignment remain unchanged. See
 and mmb.md §10.3 for the sample format.
 
 The banked host reads a fresh FIFO position and performs up to five transfers
-per frame. It reserves the complete 16-pair physical transfer, including IDLE
+per frame. If a plan is empty, it reuses the fresh observation and skips the
+second bus request. It reserves the complete 16-pair physical transfer, including IDLE
 padding, and observes the selected image's generation fence. PSG updates follow
 the released video frame. Independent, unmodulated FM channels can have short
 updates sent before bulk uploads without changing their internal write order
