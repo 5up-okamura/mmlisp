@@ -585,3 +585,21 @@ native runs and banked portable gates pass (`fm-skip-{ntsc,pal}`).
 The pair test additionally checks a wrapped frame with a nine-write bulk patch,
 two short channel groups, adjacent pitch pairs, PSG, and a no-reorder case
 with unknown modulation.
+
+## Optimization implementation: sample placement (2026-10-07)
+
+The banked exporter compares sequential placement with decreasing-length
+first-fit placement and adopts the latter only if it saves at least one whole
+bank. Equal/larger layouts retain the original offsets. Entries and their
+range/loop metadata retain their IDs; aliased blobs are relocated together and
+copied only once. The 16-byte alignment, 256-byte silence pages and existing
+format/rate checks remain.
+
+A new owned four-slice fixture (`drv/tests/multibank-packed.mmlisp`) packs
+into two data banks instead of three: the SMP is 98,304 rather than 131,072
+bytes. NTSC/PAL eight-second native runs pass, matching 74,239 / 74,058 DAC
+values, eight starts, FM/PSG and chip write timing. Portable gates check the
+fixture, synthetic relocation with an alias and all entry metadata, silence
+pages and unchanged offsets when packing ties. The added A/B baseline entry
+has zero mismatches; all existing 102 entries are unchanged.
+Reports: `drv/out/optimization-study/packed-{ntsc,pal}`.

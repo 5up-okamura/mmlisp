@@ -1917,21 +1917,32 @@ export function packBankedSamples(flat) {
     if (!len || len > 0x7f00 || len % 16 || tableEnd + off + len > flat.length)
       throw new RangeError("each baked PCM blob must fit below a bank's silence page (32512 bytes)");
     const key = `${off}:${len}`;
-    let dst = shared.get(key);
-    if (dst === undefined) {
+    let blob = shared.get(key);
+    if (blob === undefined) {
       if ((cursor & 0x7fff) + len > 0x7f00) cursor = (cursor + 0x7fff) & ~0x7fff;
-      dst = cursor; cursor += len; shared.set(key, dst);
+      blob = { off, len, dst: cursor };
+      cursor += len; shared.set(key, blob);
     }
-    rows.push({at, off, len, dst});
+    rows.push({at, blob});
   }
-  const size = 0x8000 + Math.ceil(cursor / 0x8000) * 0x8000;
+  const blobs = [...shared.values()], bins = [], packed = new Map();
+  for (const blob of [...blobs].sort((a,b) => b.len-a.len)) {
+    let index = bins.findIndex(used => used + blob.len <= 0x7f00);
+    if (index < 0) { index = bins.length; bins.push(0); }
+    packed.set(blob, index * 0x8000 + bins[index]);
+    bins[index] += blob.len;
+  }
+  // Keep the original offsets unless filling earlier banks saves a whole bank.
+  const originalBanks = Math.ceil(cursor / 0x8000);
+  if (bins.length < originalBanks)
+    for (const blob of blobs) blob.dst = packed.get(blob);
+  const size = 0x8000 + Math.min(originalBanks, bins.length) * 0x8000;
   if (size > 0x400000) throw new RangeError("PCM bank image exceeds the 4 MiB cartridge aperture");
   const bank = new Uint8Array(size), out = new DataView(bank.buffer);
   bank.set(flat.subarray(0, tableEnd));
   out.setUint16(2, view.getUint16(2, true) | 0x8000, true);
-  for (const r of rows) {
-    out.setUint32(r.at + 4, r.dst, true);
-    bank.set(flat.subarray(tableEnd + r.off, tableEnd + r.off + r.len), 0x8000 + r.dst);
-  }
+  for (const r of rows) out.setUint32(r.at + 4, r.blob.dst, true);
+  for (const blob of blobs)
+    bank.set(flat.subarray(tableEnd + blob.off, tableEnd + blob.off + blob.len), 0x8000 + blob.dst);
   return bank;
 }

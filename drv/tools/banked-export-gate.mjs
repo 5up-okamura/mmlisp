@@ -9,6 +9,7 @@ import {parsePcmBank,PcmLiveEngine} from '../../live/src/pcm-model.js';
 import {bankedEngineImage} from '../../live/src/engine-banked-images.js';
 import {DrvPlayer} from '../../live/src/drv-player.js';
 import {SlotBuilder} from '../../live/src/slot-builder.js';
+import {packBankedSamples} from '../../live/src/export-mmb.js';
 const out=resolve('out/banked-export-gate');mkdirSync(out,{recursive:true});
 const pairsExe=join(out,'pairs');
 execFileSync('cc',['-std=c99','-O2','-I68k','tests/banked-pairs.c','68k/mmlpairs.c','68k/mmlispseq.c','68k/tables.c','-o',pairsExe]);
@@ -34,6 +35,38 @@ function gate(file,voices,{commands=[],autoStart=true,frameHz=60}={}){
  return b;
 }
 const big=gate('tests/multibank.mmlisp',2);gate('tests/m3-pcm-baked.mmlisp',1);gate('tests/m4-pcm-2v-master.mmlisp',2);gate('tests/p3-se-pcm-macro.mmlisp',2,JSON.parse(readFileSync('tests/p3-se-pcm-macro.cmds.json')));
+const packed=gate('tests/multibank-packed.mmlisp',2);
+assert.equal(packed.sampleBank.length,3*32768);
+// Independent payloads and an alias retain their IDs and point metadata after relocation.
+const lengths=[20000,20000,12000,12000],tableEnd=4+5*24;
+const flat=new Uint8Array(tableEnd+64000),view=new DataView(flat.buffer);
+view.setUint16(0,5,true);view.setUint16(2,10112,true);
+let offset=0;
+for(let i=0;i<5;i++) {
+ const at=4+i*24,len=i===4?lengths[0]:lengths[i],off=i===4?0:offset;
+ flat[at]=i;flat[at+1]=7;
+ view.setUint32(at+4,off,true);view.setUint32(at+8,len,true);
+ view.setUint32(at+12,1234+i,true);
+ for(let j=16;j<24;j+=2)view.setUint16(at+j,16*(j+i),true);
+ if(i<4){for(let j=0;j<len;j++)flat[tableEnd+offset+j]=(i*41+j*13)&255;offset+=len;}
+}
+const relocated=packBankedSamples(flat),rv=new DataView(relocated.buffer);
+assert.equal(relocated.length,3*32768);
+for(let i=0;i<5;i++) {
+ const at=4+i*24,off=rv.getUint32(at+4,true),len=view.getUint32(at+8,true);
+ assert.deepEqual(relocated.subarray(at,at+4),flat.subarray(at,at+4));
+ assert.deepEqual(relocated.subarray(at+8,at+24),flat.subarray(at+8,at+24));
+ assert.deepEqual(relocated.subarray(32768+off,32768+off+len),
+   flat.subarray(tableEnd+view.getUint32(at+4,true),tableEnd+view.getUint32(at+4,true)+len));
+ assert.ok((off&32767)+len<=32512);
+}
+assert.equal(rv.getUint32(8,true),rv.getUint32(4+4*24+4,true));
+for(let bank=0;bank<3;bank++)assert.ok(relocated.subarray((bank+1)*32768-256,(bank+1)*32768).every(b=>b===0));
+const tied=flat.slice();
+[2,0,1,3,4].forEach((row,i)=>{tied.set(flat.subarray(4+row*24,4+(row+1)*24),4+i*24);tied[4+i*24]=i;});
+const tiedBank=packBankedSamples(tied),tv=new DataView(tiedBank.buffer);
+assert.equal(tiedBank.length,3*32768);
+assert.deepEqual(Array.from({length:5},(_,i)=>tv.getUint32(8+i*24,true)),[0,12000,32768,52768,12000]);
 const monoPath=join(out,'large-one.mmlisp');
 writeFileSync(monoPath,readFileSync('tests/multibank.mmlisp','utf8')
  .replace('(def pcm-voices 2)','(def pcm-voices 1)')

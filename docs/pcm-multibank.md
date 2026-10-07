@@ -76,6 +76,7 @@ The `encodeMmb` and `buildMmb` APIs accept the equivalent `multibank: true/false
 - At most 256 sample entries are available. Each note-specific baked copy counts as an entry; identical blobs can share storage.
 - Each individual baked blob must fit within 32,512 bytes. A long sample cannot span banks, even when the combined library has room.
 - Samples retain 16-byte loop granularity. Loops, release, volume, master attenuation, and retriggers remain available.
+- Export reuses empty space in earlier banks when this reduces the total bank count. Sample IDs and playback points are preserved.
 - The sample directory occupies one 32 KiB bank. Sample banks also reserve their final 256 bytes for silence. The complete SMP file therefore includes padding beyond the actual sample bytes.
 - All resources must fit in the driver's 4 MiB ROM aperture, including score data, code, and the sample directory.
 - The four distinct banked code spans occupy 12,281 ROM bytes and share a 2,560-byte table block with the single-bank profiles. Identical PAL/NTSC code shares storage. Only the selected code and the shared tables are uploaded to the Z80.
