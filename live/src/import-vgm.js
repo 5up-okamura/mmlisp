@@ -27,7 +27,7 @@
 //   vgmToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { emitSong, qstr, barEnds, estimateGrid, regrid, RATE } from "./import-song.js";
+import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE } from "./import-song.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { FM_DESTS, PSG_DESTS } from "./import-midi.js";
 
@@ -357,19 +357,37 @@ export async function parseVgm(bytes) {
   const chips = [];
   const skipped = new Map();
   const skip = (name) => skipped.set(name, (skipped.get(name) ?? 0) + 1);
-  const sn = clk(0x0c) ? snChip(clk(0x0c), { ev }) : null;
-  const opll = clk(0x10) ? opllChip(clk(0x10), { ev }) : null;
-  const opn2 = clk(0x2c) ? opnChip("YM2612", clk(0x2c), 144, { ev }) : null;
-  const opm = clk(0x30) ? opmChip(clk(0x30), { ev }) : null;
-  const opn = clk(0x44) ? opnChip("YM2203", clk(0x44), 72, { ssgDiv: 2, channels: 3, ev }) : null;
-  const opna = clk(0x48) ? opnChip("YM2608", clk(0x48), 144, { ssgDiv: 4, ev }) : null;
-  const opnb = clk(0x4c) ? opnChip("YM2610", clk(0x4c), 144, { ssgDiv: 4, ev }) : null;
-  const opl2 = clk(0x50) ? oplChip("YM3812", clk(0x50), 72, { ev }) : null;
-  const opl1 = clk(0x54) ? oplChip("YM3526", clk(0x54), 72, { ev }) : null;
-  const y8950 = clk(0x58) ? oplChip("Y8950", clk(0x58), 72, { ev }) : null;
-  const opl3 = clk(0x5c) ? oplChip("YMF262", clk(0x5c), 288, { ev }) : null;
-  const ay = clk(0x74) ? ayChip("AY-3-8910", clk(0x74), { ev }) : null;
-  for (const c of [sn, opll, opn2, opm, opn, opna, opnb, opl2, opl1, y8950, opl3, ay]) if (c) chips.push(c.name);
+  // Each chip's model starts at its first command, on the header's clock —
+  // before VGM 1.10 the YM2413 field clocks the YM2612 and YM2151 too — or,
+  // when the header gives none (some arrangements leave it 0), the chip's
+  // usual clock, said in a warning.
+  const clockNotes = [];
+  const made = new Map();
+  const CHIPS = {
+    sn: [0x0c, 3579545, (c) => snChip(c, { ev })],
+    opll: [0x10, 3579545, (c) => opllChip(c, { ev })],
+    opn2: [0x2c, 7670453, (c) => opnChip("YM2612", c, 144, { ev })],
+    opm: [0x30, 3579545, (c) => opmChip(c, { ev })],
+    opn: [0x44, 3993600, (c) => opnChip("YM2203", c, 72, { ssgDiv: 2, channels: 3, ev })],
+    opna: [0x48, 7987200, (c) => opnChip("YM2608", c, 144, { ssgDiv: 4, ev })],
+    opnb: [0x4c, 8000000, (c) => opnChip("YM2610", c, 144, { ssgDiv: 4, ev })],
+    opl2: [0x50, 3579545, (c) => oplChip("YM3812", c, 72, { ev })],
+    opl1: [0x54, 3579545, (c) => oplChip("YM3526", c, 72, { ev })],
+    y8950: [0x58, 3579545, (c) => oplChip("Y8950", c, 72, { ev })],
+    opl3: [0x5c, 14318180, (c) => oplChip("YMF262", c, 288, { ev })],
+    ay: [0x74, 1789773, (c) => ayChip("AY-3-8910", c, { ev })],
+  };
+  const chip = (key) => {
+    if (made.has(key)) return made.get(key);
+    const [off, usual, make] = CHIPS[key];
+    let c = clk(off);
+    if (!c && version < 0x110 && (key === "opn2" || key === "opm")) c = clk(0x10);
+    const m = make(c || usual);
+    if (!c) clockNotes.push(`the header gives no ${m.name} clock — its usual ${usual} Hz is assumed`);
+    made.set(key, m);
+    chips.push(m.name);
+    return m;
+  };
   for (const [o, n] of [[0x0c, "SN76489"], [0x10, "YM2413"], [0x2c, "YM2612"], [0x30, "YM2151"], [0x44, "YM2203"],
     [0x48, "YM2608"], [0x4c, "YM2610"], [0x50, "YM3812"], [0x74, "AY-3-8910"]])
     if (dual(o)) skip(`second ${n}`);
@@ -390,22 +408,22 @@ export async function parseVgm(bytes) {
     if ((c & 0xf0) === 0x80) { t += c & 15; dac = true; p++; continue; }
     if (c === 0x67) { p += 7 + u32(p + 3); continue; }
     if (c === 0x68) { p += 12; continue; }
-    if (c === 0x50) { sn?.write(u8[p + 1], t); p += 2; continue; }
-    if (c === 0x51) { opll?.write(u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x50) { chip("sn").write(u8[p + 1], t); p += 2; continue; }
+    if (c === 0x51) { chip("opll").write(u8[p + 1], u8[p + 2], t); p += 3; continue; }
     if (c === 0x52 || c === 0x53) {
-      opn2?.write(c - 0x52, u8[p + 1], u8[p + 2], t);
+      chip("opn2").write(c - 0x52, u8[p + 1], u8[p + 2], t);
       p += 3; continue;
     }
-    if (c === 0x54) { opm?.write(u8[p + 1], u8[p + 2], t); p += 3; continue; }
-    if (c === 0x55) { opn?.write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
-    if (c === 0x56 || c === 0x57) { opna?.write(c - 0x56, u8[p + 1], u8[p + 2], t); p += 3; continue; }
-    if (c === 0x58 || c === 0x59) { opnb?.write(c - 0x58, u8[p + 1], u8[p + 2], t); p += 3; continue; }
-    if (c === 0x5a) { opl2?.write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
-    if (c === 0x5b) { opl1?.write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
-    if (c === 0x5c) { y8950?.write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
-    if (c === 0x5e || c === 0x5f) { opl3?.write(c - 0x5e, u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x54) { chip("opm").write(u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x55) { chip("opn").write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x56 || c === 0x57) { chip("opna").write(c - 0x56, u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x58 || c === 0x59) { chip("opnb").write(c - 0x58, u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x5a) { chip("opl2").write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x5b) { chip("opl1").write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x5c) { chip("y8950").write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x5e || c === 0x5f) { chip("opl3").write(c - 0x5e, u8[p + 1], u8[p + 2], t); p += 3; continue; }
     if (c === 0xa0) {
-      if (ay && !(u8[p + 1] & 0x80)) ay.write(u8[p + 1], u8[p + 2], t);
+      if (!(u8[p + 1] & 0x80)) chip("ay").write(u8[p + 1], u8[p + 2], t);
       p += 3; continue;
     }
     if (c === 0x90) { p += 5; continue; }
@@ -427,7 +445,7 @@ export async function parseVgm(bytes) {
     p += n;
   }
   const end = Math.max(t, totalSamples);
-  if (opn2?.dacUsed) dac = true;
+  if (made.get("opn2")?.dacUsed) dac = true;
 
   // GD3: track, game, system, author (English, or Japanese when that is all).
   let title = null, author = null, game = null, system = null;
@@ -447,7 +465,7 @@ export async function parseVgm(bytes) {
     system = s[4] || s[5] || null;
     author = s[6] || s[7] || null;
   }
-  return { chips, skipped, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac };
+  return { chips, skipped, clockNotes, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac };
 }
 
 // ── Notes ─────────────────────────────────────────────────────────────────
@@ -525,10 +543,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // The grid: the estimate, a tempo set by hand, or frames.
   let g = a.grid;
   if (options.grid === "frames") {
-    g = { unit: RATE / a.frameRate, unitTicks: 4, origin: 0, frames: true, bpm: (60 * a.frameRate) / 24 };
+    const unit = RATE / a.frameRate;
+    g = { unitTicks: 4, frames: true, bpm: (60 * a.frameRate) / 24, readings: [], units: (t) => Math.round(t / unit) };
   }
   if (options.bpm > 0 && Math.abs(options.bpm - g.bpm) > 1e-6) g = regrid(g, options.bpm);
-  const tickOf = (t) => Math.max(0, Math.round((t - g.origin) / g.unit) * g.unitTicks);
+  const tickOf = (t) => Math.max(0, g.units(t)) * g.unitTicks;
   if (!g.frames && a.grid.fit < 0.95)
     warnings.push(`the notes fit the ${g.bpm.toFixed(1)} BPM grid loosely (${Math.round(a.grid.fit * 100)}%) — try the frame grid if it sounds off`);
   if (g.frames) warnings.push("timed on the frame grid (1/60 s = 4 ticks) — no steady beat was found");
@@ -592,13 +611,24 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     tracks.push({ ch, d, notes });
   }
 
-  // Levels and state, now that every voice's base is known.
+  // Lengths and slurs first: a gap under half a unit is held through
+  // (legato), and a slur only stays one when its note runs into it.
+  for (const tr of tracks) {
+    for (let i = 0; i < tr.notes.length; i++) {
+      const n = tr.notes[i];
+      const next = i + 1 < tr.notes.length ? tr.notes[i + 1].tick : endTick;
+      if (next - (n.tick + n.len) > 0 && next - (n.tick + n.len) < g.unitTicks / 2) n.len = next - n.tick;
+      if (n.tieIn && (i === 0 || tr.notes[i - 1].tick + tr.notes[i - 1].len !== n.tick)) n.tieIn = false;
+    }
+  }
+  // Then levels and state, now that every voice's base is known. A slur
+  // keeps the voice it slides on.
   for (const tr of tracks) {
     let cur = { voice: null, pan: null, mode: null };
     for (const n of tr.notes) {
       if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - n.voiceRec.base) * 0.75) / 2)));
       const st = {
-        voice: n.voiceRec ? n.voiceRec.name : n.stand,
+        voice: n.tieIn && cur.voice ? cur.voice : n.voiceRec ? n.voiceRec.name : n.stand,
         pan: n.pan ? `:pan ${n.pan}` : null,
         mode: n.mode ? `:mode ${n.mode}` : null,
       };
@@ -606,14 +636,6 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       for (const k of ["voice", "pan", "mode"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
       n.state = [st.voice, st.pan, st.mode].filter(Boolean);
       cur = st;
-      if (n.tieIn) n.pre = n.pre.filter((x) => !x.startsWith("voice-") && !x.startsWith("wave-"));
-      // Legato: a gap of one unit or less is held through.
-    }
-    for (let i = 0; i < tr.notes.length; i++) {
-      const n = tr.notes[i];
-      const next = i + 1 < tr.notes.length ? tr.notes[i + 1].tick : endTick;
-      if (next - (n.tick + n.len) > 0 && next - (n.tick + n.len) < g.unitTicks / 2) n.len = next - n.tick;
-      if (n.tieIn && (i === 0 || tr.notes[i - 1].tick + tr.notes[i - 1].len !== n.tick)) n.tieIn = false;
     }
   }
 
@@ -631,6 +653,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   else warnings.push("no notes to import");
 
   if (parsed.dac) warnings.push("YM2612 DAC (PCM) is not imported");
+  warnings.push(...parsed.clockNotes);
   for (const [k, n] of parsed.skipped) warnings.push(`${k} skipped (${n}×)`);
 
   const header = [`; Imported from ${options.fileName ?? "a VGM file"} (VGM: ${parsed.chips.join(", ")})`];
@@ -643,5 +666,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     const ops = rec.ops.map((o, s) => (car.includes(s) ? { ...o, tl: Math.min(127, o.tl + rec.base) } : o));
     header.push("", fmVoiceDef(rec.name, { alg: rec.v.alg, fb: rec.v.fb, ams: rec.v.ams, fms: rec.v.fms, ops }));
   }
-  return { source: emitSong({ header, bars, endTick, loopTick, tracks: out }), warnings };
+  const song = { header, bars, endTick, loopTick, tracks: out };
+  if (options.structure === false) return { source: emitSong(song), warnings };
+  return { source: emitStructured({ ...song, bars: bestBars(song) }), warnings };
 }

@@ -2933,6 +2933,7 @@
           choices: GRIDS.map((g) => [String(g), gridLabel(g)]) },
       ];
       if (a.loop) fields.push({ key: 'loop', label: 'Loop (from the file’s loop point)', type: 'checkbox', value: def.loop });
+      fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary: `${a.notes.length} notes on ${new Set(a.lanes.map((l) => l.ch)).size} channels. ` +
@@ -2951,6 +2952,7 @@
         timing,
         bpm: untouched ? null : bpm,
         loop: !!got.fields.loop,
+        structure: !!got.fields.structure,
         fileName,
       }, a);
     }
@@ -3001,6 +3003,7 @@
         { key: 'followPitch', label: 'A pitch moved during a note becomes a slur', type: 'checkbox', value: def.followPitch },
       ];
       if (parsed.loopSample != null) fields.push({ key: 'loop', label: 'Loop (from the file’s loop point)', type: 'checkbox', value: def.loop });
+      fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary: `${parsed.chips.join(' + ')} · ${(parsed.totalSamples / 44100).toFixed(1)} s` +
@@ -3016,9 +3019,14 @@
         bpm: bpm > 0 && bpm !== shown ? bpm : null,
         followPitch: !!got.fields.followPitch,
         loop: !!got.fields.loop,
+        structure: !!got.fields.structure,
         fileName,
       }, a);
     }
+
+    // MIDI and VGM: repeats folded into (x …) and phrases into defs.
+    const STRUCTURE_FIELD = { key: 'structure', label: 'Fold repeats into (x …) and phrases into defs', type: 'checkbox', value: true,
+      hint: 'off: one bar after another, as played' };
 
     // The estimated unit read as other notes; typing one keeps the unit.
     function readingsHint(g) {

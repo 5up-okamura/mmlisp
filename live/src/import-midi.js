@@ -23,7 +23,7 @@
 //   midiToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { PPQN, RATE, barEnds, emitSong, qstr, estimateGrid, regrid } from "./import-song.js";
+import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimateGrid, regrid } from "./import-song.js";
 
 // presets/gm, in program order (README.md), and the bank's note offsets
 // (xg.wopn, melodic bank MSB 0 / LSB 0): the voice sounds `offset`
@@ -371,7 +371,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     beat = analysis.beat;
     if (options.bpm > 0) beat = regrid(beat, options.bpm);
     g = beat.unitTicks;
-    q = (t) => Math.max(0, Math.round((analysis.secOf(t) * RATE - beat.origin) / beat.unit) * g);
+    q = (t) => Math.max(0, beat.units(analysis.secOf(t) * RATE)) * g;
     warnings.push(`timed by the estimated beat (${beat.bpm.toFixed(1)} BPM, onsets fit ${Math.round(beat.fit * 100)}%) — the file's tempo map is not used`);
   } else {
     g = Math.max(1, options.grid | 0);
@@ -505,6 +505,10 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   if (tracks.some((t) => t.channel.startsWith("fm"))) header.push('(import "presets/gm/set.mmlisp")');
   if (pcmUsed) header.push('(import "presets/gm-drums/set.mmlisp")', `(def pcm-voices ${pcmUsed})`);
 
-  const source = emitSong({ header, bars, endTick, loopTick, tracks });
+  // Timed by its notes, the file's bars say nothing: place them where the
+  // song folds most.
+  const song = { header, bars, endTick, loopTick, tracks };
+  const source = options.structure === false ? emitSong(song)
+    : emitStructured(beats ? { ...song, bars: bestBars(song) } : song);
   return { source, warnings };
 }

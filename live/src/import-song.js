@@ -27,8 +27,9 @@ export const noteName = (midi) => NOTE_NAMES[((midi % 12) + 12) % 12];
 /** A length in ticks as written after a note: `4`, `8.`, `3/2`, or `Nt`. */
 export function lenToken(d) {
   if (d <= 0) return "0";
-  if (WHOLE % d === 0) return String(WHOLE / d);
-  if ((d * 2) % 3 === 0 && WHOLE % ((d * 2) / 3) === 0) return `${WHOLE / ((d * 2) / 3)}.`;
+  // Denominators up to a 64th read as notes; finer is clearer in ticks.
+  if (WHOLE % d === 0 && WHOLE / d <= 64) return String(WHOLE / d);
+  if ((d * 2) % 3 === 0 && WHOLE % ((d * 2) / 3) === 0 && WHOLE / ((d * 2) / 3) <= 64) return `${WHOLE / ((d * 2) / 3)}.`;
   const g = gcd(d, WHOLE);
   if (WHOLE / g <= 64 && d / g <= 16) return `${d / g}/${WHOLE / g}`;
   return `${d}t`;
@@ -80,6 +81,14 @@ export function writeBody(notes, opts) {
   for (const m of marks) bounds.add(m.tick);
   if (loopTick != null) bounds.add(loopTick);
   const sortedBounds = [...bounds].filter((b) => b > 0 && b <= endTick).sort((a, b) => a - b);
+  // A PCM track takes no ties — the compiler strikes the sample again — so
+  // a note there ends at the next bound (a shot plays out whatever its length).
+  if (opts.noTie) {
+    notes = notes.map((n) => {
+      const b = sortedBounds.find((x) => x > n.tick) ?? endTick;
+      return n.tick + n.len > b ? { ...n, len: b - n.tick } : n;
+    });
+  }
   const barSet = new Set(bars);
   const marksAt = new Map();
   for (const m of marks) marksAt.set(m.tick, [...(marksAt.get(m.tick) ?? []), ...m.tokens]);
@@ -198,7 +207,7 @@ export function emitSong(song) {
     const vel = notes.find((n) => n.vel != null)?.vel ?? 15;
     const body = writeBody(notes, {
       bars: song.bars, endTick: song.endTick, loopTick: song.loopTick ?? null,
-      marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head,
+      marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: tr.channel.startsWith("pcm"),
     });
     const head = [tr.channel, ...tr.head, `:oct ${oct}`, `:len ${lenToken(defLen)}`];
     if (vel !== 15) head.push(`:vel ${vel}`);
@@ -282,105 +291,453 @@ export function emitPhrased(song) {
 // ── Tempo ────────────────────────────────────────────────────────────────
 
 /**
- * The grid the onsets sit on. `unit` is in samples; `unitTicks` what it is
- * in the score (24 = a 16th); `origin` the phase. Falls back to the frame
- * grid when no unit fits the onsets well.
+ * The beat the onsets keep, followed through the song. The basic unit is the
+ * coarsest one the gaps between onsets are whole multiples of — gaps, not
+ * absolute times, so a driver whose timer drifts or jitters (an arcade one
+ * at its own rate) still shows its beat. Then the onsets are walked in
+ * order: each gap is rounded to whole units, and the unit's length follows
+ * the music a little at each step, so drift never piles up into a wrong bar.
+ * Onsets within 15 ms are one (a chord, however loosely played).
+ *
+ * Returns { unitTicks (what a unit is in the score: 24 = a 16th), bpm, fit,
+ * frames, readings, units(t) → the unit a time (in samples) falls on }.
+ * Falls back to the frame grid when no unit fits.
  */
 export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
-  const frame = { unit: RATE / frameRate, unitTicks: 4, origin: 0, fit: 1, frames: true };
-  frame.bpm = (60 * RATE) / (frame.unit * (96 / frame.unitTicks));
-  const onsets = [...new Set(onsetsIn.map((t) => Math.round(t)))].sort((a, b) => a - b);
-  // Notes struck within 8 ms are one onset (a chord, however loosely played).
-  const merged = [];
-  for (const t of onsets) if (!merged.length || t - merged[merged.length - 1] > RATE * 0.008) merged.push(t);
-  if (merged.length < 8) return { ...frame, readings: [], onsets: merged };
-  const t0 = merged[0];
-
-  // How tightly the onsets gather on a grid of `u`: the length of their
-  // mean phase vector (1 = every onset on the grid). Unlike a ratio of the
-  // gaps, a few onsets a hair off (a flam, a loose chord) only shave it.
-  const fitOf = (u, upTo = merged.length) => {
-    let x = 0, y = 0;
-    for (let i = 0; i < upTo; i++) {
-      const a = (2 * Math.PI * (merged[i] - t0)) / u;
-      x += Math.cos(a); y += Math.sin(a);
-    }
-    return Math.hypot(x, y) / upTo;
+  const frameUnit = RATE / frameRate;
+  const frame = {
+    unitTicks: 4, fit: 1, frames: true, readings: [], bpm: (60 * RATE) / (frameUnit * 24),
+    units: (t) => Math.round(t / frameUnit),
   };
-  // A unit off by a hair drifts off the beat over a long song: refine it on
-  // a growing span of onsets, the search narrowing as the span grows.
+  const onsets = [...new Set(onsetsIn.map((t) => Math.round(t)))].sort((a, b) => a - b);
+  const merged = [];
+  for (const t of onsets) if (!merged.length || t - merged[merged.length - 1] > RATE * 0.015) merged.push(t);
+  if (merged.length < 8) return frame;
+  const gaps = [];
+  for (let i = 1; i < merged.length; i++) gaps.push(merged[i] - merged[i - 1]);
+
+  // How well the gaps are whole multiples of `u` (a gap under half a unit
+  // is a miss: the unit is too coarse for it).
+  const fitOf = (u) => {
+    let s = 0;
+    for (const d of gaps) {
+      const x = d / u;
+      s += x < 0.5 ? 0 : 1 - 2 * Math.abs(x - Math.round(x));
+    }
+    return s / gaps.length;
+  };
+  // The unit a gap set implies: least squares over the gaps' multiples.
   const refine = (u0) => {
-    let u = u0, range = 0.03;
-    for (let span = RATE * 4; ; span *= 2) {
-      const upTo = merged.findIndex((t) => t - t0 > span);
-      const n = upTo < 0 ? merged.length : Math.max(8, upTo);
-      let best = u, bestFit = -1;
-      for (let j = -20; j <= 20; j++) {
-        const c = u * (1 + (range * j) / 20);
-        const f = fitOf(c, n);
-        if (f > bestFit) { bestFit = f; best = c; }
+    let u = u0;
+    for (let pass = 0; pass < 3; pass++) {
+      let num = 0, den = 0;
+      for (const d of gaps) {
+        const k = Math.round(d / u);
+        if (k >= 1 && k <= 32 && Math.abs(d / u - k) < 0.25) { num += d * k; den += k * k; }
       }
-      u = best;
-      range /= 10;
-      if (upTo < 0 && range < 1e-6) break;
-      if (upTo < 0) continue;
+      if (den) u = num / den;
     }
     return u;
   };
-
-  // Candidates: the common gaps and their halves, thirds and quarters.
+  // Candidates: the common gaps and their halves, thirds, quarters …
   const hist = new Map();
-  for (let i = 1; i < merged.length; i++) {
-    const k = Math.round((merged[i] - merged[i - 1]) / 32) * 32;
+  for (const d of gaps) {
+    const k = Math.round(d / 64) * 64;
     hist.set(k, (hist.get(k) ?? 0) + 1);
   }
   const common = [...hist].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
   const cands = [];
   for (const k of common) for (const div of [1, 2, 3, 4, 6, 8]) {
-    const u = k / div;
-    if (u >= RATE * 0.025 && u <= RATE * 0.75 && !cands.some((c) => Math.abs(c - u) / u < 0.02)) cands.push(u);
+    const u = refine(k / div);
+    if (u >= RATE * 0.015 && u <= RATE * 0.75 && !cands.some((c) => Math.abs(c - u) / u < 0.02)) cands.push(u);
   }
-  // The coarsest unit the onsets gather on nearly as well as on the best.
-  const scored = cands.map((u0) => { const u = refine(u0); return { u, fit: fitOf(u) }; })
-    .sort((a, b) => b.u - a.u);
+  const scored = cands.map((u) => ({ u, fit: fitOf(u) })).sort((a, b) => b.u - a.u);
   const top = Math.max(...scored.map((x) => x.fit));
   const best = scored.find((x) => x.fit >= Math.max(0.75, 0.9 * top));
-  if (!best) return { ...frame, readings: [], onsets: merged };
+  if (!best) return frame;
   const unit = best.u;
 
-  // The unit as a note: whatever puts the beat in 80-160 BPM, a 16th first.
-  const asNote = [[4, 24], [2, 48], [8, 12], [3, 32], [6, 16], [1, 96], [16, 6]];
+  // A song on one steady clock (exact MIDI, most game drivers) keeps one
+  // grid end to end: the unit refined against every onset's absolute time,
+  // phase and all. Only when no single grid holds them (a drifting timer)
+  // is the beat followed onset by onset.
+  const phaseFit = (u, n = merged.length) => {
+    let x = 0, y = 0;
+    for (let i = 0; i < n; i++) { const a = (2 * Math.PI * (merged[i] - merged[0])) / u; x += Math.cos(a); y += Math.sin(a); }
+    return Math.hypot(x, y) / n;
+  };
+  let fixedU = unit;
+  for (let span = RATE * 4, range = 0.01; ; span *= 2, range /= 4) {
+    const upTo = merged.findIndex((t) => t - merged[0] > span);
+    const n = upTo < 0 ? merged.length : Math.max(8, upTo);
+    let bestU = fixedU, bestF = -1;
+    for (let j = -20; j <= 20; j++) {
+      const c = fixedU * (1 + (range * j) / 20);
+      const f = phaseFit(c, n);
+      if (f > bestF) { bestF = f; bestU = c; }
+    }
+    fixedU = bestU;
+    if (upTo < 0) break;
+  }
+  if (phaseFit(fixedU) >= 0.7) {
+    const origin = merged[0];
+    const units = (t) => Math.round((t - origin) / fixedU);
+    return readingsOf(fixedU, { fit: best.fit, frames: false, units });
+  }
+
+  // Walk: each onset's unit, the unit's length following as it goes.
+  const at = [0];
+  const len = [unit];
+  let u = unit;
+  for (let i = 1; i < merged.length; i++) {
+    const d = merged[i] - merged[i - 1];
+    const k = Math.max(1, Math.round(d / u));
+    at.push(at[i - 1] + k);
+    // A little of each gap's own unit, never far from the song's.
+    u = Math.min(unit * 1.1, Math.max(unit * 0.9, u + 0.1 * (d / k - u)));
+    len.push(u);
+  }
+  const units = (t) => {
+    if (t <= merged[0]) return Math.round((t - merged[0]) / unit);
+    let lo = 0, hi = merged.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (merged[mid] <= t) lo = mid; else hi = mid - 1; }
+    return at[lo] + Math.round((t - merged[lo]) / len[lo]);
+  };
+
+  return readingsOf(unit, { fit: best.fit, frames: false, units });
+}
+
+// The unit as a note: whatever puts the beat in 80-160 BPM, a 16th first;
+// the other readings (double, half, … the tempo) ride along.
+function readingsOf(unit, grid) {
+  const asNote = [[4, 24], [2, 48], [8, 12], [3, 32], [6, 16], [1, 96], [16, 6], [12, 8], [32, 3], [24, 4]];
   const options = asNote.map(([perBeat, ticks]) => ({ unitTicks: ticks, bpm: (60 * RATE) / (unit * perBeat) }));
   const pick = options.find((o) => o.bpm >= 80 && o.bpm <= 160) ?? options[0];
-  return {
-    unit, unitTicks: pick.unitTicks, origin: phaseOf(merged, unit), onsets: merged, fit: best.fit, frames: false, bpm: pick.bpm,
-    // The same unit read as other notes: double, half, … the tempo.
-    readings: options.filter((o) => o.bpm >= 40 && o.bpm <= 320),
-  };
+  return { ...grid, unitTicks: pick.unitTicks, bpm: pick.bpm, readings: options.filter((o) => o.bpm >= 40 && o.bpm <= 320) };
 }
 
 /**
  * A grid at a tempo set by hand. A tempo that is another reading of the
- * estimated unit (double, half, …) keeps the unit and reads it so; any other
- * tempo stretches the unit, read as before.
+ * estimated unit (double, half, …) reads it so; any other tempo only sets
+ * the tempo the score is written at — where the notes fall is the grid's.
  */
 export function regrid(g, bpm) {
   const r = (g.readings ?? []).find((o) => Math.abs(o.bpm - bpm) / bpm < 0.005);
-  if (r) return { ...g, unitTicks: r.unitTicks, bpm };
-  const unit = (60 * RATE) / (bpm * (96 / g.unitTicks));
-  return { ...g, unit, bpm, origin: g.frames ? 0 : phaseOf(g.onsets ?? [], unit) };
+  return r ? { ...g, unitTicks: r.unitTicks, bpm } : { ...g, bpm };
 }
 
-/** Where the grid of `unit` starts: the onsets' circular mean against it. */
-export function phaseOf(onsets, unit) {
-  let sx = 0, sy = 0;
-  for (const t of onsets) {
-    const a = (2 * Math.PI * (t % unit)) / unit;
-    sx += Math.cos(a); sy += Math.sin(a);
+// ── Structure: repeats and phrases ─────────────────────────────────────────
+// A song written with its repeats folded (user, 2026-10-07: "the more
+// structured, the easier to grasp"). Each track is cut into units — its bars,
+// and the loop point — compared by what they play (notes at MMLisp's 16
+// velocity steps, the voice/state in force, the marks). Then:
+//   1. runs that repeat back to back become `(x n …)`, and a run that comes
+//      back once more cut short becomes `(x n A (break) B)` (A B A B A);
+//   2. a run that comes back elsewhere becomes a `(def …)`, named in place.
+// A block restates the state it relies on at its head — a loop's second pass
+// arrives with its own end state, and a def plays wherever it is named. A
+// unit that starts tied (or slurred) on from the one before cannot head one.
+
+const MAX_BLOCK = 16; // units in one repeated block or phrase
+
+// The switches a note needs written, given those in force: by kind — a
+// keyword (`:pan`, `:mode`) by its name, a macro by its target, a bare name
+// (a voice, a sample, an envelope def) by its place — only what changed.
+// With nothing known in force (after a loop's break), all of them.
+function stateChange(from, to) {
+  if (!from.length) return to;
+  const kind = (toks) => {
+    const m = new Map();
+    let bare = 0;
+    for (const t of toks) {
+      const k = t.startsWith(":") ? t.split(" ")[0] : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}` : `bare${bare++}`;
+      m.set(k, t);
+    }
+    return m;
+  };
+  const a = kind(from), b = kind(to);
+  // A different set of kinds (a macro appears or goes): write them all.
+  if (a.size !== b.size || [...b.keys()].some((k) => !a.has(k))) return to;
+  return [...b].filter(([k, t]) => a.get(k) !== t).map(([, t]) => t);
+}
+
+/** Cut a track into units at the bar ends and the loop point. */
+function unitsOf(tr, bars, endTick, loopTick) {
+  let running = tr.head ?? [];
+  const notes = tr.notes.map((n) => {
+    if (n.state) running = n.state;
+    else if (n.pre?.length) running = n.pre;
+    return { ...n, st: running };
+  });
+  const cuts = [...new Set([...bars, endTick, ...(loopTick > 0 ? [loopTick] : [])])]
+    .filter((c) => c > 0 && c <= endTick).sort((a, b) => a - b);
+  const units = [];
+  let a = 0;
+  let k = 0;
+  for (const b of cuts) {
+    while (k < notes.length && notes[k].tick + notes[k].len <= a) k++;
+    const pieces = [];
+    for (let j = k; j < notes.length && notes[j].tick < b; j++) {
+      const n = notes[j];
+      const s = Math.max(n.tick, a);
+      const e = Math.min(n.tick + n.len, b);
+      if (e <= s) continue;
+      // No ties on PCM (writeBody noTie): what runs over the cut is let go.
+      if (n.tick < a && tr.channel.startsWith("pcm")) continue;
+      // Carried over the cut: tied on — except into the loop, which starts over.
+      const tieIn = n.tick < a ? a !== loopTick : !!n.tieIn && (n.tick > a || a !== loopTick);
+      pieces.push({ tick: s - a, len: e - s, midi: n.midi, vel: n.vel, st: n.st, tieIn });
+    }
+    const marks = (tr.marks ?? []).filter((m) => m.tick >= a && m.tick < b).map((m) => ({ ...m, tick: m.tick - a }));
+    const tieHead = pieces.length > 0 && pieces[0].tick === 0 && pieces[0].tieIn;
+    const key = JSON.stringify([b - a, pieces.map((p) => [p.tick, p.len, p.midi, p.vel, p.st.join(" "), p.tieIn ? 1 : 0]),
+      marks.map((m) => [m.tick, m.tokens.join(" ")])]);
+    units.push({ k: "u", start: a, len: b - a, pieces, marks, key, size: 1, tieHead });
+    a = b;
   }
-  let origin = ((Math.atan2(sy, sx) / (2 * Math.PI)) * unit + unit) % unit;
-  // The grid starts at the first onset's own step: a silent lead-in (a
-  // MIDI file's setup section, a VGM's pause) is not written as rests.
-  if (onsets.length) origin += unit * Math.round((onsets[0] - origin) / unit);
-  return origin;
+  return units;
+}
+
+const headOk = (it) => (it.k === "u" ? !it.tieHead : headOk(it.first));
+const sizeOf = (items, i, n) => { let s = 0; for (let t = 0; t < n; t++) s += items[i + t].size; return s; };
+const sameRun = (items, i, j, n) => { for (let t = 0; t < n; t++) if (items[i + t].key !== items[j + t].key) return false; return true; };
+
+/** Fold back-to-back repeats into `(x n …)` groups, until nothing folds. */
+function foldRepeats(items) {
+  for (let changed = true; changed; ) {
+    changed = false;
+    const out = [];
+    for (let i = 0; i < items.length; ) {
+      let best = null;
+      if (headOk(items[i])) {
+        for (let L = 1; L <= MAX_BLOCK && i + L <= items.length; L++) {
+          let n = 1;
+          while (i + (n + 1) * L <= items.length && sameRun(items, i, i + n * L, L)) n++;
+          let k = 0;
+          while (k < L - 1 && i + n * L + k < items.length && items[i + n * L + k].key === items[i + k].key) k++;
+          if (n < 2 && k === 0) continue;
+          // What the fold saves: the passes not written out.
+          const saved = (n - 1) * sizeOf(items, i, L) + sizeOf(items, i, k);
+          if (saved >= 1 && (!best || saved > best.saved)) best = { L, n, k, saved };
+        }
+      }
+      if (!best) { out.push(items[i++]); continue; }
+      const block = items.slice(i, i + best.L);
+      const count = best.n + (best.k ? 1 : 0);
+      const brk = best.k || null;
+      out.push({ k: "x", count, brk, block, first: block[0], size: sizeOf(items, i, best.L),
+        key: `x${count}/${brk}[${block.map((b) => b.key).join(",")}]` });
+      i += best.n * best.L + best.k;
+      changed = true;
+    }
+    items = out;
+  }
+  return items;
+}
+
+/** Runs that come back elsewhere → defs, best saving first. */
+function extractDefs(lists, prefix) {
+  const defs = [];
+  for (;;) {
+    const occ = new Map(); // run key → [{li, p, m}]
+    lists.forEach((items, li) => {
+      for (let p = 0; p < items.length; p++) {
+        if (!headOk(items[p])) continue;
+        let key = "";
+        for (let m = 1; m <= MAX_BLOCK && p + m <= items.length; m++) {
+          key += (m > 1 ? "," : "") + items[p + m - 1].key;
+          if (m === 1 && items[p].k === "d") continue; // a def of one def is no phrase
+          if (!occ.has(key)) occ.set(key, []);
+          occ.get(key).push({ li, p, m });
+        }
+      }
+    });
+    let best = null;
+    for (const [key, list] of occ) {
+      if (list.length < 2) continue;
+      // Non-overlapping, left to right in each list.
+      const used = [];
+      const last = new Map();
+      for (const o of list) {
+        if ((last.get(o.li) ?? -1) > o.p) continue;
+        used.push(o);
+        last.set(o.li, o.p + o.m);
+      }
+      if (used.length < 2) continue;
+      const size = sizeOf(lists[used[0].li], used[0].p, used[0].m);
+      if (size < 2 && used.length < 3) continue; // a one-bar phrase earns a def from three uses
+      const score = size * (used.length - 1);
+      if (!best || score > best.score || (score === best.score && used[0].m > best.used[0].m)) best = { key, used, size, score };
+    }
+    if (!best) break;
+    const { used } = best;
+    const items = lists[used[0].li].slice(used[0].p, used[0].p + used[0].m);
+    const name = `${prefix}-${defName(defs.length)}`;
+    const def = { name, items, runKey: best.key };
+    defs.push(def);
+    const ref = { k: "d", def, first: items[0], size: best.size, key: `d:${name}` };
+    // Replace right to left so the earlier indices hold.
+    for (const o of [...used].sort((x, y) => y.li - x.li || y.p - x.p)) lists[o.li].splice(o.p, o.m, ref);
+  }
+  return defs;
+}
+
+const defName = (i) => (i < 26 ? String.fromCharCode(97 + i) : defName(Math.floor(i / 26) - 1) + String.fromCharCode(97 + (i % 26)));
+
+/** The first note an item plays, for its head's restatement. */
+function firstPiece(it) {
+  if (it.k === "u") return it.pieces[0] ?? null;
+  for (const c of it.k === "x" ? it.block : it.def.items) {
+    const p = firstPiece(c);
+    if (p) return p;
+  }
+  return null;
+}
+
+/**
+ * The whole score, structured. Same input as emitSong; a track's notes may
+ * carry `state` (every switch in force) or only `pre` (a voice switch).
+ */
+// One track's structure on a given set of bars: its units, folded and
+// phrased, and the ticks it writes out (a loop body and a def once each).
+function planTrack(tr, bars, endTick, loopTick) {
+  const units = unitsOf(tr, bars, endTick, loopTick);
+  const segs = loopTick > 0 ? [units.filter((u) => u.start < loopTick), units.filter((u) => u.start >= loopTick)] : [units];
+  const lists = segs.map((s) => foldRepeats(s));
+  const defs = extractDefs(lists, tr.channel);
+  const written = (items) => items.reduce((t, it) =>
+    t + (it.k === "u" ? it.len : it.k === "x" ? written(it.block) : 0), 0);
+  const ticks = lists.reduce((t, l) => t + written(l), 0) + defs.reduce((t, d) => t + written(d.items), 0);
+  return { segs, lists, defs, ticks };
+}
+
+/**
+ * Where the bars go when the file does not say (a VGM, a MIDI file timed by
+ * its notes): the bar length and pickup under which the song folds most.
+ * `|` is editorial, so this changes only how the score reads.
+ */
+export function bestBars(song) {
+  const { endTick, loopTick = null } = song;
+  let best = null;
+  for (const bar of [384, 768, 192, 576, 288]) {
+    for (let pickup = 0; pickup < bar; pickup += 96) {
+      const bars = [];
+      for (let t = pickup || bar; t < endTick; t += bar) bars.push(t);
+      bars.push(endTick);
+      let ticks = 0;
+      for (const tr of song.tracks) ticks += planTrack(tr, bars, endTick, loopTick).ticks;
+      // A 4/4 bar reads best: another length has to fold 8% more to win.
+      if (bar !== 384) ticks *= 1.08;
+      if (!best || ticks < best.ticks) best = { bars, ticks };
+    }
+  }
+  return best.bars;
+}
+
+export function emitStructured(song) {
+  const out = [...song.header];
+  const forms = [];
+  const loopTick = song.loopTick ?? null;
+  for (const tr of song.tracks) {
+    const defLen = commonLen(tr.notes, song.bars, song.endTick);
+    const { segs, lists, defs } = planTrack(tr, song.bars, song.endTick, loopTick);
+    const byRun = new Map(defs.map((d) => [d.runKey, d]));
+
+    // Writing: the state carried from item to item, restated at a head.
+    const writeUnit = (u, st) => {
+      let running = st.st;
+      const notes = u.pieces.map((p) => {
+        const pre = stateChange(running, p.st);
+        running = p.st;
+        return { tick: p.tick, len: p.len, midi: p.midi, vel: p.vel, tieIn: p.tieIn, pre };
+      });
+      const lines = writeBody(notes, { bars: [u.len], endTick: u.len, marks: u.marks, defLen, oct: st.oct, vel: st.vel, pre: st.st });
+      const lastP = u.pieces[u.pieces.length - 1];
+      const next = lastP ? { oct: octOf(lastP.midi), vel: lastP.vel, st: lastP.st } : st;
+      return { lines, st: next };
+    };
+    // The first note anywhere in a run (a block may open on a rest bar).
+    const head = (items, st) => {
+      let p = null;
+      for (const it of items) if ((p = firstPiece(it))) break;
+      if (!p) return { tokens: [], st };
+      return { tokens: [...p.st, `:oct ${octOf(p.midi)}`, `:vel ${p.vel}`], st: { oct: octOf(p.midi), vel: p.vel, st: p.st } };
+    };
+    const defEnd = new Map();
+    // `whole`: the run the head restates for — a loop's whole block, though
+    // only the part before its (break) is written here.
+    const writeItems = (items, st, atHead, whole = items) => {
+      const lines = [];
+      items.forEach((it, idx) => {
+        let prefix = [];
+        // A block's head restates the first note it plays, whatever comes
+        // first — a rest-only loop or a def tells the next note nothing.
+        if (atHead && idx === 0) ({ tokens: prefix, st } = head(whole, st));
+        let got;
+        if (it.k === "u") got = writeUnit(it, st);
+        else if (it.k === "d") got = { lines: [it.def.name], st: defEnd.get(it.def.name) };
+        else {
+          const blockKey = it.block.map((b) => b.key).join(",");
+          const asDef = byRun.get(blockKey);
+          const inner = [];
+          let after;
+          if (asDef) {
+            inner.push(asDef.name);
+            after = defEnd.get(asDef.name);
+            if (it.brk) throw new Error("internal: a break inside a def block");
+          } else {
+            const a = writeItems(it.block.slice(0, it.brk ?? it.block.length), st, true, it.block);
+            inner.push(...a.lines);
+            after = a.st;
+            if (it.brk) {
+              inner.push("(break)");
+              const b = writeItems(it.block.slice(it.brk), a.st, false);
+              inner.push(...b.lines);
+              // The body is compiled once: after the loop the octave and
+              // velocity are where its end leaves them, though the last pass
+              // stops at the break. A voice switch is a write the chip gets
+              // only when played — the last pass did not reach B's — so the
+              // next note states its voice again.
+              after = { ...b.st, st: [] };
+            }
+          }
+          got = { lines: [`(x ${it.count}`, ...inner.map((l) => "  " + l)], st: after };
+          got.lines[got.lines.length - 1] += ")";
+        }
+        if (prefix.length) got.lines[0] = `${prefix.join(" ")} ${got.lines[0]}`;
+        lines.push(...got.lines);
+        st = got.st;
+      });
+      return { lines, st };
+    };
+
+    // Defs first (each written from its own head), in order of creation —
+    // a later def may name an earlier one.
+    const zero = { oct: 4, vel: 15, st: [] };
+    const defTexts = [];
+    for (const d of defs) {
+      // A block that is exactly this def's run is written as the def; the
+      // def's own items must not name it.
+      byRun.delete(d.runKey);
+      const w = writeItems(d.items, zero, true);
+      byRun.set(d.runKey, d);
+      defEnd.set(d.name, w.st);
+      defTexts.push(`(def ${d.name}\n${w.lines.map((l) => "  " + l).join("\n")})`);
+    }
+    if (defTexts.length) out.push("", `; ${tr.channel}`, ...defTexts);
+
+    const body = [];
+    let st = zero;
+    segs.forEach((_, si) => {
+      const w = writeItems(lists[si], st, true);
+      if (segs.length > 1 && si === 1) w.lines[0] = `#top ${w.lines[0]}`;
+      else if (segs.length === 1 && loopTick === 0) w.lines[0] = `#top ${w.lines[0]}`;
+      body.push(...w.lines);
+      st = w.st;
+    });
+    if (loopTick != null) body.push("(go top)");
+    forms.push("", `(${[tr.channel, `:len ${lenToken(defLen)}`].join(" ")}`, ...body.map((l) => "  " + l));
+    forms[forms.length - 1] += ")";
+  }
+  return [...out, ...forms].join("\n") + "\n";
 }

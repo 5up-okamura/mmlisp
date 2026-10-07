@@ -18,6 +18,21 @@ converter). Delete this file once the open items below are settled.
 - VGM export PCM: the mixed DAC stream as one data block + `0x8n`, not DAC
   stream control (the engine mixes voices in software).
 
+## Round 2 — structure and expression (user, 2026-10-07)
+
+Order: (1) structure MIDI/VGM, (2) envelopes (VGM PSG, FM carrier TL),
+(3) pitch: trackers → VGM → MIDI. Decisions:
+
+- **Structure over exactness.** "The more structured, the easier to grasp."
+  Repeats become `(x n …)`, including the `(x n A (break) B)` form (A B A B
+  A); a run used again elsewhere becomes a `(def …)`. Exact matches only (no
+  transposed repeats yet). Compare velocity at MMLisp's 16 steps — finer
+  differences mean nothing.
+- **Vibrato as a function, wobble rounded:** a `(macro :pitch (sin …))` in a
+  `(def …)` beats a faithful per-frame array; round depth/rate so notes
+  share defs.
+- **MIDI modulation (CC1): fixed mapping** (depth/rate decided by us).
+
 ## Open
 
 - **DT in the voice importers (found 2026-10-05, not fixed):** Furnace's
