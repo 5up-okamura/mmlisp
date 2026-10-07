@@ -57,6 +57,9 @@ const PCM_LOOP_MAX = 0x7f00;
 // Half a millisecond: late enough to sort after every event of its frame,
 // far too early to hear.
 const PCM_SWEEP_AFTER = 0.0005;
+// captureRegisterLog's timeline runs one driver frame behind a live run's: the
+// driver spends the first frame on the score's leading setup (driver.md §4.2).
+export const CAPTURE_SETUP_SEC = 1 / 60;
 // A PCM note's points (language.md §16): its loop (:loop-*) and its range (:pcm-*).
 const PCM_POINT_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN",
   "RANGE_START", "RANGE_END", "RANGE_LEN"]);
@@ -1236,7 +1239,7 @@ export class IRPlayer {
       // macro binds — and the first event that sounds or consumes time waits for
       // the next frame. So the timeline starts a frame late, and each track's
       // head is pulled back onto the preamble frame. Capture-only.
-      const DRV_SETUP_FRAME = 1 / 60;
+      const DRV_SETUP_FRAME = CAPTURE_SETUP_SEC;
       // Land the head a quarter-frame in, not exactly on BASE: the preamble
       // (_initDefaultVoices) writes at BASE, and the setup has to come after it
       // for the same reason it does on the driver — the neutral patch is what the

@@ -650,7 +650,7 @@
   </script>
 
 <script type="module">
-    import { IRPlayer, songOrEffectIr } from './src/ir-player.js';
+    import { IRPlayer, songOrEffectIr, CAPTURE_SETUP_SEC } from './src/ir-player.js';
     import { DrvPlayer } from './src/drv-player.js';
     import { encodeMmb, collectPcmUsage, bakeAuditionBank } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
@@ -8802,7 +8802,7 @@
     function placeLoopMark() {
       const mark = document.getElementById('time-loop');
       const sl = document.getElementById('sl-time');
-      if (!(_timeSpan?.loopStart > 0) || !(_timeSpan.end > 0)) { mark.hidden = true; return; }
+      if (!(_timeSpan?.loopStart > 0.001) || !(_timeSpan.end > 0)) { mark.hidden = true; return; }
       const thumb = sl.offsetHeight - 3; // the thumb is 3px shy of the track (style.css)
       mark.hidden = false;
       mark.style.left = `${thumb / 2 + (_timeSpan.loopStart / _timeSpan.end) * Math.max(0, sl.offsetWidth - thumb)}px`;
@@ -8823,8 +8823,10 @@
           const probe = new IRPlayer(() => {});
           probe.loadJSON(ir);
           const cap = probe.captureRegisterLog();
-          loopStart = cap.loopStartSec;
-          end = cap.endSec;
+          // Onto a live run's clock, which starts without the driver's
+          // setup frame; a loop from the very top then has no intro to mark.
+          end = Math.max(0, cap.endSec - CAPTURE_SETUP_SEC);
+          if (cap.loopStartSec != null) loopStart = Math.max(0, cap.loopStartSec - CAPTURE_SETUP_SEC);
         } catch (_) { /* unmeasured: the bar shows time but has no length */ }
       }
       _timeSpan = { ir, seekable, loopStart, end };
