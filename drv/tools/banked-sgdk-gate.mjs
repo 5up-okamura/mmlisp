@@ -4,7 +4,7 @@ import {resolve,join} from 'node:path';
 import {makeProject,sgdkEnv,runRom} from './sgdk-project.mjs';
 import {buildMmb} from './mmb-build.mjs';
 import {checkWriteStream} from '../engine/analyze.mjs';
-import {prioritizeFmNotes} from './multibank-score.mjs';
+import {prioritizeFmNotes} from './pairs-model.mjs';
 import {buildMultibankImage} from './build-multibank.mjs';
 import {MultibankModel} from './multibank-model.mjs';
 import {readProbe} from './probe-analysis.mjs';

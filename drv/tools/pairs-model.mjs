@@ -271,3 +271,43 @@ export function recordWrites(rec) {
   }
   return { fm0, fm1, psg };
 }
+
+// THE BANKED CONVERTER'S FM ORDER — the reference for mmlpairs.c banked_writes
+// (the integrated gate, banked-sgdk-gate.mjs, grades the chip's stream against
+// it). A short ordinary note on an independent, unmodulated channel goes ahead
+// of another channel's bulk voice upload; each channel's writes keep their
+// order; CH3 and CH6 (the DAC) never move; a frame with a global write other
+// than $22/$24-$28/$2B, or a split F-number pair, is left as it is.
+// `modulation` is each channel's AMS/FMS as last seen (null = unknown),
+// updated in place — a channel whose modulation is unknown or on stays put.
+export const fmChannel = ([port, reg, value]) => {
+  if (port === 2) return -1;
+  if (reg === 0x28 && port === 0 && (value & 3) < 3) return (value & 3) + ((value & 4) ? 3 : 0);
+  if (((reg >= 0x30 && reg <= 0x9e) || (reg >= 0xa0 && reg <= 0xa6)
+    || (reg >= 0xb0 && reg <= 0xb6)) && (reg & 3) < 3) return port * 3 + (reg & 3);
+  return -1;
+};
+
+// A short ordinary note on an independent, unmodulated channel should not
+// wait behind another channel's bulk voice upload. Preserve each channel's
+// write order and keep CH3/DAC channels and LFO-dependent voices in place.
+export function prioritizeFmNotes(writes, modulation) {
+  const previous = [...modulation];
+  for (const [p, r, value] of writes) if (p !== 2 && r >= 0xb4 && r <= 0xb6)
+    modulation[p * 3 + (r & 3)] = value & 0x37;
+  if (writes.some(([p, r]) => p !== 2 && r < 0x30 && ![0x22,0x24,0x25,0x26,0x27,0x28,0x2b].includes(r))) return writes;
+  // F-number upper/lower writes share a chip-wide latch. Only move complete
+  // adjacent pairs, so independent channel grouping cannot split a latch.
+  for (let i=0; i<writes.length; i++) {
+    const [p,r] = writes[i];
+    if (p !== 2 && r >= 0xa4 && r <= 0xa6 && (writes[i+1]?.[0] !== p || writes[i+1]?.[1] !== r-4)) return writes;
+    if (p !== 2 && r >= 0xa0 && r <= 0xa2 && (writes[i-1]?.[0] !== p || writes[i-1]?.[1] !== r+4)) return writes;
+  }
+  const groups = Array.from({ length: 6 }, (_, ch) => writes.filter((w) => fmChannel(w) === ch));
+  const short = groups.map((group,ch) => ({group,ch})).filter(({group,ch}) => ch !== 2 && ch !== 5
+    && previous[ch] === 0 && modulation[ch] === 0 && group.length > 0 && group.length <= 8
+    && group.every(([p,r,value]) => !(r >= 0xb4 && r <= 0xb6) || (value & 0x37) === 0));
+  short.sort((a,b) => a.group.length-b.group.length);
+  const moved = new Set(short.map(({ch}) => ch));
+  return [...short.flatMap(({group}) => group), ...writes.filter((w) => !moved.has(fmChannel(w)))];
+}

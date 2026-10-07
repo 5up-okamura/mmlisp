@@ -59,6 +59,8 @@ npm run verify:all
 | `pal-gate` | a score baked for 50 Hz is the same music as the one baked for 60 (driver.md §12.8) |
 | `pcm-ab` | the browser's IR preview sends the driver's PCM commands, each within a frame |
 | `pcm-loop` | each note plays the loop the score says (`tests/m4-pcm-loop-mode.mmlisp`): the note's `:mode` decides, track loop writes before a note are the note's and stay |
+| `banked:gate` | multi-bank PCM (docs/pcm-multibank.md): the `.smp` format (directory bank, whole 32 KiB banks, silence pages, relocation that keeps ids and aliases), the C sequencer ≡ `drv-player.js` on banked scores at 60 and 50 Hz, the banked converter's grab reservation and fences (`tests/banked-pairs.c`), auto-expansion, the bundle, corrupt banks refused |
+| `multibank:gate` | the banked engine images on the JS machine with the real nine-bit bank latch: intervals, every DAC byte against `live/src/pcm-banked-model.js`, what each start and retarget applied, the pair schedule, and that its own faults are caught |
 
 On the machine (needs SGDK, the m68k toolchain, and `sh blastem/setup.sh`):
 
@@ -100,17 +102,19 @@ silently diverge.
 ## Multi-bank PCM tools
 
 For export, browser playback, capacity limits, and SGDK usage, see
-[Multi-bank PCM](../docs/pcm-multibank.md).
+[Multi-bank PCM](../docs/pcm-multibank.md). `banked:gate` and `multibank:gate`
+run inside `verify:all`; the rest need SGDK and the patched BlastEm and leave
+recordings and reports under `out/`:
 
 ```sh
-npm run banked:gate
-npm run banked:sgdk -- tests/multibank.mmlisp --seconds 8
-npm run multibank:gate
+npm run banked:sgdk -- tests/multibank.mmlisp --seconds 8 [--pal] [--minimal]
 npm run multibank:render -- tests/multibank.mmlisp --seconds 6 --out out/multibank
 npm run multibank:rom
 ```
 
-`banked:gate` checks the sample format and C/JavaScript sequencers.
-`banked:sgdk` checks the normal SGDK driver. The `multibank:*` tools exercise
-the standalone prototype. ROM tests require SGDK and the patched BlastEm;
-they produce recordings and reports under `out/`.
+`banked:sgdk` builds the SGDK example with the score, runs it, and grades the
+DAC against the engine model, the FM and PSG streams against the sequencer (the
+FM order through `prioritizeFmNotes` in `pairs-model.mjs`, the reference for
+`banked_writes` in `mmlpairs.c`), the bus loss, and the key-on interval error.
+The `multibank:*` tools drive the standalone prototype that preceded the
+integration; `multibank:render` is a listening aid, not a production `.smp`.

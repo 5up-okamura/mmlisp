@@ -89,10 +89,10 @@ PCM in any layer.
   0x46–0x48) and LOOP_* (0x43–0x45). Why it came up at all: a reversed cymbal
   — a baked reverse costs a second blob (13 KB of 32 for a crash), which the
   user rejected.
-- **One 32 KB bank a song (2026-09-17).** If ever needed: on `pcm1` only, the
-  START piece writes the bank register (~100 cycles, blobs may not cross a
-  32 KB boundary; ~14.4 → ~12 kHz). Two or three voices would need a per-block
-  copy into RAM.
+- **One 32 KB bank a song (2026-09-17) — superseded 2026-10-07** by the
+  multi-bank profiles (`plan-pcm-multibank.md`): a block renderer that switches
+  the bank register between voices, which is why one banked voice runs at the
+  two-voice rate. The single-bank images and their rates are unchanged.
 
 The yardstick, for "approach XGM": XGM2 is 100% Z80, 3 channels of 8-bit
 signed PCM at up to 13.3 kHz paced by Timer A through a ring, loops from a

@@ -19,7 +19,7 @@
     "pcm-ab": "node tools/pcm-ab-gate.mjs",
     "mirrors": "node tools/rate-mirrors.mjs && node tools/emit-images.mjs --check && node tools/emit-bin.mjs --check && node tools/emit-banked.mjs --check",
     "emit-images": "node tools/emit-images.mjs",
-    "verify:all": "npm run mirrors && npm run selftest && npm run c-gate && npm run c-gate:pal && npm run claim-gate && npm run claim-gate:pal && npm run pairs-gate && npm run sgdk:lint && npm run engine:gate && npm run engine:score && npm run verify:ab && npm run pal-gate && npm run pcm-ab && npm run pcm-loop",
+    "verify:all": "npm run mirrors && npm run selftest && npm run c-gate && npm run c-gate:pal && npm run claim-gate && npm run claim-gate:pal && npm run pairs-gate && npm run sgdk:lint && npm run engine:gate && npm run engine:score && npm run verify:ab && npm run pal-gate && npm run pcm-ab && npm run pcm-loop && npm run banked:gate && npm run multibank:gate",
     "light-study": "node tools/light-study.mjs",
     "pcm-render": "node tools/pcm-render.mjs",
     "pcm-loop": "node tools/pcm-loop-gate.mjs",

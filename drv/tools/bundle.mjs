@@ -92,7 +92,7 @@ const sameBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i
  * `bank` is the 32 KB image (null when no song plays PCM); each song is
  * { name, src, bytes, ir, tracks, entryIds, diagnostics }.
  */
-export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
+export function buildBundle(manifest, { baseDir = ".", frameHz, multibankAuto = false } = {}) {
   const diagnostics = [];
   const diag = (severity, code, message, song = null) =>
     diagnostics.push({ severity, code, message, ...(song ? { song } : {}) });
@@ -149,9 +149,10 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     s.ir.metadata = { ...(s.ir.metadata ?? {}), pcmVoices };
   }
   const multibank = !!manifest.multibank;
-  if (multibank && pcmVoices > 3)
-    throw new RangeError("multibank bundles require at most three PCM voices");
-  const rateHz = (multibank ? bankedEngineImage(Math.max(1,pcmVoices),songs[0].ir.metadata.frameHz) : engineImage(pcmVoices)).rateHz;
+  const rateHz = (multibank ? bankedEngineImage(Math.max(1, pcmVoices), songs[0].ir.metadata.frameHz) : engineImage(pcmVoices)).rateHz;
+  if (multibankAuto)
+    diag("info", "I_MMB_MULTIBANK",
+      `the shared bank exceeds one 32 KB bank; built as multi-bank PCM, baked at ${Math.round(rateHz)} Hz (docs/pcm-multibank.md)`);
   const builder = createSampleBankBuilder(rateHz, { dedup: true });
 
   // ── encode each score into the shared plan ─────────────────────────────
@@ -170,8 +171,8 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     // sound", which is the one thing a shared bank could silently do.
     try { s.alone = encodeMmb(s.ir, { samples: s.samples, multibank }); }
     catch (e) {
-      if (manifest.multibank === undefined && !multibank && pcmVoices <= 3 && e instanceof RangeError && /exceeds/.test(e.message))
-        return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz });
+      if (manifest.multibank === undefined && !multibank && e instanceof RangeError && /exceeds/.test(e.message))
+        return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz, multibankAuto: true });
       throw e;
     }
   }
@@ -183,8 +184,8 @@ export function buildBundle(manifest, { baseDir = ".", frameHz } = {}) {
     if (multibank) bank = packBankedSamples(Uint8Array.from(bankBytes));
     else {
     if (bankBytes.length > SILENCE_PAGE) {
-      if (manifest.multibank === undefined && pcmVoices <= 3)
-        return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz });
+      if (manifest.multibank === undefined)
+        return buildBundle({ ...manifest, multibank: true }, { baseDir, frameHz, multibankAuto: true });
       throw new RangeError(
         `the shared bank is ${bankBytes.length} bytes; exceeds the ${SILENCE_PAGE} bytes below the ` +
           `32KB window's silence page by ${bankBytes.length - SILENCE_PAGE}. Fewer or shorter samples, ` +

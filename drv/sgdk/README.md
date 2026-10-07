@@ -307,6 +307,12 @@ every frame it is more, and a big DMA stops the DAC for its whole length.
 Stops up to 200 µs twice a frame were judged inaudible on drum PCM
 (`.claude/memory/plan-pcm-spec.md`, D9), so this is well inside the verdict.
 
+**A multi-bank score stops more often.** Its host (`docs/driver.md` §5.4)
+reads a fresh FIFO index before each plan and makes up to five transfers a
+frame, so a busy frame is up to ten short stops; an empty plan skips its
+second grab. On the gate's scores, all stops together cost the DAC 0.4–0.7%
+of its rate on BlastEm.
+
 **A score load is a long stop, on purpose**: `MMLisp_loadScore` boots the
 score's own engine image, clears Z80 RAM and uploads its code and shared tables
 through the Z80 window. The transfer size depends on the selected profile.
@@ -528,4 +534,4 @@ The design is `docs/driver.md`; building and the gates are `drv/README.md`.
 
 ## Multi-bank PCM
 
-Export and bundle builds automatically expand NTSC and PAL scores with up to three PCM voices when samples exceed 32 KiB. To select the new engine for smaller songs, add `--multibank` to the installer. Use MMB/SMP files generated together, loading them with `MMLisp_setSampleBank` and `MMLisp_loadScore`. The installer also updates `mmlispdrv_banked_bin.h`. Both voice profiles run at about 10.1 kHz on NTSC or 10.0 kHz on PAL, with at most 256 entries and 32,512 bytes per individual blob. Three-voice multi-bank playback runs at about 6.65 kHz on NTSC or 6.59 kHz on PAL. Use `--pal` when compiling for PAL. See [usage and validation](../../docs/pcm-multibank.md).
+Export and bundle builds automatically expand NTSC and PAL scores with up to three PCM voices when samples exceed 32 KiB. To select the new engine for smaller songs, add `--multibank` to the installer. Use MMB/SMP files generated together, loading them with `MMLisp_setSampleBank` and `MMLisp_loadScore`. The installer also updates `mmlispdrv_banked_bin.h`. One and two voices run at about 10.1 kHz on NTSC or 10.0 kHz on PAL, three at about 6.65 kHz or 6.59 kHz, with at most 256 entries and 32,512 bytes per individual blob. Use `--pal` when compiling for PAL. See [usage and validation](../../docs/pcm-multibank.md).

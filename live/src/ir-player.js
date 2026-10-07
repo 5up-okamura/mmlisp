@@ -331,8 +331,10 @@ export class IRPlayer {
     this._pcmBankRate = Number.isFinite(rateHz) && rateHz > 0 ? rateHz : null;
   }
 
+  // The rate the score's sample bank was baked at (setPcmBankRate), which the
+  // loop-length conversion below speaks. It is NOT reset here: the bank is
+  // synced around every load, including a gapless swap that commits later.
   _loadIR(irObj) {
-    this._pcmBankRate = null;
     this._ir = irObj;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
     // mixer's mute has to hold the timer rather than key the channel off.

@@ -1412,9 +1412,10 @@ carries one engine image per voice count, and the image is what sets the rate:
 The table describes the default single-bank profiles. Every note a sample is
 played at is baked separately, so the listed seconds are shared across all
 baked copies. NTSC and PAL scores with up to three voices can exceed this combined
-capacity using [multi-bank PCM](pcm-multibank.md); both banked profiles run at
-about 10.1 kHz on NTSC or 10.0 kHz on PAL. Each baked blob must still fit within 32,512 bytes, and the maximum
-of 256 entries remains.
+capacity using [multi-bank PCM](pcm-multibank.md): one or two banked voices
+run at about 10.1 kHz on NTSC or 10.0 kHz on PAL, three at 6.65 or 6.59 kHz.
+Each baked blob must still fit within 32,512 bytes, and the maximum of 256
+entries remains.
 **Only what the score plays is baked.** A def the score never sounds — most of
 a drum kit, every time you import one — declares a name and costs no bank
 bytes, so importing a whole set is free until you write the note.

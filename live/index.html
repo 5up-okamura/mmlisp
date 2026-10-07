@@ -3905,16 +3905,21 @@
     // and the worklet runs the driver's voice model and engine on that bank —
     // 8-bit, at the image's rate, with its level rungs and loop rounding. So
     // what the editor plays is what the driver will.
-    async function syncPcmBankToWorklet(ir) {
+    // `target` is the IRPlayer that plays `ir`: it learns the bank's rate, so
+    // its loop lengths round as the driver's do (the browse preview has its own).
+    async function syncPcmBankToWorklet(ir, target = player) {
       if (!workletNode) return;
-      const clear = () => workletNode.port.postMessage({ type: 'pcm-set-bank', bank: null, pcmVoices: 0 });
+      const clear = () => {
+        target?.setPcmBankRate?.(null);
+        workletNode.port.postMessage({ type: 'pcm-set-bank', bank: null, pcmVoices: 0 });
+      };
       const pcmVoices = ir?.metadata?.pcmVoices ?? 0;
       if (!pcmVoices) return clear();
       const samples = await pcmSampleBlobsForMmb(ir);
       if (!samples) return clear();
       try {
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
-        configurePcmRate(player, { bank: sampleBank, pcmVoices, frameHz: ir.metadata?.frameHz ?? 60 });
+        configurePcmRate(target, { bank: sampleBank, pcmVoices, frameHz: ir.metadata?.frameHz ?? 60 });
         workletNode.port.postMessage({
           type: 'pcm-set-bank',
           bank: sampleBank ?? null,
@@ -6827,7 +6832,7 @@
         const p = new IRPlayer(writeToWorklet);
         p.loadJSON(ir);
         p.setOnTrig((t, code) => logTrig(ir, t, code));
-        await syncPcmBankToWorklet(ir);
+        await syncPcmBankToWorklet(ir, p);
         p.play(audioCtx);
         _browseScorePlayer = p;
         _browseScorePath = key;
