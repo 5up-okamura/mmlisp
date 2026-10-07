@@ -13,9 +13,10 @@
 //
 // Carrier TL is how most drivers set a channel's level, so a voice's
 // carriers are taken relative to their loudest use and the rest becomes
-// `:vel`. Pitch moved during a note (a slide, a vibrato) becomes a slur to
-// the new pitch when it lands on another semitone. DAC/PCM and the other
-// chips are reported, not imported.
+// `:vel`, a level moving during a note a `:vel+` envelope. Pitch moved
+// during a note: a jump it stays at becomes a slur to a new note, a vibrato
+// or a bend a `:pitch` macro (pitchShape). DAC/PCM and the other chips are
+// reported, not imported.
 //
 // The tempo is estimated (estimateGrid): the onsets' common unit, read as a
 // 16th (or whatever puts the tempo in a musical range), with a frame grid
@@ -486,45 +487,261 @@ export async function parseVgm(bytes) {
 
 /**
  * One channel's events → notes in samples: {t, end, pitch, vel, voice?, pan?,
- * mode?, slur?, levels}. `levels`: [t, level] — the PSG level or the FM
- * carrier TL as it moves during the note (`lv0`: where a slurred note starts;
- * an FM note's otherwise is its voice's).
+ * mode?, slur?, bend?, levels}. `levels`: [t, level] — the PSG level or the
+ * FM carrier TL as it moves during the note (`lv0`: where a slurred note
+ * starts; an FM note's otherwise is its voice's). With `followPitch`, a
+ * pitch moved during a note is shaped (pitchShape): a jump it stays at is a
+ * slur to a new note, the rest a `bend` on the note.
  */
-function notesOf(events, followPitch) {
+function notesOf(events, followPitch, endT, tune = 0) {
+  if (tune) events = events.map((e) => (e.pitch != null ? { ...e, pitch: e.pitch - tune } : e));
   const out = [];
   let cur = null;
   const close = (t) => { if (cur) { cur.end = t; out.push(cur); cur = null; } };
-  const level = () => (cur.levels.length ? cur.levels[cur.levels.length - 1][1] : cur.lv0);
   for (const e of events) {
     if (e.kind === "on" || (e.kind === "retrig" && cur)) {
       const base = cur ?? {};
       close(e.t);
       if (e.pitch == null && base.pitch == null) continue;
       cur = { t: e.t, pitch: e.pitch ?? base.pitch, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
-        pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, levels: [] };
+        pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, levels: [], pitches: [] };
       if (!cur.voice) cur.lv0 = cur.vel;
     } else if (e.kind === "off") close(e.t);
     else if (!cur) continue;
-    else if (e.kind === "pitch" && e.pitch != null) {
-      if (followPitch && Math.round(e.pitch) !== Math.round(cur.pitch)) {
-        const next = { ...cur, t: e.t, pitch: e.pitch, slur: true, lv0: level(), levels: [] };
-        close(e.t);
-        cur = next;
-      }
-    } else if (e.kind === "vel" || e.kind === "tl") cur.levels.push([e.t, e.vel ?? e.tl]);
+    else if (e.kind === "pitch" && e.pitch != null) cur.pitches.push([e.t, e.pitch]);
+    else if (e.kind === "vel" || e.kind === "tl") cur.levels.push([e.t, e.vel ?? e.tl]);
     else if (e.kind === "mode") cur.mode = e.mode;
   }
   if (cur) { cur.end = Infinity; out.push(cur); }
-  // A pitch written in a note's last frame or so, the note let go right
-  // after (a driver resetting the period as it releases), is not a note.
-  const kept = [];
-  for (let i = out.length - 1; i >= 0; i--) {
-    const n = out[i];
-    const next = kept[kept.length - 1];
-    if (n.slur && n.end - n.t < 2 * FRAME && !(next?.slur && next.t === n.end)) continue;
-    kept.push(n);
+  const notes = out.filter((n) => n.end > n.t && n.pitch != null && n.pitch > 0 && n.pitch < 128);
+  return followPitch ? notes.flatMap((n) => pitchShape(n, endT)) : notes;
+}
+
+/**
+ * A chip's tuning: how far off the equal-tempered grid its notes start, on
+ * the whole (an arcade board's clock, a table a quarter-tone off A440) — per
+ * part of the chip. In semitones, 0 when within 15 cents. Each part is taken
+ * back onto the grid.
+ */
+export function tuningOf(parsed) {
+  const by = new Map();
+  for (const [key, events] of parsed.events) {
+    const chip = group(key);
+    if (!by.has(chip)) by.set(chip, [0, 0]);
+    const acc = by.get(chip);
+    for (const e of events) if (e.kind === "on" && e.pitch != null && e.kindOf !== "noise") {
+      const a = 2 * Math.PI * (e.pitch - Math.round(e.pitch));
+      acc[0] += Math.cos(a); acc[1] += Math.sin(a);
+    }
   }
-  return kept.reverse().filter((n) => n.end > n.t && n.pitch != null && n.pitch > 0 && n.pitch < 128);
+  const tune = new Map();
+  for (const [chip, [x, y]] of by) {
+    const off = Math.atan2(y, x) / (2 * Math.PI);
+    tune.set(chip, Math.abs(off) > 0.15 ? off : 0);
+  }
+  return (key) => tune.get(group(key)) ?? 0;
+}
+// A chip's part: its FM, its SSG, its squares (each tuned its own way).
+const group = (key) => key.replace(/(\d+|[A-C])$/, "");
+
+// ── Pitch ─────────────────────────────────────────────────────────────────
+// What a driver does to a note's pitch while it sounds, read back frame by
+// frame (cents from the struck pitch). Structure over exactness (user,
+// 2026-10-07): a jump the pitch then stays at (four frames or more) is a new
+// note, slurred; a wobble around a level is a vibrato — a sine, its depth to
+// 20 cents, its period and wait to the frame pair, so notes share one def;
+// anything else is a few straight lines. A note is the semitone it spends
+// the most frames at. A pitch moved in a note's last two frames
+// (a driver resetting it as it lets go) is not kept.
+
+const STAY = 4; // frames at a level that make a jump a new note
+
+function pitchShape(n, endT) {
+  const end = n.end === Infinity ? endT : n.end;
+  const F = Math.min(600, Math.max(1, Math.round((end - n.t) / FRAME)));
+  const moves = n.pitches.filter(([t]) => t < end - 2 * FRAME);
+  if (!moves.length) return [n];
+  // The pitch a frame, in cents from the struck one.
+  const p = [];
+  for (let f = 0, k = 0, v = n.pitch; f < F; f++) {
+    const at = n.t + (f + 0.5) * FRAME;
+    while (k < moves.length && moves[k][0] <= at) v = moves[k++][1];
+    p.push(Math.round((v - n.pitch) * 100));
+  }
+  if (Math.max(...p) - Math.min(...p) <= 30) return [n];
+  // Jumps it stays at: cut there.
+  const cuts = [0];
+  for (let f = 1; f + STAY <= F; f++) {
+    if (Math.abs(p[f] - p[f - 1]) < 50) continue;
+    let stays = true;
+    for (let g = f + 1; g < f + STAY; g++) if (Math.abs(p[g] - p[f]) > 25) { stays = false; break; }
+    if (stays) cuts.push(f);
+  }
+  cuts.push(F);
+  const segs = [];
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const f0 = cuts[i], f1 = cuts[i + 1];
+    const t0 = n.t + f0 * FRAME;
+    const t1 = i + 2 < cuts.length ? n.t + f1 * FRAME : n.end;
+    const rel = p.slice(f0, f1);
+    // The note: the semitone it spends the most frames at (a vibrato's
+    // centre, where a scoop lands, where a fall starts).
+    const at = new Map();
+    for (const c of rel) { const m = Math.round(n.pitch + c / 100); at.set(m, (at.get(m) ?? 0) + 1); }
+    const midi = [...at].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+    const off = Math.round((n.pitch - midi) * 100);
+    // A wobble of 30 cents or less is none (and the note's own detune with it).
+    const moving = Math.max(...rel) - Math.min(...rel) > 30;
+    const seg = { ...n, t: t0, end: t1, pitch: midi + 0.0, slur: i > 0 || n.slur,
+      bend: moving ? rel.map((c) => Math.round((c + off) / 5) * 5) : null };
+    if (i > 0) {
+      // Its level carries on from the note before.
+      const lv = n.levels.filter(([t]) => t <= t0);
+      seg.lv0 = lv.length ? lv[lv.length - 1][1] : n.lv0;
+      seg.levels = n.levels.filter(([t]) => t > t0 && t < t1);
+    } else seg.levels = n.levels.filter(([t]) => t < t1);
+    segs.push(seg);
+  }
+  return segs;
+}
+
+// A wobble: swings around a centre, at least three (a cycle and a half),
+// each a like length — after a wait that may hold the note still first.
+function vibratoOf(c) {
+  const sorted = [...c].sort((a, b) => a - b);
+  const centre = sorted[sorted.length >> 1];
+  const d = c.map((v) => v - centre);
+  const swings = []; // [frame, sign]
+  let sign = 0;
+  for (let f = 0; f < d.length; f++) {
+    if (Math.abs(d[f]) < 6) continue;
+    const sg = Math.sign(d[f]);
+    if (sg !== sign) { swings.push(f); sign = sg; }
+  }
+  if (swings.length < 3) return null;
+  const halves = [];
+  for (let i = 1; i < swings.length; i++) halves.push(swings[i] - swings[i - 1]);
+  const hs = [...halves].sort((a, b) => a - b);
+  const half = hs[hs.length >> 1];
+  if (half < 1 || halves.some((h) => h > half * 1.6 + 1 || h < half * 0.5 - 1)) return null;
+  // Depth: the swings' peaks.
+  const peaks = [];
+  for (let i = 0; i < swings.length; i++) {
+    const a = swings[i], b = swings[i + 1] ?? d.length;
+    let m = 0;
+    for (let f = a; f < b; f++) m = Math.max(m, Math.abs(d[f]));
+    peaks.push(m);
+  }
+  const ps = [...peaks].sort((a, b) => a - b);
+  const depth = Math.max(20, Math.round(ps[ps.length >> 1] / 20) * 20);
+  // Before the wobble: held where the note starts.
+  const wait = Math.max(0, swings[0] - Math.round(half / 2));
+  if (c.slice(0, wait).some((v) => Math.abs(v - c[0]) > 15)) return null;
+  const mid = Math.round(centre / 10) * 10;
+  return { kind: "vib", centre: Math.abs(mid) <= 20 ? 0 : mid, depth, period: Math.max(2, 2 * half),
+    wait: Math.round(wait / 2) * 2 };
+}
+
+// A few straight lines through the pitch: the fewest (up to six) within
+// 15 cents of it, else within more.
+function linesOf(c) {
+  for (const tol of [15, 25, 40, 60, 100]) {
+    const pts = simplify(c, tol);
+    if (pts.length <= 7) return { kind: "lines", pts: pts.map((f) => [f, Math.round(c[f] / 5) * 5]) };
+  }
+  // Too busy to draw in lines: step it, a frame a value.
+  return { kind: "steps", values: c.map((v) => Math.round(v / 5) * 5) };
+}
+
+/** Douglas–Peucker over frames: the frames a polyline keeps. */
+function simplify(c, tol) {
+  const keep = new Set([0, c.length - 1]);
+  const rec = (a, b) => {
+    let worst = -1, at = -1;
+    for (let f = a + 1; f < b; f++) {
+      const line = c[a] + ((c[b] - c[a]) * (f - a)) / (b - a);
+      const e = Math.abs(c[f] - line);
+      if (e > worst) { worst = e; at = f; }
+    }
+    if (worst > tol) { keep.add(at); rec(a, at); rec(at, b); }
+  };
+  rec(0, c.length - 1);
+  return [...keep].sort((a, b) => a - b);
+}
+
+const PITCH_NONE = "(macro :pitch none)";
+
+/**
+ * The notes' bends (`bend`: cents a frame) → `:pitch` macros. A vibrato is
+ * a def by its depth and period (`vib-…`), so notes share it. Any other
+ * shape is drawn in lines; a note cut short plays the start of a longer
+ * one's (within 10 cents a frame), so it names that; a shape two notes play
+ * is a def (`bend-NN`), one only one plays is written on the note. Sets
+ * `bendName`; returns the defs.
+ */
+function assignBends(notes) {
+  const defs = [];
+  const vibs = new Map();
+  const shapes = [];
+  const fits = (a, c) => a.every((v, f) => Math.abs(v - c[Math.min(f, c.length - 1)]) <= 10);
+  const others = [];
+  for (const n of notes) {
+    if (!n.bend) continue;
+    const v = vibratoOf(n.bend);
+    if (v) {
+      const spec = bendSpec(v);
+      if (!vibs.has(spec)) {
+        const name = `vib-${v.depth}-${v.period}${v.wait ? `-w${v.wait}` : ""}${v.centre ? `${v.centre > 0 ? "+" : ""}${v.centre}` : ""}`;
+        vibs.set(spec, name);
+        defs.push(`(def ${name} (macro :pitch ${spec}))`);
+      }
+      n.bendName = vibs.get(spec);
+    } else others.push(n);
+  }
+  for (const n of [...others].sort((x, y) => y.bend.length - x.bend.length)) {
+    let c = shapes.find((sh) => fits(n.bend, sh.frames));
+    if (!c) shapes.push((c = { frames: n.bend, notes: [] }));
+    c.notes.push(n);
+  }
+  let k = 0;
+  for (const c of shapes) {
+    const lines = linesOf(c.frames);
+    // Drawn, it moves 30 cents or less: none.
+    const vals = lines.kind === "lines" ? lines.pts.map(([, v]) => v) : lines.values;
+    if (Math.max(...vals) - Math.min(...vals) <= 30) continue;
+    const spec = bendSpec(lines);
+    if (!spec) continue;
+    let tok = `(macro :pitch ${spec})`;
+    if (c.notes.length >= 2) {
+      const name = `bend-${String(++k).padStart(2, "0")}`;
+      defs.push(`(def ${name} ${tok})`);
+      tok = name;
+    }
+    for (const n of c.notes) n.bendName = tok;
+  }
+  return defs;
+}
+
+/** A bend as a `:pitch` macro spec (what follows `(macro :pitch `). */
+function bendSpec(b) {
+  if (b.kind === "vib")
+    return `(sin ${b.centre - b.depth}..${b.centre + b.depth} :len ${b.period}f${b.wait ? ` :wait ${b.wait}f` : ""})`;
+  if (b.kind === "steps") return `[${b.values.join(" ")}]`;
+  // Lines: a stage each; a level held is a wait.
+  const st = [];
+  const { pts } = b;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const [f0, v0] = pts[i], [f1, v1] = pts[i + 1];
+    const len = f1 - f0;
+    if (v0 === v1 && (i > 0 || v0 === 0)) st.push(`(wait ${len}f)`);
+    else st.push(`(linear ${v0}..${v1} :len ${len}f)`);
+  }
+  while (st.length && st[st.length - 1].startsWith("(wait")) st.pop(); // the last value holds
+  if (!st.length) return null;
+  // One line after a wait reads best as the line with its own `:wait`.
+  if (st.length === 2 && st[0].startsWith("(wait") && st[1].startsWith("(linear"))
+    return st[1].replace(/\)$/, ` :wait ${st[0].match(/\d+/)[0]}f)`);
+  return st.length === 1 ? st[0] : `[${st.join(" ")}]`;
 }
 
 // ── Envelopes ─────────────────────────────────────────────────────────────
@@ -626,10 +843,11 @@ function envDef(name, { head, sus, rel }) {
 // ── What is in it ────────────────────────────────────────────────────────
 
 export function analyzeVgm(parsed, { followPitch = true } = {}) {
+  const tune = tuningOf(parsed);
   const channels = [];
   const onsets = [];
   for (const [key, events] of parsed.events) {
-    const notes = notesOf(events, followPitch);
+    const notes = notesOf(events, followPitch, parsed.totalSamples, tune(key));
     if (!notes.length) continue;
     const kind = parsed.kinds.get(key) ?? "psg";
     for (const n of notes) if (!n.slur) onsets.push(n.t);
@@ -667,6 +885,7 @@ export function defaultVgmOptions(a) {
 export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const warnings = [];
   const followPitch = options.followPitch ?? true;
+  const tune = tuningOf(parsed);
 
   // The grid: the estimate, a tempo set by hand, or frames.
   let g = a.grid;
@@ -707,13 +926,14 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (taken.has(d)) { warnings.push(`${ch.key}: ${d} is already taken — dropped`); continue; }
     taken.add(d);
     const onFm = d.startsWith("fm");
-    const raw = notesOf(parsed.events.get(ch.key), followPitch);
+    const raw = notesOf(parsed.events.get(ch.key), followPitch, parsed.totalSamples, tune(ch.key));
     const notes = [];
     for (const n of raw) {
       const tick = tickOf(n.t);
       const end = n.end === Infinity ? endTick : Math.min(endTick, tickOf(n.end));
       if (tick >= endTick) break;
-      const note = { tick, len: Math.max(1, end - tick), midi: Math.round(n.pitch), vel: n.vel, tieIn: n.slur };
+      const note = { tick, len: Math.max(1, end - tick), midi: Math.round(n.pitch), vel: n.vel, tieIn: n.slur,
+        bend: n.bend };
       const endT = n.end === Infinity ? parsed.totalSamples : n.end;
       let voice = null;
       if (onFm && n.voice) {
@@ -759,6 +979,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   for (const tr of tracks)
     tr.notes.forEach((n, i) => { if (tr.notes[i + 1]?.tieIn) n.canRelease = false; });
   const envs = assignEnvelopes(tracks.flatMap((tr) => tr.notes));
+  const bends = assignBends(tracks.flatMap((tr) => tr.notes));
   // A released note is keyed off where its release starts.
   for (const tr of tracks)
     for (const n of tr.notes) if (n.relFrame != null) n.len = Math.max(1, Math.min(n.len, tickOf(n.t0 + n.relFrame * FRAME) - n.tick));
@@ -778,21 +999,24 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // A track with any envelope states one for every note — `(macro :vel
   // none)` where there is none, since a macro stays until cleared.
   for (const tr of tracks) {
-    let cur = { voice: null, env: null, pan: null, mode: null };
+    let cur = { voice: null, env: null, pitch: null, pan: null, mode: null };
     const anyEnv = tr.notes.some((n) => n.envName);
+    const anyBend = tr.notes.some((n) => n.bendName);
     for (const n of tr.notes) {
       if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - n.voiceRec.base) * 0.75) / 2)));
       const st = {
         voice: n.tieIn && cur.voice ? cur.voice : n.voiceRec ? n.voiceRec.name : n.stand,
         env: n.envName ?? (anyEnv ? ENV_NONE : null),
+        pitch: n.bendName ?? (anyBend ? PITCH_NONE : null),
         pan: n.pan ? `:pan ${n.pan}` : null,
         mode: n.mode ? `:mode ${n.mode}` : null,
       };
       n.pre = [];
-      for (const k of ["voice", "env", "pan", "mode"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
-      // Nothing to clear before the first envelope.
+      for (const k of ["voice", "env", "pitch", "pan", "mode"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
+      // Nothing to clear before the first envelope or bend.
       if (cur.env == null && st.env === ENV_NONE) n.pre = n.pre.filter((t) => t !== ENV_NONE);
-      n.state = [st.voice, st.env, st.pan, st.mode].filter(Boolean);
+      if (cur.pitch == null && st.pitch === PITCH_NONE) n.pre = n.pre.filter((t) => t !== PITCH_NONE);
+      n.state = [st.voice, st.env, st.pitch, st.pan, st.mode].filter(Boolean);
       cur = st;
     }
   }
@@ -820,6 +1044,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   if (parsed.author) header.push(`(def author ${qstr(parsed.author)})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   if (envs.length) header.push("", ...envs);
+  if (bends.length) header.push("", ...bends);
   for (const rec of voices.values()) {
     const car = CARRIERS[rec.v.alg];
     const ops = rec.ops.map((o, s) => (car.includes(s) ? { ...o, tl: Math.min(127, o.tl + rec.base) } : o));

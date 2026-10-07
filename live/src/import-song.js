@@ -481,12 +481,12 @@ export function regrid(g, bpm) {
 
 const MAX_BLOCK = 16; // units in one repeated block or phrase
 
-// A switch's kind: a keyword by its name, a macro (or an `env-` def, an
-// imported envelope) by its target, any other name — the voice or the
-// sample — as "name".
+// A switch's kind: a keyword by its name, a macro (or an `env-`, `vib-` or
+// `bend-` def, an imported envelope or bend) by its target, any other name
+// — the voice or the sample — as "name".
 const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0]
   : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}`
-    : /^env-\d/.test(t) ? "macro:vel" : "name";
+    : /^env-\d/.test(t) ? "macro:vel" : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";
 
 // The switches a note needs written, given those in force: by kind — a
 // keyword (`:pan`, `:mode`) by its name, a macro by its target, a bare name

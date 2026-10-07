@@ -3000,7 +3000,7 @@
               readingsHint(g) },
         { key: 'grid', label: 'Timing', type: 'select', value: def.grid,
           choices: [['beats', 'the estimated beat'], ['frames', 'frames (1/60 s)']] },
-        { key: 'followPitch', label: 'A pitch moved during a note becomes a slur', type: 'checkbox', value: def.followPitch },
+        { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
       ];
       fields.push({ key: 'loop', label: a.fileLoop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: def.loop });
       fields.push(STRUCTURE_FIELD);

@@ -1188,8 +1188,13 @@ YM2610 and YM2151 the voice is the channel's registers at the key-on (DT2
 dropped on the YM2151). The carriers' TL is taken relative to the voice's
 loudest use and the rest becomes `:vel`. The SSG and the SN76489 become
 `sqr` and `noise` tracks; the YM2413 and the OPL chips give notes on a
-stand-in voice. A pitch moved during a note becomes a slur (`~`) when it
-lands on another semitone — untick it to keep only the struck pitch. A
+stand-in voice. A chip tuned off A440 on the whole (an arcade board's clock)
+is taken back onto the semitones. A pitch moved during a note is followed —
+untick it to keep only the struck pitch: a jump it then stays at is a new
+note, slurred (`~`); a wobble is a vibrato, a shared `(def vib-40-10 (macro
+:pitch (sin -40..40 :len 10f)))` (depth to 20 cents, period to the frame);
+any other move — a scoop, a fall — a few `linear` lines, a `(def bend-NN
+…)` once two notes share it (a note cut short shares a longer one's). A
 level that moves during a note — the driver's envelope on the PSG, a carrier
 TL it steps on the FM — becomes a `:vel+` macro in a shared def (`(def env-01
 (macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`), the note's `:vel` its loudest
