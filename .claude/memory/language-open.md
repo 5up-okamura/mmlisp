@@ -13,8 +13,7 @@ rot.
 
 ## 1b. Rulings from the 2026-09-26 syntax audit — do not re-propose
 
-Every item of that audit has landed (the results are in `docs/language.md`)
-or was decided against changing. The rule behind it: `:key value` is a sticky
+The rule behind that audit's rulings: `:key value` is a sticky
 parameter, `(form …)` an event or control, `#name` a position; an operator
 suffix combines with the target's base (§7.0). Kept as they are, by ruling:
 

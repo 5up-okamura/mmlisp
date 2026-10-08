@@ -25,9 +25,8 @@ keeps the reasons the docs state as bare facts, and the open list. Merged
 - **Work margin: to the edge.** "To the edge is fine if it plays." The margin
   only guards cost-model error; a mis-costed slot runs slightly flat, never
   crashes.
-- **Loops are a performance control.** Listened to 2026-09-18, the user was
-  glad they were added — "music the Mega Drive has never played" — and wants
-  start and end changeable per note and by curves, "to fit the performance".
+- **Loops are a performance control.** The user wants start and end
+  changeable per note and by curves, "to fit the performance".
   Points are TIMES, never fractions or source frames ("I want to say exactly
   from here to here"), in the same notation on the def and the track. The
   shortest loop, one 16-byte block, was accepted. `:mode` is sticky like every
@@ -81,9 +80,7 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 
 ## Open
 
-- **The integrated multi-bank build has had no listening test.** The user
-  accepted the precomputed two-voice prototype's timing by ear (a slightly
-  slow passage near 7 s) — do not claim that acceptance for the build.
+- **The integrated multi-bank build has had no listening test.**
 - Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.

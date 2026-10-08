@@ -243,10 +243,9 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
 
   Key-ons last on top: chord spread p95 19.5 → 3.0 ms, max 33 → 4; late p95
   17.1 → 16.4. WAVs in `~/Desktop/mucom/onset-listen/`.
-- **The user's verdicts**: the voice hoist and key-ons last were verified on
-  the live app and BlastEm (2026-10-07); key-ons last adopted after listening.
-  The user accepted a changed release tail, and a note ending up to two frames
-  early, over tempo wobble — then the tail cut made **no audible difference**
+- **The user's verdicts**: key-ons last adopted after listening. The user
+  accepted a changed release tail, and a note ending up to two frames early,
+  over tempo wobble — then the tail cut made **no audible difference**
   on sin008, so it is built but off by default (fewer writes). Revisit only on
   a score with a long release before a voice change.
 - **Declined after measuring**: skipping unchanged pitch pairs (half of
