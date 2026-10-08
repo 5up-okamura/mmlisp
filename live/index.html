@@ -675,7 +675,7 @@
 <script type="module">
     import { IRPlayer, songOrEffectIr, CAPTURE_SETUP_SEC } from './src/ir-player.js';
     import { DrvPlayer } from './src/drv-player.js';
-    import { encodeMmb, collectPcmUsage, bakeAuditionBank } from './src/export-mmb.js';
+    import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { renderWav } from './src/export-wav.js';
@@ -7896,10 +7896,6 @@
       const libSample = lib?.kind === 'pcm' ? lib : null;
       const name = libSample ? libSample.def.name : _pcmCursorDef;
       if (!name) return;
-      if (_fmLiveRaf != null) {
-        log('Stop playback first \u2014 a sample audition reloads the PCM bank.', 'err');
-        return;
-      }
       const seq = ++_pcmAuditionSeq;
       try {
         const { ir, diagnostics } = libSample
@@ -7916,6 +7912,12 @@
         if (!samples) throw new Error(`"${name}" did not load`);
         const loop = def.startSec != null || def.endSec != null;
         if (seq !== _pcmAuditionSeq || (loop && _pcmReleasedSeq === seq)) return; // superseded or let go
+        // During playback the engine is the song's: the same bake plays on a
+        // plain buffer source beside it, so the keys can play along.
+        if (_fmLiveRaf != null) {
+          playAuditionBlob(bakeAuditionBlob(one, samples, name, midi), loop, vel);
+          return;
+        }
         const { sampleBank, entryIds } = bakeAuditionBank(one, samples, name, midi);
         workletNode.port.postMessage({
           type: 'pcm-set-bank', bank: sampleBank, pcmVoices: 1, entryIds,
@@ -7931,7 +7933,37 @@
 
     function previewPcmNoteOff() {
       _pcmReleasedSeq = _pcmAuditionSeq;
+      // A looping audition on the side player lets go: the loop ends and the
+      // range plays out, as the engine's release does.
+      if (_sideAudition) _sideAudition.loop = false;
       workletNode?.port.postMessage({ type: 'pcm-ev', kind: 'off', voice: 0, track: 0 });
+    }
+
+    // The keys' sample audition while the song plays (previewPcmNoteOn): the
+    // baked 8-bit blob at the engine's rate, its range and loop, on a buffer
+    // source of its own — the engine and the song's bank stay untouched. One
+    // at a time, as the engine's audition voice is; its level follows vel
+    // linearly, not the driver's 6 dB rungs.
+    let _sideAudition = null;
+    function playAuditionBlob({ data, rateHz, range, loop: loopPts }, loop, vel) {
+      _sideAudition?.stop();
+      const [from, to] = range ?? [0, data.length];
+      const buf = audioCtx.createBuffer(1, Math.max(1, to - from), rateHz);
+      const ch = buf.getChannelData(0);
+      for (let i = from; i < to; i++) ch[i - from] = data[i] / 128;
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      if (loop && loopPts) {
+        src.loop = true;
+        src.loopStart = (loopPts[0] - from) / rateHz;
+        src.loopEnd = (loopPts[1] - from) / rateHz;
+      }
+      const gain = audioCtx.createGain();
+      gain.gain.value = 0.5 * Math.max(0, Math.min(15, vel)) / 15;
+      src.connect(gain).connect(audioCtx.destination);
+      src.onended = () => { if (_sideAudition === src) _sideAudition = null; };
+      src.start();
+      _sideAudition = src;
     }
 
     // Single entry point for note-on so every preview surface (on-screen keyboard,

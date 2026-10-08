@@ -109,10 +109,10 @@ user's rulings, measurements, and open items. Merged 2026-10-09 from
 
 ## Open
 
-- **A sample does not sound while the song plays**: an audition loads its own
-  bank into the worklet's one PCM engine, so it refuses. The fix discussed is a
-  small audition-only sample player apart from the engine. Deferred by the
-  user, 2026-10-08.
+- **Library ▶ and the completion list's ↑ / ↓ still refuse a sample while the
+  song plays** (their preview reloads the PCM bank). The keys play one on the
+  side player during playback (`playAuditionBlob`); routing these two through
+  it too is open.
 - A score's own `def-pcm` is not auditioned from the picker: its `:file` is
   relative to the score's folder, which the stand-in score lacks.
 - Touch has no add-cursor gesture (no modifier; long-press is the value

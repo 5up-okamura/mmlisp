@@ -5,7 +5,7 @@
 // and the bank (and the keyboard audition's bank) bakes the processed signal.
 import { applySampleEffects } from "../../live/src/sample-fx.js";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { encodeMmb, bakeAuditionBank } from "../../live/src/export-mmb.js";
+import { encodeMmb, bakeAuditionBank, bakeAuditionBlob } from "../../live/src/export-mmb.js";
 
 const RATE = 22050;
 let failed = 0;
@@ -248,6 +248,17 @@ const run = (x, chain) => {
   const { sampleBank, entryIds } = bakeAuditionBank(ir, { kick: src }, "kick", 67);
   check("the audition bakes the one note", sampleBank.length === 0x8000 && entryIds["kick|67"] !== undefined
     && Object.keys(entryIds).length === 1, JSON.stringify(entryIds));
+  // The side player's blob (the keys during playback): the bank's one entry,
+  // its bytes, and the def's loop as offsets inside them.
+  const b = bakeAuditionBlob(ir, { kick: src }, "kick", 67);
+  const at = sampleBank.indexOf(b.data[0] & 0xff, 4 + 24);
+  check("the audition blob is the bank's entry", b.data.length > 0 && b.data.length % 16 === 0
+    && b.rateHz > 6000 && b.range === null && b.loop === null && at >= 0, `${b.data.length} B @ ${Math.round(b.rateHz)} Hz`);
+  const looped = compileMMLisp(`(def-pcm pad :file "/x.wav" :loop-start 50ms :loop-end 120ms)
+(pcm1 pad :tempo 120 :len 4 :mode loop c)`, "t.mmlisp").ir;
+  const lb = bakeAuditionBlob(looped, { pad: src }, "pad", 60);
+  check("the audition blob carries the loop", !!lb.loop && lb.loop[0] < lb.loop[1] && lb.loop[1] <= lb.data.length,
+    JSON.stringify(lb.loop));
 }
 
 if (failed) {

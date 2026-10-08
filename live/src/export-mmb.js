@@ -1909,6 +1909,31 @@ export function bakeAuditionBank(ir, blobs, name, midi) {
 }
 
 
+/**
+ * The same audition as one blob, for a player outside the engine — the keys
+ * during playback, when the engine is the song's (mmb.md §10 entry layout).
+ * @returns {{ data: Int8Array, rateHz: number, range: [number, number] | null,
+ *   loop: [number, number] | null }} byte offsets into `data`
+ */
+export function bakeAuditionBlob(ir, blobs, name, midi) {
+  const { sampleBank, entryIds } = bakeAuditionBank(ir, blobs, name, midi);
+  const v = new DataView(sampleBank.buffer);
+  const n = v.getUint16(0, true);
+  const tableEnd = 4 + n * 24;
+  const id = Object.values(entryIds)[0] ?? 0;
+  let at = 4;
+  for (let i = 0; i < n; i++) if (sampleBank[4 + i * 24] === id) at = 4 + i * 24;
+  const flags = sampleBank[at + 1];
+  const off = v.getUint32(at + 4, true), len = v.getUint32(at + 8, true);
+  const u16 = (k) => v.getUint16(at + k, true);
+  return {
+    data: new Int8Array(sampleBank.buffer, tableEnd + off, len),
+    rateHz: engineImage(scorePcmVoices(ir)).rateHz,
+    range: flags & 1 ? [u16(0x10), u16(0x12)] : null,
+    loop: flags & 6 ? [u16(0x14), u16(0x16)] : null,
+  };
+}
+
 /** Banked .smp: directory in bank 0, blobs in whole 32 KiB banks.
  * Stamp bit 15 distinguishes it; entry offsets are relative to bank 1.
  * Every bank reserves its final 256 bytes as silence. */

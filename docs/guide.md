@@ -900,8 +900,10 @@ its own:
 
 **Put the cursor on a sample def to play it from the keyboard**, as with an FM
 voice: each key bakes that def at that note, effects included, and plays it on
-the driver's engine. It takes over the PCM bank, so stop playback first; the
-next Play or Build puts the song's bank back.
+the driver's engine; the next Play or Build puts the song's bank back. While
+the song plays, the engine is the song's, so the key plays the same baked
+bytes on a player of its own beside it — you can play along. That player
+follows the key's velocity smoothly rather than in the driver's 6 dB steps.
 
 Two things a PCM voice cannot do: **bend** (a note picks a pre-baked blob, so
 `:pitch`, `:semi`, `(glide …)` and a pitch vibrato are errors on a pcm track)
