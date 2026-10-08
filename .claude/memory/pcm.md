@@ -89,9 +89,8 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.
   `tests/multibank-3v.mmlisp` carries two known PSG-timing divergences in
   `ab-baseline.json`, unrelated to PCM.
-- **Sample effects, second batch**: `hpf` / `lpf` (a low cut buys level
-  headroom), `drive` (tanh). Agreed, not written. **Nothing in `:fx` has been
-  listened to by the user yet**, `reverb` included.
+- **Nothing in `:fx` has been listened to by the user yet**, `reverb` and
+  the 2026-10-09 `hpf` / `lpf` / `drive` included.
 - **Reverse at playback** (2026-10-03): zero bank and per-sample cost, but the
   block-edge pieces assume a forward walk, so a backward voice is a new piece
   mirrored through the generator, `pcm-model.js`, the worklet,

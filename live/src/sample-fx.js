@@ -39,6 +39,9 @@ export const SAMPLE_EFFECTS = {
     },
   },
   crush: { pos: "bits", params: { bits: { kind: "int", required: true, min: 1, max: 8 } } },
+  hpf: { pos: "freq", params: { freq: { kind: "num", required: true, min: 1 } } },
+  lpf: { pos: "freq", params: { freq: { kind: "num", required: true, min: 1 } } },
+  drive: { pos: "db", params: { db: { kind: "db", required: true, min: 0 } } },
   fade: {
     params: {
       at: { kind: "time", def: null },
@@ -144,6 +147,48 @@ function crush(x, { bits }) {
   return x;
 }
 
+// Two-pole Butterworth filters (RBJ biquads, Q = 1/√2, 12 dB/oct) at `freq`
+// Hz. A cutoff at or past the sample's Nyquist has no meaning at that rate:
+// it is pulled just under it, with a warning.
+function biquad(x, freq, rate, warn, high) {
+  const nyq = rate / 2;
+  let f = freq;
+  if (f >= nyq * 0.95) {
+    f = nyq * 0.95;
+    warn("W_SAMPLE_FX_FREQ",
+      `${high ? "hpf" : "lpf"} ${freq}Hz is at or past the sample's Nyquist (${nyq}Hz); filtering at ${Math.round(f)}Hz`);
+  }
+  const w = (2 * Math.PI * f) / rate;
+  const cw = Math.cos(w);
+  const alpha = Math.sin(w) / Math.SQRT2; // sin(w) / (2Q), Q = 1/√2
+  const a0 = 1 + alpha;
+  const k = high ? (1 + cw) / 2 : (1 - cw) / 2;
+  const b0 = k / a0;
+  const b1 = (high ? -2 * k : 2 * k) / a0;
+  const b2 = k / a0;
+  const a1 = (-2 * cw) / a0;
+  const a2 = (1 - alpha) / a0;
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const x0 = x[i];
+    const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1; x1 = x0; y2 = y1; y1 = y0;
+    x[i] = y0;
+  }
+  return x;
+}
+const hpf = (x, { freq }, rate, warn) => biquad(x, freq, rate, warn, true);
+const lpf = (x, { freq }, rate, warn) => biquad(x, freq, rate, warn, false);
+
+// Soft saturation: `db` of gain into tanh, scaled back by tanh of that gain,
+// so a full-scale input still peaks at full scale — distortion, not level.
+function drive(x, { db }) {
+  const g = dbToGain(db);
+  const norm = Math.tanh(g);
+  for (let i = 0; i < x.length; i++) x[i] = Math.tanh(g * x[i]) / norm;
+  return x;
+}
+
 // Fade to silence from `at` over `len`, shaped by a one-shot curve (the gain
 // is 1 − curve, so `ease-out-expo` drops fast then tails, like a natural
 // decay), and cut the sample where the fade ends.
@@ -210,7 +255,7 @@ function reverb(x, { size, damp, mix, predelay, tail }, rate) {
   return out;
 }
 
-const APPLY = { gain, normalize, comp, limit, crush, fade, reverb };
+const APPLY = { gain, normalize, comp, limit, crush, hpf, lpf, drive, fade, reverb };
 
 /**
  * Run a resolved `:fx` chain over one sample.

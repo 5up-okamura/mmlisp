@@ -1697,6 +1697,9 @@ choice, as for the range).
 | `comp` | Compressor: above the threshold the level rises 1/`:ratio` as fast, over a soft knee `:knee` dB wide |
 | `limit` | Brickwall limiter with a 2 ms lookahead: the peak never passes `:ceiling` dBFS |
 | `crush` | Quantizes to N bits — the lo-fi step |
+| `hpf` | High-pass filter, 12 dB/oct: cuts below `:freq` — a low cut also buys level headroom |
+| `lpf` | Low-pass filter, 12 dB/oct: cuts above `:freq` — darker, duller |
+| `drive` | Soft saturation (tanh): adds distortion and density, a full-scale peak stays at full scale |
 | `fade` | Fades to silence from `:at` over `:len` and **cuts the sample there** |
 | `reverb` | Freeverb-style room; **grows the sample by `:tail`** and fades the tail out over it |
 
@@ -1717,6 +1720,9 @@ Parameters — a positional value fills the one marked *positional*
 | `limit` | `:ceiling` | dBFS | ≤ 0 | `0` | The level no peak passes (the lookahead is a fixed 2 ms, so it never overshoots) |
 | | `:release` | length | ≥ 0 | `5ms` | How fast the gain comes back after a peak. Shorter is louder; longer is smoother and quieter |
 | `crush` | `:bits` | integer | 1–8 | required, *positional* | The steps the wave keeps: `8` changes nothing (the bank is 8-bit), `4` is gritty, `1`–`2` near a square wave |
+| `hpf` | `:freq` | Hz | ≥ 1 | required, *positional* | The cutoff, −3 dB there. Past the sample's Nyquist (half its rate) it is pulled just under, with `W_SAMPLE_FX_FREQ` |
+| `lpf` | `:freq` | Hz | ≥ 1 | required, *positional* | As `hpf`, from the other side |
+| `drive` | `:db` | dB | ≥ 0 | required, *positional* | Gain into the saturation: `6` thickens, `18` and up is plainly distorted. The output is scaled back, so a full-scale input stays full scale and quieter parts come up |
 | `fade` | `:len` | length | > 0 | required | How long the fade takes, from `:at` to silence |
 | | `:at` | length, from the sample's start | ≥ 0 | `:len` before the end | Where the fade starts. Everything after `:at` + `:len` is cut |
 | | `:curve` | a one-shot curve name — *Fade curves* below | not a looping curve | `linear` | The fade's shape |

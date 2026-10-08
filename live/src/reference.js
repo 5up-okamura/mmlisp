@@ -558,6 +558,27 @@ export const REFERENCE = [
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm lofi snare :fx [(crush :bits 3)])\n(pcm1 :len 8 snare c lofi c)',
   },
   {
+    name: '(hpf …)', aliases: ['hpf', 'high-pass', 'low cut', ':freq'], cat: 'fx', section: '§16', tracks: PCM,
+    syntax: '(hpf :freq Hz)',
+    summary: 'High-pass filter, 12 dB/oct: cuts below :freq — a low cut also buys level headroom.',
+    insert: '(hpf 100)',
+    example: '(import "presets/tr808/set.mmlisp")\n(def-pcm thin snare :fx [(hpf 800)])\n(pcm1 :len 8 snare c thin c)',
+  },
+  {
+    name: '(lpf …)', aliases: ['lpf', 'low-pass', 'high cut', 'filter'], cat: 'fx', section: '§16', tracks: PCM,
+    syntax: '(lpf :freq Hz)',
+    summary: 'Low-pass filter, 12 dB/oct: cuts above :freq — darker, duller.',
+    insert: '(lpf 3000)',
+    example: '(import "presets/tr808/set.mmlisp")\n(def-pcm dull snare :fx [(lpf 1500)])\n(pcm1 :len 8 snare c dull c)',
+  },
+  {
+    name: '(drive …)', aliases: ['drive', 'saturation', 'distortion', 'overdrive'], cat: 'fx', section: '§16', tracks: PCM,
+    syntax: '(drive :db N)',
+    summary: 'Soft saturation (tanh): N dB into it; a full-scale peak stays full scale, quieter parts come up.',
+    insert: '(drive 12)',
+    example: '(import "presets/tr808/set.mmlisp")\n(def-pcm dirty snare :fx [(drive 18)])\n(pcm1 :len 8 snare c dirty c)',
+  },
+  {
     name: '(fade …)', aliases: ['fade', ':at', ':curve'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(fade :at L :len L [:curve name])',
     summary: 'Fades to silence from :at over :len and cuts the sample there — it saves bank bytes.',

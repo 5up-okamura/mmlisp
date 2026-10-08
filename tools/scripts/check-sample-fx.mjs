@@ -64,6 +64,38 @@ const run = (x, chain) => {
   check("crush 3 bits: <= 7 levels", levels.size <= 7, `${levels.size} levels`);
 }
 
+// hpf / lpf: a 12 dB/oct cut, a tone well inside the band passes; a cutoff
+// past the sample's Nyquist warns and filters just under it
+{
+  const level = (hz, chain) => {
+    const y = run(tone(0.5, 0.5, hz), chain).y;
+    return db(peak(y, y.length >> 1) / 0.5);
+  };
+  const lowCut = level(100, [{ type: "hpf", freq: 1000 }]);
+  check("hpf 1000: 100 Hz down > 30 dB", lowCut < -30, `${lowCut.toFixed(1)} dB`);
+  const highPass = level(5000, [{ type: "hpf", freq: 1000 }]);
+  check("hpf 1000: 5 kHz passes", Math.abs(highPass) < 0.5, `${highPass.toFixed(2)} dB`);
+  const highCut = level(5000, [{ type: "lpf", freq: 500 }]);
+  check("lpf 500: 5 kHz down > 30 dB", highCut < -30, `${highCut.toFixed(1)} dB`);
+  const lowPass = level(50, [{ type: "lpf", freq: 500 }]);
+  check("lpf 500: 50 Hz passes", Math.abs(lowPass) < 0.5, `${lowPass.toFixed(2)} dB`);
+  const corner = level(1000, [{ type: "lpf", freq: 1000 }]);
+  check("lpf: -3 dB at the cutoff", Math.abs(corner + 3) < 0.5, `${corner.toFixed(2)} dB`);
+  const past = run(tone(0.1, 0.5), [{ type: "lpf", freq: 20000 }]);
+  check("lpf past Nyquist warns", past.warns.includes("W_SAMPLE_FX_FREQ"));
+}
+
+// drive: full scale stays full scale, a quieter signal comes up, silence
+// stays silent
+{
+  const full = run(tone(0.1, 1), [{ type: "drive", db: 12 }]).y;
+  check("drive keeps full scale at full scale", Math.abs(peak(full) - 1) < 1e-3, `peak ${peak(full).toFixed(4)}`);
+  const quiet = run(tone(0.1, 0.25), [{ type: "drive", db: 12 }]).y;
+  check("drive brings a quiet signal up", peak(quiet) > 0.5, `peak ${peak(quiet).toFixed(3)}`);
+  const z = run(new Float32Array(100), [{ type: "drive", db: 12 }]).y;
+  check("drive leaves silence silent", peak(z) === 0);
+}
+
 // fade: trimmed at at+len, silent at the end, linear is monotone
 {
   const x = new Float32Array(RATE).fill(0.5); // 1 s DC
@@ -128,6 +160,11 @@ const run = (x, chain) => {
     fx.length === 3 && fx[0].db === 3 && fx[1].attack === 0.002 && fx[1].threshold === -18
       && fx[2].len === 0.25 && fx[2].curve === "linear" && fx[2].at === null,
     JSON.stringify(fx));
+  const filt = compileMMLisp(`(def-pcm s :file "/x.wav" :fx [(hpf 80) (lpf :freq 6000) (drive 6)])`, "t.mmlisp");
+  const ff = filt.ir.metadata.samples[0].fx;
+  check("compiler resolves hpf / lpf / drive",
+    filt.diagnostics.length === 0 && ff[0].freq === 80 && ff[1].freq === 6000 && ff[2].db === 6,
+    JSON.stringify(ff));
   const instant = compileMMLisp(`(def-pcm s :file "/x.wav" :fx [(comp :attack 0ms) (fade :at 0ms :len 5ms)])`, "t.mmlisp");
   check("an instant attack and a fade :at 0 are accepted",
     instant.diagnostics.length === 0 && instant.ir.metadata.samples[0].fx.length === 2,
@@ -142,6 +179,9 @@ const run = (x, chain) => {
     [":fx [(comp :ratio 0.5)]", "E_SAMPLE_FX_PARAM"],
     [":fx [(comp :bogus 1)]", "E_SAMPLE_FX_PARAM"],
     [":fx [(crush 9)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(hpf)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(lpf 0)]", "E_SAMPLE_FX_PARAM"],
+    [":fx [(drive -3)]", "E_SAMPLE_FX_PARAM"],
     [":fx [(fade :len 10ms :curve sin)]", "E_SAMPLE_FX_PARAM"],
     [":fx [(normalize :peak 3)]", "E_SAMPLE_FX_PARAM"],
     [":fx [(fade :len 0ms)]", "E_SAMPLE_FX_PARAM"],

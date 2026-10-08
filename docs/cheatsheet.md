@@ -185,7 +185,8 @@ after its note-off. `…-len` keeps the length when its start moves.
 
 A note's pitch picks a resampled copy, baked into the 32 KB bank — only what
 the score plays is baked. No pitch moves on PCM (`:pitch`, `(glide)`); levels
-step 6 dB; voices sum and hard-clip.
+step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
+`normalize` `comp` `limit` `crush` `hpf` `lpf` `drive` `fade` `reverb`.
 
 ## Mistakes the compiler catches — and the ones it can't
 

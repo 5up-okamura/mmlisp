@@ -17,7 +17,7 @@ export const AC_FORMS = [
     .flatMap((k) => [`ease-in-${k}`, `ease-out-${k}`, `ease-inout-${k}`]),
   'sin', 'triangle', 'square', 'saw', 'ramp',
   'noise', 'pink', 'perlin', 'brown',
-  'gain', 'normalize', 'comp', 'limit', 'crush', 'fade', 'reverb',
+  'gain', 'normalize', 'comp', 'limit', 'crush', 'hpf', 'lpf', 'drive', 'fade', 'reverb',
 ];
 
 export const AC_TRACKS = [

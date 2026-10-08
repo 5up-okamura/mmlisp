@@ -887,7 +887,8 @@ to the driver (language.md §16):
 `comp` alone only takes level off — end the chain with `(normalize)` (or push
 with `gain` and cap with `(limit)`) to turn it into loudness. `(normalize)` on
 its own scales a quiet file to full scale, `(crush 4)` is the lo-fi
-step, and `(fade …)` cuts the sample where it ends — which also frees bank
+step, `(hpf 100)` / `(lpf 3000)` cut the lows or highs, `(drive 12)`
+saturates, and `(fade …)` cuts the sample where it ends — which also frees bank
 space. A whole kit takes one chain on its import, and one sound a variant of
 its own:
 
