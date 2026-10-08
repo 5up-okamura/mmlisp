@@ -296,7 +296,7 @@
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleDrvBackend();closeMenus()"
-                title="Play through the MMLispDRV reference decoder (MMB v0.3) instead of the IR player">
+                title="Play through the MMLispDRV reference decoder (MMB v0.4) instead of the IR player">
           <span>MMLispDRV Backend</span>
           <span class="menu-item-shortcut" id="drvBackendCheck"></span>
         </button>
@@ -538,7 +538,7 @@
       <div class="info-body">
         <p><b>MMLisp</b> — a Lisp-like DSL for composing expressive, interactive
         music for the Sega Mega Drive (YM2612 FM + PSG).</p>
-        <p>Version v0.6<br>
+        <p>Version v0.7<br>
         © 2026 Hiroshi Okamura (5&amp;UP Inc.) — MIT License</p>
         <p><a href="https://github.com/5up-okamura/mmlisp" target="_blank" rel="noopener">github.com/5up-okamura/mmlisp</a></p>
         <p>Sound emulation by Nuked-OPN2 &amp; Nuked-PSG — see
@@ -5820,7 +5820,7 @@
       _drvBackend = !_drvBackend;
       updateDrvBackendCheck();
       savePref('drvBackend', _drvBackend ? 'on' : 'off');
-      log('Playback backend: ' + (_drvBackend ? 'MMLispDRV reference (MMB v0.3)' : 'IR player'), 'info');
+      log('Playback backend: ' + (_drvBackend ? 'MMLispDRV reference (MMB v0.4)' : 'IR player'), 'info');
       renderSeButtons();
     }
     window.toggleDrvBackend = toggleDrvBackend;
@@ -5932,7 +5932,7 @@
       const se = seTrack ? seTrack.se.index : null;
       const playIr = _lastGoodIR ? songOrEffectIr(_lastGoodIR, se) : null;
 
-      // MMLispDRV reference backend: compile → MMB v0.3 → frame-stepped
+      // MMLispDRV reference backend: compile → MMB v0.4 → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
       // audible form of the A/B comparison. Mute/solo, live vol/master, the
       // tempo fader and Dynamic Parameters are supported (re-applied from the

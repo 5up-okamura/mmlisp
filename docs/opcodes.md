@@ -1,7 +1,7 @@
-# MMB v0.3 Opcode & Target Tables
+# MMB v0.4 Opcode & Target Tables
 
-The opcode, target and curve vocabulary of MMB v0.3 (`live/src/mmb.js`,
-`VERSION_MINOR = 3`). Ids, payload layouts and semantics defined here are
+The opcode, target and curve vocabulary of MMB v0.4 (`live/src/mmb.js`,
+`VERSION_MINOR = 4`). Ids, payload layouts and semantics defined here are
 stable: a later minor version may *add* opcodes and targets, it does not change
 these. Stream framing (duration operands, per-track termination) is defined in
 `docs/mmb.md` §7; event semantics come from the IR (`docs/ir.md`).

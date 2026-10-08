@@ -1,4 +1,4 @@
-// MMB v0.3 shared tables and framing helpers.
+// MMB v0.4 shared tables and framing helpers.
 //
 // Single source of truth for the binary container, imported by BOTH the writer
 // (export-mmb.js) and the reference decoder (drv-player.js) so their opcode,
@@ -18,7 +18,7 @@ const PPQN = 96;
 // ── File header (mmb.md §4) ───────────────────────────────────────────────
 export const MAGIC = [0x4d, 0x4d, 0x42, 0x30]; // "MMB0"
 export const VERSION_MAJOR = 0;
-export const VERSION_MINOR = 3;
+export const VERSION_MINOR = 4;
 export const HEADER_SIZE = 12;
 
 // Header flags (mmb.md §4). WIDE_OFFSETS is reserved and 0. PAL_TIMEBASE says

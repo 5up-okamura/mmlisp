@@ -1,6 +1,6 @@
 # MMLispDRV Architecture — 68k sequencer + Z80 DAC/write engine
 
-MMLispDRV plays MMB v0.3 (`docs/mmb.md`, `docs/opcodes.md`) on a Mega Drive. The
+MMLispDRV plays MMB v0.4 (`docs/mmb.md`, `docs/opcodes.md`) on a Mega Drive. The
 68000 runs the sequencer; the Z80 keeps the DAC clock and puts the sequencer's
 chip writes on the YM2612. This document defines both halves, the interface
 between them (§6), and the interactive-playback model the language is built
@@ -1037,7 +1037,7 @@ lists each).
 
 ### 12.1 `drv-player.js` — the executable spec
 
-Executes MMB v0.3 with the §4 loop order and **integer-only math** (8.8
+Executes MMB v0.4 with the §4 loop order and **integer-only math** (8.8
 accumulators, the §7/§8 integer tables — no floats), in the live environment as
 an alternate backend, and emits real frames through the real cap/spill queue
 (§4) so it specifies the interface too, not just the music.

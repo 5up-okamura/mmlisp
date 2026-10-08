@@ -1,6 +1,6 @@
 import { bankedEngineImage } from "./engine-banked-images.js";
 // ---------------------------------------------------------------------------
-// MMLispDRV reference player — MMB v0.3 decoder + Z80-constrained scheduler.
+// MMLispDRV reference player — MMB v0.4 decoder + Z80-constrained scheduler.
 //
 // This is the executable form of docs/driver.md: it consumes the MMB binary
 // (docs/mmb.md, docs/opcodes.md) exactly as the Z80 driver will — 60 Hz
@@ -226,7 +226,7 @@ export class DrvPlayer {
   }
 
   // ── Container loading ────────────────────────────────────────────────────
-  /** Parse an MMB v0.3 byte buffer. Throws on a malformed container. */
+  /** Parse an MMB v0.4 byte buffer. Throws on a malformed container. */
   loadMMB(bytes, sampleBankBytes = null) {
     // A newly loaded song plays at its written tempo: drop any live override.
     this._tempoOverride = false;

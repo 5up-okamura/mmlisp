@@ -1,6 +1,6 @@
 # MMLisp Language Reference
 
-Describes the current MMLisp language (v0.6).
+Describes the current MMLisp language (v0.7).
 
 This is the canonical reference for the language as implemented by
 `live/src/mmlisp2ir.js`. For a learning-ordered introduction, see

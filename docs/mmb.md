@@ -1,12 +1,12 @@
-# MMB v0.3 Container Format
+# MMB v0.4 Container Format
 
 This document, with `docs/opcodes.md` (opcodes and targets) and
 `docs/driver.md` (the driver), defines what the exporter writes and the
 driver reads. Event and target vocabulary comes from `docs/ir.md`; MMB is the
 binary lowering of that IR.
 
-MMB v0.3 replaces every earlier draft entirely. There is no compatibility path
-(no legacy support): a loader accepts its own version and nothing else.
+There is no compatibility path between versions (no legacy support): a loader
+accepts its own version and nothing else.
 
 ## 1. Goals
 
@@ -46,7 +46,7 @@ MMB v0.3 replaces every earlier draft entirely. There is no compatibility path
 | ------ | ---- | ------------- | ------------------------------------ |
 | 0x00   | 4    | magic         | `"MMB0"` (0x4D 0x4D 0x42 0x30)       |
 | 0x04   | 1    | version_major | 0                                    |
-| 0x05   | 1    | version_minor | 3                                    |
+| 0x05   | 1    | version_minor | 4                                    |
 | 0x06   | 2    | flags         | u16, see below                       |
 | 0x08   | 2    | section_count | u16                                  |
 | 0x0A   | 2    | header_size   | u16, = 12                              |
@@ -392,9 +392,11 @@ limits, not hardware ones; relaxing them needs no driver change beyond
 
 ## 13. Compatibility Policy
 
-1. Loader must reject a file whose `version_major` is newer than it knows.
-2. Loader may accept newer `version_minor` if no unknown header flags are
-   set and no unknown REQUIRED sections are present.
+1. A change to what a stream means — a new opcode form, a flag bit given a
+   meaning — raises `version_minor`. `drv-player.js` accepts exactly its own
+   `version_major`.`version_minor`; the 68000 sequencer does not check it,
+   since a game's MMB files and its driver are built from the same tree.
+2. There is no compatibility path between versions.
 3. Unknown section id: skip, unless its REQUIRED flag is set → reject.
 4. Unknown header flag set → reject.
 5. Unknown opcode inside a track stream → fail-safe: stop decoding that

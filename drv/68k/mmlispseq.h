@@ -73,7 +73,7 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
  * baked for the image must carry. Generated from live/src/engine-images.js. */
 #include "mml_rate.h"
 #include "mml_banked_rate.h"
-/* One v0.3 sample-bank entry (mmb.md §10). */
+/* One sample-bank entry (mmb.md §10). */
 #define MML_SAMPLE_ENTRY 24
 /* A block of the engine, and the window a voice reads through. */
 #define MML_PCM_BLOCK 16

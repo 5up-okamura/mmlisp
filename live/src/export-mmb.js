@@ -1,6 +1,6 @@
 import { bankedEngineImage } from "./engine-banked-images.js";
 // ---------------------------------------------------------------------------
-// MMB v0.3 export
+// MMB v0.4 export
 //
 // Lowers compiled IR (docs/ir.md) into the MMB binary container (docs/mmb.md,
 // docs/opcodes.md) the Z80 driver decodes in place. Follows the export-vgm.js
@@ -282,7 +282,7 @@ function midiNote(pitch) {
 }
 
 /**
- * Encode compiled IR into an MMB v0.3 byte stream.
+ * Encode compiled IR into an MMB v0.4 byte stream.
  *
  * @param {object} ir - compiled IR (compileMMLisp().ir)
  * @param {{ compilerVersion?: string,
@@ -1402,7 +1402,7 @@ export function encodeMmb(ir, opts = {}) {
   putMeta("title", ir.metadata?.title ?? "untitled");
   putMeta("composer", ir.metadata?.composer ?? "");
   putMeta("author", ir.metadata?.author ?? "");
-  putMeta("compiler_version", opts.compilerVersion ?? "mmlisp v0.6");
+  putMeta("compiler_version", opts.compilerVersion ?? "mmlisp v0.7");
   putMeta("bpm", bpmAt(timeline, 0));
   for (const v of ir.metadata?.vals ?? []) putMeta(`val_${v.slot}`, v.name);
   sections.push({

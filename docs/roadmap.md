@@ -2,7 +2,7 @@
 
 What is still ahead, and nothing else. What the language and the driver do now
 is `docs/language.md` and `docs/driver.md`; how they got here is git and its
-tags. The language baseline is v0.6, and it evolves in place from composition
+tags. The language baseline is v0.7, and it evolves in place from composition
 needs (CLAUDE.md).
 
 Items marked *to discuss* wait for a decision before anyone builds them.

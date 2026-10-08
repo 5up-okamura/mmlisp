@@ -5,7 +5,7 @@ Sega Mega Drive (YM2612 FM + PSG), ultimately compiled for MMLispDRV — a drive
 split across both CPUs: the 68000 sequences the score into per-frame
 register-write lists, the Z80 consumes one per vblank and software-mixes PCM.
 
-Current baseline: **v0.6**. The phase is "use and adjust" — the language and
+Current baseline: **v0.7**. The phase is "use and adjust" — the language and
 API evolve from practical composition needs.
 
 ## Codebase map
@@ -41,7 +41,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
-`export-mmb.js` (IR → MMB v0.3 + the sample bank), `mmb-voices.js` and
+`export-mmb.js` (IR → MMB v0.4 + the sample bank), `mmb-voices.js` and
 `mmb-dedup.js` (voice entries, stream dedup), `slot-builder.js` and
 `engine-images.js` (the per-frame slot stream and the engine images),
 `drv-player.js` (JS reference driver), and `ab-compare.js` (register-log A/B)
