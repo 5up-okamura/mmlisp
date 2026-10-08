@@ -156,6 +156,7 @@
         <button class="menu-item" onclick="openLibrary();closeMenus()"
                 title="What the app ships: the preset voice/sample sets, the example scores and the snippets. Preview a voice or play a score, insert it, or open it.">
           <span>Browse…</span>
+          <span class="menu-item-shortcut" id="libraryShortcut"></span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="openFolder();closeMenus()"
@@ -3387,6 +3388,7 @@
       if (key === 'Mod-Shift-f') return isMac ? '⌘⇧F' : 'Ctrl+Shift+F';
       if (key === 'Mod-/') return isMac ? '⌘/' : 'Ctrl+/';
       if (key === 'Mod-b') return isMac ? '⌘B' : 'Ctrl+B';
+      if (key === 'Mod-k') return isMac ? '⌘K' : 'Ctrl+K';
       if (key === 'Mod-Alt-]') return isMac ? '⌘⌥]' : 'Ctrl+Alt+]';
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
@@ -3410,6 +3412,7 @@
         ['selectNextOccurrenceShortcut', 'Mod-d'],
         ['selectAllOccurrencesShortcut', 'Mod-Shift-l'],
         ['buildShortcut', 'Mod-b'],
+        ['libraryShortcut', 'Mod-k'],
       ];
       for (const [id, key] of shortcutLabels) {
         const el = document.getElementById(id);
@@ -6298,6 +6301,10 @@
       } else if (e.key === 'b' && !e.shiftKey) {
         e.preventDefault();
         buildAction();
+      } else if (e.key === 'k' && !e.shiftKey) {
+        // Library's search box, from anywhere — the editor included.
+        e.preventDefault();
+        openLibrary();
       } else if (e.key === 'Enter') {
         e.preventDefault();
         onPlayToggle();

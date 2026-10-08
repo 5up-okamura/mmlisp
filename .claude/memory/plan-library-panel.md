@@ -40,7 +40,7 @@ user's decisions and the order of work.
 ## Order of work (agreed)
 
 1. **Built.** Panel tabs; Browse moves into Library with search and filters.
-   Open: the editor → search-box shortcut (candidates to put to the user).
+   The shortcut is ⌘K / Ctrl+K (user, 2026-10-08).
 2. The reference data, its check, and the Ref source.
 3. The same data feeds completion info, a hover tooltip and the MCP server;
    AC_PARAMS / AC_FORMS come from it so the two cannot drift.

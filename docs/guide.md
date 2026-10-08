@@ -1416,8 +1416,9 @@ The side panel (the ⚙ button) has two tabs: **Params**, the sliders and the
 mixer, and **Library**, everything that comes with the app in one list — the
 **Presets** (the voice and sample sets), the **Snippets** and the **Scores**
 (the examples) — so picking a voice or trying a technique takes one click
-instead of a file dialog. **File ▸ Browse…** opens the panel on Library with
-the search box taking the keys.
+instead of a file dialog. **File ▸ Browse…** — or **⌘K** / **Ctrl+K** from
+anywhere, the editor included — opens the panel on Library with the search box
+taking the keys.
 
 - **Search** matches a name, then the description (`piano` finds `gm-piano`,
   `env-piano` and every voice whose comment says piano). While there is a
