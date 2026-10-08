@@ -118,7 +118,7 @@ function slotWork(cfg, slotIndex, xpPlan = null) {
 // lands on a block boundary and is whole (§3.4), and a note onset can be
 // quantised to one (§3.7).
 //
-// ── THE MIX (plan-pcm-spec.md D1/D4) ──────────────────────────────────────
+// ── THE MIX (docs/driver.md §5; .claude/memory/pcm.md) ──────────────────
 //
 // One table read a voice: the rung page already carries the master (the 68000
 // folds it in), so there is no master stage. Voice 0 reads through DE'.
@@ -283,7 +283,7 @@ export const nvEdgeCost = (cfg) => Array.from({ length: cfg.voices }, (_, v) => 
   park: cost(nvEdgePark(cfg, v)), start: cost(nvEdgeStart(cfg, v)),
 }));
 
-// ── THE LOOP-CAPABLE EDGE (plan-pcm-spec.md D10) ──────────────────────────
+// ── THE LOOP-CAPABLE EDGE (docs/driver.md §14) ────────────────────────────
 //
 // A voice is a pointer, an END and a WRAP. At every block edge: if the
 // pointer has reached END it is sent to WRAP. A shot's WRAP is the silence

@@ -1,4 +1,4 @@
-; SE priority gate (plan-se.md). A BGM on fm1 is taken by effect A (priority
+; SE priority gate (docs/driver.md §2.5). A BGM on fm1 is taken by effect A (priority
 ; 5), which effect B (priority 10) preempts, and effect C (3, lower than B) is
 ; dropped with B left alone. The BGM returns after the LAST effect.
 (def-fm bgm :alg 7 :fb 0

@@ -2864,7 +2864,7 @@
 
     // ── Song importers (MIDI, …) ──────────────────────────────────────────
     // Each reads the file, shows what it found in the import dialog, and
-    // converts with the options set there (.claude/memory/plan-importers.md).
+    // converts with the options set there (.claude/memory/live-app.md).
     const SONG_IMPORTERS = {
       midi: { tag: 'MIDI', re: /\.(mid|midi|rmi|smf)$/i, exts: ['.mid', '.midi', '.rmi', '.smf'], run: importMidiBytes },
       vgm: { tag: 'VGM', re: /\.(vgm|vgz)$/i, exts: ['.vgm', '.vgz'], run: importVgmBytes },
@@ -4642,7 +4642,7 @@
           URL.revokeObjectURL(url);
         }
         log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
-        // PCM blobs live in a separate sample bank now (plan-se.md), not inside
+        // PCM blobs live in a separate sample bank now (docs/mmb.md §10), not inside
         // the .mmb. Save it as a sidecar the game loads into its own ROM bank.
         // (The shared-bank bundler that packs BGM+SE samples together is later.)
         //
@@ -5927,7 +5927,7 @@
           let mmbBytes;
           let mmbSampleBank = null;
           if (_lastGoodIR && _drvBackend) {
-            // PCM blobs ride a separate sample bank now (plan-se.md); pass it to
+            // PCM blobs ride a separate sample bank now (docs/mmb.md §10); pass it to
             // the player alongside the control MMB. (In the JS player this is a
             // plain array read — on hardware the Z80 engine reads the bank
             // through its window.)

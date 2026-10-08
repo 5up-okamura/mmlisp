@@ -1,4 +1,4 @@
-// THE LIGHT ENGINE STUDY (plan-pcm-spec.md D10, design session 2026-09-17).
+// THE LIGHT ENGINE STUDY (.claude/memory/pcm.md, design session 2026-09-17).
 //
 //   npm run light-study -- [--voices 1,2,3] [--target 1.0]
 //        [--wire 960] [--no-loops] [--lap-max 430080]

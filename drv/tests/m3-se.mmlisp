@@ -1,4 +1,4 @@
-; SE suspend/restore gate (plan-se.md). A BGM FM track holds a sustained note
+; SE suspend/restore gate (docs/driver.md §2.5). A BGM FM track holds a sustained note
 ; on fm1; an effect takes that channel mid-sustain, plays a short burst, then
 ; ends — and the BGM note must resume with its voice, level and pitch restored
 ; and re-keyed. The same on sqr1 (PSG) and on pcm1's voice (PCM, which has no

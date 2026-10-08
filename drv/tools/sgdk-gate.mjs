@@ -196,7 +196,7 @@ const rate = (dacT.length - 1) / (span / cfg.machine.masterHz);
 // BUS STOPS ARE NOT REPAID (driver.md §5): the DAC simply runs slow by the time
 // the bus was held. So the engine is graded on the rate it keeps while it runs,
 // and what the stops cost is reported as the pitch error it is — the ear's
-// verdict was that 200 µs twice a frame is inaudible (plan-pcm-spec.md D9).
+// verdict was that 200 µs twice a frame is inaudible (.claude/memory/pcm.md).
 const stops = L.stops.filter(([x]) => x >= dac0 && x <= dacT.at(-1)).map(([x, y]) => y - x);
 const held = stops.reduce((a, b) => a + b, 0);
 const rateRun = (dacT.length - 1) / ((span - held) / cfg.machine.masterHz);

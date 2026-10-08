@@ -6,8 +6,11 @@ personal workflow preferences.
 
 Rules:
 
-- One topic per file. Keep each current: edit in place, delete when the work
-  lands and the repo itself records the outcome.
+- **One file per AREA, not per feature** — driver, PCM, language, the live
+  app (and the set-aside Z80-only build). A new feature's reasons go into its
+  area's file as a section; a new file only for a new area. Keep each current:
+  edit in place, delete an item when the work lands and the repo records the
+  outcome. (2026-10-09: thirteen per-feature files had piled up again.)
 - **A file here must never assert something the docs also assert.** When it
   does, the docs win and this copy rots — which is exactly what happened to the
   five driver files merged away on 2026-09-22.
@@ -17,72 +20,22 @@ Rules:
 ## Index
 
 - [driver-decisions.md](driver-decisions.md) — **why MMLispDRV is shaped as it
-  is.** The measurement that moved the sequencer off the Z80, which of the
-  pivot's decisions were later reversed, the competitor survey (XGM2's hardware
-  write-timing table, what MDSDRV and XGM2 do about holes), the three bugs no
-  gate could see, how this repo's gates fail, the C-port lessons, and the
-  user's rulings on how to work here. The design itself is `docs/driver.md`.
-- [plan-se.md](plan-se.md) — **SE: the decisions behind the shipped design
-  (suspend/restore, the claim rule, `def-se` shared by every song, CH3 taken
-  whole, restore from the register shadow, no `:master`/`:lfo-rate` in an
-  effect), and what is still open.** The behaviour itself is `driver.md` §2.5 and
-  `drv-player.js`; read this for why, not what.
-- [plan-multi-score.md](plan-multi-score.md) — **several songs: the shared
-  sample bank is built (`bundle.mjs`); two scores RESIDENT at once is not.**
-  What moving the per-score state off the sequencer would cost, and the
-  decisions inside the bundle.
-- [plan-pcm-multibank.md](plan-pcm-multibank.md) — **multi-bank PCM — shipped
-  2026-10-07**: the user's capacity-first choice and the decisions behind the
-  block renderer, the banked host transport and the export fallback; the
-  timing measurements they rest on; and what is open (onset jitter under write
-  bursts, with the recommended order of attack; real hardware; no JS twin for
-  the banked converter). The behaviour is `docs/pcm-multibank.md`.
-- [plan-onset-jitter.md](plan-onset-jitter.md) — **tempo wobble under write
-  bursts**: the voice hoist and key-ons last are built (sin008's worst onset
-  91 → 29 ms, chord spread 33 → 4 ms on BlastEm); tail cut off (no audible
-  difference); PCM STAGE, the FM3 rule and key-ons last on the banked
-  converter are open; no transport increase; the measurements.
-- [plan-pcm-spec.md](plan-pcm-spec.md) — **PCM: the user's decisions behind the
-  shipped light engine, with their reasons, and what is still open.** Read
-  before touching PCM in any layer.
-- [language-open.md](language-open.md) — **the language and IR: what is open.**
-  The eight questions that need the user's decision, the 2026-09-26 syntax
-  audit's do-not-re-propose rulings, the preview-vs-driver residue, and
-  why compile-time eval and the value machine have their shape, with the
-  risks that are still live.
-- [plan-68k-optimization.md](plan-68k-optimization.md) — **cutting the
-  68000's share — CLOSED 2026-10-02**: the result (sin008: 24.5% → 16.3%),
-  what landed and what was undone for readability, the bugs found on the
-  way, how to measure, and what is left for when a game drops a frame
-  (assembly for the hot paths only).
-- [plan-z80-only.md](plan-z80-only.md) — **a Z80-only build (roadmap Phase 3
-  #6): the measurements (the archived sequencer with PCM off, the jitter
-  listening set, poll overhead, the RAM budget) and the decisions taken
-  (poll points, ~10 kHz, Timer A) — SET ASIDE 2026-09-28** in favour of
-  plan-68k-optimization: the user judged the build would lose most of what
-  makes the driver distinctive. Kept for the day it is revisited — with a
-  second shape seen 2026-10-02: MMLisp as the composing tool, a pre-rendered
-  stream (XGM) plus a few live controls on the Z80.
-- [plan-voice-picker.md](plan-voice-picker.md) — **the editor's voice
-  picker — shipped 2026-10-03** (guide §22 has the behaviour): why it is the
-  completion list and not a panel, why every preset set, and what is open
-  (auditioning a score's own samples), and why PSG envelopes are macros, not
-  a new def head.
-- [plan-importers.md](plan-importers.md) — **song importers (MIDI, VGM with
-  the YM2612 DAC, DMF, FUR) and VGM export with PCM — built**: the user's
-  decisions behind them (structure over exactness, rounded vibrato, the
-  fixed CC1 mapping, the envelope presets serving imports, one DAC bank
-  wav), and what is open (the voice importers' DT bug, VGM tempo changes
-  and other chips' PCM, fewer shapes).
-- [plan-editor-input-aids.md](plan-editor-input-aids.md) — the live editor's
-  input aids (all landed, guide §24 has the behaviour): why no
-  `@codemirror/lint` and the layer-only rule, which shortcuts Chrome steals,
-  Alt-click vs the value scrub, why the Edit menu, the removed touch symbol bar, and
-  the standing decisions — never auto-repair brackets, no full paredit, no
-  rainbow parens.
-- [plan-library-panel.md](plan-library-panel.md) — **the Library panel —
-  built 2026-10-08** (guide §24–§25 have the behaviour): why two tabs and one
-  list, why phones stay full-screen, why the keys never play a macro, why an
-  audition ignores the score, the menus and ⌘J / ⌘K, nothing saved across
-  launches, the reference as hand-written data; open: a sample does not sound
-  while the song plays.
+  is**: the measurement that moved the sequencer off the Z80, the reversed
+  decisions, the competitor survey, the bugs no gate could see and how the
+  gates fail, the 68000 pass (closed), onset jitter under write bursts, SE and
+  several songs, and the user's rulings on how to work here. The design itself
+  is `docs/driver.md`.
+- [pcm.md](pcm.md) — **PCM: the user's decisions with their reasons, the
+  multi-bank measurements, and what is open.** Read before touching PCM in any
+  layer.
+- [language-open.md](language-open.md) — **the language and IR**: the eight
+  questions that need the user's decision, the syntax rulings not to
+  re-propose, why compile-time eval and the value machine have their shape,
+  and the risks still live.
+- [live-app.md](live-app.md) — **the live app**: why the editing aids, the
+  Library panel, the voice picker and the importers have their shape, the
+  user's rulings, device measurements, and what is open.
+- [z80-only.md](z80-only.md) — **a Z80-only build, set aside 2026-09-28**: the
+  user's reasons, the measurements (archived sequencer, poll overhead, the RAM
+  budget, the listening verdicts), the decisions taken, and a second shape seen
+  2026-10-02 (MMLisp as the composing tool over a pre-rendered stream).

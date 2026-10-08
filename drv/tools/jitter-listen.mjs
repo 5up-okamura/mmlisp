@@ -1,5 +1,5 @@
 // IS BOUNDED DAC JITTER AUDIBLE? A listening set for the Z80-only PCM scheme
-// (.claude/memory/plan-z80-only.md): the same 8-bit PCM at the same mean rate,
+// (.claude/memory/z80-only.md): the same 8-bit PCM at the same mean rate,
 // written to the DAC on a perfect clock and with each write late by up to N
 // Z80 cycles.
 //

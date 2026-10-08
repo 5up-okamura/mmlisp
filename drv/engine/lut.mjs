@@ -54,7 +54,7 @@ export function buildClamp() {
 /** What a silent ring holds, and what the DAC gets when nothing is playing. */
 export const SILENCE = bias(0);
 
-// ── THE RUNG PAGES (plan-pcm-spec.md D4, the N-voice profile) ──────────────
+// ── THE RUNG PAGES (6 dB tables: .claude/memory/pcm.md) ─────────────────
 //
 // Eight pages, SIGNED IN and BIASED OUT: page 0 is silence, page 7 - r is the
 // 6 dB rung r = 0..6 (unity .. -36 dB). A rung is the reference's arithmetic

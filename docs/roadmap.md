@@ -54,7 +54,7 @@ Open (the limits themselves are `driver.md` §11 — keep the two in step):
    voice change is one pair instead of the ~30 register writes a channel costs
    today.
 4. **Several scores resident at once** (DJ-style transitions, driver.md §2.3;
-   `.claude/memory/plan-multi-score.md`). Today one score is resident and a
+   `.claude/memory/driver-decisions.md` §11). Today one score is resident and a
    bundle's songs share one 32 KB sample bank.
 5. **PAL PCM pitch and SE rough edges.** A PAL bank would have to be re-baked
    at the PAL DAC rate, and is not. A PCM SE restarts a looping BGM note from

@@ -70,7 +70,7 @@ const SUPPORTED_TARGETS = new Set([
 // a sample and nothing else, so a note picks a BAKED blob and that is the whole
 // pitch mechanism. Every runtime pitch move — cents, semitones, glide, a
 // (macro :pitch …) vibrato — has no hardware to land on; reject it rather than
-// drop it silently (plan-pcm-spec.md D5).
+// drop it silently (.claude/memory/pcm.md).
 const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
 
 // A PCM note's points (docs/language.md §16): the range it plays,

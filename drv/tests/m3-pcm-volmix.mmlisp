@@ -1,4 +1,4 @@
-; M3 gate: PCM vel + vol + master volume composition and mute (plan-se.md). :vel
+; M3 gate: PCM vel + vol + master volume composition and mute (docs/driver.md §14). :vel
 ; and :vol on a pcm channel and the global :master all ride the FM/PSG 2 dB/step
 ; ladder; their steps-below-unity sum onto the 6 dB bit-shift grid
 ; (shift = min(7, round(n/3)), n = (15-vel)+(31-vol)+(31-master)). vol==0 or

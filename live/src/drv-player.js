@@ -310,7 +310,7 @@ export class DrvPlayer {
 
     // SAMPLE_BANK (mmb.md §10): entry table + byte-packed 8-bit signed blobs.
     // No longer an MMB section — the blobs live in a separate ROM bank the mixer
-    // latches (plan-se.md), passed in as `sampleBankBytes`. `blobBase` is the
+    // latches (docs/mmb.md §10), passed in as `sampleBankBytes`. `blobBase` is the
     // offset of the blob region within the bank; entry offsets are relative to
     // it. (The Z80 mirror latches G_SMP_BANK; the JS reference just reads the
     // array, so the DAC trace stays bit-identical.)
@@ -1610,7 +1610,7 @@ export class DrvPlayer {
       }
       return;
     }
-    // PCM soft-mix volume (plan-se.md): vel+vol+master compose to a per-voice
+    // PCM soft-mix volume (docs/driver.md §14): vel+vol+master compose to a per-voice
     // bit-shift the mixer applies as an arithmetic right shift (cheap per sample).
     // VEL and VOL are per-voice state; MASTER is global (handled above, which
     // recomposes every voice). Composition + mute are recomputed here, off the

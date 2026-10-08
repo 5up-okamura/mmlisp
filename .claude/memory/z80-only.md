@@ -4,12 +4,12 @@
 build would keep MMLisp as a production environment but lose most of what
 makes MMLispDRV distinctive (the value machine, zero-jitter DAC, CSM, full SE
 restore) — the space is one XGM2 and MDSDRV have already mapped. The chosen
-direction is [[plan-68k-optimization]]: keep the split, cut the 68000's share.
+direction is [[driver-decisions]] §9: keep the split, cut the 68000's share.
 Everything below stands as measured, for the day this is revisited.
 
 ## A second shape: MMLisp as the composing tool, a stream player on the Z80 (2026-10-02)
 
-After the 68000 pass closed ([[plan-68k-optimization]]), the user saw a Z80
+After the 68000 pass closed ([[driver-decisions]] §9), the user saw a Z80
 version differently: not this driver shrunk, but **MMLisp as the composing
 environment** with a pre-rendered output — XGM would do — and "subtract
 something, add a little": keep a few MMLisp-like live controls on top of the
@@ -35,7 +35,7 @@ decisions so far and the measurements taken for them.
 The game side wants the whole 68000: heavy raster effects, 3D and coordinate
 math. The split cost the 68000 **~28% of every frame on average and ~116% in
 the worst render** on a six-channel song when this was asked; the 68000 pass
-that followed brought sin008 to 16.3% ([[plan-68k-optimization]]).
+that followed brought sin008 to 16.3% ([[driver-decisions]] §9).
 
 ## Decided
 
@@ -209,3 +209,14 @@ Next, in order:
 2. **The post-pivot feature list** with Z80 size estimates, and the user's cut
    decisions against the budget.
 3. Static poll placement checked by an analyzer over the sequencer's CFG.
+
+## Z80 techniques worth not rediscovering (moved from driver-decisions 2026-10-09)
+
+Absent from the shipped engine, but true of any Z80-only build: accumulate
+**biased-unsigned** (`sample ^ $80`) so the sum needs no sign extension
+anywhere; two page-aligned planes let one 8-bit index address both (`inc h` /
+`dec h`); **`exx` is flag-transparent**, so a frac carry chains into the
+pointer add — but `exx` swaps BC too, so load the increment into C *after* it.
+Two image build traps: **the image boots at level 0**, and until the bank is
+set the window shows ROM bank 0; and `ld a,(LUT>>8)` assembles as a **memory
+load** — write `ld a,LUT>>8`.

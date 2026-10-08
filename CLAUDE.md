@@ -61,7 +61,7 @@ The superseded engines are
 at tags `archive/ring-engine` (the ring-consuming Z80 mixer) and
 `archive/all-z80` (sequencer and mixer both on the Z80), and the engine's
 research bench at `archive/dac-stream-bench`; their measurements live in
-`.claude/memory/`. Read `.claude/memory/plan-pcm-spec.md` before touching PCM
+`.claude/memory/`. Read `.claude/memory/pcm.md` before touching PCM
 in any layer, and `.claude/memory/driver-decisions.md` for the driver's
 decision record.
 

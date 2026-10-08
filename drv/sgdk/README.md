@@ -305,7 +305,7 @@ SGDK's own halts cost the DAC 0.15–0.27% of its rate on the gate's scores:
 **2.4 to 4.7 cents flat**, and nothing else. With both pads read and a DMA
 every frame it is more, and a big DMA stops the DAC for its whole length.
 Stops up to 200 µs twice a frame were judged inaudible on drum PCM
-(`.claude/memory/plan-pcm-spec.md`, D9), so this is well inside the verdict.
+(`.claude/memory/pcm.md`), so this is well inside the verdict.
 
 **A multi-bank score stops more often.** Its host (`docs/driver.md` §5.4)
 reads a fresh FIFO index before each plan and makes up to five transfers a

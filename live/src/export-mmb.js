@@ -1374,7 +1374,7 @@ export function encodeMmb(ir, opts = {}) {
   });
 
   // SAMPLE_BANK is NOT an MMB section — the PCM blobs (the 32K-wall term) live
-  // in a separate ROM bank the mixer latches per frame (plan-se.md), so the
+  // in a separate ROM bank the mixer latches per frame (docs/mmb.md §10), so the
   // control MMB stays small. buildSampleBank returns the whole bank image
   // (entry table + blobs); the host loads it into a bank and publishes its
   // number. The MMB references samples by id (PCM_NOTE_ON) as before.

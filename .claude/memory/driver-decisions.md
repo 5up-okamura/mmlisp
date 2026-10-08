@@ -10,7 +10,10 @@ figure or `.z80` line reference from before 2026-09 describes the all-Z80
 build** (tag `archive/all-z80`; the ring engine is `archive/ring-engine`, the
 DAC bench `archive/dac-stream-bench`), not the shipped driver.
 
-Open work is `docs/roadmap.md` Phase 3 and `docs/driver.md` §11 — not here.
+Merged here on 2026-10-09: `plan-68k-optimization`, `plan-onset-jitter`,
+`plan-se` and `plan-multi-score` (§9–§11). PCM is [[pcm]]; the set-aside
+Z80-only build is [[z80-only]]. Open work is `docs/roadmap.md` Phase 3 and
+`docs/driver.md` §11; what is listed as open here is only what those omit.
 
 ---
 
@@ -90,11 +93,8 @@ that 1%).
   its source, not folklore: address write needs 6 Z80 cycles before its data; no
   wait at all between writes to `$21–$2F` **except `$28`**; `$28` 53; `$30–$9E`
   39; `$A0–$B6` 22. `$27` and `$2A` are both in `$21–$2F`, so **the sample feed
-  needs no wait**. Now in `driver.md` §5.1 and as the `wait:` object in
-  `drv/engine/config.mjs` that the analyzer *checks* schedules against.
-- **The frequency latch is TWO chip-wide registers** (Nuked `reg_a4`/`reg_ac`),
-  not one per port — a port-1 upper can clobber a port-0 upper. A pitch pair
-  must be written whole in one grab.
+  needs no wait**. The numbers live in the `wait:` object of
+  `drv/engine/config.mjs`, which the analyzer *checks* schedules against.
 
 ## 4. What the other drivers do
 
@@ -146,53 +146,38 @@ All outside the code under test, all silent:
   against an intended 10.5**, then 6 ms holding one value — confirmed three ways
   including a BlastEm VGM log of the user's own ROM. It survived every
   zero-tolerance gate and cost three bring-up rounds.
-- **An encoder-only fix is not locked by `verify:all`.** The 2026-07 loop
-  sticky-state bleed was fixed in the exporter, so the regression lock is the
-  ir↔drv A/B baseline, not the C gate. Same shape for the 2026-09 macro
-  hold-sentinel fix: **c-gate cannot see an encoder regression at all**, because
-  both players read the same stream and would be wrong together.
-- **Never fix a failing gate by breaking the reference the same way.** The
-  point of a zero-tolerance gate is that two independent implementations agree;
-  moving the reference to match a regression destroys the property and leaves
-  the gate green.
-- **When both players are wrong the same way, the A/B gate agrees and passes.**
-  A mid-song `:tl` wrote `$40` raw in all three players for months; ab-gate saw
-  no divergence because there was none. What found it was reading the register
-  trace against the level rule in §7 — i.e. against the *spec*, not against
-  another implementation. Budget an audit of that kind; no gate substitutes.
+- **C ≡ JS proves agreement, not correctness.** When both players are wrong the
+  same way the gate agrees and passes. A mid-song `:tl` wrote `$40` raw in all
+  three players for months; the SE modulator leak and the 68000 pass's
+  port-order and stale-`(break)` bugs were the same shape. Ears, BlastEm and
+  reading the register trace against the *spec* found them. Budget an audit of
+  that kind; no gate substitutes.
+- **An encoder-only fix is not locked by `verify:all`.** c-gate cannot see an
+  encoder regression at all — both players read the same stream. The lock is the
+  ir↔drv A/B baseline (the 2026-07 loop sticky-state bleed, the 2026-09 macro
+  hold sentinel).
+- **A silent failure has no traffic to compare.** An SE that stranded the part
+  it suspended left that part SILENT, so no twin diff could see it; `claim-gate`
+  checks the invariant itself every frame. Likewise the host's KEY_OFF never
+  let a `:len 0` PCM loop go — a bug no gate saw, because no gate sent KEY_OFF
+  to a PCM channel (fixed by making a PCM key-off one path, `channel_off`).
+- **Never fix a failing gate by breaking the reference the same way.** Moving
+  the reference to match a regression destroys the property and leaves the gate
+  green.
 - A trick that pays: run a built `res/song.mmb` + `res/song.smp` straight
   through the reference player and count `$2A` writes. One write per 600 frames
-  against 94,851 settles a "is PCM even running" question in seconds, without an
-  emulator.
+  against 94,851 settles "is PCM even running" in seconds, without an emulator.
 
 ## 7. Porting lessons that still describe `mmlispseq.c`
 
-Both M2 and M3 went into the C **with zero gate failures on the first run** —
+M2 and M3 went into the C **with zero gate failures on the first run** —
 porting from a *validated implementation* rather than from prose is what makes
-it cheap. Three things the C needs that the JS gets free, all found by the gate:
-
-- **A shadow-validity plane.** `drv-player` keys its shadow with a Map, so an
-  unwritten register never compares equal; a zero-initialised C array would
-  suppress the neutral patch's many writes of 0.
-- **VOICE_SET compares against the STRUCTURED shadow**, not the register shadow
-  — the burst only wrote the registers a PARAM_SET touched.
-- **The drain must not render**; running a frame there invents traffic the
-  reference never produces.
-
-Also: macro binds are an **ordered** map and that order is the step order; a
-slot's **byte** budget can bind before its write cap once PCM commands are in
-play; and **every PCM handler must return HL untouched** — a `left += tail` in
-HL (the command cursor) corrupted everything after a STOP, and four gate
-scenarios missed it because only a real score issues STOP+START in one slot.
-
-Z80 techniques worth not rediscovering, now absent from the tree but still true
-of any future Z80-only build: accumulate **biased-unsigned** (`sample ^ $80`) so
-the sum needs no sign extension anywhere; two page-aligned planes let one 8-bit
-index address both (`inc h`/`dec h`); **`exx` is flag-transparent**, so a frac
-carry chains into the pointer add — but `exx` swaps BC too, so load the
-increment into C *after* it. Two engine build traps: **the image boots at level
-0**, and until the bank is set the window shows ROM bank 0; and
-`ld a,(LUT>>8)` assembles as a **memory load** — write `ld a,LUT>>8`.
+it cheap (the C-only needs it found are `driver.md` §12.2). Also: macro binds
+are an **ordered** map and that order is the step order; a slot's **byte**
+budget can bind before its write cap once PCM commands are in play; and
+**every PCM handler must return HL untouched** — a `left += tail` in HL (the
+command cursor) corrupted everything after a STOP, and four gate scenarios
+missed it because only a real score issues STOP+START in one slot.
 
 ## 8. The bus grab
 
@@ -201,110 +186,205 @@ increment into C *after* it. Two engine build traps: **the image boots at level
   belong inside.
 - **Wait before the first grab** — the Z80's boot clears the pair page, so a
   grab at release time is erased.
-- **The grab must be asm.** C over `Z80_getAndRequestBus` was 2,835 master;
+- **The grab is asm** because C over `Z80_getAndRequestBus` was 2,835 master;
   eight pairs as four `movep.l` is 1,100–1,320.
-- SGDK halts the Z80 on its own: `JOY_update` (~2,490 master per 6-button port)
-  and a DMA auto-flush **every VBlank even when empty** (~600).
 
-## 9. Decisions that answer a question someone will ask again
+## 9. The 68000's share — closed 2026-10-02
 
-- **`:tl` etc. are baked, the driver has no evaluator.** Compile-time eval
-  gains the driver "no evaluator, only readers and flags".
+The user's direction after setting the Z80-only build aside ([[z80-only]]):
+keep the split and make the 68000 side cheap, so a game keeps the CPU for
+raster effects and 3D. **Closed by the user**: what is left is the price of
+moving parameters every frame, which is what this driver is for. Working notes:
+git history, `plan-68k-optimization.md` at `afef069`.
+
+| sin008 whole, `sgdk-profile --pc`, 30 s | before (`ba094a6`) | after (`bf50bdc`) |
+| --- | --- | --- |
+| driver + API | **24.5%** | **16.3%** |
+| idle (the game's) | 72.8% | 80.6% |
+| run_frame (tick walk) | 6.8% | 3.7% |
+| macro engine | 7.0% | 4.8% |
+| API polls | 3.0% | 1.3% |
+| pump | 3.6% | 3.2% |
+| worst 3 renders (`--peak 3`) | 98.8% | 94.0% |
+
+- **The user's rule: readability over noise-level gains.** Undone for it: the
+  walking bit in `process_macros`, the three-way `carrier_tl` split, the
+  byte-offset track table (~0.24%, accepted). Any future speed-up must show in
+  an A/B profile and read plainly.
+- **Measuring**: line attribution is ±1 instruction (a long instruction's time
+  lands on the next line); per-function totals hold. A/B with
+  `git checkout <rev> -- drv/68k drv/sgdk`, profile, `git checkout HEAD -- …`.
+  **Profiles taken before `b54d937` ran a broken sin008** (tracks stopped at
+  ~13 s); do not compare against them.
+- **Left, for when a game actually drops a frame**: hand-written assembly for
+  the hot paths only (the macro step, the tick walk, `mmlp_plan`), the C kept as
+  the reference — the gates would need a 68000 emulator or a BlastEm A/B; a
+  per-frame-numbered profile output; the sequencer pushing pairs directly
+  (~1–2%, a large change).
+- **Rejected**: pre-rendering macros (XGM by another name — the user wants a
+  synth the game can play); spreading one frame's render over the lead.
+
+## 10. Onset jitter under write bursts (2026-10-07)
+
+What the user hears as tempo wobble: a frame whose pairs exceed the Z80's
+service slides every key-on behind them. The behaviour that landed — the voice
+hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
+
+- **The test score is sin008**, a mucom import that must never enter the repo
+  (`~/Desktop/mucom/sin008.mmlisp`), single-bank pcm1. The wobble near 14 s is
+  the 15.02 s downbeat, where fm4/fm5 switch voice (65 writes in one frame).
+  BlastEm, 2–30 s:
+
+  | | late p95 | max | 15.02 s beat (fm1/fm5/fm4/fm2) |
+  | --- | ---: | ---: | --- |
+  | before | 18.0 ms | 91.1 ms | 16 / 50 / 88 / 91 |
+  | hoist | 17.1 ms | 31.9 ms | 0 / 12 / 19 / 22 |
+  | hoist + tail cut | 17.1 ms | 31.7 ms | 0 / 12 / 19 / 22 |
+
+  Key-ons last on top: chord spread p95 19.5 → 3.0 ms, max 33 → 4; late p95
+  17.1 → 16.4. WAVs in `~/Desktop/mucom/onset-listen/`.
+- **The user's verdicts**: the voice hoist and key-ons last were verified on
+  the live app and BlastEm (2026-10-07); key-ons last adopted after listening.
+  The user accepted a changed release tail, and a note ending up to two frames
+  early, over tempo wobble — then the tail cut made **no audible difference**
+  on sin008, so it is built but off by default (fewer writes). Revisit only on
+  a score with a long release before a voice change.
+- **Declined after measuring**: skipping unchanged pitch pairs (half of
+  sin008's rewrite the same value, but only 12 fall in heavy frames over 30 s).
+- **No transport increase.** More expander steps help `pcm1` only and reopen
+  the images' hardware risk. Capacity is closed; the work is fewer pairs ahead
+  of a key-on.
+- **Rejected**: the 68000 writing patches under BUSREQ (the engine keeps the
+  port-0 latch at `$2A`, and the expander's address/data writes are not atomic
+  against a bus stop); a frame mark in the FIFO (makes lateness uniform, does
+  not create service); writing the new patch right after the key-on (the
+  attack is the most audible part of the note).
+- **Open, in this order**: **PCM STAGE** — without an MMB change, the sequencer
+  peeks the track's next PCM note and sends a STAGE command (SRC/END/WRAP/bank,
+  no generation) once the previous START is applied, so the note's START diffs
+  to one pair; a prepayment never required for correctness. **Ordinary FM3 in
+  the short-group priority** when the converter's `$27` shadow says normal mode
+  and the frame has no `$27` write. **Key-ons last × `banked_writes`** — not
+  applied there (its short-groups-first rule would be undone), no listening
+  yet. The hoist windows are fixed options (rest 4 frames, note cut 2); a
+  song-level setting to widen them was discussed and is not built.
+- Pre-existing, seen 2026-10-07: `sgdk:gate` (not in `verify:all`) fails at FM
+  port 0 write 0 (`$2B` vs `$B0`) on an unmodified checkout — it does not
+  expect the PCM lane's `$2B` ahead of the FM queue.
+
+## 11. SE, and several songs
+
+**SE** (behaviour: `driver.md` §2.5, §12.2a; `language.md` §9.3):
+
+- **Authored in MMLisp; triggered by a host call, not a source marker** — no
+  language, IR or MMB change, and the hard part (suspend/restore) is the same
+  either way (user, 2026-07-19).
+- **Bundle the control data, share the sample bank** — chosen *explicitly
+  over* runtime cross-MMB banking. Worth re-opening if several scores ever
+  become resident; not a prerequisite.
+- **`def-se`, one way only** (2026-09-28): "実際にゲームに使えるドライバーに
+  したいので解決は必要", "def-seに一本化したい / 古い実装は必要ない". What
+  forced it: an SE addressed by TRACK ID shifts with each song's track count,
+  so a game could not hold a constant; and a song using every channel had no
+  spare one to author an SE on. The user ruled: one effects file injected into
+  every song; one effect may have several parts; a def-se carries a default
+  priority the host may override. **Mine, not ruled on**: an effect is a DEF
+  (so `import` carries it and "tracks are songs" stands); a part is on the
+  channel it takes; an effect keeps its own tempo.
+- **Re-trigger the restored macros, not resume them**, and losing an in-flight
+  sweep is accepted as an authoring rule: "作曲者が長いスイープのチャンネルを
+  SEに割り当てないようにすること".
+- **CH3 is taken whole** — "3ch丸ごとで良いです".
+- **Restore from the register shadow, not a voice id** — "レジスタの控えから
+  戻す方法にしてください". Partial `def-fm` voices were not rebuilt otherwise.
+- **No `:master` / `:lfo-rate` in an effect** — "SEでは:master,
+  :lfo-rateは使わない"; the compiler refuses them. The rule for any future
+  song-wide state: refuse it in def-se, unless it belongs to a channel the
+  effect takes, in which case the snapshot carries it.
+- **Open: the SGDK example plays SE (`example/main.c`), but it has not been
+  run on BlastEm or hardware yet** (the user, 2026-10-09). `npm run
+  sgdk:gate:se` is ready.
+
+**Several songs** (behaviour: `driver.md` §2.3, `mmb.md` §10.2):
+
+- The shared bank is built (`drv/tools/bundle.mjs`). **A non-PCM song in a
+  bundle still boots the bundle's image** — a reboot-free song change is worth
+  more than the idle voice.
+- **Two scores resident at once is not built**, and is what a cross-file
+  transition would need. The cost: the per-score state (`MMLSeq`'s stream,
+  `voices`, `macro_table`, `sample_entries`, `sample_blob_base`, `increment`,
+  `frame_hz`, `pcm_voices`; `drv-player.js` likewise) moves off the sequencer —
+  better into a score struct the track points at. The ones with teeth: the
+  tempo increment is per score, so a TEMPO_SET must reach only its own tracks;
+  two scores baked for different standards must be refused at load; **two
+  scores wanting different engine images cannot be resident at all** (the image
+  is the Z80's program); and no harness gates two MMBs (`buildMmb` returns one
+  blob).
+
+## 12. Decisions that answer a question someone will ask again
+
 - **Keep LOOP and CALL/RET separate — do NOT add a count to CALL.** A
   single-use `(x N …)` is L+3 bytes as a LOOP but L+5 as a counted CALL (the
-  body is forced out of line, plus a RET and a dest pointer). Counted-CALL wins
+  body forced out of line, plus a RET and a dest pointer). Counted-CALL wins
   only ~4 bytes on the rarer *shared* looped phrase (33 vs 37) while taxing
-  every ordinary loop 2 bytes. The count belongs to LOOP; CALL/RET stays
-  count-less. The synergy is composition, not merger.
-- **The dedup pass factors inside loops (since 2026-09-26)** where
-  `loop_depth + 1 ≤ 4` (LOOP and CALL share the 4-entry stack; a fragment
-  never CALLs). It needed one relink the depth-0 version never met: a
-  LOOP_BREAK's relative `skip` spans the loop body, so the exporter records
-  where each emitted skip sits and the pass recomputes it. Measured on the
-  repo: demo-acid 1012 → 646 B, the corpus 35.6 → 35.2 KB, every re-encoded
-  score's drv register trace identical to the depth-0 encoding.
+  every ordinary loop 2 bytes. The synergy is composition, not merger.
+- **Dedup inside loops** (2026-09-26, rule in `opcodes.md` §5.2), measured:
+  demo-acid 1012 → 646 B, the corpus 35.6 → 35.2 KB, every re-encoded score's
+  register trace identical to the depth-0 encoding.
 - **`(trig N)`'s status byte was shaped against a "a Z80-only driver exists some
   day" lens** (user, 2026-09-21). That ruled out a 68k-struct sentinel and a
   read-clears call: in a Z80-only build the game reads one byte through the
-  window and must not have to write back. The constraint is still live
-  (`roadmap.md` Phase 3 open #6). `opcodes.md` 0x42 has the format and the
-  repeat argument but not the two rejected designs.
+  window and must not have to write back.
 - **`#label` used to emit the trig opcode with its own sequence number**, so
-  every looping track wrote a phantom trigger at its loop head with an id that
-  collided with real trig ids — invisible to every gate because nothing read the
-  byte and the opcode writes no register. The user chose to fix it by **making
-  labels emit nothing at all**, over adding a separate opcode.
+  every looping track wrote a phantom trigger at its loop head — invisible to
+  every gate because nothing read the byte. The user chose **labels emit
+  nothing**, over a separate opcode.
 - **DAC ownership is a static compile-time rule, not runtime arbitration.** The
   "last KEY-ON wins" plan (18 B) was dropped when both its premises fell; the
   direction is `:prio` treating fm6 and pcm1–3 as parallel layers of one
-  channel, so the driver arbitrates zero bytes. Two sub-problems are open:
-  `:prio`'s monophonic flatten cannot yet express "fm6 vs the *group*
-  {pcm1,pcm2,pcm3}", and runtime SE cannot be flattened at compile time, so
-  SE-over-PCM stays a hardware fact. Note `process_pcm` early-outs, so fm6
-  taking the channel idles the driver's most expensive routine — **the cycle
-  saving is paid in music (the drums stopped), not free.**
+  channel, so the driver arbitrates zero bytes. Open: `:prio`'s monophonic
+  flatten cannot yet express "fm6 vs the *group* {pcm1,pcm2,pcm3}", and runtime
+  SE cannot be flattened at compile time. Note fm6 taking the channel idles the
+  driver's most expensive routine — **the cycle saving is paid in music (the
+  drums stopped), not free.**
 - **The `$2A`/`$2B` ownership split.** The sequencer *could* predict the `$2B`
   edges, but then both sides would have to agree on the exact frame — a coupling
   worth avoiding when voice activity is the one piece of state the Z80 owns.
 - **Sub-tick note timing is retired** (`SLOT_SUBS = 1`, user's call: "most game
-  drivers are 1/60"; an option would complicate the sources). Idle went 71.9% →
-  78.6%. **The machinery is left in the sources on purpose**: at SUBS=1 LTO
-  folds the one-iteration loops and the dead branches, and the SGDK host never
-  encodes slots (it uses the view path), so deleting it buys nothing measurable
-  and would touch the C, the JS reference, the slot format and the gates.
-  Checked in the built ROM. Two shapes in `mmlispseq.c` exist for its sake and
-  are still right: PCM tracks are **not** subdivided (subdividing would move PCM
-  notes earlier than the frame that owns them), and `pcm_frame` runs after the
-  **last** sub-tick so a late `PCM_VOL` is in force for this frame's samples.
-  A channel that steps at sub-tick 0 and then takes a note-on steps **twice** in
-  the frame — correct, because the note-on re-instantiates the macros.
-- **The PSG soft-envelope Layer-2 divergence is left as-is** (user). The source
-  is a finished mucom song, so neither player is authoritatively right; **the
-  goal is simply ir ≡ drv.** Keep both fixes; do not revert. Related standing
-  rule: a macro *is* the PSG envelope including the release, which runs entirely
-  while keyed off, so macro writes land after key-off while non-macro writes
-  keep the keyed guard (the `force` flag in `_paramSet`).
+  drivers are 1/60"). Idle went 71.9% → 78.6%. **The machinery is left in the
+  sources on purpose**: at SUBS=1 LTO folds it away and the SGDK host never
+  encodes slots, so deleting it buys nothing measurable and would touch the C,
+  the JS reference, the slot format and the gates. Two shapes exist for its
+  sake and are still right: PCM tracks are **not** subdivided (that would move
+  PCM notes earlier than their frame), and `pcm_frame` runs after the **last**
+  sub-tick. A channel that steps at sub-tick 0 and then takes a note-on steps
+  **twice** — correct, because the note-on re-instantiates the macros.
+- **The PSG soft-envelope divergence is left as-is** (user): the source is a
+  finished mucom song, so neither player is authoritatively right; **the goal is
+  simply ir ≡ drv.** Keep both fixes; do not revert.
 - **The song-start voice burst cannot be fixed by spreading setup at compile
   time** (the user's idea, measured and refused). What delays the first notes is
-  the **wire** — ~250 register writes at 16 pairs/frame ≈ 16 frames (~260 ms).
-  Spreading setup per channel staggers the channels unless every note start is
-  delayed by the same amount, which gives the same total delay. Two fixes do
-  address it: priming at load (shipped, `fb4fd78`) and VSET bodies in the
-  sample-bank ROM (open, `roadmap.md` #3).
+  the **wire** — ~250 writes at 16 pairs/frame ≈ 16 frames. Spreading setup
+  staggers the channels unless every note start is delayed by the same amount.
+  Priming at load addresses it (shipped); VSET bodies in ROM would (open).
 - **A tick-written macro `:step` runs on the track's tick clock** (user,
-  2026-09-27, chosen over an 8.8 fractional frame step). The frame rounding it
-  replaced drifted a keyon roll off the beat (a 16th at 118 BPM is 7.63
-  frames → 8, 6 frames a bar — `random-gate`). The 8.8 frame step would have
-  averaged right but jittered a frame per hit and ignored tempo changes; the
-  tick clock follows tempo sweeps and PAL for free. Cost: flags bit3, a 16-bit
-  accumulator per running slot, the note's track `acc` passed to the trigger.
-  `driver.md` §13.2, gate `m4-macro-tick`.
+  2026-09-27), over an 8.8 fractional frame step: the frame rounding it replaced
+  drifted a keyon roll off the beat (a 16th at 118 BPM is 7.63 frames → 8); the
+  8.8 step would have averaged right but jittered a frame per hit and ignored
+  tempo changes.
 - **A `:keyon` retrigger restarts the envelopes, not `:pitch`/`:semi`** (user,
-  2026-09-27, option "a" of three). Restarting every macro broke the
-  documented retriggered arp; restarting none left a per-hit level envelope
-  unplayed. KEYON slots step first in the frame so the restarted envelope
-  lands in the retrigger's frame whatever the bind order.
-- **Inline loop sweeps are not cancelled by a note** (2026-09-26): the spec
-  says a timeline sweep is free of key-on (language.md §5.1), and the
-  driver's cancel had made every inline loop sweep dead on arrival. A
-  PARAM_SET ends its target's sweep instead.
-- **Velocity is held in eighths of a step on every channel** (user, 2026-09-27,
-  option "a" over rounding in the language). The design intent was "compute
-  fine, quantize once at the output", and the driver had cut a `:vel` macro
-  to 16 steps before the tables (`driver.md` §7.1 has the mechanism). Cost:
-  ~420 bytes of ROM tables, no runtime cost. The user asked whether this is
-  over-spec for the Mega Drive: no — the chip's TL already resolves 0.75 dB,
-  and a fade stepping 2 dB is audible zipper noise.
-- **A PCM key-off is one path, `channel_off`** (2026-09-28, with PCM macros —
-  [[plan-pcm-spec]]). Before it, the loop release lived only in the
-  PCM_NOTE_OFF handler, so the host's KEY_OFF never let a `:len 0` loop go —
-  a bug no gate saw, because no gate sent KEY_OFF to a PCM channel.
-- **A VBlank-only pump mode is wanted as an option**, because a game (racing,
-  raster 3D) may need HBlank for itself. Shipped as
-  `MMLisp_attachVBlankOnly`. The user's stated order is **correct playback
-  first, then optimization**, and eventually trading some quality for balance.
+  2026-09-27, option "a" of three): restarting every macro broke the
+  retriggered arp; restarting none left a per-hit level envelope unplayed.
+- **Velocity in eighths of a step** (user, 2026-09-27): the intent was "compute
+  fine, quantize once at the output". The user asked whether this is over-spec
+  for the Mega Drive: no — the chip's TL resolves 0.75 dB, and a fade stepping
+  2 dB is audible zipper noise. Cost ~420 bytes of ROM tables.
+- **The horizontal interrupt is the game's.** The user wanted HBlank left free
+  for games that need it (racing, raster 3D); the host pumps from VBlank only
+  (`driver.md` §6.6). The user's order: **correct playback first, then
+  optimization**, and eventually trading some quality for balance.
 
-## 10. How to work here (the user's rulings)
+## 13. How to work here (the user's rulings)
 
 - **Measure the symptom, don't reason from a bound.** "I argued that any lost
   sample is permanent drift and therefore 99.1% must still drift. **It does
@@ -315,17 +395,14 @@ increment into C *after* it. Two engine build traps: **the image boots at level
   measure the machine.
 - **Only ask for a listening test when the answer discriminates between
   hypotheses** — not when it is your experiment.
-- Re-measure rather than guessing: every guess in the 2026-08 bring-up (DMA
-  collisions, change-only never repairing a diverged chip, overlay thrash at the
-  loop) was wrong, and the profile was right each time.
+- Re-measure rather than guessing: every guess in the 2026-08 bring-up was
+  wrong, and the profile was right each time.
 - An intermediate fix that only makes a symptom *smaller* is the wrong **shape**
   of fix; the user is right to reject it.
 - **A coefficient fitted to make the model match an observation is not a
-  hardware measurement.** Do not let one become the other in the writing-up.
+  hardware measurement.**
 - **No single number is a pass.** Not the nominal rate, not the frame-processing
-  rate, not "the DAC bytes are identical", not how it sounds. Each of those has
-  passed while something else was broken — the byte stream says nothing about
-  when the bytes left, and a delivered count is not a sample clock.
+  rate, not "the DAC bytes are identical", not how it sounds.
 - **Do not stack unproven work.** While two voices are unsettled, three voices,
-  arbitrary pitch and better interpolation are not improvements — they are more
-  unknowns on top of an unknown.
+  arbitrary pitch and better interpolation are more unknowns on top of an
+  unknown.

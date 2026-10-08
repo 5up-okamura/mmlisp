@@ -1,5 +1,5 @@
 ; M4 gate: the loop points as PARAMS — the thing no other Mega Drive driver
-; does (plan-pcm-spec.md D10). The def sets a sustain loop in the sample's own
+; does (docs/language.md §16). The def sets a sustain loop in the sample's own
 ; time; the track then moves it while the note sounds, as a literal and as a
 ; curve, and each change is one PCM_RETARGET to the engine's block edge.
 ;

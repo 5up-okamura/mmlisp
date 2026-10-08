@@ -108,7 +108,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   writeFileSync(outPath, bytes);
   console.log(`${outPath}: ${bytes.length} bytes`);
   if (sampleBank && sampleBank.length) {
-    // PCM blobs ride a separate sample bank now (plan-se.md), not in the .mmb.
+    // PCM blobs ride a separate sample bank now (docs/mmb.md §10), not in the .mmb.
     const smpPath = outPath.replace(/\.mmb$/, "") + ".smp";
     writeFileSync(smpPath, sampleBank);
     console.log(`${smpPath}: ${sampleBank.length} bytes (sample bank)`);

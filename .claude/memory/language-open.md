@@ -1,10 +1,11 @@
 # The language and IR: what is open, and why the value machine looks like this
 
 Two things live here, because a session working on the language needs both:
-**the open questions** (§1–§2, from the 2026-09-18 audit) and **the design
-rationale behind compile-time eval and the value machine** (§3–§4, merged from
-`design-eval.md` 2026-09-22). `docs/language.md` carries the shipped spec; this
-is only what the docs do not say.
+**the open questions** (§1, from the 2026-09-18 audit, and the 2026-09-26
+syntax audit's rulings) and **the rationale behind compile-time eval and the
+value machine** (§2–§3). `docs/language.md` carries the shipped spec; this is
+only what the docs do not say. Tidied 2026-10-09; the voice picker's PSG
+ruling moved in from `plan-voice-picker`.
 
 **An item is deleted from here as soon as it is fixed** and the repo carries
 both the outcome and the reason — a second copy of a settled thing can only
@@ -13,8 +14,10 @@ rot.
 ## 1. Needs the user's decision (the driver sounds different from the editor)
 
 1. **Glide longer than its note** (§14): slide faster to finish inside the
-   note, or cut at the note end? Today both players let it run into later
-   notes.
+   note, or cut at the note end? `language.md` §14 now says a glide "never
+   bleeds into the next note", but `emitGlideIfNeeded` sizes the sweep by `T`
+   alone and does not clamp it to the note (the CSM path does clamp). Check
+   which is true before deciding.
 2. **`:vol* $slot`** (§8): preview multiplies by the slot as an integer,
    driver as 8.8 (`>> 8`) — which is the meaning?
 3. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
@@ -60,18 +63,7 @@ suffix combines with the target's base (§7.0). Kept as they are, by ruling:
 - **`(glide …)` stays a form** (two arities); gate is §7.0's documented
   exception.
 
-## 2. Judgment-free but larger
-
-- **Preview vs driver.** The 2026-09-26/27 sweep closed every divergence
-  found (the repo carries each fix and its gate: the sweep engine, macro
-  releases and the tick clock, the keyon restart and echo tail, PSG level
-  macros and sweeps frame by frame, tempo sweeps and tempo quantization,
-  cross-track event order, replay state). What the A/B still shows is the
-  pitch model (float `pow` vs the driver's cent LUT, ±1 F-number — the
-  `m2b-pitch` residue). Computed levels were decided: the driver holds
-  velocity in eighths (driver-decisions.md §9).
-
-## 3. Why the value machine has this shape
+## 2. Why the value machine has this shape
 
 Compile-time eval was designed in two rounds; **round 2 reversed two of round
 1's decisions**, and the reasons are the load-bearing part:
@@ -85,8 +77,8 @@ Compile-time eval was designed in two rounds; **round 2 reversed two of round
   left-linear expression over constants and `$slot`s lowers to existing opcode
   chains **with zero new opcodes**.
 
-**The governing constraint, still true of `mmlispseq.c` and stated in no doc:**
-eval is compile-time only and its output is static data. The driver gains **no
+**The governing constraint** (the roadmap says eval is compile-time only and
+bakes to static data; this is the part it does not say): the driver gains **no
 evaluator — only readers and flags.** Since 2026-09-26 a `$slot` is a value
 kind of the evaluator itself (mmlisp-eval.js `Runtime`: the opcode chain,
 kept symbolic like a signal), so the accumulator lowering and the scaled
@@ -97,32 +89,26 @@ The vision it serves: **`def-val` slots are the score's input ports, eval
 expressions are the wiring, and the sampling tiers are the rates** — the game
 writes variables, the score declares how the music responds. The four tiers
 (compile / tick / note-on / frame) are the unifying answer to "when is this
-value read?"; `language.md` §8 and `driver.md` §6.4 show the mechanism but not
-the model.
+value read?" (guide §18b).
 
-One verdict worth keeping: the **batched frame flush** was built and then
-reverted — roughly 90 bytes for about a 1% reduction in writes. The revert is in
-git; the ratio is not.
+**PSG envelopes are macros, not a new def head** (2026-10-03). A `def-env` /
+`def-macro` was discussed and rejected: an envelope is already `(def name
+(macro …))`, the one form of a named macro, and the only need was tooling — so
+the voice picker lists macro defs instead. Naming the head was hard because
+the thing was not a new concept.
 
-## 4. Live risks in the value machine
+## 3. Live risks in the value machine
 
 1. **A folded relative op is relative to the score-visible value**, so a host
    `SET_PARAM` in between is invisible to it. `(+ $P X)` is the explicit opt-in
    to host-relative behaviour.
-2. **Multi-write chains touch the register between steps** — `W_EVAL_CHAIN_LONG`
-   past about six ops.
-3. **The signal-⊕ region model is deliberately restricted** (equal step, no
+2. **The signal-⊕ region model is deliberately restricted** (equal step, no
    loop⊕one-shot, single release). loop⊕one-shot is the designed first
    relaxation and the prerequisite for *baked* AM; runtime AM is the scaled-macro
    flag.
-4. **A second sigil (`@vel`) was considered and rejected** — more syntax for the
+3. **A second sigil (`@vel`) was considered and rejected** — more syntax for the
    same semantics. The `$` namespace carries several tiers and reserved-name
    checks keep them apart.
-5. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
+4. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
    F-number at note boundaries, proven scale-independent. This was the only
    record of it; the file it used to point at never existed.
-
-Deferred, with reasons: slot-fed macro-curve dynamics need a note-on curve
-re-sampler, and sweep `:rate`/`:len` dynamics are still baked — both still warn
-(`W_MMB_MACRO_SKIPPED`, `W_MMB_DYN_SWEEP_BAKED`). The scaled-macro form is
-`(* signal $slot)` only, so it **cannot combine with `:pitch+`** in one macro.

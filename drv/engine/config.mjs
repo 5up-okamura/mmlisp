@@ -41,7 +41,8 @@ export const YM = {
   CTL_RESET_A: 0x10, CTL_RESET_B: 0x20, CTL_CH3_CSM: 0x80,
   ST_FLAG_A: 0x01, ST_FLAG_B: 0x02, ST_BUSY: 0x80,
   // What the chip needs BETWEEN writes, in Z80 cycles — XGM2's hardware
-  // measurement as carried in docs/driver.md §5.1. This is a settling time per
+  // measurement, read from its driver source (SGDK src/snd/xgm2). This table is
+  // where the numbers live; docs/driver.md §5.1 states the rule. A settling time per
   // register range, not a busy flag to poll: the analyzer CHECKS the generated
   // schedule against it and never emits a poll.
   wait: {
@@ -61,7 +62,7 @@ export const GLOB = {
   csmLo: 0x02,    // u8  CSM ch3 frequency, lo
 };
 
-// ── THE N-VOICE PAIR PROFILE (plan-pcm-spec.md D1 + D4 study) ──────────────
+// ── THE N-VOICE PAIR PROFILE (docs/driver.md §5; reasons in .claude/memory/pcm.md) ──────────────
 //
 // One to three PCM voices at a fixed pitch class with a 2^k step, and the
 // level model D4 asks for: 6 dB RUNGS with the master folded into each voice's
@@ -149,7 +150,7 @@ export const PCMN = {
   fifoLo: 0x31, ready: 0x32, size: 0x33,
 };
 
-// THE LOOP-CAPABLE STATE BLOCK (plan-pcm-spec.md D10, design study 2026-09-17).
+// THE LOOP-CAPABLE STATE BLOCK (.claude/memory/pcm.md, design study 2026-09-17).
 // Nine 68000-writable bytes a voice from op $01: the rung page, the staged
 // start (source, END), the staged WRAP — where the pointer goes when it
 // reaches END: the loop start for a looping note, PCM_SILENCE for a shot or a
