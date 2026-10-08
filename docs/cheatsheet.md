@@ -45,7 +45,7 @@ then jumps back to `#top`. `;` starts a comment.
 | `sqr1`–`sqr3` | PSG square | |
 | `noise` | PSG noise | `:mode white0`–`white3` / `periodic0`–`periodic3` |
 | `pcm1`–`pcm3` | samples on the fm6 DAC | `(def-score :pcm-voices N)`: 1 = 14.4 kHz, 2 = 10.1, 3 = 6.7 |
-| `fm3-1`–`fm3-4` | FM3, one pitch per operator | patch from a note-less `(fm3 voice)` (§15) |
+| `fm3-1`–`fm3-4` | FM3, one pitch per operator | patch from a note-less `(fm3 voice)` — a note on it is an error (§15) |
 | `fm3-csm`, `fm3-csm-rate` | FM3 CSM | pitch = formant, rate track = buzz (§15) |
 
 Two forms of one channel append; with different `:prio` right after the

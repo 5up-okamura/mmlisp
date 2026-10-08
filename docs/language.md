@@ -113,6 +113,9 @@ Mode exclusivity (compile errors, score-wide):
 
 - `fm3-csm`/`fm3-csm-rate` cannot be mixed with `fm3` or `fm3-1`–`fm3-4`
   (`E_FM3_MODE_CONFLICT`).
+- Beside `fm3-1`–`fm3-4`, `(fm3 …)` is the shared patch only: a note on it
+  is `E_FM3_MODE_CONFLICT` (in that mode the channel's F-number is operator
+  4's). The same holds inside one `def-se`.
 - Inline `:csm-rate` and a companion `fm3-csm-rate` track are mutually
   exclusive (`E_CSM_RATE_SOURCE_CONFLICT`).
 
@@ -1419,7 +1422,8 @@ accepts a raw Hz literal or a pitch.
 
 `fm3-1`–`fm3-4` each drive one operator's F-number as a monophonic track;
 their presence enables the mode (`FM3_MODE op` at tick 0). The shared patch
-(ALG, FB, per-op TL/ADSR) is declared with a note-less `(fm3 voice)` form.
+(ALG, FB, per-op TL/ADSR) is declared with a note-less `(fm3 voice)` form —
+a note on it is `E_FM3_MODE_CONFLICT`.
 Pitch is per operator: `:pitch`, `(glide …)`, an inline `:pitch (curve …)`
 sweep and the `:pitch` / `:semi` macros on an `fm3-N` track bend that
 operator's F-number alone, `:keyon` re-attacks that operator alone — the others

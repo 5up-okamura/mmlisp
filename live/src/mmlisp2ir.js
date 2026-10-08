@@ -5697,6 +5697,27 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     });
   }
 
+  // Beside fm3-1..fm3-4 the (fm3 …) track is the shared patch alone: in
+  // independent-OP mode the channel's F-number is operator 4's, so a note on
+  // it would fight fm3-4 for pitch and key. Checked per song and per effect.
+  const fm3Groups = new Map();
+  for (const t of tracks) {
+    const key = t.se ? `se:${t.se.index}` : "song";
+    if (!fm3Groups.has(key)) fm3Groups.set(key, []);
+    fm3Groups.get(key).push(t);
+  }
+  for (const group of fm3Groups.values()) {
+    if (!group.some((t) => /^fm3-[1-4]$/.test(t.scoreChannel))) continue;
+    for (const t of group) {
+      if (t.scoreChannel !== "fm3") continue;
+      const note = t.events.find((ev) => ev.cmd === "NOTE_ON");
+      if (note)
+        pushDiag(diagnostics, "error", "E_FM3_MODE_CONFLICT",
+          "(fm3 …) beside fm3-1..fm3-4 is the shared patch only: it takes no notes",
+          note.src ?? fileSrc, t.se ? `se:${t.se.name}:fm3` : "fm3");
+    }
+  }
+
   // An imported def knows its own directory; a def written here depends on the
   // score's path being known.
   const sampleBaseDir = (sample) =>

@@ -28,7 +28,7 @@ Rules:
 - [pcm.md](pcm.md) — **PCM: the user's decisions with their reasons, the
   multi-bank measurements, and what is open.** Read before touching PCM in any
   layer.
-- [language-open.md](language-open.md) — **the language and IR**: the seven
+- [language-open.md](language-open.md) — **the language and IR**: the six
   questions that need the user's decision, the syntax rulings not to
   re-propose, why compile-time eval and the value machine have their shape,
   and the risks still live.

@@ -28,8 +28,7 @@ rot.
 4. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
 5. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
-6. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
-7. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
+6. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
    driver** (seen 2026-10-03 while the FM drum kits briefly carried their
    pitch as a `:semi` macro; they now use `def-fm :key`): `drv-player.js`
    writes F-number at the note, key-on, then the macro's frame-0 pitch, all
