@@ -3209,7 +3209,7 @@ export class IRPlayer {
 
     const target = (ev.args?.target ?? "").toUpperCase();
     // A bounded sweep (a glide) lasts its `frames` and then stops — unless the
-    // next write to its target (the next note's glide, or the PARAM_SET of a
+    // next write to its target (the next note's glide, or the hold sweep of a
     // note that does not glide) ends it first, as on the driver.
     if (ev.args?.bounded)
       return Math.min(
@@ -3873,9 +3873,12 @@ export class IRPlayer {
     // an absolute 60 Hz frame count (mirrors NOTE_ON macro curves via
     // _resolveLenFrames). Tempo is resolved at onset — a mid-sweep tempo change
     // drifts the wall-clock duration, matching the note-length Nf stance.
-    const baseFrames = ev.args?.lenFrames
-      ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
-      : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
+    // A slot-fed `:len` reads the slot at the sweep's start, by its :unit.
+    const baseFrames = ev.args?.dyn?.len != null
+      ? this._resolveLenFrames(ev.args, null, when)
+      : ev.args?.lenFrames
+        ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
+        : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
     const loop = !!ev.args?.loop;
     const { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset } =
       this._sweepFrameParams(ev, baseFrames, loop, when);
@@ -4686,9 +4689,11 @@ export class IRPlayer {
           const secsPerTick = this._secsPerTick;
           // ev.args.frames is ticks, or frames when an Nf `:len` set
           // lenFrames — as on the FM path.
-          const baseFrames = ev.args?.lenFrames
-            ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
-            : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
+          const baseFrames = ev.args?.dyn?.len != null
+            ? this._resolveLenFrames(ev.args, null, when)
+            : ev.args?.lenFrames
+              ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
+              : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
           const loop = !!ev.args?.loop;
           const framesPerTick = secsPerTick * 60;
           const { budgetFrames, loopPhaseOffset } =

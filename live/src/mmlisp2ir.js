@@ -5563,7 +5563,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     let prio = 8;
     if (atomValue(node.items[i]) === ":prio" && i + 1 < node.items.length) {
       const v = parseIntLike(atomValue(node.items[i + 1]));
-      if (v !== null) prio = Math.max(0, v);
+      if (v !== null && v >= 0) prio = v;
       else
         pushDiag(diagnostics, "error", "E_PRIO_INVALID",
           `:prio takes a non-negative integer, not ${atomValue(node.items[i + 1]) ?? "a list"}`,

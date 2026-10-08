@@ -455,6 +455,34 @@ export function encodeMmb(ir, opts = {}) {
     return lowered && { ...lowered, tick };
   };
 
+  // A slot-fed curve param the driver does not read at note-on is baked to the
+  // slot's init (language.md §10): what the preview plays while the slot stays
+  // there. A `:len` slot counts in its own `:unit`, put on the macro's clock at
+  // the score's opening tempo.
+  const valsByName = new Map((ir.metadata?.vals ?? []).map((v) => [v.name, v]));
+  const bakeDyn = (o, tick, label) => {
+    if (!o?.dyn) return o;
+    const d = o.dyn;
+    const init = (n) => Number(valsByName.get(n)?.init ?? 0);
+    const out = { ...o };
+    delete out.dyn;
+    if (d.from != null) out.from = init(d.from);
+    if (d.to != null) out.to = init(d.to);
+    if (d.rate != null) out.params = { ...(o.params ?? {}), rate: init(d.rate) };
+    if (d.len != null) {
+      const n = Math.max(1, init(d.len));
+      const inTicks = valsByName.get(d.len)?.unit === "tick";
+      const bpm = bpmAt(timeline, 0);
+      out.frames = tick
+        ? (inTicks ? n : Math.max(1, Math.round((n * bpm * 96) / (frameHz * 60))))
+        : (inTicks ? ticksToFrames(n, bpm, frameHz) : n);
+      out.lenFrames = !tick;
+    }
+    diag("warning", "W_MMB_DYN_BAKED",
+      "a slot-fed curve param is baked to the slot's init on MMB (only an inline sweep's :from/:to are read live)", label);
+    return out;
+  };
+
   // A curve length in the clock's units: frames, or ticks for a tick clock
   // (lenFrames then false). Null when it is not in them — no :len.
   const clockLen = (o, tick) =>
@@ -465,6 +493,9 @@ export function encodeMmb(ir, opts = {}) {
       diag("warning", "W_MMB_MACRO_SKIPPED", `${target} macro ${why}; dropped`, trackLabel);
       return null;
     };
+    spec = bakeDyn(spec, tick, trackLabel);
+    if (spec.type === "stages")
+      spec = { ...spec, stages: (spec.stages ?? []).map((st) => bakeDyn(st, tick, trackLabel)) };
 
     if (spec.type === "steps") {
       // Round + clamp at the binding site (§2.2): a no-op for the integer step
@@ -485,7 +516,6 @@ export function encodeMmb(ir, opts = {}) {
     }
 
     if (spec.type === "curve") {
-      if (spec.dyn) return skip("has dynamic (val-slot) params (later M3 slice)");
       // Tick/Nf `:len` is resolved to a frame count upstream (mmlisp2ir
       // resolveMacroLen); a curve reaching here without one has no `:len`.
       const baseFrames = clockLen(spec, tick);
@@ -547,7 +577,6 @@ export function encodeMmb(ir, opts = {}) {
       }
       if (!stage.curve) continue;
       if (afterLoop && release === 0xff) release = values.length;
-      if (stage.dyn) return skip("stage has dynamic (val-slot) params (later M3 slice)");
       const baseFrames = clockLen(stage, tick);
       if (baseFrames == null) return skip("stage has no :len on the macro's clock");
       if (stage.loop) {
@@ -1134,17 +1163,24 @@ export function encodeMmb(ir, opts = {}) {
               to = sid;
             }
           }
+          // A slot-fed :len bakes to the slot's init, in its own :unit; a
+          // :rate has no field in PARAM_SWEEP, slot-fed or not.
+          let lenSrc = a;
+          if (a.dyn?.len != null) {
+            const v = valsByName.get(a.dyn.len);
+            lenSrc = { frames: Math.max(1, Number(v?.init ?? 1)), lenFrames: v?.unit !== "tick" };
+          }
           if (a.dyn?.rate != null || a.dyn?.len != null) {
             diag(
               "warning",
               "W_MMB_DYN_SWEEP_BAKED",
-              `dynamic sweep :rate/:len baked to slot init (endpoints are slot-fed)`,
+              `dynamic sweep :len baked to the slot's init (:from/:to are slot-fed)`,
               label,
             );
           }
-          const frames = a.lenFrames
-            ? Math.max(1, Math.round(Number(a.frames ?? 1)))
-            : ticksToFrames(a.frames ?? 1, bpmAt(timeline, ev.tick ?? 0), frameHz);
+          const frames = lenSrc.lenFrames
+            ? Math.max(1, Math.round(Number(lenSrc.frames ?? 1)))
+            : ticksToFrames(lenSrc.frames ?? 1, bpmAt(timeline, ev.tick ?? 0), frameHz);
           stream.u8(OPCODE.PARAM_SWEEP);
           stream.u8(id);
           stream.u8(curveId(a.curve));
