@@ -179,14 +179,36 @@ File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 
 ## MMLisp Live — Keyboard Shortcuts
 
-| macOS         | Windows / Linux | Action               |
-| ------------- | --------------- | -------------------- |
-| `Cmd+Return`  | `Ctrl+Enter`    | Play / Pause         |
-| `Cmd+.`       | `Ctrl+.`        | Stop                 |
-| `Cmd+Shift+F` | `Ctrl+Shift+F`  | Format current score |
-| `Cmd+F`       | `Ctrl+F`        | Find / Replace       |
-| `Cmd+D`       | `Ctrl+D`        | Add next occurrence  |
-| `Cmd+Shift+L` | `Ctrl+Shift+L`  | Add all occurrences  |
+| macOS              | Windows / Linux     | Action                                   |
+| ------------------ | ------------------- | ---------------------------------------- |
+| **File and play**  |                     |                                          |
+| `Cmd+O`            | `Ctrl+O`            | Open                                     |
+| `Cmd+S`            | `Ctrl+S`            | Save                                     |
+| `Cmd+Shift+S`      | `Ctrl+Shift+S`      | Save As                                  |
+| `Cmd+B`            | `Ctrl+B`            | Build                                    |
+| `Cmd+Return`       | `Ctrl+Enter`        | Play / Pause                             |
+| `Cmd+.`            | `Ctrl+.`            | Stop                                     |
+| **Side panel**     |                     |                                          |
+| `Cmd+J`            | `Ctrl+J`            | Params — open the panel on it, or close it |
+| `Cmd+K`            | `Ctrl+K`            | Library — search the reference, presets, snippets, scores |
+| **Editor**         |                     |                                          |
+| `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / Redo                  |
+| `Cmd+F`            | `Ctrl+F`            | Find / Replace                           |
+| `Cmd+D`            | `Ctrl+D`            | Add next occurrence                      |
+| `Cmd+Shift+L`      | `Ctrl+Shift+L`      | Add all occurrences                      |
+| `Cmd+Option+↑` / `↓` | `Ctrl+Alt+↑` / `↓` | Add a cursor on the line above / below |
+| `Esc`              | `Esc`               | Back to one cursor                       |
+| `Option+↑` / `↓`   | `Alt+↑` / `↓`       | Grow / shrink the selection by form      |
+| `Cmd+/`            | `Ctrl+/`            | Comment / uncomment lines                |
+| `Cmd+Option+]`     | `Ctrl+Alt+]`        | Close the open brackets                  |
+| `Cmd+Shift+F`      | `Ctrl+Shift+F`      | Format current score                     |
+| `Cmd+Shift+.` / `,` | `Ctrl+Shift+.` / `,` | Nudge the value at the cursor up / down (add `Option` / `Alt` for a coarse step) |
+| **Library list**   |                     |                                          |
+| `↑` `↓`            | `↑` `↓`             | Move through the list (from the search box too) |
+| `Return`           | `Enter`             | Insert / open the highlighted row, or fold a group |
+| `Space`            | `Space`             | Play the highlighted row (in the list)   |
+| `←` `→`            | `←` `→`             | Fold / open a group (in the list)        |
+| `Esc`              | `Esc`               | Clear the search, then back to the score |
 
 ## Acknowledgements
 
