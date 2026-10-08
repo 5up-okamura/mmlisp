@@ -1446,12 +1446,14 @@ Library's filters cleared.
 - **Search** matches a name, then the description (`piano` finds `gm-piano`,
   `env-piano` and every voice whose comment says piano). While there is a
   query the list is one list, ranked as the completion ranks names.
-- **All / Ref / Presets / Snippets / Scores** narrows the list to one source.
-- **FM / PCM / Macro** keep only those kinds of preset (any number of them;
-  none means all). **Fits track** keeps what the track at the cursor can play
-  — voices on an fm track, samples on a pcm track, macros everywhere — and
-  follows the cursor. **A–Z** shows one alphabetical list instead of groups.
-  A chip that means nothing for the source picked is greyed out and rests —
+- **All / Ref / Presets / Snippets / Scores**, the bar across the top, picks
+  one source.
+- The chips under it each narrow on their own. **FM / PCM / Macro** keep
+  only those kinds of preset (any number of them; none means all). **Fits
+  track** keeps what the track at the cursor can play — voices on an fm
+  track, samples on a pcm track, macros everywhere — and follows the cursor.
+  **A–Z** shows one alphabetical list instead of groups. A chip that means
+  nothing for the source picked is greyed out and rests —
   FM / PCM / Macro apply to All and Presets, Fits track to all but Snippets
   and Scores — and takes effect again when its source comes back.
 - Without a query the list is grouped — a preset set, a snippet topic, an

@@ -1204,6 +1204,35 @@
     .lib-search:focus { outline: 1px solid var(--foreground); outline-offset: -1px; }
     .lib-filters { display: flex; flex-direction: column; gap: 0.3rem; }
     .lib-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+    /* The source: one of a set, so one joined bar split evenly across the pane
+       — not chips, which toggle on their own. */
+    .lib-seg {
+      display: flex;
+      border: 1px solid var(--mid);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .lib-seg-btn {
+      flex: 1 1 0;
+      min-width: 0;
+      background: none;
+      border: none;
+      border-left: 1px solid var(--mid);
+      color: var(--foreground);
+      font: inherit;
+      font-size: 0.66rem;
+      padding: 0.2rem 0.25rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+    .lib-seg-btn:first-child { border-left: none; }
+    .lib-seg-btn:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
+    .lib-seg-btn.active {
+      background: color-mix(in srgb, var(--foreground) 28%, var(--background));
+      font-weight: bold;
+    }
     .lib-chip {
       background: none;
       border: 1px solid var(--mid);
@@ -1289,6 +1318,7 @@
     /* Fingers: taller rows and buttons. */
     @media (pointer: coarse) {
       .lib-chip { padding: 0.35rem 0.7rem; font-size: 0.74rem; }
+      .lib-seg-btn { padding: 0.4rem 0.25rem; font-size: 0.74rem; }
       .lib-row, .lib-group { padding: 0.6rem 0.55rem; font-size: 0.8rem; }
       .lib-row { padding-left: 1.2rem; }
       .lib-mini { padding: 0.3rem 0.6rem; font-size: 0.72rem; }

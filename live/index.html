@@ -444,12 +444,14 @@
         <input id="libSearch" class="lib-search" type="search" placeholder="Search the language, voices, samples, snippets"
                autocomplete="off" autocapitalize="off" spellcheck="false">
         <div class="lib-filters">
-          <div class="lib-chips" id="libSources">
-            <button class="lib-chip" data-source="all">All</button>
-            <button class="lib-chip" data-source="ref">Ref</button>
-            <button class="lib-chip" data-source="presets">Presets</button>
-            <button class="lib-chip" data-source="snippets">Snippets</button>
-            <button class="lib-chip" data-source="scores">Scores</button>
+          <!-- One source at a time (a segmented control); the chips below
+               toggle, each narrowing on its own -->
+          <div class="lib-seg" id="libSources" role="radiogroup" aria-label="Source">
+            <button class="lib-seg-btn" role="radio" data-source="all">All</button>
+            <button class="lib-seg-btn" role="radio" data-source="ref">Ref</button>
+            <button class="lib-seg-btn" role="radio" data-source="presets">Presets</button>
+            <button class="lib-seg-btn" role="radio" data-source="snippets">Snippets</button>
+            <button class="lib-seg-btn" role="radio" data-source="scores">Scores</button>
           </div>
           <div class="lib-chips" id="libKinds">
             <button class="lib-chip" data-kind="fm">FM</button>
@@ -6525,8 +6527,10 @@
       const { source } = _libFilter;
       const kindsApply = source === 'all' || source === 'presets';
       const fitsApply = source !== 'snippets' && source !== 'scores';
-      for (const b of document.querySelectorAll('#libSources .lib-chip'))
+      for (const b of document.querySelectorAll('#libSources .lib-seg-btn')) {
         b.classList.toggle('active', b.dataset.source === source);
+        b.setAttribute('aria-checked', String(b.dataset.source === source));
+      }
       for (const b of document.querySelectorAll('#libKinds .lib-chip[data-kind]')) {
         b.disabled = !kindsApply;
         b.classList.toggle('active', kindsApply && _libFilter.kinds.has(b.dataset.kind));
@@ -6564,7 +6568,7 @@
       });
       box.addEventListener('input', () => _libList.setFilter({ query: box.value }));
       document.getElementById('libSources').addEventListener('click', (e) => {
-        const b = e.target.closest('.lib-chip');
+        const b = e.target.closest('.lib-seg-btn');
         if (b) setLibSource(b.dataset.source);
       });
       document.getElementById('libKinds').addEventListener('click', (e) => {
