@@ -82,9 +82,10 @@ shipping as examples, and a hardware-verified reference build.
 | v0.2    | frozen   | v0.2-freeze    | FM/PSG voices, modulator, UI, source map                                    |
 | v0.3    | frozen   | v0.3-freeze    | gate, shuffle, track append, voice reference, relative volume controls      |
 | v0.4    | frozen   | v0.4-freeze    | Envelopes/macros, multi-stage macro, pitch env, PSG noise, pan, level model |
-| v0.5    | baseline | —              | FM3 independent-OP, CSM, PCM/DAC mixing, TEMPO_SWEEP, stochastic curves, file I/O UI, score removal, `import`, compile-time eval and the runtime value machine |
+| v0.5    | done     | —              | FM3 independent-OP, CSM, PCM/DAC mixing, TEMPO_SWEEP, stochastic curves, file I/O UI |
+| v0.6    | baseline | —              | 1 file = 1 score (the `(score …)` wrapper removed), `import`, compile-time eval and the runtime value machine, `def-score`, `def-mod` |
 
-v0.5 is the current baseline (CLAUDE.md). Numbered freezes stopped there: the
+v0.6 is the current baseline (CLAUDE.md). Numbered freezes stopped at v0.4: the
 language now evolves in place from composition needs, and each change lands in
 `docs/language.md` rather than in a per-version spec.
 

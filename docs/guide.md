@@ -1445,6 +1445,9 @@ fresh launch starts on Params, with Library's filters cleared.
   none means all). **Fits track** keeps what the track at the cursor can play
   — voices on an fm track, samples on a pcm track, macros everywhere — and
   follows the cursor. **A–Z** shows one alphabetical list instead of groups.
+  A chip that means nothing for the source picked is greyed out and rests —
+  FM / PCM / Macro apply to All and Presets, Fits track to all but Snippets
+  and Scores — and takes effect again when its source comes back.
 - Without a query the list is grouped — a preset set, a snippet topic, an
   examples folder — every group folded until opened. The line under the list
   describes the highlighted row: a preset's comment, a file's leading comment.

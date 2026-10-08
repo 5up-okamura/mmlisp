@@ -1213,6 +1213,8 @@
       pointer-events: none;
     }
     .lib-chip:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
+    .lib-chip:disabled { opacity: 0.35; cursor: default; }
+    .lib-chip:disabled:hover { background: none; }
     .lib-chip.active {
       background: color-mix(in srgb, var(--foreground) 28%, var(--background));
       border-color: var(--foreground);

@@ -517,7 +517,7 @@
       <div class="info-body">
         <p><b>MMLisp</b> — a Lisp-like DSL for composing expressive, interactive
         music for the Sega Mega Drive (YM2612 FM + PSG).</p>
-        <p>Version v0.5<br>
+        <p>Version v0.6<br>
         © 2026 Hiroshi Okamura (5&amp;UP Inc.) — MIT License</p>
         <p><a href="https://github.com/5up-okamura/mmlisp" target="_blank" rel="noopener">github.com/5up-okamura/mmlisp</a></p>
         <p>Sound emulation by Nuked-OPN2 &amp; Nuked-PSG — see
@@ -6474,17 +6474,28 @@
         : it.kind === 'macro' || (track === 'voice' && it.kind === 'fm') || (track === 'sample' && it.kind === 'pcm');
     }
 
+    // A chip that means nothing for the source picked is disabled, and its
+    // setting rests until a source it applies to comes back: FM / PCM / Macro
+    // sort the presets (All, Presets); Fits track has nothing to sort in the
+    // snippets and scores, which fit any track.
     function applyLibFilter() {
+      const { source } = _libFilter;
+      const kindsApply = source === 'all' || source === 'presets';
+      const fitsApply = source !== 'snippets' && source !== 'scores';
       for (const b of document.querySelectorAll('#libSources .lib-chip'))
-        b.classList.toggle('active', b.dataset.source === _libFilter.source);
-      for (const b of document.querySelectorAll('#libKinds .lib-chip[data-kind]'))
-        b.classList.toggle('active', _libFilter.kinds.has(b.dataset.kind));
-      document.getElementById('libFits').classList.toggle('active', _libFilter.fits);
+        b.classList.toggle('active', b.dataset.source === source);
+      for (const b of document.querySelectorAll('#libKinds .lib-chip[data-kind]')) {
+        b.disabled = !kindsApply;
+        b.classList.toggle('active', kindsApply && _libFilter.kinds.has(b.dataset.kind));
+      }
+      const fits = document.getElementById('libFits');
+      fits.disabled = !fitsApply;
+      fits.classList.toggle('active', fitsApply && _libFilter.fits);
       document.getElementById('libOrder').classList.toggle('active', _libFilter.order === 'az');
       _libList?.setFilter({
-        source: _libFilter.source,
-        kinds: new Set(_libFilter.kinds),
-        fits: libFitsFn(),
+        source,
+        kinds: kindsApply ? new Set(_libFilter.kinds) : new Set(),
+        fits: fitsApply ? libFitsFn() : null,
         order: _libFilter.order,
       });
     }

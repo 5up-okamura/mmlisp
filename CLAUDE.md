@@ -5,7 +5,7 @@ Sega Mega Drive (YM2612 FM + PSG), ultimately compiled for MMLispDRV — a drive
 split across both CPUs: the 68000 sequences the score into per-frame
 register-write lists, the Z80 consumes one per vblank and software-mixes PCM.
 
-Current baseline: **v0.5**. The phase is "use and adjust" — the language and
+Current baseline: **v0.6**. The phase is "use and adjust" — the language and
 API evolve from practical composition needs.
 
 ## Codebase map

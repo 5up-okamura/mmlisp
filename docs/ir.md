@@ -1,6 +1,6 @@
-# MMLisp IR Reference (v0.5)
+# MMLisp IR Reference (v0.6)
 
-Describes the IR emitted by the current compiler (v0.5 lineage). The MMB
+Describes the IR emitted by the current compiler (v0.6). The MMB
 binary encoding is specified in docs/mmb.md / docs/opcodes.md.
 
 Ground truth: `live/src/mmlisp2ir.js` (producer) and `live/src/ir-player.js`

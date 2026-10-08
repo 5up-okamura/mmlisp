@@ -1364,7 +1364,7 @@ export function encodeMmb(ir, opts = {}) {
   putMeta("title", ir.metadata?.title ?? "untitled");
   putMeta("composer", ir.metadata?.composer ?? "");
   putMeta("author", ir.metadata?.author ?? "");
-  putMeta("compiler_version", opts.compilerVersion ?? "mmlisp v0.5");
+  putMeta("compiler_version", opts.compilerVersion ?? "mmlisp v0.6");
   putMeta("bpm", bpmAt(timeline, 0));
   for (const v of ir.metadata?.vals ?? []) putMeta(`val_${v.slot}`, v.name);
   sections.push({
