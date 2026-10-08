@@ -8026,18 +8026,21 @@
         const midi = Number(btn.dataset.midi);
         if (!Number.isFinite(midi)) return;
 
-        const ok = await initAudio();
-        if (!ok) return;
+        // The key is held from here, before audio starts: a release that
+        // arrives while it starts (the first tap of a session) is seen, or the
+        // note would start after it and never stop.
+        const info = { btn, midi, voice: null };
+        btn.classList.add('down');
+        _kbPointerMap.set(e.pointerId, info);
+        try { keysEl.setPointerCapture?.(e.pointerId); } catch (_) { /* the pointer is gone already */ }
 
-        const voice = previewTake(target, midi);
+        const ok = await initAudio();
+        if (!ok) { releasePointer(e.pointerId); return; }
+
+        // Let go while audio was starting: not sounded, but still written.
+        if (_kbPointerMap.get(e.pointerId) === info) info.voice = previewTake(target, midi);
         if (_stepInputEnabled) {
           insertStepNote(midi);
-        }
-
-        btn.classList.add('down');
-        _kbPointerMap.set(e.pointerId, { btn, midi, voice });
-        if (typeof keysEl.setPointerCapture === 'function') {
-          keysEl.setPointerCapture(e.pointerId);
         }
       };
 
