@@ -181,6 +181,7 @@ export class IRPlayer {
     this._loop = true; // loop by default
     this._onLine = null; // (line: number) => void — called when an event fires
     this._onTrig = null; // (trackIdx, code) => void — a (trig N) cue plays
+    this._onHold = null; // (trackIdx) => void — a track stops at a `:len 0` hold
     this._onRunStart = null; // () => void — after play()'s reset, before scheduling
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
@@ -261,8 +262,9 @@ export class IRPlayer {
     this._mutedTracks = new Set();
     this._soloTracks = new Set();
 
-    // Channels holding a len=0 note, waiting for triggerKeyOff()
-    this._holdChannels = new Set();
+    // Channels holding a note until triggerKeyOff() (`:len 0` or `:gate 0`):
+    // channel id → the track that keyed it.
+    this._holdChannels = new Map();
 
     // FM3 independent-operator mode: each fm3-1..fm3-4 track keys a single
     // operator of channel 3 via the shared 0x28 key register (see
@@ -574,9 +576,9 @@ export class IRPlayer {
   // it; the real write path and callbacks come back. Returns the held writes
   // and, when watching, that event's time from `start` (null if none plays).
   _chase(audioContext, start, until, watchLine) {
-    const saved = { write: this._write, onLine: this._onLine, onSeq: this._onSeq, onTrig: this._onTrig };
+    const saved = { write: this._write, onLine: this._onLine, onSeq: this._onSeq, onTrig: this._onTrig, onHold: this._onHold };
     const held = [];
-    this._onLine = this._onSeq = this._onTrig = null;
+    this._onLine = this._onSeq = this._onTrig = this._onHold = null;
     this._write = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object") held.push({ msg: portOrMsg, when: portOrMsg.when });
       else held.push({ port: portOrMsg | 0, addr: addr & 0xff, data: data & 0xff, when });
@@ -625,6 +627,7 @@ export class IRPlayer {
       this._onLine = saved.onLine;
       this._onSeq = saved.onSeq;
       this._onTrig = saved.onTrig;
+      this._onHold = saved.onHold;
     }
     const watched = this._chaseWatch?.time;
     this._chaseWatch = null;
@@ -787,8 +790,10 @@ export class IRPlayer {
    */
   triggerKeyOff(ch) {
     if (!this._holdChannels.has(ch)) return;
+    const tIdx = this._holdChannels.get(ch);
     this._holdChannels.delete(ch);
     const when = this._audioContext?.currentTime ?? 0;
+    this._resumeHeldTrack(tIdx, when);
     if (ch >= 20) {
       // PCM: the key-off releases a `:len 0` loop; its tail plays out.
       this._pcmEv(when, { kind: "off", voice: ch - 20 });
@@ -926,6 +931,43 @@ export class IRPlayer {
    */
   setOnSeq(fn) {
     this._onSeq = fn;
+  }
+
+  /**
+   * Release every hold (Tools > Release holds): what the host's KEY_OFF does
+   * to each channel holding a `:len 0` / `:gate 0` note.
+   */
+  releaseHolds() {
+    for (const ch of [...this._holdChannels.keys()]) this.triggerKeyOff(ch);
+  }
+
+  /** The tracks stopped at a `:len 0` note, waiting for their key-off. */
+  heldTracks() {
+    return this._tracks.map((t, i) => (t.held ? i : -1)).filter((i) => i >= 0);
+  }
+
+  // A `:len 0` note stops its track (driver.md §2.4): the key-off starts it
+  // again, its next event at the key-off's time — the track's clock moved on
+  // by however long it was held. Never earlier than the held note itself,
+  // which the lookahead may have scheduled ahead of now.
+  _resumeHeldTrack(tIdx, when) {
+    const track = this._tracks?.[tIdx];
+    const h = track?.held;
+    if (!h) return;
+    track.held = null;
+    const at = Math.max(when + 0.02, h.when);
+    const anchor = at - h.tick * this._secsPerTick;
+    track.startAudioTime += anchor - track.audioTimeAtTick0;
+    track.audioTimeAtTick0 = anchor;
+    if (this._playing && this._schedulerTimer === null) this._scheduleLoop();
+  }
+
+  /**
+   * Register a callback fired when a track stops at a `:len 0` hold, so the
+   * UI can say why it went quiet. @param {((trackIdx: number) => void) | null} fn
+   */
+  setOnHold(fn) {
+    this._onHold = fn;
   }
 
   /**
@@ -1068,6 +1110,7 @@ export class IRPlayer {
     // most 16 laps a call, for a zero-length loop); Infinity when it is done
     // or held at the swap boundary.
     const nextTime = (track, tIdx) => {
+      if (track.held) return Infinity;
       for (;;) {
         if (track.flatIndex < track.events.length) {
           const ev = track.events[track.flatIndex];
@@ -1124,6 +1167,14 @@ export class IRPlayer {
         const w = this._chaseWatch;
         if (w && w.time == null && ev.src?.line === w.line) w.time = evTime;
         this._dispatchEvent(ev, evTime);
+        // `:len 0`: the track waits here for its key-off (_resumeHeldTrack).
+        if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev.args?.length === 0) {
+          track.held = { tick: ev.tick, when: evTime };
+          if (this._onHold) {
+            const delay = Math.max(0, evTime - now) * 1000;
+            this._scheduleUiCallback(() => this._onHold(tIdx), delay);
+          }
+        }
         if (this._onTrig && ev.cmd === "TRIG") {
           const code = ev.args?.code;
           const delay = Math.max(0, evTime - now) * 1000;
@@ -1184,6 +1235,7 @@ export class IRPlayer {
       onLine: this._onLine,
       onSeq: this._onSeq,
       onTrig: this._onTrig,
+      onHold: this._onHold,
       ctx: this._audioContext,
       loop: this._loop,
       playing: this._playing,
@@ -1195,6 +1247,7 @@ export class IRPlayer {
     this._onLine = null;
     this._onSeq = null;
     this._onTrig = null;
+    this._onHold = null;
 
     this._write = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg)) {
@@ -1314,6 +1367,7 @@ export class IRPlayer {
       this._onLine = saved.onLine;
       this._onSeq = saved.onSeq;
       this._onTrig = saved.onTrig;
+      this._onHold = saved.onHold;
       this._audioContext = saved.ctx;
       this._loop = saved.loop;
       this._playing = saved.playing;
@@ -1524,6 +1578,7 @@ export class IRPlayer {
   _nextTempoEventTime() {
     let best = Infinity;
     for (const track of this._tracks) {
+      if (track.held) continue;
       for (const i of track.tempoCut ?? []) {
         if (i < track.flatIndex) continue;
         best = Math.min(best, track.audioTimeAtTick0 + track.events[i].tick * this._secsPerTick);
@@ -2226,7 +2281,7 @@ export class IRPlayer {
           }
         } else {
           // Hold note: register the channel for runtime key-off
-          this._holdChannels.add(ch);
+          this._holdChannels.set(ch, ev._trackIndex);
         }
         break;
       }
@@ -2441,7 +2496,7 @@ export class IRPlayer {
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const { secs: nextNote } = this._nextNote(ev);
     const limit = Number.isFinite(nextNote) ? nextNote - KEY_OFF_LEAD_SECS : Infinity;
-    if (gateTicks === 0) this._holdChannels.add(20 + voice); // `:len 0`: waits for KEY_OFF
+    if (gateTicks === 0) this._holdChannels.set(20 + voice, ev._trackIndex); // waits for KEY_OFF
     const levels = [];
     this._envRetrigs = this._keyonRetrigTimes(keyon, when, gateTicks, limit);
     for (const [spec, kind, target] of [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"]]) {
@@ -4494,7 +4549,7 @@ export class IRPlayer {
         }
         if (psgGateTicks === 0) {
           // Hold note: register for runtime key-off via triggerKeyOff(psgCh + 6)
-          this._holdChannels.add(psgCh + 6);
+          this._holdChannels.set(psgCh + 6, ev._trackIndex);
         }
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;

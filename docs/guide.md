@@ -705,16 +705,17 @@ operation is chosen by the keyword so the argument is never ambiguous:
   c _ _ _)   ; KEY-ON on beat 1, timeline moves 4 beats, KEY-OFF via runtime
 ```
 
-### `:len 0` — hold, timeline does not advance
+### `:len 0` — hold, the track waits
 
-`:len 0` fires KEY-ON, holds indefinitely, and does not advance the timeline. Any subsequent notes in the same channel all land at tick 0. Useful for a single held note with a release macro:
+`:len 0` fires KEY-ON, holds indefinitely, and **stops the track** there: what follows waits for the key-off, then plays on from that moment. Useful for a held note with a release macro, or a charge-up whose release shot follows it:
 
 ```lisp
 (sqr1 :len 0 (macro :vel [15 #sus 14 13 #rel 8 4 0])
   c)
+(fm1 :len 0 c :len 8 > c)   ; c holds; the key-off lets it go and > c plays
 ```
 
-In both cases, KEY-OFF is triggered at runtime via `triggerKeyOff()`.
+In both cases the key-off is the game's (`MMLisp_keyOff`); in MMLisp Live it is Tools > Release Holds (⌘⇧↩ / Ctrl+Shift+Enter).
 
 ---
 

@@ -188,6 +188,7 @@ File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 | `Cmd+B`            | `Ctrl+B`            | Build                                    |
 | `Cmd+Return`       | `Ctrl+Enter`        | Play / Pause                             |
 | `Cmd+.`            | `Ctrl+.`            | Stop                                     |
+| `Cmd+Shift+Return` | `Ctrl+Shift+Enter`  | Release Holds — the key-off a game sends: `:len 0` / `:gate 0` holds let go, a held track plays on |
 | **Side panel**     |                     |                                          |
 | `Cmd+J`            | `Ctrl+J`            | Params — open the panel on it, or close it |
 | `Cmd+K`            | `Ctrl+K`            | Library — search the reference, presets, snippets, scores |

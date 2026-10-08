@@ -347,6 +347,12 @@
     "compileErrors": 0,
     "digest": "0064a758"
   },
+  "m4-hold-stop.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-keyon-echo.mmlisp": {
     "ok": true,
     "mismatches": 0,

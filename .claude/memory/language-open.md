@@ -23,9 +23,7 @@ rot.
    rate-track rest, or `:vol 0` meaning something to CSM (TL is the attack's
    start level in this mode, not an attenuation). The preview's mixer mute
    already holds Timer A; the language has no way to.
-3. **`:len 0` then more events** (§17): the IR/preview play them at the same
-   tick; the driver waits for the host KEY_OFF.
-4. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
+3. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
    driver** (seen 2026-10-03 while the FM drum kits briefly carried their
    pitch as a `:semi` macro; they now use `def-fm :key`): `drv-player.js`
    writes F-number at the note, key-on, then the macro's frame-0 pitch, all

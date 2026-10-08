@@ -74,7 +74,7 @@ eighth), `N.` dotted, `N/M` a fraction of a whole note, `Nt` `Nf` `Nms`.
 | Keyword | Default | |
 | --- | --- | --- |
 | `:oct` | 4 | octave |
-| `:len` | 8 | default note length; `0` = hold without advancing (§17) |
+| `:len` | 8 | default note length; `0` = hold; the track waits for the key-off (§17) |
 | `:gate` `:gate*` `:gate-` | full | sounding part: absolute, a ratio (`0.7`), or length minus (`12t`) |
 | `:vel` | 15 | 0–15, 2 dB a step; never mutes |
 | `:vol` / `:master` | 31 | 0–31 fader, `0` mutes; `:master` is song-wide |

@@ -270,6 +270,11 @@
           <span>Build</span>
           <span class="menu-item-shortcut" id="buildShortcut"></span>
         </button>
+        <button class="menu-item" onclick="releaseHoldsAction();closeMenus()"
+                title="Send the key-off a game would: every :len 0 / :gate 0 hold lets go, and a track stopped at a :len 0 note plays on">
+          <span>Release Holds</span>
+          <span class="menu-item-shortcut" id="releaseHoldsShortcut"></span>
+        </button>
         <div class="menu-sep"></div>
         <!-- The side panel's two tabs (the ⚙ button opens it as it was left) -->
         <button class="menu-item" onclick="toggleParams();closeMenus()"
@@ -3354,6 +3359,7 @@
       if (key === 'Mod-b') return isMac ? '⌘B' : 'Ctrl+B';
       if (key === 'Mod-k') return isMac ? '⌘K' : 'Ctrl+K';
       if (key === 'Mod-j') return isMac ? '⌘J' : 'Ctrl+J';
+      if (key === 'Mod-Shift-Enter') return isMac ? '⌘⇧↩' : 'Ctrl+Shift+Enter';
       if (key === 'Mod-Alt-]') return isMac ? '⌘⌥]' : 'Ctrl+Alt+]';
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
@@ -3379,6 +3385,7 @@
         ['buildShortcut', 'Mod-b'],
         ['libraryShortcut', 'Mod-k'],
         ['paramsShortcut', 'Mod-j'],
+        ['releaseHoldsShortcut', 'Mod-Shift-Enter'],
       ];
       for (const [id, key] of shortcutLabels) {
         const el = document.getElementById(id);
@@ -5994,6 +6001,7 @@
         player.setOnSeq(highlightSeq);
         const playing = player;
         player.setOnTrig((t, code) => logTrig(playing._ir, t, code));
+        player.setOnHold?.((t) => logHold(playing._ir, t));
         // The FM panel tracks live registers via the playback refresh loop
         // (startFmLiveLoop), so no per-PARAM_SET UI callback is needed.
         // Rebuild strips from the IR actually loaded (covers URL/.mmb sources
@@ -6030,6 +6038,17 @@
 
     // A (trig N) cue has no sound, so the log is where it shows: the moment a
     // game polling MMLisp_trig(track) would see the status byte change.
+    // A `:len 0` note stops its track until a key-off (language.md §17), which
+    // in a game is the host's; here it is Tools > Release Holds.
+    function logHold(ir, trackIdx) {
+      const ch = ir?.tracks?.[trackIdx];
+      log(`${ch ? (ch.scoreChannel ?? ch.channel) + ' ' : ''}is holding (:len 0) \u2014 Tools > Release Holds (${formatShortcutLabel('Mod-Shift-Enter')}) plays on`, 'info');
+    }
+    function releaseHoldsAction() {
+      player?.releaseHolds?.();
+    }
+    window.releaseHoldsAction = releaseHoldsAction;
+
     function logTrig(ir, trackIdx, code) {
       const ch = ir?.tracks?.[trackIdx];
       log(`trig ${code}` + (ch ? ` \u2014 ${ch.scoreChannel ?? ch.channel}` : ''), 'info');
@@ -6344,6 +6363,9 @@
       } else if (e.key === 'j' && !e.shiftKey) {
         e.preventDefault();
         toggleParams();
+      } else if (e.key === 'Enter' && e.shiftKey) {
+        e.preventDefault();
+        releaseHoldsAction();
       } else if (e.key === 'Enter') {
         e.preventDefault();
         onPlayToggle();

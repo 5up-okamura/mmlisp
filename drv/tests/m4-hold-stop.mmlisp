@@ -1,0 +1,6 @@
+; `:len 0` stops its track until the host's key-off (language.md §17,
+; driver.md §2.4): the notes after the hold wait, while the other tracks play
+; on. Without a key-off — as here — they never sound, in the driver and the
+; preview alike.
+(fm1 :tempo 120 :alg 7 :ar4 31 :tl4 8 :len 4 c :len 0 e :len 4 g a)
+(sqr1 :len 4 c d e f g a b > c)

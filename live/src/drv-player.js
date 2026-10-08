@@ -2435,6 +2435,20 @@ export class DrvPlayer {
     this._setReg27((this._reg27 & ~0xc0) | this._ch3.mode);
     if (this._ch3.mode & 0x80) this._writeTimerA(this._ch3.timerA);
   }
+  // The host's KEY_OFF (driver.md §6.2) on every channel a hold keys — a
+  // `:len 0` note, whose track then resumes, or a `:gate 0` one — for the live
+  // app's Tools > Release holds. Nothing here that the mailbox does not.
+  releaseHolds() {
+    if (!this._playing) return;
+    const chans = new Set(
+      this._trk.filter((t) => t.running && (t.held || t.gateLeft === -1)).map((t) => t.channelId),
+    );
+    for (const ch of chans) this._mailboxKeyOff(ch);
+  }
+  /** The tracks stopped at a `:len 0` note, waiting for their key-off. */
+  heldTracks() {
+    return this._trk.map((t, i) => (t.running && t.held ? i : -1)).filter((i) => i >= 0);
+  }
   // The host's PLAY_SE / STOP_SE (driver.md §6.5) while a run is on, for the
   // live app's Sound Effects buttons: an effect over the running song, as
   // the game plays one. Nothing here that the mailbox does not.
