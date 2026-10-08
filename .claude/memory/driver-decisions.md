@@ -297,9 +297,7 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   :lfo-rateは使わない"; the compiler refuses them. The rule for any future
   song-wide state: refuse it in def-se, unless it belongs to a channel the
   effect takes, in which case the snapshot carries it.
-- **Open: the SGDK example plays SE (`example/main.c`), but it has not been
-  run on BlastEm or hardware yet** (the user, 2026-10-09). `npm run
-  sgdk:gate:se` is ready.
+- **Open: the SGDK example's SE (`example/main.c`) has not run on hardware.**
 
 **Several songs** (behaviour: `driver.md` §2.3, `mmb.md` §10.2):
 

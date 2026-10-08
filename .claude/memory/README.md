@@ -16,6 +16,10 @@ Rules:
   five driver files merged away on 2026-09-22.
 - If a file describes a build that no longer exists, say so in its first
   sentence or delete it.
+- **Record what is open, never that something was checked.** "Not yet
+  listened to / not run on hardware" is a reminder; once it is done, delete the
+  line — do not reword it into "the user listened and accepted it". A
+  listening verdict stays only as the reason for a decision.
 
 ## Index
 
@@ -29,7 +33,7 @@ Rules:
   multi-bank measurements, and what is open.** Read before touching PCM in any
   layer.
 - [language-open.md](language-open.md) — **the language and IR**: the syntax rulings not to
-  re-propose (no open decisions left as of 2026-10-09), why compile-time eval and the value machine have their shape,
+  re-propose, why compile-time eval and the value machine have their shape,
   and the risks still live.
 - [live-app.md](live-app.md) — **the live app**: why the editing aids, the
   Library panel, the voice picker and the importers have their shape, the

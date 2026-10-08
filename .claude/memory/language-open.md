@@ -1,17 +1,17 @@
-# The language and IR: what is open, and why the value machine looks like this
+# The language and IR: the rulings, and why the value machine looks like this
 
 Two things live here, because a session working on the language needs both:
-**the 2026-09-26 syntax audit's rulings** (§1b; every open question of the
-2026-09-18 audit was decided and built on 2026-10-09) and **the rationale
-behind compile-time eval and the value machine** (§2–§3). `docs/language.md` carries the shipped spec; this is
-only what the docs do not say. Tidied 2026-10-09; the voice picker's PSG
-ruling moved in from `plan-voice-picker`.
+**the 2026-09-26 syntax audit's rulings** (§1) and **the rationale behind
+compile-time eval and the value machine** (§2–§3). `docs/language.md` carries
+the shipped spec; this is only what the docs do not say. A language question
+that needs the user's decision goes in a §1-style list here until it is
+decided and built.
 
 **An item is deleted from here as soon as it is fixed** and the repo carries
 both the outcome and the reason — a second copy of a settled thing can only
 rot.
 
-## 1b. Rulings from the 2026-09-26 syntax audit — do not re-propose
+## 1. Rulings from the 2026-09-26 syntax audit — do not re-propose
 
 The rule behind that audit's rulings: `:key value` is a sticky
 parameter, `(form …)` an event or control, `#name` a position; an operator
@@ -77,5 +77,4 @@ the thing was not a new concept.
    same semantics. The `$` namespace carries several tiers and reserved-name
    checks keep them apart.
 4. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
-   F-number at note boundaries, proven scale-independent. This was the only
-   record of it; the file it used to point at never existed.
+   F-number at note boundaries, proven scale-independent.
