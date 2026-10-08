@@ -25,8 +25,7 @@ rot.
    already holds Timer A; the language has no way to.
 3. **`:len 0` then more events** (§17): the IR/preview play them at the same
    tick; the driver waits for the host KEY_OFF.
-4. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
-5. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
+4. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
    driver** (seen 2026-10-03 while the FM drum kits briefly carried their
    pitch as a `:semi` macro; they now use `def-fm :key`): `drv-player.js`
    writes F-number at the note, key-on, then the macro's frame-0 pitch, all

@@ -349,6 +349,7 @@ function resolveMacroLen(spec, bpm) {
   const len = (n, isFrames) =>
     ticks ? (isFrames ? framesToTicks(n, bpm) : n) : isFrames ? n : ticksToFrames(n, bpm);
   const resolve = (o) => {
+    resolveCurveHold(o, bpm);
     if (o.frames != null && (o.type === "curve" || o.curve)) {
       o.frames = len(o.frames, !!o.lenFrames);
       o.lenFrames = !ticks;
@@ -2342,6 +2343,7 @@ function parseCurveSpec(
   let waitFrames = null;
   let waitKeyOff = false;
   let loopMode = null; // :mode loop / shot; null = the curve's own (§11)
+  let holdLen = null; // :hold as written: { n, frames }
   const params = {};
   let hasParams = false;
   // v0.5 dynamic macro params: $name in :from/:to/:rate records a runtime slot
@@ -2596,12 +2598,14 @@ function parseCurveSpec(
           break;
         }
         case ":hold": {
-          const n = parseIntLike(v);
-          if (n !== null)
-            setParam(
-              "hold",
-              clampWithWarning(n, 1, Number.MAX_SAFE_INTEGER, ":hold"),
-            );
+          // A length (§4): `Nf` frames, else ticks. Becomes a share of :len
+          // (resolveCurveHold) once both are known in one unit.
+          const isFrames = /^\d+f$/.test(String(v));
+          const n = isFrames ? parseInt(v, 10) : parseLengthToken(v, null);
+          if (n > 0) holdLen = { n, frames: isFrames };
+          else if (diagnostics)
+            pushDiag(diagnostics, "error", "E_CURVE_HOLD",
+              `:hold takes a length (8, 16., 3f, 40ms): got ${v}`, src ?? nodeSrc(node), trackName);
           break;
         }
         case ":jitter": {
@@ -2675,6 +2679,27 @@ function parseCurveSpec(
   if (waitKeyOff) spec.waitKeyOff = true;
   if (hasParams) spec.params = params;
   if (hasDyn) spec.dyn = dyn;
+  if (holdLen) {
+    spec.holdLen = holdLen;
+    resolveCurveHold(spec, null);
+  }
+  return spec;
+}
+
+// A stochastic curve's `:hold` (a length) as a share of its `:len`: the phase
+// grid sampleCurveUnit holds the curve on, so the hold is a time, whatever
+// :len and :rate are. In one unit it needs no tempo; frames against ticks wait
+// for the macro's note, whose tempo resolveMacroLen knows.
+function resolveCurveHold(spec, bpm) {
+  const h = spec?.holdLen;
+  if (!h || !(spec.frames > 0) || spec.dyn?.len) return spec;
+  let hold = h.n;
+  if (h.frames !== !!spec.lenFrames) {
+    if (bpm == null) return spec;
+    hold = h.frames ? framesToTicks(h.n, bpm) : ticksToFrames(h.n, bpm);
+  }
+  spec.params = { ...(spec.params ?? {}), hold: hold / spec.frames };
+  delete spec.holdLen;
   return spec;
 }
 

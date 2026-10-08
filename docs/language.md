@@ -1212,7 +1212,7 @@ need the `:from` written (`E_CURVE_FROM`).
 
 | Curves    | Key            | Range     | Default | Meaning                          |
 | --------- | -------------- | --------- | ------- | -------------------------------- |
-| all four  | `:hold`        | int ≥ 1   | `1`     | Sample-and-hold interval         |
+| all four  | `:hold`        | length    | none    | Sample-and-hold: each value is held this long (`8`, `16.`, `3f`), whatever `:len` and `:rate` are; needs a `:len` |
 | all four  | `:jitter`      | 0.0–1.0   | `0.0`   | High-frequency randomness mix    |
 | all four  | `:seed`        | u32       | `0xDEAD`| RNG seed — a distinct sequence per seed (§11.1) |
 | `pink`    | `:beta`        | > 0       | `1.0`   | Spectral tilt                    |
@@ -1246,7 +1246,7 @@ a different run each playback: the same score always moves the same way.
 ```
 
 ```lisp
-(fm1 (macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 2 :leak 0.995))
+(fm1 (macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 16 :leak 0.995))
   c e g e)
 (sqr1 (macro :pitch (pink :from -40 :to 40 :len 8 :beta 1.2 :phase 32))
   c c c c)

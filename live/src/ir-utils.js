@@ -454,15 +454,13 @@ function fract(v) {
   return v - Math.floor(v);
 }
 
-function sampleLut(lut, phase, hold = 1) {
+function sampleLut(lut, phase) {
   if (!lut || lut.length === 0) return phase;
-  const idxRaw = Math.max(
+  const idx = Math.max(
     0,
     Math.min(lut.length - 1, Math.floor(phase * (lut.length - 1))),
   );
-  const holdFrames = Math.max(1, Math.floor(Number(hold) || 1));
-  const idx = Math.floor(idxRaw / holdFrames) * holdFrames;
-  return lut[Math.min(lut.length - 1, idx)];
+  return lut[idx];
 }
 
 function hashUnit01(x) {
@@ -479,8 +477,9 @@ function applySkew(phase, skewRaw) {
   return 0.5 + 0.5 * ((phase - p) / (1 - p));
 }
 
+const STOCHASTIC_HOLD_CURVES = new Set(["noise", "pink", "perlin", "brown"]);
+
 function sampleStochasticCurve(curve, phase, params) {
-  const hold = Math.max(1, Math.floor(Number(params?.hold) || 1));
   const jitter = clamp01(Number(params?.jitter) || 0);
 
   const luts = getStochasticLuts(params?.seed);
@@ -491,19 +490,19 @@ function sampleStochasticCurve(curve, phase, params) {
 
   let base = phase;
   if (curve === "noise") {
-    base = sampleLut(noiseLut, phase, hold);
+    base = sampleLut(noiseLut, phase);
   } else if (curve === "pink") {
     const beta = Math.max(0.1, Number(params?.beta) || 1.0);
-    const pink = sampleLut(pinkLut, phase, hold);
+    const pink = sampleLut(pinkLut, phase);
     if (beta === 1) {
       base = pink;
     } else if (beta < 1) {
       const mix = clamp01(1 - beta);
-      const noise = sampleLut(noiseLut, phase, hold);
+      const noise = sampleLut(noiseLut, phase);
       base = pink * (1 - mix) + noise * mix;
     } else {
       const mix = clamp01(beta - 1);
-      const brown = sampleLut(brownLut, phase, hold);
+      const brown = sampleLut(brownLut, phase);
       base = pink * (1 - mix) + brown * mix;
     }
   } else if (curve === "perlin") {
@@ -518,16 +517,16 @@ function sampleStochasticCurve(curve, phase, params) {
     let freq = 1;
     let norm = 0;
     for (let i = 0; i < octaves; i++) {
-      total += amp * sampleLut(perlinLut, fract(phase * freq), hold);
+      total += amp * sampleLut(perlinLut, fract(phase * freq));
       norm += amp;
       amp *= persistence;
       freq *= lacunarity;
     }
-    base = norm > 0 ? total / norm : sampleLut(perlinLut, phase, hold);
+    base = norm > 0 ? total / norm : sampleLut(perlinLut, phase);
   } else if (curve === "brown") {
     const raw = Number(params?.leak ?? BROWN_DEFAULT_LEAK);
     const leak = Number.isFinite(raw) ? Math.max(0, Math.min(0.9999, raw)) : BROWN_DEFAULT_LEAK;
-    base = sampleLut(brownLutFor(luts, leak), phase, hold);
+    base = sampleLut(brownLutFor(luts, leak), phase);
   }
 
   if (jitter <= 0) return base;
@@ -536,6 +535,12 @@ function sampleStochasticCurve(curve, phase, params) {
 }
 
 export function sampleCurveUnit(curve, phase, params = null) {
+  // A stochastic curve's `:hold`: its share of :len (the compiler's
+  // resolveCurveHold). The time is held on that grid before :rate and :phase,
+  // so each value lasts the hold's length whatever the curve's speed.
+  const hold = Number(params?.hold);
+  if (hold > 0 && STOCHASTIC_HOLD_CURVES.has(curve))
+    phase = Math.floor(phase / hold + 1e-9) * hold;
   const phaseOffset = (Number(params?.phase) || 0) / 256;
   const rate = Number(params?.rate);
   // rate is a phase-speed multiplier: rate 0 freezes the curve at its start

@@ -402,8 +402,8 @@ export const REFERENCE = [
   {
     name: 'noise curves', aliases: ['pink', 'perlin', 'brown', 'random', ':seed', ':hold', ':jitter', ':beta',
       ':octaves', ':lacunarity', ':persistence', ':leak'], cat: 'curves', section: '§11', tracks: null,
-    syntax: '(noise A..B :len L [:seed N])  ·  pink  ·  perlin  ·  brown',
-    summary: 'Random curves, macro only (the driver has no random source for an inline sweep). :seed picks the sequence.',
+    syntax: '(noise A..B :len L [:seed N] [:hold L])  ·  pink  ·  perlin  ·  brown',
+    summary: 'Random curves, macro only (the driver has no random source for an inline sweep). :seed picks the sequence; :hold L keeps each value for the length L.',
     insert: '(macro :pitch (perlin -30..30 :len 8))',
     example: '(sqr1 :oct 5 :len 2 (macro :pitch (brown -40..40 :len 16f :seed 7)) c e)',
   },

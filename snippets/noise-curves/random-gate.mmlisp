@@ -1,14 +1,14 @@
 ; :keyon re-attacks a held note whenever its value is 0.5 or more. Fed with
 ; noise on a 16th grid, about half the steps fire: a generative rhythm from
-; one note per bar. Each :seed is a new pattern, and :hold keeps a value for
-; several samples, so the hits come in runs.
+; one note per bar. Each :seed is a new pattern, and :hold 8 keeps each value
+; for an eighth note — two steps — so the hits come in pairs.
 (import "presets/gm/set.mmlisp")
 
 (fm1 :tempo 118 :oct 3 :len 1 gm-bass-syn2
   (macro :step 16 :keyon (noise 0..1 :len 1 :seed 11))  c
   (macro :step 16 :keyon (noise 0..1 :len 1 :seed 12))  c
   (macro :step 16 :keyon (noise 0..1 :len 1 :seed 13))  a-
-  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 14 :hold 128))  b-)
+  (macro :step 16 :keyon (noise 0..1 :len 1 :seed 14 :hold 8))  b-)
 
 (fm2 :oct 5 :len 1 gm-kalimba :vel 12
   (macro :step 16 :keyon (noise 0..1 :len 1 :seed 21) :semi [#sus 0 7 12]) g
