@@ -1208,6 +1208,17 @@
       padding: 0.15rem 0.5rem;
       cursor: pointer;
     }
+    /* A chip is as wide as its bold label, picked or not, so picking one does
+       not shift the row: a hidden bold copy of the label holds the width. */
+    .lib-chip { display: inline-flex; flex-direction: column; align-items: center; }
+    .lib-chip::after {
+      content: attr(data-label);
+      font-weight: bold;
+      height: 0;
+      overflow: hidden;
+      visibility: hidden;
+      pointer-events: none;
+    }
     .lib-chip:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
     .lib-chip.active {
       background: color-mix(in srgb, var(--foreground) 28%, var(--background));

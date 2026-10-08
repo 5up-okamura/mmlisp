@@ -6533,6 +6533,7 @@
 
     function initLibrary() {
       const box = document.getElementById('libSearch');
+      for (const chip of document.querySelectorAll('#libraryPane .lib-chip')) chip.dataset.label = chip.textContent;
       _libList = createCatalogList({
         list: document.getElementById('libList'),
         note: document.getElementById('libNote'),
