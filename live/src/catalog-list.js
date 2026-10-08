@@ -18,6 +18,22 @@
 // or A–Z order makes it one flat list, ranked as the completion ranks names:
 // a prefix of the name, then anywhere in the name, then the description.
 
+// Text with the play mark drawn the same everywhere: each ▶ in `text` becomes
+// the .ico-play shape (style.css) rather than the platform's glyph, which some
+// systems draw as a colour emoji. Text nodes only — nothing is parsed as HTML.
+export function setTextWithIcons(el, text) {
+  el.textContent = '';
+  String(text ?? '').split('\u25b6').forEach((part, i) => {
+    if (i > 0) {
+      const icon = document.createElement('span');
+      icon.className = 'ico-play';
+      icon.setAttribute('aria-label', 'play');
+      el.appendChild(icon);
+    }
+    if (part) el.appendChild(document.createTextNode(part));
+  });
+}
+
 export function createCatalogList({ list, note, hint = () => '', onHighlight = () => {} }) {
   let items = [];
   let groupActions = {};
@@ -64,7 +80,7 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
   function button(label, title, run) {
     const b = document.createElement('button');
     b.className = 'lib-mini';
-    b.textContent = label;
+    setTextWithIcons(b, label);
     if (title) b.title = title;
     b.onclick = (e) => { e.stopPropagation(); run(); };
     return b;
@@ -138,12 +154,12 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
   }
 
   function highlight(i, scroll = true) {
-    if (rows.length === 0) { at = -1; note.textContent = hint(null); onHighlight(null); return; }
+    if (rows.length === 0) { at = -1; setTextWithIcons(note, hint(null)); onHighlight(null); return; }
     at = Math.max(0, Math.min(rows.length - 1, i));
     rows.forEach((r, n) => r.el.classList.toggle('active', n === at));
     if (scroll) rows[at].el.scrollIntoView({ block: 'nearest' });
     const item = rows[at].item ?? null;
-    note.textContent = item?.detail || item?.about || hint(item);
+    setTextWithIcons(note, item?.detail || item?.about || hint(item));
     onHighlight(item);
   }
 

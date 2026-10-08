@@ -686,7 +686,7 @@
     import { decodeWav } from './src/wav-decode.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
-    import { createCatalogList } from './src/catalog-list.js';
+    import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
     import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
     import { precacheApp } from './src/offline-cache.js';
@@ -6402,7 +6402,7 @@
     }
 
     function setBrowseNote(text) {
-      document.getElementById('libNote').textContent = text;
+      setTextWithIcons(document.getElementById('libNote'), text);
     }
 
     // ---- the panel's tabs and the Library list -----------------------------

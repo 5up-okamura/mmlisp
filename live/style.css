@@ -1142,6 +1142,19 @@
     .ref-card-syntax { font-weight: bold; margin-bottom: 0.2rem; white-space: pre-wrap; }
     .ref-card-summary { opacity: 0.85; }
 
+    /* The play mark, drawn as the toolbar's own triangle (an SVG mask) so it
+       looks the same on every platform — never the colour emoji some systems
+       substitute for ▶. Sized to the text it sits in; painted in its colour. */
+    .ico-play {
+      display: inline-block;
+      width: 0.62em;
+      height: 0.62em;
+      vertical-align: 0.02em;
+      background: currentColor;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolygon points='1,0 10,5 1,10'/%3E%3C/svg%3E") center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolygon points='1,0 10,5 1,10'/%3E%3C/svg%3E") center / contain no-repeat;
+    }
+
     /* Side panel tabs: Params | Library */
     .panel-tabs {
       display: flex;
