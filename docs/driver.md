@@ -1324,7 +1324,12 @@ In the frame loop (§4 step 3, after the sweep engines), each running macro:
 A `:vel` macro owns the note's level, so a note-on composes from the macro's
 first sample (the one that lands in the same frame), not from a stale velocity
 it would then overwrite; with no first sample (a leading hold) the note takes
-its own velocity. On PSG, whose level *is* the envelope, a `:vel` or `:vol`
+its own velocity. **Pitch goes the same way**: the note-on writes the pitch
+the note sounds from — the first sample of a bound `:semi` / `:pitch` macro
+(the later bind winning, as in step 3), over the value a NOTE_PITCH sweep
+(a glide) writes this frame — before its key-on, so the key-on never sounds
+the plain note first; step 3 then writes the same value. An `fm3-N` note's
+pitch arrives by FM3_OP_PITCH ahead of it and keeps that order. On PSG, whose level *is* the envelope, a `:vel` or `:vol`
 release is the note's decay: key-off leaves the attenuation to it rather than
 silencing the channel, and the step after the release's last sample silences
 it.

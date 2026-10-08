@@ -21,18 +21,6 @@ rot.
    rate-track rest, or `:vol 0` meaning something to CSM (TL is the attack's
    start level in this mode, not an attenuation). The preview's mixer mute
    already holds Timer A; the language has no way to.
-2. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
-   driver** (seen 2026-10-03 while the FM drum kits briefly carried their
-   pitch as a `:semi` macro; they now use `def-fm :key`): `drv-player.js`
-   writes F-number at the note, key-on, then the macro's frame-0 pitch, all
-   in one frame; the preview writes the macro's pitch before the key-on. On
-   hardware that is the pair transport's spacing of two writes —
-   microseconds at the wrong pitch — but the orders differ. Decide whether
-   the sequencer should run a note's frame-0 macros before its key-on. A PSG
-   glide shows the same thing (seen 2026-10-09 building `m4-glide-lag`): the
-   driver writes the note's plain tone, then the glide's start, in the key-on
-   frame, and the preview runs a frame ahead — most of that score's PSG A/B
-   mismatches, frozen in the baseline.
 
 ## 1b. Rulings from the 2026-09-26 syntax audit — do not re-propose
 

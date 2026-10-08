@@ -2099,9 +2099,12 @@ export class IRPlayer {
         // FM3 operator notes had their F-number written by FM3_OP_PITCH.
         const writesBasePitch = !isFm3OpNote;
         if (writesBasePitch) {
-          // Write F-number high first (block + MSB), then low
-          this._writeFmFnum(port, chOffset, fnum, block, when);
+          // The note's pitch macros go first: when one's first sample lands
+          // on the note, that is the pitch it sounds from, and the plain one is
+          // never written — as the driver's note-on (onset_pitch) does.
+          let onsetWritten = false;
           const basePitchWrite = (centOffset, t) => {
+            if (Math.abs(t - when) < 1e-9) onsetWritten = true;
             const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
             this._writeFmFnum(port, chOffset, fnum, block, t);
           };
@@ -2122,6 +2125,8 @@ export class IRPlayer {
             macroLimit,
             fmOffset,
           );
+          // Write F-number high first (block + MSB), then low
+          if (!onsetWritten) this._writeFmFnum(port, chOffset, fnum, block, when);
         } else {
           // FM3 operator note: FM3_OP_PITCH already wrote this operator's
           // F-number with its sticky :pitch offset; its pitch / semi macros
@@ -4524,9 +4529,13 @@ export class IRPlayer {
             when,
             this._psgPitchOffset[psgCh] ?? 0,
           );
-          this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
-          const psgPitchWrite = (centOffset, t) =>
+          // Pitch macros first, as on FM: a first sample on the note is the
+          // pitch it sounds from (the driver's onset_pitch).
+          let onsetWritten = false;
+          const psgPitchWrite = (centOffset, t) => {
+            if (Math.abs(t - when) < 1e-9) onsetWritten = true;
             this._psgSetPitch(psgCh, midi + centOffset / 100, t);
+          };
           const psgOffset = () => this._psgPitchOffset[psgCh] ?? 0;
           this._schedulePitchMacro(
             ev.args?.pitchMacro,
@@ -4544,6 +4553,7 @@ export class IRPlayer {
             psgMacroLimit,
             psgOffset,
           );
+          if (!onsetWritten) this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
         } else {
           this._psgTriggerNoise(when);
           this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);

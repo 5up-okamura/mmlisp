@@ -904,6 +904,41 @@ export class DrvPlayer {
     }
   }
 
+  // The pitch a note sounds from its key-on (driver.md §13.1): a NOTE_PITCH
+  // sweep (a glide) and the bound :semi / :pitch macros write this frame's
+  // pitch in step 3, after the key-on — so the note-on writes it itself, and
+  // the key-on never sounds the plain note first; step 3 then writes the same.
+  // The sweep's value is the one step 3 is about to write (sub-tick 0 only:
+  // past it, step 3 has run and `cents` holds what it wrote); the macros' is
+  // their first sample, the later bind winning as in step 3. As
+  // _restoreLevelBase does for a level. Mirrors mmlispseq.c onset_pitch.
+  _onsetPitch(ch, note, cents) {
+    const bank = this._sweepBank(ch);
+    if (this._sub === 0 && bank >= 0) {
+      for (const sw of this._sweeps[bank]) {
+        if (!sw || sw.target !== TARGET_ID.NOTE_PITCH) continue;
+        cents = !sw.loop && sw.frame >= sw.len - 1
+          ? sw.to
+          : sweepValue(sw.from, sw.to, curveUnit8(sw.curveId, sw.phase16 >> 8));
+      }
+    }
+    const base = cents;
+    const n0 = note;
+    const mc = this._macroCh(ch);
+    for (const [target, macroId] of mc >= 0 ? this._macroActive[mc] ?? [] : []) {
+      if (target !== TARGET_ID.NOTE_SEMI && target !== TARGET_ID.NOTE_PITCH) continue;
+      const d = this._macros[macroId];
+      if (!d || d.release === 0) continue;
+      let v = d.values[0];
+      if (v === null || v === undefined) continue;
+      if (d.scaleSlot != null) v = scaleMacroSample(v, this._readSlot(d.scaleSlot));
+      const add = (d.flags & 2) !== 0;
+      if (target === TARGET_ID.NOTE_SEMI) [note, cents] = [n0 + v, add ? base : 0];
+      else [note, cents] = [n0, (add ? base : 0) + v];
+    }
+    return [note, cents];
+  }
+
   // ── NOTE_ON execution ────────────────────────────────────────────────────
   // `legato` (NOTE_ON_EX bit3, a slur to a different pitch): update the frequency
   // and recompose levels/macros but do NOT re-key — the FM envelope (or the PSG
@@ -938,7 +973,7 @@ export class DrvPlayer {
       // Carrier TL from voiced levels + vel/vol/master (every note, so a
       // level change always lands; matches the IR player).
       this._recomposeCarriers(ch);
-      this._writeFmPitch(ch, note, regs.pitchCents);
+      this._writeFmPitch(ch, ...this._onsetPitch(ch, note, regs.pitchCents));
       if (!legato && audible) this._keyOn(ch);
     } else if (ch < 10) {
       const psgCh = ch - 6;
@@ -946,7 +981,7 @@ export class DrvPlayer {
       st.currentNote = note;
       if (!legato && audible) st.keyed = true; // the note is active
       if (psgCh === 3) this._writeNoiseCfg();
-      else this._writePsgPitch(psgCh, note, st.pitchCents);
+      else this._writePsgPitch(psgCh, ...this._onsetPitch(ch, note, st.pitchCents));
       // Legato: keep the tone sounding (att = the PSG "key"); just the frequency
       // moved. A non-sounding channel still needs its attenuation to start.
       if (audible && (!legato || !st.sounding))

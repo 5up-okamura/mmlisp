@@ -1648,6 +1648,45 @@ static void store_vel(MMLSeq *s, int ch, int value) {
 }
 
 /* `ex_vel` < 0 means "no per-note velocity" — take the sticky base. */
+/* The pitch a note sounds from its key-on (driver.md §13.1). A NOTE_PITCH
+ * sweep (a glide) and the bound :semi / :pitch macros write this frame's pitch
+ * in step 3, after the key-on — so the note-on writes that pitch itself, and
+ * the key-on never sounds the plain note first; step 3 then writes the same.
+ * The sweep's value is the one step 3 is about to write (at sub-tick 0 only:
+ * past it, step 3 has run and `cents` already holds what it wrote); the
+ * macros' is their first sample, the later bind winning as in step 3. As
+ * restore_level_base does for a level. Mirrors drv-player.js _onsetPitch. */
+static void onset_pitch(MMLSeq *s, int ch, int *note, int *cents) {
+  int bank = sweep_bank(ch);
+  for (int i = 0; s->sub == 0 && bank >= 0 && i < 2; i++) {
+    const MMLSweep *sw = &s->sweeps[bank][i];
+    if (!sw->active || sw->target != T_NOTE_PITCH) continue;
+    *cents = (!sw->loop && sw->frame >= sw->len - 1)
+                 ? sw->to
+                 : sweep_value(sw->from, sw->to, curve_unit8(sw->curve_id, sw->phase16 >> 8));
+  }
+  int base = *cents, n0 = *note;
+  int mc = macro_ch(ch);
+  for (int i = 0; mc >= 0 && i < s->bind_count[mc]; i++) {
+    int tg = s->binds[mc][i].target;
+    if (tg != T_NOTE_SEMI && tg != T_NOTE_PITCH) continue;
+    MMLMacro d;
+    int hold = 1;
+    if (!macro_desc(s, s->binds[mc][i].macro_id, &d) || d.release == 0) continue;
+    int v = macro_value(&d, 0, &hold);
+    if (hold) continue;
+    if (d.has_scale) v = scale_macro_sample(v, read_slot(s, d.scale_slot));
+    int add = (d.flags & 2) != 0;
+    if (tg == T_NOTE_SEMI) {
+      *note = n0 + v;
+      *cents = add ? base : 0;
+    } else {
+      *note = n0;
+      *cents = (add ? base : 0) + v;
+    }
+  }
+}
+
 static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_gate,
                     int has_ex_gate, int legato, int ex_vel) {
   int ch = t->channel_id;
@@ -1674,7 +1713,9 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
     /* Carrier TL is recomposed on every note, so a level change between notes
      * always lands (matching the IR player). */
     recompose_carriers(s, ch);
-    write_fm_pitch(s, ch, note, c->pitch_cents);
+    int n = note, cents = c->pitch_cents;
+    onset_pitch(s, ch, &n, &cents);
+    write_fm_pitch(s, ch, n, cents);
     if (!legato) key_on(s, ch);
   } else if (ch < 10) {
     int pc = ch - 6;
@@ -1682,7 +1723,11 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
     st->current_note = (uint8_t)note;
     if (!legato) st->keyed = 1;
     if (pc == 3) write_noise_cfg(s);
-    else write_psg_pitch(s, pc, note, st->pitch_cents);
+    else {
+      int n = note, cents = st->pitch_cents;
+      onset_pitch(s, ch, &n, &cents);
+      write_psg_pitch(s, pc, n, cents);
+    }
     /* Legato keeps the tone sounding — the attenuation IS the PSG's key — but a
      * silent channel still has to start its attenuation. */
     if (!legato || !st->sounding) write_psg_att(s, pc, psg_att(s, st->vel, st->vol));

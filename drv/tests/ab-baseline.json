@@ -55,9 +55,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 299,
+    "mismatches": 296,
     "compileErrors": 0,
-    "digest": "3c331309"
+    "digest": "83f201fa"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -343,9 +343,9 @@
   },
   "m4-glide-lag.mmlisp": {
     "ok": false,
-    "mismatches": 72,
+    "mismatches": 19,
     "compileErrors": 0,
-    "digest": "0064a758"
+    "digest": "7031c340"
   },
   "m4-hold-stop.mmlisp": {
     "ok": true,
@@ -517,9 +517,9 @@
   },
   "p3-claim-evict.mmlisp": {
     "ok": false,
-    "mismatches": 265,
+    "mismatches": 264,
     "compileErrors": 0,
-    "digest": "62c87907"
+    "digest": "ef86fad3"
   },
   "p3-claim-se-in-twin.mmlisp": {
     "ok": true,
@@ -529,9 +529,9 @@
   },
   "p3-claim-se-in.mmlisp": {
     "ok": false,
-    "mismatches": 265,
+    "mismatches": 264,
     "compileErrors": 0,
-    "digest": "62c87907"
+    "digest": "ef86fad3"
   },
   "p3-claim-se-out-twin.mmlisp": {
     "ok": true,
