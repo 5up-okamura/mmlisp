@@ -61,3 +61,13 @@ user's decisions and their reasons; nothing is open.
    reference — they hold sub-params (`:threshold`) no entry is written for —
    but moved to `completion-names.js` and held to it by `check:reference`
    (every word they offer must have an entry by name, alias or prefix).
+
+## Open
+
+- **A sample does not sound while the song plays** (keys or ▶): an audition
+  loads its own bank into the worklet's one PCM engine, which would break the
+  song's PCM, so it refuses ("Stop playback first"). The fix discussed is a
+  small audition-only sample player in the worklet, apart from the engine
+  (not the driver's sound, but enough to try a sample). Deferred by the user,
+  2026-10-08 — the keys otherwise always sound now (one voice, score errors
+  ignored).
