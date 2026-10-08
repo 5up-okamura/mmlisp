@@ -1171,7 +1171,7 @@ formats `File > Import` accepts:
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
 the score's folder with its name filled in, until it is written (also
-`File > Export > Imported Samples…`); a VGM's DAC samples arrive the same
+`File > Export > Imported…`); a VGM's DAC samples arrive the same
 way (below). A song that uses both part J and the drums arrives with its
 `fm6` lines commented out — on the Mega Drive fm6 is the DAC the drums play
 through; move them to a free channel to hear them. NTSC and PAL drum

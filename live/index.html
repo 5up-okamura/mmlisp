@@ -207,10 +207,14 @@
           </button>
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="exportMmb();closeMenus()">MMB…</button>
+            <div class="menu-sep"></div>
+            <div class="menu-label">Recording</div>
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
             <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
             <button class="menu-item" onclick="openVideoExport();closeMenus()">Video…</button>
-            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">Imported Samples…</button>
+            <div class="menu-sep"></div>
+            <div class="menu-label">Samples</div>
+            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">Imported…</button>
           </div>
         </div>
         <div class="menu-sep"></div>
@@ -2860,7 +2864,7 @@
       // folder — so seed the decode cache under the key `:file` resolves to (a
       // bare name, since there is no base dir). The song then plays immediately;
       // saving the wav beside the score is what makes it survive a reload.
-      _mucomPcm = pcm; // for File ▸ Export ▸ Imported Samples…, and Save
+      _mucomPcm = pcm; // for File ▸ Export ▸ Imported…, and Save
       _mucomPcmUnsaved = !!pcm;
       if (pcm) {
         _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate });
@@ -3280,10 +3284,10 @@
         return true;
       } catch (e) {
         if (e?.name === 'AbortError') {
-          log(`${pcm.tag ?? 'mucom88'}: ${pcm.wavFile} not saved — the samples live only in memory until it is (File ▸ Export ▸ Imported Samples…)`, 'info');
+          log(`${pcm.tag ?? 'mucom88'}: ${pcm.wavFile} not saved — the samples live only in memory until it is (File ▸ Export ▸ Imported…)`, 'info');
         } else {
           // A picker opened without a fresh user gesture is refused (SecurityError).
-          log(`${pcm.tag ?? 'mucom88'}: saving ${pcm.wavFile} failed: ${e?.message || e} — use File ▸ Export ▸ Imported Samples…`, 'err');
+          log(`${pcm.tag ?? 'mucom88'}: saving ${pcm.wavFile} failed: ${e?.message || e} — use File ▸ Export ▸ Imported…`, 'err');
         }
         return false;
       }
