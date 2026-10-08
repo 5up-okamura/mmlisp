@@ -7861,7 +7861,9 @@
     let _pcmReleasedSeq = 0;
     async function previewPcmNoteOn(midi, vel = 15) {
       // Library's highlighted sample bakes from its own set; otherwise the
-      // def under the cursor, from the score as written.
+      // def under the cursor, from the score as written. An audition owes the
+      // score nothing: it always bakes for one voice (the engine's best rate),
+      // and an error elsewhere in the score does not keep the def from sounding.
       const lib = libraryKeyTarget();
       const libSample = lib?.kind === 'pcm' ? lib : null;
       const name = libSample ? libSample.def.name : _pcmCursorDef;
@@ -7876,17 +7878,19 @@
           ? compileMMLisp(`(import "${libSample.set.path}")\n`, 'browse-preview.mmlisp',
             { imports: new Map([[libSample.set.path, libSample.set.text]]) })
           : compileMMLisp(editorView.state.doc.toString(), _lastFileName, { imports: _importSources });
-        const err = diagnostics.find((d) => d.severity === 'error');
-        if (err) throw new Error(`${err.code} ${err.message}`);
         const def = ir.metadata.samples.find((d) => d.name === name);
-        if (!def) return;
-        const samples = await pcmSampleBlobsForMmb(ir, new Set([name]));
+        if (!def) {
+          const err = diagnostics.find((d) => d.severity === 'error');
+          throw new Error(err ? `${err.code} ${err.message}` : `"${name}" is not a sample`);
+        }
+        const one = { ...ir, metadata: { ...ir.metadata, pcmVoices: 1 } };
+        const samples = await pcmSampleBlobsForMmb(one, new Set([name]));
         if (!samples) throw new Error(`"${name}" did not load`);
         const loop = def.startSec != null || def.endSec != null;
         if (seq !== _pcmAuditionSeq || (loop && _pcmReleasedSeq === seq)) return; // superseded or let go
-        const { sampleBank, entryIds } = bakeAuditionBank(ir, samples, name, midi);
+        const { sampleBank, entryIds } = bakeAuditionBank(one, samples, name, midi);
         workletNode.port.postMessage({
-          type: 'pcm-set-bank', bank: sampleBank, pcmVoices: ir.metadata.pcmVoices ?? 1, entryIds,
+          type: 'pcm-set-bank', bank: sampleBank, pcmVoices: 1, entryIds,
         });
         workletNode.port.postMessage({
           type: 'pcm-ev', kind: 'on', voice: 0, track: 0, sample: name, midi,
