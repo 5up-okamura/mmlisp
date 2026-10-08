@@ -11,7 +11,7 @@ leading comment says what it shows, and the panel displays it.
 - **Write a snippet as if it sat at the site root**, next to a new score:
   imports read `presets/…`. The panel compiles it under its bare name, so the
   same text resolves whether it is played, opened or inserted.
-- Use drum names both kits have (`kick`, `snare`, `hat`, `hat-open`, `rim`,
-  `crash`, `tom1`–`tom6`, …) when you can, so a score importing either kit can
-  take the snippet in.
+- Use drum names every PCM kit has (`kick`, `snare`, `hat`) when you can, so a
+  score importing any kit can take the snippet in; `tr808`, `gm-drums` and
+  `rx5` also share `hat-open`, `rim`, `crash` and `tom1`–`tom6`.
 - Comments are English, and the first sentence is the summary.

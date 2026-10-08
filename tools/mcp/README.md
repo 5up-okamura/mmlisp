@@ -14,7 +14,7 @@ dependencies (Node 18+).
 | `mmlisp_ir`       | Compile and return the IR JSON (optionally one track)                        |
 | `mmlisp_format`   | The editor's formatter; with `path` + `write` rewrites the file              |
 | `mmlisp_live`     | A share link that opens the score in MMLisp Live, ready to play and edit     |
-| `mmlisp_render`   | WAV (FM + PSG, no PCM) and its levels — peak, RMS, clipping, silence         |
+| `mmlisp_render`   | WAV (FM + PSG + PCM) and its levels — peak, RMS, clipping, silence           |
 | `mmlisp_docs`     | `cheatsheet` whole; `language` / `guide` / `ir` / `roadmap`: contents, one section, or a search; `reference`: one entry per feature, by word (`query`) or category (`section`) |
 | `live_status`     | Whether MMLisp Live is connected (below), and how the user connects it       |
 | `live_read`       | The score open in the user's editor: text, cursor, selection, diagnostics    |
@@ -57,8 +57,9 @@ user a Live link or a WAV — or, with the bridge on, work in the user's editor.
 
 ## Sending a score to MMLisp Live
 
-`mmlisp_live` makes the link File > Share… makes: the source, deflate-raw +
-base64url, in the URL fragment — nothing is uploaded, and opening it loads the
+`mmlisp_live` makes the long form of File > Share…'s link (the one Share falls
+back to without its link store): the source, deflate-raw + base64url, in the
+URL fragment — nothing is uploaded, and opening it loads the
 score as a new unsaved one with a Play button. It points at
 https://mmlisp.vercel.app/ unless `base` or the `MMLISP_LIVE_URL` environment
 variable says otherwise (`http://localhost:5173/live/` for `npm run serve`).
@@ -103,8 +104,7 @@ starts before the old one exits, connects on its own.
 
 ## Limits
 
-- The WAV has no PCM (the editor's WAV export has the same scope); a PCM
-  track's events are counted, not rendered.
+- PCM events whose samples cannot be loaded are counted, not rendered.
 - The model cannot hear the result — levels only catch silence and clipping.
   Listening, and playing it in the live app, stays with the user.
 - The bridge needs the AI client and the browser on the same computer; a

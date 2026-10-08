@@ -29,7 +29,8 @@ out/                  gate reports, scratch projects, the built BlastEm (git-ign
 
 ```
 cd drv
-node tools/emit-bin.mjs          # engine image → sgdk/mmlispdrv.{bin,_bin.h}
+node tools/emit-bin.mjs          # the engine images → sgdk/mmlispdrv_bin.h
+node tools/emit-banked.mjs       # the multi-bank images → sgdk/mmlispdrv_banked_bin.h + 68k/mml_banked_rate.h
 node tools/gen-c-tables.mjs      # 68k/tables.c + 68k/mml_rate.h
 node tools/install-sgdk.mjs <project> [--song score.mmlisp]   # into an SGDK project
 node tools/mmb-build.mjs score.mmlisp song.mmb                # a score on its own
@@ -49,8 +50,10 @@ npm run verify:all
 | --- | --- |
 | `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same engine images, and the two generated files are what the images build to now |
 | `selftest` | the assembler and the emulator against their own cases |
+| `voice-hoist` | the voice-hoist pass moves time, never notes: every onset stays put and every moved voice write lands in silence, over the corpus and the SGDK example |
 | `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, over every score in the corpus (the gate prints the count it ran) |
 | `c-gate:pal` | the same corpus on PAL-baked streams — the sequencer reads no frame rate, and this is what keeps it that way |
+| `claim-gate` (and `:pal`) | a channel changes hands cleanly: modulators do not outlive their owner, and a part an effect displaced comes back exactly when the effect ends (driver.md §2.2, §2.5) |
 | `pairs-gate` | `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
 | `engine:gate` | the three engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
@@ -84,14 +87,17 @@ the images' periods come from).
 | `z80asm.mjs`, `z80cpu.mjs`, `selftest.mjs` | first-party Z80 assembler and emulator (documented T-states, including the memory cycle every `(HL)` operand pays) |
 | `machine.mjs` | the Mega Drive slice the engine runs in: YM2612 ports with a timer model from the chip, the bank register, PSG, the 68000's bus grab as injected stopped time |
 | `probe-analysis.mjs` | reading the probe BlastEm's event log |
-| `build-engine.mjs`, `emit-bin.mjs` | assemble the generated engine; emit the image and its header |
+| `build-engine.mjs`, `emit-bin.mjs` | assemble the generated engine; emit the images' header |
+| `build-multibank.mjs`, `emit-banked.mjs`, `multibank-*.mjs` | the multi-bank engine: build, emit its headers, model, run and render it |
+| `bundle.mjs` | several scores against one sample bank (a game's songs) |
 | `emit-images.mjs` | the light images' descriptors into `live/src/engine-images.js` |
 | `gen-c-tables.mjs`, `c-tables.mjs` | the sequencer's tables — into the tree, or into a gate's temp directory |
 | `mmb-build.mjs`, `wav.mjs` | `.mmlisp` → MMB (+ sample bank) through the live toolchain |
 | `pairs-model.mjs` | the JS twin of `mmlpairs.c` |
-| `c-gate.mjs`, `pairs-gate.mjs`, `engine-*-gate.mjs`, `ab-gate.mjs`, `glide-gate.mjs`, `pcm-ab-gate.mjs`, `rate-mirrors.mjs` | the gates above |
+| `c-gate.mjs`, `pairs-gate.mjs`, `engine-*-gate.mjs`, `ab-gate.mjs`, `glide-gate.mjs`, `claim-gate.mjs`, `voice-hoist-gate.mjs`, `pal-gate.mjs`, `pcm-ab-gate.mjs`, `pcm-loop-gate.mjs`, `banked-export-gate.mjs`, `multibank-gate.mjs`, `rate-mirrors.mjs` | the gates above |
 | `light-study.mjs` | the image-rate study |
 | `pcm-render.mjs` | a score's PCM through the engine model, as a WAV at the image's rate |
+| `onset-timing.mjs` | how late each FM key-on reaches the chip through the light engine, and what the frames ahead of it held |
 | `sgdk-project.mjs`, `sgdk-gate.mjs`, `sgdk-profile.mjs`, `sgdk-lint.mjs`, `sgdk-shim/` | the SGDK build path and its gates |
 | `install-sgdk.mjs` | install the driver into an SGDK project |
 

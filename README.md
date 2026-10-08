@@ -122,8 +122,8 @@ three PCM voices on it, and puts the FM writes on the YM2612 between samples
 
 It plays FM + PSG voices and the full level model, motion (sweeps / glide /
 vibrato / tempo ramps), FM3 independent-operator mode and CSM, the macro
-engine, dynamic value slots, and PCM with loop points that move while a note
-plays. Sound effects are not on the hardware driver yet (driver.md §11).
+engine, dynamic value slots, PCM with loop points that move while a note
+plays, and sound effects (`def-se`, played by the game with `MMLisp_playSe`).
 
 It's built reference-first: a JS implementation (`drv-player.js`) validated in
 MMLisp Live, then a C sequencer whose **every register write is checked
@@ -174,8 +174,8 @@ File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 - [docs/ir.md](docs/ir.md) — IR JSON reference (compiler output)
 - [docs/mmb.md](docs/mmb.md) — MMB binary container format
 - [docs/opcodes.md](docs/opcodes.md) — MMB opcode and target tables
-- [docs/driver.md](docs/driver.md) — MMLispDRV architecture and milestones
-- [docs/roadmap.md](docs/roadmap.md) — project roadmap and version history
+- [docs/driver.md](docs/driver.md) — MMLispDRV architecture and verification
+- [docs/roadmap.md](docs/roadmap.md) — what is still ahead
 
 ## MMLisp Live — Keyboard Shortcuts
 

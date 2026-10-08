@@ -25,9 +25,10 @@ The notes and the power chord play the pitch written: each `:rate` puts the
 recording at its own octave, so `:oct 2 c` on `bass-elec` is C2, as
 recorded. The strums are chords and play as recorded on `:oct 4 c`. Every
 note a score plays is baked into the sample bank on its own, and a note
-below the recording bakes longer (an octave down, twice the bytes); the bank
-holds 32 KB a song, so a bass line over many pitches fills it quickly —
-shorten a sample with `:frames` when a score needs room.
+below the recording bakes longer (an octave down, twice the bytes). A score
+that outgrows one 32 KB bank goes multi-bank at a lower rate, and each baked
+note must fit one bank (language.md §16) — shorten a sample with `:frames`
+when a low note does not.
 
 ## Sources
 

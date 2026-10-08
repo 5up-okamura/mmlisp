@@ -32,7 +32,7 @@ env-snare        an eleven-frame burst, for the noise channel
 vib              ±25 cents, five a second, from the start
 vib-delay        ±15 cents after eight frames
 slide-up         the pitch rises three semitones into the note
-drop             the pitch falls an octave over eight frames
+drop             the pitch falls eight semitones over eight frames
 ```
 
 A MIDI import puts these on the notes it sends to a PSG channel, chosen by

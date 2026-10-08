@@ -59,5 +59,5 @@
 ; Slide up: the pitch rises three semitones into the note over four frames
 (def slide-up (macro :pitch [-300 -200 -100 -50 0]))
 
-; Drop: the pitch falls an octave over eight frames — a tom, or a zap
+; Drop: the pitch falls eight semitones over eight frames — a tom, or a zap
 (def drop (macro :pitch [0 -50 -100 -200 -300 -450 -600 -800]))

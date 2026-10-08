@@ -18,9 +18,10 @@ pizz        a violin section pizzicato, C5                0.35 s
 The hits and the timpani sound as recorded on `:oct 4 c`, and other notes
 retune them. `pizz` plays the pitch written: its `:rate` puts the C5 it was
 recorded at on `:oct 5 c`. Every note a
-score plays is baked into the sample bank on its own, and the bank holds
-32 KB a song, so a long sample used at many pitches fills it quickly — trim
-one with `:frames` when a score needs room.
+score plays is baked into the sample bank on its own: a score that outgrows
+one 32 KB bank goes multi-bank at a lower rate, and each baked note must fit
+one bank (language.md §16) — trim a long sample with `:frames` when it does
+not.
 
 ## Sources
 

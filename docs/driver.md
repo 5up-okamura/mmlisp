@@ -99,12 +99,11 @@ the decay tail (§13.2). Claiming is the line, because the new owner is a
 different part.
 
 **Exception — the FM3 shared channel.** Channel 2 is exempt from eviction:
-in FM3 independent-OP mode the note-less `(fm3 …)` voice track and the
-`fm3-1` operator track legitimately coexist on it (§13.4), so a second
-track claiming channel 2 keeps both rather than releasing the first. The
-first claimant owns the shared level state; later ones only key their
-operator. (`fm3-1`–`fm3-4` live on ids 16-19, which carry no channel block
-and never arbitrate.)
+`fm3`, `fm3-csm` and `fm3-csm-rate` all sit on it and legitimately coexist
+(§13.4, §9), so a second track claiming channel 2 keeps both rather than
+releasing the first; CH3 is arbitrated as one group (`ch3_group`). The
+first claimant owns the shared level state. (`fm3-1`–`fm3-4` live on ids
+16-19, which carry no channel block and never arbitrate.)
 
 ### 2.3 Layering and scene transitions
 
@@ -488,7 +487,7 @@ PCM voices have their own state (§14).
 | voiced TL × 4 ops | level-composition base |
 | fade counters | Bresenham N/V/err/cur + frames-left |
 | sweep engine | 2 slots × {target, curve, flags, phase, from, to, len, step} |
-| macro engine | 3 active-macro ids + 3 running slots × {descriptor idx, step clock, cursor, state} (§13) |
+| macro engine | up to 8 binds + 8 running slots × {descriptor idx, step clock, cursor, state} (`MML_MACRO_BINDS`; the exporter budgets 3, §13) |
 
 **Track control block**, one per active track; `MML_MAX_TRACKS` = 32 — a
 song's 16 (one a channel) and as many effect parts again.
@@ -758,8 +757,8 @@ Every control call takes effect on the next frame rendered (§3.4).
   must not overtake). A grab drains the released lane before any FM pair, so
   a start waits for the frames before it but never behind an FM backlog: the
   host takes a frame uncapped, a voice change over six channels is ~200
-  pairs, twelve grabs, and behind it a start waited 8–18 frames
-  (`engine:score` LATENCY holds every start within 4, ~2.3 typical).
+  pairs, twelve grabs (`engine:score` LATENCY holds every start within 4,
+  ~2.3 typical).
   PSG bytes go to a queue the
   pumps write to `$C00011` one grab period late, so they land with the FM they
   were cued with. A command for a voice the booted image does not have is a
@@ -775,7 +774,7 @@ Every control call takes effect on the next frame rendered (§3.4).
   behind pairs not yet read and never across the page end. If the fresh index
   shows the engine already at or past `H`, the grab writes nothing and the
   pairs go back to the queue (a late grab; `MMLispStats.late`). 960 pairs a
-  second — the same wire two grabs of eight carried, in half the stops.
+  second.
 - **Release on time.** The converter remembers where each queued frame ends; a
   grab sends only frames whose time has come, so the tempo follows the video
   clock rather than the main loop.
@@ -934,8 +933,9 @@ The rate of overflows is the pitch; where the operators ring is the formant.
 
 - The compiler emits `CSM_ON` once at the start and `CSM_OFF` only at
   **end-of-stream** of an fm3-csm track; mid-track rests do **not** toggle
-  the CSM bit (Timer A just keeps retriggering a released envelope).
-- **Timer A runs exactly while CSM is on** — and not held by a rest. Setting
+  the CSM bit.
+- **Timer A runs while CSM is on, unless the rate source rests** (below); a
+  rest on the formant track alone leaves it running. Setting
   the CSM bits in `$27` also sets LOAD A (bit 0), and clearing them clears it:
   the counter only counts with LOAD A, and without the overflow nothing
   retriggers. The shipped engine keeps no timer, so `$24`–`$27` are the
@@ -1031,7 +1031,9 @@ three outcomes.
 ## 12. Verification Strategy
 
 There is no automated test suite for audio; verification is comparative, and
-every gate runs on the host. `cd drv && npm run verify:all` runs §12.2–§12.5.
+every gate runs on the host. `cd drv && npm run verify:all` runs §12.2–§12.8,
+the claim, voice-hoist and glide gates, and the banked gates (`drv/README.md`
+lists each).
 
 ### 12.1 `drv-player.js` — the executable spec
 
@@ -1064,8 +1066,7 @@ the gate hands it to the C as a separate file (`--samples`).
 ### 12.2a `claim-gate` — a channel's modulators do not outlive its owner
 
 `drv/tools/claim-gate.mjs`, `npm run claim-gate` (and `:pal`). §12.2 compares
-the two sequencers, so a rule both of them break passes it — and the claim rule
-of §2.2 was broken in both for as long as it existed. A leak is not a
+the two sequencers, so a rule both of them break passes it. A leak is not a
 disagreement between players; it is register traffic the music never asked for.
 So each case is a score and a **twin**, the same score with its modulators
 removed, and over the window where those modulators must not be heard the two
@@ -1138,6 +1139,13 @@ each corpus score's mismatch signature (count + digest) is frozen in
 After an intended change, review the printed mismatches and re-freeze with
 `node tools/ab-gate.mjs --update`.
 
+The two players can agree and both be wrong, which an A/B cannot see; where a
+rule can be stated, a gate checks the driver against it directly. `npm run
+glide-gate` (`drv/tools/glide-gate.mjs`): at every key-on of
+`tests/m4-glide-lag` and `tests/m4-csm-glide`, a gliding note's pitch (or
+Timer A period) does not jump, and a note that does not glide starts at its
+own pitch (language.md §14).
+
 **Known open divergence.** A PSG soft-envelope on a gate-cut note
 (`:gate-`/`:gate*`) diverges at the note boundary: the IR player emits a
 1-frame hard key-off (att 15) between notes, so they separate; the driver lets
@@ -1156,7 +1164,7 @@ integer arithmetic, after the frame's events as the driver's step 3 does).
 `npm run pcm-ab` (`drv/tools/pcm-ab-gate.mjs`, in `verify:all`) runs those
 events through `PcmIrVoices` — the class the worklet runs — and requires the
 **same PCM command bytes, in the same order, each within a frame** of
-`drv-player`'s own slot stream: 12 scores, all identical. The editor's
+`drv-player`'s own slot stream, on every score the gate lists. The editor's
 per-track PCM faders are a UI gain on a voice's samples before its rung, which
 the driver does not have.
 
@@ -1175,7 +1183,10 @@ the two generated files are what the images build to now.
 `npm run sgdk:gate -- <score>` builds a scratch SGDK project with
 `install-sgdk`, runs it in a patched headless BlastEm (`drv/blastem/`) that logs
 every DAC byte, every YM/PSG access by CPU and every bus grab, and grades the
-log: every FM write per port and every PSG byte in the score's order, **every
+log: every FM write per port and every PSG byte in the score's order (`$2B`
+graded apart: it rides the PCM lane, ahead of the frame's FM; the reference is
+given the example host's own SET_VAL of its knob slot before the song starts),
+**every
 DAC byte against `live/src/pcm-model.js` driven by the engine's own state-block
 writes**, the bus stops, PCM-vs-FM sync, and whether the FM's lag behind the
 reference's frames climbs (a lost frame). Grading starts at the LAST ready mark
@@ -1302,7 +1313,8 @@ informational for macros.
 `MACRO_SET {macro_id}` binds MACRO_TABLE[macro_id] as the **active macro for
 its target** on the track (sticky, replacing any active macro on that target);
 `MACRO_CLEAR {target}` clears one (`0xFF` = all). The channel
-holds up to **3** active-macro ids (§4.3). On **any** `NOTE_ON` the sequencer instantiates each
+holds up to **8** binds (`MML_MACRO_BINDS`, §4.3); the exporter keeps a song
+to 3. On **any** `NOTE_ON` the sequencer instantiates each
 active macro into a **running slot** (3 slots × {descriptor index, step clock,
 cursor, flags}); `NOTE_ON_EX` `macro_ref` adds a per-note one-shot. When a
 channel's active set would exceed 3, the *exporter* drops the extras with a
@@ -1394,8 +1406,7 @@ key bits.
 
 The score splits this across coexisting tracks: a note-less `(fm3 voice)`
 track carries the shared patch and channel level state, and `fm3-1`–`fm3-4`
-each drive one operator. `fm3-1` rides channel 2 (with the voice, §2.2);
-`fm3-1`–`fm3-4` ride channel ids 16-19 — one each, so an operator can hold
+each drive one operator. `fm3-1`–`fm3-4` ride channel ids 16-19 — one each, so an operator can hold
 state of its own; channel 2 is the shared CH3 alone. Each operator note emits
 `FM3_OP_PITCH {op, note}` (0xA4) — writing that operator's F-number registers
 (OP4 → the CH3 base `$A6`/`$A2`; OP1-3 → `$AC+idx`/`$A8+idx` with
@@ -1430,7 +1441,7 @@ on the `(fm3 …)` track. So `:tl2` on `fm3-2` is operator 2's voiced level and
 **Keying is per operator too**, including `:keyon`: a retrigger drops and
 restores that operator's mask bit and re-emits `$28`, so the operators sounding
 alongside it are untouched. Consecutive operator notes re-attack for the same
-reason every FM note does (§17): an operator note never carries the legato
+reason every FM note does: an operator note never carries the legato
 flag, so a full-gate note's key-off lands in the next note's dispatch, before
 its key-on, and the envelope sees the transition. Every edge rewrites the whole
 mask, so the order of the edges within a frame is the frame's `$28` sequence:
@@ -1531,8 +1542,8 @@ of the note it precedes, and of the notes after it.
 Two things this needs, both of which the sequencer does:
 
 - **The sweep engine reaches the PCM voices.** Its banks are the ten M1
-  channels plus the three voices (`sweep_bank`, `MML_SWEEP_BANKS` = 13, twin
-  `_sweepBank`); before this a sweep on a `pcmN` channel was dropped.
+  channels, the three voices and FM3's four operators (`sweep_bank`,
+  `MML_SWEEP_BANKS` = 17, twin `_sweepBank`).
 - **A RETARGET goes out only when the rounded block moves.** A sweep is
   recomputed every frame and mostly lands inside the same 16 bytes; sending it
   regardless would spend six bytes of every slot on it, sixty times a second.

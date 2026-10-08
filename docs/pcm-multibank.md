@@ -29,7 +29,7 @@ Install or update the driver and compile the song:
 node tools/install-sgdk.mjs /path/to/project --song path/to/song.mmlisp
 ```
 
-Add `--multibank` to select the new engine explicitly. The installer copies the additional engine header, `mmlispdrv_banked_bin.h`, into the project.
+Add `--multibank` to select the multi-bank engine explicitly. The installer copies the additional engine header, `mmlispdrv_banked_bin.h`, into the project.
 
 Declare the resources with an uncompressed sample file aligned to 32 KiB:
 

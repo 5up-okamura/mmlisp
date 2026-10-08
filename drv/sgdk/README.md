@@ -29,7 +29,7 @@ drv/sgdk/example/song.res   the BIN resource for the MMB
 Regenerate the generated files after any engine or table change:
 
 ```
-cd drv && node tools/emit-bin.mjs && node tools/gen-c-tables.mjs
+cd drv && node tools/emit-bin.mjs && node tools/emit-banked.mjs && node tools/gen-c-tables.mjs
 ```
 
 ## Installing into your project
@@ -64,6 +64,7 @@ src/mmlispseq.c           the sequencer
 src/mmlispseq_tables.c    its constant tables
 src/mmlpairs.c            the slot -> pair converter
 inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlpairs.h  inc/mmlispdrv_bin.h  inc/mml_rate.h
+inc/mmlispdrv_banked_bin.h  inc/mml_banked_rate.h   the multi-bank engine
 inc/mmlisp_se.h           the effects' numbers (generated)
 res/song.res  res/song.mmb  [res/song.smp]
 ```
@@ -230,8 +231,7 @@ while (TRUE) {
   yours**, raster effects and all. The pump takes the bus once, reads the
   engine's pair index, writes sixteen pairs ahead of it (the real ones, then
   IDLE) with eight `movep.l`, and releases — about 2,400 master clocks (~45 µs),
-  measured on BlastEm. Once a frame is 960 pairs a second, the same wire the
-  earlier two-grab host carried, in half the bus stops. If your game has its own
+  measured on BlastEm. Once a frame is 960 pairs a second. If your game has its own
   VBlank callback, call `MMLisp_pump()` from it instead.
 
   A pump that comes late — the engine already past where the pairs were
@@ -247,8 +247,7 @@ while (TRUE) {
   the chip's neutral patch and every track's leading setup (voices, levels)
   leave over the next frames, so the starts later send only what differs. A
   six-channel song's load is ~250 register writes — sixteen frames of the wire
-  — and the first notes used to queue behind it (252 ms late on such a song).
-  Load during a transition and start once `MMLisp_isSettled()` is TRUE;
+  — which the first notes would otherwise queue behind. Load during a transition and start once `MMLisp_isSettled()` is TRUE;
   starting sooner is still correct, the first notes just come later.
 
 - **Control.** `MMLisp_startSong` / `startTrack` / `stopTrack` / `keyOff` /
@@ -385,8 +384,8 @@ non-zero bank gives you.)
 `MMLisp_readStats()` costs no bus grab — every number is the host's own:
 
 - `pending` — pairs waiting for the wire. A handful is steady state; a number
-  that keeps climbing means the score asks for more than two grabs a frame carry
-  (960 pairs a second), or the pumps are not running.
+  that keeps climbing means the score asks for more than one grab a frame
+  carries (960 pairs a second), or the pumps are not running.
 - `grabs` — should advance by ~60 a second.
 - `late` — grabs that found the engine past their destination and left the
   pairs to the next one. A few is harmless; steadily climbing means the pumps
@@ -477,7 +476,7 @@ audible** — that last one takes two seconds and settles it outright.
 
 ## What plays
 
-Everything the language compiles to, except SE:
+Everything the language compiles to:
 
 - Notes/rests/ties, per-note length + gate, slur/legato, loops (counted +
   infinite JUMP), `CALL`/`RET`, markers, `len=0` holds, FM + PSG voices and
@@ -518,9 +517,9 @@ Everything the language compiles to, except SE:
   so a song change stops the music and returns the value slots to their inits.
   Songs share the sample bank rather than the sequencer — see "Several songs,
   one bank" above.
-- **A sound effect is a track of the score it plays over**, authored on a spare
-  channel and pointed at the BGM's by the build. `import` shares defs, not
-  tracks, so each song repeats its effect track lines.
+- **An effect's parts are tracks of each song**, compiled in from the
+  bundle's `"se"` file: every song carries a copy of the effects' control data
+  (their samples are in the shared bank once).
 - **SGDK's own Z80 halts** (pads, DMA) are outside the driver's budget — see
   "Bus stops that are not the driver's".
 - **Not yet run on hardware.** In particular the pump writes Z80 RAM with

@@ -3,8 +3,7 @@
 Local CLI tooling for the compile/verify workflow.
 
 MMB encoding lives in the browser toolchain (`live/src/export-mmb.js`, File >
-Export > MMB…), not here; the v0.1 MMB scripts were removed with the format's
-v0.2 rewrite. Driver A/B verification runs in the live app —
+Export > MMB…), not here. Driver A/B verification runs in the live app —
 `window.__abCompare()` — see docs/driver.md §12.
 
 ## Requirements

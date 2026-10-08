@@ -21,7 +21,8 @@ zap2     a robotic zap          0.3 s
 
 Each sample sounds as recorded on `c`; other notes retune it, which is the
 usual way to play a voice higher or lower. Every note a score plays is baked
-into the sample bank on its own, and the bank holds 32 KB a song.
+into the sample bank on its own; past one 32 KB bank a score goes multi-bank
+at a lower rate (language.md §16).
 
 ## Sources
 

@@ -60,8 +60,9 @@ Integration notes:
 2. `build-nuked.sh` / `build-psg.sh` build single-file ES modules for
    AudioWorklet loading, and sync copies to `live/` for Vercel/static deploys
    that only publish the `live/` directory.
-3. `live/worklet.js` loads the generated module and handles timed YM register
-   writes.
+3. `live/src/synth-md.js` imports the generated modules (`../nuked-opn2.js`,
+   `../nuked-psg.js`); the worklet and the WAV export both run the chips
+   through it.
 
 Notes:
 

@@ -24,7 +24,7 @@ phase is not free; and the saw is not VRC6's stepped accumulator. NES noise
 The envelopes are instant-attack, sustain, short-release, so note length alone
 shapes a phrase. Carriers are OP4 on the saw and square, OP1-4 on the triangle
 and OP2-4 on the pulses; set the decay there to shape a voice
-(`wave-saw :dr4 10 :sl4 5 :sr4 2 :rr4 10`). Changing a modulator's TL moves the
+(`(def-fm soft-saw wave-saw :dr4 10 :sl4 5 :sr4 2 :rr4 10)`). Changing a modulator's TL moves the
 harmonic balance, which is not an analogue low-pass sweep.
 
 For the acid voices a slide is a legato `~` plus `(glide 32)` — the pitch moves
