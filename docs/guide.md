@@ -1432,10 +1432,12 @@ mixer, and **Library**, everything that comes with the app in one list — the
 language reference (**Ref**), the **Presets** (the voice and sample sets), the
 **Snippets** and the **Scores** (the examples) — so looking up a keyword,
 picking a voice or trying a technique takes one click instead of a file
-dialog. **File ▸ Library** — or **⌘K** / **Ctrl+K** from
+dialog. **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
 anywhere, the editor included — opens the panel on Library with the search box
-taking the keys. The ⚙ button reopens the panel on the tab it was left on; a
-fresh launch starts on Params, with Library's filters cleared.
+taking the keys; **Tools ▸ Params** — **⌘J** / **Ctrl+J** — opens it on Params,
+and closes it again when Params is already showing. The ⚙ button reopens the
+panel on the tab it was left on; a fresh launch starts on Params, with
+Library's filters cleared.
 
 - **Search** matches a name, then the description (`piano` finds `gm-piano`,
   `env-piano` and every voice whose comment says piano). While there is a

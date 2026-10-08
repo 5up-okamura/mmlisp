@@ -153,11 +153,6 @@
           </button>
           <div class="menu-dropdown submenu-dropdown" id="recentList"></div>
         </div>
-        <button class="menu-item" onclick="openLibrary();closeMenus()"
-                title="The language reference, the preset voice/sample sets, the snippets and the example scores: look one up, preview it, insert it, or open it.">
-          <span>Library</span>
-          <span class="menu-item-shortcut" id="libraryShortcut"></span>
-        </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="openFolder();closeMenus()"
                 title="Open a score's folder so its relative :file samples (wav next to the score) load. After a reload, Open Recent brings a score back with its folder. Chrome blocks Desktop/Documents themselves; use a subfolder.">
@@ -274,6 +269,18 @@
         <button class="menu-item" onclick="buildAction();closeMenus()">
           <span>Build</span>
           <span class="menu-item-shortcut" id="buildShortcut"></span>
+        </button>
+        <div class="menu-sep"></div>
+        <!-- The side panel's two tabs (the ⚙ button opens it as it was left) -->
+        <button class="menu-item" onclick="toggleParams();closeMenus()"
+                title="The sliders and the mixer: open the panel on Params, or close it when Params is showing">
+          <span>Params</span>
+          <span class="menu-item-shortcut" id="paramsShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="openLibrary();closeMenus()"
+                title="The language reference, the preset voice/sample sets, the snippets and the example scores: look one up, preview it, insert it, or open it.">
+          <span>Library</span>
+          <span class="menu-item-shortcut" id="libraryShortcut"></span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleDrvBackend();closeMenus()"
@@ -2579,7 +2586,7 @@
     // The preset sets are imported but not assigned: every voice and sample in
     // them is a name the score can use, and completion lists them. Only what
     // a track plays is baked, so the imports cost the song nothing.
-    const DEFAULT_NEW_FILE_SOURCE = String.raw`; Preset voices and samples: File > Library (⌘K) auditions them, and typing a
+    const DEFAULT_NEW_FILE_SOURCE = String.raw`; Preset voices and samples: Tools > Library (⌘K) auditions them, and typing a
 ; name (gm-, wave-, kick, snare, ...) offers them for completion.
 (import "presets/gm/set.mmlisp")
 (import "presets/waveforms/set.mmlisp")
@@ -3346,6 +3353,7 @@
       if (key === 'Mod-/') return isMac ? '⌘/' : 'Ctrl+/';
       if (key === 'Mod-b') return isMac ? '⌘B' : 'Ctrl+B';
       if (key === 'Mod-k') return isMac ? '⌘K' : 'Ctrl+K';
+      if (key === 'Mod-j') return isMac ? '⌘J' : 'Ctrl+J';
       if (key === 'Mod-Alt-]') return isMac ? '⌘⌥]' : 'Ctrl+Alt+]';
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
@@ -3370,6 +3378,7 @@
         ['selectAllOccurrencesShortcut', 'Mod-Shift-l'],
         ['buildShortcut', 'Mod-b'],
         ['libraryShortcut', 'Mod-k'],
+        ['paramsShortcut', 'Mod-j'],
       ];
       for (const [id, key] of shortcutLabels) {
         const el = document.getElementById(id);
@@ -6332,6 +6341,9 @@
         // Library's search box, from anywhere — the editor included.
         e.preventDefault();
         openLibrary();
+      } else if (e.key === 'j' && !e.shiftKey) {
+        e.preventDefault();
+        toggleParams();
       } else if (e.key === 'Enter') {
         e.preventDefault();
         onPlayToggle();
@@ -6420,7 +6432,7 @@
       updateLibraryKeys();
     }
 
-    // File > Library and ⌘K: the panel, on Library, its search box taking the
+    // Tools > Library and ⌘K: the panel, on Library, its search box taking the
     // keys.
     async function openLibrary() {
       if (!_panelOpen) togglePanel();
@@ -6429,6 +6441,14 @@
       const box = document.getElementById('libSearch');
       box.focus();
       box.select();
+    }
+
+    // Tools > Params and ⌘J: the panel on Params, or — Params already showing —
+    // closed again, as the ⚙ button closes it.
+    function toggleParams() {
+      if (_panelOpen && _panelTab === 'params') { togglePanel(); editorView.focus(); return; }
+      if (!_panelOpen) togglePanel();
+      selectPanelTab('params');
     }
 
     function libraryShown() {
@@ -7333,6 +7353,7 @@
     window.playSharedScore = playSharedScore;
 
     window.openLibrary = openLibrary;
+    window.toggleParams = toggleParams;
     window.selectPanelTab = selectPanelTab;
 
     // Expose for inline handlers

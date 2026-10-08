@@ -20,7 +20,10 @@ user's decisions and their reasons; nothing is open.
   area under the list, and Browse's keys (↑↓, Space auditions, Enter acts).
   Each row: name, kind, one-line description, ▶, Insert; a group header can
   carry an action (Import set).
-- **The Browse modal is removed**; the menu entry is File > Library (⌘K).
+- **The Browse modal is removed**. The panel's tabs are menu entries side by
+  side: Tools > Params (⌘J — toggles: closes the panel when Params shows) and
+  Tools > Library (⌘K). ⌘⇧K was the user's first idea and was dropped: it is
+  CodeMirror's delete-line and Firefox's web console.
   Tools > Snippets went too (2026-10-08, the user: "the most half-done
   thing"): Library's Snippets source replaces Browse Snippets…, and the FM
   voice template is the snippet `voices/fm-voice-template`.
