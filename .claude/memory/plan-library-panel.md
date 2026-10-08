@@ -1,8 +1,8 @@
-# Library panel (Browse + reference in the side panel) — planned 2026-10-08
+# Library panel (Browse + reference in the side panel) — phase 1 built 2026-10-08
 
-Nothing is built yet. This file keeps the user's decisions and the order of work;
-once a phase lands, the guide records the behaviour and this file keeps only
-the reasons and what is still open.
+Phase 1 is built (guide §25 has the behaviour; the list is
+`live/src/catalog-list.js`). Phases 2 and 3 are not. This file keeps the
+user's decisions and the order of work.
 
 ## Decisions (2026-10-08)
 
@@ -39,7 +39,8 @@ the reasons and what is still open.
 
 ## Order of work (agreed)
 
-1. Panel tabs; Browse moves into Library with search and filters.
+1. **Built.** Panel tabs; Browse moves into Library with search and filters.
+   Open: the editor → search-box shortcut (candidates to put to the user).
 2. The reference data, its check, and the Ref source.
 3. The same data feeds completion info, a hover tooltip and the MCP server;
    AC_PARAMS / AC_FORMS come from it so the two cannot drift.

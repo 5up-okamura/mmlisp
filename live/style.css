@@ -1126,147 +1126,128 @@
     .license-row { margin: 0 0 0.55rem; }
     .license-row b { color: var(--foreground); }
 
-    /* Browse: preset sets and example scores */
-    .browse-modal { width: min(720px, 92vw); }
-    .browse-modal:focus { outline: none; }
-    .browse-tabs {
+    /* Side panel tabs: Params | Library */
+    .panel-tabs {
       display: flex;
-      gap: 0.25rem;
-      margin-bottom: 0.5rem;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--mid);
     }
-    .browse-tab {
+    .panel-tab {
+      flex: 1;
+      background: none;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      color: var(--foreground);
+      font: inherit;
+      font-size: 0.72rem;
+      font-weight: bold;
+      letter-spacing: 0.08em;
+      padding: 0.45rem 0;
+      opacity: 0.6;
+      cursor: pointer;
+    }
+    .panel-tab.active { opacity: 1; border-bottom-color: var(--foreground); }
+
+    /* Library: one searchable list over the presets, snippets and scores */
+    #libraryPane {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      padding: 0.6rem 0.75rem;
+    }
+    #libraryPane[hidden] { display: none; }
+    #keyboardDock[hidden] { display: none; }
+    #rightPanel .lib-search {
+      -webkit-user-select: text;
+      user-select: text;
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--background);
+      border: 1px solid var(--mid);
+      border-radius: 3px;
+      color: var(--foreground);
+      font: inherit;
+      font-size: 0.8rem;
+      padding: 0.35rem 0.5rem;
+    }
+    .lib-search:focus { outline: 1px solid var(--foreground); outline-offset: -1px; }
+    .lib-filters { display: flex; flex-direction: column; gap: 0.3rem; }
+    .lib-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+    .lib-chip {
       background: none;
       border: 1px solid var(--mid);
       border-radius: 3px;
       color: var(--foreground);
       font: inherit;
-      font-size: 0.72rem;
-      padding: 0.25rem 0.7rem;
+      font-size: 0.66rem;
+      padding: 0.15rem 0.5rem;
       cursor: pointer;
     }
-    .browse-tab:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
-    .browse-tab.active {
+    .lib-chip:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
+    .lib-chip.active {
       background: color-mix(in srgb, var(--foreground) 28%, var(--background));
       border-color: var(--foreground);
       font-weight: bold;
     }
-    .browse-body {
-      display: flex;
-      gap: 0.6rem;
-      height: min(420px, 60vh);
-    }
-    /* Scores and Snippets are one list each: no column of sets beside it. */
-    .browse-solo .browse-groups { display: none; }
-    .browse-groups {
-      flex: 0 0 9.5rem;
-      overflow-y: auto;
-      border: 1px solid var(--mid);
-      border-radius: 3px;
-    }
-    .browse-items {
+    .lib-list {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
+      overscroll-behavior: contain;
       border: 1px solid var(--mid);
       border-radius: 3px;
     }
-    .browse-group, .browse-row {
+    .lib-list:focus { outline: none; }
+    .lib-row, .lib-group {
       display: flex;
       align-items: center;
       gap: 0.4rem;
-      width: 100%;
       padding: 0.3rem 0.45rem;
-      background: none;
-      border: 0;
       color: var(--foreground);
-      font: inherit;
       font-size: 0.72rem;
-      text-align: left;
       cursor: pointer;
     }
-    .browse-group:hover, .browse-row:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
-    .browse-group.active { background: color-mix(in srgb, var(--foreground) 28%, var(--background)); font-weight: bold; }
-    .browse-row.active {
+    .lib-row { padding-left: 1.1rem; }
+    .lib-group { font-weight: bold; }
+    .lib-group::before { content: '\203A'; width: 0.6rem; opacity: 0.7; }
+    .lib-group.open::before { content: '\2304'; }
+    .lib-row:hover, .lib-group:hover { background: color-mix(in srgb, var(--foreground) 18%, var(--background)); }
+    .lib-row.active, .lib-group.active {
       background: color-mix(in srgb, var(--foreground) 24%, var(--background));
       outline: 1px solid var(--foreground);
       outline-offset: -1px;
     }
-    .browse-row .browse-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .browse-row .browse-kind { opacity: 0.55; font-size: 0.66rem; }
-    .browse-head {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-      padding: 0.35rem 0.45rem;
-      border-bottom: 1px solid var(--mid);
-      font-size: 0.7rem;
-      color: var(--foreground);
-    }
-    .browse-head .browse-name { flex: 1; }
-    .browse-sub {
-      padding: 0.45rem 0.45rem 0.15rem;
-      font-size: 0.64rem;
-      opacity: 0.6;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .browse-mini {
+    .lib-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lib-kind { opacity: 0.55; font-size: 0.64rem; font-weight: normal; white-space: nowrap; }
+    .lib-mini {
       background: none;
       border: 1px solid var(--mid);
       border-radius: 2px;
       color: var(--foreground);
       font: inherit;
       font-size: 0.64rem;
+      font-weight: normal;
       padding: 0.05rem 0.3rem;
       cursor: pointer;
     }
-    .browse-mini:hover { background: color-mix(in srgb, var(--foreground) 22%, var(--background)); }
-    .browse-note {
+    .lib-mini:hover { background: color-mix(in srgb, var(--foreground) 22%, var(--background)); }
+    .lib-empty { padding: 0.6rem; font-size: 0.72rem; opacity: 0.6; }
+    .lib-note {
       color: var(--foreground);
       opacity: 0.7;
       font-size: 0.66rem;
-      margin: 0.4rem 0 0;
-      min-height: 1.1em;
-    }
-    .browse-title { display: flex; align-items: center; gap: 0.4rem; }
-    .browse-back, .browse-crumb { display: none; }
-    .browse-back {
-      background: none;
-      border: 1px solid var(--mid);
-      border-radius: 2px;
-      color: var(--foreground);
-      font: inherit;
-      font-size: 1rem;
-      line-height: 1;
-      padding: 0.1rem 0.55rem 0.2rem;
-      cursor: pointer;
+      min-height: 2.2em;
     }
     /* Fingers: taller rows and buttons. */
     @media (pointer: coarse) {
-      .browse-tab { padding: 0.5rem 0.9rem; font-size: 0.8rem; }
-      .browse-group, .browse-row { padding: 0.6rem 0.55rem; font-size: 0.8rem; }
-      .browse-mini { padding: 0.3rem 0.6rem; font-size: 0.72rem; }
+      .lib-chip { padding: 0.35rem 0.7rem; font-size: 0.74rem; }
+      .lib-row, .lib-group { padding: 0.6rem 0.55rem; font-size: 0.8rem; }
+      .lib-row { padding-left: 1.2rem; }
+      .lib-mini { padding: 0.3rem 0.6rem; font-size: 0.72rem; }
+      #rightPanel .lib-search { font-size: 16px; } /* no zoom-on-focus on iOS */
     }
-    /* Phone: one column at a time — the groups, then (.browse-picked) the
-       picked group's files full width, with ‹ to go back. */
-    @media (max-width: 600px) {
-      .browse-modal {
-        display: flex;
-        flex-direction: column;
-        width: calc(100vw - 1rem);
-        height: calc(100dvh - 1rem);
-        padding: 0.75rem;
-      }
-      .browse-body { flex: 1; min-height: 0; height: auto; }
-      .browse-groups { flex: 1 1 auto; }
-      .browse-items { display: none; }
-      .browse-picked .browse-groups { display: none; }
-      .browse-picked .browse-items, .browse-solo .browse-items { display: block; }
-      .browse-picked .browse-back { display: inline-block; }
-      .browse-picked .browse-crumb { display: inline; }
-      .browse-crumb::before { content: '\203A'; margin-right: 0.4rem; opacity: 0.6; }
-      .browse-crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    }
-
 
     /* Share: the link modal, and the play prompt a shared link opens with */
     .share-modal { width: min(520px, 92vw); }

@@ -1398,7 +1398,7 @@ writing `@12 c` by hand still works: the space closes the list and types on.
 The list never takes typing — letters go into the score and narrow it; Space,
 `(` and the like close it and are typed. Only `↑` / `↓`, `Enter` and `Esc`
 belong to it. Moving the selection with `↑` / `↓` auditions the highlighted
-voice or sample (as Browse's preview does), after a short pause so running
+voice or sample (as Library's ▶ does), after a short pause so running
 down the list does not sound every row; a sample waits for playback to stop,
 since its preview reloads the PCM bank. Imported names are read when the score
 compiles, so a set of your own imported by hand joins the list after the next
@@ -1412,14 +1412,28 @@ from the first keystroke. Only what a track plays reaches the song.
 
 ## 25. Browsing what the app ships
 
-**File ▸ Browse…** lists what comes with the app on three tabs — **Presets**
-(the voice and sample sets), **Scores** (the examples) and **Snippets** — so
-picking a voice or trying a technique takes one click instead of a file
-dialog. Presets has two columns, the sets and the picked set's contents;
-Scores and Snippets are one list each.
+The side panel (the ⚙ button) has two tabs: **Params**, the sliders and the
+mixer, and **Library**, everything that comes with the app in one list — the
+**Presets** (the voice and sample sets), the **Snippets** and the **Scores**
+(the examples) — so picking a voice or trying a technique takes one click
+instead of a file dialog. **File ▸ Browse…** opens the panel on Library with
+the search box taking the keys.
 
-Each preset set is one directory under `presets/`, and the list on the right is
-read straight out of the `set.mmlisp` a score would import — so a name in the
+- **Search** matches a name, then the description (`piano` finds `gm-piano`,
+  `env-piano` and every voice whose comment says piano). While there is a
+  query the list is one list, ranked as the completion ranks names.
+- **All / Presets / Snippets / Scores** narrows the list to one source; the
+  last one picked is remembered.
+- **FM / PCM / Macro** keep only those kinds of preset (any number of them;
+  none means all). **Fits track** keeps what the track at the cursor can play
+  — voices on an fm track, samples on a pcm track, macros everywhere — and
+  follows the cursor. **A–Z** shows one alphabetical list instead of groups.
+- Without a query the list is grouped — a preset set, a snippet topic, an
+  examples folder — every group folded until opened. The line under the list
+  describes the highlighted row: a preset's comment, a file's leading comment.
+
+Each preset set is one directory under `presets/`, and its rows are read
+straight out of the `set.mmlisp` a score would import — so a name in the
 panel is always the def behind it, never a copy that drifted.
 
 What the panel offers comes from three files, `presets/index.json`,
@@ -1431,21 +1445,31 @@ alphabetical order of their directory names.
 
 | Row                | ▶                                       | Other actions |
 | ------------------ | --------------------------------------- | ------------- |
-| an FM voice (`fm`) | one `len 4` c4 on FM1 — a `:key` voice (an FM drum) at its key | **Insert def** pastes the definition at the cursor, to edit as your own |
-| a sample (`pcm`)   | one c4, baked and played through the driver's own engine — what an export will sound like | — |
-| a macro (`macro`)  | a half-note c4 on sqr1 shaped by it, then a rest for its release | **Insert def** pastes the definition at the cursor |
+| an FM voice (`fm`) | one `len 4` c4 on FM1 — a `:key` voice (an FM drum) at its key | **Insert** pastes the definition at the cursor, to edit as your own |
+| a sample (`pcm`)   | one c4, baked and played through the driver's own engine — what an export will sound like | **Import set** (a sample's `:file` is relative to its set, so importing is how a score reaches it) |
+| a macro (`macro`)  | a half-note c4 on sqr1 shaped by it, then a rest for its release | **Insert** pastes the definition at the cursor |
+| a set (group)      | —                                       | **Import set** |
 | a score            | plays it, without opening it            | **Open** puts it in the editor |
 | a snippet          | plays it, without opening it            | **Insert** puts it at the cursor; **Open** puts it in the editor |
 
 The audition is one note: enough to tell a sound, and a drum has only the one.
-To hear a voice or a sample across its range, put the cursor on its def and
-play the keyboard.
+To hear a voice or a sample across its range, play the keyboard: while Library
+shows, the keys (on screen, the computer's, a MIDI keyboard) play the
+highlighted FM voice or sample, and the keyboard is shown only then — a macro,
+a snippet or a score has nothing for the keys to play. Back on Params, the keys
+play the channel or the def at the cursor as before.
 
-The panel is driven from the keyboard: **Tab** / **Shift+Tab** switches tabs,
-**↑↓** moves through the list, **←→** steps between sets on Presets, **Space** auditions the highlighted row (and stops a score
-that is playing), **Enter** is its action — open the score, insert the snippet,
-paste the voice's definition, import the sample's set — and **Esc** closes.
-Everything is clickable too.
+The list is driven from the keyboard, from the search box as from the list:
+**↑↓** moves through it, **Enter** is the row's action (the first button —
+insert the def or the snippet, import the sample's set, open the score) or
+opens and folds a group, and **Esc** empties the search, then goes back to the
+score. In the list itself **Space** auditions the highlighted row (and stops a
+score that is playing) and **←→** fold and open the groups. Everything is
+clickable too.
+
+An insert hands the focus to the editor with the inserted text selected, so
+writing goes on from there; on a phone, where the panel covers the screen, it
+also closes the panel.
 
 **Snippets** are short scores, one technique each — echo and delay, `trig`,
 FM3 and CSM, curves and the noise curves, parametric defs, and tricks like
@@ -1457,7 +1481,7 @@ chip. **Insert** moves the snippet's `(import …)` lines to the top of the scor
 (skipping any already there) and puts the rest at the cursor, in one undo step.
 A snippet is written as if it sat next to a new score, so its imports read
 `presets/…` wherever it ends up. **Tools ▸ Snippets ▸ Browse Snippets…** opens
-the panel on this tab.
+Library on the Snippets source.
 
 A `(trig N)` cue has no sound, so the log shows it as it passes — `trig 2 —
 fm1` — whether the score is playing from the editor or from the panel.
