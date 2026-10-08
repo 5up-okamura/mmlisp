@@ -1,0 +1,6 @@
+; A rest on the CSM rate source rests the buzz (language.md §15, driver.md §9):
+; Timer A stops (LOAD A low, CSM still on) and the next rate starts it again —
+; on an fm3-csm-rate track, and with an inline :csm-rate on the fm3-csm track.
+; A glide runs on across the rest, as the compiler reckons it.
+(fm3-csm :tempo 120 :oct 3 :len 1 :vel 13 c ~ c)
+(fm3-csm-rate :len 8 200 _ 300 _ _ 400 (glide 2) 220 _ 330)

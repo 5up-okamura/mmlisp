@@ -935,10 +935,15 @@ The rate of overflows is the pitch; where the operators ring is the formant.
 - The compiler emits `CSM_ON` once at the start and `CSM_OFF` only at
   **end-of-stream** of an fm3-csm track; mid-track rests do **not** toggle
   the CSM bit (Timer A just keeps retriggering a released envelope).
-- **Timer A runs exactly while CSM is on.** Setting the CSM bits in `$27` also
-  sets LOAD A (bit 0), and clearing them clears it: the counter only counts
-  with LOAD A, and without the overflow nothing retriggers. The shipped engine
-  keeps no timer, so `$24`–`$27` are the sequencer's alone.
+- **Timer A runs exactly while CSM is on** — and not held by a rest. Setting
+  the CSM bits in `$27` also sets LOAD A (bit 0), and clearing them clears it:
+  the counter only counts with LOAD A, and without the overflow nothing
+  retriggers. The shipped engine keeps no timer, so `$24`–`$27` are the
+  sequencer's alone.
+- **A rest on the rate source holds Timer A stopped** (`csm_hold`): CSM_RATE's
+  gate form drops LOAD A with CSM still on, so the buzz rests; the next rate
+  (or the gate's run form) sets it again. Leaving CSM ends the hold, and an
+  effect that takes CH3 keeps the song's in its snapshot.
 - **A CSM note keys nothing.** Held on through `$28`, the operators would see
   no edge and every retrigger would be lost, so while CSM is on a note on CH3
   writes no `$28` at all — neither key-on nor key-off.

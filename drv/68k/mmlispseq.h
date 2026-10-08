@@ -268,6 +268,7 @@ typedef struct {
   uint8_t se, prio;     /* which effect (its SE_TABLE number), at what priority */
   uint8_t mode;         /* $27 bits 7-6 as the song had them */
   uint16_t timer_a;     /* the song's Timer A period */
+  uint8_t csm_hold;     /* the song's Timer A was stopped by a rate rest */
   uint8_t fm_keyed;     /* the shared channel was keyed (normal mode) */
   uint8_t op_mask;      /* the operators' key bits (operator mode) */
   MMLChanSnap ch;       /* the shared channel, and channel 2's binds */
@@ -368,6 +369,7 @@ typedef struct {
   uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */
   uint8_t fm3_op_mask; /* FM3 independent-OP key bits (0x10..0x80 -> $28) */
   uint16_t timer_a;    /* the Timer A period last written (the CSM rate) */
+  uint8_t csm_hold;    /* a rate rest stopped Timer A: LOAD A low, CSM on (§9) */
   MMLCh3Snap ch3;      /* CH3 as an effect found it, while one holds it */
 
   MMLSweep sweeps[MML_SWEEP_BANKS][2];

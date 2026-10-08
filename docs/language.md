@@ -1461,9 +1461,12 @@ which is heard as the formant. The sound itself comes only from Timer A —
 each overflow re-attacks the operators and its rate is the pitch — so a
 note's length neither starts nor stops it.
 `CSM_ON` is emitted once at the first note; **`CSM_OFF` fires once at the end
-of the `fm3-csm` event stream** — mid-track rests do *not* toggle CSM. To
-silence CSM mid-track, rest the rate source or write `:vol 0`. Clearing CSM on
-`STOP_TRACK` is a driver duty.
+of the `fm3-csm` event stream**. **A rest on the rate source rests the buzz**:
+Timer A stops (CSM stays on) and the next rate starts it again — a rest on the
+`fm3-csm-rate` track, or, with an inline `:csm-rate`, a rest on the `fm3-csm`
+track (whose next note starts it). With a rate track, an `fm3-csm` rest only
+holds the formant; the buzz goes on. A rate glide runs on across a rest.
+Clearing CSM on `STOP_TRACK` is a driver duty.
 
 Timer A frequency comes from exactly one source per score:
 

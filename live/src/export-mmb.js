@@ -1197,7 +1197,9 @@ export function encodeMmb(ir, opts = {}) {
         case "CSM_RATE": {
           syncClock(ev.tick);
           stream.u8(OPCODE.CSM_RATE);
-          if (a.hz !== undefined) {
+          if (a.run !== undefined) {
+            stream.u8(a.run ? 6 : 2); // flags: gate form, bit2 = run
+          } else if (a.hz !== undefined) {
             stream.u8(0); // flags: const form
             stream.u16(hzToTimerA(a.hz));
           } else {

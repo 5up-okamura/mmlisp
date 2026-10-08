@@ -287,6 +287,18 @@
     "compileErrors": 0,
     "digest": "c42bb25a"
   },
+  "m4-csm-rest-inline.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m4-csm-rest.mmlisp": {
+    "ok": false,
+    "mismatches": 48,
+    "compileErrors": 0,
+    "digest": "a08aaa48"
+  },
   "m4-delay-prio.mmlisp": {
     "ok": true,
     "mismatches": 0,

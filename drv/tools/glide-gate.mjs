@@ -131,7 +131,8 @@ const fail = (where, msg) => failures.push(`${where}: ${msg}`);
   const file = join(tests, "m4-csm-glide.mmlisp");
   const ir = compile(file);
   const at = frameOf(ir);
-  const rate = ir.tracks.flatMap((t) => t.events).filter((e) => e.cmd === "CSM_RATE");
+  const rate = ir.tracks.flatMap((t) => t.events)
+    .filter((e) => e.cmd === "CSM_RATE" && e.args.run === undefined); // not a rest's stop
   const end = at(Math.max(...rate.map((e) => e.tick))) + 4;
   const ta = perFrame(capture(ir, end), end, 0x24, 0x25, timerA);
   for (const e of rate) {

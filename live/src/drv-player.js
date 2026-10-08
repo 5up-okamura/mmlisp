@@ -472,6 +472,7 @@ export class DrvPlayer {
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
     this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
     this._timerA = 0; // the Timer A period last written (the CSM rate)
+    this._csmHold = false; // a rate rest stopped Timer A: LOAD A low, CSM on (§9)
     // CH3 as an effect found it, while one holds it (mmlispseq.h MMLCh3Snap).
     this._ch3 = { active: false };
     // FM3 independent-OP: each operator's own note and sticky :pitch offset
@@ -1302,6 +1303,19 @@ export class DrvPlayer {
           break;
         case OPCODE.CSM_RATE: {
           const flags = s[trk.pc + 1];
+          if (flags & 2) {
+            // Gate form: bit2 clear = a rate rest stops Timer A, set = it runs
+            // again at the period it had (§9).
+            trk.pc += 2;
+            this._csmHold = !(flags & 4);
+            this._setReg27(this._reg27);
+            break;
+          }
+          if (this._csmHold) {
+            // A rate after a rest: the buzz starts again.
+            this._csmHold = false;
+            this._setReg27(this._reg27);
+          }
           if ((flags & 1) === 0) {
             const period = u16(s, trk.pc + 2);
             trk.pc += 4;
@@ -2160,8 +2174,11 @@ export class DrvPlayer {
   _setReg27(value) {
     // Timer A runs exactly while CSM is on: LOAD A (bit 0) makes the counter
     // count, and the CSM key-on is its overflow (the C's set_reg27).
+    // A rate rest holds it stopped with CSM still on (_csmHold, §9); leaving
+    // CSM ends the hold.
     const v = value & 0xff;
-    this._reg27 = (v & ~0x01) | (v & 0x80 ? 0x01 : 0);
+    if (!(v & 0x80)) this._csmHold = false;
+    this._reg27 = (v & ~0x01) | (v & 0x80 && !this._csmHold ? 0x01 : 0);
     this._ym(0, 0x27, this._reg27);
   }
 
@@ -2378,6 +2395,7 @@ export class DrvPlayer {
       Object.assign(h, {
         mode: this._reg27 & 0xc0,
         timerA: this._timerA,
+        csmHold: this._csmHold,
         fmKeyed: !!this._fm[2].keyed,
         opMask: this._fm3OpMask,
         ch: this._snapshotChannel(2),
@@ -2404,6 +2422,7 @@ export class DrvPlayer {
     this._clearChannelModulators(2);
     for (let op = 1; op <= 4; op++) this._clearChannelModulators(15 + op);
     this._csmRateSweep = null;
+    this._csmHold = h.csmHold;
     this._setReg27((this._reg27 & ~0xc0) | h.mode);
     if (h.mode & 0x80) this._writeTimerA(h.timerA);
     const r = this._fm[2];
@@ -2467,6 +2486,7 @@ export class DrvPlayer {
     this._clearChannelModulators(2);
     for (let op = 1; op <= 4; op++) this._clearChannelModulators(15 + op);
     this._csmRateSweep = null;
+    this._csmHold = this._ch3.csmHold;
     this._setReg27((this._reg27 & ~0xc0) | this._ch3.mode);
     if (this._ch3.mode & 0x80) this._writeTimerA(this._ch3.timerA);
   }

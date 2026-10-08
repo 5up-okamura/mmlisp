@@ -1,0 +1,3 @@
+; An inline :csm-rate rests with the fm3-csm track: its rest stops Timer A and
+; its next note starts it again (language.md §15).
+(fm3-csm :tempo 120 :oct 3 :len 8 :vel 13 :csm-rate 300 c _ e _ _ g)

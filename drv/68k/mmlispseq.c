@@ -915,7 +915,10 @@ static void set_reg27(MMLSeq *s, uint8_t value) {
    * counter count, and the CSM key-on is its overflow: without it the mode is
    * set and nothing ever retriggers. The shipped engine keeps no timer, so
    * $24-$27 are this sequencer's alone. */
-  value = (uint8_t)((value & ~0x01) | ((value & 0x80) ? 0x01 : 0));
+  /* A rate rest holds it stopped with CSM still on (csm_hold, §9): the buzz
+   * rests, and the next rate starts it. Leaving CSM ends the hold. */
+  if (!(value & 0x80)) s->csm_hold = 0;
+  value = (uint8_t)((value & ~0x01) | ((value & 0x80) && !s->csm_hold ? 0x01 : 0));
   s->reg27 = value;
   ym(s, 0, 0x27, s->reg27);
 }
@@ -2044,6 +2047,18 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         break;
       case OP_CSM_RATE: {
         uint8_t flags = st[t->pc + 1];
+        if (flags & 2) {
+          /* Gate form: bit2 clear = a rate rest stops Timer A, set = it runs
+           * again at the period it had (§9). */
+          t->pc += 2;
+          s->csm_hold = (uint8_t)!(flags & 4);
+          set_reg27(s, s->reg27);
+          break;
+        }
+        if (s->csm_hold) { /* a rate after a rest: the buzz starts again */
+          s->csm_hold = 0;
+          set_reg27(s, s->reg27);
+        }
         if (!(flags & 1)) {
           /* The period reaches the driver precomputed; Hz never does. A
            * const rate ends a running sweep, as PARAM_SET ends its target's. */
@@ -2948,6 +2963,7 @@ static int ch3_claim(MMLSeq *s, uint8_t se, uint8_t prio) {
     }
     h->mode = (uint8_t)(s->reg27 & 0xc0);
     h->timer_a = s->timer_a;
+    h->csm_hold = s->csm_hold;
     h->fm_keyed = s->fm[2].keyed;
     h->op_mask = s->fm3_op_mask;
     snapshot_channel(s, 2, &h->ch);
@@ -2983,6 +2999,7 @@ static void ch3_restore(MMLSeq *s) {
   clear_channel_modulators(s, 2);
   for (int op = 1; op <= 4; op++) clear_channel_modulators(s, 15 + op);
   s->csm_sweep.active = 0;
+  s->csm_hold = h->csm_hold;
   set_reg27(s, (uint8_t)((s->reg27 & ~0xc0) | h->mode));
   if (h->mode & 0x80) write_timer_a(s, h->timer_a);
   MMLFmCh *c = &s->fm[2];
@@ -3055,6 +3072,7 @@ static void ch3_dissolve(MMLSeq *s) {
   clear_channel_modulators(s, 2);
   for (int op = 1; op <= 4; op++) clear_channel_modulators(s, 15 + op);
   s->csm_sweep.active = 0;
+  s->csm_hold = s->ch3.csm_hold;
   set_reg27(s, (uint8_t)((s->reg27 & ~0xc0) | s->ch3.mode));
   if (s->ch3.mode & 0x80) write_timer_a(s, s->ch3.timer_a);
 }

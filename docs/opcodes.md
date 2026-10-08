@@ -277,7 +277,9 @@ Notes:
   it ends a running swept form, as a `PARAM_SET` ends its target's sweep.
   bit0 = 1 → swept form: `from u16, to u16, len u16 (frames), curve u8`,
   stepped linearly in the period (not in Hz), replacing a running one.
-  Bits1–7 reserved 0.
+  bit1 = 1 → gate form, no payload: bit2 = 0 stops Timer A (LOAD A low, CSM
+  on — a rest on the rate source), bit2 = 1 starts it again at its period;
+  a const or swept form also starts it. Bits3–7 reserved 0.
 - **FM3_MODE / FM3_OP_PITCH** (driver.md §13.4). Each `fm3-1`…
   `fm3-4` note emits `FM3_OP_PITCH {op, note}` — recording the operator's note
   and writing its F-number registers (OP4 → CH3 base `$A6`/`$A2`; OP1-3 →

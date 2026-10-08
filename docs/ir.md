@@ -406,8 +406,15 @@ Swept (inline `:csm-rate (curve …)` or `fm3-csm-rate` glide):
 | `curve`  | string | —     | yes | Curve name.                      |
 | `params` | object | —     | no  | Curve shape params.              |
 
+Gate (a rest on the rate source, and the note after it with an inline rate):
+
+| Arg   | Type | Req | Semantics |
+| ----- | ---- | --- | --------- |
+| `run` | bool | yes | `false`: Timer A stops, CSM stays on; `true`: it runs again at the period it has. A const or swept rate also starts it. |
+
 ```json
 { "tick": 0,  "cmd": "CSM_RATE", "args": { "hz": 220 } }
+{ "tick": 48, "cmd": "CSM_RATE", "args": { "run": false } }
 { "tick": 96, "cmd": "CSM_RATE", "args": { "from": 220, "to": 440, "len": 48, "curve": "linear" } }
 ```
 

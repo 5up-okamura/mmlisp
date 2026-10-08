@@ -1,26 +1,15 @@
 # The language and IR: what is open, and why the value machine looks like this
 
 Two things live here, because a session working on the language needs both:
-**the open questions** (§1, from the 2026-09-18 audit, and the 2026-09-26
-syntax audit's rulings) and **the rationale behind compile-time eval and the
-value machine** (§2–§3). `docs/language.md` carries the shipped spec; this is
+**the 2026-09-26 syntax audit's rulings** (§1b; every open question of the
+2026-09-18 audit was decided and built on 2026-10-09) and **the rationale
+behind compile-time eval and the value machine** (§2–§3). `docs/language.md` carries the shipped spec; this is
 only what the docs do not say. Tidied 2026-10-09; the voice picker's PSG
 ruling moved in from `plan-voice-picker`.
 
 **An item is deleted from here as soon as it is fixed** and the repo carries
 both the outcome and the reason — a second copy of a settled thing can only
 rot.
-
-## 1. Needs the user's decision (the driver sounds different from the editor)
-
-1. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
-   Since 2026-09-24 this has teeth — Timer A really runs while CSM is on (it
-   never did before: LOAD A was never set, so no CSM score had ever sounded),
-   and a rest on `fm3-csm-rate` leaves it running at the last rate, so the
-   buzz continues. Silencing mid-track needs a mechanism: clear LOAD A on a
-   rate-track rest, or `:vol 0` meaning something to CSM (TL is the attack's
-   start level in this mode, not an attenuation). The preview's mixer mute
-   already holds Timer A; the language has no way to.
 
 ## 1b. Rulings from the 2026-09-26 syntax audit — do not re-propose
 

@@ -442,6 +442,7 @@ export class IRPlayer {
     this._lfoRate = 0;
     this._masterVol = VOL_UNITY;
     this._reg27 = 0; // FM3 special / CSM mode
+    this._csmHold = false; // a rate rest stopped Timer A (driver.md §9)
     this._psgCurrentMidi.fill(60);
     this._psgPitchOffset.fill(0);
     this._pitchSweepOnset.clear();
@@ -1635,8 +1636,10 @@ export class IRPlayer {
       next = fm3SpecialMode ? next | 0x40 : next & ~0x40;
     }
     // Timer A runs exactly while CSM is on: LOAD A (bit 0) makes the counter
-    // count, and the CSM key-on is its overflow (the driver's set_reg27).
-    next = (next & ~0x01) | (next & 0x80 ? 0x01 : 0);
+    // count, and the CSM key-on is its overflow (the driver's set_reg27) —
+    // unless a rate rest holds it stopped; leaving CSM ends the hold.
+    if (!(next & 0x80)) this._csmHold = false;
+    next = (next & ~0x01) | (next & 0x80 && !this._csmHold ? 0x01 : 0);
     if (next === this._reg27) return;
     this._reg27 = next;
     this._writeReg27(when);
@@ -1841,6 +1844,14 @@ export class IRPlayer {
   }
 
   _applyCsmRate(ev, when) {
+    // A rate rest stops Timer A (CSM stays on); a rate, or the gate's run
+    // form, starts it again at the period it has (driver.md §9).
+    const run = ev.args?.run;
+    if (run !== undefined || this._csmHold) {
+      this._csmHold = run === false;
+      this._setReg27State({}, when);
+      if (run !== undefined) return;
+    }
     const hz = Number(ev.args?.hz);
     if (Number.isFinite(hz) && hz > 0) {
       this._setCsmRateHz(hz, when);
@@ -1866,7 +1877,7 @@ export class IRPlayer {
     const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
     const next = track?.events
       .slice(track.flatIndex + 1)
-      .find((e) => e.cmd === "CSM_RATE");
+      .find((e) => e.cmd === "CSM_RATE" && e.args?.run === undefined);
     if (next && next.tick < ev.tick + lenTicks) {
       const nextWhen = when + (next.tick - ev.tick) * this._secsPerTick;
       runFrames = Math.max(1, this._eventFrame(nextWhen) - this._eventFrame(when));

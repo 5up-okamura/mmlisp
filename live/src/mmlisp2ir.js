@@ -633,6 +633,7 @@ function emitCsmRateNoteHz(
   const tick = trackState.tick;
   const glideTicks = trackState.glide ?? 0;
   const ramp = trackState.glideRamp;
+  trackState.csmStopped = false; // a rate starts Timer A again
   let fromHz = null;
   if (glideTicks > 0 && ramp) {
     const override = trackState.glideFrom;
@@ -858,6 +859,11 @@ function emitNoteForTrack(
       args: { op: trackState.fm3OpIndex, pitch: fullPitch },
       src,
     });
+  }
+  if (trackState.isCsmTrack && trackState.csmStopped) {
+    // An inline :csm-rate's buzz rested: the note starts it again.
+    events.push({ tick: trackState.tick, cmd: "CSM_RATE", args: { run: true }, src });
+    trackState.csmStopped = false;
   }
   if (trackState.isCsmTrack && !trackState.hasCsmOn) {
     events.push({
@@ -3627,6 +3633,16 @@ function compileChannelBody(
           parseRestLength(val, trackState.defaultLength, trackState.currentTempo),
           trackState,
         );
+        // A rest on the rate source rests the CSM buzz (language.md §15): Timer
+        // A stops, CSM stays on, and the next rate (or, with an inline
+        // :csm-rate, the next fm3-csm note) starts it again.
+        if (
+          !trackState.csmStopped &&
+          (trackState.isCsmRateTrack ? trackState.glideRamp : trackState.isCsmTrack && trackState.hasInlineCsmRate)
+        ) {
+          events.push({ tick: trackState.tick, cmd: "CSM_RATE", args: { run: false }, src: nodeSrc(node) });
+          trackState.csmStopped = true;
+        }
         events.push({
           tick: trackState.tick,
           cmd: "REST",
