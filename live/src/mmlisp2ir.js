@@ -1060,12 +1060,20 @@ function emitGlideIfNeeded(trackState, newPitch, events, glideTicks, nodeSrc) {
 }
 
 // A note that does not glide starts at its own pitch: a glide still running at
-// its tick is ended there.
+// its tick is ended there — by a sweep that holds the sticky offset for one
+// tick, which replaces the glide like any sweep on its target. Not a PARAM_SET:
+// that would write the old note's pitch on the spot, a moment before this
+// note's own; a sweep's value is taken up by the note-on (onset_pitch).
 function startWithoutGlide(trackState, pitch, events, src) {
   const tick = trackState.tick;
   const sticky = trackState.pitchSticky ?? 0;
   if (rampRunning(trackState.glideRamp, tick))
-    events.push({ tick, cmd: "PARAM_SET", args: { target: "NOTE_PITCH", value: sticky }, src });
+    events.push({
+      tick,
+      cmd: "PARAM_SWEEP",
+      args: { target: "NOTE_PITCH", from: sticky, to: sticky, curve: "linear", frames: 1, loop: false, bounded: true },
+      src,
+    });
   trackState.glideRamp = settledRamp(tick, pitchToMidi(String(pitch)) * 100 + sticky);
 }
 

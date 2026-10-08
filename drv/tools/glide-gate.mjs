@@ -110,8 +110,10 @@ const fail = (where, msg) => failures.push(`${where}: ${msg}`);
     const note = evs.find((e) => e.cmd === "NOTE_ON");
     if (!note || tick === 0) continue;
     const f = at(tick);
-    const glide = evs.find((e) => e.cmd === "PARAM_SWEEP" && e.args.bounded);
-    const set = evs.find((e) => e.cmd === "PARAM_SET" && e.args.target === "NOTE_PITCH");
+    const glide = evs.find((e) => e.cmd === "PARAM_SWEEP" && e.args.bounded && e.args.from !== e.args.to);
+    // A note without a glide ends a running one with a one-tick hold sweep.
+    const set = evs.find((e) => e.cmd === "PARAM_SWEEP" && e.args.target === "NOTE_PITCH"
+      && e.args.from === e.args.to);
     const where = `m4-glide-lag fm1 tick ${tick} (${note.args.pitch})`;
     if (glide) {
       counts.glide++;
@@ -120,7 +122,7 @@ const fail = (where, msg) => failures.push(`${where}: ${msg}`);
         fail(where, `pitch jumps ${move.toFixed(2)} semitones across the key-on`);
     } else if (set) {
       counts.settle++;
-      const want = pitchToMidi(note.args.pitch) + set.args.value / 100;
+      const want = pitchToMidi(note.args.pitch) + set.args.to / 100;
       if (!(Math.abs(pitch[f + 1] - want) <= SETTLE_TOL))
         fail(where, `starts at ${pitch[f + 1]?.toFixed(2)}, not its own ${want.toFixed(2)}`);
     }

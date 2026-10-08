@@ -55,9 +55,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 296,
+    "mismatches": 30,
     "compileErrors": 0,
-    "digest": "83f201fa"
+    "digest": "333473cf"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -355,9 +355,9 @@
   },
   "m4-glide-lag.mmlisp": {
     "ok": false,
-    "mismatches": 19,
+    "mismatches": 12,
     "compileErrors": 0,
-    "digest": "7031c340"
+    "digest": "96d3eea5"
   },
   "m4-hold-stop.mmlisp": {
     "ok": true,

@@ -4684,11 +4684,11 @@ export class IRPlayer {
           const to = Number(ev.args?.to ?? from);
           const curve = ev.args?.curve ?? "linear";
           const secsPerTick = this._secsPerTick;
-          // ev.args.frames is ticks; convert to 60 Hz frames.
-          const baseFrames = Math.max(
-            1,
-            Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60),
-          );
+          // ev.args.frames is ticks, or frames when an Nf `:len` set
+          // lenFrames — as on the FM path.
+          const baseFrames = ev.args?.lenFrames
+            ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
+            : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
           const loop = !!ev.args?.loop;
           const framesPerTick = secsPerTick * 60;
           const { budgetFrames, loopPhaseOffset } =
@@ -4721,21 +4721,22 @@ export class IRPlayer {
 
           // Store final pitch offset (used when no active sweep)
           this._psgPitchOffset[psgCh] = ev.cmd === "PARAM_SET" ? from : to;
+          // Stepped as the FM path steps it: the driver's integer curve and
+          // its frame grid (_sweepAt / _sweepFrameTime), so a PSG glide writes
+          // the periods the driver writes, on its frames.
+          const sw = {
+            from, to, curve, params: ev.args?.params, baseFrames, loop,
+            frameOffset: loopPhaseOffset, startWhen: when, startFrame: this._eventFrame(when),
+          };
           for (let frame = 0; frame < budgetFrames; frame++) {
             const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
             while (frameTick >= nextNoteTick) {
               baseMidi = nextNoteMidi;
               advance();
             }
-            const phase = sampleSweepPhase(
-              frame,
-              baseFrames,
-              loop,
-              loopPhaseOffset,
-            );
-            const centOffset =
-              from +
-              (to - from) * sampleCurveUnit(curve, phase, ev.args?.params);
+            const centOffset = ev.cmd === "PARAM_SWEEP"
+              ? Math.round(this._sweepAt(sw, loopPhaseOffset + frame))
+              : from;
             this._psgPitchOffset[psgCh] = centOffset;
             if (frame === 0)
               this._pitchSweepOnset.set(`psg:${psgCh}`, {
@@ -4745,7 +4746,7 @@ export class IRPlayer {
             this._psgSetPitch(
               psgCh,
               baseMidi + centOffset / 100,
-              when + frame / 60,
+              ev.cmd === "PARAM_SWEEP" ? this._sweepFrameTime(sw, frame) : when,
             );
           }
           // Bounded glide: snap to the exact target so a short glide that ends

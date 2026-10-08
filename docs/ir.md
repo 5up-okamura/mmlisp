@@ -312,7 +312,7 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
 | `from`       | number  | target| no  | Start value. Absent ⇒ the parameter's current value when the sweep starts (MMB `flags` bit3). |
 | `to`         | number  | target| yes | End value (0 if unspecified).                                     |
 | `frames`     | int     | ticks | no  | Sweep length. **In ticks** despite the name (the player converts ticks → 60 Hz frames at dispatch). |
-| `lenFrames`  | bool    | —     | no  | True when `:len` was written as `Nf` (absolute frames). **Ignored on PARAM_SWEEP by the player** — see §11. |
+| `lenFrames`  | bool    | —     | no  | True when `:len` was written as `Nf` (absolute frames); `frames` is then a frame count (§11). |
 | `loop`       | bool    | —     | yes | True for loop waveforms (`sin`/`triangle`/`square`/`saw`/`ramp`/`noise`/`pink`/`perlin`/`brown`) or `:mode loop`; `:mode shot` clears it. |
 | `waitTicks` / `waitKeyOff` | int / bool | ticks | no | Pre-delay before the curve. **Ignored on PARAM_SWEEP** (macro-only) — see §11. |
 | `params`     | object  | —     | no  | Curve shape params (§6.4).                                        |
