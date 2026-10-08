@@ -80,3 +80,7 @@ Rules:
   Alt-click vs the value scrub, why the Edit menu, the removed touch symbol bar, and
   the standing decisions — never auto-repair brackets, no full paredit, no
   rainbow parens.
+- [plan-library-panel.md](plan-library-panel.md) — **the Library panel —
+  planned 2026-10-08**: Browse and a new English reference in the side panel
+  (Params | Library), one searchable list for every source, the modal
+  removed, phones full-screen; the three-phase order of work.
