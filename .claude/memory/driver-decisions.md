@@ -12,8 +12,9 @@ DAC bench `archive/dac-stream-bench`), not the shipped driver.
 
 Merged here on 2026-10-09: `plan-68k-optimization`, `plan-onset-jitter`,
 `plan-se` and `plan-multi-score` (§9–§11). PCM is [[pcm]]; the set-aside
-Z80-only build is [[z80-only]]. Open work is `docs/roadmap.md` Phase 3 and
-`docs/driver.md` §11; what is listed as open here is only what those omit.
+Z80-only build is [[z80-only]]. Open work is `docs/roadmap.md` (Driver) and
+`docs/driver.md` §11; what is listed as open here is only the reasoning those
+omit.
 
 ---
 

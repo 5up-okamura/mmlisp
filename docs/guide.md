@@ -1180,6 +1180,38 @@ importer can select a lower-rate voice profile with `(def-score :pcm-voices 2)` 
 `3`. A sample that cannot fit even then is omitted, its notes become rests,
 and the log identifies it.
 
+### What a mucom88 import carries
+
+FM parts A–C / H–J go to `fm1`–`fm6`, SSG D–F to `sqr1`–`sqr3` (the notes an
+SSG part plays with noise on go to `noise`), ADPCM K to `pcm1`. Notes, lengths
+and ties land on mucom's clock grid; loops, breaks and the last `L` become the
+loop point (a part without `L` plays once). Key shift `K`/`k`, detune `D`
+(relative `D n+` too), `v`, `)`/`(`, `V`, `q`, reverb `R`, register writes
+`y`, SSG `E` envelopes and `@n` presets, `P`/`w`, inline, `@%` and `.dat`
+voices, macros, echo, portamento, hardware and software LFO and both tempo
+commands all import. Where mucom's driver behaves in a particular way, the
+import does the same rather than approximating:
+
+- **Loop passes.** `)`/`(`, `D n+`, `q` and ties act on every pass of a loop,
+  so a loop whose passes would differ — or one tied into or out of — is
+  written out pass by pass.
+- **Software LFO and detune** move the raw pitch word, so their cents depend
+  on the note: a sweep is drawn per pitch class from the exact curve.
+- **Levels.** mucom sets every carrier TL from its volume table and ignores
+  the voice's own, so voices come in with carrier TL 2 (the `v15` value); SSG
+  envelopes land on its 3 dB volume steps, drawn per `:vel`.
+- **Tempo** is `BPM = 832000 / ((256 − t) × C)`, to two decimals; `T` goes
+  through the Timer-B value it compiles to.
+- **ADPCM**: o1 c plays at 16,143.6 Hz, the bank's labelled rate; the driver
+  stops a drum at its key-off, so each sample's `:frames` is cut to the
+  longest stretch the song plays of it.
+
+The chip's own limits stay visible as warnings: SSG notes below A2 play an
+octave up (the PSG's floor), SSG levels under −30 dB hold at `:vel 1`, one
+noise channel serves the first part that uses it, and SSG reverb rings without
+its level drop. Not imported: `S` FM3 slot detune, `s` key-on revise and part
+G (the OPNA's rhythm ROM — there is no data to import).
+
 ### Song imports: MIDI, DefleMask / Furnace, VGM
 
 **A song import opens a dialog first**: what the file holds, the timing and

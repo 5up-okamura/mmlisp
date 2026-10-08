@@ -132,7 +132,7 @@ an SGDK build
 graded write by write and DAC byte by DAC byte in an emulator. See
 [docs/driver.md](docs/driver.md) for the architecture,
 [drv/README.md](drv/README.md) for building and verification, and
-[docs/roadmap.md](docs/roadmap.md) for status.
+[docs/roadmap.md](docs/roadmap.md) for what is still ahead.
 
 ## Repository Structure
 

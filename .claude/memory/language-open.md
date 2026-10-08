@@ -44,7 +44,7 @@ Compile-time eval was designed in two rounds; **round 2 reversed two of round
   left-linear expression over constants and `$slot`s lowers to existing opcode
   chains **with zero new opcodes**.
 
-**The governing constraint** (the roadmap says eval is compile-time only and
+**The governing constraint** (language.md §7 says eval is compile-time only and
 bakes to static data; this is the part it does not say): the driver gains **no
 evaluator — only readers and flags.** Since 2026-09-26 a `$slot` is a value
 kind of the evaluator itself (mmlisp-eval.js `Runtime`: the opcode chain,

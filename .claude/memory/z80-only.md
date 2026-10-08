@@ -27,7 +27,7 @@ stream. The user likes the direction; nothing is decided or built.
     music without runtime synthesis;
   - `(trig N)` markers carried in the stream, so the game can sync to bars.
 
-`roadmap.md` Phase 3 open #6. Nothing is built; this file holds the user's
+`docs/roadmap.md` Driver #7. Nothing is built; this file holds the user's
 decisions so far and the measurements taken for them.
 
 ## Why (the user, 2026-09-28)

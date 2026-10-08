@@ -109,23 +109,22 @@ user's rulings, measurements, and open items. Merged 2026-10-09 from
 
 ## Open
 
-- **Library ▶ and the completion list's ↑ / ↓ still refuse a sample while the
-  song plays** (their preview reloads the PCM bank). The keys play one on the
-  side player during playback (`playAuditionBlob`); routing these two through
-  it too is open.
-- A score's own `def-pcm` is not auditioned from the picker: its `:file` is
-  relative to the score's folder, which the stand-in score lacks.
-- Touch has no add-cursor gesture (no modifier; long-press is the value
-  popup).
-- **VGM**: tempo changes within a song (one grid for the whole file); second
-  chips; other chips' PCM (SegaPCM, YM2610 ADPCM, OKI). Dino Land's title
-  theme estimates a 64th-note grid for the whole song.
+The list is `docs/roadmap.md` (Importers, MMLisp Live); kept here is what it
+leaves out.
+
+- **Library ▶ and the completion list's ↑ / ↓ refuse a sample during
+  playback** because their preview reloads the engine's PCM bank; the keys
+  already use the side player (`playAuditionBlob`), which they could share.
+- A score's own `def-pcm` is not auditioned from the picker because its
+  `:file` is relative to the score's folder, which the stand-in score lacks.
+- Touch has no add-cursor gesture: there is no modifier, and long-press is the
+  value popup.
+- VGM's one grid per file: Dino Land's title theme estimates a 64th-note grid
+  for the whole song.
 - **Fewer shapes**, if wanted: VGM envelopes and bends match exactly (TwinBee
   gives ~26 envelopes); rounding near shapes together is the lever. A bass of
   per-note pitch falls names a bend per pitch.
-- **Trackers**: sample channels, macros of pre-INS2 Furnace instruments,
-  subsongs after the first; Furnace's slide/porta compat rules are rounded.
-- **MIDI**: per-note pan/CC changes after the first.
+- Furnace's slide/porta compat rules are rounded.
 - **Structured vs flat import**: structured writes a voice's TL at a block
   head, during the rest, where flat writes it at the note — same key-ons, a
   different release tail. Not judged audible.
