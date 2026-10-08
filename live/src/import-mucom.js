@@ -44,14 +44,14 @@ const DETUNE_SPREAD_CENTS = 10;
 // note's block; SSG tone period at o1, before the driver's octave shift).
 const FM_FNUM = [0x26a, 0x28f, 0x2b6, 0x2df, 0x30b, 0x339, 0x36a, 0x39e, 0x3d5, 0x410, 0x44e, 0x48f];
 const SSG_PERIOD = [0xee8, 0xe12, 0xd48, 0xc89, 0xbd5, 0xb2b, 0xa8a, 0x9f3, 0x964, 0x8dd, 0x85e, 0x7e6];
-// An LFO whose wave repeats within this many clocks is a vibrato: a looping
-// triangle. A slower one is a sweep (a dive, a rise), drawn as its exact curve
-// for as long as a note can plausibly last.
+// An LFO whose wave repeats within this many clocks, or keeps the pitch word in
+// range, is a vibrato: a looping triangle. Otherwise it is a sweep (a dive, a
+// rise), drawn as its exact curve as far as the notes it plays on last.
 const LFO_VIBRATO_MAX_PERIOD = 96;
 // A vibrato's depth differs per pitch class (the word moves the same, the
 // pitch does not); past this spread each pitch class gets its own triangle.
 const LFO_DEPTH_SPREAD_CENTS = 12;
-const LFO_SWEEP_MAX_CLOCKS = 1536; // how far a sweep curve is drawn
+const LFO_SWEEP_MAX_CLOCKS = 1536; // how far a sweep curve is drawn at most
 const LFO_SWEEP_TOLERANCE = 4; // cents, piecewise-linear fit of the curve
 // The compiler's SSG presets, `@0`-`@15` on D-F (ssgdat.asm): the soft
 // envelope (E), the mix (as P: 1 tone, 2 noise) and an optional software LFO
@@ -171,6 +171,17 @@ function lengthClocks(num, dots, pct, wholeClocks) {
   return clocks;
 }
 
+// A note's length in clocks, as resolveLen reads it (the default when bare,
+// a dots-only suffix dotting the default).
+function noteClocks(num, dots, pct, hasLen, state) {
+  if (hasLen && (num != null || pct != null)) return lengthClocks(num, dots, pct, state.wholeClocks);
+  const def = state.defaultLen ?? { num: 4, dots: 0, pct: null };
+  let clocks = lengthClocks(def.num, def.dots, def.pct, state.wholeClocks);
+  let add = clocks;
+  for (let d = 0; hasLen && d < dots; d++) { add = Math.floor(add / 2); clocks += add; }
+  return clocks;
+}
+
 // Resolve a note/rest length token. A dots-only suffix (`f.`, `e-.` — dots but
 // no number) applies the dots to the running DEFAULT length: mucom multiplies
 // the note's current length by 1.5 per dot. lengthToken alone returns null when
@@ -259,6 +270,15 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
   };
   const push = (op) => {
     if (op.t === "note" || op.t === "rest") finalizeTempos();
+    // How long the notes under a software LFO last (a tie or `&` runs it on):
+    // a sweep is drawn only that far (lfoSpec).
+    if (op.t === "lfoSet") { op.maxClocks = 0; state.lfoOp = op; state.lfoRun = 0; }
+    else if (op.clocks != null) {
+      state.lfoRun = op.t === "tie" || state.lfoSlur ? state.lfoRun + op.clocks : op.clocks;
+      if (state.lfoOp) state.lfoOp.maxClocks = Math.max(state.lfoOp.maxClocks, state.lfoRun);
+    }
+    if (op.t === "slur") state.lfoSlur = true;
+    else if (op.t === "note" || op.t === "rest" || op.t === "porta") state.lfoSlur = false;
     stack[stack.length - 1].push(op);
   };
   const isSsg = partLetter in SSG_PARTS;
@@ -335,7 +355,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else break;
       }
       const len = resolveLen(num, dots, pct, hasLen, state);
-      push({ t: "note", letter: c, acc, len });
+      push({ t: "note", letter: c, acc, len, clocks: noteClocks(num, dots, pct, hasLen, state) });
       continue;
     }
 
@@ -548,7 +568,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else if (d === ".") { dots++; i++; hasLen = true; }
         else break;
       }
-      push({ t: "tie", len: resolveLen(num, dots, pct, hasLen, state) }); // `^.` dots the default length
+      push({ t: "tie", len: resolveLen(num, dots, pct, hasLen, state), clocks: noteClocks(num, dots, pct, hasLen, state) }); // `^.` dots the default length
       continue;
     }
     // Slur/tie `&`: connects the previous note to the next without a re-key.
@@ -594,8 +614,11 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       const len = hasLen
         ? resolveLen(num, dots, pct, true, state)
         : resolveLen(inNum, inDots, inPct, inNum != null || inDots > 0 || inPct != null, state);
-      if (notes.length >= 2) push({ t: "porta", from: notes[0], to: notes[notes.length - 1], len });
-      else if (notes.length === 1) push({ t: "note", letter: notes[0].letter, acc: notes[0].acc, len });
+      const clocks = hasLen
+        ? noteClocks(num, dots, pct, true, state)
+        : noteClocks(inNum, inDots, inPct, inNum != null || inDots > 0 || inPct != null, state);
+      if (notes.length >= 2) push({ t: "porta", from: notes[0], to: notes[notes.length - 1], len, clocks });
+      else if (notes.length === 1) push({ t: "note", letter: notes[0].letter, acc: notes[0].acc, len, clocks });
       continue;
     }
 
@@ -1055,7 +1078,20 @@ function lfoCents(isSsg, pc, off) {
 }
 
 const lfoOff = (lfo) => !lfo.on || lfo.amp * lfo.amt === 0 || lfo.clock === 0;
-const lfoIsVibrato = (lfo) => 2 * lfo.amt * lfo.clock <= LFO_VIBRATO_MAX_PERIOD;
+
+// Does the wave keep pitch class `pc` (null: every one) inside its word — no
+// F-number carry into the block, no SSG period past 0 or 12 bits? Then its
+// triangle in the word is a triangle in pitch too, however slow.
+function lfoInRange(lfo, isSsg, pc) {
+  const d = Math.abs(lfo.amp) * Math.ceil(lfo.amt / 2);
+  const ok = (k) => (isSsg ? SSG_PERIOD[k] - d > 0 && SSG_PERIOD[k] + d < 4096 : FM_FNUM[k] - d > 0 && FM_FNUM[k] + d < 2048);
+  return pc != null ? ok(pc) : FM_FNUM.every((_, k) => ok(k));
+}
+
+// A vibrato (a looping triangle) rather than a sweep: a fast wave, or one that
+// stays in range.
+const lfoIsVibrato = (lfo, isSsg, pc) =>
+  2 * lfo.amt * lfo.clock <= LFO_VIBRATO_MAX_PERIOD || lfoInRange(lfo, isSsg, pc);
 
 // A vibrato's depth in cents on pitch class `pc` (null: the mean of all 12) —
 // the mean of the swing up and down, which differ once it is wide.
@@ -1072,19 +1108,20 @@ function lfoDepth(lfo, isSsg, pc) {
 // too much across the octave) rather than one spec for every note?
 function lfoPerPitchClass(lfo, isSsg) {
   if (lfoOff(lfo)) return false;
-  if (!lfoIsVibrato(lfo)) return true;
+  if (!lfoIsVibrato(lfo, isSsg, null)) return true;
   const d = Array.from({ length: 12 }, (_, k) => lfoDepth(lfo, isSsg, k));
   return Math.max(...d) - Math.min(...d) > LFO_DEPTH_SPREAD_CENTS;
 }
 
 // The (macro :pitch+ …) spec for a software LFO on pitch class `pc` (null: one
 // for every note). A vibrato is a looping triangle; a sweep is the exact curve,
-// fitted with linear segments. Lengths are whole-note fractions of the part's
-// clock (`3/112`), which an `Nt` could not hold for every C.
-function lfoSpec(lfo, isSsg, wholeClocks, pc) {
+// fitted with linear segments, as far as its longest note (`maxClocks`).
+// Lengths are whole-note fractions of the part's clock (`3/112`), which an
+// `Nt` could not hold for every C.
+function lfoSpec(lfo, isSsg, wholeClocks, pc, maxClocks) {
   if (lfoOff(lfo)) return "none";
   const len = (n) => `${n}/${wholeClocks}`;
-  if (lfoIsVibrato(lfo)) {
+  if (lfoIsVibrato(lfo, isSsg, pc)) {
     const cents = Math.max(1, Math.round(lfoDepth(lfo, isSsg, pc)));
     const dir = lfo.amp > 0 ? 1 : -1; // a positive vector raises the pitch first
     // :phase 64 starts the triangle at its centre, heading for :to — as PLLFO.
@@ -1092,7 +1129,7 @@ function lfoSpec(lfo, isSsg, wholeClocks, pc) {
     const lead = lfo.delay + lfo.clock - 1; // clocks before the first step
     return lead > 0 ? `[ (wait ${len(lead)}) ${tri} ]` : tri;
   }
-  const n = LFO_SWEEP_MAX_CLOCKS;
+  const n = Math.min(LFO_SWEEP_MAX_CLOCKS, maxClocks || LFO_SWEEP_MAX_CLOCKS);
   const offs = lfoOffsets(lfo, n);
   const c = offs.map((o) => Math.max(-4800, Math.min(4800, lfoCents(isSsg, pc ?? 0, o))));
   const items = [];
@@ -1138,7 +1175,7 @@ function lfoBeforeNote(ctx, out, letter, acc) {
   ctx.lfoChanged = false;
   const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
   const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
-  const name = lfoName(ctx, lfoSpec(sw.lfo, ctx.isSsg, sw.wholeClocks, pc));
+  const name = lfoName(ctx, lfoSpec(sw.lfo, ctx.isSsg, sw.wholeClocks, pc, sw.maxClocks));
   if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
 }
 
@@ -1398,12 +1435,12 @@ function renderOps(ops, ctx, out, depth = 0) {
         const lfo = op.lfo;
         if (ctx.isPcm || ctx.isNoise) break;
         if (lfoPerPitchClass(lfo, ctx.isSsg)) {
-          ctx.lfoPerPc = { lfo, wholeClocks: op.wholeClocks };
+          ctx.lfoPerPc = { lfo, wholeClocks: op.wholeClocks, maxClocks: op.maxClocks };
           ctx.lfoChanged = true;
           break;
         }
         ctx.lfoPerPc = null;
-        const spec = lfoSpec(lfo, ctx.isSsg, op.wholeClocks, null);
+        const spec = lfoSpec(lfo, ctx.isSsg, op.wholeClocks, null, op.maxClocks);
         if (ctx.lfoRegistry) {
           const name = lfoName(ctx, spec);
           if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
