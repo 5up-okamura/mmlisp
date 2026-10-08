@@ -267,9 +267,6 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   applied there (its short-groups-first rule would be undone), no listening
   yet. The hoist windows are fixed options (rest 4 frames, note cut 2); a
   song-level setting to widen them was discussed and is not built.
-- Pre-existing, seen 2026-10-07: `sgdk:gate` (not in `verify:all`) fails at FM
-  port 0 write 0 (`$2B` vs `$B0`) on an unmodified checkout — it does not
-  expect the PCM lane's `$2B` ahead of the FM queue.
 
 ## 11. SE, and several songs
 

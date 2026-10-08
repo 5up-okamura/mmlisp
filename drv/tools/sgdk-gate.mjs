@@ -88,11 +88,19 @@ player.loadMMB(mmb, sampleBank);
 // change no write's order, only when it happens, so 0 of them will do here.
 // The ROM starts the song (every track but the effects' parts) and fires the
 // effects on the schedule above; the reference has to do exactly that or the
-// two streams are of different music. `prime: 0` starts the song, so with
-// effects in play the capture is driven by an explicit command list instead.
-const commands = [];
+// two streams are of different music. The capture is driven by an explicit
+// command list: before it starts the song, the example sets its knob's level
+// slot from the loaded depth (main.c: MMLisp_setVal(VAL_LVL,
+// lvlFor(intensity)), intensity = slot 0 as loaded), and the reference takes
+// the same SET_VAL — or a score that reads slot 1 is different music on the two.
+const mainC = readFileSync(join(drv, "sgdk", "example", "main.c"), "utf8");
+const cDefine = (name) => Number(mainC.match(new RegExp(`#define ${name} (\\d+)`))[1]);
+const depth = ir.metadata?.vals?.find((v) => v.slot === 0)?.init ?? 0;
+const lvl = cDefine("LVL_MIN")
+  + Math.trunc((depth * (cDefine("LVL_MAX") - cDefine("LVL_MIN"))) / cDefine("INTENSITY_MAX"));
+const commands = [{ frame: 0, cmd: 6, a0: 1, a1: lvl & 0xff, a2: (lvl >> 8) & 0xff }];
+for (const t of ir.tracks) if (!t.se) commands.push({ frame: 0, cmd: 1, a0: t.id });
 if (FIRE_SE) {
-  for (const t of ir.tracks) if (!t.se) commands.push({ frame: 0, cmd: 1, a0: t.id });
   seListOf(ir).slice(0, SE_AT.length).forEach((_, i) =>
     commands.push({ frame: SE_AT[i], cmd: 9, a0: i })); // PLAY_SE at its own priority
 }
@@ -137,6 +145,17 @@ for (const e of L.ymZ80) {
   if (reg === null || e.time < dac0) continue;
   if (e.part === 0 && reg === 0x2a) continue;
   seen[e.part].push({ r: reg, v: e.byte, t: e.time });
+}
+// $2B (DAC enable) rides the PCM lane, which goes on the wire ahead of the
+// frame's FM queue (driver.md §5), so it is not in the FM order: the two are
+// graded apart — the FM writes in order without it, and the $2B values in
+// their own order.
+const dacEn = (list) => list.filter((w) => w.r === 0x2b);
+{
+  const a = dacEn(seen[0]).map((w) => w.v), b = dacEn(want[0]).map((w) => w.v);
+  if (a.join() !== b.join()) errors.push(`FM port 0 $2b: the chip saw ${a.join(",")}, the score says ${b.join(",")}`);
+  seen[0] = seen[0].filter((w) => w.r !== 0x2b);
+  want[0] = want[0].filter((w) => w.r !== 0x2b);
 }
 for (const p of [0, 1]) {
   const n = Math.min(seen[p].length, want[p].length);
