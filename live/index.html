@@ -432,11 +432,12 @@
       <!-- Library: the preset sets, the snippets and the example scores in one
            searchable list (catalog-list.js) -->
       <div id="libraryPane" hidden>
-        <input id="libSearch" class="lib-search" type="search" placeholder="Search voices, samples, snippets, scores"
+        <input id="libSearch" class="lib-search" type="search" placeholder="Search the language, voices, samples, snippets"
                autocomplete="off" autocapitalize="off" spellcheck="false">
         <div class="lib-filters">
           <div class="lib-chips" id="libSources">
             <button class="lib-chip" data-source="all">All</button>
+            <button class="lib-chip" data-source="ref">Ref</button>
             <button class="lib-chip" data-source="presets">Presets</button>
             <button class="lib-chip" data-source="snippets">Snippets</button>
             <button class="lib-chip" data-source="scores">Scores</button>
@@ -682,6 +683,7 @@
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList } from './src/catalog-list.js';
+    import { REFERENCE, REFERENCE_CATEGORIES } from './src/reference.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
     import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess } from './src/recent-files.js';
@@ -6442,7 +6444,9 @@
       const track = trackKindAt(state.doc.toString(), state.selection.main.head);
       _libFitsKind = track;
       if (track == null) return null;
-      return (it) => it.source !== 'presets' ? true
+      const chip = { voice: 'fm', sample: 'pcm', psg: 'psg' }[track];
+      return (it) => it.source === 'ref' ? !it.tracks || it.tracks.includes(chip)
+        : it.source !== 'presets' ? true
         : it.kind === 'macro' || (track === 'voice' && it.kind === 'fm') || (track === 'sample' && it.kind === 'pcm');
     }
 
@@ -6524,11 +6528,47 @@
       return _libLoad;
     }
 
+    // The language reference (reference.js) as Library items: Insert writes the
+    // entry's form at the cursor, ▶ plays its example on Browse's own player,
+    // and the note line shows the syntax, the summary and the example.
+    function referenceItems() {
+      const label = new Map(REFERENCE_CATEGORIES);
+      const kindOf = (e) => e.cat === 'curves' ? 'curve' : e.cat === 'fx' ? 'effect'
+        : e.cat === 'channels' ? 'channel' : e.name.startsWith(':') ? 'keyword'
+        : e.name.startsWith('(') ? 'form' : e.name.startsWith('def') ? 'def' : 'syntax';
+      return REFERENCE.map((e) => {
+        const file = { path: `reference/${e.name}`, text: e.example, snippet: true };
+        return {
+          key: 'ref:' + e.name,
+          source: 'ref',
+          group: 'ref:' + e.cat,
+          groupLabel: label.get(e.cat),
+          name: e.name,
+          aliases: e.aliases ?? [],
+          kind: kindOf(e),
+          tracks: e.tracks,
+          about: e.summary,
+          detail: `${e.syntax}\n${e.summary}\n\n${e.example}\n\u2014 language ${e.section}`,
+          audition: () => toggleBrowseScorePreview(file),
+          keys: null,
+          actions: [{ label: 'Insert', title: `Insert ${e.insert.split('\n')[0]} at the cursor`,
+            run: () => insertReferenceText(e) }],
+        };
+      });
+    }
+
+    function insertReferenceText(e) {
+      const { from, to } = editorView.state.selection.main;
+      editorView.dispatch({ changes: { from, to, insert: e.insert } });
+      setBrowseNote(`Inserted ${e.name}`);
+      showInserted(from, from + e.insert.length);
+    }
+
     // Every source as one array of items (catalog-list.js). A preset's
     // description is the comment line above its def, as the completion shows.
     async function loadLibraryItems() {
       const catalog = await loadBrowseCatalog();
-      const items = [];
+      const items = referenceItems();
       const groupActions = {};
       const sets = await Promise.all(catalog.sets.map((path) => loadBrowseSet(path)
         .catch((e) => { log('Library: ' + e.message, 'err'); return null; })));

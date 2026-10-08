@@ -6,7 +6,8 @@
 //
 // An item:
 //   { key, source, group, groupLabel, name, kind, about,
-//     track: 'voice' | 'sample' | 'macro' | null,   // what a track takes it as
+//     aliases: [name …],                             // also found by these
+//     detail: 'text',                                // the note line, else about
 //     audition: () => …   | null,                    // ▶ and Space
 //     actions: [{ label, title, run }],              // buttons; [0] is Enter's
 //   }
@@ -31,9 +32,11 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
     render();
   }
 
+  // A new query starts at its best match; any other change keeps the row.
   function setFilter(patch) {
+    const fresh = 'query' in patch && patch.query !== filter.query;
     filter = { ...filter, ...patch };
-    render();
+    render(fresh);
   }
 
   function visible() {
@@ -46,11 +49,11 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
   function ranked(list, q) {
     const out = [];
     for (const it of list) {
-      const name = it.name.toLowerCase();
+      const names = [it.name, ...(it.aliases ?? [])].map((n) => n.toLowerCase());
       let rank;
       if (!q) rank = 0;
-      else if (name.startsWith(q)) rank = 0;
-      else if (name.includes(q)) rank = 1;
+      else if (names.some((n) => n.startsWith(q))) rank = 0;
+      else if (names.some((n) => n.includes(q))) rank = 1;
       else if ((it.about ?? '').toLowerCase().includes(q)) rank = 2;
       else continue;
       out.push([rank, it]);
@@ -96,8 +99,8 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
     return el;
   }
 
-  function render() {
-    const keep = rows[at]?.item?.key ?? rows[at]?.group;
+  function render(fromTop = false) {
+    const keep = fromTop ? null : rows[at]?.item?.key ?? rows[at]?.group;
     list.innerHTML = '';
     rows = [];
     const q = filter.query.trim().toLowerCase();
@@ -140,7 +143,7 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
     rows.forEach((r, n) => r.el.classList.toggle('active', n === at));
     if (scroll) rows[at].el.scrollIntoView({ block: 'nearest' });
     const item = rows[at].item ?? null;
-    note.textContent = item?.about || hint(item);
+    note.textContent = item?.detail || item?.about || hint(item);
     onHighlight(item);
   }
 

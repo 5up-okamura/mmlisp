@@ -1414,17 +1414,18 @@ from the first keystroke. Only what a track plays reaches the song.
 
 The side panel (the ⚙ button) has two tabs: **Params**, the sliders and the
 mixer, and **Library**, everything that comes with the app in one list — the
-**Presets** (the voice and sample sets), the **Snippets** and the **Scores**
-(the examples) — so picking a voice or trying a technique takes one click
-instead of a file dialog. **File ▸ Browse…** — or **⌘K** / **Ctrl+K** from
+language reference (**Ref**), the **Presets** (the voice and sample sets), the
+**Snippets** and the **Scores** (the examples) — so looking up a keyword,
+picking a voice or trying a technique takes one click instead of a file
+dialog. **File ▸ Browse…** — or **⌘K** / **Ctrl+K** from
 anywhere, the editor included — opens the panel on Library with the search box
 taking the keys.
 
 - **Search** matches a name, then the description (`piano` finds `gm-piano`,
   `env-piano` and every voice whose comment says piano). While there is a
   query the list is one list, ranked as the completion ranks names.
-- **All / Presets / Snippets / Scores** narrows the list to one source; the
-  last one picked is remembered.
+- **All / Ref / Presets / Snippets / Scores** narrows the list to one source;
+  the last one picked is remembered.
 - **FM / PCM / Macro** keep only those kinds of preset (any number of them;
   none means all). **Fits track** keeps what the track at the cursor can play
   — voices on an fm track, samples on a pcm track, macros everywhere — and
@@ -1450,6 +1451,17 @@ alphabetical order of their directory names.
 | a sample (`pcm`)   | one c4, baked and played through the driver's own engine — what an export will sound like | **Import set** (a sample's `:file` is relative to its set, so importing is how a score reaches it) |
 | a macro (`macro`)  | a half-note c4 on sqr1 shaped by it, then a rest for its release | **Insert** pastes the definition at the cursor |
 | a set (group)      | —                                       | **Import set** |
+| a Ref entry        | plays its example                       | **Insert** writes the form at the cursor |
+
+**Ref** is the language in short entries, one per feature, grouped as the
+reference is (score, channels, notes, track keywords, FM, definitions,
+macros, curves, echo/delay/glide, flow, FM3/CSM, PCM, sample effects). The
+line under the list shows the highlighted entry's syntax, what it does, its
+example and the section of `docs/language.md` that has the rest; a search
+finds an entry by its other spellings too (`:vel+` finds `:vel`), and
+**Fits track** keeps the entries the track at the cursor can use. The entries
+live in `live/src/reference.js`; `cd tools && npm run check:reference`
+compiles every example.
 | a score            | plays it, without opening it            | **Open** puts it in the editor |
 | a snippet          | plays it, without opening it            | **Insert** puts it at the cursor; **Open** puts it in the editor |
 

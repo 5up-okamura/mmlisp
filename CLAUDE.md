@@ -69,7 +69,8 @@ Docs: `docs/language.md` is the canonical language reference;
 `docs/guide.md` is the tutorial; `docs/cheatsheet.md` condenses the language
 for people and for AI (the MCP server hands it out first) — a language change
 updates it too (`cd tools && npm run check:cheatsheet` keeps its examples
-compiling). Driver/format design: `docs/driver.md`,
+compiling), and so does `live/src/reference.js`, the Live Library's
+reference entries (`npm run check:reference`). Driver/format design: `docs/driver.md`,
 `docs/mmb.md`, `docs/opcodes.md`; IR: `docs/ir.md`. There are no per-version
 spec files — new design decisions amend these documents directly.
 

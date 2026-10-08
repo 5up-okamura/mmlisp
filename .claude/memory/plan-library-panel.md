@@ -1,8 +1,8 @@
-# Library panel (Browse + reference in the side panel) — phase 1 built 2026-10-08
+# Library panel (Browse + reference in the side panel) — phases 1–2 built 2026-10-08
 
-Phase 1 is built (guide §25 has the behaviour; the list is
-`live/src/catalog-list.js`). Phases 2 and 3 are not. This file keeps the
-user's decisions and the order of work.
+Phases 1 and 2 are built (guide §25 has the behaviour; the list is
+`live/src/catalog-list.js`, the reference `live/src/reference.js`). Phase 3
+is not. This file keeps the user's decisions and the order of work.
 
 ## Decisions (2026-10-08)
 
@@ -33,14 +33,18 @@ user's decisions and the order of work.
   play a macro, and never will (user, 2026-10-08): the keys write a key-on
   straight to the chip and run no macro engine, and a macro's ▶ audition
   (a one-note sqr1 score) is enough.
-- **The reference is English only**, written as structured data (e.g.
-  `docs/reference.json`), not scraped from language.md, with a check that
-  compiles every example (like check:cheatsheet).
+- **The reference is English only**, written as structured data, not scraped
+  from language.md, with a check that compiles every example
+  (`check:reference`). It is a JS module, `live/src/reference.js`, rather than
+  a JSON under docs/: the page imports it (so the offline cache finds it by
+  following imports), and node — the check, the MCP server — imports the same
+  file.
 
 ## Order of work (agreed)
 
 1. **Built.** Panel tabs; Browse moves into Library with search and filters.
    The shortcut is ⌘K / Ctrl+K (user, 2026-10-08).
-2. The reference data, its check, and the Ref source.
+2. **Built.** The reference data (72 entries, 13 categories), its check, and
+   the Ref source.
 3. The same data feeds completion info, a hover tooltip and the MCP server;
    AC_PARAMS / AC_FORMS come from it so the two cannot drift.
