@@ -181,20 +181,23 @@
             <span>Import</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
+          <!-- "Tool…", under what it becomes: defs at the cursor, or a score -->
           <div class="menu-dropdown submenu-dropdown">
-            <button class="menu-item" onclick="importDefleMaskDmp();closeMenus()">DefleMask DMP…</button>
-            <button class="menu-item" onclick="importFui();closeMenus()">Furnace FUI…</button>
-            <button class="menu-item" onclick="importTfi();closeMenus()">TFI…</button>
-            <button class="menu-item" onclick="importVgi();closeMenus()">VGI…</button>
-            <button class="menu-item" onclick="importOpni();closeMenus()">OPNI…</button>
-            <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voice Bank (.dat)…</button>
-            <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 PCM Bank (.bin)…</button>
+            <div class="menu-label">Instruments</div>
+            <button class="menu-item" onclick="importDefleMaskDmp();closeMenus()">DefleMask…</button>
+            <button class="menu-item" onclick="importFui();closeMenus()">Furnace…</button>
+            <button class="menu-item" onclick="importTfi();closeMenus()">TFM Music Maker…</button>
+            <button class="menu-item" onclick="importVgi();closeMenus()">VGM Music Maker…</button>
+            <button class="menu-item" onclick="importOpni();closeMenus()">OPN2-BANK…</button>
+            <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voices…</button>
+            <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 Drums…</button>
             <div class="menu-sep"></div>
-            <button class="menu-item" onclick="importSong('midi');closeMenus()">MIDI (.mid)…</button>
-            <button class="menu-item" onclick="importSong('dmf');closeMenus()">DefleMask Module (.dmf)…</button>
-            <button class="menu-item" onclick="importSong('fur');closeMenus()">Furnace Module (.fur)…</button>
-            <button class="menu-item" onclick="importSong('vgm');closeMenus()">VGM (.vgm / .vgz)…</button>
-            <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88 MML (.muc + .dat/.bin)…</button>
+            <div class="menu-label">Songs</div>
+            <button class="menu-item" onclick="importSong('midi');closeMenus()">MIDI…</button>
+            <button class="menu-item" onclick="importSong('dmf');closeMenus()">DefleMask…</button>
+            <button class="menu-item" onclick="importSong('fur');closeMenus()">Furnace…</button>
+            <button class="menu-item" onclick="importSong('vgm');closeMenus()">VGM…</button>
+            <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88…</button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -207,7 +210,7 @@
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
             <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
             <button class="menu-item" onclick="openVideoExport();closeMenus()">Video…</button>
-            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">Imported PCM Bank WAV…</button>
+            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">Imported Samples…</button>
           </div>
         </div>
         <div class="menu-sep"></div>
@@ -2857,7 +2860,7 @@
       // folder — so seed the decode cache under the key `:file` resolves to (a
       // bare name, since there is no base dir). The song then plays immediately;
       // saving the wav beside the score is what makes it survive a reload.
-      _mucomPcm = pcm; // for File ▸ Export ▸ Imported PCM Bank WAV…, and Save
+      _mucomPcm = pcm; // for File ▸ Export ▸ Imported Samples…, and Save
       _mucomPcmUnsaved = !!pcm;
       if (pcm) {
         _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate });
@@ -3173,10 +3176,10 @@
           pcmFile = (head.match(/^#pcm\s+(\S+)/im) || [])[1] || null;
         } catch { /* detection is best-effort */ }
         if (voiceFile && !datPick) {
-          log(`mucom88: ${file.name} uses external voices "${voiceFile}" — using default voices. Load it via File ▸ Import ▸ mucom88 Voice Bank, or re-import selecting the .muc and .dat together`, 'info');
+          log(`mucom88: ${file.name} uses external voices "${voiceFile}" — using default voices. Load it via File ▸ Import ▸ mucom88 Voices…, or re-import selecting the .muc and .dat together`, 'info');
         }
         if (pcmFile && !pcmPick) {
-          log(`mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Load it via File ▸ Import ▸ mucom88 PCM Bank, or re-import selecting the .muc and .bin together`, 'info');
+          log(`mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Load it via File ▸ Import ▸ mucom88 Drums…, or re-import selecting the .muc and .bin together`, 'info');
         }
       } catch (e) {
         log(`mucom88 import failed: ${e?.message || e}`, 'err');
@@ -3277,10 +3280,10 @@
         return true;
       } catch (e) {
         if (e?.name === 'AbortError') {
-          log(`${pcm.tag ?? 'mucom88'}: ${pcm.wavFile} not saved — the samples live only in memory until it is (File ▸ Export ▸ Imported PCM Bank WAV…)`, 'info');
+          log(`${pcm.tag ?? 'mucom88'}: ${pcm.wavFile} not saved — the samples live only in memory until it is (File ▸ Export ▸ Imported Samples…)`, 'info');
         } else {
           // A picker opened without a fresh user gesture is refused (SecurityError).
-          log(`${pcm.tag ?? 'mucom88'}: saving ${pcm.wavFile} failed: ${e?.message || e} — use File ▸ Export ▸ Imported PCM Bank WAV…`, 'err');
+          log(`${pcm.tag ?? 'mucom88'}: saving ${pcm.wavFile} failed: ${e?.message || e} — use File ▸ Export ▸ Imported Samples…`, 'err');
         }
         return false;
       }
@@ -6099,6 +6102,11 @@
         });
       }
       wrap.classList.add('open');
+      // No room on the right (a phone, a narrow window): unfold it in place,
+      // under its own row, instead of past the screen's edge.
+      wrap.classList.remove('inline');
+      const sub = wrap.querySelector(':scope > .submenu-dropdown');
+      if (sub && sub.getBoundingClientRect().right > window.innerWidth) wrap.classList.add('inline');
     }
 
     function toggleSubmenu(id) {

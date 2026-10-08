@@ -169,6 +169,14 @@
       white-space: nowrap;
     }
     .menu-sep { height: 0; border-top: 1px solid var(--mid); margin: 0.25rem 0; }
+    /* A section's name inside a menu: not a command. */
+    .menu-label {
+      padding: 0.3rem 0.75rem 0.1rem;
+      color: var(--mid);
+      font-size: 0.72rem;
+      white-space: nowrap;
+      cursor: default;
+    }
     .menu-item-shortcut {
       color: var(--mid);
     }
@@ -180,6 +188,15 @@
       top: 0;
       margin-left: 0;
     }
+    /* Unfolded in place when there is no room on the right (openSubmenu). */
+    .submenu-wrap.inline > .submenu-dropdown {
+      position: static;
+      min-width: 0;
+      border: none;
+      border-radius: 0;
+      padding-left: 0.75rem;
+    }
+    .submenu-wrap.inline.open > .menu-item .submenu-arrow { transform: rotate(45deg); }
     .submenu-arrow {
       width: 0.38rem;
       height: 0.38rem;
