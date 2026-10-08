@@ -13,9 +13,7 @@ rot.
 
 ## 1. Needs the user's decision (the driver sounds different from the editor)
 
-1. **`:vol* $slot`** (§8): preview multiplies by the slot as an integer,
-   driver as 8.8 (`>> 8`) — which is the meaning?
-2. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
+1. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
    Since 2026-09-24 this has teeth — Timer A really runs while CSM is on (it
    never did before: LOAD A was never set, so no CSM score had ever sounded),
    and a rest on `fm3-csm-rate` leaves it running at the last rate, so the
@@ -23,7 +21,7 @@ rot.
    rate-track rest, or `:vol 0` meaning something to CSM (TL is the attack's
    start level in this mode, not an attenuation). The preview's mixer mute
    already holds Timer A; the language has no way to.
-3. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
+2. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
    driver** (seen 2026-10-03 while the FM drum kits briefly carried their
    pitch as a `:semi` macro; they now use `def-fm :key`): `drv-player.js`
    writes F-number at the note, key-on, then the macro's frame-0 pitch, all

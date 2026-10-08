@@ -275,7 +275,7 @@ Runtime read-modify-write against the player's shadow register file.
 | -------- | ----------------------- | --- | --------------------------------------------------- |
 | `target` | string                  | yes | Canonical target (§7).                              |
 | `delta`  | number \| `{ "src": s }`| yes (`PARAM_ADD`) | Added to the current shadow value.    |
-| `factor` | number \| `{ "src": s }`| yes (`PARAM_MUL`) | Multiplies the current shadow value.  |
+| `factor` | number \| `{ "src": s }`| yes (`PARAM_MUL`) | Multiplies the current shadow value, unsigned 8.8: a number is the factor (×256, rounded); a slot's value is the 8.8 factor itself (256 = ×1). The product is floored. |
 
 `src` is `"$time"` (elapsed 60 Hz frames since play start) or a `def-val`
 slot name, resolved at dispatch time.

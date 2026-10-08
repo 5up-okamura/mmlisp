@@ -2309,11 +2309,20 @@ export class IRPlayer {
       case "PARAM_MUL": {
         const target = ev.args?.target;
         const cur = this._readParam(ch, target, this._fm3OpOf(ev));
-        const operand = this._resolveOperand(
-          ev.cmd === "PARAM_MUL" ? ev.args?.factor : ev.args?.delta,
-          when,
-        );
-        const value = ev.cmd === "PARAM_MUL" ? cur * operand : cur + operand;
+        let value;
+        if (ev.cmd === "PARAM_ADD") {
+          value = cur + this._resolveOperand(ev.args?.delta, when);
+        } else {
+          // Unsigned 8.8, as the driver multiplies (opcodes.md PARAM_MUL /
+          // PARAM_MUL_VAL): a literal factor is ×256 rounded, a slot IS the
+          // 8.8 factor (256 = ×1, 128 = ×½ — the /256 a scaled macro's depth
+          // slot reads too), and the product drops its fraction.
+          const f = ev.args?.factor;
+          const fixed = f && typeof f === "object" && "src" in f
+            ? this._resolveSrc(f.src, when)
+            : Math.round((Number(f) || 0) * 256);
+          value = Math.floor((Math.round(cur) * Math.max(0, Math.min(0xffff, fixed))) / 256);
+        }
         this._applyParam(ch, port, chOffset, { args: { target, value }, _trackIndex: ev._trackIndex }, when);
         break;
       }

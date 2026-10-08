@@ -395,6 +395,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-mul-slot.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-pal-frames.mmlisp": {
     "ok": true,
     "mismatches": 0,

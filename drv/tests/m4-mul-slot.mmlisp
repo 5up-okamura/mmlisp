@@ -1,0 +1,9 @@
+; `× $slot` and a literal `*` are one unsigned 8.8 multiply (language.md §8,
+; opcodes.md PARAM_MUL / PARAM_MUL_VAL): a slot of 256 is ×1, 128 is ×½, and
+; the product drops its fraction — in the driver and the preview alike.
+(def-val level 128 0..256)
+(def-val bright 384 0..512)
+(fm1 :tempo 120 :alg 4 :ar2 31 :ar4 31 :tl2 40 :tl4 8 :len 4
+  :vol 28 :vol* $level c
+  :tl2* $bright e
+  :tl2* 0.5 g a)

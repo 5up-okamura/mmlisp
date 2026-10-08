@@ -561,7 +561,10 @@ the driver each time the write fires:
   value (read live — works on **every** FM op-param via the generic shadow
   read, not just level/TL).
 - **Terms**: `+ const` → `PARAM_ADD`; `+ $slot` → `PARAM_ADD` (slot); `× const`
-  → `PARAM_MUL`; `× $slot` → `PARAM_MUL` (slot). Constant sub-trees fold first
+  → `PARAM_MUL`; `× $slot` → `PARAM_MUL` (slot). A multiply is unsigned 8.8:
+  a constant factor is kept to 1/256, and a slot **is** the 8.8 factor —
+  `256` is ×1, `128` ×½, `512` ×2 (the /256 a scaled macro's depth slot reads
+  too) — and the product drops its fraction. Constant sub-trees fold first
   (any builtin or `let` name), and a variadic `(+ a b c)` chains as
   `(+ (+ a b) c)`.
 
@@ -640,10 +643,11 @@ lowers to a param-opcode chain on the driver (§7.1.2).
 ```lisp
 (def-val level 20 0..40 :step 2)
 (def-val depth 30)
+(def-val gain 128 0..256)      ; a factor: 256 = ×1
 
 (fm1 :tl1 $level               ; PARAM_FROM_VAL
      :tl2+ $level              ; PARAM_ADD (slot-relative)
-     :vol* $level              ; PARAM_MUL
+     :vol* $gain               ; PARAM_MUL: × gain/256 — here ×½
      :ar1 $time                ; built-in source
      (macro :pitch (sin :from -40 :to $depth :rate 2))
      c e g e)
