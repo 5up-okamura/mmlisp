@@ -4024,6 +4024,14 @@ function compileChannelBody(
               // to every keyword — sugar for writing the pair per target.
               for (const groupSym of group ?? [sym]) {
                 const { target, op } = macroKeyword(groupSym);
+                // A keyword that names no target is a typo, as it is inline
+                // (E_UNKNOWN_KEYWORD) — never a macro that silently drops.
+                if (!SUPPORTED_TARGETS.has(target)) {
+                  pushDiag(diagnostics, "error", "E_MACRO_TARGET",
+                    `${groupSym} is not a macro target (language.md §10 lists them)`,
+                    nodeSrc(rest[j]), trackName);
+                  continue;
+                }
                 if (isClear) {
                   clearMacroTarget(trackState, target);
                   continue;

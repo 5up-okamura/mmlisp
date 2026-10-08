@@ -1432,15 +1432,15 @@ mixer, and **Library**, everything that comes with the app in one list — the
 language reference (**Ref**), the **Presets** (the voice and sample sets), the
 **Snippets** and the **Scores** (the examples) — so looking up a keyword,
 picking a voice or trying a technique takes one click instead of a file
-dialog. **File ▸ Browse…** — or **⌘K** / **Ctrl+K** from
+dialog. **File ▸ Library** — or **⌘K** / **Ctrl+K** from
 anywhere, the editor included — opens the panel on Library with the search box
-taking the keys.
+taking the keys. The ⚙ button reopens the panel on the tab it was left on; a
+fresh launch starts on Params, with Library's filters cleared.
 
 - **Search** matches a name, then the description (`piano` finds `gm-piano`,
   `env-piano` and every voice whose comment says piano). While there is a
   query the list is one list, ranked as the completion ranks names.
-- **All / Ref / Presets / Snippets / Scores** narrows the list to one source;
-  the last one picked is remembered.
+- **All / Ref / Presets / Snippets / Scores** narrows the list to one source.
 - **FM / PCM / Macro** keep only those kinds of preset (any number of them;
   none means all). **Fits track** keeps what the track at the cursor can play
   — voices on an fm track, samples on a pcm track, macros everywhere — and
@@ -1508,8 +1508,9 @@ song and its mixer alone; starting one stops the song, since there is one
 chip. **Insert** moves the snippet's `(import …)` lines to the top of the score
 (skipping any already there) and puts the rest at the cursor, in one undo step.
 A snippet is written as if it sat next to a new score, so its imports read
-`presets/…` wherever it ends up. **Tools ▸ Snippets ▸ Browse Snippets…** opens
-Library on the Snippets source.
+`presets/…` wherever it ends up. `voices/fm-voice-template` is the blank to
+start a voice from: a `def-fm` with every register written out at the chip's
+start values.
 
 A `(trig N)` cue has no sound, so the log shows it as it passes — `trig 2 —
 fm1` — whether the score is playing from the editor or from the panel.

@@ -10,8 +10,7 @@ user's decisions and their reasons; nothing is open.
 - **The side panel gets two tabs: Params | Library.** The gear stays the one
   top-bar button (the menu bar never collapses on a phone, so no new buttons
   there). Library is Browse and a new reference in one list, narrowed by a
-  source switch (All / Ref / Presets / Snippets / Scores; the last one is
-  remembered). The user preferred this to three tabs (Params | Browse | Ref):
+  source switch (All / Ref / Presets / Snippets / Scores). The user preferred this to three tabs (Params | Browse | Ref):
   one search finds the keyword, the presets and the snippets for a word.
 - **One list component for every source**: collapsible group headers in one
   column (Browse's two-column set → defs layout and its phone back button go),
@@ -21,7 +20,13 @@ user's decisions and their reasons; nothing is open.
   area under the list, and Browse's keys (↑↓, Space auditions, Enter acts).
   Each row: name, kind, one-line description, ▶, Insert; a group header can
   carry an action (Import set).
-- **The Browse modal is removed**; File > Browse… opens the panel on Library.
+- **The Browse modal is removed**; the menu entry is File > Library (⌘K).
+  Tools > Snippets went too (2026-10-08, the user: "the most half-done
+  thing"): Library's Snippets source replaces Browse Snippets…, and the FM
+  voice template is the snippet `voices/fm-voice-template`.
+- **The tab and Library's filters are not saved across launches** (user,
+  2026-10-08): the gear reopens the panel as it was left, but a state that
+  outlives quitting the app is confusing — a launch starts on Params, All.
 - **Phones keep the full-screen panel** — the play keyboard leaves no room for
   a half-height sheet. Insert on a phone closes the panel and shows the
   inserted text selected; on a desktop the panel stays open.

@@ -1026,6 +1026,8 @@ If the same target is set twice, the last one wins.
 | `:ssg` (1–4) | `FM_SSG`   | 0–15         |                                        |
 | `:am` (1–4) | `FM_AMEN`   | 0–1          |                                        |
 
+A keyword that is not in this table is `E_MACRO_TARGET` (`(macro :foo …)`
+and `(macro :foo none)` alike) — a typo is never a macro that silently drops.
 Out-of-range step values are clamped to the target's range (relative `+`/`*`
 macros stay unclamped until combined with the base).
 
