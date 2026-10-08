@@ -1,6 +1,6 @@
 # examples
 
-`index.json` lists the songs **File ▸ Browse… ▸ Scores** offers (guide §25) —
+`index.json` lists the songs the Library panel's **Scores** source offers (guide §25) —
 scores worth playing to someone. A directory cannot be listed over HTTP, so a
 song has to be named there to appear.
 

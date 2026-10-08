@@ -1,5 +1,5 @@
 /**
- * MMLisp → IR compiler — ES module port of tools/scripts/mmlisp2ir.js (v0.3)
+ * MMLisp → IR compiler (tools/scripts/mmlisp2ir.js is a thin wrapper around it).
  * No Node.js dependencies; input is a MMLisp source string.
  *
  * API:
@@ -1342,7 +1342,7 @@ function exprHasValRef(node) {
 function valueCtx(target, vals, diagnostics, trackName, src, typedDefs = null) {
   return {
     ...makeEvalCtx(diagnostics, trackName, src, typedDefs),
-    i16: target === "NOTE_PITCH" || target === "TEMPO_SCALE",
+    i16: target === "NOTE_PITCH",
     isSelf: (name) => target != null && canonicalTarget(":" + name) === target,
     resolveSlot: (raw) => resolveValRef(raw, vals, diagnostics, trackName, src),
   };
@@ -2840,7 +2840,6 @@ export function canonicalTarget(symbol) {
     // Sequencer / level
     ":vol": "VOL",
     ":master": "MASTER",
-    ":tempo-scale": "TEMPO_SCALE",
     ":pitch": "NOTE_PITCH",
     ":semi": "NOTE_SEMI",
     ":keyon": "KEYON",

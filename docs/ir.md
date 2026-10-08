@@ -308,7 +308,7 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
 | Arg          | Type    | Unit  | Req | Semantics                                                        |
 | ------------ | ------- | ----- | --- | ----------------------------------------------------------------- |
 | `target`     | string  | —     | yes | Canonical target (§7).                                            |
-| `curve`      | string  | —     | yes | Curve name (§6.4). `const` is pre-lowered to `linear` with `from == to`. |
+| `curve`      | string  | —     | yes | Curve name (§6.4).                                                |
 | `from`       | number  | target| no  | Start value. Absent ⇒ the parameter's current value when the sweep starts (MMB `flags` bit3). |
 | `to`         | number  | target| yes | End value (0 if unspecified).                                     |
 | `frames`     | int     | ticks | no  | Sweep length. **In ticks** despite the name (the player converts ticks → 60 Hz frames at dispatch). |
@@ -527,7 +527,7 @@ The curve-spec fields (shared verbatim with `PARAM_SWEEP` args §5.9):
 | Field        | Type    | Semantics                                                                       |
 | ------------ | ------- | --------------------------------------------------------------------------------|
 | `curve`      | string  | Curve name (§6.4).                                                               |
-| `from`       | number  | Start value. Absent only on an inline `PARAM_SWEEP` (start from the current value); a macro curve always carries it (`E_CURVE_FROM`). `const v` lowers to `linear` with `from == to == v`. |
+| `from`       | number  | Start value. Absent only on an inline `PARAM_SWEEP` (start from the current value); a macro curve always carries it (`E_CURVE_FROM`). |
 | `to`         | number  | End value (always present; 0 default).                                           |
 | `frames`     | number  | `:len`. Ticks by default; absolute 60 Hz frames when `lenFrames` is true (`Nf`); placeholder `1` when `dyn.len` is set. |
 | `lenFrames`  | bool    | Present (true) only for `Nf` lengths.                                            |
@@ -566,7 +566,6 @@ Easings (non-loop): `linear`, `ease-in`, `ease-out`, `ease-inout`, and the
 `ease-{in,out,inout}-{sine,quad,cubic,quart,quint,expo,circ,back,elastic,bounce}`
 family. Loop waveforms: `sin`, `triangle`, `square`, `saw`, `ramp`. Stochastic
 (fixed-seed LUTs — deterministic): `noise`, `pink`, `perlin`, `brown`.
-`const` is compile-time sugar (never appears in IR).
 
 `params` keys (all optional, numeric; clamped with warnings at compile):
 
@@ -616,12 +615,11 @@ write.
 | `FM_ML1`–`FM_ML4` | 0–15           | 0x30+op bits 3–0 (shared byte with DT).                      |
 | `FM_DT1`–`FM_DT4` | 0–7            | 0x30+op bits 6–4.                                            |
 | `FM_KS1`–`FM_KS4` | 0–3            | 0x50+op bits 7–6.                                            |
-| `FM_SSG1`–`FM_SSG4` | 0–15         | 0x90+op. Emitted by voice defs only (no `:ssg` inline keyword resolves — see §11). |
+| `FM_SSG1`–`FM_SSG4` | 0–15         | 0x90+op. `:ssg1`–`:ssg4`, inline, as a macro or in a voice def. |
 | `FM_AMEN1`–`FM_AMEN4` | 0–1        | 0x60+op bit 7.                                               |
 
-CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz).
-`canonicalTarget` also knows `:tempo-scale` → `TEMPO_SCALE`, but it is not in
-`SUPPORTED_TARGETS` and is never emitted. On PSG-routed tracks only `VOL` and
+CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz). On
+PSG-routed tracks only `VOL` and
 `NOTE_PITCH` PARAM events are honored.
 
 ## 8. Normalization invariants

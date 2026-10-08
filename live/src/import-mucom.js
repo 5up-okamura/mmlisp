@@ -775,7 +775,7 @@ export function parseMucom(text) {
   const macros = new Map(); // *n -> { ops, comments }
   const warnings = [];
   const pendingComments = []; // full-line comments awaiting the next def/section
-  let scoreComments = []; // comments just before the parts, kept above (score …)
+  let scoreComments = []; // comments just before the parts, kept above them
   let sawPart = false;
   const state = new Map(); // per-part scanner state
 
@@ -2286,7 +2286,7 @@ export function parseVoiceDat(bytes) {
 }
 
 // Pull the voices a song actually references (by @n or @"name") out of a parsed
-// .dat bank and add them to `parsed.voices`, so their (def @name …) get emitted
+// .dat bank and add them to `parsed.voices`, so their (def-fm @name …) get emitted
 // and @"name"/@n resolve. Only referenced voices are added (a bank has 256).
 function mergeDatVoices(parsed, datVoices) {
   const refNums = new Set(), refNames = new Set();

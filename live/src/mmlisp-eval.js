@@ -268,7 +268,7 @@ function rtAppend(chain, term) {
 
 function rtMulval(chain, ref, ctx) {
   if (ctx.i16)
-    throw NOT_LOWERABLE("multiply by a $value on an i16 target (NOTE_PITCH/TEMPO_SCALE) is not sign-correct");
+    throw NOT_LOWERABLE("multiply by a $value on an i16 target (NOTE_PITCH) is not sign-correct");
   return new Runtime([...chain.steps, { op: "mulval", ref }]);
 }
 
@@ -410,9 +410,6 @@ export function isEvalHead(name) {
 export function isReservedHead(name) {
   return typeof name === "string" && RESERVED_HEADS.has(name);
 }
-
-/** The reserved eval-head names, for diagnostics that want to list them. */
-export const EVAL_BUILTIN_NAMES = Object.freeze([...RESERVED_HEADS]);
 
 const atomVal = (n) =>
   n && (n.kind === "atom" || n.kind === "string") ? n.value : null;

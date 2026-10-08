@@ -1,11 +1,11 @@
 # snippets
 
-Short scores, one technique each, for **File ▸ Browse… ▸ Snippets** (guide
-§25): ▶ plays one on its own, **Insert** puts it at the cursor, **Open** puts
-it in the editor. They stand in for documentation — each file's leading
-comment says what it shows, and the panel displays it.
+Short scores, one technique each, for the Library panel's **Snippets**
+source (guide §25): ▶ plays one on its own, **Insert** puts it at the cursor,
+**Open** puts it in the editor. They stand in for documentation — each file's
+leading comment says what it shows, and the panel displays it.
 
-- One directory per topic; the directory name is the heading in the panel.
+- One directory per topic; the directory name is the group in the panel.
 - `index.json` lists what the panel offers, in order. A new snippet has to be
   named there to show up.
 - **Write a snippet as if it sat at the site root**, next to a new score:

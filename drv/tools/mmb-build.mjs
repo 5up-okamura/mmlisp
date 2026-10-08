@@ -1,4 +1,4 @@
-// Compile a .mmlisp source to an MMB v0.2 binary on disk, using the same
+// Compile a .mmlisp source to an MMB v0.3 binary on disk, using the same
 // live/src toolchain the browser uses. Usage:
 //   node mmb-build.mjs <in.mmlisp> <out.mmb>
 import { existsSync, readFileSync, writeFileSync } from "node:fs";

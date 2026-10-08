@@ -872,13 +872,6 @@
       border-radius: 1px;
       transform-origin: bottom center;
     }
-    .ch-section-label {
-      font-size: 0.58rem;
-      color: var(--mid);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      padding: 0.4rem 0 0.2rem;
-    }
 
     /* bottom keyboard */
     #keyboardDock {

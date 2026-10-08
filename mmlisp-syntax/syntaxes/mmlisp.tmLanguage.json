@@ -37,7 +37,7 @@
       ]
     },
     "def-form": {
-      "match": "(?<=\\()\\s*(def)\\s+([a-zA-Z_][a-zA-Z0-9_-]*)",
+      "match": "(?<=\\()\\s*(def(?:-[a-z]+)?)\\s+([a-zA-Z_][a-zA-Z0-9_-]*)",
       "captures": {
         "1": { "name": "entity.name.function.mmlisp" },
         "2": { "name": "entity.name.constant.mmlisp" }

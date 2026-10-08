@@ -1827,8 +1827,7 @@
           // A kit names its samples after roles; the file says which sound.
           const file = kind === 'sample' && /:file\s+"(?:[^"]*\/)?([^"/]+?)(?:\.\w+)?"/.exec(line);
           const about = comment || (file ? file[1] : '');
-          if (!(head === 'def' && /^(title|author|pcm-voices)$/.test(name) && kind === 'def'))
-            out.push({ name, kind, about, from });
+          out.push({ name, kind, about, from });
           comment = '';
           continue;
         }
@@ -3200,7 +3199,7 @@
 
     // Load a mucom .dat voice bank. If a song was just imported, re-convert it
     // with the bank so external @"name"/@n voices resolve; otherwise load the
-    // bank on its own as a library of (def @name …) voice definitions.
+    // bank on its own as a library of (def-fm @name …) voice definitions.
     async function importMucomVoiceBank() {
       let datFile;
       try {

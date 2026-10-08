@@ -378,9 +378,8 @@ range's end still moves it.
   C enum has no entry for it. Level is VEL/VOL/MASTER (language.md §6). The id
   stays parked rather than being reused.
 - **0x03 TEMPO_SCALE** is assigned in both tables and counted as an i16
-  target, but nothing emits it: the compiler knows the name `:tempo-scale`
-  while `SUPPORTED_TARGETS` rejects it, so no PARAM opcode ever carries it, and
-  neither player has a handler for it.
+  target, but nothing emits it: the language has no keyword for it, so no
+  PARAM opcode ever carries it, and neither player has a handler for it.
 
 ### 7.2 FM_DT carries a signed value
 
@@ -399,7 +398,7 @@ The driver evaluates a small curve set; the exporter lowers the language's full
 easing vocabulary onto it (output-side minimalism — the driver carries four
 easing shapes, not thirty). The mapping is `curveId()` in `live/src/mmb.js`:
 each `ease-in-*` / `ease-out-*` / `ease-inout-*` family name collapses onto its
-base quad shape, `ramp` aliases `saw`, `const` lowers to linear, and an unknown
+base quad shape, `ramp` aliases `saw`, and an unknown
 name falls back to linear.
 
 | Id  | Curve      | Notes                                                     |

@@ -14,8 +14,6 @@
  * exercisable standalone (it is the risky part to calibrate).
  */
 
-import { encodeWav } from "./export-wav.js";
-
 const DIR_ENTRIES = 32;
 const DIR_ENTRY_SIZE = 32;
 const BODY_START = 0x400;
@@ -138,16 +136,4 @@ export function decodeMucomPcmBank(bytes) {
     offset += decoded[i].length;
   }
   return { pcm, sampleRate: MUCOM_ADPCM_RATE, entries: out };
-}
-
-/**
- * Decode a bank and encode it as one 16-bit mono WAV — the file the emitted
- * sample defs slice with `:offset` / `:frames`.
- *
- * @param {Uint8Array} bytes whole `*pcm.bin`
- * @returns {{ bytes: Uint8Array, sampleRate: number, entries: Array<object> }}
- */
-export function mucomPcmBankToWav(bytes) {
-  const { pcm, sampleRate, entries } = decodeMucomPcmBank(bytes);
-  return { bytes: encodeWav(pcm, null, sampleRate), sampleRate, entries };
 }

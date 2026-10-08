@@ -84,9 +84,6 @@ export const CHANNEL_ID = {
   pcm2: 21,
   pcm3: 22,
 };
-export const CHANNEL_NAME = Object.fromEntries(
-  Object.entries(CHANNEL_ID).map(([name, id]) => [id, name]),
-);
 
 // Resolve a compiler `scoreChannel` (e.g. "fm3-1", "fm3-csm", "pcm2") to its MMB
 // channel id. The four FM3 independent-op sub-tracks are ids 16-19, one each —
