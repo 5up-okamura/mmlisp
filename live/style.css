@@ -600,6 +600,16 @@
       grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
       gap: 0.5rem;
     }
+    /* Sound Effects: one button per def-se, lit while the effect plays. */
+    .se-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+      gap: 0.4rem;
+      -webkit-touch-callout: none;
+    }
+    .se-btn { padding: 0.35rem 0.5rem; overflow: hidden; text-overflow: ellipsis; touch-action: none; }
+    .se-btn .se-num { color: var(--mid); margin-right: 0.4em; font-size: 0.6rem; }
+    .se-btn.active .se-num { color: var(--background); }
     .knob-wrap { display: flex; flex-direction: column; gap: 0; }
     .knob-label {
       font-size: 0.58rem;

@@ -1077,6 +1077,18 @@ and when none is free the keys play on the target channel itself, over the
 score's own writes there. With every channel held, the oldest key gives its
 channel to the newest.
 
+### Sound effects over the song
+
+With `Tools > MMLispDRV Backend` on, a score with `def-se` forms (§9.3 of
+the reference) gets a **Sound Effects** section in the panel, one button per
+effect with its number — the one `MMLisp_playSe` takes. A tap while the
+score plays does what the game does: the effect takes its channels from the
+song, which comes back when it ends. Stopped, a tap plays the effect alone,
+like Play with the cursor inside the `def-se`. An effect that holds (a
+`:len 0` note) sounds while the button is held. The button is lit while
+the effect plays. The IR player plays an effect alone only, so the section
+is not shown with it.
+
 ### A MIDI keyboard and knobs
 
 `MMLisp > MIDI > MIDI Input` listens to every connected MIDI input (Chrome,

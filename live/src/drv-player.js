@@ -2434,6 +2434,21 @@ export class DrvPlayer {
     this._setReg27((this._reg27 & ~0xc0) | this._ch3.mode);
     if (this._ch3.mode & 0x80) this._writeTimerA(this._ch3.timerA);
   }
+  // The host's PLAY_SE / STOP_SE (driver.md §6.5) while a run is on, for the
+  // live app's Sound Effects buttons: an effect over the running song, as
+  // the game plays one. Nothing here that the mailbox does not.
+  playSe(se, prio = null) {
+    if (this._playing) this._playSe(se, prio);
+  }
+  // Also after the run is done: a held effect played alone (play({ se })) is
+  // "done" at once — every track held — and still sounding until stopped.
+  stopSe(se) {
+    if (this._trk) this._stopSe(se);
+  }
+  sePlaying(se) {
+    return !!this._trk && this._sePlaying(se); // the tracks exist from the first run on
+  }
+
   _stopSe(se) {
     const e = this._song?.seTable?.[se];
     if (!e) return;

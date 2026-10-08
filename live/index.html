@@ -427,6 +427,14 @@
         </div>
       </div>
 
+      <!-- Sound Effects: the score's def-se as buttons (MMLispDRV backend only) -->
+      <div class="rack-section" id="seSection" hidden>
+        <div class="rack-title rack-title-row"><span>Sound Effects</span></div>
+        <div class="rack-body">
+          <div id="seBody" class="se-grid"></div>
+        </div>
+      </div>
+
       </div>
 
       <!-- Library: the preset sets, the snippets and the example scores in one
@@ -5454,6 +5462,70 @@
         body.appendChild(wrap);
       }
       refreshMidiBadges();
+      renderSeButtons();
+    }
+
+    // ---- Sound Effects: the score's def-se as buttons (MMLispDRV only) ----
+    // A tap plays an effect as the game does (MMLisp_playSe): over the
+    // running song, suspending the parts it takes and giving them back at its
+    // end (driver.md §2.5); stopped, it plays alone, as Play with the cursor
+    // in the def-se does. An effect that holds (a `:len 0` note — its track
+    // waits there for the stop; a `:gate 0` track runs on and ends) sounds
+    // while the button is held. The IR player plays an effect alone
+    // only, so the section shows with the MMLispDRV backend.
+    let _seDefs = [];            // [{ index, name, hold }] from the last good IR
+    const _seHeld = new Set();   // indices whose button is down
+    function renderSeButtons() {
+      const section = document.getElementById('seSection');
+      const body = document.getElementById('seBody');
+      if (!section || !body) return;
+      const byIndex = new Map();
+      for (const t of _lastGoodIR?.tracks ?? []) {
+        if (!t.se) continue;
+        const d = byIndex.get(t.se.index) ?? { index: t.se.index, name: t.se.name, hold: false };
+        if (t.events?.some((e) => e.cmd === 'NOTE_ON' && e.args?.length === 0)) d.hold = true;
+        byIndex.set(t.se.index, d);
+      }
+      _seDefs = [...byIndex.values()].sort((a, b) => a.index - b.index);
+      section.hidden = !(_drvBackend && _seDefs.length);
+      body.innerHTML = '';
+      for (const d of _seDefs) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tb-btn se-btn';
+        b.dataset.se = String(d.index);
+        b.title = `MMLisp_playSe(${d.index})` + (d.hold ? ' — held while the button is' : '');
+        const num = document.createElement('span');
+        num.className = 'se-num';
+        num.textContent = String(d.index);
+        b.append(num, d.name);
+        b.onpointerdown = (e) => { e.preventDefault(); seDown(d); };
+        b.onpointerup = b.onpointercancel = b.onpointerleave = () => seUp(d);
+        body.appendChild(b);
+      }
+      body.ontouchstart ??= (e) => e.preventDefault(); // no iOS long-press menu on a held button
+      refreshSeLit();
+    }
+
+    async function seDown(d) {
+      _seHeld.add(d.index);
+      if (player instanceof DrvPlayer && player.isPlaying()) {
+        player.playSe(d.index);
+        return;
+      }
+      await onPlay(null, { se: d.index }); // stopped: the effect alone
+      if (d.hold && !_seHeld.has(d.index)) player?.stopSe?.(d.index); // let go while it started
+    }
+
+    function seUp(d) {
+      if (!_seHeld.delete(d.index)) return;
+      if (d.hold) player?.stopSe?.(d.index);
+    }
+
+    function refreshSeLit() {
+      for (const b of document.querySelectorAll('#seBody .se-btn')) {
+        b.classList.toggle('active', !!player?.sePlaying?.(Number(b.dataset.se)));
+      }
     }
 
     function onDynParam(name, el) {
@@ -5776,6 +5848,7 @@
       updateDrvBackendCheck();
       savePref('drvBackend', _drvBackend ? 'on' : 'off');
       log('Playback backend: ' + (_drvBackend ? 'MMLispDRV reference (MMB v0.3)' : 'IR player'), 'info');
+      renderSeButtons();
     }
     window.toggleDrvBackend = toggleDrvBackend;
     updateDrvBackendCheck();
@@ -5862,7 +5935,7 @@
     // fromLine: play from that line's first note (the nearest line above with
     // one, unless `exactLine`, when a line with no note plays nothing);
     // fromSec: from that far into the song. Both chase the run (IRPlayer.seek).
-    async function onPlay(fromLine = null, { fromSec = null, exactLine = false } = {}) {
+    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride = null } = {}) {
       hideSharedPlay();
       const ok = await initAudio();
       if (!ok) return;
@@ -5879,7 +5952,9 @@
       }
       // With the cursor in a (def-se …), Play auditions that effect alone —
       // the song never starts its effects; the game does (driver.md §2.5).
-      const seName = _lastGoodIR ? findSeDefAtCursor() : null;
+      const seName = seOverride != null
+        ? (_lastGoodIR?.tracks.find((t) => t.se?.index === seOverride)?.se.name ?? null)
+        : (_lastGoodIR ? findSeDefAtCursor() : null);
       const seTrack = seName ? _lastGoodIR.tracks.find((t) => t.se?.name === seName) : null;
       const se = seTrack ? seTrack.se.index : null;
       const playIr = _lastGoodIR ? songOrEffectIr(_lastGoodIR, se) : null;
@@ -6011,6 +6086,8 @@
       player?.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
+      _seHeld.clear();
+      refreshSeLit();
       showTime(0);
       log('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
@@ -8875,6 +8952,7 @@
       }
       updateChannelVu();
       syncLfoSlider();
+      refreshSeLit();
       if (_fmPanelDragging || !isFmChannel(selectedCh) || getFmParamMode() !== 'channel') return;
       applyRegsToFmSliders(player.getChRegs(selectedCh), player.getOpMask(selectedCh));
     }

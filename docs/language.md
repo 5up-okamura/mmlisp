@@ -931,7 +931,9 @@ A game's sound effects are written once, as defs, and every song carries them.
   song that defines a def-se of its own would move the numbers — the bundle
   refuses it.
 - **Audition.** In the live editor, Play with the cursor inside a def-se plays
-  that effect alone.
+  that effect alone. With the MMLispDRV backend (Tools menu) the panel's
+  **Sound Effects** buttons play an effect over the running song, as the
+  game does (guide.md §22).
 
 ### 9.4 `def-mod` — score-wide modifiers
 
