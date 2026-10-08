@@ -88,7 +88,8 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
 
   function itemRow(it, showGroup) {
     const el = document.createElement('div');
-    el.className = 'lib-row';
+    // Indented under its group; a flat list (a query, A–Z) has no group to sit in.
+    el.className = showGroup ? 'lib-row' : 'lib-row lib-nested';
     if (it.audition) el.appendChild(button('▶', 'Play', it.audition));
     const name = document.createElement('span');
     name.className = 'lib-name';
