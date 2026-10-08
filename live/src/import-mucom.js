@@ -2364,14 +2364,14 @@ export function importMucom(bytes, datBytes = null, pcmBytes = null) {
   return pcm ? { ...out, pcm } : out;
 }
 
-// The samples the score plays bake into one 32 KB bank (encodeMmb), one blob
-// per sample and pitch, at the rate of the engine image the voice count
-// picks: 14.4 kHz for one voice, 10.1 for two, 6.7 for three. An over-full
-// bank does not play at all, so the import bakes it here and takes the first
-// voice count it fits in — trading rate for every drum sounding. When none
-// fits — a long melodic sample played at several pitches, say — the sample
-// costing the most bytes is dropped (its notes become rests) and the count
-// search starts over. Said in warnings and a comment.
+// The samples the score plays bake one blob per sample and pitch, at the rate
+// of the engine image the voice count picks; past one 32 KB bank encodeMmb
+// goes multi-bank on its own (docs/pcm-multibank.md). What can still fail is
+// one blob longer than a bank holds (32,512 bytes) — a long sample at a low
+// pitch — so the import bakes here and takes the first voice count whose rate
+// fits every blob. When none does, the sample costing the most bytes is
+// dropped (its notes become rests) and the search starts over. Said in
+// warnings and a comment.
 function fitPcmBank(render, pcm) {
   const bake = (source) => {
     const { ir, diagnostics } = compileMMLisp(source, "import.mmlisp", { imports: new Map(), frameHz: 60 });
@@ -2413,18 +2413,18 @@ function fitPcmBank(render, pcm) {
     let last = null;
     for (const n of [1, 2, 3]) {
       const source = n === 1 ? out.source
-        : `; The PCM fits the 32 KB sample bank at ${n} PCM voices' rate, not at 1's.\n(def-score :pcm-voices ${n})\n\n${out.source}`;
+        : `; A PCM sample fits one bank (32,512 bytes) at ${n} PCM voices' rate, not at 1's.\n(def-score :pcm-voices ${n})\n\n${out.source}`;
       const r = bake(source);
       if (r.ok) {
-        if (n > 1) out.warnings.push(`PCM: the samples exceed the 32 KB bank at 14.4 kHz; set (def-score :pcm-voices ${n}) to bake them at the lower rate`);
-        if (drop.size) out.warnings.push(`PCM: ${[...drop].join(", ")} would not fit the 32 KB bank (one copy per pitch played); dropped — their notes are rests`);
+        if (n > 1) out.warnings.push(`PCM: a sample is longer than one bank (32,512 bytes) at 1 voice's rate; set (def-score :pcm-voices ${n}) to bake it at the lower rate`);
+        if (drop.size) out.warnings.push(`PCM: ${[...drop].join(", ")} is longer than one bank (32,512 bytes) at every rate; dropped — its notes are rests`);
         return { ...out, source };
       }
       last = r.ir;
     }
     const worst = last && costliest(last);
     if (!worst || drop.has(worst)) {
-      out.warnings.push("PCM: the samples exceed the 32 KB bank even at 3 voices' rate; shorten or drop samples (:frames)");
+      out.warnings.push("PCM: a sample is longer than one bank (32,512 bytes) even at 3 voices' rate; shorten it (:frames)");
       return out;
     }
     drop.add(worst);
