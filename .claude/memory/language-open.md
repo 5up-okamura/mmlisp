@@ -13,14 +13,9 @@ rot.
 
 ## 1. Needs the user's decision (the driver sounds different from the editor)
 
-1. **Glide longer than its note** (§14): slide faster to finish inside the
-   note, or cut at the note end? `language.md` §14 now says a glide "never
-   bleeds into the next note", but `emitGlideIfNeeded` sizes the sweep by `T`
-   alone and does not clamp it to the note (the CSM path does clamp). Check
-   which is true before deciding.
-2. **`:vol* $slot`** (§8): preview multiplies by the slot as an integer,
+1. **`:vol* $slot`** (§8): preview multiplies by the slot as an integer,
    driver as 8.8 (`>> 8`) — which is the meaning?
-3. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
+2. **CSM "rest the rate source to silence"** (§15): no CSM_OFF is emitted.
    Since 2026-09-24 this has teeth — Timer A really runs while CSM is on (it
    never did before: LOAD A was never set, so no CSM score had ever sounded),
    and a rest on `fm3-csm-rate` leaves it running at the last rate, so the
@@ -28,13 +23,13 @@ rot.
    rate-track rest, or `:vol 0` meaning something to CSM (TL is the attack's
    start level in this mode, not an attenuation). The preview's mixer mute
    already holds Timer A; the language has no way to.
-4. **`:len 0` then more events** (§17): the IR/preview play them at the same
+3. **`:len 0` then more events** (§17): the IR/preview play them at the same
    tick; the driver waits for the host KEY_OFF.
-5. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
-6. **Note names vs defs** (§3): the doc says a def named like a note cannot be
+4. **`:hold`** (§11): unit undefined — it quantizes the LUT index, not steps.
+5. **Note names vs defs** (§3): the doc says a def named like a note cannot be
    referenced; the code lets the def win. Error at def time?
-7. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
-8. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
+6. **`(fm3 …)` notes beside fm3-N tracks**: no diagnostic.
+7. **A `:semi` / `:pitch` macro's first frame lands after the key-on in the
    driver** (seen 2026-10-03 while the FM drum kits briefly carried their
    pitch as a `:semi` macro; they now use `def-fm :key`): `drv-player.js`
    writes F-number at the note, key-on, then the macro's frame-0 pitch, all
@@ -42,6 +37,46 @@ rot.
    hardware that is the pair transport's spacing of two writes —
    microseconds at the wrong pitch — but the orders differ. Decide whether
    the sequencer should run a note's frame-0 macros before its key-on.
+
+## 1a. Decided, not built — hand off to an implementation chat
+
+### Glide longer than its note: portamento from where the pitch is (user, 2026-10-09)
+
+Measured before deciding (`fm1 :len 8 (glide 2) c e g`, both players alike):
+with `T` longer than the note, **no note reaches its pitch** — e covers a
+quarter of c→e in its 15 frames — and **the next note restarts from the
+previous note's WRITTEN pitch**, so the pitch jumps ~3 semitones at every
+boundary. Worse, **a glide bleeds into later notes**: after `(glide none)`, g
+started ~3 semitones flat and the old sweep dragged on for two notes, because
+a note-on cancels only LOOP sweeps (`cancel_loop_sweeps`) and a glide is a
+one-shot. `language.md` §14 says it "never bleeds into the next note" — false
+today.
+
+Offered three: (1) shrink `T` to the note so every note lands; (2) stop at the
+note end, next note from its written pitch; (3) **slide on from the pitch
+actually sounding**, as a mono synth's slow portamento does. **The user chose
+3.** What to build:
+
+- **A glide starts from the pitch sounding at its key-on**: `fromCents =
+  (previous − new) × 100 + the previous glide's remaining offset at this tick`.
+  A `T` longer than the note then reads as a lagging pitch with no jumps.
+  Compile-time only, no driver change: the glide is a linear sweep over `T`
+  ticks, so its remaining offset at any later tick is known at constant tempo
+  (approximate under a tempo sweep — say so in the doc).
+- **Nothing bleeds**: a note with no glide of its own (`(glide none)`, or a
+  rest that ends it) starts at its own pitch. Where a previous glide is still
+  running at that tick, emit a `PARAM_SET NOTE_PITCH` at the note — a
+  PARAM_SET ends its target's sweep in both players (`driver.md` §4). Keep the
+  sticky `:pitch` offset, not 0.
+- **Gate**: a score with `T` > note length checking pitch continuity at every
+  key-on frame (no jump) and that a `(glide none)` note starts at its own
+  pitch; `ab-gate` keeps the two players aligned.
+- **Docs when built**: `language.md` §14 (then "never bleeds" becomes true),
+  `cheatsheet.md` and `live/src/reference.js` if they describe glide.
+- **Open — ask the user**: the `fm3-csm-rate` glide currently does option 1
+  (`emitCsmRateNoteHz` compresses the slide into the note, to keep sweep
+  writes off the next note). One rule for both is the project's habit; with
+  option 3 the overrun it guards against becomes intended.
 
 ## 1b. Rulings from the 2026-09-26 syntax audit — do not re-propose
 
