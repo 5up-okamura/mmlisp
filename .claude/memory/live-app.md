@@ -112,9 +112,6 @@ user's rulings, measurements, and open items. Merged 2026-10-09 from
 The list is `docs/roadmap.md` (Importers, MMLisp Live); kept here is what it
 leaves out.
 
-- **Library ▶ and the completion list's ↑ / ↓ refuse a sample during
-  playback** because their preview reloads the engine's PCM bank; the keys
-  already use the side player (`playAuditionBlob`), which they could share.
 - A score's own `def-pcm` is not auditioned from the picker because its
   `:file` is relative to the score's folder, which the stand-in score lacks.
 - Touch has no add-cursor gesture: there is no modifier, and long-press is the

@@ -6396,6 +6396,7 @@
     let _browseCatalog = null;              // { sets, scores, snippets: [path] }
     const _browseFileCache = new Map();     // score/snippet path -> { text, about }
     const _browseSetCache = new Map();      // set path -> { path, text, defs }
+    let _sideAudition = null;               // the sample preview playing beside the song (playAuditionBlob)
     let _browsePreviewTimers = [];          // note on/off timers for the FM audition
     let _browsePcmSounding = false;         // the worklet holds a sample preview
 
@@ -6821,21 +6822,19 @@
       // A score's own sample resolves its :file against the score's folder,
       // which the preview's stand-in score does not have.
       if (!def || (def.kind === 'pcm' && !set.path)) return;
-      if (def.kind === 'pcm' && _fmLiveRaf != null) {
-        log('Stop playback to audition a sample \u2014 its preview reloads the PCM bank.', 'info');
-        return;
-      }
       previewBrowseDef(set, def);
     }
 
     // Cancel whatever the panel has in flight. The FM run is a JS timer; the
     // PCM hit is already queued inside the worklet, so only a flush recalls it
-    // (safe here because a sample preview refuses to start during playback).
+    // (safe here because during playback a sample preview plays on the side
+    // player instead, which stops on its own).
     function stopBrowsePreview() {
       stopBrowseScorePreview();
       for (const t of _browsePreviewTimers) clearTimeout(t);
       _browsePreviewTimers = [];
       previewNoteOff(CURSOR_DEF_PREVIEW_CH);
+      _sideAudition?.stop();
       if (_browsePcmSounding) {
         workletNode?.port.postMessage({ type: 'flush' });
         _browsePcmSounding = false;
@@ -6867,10 +6866,6 @@
     // stop.
     async function previewBrowsePcm(set, def) {
       if (!(await initAudio())) return;
-      if (_fmLiveRaf != null) {
-        setBrowseNote('Stop playback first \u2014 a sample preview reloads the PCM bank.');
-        return;
-      }
       stopBrowsePreview();
       try {
         const source = `(import "${set.path}")\n(pcm1 :oct 4 :len 4 ${def.name} c)\n`;
@@ -6881,6 +6876,14 @@
         if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
         const samples = await pcmSampleBlobsForMmb(ir);
         if (!samples) throw new Error('sample did not load');
+        // During playback the engine is the song's: the same bake plays on the
+        // side player beside it (playAuditionBlob), as the keys' audition does.
+        if (_fmLiveRaf != null) {
+          const blob = bakeAuditionBlob(ir, samples, def.name, PREVIEW_MIDI);
+          playAuditionBlob(blob, false, 15);
+          setBrowseNote(`${def.name} \u2014 c4, ${blob.data.length} bytes baked`);
+          return;
+        }
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
         workletNode.port.postMessage({
           type: 'pcm-set-bank',
@@ -7944,7 +7947,6 @@
     // source of its own — the engine and the song's bank stay untouched. One
     // at a time, as the engine's audition voice is; its level follows vel
     // linearly, not the driver's 6 dB rungs.
-    let _sideAudition = null;
     function playAuditionBlob({ data, rateHz, range, loop: loopPts }, loop, vel) {
       _sideAudition?.stop();
       const [from, to] = range ?? [0, data.length];

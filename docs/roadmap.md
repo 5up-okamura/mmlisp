@@ -68,8 +68,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## MMLisp Live
 
-- **Sample previews during playback.** The keys play a sample over a playing
-  song; Library's ▶ and the completion list's ↑ / ↓ still wait for it to stop.
 - A score's own `def-pcm` is not auditioned from the voice picker.
 - Touch has no add-cursor gesture.
 
