@@ -73,10 +73,13 @@ actually sounding**, as a mono synth's slow portamento does. **The user chose
   pitch; `ab-gate` keeps the two players aligned.
 - **Docs when built**: `language.md` §14 (then "never bleeds" becomes true),
   `cheatsheet.md` and `live/src/reference.js` if they describe glide.
-- **Open — ask the user**: the `fm3-csm-rate` glide currently does option 1
-  (`emitCsmRateNoteHz` compresses the slide into the note, to keep sweep
-  writes off the next note). One rule for both is the project's habit; with
-  option 3 the overrun it guards against becomes intended.
+- **The `fm3-csm-rate` glide follows the same rule** (user, 2026-10-09:
+  "揃える"). Today `emitCsmRateNoteHz` compresses the slide into the note
+  (option 1) to keep sweep writes off the next note; under option 3 a rate
+  note's glide starts from the Hz actually running and slides on over its full
+  `T`, and a rate note with no glide of its own ends any running sweep. One
+  start-point computation should serve both paths (pitch in cents, CSM in
+  Hz), not two.
 
 ## 1b. Rulings from the 2026-09-26 syntax audit — do not re-propose
 
