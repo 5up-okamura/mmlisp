@@ -283,9 +283,9 @@
   },
   "m4-csm-glide.mmlisp": {
     "ok": false,
-    "mismatches": 91,
+    "mismatches": 89,
     "compileErrors": 0,
-    "digest": "c42bb25a"
+    "digest": "e7f0e14d"
   },
   "m4-csm-rest-inline.mmlisp": {
     "ok": true,
@@ -295,9 +295,9 @@
   },
   "m4-csm-rest.mmlisp": {
     "ok": false,
-    "mismatches": 48,
+    "mismatches": 46,
     "compileErrors": 0,
-    "digest": "a08aaa48"
+    "digest": "d4d4f403"
   },
   "m4-delay-prio.mmlisp": {
     "ok": true,

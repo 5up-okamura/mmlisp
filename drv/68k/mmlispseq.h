@@ -311,6 +311,7 @@ typedef struct {
   int32_t gate_left; /* -1 = none */
   uint8_t pending_off;
   uint8_t trig_byte; /* game-readable trig status (opcodes.md 0x42) */
+  uint8_t csm_on;    /* this track turned CSM on: its end or stop turns it off */
   /* FADE_TRACK: a division-free Bresenham vol ramp to 0, then stop (§6.5). */
   uint8_t fading;
   uint16_t fade_n, fade_frame;

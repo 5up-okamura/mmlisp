@@ -1813,8 +1813,10 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         t->pending_off = 0;
         channel_off(s, t->channel_id);
         /* Stopping the fm3-csm track must clear CSM — the flag exists in the
-         * track table precisely so stopping never leaves the chip in it (§9). */
-        if (t->flags & TRACK_FLAG_IS_CSM) set_reg27(s, (uint8_t)(s->reg27 & ~0x80));
+         * track table precisely so stopping never leaves the chip in it (§9).
+         * Only the track that turned it on: a rate track ending while the
+         * formant plays on leaves the buzz alone. */
+        if (t->csm_on) set_reg27(s, (uint8_t)(s->reg27 & ~0x80));
         t->running = 0;
         /* A single-shot SE self-cleans here: the BGM owner it stole the
          * channel from is restored (a held or looping SE ends on STOP). */
@@ -2039,6 +2041,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       }
       case OP_CSM_ON:
         t->pc += 1;
+        t->csm_on = 1;
         set_reg27(s, (uint8_t)(s->reg27 | 0x80));
         break;
       case OP_CSM_OFF:
@@ -2191,7 +2194,7 @@ static int process_global_sweep(MMLGlobalSweep *g, int *out) {
 }
 static void stop_track(MMLSeq *s, MMLTrack *t) {
   channel_off(s, t->channel_id);
-  if (t->flags & TRACK_FLAG_IS_CSM) set_reg27(s, (uint8_t)(s->reg27 & ~0x80));
+  if (t->csm_on) set_reg27(s, (uint8_t)(s->reg27 & ~0x80)); /* see END_OF_TRACK */
   t->running = 0;
   t->fading = 0;
 }
@@ -3243,6 +3246,7 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   t->gate_left = -1;
   t->pending_off = 0;
   t->trig_byte = 0;
+  t->csm_on = 0;
   t->depth = 0;
   t->held = 0;
   t->fading = 0;

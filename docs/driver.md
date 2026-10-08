@@ -952,9 +952,10 @@ The rate of overflows is the pitch; where the operators ring is the formant.
   (`$A0`/`$A4`), so a note writes the same F-number to all four and each rings
   at the note times its own multiple, as in normal mode.
 - The sequencer's invariant: `MMLisp_stopTrack` (and END_OF_TRACK, and the stop
-  side of `MMLisp_fadeTrack`) on the track flagged `isCsm` clears the CSM bits
-  in reg `$27` — the flag exists in the track table precisely so stopping never
-  leaves the chip in CSM mode.
+  side of `MMLisp_fadeTrack`) on the track that turned CSM on (its CSM_ON)
+  clears the CSM bits in reg `$27`, so stopping never leaves the chip in CSM
+  mode. A `fm3-csm-rate` track ending while the formant plays on leaves CSM
+  alone. Both carry the `isCsm` flag, which keeps them out of PRIME.
 
 ## 10. Voice Representation
 

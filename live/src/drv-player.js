@@ -1050,8 +1050,9 @@ export class DrvPlayer {
         case OPCODE.END_OF_TRACK: {
           trk.pendingOff = false;
           this._channelOff(trk.channelId);
-          // Stopping an fm3-csm track must clear CSM (driver.md §9).
-          if (trk.flags & TRACK_FLAG.isCsm) this._setReg27(this._reg27 & ~0x80);
+          // Stopping an fm3-csm track must clear CSM (driver.md §9) — only the
+          // track that turned it on: a rate track ending leaves the buzz alone.
+          if (trk.csmOn) this._setReg27(this._reg27 & ~0x80);
           trk.running = false;
           // A single-shot SE self-cleans at EOT: restore the BGM owner it stole
           // the channel from (driver.md §2.5 — an effect ends here or on STOP).
@@ -1295,6 +1296,7 @@ export class DrvPlayer {
         }
         case OPCODE.CSM_ON:
           trk.pc += 1;
+          trk.csmOn = true;
           this._setReg27(this._reg27 | 0x80);
           break;
         case OPCODE.CSM_OFF:
@@ -2531,7 +2533,7 @@ export class DrvPlayer {
 
   _stopTrack(t) {
     this._channelOff(t.channelId);
-    if (t.flags & TRACK_FLAG.isCsm) this._setReg27(this._reg27 & ~0x80);
+    if (t.csmOn) this._setReg27(this._reg27 & ~0x80); // see END_OF_TRACK
     t.running = false;
     t.fading = false;
   }
@@ -2654,6 +2656,7 @@ export class DrvPlayer {
     trk.trigByte = 0;
     trk.loops = [];
     trk.held = false;
+    trk.csmOn = false;
     trk.fading = false;
     trk.running = true;
     trk.armed = true; // silent setup frame, first dispatch next frame
