@@ -4543,15 +4543,6 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
-      // The settings moved to (def-score …): the old shapes say so instead of
-      // turning into a snippet nobody reads, which would lose them silently.
-      const old = name === "pcm-voices" || name === "author" || name === "title"
-        ? root.items.filter((n) => n.kind !== "comment").slice(2) : null;
-      if (old?.length === 1 && (name === "pcm-voices" || old[0].kind === "string")) {
-        pushDiag(diagnostics, "error", "E_SCORE_MOVED",
-          `(def ${name} …) is now (def-score :${name} …)`, nodeSrc(root), "global");
-        continue;
-      }
       // Anything else is a snippet: expanded where its name is written.
       defs.set(
         name,

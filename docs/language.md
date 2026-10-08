@@ -42,9 +42,7 @@ source file is a sequence of top-level forms, in source order:
 `(def-score …)` holds the settings the whole score has one of. Every key is
 optional; several `def-score` forms combine, a key given twice is
 `E_SCORE_OPTION`, and so is a key it does not know. An imported file's
-`def-score` is not imported (§9.2) — the settings are the score's own. The old
-reserved defs `(def title "…")`, `(def author "…")` and `(def pcm-voices N)`
-are `E_SCORE_MOVED`.
+`def-score` is not imported (§9.2) — the settings are the score's own.
 
 - **`:title "…"` / `:composer "…"` / `:author "…"`** — the file metadata: who
   wrote the music and who wrote this score of it (an arrangement, a port). IR

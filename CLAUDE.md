@@ -32,6 +32,9 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB |
+| `catalog-list.js`              | The side panel's Library list: search, filters, groups, keys, for every source |
+| `reference.js`                 | The language reference's entries (Library's Ref, completion info, hover, MCP) |
+| `completion-names.js`          | The words the editor's completion offers, each held to a reference entry |
 | `midi-input.js`                | Web MIDI: keys play/step-input the preview, CCs drive panel sliders (MIDI Learn) |
 | `ai-bridge.js`                  | Tools > Connect to AI: the page's end of the link to the MCP server (`tools/mcp/`) |
 | `live/api/` (Vercel functions)  | Short share links: `/api/share` stores a score, `/s/<id>` opens it (Upstash Redis) |

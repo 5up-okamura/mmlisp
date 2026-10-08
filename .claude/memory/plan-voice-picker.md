@@ -11,7 +11,7 @@ reasons the guide does not, and what is still open.
 - **Every preset set, imported or not.** The user chose this after asking
   about speed: 10 sets / 374 names / ~100 KB; a substring filter over 5,000
   names costs ~0.5 ms a keystroke; the list renders at most 12 rows. Set text
-  only, through Browse's cache — a sample's WAV loads only when auditioned.
+  only, through Library's cache — a sample's WAV loads only when auditioned.
 - **Audition on ↑↓, never on Space** — Space must stay a typed space. Only a
   keyed move sounds (a capture keydown timestamp, `noteCompletionNavKey`);
   opening or narrowing the list stays quiet.
@@ -26,7 +26,7 @@ reasons the guide does not, and what is still open.
   discussed 2026-10-03 for PSG envelopes and rejected: an envelope is already
   `(def name (macro …))`, which 0914339 made the one form of a named macro,
   and the only need was tooling — so the picker lists macro defs (first on a
-  PSG track, after voices or samples elsewhere), Browse auditions one on
+  PSG track, after voices or samples elsewhere), Library's ▶ auditions one on
   sqr1, and `presets/envelopes` ships the set. Naming the head was hard
   because the thing was not a new concept.
 

@@ -81,6 +81,8 @@ Rules:
   the standing decisions — never auto-repair brackets, no full paredit, no
   rainbow parens.
 - [plan-library-panel.md](plan-library-panel.md) — **the Library panel —
-  built 2026-10-08**: Browse and a new English reference in the side panel
-  (Params | Library), one searchable list for every source, the modal
-  removed, phones full-screen; the three-phase order of work.
+  built 2026-10-08** (guide §24–§25 have the behaviour): why two tabs and one
+  list, why phones stay full-screen, why the keys never play a macro, why an
+  audition ignores the score, the menus and ⌘J / ⌘K, nothing saved across
+  launches, the reference as hand-written data; open: a sample does not sound
+  while the song plays.

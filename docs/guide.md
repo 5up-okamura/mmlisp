@@ -1425,7 +1425,7 @@ from the first keystroke. Only what a track plays reaches the song.
 
 ---
 
-## 25. Browsing what the app ships
+## 25. The Library: what the app ships
 
 The side panel (the ⚙ button) has two tabs: **Params**, the sliders and the
 mixer, and **Library**, everything that comes with the app in one list — the
@@ -1589,7 +1589,7 @@ it — a browser only lets sound start after a tap. From there it is an ordinary
 unsaved score: they can edit it, play it, save it, or share their own version.
 
 The link carries the score's text only. Preset sets and samples the app ships
-(`presets/…`, §25) and a Browse score's own folder resolve for everyone; imports
+(`presets/…`, §25) and a Library score's own folder resolve for everyone; imports
 and `.wav`s from a folder you opened or dropped in do not, and the Share dialog
 names any it finds. A score that fails to compile is flagged too.
 
