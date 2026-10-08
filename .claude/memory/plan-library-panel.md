@@ -24,6 +24,15 @@ the reasons and what is still open.
 - **Phones keep the full-screen panel** — the play keyboard leaves no room for
   a half-height sheet. Insert on a phone closes the panel and shows the
   inserted text selected; on a desktop the panel stays open.
+- **Insert moves the focus to the editor**, with the inserted text selected,
+  on a desktop as on a phone — search, Enter, keep writing. A shortcut from
+  the editor to Library's search box is to be picked with the implementation
+  (avoiding the keys Chrome takes).
+- **The play keyboard plays the highlighted preset** while Library is open:
+  shown for an FM voice or a PCM sample, hidden for anything else. It does not
+  play a macro, and never will (user, 2026-10-08): the keys write a key-on
+  straight to the chip and run no macro engine, and a macro's ▶ audition
+  (a one-note sqr1 score) is enough.
 - **The reference is English only**, written as structured data (e.g.
   `docs/reference.json`), not scraped from language.md, with a check that
   compiles every example (like check:cheatsheet).
