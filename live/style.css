@@ -13,6 +13,10 @@
       --high: color-mix(in srgb, var(--foreground) 45%, var(--contrast));     /* emphasis */
     }
     * { box-sizing: border-box; }
+    /* Controls answer taps only: iOS otherwise reads two quick presses (a
+       play button pressed again) as a double-tap and zooms the page. Pan and
+       pinch-zoom still work; touch-action is not inherited, hence the list. */
+    button, input, select, label, summary, [role=button], .cm-gutters { touch-action: manipulation; }
     /* Only the score and the console are text to select: line numbers, menus,
        labels and panels are not, so a drag or long-press never grabs them.
        Fields stay selectable — Safari will not type into one that is not. */
