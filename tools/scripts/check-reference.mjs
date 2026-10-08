@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // live/src/reference.js is the Library panel's language reference: every
 // example must compile clean and play something (▶ plays it), every insert
-// must parse, and every entry must sit in a known category.
+// must parse, every entry must sit in a known category, and every word the
+// editor's completion offers (completion-names.js) must have an entry.
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { compileMMLisp, collectImports } from "../../live/src/mmlisp2ir.js";
 import { parse } from "../../live/src/mmlisp-parser.js";
-import { REFERENCE, REFERENCE_CATEGORIES } from "../../live/src/reference.js";
+import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from "../../live/src/reference.js";
+import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from "../../live/src/completion-names.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const cats = new Set(REFERENCE_CATEGORIES.map(([id]) => id));
@@ -31,6 +33,10 @@ for (const e of REFERENCE) {
   for (const d of diagnostics) fail(`example ${d.severity} ${d.code} ${d.message}`);
   if (!ir.tracks.some((t) => t.events.some((ev) => /NOTE_ON$/.test(ev.cmd)))) fail("example plays no note");
 }
+
+// Every word the completion offers is one the reference explains.
+for (const word of [...AC_FORMS, ...AC_TRACKS, ...AC_PARAMS, ...AC_MODE_VALUES])
+  if (!referenceFor(word)) failures.push(`completion offers ${word}, which no entry covers (name, alias or prefix)`);
 
 if (failures.length) {
   for (const f of failures) console.error(f);

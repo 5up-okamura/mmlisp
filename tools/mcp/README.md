@@ -15,7 +15,7 @@ dependencies (Node 18+).
 | `mmlisp_format`   | The editor's formatter; with `path` + `write` rewrites the file              |
 | `mmlisp_live`     | A share link that opens the score in MMLisp Live, ready to play and edit     |
 | `mmlisp_render`   | WAV (FM + PSG, no PCM) and its levels — peak, RMS, clipping, silence         |
-| `mmlisp_docs`     | `cheatsheet` whole; `language` / `guide` / `ir` / `roadmap`: contents, one section, or a search |
+| `mmlisp_docs`     | `cheatsheet` whole; `language` / `guide` / `ir` / `roadmap`: contents, one section, or a search; `reference`: one entry per feature, by word (`query`) or category (`section`) |
 | `live_status`     | Whether MMLisp Live is connected (below), and how the user connects it       |
 | `live_read`       | The score open in the user's editor: text, cursor, selection, diagnostics    |
 | `live_write`      | Edit it — `{find, replace}` edits or the whole text; one undoable step, then a build |

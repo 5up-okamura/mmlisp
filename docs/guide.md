@@ -1365,9 +1365,12 @@ rather than a fragment of it.
 
 ### Completions
 
-Typing `(` opens the form and track list; `:` opens the keyword list. Forms
-with a fixed argument shape insert a filled-in template instead of a bare name,
-with `Tab` moving between the fields:
+Typing `(` opens the form and track list; `:` opens the keyword list. Beside
+the highlighted entry the list shows what it is — its syntax and one line from
+the reference (Library's Ref, §25) — and resting the mouse on a keyword or a
+form head in the score shows the same card. Forms with a fixed argument shape
+insert a filled-in template instead of a bare name, with `Tab` moving between
+the fields:
 
 | Typed          | Inserted                              |
 | -------------- | ------------------------------------- |

@@ -691,7 +691,8 @@
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList } from './src/catalog-list.js';
-    import { REFERENCE, REFERENCE_CATEGORIES } from './src/reference.js';
+    import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
+    import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
     import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess } from './src/recent-files.js';
@@ -706,6 +707,7 @@
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
     const { tags } = cm;
     const { history, historyKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
+    const { hoverTooltip } = cm;
     const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
 
@@ -1752,69 +1754,6 @@
     // -----------------------------------------------------------------------
     // Autocomplete
     // -----------------------------------------------------------------------
-    const AC_FORMS = [
-      'def','def-val','def-fm','def-pcm','def-se','import','t','x','go','param-set',
-      'echo','delay','glide','macro',
-      // compile-time eval heads (§7)
-      'let','note','ticks','frames',
-      'min','max','abs','round','floor',
-      'linear','const',
-      'ease-in','ease-out','ease-inout',
-      'ease-in-sine','ease-out-sine','ease-inout-sine',
-      'ease-in-quad','ease-out-quad','ease-inout-quad',
-      'ease-in-cubic','ease-out-cubic','ease-inout-cubic',
-      'ease-in-quart','ease-out-quart','ease-inout-quart',
-      'ease-in-quint','ease-out-quint','ease-inout-quint',
-      'ease-in-expo','ease-out-expo','ease-inout-expo',
-      'ease-in-circ','ease-out-circ','ease-inout-circ',
-      'ease-in-back','ease-out-back','ease-inout-back',
-      'ease-in-elastic','ease-out-elastic','ease-inout-elastic',
-      'ease-in-bounce','ease-out-bounce','ease-inout-bounce',
-      'sin','triangle','square','saw','ramp',
-      'noise','pink','perlin','brown',
-      // def-pcm :fx [...] chain (§16)
-      'gain','normalize','comp','limit','crush','fade','reverb',
-    ];
-    const AC_TRACKS = [
-      'fm1','fm2','fm3','fm3-csm','fm3-csm-rate','fm3-1','fm3-2','fm3-3','fm3-4',
-      'fm4','fm5','fm6',
-      'sqr1','sqr2','sqr3','noise',
-      'pcm1','pcm2','pcm3',
-    ];
-    // Keyword params suggested after ':'. Keep in sync with the keywords the
-    // compiler accepts (mmlisp2ir.js: canonicalTarget, track/note options,
-    // curve params). FM operator params are generated per operator (1–4).
-    const AC_FM_OP_PARAMS = ['ar','dr','sr','rr','sl','tl','ml','dt','ks','am']
-      .flatMap(p => [1, 2, 3, 4].map(op => `:${p}${op}`));
-    const AC_PARAMS = [
-      // global (written on a track; §1)
-      ':tempo',':lfo-rate',
-      // track / channel
-      ':prio',':oct',':oct+',':len',':gate',':gate*',':gate-',
-      ':vel',':vel+',':vel*',':vol',':volume',
-      ':master',':pan',':mode',':shuffle',':shuffle-base',
-      // note dynamics / sequencer
-      ':pitch',':pitch+',':semi',':semi+',':keyon',':back',':time',
-      ':tempo-scale',':csm-rate',
-      // macro / voice / definitions
-      ':step',':pcm-start',':pcm-end',':pcm-len',':loop-start',':loop-end',':loop-len',
-      ':file',':rate',
-      // def-val (dynamic value slots)
-      ':unit',
-      // PCM / effects
-      ':fx',':db',':peak',':threshold',':ratio',':attack',':release',
-      ':knee',':makeup',':ceiling',':bits',':at',':curve',
-      ':size',':damp',':mix',':predelay',':tail',
-      // curve params
-      ':from',':to',':phase',':wait',':duty',':skew',':hold',':jitter',
-      ':beta',':octaves',':lacunarity',':persistence',':leak',':seed',
-      // FM channel
-      ':alg',':fb',':ams',':fms',
-      // FM operator params (×4)
-      ...AC_FM_OP_PARAMS,
-    ];
-    const AC_MODE_VALUES = ['shot', 'loop'];
-
     // Templates for the forms whose argument shape is fixed enough that filling
     // it in beats typing it. Body only — the parens are already in the document
     // (typing '(' auto-closes). `${n:text}` are tab stops whose placeholder is
@@ -1826,6 +1765,8 @@
       'def-fm': 'def-fm ${1:name} init-fm ${2}',
       'def-pcm': 'def-pcm ${1:name} :file "${2:sounds/kick.wav}"',
       'def-se': 'def-se ${1:name} :prio ${2:5} (${3:fm1} ${4})',
+      'def-score': 'def-score :title "${1}"',
+      'def-mod': 'def-mod :ch ${1:fm1} :keyon off',
       'import': 'import "${1:voices.mmlisp}"',
       'x': 'x ${1:4} ${2}',
       'go': 'go ${1:head}',
@@ -1833,7 +1774,6 @@
       'echo': 'echo ${1:3} :${2:vel+} ${3:-1}',
       'delay': 'delay ${1:3} :${2:vel+} ${3:-4} :time ${4:1/8}',
       'glide': 'glide ${1:1/8}',
-      'const': 'const ${1:0} :len ${2:4}',
     };
     // Every curve head takes the same `A..B :len L` shape (§11), so generate
     // rather than list. `noise` is left out: as a head it is also a track name,
@@ -2078,6 +2018,47 @@
     // list on its own: `a-`, `e8.`, `v-2` are music, not a name being typed.
     const AC_MUSIC_WORD = /^([a-gr][+-]?[\d.]*|[vo][+-]\d*)$/;
 
+    // A word of the language explained, from its reference entry (reference.js):
+    // the completion list's info for a form or a keyword, and the editor's
+    // hover card over one.
+    function referenceCard(e) {
+      const box = document.createElement('div');
+      box.className = 'ref-card';
+      const syntax = document.createElement('div');
+      syntax.className = 'ref-card-syntax';
+      syntax.textContent = e.syntax;
+      const summary = document.createElement('div');
+      summary.className = 'ref-card-summary';
+      summary.textContent = `${e.summary} (language ${e.section})`;
+      box.append(syntax, summary);
+      return box;
+    }
+    function referenceInfo(word) {
+      const e = referenceFor(word);
+      return e ? () => referenceCard(e) : undefined;
+    }
+
+    // Hover: a keyword (`:vel`, `:tl1+`) anywhere, a form head or a channel
+    // name right after `(`. Only the words the completion offers — a def's
+    // own name, a note or a number is not the reference's to explain.
+    const AC_WORDS = new Set([...AC_FORMS, ...AC_TRACKS, ...AC_PARAMS]);
+    const referenceHover = hoverTooltip((view, pos) => {
+      const line = view.state.doc.lineAt(pos);
+      const text = line.text;
+      let from = pos - line.from, to = from;
+      const inWord = (ch) => ch != null && /[\w:+*-]/.test(ch);
+      while (from > 0 && inWord(text[from - 1])) from--;
+      while (to < text.length && inWord(text[to])) to++;
+      let word = text.slice(from, to);
+      if (!AC_WORDS.has(word) && /[+*]$/.test(word)) word = word.slice(0, -1); // :tl1+
+      if (!AC_WORDS.has(word)) return null;
+      if (!word.startsWith(':') && text[from - 1] !== '(') return null;
+      if (text.slice(0, from).includes(';')) return null;                  // a comment
+      const e = referenceFor(word);
+      if (!e) return null;
+      return { pos: line.from + from, end: line.from + to, above: true, create: () => ({ dom: referenceCard(e) }) };
+    }, { hoverTime: 500 });
+
     function mmlispCompletions(context) {
       if (_acReplace) {
         const r = _acReplace;
@@ -2091,8 +2072,8 @@
         const options = [...AC_FORMS, ...AC_TRACKS]
           .filter(s => s.startsWith(typed))
           .map(s => AC_SNIPPETS[s]
-            ? snippetCompletion(AC_SNIPPETS[s], { label: s, type: 'keyword', detail: AC_DETAIL[s] })
-            : { label: s, type: 'keyword', apply: s + ' ' });
+            ? snippetCompletion(AC_SNIPPETS[s], { label: s, type: 'keyword', detail: AC_DETAIL[s], info: referenceInfo(s) })
+            : { label: s, type: 'keyword', apply: s + ' ', info: referenceInfo(s) });
         for (const d of scoreDefNames(context.state))
           if (d.kind === 'fn' && d.name.startsWith(typed)) options.push(defCompletion(d));
         if (options.length === 0 && !context.explicit) return null;
@@ -2104,7 +2085,7 @@
         const typed = kwMatch.text;
         const options = [...AC_PARAMS]
           .filter(s => s.startsWith(typed))
-          .map(s => ({ label: s, type: 'property' }));
+          .map(s => ({ label: s, type: 'property', info: referenceInfo(s) }));
         if (options.length === 0 && !context.explicit) return null;
         return { from: kwMatch.from, options };
       }
@@ -3512,6 +3493,7 @@
       // (spamming `(` while playing then starved the audio pump). Rendering a
       // small window (the list stays complete and scrollable) drops that ~6×.
       autocompletion({ override: [mmlispCompletions], maxRenderedOptions: 12 }),
+      referenceHover,
       // Auto-close ( [ ", type over the closer, delete the pair on Backspace,
       // and wrap the selection when a bracket is typed with text selected.
       closeBrackets(),

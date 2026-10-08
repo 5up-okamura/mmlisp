@@ -6,6 +6,7 @@
 // An entry:
 //   name     what the list shows and the search matches first
 //   aliases  other names it is found by (`:vel+` finds :vel)
+//   prefixes word starts that belong to it (`:tl` covers :tl1–:tl4)
 //   cat      its category (REFERENCE_CATEGORIES)
 //   syntax   how it is written
 //   summary  one or two sentences: what it does, its range and default
@@ -39,7 +40,7 @@ const FM_PSG = ['fm', 'psg'];
 export const REFERENCE = [
   // ---- score and song-wide -------------------------------------------------
   {
-    name: 'def-score', cat: 'score', section: '§1', tracks: null,
+    name: 'def-score', aliases: [':title', ':composer', ':author', ':pcm-voices'], cat: 'score', section: '§1', tracks: null,
     syntax: '(def-score :title "…" :composer "…" :author "…" :pcm-voices N)',
     summary: 'The score\'s settings: its metadata, and how many PCM voices the driver plays (0–3; fewer voices, a higher DAC rate). Every key is optional.',
     insert: '(def-score :title "" :composer "" :author "")',
@@ -81,7 +82,7 @@ export const REFERENCE = [
     example: '(fm1 :prio 1 :len 4 c _ _ g _ _)\n(fm1 :prio 5 :len 16 e e e e e e e e e e e e e e e e e e e e e e e e)',
   },
   {
-    name: 'def-mod', cat: 'score', section: '§9.4', tracks: null,
+    name: 'def-mod', aliases: [':ch', ':voice'], cat: 'score', section: '§9.4', tracks: null,
     syntax: '(def-mod [:ch c|[c …]] [:voice v|[v …]] :keyon off | :vel V | :vel+ N | :vel* R)',
     summary: 'Rewrites every note it selects, score-wide: :keyon off turns them into rests (play the part yourself on the keys), the vel ops move their velocity, clamped to 0–15.',
     insert: '(def-mod :ch fm1 :keyon off)',
@@ -220,7 +221,7 @@ export const REFERENCE = [
     example: '(fm1 :len 8 :pan left c e :pan right g e :pan center c)',
   },
   {
-    name: ':mode', cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
+    name: ':mode', aliases: ['shot', 'loop', 'white0', 'periodic0'], cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
     syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop',
     summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once or loops while held.',
     insert: ':mode white2',
@@ -258,6 +259,7 @@ export const REFERENCE = [
   },
   {
     name: 'operator params', aliases: [':tl1', ':ar1', ':dr1', ':sr1', ':rr1', ':sl1', ':ml1', ':dt1', ':ks1', ':ssg1', ':am1', 'tl', 'ar'],
+    prefixes: [':tl', ':ar', ':dr', ':sr', ':rr', ':sl', ':ml', ':dt', ':ks', ':ssg', ':am'],
     cat: 'fm', section: '§10', tracks: FM,
     syntax: ':tl1–:tl4 0–127  ·  :ar :dr :sr 0–31  ·  :rr :sl :ml 0–15  ·  :dt −3–3  ·  :ks 0–3  ·  :ssg 0–15  ·  :am 0–1  (1–4)',
     summary: 'One operator\'s register: a value, a curve (a sweep), none (stop a sweep), $slot, or :tl1+ N / :tl1* R relative to its live value.',
@@ -288,7 +290,7 @@ export const REFERENCE = [
     example: '(def (beat n) (x 2 > n < n))\n(fm1 :len 8 (beat c) (beat e))',
   },
   {
-    name: 'def-val', aliases: ['$', 'slot', 'runtime value'], cat: 'defs', section: '§8', tracks: null,
+    name: 'def-val', aliases: ['$', 'slot', 'runtime value', ':unit'], cat: 'defs', section: '§8', tracks: null,
     syntax: '(def-val name init A..B)  ·  $name',
     summary: 'A runtime value slot the game (or a Live slider) writes; $name reads it where a value goes.',
     insert: '(def-val bright 20 0..40)',
@@ -384,7 +386,7 @@ export const REFERENCE = [
     example: '(fm1 :len 4 :tl1 (linear 0..60 :len 1) c e g e)',
   },
   {
-    name: 'ease-*', aliases: ['ease-in', 'ease-out', 'ease-inout', 'easing'], cat: 'curves', section: '§11', tracks: null,
+    name: 'ease-*', aliases: ['ease-in', 'ease-out', 'ease-inout', 'easing'], prefixes: ['ease-'], cat: 'curves', section: '§11', tracks: null,
     syntax: '(ease-out A..B :len L)  ·  ease-{in,out,inout}-{sine,quad,cubic,quart,quint,expo,circ,back,elastic,bounce}',
     summary: 'Eased ramps: slow at the start (in), the end (out) or both.',
     insert: '(ease-out 0..100 :len 8)',
@@ -398,7 +400,8 @@ export const REFERENCE = [
     example: '(fm1 :len 2 (macro :pitch (sin -25..25 :len 8f)) c e)',
   },
   {
-    name: 'noise curves', aliases: ['noise', 'pink', 'perlin', 'brown', 'random', ':seed'], cat: 'curves', section: '§11', tracks: null,
+    name: 'noise curves', aliases: ['pink', 'perlin', 'brown', 'random', ':seed', ':hold', ':jitter', ':beta',
+      ':octaves', ':lacunarity', ':persistence', ':leak'], cat: 'curves', section: '§11', tracks: null,
     syntax: '(noise A..B :len L [:seed N])  ·  pink  ·  perlin  ·  brown',
     summary: 'Random curves, macro only (the driver has no random source for an inline sweep). :seed picks the sequence.',
     insert: '(macro :pitch (perlin -30..30 :len 8))',
@@ -414,14 +417,14 @@ export const REFERENCE = [
 
   // ---- echo, delay, glide --------------------------------------------------
   {
-    name: '(echo …)', aliases: ['echo', 'repeat'], cat: 'effects', section: '§12', tracks: null,
+    name: '(echo …)', aliases: ['echo', 'repeat', ':back'], cat: 'effects', section: '§12', tracks: null,
     syntax: '(echo N :vel+ step | :vel* ratio [:back B])',
     summary: 'Replays the last note (or the one B back) N times at the current :len, each quieter — it takes time.',
     insert: '(echo 3 :vel+ -2)',
     example: '(fm1 :len 8 c (echo 3 :vel+ -3) e (echo 2 :vel* 0.6))',
   },
   {
-    name: '(delay …)', aliases: ['delay'], cat: 'effects', section: '§12', tracks: null,
+    name: '(delay …)', aliases: ['delay', ':time'], cat: 'effects', section: '§12', tracks: null,
     syntax: '(delay N :vel+ step | :vel* ratio :time T)  ·  (delay none)',
     summary: 'Sticky: every following note echoes at +k·T into the gaps the part leaves, never over a written note.',
     insert: '(delay 3 :vel+ -4 :time 1/8)',
@@ -437,7 +440,7 @@ export const REFERENCE = [
 
   // ---- loops and flow ------------------------------------------------------
   {
-    name: '(x …)', aliases: ['x', 'repeat', 'loop'], cat: 'flow', section: '§13', tracks: null,
+    name: '(x …)', aliases: ['x', 'repeat'], cat: 'flow', section: '§13', tracks: null,
     syntax: '(x N body …)  ·  (x body …)',
     summary: 'Plays the body N times (forever without N). The body compiles once: (x 4 c >) plays c c c c.',
     insert: '(x 4 c e g e)',
@@ -520,52 +523,67 @@ export const REFERENCE = [
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm loud-snare snare :fx [(comp :threshold -30 :ratio 8) (normalize)])\n(pcm1 :len 8 snare c loud-snare c)',
   },
   {
-    name: '(gain …)', aliases: ['gain'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(gain …)', aliases: ['gain', ':db'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(gain dB)',
     summary: 'Scales the level by dB, positive louder. Nothing clips until the chain ends.',
     insert: '(gain 6)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm loud snare :fx [(gain 6)])\n(pcm1 :len 8 snare c loud c)',
   },
   {
-    name: '(normalize …)', aliases: ['normalize'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(normalize …)', aliases: ['normalize', ':peak'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(normalize [:peak dBFS])',
     summary: 'Scales so the peak lands on :peak (default 0 dBFS).',
     insert: '(normalize)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm full clap :fx [(normalize)])\n(pcm1 :len 8 clap c full c)',
   },
   {
-    name: '(comp …)', aliases: ['comp', 'compressor'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(comp …)', aliases: ['comp', 'compressor', ':threshold', ':ratio', ':attack', ':release', ':knee', ':makeup'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(comp :threshold dB :ratio R :attack L :release L :knee dB :makeup dB)',
     summary: 'A compressor: above the threshold the level rises 1/ratio as fast.',
     insert: '(comp :threshold -18 :ratio 4)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm fat kick :fx [(comp :threshold -30 :ratio 8) (normalize)])\n(pcm1 :len 8 kick c fat c)',
   },
   {
-    name: '(limit …)', aliases: ['limit', 'limiter'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(limit …)', aliases: ['limit', 'limiter', ':ceiling'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(limit [:ceiling dBFS])',
     summary: 'A brickwall limiter: the peak never passes the ceiling.',
     insert: '(limit)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm hot snare :fx [(gain 12) (limit)])\n(pcm1 :len 8 snare c hot c)',
   },
   {
-    name: '(crush …)', aliases: ['crush', 'bitcrush', 'lo-fi'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(crush …)', aliases: ['crush', 'bitcrush', 'lo-fi', ':bits'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(crush :bits N)',
     summary: 'Quantizes to N bits — the lo-fi step.',
     insert: '(crush :bits 4)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm lofi snare :fx [(crush :bits 3)])\n(pcm1 :len 8 snare c lofi c)',
   },
   {
-    name: '(fade …)', aliases: ['fade'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(fade …)', aliases: ['fade', ':at', ':curve'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(fade :at L :len L [:curve name])',
     summary: 'Fades to silence from :at over :len and cuts the sample there — it saves bank bytes.',
     insert: '(fade :at 120ms :len 80ms)',
     example: '(import "presets/orch/set.mmlisp")\n(def-pcm short orch-hit :fx [(fade :at 60ms :len 60ms)])\n(pcm1 :len 4 orch-hit c short c)',
   },
   {
-    name: '(reverb …)', aliases: ['reverb', 'room'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(reverb …)', aliases: ['reverb', 'room', ':size', ':damp', ':mix', ':predelay', ':tail'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(reverb :size :damp :mix :predelay :tail L)',
     summary: 'A Freeverb-style room; grows the sample by :tail and fades the tail out.',
     insert: '(reverb :tail 250ms)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm roomy clap :fx [(reverb :tail 300ms)])\n(pcm1 :len 4 clap c roomy c)',
   },
 ];
+
+// The entry a word of the language belongs to — a form head, a keyword, a
+// track name — by its name, an alias or a prefix; null when none does. The
+// completion's info and the editor's hover read it.
+let _index = null;
+export function referenceFor(word) {
+  if (!_index) {
+    _index = { exact: new Map(), prefixes: [] };
+    for (const e of REFERENCE) {
+      for (const n of [e.name, ...(e.aliases ?? [])]) if (!_index.exact.has(n)) _index.exact.set(n, e);
+      for (const p of e.prefixes ?? []) _index.prefixes.push([p, e]);
+    }
+  }
+  return _index.exact.get(word) ?? _index.prefixes.find(([p]) => word.startsWith(p))?.[1] ?? null;
+}

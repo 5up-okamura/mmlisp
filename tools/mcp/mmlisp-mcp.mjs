@@ -30,6 +30,7 @@ const { renderWav } = await load("export-wav.js");
 const { encodeMmb } = await load("export-mmb.js");
 const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
 const { pitchToMidi } = await load("ir-utils.js");
+const { REFERENCE, REFERENCE_CATEGORIES, referenceFor } = await load("reference.js");
 
 const DOCS = {
   cheatsheet: "docs/cheatsheet.md",
@@ -216,9 +217,40 @@ function docSections(text) {
   return { lines, heads };
 }
 
+// The Live Library's reference (live/src/reference.js): one short entry per
+// feature. A query matches names and aliases first, then the summaries; a
+// section is a category; neither lists the categories with their entries.
+function formatEntry(e) {
+  const cat = REFERENCE_CATEGORIES.find(([id]) => id === e.cat)?.[1] ?? e.cat;
+  return `${e.name}  [${cat} · language ${e.section}]\n  ${e.syntax}\n  ${e.summary}\n  example: ${e.example.replace(/\n/g, "\n           ")}`;
+}
+
+function readReference({ section, query }) {
+  if (query) {
+    const q = query.toLowerCase();
+    const exact = referenceFor(query);
+    const named = REFERENCE.filter((e) => e !== exact &&
+      [e.name, ...(e.aliases ?? [])].some((n) => n.toLowerCase().includes(q)));
+    const described = REFERENCE.filter((e) => e !== exact && !named.includes(e) &&
+      `${e.syntax} ${e.summary}`.toLowerCase().includes(q));
+    const hits = [exact, ...named, ...described].filter(Boolean);
+    return hits.length ? hits.map(formatEntry).join("\n\n") : "no match";
+  }
+  if (section) {
+    const s = String(section).toLowerCase();
+    const cat = REFERENCE_CATEGORIES.find(([id, label]) => id === s || label.toLowerCase().includes(s));
+    if (!cat) throw new Error(`section must be one of: ${REFERENCE_CATEGORIES.map(([id]) => id).join(", ")}`);
+    return REFERENCE.filter((e) => e.cat === cat[0]).map(formatEntry).join("\n\n");
+  }
+  return "The reference, one entry per feature — pass `query` (a word, \":vel\", \"echo\") or `section` (a category):\n" +
+    REFERENCE_CATEGORIES.map(([id, label]) =>
+      `${id} — ${label}: ${REFERENCE.filter((e) => e.cat === id).map((e) => e.name).join(", ")}`).join("\n");
+}
+
 function readDoc({ doc = "language", section, query }) {
+  if (doc === "reference") return readReference({ section, query });
   const file = DOCS[doc];
-  if (!file) throw new Error(`doc must be one of: ${Object.keys(DOCS).join(", ")}`);
+  if (!file) throw new Error(`doc must be one of: ${Object.keys(DOCS).join(", ")}, reference`);
   const text = fs.readFileSync(path.join(ROOT, file), "utf8");
   const { lines, heads } = docSections(text);
   if (doc === "cheatsheet" && !section && !query) return text; // short: all of it
@@ -564,8 +596,8 @@ const TOOLS = [
         : path.join(os.tmpdir(), "mmlisp-mcp", path.basename(name).replace(/\.mmlisp$/, "") + ".wav");
       fs.mkdirSync(path.dirname(out), { recursive: true });
       fs.writeFileSync(out, wav.bytes);
-      const pcm = wav.pcmCount ? `\nnote: ${wav.pcmCount} PCM events were not rendered (the samples did not load)` : "";
-      return `wrote ${out}\n${wav.durationSec.toFixed(2)} s, ${levels(wav.bytes)}${pcm}`;
+      const unrendered = wav.pcmCount ? `\nnote: ${wav.pcmCount} PCM events were not rendered (the samples did not load)` : "";
+      return `wrote ${out}\n${wav.durationSec.toFixed(2)} s, ${levels(wav.bytes)}${unrendered}`;
     },
   },
   {
@@ -676,13 +708,14 @@ const TOOLS = [
     name: "mmlisp_docs",
     description:
       "Read the MMLisp documentation. doc: cheatsheet (the whole language on two pages — read it first), " +
-      "language (the reference, canonical), guide (the tutorial), ir, roadmap. " +
+      "language (the reference, canonical), reference (one short entry per feature, with a working example — " +
+      "query a word like \":vel\" or \"echo\"), guide (the tutorial), ir, roadmap. " +
       "cheatsheet with no section: all of it; any other doc with no section: its table of contents. " +
       "section: a number (\"10\", \"9.2\") or title words. query: search lines.",
     inputSchema: {
       type: "object",
       properties: {
-        doc: { type: "string", enum: Object.keys(DOCS) },
+        doc: { type: "string", enum: [...Object.keys(DOCS), "reference"] },
         section: { type: "string" },
         query: { type: "string" },
       },
@@ -715,7 +748,7 @@ const TOOLS = [
 
 const INSTRUCTIONS = `MMLisp is a Lisp-like DSL for Sega Mega Drive music (YM2612 FM fm1-fm6, PSG sqr1-3/noise, PCM).
 Workflow for writing a score:
-1. Before writing, read the cheat sheet: mmlisp_docs (doc "cheatsheet"). For anything it only names, read that section of the reference (doc "language", section "10" …).
+1. Before writing, read the cheat sheet: mmlisp_docs (doc "cheatsheet"). For one keyword or form, mmlisp_docs (doc "reference", query ":vel") gives its syntax and a working example; for more, read that section of the language reference (doc "language", section "10" …).
 2. Start from a similar snippet (mmlisp_snippets) and preset voices (mmlisp_presets) rather than inventing syntax.
 3. After every edit run mmlisp_check and fix every error; do not guess at syntax a diagnostic rejects — look it up.
 4. Compare the tracks' lengths in mmlisp_check's summary — tracks that should line up must play the same number of ticks.

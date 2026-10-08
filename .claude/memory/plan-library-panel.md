@@ -1,8 +1,9 @@
-# Library panel (Browse + reference in the side panel) — phases 1–2 built 2026-10-08
+# Library panel (Browse + reference in the side panel) — built 2026-10-08
 
-Phases 1 and 2 are built (guide §25 has the behaviour; the list is
-`live/src/catalog-list.js`, the reference `live/src/reference.js`). Phase 3
-is not. This file keeps the user's decisions and the order of work.
+All three phases are built (guide §25 and §24 have the behaviour; the list is
+`live/src/catalog-list.js`, the reference `live/src/reference.js`, the
+completion's words `live/src/completion-names.js`). This file keeps the
+user's decisions and their reasons; nothing is open.
 
 ## Decisions (2026-10-08)
 
@@ -46,5 +47,9 @@ is not. This file keeps the user's decisions and the order of work.
    The shortcut is ⌘K / Ctrl+K (user, 2026-10-08).
 2. **Built.** The reference data (72 entries, 13 categories), its check, and
    the Ref source.
-3. The same data feeds completion info, a hover tooltip and the MCP server;
-   AC_PARAMS / AC_FORMS come from it so the two cannot drift.
+3. **Built.** The same data feeds the completion's info, a hover card and the
+   MCP server (`mmlisp_docs` doc `reference`). Changed from the plan with the
+   user's OK: the completion's word lists are NOT generated from the
+   reference — they hold sub-params (`:threshold`) no entry is written for —
+   but moved to `completion-names.js` and held to it by `check:reference`
+   (every word they offer must have an entry by name, alias or prefix).
