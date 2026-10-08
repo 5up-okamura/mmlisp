@@ -167,6 +167,17 @@ export function pitchToMidi(pitchStr) {
 export const YM2612_MASTER_CLOCK = 7670454;
 
 /**
+ * Timer A's period for a rate in Hz, unrounded and unclamped, and back. The
+ * driver sweeps a CSM rate linearly in this period, not in Hz.
+ */
+export function csmTimerPeriod(hz) {
+  return 1024 - YM2612_MASTER_CLOCK / (144 * hz);
+}
+export function csmTimerHz(period) {
+  return YM2612_MASTER_CLOCK / (144 * (1024 - period));
+}
+
+/**
  * Equal temperament around A4 = 440 Hz. Fractional `midiNote` is meaningful —
  * a cent is 1/100 of a note — so every pitch path (compiler, both players,
  * the exporters) goes through this one conversion.

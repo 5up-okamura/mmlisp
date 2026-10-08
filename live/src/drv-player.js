@@ -1270,6 +1270,7 @@ export class DrvPlayer {
           if ((flags & 1) === 0) {
             const period = u16(s, trk.pc + 2);
             trk.pc += 4;
+            this._csmRateSweep = null; // a const rate ends a running sweep
             this._writeTimerA(period);
           } else {
             const from = u16(s, trk.pc + 2);

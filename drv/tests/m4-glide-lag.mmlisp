@@ -1,0 +1,16 @@
+; Glide longer than its note (language.md §14): each note slides on from the
+; pitch actually sounding, so no key-on jumps; a note without a glide of its
+; own ends the running one and starts at its own pitch (plus the sticky
+; :pitch offset); an echo replay is such a note too. glide-gate checks the
+; pitch at every key-on frame.
+(fm1 :tempo 120 :alg 7 :ar1 31 :tl1 127 :ar2 31 :tl2 127 :ar3 31 :tl3 127
+  :ar4 31 :tl4 8 :len 8
+  (glide 2) c e g > c < (glide none) c e   ; lag, then two settled notes
+  :pitch 30 (glide 2) c e (glide none) g   ; lands on g + 30 cents
+  (glide 4) g a ~ b (glide none) c         ; a legato note glides on too
+  :pitch 0 (glide 2) c g _ e               ; the slide runs on across a rest
+  c g (echo 1 :vel* 0.5)                   ; the echo ends a running glide
+  (glide none) c)
+(sqr1 :len 8
+  (glide 2) c e g (glide none) c
+  (glide 1) g c (glide none) e)

@@ -164,8 +164,10 @@ Common modifiers:
   mutes**
 - `:shuffle N` — swing ratio (`51`–`90`; `none` = straight); per-track (no
   score-wide default)
-- `(glide T)` — portamento from the previous note over duration `T` (same
-  length-token forms as `:len`); `(glide none)` disables.
+- `(glide T)` — portamento from the pitch sounding over duration `T` (same
+  length-token forms as `:len`); a `T` longer than the notes keeps sliding on
+  from wherever the pitch has got to, like a mono synth's slow portamento.
+  `(glide none)` disables, and the next note starts at its own pitch.
 - `(glide from-pitch T)` — glide from an explicit start pitch. The start pitch is
   an absolute pitch (note + octave, e.g. `f5`, where the trailing number is the
   **octave**); `T` is the duration. Example: `(glide f5 32)`.

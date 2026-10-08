@@ -1801,11 +1801,25 @@ export class IRPlayer {
 
     const curve = ev.args?.curve ?? "linear";
     const frames = Math.max(1, Math.round(lenTicks * this._secsPerTick * 60));
-    for (let frame = 0; frame < frames; frame++) {
+    // Swept in Timer A's period between the two rounded ends, as the driver
+    // sweeps it (a linear sweep in Hz would bow away from it mid-way).
+    const taFrom = this._timerAValueFromHz(from);
+    const taTo = this._timerAValueFromHz(to);
+    // The track's next rate ends the sweep, as on the driver: a glide longer
+    // than its rate note is cut by the next one.
+    let runFrames = frames;
+    const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
+    const next = track?.events
+      .slice(track.flatIndex + 1)
+      .find((e) => e.cmd === "CSM_RATE");
+    if (next && next.tick < ev.tick + lenTicks) {
+      const nextWhen = when + (next.tick - ev.tick) * this._secsPerTick;
+      runFrames = Math.max(1, this._eventFrame(nextWhen) - this._eventFrame(when));
+    }
+    for (let frame = 0; frame < runFrames; frame++) {
       const phase = frames <= 1 ? 1 : frame / (frames - 1);
       const unit = sampleCurveUnit(curve, phase, ev.args?.params);
-      const hzAt = from + (to - from) * unit;
-      this._setCsmRateHz(hzAt, when + frame / 60);
+      this._writeTimerAValue(Math.round(taFrom + (taTo - taFrom) * unit), when + frame / 60);
     }
   }
 
@@ -3101,18 +3115,27 @@ export class IRPlayer {
     return value;
   }
 
+  // A glide ended by its target's next write before it ran its length.
+  _glideCut(ev) {
+    return this._resolveSweepEndTick(ev) < ev.tick + Math.max(1, ev.args?.frames ?? 1);
+  }
+
   _resolveSweepEndTick(ev) {
     const trackIndex = ev._trackIndex;
     if (trackIndex == null) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
-
-    // A bounded sweep (e.g. a glide/portamento) lasts exactly its `frames` and
-    // then stops — it must not extend across following notes.
-    if (ev.args?.bounded) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
 
     const track = this._tracks[trackIndex];
     if (!track) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
 
     const target = (ev.args?.target ?? "").toUpperCase();
+    // A bounded sweep (a glide) lasts its `frames` and then stops — unless the
+    // next write to its target (the next note's glide, or the PARAM_SET of a
+    // note that does not glide) ends it first, as on the driver.
+    if (ev.args?.bounded)
+      return Math.min(
+        ev.tick + Math.max(1, ev.args?.frames ?? 1),
+        this._nextTargetWriteTick(track, target),
+      );
     const loopDuration = track.loopDuration ?? 1;
     const loopStartTick = track.loopStartTick ?? 0;
     const jumpTick = loopStartTick + loopDuration;
@@ -3130,21 +3153,9 @@ export class IRPlayer {
       : ev.tick < loopStartTick
         ? jumpTick
         : ev.tick + loopDuration;
-    let hasExplicitStop = false;
-
-    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
-      const nextEv = track.events[i];
-      if ((nextEv.args?.target ?? "").toUpperCase() !== target) continue;
-      if (
-        nextEv.cmd === "PARAM_SET" ||
-        nextEv.cmd === "PARAM_SWEEP" ||
-        nextEv.cmd === "PARAM_SWEEP_STOP"
-      ) {
-        endTick = nextEv.tick;
-        hasExplicitStop = true;
-        break;
-      }
-    }
+    const nextWrite = this._nextTargetWriteTick(track, target);
+    const hasExplicitStop = nextWrite !== Infinity;
+    if (hasExplicitStop) endTick = nextWrite;
 
     // Looping curves (sin/triangle/square/saw/ramp) should not freeze at the
     // first loop boundary when there is no explicit overwrite. Keep them alive
@@ -3154,6 +3165,22 @@ export class IRPlayer {
     }
 
     return endTick;
+  }
+
+  // The tick of the next PARAM_SET / PARAM_SWEEP / PARAM_SWEEP_STOP on `target`
+  // after the event being dispatched on `track`, or Infinity.
+  _nextTargetWriteTick(track, target) {
+    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
+      const nextEv = track.events[i];
+      if ((nextEv.args?.target ?? "").toUpperCase() !== target) continue;
+      if (
+        nextEv.cmd === "PARAM_SET" ||
+        nextEv.cmd === "PARAM_SWEEP" ||
+        nextEv.cmd === "PARAM_SWEEP_STOP"
+      )
+        return nextEv.tick;
+    }
+    return Infinity;
   }
 
   // Frames a sweep runs. Given its start time, counted on the driver's frame
@@ -3836,7 +3863,7 @@ export class IRPlayer {
       // offset that the note holds and every later NOTE_ON inherits (glide never
       // resets pitchOffset; `(glide none)` only stops future glides). Snap to the
       // final value so the note reaches true pitch and nothing leaks past it.
-      if (ev.args?.bounded) {
+      if (ev.args?.bounded && !this._glideCut(ev)) {
         const endWhen = when + budgetFrames / 60;
         if (opState) {
           opState.offset = to;
@@ -4638,7 +4665,7 @@ export class IRPlayer {
           }
           // Bounded glide: snap to the exact target so a short glide that ends
           // mid-slope leaves no residual offset for later notes (see the FM path).
-          if (ev.args?.bounded) {
+          if (ev.args?.bounded && !this._glideCut(ev)) {
             this._psgPitchOffset[psgCh] = to;
             this._psgSetPitch(psgCh, baseMidi + to / 100, when + budgetFrames / 60);
           }

@@ -25,9 +25,9 @@
   },
   "m2-csm.mmlisp": {
     "ok": false,
-    "mismatches": 68,
+    "mismatches": 29,
     "compileErrors": 0,
-    "digest": "31aa3761"
+    "digest": "bc5dc815"
   },
   "m2-mailbox.mmlisp": {
     "ok": true,
@@ -281,6 +281,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-csm-glide.mmlisp": {
+    "ok": false,
+    "mismatches": 91,
+    "compileErrors": 0,
+    "digest": "c42bb25a"
+  },
   "m4-delay-prio.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -334,6 +340,12 @@
     "mismatches": 0,
     "compileErrors": 0,
     "digest": "811c9dc5"
+  },
+  "m4-glide-lag.mmlisp": {
+    "ok": false,
+    "mismatches": 72,
+    "compileErrors": 0,
+    "digest": "0064a758"
   },
   "m4-keyon-echo.mmlisp": {
     "ok": true,

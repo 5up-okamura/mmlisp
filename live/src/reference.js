@@ -433,7 +433,7 @@ export const REFERENCE = [
   {
     name: '(glide …)', aliases: ['glide', 'portamento'], cat: 'effects', section: '§14', tracks: FM_PSG,
     syntax: '(glide T)  ·  (glide from T)  ·  (glide none)',
-    summary: 'Portamento into each following note over T; from sets the next glide\'s start pitch.',
+    summary: 'Portamento into each following note over T, from the pitch sounding (a T longer than the notes lags behind them); from sets the next glide\'s start pitch.',
     insert: '(glide 8)',
     example: '(fm1 :len 4 (glide 16) c g e > c (glide none) < c)',
   },

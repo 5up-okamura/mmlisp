@@ -2000,9 +2000,11 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       case OP_CSM_RATE: {
         uint8_t flags = st[t->pc + 1];
         if (!(flags & 1)) {
-          /* The period reaches the driver precomputed; Hz never does. */
+          /* The period reaches the driver precomputed; Hz never does. A
+           * const rate ends a running sweep, as PARAM_SET ends its target's. */
           int period = rd16(st, t->pc + 2);
           t->pc += 4;
+          s->csm_sweep.active = 0;
           write_timer_a(s, period);
         } else {
           int from = rd16(st, t->pc + 2), to = rd16(st, t->pc + 4);

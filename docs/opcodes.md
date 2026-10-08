@@ -274,7 +274,9 @@ Notes:
   increment domain is linear in BPM — no conversion needed in the driver.
 - **CSM_RATE**: `flags` bit0 = 0 → const form: `period u16` (10-bit Timer A
   period, precomputed from Hz at compile time — Hz never reaches the driver);
-  bit0 = 1 → swept form: `from u16, to u16, len u16 (frames), curve u8`.
+  it ends a running swept form, as a `PARAM_SET` ends its target's sweep.
+  bit0 = 1 → swept form: `from u16, to u16, len u16 (frames), curve u8`,
+  stepped linearly in the period (not in Hz), replacing a running one.
   Bits1–7 reserved 0.
 - **FM3_MODE / FM3_OP_PITCH** (driver.md §13.4). Each `fm3-1`…
   `fm3-4` note emits `FM3_OP_PITCH {op, note}` — recording the operator's note

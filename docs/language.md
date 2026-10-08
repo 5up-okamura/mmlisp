@@ -1381,17 +1381,31 @@ the phrase.
 
 | Form               | Meaning                                                     |
 | ------------------ | ----------------------------------------------------------- |
-| `(glide T)`        | Portamento into each following note from the previous note over `T` (length token) |
+| `(glide T)`        | Portamento into each following note, from the pitch sounding, over `T` (length token) |
 | `(glide from T)`   | One-shot override: next glide starts from absolute pitch `from` (note + octave, e.g. `f5`) |
 | `(glide none)`     | Disable                                                     |
 
 Glide emits a bounded `NOTE_PITCH` sweep before the `NOTE_ON`: a cent offset
-running from `(previous − new) × 100` cents to 0 over `T`, then stopping (it
-never bleeds into the next note). The first note of a track never glides.
+from the pitch sounding at the key-on to the note's own pitch over `T`, then
+stopping. The pitch sounding is the previous note's — or, while the previous
+glide is still under way, where that glide has got to: a `T` longer than the
+note is a slow portamento, a pitch lagging behind the notes with no jump at
+any of them, as on a mono synth. A glide lands on the sticky `:pitch` offset
+(a literal one; one set by a curve or a `$value` is runtime, and the glide
+lands on 0).
 
-On `fm3-csm-rate`, glide instead slides Timer A Hz between rate notes: a swept
-`CSM_RATE {from,to,len}` clamped to the note length. The `(glide from T)`
-override accepts a raw Hz literal or a pitch.
+A glide never bleeds into a note that does not glide: a note after `(glide
+none)` (or an echo's replay) starts at its own pitch, ending a glide still
+running there. A `:pitch` write ends it too. The first note of a track never
+glides. Where the glide has got to is reckoned at compile time, so under a
+tempo change mid-glide it is approximate; across a loop's jump the first note
+of the body starts from where the first pass entered it.
+
+On `fm3-csm-rate`, glide instead slides the Timer A rate between rate notes
+by the same rule: a swept `CSM_RATE {from,to,len}` from the rate running at
+the note — a slide still under way included — over the full `T`; a rate
+note with no glide ends a running slide. The `(glide from T)` override
+accepts a raw Hz literal or a pitch.
 
 ```lisp
 (fm1 (glide 8) c e (glide f5 32) g (glide none) c)

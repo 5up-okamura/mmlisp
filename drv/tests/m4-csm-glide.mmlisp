@@ -1,0 +1,10 @@
+; A CSM rate glide longer than its rate note (language.md §14): the slide
+; starts from the rate running and continues over the full glide; a rate note
+; without a glide is the const form, which ends a running slide.
+(def-fm buzz :alg 7 :fb 0
+  :ar1 31 :tl1 20 :ml1 3 :ar2 31 :tl2 18 :ml2 5
+  :ar3 31 :tl3 22 :ml3 7 :ar4 31 :tl4 8 :ml4 2)
+(fm3-csm :tempo 120 buzz :oct 3 :len 1 :vel 13 c ~ c)
+(fm3-csm-rate :len 8
+  (glide 2) 200 400 800 (glide none) 300 300
+  (glide 4) 220 330 (glide 2) 440 (glide none) 200)

@@ -29,7 +29,7 @@ Rules:
   multi-bank measurements, and what is open.** Read before touching PCM in any
   layer.
 - [language-open.md](language-open.md) — **the language and IR**: the seven
-  questions that need the user's decision, the decided-not-built glide rule, the syntax rulings not to
+  questions that need the user's decision, the syntax rulings not to
   re-propose, why compile-time eval and the value machine have their shape,
   and the risks still live.
 - [live-app.md](live-app.md) — **the live app**: why the editing aids, the

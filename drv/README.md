@@ -56,6 +56,7 @@ npm run verify:all
 | `engine:gate` | the three engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
 | `engine:score` | real scores through the image each names, driven by the host model: FM writes per port, PSG bytes, DAC bytes, the clock, PCM-vs-FM sync |
 | `verify:ab` | the drv-player ↔ ir-player A/B signatures (`tests/ab-baseline.json`) |
+| `glide-gate` | a glide longer than its note slides on from where the pitch (or CSM rate) is — no jump at any key-on — and a note that does not glide starts at its own pitch (`tests/m4-glide-lag`, `tests/m4-csm-glide`; language.md §14) |
 | `pal-gate` | a score baked for 50 Hz is the same music as the one baked for 60 (driver.md §12.8) |
 | `pcm-ab` | the browser's IR preview sends the driver's PCM commands, each within a frame |
 | `pcm-loop` | each note plays the loop the score says (`tests/m4-pcm-loop-mode.mmlisp`): the note's `:mode` decides, track loop writes before a note are the note's and stay |
@@ -88,7 +89,7 @@ the images' periods come from).
 | `gen-c-tables.mjs`, `c-tables.mjs` | the sequencer's tables — into the tree, or into a gate's temp directory |
 | `mmb-build.mjs`, `wav.mjs` | `.mmlisp` → MMB (+ sample bank) through the live toolchain |
 | `pairs-model.mjs` | the JS twin of `mmlpairs.c` |
-| `c-gate.mjs`, `pairs-gate.mjs`, `engine-*-gate.mjs`, `ab-gate.mjs`, `pcm-ab-gate.mjs`, `rate-mirrors.mjs` | the gates above |
+| `c-gate.mjs`, `pairs-gate.mjs`, `engine-*-gate.mjs`, `ab-gate.mjs`, `glide-gate.mjs`, `pcm-ab-gate.mjs`, `rate-mirrors.mjs` | the gates above |
 | `light-study.mjs` | the image-rate study |
 | `pcm-render.mjs` | a score's PCM through the engine model, as a WAV at the image's rate |
 | `sgdk-project.mjs`, `sgdk-gate.mjs`, `sgdk-profile.mjs`, `sgdk-lint.mjs`, `sgdk-shim/` | the SGDK build path and its gates |

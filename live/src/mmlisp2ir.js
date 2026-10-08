@@ -13,6 +13,8 @@ import { hoistVoiceChanges } from "./voice-hoist.js";
 import { parse } from "./mmlisp-parser.js";
 import {
   clampForTarget,
+  csmTimerHz,
+  csmTimerPeriod,
   midiToHz,
   pitchToMidi,
   sampleCurveUnit,
@@ -612,10 +614,13 @@ function emitCsmRateEvent(
 }
 
 // (glide ...) on fm3-csm-rate slides Timer A Hz between notes: emit the swept
-// CSM_RATE form (same shape as inline `:csm-rate (curve ...)`) from the previous
-// note's Hz — or a one-shot `(glide <from> <time>)` override, given as a raw Hz
-// literal or a pitch — to the new Hz. The sweep length is clamped to the note
-// length so scheduled sweep writes cannot overrun the next note's rate.
+// CSM_RATE form (same shape as inline `:csm-rate (curve ...)`) from the rate
+// running at this tick — a previous slide still under way included, as a
+// note's glide starts from the pitch sounding (emitGlideIfNeeded) — or a
+// one-shot `(glide <from> <time>)` override, given as a raw Hz literal or a
+// pitch, to the new Hz over the full glide. A rate note with no glide is the
+// const form, which ends a running slide. The ramp is kept in Timer A's
+// period, the unit the driver sweeps in.
 function emitCsmRateNoteHz(
   trackState,
   events,
@@ -623,32 +628,38 @@ function emitCsmRateNoteHz(
   src,
   trackName,
   hz,
-  lengthTicks,
 ) {
+  const tick = trackState.tick;
   const glideTicks = trackState.glide ?? 0;
+  const ramp = trackState.glideRamp;
   let fromHz = null;
-  if (glideTicks > 0 && trackState.lastCsmHz != null) {
+  if (glideTicks > 0 && ramp) {
     const override = trackState.glideFrom;
     trackState.glideFrom = null; // one-shot reset, mirrors emitGlideIfNeeded
     if (override != null) {
       const n = parseNumberLike(String(override));
       fromHz = n !== null ? n : csmPitchToHz(String(override));
-      if (!Number.isFinite(fromHz)) fromHz = trackState.lastCsmHz;
-    } else {
-      fromHz = trackState.lastCsmHz;
     }
+    if (!Number.isFinite(fromHz))
+      fromHz = Math.round(csmTimerHz(rampAt(ramp, tick)) * 100) / 100;
   }
   if (fromHz != null && fromHz !== hz) {
     emitCsmRateEvent(trackState, events, diagnostics, src, trackName, {
       from: fromHz,
       to: hz,
-      len: Math.min(glideTicks, lengthTicks),
+      len: glideTicks,
       curve: "linear",
     });
+    trackState.glideRamp = {
+      tick,
+      ticks: glideTicks,
+      from: csmTimerPeriod(fromHz),
+      to: csmTimerPeriod(hz),
+    };
   } else {
     emitCsmRateEvent(trackState, events, diagnostics, src, trackName, { hz });
+    trackState.glideRamp = settledRamp(tick, csmTimerPeriod(hz));
   }
-  trackState.lastCsmHz = hz;
 }
 
 function isPcmModeSymbol(value) {
@@ -832,7 +843,6 @@ function emitNoteForTrack(
       src,
       trackName,
       csmPitchToHz(pitch),
-      lengthTicks,
     );
     trackState.tick += lengthTicks;
     return;
@@ -946,12 +956,14 @@ function emitEvalNote(node, trackState, events, diagnostics, trackName, typedDef
 function connectionState(ts) {
   return {
     lastNotePitch: ts.lastNotePitch,
+    glideRamp: ts.glideRamp,
     pendingLegato: ts.pendingLegato,
     tiedHead: ts.tiedHead,
   };
 }
 function restoreConnectionState(ts, st) {
   ts.lastNotePitch = st.lastNotePitch;
+  ts.glideRamp = st.glideRamp;
   ts.pendingLegato = st.pendingLegato;
   ts.tiedHead = st.tiedHead;
 }
@@ -978,40 +990,96 @@ function connectAcrossJump(ts, events, fromIdx) {
   else delete head.ev.args.gate;
 }
 
+// Where a track's glide has its pitch (absolute cents) or, on fm3-csm-rate,
+// its rate (Timer A period): a linear ramp from `from` at `tick` to `to` over
+// `ticks`, then `to` — a note without a glide is a ramp of length 0. The value
+// at a later tick is exact at constant tempo (a sweep's frames are fixed from
+// the tempo at its start).
+function rampAt(ramp, tick) {
+  if (!ramp) return null;
+  if (!(ramp.ticks > 0) || tick >= ramp.tick + ramp.ticks) return ramp.to;
+  return ramp.from + ((ramp.to - ramp.from) * (tick - ramp.tick)) / ramp.ticks;
+}
+function rampRunning(ramp, tick) {
+  return !!ramp && ramp.ticks > 0 && tick < ramp.tick + ramp.ticks;
+}
+function settledRamp(tick, value) {
+  return { tick, ticks: 0, from: value, to: value };
+}
+
 /**
- * v0.4: Emit glide PARAM_SWEEP before NOTE_ON if glide is active.
- * Inserts a portamento slide from lastNotePitch to newPitch over glideTicks.
- * Resets glideFrom after emission (one-shot override).
+ * Glide (§14): a bounded NOTE_PITCH sweep before the NOTE_ON, from the pitch
+ * sounding at this tick — the previous glide's remaining offset included, so a
+ * glide longer than its note reads as a lagging pitch with no jump — to the
+ * note's own pitch plus the sticky `:pitch` offset. A note with no glide of its
+ * own ends a glide still running (a PARAM_SET ends its target's sweep in both
+ * players), so a glide never bleeds into a later note. The `(glide from T)`
+ * override is a one-shot absolute start.
  */
 function emitGlideIfNeeded(trackState, newPitch, events, glideTicks, nodeSrc) {
-  if (glideTicks <= 0 || !trackState.lastNotePitch) return; // No glide or first note
-
-  const fromPitch = trackState.glideFrom || trackState.lastNotePitch;
+  const tick = trackState.tick;
+  const sticky = trackState.pitchSticky ?? 0;
+  const base = pitchToMidi(String(newPitch)) * 100;
+  const ramp = trackState.glideRamp;
+  if (glideTicks <= 0 || !trackState.lastNotePitch) {
+    startWithoutGlide(trackState, newPitch, events, nodeSrc);
+    return;
+  }
+  const override = trackState.glideFrom;
   trackState.glideFrom = null; // One-shot reset
-
-  // NOTE_PITCH is a numeric cent offset relative to the note's own base pitch
-  // (the player applies `baseMidi + centOffset/100`). Express the glide as an
-  // offset sweep: start at (fromPitch − newPitch) cents, end at 0, so the note
-  // slides from the previous/override pitch up or down to its own pitch.
-  const fromCents =
-    (pitchToMidi(String(fromPitch)) - pitchToMidi(String(newPitch))) * 100;
+  const from = override
+    ? pitchToMidi(String(override)) * 100 + sticky
+    : rampAt(ramp, tick) ??
+      pitchToMidi(String(trackState.lastNotePitch)) * 100 + sticky;
+  trackState.glideRamp = { tick, ticks: glideTicks, from, to: base + sticky };
+  // NOTE_PITCH is a cent offset relative to the note's own base pitch (the
+  // player applies `baseMidi + centOffset/100`).
   events.push({
-    tick: trackState.tick,
+    tick,
     cmd: "PARAM_SWEEP",
     args: {
       target: "NOTE_PITCH",
-      from: fromCents,
-      to: 0,
+      from: Math.round(from - base),
+      to: sticky,
       curve: "linear",
       frames: glideTicks,
       loop: false,
       // A glide is a bounded one-shot: it slides over `frames` then stops, unlike
-      // an inline pitch sweep that holds its final value until the next event. So
-      // it must not extend across following notes (which would clobber their pitch).
+      // an inline pitch sweep that holds its final value until the next event.
       bounded: true,
     },
     src: nodeSrc,
   });
+}
+
+// A note that does not glide starts at its own pitch: a glide still running at
+// its tick is ended there.
+function startWithoutGlide(trackState, pitch, events, src) {
+  const tick = trackState.tick;
+  const sticky = trackState.pitchSticky ?? 0;
+  if (rampRunning(trackState.glideRamp, tick))
+    events.push({ tick, cmd: "PARAM_SET", args: { target: "NOTE_PITCH", value: sticky }, src });
+  trackState.glideRamp = settledRamp(tick, pitchToMidi(String(pitch)) * 100 + sticky);
+}
+
+// The `:pitch` offset the score set last, as far as the compiler can know it:
+// a literal set, plus literal `:pitch+` steps; null once a curve or a `$value`
+// makes it a runtime value (a glide then lands on offset 0). A `:pitch` write
+// also ends a running glide in both players, so the pitch settles there.
+function noteUserPitchWrites(trackState, written) {
+  if (!written.length) return;
+  for (const ev of written) {
+    const v = ev.cmd === "PARAM_SET" ? ev.args.value : ev.args.delta;
+    if (ev.cmd === "PARAM_SET" && typeof v === "number") trackState.pitchSticky = v;
+    else if (ev.cmd === "PARAM_ADD" && typeof v === "number" && trackState.pitchSticky != null)
+      trackState.pitchSticky += v;
+    else trackState.pitchSticky = null;
+  }
+  if (trackState.lastNotePitch && !trackState.isCsmRateTrack)
+    trackState.glideRamp = settledRamp(
+      trackState.tick,
+      pitchToMidi(String(trackState.lastNotePitch)) * 100 + (trackState.pitchSticky ?? 0),
+    );
 }
 
 /**
@@ -1144,6 +1212,7 @@ function emitEchoReplay(trackState, events, spec, back, src) {
   const len = trackState.defaultLength;
   const gate = trackState.defaultGate;
   for (const vel of resolveDelayVels(spec, len, note.vel ?? 15) ?? []) {
+    startWithoutGlide(trackState, note.pitch, events, src);
     events.push({
       tick: trackState.tick,
       cmd: "NOTE_ON",
@@ -3485,8 +3554,11 @@ function compileChannelBody(
                 push("PARAM_SET", { target, value: sec });
                 break;
               }
+              const writtenFrom = events.length;
               writeParam(target, op, val, readValue(items[i], evalEnv, valueCtx(target, vals, diagnostics, trackName, nodeSrc(node), typedDefs)), push,
                 evalEnv, vals, diagnostics, trackName, nodeSrc(node));
+              if (target === "NOTE_PITCH")
+                noteUserPitchWrites(trackState, events.slice(writtenFrom));
               break;
             }
           }
@@ -5383,7 +5455,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
     glideFrom: null, // v0.4: one-shot start pitch override for glide
     lastNotePitch: null, // v0.4: previous note's pitch for glide calculation
-    lastCsmHz: null, // v0.5: previous fm3-csm-rate Hz for glide sweeps
+    glideRamp: null, // where the last glide has the pitch (cents) / CSM rate (period): rampAt
+    pitchSticky: 0, // the score's `:pitch` offset, null once it is a runtime value
     shuffleRatio: 0, // per-track swing, 0 = straight (§5.2)
     shuffleBase: Math.round(WHOLE_TICKS / 8),
     subBeatParity: 0,
