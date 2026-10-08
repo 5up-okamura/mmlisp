@@ -1,0 +1,13 @@
+; hold: a :len 0 note holds until the game's key-off, and its track waits
+; there. A charge-up held while the button is down, then the release shot:
+; the notes after the hold play from the moment of the key-off
+; (MMLisp_keyOff), while the other tracks keep time. In the live app the
+; key-off is Tools > Release Holds (Cmd/Ctrl+Shift+Enter).
+(import "presets/gm/set.mmlisp")
+
+(fm1 :tempo 120 :oct 4 gm-lead-square
+  :len 0 (macro :pitch (linear 0..1200 :len 2)) c   ; charge-up, held
+  (macro :pitch none) :len 16 > c < g e c _2)       ; after the key-off: the shot
+
+(fm2 :oct 2 :len 4 gm-bass-syn2
+  (x 8 c c g c))

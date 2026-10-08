@@ -6046,6 +6046,7 @@
     }
     function releaseHoldsAction() {
       player?.releaseHolds?.();
+      _browseScorePlayer?.releaseHolds?.(); // a Library ▶ preview holds too
     }
     window.releaseHoldsAction = releaseHoldsAction;
 
@@ -6942,6 +6943,7 @@
         const p = new IRPlayer(writeToWorklet);
         p.loadJSON(ir);
         p.setOnTrig((t, code) => logTrig(ir, t, code));
+        p.setOnHold((t) => logHold(ir, t));
         await syncPcmBankToWorklet(ir, p);
         p.play(audioCtx);
         _browseScorePlayer = p;

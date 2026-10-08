@@ -18,6 +18,7 @@
   "snippets/effects/sub-octave.mmlisp",
   "snippets/game-sync/trig-cues.mmlisp",
   "snippets/game-sync/adaptive-bgm.mmlisp",
+  "snippets/game-sync/hold-release.mmlisp",
   "snippets/voices/fm-voice-template.mmlisp",
   "snippets/voices/voice-family.mmlisp",
   "snippets/voices/target-group.mmlisp",
