@@ -140,8 +140,11 @@ The sounding octave comes from the sticky `:oct` (C at `:oct 4` = middle C,
 MIDI 60); a voice with a `:key` moves its notes from there (§9).
 Enharmonic accidentals are equivalent (`c+` = `d-`).
 
-Note names shadow definitions: a `def` named `a`–`g` (or anything that parses
-as a note/length token) cannot be referenced in a channel body.
+A definition cannot be named like a note: a `def`, `def-fm` or `def-pcm`
+whose name reads as a note-stream token (`a`–`g`, `e8`, `c+`, `v+2`, `>`) is
+`E_DEF_NAME` where it is defined — the rule `let` names follow. A `def-val`
+(written `$a`) and a `def-se` (started by number) are never written bare and
+may take such names.
 
 ### Tie and slur — `X ~ Y`
 
@@ -708,7 +711,7 @@ declares a value slot (§8); a bare reference in a channel body applies them.
 Definitions are top-level forms and interleave freely
 with track forms (§1); the score's own settings are `def-score` (§1). A def (or parametric def) named after an eval builtin
 (`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `round`, `floor`, `let`, `note`,
-`ticks`, `frames`) is rejected with `E_DEF_RESERVED`.
+`ticks`, `frames`) is rejected with `E_DEF_RESERVED`. One named like a note or length token is `E_DEF_NAME` (§3).
 
 `def` vs `let` (§7.2): a `def` is a **global** name bound by **token
 substitution** — the body is spliced verbatim wherever the name appears, so it

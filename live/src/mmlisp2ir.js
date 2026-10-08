@@ -2771,6 +2771,18 @@ function isNoteStreamToken(name) {
   );
 }
 
+// A def name is written bare in a channel body, so it must not read as a
+// note-stream token there (`e`, `c+8`, `v+2`, `>`): the same rule as a `let`
+// name (E_DEF_NAME). A def-val ($name) and a def-se (started by number) are
+// never written bare.
+function rejectNoteName(defHead, name, node, diagnostics) {
+  if (!isNoteStreamToken(name)) return false;
+  pushDiag(diagnostics, "error", "E_DEF_NAME",
+    `${defHead} name '${name}' reads as a note or length token in a channel body; pick a word`,
+    nodeSrc(node), null);
+  return true;
+}
+
 function makeEvalCtx(diagnostics, trackName, src, typedDefs = null, stepFrames = 1) {
   return {
     pushDiag,
@@ -4534,6 +4546,7 @@ function collectDefs(roots, diagnostics) {
     if (head === "def-fm" || head === "def-pcm") {
       const items = root.items.filter((n) => n.kind !== "comment");
       const name = atomValue(items[1]);
+      if (name && items[1].kind === "atom" && rejectNoteName(head, name, root, diagnostics)) continue;
       if (!name || items[1].kind !== "atom" || isReservedHead(name)) {
         pushDiag(diagnostics, "error", name ? "E_DEF_RESERVED" : "E_DEF_NAME",
           name ? `'${name}' is a reserved eval builtin and cannot be a def name`
@@ -4573,6 +4586,7 @@ function collectDefs(roots, diagnostics) {
           );
           continue;
         }
+        if (rejectNoteName(head, pname, root, diagnostics)) continue;
         if (isReservedHead(pname)) {
           pushDiag(
             diagnostics,
@@ -4604,6 +4618,7 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
+      if (rejectNoteName(head, name, root, diagnostics)) continue;
       if (isReservedHead(name)) {
         pushDiag(
           diagnostics,

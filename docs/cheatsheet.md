@@ -193,9 +193,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 - A loop bakes its state: `(x 4 c >)` plays `c c c c` and leaves the octave
   up. Rebalance, `(x 4 c > c <)`.
 - `(e g a)` is not a tuplet — write `(t e g a)`.
-- A def named like a note or length (`a`–`g`, `e8`) is never reached — the
-  body reads the note, with no warning. Pick words (`riff`, `root`); `let`
-  rejects such names outright.
+- A def named like a note or length (`a`–`g`, `e8`) is `E_DEF_NAME`, as a
+  `let` name is. Pick words (`riff`, `root`).
 - `:prio` goes right after the channel name, nowhere else.
 - A macro target that does not exist — a typo like `(macro :vell [15 9])` —
   is `E_MACRO_TARGET`; the targets are listed under Macros above.
