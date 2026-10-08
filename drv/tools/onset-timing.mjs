@@ -91,7 +91,8 @@ export function onsetTiming(path, { seconds = 30, voiceHoist } = {}) {
     w.seen = true;
     if (port === 0 && reg === 0x28 && (val & 0xf0)) {
       const ch = (val & 3) + (val & 4 ? 3 : 0) + 1;
-      keyOns.push({ frame: w.f, ch, lagMs: ((cycle - dac0) / cfg.z80Hz - w.f / 60) * 1000 });
+      // The video frame is the machine's (59.92 Hz on NTSC), not 1/60 s.
+      keyOns.push({ frame: w.f, ch, lagMs: ((cycle - dac0) - w.f * cfg.frameCycles) / cfg.z80Hz * 1000 });
     }
   }
   const last = new Map();
