@@ -61,11 +61,19 @@ function clampDmpValue(v, min, max) {
   return n;
 }
 
-// Every supported format stores DT as the raw 3-bit register field
-// (0-3 = 0,+1,+2,+3 / 4-7 = -0,-1,-2,-3); the language spells it signed.
+// The parsers hand DT on as the raw 3-bit register field (0-3 = 0,+1,+2,+3 /
+// 4-7 = -0,-1,-2,-3); the language spells it signed.
 function detuneFromReg(v) {
   const r = (Number(v) | 0) & 0x07;
   return r & 4 ? -(r & 3) : r & 3;
+}
+
+// DMP, TFI, VGI and FUI store DT as Furnace (and DefleMask, TFM/VGM Music
+// Maker) keep it: 0-6 centred on 3 = none, which Furnace's own loaders read
+// unconverted. To the register field. OPNI stores the register byte itself.
+const FURNACE_DT_REG = [7, 6, 5, 0, 1, 2, 3, 4];
+function dtRegFromFurnace(v) {
+  return FURNACE_DT_REG[(Number(v) | 0) & 7];
 }
 
 function normalizeFmOp(raw) {
@@ -169,7 +177,7 @@ function parseDefleMaskDmpFm(bytes) {
       rr,
       am,
       rs,
-      dt: dtRaw & 0x0f,
+      dt: dtRegFromFurnace(dtRaw & 0x0f), // the high nibble is DT2 (OPM)
       sr,
       ssg,
     };
@@ -192,7 +200,7 @@ function parseTfiFm(bytes) {
   const fb = readDmpU8(bytes, cursor);
   const ops = readFmOps(bytes, cursor, 4, (b, c) => ({
     mul: readDmpU8(b, c),
-    dt: readDmpU8(b, c),
+    dt: dtRegFromFurnace(readDmpU8(b, c)),
     tl: readDmpU8(b, c),
     rs: readDmpU8(b, c),
     ar: readDmpU8(b, c),
@@ -230,7 +238,7 @@ function parseVgiFm(bytes) {
     const ssg = readDmpU8(b, c);
     return {
       mul,
-      dt,
+      dt: dtRegFromFurnace(dt),
       tl,
       rs,
       ar,
@@ -345,7 +353,7 @@ function parseFuiFmFeature(bytes, cursor, version, featEnd) {
     readDmpU8(b, c); // dam/dt2/ws
     return {
       mul: b1 & 0x0f,
-      dt: (b1 >> 4) & 0x07,
+      dt: dtRegFromFurnace((b1 >> 4) & 0x07),
       tl: b2 & 0x7f,
       rs: (b3 >> 6) & 0x03,
       ar: b3 & 0x1f,
@@ -451,7 +459,7 @@ function parseFuiOld(bytes) {
     if (version >= 114) readDmpU8(b, c); else readDmpU8(b, c); // enable/reserved
     if (version >= 115) readDmpU8(b, c); else readDmpU8(b, c); // kvs/reserved
     skipBytes(b, c, 10); // reserved
-    return { mul, tl, ar, dr, sl, rr, am, rs, dt, sr, ssg };
+    return { mul, tl, ar, dr, sl, rr, am, rs, dt: dtRegFromFurnace(dt), sr, ssg };
   });
 
   return normalizeFmPatchFields({
@@ -579,6 +587,7 @@ function fmVoiceDef(voiceName, raw) {
 
 export {
   fmVoiceDef,
+  dtRegFromFurnace,
   FM_IMPORT_FORMATS,
   buildMmlispVoiceFromDmp,
   slotToDisplayOps,

@@ -117,11 +117,6 @@ user's rulings, measurements, and open items. Merged 2026-10-09 from
   relative to the score's folder, which the stand-in score lacks.
 - Touch has no add-cursor gesture (no modifier; long-press is the value
   popup).
-- **DT in the single-voice importers** (found 2026-10-05): Furnace's loaders
-  store DT centred on 3 (register = `{7,6,5,0,1,2,3,4}[dt]`) for DMP, TFI and
-  FUI, but `import-fm-voices.js` reads them as the register field. DMF/FUR song
-  import converts (`import-tracker.js` DT_REG); the single-voice imports do
-  not. VGI/OPNI unverified.
 - **VGM**: tempo changes within a song (one grid for the whole file); second
   chips; other chips' PCM (SegaPCM, YM2610 ADPCM, OKI). Dino Land's title
   theme estimates a 64th-note grid for the whole song.

@@ -26,7 +26,7 @@
 // ---------------------------------------------------------------------------
 
 import { PPQN, emitSong, emitPhrased, qstr } from "./import-song.js";
-import { fmVoiceDef } from "./import-fm-voices.js";
+import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
 import { FM_DESTS, PSG_DESTS } from "./import-midi.js";
 
 // What each source channel kind is, for the defaults and the voice: an FM
@@ -42,9 +42,6 @@ const VOL_MAX = { opl: 63 };
 
 const PITCH_NONE = "(macro :pitch none)";
 const PITCH_CODES = new Set([0x01, 0x02, 0x03, 0x04, 0xe1, 0xe2, 0xe5]);
-
-// Furnace's internal DT (3 = none) → the register field.
-const DT_REG = [7, 6, 5, 0, 1, 2, 3, 4];
 
 const FX_NAMES = {
   0x01: "pitch slide up", 0x02: "pitch slide down", 0x03: "portamento", 0x04: "vibrato",
@@ -192,7 +189,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     if (!defs.has(key)) {
       const ins = t.instruments[i];
       const name = uniq(`ins-${slug(ins.name) || i}`);
-      const raw = { ...ins.fm, ops: ins.fm.ops.map((o) => ({ ...o, dt: DT_REG[o.dt & 7] })) };
+      const raw = { ...ins.fm, ops: ins.fm.ops.map((o) => ({ ...o, dt: dtRegFromFurnace(o.dt) })) };
       defs.set(key, { name, text: fmVoiceDef(name, raw) });
     }
     return defs.get(key).name;
