@@ -1505,6 +1505,7 @@
       }
       piano.appendChild(whiteRow);
       piano.appendChild(blackRow);
+      piano.oncontextmenu = (e) => e.preventDefault();
       el.appendChild(piano);
     }
     function openTokenPopup(tokenStart) {
@@ -8014,6 +8015,9 @@
       keysEl.appendChild(whiteRow);
       keysEl.appendChild(blackRow);
 
+      // A long press on a key holds the note; the context menu (desktop) and
+      // the callout (iOS, with the CSS touch-callout) must not take it over.
+      keysEl.oncontextmenu = (e) => e.preventDefault();
       keysEl.onpointerdown = async (e) => {
         const btn = e.target.closest('.kb-key');
         if (!btn || !keysEl.contains(btn)) return;

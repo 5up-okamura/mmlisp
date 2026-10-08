@@ -878,10 +878,14 @@
       border-radius: 8px;
       overflow: hidden;
     }
+    /* A held key is a note, never a long-press: no iOS callout, no selection. */
     #keyboardDock,
-    #keyboardDock * {
+    #keyboardDock *,
+    .val-piano,
+    .val-piano * {
       -webkit-user-select: none;
       user-select: none;
+      -webkit-touch-callout: none;
     }
     #keyboardControls {
       display: flex;
