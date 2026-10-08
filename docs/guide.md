@@ -104,7 +104,9 @@ suffix, `:gate` / `:gate-`, curve `:len`, macro `:step`, `(wait N)`,
 | `N.`  | dotted length (`1.5x`)                                           |
 | `N/M` | fraction of a whole note (`2/1` = 2 bars, `1/3` = triplet whole) |
 | `Nt`  | exact tick count                                                 |
-| `Nf`  | frame count (60 Hz) — honored in curve `:len` and macro `:step`  |
+| `Nf`  | frame count (60 Hz) — a true frame count in curve `:len`, macro `:step` and `(wait …)`; elsewhere converted to ticks at the tempo in force |
+| `Nms` | milliseconds, converted to ticks at the tempo in force           |
+| `0`   | hold (`:len 0` waits for the key-off, `:gate 0` holds through the slot) |
 
 Examples:
 
@@ -113,7 +115,8 @@ Examples:
 - `2/1` = 2 whole notes (2 bars at 4/4)
 - `1/3` = triplet whole
 - `24t` = 24 ticks exactly
-- `8f` = 8 frames (curve `:len` / `:step` contexts; use `Nt` elsewhere)
+- `8f` = 8 frames (on a note or rest, the ticks they take at this tempo)
+- `100ms` = 100 milliseconds
 
 The tick grid is PPQN 96 (quarter = 96 ticks, whole = 384). See
 `docs/language.md` §4.
@@ -150,7 +153,7 @@ stays open and follows the marker as you edit above it (see §22).
 Common modifiers:
 
 - `:oct N` — octave (`0`–`8`)
-- `:len token` — default note length (length token); `0` emits a held note and does not advance the timeline
+- `:len token` — default note length (length token); `0` holds the note and stops the track until the key-off (§15)
 - `:gate token` — gate time as an absolute length token (e.g. `8`, `12t`); `0` holds until runtime KEY-OFF
 - `:gate* ratio` — gate as a fraction of the note length (`0.0`–`1.0`)
 - `:gate- token` — shorten the gate: note length **minus** this time (key off early / staccato)
@@ -746,7 +749,7 @@ values.
   fills the gaps it leaves.
 - Resolution is **preemptive**: a higher-priority note that begins while a
   lower-priority note is sounding cuts it off (the lower note is simply
-  silenced at that point — no release tail in this version).
+  silenced at that point — no release tail).
 
 ```lisp
 (fm1 :prio 1  :len 4   c _ _ g _ _)   ; sparse lead — always sounds
@@ -838,8 +841,8 @@ it is evaluated at the event, so the write tracks the slot live:
 ```
 
 Curve `:from`/`:to`/`:rate`/`:len` also accept a bare `$name`, read once per
-note-on. (On the driver today, inline-sweep endpoints are slot-fed; slot-fed
-macro-curve params still bake to the slot's initial value.)
+note-on. (On the driver, inline-sweep endpoints are slot-fed; slot-fed
+macro-curve params and a sweep's `:len` bake to the slot's initial value.)
 
 See `docs/language.md` §7 (expressions, scaled macro) and §8 (`:step`, `:unit`,
 the IR mapping).
@@ -1075,13 +1078,14 @@ goes below 16 px (smaller makes iOS zoom in when you tap the editor).
 
 Every keyboard — on screen, the computer's, MIDI — is polyphonic: each held
 key takes a channel of its own, with the voice copied onto it. An FM voice
-has the six FM channels, a PSG one the three square channels; a sample and
-the noise channel play one note. While the score is stopped all of them are
-free; while it plays, only the channels it has no track on (CH3 as a whole
-once the score uses `fm3-1`… or `fm3-csm`), so you can play along over it —
-and when none is free the keys play on the target channel itself, over the
-score's own writes there. With every channel held, the oldest key gives its
-channel to the newest.
+has the six FM channels, a PSG one the three square channels; the noise
+channel plays one note. While the score is stopped all of them are free;
+while it plays, only the channels it has no track on (CH3 as a whole once the
+score uses `fm3-1`… or `fm3-csm`), so you can play along over it — and when
+none is free the keys play on the target channel itself, over the score's own
+writes there. With every channel held, the oldest key gives its channel to
+the newest. A sample plays one note: while the score is stopped on the
+driver's engine, while it plays on a player of its own beside the song (§19).
 
 ### Sound effects over the song
 
@@ -1136,7 +1140,7 @@ been deleted drops off the list when picked, and `Clear Menu` empties it.
 With the app installed from Chrome or Edge, a `.mmlisp` can also be opened
 from the Finder or Explorer (double-click, or Open With > MMLisp) — it opens
 in a window of its own, and Save writes back to that file. An app installed
-before this came in may need reinstalling to be offered for `.mmlisp`.
+that is not offered for `.mmlisp` may need reinstalling.
 
 A score opened on its own this way (or with `File > Open…`) comes with
 access to that one file only — not to the wavs and imports beside it, which
@@ -1389,7 +1393,7 @@ the fields:
 
 The placeholders are usable defaults, so leaving a template early (`Esc`) still
 leaves valid source. Forms whose shape genuinely varies — a track, `t`, the
-eval heads — insert just the name, as before.
+eval heads — insert just the name.
 
 Names complete too. Two characters of a word offer the voices, samples, macros
 and snippets the score can use — its own defs, everything its imports bring
@@ -1480,6 +1484,8 @@ alphabetical order of their directory names.
 | a macro (`macro`)  | a half-note c4 on sqr1 shaped by it, then a rest for its release | **Insert** pastes the definition at the cursor |
 | a set (group)      | —                                       | **Import set** |
 | a Ref entry        | plays its example                       | **Insert** writes the form at the cursor |
+| a score            | plays it, without opening it            | **Open** puts it in the editor |
+| a snippet          | plays it, without opening it            | **Insert** puts it at the cursor; **Open** puts it in the editor |
 
 **Ref** is the language in short entries, one per feature, grouped as the
 reference is (score, channels, notes, track keywords, FM, definitions,
@@ -1490,15 +1496,13 @@ finds an entry by its other spellings too (`:vel+` finds `:vel`), and
 **Fits track** keeps the entries the track at the cursor can use. The entries
 live in `live/src/reference.js`; `cd tools && npm run check:reference`
 compiles every example.
-| a score            | plays it, without opening it            | **Open** puts it in the editor |
-| a snippet          | plays it, without opening it            | **Insert** puts it at the cursor; **Open** puts it in the editor |
 
 The audition is one note: enough to tell a sound, and a drum has only the one.
 To hear a voice or a sample across its range, play the keyboard: while Library
 shows, the keys (on screen, the computer's, a MIDI keyboard) play the
 highlighted FM voice or sample, and the keyboard is shown only then — a macro,
 a snippet or a score has nothing for the keys to play. Back on Params, the keys
-play the channel or the def at the cursor as before.
+play the channel or the def at the cursor.
 
 The list is driven from the keyboard, from the search box as from the list:
 **↑↓** moves through it, **Enter** is the row's action (the first button —

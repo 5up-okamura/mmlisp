@@ -7882,9 +7882,9 @@
     // bank, so each key compiles the text as it stands and bakes that one def
     // at that one note — effects, its base and the import's chain included,
     // through the export's own bake — and plays it on the driver's engine. A
-    // def with loop points loops while the key is held. Like a Browse preview
-    // it takes over the PCM bank, so it waits for playback to stop; the next
-    // Play or Build puts the score's bank back.
+    // def with loop points loops while the key is held. Stopped, it takes over
+    // the engine's PCM bank (the next Play or Build puts the score's back);
+    // during playback it plays beside the song on playAuditionBlob.
     let _pcmAuditionSeq = 0;
     let _pcmReleasedSeq = 0;
     async function previewPcmNoteOn(midi, vel = 15) {

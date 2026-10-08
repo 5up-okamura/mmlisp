@@ -161,13 +161,11 @@ is used is not a free choice:
   the target label's offset. They are silent state — nothing reaches a
   register until the next note — so re-establishing them at the loop boundary
   cannot disturb anything.
-- **VEL is not.** The driver acts on `PARAM_SET VEL` immediately: it recomposes
-  every carrier's TL (driver.md §7.1), so a VEL written at the JUMP would land
-  a level on whatever is still sounding across the loop point — up to +21.8 dB
-  on a sustained chord, until the body reaches its next note. Instead, a label
-  that is a backward-JUMP target **invalidates the encoder's VEL tracking**, so
-  the body re-asserts its own velocity at the note that needs it and depends on
-  nothing established before the label.
+- **VEL is the encoder's.** A label that is a backward-JUMP target
+  **invalidates the encoder's VEL tracking**, so the body re-asserts its own
+  velocity at the note that needs it and depends on nothing established before
+  the label. (The driver stores a `PARAM_SET VEL` and the next note-on composes
+  it, driver.md §7.1.)
 
 Gate: `m3-loop-vel-hold` (label at the top, quiet `:vel`, rests at the loop head
 so a wrong level would last — all three are needed to catch it). `ir-player`
@@ -249,7 +247,7 @@ the deduped MMB and requires an unchanged mismatch baseline.
 Notes:
 
 - **PARAM_SWEEP** is a fixed 9-byte payload. `len` is
-  in 60 Hz frames; for loop-curve ids it is the period. `flags` bit0 = loop (the
+  in frames of the score's clock (60 or 50 Hz, mmb.md §4); for loop-curve ids it is the period. `flags` bit0 = loop (the
   curve cycles; any sweep runs until the next PARAM_SET / PARAM_SWEEP /
   PARAM_SWEEP_STOP on its target — notes do not stop it, language.md §5.1), **bit1 = `from`
   is a value-slot id** (in the field's low byte), **bit2 = `to` is a slot id**
@@ -258,15 +256,15 @@ Notes:
   it at dispatch, the same read `PARAM_ADD` uses; the field is 0), bits4–7
   reserved 0. From/to are in target units, i16 regardless
   of target width (NOTE_PITCH cents need it; narrow targets just don't use the
-  range). `:rate`/`:len` slots are not slot-fed; they bake to the init values.
+  range). A `:len` slot is not slot-fed: it bakes to the slot's init
+  (`W_MMB_DYN_SWEEP_BAKED`); `:rate` has no field here.
 - **PARAM_MUL** factor is unsigned 8.8 (0x0100 = ×1.0).
-  Read-modify-write against the current value, clamped at the write. The driver
-  multiplies the low byte of the current value (levels are ≤127), so signed/wide
-  targets (NOTE_PITCH) via MUL are a later refinement.
+  Read-modify-write against the current value: `(current × factor) >> 8`,
+  clamped at the write.
 - **PARAM_FROM_VAL / PARAM_ADD_VAL / PARAM_MUL_VAL** read val slot
   `slot` (mmb.md §8) at dispatch time. FROM_VAL writes the slot; ADD_VAL adds it
   to the current value; MUL_VAL multiplies by it as an 8.8 factor (like
-  PARAM_MUL). Slot 0xFF = the built-in `$time` source (elapsed 60 Hz frames,
+  PARAM_MUL; a slot of 256 is ×1). Slot 0xFF = the built-in `$time` source (elapsed frames,
   low 16 bits); slots 0x00–0x0F are VAL_TABLE slots, seeded at START_TRACK and
   written by the host (`MMLisp_setVal`, driver.md §6.4).
 - **TEMPO_SWEEP** interpolates the tick increment over `len` frames.
@@ -284,8 +282,8 @@ Notes:
   `fm3-4` note emits `FM3_OP_PITCH {op, note}` — recording the operator's note
   and writing its F-number registers (OP4 → CH3 base `$A6`/`$A2`; OP1-3 →
   `$AC+idx`/`$A8+idx`, `idx = op mod 3`) with the operator's own sticky
-  `NOTE_PITCH` offset applied — followed by a `NOTE_ON` on channel id 2 (op1)
-  or 16-19 (op1-4) that keys the operator's `$28` slot bit. NOTE_PITCH sets,
+  `NOTE_PITCH` offset applied — followed by a `NOTE_ON` on channel id 16-19
+  (op1-4) that keys the operator's `$28` slot bit. NOTE_PITCH sets,
   sweeps and macros on an operator track move that operator alone.
   `FM3_MODE 1` (from the note-less `(fm3 …)` track) sets `$27` bit6 first.
   There is no raw register-write opcode: the stream has no escape hatch to the
@@ -309,8 +307,7 @@ Notes:
   (`0xFF` = clear all). `NOTE_ON` (0x10) then triggers whatever is active — no
   change to NOTE_ON. `NOTE_ON_EX` `macro_ref` (§5.1) is the per-note one-shot.
   The exporter diffs each note's snapshotted macros into these sticky opcodes.
-  The `steps` form lowers onto i8 targets (driver.md §13); the driver
-  keeps one active macro per channel. The descriptor `flags` byte
+  The descriptor `flags` byte
   (mmb.md §15) carries bit0 = i16 values and bit1 = additive: an additive
   `:pitch+`/`:semi+` macro composes each sample with the channel's live pitch
   offset instead of overwriting it, so a static `:pitch N` shifts the macro's

@@ -46,9 +46,11 @@ There is **no top-level tempo field.** The initial tempo travels as a
 `TEMPO_SET` event at tick 0, emitted by the track that carries the leading
 `:tempo` (the player scans all tracks for a tick-0 `TEMPO_SET` and falls back
 to 120 BPM); `:lfo-rate` likewise emits a `PARAM_SET LFO_RATE` on its own
-track. The presence of any `fm3-1..fm3-4` track prepends a tick-0
-`FM3_MODE { mode: "op" }` into `tracks[0]` — the only compiler-injected init
-event.
+track. The compiler injects two init events: the presence of any
+`fm3-1..fm3-4` track prepends a tick-0 `FM3_MODE { mode: "op" }` into
+`tracks[0]` (and into an effect's first part when the effect has operator
+parts), and every noise track starts with a tick-0 `PARAM_SET NOISE_MODE 4`
+(`white0`).
 
 The PARAM targets `RANGE_START` / `RANGE_END` / `RANGE_LEN` (written
 `:pcm-start` / `:pcm-end` / `:pcm-len`) and `LOOP_START` / `LOOP_END` /
@@ -127,10 +129,9 @@ indices at load:
 | `noise`              | SN76489 noise                            | PSG 3                    |
 | `pcm1` … `pcm3`      | Software PCM worklet, keyed by track id  | (FM index fallback only) |
 
-Unknown names fall back to `min(trackIndex, 5)` on the FM side. The numeric
-channel ids 0–5 / 6–9 / 16–19 / 20–22 exist only in the legacy MMB decoder at
-the top of `ir-player.js` (scheduled for deletion); the binary channel-id
-registry is (re)defined in docs/mmb.md.
+Unknown names fall back to `min(trackIndex, 5)` on the FM side. The IR names
+channels; the numeric channel ids 0–5 / 6–9 / 16–19 / 20–22 belong to MMB
+(`live/src/mmb.js` `CHANNEL_ID`, docs/mmb.md §6.1).
 
 ## 4. Event encoding
 
@@ -168,7 +169,7 @@ FM / PSG note. Also used (with extra fields) on FM3 operator tracks.
 | `pan`        | spec (§6)  | −1/0/+1 | no  | `PAN` macro.                                                                   |
 | `noise_mode` | spec (§6)  | 0–7     | no  | `NOISE_MODE` macro (noise channel notes only).                                 |
 | `fm_tl1` … `fm_amen4` | spec (§6) | per target | no | FM operator-param macros: any supported target lower-cased (`FM_TL1` → `fm_tl1`). |
-| `vol`, `master`, `lfo_rate`, `fm_alg`, `fm_fb`, `fm_ams`, `fm_fms` | spec (§6) | per target | no | Emittable (targets are macro-legal in the compiler) but **ignored by the player** — see §11. |
+| `vol`, `master`, `lfo_rate`, `fm_alg`, `fm_fb`, `fm_ams`, `fm_fms` | spec (§6) | per target | no | Macros on those targets. |
 | `fm3Op`      | int 1–4    | —       | no  | FM3 operator-track notes only: which operator this note keys.                  |
 | `opMask`     | int        | bitmask | no  | 0x28 key nibble; `0x10 << (fm3Op-1)`. Emitted together with `fm3Op`.           |
 
@@ -187,8 +188,7 @@ Notes:
   suppresses it (slur). Macro schedules are hard-limited to 5 ms
   (`KEY_OFF_LEAD_SECS`) before the next `NOTE_ON` on the channel (monophonic
   priority).
-- `keyon` retrigger is honored on plain FM notes only — ignored on FM3
-  operator notes and on PSG.
+- `keyon` retrigger is honored on FM, FM3 operator, PSG and PCM notes.
 
 ### 5.2 REST
 
@@ -263,9 +263,8 @@ targets are compile diagnostics (`E_MARKER_DUP`, `E_JUMP_UNRESOLVED`).
 
 Notes: voice defs (`(def-fm name :alg …)` etc.) compile to a burst of same-tick
 `PARAM_SET`s in a fixed key order (ALG, FB, AMS, FMS, then op1–4 ×
-AR,DR,SR,RR,SL,TL,KS,ML,DT,SSG,AMEN). `param-set` with an unsupported target
-emits a diagnostic **but still emits the event**; the player's default case
-drops unknown targets silently.
+AR,DR,SR,RR,SL,TL,KS,ML,DT,SSG,AMEN). An unsupported target is a diagnostic,
+and no event is emitted.
 
 ### 5.7 PARAM_ADD / PARAM_MUL
 
@@ -316,13 +315,17 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
 | `loop`       | bool    | —     | yes | True for loop waveforms (`sin`/`triangle`/`square`/`saw`/`ramp`/`noise`/`pink`/`perlin`/`brown`) or `:mode loop`; `:mode shot` clears it. |
 | `waitTicks` / `waitKeyOff` | int / bool | ticks | no | Pre-delay before the curve. **Ignored on PARAM_SWEEP** (macro-only) — see §11. |
 | `params`     | object  | —     | no  | Curve shape params (§6.4).                                        |
-| `dyn`        | object  | —     | no  | `{ from?, to?, rate?, len? }` slot refs; `from`/`to`/`rate` resolved at sweep start. **`from`/`to` are slot-fed in MMB too** (PARAM_SWEEP flags bit1/bit2, read live at dispatch — §4.6 note-on tier, opcodes.md); `rate`/`len` still bake to slot init on MMB — see §11. |
+| `dyn`        | object  | —     | no  | `{ from?, to?, rate?, len? }` slot refs; `from`/`to`/`rate` resolved at sweep start. **`from`/`to` are slot-fed in MMB too** (PARAM_SWEEP flags bit1/bit2, read live at dispatch — §4.6 note-on tier, opcodes.md); `len` is read at sweep start by the player, by the slot's `:unit`; on MMB `len` bakes to the slot's init (`W_MMB_DYN_SWEEP_BAKED`). |
 | `bounded`    | bool    | —     | no  | Glide only: the sweep lasts `frames` then stops (never extended to the next automation event); the next `PARAM_SET`/`PARAM_SWEEP` on its target still ends it sooner. |
 
 ```json
 { "tick": 0, "cmd": "PARAM_SWEEP", "args": { "target": "NOTE_PITCH", "curve": "linear",
   "from": -200, "to": 0, "frames": 12, "loop": false, "bounded": true } }
 ```
+
+A note that does not glide, while a glide is still running, ends it with a
+one-tick hold sweep before its NOTE_ON: `bounded`, `from` = `to` = the sticky
+`:pitch` offset, `frames: 1`.
 
 Notes: the player steps the curve once a driver frame, with the driver's
 integer math for the curves the driver computes (mmb.js `sweepFrameValue`;
@@ -420,7 +423,8 @@ Gate (a rest on the rate source, and the note after it with an inline rate):
 
 Notes: the player converts Hz → Timer A value
 (`TA = 1024 − clock/(144·hz)`) and, for the swept form, writes per 60 Hz
-frame over `len` ticks.
+frame over `len` ticks, linear in that value, as the driver sweeps it. The
+track's next CSM_RATE (const or swept) ends a running sweep.
 
 ### 5.15 FM3_MODE
 
@@ -620,7 +624,7 @@ write.
 | `FM_RR1`–`FM_RR4` | 0–15           | 0x80+op bits 3–0 (shared byte with SL).                      |
 | `FM_SL1`–`FM_SL4` | 0–15           | 0x80+op bits 7–4.                                            |
 | `FM_ML1`–`FM_ML4` | 0–15           | 0x30+op bits 3–0 (shared byte with DT).                      |
-| `FM_DT1`–`FM_DT4` | 0–7            | 0x30+op bits 6–4.                                            |
+| `FM_DT1`–`FM_DT4` | −3–3           | 0x30+op bits 6–4, sign-magnitude at the write.               |
 | `FM_KS1`–`FM_KS4` | 0–3            | 0x50+op bits 7–6.                                            |
 | `FM_SSG1`–`FM_SSG4` | 0–15         | 0x90+op. `:ssg1`–`:ssg4`, inline, as a macro or in a voice def. |
 | `FM_AMEN1`–`FM_AMEN4` | 0–1        | 0x60+op bit 7.                                               |
@@ -648,8 +652,10 @@ PSG-routed tracks only `VOL` and
   on the same track (validated; forward or backward).
 - **Post-passes** (in order): per-layer delay expansion → `:prio` layer
   flattening (note drop/truncate under higher-priority layers) → track
-  re-numbering → counted-jump conversion → validation → tick-0 `FM3_MODE`
-  unshifted into `tracks[0]` (when fm3-1..4 tracks exist).
+  re-numbering → counted-jump conversion → validation → voice hoisting
+  (`voice-hoist.js`: a voice change moves into the silence before its note)
+  → tick-0 `FM3_MODE` unshifted into `tracks[0]` (when fm3-1..4 tracks
+  exist).
 - Transient fields (`_delay`) are stripped; `src` spans are the only
   non-semantic payload that remains.
 
@@ -714,14 +720,6 @@ PSG-routed tracks only `VOL` and
 Fields the compiler emits that the player ignores (or vice versa). These are
 the open items to settle for the MMB/Z80 encoding.
 
-1. **`keyon` macro ignored on FM3-op and PSG notes.** The `keyon` NOTE_ON macro
-   (retrigger gate) has no scheduler path on FM3 independent-op or PSG channels.
-2. **`waitTicks` / `waitKeyOff` / `dyn.len` on inline PARAM_SWEEP.** Honored in
-   NOTE_ON macro curves; `_applyParamSweep` starts immediately and ignores a
-   pre-delay or dynamic length. (An `Nf` `:len` *is* honored — `lenFrames`
-   schedules absolute frames.)
-3. **`param-set` emits even on unsupported targets** (diagnostic + event);
-   the player drops unknown targets silently.
-4. **PCM `pitch`/`length`/`gate`** are emitted but not forwarded to the
-   worklet: shot samples play to completion; loop samples stop only at
-   `PCM_NOTE_OFF`. Accepted as an M1 limitation (see language.md §16).
+1. **`waitTicks` / `waitKeyOff` on inline PARAM_SWEEP.** Honored in NOTE_ON
+   macro curves; `_applyParamSweep` starts immediately and ignores a
+   pre-delay. (An `Nf` `:len` and a slot-fed `:len` *are* honored.)

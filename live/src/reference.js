@@ -188,7 +188,7 @@ export const REFERENCE = [
   {
     name: ':len', cat: 'track', section: '§5', tracks: null,
     syntax: ':len L',
-    summary: 'The default note length. Default 8; 0 holds a note without advancing (the game keys it off).',
+    summary: 'The default note length. Default 8; 0 holds a note and the track waits for the key-off (Tools > Release Holds in the editor).',
     insert: ':len 8',
     example: '(fm1 :len 8 c e :len 16 g g g g :len 4 c)',
   },

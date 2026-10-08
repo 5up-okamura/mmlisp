@@ -131,7 +131,7 @@ Details for FM3/CSM in §15, PCM in §16.
 | `c4`, `e8.`, `f+12t`, `b-6f`, `a1/2` | Per-note length suffix (any length token, §4); affects only that note |
 | `_`            | Rest at the current `:len`                                     |
 | `_4`, `_4.`, `_14t`, `_1/2` | Explicit-length rest                              |
-| `X ~ Y`        | Connector: same pitch **ties** (extends), different pitch **slurs** (legato — §3.1) |
+| `X ~ Y`        | Connector: same pitch **ties** (extends), different pitch **slurs** (legato — §3, *Tie and slur*) |
 | `>` / `<`      | Octave up / down (±1)                                          |
 | `o+N` / `o-N`  | Octave shift (no number = ±1)                                  |
 | `v+N` / `v-N`  | Velocity shift (no number = ±1)                                |
@@ -194,8 +194,8 @@ and apply to the notes after them, inside the tuplet and on after it, as
 anywhere in the stream. Anything else, a nested tuplet included, is
 `E_UNKNOWN_TUPLET_ELEM`; a `(t)` with no note or rest is `E_TUPLET_EMPTY`.
 
-A bare note-headed list (the pre-v0.5 subgroup form `(e g a)`) is no longer a
-tuplet — it is rejected with `E_UNKNOWN_LIST`; the syntax is reserved.
+A bare note-headed list `(e g a)` is not a tuplet — it is rejected with
+`E_UNKNOWN_LIST`; the syntax is reserved.
 
 ---
 
@@ -215,7 +215,7 @@ Length token grammar:
 | `Nt`  | Exact tick count                                       | `6t` → 6      |
 | `Nf`  | N frames (1/60 s on NTSC); context-dependent (see below) | —           |
 | `Nms` | N milliseconds, absolute and tempo-independent         | `125ms` → 24 at 120 BPM |
-| `0`   | Hold: KEY-ON without advancing / without KEY-OFF (§17) | 0             |
+| `0`   | Hold: KEY-ON, and the track waits for the runtime key-off (§17) | 0    |
 
 Accepted wherever a length appears: `:len`, note/rest suffix, `:gate`,
 `:gate-`, curve `:len`, macro `:step`, `(wait N)`, `(glide T)`,
@@ -279,7 +279,7 @@ keywords at the form's first tick.
 | Keyword    | Value                     | Effect                                                   |
 | ---------- | ------------------------- | -------------------------------------------------------- |
 | `:oct`     | integer ≥ 0               | Octave (also `:oct+`, §7)                                |
-| `:len`     | length token              | Default note length; `0` = hold, no timeline advance     |
+| `:len`     | length token              | Default note length; `0` = hold, the track waits for the key-off (§17) |
 | `:gate`    | length token              | Absolute sounding time per slot; `0` = hold until runtime KEY-OFF |
 | `:gate*`   | ratio `0.0`–`1.0`         | Gate as a fraction of the note length (`1.0` = full; above 0 it keeps at least one tick) |
 | `:gate-`   | length token              | Gate = note length minus this time; a note no longer than it is not cut (full gate) |
@@ -297,7 +297,7 @@ keywords at the form's first tick.
 The gate family decides how *short* a note is inside its slot, never whether
 the next note attacks: **a note keys off at its gate even when that gate fills
 the slot**, so the note after it always re-attacks. The one thing that carries a
-note into the next is `~` (§3.1). This is what FM needs — the key-off → key-on
+note into the next is `~` (§3, *Tie and slur*). This is what FM needs — the key-off → key-on
 transition is the envelope's attack — and it costs nothing on PSG or PCM, which
 re-assert attenuation / restart the sample on every note-on anyway.
 
@@ -698,9 +698,9 @@ schedule time.
 On the MMB driver, an **inline sweep's `:from`/`:to`** are fully slot-fed:
 the driver reads the slot when the sweep dispatches (PARAM_SWEEP flags, so a
 game-controlled `def-val` moves the swell target in real time). Slot-fed
-**macro-curve** params and sweep `:rate`/`:len` are not yet lowered — those bake
-to the slot init on MMB (`W_MMB_MACRO_SKIPPED` / `W_MMB_DYN_SWEEP_BAKED`),
-matching the live player only when the slot stays at its init.
+**macro-curve** params and a sweep's `:len` are not read live — those bake to
+the slot's init on MMB (`W_MMB_DYN_BAKED` / `W_MMB_DYN_SWEEP_BAKED`), matching
+the live player while the slot stays at its init.
 
 ---
 
@@ -873,9 +873,6 @@ of the opened source folder, and the bare file name otherwise — in which case
 the editor holds the file's text in memory so the score compiles at once, and
 warns that it must be moved next to the score to survive a reload. Drop rules
 are the same as for samples, below.
-
-This is the first increment of a fuller import/patch system (presets via
-`:from`, version pinning); the `(import "path")` surface stays as it grows.
 
 ### 9.3 `def-se` — sound effects
 
@@ -1845,7 +1842,7 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   silence from −36 dB rather than gliding there. That is the model, not a
   limitation to work around (driver.md §5). Automate `:vol` on FM or PSG when a
   fade has to be smooth.
-- **Macros** (§11) on a pcm track drive `:keyon`, `:vel` and `:vol`. A
+- **Macros** (§10) on a pcm track drive `:keyon`, `:vel` and `:vol`. A
   `:keyon` step plays the blob again from its start — a roll, a flam, a
   stutter — and restarts the note's `:vel` / `:vol` envelopes, as it re-attacks
   an FM or PSG note; after key-off (an echo tail) it re-plays the released

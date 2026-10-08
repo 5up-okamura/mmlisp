@@ -55,9 +55,10 @@ Open (the limits themselves are `driver.md` §11 — keep the two in step):
    today.
 4. **Several scores resident at once** (DJ-style transitions, driver.md §2.3;
    `.claude/memory/driver-decisions.md` §11). Today one score is resident and a
-   bundle's songs share one 32 KB sample bank.
-5. **PAL PCM pitch and SE rough edges.** A PAL bank would have to be re-baked
-   at the PAL DAC rate, and is not. A PCM SE restarts a looping BGM note from
+   bundle's songs share one sample bank.
+5. **PAL PCM pitch and SE rough edges.** A single-bank PAL score's samples are
+   baked at the NTSC DAC rate (the multi-bank images have PAL rates of their
+   own). A PCM SE restarts a looping BGM note from
    the sample's head rather than where it was, and a sweep in flight on a
    stolen channel is lost rather than resumed. Effects themselves are
    `def-se`, written once and given to every song by the bundle
@@ -104,8 +105,8 @@ tick, note-on, frame) have driver support and gates.
 
 Still ahead:
 
-- **Slot-fed macro-curve params** — `:rate` and `:len` on a macro curve bake to
-  their init values today.
+- **Slot-fed macro-curve params** — `:from`/`:to`/`:rate`/`:len` on a macro
+  curve, and a sweep's `:len`, bake to their init values today.
 - **The compile-time shadow fold** (parked) — folding static bases at compile
   time instead of emitting the arithmetic.
 - **`if` / `for` / def-functions**, and what eval enables past them:

@@ -1,9 +1,9 @@
 # MMB v0.3 Container Format
 
-Status: **design frozen for review** — this document, together with
-`docs/opcodes.md` (opcode/target freeze) and `docs/driver.md` (driver
-architecture), gates the Phase 3 driver implementation. Event and target
-vocabulary comes from `docs/ir.md`; MMB is the binary lowering of that IR.
+This document, with `docs/opcodes.md` (opcodes and targets) and
+`docs/driver.md` (the driver), defines what the exporter writes and the
+driver reads. Event and target vocabulary comes from `docs/ir.md`; MMB is the
+binary lowering of that IR.
 
 MMB v0.3 replaces every earlier draft entirely. There is no compatibility path
 (no legacy support): a loader accepts its own version and nothing else.
@@ -14,7 +14,7 @@ MMB v0.3 replaces every earlier draft entirely. There is no compatibility path
    ROM. Locating any structure is pointer walking only — fixed-size headers
    and offset fields, no parsing, no allocation, no relocation.
 2. **Compact.** Events are byte-packed with no per-event tick or length
-   prefixes (the headline change from v0.1; see §7).
+   prefixes (§7).
 3. **Deterministic.** Identical IR input produces byte-identical MMB output.
 4. Clear version negotiation and fail-safe handling of unknown content.
 
@@ -51,8 +51,7 @@ MMB v0.3 replaces every earlier draft entirely. There is no compatibility path
 | 0x08   | 2    | section_count | u16                                  |
 | 0x0A   | 2    | header_size   | u16, = 12                              |
 
-The v0.1 `crc32` field is **dropped**. Integrity checking is a 68k-side
-loader concern (checksum the ROM region however the game likes); the
+There is no checksum field. Integrity checking is a 68k-side loader concern (checksum the ROM region however the game likes); the
 driver never verifies checksums.
 
 Header flags:
@@ -84,9 +83,9 @@ Section ids:
 | 0x0002 | EVENT_STREAM| required (§7)                       |
 | 0x0003 | METADATA    | required (§9); driver ignores it    |
 | 0x0004 | —           | unused (the sample bank is its own ROM bank, §10) |
-| 0x0005 | VAL_TABLE   | optional (§8); M3 content, layout frozen now |
-| 0x0006 | VOICE_TABLE | optional (§11); M3 content, layout frozen now |
-| 0x0007 | MACRO_TABLE | optional (§15); M3 content, layout frozen now |
+| 0x0005 | VAL_TABLE   | optional (§8)                       |
+| 0x0006 | VOICE_TABLE | optional (§11)                      |
+| 0x0007 | MACRO_TABLE | optional (§15)                      |
 | 0x0008 | SE_TABLE    | optional (§16); the score's sound effects (def-se) |
 
 Directory order is fixed: ascending id. A loader skips unknown section ids
@@ -120,12 +119,11 @@ Track flags:
 
 `event_offset` is u16, and the encoder limits the whole MMB to 32 KB (§12).
 Larger songs are deferred behind the reserved WIDE_OFFSETS header flag (§4);
-v0.2 tooling must reject output that would overflow u16 offsets.
+the encoder rejects output that would overflow u16 offsets.
 
 ### 6.1 Channel id map
 
-Carried verbatim from the live player (`live/src/ir-player.js`,
-`MMB_CHANNEL_ID_TO_NAME`). Ids are frozen:
+`live/src/mmb.js` `CHANNEL_ID` / `resolveChannelId`. Ids are frozen:
 
 | Id    | Channel        | Hardware                              |
 | ----- | -------------- | ------------------------------------- |
@@ -133,8 +131,7 @@ Carried verbatim from the live player (`live/src/ir-player.js`,
 | 6–8   | sqr1–sqr3      | SN76489 square 1–3                    |
 | 9     | noise          | SN76489 noise                         |
 | 10–15 | —              | reserved                              |
-| 16–19 | fm3 op1–op4    | YM2612 ch3 special mode, one id per operator (§6.1a) |
-| 19    | —              | reserved                              |
+| 16–19 | fm3 op1–op4    | YM2612 ch3 special mode, one id per operator (driver.md §13.4) |
 | 20–22 | pcm1–pcm3      | PCM voices on the fm6 DAC (driver.md §14) |
 | 23–255| —              | reserved                              |
 
@@ -142,14 +139,11 @@ Carried verbatim from the live player (`live/src/ir-player.js`,
 
 Per-track event blocks are contiguous, byte-packed, in track-table order.
 Each block starts at its `event_offset` and ends at its `END_OF_TRACK`
-opcode (0x00) — v0.2 has an explicit terminator; v0.1's reliance on
-byte-length bounds is gone (the track entry no longer carries a length).
+opcode (0x00); the track entry carries no length.
 
 ### 7.1 Delta/duration encoding
 
-This is the headline change from v0.1. The v0.1 draft prefixed every record
-with `{tick u32, opcode u8, payload_len u16}` — 7 bytes of overhead per
-event. v0.2 events carry **no time and no length prefix**:
+Events carry **no time and no length prefix**:
 
 1. Events in a block are sequential. Each track has a clock (in ticks,
    PPQN 96 — see docs/language.md §4).
@@ -231,12 +225,10 @@ inits : count × i16  (initial slot values, slot = array index)
 Slot names stay in IR/metadata only; the binary uses indices. At
 START_TRACK time the driver initializes each declared slot to its init
 value unless the host has already written it this session (driver.md §6).
-M3 content; the layout is frozen now so M1 files may already carry it
-(M1 drivers skip the section).
 
 ## 9. METADATA Section (0x0003)
 
-The v0.1 key-value format is kept unchanged. Repeated entries:
+Key-value entries, repeated:
 
 ```
 key_len   : u8
@@ -394,7 +386,7 @@ limits, not hardware ones; relaxing them needs no driver change beyond
 
 - **One MMB file ≤ 32 KB**, enforced by the encoder.
 - The u16 `event_offset` in the track table encodes this limit structurally.
-- Escape hatch (reserved, not implemented in v0.2): header flag
+- Escape hatch (reserved, not implemented): header flag
   WIDE_OFFSETS widens `event_offset` to u32 and permits a larger file. Any loader seeing this flag set must reject the file until a
   future version defines the mechanism.
 
@@ -406,13 +398,12 @@ limits, not hardware ones; relaxing them needs no driver change beyond
 3. Unknown section id: skip, unless its REQUIRED flag is set → reject.
 4. Unknown header flag set → reject.
 5. Unknown opcode inside a track stream → fail-safe: stop decoding that
-   track, report error (opcodes.md §1 defines which opcodes a v0.2 M1
-   decoder must be able to *skip* vs treat as unknown).
+   track, report error.
 
 ## 14. Validation Rules
 
-Checked by `tools/scripts/verify-mmb.js` (and asserted by the JS reference
-driver on load):
+Asserted by the JS reference driver on load (`live/src/drv-player.js`), and
+by the C sequencer's loader where it can:
 
 1. Magic, version, `header_size` = 12, directory in ascending id order.
 2. All section offsets/sizes in bounds; sections non-overlapping;
@@ -420,8 +411,9 @@ driver on load):
 3. TRACK_TABLE, EVENT_STREAM, METADATA present.
 4. Every `event_offset` in bounds; every track block reaches an
    `END_OF_TRACK` opcode without running off the section end.
-5. Every `channel_id` is defined in §6.1; at most one track per channel per
-   file; `isCsm`/`isFm3Op` flags consistent with channel ids.
+5. Every `channel_id` is defined in §6.1; `isCsm`/`isFm3Op` flags
+   consistent with channel ids. (Several tracks may share a channel: a song
+   part and the effects' parts on it, or CH3's tracks.)
 6. Metadata entries valid UTF-8; required keys present.
 7. VAL_TABLE `count` ≤ 16; every val-slot reference in the stream < count.
 8. Every `sample_id` referenced by a PCM_NOTE_ON exists in SAMPLE_BANK;
@@ -455,7 +447,7 @@ Macro descriptor (8 bytes):
 | ------ | ---- | ----------- | ------------------------------------------------ |
 | 0x00   | 1    | target      | target id (opcodes.md §7); also fixes value width |
 | 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bit1 = additive (`:pitch+`/`:semi+` — driver composes each sample with the channel's live pitch offset instead of overwriting it); bit2 = scaled (`(* <LFO> $slot)` — driver multiplies each sample by a value slot read live per frame, §4.4; see the appended slot byte below); bit3 = tick clock (`step` counts the note's track ticks, driver.md §13.2); bits4–7 reserved 0 |
-| 0x02   | 1    | step        | `:step` clock, 1–255: 60 Hz frames, or ticks when `flags` bit3 |
+| 0x02   | 1    | step        | `:step` clock, 1–255: frames of the score's clock (§4: 60 or 50 Hz), or ticks when `flags` bit3 |
 | 0x03   | 1    | loop_start  | step index the sustain loop begins; `0xFF` = one-shot (hold the last attack value) |
 | 0x04   | 1    | release     | step index the release begins; `0xFF` = no release |
 | 0x05   | 1    | count       | number of steps, 1–255                           |
