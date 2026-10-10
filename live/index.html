@@ -640,7 +640,7 @@
       <div class="modal-title">Export Video</div>
       <div class="info-body">
         <p>Plays the score from the top and records the editor as it goes — the
-        visualizer behind it, the notes lighting up — into a square video with
+        oscilloscope behind it, the notes lighting up — into a square video with
         its sound. Recording takes as long as the video; Stop ends it early.</p>
         <p>Font Size and Follow Playback (MMLisp menu) frame the picture.</p>
         <div class="video-field">
@@ -4781,8 +4781,8 @@
     // -----------------------------------------------------------------------
     // Video export (File > Export > Video…, Share > Make video): plays the
     // score and records the editor in real time — what the screen shows,
-    // redrawn every frame onto a square canvas: the visualizer behind (the
-    // oscilloscope when it is off), the text in its theme colors and Font
+    // redrawn every frame onto a square canvas: the oscilloscope behind
+    // (turned on for the take), the text in its theme colors and Font
     // Size, the playhead outlines, a title and the site underneath. Follow
     // Playback is the camera. The sound is the worklet's own output.
     // MediaRecorder writes H.264 + AAC MP4 where the browser can (recent
@@ -5760,7 +5760,7 @@
     // Mega Drive Model 1 analog output low-pass (~3 kHz). Switchable.
     // User preferences persisted to localStorage. Values are stored as named
     // strings (not booleans) so future options — Analog LPF console models,
-    // other visualizer modes — can be added without migrating saved data.
+    // say — can be added without migrating saved data.
     const PREFS_KEY = 'mmlisp.prefs';
     function readPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') || {}; } catch (_) { return {}; } }
     function loadPref(key, fallback) { const v = readPrefs()[key]; return v == null ? fallback : v; }
@@ -10081,7 +10081,7 @@
     initLaunchQueue();
     initFileDrop();
 
-    // Restore persisted visualizer selection.
+    // Restore the piano roll and the oscilloscope, each on or off.
     setPianoRoll(loadPref('pianoRoll', 'off') === 'on');
     setScope(loadPref('scope', 'on') === 'on');
     vizChanged(); // the checks, both off included
