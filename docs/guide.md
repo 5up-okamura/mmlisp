@@ -1081,9 +1081,10 @@ the last build: after an edit, play or Build to bring it up to date.
 **TIME**, under Global in the panel, shows where the song is, and its bar spans
 one pass of it: the intro and one time round the loop, the loop's start marked
 on the bar. Past the end the position carries on from the loop start, as the
-song does. Tap or drag the bar to play from there; while you drag, it keeps
-playing a moment from under your finger, so the spot can be found by ear.
-Stopped, it starts playback at that point.
+song does. While it plays, tap or drag the bar to play from there; as you
+drag, it keeps playing a moment from under your finger, so the spot can be
+found by ear. Stopped or paused, the bar only sets the point: Play starts
+there, Resume picks up there, and Stop puts it back to the top.
 
 **Tap a line number** to play from that line's first note — for a line in a
 loop, the first time round. A label's line (`#top`) plays from the label; a line

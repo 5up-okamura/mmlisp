@@ -5915,7 +5915,7 @@
 
     function onPlayToggle() {
       if (!player || (!player.isPlaying() && !_paused)) {
-        onPlay();
+        onPlay(null, _timeCue != null ? { fromSec: _timeCue } : {});
       } else if (_paused) {
         onResume();
       } else {
@@ -5928,6 +5928,7 @@
     // fromSec: from that far into the song. Both chase the run (IRPlayer.seek).
     async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride = null } = {}) {
       hideSharedPlay();
+      _timeCue = null; // a cue set on the time bar is spent by any Play
       const ok = await initAudio();
       if (!ok) return;
       stopBrowseScorePreview(); // one score owns the chip at a time
@@ -6092,6 +6093,7 @@
       player = null;
       _seHeld.clear();
       refreshSeLit();
+      _timeCue = null;
       showTime(0);
       log('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
@@ -9041,13 +9043,14 @@
     // loop start marked; past the end the position wraps to the loop start.
     // Dragging or tapping seeks (IRPlayer.seek: chased, so the point sounds as
     // the song left it), and a drag re-seeks every TIME_SCRUB_MS so the point
-    // can be found by ear. Stopped, a seek starts playback there. The MMLispDRV
-    // reference cannot seek: the bar is off while it plays.
+    // can be found by ear. Stopped or paused, it only moves the point Play
+    // starts (or resumes) from. The MMLispDRV reference cannot seek: the bar is
+    // off while it plays.
     const TIME_SCRUB_MS = 120;
     let _timeSpan = null;      // { ir, loopStart, end } of the IR the bar measures
     let _timeDragging = false;
     let _timeScrubAt = 0;
-    let _timeStarting = false; // a seek from stopped is starting playback
+    let _timeCue = null;       // stopped: where the bar was set, for the next Play
 
     function fmtTime(sec) {
       const m = Math.floor(sec / 60), s = sec - m * 60;
@@ -9087,7 +9090,8 @@
       sl.disabled = !on;
       sl.max = String(Math.max(0.01, end));
       placeLoopMark();
-      if (!on || !player?.isPlaying?.()) showTime(0);
+      if (!on) showTime(0);
+      else if (!player?.isPlaying?.()) showTime(_paused ? _pausedSec : _timeCue ?? 0);
     }
     // The position as the bar shows it: wrapped into the loop once past one pass.
     function showTime(pos) {
@@ -9101,19 +9105,17 @@
       document.getElementById('val-time').textContent =
         span?.end > 0 ? `${fmtTime(pos)} / ${fmtTime(span.end)}` : fmtTime(pos);
     }
-    async function seekTo(sec) {
-      if (player instanceof IRPlayer && (player.isPlaying() || _paused) && player._ir) {
+    function seekTo(sec) {
+      if (player instanceof IRPlayer && player.isPlaying() && player._ir) {
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });
         player.seek(audioCtx, { sec });
-        _paused = false;
         _vizFrozen = null;
-        setPlayIcon(true);
-        document.getElementById('btnPlay').classList.add('active');
         startFmLiveLoop();
-      } else if (!_timeStarting) {
-        _timeStarting = true;
-        try { await onPlay(null, { fromSec: sec }); } finally { _timeStarting = false; }
+      } else if (_paused) {
+        _pausedSec = sec; // Resume picks up here
+      } else {
+        _timeCue = sec;   // Play starts here
       }
     }
     function initTimeBar() {
