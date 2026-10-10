@@ -6345,7 +6345,7 @@
     // -----------------------------------------------------------------------
     let _paused = false;
     let _pausedSec = 0; // where pause left the song (IRPlayer.positionSec)
-    let _vizFrozen = null; // per-track frozen clocks while paused (piano roll holds in place)
+    let _vizFrozen = null; // per-track clocks the piano roll holds when not playing (pause, TIME bar)
 
     function onPause() {
       if (!player || !player.isPlaying()) return;
@@ -9070,6 +9070,18 @@
     // bar is off for both.
     const hasNotes = (ir) => (ir?.tracks ?? []).some((t) =>
       (t.events ?? []).some((e) => e.cmd === 'NOTE_ON' || e.cmd === 'PCM_NOTE_ON'));
+    // A player that is never heard, on one IR at a time: it measures the bar,
+    // chases to a point on it, and expands the IR for the piano roll while
+    // stopped. A run is never touched.
+    let _timeProbe = null; // { ir, player }
+    function timeProbe(ir) {
+      if (_timeProbe?.ir !== ir) {
+        const p = new IRPlayer(() => {});
+        p.loadJSON(ir);
+        _timeProbe = { ir, player: p };
+      }
+      return _timeProbe.player;
+    }
     function refreshTimeBar(ir, seekable = true) {
       const sl = document.getElementById('sl-time');
       if (_timeSpan?.ir === ir && _timeSpan.seekable === seekable) return;
@@ -9077,9 +9089,7 @@
       const on = seekable && hasNotes(ir);
       if (on) {
         try {
-          const probe = new IRPlayer(() => {});
-          probe.loadJSON(ir);
-          const cap = probe.captureRegisterLog();
+          const cap = timeProbe(ir).captureRegisterLog();
           // Onto a live run's clock, which starts without the driver's
           // setup frame; a loop from the very top then has no intro to mark.
           end = Math.max(0, cap.endSec - CAPTURE_SETUP_SEC);
@@ -9091,7 +9101,10 @@
       sl.max = String(Math.max(0.01, end));
       placeLoopMark();
       if (!on) showTime(0);
-      else if (!player?.isPlaying?.()) showTime(_paused ? _pausedSec : _timeCue ?? 0);
+      else if (!player?.isPlaying?.()) {
+        showTime(_paused ? _pausedSec : _timeCue ?? 0);
+        if (!_paused && _timeCue != null) holdRollAt(ir, _timeCue); // the song changed under the cue
+      }
     }
     // The position as the bar shows it: wrapped into the loop once past one pass.
     function showTime(pos) {
@@ -9114,9 +9127,18 @@
         startFmLiveLoop();
       } else if (_paused) {
         _pausedSec = sec; // Resume picks up here
+        holdRollAt(player._ir, sec);
       } else {
         _timeCue = sec;   // Play starts here
+        holdRollAt(_timeSpan?.ir, sec);
       }
+    }
+    // Stopped or paused, the piano roll shows the point the bar is set to.
+    function holdRollAt(ir, sec) {
+      if (!ir) return;
+      const clocks = timeProbe(ir).clocksAtSec(sec);
+      _vizFrozen = new Map(clocks.map((c, i) => [i, c]));
+      _rollLoops.clear(); // a point within one pass: no loop has come round
     }
     function initTimeBar() {
       const sl = document.getElementById('sl-time');
@@ -9285,13 +9307,11 @@
       return model;
     }
     function rebuildVizNotes() {
-      // Build from the player's EXPANDED events whenever it has an IR loaded, so
-      // (x N …) loop repeats are unrolled and align with trackClock. Fall back to
-      // the raw IR only when there is no player (stopped preview).
-      const usePlayer = !!(player && player._ir);
-      const getEvents = usePlayer
-        ? (ti) => player.expandedTrackEvents(ti)
-        : (ti) => _lastGoodIR?.tracks?.[ti]?.events ?? [];
+      // EXPANDED events, so (x N …) repeats are unrolled and align with
+      // trackClock: the player's, or — stopped — the probe's on the last
+      // compiled IR, which the TIME bar's point is chased on.
+      const src = player?._ir ? player : _lastGoodIR ? timeProbe(_lastGoodIR) : null;
+      const getEvents = src ? (ti) => src.expandedTrackEvents(ti) : () => [];
       _vizNotes = buildVizNotes(getEvents);
       rollModelChanged();
     }
@@ -9452,8 +9472,11 @@
       if (!isCoarsePointerDevice()) editorView.focus(); // a tap must not raise the keyboard
     }
 
+    // Playing, the run's clock; paused or stopped, the point the song holds or
+    // the TIME bar was set to (_vizFrozen), else nothing (the top).
     function rollClock(cell) {
-      return (_paused && _vizFrozen) ? _vizFrozen.get(cell.trackIndex) : player?.trackClock?.(cell.trackIndex);
+      if (!player?.isPlaying?.() && _vizFrozen) return _vizFrozen.get(cell.trackIndex);
+      return player?.trackClock?.(cell.trackIndex);
     }
     // A looping track's clock runs from its loop start again each pass; once it
     // has, the intro is gone and the past is the loop body's previous pass.

@@ -640,6 +640,19 @@ export class IRPlayer {
     return { held, lineSec: watched == null ? null : watched - start };
   }
 
+  /**
+   * Every track's clock (trackClock), by track index, at `sec` into the song:
+   * a run chased from the top on a stand-in clock, as seek() finds its point.
+   * What a visualizer shows for a point the song is not playing at — meant
+   * for a probe player, whose run it leaves where the chase stopped.
+   * @param {number} sec
+   */
+  clocksAtSec(sec) {
+    if (!this._ir) return [];
+    this._chase(null, 0, Math.max(0, sec), null);
+    return this._tracks.map((_, i) => this.trackClock(i));
+  }
+
   /** Seconds since the top of the song (seek() included); 0 when stopped. */
   positionSec() {
     if (!this._playing || !this._audioContext) return 0;

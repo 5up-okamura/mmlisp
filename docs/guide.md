@@ -1083,8 +1083,9 @@ one pass of it: the intro and one time round the loop, the loop's start marked
 on the bar. Past the end the position carries on from the loop start, as the
 song does. While it plays, tap or drag the bar to play from there; as you
 drag, it keeps playing a moment from under your finger, so the spot can be
-found by ear. Stopped or paused, the bar only sets the point: Play starts
-there, Resume picks up there, and Stop puts it back to the top.
+found by ear. Stopped or paused, the bar only sets the point — the piano
+roll moves to it — and Play starts there, Resume picks up there, and Stop
+puts it back to the top.
 
 **Tap a line number** to play from that line's first note — for a line in a
 loop, the first time round. A label's line (`#top`) plays from the label; a line
