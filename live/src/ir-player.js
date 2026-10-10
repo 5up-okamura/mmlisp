@@ -478,8 +478,9 @@ export class IRPlayer {
 
   /**
    * Per-track playback clock for visualizers: the local fractional tick (wraps
-   * within the track's loop, since audioTimeAtTick0 is re-anchored each loop) and
-   * the loop length in ticks if the track loops. Returns null when not playing.
+   * within the track's loop, since audioTimeAtTick0 is re-anchored each loop),
+   * the loop length in ticks and the tick the loop jumps back to, if the track
+   * loops. Returns null when not playing.
    * @param {number} trackIndex index into ir.tracks (== flattened track index)
    */
   trackClock(trackIndex) {
@@ -489,7 +490,11 @@ export class IRPlayer {
       0,
       (this._audioContext.currentTime - tr.audioTimeAtTick0) / this._secsPerTick,
     );
-    return { tick, loopTicks: tr.hasLoop ? tr.loopDuration : null };
+    return {
+      tick,
+      loopTicks: tr.hasLoop ? tr.loopDuration : null,
+      loopStartTick: tr.hasLoop ? tr.loopStartTick : null,
+    };
   }
 
   /**

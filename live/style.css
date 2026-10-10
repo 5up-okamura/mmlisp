@@ -238,7 +238,7 @@
       position: relative;
       background: var(--background);
     }
-    /* Piano-roll visualizer canvas, faint behind the editor text. */
+    /* Oscilloscope visualizer canvas, faint behind the editor text. */
     #vizCanvas {
       position: absolute;
       inset: 0;
@@ -477,8 +477,8 @@
     .val-bar-head { color: var(--high); font-weight: 600; }
     .val-stale { color: var(--error); font-weight: 400; }
 
-    /* drag divider */
-    #hDivider {
+    /* drag dividers */
+    #hDivider, #rollDivider {
       height: 4px;
       background: var(--background);
       border-top: 1px solid var(--mid);
@@ -486,7 +486,49 @@
       cursor: row-resize;
       flex-shrink: 0;
     }
-    #hDivider:hover { background: var(--mid); }
+    #hDivider:hover, #rollDivider:hover { background: var(--mid); }
+    #rollDivider { touch-action: none; }
+
+    /* piano roll pane (under the editor) */
+    #rollPane {
+      height: 220px;
+      min-height: 80px;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      background: var(--background);
+    }
+    #rollPane[hidden], #rollDivider[hidden] { display: none; }
+    /* The zoom sits over the roll's top-right corner. */
+    #rollZoom {
+      position: absolute;
+      top: 4px;
+      right: 6px;
+      z-index: 1;
+      background: var(--background);
+    }
+    #rollZoom .lib-seg-btn { flex: 0 0 auto; padding: 0.15rem 0.6rem; }
+    #rollWrap { flex: 1; min-height: 0; position: relative; }
+    #rollCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+    }
+    #rollTip {
+      position: absolute;
+      pointer-events: none;
+      font-size: 0.66rem;
+      font-family: ui-monospace, monospace;
+      color: var(--foreground);
+      background: var(--background);
+      border: 1px solid var(--mid);
+      border-radius: 3px;
+      padding: 1px 5px;
+      white-space: nowrap;
+    }
 
     /* console */
     #consolePane {

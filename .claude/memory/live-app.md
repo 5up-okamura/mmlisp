@@ -88,6 +88,29 @@ user's rulings, measurements, and open items. Merged 2026-10-09 from
 - **VGM export writes PCM as one data block + `0x8n`**, not DAC stream
   control, because the engine mixes voices in software.
 
+## Piano roll (`drawRoll` in `live/index.html`, guide §22)
+
+Rebuilt 2026-10-10 from an editor overlay of per-channel cells, which went
+unused: it covered the text, auto-scaled each cell's pitches with no keys,
+and showed nothing the playhead did not. The user's rulings:
+
+- **Two colors only** (`--foreground`, `--mid`) — no per-channel colors;
+  channels are told apart by focus.
+- **No bars, no bar numbers**: no meter exists, and `|` is placed per track
+  at will, so `|`-derived bar lines were ruled out. Quarters only, unaccented.
+- **No channel chips and no Follow/Fixed switch**: the cursor and a note
+  click pick the focus; the chips duplicated the source.
+- **Zoom is a scale (1×/2×/4× = 24/48/96 px per quarter)**, a segmented
+  control like `.lib-seg`; a window in beats was dropped.
+- **No transport in the pane** (the top bar has it) and **no note editing in
+  the roll** (the text stays the only source).
+- The roll is not in the video take: the take draws the editor, so it always
+  uses the oscilloscope.
+
+Open: dragging the roll's background to seek was in the mockup
+(https://claude.ai/artifact/Rimn1WHaERRJbLBLgKhJbb) and left out — not
+decided.
+
 ## Lessons
 
 - **Check a commit's Vercel status before asking for a device test**

@@ -346,6 +346,19 @@
         <button id="bracketStatus" type="button" hidden
                 title="Jump to the first unmatched bracket"></button>
       </div>
+      <!-- Piano roll: its own pane under the editor, so it stays up while writing -->
+      <div id="rollDivider" hidden></div>
+      <div id="rollPane" hidden>
+        <div id="rollWrap">
+          <canvas id="rollCanvas"></canvas>
+          <div class="lib-seg" id="rollZoom" role="radiogroup" aria-label="Zoom">
+            <button class="lib-seg-btn" role="radio" data-zoom="24">1×</button>
+            <button class="lib-seg-btn" role="radio" data-zoom="48">2×</button>
+            <button class="lib-seg-btn" role="radio" data-zoom="96">4×</button>
+          </div>
+          <div id="rollTip" hidden></div>
+        </div>
+      </div>
       <div id="hDivider"></div>
       <div id="consolePane">
         <div id="log"></div>
@@ -3420,6 +3433,10 @@
       playheadField,
       playheadLayer,
       followPlayhead,
+      // The piano roll follows the cursor: its focus and the notes written there.
+      EditorView.updateListener.of((u) => {
+        if ((u.selectionSet || u.docChanged) && _vizMode === 'pianoroll') rollFollowCursor(u.state);
+      }),
       buildFlashLayer,
       bracketField,
       bracketLayer,
@@ -4869,7 +4886,7 @@
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, S, S);
       const vc = document.getElementById('vizCanvas');
-      if (_vizMode !== 'off' && vc.width > 0) {
+      if (_vizMode === 'scope' && vc.width > 0) {
         const vr = vc.getBoundingClientRect();
         const sx = vc.width / vr.width, sy = vc.height / vr.height;
         ctx.globalAlpha = 0.5; // as #vizCanvas is shown
@@ -4945,9 +4962,10 @@
       const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
       const chunks = [];
       recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-      // No visualizer, no background: the oscilloscope stands in for the take.
+      // The take draws the editor, so its visualizer is the oscilloscope (the
+      // piano roll is a pane of its own, outside the frame).
       const vizBefore = _vizMode;
-      if (_vizMode === 'off') setVisualizer('scope');
+      if (_vizMode !== 'scope') setVisualizer('scope');
 
       onStop();
       drawVideoFrame(ctx, title);
@@ -4961,7 +4979,7 @@
         recorder.onstop = async () => {
           try { workletNode.disconnect(audioDest); } catch (_) {}
           for (const t of stream.getTracks()) t.stop();
-          if (vizBefore === 'off') setVisualizer('off');
+          if (vizBefore !== 'scope') setVisualizer(vizBefore);
           _videoRec = null;
           if (rec.discard || !chunks.length) return;
           const blob = new Blob(chunks, { type: mime.split(';')[0] });
@@ -9218,14 +9236,14 @@
     window.onTempo = onTempo;
 
     // =====================================================================
-    // Playback visualizers. The piano roll (editor overlay) is driven from the
-    // IR's note events + the live per-track playhead (player.trackClock()); the
-    // oscilloscope and the channel VU read real chip output from the audio taps.
+    // Playback visualizers. The piano roll (a pane under the editor) is driven
+    // from the IR's note events + the live per-track playhead
+    // (player.trackClock()); the oscilloscope (behind the editor text) and the
+    // channel VU read real chip output from the audio taps.
     // =====================================================================
     let _vizNotes = [];          // per strip-channel: { head, trackIndex, notes[], loMidi, hiMidi }
     let _vizRaf = null;
     let _vizColors = null;
-    const VIZ_BEATS_VISIBLE = 16; // ticks window per cell = ppqn * this
     const VIZ_MIN_CELL_W = 360;   // min cell width (px); cols = floor(editorW / this), capped at 3
 
     function vizPpqn() {
@@ -9253,7 +9271,10 @@
             gate = ev.args?.gate ?? len;
             vel = ev.args?.vel ?? 15;
           } else continue;
-          notes.push({ startTick: ev.tick, midi, lenTicks: len, gateTicks: Math.max(1, gate), vel });
+          notes.push({
+            startTick: ev.tick, midi, lenTicks: len, gateTicks: Math.max(1, gate), vel,
+            src: ev.src, sample: ev.args?.sample,
+          });
           if (midi < lo) lo = midi;
           if (midi > hi) hi = midi;
         }
@@ -9270,6 +9291,7 @@
         ? (ti) => player.expandedTrackEvents(ti)
         : (ti) => _lastGoodIR?.tracks?.[ti]?.events ?? [];
       _vizNotes = buildVizNotes(getEvents);
+      rollModelChanged();
     }
 
     // ---- per-channel VU (real levels from the audio taps) ----
@@ -9300,7 +9322,7 @@
       _chVuEls.forEach((el) => { el.style.transform = 'scaleY(0)'; });
     }
 
-    // ---- piano roll (editor overlay) ----
+    // ---- visualizer colors and the oscilloscope canvas ----
     function sampleVizColors() {
       const cs = getComputedStyle(document.documentElement);
       _vizColors = {
@@ -9322,87 +9344,428 @@
       c.height = Math.max(1, Math.round(h * dpr));
       c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    function drawPianoRoll() {
-      const c = document.getElementById('vizCanvas');
-      const wrap = document.getElementById('editorWrap');
-      if (!c || !wrap) return;
-      const dpr = window.devicePixelRatio || 1;
-      const W = wrap.clientWidth, H = wrap.clientHeight; // fixed container reference
-      if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
-        resizeVizCanvas();
+    // ---- piano roll (a pane under the editor) ----
+    // Every pitched channel on one pitch axis, so what the tracks play at one
+    // moment reads at a glance; noise and PCM as onset lanes underneath (a PCM
+    // rate is no pitch). Two colors only: the focus channel — the editor
+    // cursor's track, or a clicked note's — in the foreground, the rest in
+    // --mid; the notes written at the cursor are drawn solid. Over the part
+    // already played, the focus's real pitch (the chip's latched frequency)
+    // is traced, so glide, vibrato and arpeggios show as they sound. The grid
+    // is even quarters from tick 0: MMLisp has no meter,
+    // and `|` sits wherever each track's writer put it, so there are no bars.
+    // Zoom is a scale (px per quarter), so a wider pane shows more time.
+    const ROLL_UNPITCHED = new Set(['noise', 'pcm1', 'pcm2', 'pcm3']);
+    const ROLL_KEY_W = 40;      // key gutter (px)
+    const ROLL_LANE_H = 16;     // one noise / PCM lane (px)
+    const ROLL_HEAD_AT = 0.3;   // the playhead's place across the plot
+    const ROLL_ROW_MAX = 12;    // tallest pitch row (px); a narrow range widens to fill
+    const ROLL_ZOOMS = [24, 48, 96]; // px per quarter: 1×, 2×, 4×
+    const ROLL_NOTE_NAMES = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
+    let _rollPxPerBeat = 48;
+    let _rollFocus = null;      // strip head of the focus channel
+    let _rollRange = { lo: 48, hi: 72 };
+    let _rollHits = [];         // this frame's notes, for the pointer: { x, y, w, h, n, cell }
+    const _rollLoops = new Map(); // trackIndex → { last, wrapped }: has its loop come round
+    let _rollTrace = null;      // the focus's pitch trace: { head, offset, last, note, …, pts: [{ u, p } | null] }
+    let _rollSel = new Set();   // notes written at the cursor (drawn solid)
+    let _rollSelStale = false;  // the model was rebuilt: re-match on the next frame
+
+    function rollPitched(cell) { return !ROLL_UNPITCHED.has(cell.head); }
+    function rollNoteName(m) { return ROLL_NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
+    function rollLenName(ticks) {
+      const whole = vizPpqn() * 4;
+      const d = whole / ticks;
+      return Number.isInteger(d) && d >= 1 ? `len ${d}` : `${ticks}t`;
+    }
+    function rollModelChanged() {
+      let lo = 127, hi = 0;
+      for (const cell of _vizNotes) {
+        if (!rollPitched(cell)) continue;
+        lo = Math.min(lo, cell.loMidi);
+        hi = Math.max(hi, cell.hiMidi);
       }
-      const ctx = c.getContext('2d');
-      ctx.clearRect(0, 0, W, H);
-      const cells = _vizNotes.filter((cl) => cl.notes.length);
-      if (!cells.length) return;
-      if (!_vizColors) sampleVizColors();
-      const C = cells.length;
-      // Column count follows the available width (wider → more columns, capped
-      // at 3), so e.g. 5 channels lay out as 2×3 when narrow, 3×2 when wide.
-      const cols = Math.max(1, Math.min(3, C, Math.floor(W / VIZ_MIN_CELL_W)));
-      const rows = Math.ceil(C / cols);
-      const cellW = W / cols, cellH = H / rows;
-      const windowTicks = vizPpqn() * VIZ_BEATS_VISIBLE;
-      for (let k = 0; k < C; k++) {
-        const cell = cells[k];
-        const x0 = (k % cols) * cellW, y0 = Math.floor(k / cols) * cellH;
-        const centerX = x0 + cellW / 2;
-        const pxPerTick = cellW / windowTicks;
-        const clock = (_paused && _vizFrozen)
-          ? _vizFrozen.get(cell.trackIndex)
-          : player?.trackClock?.(cell.trackIndex);
-        const t = clock ? clock.tick : 0;
-        const loop = clock?.loopTicks ?? null;
-        let lo = cell.loMidi, hi = cell.hiMidi;
-        if (hi < lo) { lo = 48; hi = 72; }
-        if (hi === lo) { lo -= 6; hi += 6; }
-        lo -= 1; hi += 1;
-        const pad = 6;
-        const noteH = Math.max(2, Math.min(10, (cellH - pad * 2) / (hi - lo)));
-        const yOf = (m) => y0 + pad + (cellH - pad * 2) * (1 - (m - lo) / (hi - lo)) - noteH / 2;
+      _rollRange = hi >= lo ? { lo, hi } : { lo: 48, hi: 72 };
+      if (!_vizNotes.some((c) => c.head === _rollFocus && c.notes.length)) {
+        _rollFocus = (_vizNotes.find((c) => rollPitched(c) && c.notes.length) ?? _vizNotes.find((c) => c.notes.length))?.head ?? null;
+      }
+      _rollTrace = null;
+      _rollSel = new Set();
+      _rollSelStale = true;
+    }
 
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(x0, y0, cellW, cellH);
-        ctx.clip();
-        // per-channel divider/border
-        ctx.globalAlpha = 0.2;
-        ctx.strokeStyle = _vizColors.fg;
-        ctx.strokeRect(x0 + 0.5, y0 + 0.5, cellW - 1, cellH - 1);
-        ctx.globalAlpha = 1;
-
-        const reps = loop ? [-1, 0, 1] : [0];
+    // The roll follows the editor cursor. The notes written at it (or inside
+    // the selection) are drawn solid — every pass, on every channel that plays
+    // them, so a def's note lights wherever the def is used. The focus is the
+    // channel form the cursor sits in (or has just closed); outside one (in a
+    // def), the first channel, pitched before unpitched, that plays a note
+    // under it.
+    function rollFollowCursor(state) {
+      _rollSelStale = false;
+      const { from, to, head: pos } = state.selection.main;
+      const ph = state.field(playheadField);
+      const sel = new Set();
+      const seen = new Map(); // src → under the cursor (a loop's passes share one)
+      let firstHead = null, firstPitched = null;
+      for (const cell of _vizNotes) {
         for (const n of cell.notes) {
-          const w = Math.max(2, n.lenTicks * pxPerTick);
-          const y = yOf(n.midi);
-          for (const rep of reps) {
-            const s = n.startTick + rep * (loop ?? 0);
-            const x = centerX + (s - t) * pxPerTick;
-            if (x + w < x0 || x > x0 + cellW) continue;
-            // Fill only while the note is actually sounding; otherwise outline.
-            if (s <= t && t < s + n.gateTicks) {
-              ctx.globalAlpha = 0.8;
-              ctx.fillStyle = _vizColors.fg;
-              ctx.fillRect(x, y, w, noteH);
-            } else {
-              ctx.globalAlpha = 0.8;
-              ctx.strokeStyle = _vizColors.fg;
-              ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, w - 1), Math.max(1, noteH - 1));
-            }
-            ctx.globalAlpha = 1;
+          if (!n.src || n.src.file) continue;
+          let hit = seen.get(n.src);
+          if (hit === undefined) {
+            const r = resolvePlayhead(n.src, ph.builtDoc, ph.changes, state.doc);
+            hit = !!r && (from === to ? r[0] <= pos && pos <= r[1] : r[0] < to && from < r[1]);
+            seen.set(n.src, hit);
           }
+          if (!hit) continue;
+          sel.add(n);
+          firstHead ??= cell.head;
+          if (rollPitched(cell)) firstPitched ??= cell.head;
         }
-        // channel label (bottom-right, drawn last so it stays legible over notes)
-        ctx.globalAlpha = 0.8;
-        ctx.fillStyle = _vizColors.fg;
-        ctx.font = '600 11px ui-monospace, monospace';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(cell.label ?? cell.head, x0 + cellW - 5, y0 + cellH - 4);
-        ctx.globalAlpha = 1;
-        ctx.restore();
+      }
+      _rollSel = sel;
+      let top = null; // the outermost form around the cursor, or just closed by it
+      for (const p of state.field(bracketField).pairs) {
+        if (p.from < pos && pos <= p.to + 1 && (!top || p.from < top.from)) top = p;
+      }
+      let head = null;
+      if (top && state.doc.sliceString(top.from, top.from + 1) === '(') {
+        const m = /^\s*([^\s()[\];"]+)/.exec(state.doc.sliceString(top.from + 1, Math.min(top.to, top.from + 40)));
+        head = m?.[1] === 'fm3-csm-rate' ? 'fm3-csm' : m?.[1];
+      }
+      if (!(head && _vizNotes.some((c) => c.head === head))) head = firstPitched ?? firstHead;
+      if (head) _rollFocus = head;
+    }
+
+    // A clicked note selects its token, resolved as the playhead resolves it
+    // (against the build's document, mapped through the edits since).
+    function revealNoteSource(src) {
+      if (!src || src.file) return;
+      const v = editorView.state.field(playheadField);
+      const r = resolvePlayhead(src, v.builtDoc, v.changes, editorView.state.doc);
+      if (!r) return;
+      editorView.dispatch({
+        selection: EditorSelection.range(r[0], r[1]),
+        effects: EditorView.scrollIntoView(r[0], { y: 'nearest' }),
+      });
+      if (!isCoarsePointerDevice()) editorView.focus(); // a tap must not raise the keyboard
+    }
+
+    function rollClock(cell) {
+      return (_paused && _vizFrozen) ? _vizFrozen.get(cell.trackIndex) : player?.trackClock?.(cell.trackIndex);
+    }
+    // A looping track's clock runs from its loop start again each pass; once it
+    // has, the intro is gone and the past is the loop body's previous pass.
+    function rollLoopState(cell, clock) {
+      let st = _rollLoops.get(cell.trackIndex);
+      if (!st) { st = { last: null, wrapped: false }; _rollLoops.set(cell.trackIndex, st); }
+      if (!clock) { st.last = null; st.wrapped = false; return st; }
+      if (clock.loopTicks && st.last != null && clock.tick < st.last - clock.loopTicks / 2) st.wrapped = true;
+      else if (st.last != null && clock.tick < st.last - 1 && !_paused) st.wrapped = false; // a seek
+      st.last = clock.tick;
+      return st;
+    }
+    // Calls fn(n, start) for every pass of every note that overlaps [from, to).
+    function rollEachNote(cell, clock, st, from, to, fn) {
+      const loop = clock?.loopTicks ?? null;
+      const ls = clock?.loopStartTick ?? 0;
+      for (const n of cell.notes) {
+        const span = Math.max(n.lenTicks, n.gateTicks);
+        if (!loop || n.startTick < ls) {
+          if (st.wrapped && loop) continue;
+          if (n.startTick + span >= from && n.startTick < to) fn(n, n.startTick);
+          continue;
+        }
+        const kMin = st.wrapped ? Math.ceil((from - span - n.startTick) / loop) : 0;
+        const kMax = Math.floor((to - n.startTick) / loop);
+        for (let k = kMin; k <= kMax; k++) fn(n, n.startTick + k * loop);
       }
     }
+    function rollSoundingAt(cell, t) {
+      for (const n of cell.notes) if (n.startTick <= t && t < n.startTick + n.gateTicks) return n;
+      return null;
+    }
+
+    // One sample a frame of the focus's real pitch, in ticks that keep
+    // counting across loop passes, so the trace runs on behind the playhead.
+    // The latched frequency arrives with the audio batches, so for a moment
+    // after a key-on it is still the previous note's: those samples are
+    // skipped (ROLL_TRACE_STALE_MS at most), and the line breaks at every new note — a
+    // key-on jumps; only a glide or vibrato inside a note draws a slope.
+    const ROLL_TRACE_STALE_MS = 120;
+    function rollRecordTrace(cell, clock, keepTicks) {
+      if (!cell || !clock || _paused || cell.head.startsWith('fm3-')) { if (!clock) _rollTrace = null; return; }
+      if (!_rollTrace || _rollTrace.head !== cell.head) {
+        _rollTrace = { head: cell.head, offset: 0, last: null, note: null, noteAt: 0, prevHz: 0, lastHz: 0, pts: [] };
+      }
+      const tr = _rollTrace;
+      if (tr.last != null && clock.tick < tr.last - 1) {
+        if (clock.loopTicks && clock.tick < tr.last - clock.loopTicks / 2) tr.offset += clock.loopTicks;
+        else { tr.pts = []; tr.offset = 0; } // a seek: the old trace no longer lines up
+      }
+      tr.last = clock.tick;
+      const u = clock.tick + tr.offset;
+      const k = scopeChannelOf(cell.head);
+      const hz = k != null ? _scopeFreqs[k] : 0;
+      const n = hz > 0 ? rollSoundingAt(cell, clock.tick) : null;
+      const now = performance.now();
+      if (n !== tr.note) {
+        if (tr.pts.length && tr.pts[tr.pts.length - 1]) tr.pts.push(null);
+        tr.note = n; tr.noteAt = now; tr.prevHz = tr.lastHz;
+      }
+      const stale = n && hz === tr.prevHz && now - tr.noteAt < ROLL_TRACE_STALE_MS;
+      if (n && !stale) {
+        tr.pts.push({ u, p: 69 + 12 * Math.log2(hz / 440) });
+        tr.prevHz = 0; // the latch has caught up: from here every sample counts
+      }
+      if (n) tr.lastHz = hz;
+      let drop = 0;
+      while (drop < tr.pts.length && (!tr.pts[drop] || tr.pts[drop].u < u - keepTicks)) drop++;
+      if (drop) tr.pts.splice(0, drop);
+    }
+
+    function drawRoll() {
+      const c = document.getElementById('rollCanvas');
+      const wrap = document.getElementById('rollWrap');
+      if (!c || !wrap) return;
+      const dpr = window.devicePixelRatio || 1;
+      const W = wrap.clientWidth, H = wrap.clientHeight;
+      if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
+        c.width = Math.max(1, Math.round(W * dpr));
+        c.height = Math.max(1, Math.round(H * dpr));
+      }
+      const ctx = c.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      _rollHits = [];
+      if (_rollSelStale) rollFollowCursor(editorView.state);
+      if (!_vizColors) sampleVizColors();
+      const { fg, mid } = _vizColors;
+      const cells = _vizNotes.filter((cl) => cl.notes.length);
+      const pitched = cells.filter(rollPitched);
+      const lanes = cells.filter((cl) => !rollPitched(cl));
+      const focusCell = cells.find((cl) => cl.head === _rollFocus) ?? null;
+
+      const ppq = vizPpqn();
+      const ppt = _rollPxPerBeat / ppq;
+      const plotX = ROLL_KEY_W, plotW = Math.max(1, W - ROLL_KEY_W);
+      const headX = plotX + Math.round(plotW * ROLL_HEAD_AT);
+      const leftTicks = (headX - plotX) / ppt, rightTicks = (W - headX) / ppt;
+      const laneTop = H - ROLL_LANE_H * lanes.length;
+      const avail = Math.max(1, laneTop - 4);
+      let lo = _rollRange.lo - 1, hi = _rollRange.hi + 1;
+      const rowH = Math.min(ROLL_ROW_MAX, avail / (hi - lo + 1));
+      const extra = Math.floor(avail / rowH) - (hi - lo + 1);
+      if (extra > 0) { lo -= Math.floor(extra / 2); hi += Math.ceil(extra / 2); }
+      const top = 2 + (avail - (hi - lo + 1) * rowH) / 2;
+      const yOf = (m) => top + (hi - m) * rowH;
+      const isBlack = (m) => [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12);
+
+      // Black-key rows, then the quarter grid (fainter 8ths at 2×, 16ths at 4×).
+      ctx.fillStyle = fg;
+      ctx.globalAlpha = 0.06;
+      for (let m = lo; m <= hi; m++) if (isBlack(m)) ctx.fillRect(plotX, yOf(m), plotW, rowH);
+      // The grid follows the focus's clock (every track's quarters coincide).
+      const fClock = focusCell ? rollClock(focusCell) : null;
+      const gT = fClock?.tick ?? 0;
+      const sub = _rollPxPerBeat >= 96 ? ppq / 4 : _rollPxPerBeat >= 48 ? ppq / 2 : ppq;
+      ctx.strokeStyle = mid;
+      for (let b = Math.floor((gT - leftTicks) / sub) * sub; b <= gT + rightTicks; b += sub) {
+        const x = Math.round(headX + (b - gT) * ppt) + 0.5;
+        if (x < plotX) continue;
+        ctx.globalAlpha = b % ppq === 0 ? 0.6 : 0.25;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
+      // Notes: the others first in --mid, the focus on top in the foreground.
+      // Sounding = filled (the focus translucent, so its trace shows through).
+      const order = pitched.filter((cl) => cl !== focusCell);
+      if (focusCell && rollPitched(focusCell)) order.push(focusCell);
+      const lit = new Set();
+      for (const cell of order) {
+        const f = cell === focusCell;
+        const clock = rollClock(cell);
+        const st = rollLoopState(cell, clock);
+        const t = clock?.tick ?? 0;
+        ctx.strokeStyle = ctx.fillStyle = f ? fg : mid;
+        rollEachNote(cell, clock, st, t - leftTicks, t + rightTicks, (n, s) => {
+          const x = headX + (s - t) * ppt;
+          const w = Math.max(2, n.lenTicks * ppt - 1);
+          const x0 = Math.max(x, plotX), w0 = x + w - x0;
+          if (w0 <= 0) return;
+          const y = yOf(n.midi), h = Math.max(2, rowH - 1);
+          const sounding = s <= t && t < s + n.gateTicks;
+          if (sounding) {
+            ctx.globalAlpha = f ? 0.35 : 0.8;
+            ctx.fillRect(x0, y, w0, h);
+            ctx.globalAlpha = 1;
+            if (f) lit.add(n.midi);
+          }
+          if (f || !sounding) ctx.strokeRect(x0 + 0.5, y + 0.5, Math.max(1, w0 - 1), Math.max(1, h - 1));
+          if (_rollSel.has(n)) { ctx.fillStyle = fg; ctx.fillRect(x0, y, w0, h); ctx.fillStyle = f ? fg : mid; }
+          _rollHits.push({ x: x0, y, w: w0, h, n, cell });
+        });
+      }
+
+      // The focus's real pitch, behind the playhead only (it is what sounded).
+      if (focusCell && rollPitched(focusCell)) {
+        rollRecordTrace(focusCell, fClock, leftTicks);
+        const tr = _rollTrace;
+        if (tr && tr.head === focusCell.head && tr.pts.length) {
+          const uNow = (tr.last ?? 0) + tr.offset;
+          ctx.strokeStyle = fg;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          let pen = false, lastPt = null;
+          for (const pt of tr.pts) {
+            if (!pt) { pen = false; continue; }
+            const x = headX + (pt.u - uNow) * ppt, y = yOf(pt.p) + rowH / 2;
+            if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); pen = true; }
+            lastPt = pt;
+          }
+          ctx.stroke();
+          ctx.lineWidth = 1;
+          if (lastPt && pen && uNow - lastPt.u < ppq / 4) {
+            ctx.fillStyle = fg;
+            ctx.beginPath(); ctx.arc(headX + (lastPt.u - uNow) * ppt, yOf(lastPt.p) + rowH / 2, 2.5, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+      }
+
+      // Noise / PCM lanes: a tick at each onset, wider while it sounds.
+      lanes.forEach((cell, i) => {
+        const y = laneTop + i * ROLL_LANE_H;
+        const f = cell === focusCell;
+        ctx.globalAlpha = 0.3;
+        ctx.strokeStyle = mid;
+        ctx.beginPath(); ctx.moveTo(plotX, y + 0.5); ctx.lineTo(W, y + 0.5); ctx.stroke();
+        ctx.globalAlpha = 1;
+        const clock = rollClock(cell);
+        const st = rollLoopState(cell, clock);
+        const t = clock?.tick ?? 0;
+        ctx.fillStyle = f ? fg : mid;
+        rollEachNote(cell, clock, st, t - leftTicks, t + rightTicks, (n, s) => {
+          const x = Math.round(headX + (s - t) * ppt);
+          if (x < plotX || x > W) return;
+          const sounding = s <= t && t < s + Math.max(n.gateTicks, ppq / 4);
+          if (_rollSel.has(n)) { ctx.fillStyle = fg; ctx.fillRect(x - 1, y + 2, 4, ROLL_LANE_H - 4); ctx.fillStyle = f ? fg : mid; }
+          else ctx.fillRect(x, y + 3, sounding ? 3 : 2, ROLL_LANE_H - 6);
+          _rollHits.push({ x: x - 3, y, w: 8, h: ROLL_LANE_H, n, cell });
+        });
+      });
+
+      // Key gutter: C names, black keys, the focus's sounding keys lit.
+      ctx.clearRect(0, 0, ROLL_KEY_W, H);
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'right';
+      for (let m = lo; m <= hi; m++) {
+        const y = yOf(m);
+        if (lit.has(m)) { ctx.fillStyle = fg; ctx.fillRect(ROLL_KEY_W - 14, y, 12, rowH); }
+        else if (isBlack(m)) { ctx.fillStyle = mid; ctx.fillRect(ROLL_KEY_W - 14, y + 1, 12, Math.max(1, rowH - 2)); }
+        if (m % 12 === 0 && rowH * 12 >= 10) { // C names stand an octave apart
+          ctx.fillStyle = m === 60 ? fg : mid;
+          ctx.fillText(rollNoteName(m), ROLL_KEY_W - 17, y + rowH / 2);
+        }
+      }
+      lanes.forEach((cell, i) => {
+        ctx.fillStyle = cell === focusCell ? fg : mid;
+        ctx.fillText(cell.label ?? cell.head, ROLL_KEY_W - 4, laneTop + i * ROLL_LANE_H + ROLL_LANE_H / 2);
+      });
+      ctx.strokeStyle = mid;
+      ctx.beginPath(); ctx.moveTo(ROLL_KEY_W + 0.5, 0); ctx.lineTo(ROLL_KEY_W + 0.5, H); ctx.stroke();
+
+      // Playhead and the focus's name (left of the zoom control over the corner).
+      ctx.strokeStyle = fg;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath(); ctx.moveTo(headX + 0.5, 0); ctx.lineTo(headX + 0.5, H); ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (focusCell) {
+        ctx.fillStyle = fg;
+        ctx.font = '600 11px ui-monospace, monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        const zoomW = document.getElementById('rollZoom')?.offsetWidth ?? 0;
+        ctx.fillText(focusCell.label ?? focusCell.head, W - zoomW - 14, 8);
+      }
+    }
+
+    // Rows can be a few px tall: a note takes the pointer within ROLL_HIT_SLOP
+    // of its box, the last drawn (the focus) winning an overlap.
+    const ROLL_HIT_SLOP = 2;
+    function rollHitAt(x, y) {
+      const p = ROLL_HIT_SLOP;
+      for (let i = _rollHits.length - 1; i >= 0; i--) {
+        const h = _rollHits[i];
+        if (x >= h.x - p && x <= h.x + h.w + p && y >= h.y - p && y <= h.y + h.h + p) return h;
+      }
+      return null;
+    }
+    (() => {
+      const c = document.getElementById('rollCanvas');
+      const tip = document.getElementById('rollTip');
+      const at = (e) => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+      c.addEventListener('pointermove', (e) => {
+        if (e.pointerType !== 'mouse') return;
+        const [x, y] = at(e);
+        const hit = rollHitAt(x, y);
+        c.style.cursor = hit ? 'pointer' : '';
+        if (!hit) { tip.hidden = true; return; }
+        const { n, cell } = hit;
+        const what = rollPitched(cell) ? rollNoteName(n.midi) : (n.sample ?? 'note');
+        tip.textContent = `${cell.label ?? cell.head} · ${what} · ${rollLenName(n.lenTicks)}`;
+        tip.hidden = false;
+        tip.style.left = Math.max(0, Math.min(x + 12, c.clientWidth - tip.offsetWidth - 4)) + 'px';
+        tip.style.top = Math.max(2, y - 24) + 'px';
+      });
+      c.addEventListener('pointerleave', () => { tip.hidden = true; });
+      c.addEventListener('click', (e) => {
+        const hit = rollHitAt(...at(e));
+        if (!hit) return;
+        revealNoteSource(hit.n.src);
+        _rollFocus = hit.cell.head; // the clicked channel, even for a note a def shares
+      });
+
+      // Zoom: a scale, kept across launches like the other view prefs.
+      const zoomBtns = document.querySelectorAll('#rollZoom .lib-seg-btn');
+      const showZoom = () => zoomBtns.forEach((b) => {
+        const on = Number(b.dataset.zoom) === _rollPxPerBeat;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+      });
+      const z = Number(loadPref('rollZoom', 48));
+      _rollPxPerBeat = ROLL_ZOOMS.includes(z) ? z : 48;
+      showZoom();
+      zoomBtns.forEach((b) => b.addEventListener('click', () => {
+        _rollPxPerBeat = Number(b.dataset.zoom);
+        savePref('rollZoom', _rollPxPerBeat);
+        showZoom();
+      }));
+
+      // The divider between the editor and the roll sets the roll's height.
+      const divider = document.getElementById('rollDivider');
+      const pane = document.getElementById('rollPane');
+      const h = Number(loadPref('rollHeight', 0));
+      if (h > 0) pane.style.height = h + 'px';
+      divider.addEventListener('pointerdown', (e) => {
+        divider.setPointerCapture(e.pointerId);
+        const startY = e.clientY, startH = pane.offsetHeight;
+        document.body.style.cursor = 'row-resize';
+        const move = (ev) => {
+          const newH = Math.max(80, Math.min(startH + (startY - ev.clientY), window.innerHeight * 0.7));
+          pane.style.height = newH + 'px';
+        };
+        const up = () => {
+          divider.removeEventListener('pointermove', move);
+          document.body.style.cursor = '';
+          savePref('rollHeight', pane.offsetHeight);
+        };
+        divider.addEventListener('pointermove', move);
+        divider.addEventListener('pointerup', up, { once: true });
+        divider.addEventListener('pointercancel', up, { once: true });
+      });
+    })();
+
     // ---- per-channel audio taps (oscilloscope + VU) ----
     // Per-channel waveforms tapped inside the synth (see synth-md.js), batched
     // by the worklet and accumulated here in rings. The stream is enabled for
@@ -9465,9 +9828,7 @@
       if (r.volKind === 'psg') return 6 + r.volIndex;
       return r.volIndex;
     }
-    // Draws into the same cell list and grid as the piano roll (one cell per
-    // strip channel, same order and geometry), so switching visualizers keeps
-    // every channel in its place.
+    // One cell per strip channel, in the strips' order.
     function drawScope() {
       const c = document.getElementById('vizCanvas');
       const wrap = document.getElementById('editorWrap');
@@ -9539,7 +9900,7 @@
           }
           ctx.stroke();
         }
-        // channel label (bottom-right, same as the piano roll)
+        // channel label (bottom-right)
         ctx.globalAlpha = 0.8;
         ctx.fillStyle = _vizColors.fg;
         ctx.font = '600 11px ui-monospace, monospace';
@@ -9553,21 +9914,26 @@
     function vizTick() {
       _vizRaf = requestAnimationFrame(vizTick);
       if (_vizMode === 'scope') drawScope();
-      else drawPianoRoll();
+      else drawRoll();
+    }
+    function clearVizCanvas() {
+      const c = document.getElementById('vizCanvas');
+      if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
     }
     function startViz() {
       rebuildVizNotes(); // cell list shared by both piano roll and scope
       sampleVizColors();
-      resizeVizCanvas();
+      if (_vizMode === 'scope') resizeVizCanvas(); else clearVizCanvas();
+      if (_vizMode === 'pianoroll') rollFollowCursor(editorView.state);
       if (_vizRaf == null) _vizRaf = requestAnimationFrame(vizTick);
     }
     function stopViz() {
       if (_vizRaf != null) { cancelAnimationFrame(_vizRaf); _vizRaf = null; }
       resetScopeTriggers();
-      const c = document.getElementById('vizCanvas');
-      if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+      clearVizCanvas();
     }
-    // Visualizer modes — mutually exclusive overlays on the editor canvas.
+    // Visualizer modes, one at a time: the piano roll opens a pane under the
+    // editor, the oscilloscope draws behind the editor text.
     const VIZ_MODES = [['off', 'Off'], ['pianoroll', 'Piano Roll'], ['scope', 'Oscilloscope']];
     function buildVizMenu() {
       const list = document.getElementById('vizMenuList');
@@ -9580,7 +9946,9 @@
       if (!VIZ_MODES.some(([id]) => id === mode)) mode = 'off';
       if (mode !== _vizMode) {
         _vizMode = mode;
-        document.getElementById('editorWrap')?.classList.toggle('viz-on', mode !== 'off');
+        document.getElementById('editorWrap')?.classList.toggle('viz-on', mode === 'scope');
+        document.getElementById('rollPane').hidden = mode !== 'pianoroll';
+        document.getElementById('rollDivider').hidden = mode !== 'pianoroll';
         savePref('visualizer', mode);
         if (mode === 'off') stopViz(); else startViz();
       }
@@ -9588,7 +9956,7 @@
     }
     window.setVisualizer = setVisualizer;
 
-    const _vizResizeObs = new ResizeObserver(() => { if (_vizMode !== 'off') resizeVizCanvas(); });
+    const _vizResizeObs = new ResizeObserver(() => { if (_vizMode === 'scope') resizeVizCanvas(); });
     _vizResizeObs.observe(document.getElementById('editorWrap'));
 
     function setSlider(sliderId, valId, value) {

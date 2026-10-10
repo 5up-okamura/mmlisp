@@ -1051,6 +1051,31 @@ once none is left there turns to the biggest group that fits, the lowest track
 first. Scrolling, clicking or typing in the editor hands the view back to you
 for a few seconds.
 
+### The piano roll
+
+`MMLisp > Visualizer > Piano Roll` opens a pane under the editor (drag the
+line between them to size it). Every pitched channel shares one pitch axis,
+with the keys down the left, so what the tracks play at one moment — the
+chord, the spacing, a clash — reads at a glance; noise and PCM tracks are
+rows of onset marks underneath. The playhead stands still and the music runs
+past it.
+
+One channel is in focus: the one whose form holds the editor cursor, or
+whose note you click. It is drawn bright, the others dim, its sounding keys
+light up, and behind the playhead a line traces the pitch the chip actually
+played — glides, vibrato and arpeggio macros as they sounded. Clicking a note
+selects the note it came from in the score (for a note inside `(x …)` or a
+def, the one written there); hovering one names its channel, pitch and
+length. The other way round, the notes written at the cursor (or inside the
+selection) are drawn solid in the roll, every time they play — a note in a
+def lights up wherever the def is used.
+
+The grid marks quarter notes from the top of the song. MMLisp has no meter,
+and `|` goes wherever each track's writer wants it, so the roll draws no
+bars. **1× 2× 4×** zooms; a wider pane shows more of the song at the same
+scale, and zoomed in, eighths and sixteenths are marked too. The roll shows
+the last build: after an edit, play or Build to bring it up to date.
+
 ### Playing from a point
 
 **TIME**, under Global in the panel, shows where the song is, and its bar spans
@@ -1668,6 +1693,7 @@ It plays the score from the top for the length you set (30 seconds by default,
 up to 140, X's limit), in real time; **Stop** ends it early. What the editor
 shows is what the video shows, so frame it first: `MMLisp > Font Size` sets
 how much code fits, and `MMLisp > Follow Playback` moves the picture with the
-music (off, it stays where you left it). With the visualizer off, the
-oscilloscope stands in for the take. X takes H.264 video in MP4, which recent
+music (off, it stays where you left it). The take draws the editor, so the
+oscilloscope is its visualizer whichever one you have on (the piano roll's pane
+is outside the frame). X takes H.264 video in MP4, which recent
 Chrome and Safari record; other browsers say so before recording.
