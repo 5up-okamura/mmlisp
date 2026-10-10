@@ -9278,7 +9278,7 @@
           if (midi < lo) lo = midi;
           if (midi > hi) hi = midi;
         }
-        model.push({ head: entry.head, label: entry.label, trackIndex: entry.trackIndex, notes, loMidi: lo, hiMidi: hi });
+        model.push({ head: entry.head, trackIndex: entry.trackIndex, notes, loMidi: lo, hiMidi: hi });
       }
       return model;
     }
@@ -9670,24 +9670,43 @@
       }
       lanes.forEach((cell, i) => {
         ctx.fillStyle = cell === focusCell ? fg : mid;
-        ctx.fillText(cell.label ?? cell.head, ROLL_KEY_W - 4, laneTop + i * ROLL_LANE_H + ROLL_LANE_H / 2);
+        ctx.fillText(cell.head, ROLL_KEY_W - 4, laneTop + i * ROLL_LANE_H + ROLL_LANE_H / 2);
       });
       ctx.strokeStyle = mid;
       ctx.beginPath(); ctx.moveTo(ROLL_KEY_W + 0.5, 0); ctx.lineTo(ROLL_KEY_W + 0.5, H); ctx.stroke();
 
-      // Playhead and the focus's name (left of the zoom control over the corner).
+      // Playhead and the focus's name, left of the zoom control over the
+      // corner and on the baseline of its labels.
       ctx.strokeStyle = fg;
       ctx.globalAlpha = 0.6;
       ctx.beginPath(); ctx.moveTo(headX + 0.5, 0); ctx.lineTo(headX + 0.5, H); ctx.stroke();
       ctx.globalAlpha = 1;
       if (focusCell) {
+        const zoom = rollZoomGeometry();
         ctx.fillStyle = fg;
         ctx.font = '600 11px ui-monospace, monospace';
         ctx.textAlign = 'right';
-        ctx.textBaseline = 'top';
-        const zoomW = document.getElementById('rollZoom')?.offsetWidth ?? 0;
-        ctx.fillText(focusCell.label ?? focusCell.head, W - zoomW - 14, 8);
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(focusCell.head, W - zoom.width - 14, zoom.baseline);
       }
+    }
+
+    // The zoom control's width and its labels' baseline (px from the roll's
+    // top), measured with a zero-size probe on the baseline of a label. The
+    // layout is fixed, so it is measured once the pane is first shown.
+    let _rollZoomGeom = null;
+    function rollZoomGeometry() {
+      if (_rollZoomGeom) return _rollZoomGeom;
+      const zoom = document.getElementById('rollZoom');
+      const btn = zoom?.querySelector('.lib-seg-btn');
+      if (!btn || !zoom.offsetWidth) return { width: 0, baseline: 14 };
+      const probe = document.createElement('span');
+      probe.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+      btn.appendChild(probe);
+      const baseline = probe.getBoundingClientRect().top - document.getElementById('rollWrap').getBoundingClientRect().top;
+      probe.remove();
+      _rollZoomGeom = { width: zoom.offsetWidth, baseline };
+      return _rollZoomGeom;
     }
 
     // Rows can be a few px tall: a note takes the pointer within ROLL_HIT_SLOP
@@ -9713,7 +9732,7 @@
         if (!hit) { tip.hidden = true; return; }
         const { n, cell } = hit;
         const what = rollPitched(cell) ? rollNoteName(n.midi) : (n.sample ?? 'note');
-        tip.textContent = `${cell.label ?? cell.head} · ${what} · ${rollLenName(n.lenTicks)}`;
+        tip.textContent = `${cell.head} · ${what} · ${rollLenName(n.lenTicks)}`;
         tip.hidden = false;
         tip.style.left = Math.max(0, Math.min(x + 12, c.clientWidth - tip.offsetWidth - 4)) + 'px';
         tip.style.top = Math.max(2, y - 24) + 'px';
@@ -9900,13 +9919,13 @@
           }
           ctx.stroke();
         }
-        // channel label (bottom-right)
+        // channel name as the score writes it (bottom-right)
         ctx.globalAlpha = 0.8;
         ctx.fillStyle = _vizColors.fg;
         ctx.font = '600 11px ui-monospace, monospace';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(cell.label ?? cell.head, x0 + cellW - 5, y0 + cellH - 4);
+        ctx.fillText(cell.head, x0 + cellW - 5, y0 + cellH - 4);
         ctx.restore();
       }
     }
