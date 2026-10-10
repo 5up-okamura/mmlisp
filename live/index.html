@@ -86,15 +86,16 @@
           <span>Font Size</span>
           <span class="menu-item-shortcut" id="fontSizeValue"></span>
         </button>
-        <div class="menu-wrap submenu-wrap" id="menuMMLispViz">
-          <button class="menu-item" onclick="toggleSubmenu('menuMMLispViz')">
-            <span>Visualizer</span>
-            <span class="submenu-arrow" aria-hidden="true"></span>
-          </button>
-          <div class="menu-dropdown submenu-dropdown" id="vizMenuList">
-            <!-- Off / Piano Roll injected by buildVizMenu() -->
-          </div>
-        </div>
+        <button class="menu-item" onclick="togglePianoRoll();closeMenus()"
+                title="A pane under the editor, linked to the score">
+          <span>Piano Roll</span>
+          <span class="menu-item-shortcut" id="pianoRollCheck"></span>
+        </button>
+        <button class="menu-item" onclick="toggleScope();closeMenus()"
+                title="Each channel's waveform, behind the editor text">
+          <span>Oscilloscope</span>
+          <span class="menu-item-shortcut" id="scopeCheck"></span>
+        </button>
         <button class="menu-item" onclick="toggleFollow();closeMenus()"
                 title="While playing, scroll to keep the highlighted notes in view">
           <span>Follow Playback</span>
@@ -3435,7 +3436,7 @@
       followPlayhead,
       // The piano roll follows the cursor: its focus and the notes written there.
       EditorView.updateListener.of((u) => {
-        if ((u.selectionSet || u.docChanged) && _vizMode === 'pianoroll') rollFollowCursor(u.state);
+        if ((u.selectionSet || u.docChanged) && _vizRoll) rollFollowCursor(u.state);
       }),
       buildFlashLayer,
       bracketField,
@@ -4886,7 +4887,7 @@
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, S, S);
       const vc = document.getElementById('vizCanvas');
-      if (_vizMode === 'scope' && vc.width > 0) {
+      if (_vizScope && vc.width > 0) {
         const vr = vc.getBoundingClientRect();
         const sx = vc.width / vr.width, sy = vc.height / vr.height;
         ctx.globalAlpha = 0.5; // as #vizCanvas is shown
@@ -4962,10 +4963,10 @@
       const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
       const chunks = [];
       recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-      // The take draws the editor, so its visualizer is the oscilloscope (the
-      // piano roll is a pane of its own, outside the frame).
-      const vizBefore = _vizMode;
-      if (_vizMode !== 'scope') setVisualizer('scope');
+      // The take draws the editor, so it shows the oscilloscope, on for the take
+      // (the piano roll is a pane of its own, outside the frame).
+      const scopeBefore = _vizScope;
+      setScope(true);
 
       onStop();
       drawVideoFrame(ctx, title);
@@ -4979,7 +4980,7 @@
         recorder.onstop = async () => {
           try { workletNode.disconnect(audioDest); } catch (_) {}
           for (const t of stream.getTracks()) t.stop();
-          if (vizBefore !== 'scope') setVisualizer(vizBefore);
+          setScope(scopeBefore);
           _videoRec = null;
           if (rec.discard || !chunks.length) return;
           const blob = new Blob(chunks, { type: mime.split(';')[0] });
@@ -5115,7 +5116,7 @@
         _lastSourceMap = sourceMap;
         buildChStrips(ir);
         renderDynParams(ir);
-        if (_vizMode !== 'off' && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
+        if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
         // When not playing, show the score's starting tempo (the loop drives it live),
         // and measure TIME's bar for it (after the build, off its path).
         if (_fmLiveRaf == null) {
@@ -5203,7 +5204,8 @@
     let _fmPanelDragging = false;           // dragging an FM-panel slider → don't let the loop overwrite it
     let _tempoDragging = false;             // dragging the tempo slider → don't let the loop move its thumb
     let _tempoShown = null;                 // last tempo value shown (change detection)
-    let _vizMode = 'off';                    // visualizer mode: 'off' | 'pianoroll' | 'scope'
+    let _vizRoll = false;                  // the piano roll's pane is open
+    let _vizScope = false;                 // the oscilloscope draws behind the editor
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
     let _chVuEls = new Map();              // head → .ch-vu element (cached for the VU loop)
     let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
@@ -9957,50 +9959,52 @@
 
     function vizTick() {
       _vizRaf = requestAnimationFrame(vizTick);
-      if (_vizMode === 'scope') drawScope();
-      else drawRoll();
+      if (_vizScope) drawScope();
+      if (_vizRoll) drawRoll();
     }
     function clearVizCanvas() {
       const c = document.getElementById('vizCanvas');
       if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
     }
-    function startViz() {
-      rebuildVizNotes(); // cell list shared by both piano roll and scope
+    // The piano roll (a pane under the editor) and the oscilloscope (behind the
+    // editor text) are independent; one frame loop draws whichever are on.
+    function vizChanged() {
+      document.getElementById('pianoRollCheck').textContent = _vizRoll ? '✓' : '';
+      document.getElementById('scopeCheck').textContent = _vizScope ? '✓' : '';
+      if (!_vizRoll && !_vizScope) {
+        if (_vizRaf != null) { cancelAnimationFrame(_vizRaf); _vizRaf = null; }
+        return;
+      }
+      rebuildVizNotes(); // cell list shared by both
       sampleVizColors();
-      if (_vizMode === 'scope') resizeVizCanvas(); else clearVizCanvas();
-      if (_vizMode === 'pianoroll') rollFollowCursor(editorView.state);
       if (_vizRaf == null) _vizRaf = requestAnimationFrame(vizTick);
     }
-    function stopViz() {
-      if (_vizRaf != null) { cancelAnimationFrame(_vizRaf); _vizRaf = null; }
-      resetScopeTriggers();
-      clearVizCanvas();
+    function setPianoRoll(on) {
+      if (!!on === _vizRoll) return;
+      _vizRoll = !!on;
+      document.getElementById('rollPane').hidden = !_vizRoll;
+      document.getElementById('rollDivider').hidden = !_vizRoll;
+      savePref('pianoRoll', _vizRoll ? 'on' : 'off');
+      if (_vizRoll) rollFollowCursor(editorView.state);
+      vizChanged();
     }
-    // Visualizer modes, one at a time: the piano roll opens a pane under the
-    // editor, the oscilloscope draws behind the editor text.
-    const VIZ_MODES = [['off', 'Off'], ['pianoroll', 'Piano Roll'], ['scope', 'Oscilloscope']];
-    function buildVizMenu() {
-      const list = document.getElementById('vizMenuList');
-      if (!list) return;
-      list.innerHTML = VIZ_MODES.map(([id, name]) =>
-        `<button class="menu-item" onclick="setVisualizer('${id}');closeMenus()"><span>${name}</span><span class="menu-item-shortcut">${_vizMode === id ? '✓' : ''}</span></button>`
-      ).join('');
+    function setScope(on) {
+      if (!!on === _vizScope) return;
+      _vizScope = !!on;
+      document.getElementById('editorWrap')?.classList.toggle('viz-on', _vizScope);
+      savePref('scope', _vizScope ? 'on' : 'off');
+      if (_vizScope) resizeVizCanvas();
+      else { resetScopeTriggers(); clearVizCanvas(); }
+      vizChanged();
     }
-    function setVisualizer(mode) {
-      if (!VIZ_MODES.some(([id]) => id === mode)) mode = 'off';
-      if (mode !== _vizMode) {
-        _vizMode = mode;
-        document.getElementById('editorWrap')?.classList.toggle('viz-on', mode === 'scope');
-        document.getElementById('rollPane').hidden = mode !== 'pianoroll';
-        document.getElementById('rollDivider').hidden = mode !== 'pianoroll';
-        savePref('visualizer', mode);
-        if (mode === 'off') stopViz(); else startViz();
-      }
-      buildVizMenu();
-    }
-    window.setVisualizer = setVisualizer;
+    const togglePianoRoll = () => setPianoRoll(!_vizRoll);
+    const toggleScope = () => setScope(!_vizScope);
+    window.togglePianoRoll = togglePianoRoll;
+    window.toggleScope = toggleScope;
+    window.setPianoRoll = setPianoRoll;
+    window.setScope = setScope;
 
-    const _vizResizeObs = new ResizeObserver(() => { if (_vizMode === 'scope') resizeVizCanvas(); });
+    const _vizResizeObs = new ResizeObserver(() => { if (_vizScope) resizeVizCanvas(); });
     _vizResizeObs.observe(document.getElementById('editorWrap'));
 
     function setSlider(sliderId, valId, value) {
@@ -10078,7 +10082,9 @@
     initFileDrop();
 
     // Restore persisted visualizer selection.
-    setVisualizer(loadPref('visualizer', 'scope'));
+    setPianoRoll(loadPref('pianoRoll', 'off') === 'on');
+    setScope(loadPref('scope', 'on') === 'on');
+    vizChanged(); // the checks, both off included
 
     _themeReady = true; // init done — applyColors may now repaint canvases on theme change
     log('Ready.', 'info');

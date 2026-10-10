@@ -1053,8 +1053,10 @@ for a few seconds.
 
 ### The piano roll
 
-`MMLisp > Visualizer > Piano Roll` opens a pane under the editor (drag the
-line between them to size it). Every pitched channel shares one pitch axis,
+`MMLisp > Piano Roll` opens a pane under the editor (drag the line between
+them to size it); `MMLisp > Oscilloscope`, each channel's waveform behind the
+editor text, turns on and off on its own, so either, both or neither show.
+Every pitched channel shares one pitch axis,
 with the keys down the left, so what the tracks play at one moment — the
 chord, the spacing, a clash — reads at a glance; noise and PCM tracks are
 rows of onset marks underneath. The playhead stands still and the music runs
@@ -1687,7 +1689,7 @@ item off ends it.
 
 A link alone does not play on a timeline. `File > Export > Video…` (or **Make
 video** in the Share dialog) records the editor as the score plays — the
-visualizer behind the code, the notes lighting up — into a square 1080×1080
+oscilloscope behind the code, the notes lighting up — into a square 1080×1080
 video with its sound, the score's name on top and the site underneath. Post
 the video, and the link in a reply for anyone who wants to open it.
 
@@ -1695,7 +1697,7 @@ It plays the score from the top for the length you set (30 seconds by default,
 up to 140, X's limit), in real time; **Stop** ends it early. What the editor
 shows is what the video shows, so frame it first: `MMLisp > Font Size` sets
 how much code fits, and `MMLisp > Follow Playback` moves the picture with the
-music (off, it stays where you left it). The take draws the editor, so the
-oscilloscope is its visualizer whichever one you have on (the piano roll's pane
-is outside the frame). X takes H.264 video in MP4, which recent
+music (off, it stays where you left it). The take draws the editor with the
+oscilloscope behind it, on for the take even when `MMLisp > Oscilloscope` is
+off (the piano roll's pane is outside the frame). X takes H.264 video in MP4, which recent
 Chrome and Safari record; other browsers say so before recording.
