@@ -3600,6 +3600,7 @@
         return full;
       };
       const check = () => {
+        const zoomed = Math.abs(vv.scale - 1) > 0.01;
         const full = fullHeight();
         const vvShort = full - vv.height * vv.scale > 120;
         let kb;
@@ -3623,19 +3624,23 @@
             // Keep polling for as long as the keyboard is up: an iPad's close
             // comes with no event.
             if (!poll) poll = setInterval(check, 250);
-            root.classList.add('soft-kb');
-            // The editor just got shorter: bring the cursor back into view.
-            requestAnimationFrame(() => editorView.dispatch({
-              effects: EditorView.scrollIntoView(editorView.state.selection.main.head, { y: 'nearest' }),
-            }));
+            // The editor just got shorter: bring the cursor back into view —
+            // when the keyboard is the editor's, not a search or name field's.
+            requestAnimationFrame(() => {
+              if (editorView.hasFocus) editorView.dispatch({
+                effects: EditorView.scrollIntoView(editorView.state.selection.main.head, { y: 'nearest' }),
+              });
+            });
           }
           root.style.setProperty('--kb-top', `${vv.offsetTop}px`);
           root.style.setProperty('--kb-h', `${vv.height}px`);
         } else if (up) {
           stale = innerDipped;
           up = false;
-          root.classList.remove('soft-kb');
         }
+        // Pinched in, the visual viewport is the zoomed part of the page, not
+        // what the keyboard leaves: let the page pan natively until it is back.
+        root.classList.toggle('soft-kb', up && !zoomed);
         // With the keyboard down the page has no business being scrolled (html
         // and body are pinned), yet iOS leaves — or re-applies — the scroll it
         // made for the keyboard; drawn in place but hit-tested at the scrolled
