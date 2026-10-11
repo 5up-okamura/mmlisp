@@ -39,6 +39,12 @@ user's rulings, measurements, and open items. Merged 2026-10-09 from
   — the only close sign, so it is polled while up. iOS can leave `scrollY`
   non-zero after close: drawn in place, hit-tested off-target, so it is reset
   whenever the keyboard is down. The iPhone reports both open and close.
+  **In an iPhone's Safari tab** (iOS 18.7, 13 mini) the visual viewport stops
+  ~99pt above the keyboard: Safari floats its address pill there and draws
+  no bar, so the page background shows as a band (painted red with the html
+  background; the published app looks the same). No API gives the
+  keyboard's top, and stretching the app into the band put the pill over
+  the cursor line — accepted as Safari's; the home-screen app has no band.
   Piano visibility above the keyboard depends on the right panel's scroll —
   accepted.
 
