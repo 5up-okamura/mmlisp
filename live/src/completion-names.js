@@ -43,6 +43,8 @@ export const AC_PARAMS = [
   ':pitch', ':pitch+', ':semi', ':semi+', ':keyon', ':csm-rate',
   // echo / delay, macro, def-val, def-mod
   ':back', ':time', ':step', ':unit', ':ch', ':voice',
+  // import
+  ':over',
   // def-fm
   ':key',
   // def-pcm and the track's PCM points

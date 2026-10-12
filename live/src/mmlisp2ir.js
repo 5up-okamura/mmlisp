@@ -4467,7 +4467,10 @@ function collectDefs(roots, diagnostics) {
         continue;
       }
       const at = root.items.findIndex((n) => atomValue(n) === ":fx");
-      imports.push({ path: pathNode.value, src: nodeSrc(root), fxNode: at > 1 ? root.items[at + 1] : null });
+      // `:over`: this import's defs replace same-named ones from the imports
+      // written before it (mergeImportsStrict) instead of conflicting.
+      const over = root.items.slice(2).some((n) => atomValue(n) === ":over");
+      imports.push({ path: pathNode.value, src: nodeSrc(root), fxNode: at > 1 ? root.items[at + 1] : null, over });
       continue;
     }
 
@@ -4827,7 +4830,19 @@ export function collectImports(src) {
 // already present for the same kind is E_IMPORT_CONFLICT *only if it traces back
 // to a different origin file* — a diamond (two imports pulling in the same third
 // file) resolves to one origin and dedups silently. Used to fold sibling imports.
-function mergeImportsStrict(base, incoming, diagnostics, conflictSrc) {
+// An `:over` import (`over`) instead replaces what the earlier siblings define
+// under its names, in every namespace, as a file's own defs do (overlayDefs) —
+// so a kit layered on a base keeps the base's sounds it does not have.
+function mergeImportsStrict(base, incoming, diagnostics, conflictSrc, over = false) {
+  if (over) {
+    for (const kind of IMPORT_DEF_KINDS)
+      for (const name of incoming[kind].keys())
+        for (const k of IMPORT_DEF_KINDS) {
+          if (base.origin[k].get(name) === incoming.origin[kind].get(name)) continue; // diamond
+          base[k].delete(name);
+          base.origin[k].delete(name);
+        }
+  }
   for (const kind of IMPORT_DEF_KINDS) {
     for (const [name, def] of incoming[kind]) {
       const incomingOrigin = incoming.origin[kind].get(name);
@@ -4993,7 +5008,7 @@ function resolveImportFile(path, importSrc, importSources, diagnostics, cache, s
       nextStack,
       selfDir,
     );
-    mergeImportsStrict(merged, withImportEffect(sub, imp.fxNode), diagnostics, imp.src);
+    mergeImportsStrict(merged, withImportEffect(sub, imp.fxNode), diagnostics, imp.src, imp.over);
   }
   overlayDefs(merged, bundle, selfPath);
 
@@ -5015,7 +5030,7 @@ function resolveImports(importForms, importSources, diagnostics, scoreDir) {
       [],
       scoreDir,
     );
-    mergeImportsStrict(merged, withImportEffect(sub, imp.fxNode), diagnostics, imp.src);
+    mergeImportsStrict(merged, withImportEffect(sub, imp.fxNode), diagnostics, imp.src, imp.over);
   }
   return merged;
 }

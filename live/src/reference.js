@@ -47,11 +47,11 @@ export const REFERENCE = [
     example: '(def-score :title "Demo" :composer "Me")\n(fm1 c e g)',
   },
   {
-    name: 'import', cat: 'score', section: '§9.2', tracks: null,
-    syntax: '(import "path/set.mmlisp")',
-    summary: 'Folds another file\'s defs in at compile time, under this file\'s own. Its def-val, def-score, def-mod and tracks are not imported.',
+    name: 'import', aliases: [':over'], cat: 'score', section: '§9.2', tracks: null,
+    syntax: '(import "path/set.mmlisp")  ·  (import "path" :over)  ·  (import "path" :fx [...])',
+    summary: 'Folds another file\'s defs in at compile time, under this file\'s own. Its def-val, def-score, def-mod and tracks are not imported. Two imports defining one name conflict, unless the later one says :over — then it replaces the earlier ones\' defs and the rest stay.',
     insert: '(import "presets/gm/set.mmlisp")',
-    example: '(import "presets/gm/set.mmlisp")\n(fm1 gm-piano c e g)',
+    example: '(import "presets/gm-drums/set.mmlisp")\n(import "presets/tr808/set.mmlisp" :over)\n(pcm1 :len 8 kick c cabasa c)',
   },
   {
     name: ':tempo', cat: 'score', section: '§5', tracks: null,

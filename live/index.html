@@ -267,6 +267,16 @@
           <span>Format Source</span>
           <span class="menu-item-shortcut" id="formatSourceShortcut"></span>
         </button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" onclick="loopSelectionAction();closeMenus()"
+          title="Inside one channel: loop the selected notes. Across channels, or with no selection: loop each channel whole">
+          <span>Loop Selection</span>
+          <span class="menu-item-shortcut" id="loopSelectionShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="openLogicalEditor();closeMenus()"
+          title="Pick the notes that meet a condition, then delete them, change their length or reverse them">
+          <span>Logical Editor…</span>
+        </button>
       </div>
     </div>
 
@@ -545,6 +555,62 @@
     </div>
   </div>
 
+  <!-- Edit > Logical Editor: a panel beside the editor, so the matches it
+       marks stay in view (openLogicalEditor) -->
+  <div id="logicalModal" class="modal-overlay logical-overlay" hidden>
+    <div class="modal logical-modal" role="dialog" aria-labelledby="logicalTitle">
+      <div class="modal-title" id="logicalTitle">Logical Editor</div>
+      <div class="import-fields">
+        <label class="import-field"><span>Scope</span>
+          <select id="leScope">
+            <option value="selection">Selection</option>
+            <option value="channel">Channel at the cursor</option>
+            <option value="all">Whole score</option>
+          </select></label>
+        <label class="import-field"><span>Pitch</span>
+          <select id="lePitch">
+            <option value="any">Any note</option>
+            <option value="name">Note name</option>
+            <option value="range">Range</option>
+            <option value="rest">Rests</option>
+          </select></label>
+        <label class="import-field" id="leNameRow"><span>Name</span>
+          <input id="leName" type="text" value="c" placeholder="c, f+, b-"></label>
+        <label class="import-field" id="leRangeRow"><span>From – to</span>
+          <span class="le-pair"><input id="leLow" type="text" value="c4"><input id="leHigh" type="text" value="b4"></span></label>
+        <label class="import-field"><span>Length</span>
+          <span class="le-pair"><select id="leLenOp">
+            <option value="any">Any</option>
+            <option value="eq">=</option>
+            <option value="gt">&gt;</option>
+            <option value="lt">&lt;</option>
+          </select><input id="leLen" type="text" value="8" placeholder="8, 4., 96t"></span></label>
+        <label class="import-field"><span>Voice / sample</span>
+          <select id="leVoice"><option value="">Any</option></select></label>
+      </div>
+      <div class="import-fields le-ops">
+        <label class="import-field"><span>Do</span>
+          <select id="leOp">
+            <option value="rest">Delete — leave a rest</option>
+            <option value="remove">Delete — close up</option>
+            <option value="len-set">Length: set to</option>
+            <option value="len-add">Length: add</option>
+            <option value="len-mul">Length: multiply by</option>
+            <option value="reverse">Reverse (retrograde)</option>
+          </select></label>
+        <label class="import-field" id="leArgRow"><span id="leArgLabel">Length</span>
+          <input id="leArg" type="text" value="8"></label>
+        <label class="import-field"><span>Include shared notes</span>
+          <input id="leShared" type="checkbox"><small>notes in a def or a counted loop: editing one changes every place it plays</small></label>
+      </div>
+      <div class="le-status" id="leStatus"></div>
+      <div class="modal-actions">
+        <button class="tb-btn" onclick="closeLogicalEditor()">Cancel</button>
+        <button class="tb-btn" id="leApply" onclick="applyLogicalEditor()">Apply</button>
+      </div>
+    </div>
+  </div>
+
   <!-- About -->
   <div id="aboutModal" class="modal-overlay" hidden>
     <div class="modal info-modal">
@@ -713,6 +779,7 @@
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
+    import { loopSelection, loopLengths, channelForms, scoreNotes, matchNotes, applyLogical, lengthTicks, voiceDefNames } from './src/edit-tools.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
@@ -1260,6 +1327,20 @@
         for (const e of tr.effects) {
           if (e.is(setHover)) deco = e.value ? Decoration.set([hoverMark.range(e.value[0], e.value[1])]) : Decoration.none;
         }
+        return deco;
+      },
+      provide: (f) => EditorView.decorations.from(f),
+    });
+
+    // --- Logical Editor matches: marked while its panel is open. ---
+    const setLogicalMarks = StateEffect.define();
+    const logicalMark = Decoration.mark({ class: 'cm-logical-match' });
+    const logicalSharedMark = Decoration.mark({ class: 'cm-logical-match cm-logical-shared' });
+    const logicalField = StateField.define({
+      create: () => Decoration.none,
+      update(deco, tr) {
+        deco = deco.map(tr.changes);
+        for (const e of tr.effects) if (e.is(setLogicalMarks)) deco = e.value;
         return deco;
       },
       provide: (f) => EditorView.decorations.from(f),
@@ -3354,6 +3435,151 @@
     window.formatSource = formatDocument;
     window.toggleCommentAction = toggleLineComment;
     window.closeBracketsAction = () => { closeOpenBrackets(editorView); editorView.focus(); };
+    window.loopSelectionAction = () => { loopSelectionCmd(editorView); editorView.focus(); };
+
+    // Edit > Loop Selection (edit-tools.js): inside one channel the selected
+    // notes become `#loop … (go loop)`; across channels, or at a bare cursor,
+    // each channel touched loops whole. One undo step. The loop lengths are
+    // reported in bars, since channels that loop at different lengths drift.
+    function loopSelectionCmd(view) {
+      const text = view.state.doc.toString();
+      const { from, to } = view.state.selection.main;
+      const res = loopSelection(text, from, to);
+      if (res.error) {
+        log(`Loop Selection: ${res.error}`, 'err');
+        return true;
+      }
+      view.dispatch({ changes: res.changes, userEvent: 'input.loop', scrollIntoView: true });
+      let lengths = '';
+      try {
+        const { ir } = compileMMLisp(view.state.doc.toString(), _lastFileName, { imports: _importSources });
+        const ticks = loopLengths(ir);
+        const bar = (ir?.ppqn ?? 96) * 4;
+        lengths = res.channels
+          .filter((ch) => ticks[ch] != null)
+          .map((ch) => `${ch} ${+(ticks[ch] / bar).toFixed(2)} bars`)
+          .join(', ');
+      } catch { /* the lengths are a courtesy; the edit stands */ }
+      const what = res.mode === 'range' ? `looped the selection on ${res.channels[0]}` : `looped ${res.channels.join(', ')} whole`;
+      log(`Loop Selection: ${what}${lengths ? ` (${lengths})` : ''}${res.skipped.length ? `; already looping: ${res.skipped.join(', ')}` : ''}`, 'info');
+      if (res.deadAfter) log(`Loop Selection: what follows the loop on ${res.channels[0]} never plays`, 'info');
+      return true;
+    }
+
+    // Edit > Logical Editor (edit-tools.js): the score is compiled once when the
+    // panel opens; each change of the condition re-matches and re-marks the
+    // notes, and Apply rewrites their tokens as one undo step.
+    let _le = null; // { text, notes, sel }
+    const leEl = (id) => document.getElementById(id);
+
+    function logicalQuery() {
+      const sel = _le.sel;
+      const lenOp = leEl('leLenOp').value;
+      return {
+        scope: leEl('leScope').value, from: sel.from, to: sel.to, channel: _le.channel,
+        pitch: { kind: leEl('lePitch').value, name: leEl('leName').value, low: leEl('leLow').value, high: leEl('leHigh').value },
+        length: { op: lenOp, ticks: lenOp === 'any' ? null : lengthTicks(leEl('leLen').value) },
+        voice: leEl('leVoice').value,
+      };
+    }
+
+    function logicalOp() {
+      const type = leEl('leOp').value;
+      const arg = leEl('leArg').value;
+      return {
+        type, includeShared: leEl('leShared').checked,
+        ticks: type === 'len-set' || type === 'len-add' ? lengthTicks(arg) : null,
+        factor: type === 'len-mul' ? Number(arg) : null,
+      };
+    }
+
+    function refreshLogicalEditor() {
+      if (!_le) return;
+      const p = leEl('lePitch').value;
+      leEl('leNameRow').hidden = p !== 'name';
+      leEl('leRangeRow').hidden = p !== 'range';
+      const op = leEl('leOp').value;
+      leEl('leArgRow').hidden = !op.startsWith('len-');
+      leEl('leArgLabel').textContent = op === 'len-mul' ? 'Factor' : 'Length';
+      const matches = matchNotes(_le.notes, logicalQuery());
+      _le.matches = matches;
+      const shared = matches.filter((n) => n.shared).length;
+      const tied = matches.filter((n) => n.tied).length;
+      const marks = matches.map((n) => (n.shared ? logicalSharedMark : logicalMark).range(n.from, n.to));
+      editorView.dispatch({ effects: setLogicalMarks.of(Decoration.set(marks, true)) });
+      const parts = [`${matches.length} match${matches.length === 1 ? '' : 'es'}`];
+      if (shared) parts.push(`${shared} shared`);
+      if (tied) parts.push(`${tied} tied (left alone)`);
+      leEl('leStatus').textContent = parts.join(' · ');
+      leEl('leApply').disabled = matches.length === 0;
+    }
+
+    window.openLogicalEditor = () => {
+      const text = editorView.state.doc.toString();
+      let ir;
+      try {
+        ({ ir } = compileMMLisp(text, _lastFileName, { imports: _importSources }));
+      } catch (e) {
+        log(`Logical Editor: the score does not compile — ${e.message}`, 'err');
+        return;
+      }
+      const voices = voiceDefNames([text, ...(_importSources?.values?.() ?? [])]);
+      const notes = scoreNotes(text, ir, voices);
+      const sel = editorView.state.selection.main;
+      // The channel at the cursor: the form it sits in (a def has none).
+      const channel = channelForms(text).find((f) => sel.head >= f.from && sel.head <= f.to)?.channel ?? null;
+      _le = { text, notes, channel, sel: { from: sel.from, to: sel.to }, matches: [] };
+      leEl('leScope').value = sel.empty ? 'channel' : 'selection';
+      const voiceSel = leEl('leVoice');
+      voiceSel.replaceChildren(new Option('Any', ''));
+      for (const v of [...new Set(notes.map((n) => n.voice).filter(Boolean))].sort()) voiceSel.append(new Option(v, v));
+      leEl('logicalModal').hidden = false;
+      refreshLogicalEditor();
+      leEl('lePitch').focus();
+    };
+
+    window.closeLogicalEditor = () => {
+      _le = null;
+      leEl('logicalModal').hidden = true;
+      editorView.dispatch({ effects: setLogicalMarks.of(Decoration.none) });
+      editorView.focus();
+    };
+
+    window.applyLogicalEditor = () => {
+      if (!_le) return;
+      if (editorView.state.doc.toString() !== _le.text) {
+        log('Logical Editor: the score changed while the panel was open — open it again', 'err');
+        return window.closeLogicalEditor();
+      }
+      const op = logicalOp();
+      if ((op.type === 'len-set' || op.type === 'len-add') && op.ticks == null) {
+        leEl('leStatus').textContent = 'Length: write it as the score does — 8, 4., 96t, 1/3';
+        return;
+      }
+      if (op.type === 'len-mul' && !(op.factor > 0)) {
+        leEl('leStatus').textContent = 'Factor: a positive number';
+        return;
+      }
+      const res = applyLogical(_le.text, _le.notes, _le.matches, op);
+      if (res.error) {
+        leEl('leStatus').textContent = res.error;
+        return;
+      }
+      window.closeLogicalEditor();
+      if (res.changes.length) editorView.dispatch({ changes: res.changes, userEvent: 'input.logical', scrollIntoView: true });
+      const skip = [];
+      if (res.skipped.shared) skip.push(`${res.skipped.shared} shared`);
+      if (res.skipped.tied) skip.push(`${res.skipped.tied} tied`);
+      const label = leEl('leOp').selectedOptions[0]?.textContent ?? op.type;
+      log(`Logical Editor: ${label} — ${res.done} note${res.done === 1 ? '' : 's'}${skip.length ? `; skipped ${skip.join(', ')}` : ''}. Build to hear it.`, 'info');
+    };
+
+    for (const id of ['leScope', 'lePitch', 'leName', 'leLow', 'leHigh', 'leLenOp', 'leLen', 'leVoice', 'leOp'])
+      document.getElementById(id)?.addEventListener('input', () => refreshLogicalEditor());
+    document.getElementById('logicalModal')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); window.closeLogicalEditor(); }
+      else if (e.key === 'Enter' && e.target.tagName !== 'SELECT') { e.preventDefault(); window.applyLogicalEditor(); }
+    });
     window.undoAction = () => { undo(editorView); editorView.focus(); };
     window.redoAction = () => { redo(editorView); editorView.focus(); };
     // The panel takes the focus itself, so these do not steal it back.
@@ -3387,6 +3613,7 @@
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
       if (key === 'Mod-Shift-l') return isMac ? '⌘⇧L' : 'Ctrl+Shift+L';
+      if (key === 'Mod-Alt-l') return isMac ? '⌘⌥L' : 'Ctrl+Alt+L';
       if (key === 'Mod-z') return isMac ? '⌘Z' : 'Ctrl+Z';
       if (key === 'Mod-Shift-z') return isMac ? '⌘⇧Z' : 'Ctrl+Shift+Z';
       return key;
@@ -3409,6 +3636,7 @@
         ['libraryShortcut', 'Mod-k'],
         ['paramsShortcut', 'Mod-j'],
         ['releaseHoldsShortcut', 'Mod-Shift-Enter'],
+        ['loopSelectionShortcut', 'Mod-Alt-l'],
       ];
       for (const [id, key] of shortcutLabels) {
         const el = document.getElementById(id);
@@ -3433,6 +3661,7 @@
       mmlispMode,
       playheadField,
       playheadLayer,
+      logicalField,
       followPlayhead,
       // The piano roll follows the cursor: its focus and the notes written there.
       EditorView.updateListener.of((u) => {
@@ -3518,6 +3747,7 @@
         ...searchKeymap,
         { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
+        { key: 'Mod-Alt-l', run: loopSelectionCmd },
         // Structure: grow/shrink the selection by form, and close what is open.
         { key: 'Alt-ArrowUp', run: expandSelection },
         { key: 'Alt-ArrowDown', run: shrinkSelection },

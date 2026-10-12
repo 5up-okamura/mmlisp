@@ -293,7 +293,16 @@ In the live editor, **⇧Shift-dragging a `.mmlisp` onto the window** writes the
 `(import "…")` line for you — a plain drag opens the file instead.
 An imported def is a **default you can override** — a local `(def lead …)` of
 the same name wins. Only defs are imported; `def-val` slots and tracks in the
-library file are ignored. Full reference: `docs/language.md` §9.2.
+library file are ignored. Two imports that define the same name are an error,
+unless the later one says `:over` — then its defs replace the earlier ones', and
+the names it lacks stay. That is how one kit fills in for another:
+
+```lisp
+(import "presets/gm-drums/set.mmlisp")      ; every GM drum name
+(import "presets/tr808/set.mmlisp" :over)   ; the 808 where it has one
+```
+
+Full reference: `docs/language.md` §9.2.
 
 ---
 
@@ -1401,6 +1410,40 @@ cursor is in, then that form including its brackets, then the next level out.
 `Alt+↓` retraces the same steps inward. Combined with bracket-wrapping, this is
 the quick way to restructure: `Alt+↑` until the phrase you want is selected,
 then `(` to wrap it and type the head.
+
+### Looping a selection
+
+**Edit ▸ Loop Selection** (`Cmd/Ctrl+Alt+L`) writes the loop for you. With
+notes of one channel selected, they become the loop: `#loop` goes in front of
+the first and `(go loop)` after the last, widened to whole notes and forms so
+nothing is split. With a selection across channels — or just the cursor in a
+channel — each channel it touches loops whole, `#top` at its head and
+`(go top)` at its end (a channel written in several forms loops across all of
+them; one that already ends in a `go` is left alone). The log says how long
+each loop is in bars, since channels that loop at different lengths drift
+apart, and warns when notes follow a loop and so never play. It is one undo
+step.
+
+### The Logical Editor
+
+**Edit ▸ Logical Editor…** picks notes by a condition and acts on all of them
+at once, the way a DAW's logical editor does. Its panel sits beside the
+editor and marks every note the condition matches as you change it.
+
+- **Scope**: the selection, the channel the cursor is in, or the whole score.
+- **Condition**: pitch (any note, a note name in any octave, a range such as
+  `c4`–`b4`, or rests), length (`=`, `>` or `<` a length written as the score
+  writes one — `8`, `4.`, `96t`), and voice or sample (`snare`, `lead`).
+- **Do**: delete (leaving a rest, so nothing after it moves, or closing up),
+  set / add to / multiply the length, or **reverse** — the run from the first
+  matched note to the last, rests and all, played backwards. A reversed note
+  is written out in full (`> e+8 <`), so the notes around it keep their octave
+  and sample.
+
+Notes in a `def` or a counted loop are **shared**: one token plays in several
+places, so editing it changes all of them. They are marked with an outline and
+left alone unless you tick *Include shared notes*; reverse never touches them.
+Tied and slurred notes are left alone too. Apply is one undo step.
 
 ### Finding, replacing, and editing every occurrence at once
 

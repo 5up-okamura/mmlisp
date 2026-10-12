@@ -415,6 +415,19 @@
 
     /* ---- Interactive value editing ---- */
     /* Hover affordance: whole-token dotted underline + faint wash. */
+    /* Edit > Logical Editor: the notes its condition picks */
+    .cm-logical-match { background: color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 2px; }
+    .cm-logical-shared { background: none; outline: 1px dashed var(--accent); }
+    .modal-overlay.logical-overlay { background: none; justify-content: flex-end; align-items: flex-start; pointer-events: none; }
+    .logical-modal { pointer-events: auto; margin: 3.2rem 1rem 0 0; width: min(330px, 92vw); box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
+    .logical-modal .le-pair { display: flex; gap: 0.3rem; }
+    .logical-modal input[type=text] {
+      width: 4.5rem; background: var(--background); color: var(--foreground); border: 1px solid var(--mid);
+      border-radius: 2px; padding: 0.15rem 0.3rem; font-family: inherit; font-size: 0.72rem;
+    }
+    .logical-modal .le-ops { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); }
+    .logical-modal .le-status { margin-top: 0.6rem; color: var(--mid); font-size: 0.7rem; min-height: 1em; }
+    .import-field[hidden] { display: none; }
     .cm-valHover {
       border-radius: 2px;
       text-decoration: underline dotted var(--foreground);
