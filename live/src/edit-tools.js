@@ -70,7 +70,8 @@ function isInfiniteGo(item) {
 /**
  * Loop the selection. Inside one channel the selected items become the loop:
  * `#loop` before the first, `(go loop)` after the last (snapped outward to
- * whole items, so a selection never splits a note or a form). A selection
+ * whole items, so a selection never splits a note or a form) — `#top` when
+ * they are the whole channel. A selection
  * across channels — or a bare cursor — loops each channel it touches whole:
  * `#top` at the head of its first form, `(go top)` at the end of its last.
  * @returns {{changes: {from:number,to:number,insert:string}[], channels: string[],
@@ -98,9 +99,11 @@ export function loopSelection(text, selFrom, selTo) {
     const last = [...items].reverse().find((it) => it.from < selTo);
     if (!first || !last || first.from > last.from)
       return { error: "nothing to loop: the selection holds no notes of the channel" };
-    const label = freeLabel("loop", labelsIn(formsOf(ch)));
     const all = formsOf(ch).flatMap((f) => f.items);
     const deadAfter = all.some((it) => it.from >= last.to);
+    // A selection that spans the whole channel loops it whole: `#top`.
+    const whole = first === all[0] && !deadAfter;
+    const label = freeLabel(whole ? "top" : "loop", labelsIn(formsOf(ch)));
     return {
       mode: "range",
       channels,

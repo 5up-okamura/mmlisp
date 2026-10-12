@@ -1421,10 +1421,10 @@ then `(` to wrap it and type the head.
 
 ### Looping a selection
 
-**Edit ▸ Loop Selection** (`Cmd/Ctrl+Alt+L`) writes the loop for you. With
+**Edit ▸ Loop Selection** (`Cmd/Ctrl+Alt+Shift+L`) writes the loop for you. With
 notes of one channel selected, they become the loop: `#loop` goes in front of
 the first and `(go loop)` after the last, widened to whole notes and forms so
-nothing is split. With a selection across channels — or just the cursor in a
+nothing is split (selecting the whole channel writes `#top` instead). With a selection across channels — or just the cursor in a
 channel — each channel it touches loops whole, `#top` at its head and
 `(go top)` at its end (a channel written in several forms loops across all of
 them; one that already ends in a `go` is left alone). The log says how long

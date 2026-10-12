@@ -204,6 +204,7 @@ File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 | `Cmd+Option+]`     | `Ctrl+Alt+]`        | Close the open brackets                  |
 | `Cmd+Shift+F`      | `Ctrl+Shift+F`      | Format current score                     |
 | `Cmd+Shift+.` / `,` | `Ctrl+Shift+.` / `,` | Nudge the value at the cursor up / down (add `Option` / `Alt` for a coarse step) |
+| `Cmd+Option+Shift+L` | `Ctrl+Alt+Shift+L` | Loop Selection — `#loop` … `(go loop)` around the selected notes, `#top` … `(go top)` around whole channels |
 | **Library list**   |                     |                                          |
 | `↑` `↓`            | `↑` `↓`             | Move through the list (from the search box too) |
 | `Return`           | `Enter`             | Insert / open the highlighted row, or fold a group |

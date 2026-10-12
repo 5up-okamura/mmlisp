@@ -3613,7 +3613,7 @@
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
       if (key === 'Mod-Shift-l') return isMac ? '⌘⇧L' : 'Ctrl+Shift+L';
-      if (key === 'Mod-Alt-l') return isMac ? '⌘⌥L' : 'Ctrl+Alt+L';
+      if (key === 'Mod-Alt-Shift-l') return isMac ? '⌘⌥⇧L' : 'Ctrl+Alt+Shift+L';
       if (key === 'Mod-z') return isMac ? '⌘Z' : 'Ctrl+Z';
       if (key === 'Mod-Shift-z') return isMac ? '⌘⇧Z' : 'Ctrl+Shift+Z';
       return key;
@@ -3636,7 +3636,7 @@
         ['libraryShortcut', 'Mod-k'],
         ['paramsShortcut', 'Mod-j'],
         ['releaseHoldsShortcut', 'Mod-Shift-Enter'],
-        ['loopSelectionShortcut', 'Mod-Alt-l'],
+        ['loopSelectionShortcut', 'Mod-Alt-Shift-l'],
       ];
       for (const [id, key] of shortcutLabels) {
         const el = document.getElementById(id);
@@ -3747,7 +3747,7 @@
         ...searchKeymap,
         { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
-        { key: 'Mod-Alt-l', run: loopSelectionCmd },
+        { key: 'Mod-Alt-Shift-l', run: loopSelectionCmd },
         // Structure: grow/shrink the selection by form, and close what is open.
         { key: 'Alt-ArrowUp', run: expandSelection },
         { key: 'Alt-ArrowDown', run: shrinkSelection },
