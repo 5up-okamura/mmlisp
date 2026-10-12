@@ -1424,6 +1424,27 @@ each loop is in bars, since channels that loop at different lengths drift
 apart, and warns when notes follow a loop and so never play. It is one undo
 step.
 
+### The Logical Editor
+
+**Edit ▸ Logical Editor…** picks notes by a condition and acts on all of them
+at once, the way a DAW's logical editor does. Its panel sits beside the
+editor and marks every note the condition matches as you change it.
+
+- **Scope**: the selection, the channel the cursor is in, or the whole score.
+- **Condition**: pitch (any note, a note name in any octave, a range such as
+  `c4`–`b4`, or rests), length (`=`, `>` or `<` a length written as the score
+  writes one — `8`, `4.`, `96t`), and voice or sample (`snare`, `lead`).
+- **Do**: delete (leaving a rest, so nothing after it moves, or closing up),
+  set / add to / multiply the length, or **reverse** — the run from the first
+  matched note to the last, rests and all, played backwards. A reversed note
+  is written out in full (`> e+8 <`), so the notes around it keep their octave
+  and sample.
+
+Notes in a `def` or a counted loop are **shared**: one token plays in several
+places, so editing it changes all of them. They are marked with an outline and
+left alone unless you tick *Include shared notes*; reverse never touches them.
+Tied and slurred notes are left alone too. Apply is one undo step.
+
 ### Finding, replacing, and editing every occurrence at once
 
 `Cmd/Ctrl+F` (**Edit ▸ Find / Replace…**) opens the find/replace panel at the

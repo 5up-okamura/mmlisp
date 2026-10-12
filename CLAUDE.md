@@ -25,6 +25,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
 | `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
+| `edit-tools.js`                 | Edit > Loop Selection and the Logical Editor: score-text edits, testable in node |
 | `synth-md.js`, `scope-trigger.js` | Chip wiring for the browser, and the oscilloscope's trigger           |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
 | `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC), DefleMask / Furnace |
