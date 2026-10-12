@@ -4083,10 +4083,17 @@
       // name leaves the spec untouched, which is what the opened folder wants.
       const queue = collectImports(src).map((spec) => [joinImportPath(fileName, spec), spec]);
       while (queue.length) {
-        const [path, spec] = queue.shift();
-        if (seen.has(path)) continue;
-        seen.add(path);
-        const text = (await importTextForPath(path)) ?? (await importTextForPath(spec));
+        const [joined, spec] = queue.shift();
+        if (seen.has(joined)) continue;
+        seen.add(joined);
+        // Next to the importing file, else from the root — keyed where it was
+        // found, which is where the compiler then resolves its samples from.
+        let path = joined;
+        let text = await importTextForPath(joined);
+        if (text == null) {
+          path = joinImportPath('', spec);
+          text = await importTextForPath(path);
+        }
         if (text == null) continue; // absent → E_IMPORT_NOT_FOUND at compile
         map.set(path, text);
         for (const nested of collectImports(text)) {

@@ -4966,7 +4966,14 @@ function warnImportIgnored(bundle, importPath, diagnostics, importSrc) {
 // Resolve one imported file to its merged def bundle (its own defs winning over
 // what it in turn imports). `stack` detects cycles; `cache` dedups diamonds.
 function resolveImportFile(path, importSrc, importSources, diagnostics, cache, stack, baseDir = "") {
-  const selfPath = importedFilePath(path, baseDir);
+  // Next to the importing file first; failing that, from the root (a served
+  // score's `presets/…`) — and the file is then where it was found, so its
+  // samples and its own imports resolve from there.
+  const joined = importedFilePath(path, baseDir);
+  const selfPath =
+    !importSources?.has(joined) && importSources?.has(normalizePosixPath(path))
+      ? normalizePosixPath(path)
+      : joined;
   const selfDir = dirnamePosix(selfPath);
   if (stack.includes(selfPath)) {
     pushDiag(
@@ -4981,9 +4988,7 @@ function resolveImportFile(path, importSrc, importSources, diagnostics, cache, s
   }
   if (cache.has(selfPath)) return cache.get(selfPath);
 
-  const text = importSources
-    ? importSources.get(selfPath) ?? importSources.get(path)
-    : undefined;
+  const text = importSources?.get(selfPath);
   if (typeof text !== "string") {
     pushDiag(
       diagnostics,

@@ -90,10 +90,17 @@ function readImportSources(src, name) {
   const seen = new Set();
   const queue = collectImports(src).map((spec) => [joinImportPath(name, spec), spec]);
   while (queue.length) {
-    const [p, spec] = queue.shift();
-    if (seen.has(p)) continue;
-    seen.add(p);
-    const text = readText(p) ?? readText(spec);
+    const [joined, spec] = queue.shift();
+    if (seen.has(joined)) continue;
+    seen.add(joined);
+    // Next to the importing file, else from the root — keyed where it was
+    // found, which is where the compiler then resolves its samples from.
+    let p = joined;
+    let text = readText(joined);
+    if (text == null) {
+      p = joinImportPath("", spec);
+      text = readText(p);
+    }
     if (text == null) continue; // E_IMPORT_NOT_FOUND at compile
     map.set(p, text);
     for (const nested of collectImports(text)) {

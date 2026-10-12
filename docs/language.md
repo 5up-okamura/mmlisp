@@ -843,8 +843,11 @@ inline.
 
 - **Path** is a string literal (bare atoms are `E_IMPORT_PATH`), resolved
   relative to the importing file — through the opened source folder (File >
-  Open Folder…), like a PCM `:file` (§16); a served or URL score resolves it
-  from the server root. A path that cannot be read is `E_IMPORT_NOT_FOUND`.
+  Open Folder…), like a PCM `:file` (§16). A path not found there is read
+  from the root instead, so a served score's `presets/tr909/set.mmlisp` works
+  from any folder — and the file then counts as being where it was found, for
+  its samples and its own imports. A path that cannot be read is
+  `E_IMPORT_NOT_FOUND`.
 - **What is imported**: the def namespaces — plain and parametric snippets
   (`def`), FM voices (`def-fm`), PCM samples (`def-pcm`) and sound effects
   (`def-se`, §9.3). Imports are
