@@ -365,7 +365,9 @@ length — written (`c8`, `_8`) or the default — equals `:shuffle-base`
 (default: eighth). The pair spans 2× the base;
 the first beat takes `R` % of it. Each track sets its own swing, anywhere in
 the body; a change restarts the pairing, so the next swung note is a first
-beat. A value that is neither a number nor `none` is `E_SHUFFLE_INVALID`.
+beat. After a counted loop the pairing goes on from where its last pass left —
+past every pass, or from the `(break)`. A value that is neither a number nor
+`none` is `E_SHUFFLE_INVALID`.
 
 ```lisp
 (sqr1 :shuffle 66 :len 8  c c c c)

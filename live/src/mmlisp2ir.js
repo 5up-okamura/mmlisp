@@ -3878,6 +3878,7 @@ function compileChannelBody(
         // binds to the innermost COUNTED loop around it (§13).
         trackState.currentLoopId = maybeCount !== null ? loopId : savedLoopId;
         if (maybeCount !== null) {
+          const parityIn = trackState.subBeatParity;
           events.push({
             tick: trackState.tick,
             cmd: "LOOP_BEGIN",
@@ -3915,6 +3916,16 @@ function compileChannelBody(
             restoreConnectionState(trackState, brk);
             trackState.loopBreaks.delete(loopId);
           }
+          // The shuffle pairing goes on from where the last pass leaves: the
+          // body is written once, but a body with an odd count of swung notes
+          // flips the pairing on every pass, and a (break) leaves mid-body.
+          const flips = parityIn ^ trackState.subBeatParity;
+          const parityOut = trackState.loopBreakParity?.get(loopId);
+          trackState.subBeatParity =
+            parityOut != null
+              ? parityOut ^ (flips & (maybeCount - 1))
+              : parityIn ^ (flips & maybeCount);
+          trackState.loopBreakParity?.delete(loopId);
         } else {
           events.push({
             tick: trackState.tick,
@@ -4023,11 +4034,16 @@ function compileChannelBody(
         }
         // The last pass leaves the loop HERE, so what follows the loop is
         // connected to this point, not to the body's tail (see (x N …)).
-        if (trackState.currentLoopId)
+        if (trackState.currentLoopId) {
           (trackState.loopBreaks ??= new Map()).set(
             trackState.currentLoopId,
             connectionState(trackState),
           );
+          (trackState.loopBreakParity ??= new Map()).set(
+            trackState.currentLoopId,
+            trackState.subBeatParity,
+          );
+        }
         events.push({
           tick: trackState.tick,
           cmd: "LOOP_BREAK",
