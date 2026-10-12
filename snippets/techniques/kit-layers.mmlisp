@@ -1,0 +1,14 @@
+; Layered kits: a later import with :over replaces the names it has and leaves
+; the rest, so one kit fills in for another. GM is the base (every name); the
+; 808 replaces what it has; the 909 replaces both. Here kick, clap and the hats
+; are the 909's, the cowbell and conga the 808's (the 909 has none), and the
+; tambourine GM's (neither machine has one). Only the samples played are baked
+; into the 32 KB bank, so a big base costs nothing. Three pcm tracks mean three
+; voices, which play at 6.7 kHz (two at 10.1, one at 14.4).
+(import "presets/gm-drums/set.mmlisp")
+(import "presets/tr808/set.mmlisp" :over)
+(import "presets/tr909/set.mmlisp" :over)
+
+(pcm1 :len 4 (x 16 kick c))
+(pcm2 :len 8 (x 4 hat c hat-open c clap c hat-open c hat c hat-open c clap c hat-open c))
+(pcm3 :len 8 (x 4 cowbell c _ conga-hi c tamb c _ cowbell c conga-hi c tamb c))
