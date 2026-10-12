@@ -1,12 +1,14 @@
 ; A "filter sweep" on FM: the modulator's TL sets how bright the note is, so a
 ; curve on it opens and closes the sound. Inline, a curve is a timeline sweep
-; across notes; in a (macro ...) it restarts at every key-on.
+; across notes; in a (macro ...) it restarts at every key-on. A looping curve
+; inline is an auto-wah: a sin on an eighth-note clock locks the wah to the
+; tempo (:dr3 0 stops the voice's own pluck there, so the wah is the only
+; filter). One sweep over two bars, a snap on every note, then the wah.
 (import "presets/waveforms/set.mmlisp")
 
+(def riff c c > c < c c > c < c c e- c > c < c c g c)
+
 (fm1 :tempo 128 :oct 2 :len 16 acid-saw
-  ; one sweep over two bars, independent of the notes
-  :tl3 (ease-inout-sine 60..10 :len 2/1)
-  (x 2 c c > c < c c > c < c c e- c > c < c c g c)
-  ; per-note envelope: every note snaps open and closes
-  (macro :tl3 (ease-out-expo 10..60 :len 8))
-  (x 2 c c > c < c c > c < c c e- c > c < c c g c))
+  :tl3 (ease-inout-sine 60..10 :len 2/1) (x 2 riff)      ; one sweep, two bars
+  (macro :tl3 (ease-out-expo 10..60 :len 8)) (x 2 riff)  ; every note snaps open
+  (macro none) :dr3 0 :tl3 (sin 12..56 :len 8) (x 2 riff)) ; an eighth-note wah
