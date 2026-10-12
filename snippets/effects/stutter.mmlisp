@@ -1,6 +1,6 @@
 ; Stutter: :keyon re-attacks a held note on every step of its clock, so one
-; long note becomes a 32nd-note roll, and a :vel vector fades it out. For a
-; sample's beat repeat, see pcm-loop.
+; long note becomes a 32nd-note roll, and a :vel vector fades it out. On a
+; sample, a loop tightened into a buzz does the same job: see pcm-loop.
 (import "presets/gm/set.mmlisp")
 
 (def roll (macro :step 32 :keyon 1 :vel [15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0]))
