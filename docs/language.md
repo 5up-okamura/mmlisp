@@ -1324,8 +1324,12 @@ overlay that fills the gaps the written part leaves — it does **not** lengthen
 the phrase.
 
 - `:time T` — tap spacing (length token). Required (`E_DELAY_ARGS`).
-- Monophonic priority: written notes win — an echo tap overlapping any
-  written note's sounding span is dropped.
+- Monophonic priority: written notes win — a tap starting while a written
+  note sounds is dropped, and one starting in a gap is cut short at the next
+  written note. The dry note's `:gate` is where it lets the taps in: at full
+  gate, a `:time` shorter than the note drops the taps it covers.
+- Among taps, a newer one cuts the one still sounding; two on one tick keep
+  the louder.
 - Echo taps inherit the source note's articulation macros (`:keyon`, `:semi`,
   `:pitch`, operator macros, each with its own `:step`); the inherited `:vel`
   macro is rescaled so its peak matches the tap's velocity.
@@ -1336,6 +1340,8 @@ the phrase.
 ```lisp
 (fm1 (delay 3 :vel+ -4 :time 1/8)
   c e g e)                                     ; phrase + 3 decaying repeats
+(fm1 (delay 3 :vel+ -4 :time 8.)
+  :len 4 :gate 8. c _ g _)                     ; the dry note lets the taps in at 8.
 (fm2 :len 16 (delay :vel* (linear 0.8..0 :len 4) :time 16)
   c _ _ _ _)                                   ; four fading repeats in the rests
 ```

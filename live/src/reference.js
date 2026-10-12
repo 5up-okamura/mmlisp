@@ -426,9 +426,9 @@ export const REFERENCE = [
   {
     name: '(delay …)', aliases: ['delay', ':time'], cat: 'effects', section: '§12', tracks: null,
     syntax: '(delay N :vel+ step | :vel* ratio :time T)  ·  (delay none)',
-    summary: 'Sticky: every following note echoes at +k·T into the gaps the part leaves, never over a written note.',
+    summary: 'Sticky: every following note echoes at +k·T into the gaps the part leaves, cut at the next written note; the dry note\'s :gate lets them in.',
     insert: '(delay 3 :vel+ -4 :time 1/8)',
-    example: '(fm1 (delay 3 :vel+ -4 :time 1/8) :len 4 c _ e _)',
+    example: '(fm1 (delay 3 :vel+ -4 :time 1/8) :len 4 :gate 8 c _ e _)',
   },
   {
     name: '(glide …)', aliases: ['glide', 'portamento'], cat: 'effects', section: '§14', tracks: FM_PSG,

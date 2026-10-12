@@ -616,9 +616,17 @@ apart. The same taps written out: `(delay :vel+ [-4 -8 -12] :time 1/8)`.
 (fm1 :len 16 (delay :vel* (linear 0.8..0 :len 4) :time 16)  c _ _ _ _)  ; ratio fade
 ```
 
-The channel is monophonic: written notes take priority, so an echo overlapping a
-written note is dropped and echoes fill the gaps. For true overlapping delay,
-`def` the phrase and replay it on another channel.
+The channel is monophonic: written notes take priority. A tap that would start
+while a written note sounds is dropped; one that starts in a gap is cut short
+at the next written note, and a newer tap cuts an older one. So the dry note's
+`:gate` decides where the taps get in — a dotted-eighth delay on quarter notes
+needs the quarters released at the dotted eighth:
+
+```lisp
+(fm1 (delay 3 :vel+ -4 :time 8.)  :len 4 :gate 8. c _ g _ e _ d _)
+```
+
+For true overlapping delay, `def` the phrase and replay it on another channel.
 
 ### `(echo ...)` — phrase-lengthening replay
 

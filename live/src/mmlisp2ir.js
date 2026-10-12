@@ -1563,8 +1563,10 @@ function stampDelay(ev, trackState) {
 
 // v0.5 §1.5.3: compile-time delay expansion. Each note stamped with _delay
 // emits echo copies at +k·spacing with the tap velocities. Written (source)
-// notes outrank echoes: an echo overlapping any written note is dropped, so
-// echoes only sound in the gaps the written part leaves (monophonic priority).
+// notes outrank echoes (monophonic priority): a tap starting while a written
+// note sounds (its gate) is dropped, and one starting in a gap is cut short at
+// the next written note. Among taps the newer cuts the older; two on one tick
+// keep the louder.
 function expandTrackDelays(track) {
   const events = track.events;
   const NOTE_CMDS = new Set(["NOTE_ON", "PCM_NOTE_ON"]);
@@ -1573,22 +1575,20 @@ function expandTrackDelays(track) {
     for (const e of events) delete e._delay;
     return;
   }
-  const occupied = events
+  const written = events
     .filter((e) => NOTE_CMDS.has(e.cmd))
-    .map((e) => {
-      const len = e.args.gate ?? e.args.length ?? 0;
-      return [e.tick, e.tick + len];
-    });
-  const collides = (t, len) =>
-    occupied.some(([s, en]) => t < en && t + len > s);
+    .map((e) => [e.tick, e.tick + prioNoteSpan(e)]);
+  const sounding = (t) => written.some(([s, en]) => s <= t && t < en);
+  const nextWritten = (t) =>
+    written.reduce((m, [s]) => (s > t && s < m ? s : m), Infinity);
 
   const echoes = [];
   for (const ev of sources) {
     const { ticks, vels } = ev._delay;
-    const len = ev.args.gate ?? ev.args.length ?? 0;
+    const span = prioNoteSpan(ev);
     for (let k = 0; k < vels.length; k++) {
       const tick = ev.tick + (k + 1) * ticks;
-      if (collides(tick, len)) continue;
+      if (sounding(tick)) continue;
       // Echoes inherit the source's articulation macros (keyon / semi / pitch /
       // op, each with its own :step). The vel macro is inherited but scaled so
       // this echo's tail peaks at its :delay-vels level; the dry note is left
@@ -1602,12 +1602,23 @@ function expandTrackDelays(track) {
       }
       if (dv === 15) delete args.vel;
       else args.vel = dv;
-      echoes.push({ tick, cmd: ev.cmd, args, src: ev.src, _voice: ev._voice });
+      echoes.push({
+        tick, cmd: ev.cmd, args, src: ev.src, _voice: ev._voice,
+        _end: Math.min(tick + span, nextWritten(tick)),
+      });
     }
   }
   for (const e of events) delete e._delay;
-  if (echoes.length) {
-    events.push(...echoes);
+  // Same tick: the louder tap stays. Then each tap ends where the next begins.
+  echoes.sort((a, b) => a.tick - b.tick || (b.args.vel ?? 15) - (a.args.vel ?? 15));
+  const taps = echoes.filter((e, i) => i === 0 || e.tick !== echoes[i - 1].tick);
+  taps.forEach((e, i) => {
+    const end = Math.min(e._end, taps[i + 1]?.tick ?? Infinity);
+    if (end - e.tick < prioNoteSpan(e)) e.args.gate = end - e.tick;
+    delete e._end;
+  });
+  if (taps.length) {
+    events.push(...taps);
     events.sort((a, b) => a.tick - b.tick);
   }
 }
