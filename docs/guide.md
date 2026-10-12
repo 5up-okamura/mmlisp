@@ -293,7 +293,16 @@ In the live editor, **⇧Shift-dragging a `.mmlisp` onto the window** writes the
 `(import "…")` line for you — a plain drag opens the file instead.
 An imported def is a **default you can override** — a local `(def lead …)` of
 the same name wins. Only defs are imported; `def-val` slots and tracks in the
-library file are ignored. Full reference: `docs/language.md` §9.2.
+library file are ignored. Two imports that define the same name are an error,
+unless the later one says `:over` — then its defs replace the earlier ones', and
+the names it lacks stay. That is how one kit fills in for another:
+
+```lisp
+(import "presets/gm-drums/set.mmlisp")      ; every GM drum name
+(import "presets/tr808/set.mmlisp" :over)   ; the 808 where it has one
+```
+
+Full reference: `docs/language.md` §9.2.
 
 ---
 

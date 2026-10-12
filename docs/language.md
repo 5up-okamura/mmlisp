@@ -865,6 +865,24 @@ inline.
   one patch inline). Two different imported files defining the same name is an
   error (`E_IMPORT_CONFLICT`); a diamond (two imports pulling in the same third
   file) dedups and is fine. An import cycle is `E_IMPORT_CYCLE`.
+- **`:over`**: `(import "path" :over)` lets this import's defs **replace** the
+  same names from the imports written **before** it, instead of conflicting;
+  the names it does not define stay as they were. Layers stack in order, so a
+  base set can be filled out and partly replaced:
+
+  ```lisp
+  (import "presets/gm-drums/set.mmlisp")         ; the base: every GM name
+  (import "presets/tr808/set.mmlisp" :over)      ; 808's sounds replace GM's
+  (import "presets/rx5/set.mmlisp" :over)        ; ...and RX5's replace both
+  ```
+
+  Here a name RX5 has is RX5's, one only the 808 has is the 808's, and the rest
+  are GM's. `:over` reaches back only: a plain import written after it that
+  defines one of its names is still `E_IMPORT_CONFLICT`, so write the base
+  first and the layers after it. It covers the defs the import brings in
+  through its own imports too, combines with `:fx` (which rides on the samples
+  this import brings in), and a local def still wins over every import. A
+  replaced sample that nothing plays is not baked.
 
 **Drag & drop in the live editor.** ⇧Shift-dropping a `.mmlisp` onto the window
 inserts its `(import "…")` line at the cursor rather than opening the file; a
