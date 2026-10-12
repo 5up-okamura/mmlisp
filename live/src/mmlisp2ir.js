@@ -2259,6 +2259,20 @@ function parseMacroSpec(
   }
 }
 
+// A loop body that left the shuffle pairing flipped plays its next pass on
+// the other beats — unless it holds a label, which a second copy would repeat.
+function swingsOtherWay(trackState, parityIn, events, bodyIdx) {
+  return (
+    trackState.subBeatParity !== parityIn &&
+    !events.slice(bodyIdx).some((e) => e.cmd === "MARKER")
+  );
+}
+
+function dropLoopBreaks(events, from, to, id) {
+  for (let k = to - 1; k >= from; k--)
+    if (events[k].cmd === "LOOP_BREAK" && events[k].args?.id === id) events.splice(k, 1);
+}
+
 function resolveShuffleTicks(nominalTicks, trackState) {
   if (
     trackState.shuffleRatio === 0 ||
@@ -3206,6 +3220,7 @@ function compileChannelBody(
   // the empty root, but the parameter is threaded through the body recursions
   // now so later steps need no re-plumbing.
   const evalEnv = env ?? makeEnv(null);
+  const labelsHere = new Map(); // #label id -> its index in these items
   let i = 0;
   while (i < items.length) {
     const node = items[i];
@@ -3237,6 +3252,8 @@ function compileChannelBody(
             trackName,
           );
         } else {
+          labelsHere.set(id, i);
+          (trackState.labelParity ??= new Map()).set(id, trackState.subBeatParity);
           events.push({
             tick: trackState.tick,
             cmd: "MARKER",
@@ -3877,15 +3894,8 @@ function compileChannelBody(
         // Only counted loops support (break); inside an infinite (x …) it still
         // binds to the innermost COUNTED loop around it (§13).
         trackState.currentLoopId = maybeCount !== null ? loopId : savedLoopId;
-        if (maybeCount !== null) {
-          const parityIn = trackState.subBeatParity;
-          events.push({
-            tick: trackState.tick,
-            cmd: "LOOP_BEGIN",
-            args: { id: loopId },
-            src: nodeSrc(node.items[0]),
-          });
-          const bodyIdx = events.length;
+        const loopSrc = nodeSrc(node.items[0]);
+        const compileBody = () =>
           compileChannelBody(
             node.items.slice(bodyStart),
             trackState,
@@ -3897,60 +3907,91 @@ function compileChannelBody(
             vals,
             evalEnv,
           );
-          // A `~` ending the body also connects it to the body's head on the
-          // passes that loop back.
-          connectAcrossJump(trackState, events, bodyIdx);
-          events.push({
-            tick: trackState.tick,
-            cmd: "LOOP_END",
-            args: { id: loopId, repeat: maybeCount },
-            src: nodeSrc(node.items[0]),
-          });
+        if (maybeCount !== null) {
+          const parityIn = trackState.subBeatParity;
+          events.push({ tick: trackState.tick, cmd: "LOOP_BEGIN", args: { id: loopId }, src: loopSrc });
+          const bodyIdx = events.length;
+          compileBody();
+          // The loop whose pass is the last one: what follows goes on from it.
+          let lastId = loopId;
+          let lastCount = maybeCount;
+          let lastIn = parityIn;
+          if (maybeCount > 1 && swingsOtherWay(trackState, parityIn, events, bodyIdx)) {
+            // An odd count of swung notes swings the next pass the other way,
+            // and the IR holds one body: write the loop two passes to a turn
+            // (the second compiled again on the flipped pairing), and an odd
+            // count's last pass after it as a loop of one. The (break) is kept
+            // only where the loop's last pass meets it.
+            const diagLen = diagnostics.length;
+            const firstEnd = events.length;
+            compileBody();
+            const odd = maybeCount % 2 === 1;
+            dropLoopBreaks(events, bodyIdx, odd ? events.length : firstEnd, loopId);
+            if (odd) {
+              trackState.loopBreaks?.delete(loopId);
+              trackState.loopBreakParity?.delete(loopId);
+            }
+            connectAcrossJump(trackState, events, bodyIdx);
+            events.push({
+              tick: trackState.tick,
+              cmd: "LOOP_END",
+              args: { id: loopId, repeat: Math.floor(maybeCount / 2) },
+              src: loopSrc,
+            });
+            lastCount = Math.floor(maybeCount / 2);
+            if (odd) {
+              lastId = `(x ${loopCounter.count++})`;
+              trackState.currentLoopId = lastId;
+              lastIn = trackState.subBeatParity;
+              lastCount = 1;
+              events.push({ tick: trackState.tick, cmd: "LOOP_BEGIN", args: { id: lastId }, src: loopSrc });
+              compileBody();
+              events.push({ tick: trackState.tick, cmd: "LOOP_END", args: { id: lastId, repeat: 1 }, src: loopSrc });
+            }
+            diagnostics.length = diagLen; // the copies repeat the first pass's
+          } else {
+            // A `~` ending the body also connects it to the body's head on the
+            // passes that loop back.
+            connectAcrossJump(trackState, events, bodyIdx);
+            events.push({
+              tick: trackState.tick,
+              cmd: "LOOP_END",
+              args: { id: loopId, repeat: maybeCount },
+              src: loopSrc,
+            });
+          }
           trackState.currentLoopId = savedLoopId;
           // With a (break) the last pass never reaches the tail: the loop is
           // left from the break, so the next note connects to what was sounding
           // there (a ~ / glide / tie from the tail would reach a note the
           // player never came from).
-          const brk = trackState.loopBreaks?.get(loopId);
+          const brk = trackState.loopBreaks?.get(lastId);
           if (brk) {
             restoreConnectionState(trackState, brk);
-            trackState.loopBreaks.delete(loopId);
+            trackState.loopBreaks.delete(lastId);
           }
-          // The shuffle pairing goes on from where the last pass leaves: the
-          // body is written once, but a body with an odd count of swung notes
-          // flips the pairing on every pass, and a (break) leaves mid-body.
-          const flips = parityIn ^ trackState.subBeatParity;
-          const parityOut = trackState.loopBreakParity?.get(loopId);
+          // The shuffle pairing goes on from where the last pass leaves — from
+          // its (break), when it has one.
+          const flips = lastIn ^ trackState.subBeatParity;
+          const parityOut = trackState.loopBreakParity?.get(lastId);
           trackState.subBeatParity =
             parityOut != null
-              ? parityOut ^ (flips & (maybeCount - 1))
-              : parityIn ^ (flips & maybeCount);
-          trackState.loopBreakParity?.delete(loopId);
+              ? parityOut ^ (flips & (lastCount - 1))
+              : lastIn ^ (flips & lastCount);
+          trackState.loopBreakParity?.delete(lastId);
         } else {
-          events.push({
-            tick: trackState.tick,
-            cmd: "MARKER",
-            args: { id: loopId },
-            src: nodeSrc(node.items[0]),
-          });
-          compileChannelBody(
-            node.items.slice(bodyStart),
-            trackState,
-            events,
-            diagnostics,
-            trackName,
-            typedDefs,
-            loopCounter,
-            vals,
-            evalEnv,
-          );
+          const parityIn = trackState.subBeatParity;
+          events.push({ tick: trackState.tick, cmd: "MARKER", args: { id: loopId }, src: loopSrc });
+          const bodyIdx = events.length;
+          compileBody();
+          // Swinging the other way on the next pass: loop two passes at a time.
+          if (swingsOtherWay(trackState, parityIn, events, bodyIdx)) {
+            const diagLen = diagnostics.length;
+            compileBody();
+            diagnostics.length = diagLen;
+          }
           trackState.currentLoopId = savedLoopId;
-          events.push({
-            tick: trackState.tick,
-            cmd: "JUMP",
-            args: { to: loopId },
-            src: nodeSrc(node.items[0]),
-          });
+          events.push({ tick: trackState.tick, cmd: "JUMP", args: { to: loopId }, src: loopSrc });
         }
         i++;
         continue;
@@ -3998,6 +4039,25 @@ function compileChannelBody(
             );
             i++;
             continue;
+          }
+        }
+        // A section that swings the other way on its next pass: an endless
+        // one written in these items loops two passes at a time, as (x …)
+        // does; any other cannot be copied here, so it is flagged.
+        const target0 = events.findIndex((e) => e.cmd === "MARKER" && e.args?.id === label);
+        const labelParity = trackState.labelParity?.get(label);
+        if (labelParity != null && labelParity !== trackState.subBeatParity) {
+          const at = labelsHere.get(label);
+          if (repeat === null && at != null && target0 >= 0 &&
+              swingsOtherWay(trackState, labelParity, events, target0 + 1)) {
+            const diagLen = diagnostics.length;
+            compileChannelBody(items.slice(at + 1, i), trackState, events, diagnostics,
+              trackName, typedDefs, loopCounter, vals, evalEnv);
+            diagnostics.length = diagLen;
+          } else {
+            pushDiag(diagnostics, "warning", "W_SHUFFLE_LOOP",
+              `the #${label} section holds an odd count of swung notes, so its next pass swings the other way, but it plays as written — write it in (x …), or even the count`,
+              nodeSrc(node.items[0]), trackName);
           }
         }
         // A `~` before the jump connects to the label's first note.

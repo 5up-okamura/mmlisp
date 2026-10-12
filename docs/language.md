@@ -365,8 +365,13 @@ length — written (`c8`, `_8`) or the default — equals `:shuffle-base`
 (default: eighth). The pair spans 2× the base;
 the first beat takes `R` % of it. Each track sets its own swing, anywhere in
 the body; a change restarts the pairing, so the next swung note is a first
-beat. After a counted loop the pairing goes on from where its last pass left —
-past every pass, or from the `(break)`. A value that is neither a number nor
+beat. The pairing runs on through loops as played: a loop body holding an
+odd count of swung notes swings its next pass the other way, so `(x …)` and a
+`#label … (go label)` in one form are written two passes at a time (an odd
+count's last pass after them), and what follows a loop goes on from where its
+last pass left — past every pass, or from the `(break)`. A section that cannot
+be copied so — a counted `(go label N)`, or a label in another form — plays as
+written and is flagged `W_SHUFFLE_LOOP`. A value that is neither a number nor
 `none` is `E_SHUFFLE_INVALID`.
 
 ```lisp
