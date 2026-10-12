@@ -267,6 +267,12 @@
           <span>Format Source</span>
           <span class="menu-item-shortcut" id="formatSourceShortcut"></span>
         </button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" onclick="loopSelectionAction();closeMenus()"
+          title="Inside one channel: loop the selected notes. Across channels, or with no selection: loop each channel whole">
+          <span>Loop Selection</span>
+          <span class="menu-item-shortcut" id="loopSelectionShortcut"></span>
+        </button>
       </div>
     </div>
 
@@ -713,6 +719,7 @@
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
+    import { loopSelection, loopLengths } from './src/edit-tools.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
@@ -3354,6 +3361,36 @@
     window.formatSource = formatDocument;
     window.toggleCommentAction = toggleLineComment;
     window.closeBracketsAction = () => { closeOpenBrackets(editorView); editorView.focus(); };
+    window.loopSelectionAction = () => { loopSelectionCmd(editorView); editorView.focus(); };
+
+    // Edit > Loop Selection (edit-tools.js): inside one channel the selected
+    // notes become `#loop … (go loop)`; across channels, or at a bare cursor,
+    // each channel touched loops whole. One undo step. The loop lengths are
+    // reported in bars, since channels that loop at different lengths drift.
+    function loopSelectionCmd(view) {
+      const text = view.state.doc.toString();
+      const { from, to } = view.state.selection.main;
+      const res = loopSelection(text, from, to);
+      if (res.error) {
+        log(`Loop Selection: ${res.error}`, 'err');
+        return true;
+      }
+      view.dispatch({ changes: res.changes, userEvent: 'input.loop', scrollIntoView: true });
+      let lengths = '';
+      try {
+        const { ir } = compileMMLisp(view.state.doc.toString(), _lastFileName, { imports: _importSources });
+        const ticks = loopLengths(ir);
+        const bar = (ir?.ppqn ?? 96) * 4;
+        lengths = res.channels
+          .filter((ch) => ticks[ch] != null)
+          .map((ch) => `${ch} ${+(ticks[ch] / bar).toFixed(2)} bars`)
+          .join(', ');
+      } catch { /* the lengths are a courtesy; the edit stands */ }
+      const what = res.mode === 'range' ? `looped the selection on ${res.channels[0]}` : `looped ${res.channels.join(', ')} whole`;
+      log(`Loop Selection: ${what}${lengths ? ` (${lengths})` : ''}${res.skipped.length ? `; already looping: ${res.skipped.join(', ')}` : ''}`, 'info');
+      if (res.deadAfter) log(`Loop Selection: what follows the loop on ${res.channels[0]} never plays`, 'info');
+      return true;
+    }
     window.undoAction = () => { undo(editorView); editorView.focus(); };
     window.redoAction = () => { redo(editorView); editorView.focus(); };
     // The panel takes the focus itself, so these do not steal it back.
@@ -3387,6 +3424,7 @@
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
       if (key === 'Mod-Shift-l') return isMac ? '⌘⇧L' : 'Ctrl+Shift+L';
+      if (key === 'Mod-Alt-l') return isMac ? '⌘⌥L' : 'Ctrl+Alt+L';
       if (key === 'Mod-z') return isMac ? '⌘Z' : 'Ctrl+Z';
       if (key === 'Mod-Shift-z') return isMac ? '⌘⇧Z' : 'Ctrl+Shift+Z';
       return key;
@@ -3409,6 +3447,7 @@
         ['libraryShortcut', 'Mod-k'],
         ['paramsShortcut', 'Mod-j'],
         ['releaseHoldsShortcut', 'Mod-Shift-Enter'],
+        ['loopSelectionShortcut', 'Mod-Alt-l'],
       ];
       for (const [id, key] of shortcutLabels) {
         const el = document.getElementById(id);
@@ -3518,6 +3557,7 @@
         ...searchKeymap,
         { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
+        { key: 'Mod-Alt-l', run: loopSelectionCmd },
         // Structure: grow/shrink the selection by form, and close what is open.
         { key: 'Alt-ArrowUp', run: expandSelection },
         { key: 'Alt-ArrowDown', run: shrinkSelection },

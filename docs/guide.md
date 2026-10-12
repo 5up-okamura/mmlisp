@@ -1411,6 +1411,19 @@ cursor is in, then that form including its brackets, then the next level out.
 the quick way to restructure: `Alt+↑` until the phrase you want is selected,
 then `(` to wrap it and type the head.
 
+### Looping a selection
+
+**Edit ▸ Loop Selection** (`Cmd/Ctrl+Alt+L`) writes the loop for you. With
+notes of one channel selected, they become the loop: `#loop` goes in front of
+the first and `(go loop)` after the last, widened to whole notes and forms so
+nothing is split. With a selection across channels — or just the cursor in a
+channel — each channel it touches loops whole, `#top` at its head and
+`(go top)` at its end (a channel written in several forms loops across all of
+them; one that already ends in a `go` is left alone). The log says how long
+each loop is in bars, since channels that loop at different lengths drift
+apart, and warns when notes follow a loop and so never play. It is one undo
+step.
+
 ### Finding, replacing, and editing every occurrence at once
 
 `Cmd/Ctrl+F` (**Edit ▸ Find / Replace…**) opens the find/replace panel at the
