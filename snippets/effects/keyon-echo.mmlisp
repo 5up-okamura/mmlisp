@@ -1,0 +1,18 @@
+; One-channel echo from :keyon: the steps after #rel fire after the note's
+; key-off, each re-keying the same pitch, so the echo lives in the gap the
+; note's :gate leaves — no second channel, no (delay …). :vel plays its own
+; #rel through the taps, so each one is quieter, and the next written note
+; simply cuts the tail. stutter is the other half: steps before #rel.
+(import "presets/gm/set.mmlisp")
+
+; dotted-eighth echo: three taps after a quarter released at 8.
+(def dotted (macro :step 8. :keyon [0 #rel 1 1 1] :vel [15 #rel 10 6 3]))
+
+; slapback: one quick tap on short notes
+(def slap (macro :step 16 :keyon [0 #rel 1] :vel [15 #rel 8]))
+
+(fm1 :tempo 110 :oct 5 gm-marimba
+  dotted :len 4 :gate 8. c _ g _ e _ d _
+  slap :len 8 :gate 16 c e g > c < b g e d
+  dotted :len 1 :gate 8. c
+  (macro none))
