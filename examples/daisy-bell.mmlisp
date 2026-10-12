@@ -1,8 +1,8 @@
 ; Daisy Bell, after the 1961 IBM 7094 performance (voice by Kelly and
 ; Lochbaum, accompaniment by Max Mathews), the first computer to sing. The
-; voice is CSM as in csm-voice: the vowel is four formant MLs over a base,
-; the melody is the Timer A rate, and the noise channel adds consonants. The
-; three squares play the waltz accompaniment.
+; voice is CSM as in the csm-voice snippet: the vowel is four formant MLs over
+; a base, the melody is the Timer A rate, and the noise channel adds
+; consonants. The three squares play the waltz accompaniment.
 
 (def-fm vox init-fm :alg 7 :fb 0
   :ar1 31 :rr1 13 :tl1 4

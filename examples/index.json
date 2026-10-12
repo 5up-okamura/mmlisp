@@ -1,3 +1,4 @@
 [
-  "presets/waveforms/demo-acid.mmlisp"
+  "presets/waveforms/demo-acid.mmlisp",
+  "examples/daisy-bell.mmlisp"
 ]
