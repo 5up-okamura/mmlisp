@@ -797,7 +797,7 @@
     const { EditorState, EditorSelection, StateField, StateEffect } = cm;
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
     const { tags } = cm;
-    const { history, historyKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
+    const { history, historyKeymap, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
     const { hoverTooltip } = cm;
     const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
@@ -3765,6 +3765,10 @@
         { key: 'Mod-Shift-,', run: () => nudgeAtCursor(-1, false) },
         { key: 'Mod-Alt-Shift-.', run: () => nudgeAtCursor(1, true) },
         { key: 'Mod-Alt-Shift-,', run: () => nudgeAtCursor(-1, true) },
+        // Caret movement, selection extension and deletion, last so every
+        // binding above wins. Left to the browser, an arrow key moves the one
+        // native caret and collapses multiple cursors back to one.
+        ...standardKeymap,
       ]),
       EditorView.updateListener.of((update) => {
         // Compilation is manual (Build / Cmd-Ctrl+B); editing never compiles or
