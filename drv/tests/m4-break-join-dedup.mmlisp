@@ -5,6 +5,6 @@
 ; the pins. The body past the break repeats after the loop, so the dedup
 ; factors it and the skip has to shrink with it — left as it was, the break
 ; landed mid-instruction and the track stopped.
-(def env1 (macro :vel* [ (linear 15..11 :len 1t) (wait key-off) (linear 11..0 :len 65t) ]))
+(def env1 (macro :vel* [ (linear 1..0.75 :len 1t) (wait key-off) (linear 0.75..0 :len 65t) ]))
 (sqr1 :tempo 150 env1 :oct 4 :vel 12 :len 16 :gate- 10t
   (x 3 c d e f (break) g a b > c < g a b > c <) g a b > c < g a b > c < c4)

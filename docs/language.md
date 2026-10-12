@@ -408,7 +408,8 @@ own level and all four compose (§15).
   (about −62 dB on FM), not a mute — `:vol [0 8 16 24 31]` fades a note in.
   The hard mute is the fader's.
 
-Authored values are integers; a computed velocity (a `:vel` macro, a delay
+Authored values are integers — except the ratios after a `*`, such as a
+`:vel*` macro's `[1 0.75 0.5]`; a computed velocity (a `:vel` macro, a delay
 tap's `:vel*`) keeps eighths of a step, and the level is quantized once, at the
 chip's own resolution — FM TL 0.75 dB steps, so a `:vel` fade moves smoothly;
 PSG its 2 dB attenuator; PCM its 6 dB mixer shift. A `:vel` macro fades only to
@@ -453,8 +454,9 @@ divide with a fraction (`:vel* 0.5`).
   see §7.1.2.
 - In macros, `*` applies only to `:vel`. `+` applies to `:vel`, `:pitch`, and
   `:semi`; any other target (or `*` on `:pitch`/`:semi`) raises
-  `E_MACRO_OP_NO_BASE`. `:vel*` scales the macro by the note's 0–1 vel ratio and
-  `:vel+` offsets it by the note's vel — both baked per note-on. `:pitch+` /
+  `E_MACRO_OP_NO_BASE`. `:vel*` multiplies the note's vel by each value (1 =
+  unchanged: `:vel 12` with `:vel* [1 0.5 0]` plays 12, 6, 0) and `:vel+`
+  adds each value to it — both baked per note-on. `:pitch+` /
   `:semi+` are **additive**: each frame writes `note + (live pitch offset +
   macro sample)`, so a static `:pitch N` plus a shared vibrato macro wobbles
   centered at `+N` cents (e.g. two voices sharing one LFO but detuned by their

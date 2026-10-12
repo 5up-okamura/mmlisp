@@ -15,4 +15,4 @@
   (macro :keyon none :vel [15 #rel 12 9 6 3]) :gate* 0.5 c
   (macro :vel none :vol (triangle 20..31 :len 12f)) pad :mode loop :gate* 0.75 c
   (macro :vol none :keyon [1 #rel 0 0 1 0 0 1]) blip :mode shot :gate* 0.25 c
-  (macro :keyon none :step 1/16 :vel* [15 10 5]) :vel 12 :gate* 1 c c)
+  (macro :keyon none :step 1/16 :vel* [1 0.75 0.5]) :vel 12 :gate* 1 c c)

@@ -537,10 +537,10 @@ function makeNoteArgs(pitch, lengthTicks, gateSpec, vel, activeMacros, bpm) {
       else if (target === "VEL") {
         // `:vel*`/`:vel+` combine the macro with this note's velocity, resolved
         // here so it tracks per-note vel changes → a plain absolute velMacro.
-        // `*` scales by the 0..1 vel ratio (vel 15 = ×1 = unchanged); `+` adds
+        // `*` multiplies the note's vel by each value (1 = unchanged); `+` adds
         // the note's vel as an offset (vel is a relative envelope around it).
         if (spec.op === "*") {
-          const scaled = scaleMacroValues(spec, (vel ?? 15) / 15, "VEL");
+          const scaled = scaleMacroValues(spec, vel ?? 15, "VEL");
           delete scaled.op;
           args.velMacro = scaled;
         } else if (spec.op === "+") {
@@ -2072,11 +2072,13 @@ function parseMacroSpec(
   clamp = true,
   env = null, // body eval env, so `(let …)` bindings reach macro values
   step = null, // the macro's :step, for signal⊕signal materialization resolution
+  ratio = false, // a `*` macro: its values are multipliers, kept unrounded
 ) {
   if (!node) return null;
   // Relative (+/*) macros carry signed offsets / ratios; leave them unclamped
   // here and clamp only after combining with the base (add/scaleMacroValues).
   const clampVal = (v) => (clamp ? clampForTarget(target, v) : v);
+  const roundVal = (n) => (ratio ? n : Math.round(n));
   // One macro value: a number (rounded where it binds, like every value) or
   // the target's own symbol (`white2`, `left`), in a vector and as a scalar.
   const tokenValue = (val) => {
@@ -2084,7 +2086,7 @@ function parseMacroSpec(
     if (target === "NOISE_MODE" && val in NOISE_MODE_MAP) return NOISE_MODE_MAP[val];
     if (target === "PAN" && val in PAN_MAP) return PAN_MAP[val];
     const n = parseNumberLike(val);
-    return n === null ? null : Math.round(n);
+    return n === null ? null : roundVal(n);
   };
   // Step-vector or multi-stage form: [...]
   if (node.kind === "list" && node.bracket === "[]") {
@@ -2149,7 +2151,7 @@ function parseMacroSpec(
           else if (r) bad(it, "a stage is a curve, a number or (wait …)");
         } else {
           const b = boundOf(it);
-          const n = typeof b === "number" ? Math.round(b) : tokenValue(val);
+          const n = typeof b === "number" ? roundVal(b) : tokenValue(val);
           if (n !== null) spec = stepStage(clampVal(n));
           else bad(it, `${val ?? "(…)"} is not a value for this macro`);
         }
@@ -2182,7 +2184,7 @@ function parseMacroSpec(
         continue;
       }
       const b = boundOf(item);
-      const n = typeof b === "number" ? Math.round(b) : tokenValue(val);
+      const n = typeof b === "number" ? roundVal(b) : tokenValue(val);
       if (n !== null) {
         steps.push(clampVal(n));
       } else if (val === "_") {
@@ -4188,6 +4190,7 @@ function compileChannelBody(
                   !op,
                   evalEnv,
                   macroStep,
+                  op === "*",
                 );
                 if (spec && macroStep) spec.step = macroStep;
                 if (
