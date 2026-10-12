@@ -108,8 +108,8 @@ Naming a voice or sample in a track body switches to it. An FM voice change
 is sent in the silence before its note, so the note it follows ends about 40 ms
 early when there is no rest between them (language §9). Preset sets:
 `presets/gm` (gm-piano … gm-gunshot), `presets/waveforms` (wave-sine,
-acid-saw, …), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5` and
-`gm-drums` (PCM kits: kick, snare, hat, …), `presets/orch` (PCM
+acid-saw, …), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5`,
+`hiphop`, `drumnbass` and `gm-drums` (PCM kits: kick, snare, hat, …), `presets/orch` (PCM
 orchestral sounds: orch-hit, timpani, …), `presets/sfx` (PCM voices and
 effects: hey, glass, zap, …), `presets/band` (PCM guitar and bass:
 guitar, guitar-down, bass-finger, …), and `presets/fm-drums` (FM drums
