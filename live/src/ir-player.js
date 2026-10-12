@@ -2307,8 +2307,9 @@ export class IRPlayer {
             // With a keyon retrigger active, key off after the last retrigger
             // (keyonEnd) instead of at the gate, so the final tap isn't cut —
             // and never deferred, since that time is the macro's, not the
-            // note's. offWhen is null when the note slurs into the next.
-            const keyOffAt = keyonEnd != null ? keyonEnd : offWhen;
+            // note's. A note that slurs into the next keys nothing off — its
+            // gate never closes, so neither does the macro's.
+            const keyOffAt = slursIntoNext ? null : keyonEnd != null ? keyonEnd : offWhen;
             if (keyonEnd == null && deferOff) this._pendingKeyOff[ch] = true;
             else if (keyOffAt != null && !this._csmKeysCh3(chKey))
               this._write(0, 0x28, chKey, keyOffAt);
