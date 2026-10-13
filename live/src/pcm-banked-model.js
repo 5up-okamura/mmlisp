@@ -11,7 +11,8 @@ export class MultibankModel {
     this.voices = Array.from({ length: gen.cfg.voices }, () => ({ ptr: 0xff00, bank: 0,
       end: 0, wrap: 0xff00, startGen: 0, endGen: 0, start: false, apply: false, park: false, page: 0, out: 0 }));
     this.ring = new Uint8Array(256).fill(128);
-    this.target = 32;
+    if (!Number.isInteger(gen.cfg.lead)) throw new Error("banked model needs the image's lead");
+    this.target = gen.cfg.lead;
     this.log = [];
     this.slotIndex = 0;
   }

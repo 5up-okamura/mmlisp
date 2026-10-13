@@ -49,7 +49,7 @@ const frames=player.captureSlotLog({maxFrames:Math.ceil(seconds*frameHz)+frameHz
 const sampleAt=rom.indexOf(Buffer.from(b.sampleBank));
 if(sampleAt < 0 || (sampleAt & 0x7fff)) fail.push('sample resource missing or unaligned');
 const wantedStarts = frames.flatMap((rec,frame)=>recordPcm(rec).map(c=>Object.assign(c,{frame}))).filter(c => c[0] === 6);
-let completedThrough=0;
+let completedThrough=0;const startFrames=[];
 for(let v=0;v<voices;v++) {
  const expected=wantedStarts.filter(c=>c[1]===v), actual=model.log.filter(e=>e.kind==='start'&&e.v===v);
  if(!actual.length) fail.push(`voice ${v} never started`);
@@ -58,6 +58,7 @@ for(let v=0;v<voices;v++) {
   const c=expected[i], a=actual[i];
   if(!c || a.src !== (c[3]|c[4]<<8) || a.bank !== (c[9]|c[10]<<8) + (sampleAt>>15)
     || a.end !== (c[5]|c[6]<<8) || a.wrap !== (c[7]|c[8]<<8)) {fail.push(`voice ${v} start ${i} intent mismatch`);break;}
+  startFrames.push({v,slot:a.slot,frame:c.frame});
  }
 }
 const want=[[],[]],psg=[],psgFrames=[];
@@ -73,6 +74,13 @@ const latch=[0,0],seen=[[],[]],ymStream=[];
 for(const e of L.ymZ80){if(e.read)continue;if(e.kind==='addr')latch[e.part]=e.byte;
  if(e.time>ready.time)ymStream.push({cycle:e.time/15,port:e.part,reg:latch[e.part],kind:e.kind});
  if(e.kind==='data' &&(e.time>ready.time&&!(e.part===0&&latch[0]===0x2a)))seen[e.part].push([latch[e.part],e.byte,e.time]);}
+// $2B (DAC enable) rides the PCM lane, which goes on the wire ahead of the
+// frame's FM queue (driver.md §5), so it is not in the FM order: the two are
+// graded apart, the FM writes in order without it and the $2B values in
+// their own order.
+{const a=seen[0].filter(w=>w[0]===0x2b).map(w=>w[1]),b=want[0].filter(w=>w[0]===0x2b).map(w=>w[1]);
+ if(a.join()!==b.slice(0,a.length).join())fail.push(`FM port 0 $2b: the chip saw ${a.join(',')}, the score says ${b.join(',')}`);
+ seen[0]=seen[0].filter(w=>w[0]!==0x2b);want[0]=want[0].filter(w=>w[0]!==0x2b);}
 for(let port=0;port<2;port++)for(let i=0;i<seen[port].length;i++){let w=want[port][i],g=seen[port][i];if(!w||g[0]!==w[0]||g[1]!==w[1]){fail.push(`FM port ${port} write ${i}: ${JSON.stringify(g)} vs ${JSON.stringify(w)}`);break;}}
 fail.push(...checkWriteStream(ymStream).problems.slice(0,5));
 for(let port=0;port<2;port++) {
@@ -96,5 +104,19 @@ for(let i=0;i<seen[0].length;i++) {
 const sorted=intervals.map(r=>Math.abs(r.errorMs)).sort((a,b)=>a-b);
 const fmTiming={count:sorted.length,p95Ms:sorted[Math.floor((sorted.length-1)*.95)]??null,maxMs:sorted.at(-1)??null,
  worstIntervals:intervals.sort((a,b)=>Math.abs(b.errorMs)-Math.abs(a.errorMs)).slice(0,10)};
-const report={file,seconds,frameHz,integrated:true,testApp:args.includes('--minimal')?'minimal':'sgdk-example',project:p.proj,voices,sampleBankBytes:b.sampleBank.length,samples:dac.length,mismatch,starts:model.log.filter(e=>e.kind==='start').length,fmWrites:seen.map(x=>x.length),psgWrites:gotPsg.length,rate,busLossPct:loss,fmTiming,fail};
+// Onset lag against the video clock (the common origin cancels): FM key-ons
+// as the chip saw them; a PCM start at its first output sample, which is the
+// block the start action ran in, `lead` slots on.
+const ms=x=>x*1000/image.cfg.machine.masterHz,frameLag=(time,frame)=>time-frame*image.cfg.machine.frameMaster;
+const pct=(xs,q)=>xs.length?xs[Math.floor((xs.length-1)*q)]:null,stats=xs=>{const s=[...xs].sort((a,b)=>a-b);
+ return {count:s.length,p10Ms:pct(s,.1),p50Ms:pct(s,.5),p90Ms:pct(s,.9),p95Ms:pct(s,.95),maxMs:s.at(-1)??null};};
+const fmLags=[];for(let i=0;i<seen[0].length;i++){const [reg,value,time]=seen[0][i],frame=want[0][i]?.[2];
+ if(reg===0x28&&(value&0xf0)&&frame>frameHz)fmLags.push(ms(frameLag(time,frame)));}
+const fmMedian=fmLags.length?[...fmLags].sort((a,b)=>a-b)[Math.floor((fmLags.length-1)/2)]:null,pcmRows=[];
+for(const st of startFrames){const at=Math.floor(st.slot/16)*16+image.cfg.lead;
+ if(st.frame>frameHz&&at<dac.length&&fmMedian!==null)pcmRows.push({v:st.v,frame:st.frame,lagMs:ms(frameLag(dac[at].time,st.frame))-fmMedian});}
+const pcmOnset={lead:image.cfg.lead,fmKeyOns:fmLags.length,fmKeyOnVsMedian:{minMs:fmLags.length?Math.min(...fmLags)-fmMedian:null,...stats(fmLags.map(x=>x-fmMedian))},...stats(pcmRows.map(r=>r.lagMs)),
+ perVoiceP50Ms:Array.from({length:voices},(_,v)=>stats(pcmRows.filter(r=>r.v===v).map(r=>r.lagMs)).p50Ms),
+ worst:[...pcmRows].sort((a,b)=>b.lagMs-a.lagMs).slice(0,5)};
+const report={file,seconds,frameHz,integrated:true,testApp:args.includes('--minimal')?'minimal':'sgdk-example',project:p.proj,voices,sampleBankBytes:b.sampleBank.length,samples:dac.length,mismatch,starts:model.log.filter(e=>e.kind==='start').length,fmWrites:seen.map(x=>x.length),psgWrites:gotPsg.length,rate,busLossPct:loss,fmTiming,pcmOnset,fail};
 writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));if(fail.length)process.exitCode=1;

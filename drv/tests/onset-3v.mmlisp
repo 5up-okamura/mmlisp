@@ -1,0 +1,32 @@
+; Onset lag on the banked host (banked-sgdk-gate.mjs pcmOnset): FM chords
+; keyed on the same frames as a three-voice kit. fm1-fm5 change voice every
+; bar, sent in the rest before the bar, so the kit's 16ths land while five
+; voice uploads are still on the wire.
+(def-score :pcm-voices 3)
+(def-pcm kit :file "pcmbank.wav")
+(def-fm lead :alg 4 :fb 3
+  :ar1 28 :dr1  6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1  2
+  :ar2 31 :dr2  9 :sr2 2 :rr2 8 :sl2 2 :tl2  6 :ks2 0 :ml2 1 :dt2  0
+  :ar3 26 :dr3  5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4  4 :ks4 0 :ml4 1 :dt4  0)
+(def-fm bass :alg 3 :fb 5
+  :ar1 31 :dr1  4 :sr1 0 :rr1  5 :sl1 1 :tl1 22 :ks1 0 :ml1 0 :dt1 0
+  :ar2 31 :dr2  6 :sr2 1 :rr2  6 :sl2 2 :tl2 28 :ks2 0 :ml2 2 :dt2 3
+  :ar3 31 :dr3  8 :sr3 1 :rr3  7 :sl3 2 :tl3 24 :ks3 0 :ml3 1 :dt3 0
+  :ar4 31 :dr4 12 :sr4 2 :rr4 10 :sl4 4 :tl4  2 :ks4 0 :ml4 1 :dt4 0)
+(fm1 :tempo 150 :oct 4 :len 8 :vel 11
+  (x 8 lead c e g e c e g _  bass c e g e c e g _))
+(fm2 :oct 3 :len 8 :vel 11
+  (x 8 bass e g b g e g b _  lead e g b g e g b _))
+(fm3 :oct 4 :len 8 :vel 10
+  (x 8 lead g b > d < b g b > d < _  bass g b > d < b g b > d < _))
+(fm4 :oct 2 :len 8 :vel 11
+  (x 8 bass c c g g c c g _  lead c c g g c c g _))
+(fm5 :oct 5 :len 8 :vel 9
+  (x 8 lead e d c d e d c _  bass e d c d e d c _))
+(pcm1 kit :oct 3 :len 4 :mode shot :vel 12
+  (x 16 c c c c))
+(pcm2 kit :oct 3 :len 16 :mode shot :vel 10
+  (x 64 _8 e e))
+(pcm3 kit :oct 3 :len 2 :mode shot :vel 9
+  (x 32 g))

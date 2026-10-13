@@ -122,6 +122,10 @@ npm run multibank:rom
 `banked:sgdk` builds the SGDK example with the score, runs it, and grades the
 DAC against the engine model, the FM and PSG streams against the sequencer (the
 FM order through `prioritizeFmNotes` in `pairs-model.mjs`, the reference for
-`banked_writes` in `mmlpairs.c`), the bus loss, and the key-on interval error.
+`banked_writes` in `mmlpairs.c`, `$2B` graded apart since it rides the PCM
+lane), the bus loss, the key-on interval error, and the PCM-vs-FM onset lag:
+each start's first output sample against the median FM key-on, both measured
+from their frame's video time (`pcmOnset`). `tests/onset-3v.mmlisp` is the
+score for that lag: FM chords keyed with a three-voice kit, with voice changes.
 The `multibank:*` tools drive the standalone prototype that preceded the
 integration; `multibank:render` is a listening aid, not a production `.smp`.

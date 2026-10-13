@@ -33,9 +33,39 @@ static void banked_order(const MMLPairsCfg *cfg) {
     assert(p.q_port[i]==writes[i].port && p.q_op[i]==writes[i].addr
            && p.q_val[i]==writes[i].data);
 }
+/* The PCM lane in the banked profile: a frame's $2B and its START's pairs
+ * leave ahead of the frame's FM pairs, $2B first. */
+static void banked_lane(MMLPairsCfg cfg) {
+  static MMLSeq seq;
+  MMLPairs p;
+  uint8_t ops[32], vals[32]; uint16_t dst;
+  const MMLWrite writes[] = {
+    {0,0x30,1},{0,0x40,2},{0,0x50,3},{0,0x60,4},{0,0x70,5},
+    {0,0x80,6},{0,0x90,7},{0,0xb0,8},{0,0xb4,0xc0},
+    {0,0xa4,9},{0,0xa0,10},{0,0x2b,0x80},{0,0x28,0xf0}
+  };
+  const uint8_t start[] = {6,2,0,0,0x81,0x10,0x81,0,0xff,127,0};
+  cfg.voices = 3;
+  mmlp_init(&p,&cfg);
+  seq.q_tail=0; seq.q_head=13;
+  for (uint16_t i=0;i<13;i++) seq.q[i]=writes[i];
+  for (uint16_t i=0;i<sizeof(start);i++) seq.pcm_buf[i]=start[i];
+  seq.pcm_len=sizeof(start); seq.pcm_count=1;
+  mmlp_drain(&p,&seq);
+  assert(p.q_head==12 && p.l_head==10 && p.l_op[0]==0x2b && p.l_op[9]==26);
+  assert(mmlp_plan(&p,0,1,ops,vals,&dst)==16);
+  uint8_t at2b=0xff, atStart=0xff, atFm=0xff;
+  for (uint8_t i=0;i<16;i++) {
+    if (ops[i]==0x2b && at2b==0xff) at2b=i;
+    if (ops[i]==26 && atStart==0xff) atStart=i;
+    if (ops[i]==0x30 && atFm==0xff) atFm=i;
+  }
+  assert(at2b<atStart && atStart!=0xff && (atFm==0xff || atStart<atFm));
+}
 int main(void) {
   MMLPairsCfg cfg = {0x1d00,128,16,0x13,9,0x20,2,2,32,1};
   banked_order(&cfg);
+  banked_lane(cfg);
   MMLPairs p;
   uint8_t ops[32], vals[32]; uint16_t dst;
   mmlp_init(&p,&cfg);
@@ -71,9 +101,9 @@ int main(void) {
   mmlp_init(&p,&cfg);
   uint8_t note[] = {1,6,2,0,0,0x81,0x10,0x81,0,0xff,128,0};
   mmlp_frame(&p,note,sizeof(note));
-  assert(p.fault==1 && p.q_head==0 && p.start_gen[2]==0);
+  assert(p.fault==1 && p.q_head==0 && p.l_head==0 && p.start_gen[2]==0);
   note[10]=127;
   mmlp_frame(&p,note,sizeof(note));
-  assert(p.q_head==9 && p.q_op[7]==0x21 && p.q_val[7]==127 && p.q_op[8]==26);
+  assert(p.q_head==0 && p.l_head==9 && p.l_op[7]==0x21 && p.l_val[7]==127 && p.l_op[8]==26);
   return 0;
 }

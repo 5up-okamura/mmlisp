@@ -247,7 +247,7 @@ export class PcmEngineModel {
 export class PcmLiveEngine {
   constructor(image, bank) {
     this.model = image.multibank
-      ? new MultibankModel({ actions: image.actions, cfg: { voices: image.voices } }, bank)
+      ? new MultibankModel({ actions: image.actions, cfg: { voices: image.voices, lead: image.lead } }, bank)
       : new PcmEngineModel(image, bank);
     this.img = image;
     this.masterShift = 0;

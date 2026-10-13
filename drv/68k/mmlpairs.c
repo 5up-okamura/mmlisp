@@ -80,12 +80,12 @@ MMLP_HOT void lane(MMLPairs *p, uint8_t port, uint8_t op, uint8_t val) {
   p->l_work = next;
 }
 MMLP_HOT void store(MMLPairs *p, uint8_t op, uint8_t val) {
-  if (p->cfg.banked) push(p, 0xff, op, val); else lane(p, 0xff, op, val);
+  lane(p, 0xff, op, val);
 }
 
 /* A port-0 write, into the FM queue — or the lane for the DAC enable. */
 MMLP_HOT void push0(MMLPairs *p, uint8_t addr, uint8_t data) {
-  if (addr == 0x2b && !p->cfg.banked) lane(p, 0, addr, data);
+  if (addr == 0x2b) lane(p, 0, addr, data);
   else push(p, 0, addr, data);
 }
 
@@ -361,26 +361,9 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
 /* THE SGDK HOST'S FRAME, straight from the sequencer's queue (mmlispseq.h
  * MMLFrameView): its writes, then its PCM commands into the lane. */
 static void view_body(MMLPairs *p, const MMLFrameView *v) {
-  if (p->cfg.banked) {
-    uint16_t count = v->end[MML_SLOT_SUBS - 1];
-    int short_note = 1;
-    int global = 0;
-    uint16_t fm_count = 0;
-    for (uint16_t i=0; i<count; i++) {
-      const MMLWrite *w = &v->q[(v->first + i) & (MML_WRITE_QUEUE - 1)];
-      if (w->port != 2) fm_count++;
-      if (w->port != 2 && w->addr < 0x30 && w->addr != 0x28) { short_note = 0; global = 1; }
-    }
-    short_note = short_note && fm_count <= 8;
-    if (!short_note && !global && pcm_size(v->pcm, v->pcm_len, v->pcm_count) != 0xffff)
-      pcm_run(p, v->pcm, v->pcm_count);
-    banked_writes(p, v);
-    if ((short_note || global) && pcm_size(v->pcm, v->pcm_len, v->pcm_count) != 0xffff)
-      pcm_run(p, v->pcm, v->pcm_count);
-    return;
-  }
-  writes_body(p, (const uint8_t *)v->q, v->first, v->end[MML_SLOT_SUBS - 1],
-              MML_WRITE_QUEUE - 1, (uint16_t)sizeof(MMLWrite));
+  if (p->cfg.banked) banked_writes(p, v);
+  else writes_body(p, (const uint8_t *)v->q, v->first, v->end[MML_SLOT_SUBS - 1],
+                   MML_WRITE_QUEUE - 1, (uint16_t)sizeof(MMLWrite));
   /* The PCM commands go into the lane after the writes, so a $2B the frame
    * turned the DAC on with leads its first start. */
   if (pcm_size(v->pcm, v->pcm_len, v->pcm_count) != 0xffff) pcm_run(p, v->pcm, v->pcm_count);

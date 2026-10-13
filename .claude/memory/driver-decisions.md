@@ -262,7 +262,8 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
 - **Declined for their cost** (user, 2026-10-13: "費用対効果が薄そう"):
   **PCM STAGE** (the sequencer peeks a track's next PCM note and stages
   SRC/END/WRAP early so its START is one pair — lookahead in the ROM
-  sequencer for a few ms, while the PCM lane already jumps the FM backlog);
+  sequencer for a few ms, while the PCM lane already jumps the FM backlog —
+  the banked converter bypassed the lane until 2026-10-13 and takes it now);
   **ordinary FM3 in the short-group priority** (when the `$27` shadow says
   normal mode); **key-ons last × `banked_writes`** (its short-groups-first
   rule would be undone). Reopen (b)/(c) only if the multi-bank listening test

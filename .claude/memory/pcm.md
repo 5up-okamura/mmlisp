@@ -73,6 +73,14 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 - **Why ordinary FM3 is excluded from `banked_writes`**: the converter does
   not know CH3's mode; a probe showed FM3's key-on queued at index 31 behind a
   29-write patch where FM2's sat at index 2.
+- PCM-vs-FM onset (`banked:sgdk` pcmOnset, 20 s, after the banked converter
+  took the lane and the ring lead went 32 → 16), `tests/onset-3v.mmlisp`
+  NTSC: median −10.3 ms (was −6.1), p95 22.1 (25.9), max 27.9 (27.6); PAL
+  median −5.9 (−3.4), p95 14.4 (17.0). FM interval p95/max unchanged
+  (65.3/100.9 NTSC). The lead accounts for ~2.4 ms at three voices; the lane
+  bought little on these scores. Lead 16 is exact because every voice's work
+  for a block completes within its 16 slots (`multibank:gate` and BlastEm
+  match every DAC byte).
 - Not adopted, with reasons: single-bank images with more expander steps
   (fit, but the 16-pair cap would still bind); a banked three-voice variant
   with the expander's B half inlined (raw throughput does not establish
@@ -81,15 +89,16 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 ## Open
 
 - **The integrated multi-bank build has had no listening test.**
-- **Banked PCM sounds late on BlastEm** (user, 2026-10-13, an imported mucom
-  song at `:pcm-voices 3`; Live is fine). Measured with a copy of
-  `banked-sgdk-gate.mjs` that compares each START's first output sample
-  (`floor(slot/16)*16 + lead`) with the median FM key-on lag: PCM trails FM by
-  5.3 / 8.1 / 13.2 / 15.8 ms (p10 / median / p90 / p95), max 49 ms on a
-  voice-change frame. The banked image's lead is 32 samples (4.8 ms at
-  6,653 Hz) against the single-bank pcm3's 18 (2.7 ms), plus a 16-sample
-  block. Not fixed yet; FM key-ons on the same run reach 94 ms late on a
-  frame where four channels change voice.
+- **Banked PCM onsets still trail on dense frames** (user heard it late on
+  BlastEm, 2026-10-13, an imported mucom song at `:pcm-voices 3`; that song
+  was not re-measured after the fix). `tests/multibank-3v.mmlisp` gives
+  PCM−FM 34 ms median: at its frames 61 and 91 (the `:master` changes) every
+  pair of the frame, PCM and FM alike, reaches the engine one video frame
+  later than at frame 31 (first PCM pair +15 ms after the frame vs −1.7 ms),
+  and three voices' starts (retarget + level + start, ~10–12 pairs each at
+  ~0.6 ms a pair) land ~7 ms apart. Cause of the one-frame slip not found.
+  A cap on how far ahead the banked host fills the pair page (an experiment,
+  not kept) did not lower the worst case.
 - Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.

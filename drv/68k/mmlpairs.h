@@ -57,7 +57,7 @@ typedef struct {
   uint8_t ahead;         /* pairs ahead of the last-read index a grab writes at;
                             0 = MMLP_AHEAD (two grabs a frame). One grab a frame
                             needs MMLP_AHEAD_ONE (mmlpairs.c has the arithmetic) */
-  uint8_t banked;        /* block-banked image: fresh index, unified ordered queue */
+  uint8_t banked;        /* block-banked image: fresh index, banked_writes' FM order */
 } MMLPairsCfg;
 
 #define MMLP_VOICES 3

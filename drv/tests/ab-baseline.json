@@ -527,6 +527,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "onset-3v.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "p3-claim-evict-twin.mmlisp": {
     "ok": true,
     "mismatches": 0,

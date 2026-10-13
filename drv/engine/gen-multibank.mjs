@@ -9,8 +9,12 @@ import { balanced, expanderCost } from "./gen-stream.mjs";
 import { op, cost, laySlot, placementTable } from "./schedule.mjs";
 import { buildClamp, buildRungs } from "./lut.mjs";
 
+// THE LEAD IS ONE BLOCK: the packer finishes every voice's work for a block
+// within that block's 16 slots, and the DAC reads ring[s] in slot s-1's tail,
+// so the block built in slots 16k..16k+15 at ring[16k+16..] is complete before
+// slot 16k+16 reads it.
 export const MB = Object.freeze({
-  voices: 3, block: 16, lead: 32,
+  voices: 3, block: 16, lead: 16,
   // Voice 2 uses the spare STORE at $21; its bank is within the 4 MiB aperture.
   bankOp: [0x1c, 0x1e, 0x21],
   ptr: [0x1e00, 0x1e02, 0x1e0a], bank: [0x1e04, 0x1e06, 0x1e0c], target: 0x1e08,
@@ -27,6 +31,7 @@ export function multibankConfig(period = 354, xpSteps = 15, voices = 2, machine 
 export function generateMultibank(cfg = multibankConfig()) {
   if (![1, 2, 3].includes(cfg.voices) || cfg.cycleSlots !== (cfg.voices === 3 ? 48 : 80) || cfg.groupSlots !== 1)
     throw new Error("multibank prototype requires one to three voices and equal output slots");
+  if (cfg.lead !== MB.lead) throw new Error(`banked lead ${cfg.lead} is not MB.lead ${MB.lead}`);
   const base = pcm1Base(cfg);
   const state = (key, v) => hx(base + PCMN_L[key](v));
   const routines = [], jobs = [];

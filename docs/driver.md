@@ -623,7 +623,9 @@ bank's silence page; the combined library occupies multiple banks. The SMP
 starts with a directory bank, and the sequencer resolves each entry to an
 absolute ROM bank plus a window address. The engine stages the bank with the
 voice's START and switches banks while building 16-sample output blocks.
-It reuses the output ring; no voice reads ROM during a partial bank change.
+It reuses the output ring, 16 samples ahead of the DAC: every voice's work for
+a block finishes within that block's 16 slots, so the block is complete when
+the DAC reaches it. No voice reads ROM during a partial bank change.
 The loading API and 32 KB resource alignment remain unchanged. See
 [Multi-bank PCM](pcm-multibank.md) for export options and supported limits,
 and mmb.md §10.3 for the sample format.
@@ -632,9 +634,10 @@ The banked host reads a fresh FIFO position and performs up to five transfers
 per frame. If a plan is empty, it reuses the fresh observation and skips the
 second bus request. It reserves the complete 16-pair physical transfer, including IDLE
 padding, and observes the selected image's generation fence. PSG updates follow
-the released video frame. Independent, unmodulated FM channels can have short
-updates sent before bulk uploads without changing their internal write order
-or splitting F-number upper/lower pairs.
+the released video frame. PCM commands and `$2B` ride the PCM lane ahead of the
+FM queue, as in the single-bank profile (§6.6). Independent, unmodulated FM
+channels can have short updates sent before bulk uploads without changing their
+internal write order or splitting F-number upper/lower pairs.
 
 ## 6. The Interface (68000 → Z80)
 
