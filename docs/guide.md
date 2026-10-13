@@ -816,13 +816,14 @@ smooth changes:
 
 ## 18b. Dynamic Parameters (`def-val` / `$name`)
 
-Declare a runtime value slot with `(def-val ...)` and reference it with
-`$name` anywhere a runtime parameter takes a value. The live app renders one
-**Dynamic Parameters** slider per slot — drag it while the score plays.
+Declare a runtime value with `(def-val ...)` and reference it with `$name`
+anywhere a runtime parameter takes a value. Marked `:public`, it is an input
+the game writes, and the live app renders a **Dynamic Parameters** slider for
+it — drag it while the score plays.
 
 ```lisp
-(def-val cutoff 30 0..127)
-(def-val depth 20 0..60)
+(def-val cutoff 30 0..127 :public)
+(def-val depth 20 0..60 :public)
 
 (fm1 :tl1 $cutoff                              ; absolute from the slot
      :tl2+ $cutoff                             ; relative to the slot
@@ -833,6 +834,18 @@ Declare a runtime value slot with `(def-val ...)` and reference it with
 - `:from` / `:to` set the slider's endpoints (either direction); the
   positional value is the initial setting.
 - `$time` is built in: elapsed 60 Hz frames since track start.
+
+**The score's own values.** Without `:public` a `def-val` is a variable of
+the score: no slider, nothing the game sees. The score writes it like any
+parameter — `:name 12`, `:name+ -4`, `:name (linear 0..40 :len 8)` — from any
+track, and every track reads it. One sweep can then turn a knob across the
+whole song, wherever it is read:
+
+```lisp
+(def-val open 16)                                    ; 16 = dark
+(fm1 :open (linear 16..0 :len 8/1) :len 1 (x 8 _))   ; eight bars to open up
+(fm2 :len 8 (x 64 :tl2 (+ 20 $open) c e g e))        ; read at each write
+```
 
 **Expressions over slots.** A `$name` can sit inside an arithmetic expression;
 it is evaluated at the event, so the write tracks the slot live:

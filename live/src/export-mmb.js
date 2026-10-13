@@ -1404,7 +1404,8 @@ export function encodeMmb(ir, opts = {}) {
   putMeta("author", ir.metadata?.author ?? "");
   putMeta("compiler_version", opts.compilerVersion ?? "mmlisp v0.7");
   putMeta("bpm", bpmAt(timeline, 0));
-  for (const v of ir.metadata?.vals ?? []) putMeta(`val_${v.slot}`, v.name);
+  // The host's names for the slots it may write: the `:public` ones only.
+  for (const v of ir.metadata?.vals ?? []) if (v.public) putMeta(`val_${v.slot}`, v.name);
   sections.push({
     id: SECTION_ID.METADATA,
     flags: SECTION_FLAG.REQUIRED,

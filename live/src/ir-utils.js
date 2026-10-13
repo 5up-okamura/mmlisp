@@ -75,6 +75,9 @@ export const MACRO_TARGET_RANGE = {
   LOOP_START: { min: 0, max: 8 },
   LOOP_END: { min: 0, max: 8 },
   LOOP_LEN: { min: 0, max: 8 },
+
+  // Value slots (def-val) as write targets, VAL0–VAL15: an i16, like the slot.
+  VAL: { min: -32768, max: 32767 },
 };
 
 /**

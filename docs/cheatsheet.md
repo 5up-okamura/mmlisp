@@ -97,8 +97,9 @@ and a hold carry a note into the next.
 (def-fm lead-dark lead :fb 1)           ; extends lead
 (def-fm thud lead :key 35)              ; c4 sounds at MIDI 35, d two above
 (def-pcm hit :file "hit.wav")           ; relative to this file (§16)
-(def-val bright 20 0..40)               ; runtime slot, read as $bright (§8)
-(def-val gain 256 0..512)               ; as a factor, :vol* $gain is ×gain/256
+(def-val bright 20 0..40 :public)       ; a slot the game / a slider writes, read as $bright (§8)
+(def-val gain 256 0..512 :public)       ; as a factor, :vol* $gain is ×gain/256
+(def-val swell 0)                       ; the score's own value: :swell (linear 0..40 :len 8/1) moves it
 (import "presets/gm/set.mmlisp")        ; another file's defs (§9.2)
 (import "presets/tr808/set.mmlisp" :over) ; replaces earlier imports' same names
 (def-mod :ch fm2 :keyon off)            ; score-wide: fm2's notes become rests (§9.4)

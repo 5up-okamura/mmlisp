@@ -5,7 +5,7 @@
 ; players read the slot live every frame, so the depth tracks it. depth 128 ≈
 ; half; 255 ≈ full; 0 = off. fm1 = TL tremolo (i8); fm2 = pitch vibrato (i16,
 ; the wide-value + appended-slot-offset path).
-(def-val depth 128 0..255)
+(def-val depth 128 0..255 :public)
 (fm1 :tempo 120 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8
   (macro :tl1 (* (triangle 0..40 :len 8f) $depth))
   :len 2 c e g c)

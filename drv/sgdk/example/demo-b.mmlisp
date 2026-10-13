@@ -18,8 +18,8 @@
   :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 20 :ks3 0 :ml3 2 :dt3 3
   :ar4 31 :dr4 9 :sr4 2 :rr4 8 :sl4 3 :tl4 2  :ks4 0 :ml4 1 :dt4 0)
 
-(def-val vib 128 0..255)
-(def-val lvl 24 0..31)
+(def-val vib 128 0..255 :public)
+(def-val lvl 24 0..31 :public)
 
 ; ── BGM ─────────────────────────────────────────────────────────────────────
 ; track 0 — fm1, whole notes for the FM effects to steal mid-sustain

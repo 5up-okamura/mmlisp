@@ -132,8 +132,11 @@ enum {
   T_LOOP_LEN = 0x45,
   T_RANGE_START = 0x46,
   T_RANGE_END = 0x47,
-  T_RANGE_LEN = 0x48
+  T_RANGE_LEN = 0x48,
+  T_VAL0 = 0x50, /* VAL0-VAL15: the value slots as write targets */
+  T_VAL15 = 0x5f
 };
+#define T_IS_VAL(t) ((t) >= T_VAL0 && (t) <= T_VAL15)
 
 /* The bank entry's flags (mmb.md §10): which points the def set. */
 enum { SF_RANGE = 1, SF_LOOP_START = 2, SF_LOOP_END = 4 };
@@ -147,7 +150,8 @@ static int target_point(int target) {
  * live/src/mmb.js: cents, the reserved tempo scale, and the PCM points (byte
  * offsets into a blob, up to the bank's 32 KB window). */
 static int target_wide(int target) {
-  return target == T_NOTE_PITCH || target == T_TEMPO_SCALE || target_point(target);
+  return target == T_NOTE_PITCH || target == T_TEMPO_SCALE || target_point(target) ||
+         T_IS_VAL(target);
 }
 
 MML_HOT uint16_t rd16(const uint8_t *b, uint32_t o) {
@@ -668,6 +672,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     for (int vi = 0; vi < MML_PCM_VOICES; vi++) pcm_compose_shift(s, vi);
     return;
   }
+  if (T_IS_VAL(target)) {
+    s->val[target - T_VAL0] = (int16_t)clampi(value, -32768, 32767);
+    return;
+  }
   if (target == T_LFO_RATE) {
     int rate = clampi(value, 0, 8);
     s->lfo_rate = (uint8_t)rate;
@@ -863,6 +871,7 @@ static int read_slot(const MMLSeq *s, uint8_t slot) {
  * already keeps, so a relative write has a real base instead of a silent 0. */
 static int read_param(const MMLSeq *s, int ch, int target) {
   if (target == T_MASTER) return s->master;
+  if (T_IS_VAL(target)) return s->val[target - T_VAL0];
   {
     int op = fm3_op_for(s, ch);
     if (op) {
@@ -956,31 +965,51 @@ MML_HOT int macro_ch(int ch) {
 static int macro_ch_id(int mc) {
   return mc < 10 ? mc : mc < 14 ? 16 + (mc - 10) : CH_PCM1 + (mc - 14);
 }
+/* A song-wide target's own sweep slot, or -1 for a channel's target. */
+static int global_sweep(int target) {
+  if (target == T_MASTER) return 0;
+  if (target == T_LFO_RATE) return 1;
+  if (T_IS_VAL(target)) return 2 + (target - T_VAL0);
+  return -1;
+}
 static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int loop,
                         int from, int to, int len) {
-  int bank = sweep_bank(ch);
-  if (bank < 0) return;
-  MMLSweep *sl = s->sweeps[bank];
-  int idx = -1;
-  for (int i = 0; i < 2; i++)
-    if (sl[i].active && sl[i].target == target) { idx = i; break; }
-  if (idx < 0)
+  int g = global_sweep(target);
+  MMLSweep *sw;
+  if (g >= 0) {
+    sw = &s->gsweeps[g];
+    s->gsweep_live |= 1u << g;
+  } else {
+    int bank = sweep_bank(ch);
+    if (bank < 0) return;
+    MMLSweep *sl = s->sweeps[bank];
+    int idx = -1;
     for (int i = 0; i < 2; i++)
-      if (!sl[i].active) { idx = i; break; }
-  if (idx < 0) idx = 0; /* overflow: evict slot 0, deterministically */
-  sl[idx].active = 1;
-  s->sweep_live |= 1u << bank;
-  sl[idx].target = target;
-  sl[idx].curve_id = curve;
-  sl[idx].loop = (uint8_t)(loop ? 1 : 0);
-  sl[idx].from = from;
-  sl[idx].to = to;
-  sl[idx].len = (uint16_t)(len < 1 ? 1 : len);
-  sl[idx].frame = 0;
-  sl[idx].phase16 = 0;
-  sl[idx].step16 = sweep_step(len, loop);
+      if (sl[i].active && sl[i].target == target) { idx = i; break; }
+    if (idx < 0)
+      for (int i = 0; i < 2; i++)
+        if (!sl[i].active) { idx = i; break; }
+    if (idx < 0) idx = 0; /* overflow: evict slot 0, deterministically */
+    sw = &sl[idx];
+    s->sweep_live |= 1u << bank;
+  }
+  sw->active = 1;
+  sw->target = target;
+  sw->curve_id = curve;
+  sw->loop = (uint8_t)(loop ? 1 : 0);
+  sw->from = from;
+  sw->to = to;
+  sw->len = (uint16_t)(len < 1 ? 1 : len);
+  sw->frame = 0;
+  sw->phase16 = 0;
+  sw->step16 = sweep_step(len, loop);
 }
 static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
+  int g = global_sweep(target);
+  if (g >= 0) {
+    s->gsweeps[g].active = 0;
+    return;
+  }
   int bank = sweep_bank(ch);
   if (bank < 0) return;
   for (int i = 0; i < 2; i++)
@@ -2447,6 +2476,13 @@ static void run_frame(MMLSeq *s) {
         if (!s->sweeps[bank][0].active && !s->sweeps[bank][1].active)
           s->sweep_live &= ~(1u << bank);
       }
+      /* The song-wide targets' sweeps, after every channel's, in slot order. */
+      for (uint32_t live = s->gsweep_live, g = 0; live; live >>= 1, g++) {
+        if (!(live & 1)) continue;
+        MMLSweep *sw = &s->gsweeps[g];
+        if (sw->active && process_sweep(s, 0, sw)) sw->active = 0;
+        if (!sw->active) s->gsweep_live &= ~(1u << g);
+      }
       if (s->macro_live) process_macros(s);
       if (s->tempo_sweep.active) {
         int v;
@@ -2510,6 +2546,8 @@ int mml_done(const MMLSeq *s) {
   for (int b = 0; b < MML_SWEEP_BANKS; b++)
     for (int i = 0; i < 2; i++)
       if (s->sweeps[b][i].active && !s->sweeps[b][i].loop) return 0;
+  for (int g = 0; g < MML_GLOBAL_SWEEPS; g++)
+    if (s->gsweeps[g].active && !s->gsweeps[g].loop) return 0;
   if (s->tempo_sweep.active || s->csm_sweep.active) return 0;
   return 1;
 }
@@ -2743,7 +2781,11 @@ void mml_fade_track(MMLSeq *s, uint8_t track_id, uint16_t frames) {
   }
 }
 void mml_set_val(MMLSeq *s, uint8_t slot, int16_t value) {
-  if (slot < 16) s->val[slot] = value;
+  /* The latest write wins: a host write ends the score's sweep of the slot. */
+  if (slot < 16) {
+    s->gsweeps[2 + slot].active = 0;
+    s->val[slot] = value;
+  }
 }
 
 void mml_command(MMLSeq *s, uint8_t cmd, uint8_t a0, uint8_t a1, uint8_t a2) {

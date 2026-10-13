@@ -5673,12 +5673,13 @@
       return _chStripModel.find((e) => e.head === head)?.trackIndex;
     }
 
-    // Dynamic Parameters: one slider per (def-val …) slot. Slider positions
+    // Dynamic Parameters: one slider per `:public` (def-val …) slot — the
+    // others are the score's own variables (language.md §8). Slider positions
     // persist across build/play in _dynVals (declared with the panel state
     // above); onDynParam drives player.setVal live. The section auto-hides when
     // the score declares no def-vals.
     function renderDynParams(ir) {
-      const vals = Array.isArray(ir?.metadata?.vals) ? ir.metadata.vals : [];
+      const vals = Array.isArray(ir?.metadata?.vals) ? ir.metadata.vals.filter((v) => v.public) : [];
       const section = document.getElementById('dynParamSection');
       const body = document.getElementById('dynParamBody');
       if (!section || !body) return;
@@ -7206,7 +7207,7 @@
       }
       const ir = await playBrowseSource(file.text, browseCompileName(file), file.path);
       if (!ir) return;
-      const sliders = ir.metadata?.vals?.length
+      const sliders = ir.metadata?.vals?.some((v) => v.public)
         ? ' Its sliders appear once you open it.' : '';
       setBrowseNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
     }

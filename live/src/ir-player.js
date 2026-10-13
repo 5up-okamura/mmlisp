@@ -354,9 +354,12 @@ export class IRPlayer {
     // $name and PARAM_FROM_VAL / PARAM_ADD / PARAM_MUL.
     this._vals = {};
     this._valUnits = {}; // slot → "frame" | "tick" (for dynamic :len/:step)
+    this._valNames = []; // slot index → name, for the VALn write targets
+    this._valSweeps = {}; // name → the score's running sweep of that slot
     for (const v of irObj.metadata?.vals ?? []) {
       this._vals[v.name] = toSlotValue(v.init) ?? 0;
       this._valUnits[v.name] = v.unit ?? "frame";
+      this._valNames[v.slot] = v.name;
     }
     this._eventIndex = 0;
     this._currentTick = 0;
@@ -2631,6 +2634,18 @@ export class IRPlayer {
         return true;
       }
 
+      case "PARAM_SET":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
+      case "PARAM_FROM_VAL":
+      case "PARAM_SWEEP":
+      case "PARAM_SWEEP_STOP": {
+        const m = /^VAL(\d+)$/.exec(ev.args?.target ?? "");
+        if (!m) return false;
+        this._writeVal(ev, this._valNames[Number(m[1])], when);
+        return true;
+      }
+
       case "MARKER":
       case "TRIG":
       case "LOOP_BEGIN":
@@ -2654,7 +2669,71 @@ export class IRPlayer {
   // drv-player.js ignores it, leaving the slot at its previous value.
   setVal(name, value) {
     const v = toSlotValue(value);
-    if (v !== null && this._vals) this._vals[name] = v;
+    if (v === null || !this._vals) return;
+    // The latest write wins: the host's ends the score's sweep of the slot.
+    if (this._valSweeps) delete this._valSweeps[name];
+    this._vals[name] = v;
+  }
+
+  // The score writing a value slot (`:name …`, language.md §8): a song-wide
+  // target, so it is handled here whichever track carries it. A sweep runs in
+  // the slot's own sweep slot, as on the driver — a write ends it only where
+  // the driver's would (a SET, a STOP or a new sweep), and a read in a frame
+  // sees what the sweep wrote the frame before (_resolveSrc).
+  _writeVal(ev, name, when) {
+    if (name == null) return;
+    const a = ev.args ?? {};
+    const i16 = (v) => Math.max(-32768, Math.min(32767, Math.round(v)));
+    const cur = this._resolveSrc(name, when);
+    // A one-shot past its last frame has left the slot, its endpoint in it.
+    const sw = this._valSweeps[name];
+    if (sw && !sw.loop && this._eventFrame(when) - sw.startFrame - 1 >= sw.baseFrames - 1) {
+      delete this._valSweeps[name];
+      this._vals[name] = cur;
+    }
+    switch (ev.cmd) {
+      case "PARAM_SET":
+        delete this._valSweeps[name];
+        this._vals[name] = i16(a.value ?? 0);
+        break;
+      case "PARAM_SWEEP_STOP":
+        delete this._valSweeps[name];
+        this._vals[name] = cur;
+        break;
+      case "PARAM_FROM_VAL":
+        this._vals[name] = i16(this._resolveSrc(a.src, when));
+        break;
+      case "PARAM_ADD":
+        this._vals[name] = i16(cur + this._resolveOperand(a.delta, when));
+        break;
+      case "PARAM_MUL": {
+        const f = a.factor;
+        const fixed = f && typeof f === "object" && "src" in f
+          ? this._resolveSrc(f.src, when)
+          : Math.round((Number(f) || 0) * 256);
+        this._vals[name] = i16(Math.floor((cur * Math.max(0, Math.min(0xffff, fixed))) / 256));
+        break;
+      }
+      case "PARAM_SWEEP": {
+        const df = this._curveFields(a, when);
+        const baseFrames = a.dyn?.len != null
+          ? this._resolveLenFrames(a, null, when)
+          : a.lenFrames
+            ? Math.max(1, Math.round(Number(a.frames ?? 1)))
+            : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
+        this._valSweeps[name] = {
+          from: df.from != null ? Number(df.from) : cur,
+          to: Number(df.to ?? 0),
+          curve: a.curve ?? "linear",
+          params: df.params,
+          baseFrames,
+          loop: !!a.loop,
+          startFrame: this._eventFrame(when),
+          prev: cur,
+        };
+        break;
+      }
+    }
   }
   getVal(name) {
     return this._vals?.[name] ?? 0;
@@ -2670,6 +2749,15 @@ export class IRPlayer {
   // so no dynamic-value path can ever hand NaN to downstream math.
   _resolveSrc(src, when) {
     if (src === "$time") return this._valTime(when);
+    const sw = this._valSweeps?.[src];
+    if (sw) {
+      // The driver steps a sweep after the frame's events, so an event reads
+      // the value the frame before wrote — the slot as it was, in the sweep's
+      // own first frame. A finished one-shot holds its endpoint (_sweepAt).
+      const k = this._eventFrame(when) - sw.startFrame - 1;
+      if (k < 0) return sw.prev;
+      return Math.max(-32768, Math.min(32767, Math.round(this._sweepAt(sw, k))));
+    }
     const v = this._vals?.[src];
     return Number.isFinite(v) ? v : 0;
   }

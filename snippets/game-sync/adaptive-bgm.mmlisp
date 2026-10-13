@@ -4,8 +4,8 @@
 ; when its write fires, so the :vol writes sit at the top of each bar and
 ; follow the sliders once per bar.
 (import "presets/gm/set.mmlisp")
-(def-val drive 0 0..31)
-(def-val danger 0 0..31)
+(def-val drive 0 0..31 :public)
+(def-val danger 0 0..31 :public)
 
 (fm1 :tempo 124 :oct 4 :len 1 gm-pad-warm :vel 12
   #loop c a- f g (go loop))

@@ -42,7 +42,7 @@ export const AC_PARAMS = [
   // note dynamics / sequencer
   ':pitch', ':pitch+', ':semi', ':semi+', ':keyon', ':csm-rate',
   // echo / delay, macro, def-val, def-mod
-  ':back', ':time', ':step', ':unit', ':ch', ':voice',
+  ':back', ':time', ':step', ':unit', ':public', ':ch', ':voice',
   // import
   ':over',
   // def-fm

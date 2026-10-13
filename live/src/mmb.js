@@ -214,6 +214,10 @@ export const TARGET_ID = {
   RANGE_START: 0x46,
   RANGE_END: 0x47,
   RANGE_LEN: 0x48,
+  // The value slots (def-val, language.md §8) as write targets: VAL0–VAL15,
+  // i16 like the slots themselves. Score-global, so their sweeps run in the
+  // driver's global sweep slots, not a channel's (driver.md §4).
+  ...Object.fromEntries(Array.from({ length: 16 }, (_, n) => [`VAL${n}`, 0x50 + n])),
 };
 export const TARGET_NAME = Object.fromEntries(
   Object.entries(TARGET_ID).map(([name, id]) => [id, name]),
@@ -223,10 +227,14 @@ export const TARGET_NAME = Object.fromEntries(
 export const PCM_POINT_TARGET_IDS = new Set([TARGET_ID.LOOP_START, TARGET_ID.LOOP_END,
   TARGET_ID.LOOP_LEN, TARGET_ID.RANGE_START, TARGET_ID.RANGE_END, TARGET_ID.RANGE_LEN]);
 
+/** The value-slot targets VAL0–VAL15, by id. */
+export const VAL_TARGET_IDS = new Set(Array.from({ length: 16 }, (_, n) => 0x50 + n));
+
 // i16 targets (mmb.md §7.4): NOTE_PITCH (cents), the reserved TEMPO_SCALE,
-// and the six PCM points (byte offsets). Every other target is i8.
+// the six PCM points (byte offsets) and the value slots. Every other target
+// is i8.
 const WIDE_TARGET_IDS = new Set([TARGET_ID.NOTE_PITCH, TARGET_ID.TEMPO_SCALE,
-  ...PCM_POINT_TARGET_IDS]);
+  ...PCM_POINT_TARGET_IDS, ...VAL_TARGET_IDS]);
 
 // Byte width (1 = i8, 2 = i16) of a target's PARAM value, by target id.
 export function targetWidth(id) {

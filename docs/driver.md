@@ -381,7 +381,10 @@ this order and the 68k C reproduces it (§12):
    before it. It runs its `len` (a loop curve, indefinitely) until a
    PARAM_SET, PARAM_SWEEP or PARAM_SWEEP_STOP on its target frees the slot —
    a note does not stop it (a timeline sweep is free of key-on, language.md
-   §5.1).
+   §5.1). A channel holds two sweeps; a third evicts slot 0. The **song-wide
+   targets** — MASTER, LFO_RATE, VAL0–15 — sweep in a slot each of their own,
+   stepped after every channel's in that order: they belong to no channel, so
+   claiming one (§2.2) does not stop them.
 4. **Close the frame** (§6.2): its register writes and PCM commands.
 
 Register writes are **appended to the frame as they are generated**, in
@@ -488,6 +491,10 @@ PCM voices have their own state (§14).
 | fade counters | Bresenham N/V/err/cur + frames-left |
 | sweep engine | 2 slots × {target, curve, flags, phase, from, to, len, step} |
 | macro engine | up to 8 binds + 8 running slots × {descriptor idx, step clock, cursor, state} (`MML_MACRO_BINDS`; the exporter budgets 3, §13) |
+
+**Song state**: the master level, the LFO rate, the 16 val slots (§6.4), and
+one sweep slot each for MASTER, LFO_RATE and VAL0–15 (`MML_GLOBAL_SWEEPS` =
+18, §4 step 3), besides the tempo and CSM-rate sweeps.
 
 **Track control block**, one per active track; `MML_MAX_TRACKS` = 32 — a
 song's 16 (one a channel) and as many effect parts again.
@@ -713,11 +720,14 @@ Opcode-first, every address resolved by the sequencer (§14).
 ### 6.4 Val slots
 
 16 × i16 in 68k RAM, initialized from the score's VAL_TABLE at track start and
-thereafter host-written (`MMLisp_setVal`, read back with `MMLisp_getVal`). Slot
-index = VAL_TABLE index; slot 0xFF in stream operands is the built-in `$time`
-source (elapsed 60 Hz frames, low 16 bits), never stored in the array. The host
-does all arithmetic; the sequencer only stores and applies (docs/language.md
-§8).
+thereafter written by the host (`MMLisp_setVal`, read back with
+`MMLisp_getVal`) and by the score, whose PARAM ops address slot n as the
+target VAL*n* (opcodes.md §7). Slot index = VAL_TABLE index; the score's
+`:public` slots come first (language.md §8), and the MMB names only those
+(mmb.md §8). Slot 0xFF in stream operands is the built-in `$time` source
+(elapsed 60 Hz frames, low 16 bits), never stored in the array. The latest
+write wins: a host write also ends the score's sweep of that slot. The
+sequencer only stores and applies (docs/language.md §8).
 
 ### 6.5 Host API and live control
 

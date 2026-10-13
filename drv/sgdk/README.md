@@ -492,11 +492,12 @@ Everything the language compiles to:
   multi-stage sequences (attack / sustain-loop / release), `:semi` chiptune
   arpeggios, i16 `:pitch` envelopes, scaled macros, and `:keyon` retrigger (drum
   rolls), on level, FM-op and pitch targets.
-- **Dynamic values:** `(def-val …)` + `$name` — 16 i16 slots the host writes
-  with `MMLisp_setVal` and reads with `MMLisp_getVal`; the score folds them into
-  parameters via `PARAM_FROM_VAL` / `_ADD_VAL` / `_MUL_VAL` / `PARAM_MUL`, plus
-  the built-in `$time`. E.g. a live filter/LFO-depth slider, or game-state
-  timbre.
+- **Dynamic values:** `(def-val …)` + `$name` — 16 i16 slots. The `:public`
+  ones (first, by index) are the host's: it writes them with `MMLisp_setVal`
+  and reads them with `MMLisp_getVal`. The score writes and sweeps any of them
+  (`:name …`, song-wide) and folds them into parameters via `PARAM_FROM_VAL` /
+  `_ADD_VAL` / `_MUL_VAL` / `PARAM_MUL`, plus the built-in `$time`. E.g. a live
+  filter/LFO-depth slider, game-state timbre, or a score-wide sweep.
 - **PCM:** up to three sample voices on the `fm6` DAC, one engine image per
   count — `(def-score :pcm-voices N)`: one voice at 14,376 Hz, two at 10,112 Hz, three
   at 6,653 Hz. Per-note level and a master level on the 6 dB grid, every note

@@ -67,20 +67,22 @@ bakes a single sample (driver.md §5, mmb.md §10).
 
 ### 2.1 `metadata.vals[]` — dynamic value slots (`def-val`)
 
-One entry per `(def-val name …)`, in declaration order:
+One entry per `(def-val name …)`, in slot order — the `:public` ones first,
+each group in declaration order:
 
 | Field      | Type              | Semantics                                                       |
 | ---------- | ----------------- | ---------------------------------------------------------------- |
 | `name`     | string            | Slot name; scores reference it as `$name`.                       |
-| `slot`     | int               | Declaration index (stable slot id for the binary encoding).      |
+| `slot`     | int               | Slot index (the binary's id, and the `VALn` target that writes it). |
 | `init`     | int               | Initial value; the player seeds its runtime slot table from it.  |
 | `min`, `max` | int             | Control bounds (slider range).                                   |
 | `step`     | int ≥ 1           | Control granularity.                                             |
 | `reversed` | bool              | True when declared `:from > :to` (slider direction).             |
 | `unit`     | `"frame"`\|`"tick"` | Time unit when the slot feeds a dynamic `:len`/`:step`.        |
+| `public`   | bool              | Declared `:public`: the host's to write (a slider, an MMB name). |
 
-Notes: the player consumes only `name`, `init`, `unit`; `slot`/`min`/`max`/
-`step`/`reversed` are for the host UI (Dynamic Parameters panel).
+Notes: the player consumes `name`, `init`, `unit` and `slot`; `min`/`max`/
+`step`/`reversed`/`public` are for the host UI (Dynamic Parameters panel).
 
 ### 2.2 `metadata.samples[]` — PCM sample defs (`(def-pcm name …)`)
 
@@ -609,8 +611,9 @@ write.
 | `KEYON`           | 0–1            | Retrigger gate (reg 0x28 key pulses). **Macro-only** — rejected as a PARAM target. |
 | `VEL`             | 0–15           | Velocity ladder (2 dB/step) folded into carrier TL / PSG att. **Macro / `:vel` note-scoped only** — rejected as a PARAM target. |
 | `VOL`             | 0–31           | Channel fader → carrier TL offset (FM) / attenuator (PSG). 0 = hard mute. |
-| `MASTER`          | 0–31           | Global fader → all FM carrier TLs + all sounding PSG channels. |
-| `LFO_RATE`        | 0–8            | Reg 0x22 (0 = off, 1–8 = `0x08 \| rate−1`). Global.          |
+| `MASTER`          | 0–31           | Global fader → all FM carrier TLs + all sounding PSG channels. Song-wide: inline only, not a macro target. |
+| `LFO_RATE`        | 0–8            | Reg 0x22 (0 = off, 1–8 = `0x08 \| rate−1`). Song-wide, as `MASTER`. |
+| `VAL0`–`VAL15`    | −32768–32767   | Value slot n (`:name` of a `def-val`, language.md §8). Song-wide, as `MASTER`; no register. |
 | `FM_ALG`          | 0–7            | B0 bits 2–0.                                                 |
 | `FM_FB`           | 0–7            | B0 bits 5–3.                                                 |
 | `FM_AMS`          | 0–3            | B4 bits 5–4.                                                 |
@@ -684,7 +687,10 @@ PSG-routed tracks only `VOL` and
   `FM_TL*`), apply the operand (literal or slot ref), write back through the
   normal `PARAM_SET` path (round + clamp at the register write).
 - **Dynamic values.** Slots live in a name→value table seeded from
-  `metadata.vals[].init` and mutated by the host (`setVal`). `PARAM_FROM_VAL`
+  `metadata.vals[].init` and written by the host (`setVal`) and by the
+  score's `VALn` PARAM events, whatever track carries them; a `VALn` sweep is
+  the slot's own, and a read sees the value the frame before wrote, as on
+  the driver. `PARAM_FROM_VAL`
   and slot-ref operands resolve at event dispatch; macro `dyn` fields resolve
   once per note at note-on (constant for that note). `$time` = elapsed 60 Hz
   frames since playback start.

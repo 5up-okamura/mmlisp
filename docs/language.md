@@ -310,9 +310,14 @@ unaffected by ties.
 :len L)` emits `TEMPO_SWEEP` over `L` (any curve name works — there is no
 curve literally named `curve`). Tempo changes apply to all tracks.
 Written in a track's leading position it sets the song's initial tempo (§1).
-`:tempo`/`:master` are global, so if two tracks write one at the same
-tick the **last writer wins** (track order); the tick-0 initial tempo resolves
-the same way. Keep global automation on a single track to avoid ambiguity.
+**Song-wide values** — `:tempo`, `:master`, `:lfo-rate` and the `def-val`
+values (§8) — belong to the song, not to the channel whose track writes them.
+Their sweeps run on their own, one per value: an effect taking that channel
+(§9.3) or the track ending does not stop them; the next write to the value
+does. If two tracks write one at the same tick the **last writer wins** (track
+order), and for all but `:tempo` that is flagged `W_SONG_WRITE_RACE`; the
+tick-0 initial tempo resolves the same way. Keep song-wide automation on a
+single track to avoid ambiguity.
 
 On the `noise` channel, `:mode` sets the noise mode as **persistent channel
 state**: it emits `PARAM_SET NOISE_MODE`, and every noise note re-asserts the
@@ -336,6 +341,10 @@ parameter write at the current tick:
 | `:tl1 $x`         | `PARAM_FROM_VAL`         | Read a value slot (§8)              |
 | `:tl1+ $x` / `:tl1* $x` | `PARAM_ADD` / `PARAM_MUL` with `{src}` | Slot-relative     |
 | `:tl1 (+ $a (* $b 2))` | opcode chain            | Runtime `$slot` expression (§7.1.2) |
+
+A channel runs **two sweeps at once** (a glide and a fade, say); a third
+started while two still run cuts one off, which is flagged `W_SWEEP_SLOTS`. A
+song-wide value's sweep (§5) is not the channel's and does not count.
 
 The value is read the same way in every row: a literal, a `let` name, an
 expression (§7.1), a curve, or anything carrying a `$` reference. An operator
@@ -644,25 +653,29 @@ duration wrap the unit explicitly:
 
 ## 8. Dynamic values — `(def-val …)`, `$name`
 
-Runtime values for interactive playback. The host writes slots; the score
-reads them — directly (`:tl1 $level`), as an operator operand (`:tl2+ $level`),
-or combined in a runtime value expression (`:tl1 (+ 40 (* $tension 2))`) that
-lowers to a param-opcode chain on the driver (§7.1.2).
+Runtime values: the score's variables, and — marked `:public` — the inputs a
+host (the game, or the live app's sliders) writes. The score reads them
+directly (`:tl1 $level`), as an operator operand (`:tl2+ $level`), or combined
+in a runtime value expression (`:tl1 (+ 40 (* $tension 2))`) that lowers to a
+param-opcode chain on the driver (§7.1.2) — and writes them like any
+parameter, by name.
 
 ```lisp
-(def-val level 20 0..40 :step 2)
-(def-val depth 30)
-(def-val gain 128 0..256)      ; a factor: 256 = ×1
+(def-val level 20 0..40 :step 2 :public)
+(def-val gain 128 0..256 :public)   ; a factor: 256 = ×1
+(def-val swell 0)                   ; the score's own
 
 (fm1 :tl1 $level               ; PARAM_FROM_VAL
      :tl2+ $level              ; PARAM_ADD (slot-relative)
      :vol* $gain               ; PARAM_MUL: × gain/256 — here ×½
      :ar1 $time                ; built-in source
-     (macro :pitch (sin :from -40 :to $depth :rate 2))
+     (macro :pitch (sin :from -40 :to $swell :rate 2))
      c e g e)
+(sqr1 :swell (linear 0..60 :len 8/1) ; the score moves its own value, over 8 bars
+      _1 :swell+ -10 _1)
 ```
 
-`(def-val name init A..B :step S :unit U)` — or the explicit
+`(def-val name init A..B :step S :unit U :public)` — or the explicit
 `:from A :to B` form:
 
 | Field      | Meaning                                                          |
@@ -672,12 +685,28 @@ lowers to a param-opcode chain on the driver (§7.1.2).
 | `:from` / `:to` | Order-free directional endpoints — the live slider runs from A to B (either direction, negatives fine); `A..B` positionally is the same |
 | `:step`    | Slider granularity, integer > 0 (default `1`)                    |
 | `:unit`    | `frame` (default) or `tick` — how the value is read when the slot feeds a curve `:len` |
+| `:public`  | The host's to write: a live slider, and a name in the MMB's metadata. Without it the value is the score's own |
 
-Slots are indexed in declaration order and emitted in `metadata.vals` as
-`{name, slot, init, min, max, step, reversed, unit}`. The live app renders one
-Dynamic Parameters slider per slot. Names must not start with `$`
-(`E_DEFVAL_NAME`); a non-integer `init` is `E_DEFVAL_INIT`, and an unknown or
-malformed option (`:step 0`, `:unit beat`) is `E_DEFVAL_OPTION`.
+A score holds 16 slots (`E_DEFVAL_COUNT`). The `:public` ones are indexed
+first, each group in declaration order — so the indices a host writes do not
+move when the score adds a value of its own — and all are emitted in
+`metadata.vals` as `{name, slot, init, min, max, step, reversed, unit,
+public}`. The live app renders one Dynamic Parameters slider per `:public`
+slot. Names must not start with `$`, nor be a keyword the language already
+has — `:name` writes the value, so `(def-val vel …)` or `(def-val time …)`
+would mean two things (`E_DEFVAL_NAME`); a non-integer `init` is
+`E_DEFVAL_INIT`, and an unknown or malformed option (`:step 0`, `:unit beat`)
+is `E_DEFVAL_OPTION`.
+
+**Writing a value.** `:name` is a parameter like `:tl1`, and every form of
+§5.1 applies: `:swell 12`, `:swell+ -4`, `:swell* 0.5`, `:swell $other`,
+`:swell (+ $other 4)`, `:swell (linear 0..40 :len 8/1)`, `:swell none`. The
+value is song-wide (§5): written on any track, it is read by every track, and
+its sweep runs in a slot of its own — an effect taking the writing track's
+channel does not stop it. A reader takes the value when its own write runs
+(`:tl1 (+ 22 $swell)` follows a sweep note by note, not within a note). A
+host's write and the score's are the same write: the later one wins, and a
+host write ends the score's sweep of that slot.
 
 - `$name` references a slot in a value or operator-operand position of a
   runtime parameter write (§5.1). `vel`/`oct` resolve at compile time — a
@@ -925,8 +954,9 @@ A game's sound effects are written once, as defs, and every song carries them.
   effect plays, the song's part there is suspended, and comes back re-keyed
   when the effect ends (driver.md §2.5) — patch, levels, pan and, on `noise`,
   its mode, as they were. One part a channel (`E_SE_PART`).
-- **Not `:master` or `:lfo-rate`.** Those are the song's — the game's fader
-  and the chip's one LFO — so an effect does not write them (`E_SE_PART`).
+- **Not `:master`, `:lfo-rate` or a `def-val`.** Those are the song's — the
+  game's fader, the chip's one LFO, the score's values — so an effect does not
+  write them (`E_SE_PART`).
 - **CH3 is taken whole.** CH3's operator mode (`fm3-1`…`fm3-4`) and CSM
   (`fm3-csm`, `fm3-csm-rate`) are chip-wide, so an effect with any part on
   CH3 — `fm3` included — takes all of it: every song part on CH3 is suspended,
@@ -1046,10 +1076,10 @@ If the same target is set twice, the last one wins.
 | `:semi`    | `NOTE_SEMI`  | ±48          | Semitone steps (×100 cents), no retrigger — chiptune arpeggio; `:semi+` additive (§7) |
 | `:keyon`   | `KEYON`      | 0–1          | Retrigger gate, thresholded at ≥ 0.5   |
 | `:vol`     | `VOL`        | 0–31         |                                        |
-| `:master`  | `MASTER`     | 0–31         |                                        |
+| `:master`  | `MASTER`     | 0–31         | Song-wide (§5): inline only — a macro is a note's (`E_MACRO_TARGET`); sweep it instead |
 | `:pan`     | `PAN`        | −1–1         | Values snap to −1 / 0 / +1; symbols `left center right` |
 | `:mode`    | `NOISE_MODE` | 0–7          | Symbols `white0`–`white3` (4–7), `periodic0`–`periodic3` (0–3) |
-| `:lfo-rate`| `LFO_RATE`   | 0–8          |                                        |
+| `:lfo-rate`| `LFO_RATE`   | 0–8          | Song-wide (§5): inline only, as `:master` |
 | `:alg` `:fb` | `FM_ALG` `FM_FB` | 0–7    |                                        |
 | `:ams`     | `FM_AMS`     | 0–3          |                                        |
 | `:fms`     | `FM_FMS`     | 0–7          |                                        |

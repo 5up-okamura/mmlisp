@@ -82,6 +82,58 @@ const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
 // block edge rather than a chip register — so they are PARAM-legal (a literal
 // or a curve) but not macro-legal. An …_END and an …_LEN both set their span's
 // far bound, pinning the end vs the length; the last one written wins.
+// The song-wide write targets a macro does not take (a macro is a note's).
+const SONG_TARGETS = new Set(["MASTER", "LFO_RATE"]);
+// Song-wide write targets: their sweeps run in slots of their own on the
+// driver, not in the writing channel's two (driver.md §4).
+const isSongTarget = (t) => SONG_TARGETS.has(t) || /^VAL\d+$/.test(t ?? "");
+
+// Where a score's writes outrun what the driver keeps, or two channels race
+// for one song-wide value, say so — the driver would act deterministically,
+// but not as written (language.md §5.1, §8). Judged on the written timeline:
+// a loop's passes are its first.
+function warnSongWrites(tracks, diagnostics, frameHz) {
+  const tempos = tracks
+    .flatMap((t) => t.events.filter((e) => e.cmd === "TEMPO_SET"))
+    .map((e) => [e.tick, e.args?.bpm ?? 120])
+    .sort((a, b) => a[0] - b[0]);
+  const bpmAt = (tick) => tempos.reduce((bpm, [t, b]) => (t <= tick ? b : bpm), 120);
+  const ticksOf = (ev) => {
+    const n = Number(ev.args?.frames ?? 1);
+    return ev.args?.lenFrames ? (n * bpmAt(ev.tick) * PPQN) / (60 * frameHz) : n;
+  };
+  // A channel runs two sweeps at once; a third evicts one (driver.md §4).
+  for (const t of tracks) {
+    const live = new Map(); // target → end tick
+    for (const ev of t.events) {
+      const target = ev.args?.target;
+      if (!target || isSongTarget(target)) continue;
+      if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP_STOP") live.delete(target);
+      if (ev.cmd !== "PARAM_SWEEP") continue;
+      for (const [k, end] of live) if (end <= ev.tick) live.delete(k);
+      if (!live.has(target) && live.size >= 2) {
+        pushDiag(diagnostics, "warning", "W_SWEEP_SLOTS",
+          `a third sweep at once on ${t.scoreChannel} (${[...live.keys(), target].join(", ")}): the channel runs two, so one is cut off`,
+          ev.src, t.scoreChannel);
+        break;
+      }
+      live.set(target, ev.args?.loop ? Infinity : ev.tick + ticksOf(ev));
+    }
+  }
+  // Two channels writing one song-wide value on one tick: the later track wins.
+  const writers = new Map(); // "target@tick" → channel
+  for (const t of tracks)
+    for (const ev of t.events) {
+      if (!ev.cmd.startsWith("PARAM_") || !isSongTarget(ev.args?.target)) continue;
+      const key = `${ev.args.target}@${ev.tick}`;
+      const other = writers.get(key);
+      if (other != null && other !== t.scoreChannel)
+        pushDiag(diagnostics, "warning", "W_SONG_WRITE_RACE",
+          `${other} and ${t.scoreChannel} write the same song-wide value on one tick; ${t.scoreChannel}'s, the later track, wins`,
+          ev.src, t.scoreChannel);
+      writers.set(key, t.scoreChannel);
+    }
+}
 const PCM_POINT_TARGETS = new Set(["RANGE_START", "RANGE_END", "RANGE_LEN",
   "LOOP_START", "LOOP_END", "LOOP_LEN"]);
 const PCM_PITCH_KEYWORD = { NOTE_PITCH: ":pitch", NOTE_SEMI: ":semi" };
@@ -1427,7 +1479,8 @@ function valueCtx(target, vals, diagnostics, trackName, src, typedDefs = null) {
   return {
     ...makeEvalCtx(diagnostics, trackName, src, typedDefs),
     i16: target === "NOTE_PITCH",
-    isSelf: (name) => target != null && canonicalTarget(":" + name) === target,
+    isSelf: (name) => target != null && (canonicalTarget(":" + name) === target ||
+      (vals?.has(name) && `VAL${vals.get(name).slot}` === target)),
     resolveSlot: (raw) => resolveValRef(raw, vals, diagnostics, trackName, src),
   };
 }
@@ -2982,6 +3035,15 @@ function csmTrackPitch(trackState, noteName, diagnostics, src, trackName) {
   return `${noteName}${Math.max(0, oct)}`;
 }
 
+// A `:keyword` the language already means something by — a target, a PCM
+// point, or one of the body keywords handled by name — or the `$time` source.
+const BODY_KEYWORDS = new Set(["oct", "len", "gate", "tempo", "shuffle", "shuffle-base",
+  "csm-rate", "mode", "vel", "time", "prio", "pcm-voices", "step"]);
+function isLanguageKeyword(name) {
+  const t = canonicalTarget(":" + name);
+  return BODY_KEYWORDS.has(name) || SUPPORTED_TARGETS.has(t) || PCM_POINT_TARGETS.has(t);
+}
+
 export function canonicalTarget(symbol) {
   const map = {
     // Sequencer / level
@@ -3536,8 +3598,11 @@ function compileChannelBody(
               // Absolute literal → PARAM_SET; curve → PARAM_SWEEP; +/* operator
               // or $value → runtime PARAM_ADD/PARAM_MUL/PARAM_FROM_VAL.
               const { stem, op } = opSuffix(val);
-              const target = canonicalTarget(stem);
-              if (!SUPPORTED_TARGETS.has(target) && !PCM_POINT_TARGETS.has(target)) {
+              // A def-val's own name writes its slot: score-global, like
+              // :tempo, whichever track carries it (§8).
+              const valDef = vals?.get(stem.slice(1));
+              const target = valDef ? `VAL${valDef.slot}` : canonicalTarget(stem);
+              if (!valDef && !SUPPORTED_TARGETS.has(target) && !PCM_POINT_TARGETS.has(target)) {
                 // Unrecognized `:keyword` — a typo or a stray track-header option
                 // used mid-body. Fail loudly instead of dropping it silently.
                 pushDiag(
@@ -3561,7 +3626,7 @@ function compileChannelBody(
                 )
               )
                 break;
-              if (!PARAM_SET_TARGETS.has(target)) {
+              if (!valDef && !PARAM_SET_TARGETS.has(target)) {
                 // A known macro keyword (:semi/:keyon) with no absolute-write
                 // meaning — valid in a (macro …) but not as an inline write.
                 pushDiag(
@@ -4254,6 +4319,14 @@ function compileChannelBody(
                     nodeSrc(rest[j]), trackName);
                   continue;
                 }
+                // A macro runs from a note's key-on; the song's own values
+                // are not a note's. A looping sweep moves them over time.
+                if (SONG_TARGETS.has(target)) {
+                  pushDiag(diagnostics, "error", "E_MACRO_TARGET",
+                    `${groupSym} is the song's, not a note's, so it takes no macro — sweep it instead (${groupSym} (sin …))`,
+                    nodeSrc(rest[j]), trackName);
+                  continue;
+                }
                 if (isClear) {
                   clearMacroTarget(trackState, target);
                   continue;
@@ -4581,6 +4654,14 @@ function collectDefs(roots, diagnostics) {
         );
         continue;
       }
+      // `:name` writes the slot (§8), so a name the language already spells
+      // as a keyword — or the built-in `$time` — would be two things at once.
+      if (isLanguageKeyword(name)) {
+        pushDiag(diagnostics, "error", "E_DEFVAL_NAME",
+          `def-val ${name}: :${name} is already a keyword, so the value could not be written`,
+          nodeSrc(root), null);
+        continue;
+      }
       // Optional positional init (item[2]); absent when options start there
       // (e.g. `(def-val x :from 0 :to -127)`), then init defaults to `from`.
       const initPos = parseIntLike(atomValue(root.items[2]));
@@ -4595,6 +4676,7 @@ function collectDefs(roots, diagnostics) {
       let to;
       let step = 1; // slider granularity (control resolution)
       let unit = "frame"; // time unit when this slot feeds :len/:step
+      let isPublic = false; // :public — a slider and the host's to write
       let k = initPos === null ? 2 : 3;
       // Positional range sugar: `(def-val amp 24 0..127)` ≡ `:from 0 :to 127`.
       const range = parseRangeToken(atomValue(root.items[k]));
@@ -4603,8 +4685,13 @@ function collectDefs(roots, diagnostics) {
         to = range.to;
         k += 1;
       }
-      for (; k + 1 < root.items.length; k += 2) {
+      for (; k < root.items.length; k += 2) {
         const key = atomValue(root.items[k]);
+        if (key === ":public") {
+          isPublic = true;
+          k -= 1; // a flag: no value follows
+          continue;
+        }
         const raw = atomValue(root.items[k + 1]);
         const bad = (why) => pushDiag(diagnostics, "error", "E_DEFVAL_OPTION",
           `def-val ${name}: ${key} ${raw ?? ""} — ${why}`, nodeSrc(root), null);
@@ -4661,6 +4748,7 @@ function collectDefs(roots, diagnostics) {
           step,
           reversed,
           unit,
+          public: isPublic,
         });
       continue;
     }
@@ -4783,6 +4871,14 @@ function collectDefs(roots, diagnostics) {
     remaining.push(root);
   }
 
+  // `:public` slots first, each group in declaration order: the indices the
+  // host writes do not move when the score adds a value of its own.
+  const ordered = [...vals.values()].sort((a, b) => b.public - a.public || a.slot - b.slot);
+  vals.clear();
+  ordered.forEach((v, i) => vals.set(v.name, { ...v, slot: i }));
+  if (vals.size > 16)
+    pushDiag(diagnostics, "error", "E_DEFVAL_COUNT",
+      `${vals.size} def-val slots; the driver holds 16`, null, null);
   return { defs, paramDefs, typedDefs, sampleDefs, seDefs, vals, fileMeta, imports, mods, remaining };
 }
 
@@ -5818,11 +5914,13 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
           args: { target: "NOISE_MODE", value: NOISE_MODE_MAP["white0"] }, src: se.src });
       compileChannelBody(node.items.slice(1), trackState, trackData.events, diagnostics,
         `se:${se.name}:${head}`, typedDefs, loopCounter, vals);
-      // :master and :lfo-rate are the song's, not a channel's — the game's
-      // fader and the chip's one LFO — and an effect's end would leave them
-      // as it set them. An effect does not write them (language.md §9.3).
+      // :master, :lfo-rate and the def-val slots are the song's, not a
+      // channel's — the game's fader, the chip's one LFO, the score's values —
+      // and an effect's end would leave them as it set them. An effect does
+      // not write them (language.md §9.3).
+      const valNames = new Map([...vals.values()].map((v) => [`VAL${v.slot}`, `:${v.name}`]));
       for (const ev of trackData.events) {
-        const t = SE_FORBIDDEN_TARGETS[ev.args?.target];
+        const t = SE_FORBIDDEN_TARGETS[ev.args?.target] ?? valNames.get(ev.args?.target);
         if (t) pushDiag(diagnostics, "error", "E_SE_PART",
           `def-se ${se.name}: ${t} is the song's, not an effect's`, ev.src ?? se.src, null);
       }
@@ -5838,6 +5936,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     t.id = idx;
     for (const ev of t.events) delete ev._voice;
   });
+  warnSongWrites(tracks.filter((t) => !t.se), diagnostics, frameHz);
 
   for (const track of tracks) convertCountedJumps(track);
   // A (break) that no counted loop claimed does nothing — an infinite loop has
@@ -5932,6 +6031,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         step: v.step,
         reversed: v.reversed,
         unit: v.unit,
+        public: v.public,
       })),
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,

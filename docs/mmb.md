@@ -222,7 +222,9 @@ count : u16          (0–16; driver RAM reserves 16 slots)
 inits : count × i16  (initial slot values, slot = array index)
 ```
 
-Slot names stay in IR/metadata only; the binary uses indices. At
+Every slot the score declares is here, the `:public` ones first
+(language.md §8); the stream writes slot n as the target VAL*n* (opcodes.md
+§7). Slot names stay in IR/metadata only; the binary uses indices. At
 START_TRACK time the driver initializes each declared slot to its init
 value unless the host has already written it this session (driver.md §6).
 
@@ -238,7 +240,8 @@ value     : value_len bytes, UTF-8
 ```
 
 Required keys: `title`, `composer`, `author`, `compiler_version`. Optional keys include
-`bpm` (display-only, see §7.5) and val-slot names. **The driver ignores this
+`bpm` (display-only, see §7.5) and the `:public` val slots' names
+(`val_<slot>`) — the score's own slots have no name a host could address. **The driver ignores this
 section entirely**; it exists for hosts and tools.
 
 ## 10. SAMPLE_BANK (separate ROM bank)

@@ -56,6 +56,7 @@ import {
   headerFrameHz,
   tickIncrementToBpm,
   pcmBankStamp,
+  VAL_TARGET_IDS,
 } from "./mmb.js";
 import {
   toSlotValue,
@@ -83,6 +84,8 @@ const FRAMES_PER_SEC = 60;
 // The channels the macro engine runs on: 0-9 and FM3's four operators
 // (mmlispseq.h MML_MACRO_CHANNELS).
 const MACRO_CHANNELS = 17;
+// The song-wide targets' own sweep slots: :master, :lfo-rate, VAL0–15.
+const GLOBAL_SWEEPS = 18;
 const LOOP_STACK_DEPTH = 4; // driver.md §5.2
 
 // ── LUT construction (float math lives here and only here) ────────────────
@@ -450,6 +453,9 @@ export class DrvPlayer {
     // Sweep banks: the ten M1 channels, the three PCM voices, then FM3's
     // the four operators (ids 16-19) — see _sweepBank.
     this._sweeps = Array.from({ length: 17 }, () => [null, null]);
+    // The song-wide targets' sweeps — :master, :lfo-rate, VAL0–15 — one slot
+    // each, owned by no channel (_globalSweep).
+    this._gsweeps = new Array(GLOBAL_SWEEPS).fill(null);
     // M3 macro engine (driver.md §13). Per channel: a sticky active set (up to
     // 3 macros keyed by target) and running slots instantiated on NOTE_ON.
     this._macros = song?.macros ?? [];
@@ -1601,6 +1607,10 @@ export class DrvPlayer {
       this._pcm.setMaster(this._master);
       return;
     }
+    if (VAL_TARGET_IDS.has(target)) {
+      this._valSlots[target - TARGET_ID.VAL0] = value < -32768 ? -32768 : value > 32767 ? 32767 : value;
+      return;
+    }
     if (target === TARGET_ID.LFO_RATE) {
       const rate = value < 0 ? 0 : value > 8 ? 8 : value;
       this._lfoRate = rate;
@@ -1825,10 +1835,18 @@ export class DrvPlayer {
     return 16 + (bank - 13);
   }
 
+  // A song-wide target's own sweep slot, or -1 for a channel's target.
+  _globalSweep(target) {
+    if (target === TARGET_ID.MASTER) return 0;
+    if (target === TARGET_ID.LFO_RATE) return 1;
+    if (VAL_TARGET_IDS.has(target)) return 2 + (target - TARGET_ID.VAL0);
+    return -1;
+  }
+
   _startSweep(ch, target, curveId, loop, from, to, len) {
-    const bank = this._sweepBank(ch);
-    if (bank < 0) return;
-    const slots = this._sweeps[bank];
+    const g = this._globalSweep(target);
+    const bank = g >= 0 ? -1 : this._sweepBank(ch);
+    if (g < 0 && bank < 0) return;
     const slot = {
       target,
       curveId,
@@ -1840,6 +1858,11 @@ export class DrvPlayer {
       phase16: 0,
       step16: sweepStep(len, loop),
     };
+    if (g >= 0) {
+      this._gsweeps[g] = slot;
+      return;
+    }
+    const slots = this._sweeps[bank];
     let idx = slots.findIndex((x) => x && x.target === target);
     if (idx < 0) idx = slots.findIndex((x) => x === null);
     if (idx < 0) {
@@ -1850,6 +1873,11 @@ export class DrvPlayer {
   }
 
   _stopSweep(ch, target) {
+    const g = this._globalSweep(target);
+    if (g >= 0) {
+      this._gsweeps[g] = null;
+      return;
+    }
     const bank = this._sweepBank(ch);
     if (bank < 0) return;
     const slots = this._sweeps[bank];
@@ -2273,7 +2301,10 @@ export class DrvPlayer {
         this._mailboxFade(a0, a1);
         break;
       case 0x06: // SET_VAL (slot, value low, value high)
-        if (a0 < 16) this._valSlots[a0] = i16(a1 | (a2 << 8));
+        if (a0 < 16) {
+          this._gsweeps[2 + a0] = null; // the latest write wins over a score sweep
+          this._valSlots[a0] = i16(a1 | (a2 << 8));
+        }
         break;
       case 0x08: // PRIME — every idle track's leading setup, now
         this._prime();
@@ -2944,6 +2975,7 @@ export class DrvPlayer {
   // Logical current value of a target, for PARAM_ADD read-modify-write.
   _readParam(ch, target) {
     if (target === TARGET_ID.MASTER) return this._master;
+    if (VAL_TARGET_IDS.has(target)) return this._valSlots[target - TARGET_ID.VAL0];
     {
       const op = this._fm3OpFor(ch);
       if (op) {
@@ -3041,6 +3073,9 @@ export class DrvPlayer {
             if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;
           }
         }
+        // The song-wide targets' sweeps, after every channel's, in slot order.
+        for (let g = 0; g < GLOBAL_SWEEPS; g++)
+          if (this._gsweeps[g] && this._processSweep(0, this._gsweeps[g])) this._gsweeps[g] = null;
         this._processMacros(); // §13.3: macros after sweeps, same write path
         if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
         if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
@@ -3135,6 +3170,7 @@ export class DrvPlayer {
       this._trk.every((t) => !t.running || t.held) &&
       !this._macroSlots.some((ss) => ss.some((s) => s && (s.state === "release" || s.state === "tail"))) &&
       !this._sweeps.some((ss) => ss.some((s) => s && !s.loop)) &&
+      !this._gsweeps.some((s) => s && !s.loop) &&
       !this._tempoSweep && !this._csmRateSweep
     );
   }
@@ -3350,7 +3386,9 @@ export class DrvPlayer {
     const slot = this._valNameToSlot?.get(name);
     if (slot === undefined || !this._valSlots || slot >= this._valSlots.length) return;
     const v = toSlotValue(value);
-    if (v !== null) this._valSlots[slot] = v;
+    if (v === null) return;
+    this._gsweeps[2 + slot] = null; // the latest write wins over a score sweep
+    this._valSlots[slot] = v;
   }
 
   getVal(name) {

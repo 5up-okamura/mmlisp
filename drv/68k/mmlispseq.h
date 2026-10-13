@@ -135,6 +135,11 @@ typedef struct {
  * three PCM voices (macro_ch()). */
 #define MML_MACRO_CHANNELS 17
 
+/* The song-wide targets' sweeps — :master, :lfo-rate and the sixteen value
+ * slots — one slot each, owned by no channel (driver.md §4): an effect taking
+ * the channel that wrote one does not stop it. */
+#define MML_GLOBAL_SWEEPS 18
+
 /* One sweep slot (driver.md §4 step 3). Two per channel, so a pitch glide and
  * a volume fade can run at once. */
 typedef struct {
@@ -374,6 +379,7 @@ typedef struct {
   MMLCh3Snap ch3;      /* CH3 as an effect found it, while one holds it */
 
   MMLSweep sweeps[MML_SWEEP_BANKS][2];
+  MMLSweep gsweeps[MML_GLOBAL_SWEEPS]; /* see MML_GLOBAL_SWEEPS */
   MMLMacroBind binds[MML_MACRO_CHANNELS][MML_MACRO_BINDS];
   uint8_t bind_count[MML_MACRO_CHANNELS];
   MMLMacroSlot macro_slots[MML_MACRO_CHANNELS][MML_MACRO_BINDS];
@@ -384,7 +390,7 @@ typedef struct {
    * when it finds nothing (a stale set bit costs one test, a stale clear bit
    * would skip real work — so the walks clear, never the state's other
    * writers). */
-  uint32_t sweep_live, macro_live, fade_live;
+  uint32_t sweep_live, macro_live, fade_live, gsweep_live;
   /* FM3 independent-OP mode: each operator's own note and sticky :pitch
    * offset (index = op - 1). In special mode these, not fm[2]'s, are what the
    * operator's F-number is written from (driver.md §13.4). */

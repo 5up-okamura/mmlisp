@@ -45,8 +45,8 @@
   :ar3 31 :dr3 8 :sr3 1 :rr3 7 :sl3 2 :tl3 24 :ks3 0 :ml3 1 :dt3 0
   :ar4 31 :dr4 12 :sr4 2 :rr4 10 :sl4 4 :tl4 2 :ks4 0 :ml4 1 :dt4 0)
 
-(def-val vib 128 0..255)
-(def-val lvl 24 0..31)
+(def-val vib 128 0..255 :public)
+(def-val lvl 24 0..31 :public)
 
 ; ── BGM ─────────────────────────────────────────────────────────────────────
 ; track 0 — fm1. WHOLE NOTES, so an effect always steals a note that is still

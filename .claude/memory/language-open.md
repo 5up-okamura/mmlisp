@@ -58,6 +58,30 @@ writes variables, the score declares how the music responds. The four tiers
 (compile / tick / note-on / frame) are the unifying answer to "when is this
 value read?" (guide §18b).
 
+**Score-written values and song-wide sweeps** (2026-10-13). A `def-val` is
+also the score's own variable — "外に出す必要がなくても変数として使いたい".
+The user's rulings and why:
+
+- **`:public` marks the host's slots; no mark = the score's own.** Chosen over
+  `:private` once old scores were off the table ("既存のスコアのことを考える
+  必要なし"): the game interface is a contract, so exposure is opted into.
+  Public slots are numbered first so a private one never shifts the host's
+  indices. Rejected spellings: `:host none`, a range meaning public.
+- **Writes reuse the parameter syntax** (`:name v`, `:name+`, `(curve)`) and
+  the existing PARAM opcodes, the slot being target VALn — no new opcode.
+- **"制限はつけない、書いた通りに動く、でも破綻は困る"**: nothing is refused
+  for being an odd combination; where the driver cannot follow, the compiler
+  warns (`W_SWEEP_SLOTS`, `W_SONG_WRITE_RACE`) rather than refusing. The one
+  arbitration rule: the latest write or sweep wins, host or score.
+- **A song-wide value's sweep belongs to no channel** ("関係ないmacroが
+  チャンネルに縛られることに違和感") — :master, :lfo-rate and VALn sweep in
+  slots of their own, so an effect taking the writing channel does not stop
+  them. **Song-wide macros were dropped, not moved** — a macro is a note's
+  (key-on/key-off), and carrying one globally was too heavy for its use
+  ("実装が重いならいらない"); `(macro :master …)` is an error.
+- **16 slots stay** — the opcode space (0x10–0xFE) leaves room for a private
+  range if a score ever needs more; grow it then, not before.
+
 **PSG envelopes are macros, not a new def head** (2026-10-03). A `def-env` /
 `def-macro` was discussed and rejected: an envelope is already `(def name
 (macro …))`, the one form of a named macro, and the only need was tooling — so

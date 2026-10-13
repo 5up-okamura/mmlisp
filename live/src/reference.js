@@ -290,11 +290,11 @@ export const REFERENCE = [
     example: '(def (beat n) (x 2 > n < n))\n(fm1 :len 8 (beat c) (beat e))',
   },
   {
-    name: 'def-val', aliases: ['$', 'slot', 'runtime value', ':unit'], cat: 'defs', section: '§8', tracks: null,
-    syntax: '(def-val name init A..B)  ·  $name',
-    summary: 'A runtime value slot the game (or a Live slider) writes; $name reads it where a value goes.',
-    insert: '(def-val bright 20 0..40)',
-    example: '(def-val bright 20 0..40)\n(fm1 :len 8 :tl1 $bright c e g e)',
+    name: 'def-val', aliases: ['$', 'slot', 'runtime value', ':unit', ':public', 'variable'], cat: 'defs', section: '§8', tracks: null,
+    syntax: '(def-val name init [A..B] [:public])  ·  $name  ·  :name value|curve',
+    summary: 'A runtime value: $name reads it where a value goes, :name writes or sweeps it from any track; :public lets the game (or a Live slider) write it too.',
+    insert: '(def-val bright 20 0..40 :public)',
+    example: '(def-val bright 20 0..40 :public)\n(def-val swell 0)\n(fm1 :len 8 :swell (linear 0..20 :len 1) (x 2 :tl1 (+ $bright $swell) c e g e))',
   },
   {
     name: 'def-se', aliases: ['sound effect', 'se'], cat: 'defs', section: '§9.3', tracks: null,
@@ -330,7 +330,7 @@ export const REFERENCE = [
   {
     name: '(macro …)', aliases: ['macro', 'envelope'], cat: 'macros', section: '§10', tracks: null,
     syntax: '(macro :target spec …)  ·  (macro :target none)  ·  (macro none)',
-    summary: 'Per-note automation, sticky: every following note runs it until cleared. Targets: :vel :vol :master :pitch :semi :keyon :pan :mode :lfo-rate and the FM registers.',
+    summary: 'Per-note automation, sticky: every following note runs it until cleared. Targets: :vel :vol :pitch :semi :keyon :pan :mode and the FM registers (not the song-wide :master / :lfo-rate).',
     insert: '(macro :vel [15 12 9 6 3])',
     example: '(def pluck (macro :vel [15 12 9 6 3]))\n(sqr1 :oct 5 :len 8 pluck c e g e)',
   },

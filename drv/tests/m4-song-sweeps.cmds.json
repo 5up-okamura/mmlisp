@@ -1,0 +1,7 @@
+{
+  "autoStart": true,
+  "commands": [
+    {"frame": 30, "cmd": 9, "a0": 0},
+    {"frame": 120, "cmd": 6, "a0": 0, "a1": 25, "a2": 0}
+  ]
+}
