@@ -1266,8 +1266,10 @@ import does the same rather than approximating:
   slow; one that carries into the block is a sweep, drawn per pitch class from
   the exact curve as far as its longest note.
 - **Levels.** mucom sets every carrier TL from its volume table and ignores
-  the voice's own, so voices come in with carrier TL 2 (the `v15` value); SSG
-  envelopes land on its 3 dB volume steps, drawn per `:vel`.
+  the voice's own, so voices come in with carrier TL 2 (the `v15` value). An
+  SSG level (3 dB steps) plays as the PSG `:vel` nearest in dB on the Mega
+  Drive's measured attenuator, whose bottom steps are wider; SSG envelopes
+  land on those steps, drawn per `v`.
 - **Tempo** is `BPM = 832000 / ((256 − t) × C)`, to two decimals; `T` goes
   through the Timer-B value it compiles to.
 - **ADPCM**: o1 c plays at 16,143.6 Hz, the bank's labelled rate; the driver
@@ -1280,7 +1282,7 @@ import does the same rather than approximating:
   total and per-sound levels become `:vel`, the loudest sound at 15.
 
 The chip's own limits stay visible as warnings: SSG notes below A2 play an
-octave up (the PSG's floor), SSG levels under −30 dB hold at `:vel 1`, one
+octave up (the PSG's floor), one
 noise channel serves the first part that uses it, and SSG reverb rings without
 its level drop. Not imported: `S` FM3 slot detune, `s` key-on revise, and
 rhythm's per-sound pan.

@@ -1759,7 +1759,19 @@ function renderOps(ops, ctx, out, depth = 0) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v | 0)); }
 
-const SSG_VEL_SCALE = 3 / VEL_DB_PER_STEP; // SSG dB per v step, in :vel steps
+// The SSG's volume register steps 3 dB (fmgen psg.cpp), 0 silent. The Mega
+// Drive PSG's attenuator does not step evenly: Nuked-PSG's measured levels
+// (ympsg_vol) fall 2 dB a step at the top and 7 dB at the bottom. A register
+// value plays as the :vel whose level is nearest in dB (:vel = 15 - atten).
+const PSG_LEVELS = [1.0, 0.772, 0.622, 0.485, 0.382, 0.29, 0.229, 0.174, 0.132, 0.096, 0.072, 0.051, 0.034, 0.019, 0.009];
+const PSG_LEVEL_DB = PSG_LEVELS.map((x) => 20 * Math.log10(x));
+function ssgRegVel(r) {
+  if (r <= 0) return 0;
+  const db = -3 * (15 - Math.min(15, r));
+  let best = 0;
+  for (let a = 1; a < PSG_LEVEL_DB.length; a++) if (Math.abs(PSG_LEVEL_DB[a] - db) < Math.abs(PSG_LEVEL_DB[best] - db)) best = a;
+  return 15 - best;
+}
 
 // An SSG part that ever turns noise on renders twice: its square track keeps
 // the notes played with tone on, its noise copy (ctx.isNoise) the ones with
@@ -1829,50 +1841,46 @@ function finishChain(ctx, out) {
 //
 // mucom E AL,AR,DR,SL,SR,RR (music.asm SOFENV): a 0-255 level starts at AL,
 // climbs AR a clock to 255, falls DR a clock to SL, then SR a clock towards 0
-// while held; key-off falls RR a clock. The register gets level*(v+1)/256 —
-// the level lands LINEARLY on the SSG's 3 dB volume steps, so in dB a decay
-// is deeper the louder the note. With :vel = 1.5(v+1) - 9 (velToken), the
-// played level is L*(vel+9) - 9 for L = level/255, and as a :vel* macro (the
-// note's vel times m/15) that is m = 15 (L(vel+9) - 9) / vel — affine in L, so
-// the envelope's straight stages stay straight, clipped where they reach 0.
-// One envelope therefore draws per :vel, named like the LFO's pitch classes.
-function ssgEnvSpec(op, wholeClocks, vel) {
+// while held; key-off falls RR a clock. The register gets level*(v+1)/256,
+// which plays as ssgRegVel of it — so in dB a decay is deeper the louder the
+// note, and its last steps are the PSG's wide ones. As a :vel* macro (the
+// note's vel times each value) a stage is that played :vel over the note's,
+// clock by clock, fitted with straight pieces. One envelope therefore draws
+// per `v`, named like the LFO's pitch classes.
+const SSG_ENV_TOLERANCE = 1; // :vel steps, the straight-piece fit of a stage
+function ssgEnvSpec(op, wholeClocks, v) {
   const factor = WHOLE_TICKS / wholeClocks;
-  // The played :vel at level L, as a fraction of the note's: exact while it
-  // is 1 or more; below, the PSG has no step left (its 0 is off) while the
-  // SSG still sounds down to register 1, so it holds at :vel 1 until the SSG
-  // falls silent (L(v+1) < 1, v+1 = (vel+9)/1.5).
-  const L1 = 10 / (vel + 9), L0 = 1.5 / (vel + 9);
-  const played = (L) => (L >= L1 ? L * (vel + 9) - 9 : L >= L0 ? 1 : 0);
-  const m = (level) => Math.max(0, Math.min(15, Math.round((15 * played(level / 255)) / Math.max(1, vel))));
+  const vel = Math.max(1, ssgRegVel(v));
+  const played = (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256));
+  const ratio = (x) => Math.round((100 * x) / vel) / 100;
   const items = [];
-  // A straight stage from level a to b over `clocks`, split where the played
-  // level changes regime: exact, then held at :vel 1, then silent.
+  // A straight stage from level a to b over `clocks`: the played :vel per
+  // tick, fitted greedily with pieces that stay within the tolerance.
   const stage = (a, b, clocks) => {
     if (clocks <= 0) return;
     const total = Math.max(1, Math.round(clocks * factor));
-    const cuts = [L1 * 255, L0 * 255].filter((x) => (x - a) * (x - b) < 0).sort((x, y) => (a > b ? y - x : x - y));
-    const pts = [a, ...cuts, b];
-    let used = 0;
-    for (let k = 1; k < pts.length; k++) {
-      const [pa, pb] = [pts[k - 1], pts[k]];
-      const last = k === pts.length - 1;
-      const t = last ? total - used : Math.max(1, Math.round((total * Math.abs(pb - pa)) / Math.abs(b - a)));
-      if (t <= 0) continue;
-      const exact = (pa + pb) / 2 >= L1 * 255; // the piece lies in one regime
-      const [va, vb] = exact ? [m(pa), m(pb)] : [m((pa + pb) / 2), m((pa + pb) / 2)];
-      items.push(`(linear ${va}..${vb} :len ${t}t)`);
-      used += t;
+    const y = Array.from({ length: total + 1 }, (_, k) => played(a + ((b - a) * k) / total));
+    let i = 0;
+    while (i < total) {
+      let j = i + 1;
+      for (let e = i + 2; e <= total; e++) {
+        let ok = true;
+        for (let k = i + 1; k < e && ok; k++) ok = Math.abs(y[i] + ((y[e] - y[i]) * (k - i)) / (e - i) - y[k]) <= SSG_ENV_TOLERANCE;
+        if (!ok) break;
+        j = e;
+      }
+      items.push(`(linear ${ratio(y[i])}..${ratio(y[j])} :len ${j - i}t)`);
+      i = j;
     }
   };
   const { al, ar, dr, sl, sr, rr } = op;
   if (al < 255) {
     if (ar > 0) stage(al, 255, (255 - al) / ar);
-    else items.push(`${Math.round(Math.max(0, m(al)))}`); // AR 0: it never rises
+    else items.push(`${ratio(played(al))}`); // AR 0: it never rises
   }
   if (al >= 255 || ar > 0) {
     if (sl < 255) stage(255, sl, dr > 0 ? (255 - sl) / dr : 0);
-    if (dr === 0 && sl < 255) items.push("15"); // DR 0: it holds at the top
+    if (dr === 0 && sl < 255) items.push("1"); // DR 0: it holds at the top
     else if (sr > 0 && sl > 0) stage(sl, 0, sl / sr);
   }
   // Key-off releases from wherever the level is; a macro curve needs its
@@ -1883,12 +1891,11 @@ function ssgEnvSpec(op, wholeClocks, vel) {
   return `[ ${items.join(" ")} ]`;
 }
 
-// Before an SSG note: the envelope drawn for its :vel, if not already active.
+// Before an SSG note: the envelope drawn for its `v`, if not already active.
 function envBeforeNote(ctx, out) {
   const env = ctx.ssgEnv;
   if (!env || !ctx.envRegistry) return;
-  const vel = velToken(ctx.vel ?? 15, ctx);
-  const spec = ssgEnvSpec(env, env.wholeClocks, vel);
+  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15));
   let name = ctx.envRegistry.get(spec);
   if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
   if (name !== ctx.envActive || ctx.verbose) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
@@ -2015,10 +2022,8 @@ function detuneBeforeNote(ctx, out, letter, acc) {
 // amplitude, :vel is a 2 dB ladder, so the ratio becomes dB and the ladder
 // converts it to steps. Still lossy (16 steps), and v0 stays :vel 0.
 function velToken(v, ctx) {
-  // The SSG's volume steps are 3 dB (fmgen psg.cpp: two 1.5 dB table steps
-  // per value), the PSG's :vel 2 dB: keep the dB below full scale.
-  // :vel 0 is the PSG's off, so a quiet but audible v stays at :vel 1.
-  if (ctx.isSsg) return v <= 0 ? 0 : clamp(Math.round(15 - (15 - v) * SSG_VEL_SCALE), 1, 15);
+  // An SSG `v` is the register value an envelope at full level writes.
+  if (ctx.isSsg) return ssgRegVel(v);
   if (!ctx.isPcm) return clamp(v, 0, 15);
   const max = ctx.pcmVelMax || 0;
   if (v <= 0 || max <= 0) return 0;

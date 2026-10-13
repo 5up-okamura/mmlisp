@@ -206,7 +206,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       };
       const volMax = t.psgVolMax;
       if (ins.vol?.values.length)
-        parts.push(`:vel* ${arr(ins.vol, (x) => Math.max(0, Math.min(15, Math.round((x * 15) / volMax))))}`);
+        parts.push(`:vel* ${arr(ins.vol, (x) => Math.max(0, Math.min(1, Math.round((x * 100) / volMax) / 100)))}`);
       if (ins.arp?.values.length && ins.arp.values.some((x) => x !== 0)) parts.push(`:semi ${arr(ins.arp, (x) => x)}`);
       if (ins.arpFixed) warnings.push(`instrument "${ins.name}": a fixed-pitch arpeggio macro is not imported`);
       const name = uniq(`env-${slug(ins.name) || i}`);
