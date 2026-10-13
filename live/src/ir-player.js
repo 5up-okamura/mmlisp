@@ -498,6 +498,27 @@ export class IRPlayer {
   }
 
   /**
+   * Where a track is at an AudioContext time: `tick`, the event tick it plays
+   * then (wrapping round its loop as trackClock's does), and `raw`, the ticks
+   * since its first pass began, which keep counting across loop passes.
+   * Worked out from the first pass's anchor, so unlike trackClock it does not
+   * jump a loop early when the scheduler, running ahead, re-anchors the next
+   * pass. Returns null when not playing.
+   * @param {number} trackIndex index into ir.tracks (== flattened track index)
+   * @param {number} audioTime seconds on the AudioContext clock
+   */
+  trackTickAt(trackIndex, audioTime) {
+    const tr = this._tracks?.[trackIndex];
+    if (!this._playing || !tr) return null;
+    const raw = (audioTime - tr.startAudioTime) / this._secsPerTick;
+    const jump = tr.loopStartTick + tr.loopDuration;
+    const tick = tr.hasLoop && raw >= jump
+      ? tr.loopStartTick + ((raw - tr.loopStartTick) % tr.loopDuration)
+      : raw;
+    return { raw, tick };
+  }
+
+  /**
    * Play from the first event of a source line — the nearest line at or above
    * it that has one; its first pass, a line in a loop body included — as
    * seek() does: chased, so the line sounds as it does when the song reaches

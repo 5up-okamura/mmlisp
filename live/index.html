@@ -9545,7 +9545,7 @@
           } else continue;
           notes.push({
             startTick: ev.tick, midi, lenTicks: len, gateTicks: Math.max(1, gate), vel,
-            src: ev.src, sample: ev.args?.sample,
+            src: ev.src, sample: ev.args?.sample, legato: !!ev.args?.legato,
           });
           if (midi < lo) lo = midi;
           if (midi > hi) hi = midi;
@@ -9637,7 +9637,7 @@
     let _rollRange = { lo: 48, hi: 72 };
     let _rollHits = [];         // this frame's notes, for the pointer: { x, y, w, h, n, cell }
     const _rollLoops = new Map(); // trackIndex → { last, wrapped }: has its loop come round
-    let _rollTrace = null;      // the focus's pitch trace: { head, offset, last, note, …, pts: [{ u, p } | null] }
+    let _rollTrace = null;      // the focus's pitch trace: { head, last, now, note, time, start, pts: [{ u: raw tick, p } | null] }
     let _rollSel = new Set();   // notes written at the cursor (drawn solid)
     let _rollSelStale = false;  // the model was rebuilt: re-match on the next frame
 
@@ -9758,41 +9758,48 @@
       return null;
     }
 
-    // One sample a frame of the focus's real pitch, in ticks that keep
-    // counting across loop passes, so the trace runs on behind the playhead.
-    // The latched frequency arrives with the audio batches, so for a moment
-    // after a key-on it is still the previous note's: those samples are
-    // skipped (ROLL_TRACE_STALE_MS at most), and the line breaks at every new note — a
-    // key-on jumps; only a glide or vibrato inside a note draws a slope.
-    const ROLL_TRACE_STALE_MS = 120;
-    function rollRecordTrace(cell, clock, keepTicks) {
-      if (!cell || !clock || _paused || cell.head.startsWith('fm3-')) { if (!clock) _rollTrace = null; return; }
-      if (!_rollTrace || _rollTrace.head !== cell.head) {
-        _rollTrace = { head: cell.head, offset: 0, last: null, note: null, noteAt: 0, prevHz: 0, lastHz: 0, pts: [] };
-      }
-      const tr = _rollTrace;
-      if (tr.last != null && clock.tick < tr.last - 1) {
-        if (clock.loopTicks && clock.tick < tr.last - clock.loopTicks / 2) tr.offset += clock.loopTicks;
-        else { tr.pts = []; tr.offset = 0; } // a seek: the old trace no longer lines up
-      }
-      tr.last = clock.tick;
-      const u = clock.tick + tr.offset;
+    // The focus's real pitch, one sample per audio batch: the frequency
+    // latched at the batch's end, filed at the track's position at that audio
+    // time (player.trackTickAt), so the line sits under the notes it belongs
+    // to. Its x is the raw tick, which keeps counting across loop passes, so
+    // the trace runs on behind the playhead. The line breaks at every key-on
+    // (a new note jumps) and wherever playback stopped; a slur, which moves
+    // the pitch without one, stays joined, so its glide reads as one slope.
+    const ROLL_TRACE_GAP_S = 0.1; // batches further apart than this: playback stopped between
+    // While stopped the chip keeps its last pitch latched, and for a batch or
+    // two after playback starts it still reads that: such samples are skipped
+    // for up to ROLL_TRACE_SETTLE_S of a start.
+    const ROLL_TRACE_SETTLE_S = 0.15;
+    let _rollKeepTicks = 4096; // how far back the trace is kept (the roll's left side)
+    let _rollIdleHz = 0;       // the focus channel's latch while not playing
+    function rollTraceBatch(batchTime) {
+      const cell = _vizNotes.find((c) => c.head === _rollFocus);
+      if (!cell || !rollPitched(cell) || cell.head.startsWith('fm3-')) return;
       const k = scopeChannelOf(cell.head);
       const hz = k != null ? _scopeFreqs[k] : 0;
-      const n = hz > 0 ? rollSoundingAt(cell, clock.tick) : null;
-      const now = performance.now();
-      if (n !== tr.note) {
-        if (tr.pts.length && tr.pts[tr.pts.length - 1]) tr.pts.push(null);
-        tr.note = n; tr.noteAt = now; tr.prevHz = tr.lastHz;
+      const at = !_paused && batchTime != null ? player?.trackTickAt?.(cell.trackIndex, batchTime) : null;
+      if (!at) {
+        _rollIdleHz = hz;
+        if (!_paused) _rollTrace = null; // stopped: the next play starts afresh
+        return;
       }
-      const stale = n && hz === tr.prevHz && now - tr.noteAt < ROLL_TRACE_STALE_MS;
-      if (n && !stale) {
-        tr.pts.push({ u, p: 69 + 12 * Math.log2(hz / 440) });
-        tr.prevHz = 0; // the latch has caught up: from here every sample counts
+      if (!_rollTrace || _rollTrace.head !== cell.head) {
+        _rollTrace = { head: cell.head, last: null, now: null, note: null, time: null, start: batchTime, pts: [] };
       }
-      if (n) tr.lastHz = hz;
+      const tr = _rollTrace;
+      const resumed = tr.time != null && batchTime - tr.time > ROLL_TRACE_GAP_S;
+      if (resumed) tr.start = batchTime;
+      tr.time = batchTime;
+      if (tr.last != null && at.raw < tr.last) tr.pts = []; // restarted earlier in the song
+      tr.last = at.raw;
+      const settling = hz === _rollIdleHz && batchTime - tr.start < ROLL_TRACE_SETTLE_S;
+      const n = hz > 0 && !settling && at.raw >= 0 ? rollSoundingAt(cell, at.tick) : null;
+      const keyOn = n !== tr.note && !(n?.legato && tr.note);
+      if ((keyOn || resumed) && tr.pts.length && tr.pts[tr.pts.length - 1]) tr.pts.push(null);
+      tr.note = n;
+      if (n) tr.pts.push({ u: at.raw, p: 69 + 12 * Math.log2(hz / 440) });
       let drop = 0;
-      while (drop < tr.pts.length && (!tr.pts[drop] || tr.pts[drop].u < u - keepTicks)) drop++;
+      while (drop < tr.pts.length && (!tr.pts[drop] || tr.pts[drop].u < at.raw - _rollKeepTicks)) drop++;
       if (drop) tr.pts.splice(0, drop);
     }
 
@@ -9881,11 +9888,14 @@
       }
 
       // The focus's real pitch, behind the playhead only (it is what sounded).
+      _rollKeepTicks = leftTicks;
       if (focusCell && rollPitched(focusCell)) {
-        rollRecordTrace(focusCell, fClock, leftTicks);
         const tr = _rollTrace;
-        if (tr && tr.head === focusCell.head && tr.pts.length) {
-          const uNow = (tr.last ?? 0) + tr.offset;
+        if (tr && tr.head === focusCell.head && !_paused && audioCtx) {
+          tr.now = player?.trackTickAt?.(focusCell.trackIndex, audioCtx.currentTime)?.raw ?? tr.now;
+        }
+        if (tr && tr.head === focusCell.head && tr.pts.length && tr.now != null) {
+          const uNow = tr.now; // held while paused, as the notes are
           ctx.strokeStyle = fg;
           ctx.lineWidth = 1.5;
           ctx.beginPath();
@@ -10094,6 +10104,7 @@
       // While PCM plays, FM6 carries the DAC: its fnum/block latch describes a
       // note that is not sounding, so the trigger must treat it as unpitched.
       if (msg.fm6IsDac) _scopeFreqs[5] = 0;
+      if (_vizRoll) rollTraceBatch(msg.time);
       const pos = _scopeAbs % SCOPE_RING;
       let len = 0;
       // Batch length (1024) divides SCOPE_RING, so a copy never wraps.

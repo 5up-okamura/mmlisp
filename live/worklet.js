@@ -23,11 +23,12 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  *
  * Messages to the main thread include (while scope is enabled):
- *   { type: 'scope', sampleRate, freq: number[10], fm6IsDac: boolean,
+ *   { type: 'scope', sampleRate, time, freq: number[10], fm6IsDac: boolean,
  *     ch: [ArrayBuffer × 10] }  — SCOPE_FLUSH output-rate samples per channel
  *     (FM 1-6, PSG tone 1-3, noise), buffers transferred; post them back via
  *     'scope-return' to avoid reallocation. freq[c] is the pitch latched from
- *     the channel's register writes (Hz, 0 = unknown/unpitched).
+ *     the channel's register writes (Hz, 0 = unknown/unpitched) as of `time`,
+ *     the batch's end on the AudioContext clock (s).
  */
 
 // The Mega Drive chip-synthesis DSP (FM resample, PSG decimate + DC block, mix,
@@ -507,6 +508,7 @@ class YM2612Processor extends AudioWorkletProcessor {
           {
             type: "scope",
             sampleRate,
+            time: (currentFrame + src) / sampleRate,
             freq: Array.from(this._scopeFreq),
             fm6IsDac: this._dacFromVoices,
             ch: buffers,
