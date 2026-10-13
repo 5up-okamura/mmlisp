@@ -18,6 +18,7 @@ import {
   midiToHz,
   pitchToMidi,
   sampleCurveUnit,
+  expandLoops,
   FRAME_HZ_NTSC,
   FRAME_HZ_PAL,
 } from "./ir-utils.js";
@@ -1682,15 +1683,9 @@ function expandTrackDelays(track) {
 // are resolved preemptively: a note is dropped where a higher-priority note is
 // already sounding, and truncated (simple cut to silence) where a higher-priority
 // note begins mid-sustain. A channel parameter belongs to the highest layer
-// that sets it; other non-note events pass through in tick order, so loops on
-// layered channels are best-effort only (warned below).
+// that sets it; other non-note events pass through in tick order. Counted
+// loops are written out first, and an endless loop must agree across layers.
 const PRIO_NOTE_CMDS = new Set(["NOTE_ON", "PCM_NOTE_ON"]);
-const PRIO_FLOW_CMDS = new Set([
-  "JUMP",
-  "LOOP_BEGIN",
-  "LOOP_END",
-  "LOOP_BREAK",
-]);
 
 // Sounding span of a note: gate (if set) else length; 0 means hold
 // indefinitely (§ gate/len 0), modelled here as occupying the channel forever.
@@ -1707,32 +1702,63 @@ function flattenPriorityLayers(head, layers, diagnostics) {
   // reuse for channel/scoreChannel; only its event list is rebuilt.
   layers.sort((a, b) => a.prio - b.prio);
 
-  // A counted loop is compiled once, so a layer's ticks after it are pass-1
-  // ticks while its neighbours' are real ones: merged by tick, every later
-  // event of the other layers lands in the wrong place.
-  if (layers.some((l) => l.trackData.events.some((e) => e.cmd === "LOOP_BEGIN"))) {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_PRIO_LAYER_LOOP",
-      `a counted loop on a :prio-layered channel (${head}) cannot be merged with the other layers; write it out, or move it to its own channel`,
-      { line: 1, column: 1 },
-      head,
-    );
-  }
-  if (layers.filter((l) => l.trackData.events.some((e) => PRIO_FLOW_CMDS.has(e.cmd))).length > 1) {
-    pushDiag(
-      diagnostics,
-      "warning",
-      "W_PRIO_LAYER_FLOW",
-      `loops/flow control across :prio layers on channel ${head} are not resolved; keep loops on a single layer`,
-      { line: 1, column: 1 },
-      head,
-    );
+  // A counted loop compiles once, so after one a layer runs on pass-1 ticks
+  // while its neighbours run on real ones: each layer's counted loops are
+  // written out first (a `(go label N)` becoming the loop pair it stands for).
+  for (const { trackData } of layers) {
+    convertCountedJumps(trackData);
+    if (trackData.events.some((e) => e.cmd === "LOOP_BEGIN")) {
+      trackData.events = expandLoops(trackData.events).map((e) => (e.args ? { ...e, args: { ...e.args } } : e));
+    }
   }
 
   const occupied = []; // committed sounding intervals from higher-priority layers
   const drop = new Set();
+
+  // An endless loop (the song's `#loop … (go loop)`, an (x …) without a count)
+  // is the channel's, one: layers that loop must loop over the same ticks, and
+  // the merged stream keeps the highest one's MARKER and JUMP. What any layer
+  // has past the jump never plays.
+  const loopOf = (evs) => {
+    const jumps = evs.filter((e) => e.cmd === "JUMP");
+    if (!jumps.length) return undefined;
+    const marker = jumps.length === 1 && evs.find((e) => e.cmd === "MARKER" && e.args?.id === jumps[0].args?.to);
+    return marker ? { from: marker.tick, to: jumps[0].tick, jump: jumps[0], marker } : null;
+  };
+  const looping = layers.map((l) => loopOf(l.trackData.events)).filter((x) => x !== undefined);
+  let loop = null;
+  if (looping.some((x) => x === null || x.from !== looping[0].from || x.to !== looping[0].to)) {
+    pushDiag(
+      diagnostics,
+      "error",
+      "E_PRIO_LAYER_LOOP",
+      `the :prio layers on channel ${head} loop over different ticks; a channel has one loop — start and end it at the same tick on every layer that loops`,
+      { line: 1, column: 1 },
+      head,
+    );
+    for (const x of looping.slice(1)) if (x) drop.add(x.jump).add(x.marker); // one E_ is enough
+  } else if (looping.length) {
+    loop = looping[0];
+    for (const x of looping.slice(1)) drop.add(x.jump).add(x.marker);
+    let lost = false;
+    for (const { trackData } of layers) {
+      for (const e of trackData.events) {
+        if (e === loop.jump || drop.has(e)) continue;
+        const note = PRIO_NOTE_CMDS.has(e.cmd);
+        if (e.tick > loop.to || (note && e.tick === loop.to)) { drop.add(e); lost ||= note; }
+      }
+    }
+    if (lost) {
+      pushDiag(
+        diagnostics,
+        "warning",
+        "W_PRIO_LAYER_PAST_LOOP",
+        `a :prio layer on channel ${head} has notes past the channel's loop end; they never play`,
+        { line: 1, column: 1 },
+        head,
+      );
+    }
+  }
 
   // The voice, :pan, :vol and the other channel parameters are the channel's
   // registers, one of each: a parameter a higher-priority layer sets is that
@@ -1752,7 +1778,7 @@ function flattenPriorityLayers(head, layers, diagnostics) {
 
   for (const { trackData } of layers) {
     const notes = trackData.events
-      .filter((e) => PRIO_NOTE_CMDS.has(e.cmd))
+      .filter((e) => PRIO_NOTE_CMDS.has(e.cmd) && !drop.has(e))
       .sort((a, b) => a.tick - b.tick);
 
     const committed = [];
@@ -1784,7 +1810,7 @@ function flattenPriorityLayers(head, layers, diagnostics) {
   base.events = layers
     .flatMap((l) => l.trackData.events)
     .filter((ev) => !drop.has(ev) && ev.cmd !== "REST")
-    .sort((a, b) => a.tick - b.tick);
+    .sort((a, b) => a.tick - b.tick || (a === loop?.jump) - (b === loop?.jump));
   return base;
 }
 

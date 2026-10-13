@@ -80,10 +80,12 @@ monophonic event stream:
   is **dropped**; one interrupted mid-sustain is **cut** (gate truncated, no
   release tail).
 - Non-note events pass through in tick order. A counted loop — `(x N …)` or
-  `(go label N)` — on any layer of a layered channel is `E_PRIO_LAYER_LOOP`:
-  it is compiled once, so the layers' ticks after it no longer line up. An
-  infinite jump (the song loop) is fine on one layer; on more than one it is
-  not reconciled (`W_PRIO_LAYER_FLOW`).
+  `(go label N)` — on a layered channel is written out before the layers
+  merge, so it plays as written (and costs its passes in the output).
+- The channel has one endless loop (`#loop … (go loop)`, an `(x …)` without a
+  count). Any layers may carry it, but they must start and end it at the same
+  ticks — otherwise `E_PRIO_LAYER_LOOP`. Every layer's notes inside it repeat;
+  notes past its end never play (`W_PRIO_LAYER_PAST_LOOP`).
 - A note's `:vel`, `:gate` and macros travel with it; the voice, `:pan`,
   `:vol` and the other channel parameters are the channel's, one of each, so
   priority decides them too: a parameter a higher layer sets is its, and a

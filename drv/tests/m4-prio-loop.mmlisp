@@ -1,0 +1,7 @@
+; M4 gate: :prio layers with loops. Each layer's counted loops ((x N …) with a
+; (break), (go label N)) are written out before the layers merge, and the
+; channel's song loop is carried by both layers at the same ticks.
+(fm2 :prio 1 :tempo 150 :len 4 :vel 12 c _ (x 2 g _ (break) a)
+  #loop (x 2 c _ _ e) (go loop))
+(fm2 :prio 5 :len 8 :vel 9 #a e e (go a 3) _1
+  #loop (x 8 d d) (go loop))

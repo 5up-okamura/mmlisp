@@ -925,3 +925,116 @@ export const KEY_ORDER_EPS_SECS = 1e-6;
 // Sentinel frame count used for hold notes (gateTicks === 0).
 // Macros continue until triggerKeyOff() is called at runtime.
 export const HOLD_FRAMES = 0x7fffffff;
+
+// A track's counted loops (LOOP_BEGIN … LOOP_END, with (break)) written out:
+// one pass after another, each event re-ticked, and what follows a loop
+// shifted by its full expanded duration. The player plays a track this way;
+// the compiler expands :prio layers with it before merging them.
+export function expandLoops(events) {
+  // One-pass finite expansion with correct tick re-basing.
+  // Events that follow a loop block are shifted forward by the full loop
+  // duration (count * bodyDuration) so they play after all repetitions,
+  // not interleaved with early repetitions.
+
+  function findFinalPassBreak(loopBody, loopId) {
+    let depth = 0;
+    for (let i = 0; i < loopBody.length; i++) {
+      const ev = loopBody[i];
+      if (ev.cmd === "LOOP_BEGIN") {
+        depth++;
+        continue;
+      }
+      if (ev.cmd === "LOOP_END") {
+        if (depth > 0) depth--;
+        continue;
+      }
+      if (depth === 0 && ev.cmd === "LOOP_BREAK" && ev.args?.id === loopId) {
+        return { index: i, tick: ev.tick };
+      }
+    }
+    return null;
+  }
+
+  // Returns { events, extra } where `extra` is how much longer the expanded
+  // list is than the compressed input (the accumulated loop-expansion shift).
+  // `extra` is what lets an OUTER loop offset its repetitions by the inner
+  // body's *expanded* duration — without it, nested loops overlap.
+  function expand(evList, depth) {
+    if (depth > 8) return { events: [], extra: 0 }; // safety guard
+    const out = [];
+    let j = 0;
+    let tickOffset = 0; // accumulated tick shift from all loops processed so far
+
+    while (j < evList.length) {
+      const ev = evList[j];
+      if (ev.cmd === "LOOP_BEGIN") {
+        // Find matching LOOP_END (ignoring nested pairs)
+        let k = j + 1;
+        let depth2 = 0;
+        while (k < evList.length) {
+          if (evList[k].cmd === "LOOP_BEGIN") depth2++;
+          if (evList[k].cmd === "LOOP_END") {
+            if (depth2 === 0) break;
+            depth2--;
+          }
+          k++;
+        }
+        const loopBody = evList.slice(j + 1, k);
+        const count = evList[k]?.args?.repeat;
+        const loopId = ev.args?.id;
+
+        // Derive body duration from LOOP_BEGIN / LOOP_END ticks for accuracy.
+        // Falls back to first/last body event ticks if LOOP_END tick is missing.
+        const loopBeginTick = ev.tick;
+        const loopEndTick =
+          evList[k]?.tick ??
+          (loopBody.length > 0
+            ? loopBody[loopBody.length - 1].tick
+            : loopBeginTick);
+        const bodyDuration = loopEndTick - loopBeginTick;
+        const finalBreak = findFinalPassBreak(loopBody, loopId);
+        const finalBodyDuration =
+          finalBreak != null
+            ? Math.max(0, finalBreak.tick - loopBeginTick)
+            : bodyDuration;
+
+        // Expand once; the EXPANDED body may be longer than bodyDuration when
+        // it contains its own loops, so reps must advance by repDur, not by the
+        // compressed bodyDuration (otherwise repetitions overlap → desync).
+        const full = expand(loopBody, depth + 1);
+        const repDur = bodyDuration + full.extra;
+        const final =
+          finalBreak != null
+            ? expand(loopBody.slice(0, finalBreak.index), depth + 1)
+            : full;
+        const finalRepDur = finalBodyDuration + final.extra;
+
+        for (let rep = 0; rep < count; rep++) {
+          const body = rep === count - 1 ? final.events : full.events;
+          for (const bodyEv of body) {
+            out.push({
+              ...bodyEv,
+              tick: bodyEv.tick + tickOffset + rep * repDur,
+            });
+          }
+        }
+
+        // Shift following events by the loop's full expanded duration.
+        const totalLoopDuration =
+          count > 0 ? (count - 1) * repDur + finalRepDur : 0;
+        tickOffset += totalLoopDuration - bodyDuration;
+        j = k + 1; // skip past LOOP_END
+      } else if (ev.cmd === "LOOP_BREAK") {
+        // LOOP_BREAK is structural; it is consumed during expansion.
+        j++;
+      } else {
+        // Apply accumulated offset so post-loop events play after all reps
+        out.push({ ...ev, tick: ev.tick + tickOffset });
+        j++;
+      }
+    }
+    return { events: out, extra: tickOffset };
+  }
+
+  return expand(events, 0).events;
+}

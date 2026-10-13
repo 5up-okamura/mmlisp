@@ -1,7 +1,7 @@
 ; Two parts on one channel. Forms of the same channel with different :prio
 ; play at the same time: a lower number wins, and the other part fills the
-; gaps it leaves. A sparse melody and a busy filler share fm1. Keep loops
-; ((x ...), go) out of layered forms; write the notes, or use a def.
+; gaps it leaves. A sparse melody and a busy filler share fm1. The voice
+; belongs to the higher layer; loops in a layer play as written.
 (import "presets/gm/set.mmlisp")
 
 (def fill c e g e)

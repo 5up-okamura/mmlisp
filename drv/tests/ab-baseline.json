@@ -467,6 +467,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-prio-loop.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-psg-vol-macro.mmlisp": {
     "ok": true,
     "mismatches": 0,
