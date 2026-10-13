@@ -81,6 +81,15 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 ## Open
 
 - **The integrated multi-bank build has had no listening test.**
+- **Banked PCM sounds late on BlastEm** (user, 2026-10-13, an imported mucom
+  song at `:pcm-voices 3`; Live is fine). Measured with a copy of
+  `banked-sgdk-gate.mjs` that compares each START's first output sample
+  (`floor(slot/16)*16 + lead`) with the median FM key-on lag: PCM trails FM by
+  5.3 / 8.1 / 13.2 / 15.8 ms (p10 / median / p90 / p95), max 49 ms on a
+  voice-change frame. The banked image's lead is 32 samples (4.8 ms at
+  6,653 Hz) against the single-bank pcm3's 18 (2.7 ms), plus a 16-sample
+  block. Not fixed yet; FM key-ons on the same run reach 94 ms late on a
+  frame where four channels change voice.
 - Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.
