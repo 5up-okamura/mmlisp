@@ -1,18 +1,19 @@
 (import "set.mmlisp")
+(import "presets/tr909/set.mmlisp")
 (def-score :title "303-inspired FM bass")
 ; One slider: right = brighter (smaller modulator attenuation).
-(def-val color 8 16..0 :step 1)
+(def-val color 8 16..2 :step 1)
 
 ; Read color at each new attack; keep slide destinations legato.
 ; Performance fragments: velocity + brightness + envelope decay.
 ; Smaller modulator TL means stronger modulation (brighter), not a real cutoff.
-(def acid-normal :vel 12
+(def normal :vel 12
   :tl1 (+ 22 $color)
   :tl2 (+ 26 $color)
   :tl3 (+ 24 (* $color 2))
   :dr3 (+ 6 $color)
 )
-(def acid-accent :vel 15
+(def accent :vel 15
   :tl1 (+ 18 $color)
   :tl2 (+ 22 $color)
   :tl3 (+ 18 (* $color 2))
@@ -21,21 +22,34 @@
 
 ; 16 sixteenth-note steps. Set octave and default length before use.
 ; Slides: steps 4->5, 9->10 and 14->15; only the destination enables glide.
-(def acid-pattern-16
-  acid-normal e acid-normal e _
-  acid-accent e ~ (glide 32) g
-  (glide none) acid-normal b _ acid-normal d
-  acid-accent > e ~ (glide 32) d <
-  (glide none) acid-normal b _ acid-normal g
-  acid-normal e ~ (glide 32) b
-  (glide none) acid-normal e
+(def pattern-16
+  normal e e _
+  accent e ~ (glide 32) g (glide none)
+  normal b _ d >
+  accent e ~ (glide 32) d (glide none) <
+  normal b _ g
+  normal e ~ (glide 32) b (glide none)
+  normal e
 )
 
 ; One-channel acid bass: the same 16-step pattern twice on each voice.
 ; Naming the other voice mid-track switches the patch.
 (fm1 :tempo 130 :oct 2 :len 16
-  acid-saw
-  (x 4 acid-pattern-16)
-  acid-square
-  (x 4 acid-pattern-16)
+  :shuffle-base 16
+  :shuffle 66
+  :color (sin 16..2 :len 3/1)
+  #top
+  acid-saw (x 4 pattern-16)
+  acid-square (x 4 pattern-16)
+  (go top)
+)
+
+(pcm1 :len 16
+  :shuffle-base 16
+  :shuffle 66
+  #top
+  (x 8
+    (x 4 kick :vel 15 c hat :vel 7 c :vel 11 hat-open c (break) _) kick :vel 7 c
+  )
+  (go top)
 )
