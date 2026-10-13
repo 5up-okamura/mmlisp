@@ -49,7 +49,8 @@ then jumps back to `#top`. `;` starts a comment.
 | `fm3-csm`, `fm3-csm-rate` | FM3 CSM | pitch = formant, rate track = buzz (§15) |
 
 Two forms of one channel append; with different `:prio` right after the
-channel name they layer, lower number winning (§1).
+channel name they layer, lower number winning (§1). The voice, `:pan` and
+`:vol` stay the channel's — set them on one layer.
 
 ## Notes and lengths (§3, §4)
 

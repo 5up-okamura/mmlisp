@@ -1730,6 +1730,20 @@ function flattenPriorityLayers(head, layers, diagnostics) {
     );
   }
 
+  // Voice, :pan, :vol and the like are the channel's registers, not a layer's:
+  // a layer that sets one sets it for every layer's notes after it. One layer
+  // owning them is the intended use (§1); two writing them overwrite each other.
+  if (layers.filter((l) => l.trackData.events.some((e) => e.cmd === "PARAM_SET")).length > 1) {
+    pushDiag(
+      diagnostics,
+      "warning",
+      "W_PRIO_LAYER_STATE",
+      `more than one :prio layer on channel ${head} sets its voice, :pan, :vol or another channel parameter; the channel has one of each, so the last write plays every layer's notes after it — set them on one layer`,
+      { line: 1, column: 1 },
+      head,
+    );
+  }
+
   const occupied = []; // committed sounding intervals from higher-priority layers
   const drop = new Set();
 
