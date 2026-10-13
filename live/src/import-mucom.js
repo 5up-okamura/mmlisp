@@ -5,7 +5,7 @@
 // ADPCM K. MMLisp targets the Mega Drive (YM2612 FM1-6 + SN76489 PSG). FM maps
 // near 1:1; SSG -> PSG square is an approximate pitch/level map; ADPCM K becomes
 // a PCM track (its `#pcm` bank is decoded to samples — see mucom-pcm.js); rhythm
-// G has no target (OPNA rhythm ROM, no data to import) and is dropped.
+// G plays the RX5 kit on one PCM track (see rhythmOps).
 //
 // This converts MML *text* into MMLisp *source text*. Anything not in the
 // supported subset is skipped and reported in `warnings`.
@@ -76,9 +76,27 @@ const SSG_PRESETS = [
   { env: [255, 255, 255, 220, 0, 255], mix: 1, lfo: [1, 1, -3000, 255] }, // bomb
 ];
 
-// G is the OPNA's built-in rhythm generator: its sounds live in the chip's
-// rhythm ROM, not in the `#pcm` bank, so there is nothing to import them from.
-const DROP_PARTS = { G: "rhythm" };
+// G is the OPNA's built-in rhythm generator: six sounds in the chip's ROM, each
+// with its own voice. They become the RX5 kit's samples on one PCM track, so
+// where two overlap one is chosen (rhythmOps). Its channel is pcm1, or pcm2 when
+// part K plays.
+const RHYTHM_PART = "G";
+// The six, in the order of the key-on bits (`@` is a mask) and of `v`'s
+// levels: the sample, its priority (lower wins, as :prio) and how long it
+// rings — the time the RX5 sample stays within 6 dB of its peak, during which
+// a lower-priority hit is dropped rather than cutting it.
+// `ms` is the sample's whole length, for the bank-fit bake.
+const RHYTHM_SOUNDS = [
+  { name: "kick", prio: 3, ringMs: 40, ms: 160 }, // BD
+  { name: "snare", prio: 1, ringMs: 60, ms: 220 }, // SD
+  { name: "crash", prio: 5, ringMs: 220, ms: 600 }, // TOP
+  { name: "hat", prio: 6, ringMs: 40, ms: 120 }, // HH
+  { name: "tom4", prio: 2, ringMs: 65, ms: 400 }, // TOM
+  { name: "rim", prio: 4, ringMs: 15, ms: 80 }, // RIM
+];
+const RHYTHM_KIT = "presets/rx5/set.mmlisp";
+const RHYTHM_KIT_RATE = 22050;
+const RHYTHM_DB_PER_STEP = 0.75; // the total level (0-63) and each sound's (0-31)
 
 // Where mucom's native ADPCM octave lands: o1 plays the sample at its own rate,
 // and so does MMLisp's C4 (`:oct 4`) at the def's `:rate`. K octaves mirror
@@ -273,7 +291,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     // How long the notes under a software LFO last (a tie or `&` runs it on):
     // a sweep is drawn only that far (lfoSpec).
     if (op.t === "lfoSet") { op.maxClocks = 0; state.lfoOp = op; state.lfoRun = 0; }
-    else if (op.clocks != null) {
+    else if (op.clocks != null && op.t !== "rest") {
       state.lfoRun = op.t === "tie" || state.lfoSlur ? state.lfoRun + op.clocks : op.clocks;
       if (state.lfoOp) state.lfoOp.maxClocks = Math.max(state.lfoOp.maxClocks, state.lfoRun);
     }
@@ -370,7 +388,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else if (d === ".") { dots++; i++; hasLen = true; }
         else break;
       }
-      push({ t: "rest", len: resolveLen(num, dots, pct, hasLen, state) });
+      push({ t: "rest", len: resolveLen(num, dots, pct, hasLen, state), clocks: noteClocks(num, dots, pct, hasLen, state) });
       continue;
     }
 
@@ -430,6 +448,13 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     if (c === "v") {
       i++;
       if (body[i] === "m") { i++; readInt(); continue; }
+      if (partLetter === RHYTHM_PART) {
+        // v total,BD,SD,TOP,HH,TOM,RIM — a level left out keeps its value.
+        const levels = [readInt()];
+        while (body[i] === ",") { i++; levels.push(readInt()); }
+        push({ t: "rhythmLevels", levels });
+        continue;
+      }
       const v = readInt();
       if (v != null) push({ t: "vel", v: partLetterIsPcm ? v : v + (state.tvOfs ?? 0) });
       continue;
@@ -439,7 +464,14 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     if (c === "(") { i++; const v = readInt() ?? 1; push({ t: "velAdj", d: -v }); continue; }
 
     // Pan: p0=off, p1=right, p2=left, p3=center
-    if (c === "p") { i++; const v = readInt(); if (v != null) push({ t: "pan", v }); continue; }
+    if (c === "p") {
+      i++;
+      // On G, `p$xy` pans sound x: a mono PCM track has nothing to carry it to.
+      if (partLetter === RHYTHM_PART) { if (body[i] === "$") i++; while (i < n && /[0-9a-fA-F]/.test(body[i])) i++; continue; }
+      const v = readInt();
+      if (v != null) push({ t: "pan", v });
+      continue;
+    }
 
     // Quantize/gate: q<n> keys off n clocks early (staccato) -> :gate- (note
     // length minus that time). Sticky like mucom's q.
@@ -768,8 +800,7 @@ function scanLoopSpans(lines) {
     const sc = body.indexOf(";");
     if (sc >= 0) body = body.slice(0, sc); // ignore brackets inside comments
     for (const letter of pm[1]) {
-      if (letter in DROP_PARTS) continue;
-      if (!(letter in FM_PARTS) && !(letter in SSG_PARTS) && !(letter in PCM_PARTS)) continue;
+      if (!(letter in FM_PARTS) && !(letter in SSG_PARTS) && !(letter in PCM_PARTS) && letter !== RHYTHM_PART) continue;
       let dec = decisions.get(letter);
       if (!dec) { dec = []; decisions.set(letter, dec); }
       let st = stacks.get(letter);
@@ -794,7 +825,6 @@ export function parseMucom(text) {
   // { kind:"form", letter, ops, comment } (one per letter); an in-music comment
   // line becomes { kind:"comment", text }. Emitted verbatim top-to-bottom.
   const scoreItems = [];
-  const droppedOps = []; // ops from dropped parts (G/K) — scanned only for tempo
   const macros = new Map(); // *n -> { ops, comments }
   const warnings = [];
   const pendingComments = []; // full-line comments awaiting the next def/section
@@ -938,20 +968,11 @@ export function parseMucom(text) {
       const letters = pm[1];
       const bodyStr = pm[2];
       for (const letter of letters) {
-        if (letter in DROP_PARTS) {
-          warnOnce(warnings, `part${letter}`, `part ${letter} (${DROP_PARTS[letter]}) not supported; dropped`);
-          // The song's tempo (t/T) often lives on a dropped part (rhythm/ADPCM
-          // usually comes first), so still tokenize to recover it — discard the
-          // rest and its warnings.
-          const { ops } = tokenizeBody(bodyStr, partState(letter), [], letter, macros);
-          droppedOps.push(...ops);
-          continue;
-        }
-        if (!(letter in FM_PARTS) && !(letter in SSG_PARTS) && !(letter in PCM_PARTS)) continue;
+        if (!(letter in FM_PARTS) && !(letter in SSG_PARTS) && !(letter in PCM_PARTS) && letter !== RHYTHM_PART) continue;
         // K is always parsed — the song's tempo often lives on it, and `tempo`
         // is resolved here from scoreItems. mucomToMmlisp drops the K forms if
         // no `#pcm` bank was supplied (there'd be no samples to reference).
-        const ch = FM_PARTS[letter] || SSG_PARTS[letter] || PCM_PARTS[letter];
+        const ch = FM_PARTS[letter] || SSG_PARTS[letter] || PCM_PARTS[letter] || "pcm1"; // G: see rhythmOps
         const { ops, comment } = tokenizeBody(bodyStr, partState(letter), warnings, letter, macros);
         // A multi-letter line shares one trailing comment; keep it on the first.
         scoreItems.push({ kind: "form", letter, ch, ops, comment: letter === letters[0] ? comment : null });
@@ -974,7 +995,7 @@ export function parseMucom(text) {
   // can only live here). Mid-song changes are emitted inline by renderOps, so
   // multiple tempos are expected — not an error.
   let tempo = null;
-  const tempoSources = [...scoreItems.filter((it) => it.kind === "form").map((it) => it.ops), droppedOps];
+  const tempoSources = scoreItems.filter((it) => it.kind === "form").map((it) => it.ops);
   for (const ops of tempoSources) {
     const t = findFirstTempo(ops);
     if (t != null) { tempo = t; break; }
@@ -1179,6 +1200,94 @@ function lfoBeforeNote(ctx, out, letter, acc) {
   if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
 }
 
+// --- rhythm (part G) ----------------------------------------------------------
+
+// Part G's forms, rewritten in place as one PCM track's ops. A note plays the
+// highest-priority sound its `@` mask keys on — unless a higher-priority one
+// still rings (RHYTHM_SOUNDS), and then it rests; a ringing one is cut by any
+// hit of its priority or higher, as on a :prio-layered channel. Its level is
+// the total plus the sound's own, against the loudest the part plays (:vel
+// 15). `@`, `v` and the ringing carry from pass to pass of a loop, so a body
+// that resolves differently on its second pass is written out pass by pass;
+// the sample and :vel are written where they change in text order (an (x …)
+// body is compiled once).
+function rhythmOps(forms, timerB, warnings) {
+  const st = { mask: 0, levels: [63, 31, 31, 31, 31, 31, 31], ring: 0, ringPrio: Infinity, timerB };
+  const KEEP = new Set(["loopBreak", "loopMarker", "loopGo", "globalLoop", "tempo", "lenSet", "bar"]);
+  const sec = (clocks) => ((clocks ?? 0) * (256 - st.timerB) * 2304) / 7987200;
+  const pass = (op) => { st.ring -= sec(op.clocks); };
+  const walk = (ops) => ops.flatMap((op) => {
+    switch (op.t) {
+      case "voice": st.mask = op.n; return [];
+      case "rhythmLevels":
+        op.levels.forEach((v, k) => { if (v != null && k < 7) st.levels[k] = clamp(v, 0, k ? 31 : 63); });
+        return [];
+      case "velAdj": st.levels[0] = clamp(st.levels[0] + op.d, 0, 63); return [];
+      case "tempo": st.timerB = op.timerB; return [op];
+      case "loop": {
+        const first = walk(op.body);
+        const second = walk(op.body);
+        if (JSON.stringify(first) === JSON.stringify(second)) return [{ ...op, body: first }];
+        // Written out: passes 3.. from where the one before left, the last
+        // stopping at its `/`.
+        const head = op.body.slice(0, Math.max(0, op.body.findIndex((o) => o.t === "loopBreak")));
+        const passes = [first, second];
+        for (let p = 3; p <= op.count; p++) passes.push(walk(p === op.count && head.length ? head : op.body));
+        if (op.count === 2 && head.length) passes[1] = second.slice(0, second.findIndex((o) => o.t === "loopBreak"));
+        return passes.slice(0, Math.max(1, op.count)).flat().filter((o) => o.t !== "loopBreak");
+      }
+      case "note": {
+        let k = -1;
+        for (let b = 0; b < RHYTHM_SOUNDS.length; b++) {
+          if (st.mask >> b & 1 && (k < 0 || RHYTHM_SOUNDS[b].prio < RHYTHM_SOUNDS[k].prio)) k = b;
+        }
+        const s = RHYTHM_SOUNDS[k];
+        if (!s || (st.ring > 0 && s.prio > st.ringPrio)) { pass(op); return [{ t: "rest", len: op.len, clocks: op.clocks }]; }
+        st.ring = s.ringMs / 1000;
+        st.ringPrio = s.prio;
+        pass(op);
+        const atten = RHYTHM_DB_PER_STEP * (63 - st.levels[0] + 31 - st.levels[k + 1]);
+        return [{ t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, hit: { name: s.name, atten } }];
+      }
+      case "rest": case "tie": pass(op); return [{ t: "rest", len: op.len, clocks: op.clocks }];
+      case "macroCall":
+        warnOnce(warnings, "rhythmMacro", "part G: a macro (*n) is not followed on the rhythm part; dropped");
+        return [];
+      default: return KEEP.has(op.t) ? [op] : [];
+    }
+  });
+  for (const f of forms) f.ops = walk(f.ops);
+
+  let loudest = Infinity;
+  const scan = (ops) => ops.forEach((op) => (op.t === "loop" ? scan(op.body) : op.hit && (loudest = Math.min(loudest, op.hit.atten))));
+  forms.forEach((f) => scan(f.ops));
+  const cur = { name: null, vel: null };
+  const mark = (ops) => ops.flatMap((op) => {
+    if (op.t === "loop") return [{ ...op, body: mark(op.body) }];
+    if (!op.hit) return [op];
+    const pre = [];
+    const vel = clamp(Math.round(15 - (op.hit.atten - loudest) / VEL_DB_PER_STEP), 1, 15);
+    if (op.hit.name !== cur.name) pre.push({ t: "raw", text: (cur.name = op.hit.name) });
+    if (vel !== cur.vel) pre.push({ t: "raw", text: `:vel ${(cur.vel = vel)}` });
+    return [...pre, op];
+  });
+  for (const f of forms) f.ops = mark(f.ops);
+  return forms.some((f) => JSON.stringify(f.ops).includes('"hit"'));
+}
+
+// The first `t`/`T` anywhere: the Timer-B value part G's clocks run at.
+function firstTimerB(items) {
+  const find = (ops) => {
+    for (const op of ops) {
+      if (op.t === "tempo") return op.timerB;
+      if (op.t === "loop") { const t = find(op.body); if (t != null) return t; }
+    }
+    return null;
+  };
+  for (const it of items) if (it.kind === "form") { const t = find(it.ops); if (t != null) return t; }
+  return null;
+}
+
 // --- loops ------------------------------------------------------------------
 //
 // mucom compiles a loop body ONCE and the driver repeats the bytes, so state
@@ -1354,6 +1463,9 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "bar":
         out.push("|"); // bar line — editorial marker, carried through verbatim
+        break;
+      case "raw": // a token written as is (part G's sample and :vel, rhythmOps)
+        out.push(op.text);
         break;
       case "octUp":
         // PCM part K is INVERTED (see octSet): mucom `>` raises the octave number,
@@ -1993,6 +2105,15 @@ export function mucomToMmlisp(parsed) {
       warnOnce(warnings, "partK", "part K (ADPCM) dropped: no #pcm bank supplied");
     }
   }
+  // Part G: the RX5 kit on one PCM track, beside part K's when that plays.
+  const kPlays = scoreItems.some((it) => it.kind === "form" && it.letter in PCM_PARTS && !it.dropped);
+  const rhythmForms = scoreItems.filter((it) => it.kind === "form" && it.letter === RHYTHM_PART);
+  const rhythmPlays = rhythmForms.length > 0 && rhythmOps(rhythmForms, firstTimerB(scoreItems) ?? 200, warnings);
+  for (const f of rhythmForms) {
+    f.ch = kPlays ? "pcm2" : "pcm1";
+    if (!rhythmPlays) f.dropped = true;
+  }
+
   // @n (1-based) -> the sample def it selects, deduped into pcmRegistry as it is
   // referenced so unused bank entries never reach the output (a bank holds up to
   // 32, a song typically plays a handful) — the rule mergeDatVoices uses.
@@ -2099,6 +2220,10 @@ export function mucomToMmlisp(parsed) {
   const score = [meta.title && `:title ${qstr(meta.title)}`, meta.composer && `:composer ${qstr(meta.composer)}`,
     meta.author && `:author ${qstr(meta.author)}`].filter(Boolean);
   if (score.length) metaDefs.push(`(def-score ${score.join(" ")})`);
+  if (rhythmPlays) {
+    if (kPlays) metaDefs.push("; Part G's drums play beside part K's samples: two PCM voices.", "(def-score :pcm-voices 2)");
+    metaDefs.push(`(import ${qstr(RHYTHM_KIT)})  ; part G (the OPNA rhythm) on the RX5 kit`);
+  }
   // LFO defs (if any) are spliced in here once rendering has discovered them.
   const lfoDefAnchor = lines.length;
   lines.push("");
@@ -2113,7 +2238,8 @@ export function mucomToMmlisp(parsed) {
   const letterCtx = (key) => {
     const letter = key[0];
     if (!ctxByLetter.has(key)) {
-      ctxByLetter.set(key, { pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: letter in PCM_PARTS, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
+      const pcmPart = letter in PCM_PARTS || letter === RHYTHM_PART;
+      ctxByLetter.set(key, { pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
     return ctxByLetter.get(key);
   };
@@ -2221,7 +2347,7 @@ export function mucomToMmlisp(parsed) {
     // uses a native-reference default (see MUCOM_PCM_DEFAULT_OCT) instead of the
     // saturating :oct 9.
     if (!startsWithAbsoluteOctave(allOpsByLetter.get(letter) || [])) {
-      const defOct = letter in PCM_PARTS ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter);
+      const defOct = letter in PCM_PARTS || letter === RHYTHM_PART ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter);
       prefix.push(`:oct ${defOct}`);
     }
     if (prefix.length) f.text = `${prefix.join(" ")} ${f.text}`.trim();
@@ -2250,7 +2376,7 @@ export function mucomToMmlisp(parsed) {
   // uses both part J and ADPCM drums cannot keep both (E_FM6_DAC). The drums
   // stay and J is kept as written but commented out, for the user to move to
   // a free channel or to trade against the drums.
-  const pcmPlays = forms.some((f) => f.letter in PCM_PARTS && f.text !== "");
+  const pcmPlays = forms.some((f) => (f.letter in PCM_PARTS || f.letter === RHYTHM_PART) && f.text !== "");
   const fm6Forms = forms.filter((f) => f.ch === "fm6" && f.text !== "");
   if (pcmPlays && fm6Forms.length) {
     for (const f of fm6Forms) f.commentOut = true;
@@ -2277,7 +2403,7 @@ export function mucomToMmlisp(parsed) {
   }
 
   lines.push("");
-  return { source: lines.join("\n").replace(/^\n+/, ""), warnings };
+  return { source: lines.join("\n").replace(/^\n+/, ""), warnings, pcmVoices: rhythmPlays && kPlays ? 2 : 1, rhythm: rhythmPlays };
 }
 
 // --- external voice bank (.dat) --------------------------------------------
@@ -2373,11 +2499,19 @@ export function importMucom(bytes, datBytes = null, pcmBytes = null) {
 // dropped (its notes become rests) and the search starts over. Said in
 // warnings and a comment.
 function fitPcmBank(render, pcm) {
+  // Part G's kit stands in as silence of its samples' lengths: it costs the
+  // bank the same.
+  const kit = new Map([[RHYTHM_KIT, RHYTHM_SOUNDS.map((s) => `(def-pcm ${s.name} :file "${s.name}.wav")`).join("\n")]]);
+  const kitData = new Map(RHYTHM_SOUNDS.map((s) => [s.name, new Float32Array(Math.round((s.ms / 1000) * RHYTHM_KIT_RATE))]));
   const bake = (source) => {
-    const { ir, diagnostics } = compileMMLisp(source, "import.mmlisp", { imports: new Map(), frameHz: 60 });
+    const { ir, diagnostics } = compileMMLisp(source, "import.mmlisp", { imports: kit, frameHz: 60 });
     if (diagnostics.some((d) => d.severity === "error")) return { ok: true }; // not ours to judge here
     const samples = {};
     for (const def of ir.metadata?.samples ?? []) {
+      if (kitData.has(def.name) && !def.offset && def.frames == null) {
+        samples[def.name] = { data: kitData.get(def.name), baseRate: RHYTHM_KIT_RATE };
+        continue;
+      }
       const at = def.offset ?? 0;
       samples[def.name] = { data: pcm.mono.slice(at, at + (def.frames ?? pcm.mono.length - at)), baseRate: pcm.rate };
     }
@@ -2411,12 +2545,12 @@ function fitPcmBank(render, pcm) {
   for (;;) {
     const out = render(drop);
     let last = null;
-    for (const n of [1, 2, 3]) {
-      const source = n === 1 ? out.source
-        : `; A PCM sample fits one bank (32,512 bytes) at ${n} PCM voices' rate, not at 1's.\n(def-score :pcm-voices ${n})\n\n${out.source}`;
+    for (const n of [1, 2, 3].filter((n) => n >= out.pcmVoices)) {
+      const source = n === out.pcmVoices ? out.source
+        : `; A PCM sample fits one bank (32,512 bytes) at ${n} PCM voices' rate, not at ${out.pcmVoices}'s.\n(def-score :pcm-voices ${n})\n\n${out.source.replace(/^; Part G's drums.*\n\(def-score :pcm-voices 2\)\n/m, "")}`;
       const r = bake(source);
       if (r.ok) {
-        if (n > 1) out.warnings.push(`PCM: a sample is longer than one bank (32,512 bytes) at 1 voice's rate; set (def-score :pcm-voices ${n}) to bake it at the lower rate`);
+        if (n > out.pcmVoices) out.warnings.push(`PCM: a sample is longer than one bank (32,512 bytes) at ${out.pcmVoices} voice's rate; set (def-score :pcm-voices ${n}) to bake it at the lower rate`);
         if (drop.size) out.warnings.push(`PCM: ${[...drop].join(", ")} is longer than one bank (32,512 bytes) at every rate; dropped — its notes are rests`);
         return { ...out, source };
       }
