@@ -87,12 +87,12 @@ const RHYTHM_PART = "G";
 // a lower-priority hit is dropped rather than cutting it.
 // `ms` is the sample's whole length, for the bank-fit bake.
 const RHYTHM_SOUNDS = [
-  { name: "kick", prio: 3, ringMs: 40, ms: 160 }, // BD
+  { name: "kick", prio: 4, ringMs: 40, ms: 160 }, // BD
   { name: "snare", prio: 1, ringMs: 60, ms: 220 }, // SD
-  { name: "crash", prio: 5, ringMs: 220, ms: 600 }, // TOP
+  { name: "crash", prio: 3, ringMs: 220, ms: 600 }, // TOP
   { name: "hat", prio: 6, ringMs: 40, ms: 120 }, // HH
   { name: "tom4", prio: 2, ringMs: 65, ms: 400 }, // TOM
-  { name: "rim", prio: 4, ringMs: 15, ms: 80 }, // RIM
+  { name: "rim", prio: 5, ringMs: 15, ms: 80 }, // RIM
 ];
 const RHYTHM_KIT = "presets/rx5/set.mmlisp";
 const RHYTHM_KIT_RATE = 22050;

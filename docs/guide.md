@@ -1275,7 +1275,7 @@ import does the same rather than approximating:
   longest stretch the song plays of it.
 - **Rhythm** keys up to six sounds at once (`@` is a mask: 1 BD, 2 SD, 4 TOP,
   8 HH, 16 TOM, 32 RIM), each its own voice; on one PCM track a hit plays the
-  highest-priority sound — snare, tom, kick, rim, cymbal, hi-hat — and is
+  highest-priority sound — snare, tom, cymbal, kick, rim, hi-hat — and is
   dropped while a higher one still rings (within 6 dB of its peak). `v`'s
   total and per-sound levels become `:vel`, the loudest sound at 15.
 
