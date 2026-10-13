@@ -5,7 +5,7 @@
 // ADPCM K. MMLisp targets the Mega Drive (YM2612 FM1-6 + SN76489 PSG). FM maps
 // near 1:1; SSG -> PSG square is an approximate pitch/level map; ADPCM K becomes
 // a PCM track (its `#pcm` bank is decoded to samples — see mucom-pcm.js); rhythm
-// G plays the RX5 kit on one PCM track (see rhythmOps).
+// G plays the RX5 kit on one PCM track, a :prio layer per sound (rhythmLayers).
 //
 // This converts MML *text* into MMLisp *source text*. Anything not in the
 // supported subset is skipped and reported in `warnings`.
@@ -78,7 +78,7 @@ const SSG_PRESETS = [
 
 // G is the OPNA's built-in rhythm generator: six sounds in the chip's ROM, each
 // with its own voice. They become the RX5 kit's samples on one PCM track, so
-// where two overlap one is chosen (rhythmOps). Its channel is pcm1, or pcm2 when
+// where two overlap one is chosen by priority (rhythmLayers). Its channel is pcm1, or pcm2 when
 // part K plays.
 const RHYTHM_PART = "G";
 // The six, in the order of the key-on bits (`@` is a mask) and of `v`'s
@@ -972,7 +972,7 @@ export function parseMucom(text) {
         // K is always parsed — the song's tempo often lives on it, and `tempo`
         // is resolved here from scoreItems. mucomToMmlisp drops the K forms if
         // no `#pcm` bank was supplied (there'd be no samples to reference).
-        const ch = FM_PARTS[letter] || SSG_PARTS[letter] || PCM_PARTS[letter] || "pcm1"; // G: see rhythmOps
+        const ch = FM_PARTS[letter] || SSG_PARTS[letter] || PCM_PARTS[letter] || "pcm1"; // G: see rhythmLayers
         const { ops, comment } = tokenizeBody(bodyStr, partState(letter), warnings, letter, macros);
         // A multi-letter line shares one trailing comment; keep it on the first.
         scoreItems.push({ kind: "form", letter, ch, ops, comment: letter === letters[0] ? comment : null });
@@ -1202,20 +1202,18 @@ function lfoBeforeNote(ctx, out, letter, acc) {
 
 // --- rhythm (part G) ----------------------------------------------------------
 
-// Part G's forms, rewritten in place as one PCM track's ops. A note plays the
-// highest-priority sound its `@` mask keys on — unless a higher-priority one
-// still rings (RHYTHM_SOUNDS), and then it rests; a ringing one is cut by any
-// hit of its priority or higher, as on a :prio-layered channel. Its level is
-// the total plus the sound's own, against the loudest the part plays (:vel
-// 15). `@`, `v` and the ringing carry from pass to pass of a loop, so a body
-// that resolves differently on its second pass is written out pass by pass;
-// the sample and :vel are written where they change in text order (an (x …)
-// body is compiled once).
-function rhythmOps(forms, timerB, warnings) {
-  const st = { mask: 0, levels: [63, 31, 31, 31, 31, 31, 31], ring: 0, ringPrio: Infinity, timerB };
+// Part G's forms as one :prio layer per sound (RHYTHM_SOUNDS), each a copy of
+// G's ops — its loops and `L` kept — that plays the notes whose `@` mask keys
+// its sound and rests through the rest. The compiler's layering then picks
+// what plays: a hit is dropped while a higher-priority one sounds (its :gate,
+// the ring time) and cuts a lower one. A hit's level is the total plus the
+// sound's own, against the loudest the part plays (:vel 15). `@` and `v` carry
+// from pass to pass, so a loop whose passes key differently is written out
+// pass by pass. Returns, per form, the layers' ops (null: the sound is never
+// keyed anywhere in the part).
+function rhythmLayers(forms, warnings) {
+  const st = { mask: 0, levels: [63, 31, 31, 31, 31, 31, 31] };
   const KEEP = new Set(["loopBreak", "loopMarker", "loopGo", "globalLoop", "tempo", "lenSet", "bar"]);
-  const sec = (clocks) => ((clocks ?? 0) * (256 - st.timerB) * 2304) / 7987200;
-  const pass = (op) => { st.ring -= sec(op.clocks); };
   const walk = (ops) => ops.flatMap((op) => {
     switch (op.t) {
       case "voice": st.mask = op.n; return [];
@@ -1223,7 +1221,6 @@ function rhythmOps(forms, timerB, warnings) {
         op.levels.forEach((v, k) => { if (v != null && k < 7) st.levels[k] = clamp(v, 0, k ? 31 : 63); });
         return [];
       case "velAdj": st.levels[0] = clamp(st.levels[0] + op.d, 0, 63); return [];
-      case "tempo": st.timerB = op.timerB; return [op];
       case "loop": {
         const first = walk(op.body);
         const second = walk(op.body);
@@ -1237,55 +1234,41 @@ function rhythmOps(forms, timerB, warnings) {
         return passes.slice(0, Math.max(1, op.count)).flat().filter((o) => o.t !== "loopBreak");
       }
       case "note": {
-        let k = -1;
-        for (let b = 0; b < RHYTHM_SOUNDS.length; b++) {
-          if (st.mask >> b & 1 && (k < 0 || RHYTHM_SOUNDS[b].prio < RHYTHM_SOUNDS[k].prio)) k = b;
-        }
-        const s = RHYTHM_SOUNDS[k];
-        if (!s || (st.ring > 0 && s.prio > st.ringPrio)) { pass(op); return [{ t: "rest", len: op.len, clocks: op.clocks }]; }
-        st.ring = s.ringMs / 1000;
-        st.ringPrio = s.prio;
-        pass(op);
-        const atten = RHYTHM_DB_PER_STEP * (63 - st.levels[0] + 31 - st.levels[k + 1]);
-        return [{ t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, hit: { name: s.name, atten } }];
+        const hits = {};
+        RHYTHM_SOUNDS.forEach((_, k) => {
+          if (st.mask >> k & 1) hits[k] = RHYTHM_DB_PER_STEP * (63 - st.levels[0] + 31 - st.levels[k + 1]);
+        });
+        return [{ t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, hits }];
       }
-      case "rest": case "tie": pass(op); return [{ t: "rest", len: op.len, clocks: op.clocks }];
+      case "rest": case "tie": return [{ t: "rest", len: op.len, clocks: op.clocks }];
       case "macroCall":
         warnOnce(warnings, "rhythmMacro", "part G: a macro (*n) is not followed on the rhythm part; dropped");
         return [];
       default: return KEEP.has(op.t) ? [op] : [];
     }
   });
-  for (const f of forms) f.ops = walk(f.ops);
+  const items = forms.map((f) => walk(f.ops));
 
   let loudest = Infinity;
-  const scan = (ops) => ops.forEach((op) => (op.t === "loop" ? scan(op.body) : op.hit && (loudest = Math.min(loudest, op.hit.atten))));
-  forms.forEach((f) => scan(f.ops));
-  const cur = { name: null, vel: null };
-  const mark = (ops) => ops.flatMap((op) => {
-    if (op.t === "loop") return [{ ...op, body: mark(op.body) }];
-    if (!op.hit) return [op];
-    const pre = [];
-    const vel = clamp(Math.round(15 - (op.hit.atten - loudest) / VEL_DB_PER_STEP), 1, 15);
-    if (op.hit.name !== cur.name) pre.push({ t: "raw", text: (cur.name = op.hit.name) });
-    if (vel !== cur.vel) pre.push({ t: "raw", text: `:vel ${(cur.vel = vel)}` });
-    return [...pre, op];
+  const keyed = new Set();
+  const scan = (ops) => ops.forEach((op) => {
+    if (op.t === "loop") scan(op.body);
+    else if (op.hits) for (const [k, a] of Object.entries(op.hits)) { keyed.add(+k); loudest = Math.min(loudest, a); }
   });
-  for (const f of forms) f.ops = mark(f.ops);
-  return forms.some((f) => JSON.stringify(f.ops).includes('"hit"'));
-}
-
-// The first `t`/`T` anywhere: the Timer-B value part G's clocks run at.
-function firstTimerB(items) {
-  const find = (ops) => {
-    for (const op of ops) {
-      if (op.t === "tempo") return op.timerB;
-      if (op.t === "loop") { const t = find(op.body); if (t != null) return t; }
-    }
-    return null;
-  };
-  for (const it of items) if (it.kind === "form") { const t = find(it.ops); if (t != null) return t; }
-  return null;
+  items.forEach(scan);
+  return RHYTHM_SOUNDS.map((s, k) => {
+    if (!keyed.has(k)) return null;
+    let vel = null;
+    const layer = (ops) => ops.flatMap((op) => {
+      if (op.t === "loop") return [{ ...op, body: layer(op.body) }];
+      if (!op.hits) return [op];
+      if (op.hits[k] == null) return [{ t: "rest", len: op.len, clocks: op.clocks }];
+      const v = clamp(Math.round(15 - (op.hits[k] - loudest) / VEL_DB_PER_STEP), 1, 15);
+      const pre = v !== vel ? [{ t: "raw", text: `:vel ${(vel = v)}` }] : [];
+      return [...pre, { t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks }];
+    });
+    return items.map(layer);
+  });
 }
 
 // --- loops ------------------------------------------------------------------
@@ -1464,7 +1447,7 @@ function renderOps(ops, ctx, out, depth = 0) {
       case "bar":
         out.push("|"); // bar line — editorial marker, carried through verbatim
         break;
-      case "raw": // a token written as is (part G's sample and :vel, rhythmOps)
+      case "raw": // a token written as is (part G's sample, :gate and :vel, rhythmLayers)
         out.push(op.text);
         break;
       case "octUp":
@@ -2113,10 +2096,21 @@ export function mucomToMmlisp(parsed) {
   // Part G: the RX5 kit on one PCM track, beside part K's when that plays.
   const kPlays = scoreItems.some((it) => it.kind === "form" && it.letter in PCM_PARTS && !it.dropped);
   const rhythmForms = scoreItems.filter((it) => it.kind === "form" && it.letter === RHYTHM_PART);
-  const rhythmPlays = rhythmForms.length > 0 && rhythmOps(rhythmForms, firstTimerB(scoreItems) ?? 200, warnings);
-  for (const f of rhythmForms) {
-    f.ch = kPlays ? "pcm2" : "pcm1";
-    if (!rhythmPlays) f.dropped = true;
+  const layers = rhythmForms.length ? rhythmLayers(rhythmForms, warnings) : [];
+  const rhythmPlays = layers.some(Boolean);
+  // Each G line becomes its layers' forms, in RHYTHM_SOUNDS order; a layer's
+  // first form names its sample and sets its ring as the :gate.
+  for (const [i, f] of rhythmForms.entries()) {
+    const copies = [];
+    layers.forEach((per, k) => {
+      if (!per) return;
+      const s = RHYTHM_SOUNDS[k];
+      const head = i === 0
+        ? [{ t: "raw", text: `${s.name} :gate ${Math.max(1, Math.round((s.ringMs / 1000) * ((tempo ?? 120) / 60) * PPQN))}t` }]
+        : [];
+      copies.push({ kind: "form", letter: f.letter, key: `${f.letter}~${s.name}`, ch: kPlays ? "pcm2" : "pcm1", prio: s.prio, ops: [...head, ...per[i]], comment: copies.length ? null : f.comment });
+    });
+    scoreItems.splice(scoreItems.indexOf(f), 1, ...copies);
   }
 
   // @n (1-based) -> the sample def it selects, deduped into pcmRegistry as it is
@@ -2403,7 +2397,7 @@ export function mucomToMmlisp(parsed) {
     if (it.kind === "comment") { lines.push(it.text); continue; }
     if (it.dropped) continue; // parsed for tempo only (part K with no #pcm bank)
     if (it.text === "") { if (it.comment) lines.push(it.comment); continue; }
-    const form = `(${it.ch} ${it.text})${it.comment ? `  ${it.comment}` : ""}`;
+    const form = `(${it.ch}${it.prio != null ? ` :prio ${it.prio}` : ""} ${it.text})${it.comment ? `  ${it.comment}` : ""}`;
     lines.push(it.commentOut ? `; ${form}` : form);
   }
 

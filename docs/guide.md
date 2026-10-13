@@ -1276,10 +1276,12 @@ import does the same rather than approximating:
   stops a drum at its key-off, so each sample's `:frames` is cut to the
   longest stretch the song plays of it.
 - **Rhythm** keys up to six sounds at once (`@` is a mask: 1 BD, 2 SD, 4 TOP,
-  8 HH, 16 TOM, 32 RIM), each its own voice; on one PCM track a hit plays the
-  highest-priority sound — snare, tom, cymbal, kick, rim, hi-hat — and is
-  dropped while a higher one still rings (within 6 dB of its peak). `v`'s
-  total and per-sound levels become `:vel`, the loudest sound at 15.
+  8 HH, 16 TOM, 32 RIM), each its own voice. On the one PCM track each sound
+  is a `:prio` layer — snare 1, tom 2, cymbal 3, kick 4, rim 5, hi-hat 6 — so a
+  hit plays the highest-priority sound and is dropped while a higher one still
+  rings: its `:gate` is the ring, the time the RX5 sample stays within 6 dB of
+  its peak. `v`'s total and per-sound levels become `:vel`, the loudest sound
+  at 15.
 
 The chip's own limits stay visible as warnings: SSG notes below A2 play an
 octave up (the PSG's floor), one
