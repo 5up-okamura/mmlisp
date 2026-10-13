@@ -9630,7 +9630,7 @@
     const ROLL_KEY_W = 40;      // key gutter (px)
     const ROLL_LANE_H = 16;     // one noise / PCM lane (px)
     const ROLL_HEAD_AT = 0.3;   // the playhead's place across the plot
-    const ROLL_ROW_MAX = 12;    // tallest pitch row (px); a narrow range widens to fill
+    const ROLL_ROW_MAX = 12;    // tallest pitch row (px); a narrower span widens to fill
     const ROLL_ZOOMS = [24, 48, 96]; // px per quarter: 1×, 2×, 4×
     const ROLL_NOTE_NAMES = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
     let _rollPxPerBeat = 48;
@@ -9657,9 +9657,7 @@
         hi = Math.max(hi, cell.hiMidi);
       }
       _rollRange = hi >= lo ? { lo, hi } : { lo: 48, hi: 72 };
-      if (!_vizNotes.some((c) => c.head === _rollFocus && c.notes.length)) {
-        _rollFocus = (_vizNotes.find((c) => rollPitched(c) && c.notes.length) ?? _vizNotes.find((c) => c.notes.length))?.head ?? null;
-      }
+      if (!_vizNotes.some((c) => c.head === _rollFocus && c.notes.length)) _rollFocus = null;
       _rollTrace = null;
       _rollSel = new Set();
       _rollSelStale = true;
@@ -9670,7 +9668,7 @@
     // them, so a def's note lights wherever the def is used. The focus is the
     // channel form the cursor sits in (or has just closed); outside one (in a
     // def), the first channel, pitched before unpitched, that plays a note
-    // under it.
+    // under it; with neither, there is no focus.
     function rollFollowCursor(state) {
       _rollSelStale = false;
       const { from, to, head: pos } = state.selection.main;
@@ -9704,7 +9702,7 @@
         head = m?.[1] === 'fm3-csm-rate' ? 'fm3-csm' : m?.[1];
       }
       if (!(head && _vizNotes.some((c) => c.head === head))) head = firstPitched ?? firstHead;
-      if (head) _rollFocus = head;
+      _rollFocus = head; // null: no channel in focus, the whole song in view
     }
 
     // A clicked note selects its token, resolved as the playhead resolves it
@@ -9804,6 +9802,35 @@
       if (drop) tr.pts.splice(0, drop);
     }
 
+    // The pitch axis spans the focus's range plus ROLL_MARGIN semitones each
+    // side (every pitched track's with no focus or a noise/PCM one), widened
+    // to fill the pane wherever rows would pass ROLL_ROW_MAX. The other tracks
+    // show what falls inside it. A new span eases in over ROLL_VIEW_MS.
+    const ROLL_MARGIN = 3;
+    const ROLL_VIEW_MS = 200;
+    let _rollView = null; // { from: { lo, hi }, to: { lo, hi }, t0 }
+    function rollTargetRange(focusCell, avail) {
+      const src = focusCell && rollPitched(focusCell) && focusCell.hiMidi >= focusCell.loMidi
+        ? { lo: focusCell.loMidi, hi: focusCell.hiMidi } : _rollRange;
+      let lo = src.lo - ROLL_MARGIN, hi = src.hi + ROLL_MARGIN;
+      const rowH = Math.min(ROLL_ROW_MAX, avail / (hi - lo + 1));
+      const extra = Math.floor(avail / rowH) - (hi - lo + 1);
+      if (extra > 0) { lo -= Math.floor(extra / 2); hi += Math.ceil(extra / 2); }
+      return { lo, hi };
+    }
+    function rollViewNow(focusCell, avail) {
+      const to = rollTargetRange(focusCell, avail);
+      const now = performance.now();
+      const at = (v) => {
+        const p = Math.min(1, (now - v.t0) / ROLL_VIEW_MS);
+        const e = 1 - Math.pow(1 - p, 3); // ease out
+        return { lo: v.from.lo + (v.to.lo - v.from.lo) * e, hi: v.from.hi + (v.to.hi - v.from.hi) * e };
+      };
+      if (!_rollView || matchMedia('(prefers-reduced-motion: reduce)').matches) _rollView = { from: to, to, t0: now };
+      else if (to.lo !== _rollView.to.lo || to.hi !== _rollView.to.hi) _rollView = { from: at(_rollView), to, t0: now };
+      return at(_rollView);
+    }
+
     function drawRoll() {
       const c = document.getElementById('rollCanvas');
       const wrap = document.getElementById('rollWrap');
@@ -9833,18 +9860,15 @@
       const leftTicks = (headX - plotX) / ppt, rightTicks = (W - headX) / ppt;
       const laneTop = H - ROLL_LANE_H * lanes.length;
       const avail = Math.max(1, laneTop - 4);
-      let lo = _rollRange.lo - 1, hi = _rollRange.hi + 1;
-      const rowH = Math.min(ROLL_ROW_MAX, avail / (hi - lo + 1));
-      const extra = Math.floor(avail / rowH) - (hi - lo + 1);
-      if (extra > 0) { lo -= Math.floor(extra / 2); hi += Math.ceil(extra / 2); }
-      const top = 2 + (avail - (hi - lo + 1) * rowH) / 2;
-      const yOf = (m) => top + (hi - m) * rowH;
+      const { lo, hi } = rollViewNow(focusCell, avail); // fractional while easing
+      const rowH = avail / (hi - lo + 1);
+      const yOf = (m) => 2 + (hi - m) * rowH;
+      const mLo = Math.max(0, Math.floor(lo)), mHi = Math.min(127, Math.ceil(hi));
       const isBlack = (m) => [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12);
+      // Pitched drawing stays above the lanes: rows past the span are cut off.
+      const clipPitched = () => { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, laneTop); ctx.clip(); };
 
-      // Black-key rows, then the quarter grid (fainter 8ths at 2×, 16ths at 4×).
-      ctx.fillStyle = fg;
-      ctx.globalAlpha = 0.06;
-      for (let m = lo; m <= hi; m++) if (isBlack(m)) ctx.fillRect(plotX, yOf(m), plotW, rowH);
+      // The quarter grid (fainter 8ths at 2×, 16ths at 4×), then black-key rows.
       // The grid follows the focus's clock (every track's quarters coincide).
       const fClock = focusCell ? rollClock(focusCell) : null;
       const gT = fClock?.tick ?? 0;
@@ -9856,6 +9880,10 @@
         ctx.globalAlpha = b % ppq === 0 ? 0.6 : 0.25;
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
       }
+      clipPitched();
+      ctx.fillStyle = fg;
+      ctx.globalAlpha = 0.06;
+      for (let m = mLo; m <= mHi; m++) if (isBlack(m)) ctx.fillRect(plotX, yOf(m), plotW, rowH);
       ctx.globalAlpha = 1;
 
       // Notes: the others first in --mid, the focus on top in the foreground.
@@ -9864,7 +9892,7 @@
       if (focusCell && rollPitched(focusCell)) order.push(focusCell);
       const lit = new Set();
       for (const cell of order) {
-        const f = cell === focusCell;
+        const f = cell === focusCell || !focusCell; // no focus: every channel alike
         const clock = rollClock(cell);
         const st = rollLoopState(cell, clock);
         const t = clock?.tick ?? 0;
@@ -9880,11 +9908,11 @@
             ctx.globalAlpha = f ? 0.35 : 0.8;
             ctx.fillRect(x0, y, w0, h);
             ctx.globalAlpha = 1;
-            if (f) lit.add(n.midi);
+            if (cell === focusCell) lit.add(n.midi);
           }
           if (f || !sounding) ctx.strokeRect(x0 + 0.5, y + 0.5, Math.max(1, w0 - 1), Math.max(1, h - 1));
           if (_rollSel.has(n)) { ctx.fillStyle = fg; ctx.fillRect(x0, y, w0, h); ctx.fillStyle = f ? fg : mid; }
-          _rollHits.push({ x: x0, y, w: w0, h, n, cell });
+          if (y + h > 0 && y < laneTop) _rollHits.push({ x: x0, y, w: w0, h, n, cell }); // only what shows
         });
       }
 
@@ -9916,10 +9944,12 @@
         }
       }
 
+      ctx.restore(); // the pitched clip
+
       // Noise / PCM lanes: a tick at each onset, wider while it sounds.
       lanes.forEach((cell, i) => {
         const y = laneTop + i * ROLL_LANE_H;
-        const f = cell === focusCell;
+        const f = cell === focusCell || !focusCell;
         ctx.globalAlpha = 0.3;
         ctx.strokeStyle = mid;
         ctx.beginPath(); ctx.moveTo(plotX, y + 0.5); ctx.lineTo(W, y + 0.5); ctx.stroke();
@@ -9943,7 +9973,8 @@
       ctx.font = '9px ui-monospace, monospace';
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'right';
-      for (let m = lo; m <= hi; m++) {
+      clipPitched();
+      for (let m = mLo; m <= mHi; m++) {
         const y = yOf(m);
         if (lit.has(m)) { ctx.fillStyle = fg; ctx.fillRect(ROLL_KEY_W - 14, y, 12, rowH); }
         else if (isBlack(m)) { ctx.fillStyle = mid; ctx.fillRect(ROLL_KEY_W - 14, y + 1, 12, Math.max(1, rowH - 2)); }
@@ -9952,6 +9983,7 @@
           ctx.fillText(rollNoteName(m), ROLL_KEY_W - 17, y + rowH / 2);
         }
       }
+      ctx.restore();
       lanes.forEach((cell, i) => {
         ctx.fillStyle = cell === focusCell ? fg : mid;
         ctx.fillText(cell.head, ROLL_KEY_W - 4, laneTop + i * ROLL_LANE_H + ROLL_LANE_H / 2);

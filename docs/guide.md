@@ -1095,7 +1095,12 @@ past it.
 One channel is in focus: the one whose form holds the editor cursor, or
 whose note you click. It is drawn bright, the others dim, its sounding keys
 light up, and behind the playhead a line traces the pitch the chip actually
-played — glides, vibrato and arpeggio macros as they sounded. Clicking a note
+played — glides, vibrato and arpeggio macros as they sounded. The pitch axis
+follows it: its range and a few semitones either side, so a wide song stays
+readable; the other channels show what falls inside. With the cursor in no
+channel's form (a comment, a def with no note there, the score's settings),
+nothing is in focus: every channel is drawn alike over the whole song's
+range. Clicking a note
 selects the note it came from in the score (for a note inside `(x …)` or a
 def, the one written there); hovering one names its channel, pitch and
 length. The other way round, the notes written at the cursor (or inside the
