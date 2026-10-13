@@ -1139,16 +1139,28 @@ function lfoPerPitchClass(lfo, isSsg) {
 // fitted with linear segments, as far as its longest note (`maxClocks`).
 // Lengths are whole-note fractions of the part's clock (`3/112`), which an
 // `Nt` could not hold for every C.
-function lfoSpec(lfo, isSsg, wholeClocks, pc, maxClocks) {
-  if (lfoOff(lfo)) return "none";
+// The MMB holds a macro of up to 255 steps and drops a longer one, so a macro
+// over that many frames (at the song's opening tempo) is sampled at a coarser
+// :step — which the preview plays too.
+const MACRO_MAX_STEPS = 250; // under 255, for the rounding of lengths
+function macroStep(frames) {
+  const step = Math.ceil(frames / MACRO_MAX_STEPS);
+  return step > 1 ? `:step ${step}f ` : "";
+}
+
+// The (macro …) body for a software LFO on pitch class `pc` (null: one for
+// every note): `:pitch+` and its spec, a :step first when it is long.
+function lfoSpec(lfo, isSsg, wholeClocks, pc, maxClocks, bpm) {
+  if (lfoOff(lfo)) return ":pitch+ none";
   const len = (n) => `${n}/${wholeClocks}`;
+  const frames = (clocks) => (clocks / wholeClocks) * (240 / (bpm || 120)) * 60;
   if (lfoIsVibrato(lfo, isSsg, pc)) {
     const cents = Math.max(1, Math.round(lfoDepth(lfo, isSsg, pc)));
     const dir = lfo.amp > 0 ? 1 : -1; // a positive vector raises the pitch first
     // :phase 64 starts the triangle at its centre, heading for :to — as PLLFO.
     const tri = `(triangle ${-dir * cents}..${dir * cents} :len ${len(2 * lfo.amt * lfo.clock)} :phase 64)`;
     const lead = lfo.delay + lfo.clock - 1; // clocks before the first step
-    return lead > 0 ? `[ (wait ${len(lead)}) ${tri} ]` : tri;
+    return `${macroStep(frames(lead + 2 * lfo.amt * lfo.clock))}:pitch+ ${lead > 0 ? `[ (wait ${len(lead)}) ${tri} ]` : tri}`;
   }
   const n = Math.min(LFO_SWEEP_MAX_CLOCKS, maxClocks || LFO_SWEEP_MAX_CLOCKS);
   const offs = lfoOffsets(lfo, n);
@@ -1173,14 +1185,15 @@ function lfoSpec(lfo, isSsg, wholeClocks, pc, maxClocks) {
     items.push(`(linear ${Math.round(c[a])}..${Math.round(c[b])} :len ${len(b - a)})`);
     a = b;
   }
-  return `[ ${items.join(" ")} ]`;
+  return `${macroStep(frames(n))}:pitch+ [ ${items.join(" ")} ]`;
 }
 
 // Name an LFO spec once as (def lfoN (macro :pitch+ …)) and return the name.
 function lfoName(ctx, spec) {
   let name = ctx.lfoRegistry.get(spec);
   if (!name) {
-    name = spec === "none" ? "lfo-off" : `lfo${[...ctx.lfoRegistry.keys()].filter((k) => k !== "none").length + 1}`;
+    const off = ":pitch+ none";
+    name = spec === off ? "lfo-off" : `lfo${[...ctx.lfoRegistry.keys()].filter((k) => k !== off).length + 1}`;
     ctx.lfoRegistry.set(spec, name);
   }
   return name;
@@ -1196,7 +1209,7 @@ function lfoBeforeNote(ctx, out, letter, acc) {
   ctx.lfoChanged = false;
   const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
   const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
-  const name = lfoName(ctx, lfoSpec(sw.lfo, ctx.isSsg, sw.wholeClocks, pc, sw.maxClocks));
+  const name = lfoName(ctx, lfoSpec(sw.lfo, ctx.isSsg, sw.wholeClocks, pc, sw.maxClocks, ctx.tempo));
   if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
 }
 
@@ -1535,12 +1548,12 @@ function renderOps(ops, ctx, out, depth = 0) {
           break;
         }
         ctx.lfoPerPc = null;
-        const spec = lfoSpec(lfo, ctx.isSsg, op.wholeClocks, null, op.maxClocks);
+        const spec = lfoSpec(lfo, ctx.isSsg, op.wholeClocks, null, op.maxClocks, ctx.tempo);
         if (ctx.lfoRegistry) {
           const name = lfoName(ctx, spec);
           if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
         } else {
-          out.push(`(macro :pitch+ ${spec})`);
+          out.push(`(macro ${spec})`);
         }
         break;
       }
@@ -1831,8 +1844,9 @@ function finishChain(ctx, out) {
 // clock by clock, fitted with straight pieces. One envelope therefore draws
 // per `v`, named like the LFO's pitch classes.
 const SSG_ENV_TOLERANCE = 1; // :vel steps, the straight-piece fit of a stage
-function ssgEnvSpec(op, wholeClocks, v) {
+function ssgEnvSpec(op, wholeClocks, v, bpm) {
   const factor = WHOLE_TICKS / wholeClocks;
+  let ticks = 0; // the stages' whole length, for macroStep
   const vel = Math.max(1, ssgRegVel(v));
   const played = (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256));
   const ratio = (x) => Math.round((100 * x) / vel) / 100;
@@ -1842,6 +1856,7 @@ function ssgEnvSpec(op, wholeClocks, v) {
   const stage = (a, b, clocks) => {
     if (clocks <= 0) return;
     const total = Math.max(1, Math.round(clocks * factor));
+    ticks += total;
     const y = Array.from({ length: total + 1 }, (_, k) => played(a + ((b - a) * k) / total));
     let i = 0;
     while (i < total) {
@@ -1871,14 +1886,14 @@ function ssgEnvSpec(op, wholeClocks, v) {
   // and has not decayed far into it.
   items.push("(wait key-off)");
   if (sl > 0 && rr > 0) stage(sl, 0, sl / rr);
-  return `[ ${items.join(" ")} ]`;
+  return `${macroStep((ticks / PPQN) * (60 / (bpm || 120)) * 60)}:vel* [ ${items.join(" ")} ]`;
 }
 
 // Before an SSG note: the envelope drawn for its `v`, if not already active.
 function envBeforeNote(ctx, out) {
   const env = ctx.ssgEnv;
   if (!env || !ctx.envRegistry) return;
-  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15));
+  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15), ctx.tempo);
   let name = ctx.envRegistry.get(spec);
   if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
   if (name !== ctx.envActive || ctx.verbose) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
@@ -2358,8 +2373,8 @@ export function mucomToMmlisp(parsed) {
   // Emit the discovered LFO / envelope / echo / PCM defs above the score (by name).
   if (lfoRegistry.size || envRegistry.size || echoRegistry.size || pcmRegistry.size) {
     const defLines = [];
-    for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} (macro :pitch+ ${spec}))`);
-    for (const [spec, name] of envRegistry) defLines.push("", `(def ${name} (macro :vel* ${spec}))`);
+    for (const [spec, name] of lfoRegistry) defLines.push("", `(def ${name} (macro ${spec}))`);
+    for (const [spec, name] of envRegistry) defLines.push("", `(def ${name} (macro ${spec}))`);
     for (const [form, name] of echoRegistry) defLines.push("", `(def ${name} (echo ${form}))`);
     // Each referenced bank sample slices the one WAV the bank decoded to.
     for (const [, e] of [...pcmRegistry].sort((a, b) => a[0] - b[0])) {
