@@ -255,17 +255,3 @@ Licenses dialog links it.
 - Conversion: channel mix, resampling, cuts with half-cosine fades, one
   kick mixed with the crash, and a level set by role (a limiter and clip to
   raise, a gain to lower).
-
-## YM2608-style rhythm samples
-
-- Source: "YM2608風リズム音源音色データ Ver.2.0" (2608modoki2.zip) by メモル
-  (Takanori YOSHIMURA), https://sound.jp/jaime/fmp_top.html.
-- Made by the author from sounds of their own instruments, edited to resemble
-  the YM2608 rhythm section; not the chip's ROM.
-- License: the author's terms — free to distribute, reprint or build into
-  software, paid or free — preserved in
-  `presets/ym2608/LICENSE-2608modoki2.txt`.
-- Included: six GM-numbered WAVs in `presets/ym2608/wav/`, converted to
-  22,050 Hz / 16-bit mono.
-- Conversion: resampling, a short end fade, and a level set by role (a
-  limiter and clip to raise, a gain to lower).
