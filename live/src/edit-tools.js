@@ -25,7 +25,9 @@ function nodeSpan(node, starts) {
 }
 
 // The score's channel forms, in order: (fm1 …), (pcm2 …) — with each body
-// item's span, so an edit can land between items and never inside one.
+// item's span, so an edit can land between items and never inside one. Forms
+// of one channel and one :prio append into one timeline, a layer; distinct
+// :prio are parallel layers of the channel.
 export function channelForms(text) {
   const starts = lineStarts(text);
   const forms = [];
@@ -34,12 +36,17 @@ export function channelForms(text) {
     const head = node.items[0];
     if (head?.kind !== "atom" || !TRACKS.has(head.value)) continue;
     const span = nodeSpan(node, starts);
+    // `:prio N` is the head option: it picks the form's layer (language.md
+    // §1) and is not part of the body, so nothing is written before it.
+    const hasPrio = node.items[1]?.value === ":prio";
+    const body = node.items.slice(hasPrio ? 3 : 1);
     forms.push({
       channel: head.value,
+      prio: hasPrio ? Number(node.items[2]?.value) : 8,
       from: span.from,
       to: span.to,
-      head: nodeSpan(head, starts),
-      items: node.items.slice(1).map((n) => ({ node: n, ...nodeSpan(n, starts) })),
+      head: nodeSpan(hasPrio && node.items[2] ? node.items[2] : head, starts),
+      items: body.map((n) => ({ node: n, ...nodeSpan(n, starts) })),
     });
   }
   return forms;
@@ -88,25 +95,31 @@ export function loopSelection(text, selFrom, selTo) {
   const touched = forms.filter((f) =>
     empty ? selFrom >= f.from && selFrom <= f.to : selFrom < f.to && selTo > f.from);
   if (touched.length === 0) return { error: "the selection is not inside a channel form" };
-  const channels = [...new Set(touched.map((f) => f.channel))];
-  const formsOf = (ch) => forms.filter((f) => f.channel === ch);
+  // A layer is one channel at one :prio; a loop lives in a layer.
+  const key = (f) => `${f.channel}/${f.prio}`;
+  const layers = [...new Map(touched.map((f) => [key(f), f])).values()];
+  const layerForms = (f) => forms.filter((g) => key(g) === key(f));
+  const channelLabels = (ch) => labelsIn(forms.filter((g) => g.channel === ch));
+  const layered = (ch) => new Set(forms.filter((g) => g.channel === ch).map((g) => g.prio)).size > 1;
+  const name = (f) => (layered(f.channel) ? `${f.channel} (prio ${f.prio})` : f.channel);
 
-  if (!empty && channels.length === 1) {
-    // One channel: the selected items, snapped out to whole body items.
-    const ch = channels[0];
+  if (!empty && layers.length === 1) {
+    // One layer: the selected items, snapped out to whole body items.
+    const layer = layers[0];
     const items = touched.flatMap((f) => f.items);
     const first = items.find((it) => it.to > selFrom);
     const last = [...items].reverse().find((it) => it.from < selTo);
     if (!first || !last || first.from > last.from)
       return { error: "nothing to loop: the selection holds no notes of the channel" };
-    const all = formsOf(ch).flatMap((f) => f.items);
+    const all = layerForms(layer).flatMap((f) => f.items);
     const deadAfter = all.some((it) => it.from >= last.to);
-    // A selection that spans the whole channel loops it whole: `#top`.
+    // A selection that spans the whole layer loops it whole: `#top`.
     const whole = first === all[0] && !deadAfter;
-    const label = freeLabel(whole ? "top" : "loop", labelsIn(formsOf(ch)));
+    const label = freeLabel(whole ? "top" : "loop", channelLabels(layer.channel));
     return {
       mode: "range",
-      channels,
+      channels: [layer.channel],
+      layers: [name(layer)],
       skipped: [],
       deadAfter,
       changes: [
@@ -116,29 +129,38 @@ export function loopSelection(text, selFrom, selTo) {
     };
   }
 
-  // Whole channels: one loop each, from its first form's head to its last
-  // form's end. A channel already ending in an infinite go is left alone.
+  // Whole layers: one loop each, from its first form's head to its last
+  // form's end. A layer already ending in an infinite go is left alone. Layers
+  // of one channel that loop must start and end together (E_PRIO_LAYER_LOOP).
   const changes = [];
   const done = [];
   const skipped = [];
-  for (const ch of channels) {
-    const fs = formsOf(ch);
+  for (const layer of layers) {
+    const fs = layerForms(layer);
     const firstForm = fs[0];
     const lastForm = fs[fs.length - 1];
     if (isInfiniteGo(lastForm.items[lastForm.items.length - 1])) {
-      skipped.push(ch);
+      skipped.push(name(layer));
       continue;
     }
-    const label = freeLabel("top", labelsIn(fs));
+    const taken = channelLabels(layer.channel);
+    for (const c of changes) if (c.label && c.channel === layer.channel) taken.add(c.label);
+    const label = freeLabel("top", taken);
     const at = firstForm.items[0]?.from ?? firstForm.head.to;
-    const sep = firstForm.items[0] ? " " : "";
-    changes.push({ from: at, to: at, insert: firstForm.items[0] ? `#${label}${sep}` : ` #${label}` });
+    changes.push({ from: at, to: at, insert: firstForm.items[0] ? `#${label} ` : ` #${label}`, label, channel: layer.channel });
     changes.push({ from: lastForm.to - 1, to: lastForm.to - 1, insert: ` (go ${label})` });
-    done.push(ch);
+    done.push(layer);
   }
   if (done.length === 0) return { error: `already looping: ${skipped.join(", ")}` };
   changes.sort((a, b) => a.from - b.from);
-  return { mode: "whole", channels: done, skipped, deadAfter: false, changes };
+  return {
+    mode: "whole",
+    channels: [...new Set(done.map((f) => f.channel))],
+    layers: done.map(name),
+    skipped,
+    deadAfter: false,
+    changes: changes.map(({ from, to, insert }) => ({ from, to, insert })),
+  };
 }
 
 // Apply changes (sorted, non-overlapping) to text — for node checks; the
@@ -252,6 +274,7 @@ export function scoreNotes(text, ir, voiceNames = new Set()) {
         midi: isNote ? pitchMidi(e.args.pitch) : null,
         sample: e.args?.sample ?? null,
         voice: e.args?.sample ?? (form ? voiceAt(form, forms, from, voiceNames) : null),
+        prio: form?.prio ?? null,
         direct: !!form?.items.some((it) => it.from === from),
         shared: depth > 0 || !form,
         tied: !!(e.args?.legato || next?.cmd === "TIE" || next?.args?.legato),
@@ -264,12 +287,35 @@ export function scoreNotes(text, ir, voiceNames = new Set()) {
   return out.sort((a, b) => a.from - b.from);
 }
 
+// scoreNotes for every layer, the notes a higher layer hides included. The
+// compiler merges a channel's :prio layers into one stream and drops what a
+// higher layer covers, so each layer of a layered channel is compiled alone —
+// the channel's other layers blanked out, space for space, so every offset
+// stays where it is. `compile(text)` returns the IR (with the score's imports).
+export function layeredNotes(text, compile, voiceNames = new Set()) {
+  const forms = channelForms(text);
+  const prios = new Map();
+  for (const f of forms) prios.set(f.channel, (prios.get(f.channel) ?? new Set()).add(f.prio));
+  const layered = new Set([...prios].filter(([, ps]) => ps.size > 1).map(([ch]) => ch));
+  const notes = scoreNotes(text, compile(text), voiceNames).filter((n) => !layered.has(n.channel));
+  for (const ch of layered) {
+    for (const p of prios.get(ch)) {
+      let alone = text;
+      for (const f of forms)
+        if (f.channel === ch && f.prio !== p)
+          alone = alone.slice(0, f.from) + alone.slice(f.from, f.to).replace(/[^\n]/g, " ") + alone.slice(f.to);
+      notes.push(...scoreNotes(alone, compile(alone), voiceNames).filter((n) => n.channel === ch));
+    }
+  }
+  return notes.sort((a, b) => a.from - b.from);
+}
+
 // The voice (a def-fm / def-pcm name) in force at `offset` in a channel: the
 // last one named before it across the channel's forms, top level.
 function voiceAt(form, forms, offset, voiceNames) {
   let voice = null;
   for (const f of forms) {
-    if (f.channel !== form.channel || f.from > offset) continue;
+    if (f.channel !== form.channel || f.prio !== form.prio || f.from > offset) continue;
     for (const it of f.items) {
       if (it.from >= offset) break;
       if (it.node.kind === "atom" && voiceNames.has(it.node.value)) voice = it.node.value;
@@ -280,18 +326,19 @@ function voiceAt(form, forms, offset, voiceNames) {
 
 /**
  * The notes meeting a condition.
- * @param {object} q  {scope: 'selection'|'channel'|'all', from, to, channel,
+ * @param {object} q  {scope: 'selection'|'layer'|'channel'|'all', from, to, channel, prio,
  *   pitch: {kind: 'any'|'rest'|'name'|'range', name, low, high},
  *   length: {op: 'any'|'eq'|'gt'|'lt', ticks}, voice: '' | name}
  */
 export function matchNotes(notes, q) {
-  const channel = q.scope === "channel" ? q.channel ?? null : null;
+  const channel = q.scope === "channel" || q.scope === "layer" ? q.channel ?? null : null;
   const pc = q.pitch?.kind === "name" ? pitchMidi(q.pitch.name) : null;
   const lo = q.pitch?.kind === "range" ? pitchMidi(q.pitch.low) : null;
   const hi = q.pitch?.kind === "range" ? pitchMidi(q.pitch.high) : null;
   return notes.filter((n) => {
     if (q.scope === "selection" && !(n.from < q.to && n.to > q.from)) return false;
     if (q.scope === "channel" && n.channel !== channel) return false;
+    if (q.scope === "layer" && (n.channel !== channel || n.prio !== q.prio)) return false;
     const p = q.pitch?.kind ?? "any";
     if (p === "rest" ? n.kind !== "rest" : n.kind !== "note") return false;
     if (p === "name" && (pc == null || (((n.midi - pc) % 12) + 12) % 12 !== 0)) return false;
@@ -350,25 +397,26 @@ function reverseRuns(text, notes, matches) {
   const changes = [];
   let done = 0;
   const forms = channelForms(text);
-  for (const ch of [...new Set(matches.map((m) => m.channel))]) {
-    // The run is set by the channel's own notes; one in a def or a loop is a
-    // token many places share, not a place in this channel's timeline.
-    const ms = matches.filter((m) => m.channel === ch && !m.shared).sort((a, b) => a.from - b.from);
+  const key = (n) => `${n.channel}/${n.prio}`;
+  for (const layer of [...new Set(matches.map(key))]) {
+    // The run is set by the layer's own notes; one in a def or a loop is a
+    // token many places share, not a place in this layer's timeline.
+    const ms = matches.filter((m) => key(m) === layer && !m.shared).sort((a, b) => a.from - b.from);
     if (ms.length === 0) continue;
     const first = ms[0];
     const last = ms[ms.length - 1];
-    const form = forms.find((f) => f.channel === ch && first.from >= f.from && first.to <= f.to);
-    if (!form || last.to > form.to)
-      return { error: `${ch}: reverse works inside one form; the matches span several` };
-    const run = notes.filter((n) => n.channel === ch && n.from >= first.from && n.to <= last.to);
+    const name = first.prio != null && first.prio !== 8 ? `${first.channel} (prio ${first.prio})` : first.channel;
+    // Forms of one layer append into one timeline, so a run may cross them.
+    const lforms = forms.filter((f) => `${f.channel}/${f.prio}` === layer && f.to > first.from && f.from < last.to);
+    const run = notes.filter((n) => key(n) === layer && n.from >= first.from && n.to <= last.to);
     const bad = run.find((n) => n.shared || n.tied || !n.direct);
-    if (bad) return { error: `${ch}: reverse needs plain notes and rests — "${bad.token}" sits in a loop, a def, a nested form or a tie` };
+    if (bad) return { error: `${name}: reverse needs plain notes and rests — "${bad.token}" sits in a loop, a def, a nested form or a tie` };
     if (run.length < 2) continue;
     // The octave and sample in force at each element, walking the run's items.
     const at = new Map();
     let oct = Math.floor(run[0].midi / 12) - 1;
     let sample = run[0].sample;
-    const items = form.items.filter((it) => it.from >= first.from && it.to <= last.to);
+    const items = lforms.flatMap((f) => f.items).filter((it) => it.from >= first.from && it.to <= last.to);
     const sampleNames = new Set(run.map((n) => n.sample).filter(Boolean));
     for (let k = 0; k < items.length; k++) {
       const it = items[k];
@@ -385,30 +433,36 @@ function reverseRuns(text, notes, matches) {
       else if (v && sampleNames.has(v)) sample = v;
     }
     const rev = [...run].reverse();
-    const local = [];
-    run.forEach((slot, i) => {
+    const slots = run.map((slot, i) => {
       const src = rev[i];
       const ctx = at.get(slot.from);
       let insert;
       if (src.kind === "rest") insert = `_${lengthSuffix(src.len)}`;
       else {
-        const name = /^([a-g][+\-#]*)/i.exec(src.pitch)[1];
+        const pname = /^([a-g][+\-#]*)/i.exec(src.pitch)[1];
         const d = Math.floor(src.midi / 12) - 1 - ctx.oct;
         const up = d > 0 ? "> ".repeat(d) : "< ".repeat(-d);
         const down = d > 0 ? " <".repeat(d) : " >".repeat(-d);
-        insert = `${up}${name}${lengthSuffix(src.len)}${down}`;
+        insert = `${up}${pname}${lengthSuffix(src.len)}${down}`;
         if (src.sample && ctx.sample && src.sample !== ctx.sample) insert = `${src.sample} ${insert} ${ctx.sample}`;
       }
-      local.push({ from: slot.from - first.from, to: slot.to - first.from, insert });
+      return { from: slot.from, to: slot.to, insert };
     });
-    // One change for the run, with the octave marks that now cancel — a `>`
-    // written back to back with a `<` — taken out.
-    let span = applyChanges(text.slice(first.from, last.to), local);
-    for (let prev = null; prev !== span; ) {
-      prev = span;
-      span = span.replace(/(^|[ \t])(?:> <|< >)(?=[ \t]|$)/g, "$1").replace(/[ \t]{2,}/g, " ");
+    // One change per form the run crosses, with the octave marks that now
+    // cancel — a `>` written right before a `<` — taken out. Only the pair
+    // goes; the spacing around it is the writer's.
+    for (const f of lforms) {
+      const from = Math.max(f.from, first.from);
+      const to = Math.min(f.to, last.to);
+      const local = slots.filter((c) => c.from >= from && c.to <= to).map((c) => ({ ...c, from: c.from - from, to: c.to - from }));
+      if (local.length === 0) continue;
+      let span = applyChanges(text.slice(from, to), local);
+      for (let prev = null; prev !== span; ) {
+        prev = span;
+        span = span.replace(/[ \t](?:> <|< >)(?=[ \t]|$)/g, "").replace(/^(?:> <|< >)(?:[ \t]|$)/, "");
+      }
+      if (span !== text.slice(from, to)) changes.push({ from, to, insert: span });
     }
-    if (span !== text.slice(first.from, last.to)) changes.push({ from: first.from, to: last.to, insert: span.trim() });
     done += run.length;
   }
   return { changes, done, skipped: { shared: 0, tied: 0 } };

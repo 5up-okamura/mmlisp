@@ -1458,7 +1458,10 @@ the first and `(go loop)` after the last, widened to whole notes and forms so
 nothing is split (selecting the whole channel writes `#top` instead). With a selection across channels — or just the cursor in a
 channel — each channel it touches loops whole, `#top` at its head and
 `(go top)` at its end (a channel written in several forms loops across all of
-them; one that already ends in a `go` is left alone). The log says how long
+them; one that already ends in a `go` is left alone). On a channel with
+`:prio` layers the loop belongs to a layer: the cursor's layer, or each layer
+the selection touches — and layers that loop must start and end together
+(`E_PRIO_LAYER_LOOP`, which the log repeats). The log says how long
 each loop is in bars, since channels that loop at different lengths drift
 apart, and warns when notes follow a loop and so never play. It is one undo
 step.
@@ -1469,13 +1472,17 @@ step.
 at once, the way a DAW's logical editor does. Its panel sits beside the
 editor and marks every note the condition matches as you change it.
 
-- **Scope**: the selection, the channel the cursor is in, or the whole score.
+- **Scope**: the selection, the layer the cursor is in (its channel at its
+  `:prio` — every form of it, since they append), the channel with all its
+  layers, or the whole score. Notes a higher `:prio` layer hides count too:
+  they are in the text even when they do not sound.
 - **Condition**: pitch (any note, a note name in any octave, a range such as
   `c4`–`b4`, or rests), length (`=`, `>` or `<` a length written as the score
   writes one — `8`, `4.`, `96t`), and voice or sample (`snare`, `lead`).
 - **Do**: delete (leaving a rest, so nothing after it moves, or closing up),
   set / add to / multiply the length, or **reverse** — the run from the first
-  matched note to the last, rests and all, played backwards. A reversed note
+  matched note to the last, rests and all, played backwards, in each layer on
+  its own. A reversed note
   is written out in full (`> e+8 <`), so the notes around it keep their octave
   and sample.
 

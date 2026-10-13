@@ -564,7 +564,8 @@
         <label class="import-field"><span>Scope</span>
           <select id="leScope">
             <option value="selection">Selection</option>
-            <option value="channel">Channel at the cursor</option>
+            <option value="layer">Layer at the cursor (its :prio)</option>
+            <option value="channel">Channel at the cursor (every layer)</option>
             <option value="all">Whole score</option>
           </select></label>
         <label class="import-field"><span>Pitch</span>
@@ -779,7 +780,7 @@
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
-    import { loopSelection, loopLengths, channelForms, scoreNotes, matchNotes, applyLogical, lengthTicks, voiceDefNames } from './src/edit-tools.js';
+    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, lengthTicks, voiceDefNames } from './src/edit-tools.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
@@ -3451,8 +3452,11 @@
       }
       view.dispatch({ changes: res.changes, userEvent: 'input.loop', scrollIntoView: true });
       let lengths = '';
+      let layerDiags = [];
       try {
-        const { ir } = compileMMLisp(view.state.doc.toString(), _lastFileName, { imports: _importSources });
+        const { ir, diagnostics } = compileMMLisp(view.state.doc.toString(), _lastFileName, { imports: _importSources });
+        // Layers of one channel that loop must start and end together.
+        layerDiags = (diagnostics ?? []).filter((d) => /PRIO_LAYER/.test(d.code));
         const ticks = loopLengths(ir);
         const bar = (ir?.ppqn ?? 96) * 4;
         lengths = res.channels
@@ -3460,9 +3464,10 @@
           .map((ch) => `${ch} ${+(ticks[ch] / bar).toFixed(2)} bars`)
           .join(', ');
       } catch { /* the lengths are a courtesy; the edit stands */ }
-      const what = res.mode === 'range' ? `looped the selection on ${res.channels[0]}` : `looped ${res.channels.join(', ')} whole`;
+      const what = res.mode === 'range' ? `looped the selection on ${res.layers[0]}` : `looped ${res.layers.join(', ')} whole`;
       log(`Loop Selection: ${what}${lengths ? ` (${lengths})` : ''}${res.skipped.length ? `; already looping: ${res.skipped.join(', ')}` : ''}`, 'info');
-      if (res.deadAfter) log(`Loop Selection: what follows the loop on ${res.channels[0]} never plays`, 'info');
+      if (res.deadAfter) log(`Loop Selection: what follows the loop on ${res.layers[0]} never plays`, 'info');
+      for (const d of layerDiags) log(`Loop Selection: ${d.code} ${d.message}`, d.severity === 'error' ? 'err' : 'info');
       return true;
     }
 
@@ -3476,7 +3481,7 @@
       const sel = _le.sel;
       const lenOp = leEl('leLenOp').value;
       return {
-        scope: leEl('leScope').value, from: sel.from, to: sel.to, channel: _le.channel,
+        scope: leEl('leScope').value, from: sel.from, to: sel.to, channel: _le.channel, prio: _le.prio,
         pitch: { kind: leEl('lePitch').value, name: leEl('leName').value, low: leEl('leLow').value, high: leEl('leHigh').value },
         length: { op: lenOp, ticks: lenOp === 'any' ? null : lengthTicks(leEl('leLen').value) },
         voice: leEl('leVoice').value,
@@ -3524,11 +3529,12 @@
         return;
       }
       const voices = voiceDefNames([text, ...(_importSources?.values?.() ?? [])]);
-      const notes = scoreNotes(text, ir, voices);
+      // Every layer's notes, those a higher :prio layer hides included.
+      const notes = layeredNotes(text, (t) => (t === text ? ir : compileMMLisp(t, _lastFileName, { imports: _importSources }).ir), voices);
       const sel = editorView.state.selection.main;
       // The channel at the cursor: the form it sits in (a def has none).
-      const channel = channelForms(text).find((f) => sel.head >= f.from && sel.head <= f.to)?.channel ?? null;
-      _le = { text, notes, channel, sel: { from: sel.from, to: sel.to }, matches: [] };
+      const here = channelForms(text).find((f) => sel.head >= f.from && sel.head <= f.to);
+      _le = { text, notes, channel: here?.channel ?? null, prio: here?.prio ?? null, sel: { from: sel.from, to: sel.to }, matches: [] };
       leEl('leScope').value = sel.empty ? 'channel' : 'selection';
       const voiceSel = leEl('leVoice');
       voiceSel.replaceChildren(new Option('Any', ''));
