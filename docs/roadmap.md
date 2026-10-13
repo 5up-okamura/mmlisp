@@ -5,8 +5,6 @@ is `docs/language.md` and `docs/driver.md`; how they got here is git and its
 tags. The language baseline is v0.7, and it evolves in place from composition
 needs (CLAUDE.md).
 
-Items marked *to discuss* wait for a decision before anyone builds them.
-
 ## Driver (MMLispDRV)
 
 Its current limits are `driver.md` §11 — keep the two in step.
@@ -14,28 +12,17 @@ Its current limits are `driver.md` §11 — keep the two in step.
 1. **A hardware run.** Everything — the three engine images at a 100% work
    ceiling, the multi-bank engine, sound effects in the SGDK example — has run
    only in the JS machine and on BlastEm.
-2. **Wire budget** (*to discuss*). 960 pairs a second; the opening setup is
-   primed at load, but a mid-song change still has to fit through. Candidates,
-   in this order: **PCM STAGE** (the sequencer peeks a track's next PCM note
-   and stages its sample, so the note's START is one pair); **ordinary FM3 in
-   the short-group priority**; **key-ons last** on the banked converter too.
-3. **Voice-hoist windows** (*to discuss*). The windows a voice change may move
-   into are fixed (a rest of 4 frames, a note cut of 2); a song-level setting
-   to widen them was discussed and is not built.
-4. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
+2. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
    voice change is one pair instead of the ~30 register writes a channel costs
    today.
-5. **Several scores resident at once** (DJ-style transitions, driver.md §2.3).
+3. **Several scores resident at once** (DJ-style transitions, driver.md §2.3).
    Today one score is resident; a bundle's songs share one sample bank.
-6. **PAL and SE rough edges.** A single-bank PAL score's samples are baked at
+4. **PAL and SE rough edges.** A single-bank PAL score's samples are baked at
    the NTSC DAC rate (the multi-bank images have PAL rates of their own). A
    PCM effect restarts a looping BGM note from the sample's head rather than
    where it was, and a sweep in flight on a stolen channel is lost rather than
    resumed.
-7. **A small Z80-only build** (*to discuss*) — sequencer and engine both on
-   the Z80, for a game that cannot spare the 68000. Its PCM rate (a
-   Timer-A-paced 10,653 Hz rather than 10,112) is part of that discussion.
-8. **Integration breadth** — more game-scene mappings worth shipping as
+5. **Integration breadth** — more game-scene mappings worth shipping as
    examples beside `drv/sgdk/example`, and a hardware-verified reference
    build.
 
@@ -80,6 +67,13 @@ resolved at compile time, version-pinned for reproducibility. Patches would be
 FM voices and function effects (delay, arpeggiator, LFO), each with author,
 license, version and lineage (`fork_of`); previews synthesize in the browser,
 since the chip emulators are already there.
+
+**MMLisp as the composing tool for a Z80 stream player.** For a game that
+cannot spare the 68000: the score exported as a pre-rendered stream (Live's
+VGM export → xgmtool → XGM works today, without runtime parameter motion),
+played by a small Z80 player with a little added on top — per-channel level
+offsets on the carrier TL writes, part swapping between layered variant
+streams, and `(trig N)` markers so the game can sync to bars.
 
 **Multi-chip.** The IR is chip-agnostic; only the backend (MMB exporter and
 driver) is chip-specific. YM2151 (OPM), YM2413 (OPLL), SID, the NES 2A03 and

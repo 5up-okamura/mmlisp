@@ -259,15 +259,20 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   against a bus stop); a frame mark in the FIFO (makes lateness uniform, does
   not create service); writing the new patch right after the key-on (the
   attack is the most audible part of the note).
-- **Open, in this order**: **PCM STAGE** — without an MMB change, the sequencer
-  peeks the track's next PCM note and sends a STAGE command (SRC/END/WRAP/bank,
-  no generation) once the previous START is applied, so the note's START diffs
-  to one pair; a prepayment never required for correctness. **Ordinary FM3 in
-  the short-group priority** when the converter's `$27` shadow says normal mode
-  and the frame has no `$27` write. **Key-ons last × `banked_writes`** — not
-  applied there (its short-groups-first rule would be undone), no listening
-  yet. The hoist windows are fixed options (rest 4 frames, note cut 2); a
-  song-level setting to widen them was discussed and is not built.
+- **Declined for their cost** (user, 2026-10-13: "費用対効果が薄そう"):
+  **PCM STAGE** (the sequencer peeks a track's next PCM note and stages
+  SRC/END/WRAP early so its START is one pair — lookahead in the ROM
+  sequencer for a few ms, while the PCM lane already jumps the FM backlog);
+  **ordinary FM3 in the short-group priority** (when the `$27` shadow says
+  normal mode); **key-ons last × `banked_writes`** (its short-groups-first
+  rule would be undone). Reopen (b)/(c) only if the multi-bank listening test
+  ([[pcm]] Open) hears onset wobble; `onset-timing.mjs` rejects multi-bank
+  scores, so measuring needs the banked host model first.
+- **The hoist windows stay fixed** (rest 4 frames, note cut 2; user,
+  2026-10-13), no song-level setting: a wider rest window only sends the voice
+  earlier, and the note cut is already controlled where it matters — a slur
+  keeps the voice in place, a `:gate-` silence is used as it is. Revisit only
+  if a score suffers from the cut.
 
 ## 11. SE, and several songs
 

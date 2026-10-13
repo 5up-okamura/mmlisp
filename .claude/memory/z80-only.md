@@ -6,6 +6,9 @@ makes MMLispDRV distinctive (the value machine, zero-jitter DAC, CSM, full SE
 restore) — the space is one XGM2 and MDSDRV have already mapped. The chosen
 direction is [[driver-decisions]] §9: keep the split, cut the 68000's share.
 Everything below stands as measured, for the day this is revisited.
+**Off the driver roadmap 2026-10-13** (user): the motive has weakened — the
+68000 pass brought the split's share to ~16% — and the stream-player shape
+below moved to the roadmap's Future vision.
 
 ## A second shape: MMLisp as the composing tool, a stream player on the Z80 (2026-10-02)
 
@@ -27,7 +30,7 @@ stream. The user likes the direction; nothing is decided or built.
     music without runtime synthesis;
   - `(trig N)` markers carried in the stream, so the game can sync to bars.
 
-`docs/roadmap.md` Driver #7. Nothing is built; this file holds the user's
+`docs/roadmap.md` Future vision. Nothing is built; this file holds the user's
 decisions so far and the measurements taken for them.
 
 ## Why (the user, 2026-09-28)
@@ -167,8 +170,8 @@ chip's DAC reads, so the grid's own error (31.9 dB in the listening set)
 disappears for on-time writes. Timer A reloads itself, so the mean rate is
 exact whenever the flag is re-armed; a poll later than one period (354 cycles)
 misses an overflow and slips one sample. The re-arm writes `$27`, which also
-holds the CH3 mode: write it from a shadow. Not yet put to the user as a
-change of number.
+holds the CH3 mode: write it from a shadow. Put to the user only if this
+build is resumed (it was taken off the roadmap 2026-10-13).
 
 ## The RAM budget (2026-09-28, archive `npm run size` + its symbols)
 
