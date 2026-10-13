@@ -107,20 +107,20 @@ and a hold carry a note into the next.
 (def-mod :voice [hat hat-open] :vel+ -3) ; every note on these, quieter (clamped 0–15)
 ```
 
-Naming a voice or sample in a track body switches to it. An FM voice change
-is sent in the silence before its note, so the note it follows ends about 40 ms
+Naming a voice or sample in a track body switches to it. An FM voice change is
+sent in the silence before its note, so the note it follows ends about 40 ms
 early when there is no rest between them (language §9). Preset sets:
-`presets/gm` (gm-piano … gm-gunshot), `presets/waveforms` (wave-sine,
-acid-saw, …), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5`,
-`hiphop`, `drumnbass` and `gm-drums` (PCM kits: kick, snare, hat, …), `presets/orch` (PCM
-orchestral sounds: orch-hit, timpani, …), `presets/sfx` (PCM voices and
-effects: hey, glass, zap, …), `presets/band` (PCM guitar and bass:
-guitar, guitar-down, bass-finger, …), and `presets/fm-drums` (FM drums
-on an fm track: fm-kick, fm-snare, fm-hat, … and fm-analog-kick, fm-elec-tom1,
+`presets/gm` (gm-piano … gm-gunshot), `presets/waveforms` (wave-sine, acid-saw,
+…), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5`, `hiphop`,
+`drumnbass`, `ym2608` and `gm-drums` (PCM kits: kick, snare, hat, …),
+`presets/orch` (PCM orchestral sounds: orch-hit, timpani, …), `presets/sfx` (PCM
+voices and effects: hey, glass, zap, …), `presets/band` (PCM guitar and bass:
+guitar, guitar-down, bass-finger, …), and `presets/fm-drums` (FM drums on an fm
+track: fm-kick, fm-snare, fm-hat, … and fm-analog-kick, fm-elec-tom1,
 fm-symph-snare, … — `:key` voices: at `:oct 4`, `c` is the drum as tuned, and
-other notes retune it), and `presets/envelopes` (macros that shape a PSG
-note — level as `:vel+`: env-pluck, env-piano, env-organ, env-pad, …; pitch:
-vib, vib-delay, slide-up, drop; combine one of each; they work on FM too).
+other notes retune it), and `presets/envelopes` (macros that shape a PSG note —
+level as `:vel+`: env-pluck, env-piano, env-organ, env-pad, …; pitch: vib,
+vib-delay, slide-up, drop; combine one of each; they work on FM too).
 
 ## Loops and flow (§13)
 
