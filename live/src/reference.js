@@ -77,7 +77,7 @@ export const REFERENCE = [
   {
     name: ':prio', cat: 'score', section: '§1', tracks: null,
     syntax: '(fm1 :prio N …)',
-    summary: 'Right after the channel name only. Forms of one channel with different :prio are layers on one voice: the lower number wins, a lower layer\'s note sounds in the higher one\'s gaps. The voice, :pan and :vol are the channel\'s, so set them on one layer. Default 8.',
+    summary: 'Right after the channel name only. Forms of one channel with different :prio are layers on one voice: the lower number wins, a lower layer\'s note sounds in the higher one\'s gaps. The voice, :pan and :vol go to the higher layer that sets them. Default 8.',
     insert: ':prio 1',
     example: '(fm1 :prio 1 :len 4 c _ _ g _ _)\n(fm1 :prio 5 :len 16 e e e e e e e e e e e e e e e e e e e e e e e e)',
   },

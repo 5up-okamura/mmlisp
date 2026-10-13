@@ -84,10 +84,11 @@ monophonic event stream:
   it is compiled once, so the layers' ticks after it no longer line up. An
   infinite jump (the song loop) is fine on one layer; on more than one it is
   not reconciled (`W_PRIO_LAYER_FLOW`).
-- A note's `:vel`, `:gate` and macros travel with it, but the voice, `:pan`,
-  `:vol` and the other channel parameters are the channel's: one set on any
-  layer holds for every layer's notes after it. Set them on one layer — more
-  than one is `W_PRIO_LAYER_STATE`.
+- A note's `:vel`, `:gate` and macros travel with it; the voice, `:pan`,
+  `:vol` and the other channel parameters are the channel's, one of each, so
+  priority decides them too: a parameter a higher layer sets is its, and a
+  lower layer's writes to it are dropped. One that no higher layer sets is the
+  lower layer's to set — for every layer's notes.
 
 ```lisp
 (fm1 :prio 1 :len 4   c _ _ g _ _)                 ; lead — always sounds

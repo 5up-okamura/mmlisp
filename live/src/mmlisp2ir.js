@@ -1681,8 +1681,9 @@ function expandTrackDelays(track) {
 // into one monophonic event stream. Lower number = higher priority. Note events
 // are resolved preemptively: a note is dropped where a higher-priority note is
 // already sounding, and truncated (simple cut to silence) where a higher-priority
-// note begins mid-sustain. All non-note events pass through in tick order, so
-// loops/param automation on layered channels are best-effort only (warned below).
+// note begins mid-sustain. A channel parameter belongs to the highest layer
+// that sets it; other non-note events pass through in tick order, so loops on
+// layered channels are best-effort only (warned below).
 const PRIO_NOTE_CMDS = new Set(["NOTE_ON", "PCM_NOTE_ON"]);
 const PRIO_FLOW_CMDS = new Set([
   "JUMP",
@@ -1730,22 +1731,24 @@ function flattenPriorityLayers(head, layers, diagnostics) {
     );
   }
 
-  // Voice, :pan, :vol and the like are the channel's registers, not a layer's:
-  // a layer that sets one sets it for every layer's notes after it. One layer
-  // owning them is the intended use (§1); two writing them overwrite each other.
-  if (layers.filter((l) => l.trackData.events.some((e) => e.cmd === "PARAM_SET")).length > 1) {
-    pushDiag(
-      diagnostics,
-      "warning",
-      "W_PRIO_LAYER_STATE",
-      `more than one :prio layer on channel ${head} sets its voice, :pan, :vol or another channel parameter; the channel has one of each, so the last write plays every layer's notes after it — set them on one layer`,
-      { line: 1, column: 1 },
-      head,
-    );
-  }
-
   const occupied = []; // committed sounding intervals from higher-priority layers
   const drop = new Set();
+
+  // The voice, :pan, :vol and the other channel parameters are the channel's
+  // registers, one of each: a parameter a higher-priority layer sets is that
+  // layer's, and a lower layer's writes to it are dropped. One no higher layer
+  // touches is the lower layer's to set, for every layer's notes.
+  const owned = new Set();
+  for (const { trackData } of layers) {
+    const mine = new Set();
+    for (const e of trackData.events) {
+      const target = e.cmd.startsWith("PARAM_") ? e.args?.target : null;
+      if (target == null) continue;
+      if (owned.has(target)) drop.add(e);
+      else mine.add(target);
+    }
+    for (const t of mine) owned.add(t);
+  }
 
   for (const { trackData } of layers) {
     const notes = trackData.events
