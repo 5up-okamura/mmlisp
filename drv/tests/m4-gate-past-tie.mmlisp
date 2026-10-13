@@ -1,0 +1,7 @@
+; M4 gate: a gate reaching through a tie. `:gate-` on a tied chain gives its
+; NOTE_ON a gate longer than the note's own dur; when that gate is a whole
+; number of the dur's eighths it must still ride NOTE_ON_EX (GATE holds 0..8),
+; and the pitch macro must run on through the ties.
+(fm2 :tempo 86 :oct 5 :len 16 :gate- 18t
+  (macro :pitch+ [ (wait 60/128) (linear 0..1000 :len 10/128) ])
+  c ~ c2 ~ c2 d ~ d2 _2)

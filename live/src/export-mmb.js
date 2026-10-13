@@ -834,7 +834,9 @@ export function encodeMmb(ir, opts = {}) {
             const g = a.gate;
             if (g === 0) {
               exGate = 0;
-            } else if ((g * 8) % length === 0) {
+            } else if (g <= length && (g * 8) % length === 0) {
+              // GATE holds 0..8 eighths (opcodes.md §4): a gate past the note's
+              // dur — one reaching through a tie — rides NOTE_ON_EX instead.
               const eighths = (g * 8) / length;
               if (eighths !== gateState) {
                 emitParamState(TARGET_ID.GATE, eighths);
