@@ -360,6 +360,7 @@ export function matchNotes(notes, q) {
 export function applyLogical(text, notes, matches, op) {
   const skipped = { shared: 0, tied: 0 };
   if (op.type === "reverse") return reverseRuns(text, notes, matches);
+  if (op.type === "transpose") return transposeNotes(text, matches, op);
   const changes = [];
   const done = new Set();
   for (const n of matches) {
@@ -386,6 +387,57 @@ export function applyLogical(text, notes, matches, op) {
     }
   }
   return { changes, done: done.size, skipped };
+}
+
+// Move matched notes by `op.semitones`. A note's own token holds no octave —
+// it plays in the octave in force there — so one that crosses an octave is
+// wrapped in the > / < it needs and the context is restored right after it;
+// the notes around it do not move. Spelled with flats when the note was.
+function transposeNotes(text, matches, op) {
+  const skipped = { shared: 0, tied: 0 };
+  const semis = Math.round(Number(op.semitones) || 0);
+  const slots = [];
+  const seen = new Set();
+  for (const n of matches) {
+    if (n.kind !== "note" || seen.has(n.from)) continue;
+    if (n.tied) { skipped.tied++; continue; }
+    if (n.shared && !op.includeShared) { skipped.shared++; continue; }
+    seen.add(n.from);
+    const { head, suffix } = splitToken(n.token);
+    const ctxOct = Math.floor(n.midi / 12) - 1;
+    slots.push({ from: n.from, to: n.to, insert: spellAt(n.midi + semis, ctxOct, suffix, head.includes("-")) });
+  }
+  return { changes: formChanges(text, channelForms(text), slots), done: slots.length, skipped };
+}
+
+// Token rewrites, gathered into one change per form, with the octave marks
+// that now cancel — a `>` written right before a `<` — taken out. Only the
+// pair goes; the spacing around it is the writer's.
+function formChanges(text, forms, slots) {
+  const changes = [];
+  for (const f of forms) {
+    const local = slots.filter((c) => c.from >= f.from && c.to <= f.to).map((c) => ({ ...c, from: c.from - f.from, to: c.to - f.from }));
+    if (local.length === 0) continue;
+    const lo = Math.min(...local.map((c) => c.from));
+    const hi = Math.max(...local.map((c) => c.to));
+    let span = applyChanges(text.slice(f.from + lo, f.from + hi), local.map((c) => ({ ...c, from: c.from - lo, to: c.to - lo })));
+    for (let prev = null; prev !== span; ) {
+      prev = span;
+      span = span.replace(/[ \t](?:> <|< >)(?=[ \t]|$)/g, "").replace(/^(?:> <|< >)(?:[ \t]|$)/, "");
+    }
+    if (span !== text.slice(f.from + lo, f.from + hi)) changes.push({ from: f.from + lo, to: f.from + hi, insert: span });
+  }
+  return changes;
+}
+
+// A pitch spelled as a note token in an octave context: its name (sharps,
+// or flats when `flats`) wrapped in the > / < it needs, restored after.
+const SHARP = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
+const FLAT = ["c", "d-", "d", "e-", "e", "f", "g-", "g", "a-", "a", "b-", "b"];
+function spellAt(midi, ctxOct, suffix, flats = false) {
+  const name = (flats ? FLAT : SHARP)[((midi % 12) + 12) % 12];
+  const d = Math.floor(midi / 12) - 1 - ctxOct;
+  return `${d > 0 ? "> ".repeat(d) : "< ".repeat(-d)}${name}${suffix}${d > 0 ? " <".repeat(d) : " >".repeat(-d)}`;
 }
 
 // Reverse, per channel, the run from the first matched note to the last:

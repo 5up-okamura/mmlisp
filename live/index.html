@@ -597,6 +597,7 @@
             <option value="len-set">Length: set to</option>
             <option value="len-add">Length: add</option>
             <option value="len-mul">Length: multiply by</option>
+            <option value="transpose">Transpose (semitones)</option>
             <option value="reverse">Reverse (retrograde)</option>
           </select></label>
         <label class="import-field" id="leArgRow"><span id="leArgLabel">Length</span>
@@ -3495,6 +3496,7 @@
         type, includeShared: leEl('leShared').checked,
         ticks: type === 'len-set' || type === 'len-add' ? lengthTicks(arg) : null,
         factor: type === 'len-mul' ? Number(arg) : null,
+        semitones: type === 'transpose' ? Number(arg) : null,
       };
     }
 
@@ -3504,8 +3506,12 @@
       leEl('leNameRow').hidden = p !== 'name';
       leEl('leRangeRow').hidden = p !== 'range';
       const op = leEl('leOp').value;
-      leEl('leArgRow').hidden = !op.startsWith('len-');
-      leEl('leArgLabel').textContent = op === 'len-mul' ? 'Factor' : 'Length';
+      leEl('leArgRow').hidden = !op.startsWith('len-') && op !== 'transpose';
+      const argLabel = op === 'len-mul' ? 'Factor' : op === 'transpose' ? 'Semitones' : 'Length';
+      if (leEl('leArgLabel').textContent !== argLabel) {
+        leEl('leArgLabel').textContent = argLabel;
+        leEl('leArg').value = op === 'len-mul' ? '2' : op === 'transpose' ? '12' : '8';
+      }
       const matches = matchNotes(_le.notes, logicalQuery());
       _le.matches = matches;
       const shared = matches.filter((n) => n.shared).length;
@@ -3564,6 +3570,10 @@
       }
       if (op.type === 'len-mul' && !(op.factor > 0)) {
         leEl('leStatus').textContent = 'Factor: a positive number';
+        return;
+      }
+      if (op.type === 'transpose' && !Number.isInteger(op.semitones)) {
+        leEl('leStatus').textContent = 'Semitones: a whole number, + up or − down (12 = an octave)';
         return;
       }
       const res = applyLogical(_le.text, _le.notes, _le.matches, op);

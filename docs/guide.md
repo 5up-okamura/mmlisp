@@ -1480,7 +1480,8 @@ editor and marks every note the condition matches as you change it.
   `c4`–`b4`, or rests), length (`=`, `>` or `<` a length written as the score
   writes one — `8`, `4.`, `96t`), and voice or sample (`snare`, `lead`).
 - **Do**: delete (leaving a rest, so nothing after it moves, or closing up),
-  set / add to / multiply the length, or **reverse** — the run from the first
+  set / add to / multiply the length, **transpose** by semitones (a note that
+  crosses an octave is written `> c <`, so its neighbours stay put), or **reverse** — the run from the first
   matched note to the last, rests and all, played backwards, in each layer on
   its own. A reversed note
   is written out in full (`> e+8 <`), so the notes around it keep their octave
