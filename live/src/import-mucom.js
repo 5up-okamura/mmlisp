@@ -89,7 +89,7 @@ const RHYTHM_PART = "G";
 const RHYTHM_SOUNDS = [
   { name: "kick", prio: 4, ringMs: 40, ms: 160 }, // BD
   { name: "snare", prio: 1, ringMs: 60, ms: 220 }, // SD
-  { name: "crash", prio: 3, ringMs: 220, ms: 600 }, // TOP
+  { name: "ride", prio: 3, ringMs: 350, ms: 600 }, // TOP (the OPNA's top cymbal is a ride)
   { name: "hat", prio: 6, ringMs: 40, ms: 120 }, // HH
   { name: "tom4", prio: 2, ringMs: 65, ms: 400 }, // TOM
   { name: "rim", prio: 5, ringMs: 15, ms: 80 }, // RIM

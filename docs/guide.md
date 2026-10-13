@@ -1278,7 +1278,7 @@ import does the same rather than approximating:
   longest stretch the song plays of it.
 - **Rhythm** keys up to six sounds at once (`@` is a mask: 1 BD, 2 SD, 4 TOP,
   8 HH, 16 TOM, 32 RIM), each its own voice. On the one PCM track each sound
-  is a `:prio` layer — snare 1, tom 2, cymbal 3, kick 4, rim 5, hi-hat 6 — so a
+  is a `:prio` layer — snare 1, tom 2, ride 3, kick 4, rim 5, hi-hat 6 — so a
   hit plays the highest-priority sound and is dropped while a higher one still
   rings: its `:gate` is the ring, the time the RX5 sample stays within 6 dB of
   its peak. `v`'s total and per-sound levels become `:vel`, the loudest sound
