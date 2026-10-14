@@ -20,7 +20,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { buildLightImage } from "./build-engine.mjs";
-import { FrameRecorder, MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites, recordWritesOnWire } from "./pairs-model.mjs";
+import { FrameRecorder, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites, recordWritesOnWire } from "./pairs-model.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { headerPcmVoices } from "../../live/src/mmb.js";
 import { PcmEngineModel, PCM_SILENCE_BYTE } from "../../live/src/pcm-model.js";
@@ -64,7 +64,7 @@ function runScore(path) {
   // The bank the window shows: the score's own, or silence.
   const bank = new Uint8Array(0x8000);
   if (sampleBank) bank.set(sampleBank.subarray(0, 0x8000), 0);
-  const model = new PairsModel({ ...pairsCfgForImage(desc), ahead: MMLP_AHEAD_ONE });
+  const model = new PairsModel(pairsCfgForImage(desc));
   const fifoAddrs = Array.from({ length: 256 }, (_, i) => desc.fifo + i);
   const m = new Machine(cfg, { bytes: built.bytes, symbols: built.symbols }, { rom: bank, watch: fifoAddrs });
   m.trace.meta = traceMeta(cfg, { case: basename(path), frames: FRAMES });
@@ -76,17 +76,18 @@ function runScore(path) {
   // VBlank pump is when the main loop overruns: the next grab then comes two
   // frames after the last, and the in-grab test (mmlpairs.h mmlp_in_time) must
   // give the pairs back, not write them.
-  let tick = 0, frame = 0, fifoLo = null;
+  let tick = 0, frame = 0, fifoLo = 0xff;
   const psgOut = [];
   m.host = { every: frameCycles, fn: (ram, cycle) => {
     const t = tick++;
     if (frame < frames.length) model.frame(frames[frame++]);
     if (t % 8 === 7) return [];
-    const prev = fifoLo;
-    const g = model.plan(prev);
+    // The host reads the engine's index, plans MMLP_AHEAD past it, and writes
+    // at once; the index has not moved, so a plan is never late here.
     fifoLo = ram[desc.fifoLo];
+    const g = model.plan(fifoLo);
     const writes = [];
-    if (g.bytes.length && !inTime(prev, g.dst, fifoLo)) model.abort();
+    if (g.bytes.length && !inTime(fifoLo, g.dst, ram[desc.fifoLo])) model.abort();
     else if (g.bytes.length) for (let i = 0; i < g.fill.length; i++) writes.push([g.dst + i, g.fill[i]]);
     for (const b of model.psgTake()) psgOut.push({ cycle, byte: b });
     return writes;

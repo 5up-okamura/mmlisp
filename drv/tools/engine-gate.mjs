@@ -141,8 +141,8 @@ function script(kind, desc, frames, opts) {
 }
 const CASES = ["idle", "shots", "loop", "retarget", "levels", "clip", "roll", "adjacent"];
 
-// ── The host: VSync only, 16 pairs a grab, written ahead of the index ──────
-const PAIRS_PER_GRAB = 16, AHEAD = 48;
+// ── The host: VSync only, 16 pairs a grab, written MMLP_AHEAD past the index ──
+const PAIRS_PER_GRAB = 16, AHEAD = 8;
 
 function runCase(built, kind, { seconds, fault }) {
   const { cfg, descriptor: desc } = built;

@@ -4,8 +4,8 @@
 // end-to-end model run, where the DAC and the FM writes of a real score are
 // graded against the reference driver's own stream.
 
-export const MMLP_QUEUE = 1024, MMLP_LANE = 256, MMLP_PSG = 256, MMLP_AHEAD = 32;
-export const MMLP_FRAMES = 8, MMLP_AHEAD_ONE = 48, MMLP_VOICES = 3;
+export const MMLP_QUEUE = 1024, MMLP_LANE = 256, MMLP_PSG = 256, MMLP_AHEAD = 8;
+export const MMLP_FRAMES = 8, MMLP_VOICES = 3;
 const PCM_LEN = [0, 9, 0, 3, 6, 2, 11];
 const isPitchHi = (r) => (r >= 0xa4 && r <= 0xa6) || (r >= 0xac && r <= 0xae);
 const OP_IDLE = 0, OP_PORT = 0x20;
@@ -176,7 +176,7 @@ export class PairsModel {
     if (release >= inn) return inn;              // everything queued is due
     return inn - release >= MMLP_FRAMES ? inn - (MMLP_FRAMES - 1) : release;
   }
-  /** One grab: returns {dst, bytes} or bytes.length 0. `fifoLo` is the byte the engine published last grab, or null. */
+  /** One grab: returns {dst, bytes} or bytes.length 0. `fifoLo` is the byte the engine publishes, read just before, or null. */
   plan(fifoLo, release = this.framesIn) {
     const { fifoPairs: N, pairsPerGrab: K, fifo, voices } = this.cfg;
     const MASK = N - 1;

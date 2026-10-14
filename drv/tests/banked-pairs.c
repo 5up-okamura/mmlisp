@@ -63,7 +63,7 @@ static void banked_lane(MMLPairsCfg cfg) {
   assert(at2b<atStart && atStart!=0xff && (atFm==0xff || atStart<atFm));
 }
 int main(void) {
-  MMLPairsCfg cfg = {0x1d00,128,16,0x13,9,0x20,2,2,32,1};
+  MMLPairsCfg cfg = {0x1d00,128,16,0x13,9,0x20,2,2,MMLP_AHEAD,1};
   banked_order(&cfg);
   banked_lane(cfg);
   MMLPairs p;
@@ -78,7 +78,7 @@ int main(void) {
   p.q_head=1; p.q_op[0]=0x30; p.frames_in=1; p.end_q[0]=1;
   p.head=16; p.head_valid=1; p.last_fifo=0;
   assert(mmlp_plan(&p,40,1,ops,vals,&dst)==1);
-  assert(dst==0x1d00+2*(20+32)); /* Consumer passed the old head. */
+  assert(dst==0x1d00+2*(20+MMLP_AHEAD)); /* Consumer passed the old head. */
   mmlp_init(&p,&cfg);
   /* Two generation changes with no staged byte between them still need a fence. */
   p.q_head=2; p.q_port[0]=p.q_port[1]=0xff;

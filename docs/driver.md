@@ -247,7 +247,7 @@ def-se: by number, two parts under one, its own tempo, stopped early.
 ### 3.1 Clocks and accumulators
 
 **The frame clock is the 68000's.** `MMLisp_frame()`, called once per frame
-from the game's main loop, renders each frame `MMLISP_LEAD` (default 1) frames
+from the game's main loop, renders each frame `MMLISP_LEAD` (default 2) frames
 before its time into the pair queue. The pumps (§6.6) send only the frames
 whose time has come, counted from SGDK's `vtimer`. A main loop that runs late
 renders the missed frames on its next call; one that falls more than three
@@ -338,10 +338,14 @@ is what shows the sequencer really is rate-blind.
 
 Every control call (§6.5) takes effect on the next frame `MMLisp_frame()`
 renders. That frame is released `MMLISP_LEAD` frames later, and its writes
-reach the chip within about half a frame of their time (the grab period plus
-the pair page). Each frame of lead is a frame of latency on every host → music
-operation; the lead is what absorbs a heavy frame of the game or of the music
-(a voice change on several channels can take more than a frame to render).
+reach the chip 5–9 ms into their frame's time: the pump at the vblank, then
+`MMLP_AHEAD` (8) pairs of the page (§6.6). Each frame of lead is a frame of
+latency on every host → music operation; the lead is what absorbs a render that
+runs past a vblank — the game's frame plus the driver's, which on a frame of
+chords and drums is 10–20 ms of 68000 time by itself, and more than a frame on
+a voice change over several channels. With two frames of lead a render has the
+whole frame before its own. A sound effect's first note sounds about 45 ms
+after the call: the lead, the silent armed frame (§4.2) and the page.
 
 ### 3.5 Note onsets
 
@@ -630,11 +634,11 @@ The loading API and 32 KB resource alignment remain unchanged. See
 [Multi-bank PCM](pcm-multibank.md) for export options and supported limits,
 and mmb.md §10.3 for the sample format.
 
-The banked host reads a fresh FIFO position and performs up to five transfers
-per frame, stopping at the first plan that is empty: with the release fixed for
-the vblank, a later plan has nothing to send either. An empty plan reuses the
-fresh observation and skips the second bus request. It reserves the complete 16-pair physical transfer, including IDLE
-padding, and observes the selected image's generation fence. PSG updates follow
+The banked host performs up to five transfers per frame, stopping at the
+first plan that is empty: with the release fixed for the vblank, a later plan
+has nothing to send either. It reserves the complete 16-pair physical
+transfer, including IDLE padding, and observes the selected image's generation
+fence. PSG updates follow
 the released video frame. PCM commands and `$2B` ride the PCM lane ahead of the
 FM queue, as in the single-bank profile (§6.6). Independent, unmodulated FM
 channels can have short updates sent before bulk uploads without changing their
@@ -780,15 +784,18 @@ Every control call takes effect on the next frame rendered (§3.4).
 - **The image** is booted by `MMLisp_loadScore` from the MMB header's PCM voice
   count (`MMLisp_init` boots `pcm1`); booting another resets the Z80 and
   rewrites the bank register.
-- **One grab a frame, from the vertical interrupt.** The horizontal interrupt
-  is never touched — it stays the game's. A grab reads the engine's index, then
-  writes **sixteen pairs** (IDLE-padded) at `H = index read last grab +
-  MMLP_AHEAD_ONE` (48) with two `movem.l` and eight `movep.l` — about 2,400
-  master clocks (~45 µs) of bus stop, measured on BlastEm. It never writes
-  behind pairs not yet read and never across the page end. If the fresh index
-  shows the engine already at or past `H`, the grab writes nothing and the
-  pairs go back to the queue (a late grab; `MMLispStats.late`). 960 pairs a
-  second.
+- **One pump a frame, from the vertical interrupt.** The horizontal interrupt
+  is never touched — it stays the game's. A pump is two short bus stops: one
+  reads the engine's index, the plan places its pairs `MMLP_AHEAD` (8) past it,
+  and the second writes **sixteen pairs** (IDLE-padded) there with two
+  `movem.l` and eight `movep.l` — about 2,400 master clocks (~45 µs) of bus
+  stop in all, measured on BlastEm. Everything past the index waits on the
+  wire, so the placement is the floor of every write's latency: 8 pairs is
+  5–8 ms. The write never lands behind pairs not yet read and never crosses the
+  page end. If the index read with the write shows the engine already at or
+  past the destination (an interrupt landed between the two stops), the pump
+  writes nothing and the pairs go back to the queue (a late grab;
+  `MMLispStats.late`). 960 pairs a second.
 - **Release on time.** The converter remembers where each queued frame ends; a
   grab sends only frames whose time has come, so the tempo follows the video
   clock rather than the main loop.

@@ -24,18 +24,6 @@ static const uint8_t PCM_LEN[7] = {0, 9, 0, 3, 6, 2, 11};
 #define OP_START(v) ((uint8_t)(8 + 9 * (v)))
 #define OP_RETARGET(v) ((uint8_t)(9 + 9 * (v)))
 
-/* How far ahead of the last-read consumer index the head is placed: past what
- * the consumer takes between two grabs. The engine takes 16 pairs a lap
- * (~2 a millisecond); the SGDK host grabs from the vertical interrupt and from
- * a horizontal one at line 93, so the longer gap is 131 lines on NTSC
- * (8.3 ms, ~17 pairs) and 182 on PAL (11.6 ms, ~23). 32 covers both with room;
- * a grab later than that finds out itself (mmlp_in_time) and copies nothing. */
-#define MMLP_AHEAD 32
-
-/* …and with ONE grab a frame (the host's VBlank-only mode), the gap is the
- * whole frame: 16.7 ms on NTSC (~34 pairs) and 20 ms on PAL (~40), so the
- * head goes 48 ahead. The page holds 128; 48 + a grab's 8 stays well clear. */
-
 /* A voice's rung page: silence for the sequencer's mute (8) or a total past
  * the last rung (-36 dB), else page 7 - total (driver.md §14). */
 uint8_t mmlp_level_page(const MMLPairsCfg *cfg, uint8_t shift, uint8_t master_shift) {
@@ -471,9 +459,9 @@ uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops,
   p->undo_port = p->chip_port;
   for (uint8_t v = 0; v < MMLP_VOICES; v++) p->undo_since[v] = p->since_gen[v];
   p->undo_n = 0;
-  /* WHERE THE PAIRS GO (pairs-model.mjs twins this): ahead of the index read last time by
-   * more than the consumer takes between grabs — and never behind the pairs
-   * written last time that it may not have reached yet. */
+  /* WHERE THE PAIRS GO (pairs-model.mjs twins this): MMLP_AHEAD past the
+   * index just read — and never behind the pairs written last time that the
+   * engine may not have reached yet. */
   if (fifo_lo == 0xff) { *dst = 0; return 0; }            /* no index yet */
   if (cfg->banked && p->head_valid && p->last_fifo != 0xff &&
       (uint8_t)(fifo_lo - p->last_fifo) >= (uint8_t)(2*p->head - p->last_fifo)) p->head_valid = 0;

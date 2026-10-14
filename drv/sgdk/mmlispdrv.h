@@ -19,7 +19,7 @@
 //                                into the queue; takes no bus
 //
 // THE TEMPO FOLLOWS THE VIDEO CLOCK, NOT THE MAIN LOOP. MMLisp_frame() renders
-// each frame MMLISP_LEAD (default 1) frames before its time, and the pumps send
+// each frame MMLISP_LEAD (default 2) frames before its time, and the pumps send
 // only the frames whose time has come, counted from SGDK's vtimer. So a main
 // loop that runs late — a heavy frame of the game, or of the music — delays
 // nothing that was ready, and the next call catches up. A main loop more than
@@ -102,18 +102,18 @@ void MMLisp_attachInterrupts(void);
 // control calls below: they take effect on the next frame it renders.
 void MMLisp_frame(void);
 
-// One grab: read the engine's index, write up to sixteen pairs of the frames
-// whose time has come ahead of it, then write the PSG bytes released for the
-// last frame. Once a frame, from the vertical interrupt
-// (MMLisp_attachInterrupts does it). Each call stops the Z80 for about 2,400
-// master clocks (~45 µs), which nothing repays. A pump that overlaps another
+// One pump: read the engine's index, write up to sixteen pairs of the frames
+// whose time has come MMLP_AHEAD past it, then write the PSG bytes released
+// for the last frame. Once a frame, from the vertical interrupt
+// (MMLisp_attachInterrupts does it). Each pump stops the Z80 twice, for about
+// 2,400 master clocks (~45 µs) in all, which nothing repays. A pump that overlaps another
 // returns at once, and a bus the interrupted code holds is left held.
 void MMLisp_pump(void);
 
 // ── Track control (driver.md §6.5) ─────────────────────────────────────────
 // Every call takes effect on the next frame MMLisp_frame renders, which is
-// played MMLISP_LEAD frames later; its FM writes reach the chip within about a
-// half-frame of that frame's time.
+// played MMLISP_LEAD frames later; its FM writes reach the chip 5–9 ms into
+// that frame's time (the grab at the vblank, then MMLP_AHEAD pairs of the page).
 
 // Start a track by its MMB track id. Claiming a channel evicts its current
 // owner and resets the channel's level state. Start each track of a score with
@@ -200,8 +200,8 @@ u8 MMLisp_trig(u8 track_id);
 u8 MMLisp_scoreFrameHz(void);
 
 // Frames rendered since the score was loaded. They are rendered MMLISP_LEAD
-// frames ahead of their time, and what the player hears runs a further ~16 ms
-// behind that (a half-frame grab period plus the pair page); anything that has
+// frames ahead of their time, and what the player hears runs a further 5–9 ms
+// behind that (the grab at the vblank, then the pair page); anything that has
 // to line up with the music compares against MMLispStats.due instead.
 u16 MMLisp_renderedFrames(void);
 

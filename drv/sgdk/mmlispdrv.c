@@ -39,13 +39,21 @@ static bool       ready  = FALSE;
 static bool       loaded = FALSE;
 static const u8*  smpBank = NULL;
 static s8         bankRc = 0;          // mml_load_samples on the last publish
-static u8         fifoLo = 0xff;      // the engine's index as read in the last grab
+static u8         fifoLo = 0xff;      // the engine's index as last read
 static u16        rendered = 0;
-// HOW FAR AHEAD THE MAIN LOOP RENDERS, in frames. One absorbs a main loop that
-// runs up to a frame late with no audible trace; each frame of lead is a frame
-// of latency on the control calls. At most MMLP_FRAMES - 2.
+// HOW FAR AHEAD THE MAIN LOOP RENDERS, in frames. A frame's render — the
+// game's work and the driver's, which on a chord-and-drums frame is 10–20 ms of
+// 68000 time by itself — has to be done before that frame's vblank; two frames
+// of lead give it the whole frame before, so a render that runs past one
+// vblank still leaves on time. Each frame of lead is a frame of latency on the
+// control calls. At most MMLP_FRAMES - 2.
 #ifndef MMLISP_LEAD
-#define MMLISP_LEAD 1
+#define MMLISP_LEAD 2
+#endif
+// WHERE A GRAB WRITES: pairs past the engine's index, read just before the
+// plan (mmlpairs.h MMLP_AHEAD). A gate builds with another value to measure.
+#ifndef MMLISP_AHEAD
+#define MMLISP_AHEAD MMLP_AHEAD
 #endif
 // A main loop further behind than this is stopped, not slow (a load, a pause
 // screen, a debugger): the music pauses with it instead of playing the missed
@@ -69,7 +77,7 @@ static MMLPairsCfg PAIRS_CFG = {
     MMLISPDRV_LUT_PAGE, MMLISPDRV_OP_STRIDE, MMLISPDRV_OP_PORT,
     1,   // voices: the booted image's (bootImage)
     1,   // idle_after_gen: likewise
-    MMLP_AHEAD_ONE,  // ahead: a whole frame of the engine's reading between grabs
+    MMLISP_AHEAD,    // ahead: pairs past the index read just before the plan
     0,              // banked image selected by the score
 };
 static u8         bankedImage = 0;
@@ -90,7 +98,6 @@ static void bootImage(u8 voices)
     bankedImage = seq.pcm_banked;
     bankedFrameHz = seq.frame_hz;
     PAIRS_CFG.banked = bankedImage;
-    PAIRS_CFG.ahead = bankedImage ? 32 : MMLP_AHEAD_ONE;
     ready = FALSE;
     image = voices;
     PAIRS_CFG.voices = img->voices;
@@ -320,16 +327,19 @@ static u16 pump(u16 release)
     // Everything that can be decided before the bus is taken is (R20 §48.4):
     // which pairs, where they go, and the registers they are stored from.
     u16 dst = 0;
-    if (bankedImage) {
+    // The engine's index, fresh: a grab that writes nothing (dist 0 fails the
+    // in-grab test) and so only reads. The plan places its pairs MMLP_AHEAD
+    // past it, and the write below checks the engine has not got there first.
+    {
         static GrabBlock pollBlock;
         fifoLo = (u8)grab(&pollBlock, MMLISPDRV_FIFO);
     }
     static GrabBlock blk;        // static: the planner's arrays, the grab's registers
     blk.prev = fifoLo;
     const u16 n = mmlp_plan(&pairs, fifoLo, release, blk.ops, blk.vals, &dst);
-    // A banked pump already read a fresh index; an empty plan needs no second grab.
+    // An empty plan needs no second grab: the index is already fresh.
     blk.dist = n ? (u8)((u8)dst - fifoLo) : 0;
-    const u16 got = bankedImage && !n ? fifoLo : grab(&blk, dst);
+    const u16 got = !n ? fifoLo : grab(&blk, dst);
     fifoLo = (u8)got;
     // A late grab gives its pairs back; everything written before them has
     // been consumed, so the next plan starts from the index just read.

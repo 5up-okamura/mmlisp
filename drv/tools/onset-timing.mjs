@@ -14,7 +14,7 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { buildLightImage } from "./build-engine.mjs";
-import { FrameRecorder, MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites } from "./pairs-model.mjs";
+import { FrameRecorder, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites } from "./pairs-model.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { headerPcmVoices } from "../../live/src/mmb.js";
 import { Machine } from "./machine.mjs";
@@ -44,18 +44,17 @@ export function onsetTiming(path, { seconds = 30, voiceHoist } = {}) {
   const frames = player.captureSlotLog({ maxFrames, commands: [], builder: new FrameRecorder() }).slots;
   const bank = new Uint8Array(0x8000);
   if (sampleBank) bank.set(sampleBank.subarray(0, 0x8000), 0);
-  const model = new PairsModel({ ...pairsCfgForImage(desc), ahead: MMLP_AHEAD_ONE });
+  const model = new PairsModel(pairsCfgForImage(desc));
   const m = new Machine(cfg, { bytes: built.bytes, symbols: built.symbols }, { rom: bank });
   while (!m.trace.dacCycle.length) m.run(m.cycles + 200);
   const dac0 = m.trace.dacCycle[0];
   const frameCycles = Math.round(cfg.frameCycles);
-  let frame = 0, fifoLo = null;
+  let frame = 0, fifoLo = 0xff;
   m.host = { every: frameCycles, fn: (ram) => {
     if (frame < frames.length) model.frame(frames[frame++]);
-    const prev = fifoLo;
-    const g = model.plan(prev);
     fifoLo = ram[desc.fifoLo];
-    if (g.bytes.length && !inTime(prev, g.dst, fifoLo)) { model.abort(); return []; }
+    const g = model.plan(fifoLo);
+    if (g.bytes.length && !inTime(fifoLo, g.dst, ram[desc.fifoLo])) { model.abort(); return []; }
     const writes = [];
     if (g.bytes.length) for (let i = 0; i < g.fill.length; i++) writes.push([g.dst + i, g.fill[i]]);
     model.psgTake();

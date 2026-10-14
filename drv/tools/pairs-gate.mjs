@@ -25,7 +25,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { generatedTables } from "./c-tables.mjs";
-import { FrameRecorder, MMLP_AHEAD_ONE, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
+import { FrameRecorder, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { engineImage } from "../../live/src/engine-images.js";
 import { headerPcmVoices } from "../../live/src/mmb.js";
@@ -65,17 +65,21 @@ const cArgsOf = (cfg) => [cfg.fifo, cfg.fifoPairs, cfg.pairsPerGrab, cfg.lutPage
 
 /** The JS side: the same frames, the same modelled engine, the same records. */
 function jsStream(cfg, frames, lead = -1, pumps = 2) {
-  const m = new PairsModel(pumps === 1 ? { ...cfg, ahead: MMLP_AHEAD_ONE } : cfg);
-  const advance = pumps === 1 ? 34 : 17;
+  const m = new PairsModel(cfg);
+  const advance = pumps === 1 ? 34 : 17, LATE_BY = 10;
   const out = [];
-  let consumer = 0, fifoLo = null, ngrab = 0;
+  let consumer = 0, ngrab = 0;
+  // As pairs_main.c grabs: the engine has moved on, the host reads its index
+  // and plans past it; every seventh grab the engine moves LATE_BY more between
+  // the read and the write, so the in-grab test fails and the pairs go back.
   const grab = (release = m.framesIn) => {
-    const prev = fifoLo;
-    const g = m.plan(prev, release);
-    consumer = (consumer + (ngrab++ % 7 === 6 ? advance + 24 : advance)) % cfg.fifoPairs;
-    fifoLo = 2 * consumer;
+    consumer = (consumer + advance) % cfg.fifoPairs;
+    const fresh = 2 * consumer;
+    const g = m.plan(fresh, release);
+    if (ngrab++ % 7 === 6) consumer = (consumer + LATE_BY) % cfg.fifoPairs;
+    const fifoLo = 2 * consumer;
     let bytes = g.bytes;
-    if (bytes.length && !inTime(prev, g.dst, fifoLo)) { m.abort(); bytes = []; out.push(0x4c); }
+    if (bytes.length && !inTime(fresh, g.dst, fifoLo)) { m.abort(); bytes = []; out.push(0x4c); }
     out.push(0x47, g.dst & 0xff, g.dst >> 8, bytes.length, ...bytes);
     const psg = m.psgTake(256, release);
     out.push(0x50, psg.length, ...psg);

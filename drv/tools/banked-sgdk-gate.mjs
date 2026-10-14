@@ -18,9 +18,13 @@ const frameHz=args.includes("--pal")?50:60;
 mkdirSync(out,{recursive:true});
 const E=sgdkEnv('banked-sgdk'),b=buildMmb(file,{multibank:true,frameHz});
 const voices=(b.bytes[6]>>2)&3,image=buildMultibankImage({voices,frameHz});
-const lead=args.includes('--lead')?Number(opt('--lead',1)):null;
+const lead=args.includes('--lead')?Number(opt('--lead',2)):null;
 if(lead!==null&&!(lead>=1&&lead<=4))throw new RangeError('lead must be 1..4');
-const p=makeProject(E,file,{multibank:true,frameHz,flags:lead?`-DMMLISP_LEAD=${lead}`:'',patch:args.includes('--minimal') ? proj => {
+const ahead=args.includes('--ahead')?Number(opt('--ahead',32)):null;
+if(ahead!==null&&!(ahead>=2&&ahead<=64))throw new RangeError('ahead must be 2..64');
+// --lead N / --ahead N build the host with MMLISP_LEAD / MMLISP_AHEAD set, to measure a score at another render lead or grab placement.
+const flags=[lead?`-DMMLISP_LEAD=${lead}`:'',ahead!==null?`-DMMLISP_AHEAD=${ahead}`:''].filter(Boolean).join(' ');
+const p=makeProject(E,file,{multibank:true,frameHz,flags,patch:args.includes('--minimal') ? proj => {
  writeFileSync(join(proj,'src/main.c'), `#include <genesis.h>
 #include "mmlispdrv.h"
 #include "song.h"
@@ -120,5 +124,5 @@ for(const st of startFrames){const at=Math.floor(st.slot/16)*16+image.cfg.lead;
 const pcmOnset={lead:image.cfg.lead,fmKeyOns:fmLags.length,fmKeyOnVsMedian:{minMs:fmLags.length?Math.min(...fmLags)-fmMedian:null,...stats(fmLags.map(x=>x-fmMedian))},...stats(pcmRows.map(r=>r.lagMs)),
  perVoiceP50Ms:Array.from({length:voices},(_,v)=>stats(pcmRows.filter(r=>r.v===v).map(r=>r.lagMs)).p50Ms),
  worst:[...pcmRows].sort((a,b)=>b.lagMs-a.lagMs).slice(0,5)};
-const report={file,seconds,frameHz,lead:lead??1,integrated:true,testApp:args.includes('--minimal')?'minimal':'sgdk-example',project:p.proj,voices,sampleBankBytes:b.sampleBank.length,samples:dac.length,mismatch,starts:model.log.filter(e=>e.kind==='start').length,fmWrites:seen.map(x=>x.length),psgWrites:gotPsg.length,rate,busLossPct:loss,fmTiming,pcmOnset,fail};
+const report={file,seconds,frameHz,lead:lead??2,ahead:ahead??8,integrated:true,testApp:args.includes('--minimal')?'minimal':'sgdk-example',project:p.proj,voices,sampleBankBytes:b.sampleBank.length,samples:dac.length,mismatch,starts:model.log.filter(e=>e.kind==='start').length,fmWrites:seen.map(x=>x.length),psgWrites:gotPsg.length,rate,busLossPct:loss,fmTiming,pcmOnset,fail};
 writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));if(fail.length)process.exitCode=1;

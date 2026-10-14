@@ -190,13 +190,17 @@ missed it because only a real score issues STOP+START in one slot.
 - **The grab is asm** because C over `Z80_getAndRequestBus` was 2,835 master;
   eight pairs as four `movep.l` is 1,100–1,320.
 
-## 9. The 68000's share — closed 2026-10-02
+## 9. The 68000's share — closed 2026-10-02, reopened 2026-10-14
 
 The user's direction after setting the Z80-only build aside ([[z80-only]]):
 keep the split and make the 68000 side cheap, so a game keeps the CPU for
-raster effects and 3D. **Closed by the user**: what is left is the price of
-moving parameters every frame, which is what this driver is for. Working notes:
-git history, `plan-68k-optimization.md` at `afef069`.
+raster effects and 3D. Closed by the user on 2026-10-02 as the price of moving
+parameters every frame. **Reopened 2026-10-14** ("そこまで重いのは大問題です")
+when a banked mucom import measured a 10–20 ms render on every beat and 45 ms
+on a voice-change frame — past the vblank at one frame of lead, so the frame
+slipped (the SGDK example app itself is idle: the cost is the driver's). What
+was done and what is open is in [[pcm]]; the standing rules below hold.
+Working notes: git history, `plan-68k-optimization.md` at `afef069`.
 
 | sin008 whole, `sgdk-profile --pc`, 30 s | before (`ba094a6`) | after (`bf50bdc`) |
 | --- | --- | --- |
@@ -274,6 +278,18 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   earlier, and the note cut is already controlled where it matters — a slur
   keeps the voice in place, a `:gate-` silence is used as it is. Revisit only
   if a score suffers from the cut.
+- **Two frames of lead, eight pairs ahead** (user, 2026-10-14, "進めて"). The
+  frame slip above is the render missing its vblank; `MMLISP_LEAD` 2 gives it
+  the whole frame before. The user's worry was SE latency ("1フレームの遅れ、
+  SEが遅れるのがとても気になってる"), so the wire was measured first: the
+  host placed a grab 32 pairs past the engine's index (48 past a frame-old one
+  on the light host), 18.3 ms of dead wire at two banked voices (p50, every
+  pair, BlastEm). Read fresh and placed 8 past it: 5.7 ms, every gate green.
+  So LEAD 2 + AHEAD 8 is +4 ms on an SE against the old defaults (~47 vs 43 ms
+  call → sound), and the slips are gone (disco1 FM key-on lag p90/p95 19.9/23.7
+  → 5.5/7.7 ms). Both hosts, one rule. Next for SE latency, a design question
+  not yet put to the user: skipping the silent armed frame (§4.2) for an SE
+  whose setup is a few pairs would take ~17 ms off.
 
 ## 11. SE, and several songs
 

@@ -215,7 +215,7 @@ while (TRUE) {
 
 - **`MMLisp_frame()` — once per frame, in the main loop — renders ahead.** It
   runs the sequencer and turns each slot into pairs (`mmlpairs.c`), up to
-  `MMLISP_LEAD` (default 1) frames past the ones whose time has come; it takes
+  `MMLISP_LEAD` (default 2) frames past the ones whose time has come; it takes
   no bus. The pumps send only frames whose time has come, counted from SGDK's
   `vtimer`, so **the tempo follows the video clock, not your main loop**: a
   main loop that runs late delays nothing that was ready, and the next call
@@ -307,10 +307,10 @@ Stops up to 200 µs twice a frame were judged inaudible on drum PCM
 (`.claude/memory/pcm.md`), so this is well inside the verdict.
 
 **A multi-bank score stops more often.** Its host (`docs/driver.md` §5.4)
-reads a fresh FIFO index before each plan and makes up to five transfers a
-frame, so a busy frame is up to ten short stops; the first empty plan ends
-the frame's pumps and skips its second grab. On the gate's scores, all stops
-together cost the DAC about 0.2% of its rate on BlastEm.
+makes up to five transfers a frame, so a busy frame is up to ten short stops;
+the first empty plan ends the frame's pumps and skips its second grab. On the
+gate's scores, all stops together cost the DAC about 0.2% of its rate on
+BlastEm.
 
 **A score load is a long stop, on purpose**: `MMLisp_loadScore` boots the
 score's own engine image, clears Z80 RAM and uploads its code and shared tables

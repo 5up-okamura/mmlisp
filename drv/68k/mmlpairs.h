@@ -54,9 +54,8 @@ typedef struct {
   uint8_t op_port;       /* $20 */
   uint8_t voices;        /* PCM voices the image plays */
   uint8_t idle_after_gen;/* IDLE pairs after a generation pair, per image */
-  uint8_t ahead;         /* pairs ahead of the last-read index a grab writes at;
-                            0 = MMLP_AHEAD (two grabs a frame). One grab a frame
-                            needs MMLP_AHEAD_ONE (mmlpairs.c has the arithmetic) */
+  uint8_t ahead;         /* pairs past the engine's index a grab writes at, the
+                            index read just before the plan; 0 = MMLP_AHEAD */
   uint8_t banked;        /* block-banked image: fresh index, banked_writes' FM order */
 } MMLPairsCfg;
 
@@ -66,7 +65,14 @@ typedef struct {
 #define MMLP_LANE  256    /* the PCM lane's pairs */
 #define MMLP_PSG   256    /* PSG bytes held for one grab period */
 #define MMLP_FRAMES 8     /* frames queued ahead whose ends are remembered (a power of two) */
-#define MMLP_AHEAD_ONE 48 /* MMLPairsCfg.ahead for one grab a frame */
+/* WHERE A GRAB WRITES: this many pairs past the engine's index, read by the
+ * host just before it plans (a poll grab). Everything past the index waits on
+ * the wire — at 1 pair a millisecond on the light images and ~0.55 on the
+ * banked ones, 8 is 5–8 ms of latency on every write. What has to fit inside
+ * is the 68000's time between the poll and the write (the plan, a few
+ * thousand cycles) plus any interrupt that lands between them; a grab delayed
+ * past it finds out itself (mmlp_in_time) and copies nothing. */
+#define MMLP_AHEAD 8
 #define MMLP_MAX_GRAB 32  /* the largest pairs_per_grab mmlp_plan will be asked for */
 
 typedef struct {
@@ -135,14 +141,14 @@ void mmlp_frame(MMLPairs *p, const uint8_t *rec, uint16_t len);
 
 /* WHICH FRAMES MAY GO. `release` is how many frames' time has come: frames
  * 0 .. release-1 may be written, later ones wait even if they are queued. So
- * the host can render ahead (the SGDK host renders one frame early) and the
+ * the host can render ahead (the SGDK host renders two frames early) and the
  * pairs still leave on their own frame — a render that runs late delays
  * nothing that was ready, and nothing goes out early. Frames more than
  * MMLP_FRAMES ahead of `release` must not be queued; `release` = frames_in
  * sends whatever is queued. Counts wrap at 16 bits and compare as such. */
 
 /* Plan one grab. `fifo_lo` is the byte the engine publishes (its next pair's
- * byte offset into the page) as read in the PREVIOUS grab, or 0xff for none
+ * byte offset into the page), read just before the call, or 0xff for none
  * yet. Fills `ops[k]` and `vals[k]` for the grab's pairs_per_grab positions —
  * the real pairs, then IDLE — and returns how many are real; `*dst` is the Z80
  * address of the first. Zero means nothing to write this time (the host still
@@ -151,15 +157,15 @@ void mmlp_frame(MMLPairs *p, const uint8_t *rec, uint16_t len);
  * writes every other byte of the page (mmlispdrv.c). */
 uint16_t mmlp_plan(MMLPairs *p, uint8_t fifo_lo, uint16_t release, uint8_t *ops, uint8_t *vals, uint16_t *dst);
 
-/* THE IN-GRAB TEST. The destination was chosen from the index read in the
- * PREVIOUS grab, ahead of it by more than the engine consumes between two
- * grabs at the normal spacing. A grab that comes late (an interrupt pump
- * skipped, a main loop that overran a frame) can find the engine already at or
- * past `dst`; pairs written there would wait a whole page cycle (~64 ms) and
- * the next grab's pairs, placed from a fresh index, would be read BEFORE them.
- * So the grab reads the index first and copies only when the engine has not
- * reached `dst`: the index moved by less than `dst` was ahead of it. One byte
- * subtraction and compare, with the bus held; everything else is planned. */
+/* THE IN-GRAB TEST. The destination was chosen MMLP_AHEAD pairs past the
+ * index read just before the plan. A grab delayed between that read and its
+ * write (an interrupt in between, a bus already held) can find the engine
+ * already at or past `dst`; pairs written there would wait a whole page cycle
+ * (~64 ms) and the next grab's pairs, placed from a fresh index, would be read
+ * BEFORE them. So the grab reads the index again and copies only when the
+ * engine has not reached `dst`: the index moved by less than `dst` was ahead
+ * of it. One byte subtraction and compare, with the bus held; everything else
+ * is planned. */
 static inline int mmlp_in_time(uint8_t lo_prev, uint16_t dst, uint8_t lo_now) {
   return (uint8_t)(lo_now - lo_prev) < (uint8_t)((uint8_t)dst - lo_prev);
 }
