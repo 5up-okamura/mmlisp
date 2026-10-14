@@ -1825,7 +1825,12 @@ function finishChain(ctx, out) {
   if (!ch || !ch.toks.length) return;
   const top = Math.max(ch.base, ...ch.toks.map((t) => t.v));
   // :vol is 2 dB a step, like :vel — so it moves as the written :vel would.
-  const vol = (v) => 31 - (velToken(top, ctx) - velToken(v, ctx));
+  // An SSG level is the envelope's times v (ssgEnvSpec), and on the PSG the
+  // :vol steps add to the attenuator's, whose bottom ones are wide: the step
+  // count is the attenuator's between the two at the envelope's sustain.
+  const sl = ctx.isSsg ? (ctx.ssgEnv?.sl ?? 255) : 255;
+  const velAt = (v) => (ctx.isSsg ? ssgRegVel(Math.floor((sl * (v + 1)) / 256)) : velToken(v, ctx));
+  const vol = (v) => Math.max(0, 31 - (velAt(top) - velAt(v)));
   ch.arr[ch.idx] = `:vel ${velToken(top, ctx)} :vol ${vol(ch.base)} ${ch.arr[ch.idx]}`;
   for (const t of ch.toks) t.arr[t.idx] = `:vol ${vol(t.v)}`;
   out.push(":vol 31");
@@ -1851,13 +1856,19 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
   const played = (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256));
   const ratio = (x) => Math.round((100 * x) / vel) / 100;
   const items = [];
-  // A straight stage from level a to b over `clocks`: the played :vel per
-  // tick, fitted greedily with pieces that stay within the tolerance.
-  const stage = (a, b, clocks) => {
-    if (clocks <= 0) return;
-    const total = Math.max(1, Math.round(clocks * factor));
+  // A stage from level a towards b, `rate` a clock — SOFENV steps the level
+  // once a clock and holds it between, so a note keeps its start level for
+  // its first clock — as the played :vel per tick, fitted greedily with pieces
+  // that stay within the tolerance.
+  const stage = (a, b, rate) => {
+    if (rate <= 0) return;
+    const total = Math.max(1, Math.round(Math.ceil(Math.abs(b - a) / rate) * factor));
     ticks += total;
-    const y = Array.from({ length: total + 1 }, (_, k) => played(a + ((b - a) * k) / total));
+    const dir = b > a ? 1 : -1;
+    const y = Array.from({ length: total + 1 }, (_, j) => {
+      const lv = a + dir * Math.floor(j / factor) * rate;
+      return played(dir > 0 ? Math.min(b, lv) : Math.max(b, lv));
+    });
     let i = 0;
     while (i < total) {
       let j = i + 1;
@@ -1873,19 +1884,19 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
   };
   const { al, ar, dr, sl, sr, rr } = op;
   if (al < 255) {
-    if (ar > 0) stage(al, 255, (255 - al) / ar);
+    if (ar > 0) stage(al, 255, ar);
     else items.push(`${ratio(played(al))}`); // AR 0: it never rises
   }
   if (al >= 255 || ar > 0) {
-    if (sl < 255) stage(255, sl, dr > 0 ? (255 - sl) / dr : 0);
+    if (sl < 255) stage(255, sl, dr);
     if (dr === 0 && sl < 255) items.push("1"); // DR 0: it holds at the top
-    else if (sr > 0 && sl > 0) stage(sl, 0, sl / sr);
+    else if (sr > 0 && sl > 0) stage(sl, 0, sr);
   }
   // Key-off releases from wherever the level is; a macro curve needs its
   // start written, so it is SL — exact for a note that reached the sustain
   // and has not decayed far into it.
   items.push("(wait key-off)");
-  if (sl > 0 && rr > 0) stage(sl, 0, sl / rr);
+  if (sl > 0 && rr > 0) stage(sl, 0, rr);
   return `${macroStep((ticks / PPQN) * (60 / (bpm || 120)) * 60)}:vel* [ ${items.join(" ")} ]`;
 }
 
