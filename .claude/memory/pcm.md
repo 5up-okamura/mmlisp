@@ -90,8 +90,9 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 
 - **The integrated multi-bank build has had no listening test.**
 - **Banked PCM onsets still trail on dense frames** (user heard it late on
-  BlastEm, 2026-10-13, an imported mucom song at `:pcm-voices 3`; that song
-  was not re-measured after the fix). `tests/multibank-3v.mmlisp` gives
+  BlastEm, 2026-10-13, an imported mucom song at `:pcm-voices 3`; after the
+  fix that song measures PCM−FM −1.1 ms median, p95 8.9, max 38 on one
+  frame — not yet listened to). `tests/multibank-3v.mmlisp` gives
   PCM−FM 34 ms median: at its frames 61 and 91 (the `:master` changes) every
   pair of the frame, PCM and FM alike, reaches the engine one video frame
   later than at frame 31 (first PCM pair +15 ms after the frame vs −1.7 ms),
