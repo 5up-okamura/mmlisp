@@ -86,16 +86,30 @@
           <span>Font Size</span>
           <span class="menu-item-shortcut" id="fontSizeValue"></span>
         </button>
-        <button class="menu-item" onclick="togglePianoRoll();closeMenus()"
-                title="A pane under the editor, linked to the score">
-          <span>Piano Roll</span>
-          <span class="menu-item-shortcut" id="pianoRollCheck"></span>
-        </button>
-        <button class="menu-item" onclick="toggleScope();closeMenus()"
-                title="Each channel's waveform, behind the editor text">
-          <span>Oscilloscope</span>
-          <span class="menu-item-shortcut" id="scopeCheck"></span>
-        </button>
+        <!-- the score's three views, each on or off -->
+        <div class="menu-wrap submenu-wrap" id="menuMMLispView">
+          <button class="menu-item" onclick="toggleSubmenu('menuMMLispView')">
+            <span>View</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown">
+            <button class="menu-item" onclick="toggleSource();closeMenus()"
+                    title="The score's text and its line numbers">
+              <span>Source</span>
+              <span class="menu-item-shortcut" id="sourceCheck"></span>
+            </button>
+            <button class="menu-item" onclick="togglePianoRoll();closeMenus()"
+                    title="A pane under the editor, linked to the score">
+              <span>Piano Roll</span>
+              <span class="menu-item-shortcut" id="pianoRollCheck"></span>
+            </button>
+            <button class="menu-item" onclick="toggleScope();closeMenus()"
+                    title="Each channel's waveform, behind the editor text">
+              <span>Oscilloscope</span>
+              <span class="menu-item-shortcut" id="scopeCheck"></span>
+            </button>
+          </div>
+        </div>
         <button class="menu-item" onclick="toggleFollow();closeMenus()"
                 title="While playing, scroll to keep the highlighted notes in view">
           <span>Follow Playback</span>
@@ -5156,11 +5170,13 @@
         ctx.drawImage(vc, (crop.left - vr.left) * sx, (crop.top - vr.top) * sy, side * sx, side * sy, 0, 0, S, S);
         ctx.globalAlpha = 1;
       }
-      ctx.save();
-      ctx.scale(k, k);
-      ctx.translate(-crop.left, -crop.top);
-      drawEditorText(ctx, crop);
-      ctx.restore();
+      if (_sourceOn) { // what the editor shows: no text while MMLisp > View > Source is off
+        ctx.save();
+        ctx.scale(k, k);
+        ctx.translate(-crop.left, -crop.top);
+        drawEditorText(ctx, crop);
+        ctx.restore();
+      }
 
       // Title and footer, each on a solid band of the background that fades
       // into the picture (stepped alpha: any theme color works, no parsing).
@@ -5466,6 +5482,7 @@
     let _fmPanelDragging = false;           // dragging an FM-panel slider → don't let the loop overwrite it
     let _tempoDragging = false;             // dragging the tempo slider → don't let the loop move its thumb
     let _tempoShown = null;                 // last tempo value shown (change detection)
+    let _sourceOn = true;                  // MMLisp > View > Source: the score's text shows
     let _vizRoll = false;                  // the piano roll's pane is open
     let _vizScope = false;                 // the oscilloscope draws behind the editor
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
@@ -9884,7 +9901,7 @@
         selection: EditorSelection.range(r[0], r[1]),
         effects: EditorView.scrollIntoView(r[0], { y: 'nearest' }),
       });
-      if (!isCoarsePointerDevice()) editorView.focus(); // a tap must not raise the keyboard
+      if (_sourceOn && !isCoarsePointerDevice()) editorView.focus(); // a tap must not raise the keyboard
     }
 
     // Playing, the run's clock; paused or stopped, the point the song holds or
@@ -10450,11 +10467,26 @@
       if (!!on === _vizScope) return;
       _vizScope = !!on;
       document.getElementById('editorWrap')?.classList.toggle('viz-on', _vizScope);
+      document.getElementById('leftCol').classList.toggle('scope-off', !_vizScope);
       savePref('scope', _vizScope ? 'on' : 'off');
       if (_vizScope) resizeVizCanvas();
       else { resetScopeTriggers(); clearVizCanvas(); }
       vizChanged();
     }
+    // Source (MMLisp > View): the score's text and line numbers. Hidden, the
+    // editor keeps its place (the oscilloscope and the video crop use it) but
+    // takes no focus; with the oscilloscope off too, the editor area folds
+    // away and the piano roll takes the column (style.css, #leftCol.source-off).
+    function setSource(on) {
+      _sourceOn = !!on;
+      document.getElementById('leftCol').classList.toggle('source-off', !_sourceOn);
+      document.getElementById('sourceCheck').textContent = _sourceOn ? '✓' : '';
+      savePref('source', _sourceOn ? 'on' : 'off');
+      if (!_sourceOn) editorView.contentDOM.blur();
+    }
+    const toggleSource = () => setSource(!_sourceOn);
+    window.toggleSource = toggleSource;
+    window.setSource = setSource;
     const togglePianoRoll = () => setPianoRoll(!_vizRoll);
     const toggleScope = () => setScope(!_vizScope);
     window.togglePianoRoll = togglePianoRoll;
@@ -10539,7 +10571,8 @@
     initLaunchQueue();
     initFileDrop();
 
-    // Restore the piano roll and the oscilloscope, each on or off.
+    // Restore the three views (MMLisp > View), each on or off.
+    setSource(loadPref('source', 'on') !== 'off');
     setPianoRoll(loadPref('pianoRoll', 'off') === 'on');
     setScope(loadPref('scope', 'on') === 'on');
     vizChanged(); // the checks, both off included

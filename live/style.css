@@ -502,6 +502,24 @@
     #hDivider:hover, #rollDivider:hover { background: var(--mid); }
     #rollDivider { touch-action: none; }
 
+    /* MMLisp > View > Source off: the text and line numbers hide (the editor
+       keeps its place for the oscilloscope behind it); with the oscilloscope
+       off too the editor area folds away — unless a prompt there is showing
+       (a shared link's Play, the folder grant) — and the piano roll takes the
+       column. */
+    #leftCol.source-off #editorWrap .cm-editor,
+    #leftCol.source-off #bracketStatus { visibility: hidden; }
+    #leftCol.source-off.scope-off #editorWrap:not(:has(> #sharedPlay:not([hidden]), > #folderAccess:not([hidden]))) {
+      display: none;
+    }
+    #leftCol.source-off.scope-off #editorWrap:not(:has(> #sharedPlay:not([hidden]), > #folderAccess:not([hidden]))) ~ #rollDivider {
+      display: none;
+    }
+    #leftCol.source-off.scope-off #editorWrap:not(:has(> #sharedPlay:not([hidden]), > #folderAccess:not([hidden]))) ~ #rollPane {
+      flex: 1;
+      height: auto !important; /* over the dragged height */
+    }
+
     /* piano roll pane (under the editor) */
     #rollPane {
       height: 220px;

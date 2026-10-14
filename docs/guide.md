@@ -1083,14 +1083,16 @@ for a few seconds.
 
 ### The piano roll
 
-`MMLisp > Piano Roll` opens a pane under the editor (drag the line between
-them to size it); `MMLisp > Oscilloscope`, each channel's waveform behind the
-editor text, turns on and off on its own, so either, both or neither show.
-Every pitched channel shares one pitch axis,
-with the keys down the left, so what the tracks play at one moment — the
-chord, the spacing, a clash — reads at a glance; noise and PCM tracks are
-rows of onset marks underneath. The playhead stands still and the music runs
-past it.
+`MMLisp > View` turns the score's three views on and off, each on its own:
+**Source** (the text and its line numbers), **Piano Roll** (a pane under the
+editor; drag the line between them to size it) and **Oscilloscope** (each
+channel's waveform behind the text). With Source off the oscilloscope fills the
+editor's place; with both off the piano roll takes the whole column — a view
+for listening, or for a phone. In the piano roll, every pitched channel shares
+one pitch axis, with the keys down the left, so what the tracks play at one
+moment — the chord, the spacing, a clash — reads at a glance; noise and PCM
+tracks are rows of onset marks underneath. The playhead stands still and the
+music runs past it.
 
 One channel is in focus: the one whose form holds the editor cursor, or
 whose note you click. It is drawn bright, the others dim, its sounding keys
@@ -1797,9 +1799,11 @@ the video, and the link in a reply for anyone who wants to open it.
 
 It plays the score from the top for the length you set (30 seconds by default,
 up to 140, X's limit), in real time; **Stop** ends it early. What the editor
-shows is what the video shows, so frame it first: `MMLisp > Font Size` sets
-how much code fits, and `MMLisp > Follow Playback` moves the picture with the
-music (off, it stays where you left it). The take draws the editor with the
-oscilloscope behind it, on for the take even when `MMLisp > Oscilloscope` is
-off (the piano roll's pane is outside the frame). X takes H.264 video in MP4, which recent
-Chrome and Safari record; other browsers say so before recording.
+shows is what the video shows, so frame it first: `MMLisp > Font Size` sets how
+much code fits, and `MMLisp > Follow Playback` moves the picture with the music
+(off, it stays where you left it). The take draws the editor with the
+oscilloscope behind it, on for the take even when
+`MMLisp > View > Oscilloscope` is off (the piano roll's pane is outside the
+frame); with `MMLisp > View > Source` off it is the oscilloscope alone. X takes
+H.264 video in MP4, which recent Chrome and Safari record; other browsers say
+so before recording.
