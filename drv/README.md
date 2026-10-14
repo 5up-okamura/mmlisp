@@ -114,7 +114,7 @@ run inside `verify:all`; the rest need SGDK and the patched BlastEm and leave
 recordings and reports under `out/`:
 
 ```sh
-npm run banked:sgdk -- tests/multibank.mmlisp --seconds 8 [--pal] [--minimal]
+npm run banked:sgdk -- tests/multibank.mmlisp --seconds 8 [--pal] [--minimal] [--lead N]
 npm run multibank:render -- tests/multibank.mmlisp --seconds 6 --out out/multibank
 npm run multibank:rom
 ```
@@ -127,5 +127,7 @@ lane), the bus loss, the key-on interval error, and the PCM-vs-FM onset lag:
 each start's first output sample against the median FM key-on, both measured
 from their frame's video time (`pcmOnset`). `tests/onset-3v.mmlisp` is the
 score for that lag: FM chords keyed with a three-voice kit, with voice changes.
+`--lead N` builds the host with `MMLISP_LEAD=N` (frames rendered ahead of their
+release) to compare a score's timing at another render lead.
 The `multibank:*` tools drive the standalone prototype that preceded the
 integration; `multibank:render` is a listening aid, not a production `.smp`.

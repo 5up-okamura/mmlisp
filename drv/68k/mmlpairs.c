@@ -304,6 +304,11 @@ MMLP_HOT uint8_t fm_channel(const MMLWrite *w) {
 MMLP_HOT const MMLWrite *view_write(const MMLFrameView *v, uint16_t i) {
   return &v->q[(v->first+i) & (MML_WRITE_QUEUE-1)];
 }
+/* Each write's FM channel (fm_channel), classified once a frame: the moved
+ * groups and the rest are separate passes over the frame, and on the 68000 a
+ * voice change's frame spent most of its render reclassifying the same writes.
+ * One frame at a time, from the producer only. */
+static uint8_t frame_ch[MML_WRITE_QUEUE];
 static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
   uint16_t n=v->end[MML_SLOT_SUBS-1], counts[6]={0,0,0,0,0,0};
   uint8_t eligible=0, moved=0, intermediate=0, previous[6];
@@ -311,6 +316,7 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
   for (uint8_t ch=0; ch<6; ch++) previous[ch]=p->fm_mod[ch];
   for (uint16_t i=0; i<n; i++) {
     const MMLWrite *w=view_write(v,i); uint8_t ch=fm_channel(w);
+    frame_ch[i]=ch;
     if (ch<6) counts[ch]++;
     if (w->port>1) continue;
     if (w->addr>=0xb4 && w->addr<=0xb6) {
@@ -328,8 +334,9 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
   for (uint8_t size=1; size<=8; size++) for (uint8_t ch=0; ch<6; ch++)
     if ((eligible&(1u<<ch)) && counts[ch]==size) {
       for (uint16_t i=0; i<n; i++) {
+        if (frame_ch[i]!=ch) continue;
         const MMLWrite *w=view_write(v,i);
-        if (fm_channel(w)==ch) { if (w->port==0) push0(p,w->addr,w->data); else push(p,1,w->addr,w->data); }
+        if (w->port==0) push0(p,w->addr,w->data); else push(p,1,w->addr,w->data);
       }
       moved |= (uint8_t)(1u<<ch);
     }
@@ -338,14 +345,14 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
   for (uint16_t i=0; i<=n; i++) {
     const MMLWrite *w=i<n ? view_write(v,i) : 0;
     if (moved && w) {
-      const uint8_t ch=fm_channel(w);
+      const uint8_t ch=frame_ch[i];
       if (ch<6 && (moved&(1u<<ch))) continue;
     }
     if (!w || (w->port==0 && w->addr==0x28 && (w->data&4))) {
       for (uint16_t k=lo; k<hi; k++) {
         const MMLWrite *other=view_write(v,k);
         if (other->port==1) {
-          uint8_t ch=moved ? fm_channel(other) : 0xff;
+          uint8_t ch=moved ? frame_ch[k] : 0xff;
           if (!(ch<6 && (moved&(1u<<ch)))) push(p,1,other->addr,other->data);
         }
       }

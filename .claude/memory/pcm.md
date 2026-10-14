@@ -89,17 +89,21 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 ## Open
 
 - **The integrated multi-bank build has had no listening test.**
-- **Banked PCM onsets still trail on dense frames** (user heard it late on
-  BlastEm, 2026-10-13, an imported mucom song at `:pcm-voices 3`; after the
-  fix that song measures PCM−FM −1.1 ms median, p95 8.9, max 38 on one
-  frame — not yet listened to). `tests/multibank-3v.mmlisp` gives
-  PCM−FM 34 ms median: at its frames 61 and 91 (the `:master` changes) every
-  pair of the frame, PCM and FM alike, reaches the engine one video frame
-  later than at frame 31 (first PCM pair +15 ms after the frame vs −1.7 ms),
-  and three voices' starts (retarget + level + start, ~10–12 pairs each at
-  ~0.6 ms a pair) land ~7 ms apart. Cause of the one-frame slip not found.
-  A cap on how far ahead the banked host fills the pair page (an experiment,
-  not kept) did not lower the worst case.
+- **Banked onsets slip a frame when the 68000's render overruns** (user
+  heard FM chords and drums wobble on BlastEm, 2026-10-14, `disco1`, a mucom
+  import at two banked voices; Live is fine). With `MMLISP_LEAD` 1 a frame
+  is rendered ~3 ms after the vblank before its own (the pumps run first) and
+  must finish before the next; the beat frames take 10–20 ms on that song
+  (p50 2.3, p95 8), up to 45 ms on a voice-change frame, so they miss their
+  release and go one vblank late. Measured (`banked:sgdk --lead`, 40 s): FM
+  key-on lag p90 19.9 ms at lead 1, 5.2 at lead 2; PCM−FM p95 17.9 vs 2.7.
+  The same slip is the `multibank-3v` frames 61/91 one. Open, the user's
+  call: `MMLISP_LEAD` 2 as the default (one more frame of latency on every
+  host call, §3.4) and/or a 68000 render pass — the expensive renders spread
+  over dispatch, note_on, macros and the PCM note path, no single hot spot.
+  Not adopted: STAGED EARLY in the host lane (a frame's staged stores sent a
+  frame ahead) — at lead 1 the next frame is never queued at the vblank, and
+  at lead 2 it measured no better than the unchanged converter.
 - Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.
