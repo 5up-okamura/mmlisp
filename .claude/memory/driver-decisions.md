@@ -190,7 +190,7 @@ missed it because only a real score issues STOP+START in one slot.
 - **The grab is asm** because C over `Z80_getAndRequestBus` was 2,835 master;
   eight pairs as four `movep.l` is 1,100–1,320.
 
-## 9. The 68000's share — closed 2026-10-02, reopened 2026-10-14
+## 9. The 68000's share — closed 2026-10-02, reopened and closed again 2026-10-14
 
 The user's direction after setting the Z80-only build aside ([[z80-only]]):
 keep the split and make the 68000 side cheap, so a game keeps the CPU for
@@ -198,8 +198,10 @@ raster effects and 3D. Closed by the user on 2026-10-02 as the price of moving
 parameters every frame. **Reopened 2026-10-14** ("そこまで重いのは大問題です")
 when a banked mucom import measured a 10–20 ms render on every beat and 45 ms
 on a voice-change frame — past the vblank at one frame of lead, so the frame
-slipped (the SGDK example app itself is idle: the cost is the driver's). What
-was done and what is open is in [[pcm]]; the standing rules below hold.
+slipped (the SGDK example app itself is idle: the cost is the driver's). Closed
+again the same day by listening, after two frames of lead, the first
+optimisation pass and the voice spread (§10); the per-write cost figures to
+reopen with are in [[pcm]]. The standing rules below hold.
 Working notes: git history, `plan-68k-optimization.md` at `afef069`.
 
 | sin008 whole, `sgdk-profile --pc`, 30 s | before (`ba094a6`) | after (`bf50bdc`) |
@@ -280,17 +282,18 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   earlier, and the note cut is already controlled where it matters — a slur
   keeps the voice in place, a `:gate-` silence is used as it is. Revisit only
   if a score suffers from the cut.
-- **Within the window, the lightest frame** (user, 2026-10-14, "A + C"): the
-  behaviour is `language.md` §9. Why: on `disco1` the two measured slips were
-  not hoisted voices at all — a voice the mucom importer wrote before a rest
-  (`stab _2 (x 26 _1 e …)`) landed on another channel's beat (fm5's key-on
-  33 ms late at lead 2), and the head of a `(go loop3 2)` repeat puts five
-  voices with their notes in one frame. So a voice written before a rest is treated like one
-  in the gap (C), and every placed voice takes the first frame of its window
-  free of voices and FM key-ons (A); the loop head (B) was deferred as one
-  beat's worth and a driver change ([[pcm]] Open). Measured: disco1 FM key-on
-  error max 33.3 → 14.0 ms, the voice-change render 153% → 117% of a frame;
-  the single-voice case lands where it did. Spreading does nothing for the
+- **Within the window, the lightest frame, and a voice before a rest moves
+  too** (user, 2026-10-14): the behaviour is `language.md` §9. Why: on
+  `disco1` the two measured slips were not hoisted voices at all — a voice the
+  mucom importer wrote before a rest (`stab _2 (x 26 _1 e …)`) landed on
+  another channel's beat (fm5's key-on 33 ms late at lead 2), and the head of
+  a `(go loop3 2)` repeat puts five voices with their notes in one frame. So a
+  voice written before a rest is treated like one in the gap, and every placed
+  voice takes the first frame of its window free of voices and FM key-ons.
+  The loop head was left as it is — one beat's worth, and a driver change —
+  and the listening that followed settled it ([[pcm]]). Measured: disco1 FM
+  key-on error max 33.3 → 14.0 ms, the voice-change render 153% → 117% of a
+  frame; a lone voice lands where it did. Spreading does nothing for the
   single-bank WIRE (the pairs before a key-on are the same however they are
   spread over the window); it is the 68000's render it halves.
 - **Two frames of lead, eight pairs ahead** (user, 2026-10-14, "進めて"). The
@@ -300,22 +303,21 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   host placed a grab 32 pairs past the engine's index (48 past a frame-old one
   on the light host), 18.3 ms of dead wire at two banked voices (p50, every
   pair, BlastEm). Read fresh and placed 8 past it: 5.7 ms, every gate green.
-  So LEAD 2 + AHEAD 8 is +4 ms on an SE against the old defaults (~47 vs 43 ms
-  call → sound), and the slips are gone (disco1 FM key-on lag p90/p95 19.9/23.7
-  → 5.5/7.7 ms). Both hosts, one rule. Re-measured after the 68000 pass
-  (2026-10-14, disco1 40 s): lead 1 still slips — key-on lag p95/max 18.3/38.8
-  ms, interval error p95 17.9 — on ordinary 107–126% frames at 8–31 s, not
-  only the 242% loop head; lead 2 gives 6.7/22.2 and 7.2. So LEAD 2 stays
-  until a render fits a frame. The silent armed frame is gone (user,
-  2026-10-14, "進めて"): every start — song, track, SE — sounds in the frame
-  it is drained in, ~17 ms off every start (SE call → sound ~30 ms). One rule,
-  not an SE-only branch. The FIFO wire keeps the head's writes ahead of the
-  first key-on. The head still runs at the head of the track's first frame
-  (`fresh`), before that frame's tempo step: run inside the accumulate loop,
-  the first tick piles up at the old tempo before a head TEMPO_SET lands, a
-  sub-frame phase offset for the whole song (pal-gate caught it on m3-voice
-  and m4-voice-hoist). Priming at load reuses the same flag: start, dispatch
-  the head, stop.
+  The slips are gone (disco1 FM key-on lag p90/p95 19.9/23.7 → 5.5/7.7 ms).
+  Both hosts, one rule. Re-measured after the 68000 pass (disco1 40 s): lead
+  1 still slips — key-on lag p95/max 18.3/38.8 ms, interval error p95 17.9 —
+  on ordinary 107–126% frames at 8–31 s, not only the 242% loop head; lead 2
+  gives 6.7/22.2 and 7.2. So LEAD 2 stays until a render fits a frame.
+- **Every start sounds in the frame it is drained in** (user, 2026-10-14,
+  "進めて"): the silent armed frame that held a song's, a track's and an
+  effect's first note back ~17 ms is gone — one rule, not an SE-only branch,
+  since the FIFO wire already keeps a head's writes ahead of its first key-on.
+  The head still runs at the head of the track's first frame (`fresh`),
+  before that frame's tempo step: run inside the accumulate loop, the first
+  tick piles up at the old tempo before a head TEMPO_SET lands, a sub-frame
+  phase offset for the whole song (pal-gate caught it on m3-voice and
+  m4-voice-hoist). Priming at load reuses the same flag: start, dispatch the
+  head, stop. The call → sound figure an effect gets now is `driver.md` §3.4.
 
 ## 11. SE, and several songs
 

@@ -86,36 +86,38 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
   with the expander's B half inlined (raw throughput does not establish
   better onset latency).
 
+## The 68000's share on a banked score — closed 2026-10-14 by listening
+
+The user heard `disco1` (a banked mucom import, two voices) wobble on
+BlastEm: 10–20 ms renders on a chord-and-drums frame, 45 ms on a voice-change
+frame, past the vblank at one frame of lead. Covered by `MMLISP_LEAD` 2 and
+`MMLP_AHEAD` 8, the first optimisation pass and the voice spread
+([[driver-decisions]] §9–§10); the user then played disco1 again and heard no
+problem, which also settles the one frame left over — the five voices at the
+head of its `#loop3 … (go loop3 2)` repeat (242% of a frame, at 1 s and
+79 s): not worth a copy before the loop plus a rotation into the body's tail
+rest, nor a voice-id skip in `apply_patch`.
+
+**The figures to reopen with** (BlastEm, `sgdk-profile --fn` / `--pc
+--peak`): a YM register write costs ~2,000 cycles end to end — ~400 in the
+sequencer (`ym()`, shadow, `q_push`), ~870 in the banked converter, ~220 in
+`mmlp_plan` and the grab — so a peak render is its write count (116 writes =
+2.4 frames); the converter is 2% of all 68000 time but 30–45% of a peak
+render. Steady state: the tick walk ~550 cycles a track a frame (4.5% of the
+CPU), a macro slot ~1,000 a frame, `mmlp_plan` + pump ~3%; the driver's
+average share ~17% of the 68000. The C-level items left (a tick-walk fast
+path ~1.5%, skipping HOLD macro slots ~0.5–1%) sum to 3–4 points and stop
+there — the floor is C on the 68000 at ~10 cycles an operation; if the
+average ever matters, the structural change is the sequencer pushing pairs
+straight into the converter's queue (one queue and a classify pass fewer:
+−2% average, −30–40% on a peak, −5 KB RAM). Not adopted: a banked_writes
+rewrite that reads the ring once and keeps YM pointers (byte-identical over
+400k fuzzed frames, p50 −36%, but no gain on the peak frames and +4 KB of
+RAM); STAGED EARLY in the host lane (at lead 1 the next frame is never
+queued at the vblank, at lead 2 no better than the unchanged converter).
+
 ## Open
 
-- **The 68000's per-frame cost — closed 2026-10-14 by listening.** The user
-  heard `disco1` (a banked mucom import, two voices) wobble on BlastEm:
-  10–20 ms renders on a chord-and-drums frame, 45 ms on a voice-change
-  frame, past the vblank at one frame of lead. Closed by `MMLISP_LEAD` 2 and
-  `MMLP_AHEAD` 8 ([[driver-decisions]] §10), the first optimisation pass and
-  the voice spread (git); the user then played disco1 on BlastEm and heard
-  no problem, which also settles the one frame left over — the five voices
-  at the head of its `#loop3 … (go loop3 2)` repeat (242% of a frame, at 1 s
-  and 79 s): not worth a copy before the loop plus a rotation into the body's
-  tail rest, nor a voice-id skip in `apply_patch`. Reopen on a score that is
-  heard to wobble, with these figures (BlastEm, `sgdk-profile --fn` /
-  `--pc --peak`): **a YM register write costs ~2,000 cycles end to end** —
-  ~400 in the sequencer (`ym()`, shadow, `q_push`), ~870 in the banked
-  converter, ~220 in `mmlp_plan` and the grab — so a peak render is its
-  write count (116 writes = 2.4 frames); the converter is 2% of all 68000
-  time but 30–45% of a peak render. Steady state: the tick walk ~550 cycles
-  a track a frame (4.5% of the CPU), a macro slot ~1,000 a frame,
-  `mmlp_plan` + pump ~3%; the driver's average share ~17% of the 68000. The
-  C-level items left (a tick-walk fast path ~1.5%, skipping HOLD macro slots
-  ~0.5–1%) sum to 3–4 points and stop there — the floor is C on the 68000 at
-  ~10 cycles an operation; if the average ever matters, the structural change
-  is the sequencer pushing pairs straight into the converter's queue (one
-  queue and a classify pass fewer: −2% average, −30–40% on a peak, −5 KB
-  RAM). Not adopted: a banked_writes rewrite that reads the ring once and
-  keeps YM pointers (byte-identical over 400k fuzzed frames, p50 −36%, but
-  no gain on the peak frames and +4 KB of RAM); STAGED EARLY in the host lane
-  (at lead 1 the next frame is never queued at the vblank, at lead 2 no
-  better than the unchanged converter).
 - Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.
