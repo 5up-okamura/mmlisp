@@ -5464,7 +5464,8 @@
     let player = null;
     let currentIrURL = null;
     let selectedCh = null;                 // hardware FM/PSG index (0-9) or null — drives the FM param panel
-    let selectedChannel = null;            // head of the selected strip (e.g. "fm3-1") for highlight
+    let selectedChannel = null;            // head of the selected strip (e.g. "fm3-1", "pcm1"), or null: none is selected
+                                           // (a PCM strip leaves selectedCh null, so test this one for "none")
     const CURSOR_DEF_PREVIEW_CH = 0;        // FM channel used to audition a cursor FM def (incl. its op mask)
     const PCM_PREVIEW_CH = 'pcm';           // the keyboard's target while the cursor is on a sample def
     let _pcmCursorDef = null;               // name of the sample def under the cursor
@@ -8019,7 +8020,7 @@
 
     function getFmParamMode() {
       if (isFmChannel(selectedCh)) return 'channel';
-      if (selectedCh == null && _fmCursorDefContext) return 'cursor-def';
+      if (selectedChannel == null && _fmCursorDefContext) return 'cursor-def';
       return 'disabled';
     }
 
@@ -8034,7 +8035,7 @@
         statusEl.textContent = channelLabel(selectedCh);
         return;
       }
-      if (selectedCh == null && _fmCursorDefContext?.name) {
+      if (selectedChannel == null && _fmCursorDefContext?.name) {
         statusEl.textContent = _fmCursorDefContext.name;
         return;
       }
@@ -8069,10 +8070,10 @@
       }
       // A selected PCM part plays its own sample (previewPcmNoteOn).
       if (selectedPcmPart()) return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
-      if (selectedCh == null && _pcmCursorDef) {
+      if (selectedChannel == null && _pcmCursorDef) {
         return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
       }
-      if (selectedCh == null && _fmCursorDefContext?.regs) {
+      if (selectedChannel == null && _fmCursorDefContext?.regs) {
         return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmCursorDefContext };
       }
       // Keep the keyboard usable even when PSG is selected or no channel is selected.
@@ -9354,8 +9355,8 @@
 
     // ---- sync slider display from player state ----
     function syncParamUI() {
-      _fmCursorDefContext = selectedCh == null ? findFmDefAtCursor() : null;
-      _pcmCursorDef = selectedCh == null && !_fmCursorDefContext ? findSampleDefAtCursor() : null;
+      _fmCursorDefContext = selectedChannel == null ? findFmDefAtCursor() : null;
+      _pcmCursorDef = selectedChannel == null && !_fmCursorDefContext ? findSampleDefAtCursor() : null;
       libraryCursorMoved();
       updateFmParamStatus();
       updateKeyboardUiState();
