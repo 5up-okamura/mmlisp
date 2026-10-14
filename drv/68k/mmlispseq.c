@@ -174,8 +174,29 @@ MML_HOT int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v
 static const uint8_t MML_MOD3[32] = {0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0,
                                      1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1};
 MML_HOT uint8_t mod3(int ch) { return (unsigned)ch < 32 ? MML_MOD3[ch] : ch % 3; }
-/* a * b for operands that fit 16 bits (muls.w). */
-MML_HOT int32_t mml_muls(int16_t a, int16_t b) { return (int32_t)a * (int32_t)b; }
+/* a * b for operands that fit 16 bits (muls.w / mulu.w). In asm, like the
+ * divide: written in C, GCC widened the operands and called __mulsi3 anyway
+ * for most of these (the ease-in curve, every sweep step, a gated note's
+ * length, a scaled macro sample); only where it could see the range itself
+ * (255 - t, squared) did it pick mulu.w on its own. */
+MML_HOT int32_t mml_muls(int16_t a, int16_t b) {
+#if defined(__m68k__)
+  int32_t r = a;
+  __asm__("muls.w %1,%0" : "+d"(r) : "dmi"(b) : "cc");
+  return r;
+#else
+  return (int32_t)a * (int32_t)b;
+#endif
+}
+MML_HOT uint32_t mml_mulu(uint16_t a, uint16_t b) {
+#if defined(__m68k__)
+  uint32_t r = a;
+  __asm__("mulu.w %1,%0" : "+d"(r) : "dmi"(b) : "cc");
+  return r;
+#else
+  return (uint32_t)a * (uint32_t)b;
+#endif
+}
 /* n / d for a quotient that fits 16 bits (divs.w). */
 MML_HOT int16_t mml_divs(int32_t n, int16_t d) {
 #if defined(__m68k__)
@@ -1112,7 +1133,7 @@ static int scale_macro_sample(int sample, int slot_value) {
   int depth = slot_value & 0xff;
   int a = sample < 0 ? -sample : sample;
   /* |sample| <= 32768 and depth <= 255: mulu.w, not a __mulsi3 call */
-  int mag = a <= 0xffff ? (int)(((uint32_t)(uint16_t)a * (uint16_t)depth) >> 8) : (a * depth) >> 8;
+  int mag = a <= 0xffff ? (int)(mml_mulu((uint16_t)a, (uint16_t)depth) >> 8) : (a * depth) >> 8;
   return sample < 0 ? -mag : mag;
 }
 
