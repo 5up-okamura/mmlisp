@@ -3,7 +3,9 @@
 // the def's `:fx` chain, bakes each note and quantizes to 8-bit once. The
 // decoder is the browser's too (live/src/wav-decode.js), so both build the
 // same bank.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { decodeWav } from "../../live/src/wav-decode.js";
 
 // Returns { data: Float32Array (mono, -1..1), sampleRate }.
@@ -19,10 +21,14 @@ export function loadWav(path) {
 // instrument bank is one WAV that a dozen defs cut up, and re-reading it per
 // def is both slow and pointless.
 const wavCache = new Map();
+// A sample of a file imported from the repository root (`presets/…`,
+// language.md §9.2) resolves relative to it, not to the working directory.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 function loadWavCached(path) {
   let wav = wavCache.get(path);
   if (!wav) {
-    wav = loadWav(path);
+    const rooted = !existsSync(path) && !isAbsolute(path) ? resolve(REPO_ROOT, path) : null;
+    wav = loadWav(rooted && existsSync(rooted) ? rooted : path);
     wavCache.set(path, wav);
   }
   return wav;

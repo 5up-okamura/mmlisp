@@ -2,27 +2,47 @@
 // live/src toolchain the browser uses. Usage:
 //   node mmb-build.mjs <in.mmlisp> <out.mmb>
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, posix, relative, resolve } from "node:path";
+import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { collectImports, compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { encodeMmb } from "../../live/src/export-mmb.js";
 import { loadSamplesForIr } from "./wav.mjs";
 
+/* The repository root: where a path not found next to its importer is read
+ * from (language.md §9.2), so `presets/…` works from any folder. */
+export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/* Where a key the compiler uses is on disk: as given (absolute, or relative to
+ * the working directory), else under the repository root. */
+export function locateFile(path) {
+  if (existsSync(path)) return path;
+  if (!isAbsolute(path) && existsSync(resolve(REPO_ROOT, path))) return resolve(REPO_ROOT, path);
+  return null;
+}
+
 /* The sources of every file a score imports, transitively, keyed the way the
  * compiler looks them up (language.md §9.2): the importing file's directory
- * joined with the literal path, as a normalized posix path. The compiler does
- * no I/O — the browser reads the files ahead of it and so does this. A path
- * that does not exist is left out, so the compiler's own E_IMPORT_NOT_FOUND
- * names it. */
+ * joined with the literal path, as a normalized posix path, or — when nothing
+ * is there — the literal path itself, read from the repository root. The file
+ * then counts as being where it was found, so its own imports and samples
+ * resolve from there. The compiler does no I/O — the browser reads the files
+ * ahead of it and so does this. A path found nowhere is left out, so the
+ * compiler's own E_IMPORT_NOT_FOUND names it. */
 export function readImportSources(sourcePath, src = readFileSync(sourcePath, "utf8")) {
   const map = new Map();
   const walk = (filePath, text) => {
     const dir = dirname(filePath).replace(/\\/g, "/");
     for (const p of collectImports(text)) {
-      const full = posix.normalize(posix.isAbsolute(p) ? p : posix.join(dir, p));
-      if (map.has(full) || !existsSync(full)) continue;
-      const t = readFileSync(full, "utf8");
-      map.set(full, t);
-      walk(full, t);
+      let key = posix.normalize(posix.isAbsolute(p) ? p : posix.join(dir, p));
+      let at = locateFile(key);
+      if (!at && !posix.isAbsolute(p)) {
+        key = posix.normalize(p);
+        at = locateFile(key);
+      }
+      if (!at || map.has(key)) continue;
+      const t = readFileSync(at, "utf8");
+      map.set(key, t);
+      walk(key, t);
     }
   };
   walk(sourcePath.replace(/\\/g, "/"), src);
