@@ -3089,6 +3089,7 @@
       const def = defaultTrackerOptions(a);
       const choices = ['drop', ...FM_DESTS, ...PSG_DESTS, 'noise'];
       const pcmChoices = ['drop', 'pcm1'];
+      const chipPcmChoices = ['drop', ['pcm', 'pcm1–3']];
       const played = a.channels.filter((c) => c.notes > 0);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
@@ -3119,6 +3120,7 @@
       const def = defaultVgmOptions(a);
       const choices = ['drop', ...FM_DESTS, ...PSG_DESTS, 'noise'];
       const pcmChoices = ['drop', 'pcm1'];
+      const chipPcmChoices = ['drop', ['pcm', 'pcm1–3']];
       const g = a.grid;
       const shown = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
       const fields = [
@@ -3131,13 +3133,19 @@
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
       ];
       fields.push({ key: 'loop', label: a.fileLoop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: def.loop });
+      // A PCM chip's channels share pcm1–3: how many voices (the rate) is the choice.
+      if (a.channels.some((c) => c.kind === 'chip-pcm'))
+        fields.push({ key: 'pcmVoices', label: 'PCM voices', type: 'select', value: String(def.pcmVoices),
+          choices: [['1', '1 — 14.4 kHz'], ['2', '2 — 10.1 kHz'], ['3', '3 — 6.7 kHz']],
+          hint: `up to ${a.pcmPoly} ring at once — with fewer voices, the oldest sound is cut` });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary: `${parsed.chips.join(' + ')} · ${(parsed.totalSamples / 44100).toFixed(1)} s` +
           `${parsed.title ? ' · ' + parsed.title : ''}. Notes are rebuilt from the register writes; one row per chip channel that plays.`,
         fields,
-        rows: a.channels.map((c) => ({ key: c.key, label: c.label, value: def.dest[c.key], choices: c.kind === 'pcm' ? pcmChoices : choices })),
+        rows: a.channels.map((c) => ({ key: c.key, label: c.label, value: def.dest[c.key],
+          choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : choices })),
       });
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
@@ -3147,6 +3155,7 @@
         bpm: bpm > 0 && bpm !== shown ? bpm : null,
         followPitch: !!got.fields.followPitch,
         loop: !!got.fields.loop,
+        pcmVoices: got.fields.pcmVoices ? Number(got.fields.pcmVoices) : def.pcmVoices,
         structure: !!got.fields.structure,
         fileName,
       }, a);

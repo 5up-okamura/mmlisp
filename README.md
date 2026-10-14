@@ -102,7 +102,8 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 - Song import with a dialog for tempo and which part goes on which channel:
   MIDI onto the GM voice set; DefleMask and Furnace modules with each pattern
   as a phrase;
-  VGM rebuilt into notes and voices, its tempo estimated
+  VGM rebuilt into notes and voices, its tempo estimated, and its PCM
+  (YM2612 DAC, SegaPCM, YM2610 ADPCM, X68000 OKIM6258) decoded onto pcm1–3
 - VGM and WAV export, PCM included; open/save `.mmlisp` sources with the File System
   Access API
 - Writing with an AI: Tools > Connect to AI lets Claude Code or Claude Desktop

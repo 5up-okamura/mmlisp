@@ -1250,8 +1250,8 @@ formats `File > Import` accepts:
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
 the score's folder with its name filled in, until it is written (also
-`File > Export > Imported…`); a VGM's DAC samples arrive the same
-way (below). A song that uses both part J and the drums (K or G) arrives with its
+`File > Export > Imported…`); a VGM's DAC or PCM-chip samples arrive the
+same way (below). A song that uses both part J and the drums (K or G) arrives with its
 `fm6` lines commented out — on the Mega Drive fm6 is the DAC the drums play
 through; move them to a free channel to hear them. NTSC and PAL drum
 libraries with up to three PCM voices can expand to multiple sample banks
@@ -1401,8 +1401,23 @@ them: a key-on starts a note, a key-off ends it.
   `8n` writes and DAC stream control both read; a DAC written byte by byte,
   without a data bank, does not — nor can a driver's own mix of several
   samples be split again. FM6 is the DAC then, so its track is dropped.
-- Other chips' PCM, a second chip and tempo changes within the song are not
-  imported, and the log says so.
+- An arcade or X68000 chip's PCM comes in too: **SegaPCM** (System 16, X,
+  OutRun), the **YM2610's ADPCM-A and ADPCM-B** (Neo Geo, Taito) and the
+  **X68000's OKIM6258**. Each of its channels is a row (`pcm1–3` or drop);
+  the sample data the file carries is decoded into one wav,
+  `<song>-pcm.wav`, sliced by `(def-pcm sega-NN …)`, `pcma-NN`, `pcmb-NN`
+  or `oki-NN` defs — one gain for the song brings its loudest sample to full
+  scale — and each hit's level becomes `:vel` (the loudest hit 15).
+  **PCM voices** picks how many of pcm1–3 the score uses — the rate the
+  driver plays them at — and starts at the most that ring at once, three at
+  most. With as many voices as channels, a channel is a track; with fewer,
+  each hit takes a free voice, or cuts the sound that began longest ago —
+  never an ADPCM-B note, the one melodic part — and the log counts the hits
+  cut. A sample too long to bake into one 32 KB bank at its lowest pitch is
+  cut to fit; pan is not imported (the DAC is one channel). With PCM in the
+  song, FM is offered fm1–fm5.
+- The OKI MSM6295, QSound and the other PCM chips, a second chip and tempo
+  changes within the song are not imported, and the log says so.
 
 **A MIDI or VGM import is structured** (untick **Fold repeats** for one bar
 after another): bars that repeat back to back become `(x n …)`, a run that

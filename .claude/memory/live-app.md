@@ -91,8 +91,22 @@ user's rulings, measurements, and open items. Merged 2026-10-09 from
   undelayed one wobbling throughout.
 - **A dialog whose defaults are right**: Enter alone imports; only what a user
   changes per file is offered.
+- **Structured import writes a voice at its block's head**, in the rest
+  before the note, where flat writes it at the note — same key-ons, a
+  different release tail; the user heard no difference (2026-10-15).
 - **VGM export writes PCM as one data block + `0x8n`**, not DAC stream
   control, because the engine mixes voices in software.
+- **A VGM's chip PCM onto three voices** (user, 2026-10-15, the
+  recommendations taken as offered): with fewer voices than channels, each
+  hit takes a free voice or cuts the oldest sound — beats survive, only tails
+  are lost — over keeping each source channel as a `:prio` layer (a fixed
+  pairing drops a hit even while another voice is free); a channel is its own
+  track only when the voices suffice. ADPCM-B, the one melodic part, is never
+  cut. The voice count starts at the most that ring at once, and the dialog
+  lowers it for the brighter rate.
+- **The VGM grid stays estimated from the FM/PSG onsets.** Mixing the DAC
+  hits in moved Sonic 2's Emerald Hill from 138.9 to 95.1 BPM; PCM played
+  before the first note moves the song on by whole units instead.
 
 ## Piano roll (`drawRoll` in `live/index.html`, guide §22)
 
@@ -162,9 +176,8 @@ leaves out.
   gives ~26 envelopes); rounding near shapes together is the lever. A bass of
   per-note pitch falls names a bend per pitch.
 - Furnace's slide/porta compat rules are rounded.
+- The X68000's OKIM6258 comes in a little quiet after the full-scale gain
+  (accepted, 2026-10-15); a `:fx` comp is the lever if it is raised again.
 - **The ja / es translations are unreviewed** — machine-written from the
   glossary; Spanish especially wants a reader. A fix goes through
   `i18n-sync.mjs --apply`, never a hand edit of the pack.
-- **Structured vs flat import**: structured writes a voice's TL at a block
-  head, during the rest, where flat writes it at the note — same key-ons, a
-  different release tail. Not judged audible.
