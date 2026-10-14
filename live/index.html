@@ -8050,6 +8050,8 @@
       if (Number.isInteger(selectedCh) && selectedCh >= 6 && selectedCh < 10) {
         return { chIndex: selectedCh, useCursorDef: false, replaces: true };
       }
+      // A selected PCM part plays its own sample (previewPcmNoteOn).
+      if (selectedPcmPart()) return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
       if (selectedCh == null && _pcmCursorDef) {
         return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
       }
@@ -8214,30 +8216,46 @@
       previewFmNoteOff(chIndex);
     }
 
-    // THE SAMPLE DEF UNDER THE CURSOR, ON THE KEYBOARD. A sample is bytes in a
-    // bank, so each key compiles the text as it stands and bakes that one def
-    // at that one note — effects, its base and the import's chain included,
-    // through the export's own bake — and plays it on the driver's engine. A
-    // def with loop points loops while the key is held. Stopped, it takes over
-    // the engine's PCM bank (the next Play or Build puts the score's back);
-    // during playback it plays beside the song on playAuditionBlob.
+    // A SAMPLE ON THE KEYBOARD: Library's highlighted one, else a selected PCM
+    // part's — the one it last played, or opens with while stopped, as a
+    // selected FM channel plays its voice — else the def under the cursor. A
+    // sample is bytes in a bank, so each key compiles the text as it stands
+    // and bakes that one def at that one note — effects, its base and the
+    // import's chain included, through the export's own bake — and plays it on
+    // the driver's engine. A def with loop points loops while the key is held.
+    // Stopped, it takes over the engine's PCM bank (the next Play or Build puts
+    // the score's back); during playback it plays beside the song on
+    // playAuditionBlob.
     let _pcmAuditionSeq = 0;
     let _pcmReleasedSeq = 0;
+
+    // The PCM strip selected in Channels (its head, e.g. "pcm1"), or null.
+    function selectedPcmPart() {
+      return /^pcm[1-3]$/.test(selectedChannel ?? '') ? selectedChannel : null;
+    }
+
     async function previewPcmNoteOn(midi, vel = 15) {
-      // Library's highlighted sample bakes from its own set; otherwise the
-      // def under the cursor, from the score as written. An audition owes the
-      // score nothing: it always bakes for one voice (the engine's best rate),
-      // and an error elsewhere in the score does not keep the def from sounding.
+      // An audition owes the score nothing: it always bakes for one voice (the
+      // engine's best rate), and an error elsewhere in the score does not keep
+      // the def from sounding.
       const lib = libraryKeyTarget();
       const libSample = lib?.kind === 'pcm' ? lib : null;
-      const name = libSample ? libSample.def.name : _pcmCursorDef;
-      if (!name) return;
+      const part = libSample ? null : selectedPcmPart();
+      let name = libSample ? libSample.def.name : part ? null : _pcmCursorDef;
+      if (!name && !part) return;
       const seq = ++_pcmAuditionSeq;
       try {
         const { ir, diagnostics } = libSample
           ? compileMMLisp(`(import "${libSample.set.path}")\n`, 'browse-preview.mmlisp',
             { imports: new Map([[libSample.set.path, libSample.set.text]]) })
           : compileMMLisp(editorView.state.doc.toString(), _lastFileName, { imports: _importSources });
+        if (part) {
+          const playing = _fmLiveRaf != null ? player?.pcmSampleOf?.(PCM_CH_NAME_TO_INDEX[part]) : null;
+          const opening = ir.tracks.find((t) => !t.se && t.channel === part)
+            ?.events.find((e) => e.cmd === 'PCM_NOTE_ON')?.args?.sample;
+          name = playing ?? opening;
+          if (!name) throw new Error(`${part} plays no sample`);
+        }
         const def = ir.metadata.samples.find((d) => d.name === name);
         if (!def) {
           const err = diagnostics.find((d) => d.severity === 'error');

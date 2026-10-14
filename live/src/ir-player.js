@@ -204,6 +204,9 @@ export class IRPlayer {
 
     // Per-channel register state for param application
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
+    // The sample each PCM voice last played: a PCM part's voice, as _chRegs
+    // holds an FM channel's (what the live keys play on a selected part).
+    this._pcmSample = [null, null, null];
 
     // Global YM2612 state
     this._lfoRate = 0; // 0 = off, 1-8 = rate index
@@ -444,6 +447,7 @@ export class IRPlayer {
   // would read as running in this one.
   _resetRunState() {
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
+    this._pcmSample = [null, null, null];
     this._lfoRate = 0;
     this._masterVol = VOL_UNITY;
     this._reg27 = 0; // FM3 special / CSM mode
@@ -2447,6 +2451,7 @@ export class IRPlayer {
     const velRaw = Number(ev.args?.vel ?? 15);
     const noteVel = Number.isFinite(velRaw) ? velRaw : 15;
     const voice = ev._chIndex ?? 0;
+    this._pcmSample[voice] = sample;
     // The bank baked one blob per (sample, note); the worklet finds it by the
     // same MIDI number the exporter keyed it with (export-mmb.js midiNote).
     const midi = Math.max(0, Math.min(127, Math.round(pitchToMidi(ev.args?.pitch ?? "c4"))));
@@ -4106,6 +4111,11 @@ export class IRPlayer {
       cmd: "PARAM_SET",
       args: { target, value },
     });
+  }
+
+  /** The sample a PCM voice (0-2) last played, or null. */
+  pcmSampleOf(voice) {
+    return this._pcmSample[voice] ?? null;
   }
 
   /**

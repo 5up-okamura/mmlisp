@@ -1141,16 +1141,28 @@ goes below 16 px (smaller makes iOS zoom in when you tap the editor).
 
 ### Chords on the keyboards
 
+The keys play what is selected: a channel picked in the panel's Channels plays
+its voice — the one the score has on it while it plays, the one its part
+opens with while stopped (a PCM part, its sample: the one it last played, or
+opens with) — and with no channel picked, the voice or sample under the
+cursor, else FM1's.
+
 Every keyboard — on screen, the computer's, MIDI — is polyphonic: each held
 key takes a channel of its own, with the voice copied onto it. An FM voice
 has the six FM channels, a PSG one the three square channels; the noise
-channel plays one note. While the score is stopped all of them are free;
-while it plays, only the channels it has no track on (CH3 as a whole once the
-score uses `fm3-1`… or `fm3-csm`), so you can play along over it — and when
-none is free the keys play on the target channel itself, over the score's own
-writes there. With every channel held, the oldest key gives its channel to
-the newest. A sample plays one note: while the score is stopped on the
+channel plays one note. While the score is stopped all of them are free.
+While it plays, the keys take the channels it has no track on first, then
+borrow its own: the selected channel — the part you are replacing — then the
+parts with the fewest notes, so a chord drops the quietest ones (fm6 is never
+borrowed while PCM holds its DAC). A borrowed FM channel is the keys' alone,
+as an effect takes a part on the driver: the score's writes to it wait, the
+release rings out, and the part comes back at its next note. A PSG channel,
+or CH3 while the score uses `fm3-1`… or `fm3-csm`, is played over the score's
+own writes instead. With every channel held, the oldest key gives its channel
+to the newest. A sample plays one note: while the score is stopped on the
 driver's engine, while it plays on a player of its own beside the song (§19).
+With `Tools > MMLispDRV Backend` on, the keys sound FM and PSG only while the
+score is stopped.
 
 ### Sound effects over the song
 
