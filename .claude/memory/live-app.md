@@ -108,12 +108,14 @@ and showed nothing the playhead did not. The user's rulings:
   click pick the focus; the chips duplicated the source.
 - **Zoom is a scale (1×/2×/4× = 24/48/96 px per quarter)**, a segmented
   control like `.lib-seg`; a window in beats was dropped.
-- **The views live in `MMLisp > View`** (Source, Piano Roll, Oscilloscope,
-  each on its own) — a submenu, not a top-level View menu (user rejected one).
+- **`MMLisp > View` is a submenu, not a top-level View menu** (user rejected
+  one).
+- **The pitch axis follows the focus**: its range plus 3 semitones a side,
+  the other channels showing what falls inside (edge markers for the rest
+  were offered and declined). On a phone the zoom control can cover the top
+  note — accepted: "scrolling shows it".
 - **No transport in the pane** (the top bar has it) and **no note editing in
   the roll** (the text stays the only source).
-- The roll is not in the video take: the take draws the editor, so it always
-  uses the oscilloscope.
 
 Open: dragging the roll's background to seek was in the mockup
 (https://claude.ai/artifact/Rimn1WHaERRJbLBLgKhJbb) and left out — not
