@@ -5936,7 +5936,9 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   for (const se of seDefs.values()) {
     const parts = expandRoots(se.parts, defs, paramDefs, diagnostics);
     // An effect with operator parts sets CH3's operator mode itself: taking
-    // CH3 leaves it in normal mode (driver.md §2.5), as a song starts.
+    // CH3 leaves it in normal mode (driver.md §2.5), as a song starts. The
+    // first CH3 part carries the switch: a part on another channel may be
+    // primed at load (driver.md §4.1), and CH3's mode is the chip's.
     let opMode = parts.some((n) => /^fm3-[1-4]$/.test(atomValue(n.items[0])));
     for (const node of parts) {
       const head = atomValue(node.items[0]);
@@ -5948,7 +5950,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         se: { name: se.name, index: seIndex, prio: se.prio },
         events: [{ tick: 0, cmd: "TEMPO_SET", args: { bpm: se.tempo }, src: se.src }],
       };
-      if (opMode) {
+      if (opMode && /^fm3(-[1-4])?$/.test(head)) {
         trackData.events.push({ tick: 0, cmd: "FM3_MODE", args: { mode: "op" }, src: se.src });
         opMode = false;
       }
@@ -5963,6 +5965,10 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       // not write them (language.md §9.3).
       const valNames = new Map([...vals.values()].map((v) => [`VAL${v.slot}`, `:${v.name}`]));
       for (const ev of trackData.events) {
+        // A tempo sweep drives the song's clock; an effect's tempo is fixed.
+        if (ev.cmd === "TEMPO_SWEEP") pushDiag(diagnostics, "error", "E_SE_PART",
+          `def-se ${se.name}: a :tempo sweep moves the song's clock; an effect keeps a fixed tempo`,
+          ev.src ?? se.src, null);
         const t = SE_FORBIDDEN_TARGETS[ev.args?.target] ?? valNames.get(ev.args?.target);
         if (t) pushDiag(diagnostics, "error", "E_SE_PART",
           `def-se ${se.name}: ${t} is the song's, not an effect's`, ev.src ?? se.src, null);

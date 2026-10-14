@@ -971,7 +971,9 @@ A game's sound effects are written once, as defs, and every song carries them.
   **takes from the song** — `fm1` above is the song's lead's channel. When the
   effect plays, the song's part there is suspended, and comes back re-keyed
   when the effect ends (driver.md §2.5) — patch, levels, pan and, on `noise`,
-  its mode, as they were. One part a channel (`E_SE_PART`).
+  its mode, as they were. One part a channel (`E_SE_PART`). An FM effect on a
+  channel the song leaves free starts sooner: the first effect there has its
+  voice loaded with the score (driver.md §4.1).
 - **Not `:master`, `:lfo-rate` or a `def-val`.** Those are the song's — the
   game's fader, the chip's one LFO, the score's values — so an effect does not
   write them (`E_SE_PART`).
@@ -1007,7 +1009,9 @@ A game's sound effects are written once, as defs, and every song carries them.
   effect on the same channel: a lower one is dropped, an equal or higher one
   takes over. The game may pass its own (`MMLisp_playSePrio`).
 - **`:tempo`** (default 120) is the effect's own clock: an effect sounds the
-  same in every song and under any tempo the song sets.
+  same in every song and under any tempo the song sets. A part may set it
+  again, but not sweep it — a `:tempo` curve drives the song's clock
+  (`E_SE_PART`).
 - **Every song carries the same effects.** A bundle's `"se"` file (and
   `install-sgdk --se`) is compiled into every song as if it imported it, so
   the numbers are the same in every song and a song never names an effect. A
