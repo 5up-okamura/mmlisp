@@ -550,7 +550,9 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         i++; let name = "";
         while (i < n && body[i] !== '"') name += body[i++];
         if (body[i] === '"') i++;
-        if (!isSsg) push({ t: "voiceByName", name });
+        // A voice name is six bytes padded with spaces (the .dat's, and the
+        // driver compares all six), so `@"ｿｳﾙﾍﾞ "` names the voice "ｿｳﾙﾍﾞ".
+        if (!isSsg) push({ t: "voiceByName", name: name.trim() });
         continue;
       }
       const v = readInt();
@@ -969,7 +971,7 @@ export function parseMucom(text) {
           i++;
         }
       }
-      const name = (block.match(/"([^"]*)"/) || [])[1] || null;
+      const name = (block.match(/"([^"]*)"/) || [])[1]?.trim() || null; // space-padded, as @"name"
       const nums = parseVoiceNumbers(block);
       if (nums.length >= 38) {
         const fb = nums[0], alg = nums[1];
@@ -1788,9 +1790,9 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v | 0)); }
 // value plays as the :vel whose level is nearest in dB (:vel = 15 - atten).
 const PSG_LEVELS = [1.0, 0.772, 0.622, 0.485, 0.382, 0.29, 0.229, 0.174, 0.132, 0.096, 0.072, 0.051, 0.034, 0.019, 0.009];
 const PSG_LEVEL_DB = PSG_LEVELS.map((x) => 20 * Math.log10(x));
-function ssgRegVel(r) {
+function ssgRegVel(r, offsetDb = 0) {
   if (r <= 0) return 0;
-  const db = -3 * (15 - Math.min(15, r));
+  const db = -3 * (15 - Math.min(15, r)) + offsetDb;
   let best = 0;
   for (let a = 1; a < PSG_LEVEL_DB.length; a++) if (Math.abs(PSG_LEVEL_DB[a] - db) < Math.abs(PSG_LEVEL_DB[best] - db)) best = a;
   return 15 - best;
@@ -1803,6 +1805,16 @@ function mutedHere(ctx) {
   if (!ctx.isSsg) return false;
   const mix = ctx.mix ?? 1;
   return ctx.isNoise ? !(mix & 2) : !(mix & 1);
+}
+
+// The OPNA shifts its noise at 124.8 kHz / w, so below w3 most of its power
+// lies above hearing, where the PSG's (at most 7 kHz) has none: the noise copy
+// plays lower by the share of the SSG's that is heard (w0: -4.9 dB, matching
+// mucom88's own render against the PSG's).
+function noiseDb(ctx) {
+  if (!ctx.isNoise) return 0;
+  const f = 124800 / Math.max(1, ctx.noiseW ?? 0);
+  return Math.min(0, 10 * Math.log10(20000 / (f / 2)));
 }
 
 // The noise copy's :mode, from the SSG noise period w0-31: the OPNA shifts its
@@ -1856,7 +1868,7 @@ function finishChain(ctx, out) {
   // :vol steps add to the attenuator's, whose bottom ones are wide: the step
   // count is the attenuator's between the two at the envelope's sustain.
   const sl = ctx.isSsg ? (ctx.ssgEnv?.sl ?? 255) : 255;
-  const velAt = (v) => (ctx.isSsg ? ssgRegVel(Math.floor((sl * (v + 1)) / 256)) : velToken(v, ctx));
+  const velAt = (v) => (ctx.isSsg ? ssgRegVel(Math.floor((sl * (v + 1)) / 256), noiseDb(ctx)) : velToken(v, ctx));
   const vol = (v) => Math.max(0, 31 - (velAt(top) - velAt(v)));
   ch.arr[ch.idx] = `:vel ${velToken(top, ctx)} :vol ${vol(ch.base)} ${ch.arr[ch.idx]}`;
   for (const t of ch.toks) t.arr[t.idx] = `:vol ${vol(t.v)}`;
@@ -1876,11 +1888,11 @@ function finishChain(ctx, out) {
 // clock by clock, fitted with straight pieces. One envelope therefore draws
 // per `v`, named like the LFO's pitch classes.
 const SSG_ENV_TOLERANCE = 1; // :vel steps, the straight-piece fit of a stage
-function ssgEnvSpec(op, wholeClocks, v, bpm) {
+function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0) {
   const factor = WHOLE_TICKS / wholeClocks;
   let ticks = 0; // the stages' whole length, for macroStep
-  const vel = Math.max(1, ssgRegVel(v));
-  const played = (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256));
+  const vel = Math.max(1, ssgRegVel(v, offsetDb));
+  const played = (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256), offsetDb);
   const ratio = (x) => Math.round((100 * x) / vel) / 100;
   const items = [];
   // A stage from level a towards b, `rate` a clock — SOFENV steps the level
@@ -1931,7 +1943,7 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
 function envBeforeNote(ctx, out) {
   const env = ctx.ssgEnv;
   if (!env || !ctx.envRegistry) return;
-  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15), ctx.tempo);
+  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15), ctx.tempo, noiseDb(ctx));
   let name = ctx.envRegistry.get(spec);
   if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
   if (name !== ctx.envActive || ctx.verbose) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
@@ -2059,7 +2071,7 @@ function detuneBeforeNote(ctx, out, letter, acc) {
 // converts it to steps. Still lossy (16 steps), and v0 stays :vel 0.
 function velToken(v, ctx) {
   // An SSG `v` is the register value an envelope at full level writes.
-  if (ctx.isSsg) return ssgRegVel(v);
+  if (ctx.isSsg) return ssgRegVel(v, noiseDb(ctx));
   if (!ctx.isPcm) return clamp(v, 0, 15);
   const max = ctx.pcmVelMax || 0;
   if (v <= 0 || max <= 0) return 0;

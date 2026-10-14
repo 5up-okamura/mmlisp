@@ -1285,7 +1285,9 @@ import does the same rather than approximating:
   the voice's own, so voices come in with carrier TL 2 (the `v15` value). An
   SSG level (3 dB steps) plays as the PSG `:vel` nearest in dB on the Mega
   Drive's measured attenuator, whose bottom steps are wider; SSG envelopes
-  land on those steps, drawn per `v`.
+  land on those steps, drawn per `v`. SSG noise at a short `w` shifts faster
+  than hearing — most of it is inaudible, while the PSG's is all heard — so
+  the noise copy plays that much lower (`w0`: −4.9 dB).
 - **Tempo** is `BPM = 832000 / ((256 − t) × C)`, to two decimals; `T` goes
   through the Timer-B value it compiles to.
 - **ADPCM**: o1 c plays at 16,143.6 Hz, the bank's labelled rate; the driver
