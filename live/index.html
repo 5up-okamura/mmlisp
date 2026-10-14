@@ -774,7 +774,7 @@
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
-    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
+    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, PCM_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -7146,7 +7146,10 @@
     async function previewBrowseFm(def) {
       const midi = def.regs.key ?? PREVIEW_MIDI;
       if (!(await initAudio())) return;
-      initParamOnlyPlayer();
+      if (!claimPreviewPlayer()) {
+        setBrowseNote(`${def.name} \u2014 not sounded while the MMLispDRV backend plays`);
+        return;
+      }
       applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH, def.regs);
       _kbAppliedDefSig = null; // the panel took the channel; let the keyboard re-push
       stopBrowsePreview();
@@ -8037,11 +8040,14 @@
       if (lib?.kind === 'fm')
         return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: { name: lib.def.name, regs: lib.def.regs } };
       if (lib?.kind === 'pcm') return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
+      // A selected channel is a part the keys replace (previewPool plays it
+      // before any other song channel); without one, chIndex only names where
+      // the patch comes from.
       if (isFmChannel(selectedCh)) {
-        return { chIndex: selectedCh, useCursorDef: false };
+        return { chIndex: selectedCh, useCursorDef: false, replaces: true };
       }
       if (Number.isInteger(selectedCh) && selectedCh >= 6 && selectedCh < 10) {
-        return { chIndex: selectedCh, useCursorDef: false };
+        return { chIndex: selectedCh, useCursorDef: false, replaces: true };
       }
       if (selectedCh == null && _pcmCursorDef) {
         return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
@@ -8150,13 +8156,34 @@
       writeToWorklet(0, 0x28, chKey);
     }
 
+    // The player an FM or PSG preview writes through. The MMLispDRV reference
+    // plays the MMB as-is: it takes no live register edits (setParam), so a
+    // preview could not put its patch on a channel and would key whatever is
+    // there. While it plays, FM and PSG previews stay silent — said once per
+    // run, so a silent key is not a mystery; step input still takes the keys.
+    // Once it stops, the chip goes back to a param-only IR player.
+    let _drvPreviewWarned = null;
+
+    function claimPreviewPlayer() {
+      if (player instanceof DrvPlayer) {
+        if (player.isPlaying()) {
+          if (_drvPreviewWarned !== player) {
+            _drvPreviewWarned = player;
+            log('The keys do not sound FM or PSG while the MMLispDRV backend plays (Tools > MMLispDRV Backend); they do once it stops.', 'info');
+          }
+          return false;
+        }
+        player = null;
+      }
+      // Keep the preview deterministic by ensuring default regs/state exist.
+      initParamOnlyPlayer();
+      return player != null;
+    }
+
     function previewNoteOn(chIndex, midi, vel) {
       if (!workletNode) return;
       if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOn(midi, vel); return; }
-
-      // Keep FM preview deterministic by ensuring default regs/state exist.
-      // PSG path already does this, so do the same before FM preview writes.
-      initParamOnlyPlayer();
+      if (!claimPreviewPlayer()) return;
 
       if (isPsgPreviewChannel(chIndex)) {
         previewPsgNoteOn(chIndex, midi, vel);
@@ -8652,10 +8679,12 @@
     // CSM mode). The target's patch and op mask are copied onto a pool channel
     // as a key takes it, through the player, so its shadow stays true. With
     // every pool channel held, the oldest key gives its channel up; with no
-    // free channel the target itself is played, over the song's own writes
-    // (the sequencer keeps writing it — a real take-over is driver.md §2.5's
-    // suspend, which the preview does not have). A sample (one bank) and the
-    // noise channel stay one voice.
+    // free channel a song channel is played, over the song's own writes (the
+    // sequencer keeps writing it — a real take-over is driver.md §2.5's
+    // suspend, which the preview does not have): the selected channel, the
+    // part the keys replace, or with none selected the song's least busy
+    // channel — never FM1 by default, which is most often the lead. A sample
+    // (one bank) and the noise channel stay one voice.
     const _previewVoices = new Map(); // chIndex → the voice (key) holding it
     let _previewSeq = 0;
 
@@ -8663,25 +8692,38 @@
       const t = target.chIndex;
       if (t === PCM_PREVIEW_CH || t === 9) return [t];
       const kind = isFmChannel(t) ? [0, 1, 2, 3, 4, 5] : [6, 7, 8];
-      const used = new Set();
+      const notes = new Map(); // a song channel → the NOTE_ONs it plays
       if (_fmLiveRaf != null) {
         for (const tr of _lastGoodIR?.tracks ?? []) {
           if (tr.se) continue;
-          if (/^fm3-/.test(tr.scoreChannel ?? '')) used.add(2);
+          const n = tr.events?.filter((e) => e.cmd === 'NOTE_ON').length ?? 0;
+          // A PCM note claims fm6 for the DAC, which mutes it as an FM channel.
+          if (PCM_CH_NAME_TO_INDEX[tr.channel] != null) {
+            if (n > 0) notes.set(5, Infinity);
+            continue;
+          }
           // A track with no notes (a def-mod :keyon off) leaves its channel to
           // the keys — they take it first when it is the target.
-          if (!tr.events?.some((e) => e.cmd === 'NOTE_ON')) continue;
-          const fm = CH_NAME_TO_INDEX[tr.channel];
+          const fm3 = /^fm3-/.test(tr.scoreChannel ?? '');
+          if (n === 0 && !fm3) continue;
+          const fm = fm3 ? 2 : CH_NAME_TO_INDEX[tr.channel];
           const psg = PSG_CH_NAME_TO_INDEX[tr.channel];
-          if (fm != null) used.add(fm);
-          else if (psg != null) used.add(6 + psg);
+          const c = fm ?? (psg != null ? 6 + psg : null);
+          // CH3 in operator or CSM mode is never free, even with no notes.
+          if (c != null) notes.set(c, (notes.get(c) ?? 0) + Math.max(n, fm3 ? 1 : 0));
         }
       }
-      const free = kind.filter((c) => !used.has(c));
-      return free.includes(t) ? [t, ...free.filter((c) => c !== t)] : [...free, t];
+      const free = kind.filter((c) => !notes.has(c));
+      if (free.includes(t)) return [t, ...free.filter((c) => c !== t)];
+      if (target.replaces) return [...free, t];
+      if (free.length > 0) return free;
+      // Nothing free and no part to replace: the least busy song channel.
+      return [kind.reduce((a, b) => (notes.get(a) <= notes.get(b) ? a : b))];
     }
 
     function previewTake(target, midi, vel) {
+      // The driver's run keeps its channels (and op masks) to itself.
+      if (target.chIndex !== PCM_PREVIEW_CH && !claimPreviewPlayer()) return null;
       const pool = previewPool(target);
       let ch = pool.find((c) => !_previewVoices.has(c));
       if (ch == null) {
