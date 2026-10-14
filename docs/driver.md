@@ -345,7 +345,7 @@ runs past a vblank — the game's frame plus the driver's, which on a frame of
 chords and drums is 10–20 ms of 68000 time by itself, and more than a frame on
 a voice change over several channels. With two frames of lead a render has the
 whole frame before its own. A PSG or PCM effect, or an FM effect whose voice
-is primed (§4.1), sounds about 40 ms after the call: the lead and the page —
+is primed (§4.1), sounds about 45 ms after the call: the lead and the page —
 the effect sounds in the frame its start is drained in (§4.2). An FM effect
 that brings its own voice onto a song's channel sends that upload ahead of its
 key-on: about 1 ms a write on the light images (~35 ms for a full patch),

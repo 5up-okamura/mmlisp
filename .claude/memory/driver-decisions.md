@@ -363,7 +363,9 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   gates, and it does not touch the upload); a faster light-image wire (more
   expander steps + a higher per-frame cap, trades PCM rate/voices). An effect
   on a song channel still pays its upload — the advice is to keep FM effects
-  on free channels (`drv/sgdk/README.md`).
+  on free channels (`drv/sgdk/README.md`). Measured after it (demo-se with
+  bleep/zap moved to fm4/fm5): 46.7 / 46.1 ms, four writes in the frame
+  (TL, pitch, key-on), from 72.9 / 70.4 before.
 - **Open: the SGDK example's SE (`example/main.c`) has not run on hardware.**
 
 **Several songs** (behaviour: `driver.md` §2.3, `mmb.md` §10.2):

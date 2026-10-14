@@ -271,7 +271,7 @@ while (TRUE) {
   says whether it still runs. An effect keeps its own tempo, so it sounds the
   same in every song. **Keep FM effects on channels the song leaves free**:
   their voices are loaded with the score (the first effect's on each such
-  channel), and they sound about 40 ms after the
+  channel), and they sound about 45 ms after the
   call, as PSG and PCM effects do. An FM effect that takes a song's channel
   pays its voice upload first — ~35 ms more for a full patch on the non-banked
   images (`docs/driver.md` §3.4).
