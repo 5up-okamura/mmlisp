@@ -139,6 +139,13 @@ decided.
   restructuring.
 - **No rainbow parens** — breaks the "accent only on call heads and
   `:params`" rule in `mmlispHighlight`.
+- **Translate only what explains** (user, 2026-10-15): the reference serves
+  people who already use the language, the snippets' descriptions people
+  meeting it for the first time; both are meaning a non-English reader cannot
+  get otherwise. Menus, the log and diagnostics stay English (a music tool's
+  words read the same everywhere; the AI on the MCP link reads diagnostics),
+  and GitHub's docs are left to the browser's translator. No runtime machine
+  translation: the app runs offline and terms must stay fixed (glossary).
 
 ## Open
 
@@ -155,6 +162,9 @@ leaves out.
   gives ~26 envelopes); rounding near shapes together is the lever. A bass of
   per-note pitch falls names a bend per pitch.
 - Furnace's slide/porta compat rules are rounded.
+- **The ja / es translations are unreviewed** — machine-written from the
+  glossary; Spanish especially wants a reader. A fix goes through
+  `i18n-sync.mjs --apply`, never a hand edit of the pack.
 - **Structured vs flat import**: structured writes a voice's TL at a block
   head, during the rest, where flat writes it at the note — same key-ons, a
   different release tail. Not judged audible.

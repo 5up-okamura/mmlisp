@@ -21,6 +21,28 @@ Run from tools directory:
 5. `npm run check:mmlisp-strict`
 6. `npm run check:cheatsheet` — the examples in docs/cheatsheet.md still compile
 7. `npm run mcp` — the MMLisp MCP server for AI clients (see [mcp/README.md](mcp/README.md))
+8. `npm run check:i18n` — every translation of the Live reference and snippets present and current
+
+## i18n
+
+The Live app shows the reference's summaries and the snippets' descriptions
+in the user's language (MMLisp ▸ Language); the rest of the app stays in
+English. The English is the source, read from `live/src/reference.js` and the
+snippets' leading comments; each language is one generated pack,
+`live/src/i18n/<lang>.js`, that pairs every text with a hash of the English it
+translates. Nobody edits a pack:
+
+1. `node scripts/i18n-sync.mjs --todo ja > /tmp/ja.json` — the texts the pack
+   lacks or whose English changed, as `{"section/key": "English"}`.
+2. Translate the values in place (an AI session does this, with
+   [i18n/glossary.md](i18n/glossary.md) — the terms to keep and the ones never
+   translated — in hand).
+3. `node scripts/i18n-sync.mjs --apply ja /tmp/ja.json` — merges the
+   translations in and drops texts the English no longer has.
+
+`npm run check:i18n` fails on anything missing, stale or orphaned, so a
+changed summary or a new snippet is translated before it lands. A new language
+is a pack `--apply` creates, plus its import and name in `live/src/i18n.js`.
 
 ## Notes
 

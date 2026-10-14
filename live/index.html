@@ -86,6 +86,17 @@
           <span>Font Size</span>
           <span class="menu-item-shortcut" id="fontSizeValue"></span>
         </button>
+        <!-- the reference's and the snippets' texts; the rest stays in English -->
+        <div class="menu-wrap submenu-wrap" id="menuMMLispLanguage">
+          <button class="menu-item" onclick="toggleSubmenu('menuMMLispLanguage')"
+                  title="The language the Library, the completion and the hover explain the reference and the snippets in">
+            <span>Language</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown" id="languageMenuList">
+            <!-- one item per language, injected by buildLanguageMenu() -->
+          </div>
+        </div>
         <!-- the score's three views, each on or off -->
         <div class="menu-wrap submenu-wrap" id="menuMMLispView">
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispView')">
@@ -799,6 +810,7 @@
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
+    import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout } from './src/i18n.js';
     import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
@@ -2149,7 +2161,7 @@
       syntax.textContent = e.syntax;
       const summary = document.createElement('div');
       summary.className = 'ref-card-summary';
-      summary.textContent = `${e.summary} (language ${e.section})`;
+      summary.textContent = `${refSummary(e)} (language ${e.section})`;
       box.append(syntax, summary);
       return box;
     }
@@ -6615,6 +6627,24 @@
       });
     }
     window.setTheme = setTheme;
+
+    // MMLisp > Language: the reference's summaries and the snippets'
+    // descriptions (i18n.js). The Library's items carry the texts, so the
+    // list is read again; the completion and the hover read at show time.
+    function buildLanguageMenu() {
+      const list = document.getElementById('languageMenuList');
+      list.innerHTML = LANGUAGES.map(([id, name]) =>
+        `<button class="menu-item" onclick="setUiLanguage('${id}');closeMenus()"><span>${name}</span>` +
+        `<span class="menu-item-shortcut">${language() === id ? '\u2713' : ''}</span></button>`).join('');
+    }
+    function setUiLanguage(id) {
+      setLanguage(id);
+      buildLanguageMenu();
+      _libLoad = null;
+      if (_libList) ensureLibrary();
+    }
+    buildLanguageMenu();
+    window.setUiLanguage = setUiLanguage;
     window.openThemeModal = openThemeModal;
     window.closeThemeModal = closeThemeModal;
     window.resetCustomTheme = resetCustomTheme;
@@ -6941,13 +6971,13 @@
           key: 'ref:' + e.name,
           source: 'ref',
           group: 'ref:' + e.cat,
-          groupLabel: label.get(e.cat),
+          groupLabel: refCategoryLabel(e.cat, label.get(e.cat)),
           name: e.name,
           aliases: e.aliases ?? [],
           kind: kindOf(e),
           tracks: e.tracks,
-          about: e.summary,
-          detail: `${e.syntax}\n${e.summary}\n\n${e.example}\n\u2014 language ${e.section}`,
+          about: refSummary(e),
+          detail: `${e.syntax}\n${refSummary(e)}\n\n${e.example}\n\u2014 language ${e.section}`,
           audition: () => toggleBrowseScorePreview(file),
           keys: null,
           actions: [{ label: 'Insert', title: `Insert ${e.insert.split('\n')[0]} at the cursor`,
@@ -7017,7 +7047,7 @@
             groupLabel: snippet ? dir.replace(/^snippets\//, '') : dir,
             name: f.path.split('/').pop().replace(/\.mmlisp$/, ''),
             kind: snippet ? 'snippet' : 'score',
-            about: f.about,
+            about: snippet ? snippetAbout(f.path, f.about) : f.about,
             audition: () => toggleBrowseScorePreview(file),
             keys: null,
             actions: snippet

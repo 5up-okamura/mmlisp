@@ -1616,6 +1616,13 @@ and closes it again when Params is already showing. The ⚙ button reopens the
 panel on the tab it was left on; a fresh launch starts on Params, with
 Library's filters cleared.
 
+**MMLisp ▸ Language** picks the language the reference and the snippets are
+explained in — the Ref entries' summaries and category names, the snippets'
+descriptions, in the Library, the completion's info and the hover card. The
+app starts in the browser's language when it has one (English, 日本語,
+Español) and remembers the choice. The language's own words, the menus, the
+log and the compiler's messages stay in English.
+
 - **Search** matches a name, then the description (`piano` finds `gm-piano`,
   `env-piano` and every voice whose comment says piano). While there is a
   query the list is one list, ranked as the completion ranks names.
