@@ -261,7 +261,7 @@ static void put16(uint8_t *c, uint16_t x) {
 static void pcm_compose_shift(MMLSeq *s, int vi) {
   MMLPcmVoice *v = &s->pcm[vi];
   int n = (VEL_MAX - v->vel) + VEL_FINE * (31 - v->vol);
-  int shift = (n + 12) / 24; /* round(n/24); n is never negative */
+  int shift = mml_divs(n + 12, 24); /* round(n/24); n is 0..368, so divs.w */
   v->shift = (uint8_t)(shift > MML_PCM_MAX_SHIFT ? MML_PCM_MAX_SHIFT : shift);
   v->muted = (uint8_t)(v->vol == 0 || s->master == 0
                        || v->shift + s->pcm_master_shift
@@ -279,7 +279,7 @@ static void pcm_compose_shift(MMLSeq *s, int vi) {
  * only when the SHIFT moves, not when master does. */
 static void pcm_compose_master(MMLSeq *s) {
   int n = 31 - s->master;
-  int shift = (n + 1) / 3; /* round(n/3) */
+  int shift = mml_divs(n + 1, 3); /* round(n/3); n is 0..31, so divs.w */
   s->pcm_master_shift = (uint8_t)(shift > MML_PCM_MASTER_MAX_SHIFT
                                     ? MML_PCM_MASTER_MAX_SHIFT
                                     : shift);
@@ -324,10 +324,11 @@ MML_HOT uint8_t enc_80(const MMLOp *o) {
 static int curve_unit8(int id, int t) {
   t &= 0xff;
   switch (id) {
-    case 1: return (t * t) >> 8;                                  /* ease-in  */
-    case 2: return 255 - (((255 - t) * (255 - t)) >> 8);          /* ease-out */
-    case 3: return t < 128 ? (2 * t * t) >> 8
-                           : 255 - ((2 * (255 - t) * (255 - t)) >> 8);
+    /* t is 0..255, so every product fits muls.w (not a __mulsi3 call). */
+    case 1: return (int)(mml_muls((int16_t)t, (int16_t)t) >> 8);                  /* ease-in  */
+    case 2: return 255 - (int)(mml_muls((int16_t)(255 - t), (int16_t)(255 - t)) >> 8); /* ease-out */
+    case 3: return t < 128 ? (int)(mml_muls((int16_t)(2 * t), (int16_t)t) >> 8)
+                           : 255 - (int)(mml_muls((int16_t)(2 * (255 - t)), (int16_t)(255 - t)) >> 8);
     case 4: return MML_SIN_LUT[t];
     case 5: return t < 128 ? t << 1 : (255 - t) << 1;             /* triangle */
     case 6: return t < 128 ? 0 : 255;                             /* square   */
@@ -337,7 +338,10 @@ static int curve_unit8(int id, int t) {
 /* from + trunc((to-from)*unit/256) — truncating TOWARD ZERO, which is what
  * the Z80's sign-magnitude shift does. */
 static int sweep_value(int from, int to, int unit8) {
-  int p = (to - from) * (unit8 & 0xff);
+  /* muls.w when the span fits 16 bits — every level and most pitch sweeps. */
+  int d = to - from;
+  int32_t p = (d >= -32768 && d <= 32767) ? mml_muls((int16_t)d, (int16_t)(unit8 & 0xff))
+                                          : (int32_t)d * (unit8 & 0xff);
   return from + (p < 0 ? -((-p) >> 8) : p >> 8);
 }
 static uint16_t sweep_step(int len, int loop) {
@@ -1106,7 +1110,9 @@ static int vel_release_pending(const MMLSeq *s, int ch) {
  * sweep_value — all three players agree bit for bit. */
 static int scale_macro_sample(int sample, int slot_value) {
   int depth = slot_value & 0xff;
-  int mag = ((sample < 0 ? -sample : sample) * depth) >> 8;
+  int a = sample < 0 ? -sample : sample;
+  /* |sample| <= 32768 and depth <= 255: mulu.w, not a __mulsi3 call */
+  int mag = a <= 0xffff ? (int)(((uint32_t)(uint16_t)a * (uint16_t)depth) >> 8) : (a * depth) >> 8;
   return sample < 0 ? -mag : mag;
 }
 
@@ -1434,6 +1440,10 @@ static void process_macros(MMLSeq *s) {
  * these twin.
  */
 static const uint8_t *find_sample(const MMLSeq *s, int id) {
+  /* The first entry with this id, from the index the load built; 0xff is
+   * "none" or entry 255, which the scan tells apart. */
+  if (!s->sample_entries || id < 0 || id > 255) return 0;
+  if (s->sample_index[id] != 0xff) return s->sample_entries + (uint32_t)s->sample_index[id] * MML_SAMPLE_ENTRY;
   for (uint16_t i = 0; i < s->sample_count; i++) {
     const uint8_t *e = s->sample_entries + (uint32_t)i * MML_SAMPLE_ENTRY;
     if (e[0] == (uint8_t)id) return e;
@@ -1797,7 +1807,7 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
     t->gate_left = ex_gate;
     t->pending_off = 0;
   } else if (gate < 8) {
-    int32_t g = (dur * gate) >> 3;
+    int32_t g = (dur <= 0x7fff ? mml_muls((int16_t)dur, (int16_t)gate) : dur * gate) >> 3;
     t->gate_left = g < 1 ? 1 : g;
     t->pending_off = 0;
   } else {
@@ -2737,6 +2747,9 @@ int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_
   }
   s->sample_count = n;
   s->sample_entries = bank + 4;
+  /* id -> its first entry, so a note finds its sample without a scan. */
+  for (uint16_t i = 0; i < 256; i++) s->sample_index[i] = 0xff;
+  for (uint16_t i = n; i-- > 0;) s->sample_index[s->sample_entries[(uint32_t)i * MML_SAMPLE_ENTRY]] = (uint8_t)i;
   /* Entry offsets are relative to the blob region, which follows the table. */
   s->sample_blob_base = blobs;
   s->sample_rom_base = rom_base;

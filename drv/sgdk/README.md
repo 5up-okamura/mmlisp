@@ -308,9 +308,9 @@ Stops up to 200 µs twice a frame were judged inaudible on drum PCM
 
 **A multi-bank score stops more often.** Its host (`docs/driver.md` §5.4)
 reads a fresh FIFO index before each plan and makes up to five transfers a
-frame, so a busy frame is up to ten short stops; an empty plan skips its
-second grab. On the gate's scores, all stops together cost the DAC 0.4–0.7%
-of its rate on BlastEm.
+frame, so a busy frame is up to ten short stops; the first empty plan ends
+the frame's pumps and skips its second grab. On the gate's scores, all stops
+together cost the DAC about 0.2% of its rate on BlastEm.
 
 **A score load is a long stop, on purpose**: `MMLisp_loadScore` boots the
 score's own engine image, clears Z80 RAM and uploads its code and shared tables

@@ -301,23 +301,39 @@ MMLP_HOT uint8_t fm_channel(const MMLWrite *w) {
     return (uint8_t)(3*w->port + (w->addr & 3));
   return 0xff;
 }
-MMLP_HOT const MMLWrite *view_write(const MMLFrameView *v, uint16_t i) {
-  return &v->q[(v->first+i) & (MML_WRITE_QUEUE-1)];
-}
-/* Each write's FM channel (fm_channel), classified once a frame: the moved
- * groups and the rest are separate passes over the frame, and on the 68000 a
- * voice change's frame spent most of its render reclassifying the same writes.
- * One frame at a time, from the producer only. */
+/* THE BANKED FM ORDER (pairs-model.mjs prioritizeFmNotes is the reference):
+ * a short ordinary note on an independent, unmodulated channel goes ahead of
+ * another channel's bulk upload, smallest group first; the rest keep the
+ * port-1 deferral and key-edge rule. One pass classifies the frame — each
+ * write's channel, the moved groups' indices, the frame's safety — and the
+ * emitting passes only read what it kept: on the 68000 a voice change's frame
+ * spent most of its render re-reading the same writes. Producer side only. */
 static uint8_t frame_ch[MML_WRITE_QUEUE];
+static const MMLWrite *frame_p1[MML_WRITE_QUEUE];
+MMLP_HOT const MMLWrite *next_write(const MMLFrameView *v, const MMLWrite *w) {
+  return ++w == v->q + MML_WRITE_QUEUE ? v->q : w;
+}
 static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
-  uint16_t n=v->end[MML_SLOT_SUBS-1], counts[6]={0,0,0,0,0,0};
+  const uint16_t n=v->end[MML_SLOT_SUBS-1];
+  if (!n) return;
+  const MMLWrite *const first=&v->q[v->first & (MML_WRITE_QUEUE-1)];
+  uint16_t counts[6]={0,0,0,0,0,0}, at[6][8];
   uint8_t eligible=0, moved=0, intermediate=0, previous[6];
+  uint8_t hi_port=0xff, hi_addr=0;  /* an F-number upper half waiting for its lower */
   int safe=1;
   for (uint8_t ch=0; ch<6; ch++) previous[ch]=p->fm_mod[ch];
-  for (uint16_t i=0; i<n; i++) {
-    const MMLWrite *w=view_write(v,i); uint8_t ch=fm_channel(w);
+  const MMLWrite *w=first;
+  for (uint16_t i=0; i<n; i++, w=next_write(v,w)) {
+    const uint8_t ch=fm_channel(w);
     frame_ch[i]=ch;
-    if (ch<6) counts[ch]++;
+    if (ch<6) { if (counts[ch]<8) at[ch][counts[ch]]=i; counts[ch]++; }
+    /* A pitch pair is an upper half ($A4-$A6) followed at once by its lower
+     * half on the same port; anything else splits a latch. */
+    int matched=0;
+    if (hi_port!=0xff) {
+      if (w->port==hi_port && w->addr==(uint8_t)(hi_addr-4)) matched=1; else safe=0;
+      hi_port=0xff;
+    }
     if (w->port>1) continue;
     if (w->addr>=0xb4 && w->addr<=0xb6) {
       uint8_t m=w->data & 0x37; p->fm_mod[3*w->port+(w->addr&3)]=m;
@@ -325,44 +341,36 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
     }
     if (w->addr<0x30 && w->addr!=0x22 && w->addr!=0x24 && w->addr!=0x25 &&
         w->addr!=0x26 && w->addr!=0x27 && w->addr!=0x28 && w->addr!=0x2b) safe=0;
-    if (w->addr>=0xa4 && w->addr<=0xa6 && (i+1>=n || view_write(v,i+1)->port!=w->port || view_write(v,i+1)->addr!=w->addr-4)) safe=0;
-    if (w->addr>=0xa0 && w->addr<=0xa2 && (!i || view_write(v,i-1)->port!=w->port || view_write(v,i-1)->addr!=w->addr+4)) safe=0;
+    if (w->addr>=0xa4 && w->addr<=0xa6) { hi_port=w->port; hi_addr=w->addr; }
+    else if (w->addr>=0xa0 && w->addr<=0xa2 && !matched) safe=0;
   }
+  if (hi_port!=0xff) safe=0;
   if (safe) for (uint8_t ch=0; ch<6; ch++)
     if (ch!=2 && ch!=5 && counts[ch] && counts[ch]<=8 && previous[ch]==0 && p->fm_mod[ch]==0 && !(intermediate&(1u<<ch))) eligible |= (uint8_t)(1u<<ch);
   /* Smallest group first, ties in channel order. */
-  for (uint8_t size=1; size<=8; size++) for (uint8_t ch=0; ch<6; ch++)
+  if (eligible) for (uint8_t size=1; size<=8; size++) for (uint8_t ch=0; ch<6; ch++)
     if ((eligible&(1u<<ch)) && counts[ch]==size) {
-      for (uint16_t i=0; i<n; i++) {
-        if (frame_ch[i]!=ch) continue;
-        const MMLWrite *w=view_write(v,i);
-        if (w->port==0) push0(p,w->addr,w->data); else push(p,1,w->addr,w->data);
+      for (uint8_t k=0; k<size; k++) {
+        const MMLWrite *g=&v->q[(v->first+at[ch][k]) & (MML_WRITE_QUEUE-1)];
+        if (g->port==0) push0(p,g->addr,g->data); else push(p,1,g->addr,g->data);
       }
       moved |= (uint8_t)(1u<<ch);
     }
-  /* Remaining writes keep the legacy port-1 deferral and key-edge rule. */
-  uint16_t lo=n, hi=0;
-  for (uint16_t i=0; i<=n; i++) {
-    const MMLWrite *w=i<n ? view_write(v,i) : 0;
-    if (moved && w) {
-      const uint8_t ch=frame_ch[i];
-      if (ch<6 && (moved&(1u<<ch))) continue;
+  /* The rest in order: port 1 held to the frame's end or to an fm4-6 key edge. */
+  uint16_t held=0;
+  w=first;
+  for (uint16_t i=0; i<n; i++, w=next_write(v,w)) {
+    const uint8_t ch=frame_ch[i];
+    if (moved && ch<6 && (moved&(1u<<ch))) continue;
+    if (w->port==2) { psg_push(p,w->data); continue; }
+    if (w->port==1) { frame_p1[held++]=w; continue; }
+    if (w->addr==0x28 && (w->data&4)) {
+      for (uint16_t k=0; k<held; k++) push(p,1,frame_p1[k]->addr,frame_p1[k]->data);
+      held=0;
     }
-    if (!w || (w->port==0 && w->addr==0x28 && (w->data&4))) {
-      for (uint16_t k=lo; k<hi; k++) {
-        const MMLWrite *other=view_write(v,k);
-        if (other->port==1) {
-          uint8_t ch=moved ? frame_ch[k] : 0xff;
-          if (!(ch<6 && (moved&(1u<<ch)))) push(p,1,other->addr,other->data);
-        }
-      }
-      lo=n; hi=0;
-    }
-    if (!w) break;
-    if (w->port==2) psg_push(p,w->data);
-    else if (!w->port) push0(p,w->addr,w->data);
-    else { if (lo==n) lo=i; hi=i+1; }
+    push0(p,w->addr,w->data);
   }
+  for (uint16_t k=0; k<held; k++) push(p,1,frame_p1[k]->addr,frame_p1[k]->data);
 }
 
 /* THE SGDK HOST'S FRAME, straight from the sequencer's queue (mmlispseq.h

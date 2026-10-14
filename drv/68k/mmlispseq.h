@@ -338,6 +338,7 @@ typedef struct {
    * the entry table is the sequencer's business; the blob belongs to the Z80. */
   const uint8_t *sample_entries;
   uint16_t sample_count;
+  uint8_t sample_index[256]; /* sample id -> its first entry, 0xff = none (mml_load_samples) */
   uint32_t sample_blob_base;
   /* The score's PCM voice count (MMB header flags bits 2-3): which engine image
    * plays it, and so the rate stamp its bank must carry. */

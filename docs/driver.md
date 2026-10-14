@@ -631,8 +631,9 @@ The loading API and 32 KB resource alignment remain unchanged. See
 and mmb.md §10.3 for the sample format.
 
 The banked host reads a fresh FIFO position and performs up to five transfers
-per frame. If a plan is empty, it reuses the fresh observation and skips the
-second bus request. It reserves the complete 16-pair physical transfer, including IDLE
+per frame, stopping at the first plan that is empty: with the release fixed for
+the vblank, a later plan has nothing to send either. An empty plan reuses the
+fresh observation and skips the second bus request. It reserves the complete 16-pair physical transfer, including IDLE
 padding, and observes the selected image's generation fence. PSG updates follow
 the released video frame. PCM commands and `$2B` ride the PCM lane ahead of the
 FM queue, as in the single-bank profile (§6.6). Independent, unmodulated FM

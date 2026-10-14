@@ -311,9 +311,11 @@ static u16 grab(const GrabBlock* blk, u16 dst)
 }
 
 // One grab, sending the frames before `release` (mmlpairs.h mmlp_plan).
-static void pump(u16 release)
+// Returns the pairs it planned: 0 means a further pump with the same release
+// has nothing to send either.
+static u16 pump(u16 release)
 {
-    if (!ready || busy) return;
+    if (!ready || busy) return 0;
     busy = TRUE;
     // Everything that can be decided before the bus is taken is (R20 §48.4):
     // which pairs, where they go, and the registers they are stored from.
@@ -348,6 +350,15 @@ static void pump(u16 release)
         SYS_setInterruptMaskLevel(level);
     }
     busy = FALSE;
+    return n;
+}
+
+// The banked host's pumps: up to five grabs, until one finds nothing to send
+// (each costs a bus grab and a plan, and a vblank's time is the render's).
+static void pumps(u16 release)
+{
+    for (u16 i = 0; i < (bankedImage ? 5 : 1); i++)
+        if (!pump(release)) break;
 }
 
 // The frames whose time has come; anything rendered ahead of them waits.
@@ -355,16 +366,14 @@ static u16 due(void) { return (u16)(vtimer - frameBase); }
 
 void MMLisp_pump(void)
 {
-    const u16 release = due();
-    for (u16 i=0; i<(bankedImage ? 5 : 1); i++) pump(release);
+    pumps(due());
 }
 
 // The frame's grab, from the vertical interrupt. It carries the frame whose
 // time has just come, so the music's tempo is the video clock's.
 static void vblankPump(void)
 {
-    const u16 release = due();
-    for (u16 i=0; i<(bankedImage ? 5 : 1); i++) pump(release);
+    pumps(due());
 }
 
 void MMLisp_attachInterrupts(void)

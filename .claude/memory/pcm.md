@@ -92,18 +92,22 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 - **Banked onsets slip a frame when the 68000's render overruns** (user
   heard FM chords and drums wobble on BlastEm, 2026-10-14, `disco1`, a mucom
   import at two banked voices; Live is fine). With `MMLISP_LEAD` 1 a frame
-  is rendered ~3 ms after the vblank before its own (the pumps run first) and
-  must finish before the next; the beat frames take 10–20 ms on that song
-  (p50 2.3, p95 8), up to 45 ms on a voice-change frame, so they miss their
-  release and go one vblank late. Measured (`banked:sgdk --lead`, 40 s): FM
-  key-on lag p90 19.9 ms at lead 1, 5.2 at lead 2; PCM−FM p95 17.9 vs 2.7.
-  The same slip is the `multibank-3v` frames 61/91 one. Open, the user's
-  call: `MMLISP_LEAD` 2 as the default (one more frame of latency on every
-  host call, §3.4) and/or a 68000 render pass — the expensive renders spread
-  over dispatch, note_on, macros and the PCM note path, no single hot spot.
-  Not adopted: STAGED EARLY in the host lane (a frame's staged stores sent a
-  frame ahead) — at lead 1 the next frame is never queued at the vblank, and
-  at lead 2 it measured no better than the unchanged converter.
+  is rendered after the vblank before its own and must finish before the
+  next; a render past that misses its release and goes one vblank late. The
+  user called the 68000's cost "a big problem" (2026-10-14). First pass done
+  (banked_writes in one pass, pumps stop at the first empty plan, hot libgcc
+  arithmetic to 16-bit forms, a sample-id index): disco1 at lead 1 went FM
+  key-on lag p90/p95 19.9/23.7 -> 8.0/19.7 ms, PCM-FM p95 17.9 -> 6.2; the
+  68000's idle share 67% -> 77%; render p99 64.9% -> 61.2% of a frame, still
+  7 renders over one frame (`sgdk-profile --fn mmlp_render`). Open: the
+  per-note path (an FM note-on ~6.5k cycles, a PCM note ~7k, PARAM_SET ~1.3k
+  each — spread over dispatch, note_on, level restore, macro triggers, the
+  PCM point math), a voice change's write volume (5 channels x ~36 writes in
+  one frame is >1 frame on its own: `onset-3v` p99 77%), and whether
+  `MMLISP_LEAD` 2 becomes the default (one more frame on every host call,
+  §3.4; disco1 p90 5.2 ms). Not adopted: STAGED EARLY in the host lane — at
+  lead 1 the next frame is never queued at the vblank, and at lead 2 it
+  measured no better than the unchanged converter.
 - Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.
