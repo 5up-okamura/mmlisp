@@ -226,18 +226,16 @@ Licenses dialog links it.
 ## Hip-hop kit samples
 
 - Sources: holizna's Lofi Drum Loops, https://freesound.org/s/629132/,
-  https://freesound.org/s/629137/ and https://freesound.org/s/629139/;
-  https://github.com/sfzinstruments/virtuosity_drums at
-  `9f04cf9a734527edfbb0a4eee1f674e45bbf71bc` (Versilian Studios and
-  Karoryfer Samples, the lo-fi mic open hi-hat); the clap is the tr808
-  kit's file (TR-808 samples above).
+  https://freesound.org/s/629137/ and https://freesound.org/s/629139/; the
+  clap is the tr808 kit's file (TR-808 samples above).
 - License: CC0-1.0, preserved in `presets/hiphop/LICENSE-CC0.txt`.
 - Included: nine GM-numbered WAVs in `presets/hiphop/wav/`, converted to
   22,050 Hz / 16-bit mono; which file came from where is listed in
   `presets/hiphop/README.md`.
 - Conversion: channel mix, resampling, hits cut from three loops, cuts with
-  half-cosine fades, a 1 kHz high-pass on one hat, and a level set by role
-  (a limiter and clip to raise, a gain to lower).
+  half-cosine fades, one kick subtracted under the open hat, high-passes on
+  two hats, and a level set by role (a limiter and clip to raise, a gain to
+  lower).
 
 ## Drum-and-bass kit samples
 

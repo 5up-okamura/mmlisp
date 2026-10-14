@@ -1,6 +1,6 @@
 # Hip-hop drum kit
 
-Nine one-shots for boom-bap and lo-fi beats, gathered from three CC0
+Nine one-shots for boom-bap and lo-fi beats, gathered from two CC0
 sources — [licence](LICENSE-CC0.txt). 22,050 Hz, signed 16-bit mono.
 
 `set.mmlisp` names them by role, in the vocabulary every kit uses, so
@@ -22,16 +22,18 @@ classic game PCM, a little grit by design). Balance a score further with
 
 ## Sources
 
-- `kick`, `kick2`, `rim`, `snare`, `snare2`, `hat`, `hat-pedal`: hits cut
-  from three loops in holizna's [Lofi Drum Loops](https://freesound.org/people/holizna/packs/34855/),
-  each before the loop's next hit:
+- `kick`, `kick2`, `rim`, `snare`, `snare2`, `hat`, `hat-pedal`, `hat-open`:
+  hits cut from three loops in holizna's [Lofi Drum Loops](https://freesound.org/people/holizna/packs/34855/):
   - `kick` and `snare` from "Boom Bap Hiphop Kick Snare Loop 95 BPM"
     ([Freesound 629132](https://freesound.org/s/629132/)), 0.3 s from
     0.325 s and from 3.144 s;
-  - `kick2`, `rim` and `hat-pedal` from "Funky Lofi Drum Loop 88 BPM"
-    ([Freesound 629137](https://freesound.org/s/629137/)), 0.32 s from
-    0.009 s, 0.32 s from 0.710 s and 0.12 s from 1.299 s — `rim` is the
-    loop's snare, a third snare on the side-stick note;
+  - `kick2`, `rim`, `hat-pedal` and `hat-open` from "Funky Lofi Drum Loop
+    88 BPM" ([Freesound 629137](https://freesound.org/s/629137/)), 0.32 s
+    from 0.009 s, 0.32 s from 0.710 s, 0.12 s from 1.299 s and 0.41 s from
+    2.298 s — `rim` is the loop's snare, a third snare on the side-stick
+    note; under `hat-open` the loop's kick at 2.41 s is subtracted (the
+    loop's lone first kick, aligned and scaled) and a 200 Hz high-pass
+    (24 dB/oct) takes what is left of it;
   - `snare2` and `hat` from "BoomBap Drums 90 BPM"
     ([Freesound 629139](https://freesound.org/s/629139/)), 0.34 s from
     0.667 s and 0.3 s from 0.350 s, the hat high-passed at 1 kHz
@@ -39,10 +41,6 @@ classic game PCM, a little grit by design). Balance a score further with
 - `clap`: the tr808 kit's clap, the same file — see
   [tr808](../tr808/README.md) for its source (the TR-808 recordings in
   tidalcycles/sounds-tr808-fischer, CC0).
-- `hat-open`: Virtuosity Drums (Versilian Studios and Karoryfer Samples),
-  [upstream](https://github.com/sfzinstruments/virtuosity_drums) at
-  `9f04cf9a7345`, the lo-fi mic — `Samples/lofi/hh/lofi_hh_open_vl3_rr1`,
-  0.5 s with a half-cosine fade.
 
 All are resampled to 22,050 Hz and mixed to mono. The kit has no toms,
 cymbals or Latin percussion, so those GM notes are absent.
