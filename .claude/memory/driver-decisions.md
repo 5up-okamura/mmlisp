@@ -302,7 +302,11 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   pair, BlastEm). Read fresh and placed 8 past it: 5.7 ms, every gate green.
   So LEAD 2 + AHEAD 8 is +4 ms on an SE against the old defaults (~47 vs 43 ms
   call → sound), and the slips are gone (disco1 FM key-on lag p90/p95 19.9/23.7
-  → 5.5/7.7 ms). Both hosts, one rule. The silent armed frame is gone (user,
+  → 5.5/7.7 ms). Both hosts, one rule. Re-measured after the 68000 pass
+  (2026-10-14, disco1 40 s): lead 1 still slips — key-on lag p95/max 18.3/38.8
+  ms, interval error p95 17.9 — on ordinary 107–126% frames at 8–31 s, not
+  only the 242% loop head; lead 2 gives 6.7/22.2 and 7.2. So LEAD 2 stays
+  until a render fits a frame. The silent armed frame is gone (user,
   2026-10-14, "進めて"): every start — song, track, SE — sounds in the frame
   it is drained in, ~17 ms off every start (SE call → sound ~30 ms). One rule,
   not an SE-only branch. The FIFO wire keeps the head's writes ahead of the
