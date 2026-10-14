@@ -134,6 +134,13 @@ export class PcmEngineModel {
     this.saturate = saturate;
     this.state = new Uint8Array(0x40);
     this.ring = new Uint8Array(256).fill(PCM_SILENCE_BYTE);
+    // Each voice's own term of the mix (signed, after its rung), kept in the
+    // ring's slots beside the byte they sum to — for the editor's oscilloscope,
+    // one trace a PCM track. The engine has no such thing; the DAC byte is
+    // unchanged by it.
+    this.voiceRing = Array.from({ length: image.voices }, () => new Int8Array(256));
+    /** The terms behind the byte the last slot returned, one a voice. */
+    this.voiceOut = new Int8Array(image.voices);
     this.slotIndex = 0;
     this.xp = new Set(image.xpSlots);
     this.ptr = [];
@@ -170,12 +177,16 @@ export class PcmEngineModel {
   slot(pair = null) {
     const img = this.img, s = this.slotIndex++;
     const out = this.ring[s & 0xff];
+    for (let v = 0; v < img.voices; v++) {
+      this.voiceOut[v] = this.voiceRing[v][s & 0xff];
+      this.voiceRing[v][s & 0xff] = 0;
+    }
     const B = img.blockSamples;
     const b = (s + img.lead) % B;
     const V = img.voices;
     const bv = (v) => (((b - img.voiceOffsets[v]) % B) + B) % B;
     for (let v = 0; v < V; v++) if (bv(v) === 0) this.pieceStart(s, v);
-    this.ring[(s + img.lead) & 0xff] = this.mix();
+    this.ring[(s + img.lead) & 0xff] = this.mix((s + img.lead) & 0xff);
     const [pSG, pEG, pAP] = img.lightAt;
     for (let v = 0; v < V; v++) {
       const p = bv(v);
@@ -189,7 +200,8 @@ export class PcmEngineModel {
     return out;
   }
 
-  mix() {
+  /** The byte the voices sum to for ring slot `at` (each term kept there too). */
+  mix(at) {
     let acc = 0;
     for (let v = 0; v < this.img.voices; v++) {
       const a = this.ptr[v];
@@ -197,6 +209,7 @@ export class PcmEngineModel {
       let x = signed(this.bank[a - PCM_WINDOW]);
       if (this.uiGain) x = Math.round(x * this.uiGain[v]);
       const t = pcmRung(x, this.page[v] - this.img.lutPage);
+      this.voiceRing[v][at] = t;
       acc = v === 0 ? t : this.saturate ? sat(acc + t) : signed(acc + t);
       this.ptr[v] = (a + 1) & 0xffff;
     }
@@ -289,6 +302,12 @@ export class PcmLiveEngine {
   /** The next DAC byte (biased, 0x80 = silence). */
   next() {
     return this.model.slot(null);
+  }
+
+  /** Each voice's term of the byte next() last returned (signed), for the
+   * editor's oscilloscope. */
+  get voiceOut() {
+    return this.model.voiceOut;
   }
 }
 

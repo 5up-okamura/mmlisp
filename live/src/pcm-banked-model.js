@@ -11,6 +11,10 @@ export class MultibankModel {
     this.voices = Array.from({ length: gen.cfg.voices }, () => ({ ptr: 0xff00, bank: 0,
       end: 0, wrap: 0xff00, startGen: 0, endGen: 0, start: false, apply: false, park: false, page: 0, out: 0 }));
     this.ring = new Uint8Array(256).fill(128);
+    // Each voice's term beside the ring byte, for the editor's oscilloscope
+    // (as PcmEngineModel's); the DAC byte is unchanged by it.
+    this.voiceRing = Array.from({ length: gen.cfg.voices }, () => new Int8Array(256));
+    this.voiceOut = new Int8Array(gen.cfg.voices);
     if (!Number.isInteger(gen.cfg.lead)) throw new Error("banked model needs the image's lead");
     this.target = gen.cfg.lead;
     this.log = [];
@@ -21,6 +25,10 @@ export class MultibankModel {
   slot(pair) {
     const s = this.slotIndex++;
     const output = this.ring[s & 255];
+    for (let k = 0; k < this.voiceRing.length; k++) {
+      this.voiceOut[k] = this.voiceRing[k][s & 255];
+      this.voiceRing[k][s & 255] = 0;
+    }
     for (const a of this.gen.actions[s % this.gen.actions.length]) {
       const v = this.voices[a.v], k = a.v;
       switch (a.kind) {
@@ -59,6 +67,7 @@ export class MultibankModel {
             let sample = (raw << 24) >> 24;
             if (this.uiGain) sample = Math.round(sample * this.uiGain[k]);
             const term = pcmRung(sample, v.page);
+            this.voiceRing[k][v.out] = term;
             const sum = term + (k ? this.ring[v.out] - 128 : 0);
             this.ring[v.out] = Math.max(-128, Math.min(127, sum)) + 128;
             v.ptr = (v.ptr + 1) & 65535; v.out = (v.out + 1) & 255;

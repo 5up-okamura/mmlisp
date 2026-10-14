@@ -51,17 +51,24 @@ const NOPN_MAX_RENDER = 4096; // nuked adapter caps _nopn_render() at this
 // the useful range (higher = louder but clips dense passages more).
 const MASTER_OUTPUT_GAIN = 4.0;
 
-// Oscilloscope taps: 10 per-channel streams at the output rate, scaled to each
+// Oscilloscope taps: 13 per-channel streams at the output rate, scaled to each
 // channel's contribution to the mix. FM: the chip time-multiplexes channels on
 // its 9-bit DAC, so one channel's share of the 24-cycle-averaged output is
 // ch_out / 4096 — measured against this path (least-squares fit of a solo
 // full-scale channel vs the mix; the ~9% residual is the DAC ladder offsets
 // from other channels' bus slots, which a clean per-channel tap excludes).
 // PSG: one DC-blocked term of the 4-channel sum times PSG_OUTPUT_GAIN.
+// PCM: each voice's term of the DAC byte (pcmTaps, set by the caller as its
+// engine steps), on FM6's scale — the chip's DAC latch is (byte - 0x80) * 2 —
+// so the voices add up to the FM6 tap wherever the engine's sum does not
+// saturate.
 export const SCOPE_FM_CHANNELS = 6; // scope indices 0-5 (FM6 = DAC when on)
 export const SCOPE_PSG_CHANNELS = 4; // scope indices 6-9 (tone 1-3, noise)
-export const SCOPE_CHANNELS = SCOPE_FM_CHANNELS + SCOPE_PSG_CHANNELS;
+export const SCOPE_PCM_CHANNELS = 3; // scope indices 10-12 (PCM voices 1-3)
+export const SCOPE_CHANNELS = SCOPE_FM_CHANNELS + SCOPE_PSG_CHANNELS + SCOPE_PCM_CHANNELS;
+const SCOPE_PCM_BASE = SCOPE_FM_CHANNELS + SCOPE_PSG_CHANNELS;
 const FM_CH_SCALE = 1 / 4096;
+const PCM_TAP_SCALE = 2 * FM_CH_SCALE;
 
 export class MegaDriveSynth {
   /** Instantiate both cores and return a ready synth. */
@@ -95,6 +102,9 @@ export class MegaDriveSynth {
     this._psgRatio = psg._psg_get_native_sample_rate() / outputSR;
 
     this._dacEnabled = false;
+    /** The PCM voices' terms of the current DAC byte (signed, one a voice),
+     * kept by the caller as its engine steps; read for the PCM scope taps. */
+    this.pcmTaps = null;
 
     this._lpfOn = false;
     this._lpfCutoff = MD_LPF_DEFAULT_CUTOFF;
@@ -293,9 +303,10 @@ export class MegaDriveSynth {
   }
 
   // scope: optional array of SCOPE_CHANNELS Float32Arrays (length >= count).
-  // When given, per-channel waveforms land in scope[0..5] (FM 1-6) and
-  // scope[6..9] (PSG tone 1-3, noise) on the same output-rate time axis as
-  // the mix. Null-cost when omitted.
+  // When given, per-channel waveforms land in scope[0..5] (FM 1-6),
+  // scope[6..9] (PSG tone 1-3, noise) and scope[10..12] (PCM voices, from
+  // this.pcmTaps while the DAC plays) on the same output-rate time axis as the
+  // mix. Null-cost when omitted.
   renderInto(
     outL,
     outR,
@@ -347,6 +358,10 @@ export class MegaDriveSynth {
         const next = this._ymChNext;
         for (let c = 0; c < SCOPE_FM_CHANNELS; c++) {
           scope[c][i] = cur[c] * (1 - t) + next[c] * t;
+        }
+        const pcm = getDacByte && this._dacEnabled ? this.pcmTaps : null;
+        for (let v = 0; v < SCOPE_PCM_CHANNELS; v++) {
+          scope[SCOPE_PCM_BASE + v][i] = pcm ? pcm[v] * PCM_TAP_SCALE : 0;
         }
       }
       this._ymFrac += this._resampleRatio;

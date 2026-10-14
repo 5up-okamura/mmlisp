@@ -10292,8 +10292,9 @@
     // the node's lifetime: the scope draws from the rings and the Channels VU
     // reads the per-batch peaks, so both always show real chip output.
     // Channel order is fixed: 0-5 FM 1-6 (FM6 carries the DAC while PCM
-    // plays), 6-8 PSG tone, 9 noise.
-    const SCOPE_CH = 10;
+    // plays — the sum of the PCM voices), 6-8 PSG tone, 9 noise, 10-12 PCM
+    // voices 1-3 (pcm1-pcm3, each its own term of the DAC byte).
+    const SCOPE_CH = 13;
     const SCOPE_RING = 16384;       // ~340ms at 48k: 2+ periods of any audible pitch
     const SCOPE_DISPLAY_GAIN = 10;  // mix-contribution units → pane half-height
     const _scopeRings = Array.from({ length: SCOPE_CH }, () => new Float32Array(SCOPE_RING));
@@ -10341,11 +10342,12 @@
       // Recycle the transferred buffers back to the worklet.
       workletNode?.port.postMessage({ type: 'scope-return', ch: msg.ch }, msg.ch);
     }
-    // The strip head's hardware scope channel: PCM tracks sound through the
-    // FM6 DAC and fm3 variants share hardware FM3.
+    // The strip head's scope channel: a PCM track has its voice's own tap (it
+    // sounds through the FM6 DAC, whose tap is the voices' sum), and the fm3
+    // variants share hardware FM3.
     function scopeChannelOf(head) {
       const r = channelRouting(head);
-      if (r.volKind === 'pcm') return 5;
+      if (r.volKind === 'pcm') return 10 + Number(head.slice(3)) - 1;
       if (r.volKind === 'psg') return 6 + r.volIndex;
       return r.volIndex;
     }

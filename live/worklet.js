@@ -23,10 +23,10 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  *
  * Messages to the main thread include (while scope is enabled):
- *   { type: 'scope', sampleRate, time, freq: number[10], fm6IsDac: boolean,
- *     ch: [ArrayBuffer × 10] }  — SCOPE_FLUSH output-rate samples per channel
- *     (FM 1-6, PSG tone 1-3, noise), buffers transferred; post them back via
- *     'scope-return' to avoid reallocation. freq[c] is the pitch latched from
+ *   { type: 'scope', sampleRate, time, freq: number[13], fm6IsDac: boolean,
+ *     ch: [ArrayBuffer × 13] }  — SCOPE_FLUSH output-rate samples per channel
+ *     (FM 1-6, PSG tone 1-3, noise, PCM voices 1-3), buffers transferred;
+ *     post them back via 'scope-return' to avoid reallocation. freq[c] is the pitch latched from
  *     the channel's register writes (Hz, 0 = unknown/unpitched) as of `time`,
  *     the batch's end on the AudioContext clock (s).
  */
@@ -95,6 +95,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmSeq = null;      // PcmIrVoices: the IR's events → engine commands
     this._pcmAcc = 0;
     this._pcmByte = 0x80;
+    this._pcmTaps = new Int8Array(3); // each voice's term of _pcmByte (the PCM scope taps)
     this._pcmClaimsDac = false; // the first note claims fm6, as on the driver
     this._pcmTrackGain = new Map(); // trackIndex → live mixer gain (0..1); default 1
     // Whether our own engine claimed the DAC, so we only release what we took —
@@ -144,6 +145,7 @@ class YM2612Processor extends AudioWorkletProcessor {
       while (this._pcmAcc >= this._nativeSR) {
         this._pcmAcc -= this._nativeSR;
         this._pcmByte = this._pcmLive.next();
+        this._pcmTaps.set(this._pcmLive.voiceOut);
       }
       return this._pcmByte;
     };
@@ -151,6 +153,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     MegaDriveSynth.create(sampleRate)
       .then((synth) => {
         synth.setLpf(this._lpfOn, this._lpfCutoff);
+        synth.pcmTaps = this._pcmTaps;
         this._synth = synth;
         // Signal the main thread that the WASM cores are live — lets it
         // distinguish "context never started" from "synth never initialized".
@@ -423,6 +426,7 @@ class YM2612Processor extends AudioWorkletProcessor {
   _pcmRestart() {
     this._pcmAcc = 0;
     this._pcmByte = 0x80;
+    this._pcmTaps.fill(0);
     this._pcmClaimsDac = false;
     if (!this._pcmBank) {
       this._pcmLive = null;
