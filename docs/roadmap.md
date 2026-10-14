@@ -45,8 +45,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
 ## Importers
 
 - **mucom88**: `S` FM3 slot detune (13 reference songs; maps onto
-  `fm3-1`–`fm3-4` with a per-operator `:pitch`), `s` key-on revise. Part G is
-  the OPNA's rhythm ROM — there is no data to import.
+  `fm3-1`–`fm3-4` with a per-operator `:pitch`), `s` key-on revise.
 - **VGM**: tempo changes within a song (one grid serves the whole file),
   second chips, other chips' PCM (SegaPCM, YM2610 ADPCM, OKI).
 - **DefleMask / Furnace**: sample channels, the macros of pre-INS2 Furnace

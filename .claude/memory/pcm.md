@@ -89,21 +89,18 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 ## Open
 
 - **The 68000's per-frame cost is "a big problem"** (user, 2026-10-14):
-  with one frame of lead, a chord-and-drums frame of `disco1` (a mucom import,
-  two banked voices) ran 10–20 ms and a voice-change frame up to 45 ms, past
-  the next vblank, so its FM and PCM slipped a frame (Live is fine). First
-  pass done (banked_writes one pass, pumps stop at the first empty plan, hot
-  arithmetic to 16-bit forms, a sample-id index): render p99 64.9% → 61.2% of a
-  frame, 68000 idle 67% → 77%. The slip itself is covered by `MMLISP_LEAD` 2
-  and `MMLP_AHEAD` 8 (driver-decisions). Open, as separate work: the per-note
-  path (an FM note-on ~6.1k cycles, `apply_patch` ~11k a voice, PARAM_SET
-  ~1.2k, `dispatch` ~400 an opcode, a vibrato macro step ~1.6k a channel a
-  frame — spread, no hot spot: `sgdk-profile --pc --peak`), and spreading a
-  bar's voice uploads over the hoist window in the compiler (`onset-3v`: five
-  voices in one frame is >1 frame of render on its own; the wire needs ~6.5
-  frames for them, the window stays 4). Not adopted: STAGED EARLY in the host
-  lane — at lead 1 the next frame is never queued at the vblank, and at lead 2
-  it measured no better than the unchanged converter.
+  a banked mucom import (`disco1`, two voices) rendered 10–20 ms on a
+  chord-and-drums frame and up to 45 ms on a voice-change frame. The frame
+  slip is covered by `MMLISP_LEAD` 2 and `MMLP_AHEAD` 8 ([[driver-decisions]]
+  §10), the first optimisation pass by git. Still open, as separate work: the
+  per-note path (an FM note-on ~6.1k cycles, `apply_patch` ~11k a voice,
+  PARAM_SET ~1.2k, `dispatch` ~400 an opcode, a vibrato macro step ~1.6k a
+  channel a frame — spread, no hot spot: `sgdk-profile --pc --peak`), and
+  spreading a bar's voice uploads over the hoist window in the compiler
+  (`onset-3v`: five voices in one frame is >1 frame of render on its own; the
+  wire needs ~6.5 frames for them, the window stays 4). Not adopted: STAGED
+  EARLY in the host lane — at lead 1 the next frame is never queued at the
+  vblank, and at lead 2 it measured no better than the unchanged converter.
 - Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.

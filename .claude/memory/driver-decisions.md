@@ -263,16 +263,18 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   against a bus stop); a frame mark in the FIFO (makes lateness uniform, does
   not create service); writing the new patch right after the key-on (the
   attack is the most audible part of the note).
-- **Declined for their cost** (user, 2026-10-13: "費用対効果が薄そう"):
+- **Declined for their cost** (user, 2026-10-13 — the expected gain looked too
+  small for the cost; a judgment, not a measurement):
   **PCM STAGE** (the sequencer peeks a track's next PCM note and stages
   SRC/END/WRAP early so its START is one pair — lookahead in the ROM
-  sequencer for a few ms, while the PCM lane already jumps the FM backlog —
-  the banked converter bypassed the lane until 2026-10-13 and takes it now);
+  sequencer for a few ms, while the PCM lane already jumps the FM backlog on
+  both hosts);
   **ordinary FM3 in the short-group priority** (when the `$27` shadow says
   normal mode); **key-ons last × `banked_writes`** (its short-groups-first
   rule would be undone). The wobble the user then heard on a banked score was
   the render slipping a frame, not the order (two frames of lead, below);
-  reopen (b)/(c) only if one is heard again. `banked:sgdk` measures it.
+  reopen the FM3 or key-ons-last item only if a wobble is heard again.
+  `banked:sgdk` measures it.
 - **The hoist windows stay fixed** (rest 4 frames, note cut 2; user,
   2026-10-13), no song-level setting: a wider rest window only sends the voice
   earlier, and the note cut is already controlled where it matters — a slur
