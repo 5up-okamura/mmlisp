@@ -344,9 +344,12 @@ latency on every host → music operation; the lead is what absorbs a render tha
 runs past a vblank — the game's frame plus the driver's, which on a frame of
 chords and drums is 10–20 ms of 68000 time by itself, and more than a frame on
 a voice change over several channels. With two frames of lead a render has the
-whole frame before its own. A sound effect's first note sounds about 30 ms
-after the call: the lead and the page — the effect sounds in the frame its
-start is drained in (§4.2).
+whole frame before its own. A PSG or PCM effect, or an FM effect whose voice
+is primed (§4.1), sounds about 40 ms after the call: the lead and the page —
+the effect sounds in the frame its start is drained in (§4.2). An FM effect
+that brings its own voice onto a song's channel sends that upload ahead of its
+key-on: about 1 ms a write on the light images (~35 ms for a full patch),
+about half that on the banked ones.
 
 ### 3.5 Note onsets
 
@@ -432,8 +435,17 @@ note (§4.2) — runs, and the track is stopped before it sounds. The chip's neu
 patch and every track's voices and levels are queued at once and leave over
 the next frames; the real start later is an ordinary start whose change-only
 writes find the registers already set, so the first notes do not wait behind a
-few hundred setup writes. Skipped: channels a running track owns, FM3-op, PCM
+few hundred setup writes. The setup's sweeps are cleared after it; the real
+start runs them again. Skipped: channels a running track owns, FM3-op, PCM
 and CSM tracks. `MMLisp_isSettled()` reports when the load has gone out.
+
+An effect's part (§2.5) is primed too when it is **the first effect part on a
+channel no song track uses** — not on CH3, which an effect claims whole when
+it plays. Its voice is then in place before the game fires it, and the effect
+writes only its levels, pitch and key-on (§3.4). One a channel: a later part
+there would replace that voice, so it uploads its own when it plays, as does
+an effect on a song's channel. The part's head TEMPO_SET sets its own clock,
+never the song's.
 
 ### 4.2 Starting a track
 

@@ -346,6 +346,24 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   :lfo-rateは使わない"; the compiler refuses them. The rule for any future
   song-wide state: refuse it in def-se, unless it belongs to a channel the
   effect takes, in which case the snapshot carries it.
+- **Prime the voices of effects on free channels** (user, 2026-10-15, "SE
+  音色の先置きを進めて"). Measured on BlastEm (SGDK example + demo-se,
+  2026-10-14): an FM SE that brings its voice onto a song channel sounded
+  81 ms after the call = lead 33 + pump to the first pair 8 + wire 40 (its
+  ~35 voice/level/pitch writes ahead of the key-on, ~1 pair/ms on the light
+  images); PSG/PCM effects, which upload nothing, ~42 ms. The rule (both
+  players' prime, `driver.md` §4.1): an effect part is primed when no song
+  track anywhere in the table uses its channel and it is the first effect
+  part there; not on CH3 (claimed whole at play); the prime clears the
+  setup's sweeps after it. Closed with it: an effect's `:tempo` sweep drove
+  the song's clock (now `E_SE_PART`), and an effect's FM3_MODE rides its first
+  CH3 part, not its first part. **Not chosen**: LEAD 1 (re-measured after the
+  68000 pass, still slips); an SE lane running effect tracks two frames ahead
+  of the song (two clocks, ownership/restore edge cases, three players +
+  gates, and it does not touch the upload); a faster light-image wire (more
+  expander steps + a higher per-frame cap, trades PCM rate/voices). An effect
+  on a song channel still pays its upload — the advice is to keep FM effects
+  on free channels (`drv/sgdk/README.md`).
 - **Open: the SGDK example's SE (`example/main.c`) has not run on hardware.**
 
 **Several songs** (behaviour: `driver.md` §2.3, `mmb.md` §10.2):

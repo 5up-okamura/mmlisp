@@ -1,0 +1,41 @@
+; Priming at load reaches effect parts (docs/driver.md §4.1). The song uses fm1
+; and sqr1; the effects' parts on fm6 and sqr2 are the first on channels the
+; song leaves free, so the load uploads their voice and levels before the game
+; fires them. The second part on fm6 gives way to the first (one voice a
+; channel), and the part on fm1 takes the song's channel, so neither is primed.
+; The fm6 effect opens with a :vol sweep: the prime must leave no sweep running
+; on the idle channel. No host schedule, so c-gate also runs the SGDK host's
+; load — PRIME, idle frames, then the song's start — through both players.
+(def-fm lead :alg 4 :fb 3
+  :ar1 31 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 24 :ks1 0 :ml1 1 :dt1 0
+  :ar2 31 :dr2 8 :sr2 1 :rr2 7 :sl2 3 :tl2 10 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 26 :ks3 0 :ml3 2 :dt3 0
+  :ar4 31 :dr4 8 :sr4 1 :rr4 7 :sl4 3 :tl4 8 :ks4 0 :ml4 1 :dt4 0)
+
+(def-fm bell :alg 7 :fb 5
+  :ar1 31 :dr1 2 :sr1 0 :rr1 4 :sl1 0 :tl1 8 :ks1 0 :ml1 4 :dt1 0
+  :ar2 31 :dr2 3 :sr2 0 :rr2 5 :sl2 1 :tl2 6 :ks2 0 :ml2 7 :dt2 0
+  :ar3 31 :dr3 2 :sr3 0 :rr3 4 :sl3 0 :tl3 10 :ks3 0 :ml3 2 :dt3 0
+  :ar4 31 :dr4 4 :sr4 1 :rr4 6 :sl4 2 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(def-fm buzz :alg 0 :fb 7
+  :ar1 31 :dr1 10 :sr1 0 :rr1 10 :sl1 3 :tl1 20 :ks1 0 :ml1 3 :dt1 0
+  :ar2 31 :dr2 10 :sr2 0 :rr2 10 :sl2 3 :tl2 18 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 10 :sr3 0 :rr3 10 :sl3 3 :tl3 22 :ks3 0 :ml3 5 :dt3 0
+  :ar4 31 :dr4 12 :sr4 0 :rr4 12 :sl4 4 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(fm1 :tempo 120 lead :oct 4 :len 4 :vel 13  c e g e  c e g > c)
+(sqr1 :oct 5 :len 8 :vel 10  (x 8 c e))
+
+; effect 0: fm6, a channel the song leaves free, with its own voice — primed.
+(def-se bell :prio 5 :tempo 150
+  (fm6 bell :pan 1 :vol (linear 31..20 :len 8) :oct 5 :len 16 :vel 15  g a > c))
+; effect 1: a second part on fm6 (not primed: fm6's voice is effect 0's), and
+; one on sqr2 (primed).
+(def-se zap :prio 6
+  (fm6 buzz :oct 6 :len 16 :vel 14  c < a)
+  (sqr2 :oct 6 :len 16 :vel 12  e g))
+; effect 2: fm1, the song's channel — not primed; it uploads its voice when it
+; plays.
+(def-se hit :prio 5
+  (fm1 bell :oct 6 :len 8 :vel 15  g g))

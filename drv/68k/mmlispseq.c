@@ -3398,22 +3398,36 @@ int mml_se_playing(const MMLSeq *s, uint8_t se) {
  * only what differs. So the chip is in the same state at every point after the
  * start as without priming — the writes simply left earlier.
  *
+ * An effect's part is primed too when it is the first effect part on a channel
+ * no song track uses: its voice is then in place before the game fires it, and
+ * the effect writes only its levels, pitch and key-on. One a channel — a later
+ * part there would replace that voice. Not on CH3, which an effect claims
+ * whole when it plays. Its head TEMPO_SET reaches only its own clock (the
+ * flag routes it, dispatch), so the song's tempo is untouched.
+ *
  * Skipped: a channel a running track owns (priming would rewrite a sounding
  * voice), channels without a block (FM3 ops, PCM), and CSM tracks, whose setup
- * switches CH3 into CSM mode. */
+ * switches CH3 into CSM mode. The setup's sweeps are cleared after it: the real
+ * start runs them again, from the register the setup left. */
 void mml_prime_tracks(MMLSeq *s) {
   for (uint8_t i = 0; i < s->track_count; i++) {
     MMLTrack *t = &s->trk[i];
     const int ch = t->channel_id;
-    if (ch >= 10 || (t->flags & (TRACK_FLAG_IS_CSM | TRACK_FLAG_IS_SE)) || t->running) continue;
-    int owned = 0;
-    for (uint8_t j = 0; j < s->track_count; j++)
-      if (s->trk[j].running && s->trk[j].channel_id == ch) owned = 1;
+    if (ch >= 10 || (t->flags & TRACK_FLAG_IS_CSM) || t->running) continue;
+    int owned = (t->flags & TRACK_FLAG_IS_SE) && ch3_group(ch);
+    for (uint8_t j = 0; j < s->track_count; j++) {
+      const MMLTrack *o = &s->trk[j];
+      if (o->channel_id != ch) continue;
+      if (o->running) owned = 1;
+      /* an effect part gives way to any song track there and to an earlier part */
+      if ((t->flags & TRACK_FLAG_IS_SE) && (j < i || !(o->flags & TRACK_FLAG_IS_SE))) owned = 1;
+    }
     if (owned) continue;
     mml_start_track(s, t->track_id);
     dispatch(s, t); /* fresh: the leading setup, up to the first note */
     t->fresh = 0;
     t->running = 0; /* never keyed, so stopping writes nothing */
+    clear_channel_modulators(s, ch);
   }
 }
 

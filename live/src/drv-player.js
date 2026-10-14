@@ -2333,17 +2333,23 @@ export class DrvPlayer {
   // PRIME (host command 0x08, mmlispseq.c mml_prime_tracks has the reasoning):
   // start each idle track, run its leading setup up to the first note, and
   // stop it again before it sounds — so the setup's writes leave early and the
-  // real start finds its registers already set.
+  // real start finds its registers already set. An effect's part is primed
+  // too when it is the first effect part on a channel no song track uses, and
+  // not on CH3; the setup's sweeps are cleared after it.
   _prime() {
-    for (const trk of this._trk) {
+    this._trk.forEach((trk, i) => {
       const ch = trk.channelId;
-      if (ch >= 10 || (trk.flags & (TRACK_FLAG.isCsm | TRACK_FLAG.isSe)) || trk.running) continue;
-      if (this._trk.some((t) => t.running && t.channelId === ch)) continue;
+      const se = trk.flags & TRACK_FLAG.isSe;
+      if (ch >= 10 || (trk.flags & TRACK_FLAG.isCsm) || trk.running) return;
+      if (se && this._ch3Group(ch)) return;
+      if (this._trk.some((t, j) => t.channelId === ch &&
+          (t.running || (se && (j < i || !(t.flags & TRACK_FLAG.isSe)))))) return;
       this._startTrack(trk.trackId, false);
       this._dispatch(trk); // fresh: the leading setup, up to the first note
       trk.fresh = false;
       trk.running = false; // never keyed, so stopping writes nothing
-    }
+      this._clearChannelModulators(ch);
+    });
   }
 
   // A def-se by its number (mmb.md §16; mmlispseq.c mml_play_se): every part

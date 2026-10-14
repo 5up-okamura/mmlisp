@@ -248,7 +248,9 @@ while (TRUE) {
   leave over the next frames, so the starts later send only what differs. A
   six-channel song's load is ~250 register writes — sixteen frames of the wire
   — which the first notes would otherwise queue behind. Load during a transition and start once `MMLisp_isSettled()` is TRUE;
-  starting sooner is still correct, the first notes just come later.
+  starting sooner is still correct, the first notes just come later. The load
+  primes an effect's voice too when its part is the first on a channel the
+  song leaves free (`docs/driver.md` §4.1).
 
 - **Control.** `MMLisp_startSong` / `startTrack` / `stopTrack` / `keyOff` /
   `setParam` / `fadeTrack` / `setVal` are plain calls into the sequencer. They
@@ -267,7 +269,12 @@ while (TRUE) {
   replaces it otherwise; the song comes back after the last. The def-se gives
   the priority; `MMLisp_playSePrio(se, p)` overrides it. `MMLisp_sePlaying(se)`
   says whether it still runs. An effect keeps its own tempo, so it sounds the
-  same in every song.
+  same in every song. **Keep FM effects on channels the song leaves free**:
+  their voices are loaded with the score (the first effect's on each such
+  channel), and they sound about 40 ms after the
+  call, as PSG and PCM effects do. An FM effect that takes a song's channel
+  pays its voice upload first — ~35 ms more for a full patch on the non-banked
+  images (`docs/driver.md` §3.4).
 
 - **Music → game: `MMLisp_trig(track)`.** The score marks a beat with
   `(trig N)`; this returns that track's status byte — the id in bits 5-0 under a
