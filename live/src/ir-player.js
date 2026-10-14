@@ -234,6 +234,7 @@ export class IRPlayer {
     this._pitchSweepOnset = new Map(); // key → { when, offset }
     this._psgVol = new Array(4).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
     this._psgLastVel = new Array(4).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
+    this._psgLevelAhead = new Array(4).fill(false); // the current note's level macros took its :vol sets in
     this._psgVolSweep = new Array(4).fill(null); // active VOL sweep state per PSG ch
     this._psgKeyedUntil = new Array(4).fill(0); // when the current note keys off
     // Whether each PSG ch is currently sounding a note (att < 15). A PSG channel
@@ -3146,6 +3147,25 @@ export class IRPlayer {
     return this._tempoAhead;
   }
 
+  // The :vol sets a track makes while its note sounds (up to its next note):
+  // frame → value. A PSG level macro's frames are written at the note's onset,
+  // so they take these in then — the set, when it comes, cannot redo them.
+  _volSetsAhead(ev) {
+    const out = new Map();
+    const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
+    if (!track) return out;
+    const base = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
+    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
+      const ne = track.events[i];
+      if (ne.cmd === "NOTE_ON" || ne.cmd === "PCM_NOTE_ON") break;
+      if (ne.cmd === "PARAM_SET" && String(ne.args?.target ?? "").toUpperCase() === "VOL") {
+        const v = Math.max(0, Math.min(31, ne.args?.value ?? VOL_UNITY));
+        out.set(this._eventFrame(this._timeAfterTicks(base, ne.tick - ev.tick)), v);
+      }
+    }
+    return out;
+  }
+
   _nextNoteSecs(ev) {
     return this._nextNote(ev).secs;
   }
@@ -4409,6 +4429,7 @@ export class IRPlayer {
     limitSecs = Infinity,
     offWhen = null,
     velFirst = true, // bind order: which of the two steps first in a frame
+    volAhead = new Map(), // frame → the :vol the track sets while the note sounds
   ) {
     this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
@@ -4428,6 +4449,7 @@ export class IRPlayer {
     // time, so the player must not scale again here.
     const vel = run(velMacro, "VEL");
     const vol = run(volMacro, "VOL");
+    this._psgLevelAhead[psgCh] = !!(velMacro || volMacro);
     const at = (list, t, dflt) => {
       let v = dflt;
       for (const s of list) if (s.t <= t + 1e-9) v = s.v; else break;
@@ -4470,6 +4492,7 @@ export class IRPlayer {
     );
     const lastF = Math.max(
       ...[...velF.keys(), ...volF.keys()],
+      ...[...volAhead.keys()].filter((F) => F < keyEnd),
       Math.min(Number.isFinite(keyEnd) ? keyEnd - 1 : F0, sweepEnd - 1),
       F0,
     );
@@ -4481,6 +4504,10 @@ export class IRPlayer {
       const t = F === F0 ? noteWhen : Math.max(noteWhen, this._frameOrigin + F / 60);
       const master = this._masterAtFrame(F);
       const write = () => this._psgSetAtt(psgCh, this._composePsgAtt(velLive, volAtF(F), master), t);
+      if (F < keyEnd && volAhead.has(F)) {
+        volNow = volAhead.get(F);
+        write();
+      }
       const vsOn = inSweep(vs, F);
       if (F < keyEnd && (vsOn || inSweep(ms, F))) {
         if (vsOn) volNow = Math.max(0, Math.min(31, this._sweepAtFrame(vs, F)));
@@ -4638,9 +4665,11 @@ export class IRPlayer {
             psgOffWhen,
             Object.keys(ev.args).indexOf("velMacro") < Object.keys(ev.args).indexOf("vol") ||
               !volMacro,
+            this._volSetsAhead(ev),
           );
           this._envRetrigs = null;
         } else {
+          this._psgLevelAhead[psgCh] = false;
           this._schedulePsgEnvelope(psgCh, when, psgGateTicks, baseVel, psgOffWhen);
         }
         break;
@@ -4651,20 +4680,24 @@ export class IRPlayer {
         const psgTarget = (ev.args?.target ?? "").toUpperCase();
         if (psgTarget === "VOL") {
           if (ev.cmd === "PARAM_SET") {
-            // Immediate vol: store, and update hardware only if the channel is
-            // currently sounding (otherwise it takes effect at the next NOTE_ON;
-            // writing att to an idle channel would drone a tone).
+            // Immediate vol: store, and update hardware only if a note is keyed
+            // at `when` (otherwise it takes effect at the next NOTE_ON; writing
+            // att to an idle channel would drone a tone). Keyed by time, not
+            // by _psgSounding: a note's key-off is scheduled at its onset, so
+            // that flag already reads silent during the note — a :vol before
+            // a tie's `~` was lost.
             const vol = Math.max(0, Math.min(31, ev.args?.value ?? VOL_UNITY));
             this._psgVol[psgCh] = vol;
             this._psgVolSweep[psgCh] = null;
-            if (this._psgSounding[psgCh]) {
-              const velLevel = this._psgLastVel[psgCh] ?? 15;
-              const master = this._masterVol ?? VOL_UNITY;
-              this._psgSetAtt(
-                psgCh,
-                this._composePsgAtt(velLevel, vol, master),
-                when,
-              );
+            const until = this._psgKeyedUntil[psgCh] ?? 0;
+            if (when < until - 1e-6) {
+              // A note with a level macro wrote this set in with its frames
+              // at its onset (_volSetsAhead); one without composes it now.
+              if (!this._psgLevelAhead[psgCh]) {
+                const velLevel = this._psgLastVel[psgCh] ?? 15;
+                const master = this._masterVol ?? VOL_UNITY;
+                this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
+              }
             }
           } else {
             // PARAM_SWEEP: store sweep state (same format as _fmVolSweep); a
