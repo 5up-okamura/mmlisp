@@ -237,6 +237,7 @@ function ditherClocks(clocks, token, state) {
   state.tickErr = state.tickErr ?? 0;
   const ticks = Math.max(1, Math.round(exact + state.tickErr));
   state.tickErr += exact - ticks;
+  state.dithered = true; // the op this token lands in: push records it
   return `${ticks}t`;
 }
 
@@ -297,7 +298,29 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     }
     if (op.t === "slur") state.lfoSlur = true;
     else if (op.t === "note" || op.t === "rest" || op.t === "porta") state.lfoSlur = false;
+    // The last dithered length at each loop depth, for closeLoopDither.
+    if (state.dithered) { state.ditherTop[loopDepth()] = op; state.dithered = false; }
     stack[stack.length - 1].push(op);
+  };
+  // A loop body is written once and played `count` times, so its dithered
+  // lengths must add up on their own: at `]` the body's rounding is settled
+  // on its last dithered length (made the nearest whole tick count of the
+  // body's exact length), and what is left is carried for every pass.
+  const loopDepth = () => state.crossStack.length + stack.length - 1;
+  const openLoopDither = () => {
+    state.loopErr.push(state.tickErr ?? 0);
+    state.ditherTop[loopDepth()] = null;
+  };
+  const closeLoopDither = (depth, count) => {
+    const start = state.loopErr.pop() ?? 0;
+    let err = (state.tickErr ?? 0) - start;
+    const adj = Math.round(err);
+    const op = state.ditherTop[depth];
+    if (adj && op && /^\d+t$/.test(op.len ?? "")) {
+      op.len = `${Math.max(1, parseInt(op.len, 10) + adj)}t`;
+      err -= adj;
+    }
+    state.tickErr = start + count * err;
   };
   const isSsg = partLetter in SSG_PARTS;
   const partLetterIsPcm = partLetter in PCM_PARTS;
@@ -305,6 +328,8 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
   state.decisions = state.decisions || [];
   if (state.decisionIdx == null) state.decisionIdx = 0;
   state.crossStack = state.crossStack || [];
+  state.loopErr = state.loopErr || []; // tickErr at each open loop (closeLoopDither)
+  state.ditherTop = state.ditherTop || [];
   state.lfo = state.lfo || { on: false, delay: 0, clock: 0, amp: 0, amt: 0 };
   state.echo = state.echo || {}; // shared across parts via partState; local for macros
   let comment = null; // verbatim `; …` trailing comment, kept for the output line
@@ -564,12 +589,14 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         push({ t: "loop", count: 2, body: body2 });
         stack.push(body2);
       }
+      openLoopDither();
       continue;
     }
     if (c === "]") {
       // mucom tolerates whitespace before the repeat count (`] 2` == `]2`);
       // skip it so the count is read, not left as a stray unknown token.
       i++; skipSpaces(); const cnt = readInt();
+      if (stack.length > 1 || state.crossStack.length > 0) closeLoopDither(loopDepth(), cnt ?? 2);
       if (stack.length > 1) {
         // Close the innermost single-line loop (local nesting).
         stack.pop();
