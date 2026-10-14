@@ -55,6 +55,21 @@ import { PSG_MASTER_CLOCK } from "./src/ir-utils.js";
 const WORKLET_BLOCK = 128; // AudioWorklet block size
 const SCOPE_FLUSH = 1024; // scope samples per batch posted to the main thread
 
+// The FM channel (0-5) a YM write belongs to, or -1 for a global register.
+// CH3's operator F-numbers ($A8-$AE) are CH3's.
+function ymWriteChannel(port, addr, data) {
+  if (addr === 0x28) {
+    const c = data & 3;
+    return c === 3 ? -1 : c + (data & 4 ? 3 : 0);
+  }
+  if ((addr >= 0x30 && addr < 0xa8) || (addr >= 0xb0 && addr < 0xb8)) {
+    const c = addr & 3;
+    return c === 3 ? -1 : c + (port ? 3 : 0);
+  }
+  if (port === 0 && addr >= 0xa8 && addr < 0xb0) return 2;
+  return -1;
+}
+
 class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
     super(options);
@@ -109,8 +124,17 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._psgLatch = 0; // last PSG latch byte
 
     // FM/PSG register write queues. Drained block-quantized in process().
-    this._writeQueue = []; // untimed: [{port, addr, data}]
-    this._timedQueue = []; // timed: [{frame, port, addr, data}]
+    this._writeQueue = []; // untimed: [{port, addr, data, preview}]
+    this._timedQueue = []; // timed: [{frame, port, addr, data, preview}]
+
+    // FM channels the keys hold over a playing song (index.html previewTake).
+    // The song's writes to a held channel stay off the chip; every song write
+    // is remembered in _songRegs, so when the keys let go the channel waits
+    // for the song's next key-on — the preview's release rings until then —
+    // and that key-on lands on the song's registers replayed first.
+    // 0 = the song's, 1 = held, 2 = let go (the song's at its next key-on).
+    this._chHold = new Uint8Array(6);
+    this._songRegs = [new Int16Array(256).fill(-1), new Int16Array(256).fill(-1)];
 
     // DAC byte provider handed to the synth, once per FM native sample: the
     // engine's current byte, stepped at the image's own rate.
@@ -157,10 +181,14 @@ class YM2612Processor extends AudioWorkletProcessor {
             port: msg.port ?? 0,
             addr: msg.addr,
             data: msg.data,
+            preview: !!msg.preview,
           });
         } else {
           this._writeQueue.push(msg);
         }
+      } else if (msg.type === "hold-ch") {
+        const ch = msg.ch | 0;
+        if (ch >= 0 && ch < 6) this._chHold[ch] = msg.on ? 1 : this._chHold[ch] ? 2 : 0;
       } else if (msg.type === "pcm-set-bank") {
         this._setPcmBank(msg);
       } else if (msg.type === "pcm-ev") {
@@ -211,8 +239,12 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._fmFnumHi.fill(0);
         this._psgTone.fill(0);
         this._psgLatch = 0;
+        this._chHold.fill(0);
+        for (const r of this._songRegs) r.fill(-1);
       } else if (msg.type === "flush") {
-        // Discard pending scheduled writes (before hot-swap)
+        // Discard pending scheduled writes (before hot-swap); a new run plays
+        // its channels from the top, held or not.
+        this._chHold.fill(0);
         this._timedQueue = [];
         this._psgTimedQueue = [];
         this._pcmTimedQueue = [];
@@ -253,12 +285,12 @@ class YM2612Processor extends AudioWorkletProcessor {
 
   _drainImmediateYmWrites() {
     this._drainImmediateQueue(this._writeQueue, (op) => {
-      this._applyYmWrite(op.port ?? 0, op.addr, op.data);
+      this._applyYmWrite(op.port ?? 0, op.addr, op.data, op.preview);
     });
   }
 
   // Apply a YM register write, latching per-channel pitch on the way in.
-  _applyYmWrite(port, addr, data) {
+  _applyYmWrite(port, addr, data, preview = false) {
     const p = port ?? 0;
     const a = addr & 0xff;
     const d = data & 0xff;
@@ -276,8 +308,37 @@ class YM2612Processor extends AudioWorkletProcessor {
       this._synth.setDacEnabled(!!(d & 0x80));
       return;
     }
+    if (!preview) {
+      if (a !== 0x28) this._songRegs[p & 1][a] = d;
+      const ch = ymWriteChannel(p, a, d);
+      if (ch >= 0 && this._chHold[ch] !== 0) {
+        if (this._chHold[ch] === 1 || a !== 0x28 || (d & 0xf0) === 0) return;
+        this._chHold[ch] = 0;
+        this._replaySongRegs(ch);
+      }
+    }
     this._latchYmPitch(p, a, d);
     this._synth.writeYM(p, a, d);
+  }
+
+  // A held channel going back to the song: every register of it the song has
+  // written, as the song last left it — operators, $B0/$B4, then the
+  // F-numbers high byte first (CH3's operator ones too).
+  _replaySongRegs(ch) {
+    const p = ch >= 3 ? 1 : 0;
+    const c = ch % 3;
+    const r = this._songRegs[p];
+    const put = (a) => {
+      if (r[a] < 0) return;
+      this._latchYmPitch(p, a, r[a]);
+      this._synth.writeYM(p, a, r[a]);
+    };
+    for (let a = 0x30 + c; a < 0xa0; a += 4) put(a);
+    put(0xb0 + c);
+    put(0xb4 + c);
+    put(0xa4 + c);
+    put(0xa0 + c);
+    if (ch === 2) for (const a of [0xac, 0xa8, 0xad, 0xa9, 0xae, 0xaa]) put(a);
   }
 
   // True while a backend has DAC bytes queued for this block. Each is meant for
@@ -419,7 +480,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._drainImmediateYmWrites();
     if (!dacStreaming) {
       this._drainTimedQueue(this._timedQueue, blockEnd, (op) => {
-        this._applyYmWrite(op.port, op.addr, op.data);
+        this._applyYmWrite(op.port, op.addr, op.data, op.preview);
       });
     }
     this._drainImmediateQueue(this._psgWriteQueue, (data) => {
@@ -454,7 +515,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     const onFrame = dacStreaming
       ? (i) =>
           this._drainTimedQueue(this._timedQueue, currentFrame + i + 1, (op) => {
-            this._applyYmWrite(op.port, op.addr, op.data);
+            this._applyYmWrite(op.port, op.addr, op.data, op.preview);
           })
       : null;
     const getDacByte = pcmActive ? this._getDacByte : null;

@@ -774,7 +774,7 @@
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
-    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, PCM_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE } from './src/ir-utils.js';
+    import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, PCM_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, OP_ADDR_OFFSET, fmCarrierOpsForAlg, encode30, encode60, encode80, encodeB0, encodeB4 } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -7152,6 +7152,7 @@
       }
       applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH, def.regs);
       _kbAppliedDefSig = null; // the panel took the channel; let the keyboard re-push
+      _openingVoiceOn = null;
       stopBrowsePreview();
       previewNoteOn(CURSOR_DEF_PREVIEW_CH, midi);
       _browsePreviewTimers.push(setTimeout(
@@ -8128,15 +8129,23 @@
       player._psgSetAtt(psgCh, 15, audioCtx?.currentTime);
     }
 
+    // A preview's own register write: it reaches a channel the keys hold over
+    // the song, where the song's writes do not (previewTake).
+    function writePreview(port, addr, data) {
+      workletNode?.port.postMessage({ type: 'write', port, addr, data, preview: true });
+    }
+
     function previewFmNoteOn(chIndex, midi, vel) {
       const { fnum, block } = midiToFnumBlock(midi);
-      // The carriers' TL at this velocity, composed as a note's would be.
-      if (vel != null && player) player._writeFmLevel(chIndex, audioCtx?.currentTime, { vel });
+      const borrowed = _borrowedKeyMask.get(chIndex);
+      // The carriers' TL at this velocity, composed as a note's would be (a
+      // borrowed channel had its level written with its patch).
+      if (vel != null && player && borrowed == null) player._writeFmLevel(chIndex, audioCtx?.currentTime, { vel });
       const { port, chOffset } = fmPortAndOffset(chIndex);
       const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
       const low = fnum & 0xff;
-      writeToWorklet(port, 0xa4 + chOffset, high);
-      writeToWorklet(port, 0xa0 + chOffset, low);
+      writePreview(port, 0xa4 + chOffset, high);
+      writePreview(port, 0xa0 + chOffset, low);
       // CH3 may be left in FM3 special mode (separate per-operator frequencies)
       // after editing/playing an fm3-N score; the base A0/A4 write above only
       // reaches OP4 in that mode. Mirror the pitch onto every operator's
@@ -8145,15 +8154,15 @@
       if (chIndex === 2 && player && typeof player._writeFm3OpPitch === 'function') {
         for (let op = 1; op <= 4; op++) player._writeFm3OpPitch(op, midi);
       }
-      const keyMask = player ? player.getOpMask(chIndex) : 0xf0;
+      const keyMask = borrowed ?? (player ? player.getOpMask(chIndex) : 0xf0);
       const chKey = (port << 2) | chOffset;
-      writeToWorklet(0, 0x28, keyMask | chKey);
+      writePreview(0, 0x28, keyMask | chKey);
     }
 
     function previewFmNoteOff(chIndex) {
       const { port, chOffset } = fmPortAndOffset(chIndex);
       const chKey = (port << 2) | chOffset;
-      writeToWorklet(0, 0x28, chKey);
+      writePreview(0, 0x28, chKey);
     }
 
     // The player an FM or PSG preview writes through. The MMLispDRV reference
@@ -8669,7 +8678,30 @@
       if (_kbAppliedDefSig !== sig) {
         applyFmRegsToChannel(target.chIndex, target.defCtx.regs);
         _kbAppliedDefSig = sig;
+        _openingVoiceOn = null;
       }
+    }
+
+    // Stopped, nothing has put the song's voices on the chip (Stop drops the
+    // player; the keys' own starts from the default voice). So a selected FM
+    // channel gets its part's opening voice — the FM params its track sets
+    // before its first note — once per player, score and channel: a panel
+    // edit after that is the user's and stays.
+    let _openingVoiceOn = null; // { player, ir, ch } it was put on
+
+    function applyOpeningVoice(ch) {
+      const on = _openingVoiceOn;
+      if (on && on.player === player && on.ir === _lastGoodIR && on.ch === ch) return;
+      const tr = _lastGoodIR?.tracks?.find((t) => !t.se && CH_NAME_TO_INDEX[t.channel] === ch);
+      for (const e of tr?.events ?? []) {
+        if (e.cmd === 'NOTE_ON') break;
+        const { target, value } = e.args ?? {};
+        if (e.cmd === 'PARAM_SET' && /^FM_/.test(target ?? '') && Number.isFinite(value)) {
+          setLiveParamForChannel(target, value, ch);
+        }
+      }
+      _openingVoiceOn = { player, ir: _lastGoodIR, ch };
+      syncParamUI();
     }
 
     // POLYPHONIC PREVIEW: a held key takes a channel of its own. The three
@@ -8677,29 +8709,34 @@
     // kind the song leaves free: all of them while stopped, the trackless ones
     // while it plays (CH3 as a whole once the song puts it in its operator or
     // CSM mode). The target's patch and op mask are copied onto a pool channel
-    // as a key takes it, through the player, so its shadow stays true. With
-    // every pool channel held, the oldest key gives its channel up; with no
-    // free channel a song channel is played, over the song's own writes (the
-    // sequencer keeps writing it — a real take-over is driver.md §2.5's
-    // suspend, which the preview does not have): the selected channel, the
-    // part the keys replace, or with none selected the song's least busy
-    // channel — never FM1 by default, which is most often the lead. A sample
-    // (one bank) and the noise channel stay one voice.
+    // as a key takes it, through the player, so its shadow stays true. Past
+    // the free channels the keys borrow the song's: the selected channel
+    // first — the part they replace — then the least busy ones, so a chord
+    // drops the quietest parts, never FM1 by default (most often the lead).
+    // With every pool channel held, the oldest key gives its channel up.
+    // A borrowed FM channel is held, as driver.md §2.5 suspends a part for an effect: the
+    // song's writes stay off it (worklet hold-ch), the patch goes on as raw
+    // writes that leave the player's shadow the song's, and when the key lets
+    // go its release rings until the song's next note takes the channel back.
+    // CH3 in operator or CSM mode is played over, not held. A sample (one
+    // bank) and the noise channel stay one voice.
     const _previewVoices = new Map(); // chIndex → the voice (key) holding it
+    const _borrowedKeyMask = new Map(); // a held song channel → the keys' op mask
     let _previewSeq = 0;
 
-    function previewPool(target) {
-      const t = target.chIndex;
-      if (t === PCM_PREVIEW_CH || t === 9) return [t];
-      const kind = isFmChannel(t) ? [0, 1, 2, 3, 4, 5] : [6, 7, 8];
-      const notes = new Map(); // a song channel → the NOTE_ONs it plays
+    // What the playing song does with each channel: NOTE_ONs per channel
+    // (Infinity where the keys cannot sound), and whether CH3 is in operator
+    // or CSM mode. Empty while stopped.
+    function previewSongUse() {
+      const notes = new Map();
+      let fm3Mode = false;
       if (_fmLiveRaf != null) {
         for (const tr of _lastGoodIR?.tracks ?? []) {
           if (tr.se) continue;
           const n = tr.events?.filter((e) => e.cmd === 'NOTE_ON').length ?? 0;
           // A PCM note claims fm6 for the DAC, which mutes it as an FM channel.
           if (PCM_CH_NAME_TO_INDEX[tr.channel] != null) {
-            if (n > 0) notes.set(5, Infinity);
+            if (tr.events?.some((e) => e.cmd === 'PCM_NOTE_ON')) notes.set(5, Infinity);
             continue;
           }
           // A track with no notes (a def-mod :keyon off) leaves its channel to
@@ -8710,28 +8747,54 @@
           const psg = PSG_CH_NAME_TO_INDEX[tr.channel];
           const c = fm ?? (psg != null ? 6 + psg : null);
           // CH3 in operator or CSM mode is never free, even with no notes.
+          if (fm3) fm3Mode = true;
           if (c != null) notes.set(c, (notes.get(c) ?? 0) + Math.max(n, fm3 ? 1 : 0));
         }
       }
+      return { notes, fm3Mode };
+    }
+
+    function previewPool(target, { notes, fm3Mode }) {
+      const t = target.chIndex;
+      if (t === PCM_PREVIEW_CH || t === 9) return [t];
+      const fm = isFmChannel(t);
+      const kind = fm ? [0, 1, 2, 3, 4, 5] : [6, 7, 8];
       const free = kind.filter((c) => !notes.has(c));
       if (free.includes(t)) return [t, ...free.filter((c) => c !== t)];
-      if (target.replaces) return [...free, t];
-      if (free.length > 0) return free;
-      // Nothing free and no part to replace: the least busy song channel.
-      return [kind.reduce((a, b) => (notes.get(a) <= notes.get(b) ? a : b))];
+      // Song FM channels the keys can hold, least busy first: not CH3 in
+      // operator or CSM mode, nor fm6 under the DAC. PSG is played over, so
+      // it borrows one channel at most.
+      const busy = kind.filter((c) => notes.has(c) && !(target.replaces && c === t))
+        .sort((a, b) => notes.get(a) - notes.get(b));
+      const held = fm ? busy.filter((c) => Number.isFinite(notes.get(c)) && !(c === 2 && fm3Mode)) : [];
+      if (target.replaces) return [...free, t, ...held];
+      if (free.length + held.length > 0) return [...free, ...held];
+      // Nothing to hold: play over the least busy channel.
+      return [busy[0] ?? t];
     }
 
     function previewTake(target, midi, vel) {
       // The driver's run keeps its channels (and op masks) to itself.
       if (target.chIndex !== PCM_PREVIEW_CH && !claimPreviewPlayer()) return null;
-      const pool = previewPool(target);
+      const use = previewSongUse();
+      const { notes, fm3Mode } = use;
+      const pool = previewPool(target, use);
       let ch = pool.find((c) => !_previewVoices.has(c));
       if (ch == null) {
         ch = pool.reduce((a, b) => (_previewVoices.get(a).seq <= _previewVoices.get(b).seq ? a : b));
         _previewVoices.get(ch).ch = null; // its key no longer holds a channel
         previewNoteOff(ch);
       }
-      if (ch === target.chIndex) {
+      if (_fmLiveRaf == null && target.replaces && isFmChannel(target.chIndex)) {
+        applyOpeningVoice(target.chIndex);
+      }
+      const borrow = isFmChannel(ch) && Number.isFinite(notes.get(ch)) && !(ch === 2 && fm3Mode);
+      if (borrow) {
+        workletNode.port.postMessage({ type: 'hold-ch', ch, on: true });
+        const regs = target.useCursorDef ? target.defCtx.regs : player.getChRegs(target.chIndex);
+        writeBorrowedPatch(ch, regs, vel);
+        _borrowedKeyMask.set(ch, player.getOpMask(target.chIndex));
+      } else if (ch === target.chIndex) {
         ensurePreviewDefApplied(target);
       } else if (isFmChannel(ch)) {
         const regs = target.useCursorDef ? target.defCtx.regs : player?.getChRegs(target.chIndex);
@@ -8748,6 +8811,35 @@
       if (voice?.ch == null || _previewVoices.get(voice.ch) !== voice) return;
       _previewVoices.delete(voice.ch);
       previewNoteOff(voice.ch);
+      if (_borrowedKeyMask.delete(voice.ch)) {
+        workletNode?.port.postMessage({ type: 'hold-ch', ch: voice.ch, on: false });
+      }
+    }
+
+    // A patch onto a borrowed channel, register by register, past the player:
+    // its shadow stays the song's, which the song's own relative edits read
+    // and the channel goes back to. Carriers at the voiced level, or at `vel`
+    // composed as a note's would be; the pan stays the channel's.
+    function writeBorrowedPatch(ch, regs, vel) {
+      const { port, chOffset: c } = fmPortAndOffset(ch);
+      const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
+      regs.ops.forEach((o, i) => {
+        const a = OP_ADDR_OFFSET[i] + c;
+        const voiced = o.voicedTl ?? o.tl ?? 0;
+        const tl = vel != null && carriers.includes(i)
+          ? player._carrierTl({ voicedTl: voiced }, vel, VOL_UNITY, player._masterVol ?? VOL_UNITY)
+          : voiced;
+        writePreview(port, 0x30 + a, encode30(o));
+        writePreview(port, 0x40 + a, tl & 0x7f);
+        writePreview(port, 0x50 + a, ((o.rs ?? 0) << 6) | (o.ar ?? 0));
+        writePreview(port, 0x60 + a, encode60(o));
+        writePreview(port, 0x70 + a, o.d2r ?? 0);
+        writePreview(port, 0x80 + a, encode80(o));
+        writePreview(port, 0x90 + a, (o.ssg ?? 0) & 0x0f);
+      });
+      writePreview(port, 0xb0 + c, encodeB0(regs));
+      const pan = player._chRegs?.[ch]?.pan ?? 0;
+      writePreview(port, 0xb4 + c, encodeB4({ pan, ams: regs.ams ?? 0, fms: regs.fms ?? 0 }));
     }
 
     async function onPhysicalKeyDown(e) {
