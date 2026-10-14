@@ -10323,6 +10323,7 @@
       // While PCM plays, FM6 carries the DAC: its fnum/block latch describes a
       // note that is not sounding, so the trigger must treat it as unpitched.
       if (msg.fm6IsDac) _scopeFreqs[5] = 0;
+      _scopePcmVoices = !!msg.fm6IsDac;
       if (_vizRoll) rollTraceBatch(msg.time);
       const pos = _scopeAbs % SCOPE_RING;
       let len = 0;
@@ -10342,12 +10343,14 @@
       // Recycle the transferred buffers back to the worklet.
       workletNode?.port.postMessage({ type: 'scope-return', ch: msg.ch }, msg.ch);
     }
-    // The strip head's scope channel: a PCM track has its voice's own tap (it
-    // sounds through the FM6 DAC, whose tap is the voices' sum), and the fm3
-    // variants share hardware FM3.
+    // The strip head's scope channel: a PCM track has its voice's own tap
+    // while the worklet's engine feeds the DAC; under MMLispDRV the driver
+    // streams the DAC itself, so the voices are not taken apart and every PCM
+    // track shows FM6's tap, their sum. The fm3 variants share hardware FM3.
+    let _scopePcmVoices = false; // the latest batch's taps 10-12 are live
     function scopeChannelOf(head) {
       const r = channelRouting(head);
-      if (r.volKind === 'pcm') return 10 + Number(head.slice(3)) - 1;
+      if (r.volKind === 'pcm') return _scopePcmVoices ? 10 + Number(head.slice(3)) - 1 : 5;
       if (r.volKind === 'psg') return 6 + r.volIndex;
       return r.volIndex;
     }
