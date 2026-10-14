@@ -280,6 +280,19 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   earlier, and the note cut is already controlled where it matters — a slur
   keeps the voice in place, a `:gate-` silence is used as it is. Revisit only
   if a score suffers from the cut.
+- **Within the window, the lightest frame** (user, 2026-10-14, "A + C"): the
+  behaviour is `language.md` §9. Why: on `disco1` the two measured slips were
+  not hoisted voices at all — a voice the mucom importer wrote before a rest
+  (`stab _2 (x 26 _1 e …)`) landed on another channel's beat (fm5's key-on
+  33 ms late at lead 2), and the head of a `(go loop3 2)` repeat puts five
+  voices with their notes in one frame. So a voice written before a rest is treated like one
+  in the gap (C), and every placed voice takes the first frame of its window
+  free of voices and FM key-ons (A); the loop head (B) was deferred as one
+  beat's worth and a driver change ([[pcm]] Open). Measured: disco1 FM key-on
+  error max 33.3 → 14.0 ms, the voice-change render 153% → 117% of a frame;
+  the single-voice case lands where it did. Spreading does nothing for the
+  single-bank WIRE (the pairs before a key-on are the same however they are
+  spread over the window); it is the 68000's render it halves.
 - **Two frames of lead, eight pairs ahead** (user, 2026-10-14, "進めて"). The
   frame slip above is the render missing its vblank; `MMLISP_LEAD` 2 gives it
   the whole frame before. The user's worry was SE latency ("1フレームの遅れ、

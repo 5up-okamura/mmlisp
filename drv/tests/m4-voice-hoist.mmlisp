@@ -3,6 +3,10 @@
 ; about 40 ms short); after a :gate- note (its own silence); after a tie chain;
 ; after a loop that ends in a rest (the rest is peeled out of the final pass);
 ; and a voice change inside a slur, which stays where it was written.
+; Then the spread: fm1, fm2 and fm3 all change voice before the beat at 384
+; after a rest, so their voices take three different frames of the window;
+; fm3's is written before its rest (stab _ c), fm5's before a rest that runs
+; into a loop (stab _ (x 2 _ c)) and goes to the rest's end.
 
 (def-fm lead :alg 4 :fb 3
   :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
@@ -17,8 +21,8 @@
   :ar4 31 :dr4 6 :sr4 1 :rr4 7 :sl4 2 :tl4 4 :ks4 0 :ml4 5 :dt4 0)
 
 (fm1 :tempo 150 :oct 4 :len 4 :vel 12 lead c _ stab :vel 10 e _ lead g)
-(fm2 :oct 3 :len 4 :vel 12 lead c stab e lead g c)
-(fm3 :oct 4 :len 4 :vel 11 :gate- 10t lead e stab g lead > c)
+(fm2 :oct 3 :len 4 :vel 12 lead c stab e lead g _ stab c)
+(fm3 :oct 4 :len 4 :vel 11 :gate- 10t lead e stab g lead > c stab _ c)
 (fm4 :oct 3 :len 4 :vel 12 lead c ~ c ~ c stab e lead g)
-(fm5 :oct 4 :len 8 :vel 11 lead (x 3 c _) stab :pan -1 e4 lead :pan 0 g4)
+(fm5 :oct 4 :len 8 :vel 11 lead (x 3 c _) stab :pan -1 e4 lead :pan 0 g4 stab _ (x 2 _ c))
 (fm6 :oct 3 :len 4 :vel 12 lead c ~ stab e lead g)

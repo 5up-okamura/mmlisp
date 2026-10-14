@@ -357,8 +357,12 @@ What moves an onset off its frame is the pair wire: the Z80 sends a frame's
 writes one by one, so a key-on waits behind the writes queued before it (16
 pairs a frame on the single-bank host, §6.6). The largest burst is a voice
 change, ~36 writes a channel, so the compiler sends a voice ahead of its note,
-in the silence before it (`live/src/voice-hoist.js`, language.md §9): the
-note's frame keeps its pitch, key-on and level writes. Within a frame, the
+in the silence before it (`live/src/voice-hoist.js`, language.md §9), on the
+first frame of its window that has no other channel's voice and no FM key-on:
+the note's frame keeps its pitch, key-on and level writes, and several
+channels changing voice before one beat cost the 68000 one voice a frame, not
+all of them in one render (§5.4's host measured a 33 ms late key-on on such a
+frame, 14 ms spread). Within a frame, the
 single-bank converter sends the key-ons last (`mmlpairs.c` keyons_last), so a
 chord keys within a few pairs (~3 ms) instead of behind every pitch and level
 write of the frame; each channel's own writes still precede its key-on, a

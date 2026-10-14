@@ -809,8 +809,12 @@ compiler moves a voice written before a note into the silence before it,
 together with the channel's own `:vel`, `:vol`, `:pan` and `:pitch` written
 there (`:lfo-rate` and `:master` stay with the note):
 
-- after a rest, the voice goes in about 80 ms (four PAL frames) before the
-  note;
+- after a rest, the voice goes in the last four PAL frames (about 80 ms) of
+  it. A voice written before the rest, `stab _ c`, goes there too, and so
+  does one before a rest that runs on through rests and loops of rests,
+  `stab _2 (x 4 _1) c`, or up to a loop or label, `stab _2 (x 4 _1 e …)`: a
+  voice sounds at the next note wherever that is, so it waits at the end of
+  the rest;
 - after a note that runs into the next one, that note is **cut about 40 ms
   short** (two PAL frames, the same ticks on either standard) to make the
   silence; a `:gate-`/`:gate*` that already leaves one is
@@ -818,10 +822,17 @@ there (`:lfo-rate` and `:master` stay with the note):
 - after a counted loop that ends in a rest, `(x N … _)`, the loop's last pass
   leaves the rest out and it is played after the loop, so the voice can go in.
 
+Which frame of those: the first that is free — no other channel's voice
+already there, no FM key-on there on any channel — else the one with the
+fewest. Several channels changing voice before the same beat take several
+frames, one voice each, instead of one frame (a voice is about 36 writes of
+the driver's frame, and of its wire); a voice alone takes the earliest, as
+before.
+
 Nothing moves inside a slur (`c ~ lead e`), across a `#label` or `(go …)`, at a
-track's start (it is sent at load, driver.md §4.1), on an `fm3-N` operator
-track or with CSM, or in an effect's part. Note onsets never move. The editor
-plays the same moved stream as the driver.
+track's start (it is sent at load, driver.md §4.1), at a loop's head, on an
+`fm3-N` operator track or with CSM, or in an effect's part. Note onsets never
+move. The editor plays the same moved stream as the driver.
 
 **`:key N`** gives a voice its own pitch: c4 sounds at MIDI note `N`
 (0–127, else `E_VOICE_VALUE`), and every note written on the voice moves by

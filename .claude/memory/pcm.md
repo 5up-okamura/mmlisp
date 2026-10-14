@@ -92,15 +92,33 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
   a banked mucom import (`disco1`, two voices) rendered 10–20 ms on a
   chord-and-drums frame and up to 45 ms on a voice-change frame. The frame
   slip is covered by `MMLISP_LEAD` 2 and `MMLP_AHEAD` 8 ([[driver-decisions]]
-  §10), the first optimisation pass by git. Still open, as separate work: the
-  per-note path (an FM note-on ~6.1k cycles, `apply_patch` ~11k a voice,
-  PARAM_SET ~1.2k, `dispatch` ~400 an opcode, a vibrato macro step ~1.6k a
-  channel a frame — spread, no hot spot: `sgdk-profile --pc --peak`), and
-  spreading a bar's voice uploads over the hoist window in the compiler
-  (`onset-3v`: five voices in one frame is >1 frame of render on its own; the
-  wire needs ~6.5 frames for them, the window stays 4). Not adopted: STAGED
-  EARLY in the host lane — at lead 1 the next frame is never queued at the
-  vblank, and at lead 2 it measured no better than the unchanged converter.
+  §10), the first optimisation pass and the voice spread by git. What the
+  profile says (BlastEm, `sgdk-profile --fn` / `--pc --peak`): **a YM register
+  write costs ~2,000 cycles end to end** — ~400 in the sequencer (`ym()`,
+  shadow, `q_push`), ~870 in the banked converter, ~220 in `mmlp_plan` and
+  the grab — so a peak render is its write count (116 writes = 2.4 frames);
+  the converter is 2% of all 68000 time but 30–45% of a peak render. Steady
+  state: the tick walk ~550 cycles a track a frame (4.5% of the CPU), a macro
+  slot ~1,000 a frame, `mmlp_plan` + pump ~3%. The driver's average share is
+  ~17% of the 68000; the C-level items left (a tick-walk fast path ~1.5%,
+  skipping HOLD macro slots ~0.5–1%) sum to 3–4 points and stop there — the
+  floor is C on the 68000 at ~10 cycles an operation. Not adopted: a
+  banked_writes rewrite that reads the ring once and keeps YM pointers
+  (byte-identical over 400k fuzzed frames, p50 −36%, but no gain on the peak
+  frames and +4 KB of RAM; patch in the 2026-10-14 session's scratch); STAGED
+  EARLY in the host lane. Still open: **a voice at a loop head** (`disco1`'s
+  first beat — the head of a `#loop3 … (go loop3 2)` repeat, five voices with
+  their notes in one frame, 242%, and the repeat's second head at 79 s the
+  same; `pcmt13` the same every 16 bars) — the IR hoist cannot cross the loop edge
+  and the song changes voices later, so it is not loop-invariant; a copy before
+  the loop in the rest there fixes pass 1 (~165% of a frame, inside lead 2);
+  a later pass's head needs the voice at the head when the body changes
+  voices, so it would take the voice rotated into the body's tail rest behind
+  a (break); skipping an `apply_patch` whose voice id is current would save
+  the head's 11k cycles a channel but needs the id invalidated on every
+  voiced write path in three players. Deferred by the user 2026-10-14. And the structural change if the average matters: the
+  sequencer pushing pairs straight into the converter's queue (one queue and
+  a classify pass fewer: −2% average, −30–40% on a peak, −5 KB RAM).
 - Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.
