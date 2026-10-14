@@ -126,12 +126,34 @@ function sourceLine(src, line) {
   return line ? (src.split("\n")[line - 1] ?? "").trimEnd() : "";
 }
 
+// Where language.md explains a diagnostic: the section that first names its
+// code, as an argument mmlisp_docs takes ("9.2", or a heading's own words).
+let _codeSections = null;
+function codeSection(code) {
+  if (!_codeSections) {
+    _codeSections = new Map();
+    const { lines, heads } = docSections(fs.readFileSync(path.join(ROOT, DOCS.language), "utf8"));
+    lines.forEach((l, i) => {
+      for (const [c] of l.matchAll(/\b[EW]_[A-Z0-9_]+\b/g)) {
+        if (_codeSections.has(c)) continue;
+        const h = heads.findLast((x) => x.line <= i);
+        if (!h) continue;
+        const num = /^(\d+(?:\.\d+)*)\.?\s/.exec(h.title);
+        _codeSections.set(c, num ? num[1] : h.title.replace(/`/g, ""));
+      }
+    });
+  }
+  return _codeSections.get(code) ?? null;
+}
+
 function formatDiagnostics(diags, src) {
   return diags.map((d) => {
     const where = d.line ? `${d.line}:${d.column ?? 1}` : "-";
     const track = d.track ? ` [${d.track}]` : "";
     const code = sourceLine(src, d.line);
-    return `${d.severity} ${d.code} at ${where}${track}: ${d.message}` + (code ? `\n    | ${code}` : "");
+    const sec = codeSection(d.code);
+    const see = sec ? ` (see mmlisp_docs language section "${sec}")` : "";
+    return `${d.severity} ${d.code} at ${where}${track}: ${d.message}${see}` + (code ? `\n    | ${code}` : "");
   });
 }
 
@@ -275,12 +297,13 @@ function readDoc({ doc = "language", section, query }) {
     return `${file} — pass \`section\` (a number like "10" or "9.2", or words from a title) to read one:\n` +
       heads.map((h) => "  ".repeat(h.level - 1) + h.title).join("\n");
   }
-  const s = String(section).toLowerCase();
+  const norm = (x) => String(x).toLowerCase().replace(/`/g, "");
+  const s = norm(section);
   const idx = heads.findIndex((h) => {
-    const t = h.title.toLowerCase();
+    const t = norm(h.title);
     return t.startsWith(s + ".") || t.startsWith(s + " ") || t === s;
   });
-  const at = idx >= 0 ? idx : heads.findIndex((h) => h.title.toLowerCase().includes(s));
+  const at = idx >= 0 ? idx : heads.findIndex((h) => norm(h.title).includes(s));
   if (at < 0) throw new Error(`no section matching "${section}" in ${file}`);
   const h = heads[at];
   const end = heads.slice(at + 1).find((x) => x.level <= h.level);

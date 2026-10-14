@@ -21,6 +21,11 @@ game state at runtime.
   auditions your score in the browser through a cycle-accurate **Nuked-OPN2**
   (YM2612) core — the same register writes the real chip sees — and hot-swaps
   the recompiled score without stopping playback.
+- **Compose with an AI.** An [MCP server](tools/mcp/README.md) gives Claude
+  Code, Claude Desktop or any MCP client the language reference, the real
+  compiler's diagnostics and WAV renders — and, with **Tools > Connect to AI**,
+  the score open in MMLisp Live: the AI edits it and plays it while you listen,
+  every change one undo away. Plain text scores are a language an AI can write.
 - **Deep FM expression as language features.** Per-operator envelope/LFO macros,
   cent-accurate glide and vibrato, **FM3 independent-operator mode** and CSM,
   chiptune arpeggios (`:semi`) and drum rolls (`:keyon`) — advanced YM2612

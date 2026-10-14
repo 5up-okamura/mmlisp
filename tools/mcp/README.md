@@ -10,7 +10,7 @@ dependencies (Node 18+).
 
 | Tool              | What it does                                                                 |
 | ----------------- | ---------------------------------------------------------------------------- |
-| `mmlisp_check`    | Compile; diagnostics with the offending line, each track's length (loops unrolled), song length |
+| `mmlisp_check`    | Compile; diagnostics with the offending line and the reference section that explains them, each track's length (loops unrolled), song length |
 | `mmlisp_ir`       | Compile and return the IR JSON (optionally one track)                        |
 | `mmlisp_format`   | The editor's formatter; with `path` + `write` rewrites the file              |
 | `mmlisp_live`     | A share link that opens the score in MMLisp Live, ready to play and edit     |
