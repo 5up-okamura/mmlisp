@@ -6,7 +6,8 @@
 (import "presets/gm/set.mmlisp")
 
 (fm1 :tempo 110 :oct 5 gm-marimba
-  ; dotted-eighth delay: 3 taps, each 4 velocity steps quieter
+  ; dotted-eighth delay, each tap 4 velocity steps quieter: two land in the
+  ; rest, the third on the next note — and the written note wins
   (delay 3 :vel+ -4 :time 8.)
   :len 4 :gate 8. c _ g _ e _ d _
 
@@ -14,7 +15,9 @@
   (delay :vel* [0.7 0.45 0.25] :time 16)
   :len 8 :gate 16 c _ _ _ e _ _ _ g _ _ _ > c < _ _ _
 
-  ; a curve is the envelope; the tap count is its :len / :time
-  (delay :vel* (linear 0.9..0.1 :len 2) :time 8)
-  :len 1 :gate 8 c
+  ; a curve is the envelope, its :len / :time taps (five here). Every note
+  ; leaves its own, so with :time as long as the phrase the whole phrase
+  ; repeats, fading to vel 0 — which FM still sounds
+  (delay :vel* (linear 0.9..0 :len 1) :time 8.)
+  :len 16 c g > c
   (delay none))
