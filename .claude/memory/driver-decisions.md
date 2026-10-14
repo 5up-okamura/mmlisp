@@ -270,9 +270,9 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   the banked converter bypassed the lane until 2026-10-13 and takes it now);
   **ordinary FM3 in the short-group priority** (when the `$27` shadow says
   normal mode); **key-ons last × `banked_writes`** (its short-groups-first
-  rule would be undone). Reopen (b)/(c) only if the multi-bank listening test
-  ([[pcm]] Open) hears onset wobble; `onset-timing.mjs` rejects multi-bank
-  scores, so measuring needs the banked host model first.
+  rule would be undone). The wobble the user then heard on a banked score was
+  the render slipping a frame, not the order (two frames of lead, below);
+  reopen (b)/(c) only if one is heard again. `banked:sgdk` measures it.
 - **The hoist windows stay fixed** (rest 4 frames, note cut 2; user,
   2026-10-13), no song-level setting: a wider rest window only sends the voice
   earlier, and the note cut is already controlled where it matters — a slur

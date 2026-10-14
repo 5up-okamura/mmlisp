@@ -88,7 +88,6 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 
 ## Open
 
-- **The integrated multi-bank build has had no listening test.**
 - **The 68000's per-frame cost is "a big problem"** (user, 2026-10-14):
   with one frame of lead, a chord-and-drums frame of `disco1` (a mucom import,
   two banked voices) ran 10–20 ms and a voice-change frame up to 45 ms, past
