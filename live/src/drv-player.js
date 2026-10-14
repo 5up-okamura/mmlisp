@@ -522,6 +522,8 @@ export class DrvPlayer {
       trigByte: 0, // the game-readable trig status byte (opcodes.md §0x42)
       wait: 0, // ticks until the next timed event resumes
       gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
+      keyedNow: false, // a note keyed this frame (a gate running out in it waits)
+      offNext: false, // a gate key-off held to the next frame's head
       pendingOff: false, // full-gate key-off awaiting the next event
       running: autoStart && !(t.flags & TRACK_FLAG.isSe), // the game starts an effect
       // FRESH: the track's leading setup has not run yet. A start sets it; the
@@ -1015,6 +1017,8 @@ export class DrvPlayer {
       return;
     }
     trk.wait = dur;
+    trk.keyedNow = true;
+    trk.offNext = false; // this note-on keys the channel; an off held for the last is moot
     if (exGate === 0) {
       // gate 0: the note holds until a runtime KEY_OFF or the next note, and
       // the track keeps time by its length (language.md §17).
@@ -2685,6 +2689,7 @@ export class DrvPlayer {
     trk.wait = 0;
     trk.gateLeft = -1;
     trk.pendingOff = false;
+    trk.keyedNow = trk.offNext = false;
     trk.trigByte = 0;
     trk.loops = [];
     trk.held = false;
@@ -3035,6 +3040,13 @@ export class DrvPlayer {
       // frame the track starts in. The track then accumulates in this frame.
       if (sub === 0) {
         for (const trk of this._trk) {
+          // A key-off held over from a note keyed in the last frame (gate).
+          if (trk.offNext) {
+            this._curAcc = 0;
+            this._channelOff(trk.channelId);
+            trk.offNext = false;
+          }
+          trk.keyedNow = false;
           if (trk.running && trk.fresh) {
             this._dispatch(trk);
             trk.fresh = false;
@@ -3054,7 +3066,10 @@ export class DrvPlayer {
           if (trk.gateLeft > 0) {
             trk.gateLeft--;
             if (trk.gateLeft === 0) {
-              this._channelOff(trk.channelId);
+              // A gate that runs out in its note-on's own frame keys off at
+              // the next frame's head: on and off in one frame never sound.
+              if (trk.keyedNow) trk.offNext = true;
+              else this._channelOff(trk.channelId);
               trk.gateLeft = -1;
             }
           }

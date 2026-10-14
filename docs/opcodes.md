@@ -68,7 +68,8 @@ structural end for validation).
 **0x10 NOTE_ON** — key-on `note` (u8 MIDI number → F-number/block or PSG
 period via ROM LUTs, mmb.md §7.3) using the track's current **vel** and
 **gate** state (see §4). Advance the clock by `dur`. Key-off fires at
-`dur × gate / 8` ticks; with gate = 8 the key-off at `dur` expiry is held for
+`dur × gate / 8` ticks (one that would land in the note-on's own frame waits
+for the next frame, driver.md §4); with gate = 8 the key-off at `dur` expiry is held for
 the next opcode to resolve: TIE extends the note and keeps it pending, a
 **legato** NOTE_ON_EX (bit3, §5.1) cancels it, and everything else — a plain
 NOTE_ON, REST, END_OF_TRACK — fires it. Before a NOTE_ON it is written ahead of

@@ -386,7 +386,10 @@ this order and the 68k C reproduces it (§12):
    loop; each consumed tick counts down `wait_ticks` and, at zero, executes
    stream events (immediate events run back-to-back; the next timed event
    reloads `wait_ticks`). Key-offs scheduled by the gate rule fire on their
-   tick inside this loop.
+   tick inside this loop — except one whose note keyed on in this same frame:
+   on and off in one frame would never sound, so it fires at the head of the
+   next frame (before that frame's dispatch), and a note-on in between
+   drops it.
 3. **Engines, ascending channel index:** sweep interpolators, then macro
    steppers (§13.3). A sweep takes its first step in the frame its
    PARAM_SWEEP dispatched in, so a note in that frame composes from the level

@@ -1,0 +1,5 @@
+; M4 gate: a gate shorter than a frame. At 150 BPM a frame is 4 ticks, so a
+; 16th cut to 3 ticks (:gate- 21t) can key on and run out in one frame; the
+; key-off then waits for the next frame's head, so every note sounds a frame.
+(fm4 :tempo 150 :oct 5 :len 16 :gate- 21t c c c c e- e- e- e- :gate- 18t f f f f)
+(sqr1 :oct 4 :len 16 :gate- 22t c c c c c c c c)

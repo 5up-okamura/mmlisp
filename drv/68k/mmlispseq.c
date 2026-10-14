@@ -1817,6 +1817,8 @@ static void note_on(MMLSeq *s, MMLTrack *t, int note, int32_t dur, int32_t ex_ga
     return;
   }
   t->wait = dur;
+  t->keyed_now = 1;
+  t->off_next = 0; /* this note-on keys the channel; an off held for the last is moot */
   if (has_ex_gate && ex_gate == 0) {
     /* gate 0: the note holds until a runtime KEY_OFF or the next note, and the
      * track keeps time by its length (language.md §17). */
@@ -2458,6 +2460,13 @@ static void run_frame(MMLSeq *s) {
     if (sub == 0)
       for (uint8_t i = 0; i < s->track_count; i++) {
         MMLTrack *t = &s->trk[i];
+        /* A key-off held over from a note keyed in the last frame (gate). */
+        if (t->off_next) {
+          s->cur_acc = 0;
+          channel_off(s, t->channel_id);
+          t->off_next = 0;
+        }
+        t->keyed_now = 0;
         if (t->running && t->fresh) {
           dispatch(s, t);
           t->fresh = 0;
@@ -2483,7 +2492,8 @@ static void run_frame(MMLSeq *s) {
         if (t->gate_left > 0) {
           t->gate_left -= k;
           if (t->gate_left == 0) {
-            channel_off(s, t->channel_id);
+            if (t->keyed_now) t->off_next = 1; /* keyed this frame: off at the next */
+            else channel_off(s, t->channel_id);
             t->gate_left = -1;
           }
         }
@@ -2844,6 +2854,7 @@ void mml_start_all(MMLSeq *s) {
     s->trk[i].running = 1;
     s->trk[i].fresh = 1; /* the leading setup runs at the next frame's head */
     s->trk[i].gate_left = -1;
+    s->trk[i].keyed_now = s->trk[i].off_next = 0;
   }
 }
 
@@ -3321,6 +3332,7 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   t->wait = 0;
   t->gate_left = -1;
   t->pending_off = 0;
+  t->keyed_now = t->off_next = 0;
   t->trig_byte = 0;
   t->csm_on = 0;
   t->depth = 0;

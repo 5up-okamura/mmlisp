@@ -318,6 +318,9 @@ typedef struct {
   int32_t wait;      /* ticks until the next timed dispatch */
   int32_t gate_left; /* -1 = none */
   uint8_t pending_off;
+  /* A gate that runs out in its note-on's own frame keys off at the next
+   * frame's head instead: on and off in one frame would never sound. */
+  uint8_t keyed_now, off_next;
   uint8_t trig_byte; /* game-readable trig status (opcodes.md 0x42) */
   uint8_t csm_on;    /* this track turned CSM on: its end or stop turns it off */
   /* FADE_TRACK: a division-free Bresenham vol ramp to 0, then stop (§6.5). */
