@@ -1627,8 +1627,9 @@ static void apply_patch(MMLSeq *s, int ch, const uint8_t *e) {
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   /* TL goes out COMPOSED, not raw — op_level() holds that rule (§7). Raw would
    * step the level by up to +10 dB on whatever note is still sounding:
-   * inaudible at track start (the armed frame keeps it silent) but audible at
-   * every loop point and every mid-song patch change that re-applies a voice.
+   * inaudible at track start (a start silences the channel's owner) but
+   * audible at every loop point and every mid-song patch change that
+   * re-applies a voice.
    * The voice's own algorithm is passed in, because it decides the carriers
    * here even though its $B0 still goes out last. */
   for (int op = 0; op < 4; op++) {
@@ -1843,10 +1844,9 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
   int guard = 0;
   while (t->running && !t->held && guard++ < 4096) {
     uint8_t op = st[t->pc];
-    /* An armed track runs the score's leading setup and stops at the first
-     * opcode that sounds or consumes time, so the frame it was started in
-     * makes no sound however long its voice applies take (driver.md §4.2). */
-    if (t->armed && ((op >= OP_NOTE_ON && op <= OP_NOTE_ON_EX) || op == OP_PCM_NOTE_ON)) return;
+    /* A fresh track runs the score's leading setup and stops at the first
+     * opcode that sounds or consumes time (driver.md §4.2). */
+    if (t->fresh && ((op >= OP_NOTE_ON && op <= OP_NOTE_ON_EX) || op == OP_PCM_NOTE_ON)) return;
     switch (op) {
       case OP_END_OF_TRACK:
         t->pending_off = 0;
@@ -2431,20 +2431,22 @@ static uint16_t sub_increment(uint16_t inc, int sub) {
 static void run_frame(MMLSeq *s) {
   for (int sub = 0; sub < MML_SLOT_SUBS; sub++) {
     s->sub = (uint8_t)sub;
+    /* A started track's leading setup runs at the head of its first frame,
+     * before the tempo step below is taken: a head TEMPO_SET governs the frame
+     * the track starts in. The track then accumulates in this same frame. */
+    if (sub == 0)
+      for (uint8_t i = 0; i < s->track_count; i++) {
+        MMLTrack *t = &s->trk[i];
+        if (t->running && t->fresh) {
+          dispatch(s, t);
+          t->fresh = 0;
+        }
+      }
     uint16_t step = sub_increment(s->increment, sub);
     if (sub == 0) s->frame_inc = step; /* a tick-clocked macro's share (§13.2) */
     for (uint8_t i = 0; i < s->track_count; i++) {
       MMLTrack *t = &s->trk[i];
       if (!t->running || t->held) continue;
-      if (t->armed) {
-        if (sub != 0) continue; /* the setup runs once, at the frame head */
-        dispatch(s, t);         /* leading setup only — see the armed test there */
-        t->armed = 0;           /* notes start next frame */
-        t->armed_frame = s->frame; /* ...and this frame advances no ticks */
-        continue;
-      } else if (t->armed_frame == s->frame) {
-        continue; /* the armed frame is silent setup, at any sub-tick */
-      }
       t->acc = (uint16_t)(t->acc + ((t->flags & TRACK_FLAG_IS_SE) ? sub_increment(t->inc, sub) : step));
       while (t->acc >= 0x100) {
         /* STRAIGHT TO THE NEXT TICK THAT DOES SOMETHING. The ticks before the
@@ -2667,7 +2669,6 @@ int mml_load(MMLSeq *s, const uint8_t *mmb, uint32_t len) {
     s->trk[i].flags = track_table[at + 2];
     s->trk[i].event_offset = rd16(track_table, at + 3);
     s->trk[i].pc = s->trk[i].event_offset;
-    s->trk[i].armed_frame = 0xffffffffu; /* never armed; frame 0 is a real one */
     s->trk[i].displaced = 0xff;
     s->trk[i].se_index = 0xff;
   }
@@ -2820,8 +2821,7 @@ void mml_start_all(MMLSeq *s) {
   for (uint8_t i = 0; i < s->track_count; i++) {
     if (s->trk[i].flags & TRACK_FLAG_IS_SE) continue; /* the game starts those */
     s->trk[i].running = 1;
-    s->trk[i].armed = 1; /* the armed frame, driver.md §4.2 */
-    s->trk[i].armed_frame = 0xffffffffu;
+    s->trk[i].fresh = 1; /* the leading setup runs at the next frame's head */
     s->trk[i].gate_left = -1;
   }
 }
@@ -3306,8 +3306,7 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   t->held = 0;
   t->fading = 0;
   t->running = 1;
-  t->armed = 1; /* silent setup frame; the first dispatch is the next one */
-  t->armed_frame = 0xffffffffu;
+  t->fresh = 1; /* the leading setup runs at the next frame's head (§4.2) */
   t->suspended = 0;
   t->is_se = (uint8_t)as_se;
 }
@@ -3372,7 +3371,7 @@ int mml_se_playing(const MMLSeq *s, uint8_t se) {
  * of it has to cross the wire before the first note can sound behind it
  * (driver.md §15.3: ~30 writes a channel, 960 a second). Run at load, while
  * nothing plays, the setup reaches the chip early: each track is started, its
- * leading setup dispatched as the armed frame would, and stopped again before
+ * leading setup dispatched up to the first note, and stopped again before
  * it sounds. The real start later does everything it always did; the change-
  * only write path finds the registers already holding those values and sends
  * only what differs. So the chip is in the same state at every point after the
@@ -3391,9 +3390,9 @@ void mml_prime_tracks(MMLSeq *s) {
       if (s->trk[j].running && s->trk[j].channel_id == ch) owned = 1;
     if (owned) continue;
     mml_start_track(s, t->track_id);
-    dispatch(s, t); /* armed: the leading setup, up to the first note */
+    dispatch(s, t); /* fresh: the leading setup, up to the first note */
+    t->fresh = 0;
     t->running = 0; /* never keyed, so stopping writes nothing */
-    t->armed = 0;
   }
 }
 

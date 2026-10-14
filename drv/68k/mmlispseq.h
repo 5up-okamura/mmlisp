@@ -10,7 +10,7 @@
  * assembler, a debugger on both sides.
  *
  * Scope so far: M1 + M2 + M3 (driver.md §11) — the core opcode set, FM + PSG
- * note paths, the level model, pitch, loops/calls, tempo, the armed frame, slot
+ * note paths, the level model, pitch, loops/calls, tempo, track start, slot
  * emission through the real cap/spill queue, the sweep engine and host API, and
  * now the macro engine, the value machine's stream ops, FM3 independent-OP mode,
  * PCM command emission and SE (suspend / restore, priority). Anything still
@@ -284,7 +284,13 @@ typedef struct {
 } MMLCh3Snap;
 
 typedef struct {
-  uint8_t running, armed, held;
+  uint8_t running, held;
+  /* FRESH: the track's leading setup has not run yet. A start sets it; the
+   * setup runs at the head of the track's first frame, before that frame's
+   * tempo step is taken, so a head TEMPO_SET governs the frame it starts in
+   * (driver.md §4.2). Dispatch stops at the first opcode that sounds or
+   * consumes time while it is set. */
+  uint8_t fresh;
   /* SUSPENDED (the fourth track state, beside idle/running/held): a BGM owner
    * an SE displaced. It keeps its state, does not dispatch and does not own
    * its channel; the SE's end puts it back. Eviction would be the wrong
@@ -304,9 +310,6 @@ typedef struct {
   uint8_t pcm_snap, pcm_snap_sample, pcm_snap_loop, pcm_vi;
   uint8_t pcm_se, pcm_bind_count;
   MMLMacroBind pcm_binds[MML_MACRO_BINDS];
-  /* The frame the armed setup ran in. The armed frame advances no ticks at ALL
-   * of its sub-ticks, not only the one that ran the setup (driver.md §3.5). */
-  uint32_t armed_frame;
   uint8_t track_id, channel_id, flags;
   uint16_t event_offset; /* stream start, for a restart */
   uint16_t pc;
@@ -472,7 +475,8 @@ void mml_start_all(MMLSeq *s);
 
 /* Start one track by its MMB track id (driver.md §6.5): re-init its dispatch
  * state, apply the channel-ownership rule (§2.2 — the current owner is evicted),
- * reset the channel's level state to defaults, and enter the armed frame (§4.2).
+ * reset the channel's level state to defaults; the track dispatches from the
+ * frame this call is drained in (§4.2).
  * Starting an already-running track restarts it from the top. */
 void mml_start_track(MMLSeq *s, uint8_t track_id);
 

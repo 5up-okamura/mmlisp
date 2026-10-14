@@ -51,7 +51,8 @@ const model=new MultibankModel(image.gen,rom);let mismatch=0;
 for(let i=0;i<dac.length;i++)if(model.slot(stores.get(i))!==dac[i].value)mismatch++;
 if(mismatch)fail.push(`${mismatch} DAC mismatches`);if(!dac.some(d=>d.value!==128))fail.push('silent PCM');
 const player=new DrvPlayer();player.loadMMB(b.bytes,b.sampleBank);
-const frames=player.captureSlotLog({maxFrames:Math.ceil(seconds*frameHz)+frameHz,prime:0,builder:new FrameRecorder()}).slots;
+// prime:1 — the prime's writes are a frame of their own on the host, and banked_writes orders a frame from its content.
+const frames=player.captureSlotLog({maxFrames:Math.ceil(seconds*frameHz)+frameHz,prime:1,builder:new FrameRecorder()}).slots;
 const sampleAt=rom.indexOf(Buffer.from(b.sampleBank));
 if(sampleAt < 0 || (sampleAt & 0x7fff)) fail.push('sample resource missing or unaligned');
 const wantedStarts = frames.flatMap((rec,frame)=>recordPcm(rec).map(c=>Object.assign(c,{frame}))).filter(c => c[0] === 6);

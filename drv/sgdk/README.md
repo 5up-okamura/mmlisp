@@ -280,9 +280,11 @@ while (TRUE) {
   `MMLisp_renderedFrames()` against `MMLispStats.due`. `example/main.c` polls it
   every frame and prints the id.
 
-- **Starting tracks: all in one frame.** Each track's clock starts on the frame
-  it was set up in, so staggering the starts leaves the tracks permanently out of
-  phase. The setup frame is silent by construction (`docs/driver.md` §4.2).
+- **Starting tracks: all in one frame.** A track sounds from the frame its
+  start is rendered in, and its clock starts there, so staggering the starts
+  leaves the tracks permanently out of phase. The score's head — voice, levels,
+  tempo — runs at that frame's head, and the wire keeps it ahead of the first
+  key-on (`docs/driver.md` §4.2).
 
 - **PCM against FM.** A PCM start sounds within about 1.5 ms of the FM key-on
   on the same beat (`tests/m3-pcm-sync.mmlisp`, graded by the model gate). The

@@ -776,7 +776,7 @@
   </script>
 
 <script type="module">
-    import { IRPlayer, songOrEffectIr, CAPTURE_SETUP_SEC } from './src/ir-player.js';
+    import { IRPlayer, songOrEffectIr } from './src/ir-player.js';
     import { DrvPlayer } from './src/drv-player.js';
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
@@ -9525,10 +9525,9 @@
       if (on) {
         try {
           const cap = timeProbe(ir).captureRegisterLog();
-          // Onto a live run's clock, which starts without the driver's
-          // setup frame; a loop from the very top then has no intro to mark.
-          end = Math.max(0, cap.endSec - CAPTURE_SETUP_SEC);
-          if (cap.loopStartSec != null) loopStart = Math.max(0, cap.loopStartSec - CAPTURE_SETUP_SEC);
+          // A loop from the very top has no intro to mark.
+          end = Math.max(0, cap.endSec);
+          if (cap.loopStartSec != null) loopStart = Math.max(0, cap.loopStartSec);
         } catch (_) { /* unmeasured: the bar shows time but has no length */ }
       }
       _timeSpan = { ir, seekable, loopStart, end };

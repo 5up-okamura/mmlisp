@@ -150,9 +150,9 @@ static void drawHex(u32 value, u16 digits, u16 x, u16 y)
 static void playBgm(void)
 {
     // Every track of the song in one frame — the effects' parts excepted, the
-    // game starts those. Each track's clock starts on the frame it was set up
-    // in, so spreading the starts would leave them permanently out of phase —
-    // and the setup frame is silent anyway (driver.md §4.2).
+    // game starts those. Each track's clock starts on the frame it was started
+    // in, so spreading the starts would leave them permanently out of phase
+    // (driver.md §4.2).
     MMLisp_startSong();
 }
 

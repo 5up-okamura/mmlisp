@@ -27,7 +27,7 @@
     "ok": false,
     "mismatches": 29,
     "compileErrors": 0,
-    "digest": "bc5dc815"
+    "digest": "766bbadc"
   },
   "m2-mailbox.mmlisp": {
     "ok": true,
@@ -57,7 +57,7 @@
     "ok": false,
     "mismatches": 30,
     "compileErrors": 0,
-    "digest": "333473cf"
+    "digest": "5766cfdc"
   },
   "m3-callret.mmlisp": {
     "ok": true,
@@ -75,7 +75,7 @@
     "ok": false,
     "mismatches": 8,
     "compileErrors": 0,
-    "digest": "c92bc635"
+    "digest": "a2453b30"
   },
   "m3-fm3op.mmlisp": {
     "ok": true,
@@ -105,7 +105,7 @@
     "ok": false,
     "mismatches": 2,
     "compileErrors": 0,
-    "digest": "cdecefdf"
+    "digest": "222e7489"
   },
   "m3-macro-keyon.mmlisp": {
     "ok": true,
@@ -117,7 +117,7 @@
     "ok": false,
     "mismatches": 216,
     "compileErrors": 0,
-    "digest": "dc9eb9d7"
+    "digest": "3d5d5054"
   },
   "m3-macro-pitch.mmlisp": {
     "ok": true,
@@ -283,9 +283,9 @@
   },
   "m4-csm-glide.mmlisp": {
     "ok": false,
-    "mismatches": 89,
+    "mismatches": 54,
     "compileErrors": 0,
-    "digest": "e7f0e14d"
+    "digest": "bd4b51bf"
   },
   "m4-csm-rest-inline.mmlisp": {
     "ok": true,
@@ -297,7 +297,7 @@
     "ok": false,
     "mismatches": 46,
     "compileErrors": 0,
-    "digest": "d4d4f403"
+    "digest": "9ddac9fc"
   },
   "m4-delay-prio.mmlisp": {
     "ok": true,
@@ -333,7 +333,7 @@
     "ok": false,
     "mismatches": 3,
     "compileErrors": 0,
-    "digest": "7da82f4b"
+    "digest": "5b7c628b"
   },
   "m4-fm3op-timbre.mmlisp": {
     "ok": true,
@@ -363,7 +363,7 @@
     "ok": false,
     "mismatches": 12,
     "compileErrors": 0,
-    "digest": "96d3eea5"
+    "digest": "8528e0f8"
   },
   "m4-hold-stop.mmlisp": {
     "ok": true,
@@ -405,7 +405,7 @@
     "ok": false,
     "mismatches": 4,
     "compileErrors": 0,
-    "digest": "abf0afd3"
+    "digest": "2873494d"
   },
   "m4-macro-tick.mmlisp": {
     "ok": true,
@@ -427,9 +427,9 @@
   },
   "m4-pal-sweep.mmlisp": {
     "ok": false,
-    "mismatches": 61,
+    "mismatches": 1,
     "compileErrors": 0,
-    "digest": "e6eea8cc"
+    "digest": "89d7baa9"
   },
   "m4-pcm-2v-master.mmlisp": {
     "ok": true,
@@ -525,7 +525,7 @@
     "ok": false,
     "mismatches": 2,
     "compileErrors": 0,
-    "digest": "4ada7941"
+    "digest": "dc3cbc19"
   },
   "multibank-packed.mmlisp": {
     "ok": true,
@@ -553,9 +553,9 @@
   },
   "p3-claim-evict.mmlisp": {
     "ok": false,
-    "mismatches": 264,
+    "mismatches": 268,
     "compileErrors": 0,
-    "digest": "ef86fad3"
+    "digest": "7f8b37bc"
   },
   "p3-claim-se-in-twin.mmlisp": {
     "ok": true,
@@ -565,9 +565,9 @@
   },
   "p3-claim-se-in.mmlisp": {
     "ok": false,
-    "mismatches": 264,
+    "mismatches": 268,
     "compileErrors": 0,
-    "digest": "ef86fad3"
+    "digest": "7f8b37bc"
   },
   "p3-claim-se-out-twin.mmlisp": {
     "ok": true,
@@ -681,6 +681,6 @@
     "ok": false,
     "mismatches": 9,
     "compileErrors": 0,
-    "digest": "3d22158f"
+    "digest": "674aa464"
   }
 }

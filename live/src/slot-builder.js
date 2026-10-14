@@ -108,8 +108,8 @@ export class SlotBuilder {
    * sub-slot — so the queue is walked once and the buckets fill in order.
    * Excess writes stay queued IN ORDER and lead the next slot, so writes are
    * never dropped and never reordered — the chip state always converges, and
-   * the only cost is that a key-on in a write-dense frame can land one frame
-   * late. This is the runtime analogue of the armed frame (driver.md §4.2).
+   * the only cost is that a key-on in a write-dense frame — a track start
+   * behind a long head among them — can land one frame late (driver.md §4.2).
    */
   endFrame() {
     // A frame nobody sub-divided (the post-song drain) puts everything it can

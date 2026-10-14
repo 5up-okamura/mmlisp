@@ -174,7 +174,7 @@ snapshotted first. FM: the **patch as the register shadow holds it** — the
 mode (one register, which an effect's noise part sets its own). The patch is taken
 from the shadow, not from the last VOICE_SET, because a channel's patch is
 whatever last wrote it: a partial `def-fm` (no voice entry), a mid-song `:tl1`
-or `:pan`. The channel is silenced and the SE starts as any track does (armed,
+or `:pan`. The channel is silenced and the SE starts as any track does (§4.2,
 level state reset).
 
 **Restore re-keys.** When the SE ends — its own END_OF_TRACK, or
@@ -344,8 +344,9 @@ latency on every host → music operation; the lead is what absorbs a render tha
 runs past a vblank — the game's frame plus the driver's, which on a frame of
 chords and drums is 10–20 ms of 68000 time by itself, and more than a frame on
 a voice change over several channels. With two frames of lead a render has the
-whole frame before its own. A sound effect's first note sounds about 45 ms
-after the call: the lead, the silent armed frame (§4.2) and the page.
+whole frame before its own. A sound effect's first note sounds about 30 ms
+after the call: the lead and the page — the effect sounds in the frame its
+start is drained in (§4.2).
 
 ### 3.5 Note onsets
 
@@ -422,49 +423,50 @@ engine executes (§5.1, §6.1); PSG bytes are written by the host directly
 ### 4.1 Priming at load
 
 `MMLisp_loadScore` primes the score (`mml_prime_tracks`, host command `0x08`):
-each idle track is started, its leading setup runs as the armed frame would
-run it (§4.2), and the track is stopped before it sounds. The chip's neutral
+each idle track is started, its leading setup — everything up to the first
+note (§4.2) — runs, and the track is stopped before it sounds. The chip's neutral
 patch and every track's voices and levels are queued at once and leave over
 the next frames; the real start later is an ordinary start whose change-only
 writes find the registers already set, so the first notes do not wait behind a
 few hundred setup writes. Skipped: channels a running track owns, FM3-op, PCM
 and CSM tracks. `MMLisp_isSettled()` reports when the load has gone out.
 
-### 4.2 The armed frame (starting a track does not sound in its own frame)
+### 4.2 Starting a track
 
-A track's clock starts on the frame it was set up in, so a host that staggers
-`MMLisp_startTrack` across frames leaves its tracks **permanently out of phase**
-by that many frames.
+A start (`MMLisp_startTrack`, `MMLisp_playSe`, the load's start of every
+track) takes effect in the frame it is drained in: the track's first notes
+sound in that frame.
 
-So track status carries **armed**: the state a track is in for the frame its
-start was drained in. Armed tracks do not accumulate; they are promoted at the
-top of the next frame and all begin dispatching together. Frame-exact and
-tempo-independent.
+**The head runs at the frame's head.** A started track is **fresh** until the
+head of its first frame. There, before the frame's tempo step is taken, its
+leading setup is dispatched: dispatch returns at the first opcode that sounds
+or consumes time (`$10..$13`, and `PCM_NOTE_ON`), so the leading VOICE_SET /
+PARAM_SET / TEMPO_SET / macro binds run and the notes do not. The track then
+accumulates in that same frame like any other, so a head TEMPO_SET governs
+the frame the track starts in, and the first note lands on the sub-tick its
+own tempo puts it on (§3.5).
 
-**The armed frame also runs the score's head.** Dispatch returns early while
-the track is armed, at the first opcode that sounds or consumes time
-(`$10..$13`, and `PCM_NOTE_ON`): the leading VOICE_SET / PARAM_SET / macro binds run in the armed
-frame, the notes wait for the next one. The head of a score generates far more
-writes than the wire carries in a frame (sixteen pairs), so it takes several
-frames to reach the chip either way; arming keeps the voice applies ahead of the notes, so no note sounds under
-a half-applied patch.
+**Tracks started in one drain begin together.** They are all fresh at the same
+frame head and accumulate from the same sub-tick, so a host that starts them in
+one frame gets them in phase; a host that staggers `MMLisp_startTrack` across
+frames leaves its tracks permanently out of phase by that many frames.
 
-PCM tracks are armed like every other track, and the converter sends a frame's
+**The head's writes reach the chip before the first key-on.** The head of a
+score generates more writes than the wire carries in a frame (sixteen pairs);
+the pair transport is FIFO per frame and per channel (§6.6), so a note queued
+behind its voice apply cannot overtake it — it sounds once the patch is in,
+never under a half-applied one. A start silences the channel's previous owner, so
+the voice apply itself is not heard under a note.
+
+PCM tracks start like every other track, and the converter sends a frame's
 PCM commands in a lane ahead of the FM queue (§6.6), so a PCM hit and an FM hit
 written on the same beat sound together (within ~1.5 ms in the score gate,
 `tests/m3-pcm-sync.mmlisp`), and a hit in a burst's frame is not held back by
 the burst's FM writes.
 
-`drv-player.js` implements this (`armed`), and `ir-player.captureRegisterLog`
-mirrors it (`_drvSetupShift`) so the A/B gate compares like with like: the
-timeline starts a frame late and each track's leading events are pulled back
-onto the preamble frame — a quarter-frame in, so they land after
-`_initDefaultVoices` rather than being overwritten by the neutral patch. Capture
-only; live playback has no setup frame to hide. What that cannot reproduce is
-*when the level model recomposes*: the sequencer composes carrier TL once, in
-the armed frame, with the vel the head set, while ir-player writes the voiced TL
-and recomposes at the note. Six A/B scores carry 4–12 mismatches of that shape
-(all TL, all at the track's first frame), frozen in the baseline.
+`drv-player.js` implements the same rule (`fresh`), and
+`ir-player.captureRegisterLog` starts every track at its timeline's origin, so
+the A/B gate compares like with like.
 
 ### 4.3 Sequencer state (68000)
 
@@ -505,7 +507,7 @@ song's 16 (one a channel) and as many effect parts again.
 
 | Field | Notes |
 | ----- | ----- |
-| status | idle / playing / armed / held / fading / suspended |
+| status | idle / playing / held / fading / suspended; a started track is also fresh until its first frame's head (§4.2) |
 | track id, channel id | |
 | flags | hasLoop / isCsm / isFm3Op / isSe |
 | stream pointer, stream base | 68k ROM pointers. JUMP/CALL destinations are relative to the base |
@@ -748,7 +750,7 @@ sequencer only stores and applies (docs/language.md §8).
 | `MMLisp_loadScore(mmb)` | load a score (resets the sequencer; one score at a time) and prime it (§4.1); `MMLisp_isSettled()` says when the load has gone out |
 | `MMLisp_attachInterrupts()` | install the pump (§6.6) as the VBlank callback; a game with its own calls `MMLisp_pump()` once a frame instead. The horizontal interrupt is not touched |
 | `MMLisp_frame()` | once per frame in the main loop, after the control calls: render ahead (§3.1); takes no bus |
-| `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), reset the channel's level state (vel 15, vol 31, master 31, gate 8), and initialize declared val slots not yet host-written (mmb.md §8). Restarting an active track restarts it from the top. The track enters **armed** (§4.2) |
+| `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), reset the channel's level state (vel 15, vol 31, master 31, gate 8), and initialize declared val slots not yet host-written (mmb.md §8). Restarting an active track restarts it from the top. The track sounds from the frame the call is drained in (§4.2) |
 | `MMLisp_stopTrack(track)` | key-off (the release tail runs out naturally), free the channel, idle the track. On an `fm3-csm` track this clears the CSM bit in `$27` (§9). Stopping an SE restores the BGM it displaced (§2.5) |
 | `MMLisp_startSong()` | start every track of the song — all but the effects' parts — in one frame |
 | `MMLisp_playSe(se)` / `MMLisp_playSePrio(se, priority)` | play a def-se by number (`SE_<NAME>` in `inc/mmlisp_se.h`): each part takes its channel as below, at the def-se's priority or `priority`. `MMLisp_stopSe(se)` ends every part, `MMLisp_sePlaying(se)` says whether one runs, `MMLisp_seCount()` how many the score has |

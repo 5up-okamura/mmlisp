@@ -524,16 +524,12 @@ export class DrvPlayer {
       gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
       pendingOff: false, // full-gate key-off awaiting the next event
       running: autoStart && !(t.flags & TRACK_FLAG.isSe), // the game starts an effect
-      // ARMED (Z80 T_STATUS 2): the frame START_TRACK set this track up in. It
-      // does not accumulate, so the setup frame — several tracks' worth of
-      // overlay loads and voice applies, far more than a frame's cycles on the
-      // Z80 — stays silent, and every track armed in it starts dispatching
-      // together on the next frame (driver.md §4.2). autoStart mirrors the
-      // harness posting START_TRACK for every track before frame 0.
-      armed: autoStart && !(t.flags & TRACK_FLAG.isSe),
-      // The frame the armed setup ran in. The armed frame advances no ticks at
-      // ALL of its sub-ticks, not just the one that ran the setup (§3.5).
-      armedFrame: -1,
+      // FRESH: the track's leading setup has not run yet. A start sets it; the
+      // setup runs at the head of the track's first frame, before that frame's
+      // tempo step is taken, so a head TEMPO_SET governs the frame it starts in
+      // (driver.md §4.2). autoStart mirrors the harness posting START_TRACK
+      // for every track before frame 0.
+      fresh: autoStart && !(t.flags & TRACK_FLAG.isSe),
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
       fading: false, // FADE_TRACK (M2 mailbox): Bresenham vol ramp to 0, then stop
@@ -1047,11 +1043,10 @@ export class DrvPlayer {
     let guard = 0;
     while (trk.running && !trk.held && guard++ < 4096) {
       const op = s[trk.pc];
-      // An armed track runs the score's leading setup — VOICE_SET, PARAM_SET,
-      // macro binds — and stops at the first opcode that sounds or consumes
-      // time, so the frame it was started in makes no sound however long its
-      // voice applies take (driver.md §4.2; the same test sits in d_next).
-      if (trk.armed && ((op >= OPCODE.NOTE_ON && op <= OPCODE.NOTE_ON_EX) || op === OPCODE.PCM_NOTE_ON)) return;
+      // A fresh track runs the score's leading setup — VOICE_SET, PARAM_SET,
+      // TEMPO_SET, macro binds — and stops at the first opcode that sounds or
+      // consumes time (driver.md §4.2).
+      if (trk.fresh && ((op >= OPCODE.NOTE_ON && op <= OPCODE.NOTE_ON_EX) || op === OPCODE.PCM_NOTE_ON)) return;
       switch (op) {
         case OPCODE.END_OF_TRACK: {
           trk.pendingOff = false;
@@ -1528,7 +1523,7 @@ export class DrvPlayer {
     };
     // TL goes out COMPOSED, not raw — _opLevel holds that rule (driver.md §7).
     // Raw would be a step of up to +10 dB on whatever note is still sounding:
-    // silent at track start (the armed frame), audible at every loop point and
+    // silent at track start (a start silences the channel's owner), audible at every loop point and
     // every mid-song patch change that re-applies a voice. The voice's own
     // algorithm is passed in, because it decides the carriers here even though
     // its $B0 still goes out last.
@@ -2336,7 +2331,7 @@ export class DrvPlayer {
   }
 
   // PRIME (host command 0x08, mmlispseq.c mml_prime_tracks has the reasoning):
-  // start each idle track, run its leading setup as the armed frame would, and
+  // start each idle track, run its leading setup up to the first note, and
   // stop it again before it sounds — so the setup's writes leave early and the
   // real start finds its registers already set.
   _prime() {
@@ -2345,9 +2340,9 @@ export class DrvPlayer {
       if (ch >= 10 || (trk.flags & (TRACK_FLAG.isCsm | TRACK_FLAG.isSe)) || trk.running) continue;
       if (this._trk.some((t) => t.running && t.channelId === ch)) continue;
       this._startTrack(trk.trackId, false);
-      this._dispatch(trk); // armed: the leading setup, up to the first note
+      this._dispatch(trk); // fresh: the leading setup, up to the first note
+      trk.fresh = false;
       trk.running = false; // never keyed, so stopping writes nothing
-      trk.armed = false;
     }
   }
 
@@ -2690,8 +2685,7 @@ export class DrvPlayer {
     trk.csmOn = false;
     trk.fading = false;
     trk.running = true;
-    trk.armed = true; // silent setup frame, first dispatch next frame
-    trk.armedFrame = -1;
+    trk.fresh = true; // the leading setup runs at the next frame's head (§4.2)
     trk.suspended = false;
     trk.isSe = asSe;
   }
@@ -3030,20 +3024,22 @@ export class DrvPlayer {
     // 1. Mailbox drain — stub in the reference (all tracks auto-started).
     for (let sub = 0; sub < SLOT_SUBS; sub++) {
       this._sub = sub;
+      // A started track's leading setup runs at the head of its first frame,
+      // before the tempo step below is taken: a head TEMPO_SET governs the
+      // frame the track starts in. The track then accumulates in this frame.
+      if (sub === 0) {
+        for (const trk of this._trk) {
+          if (trk.running && trk.fresh) {
+            this._dispatch(trk);
+            trk.fresh = false;
+          }
+        }
+      }
       const step = subIncrement(this._increment, sub, SLOT_SUBS);
       if (sub === 0) this._frameInc = step; // a tick-clocked macro's share (§13.2)
       // 2. Per track, ascending index: accumulate and dispatch.
       for (const trk of this._trk) {
         if (!trk.running || trk.held) continue;
-        if (trk.armed) {
-          if (sub !== 0) continue; // the setup runs once, at the frame head
-          this._dispatch(trk); // leading setup only — see the guard in _dispatch
-          trk.armed = false; // notes start next frame (Z80: dec T_STATUS)
-          trk.armedFrame = this._frame; // ...and this frame advances no ticks
-          continue;
-        } else if (trk.armedFrame === this._frame) {
-          continue; // the armed frame is silent setup, at any sub-tick
-        }
         trk.acc += trk.flags & TRACK_FLAG.isSe ? subIncrement(trk.inc, sub, SLOT_SUBS) : step;
         while (trk.acc >= 0x100) {
           trk.acc -= 0x100;

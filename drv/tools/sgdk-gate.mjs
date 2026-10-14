@@ -84,8 +84,12 @@ const { bytes: mmb, ir } = buildMmb(score, { seFile: SE_FILE });
 const player = new DrvPlayer();
 player.loadMMB(mmb, sampleBank);
 // The SGDK host primes at load and the example starts every track once the
-// load has gone out — the reference's prime mode. The idle frames between
-// change no write's order, only when it happens, so 0 of them will do here.
+// load has gone out — the reference's prime mode, with PRIME idle frames
+// between: on the host the prime's writes are a frame of their own, and the
+// converter orders each frame from its content (key-ons last unless the frame
+// writes $27, mmlpairs.c keyons_last), so the start frame must not carry them.
+// The reference's song frame 0 is then frame PRIME, and the schedule below
+// moves with it.
 // The ROM starts the song (every track but the effects' parts) and fires the
 // effects on the schedule above; the reference has to do exactly that or the
 // two streams are of different music. The capture is driven by an explicit
@@ -98,20 +102,21 @@ const cDefine = (name) => Number(mainC.match(new RegExp(`#define ${name} (\\d+)`
 const depth = ir.metadata?.vals?.find((v) => v.slot === 0)?.init ?? 0;
 const lvl = cDefine("LVL_MIN")
   + Math.trunc((depth * (cDefine("LVL_MAX") - cDefine("LVL_MIN"))) / cDefine("INTENSITY_MAX"));
-const commands = [{ frame: 0, cmd: 6, a0: 1, a1: lvl & 0xff, a2: (lvl >> 8) & 0xff }];
-for (const t of ir.tracks) if (!t.se) commands.push({ frame: 0, cmd: 1, a0: t.id });
+const PRIME = 1;
+const commands = [{ frame: PRIME, cmd: 6, a0: 1, a1: lvl & 0xff, a2: (lvl >> 8) & 0xff }];
+for (const t of ir.tracks) if (!t.se) commands.push({ frame: PRIME, cmd: 1, a0: t.id });
 if (FIRE_SE) {
   seListOf(ir).slice(0, SE_AT.length).forEach((_, i) =>
-    commands.push({ frame: SE_AT[i], cmd: 9, a0: i })); // PLAY_SE at its own priority
+    commands.push({ frame: PRIME + SE_AT[i], cmd: 9, a0: i })); // PLAY_SE at its own priority
 }
-// `prime: 0` either way: the SGDK host primes the score at load, so a
-// reference that did not would put the whole setup burst on the wire again at
-// track start and every write after it would be out of step.
+// Primed either way: the SGDK host primes the score at load, so a reference
+// that did not would put the whole setup burst on the wire again at track
+// start and every write after it would be out of step.
 // The frames the host takes (mmlispseq.c fill_view): every write in the
 // sequencer's order, uncapped — so each write's frame is the one it was made in.
 const frames = player.captureSlotLog({
   maxFrames: Math.round(SECONDS * 60) + 60,
-  prime: 0,
+  prime: PRIME,
   commands,
   builder: new FrameRecorder(),
 }).slots;

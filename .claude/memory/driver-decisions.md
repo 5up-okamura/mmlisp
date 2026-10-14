@@ -289,9 +289,16 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   pair, BlastEm). Read fresh and placed 8 past it: 5.7 ms, every gate green.
   So LEAD 2 + AHEAD 8 is +4 ms on an SE against the old defaults (~47 vs 43 ms
   call → sound), and the slips are gone (disco1 FM key-on lag p90/p95 19.9/23.7
-  → 5.5/7.7 ms). Both hosts, one rule. Next for SE latency, a design question
-  not yet put to the user: skipping the silent armed frame (§4.2) for an SE
-  whose setup is a few pairs would take ~17 ms off.
+  → 5.5/7.7 ms). Both hosts, one rule. The silent armed frame is gone (user,
+  2026-10-14, "進めて"): every start — song, track, SE — sounds in the frame
+  it is drained in, ~17 ms off every start (SE call → sound ~30 ms). One rule,
+  not an SE-only branch. The FIFO wire keeps the head's writes ahead of the
+  first key-on. The head still runs at the head of the track's first frame
+  (`fresh`), before that frame's tempo step: run inside the accumulate loop,
+  the first tick piles up at the old tempo before a head TEMPO_SET lands, a
+  sub-frame phase offset for the whole song (pal-gate caught it on m3-voice
+  and m4-voice-hoist). Priming at load reuses the same flag: start, dispatch
+  the head, stop.
 
 ## 11. SE, and several songs
 

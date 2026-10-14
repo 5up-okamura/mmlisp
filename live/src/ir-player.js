@@ -58,9 +58,6 @@ const PCM_LOOP_MAX = 0x7f00;
 // Half a millisecond: late enough to sort after every event of its frame,
 // far too early to hear.
 const PCM_SWEEP_AFTER = 0.0005;
-// captureRegisterLog's timeline runs one driver frame behind a live run's: the
-// driver spends the first frame on the score's leading setup (driver.md §4.2).
-export const CAPTURE_SETUP_SEC = 1 / 60;
 // A PCM note's points (language.md §16): its loop (:loop-*) and its range (:pcm-*).
 const PCM_POINT_TARGETS = new Set(["LOOP_START", "LOOP_END", "LOOP_LEN",
   "RANGE_START", "RANGE_END", "RANGE_LEN"]);
@@ -195,13 +192,6 @@ export class IRPlayer {
     this._chaseWatch = null; // seek(): { line, time } while a chase looks for a line
     this._scheduleCapTime = Infinity; // audio time; old tracks don't schedule past this
     this._dispatchFloor = -Infinity; // audio time; events before this are skipped (not dispatched)
-    // Capture-only (see captureRegisterLog): seconds to pull a track's LEADING
-    // setup events forward by, so the A/B capture reproduces the driver's shape
-    // — a track's head (VOICE_SET/PARAM_SET/macro binds) is applied in the frame
-    // START_TRACK set it up in, and its first note comes a frame later
-    // (driver.md §4.2). 0 during live playback, which has no setup frame.
-    this._drvSetupShift = 0;
-
     // Per-channel register state for param application
     this._chRegs = Array.from({ length: 6 }, (_, i) => buildChannelRegState(i));
     // The sample each PCM voice last played: a PCM part's voice, as _chRegs
@@ -1165,14 +1155,7 @@ export class IRPlayer {
           const ev = track.events[track.flatIndex];
           // Read secsPerTick live: a TEMPO_SET dispatched earlier in this very
           // pass re-anchors audioTimeAtTick0 for the NEW tempo.
-          let evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
-          if (
-            this._drvSetupShift &&
-            track.loopCount === 0 &&
-            track.flatIndex < track.drvSetupUntil
-          ) {
-            evTime -= this._drvSetupShift; // leading setup: one frame earlier
-          }
+          const evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
           // Pending swap: stop the outgoing tracks at the swap boundary so they
           // never emit past it (the incoming IR takes over there).
           return evTime >= this._scheduleCapTime ? Infinity : evTime;
@@ -1336,24 +1319,13 @@ export class IRPlayer {
       }));
       this._pendingKeyOff.fill(false);
       this._tracks = this._flattenTracks();
-      // Reproduce the driver's track start (driver.md §4.2): the frame
-      // START_TRACK is drained in runs the score's LEADING setup — voice, params,
-      // macro binds — and the first event that sounds or consumes time waits for
-      // the next frame. So the timeline starts a frame late, and each track's
-      // head is pulled back onto the preamble frame. Capture-only.
-      const DRV_SETUP_FRAME = CAPTURE_SETUP_SEC;
-      // Land the head a quarter-frame in, not exactly on BASE: the preamble
-      // (_initDefaultVoices) writes at BASE, and the setup has to come after it
-      // for the same reason it does on the driver — the neutral patch is what the
-      // voice then overrides. A quarter frame still rounds to frame 0.
-      const HEAD_IN_FRAME = DRV_SETUP_FRAME / 4;
-      const TIMED = new Set(["NOTE_ON", "REST", "TIE", "PCM_NOTE_ON"]);
-      this._drvSetupShift = DRV_SETUP_FRAME - HEAD_IN_FRAME;
+      // Every track starts at BASE, as the driver's start their first frame
+      // (driver.md §4.2). The preamble above writes at BASE too and was pushed
+      // first; the sort below is stable, so each track's head still follows the
+      // neutral patch it overrides.
       for (const t of this._tracks) {
-        t.drvSetupUntil = t.events.findIndex((e) => TIMED.has(e.cmd));
-        if (t.drvSetupUntil < 0) t.drvSetupUntil = t.events.length;
-        t.audioTimeAtTick0 = BASE + DRV_SETUP_FRAME;
-        t.startAudioTime = BASE + DRV_SETUP_FRAME;
+        t.audioTimeAtTick0 = BASE;
+        t.startAudioTime = BASE;
         t.loopCount = 0;
         t.flatIndex = 0;
       }
@@ -1422,7 +1394,6 @@ export class IRPlayer {
       this._playing = saved.playing;
       this._bpm = saved.bpm;
       this._tempoSweep = saved.tempoSweep;
-      this._drvSetupShift = 0;
     }
 
     writes.sort((a, b) => a.sec - b.sec);
