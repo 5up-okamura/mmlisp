@@ -26,9 +26,10 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'scope', sampleRate, time, freq: number[13], fm6IsDac: boolean,
  *     ch: [ArrayBuffer × 13] }  — SCOPE_FLUSH output-rate samples per channel
  *     (FM 1-6, PSG tone 1-3, noise, PCM voices 1-3), buffers transferred;
- *     post them back via 'scope-return' to avoid reallocation. freq[c] is the pitch latched from
- *     the channel's register writes (Hz, 0 = unknown/unpitched) as of `time`,
- *     the batch's end on the AudioContext clock (s).
+ *     post them back via 'scope-return' to avoid reallocation. freq[c] is
+ *     the pitch latched from the channel's register writes (Hz, 0 =
+ *     unknown/unpitched) as of `time`, the batch's end on the AudioContext
+ *     clock (s).
  */
 
 // The Mega Drive chip-synthesis DSP (FM resample, PSG decimate + DC block, mix,
@@ -40,6 +41,7 @@ import {
   NUKED_NATIVE_SAMPLE_RATE,
   MD_LPF_DEFAULT_CUTOFF,
   SCOPE_CHANNELS,
+  SCOPE_PCM_CHANNELS,
 } from "./src/synth-md.js";
 
 // PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3,
@@ -95,7 +97,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmSeq = null;      // PcmIrVoices: the IR's events → engine commands
     this._pcmAcc = 0;
     this._pcmByte = 0x80;
-    this._pcmTaps = new Int8Array(3); // each voice's term of _pcmByte (the PCM scope taps)
+    this._pcmTaps = new Int8Array(SCOPE_PCM_CHANNELS); // each voice's term of _pcmByte (the PCM scope taps)
     this._pcmClaimsDac = false; // the first note claims fm6, as on the driver
     this._pcmTrackGain = new Map(); // trackIndex → live mixer gain (0..1); default 1
     // Whether our own engine claimed the DAC, so we only release what we took —

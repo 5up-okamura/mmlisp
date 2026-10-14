@@ -137,7 +137,8 @@ export class PcmEngineModel {
     // Each voice's own term of the mix (signed, after its rung), kept in the
     // ring's slots beside the byte they sum to — for the editor's oscilloscope,
     // one trace a PCM track. The engine has no such thing; the DAC byte is
-    // unchanged by it.
+    // unchanged by it. Every voice writes every slot each lap, as the ring is
+    // written, so a slot read is always this lap's.
     this.voiceRing = Array.from({ length: image.voices }, () => new Int8Array(256));
     /** The terms behind the byte the last slot returned, one a voice. */
     this.voiceOut = new Int8Array(image.voices);
@@ -177,10 +178,7 @@ export class PcmEngineModel {
   slot(pair = null) {
     const img = this.img, s = this.slotIndex++;
     const out = this.ring[s & 0xff];
-    for (let v = 0; v < img.voices; v++) {
-      this.voiceOut[v] = this.voiceRing[v][s & 0xff];
-      this.voiceRing[v][s & 0xff] = 0;
-    }
+    for (let v = 0; v < img.voices; v++) this.voiceOut[v] = this.voiceRing[v][s & 0xff];
     const B = img.blockSamples;
     const b = (s + img.lead) % B;
     const V = img.voices;

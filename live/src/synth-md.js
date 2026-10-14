@@ -359,6 +359,8 @@ export class MegaDriveSynth {
         for (let c = 0; c < SCOPE_FM_CHANNELS; c++) {
           scope[c][i] = cur[c] * (1 - t) + next[c] * t;
         }
+        // Only while the caller's engine feeds the DAC: a DAC streamed by
+        // register writes (a VGM) has no voices behind it.
         const pcm = getDacByte && this._dacEnabled ? this.pcmTaps : null;
         for (let v = 0; v < SCOPE_PCM_CHANNELS; v++) {
           scope[SCOPE_PCM_BASE + v][i] = pcm ? pcm[v] * PCM_TAP_SCALE : 0;

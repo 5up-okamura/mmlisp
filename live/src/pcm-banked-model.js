@@ -25,10 +25,7 @@ export class MultibankModel {
   slot(pair) {
     const s = this.slotIndex++;
     const output = this.ring[s & 255];
-    for (let k = 0; k < this.voiceRing.length; k++) {
-      this.voiceOut[k] = this.voiceRing[k][s & 255];
-      this.voiceRing[k][s & 255] = 0;
-    }
+    for (let k = 0; k < this.voiceRing.length; k++) this.voiceOut[k] = this.voiceRing[k][s & 255];
     for (const a of this.gen.actions[s % this.gen.actions.length]) {
       const v = this.voices[a.v], k = a.v;
       switch (a.kind) {
