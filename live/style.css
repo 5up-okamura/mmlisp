@@ -52,7 +52,7 @@
     }
     /* On-screen keyboard up (watchSoftKeyboard, index.html): the app is
        pinned to the part of the screen the keyboard leaves, and the console
-       gives its height to the editor. */
+       and the piano roll give their height to the editor. */
     html.soft-kb body {
       top: var(--kb-top);
       bottom: auto;
@@ -60,7 +60,9 @@
       padding-bottom: 0;
     }
     html.soft-kb #hDivider,
-    html.soft-kb #consolePane { display: none; }
+    html.soft-kb #consolePane,
+    html.soft-kb #rollDivider,
+    html.soft-kb #rollPane { display: none; }
 
     /* ---- top bar ---- */
     #topbar {

@@ -1091,11 +1091,13 @@ editor; drag the line between them to size it) and **Oscilloscope** (each
 channel's waveform behind the text; a PCM track shows its own voice, not the
 DAC's mix — under MMLispDRV, which streams the DAC itself, their sum). With
 Source off the oscilloscope fills the editor's place; with both off the piano
-roll takes the whole column — a view for listening, or for a phone. In the
-piano roll, every pitched channel shares one pitch axis, with the keys down the
-left, so what the tracks play at one moment — the chord, the spacing, a clash —
-reads at a glance; noise and PCM tracks are rows of onset marks underneath. The
-playhead stands still and the music runs past it.
+roll takes the whole column — a view for listening, or for a phone. While a
+phone's or tablet's on-screen keyboard is up, the piano roll steps aside and
+gives its height to the text. In the piano roll, every pitched channel shares
+one pitch axis, with the keys down the left, so what the tracks play at one
+moment — the chord, the spacing, a clash — reads at a glance; noise and PCM
+tracks are rows of onset marks underneath. The playhead stands still and the
+music runs past it.
 
 One channel is in focus: the one whose form holds the editor cursor, or
 whose note you click. It is drawn bright, the others dim, its sounding keys
