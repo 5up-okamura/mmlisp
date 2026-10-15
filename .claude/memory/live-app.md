@@ -169,9 +169,11 @@ leaves out.
 - **Playing in the background on iOS** (user, 2026-10-16): done as the
   `<audio>` fed from a MediaStreamAudioDestinationNode plus the Media
   Session (index.html synthOutput / startBackgroundAudio / setMediaSession,
-  iOS only by isIOS()), verified headless with a faked UA; **not yet heard
-  on an iPhone** — if a hidden page still stutters there, raise
-  `LOOKAHEAD_HIDDEN` (3 s) first. Judged not worth it yet: moving the
+  iOS only by isIOS()); heard on an iPhone, 2026-10-16. Open: a tap on the
+  lock screen's item went to the 192.168 dev address — the user's home-screen
+  app may have been added from the dev server; waiting on a re-add from the
+  Vercel URL. iOS opens Safari, not the home-screen app, on that tap; the
+  target is the page's URL, which the page cannot choose. Judged not worth it yet: moving the
   sequencer into the worklet. Footholds if ever needed: both players already
   run off a manual clock in `captureRegisterLog` (a sample counter is such a
   clock), and the page reaches the player at ~30 sites in index.html that

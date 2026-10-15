@@ -6220,7 +6220,11 @@
       if (!ms) return;
       try {
         if (state === 'playing' && !ms.metadata) {
-          ms.metadata = new MediaMetadata({ title: _lastFileName.replace(/\.mmlisp$/, ''), artist: 'MMLisp Live' });
+          // The icons as absolute URLs: the lock screen shows them, and they
+          // name the site the sound comes from.
+          const artwork = [['./icons/icon-192.png', '192x192'], ['./icons/icon-512.png', '512x512']]
+            .map(([src, sizes]) => ({ src: new URL(src, location.href).href, sizes, type: 'image/png' }));
+          ms.metadata = new MediaMetadata({ title: _lastFileName.replace(/\.mmlisp$/, ''), artist: 'MMLisp Live', artwork });
           ms.setActionHandler('play', () => { if (_paused) onResume(); else if (!player) onPlay(); });
           ms.setActionHandler('pause', () => onPause());
           ms.setActionHandler('stop', () => onStop());
