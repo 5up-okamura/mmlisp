@@ -4362,6 +4362,7 @@
     // folder and its samples.
     async function openScoreHandle(handle) {
       if (_sourceDir && !(await _sourceDir.resolve(handle))) clearSourceDir();
+      else if (!_sourceDir) forgetHeldFiles();
       await readFileHandle(handle);
     }
 
@@ -4382,13 +4383,20 @@
     // the new score's, and a stale base resolving `:file` to someone else's wav
     // is worse than no base at all (which at least warns).
     function clearSourceDir() {
+      forgetHeldFiles();
       if (!_sourceDir) return;
       _sourceDir = null;
       _sourceDirScores = [];
-      _pcmSampleCache.clear();
-      _droppedImportSources.clear();
       updateSourceDirLabel();
       renderFolderScores();
+    }
+
+    // The files held in memory for the score that is leaving — dropped or
+    // picked wavs and imports, an imported bank's wav — would otherwise answer
+    // the next score's same bare names.
+    function forgetHeldFiles() {
+      _pcmSampleCache.clear();
+      _droppedImportSources.clear();
     }
 
     async function openFolder() {
@@ -4494,15 +4502,20 @@
       const btn = document.getElementById('folderAccess');
       if (!btn) return;
       if (typeof window.showDirectoryPicker !== 'function') {
-        const isUrl = (p) => /^[a-zA-Z][\w+.-]*:\/\//.test(p);
+        // What the app serves (the preset, example and snippet trees) and URLs
+        // load by fetch; the rest only from a file.
+        const reachable = (p) => /^(presets|examples|snippets)\//.test(p) || /^[a-zA-Z][\w+.-]*:\/\//.test(p);
         const samples = [...new Set(sampleDefs
           .map((d) => d.resolvedFile ?? d.file ?? '')
-          .filter((p) => p && !/^presets\//.test(p) && !isUrl(p) && !_pcmSampleCache.has(p)))];
-        // The score's imports, and those of the imported files already held.
+          .filter((p) => p && !reachable(p) && !_pcmSampleCache.has(p)))];
+        // The score's imports, and those of the imported files already held —
+        // each looked for next to its importer, then from the root
+        // (readImportSources), so it is missing only under both names.
+        const held = (from, spec) => _importSources.has(joinImportPath(from, spec)) || _importSources.has(joinImportPath('', spec));
         const imports = [...new Set([
-          ...collectImports(src).map((spec) => joinImportPath('', spec)),
-          ...[..._importSources].flatMap(([path, text]) => collectImports(text).map((spec) => joinImportPath(path, spec))),
-        ])].filter((p) => !/^presets\//.test(p) && !isUrl(p) && !_importSources.has(p));
+          ...collectImports(src).filter((spec) => !held(_lastFileName, spec)),
+          ...[..._importSources].flatMap(([path, text]) => collectImports(text).filter((spec) => !held(path, spec))),
+        ].map((spec) => joinImportPath('', spec)))].filter((p) => !reachable(p));
         _missingFiles = [
           ...samples.map((path) => ({ kind: 'sample', path })),
           ...imports.map((path) => ({ kind: 'import', path })),
