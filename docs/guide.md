@@ -1289,9 +1289,9 @@ the RX5 kit on one PCM track (`pcm1`, or `pcm2` beside K). Notes, lengths
 and ties land on mucom's clock grid; loops, breaks and the last `L` become the
 loop point (a part without `L` plays once). Key shift `K`/`k`, detune `D`
 (relative `D n+` too), `v`, `)`/`(`, `V`, `q`, reverb `R`, register writes
-`y`, SSG `E` envelopes and `@n` presets, `P`/`w`, inline, `@%` and `.dat`
-voices, macros, echo, portamento, hardware and software LFO and both tempo
-commands all import. Where mucom's driver behaves in a particular way, the
+`y`, SSG `E` envelopes and `@n` presets, `P`/`w`, slot detune `S`, inline,
+`@%` and `.dat` voices, macros, echo, portamento, hardware and software LFO
+and both tempo commands all import. Where mucom's driver behaves in a particular way, the
 import does the same rather than approximating:
 
 - **Loop passes.** `)`/`(`, `D n+`, `q` and ties act on every pass of a loop,
@@ -1309,6 +1309,15 @@ import does the same rather than approximating:
   land on those steps, drawn per `v`. SSG noise at a short `w` shifts faster
   than hearing — most of it is inaudible, while the PSG's is all heard — so
   the noise copy plays that much lower (`w0`: −4.9 dB).
+- **Slot detune** `S a,b,c,d` (part C) puts CH3 in the chip's
+  independent-operator mode and offsets each operator's pitch word — the
+  values are operators 4, 3, 1, 2, as the chip's registers run. The part
+  renders once per operator onto `fm3-1`–`fm3-4`, each copy carrying its
+  offset in the `:pitch` cents it writes per note; the voice and `:pan` ride
+  the first copy (they are the shared channel's), and `v` reaches the
+  carriers alone, as mucom's volume table writes them. All-zero offsets are
+  the normal mode, so a part that only ever writes those stays one `fm3`
+  track.
 - **Tempo** is `BPM = 832000 / ((256 − t) × C)`, to two decimals; `T` goes
   through the Timer-B value it compiles to.
 - **ADPCM**: o1 c plays at 16,143.6 Hz, the bank's labelled rate; the driver
@@ -1325,7 +1334,7 @@ import does the same rather than approximating:
 The chip's own limits stay visible as warnings: SSG notes below A2 play an
 octave up (the PSG's floor), one
 noise channel serves the first part that uses it, and SSG reverb rings without
-its level drop. Not imported: `S` FM3 slot detune, `s` key-on revise,
+its level drop. Not imported: `s` key-on revise,
 rhythm's per-sound pan, the ADPCM part K's pan `p` and detune `D` (a PCM voice
 has neither), and K's volume mode `vm<n>`.
 

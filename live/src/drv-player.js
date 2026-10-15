@@ -1497,9 +1497,10 @@ export class DrvPlayer {
   // into. Populates the structured shadow (so later VEL recompose / relative
   // reads stay correct) and queues the same register writes the burst emitted.
   _voiceSet(channelId, voiceId) {
-    if (channelId >= 6) return;
+    const ch = channelId >= 16 && channelId <= 19 ? 2 : channelId; // an operator track's patch is CH3's
+    if (ch >= 6) return;
     const entry = this._voices[voiceId];
-    if (entry) this._applyPatch(channelId, entry);
+    if (entry) this._applyPatch(ch, entry);
   }
 
   // A VOICE_TABLE-shaped entry onto an FM channel — a voice, or an SE

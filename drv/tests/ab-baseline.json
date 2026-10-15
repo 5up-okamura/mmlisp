@@ -347,6 +347,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-fm3op-voice-on-op.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-fm6-only.mmlisp": {
     "ok": true,
     "mismatches": 0,

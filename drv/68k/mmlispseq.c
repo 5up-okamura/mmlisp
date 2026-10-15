@@ -1693,6 +1693,7 @@ static void apply_patch(MMLSeq *s, int ch, const uint8_t *e) {
 }
 
 static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
+  if (ch >= 16 && ch <= 19) ch = 2; /* an operator track's patch is CH3's */
   if (ch >= 6 || voice_id >= s->voice_count) return;
   apply_patch(s, ch, s->voices + (uint32_t)voice_id * 29);
 }

@@ -13,7 +13,7 @@
 
 import { decodeMucomPcmBank } from "./mucom-pcm.js";
 import { encodeWav } from "./export-wav.js";
-import { VEL_DB_PER_STEP, pitchToMidi } from "./ir-utils.js";
+import { VEL_DB_PER_STEP, fmCarrierOpsForAlg, pitchToMidi } from "./ir-utils.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 import { encodeMmb } from "./export-mmb.js";
 import { PPQN, qstr, noteName } from "./import-song.js";
@@ -758,7 +758,25 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
-    // Unsupported commands (S slot detune, s key-on revise; P/w outside SSG).
+    // Slot detune `S a,b,c,d` (part C only — the compiler rejects it elsewhere;
+    // muc88.asm SETSE): CH3's four operators each take an unsigned 0-255 offset
+    // on the pitch word, and the channel goes to the chip's CH3 special mode.
+    if (c === "S" && partLetter === "C") {
+      i++;
+      const offs = readNumList();
+      // The four values are operators 4, 3, 1, 2 — the chip's CH3 register
+      // order (music.asm OP_SEL `DB 0A6H,0ACH,0ADH,0AEH ; OP 4,3,1,2`). Stored
+      // by operator number, so `offs[n - 1]` is operator n as MMLisp counts it.
+      if (offs.length === 4) {
+        const byOp = [offs[2], offs[3], offs[1], offs[0]].map((v) => clamp(v, 0, 255));
+        push({ t: "slotDetune", offs: byOp });
+        continue;
+      }
+      warnOnce(warn, "S", "slot detune (S) takes four values; dropped");
+      continue;
+    }
+
+    // Unsupported commands (s key-on revise; P/w outside SSG, S off part C).
     // Consume the FULL argument list so nothing leaks into note/length parsing
     // (a leaked arg becomes a spurious note and drifts the channel).
     if ("SPws".includes(c)) {
@@ -1442,6 +1460,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         envBeforeNote(ctx, out);
         lfoBeforeNote(ctx, out, op.letter, op.acc);
         detuneBeforeNote(ctx, out, op.letter, op.acc);
+        fm3VelBeforeNote(ctx, out);
         pcmNoteUse(ctx, op, ctx.pendingSlur);
         if (ctx.pendingSlur) { flushSlur(ctx, out); continueChain(ctx); } else startChain(ctx, out);
         if (!reverbNote(ctx, out, op, ops[k + 1])) out.push(noteToken(op.letter, op.acc, op.len, ctx));
@@ -1505,6 +1524,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         out.push(`:oct ${ctx.oct}`);
         break;
       case "pan":
+        if (!fm3Patch(ctx)) break;
         // PCM is a soft-mix voice on the fm6 DAC and owns no FM channel, so it
         // has no pan lane.
         if (ctx.isPcm) { warnOnce(ctx.warnings, "pcmPan", "part K: pan (p) has no PCM equivalent; dropped"); break; }
@@ -1519,6 +1539,13 @@ function renderOps(ops, ctx, out, depth = 0) {
         detuneChanged(ctx, out);
         break;
       }
+      case "slotDetune":
+        // Part C only (the parser enforces it). Zero offsets everywhere is the
+        // normal mode again, which is how a part that only ever writes those
+        // stays one `fm3` track (slotDetuneUsed).
+        ctx.slotOffs = op.offs;
+        if (ctx.fm3Op) detuneChanged(ctx, out);
+        break;
       case "lenSet":
         ctx.len = op.token;
         out.push(`:len ${op.token}`);
@@ -1552,6 +1579,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       }
       case "hwLfo":
+        if (!fm3Patch(ctx)) break;
         // Hardware (YM) LFO. FM only — the SSG/PSG has no equivalent.
         if (ctx.isSsg) {
           warnOnce(ctx.warnings, "Hssg", "hardware LFO (H) is FM-only; dropped on SSG/PSG");
@@ -1587,6 +1615,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "opReg":
       case "rawReg": {
+        if (!fm3Patch(ctx)) break;
         // y: an FM register write, as the same parameter written inline. The
         // voice's next @ rewrites it, as the driver's voice set does.
         if (ctx.isSsg || ctx.isPcm) break;
@@ -1667,7 +1696,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.macroOps && ctx.macroOps.has(op.n)) {
           const m = scratchCtx(ctx);
           renderOps(ctx.macroOps.get(op.n), m, [], depth + 1);
-          for (const key of ["pcmSample", "pcmMuted", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "keyShift", "lastNote", "lfoPerPc", "lfoActive"]) ctx[key] = m[key];
+          for (const key of ["pcmSample", "pcmMuted", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "keyShift", "lastNote", "lfoPerPc", "lfoActive", "slotOffs", "velTok"]) ctx[key] = m[key];
         }
         // Reference a (def *n …); skip macros whose body had no supported content.
         if (ctx.usableMacros && ctx.usableMacros.has(op.n)) out.push(`*${op.n}`);
@@ -1677,6 +1706,12 @@ function renderOps(ops, ctx, out, depth = 0) {
         }
         break;
       case "voice":
+        // An operator copy takes only the algorithm, which says whether this
+        // operator is a carrier (fm3VelBeforeNote); the patch is copy one's.
+        if (!fm3Patch(ctx)) {
+          if (ctx.definedVoices?.has(op.n)) ctx.voiceAlg = ctx.voiceAlgs?.get(op.n) ?? null;
+          break;
+        }
         // On part K, @n selects a bank sample (1-based), not an FM voice. A bare
         // symbol rebinds the PCM track's sample, so that is all we emit; the def
         // is collected in pcmRegistry and spliced above the score.
@@ -1705,6 +1740,11 @@ function renderOps(ops, ctx, out, depth = 0) {
         }
         break;
       case "voiceByName": {
+        if (!fm3Patch(ctx)) {
+          const alg = ctx.voiceAlgByName?.get(op.name);
+          if (alg != null) ctx.voiceAlg = alg;
+          break;
+        }
         // @"name": resolve to an inline voice of that name. External banks
         // (#voice xxx.dat) aren't loaded, so unknown names just keep the default.
         const label = ctx.voiceByName && ctx.voiceByName.get(op.name);
@@ -1769,7 +1809,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         // Emit an inline :tempo only when it changes the running tempo. The
         // first tempo already rides the first playable form (ctx.tempo), so
         // it's not repeated inline; mid-song changes are emitted here.
-        if (ctx.isNoise) break; // the square track carries it
+        if (ctx.isNoise || !fm3Patch(ctx)) break; // the square track / first copy carries it
         if (op.bpm !== ctx.tempo || ctx.verbose) { out.push(`:tempo ${op.bpm}`); ctx.tempo = op.bpm; }
         break;
     }
@@ -1834,14 +1874,30 @@ function noiseModeBeforeNote(ctx, out) {
 // and the fader goes back to 31 for the next note. The tokens are patched in
 // place in the out arrays they were written to.
 function pushVel(ctx, out, v) {
-  out.push(`:vel ${velToken(v, ctx)}`);
   ctx.vel = v;
+  if (ctx.fm3Op) {
+    // A modulator copy holds the patch's level; a carrier's is the part's.
+    const carrier = fm3Carrier(ctx);
+    ctx.velTok = carrier ? velToken(v, ctx) : 15;
+    out.push(`:vel ${ctx.velTok}`);
+    if (carrier && ctx.chain) ctx.chain.cand.push({ arr: out, idx: out.length - 1, v });
+    return;
+  }
+  out.push(`:vel ${velToken(v, ctx)}`);
   if (ctx.chain) ctx.chain.cand.push({ arr: out, idx: out.length - 1, v });
+}
+
+// Before a note on an operator copy: a voice change may have moved this
+// operator between carrier and modulator, and with it which level it plays at.
+function fm3VelBeforeNote(ctx, out) {
+  if (!ctx.fm3Op || ctx.vel == null) return;
+  const tok = fm3Carrier(ctx) ? velToken(ctx.vel, ctx) : 15;
+  if (tok !== ctx.velTok || ctx.verbose) { out.push(`:vel ${tok}`); ctx.velTok = tok; }
 }
 
 function startChain(ctx, out) {
   finishChain(ctx, out);
-  if (ctx.isPcm || ctx.vel == null) return;
+  if (ctx.isPcm || ctx.vel == null || !fm3Carrier(ctx)) return;
   ctx.chain = { arr: out, idx: out.length, base: ctx.vel, toks: [], cand: [] };
 }
 
@@ -2002,10 +2058,11 @@ function reverbNote(ctx, out, op, next) {
   const tailV = ((ctx.vel + 4 + (ctx.reverbAmt ?? 0)) >> 1) - 4;
   const drop = Math.max(0, velToken(ctx.vel, ctx) - velToken(clamp(tailV, 0, 15), ctx));
   if (!drop) return false;
+  const carrier = fm3Carrier(ctx); // a modulator copy ties the same split, unturned
   out.push(noteToken(op.letter, op.acc, `${total - cut}t`, ctx));
-  out.push(`~ :vol ${31 - drop}`);
+  out.push(carrier ? `~ :vol ${31 - drop}` : "~");
   out.push(noteToken(op.letter, op.acc, `${cut}t`, ctx));
-  out.push(":vol 31");
+  if (carrier) out.push(":vol 31");
   return true;
 }
 
@@ -2037,13 +2094,40 @@ function emitGate(ctx, out) {
   if (cut !== ctx.gateCut || ctx.verbose) { out.push(`:gate- ${cut}t`); ctx.gateCut = cut; }
 }
 
+// --- slot detune (part C's `S`) ---------------------------------------------
+//
+// `S a,b,c,d` puts CH3 in the chip's special mode and offsets each operator's
+// pitch word (muc88.asm SETSE, music.asm EXMODE) — on top of `D`, and the
+// software LFO rides each operator's own offset. MMLisp's form is the
+// independent-operator mode (language.md §15): the part renders once per
+// operator onto `fm3-1`-`fm3-4`, each copy carrying its offset in the
+// `:pitch` cents it already writes for `D`. `ctx.fm3Op` is which copy (1-4);
+// without it the part is one `fm3` track, which is what `S0,0,0,0` means.
+const slotOffset = (ctx) => (ctx.fm3Op ? ctx.slotOffs?.[ctx.fm3Op - 1] ?? 0 : 0);
+const rawDetune = (ctx) => (ctx.detune ?? 0) + slotOffset(ctx);
+
+// Patch and song-wide writes (the voice, `:pan`, `y` registers, `:lfo-rate`,
+// the tempo) belong to the channel, not an operator: the first copy writes
+// them, and on an `fm3-N` track they reach the shared patch as written.
+const fm3Patch = (ctx) => !ctx.fm3Op || ctx.fm3Op === 1;
+
+// Is this copy's operator a carrier under the voice's algorithm? mucom's `v`
+// writes the carriers' TL alone, while an `fm3-N` `:vel` is that operator's
+// own level — so only a carrier copy carries the part's levels, and a
+// modulator's stays at the patch's (`:vel 15`). MMLisp's default voice is
+// alg 7, where every operator is one.
+const fm3Carrier = (ctx) =>
+  !ctx.fm3Op || fmCarrierOpsForAlg(ctx.voiceAlg ?? 7).includes(ctx.fm3Op - 1);
+
 // A new `D`: write the one `:pitch` that serves every note, or leave it to
 // detuneBeforeNote when the cents depend too much on the pitch class.
 function detuneChanged(ctx, out) {
   if (ctx.isNoise) return;
-  const raw = ctx.detune ?? 0;
+  const raw = rawDetune(ctx);
   const cents = Array.from({ length: 12 }, (_, pc) => lfoCents(ctx.isSsg, pc, raw));
-  ctx.detunePerNote = Math.max(...cents) - Math.min(...cents) > DETUNE_SPREAD_CENTS;
+  // In operator mode the point is the small distance between the operators, and
+  // one `:pitch` per part would blur it: those parts always write per note.
+  ctx.detunePerNote = ctx.fm3Op != null || Math.max(...cents) - Math.min(...cents) > DETUNE_SPREAD_CENTS;
   if (ctx.detunePerNote) return;
   const mean = Math.round(cents.reduce((a, b) => a + b, 0) / 12);
   if (mean !== ctx.pitchOut || ctx.verbose) { out.push(`:pitch ${mean}`); ctx.pitchOut = mean; }
@@ -2053,7 +2137,7 @@ function detuneBeforeNote(ctx, out, letter, acc) {
   if (!ctx.detunePerNote || ctx.isPcm || ctx.isNoise) return;
   const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
   const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
-  const cents = Math.round(lfoCents(ctx.isSsg, pc, ctx.detune ?? 0));
+  const cents = Math.round(lfoCents(ctx.isSsg, pc, rawDetune(ctx)));
   if (cents !== ctx.pitchOut || ctx.verbose) { out.push(`:pitch ${cents}`); ctx.pitchOut = cents; }
 }
 
@@ -2295,7 +2379,7 @@ function mucomToMmlisp(parsed) {
     const letter = key[0];
     if (!ctxByLetter.has(key)) {
       const pcmPart = letter in PCM_PARTS || letter === RHYTHM_PART;
-      ctxByLetter.set(key, { pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
+      ctxByLetter.set(key, { pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), fm3Op: Number(/~op(\d)$/.exec(key)?.[1]) || null, vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
     return ctxByLetter.get(key);
   };
@@ -2321,6 +2405,25 @@ function mucomToMmlisp(parsed) {
       const it = scoreItems[k];
       if (it.kind !== "form" || it.letter !== noiseLetter) continue;
       scoreItems.splice(k + 1, 0, { kind: "form", letter: it.letter, key: `${it.letter}~noise`, ch: "noise", ops: it.ops, comment: null });
+    }
+  }
+
+  // Part C's `S` with an offset: the part plays in the chip's CH3 special mode,
+  // so it renders once per operator onto fm3-1-fm3-4 (slotOffset). All-zero
+  // offsets are the normal mode, and a part that only ever writes those stays
+  // one `fm3` track.
+  const usesSlotDetune = (ops) => ops.some((op) =>
+    (op.t === "slotDetune" && op.offs.some((v) => v !== 0)) ||
+    (op.t === "loop" && usesSlotDetune(op.body)) ||
+    (op.t === "macroCall" && macroOps.has(op.n) && usesSlotDetune(macroOps.get(op.n))));
+  if (scoreItems.some((it) => it.kind === "form" && it.letter === "C" && usesSlotDetune(it.ops))) {
+    for (let k = scoreItems.length - 1; k >= 0; k--) {
+      const it = scoreItems[k];
+      if (it.kind !== "form" || it.letter !== "C") continue;
+      scoreItems.splice(k, 1, ...[1, 2, 3, 4].map((n) => ({
+        kind: "form", letter: "C", key: `C~op${n}`, ch: `fm3-${n}`, ops: it.ops,
+        comment: n === 1 ? it.comment : null,
+      })));
     }
   }
 
