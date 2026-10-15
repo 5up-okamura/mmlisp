@@ -3212,9 +3212,6 @@ export class DrvPlayer {
         frames,
         ended: this._done(),
         diagnostics: this._diagnostics.slice(),
-        // Always empty — every opcode executes. Kept only for
-        // tools/scripts/render-acid-fm.mjs, which asserts it.
-        skippedOpcodes: {},
       };
     } finally {
       this._writeCb = saved;
@@ -3420,7 +3417,8 @@ export class DrvPlayer {
     if (!this._trk) return;
     for (const trk of this._trk) {
       if (this._isTrackAudible(trk.index)) continue;
-      if (trk.channelId < 10) this._channelOff(trk.channelId);
+      // An FM3 operator track (16–19) keys off its operator alone.
+      if (trk.channelId < 10 || this._fm3OpFor(trk.channelId)) this._channelOff(trk.channelId);
       else if (trk.channelId >= 20 && trk.channelId <= 22) {
         // PCM has no key: muting parks the voice on the silence page.
         const vi = trk.channelId - 20;

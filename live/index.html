@@ -5378,6 +5378,7 @@
     // Compile the current source to IR. Logs diagnostics, updates _lastGoodIR /
     // _lastSourceMap on success, and returns { ir, ok }. Does NOT apply to the
     // running player — callers decide (see buildAction).
+    let _lastWarnSig = '';
     function compileNow() {
       const src = editorView.state.doc.toString();
       try {
@@ -5403,6 +5404,19 @@
           }
         } else {
           _unsavedSamplePathWarned = false;
+        }
+        // Warnings are logged too: a typo the compiler drops (a bad :step, an
+        // echo with nothing to replay) must not go unseen. A compile that says
+        // the same as the last one stays quiet (a value drag recompiles every
+        // 140 ms); Build clears the memory, so it always says them. An unsaved
+        // score's relative sample paths are said once, above.
+        const warnLines = diagnostics
+          .filter(d => d.severity === 'warning' && d.code !== 'W_SAMPLE_BASE_UNKNOWN')
+          .map(d => `[W] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`);
+        const warnSig = warnLines.join('\n');
+        if (warnSig !== _lastWarnSig) {
+          for (const line of warnLines) log(line, 'warn');
+          _lastWarnSig = warnSig;
         }
         const errors = diagnostics.filter(d => d.severity === 'error');
         if (errors.length > 0) {
@@ -5457,6 +5471,7 @@
     // Manual build (Tools > Build / Cmd-Ctrl+B): compile, then — if playing —
     // apply gaplessly at the next bar boundary. Errors keep the last good IR.
     async function buildAction() {
+      _lastWarnSig = '';
       const { ir, ok } = await refreshImportsAndCompile();
       if (!ok) return;
       flashBuild();
@@ -7583,8 +7598,8 @@
       return editorView.state.doc.lineAt(pos).number;
     }
 
-    // Everything the compiler says about the current text — warnings too, which
-    // compileNow() does not surface.
+    // Everything the compiler says about the current text, for the AI link —
+    // including the warnings compileNow() leaves unsaid when they repeat.
     async function aiDiagnostics() {
       const src = editorView.state.doc.toString();
       await refreshImportSources(src);

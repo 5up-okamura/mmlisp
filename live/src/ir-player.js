@@ -769,6 +769,20 @@ export class IRPlayer {
       const port = ch >= 3 ? 1 : 0;
       this._write(0, 0x28, (port << 2) | (ch % 3), when); // key off (opmask 0)
     }
+    // An FM3 operator track that went silent while channel 3 still sounds for
+    // another: key off its operator alone, and drop its queued key-ons.
+    let fm3Off = 0;
+    this._ir?.tracks?.forEach((t, ti) => {
+      const op = /^fm3-([1-4])$/.exec(t.scoreChannel ?? "")?.[1];
+      if (op && !this._isTrackAudible(ti)) fm3Off |= 0x10 << (op - 1);
+    });
+    if (fm3Off && this._fm3Mask & fm3Off) {
+      this._fm3KeyQueue = this._fm3KeyQueue.filter((e) => !(e.on && e.bit & fm3Off));
+      this._fm3Held &= ~fm3Off;
+      this._fm3Mask &= ~fm3Off;
+      this._fm3KeyLast = Math.max(when, this._fm3KeyLast);
+      this._write(0, 0x28, this._fm3Mask | 0x02, this._fm3KeyLast);
+    }
     // PSG: force silent attenuation on an inaudible channel.
     for (const [ti, psgCh] of this._psgTrackChannel) {
       if (!this._isTrackAudible(ti)) this._psgSetAtt(psgCh, 15, when);
