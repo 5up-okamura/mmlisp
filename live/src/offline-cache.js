@@ -4,8 +4,8 @@
 // worker: iOS stops a worker's background work within seconds, which left
 // the samples (fetched last) uncached; the page lives as long as it is open.
 //
-// No list is kept: files are found by following references — from the page
-// and the worklet, their module imports, stylesheets, fonts and icons; from
+// No list is kept: files are found by following references — from the page,
+// the worklet and the workers, their module imports, stylesheets, fonts and icons; from
 // the preset, snippet and example indexes, each score's (import "…") — its
 // own folder's or the app's, as the compiler resolves it — and the samples
 // its :file names, relative to the score. Each is
@@ -28,7 +28,8 @@ function references(url, text, root, listed) {
   const path = new URL(url).pathname;
   if (/\.m?js$|\.html$|\/$/.test(path)) {
     for (const re of [/\bfrom\s*["']([^"']+)["']/g, /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-      /\bimport\s+["']([^"']+)["']/g, /addModule\(\s*["']([^"']+)["']/g]) {
+      /\bimport\s+["']([^"']+)["']/g, /addModule\(\s*["']([^"']+)["']/g,
+      /\bnew\s+Worker\(\s*["']([^"']+)["']/g]) {
       for (const m of text.matchAll(re)) if (/^\.\.?\//.test(m[1])) add(m[1]);
     }
   }

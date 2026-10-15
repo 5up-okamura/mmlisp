@@ -3810,7 +3810,7 @@
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged) syncBracketStatus();
         if (update.docChanged) scheduleDraftSave();
-        if (update.docChanged || update.selectionSet) syncParamUI();
+        if (update.docChanged || update.selectionSet) syncParamUI({ repaint: false });
         auditionOnSelect(update);
       }),
     ];
@@ -3994,13 +3994,38 @@
 
     // A position from an imported file (a preset's macro, a def written
     // there) is a place in that file, not in the score: nothing to outline.
+    // The player calls these once per event; a frame's worth goes to the
+    // editor as one transaction, in order (a sequence's show/hide is a count).
+    // A hidden tab runs no frames but still fires the timers: past a cap the
+    // queue goes out at once.
+    let _playheadFx = [];
+    let _playheadFxRaf = 0;
+    function queuePlayheadFx(effect) {
+      _playheadFx.push(effect);
+      if (_playheadFx.length >= 256) flushPlayheadFx();
+      else _playheadFxRaf ||= requestAnimationFrame(flushPlayheadFx);
+    }
+    function flushPlayheadFx() {
+      if (_playheadFxRaf) cancelAnimationFrame(_playheadFxRaf);
+      _playheadFxRaf = 0;
+      if (!_playheadFx.length) return;
+      const effects = _playheadFx;
+      _playheadFx = [];
+      editorView.dispatch({ effects });
+    }
+    function dropPlayheadFx() {
+      if (_playheadFxRaf) cancelAnimationFrame(_playheadFxRaf);
+      _playheadFxRaf = 0;
+      _playheadFx = [];
+    }
+
     function highlightTrackLine(trackIdx, src) {
-      editorView.dispatch({ effects: setTrackLine.of({ trackIdx, src: src?.file ? null : src }) });
+      queuePlayheadFx(setTrackLine.of({ trackIdx, src: src?.file ? null : src }));
     }
 
     function highlightSeq(show, src) {
       if (src?.file) return;
-      editorView.dispatch({ effects: setSeq.of({ show, src }) });
+      queuePlayheadFx(setSeq.of({ show, src }));
     }
 
     // -----------------------------------------------------------------------
@@ -5563,16 +5588,16 @@
         buildChStrips(ir);
         renderDynParams(ir);
         if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
-        // When not playing, show the score's starting tempo (the loop drives it live),
-        // and measure TIME's bar for it when the page is idle: the measure renders
-        // the whole song, so it waits until typing pauses.
+        // When not playing, show the score's starting tempo (the loop drives it
+        // live) and measure TIME's bar for it.
         if (_fmLiveRaf == null) {
           updateTempoDisplay(irInitialBpm(ir));
-          whenIdle(() => { if (_fmLiveRaf == null && _lastGoodIR === ir) refreshTimeBar(ir); });
+          refreshTimeBar(ir);
         }
         // Anchor playhead highlights to the document this IR was compiled from.
         // Later edits (without rebuild) are mapped from here so highlights track
         // the text. Edits compose into the field even while stopped.
+        flushPlayheadFx(); // the old build's positions resolve against its own doc
         editorView.dispatch({ effects: setPlayheadBase.of(null) });
         // Re-anchor bar markers ( | ) to the just-compiled document too.
         refreshBarMarkers();
@@ -5639,6 +5664,7 @@
     let _pcmCursorDef = null;               // name of the sample def under the cursor
     let _prevFmParamMode = null;            // previous getFmParamMode(), to detect entering cursor-def
     let _prevCursorDefKey = null;           // identity of the def under the cursor, to detect switching defs
+    let _paramSubjectKey = null;            // mode|def|channel the FM panel last showed (syncParamUI)
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
@@ -6538,6 +6564,7 @@
       log('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
       setPlayIcon(false);
+      dropPlayheadFx();
       editorView.dispatch({ effects: [setTrackLine.of({ trackIdx: -1 }), setSeq.of({ clear: true })] });
     }
 
@@ -9515,7 +9542,12 @@
     }
 
     // ---- sync slider display from player state ----
-    function syncParamUI() {
+    // A caller snapping a moved slider back passes nothing: the slider no
+    // longer shows what the cache holds, so everything is repainted. The
+    // editor's edits and cursor moves pass { repaint: false } and repaint only
+    // when the panel's subject (mode, def, channel) changed — otherwise the
+    // change detection writes just what differs.
+    function syncParamUI({ repaint = true } = {}) {
       _fmCursorDefContext = selectedChannel == null ? findFmDefAtCursor() : null;
       _pcmCursorDef = selectedChannel == null && !_fmCursorDefContext ? findSampleDefAtCursor() : null;
       libraryCursorMoved();
@@ -9537,6 +9569,9 @@
       }
       _prevFmParamMode = mode;
       _prevCursorDefKey = cursorDefKey;
+      const subjectKey = `${mode}|${cursorDefKey}|${selectedCh}`;
+      if (subjectKey !== _paramSubjectKey) repaint = true;
+      _paramSubjectKey = subjectKey;
 
       const regs = mode === 'cursor-def'
         ? _fmCursorDefContext.regs
@@ -9548,8 +9583,7 @@
       // operator toggles persist in the UI.
       const maskCh = mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh;
       const mask = mode !== 'disabled' && player ? player.getOpMask(maskCh) : 0xf0;
-      // Context (channel/def) changed → force a full repaint and cache reset.
-      applyRegsToFmSliders(regs, mask, true);
+      applyRegsToFmSliders(regs, mask, repaint);
       syncLfoSlider();
     }
 
@@ -9571,6 +9605,8 @@
       if (algChanged) {
         _fmSliderCache._alg = regs.algorithm;
         updateOpRoles(regs.algorithm); // redraws the diagram (incl. feedback)
+        // A role is an envelope's colour: redraw all four below.
+        for (let op = 1; op <= 4; op++) delete _fmSliderCache[`_env${op}`];
       }
       if (_fmSliderCache._fb !== regs.feedback) {
         _fmSliderCache._fb = regs.feedback;
@@ -9679,32 +9715,60 @@
       return _timeProbe.player;
     }
     // Safari has no requestIdleCallback.
-    function whenIdle(fn) {
-      if (window.requestIdleCallback) requestIdleCallback(fn, { timeout: 2000 });
-      else setTimeout(fn, 200);
+    // The measure plays the whole song through, so it runs in a worker
+    // (src/time-worker.js); until it answers, the bar shows time but has no
+    // length. Where no worker starts, or the IR does not clone, it runs here.
+    let _timeWorker;           // undefined: not tried yet; null: unavailable
+    let _timeMeasureId = 0;
+    let _timeMeasuring = false; // the worker is on a measure
+    function measureTimeSpan(ir, done) {
+      const id = ++_timeMeasureId;
+      const fallback = () => {
+        try { done(timeProbe(ir).captureRegisterLog()); } catch (_) { done(null); }
+      };
+      if (_timeWorker && _timeMeasuring) { // a rebuild mid-measure: not queued behind it
+        _timeWorker.terminate();
+        _timeWorker = undefined;
+      }
+      if (_timeWorker === undefined) {
+        try { _timeWorker = new Worker('./src/time-worker.js', { type: 'module' }); }
+        catch (_) { _timeWorker = null; }
+      }
+      if (!_timeWorker) { fallback(); return; }
+      _timeWorker.onmessage = (e) => {
+        _timeMeasuring = false;
+        if (e.data.id !== _timeMeasureId) return; // a newer song is being measured
+        done(e.data.error ? null : e.data);
+      };
+      _timeWorker.onerror = () => { _timeWorker = null; _timeMeasuring = false; if (id === _timeMeasureId) fallback(); };
+      try { _timeWorker.postMessage({ id, ir }); _timeMeasuring = true; }
+      catch (_) { fallback(); }
     }
     function refreshTimeBar(ir, seekable = true) {
       const sl = document.getElementById('sl-time');
       if (_timeSpan?.ir === ir && _timeSpan.seekable === seekable) return;
-      let loopStart = null, end = 0;
       const on = seekable && hasNotes(ir);
-      if (on) {
-        try {
-          const cap = timeProbe(ir).captureRegisterLog();
-          // A loop from the very top has no intro to mark.
-          end = Math.max(0, cap.endSec);
-          if (cap.loopStartSec != null) loopStart = Math.max(0, cap.loopStartSec);
-        } catch (_) { /* unmeasured: the bar shows time but has no length */ }
-      }
-      _timeSpan = { ir, seekable, loopStart, end };
-      sl.disabled = !on;
-      sl.max = String(Math.max(0.01, end));
+      const span = { ir, seekable, loopStart: null, end: 0 };
+      _timeSpan = span;
       placeLoopMark();
-      if (!on) showTime(0);
-      else if (!player?.isPlaying?.()) {
-        showTime(_paused ? _pausedSec : _timeCue ?? 0);
-        if (!_paused && _timeCue != null) holdRollAt(ir, _timeCue); // the song changed under the cue
-      }
+      if (!on) { _timeMeasureId++; sl.disabled = true; sl.max = '0.01'; showTime(0); return; }
+      // Until the measure lands the bar keeps its length: the thumb stays put
+      // through a rebuild while playing.
+      measureTimeSpan(ir, (cap) => {
+        if (_timeSpan !== span) return;
+        if (cap) {
+          // A loop from the very top has no intro to mark.
+          span.end = Math.max(0, cap.endSec);
+          if (cap.loopStartSec != null) span.loopStart = Math.max(0, cap.loopStartSec);
+        } // else unmeasured: the bar shows time but has no length
+        sl.disabled = false;
+        sl.max = String(Math.max(0.01, span.end));
+        placeLoopMark();
+        if (!player?.isPlaying?.()) {
+          showTime(_paused ? _pausedSec : _timeCue ?? 0);
+          if (!_paused && _timeCue != null) holdRollAt(ir, _timeCue); // the song changed under the cue
+        }
+      });
     }
     // The position as the bar shows it: wrapped into the loop once past one pass.
     function showTime(pos) {
@@ -9962,6 +10026,7 @@
       // displays at its backing attribute size, which would feed back and grow).
       c.style.width = w + 'px';
       c.style.height = h + 'px';
+      _scopeDrawnKey = null; // a resize clears the canvas
       c.width = Math.max(1, Math.round(w * dpr));
       c.height = Math.max(1, Math.round(h * dpr));
       c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -9991,6 +10056,7 @@
     const _rollLoops = new Map(); // trackIndex → { last, wrapped }: has its loop come round
     let _rollTrace = null;      // the focus's pitch trace: { head, last, now, note, time, start, pts: [{ u: raw tick, p } | null] }
     let _rollSel = new Set();   // notes written at the cursor (drawn solid)
+    let _rollDrawnKey = null;   // what the still picture on the canvas was drawn from (drawRoll)
     let _rollSelStale = false;  // the model was rebuilt: re-match on the next frame
 
     function rollPitched(cell) { return !ROLL_UNPITCHED.has(cell.head); }
@@ -10020,27 +10086,45 @@
     // channel form the cursor sits in (or has just closed); outside one (in a
     // def), the first channel, pitched before unpitched, that plays a note
     // under it; with neither, there is no focus.
-    function rollFollowCursor(state) {
-      _rollSelStale = false;
-      const { from, to, head: pos } = state.selection.main;
+    // Where each note is written, resolved as the playhead resolves it: it
+    // moves only with the build and the edits since, not with the cursor.
+    let _rollSrcs = null; // { notes, builtDoc, changes, ranges: [from, to, …], refs: [n, cell, range index, …] }
+    function rollSourceRanges(state) {
       const ph = state.field(playheadField);
-      const sel = new Set();
-      const seen = new Map(); // src → under the cursor (a loop's passes share one)
-      let firstHead = null, firstPitched = null;
+      const c = _rollSrcs;
+      if (c && c.notes === _vizNotes && c.builtDoc === ph.builtDoc && c.changes === ph.changes) return c;
+      const ranges = [], refs = [], index = new Map(); // src → range index (a loop's passes share one)
       for (const cell of _vizNotes) {
         for (const n of cell.notes) {
           if (!n.src || n.src.file) continue;
-          let hit = seen.get(n.src);
-          if (hit === undefined) {
+          let i = index.get(n.src);
+          if (i === undefined) {
             const r = resolvePlayhead(n.src, ph.builtDoc, ph.changes, state.doc);
-            hit = !!r && (from === to ? r[0] <= pos && pos <= r[1] : r[0] < to && from < r[1]);
-            seen.set(n.src, hit);
+            i = r ? ranges.push(r[0], r[1]) / 2 - 1 : -1;
+            index.set(n.src, i);
           }
-          if (!hit) continue;
-          sel.add(n);
-          firstHead ??= cell.head;
-          if (rollPitched(cell)) firstPitched ??= cell.head;
+          if (i >= 0) refs.push(n, cell, i);
         }
+      }
+      return (_rollSrcs = { notes: _vizNotes, builtDoc: ph.builtDoc, changes: ph.changes, ranges, refs });
+    }
+    function rollFollowCursor(state) {
+      _rollSelStale = false;
+      const { from, to, head: pos } = state.selection.main;
+      const { ranges, refs } = rollSourceRanges(state);
+      const hits = new Uint8Array(ranges.length / 2);
+      for (let i = 0; i < hits.length; i++) {
+        const a = ranges[2 * i], b = ranges[2 * i + 1];
+        hits[i] = from === to ? a <= pos && pos <= b : a < to && from < b;
+      }
+      const sel = new Set();
+      let firstHead = null, firstPitched = null;
+      for (let j = 0; j < refs.length; j += 3) {
+        if (!hits[refs[j + 2]]) continue;
+        const n = refs[j], cell = refs[j + 1];
+        sel.add(n);
+        firstHead ??= cell.head;
+        if (rollPitched(cell)) firstPitched ??= cell.head;
       }
       _rollSel = sel;
       let top = null; // the outermost form around the cursor, or just closed by it
@@ -10193,12 +10277,21 @@
         c.width = Math.max(1, Math.round(W * dpr));
         c.height = Math.max(1, Math.round(H * dpr));
       }
+      if (_rollSelStale) rollFollowCursor(editorView.state);
+      if (!_vizColors) sampleVizColors();
+      // Not playing and not easing, the picture changes only with what it is
+      // drawn from; each is replaced, never changed in place, so identity
+      // says enough.
+      const easing = _rollView && performance.now() - _rollView.t0 < ROLL_VIEW_MS;
+      const key = player?.isPlaying?.() || easing ? null : [W, H, dpr, _vizNotes, _vizColors, _rollFocus,
+        _rollSel, _rollPxPerBeat, _vizFrozen, _paused, player, _rollTrace, _rollTrace?.pts.length,
+        _rollTrace?.now, _rollView];
+      if (key && _rollDrawnKey?.every((x, i) => x === key[i])) return;
+      _rollDrawnKey = key;
       const ctx = c.getContext('2d');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
       _rollHits = [];
-      if (_rollSelStale) rollFollowCursor(editorView.state);
-      if (!_vizColors) sampleVizColors();
       const { fg, mid } = _vizColors;
       const cells = _vizNotes.filter((cl) => cl.notes.length);
       const pitched = cells.filter(rollPitched);
@@ -10466,6 +10559,13 @@
     const SCOPE_DISPLAY_GAIN = 10;  // mix-contribution units → pane half-height
     const _scopeRings = Array.from({ length: SCOPE_CH }, () => new Float32Array(SCOPE_RING));
     const _scopePeaks = new Float32Array(SCOPE_CH); // |peak| of the latest batch
+    // Silence draws one picture: once every tap has held one value for a whole
+    // ring of batches, the scope stops redrawing until a tap moves or the
+    // picture's inputs (size, cells, colours, taps) change (drawScope).
+    const SCOPE_STILL_BATCHES = SCOPE_RING / 1024;
+    const _scopeLastLevel = new Float32Array(SCOPE_CH).fill(NaN);
+    let _scopeStill = 0;       // consecutive batches with every tap held still
+    let _scopeDrawnKey = null; // what the picture on the canvas was drawn from, or null
     let _scopeAbs = 0;              // absolute sample count at the ring write head
     let _scopeFreqs = new Array(SCOPE_CH).fill(0); // latched pitch per channel (Hz)
     let _scopeSR = 48000;           // worklet sample rate (updates per batch)
@@ -10493,19 +10593,23 @@
       _scopePcmVoices = !!msg.fm6IsDac;
       if (_vizRoll) rollTraceBatch(msg.time);
       const pos = _scopeAbs % SCOPE_RING;
-      let len = 0;
+      let len = 0, still = true;
       // Batch length (1024) divides SCOPE_RING, so a copy never wraps.
       for (let c = 0; c < SCOPE_CH && c < msg.ch.length; c++) {
         const v = new Float32Array(msg.ch[c]);
         _scopeRings[c].set(v, pos);
-        let pk = 0;
+        let pk = 0, lo = v[0], hi = v[0];
         for (let i = 0; i < v.length; i++) {
-          const a = Math.abs(v[i]);
+          const x = v[i], a = Math.abs(x);
           if (a > pk) pk = a;
+          if (x < lo) lo = x; else if (x > hi) hi = x;
         }
         _scopePeaks[c] = pk;
+        if (!(lo === hi && lo === _scopeLastLevel[c])) still = false;
+        _scopeLastLevel[c] = lo === hi ? lo : NaN;
         len = v.length;
       }
+      _scopeStill = still ? _scopeStill + 1 : 0;
       _scopeAbs += len;
       // Recycle the transferred buffers back to the worklet.
       workletNode?.port.postMessage({ type: 'scope-return', ch: msg.ch }, msg.ch);
@@ -10531,12 +10635,18 @@
       if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
         resizeVizCanvas();
       }
+      if (!_vizColors) sampleVizColors();
+      // The same inputs draw the same picture: a frame with no new batch, or
+      // silence held for a ring, leaves the canvas as it is.
+      const key = [W, H, dpr, _vizNotes, _vizColors, _scopePcmVoices,
+        _scopeStill >= SCOPE_STILL_BATCHES ? -1 : _scopeAbs];
+      if (_scopeDrawnKey?.every((x, i) => x === key[i])) return;
+      _scopeDrawnKey = key;
       const ctx = c.getContext('2d');
       ctx.clearRect(0, 0, W, H);
       if (!_scopeRings) return;
       const cells = _vizNotes.filter((cl) => cl.notes.length);
       if (!cells.length) return;
-      if (!_vizColors) sampleVizColors();
       const C = cells.length;
       const cols = Math.max(1, Math.min(3, C, Math.floor(W / VIZ_MIN_CELL_W)));
       const rows = Math.ceil(C / cols);
@@ -10612,6 +10722,7 @@
     function clearVizCanvas() {
       const c = document.getElementById('vizCanvas');
       if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+      _scopeDrawnKey = null;
     }
     // The piano roll (a pane under the editor) and the oscilloscope (behind the
     // editor text) are independent; one frame loop draws whichever are on.

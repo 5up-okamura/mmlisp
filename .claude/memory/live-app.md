@@ -176,9 +176,13 @@ leaves out.
   per-note pitch falls names a bend per pitch.
 - Furnace's slide/porta compat rules are rounded.
 - **Performance, step by step** (user, 2026-10-15): the app has heavy
-  moments on Intel Macs and phones. Known suspects: the piano roll's
-  follow-cursor walks every note on each selection change (`rollFollowCursor`);
-  profile on those devices before changing anything.
+  moments on Intel Macs and phones. A headless profile at 4× CPU throttle on a
+  9-track, 9,600-note score (2026-10-16) left, after two passes: the scope
+  while playing (`correlateValid` ~9 % of the throttled thread, plus its
+  polyline), and the compile itself (~200 ms on Build and Play). The user's
+  Intel Mac runs light after the two passes; these are for when a heavier
+  score or a phone shows them. Headless canvas is CPU-drawn, so draw costs
+  read high there.
 - **Internal "Browse" names** (`BROWSE_*_INDEX`, `loadBrowseCatalog`,
   `previewBrowse*`, …) still name the Library; rename when a refactor of that
   area comes up — the user-visible strings already say Library.
