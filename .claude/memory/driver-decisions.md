@@ -446,6 +446,11 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   for games that need it (racing, raster 3D); the host pumps from VBlank only
   (`driver.md` §6.6). The user's order: **correct playback first, then
   optimization**, and eventually trading some quality for balance.
+- **The gates' slot encoder stays in `mmlispseq.c`** (user, 2026-10-15). It,
+  `mml_command` and `mml_start_all` serve only the gates, but SGDK builds with
+  `-ffunction-sections` + `--gc-sections` + LTO, and a built ROM's symbols
+  hold none of them; the gate-only RAM is six bytes. A separate file would buy
+  nothing on the target and cost an internal header for the queue it reads.
 
 ## 13. How to work here (the user's rulings)
 

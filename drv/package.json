@@ -32,7 +32,6 @@
     "sgdk:gate:se": "node tools/sgdk-gate.mjs sgdk/example/demo.mmlisp --se sgdk/example/demo-se.mmlisp --seconds 6",
     "multibank:gate": "node tools/multibank-gate.mjs",
     "multibank:render": "node tools/multibank-render.mjs",
-    "multibank:rom": "node tools/multibank-rom.mjs",
     "banked:sgdk": "node tools/banked-sgdk-gate.mjs",
     "banked:gate": "node tools/banked-export-gate.mjs",
     "voice-hoist": "node tools/voice-hoist-gate.mjs",

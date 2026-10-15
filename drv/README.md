@@ -124,7 +124,6 @@ recordings and reports under `out/`:
 ```sh
 npm run banked:sgdk -- tests/multibank.mmlisp --seconds 8 [--pal] [--minimal] [--lead N] [--ahead N]
 npm run multibank:render -- tests/multibank.mmlisp --seconds 6 --out out/multibank
-npm run multibank:rom
 ```
 
 `banked:sgdk` builds the SGDK example with the score, runs it, and grades the
@@ -140,5 +139,3 @@ release) and `--ahead N` with `MMLISP_AHEAD=N` (pairs past the engine's index a
 grab writes at), to compare a score's timing at other settings.
 `multibank:render` renders a score through the banked engine model alone —
 a listening aid; the sample file it writes is not a production `.smp`.
-`multibank:rom` builds a standalone BlastEm ROM that replays a score's
-precomputed frames through the banked engine, without the C sequencer.

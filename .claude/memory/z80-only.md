@@ -91,12 +91,12 @@ instruction stream at an even pace.
 
 ## Decided: poll points (2026-09-28, the user's listening verdict)
 
-Listening set: `drv/tools/jitter-listen.mjs` (→ `drv/out/jitter/`, not checked
-in; its header states the model — 14,375.68 Hz, 8-bit, each write late by
-U(0, N) Z80 cycles, the chip reading the DAC on its 53,267 Hz / 67.2-cycle
-grid). Jitter error in dB below signal: N=30 30.8, 100 25.6, 300 20.3 (samples
-overwritten unheard), 600 17.6; the chip's own grid against an ideal hold is
-already 31.9. The user:
+Listening set: `drv/tools/jitter-listen.mjs`, deleted 2026-10-15 — restore it
+from commit `cbde5d0` (→ `drv/out/jitter/`; its header states the model —
+14,375.68 Hz, 8-bit, each write late by U(0, N) Z80 cycles, the chip reading
+the DAC on its 53,267 Hz / 67.2-cycle grid). Jitter error in dB below
+signal: N=30 30.8, 100 25.6, 300 20.3 (samples overwritten unheard), 600
+17.6; the chip's own grid against an ideal hold is already 31.9. The user:
 
 - **N=100 is audible and acceptable.** So the scheme is **poll points**
   (XGM2's shape), not the constant-time lap: the sequencer carries a poll at

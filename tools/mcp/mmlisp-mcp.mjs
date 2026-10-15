@@ -38,6 +38,7 @@ const DOCS = {
   guide: "docs/guide.md",
   ir: "docs/ir.md",
   roadmap: "docs/roadmap.md",
+  driver: "docs/driver.md",
 };
 
 // ---------------------------------------------------------------------------
@@ -739,7 +740,8 @@ const TOOLS = [
     description:
       "Read the MMLisp documentation. doc: cheatsheet (the whole language on two pages — read it first), " +
       "language (the reference, canonical), reference (one short entry per feature, with a working example — " +
-      "query a word like \":vel\" or \"echo\"), guide (the tutorial), ir, roadmap. " +
+      "query a word like \":vel\" or \"echo\"), guide (the tutorial), ir, roadmap, " +
+      "driver (MMLispDRV: the SGDK host API, sound effects, its limits — for putting a score in a game). " +
       "cheatsheet with no section: all of it; any other doc with no section: its table of contents. " +
       "section: a number (\"10\", \"9.2\") or title words. query: search lines.",
     inputSchema: {
