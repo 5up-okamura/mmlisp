@@ -4484,12 +4484,39 @@
     // it, and the browser grants a folder only from a click. So when such a
     // score needs its folder, a button offers the picker, already in that
     // folder: one more click on Open.
-    function updateFolderAccessPrompt(src, hasSamples) {
+    //
+    // A browser that cannot open a folder (iOS, Firefox) asks for the files
+    // themselves instead: the button names how many are missing, and the ones
+    // picked are matched to the score's :file and (import …) paths by file
+    // name and held in memory for this session (_missingFiles, pickMissingFiles).
+    let _missingFiles = [];
+    function updateFolderAccessPrompt(src, hasSamples, sampleDefs) {
       const btn = document.getElementById('folderAccess');
       if (!btn) return;
+      if (typeof window.showDirectoryPicker !== 'function') {
+        const isUrl = (p) => /^[a-zA-Z][\w+.-]*:\/\//.test(p);
+        const samples = [...new Set(sampleDefs
+          .map((d) => d.resolvedFile ?? d.file ?? '')
+          .filter((p) => p && !/^presets\//.test(p) && !isUrl(p) && !_pcmSampleCache.has(p)))];
+        // The score's imports, and those of the imported files already held.
+        const imports = [...new Set([
+          ...collectImports(src).map((spec) => joinImportPath('', spec)),
+          ...[..._importSources].flatMap(([path, text]) => collectImports(text).map((spec) => joinImportPath(path, spec))),
+        ])].filter((p) => !/^presets\//.test(p) && !isUrl(p) && !_importSources.has(p));
+        _missingFiles = [
+          ...samples.map((path) => ({ kind: 'sample', path })),
+          ...imports.map((path) => ({ kind: 'import', path })),
+        ];
+        const n = _missingFiles.length;
+        if (n) {
+          document.getElementById('folderAccessLabel').textContent =
+            `Load ${n} missing file${n > 1 ? 's' : ''} (${_missingFiles.map((m) => m.path.split('/').pop()).join(', ')})…`;
+        }
+        btn.hidden = !n;
+        return;
+      }
       const localImports = /\(import\s+"(?!presets\/)[^"]+"/.test(src);
-      const show = Boolean(_sourceHandle) && !_sourceDir
-        && typeof window.showDirectoryPicker === 'function' && (hasSamples || localImports);
+      const show = Boolean(_sourceHandle) && !_sourceDir && (hasSamples || localImports);
       if (show) {
         document.getElementById('folderAccessLabel').textContent =
           `Load ${hasSamples ? 'samples' : 'imports'} from ${_sourceHandle.name}'s folder`;
@@ -4497,7 +4524,38 @@
       btn.hidden = !show;
     }
 
+    async function pickMissingFiles() {
+      let files;
+      try {
+        files = await pickFileWithInput(null, { multiple: true });
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('Load files failed: ' + e.message, 'err');
+        return;
+      }
+      const byName = new Map(files.map((f) => [f.name.toLowerCase(), f]));
+      const loaded = [];
+      for (const m of _missingFiles) {
+        const file = byName.get(m.path.split('/').pop().toLowerCase());
+        if (!file) continue;
+        try {
+          if (m.kind === 'sample') _pcmSampleCache.set(m.path, decodeWav(await file.arrayBuffer()));
+          else _droppedImportSources.set(m.path, await file.text());
+          loaded.push(file.name);
+        } catch (e) {
+          log(`${file.name}: ${e?.message || e}`, 'err');
+        }
+      }
+      if (loaded.length) log(`Loaded ${loaded.join(', ')} — held until the app is closed`, 'info');
+      await refreshImportsAndCompile();
+      // An import just loaded can name files of its own, so what is still
+      // missing is read after the compile.
+      if (_missingFiles.length) {
+        log(`Still missing: ${_missingFiles.map((m) => m.path).join(', ')} — pick the files with these names`, 'err');
+      }
+    }
+
     async function grantScoreFolder() {
+      if (typeof window.showDirectoryPicker !== 'function') return pickMissingFiles();
       const handle = _sourceHandle;
       if (!handle) return;
       let dir;
@@ -5470,8 +5528,9 @@
         });
         const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
           Boolean(_sourceDir) || _lastFileName.includes('/');
-        updateFolderAccessPrompt(src, hasSamples);
-        if (hasSamples && !hasSavedBase) {
+        updateFolderAccessPrompt(src, hasSamples, sampleDefs);
+        // Without a folder picker the Load button above says what is missing.
+        if (hasSamples && !hasSavedBase && typeof window.showDirectoryPicker === 'function') {
           if (!_unsavedSamplePathWarned) {
             log('Sample paths may not resolve reliably until this source is saved (File > Save As...)', 'err');
             _unsavedSamplePathWarned = true;

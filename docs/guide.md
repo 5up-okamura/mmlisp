@@ -1224,8 +1224,10 @@ with a plain file chooser, and Save, Save As… and the exports hand the file
 over: on a touch device to the share sheet (`Save to Files` on iOS), else as
 a download. An export that took a while to render asks for one more tap in
 the console (`Save…`), since the share sheet needs one. Such a browser cannot
-open a folder, so `Open Folder…` is not offered and a score's own `:file`
-samples and `(import …)`s beside it cannot load there; presets and URLs do.
+open a folder, so `Open Folder…` is not offered. When a score's own `:file`
+samples or `(import …)`s are missing, a `Load … missing files` button over the
+editor names them: pick those files (several at once) and they are matched by
+file name and held until the app is closed. Presets and URLs load as usual.
 
 `File > Open Recent` lists the last ten scores opened or saved (Chrome and
 Edge; a browser without file handles has no such menu). A score opened from
