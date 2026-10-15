@@ -29,6 +29,10 @@ suffix combines with the target's base (§7.0). Kept as they are, by ruling:
   so do **`:csm-rate` and the `fm3-csm-rate` track** (different use and range).
 - **`(glide …)` stays a form** (two arities); gate is §7.0's documented
   exception.
+- **`(echo …)` is for the mucom import; `(delay …)` is what the user writes**
+  (2026-10-15). echo replays one note and lengthens the phrase (mucom `\=`);
+  delay is sticky and keeps the phrase's length. Offer delay first when a score
+  wants an echo effect.
 
 ## 2. Why the value machine has this shape
 

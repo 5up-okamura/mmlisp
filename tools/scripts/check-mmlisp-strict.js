@@ -84,6 +84,21 @@ async function main() {
       expected: ["W_SWEEP_WAIT"],
     },
     {
+      label: "curve param that does not read",
+      src: "(fm1 (macro :tl1 (sin :from 0 :to 20 :len 8x :phase p)) c (macro :tl1 (sin :from 0 :to 20 :len 8 :phase 4)) c)",
+      expected: ["W_CURVE_PARAM_INVALID", "W_CURVE_PARAM_INVALID"],
+    },
+    {
+      label: "echo before any note",
+      src: "(fm1 (echo 3 :vel+ -3) c d (echo 2 :vel+ -2))",
+      expected: ["W_ECHO_NO_NOTE"],
+    },
+    {
+      label: "def-pcm rate not above 0",
+      src: '(def-pcm k :file "/k.wav" :rate 0)',
+      expected: ["W_SAMPLE_KEY_INVALID"],
+    },
+    {
       label: "wait value typo",
       src: "(fm1 (macro :tl1 (linear 0..60 :len 8 :wait 4x) :vel [15 (wait zz) (linear 15..0 :len 4)]) c)",
       expected: ["W_WAIT_INVALID", "W_WAIT_INVALID"],

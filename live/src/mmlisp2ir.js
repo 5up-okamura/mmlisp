@@ -973,15 +973,14 @@ function emitNoteForTrack(
   };
   trackState.tick += lengthTicks;
   trackState.lastNotePitch = fullPitch;
-  // Feed the (echo …) history (FM3-op excluded; a pcm note feeds it above).
-  if (!trackState.isFm3OpTrack)
-    pushRecentNote(
-      trackState,
-      fullPitch,
-      lengthTicks,
-      trackState.defaultGate,
-      trackState.defaultVel ?? 15,
-    );
+  // Feed the (echo …) history (a pcm note feeds it above).
+  pushRecentNote(
+    trackState,
+    fullPitch,
+    lengthTicks,
+    trackState.defaultGate,
+    trackState.defaultVel ?? 15,
+  );
 }
 
 // `(note expr [len])` (§7.3): evaluate a MIDI number and emit one NOTE_ON at
@@ -1324,10 +1323,17 @@ function emitEchoReplay(trackState, events, spec, back, src) {
       continue;
     }
     startWithoutGlide(trackState, note.pitch, events, src);
+    // An FM3 operator's note is its own pitch write plus an operator-keyed
+    // NOTE_ON, as a written one is.
+    const op = trackState.isFm3OpTrack ? trackState.fm3OpIndex : null;
+    if (op !== null)
+      events.push({ tick: trackState.tick, cmd: "FM3_OP_PITCH", args: { op, pitch: note.pitch }, src });
     const ev = {
       tick: trackState.tick,
       cmd: "NOTE_ON",
-      args: makeNoteArgs(note.pitch, len, gate, vel, null),
+      args: op !== null
+        ? makeFm3OpNoteArgs(note.pitch, len, gate, vel, op, null)
+        : makeNoteArgs(note.pitch, len, gate, vel, null),
       src,
     };
     // The voice the tap plays, for a def-mod :voice, as a written note's.
@@ -2119,7 +2125,11 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
       // Whole numbers: a rate in Hz, a frame position and a frame count. One
       // that does not read leaves the key at its default — say so.
       const n = parseIntLike(rawVal);
-      if (n !== null) sample[key.slice(1)] = n;
+      if (n !== null && key === ":rate" && n <= 0)
+        pushDiag(diagnostics, "warning", "W_SAMPLE_KEY_INVALID",
+          `def-pcm :rate takes a rate in Hz above 0, not ${n}; the file's own rate is kept`,
+          nodeSrc(bodyItems[ki + 1]) ?? src, null);
+      else if (n !== null) sample[key.slice(1)] = n;
       else
         pushDiag(diagnostics, "warning", "W_SAMPLE_KEY_INVALID",
           `def-pcm ${key} takes a whole number, not ${rawVal ?? "a list"}; the default is kept`,
@@ -2625,6 +2635,14 @@ function parseCurveSpec(
     }
     return clamped;
   };
+  // A value that does not read is dropped, as before — but said, so a typo
+  // in a curve param is not silent.
+  const badParam = (key, v) => {
+    if (diagnostics)
+      pushDiag(diagnostics, "warning", "W_CURVE_PARAM_INVALID",
+        `curve param ${key} on ${head} does not read as a number: ${v ?? "nothing"}; ignored`,
+        src ?? nodeSrc(node), trackName);
+  };
   const setParam = (key, value) => {
     params[key] = value;
     hasParams = true;
@@ -2741,7 +2759,10 @@ function parseCurveSpec(
             from = 0;
             dyn.from = s;
             hasDyn = true;
-          } else from = readScalar(v);
+          } else {
+            from = readScalar(v);
+            if (from === null) badParam(k, v);
+          }
           break;
         }
         case ":to": {
@@ -2750,7 +2771,10 @@ function parseCurveSpec(
             to = 0;
             dyn.to = s;
             hasDyn = true;
-          } else to = readScalar(v);
+          } else {
+            to = readScalar(v);
+            if (to === null) badParam(k, v);
+          }
           break;
         }
         case ":len": {
@@ -2764,6 +2788,7 @@ function parseCurveSpec(
           } else {
             frames = parseLengthToken(v, null);
             lenFrames = isFrameToken(v); // Nf / Nms is an absolute frame count, not ticks
+            if (frames === null) badParam(k, v);
           }
           break;
         }
@@ -2786,6 +2811,7 @@ function parseCurveSpec(
           const n = parseIntLike(v);
           if (n !== null)
             setParam("phase", clampWithWarning(n, 0, 255, ":phase"));
+          if (n === null) badParam(k, v);
           break;
         }
         case ":rate": {
@@ -2803,18 +2829,21 @@ function parseCurveSpec(
               // 0 = freeze (no phase advance); matches the player's rate >= 0.
               clampWithWarning(n, 0, Number.MAX_VALUE, ":rate"),
             );
+          if (n === null) badParam(k, v);
           break;
         }
         case ":duty": {
           const n = parseIntLike(v);
           if (n !== null)
             setParam("duty", clampWithWarning(n, 1, 255, ":duty"));
+          if (n === null) badParam(k, v);
           break;
         }
         case ":skew": {
           const n = parseIntLike(v);
           if (n !== null)
             setParam("skew", clampWithWarning(n, -127, 127, ":skew"));
+          if (n === null) badParam(k, v);
           break;
         }
         case ":hold": {
@@ -2832,6 +2861,7 @@ function parseCurveSpec(
           const n = parseNumberLike(v);
           if (n !== null)
             setParam("jitter", clampWithWarning(n, 0, 1, ":jitter"));
+          if (n === null) badParam(k, v);
           break;
         }
         case ":beta": {
@@ -2841,12 +2871,14 @@ function parseCurveSpec(
               "beta",
               clampWithWarning(n, 0.0001, Number.MAX_VALUE, ":beta"),
             );
+          if (n === null) badParam(k, v);
           break;
         }
         case ":octaves": {
           const n = parseIntLike(v);
           if (n !== null)
             setParam("octaves", clampWithWarning(n, 1, 8, ":octaves"));
+          if (n === null) badParam(k, v);
           break;
         }
         case ":lacunarity": {
@@ -2856,6 +2888,7 @@ function parseCurveSpec(
               "lacunarity",
               clampWithWarning(n, 0.0001, Number.MAX_VALUE, ":lacunarity"),
             );
+          if (n === null) badParam(k, v);
           break;
         }
         case ":persistence": {
@@ -2865,12 +2898,14 @@ function parseCurveSpec(
               "persistence",
               clampWithWarning(n, 0.0001, Number.MAX_VALUE, ":persistence"),
             );
+          if (n === null) badParam(k, v);
           break;
         }
         case ":leak": {
           const n = parseNumberLike(v);
           if (n !== null)
             setParam("leak", clampWithWarning(n, 0, 0.9999, ":leak"));
+          if (n === null) badParam(k, v);
           break;
         }
         case ":seed": {
@@ -2879,6 +2914,7 @@ function parseCurveSpec(
           // statistical sequence, unlike :phase (a shift of the same table).
           const n = parseIntLike(v);
           if (n !== null) setParam("seed", n >>> 0);
+          if (n === null) badParam(k, v);
           break;
         }
       }
@@ -4357,6 +4393,13 @@ function compileChannelBody(
           }
         } else if (tap) {
           const back = Math.max(1, parseIntLike(tap.opts[":back"]) ?? 1);
+          // Echo replays a note already written; before the first one it has
+          // nothing to play — likely meant as (delay …), which is sticky.
+          if (!trackState.recentNotes?.length)
+            pushDiag(diagnostics, "warning", "W_ECHO_NO_NOTE",
+              "(echo …) replays a note written before it, and there is none yet; " +
+                "for an echo on every following note, write (delay … :time T)",
+              nodeSrc(items[0]), trackName);
           emitEchoReplay(trackState, events, tap.spec, back, nodeSrc(node));
         }
         i++;

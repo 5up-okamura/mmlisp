@@ -1323,6 +1323,8 @@ Normalization rules:
 
 - Unknown keyword for a curve name → `E_CURVE_PARAM_UNKNOWN` (error).
 - Out-of-range values are clamped with `W_CURVE_PARAM_CLAMPED`.
+- A value that does not read as a number (`:phase x`, `:len 8x`) is ignored,
+  with `W_CURVE_PARAM_INVALID`.
 - All params are part of the LUT identity; identical curve + params
   combinations share one LUT.
 
@@ -1379,11 +1381,14 @@ number without `N`, or an `N` with a vector or a curve, is `E_ECHO_ARGS` /
 
 One-shot at its position in the note stream (not sticky). Replays the single
 note `B` positions back (`:back 1` = the last note, the default; history depth
-9); the taps are spaced by — and play at — the **current** `:len`/`:gate`
-(mucom `\=` semantics), not the source note's, and occupy real time, so
-following notes shift back. A tap plays in the track's current voice, so a
-`def-mod :voice` (§9.4) selects it as it does a written note. On a pcm track
-a tap replays the note's own sample (and its `:mode`) at its pitch.
+9) — before the track's first note there is none (`W_ECHO_NO_NOTE`; the
+sticky form is `(delay …)`). The taps are spaced by — and play at — the
+**current** `:len`/`:gate` (mucom `\=` semantics), not the source note's, and
+occupy real time, so following notes shift back. A tap plays in the track's
+current voice, so a `def-mod :voice` (§9.4) selects it as it does a written
+note. On a pcm track a tap replays the note's own sample (and its `:mode`) at
+its pitch. On an FM3 operator track (`fm3-1`…`fm3-4`) a tap keys that
+operator alone, as the written note does.
 
 ```lisp
 (fm1 c (echo 3 :vel+ -1)          ; vel−1, −2, −3 decaying trail
@@ -1657,7 +1662,8 @@ is never touched.
 | `:fx`     | The processing chain, `[(effect …) …]` — see *Effects* below   |
 
 `:rate`, `:offset` and `:frames` are whole numbers; one that does not read
-(`8k`, `1.5`) keeps the key's default, with `W_SAMPLE_KEY_INVALID`.
+(`8k`, `1.5`) keeps the key's default, with `W_SAMPLE_KEY_INVALID` — as does a
+`:rate` of 0 or below.
 
 All conversion is compile-time: stereo is downmixed `(L+R)/2`, the `:fx`
 chain runs, and the data becomes raw 8-bit signed PCM.
