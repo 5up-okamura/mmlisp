@@ -1,37 +1,12 @@
 # A Z80-only MMLisp build — feasibility (started 2026-09-28; SET ASIDE the same day)
 
-**Set aside 2026-09-28**: with the cut list in view the user judged a Z80-only
-build would keep MMLisp as a production environment but lose most of what
-makes MMLispDRV distinctive (the value machine, zero-jitter DAC, CSM, full SE
-restore) — the space is one XGM2 and MDSDRV have already mapped. The chosen
-direction is [[driver-decisions]] §9: keep the split, cut the 68000's share.
-Everything below stands as measured, for the day this is revisited.
-**Off the driver roadmap 2026-10-13** (user): the motive has weakened — the
-68000 pass brought the split's share to ~16% — and the stream-player shape
-below moved to the roadmap's Future vision.
-
-## A second shape: MMLisp as the composing tool, a stream player on the Z80 (2026-10-02)
-
-After the 68000 pass closed ([[driver-decisions]] §9), the user saw a Z80
-version differently: not this driver shrunk, but **MMLisp as the composing
-environment** with a pre-rendered output — XGM would do — and "subtract
-something, add a little": keep a few MMLisp-like live controls on top of the
-stream. The user likes the direction; nothing is decided or built.
-
-- **The path exists today**: Live's VGM export (`live/src/export-vgm.js`) →
-  SGDK's xgmtool → XGM. What is lost is runtime parameter motion (`$slot`,
-  macros reacting to the game); the language, preview and importers stay.
-- **The "little" to add on a pre-rendered stream**, each cheap on a Z80:
-  - per-channel level offsets: an add on the carrier TL writes passing
-    through (the player tracks each channel's ALG from the stream's $B0 to
-    know the carriers) — the game turns a part down;
-  - part swapping: the score exported as layered variant streams, switched
-    per channel by game state (drums come in for the battle) — interactive
-    music without runtime synthesis;
-  - `(trig N)` markers carried in the stream, so the game can sync to bars.
-
-`docs/roadmap.md` Future vision. Nothing is built; this file holds the user's
-decisions so far and the measurements taken for them.
+Set aside by the user on 2026-09-28 and taken off the driver roadmap on
+2026-10-13: with the cut list in view it would keep MMLisp as a production
+environment but lose most of what makes MMLispDRV distinctive (the value
+machine, zero-jitter DAC, CSM, full SE restore) — the space XGM2 and MDSDRV
+already cover — and the 68000 pass then brought the split's share to ~16%
+([[driver-decisions]] §9). The stream-player shape is the roadmap's Future
+vision. What follows is the measurement record, for the day it is revisited.
 
 ## Why (the user, 2026-09-28)
 
@@ -147,9 +122,9 @@ then totals ~72% mean at 10.1 kHz, ~83% at 14.4 kHz.
   uses no `ldir`, so nothing shipped moved; the archive's busy figures above
   moved by ≤0.5 point on the means, and its overlay-load frames now clip.
 
-## Open
+## Constraints a poll-point build must meet
 
-Constraints the poll-point build must meet:
+
 
 - **The game's VDP DMA blocks the Z80's ROM window.** A 68k-heavy game DMAs a
   lot; the DAC must be fed from Z80 RAM (a ring ahead of it), and the ring's

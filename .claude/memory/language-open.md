@@ -55,29 +55,7 @@ The vision it serves: `def-val` slots are the score's input ports, expressions
 the wiring, the sampling tiers the rates — the game writes variables, the
 score declares how the music responds.
 
-## 3. Score-written values (2026-10-13)
-
-A `def-val` is also the score's own variable ("外に出す必要がなくても変数として
-使いたい"). The rulings and why:
-
-- **`:public` opts a slot into the host's interface**, chosen over `:private`
-  once old scores were off the table ("既存のスコアのことを考える必要なし"): the
-  game interface is a contract. Rejected spellings: `:host none`, a range
-  meaning public.
-- **Writes reuse the parameter syntax and the PARAM opcodes** (target VALn) —
-  no new opcode.
-- **"制限はつけない、書いた通りに動く、でも破綻は困る"**: no odd combination is
-  refused; where the driver cannot follow, the compiler warns instead. The one
-  arbitration rule: the latest write or sweep wins, host or score.
-- **A song-wide value's sweep belongs to no channel** ("関係ないmacroが
-  チャンネルに縛られることに違和感"), so an effect taking the writing channel
-  does not stop it. **Song-wide macros were dropped, not moved** — a macro is a
-  note's (key-on/key-off), and carrying one globally was too heavy for its use
-  ("実装が重いならいらない").
-- **16 slots stay** — the opcode space (0x10–0xFE) leaves room for a private
-  range; grow it when a score needs it, not before.
-
-## 4. A known A/B divergence
+## 3. A known A/B divergence
 
 An override looping curve on a pitch macro skews the ir↔drv A/B by ±8 in the
 F-number at note boundaries, proven scale-independent.

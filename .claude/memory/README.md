@@ -46,5 +46,5 @@ Rules:
   user's rulings, device measurements, and what is open.
 - [z80-only.md](z80-only.md) — **a Z80-only build, set aside 2026-09-28**: the
   user's reasons, the measurements (archived sequencer, poll overhead, the RAM
-  budget, the listening verdicts), the decisions taken, and a second shape seen
-  2026-10-02 (MMLisp as the composing tool over a pre-rendered stream).
+  budget, the listening verdicts) and the decisions taken; the stream-player
+  shape is the roadmap's Future vision.

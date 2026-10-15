@@ -62,7 +62,10 @@ Its current limits are `driver.md` §11 — keep the two in step.
 - **mucom88**: the MML is imported whole. What a Mega Drive cannot hold is
   reinterpreted, not carried: part G's rhythm plays the RX5 kit, the ADPCM
   part its decoded `#pcm` bank, and the SSG lands on the PSG's coarser steps.
-- **VGM**: tempo changes within a song (one grid serves the whole file),
+- **VGM**: tempo changes within a song (one grid serves the whole file — Dino
+  Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
+  if wanted — envelopes and bends match exactly (TwinBee gives ~26
+  envelopes), and rounding near ones together is the lever;
   second chips, the YM2608's rhythm and ADPCM-B, the remaining PCM chips (OKI
   MSM6295, QSound, K054539, C140, …).
 - **DefleMask / Furnace**: sample channels, the macros of pre-INS2 Furnace
@@ -72,8 +75,12 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## MMLisp Live
 
-- A score's own `def-pcm` is not auditioned from the voice picker.
-- Touch has no add-cursor gesture.
+- A score's own `def-pcm` is not auditioned from the voice picker: its `:file`
+  is relative to the score's folder, which the picker's stand-in score lacks.
+- Touch has no add-cursor gesture: there is no modifier, and long-press is the
+  value popup.
+- Dragging the piano roll's background to seek (in the mockup, left out; not
+  decided).
 
 ## Future vision
 

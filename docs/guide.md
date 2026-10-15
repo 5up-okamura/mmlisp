@@ -1400,7 +1400,8 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
 - The pitch effects come along as `:pitch` macros: a vibrato (`04xy`) is a
   shared `(def vib-xy (macro :pitch (sin …)))`, a slide (`01xx`/`02xx`,
   `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a slur that glides
-  in, and fine tune (`E5xx`) an offset rounded to 10 cents.
+  in, and fine tune (`E5xx`) an offset rounded to 10 cents. Furnace's
+  slide/portamento compatibility flags are followed approximately.
 - The log counts the effects that do not come along. On a non-Genesis
   system the channels play their notes on a `presets/waveforms` stand-in
   voice; sample channels are left out. Of a Furnace module, the first
@@ -1451,7 +1452,9 @@ them: a key-on starts a note, a key-off ends it.
   the sample data the file carries is decoded into one wav,
   `<song>-pcm.wav`, sliced by `(def-pcm sega-NN …)`, `pcma-NN`, `pcmb-NN`
   or `oki-NN` defs — one gain for the song brings its loudest sample to full
-  scale — and each hit's level becomes `:vel` (the loudest hit 15).
+  scale, though the X68000's samples still come in a little quiet (a `:fx`
+  `comp` on its defs raises them) — and each hit's level becomes `:vel` (the
+  loudest hit 15).
   **PCM voices** picks how many of pcm1–3 the score uses — the rate the
   driver plays them at — and starts at the most that ring at once, three at
   most. With as many voices as channels, a channel is a track; with fewer,

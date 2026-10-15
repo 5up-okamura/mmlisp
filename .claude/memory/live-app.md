@@ -155,17 +155,12 @@ and showed nothing the playhead did not. The user's rulings:
   words read the same everywhere; the AI on the MCP link reads diagnostics),
   and GitHub's docs are left to the browser's translator. No runtime machine
   translation: the app runs offline and terms must stay fixed (glossary).
-- **The X68000's OKIM6258 stays a little quiet** after the full-scale gain
-  (accepted, 2026-10-15); a `:fx` comp is the lever if it is raised again.
 
 ## Open
 
-The list is `docs/roadmap.md` (Importers, MMLisp Live); kept here is what it
-leaves out.
+What is ahead for users is `docs/roadmap.md` (Importers, MMLisp Live); what
+is here serves development only.
 
-- Why the roadmap's two MMLisp Live items are hard: a score's own `def-pcm`
-  `:file` is relative to the score's folder, which the picker's stand-in score
-  lacks; on touch there is no modifier, and long-press is the value popup.
 - **Playing in the background on iOS** (user, 2026-10-16): done as the
   `<audio>` fed from a MediaStreamAudioDestinationNode plus the Media
   Session (index.html synthOutput / startBackgroundAudio / setMediaSession,
@@ -179,15 +174,6 @@ leaves out.
   clock), and the page reaches the player at ~30 sites in index.html that
   would read a posted mirror instead; the hazards are seek/hot-swap/GC
   stalls on the audio thread.
-- Dragging the piano roll's background to seek was in the mockup
-  (https://claude.ai/artifact/Rimn1WHaERRJbLBLgKhJbb) and left out — not
-  decided.
-- VGM's one grid per file: Dino Land's title theme estimates a 64th-note grid
-  for the whole song.
-- **Fewer shapes**, if wanted: VGM envelopes and bends match exactly (TwinBee
-  gives ~26 envelopes); rounding near shapes together is the lever. A bass of
-  per-note pitch falls names a bend per pitch.
-- Furnace's slide/porta compat rules are rounded.
 - **Performance, step by step** (user, 2026-10-15): the app has heavy
   moments on Intel Macs and phones. A headless profile at 4× CPU throttle on a
   9-track, 9,600-note score (2026-10-16) left, after two passes: the scope
