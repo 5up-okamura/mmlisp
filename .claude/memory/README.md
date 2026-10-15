@@ -13,7 +13,7 @@ Rules:
   facts — stays here.
 
 - **One file per AREA, not per feature** — driver, PCM, language, the live
-  app (and the set-aside Z80-only build). A new feature's reasons go into its
+  app. A new feature's reasons go into its
   area's file as a section; a new file only for a new area. Keep each current:
   edit in place, delete an item when the work lands and the repo records the
   outcome. (2026-10-09: thirteen per-feature files had piled up again.)
@@ -44,7 +44,3 @@ Rules:
 - [live-app.md](live-app.md) — **the live app**: why the editing aids, the
   Library panel, the voice picker and the importers have their shape, the
   user's rulings, device measurements, and what is open.
-- [z80-only.md](z80-only.md) — **a Z80-only build, set aside 2026-09-28**: the
-  user's reasons, the measurements (archived sequencer, poll overhead, the RAM
-  budget, the listening verdicts) and the decisions taken; the stream-player
-  shape is the roadmap's Future vision.

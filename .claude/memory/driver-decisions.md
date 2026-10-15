@@ -5,15 +5,10 @@ measurements that cost real work, and the user's rulings. **The design itself is
 `docs/driver.md`** — if a fact about the present is in both places, that one
 wins and this one is wrong.
 
-**A byte budget, overlay table, `npm run size` / `budget` / `mixer` / `ring`
-figure or `.z80` line reference from before 2026-09 describes the all-Z80
-build** (tag `archive/all-z80`; the ring engine is `archive/ring-engine`, the
-DAC bench `archive/dac-stream-bench`), not the shipped driver.
-
-PCM is [[pcm]]; the set-aside
-Z80-only build is [[z80-only]]. Open work is `docs/roadmap.md` (Driver) and
-`docs/driver.md` §11; what is listed as open here is only the reasoning those
-omit.
+PCM is [[pcm]]. Open work is `docs/roadmap.md` (Driver) and `docs/driver.md`
+§11; what is listed as open here is only the reasoning those omit. The
+superseded engines are tags `archive/all-z80`, `archive/ring-engine` and
+`archive/dac-stream-bench`.
 
 ---
 
@@ -116,6 +111,18 @@ Read from source (`SGDK/src/snd/xgm2/*`, MDSDRV's `mdssub.z80`), 2026-09-01:
   pitched, switchable**. A voice count says nothing about feed uniformity, and
   that is the part worth learning.
 
+**For any Z80 player** (a stream player included), learned on the all-Z80
+build: the game's VDP DMA stops the Z80's access to the ROM window, so a DAC
+fed from it must play from a ring in Z80 RAM deep enough for the longest DMA,
+and the game must flag its DMA (XGM2's protocol); bank switches (~9 writes)
+belong per chunk, not per sample. Accumulate **biased-unsigned** (`sample ^
+$80`) so the sum needs no sign extension; two page-aligned planes let one
+8-bit index address both (`inc h` / `dec h`); **`exx` is flag-transparent**,
+so a frac carry chains into the pointer add — but `exx` swaps BC too, so load
+the increment into C *after* it. Two image build traps: **the image boots at
+level 0**, and until the bank is set the window shows ROM bank 0; and
+`ld a,(LUT>>8)` assembles as a **memory load** — write `ld a,LUT>>8`.
+
 ## 5. Three bugs that no gate could see
 
 All outside the code under test, all silent:
@@ -191,7 +198,8 @@ missed it because only a real score issues STOP+START in one slot.
 
 ## 9. The 68000's share — closed 2026-10-02, reopened and closed again 2026-10-14
 
-The user's direction after setting the Z80-only build aside ([[z80-only]]):
+The user's direction after setting a Z80-only build aside (2026-09-28; the
+stream-player shape that may replace it is the roadmap's Future vision):
 keep the split and make the 68000 side cheap, so a game keeps the CPU for
 raster effects and 3D. Closed by the user on 2026-10-02 as the price of moving
 parameters every frame. **Reopened 2026-10-14** (the user: a render that
