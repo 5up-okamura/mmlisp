@@ -1141,7 +1141,7 @@
       justify-content: center;
       gap: 0.4rem;
       background: color-mix(in srgb, var(--background) 82%, transparent);
-      outline: 2px dashed var(--accent);
+      outline: 2px dashed var(--foreground);
       outline-offset: -10px;
       font: 14px 'Open Sans', sans-serif;
       color: var(--foreground);
