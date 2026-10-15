@@ -198,7 +198,7 @@
           <span>Save</span>
           <span class="menu-item-shortcut" id="saveFileShortcut"></span>
         </button>
-        <button class="menu-item" onclick="saveFileAs();closeMenus()">
+        <button class="menu-item" id="saveAsItem" onclick="saveFileAs();closeMenus()">
           <span>Save As…</span>
           <span class="menu-item-shortcut" id="saveFileAsShortcut"></span>
         </button>
@@ -10742,6 +10742,9 @@
     initRecent();
     // A browser that cannot open a folder (iOS, Firefox) gets no Open Folder…;
     // Scores in Folder only ever appears with one open.
+    // Without a save picker (iOS, Firefox) a score keeps no file to write
+    // back to: every Save asks where, so Save As… would be the same thing.
+    if (typeof window.showSaveFilePicker !== 'function') document.getElementById('saveAsItem').hidden = true;
     if (typeof window.showDirectoryPicker !== 'function') {
       document.getElementById('openFolderItem').hidden = true;
       document.getElementById('openFolderSep').hidden = true;
