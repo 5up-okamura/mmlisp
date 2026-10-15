@@ -1287,12 +1287,13 @@ FM parts A–C / H–J go to `fm1`–`fm6`, SSG D–F to `sqr1`–`sqr3` (the no
 SSG part plays with noise on go to `noise`), ADPCM K to `pcm1`, rhythm G to
 the RX5 kit on one PCM track (`pcm1`, or `pcm2` beside K). Notes, lengths
 and ties land on mucom's clock grid; loops, breaks and the last `L` become the
-loop point (a part without `L` plays once). Key shift `K`/`k`, detune `D`
-(relative `D n+` too), `v`, `)`/`(`, `V`, `q`, reverb `R`, register writes
-`y`, SSG `E` envelopes and `@n` presets, `P`/`w`, slot detune `S`, key-on
-revise `s`, inline, `@%` and `.dat` voices, macros, echo, portamento,
-hardware and software LFO and both tempo commands all import. Where mucom's driver behaves in a particular way, the
-import does the same rather than approximating:
+loop point (a part without `L` plays once). **Every mucom command imports**:
+key shift `K`/`k`, detune `D` (relative `D n+` too), `v`, `)`/`(`, `V`, `q`,
+reverb `R`, register writes `y`, SSG `E` envelopes and `@n` presets, `P`/`w`,
+slot detune `S`, key-on revise `s`, inline, `@%` and `.dat` voices, macros,
+echo, portamento, hardware and software LFO, and both tempo commands. Where
+mucom's driver behaves in a particular way, the import does the same rather
+than approximating:
 
 - **Loop passes.** `)`/`(`, `D n+`, `q` and ties act on every pass of a loop,
   so a loop whose passes would differ — or one tied into or out of — is
@@ -1337,10 +1338,11 @@ import does the same rather than approximating:
   at 15.
 
 The chip's own limits stay visible as warnings: SSG notes below A2 play an
-octave up (the PSG's floor), one
-noise channel serves the first part that uses it, and SSG reverb rings without
-its level drop. Not imported: rhythm's per-sound pan, the ADPCM part K's pan `p` and detune `D` (a PCM voice
-has neither), and K's volume mode `vm<n>`.
+octave up (the PSG's floor), one noise channel serves the first part that uses
+it, and SSG reverb rings without its level drop. What the Mega Drive has no
+place for is dropped and said so: rhythm's per-sound pan, the ADPCM part K's
+pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
+`vm<n>`.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM
 

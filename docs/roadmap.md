@@ -9,20 +9,31 @@ needs (CLAUDE.md).
 
 Its current limits are `driver.md` §11 — keep the two in step.
 
-1. **A hardware run.** Everything — the three engine images at a 100% work
-   ceiling, the multi-bank engine, sound effects in the SGDK example — has run
-   only in the JS machine and on BlastEm.
-2. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
+**Defects** — behaviour that is wrong, fixed before features:
+
+- **CH3 under an effect waits.** An effect on CH3 takes all of it, and the
+  song's CH3 parts are suspended without playing on (every other channel's
+  displaced part plays on unheard, driver.md §2.5), so after the effect they
+  are late by its length.
+- **A PCM effect restarts a looping BGM note** from the sample's head rather
+  than where it would be.
+
+**Before release:**
+
+- **A hardware run.** Everything — the three engine images at a 100% work
+  ceiling, the multi-bank engine, sound effects in the SGDK example — has run
+  only in the JS machine and on BlastEm.
+
+**Next:**
+
+1. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
    voice change is one pair instead of the ~30 register writes a channel costs
    today.
-3. **Several scores resident at once** (DJ-style transitions, driver.md §2.3).
+2. **Several scores resident at once** (DJ-style transitions, driver.md §2.3).
    Today one score is resident; a bundle's songs share one sample bank.
-4. **PAL and SE rough edges.** A single-bank PAL score's samples are baked at
-   the NTSC DAC rate (the multi-bank images have PAL rates of their own). A
-   PCM effect restarts a looping BGM note from the sample's head rather than
-   where it was, and a sweep in flight on a stolen channel is lost rather than
-   resumed.
-5. **Integration breadth** — more game-scene mappings worth shipping as
+3. **Single-bank PAL samples** are baked at the NTSC DAC rate (the multi-bank
+   images have PAL rates of their own).
+4. **Integration breadth** — more game-scene mappings worth shipping as
    examples beside `drv/sgdk/example`, and a hardware-verified reference
    build.
 
@@ -44,8 +55,9 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## Importers
 
-- **mucom88**: `S` FM3 slot detune (13 reference songs; maps onto
-  `fm3-1`–`fm3-4` with a per-operator `:pitch`), `s` key-on revise.
+- **mucom88**: the MML is imported whole. What a Mega Drive cannot hold is
+  reinterpreted, not carried: part G's rhythm plays the RX5 kit, the ADPCM
+  part its decoded `#pcm` bank, and the SSG lands on the PSG's coarser steps.
 - **VGM**: tempo changes within a song (one grid serves the whole file),
   second chips, the YM2608's rhythm and ADPCM-B, the remaining PCM chips (OKI
   MSM6295, QSound, K054539, C140, …).
