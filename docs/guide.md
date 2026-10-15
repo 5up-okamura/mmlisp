@@ -1223,8 +1223,9 @@ a reload asks where.
 
 While a song plays the screen stays on (where the browser allows a page to
 ask: Chrome, and Safari from iOS 16.4), and the page goes on playing when it
-is hidden behind another tab or app — Safari on iPhone and iPad stops a
-hidden page's sound, so there the song pauses until the page is back.
+is hidden behind another tab or app. On an iPhone or iPad the sound plays as
+media, so the lock screen and Control Center show the song with play, pause
+and stop.
 
 A browser without file pickers — Safari on iPhone and iPad, Firefox — opens
 with a plain file chooser, has only Save (every save asks where, so there is

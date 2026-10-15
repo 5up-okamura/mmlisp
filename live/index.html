@@ -6183,6 +6183,53 @@
     function isCoarsePointerDevice() {
       return window.matchMedia('(hover: none) and (pointer: coarse)').matches;
     }
+    // An iPhone or iPad (iPadOS reports itself as a Mac, with touch).
+    function isIOS() {
+      return /iP(?:hone|ad|od)/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    // ── Sound behind another app (iOS) ─────────────────────────────────────
+    // Safari on iPhone and iPad stops a hidden page's Web Audio unless a media
+    // element of the page is playing: there the synth plays through an <audio>
+    // fed from a MediaStreamAudioDestinationNode instead of the context's own
+    // output, and the lock screen's controls reach the page through the Media
+    // Session. The element starts inside the Play tap, before anything awaits.
+    let _bgAudio = null, _bgDest = null;
+    function synthOutput() {
+      if (!isIOS()) return audioCtx.destination;
+      if (!_bgDest) {
+        _bgDest = audioCtx.createMediaStreamDestination();
+        _bgAudio = document.createElement('audio');
+        _bgAudio.setAttribute('playsinline', '');
+        _bgAudio.srcObject = _bgDest.stream;
+        document.body.appendChild(_bgAudio);
+      }
+      return _bgDest;
+    }
+    function startBackgroundAudio() {
+      if (!isIOS() || !audioCtx) return;
+      synthOutput();
+      if (_bgAudio.paused) _bgAudio.play().catch(() => {});
+    }
+    function stopBackgroundAudio() {
+      _bgAudio?.pause();
+    }
+    function setMediaSession(state) {
+      const ms = navigator.mediaSession;
+      if (!ms) return;
+      try {
+        if (state === 'playing' && !ms.metadata) {
+          ms.metadata = new MediaMetadata({ title: _lastFileName.replace(/\.mmlisp$/, ''), artist: 'MMLisp Live' });
+          ms.setActionHandler('play', () => { if (_paused) onResume(); else if (!player) onPlay(); });
+          ms.setActionHandler('pause', () => onPause());
+          ms.setActionHandler('stop', () => onStop());
+        } else if (state === 'playing') {
+          ms.metadata.title = _lastFileName.replace(/\.mmlisp$/, '');
+        }
+        ms.playbackState = state;
+      } catch (_) { /* a browser without the Media Session's actions */ }
+    }
 
     function audioWorkletUnavailableReason() {
       const protocol = window.location?.protocol ?? 'unknown';
@@ -6227,7 +6274,7 @@
           onScopeBatch(msg);
         }
       };
-      workletNode.connect(audioCtx.destination);
+      workletNode.connect(synthOutput());
       // Apply the current analog-LPF state to the fresh node, and keep the
       // per-channel tap stream on for its lifetime (feeds scope + VU).
       workletNode.port.postMessage({ type: 'set-analog-lpf', on: analogLpfOn, cutoffHz: ANALOG_LPF_CUTOFF });
@@ -6361,6 +6408,7 @@
             log('AudioContext @ ' + audioCtx.sampleRate + ' Hz', 'info');
             audioCtx.onstatechange = () => log('AudioContext state: ' + audioCtx.state, 'info');
           }
+          startBackgroundAudio(); // iOS: in the tap, before any await
           // On iOS/Safari this is safest inside the click/touch handler chain.
           // A bare resume() can hang on iOS, so bound it — a timeout settles the
           // promise so a later tap can retry instead of being stuck forever.
@@ -6587,6 +6635,8 @@
     function playingStarted() {
       player?.setLookahead?.(document.hidden ? LOOKAHEAD_HIDDEN : LOOKAHEAD_VISIBLE);
       holdScreen();
+      startBackgroundAudio(); // a lock-screen Play arrives with no tap
+      setMediaSession('playing');
     }
     document.addEventListener('visibilitychange', () => {
       if (!player?.isPlaying?.()) return;
@@ -6603,6 +6653,8 @@
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
       releaseScreen();
+      stopBackgroundAudio();
+      setMediaSession('none');
       _seHeld.clear();
       refreshSeLit();
       _timeCue = null;
@@ -6886,6 +6938,7 @@
       player.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       releaseScreen();
+      setMediaSession('paused'); // the element plays on (silence): the lock screen keeps its controls
       _paused = true;
       log('Paused');
       setPlayIcon(false);
