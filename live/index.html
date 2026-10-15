@@ -5531,7 +5531,6 @@
     let _fmCursorDefContext = null;
     let _stepInputEnabled = false;
     let _kbBaseOctave = 3;
-    let _kbAppliedDefSig = null;
     const _kbPointerMap = new Map();
     const _kbPhysicalMap = new Map();      // physical-keyboard note down: e.code → { chIndex, midi }
     let _lastPreviewMidi = 60;             // last previewed pitch (initial C4 = MIDI 60)
@@ -6839,7 +6838,6 @@
     function updateLibraryKeys() {
       const dock = document.getElementById('keyboardDock');
       if (dock) dock.hidden = libraryShown() && !_libKeyTarget;
-      _kbAppliedDefSig = null; // a new voice to push before the next key
       updateKeyboardUiState();
     }
 
@@ -7200,7 +7198,6 @@
         return;
       }
       applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH, def.regs);
-      _kbAppliedDefSig = null; // the panel took the channel; let the keyboard re-push
       _openingVoiceOn = null;
       stopBrowsePreview();
       previewNoteOn(CURSOR_DEF_PREVIEW_CH, midi);
@@ -8729,16 +8726,14 @@
       return false;
     }
 
-    // Push the cursor-def voice onto the preview channel before auditioning, with
-    // the same signature cache the on-screen keyboard uses.
+    // Push the cursor-def (or Library's) voice onto the preview channel before
+    // auditioning. Every key does it, as a key taking a second channel does:
+    // nothing else keeps that channel the def's — a run's end drops the player,
+    // and the next one starts every channel from the default voice.
     function ensurePreviewDefApplied(target) {
       if (!target.useCursorDef) return;
-      const sig = JSON.stringify(target.defCtx.regs);
-      if (_kbAppliedDefSig !== sig) {
-        applyFmRegsToChannel(target.chIndex, target.defCtx.regs);
-        _kbAppliedDefSig = sig;
-        _openingVoiceOn = null;
-      }
+      applyFmRegsToChannel(target.chIndex, target.defCtx.regs);
+      _openingVoiceOn = null;
     }
 
     // Stopped, nothing has put the song's voices on the chip (Stop drops the
