@@ -626,7 +626,7 @@ export class DrvPlayer {
     // shadow covers every address the change-only layer writes (driver.md §4).
     this._ym(0, 0x22, 0); // LFO off
     this._ym(0, 0x27, 0); // CH3 normal mode, timers off
-    this._ym(0, 0x2a, 0); // DAC data centred
+    this._ym(0, 0x2a, 0); // DAC data 0 — the DAC is off; the engine feeds it
     this._ym(0, 0x2b, 0); // DAC off: fm6 is FM until a PCM note claims it
     // $2A stays in the neutral patch for parity with ir-player but never
     // crosses the bus — the engine writes the DAC. $2B does: it is the

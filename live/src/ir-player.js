@@ -4872,7 +4872,7 @@ export class IRPlayer {
     // Globals, matching the driver's boot patch (driver.md §5.4).
     this._write(0, 0x22, 0); // LFO off
     this._write(0, 0x27, 0); // CH3 normal mode, timers off
-    this._write(0, 0x2a, 0); // DAC data centred
+    this._write(0, 0x2a, 0); // DAC data 0 — the DAC is off; the engine feeds it
     this._write(0, 0x2b, 0); // DAC off
   }
 }

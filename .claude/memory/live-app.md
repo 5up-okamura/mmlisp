@@ -175,6 +175,13 @@ leaves out.
   gives ~26 envelopes); rounding near shapes together is the lever. A bass of
   per-note pitch falls names a bend per pitch.
 - Furnace's slide/porta compat rules are rounded.
+- **Performance, step by step** (user, 2026-10-15): the app has heavy
+  moments on Intel Macs and phones. Known suspects: the piano roll's
+  follow-cursor walks every note on each selection change (`rollFollowCursor`);
+  profile on those devices before changing anything.
+- **Internal "Browse" names** (`BROWSE_*_INDEX`, `loadBrowseCatalog`,
+  `previewBrowse*`, …) still name the Library; rename when a refactor of that
+  area comes up — the user-visible strings already say Library.
 - **The ja / es translations are unreviewed** — machine-written from the
   glossary; Spanish especially wants a reader. A fix goes through
   `i18n-sync.mjs --apply`, never a hand edit of the pack.

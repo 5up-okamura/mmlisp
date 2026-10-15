@@ -2620,7 +2620,7 @@ static void emit_init_writes(MMLSeq *s) {
   }
   ym(s, 0, 0x22, 0); /* LFO off */
   ym(s, 0, 0x27, 0); /* CH3 normal mode, timers off */
-  ym(s, 0, 0x2a, 0); /* DAC data centred — shadow only, the mixer owns it */
+  ym(s, 0, 0x2a, 0); /* DAC data 0 (the DAC is off) — shadow only, the mixer owns it */
   ym(s, 0, 0x2b, 0); /* DAC off — likewise */
 }
 
