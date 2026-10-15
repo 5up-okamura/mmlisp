@@ -193,6 +193,21 @@ function noteClocks(num, dots, pct, hasLen, state) {
   return clocks;
 }
 
+// mucom `s n` (muc88.asm FCOMP1X): a NOTE's clock length takes +n and the
+// sign then flips, so a run alternates +n, -n — a micro-shuffle around the
+// beat, whose pairs still add up. Rests keep their length; a tie and a
+// portamento count as notes. The flip is the compiler's, so a loop body bakes
+// the lengths it was compiled with, exactly as an `(x …)` body does.
+function reviseLen(token, num, dots, pct, hasLen, state) {
+  const rev = state.keyOnRev ?? 0;
+  if (!rev) return token;
+  state.keyOnRev = -rev;
+  const clocks = noteClocks(num, dots, pct, hasLen, state);
+  if (clocks == null) return token;
+  const c = Math.max(1, clocks + rev);
+  return ditherClocks(c, lengthToken(null, 0, c, state.wholeClocks), state);
+}
+
 // Resolve a note/rest length token. A dots-only suffix (`f.`, `e-.` — dots but
 // no number) applies the dots to the running DEFAULT length: mucom multiplies
 // the note's current length by 1.5 per dot (lengthToken alone returns null when
@@ -390,8 +405,9 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else if (d === ".") { dots++; i++; hasLen = true; }
         else break;
       }
-      const len = resolveLen(num, dots, pct, hasLen, state);
-      push({ t: "note", letter: c, acc, len, clocks: noteClocks(num, dots, pct, hasLen, state) });
+      const clocks = noteClocks(num, dots, pct, hasLen, state);
+      const len = reviseLen(resolveLen(num, dots, pct, hasLen, state), num, dots, pct, hasLen, state);
+      push({ t: "note", letter: c, acc, len, clocks });
       continue;
     }
 
@@ -624,7 +640,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else if (d === ".") { dots++; i++; hasLen = true; }
         else break;
       }
-      push({ t: "tie", len: resolveLen(num, dots, pct, hasLen, state), clocks: noteClocks(num, dots, pct, hasLen, state) }); // `^.` dots the default length
+      push({ t: "tie", clocks: noteClocks(num, dots, pct, hasLen, state), len: reviseLen(resolveLen(num, dots, pct, hasLen, state), num, dots, pct, hasLen, state) }); // `^.` dots the default length
       continue;
     }
     // Slur/tie `&`: connects the previous note to the next without a re-key.
@@ -667,12 +683,10 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         else if (d === ".") { dots++; i++; hasLen = true; }
         else break;
       }
-      const len = hasLen
-        ? resolveLen(num, dots, pct, true, state)
-        : resolveLen(inNum, inDots, inPct, inNum != null || inDots > 0 || inPct != null, state);
-      const clocks = hasLen
-        ? noteClocks(num, dots, pct, true, state)
-        : noteClocks(inNum, inDots, inPct, inNum != null || inDots > 0 || inPct != null, state);
+      const pHas = hasLen || inNum != null || inDots > 0 || inPct != null;
+      const [pn, pd, pp] = hasLen ? [num, dots, pct] : [inNum, inDots, inPct];
+      const len = reviseLen(resolveLen(pn, pd, pp, pHas, state), pn, pd, pp, pHas, state);
+      const clocks = noteClocks(pn, pd, pp, pHas, state);
       if (notes.length >= 2) push({ t: "porta", from: notes[0], to: notes[notes.length - 1], len, clocks });
       else if (notes.length === 1) push({ t: "note", letter: notes[0].letter, acc: notes[0].acc, len, clocks });
       continue;
@@ -776,10 +790,18 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
-    // Unsupported commands (s key-on revise; P/w outside SSG, S off part C).
+    // Key-on revise `s n` — compile time, so it is the parser's (reviseLen).
+    if (c === "s") {
+      i++;
+      const v = readSignedInt();
+      if (v != null) state.keyOnRev = v;
+      continue;
+    }
+
+    // Unsupported commands (P/w outside SSG, S off part C).
     // Consume the FULL argument list so nothing leaks into note/length parsing
     // (a leaked arg becomes a spurious note and drifts the channel).
-    if ("SPws".includes(c)) {
+    if ("SPw".includes(c)) {
       i++;
       warnOnce(warn, c, `command '${c}' not supported; dropped`);
       while (i < n && /[0-9$+\-,.]/.test(body[i])) i++;

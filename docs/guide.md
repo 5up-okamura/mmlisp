@@ -1289,9 +1289,9 @@ the RX5 kit on one PCM track (`pcm1`, or `pcm2` beside K). Notes, lengths
 and ties land on mucom's clock grid; loops, breaks and the last `L` become the
 loop point (a part without `L` plays once). Key shift `K`/`k`, detune `D`
 (relative `D n+` too), `v`, `)`/`(`, `V`, `q`, reverb `R`, register writes
-`y`, SSG `E` envelopes and `@n` presets, `P`/`w`, slot detune `S`, inline,
-`@%` and `.dat` voices, macros, echo, portamento, hardware and software LFO
-and both tempo commands all import. Where mucom's driver behaves in a particular way, the
+`y`, SSG `E` envelopes and `@n` presets, `P`/`w`, slot detune `S`, key-on
+revise `s`, inline, `@%` and `.dat` voices, macros, echo, portamento,
+hardware and software LFO and both tempo commands all import. Where mucom's driver behaves in a particular way, the
 import does the same rather than approximating:
 
 - **Loop passes.** `)`/`(`, `D n+`, `q` and ties act on every pass of a loop,
@@ -1318,6 +1318,11 @@ import does the same rather than approximating:
   carriers alone, as mucom's volume table writes them. All-zero offsets are
   the normal mode, so a part that only ever writes those stays one `fm3`
   track.
+- **Key-on revise** `s n` adds n clocks to a note's length and flips the
+  sign, so a run alternates +n, −n — a micro-shuffle whose pairs still add
+  up. Rests keep their length; a tie and a portamento count as notes. The
+  flip is the compiler's, so a loop body plays the lengths it was compiled
+  with, as an `(x …)` body does.
 - **Tempo** is `BPM = 832000 / ((256 − t) × C)`, to two decimals; `T` goes
   through the Timer-B value it compiles to.
 - **ADPCM**: o1 c plays at 16,143.6 Hz, the bank's labelled rate; the driver
@@ -1334,8 +1339,7 @@ import does the same rather than approximating:
 The chip's own limits stay visible as warnings: SSG notes below A2 play an
 octave up (the PSG's floor), one
 noise channel serves the first part that uses it, and SSG reverb rings without
-its level drop. Not imported: `s` key-on revise,
-rhythm's per-sound pan, the ADPCM part K's pan `p` and detune `D` (a PCM voice
+its level drop. Not imported: rhythm's per-sound pan, the ADPCM part K's pan `p` and detune `D` (a PCM voice
 has neither), and K's volume mode `vm<n>`.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM
