@@ -980,9 +980,10 @@ A game's sound effects are written once, as defs, and every song carries them.
 
 - **Parts.** Each part is a channel form, written on the channel the effect
   **takes from the song** — `fm1` above is the song's lead's channel. When the
-  effect plays, the song's part there is suspended, and comes back re-keyed
-  when the effect ends (driver.md §2.5) — patch, levels, pan and, on `noise`,
-  its mode, as they were. One part a channel (`E_SE_PART`). An FM effect on a
+  effect plays, the song's part there is suspended — it plays on, unheard —
+  and when the effect ends it comes back where the song is (driver.md §2.5):
+  patch, levels, pan, a sweep still moving and, on `noise`, its mode, with a
+  note it still holds re-keyed. One part a channel (`E_SE_PART`). An FM effect on a
   channel the song leaves free starts sooner: the first effect there has its
   voice loaded with the score (driver.md §4.1).
 - **Not `:master`, `:lfo-rate` or a `def-val`.** Those are the song's — the
@@ -990,7 +991,8 @@ A game's sound effects are written once, as defs, and every song carries them.
   write them (`E_SE_PART`).
 - **CH3 is taken whole.** CH3's operator mode (`fm3-1`…`fm3-4`) and CSM
   (`fm3-csm`, `fm3-csm-rate`) are chip-wide, so an effect with any part on
-  CH3 — `fm3` included — takes all of it: every song part on CH3 is suspended,
+  CH3 — `fm3` included — takes all of it: every song part on CH3 is suspended
+  and waits (it comes back late by the effect's length),
   the effect plays in whatever mode its own parts set (an effect with operator
   parts switches CH3 into operator mode itself), and at its end the song gets
   its mode, CSM rate, patch, levels and held notes back. One effect is either

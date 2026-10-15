@@ -55,7 +55,7 @@ npm run verify:all
 | `voice-hoist` | the voice-hoist pass moves time, never notes: every onset stays put and every moved voice write lands in silence, over the corpus and the SGDK example |
 | `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, over the corpus — every `tests/*.mmlisp` but the claim-gate twins (`corpus()` in `c-gate.mjs`) — and the SGDK example's bundle; the gate prints the count it ran |
 | `c-gate:pal` | the same corpus on PAL-baked streams — the sequencer reads no frame rate, and this is what keeps it that way |
-| `claim-gate` (and `:pal`) | a channel changes hands cleanly: modulators do not outlive their owner, and a part an effect displaced comes back exactly when the effect ends (driver.md §2.2, §2.5) |
+| `claim-gate` (and `:pal`) | a channel changes hands cleanly: modulators do not outlive their owner, and a part an effect displaced comes back exactly when the effect ends, in time with the song as if the effect had never fired (driver.md §2.2, §2.5) |
 | `pairs-gate` | over c-gate's corpus: the C sequencer's frames in write order ≡ the reference's; `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame (a banked score's pairs are `banked:gate`'s); the SGDK host's frame-view path ≡ the record path |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
 | `engine:gate` | the three single-bank engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |

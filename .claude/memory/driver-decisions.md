@@ -194,7 +194,8 @@ missed it because only a real score issues STOP+START in one slot.
 The user's direction after setting the Z80-only build aside ([[z80-only]]):
 keep the split and make the 68000 side cheap, so a game keeps the CPU for
 raster effects and 3D. Closed by the user on 2026-10-02 as the price of moving
-parameters every frame. **Reopened 2026-10-14** ("そこまで重いのは大問題です")
+parameters every frame. **Reopened 2026-10-14** (the user: a render that
+heavy is a serious problem)
 when a banked mucom import measured a 10–20 ms render on every beat and 45 ms
 on a voice-change frame — past the vblank at one frame of lead, so the frame
 slipped (the SGDK example app itself is idle: the cost is the driver's). Closed
@@ -295,10 +296,11 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   frame; a lone voice lands where it did. Spreading does nothing for the
   single-bank WIRE (the pairs before a key-on are the same however they are
   spread over the window); it is the 68000's render it halves.
-- **Two frames of lead, eight pairs ahead** (user, 2026-10-14, "進めて"). The
+- **Two frames of lead, eight pairs ahead** (user, 2026-10-14). The
   frame slip above is the render missing its vblank; `MMLISP_LEAD` 2 gives it
-  the whole frame before. The user's worry was SE latency ("1フレームの遅れ、
-  SEが遅れるのがとても気になってる"), so the wire was measured first: the
+  the whole frame before. The user's worry was SE latency — one frame of
+  delay, an effect arriving late, matters a lot to them — so the wire was
+  measured first: the
   host placed a grab 32 pairs past the engine's index (48 past a frame-old one
   on the light host), 18.3 ms of dead wire at two banked voices (p50, every
   pair, BlastEm). Read fresh and placed 8 past it: 5.7 ms, every gate green.
@@ -307,8 +309,8 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   1 still slips — key-on lag p95/max 18.3/38.8 ms, interval error p95 17.9 —
   on ordinary 107–126% frames at 8–31 s, not only the 242% loop head; lead 2
   gives 6.7/22.2 and 7.2. So LEAD 2 stays until a render fits a frame.
-- **Every start sounds in the frame it is drained in** (user, 2026-10-14,
-  "進めて"): the silent armed frame that held a song's, a track's and an
+- **Every start sounds in the frame it is drained in** (user, 2026-10-14):
+  the silent armed frame that held a song's, a track's and an
   effect's first note back ~17 ms is gone — one rule, not an SE-only branch,
   since the FIFO wire already keeps a head's writes ahead of its first key-on.
   The head still runs at the head of the track's first frame (`fresh`),
@@ -328,8 +330,9 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
 - **Bundle the control data, share the sample bank** — chosen *explicitly
   over* runtime cross-MMB banking. Worth re-opening if several scores ever
   become resident; not a prerequisite.
-- **`def-se`, one way only** (2026-09-28): "実際にゲームに使えるドライバーに
-  したいので解決は必要", "def-seに一本化したい / 古い実装は必要ない". What
+- **`def-se`, one way only** (2026-09-28): the user wants a driver a game can
+  really use, so this had to be settled, and wants `def-se` to be the single
+  way — the older implementation is not needed. What
   forced it: an SE addressed by TRACK ID shifts with each song's track count,
   so a game could not hold a constant; and a song using every channel had no
   spare one to author an SE on. The user ruled: one effects file injected into
@@ -337,18 +340,35 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   priority the host may override. **Mine, not ruled on**: an effect is a DEF
   (so `import` carries it and "tracks are songs" stands); a part is on the
   channel it takes; an effect keeps its own tempo.
-- **Re-trigger the restored macros, not resume them**, and losing an in-flight
-  sweep is accepted as an authoring rule: "作曲者が長いスイープのチャンネルを
-  SEに割り当てないようにすること".
-- **CH3 is taken whole** — "3ch丸ごとで良いです".
-- **Restore from the register shadow, not a voice id** — "レジスタの控えから
-  戻す方法にしてください". Partial `def-fm` voices were not rebuilt otherwise.
-- **No `:master` / `:lfo-rate` in an effect** — "SEでは:master,
-  :lfo-rateは使わない"; the compiler refuses them. The rule for any future
+- **Re-trigger the restored macros, not resume them.**
+- **The displaced part plays on, unheard** (2026-10-16). The earlier ruling —
+  an in-flight sweep lost, kept out by authoring (a composer was to avoid
+  assigning a channel with a long sweep to an effect) — was reversed: a sweep
+  that does not come back on a channel an effect took is a bug. Probing it
+  found the larger
+  fault: a suspended part did not advance, so after an effect it was late by
+  the effect's length for the rest of the song, in both players. **Chosen**:
+  the part keeps dispatching into a per-channel ghost (`MMLGhost`) with the
+  channel's writes dropped; ghost and live state trade places only around
+  what the part does to its channel. **Not chosen**: advancing the clock and
+  catching up at SE-end — every event of the effect's span lands in one frame
+  ($slot reads, trig, loops at the wrong time) and a sweep's value has to be
+  computed apart. Measured (m68k-elf-gcc sizes): `MMLSeq` 15,042 → 14,402 B
+  (the per-track snapshot went; ten 128 B ghosts came). Left open: CH3 taken
+  whole still waits (roadmap Defects); a `:master` the ghost's own stream
+  writes recomposes every channel but the effect's, which is stashed in the
+  ghost at that moment (rare: master is song-wide and usually set at the
+  head).
+- **CH3 is taken whole** — the user's ruling: taking all of channel 3 is fine.
+- **Restore from the register shadow, not a voice id** — the user's ruling: go
+  back from the register copy. Partial `def-fm` voices were not rebuilt
+  otherwise.
+- **No `:master` / `:lfo-rate` in an effect** — the user's ruling: an effect
+  does not use them; the compiler refuses them. The rule for any future
   song-wide state: refuse it in def-se, unless it belongs to a channel the
-  effect takes, in which case the snapshot carries it.
-- **Prime the voices of effects on free channels** (user, 2026-10-15, "SE
-  音色の先置きを進めて"). Measured on BlastEm (SGDK example + demo-se,
+  effect takes, in which case the channel's ghost carries it.
+- **Prime the voices of effects on free channels** (user, 2026-10-15).
+  Measured on BlastEm (SGDK example + demo-se,
   2026-10-14): an FM SE that brings its voice onto a song channel sounded
   81 ms after the call = lead 33 + pump to the first pair 8 + wire 40 (its
   ~35 voice/level/pitch writes ahead of the key-on, ~1 pair/ms on the light

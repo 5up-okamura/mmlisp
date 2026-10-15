@@ -71,6 +71,11 @@ const CASES = [
     from: 74, to: 130,  // opens after the NTSC restore, the later of the two
     what: "an effect's macro and sweep do not play the restored part",
   },
+  {
+    score: "p3-se-ghost",
+    from: 71, to: 140,  // from the NTSC restore on, the later of the two
+    what: "a displaced part plays on unheard: after the effect, the song as if it never fired",
+  },
 ];
 const MAX_FRAMES = 140;
 // The ledger is checked for longer: an effect that ends late (a CH3 hold in
@@ -112,7 +117,7 @@ const INVARIANT_SCORES = [
   "m3-se", "m3-se-prio", "p3-se-strand", "p3-se-fade", "p3-se-stopped",
   "p3-se-overlap", "p3-se-pcm-macro", "p3-se-def", "p3-se-ch3", "p3-se-ch3-op",
   "p3-se-patch", "p3-se-noise", "p3-se-ch3-dissolve",
-  "p3-claim-se-in", "p3-claim-se-out",
+  "p3-claim-se-in", "p3-claim-se-out", "p3-se-ghost",
 ];
 
 function checkInvariant(stem) {

@@ -102,11 +102,11 @@ the PCM switch set; an existing one is told what to add.)
 | LEFT / RIGHT | the value knob, held |
 
 Press A and the lead stops and the effect plays; when it ends the lead comes
-back mid-note, re-keyed. Press A then B and the second effect takes the channel
+back mid-note, re-keyed, in time with the rest of the song — it played on
+unheard meanwhile. Press A then B and the second effect takes the channel
 over — the lead returns only after it. Press B then A and the second press is
-dropped with the first effect left untouched. `track active` on screen goes to
-0 for the displaced track and back to 1 on its own, which is the suspend and
-the restore made visible.
+dropped with the first effect left untouched. `track active` on screen stays
+1 for the displaced track throughout: it is still playing.
 
 START a second time loads the other song. The music stops for the load — a
 resident score is one MMB — and the knob's slots are written again, because a
@@ -269,8 +269,10 @@ while (TRUE) {
   `"se"` (or `install-sgdk --song … --se se.mmlisp`) compiles into every song;
   `#include "mmlisp_se.h"` for the `SE_<NAME>` numbers. Each of its parts
   plays on the channel it names: the song's part there is suspended, not
-  evicted, and when the effect ends (its own end, or `MMLisp_stopSe`) it
-  resumes with the note it was holding re-keyed. A second effect on the same
+  evicted — it plays on unheard — and when the effect ends (its own end, or
+  `MMLisp_stopSe`) it comes back in time, re-keying a note it still holds. On
+  CH3, which an effect takes whole, the song's parts wait instead, and come
+  back late by the effect's length. A second effect on the same
   channel is dropped if its priority is lower than the playing one's and
   replaces it otherwise; the song comes back after the last. The def-se gives
   the priority; `MMLisp_playSePrio(se, p)` overrides it. `MMLisp_sePlaying(se)`
