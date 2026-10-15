@@ -20,7 +20,7 @@
 
 ; intro
 (fm1 :tempo 132 :oct 5 gm-lead-calliope l-intro)
-(fm2 :oct 2 gm-bass-finger b-intro)
+(fm2 :oct 1 gm-bass-finger b-intro)
 
 ; verse: verse, turnaround, verse again, then straight on
 (fm1 (x 2 l-verse (break) l-turn))

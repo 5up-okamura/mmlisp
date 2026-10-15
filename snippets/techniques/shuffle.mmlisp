@@ -6,5 +6,5 @@
 
 (fm1 :shuffle 66 :tempo 132 :oct 4 :len 8 gm-ep1
   e g a g e g a > c < b a g e d e g _)
-(fm2 :shuffle 66 :oct 2 :len 8 gm-bass-acoustic
+(fm2 :shuffle 66 :oct 1 :len 8 gm-bass-acoustic
   c _ c e g _ g a b- _ b- a g _ g e)

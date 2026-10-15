@@ -6,7 +6,7 @@
 
 (def fill c e g e)
 
-(fm1 :prio 1 :tempo 120 :oct 5 :len 4 gm-musicbox
+(fm1 :prio 1 :tempo 120 :oct 4 :len 4 gm-musicbox
   c _ _ g _ _ e _ a _ g _ f _ _ _)
 (fm1 :prio 5 :oct 4 :len 16 :vel 10
   fill fill fill fill  fill fill fill fill

@@ -34,9 +34,8 @@ import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimate
 
 export { FM_DESTS, PSG_DESTS, PCM_DESTS };
 
-// presets/gm, in program order (README.md), and the bank's note offsets
-// (xg.wopn, melodic bank MSB 0 / LSB 0): the voice sounds `offset`
-// semitones below the key, so the key is raised by it.
+// presets/gm, in program order (README.md). The bank's note offsets live on
+// the voices themselves, as `:key` — a key is written as the MIDI file has it.
 const GM_VOICES = ("gm-piano gm-piano-bright gm-piano-e-grand gm-honkytonk gm-ep1 gm-ep2 gm-harpsi " +
   "gm-clav gm-celesta gm-glock gm-musicbox gm-vibes gm-marimba gm-xylo gm-tubular gm-dulcimer gm-organ-drawbar " +
   "gm-organ-perc gm-organ-rock gm-organ-church gm-organ-reed gm-accordion gm-harmonica gm-bandoneon " +
@@ -53,14 +52,6 @@ const GM_VOICES = ("gm-piano gm-piano-bright gm-piano-e-grand gm-honkytonk gm-ep
   "gm-banjo gm-shamisen gm-koto gm-kalimba gm-bagpipe gm-fiddle gm-shanai gm-tinkle gm-agogo gm-steeldrum " +
   "gm-woodblock gm-taiko gm-tom-melodic gm-syndrum gm-revcymbal gm-fretnoise gm-breath gm-seashore gm-bird " +
   "gm-phone gm-heli gm-applause gm-gunshot").split(" ");
-const GM_NOTE_OFFSETS = [
-  0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 12, 0, 0, 12, -12, 0, 0, -12, -12, 12, 0, 0, 0, 0, 12, 12, 0, 0, 0, 0, 0, 12,
-  12, 12, 12, 12, 12, 12, -12, 12, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 12, 12, 0, 12, 0, -12, 12, 12, -12, 0, 12,
-  0, 0, 12, 12, 12, 12, 0, 0, 12, 0, -12, 0, -12, 0, 0, -12, 0, 0, 0, 0, 0, 0, 0, 0, -24, 0, 0, 0, 12, 12, 0, 0,
-  0, 0, 0, -12, -12, 0, 0, 0, 0, 0, 0, -12, 0, 0, 0, 12, 0, 0, 0, -12, 0, -12, 0, 0, 0, 0, 0, -12, 0, 0, 0, -12,
-  0, 0,
-];
-
 // presets/gm-drums by GM key; the keys the kit lacks borrow a neighbour.
 const GM_DRUMS = {
   35: "kick2", 36: "kick", 37: "rim", 38: "snare", 41: "tom1", 42: "hat", 43: "tom2", 44: "hat-pedal",
@@ -546,7 +537,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
         note.midi = DRUM_KEY;
         if (name !== cur) { note.pre = [name]; cur = name; }
       } else {
-        note.midi = n.key + (fm ? GM_NOTE_OFFSETS[n.program] : 0);
+        note.midi = n.key;
         if (fm && GM_VOICES[n.program] !== cur) { note.pre = [GM_VOICES[n.program]]; cur = GM_VOICES[n.program]; }
         // The PSG has no voice: the program's family picks its envelope.
         if (!fm && psgEnvOf(n.program) !== cur) { cur = psgEnvOf(n.program); note.pre = [cur]; usedPsgEnv = true; }

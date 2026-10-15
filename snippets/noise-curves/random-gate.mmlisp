@@ -4,7 +4,7 @@
 ; for an eighth note — two steps — so the hits come in pairs.
 (import "presets/gm/set.mmlisp")
 
-(fm1 :tempo 118 :oct 3 :len 1 gm-bass-syn2
+(fm1 :tempo 118 :oct 2 :len 1 gm-bass-syn2
   (macro :step 16 :keyon (noise 0..1 :len 1 :seed 11))  c
   (macro :step 16 :keyon (noise 0..1 :len 1 :seed 12))  c
   (macro :step 16 :keyon (noise 0..1 :len 1 :seed 13))  a-

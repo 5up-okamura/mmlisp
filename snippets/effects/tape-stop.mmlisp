@@ -8,12 +8,12 @@
 
 (def groove kick c _ hat c _ snare c _ hat c _)
 
-(fm1 :tempo 124 :oct 2 :len 8 gm-bass-syn1
+(fm1 :tempo 124 :oct 3 :len 8 gm-bass-syn1
   c c > c < c  e- f g b-  c c > c < c  e- f g b-
   :pitch (ease-in 0..-1200 :len 1)
   :tempo (ease-in 124..24 :len 1)
   c c > c < c  e- f g b-  :pitch 0 :len 2 _)
-(fm2 :oct 4 :len 4 gm-organ-rock :vel 11
+(fm2 :oct 5 :len 4 gm-organ-rock :vel 11
   c e- f g  c e- f g
   :pitch (ease-in 0..-1200 :len 1)
   c e- f g  _2)

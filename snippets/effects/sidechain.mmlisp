@@ -12,11 +12,11 @@
 
 (def (pump n) :vol (ease-in 4..31 :len 8) n)
 
-(fm1 :tempo 124 :oct 4 :len 4 gm-pad-poly
+(fm1 :tempo 124 :oct 3 :len 4 gm-pad-poly
   c ~ c ~ c ~ c  a- ~ a- ~ a- ~ a-
   (pump c) ~ (pump c) ~ (pump c) ~ (pump c)
   (pump a-) ~ (pump a-) ~ (pump a-) ~ (pump a-))
-(fm2 :oct 3 :len 4 gm-pad-poly :vel 12
+(fm2 :oct 2 :len 4 gm-pad-poly :vel 12
   g ~ g ~ g ~ g  e- ~ e- ~ e- ~ e-
   (pump g) ~ (pump g) ~ (pump g) ~ (pump g)
   (pump e-) ~ (pump e-) ~ (pump e-) ~ (pump e-))

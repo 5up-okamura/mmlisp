@@ -7,12 +7,12 @@
 ; can repeat (octave changes are sticky).
 (def (arp a b c) :len 16 a b c > a b a < c b)
 
-(fm1 :tempo 132 :oct 4 gm-harpsi
+(fm1 :tempo 132 :oct 3 gm-harpsi
   (x 2 (arp c e g))
   (x 2 (arp c f a))
   (x 2 (arp d g b))
   (x 2 (arp c e g))
   :len 2 c)
 
-(fm2 :oct 2 :len 4 gm-bass-finger
+(fm2 :oct 1 :len 4 gm-bass-finger
   c _ c _ f _ f _ g _ g _ c _ _ _ c)

@@ -4,8 +4,15 @@ The 128 melodic voices (bank MSB 0 / LSB 0) of the libOPNMIDI XG bank, from
 [fm_banks/xg.wopn @ 8e0a0a6ac97a](https://github.com/Wohlstand/libOPNMIDI/blob/8e0a0a6ac97a21f22c4b4d53d67a8d916d8c487b/fm_banks/xg.wopn).
 Copyright (c) 2018-2026 Vitaliy Novichkov (Wohlstand), MIT —
 [notice](licenses/libopnmidi-xg.txt). The registers are the bank's; only the
-operator order is re-ordered to MMLisp's 1,2,3,4, and the bank's note offsets
-and shared LFO rate are not applied.
+operator order is re-ordered to MMLisp's 1,2,3,4, and the shared LFO rate is
+not applied.
+
+46 of the voices carry the bank's note offset as a `:key` — `:key 72` for
+the bank's +12, `:key 48` for -12, `:key 36` for the one -24 (`gm-lead-fifths`).
+The compiler moves those voices' notes by `:key` - 60 (language §9), so a
+written note sounds where the bank means it to: `gm-bass-syn1` is a `:key 48`
+voice, an octave below what is written, and most of the other basses are
+`:key 72`, an octave above. A note moved outside MIDI 0-127 is `E_NOTE_RANGE`.
 
 ```
   1 gm-piano           33 gm-bass-acoustic   65 gm-sax-soprano     97 gm-fx-rain

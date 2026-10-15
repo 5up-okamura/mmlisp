@@ -9,5 +9,5 @@
   :len 0 (macro :pitch (linear 0..1200 :len 2)) c   ; charge-up, held
   (macro :pitch none) :len 16 > c < g e c _2)       ; after the key-off: the shot
 
-(fm2 :oct 2 :len 4 gm-bass-syn2
+(fm2 :oct 1 :len 4 gm-bass-syn2
   (x 8 c c g c))

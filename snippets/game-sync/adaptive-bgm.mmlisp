@@ -10,7 +10,7 @@
 (fm1 :tempo 124 :oct 4 :len 1 gm-pad-warm :vel 12
   #loop c a- f g (go loop))
 
-(fm2 :oct 2 :len 8 gm-bass-syn1
+(fm2 :oct 3 :len 8 gm-bass-syn1
   #loop
   :vol $drive (x 8 c)
   :vol $drive (x 8 a-)

@@ -9,7 +9,7 @@
 (def beat-arp  (macro :step 16 :semi [#sus 0 4 7 12] :keyon 1))
 (def frame-arp (macro :step 7f :semi [#sus 0 4 7 12] :keyon 1))
 
-(fm1 :tempo 100 :oct 4 :len 1 gm-harpsi
+(fm1 :tempo 100 :oct 3 :len 1 gm-harpsi
   :tempo (linear 100..160 :len 4/1)
   beat-arp  c a- f g
   :tempo (linear 160..100 :len 4/1)
