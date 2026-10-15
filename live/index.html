@@ -180,8 +180,8 @@
           </button>
           <div class="menu-dropdown submenu-dropdown" id="recentList"></div>
         </div>
-        <div class="menu-sep"></div>
-        <button class="menu-item" onclick="openFolder();closeMenus()"
+        <div class="menu-sep" id="openFolderSep"></div>
+        <button class="menu-item" id="openFolderItem" onclick="openFolder();closeMenus()"
                 title="Open a score's folder so its relative :file samples (wav next to the score) load. After a reload, Open Recent brings a score back with its folder. Chrome blocks Desktop/Documents themselves; use a subfolder.">
           <span>Open Folder…</span>
           <span class="menu-item-shortcut" id="sourceDirLabel"></span>
@@ -3373,13 +3373,7 @@
         await writeMucomPcmWav(_sourceHandle);
         return;
       }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = pcm.wavFile;
-      a.click();
-      URL.revokeObjectURL(url);
-      log(`${pcm.tag ?? 'mucom88'}: downloaded ${pcm.wavFile} — move it next to the score`, 'info');
+      if (await deliverFile(blob, pcm.wavFile)) log(`${pcm.tag ?? 'mucom88'}: saved ${pcm.wavFile} — put it next to the score`, 'info');
     }
 
     // The picker for the bank's wav. `startIn` is the saved score's handle when
@@ -3946,6 +3940,7 @@
 
     // File > Open's picker types; Save As writes only the score's own type.
     const MMLISP_FILE_TYPE = { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } };
+    const SOURCE_FILE_EXT = /\.(mmlisp|mmb|dmp|fui|tfi|vgi|opni)$/i;
     const SOURCE_FILE_TYPES = [
       MMLISP_FILE_TYPE,
       { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
@@ -4334,14 +4329,31 @@
     }
 
     async function openFile() {
-      const [handle] = await window.showOpenFilePicker({
-        types: SOURCE_FILE_TYPES,
-        multiple: false,
-        // Start in the opened folder when there is one, so Open lands on the
-        // project rather than wherever the OS picker was left.
-        ...(_sourceDir ? { startIn: _sourceDir } : {}),
-      });
-      await openScoreHandle(handle);
+      try {
+        if (!window.showOpenFilePicker) {
+          // No open picker (iOS, Firefox): a plain file input, which gives a
+          // File and no handle — Save then asks where. Unfiltered, since iOS
+          // greys out what it has no type for (.mmlisp); checked here instead.
+          const file = await pickFileWithInput(null);
+          if (!SOURCE_FILE_EXT.test(file.name)) {
+            log(`${file.name}: Open takes .mmlisp, .mmb and FM voices (.dmp .fui .tfi .vgi .opni) — songs and samples are under File > Import`, 'err');
+            return;
+          }
+          clearSourceDir();
+          await readSourceFile(file);
+          return;
+        }
+        const [handle] = await window.showOpenFilePicker({
+          types: SOURCE_FILE_TYPES,
+          multiple: false,
+          // Start in the opened folder when there is one, so Open lands on the
+          // project rather than wherever the OS picker was left.
+          ...(_sourceDir ? { startIn: _sourceDir } : {}),
+        });
+        await openScoreHandle(handle);
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('Open failed: ' + e.message, 'err');
+      }
     }
 
     // Opening a score from outside the folder leaves it stale — reset. A file
@@ -4857,7 +4869,55 @@
       }, { capture: true });
     }
 
+    // A file handed over without a save picker (iOS, Firefox): on a touch
+    // device the share sheet ("Save to Files" on iOS — a download there can
+    // fail silently in the installed app), else a download. The share sheet
+    // wants a fresh tap, which an export has spent on its render; then the
+    // console offers a button for one. True once the file is handed over.
+    const _touchSave = window.matchMedia('(pointer: coarse)');
+    async function deliverFile(blob, name) {
+      const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+      if (_touchSave.matches && navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file] });
+          return true;
+        } catch (e) {
+          if (e?.name === 'AbortError') { log(`${name} not saved`, 'info'); return false; }
+          if (e?.name === 'NotAllowedError') { offerShare(file); return false; }
+          // anything else: try the download
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      return true;
+    }
+    function offerShare(file) {
+      const line = log(`${file.name} is ready `, 'info');
+      const btn = document.createElement('button');
+      btn.textContent = 'Save…';
+      btn.onclick = async () => {
+        try {
+          await navigator.share({ files: [file] });
+          btn.remove();
+          log(`Saved ${file.name}`, 'info');
+        } catch (e) {
+          if (e?.name !== 'AbortError') log(`${file.name}: ${e.message}`, 'err');
+        }
+      };
+      line.appendChild(btn);
+    }
+
     async function saveFileAs() {
+      if (!window.showSaveFilePicker) {
+        const name = _sourceFileName || 'untitled.mmlisp';
+        const blob = new Blob([editorView.state.doc.toString()], { type: 'text/plain' });
+        if (await deliverFile(blob, name)) log('Saved ' + name, 'info');
+        return;
+      }
       const handle = await window.showSaveFilePicker({
         types: [MMLISP_FILE_TYPE],
         suggestedName: _sourceFileName || 'untitled.mmlisp',
@@ -4891,19 +4951,13 @@
       }
     }
 
+    // True once written or handed over (deliverFile).
     async function writeExport(target, blob, suggestedName) {
-      if (target.handle) {
-        const writable = await target.handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = suggestedName;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
+      if (!target.handle) return deliverFile(blob, suggestedName);
+      const writable = await target.handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
     }
 
     async function exportPcmBank(ir, what) {
@@ -4962,8 +5016,7 @@
 
       const blob = new Blob([bytes], { type: 'application/octet-stream' });
       try {
-        await writeExport(target, blob, suggestedName);
-        log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
+        if (await writeExport(target, blob, suggestedName)) log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
       } catch (e) {
         if (e?.name !== 'AbortError') log('VGM save failed: ' + e.message, 'err');
       }
@@ -5009,13 +5062,8 @@
           const writable = await mmbHandle.createWritable();
           await writable.write(blob);
           await writable.close();
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = suggestedName;
-          a.click();
-          URL.revokeObjectURL(url);
+        } else if (!(await deliverFile(blob, suggestedName))) {
+          return;
         }
         log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
         // PCM blobs live in a separate sample bank (docs/mmb.md §10), not inside
@@ -5047,13 +5095,8 @@
             const writable = await smpHandle.createWritable();
             await writable.write(smpBlob);
             await writable.close();
-          } else {
-            const url = URL.createObjectURL(smpBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = smpName;
-            a.click();
-            URL.revokeObjectURL(url);
+          } else if (!(await deliverFile(smpBlob, smpName))) {
+            return;
           }
           log(`Exported ${smpName} sample bank (${sampleBank.length} bytes)`, 'info');
         }
@@ -5105,8 +5148,7 @@
 
       const blob = new Blob([bytes], { type: 'audio/wav' });
       try {
-        await writeExport(target, blob, suggestedName);
-        log(`Exported ${suggestedName} (${durationSec.toFixed(1)}s, ${bytes.length} bytes)`, 'info');
+        if (await writeExport(target, blob, suggestedName)) log(`Exported ${suggestedName} (${durationSec.toFixed(1)}s, ${bytes.length} bytes)`, 'info');
       } catch (e) {
         if (e?.name !== 'AbortError') log('WAV save failed: ' + e.message, 'err');
       }
@@ -5361,13 +5403,8 @@
           const writable = await handle.createWritable();
           await writable.write(blob);
           await writable.close();
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = name;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(url), 10000);
+        } else if (!(await deliverFile(blob, name))) {
+          return;
         }
         log(`Exported ${handle?.name || name} (${(blob.size / 1e6).toFixed(1)} MB)`, 'info');
       } catch (e) {
@@ -10644,6 +10681,12 @@
     selectPanelTab(_panelTab);
     initMidi();
     initRecent();
+    // A browser that cannot open a folder (iOS, Firefox) gets no Open Folder…;
+    // Scores in Folder only ever appears with one open.
+    if (typeof window.showDirectoryPicker !== 'function') {
+      document.getElementById('openFolderItem').hidden = true;
+      document.getElementById('openFolderSep').hidden = true;
+    }
     initLaunchQueue();
     initFileDrop();
 

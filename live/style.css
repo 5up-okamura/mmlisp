@@ -169,6 +169,7 @@
       white-space: nowrap;
     }
     .menu-sep { height: 0; border-top: 1px solid var(--mid); margin: 0.25rem 0; }
+    .menu-item[hidden], .menu-sep[hidden] { display: none; }
     /* A section's name inside a menu: not a command. */
     .menu-label {
       padding: 0.3rem 0.75rem 0.1rem;

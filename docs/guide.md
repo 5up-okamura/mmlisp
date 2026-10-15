@@ -1219,6 +1219,14 @@ replaces it. A share link only shows its score; that score takes the place of
 yours at its first edit. The kept copy has no file behind it, so `Save` after
 a reload asks where.
 
+A browser without file pickers — Safari on iPhone and iPad, Firefox — opens
+with a plain file chooser, and Save, Save As… and the exports hand the file
+over: on a touch device to the share sheet (`Save to Files` on iOS), else as
+a download. An export that took a while to render asks for one more tap in
+the console (`Save…`), since the share sheet needs one. Such a browser cannot
+open a folder, so `Open Folder…` is not offered and a score's own `:file`
+samples and `(import …)`s beside it cannot load there; presets and URLs do.
+
 `File > Open Recent` lists the last ten scores opened or saved (Chrome and
 Edge; a browser without file handles has no such menu). A score opened from
 its folder (`File > Open Folder…`) comes back with the folder, so its samples
