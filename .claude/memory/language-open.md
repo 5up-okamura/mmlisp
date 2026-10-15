@@ -1,21 +1,15 @@
-# The language and IR: the rulings, and why the value machine looks like this
+# The language and IR — the user's rulings and the reasons behind them
 
-Two things live here, because a session working on the language needs both:
-**the 2026-09-26 syntax audit's rulings** (§1) and **the rationale behind
-compile-time eval and the value machine** (§2–§3). `docs/language.md` carries
-the shipped spec; this is only what the docs do not say. A language question
-that needs the user's decision goes in a §1-style list here until it is
-decided and built.
+`docs/language.md` is the spec and the guide teaches it; this file keeps only
+what they do not say: rulings not to re-propose, and why the value machine is
+shaped as it is. A language question waiting on the user goes in §1 until it
+is decided and built; a settled item that the repo records is deleted.
 
-**An item is deleted from here as soon as it is fixed** and the repo carries
-both the outcome and the reason — a second copy of a settled thing can only
-rot.
+## 1. Rulings — do not re-propose
 
-## 1. Rulings from the 2026-09-26 syntax audit — do not re-propose
-
-The rule behind that audit's rulings: `:key value` is a sticky
+The rule behind the 2026-09-26 syntax audit: `:key value` is a sticky
 parameter, `(form …)` an event or control, `#name` a position; an operator
-suffix combines with the target's base (§7.0). Kept as they are, by ruling:
+suffix combines with the target's base (language.md §7.0).
 
 - **No CALL/RET in the language** — naming is a source convenience, sharing is
   the encoder's job (MACRO_TABLE / VOICE_TABLE dedup, the CALL/RET pass).
@@ -33,76 +27,67 @@ suffix combines with the target's base (§7.0). Kept as they are, by ruling:
   (2026-10-15). echo replays one note and lengthens the phrase (mucom `\=`);
   delay is sticky and keeps the phrase's length. Offer delay first when a score
   wants an echo effect.
+- **PSG envelopes are macros, not a new def head** (2026-10-03): an envelope
+  is already `(def name (macro …))`, and the only need was tooling, so the
+  voice picker lists macro defs. Naming a head was hard because the thing was
+  not a new concept.
+- **No second sigil (`@vel`)** — more syntax for the same semantics; the `$`
+  namespace carries every tier, kept apart by reserved-name checks.
 
 ## 2. Why the value machine has this shape
 
-Compile-time eval was designed in two rounds; **round 2 reversed two of round
-1's decisions**, and the reasons are the load-bearing part:
+Compile-time eval was designed twice; the second round reversed two of the
+first round's decisions, and those reasons are what will be argued again:
 
-- ~~"shrink the JS player's read-modify-write reads to match the Z80"~~ →
-  **grow the driver instead.** A generic shadow read, derived from the existing
-  write-descriptor table, makes every FM operator param readable.
-  **`live ≡ hardware` is achieved upward, not downward.**
-- ~~"`$`-bearing expressions must match a small closed lowering table"~~ → the
-  table **opens.** With the target param itself as the accumulator, any
-  left-linear expression over constants and `$slot`s lowers to existing opcode
-  chains **with zero new opcodes**.
+- **Grow the driver rather than shrink the preview.** Round 1 cut the JS
+  player's read-modify-write reads down to what the Z80 could read; round 2
+  gave the driver a generic shadow read, derived from the write-descriptor
+  table, so every FM operator param is readable. `live ≡ hardware` is reached
+  upward, not downward.
+- **The lowering table is open.** Round 1 allowed `$`-bearing expressions only
+  from a small closed table; with the target param itself as the accumulator,
+  any left-linear expression over constants and `$slot`s lowers to existing
+  opcode chains, with zero new opcodes.
 
-**The governing constraint** (language.md §7 says eval is compile-time only and
-bakes to static data; this is the part it does not say): the driver gains **no
-evaluator — only readers and flags.** Since 2026-09-26 a `$slot` is a value
-kind of the evaluator itself (mmlisp-eval.js `Runtime`: the opcode chain,
-kept symbolic like a signal), so the accumulator lowering and the scaled
-macro `(* signal $slot)` are its arithmetic — no separate linearizer or
-pattern detector in mmlisp2ir.
+**The governing constraint:** the driver gains no evaluator — only readers and
+flags. A `$slot` is a value kind of the evaluator itself (mmlisp-eval.js
+`Runtime`, the opcode chain kept symbolic like a signal), so the accumulator
+lowering and the scaled macro `(* signal $slot)` are its arithmetic, with no
+separate linearizer or pattern detector in mmlisp2ir.
 
-The vision it serves: **`def-val` slots are the score's input ports, eval
-expressions are the wiring, and the sampling tiers are the rates** — the game
-writes variables, the score declares how the music responds. The four tiers
-(compile / tick / note-on / frame) are the unifying answer to "when is this
-value read?" (guide §18b).
+The vision it serves: `def-val` slots are the score's input ports, expressions
+the wiring, the sampling tiers the rates — the game writes variables, the
+score declares how the music responds.
 
-**Score-written values and song-wide sweeps** (2026-10-13). A `def-val` is
-also the score's own variable — "外に出す必要がなくても変数として使いたい".
-The user's rulings and why:
+## 3. Score-written values (2026-10-13)
 
-- **`:public` marks the host's slots; no mark = the score's own.** Chosen over
-  `:private` once old scores were off the table ("既存のスコアのことを考える
-  必要なし"): the game interface is a contract, so exposure is opted into.
-  Public slots are numbered first so a private one never shifts the host's
-  indices. Rejected spellings: `:host none`, a range meaning public.
-- **Writes reuse the parameter syntax** (`:name v`, `:name+`, `(curve)`) and
-  the existing PARAM opcodes, the slot being target VALn — no new opcode.
-- **"制限はつけない、書いた通りに動く、でも破綻は困る"**: nothing is refused
-  for being an odd combination; where the driver cannot follow, the compiler
-  warns (`W_SWEEP_SLOTS`, `W_SONG_WRITE_RACE`) rather than refusing. The one
+A `def-val` is also the score's own variable ("外に出す必要がなくても変数として
+使いたい"). The rulings and why:
+
+- **`:public` opts a slot into the host's interface**, chosen over `:private`
+  once old scores were off the table ("既存のスコアのことを考える必要なし"): the
+  game interface is a contract. Rejected spellings: `:host none`, a range
+  meaning public.
+- **Writes reuse the parameter syntax and the PARAM opcodes** (target VALn) —
+  no new opcode.
+- **"制限はつけない、書いた通りに動く、でも破綻は困る"**: no odd combination is
+  refused; where the driver cannot follow, the compiler warns instead. The one
   arbitration rule: the latest write or sweep wins, host or score.
 - **A song-wide value's sweep belongs to no channel** ("関係ないmacroが
-  チャンネルに縛られることに違和感") — :master, :lfo-rate and VALn sweep in
-  slots of their own, so an effect taking the writing channel does not stop
-  them. **Song-wide macros were dropped, not moved** — a macro is a note's
-  (key-on/key-off), and carrying one globally was too heavy for its use
-  ("実装が重いならいらない"); `(macro :master …)` is an error.
+  チャンネルに縛られることに違和感"), so an effect taking the writing channel
+  does not stop it. **Song-wide macros were dropped, not moved** — a macro is a
+  note's (key-on/key-off), and carrying one globally was too heavy for its use
+  ("実装が重いならいらない").
 - **16 slots stay** — the opcode space (0x10–0xFE) leaves room for a private
-  range if a score ever needs more; grow it then, not before.
+  range; grow it when a score needs it, not before.
 
-**PSG envelopes are macros, not a new def head** (2026-10-03). A `def-env` /
-`def-macro` was discussed and rejected: an envelope is already `(def name
-(macro …))`, the one form of a named macro, and the only need was tooling — so
-the voice picker lists macro defs instead. Naming the head was hard because
-the thing was not a new concept.
-
-## 3. Live risks in the value machine
+## 4. Known limits
 
 1. **A folded relative op is relative to the score-visible value**, so a host
-   `SET_PARAM` in between is invisible to it. `(+ $P X)` is the explicit opt-in
+   `SET_PARAM` in between is invisible to it; `(+ $P X)` is the explicit opt-in
    to host-relative behaviour.
-2. **The signal-⊕ region model is deliberately restricted** (equal step, no
-   loop⊕one-shot, single release). loop⊕one-shot is the designed first
-   relaxation and the prerequisite for *baked* AM; runtime AM is the scaled-macro
-   flag.
-3. **A second sigil (`@vel`) was considered and rejected** — more syntax for the
-   same semantics. The `$` namespace carries several tiers and reserved-name
-   checks keep them apart.
-4. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
+2. **Loop⊕one-shot in the signal-⊕ region model** is the designed first
+   relaxation and the prerequisite for *baked* AM; runtime AM is the
+   scaled-macro flag.
+3. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
    F-number at note boundaries, proven scale-independent.

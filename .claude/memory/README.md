@@ -32,9 +32,9 @@ Rules:
 - [pcm.md](pcm.md) — **PCM: the user's decisions with their reasons, the
   multi-bank measurements, and what is open.** Read before touching PCM in any
   layer.
-- [language-open.md](language-open.md) — **the language and IR**: the syntax rulings not to
-  re-propose, why compile-time eval and the value machine have their shape,
-  and the risks still live.
+- [language-open.md](language-open.md) — **the language and IR**: the rulings
+  not to re-propose, why the value machine and score-written values have
+  their shape, and its known limits.
 - [live-app.md](live-app.md) — **the live app**: why the editing aids, the
   Library panel, the voice picker and the importers have their shape, the
   user's rulings, device measurements, and what is open.
