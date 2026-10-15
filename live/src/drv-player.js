@@ -246,6 +246,7 @@ export class DrvPlayer {
     this._onRunStart = null; // () => void — after play()'s reset, before the first frame
     this._audioContext = null;
     this._startAudioTime = 0;
+    this._lookahead = 0.2; // seconds the realtime run steps ahead of the audible position (setLookahead)
     this._diagnostics = [];
     // Live mixer state — usable before playback starts (the app may mute/solo
     // any time). Preserved across a hot-swap _reset.
@@ -3225,13 +3226,12 @@ export class DrvPlayer {
     if (se != null) this._playSe(se);
     this._playing = true;
     if (!audioContext) return;
-    const LOOKAHEAD = 0.2;
     const tick = () => {
       if (!this._playing) return;
       const now = audioContext.currentTime;
       while (
         this._startAudioTime + this._frame / this._frameHz <
-        now + LOOKAHEAD
+        now + this._lookahead
       ) {
         this.stepFrame();
         if (this._done()) {
@@ -3242,6 +3242,11 @@ export class DrvPlayer {
     };
     tick();
     this._timer = setInterval(tick, 25);
+  }
+
+  /** As IRPlayer.setLookahead: deeper while the page is hidden. */
+  setLookahead(sec) {
+    this._lookahead = Math.max(0.1, Number(sec) || 0.2);
   }
 
   stop() {

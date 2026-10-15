@@ -166,6 +166,19 @@ leaves out.
 - Why the roadmap's two MMLisp Live items are hard: a score's own `def-pcm`
   `:file` is relative to the score's folder, which the picker's stand-in score
   lacks; on touch there is no modifier, and long-press is the value popup.
+- **Playing in the background on iOS** (user, 2026-10-16): Safari stops a
+  hidden page's Web Audio unless an `<audio>` element is playing. The way:
+  route the worklet through a MediaStreamAudioDestinationNode into an
+  `<audio>`, register `navigator.mediaSession` handlers (lock-screen
+  controls); test on an iPhone, and the hidden lookahead (3 s,
+  `LOOKAHEAD_HIDDEN`) may need to grow. Done already: the Screen Wake Lock
+  while playing, and the lookahead switch on `visibilitychange` (Android and
+  desktop tabs). Judged not worth it yet: moving the sequencer into the
+  worklet. Footholds if ever needed: both players already run off a manual
+  clock in `captureRegisterLog` (a sample counter is such a clock), and the
+  page reaches the player at ~30 sites in index.html that would read a
+  posted mirror instead; the hazards are seek/hot-swap/GC stalls on the
+  audio thread.
 - Dragging the piano roll's background to seek was in the mockup
   (https://claude.ai/artifact/Rimn1WHaERRJbLBLgKhJbb) and left out — not
   decided.

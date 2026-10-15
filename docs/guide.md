@@ -1221,6 +1221,11 @@ replaces it. A share link only shows its score; that score takes the place of
 yours at its first edit. The kept copy has no file behind it, so `Save` after
 a reload asks where.
 
+While a song plays the screen stays on (where the browser allows a page to
+ask: Chrome, and Safari from iOS 16.4), and the page goes on playing when it
+is hidden behind another tab or app — Safari on iPhone and iPad stops a
+hidden page's sound, so there the song pauses until the page is back.
+
 A browser without file pickers — Safari on iPhone and iPad, Firefox — opens
 with a plain file chooser, has only Save (every save asks where, so there is
 no Save As…), and Save and the exports hand the file over: on a touch device to the share sheet (`Save to Files` on iOS), else as

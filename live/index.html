@@ -6475,6 +6475,7 @@
           const drv = player;
           player.setOnRunStart(() => applyPlayerChannelState(drv));
           player.play(audioCtx, { se });
+          playingStarted();
           refreshTimeBar(player._ir ?? _lastGoodIR, false); // the reference driver cannot seek
           // After play(): the driver's reset is a power-on, reseeding every value
           // slot from its def-val init, so the live slider values go in behind it
@@ -6531,6 +6532,7 @@
         } else {
           player.play(audioCtx);
         }
+        playingStarted();
         _paused = false;
         _vizFrozen = null;
         refreshTimeBar(player._ir);
@@ -6562,6 +6564,36 @@
       log(`trig ${code}` + (ch ? ` \u2014 ${ch.scoreChannel ?? ch.channel}` : ''), 'info');
     }
 
+    // ── Playing on a phone ──────────────────────────────────────────────────
+    // The screen stays on while the song plays (Screen Wake Lock; released by
+    // the browser when the page is hidden, taken again when it is back), and a
+    // hidden page runs its scheduler deeper: the browser lets a hidden page's
+    // timers fire about once a second, so the 0.2 s the players queue ahead
+    // would run dry between two of them.
+    const LOOKAHEAD_VISIBLE = 0.2, LOOKAHEAD_HIDDEN = 3;
+    let _wakeLock = null;
+    async function holdScreen() {
+      if (_wakeLock || !navigator.wakeLock || document.hidden) return;
+      try {
+        const lock = await navigator.wakeLock.request('screen');
+        lock.addEventListener('release', () => { if (_wakeLock === lock) _wakeLock = null; });
+        _wakeLock = lock;
+      } catch (_) { /* denied (low battery, a setting): the screen behaves as usual */ }
+    }
+    function releaseScreen() {
+      _wakeLock?.release().catch(() => {});
+      _wakeLock = null;
+    }
+    function playingStarted() {
+      player?.setLookahead?.(document.hidden ? LOOKAHEAD_HIDDEN : LOOKAHEAD_VISIBLE);
+      holdScreen();
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!player?.isPlaying?.()) return;
+      player.setLookahead?.(document.hidden ? LOOKAHEAD_HIDDEN : LOOKAHEAD_VISIBLE);
+      if (!document.hidden) holdScreen();
+    });
+
     function onStop() {
       stopBrowseScorePreview();
       stopFmLiveLoop();
@@ -6570,6 +6602,7 @@
       player?.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
+      releaseScreen();
       _seHeld.clear();
       refreshSeLit();
       _timeCue = null;
@@ -6852,6 +6885,7 @@
       _vizFrozen = new Map(_vizNotes.map((cell) => [cell.trackIndex, player.trackClock(cell.trackIndex)]));
       player.stop();
       workletNode?.port.postMessage({ type: 'flush' });
+      releaseScreen();
       _paused = true;
       log('Paused');
       setPlayIcon(false);
@@ -6865,6 +6899,7 @@
       player.seek(audioCtx, { sec: _pausedSec });
       _paused = false;
       _vizFrozen = null;
+      playingStarted();
       log('Resumed', 'info');
       setPlayIcon(true);
       document.getElementById('btnPlay').classList.add('active');

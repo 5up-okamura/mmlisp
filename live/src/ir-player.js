@@ -199,6 +199,7 @@ export class IRPlayer {
     this._schedulerTimer = null;
     this._schedulerLookahead = 0.2; // seconds
     this._schedulerInterval = 25; // ms
+    this._scheduledHorizon = 0; // the furthest audio time the run has queued events to
     this._loop = true; // loop by default
     this._onLine = null; // (line: number) => void — called when an event fires
     this._onTrig = null; // (trackIdx, code) => void — a (trig N) cue plays
@@ -405,6 +406,7 @@ export class IRPlayer {
     this._audioContext = audioContext;
     this._playing = true;
     this._startAudioTime = audioContext.currentTime + 0.05; // small startup offset
+    this._scheduledHorizon = 0;
     this._frameOrigin = this._startAudioTime;
 
     // Initialize all channels with default voices
@@ -648,6 +650,7 @@ export class IRPlayer {
       this._audioContext = clock;
       this._playing = true;
       this._startAudioTime = start;
+      this._scheduledHorizon = 0; // the queue was flushed
       this._frameOrigin = start;
       this._initDefaultVoices();
       this._resetFm3Keys();
@@ -707,6 +710,16 @@ export class IRPlayer {
   /** Toggle looping at any time. */
   setLoop(enabled) {
     this._loop = enabled;
+  }
+
+  /**
+   * How far ahead of the audible position the run queues events, in seconds.
+   * 0.2 s keeps an edit's hot-swap close; a hidden page, whose timers the
+   * browser lets fire about once a second, needs several seconds so the
+   * queue never runs dry. Takes effect at the next scheduler pass.
+   */
+  setLookahead(sec) {
+    this._schedulerLookahead = Math.max(0.1, Number(sec) || 0.2);
   }
 
   /**
@@ -950,9 +963,11 @@ export class IRPlayer {
     // Local tick within track 0's current (loop-advanced) frame.
     const localTick = Math.max(0, (now - t0.audioTimeAtTick0) / secsPerTick);
     const barTicks = this._ppqn * 4;
-    // First bar boundary whose time is safely past the lookahead window, so the
-    // outgoing tracks have not queued anything beyond it yet.
-    const leadTicks = (this._schedulerLookahead + 0.03) / secsPerTick;
+    // First bar boundary whose time is safely past what the outgoing tracks
+    // have queued — the lookahead, or further when a deeper one (a hidden page)
+    // queued ahead and the page has just come back.
+    const queued = Math.max(this._schedulerLookahead, this._scheduledHorizon - now);
+    const leadTicks = (queued + 0.03) / secsPerTick;
     const boundaryTick =
       Math.ceil((localTick + leadTicks) / barTicks) * barTicks;
     const boundaryTime = t0.audioTimeAtTick0 + boundaryTick * secsPerTick;
@@ -1124,6 +1139,7 @@ export class IRPlayer {
 
     const now = this._audioContext.currentTime;
     const horizon = now + this._schedulerLookahead;
+    if (horizon > this._scheduledHorizon) this._scheduledHorizon = horizon;
 
     // Commit a pending gapless swap once the scheduler reaches the boundary.
     // All outgoing events before the boundary are already queued in the worklet
