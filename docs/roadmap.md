@@ -47,11 +47,12 @@ Its current limits are `driver.md` §11 — keep the two in step.
 - **mucom88**: `S` FM3 slot detune (13 reference songs; maps onto
   `fm3-1`–`fm3-4` with a per-operator `:pitch`), `s` key-on revise.
 - **VGM**: tempo changes within a song (one grid serves the whole file),
-  second chips, the remaining PCM chips (OKI MSM6295, QSound, K054539, C140,
-  …).
+  second chips, the YM2608's rhythm and ADPCM-B, the remaining PCM chips (OKI
+  MSM6295, QSound, K054539, C140, …).
 - **DefleMask / Furnace**: sample channels, the macros of pre-INS2 Furnace
   instruments, subsongs after the first.
-- **MIDI**: per-note pan and CC changes after the first.
+- **MIDI**: per-note pan (a channel's first pan serves the song), and CC7/CC11
+  moving during a note (they are read at each note-on).
 
 ## MMLisp Live
 

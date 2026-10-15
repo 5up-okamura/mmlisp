@@ -139,7 +139,7 @@ for (let bank = 0; bank < score.banks; bank++)
 const scoreRun = runMultibank(built, score.rom, score.items, { seconds: 7 });
 assert.deepEqual(scoreRun.fail, []);
 assert.ok(new Set(scoreRun.log.filter((e) => e.kind === "start").map((e) => e.bank)).size > 1);
-console.log(`ok real score: legacy rejects it, ${score.usedBytes} B / ${score.banks} banks, every DAC byte matches`);
+console.log(`ok real score: single-bank rejects it, ${score.usedBytes} B / ${score.banks} banks, every DAC byte matches`);
 const separated = buildMultibankScore(scorePath, { frames: 360, idleAfterGen: built.gen.idleAfterGen, separateBanks: true });
 assert.ok(separated.banks > score.banks);
 const separatedRun = runMultibank(built, separated.rom, separated.items, { seconds: 7 });

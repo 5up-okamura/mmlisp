@@ -1,4 +1,4 @@
-/* MMLispDRV — the sequencer's frames turned into the pair transport (R28 §63.3 D7).
+/* MMLispDRV — the sequencer's frames turned into the pair transport (docs/driver.md §6.6).
  *
  * The sequencer (mmlispseq.c) renders each frame into a queue of register
  * writes in the order it made them, and the PCM commands docs/driver.md §6.3
@@ -50,7 +50,6 @@ typedef struct {
   uint8_t fifo_pairs;    /* 128 */
   uint8_t pairs_per_grab;/* what one grab writes, IDLE-padded */
   uint8_t lut_page;      /* the rung pages' first page: + 0 silence .. + 7 unity */
-  uint8_t op_stride;     /* 9: a voice's run of ops */
   uint8_t op_port;       /* $20 */
   uint8_t voices;        /* PCM voices the image plays */
   uint8_t idle_after_gen;/* IDLE pairs after a generation pair, per image */

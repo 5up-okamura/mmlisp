@@ -239,11 +239,12 @@ on PAL:** `30f` is thirty refreshes on either standard, and so lasts 20% longer
 at 50 Hz. A frame count is a hardware quantity — an LFO's update rate, an
 attack's write budget — and rescaling it would make it something else. What
 does keep its wall-clock length on PAL is everything written in musical time
-(driver.md §3.3). `Nms` has no such
-special context: it is a duration, converted to ticks at the tempo in force,
-and it is the only token finer than a tick (5.2 ms at 120 BPM). The PCM loop
-points (§16) are the one place it is not rounded to ticks at all — they take
-their value in seconds, so `1ms` reaches the engine's own floor.
+(driver.md §3.3). `Nms` is a duration at any tempo: in those same frame
+contexts it becomes the nearest whole frame count (`300ms` → 18 frames on
+NTSC), and in a structural one it is converted to ticks at the tempo in force,
+where it is the only token finer than a tick (5.2 ms at 120 BPM). The PCM loop
+points (§16) are the one place it is not rounded at all — they take their
+value in seconds, so `1ms` reaches the engine's own floor.
 
 In **structural** contexts that advance the musical timeline — note length,
 `:gate`, `~` (tie), rests, `(glide T)`, and `(delay … :time T)` — `Nf` is
@@ -289,13 +290,13 @@ keywords at the form's first tick.
 | `:len`     | length token              | Default note length; `0` = hold, the track waits for the key-off (§17) |
 | `:gate`    | length token              | Absolute sounding time per slot; `0` = hold until runtime KEY-OFF |
 | `:gate*`   | ratio `0.0`–`1.0`         | Gate as a fraction of the note length (`1.0` = full; above 0 it keeps at least one tick) |
-| `:gate-`   | length token              | Gate = note length minus this time; a note no longer than it is not cut (full gate) |
+| `:gate-`   | length token              | Gate = note length minus this time; a note no longer than it is not cut (full gate). A gate value that is not a length (or a ratio outside 0–1) is `E_GATE_INVALID` |
 | `:vel`     | 0–15                      | Note-on velocity (also `:vel+` / `:vel*`)                |
 | `:vol`     | 0–31 or curve             | Channel fader → `PARAM_SET` / `PARAM_SWEEP`              |
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
-| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`; `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
+| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:shuffle` | 51–90 or `none`           | Swing ratio (§5.2)                                       |
 | `:shuffle-base` | length token         | The swung length (default: eighth, §5.2)                 |
@@ -387,8 +388,10 @@ odd count of swung notes swings its next pass the other way, so `(x …)` and a
 count's last pass after them), and what follows a loop goes on from where its
 last pass left — past every pass, or from the `(break)`. A section that cannot
 be copied so — a counted `(go label N)`, or a label in another form — plays as
-written and is flagged `W_SHUFFLE_LOOP`. A value that is neither a number nor
-`none` is `E_SHUFFLE_INVALID`.
+written and is flagged `W_SHUFFLE_LOOP`. `0` plays straight, as `none` does;
+a value 1–50 plays straight too (`W_SHUFFLE_STRAIGHT`), and one above 90 plays
+as 90 (`W_SHUFFLE_CLAMPED`); a value that is neither a number nor `none` is
+`E_SHUFFLE_INVALID`.
 
 ```lisp
 (sqr1 :shuffle 66 :len 8  c c c c)
@@ -501,8 +504,8 @@ divide with a fraction (`:vel* 0.5`).
   Works on any macro target (the scale applies before the target write). The
   operand must be a signal — `(* 2 $depth)` (scalar × slot) is `E_EVAL_TYPE`;
   a bare `$slot` in a plain arithmetic macro value stays
-  `E_EVAL_NOT_LOWERABLE`. Scaling is orthogonal to `+` (additive): the MVP
-  covers `(* signal $slot)` only, and it combines with `:pitch+` — the scaled
+  `E_EVAL_NOT_LOWERABLE`. Scaling is orthogonal to `+` (additive): only
+  `(* signal $slot)` scales, and it combines with `:pitch+` — the scaled
   signal is added to the note's own pitch offset.
 - Echo/delay taps are always relative, so the keyword is `:vel+` or `:vel*`
   and its value is the per-tap change (§12); bare `:vel` is
@@ -551,8 +554,8 @@ A curve (§11) is a value too, so arithmetic composes with it:
   normalized shape to ±40. `(- 40 curve)` flips and offsets. Non-affine
   (scalar ÷ curve, or `min`/`max`/`abs`/… on a curve) → `E_EVAL_SIGNAL_NONAFFINE`.
 - **Two curves combined** (`(* a b)`, `(+ a b)`) are **materialized** — sampled
-  point-by-point into a baked step vector at compile time. MVP scope: frame-based
-  `:len` (`Nf`) on both, in a **macro** value only (an inline sweep cannot carry
+  point-by-point into a baked step vector at compile time. What lowers: a frame
+  `:len` (`Nf` / `Nms`) on both, in a **macro** value only (an inline sweep cannot carry
   a step vector → `E_EVAL_SIGNAL_SHAPE`). The two must be the **same region
   kind** — both looping (`sin`/`saw`/… and the stochastic curves) or both
   one-shot (`linear`/easings); mixing them, a tick `:len`, a `:wait` prefix, or a
@@ -624,6 +627,8 @@ chip within the same frame; a later batched flush collapses them).
   where it is written (§7.1.2): `(let ((lvl (* $a 2))) :tl1 lvl …)`. A
   self-read `$<param>` needs the parameter, so it binds only in a value-position
   `let` (`:tl1 (let ((x $tl1)) (+ x 3))`).
+- **Bindings** are a list of `(name expr)` pairs; anything else is
+  `E_LET_BINDING`.
 - **Names** must not be note/length tokens (so single letters `a`–`g`, `_`,
   `>`, `4t`, `v+` … are rejected — `E_LET_NAME`) and must not shadow a def
   (`E_LET_SHADOWS_DEF`). Use multi-letter words (`root`, `amp`, `base`).
@@ -638,7 +643,8 @@ scoped to its body.
 note, behaving exactly like a literal note (ties, glide, shuffle, PCM, macros).
 The optional length is any length token (`4`, `24t`, `20f`, `1/2`), a
 `(ticks …)` / `(frames …)` bridge, or a bare expression (§7.4). Out of MIDI
-range 0–127 → `E_NOTE_RANGE`.
+range 0–127 → `E_NOTE_RANGE`; no pitch, or more than a pitch and a length, is
+`E_NOTE_ARGS`.
 
 ```lisp
 (fm1 :len 8 (note 60) (note (+ 60 7)) (note (* 12 6)))   ; c4 g4 c6
@@ -688,7 +694,7 @@ parameter, by name.
 | Field      | Meaning                                                          |
 | ---------- | ---------------------------------------------------------------- |
 | `init`     | Positional default (integer). Omitted → defaults to the range start |
-| `A..B`     | Positional range sugar (§11) for the slider endpoints — the same `:from A :to B`, so `90..10` runs the slider downward |
+| `A..B`     | Positional range sugar (§11) for the slider endpoints — the same `:from A :to B`, so `90..10` runs the slider downward. With no range at all the slider runs `0..127`; with only one of `:from` / `:to`, the other end is `0` |
 | `:from` / `:to` | Order-free directional endpoints — the live slider runs from A to B (either direction, negatives fine); `A..B` positionally is the same |
 | `:step`    | Slider granularity, integer > 0 (default `1`)                    |
 | `:unit`    | `frame` (default) or `tick` — how the value is read when the slot feeds a curve `:len` |
@@ -719,7 +725,7 @@ host write ends the score's sweep of that slot.
   runtime parameter write (§5.1). `vel`/`oct` resolve at compile time — a
   number, a `let` name or an expression — so a `$` there, or a curve, is
   `E_VALUE_COMPILE_TIME`.
-- `$time` is built in: elapsed 60 Hz frames since track start, read-only.
+- `$time` is built in: elapsed 60 Hz frames since playback started, read-only.
 - An undefined `$name` raises `E_VAL_UNDEFINED`.
 - A slot is a signed 16-bit integer, and that is its only bound: a host
   `setVal` is rounded and clamped to i16, and a non-finite write is ignored,
@@ -1011,7 +1017,8 @@ A game's sound effects are written once, as defs, and every song carries them.
 - **`:tempo`** (default 120) is the effect's own clock: an effect sounds the
   same in every song and under any tempo the song sets. A part may set it
   again, but not sweep it — a `:tempo` curve drives the song's clock
-  (`E_SE_PART`).
+  (`E_SE_PART`). An option out of range, or any other key before the parts,
+  is `E_SE_OPTION`.
 - **Every song carries the same effects.** A bundle's `"se"` file (and
   `install-sgdk --se`) is compiled into every song as if it imported it, so
   the numbers are the same in every song and a song never names an effect. A
@@ -1140,7 +1147,7 @@ vector holding any stage — a curve, `(wait …)`, arithmetic on a curve, or a
 - a curve runs for its `:len`; a curve that loops (a loop wave, or `:mode
   loop`) runs until key-off — a modulated sustain;
 - `(wait N)` holds the current value for a length token, `(wait key-off)`
-  until key-off;
+  until key-off (a `N` that is not a length waits one tick, `W_WAIT_INVALID`);
 - `#sus` makes the stage after it loop until key-off, and `#rel` is where the
   release starts (as `(wait key-off)`).
 
@@ -1162,13 +1169,16 @@ A flat run is a curve from a value to itself, `(linear 1..1 :len 8)`.
 `(macro :vel […] :step 4 :tl1 …)` and `(macro :step 4 :vel […] :tl1 …)` are
 identical. A macro takes at most one `:step`; a second is `E_MACRO_STEP_DUP`.
 For two different clocks in one note, write two `(macro …)` forms — they
-compose. Default: `1f` (one 60 Hz frame).
+compose. Default: `1f` (one 60 Hz frame). A `:step` that is not a length
+above 0 (`0`, a typo) leaves the macro on that default, with
+`W_MACRO_STEP_INVALID`.
 
 A `:step` written as a note length or ticks (`16`, `1/16`, `24t`) is a **beat
 clock**: the macro steps on its track's ticks, so a 16th-note roll or arp stays
 on the beat at any tempo (a 16th at 118 BPM is 7.63 frames — rounding it to
 frames would drift). A `:step` in frames (`Nf`) is a **frame clock**, for LFO
-and envelope rates.
+and envelope rates; one in milliseconds (`Nms`) is the frame clock of the
+nearest whole frame count (§4).
 
 - A step vector advances one step per `:step`; a curve is sampled-and-held
   every `:step` (coarse step = stepped LFO; default keeps curves smooth).
@@ -1274,7 +1284,7 @@ function is.
 | `:phase` | int 0–255     | `0`     | Start phase offset                          |
 | `:rate`  | number ≥ 0    | `1.0`   | Phase speed multiplier (relative to `:len`); `0` freezes the curve at its start phase; accepts `$slot` |
 | `:mode`  | `loop`/`shot` | per curve | Cycle until key-off, or play once         |
-| `:wait`  | length token or `key-off` | — | Delay before the curve starts    |
+| `:wait`  | length token or `key-off` | — | Delay before the curve starts — in a `(macro …)` or a stage |
 
 An omitted **`:from`** means one thing: *start where the parameter is now.*
 That is only knowable where the curve runs against a live value — an inline
@@ -1283,6 +1293,11 @@ parameter when it starts, and `:tempo` starts from the tempo in force. A macro
 curve is baked per note, a `(delay …)` envelope and a PCM range point are laid
 out at compile time, and arithmetic on a curve shifts its start — so those
 need the `:from` written (`E_CURVE_FROM`).
+
+**`:wait`** delays a curve where it runs per note — in a `(macro …)` or as a
+stage. An inline sweep starts where it is written, so a `:wait` on one does
+nothing and is flagged `W_SWEEP_WAIT`; a `:wait` value that is neither a
+length nor `key-off` is `W_WAIT_INVALID`, and the curve does not wait.
 
 ### Shape parameters
 
@@ -1295,7 +1310,7 @@ need the `:from` written (`E_CURVE_FROM`).
 
 | Curves    | Key            | Range     | Default | Meaning                          |
 | --------- | -------------- | --------- | ------- | -------------------------------- |
-| all four  | `:hold`        | length    | none    | Sample-and-hold: each value is held this long (`8`, `16.`, `3f`), whatever `:len` and `:rate` are; needs a `:len` |
+| all four  | `:hold`        | length    | none    | Sample-and-hold: each value is held this long (`8`, `16.`, `3f`), whatever `:len` and `:rate` are; needs a literal `:len` (`E_CURVE_HOLD`, as is a `:hold` that is not a length) |
 | all four  | `:jitter`      | 0.0–1.0   | `0.0`   | High-frequency randomness mix    |
 | all four  | `:seed`        | u32       | `0xDEAD`| RNG seed — a distinct sequence per seed (§11.1) |
 | `pink`    | `:beta`        | > 0       | `1.0`   | Spectral tilt                    |
@@ -1366,7 +1381,9 @@ One-shot at its position in the note stream (not sticky). Replays the single
 note `B` positions back (`:back 1` = the last note, the default; history depth
 9); the taps are spaced by — and play at — the **current** `:len`/`:gate`
 (mucom `\=` semantics), not the source note's, and occupy real time, so
-following notes shift back.
+following notes shift back. A tap plays in the track's current voice, so a
+`def-mod :voice` (§9.4) selects it as it does a written note. On a pcm track
+a tap replays the note's own sample (and its `:mode`) at its pitch.
 
 ```lisp
 (fm1 c (echo 3 :vel+ -1)          ; vel−1, −2, −3 decaying trail
@@ -1480,6 +1497,9 @@ the phrase.
 | `(glide from T)`   | One-shot override: next glide starts from absolute pitch `from` (note + octave, e.g. `f5`) |
 | `(glide none)`     | Disable                                                     |
 
+A `T` that is neither a length nor `none` leaves the glide as it was, with
+`W_GLIDE_INVALID`.
+
 Glide emits a bounded `NOTE_PITCH` sweep before the `NOTE_ON`: a cent offset
 from the pitch sounding at the key-on to the note's own pitch over `T`, then
 stopping. The pitch sounding is the previous note's — or, while the previous
@@ -1562,7 +1582,8 @@ Timer A frequency comes from exactly one source per score:
    clamped, `W_CSM_RATE_OCT_CLAMPED`); bare numeric atoms are raw Hz literals
    for the range above `:oct 10`. `(glide …)` slides Hz between notes (§14).
 
-Valid rate range: 52–53270 Hz, clamped with `W_CSM_RATE_CLAMPED`. A score
+Valid rate range: 52–53270 Hz, clamped with `W_CSM_RATE_CLAMPED`. An inline
+`:csm-rate` that is neither a number nor a curve is `E_CSM_RATE_INVALID`. A score
 with neither source produces no Timer A retrigger (fm3-csm plays silently).
 
 ```lisp
@@ -1634,6 +1655,9 @@ is never touched.
 | `:pcm-start` / `:pcm-end` / `:pcm-len` | The range a note plays, as LENGTHS (see *The range and the loop*) |
 | `:loop-start` / `:loop-end` / `:loop-len` | The loop a held `loop` note repeats, inside the range |
 | `:fx`     | The processing chain, `[(effect …) …]` — see *Effects* below   |
+
+`:rate`, `:offset` and `:frames` are whole numbers; one that does not read
+(`8k`, `1.5`) keeps the key's default, with `W_SAMPLE_KEY_INVALID`.
 
 All conversion is compile-time: stereo is downmixed `(L+R)/2`, the `:fx`
 chain runs, and the data becomes raw 8-bit signed PCM.
@@ -1770,6 +1794,9 @@ Limits worth knowing:
   recording, so a point stays where you set it however the note transposes. On
   a track it is time as you HEAR it, so `:loop-len 16` is a 16th note at every
   pitch. At C4 the two coincide.
+- A point written on a track — inline or in a `(param-set …)` — that is not a
+  length is `E_PCM_RANGE_LENGTH`; one on a channel other than `pcm1`–`pcm3` is
+  `E_UNSUPPORTED_TARGET`.
 
 ### Effects
 
@@ -1819,7 +1846,7 @@ Parameters — a positional value fills the one marked *positional*
 | `limit` | `:ceiling` | dBFS | ≤ 0 | `0` | The level no peak passes (the lookahead is a fixed 2 ms, so it never overshoots) |
 | | `:release` | length | ≥ 0 | `5ms` | How fast the gain comes back after a peak. Shorter is louder; longer is smoother and quieter |
 | `crush` | `:bits` | integer | 1–8 | required, *positional* | The steps the wave keeps: `8` changes nothing (the bank is 8-bit), `4` is gritty, `1`–`2` near a square wave |
-| `hpf` | `:freq` | Hz | ≥ 1 | required, *positional* | The cutoff, −3 dB there. Past the sample's Nyquist (half its rate) it is pulled just under, with `W_SAMPLE_FX_FREQ` |
+| `hpf` | `:freq` | Hz | ≥ 1 | required, *positional* | The cutoff, −3 dB there. At 95% of the sample's Nyquist (half its rate) or above it is pulled to that 95%, with `W_SAMPLE_FX_FREQ` |
 | `lpf` | `:freq` | Hz | ≥ 1 | required, *positional* | As `hpf`, from the other side |
 | `drive` | `:db` | dB | ≥ 0 | required, *positional* | Gain into the saturation: `6` thickens, `18` and up is plainly distorted. The output is scaled back, so a full-scale input stays full scale and quieter parts come up |
 | `fade` | `:len` | length | > 0 | required | How long the fade takes, from `:at` to silence |

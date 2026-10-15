@@ -1,7 +1,12 @@
 // The pair transport's host gate: 68k/mmlpairs.c against tools/pairs-model.mjs
-// (R28 §63.6 step 4).
+// (docs/driver.md §12.3).
 //
 //   node tools/pairs-gate.mjs [score.mmlisp …] [--frames N]
+//
+// With no score named it runs c-gate's corpus. A banked score (the MMB's
+// MULTIBANK_PCM flag) goes through the banked converter, which has no JS twin
+// here: its frames and its view path are held, its pair streams are
+// banked:gate's (tests/banked-pairs.c).
 //
 // Both sides take the SAME frames — the sequencer's, rendered by gate_main
 // --frames: every write in the sequencer's order, uncapped, as the SGDK host
@@ -19,7 +24,7 @@
 // matters — an fm4-6 key-on ($28 is port 0) goes out after every port-1 write
 // its channel's sequencer made before it (its F-number, level, patch).
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +33,8 @@ import { generatedTables } from "./c-tables.mjs";
 import { FrameRecorder, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
 import { DrvPlayer } from "../../live/src/drv-player.js";
 import { engineImage } from "../../live/src/engine-images.js";
-import { headerPcmVoices } from "../../live/src/mmb.js";
+import { HEADER_FLAG, headerPcmVoices } from "../../live/src/mmb.js";
+import { corpus } from "./c-gate.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const c68k = join(here, "..", "68k");
@@ -36,11 +42,7 @@ const argv = process.argv.slice(2);
 const fIdx = argv.indexOf("--frames");
 const FRAMES = fIdx >= 0 ? Number(argv[fIdx + 1]) : 400;
 let scores = argv.filter((a, i) => !a.startsWith("--") && !(fIdx >= 0 && i === fIdx + 1));
-if (!scores.length) {
-  // The c-gate's own list, from the one place it is defined.
-  const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8"));
-  scores = pkg.scripts["c-gate"].split(/\s+/).filter((a) => a.endsWith(".mmlisp")).map((s) => join(here, "..", s));
-}
+if (!scores.length) scores = corpus();
 
 const ctab = generatedTables();
 const tmp = mkdtempSync(join(tmpdir(), "pairsgate-"));
@@ -60,7 +62,7 @@ try {
 
 /** The converter's configuration for a score: its engine image's (MMB header flags). */
 const cfgOf = (mmb) => pairsCfgForImage(engineImage(headerPcmVoices(mmb[6] | (mmb[7] << 8))));
-const cArgsOf = (cfg) => [cfg.fifo, cfg.fifoPairs, cfg.pairsPerGrab, cfg.lutPage, cfg.opStride, cfg.opPort,
+const cArgsOf = (cfg) => [cfg.fifo, cfg.fifoPairs, cfg.pairsPerGrab, cfg.lutPage, cfg.opPort,
   cfg.voices, cfg.idleAfterGen].map(String);
 
 /** The JS side: the same frames, the same modelled engine, the same records. */
@@ -185,7 +187,9 @@ for (const score of scores) {
   // Three schedules: every frame sent as soon as it is queued, and the SGDK
   // host's render-ahead of one and two frames with release by frame count.
   let asap = null;
-  for (const [lead, pumps] of [[-1, 2], [1, 2], [2, 2], [1, 1]]) {
+  const banked = ((bytes[6] | (bytes[7] << 8)) & HEADER_FLAG.MULTIBANK_PCM) !== 0;
+  if (banked) rows.push("banked: pairs in banked:gate");
+  for (const [lead, pumps] of banked ? [] : [[-1, 2], [1, 2], [2, 2], [1, 1]]) {
     let cOut;
     try { cOut = execFileSync(pairsExe, [framesFile, ...cArgs, String(lead), String(pumps)], { maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "pipe"] }); }
     catch (e) { rows.push(`pairs_main (lead ${lead}): ${e.stderr?.toString().trim()}`); scoreBad = true; continue; }

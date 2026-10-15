@@ -10,8 +10,7 @@ figure or `.z80` line reference from before 2026-09 describes the all-Z80
 build** (tag `archive/all-z80`; the ring engine is `archive/ring-engine`, the
 DAC bench `archive/dac-stream-bench`), not the shipped driver.
 
-Merged here on 2026-10-09: `plan-68k-optimization`, `plan-onset-jitter`,
-`plan-se` and `plan-multi-score` (§9–§11). PCM is [[pcm]]; the set-aside
+PCM is [[pcm]]; the set-aside
 Z80-only build is [[z80-only]]. Open work is `docs/roadmap.md` (Driver) and
 `docs/driver.md` §11; what is listed as open here is only the reasoning those
 omit.
@@ -128,7 +127,7 @@ All outside the code under test, all silent:
    not 4; `ld (hl),n` is 10, not 7), and the mixer's hot loop was `ld a,(hl)` +
    `add a,(hl)`. **Every cycle budget in the repository was computed against an
    under-charged model.** Fixed with a selftest pinning the documented counts.
-   Treat any modelled figure from before commit `fcc8457` as uncalibrated — and
+   Treat any modelled figure from before commit `9c7c51f` as uncalibrated — and
    do NOT assume BlastEm values or hand calculations share the error.
    The same model charged a **whole `ldir` 16 cycles** until 2026-09-28 (now
    21 a repeating byte, 16 the last, pinned by the selftest). Nothing shipped
@@ -238,7 +237,7 @@ service slides every key-on behind them. The behaviour that landed — the voice
 hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
 
 - **The test score is sin008**, a mucom import that must never enter the repo
-  (`~/Desktop/mucom/sin008.mmlisp`), single-bank pcm1. The wobble near 14 s is
+  (`~/Desktop/mucom/sin008.mmlisp` on the user's machine), single-bank pcm1. The wobble near 14 s is
   the 15.02 s downbeat, where fm4/fm5 switch voice (65 writes in one frame).
   BlastEm, 2–30 s:
 
@@ -249,7 +248,7 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   | hoist + tail cut | 17.1 ms | 31.7 ms | 0 / 12 / 19 / 22 |
 
   Key-ons last on top: chord spread p95 19.5 → 3.0 ms, max 33 → 4; late p95
-  17.1 → 16.4. WAVs in `~/Desktop/mucom/onset-listen/`.
+  17.1 → 16.4. WAVs in `~/Desktop/mucom/onset-listen/` on the user's machine.
 - **The user's verdicts**: key-ons last adopted after listening. The user
   accepted a changed release tail, and a note ending up to two frames early,
   over tempo wobble — then the tail cut made **no audible difference**
@@ -368,14 +367,13 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   on free channels (`drv/sgdk/README.md`). Measured after it (demo-se with
   bleep/zap moved to fm4/fm5): 46.7 / 46.1 ms, four writes in the frame
   (TL, pitch, key-on), from 72.9 / 70.4 before.
-- **Open: the SGDK example's SE (`example/main.c`) has not run on hardware.**
 
 **Several songs** (behaviour: `driver.md` §2.3, `mmb.md` §10.2):
 
 - The shared bank is built (`drv/tools/bundle.mjs`). **A non-PCM song in a
   bundle still boots the bundle's image** — a reboot-free song change is worth
   more than the idle voice.
-- **Two scores resident at once is not built**, and is what a cross-file
+- **Two scores resident at once** (roadmap Driver 3) is what a cross-file
   transition would need. The cost: the per-score state (`MMLSeq`'s stream,
   `voices`, `macro_table`, `sample_entries`, `sample_blob_base`, `increment`,
   `frame_hz`, `pcm_voices`; `drv-player.js` likewise) moves off the sequencer —

@@ -13,7 +13,7 @@
 //     so it can never escape and no JUMP can target its interior (every JUMP
 //     dest is a MARKER offset, and markers are excluded);
 //   - within a single track, at a loop depth that leaves the CALL a slot:
-//     LOOP and CALL share the 4-entry control stack (driver.md §5.2), and a
+//     LOOP and CALL share the 4-entry control stack (driver.md §4.3), and a
 //     fragment never CALLs (its units are consumed once factored), so a CALL
 //     at depth d needs d + 1 ≤ 4. A phrase shared inside loops is factored too.
 //
@@ -39,7 +39,7 @@ const CONTROL_CMDS = new Set([
 // `(k-1)*B > 3k + 1`; for k=2 that means B ≥ 8.
 const MIN_RUN_BYTES = 8;
 
-// Control-stack entries per track (driver.md §5.2), shared by LOOP and CALL.
+// Control-stack entries per track (driver.md §4.3), shared by LOOP and CALL.
 const CONTROL_STACK = 4;
 
 function bytesEqual(a, b) {

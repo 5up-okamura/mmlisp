@@ -4,10 +4,11 @@ How to play an MMLisp score on a real Mega Drive (or an accurate emulator) from
 an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 
 > **Verification status.** The sequencer is proven byte-for-byte against the
-> JS reference on the host (`npm run c-gate`, the whole corpus); the slot → pair
-> converter against its JS twin (`npm run pairs-gate`); the three engine images
-> with the converter in the JS instruction model (`npm run engine:gate`,
-> `npm run engine:score`). `npm run sgdk:lint` type-checks the glue against a
+> JS reference on the host (`npm run c-gate`, the whole corpus); the frame → pair
+> converter against its JS twin (`npm run pairs-gate`, the banked converter in
+> `npm run banked:gate`); the three single-bank engine images with the
+> converter in the JS instruction model (`npm run engine:gate`,
+> `npm run engine:score`) and the six banked ones (`npm run multibank:gate`). `npm run sgdk:lint` type-checks the glue against a
 > shim. The glue built with SGDK 2.x + m68k-elf-gcc 13.2.0 runs headless in a
 > patched BlastEm on the image the score itself boots (`npm run sgdk:gate`),
 > graded write by write and DAC byte by DAC byte — driver.md §12.7 carries the
@@ -18,10 +19,13 @@ an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 ```
 drv/sgdk/mmlispdrv.h        host API
 drv/sgdk/mmlispdrv.c        host implementation (Z80 bring-up, the pump, the grab)
-drv/sgdk/mmlispdrv_bin.h    generated: the three Z80 engine images + their ABI constants
+drv/sgdk/mmlispdrv_bin.h    generated: the three single-bank Z80 engine images + their ABI constants
+drv/sgdk/mmlispdrv_banked_bin.h  generated: the six block-banked images (1-3 voices, NTSC and PAL)
 drv/68k/mmlispseq.{c,h}     the sequencer — 68k code, compiled INTO your game
-drv/68k/mmlpairs.{c,h}      the slot -> pair converter, also compiled into your game
+drv/68k/mmlpairs.{c,h}      the frame -> pair converter, also compiled into your game
 drv/68k/tables.c            generated: the sequencer's constant tables
+drv/68k/mml_rate.h          generated: the single-bank images' rate stamps
+drv/68k/mml_banked_rate.h   generated: the banked images' rate stamps
 drv/sgdk/example/main.c     minimal player program
 drv/sgdk/example/song.res   the BIN resource for the MMB
 ```
@@ -62,7 +66,7 @@ src/main.c                yours
 src/mmlispdrv.c           host glue
 src/mmlispseq.c           the sequencer
 src/mmlispseq_tables.c    its constant tables
-src/mmlpairs.c            the slot -> pair converter
+src/mmlpairs.c            the frame -> pair converter
 inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlpairs.h  inc/mmlispdrv_bin.h  inc/mml_rate.h
 inc/mmlispdrv_banked_bin.h  inc/mml_banked_rate.h   the multi-bank engine
 inc/mmlisp_se.h           the effects' numbers (generated)
@@ -158,8 +162,8 @@ bundle cannot produce a mismatch, a hand-built pair can.
 ```
 mysong.mmlisp ──mmb-build.mjs──▶ song.mmb [+ song.smp] ──rescomp(BIN)──▶ ROM
                                                                           │
- main loop:  MMLisp_frame()  ─ mmlispseq.c renders one slot a frame ─┐    │
-                              mmlpairs.c: slot -> {op,val} pairs     │    │
+ main loop:  MMLisp_frame()  ─ mmlispseq.c renders one frame ──────┐    │
+                              mmlpairs.c: frame -> {op,val} pairs    │    │
  VBlank:     one pump ─ 16 pairs a grab, ~45 µs of held bus ─────────┤    │
                                                                      ▼    ▼
  Z80: the score's engine image (1-3 PCM voices, 14,376 / 10,112 / 6,653 Hz);
@@ -214,7 +218,7 @@ while (TRUE) {
   page the engine reads at fixed slots of its lap (`docs/driver.md` §5, §6).
 
 - **`MMLisp_frame()` — once per frame, in the main loop — renders ahead.** It
-  runs the sequencer and turns each slot into pairs (`mmlpairs.c`), up to
+  runs the sequencer and turns each frame into pairs (`mmlpairs.c`), up to
   `MMLISP_LEAD` (default 2) frames past the ones whose time has come; it takes
   no bus. The pumps send only frames whose time has come, counted from SGDK's
   `vtimer`, so **the tempo follows the video clock, not your main loop**: a
@@ -256,7 +260,9 @@ while (TRUE) {
   `setParam` / `fadeTrack` / `setVal` are plain calls into the sequencer. They
   take effect on the next frame rendered and reach the chip within about a
   frame after that. `MMLisp_startSong()` starts the song — every track but the
-  effects' parts.
+  effects' parts. `MMLisp_setParam`'s value is an `s16`, so the wide targets
+  (`NOTE_PITCH` in cents, the PCM points, the value slots; `docs/mmb.md` §7.4)
+  reach the sequencer whole.
 
 - **Sound effects: `MMLisp_playSe(SE_NAME)`.** An effect is a `def-se`
   (docs/language.md §9.3) in the game's effects file, which the bundle's
@@ -451,9 +457,9 @@ the include phase and prints the real error.)
    times the driver's functions in the same build (probe marks on entry and
    exit); `--pc` samples the 68000's PC instead and names the inlined source
    lines, `--peak N` only inside the N heaviest renders. On a six-channel
-   song the driver takes ~28% of the 68000 on average — the render ~18%, the
-   pump the rest — and the worst render ~116% of a frame (a voice change on
-   several channels), which the render lead absorbs.
+   song the driver takes ~16% of the 68000 on average — the tick walk and the
+   macro engine ~9%, the pump ~3% — and the worst renders ~94% of a frame (a
+   voice change on several channels), which the render lead absorbs.
 
 ### Two tools that settle almost any "it sounds wrong" report
 

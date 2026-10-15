@@ -8,8 +8,7 @@
 //
 // Frozen spec: docs/mmb.md (container), docs/opcodes.md (opcode/target/curve
 // freeze), docs/ir.md (event vocabulary). Ids and layouts here match those
-// documents verbatim; the v0.1 ids they inherit came from the old
-// tools/scripts/mmb-common.js + ir-player.js MMB maps.
+// documents verbatim, and drv/68k/mmlispseq.c carries the same ids.
 import { FRAME_HZ_NTSC } from "./ir-utils.js";
 
 // Ticks per quarter note — the musical grid every tick count is in.
@@ -33,7 +32,7 @@ export const HEADER_FLAG = {
   MULTIBANK_PCM: 1 << 4,
 };
 export const HEADER_PCM_VOICES_SHIFT = 2;
-export const HEADER_PCM_VOICES_MASK = 0x03;
+const HEADER_PCM_VOICES_MASK = 0x03;
 /** The PCM voice count an MMB header's flags word names. */
 export const headerPcmVoices = (flags) => (flags >> HEADER_PCM_VOICES_SHIFT) & HEADER_PCM_VOICES_MASK;
 /** The frame clock an MMB header's flags word was baked for, in Hz. */
@@ -142,7 +141,7 @@ export const OPCODE_NAME = Object.fromEntries(
 );
 
 // ── Target ids (opcodes.md §7) ────────────────────────────────────────────
-// 0x02 NOTE_VOLUME is retired (id parked, never emitted). Width is 2 (i16) for
+// 0x02 is unassigned and stays parked (opcodes.md §7.1). Width is 2 (i16) for
 // NOTE_PITCH and TEMPO_SCALE, 1 (i8) for everything else.
 export const TARGET_ID = {
   NOTE_PITCH: 0x01,
@@ -207,7 +206,7 @@ export const TARGET_ID = {
   // A PCM note's points (language.md §16), as the engine's own byte offsets
   // into the playing blob: the loop (:loop-*) and the range (:pcm-*). One
   // image plays one byte a sample, so a point is at most 32,512 and fits the
-  // same i16 every other wide target uses (docs/driver.md §5).
+  // same i16 every other wide target uses (docs/driver.md §5.3).
   LOOP_START: 0x43,
   LOOP_END: 0x44,
   LOOP_LEN: 0x45,
@@ -253,7 +252,8 @@ export const CURVE_ID = {
   triangle: 5,
   square: 6,
   saw: 7,
-  // 8–11 reserved (stochastic); how they lower is an M3 decision.
+  // 8–11 stochastic: macro-only — the exporter samples them into MACRO_TABLE
+  // and a sweep never carries them (opcodes.md §8.1).
   noise: 8,
   pink: 9,
   perlin: 10,
@@ -275,7 +275,7 @@ export function curveId(name) {
   return CURVE_ID.linear;
 }
 
-// ── Integer curve evaluation (driver.md §8, M2 sweep engine) ──────────────
+// ── Integer curve evaluation (opcodes.md §8, the sweep engine) ────────────
 // The driver evaluates curves integer-only from an 8-bit phase (0..255) to an
 // 8-bit unit (0..255). Seven of the eight shapes are computed (a multiply or a
 // fold); only `sin` needs a table. Both drv-player.js and the C sequencer use
@@ -320,7 +320,7 @@ export function curveUnit8(id, t) {
 }
 
 // sweepValue(from, to, unit8): from + trunc((to-from)·unit8 / 256), truncating
-// toward zero (matches the asm magnitude-multiply-then-negate). Result is the
+// toward zero (a magnitude multiply, then the sign — mmlispseq.c sweep_value). Result is the
 // interpolated target value before per-target clamping at the register write.
 export function sweepValue(from, to, unit8) {
   const p = (to - from) * (unit8 & 0xff);
@@ -369,8 +369,8 @@ export const PCM_MASTER_MAX_SHIFT = 6;
 export const PCM_TOTAL_MAX_SHIFT = 7;
 
 // ── Duration operand (mmb.md §7.2) ────────────────────────────────────────
-export const DUR_HOLD = 0x00; // indefinite hold (len=0 note)
-export const DUR_EXT = 0xff; // extended: u16le follows
+const DUR_HOLD = 0x00; // indefinite hold (len=0 note)
+const DUR_EXT = 0xff; // extended: u16le follows
 
 // Encode a tick duration to operand bytes. 0 = indefinite hold; 1–254 = one
 // byte; 255–65535 = 0xFF followed by u16le. Throws above 65535 (the exporter is

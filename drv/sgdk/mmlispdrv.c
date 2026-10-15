@@ -1,19 +1,20 @@
 // MMLispDRV — SGDK host implementation. See mmlispdrv.h for the API.
 //
-// The Z80 image is one of three light engines, one per PCM voice count
-// (docs/driver.md §5): each keeps its own fixed DAC clock and consumes
-// {op, val} PAIRS from a page in its RAM at fixed slots. A score's MMB header
-// names the image; MMLisp_loadScore boots it. This file is what puts the pairs
+// The Z80 image is one of nine engines — three single-bank light images, one
+// per PCM voice count, and six block-banked ones (docs/driver.md §5, §5.4):
+// each keeps its own fixed DAC clock and consumes {op, val} PAIRS from a page
+// in its RAM at fixed slots. A score's MMB header names the image;
+// MMLisp_loadScore boots it. This file is what puts the pairs
 // there. The sequencer (mmlispseq.c) renders a frame and mmlpairs.c takes it
 // from the sequencer's write queue into pairs and PSG bytes (the slot the
 // other gates see is never packed here); everything SGDK-specific is here: the
 // bring-up, the bus grab, the copy, the PSG port.
 //
-// ONE GRAB A FRAME, FROM THE VERTICAL INTERRUPT. A grab carries sixteen pairs,
-// so the wire is 960 pairs a second — the same as the two-grab host it
-// replaces, in half the bus stops, and off the one interrupt every game
-// already has. A bus stop is not repaid: the DAC runs slow by the ~45 µs the
-// grab held, once a frame (driver.md §5.3).
+// ONE GRAB A FRAME, FROM THE VERTICAL INTERRUPT (up to five on a banked
+// image, pumps()). A single-bank grab carries sixteen pairs, so the wire is
+// 960 pairs a second, off the one interrupt every game already has. A bus stop
+// is not repaid: the DAC runs slow by the ~45 µs the grab held, once a frame
+// (driver.md §5.1).
 //
 // RENDERED AHEAD, SENT ON TIME. The main loop's MMLisp_frame() renders each
 // frame MMLISP_LEAD frames before its time; the pumps send only the frames
@@ -28,7 +29,7 @@
 
 // ── Z80 address space, as seen from the 68000 ───────────────────────────────
 // Byte accesses only: the Z80 bus is 8-bit, so a word access here duplicates
-// the even byte into both halves (R19 §46.3).
+// the even byte into both halves.
 #define Z80_RAM_AT(off)   ((vu8*)(0xA00000 + (off)))
 #define Z80_BANK_REG      (*(vu8*)0xA06000)
 #define MML_PSG_PORT      (*(vu8*)0xC00011)   // SGDK's psg.h names the address PSG_PORT
@@ -68,13 +69,12 @@ static u16        pauses = 0;
 // interrupted resumes, so a plain flag is enough: a pump that finds it set
 // returns at once and the next one carries the pairs.
 static vu8        busy = FALSE;
-static u16        lateGrabs = 0;
 // Where a grab's release store goes when the bus was already held by the code
 // it interrupted: that code releases it, not us.
 static vu16       releaseSink;
 static MMLPairsCfg PAIRS_CFG = {
     MMLISPDRV_FIFO, MMLISPDRV_FIFO_PAIRS, MMLISPDRV_PAIRS_PER_GRAB,
-    MMLISPDRV_LUT_PAGE, MMLISPDRV_OP_STRIDE, MMLISPDRV_OP_PORT,
+    MMLISPDRV_LUT_PAGE, MMLISPDRV_OP_PORT,
     1,   // voices: the booted image's (bootImage)
     1,   // idle_after_gen: likewise
     MMLISP_AHEAD,    // ahead: pairs past the index read just before the plan
@@ -151,7 +151,7 @@ void MMLisp_setSampleBank(const u8* smp)
     smpBank = smp;
     writeBankRegister();
     // The sequencer resolves every PCM field itself and needs the bank's
-    // directory and its ROM address (driver.md §6.3).
+    // directory and its ROM address (driver.md §5.4).
     bankRc = (smp && loaded) ? (s8)mml_load_samples(&seq, smp, 0, (u32)smp) : 0;
 }
 
@@ -249,7 +249,7 @@ typedef struct { u8 ops[16]; u8 vals[16]; u8 prev, dist; } __attribute__((aligne
 // page's layout: ops at even offsets, values at odd ones — so thirty-two bytes
 // cost 192 cycles where thirty-two move.b would cost 384. The whole grab is
 // about 2,400 master (~45 µs); nothing repays it, so the DAC runs that much
-// slow once a frame (driver.md §5).
+// slow once a frame (driver.md §5.1).
 //
 // The Z80 is on a byte-wide bus; movep's accesses are single bytes (UDS for
 // the even run, LDS for the odd), which is what the Z80 window takes.
@@ -324,7 +324,7 @@ static u16 pump(u16 release)
 {
     if (!ready || busy) return 0;
     busy = TRUE;
-    // Everything that can be decided before the bus is taken is (R20 §48.4):
+    // Everything that can be decided before the bus is taken is:
     // which pairs, where they go, and the registers they are stored from.
     u16 dst = 0;
     // The engine's index, fresh: a grab that writes nothing (dist 0 fails the
@@ -343,7 +343,7 @@ static u16 pump(u16 release)
     fifoLo = (u8)got;
     // A late grab gives its pairs back; everything written before them has
     // been consumed, so the next plan starts from the index just read.
-    if (n && (got & GRAB_LATE)) { mmlp_abort(&pairs); lateGrabs++; }
+    if (n && (got & GRAB_LATE)) mmlp_abort(&pairs);
 
     // The PSG is in the VDP's address space: no bus grab. Its bytes are the
     // ones queued before the PREVIOUS pump, so they land about when the FM
@@ -374,21 +374,17 @@ static void pumps(u16 release)
 // The frames whose time has come; anything rendered ahead of them waits.
 static u16 due(void) { return (u16)(vtimer - frameBase); }
 
+// The frame's grab, from the vertical interrupt (MMLisp_attachInterrupts) or
+// the game's own. It carries the frame whose time has just come, so the
+// music's tempo is the video clock's.
 void MMLisp_pump(void)
-{
-    pumps(due());
-}
-
-// The frame's grab, from the vertical interrupt. It carries the frame whose
-// time has just come, so the music's tempo is the video clock's.
-static void vblankPump(void)
 {
     pumps(due());
 }
 
 void MMLisp_attachInterrupts(void)
 {
-    SYS_setVIntCallback(vblankPump);
+    SYS_setVIntCallback(MMLisp_pump);
 }
 
 void MMLisp_frame(void)
@@ -430,7 +426,7 @@ bool MMLisp_sePlaying(u8 se)         { return loaded && mml_se_playing(&seq, se)
 u8 MMLisp_seCount(void)              { return loaded ? mml_se_count(&seq) : 0; }
 void MMLisp_keyOff(u8 channel_id)    { if (loaded) mml_key_off(&seq, channel_id); }
 
-void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value)
+void MMLisp_setParam(u8 channel_id, u8 target_id, s16 value)
 {
     if (loaded) mml_set_param(&seq, channel_id, target_id, value);
 }
@@ -501,7 +497,7 @@ void MMLisp_readStats(MMLispStats* out)
     out->bank         = bankRc;
     out->image        = image;
     out->fifoLo       = fifoLo;
-    out->late         = lateGrabs;
+    out->late         = pairs.late;
     out->due          = loaded ? due() : 0;
     out->pauses       = pauses;
 }

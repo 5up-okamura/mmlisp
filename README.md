@@ -45,7 +45,8 @@ game state at runtime.
   **byte-for-byte** against a JS reference at zero tolerance — so what you hear
   in the browser is what the driver emits.
 - **Bring your own voices.** Import FM patches from DefleMask (DMP), Furnace
-  (FUI), TFI, VGI, OPNI, and mucom88 `.muc` / `.dat` banks.
+  (FUI), TFI, VGI, OPNI, and mucom88 `.muc` / `.dat` banks, and mucom88
+  `*pcm.bin` drum banks as samples.
 
 ## What it looks like
 
@@ -87,8 +88,14 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
   format-on-demand, structure help (bracket auto-close, enclosing-form
   highlight, unmatched-bracket marks, select-by-form), and find / replace with
   multi-cursor editing
-- Hot-swap compile on edit: the score rebuilds while playing and resumes at
-  the next bar boundary
+- Hot-swap while playing: typing never compiles; Build (Cmd/Ctrl+B), Play and
+  value edits (scrubbing or nudging a number) swap the recompiled score in
+  at the next bar boundary
+- Library (Tools > Library, Cmd/Ctrl+K): one search over the language
+  reference, the preset sets, the snippets and the example
+  scores (Ref / Presets / Snippets / Scores), each auditionable and insertable
+- Piano roll and oscilloscope views (MMLisp > View) and Follow Playback, which
+  keeps the playing line in sight
 - Accurate FM sound via a Nuked-OPN2 (YM2612) WebAssembly core in an
   AudioWorklet
 - FM parameter panel: per-channel ALG/FB and per-operator sliders, updated
@@ -98,14 +105,24 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 - Channel strips (select / mute / solo), keyboard note preview, and
   keyboard-driven step input
 - FM voice import: DefleMask DMP, Furnace FUI, TFI, VGI, OPNI
-- mucom88 `.muc` / `.dat` song and voice-bank import
+- mucom88 `.muc` / `.dat` song and voice-bank import, and its `*pcm.bin` drum
+  banks (File > Import > mucom88 Drums…) as samples
 - Song import with a dialog for tempo and which part goes on which channel:
   MIDI onto the GM voice set; DefleMask and Furnace modules with each pattern
   as a phrase;
   VGM rebuilt into notes and voices, its tempo estimated, and its PCM
   (YM2612 DAC, SegaPCM, YM2610 ADPCM, X68000 OKIM6258) decoded onto pcm1–3
-- VGM and WAV export, PCM included; open/save `.mmlisp` sources with the File System
-  Access API
+- VGM, WAV and video export, PCM included; open/save `.mmlisp` sources with the
+  File System Access API, File > Open Recent (a score with its folder), and
+  `.mmlisp` files opening in the installed app from the OS
+- Share links (File > Share…): a short URL that opens the score in MMLisp Live
+- Edit > Loop Selection wraps the selected notes or channels in a loop;
+  Edit > Logical Editor… finds notes by pitch, length or voice and changes them
+  together
+- MIDI input (MMLisp > MIDI): a keyboard plays and step-inputs, and MIDI Learn
+  ties a controller's CCs to panel sliders
+- MMLisp > Language: the reference and snippets in English, Japanese or Spanish
+- Installable, and works offline once installed
 - Writing with an AI: Tools > Connect to AI lets Claude Code or Claude Desktop
   (with the [MMLisp MCP server](tools/mcp/README.md)) read, edit and play the
   open score — every change logged and undoable
@@ -181,6 +198,7 @@ File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 - [docs/mmb.md](docs/mmb.md) — MMB binary container format
 - [docs/opcodes.md](docs/opcodes.md) — MMB opcode and target tables
 - [docs/driver.md](docs/driver.md) — MMLispDRV architecture and verification
+- [docs/pcm-multibank.md](docs/pcm-multibank.md) — PCM beyond one 32 KiB bank
 - [docs/roadmap.md](docs/roadmap.md) — what is still ahead
 
 ## MMLisp Live — Keyboard Shortcuts

@@ -6,14 +6,14 @@
 #
 # BIN <name> <file> [align] [size_align] [compression]
 #
-# The MMB needs NO alignment any more. Post-split the 68000 reads it straight
-# out of its own address space (docs/driver.md §1.1); only the Z80's bank window
-# ever needed a 32 KB boundary, and the score no longer goes through it.
+# The MMB needs no alignment: the 68000 reads it straight out of its own
+# address space (docs/driver.md §1.1); only the Z80's bank window needs a 32 KB
+# boundary, and the score does not go through it.
 BIN song_mmb "song.mmb" 2
 
-# A PCM song also exports a sample bank sidecar (song.smp, mmb.md §10). That one
-# DOES still ride the Z80's window — the mixer latches its bank every frame — so
-# it keeps the 32 KB alignment. Leave the compression field unset: a compressed
+# A PCM song also exports a sample bank sidecar (song.smp, mmb.md §10). The Z80
+# reads it through its 32 KB bank window, so it needs the 32 KB alignment (a
+# banked score's song.smp is N whole 32 KB banks, docs/pcm-multibank.md). Leave the compression field unset: a compressed
 # BIN is unpacked into RAM, and the window only reaches ROM.
 #
 # Uncomment when your score uses samples (rescomp fails on a BIN whose file is

@@ -52,7 +52,7 @@ export const VOICE_TARGETS = new Set([
 // (`:vel`, `:vol`, `:pan`, `:pitch`), which would otherwise rewrite the new
 // voice's levels and pitch in the note's frame. A `:vel` alone moves nothing.
 // LFO rate, master and tempo are the whole chip's and stay with the note.
-export const MOVE_TARGETS = new Set([...VOICE_TARGETS, "VEL", "VOL", "PAN", "NOTE_PITCH", "NOTE_SEMI"]);
+const MOVE_TARGETS = new Set([...VOICE_TARGETS, "VEL", "VOL", "PAN", "NOTE_PITCH", "NOTE_SEMI"]);
 
 const FM_CHANNELS = new Set(["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"]);
 // Events that may sit between the previous note and this one without ending
@@ -151,8 +151,8 @@ function peelLoopRest(out, e) {
  * moved, how many could not (no silence before the note, or a structure in
  * the way), and how many were spread to a later frame of their window.
  *
- * The previous note is keyed off by a REST (a pending key-off, driver.md
- * §6.3) or by its gate, so the voice always lands at least one tick after a
+ * The previous note is keyed off by a REST (a pending key-off, opcodes.md
+ * §3.1) or by its gate, so the voice always lands at least one tick after a
  * REST begins — never in the same tick as a key-off it would precede.
  */
 export function hoistVoiceChanges(tracks, { ppqn = 96, restFrames = 4, noteFrames = 2, cutTail = false } = {}) {

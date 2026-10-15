@@ -64,8 +64,8 @@ export const GLOB = {
 
 // ── THE N-VOICE PAIR PROFILE (docs/driver.md §5; reasons in .claude/memory/pcm.md) ──────────────
 //
-// One to three PCM voices at a fixed pitch class with a 2^k step, and the
-// level model D4 asks for: 6 dB RUNGS with the master folded into each voice's
+// One to three PCM voices, one source byte a sample, and the level model of
+// docs/driver.md §5.3: 6 dB RUNGS with the master folded into each voice's
 // rung by the 68000, so a voice costs ONE table read and there is no master
 // stage. Eight pages: page 0 is silence, page 7 - r is the rung `s * 2^-r` for
 // r = 0..6 (unity .. -36 dB) — the reference's PCM_TOTAL_MAX_SHIFT = 7 made
@@ -75,7 +75,7 @@ export const GLOB = {
 // reference's 8-bit saturating add, order and all).
 //
 // Voice 0's pointer lives in DE'; voices 1 and 2 keep theirs in a self-modified
-// `ld hl,nn` inside the mix, so no register the expander or the decode owns is
+// `ld hl,nn` inside the mix, so no register the expander or the pad owns is
 // taken, and a third voice needs nothing the second did not.
 //
 // Everything the 68000 tells the engine arrives as ONE ring of 2-byte {op,val}
@@ -136,23 +136,8 @@ export const RESERVE_LIGHT = Array.from({ length: 16 }, (_, b) => [b, 0,
   : "free for the decode's pieces and the expander's sites"]);
 export const CODE_ESTIMATE_LIGHT = [];
 
-// The N-voice state block, from the same base as the rest (glob + $30). Eight
-// 68000-writable bytes a voice from op $01 — the rung page, the staged start
-// (source, end, step) and the two generations — so three voices end at $18,
-// below PORT ($20). The Z80's own bytes start at $22, out of every op's reach.
-export const PCMN = {
-  bucket: 0x00,
-  level: (v) => 0x01 + 8 * v, stSrc: (v) => 0x02 + 8 * v, stEnd: (v) => 0x04 + 8 * v,
-  stStep: (v) => 0x06 + 8 * v, startGen: (v) => 0x07 + 8 * v, stopGen: (v) => 0x08 + 8 * v,
-  port: 0x20,
-  liveEnd: (v) => 0x22 + 5 * v, lastStart: (v) => 0x24 + 5 * v, lastStop: (v) => 0x25 + 5 * v,
-  parkMask: (v) => 0x26 + 5 * v,
-  fifoLo: 0x31, ready: 0x32, size: 0x33,
-};
-
-// THE LOOP-CAPABLE STATE BLOCK (.claude/memory/pcm.md, design study 2026-09-17).
-// Nine 68000-writable bytes a voice from op $01: the rung page, the staged
-// start (source, END), the staged WRAP — where the pointer goes when it
+// THE STATE BLOCK (docs/driver.md §5.3, §6.3). Nine 68000-writable bytes a
+// voice from op $01: the rung page, the staged start (source, END), the staged WRAP — where the pointer goes when it
 // reaches END: the loop start for a looping note, PCM_SILENCE for a shot or a
 // release — and TWO generations: `startGen` (pointer, END and WRAP := the
 // staged ones, at the next edge) and `endGen` (END and WRAP only — a RETARGET:
@@ -186,15 +171,15 @@ export const voiceOffsets = (voices, B = 16) =>
 export function buildConfig({
   machine = NTSC,
   voices,              // 1..3 PCM voices
-  blockSamples = 16,   // §3.3 — the finished-PCM block
+  blockSamples = 16,   // the finished-PCM block (docs/driver.md §5.3)
   // How far ahead of the play cursor the build cursor runs. 16 would align a
   // built block with a slot block exactly, which puts the block edge in the
   // LAST slot of the 80-slot schedule — the one that also pays the loop-back —
-  // and takes that interval from 79.6% to 82.2% of its period, past §4's
-  // ceiling, for no reason but arithmetic coincidence. 17 moves the edge one
+  // and takes that interval from 79.6% to 82.2% of its period, past the
+  // 79.6% ceiling, for no reason but arithmetic coincidence. 17 moves the edge one
   // slot earlier and costs one sample of latency (0.1 ms).
   lead = blockSamples + 1,
-  blocks = 3,          // §3.3 — playing / finished / under construction
+  blocks = 3,          // playing / finished / under construction
   timerB = 255,        // $26: period = 16 x (256 - TB) FM samples. 255 = shortest
   timerAfm = 64,       // CSM key-on period, in FM samples (Timer A = 1024 - NA)
   // Build the engine's BUDGET: every unimplemented feature's cycles are
@@ -202,9 +187,9 @@ export function buildConfig({
   // what changes is that the schedule now has to survive the finished engine's
   // costs, and the gate measures it doing so.
   complete = false,
-  // The per-slot ceiling this build is judged against. §4 and R1 set 79.6% and
-  // it is still what a shipped build is measured by. The average is judged
-  // separately.
+  // The per-slot ceiling this build is judged against, as a fraction of the
+  // slot; the shipped images pass 1.0 (build-engine.mjs LIGHT_WORK_TARGET).
+  // The average is judged separately.
   workTarget = 0.796,
   meanTarget = 0.796,
   // WHAT A READ THROUGH THE 68k WINDOW COSTS, in Z80 cycles on top of the
@@ -219,21 +204,17 @@ export function buildConfig({
   // Perfectly linear, and constant to within the probe's own 42-master-clock
   // timestamp resolution.
   //
-  // A constant, predictable wait is not the unpredictable external stall §3.1
-  // (R1) says static padding cannot absorb — it can be charged like any other
+  // A constant, predictable wait is not an unpredictable external stall, which
+  // static padding cannot absorb — it can be charged like any other
   // cycle, and it is, so the pad shrinks by it and the period stays exact. The
   // 68000 was spinning in a two-instruction ROM loop while this was measured,
   // so it is the FLOOR: a 68000 doing VDP DMA contends harder.
   windowWait = 3,
-  // THE SHIPPED IMAGE. No Timer A/B set-up at boot — the engine keeps no timer
-  // and the sequencer owns $24..$27 through the pair stream — and the level
-  // family takes SIGNED source bytes, because that is what the sample bank
-  // holds (mmb.md §10). Test images keep the biased family the gates were
-  // written against.
-  production = false,
+  // The level family takes SIGNED source bytes, because that is what the
+  // sample bank holds (mmb.md §10). Required.
   signedSource = false,
-  // THE N-VOICE PAIR PROFILE (D1/D4 study): `pairs: true` with `complete: true`
-  // and 1..3 voices. Its own RAM map (RAM_NV), eight rung pages, no reserve.
+  // THE N-VOICE PAIR PROFILE: `pairs: true` with `complete: true` and 1..3
+  // voices. Its own RAM map (RAM_NV), eight rung pages, no reserve. Required.
   pairs = false,
   // The DAC period in MASTER clocks, and the only rate knob.
   sampleMaster = null,
@@ -243,13 +224,6 @@ export function buildConfig({
   lapBlocks = null,
   // Expander steps a lap (each consumes one pair).
   xpSteps = 16,
-  // How many voices, from voice 0, carry the 2^k octave step. The rest read
-  // one byte a sample, which is what makes an extra voice cheap.
-  stepVoices = null,
-  // THE LOOP-CAPABLE EDGE (D10): PCMN_L's state block and the six-piece edge
-  // (START-GEN, END-GEN, APPLY, COMPARE, WRAP, START) in place of the
-  // four-piece one.
-  loops = false,
 } = {}) {
   if (!sampleMaster) throw new Error("the DAC period `sampleMaster` (master clocks) is required");
   const p = { name: `m${sampleMaster}`, sampleMaster };
@@ -307,8 +281,8 @@ export function buildConfig({
   // one. One more sample of latency, 0.1 ms.
   if (lead === blockSamples + 1) lead = blockSamples + 2;
   // The light images share ONE map whatever their voice count, so nothing the
-  // host or the exporter addresses moves between them (D10 design §1.3).
-  const ram = RAM_NV(loops ? NV_MAX_VOICES : voices);
+  // host or the exporter addresses moves between them (docs/driver.md §5.2).
+  const ram = RAM_NV(NV_MAX_VOICES);
   if ((ram.lut[1] - ram.lut[0]) >> 8 !== levels)
     throw new Error(`the RAM map has ${(ram.lut[1] - ram.lut[0]) >> 8} level pages, not ${levels}`);
   const regions = Object.entries(ram).filter(([k]) => k !== "size")
@@ -325,14 +299,16 @@ export function buildConfig({
   // object, and every host-side mirror carries it (build-engine.mjs
   // lightDescriptor -> live/src/engine-images.js and sgdk/mmlispdrv_bin.h).
   // The fields the engine does not vary are pinned here rather than dropped,
-  // because a field that leaves the object renames every image built from it.
+  // because a field that leaves the object renames every image built from it:
+  // every image is the shipped one (`production`), no voice carries an octave
+  // step (`stepVoices: 0`), and the edge is the loop-capable one (`loops`).
   const cfg = {
     machine, profile: p, ym: YM, ram, levels, workTarget, meanTarget,
     voices, blockSamples, blocks, lead, csm: false, fmBurst: 0, observeTimerB: false,
     complete, windowWait,
-    oneVoice: false, production, signedSource,
+    oneVoice: false, production: true, signedSource,
     multi: true, xpSteps, voiceOffsets: voiceOffsets(voices, blockSamples),
-    stepVoices: stepVoices ?? voices, ...(loops ? { loops: true } : {}),
+    stepVoices: 0, loops: true,
     reserve: RESERVE_LIGHT,
     codeEstimate: CODE_ESTIMATE_LIGHT,
     correctorBudget: false, command: false, ymWriter: false, csmHost: false,
@@ -354,8 +330,8 @@ export const stampLine = (c) =>
   `MMLISPDRV ${c.stamp} ${c.profile.name} ${c.rateHz.toFixed(2)}Hz`
   + ` period ${c.periodNum}/${c.periodDen} group ${c.groupSlots}x${c.groupCycles}`
   + ` voices ${c.voices} block ${c.blockSamples}`
-  // R8 §23.2: the level count, the RAM shape and the ceiling this build was
-  // judged against belong to its identity. Two images that differ only in how
+  // The level count, the RAM shape and the ceiling this build was judged
+  // against belong to its identity. Two images that differ only in how
   // much work a slot was allowed to carry are not the same artifact.
   + ` levels ${c.levels} lut ${hexAddr(c.ram.lut?.[0])}..${hexAddr(c.ram.lut?.[1])}`
   + `${c.ram.phase ? ` phase ${hexAddr(c.ram.phase[0])}` : ""}`

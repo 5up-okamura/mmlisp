@@ -74,8 +74,9 @@ the next opcode to resolve: TIE extends the note and keeps it pending, a
 **legato** NOTE_ON_EX (bit3, §5.1) cancels it, and everything else — a plain
 NOTE_ON, REST, END_OF_TRACK — fires it. Before a NOTE_ON it is written ahead of
 that note's own writes: on FM the key transition *is* the attack, and the two
-`$28` writes land one expander slot apart (≥139 µs, driver.md §6.1), far past
-the 18.77 µs round in which the chip latches key state. On PSG and PCM the
+`$28` writes land at least one expander slot apart (≥99 µs on the densest
+image, driver.md §6.1), far past the 18.77 µs round in which the chip latches
+key state. On PSG and PCM the
 pending key-off is dropped instead — the note-on re-asserts attenuation or
 restarts the sample, so nothing is lost. `dur = 0x00` holds the key until the
 host releases it (docs/language.md §17); the track suspends dispatch until then.
@@ -205,7 +206,8 @@ size (gate uses the duration-operand length rules).
   pushing the return pointer on the track control stack. Shared-subsequence
   reference: emitted by the encode-time deduplication pass (`mmb-dedup.js`).
   Depth: CALL and LOOP entries share one 4-entry control stack (driver.md
-  §5.2, CALL entries tagged remaining = 0xFF); the encoder factors only
+  §4.3; a CALL's entry is tagged so RET finds it, the tag's form each
+  player's own); the encoder factors only
   control-flow-free runs, and a fragment never CALLs, so a CALL adds exactly
   one entry — it factors inside a loop only where `loop depth + 1 ≤ 4`. A
   phrase shared inside loops is factored too, and a LOOP_BREAK whose loop

@@ -3,10 +3,6 @@
 // compiles against (sgdk/mmlispdrv_bin.h, tools/emit-bin.mjs) and the JS mirror
 // (live/src/engine-images.js, tools/emit-images.mjs) are read out of these
 // builds — never typed twice.
-//
-// The superseded engines are at tags archive/ring-engine and archive/all-z80;
-// the one-voice phase-corrected image that shipped before the light images is
-// in git history (D10 S2).
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,9 +16,9 @@ export const FIFO_PAIRS = 128;
 // ── THE LIGHT IMAGES (docs/driver.md §5) ────────────
 //
 // One image per PCM voice count, chosen by the score's `(def-score :pcm-voices N)`.
-// No phase decode, no corrector, no protocol — `generate()` alone — the rung
-// levels, no octave step, the loop-capable six-piece edge. The periods are the
-// highest the generator places at the 100% work ceiling (the user's choice),
+// `generate()` alone: the rung levels, no octave step, the loop-capable
+// six-piece edge (docs/driver.md §5.3). The periods are the highest the
+// generator places at the 100% work ceiling,
 // MEASURED with `npm run light-study`; re-run it after any change to the
 // pieces and write what it finds here. The build refuses a period that no
 // longer places rather than quietly shipping a slot that overruns.
@@ -32,7 +28,7 @@ export const LIGHT_IMAGES = {
   2: { period: 354, lapBlocks: 5 },
   3: { period: 538, lapBlocks: 3 },
 };
-/** Pairs a second the expander is sized for: the host's wire (design §1.7). */
+/** Pairs a second the expander is sized for: the host's wire (docs/driver.md §6.6). */
 export const LIGHT_WIRE = 960;
 export const LIGHT_WORK_TARGET = 1.0;
 
@@ -41,15 +37,15 @@ export function lightImageConfig(voices) {
   if (!img) throw new Error(`no light image for ${voices} voices (1..${NV_MAX_VOICES})`);
   const sampleMaster = img.period * 15;
   const lapSeconds = (img.lapBlocks * 16 * sampleMaster) / 53693175;
-  return buildConfig({ voices, complete: true, pairs: true, signedSource: true, production: true,
-    loops: true, stepVoices: 0, workTarget: LIGHT_WORK_TARGET, meanTarget: LIGHT_WORK_TARGET,
+  return buildConfig({ voices, complete: true, pairs: true, signedSource: true,
+    workTarget: LIGHT_WORK_TARGET, meanTarget: LIGHT_WORK_TARGET,
     sampleMaster, lapBlocks: img.lapBlocks,
     xpSteps: Math.max(8, Math.ceil(LIGHT_WIRE * lapSeconds)) });
 }
 
 /**
  * HOW MANY IDLE PAIRS MUST FOLLOW A GENERATION PAIR before the next staged
- * store for the same voice (design §2.3), computed from THIS image's slots.
+ * store for the same voice (docs/driver.md §6.1), computed from THIS image's slots.
  *
  * A generation consumed by the expander in slot `a` is seen by the voice's
  * first detection piece in a later slot; the staged bytes it names are read by

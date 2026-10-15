@@ -11,7 +11,7 @@
 // places it would otherwise be needed — 6% of the period.
 export const unbias = (b) => (b & 0xff) - 128;
 export const bias = (s) => (s + 128) & 0xff;
-/** The signed value of a SOURCE byte, in either convention (R28 step 4). */
+/** The signed value of a SOURCE byte, in either convention. */
 export const sourceValue = (b, signed = false) => (signed ? ((b & 0xff) << 24) >> 24 : unbias(b));
 
 /**

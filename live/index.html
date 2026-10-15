@@ -4,8 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>MMLisp authoring environment</title>
-  <!-- PWA: installable, runs standalone (full screen) on mobile. Relative paths
-       keep the app movable (it is served under /live/). -->
+  <!-- PWA: installable, runs standalone (full screen) on mobile. The app's own
+       files are linked relatively (it is served under /live/); presets and
+       snippets come from the site root. -->
   <link rel="manifest" href="./manifest.webmanifest">
   <meta name="theme-color" content="#000000">
   <meta name="mobile-web-app-capable" content="yes">
@@ -54,7 +55,7 @@
        only tracks the Shift state. -->
   <div id="dropOverlay" hidden aria-hidden="true">
     <div class="drop-open">Drop to open — or import by extension<br>
-      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf .fur .vgm — or a folder</span>
+      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .mid .midi .rmi .smf .dmf .fur .vgm .vgz — or a folder</span>
     </div>
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
@@ -332,7 +333,7 @@
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleDrvBackend();closeMenus()"
-                title="Play through the MMLispDRV reference decoder (MMB v0.4) instead of the IR player">
+                title="Play through the MMLispDRV reference decoder (the exported MMB) instead of the IR player">
           <span>MMLispDRV Backend</span>
           <span class="menu-item-shortcut" id="drvBackendCheck"></span>
         </button>
@@ -1805,7 +1806,7 @@
         updateHoverAt(view, e);
         return false;
       },
-      pointerup(e, view) {
+      pointerup(_e, view) {
         // An Alt press that never became a drag is an Alt-click: place a cursor.
         if (_drag && !_drag.moved) addCursorAt(view, _drag.downPos);
         endDrag();
@@ -2001,7 +2002,7 @@
 
     // Every preset set's voices and samples, imported or not, so a name can be
     // found before its set is: picking one writes the set's (import …) as
-    // well. Read once, from the set files Browse caches (never a sample's
+    // well. Read once, from the set files the Library caches (never a sample's
     // audio — that loads only when it is auditioned), then filtered per
     // keystroke.
     let _acPresetDefs = null;              // [{ name, kind, about, from, set }] once read
@@ -2911,24 +2912,15 @@
       });
     }
 
-    async function pickImportFile(options) {
-      // Always prefer plain file input for import to avoid browser File System Access
-      // restrictions like "contains system files" on some folders/platforms.
-      return pickFileWithInput(options.extensions);
-    }
-
     async function importFmVoiceFile(options) {
       try {
-        const file = await pickImportFile(options);
+        // A plain file input, not the File System Access picker: that one
+        // refuses folders it deems to "contain system files" on some platforms.
+        const file = await pickFileWithInput(options.extensions);
         await importFmVoiceFromFile(file, options.key);
       } catch (e) {
         if (e && e.name === 'AbortError') return;
         log(`${options.label} import failed: ${e?.message || e}`, 'err');
-        try {
-          log(`${options.label} picker: accept=${options.extensions.join(',')}`, 'info');
-        } catch {
-          // noop
-        }
       }
     }
 
@@ -3088,8 +3080,6 @@
       const a = analyzeTracker(t);
       const def = defaultTrackerOptions(a);
       const choices = ['drop', ...FM_DESTS, ...PSG_DESTS, 'noise'];
-      const pcmChoices = ['drop', 'pcm1'];
-      const chipPcmChoices = ['drop', ['pcm', 'pcm1–3']];
       const played = a.channels.filter((c) => c.notes > 0);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
@@ -3262,7 +3252,8 @@
     }
 
     // mucom88 .muc: convert the whole song to MMLisp source and load it as a
-    // new untitled document (FM + SSG only; rhythm/ADPCM/etc. are reported).
+    // new untitled document: FM and SSG parts, rhythm G and ADPCM K on PCM
+    // tracks (with their banks); what does not convert is reported.
     async function importMucom88() {
       // One dialog for the song AND its banks. Chaining a second picker after
       // the first `await` loses the user gesture, so the browser blocks it —
@@ -3650,7 +3641,6 @@
 
     function formatShortcutLabel(key) {
       const isMac = navigator.platform.toUpperCase().includes('MAC');
-      if (key === 'Mod-n') return isMac ? '⌘N' : 'Ctrl+N';
       if (key === 'Mod-o') return isMac ? '⌘O' : 'Ctrl+O';
       if (key === 'Mod-s') return isMac ? '⌘S' : 'Ctrl+S';
       if (key === 'Mod-Shift-s') return isMac ? '⌘⇧S' : 'Ctrl+Shift+S';
@@ -3702,7 +3692,6 @@
       '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
         { backgroundColor: 'color-mix(in srgb, var(--foreground) 22%, var(--background))' },
       '.cm-gutters': { backgroundColor: 'var(--background)', color: 'var(--mid)', border: 'none' },
-      '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--foreground)' },
       '.cm-foldPlaceholder': { backgroundColor: 'transparent', color: 'var(--mid)', border: 'none' },
     }, { dark: true });
 
@@ -3954,9 +3943,10 @@
       check();
     }
 
-    // IR preset → MMLisp source URL mapping
+    // File > Open's picker types; Save As writes only the score's own type.
+    const MMLISP_FILE_TYPE = { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } };
     const SOURCE_FILE_TYPES = [
-      { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } },
+      MMLISP_FILE_TYPE,
       { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
       { description: 'FM voice import', accept: { 'application/octet-stream': ['.dmp', '.fui', '.tfi', '.vgi', '.opni'] } },
     ];
@@ -4049,8 +4039,8 @@
     // Read a sample through the opened source folder. `:file` is relative to the
     // score (language.md §PCM), and a file picked with showOpenFilePicker exposes
     // no parent directory — so a local score's sibling wav is only reachable once
-    // the user has opened its folder (File > Open Folder…, remembered across
-    // sessions). Returns null when there is no folder or no such file, so the
+    // the user has opened its folder (File > Open Folder…, for this session;
+    // File > Open Recent brings it back). Returns null when there is no folder or no such file, so the
     // caller can fall back to fetch (URL / server-root paths).
     async function sampleBytesFromSourceDir(path) {
       if (!_sourceDir) return null;
@@ -4071,7 +4061,7 @@
       }
     }
 
-    // v0.6 Phase 2: (import "path") resolution. compileMMLisp is synchronous, so
+    // (import "path") resolution. compileMMLisp is synchronous, so
     // the host reads the imported files' text ahead of it (like PCM samples,
     // resolved outside the pure compiler) into a cached map keyed by the literal
     // path string. refreshImportSources re-walks the current source, following
@@ -4124,13 +4114,13 @@
     }
 
     // The imported files' text for `src` compiled as `fileName` — the editor's
-    // score, or one Browse plays without opening it.
+    // score, or one the Library plays without opening it.
     async function readImportSources(src, fileName) {
       const map = new Map();
       const seen = new Set();
       // A top-level import resolves against the score's own folder, exactly as
       // the compiler resolves it (docs/language.md §9.2). The score's name only
-      // HAS a folder when it came from the served tree (Browse); a bare file
+      // HAS a folder when it came from the served tree (the Library); a bare file
       // name leaves the spec untouched, which is what the opened folder wants.
       const queue = collectImports(src).map((spec) => [joinImportPath(fileName, spec), spec]);
       while (queue.length) {
@@ -4186,15 +4176,13 @@
     // points are left to the IR metadata — the compiled truth; baseRate must be
     // supplied, since the exporter would otherwise fall back to 13000 Hz rather
     // than the wav's own rate.
-    // encodeMmb reports more than dropped events (missing sample blobs, deferred
-    // macro tiers, …), so surface each diagnostic's own message instead of
-    // calling them all "events not in the M1 stream".
+    // encodeMmb's diagnostics (dropped events, missing sample blobs, …), each
+    // in its own words.
     function reportMmbDiagnostics(diags) {
       if (!diags?.length) return;
       for (const d of diags) {
         log(`MMB: ${d.message}`, d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info');
       }
-      console.warn('encodeMmb diagnostics:', diags);
     }
 
     async function pcmSampleBlobsForMmb(ir, played = collectPcmUsage(ir)) {
@@ -4330,8 +4318,8 @@
 
     // Open a score's folder rather than the bare file: a handle from
     // showOpenFilePicker exposes no parent directory, so this is the only way a
-    // local score can reach the wavs sitting next to it. The folder is
-    // remembered, so reopening later plays the PCM without picking again.
+    // local score can reach the wavs sitting next to it. The folder lasts the
+    // session; File > Open Recent brings it back with the score.
     function setSourceDir(handle) {
       _sourceDir = handle;
       // Paths now resolve against a different base, so both in-memory stand-ins
@@ -4725,7 +4713,7 @@
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
             ? `${entry.file.name}: only .wav is accepted as a sample — the exporters read RIFF WAV only, so convert it first`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .dat .bin .mid .dmf .fur .vgm)`,
+            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .mid .midi .rmi .smf .dmf .fur .vgm .vgz)`,
           'err',
         );
       }
@@ -4834,7 +4822,7 @@
 
     async function saveFileAs() {
       const handle = await window.showSaveFilePicker({
-        types: SOURCE_FILE_TYPES,
+        types: [MMLISP_FILE_TYPE],
         suggestedName: _sourceFileName || 'untitled.mmlisp',
       });
       const src = editorView.state.doc.toString();
@@ -4849,6 +4837,38 @@
 
     // The bank an .mmb would ship, for an export that plays the score's PCM
     // through the driver's engine (export-vgm.js renderPcmDac); null = none.
+    // Ask where to save BEFORE the render: the file picker needs the user's
+    // click, and a long render outlives it. Null = cancelled; `{}` = no picker
+    // (the browser downloads instead).
+    async function pickExportTarget(suggestedName, description, mime, ext) {
+      if (!window.showSaveFilePicker) return {};
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description, accept: { [mime]: [ext] } }],
+        });
+        return { handle };
+      } catch (e) {
+        if (e?.name !== 'AbortError') log(`${description} save failed: ` + e.message, 'err');
+        return null;
+      }
+    }
+
+    async function writeExport(target, blob, suggestedName) {
+      if (target.handle) {
+        const writable = await target.handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = suggestedName;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    }
+
     async function exportPcmBank(ir, what) {
       const pcmVoices = ir.metadata?.pcmVoices ?? 0;
       if (!pcmVoices) return null;
@@ -4880,6 +4900,11 @@
         return;
       }
 
+      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
+      const suggestedName = baseName + '.vgm';
+      const target = await pickExportTarget(suggestedName, 'VGM', 'application/octet-stream', '.vgm');
+      if (!target) return;
+
       const pcm = await exportPcmBank(ir, 'VGM');
       let bytes, pcmCount;
       try {
@@ -4898,26 +4923,9 @@
         log(`VGM export: skipped ${pcmCount} DAC/PCM event(s) — the samples did not load`, 'err');
       }
 
-      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
-      const suggestedName = baseName + '.vgm';
       const blob = new Blob([bytes], { type: 'application/octet-stream' });
       try {
-        if (window.showSaveFilePicker) {
-          const handle = await window.showSaveFilePicker({
-            suggestedName,
-            types: [{ description: 'VGM', accept: { 'application/octet-stream': ['.vgm'] } }],
-          });
-          const writable = await handle.createWritable();
-          await writable.write(blob);
-          await writable.close();
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = suggestedName;
-          a.click();
-          URL.revokeObjectURL(url);
-        }
+        await writeExport(target, blob, suggestedName);
         log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
       } catch (e) {
         if (e?.name !== 'AbortError') log('VGM save failed: ' + e.message, 'err');
@@ -4973,9 +4981,9 @@
           URL.revokeObjectURL(url);
         }
         log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
-        // PCM blobs live in a separate sample bank now (docs/mmb.md §10), not inside
+        // PCM blobs live in a separate sample bank (docs/mmb.md §10), not inside
         // the .mmb. Save it as a sidecar the game loads into its own ROM bank.
-        // (The shared-bank bundler that packs BGM+SE samples together is later.)
+        // (Several scores sharing one bank: drv/tools/bundle.mjs.)
         //
         // The pair only makes sense together (the SGDK res script names both out
         // of one folder), so the bank must land beside the .mmb — but a saved
@@ -5034,13 +5042,22 @@
         return;
       }
 
+      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
+      const suggestedName = baseName + '.wav';
+      const target = await pickExportTarget(suggestedName, 'WAV', 'audio/wav', '.wav');
+      if (!target) return;
+
       const pcm = await exportPcmBank(ir, 'WAV');
       let bytes, pcmCount, durationSec;
       try {
-        log('Rendering WAV…', 'info');
+        const line = log('Rendering WAV…', 'info');
+        const stamp = line.textContent.slice(0, line.textContent.indexOf(']') + 1);
         const offline = new IRPlayer(() => {});
         offline.loadJSON(ir);
-        ({ bytes, pcmCount, durationSec } = await renderWav(offline, { lpfOn: analogLpfOn, pcm }));
+        ({ bytes, pcmCount, durationSec } = await renderWav(offline, {
+          lpfOn: analogLpfOn, pcm,
+          onProgress: (f) => { line.textContent = `${stamp} Rendering WAV… ${Math.floor(f * 100)}%`; },
+        }));
       } catch (e) {
         log('WAV export failed: ' + e.message, 'err');
         return;
@@ -5049,26 +5066,9 @@
         log(`WAV export: skipped ${pcmCount} DAC/PCM event(s) — the samples did not load`, 'err');
       }
 
-      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
-      const suggestedName = baseName + '.wav';
       const blob = new Blob([bytes], { type: 'audio/wav' });
       try {
-        if (window.showSaveFilePicker) {
-          const handle = await window.showSaveFilePicker({
-            suggestedName,
-            types: [{ description: 'WAV', accept: { 'audio/wav': ['.wav'] } }],
-          });
-          const writable = await handle.createWritable();
-          await writable.write(blob);
-          await writable.close();
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = suggestedName;
-          a.click();
-          URL.revokeObjectURL(url);
-        }
+        await writeExport(target, blob, suggestedName);
         log(`Exported ${suggestedName} (${durationSec.toFixed(1)}s, ${bytes.length} bytes)`, 'info');
       } catch (e) {
         if (e?.name !== 'AbortError') log('WAV save failed: ' + e.message, 'err');
@@ -5385,7 +5385,7 @@
         const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
         // A preset set's samples are served from the site root, so they resolve
         // whether or not the score has been saved anywhere. So do those of a
-        // score from the served tree (Browse, a share link): its compile name
+        // score from the served tree (the Library, a share link): its compile name
         // is its path there, and its samples resolve against its folder.
         // And a sample already held in memory (a mucom88 bank's wav, seeded at
         // import) plays without any path resolving at all.
@@ -5417,10 +5417,11 @@
         renderDynParams(ir);
         if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
         // When not playing, show the score's starting tempo (the loop drives it live),
-        // and measure TIME's bar for it (after the build, off its path).
+        // and measure TIME's bar for it when the page is idle: the measure renders
+        // the whole song, so it waits until typing pauses.
         if (_fmLiveRaf == null) {
           updateTempoDisplay(irInitialBpm(ir));
-          setTimeout(() => { if (_fmLiveRaf == null && _lastGoodIR === ir) refreshTimeBar(ir); });
+          whenIdle(() => { if (_fmLiveRaf == null && _lastGoodIR === ir) refreshTimeBar(ir); });
         }
         // Anchor playhead highlights to the document this IR was compiled from.
         // Later edits (without rebuild) are mapped from here so highlights track
@@ -5473,8 +5474,6 @@
         log('Built', 'info');
       }
     }
-
-    // Wire editor → live compile is registered in EditorState extensions above.
 
     // -----------------------------------------------------------------------
     // State
@@ -5555,20 +5554,6 @@
       { semitone: 8, whiteAfter: 5 },
       { semitone: 10, whiteAfter: 6 },
     ];
-    const KB_SEMITONES = [
-      { name: 'C',  black: false },
-      { name: 'C#', black: true },
-      { name: 'D',  black: false },
-      { name: 'D#', black: true },
-      { name: 'E',  black: false },
-      { name: 'F',  black: false },
-      { name: 'F#', black: true },
-      { name: 'G',  black: false },
-      { name: 'G#', black: true },
-      { name: 'A',  black: false },
-      { name: 'A#', black: true },
-      { name: 'B',  black: false },
-    ];
 
     // Load default source on startup — or the score a share link carries. Its
     // imports are fetched, so the compile waits for the rest of this module to
@@ -5587,6 +5572,7 @@
       d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
       logEl.appendChild(d);
       logEl.scrollTop = logEl.scrollHeight;
+      return d;
     }
     // -----------------------------------------------------------------------
     // Panel toggle
@@ -6007,12 +5993,9 @@
     function audioWorkletUnavailableReason() {
       const protocol = window.location?.protocol ?? 'unknown';
       const host = window.location?.host ?? 'unknown';
-      const secure = window.isSecureContext;
-      const hasAPI = !!window.AudioWorkletNode;
-      const reason = !secure && protocol !== 'https:'
+      return !window.isSecureContext && protocol !== 'https:'
         ? `insecure context (${protocol}//${host})`
         : 'AudioWorklet API not supported in this browser runtime';
-      return { reason, protocol, host, secure, hasAPI };
     }
 
     // Reject if a promise doesn't settle in `ms`. On iOS Safari resume() /
@@ -6032,8 +6015,7 @@
     async function ensureWorkletNode() {
       if (_workletReady) return;
       if (!audioCtx?.audioWorklet || typeof audioCtx.audioWorklet.addModule !== 'function') {
-        const info = audioWorkletUnavailableReason();
-        throw new Error(`AudioWorklet unavailable: ${info.reason}`);
+        throw new Error(`AudioWorklet unavailable: ${audioWorkletUnavailableReason()}`);
       }
       log('Loading worklet module…', 'info');
       await withTimeout(audioCtx.audioWorklet.addModule('./worklet.js'), 5000, 'worklet addModule');
@@ -6132,7 +6114,8 @@
     window.toggleFollow = toggleFollow;
     updateFollowCheck();
 
-    // MMLispDRV reference backend (Phase C A/B listening; docs/driver.md §12).
+    // MMLispDRV reference backend: A/B listening against the IR player
+    // (docs/driver.md §12.5).
     let _drvBackend = loadPref('drvBackend', 'off') !== 'off';
     function updateDrvBackendCheck() {
       const el = document.getElementById('drvBackendCheck');
@@ -6142,7 +6125,7 @@
       _drvBackend = !_drvBackend;
       updateDrvBackendCheck();
       savePref('drvBackend', _drvBackend ? 'on' : 'off');
-      log('Playback backend: ' + (_drvBackend ? 'MMLispDRV reference (MMB v0.4)' : 'IR player'), 'info');
+      log('Playback backend: ' + (_drvBackend ? 'MMLispDRV reference' : 'IR player'), 'info');
       renderSeButtons();
     }
     window.toggleDrvBackend = toggleDrvBackend;
@@ -6198,9 +6181,8 @@
           await ensureWorkletNode();
           return true;
         } catch (e) {
-          const info = audioWorkletUnavailableReason();
           if (!audioCtx?.audioWorklet || typeof audioCtx.audioWorklet.addModule !== 'function') {
-            log(`AudioWorklet unavailable: ${info.reason}`, 'err');
+            log(`AudioWorklet unavailable: ${audioWorkletUnavailableReason()}`, 'err');
             log(`Hint: open over HTTPS (or localhost) and use Safari/iOS 14.5+`, 'err');
           }
           log('Audio init failed: ' + e.message, 'err');
@@ -6255,7 +6237,7 @@
       const se = seTrack ? seTrack.se.index : null;
       const playIr = _lastGoodIR ? songOrEffectIr(_lastGoodIR, se) : null;
 
-      // MMLispDRV reference backend: compile → MMB v0.4 → frame-stepped
+      // MMLispDRV reference backend: compile → MMB → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
       // audible form of the A/B comparison. Mute/solo, live vol/master, the
       // tempo fader and Dynamic Parameters are supported (re-applied from the
@@ -6360,7 +6342,6 @@
         refreshTimeBar(player._ir);
         setPlayIcon(true);
         document.getElementById('btnPlay').classList.add('active');
-        document.getElementById('btnStop').disabled = false;
         syncParamUI();
         startFmLiveLoop();
       } catch (e) {
@@ -6406,9 +6387,8 @@
     }
 
     // -----------------------------------------------------------------------
-    // File picker
+    // Menus
     // -----------------------------------------------------------------------
-    // ---- menu helpers ----
     function toggleMenu(id) {
       const wrap = document.getElementById(id);
       const isOpen = wrap.classList.contains('open');
@@ -6659,11 +6639,10 @@
     window.resetCustomTheme = resetCustomTheme;
     initTheme();
 
-    // btnPlay is always enabled (audio init on first click)
-    document.getElementById('btnStop').disabled = false;
-
     // -----------------------------------------------------------------------
-    // Keyboard shortcuts: Cmd+Enter = play/pause toggle, Cmd+. = full stop
+    // Keyboard shortcuts (Cmd on macOS, Ctrl elsewhere): O open, S save,
+    // ⇧S save as, B build, K Library, J params, Enter play/pause, ⇧Enter
+    // release holds, . full stop. The editor's own keys are its keymap.
     // -----------------------------------------------------------------------
     let _paused = false;
     let _pausedSec = 0; // where pause left the song (IRPlayer.positionSec)
@@ -6736,7 +6715,7 @@
 
 
     // -----------------------------------------------------------------------
-    // Library (the side panel's second tab; File > Browse… opens it)
+    // Library (the side panel's second tab; Tools > Library / ⌘K opens it)
     // -----------------------------------------------------------------------
     // One list over what the app ships: the preset sets, the example scores
     // and the snippets. A set's contents are parsed out of the very file a
@@ -6767,7 +6746,7 @@
       _browseCatalogLoad ??= (async () => {
         const read = async (url) => {
           try { return JSON.parse(await fetchText(url)); }
-          catch (e) { log('Browse: ' + e.message, 'err'); return []; }
+          catch (e) { log('Library: ' + e.message, 'err'); return []; }
         };
         const [sets, scores, snippets] = await Promise.all(
           [read(BROWSE_SETS_INDEX), read(BROWSE_SCORES_INDEX), read(BROWSE_SNIPPETS_INDEX)]);
@@ -6967,7 +6946,7 @@
     }
 
     // The language reference (reference.js) as Library items: Insert writes the
-    // entry's form at the cursor, ▶ plays its example on Browse's own player,
+    // entry's form at the cursor, ▶ plays its example on the Library's own player,
     // and the note line shows the syntax, the summary and the example.
     function referenceItems() {
       const label = new Map(REFERENCE_CATEGORIES);
@@ -7081,7 +7060,8 @@
 
     function browseSetFromText(path, text) {
       const defs = [];
-      for (const node of parse(text)) {
+      const roots = parse(text);
+      for (const node of roots) {
         if (!node || node.kind !== 'list') continue;
         const head = node.items?.[0];
         if (!head || head.kind !== 'atom' || !/^def(-fm|-pcm)?$/.test(head.value)) continue;
@@ -7089,7 +7069,7 @@
         if (!nameNode || nameNode.kind !== 'atom') continue;
         const name = nameNode.value;
         if (isFmVoiceDefNode(node)) {
-          defs.push({ name, kind: 'fm', regs: parseFmDefRegs(node, fmDefIn(text)), node });
+          defs.push({ name, kind: 'fm', regs: parseFmDefRegs(node, fmDefIn(roots)), node });
         } else if (sampleFileOfDefNode(node)) {
           defs.push({ name, kind: 'pcm', node });
         } else {
@@ -7102,13 +7082,10 @@
       return { path, text, defs };
     }
 
-    // A lookup for parseFmDefRegs: the top-level def-fm of that name in `text`.
-    function fmDefIn(text) {
-      let roots = null;
-      return (name) => {
-        try { roots ??= parse(text); } catch { roots = []; }
-        return roots.find((n) => isFmVoiceDefNode(n) && n.items[1]?.value === name) ?? null;
-      };
+    // A lookup for parseFmDefRegs: the top-level def-fm of that name in the
+    // parsed `roots`.
+    function fmDefIn(roots) {
+      return (name) => roots.find((n) => isFmVoiceDefNode(n) && n.items[1]?.value === name) ?? null;
     }
 
     // The `:file` of a `(def-pcm name …)`, or null when the node is not a
@@ -7162,7 +7139,7 @@
       setBrowseNote(`${def.name} is not a voice, a sample or a macro \u2014 nothing to sound.`);
     }
 
-    // The completion list's audition (↑ / ↓ over a voice or sample): Browse's
+    // The completion list's audition (↑ / ↓ over a voice or sample): the Library's
     // preview, on the def read from wherever the name lives — a preset set, an
     // imported file, or the score itself.
     async function auditionName(d) {
@@ -7257,7 +7234,7 @@
         _browsePcmSounding = true;
         setBrowseNote(`${def.name} \u2014 c4, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
       } catch (e) {
-        log('Browse preview: ' + e.message, 'err');
+        log('Library: ' + e.message, 'err');
         setBrowseNote(String(e.message));
       }
     }
@@ -7265,7 +7242,7 @@
     // A macro shapes a note, so sound one: the def's own lines, then a half
     // note on sqr1 \u2014 the channel with no voice of its own, which is what an
     // envelope is for \u2014 and a rest, so a release section is heard too. It
-    // plays on Browse's own player, as a score does.
+    // plays on the Library's own player, as a score does.
     async function previewBrowseMacro(set, def) {
       const source = defSourceText(set, def) + `\n(sqr1 :oct 4 :len 2 :vel 15 ${def.name} c _)\n`;
       if (await playBrowseSource(source, 'browse-preview.mmlisp', 'macro:' + def.name))
@@ -7289,7 +7266,7 @@
       setBrowseNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
     }
 
-    // Compile `text` under `name` and play it on Browse's player; `key` is
+    // Compile `text` under `name` and play it on the Library's player; `key` is
     // what a second \u25b6 on the same thing stops. Returns the IR, or null when
     // nothing played \u2014 the note then says why.
     async function playBrowseSource(text, name, key) {
@@ -7315,7 +7292,7 @@
         _browseScorePath = key;
         return ir;
       } catch (e) {
-        log('Browse: ' + e.message, 'err');
+        log('Library: ' + e.message, 'err');
         setBrowseNote(String(e.message));
         return null;
       }
@@ -7413,7 +7390,7 @@
         showInserted(0, 0);
         log('Opened ' + path, 'info');
       } catch (e) {
-        log('Browse: ' + e.message, 'err');
+        log('Library: ' + e.message, 'err');
         setBrowseNote(String(e.message));
       }
     }
@@ -7422,7 +7399,7 @@
     // Share (File > Share…): the score travels in the link's fragment,
     // deflate-raw + base64url, so posting it needs no server and the fragment
     // never reaches one. `n` keeps the compile name: a score from the served
-    // tree (Browse) resolves its imports and samples against its own folder
+    // tree (the Library) resolves its imports and samples against its own folder
     // there, exactly as it did for the sharer.
     // -----------------------------------------------------------------------
 
@@ -7745,10 +7722,8 @@
     window.toggleParams = toggleParams;
     window.selectPanelTab = selectPanelTab;
 
-    // Expose for inline handlers
-    window.initAudio    = initAudio;
+    // The markup's onclick handlers call these.
     window.onPlayToggle = onPlayToggle;
-    window.onPlay       = onPlay;
     window.onStop       = onStop;
     window.newFile      = newFile;
     window.openFile     = openFile;
@@ -7987,14 +7962,8 @@
     function findFmDefAtCursor() {
       const state = editorView.state;
       const cursorLine = state.doc.lineAt(state.selection.main.head).number;
-      const src = state.doc.toString();
-
-      let ast;
-      try {
-        ast = parse(src);
-      } catch {
-        return null;
-      }
+      const ast = parseCached(state.doc);
+      if (!ast) return null;
 
       let best = null;
       function visit(node) {
@@ -8024,7 +7993,7 @@
         from,
         to,
         closeAt,
-        regs: parseFmDefRegs(best, fmDefIn(src)),
+        regs: parseFmDefRegs(best, fmDefIn(ast)),
       };
     }
 
@@ -8033,8 +8002,8 @@
     function findSampleDefAtCursor() {
       const state = editorView.state;
       const cursorLine = state.doc.lineAt(state.selection.main.head).number;
-      let ast;
-      try { ast = parse(state.doc.toString()); } catch { return null; }
+      const ast = parseCached(state.doc);
+      if (!ast) return null;
       for (const root of ast) {
         const it = root.kind === 'list' ? root.items.filter((n) => n.kind !== 'comment') : [];
         if (it[0]?.value !== 'def-pcm') continue;
@@ -8047,8 +8016,8 @@
     function findSeDefAtCursor() {
       const state = editorView.state;
       const cursorLine = state.doc.lineAt(state.selection.main.head).number;
-      let ast;
-      try { ast = parse(state.doc.toString()); } catch { return null; }
+      const ast = parseCached(state.doc);
+      if (!ast) return null;
       for (const root of ast) {
         const it = root.kind === 'list' ? root.items.filter((n) => n.kind !== 'comment') : [];
         if (it[0]?.value !== 'def-se') continue;
@@ -8125,8 +8094,8 @@
         initParamOnlyPlayer();
       }
       if (!player) return false;
-      // Live slider edits are an IR-player feature; the MMLispDRV reference
-      // plays the compiled MMB as-is (SET_PARAM arrives with the M2 mailbox).
+      // Both players take live slider edits (the MMLispDRV reference through
+      // its own PARAM_SET apply path).
       if (typeof player.setParam !== 'function') return false;
       player.setParam(paramName, value, chIndex);
       return true;
@@ -8558,14 +8527,13 @@
       for (let octOffset = 0; octOffset < octaveSpan; octOffset++) {
         const oct = _kbBaseOctave + octOffset;
         for (const semitone of KB_WHITE_SEMITONES) {
-          const meta = KB_SEMITONES[semitone];
           const midi = (oct + 1) * 12 + semitone;
           const btn = document.createElement('button');
           btn.className = 'kb-key';
           btn.type = 'button';
           btn.dataset.midi = String(midi);
           btn.textContent = '';
-          if (meta.name === 'C') {
+          if (semitone === 0) { // C carries the octave number
             const marker = document.createElement('span');
             marker.className = 'kb-oct-marker';
             marker.textContent = String(oct);
@@ -8597,10 +8565,6 @@
       // A long press on a key holds the note; the context menu (desktop) and
       // the callout (iOS, with the CSS touch-callout) must not take it over.
       keysEl.oncontextmenu = (e) => e.preventDefault();
-      // iOS keeps its long-press callout and magnifier unless touchstart's
-      // default is cancelled (the CSS alone did not stop it on an iPad); the
-      // keys are driven by pointer events, which still fire.
-      keysEl.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
       keysEl.onpointerdown = async (e) => {
         const btn = e.target.closest('.kb-key');
         if (!btn || !keysEl.contains(btn)) return;
@@ -8682,6 +8646,11 @@
       const tieBtn = document.getElementById('btnStepTie');
       const octDownBtn = document.getElementById('btnOctDown');
       const octUpBtn = document.getElementById('btnOctUp');
+
+      // iOS keeps its long-press callout and magnifier unless touchstart's
+      // default is cancelled (the CSS alone did not stop it on an iPad); the
+      // keys are driven by pointer events, which still fire.
+      document.getElementById('kbKeys')?.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
 
       recBtn?.addEventListener('click', () => {
         _stepInputEnabled = !_stepInputEnabled;
@@ -9283,7 +9252,7 @@
       return { handled: true, mode, success: ok };
     }
 
-    // Build channel tabs — now handled by channel buttons in chStrips
+    // Select a channel strip (chStrips); selecting it again deselects.
     function selectCh(head) {
       if (selectedChannel === head) {
         selectedChannel = null;
@@ -9315,8 +9284,6 @@
       const col = document.createElement('div');
       col.className = 'op-col';
       col.id = `op-col-${op}`;
-      // bit position in opMask: op1=bit4(0x10), op2=bit5(0x20), op3=bit6(0x40), op4=bit7(0x80)
-      const opBit = 1 << (op + 3);
       col.innerHTML = `<div class="op-col-title" id="op-title-${op}">
         <input type="checkbox" id="chk-op${op}" checked
           onchange="onOpToggle(${op}, this.checked)">
@@ -9555,6 +9522,11 @@
         _timeProbe = { ir, player: p };
       }
       return _timeProbe.player;
+    }
+    // Safari has no requestIdleCallback.
+    function whenIdle(fn) {
+      if (window.requestIdleCallback) requestIdleCallback(fn, { timeout: 2000 });
+      else setTimeout(fn, 200);
     }
     function refreshTimeBar(ir, seekable = true) {
       const sl = document.getElementById('sl-time');
@@ -10033,6 +10005,7 @@
     const ROLL_MARGIN = 3;
     const ROLL_VIEW_MS = 200;
     let _rollView = null; // { from: { lo, hi }, to: { lo, hi }, t0 }
+    const _reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     function rollTargetRange(focusCell, avail) {
       const src = focusCell && rollPitched(focusCell) && focusCell.hiMidi >= focusCell.loMidi
         ? { lo: focusCell.loMidi, hi: focusCell.hiMidi } : _rollRange;
@@ -10050,7 +10023,7 @@
         const e = 1 - Math.pow(1 - p, 3); // ease out
         return { lo: v.from.lo + (v.to.lo - v.from.lo) * e, hi: v.from.hi + (v.to.hi - v.from.hi) * e };
       };
-      if (!_rollView || matchMedia('(prefers-reduced-motion: reduce)').matches) _rollView = { from: to, to, t0: now };
+      if (!_rollView || _reducedMotion.matches) _rollView = { from: to, to, t0: now };
       else if (to.lo !== _rollView.to.lo || to.hi !== _rollView.to.hi) _rollView = { from: at(_rollView), to, t0: now };
       return at(_rollView);
     }

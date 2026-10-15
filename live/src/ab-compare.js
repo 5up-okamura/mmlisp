@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
 // A/B register-log comparison: IRPlayer (Web-Audio reference) vs DrvPlayer
-// (MMB/Z80 reference). The Phase-C acceptance gate (docs/driver.md §12).
+// (the MMB reference driver). The characterization gate verify:ab runs
+// (docs/driver.md §12.5).
 //
 // Both players render the same score to a register-write log; this module
 // normalizes the two logs and diffs them:
@@ -133,7 +134,7 @@ function normalize(writes) {
     // coalescing-invariant: a full-voice PARAM_SET burst (which writes some
     // registers twice per frame, e.g. $30 = ML then DT) and the single
     // VOICE_SET it folds into produce the same frame-final, so the baseline is
-    // stable across the coalescing pass ([[plan-voice-set]] decision (b)).
+    // stable across the VOICE_SET coalescing pass (driver.md §10).
     const k = `${w.port}:${w.addr}`;
     const pend = ymPending.get(k);
     if (pend && pend.frame !== w.frame) commitYm(k, pend);
@@ -268,7 +269,6 @@ export function abCompare(source, { maxSec = 30, filename = "ab.mmlisp" } = {}) 
       writesA: capA.writes.length,
       writesB: capB.writes.length,
       exportDiags: exportDiags.length,
-      skippedOpcodes: capB.skippedOpcodes,
       pcmCount: capA.pcmCount,
     },
   };
@@ -284,9 +284,6 @@ export function formatAbReport(result, { maxLines = 30 } = {}) {
       `A ${result.stats.writesA} writes, B ${result.stats.writesB} writes, ` +
       `${result.mismatches.length} mismatches`,
   );
-  if (result.stats.skippedOpcodes && Object.keys(result.stats.skippedOpcodes).length) {
-    lines.push(`  skipped (M2/M3): ${JSON.stringify(result.stats.skippedOpcodes)}`);
-  }
   for (const m of result.mismatches.slice(0, maxLines)) {
     lines.push(
       `  f${m.frame} ${m.where}: ${m.kind}` +

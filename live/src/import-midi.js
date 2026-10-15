@@ -30,12 +30,14 @@
 // ---------------------------------------------------------------------------
 
 import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimateGrid, regrid,
-  assignBends, PITCH_NONE } from "./import-song.js";
+  assignBends, PITCH_NONE, FM_DESTS, PSG_DESTS, PCM_DESTS } from "./import-song.js";
+
+export { FM_DESTS, PSG_DESTS, PCM_DESTS };
 
 // presets/gm, in program order (README.md), and the bank's note offsets
 // (xg.wopn, melodic bank MSB 0 / LSB 0): the voice sounds `offset`
 // semitones below the key, so the key is raised by it.
-export const GM_VOICES = ("gm-piano gm-piano-bright gm-piano-e-grand gm-honkytonk gm-ep1 gm-ep2 gm-harpsi " +
+const GM_VOICES = ("gm-piano gm-piano-bright gm-piano-e-grand gm-honkytonk gm-ep1 gm-ep2 gm-harpsi " +
   "gm-clav gm-celesta gm-glock gm-musicbox gm-vibes gm-marimba gm-xylo gm-tubular gm-dulcimer gm-organ-drawbar " +
   "gm-organ-perc gm-organ-rock gm-organ-church gm-organ-reed gm-accordion gm-harmonica gm-bandoneon " +
   "gm-guitar-nylon gm-guitar-steel gm-guitar-jazz gm-guitar-clean gm-guitar-mute gm-guitar-od gm-guitar-dist " +
@@ -51,7 +53,7 @@ export const GM_VOICES = ("gm-piano gm-piano-bright gm-piano-e-grand gm-honkyton
   "gm-banjo gm-shamisen gm-koto gm-kalimba gm-bagpipe gm-fiddle gm-shanai gm-tinkle gm-agogo gm-steeldrum " +
   "gm-woodblock gm-taiko gm-tom-melodic gm-syndrum gm-revcymbal gm-fretnoise gm-breath gm-seashore gm-bird " +
   "gm-phone gm-heli gm-applause gm-gunshot").split(" ");
-export const GM_NOTE_OFFSETS = [
+const GM_NOTE_OFFSETS = [
   0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 12, 0, 0, 12, -12, 0, 0, -12, -12, 12, 0, 0, 0, 0, 12, 12, 0, 0, 0, 0, 0, 12,
   12, 12, 12, 12, 12, 12, -12, 12, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 12, 12, 0, 12, 0, -12, 12, 12, -12, 0, 12,
   0, 0, 12, 12, 12, 12, 0, 0, 12, 0, -12, 0, -12, 0, 0, -12, 0, 0, 0, 0, 0, 0, 0, 0, -24, 0, 0, 0, 12, 12, 0, 0,
@@ -73,18 +75,14 @@ const GM_DRUMS = {
 const DRUM_CH = 9;
 const DRUM_KEY = 60; // a PCM note at c4 plays the sample as recorded
 
-export const FM_DESTS = ["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"];
-export const PSG_DESTS = ["sqr1", "sqr2", "sqr3"];
-
 // A GM program on the PSG: its family's envelope (presets/envelopes), the
-// level shape the voice would have had — fixed by family (user, 2026-10-07).
+// level shape the voice would have had — fixed by family.
 const PSG_ENV_BY_FAMILY = [
   "env-piano", "env-bell", "env-organ", "env-guitar", "env-guitar", "env-pad", "env-pad", "env-brass",
   "env-lead", "env-lead", "env-lead", "env-pad", "env-pad", "env-guitar", "env-pluck", "env-organ",
 ];
 const PSG_ENV_BY_PROGRAM = { 45: "env-pluck-long", 47: "env-bell", 55: "env-stab" }; // pizzicato, timpani, orchestra hit
 const psgEnvOf = (program) => PSG_ENV_BY_PROGRAM[program] ?? PSG_ENV_BY_FAMILY[program >> 3];
-export const PCM_DESTS = ["pcm1", "pcm2", "pcm3"];
 // Quantize grids, coarsest first: 16th, 16th triplet, 32nd, 32nd triplet, 64th…
 export const GRIDS = [24, 16, 12, 8, 6, 4, 3, 2, 1];
 
@@ -326,9 +324,9 @@ export function analyzeMidi(parsed) {
     if (i > 0) at += ((tempos[i].tick - tempos[i - 1].tick) * tempos[i - 1].usPerQ) / parsed.division / 1e6;
     marks.push({ tick: tempos[i].tick, sec: at, usPerQ: tempos[i].usPerQ });
   }
+  const markAt = marks.map((m) => [m.tick, m]);
   const secOf = (tick) => {
-    let m = marks[0];
-    for (const x of marks) if (x.tick <= tick) m = x;
+    const m = valueAt(markAt, tick) || marks[0];
     return m.sec + ((tick - m.tick) * m.usPerQ) / parsed.division / 1e6;
   };
   // The tempo the music starts at: a file may run a silent setup section at
@@ -345,6 +343,14 @@ export function analyzeMidi(parsed) {
   return a;
 }
 
+/** The value in force at `at` in a list of [at, value] in time order (0 before the first). */
+function valueAt(list, at) {
+  let lo = 0, hi = list.length - 1;
+  if (hi < 0 || list[0][0] > at) return 0;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (list[mid][0] <= at) lo = mid; else hi = mid - 1; }
+  return list[lo][1];
+}
+
 /** dB of a 0-127 MIDI level (GM: 40 log10). */
 const gainDb = (v) => (v <= 0 ? -96 : 40 * Math.log10(v / 127));
 
@@ -354,7 +360,7 @@ const gainDb = (v) => (v <= 0 ? -96 : 40 * Math.log10(v / 127));
  * recorded performance, a conversion from a log) and the beat has to be
  * estimated from the notes' times instead.
  */
-export function detectGrid(analysis) {
+function detectGrid(analysis) {
   const k = PPQN / analysis.division;
   const ticks = analysis.notes.map((n) => n.tick * k);
   if (!ticks.length) return { grid: 12, fits: true };
@@ -490,13 +496,6 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   // modulation wheel's vibrato.
   const secOfBend = analysis.bends.map((list) => list.map(([t, c]) => [analysis.secOf(t), c]));
   const secOfMod = analysis.mods.map((list) => list.map(([t, v]) => [analysis.secOf(t), v]));
-  // The value in force at `sec` (the lists are in time order).
-  const valueAt = (list, sec) => {
-    let lo = 0, hi = list.length - 1;
-    if (hi < 0 || list[0][0] > sec) return 0;
-    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (list[mid][0] <= sec) lo = mid; else hi = mid - 1; }
-    return list[lo][1];
-  };
   const MOD_WAIT = 12; // frames before the wheel's vibrato starts (0.2 s)
   const pitchOf = (n, note) => {
     const s0 = analysis.secOf(n.tick), s1 = analysis.secOf(n.end);
@@ -523,10 +522,16 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   };
   const laneNotes = [];
   let usedPsgEnv = false;
+  const keptByLane = new Map();
+  for (const n of kept) {
+    const key = `${n.ch}:${n.lane}`;
+    if (!keptByLane.has(key)) keptByLane.set(key, []);
+    keptByLane.get(key).push(n);
+  }
   for (const [key, d] of [...laneDest].sort((a, b) => order.indexOf(a[1]) - order.indexOf(b[1]))) {
     const lane = analysis.lanes.find((l) => l.key === key);
     const fm = d.startsWith("fm");
-    const src = kept.filter((n) => `${n.ch}:${n.lane}` === key).sort((a, b) => a.tick - b.tick);
+    const src = (keptByLane.get(key) ?? []).sort((a, b) => a.tick - b.tick);
     const notes = [];
     let cur = null;
     for (const n of src) {

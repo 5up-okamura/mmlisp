@@ -9,7 +9,7 @@
 const DB_NAME = 'mmlisp';
 const STORE = 'recent';
 const KEY = 'list';
-export const RECENT_MAX = 10;
+const RECENT_MAX = 10;
 
 export const recentSupported = typeof indexedDB !== 'undefined'
   && typeof window !== 'undefined' && typeof window.showOpenFilePicker === 'function';

@@ -1,4 +1,3 @@
-import { bankedEngineImage } from "./engine-banked-images.js";
 // ---------------------------------------------------------------------------
 // VGM export
 //
@@ -22,13 +21,14 @@ import { bankedEngineImage } from "./engine-banked-images.js";
 // in software, so only the mix is what the hardware hears.
 // ---------------------------------------------------------------------------
 
-// VGM timing is always referenced to a fixed 44100 Hz sample clock, regardless
-// of the chip clocks below.
 import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "./ir-utils.js";
 import { PcmLiveEngine, PCM_SILENCE_BYTE, parsePcmBank } from "./pcm-model.js";
 import { PcmIrVoices } from "./pcm-voices.js";
 import { engineImage } from "./engine-images.js";
+import { bankedEngineImage } from "./engine-banked-images.js";
 
+// VGM timing is always referenced to a fixed 44100 Hz sample clock, regardless
+// of the chip clocks below.
 const VGM_SAMPLE_RATE = 44100;
 
 // NTSC Mega Drive clocks (master 53.693175 MHz; YM2612 = /7, SN76489 = /15).
@@ -55,7 +55,7 @@ const DATA_START = 0x40; // header is 0x40 bytes for version 1.50
  *        the mixed DAC stream from renderPcmDac, or null for none
  * @returns {Uint8Array}
  */
-export function encodeVgm(capture, meta = {}, dac = null) {
+function encodeVgm(capture, meta = {}, dac = null) {
   const { writes, loopStartSec } = capture;
   const endSec = Math.max(capture.endSec, dac ? dac.startSec + dac.bytes.length / dac.rateHz : 0);
   const secToSample = (sec) => Math.max(0, Math.round(sec * VGM_SAMPLE_RATE));
@@ -63,7 +63,7 @@ export function encodeVgm(capture, meta = {}, dac = null) {
   const endSample = secToSample(endSec);
   const loopSample = loopStartSec == null ? null : secToSample(loopStartSec);
 
-  const data = [];
+  const data = new ByteBuffer(DATA_START + writes.length * 3 + (dac ? dac.bytes.length * 2 : 0));
   let curSample = 0;
   let loopOffsetInData = null; // byte position of the loop command within `data`
 
@@ -71,38 +71,43 @@ export function encodeVgm(capture, meta = {}, dac = null) {
     while (target > curSample) {
       const d = Math.min(0xffff, target - curSample);
       if (d <= 0) break;
-      if (d <= 16) data.push(0x70 | (d - 1)); // short wait, 1-16 samples
-      else data.push(0x61, d & 0xff, (d >> 8) & 0xff);
+      if (d <= 16) data.push1(0x70 | (d - 1)); // short wait, 1-16 samples
+      else data.push3(0x61, d & 0xff, (d >> 8) & 0xff);
       curSample += d;
     }
   };
 
-  // The DAC stream's bytes, as timed events among the register writes: the
-  // first claims the DAC (0x2B), every one is a 0x8n from the data bank.
-  let events = writes;
-  if (dac && dac.bytes.length) {
-    events = writes.map((w) => ({ ...w, s: secToSample(w.sec) }));
-    events.push({ s: secToSample(dac.startSec), port: 0, addr: 0x2b, data: 0x80, enable: true });
-    for (let k = 0; k < dac.bytes.length; k++)
-      events.push({ s: secToSample(dac.startSec + k / dac.rateHz), dacIndex: k });
-    // Stable: a register write at the same sample goes before the DAC byte.
-    events.sort((a, b) => a.s - b.s || (a.dacIndex != null) - (b.dacIndex != null));
+  // The register writes in time order, each at its sample. With a DAC
+  // stream, the first byte claims the DAC (0x2B) and every byte is a 0x8n
+  // from the data bank, merged in: a register write at the same sample goes
+  // before the DAC byte.
+  const dacLen = dac ? dac.bytes.length : 0;
+  let regs = writes;
+  let regSample = writes.map((w) => secToSample(w.sec));
+  if (dacLen) {
+    const timed = writes.map((w, i) => ({ w, s: regSample[i] }));
+    timed.push({ w: { port: 0, addr: 0x2b, data: 0x80 }, s: secToSample(dac.startSec) });
+    timed.sort((a, b) => a.s - b.s);
+    regs = timed.map((x) => x.w);
+    regSample = timed.map((x) => x.s);
     // The data block, ahead of every command (VGM 1.50: type 0x00 = YM2612 PCM).
-    const n = dac.bytes.length;
-    data.push(0x67, 0x66, 0x00, n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff);
-    for (let k = 0; k < n; k++) data.push(dac.bytes[k]);
-    data.push(0xe0, 0, 0, 0, 0); // seek the data bank to its start
+    data.push3(0x67, 0x66, 0x00);
+    data.push4(dacLen & 0xff, (dacLen >> 8) & 0xff, (dacLen >> 16) & 0xff, (dacLen >>> 24) & 0xff);
+    data.pushBytes(dac.bytes);
+    data.push1(0xe0);
+    data.push4(0, 0, 0, 0); // seek the data bank to its start
   }
+  const dacSample = (k) => (k < dacLen ? secToSample(dac.startSec + k / dac.rateHz) : Infinity);
   // The bank pointer each event leaves behind, for the seek at the loop point.
   let dacNext = 0;
 
   const emitWrite = (w) => {
     if (w.port === 2) {
-      data.push(0x50, w.data & 0xff); // SN76489
+      data.push2(0x50, w.data & 0xff); // SN76489
     } else if (w.port === 1) {
-      data.push(0x53, w.addr & 0xff, w.data & 0xff); // YM2612 port 1
+      data.push3(0x53, w.addr & 0xff, w.data & 0xff); // YM2612 port 1
     } else {
-      data.push(0x52, w.addr & 0xff, w.data & 0xff); // YM2612 port 0
+      data.push3(0x52, w.addr & 0xff, w.data & 0xff); // YM2612 port 0
     }
   };
 
@@ -111,15 +116,19 @@ export function encodeVgm(capture, meta = {}, dac = null) {
     loopOffsetInData = data.length;
     // The data bank's pointer does not jump with the loop: re-seek it to
     // where the stream stood at the loop point.
-    if (dac && dac.bytes.length) {
+    if (dacLen) {
       const p = dacNext;
-      data.push(0xe0, p & 0xff, (p >> 8) & 0xff, (p >> 16) & 0xff, (p >>> 24) & 0xff);
+      data.push1(0xe0);
+      data.push4(p & 0xff, (p >> 8) & 0xff, (p >> 16) & 0xff, (p >>> 24) & 0xff);
     }
   };
 
-  for (let i = 0; i < events.length; i++) {
-    const w = events[i];
-    const sample = w.s ?? secToSample(w.sec);
+  let r = 0; // the next register write
+  let k = 0; // the next DAC byte
+  let kSample = dacSample(0);
+  while (r < regs.length || k < dacLen) {
+    const isReg = r < regs.length && regSample[r] <= kSample;
+    const sample = isReg ? regSample[r] : kSample;
 
     // Mark the loop point exactly at loopSample so [loop, end) is a seamless
     // period: advance to the loop boundary, record the offset, then continue
@@ -127,19 +136,20 @@ export function encodeVgm(capture, meta = {}, dac = null) {
     if (loopSample != null && loopOffsetInData == null && sample >= loopSample) markLoop();
 
     waitUntil(sample);
-    if (w.dacIndex != null) {
-      // 0x8n writes the bank's next byte and waits n (0-15): fold the wait
-      // up to the next event in, unless the loop point falls inside it.
-      const next = events[i + 1];
-      let n = next ? Math.min(15, ((next.s ?? secToSample(next.sec)) - curSample)) : 0;
-      if (loopSample != null && loopOffsetInData == null && curSample + n > loopSample)
-        n = Math.max(0, loopSample - curSample);
-      data.push(0x80 | Math.max(0, n));
-      curSample += Math.max(0, n);
-      dacNext = w.dacIndex + 1;
-    } else {
-      emitWrite(w);
+    if (isReg) {
+      emitWrite(regs[r++]);
+      continue;
     }
+    // 0x8n writes the bank's next byte and waits n (0-15): fold the wait
+    // up to the next event in, unless the loop point falls inside it.
+    dacNext = ++k;
+    kSample = dacSample(k);
+    const nextSample = Math.min(r < regs.length ? regSample[r] : Infinity, kSample);
+    let n = nextSample === Infinity ? 0 : Math.min(15, nextSample - curSample);
+    if (loopSample != null && loopOffsetInData == null && curSample + n > loopSample)
+      n = Math.max(0, loopSample - curSample);
+    data.push1(0x80 | Math.max(0, n));
+    curSample += Math.max(0, n);
   }
 
   // A loop point at or past the last write (rare) still needs to be marked.
@@ -148,14 +158,34 @@ export function encodeVgm(capture, meta = {}, dac = null) {
   // Pad to the total length, then terminate. For looping pieces this makes the
   // loop period exact; for one-shots it lets the final release ring out.
   waitUntil(endSample);
-  data.push(0x66);
+  data.push1(0x66);
 
   const gd3 = buildGd3(meta);
-  return assembleVgm(data, gd3, {
+  return assembleVgm(data.bytes(), gd3, {
     totalSamples: endSample,
     loopOffsetInData,
     loopSamples: loopSample == null ? 0 : endSample - loopSample,
   });
+}
+
+/** A byte array that grows as it is written. */
+class ByteBuffer {
+  constructor(capacity = 1024) {
+    this.buf = new Uint8Array(Math.max(16, capacity));
+    this.length = 0;
+  }
+  room(n) {
+    if (this.length + n <= this.buf.length) return;
+    const grown = new Uint8Array(Math.max(this.length + n, this.buf.length * 2));
+    grown.set(this.buf.subarray(0, this.length));
+    this.buf = grown;
+  }
+  push1(a) { this.room(1); this.buf[this.length++] = a; }
+  push2(a, b) { this.room(2); this.buf[this.length++] = a; this.buf[this.length++] = b; }
+  push3(a, b, c) { this.room(3); this.buf[this.length++] = a; this.buf[this.length++] = b; this.buf[this.length++] = c; }
+  push4(a, b, c, d) { this.room(4); this.push2(a, b); this.push2(c, d); }
+  pushBytes(u8) { this.room(u8.length); this.buf.set(u8, this.length); this.length += u8.length; }
+  bytes() { return this.buf.subarray(0, this.length); }
 }
 
 /**
@@ -196,27 +226,23 @@ export function renderPcmDac(capture, pcm) {
   const lastEventSec = events[events.length - 1].sec;
   const hardEnd = looping ? capture.endSec : Math.max(capture.endSec, lastEventSec) + PCM_TAIL_MAX_SEC;
   const quietSamples = Math.ceil(PCM_TAIL_SILENCE_SEC * img.rateHz);
-  const out = [];
+  const out = new ByteBuffer(Math.ceil(Math.max(0, hardEnd - startSec) * img.rateHz) + 1);
   let quiet = 0;
   for (let n = 0; ; n++) {
     const sec = startSec + n / img.rateHz;
     if (sec >= hardEnd) break;
     for (; k < events.length && events[k].sec <= sec; k++) seq.apply(events[k]);
     const b = engine.next();
-    out.push(b);
+    out.push1(b);
     if (!looping && sec >= Math.max(capture.endSec, lastEventSec)) {
       quiet = b === PCM_SILENCE_BYTE ? quiet + 1 : 0;
       if (quiet >= quietSamples) break;
     }
   }
-  return { bytes: Uint8Array.from(out), rateHz: img.rateHz, startSec };
+  return { bytes: out.bytes(), rateHz: img.rateHz, startSec };
 }
 
-/**
- * Build a VGM file from an IRPlayer with IR loaded (capture + encode).
- * `pcm` ({bank, entryIds, pcmVoices}, see renderPcmDac) adds the PCM; without
- * it the score's PCM events are skipped and counted in `pcmCount`.
- */
+/** Set the player's PCM bank rate to the engine image `pcm` plays on. */
 export function configurePcmRate(player, pcm) {
   if (!pcm?.bank) return;
   const parsed = parsePcmBank(pcm.bank);
@@ -224,6 +250,11 @@ export function configurePcmRate(player, pcm) {
   player?.setPcmBankRate?.(img.rateHz);
 }
 
+/**
+ * Build a VGM file from an IRPlayer with IR loaded (capture + encode).
+ * `pcm` ({bank, entryIds, pcmVoices}, see renderPcmDac) adds the PCM; without
+ * it the score's PCM events are skipped and counted in `pcmCount`.
+ */
 export function renderVgm(player, meta = {}, pcm = null) {
   configurePcmRate(player, pcm);
   const capture = player.captureRegisterLog();

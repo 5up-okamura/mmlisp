@@ -6,8 +6,13 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  * from the main thread and generates audio samples using the YM2612 emulator.
  *
  * Message protocol (from main thread via port.postMessage):
- *   { type: 'write', port: 0|1, addr: number, data: number }
- *   { type: 'writes', ops: [{port, addr, data}, ...] }
+ *   { type: 'write', port: 0|1|2, addr: number, data: number, when?, preview? }
+ *       — port 2 is the PSG; `when` (AudioContext seconds) schedules the
+ *         write, without it the write applies at the next block; `preview`
+ *         marks a key's audition write, which a hold does not swallow and
+ *         the song's register shadow does not record
+ *   { type: 'hold-ch', ch: 0-5, on: boolean }  — the keys hold an FM channel
+ *       over a playing song (index.html previewTake)
  *   { type: 'pcm-set-bank', bank: Uint8Array|null, pcmVoices: 0-3, entryIds: {"name|midi": id} }
  *       — the score's baked sample bank (the one an export ships), which the
  *         IR preview plays through the driver's own engine model
@@ -19,7 +24,6 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'set-analog-lpf', on: boolean, cutoffHz?: number }
  *   { type: 'scope-enable', on: boolean }
  *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
- *   { type: 'reset' }
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  *
  * Messages to the main thread include (while scope is enabled):
@@ -44,8 +48,8 @@ import {
   SCOPE_PCM_CHANNELS,
 } from "./src/synth-md.js";
 
-// PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3,
-// D0: the preview must sound like the driver): the same voice model the 68000
+// PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3 — the
+// preview must sound like the driver): the same voice model the 68000
 // runs, the same engine model the gates grade the Z80 against, the same baked
 // bank an export ships — 8-bit, at the image's rate, with its 6 dB rungs, its
 // 16-byte loop rounding and its loop-point moves.
@@ -210,10 +214,6 @@ class YM2612Processor extends AudioWorkletProcessor {
           this._pcmTrackGain.set(track, g);
           this._pcmApplyUiGain();
         }
-      } else if (msg.type === "writes") {
-        for (const op of msg.ops) {
-          this._writeQueue.push(op);
-        }
       } else if (msg.type === "set-analog-lpf") {
         this._lpfOn = !!msg.on;
         const c = Number(msg.cutoffHz);
@@ -230,22 +230,6 @@ class YM2612Processor extends AudioWorkletProcessor {
             this._scopePool.push(b);
           }
         }
-      } else if (msg.type === "reset") {
-        this._synth?.reset();
-        this._writeQueue = [];
-        this._timedQueue = [];
-        this._psgWriteQueue = [];
-        this._psgTimedQueue = [];
-        this._pcmTimedQueue = [];
-        this._pcmTrackGain = new Map();
-        this._setPcmBank(null);
-        this._dacFromVoices = false;
-        this._scopeFreq.fill(0);
-        this._fmFnumHi.fill(0);
-        this._psgTone.fill(0);
-        this._psgLatch = 0;
-        this._chHold.fill(0);
-        for (const r of this._songRegs) r.fill(-1);
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap); a new run plays
         // its channels from the top, held or not.

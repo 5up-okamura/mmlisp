@@ -9,12 +9,12 @@
  * as well as for m68k — that is what makes the gate cheap: no emulator, no
  * assembler, a debugger on both sides.
  *
- * Scope so far: M1 + M2 + M3 (driver.md §11) — the core opcode set, FM + PSG
- * note paths, the level model, pitch, loops/calls, tempo, track start, slot
- * emission through the real cap/spill queue, the sweep engine and host API, and
- * now the macro engine, the value machine's stream ops, FM3 independent-OP mode,
- * PCM command emission and SE (suspend / restore, priority). Anything still
- * unported stops the track fail-safe rather than being silently mis-decoded.
+ * Every opcode of opcodes.md is decoded: FM + PSG note paths, the level
+ * model, pitch, loops/calls, tempo, track start, the write queue, the sweep
+ * engine and host API, the macro engine, the value machine's stream ops, FM3
+ * independent-OP mode, PCM commands and SE (suspend / restore, priority). A
+ * byte that is not an opcode stops its track fail-safe (mmb.md §13) rather
+ * than being mis-decoded.
  */
 #ifndef MMLISPSEQ_H
 #define MMLISPSEQ_H
@@ -41,20 +41,18 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 /* ── Build constants (driver.md §6.2) ─────────────────────────────────────── */
 #define MML_SLOT_SIZE 256
 #define MML_SLOT_MAX_WRITES 95 /* the slot's cap (driver.md §6.2) — the gates' form; the SGDK host takes frames uncapped */
-/* Sub-ticks per frame (driver.md §3.5). ONE: note onsets are on the 60 Hz
- * frame, as in most game drivers. Sub-ticks were adopted as nearly free; with
- * the pair engine they were not heard (a frame's writes leave together) and
- * cost the 68000 ~6 points of its time (a six-channel FM+PSG+PCM song: idle
- * 71.9% -> 78.6% at 1), so they were retired (2026-09-14). Must equal
- * live/src/slot-builder.js. */
+/* Sub-ticks per frame (driver.md §3.5). ONE: note onsets are on the frame,
+ * as in most game drivers — a frame's writes leave the pair engine together,
+ * so finer onsets would not be heard. Must equal live/src/slot-builder.js
+ * SLOT_SUBS. */
 #define MML_SLOT_SUBS 1
 /* A song's tracks — one a channel, 16 at most — and as many sound-effect
  * parts again (def-se, driver.md §2.5). live/src/mmb.js MAX_TRACKS. */
 #define MML_MAX_TRACKS 32
 #define MML_LOOP_DEPTH 4
 #define MML_WRITE_QUEUE 1024 /* spill headroom; a score head peaks near 150 */
-/* Macros bound per channel (driver.md §13.1 budgets 3 — one per target family;
- * the extra room costs 2 bytes a slot and removes a silent-drop failure mode). */
+/* Macros bound per channel (driver.md §13.1). A ninth bind on a channel is
+ * ignored. */
 #define MML_MACRO_BINDS 8
 /* PCM voices (pcm1-pcm3). The score's own count picks the engine image
  * (driver.md §5); the sequencer keeps state for all three. */
@@ -126,7 +124,7 @@ typedef struct {
   uint8_t sounding; /* attenuation < 15 */
 } MMLPsgCh;
 
-/* Sweep banks: the ten M1 channels, the three PCM voices, then FM3's four
+/* Sweep banks: the ten register channels (0-9), the three PCM voices, then FM3's four
  * operators (channel ids 16-19) — a glide or pitch sweep on an fm3-N track
  * bends that operator alone (driver.md §13.4). sweep_bank() maps a channel id
  * to its bank. */
@@ -413,25 +411,24 @@ typedef struct {
   MMLGlobalSweep csm_sweep;
   int16_t val[16]; /* VAL_TABLE seed; slot 0xFF is $time, never stored here */
 
-  /* Change-only shadow, driver.md §4. Post-split this lives HERE, not on the
-   * Z80 — which is what removed ~550 cycles of bookkeeping per write there.
+  /* Change-only shadow, driver.md §4.
    *
    * `shadow_set` is the "has this register ever been written" plane. It looks
    * redundant — the neutral patch covers every register anything writes — but
    * without it a FIRST write of 0 would compare equal to a zero-initialised
    * entry and be suppressed, and the patch is full of zeroes. The reference
-   * gets this for free by keying a Map (missing != 0); the Z80 got it by
-   * writing every covered register at boot, which is what let it drop the
-   * plane entirely. */
+   * gets this for free by keying a Map (missing != 0). */
   uint8_t shadow[2][256];
   uint8_t shadow_set[2][256];
 
-  /* The cap/spill queue. Excess writes keep their order and lead the next
-   * slot: the transport may delay a write, never reorder or drop one. */
+  /* The write queue, in the order the writes were made. The SGDK host takes a
+   * frame from it whole (MMLFrameView); the gates' slot caps it and the excess
+   * keeps its order and leads the next slot: a write may be delayed, never
+   * reordered or dropped. */
   MMLWrite q[MML_WRITE_QUEUE];
   uint16_t q_head, q_tail;
   /* Queue depth at each sub-tick boundary — where one sub-slot's run ends and
-   * the next begins. Recorded as a COUNT, not an index, so the ring's wrap
+   * the next begins. Recorded as a COUNT, not an index, so the queue's wrap
    * never has to be reasoned about at encode time. */
   uint16_t sub_mark[MML_SLOT_SUBS];
   uint16_t spill_peak, spill_frames;
@@ -553,16 +550,15 @@ int mml_done(const MMLSeq *s);
 
 /* ── Host control (driver.md §6.5) ─────────────────────────────────────────
  * These execute IN the sequencer rather than being posted to it, so they take
- * effect on the next frame rendered — and are therefore heard RING_DEPTH
+ * effect on the next frame rendered — and are therefore heard MMLISP_LEAD
  * frames later (§3.4). */
 void mml_key_off(MMLSeq *s, uint8_t channel_id);
 void mml_set_param(MMLSeq *s, uint8_t channel_id, uint8_t target, int value);
 void mml_fade_track(MMLSeq *s, uint8_t track_id, uint16_t frames);
 void mml_set_val(MMLSeq *s, uint8_t slot, int16_t value);
 
-/* Dispatch one host command by the v0.2 mailbox numbering. The transport is
- * gone — these are ordinary calls now — but the numbering survives so the gate
- * corpus's command schedules keep working unchanged. */
+/* Dispatch one host command by number — the numbering the gate corpus's
+ * command schedules (the tests' .cmds.json sidecars) use. */
 void mml_command(MMLSeq *s, uint8_t cmd, uint8_t a0, uint8_t a1, uint8_t a2);
 
 #endif /* MMLISPSEQ_H */

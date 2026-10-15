@@ -136,9 +136,8 @@ check("$ is the current instruction", [...asm(`
 
 // DOCUMENTED CYCLE COUNTS, for the forms a cycle budget is actually built on.
 // Every (HL) operand pays a memory cycle: 4 becomes 7 and `ld (hl),n` is 10.
-// The emulator charged 4 and 7 here until 2026-09-06, which under-reported the
-// PCM mixer's hot loop — `ld a,(hl)`, `add a,(hl)` — by 3 cycles an iteration,
-// and every pad ever calibrated against it inherited the error.
+// Charging 4 and 7 would under-report the PCM mixer's hot loop — `ld a,(hl)`,
+// `add a,(hl)` — by 3 cycles an iteration, and every pad calibrated against it.
 {
   const bytes = asm(`
     org 0
@@ -161,7 +160,7 @@ nn_ equ $1800
   check("(hl) operands cost their memory cycle", got, [4, 7, 7, 10, 4, 7, 11, 7, 13]);
 }
 // A block move is charged per byte: 21 for each iteration that repeats, 16 for
-// the last (and for a lone ldi). Until 2026-09-28 a whole ldir cost 16.
+// the last (and for a lone ldi), not 16 for the whole ldir.
 {
   const bytes = asm(`
     org 0

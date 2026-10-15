@@ -226,13 +226,13 @@ export function midiToFnumBlock(midiNote) {
 // ---------------------------------------------------------------------------
 // vel / vol / master each map to a signed dB offset; the offsets are summed (in
 // float) on top of an operator's voiced TL, and quantized once at the register
-// write. This is the PMD/MDSDRV table style and maps directly onto a Z80 driver
-// (add small per-control offset tables). The helpers below return register-step
+// write. This is the PMD/MDSDRV table style, and the 68000 sequencer composes
+// the same way (driver.md §7). The helpers below return register-step
 // offsets (FM: dB ÷ 0.75; PSG: dB ÷ 2), as floats.
 //
 // Hardware step sizes, in dB:
-export const TL_DB_PER_STEP = 0.75; // YM2612 TL — 128 steps over ~95 dB
-export const PSG_DB_PER_STEP = 2; // SN76489 attenuator — 16 steps
+const TL_DB_PER_STEP = 0.75; // YM2612 TL — 128 steps over ~95 dB
+const PSG_DB_PER_STEP = 2; // SN76489 attenuator — 16 steps
 // Velocity ladder (PMD / MDSDRV coarse-volume convention):
 export const VEL_DB_PER_STEP = 2;
 // The driver holds a live velocity in eighths of a step (0..15·8): a :vel
@@ -260,7 +260,7 @@ export function sumLevelOffsets(...offs) {
 // vol/master mixer-fader (tunable): VOL_UNITY = 0 dB reference on the 0–31
 // scale. Unity sits at the top (31 = full, no attenuation), so vol/master is a
 // pure attenuator — lower values cut, matching the master fader.
-export const VOL_STEP_DB = 2;
+const VOL_STEP_DB = 2;
 export const VOL_UNITY = 31;
 
 // Velocity (0-15) → TL attenuation (float, register steps). 2 dB/step ladder:
@@ -421,12 +421,12 @@ const STOCHASTIC_LUTS = buildStochasticLuts(
   STOCHASTIC_LUT_SEED,
 );
 
-// Per-seed stochastic LUT sets, memoized (v0.6 `:seed`). The default seed reuses
-// the module-level tables so seedless sources are byte-identical; other seeds
-// regenerate once and cache. Compile-time only — the driver replays the sampled
-// values, so the seed costs nothing on the Z80.
+// Per-seed stochastic LUT sets, memoized (`:seed`, language.md §11.1). The
+// default seed reuses the module-level tables so seedless sources are
+// byte-identical; other seeds regenerate once and cache. Compile-time only —
+// the driver replays the sampled values, so the seed costs it nothing.
 const stochasticLutCache = new Map();
-export function getStochasticLuts(seed) {
+function getStochasticLuts(seed) {
   if (seed == null || (seed >>> 0) === STOCHASTIC_LUT_SEED) return STOCHASTIC_LUTS;
   const key = seed >>> 0;
   let luts = stochasticLutCache.get(key);
@@ -701,7 +701,7 @@ export function sampleCurveUnit(curve, phase, params = null) {
     case "saw":
     case "ramp":
       return applySkew(t, params?.skew);
-    // ── Stochastic (v0.5; LUT-based at compile time) ──────────────────────
+    // ── Stochastic (LUT-based at compile time) ────────────────────────────
     case "noise":
     case "pink":
     case "perlin":
@@ -831,7 +831,7 @@ export function encode30(op) {
 }
 
 // DT: signed value → 3-bit sign-magnitude register field, and back.
-export function detuneToReg(dt) {
+function detuneToReg(dt) {
   const d = dt | 0;
   return d < 0 ? 4 | (-d & 0x03) : d & 0x03;
 }

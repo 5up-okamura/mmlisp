@@ -154,7 +154,7 @@ function parseDefleMaskDmpFm(bytes) {
   const fms = version > 1 ? readDmpU8(bytes, cursor) : 0;
   const fb = readDmpU8(bytes, cursor);
   const alg = readDmpU8(bytes, cursor);
-  const ams = sys !== 1 ? readDmpU8(bytes, cursor) : 0;
+  const ams = readDmpU8(bytes, cursor);
 
   const opsOut = readFmOps(bytes, cursor, ops, (b, c) => {
     const mul = readDmpU8(b, c);

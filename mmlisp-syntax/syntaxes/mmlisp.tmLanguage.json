@@ -8,9 +8,8 @@
     { "include": "#def-form" },
     { "include": "#form-head" },
     { "include": "#label-decl" },
-    { "include": "#voice-switch" },
-    { "include": "#boolean" },
     { "include": "#keyword" },
+    { "include": "#value-slot" },
     { "include": "#rest-shorthand" },
     { "include": "#octave-shift" },
     { "include": "#slur" },
@@ -55,19 +54,13 @@
         "1": { "name": "keyword.other.control-flow.mmlisp" }
       }
     },
-    "voice-switch": {
-      "match": "(@)([a-zA-Z][a-zA-Z0-9_-]*)",
-      "captures": {
-        "1": { "name": "support.function.mmlisp" }
-      }
-    },
-    "boolean": {
-      "name": "constant.language.boolean.mmlisp",
-      "match": "(?<=[\\s(])(?:true|false)(?=[\\s)])"
-    },
     "keyword": {
       "name": "constant.other.keyword.mmlisp",
       "match": ":[a-zA-Z][a-zA-Z0-9_+-]*"
+    },
+    "value-slot": {
+      "name": "variable.other.slot.mmlisp",
+      "match": "\\$[a-zA-Z][a-zA-Z0-9_-]*"
     },
     "rest-shorthand": {
       "name": "constant.language.mmlisp",
@@ -90,8 +83,8 @@
       "match": "\\d+/\\d+"
     },
     "number": {
-      "name": "constant.numeric.integer.mmlisp",
-      "match": "(?<=[\\s(\\[])[+-]?\\d+(?=[\\s)\\]])"
+      "name": "constant.numeric.mmlisp",
+      "match": "(?<=[\\s(\\[])[+-]?\\d+(?:\\.\\d+)?(?:\\.\\.[+-]?\\d+(?:\\.\\d+)?)?(?:ms|s|f|t)?(?=[\\s)\\]])"
     },
     "paren": {
       "name": "punctuation.section.parens.mmlisp",

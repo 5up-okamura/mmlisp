@@ -1,11 +1,10 @@
 # The live app — why it is shaped this way, and what is open
 
 What the editor, the Library panel, the voice picker and the song importers DO
-is `docs/guide.md` (§22 completions, §23 importers, §24 editing aids, §25 the
-Library). This file keeps only the reasons the guide does not carry, the
-user's rulings, measurements, and open items. Merged 2026-10-09 from
-`plan-editor-input-aids`, `plan-library-panel`, `plan-voice-picker` and
-`plan-importers`.
+is `docs/guide.md` (§22 editing values, the views and MIDI, §23 importers,
+§24 typing help — editing aids and completions, §25 the Library). This file
+keeps only the reasons the guide does not carry, the user's rulings,
+measurements, and open items.
 
 ## Editing aids (`live/index.html`, `live/style.css`)
 
@@ -131,10 +130,6 @@ and showed nothing the playhead did not. The user's rulings:
 - **No transport in the pane** (the top bar has it) and **no note editing in
   the roll** (the text stays the only source).
 
-Open: dragging the roll's background to seek was in the mockup
-(https://claude.ai/artifact/Rimn1WHaERRJbLBLgKhJbb) and left out — not
-decided.
-
 ## Lessons
 
 - **Check a commit's Vercel status before asking for a device test**
@@ -160,24 +155,26 @@ decided.
   words read the same everywhere; the AI on the MCP link reads diagnostics),
   and GitHub's docs are left to the browser's translator. No runtime machine
   translation: the app runs offline and terms must stay fixed (glossary).
+- **The X68000's OKIM6258 stays a little quiet** after the full-scale gain
+  (accepted, 2026-10-15); a `:fx` comp is the lever if it is raised again.
 
 ## Open
 
 The list is `docs/roadmap.md` (Importers, MMLisp Live); kept here is what it
 leaves out.
 
-- A score's own `def-pcm` is not auditioned from the picker because its
-  `:file` is relative to the score's folder, which the stand-in score lacks.
-- Touch has no add-cursor gesture: there is no modifier, and long-press is the
-  value popup.
+- Why the roadmap's two MMLisp Live items are hard: a score's own `def-pcm`
+  `:file` is relative to the score's folder, which the picker's stand-in score
+  lacks; on touch there is no modifier, and long-press is the value popup.
+- Dragging the piano roll's background to seek was in the mockup
+  (https://claude.ai/artifact/Rimn1WHaERRJbLBLgKhJbb) and left out — not
+  decided.
 - VGM's one grid per file: Dino Land's title theme estimates a 64th-note grid
   for the whole song.
 - **Fewer shapes**, if wanted: VGM envelopes and bends match exactly (TwinBee
   gives ~26 envelopes); rounding near shapes together is the lever. A bass of
   per-note pitch falls names a bend per pitch.
 - Furnace's slide/porta compat rules are rounded.
-- The X68000's OKIM6258 comes in a little quiet after the full-scale gain
-  (accepted, 2026-10-15); a `:fx` comp is the lever if it is raised again.
 - **The ja / es translations are unreviewed** — machine-written from the
   glossary; Spanish especially wants a reader. A fix goes through
   `i18n-sync.mjs --apply`, never a hand edit of the pack.

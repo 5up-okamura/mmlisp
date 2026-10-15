@@ -203,7 +203,7 @@ slot 274 · mailbox/globals 232 · channel state 640 (10 × 64) · TCBs 512
   must keep off the window (play from the ring) while it is up. XGM2 has the
   same protocol.
 
-Next, in order:
+If the Z80-only build is resumed, in order:
 
 1. **A bench on the archive sequencer** — real polls (assembler-inserted),
    the ring, Timer A output, one voice — in the machine model: the DAC write

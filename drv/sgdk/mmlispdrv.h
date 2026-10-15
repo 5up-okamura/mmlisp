@@ -27,9 +27,11 @@
 // pauses with it rather than bursting through the missed frames.
 //
 // If your game has its own VBlank callback, skip the attach and call
-// MMLisp_pump() from yours, once a frame. A pump that comes late (two frames
-// after the last one) notices, copies nothing, and the next one catches up;
-// the Z80 is never handed pairs behind its read index.
+// MMLisp_pump() from yours, once a frame. Each grab checks, with the bus
+// held, that the engine's read index has not reached where the pairs were
+// planned to go (mmlpairs.h mmlp_in_time); a grab that finds it has copies
+// nothing and the next one carries the pairs, so the Z80 is never handed
+// pairs behind its read index.
 //
 // BUS STOPS ARE NOT REPAID. The grab itself holds the bus about 45 µs, and
 // SGDK halts the Z80 around every joypad read (HALT_Z80_ON_IO, ~350 68k cycles
@@ -40,8 +42,9 @@
 // PROFILE: one to three PCM voices, the count the score names — each count is
 // its own Z80 image with its own DAC rate, booted by MMLisp_loadScore. Every
 // note is baked at that rate; loops and releases are played by the engine.
-// The sample bank must be the 32 KB `song.smp` the exporter writes for the
-// score — its top page is the silence a parked voice reads.
+// The sample bank must be the `song.smp` the exporter writes for the score:
+// one 32 KB bank whose top page is the silence a parked voice reads, or, for
+// a block-banked score, N whole 32 KB banks (docs/pcm-multibank.md).
 #ifndef MMLISPDRV_H
 #define MMLISPDRV_H
 
@@ -59,10 +62,11 @@ void MMLisp_init(void);
 // True once the engine reported ready.
 bool MMLisp_isReady(void);
 
-// Publish the PCM sample bank: the 32 KB `song.smp` rescomp placed on a 32 KB
-// boundary (`BIN song_smp "song.smp" 32768`). Sets the Z80's bank window to it
-// (nine register writes inside one bus grab) and hands its directory to the
-// sequencer. Call once after MMLisp_init and before starting a PCM track; with
+// Publish the PCM sample bank: the `song.smp` rescomp placed on a 32 KB
+// boundary (`BIN song_smp "song.smp" 32768`) — 32 KB, or N × 32 KB banked.
+// On a single-bank image it sets the Z80's bank window to it (nine register
+// writes inside one bus grab; a banked image switches banks itself), and it
+// hands the bank's directory to the sequencer. Call once after MMLisp_init and before starting a PCM track; with
 // no bank published every PCM note is dropped and the song plays FM/PSG only.
 void MMLisp_setSampleBank(const u8* smp);
 
@@ -154,8 +158,10 @@ u8 MMLisp_trackId(u8 index);
 // Key-off one channel without stopping its track.
 void MMLisp_keyOff(u8 channel_id);
 
-// One-shot absolute parameter write on a channel (docs/opcodes.md §7).
-void MMLisp_setParam(u8 channel_id, u8 target_id, s8 value);
+// One-shot absolute parameter write on a channel (docs/opcodes.md §7). The
+// value is i16 so the wide targets fit: NOTE_PITCH (cents), the PCM points,
+// VAL0-VAL15 (mmb.md §7.4); every other target takes its i8 range.
+void MMLisp_setParam(u8 channel_id, u8 target_id, s16 value);
 
 // Fade a track's volume to silence over `frames` frames, then stop it.
 void MMLisp_fadeTrack(u8 track_id, u16 frames);

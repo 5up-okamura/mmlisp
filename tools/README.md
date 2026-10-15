@@ -3,8 +3,9 @@
 Local CLI tooling for the compile/verify workflow.
 
 MMB encoding lives in the browser toolchain (`live/src/export-mmb.js`, File >
-Export > MMB…), not here. Driver A/B verification runs in the live app —
-`window.__abCompare()` — see docs/driver.md §12.
+Export > MMB…), not here. Driver A/B verification is `cd drv && npm run
+verify:ab` (the gate) or `window.__abCompare()` in the live app — see
+docs/driver.md §12.
 
 ## Requirements
 
@@ -22,6 +23,9 @@ Run from tools directory:
 6. `npm run check:cheatsheet` — the examples in docs/cheatsheet.md still compile
 7. `npm run mcp` — the MMLisp MCP server for AI clients (see [mcp/README.md](mcp/README.md))
 8. `npm run check:i18n` — every translation of the Live reference and snippets present and current
+9. `npm run check:reference` — every example of the Live reference compiles and plays, and every completion word has an entry
+10. `npm run check:sample-fx` — a sample def's `:fx` chain and its bake
+11. `npm run check:scope-trigger` — the oscilloscope's trigger holds a stationary picture
 
 ## i18n
 

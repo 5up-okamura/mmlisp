@@ -1,5 +1,5 @@
 // The JS twin of 68k/mmlpairs.c — the sequencer's frames turned into the pair
-// transport (R28 §63.3 D7) — written from the same rules and gated against it
+// transport (docs/driver.md §6.6) — written from the same rules and gated against it
 // byte for byte (tools/pairs-gate.mjs). It also feeds the JS machine in the
 // end-to-end model run, where the DAC and the FM writes of a real score are
 // graded against the reference driver's own stream.
@@ -16,9 +16,8 @@ const OP_START = (v) => 8 + 9 * v, OP_RETARGET = (v) => 9 + 9 * v;
 export const levelPage = (cfg, shift, masterShift) =>
   cfg.lutPage + (shift >= 8 || shift + masterShift > 6 ? 0 : 7 - (shift + masterShift));
 
-// ONE GRAB A FRAME, from the VBlank callback (driver.md §5.3): sixteen pairs
-// a grab is the same 960 pairs a second the two-grab host carried, in half as
-// many bus stops.
+// ONE GRAB A FRAME, from the VBlank callback (driver.md §6.6): sixteen pairs
+// a grab, 960 pairs a second.
 export const SGDK_PAIRS_PER_GRAB = 16;
 
 /** The converter's configuration for an engine image descriptor (live/src/engine-images.js). */

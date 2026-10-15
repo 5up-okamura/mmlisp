@@ -62,8 +62,8 @@ const MASTER_OUTPUT_GAIN = 4.0;
 // engine steps), on FM6's scale — the chip's DAC latch is (byte - 0x80) * 2 —
 // so the voices add up to the FM6 tap wherever the engine's sum does not
 // saturate.
-export const SCOPE_FM_CHANNELS = 6; // scope indices 0-5 (FM6 = DAC when on)
-export const SCOPE_PSG_CHANNELS = 4; // scope indices 6-9 (tone 1-3, noise)
+const SCOPE_FM_CHANNELS = 6; // scope indices 0-5 (FM6 = DAC when on)
+const SCOPE_PSG_CHANNELS = 4; // scope indices 6-9 (tone 1-3, noise)
 export const SCOPE_PCM_CHANNELS = 3; // scope indices 10-12 (PCM voices 1-3)
 export const SCOPE_CHANNELS = SCOPE_FM_CHANNELS + SCOPE_PSG_CHANNELS + SCOPE_PCM_CHANNELS;
 const SCOPE_PCM_BASE = SCOPE_FM_CHANNELS + SCOPE_PSG_CHANNELS;

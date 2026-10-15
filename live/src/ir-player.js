@@ -72,6 +72,28 @@ const DRIVER_SWEEP_CURVES = new Set([
 // The tracks a playback takes from the IR: the song's (every track but an
 // effect's part), or one effect's parts alone — renumbered, since a track's
 // index is its id here.
+// The NOTE_ON macro args _scheduleFmOpMacros runs, keyed as makeNoteArgs
+// writes them (fm_tl1 → FM_TL1). :vel and :vol are the note's level, scheduled
+// with it (_scheduleFmLevelMacros); these are the channel's other targets.
+const OP_MACRO_MAP = [
+  ["pan", "PAN"],
+  ["fm_alg", "FM_ALG"],
+  ["fm_fb", "FM_FB"],
+  ["fm_ams", "FM_AMS"],
+  ["fm_fms", "FM_FMS"],
+  ...[1, 2, 3, 4].flatMap((op) =>
+    ["TL", "AR", "DR", "SR", "RR", "SL", "ML", "DT", "KS", "AMEN", "SSG"].map(
+      (f) => [`fm_${f.toLowerCase()}${op}`, `FM_${f}${op}`],
+    ),
+  ),
+];
+
+// An FM operator target's field in the shadow register file (_readParam).
+const OP_REG_FIELD = {
+  TL: "voicedTl", AR: "ar", DR: "dr", SR: "d2r", RR: "rr",
+  SL: "sl", ML: "mul", DT: "dt", KS: "rs", AMEN: "amen", SSG: "ssg",
+};
+
 export function songOrEffectIr(ir, se) {
   const tracks = (ir?.tracks ?? []).filter((t) => (se == null ? !t.se : t.se?.index === se));
   if (tracks.length === (ir?.tracks ?? []).length) return ir;
@@ -99,7 +121,7 @@ function drvBpm(bpm) {
 // Control-flow and timing events do not represent a sounding position, so they
 // must not move the editor playhead highlight. Without this, a zero-duration
 // loop (e.g. `#loop (go loop)` with no notes) fires MARKER/JUMP at the
-// scheduler's max rate and the highlight flickers on `go` / `#loop` / `score`.
+// scheduler's max rate and the highlight flickers on `go` / `#loop`.
 const PLAYHEAD_SKIP_CMDS = new Set([
   "MARKER",
   "TRIG",
@@ -124,9 +146,9 @@ function gcd(a, b) {
   return a;
 }
 
-// Scaled-macro sample (§4.4): `(sample × depth) >> 8`, depth = slot low byte
-// (0..255), toward zero. Kept byte-identical with drv-player's copy and the
-// Z80 mul16x8_sh8 path so all three players agree.
+// Scaled-macro sample (language.md §7.0): `(sample × depth) >> 8`, depth =
+// slot low byte (0..255), toward zero. Kept byte-identical with drv-player's
+// copy and the sequencer's scale_macro_sample so all three players agree.
 function scaleMacroSample(sample, slotValue) {
   const depth = (slotValue & 0xff) >>> 0;
   const mag = (Math.abs(sample) * depth) >> 8;
@@ -166,10 +188,11 @@ export class IRPlayer {
     this._loopCount = new Map(); // loopId → iteration count
     this._eventIndex = 0;
     this._currentTick = 0;
-    this._ppqn = 48;
+    this._ppqn = 96; // the IR's own (ir.md §2)
     this._bpm = 120;
     this._tempoSweep = null;
     this._tempoOverride = false; // set once the tempo is dialled in live
+    this._schedGen = 0; // bumped whenever a track's next event moves
     this._startAudioTime = 0;
     this._frameOrigin = 0; // audio time of frame 0 (the sweep frame grid)
     this._audioContext = null;
@@ -340,11 +363,11 @@ export class IRPlayer {
     // mixer's mute has to hold the timer rather than key the channel off.
     this._csmTrack = (irObj.tracks ?? []).findIndex((t) =>
       (t.events ?? []).some((e) => e.cmd === "CSM_ON"));
-    this._ppqn = irObj.ppqn ?? 48;
+    this._ppqn = irObj.ppqn;
     this._bpm = this._resolveInitialTempo(irObj);
     this._tempoSweep = null;
     this._tempoOverride = false; // a newly loaded score starts at its own tempo
-    // v0.5 dynamic value slots: name → current value, seeded from def-val inits.
+    // Dynamic value slots (§8): name → current value, seeded from def-val inits.
     // The host (or live UI) mutates these via setVal(); scores read them with
     // $name and PARAM_FROM_VAL / PARAM_ADD / PARAM_MUL.
     this._vals = {};
@@ -403,6 +426,7 @@ export class IRPlayer {
       t.startAudioTime = this._startAudioTime;
       t.loopCount = 0;
       t.flatIndex = 0;
+      this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
     }
 
     this._onRunStart?.();
@@ -637,6 +661,7 @@ export class IRPlayer {
         tr.startAudioTime = start;
         tr.loopCount = 0;
         tr.flatIndex = 0;
+        this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
       }
       this._chaseWatch = watchLine == null ? null : { line: watchLine, time: null };
       for (;;) {
@@ -941,12 +966,14 @@ export class IRPlayer {
       t.audioTimeAtTick0 = newTick0;
       t.loopCount = 0;
       t.flatIndex = 0;
+      this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
       // Resume at the boundary tick (loops fast-forward in _scheduleStep).
       while (
         t.flatIndex < t.events.length &&
         t.events[t.flatIndex].tick < boundaryTick
       ) {
         t.flatIndex++;
+        this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
       }
     }
     // Suppress any incoming write before the boundary (loop catch-up) so the new
@@ -1172,6 +1199,7 @@ export class IRPlayer {
             track.startAudioTime +
             track.loopCount * track.loopDuration * this._secsPerTick;
           track.flatIndex = track.loopStartIndex ?? 0;
+          this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
           continue;
         }
         return Infinity;
@@ -1223,6 +1251,7 @@ export class IRPlayer {
         }
       }
       track.flatIndex++;
+      this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
     }
   }
 
@@ -1233,7 +1262,7 @@ export class IRPlayer {
    * deterministic transcript of every YM2612/PSG write — the basis for VGM
    * export.
    *
-   * Tracks loop independently (each `(goto …)` returns that track to its own
+   * Tracks loop independently (each `(go …)` returns that track to its own
    * label), and a track may have an intro before its label — so loop-start
    * ticks differ per track. The single VGM loop point must be where *every*
    * track has entered its repeating body, i.e. the LATEST loop-start tick among
@@ -1328,6 +1357,7 @@ export class IRPlayer {
         t.startAudioTime = BASE;
         t.loopCount = 0;
         t.flatIndex = 0;
+        this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
       }
 
       const looping = this._tracks.filter((t) => t.hasLoop);
@@ -1444,7 +1474,7 @@ export class IRPlayer {
 
       // For looped playback, restart from the last backward JUMP target marker
       // (a backward jump is one whose target marker tick < the JUMP tick).
-      // Forward jumps (e.g. event-recovery goto) are ignored for loop detection.
+      // Forward jumps (a `(go …)` to a later label) are ignored for loop detection.
       let jumpTick = -1;
       let jumpTarget = null;
 
@@ -1457,8 +1487,8 @@ export class IRPlayer {
       }
 
       // Pick the backward JUMP with the smallest target tick (outermost / main loop).
-      // Multiple backward JUMPs can exist (e.g. goto-calm + goto-recover); the one
-      // that jumps furthest back defines the structural loop boundary.
+      // Multiple backward JUMPs can exist (two `(go …)` to different labels);
+      // the one that jumps furthest back defines the structural loop boundary.
       let bestTargetTick = Infinity;
       for (let i = 0; i < events.length; i++) {
         if (events[i].cmd === "JUMP") {
@@ -1490,8 +1520,8 @@ export class IRPlayer {
         }
       }
 
-      // Truncate events after the backward JUMP so post-loop branch sections
-      // (e.g. event-recovery #recover) are not played in normal linear flow.
+      // Truncate events after the backward JUMP so sections past it (reached
+      // only by a jump to their label) are not played in normal linear flow.
       const trimmedEvents =
         jumpTick >= 0 ? events.filter((ev) => ev.tick <= jumpTick) : events;
 
@@ -1514,9 +1544,9 @@ export class IRPlayer {
 
       return {
         events: trimmedEvents,
-        // Where its tempo changes sit, for lengths spanning one (_timeAfterTicks).
         // Where the track's last note or rest runs out.
         endTick: trimmedEvents.reduce((m, e) => Math.max(m, e.tick + (Number(e.args?.length) || 0)), 0),
+        // Where its tempo changes sit, for lengths spanning one (_timeAfterTicks).
         tempoIdx: trimmedEvents.flatMap((e, i) => (e.cmd === "TEMPO_SET" && e.tick > 0 ? [i] : [])),
         tempoCut: trimmedEvents.flatMap((e, i) =>
           (e.cmd === "TEMPO_SET" || e.cmd === "TEMPO_SWEEP") && e.tick > 0 ? [i] : []),
@@ -1894,9 +1924,11 @@ export class IRPlayer {
     // than its rate note is cut by the next one.
     let runFrames = frames;
     const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
-    const next = track?.events
-      .slice(track.flatIndex + 1)
-      .find((e) => e.cmd === "CSM_RATE" && e.args?.run === undefined);
+    let next = null;
+    for (let i = (track?.flatIndex ?? 0) + 1; track && i < track.events.length; i++) {
+      const e = track.events[i];
+      if (e.cmd === "CSM_RATE" && e.args?.run === undefined) { next = e; break; }
+    }
     if (next && next.tick < ev.tick + lenTicks) {
       const nextWhen = when + (next.tick - ev.tick) * this._secsPerTick;
       runFrames = Math.max(1, this._eventFrame(nextWhen) - this._eventFrame(when));
@@ -1988,7 +2020,7 @@ export class IRPlayer {
         );
         const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
         const chKey = (port << 2) | chOffset; // 0x28 channel key
-        const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
+        const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
         // Monophonic priority: macro tails (echo/retrigger/curve) are cut a
@@ -2222,9 +2254,10 @@ export class IRPlayer {
         break;
       }
 
-      // v0.5 dynamic values (Tier 0/1). Resolved at dispatch time; with the
-      // Web Audio look-ahead this trails live setVal() by the scheduler window
-      // — acceptable for the reference player (the Z80 driver resolves per tick).
+      // A `$slot` write (§8). Resolved at dispatch time; with the Web Audio
+      // look-ahead this trails live setVal() by the scheduler window —
+      // acceptable for the reference player (the driver reads the slot as the
+      // event runs).
       case "PARAM_FROM_VAL": {
         const value = this._resolveSrc(ev.args?.src, when);
         this._applyParam(
@@ -2432,7 +2465,7 @@ export class IRPlayer {
     // next note on the track, which re-instantiates them; a :keyon retrigger
     // restarts the level envelopes, as it does on FM and PSG.
     const { keyon, velMacro, vol: volMacro } = ev.args ?? {};
-    const lengthTicks = ev.args?.length ?? this._ppqn / 2;
+    const lengthTicks = ev.args.length;
     const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const { secs: nextNote } = this._nextNote(ev);
@@ -2642,7 +2675,7 @@ export class IRPlayer {
     return Number(operand) || 0;
   }
 
-  // v0.5 dynamic macro params: resolve a curve spec's dynamic :from/:to/:rate
+  // Dynamic macro params: resolve a curve spec's dynamic :from/:to/:rate
   // (spec.dyn = { from?, to?, rate? } slot names) to current slot values at
   // `when` (note-on) — one read per note, so the value is constant for the
   // note. Returns { from, to, params } with the dynamic fields overridden.
@@ -2674,14 +2707,14 @@ export class IRPlayer {
       : Math.max(1, Math.round(Number(rawFrames) * this._secsPerTick * 60));
   }
 
-  // Read a target's current stored value from chRegs (the shadow register file)
-  // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
-  // base so a relative TL op composes with vel/vol attenuation.
   // The FM3 operator an event's track drives (0 = not an operator track).
   _fm3OpOf(ev) {
     return ev?._trackIndex != null ? (this._tracks[ev._trackIndex]?.fm3Op ?? 0) : 0;
   }
 
+  // Read a target's current stored value from chRegs (the shadow register file)
+  // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
+  // base so a relative TL op composes with vel/vol attenuation.
   _readParam(ch, target, fm3Op = 0) {
     const regs = this._chRegs[ch];
     if (!regs) return 0;
@@ -2689,11 +2722,7 @@ export class IRPlayer {
     if (fm3Op && t === "NOTE_PITCH") return this._fm3Op[fm3Op - 1].offset;
     const m = t.match(/^FM_([A-Z]+)([1-4])$/);
     if (m) {
-      const FIELD = {
-        TL: "voicedTl", AR: "ar", DR: "dr", SR: "d2r", RR: "rr",
-        SL: "sl", ML: "mul", DT: "dt", KS: "rs", AMEN: "amen", SSG: "ssg",
-      };
-      const f = FIELD[m[1]];
+      const f = OP_REG_FIELD[m[1]];
       return f ? (regs.ops[+m[2] - 1]?.[f] ?? 0) : 0;
     }
     switch (t) {
@@ -2988,7 +3017,7 @@ export class IRPlayer {
       }
 
       case "VOL": {
-        // The score's fader (a :vol macro is the note's level instead, §7.2).
+        // The score's fader (a :vol macro is the note's level instead, §6).
         // FM3 independent-OP: :vol on an fm3-N track is THAT operator's fader;
         // on the shared (fm3 …) track it is the group fader over all four
         // (driver.md §13.4).
@@ -3103,7 +3132,7 @@ export class IRPlayer {
   // steps, and each track's next TEMPO_SETs at their projected times, in time
   // order. Cached per scheduler state (a change dispatched moves them).
   _tempoChangesAhead() {
-    const key = `${this._bpm}|${this._tempoSweep?.steps.length ?? 0}|${this._tracks.map((t) => t.flatIndex).join(",")}`;
+    const key = `${this._bpm}|${this._tempoSweep?.steps.length ?? 0}|${this._schedGen}`;
     if (this._tempoAheadKey !== key) {
       const list = [...(this._tempoSweep?.steps ?? [])];
       if (!this._tempoOverride) {
@@ -3140,10 +3169,6 @@ export class IRPlayer {
       }
     }
     return out;
-  }
-
-  _nextNoteSecs(ev) {
-    return this._nextNote(ev).secs;
   }
 
   // The next NOTE_ON on this track: when it lands, and whether it slurs into
@@ -3216,8 +3241,9 @@ export class IRPlayer {
   }
 
   // A glide ended by its target's next write before it ran its length.
-  _glideCut(ev) {
-    return this._resolveSweepEndTick(ev) < ev.tick + Math.max(1, ev.args?.frames ?? 1);
+  // `endTick`: the sweep's end, when the dispatch has resolved it already.
+  _glideCut(ev, endTick = this._resolveSweepEndTick(ev)) {
+    return endTick < ev.tick + Math.max(1, ev.args?.frames ?? 1);
   }
 
   _resolveSweepEndTick(ev) {
@@ -3285,8 +3311,7 @@ export class IRPlayer {
 
   // Frames a sweep runs. Given its start time, counted on the driver's frame
   // grid: every frame from the one it starts in up to the one its end falls in.
-  _resolveSweepBudgetFrames(ev, when = null) {
-    const endTick = this._resolveSweepEndTick(ev);
+  _resolveSweepBudgetFrames(ev, when = null, endTick = this._resolveSweepEndTick(ev)) {
     const secsPerTick = this._secsPerTick;
     if (when != null) {
       const endWhen = when + Math.max(0, endTick - ev.tick) * secsPerTick;
@@ -3303,13 +3328,14 @@ export class IRPlayer {
   //   nonLoopStartFrame – absolute frame index at start of this iteration
   //   iterFrames        – how many frames to actually write (capped to remaining sweep)
   //   loopPhaseOffset   – phase offset for looping curves (sin/tri/saw/…)
+  //   endTick           – the sweep's end tick, resolved once for the dispatch
   _sweepFrameParams(ev, baseFrames, loop, when = null) {
     const secsPerTick = this._secsPerTick;
+    const endTick = this._resolveSweepEndTick(ev);
     const budgetFrames = Math.min(
-      this._resolveSweepBudgetFrames(ev, when),
+      this._resolveSweepBudgetFrames(ev, when, endTick),
       loop ? Infinity : Math.max(1, baseFrames), // an unbounded one-shot: its length
     );
-    const endTick = this._resolveSweepEndTick(ev);
     const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
     const spansLoopBoundary =
       track != null && endTick >= ev.tick + (track.loopDuration ?? 0);
@@ -3328,11 +3354,11 @@ export class IRPlayer {
           Math.min(loopDurationFrames, budgetFrames, baseFrames - nonLoopStartFrame),
         )
       : budgetFrames;
-    return { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset };
+    return { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset, endTick };
   }
 
   // Resolve a NOTE_ON `step` spec ({ unit, value }) to seconds per step.
-  // Absent → 1/60 s (the pre-:step 60 Hz rate).
+  // Absent → one frame (1/60 s), the default :step.
   _stepSecs(stepSpec) {
     if (!stepSpec) return 1 / 60;
     if (stepSpec.unit === "tick")
@@ -3419,7 +3445,7 @@ export class IRPlayer {
       };
     }
 
-    // Scaled macro (§4.4, frame tier): a value slot is a per-frame depth knob.
+    // Scaled macro (§7.0): a value slot is a per-frame depth knob.
     // Wrap every scheduled value with `(sample × slot) >> 8`, reading the slot
     // per step (the driver reads it live per frame). Applies to every target
     // uniformly, matching drv-player's pre-dispatch scale of the raw sample.
@@ -3652,34 +3678,8 @@ export class IRPlayer {
       when,
       gateTicks,
     );
-    // :vel and :vol are the note's level, scheduled with it
-    // (_scheduleFmLevelMacros); these are the channel's other targets.
-    const OP_MACRO_MAP = {
-      pan: "PAN",
-      master: "MASTER",
-      lfo_rate: "LFO_RATE",
-      fm_alg: "FM_ALG",
-      fm_fb: "FM_FB",
-      fm_ams: "FM_AMS",
-      fm_fms: "FM_FMS",
-      ...Object.fromEntries(
-        [1, 2, 3, 4].flatMap((op) => [
-          [`fm_tl${op}`, `FM_TL${op}`],
-          [`fm_ar${op}`, `FM_AR${op}`],
-          [`fm_dr${op}`, `FM_DR${op}`],
-          [`fm_sr${op}`, `FM_SR${op}`],
-          [`fm_rr${op}`, `FM_RR${op}`],
-          [`fm_sl${op}`, `FM_SL${op}`],
-          [`fm_ml${op}`, `FM_ML${op}`],
-          [`fm_dt${op}`, `FM_DT${op}`],
-          [`fm_ks${op}`, `FM_KS${op}`],
-          [`fm_amen${op}`, `FM_AMEN${op}`],
-          [`fm_ssg${op}`, `FM_SSG${op}`],
-        ]),
-      ),
-    };
     const retrigs = this._envRetrigs;
-    for (const [key, target] of Object.entries(OP_MACRO_MAP)) {
+    for (const [key, target] of OP_MACRO_MAP) {
       const spec = noteArgs[key];
       if (!spec) continue;
       const t = target; // capture for closure
@@ -3900,7 +3900,7 @@ export class IRPlayer {
         ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
         : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
     const loop = !!ev.args?.loop;
-    const { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset } =
+    const { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset, endTick } =
       this._sweepFrameParams(ev, baseFrames, loop, when);
 
     // NOTE_PITCH: must track future NOTE_ON base pitches so per-frame frequency
@@ -3966,7 +3966,7 @@ export class IRPlayer {
       // offset that the note holds and every later NOTE_ON inherits (glide never
       // resets pitchOffset; `(glide none)` only stops future glides). Snap to the
       // final value so the note reaches true pitch and nothing leaks past it.
-      if (ev.args?.bounded && !this._glideCut(ev)) {
+      if (ev.args?.bounded && !this._glideCut(ev, endTick)) {
         const endWhen = when + budgetFrames / 60;
         if (opState) {
           opState.offset = to;
@@ -4558,12 +4558,12 @@ export class IRPlayer {
         }
 
         const isNoise = psgCh === 3;
-        const baseLengthTicks = ev.args?.length ?? this._ppqn / 2;
+        const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
         // Monophonic priority: cut this note's macro tail a key-off lead before
         // the next note on this channel.
-        const psgNextNote = this._nextNoteSecs(ev);
+        const psgNextNote = this._nextNote(ev).secs;
         const psgMacroLimit = Number.isFinite(psgNextNote)
           ? psgNextNote - KEY_OFF_LEAD_SECS
           : Infinity;
@@ -4734,10 +4734,10 @@ export class IRPlayer {
               : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
           const loop = !!ev.args?.loop;
           const framesPerTick = secsPerTick * 60;
-          const { budgetFrames, loopPhaseOffset } =
+          const { budgetFrames, loopPhaseOffset, endTick } =
             ev.cmd === "PARAM_SWEEP"
               ? this._sweepFrameParams(ev, baseFrames, loop, when)
-              : { budgetFrames: 1, loopPhaseOffset: 0 };
+              : { budgetFrames: 1, loopPhaseOffset: 0, endTick: undefined };
           const track =
             ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
           let baseMidi = this._psgCurrentMidi[psgCh] ?? 60;
@@ -4794,7 +4794,7 @@ export class IRPlayer {
           }
           // Bounded glide: snap to the exact target so a short glide that ends
           // mid-slope leaves no residual offset for later notes (see the FM path).
-          if (ev.args?.bounded && !this._glideCut(ev)) {
+          if (ev.args?.bounded && !this._glideCut(ev, endTick)) {
             this._psgPitchOffset[psgCh] = to;
             this._psgSetPitch(psgCh, baseMidi + to / 100, when + budgetFrames / 60);
           }

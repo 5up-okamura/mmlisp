@@ -15,7 +15,7 @@ const ch = (kind, name) => ({ kind, name });
 const fm = (n, from = 1) => Array.from({ length: n }, (_, i) => ch("fm", `FM${i + from}`));
 const sn = [ch("psg", "SQ1"), ch("psg", "SQ2"), ch("psg", "SQ3"), ch("noise", "Noise")];
 const nes = [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Triangle"), ch("noise", "Noise"), ch("pcm", "DPCM")];
-export const DMF_SYSTEMS = {
+const DMF_SYSTEMS = {
   0x02: { name: "Genesis", channels: [...fm(6), ...sn] },
   0x42: { name: "Genesis (ext. CH3)", channels: [...fm(2), ch("fm3op", "FM3 OP1"), ch("fm3op", "FM3 OP2"),
     ch("fm3op", "FM3 OP3"), ch("fm3op", "FM3 OP4"), ...fm(3, 4), ...sn] },

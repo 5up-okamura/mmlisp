@@ -48,6 +48,7 @@ static void mml_copy(uint8_t *dst, const uint8_t *src, uint16_t n) {
 #define PCM_VOL 3
 #define PCM_RETARGET 4
 #define PCM_MASTER 5
+#define PCM_START_BANKED 6
 
 /* Channel ids beyond the 10 register channels (mmb.md §6.1). */
 #define CH_PCM1 20
@@ -481,7 +482,7 @@ static uint16_t psg_period_for(int note, int cents) {
   fold_cents(&note, &cents);
   if (cents == 0) return MML_PSG_PERIOD[note];
   /* Period falls as pitch rises, so the numerator stays non-negative — the
-   * same form the asm uses, which is what keeps all three players bit-equal. */
+   * same form drv-player.js uses, which is what keeps the players bit-equal. */
   int p0 = MML_PSG_PERIOD[note];
   int diff = p0 - MML_PSG_PERIOD[note + 1];
   int p = p0 - mml_divs(mml_muls((int16_t)diff, (int16_t)cents) + 50, 100); /* |diff| < 1024 */
@@ -517,7 +518,7 @@ static void write_noise_cfg(MMLSeq *s) {
   psg_byte(s, (uint8_t)(0x80 | (3 << 5) | (s->noise_mode & 7)));
 }
 
-/* ── FM3 independent-OP mode (driver.md §5.1, opcodes 0xA3/0xA4) ───────────
+/* ── FM3 independent-OP mode (driver.md §13.4, opcodes 0xA3/0xA4) ──────────
  * In CH3 special mode ($27 bit6) the channel's four operators carry independent
  * F-numbers and key bits. The four operator tracks are channel ids 16-19;
  * channel 2 is the shared CH3 (patch + channel level).
@@ -891,7 +892,7 @@ static int read_slot(const MMLSeq *s, uint8_t slot) {
 }
 
 /* The logical current value of a target, for the read-modify-write PARAM_ADD
- * takes. Op-param fields mirror the Z80's read_op_param: the family selects
+ * takes. Op-param fields mirror drv-player's _readParam: the family selects
  * the field, the low two bits the operator — reading state the sequencer
  * already keeps, so a relative write has a real base instead of a silent 0. */
 static int read_param(const MMLSeq *s, int ch, int target) {
@@ -963,7 +964,7 @@ static void write_timer_a(MMLSeq *s, int period) {
 }
 
 /* ── Sweep slots ──────────────────────────────────────────────────────────── */
-/* A channel's sweep bank: the ten M1 channels are their own, the three PCM
+/* A channel's sweep bank: the ten register channels (0-9) are their own, the three PCM
  * voices follow them (their loop points sweep like any other param), then
  * FM3's four operators (ids 16-19) — a glide on an fm3-N track bends that
  * operator alone. -1 = no bank. */
@@ -1126,7 +1127,7 @@ static int vel_release_pending(const MMLSeq *s, int ch) {
   return 0;
 }
 
-/* Scaled-macro sample (§4.4): `(sample x depth) >> 8`, depth = the slot's low
+/* Scaled-macro sample (mmb.md §15): `(sample x depth) >> 8`, depth = the slot's low
  * byte. Magnitude-then-resign, so the truncation is toward zero and matches
  * sweep_value — all three players agree bit for bit. */
 static int scale_macro_sample(int sample, int slot_value) {
@@ -1216,7 +1217,7 @@ static void write_note_semi(MMLSeq *s, int ch, int semi, int add) {
   }
 }
 
-/* KEYON retrigger (driver.md §14): re-attack the note. Restart the channel's
+/* KEYON retrigger (driver.md §13): re-attack the note. Restart the channel's
  * envelope macros — level and timbre, the soft envelope — and, on FM, re-key
  * the hardware EG. PSG has no hardware EG, so there the macro restart is the
  * whole effect. :pitch and :semi run on: a retriggered arp keeps its place;
@@ -1619,7 +1620,7 @@ static void pcm_restart(MMLSeq *s, int vi) {
   uint16_t start, end, wrap;
   pcm_points(v, &start, &end, &wrap);
   uint8_t c[11];
-  c[0] = s->pcm_banked ? 6 : PCM_START;
+  c[0] = s->pcm_banked ? PCM_START_BANKED : PCM_START;
   c[1] = (uint8_t)vi;
   c[2] = pcm_shift_byte(v);
   put16(c + 3, start);
@@ -2215,9 +2216,8 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         t->pc += 3;
         break;
       default:
-        /* Fail-safe, like the Z80's unknown-opcode rule (mmb.md §13): stop the
-         * track rather than mis-decode a length and walk into noise. M2/M3
-         * opcodes land here until they are ported. */
+        /* Fail-safe, the unknown-opcode rule (mmb.md §13): stop the track
+         * rather than mis-decode a length and walk into noise. */
         t->running = 0;
         if (!s->stopped) {
           s->stopped = 1;
@@ -3402,7 +3402,7 @@ int mml_se_playing(const MMLSeq *s, uint8_t se) {
  *
  * A track's first frame is its setup — VOICE_SET, PARAM_SETs — and every write
  * of it has to cross the wire before the first note can sound behind it
- * (driver.md §15.3: ~30 writes a channel, 960 a second). Run at load, while
+ * (driver.md §4.1: ~30 writes a channel, 960 a second). Run at load, while
  * nothing plays, the setup reaches the chip early: each track is started, its
  * leading setup dispatched up to the first note, and stopped again before
  * it sounds. The real start later does everything it always did; the change-

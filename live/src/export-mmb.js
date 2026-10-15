@@ -3,23 +3,24 @@ import { bankedEngineImage } from "./engine-banked-images.js";
 // MMB v0.4 export
 //
 // Lowers compiled IR (docs/ir.md) into the MMB binary container (docs/mmb.md,
-// docs/opcodes.md) the Z80 driver decodes in place. Follows the export-vgm.js
-// pattern: pure function, IR in → Uint8Array out, plus a diagnostics list for
-// everything the M1 stream cannot carry (macro specs, dynamic sweep endpoints)
-// so the caller can warn instead of silently degrading.
+// docs/opcodes.md) the 68000 sequencer reads in place. Follows the
+// export-vgm.js pattern: pure function, IR in → Uint8Array out, plus a
+// diagnostics list for everything the stream cannot carry as written (a
+// slot-fed curve param baked to its init, a macro it cannot lower, a sample
+// with no baked entry) so the caller can warn instead of silently degrading.
 //
 // Key lowerings (see docs/opcodes.md):
 // - Time: tick-stamped IR events → delta/duration stream. NOTE_ON/REST/TIE/
 //   PCM_NOTE_ON advance the clock; clock gaps (e.g. notes dropped by :prio
 //   flattening) are filled with synthesized RESTs.
-// - vel/gate: Option B — NOTE_ON carries {note, dur}; vel and gate become
+// - vel/gate: NOTE_ON carries {note, dur}; vel and gate become
 //   sticky track state via PARAM_SET VEL / PARAM_SET GATE (gate in eighths of
 //   dur). A gate that is not an exact eighth uses NOTE_ON_EX with an absolute
 //   tick gate.
 // - Pitch: note names → u8 MIDI at compile time (pitchToMidi).
 // - Tempo: BPM → 8.8 tick increment (bpmToTickIncrement); BPM is metadata.
-// - Sweep lengths: IR tick lengths → 60 Hz frames at the tempo active at the
-//   event's tick (a global tick→BPM timeline is prescanned from TEMPO events).
+// - Sweep lengths: IR tick lengths → frames (at the score's frame rate) at the
+//   tempo active at the event's tick (a global tick→BPM timeline is prescanned from TEMPO events).
 // ---------------------------------------------------------------------------
 
 import {
@@ -110,9 +111,8 @@ export const MACRO_ARG_KEYS = new Set([
 // ── Loop-invariant VOICE_SET hoist ─────────────────────────────────────────
 // mucom-style scores carry the voice at the loop head (`#loop @psg003`), so every
 // iteration re-applies the same 29 registers. Change-only suppression drops all of
-// those chip writes, but the driver still pays the per-register shadow bookkeeping
-// — measured at ~30k Z80 cycles per track, which put a 7-track import's loop frame
-// at 4.4× the 59,659-cycle frame budget and made the loop audibly stumble.
+// those chip writes, but the sequencer still walks the whole entry against its
+// shadow on every pass, for every track that does it (driver.md §10.1).
 //
 // When the loop body cannot disturb the channel's voiced state, that VOICE_SET can
 // be emitted BEFORE the marker: pass 1 still applies it and the backward JUMP lands
@@ -408,8 +408,9 @@ export function encodeMmb(ir, opts = {}) {
   // Every distinct lowered macro is interned once and referenced by id from
   // MACRO_SET. Lowers the `steps`, `curve`, and `stages` forms onto i8 targets
   // that ride the PARAM_SET apply path; curve/stages are pre-sampled at the
-  // :step clock (driver.md §13). The special targets (NOTE_PITCH i16,
-  // NOTE_SEMI, KEYON) and dynamic (val-slot) params are still dropped.
+  // :step clock (driver.md §13). NOTE_PITCH carries i16 values (flags bit0);
+  // NOTE_SEMI and KEYON are macro-only targets the driver resolves itself. A
+  // slot-fed curve param is baked to the slot's init (W_MMB_DYN_BAKED).
   const macroRegistry = new Map(); // canonical key → { id, target, flags, step, loopStart, release, values }
 
   // The :step clock: frames (default 1f), or ticks of the note's track (flags
@@ -602,14 +603,14 @@ export function encodeMmb(ir, opts = {}) {
     if (!spec || typeof spec !== "object") return null;
     const lowered = lowerMacro(spec, target, trackLabel);
     if (!lowered) return null;
-    // Scaled macro (v0.6 §4.4, frame tier): a value slot is a per-frame depth
+    // Scaled macro (mmb.md §15, driver.md §13.2): a value slot is a per-frame depth
     // knob; the driver writes `(sample × slot) >> 8`. The slot id rides one byte
     // appended after this macro's value blob (descriptor stays 8 bytes), gated
     // by flags bit2. An unknown slot degrades to a plain (override) macro.
     const scaleSlot = spec.scale != null ? slotId(spec.scale, trackLabel) : null;
     // bit0 = i16 values (cents); bit1 = additive (`:pitch+`/`:semi+` — the driver
     // composes each sample with the channel's live pitch offset, driver.md §8);
-    // bit2 = scaled (§4.4). The intern key folds in `flags` + the scale slot, so
+    // bit2 = scaled (mmb.md §15). The intern key folds in `flags` + the scale slot, so
     // additive/override/scaled and distinct slots intern separately.
     // bit3 = the :step clock is the note's track ticks (driver.md §13.2).
     const flags =
@@ -635,9 +636,8 @@ export function encodeMmb(ir, opts = {}) {
 
   // VOICE_TABLE coalescing (driver.md §10): fold full-voice PARAM_SET bursts
   // into deduplicated 29-byte entries + VOICE_SET. Plans are keyed by track
-  // index; a null plan means the track has no coalescable voice. ON by default
-  // (the Z80 VOICE_SET handler landed in ovl_voice); pass
-  // opts.voiceCoalesce === false to force the raw PARAM_SET burst.
+  // index; a null plan means the track has no coalescable voice. ON by default;
+  // pass opts.voiceCoalesce === false to force the raw PARAM_SET burst.
   const voices = opts.voiceCoalesce !== false ? planVoices(ir) : { table: [], plans: new Map() };
   // Which loop-head VOICE_SETs move above their marker (see planVoiceHoists).
   // opts.voiceHoist === false keeps them in the loop body — an A/B switch for
@@ -1137,11 +1137,11 @@ export function encodeMmb(ir, opts = {}) {
             );
             break;
           }
-          // Dynamic endpoints (§4.6, note-on tier): the `flags` byte marks
-          // from/to as slot ids (bit1/bit2); the field then holds the slot id in
-          // its low byte, and the driver reads the slot at sweep-dispatch time
-          // (drv-player _startSweep / Z80 d_param_sweep). `:rate`/`:len` slots
-          // are not lowered yet — they stay baked to the slot init (warned).
+          // Dynamic endpoints (opcodes.md §6, note-on tier): the `flags` byte
+          // marks from/to as slot ids (bit1/bit2); the field then holds the slot
+          // id in its low byte, and the driver reads the slot at sweep-dispatch
+          // time (drv-player _startSweep, mmlispseq.c). A slot-fed `:len` is
+          // baked to the slot's init and a `:rate` has no field (warned below).
           let from = targetValue(a.target, a.from);
           let to = targetValue(a.target, a.to);
           let flags = a.loop ? 1 : 0;
@@ -1414,9 +1414,9 @@ export function encodeMmb(ir, opts = {}) {
     payload: metadata.bytes,
   });
 
-  // SAMPLE_BANK is NOT an MMB section — the PCM blobs (the 32K-wall term) live
-  // in a separate ROM bank the mixer latches per frame (docs/mmb.md §10), so the
-  // control MMB stays small. buildSampleBank returns the whole bank image
+  // SAMPLE_BANK is NOT an MMB section — the PCM blobs live in their own ROM
+  // resource, read through the Z80's bank window (docs/mmb.md §10, driver.md
+  // §5.4), so the control MMB stays small. buildSampleBank returns the whole bank image
   // (entry table + blobs); the host loads it into a bank and publishes its
   // number. The MMB references samples by id (PCM_NOTE_ON) as before.
   const usesPcm = (ir.tracks ?? []).some((t) =>
@@ -1434,9 +1434,9 @@ export function encodeMmb(ir, opts = {}) {
     // ship a ROM that plays garbage. A mucom bank import is the usual way to
     // hit it: trim `:frames`, drop unused samples, or lower `:rate`.
     //
-    // THE BANK IS A WHOLE 32 KB, AND ITS TOP PAGE IS SILENCE (mmb.md §10, R28
-    // §63.3 D2). The engine's one voice parks at window $FF00 when its sample
-    // ends and reads from there until the next start, so bank offset $7F00..
+    // THE BANK IS A WHOLE 32 KB, AND ITS TOP PAGE IS SILENCE (mmb.md §10). A
+    // PCM voice parks at window $FF00 when its sample ends and reads from there
+    // until the next start (driver.md §5.3), so bank offset $7F00..
     // $7FFF must be zero (the bank holds signed bytes; 0 is silence) — whatever
     // rescomp happens to place after the blob in ROM is not. That is why the
     // payload may reach $7F00 only, and why the file is padded to $8000.
@@ -1544,7 +1544,7 @@ export function encodeMmb(ir, opts = {}) {
     file.raw(s.payload);
   });
 
-  // M1 constraint (mmb.md §12): the whole MMB must fit one 32KB bank window;
+  // The whole MMB must fit one 32KB bank window (mmb.md §12);
   // WIDE_OFFSETS multi-bank streaming is reserved, not implemented.
   if (file.length > 0x8000) {
     throw new RangeError(
@@ -1874,11 +1874,10 @@ export function createSampleBankBuilder(rateHz, { dedup = false } = {}) {
           const id = entryIdFor.get(`${name}|${note}`);
           if (id !== undefined) return id;
           // A NOTE THAT REACHES A NON-BAKED ENTRY CANNOT BE PLAYED IN TUNE. The
-          // engine's mixer has no resampler: it advances a whole number of bytes a
-          // tick and takes that number from the entry, so an entry whose increment
-          // carries a fraction plays at the wrong pitch and says nothing about it.
-          // Both paths below hand back exactly such an entry, so both are errors
-          // rather than the warnings they were when a fraction still worked.
+          // engine has no resampler: a voice plays one byte a sample (driver.md
+          // §5.3), so a note sounds at the pitch its entry was baked for
+          // (mmb.md §10.1) and says nothing about it. Both paths below hand back
+          // an entry baked for another note, so both are errors.
           const fb = fallbackFor.get(name);
           if (fb !== undefined) {
             diag("error", "E_MMB_UNBAKED_NOTE",

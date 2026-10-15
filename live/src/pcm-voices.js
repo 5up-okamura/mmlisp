@@ -5,11 +5,12 @@
 //                   (npm run c-gate): its slots carry exactly these commands
 //   ir-player.js    the browser's IR playback: the same commands, sent to the
 //                   worklet's PcmLiveEngine, so a score previews with the
-//                   driver's levels, loop rounding and loop-point moves (D0)
+//                   driver's levels, loop rounding and loop-point moves
+//                   (driver.md §14.3)
 //
 // It owns no timing and no bank: a caller resolves the note to its blob and
 // says when. Everything it decides comes out as a slot-format PCM command
-// (driver.md §6.2) through `emit`:
+// (driver.md §6.3) through `emit`:
 //
 //   [PCM_START, v, shift, src u16, end u16, wrap u16]
 //   [PCM_VOL, v, shift]           [PCM_RETARGET, v, end u16, wrap u16]
@@ -21,14 +22,14 @@ import {
   PCM_MASTER_MAX_SHIFT,
   PCM_TOTAL_MAX_SHIFT,
 } from "./mmb.js";
-import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
+import { PCM_START, PCM_START_BANKED, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
 import { pcmNotePoints, PCM_WINDOW } from "./pcm-model.js";
 import { velFine, VEL_FINE, VEL_FINE_MAX } from "./ir-utils.js";
 
 
 const u16le = (x) => [x & 0xff, (x >> 8) & 0xff];
 
-export function newPcmVoice() {
+function newPcmVoice() {
   return {
     started: false, // a START has been sent since load: PCM_VOL is worth sending
     looping: false, // the running note loops; a note-off sends its release
@@ -65,7 +66,7 @@ export function newPcmVoice() {
 }
 
 /** A voice's four points, resolved: [rs, re, ls, le] in baked bytes, unclamped. */
-export function pcmVoicePoints(v) {
+function pcmVoicePoints(v) {
   const re = v.rKind === "END" ? v.rBound : v.rs + v.rBound;
   const ls = v.lsSet ? v.ls : v.rs;
   const le = v.lKind === "END" ? v.lBound : v.lKind === "LEN" ? ls + v.lBound : re;
@@ -253,7 +254,7 @@ export class PcmIrVoices {
     this.seq = new PcmVoices(c => {
       if (bank.multibank && c[0] === PCM_START) {
         const b = this.seq.voices[c[1]].bank;
-        c = [6, ...c.slice(1), b & 255, b >> 8];
+        c = [PCM_START_BANKED, ...c.slice(1), b & 255, b >> 8];
       }
       emit(c);
     });

@@ -12,10 +12,12 @@ plays is `docs/mmb.md` / `docs/opcodes.md`; integrating it into a game is
                       for the host by the gates
 68k/mmlpairs.{c,h}    the frame → {op, val} pair converter (driver.md §6.6)
 68k/tables.c          GENERATED constant tables (tools/gen-c-tables.mjs)
-68k/mml_rate.h        GENERATED engine images' rate stamps (tools/gen-c-tables.mjs)
+68k/mml_rate.h        GENERATED single-bank images' rate stamps (tools/gen-c-tables.mjs)
+68k/mml_banked_rate.h GENERATED banked images' rate stamps (tools/emit-banked.mjs)
 68k/*_main.c          host harnesses for c-gate and pairs-gate
 sgdk/mmlispdrv.{c,h}  the SGDK host: engine bring-up, the pumps, the API
-sgdk/mmlispdrv_bin.h  GENERATED engine images + ABI constants (tools/emit-bin.mjs)
+sgdk/mmlispdrv_bin.h  GENERATED single-bank engine images + ABI constants (tools/emit-bin.mjs)
+sgdk/mmlispdrv_banked_bin.h  GENERATED block-banked engine images (tools/emit-banked.mjs)
 sgdk/example/         a minimal player program
 engine/               the Z80 engine generator: config, the slot schedule and the
                       pair expander (gen-stream), the tables (lut)
@@ -48,15 +50,15 @@ npm run verify:all
 
 | gate | what it proves |
 | --- | --- |
-| `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same engine images, and the two generated files are what the images build to now |
+| `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same single-bank images, and every generated artifact — those three and the banked ones (`sgdk/mmlispdrv_banked_bin.h`, `68k/mml_banked_rate.h`, `live/src/engine-banked-images.js`) — is what the generators build now |
 | `selftest` | the assembler and the emulator against their own cases |
 | `voice-hoist` | the voice-hoist pass moves time, never notes: every onset stays put and every moved voice write lands in silence, over the corpus and the SGDK example |
-| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, over every score in the corpus (the gate prints the count it ran) |
+| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, over the corpus — every `tests/*.mmlisp` but the claim-gate twins (`corpus()` in `c-gate.mjs`) — and the SGDK example's bundle; the gate prints the count it ran |
 | `c-gate:pal` | the same corpus on PAL-baked streams — the sequencer reads no frame rate, and this is what keeps it that way |
 | `claim-gate` (and `:pal`) | a channel changes hands cleanly: modulators do not outlive their owner, and a part an effect displaced comes back exactly when the effect ends (driver.md §2.2, §2.5) |
-| `pairs-gate` | `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame |
+| `pairs-gate` | over c-gate's corpus: the C sequencer's frames in write order ≡ the reference's; `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, leads 0–2, one/two grabs a frame (a banked score's pairs are `banked:gate`'s); the SGDK host's frame-view path ≡ the record path |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
-| `engine:gate` | the three engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
+| `engine:gate` | the three single-bank engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
 | `engine:score` | real scores through the image each names, driven by the host model: FM writes per port, PSG bytes, DAC bytes, the clock, PCM-vs-FM sync |
 | `verify:ab` | the drv-player ↔ ir-player A/B signatures (`tests/ab-baseline.json`) |
 | `glide-gate` | a glide longer than its note slides on from where the pitch (or CSM rate) is — no jump at any key-on — and a note that does not glide starts at its own pitch (`tests/m4-glide-lag`, `tests/m4-csm-glide`; language.md §14) |
@@ -76,7 +78,9 @@ npm run sgdk:profile -- <score.mmlisp> [--pc] [--peak N]       # where the 68000
 Other tools: `npm run engine:gate:negatives` (the light gate's own faults
 must fail), `npm run emit-images` (regenerate `live/src/engine-images.js`),
 `npm run pcm-render -- <score> [--seconds N] [--out F.wav]` (the score's PCM as
-the DAC plays it, for listening; into `out/pcm-render/`), and `npm run
+the DAC plays it, for listening; into `out/pcm-render/`), `npm run pcm-trace --
+<score> [--frames N] [--list N]` (what both sequencers tell the PCM voices,
+decoded, for a score that sounds wrong on the machine), and `npm run
 light-study` (the highest rate the generator places at each voice count — where
 the images' periods come from).
 
@@ -89,6 +93,10 @@ the images' periods come from).
 | `probe-analysis.mjs` | reading the probe BlastEm's event log |
 | `build-engine.mjs`, `emit-bin.mjs` | assemble the generated engine; emit the images' header |
 | `build-multibank.mjs`, `emit-banked.mjs`, `multibank-*.mjs` | the multi-bank engine: build, emit its headers, model, run and render it |
+| `multibank-render.mjs` | a score's banked PCM through the banked engine model, as a WAV (a listening aid; its sample file is not a production `.smp`) |
+| `banked-sgdk-gate.mjs` | the banked host on BlastEm: the SGDK example built with a score, graded against the engine model and the sequencer (`banked:sgdk`, below) |
+| `gen-test-sample.mjs` | writes `tests/pcmbank.wav`, the synthesized PCM fixture the loop gates play |
+| `pcm-trace.mjs` | the PCM commands from both sequencers for one score, decoded and checked (`npm run pcm-trace`) |
 | `bundle.mjs` | several scores against one sample bank (a game's songs) |
 | `emit-images.mjs` | the light images' descriptors into `live/src/engine-images.js` |
 | `gen-c-tables.mjs`, `c-tables.mjs` | the sequencer's tables — into the tree, or into a gate's temp directory |
@@ -130,5 +138,7 @@ score for that lag: FM chords keyed with a three-voice kit, with voice changes.
 `--lead N` builds the host with `MMLISP_LEAD=N` (frames rendered ahead of their
 release) and `--ahead N` with `MMLISP_AHEAD=N` (pairs past the engine's index a
 grab writes at), to compare a score's timing at other settings.
-The `multibank:*` tools drive the standalone prototype that preceded the
-integration; `multibank:render` is a listening aid, not a production `.smp`.
+`multibank:render` renders a score through the banked engine model alone —
+a listening aid; the sample file it writes is not a production `.smp`.
+`multibank:rom` builds a standalone BlastEm ROM that replays a score's
+precomputed frames through the banked engine, without the C sequencer.

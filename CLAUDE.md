@@ -40,12 +40,16 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `midi-input.js`                | Web MIDI: keys play/step-input the preview, CCs drive panel sliders (MIDI Learn) |
 | `ai-bridge.js`                  | Tools > Connect to AI: the page's end of the link to the MCP server (`tools/mcp/`) |
 | `live/api/` (Vercel functions)  | Short share links: `/api/share` stores a score, `/s/<id>` opens it (Upstash Redis) |
-| `nuked-opn2.js`, `nuked-psg.js` | YM2612 / PSG cores (WASM, built from `third_party/` via `wasm/`) |
+| `voice-hoist.js`               | The IR pass that moves a voice change's register burst ahead of its note |
+| `offline-cache.js`             | Fills the service worker's cache so the installed app runs offline |
+| `../nuked-opn2.js`, `../nuked-psg.js` | YM2612 / PSG cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
 `export-mmb.js` (IR → MMB v0.4 + the sample bank), `mmb-voices.js` and
 `mmb-dedup.js` (voice entries, stream dedup), `slot-builder.js` and
-`engine-images.js` (the per-frame slot stream and the engine images),
+`engine-images.js` (the per-frame slot stream and the engine images;
+`engine-banked-images.js` and `pcm-banked-model.js` are the multi-bank
+engine's images and its PCM model),
 `drv-player.js` (JS reference driver), and `ab-compare.js` (register-log A/B)
 in the same directory. PCM has
 one model for every consumer: `pcm-voices.js` (the sequencer's voice model)
@@ -88,7 +92,8 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 ```
 
 The driver has gates — `cd drv && npm run verify:all` must be green — and
-`cd tools && npm run check:mmlisp-strict` checks the compiler. To write or
+`cd tools && npm run check:mmlisp-strict` (with `check:cheatsheet`,
+`check:reference` and `check:sample-fx`) checks the compiler. To write or
 check a score as an AI, use the `mmlisp` MCP server (`/.mcp.json`,
 `tools/mcp/README.md`): it compiles with diagnostics, renders WAV, serves the
 docs and snippets, and — with Tools > Connect to AI on — edits and plays the

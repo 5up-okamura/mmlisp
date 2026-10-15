@@ -1,5 +1,5 @@
 /**
- * MMLisp source parser — ES module port of tools/scripts/mmlisp_parser.js.
+ * MMLisp source parser: tokenize and parse into a generic list/atom AST.
  * No Node.js dependencies; input is a string, output is an AST array.
  */
 

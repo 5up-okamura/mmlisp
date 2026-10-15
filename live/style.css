@@ -273,7 +273,6 @@
     }
     #editorWrap .cm-scroller { overflow: auto; }
     #editorWrap .cm-content { color: var(--foreground); }
-    #editorWrap .cm-activeLine { background: transparent; }
     #editorWrap .cm-gutters {
       background: var(--background);
       border-right: none;
@@ -584,6 +583,7 @@
     }
     #log .err { color: var(--error); }
     #log .info { color: var(--foreground); }
+    #log .warn { color: var(--accent); }
 
     /* ---- right panel ---- */
     #rightPanel {

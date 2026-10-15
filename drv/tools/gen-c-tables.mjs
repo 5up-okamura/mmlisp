@@ -8,8 +8,8 @@
 //   node tools/gen-c-tables.mjs [--out DIR]
 //
 // `--out` exists because the VERIFICATION tools compile these files too, and
-// every one of them used to regenerate them in place and leave the tree
-// modified. The DEFAULT still writes drv/68k, which is what install-sgdk.mjs
+// must not regenerate them in place and leave the tree modified. The DEFAULT
+// writes drv/68k, which is what install-sgdk.mjs
 // copies from and what a product build reads; the gates pass a directory of
 // their own (tools/c-tables.mjs).
 import { mkdirSync, writeFileSync } from "node:fs";

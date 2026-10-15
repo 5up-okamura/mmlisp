@@ -6,10 +6,10 @@
 // Reuses IRPlayer.captureRegisterLog() — the same time-ordered {sec,port,addr,
 // data} log that feeds VGM export — so timing/loop detection is shared.
 //
-// Loop handling (per the user's spec): if the piece has an authored loop, play
-// the intro + 2 full loop bodies, then begin a 4-second fadeout as the 3rd body
-// starts, and stop. Total = loopStart + 2*P + fadeSec (P = loop period). A
-// one-shot piece renders once with no fade.
+// Loop handling: if the piece has an authored loop, play the intro + 2 full
+// loop bodies, then begin a 4-second fadeout as the 3rd body starts, and stop.
+// Total = loopStart + 2*P + fadeSec (P = loop period). A one-shot piece renders
+// once with no fade.
 //
 // PCM, given the score's bank: the same mixed DAC stream VGM export embeds
 // (export-vgm.js renderPcmDac), fed to the YM2612's DAC at the engine's rate
@@ -37,7 +37,7 @@ const DEFAULT_FADE_SEC = 4;
  *             psgWrites:Array<{frame:number,data:number}>,
  *             totalFrames:number, fadeStartFrame:number|null }}
  */
-export function buildTimeline(capture, sampleRate, fadeSec = DEFAULT_FADE_SEC) {
+function buildTimeline(capture, sampleRate, fadeSec = DEFAULT_FADE_SEC) {
   const { writes, loopStartSec, endSec } = capture;
   const looping = loopStartSec != null;
   const P = looping ? endSec - loopStartSec : 0;
@@ -96,17 +96,21 @@ export function buildTimeline(capture, sampleRate, fadeSec = DEFAULT_FADE_SEC) {
 /**
  * Render the timeline to stereo float buffers via the shared MegaDriveSynth
  * core. Writes are applied sample-accurately through the renderInto onFrame
- * callback (the offline path has no realtime constraint); the DAC stays off.
+ * callback (the offline path has no realtime constraint). With `dac` (the
+ * PCM stream, see renderWav) the DAC is claimed at its first byte and fed from
+ * it; without, the DAC stays off. It renders in slices and yields between
+ * them, so a page that runs it stays responsive; `onProgress(0..1)` follows.
  *
  * @returns {Promise<{ L: Float32Array, R: Float32Array }>}
  */
-export async function renderSamples(
+async function renderSamples(
   fmWrites,
   psgWrites,
   totalFrames,
   sampleRate,
   lpfOn,
   dac = null,
+  onProgress = null,
 ) {
   const synth = await MegaDriveSynth.create(sampleRate);
   synth.setLpf(lpfOn);
@@ -131,8 +135,7 @@ export async function renderSamples(
 
   let fmI = 0;
   let psgI = 0;
-  synth.renderInto(L, R, totalFrames, (frame) => {
-    if (frame === dacStartFrame) synth.setDacEnabled(true);
+  const onFrameAt = (frame) => {
     while (fmI < fmWrites.length && fmWrites[fmI].frame <= frame) {
       const op = fmWrites[fmI++];
       synth.writeYM(op.port, op.addr, op.data);
@@ -140,13 +143,23 @@ export async function renderSamples(
     while (psgI < psgWrites.length && psgWrites[psgI].frame <= frame) {
       synth.writePSG(psgWrites[psgI++].data);
     }
-  }, getDacByte);
+    // After the frame's writes: the player's boot writes $2B = 0 at time 0,
+    // which would turn a DAC claimed in the same frame back off.
+    if (frame === dacStartFrame) synth.setDacEnabled(true);
+  };
+  const slice = Math.max(1, Math.round(sampleRate / 4));
+  for (let at = 0; at < totalFrames; at += slice) {
+    const n = Math.min(slice, totalFrames - at);
+    synth.renderInto(L.subarray(at, at + n), R.subarray(at, at + n), n, (i) => onFrameAt(at + i), getDacByte);
+    onProgress?.((at + n) / totalFrames);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 
   return { L, R };
 }
 
 /** Linear gain ramp 1->0 across [fadeStartFrame, totalFrames). In place. */
-export function applyFade(L, R, fadeStartFrame, totalFrames) {
+function applyFade(L, R, fadeStartFrame, totalFrames) {
   const fadeLen = totalFrames - fadeStartFrame;
   if (fadeLen <= 0) return;
   for (let i = fadeStartFrame; i < totalFrames; i++) {
@@ -203,7 +216,8 @@ export function encodeWav(L, R, sampleRate) {
  *
  * @param {IRPlayer} player  player with IR already loaded
  * @param {{ sampleRate?:number, lpfOn?:boolean, fadeSec?:number,
- *           pcm?:{bank:Uint8Array, entryIds:object, pcmVoices:number} }} [opts]
+ *           pcm?:{bank:Uint8Array, entryIds:object, pcmVoices:number},
+ *           onProgress?:(fraction:number)=>void }} [opts]
  *        `pcm` is the score's bank (see export-vgm.js renderPcmDac)
  * @returns {Promise<{ bytes:Uint8Array, pcmCount:number, durationSec:number }>}
  */
@@ -226,6 +240,7 @@ export async function renderWav(player, opts = {}) {
     sampleRate,
     lpfOn,
     dac && { ...dac, loopStartSec: capture.loopStartSec, endSec: capture.endSec },
+    opts.onProgress ?? null,
   );
   if (tl.fadeStartFrame != null) {
     applyFade(L, R, tl.fadeStartFrame, tl.totalFrames);

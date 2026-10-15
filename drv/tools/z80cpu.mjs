@@ -6,9 +6,8 @@
 // assembler and emulator are developed in lockstep, and an unexpected byte
 // means a real bug, not something to limp past.
 //
-// Timing is NOT cycle-accurate (the M1 trace harness is frame-driven, not
-// cycle-driven); step() returns rough documented cycle counts for later
-// budget estimates only.
+// Timing: step() returns each instruction's documented T-states (Zilog Z80 CPU
+// User Manual). Memory wait states and bus arbitration are not modeled.
 //
 // Interrupts: IM 1 only (Mega Drive Z80 vblank). intRequest() raises /INT,
 // accepted when IFF1 is set (with the standard one-instruction EI delay),
@@ -16,11 +15,10 @@
 //
 // /INT IS A PULSE, NOT A LATCH. The VDP holds the Z80's /INT low for ONE
 // SCANLINE and then drops it — a vblank the Z80 does not take inside that
-// window is GONE, and no amount of `ei` later brings it back. This used to be
-// latched here, which made a `di` of any length free: the interrupt was always
-// waiting when it lifted. It is not, and a driver with a `di` longer than the
-// pulse silently stops advancing frames on hardware while every harness in
-// this repo reports it healthy. Pass the pulse width to intRequest() (default
+// window is GONE, and no amount of `ei` later brings it back. A latched model
+// would make a `di` of any length free — the interrupt always waiting when it
+// lifted — and a driver with a `di` longer than the pulse would silently stop
+// advancing frames on hardware while every harness reported it healthy. Pass the pulse width to intRequest() (default
 // INT_PULSE) and call decay() with each step's cycles to model it.
 
 // One scanline of asserted /INT: 3420 master clocks / 15.
@@ -378,9 +376,9 @@ export class Z80Cpu {
     if ((op & 0xc7) === 0x05) { const r = (op >> 3) & 7; this.setR(r, this.dec8(this.getR(r))); return r === 6 ? 11 : 4; }
     // ANY (HL) OPERAND COSTS THE MEMORY CYCLE. `ld r,(hl)`, `ld (hl),r` and
     // `alu a,(hl)` are 7 T-states, not 4, and `ld (hl),n` is 10, not 7 — the
-    // register code 6 is a memory access, not a register. This was 4/7 here for
-    // the life of the tool, which under-reported EVERY loop that touches memory
-    // through HL by 3 cycles apiece: the PCM mixer's `ld a,(hl)` and
+    // register code 6 is a memory access, not a register. Costing it as a
+    // register would under-report EVERY loop that touches memory through HL by
+    // 3 cycles apiece: the PCM mixer's `ld a,(hl)` and
     // `add a,(hl)` are exactly that, and so is every pad calibrated against
     // them. Documented timings, Zilog Z80 CPU User Manual.
     if ((op & 0xc7) === 0x06) { const r = (op >> 3) & 7; this.setR(r, this.fetch()); return r === 6 ? 10 : 7; }

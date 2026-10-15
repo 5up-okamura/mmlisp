@@ -86,8 +86,8 @@ named collection of tracks; the game starts and stops tracks individually
 **Channel ownership rule:** when a newly started track claims a channel
 already owned by a running track, the running track is released on that
 channel — with its release tail if the voice defines one (key-off, envelope
-runs out), otherwise immediately. The channel state records the owning
-track id (§4.3) to arbitrate this.
+runs out), otherwise immediately. The owner is found by walking the tracks:
+the running, unsuspended track on that channel.
 
 **Claiming a channel wipes its modulators.** The new owner finds the channel's
 macro binds cleared, its running macro slots dropped and its sweep slots
@@ -510,12 +510,10 @@ PCM voices have their own state (§14).
 | pan (i8 −1/0/1) | |
 | key-off countdown | ticks; sentinel = none/held |
 | pitch offset | cents, i16 |
-| owner track id | channel-ownership arbitration, §2.2 |
 | algorithm | selects the carrier mask |
 | voiced TL × 4 ops | level-composition base |
-| fade counters | Bresenham N/V/err/cur + frames-left |
 | sweep engine | 2 slots × {target, curve, flags, phase, from, to, len, step} |
-| macro engine | up to 8 binds + 8 running slots × {descriptor idx, step clock, cursor, state} (`MML_MACRO_BINDS`; the exporter budgets 3, §13) |
+| macro engine | up to 8 binds + 8 running slots × {descriptor idx, step clock, cursor, state} (`MML_MACRO_BINDS`, §13.1) |
 
 **Song state**: the master level, the LFO rate, the 16 val slots (§6.4), and
 one sweep slot each for MASTER, LFO_RATE and VAL0–15 (`MML_GLOBAL_SWEEPS` =
@@ -534,18 +532,21 @@ song's 16 (one a channel) and as many effect parts again.
 | tick accumulator, tempo increment | 8.8 (§3.1); an effect part keeps its own increment (§2.5) |
 | wait_ticks | until the next timed dispatch |
 | control stack | 4 × {ptr, count}; LOOP entries carry the remaining count, CALL entries are tagged |
-| fade counter | |
+| fade counters | Bresenham N/err/vol/cur + frame (`MMLisp_fadeTrack`, §6.5) |
 | trig status byte | `(trig N)` sync: id in bits 5-0, a 2-bit firing counter above it; read with `MMLisp_trig()` (opcodes.md §0x42) |
 
 ## 5. The Z80 Engine
 
 The engine is generated, not hand-written: `drv/engine/gen-stream.mjs`
 generates it and `drv/tools/build-engine.mjs` assembles one image per PCM voice
-count. `drv/sgdk/mmlispdrv_bin.h` carries the three images and every address
-below as an ABI constant; `live/src/engine-images.js` carries the same
-descriptors for the exporter and the browser. The images share the RAM map, the
-state block and the op layout; they differ only in voice count, rate, lap and
-expander steps.
+count; `drv/engine/gen-multibank.mjs` generates the block-banked images (§5.4).
+`drv/sgdk/mmlispdrv_bin.h` carries the three single-bank images and every
+address below as an ABI constant, `drv/sgdk/mmlispdrv_banked_bin.h` the six
+banked ones; `live/src/engine-images.js` and `engine-banked-images.js` carry
+the same descriptors for the exporter and the browser. The images share the
+RAM map (banked additions below), the state block and the op layout; they
+differ in voice count, rate, lap, expander steps, where in the lap the voices'
+work sits (`lightAt`, `xpSlots`) and the IDLE pairs a generation needs.
 
 | image | PCM voices | DAC period (Z80 cycles) | rate | lap (samples) | expander steps a lap | IDLE pairs after a generation |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -583,7 +584,8 @@ PCM normally plays on `pcm1`, which is also its FM/PSG writer.
 
 ### 5.2 RAM map
 
-The same for the three images.
+The same for every image, except that the banked images keep their voices'
+bank state at `$1E00–$1E0D`.
 
 | Region | Address | Contents |
 | ------ | ------- | -------- |
@@ -593,7 +595,8 @@ The same for the three images.
 | — | `$1B00–$1BFF` | unused |
 | sample ring | `$1C00–$1CFF` | finished samples, 18 ahead of the DAC |
 | pair page | `$1D00–$1DFF` | 128 `{op, val}` pairs (`MMLISPDRV_FIFO`, §6.1) |
-| — | `$1E00–$1EFF` | unused |
+| banked state | `$1E00–$1E0D` | banked images only: each voice's pointer and bank, the bank target; unused on the single-bank images |
+| — | `$1E0E–$1EFF` | unused |
 | globals | `$1F00–$1F7F` | the PCM state block at `$1F30` (`MMLISPDRV_STATE`, §6.1), the pair index at `$1F6D` (`FIFO_LO`), the ready mark at `$1F6E` (`0xD2`) |
 | stack | `$1F80–$1FFF` | |
 
@@ -678,7 +681,7 @@ slots, writes IDLE over each pair it consumed, and publishes its next position
 
 | op | effect |
 | --- | --- |
-| `$00`..`$1F` | STORE: `(PCM_STATE + op) := val` — `$00` is a bucket (IDLE) |
+| `$00`..`$1F`, `$21` | STORE: `(PCM_STATE + op) := val` — `$00` is a bucket (IDLE); the banked images take the voices' bank bytes at `$1C`–`$1F` and `$21` (§5.4) |
 | `$20` | PORT: the YM port the RAW pairs after it go to |
 | `$22`..`$B6` | RAW: a YM register write on the current port |
 
@@ -737,19 +740,20 @@ Opcode-first, every address resolved by the sequencer (§14).
 
 | Op | Name | Payload |
 | -- | ---- | ------- |
-| 0x01 | `PCM_START` | voice u8, shift u8, src u16, end u16, wrap u16 — 8 B |
-| 0x03 | `PCM_VOL` | voice u8, shift u8 |
-| 0x04 | `PCM_RETARGET` | voice u8, end u16, wrap u16 — a release, or a loop point moved |
-| 0x05 | `PCM_MASTER` | shift u8 — sent when the master's shift moves, not when `master` does |
-| 0x06 | `PCM_START_BANKED` | voice u8, shift u8, src u16, end u16, wrap u16, bank u16 — 10 B; multi-bank profile only |
+| 0x01 | `PCM_START` | voice u8, shift u8, src u16, end u16, wrap u16 — 9 B with the opcode |
+| 0x03 | `PCM_VOL` | voice u8, shift u8 — 3 B |
+| 0x04 | `PCM_RETARGET` | voice u8, end u16, wrap u16 — 6 B; a release, or a loop point moved |
+| 0x05 | `PCM_MASTER` | shift u8 — 2 B; sent when the master's shift moves, not when `master` does |
+| 0x06 | `PCM_START_BANKED` | voice u8, shift u8, src u16, end u16, wrap u16, bank u16 — 11 B; multi-bank profile only |
 
 `shift` is the voice's attenuation 0–4 on the 6 dB grid; **8 means mute**.
 `src`, `end` and `wrap` are window addresses (§5.3).
 
 ### 6.4 Val slots
 
-16 × i16 in 68k RAM, initialized from the score's VAL_TABLE at track start and
-thereafter written by the host (`MMLisp_setVal`, read back with
+16 × i16 in 68k RAM, seeded from the score's VAL_TABLE when the score is
+loaded (a load resets them; starting a track does not) and thereafter written
+by the host (`MMLisp_setVal`, read back with
 `MMLisp_getVal`) and by the score, whose PARAM ops address slot n as the
 target VAL*n* (opcodes.md §7). Slot index = VAL_TABLE index; the score's
 `:public` slots come first (language.md §8), and the MMB names only those
@@ -769,14 +773,14 @@ sequencer only stores and applies (docs/language.md §8).
 | `MMLisp_loadScore(mmb)` | load a score (resets the sequencer; one score at a time) and prime it (§4.1); `MMLisp_isSettled()` says when the load has gone out |
 | `MMLisp_attachInterrupts()` | install the pump (§6.6) as the VBlank callback; a game with its own calls `MMLisp_pump()` once a frame instead. The horizontal interrupt is not touched |
 | `MMLisp_frame()` | once per frame in the main loop, after the control calls: render ahead (§3.1); takes no bus |
-| `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), reset the channel's level state (vel 15, vol 31, master 31, gate 8), and initialize declared val slots not yet host-written (mmb.md §8). Restarting an active track restarts it from the top. The track sounds from the frame the call is drained in (§4.2) |
+| `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), and reset the channel's level state (vel 15, vol 31, master 31, gate 8); val slots are left as they are (§6.4). Restarting an active track restarts it from the top. The track sounds from the frame the call is drained in (§4.2) |
 | `MMLisp_stopTrack(track)` | key-off (the release tail runs out naturally), free the channel, idle the track. On an `fm3-csm` track this clears the CSM bit in `$27` (§9). Stopping an SE restores the BGM it displaced (§2.5) |
 | `MMLisp_startSong()` | start every track of the song — all but the effects' parts — in one frame |
 | `MMLisp_playSe(se)` / `MMLisp_playSePrio(se, priority)` | play a def-se by number (`SE_<NAME>` in `inc/mmlisp_se.h`): each part takes its channel as below, at the def-se's priority or `priority`. `MMLisp_stopSe(se)` ends every part, `MMLisp_sePlaying(se)` says whether one runs, `MMLisp_seCount()` how many the score has |
 | `MMLisp_trackCount()` / `MMLisp_trackId(i)` | enumerate the loaded score's tracks |
 | `MMLisp_keyOff(channel)` | key-off one channel without stopping its track: releases a `len=0` hold (the dispatcher resumes) or truncates a sounding note |
 | `MMLisp_setParam(channel, target, value)` | one-shot absolute write of `target` (opcodes.md §7), as if a PARAM_SET arrived in the stream |
-| `MMLisp_fadeTrack(track, frames)` | step `master` down to 0 over `frames`, then stop |
+| `MMLisp_fadeTrack(track, frames)` | step the track's channel `vol` down to 0 over `frames`, then stop; `frames` 0 stops at once |
 | `MMLisp_setVal(slot, value)` / `MMLisp_getVal(slot)` | val slots (§6.4) |
 | `MMLisp_trig(track)` | the track's `(trig N)` status byte (opcodes.md §0x42). Poll it and compare with the byte you last saw: any difference is a trigger, including a repeat of the same id. It moves when the frame is **rendered**, which is `MMLISP_LEAD` frames before it is heard |
 | `MMLisp_needsSampleBank()` / `MMLisp_trackActive(track)` / `MMLisp_renderedFrames()` / `MMLisp_readStats(&stats)` | status; `MMLispStats` is the host's own counters and takes no bus grab (`drv/sgdk/README.md`) |
@@ -941,20 +945,19 @@ Both tables are generated **from the same code as `ir-utils.js`**
 (`midiToFnumBlock`, `PSG_MASTER_CLOCK`) and emitted as C arrays the 68k links
 (§12.6). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
 
-- **FM:** `FNUM_LUT[12]` u16, A-rooted so every entry falls in the 512–1023
-  window `midiToFnumBlock` normalizes to:
-  `[541,574,608,644,682,723,766,811,859,910,965,1022]` (A, A#, …, G#).
-  For MIDI note n: `index = (n + 3) mod 12`, `block = (n + 3)/12 − 1`.
-  Because the ideal F-number is exactly ×2 per octave, one rounded table +
-  block reproduces `midiToFnumBlock` output bit-exactly for all notes with
-  block 0–7 (MIDI 9–116); outside, block clamps and the F-number shifts
-  (sub/ultra-sonic; ±1 LSB tolerance there).
-- **PSG:** `PSG_PERIOD_LUT[72]` u16 for MIDI 45–116
-  (`period = round(3579545 / (32 × freq))`; MIDI 45/A2 → 1017). Notes below
-  45 clamp to period 1023, above 116 to the top entry.
-- Fractional pitch (cents — glide, vibrato, NOTE_PITCH sweeps) is applied as a
-  linear interpolation between adjacent LUT entries (F-number is near-linear
-  over one semitone; error < 1 cent).
+- **FM:** `MML_FNUM_BLOCK[128]` u16, indexed by the MIDI note number: each
+  entry is `(block << 11) | fnum`, exactly what `midiToFnumBlock` returns for
+  that note (F-number normalized into 512–1023 where the block range allows;
+  below MIDI 9 block 0 holds smaller F-numbers, from MIDI 105 up block 7
+  holds larger ones, up to the 2047 clamp).
+- **PSG:** `MML_PSG_PERIOD[128]` u16, indexed by the MIDI note number
+  (`period = round(3579545 / (32 × freq))`, clamped to 1023; MIDI 45/A2 →
+  1017, every note below 45 is 1023).
+- Fractional pitch (cents — glide, vibrato, NOTE_PITCH sweeps) is folded into
+  a whole note plus 0–99 cents and applied as a linear interpolation between
+  the note's entry and the next (`fnum_block_for` / `psg_period_for`; the
+  F-number is near-linear over one semitone, error < 1 cent). An interpolated
+  F-number past 1023 moves up a block.
 - **The F-number write is unconditional, not change-only.** The high byte
   (`$A4`–`$A6`) latches into a register the YM2612 shares across channels (and
   across ports, §6.1); the low-byte write (`$A0`–`$A2`) commits `{latch, low}`
@@ -1060,8 +1063,9 @@ three outcomes.
   on CH3 takes all of it — one effect's CH3 parts at a time, never shared
   with the song's.
 - **PAL:** supported by baking a second score (§3.3); one MMB plays correctly
-  on one standard. Banked PCM samples are baked at the selected NTSC or PAL
-  DAC rate. Legacy single-bank PCM retains its existing regional pitch difference.
+  on one standard. A single-bank PAL score's samples are baked at the NTSC DAC
+  rate, so they play at the NTSC image's rate on a PAL machine too; the banked
+  images have PAL rates of their own.
 - **Not yet run on hardware.** The images are graded in the JS machine
   (§12.4) and on BlastEm (§12.7); the slot that binds each rate has no margin,
   and the one wait the model charges from measurement — a read through the 68k
@@ -1162,8 +1166,9 @@ and repeats values; the sequencer is change-only and frame-quantized).
 Acceptance bands:
 
 - **±1 frame** timing skew on every state change and key edge.
-- **TL data exact** (both compose in the same quarter steps, §7);
-  **F-number low byte ±1** (LUT cent interpolation vs float pow).
+- **TL ($40–$4F) ±2** (the sequencer's integer tables vs the IR player's
+  float sum); **F-number low byte ±1** (LUT cent interpolation vs float pow);
+  **PSG tone period ±1**. Every other value exact.
 - **$28 key edges compare per channel** — cross-channel write order
   within one frame is player-specific and carries no meaning.
 - **Waiver — notes sounding across a TEMPO_SET**: the IR player
@@ -1172,8 +1177,8 @@ Acceptance bands:
   is the tick-exact one. Scores for exact A/B (ab-core) put tempo
   changes on all-track note boundaries.
 
-`drv/tests/ab-core.mmlisp` (exactly the M1 opcode set) diffs clean.
-Songs using M2/M3 features (macros, sweeps, PCM, CSM) diverge by construction —
+`drv/tests/ab-core.mmlisp` (the core opcodes only, opcodes.md §3) diffs clean.
+Songs using macros, sweeps, PCM or CSM diverge by construction —
 the exporter pre-samples curves that `ir-player` evaluates in continuous time —
 so `npm run verify:ab` (`drv/tools/ab-gate.mjs`) is a *characterization* gate:
 each corpus score's mismatch signature (count + digest) is frozen in
@@ -1217,8 +1222,10 @@ offsets, curve units) from `live/src/ir-utils.js`, and
 `tools/gen-c-tables.mjs` emits the same tables as C for the 68k
 (`drv/68k/tables.c`, and the images' rate stamps in `drv/68k/mml_rate.h`).
 Neither side re-derives a table. `npm run mirrors` checks that `mml_rate.h`, the
-engine header and `live/src/engine-images.js` describe the same images, and that
-the two generated files are what the images build to now.
+engine header and `live/src/engine-images.js` describe the same single-bank
+images, and that every generated artifact — those, and the banked images'
+`mmlispdrv_banked_bin.h`, `mml_banked_rate.h` and `engine-banked-images.js` —
+is what the generators build now.
 
 ### 12.7 On the machine
 
@@ -1247,7 +1254,7 @@ song's own channels, so what the machine runs is the whole suspend and restore.
 PCM effects, one preempted and one dropped by priority, every FM and PSG write
 in the reference's order and every DAC byte against the model.
 
-Measured, four scores across the three images:
+Measured, four scores across the three single-bank images:
 
 | | `m2-pcm` | `m4-pcm-2v-master` | `m4-pcm-3v` | `m4-pcm-loop-curve` |
 | --- | --- | --- | --- | --- |
@@ -1314,12 +1321,12 @@ region; `(wait key-off)` marks the release boundary).
   flags bit0 (i16), the value blob is 2 bytes per `:step` (cents, hold sentinel
   `0x8000`), and the stepper reads it wide and rides the PARAM_SET apply path.
   Gated by `m3-macro-pitch` on FM and PSG.
-- **Multiple macros per channel** run together (up to 3, keyed by target —
+- **Multiple macros per channel** run together (up to 8, keyed by target —
   e.g. a VOL envelope + a NOTE_PITCH vibrato + a NOTE_SEMI arpeggio): the active
   ids stay compact and insertion-ordered (matching drv-player's Map),
   `MACRO_SET` replaces same-target in place and appends a new target,
   `MACRO_CLEAR` removes one target (or all on `0xFF`), NOTE_ON instantiates
-  every active into its running slot, and the stepper steps all three. Gated by
+  every active into its running slot, and the stepper steps them all. Gated by
   `m3-macro-multi`.
 - **KEYON** (macro-only target, retrigger; gated by `m3-macro-keyon`): a nonzero
   step re-attacks the note — except the **first** one, which lands in the note's
@@ -1355,17 +1362,16 @@ informational for macros.
 `MACRO_SET {macro_id}` binds MACRO_TABLE[macro_id] as the **active macro for
 its target** on the track (sticky, replacing any active macro on that target);
 `MACRO_CLEAR {target}` clears one (`0xFF` = all). The channel
-holds up to **8** binds (`MML_MACRO_BINDS`, §4.3); the exporter keeps a song
-to 3. On **any** `NOTE_ON` the sequencer instantiates each
-active macro into a **running slot** (3 slots × {descriptor index, step clock,
-cursor, flags}); `NOTE_ON_EX` `macro_ref` adds a per-note one-shot. When a
-channel's active set would exceed 3, the *exporter* drops the extras with a
-`W_MMB_MACRO_SLOTS` warning (deterministic) — the driver never overflows.
+holds up to **8** binds (`MML_MACRO_BINDS`, §4.3); a `MACRO_SET` for a ninth
+target is ignored (deterministically, in both players). On **any** `NOTE_ON`
+the sequencer instantiates each active macro into a **running slot** (one per
+bind: {descriptor, step clock, cursor, state}); `NOTE_ON_EX` `macro_ref` adds
+a per-note one-shot.
 
 A bind belongs to the **channel**, not to the track that wrote it, so claiming
 the channel clears it (§2.2). A sound effect carries the displaced part's binds
-in its snapshot and re-instantiates them on the restore (§2.5); that snapshot
-holds the driver's own capacity, not the exporter's three.
+in its snapshot and re-instantiates them on the restore (§2.5); the snapshot
+holds all 8.
 
 ### 13.2 Per-frame stepping
 
@@ -1583,7 +1589,7 @@ of the note it precedes, and of the notes after it.
 
 Two things this needs, both of which the sequencer does:
 
-- **The sweep engine reaches the PCM voices.** Its banks are the ten M1
+- **The sweep engine reaches the PCM voices.** Its banks are the ten register
   channels, the three voices and FM3's four operators (`sweep_bank`,
   `MML_SWEEP_BANKS` = 17, twin `_sweepBank`).
 - **A RETARGET goes out only when the rounded block moves.** A sweep is

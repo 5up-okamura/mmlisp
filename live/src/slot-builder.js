@@ -1,10 +1,10 @@
-// The 68k → Z80 slot protocol (docs/driver.md §6.2).
+// The slot — the sequencer's frame in the gates' form (docs/driver.md §6.2).
 //
-// This is the single definition of the wire format, shared in spirit by
-// drv-player.js (the port spec) and the 68k C that replaces it. Keeping the
-// cap-and-spill queue here rather than inside either player is deliberate: the
-// interface is part of the spec, not an implementation detail, and the §12.2
-// gate compares slot streams.
+// This is the single JS definition of the slot, the one drv-player.js builds
+// and drv/68k/mmlispseq.c reproduces. Keeping the cap-and-spill queue here
+// rather than inside the player is deliberate: the format is part of the spec,
+// not an implementation detail, and the c-gate (driver.md §12.2) compares
+// slot streams.
 //
 // One slot is one frame:
 //
@@ -26,19 +26,18 @@
 // FrameRecorder), and pairs-gate holds that order to this reference. c-gate
 // still compares the two sequencers through the slot.
 
-export const SLOT_SIZE = 256;
+const SLOT_SIZE = 256;
 
-// Sub-ticks per frame: ONE — note onsets on the 60 Hz frame (driver.md §3.5,
-// retired 2026-09-14: the pair engine sent a frame's writes together, so the
-// sub-ticks were never heard, and they cost the 68000 ~6 points). Must equal
-// MML_SLOT_SUBS in drv/68k/mmlispseq.h. At 1 the format is the single-block one.
+// Sub-ticks per frame: a format parameter fixed at ONE — note onsets fall on
+// the frame (driver.md §3.5). Must equal MML_SLOT_SUBS in
+// drv/68k/mmlispseq.h. At 1 the format is the single-block one.
 export const SLOT_SUBS = 1;
 
-// Bounded by CYCLES, not bytes: the Z80's frame is shared with the PCM mixer,
-// and 95 is what the settled mixer configuration leaves (driver.md §5.3.1,
-// §6.2). A typical frame emits ~60 writes, so this binds only on voice changes
-// and score heads.
-export const SLOT_MAX_WRITES = 95;
+// The slot's cap (driver.md §4, §6.2): at most 95 writes a frame; the rest
+// lead the next slot, in order, never splitting an F-number pair. It belongs
+// to the gates' form only — the SGDK host takes a frame whole and uncapped —
+// and must equal MML_SLOT_MAX_WRITES in drv/68k/mmlispseq.h.
+const SLOT_MAX_WRITES = 95;
 
 // PCM voices a slot's commands can name (pcm1-pcm3).
 export const PCM_VOICES = 3;
@@ -54,8 +53,8 @@ export const PCM_START = 1;
 export const PCM_VOL = 3;
 export const PCM_RETARGET = 4;
 export const PCM_MASTER = 5;
-/** Command lengths by opcode; 0 = not a command. */
 export const PCM_START_BANKED = 6;
+/** Command lengths by opcode; 0 = not a command. */
 export const PCM_LEN = [0, 9, 0, 3, 6, 2, 11];
 
 // An F-number high byte ($A4-$A6, $AC-$AE) whose low byte is the next write.
@@ -104,12 +103,11 @@ export class SlotBuilder {
   /**
    * Close the frame and return its slot bytes.
    *
-   * The cap is a FRAME total — it bounds the Z80's cycles per frame, not per
-   * sub-slot — so the queue is walked once and the buckets fill in order.
-   * Excess writes stay queued IN ORDER and lead the next slot, so writes are
-   * never dropped and never reordered — the chip state always converges, and
-   * the only cost is that a key-on in a write-dense frame — a track start
-   * behind a long head among them — can land one frame late (driver.md §4.2).
+   * The cap is a FRAME total, not a sub-slot one, so the queue is walked once
+   * and the buckets fill in order. Excess writes stay queued IN ORDER and lead
+   * the next slot, so writes are never dropped and never reordered — the chip
+   * state always converges, and in the slot a key-on in a write-dense frame —
+   * a track start behind a long head among them — can land a frame late.
    */
   endFrame() {
     // A frame nobody sub-divided (the post-song drain) puts everything it can
@@ -154,10 +152,8 @@ export class SlotBuilder {
   }
 
   _encode(writes, marks) {
-    // n_writes leads: the engine charges its pacing pad for the frame's chip
-    // writes and needs the total at the frame head, before sub-slots 1..K-1
-    // exist on the chips. One byte here replaces the engine tallying every run
-    // as it goes, which is why the count is a field and not a derivation.
+    // n_writes leads: the frame's total, so a reader has it at the slot's head
+    // without walking the port runs.
     const out = [writes.length, this._pcm.length];
     for (const c of this._pcm) out.push(...c);
     let start = 0;

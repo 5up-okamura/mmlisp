@@ -16,7 +16,7 @@
 export const PPQN = 96; // must match mmlisp2ir.js
 /** The time base estimateGrid works in: onsets in samples at this rate. */
 export const RATE = 44100;
-export const WHOLE = PPQN * 4;
+const WHOLE = PPQN * 4;
 
 const NOTE_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
 
@@ -25,7 +25,7 @@ export const octOf = (midi) => Math.floor(midi / 12) - 1;
 export const noteName = (midi) => NOTE_NAMES[((midi % 12) + 12) % 12];
 
 /** A length in ticks as written after a note: `4`, `8.`, `3/2`, or `Nt`. */
-export function lenToken(d) {
+function lenToken(d) {
   if (d <= 0) return "0";
   // Denominators up to a 64th read as notes; finer is clearer in ticks.
   if (WHOLE % d === 0 && WHOLE / d <= 64) return String(WHOLE / d);
@@ -39,6 +39,18 @@ export function gcd(a, b) {
   a = Math.abs(a); b = Math.abs(b);
   while (b) [a, b] = [b, a % b];
   return a;
+}
+
+// The destinations an import's dialog offers, in channel order.
+export const FM_DESTS = ["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"];
+export const PSG_DESTS = ["sqr1", "sqr2", "sqr3"];
+export const PCM_DESTS = ["pcm1", "pcm2", "pcm3"];
+
+/** The first of the sorted `list` above `x` (`list.find((v) => v > x)`). */
+function firstAbove(list, x) {
+  let lo = 0, hi = list.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid] > x) hi = mid; else lo = mid + 1; }
+  return list[lo];
 }
 
 /** A string as an MMLisp string literal. */
@@ -75,7 +87,7 @@ export function barEnds(timeSigs, endTick) {
  *                defLen, oct, vel}
  * @returns {string[]} lines, one per bar
  */
-export function writeBody(notes, opts) {
+function writeBody(notes, opts) {
   const { bars = [], endTick, loopTick = null, marks = [], defLen } = opts;
   const bounds = new Set([...bars, endTick]);
   for (const m of marks) bounds.add(m.tick);
@@ -85,7 +97,7 @@ export function writeBody(notes, opts) {
   // a note there ends at the next bound rather than tie across it.
   if (opts.noTie) {
     notes = notes.map((n) => {
-      const b = sortedBounds.find((x) => x > n.tick) ?? endTick;
+      const b = firstAbove(sortedBounds, n.tick) ?? endTick;
       return n.tick + n.len > b ? { ...n, len: b - n.tick } : n;
     });
   }
@@ -169,11 +181,11 @@ export function writeBody(notes, opts) {
 }
 
 /** The most common piece length a body will write (the `:len` to set). */
-export function commonLen(notes, bars, endTick) {
+function commonLen(notes, bars, endTick) {
   const count = new Map();
   for (const n of notes) {
     // Count the piece up to the next bar end, as writeBody splits it.
-    const b = bars.find((x) => x > n.tick) ?? endTick;
+    const b = firstAbove(bars, n.tick) ?? endTick;
     const d = Math.min(n.len, b - n.tick);
     if (d > 0) count.set(d, (count.get(d) ?? 0) + 1);
   }
@@ -187,6 +199,14 @@ export function commonLen(notes, bars, endTick) {
   return best;
 }
 
+// The compiler's octaves run 0 up: a note below (a slide's tail, a deep
+// drum sweep) is folded up an octave at a time — written as it is, every
+// relative octave after it would land one too high.
+const playable = (m) => (m == null ? m : m < 12 ? playable(m + 12) : m > 127 ? playable(m - 12) : m);
+const inRange = (notes) => (notes.every((n) => n.midi == null || (n.midi >= 12 && n.midi <= 127)) ? notes
+  : notes.map((n) => ({ ...n, midi: playable(n.midi) })));
+const songInRange = (song) => ({ ...song, tracks: song.tracks.map((tr) => ({ ...tr, notes: inRange(tr.notes) })) });
+
 /**
  * The whole score.
  *
@@ -197,14 +217,6 @@ export function commonLen(notes, bars, endTick) {
  *   tracks: [{channel, head: string[], notes, marks?, vel?}]
  * }
  */
-// The compiler's octaves run 0 up: a note below (a slide's tail, a deep
-// drum sweep) is folded up an octave at a time — written as it is, every
-// relative octave after it would land one too high.
-const playable = (m) => (m == null ? m : m < 12 ? playable(m + 12) : m > 127 ? playable(m - 12) : m);
-const inRange = (notes) => (notes.every((n) => n.midi == null || (n.midi >= 12 && n.midi <= 127)) ? notes
-  : notes.map((n) => ({ ...n, midi: playable(n.midi) })));
-const songInRange = (song) => ({ ...song, tracks: song.tracks.map((tr) => ({ ...tr, notes: inRange(tr.notes) })) });
-
 export function emitSong(song) {
   song = songInRange(song);
   const out = [...song.header];
@@ -468,10 +480,10 @@ export function regrid(g, bpm) {
 }
 
 // ── Structure: repeats and phrases ─────────────────────────────────────────
-// A song written with its repeats folded (user, 2026-10-07: "the more
-// structured, the easier to grasp"). Each track is cut into units — its bars,
-// and the loop point — compared by what they play (notes at MMLisp's 16
-// velocity steps, the voice/state in force, the marks). Then:
+// A song written with its repeats folded: the more structured, the easier to
+// grasp. Each track is cut into units — its bars, and the loop point —
+// compared by what they play (notes at MMLisp's 16 velocity steps, the
+// voice/state in force, the marks). Then:
 //   1. runs that repeat back to back become `(x n …)`, and a run that comes
 //      back once more cut short becomes `(x n A (break) B)` (A B A B A);
 //   2. a run that comes back elsewhere becomes a `(def …)`, named in place.
@@ -670,10 +682,6 @@ function lastPiece(items) {
   return null;
 }
 
-/**
- * The whole score, structured. Same input as emitSong; a track's notes may
- * carry `state` (every switch in force) or only `pre` (a voice switch).
- */
 // One track's structure on a given set of bars: its units, folded and
 // phrased, and the ticks it writes out (a loop body and a def once each).
 function planTrack(tr, bars, endTick, loopTick) {
@@ -711,6 +719,10 @@ export function bestBars(song) {
   return best.bars;
 }
 
+/**
+ * The whole score, structured. Same input as emitSong; a track's notes may
+ * carry `state` (every switch in force) or only `pre` (a voice switch).
+ */
 export function emitStructured(song) {
   song = songInRange(song);
   const out = [...song.header];
@@ -860,9 +872,9 @@ export function emitStructured(song) {
 // ── Pitch shapes: vibrato and bends ───────────────────────────────────────
 // A note's pitch as cents from its own, a frame (1/60 s) each — what a VGM
 // driver or a MIDI file's pitch bend did to it — drawn as a `:pitch` macro.
-// Structure over exactness (user, 2026-10-07): a wobble is a vibrato, a sine
-// whose depth (20 cents) and period (the frame pair) are rounded so notes
-// share one def; any other move is a few straight lines.
+// Structure over exactness: a wobble is a vibrato, a sine whose depth (20
+// cents) and period (the frame pair) are rounded so notes share one def; any
+// other move is a few straight lines.
 
 // A wobble: swings around a centre, at least three (a cycle and a half),
 // each a like length — after a wait that may hold the note still first.
@@ -959,9 +971,33 @@ export function assignBends(notes) {
       n.bendName = vibs.get(spec);
     } else others.push(n);
   }
+  // Longest first, so every shape is at least as long as the note tried on
+  // it. A fit is within 10 cents a frame, so only the shapes whose first
+  // frame (and, for a note longer than 8 frames, ninth) lies in the 10-cent
+  // bucket of the note's or one either side can fit: those are tried, in
+  // the order the shapes were made.
+  const bucket = (v) => Math.floor(v / 10);
+  const by0 = new Map(), by08 = new Map();
+  const index = (m, k, c) => { if (!m.has(k)) m.set(k, []); m.get(k).push(c); };
+  const near = (a) => {
+    if (!a.length) return shapes;
+    const b0 = bucket(a[0]), b8 = a.length > 8 ? bucket(a[8]) : null;
+    const out = [];
+    for (let i = -1; i <= 1; i++) {
+      if (b8 == null) out.push(...(by0.get(b0 + i) ?? []));
+      else for (let j = -1; j <= 1; j++) out.push(...(by08.get(`${b0 + i},${b8 + j}`) ?? []));
+    }
+    return out.sort((x, y) => x.i - y.i);
+  };
   for (const n of [...others].sort((x, y) => y.bend.length - x.bend.length)) {
-    let c = shapes.find((sh) => fits(n.bend, sh.frames));
-    if (!c) shapes.push((c = { frames: n.bend, notes: [] }));
+    let c = near(n.bend).find((sh) => fits(n.bend, sh.frames));
+    if (!c) {
+      shapes.push((c = { frames: n.bend, notes: [], i: shapes.length }));
+      if (n.bend.length) {
+        index(by0, bucket(n.bend[0]), c);
+        if (n.bend.length > 8) index(by08, `${bucket(n.bend[0])},${bucket(n.bend[8])}`, c);
+      }
+    }
     c.notes.push(n);
   }
   let k = 0;

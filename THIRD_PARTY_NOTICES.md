@@ -14,6 +14,7 @@ Included files:
 - `third_party/Nuked-OPN2/ym3438.c`
 - `third_party/Nuked-OPN2/ym3438.h`
 - `third_party/Nuked-OPN2/README.md`
+- `third_party/Nuked-OPN2/ym3438.svg` (an upstream diagram of the chip, not used by the build)
 - `third_party/Nuked-OPN2/LICENSE`
 
 Local integration files in this repository:

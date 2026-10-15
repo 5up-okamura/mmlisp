@@ -60,6 +60,12 @@ family whose IR value is not
 an integer: the MMB exporter multiplies by the engine image's rate to get the
 byte offset the driver wants. They are valid on `pcm1`–`pcm3` only.
 
+`metadata.frameHz` is the frame clock the score was compiled for: `60` (NTSC,
+the default and the editor's preview) or `50` (PAL, `compileMMLisp`'s
+`options.frameHz`). Every `Nf`/`Nms` frame count, macro step and sweep length
+in the IR was resolved against it, and the MMB exporter reads it so a score is
+never compiled for one standard and baked for the other (driver.md §3.3).
+
 `metadata.pcmVoices` is how many PCM voices the driver plays, 0–3, from
 `(def-score :pcm-voices N)` or the highest `pcmN` track the score uses. It picks the
 engine image and with it the DAC rate, so the MMB exporter reads it before it
@@ -171,7 +177,8 @@ FM / PSG note. Also used (with extra fields) on FM3 operator tracks.
 | `pan`        | spec (§6)  | −1/0/+1 | no  | `PAN` macro.                                                                   |
 | `noise_mode` | spec (§6)  | 0–7     | no  | `NOISE_MODE` macro (noise channel notes only).                                 |
 | `fm_tl1` … `fm_amen4` | spec (§6) | per target | no | FM operator-param macros: any supported target lower-cased (`FM_TL1` → `fm_tl1`). |
-| `vol`, `master`, `lfo_rate`, `fm_alg`, `fm_fb`, `fm_ams`, `fm_fms` | spec (§6) | per target | no | Macros on those targets. |
+| `vol`, `fm_alg`, `fm_fb`, `fm_ams`, `fm_fms` | spec (§6) | per target | no | Macros on those targets. |
+| `legato`     | bool       | —       | no  | Present (true) on the right note of a slur (`e ~ g`, language.md §3): the pitch moves without a key-off/key-on (MMB `NOTE_ON_EX` bit3). FM/PSG only. |
 | `fm3Op`      | int 1–4    | —       | no  | FM3 operator-track notes only: which operator this note keys.                  |
 | `opMask`     | int        | bitmask | no  | 0x28 key nibble; `0x10 << (fm3Op-1)`. Emitted together with `fm3Op`.           |
 
@@ -288,7 +295,8 @@ slot name, resolved at dispatch time.
 
 Notes: the readable shadow set is `FM_*` op/channel params (TL reads the
 *voiced* timbre TL, so relative TL composes under vel/vol attenuation),
-`VOL`, `PAN`. Anything else reads 0.
+`VOL`, `PAN`, and `NOTE_PITCH` / `NOTE_SEMI` (the running cent offset, so
+`:pitch+ N` accumulates). Anything else reads 0.
 
 ### 5.8 PARAM_FROM_VAL
 
@@ -313,11 +321,11 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
 | `from`       | number  | target| no  | Start value. Absent ⇒ the parameter's current value when the sweep starts (MMB `flags` bit3). |
 | `to`         | number  | target| yes | End value (0 if unspecified).                                     |
 | `frames`     | int     | ticks | no  | Sweep length. **In ticks** despite the name (the player converts ticks → 60 Hz frames at dispatch). |
-| `lenFrames`  | bool    | —     | no  | True when `:len` was written as `Nf` (absolute frames); `frames` is then a frame count (§11). |
+| `lenFrames`  | bool    | —     | no  | True when `:len` was written as `Nf` or `Nms` (absolute frames); `frames` is then a frame count (language.md §4). |
 | `loop`       | bool    | —     | yes | True for loop waveforms (`sin`/`triangle`/`square`/`saw`/`ramp`/`noise`/`pink`/`perlin`/`brown`) or `:mode loop`; `:mode shot` clears it. |
-| `waitTicks` / `waitKeyOff` | int / bool | ticks | no | Pre-delay before the curve. **Ignored on PARAM_SWEEP** (macro-only) — see §11. |
+| `waitTicks` / `waitFrames` / `waitKeyOff` | int / int / bool | ticks / frames | no | Pre-delay before the curve. **Ignored on PARAM_SWEEP** (macro-only) — see §11. |
 | `params`     | object  | —     | no  | Curve shape params (§6.4).                                        |
-| `dyn`        | object  | —     | no  | `{ from?, to?, rate?, len? }` slot refs; `from`/`to`/`rate` resolved at sweep start. **`from`/`to` are slot-fed in MMB too** (PARAM_SWEEP flags bit1/bit2, read live at dispatch — §4.6 note-on tier, opcodes.md); `len` is read at sweep start by the player, by the slot's `:unit`; on MMB `len` bakes to the slot's init (`W_MMB_DYN_SWEEP_BAKED`). |
+| `dyn`        | object  | —     | no  | `{ from?, to?, rate?, len? }` slot refs; `from`/`to`/`rate` resolved at sweep start. **`from`/`to` are slot-fed in MMB too** (PARAM_SWEEP flags bit1/bit2, read live at dispatch — opcodes.md §6); `len` is read at sweep start by the player, by the slot's `:unit`; on MMB `len` bakes to the slot's init (`W_MMB_DYN_SWEEP_BAKED`). |
 | `bounded`    | bool    | —     | no  | Glide only: the sweep lasts `frames` then stops (never extended to the next automation event); the next `PARAM_SET`/`PARAM_SWEEP` on its target still ends it sooner. |
 
 ```json
@@ -378,8 +386,10 @@ stay continuous).
 { "tick": 384, "cmd": "TEMPO_SWEEP", "args": { "from": 120, "to": 90, "len": 384, "curve": "ease-out" } }
 ```
 
-Notes: interpolated continuously — the player re-evaluates BPM each scheduler
-pass (~25 ms) and re-anchors the clock each step; on completion it pins `to`.
+Notes: stepped once a frame, as the driver steps it — the tempos as tick
+increments, the length as frames at the average tempo, one integer increment
+a frame; the player re-anchors the clock at each step and on completion pins
+`to`.
 
 ### 5.13 CSM_ON / CSM_OFF
 
@@ -542,10 +552,11 @@ The curve-spec fields (shared verbatim with `PARAM_SWEEP` args §5.9):
 | `curve`      | string  | Curve name (§6.4).                                                               |
 | `from`       | number  | Start value. Absent only on an inline `PARAM_SWEEP` (start from the current value); a macro curve always carries it (`E_CURVE_FROM`). |
 | `to`         | number  | End value (always present; 0 default).                                           |
-| `frames`     | number  | `:len`. Ticks by default; absolute 60 Hz frames when `lenFrames` is true (`Nf`); placeholder `1` when `dyn.len` is set. |
-| `lenFrames`  | bool    | Present (true) only for `Nf` lengths.                                            |
+| `frames`     | number  | `:len`. On a macro, resolved at the note to the macro's clock: frames under a frame `:step` (the default), ticks under a tick `:step`. On an inline sweep, ticks unless `lenFrames`. Placeholder `1` when `dyn.len` is set. |
+| `lenFrames`  | bool    | Present (true) when `frames` is a frame count — an `Nf`/`Nms` `:len`, or any macro curve under a frame `:step`. |
 | `loop`       | bool    | Loop waveforms and `:mode loop` easings cycle until gate; non-loop curves clamp at phase 1 and hold. |
-| `waitTicks`  | int     | Pre-delay in ticks before the curve starts (`:wait N`).                          |
+| `waitTicks`  | int     | Pre-delay in ticks before the curve starts (`:wait N`) — a macro under a tick `:step`. |
+| `waitFrames` | int     | The same pre-delay in frames — a macro under a frame `:step` (the default), whatever unit `:wait` was written in. |
 | `waitKeyOff` | bool    | Start at the key-off boundary (`:wait key-off`) — e.g. release envelopes.        |
 | `params`     | object  | Shape params (§6.4). Only emitted when non-empty.                                |
 | `dyn`        | object  | `{ from?, to?, rate?, len? }` — slot names (no `$`). The player resolves them **once per note at note-on**; `len` is interpreted by the slot's `unit` (`frame` as-is, `tick` × tempo). Static placeholders (`from:0`, `to:0`, `rate:1`, `frames:1`) hold the field shape. |
@@ -568,7 +579,7 @@ either a curve spec (§6.2 fields, no `type`) or a wait:
 | ------------- | ------------------------------------------------------------------------------|
 | `waitKeyOff: true` | Snap the cursor to the gate boundary.                                     |
 | `waitTicks: N`     | Advance the cursor N ticks (tempo-scaled).                                 |
-| `waitFrames: N`    | Advance the cursor N 60 Hz frames (wall-clock). Emitted for `(wait Nf)`.   |
+| `waitFrames: N`    | Advance the cursor N 60 Hz frames (wall-clock). Emitted for `(wait Nf)` / `(wait Nms)` and for `_`, under a frame `:step`. |
 | curve stage        | Plays for its `frames`; a `loop: true` stage cycles until the gate.       |
 
 A `:wait` **inside** a curve stage acts as that stage's pre-delay.
@@ -585,10 +596,10 @@ family. Loop waveforms: `sin`, `triangle`, `square`, `saw`, `ramp`. Stochastic
 | Key       | Range        | Applies to        | Semantics                          |
 | --------- | ------------ | ----------------- | ----------------------------------- |
 | `phase`   | 0–255        | all               | Phase offset (/256 of a cycle).     |
-| `rate`    | > 0          | all               | Phase multiplier (cycles per `len`).|
+| `rate`    | ≥ 0          | all               | Phase multiplier (cycles per `len`); `0` freezes the phase. |
 | `duty`    | 1–255        | `square`          | Duty threshold (/256).              |
 | `skew`    | −127–127     | `sin` `triangle` `saw` `ramp` | Waveform skew.          |
-| `hold`    | ≥ 1          | stochastic        | Sample-and-hold frames in the LUT.  |
+| `hold`    | 0–1          | stochastic        | Sample-and-hold length as a share of `len` (`:hold` ÷ `:len`, resolved at compile time). |
 | `jitter`  | 0–1          | stochastic        | White-noise mix-in.                 |
 | `beta`    | > 0          | `pink`            | Spectral slope blend.               |
 | `octaves` | 1–8          | `perlin`          | fBm octaves.                        |
@@ -633,8 +644,8 @@ write.
 | `FM_AMEN1`–`FM_AMEN4` | 0–1        | 0x60+op bit 7.                                               |
 
 CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz). On
-PSG-routed tracks only `VOL` and
-`NOTE_PITCH` PARAM events are honored.
+PSG-routed tracks only `VOL`, `NOTE_PITCH` and (on the noise channel)
+`NOISE_MODE` PARAM events are honored.
 
 ## 8. Normalization invariants
 
@@ -653,9 +664,11 @@ PSG-routed tracks only `VOL` and
   rewrites the pair — that pass runs on the *merged* track, so label and jump
   may come from different source forms). `JUMP.to` must resolve to a `MARKER`
   on the same track (validated; forward or backward).
-- **Post-passes** (in order): per-layer delay expansion → `:prio` layer
-  flattening (note drop/truncate under higher-priority layers) → track
-  re-numbering → counted-jump conversion → validation → voice hoisting
+- **Post-passes** (in order): per-layer delay expansion → `def-mod`
+  application (language.md §9.4) → `:prio` layer flattening (note
+  drop/truncate under higher-priority layers) → track re-numbering →
+  counted-jump conversion → removal of a stray `LOOP_BREAK` no counted loop
+  claims (`W_BREAK_OUTSIDE_LOOP`) → validation → voice hoisting
   (`voice-hoist.js`: a voice change moves into the silence before its note)
   → tick-0 `FM3_MODE` unshifted into `tracks[0]` (when fm3-1..4 tracks
   exist).
@@ -675,13 +688,13 @@ PSG-routed tracks only `VOL` and
   cut 5 ms before the next note-on on the same channel (monophonic priority).
 - **Holds.** `length: 0` or `gate: 0` = hold indefinitely; the channel is
   parked in a hold set until the host calls `triggerKeyOff(ch)` (FM 0–5,
-  PSG `psgCh + 6`). Macro budgets use the `HOLD_FRAMES` sentinel.
+  PSG `psgCh + 6`, PCM `20 + voice`). Macro budgets use the `HOLD_FRAMES` sentinel.
 - **TEMPO_SET re-anchoring.** Tempo changes re-anchor every track's
   tick→audio-time base so the change tick's audio time is preserved — tick
   durations before and after differ, absolute positions never jump.
-- **TEMPO_SWEEP** interpolates BPM along the curve over `len` ticks,
-  re-evaluated every scheduler pass; a `TEMPO_SET` (or the host `setTempo`)
-  cancels it.
+- **TEMPO_SWEEP** steps the tempo along the curve once a frame over `len`
+  ticks (the frames they take at the average tempo); a `TEMPO_SET` (or the
+  host `setTempo`) cancels it.
 - **PARAM_ADD / PARAM_MUL** are read-modify-write against the player's shadow
   register file (never the chip): read the stored value (voiced TL for
   `FM_TL*`), apply the operand (literal or slot ref), write back through the

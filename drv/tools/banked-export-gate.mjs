@@ -95,4 +95,4 @@ for(const hz of [60,50]) for(const voices of [1,2,3]) {
  const peak=Math.max(...Array.from({length:image.cfg.cycleSlots},(_,start)=>Array.from({length:window},(_,i)=>sites.has((start+i)%image.cfg.cycleSlots)?1:0).reduce((a,b)=>a+b,0)));
  assert.ok(peak<128,`FIFO publication can hide a wrap at ${hz} Hz / ${voices} voices: ${peak}`);
 }
-console.log('ok auto extension, legacy output, unsupported profiles, corrupt banks, bundle');
+console.log('ok auto extension, single-bank output, unsupported profiles, corrupt banks, bundle');

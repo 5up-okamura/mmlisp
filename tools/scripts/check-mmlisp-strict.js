@@ -57,6 +57,37 @@ async function main() {
       src: "(zonk :tempo 120 c)",
       expected: ["E_UNKNOWN_TOPLEVEL_FORM"],
     },
+    // Values that compile but cannot mean what was written: warned, not dropped.
+    {
+      label: "macro :step 0",
+      src: "(fm1 (macro :vel [15 12 9] :step 0) c)",
+      expected: ["W_MACRO_STEP_INVALID"],
+    },
+    {
+      label: "glide time typo",
+      src: "(fm1 (glide 8x) c e)",
+      expected: ["W_GLIDE_INVALID"],
+    },
+    {
+      label: "def-pcm number typo",
+      src: '(def-pcm k :file "/k.wav" :rate 8k :offset 1.5 :frames 100)',
+      expected: ["W_SAMPLE_KEY_INVALID", "W_SAMPLE_KEY_INVALID"],
+    },
+    {
+      label: "shuffle out of range",
+      src: "(sqr1 :shuffle 30 c :shuffle 95 c :shuffle 0 c :shuffle 66 c)",
+      expected: ["W_SHUFFLE_STRAIGHT", "W_SHUFFLE_CLAMPED"],
+    },
+    {
+      label: "inline sweep :wait",
+      src: "(fm1 (x 2 :tl1 (linear 0..60 :len 8 :wait 4) c) (macro :tl1 (linear 0..60 :len 8 :wait 4)) c)",
+      expected: ["W_SWEEP_WAIT"],
+    },
+    {
+      label: "wait value typo",
+      src: "(fm1 (macro :tl1 (linear 0..60 :len 8 :wait 4x) :vel [15 (wait zz) (linear 15..0 :len 4)]) c)",
+      expected: ["W_WAIT_INVALID", "W_WAIT_INVALID"],
+    },
   ];
 
   for (const testCase of cases) {

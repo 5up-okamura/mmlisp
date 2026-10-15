@@ -4,8 +4,7 @@
 `docs/driver.md` §1/§5/§5.4/§6.3/§6.6/§14 (engines, host, levels, loops),
 `docs/language.md` §9/§16 (`pcm-voices`, the four points, `:fx`),
 `docs/mmb.md` §10 (the bank), `docs/pcm-multibank.md` (multi-bank). This file
-keeps the reasons the docs state as bare facts, and the open list. Merged
-2026-10-09 from `plan-pcm-spec` and `plan-pcm-multibank`.
+keeps the reasons the docs state as bare facts, and the open list.
 
 ## The user's decisions, with their reasons
 
@@ -90,8 +89,8 @@ CSM owns Timer A; what we have that it lacks is levels and moving loop points.
 
 The user heard `disco1` (a banked mucom import, two voices) wobble on
 BlastEm: 10–20 ms renders on a chord-and-drums frame, 45 ms on a voice-change
-frame, past the vblank at one frame of lead. Covered by `MMLISP_LEAD` 2 and
-`MMLP_AHEAD` 8, the first optimisation pass and the voice spread
+frame, past the vblank at one frame of lead. Covered by the two-frame lead and
+the converter's look-ahead (`driver.md` §3.4), the first optimisation pass and the voice spread
 ([[driver-decisions]] §9–§10); the user then played disco1 again and heard no
 problem, which also settles the one frame left over — the five voices at the
 head of its `#loop3 … (go loop3 2)` repeat (242% of a frame, at 1 s and
@@ -118,7 +117,6 @@ queued at the vblank, at lead 2 no better than the unchanged converter).
 
 ## Open
 
-- Nothing has run on real hardware.
 - **The banked converter has no byte-for-byte JS twin** in `pairs-gate`:
   covered by `tests/banked-pairs.c`, the BlastEm run and `prioritizeFmNotes`.
   `tests/multibank-3v.mmlisp` carries two known PSG-timing divergences in

@@ -163,9 +163,8 @@ export function loopSelection(text, selFrom, selTo) {
   };
 }
 
-// Apply changes (sorted, non-overlapping) to text — for node checks; the
-// editor dispatches them itself.
-export function applyChanges(text, changes) {
+// Apply changes (sorted, non-overlapping) to a slice of text.
+function applyChanges(text, changes) {
   let out = "";
   let at = 0;
   for (const c of [...changes].sort((a, b) => a.from - b.from)) {
@@ -201,7 +200,7 @@ const WHOLE = 384; // ticks in a whole note (PPQN 96)
 const STEP = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
 
 // MIDI number of a pitch name with or without an octave ("e+5", "b-", "c").
-export function pitchMidi(name, octave = 4) {
+function pitchMidi(name, octave = 4) {
   const m = /^([a-g])([+\-#]*)(-?\d+)?$/i.exec(String(name).trim());
   if (!m) return null;
   let n = STEP[m[1].toLowerCase()];
@@ -226,7 +225,7 @@ export function lengthTicks(str) {
 }
 
 // The shortest suffix the score reads back as `ticks`.
-export function lengthSuffix(ticks) {
+function lengthSuffix(ticks) {
   for (const n of [1, 2, 4, 8, 16, 32, 64, 3, 6, 12, 24, 48, 96]) {
     if (WHOLE / n === ticks) return String(n);
     if ((WHOLE / n) * 1.5 === ticks) return `${n}.`;
@@ -244,7 +243,7 @@ function splitToken(tok) {
 // token that sounds more than once or outside its channel — inside a counted
 // loop, or in a def — where one edit changes every pass; `tied` one joined by
 // ~ to its neighbour, whose length is not its own to change.
-export function scoreNotes(text, ir, voiceNames = new Set()) {
+function scoreNotes(text, ir, voiceNames = new Set()) {
   const starts = lineStarts(text);
   const forms = channelForms(text);
   const out = [];

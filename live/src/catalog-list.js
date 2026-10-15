@@ -1,5 +1,5 @@
-// The Library panel's list: every source (the preset sets, the snippets, the
-// example scores — and the reference, later) is one array of items, shown
+// The Library panel's list: every source (the reference, the preset sets, the
+// snippets, the example scores) is one array of items, shown
 // through one search box and one set of filters. This file is the list and
 // nothing else: what an item is, how it sounds and what inserting it writes
 // are the page's (index.html), passed in on the items.
@@ -201,5 +201,5 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
     }
   }
 
-  return { setItems, setFilter, key, refresh: render, get filter() { return filter; } };
+  return { setItems, setFilter, key };
 }

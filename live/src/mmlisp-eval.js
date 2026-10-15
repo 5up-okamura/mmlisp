@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Compile-time evaluator (v0.6 Phase 3, step 1 — scalar core)
+// Compile-time evaluator
 //
 // The channel body is an implicit quasiquote: bare atoms are literal note/
 // directive data, and a `()` form whose head is an eval builtin is *computed*
@@ -11,7 +11,7 @@
 // `$slot`-bearing expression kept symbolic as the param-opcode chain that
 // computes it on the driver). The builtins are `+ - * /`, `min max abs round
 // floor`, the curves (via ctx), and `let`; docs/language.md §7, rationale in
-// .claude/memory/language-open.md §3.
+// .claude/memory/language-open.md §2.
 // ---------------------------------------------------------------------------
 
 import { sampleCurveUnit } from "./ir-utils.js";
@@ -28,9 +28,8 @@ class EvalError extends Error {
   }
 }
 
-// Lexical environment: a scope chain of name → value bindings. `let` (step 4)
-// pushes child scopes; step 1 only ever holds the empty root, but the wiring is
-// in place so binding lookup Just Works when `let` lands.
+// Lexical environment: a scope chain of name → value bindings. Each `let`
+// (language.md §7.2) pushes a child scope onto it.
 export function makeEnv(parent = null) {
   return { bindings: new Map(), parent };
 }
@@ -45,7 +44,7 @@ function envLookup(env, name) {
 // ── Value model ──────────────────────────────────────────────────────────
 // An eval value is a scalar (JS double), a signal (a curve/stages/steps spec
 // object — the very object parseCurveSpec produces, kept symbolic so LUTs stay
-// byte-identical; design §2.2), or a Runtime. Signals are opaque here except
+// byte-identical), or a Runtime. Signals are opaque here except
 // through ctx.foldSignal (owned by mmlisp2ir.js).
 //
 // A Runtime is a value that carries a `$` reference, so it is not known until
@@ -65,7 +64,7 @@ class Runtime {
 const isRuntime = (v) => v instanceof Runtime;
 const isSignal = (v) => v !== null && typeof v === "object" && !isRuntime(v);
 
-// ── Affine arithmetic (scalar ⊕ signal stays symbolic; design §2.3) ──────────
+// ── Affine arithmetic (scalar ⊕ signal stays symbolic) ─────────────────────
 // A running accumulator is either a scalar (spec === null → value = k) or an
 // affine transform of one signal (value = coeff·sample + offset). Only the four
 // affine operators reach here; `min`/`max`/etc. reject signals.
@@ -88,11 +87,11 @@ function requireFrom(v) {
       "a scaled macro (* signal $slot) takes no further arithmetic");
 }
 
-// ── Signal ⊕ signal materialization (design §2.3) ────────────────────────────
+// ── Signal ⊕ signal materialization ────────────────────────────────────────
 // Two signals combined by `+ - * /` cannot stay symbolic, so they are sampled
 // pointwise (mirroring the export-mmb.js curve sampling) into a float `steps`
-// spec. MVP scope: curve⊕curve, frame-based `:len` (Nf), a common frame `:step`;
-// each harder case is a specific error. Round/clamp is deferred to the binding
+// spec. What lowers: curve⊕curve, a frame `:len` (Nf / Nms), a common frame
+// `:step`; each harder case is a specific error. Round/clamp is deferred to the binding
 // site (values stay float here).
 function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
 function lcm(a, b) { return (a / gcd(a, b)) * b; }
@@ -105,7 +104,7 @@ function combineOp(op, va, vb) {
   return va / vb;
 }
 
-// Sample one signal into { values: float[], loop, period }. Curve-only in MVP.
+// Sample one signal into { values: float[], loop, period }. Curves only.
 function sampleSignal(spec, stepFrames) {
   if (spec.steps) {
     throw new EvalError(
@@ -154,7 +153,7 @@ function materializeSignals(op, aSpec, bSpec, ctx) {
   if (a.loop !== b.loop) {
     throw new EvalError(
       "E_EVAL_SIGNAL_SHAPE",
-      "cannot combine a looping and a one-shot signal (MVP)",
+      "cannot combine a looping and a one-shot signal",
     );
   }
   let steps;
@@ -217,7 +216,7 @@ function affineCombine(op, acc, x, ctx) {
     );
   }
   // signal ⊕ signal — finalize acc's affine into a concrete curve, then
-  // materialize the two signals pointwise into a float `steps` signal (§2.3).
+  // materialize the two signals pointwise into a float `steps` signal.
   const aSpec =
     acc.coeff === 1 && acc.offset === 0
       ? acc.spec
@@ -231,14 +230,14 @@ function affineFinish(acc, ctx) {
   if (acc.coeff === 1 && acc.offset === 0) return acc.spec; // untouched — byte-identical
   // Fold the affine transform into the signal's value axis. ctx.foldSignal
   // leaves the time axis (rate/len/step) alone and does not clamp — clamping
-  // happens once at the binding site (design §2.2-2.3).
+  // happens once at the binding site.
   return ctx.foldSignal(acc.spec, (v) => acc.coeff * v + acc.offset);
 }
 
 // ── Runtime arithmetic (language.md §7.1.2) ────────────────────────────────
 // One binary op with a Runtime operand, extending the accumulator chain; the
 // shapes with no opcode are E_EVAL_NOT_LOWERABLE (the honest list). A signal
-// times a bare slot is the scaled macro (§4.4): the signal, read with that
+// times a bare slot is the scaled macro (§7.0): the signal, read with that
 // slot as a live depth.
 const NOT_LOWERABLE = (msg) => new EvalError("E_EVAL_NOT_LOWERABLE", msg);
 
@@ -297,7 +296,7 @@ function runtimeBinary(op, a, b, ctx) {
     if (cb !== null) return rtScale(rtChain(a), cb);
     if (bare(b) !== null) return rtMulval(a, bare(b), ctx);
     if (bare(a) !== null) return rtMulval(b, bare(a), ctx);
-    throw NOT_LOWERABLE("product of two runtime sub-expressions needs a temporary (not built; §4.5)");
+    throw NOT_LOWERABLE("product of two runtime sub-expressions needs a temporary the driver does not have");
   }
   if (op === "/") {
     if (cb === 0) throw new EvalError("E_EVAL_DIV_ZERO", "division by zero");
@@ -310,7 +309,7 @@ function runtimeBinary(op, a, b, ctx) {
     if (tb) return rtAppend(rtChain(a), tb);
     const ta = term(a);
     if (ta) return rtAppend(rtChain(b), ta);
-    throw NOT_LOWERABLE("sum of two runtime sub-expressions needs a temporary (not built; §4.5)");
+    throw NOT_LOWERABLE("sum of two runtime sub-expressions needs a temporary the driver does not have");
   }
   // op === "-"
   if (cb !== null) return rtAppend(rtChain(a), { const: -cb });
@@ -391,12 +390,12 @@ BUILTINS.set("round", { arity: [1, 1], apply: (a, _c, n) => Math.round(scalarsOn
 BUILTINS.set("floor", { arity: [1, 1], apply: (a, _c, n) => Math.floor(scalarsOnly(n, a)[0]) });
 
 // Value-producing heads that dispatch to the evaluator in value positions:
-// the arithmetic/math builtins plus the `let` special form (§7).
+// the arithmetic/math builtins plus the `let` special form (§7.2).
 const VALUE_HEADS = new Set([...BUILTINS.keys(), "let"]);
 
 // Heads that also read as eval forms elsewhere (item/length positions) —
-// reserved so a def cannot shadow them. `note` is item-only (§2.5);
-// `ticks`/`frames` are length-only bridges (§2.4); they are handled in
+// reserved so a def cannot shadow them. `note` is item-only (§7.3);
+// `ticks`/`frames` are length-only bridges (§7.4); they are handled in
 // mmlisp2ir.js, but naming a def after them is still `E_DEF_RESERVED`.
 const RESERVED_HEADS = new Set([...VALUE_HEADS, "note", "ticks", "frames"]);
 
@@ -471,7 +470,7 @@ export function evalLet(node, env, ctx) {
 }
 
 // A length-grammar smell test: reject note/length/rest atoms as arithmetic
-// operands (no implicit note→number coercion — design §1.1, §2.4). The
+// operands (no implicit note→number coercion). The
 // authoritative note-stream predicates live in mmlisp2ir.js and reach the
 // evaluator via ctx.isNoteStreamToken for `let` name validation.
 function looksLikeMusicToken(s) {
@@ -480,8 +479,8 @@ function looksLikeMusicToken(s) {
 
 // ── The evaluator ────────────────────────────────────────────────────────
 // Returns a scalar (JS double) or a signal (spec object). Floats are legal
-// throughout; integerization happens only at the binding site (design §2.1).
-// Curve heads (design §3) are resolved through ctx.parseCurve — the evaluator
+// throughout; integerization happens only at the binding site.
+// Curve heads are resolved through ctx.parseCurve — the evaluator
 // stays free of curve internals. Throws EvalError on failure.
 function evalNode(node, env, ctx) {
   if (ctx.depth > MAX_DEPTH) {
@@ -512,7 +511,7 @@ function evalNode(node, env, ctx) {
       const ref = ctx.resolveSlot(v);
       return new Runtime([{ op: "fromval", ref }], ref);
     }
-    // Bound name (let, step 4) — env is empty until then.
+    // A `let`-bound name.
     const bound = envLookup(env, v);
     if (bound !== undefined) return bound;
     if (looksLikeMusicToken(v)) {
@@ -529,7 +528,7 @@ function evalNode(node, env, ctx) {
     const head = items[0] && items[0].kind === "atom" ? items[0].value : null;
 
     // `let` in a value/expression position: bind, then evaluate a single body
-    // expression in the extended env (§7).
+    // expression in the extended env (§7.2).
     if (head === "let") {
       const child = bindLet(items, env, ctx);
       const body = items.slice(2);
@@ -633,7 +632,7 @@ export function lookupBound(env, name) {
 }
 
 /**
- * Length-position bridge (§2.4): resolve `(ticks expr)` / `(frames expr)` to a
+ * Length-position bridge (§7.4): resolve `(ticks expr)` / `(frames expr)` to a
  * unit-tagged non-negative integer. Returns `{unit:"tick"|"frame", value}` for
  * those heads, or null for any other node (the caller then uses the normal
  * length-token parser). Diagnostics: a non-scalar or unknown head errors.

@@ -103,13 +103,7 @@ function nodeToInline(node) {
   const joined = trailingComment
     ? `${open}${parts.join(" ")}${close} ${trailingComment.value}`
     : `${open}${parts.join(" ")}${close}`;
-  if (open === "(" && joined.length > MAX_INLINE_LENGTH) {
-    // seq forms stay on one line regardless of length
-    if (parts.length > 0 && parts[0] === "seq") {
-      return joined;
-    }
-    return null;
-  }
+  if (open === "(" && joined.length > MAX_INLINE_LENGTH) return null;
   return joined;
 }
 
@@ -325,6 +319,7 @@ function formatList(node) {
 
   const { pairs, nextIndex } = collectKeywordPairs(node.items, pairStartIndex);
   let pairOffset = 0;
+  let headEndsInComment = false;
   // Absorb onto the header line the keyword pairs the author wrote on the head's
   // own source line (source-faithful, regardless of lead args). Pairs the author
   // placed on later lines stay below.
@@ -342,6 +337,7 @@ function formatList(node) {
     // A trailing comment ends the source line; nothing else can be absorbed.
     if (pairs[pairOffset - 1][2]) {
       lines[0] = `${lines[0]} ${pairs[pairOffset - 1][2].value}`;
+      headEndsInComment = true;
       break;
     }
   }
@@ -478,7 +474,11 @@ function formatList(node) {
     lines.push(line);
   }
 
-  lines.push(")");
+  // Everything absorbed onto the header line and nothing below it: close the
+  // form there rather than on a line of its own — unless the header ends in a
+  // comment, which would swallow the paren.
+  if (lines.length === 1 && !headEndsInComment) lines[0] += ")";
+  else lines.push(")");
   return lines.join("\n");
 }
 

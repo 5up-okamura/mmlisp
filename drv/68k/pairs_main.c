@@ -1,9 +1,9 @@
 /* Host harness for the pairs gate (tools/pairs-gate.mjs): read the frame
  * records gate_main --frames emits ([u16 len][record] per frame, mmlpairs.h
  * mmlp_frame) from a file, run every frame through mmlpairs, and drive the
- * planner with a modelled consumer — two grabs a frame, the engine's index
- * advancing by 17 pairs a grab — writing
- * what the 68000 would have put on the wire:
+ * planner with a modelled consumer — by default two grabs a frame, the
+ * engine's index advancing by 17 pairs a grab (one grab of 34 with `pumps` 1,
+ * the VBlank-only host) — writing what the 68000 would have put on the wire:
  *
  *   for each grab:  [u8 'G'][u16 dst][u8 n][n bytes]  the pair bytes
  *                   [u8 'P'][u8 n][n bytes]            the PSG bytes released
@@ -11,7 +11,7 @@
  * The JS twin (tools/pairs-model.mjs) produces the same stream from the same
  * frames, and the gate compares the two byte for byte.
  *
- *   pairs_main <frames.bin> <fifo> <fifo_pairs> <ppg> <lut_page> <op_stride> <op_port>
+ *   pairs_main <frames.bin> <fifo> <fifo_pairs> <ppg> <lut_page> <op_port>
  *              <voices> <idle_after_gen> [lead] [pumps]
  */
 #include <stdio.h>
@@ -69,7 +69,7 @@ static void grab(MMLPairs *p, uint16_t release, unsigned *consumer, uint8_t *fif
 }
 
 int main(int argc, char **argv) {
-  if (argc < 10) { fprintf(stderr, "usage: see the header comment\n"); return 2; }  /* argv[10]: lead, optional */
+  if (argc < 9) { fprintf(stderr, "usage: see the header comment\n"); return 2; }  /* argv[9]: lead, optional */
   long len = 0;
   unsigned char *recs = slurp(argv[1], &len);
   if (!recs) { fprintf(stderr, "cannot read %s\n", argv[1]); return 2; }
@@ -79,12 +79,11 @@ int main(int argc, char **argv) {
   cfg.fifo_pairs = (uint8_t)strtol(argv[3], 0, 0);
   cfg.pairs_per_grab = (uint8_t)strtol(argv[4], 0, 0);
   cfg.lut_page = (uint8_t)strtol(argv[5], 0, 0);
-  cfg.op_stride = (uint8_t)strtol(argv[6], 0, 0);
-  cfg.op_port = (uint8_t)strtol(argv[7], 0, 0);
-  cfg.voices = (uint8_t)strtol(argv[8], 0, 0);
-  cfg.idle_after_gen = (uint8_t)strtol(argv[9], 0, 0);
-  /* argv[11], optional: grabs a frame, 2 (the default) or 1 (VBlank-only). */
-  const int pumps = argc > 11 ? atoi(argv[11]) : 2;
+  cfg.op_port = (uint8_t)strtol(argv[6], 0, 0);
+  cfg.voices = (uint8_t)strtol(argv[7], 0, 0);
+  cfg.idle_after_gen = (uint8_t)strtol(argv[8], 0, 0);
+  /* argv[10], optional: grabs a frame, 2 (the default) or 1 (VBlank-only). */
+  const int pumps = argc > 10 ? atoi(argv[10]) : 2;
   if (pumps == 1) advance = 34;
   static MMLPairs p;
   mmlp_init(&p, &cfg);
@@ -92,11 +91,11 @@ int main(int argc, char **argv) {
   unsigned consumer = 0, ngrab = 0;
   uint8_t fifo_lo = 0xff;
   long i = 0;
-  /* argv[10], optional: the render lead. Absent, every frame is sent as soon as
+  /* argv[9], optional: the render lead. Absent, every frame is sent as soon as
    * it is queued (release = frames queued). Given, frames are queued `lead` frames ahead of
    * their release, and each frame's two grabs pass the frame count — the SGDK
    * host's schedule (mmlispdrv.c MMLisp_frame). */
-  const int lead = argc > 10 ? atoi(argv[10]) : -1;
+  const int lead = argc > 9 ? atoi(argv[9]) : -1;
   uint16_t release = 0;
   for (;;) {
     int more = i + 2 <= len;

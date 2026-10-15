@@ -5,10 +5,11 @@
 //   src/mmlispdrv.c       the host glue      )
 //   src/mmlispseq.c       the sequencer       ) copied by
 //   src/mmlispseq_tables.c its constant tables ) drv/tools/install-sgdk.mjs
-//   src/mmlpairs.c        the slot -> pair converter
-//   inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlpairs.h  inc/mmlispdrv_bin.h (generated)
+//   src/mmlpairs.c        the frame -> pair converter
+//   inc/mmlispdrv.h  inc/mmlispseq.h  inc/mmlpairs.h
+//   inc/mmlispdrv_bin.h  inc/mmlispdrv_banked_bin.h   the engine images (generated)
+//   inc/mml_rate.h  inc/mml_banked_rate.h   the images' sample clocks (generated)
 //   inc/mmlisp_se.h       the score's def-se numbers (generated)
-//   inc/mml_rate.h        the sample clock — mmlispseq.h includes it
 //   res/song.res          the BIN resources: song.mmb, and song.smp for a PCM score
 //
 // Controls
@@ -33,7 +34,7 @@
 #include "mmlisp_se.h"   // install-sgdk: SE_<NAME> and MMLISP_SE_COUNT, the def-se numbers
 
 // ── PCM scores ──────────────────────────────────────────────────────────────
-// A score with `def :sample` ships res/song.smp beside res/song.mmb, and needs
+// A score with a `def-pcm` ships res/song.smp beside res/song.mmb, and needs
 // BOTH of these or not one PCM note plays:
 //
 //   1. uncomment the `BIN song_smp "song.smp" 32768` line in res/song.res
@@ -273,11 +274,11 @@ int main(bool hardReset)
     //
     // `pend` is the pairs waiting for the wire. A handful is steady state; a
     // number that keeps climbing means the score asks for more register writes
-    // a second than two grabs a frame carry (~600), or the interrupt pumps are
-    // not running. `ovf` is pairs LOST to a full queue — it must stay 0.
+    // a second than the grabs carry (~960 single-bank), or the interrupt pumps
+    // are not running. `ovf` is pairs LOST to a full queue — it must stay 0.
+    // `flt` is PCM commands for a voice the booted image does not have.
     // `late` is grabs that came too late to write and left it to the next.
-    // `drop` is PCM commands this one-voice profile cannot play (pcm2/pcm3,
-    // loops); `grabs` should advance by ~120 a second.
+    // `grabs` advances by about one a frame (up to five on a banked image).
     VDP_drawText("host x256:", 2, 8);
     VDP_drawText("frames:", 19, 8);
     VDP_drawText("pend:", 2, 9);

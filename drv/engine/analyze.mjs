@@ -9,7 +9,7 @@ import { YM } from "./config.mjs";
 
 const q = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))];
 
-/** §6.2 — when did each byte actually leave? */
+/** TIME — when did each byte actually leave? */
 export function analyzeTime(trace, cfg, { warmup = 0 } = {}) {
   const T = cfg.periodCycles;
   const t = trace.dacCycle.slice(warmup);
@@ -25,8 +25,8 @@ export function analyzeTime(trace, cfg, { warmup = 0 } = {}) {
   const inBand = (lo, hi) => gaps.filter((g) => g >= T * lo && g <= T * hi).length / gaps.length;
   // A hole is a stretch with NO write in it — the DAC repeating its last byte
   // — and it is reported as its own fault, attributed to a bus grab where one
-  // overlaps (§4/5 of the 2026-09-04 note: the 68000 was falsified as the
-  // cause once already, so the attribution is measured, not assumed).
+  // overlaps — measured, not assumed: a hole is not blamed on the 68000
+  // without a grab that covers it.
   const holes = [];
   for (let i = 1; i < t.length; i++) {
     const g = t[i] - t[i - 1];
@@ -85,7 +85,7 @@ export function analyzeWrites(trace, cfg) {
 }
 
 /**
- * THE RULES, applied to a write stream from wherever it came (R26 §59.4).
+ * THE RULES, applied to a write stream from wherever it came.
  *
  * The JS emulator produces one from its own trace and the machine produces one
  * from the instrument's record of every YM access the Z80 made — and the two
@@ -98,7 +98,7 @@ export function checkWriteStream(writes) {
   const problems = [];
   const lastData = new Map();   // range -> cycle
   const lastAddr = [null, null];
-  // THE FREQUENCY LATCH IS A SECOND, SEPARATE THING TO PROTECT (§3.5, R1).
+  // THE FREQUENCY LATCH IS A SECOND, SEPARATE THING TO PROTECT.
   // Restoring the $2A address latch says nothing about it: $A4-$A6 and
   // $AC-$AE park an upper byte in a per-part holding register that the
   // matching lower write ($A0-$A2, $A8-$AA) commits. Splitting an FM
@@ -107,15 +107,14 @@ export function checkWriteStream(writes) {
   // the commit silently loses the first. Checked on its own, and separately
   // from the address latch above.
   //
-  // WHICH LATCH, FROM THE CHIP AND NOT FROM A GUESS (R28, step 2). Nuked-OPN2
+  // WHICH LATCH, FROM THE CHIP AND NOT FROM A GUESS. Nuked-OPN2
   // (third_party/Nuked-OPN2/ym3438.c, from the die) keeps TWO holding
   // registers: `reg_a4` for $A4-$A6, committed by $A0-$A2, and `reg_ac` for
   // $AC-$AE, committed by $A8-$AA — and each is ONE register for both parts.
   // So a ch3 special-mode pair (the engine's CSM traffic) and a normal pitch
   // pair never share a latch, while an upper write on port 1 does clobber an
-  // uncommitted upper on port 0. The earlier model here — one latch per port
-  // covering both groups — was wrong both ways; it is what made R26 §60.7 read
-  // CSM's $AC as a threat to a $A4 pair. BlastEm's ym2612.c latches per
+  // uncommitted upper on port 0 — and a model of one latch per port covering
+  // both groups would be wrong both ways. BlastEm's ym2612.c latches per
   // channel, which is more lenient than the chip; this checks the chip.
   const COMMIT = { 0xa0: 0xa4, 0xa1: 0xa5, 0xa2: 0xa6, 0xa8: 0xac, 0xa9: 0xad, 0xaa: 0xae };
   const isUpper = (r) => (r >= 0xa4 && r <= 0xa6) || (r >= 0xac && r <= 0xae);

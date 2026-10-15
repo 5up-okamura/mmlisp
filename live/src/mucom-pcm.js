@@ -9,9 +9,9 @@
  * linear PCM: the importer emits one WAV of the whole bank and each sample def
  * slices it (`:offset` / `:frames`).
  *
- * Kept out of import-mucom.js on purpose — that file is pure MML text -> text,
- * while this is binary decode with no MML knowledge, and the decoder needs to be
- * exercisable standalone (it is the risky part to calibrate).
+ * Kept out of import-mucom.js on purpose — that file is MML text -> text, while
+ * this is binary decode with no MML knowledge (the VGM importer's ADPCM-B uses
+ * it too).
  */
 
 const DIR_ENTRIES = 32;
@@ -27,7 +27,7 @@ const BODY_START = 0x400;
  * play every drum 15 cents flat and 1% long. The MMB exporter bakes each note
  * from it at the engine image's own rate.
  */
-export const MUCOM_ADPCM_RATE = 16144;
+const MUCOM_ADPCM_RATE = 16144;
 
 /** YM2608 ADPCM-B step-size table, indexed by the nibble magnitude (0-7). */
 const STEP_TABLE = [57, 57, 57, 57, 77, 102, 128, 153];
@@ -45,7 +45,7 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
  * @returns {{ entries: Array<{index:number,name:string,defaultVol:number,start:number,length:number}> }}
  *   `start` is an absolute byte offset into `bytes`; `length` is in bytes.
  */
-export function parseMucomPcmBank(bytes) {
+function parseMucomPcmBank(bytes) {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const entries = [];
   for (let i = 0; i < DIR_ENTRIES; i++) {

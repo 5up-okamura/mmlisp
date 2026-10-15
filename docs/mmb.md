@@ -172,28 +172,28 @@ valid on `NOTE_ON` / `PCM_NOTE_ON`.
 
 Pitch is a **u8 MIDI note number**, resolved at compile time (note names,
 `:oct`, transpose all folded by the compiler). The driver converts note →
-registers with ROM tables:
+registers with ROM tables, both 128 entries indexed by the note number:
 
-- FM: a 12-entry u16 F-number LUT plus `block` derived from the note
-  (`block = (note + 3) / 12 − 1`, LUT indexed by `(note + 3) mod 12` — the
-  table is A-rooted so that every F-number lands in the 512–1023 window
-  that `midiToFnumBlock` in `live/src/ir-utils.js` normalizes to).
-- PSG: a u16 period LUT over the playable note range.
+- FM: `MML_FNUM_BLOCK[128]`, each entry `(block << 11) | fnum` as
+  `midiToFnumBlock` in `live/src/ir-utils.js` returns it for that note.
+- PSG: `MML_PSG_PERIOD[128]`, the SN76489 tone period (clamped to 1023).
 
 Both tables **must match the `ir-utils.js` math** (`midiToFnumBlock`,
 `PSG_MASTER_CLOCK`). The JS reference builds both tables from that same code,
 and `drv/tools/gen-c-tables.mjs` emits them as C for the 68k sequencer
 (driver.md §8, §12.6). Fractional/cent pitch never appears in the
 stream; pitch bends are `PARAM_SWEEP NOTE_PITCH` events executed by the
-driver's sweep engine (M2).
+driver's sweep engine.
 
 ### 7.4 Parameter values
 
 Targets are u8 ids (opcodes.md §7). A parameter value is **i8 when the
 target's clamp range fits in i8, i16 otherwise**; the width is a fixed
 per-target property listed in the target table, known to both encoder and
-decoder (the driver holds a width bitmap in ROM). In practice every target
-except `NOTE_PITCH` (cents, ±32767) is i8.
+decoder (`targetWidth` in `live/src/mmb.js`, `target_wide` in the C). The
+i16 targets are `NOTE_PITCH` (cents), the reserved `TEMPO_SCALE`, the six PCM
+points (byte offsets) and the value slots `VAL0`–`VAL15`; every other target
+is i8.
 
 ### 7.5 TEMPO_SET payload
 
@@ -224,9 +224,9 @@ inits : count × i16  (initial slot values, slot = array index)
 
 Every slot the score declares is here, the `:public` ones first
 (language.md §8); the stream writes slot n as the target VAL*n* (opcodes.md
-§7). Slot names stay in IR/metadata only; the binary uses indices. At
-START_TRACK time the driver initializes each declared slot to its init
-value unless the host has already written it this session (driver.md §6).
+§7). Slot names stay in IR/metadata only; the binary uses indices. Loading
+the score seeds every slot from these inits (and resets the rest to 0);
+starting and stopping tracks never touches them (driver.md §6.4).
 
 ## 9. METADATA Section (0x0003)
 
@@ -407,8 +407,22 @@ limits, not hardware ones; relaxing them needs no driver change beyond
 
 ## 14. Validation Rules
 
-Asserted by the JS reference driver on load (`live/src/drv-player.js`), and
-by the C sequencer's loader where it can:
+These are **the encoder's obligations** (`live/src/export-mmb.js`): every MMB
+it writes satisfies them, and the players trust it: validation lives in the
+toolchain, not in the ROM driver. What the loaders do check:
+
+- **The C sequencer** (`mml_load`): the magic; the score's banked PCM voice
+  count has an image; every section's offset + size within the blob;
+  TRACK_TABLE and EVENT_STREAM present (`mml_load_samples` checks the sample
+  bank: the banked flag and the rate stamp match the score's image, the entry
+  count and every blob range in bounds, a banked bank on whole 32 KB banks).
+- **The JS reference** (`DrvPlayer.loadMMB`): the magic and the version; the
+  banked voice count; every section in bounds; TRACK_TABLE and EVENT_STREAM
+  present; the sample bank's format and stamp against the score.
+
+An unknown opcode in a stream is still caught at play time (§13).
+
+The obligations:
 
 1. Magic, version, `header_size` = 12, directory in ascending id order.
 2. All section offsets/sizes in bounds; sections non-overlapping;
@@ -451,7 +465,7 @@ Macro descriptor (8 bytes):
 | Offset | Size | Field       | Notes                                            |
 | ------ | ---- | ----------- | ------------------------------------------------ |
 | 0x00   | 1    | target      | target id (opcodes.md §7); also fixes value width |
-| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bit1 = additive (`:pitch+`/`:semi+` — driver composes each sample with the channel's live pitch offset instead of overwriting it); bit2 = scaled (`(* <LFO> $slot)` — driver multiplies each sample by a value slot read live per frame, §4.4; see the appended slot byte below); bit3 = tick clock (`step` counts the note's track ticks, driver.md §13.2); bits4–7 reserved 0 |
+| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bit1 = additive (`:pitch+`/`:semi+` — driver composes each sample with the channel's live pitch offset instead of overwriting it); bit2 = scaled (`(* <LFO> $slot)` — driver multiplies each sample by a value slot read live per frame, driver.md §13.2; see the appended slot byte below); bit3 = tick clock (`step` counts the note's track ticks, driver.md §13.2); bits4–7 reserved 0 |
 | 0x02   | 1    | step        | `:step` clock, 1–255: frames of the score's clock (§4: 60 or 50 Hz), or ticks when `flags` bit3 |
 | 0x03   | 1    | loop_start  | step index the sustain loop begins; `0xFF` = one-shot (hold the last attack value) |
 | 0x04   | 1    | release     | step index the release begins; `0xFF` = no release |
@@ -467,7 +481,7 @@ after its `count` values (found at `blob_offset + count × width`); the
 descriptor stays 8 bytes. Each frame the driver reads that value slot and writes
 `(sample × (slot & 0xFF)) >> 8` — the low byte is a 0..255 depth (255 ≈ full,
 256 ≈ ×1 is not representable), the multiply runs on the magnitude then
-re-signs toward zero (§4.4). `scale_slot` = 0xFF is the `$time` frame counter,
+re-signs toward zero, as a sweep's value does. `scale_slot` = 0xFF is the `$time` frame counter,
 0x00–0x0F a value slot. The **hold sentinel** `0x80` (i8) / `0x8000` (i16)
 means "advance one step, write nothing" (the `_` token). The sentinel is NOT a
 free value: NOTE_PITCH's range bottoms out at exactly −32768, so **the exporter

@@ -1,5 +1,6 @@
-// One-to-three-voice block renderer for the banked MMB profile. Legacy images keep
-// using gen-stream.mjs. A block is built voice by voice, with a complete ROM
+// The banked engine images (docs/driver.md §5.4): a one-to-three-voice block
+// renderer for the MULTIBANK_PCM profile. The single-bank images are
+// gen-stream.mjs's. A block is built voice by voice, with a complete ROM
 // bank selection between voices. The DAC consumes an older, finished block.
 //
 // Samples remain pre-baked signed bytes; END/WRAP retain the 16-byte contract.
@@ -22,15 +23,15 @@ export const MB = Object.freeze({
 const hx = (x) => `$${x.toString(16)}`;
 
 export function multibankConfig(period = 354, xpSteps = 15, voices = 2, machine = NTSC) {
-  return buildConfig({ machine, voices, loops: true, stepVoices: 0,
-    complete: true, pairs: true, signedSource: true, production: true,
+  return buildConfig({ machine, voices,
+    complete: true, pairs: true, signedSource: true,
     workTarget: 1, meanTarget: 1, sampleMaster: period * 15,
     lapBlocks: voices === 3 ? 3 : 5, xpSteps, lead: MB.lead });
 }
 
 export function generateMultibank(cfg = multibankConfig()) {
   if (![1, 2, 3].includes(cfg.voices) || cfg.cycleSlots !== (cfg.voices === 3 ? 48 : 80) || cfg.groupSlots !== 1)
-    throw new Error("multibank prototype requires one to three voices and equal output slots");
+    throw new Error("the banked engine takes one to three voices and equal output slots");
   if (cfg.lead !== MB.lead) throw new Error(`banked lead ${cfg.lead} is not MB.lead ${MB.lead}`);
   const base = pcm1Base(cfg);
   const state = (key, v) => hx(base + PCMN_L[key](v));
@@ -203,7 +204,7 @@ export function generateMultibank(cfg = multibankConfig()) {
     }
   }
 
-  const lines = ["; EXPERIMENTAL block-banked PCM engine", "org 0", "di", "im 1", "ld sp,$2000",
+  const lines = ["; block-banked PCM engine", "org 0", "di", "im 1", "ld sp,$2000",
     // Do not erase staged commands. Live state, FIFO and output are initialized.
     "ld hl,$1c00", "ld b,0", "ld a,$80", "mb_silence:", "ld (hl),a", "inc l", "djnz mb_silence",
     "ld hl,$1d00", "ld b,0", "xor a", "mb_fifo:", "ld (hl),a", "inc l", "djnz mb_fifo"];

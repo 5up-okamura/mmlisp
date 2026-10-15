@@ -1,4 +1,4 @@
-// THE WHOLE THING, BUILT WITH SGDK AND RUN ON BLASTEM (R28 §63.6 step 4).
+// THE WHOLE THING, BUILT WITH SGDK AND RUN ON BLASTEM (docs/driver.md §12.7).
 //
 //   node tools/sgdk-gate.mjs [score.mmlisp] [--seconds N] [--se effects.mmlisp] [--keep]
 //
@@ -170,7 +170,6 @@ for (const p of [0, 1]) {
   }
   if (seen[p].length > want[p].length) errors.push(`FM port ${p}: the chip saw ${seen[p].length} writes, the score has ${want[p].length}`);
 }
-// The engine's boot writes $2B (DAC enable) only; anything else before the first sample is a stray.
 // SGDK's own boot mutes the PSG before the score starts, so the score's stream
 // is matched as what the 68000 wrote AFTER the engine's first frame.
 const firstFrame = L.grabs.length > 8 ? L.grabs[8][0] : dac0;

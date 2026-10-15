@@ -25,14 +25,13 @@
 // fine tune (E5xx) an offset. Everything else is counted and reported.
 // ---------------------------------------------------------------------------
 
-import { PPQN, emitSong, emitPhrased, qstr } from "./import-song.js";
+import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS } from "./import-song.js";
 import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
-import { FM_DESTS, PSG_DESTS } from "./import-midi.js";
 
 // What each source channel kind is, for the defaults and the voice: an FM
 // channel whose instruments are OPN voices; OPM / OPLL / wavetable channels
 // play their notes on a stand-in voice.
-export const CHANNEL_KINDS = {
+const CHANNEL_KINDS = {
   fm: "FM", fm3op: "FM operator", opm: "OPM FM", opll: "OPLL FM", opl: "OPL FM",
   psg: "square", wave: "wavetable", noise: "noise", pcm: "sample",
 };
@@ -40,7 +39,6 @@ const STAND_IN = { psg: "wave-square", wave: "wave-triangle", noise: "wave-squar
 // The volume column's top, where it is not the model's FM / PSG one.
 const VOL_MAX = { opl: 63 };
 
-const PITCH_NONE = "(macro :pitch none)";
 const PITCH_CODES = new Set([0x01, 0x02, 0x03, 0x04, 0xe1, 0xe2, 0xe5]);
 
 const FX_NAMES = {
@@ -67,33 +65,29 @@ function playOrder(t) {
   const seen = new Map(); // order → its index in seq
   let o = 0;
   let loopIndex = 0;
-  const notes = { forward: 0 };
   while (o < t.orders.length) {
     if (seen.has(o)) { loopIndex = seen.get(o); break; }
     seen.set(o, seq.length);
     let rows = t.patLen;
     let jump = null;
-    let brk = false;
     for (let r = 0; r < t.patLen && rows === t.patLen; r++) {
       t.channels.forEach((chn, c) => {
         const row = chn.patterns.get(t.orders[o][c])?.[r];
         for (const [code, val] of row?.fx ?? []) {
           if (code === 0x0b && val >= 0) { jump = val; rows = r + 1; }
-          if (code === 0x0d) { brk = true; rows = r + 1; }
+          if (code === 0x0d) rows = r + 1;
         }
       });
     }
     seq.push({ order: o, rows });
     if (jump != null) {
       if (seen.has(jump)) { loopIndex = seen.get(jump); break; }
-      if (jump > o) notes.forward++;
       o = jump;
       continue;
     }
-    void brk;
     o++;
   }
-  return { seq, loopIndex, notes };
+  return { seq, loopIndex };
 }
 
 /**
@@ -504,7 +498,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       return {
         label: `p${String(t.orders[s.order][ch.index]).padStart(2, "0")}`,
         len, bars: segBars(len), notes: inSeg, marks: segMarks,
-        state: { pre: src?.state ?? [], vel: src?.vel ?? 15, oct: Math.floor(midi / 12) - 1 },
+        state: { pre: src?.state ?? [], vel: src?.vel ?? 15, oct: octOf(midi) },
       };
     });
     return { channel: ch.dest, head: [], loopIndex, segments };

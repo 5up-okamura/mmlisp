@@ -1,5 +1,10 @@
-// Experimental MMLisp -> banked ROM + precomputed host frames. The production
-// MMB/.smp ABI is not widened or silently reinterpreted by this tool.
+// MMLisp -> a banked sample ROM + precomputed host frames, for the engine-level
+// banked gates (multibank:gate) and multibank-render.mjs. It is not the
+// production export: the score is baked as a two-voice single-bank score at
+// the pcm2 rate, packMultibank lays the baked blobs into 32 KB banks itself
+// (no directory bank, unlike the exporter's multi-bank .smp), and its player
+// appends the bank to PCM_START instead of sending PCM_START_BANKED
+// (multibank-model.mjs MultibankPairs).
 import { readFileSync } from "node:fs";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { createSampleBankBuilder, encodeMmb } from "../../live/src/export-mmb.js";
@@ -18,14 +23,14 @@ export function packMultibank(raw, { separateBanks = false } = {}) {
   let bank = 0, cursor = 0, usedBytes = 0;
   const packed = entries.map((s) => {
     if (!Number.isInteger(s.len) || s.len <= 0 || s.len % 16 || s.len > 0x7f00)
-      throw new RangeError(`one baked sample is ${s.len} B; the prototype supports 16..32512 B per blob`);
+      throw new RangeError(`one baked sample is ${s.len} B; the banked engine takes 16..32512 B per blob`);
     if (s.base + s.len > raw.length) throw new RangeError("truncated baked sample data");
     const key = `${s.base}:${s.len}`;
     if (!shared.has(key)) {
       if (cursor + s.len > 0x7f00 || (separateBanks && cursor > 0)) {
         bank++;
         // Normal cartridge ROM aperture; larger mapper ROMs need a host policy.
-        if (bank >= 128) throw new RangeError("prototype PCM ROM exceeds the 4 MiB cartridge aperture");
+        if (bank >= 128) throw new RangeError("the packed PCM ROM exceeds the 4 MiB cartridge aperture");
         banks.push(new Uint8Array(0x8000)); cursor = 0;
       }
       banks[bank].set(raw.subarray(s.base, s.base + s.len), cursor);
@@ -94,11 +99,11 @@ export function buildMultibankScore(path, { frames = 240, idleAfterGen = 2, sepa
   rejectErrors();
   const ir = compiled.ir;
   const sourceVoices = ir.metadata.pcmVoices;
-  if (sourceVoices < 1 || sourceVoices > 2) throw new Error("multibank prototype requires one or two PCM voices");
+  if (sourceVoices < 1 || sourceVoices > 2) throw new Error("multibank-score takes one or two PCM voices");
   if (sourceVoices !== 2) {
     ir.metadata.pcmVoices = 2;
     diagnostics.push({ severity: "info", code: "I_MULTIBANK_ENGINE",
-      message: "one-voice score rebaked for the experimental bank image (10111.709 Hz)" });
+      message: "one-voice score rebaked for the two-voice bank image (10111.709 Hz)" });
   }
   const samples = loadSamplesForIr(ir, diagnostics);
   const builder = createSampleBankBuilder(engineImage(2).rateHz);
@@ -109,7 +114,8 @@ export function buildMultibankScore(path, { frames = 240, idleAfterGen = 2, sepa
   const packed = packMultibank(Uint8Array.from(flat.bytes), { separateBanks });
   const player = new BankedPlayer();
   player.loadMMB(encoded.bytes);
-  // Explicit experiment adapter; these records never enter a production .smp.
+  // The packed entries (bank + window address) replace the flat bank's; they
+  // never enter a .smp.
   player._song.samples = packed.entries;
   const capture = player.captureSlotLog({ maxFrames: frames, builder: new Frames() });
   diagnostics.push(...capture.diagnostics);

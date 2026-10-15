@@ -144,10 +144,10 @@ vib, vib-delay, slide-up, drop; combine one of each; they work on FM too).
 ```
 
 A macro is sticky: it runs on every following note until cleared. Targets:
-`:vel :vol :master :pitch :semi :keyon :pan :mode :lfo-rate`, the FM voice
-(`:alg :fb :ams :fms`) and the operators (`:tl1`–`:tl4`, `:ar :dr :sr :rr :sl
-:ml :dt :ks :ssg :am` 1–4). `:step` is frames (`2f`) or a note length (`16`,
-on the beat).
+`:vel :vol :pitch :semi :keyon :pan :mode`, the FM voice (`:alg :fb :ams
+:fms`) and the operators (`:tl1`–`:tl4`, `:ar :dr :sr :rr :sl :ml :dt :ks :ssg
+:am` 1–4). The song-wide `:master` and `:lfo-rate` are inline only (a sweep, not
+a macro). `:step` is frames (`2f`) or a note length (`16`, on the beat).
 
 ## Curves (§11)
 

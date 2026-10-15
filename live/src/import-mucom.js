@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// mucom88 (.muc) -> MMLisp import (best-effort: FM voices + FM/SSG notes)
+// mucom88 (.muc) -> MMLisp import
 //
 // mucom88 targets the PC-8801 / YM2608 (OPNA): FM A-C,H-J, SSG D-F, rhythm G,
 // ADPCM K. MMLisp targets the Mega Drive (YM2612 FM1-6 + SN76489 PSG). FM maps
@@ -16,8 +16,8 @@ import { encodeWav } from "./export-wav.js";
 import { VEL_DB_PER_STEP, pitchToMidi } from "./ir-utils.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 import { encodeMmb } from "./export-mmb.js";
+import { PPQN, qstr, noteName } from "./import-song.js";
 
-const PPQN = 96; // must match mmlisp2ir.js
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
 const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole note)
 
@@ -126,24 +126,17 @@ const MUCOM_PCM_VEL_DEFAULT = 64;
 const octShiftFor = (letter) => (letter in SSG_PARTS ? 0 : -1);
 const MUCOM_DEFAULT_OCT = 6; // mucom's default octave when a part sets none
 
-/** Decode .muc bytes (usually Shift-JIS) to a string, UTF-8 fallback. */
-export function decodeMucText(bytes) {
-  for (const enc of ["shift-jis", "utf-8"]) {
-    try {
-      return new TextDecoder(enc, { fatal: false }).decode(bytes);
-    } catch {
-      /* try next */
-    }
+/** Decode .muc bytes to a string: UTF-8 when they are valid UTF-8, else Shift-JIS. */
+function decodeMucText(bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("shift-jis").decode(bytes);
   }
-  // Last resort: latin1-ish
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
-  return s;
 }
 
 // --- length helpers ---------------------------------------------------------
 
-// Convert a mucom length spec to an MMLisp length token.
 // Convert a mucom note length to an MMLisp length token. Durations are computed
 // on mucom's CLOCK grid (wholeClocks/whole, default 128) exactly as the driver
 // does — base = floor(wholeClocks/len), each dot adds floor(prev/2) — then scaled
@@ -202,8 +195,8 @@ function noteClocks(num, dots, pct, hasLen, state) {
 
 // Resolve a note/rest length token. A dots-only suffix (`f.`, `e-.` — dots but
 // no number) applies the dots to the running DEFAULT length: mucom multiplies
-// the note's current length by 1.5 per dot. lengthToken alone returns null when
-// num is absent, which silently dropped the dot (part ran short over the loop).
+// the note's current length by 1.5 per dot (lengthToken alone returns null when
+// num is absent).
 function resolveLen(num, dots, pct, hasLen, state) {
   if (!hasLen) return defaultLenToken(state);
   if (num == null && pct == null && dots > 0) {
@@ -402,7 +395,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
-    // Rest (lowercase 'r' only; uppercase 'R' is reverb — see deferred list)
+    // Rest (lowercase 'r' only; uppercase 'R' is reverb)
     if (c === "r") {
       i++;
       let num = null, dots = 0, pct = null, hasLen = false;
@@ -545,7 +538,9 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     // Voice select @<n> or by name @"name" (FM only)
     if (c === "@") {
       i++;
-      if (body[i] === "%") { i++; readInt(); warnOnce(warn, "@%", "register-dump voice (@%) not supported; dropped"); continue; }
+      // `@%n` names a voice only in a definition line; muc88.asm SETCOL reads
+      // no `%` after `@` in a part, so the real compiler rejects it here.
+      if (body[i] === "%") { i++; readInt(); warnOnce(warn, "@%", "@% in a part is not mucom88 syntax (only a voice definition takes it); dropped"); continue; }
       if (body[i] === '"') {
         i++; let name = "";
         while (i < n && body[i] !== '"') name += body[i++];
@@ -808,12 +803,6 @@ function parseVoiceNumbers(text) {
 
 // --- top-level parse --------------------------------------------------------
 
-/**
- * Parse mucom88 MML text into a structured, MMLisp-friendly intermediate.
- * @returns {{ meta:{title,author}, tempo:number|null,
- *             voices: Map<number, {fb,alg,ops:Array}>,
- *             parts: Map<string, Array>, warnings: string[] }}
- */
 // Decide, per part letter, whether each `[ … ]` loop closes on the same source
 // line it opened (single-line -> (x …)) or spans lines (cross-line -> #label /
 // (go label n)). Returns Map<letter, Array<{cross, label}>> in `[` order.
@@ -846,7 +835,13 @@ function scanLoopSpans(lines) {
   return decisions;
 }
 
-export function parseMucom(text) {
+/**
+ * Parse mucom88 MML text into a structured, MMLisp-friendly intermediate.
+ * @returns {{ meta: {title, composer, author, voiceFile, pcmFile}, tempo: number|null,
+ *             voices: Map<number, {fb,alg,ops:Array,name}>, macros: Map<number, {ops, comments}>,
+ *             scoreItems: Array, scoreComments: string[], warnings: string[] }}
+ */
+function parseMucom(text) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const meta = { title: null, composer: null, author: null, voiceFile: null, pcmFile: null };
   const voices = new Map();
@@ -1061,12 +1056,11 @@ const ACC = (acc) => (acc > 0 ? "+" : acc < 0 ? "-" : "");
 // crosses an octave wraps the note in `>`/`<` so the running octave is left
 // untouched (the compiler shifts the note, never the octave).
 const SEMI = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
-const SHARP_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
 function shiftedNote(letter, acc, shift) {
   if (!shift) return { name: `${letter}${ACC(acc)}`, dOct: 0 };
   const n = SEMI[letter] + acc + shift;
   const pc = ((n % 12) + 12) % 12;
-  return { name: SHARP_NAMES[pc], dOct: Math.floor(n / 12) }; // relative to this octave's c
+  return { name: noteName(pc), dOct: Math.floor(n / 12) }; // relative to this octave's c
 }
 // The SN76489's 10-bit period bottoms out at A2 (~109 Hz); the SSG goes down
 // to C1. A lower SSG note is played an octave (or two) up rather than pinned
@@ -2137,13 +2131,11 @@ function buildVoiceLabels(voices) {
   return labels;
 }
 
-const qstr = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
-
 /**
  * Render a parsed mucom song into MMLisp source text.
- * @returns {{ source:string, warnings:string[] }}
+ * @returns {{ source:string, warnings:string[], pcmVoices:number }}
  */
-export function mucomToMmlisp(parsed) {
+function mucomToMmlisp(parsed) {
   const { meta, tempo, voices, macros, scoreItems, scoreComments, warnings, pcm } = parsed;
   const lines = [];
 
@@ -2467,7 +2459,7 @@ export function mucomToMmlisp(parsed) {
   }
 
   lines.push("");
-  return { source: lines.join("\n").replace(/^\n+/, ""), warnings, pcmVoices: rhythmPlays && kPlays ? 2 : 1, rhythm: rhythmPlays };
+  return { source: lines.join("\n").replace(/^\n+/, ""), warnings, pcmVoices: rhythmPlays && kPlays ? 2 : 1 };
 }
 
 // --- external voice bank (.dat) --------------------------------------------
@@ -2476,7 +2468,7 @@ export function mucomToMmlisp(parsed) {
 // Each record is hed(1) + 6 param groups x 4 ops + FB/AL(1) + name(6). The four
 // op bytes per group are in YM2608 slot order op1,op3,op2,op4. Returns
 // Map<index, { fb, alg, ops:[{ar,dr,sr,rr,sl,tl,ks,ml,dt}x4], name }>.
-export function parseVoiceDat(bytes) {
+function parseVoiceDat(bytes) {
   const REC = 32;
   const voices = new Map();
   const slot = { 1: 0, 2: 2, 3: 1, 4: 3 }; // MMLisp op n -> byte position in a group

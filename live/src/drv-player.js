@@ -1,27 +1,31 @@
 import { bankedEngineImage } from "./engine-banked-images.js";
 // ---------------------------------------------------------------------------
-// MMLispDRV reference player — MMB v0.4 decoder + Z80-constrained scheduler.
+// MMLispDRV reference driver — the sequencer's executable spec (driver.md §12.1).
 //
-// This is the executable form of docs/driver.md: it consumes the MMB binary
-// (docs/mmb.md, docs/opcodes.md) exactly as the Z80 driver will — 60 Hz
-// frame-stepped, per-track 8.8 fixed-point tick accumulators, shadow register
-// file with change-only writes — and emits YM2612/PSG register writes through
-// the same write callback IRPlayer uses, so the two players can be A/B-diffed
-// register-for-register (ab-compare.js) and the asm port can later be traced
-// against the same logs.
+// It reads an MMB (docs/mmb.md, docs/opcodes.md) the way the 68000 sequencer
+// in drv/68k/mmlispseq.c does: frame-stepped at the score's own rate (60 Hz,
+// or 50 Hz for a PAL-baked score), per-track 8.8 fixed-point tick
+// accumulators, a shadow register file with change-only writes, the sweep and
+// macro engines, SE channel arbitration, and the PCM voices' command stream.
+// Its register writes go out through the same write callback IRPlayer uses.
 //
-// Z80 constraints, operationally:
-// - Integer-only runtime. All float math happens once, in LUT construction
-//   (buildLuts): note→F-number/block, note→PSG period, vel/vol→TL and PSG
-//   attenuation offset tables. The tables are exported (getLuts) so the asm
-//   port copies them verbatim.
-// - One stepFrame() per vblank: mailbox → per-track dispatch → write flush.
-//   The frame order is the normative main-loop order of driver.md §4.
-// - M1 opcode coverage (opcodes.md §3): NOTE_ON(+EX gate), REST, TIE,
-//   LOOP_BEGIN/END(+BREAK), MARKER, JUMP, PARAM_SET (all targets), TEMPO_SET,
-//   END_OF_TRACK. Reserved opcodes are length-decoded and skipped with a
-//   diagnostic (PCM_NOTE_ON still advances the clock so timelines stay
-//   aligned).
+// The gates that hold it (driver.md §12):
+// - c-gate: the C sequencer produces the identical slot stream
+//   (captureSlotLog) — every write, PCM command and trig byte — on the corpus,
+//   NTSC and PAL; banked:gate does the same for multi-bank PCM scores.
+// - claim-gate: a channel's modulators do not outlive its owner (§12.2a).
+// - pairs-gate: this player's frames are the reference both converters —
+//   drv/68k/mmlpairs.c and its JS twin — turn into pairs (§12.3).
+// - verify:ab: the register log against ir-player (ab-compare.js), within the
+//   documented tolerances (§12.5).
+// - pcm-ab / pcm-loop: its PCM commands against the IR preview's, and against
+//   the points the language gives each note.
+//
+// The runtime is integer-only, like the C: all float math happens once, in
+// buildLuts (F-number/block and PSG period by MIDI note, vel/vol level
+// offsets), from the same ir-utils.js functions tools/gen-c-tables.mjs emits
+// drv/68k/tables.c from. One stepFrame() is one frame in the normative order
+// of driver.md §4: host commands → per-track dispatch → engines → the frame.
 //
 // Gate rule (opcodes.md §3.1 + language.md §3.1 legato): key-off fires at
 // dur×gate/8 ticks. With gate = 8 the key-off at dur expiry is *pending*: a TIE
@@ -42,7 +46,6 @@ import {
   SECTION_ID,
   TRACK_FLAG,
   OPCODE,
-  OPCODE_NAME,
   TARGET_ID,
   TARGET_NAME,
   PCM_POINT_TARGET_IDS,
@@ -84,21 +87,22 @@ const FRAMES_PER_SEC = 60;
 // The channels the macro engine runs on: 0-9 and FM3's four operators
 // (mmlispseq.h MML_MACRO_CHANNELS).
 const MACRO_CHANNELS = 17;
+// Macro binds a channel holds (mmlispseq.h MML_MACRO_BINDS).
+const MACRO_BINDS = 8;
 // The song-wide targets' own sweep slots: :master, :lfo-rate, VAL0–15.
 const GLOBAL_SWEEPS = 18;
-const LOOP_STACK_DEPTH = 4; // driver.md §5.2
+const LOOP_STACK_DEPTH = 4; // the track's control stack (driver.md §4.3)
 
 // ── LUT construction (float math lives here and only here) ────────────────
 function buildLuts() {
-  // note → (block << 11) | fnum, u16. The asm ships the A-rooted 12-entry
-  // form (driver.md §8); the reference carries the expanded 128-entry table
-  // generated from the same midiToFnumBlock math so they cannot disagree.
+  // note → (block << 11) | fnum, u16, indexed by MIDI note — the same
+  // 128-entry table drv/68k/tables.c ships as MML_FNUM_BLOCK (driver.md §8).
   const fnumBlock = new Uint16Array(128);
   for (let n = 0; n < 128; n++) {
     const { fnum, block } = midiToFnumBlock(n);
     fnumBlock[n] = ((block & 0x07) << 11) | (fnum & 0x7ff);
   }
-  // note → SN76489 tone period (10 bit), u16.
+  // note → SN76489 tone period (10 bit), u16 — tables.c MML_PSG_PERIOD.
   const psgPeriod = new Uint16Array(128);
   for (let n = 0; n < 128; n++) psgPeriod[n] = midiToPsgPeriod(n);
   // Level offset tables (driver.md §7). Stored as float-exact step offsets;
@@ -123,20 +127,19 @@ const u16le = (x) => [x & 0xff, (x >> 8) & 0xff];
 const u32 = (b, o) =>
   (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
 const i8 = (v) => (v & 0x80 ? v - 0x100 : v);
-// pcm1-pcm3, the three soft-mix voices (driver.md §14)
 const i16 = (v) => (v & 0x8000 ? v - 0x10000 : v);
 
-// Scaled-macro sample (§4.4): `(sample × depth) >> 8`, depth = slot low byte
-// (0..255). The multiply is unsigned on magnitude then re-signed (toward zero),
-// matching the Z80 mul16x8_sh8 + sweep_value sign pattern so all three players
-// agree bit-for-bit. Depth 256 (≈×1) is not representable; 255 ≈ full.
+// Scaled-macro sample (driver.md §13.2): `(sample × depth) >> 8`, depth = slot
+// low byte (0..255). The multiply is unsigned on magnitude then re-signed
+// (toward zero), as mmlispseq.c scale_macro_sample does, so the players agree
+// bit-for-bit. Depth 256 (≈×1) is not representable; 255 ≈ full.
 function scaleMacroSample(sample, slotValue) {
   const depth = slotValue & 0xff;
   const mag = (Math.abs(sample) * depth) >> 8;
   return sample < 0 ? -mag : mag;
 }
 
-// Fresh per-FM-channel shadow state (voiced values; mirrors driver.md §5.1).
+// Fresh per-FM-channel state (voiced values; driver.md §4.3).
 function freshFmChannel() {
   return {
     algorithm: 7,
@@ -181,6 +184,7 @@ import {
   SlotBuilder,
   SLOT_SUBS,
   PCM_START,
+  PCM_START_BANKED,
 } from "./slot-builder.js";
 import { PcmLiveEngine, PCM_WINDOW, PCM_SILENCE_ADDR, parsePcmBank } from "./pcm-model.js";
 import { PcmVoices } from "./pcm-voices.js";
@@ -214,13 +218,12 @@ export class DrvPlayer {
     this._audioContext = null;
     this._startAudioTime = 0;
     this._diagnostics = [];
-    this._skippedOpcodes = new Map(); // opcode → count (reserved, not executed)
     // Live mixer state — usable before playback starts (the app may mute/solo
     // any time). Preserved across a hot-swap _reset.
     this._mutedTracks = new Set();
     this._soloTracks = new Set();
     // The engine's PCM, for LIVE playback only (docs/driver.md §14.3):
-    // the same state machine the engine gate grades the Z80 against, driven by
+    // the state machine engine:gate grades the Z80 engine against, driven by
     // this player's own commands, producing the DAC bytes the page hears. The
     // gates never build it — they compare commands, not samples.
     this._pcmModel = null;
@@ -288,7 +291,7 @@ export class DrvPlayer {
     }
 
     // METADATA (mmb.md §5): repeated {u8 keyLen, key, u16 valLen, value}. The
-    // driver itself never reads this section — the Z80 skips it — but the
+    // driver itself never reads this section — the sequencer skips it — but the
     // exporter records each value slot's source name as `val_<slot>`, which is
     // the only place a name survives compilation (the stream and VAL_TABLE are
     // numeric). Recovering that map is what lets the UI drive `def-val` slots
@@ -311,12 +314,10 @@ export class DrvPlayer {
     }
     this._valNameToSlot = valNameToSlot;
 
-    // SAMPLE_BANK (mmb.md §10): entry table + byte-packed 8-bit signed blobs.
-    // No longer an MMB section — the blobs live in a separate ROM bank the mixer
-    // latches (docs/mmb.md §10), passed in as `sampleBankBytes`. `blobBase` is the
-    // offset of the blob region within the bank; entry offsets are relative to
-    // it. (The Z80 mirror latches G_SMP_BANK; the JS reference just reads the
-    // array, so the DAC trace stays bit-identical.)
+    // SAMPLE_BANK (mmb.md §10): entry table + byte-packed 8-bit signed blobs,
+    // in their own ROM resource beside the MMB, passed in as `sampleBankBytes`.
+    // `blobBase` is the offset of the blob region within the bank; entry
+    // offsets are relative to it.
     const samples = [];
     let sampleData = null;
     const sampleBank =
@@ -371,7 +372,7 @@ export class DrvPlayer {
             off += 1;
           }
         }
-        // Scaled macro (flags bit2, §4.4): one slot-id byte follows the values.
+        // Scaled macro (flags bit2, mmb.md §15): one slot-id byte follows the values.
         const scaleSlot = (flags & 4) !== 0 ? macroTable[off] : null;
         macros.push({
           target: macroTable[e],
@@ -407,10 +408,9 @@ export class DrvPlayer {
   }
 
   // ── Playback state reset (driver "power-on + START_TRACK all") ──────────
-  // `autoStart`: true starts
-  // every track from frame 0 (the M1 default); false leaves them idle so the
-  // host mailbox schedule drives START_TRACK / PLAY_SE explicitly (the SE
-  // gates — an effect track must not auto-start; driver.md §2.5).
+  // `autoStart`: true starts every track but the effects' parts from frame 0
+  // (the default); false leaves them idle so the host command schedule drives
+  // START_TRACK / PLAY_SE explicitly (the SE gates; driver.md §2.5).
   _reset(autoStart = true) {
     const song = this._song;
     this._frame = 0;
@@ -422,7 +422,6 @@ export class DrvPlayer {
       ? this._tempoOverrideInc
       : bpmToTickIncrement(120, this._frameHz);
     this._diagnostics = [];
-    this._skippedOpcodes = new Map();
     this._master = VOL_UNITY;
     this._lfoRate = null;
     this._noiseMode = 4; // white0 — compiler emits an explicit tick-0 set anyway
@@ -440,27 +439,27 @@ export class DrvPlayer {
       // vel macro can drive att to 15 (silent) mid-note without un-keying, so
       // the macro engine keys off this, not `sounding` (driver.md §13.3).
     }));
-    // Hardware shadow for change-only suppression (driver.md §5.4). Key ($28)
+    // Hardware shadow for change-only suppression (driver.md §4). Key ($28)
     // and raw PSG bytes are edges, not state — they bypass the shadow.
     this._shadow = [new Map(), new Map()]; // per YM port: addr → data
     this._opMasks = new Array(6).fill(0xf0); // UI op-enable mask per channel
 
-    // M2 sweep engine (driver.md §4 step 3). Two concurrent sweep slots per
+    // Sweep engine (driver.md §4 step 3). Two concurrent sweep slots per
     // channel (e.g. a pitch glide and a volume fade at once) + one global tempo
     // sweep. Slot: { target, curveId, loop, from, to, len, frame, phase16, step16 }.
-    // Banks: the ten M1 channels, then the three PCM voices — their loop
-    // points sweep like any other param (_sweepBank).
-    // Sweep banks: the ten M1 channels, the three PCM voices, then FM3's
-    // the four operators (ids 16-19) — see _sweepBank.
+    // Banks (_sweepBank): channels 0-9, the three PCM voices as 10-12 — their
+    // loop points sweep like any other param — then FM3's four operators
+    // (ids 16-19) as 13-16.
     this._sweeps = Array.from({ length: 17 }, () => [null, null]);
     // The song-wide targets' sweeps — :master, :lfo-rate, VAL0–15 — one slot
     // each, owned by no channel (_globalSweep).
     this._gsweeps = new Array(GLOBAL_SWEEPS).fill(null);
-    // M3 macro engine (driver.md §13). Per channel: a sticky active set (up to
-    // 3 macros keyed by target) and running slots instantiated on NOTE_ON.
+    // Macro engine (driver.md §13). Per channel: a sticky active set (up to
+    // MACRO_BINDS macros keyed by target) and running slots instantiated on NOTE_ON.
     this._macros = song?.macros ?? [];
     this._voices = song?.voices ?? [];
-    // The macro engine's channels: 0-9 and FM3's op2-4 as 10-12 (_macroCh).
+    // The macro engine's channels (_macroCh): 0-9, FM3's four operators
+    // (ids 16-19) as 10-13, and the PCM voices (ids 20-22) as 14-16.
     this._macroActive = Array.from({ length: MACRO_CHANNELS }, () => new Map()); // target → macro index
     this._macroSlots = Array.from({ length: MACRO_CHANNELS }, () => []); // running slots
     this._curAcc = 0; // the dispatching track's accumulator after its tick
@@ -468,7 +467,7 @@ export class DrvPlayer {
     // The effect part whose note triggered a channel's macros (track index + 1,
     // 0 = the song's): a tick-clocked macro counts that part's ticks.
     this._mcSe = new Array(MACRO_CHANNELS).fill(0);
-    // M3 dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
+    // Dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
     // overwritten by SET_VAL. $time (slot 0xFF) reads the frame counter instead.
     this._valSlots = new Int16Array(16);
     const vi = song?.valInits ?? [];
@@ -534,7 +533,7 @@ export class DrvPlayer {
       fresh: autoStart && !(t.flags & TRACK_FLAG.isSe),
       held: false, // len=0 hold: dispatcher suspended
       loops: [], // {resumePc, remaining}
-      fading: false, // FADE_TRACK (M2 mailbox): Bresenham vol ramp to 0, then stop
+      fading: false, // FADE_TRACK (host command): Bresenham vol ramp to 0, then stop
       fadeN: 0,
       fadeErr: 0,
       fadeVol: 0,
@@ -549,7 +548,7 @@ export class DrvPlayer {
       displaced: null, // owner track index this SE displaced (null = none)
       seIndex: null, // the effect this part plays for (SE_TABLE number)
       snapshot: null, // channel state captured at suspend (owner tracks only)
-      pcmSnap: null, // PCM SE (design C): stolen soft-mix voice struct to restore
+      pcmSnap: null, // PCM SE: the soft-mix voice it took, to restore
       pcmSe: null, // PCM SE: {vi, binds} — the voice it took, and the BGM binds to hand back
       sePrio: 0, // register-SE priority (for same-channel preempt/drop)
     }));
@@ -562,7 +561,7 @@ export class DrvPlayer {
 
   // ── Write paths ──────────────────────────────────────────────────────────
   // A write is stamped at its own sub-tick, not at the frame head: that is what
-  // the sub-slots buy on the Z80 (driver.md §3.5) and here it costs nothing to
+  // the sub-ticks buy (driver.md §3.5), and here it costs nothing to
   // hand a realtime consumer the same resolution. Offline runs (the gates) have
   // no audio context and get `undefined`, so the traces are unaffected.
   _when() {
@@ -618,14 +617,13 @@ export class DrvPlayer {
         this._ym(port, 0x80 + opOff + off, encode80(op));
         // SSG-EG off. The patch has to cover every register a voice writes, or
         // those shadow entries stay unwritten and VOICE_SET cannot suppress a
-        // matching value (ovl_voice vs_put) — and on hardware a power-on SSG-EG
-        // bit would never be cleared.
+        // matching value — and on hardware a power-on SSG-EG bit would never
+        // be cleared.
         this._ym(port, 0x90 + opOff + off, 0);
       }
     }
-    // The global registers, so the shadow covers every address anything writes
-    // through the change-only layer (driver.md §5.4). The Z80 has no "valid"
-    // plane: an uninitialised entry would let a first write of 0 be suppressed.
+    // The global registers, so the chip starts from a known state and the
+    // shadow covers every address the change-only layer writes (driver.md §4).
     this._ym(0, 0x22, 0); // LFO off
     this._ym(0, 0x27, 0); // CH3 normal mode, timers off
     this._ym(0, 0x2a, 0); // DAC data centred
@@ -655,8 +653,8 @@ export class DrvPlayer {
   // two neighbouring semitone entries. The interpolation is done in block0's
   // F-number units (not the full fnum<<block space) with a non-negative
   // numerator, so the whole thing stays inside 16-bit integers and matches the
-  // Z80 asm bit-for-bit (driver.md §8; the residue vs the old float-space form
-  // is ≤ 1 F-number LSB, well inside the A/B band).
+  // C bit-for-bit (driver.md §8; the residue against ir-player's float-space
+  // pitch is ≤ 1 F-number LSB, well inside the A/B band).
   _fnumBlockFor(note, cents) {
     const { fnumBlock } = this._luts;
     let n = note;
@@ -697,7 +695,7 @@ export class DrvPlayer {
     n = n < 0 ? 0 : n > 126 ? 126 : n;
     if (c === 0) return psgPeriod[n];
     // Period decreases as pitch rises, so diff >= 0; subtract with a
-    // non-negative numerator to mirror the asm (round half up).
+    // non-negative numerator, as the C does (round half up).
     const p0 = psgPeriod[n];
     const diff = p0 - psgPeriod[n + 1];
     const p = p0 - Math.floor((diff * c + 50) / 100);
@@ -759,8 +757,9 @@ export class DrvPlayer {
   // here, before that note's writes, so the FM envelope sees the transition it
   // needs to attack. A slur (NOTE_ON_EX bit3) cancels it instead — that is the
   // one place the envelope is meant to carry over. Off and on land in the same
-  // frame; the pair expander spaces consecutive writes 139 µs at the closest,
-  // well past the chip's 18.8 µs key latch round.
+  // frame as separate pairs; the engine consumes at most one pair a slot, so
+  // the densest shipped image (banked, 5310 master clocks a slot) still puts
+  // them ≥ 99 µs apart, well past the chip's 18.8 µs key latch round.
   _resolvePendingOff(trk, legato) {
     if (!trk.pendingOff) return;
     trk.pendingOff = false;
@@ -813,7 +812,7 @@ export class DrvPlayer {
     });
   }
 
-  // ── FM3 independent-OP mode (driver.md §5.1 / opcodes.md 0xA3/0xA4) ────────
+  // ── FM3 independent-OP mode (driver.md §13.4 / opcodes.md 0xA3/0xA4) ───────
   // In special mode ($27 bit6) CH3's four operators have independent F-numbers
   // and key bits. The four operator tracks are channel ids 16-19; channel 2 is
   // the shared CH3 (patch + channel level).
@@ -1160,13 +1159,12 @@ export class DrvPlayer {
         case OPCODE.JUMP: {
           // dest is a byte offset relative to the EVENT_STREAM payload start.
           trk.pc = u16(s, trk.pc + 1);
-          trk.looped = true;
           break;
         }
         case OPCODE.CALL: {
           // dest is EVENT_STREAM-relative (like JUMP). Push the return pointer
           // on the shared control stack, tagged as a call (remaining -1); RET
-          // pops it. driver.md §5.2 — CALL and LOOP share the 4-entry stack.
+          // pops it. driver.md §4.3 — CALL and LOOP share the 4-entry stack.
           const dest = u16(s, trk.pc + 1);
           const resumePc = trk.pc + 3;
           if (trk.loops.length >= LOOP_STACK_DEPTH) {
@@ -1220,12 +1218,12 @@ export class DrvPlayer {
           trk.pc += 3;
           break;
         }
-        // ── M2 motion: sweeps, param-add, tempo sweep ─────────────────────
+        // ── Motion: sweeps, param-add, tempo sweep ────────────────────────
         case OPCODE.PARAM_SWEEP: {
           const target = s[trk.pc + 1];
           const curve = s[trk.pc + 2];
           const flags = s[trk.pc + 3];
-          // Dynamic endpoints (§4.6, note-on tier): flags bit1/bit2 mark from/to
+          // Dynamic endpoints (opcodes.md §6, note-on tier): flags bit1/bit2 mark from/to
           // as slot ids (in the field's low byte), read live at dispatch.
           // bit3: no :from — start where the parameter is now.
           const from = flags & 8 ? this._readParam(trk.channelId, target)
@@ -1398,10 +1396,13 @@ export class DrvPlayer {
           trk.pc += 2;
           const d = this._macros[macroId];
           const mc = this._macroCh(trk.channelId);
-          if (d && mc >= 0) {
-            // Sticky: bind this macro as the active macro for its target,
-            // replacing any macro already active on that target (driver.md §13.1).
-            this._macroActive[mc].set(d.target, macroId);
+          const binds = mc >= 0 ? this._macroActive[mc] : null;
+          // Sticky: bind this macro as the active macro for its target,
+          // replacing any macro already active on that target in place
+          // (driver.md §13.1). A channel holds MACRO_BINDS; a further target
+          // is ignored (mmlispseq.c macro_bind).
+          if (d && binds && (binds.has(d.target) || binds.size < MACRO_BINDS)) {
+            binds.set(d.target, macroId);
           }
           break;
         }
@@ -1415,9 +1416,6 @@ export class DrvPlayer {
           }
           break;
         }
-        case OPCODE.VOICE_SET:
-          this._skip(trk, op, 2);
-          break;
         default: {
           this._diag(
             "W_DRV_UNKNOWN_OPCODE",
@@ -1428,14 +1426,6 @@ export class DrvPlayer {
         }
       }
     }
-  }
-
-  _skip(trk, op, bytes) {
-    trk.pc += bytes;
-    this._noteSkip(op);
-  }
-  _noteSkip(op) {
-    this._skippedOpcodes.set(op, (this._skippedOpcodes.get(op) ?? 0) + 1);
   }
 
   _setLevel(channelId, key, value) {
@@ -1812,14 +1802,13 @@ export class DrvPlayer {
         return;
       }
       default:
-        // NOTE_SEMI/KEYON/TEMPO_SCALE etc: no M1 register effect.
-        this._noteSkip(OPCODE.PARAM_SET);
+        // A target with no register effect here is ignored, as in the C.
         return;
     }
   }
 
-  // ── M2 sweep engine (driver.md §4 step 3) ────────────────────────────────
-  // A channel's sweep bank: the ten M1 channels are their own, the three PCM
+  // ── Sweep engine (driver.md §4 step 3) ───────────────────────────────────
+  // A channel's sweep bank: channels 0-9 are their own, the three PCM
   // voices follow them, then FM3's four operators (ids 16-19) — a glide on an
   // fm3-N track bends that operator alone. -1 = no bank.
   _sweepBank(ch) {
@@ -1910,7 +1899,7 @@ export class DrvPlayer {
     for (let i = 0; i < slots.length; i++) slots[i] = null;
   }
 
-  // ── M3 macro engine (driver.md §13) ──────────────────────────────────────
+  // ── Macro engine (driver.md §13) ─────────────────────────────────────────
   // A channel's frame share of ticks for a tick-clocked macro (§13.2).
   _chanFrameInc(mc) {
     const k = this._mcSe[mc];
@@ -1947,7 +1936,7 @@ export class DrvPlayer {
 
   // NOTE_SEMI macro apply: pitch register at (current note + semitones), cents 0,
   // no change to the channel's sticky pitch offset (matches ir-player basePitchWrite).
-  // `add` (additive macro, §4.4): ride the live :pitch offset (cents) instead of
+  // `add` (additive macro, driver.md §13.2): ride the live :pitch offset (cents) instead of
   // overriding to 0 — for `:semi+` sharing a vibrato over a detuned base.
   _writeNoteSemi(ch, semi, add = false) {
     const op = this._fm3OpFor(ch);
@@ -2068,15 +2057,15 @@ export class DrvPlayer {
     }
     let v = d.values[slot.cursor];
     if (v !== null && v !== undefined) {
-      // Scaled macro (§4.4): a value slot is a per-frame depth knob. Multiply
-      // the sample by the slot low byte and shift 8 (toward-zero, signed by the
-      // sample) before it reaches the target — mirrors the Z80 mul16x8_sh8 path.
+      // Scaled macro (driver.md §13.2): a value slot is a per-frame depth knob.
+      // Multiply the sample by the slot low byte and shift 8 (toward-zero,
+      // signed by the sample) before it reaches the target.
       if (d.scaleSlot != null) v = scaleMacroSample(v, this._readSlot(d.scaleSlot));
-      const add = (d.flags & 2) !== 0; // additive macro (§4.4): live offset + sample
+      const add = (d.flags & 2) !== 0; // additive macro (§13.2): live offset + sample
       // NOTE_SEMI is a key-on pitch offset (chiptune arpeggio): write the pitch
       // register at note+semi without touching the sticky :pitch state.
       if (d.target === TARGET_ID.NOTE_SEMI) this._writeNoteSemi(ch, v, add);
-      // KEYON retrigger: a nonzero step re-attacks the note (driver.md §14).
+      // KEYON retrigger: a nonzero step re-attacks the note (driver.md §13).
       else if (d.target === TARGET_ID.KEYON) {
         // The first sample lands in the note's own frame, where the note has
         // just attacked — re-attacking there is a write with nothing behind
@@ -2133,7 +2122,7 @@ export class DrvPlayer {
     return false;
   }
 
-  // KEYON retrigger (driver.md §14): re-attack the note. Restart the channel's
+  // KEYON retrigger (driver.md §13): re-attack the note. Restart the channel's
   // envelope macros (level and timbre slots → attack; :pitch/:semi/:pan run on) and, on FM,
   // re-key the hardware EG ($28). PSG has no hardware EG — the macro restart is
   // the whole effect.
@@ -2278,8 +2267,8 @@ export class DrvPlayer {
 
 
 
-  // ── Mailbox commands (driver.md §6.2) — host → driver, applied at the top
-  //    of a frame. When the harness auto-starts every track (the M1 default)
+  // ── Host commands (driver.md §6.5) — host → driver, applied at the top
+  //    of a frame. When the harness auto-starts every track (the default)
   //    START/STOP never arrive; with auto-start off (the SE gates, driver.md
   //    §2.5) the schedule drives START_TRACK / PLAY_SE / STOP_TRACK too.
   _applyMailbox(cmd, a0, a1, a2) {
@@ -2328,7 +2317,7 @@ export class DrvPlayer {
 
   _mailboxKeyOff(channelId) {
     this._channelOff(channelId);
-    // Release a len=0 hold: the track's dispatcher resumes (driver.md §6.2).
+    // Release a len=0 hold: the track's dispatcher resumes (driver.md §6.5).
     for (const t of this._trk) {
       if (t.channelId === channelId && t.held) t.held = false;
     }
@@ -2528,7 +2517,7 @@ export class DrvPlayer {
     this._setReg27((this._reg27 & ~0xc0) | this._ch3.mode);
     if (this._ch3.mode & 0x80) this._writeTimerA(this._ch3.timerA);
   }
-  // The host's KEY_OFF (driver.md §6.2) on every channel a hold keys — a
+  // The host's KEY_OFF (driver.md §6.5) on every channel a hold keys — a
   // `:len 0` note, whose track then resumes, or a `:gate 0` one — for the live
   // app's Tools > Release holds. Nothing here that the mailbox does not.
   releaseHolds() {
@@ -2784,9 +2773,9 @@ export class DrvPlayer {
     if (encodeB4(r) !== old) this._ym(ch >= 3 ? 1 : 0, 0xb4 + (ch % 3), encodeB4(r));
   }
 
-  // Restore a snapshotted channel and re-key its held note (design B). The write
-  // order — the patch, carrier level, pitch, re-key — is normative: the Z80
-  // mirror must emit the same registers in the same order.
+  // Restore a snapshotted channel and re-key its held note. The write order —
+  // the patch, carrier level, pitch, re-key — is normative: mmlispseq.c
+  // restore_channel emits the same registers in the same order.
   _restoreChannel(ch, snap) {
     if (!snap) return;
     // Whatever the SE left bound or sweeping goes first — the channel is
@@ -2802,14 +2791,8 @@ export class DrvPlayer {
       regs.gate = snap.gate;
       regs.pitchCents = snap.pitchCents;
       regs.currentNote = snap.note;
-      // Re-apply carrier level (like _noteOn) so a vel/vol < unity lands.
-      const port = ch >= 3 ? 1 : 0;
-      const off = ch % 3;
-      for (const opIdx of fmCarrierOpsForAlg(regs.algorithm)) {
-        const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
-        regs.ops[opIdx].tl = tl;
-        this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
-      }
+      // Carrier level as a note-on composes it, so a vel/vol below unity lands.
+      this._recomposeCarriers(ch);
       this._writeFmPitch(ch, snap.note, snap.pitchCents);
       this._applyKeyon(ch);
     } else if (snap.kind === "psg") {
@@ -2877,7 +2860,7 @@ export class DrvPlayer {
       this._ch3Restore();
       return;
     }
-    // PCM (design C): the BGM loop the SE stole is started again. No owner track.
+    // PCM: the BGM loop the SE stole is started again. No owner track.
     // The voice's macro binds come back, and the looping BGM note starts
     // again with them, as a note-on.
     if (seTrk.pcmSe != null) {
@@ -2918,7 +2901,7 @@ export class DrvPlayer {
       return;
     }
     // Bresenham vol ramp from the channel's current vol down to 0 over `frames`
-    // frames, then STOP_TRACK (driver.md §6.3). Division-free.
+    // frames, then STOP_TRACK (driver.md §6.5). Division-free.
     t.fading = true;
     t.fadeN = frames;
     t.fadeErr = 0;
@@ -2954,7 +2937,7 @@ export class DrvPlayer {
     if (this._song?.pcmBanked && bytes[0] === PCM_START) {
       const v = this._pcmVoices[bytes[1]], sample = this._song.samples[v.sampleId];
       const bank = this._sampleBankBase + Math.floor((sample?.base ?? 0) / 0x8000);
-      bytes = [6, ...bytes.slice(1), ...u16le(bank)];
+      bytes = [PCM_START_BANKED, ...bytes.slice(1), ...u16le(bank)];
     }
     if (this._slotSink) this._slotSink.pcm(bytes);
     if (this._pcmModel) this._pcmModel.apply(bytes);
@@ -3007,11 +2990,10 @@ export class DrvPlayer {
       if (target === TARGET_ID.FM_ALG) return regs.algorithm;
       if (target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4)
         return regs.ops[target - TARGET_ID.FM_TL1].voicedTl;
-      // Op-param fields (AR/DR/SR/RR/SL/KS/ML/DT/SSG/AMEN, 0x16..0x3D): mirror
-      // the Z80 read_op_param (§4.1) — family selects the field, low 2 bits the
-      // operator — reading the shadow the driver already stores. Closes the
-      // silent-0 gap so op-param relatives read their real base (matches
-      // ir-player, which already reads the full op-env set).
+      // Op-param fields (AR/DR/SR/RR/SL/KS/ML/DT/SSG/AMEN, 0x16..0x3D), as
+      // mmlispseq.c read_param reads them: the family selects the field, the
+      // low 2 bits the operator, from the state the driver already keeps — so
+      // an op-param relative reads its real base (as ir-player does).
       if (target >= TARGET_ID.FM_AR1 && target <= TARGET_ID.FM_AMEN4) {
         const fam = (target - TARGET_ID.FM_AR1) >> 2;
         const op = (target - TARGET_ID.FM_AR1) & 3;
@@ -3096,7 +3078,7 @@ export class DrvPlayer {
         this._processMacros(); // §13.3: macros after sweeps, same write path
         if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
         if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
-        this._processFades(); // FADE_TRACK vol ramps (driver.md §6.3)
+        this._processFades(); // FADE_TRACK vol ramps (driver.md §6.5)
       }
       // The live DAC feed, after the frame's commands (no-op in the gates).
       if (sub === SLOT_SUBS - 1) this._pcmFrame();
@@ -3205,9 +3187,9 @@ export class DrvPlayer {
     this._writeCb = (port, addr, data) => {
       writes.push({ frame: this._frame, port, addr: addr & 0xff, data: data & 0xff });
     };
-    // Host mailbox schedule (KEY_OFF/SET_PARAM/FADE_TRACK): applied at the top
-    // of the matching frame, before dispatch — exactly where the Z80 drains the
-    // ring (driver.md §4 step 1).
+    // Host command schedule (KEY_OFF/SET_PARAM/FADE_TRACK): applied at the top
+    // of the matching frame, before dispatch — where the sequencer drains its
+    // host command queue (driver.md §4 step 1).
     const cmdByFrame = new Map();
     for (const c of commands) {
       if (!cmdByFrame.has(c.frame)) cmdByFrame.set(c.frame, []);
@@ -3230,9 +3212,9 @@ export class DrvPlayer {
         frames,
         ended: this._done(),
         diagnostics: this._diagnostics.slice(),
-        skippedOpcodes: Object.fromEntries(
-          [...this._skippedOpcodes].map(([op, n]) => [OPCODE_NAME[op] ?? op, n]),
-        ),
+        // Always empty — every opcode executes. Kept only for
+        // tools/scripts/render-acid-fm.mjs, which asserts it.
+        skippedOpcodes: {},
       };
     } finally {
       this._writeCb = saved;
@@ -3240,17 +3222,13 @@ export class DrvPlayer {
   }
 
   /**
-   * Deterministic offline run that emits what the 68000 actually hands the Z80:
-   * one slot per frame, through the real cap-and-spill queue (driver.md §6.2).
+   * Deterministic offline run in the gates' form: one slot per frame — the
+   * frame's register writes and PCM commands — through the slot's
+   * cap-and-spill queue (SlotBuilder, driver.md §6.2).
    *
-   * This is the surface the §12.2 gate compares — the C sequencer must produce
-   * the identical slot stream — and the surface tools/slot-gate.mjs feeds
-   * straight into the Z80 engine.
-   *
-   * PCM commands are not emitted yet: the reference mixer still implements
-   * sum-then-saturate, which the settled configuration replaced with 8-bit
-   * saturating-add (§5.3.1), so re-basing it belongs with that change rather
-   * than with the transport.
+   * This is the surface c-gate compares (driver.md §12.2) — the C sequencer
+   * must produce the identical slot stream — and the one pairs-gate turns into
+   * pairs through mmlpairs.c and its JS twin (§12.3).
    */
   captureSlotLog({ maxFrames = 36000, commands = [], autoStart = true, prime = -1, builder } = {}) {
     if (!this._song) throw new Error("No MMB loaded");
@@ -3324,7 +3302,7 @@ export class DrvPlayer {
     }
   }
 
-  /** The constant tables the asm port ships verbatim (driver.md §12). */
+  /** The constant tables; drv/68k/tables.c holds the same values (driver.md §12.6). */
   getLuts() {
     return this._luts;
   }

@@ -7,6 +7,8 @@
 // register of the channel at key-on. What maps:
 //
 //   YM2612, YM2203, YM2608, YM2610   voices and notes (FM), SSG → PSG
+//                                    (the YM2608 is FM + SSG only: its
+//                                    rhythm and ADPCM-B are reported)
 //   YM2151 (OPM)                     voices (DT2 dropped) and notes
 //   SN76489, AY-3-8910               notes (square, noise)
 //   YM2413, YM3812/3526/Y8950, YMF262 notes, on a stand-in voice
@@ -34,14 +36,13 @@
 // ---------------------------------------------------------------------------
 
 import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE,
-  assignBends, PITCH_NONE } from "./import-song.js";
+  assignBends, PITCH_NONE, gcd, FM_DESTS, PSG_DESTS } from "./import-song.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
 import { VEL_DB_PER_STEP } from "./ir-utils.js";
 import { engineImage } from "./engine-images.js";
 import { bankedEngineImage } from "./engine-banked-images.js";
-import { FM_DESTS, PSG_DESTS } from "./import-midi.js";
 
 const CARRIERS = [[3], [3], [3], [3], [2, 3], [1, 2, 3], [1, 2, 3], [0, 1, 2, 3]]; // by ALG, in slot order
 const STAND_IN = { psg: "wave-square", noise: "wave-square", opl: "wave-sine", opll: "wave-saw" };
@@ -371,7 +372,6 @@ export async function parseVgm(bytes) {
   const dataStart = version >= 0x150 && u32(0x34) ? 0x34 + u32(0x34) : 0x40;
   const hdr = (o) => (o < dataStart ? u32(o) : 0);
   const clk = (o) => hdr(o) & 0x3fffffff;
-  const dual = (o) => !!(hdr(o) & 0x40000000);
   const totalSamples = u32(0x18);
   const loopOffset = u32(0x1c) ? 0x1c + u32(0x1c) : null;
 
@@ -416,9 +416,13 @@ export async function parseVgm(bytes) {
     chips.push(m.name);
     return m;
   };
-  for (const [o, n] of [[0x0c, "SN76489"], [0x10, "YM2413"], [0x2c, "YM2612"], [0x30, "YM2151"], [0x44, "YM2203"],
-    [0x48, "YM2608"], [0x4c, "YM2610"], [0x50, "YM3812"], [0x74, "AY-3-8910"]])
-    if (dual(o)) skip(`second ${n}`);
+  // A second chip (dual-chip bit in its clock) is not imported: its
+  // commands are counted under its name.
+  const SECOND = {
+    0x30: "SN76489", 0x3f: "SN76489", 0xa1: "YM2413", 0xa2: "YM2612", 0xa3: "YM2612", 0xa4: "YM2151",
+    0xa5: "YM2203", 0xa6: "YM2608", 0xa7: "YM2608", 0xa8: "YM2610", 0xa9: "YM2610", 0xaa: "YM3812",
+    0xab: "YM3526", 0xac: "Y8950", 0xae: "YMF262", 0xaf: "YMF262",
+  };
 
   let p = dataStart;
   let t = 0;
@@ -561,7 +565,14 @@ export async function parseVgm(bytes) {
     }
     if (c === 0x54) { chip("opm").write(u8[p + 1], u8[p + 2], t); p += 3; continue; }
     if (c === 0x55) { chip("opn").write(0, u8[p + 1], u8[p + 2], t); p += 3; continue; }
-    if (c === 0x56 || c === 0x57) { chip("opna").write(c - 0x56, u8[p + 1], u8[p + 2], t); p += 3; continue; }
+    if (c === 0x56 || c === 0x57) {
+      const port = c - 0x56, a = u8[p + 1];
+      // The YM2608's rhythm (port 0 $10–$1D) and ADPCM-B (port 1 $00–$10).
+      if (port === 0 && a >= 0x10 && a <= 0x1d) { chip("opna"); skip("YM2608 rhythm"); }
+      else if (port === 1 && a <= 0x10) { chip("opna"); skip("YM2608 ADPCM-B"); }
+      else chip("opna").write(port, a, u8[p + 2], t);
+      p += 3; continue;
+    }
     if (c === 0x58 || c === 0x59) {
       const port = c - 0x58, a = u8[p + 1];
       if (port === 1 ? a < 0x30 : a >= 0x10 && a < 0x1d) { chip("opnb"); pcm.opnb(port, a, u8[p + 2], t); }
@@ -579,6 +590,7 @@ export async function parseVgm(bytes) {
     if (c === 0x5e || c === 0x5f) { chip("opl3").write(c - 0x5e, u8[p + 1], u8[p + 2], t); p += 3; continue; }
     if (c === 0xa0) {
       if (!(u8[p + 1] & 0x80)) chip("ay").write(u8[p + 1], u8[p + 2], t);
+      else skip("second AY-3-8910");
       p += 3; continue;
     }
     // Everything else, by the command ranges' fixed lengths.
@@ -589,7 +601,8 @@ export async function parseVgm(bytes) {
     else if (c >= 0xc0 && c <= 0xdf) n = 4;
     else if (c >= 0xe1) n = 5;
     else n = LEN[c] ?? 1;
-    if (c !== 0x4f) skip(`command 0x${c.toString(16)}`);
+    if (SECOND[c]) skip(`second ${SECOND[c]}`);
+    else if (c !== 0x4f) skip(`command 0x${c.toString(16)}`);
     p += n;
   }
   const end = Math.max(t, totalSamples);
@@ -598,8 +611,16 @@ export async function parseVgm(bytes) {
   hits.sort((a, b) => a.t - b.t);
   // A hit cut off within 10 ms by the next (a driver starting one sample and
   // at once another) is not one.
-  for (let i = hits.length - 2; i >= 0; i--)
-    if (hits[i + 1].t - hits[i].t < 0.01 * RATE && (hits[i].bytes / hits[i].rate) < 0.01) hits.splice(i, 1);
+  {
+    const kept = hits.slice(-1);
+    for (let i = hits.length - 2; i >= 0; i--) {
+      const next = kept[kept.length - 1];
+      if (!(next.t - hits[i].t < 0.01 * RATE && (hits[i].bytes / hits[i].rate) < 0.01)) kept.push(hits[i]);
+    }
+    kept.reverse();
+    hits.length = kept.length;
+    for (let i = 0; i < kept.length; i++) hits[i] = kept[i];
+  }
   const bank = new Uint8Array(bankLen);
   { let o = 0; for (const part of bankParts) { bank.set(part, o); o += part.length; } }
   if (made.get("opn2")?.dacUsed) dac = true;
@@ -693,15 +714,26 @@ function tuningOf(parsed) {
 // A chip's part: its FM, its SSG, its squares (each tuned its own way).
 const group = (key) => key.replace(/(\d+|[A-C])$/, "");
 
+// A channel's notes, worked out once per file and setting (the dialog's
+// analysis and every import from it read the same): kept on `parsed`.
+const notesCache = new WeakMap(); // parsed → {tune, byKey: Map(`${followPitch}/${key}` → notes)}
+function channelNotes(parsed, key, followPitch) {
+  let c = notesCache.get(parsed);
+  if (!c) notesCache.set(parsed, (c = { tune: tuningOf(parsed), byKey: new Map() }));
+  const k = `${followPitch}/${key}`;
+  if (!c.byKey.has(k)) c.byKey.set(k, notesOf(parsed.events.get(key), followPitch, parsed.totalSamples, c.tune(key)));
+  return c.byKey.get(k);
+}
+
 // ── Pitch ─────────────────────────────────────────────────────────────────
 // What a driver does to a note's pitch while it sounds, read back frame by
-// frame (cents from the struck pitch). Structure over exactness (user,
-// 2026-10-07): a jump the pitch then stays at (four frames or more) is a new
-// note, slurred; a wobble around a level is a vibrato — a sine, its depth to
-// 20 cents, its period and wait to the frame pair, so notes share one def;
-// anything else is a few straight lines. A note is the semitone it spends
-// the most frames at. A pitch moved in a note's last two frames
-// (a driver resetting it as it lets go) is not kept.
+// frame (cents from the struck pitch). Structure over exactness: a jump the
+// pitch then stays at (four frames or more) is a new note, slurred; a wobble
+// around a level is a vibrato — a sine, its depth to 20 cents, its period and
+// wait to the frame pair, so notes share one def; anything else is a few
+// straight lines. A note is the semitone it spends the most frames at. A
+// pitch moved in a note's last two frames (a driver resetting it as it lets
+// go) is not kept.
 
 const STAY = 4; // frames at a level that make a jump a new note
 
@@ -760,6 +792,7 @@ function pitchShape(n, endT) {
 const FRAME = RATE / 60;
 const MAX_ENV = 256; // frames an envelope follows; a level held after it is held on
 const ENV_NONE = "(macro :vel none)";
+const ENV_KEY = 4; // frames assignEnvelopes indexes its shapes by
 
 /** A note's level frame by frame (sampled mid-frame), from `start`. */
 function levelFrames(n, start, endT) {
@@ -792,18 +825,44 @@ function assignEnvelopes(notes) {
     if (n.shape.rel) return !!c.rel && same(n.shape.head, c.head) && n.shape.sus === c.sus && same(n.shape.rel, c.rel);
     return n.env.every((v, f) => v === (f < c.head.length ? c.head[f] : c.sus));
   };
+  // A fit plays the shape's first ENV_KEY frames exactly, so a note that
+  // long is tried only on the shapes that start so; a shorter one, on all.
+  const keyOf = (env) => env.join(",");
+  const startOf = (c) => {
+    const a = [];
+    for (let f = 0; f < ENV_KEY; f++) a.push(f < c.head.length ? c.head[f] : c.sus);
+    return keyOf(a);
+  };
+  const noteKey = (n) => (n.shape.rel ? startOf(n.shape) : n.env.length >= ENV_KEY ? keyOf(n.env.slice(0, ENV_KEY)) : null);
+  const indexed = (list) => {
+    const by = new Map();
+    for (const c of list) {
+      const k = startOf(c);
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(c);
+    }
+    return (n) => { const k = noteKey(n); return k == null ? list : by.get(k) ?? []; };
+  };
   const shapes = [];
+  const by = new Map();
   // Whole shapes first, longest first: a shorter note may be the start of one.
   const order = [...moving].sort((x, y) => (y.shape.rel ? 1 : 0) - (x.shape.rel ? 1 : 0) || y.env.length - x.env.length);
   for (const n of order) {
-    let c = shapes.find((sh) => fits(n, sh));
-    if (!c) shapes.push((c = { ...n.shape, uses: 0 }));
+    const k = noteKey(n);
+    let c = (k == null ? shapes : by.get(k) ?? []).find((sh) => fits(n, sh));
+    if (!c) {
+      shapes.push((c = { ...n.shape, uses: 0 }));
+      const sk = startOf(c);
+      if (!by.has(sk)) by.set(sk, []);
+      by.get(sk).push(c);
+    }
     c.uses++;
   }
   shapes.sort((x, y) => y.uses - x.uses || x.head.length - y.head.length);
+  const near = indexed(shapes);
   const named = new Map();
   for (const n of moving) {
-    const c = shapes.find((sh) => fits(n, sh));
+    const c = near(n).find((sh) => fits(n, sh));
     if (!named.has(c)) named.set(c, `env-${String(named.size + 1).padStart(2, "0")}`);
     n.envName = named.get(c);
     if (n.shape.rel) n.relFrame = n.shape.relAt;
@@ -844,7 +903,6 @@ function envDef(name, { head, sus, rel }) {
     return out;
   };
   const parts = [runs(head), runs(rel ?? [])];
-  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
   const step = parts.flat().reduce((g, [, k]) => gcd(g, k), 0) || 1;
   const vals = (r) => r.flatMap(([v, k]) => new Array(k / step).fill(v));
   const body = [...vals(parts[0]), "#sus", sus, ...(rel ? ["#rel", ...vals(parts[1])] : [])];
@@ -854,11 +912,10 @@ function envDef(name, { head, sus, rel }) {
 // ── What is in it ────────────────────────────────────────────────────────
 
 export function analyzeVgm(parsed, { followPitch = true } = {}) {
-  const tune = tuningOf(parsed);
   const channels = [];
   const onsets = [];
-  for (const [key, events] of parsed.events) {
-    const notes = notesOf(events, followPitch, parsed.totalSamples, tune(key));
+  for (const key of parsed.events.keys()) {
+    const notes = channelNotes(parsed, key, followPitch);
     if (!notes.length) continue;
     const kind = parsed.kinds.get(key) ?? "psg";
     for (const n of notes) if (!n.slur) onsets.push(n.t);
@@ -921,7 +978,6 @@ export function defaultVgmOptions(a) {
 export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const warnings = [];
   const followPitch = options.followPitch ?? true;
-  const tune = tuningOf(parsed);
 
   // The grid: the estimate, a tempo set by hand, or frames.
   let g = a.grid;
@@ -965,7 +1021,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (taken.has(d)) { warnings.push(`${ch.key}: ${d} is already taken — dropped`); continue; }
     taken.add(d);
     const onFm = d.startsWith("fm");
-    const raw = notesOf(parsed.events.get(ch.key), followPitch, parsed.totalSamples, tune(ch.key));
+    const raw = channelNotes(parsed, ch.key, followPitch);
     const notes = [];
     for (const n of raw) {
       const tick = tickOf(n.t);
@@ -1133,8 +1189,13 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName) {
   const base = String(fileName || "vgm").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
   const wavFile = `${base}-dac.wav`;
   const samples = new Map();
+  const byOffset = new Map();
+  for (const h of hits) {
+    if (!byOffset.has(h.offset)) byOffset.set(h.offset, []);
+    byOffset.get(h.offset).push(h);
+  }
   starts.forEach((offset, i) => {
-    const mine = hits.filter((h) => h.offset === offset);
+    const mine = byOffset.get(offset);
     const limit = (starts[i + 1] ?? bank.length) - offset;
     let frames = Math.min(limit, Math.max(...mine.map((h) => h.bytes)));
     while (frames > 1 && Math.abs(bank[offset + frames - 1] - 128) <= 2) frames--;

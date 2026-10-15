@@ -8,7 +8,8 @@
 // expander's STORE arm at the image's own step slots. Three consumers read it:
 // the engine gate (drv/tools/engine-gate.mjs) as the VALUE reference the Z80
 // is graded against, the reference driver (drv-player.js) as the DAC feed, and
-// the browser's worklet so the live editor sounds like the driver (D0).
+// the browser's worklet so the live editor sounds like the driver
+// (driver.md §14.3).
 //
 // It depends on nothing — no DOM, no audio, no driver-side module — so the
 // browser can import it as it is. The tables are computed here from the
@@ -22,18 +23,18 @@
 // ---------------------------------------------------------------------------
 
 import { MultibankModel, pcmBankOp } from "./pcm-banked-model.js";
-import { PCM_START, PCM_VOL, PCM_RETARGET, PCM_MASTER } from "./slot-builder.js";
+import { PCM_START, PCM_START_BANKED, PCM_VOL, PCM_RETARGET, PCM_MASTER } from "./slot-builder.js";
 
 export const PCM_WINDOW = 0x8000;
 /** Where a parked voice reads: the bank's top page, which the exporter keeps silent. */
 export const PCM_SILENCE_ADDR = 0xff00;
 export const PCM_BLOCK = 16;
-export const PCM_RUNG_PAGES = 8;
+const PCM_RUNG_PAGES = 8;
 /** The DAC byte for silence. */
 export const PCM_SILENCE_BYTE = 0x80;
 
 // ── The state block's layout (drv/engine/config.mjs PCMN_L) ────────────────
-export const PCM_OP_STRIDE = 9;
+const PCM_OP_STRIDE = 9;
 const OP = { LEVEL: 0x01, SRC: 0x02, END: 0x04, WRAP: 0x06, START: 0x08, RETARGET: 0x09 };
 /** The pair op of a voice's field: `pcmOp("END", 1)` is voice 1's END_LO. */
 export const pcmOp = (name, v) => OP[name] + PCM_OP_STRIDE * v;
@@ -41,7 +42,7 @@ const LIVE = { END: 0x22, WRAP: 0x24, LAST_START: 0x26, LAST_END: 0x27, PARK: 0x
   START_MASK: 0x29, APPLY_MASK: 0x2a };
 const live = (name, v) => LIVE[name] + PCM_OP_STRIDE * v;
 /** Ops below this are STOREs into the state block; $20 is PORT, above is RAW. */
-export const PCM_OP_PORT = 0x20;
+const PCM_OP_PORT = 0x20;
 
 // ── The arithmetic ─────────────────────────────────────────────────────────
 const signed = (b) => ((b & 0xff) << 24) >> 24;
@@ -51,7 +52,7 @@ export const pcmRung = (s, page) => (page <= 0 ? 0 : s >> (PCM_RUNG_PAGES - 1 - 
 export const pcmPageOfShift = (shift) => (shift > PCM_RUNG_PAGES - 2 ? 0 : PCM_RUNG_PAGES - 1 - shift);
 const sat = (x) => (x > 127 ? 127 : x < -128 ? -128 : x);
 
-// ── The loop and shot contracts (design §1.5) ──────────────────────────────
+// ── The loop and shot contracts (driver.md §5.3) ───────────────────────────
 //
 // The voice wraps at the last block edge before it would read past END+15,
 // so END is the last byte to play, plus one, less a block. Blobs are padded to
@@ -247,7 +248,7 @@ export class PcmEngineModel {
 }
 
 // ── The engine driven by COMMANDS ─────────────────────────────────────────
-// What a live player needs: the slot-format PCM commands (driver.md §6.2)
+// What a live player needs: the slot-format PCM commands (driver.md §6.3)
 // applied the way the host converter would put them on the wire — the level
 // page with the master folded in, the staged bytes, then the generation — but
 // at once, not through the pair page (a block of delay is nothing to the ear),
@@ -276,13 +277,13 @@ export class PcmLiveEngine {
     const put16 = (name, vi, x) => { m.store(pcmOp(name, vi), x & 0xff); m.store(pcmOp(name, vi) + 1, (x >> 8) & 0xff); };
     const w = (k) => c[k] | (c[k + 1] << 8);
     const bump = (name, vi) => { const op = pcmOp(name, vi); m.store(op, (m.state[op] + 1) & 0xff); };
-    if ((c[0] === PCM_START || c[0] === 6) && c[1] < V) {
-      if (c[0] === 6 && c[1] === 2 && w(9) > 127) throw new RangeError("PCM bank exceeds the 4 MiB aperture");
+    if ((c[0] === PCM_START || c[0] === PCM_START_BANKED) && c[1] < V) {
+      if (c[0] === PCM_START_BANKED && c[1] === 2 && w(9) > 127) throw new RangeError("PCM bank exceeds the 4 MiB aperture");
       this.started[c[1]] = true;
       this.shiftByte[c[1]] = c[2];
       m.store(pcmOp("LEVEL", c[1]), this.page(c[2]));
       put16("SRC", c[1], w(3)); put16("END", c[1], w(5)); put16("WRAP", c[1], w(7));
-      if (c[0] === 6) { m.store(pcmBankOp(c[1]), c[9]); if (c[1] !== 2) m.store(pcmBankOp(c[1])+1, c[10]); }
+      if (c[0] === PCM_START_BANKED) { m.store(pcmBankOp(c[1]), c[9]); if (c[1] !== 2) m.store(pcmBankOp(c[1])+1, c[10]); }
       bump("START", c[1]);
     } else if (c[0] === PCM_RETARGET && c[1] < V) {
       put16("END", c[1], w(2)); put16("WRAP", c[1], w(4));

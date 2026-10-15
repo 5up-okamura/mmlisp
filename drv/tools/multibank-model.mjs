@@ -1,13 +1,18 @@
-// Independent arithmetic reference for the experimental block renderer.
-// The generated schedule says WHEN work happens; no Z80 output or LUT is
+// The banked engine's arithmetic reference (engine/gen-multibank.mjs), used by
+// multibank-run.mjs, multibank:gate and banked-sgdk-gate. The generated schedule says WHEN work happens; no Z80 output or LUT is
 // used to determine WHAT the DAC should output.
 import { pcmOp, pcmRung } from "../../live/src/pcm-model.js";
 import { MB } from "../engine/gen-multibank.mjs";
 
 export { MultibankModel } from "../../live/src/pcm-banked-model.js";
 
-// Prototype transport: append a u16 bank to PCM_START, keep all other command
-// payloads unchanged. This is intentionally not the production wire ABI.
+// The engine-level PCM converter for the banked image. It takes a PCM_START
+// frame command (opcode 1) with the u16 bank appended at bytes 9-10 — what
+// multibank-score.mjs's player emits — where the production sequencer sends
+// PCM_START_BANKED (opcode 6, the same 11 bytes). The pairs are the ones
+// 68k/mmlpairs.c sends for it: the level, the changed staged bytes, the bank
+// stores ($1C-$1F, $21 for voice 2) when the bank moves, then the generation;
+// here every generation is followed by `idleAfterGen` IDLE pairs at once.
 export class MultibankPairs {
   constructor(idleAfterGen) {
     this.idle = idleAfterGen;

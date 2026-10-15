@@ -16,7 +16,7 @@
 // distinction is a bug this project has already paid for once.
 //
 // BUSY IS OBSERVED, NEVER ENFORCED. A write always lands, exactly as BlastEm
-// applies it (§6.4) and as the hardware would if the settling time is
+// applies it and as the hardware would if the settling time is
 // respected. What the instrument does instead is RECORD the gap between writes
 // so the analyzer can check them against the chip's settling table. A driver
 // that polls BUSY has already lost the cycles; a driver whose schedule spaces
@@ -38,17 +38,18 @@ export class Machine {
     // $8000 bank window. On silicon that read pays bus arbitration this model
     // does not charge — the one instruction in the mix that is exposed to it.
     this.rom = rom;
-    // Legacy gates pass an already selected 32 KiB window. Experiments can
-    // instead pass the full ROM and exercise the real nine-bit serial latch.
+    // The single-bank gates pass an already selected 32 KiB window; the banked
+    // run (multibank-run.mjs) passes the full ROM with `bankedRom` and
+    // exercises the real nine-bit serial latch.
     this.bankedRom = bankedRom;
     this.bank = bank & 0x1ff;
     // The host's writes into Z80 RAM, scheduled by cycle. This is the 68000
-    // poking a level, WITHOUT the bus grab it would really cost: §3.6 is P3's
-    // question and this is not an answer to it.
+    // poking a level, WITHOUT the bus grab it would really cost: what a grab
+    // costs is BlastEm's measurement, not this model's.
     this.pokes = [...pokes].sort((a, b) => a.at - b.at);
     this.pokeIdx = 0;
     this.watch = new Set(watch);
-    // A HOST THAT DECIDES AS IT GOES (R28 §63.6 step 2): `{every, fn}` — every
+    // A HOST THAT DECIDES AS IT GOES: `{every, fn}` — every
     // `every` cycles `fn(ram, cycle)` is called with the Z80 stopped and returns
     // the bytes to write, `[[addr, value], ...]`. This is the 68000 reading the
     // expander's index and writing pairs ahead of it; the model charges no bus
@@ -83,7 +84,7 @@ export class Machine {
     // ── What it records ────────────────────────────────────────────────────
     this.trace = {
       meta: null,
-      dacCycle: [], dacValue: [],       // §6.2 t[i] and §6.1 the value
+      dacCycle: [], dacValue: [],       // TIME t[i] and VALUE (analyze.mjs)
       ym: [],                           // every non-DAC chip DATA write
       ymAddr: [],                       // every address-port write, for the settling check
       statusRead: [],                   // cycle, value — the phase reference
@@ -93,7 +94,7 @@ export class Machine {
       globWrite: [],                    // …and the Z80's writes to it
       pokes: [],                        // the host's writes, as applied
       // Every access to the finished-sample ring, with the PC that made it —
-      // §3.3 (R1) asks for the fixed lead to be CHECKED, and the check needs to
+      // the fixed lead is CHECKED, and the check needs to
       // tell the play cursor's fetch from the mixer's park and read-back. The
       // PC is what separates them, so it is recorded rather than inferred.
       ring: [],                         // cycle, pc, addr, isWrite
@@ -259,8 +260,7 @@ export class Machine {
     const cpu = this.cpu;
     while (this.cycles < untilCycles) {
       // The 68000's bus grab: the Z80 executes NOTHING while it is held, and
-      // it is charged as stopped time rather than skipped. §3.6 is the reason
-      // this exists before there is anything to transfer — a hole is a hole
+      // it is charged as stopped time rather than skipped — a hole is a hole
       // whether or not the buffer was full.
       while (this.pokeIdx < this.pokes.length && this.pokes[this.pokeIdx].at <= this.cycles) {
         const p = this.pokes[this.pokeIdx++];

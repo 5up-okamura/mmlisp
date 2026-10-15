@@ -3,11 +3,11 @@
 export const KIND = { DAC: 1, GRAB: 2, RELEASE: 3, VINT: 4, DACEN: 5,
   DACBUS: 7, STOP: 8, RESUME: 9, NOTIFY: 10, COPY: 11, POLL: 12, COMMIT: 13,
   HINT: 14, MARK: 15, MARKW: 16, Z80VDP: 17, Z80RAM: 18, HOSTW: 19,
-  // Every YM2612 access, by the CPU that made it (R24 §55.3). The window a
-  // 68000 FM transaction has to fit in is the gap between the Z80's OWN
-  // accesses, and until R24 the instrument saw only the $2A data write.
+  // Every YM2612 access, by the CPU that made it. The window a 68000 FM
+  // transaction has to fit in is the gap between the Z80's OWN accesses, which
+  // the $2A data write alone does not show.
   YMZ80: 20, YM68K: 21,
-  // Every PSG write, by the CPU that made it (R25 §57.3). The PSG is in the
+  // Every PSG write, by the CPU that made it. The PSG is in the
   // VDP's address space, so the 68000 reaches it with no BUSREQ at all — kept
   // apart from the YM records so the two judgments never share a row.
   PSGZ80: 22, PSG68K: 23 };
@@ -45,7 +45,7 @@ export function readProbe(buf) {
     records: of(KIND.NOTIFY).filter((e) => (e.value >>> 8) !== 0)
       .map((e) => ({ time: e.time, field: (e.value >>> 8) - 1, value: e.value & 0xff })),
     // Every Z80 write to the watched globals page, with no cycle spent by the
-    // engine to publish it: the instrument watches the RAM (R7 §20.2 B).
+    // engine to publish it: the instrument watches the RAM.
     // TWO watched ranges, told apart by bit 7 of the offset byte: the globals
     // page (0..$7f of $1F00) and the 32-byte publication region ($1E40). One
     // event kind, two offset spaces, and a consumer that forgets to say which
@@ -81,7 +81,7 @@ const find = (gens, t) => {
 };
 
 /**
- * The 68000's own timeline (§12.2 A/D): when the VDP raised each horizontal
+ * The 68000's own timeline: when the VDP raised each horizontal
  * interrupt, when the handler actually got there, and what the load cost.
  * Marks are bus writes with a real price, so this only ever describes a ROM
  * that was BUILT with them.

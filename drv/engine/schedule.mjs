@@ -27,12 +27,12 @@ export const cost = (ops) => ops.reduce((t, o) => t + o.cycles, 0);
 
 // How many BYTES a filler costs. Only the pad solver's own forms are here,
 // which is all that is needed: what the byte question is about is padding, and
-// padding is the one thing whose size changes when a slot may not touch BC
-// (R8 §23.3). `ld b,k`/`djnz $` is four bytes for any length; the same wait in
+// padding is the one thing whose size changes when a slot may not touch BC.
+// `ld b,k`/`djnz $` is four bytes for any length; the same wait in
 // `jr $+2` is one byte per six cycles.
 const FILL_BYTES = { "nop": 1, "inc bc": 1, "ld a,0": 2, "jp $+3": 3, "jr $+2": 2,
   "djnz $": 2, "push af": 1, "pop  af": 1, "dec  iyl": 2, "jr   nz,$-2": 2,
-  // The A counter (R22 §52.3): `dec a` is ONE byte where `dec iyl` is two, and
+  // The A counter: `dec a` is ONE byte where `dec iyl` is two, and
   // its `jr` reaches one byte further back.
   "dec  a": 1, "jr   nz,$-1": 2 };
 export const fillBytes = (ops) => ops.reduce((t, o) => t + o.asm.reduce((u, l) => {
@@ -57,7 +57,7 @@ const FILL = [
   // and it destroys NOTHING: `pop af` puts back the A and the flags `push af`
   // saved, and the pair is balanced, so all it costs is two bytes of stack
   // while it runs. It exists for the slots that must carry a value in BC and
-  // therefore cannot use `ld b,k`/`djnz $` (R8 §23.3). Off unless a caller asks
+  // therefore cannot use `ld b,k`/`djnz $`. Off unless a caller asks
   // for it: a pad is otherwise pure straight-line code that touches no memory
   // at all, and that property is worth keeping by default.
   { asm: ["push af", "pop  af"], cycles: 21, clobbers: [], stack: 2 },
@@ -112,20 +112,18 @@ export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false, stack = fa
   // TWO LOOPS, and the shorter plan wins on BYTES.
   //
   // `ld b,k` / `djnz $` is four bytes for any wait, and it is what most slots
-  // use. A slot that has to carry a value in BC cannot have it, and used to
-  // fall back on `push af`/`pop af` — two bytes for 21 cycles, the densest
-  // straight line there is, but still two bytes every 21 cycles.
+  // use. A slot that has to carry a value in BC cannot have it; its
+  // straight-line fallback is `push af`/`pop af` — two bytes for 21 cycles,
+  // the densest straight line there is, but still two bytes every 21 cycles.
   //
-  // IYL is the third counter (R19 §46.3): `ld iyl,k` / `dec iyl` / `jr nz` is
+  // IYL is the third counter: `ld iyl,k` / `dec iyl` / `jr nz` is
   // 20k + 6 cycles in FIVE bytes whatever k is. It is the mixer's register and
   // it is live strictly INSIDE `mix_one` — set from A and read back two
   // instructions later — so it is dead in every pad in the image. The caller
   // has to say so, which is why it is in `dead` and not assumed here.
   //
-  // What this buys is BYTES, not cycles. The reserved padding a `complete`
-  // build executes is provisional — the real feature replaces it — and paying
-  // for it in image is what pushed the 15-level engine with CSM, the corrector,
-  // the protocol and the consumer past its region.
+  // What this buys is BYTES, not cycles: every pad is image, and the code
+  // region is fixed.
   const loop = (setup, per, base, name) => {
     const kMax = Math.min(255, Math.floor((n - base) / per));
     for (let k = kMax; k >= 1; k--) {
@@ -135,16 +133,13 @@ export function padTo(n, { dead = ["a", "b", "bc"], nopsOnly = false, stack = fa
     }
     return null;
   };
-  // A IS THE CHEAPEST COUNTER OF THE THREE (R22 §52.3). `ld a,k` / `dec a` /
+  // A IS THE CHEAPEST COUNTER OF THE THREE. `ld a,k` / `dec a` /
   // `jr nz` is FIVE bytes for any wait against IYL's seven, because `dec a` is
   // one byte and `dec iyl` is two with its IY prefix. Both destroy the flags,
   // and both are only offered where the caller has said the register is dead —
-  // which for A is everywhere a pad runs, since the one value that crosses a
-  // slot boundary in flags does so in AF' (R17 §43.4).
-  //
-  // It matters because moving the counter to the head of the decode (R22
-  // §52.2) left nine more slots carrying a value in BC through their pad, and
-  // at seven bytes each that was thirteen bytes past the 2,560 B region.
+  // which for A is everywhere a pad runs, since a slot fetches its next sample
+  // after the pad (gen-stream.mjs). It matters in the slots that carry a value
+  // in BC through their pad: two bytes saved on each.
   if (allow.has("a")) {
     const p = loop((k) => [op(`ld   a,${k}`, 7, { clobbers: ["a"] }),
       op(["dec  a", "jr   nz,$-1"], 16 * k - 5, { clobbers: ["a"] })], 16, 2);
@@ -193,7 +188,7 @@ export function laySlot({ index, cycles, dacWrite, work = [], tail = [], dead, f
       + [dacWrite, ...work, ...tail]
         .map((o) => `    ${String(o.cycles).padStart(4)}  ${o.what ?? o.asm[0]}`).join("\n"));
   }
-  // A CORRECTION LADDER IS PART WORK, PART PAD (R10 §29.5). Its `jp` is a fixed
+  // A CORRECTION LADDER IS PART WORK, PART PAD. Its `jp` is a fixed
   // cost the ceiling has to hold; the `nop`s it lands in are the timing itself
   // — the same cycles the pad solver would otherwise have emitted — so charging
   // the whole neutral run as work would put 16 cycles of pure padding into
@@ -214,7 +209,7 @@ export function laySlot({ index, cycles, dacWrite, work = [], tail = [], dead, f
   };
 }
 
-/** The §4 "出力配置表" — what each interval runs, and where the room is. */
+/** The placement table — what each interval runs, and where the room is. */
 export function placementTable(slots, period) {
   const rows = slots.map((s) => s.row);
   const worst = rows.reduce((m, r) => (r.workPct > m.workPct ? r : m), rows[0]);

@@ -63,7 +63,7 @@ static void banked_lane(MMLPairsCfg cfg) {
   assert(at2b<atStart && atStart!=0xff && (atFm==0xff || atStart<atFm));
 }
 int main(void) {
-  MMLPairsCfg cfg = {0x1d00,128,16,0x13,9,0x20,2,2,MMLP_AHEAD,1};
+  MMLPairsCfg cfg = {0x1d00,128,16,0x13,0x20,2,2,MMLP_AHEAD,1};
   banked_order(&cfg);
   banked_lane(cfg);
   MMLPairs p;

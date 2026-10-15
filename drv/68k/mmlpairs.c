@@ -15,6 +15,7 @@
 #define PCM_VOL 3
 #define PCM_RETARGET 4
 #define PCM_MASTER 5
+#define PCM_START_BANKED 6
 static const uint8_t PCM_LEN[7] = {0, 9, 0, 3, 6, 2, 11};
 
 /* The state block's ops (driver.md §6.1), for voice v. */
@@ -103,11 +104,11 @@ static void level(MMLPairs *p, uint8_t v) {
 static void pcm_command(MMLPairs *p, const uint8_t *c) {
   const MMLPairsCfg *cfg = &p->cfg;
   switch (c[0]) {
-  case 6:
+  case PCM_START_BANKED:
   case PCM_START: {
     uint8_t v = c[1];
     if (v >= cfg->voices) { p->fault++; return; }
-    if (c[0] == 6 && (v > 2 || (v == 2 && rd16le(c + 9) > 127))) { p->fault++; return; }
+    if (c[0] == PCM_START_BANKED && (v > 2 || (v == 2 && rd16le(c + 9) > 127))) { p->fault++; return; }
     p->shift[v] = c[2];
     level(p, v);
     /* ONLY WHAT CHANGED. The staged bytes are the host's alone (the engine reads
@@ -117,7 +118,7 @@ static void pcm_command(MMLPairs *p, const uint8_t *c) {
     const uint8_t vals[6] = {(uint8_t)src, (uint8_t)(src >> 8), (uint8_t)end, (uint8_t)(end >> 8),
                              (uint8_t)wrap, (uint8_t)(wrap >> 8)};
     stage(p, v, 0, vals, 6);
-    if (c[0] == 6) {
+    if (c[0] == PCM_START_BANKED) {
       uint16_t bank = rd16le(c + 9);
       if (!p->bank_valid[v] || p->bank[v] != bank) {
         store(p, v == 2 ? 0x21 : (uint8_t)(0x1c + 2*v), (uint8_t)bank);
@@ -296,8 +297,11 @@ MMLP_HOT uint8_t fm_channel(const MMLWrite *w) {
  * write's channel, the moved groups' indices, the frame's safety — and the
  * emitting passes only read what it kept: on the 68000 a voice change's frame
  * spent most of its render re-reading the same writes. Producer side only. */
+/* A frame's write count is bounded only by the sequencer's queue (q_push
+ * refuses the write that would fill it), so both are queue-sized; frame_p1
+ * keeps queue indices rather than pointers, half the RAM on the 68000. */
 static uint8_t frame_ch[MML_WRITE_QUEUE];
-static const MMLWrite *frame_p1[MML_WRITE_QUEUE];
+static uint16_t frame_p1[MML_WRITE_QUEUE];
 MMLP_HOT const MMLWrite *next_write(const MMLFrameView *v, const MMLWrite *w) {
   return ++w == v->q + MML_WRITE_QUEUE ? v->q : w;
 }
@@ -351,14 +355,14 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
     const uint8_t ch=frame_ch[i];
     if (moved && ch<6 && (moved&(1u<<ch))) continue;
     if (w->port==2) { psg_push(p,w->data); continue; }
-    if (w->port==1) { frame_p1[held++]=w; continue; }
+    if (w->port==1) { frame_p1[held++]=(uint16_t)(w-v->q); continue; }
     if (w->addr==0x28 && (w->data&4)) {
-      for (uint16_t k=0; k<held; k++) push(p,1,frame_p1[k]->addr,frame_p1[k]->data);
+      for (uint16_t k=0; k<held; k++) push(p,1,v->q[frame_p1[k]].addr,v->q[frame_p1[k]].data);
       held=0;
     }
     push0(p,w->addr,w->data);
   }
-  for (uint16_t k=0; k<held; k++) push(p,1,frame_p1[k]->addr,frame_p1[k]->data);
+  for (uint16_t k=0; k<held; k++) push(p,1,v->q[frame_p1[k]].addr,v->q[frame_p1[k]].data);
 }
 
 /* THE SGDK HOST'S FRAME, straight from the sequencer's queue (mmlispseq.h

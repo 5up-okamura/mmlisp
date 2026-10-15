@@ -13,7 +13,8 @@
     "check:cheatsheet": "node scripts/check-cheatsheet.mjs",
     "check:reference": "node scripts/check-reference.mjs",
     "check:i18n": "node scripts/i18n-sync.mjs",
-    "mcp": "node mcp/mmlisp-mcp.mjs"
+    "mcp": "node mcp/mmlisp-mcp.mjs",
+    "check:scope-trigger": "node scripts/check-scope-trigger.mjs"
   },
   "engines": {
     "node": ">=18"

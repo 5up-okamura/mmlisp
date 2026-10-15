@@ -85,10 +85,10 @@ Every note attacks. `~` between two notes is what joins them:
 `~` attaches to the next real note, skipping state tokens (`c ~ > d` slurs to
 the octave-up `d`), and the right note keeps its own length.
 
-The slur carries the envelope over only if the left note has a **full gate**
-(the default). A `:gate`-cut note keys off first, so the slur starts from a
-decaying tone. Slur is an FM/PSG thing; on PCM a different-pitch `~` is just a
-new note.
+The left note of a slur always sounds its full slot: its `:gate` is ignored,
+so it never keys off before the connection and the envelope carries over. The
+right note keeps its own gate. Slur is an FM/PSG thing; on PCM a
+different-pitch `~` is just a new note.
 
 ---
 
@@ -105,7 +105,7 @@ suffix, `:gate` / `:gate-`, curve `:len`, macro `:step`, `(wait N)`,
 | `N/M` | fraction of a whole note (`2/1` = 2 bars, `1/3` = triplet whole) |
 | `Nt`  | exact tick count                                                 |
 | `Nf`  | frame count (60 Hz) — a true frame count in curve `:len`, macro `:step` and `(wait …)`; elsewhere converted to ticks at the tempo in force |
-| `Nms` | milliseconds, converted to ticks at the tempo in force           |
+| `Nms` | milliseconds — the nearest frame count where `Nf` is one; elsewhere converted to ticks at the tempo in force |
 | `0`   | hold (`:len 0` waits for the key-off, `:gate 0` holds through the slot) |
 
 Examples:
@@ -152,7 +152,7 @@ stays open and follows the marker as you edit above it (see §22).
 
 Common modifiers:
 
-- `:oct N` — octave (`0`–`8`)
+- `:oct N` — octave (an integer ≥ 0; `4` holds middle C)
 - `:len token` — default note length (length token); `0` holds the note and stops the track until the key-off (§15)
 - `:gate token` — gate time as an absolute length token (e.g. `8`, `12t`); `0` holds until runtime KEY-OFF
 - `:gate* ratio` — gate as a fraction of the note length (`0.0`–`1.0`)
@@ -774,9 +774,11 @@ values.
 ```
 
 The whole thing is resolved at compile time into a single event stream, so the
-player and driver still see one track per channel. Layers are straight
-lines: a counted loop on a layered channel is an error (write it out), and the
-song loop `(go …)` belongs on one layer only.
+player and driver still see one track per channel. A counted loop on a layer
+is written out before the layers merge, so it plays as written. The channel
+has one song loop: any layers may carry it, but they must start and end it on
+the same ticks (`E_PRIO_LAYER_LOOP` otherwise), and notes past its end never
+play.
 
 ---
 
@@ -833,7 +835,7 @@ it — drag it while the score plays.
 
 - `:from` / `:to` set the slider's endpoints (either direction); the
   positional value is the initial setting.
-- `$time` is built in: elapsed 60 Hz frames since track start.
+- `$time` is built in: elapsed 60 Hz frames since playback started.
 
 **The score's own values.** Without `:public` a `def-val` is a variable of
 the score: no slider, nothing the game sees. The score writes it like any
@@ -1304,8 +1306,9 @@ import does the same rather than approximating:
 The chip's own limits stay visible as warnings: SSG notes below A2 play an
 octave up (the PSG's floor), one
 noise channel serves the first part that uses it, and SSG reverb rings without
-its level drop. Not imported: `S` FM3 slot detune, `s` key-on revise, and
-rhythm's per-sound pan.
+its level drop. Not imported: `S` FM3 slot detune, `s` key-on revise,
+rhythm's per-sound pan, the ADPCM part K's pan `p` and detune `D` (a PCM voice
+has neither), and K's volume mode `vm<n>`.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM
 
@@ -1416,8 +1419,10 @@ them: a key-on starts a note, a key-off ends it.
   cut. A sample too long to bake into one 32 KB bank at its lowest pitch is
   cut to fit; pan is not imported (the DAC is one channel). With PCM in the
   song, FM is offered fm1–fm5.
-- The OKI MSM6295, QSound and the other PCM chips, a second chip and tempo
-  changes within the song are not imported, and the log says so.
+- The OKI MSM6295, QSound and the other PCM chips are not imported — the log
+  names each VGM command it skipped — and neither is a second chip, which the
+  log reports. Tempo changes within the song are not imported either: one grid
+  serves the whole file.
 
 **A MIDI or VGM import is structured** (untick **Fold repeats** for one bar
 after another): bars that repeat back to back become `(x n …)`, a run that

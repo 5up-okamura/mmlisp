@@ -69,7 +69,7 @@ const SUPPORTED_TARGETS = new Set([
   ]),
 ]);
 
-// D5: a PCM voice has no pitch step. The engine advances its pointer one byte
+// A PCM voice has no pitch step. The engine advances its pointer one byte
 // a sample and nothing else, so a note picks a BAKED blob and that is the whole
 // pitch mechanism. Every runtime pitch move — cents, semitones, glide, a
 // (macro :pitch …) vibrato — has no hardware to land on; reject it rather than
@@ -156,6 +156,39 @@ function pcmRejectsPitch(trackState, what, diagnostics, src, trackName) {
     trackName,
   );
   return true;
+}
+
+// A PCM point (`:pcm-start` …, inline or in a (param-set …)) is a length
+// everywhere: the literal, and both ends of a curve. The IR carries SECONDS;
+// the exporter turns them into the engine's byte offsets at the image's rate
+// (driver.md §5). Events go out through `push(cmd, args)`.
+function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnostics, src, trackName) {
+  if (!trackState.isPcmTrack) {
+    pushDiag(diagnostics, "error", "E_UNSUPPORTED_TARGET",
+      `${keyword} is only for pcm1-pcm3, not ${String(trackName).split(":")[0]}`,
+      src, trackName);
+    return;
+  }
+  if (op) {
+    pushDiag(diagnostics, "error", "E_UNSUPPORTED_TARGET",
+      `${keyword} takes a length, so '${op}' has no meaning on it`, src, trackName);
+    return;
+  }
+  const secOf = (tok) => lengthTokenSeconds(tok, trackState.currentTempo);
+  const rangeCurve = parseCurveSpec(valueNode, diagnostics, src, trackName, true, secOf);
+  requireCurveFrom(rangeCurve, diagnostics, trackName, "a PCM point", src);
+  if (rangeCurve) {
+    push("PARAM_SWEEP", { target, ...rangeCurve });
+    return;
+  }
+  const rawVal = atomValue(valueNode);
+  const sec = secOf(rawVal);
+  if (sec === null) {
+    pushDiag(diagnostics, "error", "E_PCM_RANGE_LENGTH",
+      `${keyword} needs a length (300ms, 16, 8., 6t, 3f): got ${rawVal}`, src, trackName);
+    return;
+  }
+  push("PARAM_SET", { target, value: sec });
 }
 
 // PARAM-legal targets — what an inline `:target v` / `(param-set …)` may write.
@@ -369,11 +402,23 @@ function msToTicks(ms, bpm) {
   return Math.max(1, Math.round((ms * bpm * PPQN) / 60000));
 }
 
+// An `Nms` on the frame clock: where a length is a frame count (curve `:len`,
+// `:wait`, `:hold`, `(wait …)`, macro `:step`), a millisecond duration is the
+// nearest whole frame, so it keeps its wall-clock length at any tempo.
+function msToFrames(ms) {
+  if (ms === 0) return 0;
+  return Math.max(1, Math.round((ms * compileFrameHz) / 1000));
+}
+
+// `Nf` and `Nms` — the tokens that are a frame count outside a structural
+// position (parseLengthToken with no tempo).
+const isFrameToken = (v) => /^\d+(f|ms)$/.test(String(v));
+
 // A length token as an absolute duration in SECONDS, without the detour through
 // ticks. The PCM range needs this: a tick is 5.2 ms at 120 BPM, so
 // resolving `1ms` to ticks would round it away, while the engine can place a
 // loop 1.11 ms long (one 16-byte block at pcm1 — driver.md §5).
-export function lengthTokenSeconds(token, bpm = 120) {
+function lengthTokenSeconds(token, bpm = 120) {
   if (typeof token !== "string") return null;
   if (/^\d+ms$/.test(token)) return parseInt(token, 10) / 1000;
   if (/^\d+f$/.test(token)) return parseInt(token, 10) / compileFrameHz;
@@ -423,9 +468,9 @@ function resolveMacroLen(spec, bpm) {
 }
 
 // `bpm` gives a structural context (note length / gate / tie / rest): there an
-// `Nf` token is converted to ticks at the active tempo. When `bpm` is null
-// (curve `:len` context) the raw frame count is returned and paired with a
-// `lenFrames` flag the player honors natively.
+// `Nf` or `Nms` token is converted to ticks at the active tempo. When `bpm` is
+// null (curve `:len` context) both return a frame count, which the caller
+// pairs with a `lenFrames` flag (isFrameToken) the player honors natively.
 function parseLengthToken(value, inheritedTicks, bpm = null) {
   if (!value) return inheritedTicks;
   // Tick count: "14t" — exact tick value
@@ -439,9 +484,11 @@ function parseLengthToken(value, inheritedTicks, bpm = null) {
   }
   // Milliseconds: "300ms" — an absolute duration, tempo-independent, and the
   // only length token finer than a tick (one tick is 5.2 ms at 120 BPM). Like
-  // Nf in a structural context it converts to ticks at the tempo in force.
+  // Nf, in a structural context it converts to ticks at the tempo in force,
+  // and elsewhere it is a frame count.
   if (/^\d+ms$/.test(value)) {
-    return msToTicks(parseInt(value, 10), bpm ?? 120);
+    const ms = parseInt(value, 10);
+    return bpm != null ? msToTicks(ms, bpm) : msToFrames(ms);
   }
   // Fraction: "1/2", "3/4"
   if (/^\d+\/\d+$/.test(value)) {
@@ -468,8 +515,8 @@ function parseLengthToken(value, inheritedTicks, bpm = null) {
 // the unit the player needs to schedule each kind correctly.
 function parseStepToken(value) {
   if (typeof value !== "string") return null;
-  if (/^\d+f$/.test(value)) {
-    const n = parseInt(value, 10);
+  if (isFrameToken(value)) {
+    const n = parseLengthToken(value, null);
     return n > 0 ? { unit: "frame", value: n } : null;
   }
   if (/^\d+t$/.test(value)) {
@@ -498,7 +545,7 @@ function parseRestLength(val, inheritedTicks, bpm = null) {
 // The gate family. The operation is chosen by the keyword so each is
 // unambiguous (no overloading one arg as either a ratio or a time):
 //   :gate  <time>  — absolute sounding time (length / Nf / Nt token); `0` = hold.
-//   :gate* <ratio> — fraction of the note length (0 <= ratio < 1).
+//   :gate* <ratio> — fraction of the note length (0 <= ratio <= 1).
 //   :gate- <time>  — shorten: note length minus this time (key off early).
 function parseGateFamily(keyword, val, bpm = null) {
   if (typeof val !== "string") return null;
@@ -520,8 +567,7 @@ function compileTimeScalar(node, raw, op, evalEnv, keyword, diagnostics, trackNa
   if (node?.kind === "list") {
     const head = atomValue(node.items?.[0]);
     if (isEvalHead(head)) {
-      const v = evalScalarValue(node, evalEnv, makeEvalCtx(diagnostics, trackName, src, typedDefs));
-      return v === null ? null : v;
+      return evalScalarValue(node, evalEnv, makeEvalCtx(diagnostics, trackName, src, typedDefs));
     }
     pushDiag(diagnostics, "error", "E_VALUE_COMPILE_TIME",
       `${keyword} takes a number or an expression, not (${head ?? ""} …) — use a (macro …) for motion`,
@@ -803,7 +849,7 @@ function emitNoteForTrack(
         else delete head.ev.args.gate;
       }
       trackState.tick += lengthTicks;
-      updateLastNotePitch(trackState, cmpPitch);
+      trackState.lastNotePitch = cmpPitch;
       return;
     }
     legato = true;
@@ -826,60 +872,21 @@ function emitNoteForTrack(
       return;
     }
     const fullPitch = noteName + trackState.defaultOct;
-    // Every note gets its own blob, baked at its own rate (driver.md §14.2);
-    // the 32 KB bank is the only limit, so there is no practical-range clamp.
-    const pcmRate = Math.pow(2, (pitchToMidi(fullPitch) - 60) / 12);
-    const gateTicks = resolveGateTicks(trackState.defaultGate, lengthTicks);
     const mode = trackState.pcmMode; // sticky, like every track parameter
-    const sampleDef = trackState.sampleDefs?.get(trackState.pcmSampleName);
-    const args = {
-      sample: trackState.pcmSampleName,
-      pitch: fullPitch,
-      rate: pcmRate,
-      length: lengthTicks,
-      mode,
-    };
-    if (Number.isFinite(sampleDef?.rate) && sampleDef.rate > 0) {
-      args.baseRate = sampleDef.rate;
-    }
-    if (trackState.defaultVel !== undefined && trackState.defaultVel !== 15) {
-      args.vel = trackState.defaultVel;
-    }
-    if (gateTicks < lengthTicks) args.gate = gateTicks;
-    // The note's macros, resolved as an FM/PSG note's are (a `:vel*` macro
-    // scaled by this note's vel, tick lengths at this tempo).
-    const withMacros = makeNoteArgs(fullPitch, lengthTicks, trackState.defaultGate,
-      trackState.defaultVel, trackState.activeMacros, trackState.currentTempo);
-    for (const key of PCM_MACRO_ARG_KEYS) if (withMacros[key]) args[key] = withMacros[key];
-    const hasMacros = PCM_MACRO_ARG_KEYS.some((key) => args[key]);
-
-    const pcmEv = {
-      tick: trackState.tick,
-      cmd: "PCM_NOTE_ON",
-      args,
-      src,
-    };
+    const { ev: pcmEv, off, hasMacros } = pushPcmNote(trackState, events, {
+      sample: trackState.pcmSampleName, pitch: fullPitch, length: lengthTicks,
+      gateSpec: trackState.defaultGate, vel: trackState.defaultVel, mode,
+      macros: trackState.activeMacros,
+    }, src);
     stampDelay(pcmEv, trackState);
-    events.push(pcmEv);
-    // The note's key-off: a loop's release, and where a shot's macros take
-    // theirs — a shot with none has nothing that listens, and at full gate the
-    // next note or rest keys it off anyway.
-    let off = null;
-    if (gateTicks > 0 && (mode === "loop" || (hasMacros && gateTicks < lengthTicks))) {
-      off = {
-        tick: trackState.tick + gateTicks,
-        cmd: "PCM_NOTE_OFF",
-        args: { sample: trackState.pcmSampleName, mode },
-        src,
-      };
-      events.push(off);
-    }
     // The head a `~` ties on to (placePcmTieOff).
     trackState.pcmTiedHead = {
       ev: pcmEv, off, segs: [pcmEv], total: lengthTicks, gateSpec: trackState.defaultGate,
       sample: trackState.pcmSampleName, pitch: fullPitch, loop: mode === "loop", hasMacros,
     };
     trackState.tick += lengthTicks;
+    pushRecentNote(trackState, fullPitch, lengthTicks, trackState.defaultGate,
+      trackState.defaultVel ?? 15, { sample: trackState.pcmSampleName, mode });
     return;
   }
 
@@ -965,8 +972,8 @@ function emitNoteForTrack(
     total: lengthTicks,
   };
   trackState.tick += lengthTicks;
-  updateLastNotePitch(trackState, fullPitch);
-  // Feed the (echo …) history from the standard pitch path (FM3-op/PCM excluded).
+  trackState.lastNotePitch = fullPitch;
+  // Feed the (echo …) history (FM3-op excluded; a pcm note feeds it above).
   if (!trackState.isFm3OpTrack)
     pushRecentNote(
       trackState,
@@ -977,7 +984,7 @@ function emitNoteForTrack(
     );
 }
 
-// `(note expr [len])` (§2.5): evaluate a MIDI number and emit one NOTE_ON at
+// `(note expr [len])` (§7.3): evaluate a MIDI number and emit one NOTE_ON at
 // that absolute pitch, reusing emitNoteForTrack so ties/glide/shuffle/PCM/macros
 // behave identically to a literal note. The octave is set from the MIDI number
 // (temporarily, so it does not leak into following notes) — the note name +
@@ -1150,9 +1157,6 @@ function noteUserPitchWrites(trackState, written) {
     );
 }
 
-/**
- * v0.4: Update lastNotePitch after emitting NOTE_ON.
- */
 // A PCM note tied on (`c ~ c`): its key-off moves to the gate of the whole
 // tied length, as an FM note's does. The off is an event of its own, so it
 // goes where that gate lands — in the head (the head's own gate, which ends
@@ -1195,23 +1199,54 @@ function placePcmTieOff(h, events) {
   }
 }
 
-function updateLastNotePitch(trackState, pitch) {
-  trackState.lastNotePitch = pitch;
+// One pcm note: its PCM_NOTE_ON and, where something listens for it, its
+// PCM_NOTE_OFF — the note a pcm track writes, and an (echo …) tap replaying
+// one. `macros` null plays it bare (an echo tap, as an FM/PSG one is).
+function pushPcmNote(trackState, events, note, src) {
+  const { sample, pitch, length, gateSpec, vel, mode, macros } = note;
+  // Every note gets its own blob, baked at its own rate (driver.md §14.2);
+  // the 32 KB bank is the only limit, so there is no practical-range clamp.
+  const pcmRate = Math.pow(2, (pitchToMidi(pitch) - 60) / 12);
+  const gateTicks = resolveGateTicks(gateSpec, length);
+  const sampleDef = trackState.sampleDefs?.get(sample);
+  const args = { sample, pitch, rate: pcmRate, length, mode };
+  if (Number.isFinite(sampleDef?.rate) && sampleDef.rate > 0) {
+    args.baseRate = sampleDef.rate;
+  }
+  if (vel !== undefined && vel !== 15) args.vel = vel;
+  if (gateTicks < length) args.gate = gateTicks;
+  // The note's macros, resolved as an FM/PSG note's are (a `:vel*` macro
+  // scaled by this note's vel, tick lengths at this tempo).
+  if (macros) {
+    const withMacros = makeNoteArgs(pitch, length, gateSpec, vel, macros, trackState.currentTempo);
+    for (const key of PCM_MACRO_ARG_KEYS) if (withMacros[key]) args[key] = withMacros[key];
+  }
+  const hasMacros = PCM_MACRO_ARG_KEYS.some((key) => args[key]);
+  const ev = { tick: trackState.tick, cmd: "PCM_NOTE_ON", args, src };
+  events.push(ev);
+  // The note's key-off: a loop's release, and where a shot's macros take
+  // theirs — a shot with none has nothing that listens, and at full gate the
+  // next note or rest keys it off anyway.
+  let off = null;
+  if (gateTicks > 0 && (mode === "loop" || (hasMacros && gateTicks < length))) {
+    off = {
+      tick: trackState.tick + gateTicks,
+      cmd: "PCM_NOTE_OFF",
+      args: { sample, mode },
+      src,
+    };
+    events.push(off);
+  }
+  return { ev, off, hasMacros };
 }
 
-// v0.5: rolling history of recently emitted notes (max 9) for (echo …) replay.
+// Rolling history of recently emitted notes (max 9) for (echo …) replay.
 // pitch is absolute (includes octave), so the replay needs no octave bookkeeping.
-function pushRecentNote(trackState, pitch, length, gateSpec, vel) {
+// A pcm note also keeps its sample and mode, which its replay plays again.
+function pushRecentNote(trackState, pitch, length, gateSpec, vel, pcm = null) {
   const hist = (trackState.recentNotes ||= []);
-  hist.push({ pitch, length, gateSpec, vel });
+  hist.push({ pitch, length, gateSpec, vel, pcm });
   if (hist.length > 9) hist.shift();
-}
-
-// Resolve a tap's value relative to the source: additive (src + by·k) or
-// multiplicative (src · by^k), clamped to the target range. Shared by echo/delay.
-function tapValue(domain, by, k, srcVal, target) {
-  const v = domain === "mul" ? srcVal * Math.pow(by, k) : srcVal + by * k;
-  return clampForTarget(target, v);
 }
 
 // The shared arguments of (echo …) and (delay …): `[N] :vel+|:vel* V`, then
@@ -1267,7 +1302,8 @@ function readTapArgs(form, items, env, ctx, diagnostics, trackName, src) {
 // (echo …): replay the single note `back` positions back (back=1 = the last
 // note), once per tap (1..count), each modulating `target` relative to that
 // note's own value. Advances trackState.tick so the phrase lengthens. This
-// matches mucom `\=n1,n2` (the note n1 back), where `back` = n1. v1 targets VEL.
+// matches mucom `\=n1,n2` (the note n1 back), where `back` = n1. The taps
+// move :vel.
 function emitEchoReplay(trackState, events, spec, back, src) {
   const hist = trackState.recentNotes || [];
   if (!hist.length) return;
@@ -1280,13 +1316,23 @@ function emitEchoReplay(trackState, events, spec, back, src) {
   const len = trackState.defaultLength;
   const gate = trackState.defaultGate;
   for (const vel of resolveDelayVels(spec, len, note.vel ?? 15) ?? []) {
+    if (note.pcm) {
+      pushPcmNote(trackState, events, {
+        ...note.pcm, pitch: note.pitch, length: len, gateSpec: gate, vel, macros: null,
+      }, src);
+      trackState.tick += len;
+      continue;
+    }
     startWithoutGlide(trackState, note.pitch, events, src);
-    events.push({
+    const ev = {
       tick: trackState.tick,
       cmd: "NOTE_ON",
       args: makeNoteArgs(note.pitch, len, gate, vel, null),
       src,
-    });
+    };
+    // The voice the tap plays, for a def-mod :voice, as a written note's.
+    if (trackState.voiceName) ev._voice = trackState.voiceName;
+    events.push(ev);
     trackState.tick += len;
   }
 }
@@ -1319,24 +1365,24 @@ function applyMacroEntryToState(trackState, irTarget, spec, ctx) {
   trackState.activeMacros[irTarget] = spec;
 }
 
-// v0.5: `:macro :target none` clears one active macro; `:macro none` clears all.
+// `(macro :target none)` clears one active macro; `(macro none)` clears all.
 function clearMacroTarget(trackState, irTarget) {
   if (irTarget && SUPPORTED_TARGETS.has(irTarget))
     delete trackState.activeMacros[irTarget];
 }
 
-// v0.5: resolve a (delay …) spec into concrete per-tap velocities, RELATIVE to
+// Resolve a (delay …) spec into concrete per-tap velocities, RELATIVE to
 // the source note's vel. `param` = a regular ramp from `:by` (additive on :vel /
 // geometric on :vel*); `list` = explicit per-tap deltas/ratios; `curve` = a
 // relative envelope whose tap count is :len ÷ spacing. mode "add"|"mul".
 function resolveDelayVels(spec, delayTicks, srcVel) {
   if (!spec || !(delayTicks > 0)) return null;
-  const apply = (rel) =>
-    clampForTarget("VEL", spec.mode === "mul" ? srcVel * rel : srcVel + rel);
+  const mul = spec.mode === "mul";
+  const apply = (rel) => clampForTarget("VEL", mul ? srcVel * rel : srcVel + rel);
   if (spec.type === "param") {
+    const by = spec.by ?? 0;
     const out = [];
-    for (let k = 1; k <= spec.count; k++)
-      out.push(tapValue(spec.mode, spec.by ?? 0, k, srcVel, "VEL"));
+    for (let k = 1; k <= spec.count; k++) out.push(apply(mul ? Math.pow(by, k) : by * k));
     return out.length ? out : null;
   }
   if (spec.type === "list") {
@@ -1376,10 +1422,6 @@ function velMacroPeak(spec) {
   return 0;
 }
 
-// Scale a macro spec's values by `factor`, clamped to `target`'s range (kept
-// float, quantized at playback), preserving type, markers, and per-macro step.
-// Shared by the `*` multiplicative modifier (factor = the note's static base)
-// and :delay echoes (factor = the echo's vel ratio).
 // Apply fn to every scalar value a macro spec carries (step values / curve
 // from&to / stage from&to), preserving nulls. Shared by scale and add.
 function mapMacroValues(spec, fn) {
@@ -1404,6 +1446,10 @@ function mapMacroValues(spec, fn) {
   return spec;
 }
 
+// Scale a macro spec's values by `factor`, clamped to `target`'s range (kept
+// float, quantized at playback), preserving type, markers, and per-macro step.
+// Shared by the `*` multiplicative modifier (factor = the note's static base)
+// and :delay echoes (factor = the echo's vel ratio).
 function scaleMacroValues(spec, factor, target) {
   return mapMacroValues(spec, (v) => clampForTarget(target, v * factor));
 }
@@ -1412,16 +1458,10 @@ function addMacroValues(spec, offset, target) {
   return mapMacroValues(spec, (v) => clampForTarget(target, v + offset));
 }
 
-// A :delay echo's inherited vel tail peaks at the echo's :delay-vels level.
-function scaleVelMacroSteps(spec, ratio) {
-  return scaleMacroValues(spec, ratio, "VEL");
-}
-
 // Macro targets that accept the `*` (multiplicative) modifier: each has a
 // per-note/channel static base its macro values scale. Offset targets
 // (NOTE_PITCH/NOTE_SEMI) and discrete ones (PAN/KEYON/...) have no base, so
-// `*` is rejected there. VOL/MASTER live in a separate channel-level macro
-// path and are not wired yet; add them here once that path tracks a base.
+// `*` is rejected there.
 const OP_BASE_TARGETS = new Set(["VEL"]);
 
 // Offset targets carry a runtime base (the channel's live pitch offset), so `+`
@@ -1492,7 +1532,7 @@ function emitRuntime(steps, target, push, diagnostics, trackName, src) {
   const writes = steps.filter((s) => s.op !== "self").length;
   if (writes > 6)
     pushDiag(diagnostics, "warning", "W_EVAL_CHAIN_LONG",
-      `expression lowers to ${writes} register writes (§4.7)`, src, trackName);
+      `expression lowers to ${writes} register writes (language.md §7.1.2)`, src, trackName);
   for (const s of steps) {
     if (s.op === "self") continue;
     if (s.op === "set") push("PARAM_SET", { target, value: Math.round(s.val) });
@@ -1615,7 +1655,37 @@ function stampDelay(ev, trackState) {
   if (vels && vels.length) ev._delay = { ticks: trackState.delayTicks, vels };
 }
 
-// v0.5 §1.5.3: compile-time delay expansion. Each note stamped with _delay
+// [start, end) note intervals, indexed for the two questions the delay and
+// :prio passes ask: is a note sounding at `t`, and when does the next one
+// start after `t`. Sorted by start, with the latest end among each prefix — a
+// note sounds at `t` iff one starting by `t` ends after it.
+function intervalIndex(intervals) {
+  const starts = [];
+  const reach = [];
+  for (const [st, en] of [...intervals].sort((a, b) => a[0] - b[0])) {
+    starts.push(st);
+    reach.push(Math.max(en, reach.at(-1) ?? -Infinity));
+  }
+  const startedBy = (t) => { // how many start at or before t
+    let lo = 0;
+    let hi = starts.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (starts[mid] <= t) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  return {
+    sounding: (t) => {
+      const n = startedBy(t);
+      return n > 0 && reach[n - 1] > t;
+    },
+    nextStart: (t) => starts[startedBy(t)] ?? Infinity,
+  };
+}
+
+// Compile-time delay expansion (§12). Each note stamped with _delay
 // emits echo copies at +k·spacing with the tap velocities. Written (source)
 // notes outrank echoes (monophonic priority): a tap starting while a written
 // note sounds (its gate) is dropped, and one starting in a gap is cut short at
@@ -1629,12 +1699,9 @@ function expandTrackDelays(track) {
     for (const e of events) delete e._delay;
     return;
   }
-  const written = events
-    .filter((e) => NOTE_CMDS.has(e.cmd))
-    .map((e) => [e.tick, e.tick + prioNoteSpan(e)]);
-  const sounding = (t) => written.some(([s, en]) => s <= t && t < en);
-  const nextWritten = (t) =>
-    written.reduce((m, [s]) => (s > t && s < m ? s : m), Infinity);
+  const { sounding, nextStart: nextWritten } = intervalIndex(
+    events.filter((e) => NOTE_CMDS.has(e.cmd)).map((e) => [e.tick, e.tick + prioNoteSpan(e)]),
+  );
 
   const echoes = [];
   for (const ev of sources) {
@@ -1652,7 +1719,7 @@ function expandTrackDelays(track) {
       if (args.velMacro) {
         const peak = velMacroPeak(args.velMacro);
         const ratio = peak > 0 ? dv / peak : 0;
-        args.velMacro = scaleVelMacroSteps(args.velMacro, ratio);
+        args.velMacro = scaleMacroValues(args.velMacro, ratio, "VEL");
       }
       if (dv === 15) delete args.vel;
       else args.vel = dv;
@@ -1677,7 +1744,7 @@ function expandTrackDelays(track) {
   }
 }
 
-// v0.5 :prio layering. Multiple forms of the same channel with different :prio
+// :prio layering (§1). Multiple forms of the same channel with different :prio
 // values become independent parallel timelines; this post-pass flattens them
 // into one monophonic event stream. Lower number = higher priority. Note events
 // are resolved preemptively: a note is dropped where a higher-priority note is
@@ -1782,18 +1849,18 @@ function flattenPriorityLayers(head, layers, diagnostics) {
       .sort((a, b) => a.tick - b.tick);
 
     const committed = [];
+    const higher = intervalIndex(occupied);
     for (let i = 0; i < notes.length; i++) {
       const ev = notes[i];
       const t = ev.tick;
       // Suppressed: starts while a higher-priority note is sounding.
-      if (occupied.some(([s, e]) => t >= s && t < e)) {
+      if (higher.sounding(t)) {
         drop.add(ev);
         continue;
       }
       const rawEnd = t + prioNoteSpan(ev); // gate/len end (may be Infinity)
       const nextSame = notes[i + 1]?.tick ?? Infinity; // own retrigger ends it
-      let nextHi = Infinity; // next higher-priority onset
-      for (const [s] of occupied) if (s > t && s < nextHi) nextHi = s;
+      const nextHi = higher.nextStart(t); // next higher-priority onset
       // A higher-priority note interrupts before this note's natural end → cut
       // to silence (no release tail in this version).
       if (nextHi < rawEnd && nextHi < nextSame) ev.args.gate = nextHi - t;
@@ -2048,15 +2115,15 @@ function parseSampleDef(bodyItems, base, diagnostics, src) {
     }
     if (key === ":file") {
       sample.file = rawVal;
-    } else if (key === ":rate") {
-      const rate = parseIntLike(rawVal);
-      if (rate !== null) sample.rate = rate;
-    } else if (key === ":offset") {
-      const offset = parseIntLike(rawVal);
-      if (offset !== null) sample.offset = offset;
-    } else if (key === ":frames") {
-      const frames = parseIntLike(rawVal);
-      if (frames !== null) sample.frames = frames;
+    } else if (key === ":rate" || key === ":offset" || key === ":frames") {
+      // Whole numbers: a rate in Hz, a frame position and a frame count. One
+      // that does not read leaves the key at its default — say so.
+      const n = parseIntLike(rawVal);
+      if (n !== null) sample[key.slice(1)] = n;
+      else
+        pushDiag(diagnostics, "warning", "W_SAMPLE_KEY_INVALID",
+          `def-pcm ${key} takes a whole number, not ${rawVal ?? "a list"}; the default is kept`,
+          nodeSrc(bodyItems[ki + 1]) ?? src, null);
     } else if (key === ":pcm-start") {
       sample.startTok = rawVal;
     } else if (key === ":pcm-end") {
@@ -2125,8 +2192,16 @@ function extractMacroStep(items, diagnostics, trackName) {
   for (let k = 0; k < items.length; k++) {
     if (atomValue(items[k]) !== ":step") continue;
     count++;
-    if (count === 1 && k + 1 < items.length)
-      step = parseStepToken(atomValue(items[k + 1]));
+    if (count !== 1) continue;
+    const tok = k + 1 < items.length ? atomValue(items[k + 1]) : null;
+    step = parseStepToken(tok);
+    // A :step that is not a length > 0 would leave the macro on its 1f
+    // default without a word — a typo heard as the wrong rate.
+    if (step === null && diagnostics)
+      pushDiag(diagnostics, "warning", "W_MACRO_STEP_INVALID",
+        `:step takes a length > 0 (16, 24t, 2f, 30ms), not ${tok ?? "nothing"}; ` +
+          "the macro steps at the default 1f",
+        nodeSrc(items[k + 1] ?? items[k]), trackName);
   }
   if (count > 1) {
     pushDiag(
@@ -2152,7 +2227,7 @@ function requireCurveFrom(spec, diagnostics, trackName, where, src = null) {
 }
 
 /**
- * Parse a :macro spec node for any target.
+ * Parse a (macro …) spec node for any target.
  * Accepts both step-vector [...] and curve (...) forms.
  * Steps are clamped with clampForTarget(target, n) — works for any target.
  * Returns { type: "steps", steps, loopIndex, releaseIndex }
@@ -2226,13 +2301,17 @@ function parseMacroSpec(
           const arg = atomValue(it.items?.[1]);
           if (arg === "key-off") {
             stages.push({ waitKeyOff: true });
-          } else if (/^\d+f$/.test(arg)) {
-            // Nf is a wall-clock frame count; carry the unit so the player's
-            // frame branch schedules it directly (a stage wait is a local
-            // sampler delay, not a timeline advance — tempo-independent).
-            stages.push({ waitFrames: parseInt(arg, 10) });
+          } else if (isFrameToken(arg)) {
+            // Nf / Nms is a wall-clock frame count; carry the unit so the
+            // player's frame branch schedules it directly (a stage wait is a
+            // local sampler delay, not a timeline advance — tempo-independent).
+            stages.push({ waitFrames: parseLengthToken(arg, null) });
           } else {
             const t = parseLengthToken(arg, null);
+            if (t === null && diagnostics)
+              pushDiag(diagnostics, "warning", "W_WAIT_INVALID",
+                `(wait …) takes a length or key-off, not ${arg ?? "nothing"}; it waits 1 tick`,
+                nodeSrc(it), trackName);
             stages.push({ waitTicks: t ?? 1 });
           }
           continue;
@@ -2296,7 +2375,7 @@ function parseMacroSpec(
     return { type: "steps", steps, loopIndex, releaseIndex, src: nodeSrc(node) };
   }
   // A curve, an expression or a `let` name (§7.2) evaluates to a signal or a
-  // number. Scaled macro (§4.4, frame tier): `(* <signal> $slot)` evaluates to
+  // number. Scaled macro (§7.0): `(* <signal> $slot)` evaluates to
   // the signal carrying `scale`, the slot it rides as a per-frame depth knob —
   // the driver writes `(sample × slot) >> 8` each frame (exporter → MMB flags
   // bit2 + a slot byte). A macro reads no other `$`.
@@ -2446,7 +2525,7 @@ function parseCurveSpec(
   trackName = null,
   requireCurve = false,
   // How a value in `:from` / `:to` (and `const`'s positional) is read. The PCM
-  // range points pass a length-token reader here, so `(line :from 16 :to 64)`
+  // range points pass a length-token reader here, so `(linear :from 16 :to 64)`
   // sweeps a 16th note down to a 64th instead of the bare numbers 16 and 64.
   scalar = null,
 ) {
@@ -2483,9 +2562,9 @@ function parseCurveSpec(
   let holdLen = null; // :hold as written: { n, frames }
   const params = {};
   let hasParams = false;
-  // v0.5 dynamic macro params: $name in :from/:to/:rate records a runtime slot
-  // source here (with a placeholder static value); the player resolves it at
-  // note-on. `:len`/`:step` (which need a frame/tick unit) are not dynamic yet.
+  // Dynamic curve params: $name in :from/:to/:rate/:len records a runtime
+  // slot source here (with a placeholder static value); the player resolves
+  // it at note-on — a `:len` by the slot's def-val :unit.
   const dyn = {};
   let hasDyn = false;
   const dynSrc = (v) =>
@@ -2684,19 +2763,23 @@ function parseCurveSpec(
             hasDyn = true;
           } else {
             frames = parseLengthToken(v, null);
-            lenFrames = /^\d+f$/.test(v); // Nf is an absolute frame count, not ticks
+            lenFrames = isFrameToken(v); // Nf / Nms is an absolute frame count, not ticks
           }
           break;
         }
         case ":wait":
           if (v === "key-off") {
             waitKeyOff = true;
-          } else if (/^\d+f$/.test(String(v))) {
-            // Nf is a wall-clock frame count, as a stage `(wait Nf)` is.
-            waitFrames = parseInt(v, 10);
+          } else if (isFrameToken(v)) {
+            // Nf / Nms is a wall-clock frame count, as a stage `(wait Nf)` is.
+            waitFrames = parseLengthToken(v, null);
           } else {
             const t = parseLengthToken(v, null);
             if (t !== null) waitTicks = t;
+            else if (diagnostics)
+              pushDiag(diagnostics, "warning", "W_WAIT_INVALID",
+                `:wait takes a length or key-off, not ${v ?? "nothing"}; the curve does not wait`,
+                src ?? nodeSrc(node), trackName);
           }
           break;
         case ":phase": {
@@ -2735,10 +2818,10 @@ function parseCurveSpec(
           break;
         }
         case ":hold": {
-          // A length (§4): `Nf` frames, else ticks. Becomes a share of :len
-          // (resolveCurveHold) once both are known in one unit.
-          const isFrames = /^\d+f$/.test(String(v));
-          const n = isFrames ? parseInt(v, 10) : parseLengthToken(v, null);
+          // A length (§4): `Nf` / `Nms` frames, else ticks. Becomes a share
+          // of :len (resolveCurveHold) once both are known in one unit.
+          const isFrames = isFrameToken(v);
+          const n = parseLengthToken(v, null);
           if (n > 0) holdLen = { n, frames: isFrames };
           else if (diagnostics)
             pushDiag(diagnostics, "error", "E_CURVE_HOLD",
@@ -2817,8 +2900,16 @@ function parseCurveSpec(
   if (hasParams) spec.params = params;
   if (hasDyn) spec.dyn = dyn;
   if (holdLen) {
-    spec.holdLen = holdLen;
-    resolveCurveHold(spec, null);
+    // The hold is a share of :len, so it needs a literal one (§11).
+    if (!(spec.frames > 0) || dyn.len) {
+      if (diagnostics)
+        pushDiag(diagnostics, "error", "E_CURVE_HOLD",
+          dyn.len ? ":hold needs a literal :len, not a $slot" : ":hold needs a :len",
+          src ?? nodeSrc(node), trackName);
+    } else {
+      spec.holdLen = holdLen;
+      resolveCurveHold(spec, null);
+    }
   }
   return spec;
 }
@@ -2829,7 +2920,7 @@ function parseCurveSpec(
 // for the macro's note, whose tempo resolveMacroLen knows.
 function resolveCurveHold(spec, bpm) {
   const h = spec?.holdLen;
-  if (!h || !(spec.frames > 0) || spec.dyn?.len) return spec;
+  if (!h) return spec;
   let hold = h.n;
   if (h.frames !== !!spec.lenFrames) {
     if (bpm == null) return spec;
@@ -2847,10 +2938,10 @@ function parseNumberLike(value) {
 }
 
 // Resolve a length in a structural position: a plain length-token atom, a
-// `(ticks expr)` / `(frames expr)` unit bridge (§2.4), or a bare eval
+// `(ticks expr)` / `(frames expr)` unit bridge (§7.4), or a bare eval
 // expression whose numeric result is a note denominator — `(+ 2 2)` ≡ `4` ≡ a
 // quarter note, uniform with a literal number. Frames convert to ticks at the
-// active tempo (like Nf, [[project-todo-2-nf-always-frame]]).
+// active tempo, as an Nf length does (§4).
 function resolveLengthNode(node, inherited, trackState, ctx, env) {
   if (node && node.kind === "list") {
     const lv = evalLengthValue(node, env, ctx);
@@ -2870,7 +2961,7 @@ function resolveLengthNode(node, inherited, trackState, ctx, env) {
   return parseLengthToken(atomValue(node), inherited, trackState.currentTempo);
 }
 
-// Positional curve-range sugar: `A..B` → { from: A, to: B } (v0.6). Endpoints
+// Positional curve-range sugar: `A..B` → { from: A, to: B }. Endpoints
 // are signed decimals; `40..0` is a valid descending range. Returns null for
 // anything that is not exactly a range token.
 const RANGE_RE = /^(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)$/;
@@ -2881,7 +2972,7 @@ function parseRangeToken(value) {
   return { from: Number(m[1]), to: Number(m[2]) };
 }
 
-// Inverse of pitchToMidi for `(note <midi>)` (§2.5): MIDI → { note name, octave }
+// Inverse of pitchToMidi for `(note <midi>)` (§7.3): MIDI → { note name, octave }
 // with sharps spelled `+`, matching the literal note grammar. C4 = 60.
 const MIDI_NOTE_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
 function midiToNoteParts(midi) {
@@ -2998,12 +3089,17 @@ function buildTempoSweepFromCurve(
 
   const from = parseNumberLike(String(curveSpec.from ?? ""));
   const to = parseNumberLike(String(curveSpec.to ?? ""));
-  const len =
-    Number.isFinite(Number(curveSpec.frames)) && Number(curveSpec.frames) > 0
-      ? Number(curveSpec.frames)
-      : null;
   const fromBpm = from ?? fallbackFromBpm;
   const toBpm = to;
+  // TEMPO_SWEEP's `len` is ticks, which the player and the exporter turn into
+  // frames at the sweep's average tempo — so an `Nf` / `Nms` length converts
+  // to ticks at that same tempo, and keeps its frame count.
+  const len =
+    Number.isFinite(Number(curveSpec.frames)) && Number(curveSpec.frames) > 0
+      ? curveSpec.lenFrames && fromBpm > 0 && toBpm > 0
+        ? framesToTicks(Number(curveSpec.frames), (fromBpm + toBpm) / 2)
+        : Number(curveSpec.frames)
+      : null;
   if (
     fromBpm !== null &&
     Number.isFinite(fromBpm) &&
@@ -3087,47 +3183,50 @@ function isLanguageKeyword(name) {
   return BODY_KEYWORDS.has(name) || SUPPORTED_TARGETS.has(t) || PCM_POINT_TARGETS.has(t);
 }
 
+// Keyword → IR target name (canonicalTarget).
+const TARGET_KEYWORDS = new Map(Object.entries({
+  // Sequencer / level
+  ":vol": "VOL",
+  ":master": "MASTER",
+  ":pitch": "NOTE_PITCH",
+  ":semi": "NOTE_SEMI",
+  ":keyon": "KEYON",
+  // LFO
+  ":lfo-rate": "LFO_RATE",
+  // PCM points: the range a note plays, and the loop inside it
+  ":pcm-start": "RANGE_START",
+  ":pcm-end": "RANGE_END",
+  ":pcm-len": "RANGE_LEN",
+  ":loop-start": "LOOP_START",
+  ":loop-end": "LOOP_END",
+  ":loop-len": "LOOP_LEN",
+  // FM channel-level
+  ":alg": "FM_ALG",
+  ":fb": "FM_FB",
+  ":ams": "FM_AMS",
+  ":fms": "FM_FMS",
+  ":pan": "PAN",
+  ":mode": "NOISE_MODE",
+  // FM operator params — :tl1–:tl4, :ar1–:ar4, etc.
+  ...[1, 2, 3, 4].reduce((acc, op) => {
+    acc[`:tl${op}`] = `FM_TL${op}`;
+    acc[`:ar${op}`] = `FM_AR${op}`;
+    acc[`:dr${op}`] = `FM_DR${op}`;
+    acc[`:sr${op}`] = `FM_SR${op}`;
+    acc[`:rr${op}`] = `FM_RR${op}`;
+    acc[`:sl${op}`] = `FM_SL${op}`;
+    acc[`:ml${op}`] = `FM_ML${op}`;
+    acc[`:dt${op}`] = `FM_DT${op}`;
+    acc[`:ks${op}`] = `FM_KS${op}`;
+    acc[`:am${op}`] = `FM_AMEN${op}`;
+    acc[`:ssg${op}`] = `FM_SSG${op}`;
+    return acc;
+  }, {}),
+}));
+
 export function canonicalTarget(symbol) {
-  const map = {
-    // Sequencer / level
-    ":vol": "VOL",
-    ":master": "MASTER",
-    ":pitch": "NOTE_PITCH",
-    ":semi": "NOTE_SEMI",
-    ":keyon": "KEYON",
-    // LFO
-    ":lfo-rate": "LFO_RATE",
-    // PCM points: the range a note plays, and the loop inside it
-    ":pcm-start": "RANGE_START",
-    ":pcm-end": "RANGE_END",
-    ":pcm-len": "RANGE_LEN",
-    ":loop-start": "LOOP_START",
-    ":loop-end": "LOOP_END",
-    ":loop-len": "LOOP_LEN",
-    // FM channel-level
-    ":alg": "FM_ALG",
-    ":fb": "FM_FB",
-    ":ams": "FM_AMS",
-    ":fms": "FM_FMS",
-    ":pan": "PAN",
-    ":mode": "NOISE_MODE",
-    // FM operator params — :tl1–:tl4, :ar1–:ar4, etc.
-    ...[1, 2, 3, 4].reduce((acc, op) => {
-      acc[`:tl${op}`] = `FM_TL${op}`;
-      acc[`:ar${op}`] = `FM_AR${op}`;
-      acc[`:dr${op}`] = `FM_DR${op}`;
-      acc[`:sr${op}`] = `FM_SR${op}`;
-      acc[`:rr${op}`] = `FM_RR${op}`;
-      acc[`:sl${op}`] = `FM_SL${op}`;
-      acc[`:ml${op}`] = `FM_ML${op}`;
-      acc[`:dt${op}`] = `FM_DT${op}`;
-      acc[`:ks${op}`] = `FM_KS${op}`;
-      acc[`:am${op}`] = `FM_AMEN${op}`;
-      acc[`:ssg${op}`] = `FM_SSG${op}`;
-      return acc;
-    }, {}),
-  };
-  if (map[symbol]) return map[symbol];
+  const known = TARGET_KEYWORDS.get(symbol);
+  if (known) return known;
   // The spelled-out fallback must not make `:range-start` a key.
   const t = symbol.replace(/^:/, "").toUpperCase().replace(/-/g, "_");
   return PCM_POINT_TARGETS.has(t) ? null : t;
@@ -3170,14 +3269,14 @@ function createInitFmKwMap() {
   return kwMap;
 }
 
+// A def-fm voice switch: its registers as of `tick`, and the key shift its
+// :key sets on the track.
 function emitVoice(td, tick, events, src, trackState = null) {
-  if (td.tag !== "voice") return false;
   if (td.kwMap) emitVoiceFromKwMap(td.kwMap, tick, events, src);
   if (trackState) {
     const key = td.kwMap?.get(VOICE_KEY);
     trackState.voiceKeyShift = key === undefined ? 0 : key - 60;
   }
-  return true;
 }
 
 // The canonical targets a voice sets: the channel's ALG/FB/AMS/FMS and every
@@ -3305,7 +3404,7 @@ function nodeSrc(node) {
 }
 
 /**
- * Unified v0.4 channel body compiler.
+ * The channel body compiler.
  * Processes notes, rests, inline modifiers, and structural forms directly
  * from an indexed item list. All state (oct, len, gate, vol) is sticky:
  * modifications persist in trackState across items and across channel forms.
@@ -3321,9 +3420,8 @@ function compileChannelBody(
   vals,
   env = null,
 ) {
-  // Lexical env for compile-time eval (`let`, step 4). Step 1 only ever sees
-  // the empty root, but the parameter is threaded through the body recursions
-  // now so later steps need no re-plumbing.
+  // Lexical env for compile-time eval: each `let` (§7.2) extends it for the
+  // body it wraps.
   const evalEnv = env ?? makeEnv(null);
   const labelsHere = new Map(); // #label id -> its index in these items
   let i = 0;
@@ -3453,6 +3551,15 @@ function compileChannelBody(
                     nodeSrc(node), trackName);
                   break;
                 }
+                // 1–50 and over 90 are outside the swing's range: they play
+                // straight / as 90, as before, but a typo should not pass.
+                if (v !== 0 && v < 51)
+                  pushDiag(diagnostics, "warning", "W_SHUFFLE_STRAIGHT",
+                    `:shuffle ${v} is under 51 and plays straight; swing is 51..90 (none or 0 = straight)`,
+                    nodeSrc(items[i]), trackName);
+                else if (v > 90)
+                  pushDiag(diagnostics, "warning", "W_SHUFFLE_CLAMPED",
+                    `:shuffle ${v} is over 90 and plays as 90`, nodeSrc(items[i]), trackName);
                 trackState.shuffleRatio = v < 51 ? 0 : Math.min(90, v);
               } else {
                 trackState.shuffleBase = resolveLengthNode(
@@ -3519,10 +3626,14 @@ function compileChannelBody(
 
                 const from = parseNumberLike(String(curveSpec.from ?? ""));
                 const to = parseNumberLike(String(curveSpec.to ?? ""));
+                // CSM_RATE's `len` is ticks: an `Nf` / `Nms` length converts at
+                // the tempo in force.
                 const len =
                   Number.isFinite(Number(curveSpec.frames)) &&
                   Number(curveSpec.frames) > 0
-                    ? Number(curveSpec.frames)
+                    ? curveSpec.lenFrames
+                      ? framesToTicks(Number(curveSpec.frames), trackState.currentTempo)
+                      : Number(curveSpec.frames)
                     : null;
 
                 if (
@@ -3553,7 +3664,7 @@ function compileChannelBody(
                     diagnostics,
                     "error",
                     "E_CSM_RATE_INVALID",
-                    "invalid :csm-rate curve; expected (:curve :from N :to M :len L)",
+                    "invalid :csm-rate curve; expected (<curve> :from N :to M :len L)",
                     nodeSrc(node),
                     trackName,
                   );
@@ -3695,52 +3806,8 @@ function compileChannelBody(
                 break;
               }
               if (PCM_POINT_TARGETS.has(target)) {
-                // A length everywhere: the literal, and both ends of a curve.
-                // The IR carries SECONDS; the exporter turns them into the
-                // engine's byte offsets at the image's rate (driver.md §5).
-                if (!trackState.isPcmTrack) {
-                  wrongChannel(val, "pcm1-pcm3");
-                  break;
-                }
-                if (op) {
-                  pushDiag(
-                    diagnostics,
-                    "error",
-                    "E_UNSUPPORTED_TARGET",
-                    `${val} takes a length, so '${op}' has no meaning on it`,
-                    nodeSrc(node),
-                    trackName,
-                  );
-                  break;
-                }
-                const secOf = (tok) =>
-                  lengthTokenSeconds(tok, trackState.currentTempo);
-                const rangeCurve = parseCurveSpec(
-                  items[i],
-                  diagnostics,
-                  nodeSrc(node),
-                  trackName,
-                  true,
-                  secOf,
-                );
-                requireCurveFrom(rangeCurve, diagnostics, trackName, "a PCM point", nodeSrc(node));
-                if (rangeCurve) {
-                  push("PARAM_SWEEP", { target, ...rangeCurve });
-                  break;
-                }
-                const sec = secOf(rawVal);
-                if (sec === null) {
-                  pushDiag(
-                    diagnostics,
-                    "error",
-                    "E_PCM_RANGE_LENGTH",
-                    `${val} needs a length (300ms, 16, 8., 6t, 3f): got ${rawVal}`,
-                    nodeSrc(node),
-                    trackName,
-                  );
-                  break;
-                }
-                push("PARAM_SET", { target, value: sec });
+                writePcmPoint(target, val, op, items[i], trackState, push,
+                  diagnostics, nodeSrc(node), trackName);
                 break;
               }
               const writtenFrom = events.length;
@@ -3846,10 +3913,10 @@ function compileChannelBody(
         continue;
       }
 
-      // Bare identifier: typed def reference (voice/patch switch)
+      // Bare identifier: a def-fm voice (a voice switch)
       if (typedDefs?.has(val)) {
-        if (emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node), trackState))
-          trackState.voiceName = val; // what a def-mod :voice matches
+        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node), trackState);
+        trackState.voiceName = val; // what a def-mod :voice matches
 
         i++;
         continue;
@@ -3870,7 +3937,6 @@ function compileChannelBody(
             nodeSrc(node),
             trackName,
             rawHz,
-            ticks,
           );
           trackState.tick += ticks;
           i++;
@@ -4322,6 +4388,10 @@ function compileChannelBody(
             ? 0
             : parseLengthToken(tv, null, trackState.currentTempo);
         if (t !== null) trackState.glide = Math.max(0, t);
+        else
+          pushDiag(diagnostics, "warning", "W_GLIDE_INVALID",
+            `(glide …) takes a length or none, not ${tv ?? "nothing"}; the glide is unchanged`,
+            nodeSrc(items[has2 ? 2 : 1] ?? node), trackName);
         i++;
         continue;
       }
@@ -4455,6 +4525,11 @@ function compileChannelBody(
               nodeSrc(targetNode),
               trackName,
             );
+          } else if (PCM_POINT_TARGETS.has(target)) {
+            // The same length reading and pcm-track check as the inline write.
+            writePcmPoint(target, atomValue(targetNode), null, valueNode, trackState,
+              (cmd, args) => events.push({ tick: trackState.tick, cmd, args, src: nodeSrc(targetNode) }),
+              diagnostics, nodeSrc(targetNode), trackName);
           } else {
             events.push({
               tick: trackState.tick,
@@ -4496,7 +4571,7 @@ function compileChannelBody(
         continue;
       }
 
-      // `(note expr [len])` (§2.5): a computed absolute-pitch NOTE_ON.
+      // `(note expr [len])` (§7.3): a computed absolute-pitch NOTE_ON.
       if (head === "note") {
         emitEvalNote(node, trackState, events, diagnostics, trackName, typedDefs, evalEnv);
         i++;
@@ -4641,10 +4716,10 @@ function collectDefs(roots, diagnostics) {
   // (def-se name [:prio N] [:tempo T] (channel body…)…) — a sound effect: its
   // parts are tracks the host starts by the effect's number, not the song.
   const seDefs = new Map();
-  const vals = new Map(); // v0.5: (def-val name init) runtime value slots
+  const vals = new Map(); // (def-val name init) runtime value slots
   // (def-score :title "…" :composer "…" :author "…" :pcm-voices N) — the score's settings.
   const fileMeta = { title: null, composer: null, author: null, pcmVoices: null };
-  const imports = []; // v0.6 Phase 2: (import "path") — [{path, src}]
+  const imports = []; // (import "path") — [{path, src}]
   const mods = []; // (def-mod …) forms, read once the defs are known (parseModDef)
   const remaining = [];
 
@@ -4655,7 +4730,7 @@ function collectDefs(roots, diagnostics) {
     }
     const head = atomValue(root.items[0]);
 
-    // (import "path") — compile-time merge of another file's defs (v0.6 Phase 2).
+    // (import "path") — compile-time merge of another file's defs (§9.2).
     // The host resolves the path to source text (relative to the importing file)
     // before compileMMLisp; here we only record it. Only the string-literal form
     // is an import; anything else keeps flowing to the unknown-form checks.
@@ -4680,8 +4755,8 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
-    // (def-val name init A..B) — declare a runtime value slot (Tier 0/1
-    // dynamic value). init is the default; A..B (or :from/:to) are the ends of
+    // (def-val name init A..B) — declare a runtime value slot (§8). init is
+    // the default; A..B (or :from/:to) are the ends of
     // the live control (the Dynamic Parameters sliders), not a bound on the
     // slot. Slots are indexed in declaration order.
     if (head === "def-val") {
@@ -5033,7 +5108,7 @@ function parseSeDef(root, diagnostics) {
   return se;
 }
 
-// v0.6 Phase 2: the def namespaces `import` folds across files. def-val
+// The def namespaces `import` folds across files (§9.2). def-val
 // slots and tracks are deliberately NOT imported (a slot's index is the
 // importing file's host-visible layout; tracks are songs, not a library) —
 // an effect is a def, so a game's set of them is one file every song shares.
@@ -5131,7 +5206,7 @@ function emptyImportBundle() {
 }
 
 // Warn (once per file) about content in an imported file that import ignores:
-// def-val slots and track/other top-level forms. Defs-only is the MVP scope.
+// def-val slots and track/other top-level forms — import brings defs only.
 function warnImportIgnored(bundle, importPath, diagnostics, importSrc) {
   if (bundle.vals.size > 0) {
     pushDiag(
@@ -5493,7 +5568,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     mods: modForms,
     remaining,
   } = collectDefs(parsed, diagnostics);
-  // v0.6 Phase 2: fold imported defs in *under* this file's own — imports are
+  // Fold imported defs in *under* this file's own — imports are
   // overridable defaults (local wins); two imports defining the same name is
   // E_IMPORT_CONFLICT. def-val slots and tracks are not imported (defs only).
   if (imports.length > 0) {
@@ -5524,7 +5599,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   typedDefs.sampleNames = sampleDefs; // for a let name shadowing a sample
   const roots = expandRoots(remaining, defs, paramDefs, diagnostics);
 
-  // v0.6: 1 file = 1 score. There is no (score …) wrapper — the post-expand
+  // 1 file = 1 score. There is no (score …) wrapper — the post-expand
   // root list *is* the score body: def/track forms interleave freely in source
   // order. File metadata comes from (def-score …).
   const fileSrc = roots.length > 0 ? nodeSrc(roots[0]) : { line: 1, column: 1 };
@@ -5639,7 +5714,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     }
   }
 
-  // v0.4: Lists with a channel name as the form head are treated as tracks
+  // Lists with a channel name as the form head are tracks
   const CHANNEL_NAMES = [
     "fm1",
     "fm2",
@@ -5688,7 +5763,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     );
   }
 
-  // D10: the PCM voice count is the engine image, and the image is a whole-song
+  // The PCM voice count is the engine image, and the image is a whole-song
   // choice — one image plays 1, 2 or 3 voices at 14.4 / 10.1 / 6.7 kHz. The
   // score states it, or it is the highest pcmN track used.
   // An effect's channels count here too: its PCM needs the voices, and fm6 is
@@ -5713,7 +5788,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       "global",
     );
   }
-  // D6: a score with PCM owns fm6 as the DAC for the whole song — the engine
+  // A score with PCM owns fm6 as the DAC for the whole song — the engine
   // writes $2B once and never gives the channel back.
   if (pcmVoices > 0 && allHeads.has("fm6")) {
     pushDiag(
@@ -5753,7 +5828,6 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     isCsmTrack: head === "fm3-csm",
     isCsmRateTrack: head === "fm3-csm-rate",
     isPcmTrack: isPcmTrackName(head),
-    isFm6Track: head === "fm6",
     isNoiseTrack: head === "noise",
     pcmSampleName: null, // bound by a bare sample name in the body
     pcmMode: "shot",
@@ -5761,13 +5835,13 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     hasInlineCsmRate: false,
     hasCsmOn: false,
     defaultVel: 15, // per-note velocity, KEY-ON scoped, 0-15
-    activeMacros: {}, // v0.4: unified macro map { target: spec, ... } for all targets
-    delayTicks: 0, // v0.5: (delay …) tap spacing in ticks (0 = off)
-    delaySpec: null, // v0.5: (delay …) relative spec {mode,type,…} or null
+    activeMacros: {}, // the macros in force, { target: spec, ... } for all targets
+    delayTicks: 0, // (delay …) tap spacing in ticks (0 = off)
+    delaySpec: null, // (delay …) relative spec {mode,type,…} or null
 
-    glide: 0, // v0.4: glide duration in length-token units (0 = disabled)
-    glideFrom: null, // v0.4: one-shot start pitch override for glide
-    lastNotePitch: null, // v0.4: previous note's pitch for glide calculation
+    glide: 0, // glide duration in ticks (0 = disabled)
+    glideFrom: null, // one-shot start pitch override for glide
+    lastNotePitch: null, // previous note's pitch for glide calculation
     glideRamp: null, // where the last glide has the pitch (cents) / CSM rate (period): rampAt
     pitchSticky: 0, // the score's `:pitch` offset, null once it is a runtime value
     shuffleRatio: 0, // per-track swing, 0 = straight (§5.2)
@@ -5804,7 +5878,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     // `:prio` is the one head option: it picks the layer (the timeline) the
     // form belongs to, so it must be read before the body. Everything else in
     // the form is body (language.md §5).
-    // v0.5: :prio layers forms on the same channel. Same prio appends (one
+    // :prio layers forms on the same channel. Same prio appends (one
     // timeline); different prio values are independent parallel timelines on the
     // same physical channel, resolved by priority at the flatten post-pass.
     // Lower number = higher priority; default 8 (headroom on both sides).
@@ -5998,7 +6072,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     for (const ev of stray)
       pushDiag(diagnostics, "warning", "W_BREAK_OUTSIDE_LOOP",
         "(break) is outside a counted loop — (x N …) or #label … (go label N) — and does nothing; dropped",
-        ev.src ?? { line: 1, column: 1 }, track.name ?? track.channel ?? null);
+        ev.src ?? { line: 1, column: 1 }, track.scoreChannel ?? track.channel ?? null);
     if (stray.length) track.events = track.events.filter((ev) => !stray.includes(ev));
   }
   for (const track of tracks) validateTrack(track, diagnostics);
@@ -6008,7 +6082,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   if (options.voiceHoist !== false)
     hoistVoiceChanges(tracks, { ppqn: PPQN, ...(options.voiceHoist ?? {}) });
 
-  // v0.6: tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
+  // Tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
   // emit their own tick-0 events); the only derived init event is FM3 op mode.
   if (tracks.length > 0 && hasFm3OpTracks) {
     tracks[0].events.unshift({
@@ -6100,6 +6174,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   });
 
   rejectInlineStochasticSweeps(tracks, diagnostics);
+  warnInlineSweepWaits(tracks, diagnostics);
   return { ir, diagnostics, sourceMap: buildSourceMap(tracks), openingBpm: scoreInitialBpm ?? 120 };
 }
 
@@ -6117,6 +6192,7 @@ function rejectInlineStochasticSweeps(tracks, diagnostics) {
       if (!INLINE_SWEEP_CMDS.has(ev.cmd)) continue;
       const curve = ev.args?.curve;
       if (!STOCHASTIC_CURVE_NAMES.has(curve)) continue;
+      delete ev.args.holdLen; // a :hold in units only a macro's note resolves
       pushDiag(
         diagnostics,
         "error",
@@ -6126,6 +6202,27 @@ function rejectInlineStochasticSweeps(tracks, diagnostics) {
         ev.src,
         track.scoreChannel ?? track.channel,
       );
+    }
+  }
+}
+
+// `:wait` delays a macro's curve or a stage (§11); an inline sweep starts
+// where it is written, and both players start it there whatever its :wait
+// says. Warned once per written sweep (a repeat copies its events).
+function warnInlineSweepWaits(tracks, diagnostics) {
+  const seen = new Set();
+  for (const track of tracks) {
+    for (const ev of track.events ?? []) {
+      if (!INLINE_SWEEP_CMDS.has(ev.cmd)) continue;
+      const a = ev.args ?? {};
+      if (a.waitTicks == null && a.waitFrames == null && !a.waitKeyOff) continue;
+      const key = `${ev.src?.file ?? ""}:${ev.src?.line}:${ev.src?.column}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pushDiag(diagnostics, "warning", "W_SWEEP_WAIT",
+        "an inline sweep starts where it is written: its :wait is ignored " +
+          "(:wait delays a curve in a (macro …) or a stage, language.md §11)",
+        ev.src, track.scoreChannel ?? track.channel);
     }
   }
 }

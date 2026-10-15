@@ -28,11 +28,11 @@ writeFileSync(join(out, "pcm.wav"), Buffer.concat([hdr, pcm]));
 writeFileSync(join(out, "engine.bin"), image.bytes);
 writeFileSync(join(out, "engine.z80"), image.gen.text);
 writeFileSync(join(out, "samples.rom"), score.rom);
-writeFileSync(join(out, "manifest.json"), JSON.stringify({ experimental: true, voices: 2,
+writeFileSync(join(out, "manifest.json"), JSON.stringify({ voices: 2,
   sourceVoices: score.sourceVoices, separateBanks: score.separateBanks,
   rateHz: image.cfg.rateHz, usedBytes: score.usedBytes, banks: score.banks,
   entries: score.entries, entryIds: score.entryIds, time: run.time, pairs: run.pairs,
   codeBytes: image.symbols.get("code_end"), idleAfterGen: image.gen.idleAfterGen }, null, 2) + "\n");
 console.log(`${out}: ${score.usedBytes} B PCM in ${score.banks} data banks, `
   + `${image.cfg.rateHz.toFixed(3)} Hz, every DAC byte matches, gap ${run.time.gapMin}..${run.time.gapMax}`);
-console.log("Experimental Z80 PCM WAV; FM/PSG audio is not included. Not a production .smp or driver installation.");
+console.log("Z80 PCM only: FM/PSG audio is not included, and samples.rom is multibank-score's packing, not an exported .smp.");

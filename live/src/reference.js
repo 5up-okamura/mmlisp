@@ -363,7 +363,7 @@ export const REFERENCE = [
     example: '(sqr1 :oct 5 :len 2 (macro :step 2f :semi [#sus 0 4 7]) c f)',
   },
   {
-    name: ':keyon', aliases: ['retrigger'], cat: 'macros', section: '§10', tracks: FM,
+    name: ':keyon', aliases: ['retrigger'], cat: 'macros', section: '§10', tracks: null,
     syntax: '(macro :keyon [1 0 …])',
     summary: 'Re-attacks the note wherever the value is 1 — with :semi, an arpeggio that re-keys.',
     insert: ':keyon 1',
