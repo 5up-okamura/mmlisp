@@ -154,7 +154,9 @@ a macro). `:step` is frames (`2f`) or a note length (`16`, on the beat).
 `(name A..B :len L …)` — `linear`, `ease-in` / `ease-out` / `ease-inout` (and
 `-sine -cubic -expo -back -bounce …`), the loop waves `sin triangle square saw
 ramp`, and the random `noise pink perlin brown` (macro only). Options: `:rate`,
-`:phase`, `:mode loop|shot`, `:wait`, `:duty` (square), `:seed`.
+`:phase`, `:mode loop|shot`, `:wait`, `:duty` (square), `:seed`. A param takes
+a number, a `let` name or an expression (`:to (* 2 top)`); `:from :to :len
+:rate` also a bare `$slot`, never an expression with a `$`.
 
 Where a curve goes: a macro (per note), an inline sweep (`:tl1 (linear 40..0
 :len 2)`, `:vol`, `:pan`), `:tempo`, `(delay …)`. A macro curve needs its

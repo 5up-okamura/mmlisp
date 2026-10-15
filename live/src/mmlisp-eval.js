@@ -543,7 +543,7 @@ function evalNode(node, env, ctx) {
 
     // Curve head → a symbolic signal (delegated to parseCurveSpec via ctx).
     if (head && ctx.curveNames && ctx.curveNames.has(head)) {
-      const spec = ctx.parseCurve(node);
+      const spec = ctx.parseCurve(node, env);
       if (!spec) {
         throw new EvalError("E_EVAL_UNKNOWN_HEAD", `bad curve '${head}'`);
       }

@@ -532,8 +532,8 @@ binds (the target's own round/clamp). A note/length token as an operand is
 `E_EVAL_DEPTH`; wrong argument count → `E_EVAL_ARITY`.
 
 Expressions are accepted in **value positions**: an inline param write
-(`:tl1 (+ 20 10)`), a `(param-set …)` value, and inside `let` / `note` /
-`(ticks …)` / `(frames …)`.
+(`:tl1 (+ 20 10)`), a `(param-set …)` value, a curve parameter
+(`:to (* 2 10)`, §11), and inside `let` / `note` / `(ticks …)` / `(frames …)`.
 
 ```lisp
 (fm1 :tl1 (+ 20 10)              ; = :tl1 30
@@ -652,7 +652,8 @@ range 0–127 → `E_NOTE_RANGE`; no pitch, or more than a pitch and a length, i
 
 ### 7.4 Lengths from expressions — `ticks` / `frames`
 
-In a length position (`:len`, `:gate`, a note's second argument) a **bare
+In a length position (`:len`, `:gate`, a note's second argument, a curve's
+`:len` / `:hold` / `:wait` and a stage's `(wait …)`) a **bare
 number is a note denominator** — and a computed number is the same:
 `(+ 2 2)` ≡ `4` ≡ a quarter note; `(* 2 4)` ≡ `8` ≡ an eighth. For an absolute
 duration wrap the unit explicitly:
@@ -740,7 +741,11 @@ host write ends the score's sweep of that slot.
   that cannot fit a 16-bit slot is `E_DEFVAL_INIT`.
 
 **Dynamic curve parameters.** A `$name` may feed a curve's `:from`, `:to`,
-`:rate`, or `:len`. The slot is read **once at note-on** (the note-on sampling
+`:rate`, or `:len` — a **bare** `$name` only: the driver reads one slot as-is,
+so an expression with a `$` in it (`:to (+ $v 4)`, or a `let` name bound to
+one) is `E_CURVE_PARAM_RUNTIME`. (Compute it into a value of its own instead:
+`(def-val lift 0)`, `:lift (+ $v 4)`, then `:to $lift`.) The slot is read
+**once at note-on** (the note-on sampling
 tier), so the value is constant for that note. `:len` uses the slot's
 `def-val :unit` to pick frame/tick interpretation. The macro `:step` clock is
 static. The curve spec records these in a `dyn` map the player resolves at
@@ -1243,6 +1248,9 @@ and `(delay …)` — except the stochastic curves, which are macro-only (below)
 ```
 
 `A..B` is shorthand for `:from A :to B` (signed decimals; `40..0` descends).
+Its ends are numbers only — the range is one token, so a `let` name or an
+expression as an end goes in `:from` / `:to` (`0..n` is
+`E_CURVE_RANGE_MALFORMED`).
 It works anywhere a curve does, including inside arithmetic
 (`(* (sin -1..1 :len 8f) 40)`) and score `:tempo (linear 120..80 :len 4)`.
 Combining it with an explicit `:from`/`:to`, or two ranges, is
@@ -1274,6 +1282,22 @@ is forward only.
 `(…)` in a curve position whose head is not one of these names (a typo, or the
 literal word `curve`) is rejected with `E_EVAL_UNKNOWN_HEAD`, as any unknown
 function is.
+
+**Parameter values.** Every numeric parameter below takes a compile-time
+value: a number, a `let` name (§7.2), a `def` constant, or an expression
+(`:to (* 2 10)`, `:phase (+ root 4)`, §7.1), folded when the score compiles.
+A length parameter (`:len`, `:hold`, `:wait`, a stage's `(wait …)`) reads a
+computed number as the same bare number would read — a note denominator,
+`(* 2 4)` ≡ `8` (§7.4) — and takes a `(ticks …)` / `(frames …)` bridge for an
+absolute count; an integer parameter (`:phase`, `:duty`, `:skew`, `:octaves`,
+`:seed`) rounds it. A curve's `:from`, `:to`, `:len` and `:rate` also take a bare
+`$slot` (§8), but not an expression with a `$` in it (`E_CURVE_PARAM_RUNTIME`).
+
+```lisp
+(fm1 (let ((top 40))
+       (macro :tl1 (sin :from 0 :to top :len (* 2 4) :phase (/ 256 4))))
+     c e g)
+```
 
 ### Common parameters (all curves)
 
@@ -1324,7 +1348,8 @@ Normalization rules:
 - Unknown keyword for a curve name → `E_CURVE_PARAM_UNKNOWN` (error).
 - Out-of-range values are clamped with `W_CURVE_PARAM_CLAMPED`.
 - A value that does not read as a number (`:phase x`, `:len 8x`) is ignored,
-  with `W_CURVE_PARAM_INVALID`.
+  with `W_CURVE_PARAM_INVALID`; an expression with a `$` is
+  `E_CURVE_PARAM_RUNTIME`, and one that yields a curve is `E_EVAL_TYPE`.
 - All params are part of the LUT identity; identical curve + params
   combinations share one LUT.
 

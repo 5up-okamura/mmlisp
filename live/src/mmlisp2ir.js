@@ -162,7 +162,7 @@ function pcmRejectsPitch(trackState, what, diagnostics, src, trackName) {
 // everywhere: the literal, and both ends of a curve. The IR carries SECONDS;
 // the exporter turns them into the engine's byte offsets at the image's rate
 // (driver.md §5). Events go out through `push(cmd, args)`.
-function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnostics, src, trackName) {
+function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnostics, src, trackName, env = null) {
   if (!trackState.isPcmTrack) {
     pushDiag(diagnostics, "error", "E_UNSUPPORTED_TARGET",
       `${keyword} is only for pcm1-pcm3, not ${String(trackName).split(":")[0]}`,
@@ -175,7 +175,7 @@ function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnos
     return;
   }
   const secOf = (tok) => lengthTokenSeconds(tok, trackState.currentTempo);
-  const rangeCurve = parseCurveSpec(valueNode, diagnostics, src, trackName, true, secOf);
+  const rangeCurve = parseCurveSpec(valueNode, diagnostics, src, trackName, true, secOf, env);
   requireCurveFrom(rangeCurve, diagnostics, trackName, "a PCM point", src);
   if (rangeCurve) {
     push("PARAM_SWEEP", { target, ...rangeCurve });
@@ -2307,9 +2307,13 @@ function parseMacroSpec(
         if (val === "#rel") { stages.push({ waitKeyOff: true }); continue; }
         if (val === "_") { stages.push(stepWait()); continue; }
         if (it.kind === "list" && atomValue(it.items?.[0]) === "wait") {
-          // (wait key-off) or (wait N) or (wait Nf)
-          const arg = atomValue(it.items?.[1]);
-          if (arg === "key-off") {
+          // (wait key-off) or (wait N) or (wait Nf), N a length as a curve's
+          // :wait reads it — a let name or an expression too.
+          const arg = curveParamToken(it.items?.[1], env, "length", "(wait …)", "a stage",
+            false, diagnostics, nodeSrc(it), trackName);
+          if (arg === undefined) {
+            stages.push({ waitTicks: 1 });
+          } else if (arg === "key-off") {
             stages.push({ waitKeyOff: true });
           } else if (isFrameToken(arg)) {
             // Nf / Nms is a wall-clock frame count; carry the unit so the
@@ -2524,6 +2528,57 @@ function isPerNoteLengthAtom(val) {
   return parsePerNoteLength(val) !== null;
 }
 
+// How each curve param reads a number (curveParamToken); `:from` / `:to` are
+// numbers, or lengths on a PCM point. The keys a bare `$slot` feeds (§8).
+const CURVE_PARAM_KIND = {
+  ":len": "length", ":hold": "length", ":wait": "length",
+  ":phase": "int", ":duty": "int", ":skew": "int", ":octaves": "int", ":seed": "int",
+  ":rate": "number", ":jitter": "number", ":beta": "number", ":lacunarity": "number",
+  ":persistence": "number", ":leak": "number",
+};
+const CURVE_DYN_KEYS = new Set([":from", ":to", ":len", ":rate"]);
+
+// A curve parameter's value (language.md §11) as the token its reader takes.
+// An atom is itself — a literal, or a bare `$slot` the caller records as a
+// dynamic source — unless it is a `let` name; a `let` name or an expression is
+// evaluated at compile time and its number written back as the token the same
+// bare number would be. `kind` is how the param reads a number: "int" and
+// "length" round it (a length's number is a note denominator, §7.4, and a
+// `(ticks …)` / `(frames …)` bridge becomes an `Nt` / `Nf` token); "number"
+// keeps it. A `$` inside an expression is an error: the driver reads one slot
+// as-is, so a curve param takes a bare `$slot` or a compile-time value.
+// Returns the token (null when there is none), or undefined after a diagnostic.
+function curveParamToken(node, env, kind, key, head, dynOk, diagnostics, src, trackName) {
+  if (!node) return null;
+  if (node.kind === "atom" && !(env && lookupBound(env, node.value) !== undefined))
+    return node.value;
+  if (node.kind === "atom" || (node.kind === "list" && node.bracket === "()")) {
+    const err = (code, msg) => {
+      if (diagnostics) pushDiag(diagnostics, "error", code, msg, src, trackName);
+    };
+    const runtime = () =>
+      err("E_CURVE_PARAM_RUNTIME",
+        `curve param ${key} on ${head} takes ${dynOk ? "one bare slot ($v) or " : ""}a compile-time value, ` +
+        `not an expression with a $ — the driver reads ${dynOk ? "one slot as-is" : "no slot here"}`);
+    if (exprHasValRef(node)) return runtime();
+    const ctx = {
+      ...makeEvalCtx(diagnostics ?? [], trackName, src),
+      resolveSlot: (raw) => raw.slice(1), // a let name bound to a `$` expression
+    };
+    if (kind === "length") {
+      const lv = evalLengthValue(node, env, ctx);
+      if (lv) return lv.unit === "error" ? undefined : `${lv.value}${lv.unit === "frame" ? "f" : "t"}`;
+    }
+    const r = evalValue(node, env, ctx);
+    if (!r) return undefined;
+    if (r.kind === "runtime") return runtime();
+    if (r.kind === "signal")
+      return err("E_EVAL_TYPE", `curve param ${key} on ${head} takes a number, not a curve`);
+    return String(kind === "number" ? r.value : Math.round(r.value));
+  }
+  return null;
+}
+
 /**
  * Parse an inline curve spec node, e.g. (ease-out :from 28 :to 20 :len 8).
  * Returns a PARAM_SWEEP args object or null if the node is not a curve form.
@@ -2534,10 +2589,12 @@ function parseCurveSpec(
   src = null,
   trackName = null,
   requireCurve = false,
-  // How a value in `:from` / `:to` (and `const`'s positional) is read. The PCM
-  // range points pass a length-token reader here, so `(linear :from 16 :to 64)`
-  // sweeps a 16th note down to a 64th instead of the bare numbers 16 and 64.
+  // How a value in `:from` / `:to` is read. The PCM range points pass a
+  // length-token reader here, so `(linear :from 16 :to 64)` sweeps a 16th
+  // note down to a 64th instead of the bare numbers 16 and 64.
   scalar = null,
+  // The lexical `let` env, so a param can name a binding (§7.2).
+  env = null,
 ) {
   const readScalar = scalar ?? parseNumberLike;
   if (!node || node.kind !== "list" || !node.items || node.items.length === 0)
@@ -2692,7 +2749,7 @@ function parseCurveSpec(
         diagnostics,
         "error",
         "E_CURVE_RANGE_MALFORMED",
-        `malformed range '${k}' (expected A..B)`,
+        `malformed range '${k}' (expected A..B, two numbers; a name or an expression goes in :from / :to)`,
         src ?? nodeSrc(node),
         trackName,
       );
@@ -2718,7 +2775,6 @@ function parseCurveSpec(
       continue;
     }
     if (k && k.startsWith(":") && j + 1 < node.items.length) {
-      const v = atomValue(node.items[j + 1]);
       if ((k === ":from" || k === ":to") && rangeUsed) {
         if (diagnostics) {
           pushDiag(
@@ -2749,6 +2805,13 @@ function parseCurveSpec(
             trackName,
           );
         }
+        j++;
+        continue;
+      }
+      const v = curveParamToken(
+        node.items[j + 1], env, CURVE_PARAM_KIND[k] ?? (scalar ? "length" : "number"), k, head,
+        CURVE_DYN_KEYS.has(k), diagnostics, src ?? nodeSrc(node), trackName);
+      if (v === undefined) {
         j++;
         continue;
       }
@@ -3079,7 +3142,7 @@ function makeEvalCtx(diagnostics, trackName, src, typedDefs = null, stepFrames =
     trackName,
     src,
     curveNames: CURVE_NAMES,
-    parseCurve: (n) => parseCurveSpec(n, diagnostics, nodeSrc(n), trackName, false),
+    parseCurve: (n, env) => parseCurveSpec(n, diagnostics, nodeSrc(n), trackName, false, null, env),
     foldSignal: foldCurveValues,
     isNoteStreamToken,
     // A voice or a sample (the samples ride on the voice map, set once the
@@ -3110,6 +3173,7 @@ function buildTempoSweepFromCurve(
   diagnostics,
   src,
   trackName,
+  env = null,
 ) {
   if (
     !(
@@ -3120,7 +3184,7 @@ function buildTempoSweepFromCurve(
   ) {
     return null;
   }
-  const curveSpec = parseCurveSpec(valueNode, diagnostics, src, trackName, true);
+  const curveSpec = parseCurveSpec(valueNode, diagnostics, src, trackName, true, null, env);
   if (!curveSpec) return null;
 
   const from = parseNumberLike(String(curveSpec.from ?? ""));
@@ -3657,6 +3721,8 @@ function compileChannelBody(
                   nodeSrc(node),
                   trackName,
                   true,
+                  null,
+                  evalEnv,
                 );
                 if (!curveSpec) break;
 
@@ -3747,6 +3813,7 @@ function compileChannelBody(
                 diagnostics,
                 nodeSrc(node),
                 trackName,
+                evalEnv,
               );
               if (swept) {
                 trackState.currentTempo = swept.toBpm;
@@ -3843,7 +3910,7 @@ function compileChannelBody(
               }
               if (PCM_POINT_TARGETS.has(target)) {
                 writePcmPoint(target, val, op, items[i], trackState, push,
-                  diagnostics, nodeSrc(node), trackName);
+                  diagnostics, nodeSrc(node), trackName, evalEnv);
                 break;
               }
               const writtenFrom = events.length;
@@ -4572,7 +4639,7 @@ function compileChannelBody(
             // The same length reading and pcm-track check as the inline write.
             writePcmPoint(target, atomValue(targetNode), null, valueNode, trackState,
               (cmd, args) => events.push({ tick: trackState.tick, cmd, args, src: nodeSrc(targetNode) }),
-              diagnostics, nodeSrc(targetNode), trackName);
+              diagnostics, nodeSrc(targetNode), trackName, evalEnv);
           } else {
             events.push({
               tick: trackState.tick,

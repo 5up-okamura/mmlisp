@@ -89,6 +89,16 @@ async function main() {
       expected: ["W_CURVE_PARAM_INVALID", "W_CURVE_PARAM_INVALID"],
     },
     {
+      label: "curve params from compile-time values",
+      src: "(def-val v 5)\n(fm1 (let ((n 20) (w 2)) (macro :tl1 [(wait (* w 8)) (sin :from $v :to (* n 2) :len (+ 4 4) :phase (+ 60 4) :rate n)]) :tl2 (linear :from 0 :to n :len (frames 12)) c))",
+      expected: [],
+    },
+    {
+      label: "curve param expression with a $",
+      src: "(def-val v 5)\n(fm1 (macro :tl1 (linear :from 0 :to (+ $v 4) :len 8)) c (let ((x (* $v 2))) :tl1 (linear :from 0 :to x :len 8) c))",
+      expected: ["E_CURVE_PARAM_RUNTIME", "E_CURVE_PARAM_RUNTIME"],
+    },
+    {
       label: "echo before any note",
       src: "(fm1 (echo 3 :vel+ -3) c d (echo 2 :vel+ -2))",
       expected: ["W_ECHO_NO_NOTE"],
