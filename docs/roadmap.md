@@ -44,10 +44,14 @@ Its current limits are `driver.md` §11 — keep the two in step.
   driver; reading them at note-on would make them as live as an inline
   sweep's endpoints.
 - **The compile-time shadow fold** (parked) — folding static bases at compile
-  time instead of emitting the arithmetic.
+  time instead of emitting the arithmetic. A folded `:tl1+ 3` would be
+  relative to the value the score wrote, missing a host write in between;
+  `(+ $tl1 3)` would stay the live reading.
 - **`if` / `for` / def-functions**, and what eval enables past them:
   algorithmic composition, parametric phrases as real functions, signal
   composition (`(+ (sin) (saw))`, `(* env lfo)`), curves as a standard library.
+  The signal-⊕ region model's first relaxation is loop⊕one-shot, which a
+  baked `env × lfo` AM needs (runtime AM is the scaled macro today).
 - **Quantize snap** — a scale mask applied after the pitch sum.
 - **OP mask** — per-channel operator enable/disable.
 - **Dynamic performance branches** — `|` alternation, random part switching,

@@ -1,9 +1,9 @@
 # The language and IR — the user's rulings and the reasons behind them
 
 `docs/language.md` is the spec and the guide teaches it; this file keeps only
-what they do not say: rulings not to re-propose, and why the value machine is
-shaped as it is. A language question waiting on the user goes in §1 until it
-is decided and built; a settled item that the repo records is deleted.
+what a developer needs and no reader of the docs does: rulings not to
+re-propose, and why the value machine is shaped as it is. A language question
+waiting on the user goes in §1 until it is decided and built.
 
 ## 1. Rulings — do not re-propose
 
@@ -23,10 +23,6 @@ suffix combines with the target's base (language.md §7.0).
   so do **`:csm-rate` and the `fm3-csm-rate` track** (different use and range).
 - **`(glide …)` stays a form** (two arities); gate is §7.0's documented
   exception.
-- **`(echo …)` is for the mucom import; `(delay …)` is what the user writes**
-  (2026-10-15). echo replays one note and lengthens the phrase (mucom `\=`);
-  delay is sticky and keeps the phrase's length. Offer delay first when a score
-  wants an echo effect.
 - **PSG envelopes are macros, not a new def head** (2026-10-03): an envelope
   is already `(def name (macro …))`, and the only need was tooling, so the
   voice picker lists macro defs. Naming a head was hard because the thing was
@@ -81,13 +77,7 @@ A `def-val` is also the score's own variable ("外に出す必要がなくても
 - **16 slots stay** — the opcode space (0x10–0xFE) leaves room for a private
   range; grow it when a score needs it, not before.
 
-## 4. Known limits
+## 4. A known A/B divergence
 
-1. **A folded relative op is relative to the score-visible value**, so a host
-   `SET_PARAM` in between is invisible to it; `(+ $P X)` is the explicit opt-in
-   to host-relative behaviour.
-2. **Loop⊕one-shot in the signal-⊕ region model** is the designed first
-   relaxation and the prerequisite for *baked* AM; runtime AM is the
-   scaled-macro flag.
-3. **An override looping curve on a pitch macro skews the A/B** by ±8 in the
-   F-number at note boundaries, proven scale-independent.
+An override looping curve on a pitch macro skews the ir↔drv A/B by ±8 in the
+F-number at note boundaries, proven scale-independent.

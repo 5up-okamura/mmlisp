@@ -166,7 +166,7 @@ start written (`40..0`, not `:to 0` alone).
 
 | Write | Means |
 | --- | --- |
-| `(echo 3 :vel+ -2)` | replay the last note 3 times, quieter; takes time (§12) |
+| `(echo 3 :vel+ -2)` | replay the last note 3 times, quieter; takes time — the mucom import's `\=`; for an echo effect write `(delay …)` (§12) |
 | `(delay 2 :vel* 0.6 :time 1/8)` | echo copies of every following note in the gaps (§12) |
 | `(glide 8)` … `(glide none)` | portamento into each note (§14) |
 | `(let ((root 60)) (note root) (note (+ root 7)))` | computed pitches, MIDI numbers (§7.2, §7.3) |

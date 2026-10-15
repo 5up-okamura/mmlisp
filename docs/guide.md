@@ -633,7 +633,8 @@ For true overlapping delay, `def` the phrase and replay it on another channel.
 `(echo ...)` is an inline note-replay that **lengthens** the phrase: its taps
 occupy real time, so later notes shift back. This is the opposite of `(delay
 ...)`, which overlays into gaps without lengthening. `(echo ...)` is relative and
-**one-shot** at its position (not sticky).
+**one-shot** at its position (not sticky). It is how the mucom88 import writes
+`\=`; for an echo effect in your own score, write `(delay ...)`.
 
 ```text
 (echo N :vel+ step [:back B])      ; N taps at the current :len, each `step` further

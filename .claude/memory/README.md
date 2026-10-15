@@ -6,6 +6,12 @@ personal workflow preferences.
 
 Rules:
 
+- **The goal is an empty directory.** Work that is done is deleted; what a
+  user or composer needs moves into the matching document (`docs/`, a
+  README, the roadmap for what is ahead); only what serves development alone
+  — rulings not to re-propose, measurements, reasons the docs state as bare
+  facts — stays here.
+
 - **One file per AREA, not per feature** — driver, PCM, language, the live
   app (and the set-aside Z80-only build). A new feature's reasons go into its
   area's file as a section; a new file only for a new area. Keep each current:
@@ -34,7 +40,7 @@ Rules:
   layer.
 - [language-open.md](language-open.md) — **the language and IR**: the rulings
   not to re-propose, why the value machine and score-written values have
-  their shape, and its known limits.
+  their shape, and one known A/B divergence.
 - [live-app.md](live-app.md) — **the live app**: why the editing aids, the
   Library panel, the voice picker and the importers have their shape, the
   user's rulings, device measurements, and what is open.
