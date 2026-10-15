@@ -3963,7 +3963,9 @@
     // has no way to save to a file at all. Written shortly after each edit and
     // whenever the page is hidden; read back at startup (unless a share link
     // brings its own score). Its file name comes back with it, not its file
-    // handle, so Save after a reload asks where.
+    // handle, so Save after a reload asks where — and so does the name it
+    // compiles under, which for a score from the Library is its path there:
+    // its imports and samples resolve against that folder.
     const DRAFT_KEY = 'mmlisp.draft';
     let _draftTimer = null;
     function scheduleDraftSave() {
@@ -3978,6 +3980,7 @@
         localStorage.setItem(DRAFT_KEY, JSON.stringify({
           src: editorView.state.doc.toString(),
           name: _sourceFileName,
+          path: _lastFileName,
         }));
       } catch (_) { /* storage off or full: the page still works, unsaved */ }
     }
@@ -5747,7 +5750,7 @@
     const _draft = loadDraft();
     if (_draft) {
       _sourceFileName = _draft.name || null;
-      _lastFileName = _sourceFileName || 'untitled.mmlisp';
+      _lastFileName = _draft.path || _sourceFileName || 'untitled.mmlisp';
     }
     setEditorDoc(_draft ? _draft.src : DEFAULT_NEW_FILE_SOURCE);
     queueMicrotask(() => {
