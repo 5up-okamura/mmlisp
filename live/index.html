@@ -3815,6 +3815,7 @@
         // applies — see buildAction(). Only the param/cursor UI tracks edits.
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged) syncBracketStatus();
+        if (update.docChanged) scheduleDraftSave();
         if (update.docChanged || update.selectionSet) syncParamUI();
         auditionOnSelect(update);
       }),
@@ -3959,7 +3960,42 @@
       }));
       syncBracketStatus(); // setState fires no doc-change update
       hideSharedPlay(); // a shared score's prompt belongs to that score alone
+      scheduleDraftSave();
     }
+
+    // The score being edited, kept in this browser so it outlives the page:
+    // a phone drops a background tab, an installed app is relaunched, and iOS
+    // has no way to save to a file at all. Written shortly after each edit and
+    // whenever the page is hidden; read back at startup (unless a share link
+    // brings its own score). Its file name comes back with it, not its file
+    // handle, so Save after a reload asks where.
+    const DRAFT_KEY = 'mmlisp.draft';
+    let _draftTimer = null;
+    function scheduleDraftSave() {
+      clearTimeout(_draftTimer);
+      _draftTimer = setTimeout(saveDraft, 500);
+    }
+    function saveDraft() {
+      clearTimeout(_draftTimer);
+      _draftTimer = null;
+      if (currentIrURL) return; // a binary .mmb: the editor holds only a placeholder
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({
+          src: editorView.state.doc.toString(),
+          name: _sourceFileName,
+        }));
+      } catch (_) { /* storage off or full: the page still works, unsaved */ }
+    }
+    function loadDraft() {
+      try {
+        const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+        return typeof d?.src === 'string' ? d : null;
+      } catch (_) { return null; }
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && _draftTimer != null) saveDraft();
+    });
+    window.addEventListener('pagehide', () => { if (_draftTimer != null) saveDraft(); });
 
     // A position from an imported file (a preset's macro, a def written
     // there) is a place in that file, not in the score: nothing to outline.
@@ -4262,6 +4298,7 @@
       _sourceFileName = handle?.name || name || null;
       currentIrURL = null;
       _lastFileName = _sourceFileName || 'untitled.mmlisp';
+      scheduleDraftSave();
     }
 
     async function readFileHandle(handle) {
@@ -5569,11 +5606,19 @@
       { semitone: 10, whiteAfter: 6 },
     ];
 
-    // Load default source on startup — or the score a share link carries. Its
-    // imports are fetched, so the compile waits for the rest of this module to
-    // have run.
-    setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
-    queueMicrotask(() => (location.hash ? loadSharedFromHash() : refreshImportsAndCompile()));
+    // On startup: the score being edited last time (its draft), else the
+    // template — or, over either, the score a share link carries. Its imports
+    // are fetched, so the compile waits for the rest of this module to have run.
+    const _draft = loadDraft();
+    if (_draft) {
+      _sourceFileName = _draft.name || null;
+      _lastFileName = _sourceFileName || 'untitled.mmlisp';
+    }
+    setEditorDoc(_draft ? _draft.src : DEFAULT_NEW_FILE_SOURCE);
+    queueMicrotask(() => {
+      if (_draft && !location.hash) log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
+      return location.hash ? loadSharedFromHash() : refreshImportsAndCompile();
+    });
     window.addEventListener('hashchange', () => loadSharedFromHash());
 
     // -----------------------------------------------------------------------
@@ -7567,6 +7612,10 @@
       _channelVol.clear();
       _masterVolUi = 31;
       setEditorDoc(src);
+      // Only looking at someone's score must not replace your own draft: it
+      // becomes the draft at its first edit.
+      clearTimeout(_draftTimer);
+      _draftTimer = null;
       await refreshImportsAndCompile();
       log('Opened shared score ' + _sourceFileName, 'info');
       document.getElementById('sharedPlayLabel').textContent = 'Play ' + _sourceFileName.replace(/\.mmlisp$/i, '');

@@ -1212,6 +1212,13 @@ MIDI, and the menu is not shown there). The choice is remembered.
 
 ### Reopening scores
 
+The score being edited is kept in the browser as you type, and comes back
+when the page is opened again — after a reload, or a phone dropping the tab.
+It is one score, the one in the editor: `File > New` or opening another file
+replaces it. A share link only shows its score; that score takes the place of
+yours at its first edit. The kept copy has no file behind it, so `Save` after
+a reload asks where.
+
 `File > Open Recent` lists the last ten scores opened or saved (Chrome and
 Edge; a browser without file handles has no such menu). A score opened from
 its folder (`File > Open Folder…`) comes back with the folder, so its samples

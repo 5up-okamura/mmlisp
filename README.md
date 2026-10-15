@@ -115,6 +115,8 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 - VGM, WAV and video export, PCM included; open/save `.mmlisp` sources with the
   File System Access API, File > Open Recent (a score with its folder), and
   `.mmlisp` files opening in the installed app from the OS
+- The score being edited is kept in the browser and comes back on the next
+  launch
 - Share links (File > Share…): a short URL that opens the score in MMLisp Live
 - Edit > Loop Selection wraps the selected notes or channels in a loop;
   Edit > Logical Editor… finds notes by pitch, length or voice and changes them
