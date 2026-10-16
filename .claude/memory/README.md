@@ -32,15 +32,15 @@ Rules:
 - [driver-decisions.md](driver-decisions.md) — **why MMLispDRV is shaped as it
   is**: the measurement that moved the sequencer off the Z80, the reversed
   decisions, the competitor survey, the bugs no gate could see and how the
-  gates fail, the 68000 pass (closed), onset jitter under write bursts, SE and
-  several songs, and the user's rulings on how to work here. The design itself
-  is `docs/driver.md`.
+  gates fail, the 68000's share and the figures to reopen it with, onset
+  jitter under write bursts, SE and several songs, and the user's rulings on
+  how to work here. The design itself is `docs/driver.md`.
 - [pcm.md](pcm.md) — **PCM: the user's decisions with their reasons, the
   multi-bank measurements, and what is open.** Read before touching PCM in any
   layer.
 - [language-open.md](language-open.md) — **the language and IR**: the rulings
   not to re-propose, why the value machine and score-written values have
   their shape, and one known A/B divergence.
-- [live-app.md](live-app.md) — **the live app**: why the editing aids, the
-  Library panel, the voice picker and the importers have their shape, the
-  user's rulings, device measurements, and what is open.
+- [live-app.md](live-app.md) — **the live app**: what was decided against
+  (not to be proposed again), working lessons, and the open development
+  items.

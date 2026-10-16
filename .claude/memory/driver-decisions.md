@@ -196,21 +196,13 @@ missed it because only a real score issues STOP+START in one slot.
 - **The grab is asm** because C over `Z80_getAndRequestBus` was 2,835 master;
   eight pairs as four `movep.l` is 1,100–1,320.
 
-## 9. The 68000's share — closed 2026-10-02, reopened and closed again 2026-10-14
+## 9. The 68000's share
 
-The user's direction after setting a Z80-only build aside (2026-09-28; the
-stream-player shape that may replace it is the roadmap's Future vision):
-keep the split and make the 68000 side cheap, so a game keeps the CPU for
-raster effects and 3D. Closed by the user on 2026-10-02 as the price of moving
-parameters every frame. **Reopened 2026-10-14** (the user: a render that
-heavy is a serious problem)
-when a banked mucom import measured a 10–20 ms render on every beat and 45 ms
-on a voice-change frame — past the vblank at one frame of lead, so the frame
-slipped (the SGDK example app itself is idle: the cost is the driver's). Closed
-again the same day by listening, after two frames of lead, the first
-optimisation pass and the voice spread (§10); the per-write cost figures to
-reopen with are in [[pcm]]. The standing rules below hold.
-Working notes: git history, `plan-68k-optimization.md` at `afef069`.
+The user's direction: keep the split and make the 68000 side cheap, so a game
+keeps the CPU for raster effects and 3D. Settled by listening on 2026-10-14
+(a banked mucom import, `disco1`, had slipped frames; two frames of lead, the
+first optimisation pass and the voice spread of §10 fixed it). Working notes:
+git history, `plan-68k-optimization.md` at `afef069`.
 
 | sin008 whole, `sgdk-profile --pc`, 30 s | before (`ba094a6`) | after (`bf50bdc`) |
 | --- | --- | --- |
@@ -237,7 +229,26 @@ Working notes: git history, `plan-68k-optimization.md` at `afef069`.
   per-frame-numbered profile output; the sequencer pushing pairs directly
   (~1–2%, a large change).
 - **Rejected**: pre-rendering macros (XGM by another name — the user wants a
-  synth the game can play); spreading one frame's render over the lead.
+  synth the game can play); spreading one frame's render over the lead; for
+  disco1's one remaining heavy frame (five voices at the head of a
+  `(go loop3 2)` repeat, 242% of a frame), a copy before the loop plus a
+  rotation into the body's tail rest, or a voice-id skip in `apply_patch` —
+  the user heard no problem after the fixes; a banked_writes rewrite that
+  reads the ring once (byte-identical over 400k fuzzed frames, p50 −36%, but
+  no gain on the peak frames and +4 KB RAM); staging early in the host lane
+  (at lead 1 the next frame is never queued at the vblank, at lead 2 no
+  better).
+- **The figures to reopen with** (BlastEm, `sgdk-profile --fn` / `--pc
+  --peak`, a banked score): a YM register write costs ~2,000 cycles end to
+  end — ~400 in the sequencer (`ym()`, shadow, `q_push`), ~870 in the banked
+  converter, ~220 in `mmlp_plan` and the grab — so a peak render is its write
+  count (116 writes = 2.4 frames); the converter is 2% of all 68000 time but
+  30–45% of a peak render. Steady state: the tick walk ~550 cycles a track a
+  frame, a macro slot ~1,000 a frame, `mmlp_plan` + pump ~3%; the driver's
+  average ~17% of the 68000. The C-level items left (a tick-walk fast path
+  ~1.5%, skipping HOLD macro slots ~0.5–1%) stop at 3–4 points; past them
+  the structural change is the sequencer pushing pairs straight into the
+  converter's queue (−2% average, −30–40% on a peak, −5 KB RAM).
 
 ## 10. Onset jitter under write bursts (2026-10-07)
 
@@ -299,7 +310,7 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   voice written before a rest is treated like one in the gap, and every placed
   voice takes the first frame of its window free of voices and FM key-ons.
   The loop head was left as it is — one beat's worth, and a driver change —
-  and the listening that followed settled it ([[pcm]]). Measured: disco1 FM
+  and the listening that followed settled it (§9). Measured: disco1 FM
   key-on error max 33.3 → 14.0 ms, the voice-change render 153% → 117% of a
   frame; a lone voice lands where it did. Spreading does nothing for the
   single-bank WIRE (the pairs before a key-on are the same however they are

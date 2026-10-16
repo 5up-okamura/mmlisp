@@ -1118,8 +1118,9 @@ def lights up wherever the def is used.
 The grid marks quarter notes from the top of the song. MMLisp has no meter,
 and `|` goes wherever each track's writer wants it, so the roll draws no
 bars. **1× 2× 4×** zooms; a wider pane shows more of the song at the same
-scale, and zoomed in, eighths and sixteenths are marked too. The roll shows
-the last build: after an edit, play or Build to bring it up to date.
+scale, and zoomed in, eighths and sixteenths are marked too. On a phone the
+zoom control can sit over the top note; scrolling the roll shows it. The roll
+shows the last build: after an edit, play or Build to bring it up to date.
 
 ### Playing from a point
 
@@ -1226,7 +1227,9 @@ While a song plays the screen stays on (where the browser allows a page to
 ask: Chrome, and Safari from iOS 16.4), and the page goes on playing when it
 is hidden behind another tab or app. On an iPhone or iPad the sound plays as
 media, so the lock screen and Control Center show the song with play, pause
-and stop.
+and stop. In a Safari tab on an iPhone, Safari floats its address bar above
+the on-screen keyboard, and a strip of the page shows around it; the app
+added to the home screen has no such strip.
 
 A browser without file pickers — Safari on iPhone and iPad, Firefox — opens
 with a plain file chooser, has only Save (every save asks where, so there is
@@ -1604,7 +1607,9 @@ value.
 
 A "word" in the editor is a whole MMLisp atom — `:vel*`, `def-val`, `1/4`,
 `c4~` — so a double-click, and `Cmd/Ctrl+D` on its own, take the token you see
-rather than a fragment of it.
+rather than a fragment of it. Two things follow from it: a `"` typed right
+before such a character does not close itself, and a double-click in a
+comment takes the punctuation after a word with it.
 
 ### Completions
 

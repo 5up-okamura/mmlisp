@@ -1,134 +1,37 @@
-# The live app — why it is shaped this way, and what is open
+# The live app — decisions not to redo, and what is open
 
-What the editor, the Library panel, the voice picker and the song importers DO
-is `docs/guide.md` (§22 editing values, the views and MIDI, §23 importers,
-§24 typing help — editing aids and completions, §25 the Library). This file
-keeps only the reasons the guide does not carry, the user's rulings,
-measurements, and open items.
+What the app does is `docs/guide.md` (§22–§27); why the code is shaped the
+way it is lives in its comments. Kept here: what was decided against (so it
+is not proposed again), working lessons, and open development items.
 
-## Editing aids (`live/index.html`, `live/style.css`)
+## Decided against — do not re-propose
 
-- **No `@codemirror/lint`, no `bracketMatching()`.** Bracket marks are drawn
-  in a `layer`, like the playhead: a mark decoration around a bracket adds a
-  line-break opportunity — the wrap instability the playhead layer exists to
-  avoid. `bracketMatching()` under `StreamLanguage` falls back to a scan that
-  does not skip strings and comments. The one exception to the layer-only
-  rule is search matches (CodeMirror's own marks, only while the panel is
-  open).
-- **Shortcuts Chrome steals:** `Mod-Shift-]` is reserved, hence `Mod-Alt-]`
-  for Close Open Brackets. `Alt-ArrowUp/Down` return `true` even with nothing
-  to do, or the browser moves the cursor and drops the selection.
-- **No `rectangularSelection()` / `crosshairCursor()`**: Alt-*drag* is the
-  value scrub. An Alt press over a value stays undecided until `pointerup`,
-  and no movement means add-cursor, so no spot refuses a cursor.
-- **`wordChars` carries an atom's punctuation** (`-+*/%^~!?<>=:@#$&|'.`), so
-  double-click, `Mod-d` and the match tint take `:vel*`, not `vel`. Accepted
-  side effects: `"` typed right before such a character does not auto-close,
-  and a double-click in a comment grabs trailing punctuation.
-- The search panel docks at the bottom because the top-right is the
-  unmatched-bracket badge.
-- **The Edit menu exists because of undo on touch**, not width (the top bar
-  had 55px to spare even at 360px). Edit = what changes the text; Tools =
-  what is done with the score.
-- **On-screen keyboard** (`watchSoftKeyboard`, `html.soft-kb`), measured on
-  the user's iPad (iPadOS 17.6.1, landscape, home-screen app): opening fires a
-  `visualViewport` resize; **closing fires nothing**, keeps the editor focused
-  and leaves `visualViewport` stale; `innerHeight` dips while the keyboard is
-  up by however far iOS scrolled the page (8–168px seen) and returns on close
-  — the only close sign, so it is polled while up. iOS can leave `scrollY`
-  non-zero after close: drawn in place, hit-tested off-target, so it is reset
-  whenever the keyboard is down. The iPhone reports both open and close.
-  **In an iPhone's Safari tab** (iOS 18.7, 13 mini) the visual viewport stops
-  ~99pt above the keyboard: Safari floats its address pill there and draws
-  no bar, so the page background shows as a band (painted red with the html
-  background; the published app looks the same). No API gives the
-  keyboard's top, and stretching the app into the band put the pill over
-  the cursor line — accepted as Safari's; the home-screen app has no band.
-  Piano visibility above the keyboard depends on the right panel's scroll —
-  accepted.
-
-## Library panel and voice picker
-
-- **Two tabs, not three**: one search finds the keyword, the presets and the
-  snippets for a word; a source switch narrows it. **One list component** for
-  every source, so Browse's two-column layout, its phone back button and the
-  modal went.
-- **Phones keep the full-screen panel** — the play keyboard leaves no room for
-  a half-height sheet.
-- **The keys never play a macro** (user: not now, not later): they write a
-  key-on and run no macro engine; a macro's ▶ (a one-note sqr1 score) is
-  enough.
-- **An audition owes the score nothing** (user: "it should always sound"):
-  it bakes for one voice whatever the score states, and an error elsewhere in
-  the score does not stop it.
-- ⌘⇧K was dropped (CodeMirror's delete-line, Firefox's web console). Tools >
-  Snippets went (user: "the most half-done thing").
-- **Nothing is saved across launches** — state that outlived quitting
-  confused the user.
-- **The reference is hand-written data, not scraped from language.md**, a JS
-  module both the page and node import. The completion's word lists are NOT
-  generated from it (they hold sub-params no entry is written for);
-  `check:reference` fails when the completion offers a word no entry covers.
-- **The picker is the completion list, not a modal.** It never takes typing,
-  which is what makes the `@` trigger safe next to mucom's `@1` voice names.
-- **Every preset set, imported or not** — the user chose this after asking
-  about speed: 10 sets / 374 names / ~100 KB; a substring filter over 5,000
-  names costs ~0.5 ms a keystroke.
-- **Long-press rides `classifyToken`**, so long-press means "edit this" for
-  every kind of token.
-- **Import is judged by the written `(import …)` lines**, not
-  `_importSources`, which is only re-read on Build and so holds the previous
-  score's sets.
-
-## Song importers (`live/src/import-*.js`)
-
-- **"The more structured, the easier to grasp"** (user, 2026-10-07):
-  repeats fold into `(x …)`, reused runs into defs; exact matches only.
-- **Vibrato and fine tune are rounded so notes share defs** — a function beats
-  a faithful per-frame array.
-- **MIDI CC1 starts 12 frames into the note** because the user found an
-  undelayed one wobbling throughout.
-- **A dialog whose defaults are right**: Enter alone imports; only what a user
-  changes per file is offered.
-- **Structured import writes a voice at its block's head**, in the rest
-  before the note, where flat writes it at the note — same key-ons, a
-  different release tail; the user heard no difference (2026-10-15).
-- **VGM export writes PCM as one data block + `0x8n`**, not DAC stream
-  control, because the engine mixes voices in software.
-- **A VGM's chip PCM onto three voices** (user, 2026-10-15, the
-  recommendations taken as offered): with fewer voices than channels, each
-  hit takes a free voice or cuts the oldest sound — beats survive, only tails
-  are lost — over keeping each source channel as a `:prio` layer (a fixed
-  pairing drops a hit even while another voice is free); a channel is its own
-  track only when the voices suffice. ADPCM-B, the one melodic part, is never
-  cut. The voice count starts at the most that ring at once, and the dialog
-  lowers it for the brighter rate.
-- **The VGM grid stays estimated from the FM/PSG onsets.** Mixing the DAC
-  hits in moved Sonic 2's Emerald Hill from 138.9 to 95.1 BPM; PCM played
-  before the first note moves the song on by whole units instead.
-
-## Piano roll (`drawRoll` in `live/index.html`, guide §22)
-
-Rebuilt 2026-10-10 from an editor overlay of per-channel cells, which went
-unused: it covered the text, auto-scaled each cell's pitches with no keys,
-and showed nothing the playhead did not. The user's rulings:
-
-- **Two colors only** (`--foreground`, `--mid`) — no per-channel colors;
-  channels are told apart by focus.
-- **No bars, no bar numbers**: no meter exists, and `|` is placed per track
-  at will, so `|`-derived bar lines were ruled out. Quarters only, unaccented.
-- **No channel chips and no Follow/Fixed switch**: the cursor and a note
-  click pick the focus; the chips duplicated the source.
-- **Zoom is a scale (1×/2×/4× = 24/48/96 px per quarter)**, a segmented
-  control like `.lib-seg`; a window in beats was dropped.
-- **`MMLisp > View` is a submenu, not a top-level View menu** (user rejected
-  one).
-- **The pitch axis follows the focus**: its range plus 3 semitones a side,
-  the other channels showing what falls inside (edge markers for the rest
-  were offered and declined). On a phone the zoom control can cover the top
-  note — accepted: "scrolling shows it".
-- **No transport in the pane** (the top bar has it) and **no note editing in
-  the roll** (the text stays the only source).
+- **Editor:** no `@codemirror/lint` and no `bracketMatching()` (a mark
+  decoration moves the soft-wrap point; under `StreamLanguage` the fallback
+  scan does not skip strings and comments — bracket marks are a `layer`). No
+  `rectangularSelection()` / `crosshairCursor()` (Alt-drag is the value
+  scrub). No full paredit (editing here is step-vector churn). No rainbow
+  parens (accent only on call heads and `:params`). No touch symbol bar
+  (unstable on the user's iPad; not without a way to test there).
+- **Library and keys:** the keys never play a macro (user: not now, not
+  later). No ⌘⇧K (CodeMirror's delete-line, Firefox's console). No Tools >
+  Snippets (user: "the most half-done thing"). No Library state kept across
+  launches (it confused the user).
+- **Piano roll:** two colours only, no per-channel colours; no bars or bar
+  numbers; no channel chips, no Follow/Fixed switch; zoom is a scale, not a
+  window in beats; `MMLisp > View` is a submenu, not a View menu; no edge
+  markers for notes outside the focus's range; no transport and no note
+  editing in the pane.
+- **Translation:** only what explains is translated — the reference and the
+  snippets' descriptions. Menus, the log and diagnostics stay English; no
+  runtime machine translation (offline, fixed glossary terms).
+- **Playback in the worklet** (2026-10-16): not now. iOS plays on behind
+  another app through an `<audio>` element. If ever needed: both players
+  already run off a manual clock in `captureRegisterLog`, the page reaches
+  the player at ~30 sites in index.html that would read a posted mirror, and
+  the hazards are seek/hot-swap/GC stalls on the audio thread.
+- **The lock screen's item** opening another home-screen web app (the
+  user's iPhone, 2026-10-16): taken as the device's, left alone.
 
 ## Lessons
 
@@ -139,52 +42,22 @@ and showed nothing the playhead did not. The user's rulings:
   every 300ms made the iPad lay the app out at portrait size in landscape; it
   was blamed on the offline change and the vendored font first. Prefer a
   probe that writes only on demand.
-
-## Standing decisions — do not re-propose
-
-- **Touch symbol bar**: removed at the user's request (unstable on their
-  iPad). Not without a way to test on that device.
-- **No full paredit** — editing here is step-vector churn, not S-expression
-  restructuring.
-- **No rainbow parens** — breaks the "accent only on call heads and
-  `:params`" rule in `mmlispHighlight`.
-- **Translate only what explains** (user, 2026-10-15): the reference serves
-  people who already use the language, the snippets' descriptions people
-  meeting it for the first time; both are meaning a non-English reader cannot
-  get otherwise. Menus, the log and diagnostics stay English (a music tool's
-  words read the same everywhere; the AI on the MCP link reads diagnostics),
-  and GitHub's docs are left to the browser's translator. No runtime machine
-  translation: the app runs offline and terms must stay fixed (glossary).
+- **WebKit reproduces iPhone issues headless**: playwright-core's WebKit
+  (`npx playwright-core install webkit`, cached in ~/Library/Caches) with
+  `devices['iPhone 13']` — no folder picker, touch, the iOS paths.
 
 ## Open
 
-What is ahead for users is `docs/roadmap.md` (Importers, MMLisp Live); what
-is here serves development only.
+What is ahead for users is `docs/roadmap.md`; these serve development only.
 
-- **Playing in the background on iOS** (user, 2026-10-16): done as the
-  `<audio>` fed from a MediaStreamAudioDestinationNode plus the Media
-  Session (index.html synthOutput / startBackgroundAudio / setMediaSession,
-  iOS only by isIOS()); heard on an iPhone, 2026-10-16. Open: a tap on the
-  lock screen's item went to the 192.168 dev address — the user's home-screen
-  app may have been added from the dev server; waiting on a re-add from the
-  Vercel URL. iOS opens Safari, not the home-screen app, on that tap; the
-  target is the page's URL, which the page cannot choose. Judged not worth it yet: moving the
-  sequencer into the worklet. Footholds if ever needed: both players already
-  run off a manual clock in `captureRegisterLog` (a sample counter is such a
-  clock), and the page reaches the player at ~30 sites in index.html that
-  would read a posted mirror instead; the hazards are seek/hot-swap/GC
-  stalls on the audio thread.
-- **Performance, step by step** (user, 2026-10-15): the app has heavy
-  moments on Intel Macs and phones. A headless profile at 4× CPU throttle on a
-  9-track, 9,600-note score (2026-10-16) left, after two passes: the scope
-  while playing (`correlateValid` ~9 % of the throttled thread, plus its
-  polyline), and the compile itself (~200 ms on Build and Play). The user's
-  Intel Mac runs light after the two passes; these are for when a heavier
-  score or a phone shows them. Headless canvas is CPU-drawn, so draw costs
-  read high there.
+- **Performance, step by step** (user, 2026-10-15): after two passes the
+  user's Intel Mac runs light. Left, for a heavier score or a phone: the
+  scope while playing (`correlateValid` ~9 % of a 4×-throttled thread, plus
+  its polyline) and the compile itself (~200 ms on Build and Play). Headless
+  canvas is CPU-drawn, so draw costs read high there.
 - **Internal "Browse" names** (`BROWSE_*_INDEX`, `loadBrowseCatalog`,
   `previewBrowse*`, …) still name the Library; rename when a refactor of that
-  area comes up — the user-visible strings already say Library.
+  area comes up.
 - **The ja / es translations are unreviewed** — machine-written from the
   glossary; Spanish especially wants a reader. A fix goes through
   `i18n-sync.mjs --apply`, never a hand edit of the pack.
