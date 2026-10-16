@@ -6604,6 +6604,14 @@
       const seTrack = seName ? _lastGoodIR.tracks.find((t) => t.se?.name === seName) : null;
       const se = seTrack ? seTrack.se.index : null;
       const playIr = _lastGoodIR ? songOrEffectIr(_lastGoodIR, se) : null;
+      // Nothing to hear (a new score's empty tracks): do not start a silent run
+      // whose clock would race past a bar with no length. The Library's ▶ says
+      // the same for a score with no notes.
+      if (playIr && !hasNotes(playIr)) {
+        onStop();
+        log('No notes to play', 'info');
+        return;
+      }
 
       // MMLispDRV reference backend: compile → MMB → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
