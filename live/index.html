@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
   <title>MMLisp authoring environment</title>
   <!-- PWA: installable, runs standalone (full screen) on mobile. The app's own
        files are linked relatively (it is served under /live/); presets and
@@ -6321,8 +6321,9 @@
 
     // Editor font size (px), MMLisp > Font Size: the panel's number popup, so it
     // is typed or stepped like any other value. Wide on purpose — a projector
-    // or a recording wants it huge. Touch layouts never go under 16px (iOS
-    // zooms a focused field below that; style.css).
+    // or a recording wants it huge. Small sizes hold on touch screens too: the
+    // viewport's maximum-scale keeps iOS from zooming into a focused field
+    // under 16 px.
     const FONT_SIZE_MIN = 8, FONT_SIZE_MAX = 96, FONT_SIZE_DEFAULT = 14;
     let _fontSize = FONT_SIZE_DEFAULT;
     function applyFontSize(px) {

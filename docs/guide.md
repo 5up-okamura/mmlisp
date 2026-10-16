@@ -1144,8 +1144,8 @@ before the point are in place, not just the notes after it.
 
 `MMLisp > Font Size` sets the editor's text size in pixels, typed or stepped in
 the same popup as a panel value — anywhere from 8 to 96, so it can go large for a
-projector or a recording. It is remembered. On touch screens the text never
-goes below 16 px (smaller makes iOS zoom in when you tap the editor).
+projector or a recording. It is remembered, and holds on touch screens too:
+tapping into the editor does not zoom the page, whatever the size.
 
 ### Chords on the keyboards
 

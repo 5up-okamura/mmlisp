@@ -262,18 +262,6 @@
     #editorWrap.viz-on .cm-editor,
     #editorWrap.viz-on .cm-scroller,
     #editorWrap.viz-on .cm-gutters { background: transparent; }
-    /* iOS Safari zooms focused editable content when effective size is < 16px:
-       the Font Size setting still applies, but never below that. */
-    @media (hover: none) and (pointer: coarse), (max-width: 768px) {
-      #editorWrap .cm-editor,
-      #editorWrap .cm-content,
-      #editorWrap .cm-line,
-      #editorWrap .cm-gutter,
-      #editorWrap .cm-gutterElement,
-      #editorWrap .cm-textfield {
-        font-size: max(16px, var(--editor-font-size, 16px)) !important;
-      }
-    }
     #editorWrap .cm-scroller { overflow: auto; }
     #editorWrap .cm-content { color: var(--foreground); }
     #editorWrap .cm-gutters {
@@ -1415,7 +1403,6 @@
       .lib-row, .lib-group { padding: 0.6rem 0.55rem; font-size: 0.8rem; }
       .lib-nested { padding-left: 1.2rem; }
       .lib-mini { padding: 0.3rem 0.6rem; font-size: 0.72rem; }
-      #rightPanel .lib-search { font-size: 16px; } /* no zoom-on-focus on iOS */
     }
 
     /* Share: the link modal, and the play prompt a shared link opens with */
