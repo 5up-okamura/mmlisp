@@ -827,7 +827,7 @@
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
     const { tags } = cm;
     const { history, historyKeymap, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
-    const { hoverTooltip, closeHoverTooltips, hasHoverTooltips } = cm;
+    const { hoverTooltip, closeHoverTooltips, hasHoverTooltips, tooltips } = cm;
     const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
 
@@ -3780,6 +3780,10 @@
       autocompletion({ override: [mmlispCompletions], maxRenderedOptions: 12 }),
       referenceHover,
       closeReferenceOnMove,
+      // Tooltips (the reference card, the completion list) fit inside the
+      // editor: measured against the window, a card over the first lines
+      // went up under the menu bar instead of below its word.
+      tooltips({ tooltipSpace: (view) => view.dom.getBoundingClientRect() }),
       // Auto-close ( [ ", type over the closer, delete the pair on Backspace,
       // and wrap the selection when a bracket is typed with text selected.
       closeBrackets(),
