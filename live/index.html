@@ -738,7 +738,8 @@
         <p>Plays the score from the top and records the editor as it goes — the
         oscilloscope behind it, the notes lighting up — into a square video with
         its sound. Recording takes as long as the video; Stop ends it early.</p>
-        <p>Font Size and Follow Playback (MMLisp menu) frame the picture.</p>
+        <p>The take frames a square of the editor, the same on any screen, and
+        follows the playback; Theme and Font Size (MMLisp menu) set its look.</p>
         <div class="video-field">
           <label for="videoSeconds">Length (seconds)</label>
           <input id="videoSeconds" class="share-url" type="number" min="1" max="140" step="1" value="30">
@@ -978,25 +979,34 @@
     // leaves it, the view glides to put them at the top of the band — so a
     // looping pattern holds still, a melody turns the page, and the view
     // travels at section changes. Highlights spread wider than the band: the
-    // view holds while any of them is on screen above the bottom band, and only
-    // then turns to the largest group that fits, the lowest track winning a
-    // tie. Scrolling, clicking or typing in the editor hands the view back for
-    // FOLLOW_HOLD_MS. The on/off pref is loaded with the others.
+    // view goes where the music is busiest — the largest group that fits, the
+    // lowest track winning a tie — but only for a group FOLLOW_GAIN larger
+    // than what is on screen above the bottom band, and no sooner than
+    // FOLLOW_DWELL_MS after the last turn, so it does not hop between
+    // near-equal places; with nothing left on screen it turns at once.
+    // Scrolling, clicking or typing in the editor hands the view back for
+    // FOLLOW_HOLD_MS. The on/off pref is loaded with the others; a video take
+    // follows whatever it says (followOn).
     const FOLLOW_BAND = 0.2;
     const FOLLOW_GLIDE_MS = 700;
     const FOLLOW_HOLD_MS = 4000;
+    const FOLLOW_GAIN = 2;
+    const FOLLOW_DWELL_MS = 4000;
     let _follow = false;
+    let _followTake = false; // a video take is recording: follow regardless of the pref
+    const followOn = () => _follow || _followTake;
+    let _followLastTurn = 0;
     let _followHoldUntil = 0;
     let _followRaf = 0;
     let _followAnim = null; // { from, to, t0 } scrollTop glide in flight
 
     function followSchedule(view) {
-      if (!_follow || _followRaf) return;
+      if (!followOn() || _followRaf) return;
       _followRaf = requestAnimationFrame(() => { _followRaf = 0; followCheck(view); });
     }
 
     function followCheck(view) {
-      if (!_follow || performance.now() < _followHoldUntil) return;
+      if (!followOn() || performance.now() < _followHoldUntil) return;
       const v = view.state.field(playheadField);
       const spans = [];
       const addSpan = (r, k) => spans.push({
@@ -1028,14 +1038,16 @@
       // Judge against where a glide in flight is heading, not where it is.
       const at = _followAnim ? _followAnim.to : sc.scrollTop;
       if (best.top >= at + band && best.bottom <= at + h - band) return;
-      // A highlight already on screen, and not yet at the bottom band, is
-      // being followed: do not leave it for a larger group elsewhere.
-      if (spans.some((sp) => sp.top + offset >= at && sp.bottom + offset <= at + h - band)) return;
+      // What is on screen and not yet at the bottom band is kept unless the
+      // busiest group is clearly busier, and not again right after a turn.
+      const onScreen = spans.filter((sp) => sp.top + offset >= at && sp.bottom + offset <= at + h - band).length;
+      if (onScreen && (best.n < onScreen + FOLLOW_GAIN || performance.now() - _followLastTurn < FOLLOW_DWELL_MS)) return;
       const max = sc.scrollHeight - h;
       // Page-turn: the group lands at the top of the band, leaving the rest of
       // the view for what comes next rather than for what just played.
       const target = Math.round(Math.max(0, Math.min(max, best.top - band)));
       if (Math.abs(target - at) < 2) return;
+      _followLastTurn = performance.now();
       followGlide(sc, target);
     }
 
@@ -1062,7 +1074,7 @@
 
     const followPlayhead = [
       EditorView.updateListener.of((u) => {
-        if (_follow && u.startState.field(playheadField) !== u.state.field(playheadField)) followSchedule(u.view);
+        if (followOn() && u.startState.field(playheadField) !== u.state.field(playheadField)) followSchedule(u.view);
       }),
       EditorView.domEventHandlers({
         wheel: () => { followHold(); return false; },
@@ -5291,8 +5303,12 @@
     // score and records the editor in real time — what the screen shows,
     // redrawn onto a square canvas VIDEO_FPS times a second: the oscilloscope
     // behind (turned on for the take), the text in its theme colors and Font
-    // Size, the playhead outlines, a title and the site underneath. Follow
-    // Playback is the camera. The sound is the worklet's own output.
+    // Size, the playhead outlines, a title and the site underneath. For the
+    // take the editor is a VIDEO_FRAME square without line numbers, whatever
+    // the screen — the text wraps and the oscilloscope's cells lay out alike
+    // on a phone and a desktop, so only Theme and Font Size change the
+    // picture — and Follow Playback is on, as the camera, whatever its pref.
+    // The sound is the worklet's own output.
     //
     // Two recorders, both writing H.264 + AAC MP4, what X takes. With
     // WebCodecs (Chrome) the page stamps each frame itself — frame k at
@@ -5303,6 +5319,7 @@
     // cannot write MP4 either, the video is whatever it has, with a warning.
     // -----------------------------------------------------------------------
     const VIDEO_SIZE = 1080;
+    const VIDEO_FRAME = 720; // the editor's side (CSS px) during a take
     const VIDEO_FPS = 30;
     const VIDEO_MAX_SEC = 140; // X's limit for a posted video
     const VIDEO_BITRATE = 8_000_000;
@@ -5505,13 +5522,10 @@
       const root = getComputedStyle(document.documentElement);
       const bg = root.getPropertyValue('--background').trim() || '#000';
       const fg = root.getPropertyValue('--foreground').trim() || '#fff';
-      // The crop: a square of the editor, starting at the text's left edge
-      // (no line numbers) and the top of the scroller.
+      // The crop: the editor, a VIDEO_FRAME square during the take.
       const sr = editorView.scrollDOM.getBoundingClientRect();
-      const cr = editorView.contentDOM.getBoundingClientRect();
-      const left = Math.max(sr.left, cr.left - 6);
-      const side = Math.max(1, Math.min(sr.height, sr.right - left));
-      const crop = { left, top: sr.top, right: left + side, bottom: sr.top + side };
+      const side = Math.max(1, Math.min(sr.width, sr.height));
+      const crop = { left: sr.left, top: sr.top, right: sr.left + side, bottom: sr.top + side };
       const k = S / side;
 
       ctx.fillStyle = bg;
@@ -5598,7 +5612,23 @@
       // The take draws the editor, so it shows the oscilloscope, on for the take
       // (the piano roll is a pane of its own, outside the frame).
       const scopeBefore = _vizScope;
+      const wrap = document.getElementById('editorWrap');
+      wrap.style.setProperty('--video-frame', VIDEO_FRAME + 'px');
+      wrap.classList.add('video-take');
+      _vizPixelRatio = VIDEO_SIZE / VIDEO_FRAME; // the canvas at the video's own scale
       setScope(true);
+      resizeVizCanvas();
+      editorView.requestMeasure();
+      _followTake = true;
+      _followHoldUntil = 0;
+      const endTake = () => {
+        _followTake = false;
+        _vizPixelRatio = 0;
+        wrap.classList.remove('video-take');
+        setScope(scopeBefore);
+        if (_vizScope) resizeVizCanvas();
+        editorView.requestMeasure();
+      };
 
       onStop();
       drawVideoFrame(ctx, title);
@@ -5613,7 +5643,7 @@
         recorder.stop(rec.discard)
           .then((blob) => blob && saveVideoBlob(blob, `${title}.${recorder.ext}`, handle),
             (e) => log('Video: ' + e.message, 'err'))
-          .finally(() => { setScope(scopeBefore); _videoRec = null; });
+          .finally(() => { endTake(); _videoRec = null; });
       };
       rec.finish = finish;
 
@@ -5936,6 +5966,7 @@
     let _sourceOn = true;                  // MMLisp > View > Source: the score's text shows
     let _vizRoll = false;                  // the piano roll's pane is open
     let _vizScope = false;                 // the oscilloscope draws behind the editor
+    let _vizPixelRatio = 0;                // a video take's canvas scale (0: the screen's devicePixelRatio)
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
     let _chVuEls = new Map();              // head → .ch-vu element (cached for the VU loop)
     let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
@@ -10394,7 +10425,7 @@
       const c = document.getElementById('vizCanvas');
       const wrap = document.getElementById('editorWrap');
       if (!c || !wrap) return;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = _vizPixelRatio || window.devicePixelRatio || 1;
       const w = wrap.clientWidth, h = wrap.clientHeight;
       // Pin the CSS display size to the container (a canvas with no CSS size
       // displays at its backing attribute size, which would feed back and grow).
@@ -11004,7 +11035,7 @@
       const c = document.getElementById('vizCanvas');
       const wrap = document.getElementById('editorWrap');
       if (!c || !wrap) return;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = _vizPixelRatio || window.devicePixelRatio || 1;
       const W = wrap.clientWidth, H = wrap.clientHeight;
       if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
         resizeVizCanvas();

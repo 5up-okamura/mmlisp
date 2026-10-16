@@ -267,6 +267,18 @@
       display: none;
     }
     #editorWrap.viz-on #vizCanvas { display: block; }
+    /* A video take: the editor is a fixed square (--video-frame, set by the
+       take) without line numbers, so its text wraps and the oscilloscope lays
+       out alike on any screen; the rest of the column may overflow meanwhile. */
+    #editorWrap.video-take {
+      flex: none;
+      width: var(--video-frame);
+      height: var(--video-frame);
+    }
+    #editorWrap.video-take .cm-gutters { display: none; }
+    #editorWrap.video-take .cm-scroller { scrollbar-width: none; } /* a classic scrollbar would narrow the square */
+    #editorWrap.video-take .cm-scroller::-webkit-scrollbar { display: none; }
+    #editorWrap.video-take .cm-content { padding-left: 14px; padding-right: 14px; }
     #editorWrap .cm-editor {
       height: 100%;
       font-size: var(--editor-font-size, 14px);
