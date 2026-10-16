@@ -107,7 +107,7 @@ Read from source (`SGDK/src/snd/xgm2/*`, MDSDRV's `mdssub.z80`), 2026-09-01:
   frame and holed the DAC.
 - MDSDRV accepts a ~313 µs hole for a key-on plus patch transfer — **holes are
   an accepted concept**, and ours were ~3× too big.
-- Third-party data point (吉村ことり's driver): **8 fixed-pitch PCM voices ⇄ 2
+- Another homebrew driver's data point: **8 fixed-pitch PCM voices ⇄ 2
   pitched, switchable**. A voice count says nothing about feed uniformity, and
   that is the part worth learning.
 
@@ -200,11 +200,11 @@ missed it because only a real score issues STOP+START in one slot.
 
 The user's direction: keep the split and make the 68000 side cheap, so a game
 keeps the CPU for raster effects and 3D. Settled by listening on 2026-10-14
-(a banked mucom import, `disco1`, had slipped frames; two frames of lead, the
+(a banked mucom import, score B of §10, had slipped frames; two frames of lead, the
 first optimisation pass and the voice spread of §10 fixed it). Working notes:
 git history, `plan-68k-optimization.md` at `afef069`.
 
-| sin008 whole, `sgdk-profile --pc`, 30 s | before (`ba094a6`) | after (`bf50bdc`) |
+| score A whole, `sgdk-profile --pc`, 30 s | before (`ba094a6`) | after (`bf50bdc`) |
 | --- | --- | --- |
 | driver + API | **24.5%** | **16.3%** |
 | idle (the game's) | 72.8% | 80.6% |
@@ -221,7 +221,7 @@ git history, `plan-68k-optimization.md` at `afef069`.
 - **Measuring**: line attribution is ±1 instruction (a long instruction's time
   lands on the next line); per-function totals hold. A/B with
   `git checkout <rev> -- drv/68k drv/sgdk`, profile, `git checkout HEAD -- …`.
-  **Profiles taken before `b54d937` ran a broken sin008** (tracks stopped at
+  **Profiles taken before `b54d937` ran a broken score A** (tracks stopped at
   ~13 s); do not compare against them.
 - **Left, for when a game actually drops a frame**: hand-written assembly for
   the hot paths only (the macro step, the tick walk, `mmlp_plan`), the C kept as
@@ -230,7 +230,7 @@ git history, `plan-68k-optimization.md` at `afef069`.
   (~1–2%, a large change).
 - **Rejected**: pre-rendering macros (XGM by another name — the user wants a
   synth the game can play); spreading one frame's render over the lead; for
-  disco1's one remaining heavy frame (five voices at the head of a
+  score B's one remaining heavy frame (five voices at the head of a
   `(go loop3 2)` repeat, 242% of a frame), a copy before the loop plus a
   rotation into the body's tail rest, or a voice-id skip in `apply_patch` —
   the user heard no problem after the fixes; a banked_writes rewrite that
@@ -256,8 +256,9 @@ What the user hears as tempo wobble: a frame whose pairs exceed the Z80's
 service slides every key-on behind them. The behaviour that landed — the voice
 hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
 
-- **The test score is sin008**, a mucom import that must never enter the repo
-  (`~/Desktop/mucom/sin008.mmlisp` on the user's machine), single-bank pcm1. The wobble near 14 s is
+- **The test scores are two private mucom imports that never enter the repo**
+  (kept on the user's machine): score A, dense, single-bank pcm1, and score B,
+  banked. Score A's wobble near 14 s is
   the 15.02 s downbeat, where fm4/fm5 switch voice (65 writes in one frame).
   BlastEm, 2–30 s:
 
@@ -268,14 +269,14 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   | hoist + tail cut | 17.1 ms | 31.7 ms | 0 / 12 / 19 / 22 |
 
   Key-ons last on top: chord spread p95 19.5 → 3.0 ms, max 33 → 4; late p95
-  17.1 → 16.4. WAVs in `~/Desktop/mucom/onset-listen/` on the user's machine.
+  17.1 → 16.4. The listening WAVs are on the user's machine.
 - **The user's verdicts**: key-ons last adopted after listening. The user
   accepted a changed release tail, and a note ending up to two frames early,
   over tempo wobble — then the tail cut made **no audible difference**
-  on sin008, so it is built but off by default (fewer writes). Revisit only on
+  on score A, so it is built but off by default (fewer writes). Revisit only on
   a score with a long release before a voice change.
 - **Declined after measuring**: skipping unchanged pitch pairs (half of
-  sin008's rewrite the same value, but only 12 fall in heavy frames over 30 s).
+  score A's rewrite the same value, but only 12 fall in heavy frames over 30 s).
 - **No transport increase.** More expander steps help `pcm1` only and reopen
   the images' hardware risk. Capacity is closed; the work is fewer pairs ahead
   of a key-on.
@@ -303,14 +304,14 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   if a score suffers from the cut.
 - **Within the window, the lightest frame, and a voice before a rest moves
   too** (user, 2026-10-14): the behaviour is `language.md` §9. Why: on
-  `disco1` the two measured slips were not hoisted voices at all — a voice the
+  score B the two measured slips were not hoisted voices at all — a voice the
   mucom importer wrote before a rest (`stab _2 (x 26 _1 e …)`) landed on
   another channel's beat (fm5's key-on 33 ms late at lead 2), and the head of
   a `(go loop3 2)` repeat puts five voices with their notes in one frame. So a
   voice written before a rest is treated like one in the gap, and every placed
   voice takes the first frame of its window free of voices and FM key-ons.
   The loop head was left as it is — one beat's worth, and a driver change —
-  and the listening that followed settled it (§9). Measured: disco1 FM
+  and the listening that followed settled it (§9). Measured: score B FM
   key-on error max 33.3 → 14.0 ms, the voice-change render 153% → 117% of a
   frame; a lone voice lands where it did. Spreading does nothing for the
   single-bank WIRE (the pairs before a key-on are the same however they are
@@ -323,8 +324,8 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   host placed a grab 32 pairs past the engine's index (48 past a frame-old one
   on the light host), 18.3 ms of dead wire at two banked voices (p50, every
   pair, BlastEm). Read fresh and placed 8 past it: 5.7 ms, every gate green.
-  The slips are gone (disco1 FM key-on lag p90/p95 19.9/23.7 → 5.5/7.7 ms).
-  Both hosts, one rule. Re-measured after the 68000 pass (disco1 40 s): lead
+  The slips are gone (score B FM key-on lag p90/p95 19.9/23.7 → 5.5/7.7 ms).
+  Both hosts, one rule. Re-measured after the 68000 pass (score B 40 s): lead
   1 still slips — key-on lag p95/max 18.3/38.8 ms, interval error p95 17.9 —
   on ordinary 107–126% frames at 8–31 s, not only the 242% loop head; lead 2
   gives 6.7/22.2 and 7.2. So LEAD 2 stays until a render fits a frame.
