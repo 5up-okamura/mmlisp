@@ -32,6 +32,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
+| `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |
 | `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB |
 | `catalog-list.js`              | The side panel's Library list: search, filters, groups, keys, for every source |
 | `reference.js`                 | The language reference's entries (Library's Ref, completion info, hover, MCP) |

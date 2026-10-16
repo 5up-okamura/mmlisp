@@ -795,6 +795,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
+    import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
@@ -5288,17 +5289,27 @@
     // -----------------------------------------------------------------------
     // Video export (File > Export > Video…, Share > Make video): plays the
     // score and records the editor in real time — what the screen shows,
-    // redrawn every frame onto a square canvas: the oscilloscope behind
-    // (turned on for the take), the text in its theme colors and Font
+    // redrawn onto a square canvas VIDEO_FPS times a second: the oscilloscope
+    // behind (turned on for the take), the text in its theme colors and Font
     // Size, the playhead outlines, a title and the site underneath. Follow
     // Playback is the camera. The sound is the worklet's own output.
-    // MediaRecorder writes H.264 + AAC MP4 where the browser can (recent
-    // Chrome, Safari) — what X takes; elsewhere whatever it has, with a warning.
+    //
+    // Two recorders, both writing H.264 + AAC MP4, what X takes. With
+    // WebCodecs (Chrome) the page stamps each frame itself — frame k at
+    // k/VIDEO_FPS, however late the paint that drew it ran — and
+    // src/mp4-mux.js writes the encoders' output. Without it, MediaRecorder
+    // stamps a frame when it noticed the canvas painted, 5–15 ms off the
+    // vsync under the player's load, which plays back as a stutter; where it
+    // cannot write MP4 either, the video is whatever it has, with a warning.
     // -----------------------------------------------------------------------
     const VIDEO_SIZE = 1080;
     const VIDEO_FPS = 30;
     const VIDEO_MAX_SEC = 140; // X's limit for a posted video
-    // X takes H.264 + AAC in MP4; the rest are fallbacks it may refuse.
+    const VIDEO_BITRATE = 8_000_000;
+    const AUDIO_BITRATE = 192_000;
+    const VIDEO_CODEC = 'avc1.640028'; // H.264 High 4.0
+    const AUDIO_CODEC = 'mp4a.40.2';   // AAC-LC
+    // MediaRecorder's types, X's first; the rest are fallbacks it may refuse.
     const VIDEO_TYPES = [
       'video/mp4;codecs=avc1.640028,mp4a.40.2',
       'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
@@ -5308,6 +5319,8 @@
       'video/webm',
     ];
     const videoForX = (mime) => /avc1/.test(mime) && /mp4a/.test(mime);
+    const hasVideoCodecs = () => typeof VideoEncoder === 'function' && typeof AudioEncoder === 'function'
+      && typeof MediaStreamTrackProcessor === 'function';
     let _videoRec = null;
 
     function videoMimeType() {
@@ -5319,11 +5332,121 @@
       if (_videoRec) return;
       const mime = videoMimeType();
       const warn = document.getElementById('videoWarn');
-      warn.hidden = !!mime && videoForX(mime);
+      warn.hidden = hasVideoCodecs() || (!!mime && videoForX(mime));
       warn.textContent = !mime
         ? 'This browser cannot record video.'
         : 'This browser cannot record H.264 + AAC, which X requires — the video will play elsewhere, but for X use recent Chrome or Safari.';
       window.openInfoModal('videoModal');
+    }
+
+    // The WebCodecs recorder; null where its encoders cannot do H.264 + AAC.
+    // frame(k) encodes the canvas as frame k; stop() resolves to the MP4.
+    async function codecVideoRecorder(canvas) {
+      const vcfg = {
+        codec: VIDEO_CODEC, width: VIDEO_SIZE, height: VIDEO_SIZE, bitrate: VIDEO_BITRATE,
+        framerate: VIDEO_FPS, avc: { format: 'avc' }, latencyMode: 'quality',
+      };
+      const acfg = { codec: AUDIO_CODEC, sampleRate: audioCtx.sampleRate, numberOfChannels: 2, bitrate: AUDIO_BITRATE, aac: { format: 'aac' } };
+      try {
+        if (!(await VideoEncoder.isConfigSupported(vcfg)).supported) return null;
+        if (!(await AudioEncoder.isConfigSupported(acfg)).supported) return null;
+      } catch (_) {
+        return null;
+      }
+      const mux = new Mp4Muxer();
+      let error = null;
+      const fail = (e) => { error ||= e; };
+      const videoEnc = new VideoEncoder({ output: (c, m) => mux.addVideo(c, m), error: fail });
+      videoEnc.configure(vcfg);
+      // The sound: the worklet's output, read as AudioData off a stream and
+      // encoded with the stream's own rate and channel count. Reading starts
+      // with the first frame, so the two tracks start together.
+      const audioEnc = new AudioEncoder({ output: (c, m) => mux.addAudio(c, m), error: fail });
+      const audioDest = audioCtx.createMediaStreamDestination();
+      workletNode.connect(audioDest);
+      const [audioTrack] = audioDest.stream.getAudioTracks();
+      const reader = new MediaStreamTrackProcessor({ track: audioTrack }).readable.getReader();
+      let pump = Promise.resolve();
+      const frameUs = Math.round(1e6 / VIDEO_FPS);
+      let sinceKey = Infinity;
+      return {
+        ext: 'mp4', type: 'video/mp4', paced: true,
+        start() {
+          pump = (async () => {
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) return;
+              if (audioEnc.state === 'unconfigured') {
+                audioEnc.configure({ ...acfg, sampleRate: value.sampleRate, numberOfChannels: value.numberOfChannels });
+              }
+              if (!error) audioEnc.encode(value);
+              value.close();
+            }
+          })().catch(fail);
+        },
+        frame(k) {
+          if (error || videoEnc.encodeQueueSize > 8) return; // the encoder is behind: the last frame holds
+          const f = new VideoFrame(canvas, { timestamp: k * frameUs, duration: frameUs });
+          const keyFrame = sinceKey >= 2 * VIDEO_FPS;
+          videoEnc.encode(f, { keyFrame });
+          f.close();
+          sinceKey = keyFrame ? 1 : sinceKey + 1;
+        },
+        async stop(discard) {
+          try { await reader.cancel(); } catch (_) { /* already closed */ }
+          await pump;
+          try { workletNode.disconnect(audioDest); } catch (_) { /* gone with the context */ }
+          audioTrack.stop();
+          try {
+            if (!discard && !error) {
+              await videoEnc.flush();
+              if (audioEnc.state === 'configured') await audioEnc.flush();
+            }
+          } catch (e) {
+            fail(e);
+          }
+          videoEnc.close();
+          if (audioEnc.state !== 'closed') audioEnc.close();
+          if (discard) return null;
+          if (error) throw error;
+          return mux.finish();
+        },
+      };
+    }
+
+    // The MediaRecorder recorder. The canvas stream emits a frame only when
+    // asked (requestFrame), on the loop's slots; a browser without that
+    // samples the canvas itself at VIDEO_FPS.
+    function streamVideoRecorder(canvas, mime) {
+      const audioDest = audioCtx.createMediaStreamDestination();
+      workletNode.connect(audioDest);
+      let videoTrack = canvas.captureStream(0).getVideoTracks()[0];
+      const paced = typeof videoTrack.requestFrame === 'function';
+      if (!paced) {
+        videoTrack.stop();
+        videoTrack = canvas.captureStream(VIDEO_FPS).getVideoTracks()[0];
+      }
+      const stream = new MediaStream([videoTrack, ...audioDest.stream.getAudioTracks()]);
+      const type = mime.split(';')[0];
+      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: VIDEO_BITRATE, audioBitsPerSecond: AUDIO_BITRATE });
+      const chunks = [];
+      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      return {
+        ext: type === 'video/mp4' ? 'mp4' : 'webm', type, paced,
+        start() { recorder.start(1000); },
+        frame() { if (paced) videoTrack.requestFrame(); },
+        stop(discard) {
+          return new Promise((resolve) => {
+            recorder.onstop = () => {
+              try { workletNode.disconnect(audioDest); } catch (_) { /* gone with the context */ }
+              for (const t of stream.getTracks()) t.stop();
+              resolve(discard || !chunks.length ? null : new Blob(chunks, { type }));
+            };
+            if (recorder.state === 'inactive') recorder.onstop();
+            else recorder.stop();
+          });
+        },
+      };
     }
 
     // The editor's visible text and playhead outlines, drawn in page
@@ -5441,8 +5564,9 @@
       const seconds = Math.round(Math.min(VIDEO_MAX_SEC, Math.max(1, Number(document.getElementById('videoSeconds').value) || 30)));
       window.closeInfoModal('videoModal');
       const mime = videoMimeType();
-      if (!mime) { log('Video: this browser cannot record video', 'err'); return; }
-      const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+      if (!mime && !hasVideoCodecs()) { log('Video: this browser cannot record video', 'err'); return; }
+      const type = hasVideoCodecs() || mime.startsWith('video/mp4') ? 'video/mp4' : mime.split(';')[0];
+      const ext = type === 'video/mp4' ? 'mp4' : 'webm';
       const title = (_sourceFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
       // Where to save is asked now, on the Record click: a file picker needs a
       // user gesture, and the recording ends long after this one.
@@ -5451,7 +5575,7 @@
         try {
           handle = await window.showSaveFilePicker({
             suggestedName: `${title}.${ext}`,
-            types: [{ description: 'Video', accept: { [mime.split(';')[0]]: ['.' + ext] } }],
+            types: [{ description: 'Video', accept: { [type]: ['.' + ext] } }],
           });
         } catch (e) {
           if (e?.name !== 'AbortError') log('Video: ' + e.message, 'err');
@@ -5463,15 +5587,14 @@
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = VIDEO_SIZE;
       const ctx = canvas.getContext('2d');
-      const audioDest = audioCtx.createMediaStreamDestination();
-      workletNode.connect(audioDest);
-      const stream = new MediaStream([
-        ...canvas.captureStream(VIDEO_FPS).getVideoTracks(),
-        ...audioDest.stream.getAudioTracks(),
-      ]);
-      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
-      const chunks = [];
-      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      let recorder = null;
+      if (hasVideoCodecs()) {
+        try { recorder = await codecVideoRecorder(canvas); } catch (e) { log('Video: ' + e.message, 'err'); }
+      }
+      if (!recorder) {
+        if (!mime) { log('Video: this browser cannot record video', 'err'); return; }
+        recorder = streamVideoRecorder(canvas, mime);
+      }
       // The take draws the editor, so it shows the oscilloscope, on for the take
       // (the piano roll is a pane of its own, outside the frame).
       const scopeBefore = _vizScope;
@@ -5479,28 +5602,21 @@
 
       onStop();
       drawVideoFrame(ctx, title);
-      const rec = { recorder, seconds, t0: 0, raf: 0, done: false, discard: false };
+      const rec = { seconds, t0: 0, raf: 0, done: false, discard: false };
       _videoRec = rec;
       const finish = () => {
         if (rec.done) return;
         rec.done = true;
         cancelAnimationFrame(rec.raf);
         document.getElementById('recBadge').hidden = true;
-        recorder.onstop = async () => {
-          try { workletNode.disconnect(audioDest); } catch (_) {}
-          for (const t of stream.getTracks()) t.stop();
-          setScope(scopeBefore);
-          _videoRec = null;
-          if (rec.discard || !chunks.length) return;
-          const blob = new Blob(chunks, { type: mime.split(';')[0] });
-          await saveVideoBlob(blob, `${title}.${ext}`, handle);
-        };
-        recorder.stop();
         onStop();
+        recorder.stop(rec.discard)
+          .then((blob) => blob && saveVideoBlob(blob, `${title}.${recorder.ext}`, handle),
+            (e) => log('Video: ' + e.message, 'err'))
+          .finally(() => { setScope(scopeBefore); _videoRec = null; });
       };
       rec.finish = finish;
 
-      recorder.start(1000);
       await onPlay();
       if (!aiPlaying()) { // did not start (a compile error is in the log)
         rec.discard = true;
@@ -5508,12 +5624,25 @@
         return;
       }
       rec.t0 = performance.now();
+      recorder.start();
       document.getElementById('recBadge').hidden = false;
       const timeText = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-      const frame = () => {
+      const slot = 1000 / VIDEO_FPS;
+      let nextAt = 0; // the next slot's time, from t0
+      const frame = (ts) => {
         if (rec.done) return;
         const elapsed = performance.now() - rec.t0;
-        drawVideoFrame(ctx, title);
+        // Slots are judged by the frame's vsync time (ts), not by when this
+        // callback got to run: a callback 10 ms late would take the next
+        // slot early and leave a 17 ms / 50 ms pair. A quarter vsync early
+        // still counts, since 2 × 16.67 ms rounds either side of 33.33 ms.
+        const at = ts - rec.t0;
+        if (!recorder.paced || at >= nextAt - 4) {
+          const k = Math.max(0, Math.floor((at + 4) / slot));
+          drawVideoFrame(ctx, title);
+          recorder.frame(k);
+          nextAt = (k + 1) * slot;
+        }
         document.getElementById('recTime').textContent = `${timeText(elapsed)} / ${timeText(seconds * 1000)}`;
         if (elapsed >= seconds * 1000 || !aiPlaying()) { finish(); return; }
         rec.raf = requestAnimationFrame(frame);
