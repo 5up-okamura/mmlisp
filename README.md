@@ -90,7 +90,8 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
   multi-cursor editing
 - Hot-swap while playing: typing never compiles; Build (Cmd/Ctrl+B), Play and
   value edits (scrubbing or nudging a number) swap the recompiled score in
-  at the next bar boundary
+  at the next bar boundary; resuming after an edit made while paused builds
+  and plays on from the same point
 - Library (Tools > Library, Cmd/Ctrl+K): one search over the language
   reference, the preset sets, the snippets and the example
   scores (Ref / Presets / Snippets / Scores), each auditionable and insertable

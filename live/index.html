@@ -1309,7 +1309,10 @@
       clearTimeout(_hotSwapTimer);
       _hotSwapTimer = setTimeout(async () => {
         const { ir, ok } = await refreshImportsAndCompile();
-        if (ok && player && typeof player.swapAtNextBar === 'function') player.swapAtNextBar(ir);
+        if (ok && player && typeof player.swapAtNextBar === 'function') {
+          player.swapAtNextBar(ir);
+          _runSrc = _lastGoodSrc;
+        }
       }, 140);
     }
     function applyText(from, to, text) {
@@ -4064,6 +4067,7 @@
     // Manual compile (Tools > Build / Cmd-Ctrl+B)
     // -----------------------------------------------------------------------
     let _lastGoodIR = null;     // last successfully compiled IR object
+    let _lastGoodSrc = null;    // the source text _lastGoodIR was compiled from
     let _lastSourceMap = null;  // source map from last compile
     let _lastFileName = 'untitled.mmlisp';
     let _sourceHandle = null;
@@ -5706,6 +5710,7 @@
         return { ir: null, ok: false };
       }
       _lastGoodIR = ir;
+      _lastGoodSrc = src;
       _lastSourceMap = sourceMap;
       buildChStrips(ir);
       renderDynParams(ir);
@@ -5756,7 +5761,8 @@
         syncPcmBankToWorklet(ir).catch((e) => {
           log('PCM sync failed: ' + e.message, 'err');
         });
-        player.swapAtNextBar(ir);
+        player.swapAtNextBar(ir); // paused: loaded, and Resume plays it
+        _runSrc = _lastGoodSrc;
         log('Built — applies at next bar', 'info');
       } else if (player) {
         // Backend without gapless swap (MMLispDRV reference): keep the built IR;
@@ -6571,7 +6577,8 @@
     // fromLine: play from that line's first note (the nearest line above with
     // one, unless `exactLine`, when a line with no note plays nothing);
     // fromSec: from that far into the song. Both chase the run (IRPlayer.seek).
-    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride = null } = {}) {
+    // se: an effect's index, null for the song; left out, the cursor decides.
+    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride } = {}) {
       hideSharedPlay();
       _timeCue = null; // a cue set on the time bar is spent by any Play
       const ok = await initAudio();
@@ -6589,8 +6596,8 @@
       }
       // With the cursor in a (def-se …), Play auditions that effect alone —
       // the song never starts its effects; the game does (driver.md §2.5).
-      const seName = seOverride != null
-        ? (_lastGoodIR?.tracks.find((t) => t.se?.index === seOverride)?.se.name ?? null)
+      const seName = seOverride !== undefined
+        ? (seOverride == null ? null : _lastGoodIR?.tracks.find((t) => t.se?.index === seOverride)?.se.name ?? null)
         : (_lastGoodIR ? findSeDefAtCursor() : null);
       const seTrack = seName ? _lastGoodIR.tracks.find((t) => t.se?.name === seName) : null;
       const se = seTrack ? seTrack.se.index : null;
@@ -6661,6 +6668,8 @@
         // Use last successfully compiled IR if available, else load from URL
         if (_lastGoodIR) {
           player.loadJSON(_lastGoodIR, { se });
+          _runSrc = _lastGoodSrc;
+          _runSe = se;
           await syncPcmBankToWorklet(_lastGoodIR);
           log(se != null ? `Playing effect ${seName}` : 'Playing (compiled source)', 'info');
         } else if (currentIrURL) {
@@ -7043,6 +7052,8 @@
     // -----------------------------------------------------------------------
     let _paused = false;
     let _pausedSec = 0; // where pause left the song (IRPlayer.positionSec)
+    let _runSrc = null; // the source the playing (or paused) run was compiled from
+    let _runSe = null;  // the effect it plays, or null for the song
     let _vizFrozen = null; // per-track clocks the piano roll holds when not playing (pause, TIME bar)
 
     function onPause() {
@@ -7064,6 +7075,12 @@
 
     function onResume() {
       if (!player || !_paused) return;
+      // Edited while paused: build, and play the new score from the same point
+      // (a phone has no Build shortcut, so ▶ is the one tap that applies it).
+      if (editorView.state.doc.toString() !== _runSrc) {
+        onPlay(null, { fromSec: _pausedSec, se: _runSe });
+        return;
+      }
       // Resume is a seek back to where pause left it: the song's clock and state
       // pick up from there.
       player.seek(audioCtx, { sec: _pausedSec });
