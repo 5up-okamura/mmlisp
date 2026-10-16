@@ -217,27 +217,12 @@ note-on (§13.1) rather than a macro resumed mid-step under an envelope that
 just re-attacked. The SE's own binds and sweeps go the same way at the
 restore.
 
-**CH3 is taken whole.** Channel 2 and its operator and CSM tracks
-(`fm3-1..4`, `fm3-csm`, `fm3-csm-rate`) share one mode register, Timer A and
-the channel's patch, so an effect cannot take one slot of it: its CH3 parts
-claim the **group** once. The claim suspends every song track there — they
-wait, not ghosted: their state spans the chip-wide mode — and snapshots the
-mode, Timer A, the channel and each operator's note, levels,
-cents and binds; then CH3 is cleared — normal mode, levels reset, modulators
-gone, a CSM sweep stopped — and the effect sets the mode it needs itself (the
-compiler puts FM3_MODE `op` at the head of an effect with operator parts, and
-a CSM part carries its own CSM_ON/OFF). When the effect's **last** CH3 part
-ends, the snapshot is written back: mode, Timer A, the patch, the operators'
-pitches and levels, key-on. Priority is per group: a lower effect's CH3 parts
-are dropped (its other parts still play), an equal or higher one — or the same
-effect again — preempts and inherits the snapshot. A song START_TRACK on CH3
-during a hold dissolves it: the effect's parts stop and the song takes CH3
-back without a restore — nothing is re-keyed, the started track brings its own
-notes — but the effect's chip-wide settings go with it: the song's mode and
-Timer A are put back and CH3's modulators and CSM sweep stop. One
-effect cannot mix CSM and operator parts: they are two modes of one register.
-Gates `p3-se-ch3` (normal-mode song; op, CSM, drop, preempt) and
-`p3-se-ch3-op` (op-mode song restored exactly), `p3-se-ch3-dissolve`.
+**Not on CH3.** Channel 2 and its operator and CSM tracks (`fm3-1..4`,
+`fm3-csm`, `fm3-csm-rate`) share one mode register, Timer A and the channel's
+patch, chip-wide state a part playing on unheard could not keep apart from an
+effect's, so an effect has no part there: the compiler refuses one
+(`E_SE_PART`). CH3's tracks are also outside the ownership rule — they share
+the channel, so starting one evicts no other.
 
 An effect does not write `:master` or `:lfo-rate` — the song's fader and the
 chip's one LFO, which nothing would put back — and the compiler refuses them
@@ -451,8 +436,7 @@ start runs them again. Skipped: channels a running track owns, FM3-op, PCM
 and CSM tracks. `MMLisp_isSettled()` reports when the load has gone out.
 
 An effect's part (§2.5) is primed too when it is **the first effect part on a
-channel no song track uses** — not on CH3, which an effect claims whole when
-it plays. Its voice is then in place before the game fires it, and the effect
+channel no song track uses**. Its voice is then in place before the game fires it, and the effect
 writes only its levels, pitch and key-on (§3.4). One a channel: a later part
 there would replace that voice, so it uploads its own when it plays, as does
 an effect on a song's channel. The part's head TEMPO_SET sets its own clock,
@@ -995,8 +979,7 @@ The rate of overflows is the pitch; where the operators ring is the formant.
   sequencer's alone.
 - **A rest on the rate source holds Timer A stopped** (`csm_hold`): CSM_RATE's
   gate form drops LOAD A with CSM still on, so the buzz rests; the next rate
-  (or the gate's run form) sets it again. Leaving CSM ends the hold, and an
-  effect that takes CH3 keeps the song's in its snapshot.
+  (or the gate's run form) sets it again. Leaving CSM ends the hold.
 - **A CSM note keys nothing.** Held on through `$28`, the operators would see
   no edge and every retrigger would be lost, so while CSM is on a note on CH3
   writes no `$28` at all — neither key-on nor key-off.
@@ -1066,10 +1049,8 @@ three outcomes.
 - **SE** (§2.5): an effect's parts are tracks of the score it plays over, so
   every song carries the game's effects (a bundle compiles each song with the
   `"se"` file; the control data is small, the samples are shared). A PCM SE
-  restarts the BGM loop from the sample's head, not from where it was. An
-  effect on CH3 takes all of it — one effect's CH3 parts at a time, never
-  shared with the song's — and the song's CH3 parts wait out the effect
-  rather than playing on unheard, so they come back late by its length.
+  restarts the BGM loop from the sample's head, not from where it was. No
+  effect plays on CH3.
 - **PAL:** supported by baking a second score (§3.3); one MMB plays correctly
   on one standard. A single-bank PAL score's samples are baked at the NTSC DAC
   rate, so they play at the NTSC image's rate on a PAL machine too; the banked
@@ -1130,10 +1111,9 @@ never fired (`p3-se-ghost`): from the restore on, a displaced part's stream is
 the song's — in time, its sweep moved on, a note that ended under the effect
 not re-keyed. The windows are cut so one fits both video standards.
 It also checks, every frame of every schedule with an effect, that a part is
-suspended exactly while one running effect holds it (CH3's hold included), and
-that what an effect set comes back: the channel's patch (`p3-se-patch`, a patch
-no voice number could rebuild), the noise mode (`p3-se-noise`), and CH3's mode
-after a dissolved hold (`p3-se-ch3-dissolve`).
+suspended exactly while one running effect holds it, and that what an effect
+set comes back: the channel's patch (`p3-se-patch`, a patch no voice number
+could rebuild) and the noise mode (`p3-se-noise`).
 ### 12.3 The converter — `mmlpairs.c` ≡ its JS twin
 
 `npm run pairs-gate`: first the frames themselves — the C sequencer's
@@ -1380,8 +1360,8 @@ a per-note one-shot.
 
 A bind belongs to the **channel**, not to the track that wrote it, so claiming
 the channel clears it (§2.2). A sound effect's claim keeps the displaced
-part's binds in the channel's ghost (on CH3, the hold's snapshot) and the
-restore re-instantiates them (§2.5); both hold all 8.
+part's binds in the channel's ghost and the restore re-instantiates them
+(§2.5); the ghost holds all 8.
 
 ### 13.2 Per-frame stepping
 

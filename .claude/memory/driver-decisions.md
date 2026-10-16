@@ -373,12 +373,16 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   catching up at SE-end — every event of the effect's span lands in one frame
   ($slot reads, trig, loops at the wrong time) and a sweep's value has to be
   computed apart. Measured (m68k-elf-gcc sizes): `MMLSeq` 15,042 → 14,402 B
-  (the per-track snapshot went; ten 128 B ghosts came). Left open: CH3 taken
-  whole still waits (roadmap Defects); a `:master` the ghost's own stream
+  (the per-track snapshot went; ten 128 B ghosts came). Left open: a
+  `:master` the ghost's own stream
   writes recomposes every channel but the effect's, which is stashed in the
   ghost at that moment (rare: master is song-wide and usually set at the
   head).
-- **CH3 is taken whole** — the user's ruling: taking all of channel 3 is fine.
+- **No effect on CH3** (user, 2026-10-16), reversing "taking all of channel 3
+  is fine": a ghost for CH3 would span the shared channel, four operators,
+  the chip-wide `$27` and Timer A, and several tracks writing one ghost —
+  heavy for the driver — so the compiler refuses a CH3 part (`E_SE_PART`)
+  and the driver's CH3 hold (claim, restore, dissolve, `MMLCh3Snap`) went.
 - **Restore from the register shadow, not a voice id** — the user's ruling: go
   back from the register copy. Partial `def-fm` voices were not rebuilt
   otherwise.
@@ -394,10 +398,9 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   images); PSG/PCM effects, which upload nothing, ~42 ms. The rule (both
   players' prime, `driver.md` §4.1): an effect part is primed when no song
   track anywhere in the table uses its channel and it is the first effect
-  part there; not on CH3 (claimed whole at play); the prime clears the
-  setup's sweeps after it. Closed with it: an effect's `:tempo` sweep drove
-  the song's clock (now `E_SE_PART`), and an effect's FM3_MODE rides its first
-  CH3 part, not its first part. **Not chosen**: LEAD 1 (re-measured after the
+  part there; the prime clears the setup's sweeps after it. Closed with it:
+  an effect's `:tempo` sweep drove the song's clock (now `E_SE_PART`).
+  **Not chosen**: LEAD 1 (re-measured after the
   68000 pass, still slips); an SE lane running effect tracks two frames ahead
   of the song (two clocks, ownership/restore edge cases, three players +
   gates, and it does not touch the upload); a faster light-image wire (more

@@ -511,10 +511,7 @@ export class DrvPlayer {
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
     this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
-    this._timerA = 0; // the Timer A period last written (the CSM rate)
     this._csmHold = false; // a rate rest stopped Timer A: LOAD A low, CSM on (§9)
-    // CH3 as an effect found it, while one holds it (mmlispseq.h MMLCh3Snap).
-    this._ch3 = { active: false };
     // FM3 independent-OP: each operator's own note and sticky :pitch offset
     // (index = op − 1); in special mode the operator's F-number is written from
     // these, not from _fm[2] (driver.md §13.4).
@@ -1551,7 +1548,7 @@ export class DrvPlayer {
   }
 
   // A VOICE_TABLE-shaped entry onto an FM channel — a voice, or an SE
-  // snapshot's patch. Mirrors mmlispseq.c apply_patch.
+  // ghost's patch. Mirrors mmlispseq.c apply_patch.
   _applyPatch(ch, entry) {
     const regs = this._fm[ch];
     const port = ch >= 3 ? 1 : 0;
@@ -2252,7 +2249,6 @@ export class DrvPlayer {
   }
 
   _writeTimerA(period) {
-    this._timerA = period; // what an effect that takes CH3 gives back
     this._ym(0, 0x24, (period >> 2) & 0xff);
     this._ym(0, 0x25, period & 0x03);
   }
@@ -2378,14 +2374,13 @@ export class DrvPlayer {
   // start each idle track, run its leading setup up to the first note, and
   // stop it again before it sounds — so the setup's writes leave early and the
   // real start finds its registers already set. An effect's part is primed
-  // too when it is the first effect part on a channel no song track uses, and
-  // not on CH3; the setup's sweeps are cleared after it.
+  // too when it is the first effect part on a channel no song track uses; the
+  // setup's sweeps are cleared after it.
   _prime() {
     this._trk.forEach((trk, i) => {
       const ch = trk.channelId;
       const se = trk.flags & TRACK_FLAG.isSe;
       if (ch >= 10 || (trk.flags & TRACK_FLAG.isCsm) || trk.running) return;
-      if (se && this._ch3Group(ch)) return;
       if (this._trk.some((t, j) => t.channelId === ch &&
           (t.running || (se && (j < i || !(t.flags & TRACK_FLAG.isSe)))))) return;
       this._startTrack(trk.trackId, false);
@@ -2402,171 +2397,19 @@ export class DrvPlayer {
     const e = this._song?.seTable?.[se];
     if (!e) return;
     const p = prio ?? e.prio;
-    // CH3 is claimed once for all of the effect's parts there; dropped, those
-    // parts do not start and the others still do.
-    let ch3 = null;
     for (let k = 0; k < e.count; k++) {
       const t = this._trk.find((x) => x.trackId === e.first + k);
       if (!t) continue;
-      if (this._ch3Group(t.channelId)) {
-        if (ch3 === null) ch3 = this._ch3Claim(se, p);
-        if (!ch3) continue;
-      }
       t.seIndex = se;
       this._startTrack(t.trackId, true, p);
     }
   }
 
-  // ── CH3 taken whole (driver.md §2.5; mmlispseq.c ch3_*) ──────────────────
-  // CH3's operator mode and CSM are chip-wide, so an effect with any part on
-  // the shared channel (2) or an operator (16-19) takes all of it, suspends
-  // every song part there, and gives back the mode, the timer and the
-  // channel's state at its end.
+  // CH3 — the shared channel 2 and the operator tracks 16-19 — is one channel
+  // its tracks share, so the ownership rule leaves it alone; an effect never
+  // plays there (the compiler refuses it, E_SE_PART).
   _ch3Group(ch) {
     return ch === 2 || (ch >= 16 && ch <= 19);
-  }
-  _ch3Silence() {
-    this._keyOff(2);
-    if (this._fm3OpMask) {
-      this._fm3OpMask = 0;
-      this._ymKey(0x02);
-    }
-  }
-  _ch3Clear() {
-    this._ch3Silence();
-    this._clearChannelModulators(2);
-    for (let op = 1; op <= 4; op++) {
-      this._clearChannelModulators(15 + op);
-      this._fm3OpVelBase[op - 1] = VEL_FINE_MAX;
-      this._fm3OpVel[op - 1] = VEL_FINE_MAX;
-      this._fm3OpVol[op - 1] = VOL_UNITY;
-      this._fm3OpVolBase[op - 1] = VOL_UNITY;
-    }
-    const r = this._fm[2];
-    r.velBase = VEL_FINE_MAX;
-    r.vel = VEL_FINE_MAX;
-    r.volBase = VOL_UNITY;
-    r.vol = VOL_UNITY;
-    r.gate = 8;
-    this._csmRateSweep = null;
-    this._setReg27(this._reg27 & ~0xc0);
-  }
-  // Effect `se` takes CH3 at `prio`; false = dropped (another effect holds it
-  // at a higher priority, and is left alone).
-  _ch3Claim(se, prio) {
-    const h = this._ch3;
-    if (h.active) {
-      if (h.se !== se && prio < h.prio) return false;
-      for (const o of this._trk) {
-        if (o.running && o.isSe && this._ch3Group(o.channelId)) {
-          o.running = false;
-          o.isSe = false;
-        }
-      }
-    } else {
-      for (const o of this._trk) {
-        if (o.running && !o.isSe && this._ch3Group(o.channelId)) {
-          o.running = false;
-          o.suspended = true;
-        }
-      }
-      Object.assign(h, {
-        mode: this._reg27 & 0xc0,
-        timerA: this._timerA,
-        csmHold: this._csmHold,
-        fmKeyed: !!this._fm[2].keyed,
-        opMask: this._fm3OpMask,
-        ch: this._snapshotChannel(2),
-        opNote: [...this._fm3OpNote],
-        opCents: [...this._fm3OpCents],
-        opVelBase: [...this._fm3OpVelBase],
-        opVel: [...this._fm3OpVel],
-        opVol: [...this._fm3OpVol],
-        opVolBase: [...this._fm3OpVolBase],
-        opBinds: [1, 2, 3, 4].map((op) => [...this._macroActive[this._macroCh(15 + op)]]),
-        active: true,
-      });
-    }
-    h.se = se;
-    h.prio = prio;
-    this._ch3Clear();
-    return true;
-  }
-  _ch3Restore() {
-    const h = this._ch3;
-    h.active = false;
-    const resumed = this._trk.some((o) => o.suspended && this._ch3Group(o.channelId));
-    this._ch3Silence();
-    this._clearChannelModulators(2);
-    for (let op = 1; op <= 4; op++) this._clearChannelModulators(15 + op);
-    this._csmRateSweep = null;
-    this._csmHold = h.csmHold;
-    this._setReg27((this._reg27 & ~0xc0) | h.mode);
-    if (h.mode & 0x80) this._writeTimerA(h.timerA);
-    const r = this._fm[2];
-    this._restorePatch(2, h.ch);
-    r.velBase = h.ch.velBase;
-    r.vel = h.ch.vel;
-    r.volBase = h.ch.volBase;
-    r.vol = h.ch.vol;
-    r.gate = h.ch.gate;
-    r.pitchCents = h.ch.pitchCents;
-    r.currentNote = h.ch.note;
-    for (let i = 0; i < 4; i++) {
-      this._fm3OpNote[i] = h.opNote[i];
-      this._fm3OpCents[i] = h.opCents[i];
-      this._fm3OpVelBase[i] = h.opVelBase[i];
-      this._fm3OpVel[i] = h.opVel[i];
-      this._fm3OpVol[i] = h.opVol[i];
-      this._fm3OpVolBase[i] = h.opVolBase[i];
-    }
-    this._recomposeCarriers(2);
-    if (h.mode & 0x40) {
-      for (let op = 1; op <= 4; op++) this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], this._fm3OpCents[op - 1]);
-    } else {
-      this._writeFmPitch(2, r.currentNote, r.pitchCents);
-    }
-    if (resumed) {
-      if (h.mode & 0x40) {
-        for (let op = 1; op <= 4; op++) if (h.opMask & (0x10 << (op - 1))) this._fm3KeyOp(op, true);
-      } else if (!(h.mode & 0x80) && h.fmKeyed) {
-        this._keyOn(2);
-      }
-    }
-    let mc = this._macroCh(2);
-    this._macroActive[mc] = new Map(h.ch.macros);
-    if (h.ch.macros.length) this._macroTrigger(2, 0);
-    for (let i = 0; i < 4; i++) {
-      mc = this._macroCh(16 + i);
-      this._macroActive[mc] = new Map(h.opBinds[i]);
-      if (h.opBinds[i].length) this._macroTrigger(16 + i, 0);
-    }
-    for (const o of this._trk) {
-      if (o.suspended && this._ch3Group(o.channelId)) {
-        o.suspended = false;
-        o.running = true;
-      }
-    }
-  }
-  _ch3Dissolve() {
-    this._ch3.active = false;
-    for (const o of this._trk) {
-      if (!this._ch3Group(o.channelId)) continue;
-      if (o.running && o.isSe) {
-        o.running = false;
-        o.isSe = false;
-      }
-      if (o.suspended) o.suspended = false;
-    }
-    // What the effect set chip-wide does not outlive it (mmlispseq.c
-    // ch3_dissolve): the song's mode and Timer A, no modulators, no sweep.
-    this._ch3Silence();
-    this._clearChannelModulators(2);
-    for (let op = 1; op <= 4; op++) this._clearChannelModulators(15 + op);
-    this._csmRateSweep = null;
-    this._csmHold = this._ch3.csmHold;
-    this._setReg27((this._reg27 & ~0xc0) | this._ch3.mode);
-    if (this._ch3.mode & 0x80) this._writeTimerA(this._ch3.timerA);
   }
   // The host's KEY_OFF (driver.md §6.5) on every channel a hold keys — a
   // `:len 0` note, whose track then resumes, or a `:gate 0` one — for the live
@@ -2634,13 +2477,9 @@ export class DrvPlayer {
     trk.pcmSnap = null;
     trk.pcmSe = null;
     if (!asSe) trk.seIndex = null;
-    // Channel ownership. CH3 — the shared channel 2 and the operator ids 16-19
-    // — is one unit, taken whole by an effect (_ch3Claim, from _playSe); a
-    // plain start there while an effect holds it ends the hold. PCM voices
-    // have no channel block, so no owner to displace.
-    if (this._ch3Group(ch)) {
-      if (!asSe && this._ch3.active) this._ch3Dissolve();
-    } else if (ch < 10) {
+    // Channel ownership, on the register channels but CH3 (_ch3Group). PCM
+    // voices have no channel block, so no owner to displace.
+    if (ch < 10 && !this._ch3Group(ch)) {
       // The channel's current owner (running, not suspended). For a register SE
       // it is either the BGM (fresh steal) or an already-playing SE (preempt).
       const owner = this._trk.find(
@@ -2763,40 +2602,16 @@ export class DrvPlayer {
     }
   }
 
-  // CH3's shared channel as an effect that takes CH3 whole finds it (_ch3Claim).
-  // FM: the PATCH as the register shadow holds it (a VOICE_TABLE-shaped entry
-  // plus $B4), so whatever set it — a voice, a partial def-fm, a mid-song :tl
-  // or :pan — comes back; and note/vel/vol/gate/pitch, plus the MACRO BINDS,
-  // because claiming the channel is about to wipe them. mmlispseq.c
-  // snapshot_channel.
-  _snapshotChannel(ch) {
-    const r = this._fm[ch];
-    return {
-      macros: [...this._macroActive[this._macroCh(ch)]],
-      patch: fmPatchOf(r),
-      ams: r.ams,
-      fms: r.fms,
-      pan: r.pan,
-      note: r.currentNote,
-      velBase: r.velBase, // the score's vel, so the resumed track's next note is right
-      vel: r.vel,
-      volBase: r.volBase,
-      vol: r.vol,
-      gate: r.gate,
-      pitchCents: r.pitchCents,
-    };
-  }
-
-  // The snapshot's patch back on the chip: the entry change-only against the
+  // A ghost's patch back on the chip: the entry change-only against the
   // structured shadow, as VOICE_SET does it, then $B4 the same way. Mirrors
   // mmlispseq.c restore_patch.
-  _restorePatch(ch, snap) {
+  _restorePatch(ch, gr) {
     const r = this._fm[ch];
-    this._applyPatch(ch, snap.patch);
+    this._applyPatch(ch, fmPatchOf(gr));
     const old = encodeB4(r);
-    r.ams = snap.ams;
-    r.fms = snap.fms;
-    r.pan = snap.pan;
+    r.ams = gr.ams;
+    r.fms = gr.fms;
+    r.pan = gr.pan;
     if (encodeB4(r) !== old) this._ym(ch >= 3 ? 1 : 0, 0xb4 + (ch % 3), encodeB4(r));
   }
 
@@ -2807,8 +2622,7 @@ export class DrvPlayer {
   // channel is dropped (_ghostMuted). The ghost and the live channel trade
   // places only around what the part does to its channel (_ghostIn/_ghostOut),
   // so in between the effect's own state is the live one. SE-end puts the
-  // ghost on the chip (_restoreGhost). CH3 taken whole is not ghosted: its
-  // parts wait (_ch3Claim). mmlispseq.c ghost_capture / ghost_swap.
+  // ghost on the chip (_restoreGhost). mmlispseq.c ghost_capture / ghost_swap.
   _ghostCapture(ch) {
     const mc = this._macroCh(ch);
     const g = {
@@ -2868,7 +2682,7 @@ export class DrvPlayer {
     let keyed;
     if (ch < 6) {
       const r = this._fm[ch], gr = g.fm;
-      this._restorePatch(ch, { patch: fmPatchOf(gr), ams: gr.ams, fms: gr.fms, pan: gr.pan });
+      this._restorePatch(ch, gr);
       r.velBase = gr.velBase;
       r.vel = gr.vel;
       r.volBase = gr.volBase;
@@ -2927,11 +2741,9 @@ export class DrvPlayer {
   _releaseSuspended(t) {
     if (!t.suspended) return;
     t.suspended = false;
-    if (!this._ch3Group(t.channelId)) {
-      t.running = false; // its ghost is all it had of the channel
-      t.fading = false;
-      this._ghost[t.channelId] = null;
-    }
+    t.running = false; // its ghost is all it had of the channel
+    t.fading = false;
+    this._ghost[t.channelId] = null;
     for (const se of this._trk) if (se.isSe && se.displaced === t.index) se.displaced = null;
   }
 
@@ -2939,15 +2751,6 @@ export class DrvPlayer {
   // track's END_OF_TRACK, at STOP_TRACK and at a fade's terminal stop.
   _reclaimSe(seTrk) {
     if (!seTrk.isSe) return;
-    if (this._ch3Group(seTrk.channelId)) {
-      // CH3 comes back when the holding effect's LAST part there has ended.
-      seTrk.isSe = false;
-      if (!this._ch3.active || this._ch3.se !== seTrk.seIndex) return;
-      if (this._trk.some((o) => o !== seTrk && o.running && o.isSe &&
-        this._ch3Group(o.channelId) && o.seIndex === seTrk.seIndex)) return;
-      this._ch3Restore();
-      return;
-    }
     // PCM: the BGM loop the SE stole is started again. No owner track.
     // The voice's macro binds come back, and the looping BGM note starts
     // again with them, as a note-on.

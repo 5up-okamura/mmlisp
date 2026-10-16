@@ -5110,13 +5110,14 @@ function collectDefs(roots, diagnostics) {
   return { defs, paramDefs, typedDefs, sampleDefs, seDefs, vals, fileMeta, imports, mods, remaining };
 }
 
-// The channels a sound effect may play on — every one a song may. A part on
-// CH3 (fm3, fm3-1…fm3-4, fm3-csm, fm3-csm-rate) takes all of CH3 from the song,
-// its operator mode and CSM being chip-wide (driver.md §2.5).
+// The channels a sound effect may play on — every one a song may but CH3.
 const SE_CHANNELS = new Set([
-  "fm1", "fm2", "fm3", "fm4", "fm5", "fm6", "sqr1", "sqr2", "sqr3", "noise",
-  "pcm1", "pcm2", "pcm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate",
+  "fm1", "fm2", "fm4", "fm5", "fm6", "sqr1", "sqr2", "sqr3", "noise",
+  "pcm1", "pcm2", "pcm3",
 ]);
+// CH3 is not an effect's: its operator mode and CSM are chip-wide, and the
+// song's CH3 parts could not play on under an effect (driver.md §2.5).
+const SE_CH3 = new Set(["fm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate"]);
 // What an effect may not write, by IR target: the source keyword to name.
 const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate" };
 
@@ -5188,17 +5189,15 @@ function parseSeDef(root, diagnostics) {
   const seen = new Set();
   for (const part of items.slice(i)) {
     const head = part.kind === "list" ? atomValue(part.items[0]) : null;
-    if (!head || !SE_CHANNELS.has(head)) {
+    if (head && SE_CH3.has(head)) {
       pushDiag(diagnostics, "error", "E_SE_PART",
-        `a def-se part is a channel form, e.g. (fm1 …), not ${head ? `(${head} …)` : "that"}`,
+        `def-se ${name}: an effect cannot play on CH3 (${head}); put it on fm1, fm2 or fm4–fm6`,
         nodeSrc(part), null);
       continue;
     }
-    // CH3 in CSM mode is not CH3 in operator mode: one effect picks one.
-    const csm = /^fm3-csm/.test(head);
-    if ([...seen].some((h) => /^fm3/.test(h) && /^fm3-csm/.test(h) !== csm)) {
+    if (!head || !SE_CHANNELS.has(head)) {
       pushDiag(diagnostics, "error", "E_SE_PART",
-        `def-se ${name}: fm3-csm/fm3-csm-rate cannot share an effect with fm3 or fm3-1…fm3-4`,
+        `a def-se part is a channel form, e.g. (fm1 …), not ${head ? `(${head} …)` : "that"}`,
         nodeSrc(part), null);
       continue;
     }
@@ -5877,8 +5876,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // choice — one image plays 1, 2 or 3 voices at 14.4 / 10.1 / 6.7 kHz. The
   // score states it, or it is the highest pcmN track used.
   // An effect's channels count here too: its PCM needs the voices, and fm6 is
-  // the DAC for an effect as for the song. (Its CH3 mode is its own — the
-  // FM3 checks above are the song's alone.)
+  // the DAC for an effect as for the song.
   const allHeads = new Set(channelHeads);
   for (const se of seDefs.values())
     for (const part of se.parts) allHeads.add(atomValue(part.items[0]));
@@ -6119,25 +6117,16 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   let seIndex = 0;
   for (const se of seDefs.values()) {
     const parts = expandRoots(se.parts, defs, paramDefs, diagnostics);
-    // An effect with operator parts sets CH3's operator mode itself: taking
-    // CH3 leaves it in normal mode (driver.md §2.5), as a song starts. The
-    // first CH3 part carries the switch: a part on another channel may be
-    // primed at load (driver.md §4.1), and CH3's mode is the chip's.
-    let opMode = parts.some((n) => /^fm3-[1-4]$/.test(atomValue(n.items[0])));
     for (const node of parts) {
       const head = atomValue(node.items[0]);
       const trackState = makeTrackState(head, se.tempo, se.tempo, null);
       const trackData = {
         id: 0,
         scoreChannel: head,
-        channel: /^fm3-/.test(head) ? "fm3" : head,
+        channel: head,
         se: { name: se.name, index: seIndex, prio: se.prio },
         events: [{ tick: 0, cmd: "TEMPO_SET", args: { bpm: se.tempo }, src: se.src }],
       };
-      if (opMode && /^fm3(-[1-4])?$/.test(head)) {
-        trackData.events.push({ tick: 0, cmd: "FM3_MODE", args: { mode: "op" }, src: se.src });
-        opMode = false;
-      }
       if (head === "noise")
         trackData.events.push({ tick: 0, cmd: "PARAM_SET",
           args: { target: "NOISE_MODE", value: NOISE_MODE_MAP["white0"] }, src: se.src });
@@ -6205,22 +6194,15 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
 
   // Beside fm3-1..fm3-4 the (fm3 …) track is the shared patch alone: in
   // independent-OP mode the channel's F-number is operator 4's, so a note on
-  // it would fight fm3-4 for pitch and key. Checked per song and per effect.
-  const fm3Groups = new Map();
-  for (const t of tracks) {
-    const key = t.se ? `se:${t.se.index}` : "song";
-    if (!fm3Groups.has(key)) fm3Groups.set(key, []);
-    fm3Groups.get(key).push(t);
-  }
-  for (const group of fm3Groups.values()) {
-    if (!group.some((t) => /^fm3-[1-4]$/.test(t.scoreChannel))) continue;
-    for (const t of group) {
-      if (t.scoreChannel !== "fm3") continue;
+  // it would fight fm3-4 for pitch and key.
+  if (tracks.some((t) => !t.se && /^fm3-[1-4]$/.test(t.scoreChannel))) {
+    for (const t of tracks) {
+      if (t.se || t.scoreChannel !== "fm3") continue;
       const note = t.events.find((ev) => ev.cmd === "NOTE_ON");
       if (note)
         pushDiag(diagnostics, "error", "E_FM3_MODE_CONFLICT",
           "(fm3 …) beside fm3-1..fm3-4 is the shared patch only: it takes no notes",
-          note.src ?? fileSrc, t.se ? `se:${t.se.name}:fm3` : "fm3");
+          note.src ?? fileSrc, "fm3");
     }
   }
 

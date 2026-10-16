@@ -989,15 +989,10 @@ A game's sound effects are written once, as defs, and every song carries them.
 - **Not `:master`, `:lfo-rate` or a `def-val`.** Those are the song's — the
   game's fader, the chip's one LFO, the score's values — so an effect does not
   write them (`E_SE_PART`).
-- **CH3 is taken whole.** CH3's operator mode (`fm3-1`…`fm3-4`) and CSM
-  (`fm3-csm`, `fm3-csm-rate`) are chip-wide, so an effect with any part on
-  CH3 — `fm3` included — takes all of it: every song part on CH3 is suspended
-  and waits (it comes back late by the effect's length),
-  the effect plays in whatever mode its own parts set (an effect with operator
-  parts switches CH3 into operator mode itself), and at its end the song gets
-  its mode, CSM rate, patch, levels and held notes back. One effect is either
-  CSM or not: `fm3-csm` parts cannot share an effect with `fm3` / `fm3-1`…
-  (`E_SE_PART`).
+- **Not on CH3.** `fm3`, `fm3-1`…`fm3-4`, `fm3-csm` and `fm3-csm-rate` take
+  no effect part (`E_SE_PART`): CH3's operator mode and CSM are chip-wide,
+  so a song part there could not play on under an effect. Put an FM effect
+  on `fm1`, `fm2` or `fm4`–`fm6`.
 
   ```lisp
   (def-fm kit :alg 7 :fb 0

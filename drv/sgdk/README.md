@@ -270,9 +270,9 @@ while (TRUE) {
   `#include "mmlisp_se.h"` for the `SE_<NAME>` numbers. Each of its parts
   plays on the channel it names: the song's part there is suspended, not
   evicted — it plays on unheard — and when the effect ends (its own end, or
-  `MMLisp_stopSe`) it comes back in time, re-keying a note it still holds. On
-  CH3, which an effect takes whole, the song's parts wait instead, and come
-  back late by the effect's length. A second effect on the same
+  `MMLisp_stopSe`) it comes back in time, re-keying a note it still holds. An
+  effect has no part on CH3 (`fm3`, its operators, CSM — the compiler
+  refuses one). A second effect on the same
   channel is dropped if its priority is lower than the playing one's and
   replaces it otherwise; the song comes back after the last. The def-se gives
   the priority; `MMLisp_playSePrio(se, p)` overrides it. `MMLisp_sePlaying(se)`

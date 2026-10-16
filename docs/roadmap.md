@@ -9,15 +9,6 @@ needs (CLAUDE.md).
 
 Its current limits are `driver.md` §11 — keep the two in step.
 
-**Defects** — behaviour that is wrong, fixed before features:
-
-- **CH3 under an effect waits.** An effect on CH3 takes all of it, and the
-  song's CH3 parts are suspended without playing on (every other channel's
-  displaced part plays on unheard, driver.md §2.5), so after the effect they
-  are late by its length.
-- **A PCM effect restarts a looping BGM note** from the sample's head rather
-  than where it would be.
-
 **Before release:**
 
 - **A hardware run.** Everything — the three engine images at a 100% work

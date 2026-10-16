@@ -113,6 +113,11 @@ async function main() {
       src: "(fm1 (macro :tl1 (linear 0..60 :len 8 :wait 4x) :vel [15 (wait zz) (linear 15..0 :len 4)]) c)",
       expected: ["W_WAIT_INVALID", "W_WAIT_INVALID"],
     },
+    {
+      label: "def-se part on CH3",
+      src: "(fm1 c)\n(def-se hit (fm3 c) (fm3-1 c) (fm3-csm c) (fm2 c))",
+      expected: ["E_SE_PART", "E_SE_PART", "E_SE_PART"],
+    },
   ];
 
   for (const testCase of cases) {
