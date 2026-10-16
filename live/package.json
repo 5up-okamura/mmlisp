@@ -7,6 +7,7 @@
   "scripts": {
     "serve": "npx --yes serve .. --cors -p 5173",
     "gen:https-cert": "bash scripts/gen-local-cert.sh",
-    "serve:https": "npm run gen:https-cert && npx --yes serve .. --cors -p 5173 --ssl-cert .certs/dev-cert.pem --ssl-key .certs/dev-key.pem"
+    "serve:https": "npm run gen:https-cert && npx --yes serve .. --cors -p 5173 --ssl-cert .certs/dev-cert.pem --ssl-key .certs/dev-key.pem",
+    "deploy": "npx --yes wrangler@4 deploy"
   }
 }

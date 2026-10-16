@@ -7859,7 +7859,7 @@
       return { n, s, url: location.origin + location.pathname + '#' + (head ? head + '&' : '') + 's=' + s };
     }
 
-    // The short form (/s/<id>) from the deployment's share store (live/api/).
+    // The short form (/s/<id>) from the deployment's share store (live/worker/).
     // null wherever there is none — the dev server, offline, an unconfigured
     // store — and the long link, which needs no server, stands in.
     async function shortShareUrl({ n, s }) {

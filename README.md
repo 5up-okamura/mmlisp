@@ -7,7 +7,7 @@ compile them to a compact binary for a Mega Drive sound driver — with a design
 built around *interactive* music: tracks that start, stop, layer, and respond to
 game state at runtime.
 
-- **Try it now:** https://mmlisp.vercel.app/
+- **Try it now:** https://mmlisp.com/
 - **Playback driver:** MMLispDRV (68k sequencer + Z80 PCM/write engine, SGDK
   integration) — trace-verified against the JS reference in emulation.
 
@@ -17,7 +17,7 @@ game state at runtime.
   once and reuse it, factor phrases into definitions, build envelopes and LFOs
   from composable curves, expand echoes and arpeggios at compile time. A
   programming language's expressiveness, aimed at the YM2612 + PSG.
-- **Hear it instantly, accurately.** [MMLisp Live](https://mmlisp.vercel.app/)
+- **Hear it instantly, accurately.** [MMLisp Live](https://mmlisp.com/)
   auditions your score in the browser through a cycle-accurate **Nuked-OPN2**
   (YM2612) core — the same register writes the real chip sees — and hot-swaps
   the recompiled score without stopping playback.
@@ -69,7 +69,7 @@ game state at runtime.
   c c c c  c c c c)
 ```
 
-Paste it into [MMLisp Live](https://mmlisp.vercel.app/), press Cmd/Ctrl+Enter,
+Paste it into [MMLisp Live](https://mmlisp.com/), press Cmd/Ctrl+Enter,
 and you get an FM e-piano arpeggio over a square-wave line with a ticking
 noise hat — synthesized by the same register writes the real chips would see.
 

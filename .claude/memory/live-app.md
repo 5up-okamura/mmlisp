@@ -43,9 +43,11 @@ is not proposed again), working lessons, and open development items.
 
 ## Lessons
 
-- **Check a commit's Vercel status before asking for a device test**
-  (`api.github.com/repos/5up-okamura/mmlisp/commits/<sha>/status`) — a run of
-  failed deploys once meant four fixes never reached the device.
+- **Make sure a change is deployed before asking for a device test** — a run
+  of failed deploys once meant four fixes never reached the device. A push to
+  `main` deploys mmlisp.com through Cloudflare Workers Builds; its result is
+  the commit's check run
+  (`api.github.com/repos/5up-okamura/mmlisp/commits/<sha>/check-runs`).
 - **Suspect the instrument first.** An on-screen probe that rewrote itself
   every 300ms made the iPad lay the app out at portrait size in landscape; it
   was blamed on the offline change and the vendored font first. Prefer a
