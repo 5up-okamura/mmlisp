@@ -112,6 +112,22 @@
     .tb-btn:disabled { opacity: 0.3; cursor: default; }
     .tb-btn.active { border-color: var(--foreground); color: var(--background); background: var(--foreground); }
     #topbar .spacer { flex: 1; }
+    /* Transport on a touch screen: drawn at the desktop's size, but each
+       button answers across the bar's full height and halfway into the gap
+       beside it, so a finger lands on one or the other. */
+    @media (pointer: coarse) {
+      #btnStop, #btnPlay { position: relative; }
+      #btnPlay { margin-left: 12px; }
+      #btnStop::after, #btnPlay::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: -9px;   /* 8px past the 1px border: half the 16px gap */
+        right: -9px;
+        height: 36px;
+        transform: translateY(-50%);
+      }
+    }
     #btnPanel {
       display: inline-flex;
       align-items: center;
