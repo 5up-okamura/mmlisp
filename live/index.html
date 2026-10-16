@@ -346,13 +346,15 @@
       </div>
     </div>
 
-    <!-- Transport buttons -->
-    <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" style="margin-left:0.5rem">
+    <!-- Transport buttons: Stop sits left of Play/Pause, where a player keeps
+         "back to the start" — it silences everything and returns to the top. -->
+    <button id="btnStop" class="tb-btn" onclick="onStop()" style="margin-left:0.5rem"
+            title="Stop — everything that sounds, and back to the top">
+      <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10"/></svg>
+    </button>
+    <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" title="Play / Pause">
       <svg id="iconPlay" width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
       <svg id="iconPause" width="8" height="8" viewBox="0 0 10 10" fill="currentColor" style="display:none"><rect x="0" y="0" width="3" height="10"/><rect x="5" y="0" width="3" height="10"/></svg>
-    </button>
-    <button id="btnStop" class="tb-btn" onclick="onStop()">
-      <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10"/></svg>
     </button>
 
     <div class="spacer"></div>
