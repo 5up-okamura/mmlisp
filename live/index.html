@@ -827,7 +827,7 @@
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
     const { tags } = cm;
     const { history, historyKeymap, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
-    const { hoverTooltip } = cm;
+    const { hoverTooltip, closeHoverTooltips, hasHoverTooltips } = cm;
     const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
 
@@ -2174,6 +2174,8 @@
     // Hover: a keyword (`:vel`, `:tl1+`) anywhere, a form head or a channel
     // name right after `(`. Only the words the completion offers — a def's
     // own name, a note or a number is not the reference's to explain.
+    // On a touch screen a tap is the hover and nothing ever leaves it, so the
+    // card also goes on a tap on it, on typing, and when the cursor moves.
     const AC_WORDS = new Set([...AC_FORMS, ...AC_TRACKS, ...AC_PARAMS]);
     const referenceHover = hoverTooltip((view, pos) => {
       const line = view.state.doc.lineAt(pos);
@@ -2189,8 +2191,19 @@
       if (text.slice(0, from).includes(';')) return null;                  // a comment
       const e = referenceFor(word);
       if (!e) return null;
-      return { pos: line.from + from, end: line.from + to, above: true, create: () => ({ dom: referenceCard(e) }) };
-    }, { hoverTime: 500 });
+      return {
+        pos: line.from + from, end: line.from + to, above: true,
+        create: (v) => {
+          const dom = referenceCard(e);
+          dom.addEventListener('click', () => v.dispatch({ effects: closeHoverTooltips }));
+          return { dom };
+        },
+      };
+    }, { hoverTime: 500, hideOnChange: true });
+    const closeReferenceOnMove = EditorView.updateListener.of((u) => {
+      if (!u.selectionSet || u.docChanged || !hasHoverTooltips(u.state)) return;
+      queueMicrotask(() => u.view.dispatch({ effects: closeHoverTooltips })); // not inside this update
+    });
 
     function mmlispCompletions(context) {
       if (_acReplace) {
@@ -3766,6 +3779,7 @@
       // small window (the list stays complete and scrollable) drops that ~6×.
       autocompletion({ override: [mmlispCompletions], maxRenderedOptions: 12 }),
       referenceHover,
+      closeReferenceOnMove,
       // Auto-close ( [ ", type over the closer, delete the pair on Backspace,
       // and wrap the selection when a bracket is typed with text selected.
       closeBrackets(),
