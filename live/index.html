@@ -903,8 +903,10 @@
 
         for (const e of tr.effects) {
           if (e.is(setPlayheadBase)) {
+            // The document the build was compiled from, and the edits made
+            // while it compiled (null: the current document, none).
             own(); toks.clear(); seqs.clear();
-            builtDoc = tr.state.doc; changes = null;
+            builtDoc = e.value?.doc ?? tr.state.doc; changes = e.value?.changes ?? null;
           } else if (e.is(setTrackLine)) {
             own();
             const { trackIdx, src } = e.value;
@@ -1401,8 +1403,8 @@
       const b = list.find((x) => offset >= x.from - BAR_HIT_SLOP && offset <= x.to + BAR_HIT_SLOP);
       return b ? { ...b, stale } : null;
     }
-    // Re-anchor bar markers to the just-compiled document. Called from compileNow.
-    function refreshBarMarkers() {
+    // Re-anchor bar markers to the just-compiled document. Called from applyCompile.
+    function refreshBarMarkers(base = null) {
       if (!editorView) return;
       const doc = editorView.state.doc;
       const out = [];
@@ -1413,9 +1415,9 @@
         const head = _chStripModel.find((e) => e.trackIndex === ti)?.head ?? `track ${ti + 1}`;
         let prev = 0;
         for (const bar of bars) {
-          let r;
-          try { r = srcToRange(doc, { line: bar.line, column: bar.column, endLine: bar.line, endColumn: bar.column + 1 }); }
-          catch (_) { prev = bar.tick; continue; }
+          const r = resolvePlayhead({ line: bar.line, column: bar.column, endLine: bar.line, endColumn: bar.column + 1 },
+            base?.doc ?? doc, base?.changes ?? null, doc);
+          if (!r) { prev = bar.tick; continue; }
           out.push({ from: r[0], to: r[1], ordinal: bar.ordinal, tick: bar.tick, barLen: bar.tick - prev, head });
           prev = bar.tick;
         }
@@ -3714,6 +3716,11 @@
       EditorView.updateListener.of((u) => {
         if ((u.selectionSet || u.docChanged) && _vizRoll) rollFollowCursor(u.state);
       }),
+      // What a running compile will be placed through (refreshImportsAndCompile).
+      EditorView.updateListener.of((u) => {
+        if (_compileRec && u.docChanged)
+          _compileRec.changes = _compileRec.changes ? _compileRec.changes.compose(u.changes) : u.changes;
+      }),
       buildFlashLayer,
       bracketField,
       bracketLayer,
@@ -3965,8 +3972,12 @@
       { description: 'FM voice import', accept: { 'application/octet-stream': ['.dmp', '.fui', '.tfi', '.vgi', '.opni'] } },
     ];
 
+    // Bumped by each new document: a compile's result for the score it
+    // replaced is dropped (refreshImportsAndCompile).
+    let _docEpoch = 0;
     function setEditorDoc(text) {
       // Reset the full state so that undo history does not include the file load.
+      _docEpoch++; // a compile still running is of the score this one replaces
       editorView.setState(EditorState.create({
         doc: text,
         extensions: editorExtensions,
@@ -4222,12 +4233,9 @@
       return map;
     }
 
-    // Resolve the current doc's imports, then compile. Async because file reads
-    // are; the user-action entry points await it.
-    async function refreshImportsAndCompile() {
-      await refreshImportSources(editorView.state.doc.toString());
-      return compileNow();
-    }
+    // Resolve the current doc's imports, then compile: refreshImportsAndCompile,
+    // with the compile (below, beside compileNow). The user-action entry points
+    // await it.
 
     async function decodePcmSample(path) {
       const cached = _pcmSampleCache.get(path);
@@ -5573,73 +5581,150 @@
     function compileNow() {
       const src = editorView.state.doc.toString();
       try {
-        const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName, { imports: _importSources });
-        const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
-        // A preset set's samples are served from the site root, so they resolve
-        // whether or not the score has been saved anywhere. So do those of a
-        // score from the served tree (the Library, a share link): its compile name
-        // is its path there, and its samples resolve against its folder.
-        // And a sample already held in memory (a mucom88 bank's wav, seeded at
-        // import) plays without any path resolving at all.
-        const hasSamples = sampleDefs.some((d) => {
-          const path = d.resolvedFile ?? d.file ?? '';
-          return !/^presets\//.test(path) && !_pcmSampleCache.has(path);
-        });
-        const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
-          Boolean(_sourceDir) || _lastFileName.includes('/');
-        updateFolderAccessPrompt(src, hasSamples, sampleDefs);
-        // Without a folder picker the Load button above says what is missing.
-        if (hasSamples && !hasSavedBase && typeof window.showDirectoryPicker === 'function') {
-          if (!_unsavedSamplePathWarned) {
-            log('Sample paths may not resolve reliably until this source is saved (File > Save As...)', 'err');
-            _unsavedSamplePathWarned = true;
-          }
-        } else {
-          _unsavedSamplePathWarned = false;
-        }
-        // Warnings are logged too: a typo the compiler drops (a bad :step, an
-        // echo with nothing to replay) must not go unseen. A compile that says
-        // the same as the last one stays quiet (a value drag recompiles every
-        // 140 ms); Build clears the memory, so it always says them. An unsaved
-        // score's relative sample paths are said once, above.
-        const warnLines = diagnostics
-          .filter(d => d.severity === 'warning' && d.code !== 'W_SAMPLE_BASE_UNKNOWN')
-          .map(d => `[W] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`);
-        const warnSig = warnLines.join('\n');
-        if (warnSig !== _lastWarnSig) {
-          for (const line of warnLines) log(line, 'warn');
-          _lastWarnSig = warnSig;
-        }
-        const errors = diagnostics.filter(d => d.severity === 'error');
-        if (errors.length > 0) {
-          for (const d of errors) {
-            log(`[E] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`, 'err');
-          }
-          return { ir: null, ok: false };
-        }
-        _lastGoodIR = ir;
-        _lastSourceMap = sourceMap;
-        buildChStrips(ir);
-        renderDynParams(ir);
-        if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
-        // When not playing, show the score's starting tempo (the loop drives it
-        // live) and measure TIME's bar for it.
-        if (_fmLiveRaf == null) {
-          updateTempoDisplay(irInitialBpm(ir));
-          refreshTimeBar(ir);
-        }
-        // Anchor playhead highlights to the document this IR was compiled from.
-        // Later edits (without rebuild) are mapped from here so highlights track
-        // the text. Edits compose into the field even while stopped.
-        flushPlayheadFx(); // the old build's positions resolve against its own doc
-        editorView.dispatch({ effects: setPlayheadBase.of(null) });
-        // Re-anchor bar markers ( | ) to the just-compiled document too.
-        refreshBarMarkers();
-        return { ir, ok: true };
+        return applyCompile(src, compileMMLisp(src, _lastFileName, { imports: _importSources }), null);
       } catch (e) {
         log('[compile] ' + e.message, 'err');
         return { ir: null, ok: false };
       }
+    }
+
+    // The compile, off the page's thread (src/compile-worker.js): on a long
+    // score it held up Build, Play and a drag's hot-swap. One at a time, in the
+    // order asked, so each compiles the document of its turn, as a synchronous
+    // compile did. Where no worker starts it runs here.
+    let _compileWorker;           // undefined: not tried yet; null: unavailable
+    let _compileId = 0;
+    const _compilePending = new Map(); // id → { resolve, reject, here }
+    function compileOffThread(src, name, imports) {
+      const here = () => compileMMLisp(src, name, { imports });
+      if (_compileWorker === undefined) {
+        try {
+          _compileWorker = new Worker('./src/compile-worker.js', { type: 'module' });
+          _compileWorker.onmessage = (e) => {
+            const p = _compilePending.get(e.data.id);
+            if (!p) return;
+            _compilePending.delete(e.data.id);
+            if (e.data.error) p.reject(new Error(e.data.error));
+            else p.resolve(e.data);
+          };
+          _compileWorker.onerror = () => {
+            _compileWorker.terminate();
+            _compileWorker = null;
+            for (const p of _compilePending.values()) p.here();
+            _compilePending.clear();
+          };
+        } catch (_) { _compileWorker = null; }
+      }
+      if (!_compileWorker) return Promise.resolve().then(here);
+      return new Promise((resolve, reject) => {
+        const id = ++_compileId;
+        const p = { resolve, reject, here: () => { try { resolve(here()); } catch (e) { reject(e); } } };
+        _compilePending.set(id, p);
+        try { _compileWorker.postMessage({ id, src, name, imports }); }
+        catch (_) { _compilePending.delete(id); p.here(); }
+      });
+    }
+    // The edits made while a compile runs, so what it built is placed on the
+    // document as it is now (the playhead, the bar markers).
+    let _compileRec = null; // { doc, changes }
+    let _compileChain = Promise.resolve();
+    // A compile asked for but not started yet: later asks share it, as it reads
+    // the document when its turn comes — so a value drag on a slow machine does
+    // not queue one compile per step and play them all out after the drag.
+    let _compileQueued = null;
+    function refreshImportsAndCompile() {
+      if (_compileQueued) return _compileQueued;
+      const run = _compileChain.then(async () => {
+        if (_compileQueued === run) _compileQueued = null;
+        await refreshImportSources(editorView.state.doc.toString());
+        const doc = editorView.state.doc;
+        const src = doc.toString();
+        const epoch = _docEpoch;
+        const rec = { doc, changes: null };
+        _compileRec = rec;
+        try {
+          const result = await compileOffThread(src, _lastFileName, _importSources);
+          if (epoch !== _docEpoch) return { ir: null, ok: false };
+          return applyCompile(src, result, rec);
+        } catch (e) {
+          log('[compile] ' + e.message, 'err');
+          return { ir: null, ok: false };
+        } finally {
+          if (_compileRec === rec) _compileRec = null;
+        }
+      });
+      _compileQueued = run;
+      _compileChain = run.catch(() => {});
+      return run;
+    }
+
+    // A compile's result onto the page: diagnostics, the last good IR, the
+    // strips, the time bar, the playhead's anchor. `rec` is the document it
+    // was compiled from and the edits since (null: compiled just now).
+    function applyCompile(src, { ir, diagnostics, sourceMap }, rec) {
+      const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
+      // A preset set's samples are served from the site root, so they resolve
+      // whether or not the score has been saved anywhere. So do those of a
+      // score from the served tree (the Library, a share link): its compile name
+      // is its path there, and its samples resolve against its folder.
+      // And a sample already held in memory (a mucom88 bank's wav, seeded at
+      // import) plays without any path resolving at all.
+      const hasSamples = sampleDefs.some((d) => {
+        const path = d.resolvedFile ?? d.file ?? '';
+        return !/^presets\//.test(path) && !_pcmSampleCache.has(path);
+      });
+      const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
+        Boolean(_sourceDir) || _lastFileName.includes('/');
+      updateFolderAccessPrompt(src, hasSamples, sampleDefs);
+      // Without a folder picker the Load button above says what is missing.
+      if (hasSamples && !hasSavedBase && typeof window.showDirectoryPicker === 'function') {
+        if (!_unsavedSamplePathWarned) {
+          log('Sample paths may not resolve reliably until this source is saved (File > Save As...)', 'err');
+          _unsavedSamplePathWarned = true;
+        }
+      } else {
+        _unsavedSamplePathWarned = false;
+      }
+      // Warnings are logged too: a typo the compiler drops (a bad :step, an
+      // echo with nothing to replay) must not go unseen. A compile that says
+      // the same as the last one stays quiet (a value drag recompiles every
+      // 140 ms); Build clears the memory, so it always says them. An unsaved
+      // score's relative sample paths are said once, above.
+      const warnLines = diagnostics
+        .filter(d => d.severity === 'warning' && d.code !== 'W_SAMPLE_BASE_UNKNOWN')
+        .map(d => `[W] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`);
+      const warnSig = warnLines.join('\n');
+      if (warnSig !== _lastWarnSig) {
+        for (const line of warnLines) log(line, 'warn');
+        _lastWarnSig = warnSig;
+      }
+      const errors = diagnostics.filter(d => d.severity === 'error');
+      if (errors.length > 0) {
+        for (const d of errors) {
+          log(`[E] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`, 'err');
+        }
+        return { ir: null, ok: false };
+      }
+      _lastGoodIR = ir;
+      _lastSourceMap = sourceMap;
+      buildChStrips(ir);
+      renderDynParams(ir);
+      if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
+      // When not playing, show the score's starting tempo (the loop drives it
+      // live) and measure TIME's bar for it.
+      if (_fmLiveRaf == null) {
+        updateTempoDisplay(irInitialBpm(ir));
+        refreshTimeBar(ir);
+      }
+      // Anchor playhead highlights to the document this IR was compiled from.
+      // Later edits (without rebuild) are mapped from here so highlights track
+      // the text. Edits compose into the field even while stopped.
+      flushPlayheadFx(); // the old build's positions resolve against its own doc
+      const base = rec && rec.doc !== editorView.state.doc ? rec : null;
+      editorView.dispatch({ effects: setPlayheadBase.of(base) });
+      // Re-anchor bar markers ( | ) to the just-compiled document too.
+      refreshBarMarkers(base);
+      return { ir, ok: true };
     }
 
     // Flash the text background to confirm a build. Toggle off→on (each a no-op
@@ -7901,7 +7986,7 @@
     }
 
     // Everything the compiler says about the current text, for the AI link —
-    // including the warnings compileNow() leaves unsaid when they repeat.
+    // including the warnings applyCompile leaves unsaid when they repeat.
     async function aiDiagnostics() {
       const src = editorView.state.doc.toString();
       await refreshImportSources(src);

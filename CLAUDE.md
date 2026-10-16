@@ -43,6 +43,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `voice-hoist.js`               | The IR pass that moves a voice change's register burst ahead of its note |
 | `offline-cache.js`             | Fills the service worker's cache so the installed app runs offline |
 | `time-worker.js`               | TIME's bar length, measured off the page's thread (`IRPlayer.captureRegisterLog`) |
+| `compile-worker.js`            | The score's compile (`compileMMLisp`) off the page's thread, for Build, Play and a drag's hot-swap |
 | `../nuked-opn2.js`, `../nuked-psg.js` | YM2612 / PSG cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),

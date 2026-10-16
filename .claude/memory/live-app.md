@@ -32,6 +32,14 @@ is not proposed again), working lessons, and open development items.
   the hazards are seek/hot-swap/GC stalls on the audio thread.
 - **The lock screen's item** opening another home-screen web app (the
   user's iPhone, 2026-10-16): taken as the device's, left alone.
+- **The scope while playing** (2026-10-16): `correlateValid` is ~9 % of a
+  4×-throttled thread plus its polyline, and cutting more changes how the
+  trace locks — not worth it. (Headless canvas is CPU-drawn, so draw costs
+  read high there.)
+- **The ja / es translations** stay as machine-written from the glossary
+  (user, 2026-10-16: having one helps more than none; a wrong line is fixed
+  when found). A fix goes through `i18n-sync.mjs --apply`, never a hand edit
+  of the pack.
 
 ## Lessons
 
@@ -50,14 +58,6 @@ is not proposed again), working lessons, and open development items.
 
 What is ahead for users is `docs/roadmap.md`; these serve development only.
 
-- **Performance, step by step** (user, 2026-10-15): after two passes the
-  user's Intel Mac runs light. Left, for a heavier score or a phone: the
-  scope while playing (`correlateValid` ~9 % of a 4×-throttled thread, plus
-  its polyline) and the compile itself (~200 ms on Build and Play). Headless
-  canvas is CPU-drawn, so draw costs read high there.
 - **Internal "Browse" names** (`BROWSE_*_INDEX`, `loadBrowseCatalog`,
   `previewBrowse*`, …) still name the Library; rename when a refactor of that
   area comes up.
-- **The ja / es translations are unreviewed** — machine-written from the
-  glossary; Spanish especially wants a reader. A fix goes through
-  `i18n-sync.mjs --apply`, never a hand edit of the pack.
