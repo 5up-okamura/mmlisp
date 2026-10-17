@@ -1,8 +1,9 @@
-# The live app — decisions not to redo, and what is open
+# The live app — decisions not to redo, and lessons
 
 What the app does is `docs/guide.md` (§22–§27); why the code is shaped the
-way it is lives in its comments. Kept here: what was decided against (so it
-is not proposed again), working lessons, and open development items.
+way it is lives in its comments; what is ahead is `docs/roadmap.md`. Kept
+here: what was decided against (so it is not proposed again), and working
+lessons.
 
 ## Decided against — do not re-propose
 
@@ -55,11 +56,3 @@ is not proposed again), working lessons, and open development items.
 - **WebKit reproduces iPhone issues headless**: playwright-core's WebKit
   (`npx playwright-core install webkit`, cached in ~/Library/Caches) with
   `devices['iPhone 13']` — no folder picker, touch, the iOS paths.
-
-## Open
-
-What is ahead for users is `docs/roadmap.md`; these serve development only.
-
-- **Internal "Browse" names** (`BROWSE_*_INDEX`, `loadBrowseCatalog`,
-  `previewBrowse*`, …) still name the Library; rename when a refactor of that
-  area comes up.

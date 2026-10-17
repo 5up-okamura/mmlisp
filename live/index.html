@@ -2030,11 +2030,11 @@
     function loadPresetDefNames() {
       _acPresetLoad ??= (async () => {
         try {
-          const { sets } = await loadBrowseCatalog();
-          const loaded = await Promise.all(sets.map((path) => loadBrowseSet(path)
+          const { sets } = await loadLibraryCatalog();
+          const loaded = await Promise.all(sets.map((path) => loadLibrarySet(path)
             .catch((e) => { log('Completion: ' + e.message, 'err'); return null; })));
           _acPresetDefs = loaded.filter(Boolean).flatMap((set) =>
-            scanDefNames(set.text, browseSetName(set.path))
+            scanDefNames(set.text, librarySetName(set.path))
               .filter((d) => d.kind === 'voice' || d.kind === 'sample' || d.kind === 'macro')
               .map((d) => ({ ...d, set: set.path })));
         } catch (e) {
@@ -2088,7 +2088,7 @@
       for (const d of [...scoreDefNames(state, text, imported), ..._acPresetDefs]) {
         if (seen.has(d.name)) continue;
         seen.add(d.name);
-        const set = d.set ?? (_browseSetCache.has(d.path) ? d.path : null);
+        const set = d.set ?? (_librarySetCache.has(d.path) ? d.path : null);
         if (fits(d)) out.push(set && !imported.has(set) ? { ...d, importSet: set } : d);
       }
       return own ? [...out.filter((d) => d.kind === own), ...out.filter((d) => d.kind !== own)] : out;
@@ -4331,7 +4331,7 @@
     // 8-bit, at the image's rate, with its level rungs and loop rounding. So
     // what the editor plays is what the driver will.
     // `target` is the IRPlayer that plays `ir`: it learns the bank's rate, so
-    // its loop lengths round as the driver's do (the browse preview has its own).
+    // its loop lengths round as the driver's do (the Library's preview has its own).
     async function syncPcmBankToWorklet(ir, target = player) {
       if (!workletNode) return;
       const clear = () => {
@@ -5956,8 +5956,8 @@
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
     let _dynVals = {};                     // Dynamic Parameters: name → current slider value (declared here so the startup compileNow can render before the panel functions)
     let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
-    let _browseScorePlayer = null;          // the score or snippet Browse ▶ is playing
-    let _browseScorePath = null;
+    let _libraryScorePlayer = null;          // the score or snippet Library ▶ is playing
+    let _libraryScorePath = null;
     let _fmLiveRaf = null;                  // requestAnimationFrame id for the playback refresh loop
     let _fmLiveLast = 0;                    // last live-tick timestamp (throttle)
     let _fmPanelDragging = false;           // dragging an FM-panel slider → don't let the loop overwrite it
@@ -6061,7 +6061,7 @@
     function togglePanel() {
       _panelOpen = !_panelOpen;
       applyPanelState();
-      if (!_panelOpen) stopBrowsePreview();
+      if (!_panelOpen) stopLibraryPreview();
       updateLibraryKeys(); // the keys play Library's pick only while it shows
     }
     window.togglePanel = togglePanel;
@@ -6745,7 +6745,7 @@
       _timeCue = null; // a cue set on the time bar is spent by any Play
       const ok = await initAudio();
       if (!ok) return;
-      stopBrowseScorePreview(); // one score owns the chip at a time
+      stopLibraryScorePreview(); // one score owns the chip at a time
       // Manual-compile model: starting from stopped always rebuilds from the
       // current source, so Play reflects the latest edits. On error, compileNow
       // keeps the last good IR; only binary/URL presets with no editable source
@@ -6899,7 +6899,7 @@
     }
     function releaseHoldsAction() {
       player?.releaseHolds?.();
-      _browseScorePlayer?.releaseHolds?.(); // a Library ▶ preview holds too
+      _libraryScorePlayer?.releaseHolds?.(); // a Library ▶ preview holds too
     }
     window.releaseHoldsAction = releaseHoldsAction;
 
@@ -6941,7 +6941,7 @@
     });
 
     function onStop() {
-      stopBrowseScorePreview();
+      stopLibraryScorePreview();
       stopFmLiveLoop();
       resetChannelVu();
       _vizFrozen = null;
@@ -7309,16 +7309,16 @@
     // score imports, so a listed name can never drift from the def behind it.
     // The index.json files exist only because a directory cannot be listed
     // over HTTP; they hold paths and nothing else.
-    const BROWSE_SETS_INDEX = '/presets/index.json';
-    const BROWSE_SCORES_INDEX = '/examples/index.json';
-    const BROWSE_SNIPPETS_INDEX = '/snippets/index.json';
+    const LIBRARY_SETS_INDEX = '/presets/index.json';
+    const LIBRARY_SCORES_INDEX = '/examples/index.json';
+    const LIBRARY_SNIPPETS_INDEX = '/snippets/index.json';
 
-    let _browseCatalog = null;              // { sets, scores, snippets: [path] }
-    const _browseFileCache = new Map();     // score/snippet path -> { text, about }
-    const _browseSetCache = new Map();      // set path -> { path, text, defs }
+    let _libraryCatalog = null;              // { sets, scores, snippets: [path] }
+    const _libraryFileCache = new Map();     // score/snippet path -> { text, about }
+    const _librarySetCache = new Map();      // set path -> { path, text, defs }
     let _sideAudition = null;               // the sample preview playing beside the song (playAuditionBlob)
-    let _browsePreviewTimers = [];          // note on/off timers for the FM audition
-    let _browsePcmSounding = false;         // the worklet holds a sample preview
+    let _libraryPreviewTimers = [];          // note on/off timers for the FM audition
+    let _libraryPcmSounding = false;         // the worklet holds a sample preview
 
     async function fetchText(path) {
       const res = await fetch(toFetchablePath(path));
@@ -7328,26 +7328,26 @@
 
     // Read once, by the panel or by the editor's completion (which lists
     // every set's names), whichever asks first.
-    let _browseCatalogLoad = null;
-    function loadBrowseCatalog() {
-      _browseCatalogLoad ??= (async () => {
+    let _libraryCatalogLoad = null;
+    function loadLibraryCatalog() {
+      _libraryCatalogLoad ??= (async () => {
         const read = async (url) => {
           try { return JSON.parse(await fetchText(url)); }
           catch (e) { log('Library: ' + e.message, 'err'); return []; }
         };
         const [sets, scores, snippets] = await Promise.all(
-          [read(BROWSE_SETS_INDEX), read(BROWSE_SCORES_INDEX), read(BROWSE_SNIPPETS_INDEX)]);
-        _browseCatalog = { sets, scores, snippets };
-        return _browseCatalog;
+          [read(LIBRARY_SETS_INDEX), read(LIBRARY_SCORES_INDEX), read(LIBRARY_SNIPPETS_INDEX)]);
+        _libraryCatalog = { sets, scores, snippets };
+        return _libraryCatalog;
       })();
-      return _browseCatalogLoad;
+      return _libraryCatalogLoad;
     }
 
-    function browseSetName(path) {
+    function librarySetName(path) {
       return path.replace(/\/[^/]*$/, '').replace(/^presets\//, '');
     }
 
-    function setBrowseNote(text) {
+    function setLibraryNote(text) {
       setTextWithIcons(document.getElementById('libNote'), text);
     }
 
@@ -7374,7 +7374,7 @@
       document.getElementById('rightPanelBody').hidden = _panelTab !== 'params';
       document.getElementById('libraryPane').hidden = _panelTab !== 'library';
       if (_panelTab === 'library') ensureLibrary();
-      else stopBrowsePreview();
+      else stopLibraryPreview();
       updateLibraryKeys();
     }
 
@@ -7552,7 +7552,7 @@
           tracks: e.tracks,
           about: refSummary(e),
           detail: `${e.syntax}\n${refSummary(e)}\n\n${e.example}\n\u2014 language ${e.section}`,
-          audition: () => toggleBrowseScorePreview(file),
+          audition: () => toggleLibraryScorePreview(file),
           keys: null,
           actions: [{ label: 'Insert', title: `Insert ${e.insert.split('\n')[0]} at the cursor`,
             run: () => insertReferenceText(e) }],
@@ -7563,23 +7563,23 @@
     function insertReferenceText(e) {
       const { from, to } = editorView.state.selection.main;
       editorView.dispatch({ changes: { from, to, insert: e.insert } });
-      setBrowseNote(`Inserted ${e.name}`);
+      setLibraryNote(`Inserted ${e.name}`);
       showInserted(from, from + e.insert.length);
     }
 
     // Every source as one array of items (catalog-list.js). A preset's
     // description is the comment line above its def, as the completion shows.
     async function loadLibraryItems() {
-      const catalog = await loadBrowseCatalog();
+      const catalog = await loadLibraryCatalog();
       const items = referenceItems();
       const groupActions = {};
-      const sets = await Promise.all(catalog.sets.map((path) => loadBrowseSet(path)
+      const sets = await Promise.all(catalog.sets.map((path) => loadLibrarySet(path)
         .catch((e) => { log('Library: ' + e.message, 'err'); return null; })));
       for (const set of sets.filter(Boolean)) {
-        const label = browseSetName(set.path);
+        const label = librarySetName(set.path);
         const about = new Map(scanDefNames(set.text, label).map((d) => [d.name, d.about]));
         const importSet = { label: 'Import set', title: `Add (import "${set.path}") to the top of the score`,
-          run: () => insertBrowseImport(set.path) };
+          run: () => insertLibraryImport(set.path) };
         groupActions[set.path] = [importSet];
         for (const def of set.defs) {
           // An FM def or a macro is self-contained text, so a copy can be
@@ -7595,10 +7595,10 @@
             name: def.name,
             kind: def.kind,
             about: about.get(def.name) ?? '',
-            audition: def.kind === 'def' ? null : () => previewBrowseDef(set, def),
+            audition: def.kind === 'def' ? null : () => previewLibraryDef(set, def),
             keys: def.kind === 'fm' || def.kind === 'pcm' ? { kind: def.kind, set, def } : null,
             actions: copy
-              ? [{ label: 'Insert', title: 'Insert the def at the cursor', run: () => insertBrowseDefText(set, def) }]
+              ? [{ label: 'Insert', title: 'Insert the def at the cursor', run: () => insertLibraryDefText(set, def) }]
               : [importSet],
           });
         }
@@ -7606,14 +7606,14 @@
       for (const [source, paths] of [['snippets', catalog.snippets], ['scores', catalog.scores]]) {
         const snippet = source === 'snippets';
         const loaded = await Promise.all(paths.map(async (path) => {
-          try { return { path, ...(await loadBrowseFile(path)) }; }
+          try { return { path, ...(await loadLibraryFile(path)) }; }
           catch (e) { log('Library: ' + e.message, 'err'); return null; }
         }));
         for (const f of loaded.filter(Boolean)) {
           const dir = f.path.replace(/\/[^/]*$/, '');
           const file = { path: f.path, text: f.text, snippet };
           const open = { label: 'Open', title: 'Open in the editor, replacing what is there',
-            run: () => openBrowseScore(f.path, browseCompileName(file)) };
+            run: () => openLibraryScore(f.path, libraryCompileName(file)) };
           items.push({
             key: f.path,
             source,
@@ -7622,10 +7622,10 @@
             name: f.path.split('/').pop().replace(/\.mmlisp$/, ''),
             kind: snippet ? 'snippet' : 'score',
             about: snippet ? snippetAbout(f.path, f.about) : f.about,
-            audition: () => toggleBrowseScorePreview(file),
+            audition: () => toggleLibraryScorePreview(file),
             keys: null,
             actions: snippet
-              ? [{ label: 'Insert', title: 'Insert at the cursor (its imports go to the top)', run: () => insertBrowseSnippet(file) }, open]
+              ? [{ label: 'Insert', title: 'Insert at the cursor (its imports go to the top)', run: () => insertLibrarySnippet(file) }, open]
               : [open],
           });
         }
@@ -7636,15 +7636,15 @@
     // A set is read straight from its source: every top-level (def …) becomes a
     // row, classified the way the FM panel already classifies the def under the
     // cursor.
-    async function loadBrowseSet(path) {
-      const cached = _browseSetCache.get(path);
+    async function loadLibrarySet(path) {
+      const cached = _librarySetCache.get(path);
       if (cached) return cached;
-      const entry = browseSetFromText(path, await fetchText(path));
-      _browseSetCache.set(path, entry);
+      const entry = librarySetFromText(path, await fetchText(path));
+      _librarySetCache.set(path, entry);
       return entry;
     }
 
-    function browseSetFromText(path, text) {
+    function librarySetFromText(path, text) {
       const defs = [];
       const roots = parse(text);
       for (const node of roots) {
@@ -7688,14 +7688,14 @@
     // its imports read `presets/…`, so the text resolves the same way when it
     // is played from here, opened, or pasted into the score in the editor. An
     // example score keeps its own folder (its imports are relative to it).
-    function browseCompileName(file) {
+    function libraryCompileName(file) {
       return file.snippet ? file.path.split('/').pop() : file.path;
     }
 
     // The leading comment block is the file's description; the first sentence
     // of it is what the note line shows.
-    async function loadBrowseFile(path) {
-      const cached = _browseFileCache.get(path);
+    async function loadLibraryFile(path) {
+      const cached = _libraryFileCache.get(path);
       if (cached) return cached;
       const text = await fetchText(path);
       const lead = [];
@@ -7706,7 +7706,7 @@
       }
       const about = lead.join(' ').replace(/\s+/g, ' ').trim();
       const entry = { text, about };
-      _browseFileCache.set(path, entry);
+      _libraryFileCache.set(path, entry);
       return entry;
     }
 
@@ -7718,11 +7718,11 @@
     const PREVIEW_GAP_SEC = 0.02;          // key-off before the slot ends
     const PREVIEW_MIDI = 60;
 
-    function previewBrowseDef(set, def) {
-      if (def.kind === 'fm') return previewBrowseFm(def);
-      if (def.kind === 'pcm') return previewBrowsePcm(set, def);
-      if (def.kind === 'macro') return previewBrowseMacro(set, def);
-      setBrowseNote(`${def.name} is not a voice, a sample or a macro \u2014 nothing to sound.`);
+    function previewLibraryDef(set, def) {
+      if (def.kind === 'fm') return previewLibraryFm(def);
+      if (def.kind === 'pcm') return previewLibraryPcm(set, def);
+      if (def.kind === 'macro') return previewLibraryMacro(set, def);
+      setLibraryNote(`${def.name} is not a voice, a sample or a macro \u2014 nothing to sound.`);
     }
 
     // The completion list's audition (↑ / ↓ over a voice or sample): the Library's
@@ -7731,30 +7731,30 @@
     async function auditionName(d) {
       let set;
       try {
-        if (d.set) set = await loadBrowseSet(d.set);
-        else if (d.path) set = browseSetFromText(d.path, _importSources.get(d.path) ?? '');
-        else set = browseSetFromText(null, editorView.state.doc.toString());
+        if (d.set) set = await loadLibrarySet(d.set);
+        else if (d.path) set = librarySetFromText(d.path, _importSources.get(d.path) ?? '');
+        else set = librarySetFromText(null, editorView.state.doc.toString());
       } catch { return; }
       const def = set.defs.find((x) => x.name === d.name);
       // A score's own sample resolves its :file against the score's folder,
       // which the preview's stand-in score does not have.
       if (!def || (def.kind === 'pcm' && !set.path)) return;
-      previewBrowseDef(set, def);
+      previewLibraryDef(set, def);
     }
 
     // Cancel whatever the panel has in flight. The FM run is a JS timer; the
     // PCM hit is already queued inside the worklet, so only a flush recalls it
     // (safe here because during playback a sample preview plays on the side
     // player instead, which stops on its own).
-    function stopBrowsePreview() {
-      stopBrowseScorePreview();
-      for (const t of _browsePreviewTimers) clearTimeout(t);
-      _browsePreviewTimers = [];
+    function stopLibraryPreview() {
+      stopLibraryScorePreview();
+      for (const t of _libraryPreviewTimers) clearTimeout(t);
+      _libraryPreviewTimers = [];
       previewNoteOff(CURSOR_DEF_PREVIEW_CH);
       _sideAudition?.stop();
-      if (_browsePcmSounding) {
+      if (_libraryPcmSounding) {
         workletNode?.port.postMessage({ type: 'flush' });
-        _browsePcmSounding = false;
+        _libraryPcmSounding = false;
       }
     }
 
@@ -7763,20 +7763,20 @@
     // `:key` voice sounds at its key. A timer rather than a scheduled write, so
     // a second press can cancel the first without flushing a song that may be
     // playing underneath.
-    async function previewBrowseFm(def) {
+    async function previewLibraryFm(def) {
       const midi = def.regs.key ?? PREVIEW_MIDI;
       if (!(await initAudio())) return;
       if (!claimPreviewPlayer()) {
-        setBrowseNote(`${def.name} \u2014 not sounded while the MMLispDRV backend plays`);
+        setLibraryNote(`${def.name} \u2014 not sounded while the MMLispDRV backend plays`);
         return;
       }
       applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH, def.regs);
       _openingVoiceOn = null;
-      stopBrowsePreview();
+      stopLibraryPreview();
       previewNoteOn(CURSOR_DEF_PREVIEW_CH, midi);
-      _browsePreviewTimers.push(setTimeout(
+      _libraryPreviewTimers.push(setTimeout(
         () => previewNoteOff(CURSOR_DEF_PREVIEW_CH), (PREVIEW_NOTE_SEC - PREVIEW_GAP_SEC) * 1000));
-      setBrowseNote(`${def.name} \u2014 c4${def.regs.key != null ? ` (:key ${def.regs.key})` : ''} on ${channelLabel(CURSOR_DEF_PREVIEW_CH)}`);
+      setLibraryNote(`${def.name} \u2014 c4${def.regs.key != null ? ` (:key ${def.regs.key})` : ''} on ${channelLabel(CURSOR_DEF_PREVIEW_CH)}`);
     }
 
     // A sample has no register form to push: it is bytes in a bank. So compile
@@ -7784,12 +7784,12 @@
     // that bank: the export's own bake. The score's bank is displaced until the
     // next Play or Build re-syncs it, which is why this waits for playback to
     // stop.
-    async function previewBrowsePcm(set, def) {
+    async function previewLibraryPcm(set, def) {
       if (!(await initAudio())) return;
-      stopBrowsePreview();
+      stopLibraryPreview();
       try {
         const source = `(import "${set.path}")\n(pcm1 :oct 4 :len 4 ${def.name} c)\n`;
-        const { ir, diagnostics } = compileMMLisp(source, 'browse-preview.mmlisp', {
+        const { ir, diagnostics } = compileMMLisp(source, 'library-preview.mmlisp', {
           imports: new Map([[set.path, set.text]]),
         });
         const errors = diagnostics.filter((d) => d.severity === 'error');
@@ -7801,7 +7801,7 @@
         if (_fmLiveRaf != null) {
           const blob = bakeAuditionBlob(ir, samples, def.name, PREVIEW_MIDI);
           playAuditionBlob(blob, false, 15);
-          setBrowseNote(`${def.name} \u2014 c4, ${blob.data.length} bytes baked`);
+          setLibraryNote(`${def.name} \u2014 c4, ${blob.data.length} bytes baked`);
           return;
         }
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
@@ -7816,11 +7816,11 @@
           kind: 'on', voice: 0, track: 0, sample: def.name,
           midi: PREVIEW_MIDI, mode: 'shot', vel: 15,
         });
-        _browsePcmSounding = true;
-        setBrowseNote(`${def.name} \u2014 c4, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
+        _libraryPcmSounding = true;
+        setLibraryNote(`${def.name} \u2014 c4, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
       } catch (e) {
         log('Library: ' + e.message, 'err');
-        setBrowseNote(String(e.message));
+        setLibraryNote(String(e.message));
       }
     }
 
@@ -7828,35 +7828,35 @@
     // note on sqr1 \u2014 the channel with no voice of its own, which is what an
     // envelope is for \u2014 and a rest, so a release section is heard too. It
     // plays on the Library's own player, as a score does.
-    async function previewBrowseMacro(set, def) {
+    async function previewLibraryMacro(set, def) {
       const source = defSourceText(set, def) + `\n(sqr1 :oct 4 :len 2 :vel 15 ${def.name} c _)\n`;
-      if (await playBrowseSource(source, 'browse-preview.mmlisp', 'macro:' + def.name))
-        setBrowseNote(`${def.name} \u2014 c4 on sqr1`);
+      if (await playLibrarySource(source, 'library-preview.mmlisp', 'macro:' + def.name))
+        setLibraryNote(`${def.name} \u2014 c4 on sqr1`);
     }
 
     // A SCORE PLAYS ON ITS OWN PLAYER, never through the editor's: the song
     // being written keeps its IR, its source map and its mixer state, and the
     // next Play or Build puts its PCM bank back (as a sample preview does).
     // The chip is one chip, so the song stops first.
-    async function toggleBrowseScorePreview(file) {
-      if (_browseScorePlayer && _browseScorePath === file.path) {
-        stopBrowseScorePreview();
-        setBrowseNote('Stopped.');
+    async function toggleLibraryScorePreview(file) {
+      if (_libraryScorePlayer && _libraryScorePath === file.path) {
+        stopLibraryScorePreview();
+        setLibraryNote('Stopped.');
         return;
       }
-      const ir = await playBrowseSource(file.text, browseCompileName(file), file.path);
+      const ir = await playLibrarySource(file.text, libraryCompileName(file), file.path);
       if (!ir) return;
       const sliders = ir.metadata?.vals?.some((v) => v.public)
         ? ' Its sliders appear once you open it.' : '';
-      setBrowseNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
+      setLibraryNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
     }
 
     // Compile `text` under `name` and play it on the Library's player; `key` is
     // what a second \u25b6 on the same thing stops. Returns the IR, or null when
     // nothing played \u2014 the note then says why.
-    async function playBrowseSource(text, name, key) {
+    async function playLibrarySource(text, name, key) {
       if (!(await initAudio())) return null;
-      stopBrowsePreview();
+      stopLibraryPreview();
       if (player) onStop();
       try {
         const imports = await readImportSources(text, name);
@@ -7864,7 +7864,7 @@
         const errors = diagnostics.filter((d) => d.severity === 'error');
         if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
         if (!ir.tracks.some((t) => t.events.some((e) => /NOTE_ON$/.test(e.cmd)))) {
-          setBrowseNote('No tracks to play.');
+          setLibraryNote('No tracks to play.');
           return null;
         }
         const p = new IRPlayer(writeToWorklet);
@@ -7873,22 +7873,22 @@
         p.setOnHold((t) => logHold(ir, t));
         await syncPcmBankToWorklet(ir, p);
         p.play(audioCtx);
-        _browseScorePlayer = p;
-        _browseScorePath = key;
+        _libraryScorePlayer = p;
+        _libraryScorePath = key;
         return ir;
       } catch (e) {
         log('Library: ' + e.message, 'err');
-        setBrowseNote(String(e.message));
+        setLibraryNote(String(e.message));
         return null;
       }
     }
 
-    function stopBrowseScorePreview() {
-      if (!_browseScorePlayer) return;
-      _browseScorePlayer.stop();
+    function stopLibraryScorePreview() {
+      if (!_libraryScorePlayer) return;
+      _libraryScorePlayer.stop();
       workletNode?.port.postMessage({ type: 'flush' });
-      _browseScorePlayer = null;
-      _browseScorePath = null;
+      _libraryScorePlayer = null;
+      _libraryScorePath = null;
     }
 
     function bankBytesUsed(bank) {
@@ -7907,12 +7907,12 @@
       editorView.focus();
     }
 
-    function insertBrowseImport(path) {
+    function insertLibraryImport(path) {
       const doc = editorView.state.doc.toString();
       const line = `(import "${path}")`;
-      if (doc.includes(line)) { setBrowseNote('Already imported.'); return; }
+      if (doc.includes(line)) { setLibraryNote('Already imported.'); return; }
       editorView.dispatch({ changes: { from: 0, to: 0, insert: line + '\n' } });
-      setBrowseNote(`Inserted ${line}`);
+      setLibraryNote(`Inserted ${line}`);
       showInserted(0, line.length);
     }
 
@@ -7924,18 +7924,18 @@
       return lines.slice(from, to + 1).join('\n');
     }
 
-    function insertBrowseDefText(set, def) {
+    function insertLibraryDefText(set, def) {
       const text = defSourceText(set, def);
       const { from, to } = editorView.state.selection.main;
       editorView.dispatch({ changes: { from, to, insert: text + '\n' } });
-      setBrowseNote(`Inserted ${def.name} (${text.split('\n').length} lines)`);
+      setLibraryNote(`Inserted ${def.name} (${text.split('\n').length} lines)`);
       showInserted(from, from + text.length);
     }
 
     // A snippet's imports go to the top of the score, each once; the rest of
     // it lands at the cursor. Both edits are one transaction, so one undo
     // takes the whole snippet back out.
-    function insertBrowseSnippet(file) {
+    function insertLibrarySnippet(file) {
       const importLine = /^\s*\(import\s+"([^"]+)"\)\s*(;.*)?$/;
       const lines = file.text.split('\n');
       const have = new Set(collectImports(editorView.state.doc.toString()));
@@ -7950,7 +7950,7 @@
       changes.push({ from: sel.from, to: sel.to, insert: body });
       editorView.dispatch({ changes });
       const name = file.path.split('/').pop();
-      setBrowseNote(`Inserted ${name}` + (imports.length ? ` and ${imports.length} import${imports.length > 1 ? 's' : ''}` : ''));
+      setLibraryNote(`Inserted ${name}` + (imports.length ? ` and ${imports.length} import${imports.length > 1 ? 's' : ''}` : ''));
       const at = sel.from + head.length; // the imports went in above it
       showInserted(at, at + body.trimEnd().length);
     }
@@ -7959,10 +7959,10 @@
     // imports and its samples' `:file` resolve against its own folder rather
     // than the site root (docs/language.md §9.2, §16). A snippet is written
     // for the root, so it opens under its bare name, like a new score.
-    async function openBrowseScore(path, compileName = path) {
+    async function openLibraryScore(path, compileName = path) {
       try {
         const src = await fetchText(path);
-        stopBrowsePreview();
+        stopLibraryPreview();
         clearSourceDir();
         _sourceHandle = null;
         _sourceFileName = path.split('/').pop();
@@ -7976,7 +7976,7 @@
         log('Opened ' + path, 'info');
       } catch (e) {
         log('Library: ' + e.message, 'err');
-        setBrowseNote(String(e.message));
+        setLibraryNote(String(e.message));
       }
     }
 
@@ -8861,7 +8861,7 @@
       const seq = ++_pcmAuditionSeq;
       try {
         const { ir, diagnostics } = libSample
-          ? compileMMLisp(`(import "${libSample.set.path}")\n`, 'browse-preview.mmlisp',
+          ? compileMMLisp(`(import "${libSample.set.path}")\n`, 'library-preview.mmlisp',
             { imports: new Map([[libSample.set.path, libSample.set.text]]) })
           : compileMMLisp(editorView.state.doc.toString(), _lastFileName, { imports: _importSources });
         if (part) {

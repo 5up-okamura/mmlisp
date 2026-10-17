@@ -42,5 +42,4 @@ Rules:
   not to re-propose, why the value machine and score-written values have
   their shape, and one known A/B divergence.
 - [live-app.md](live-app.md) — **the live app**: what was decided against
-  (not to be proposed again), working lessons, and the open development
-  items.
+  (not to be proposed again) and working lessons.

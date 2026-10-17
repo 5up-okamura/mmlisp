@@ -23,7 +23,7 @@ const packDir = path.join(root, "live/src/i18n");
 
 const hash = (text) => createHash("sha1").update(text).digest("hex").slice(0, 8);
 
-// The snippet's description, as live/index.html's loadBrowseFile reads it.
+// The snippet's description, as live/index.html's loadLibraryFile reads it.
 function leadingComment(file) {
   const lead = [];
   for (const line of fs.readFileSync(file, "utf8").split("\n")) {
