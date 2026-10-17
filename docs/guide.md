@@ -1599,8 +1599,10 @@ selected has its other occurrences tinted, so the next press is never a guess.
 Cursors can also be placed by hand: `Alt+click` — or `Cmd/Ctrl+click` — puts one
 wherever you click, and clicking an existing cursor the same way takes it back
 out, so overshooting costs nothing. `Cmd/Ctrl+Alt+↑` / `↓` adds one on the line
-above / below, which turns a column of note lengths into a single edit. `Esc`
-collapses them all back to one cursor.
+above / below, which turns a column of note lengths into a single edit. On a
+touch screen, with no key to hold, **Edit > Add Cursor Above / Below** does the
+same, as VS Code's Selection menu does on a tablet. `Esc` collapses them all
+back to one cursor.
 
 Over a value token, `Alt` is shared with the scrub (§22), and the press decides
 which one you meant: click and it places a cursor, drag and it scrubs the

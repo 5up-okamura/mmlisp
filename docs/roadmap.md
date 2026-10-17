@@ -68,8 +68,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 - A score's own `def-pcm` is not auditioned from the voice picker: its `:file`
   is relative to the score's folder, which the picker's stand-in score lacks.
-- Touch has no add-cursor gesture: there is no modifier, and long-press is the
-  value popup.
 - Dragging the piano roll's background to seek (in the mockup, left out; not
   decided).
 

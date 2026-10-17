@@ -280,6 +280,16 @@
           <span>Select All Occurrences</span>
           <span class="menu-item-shortcut" id="selectAllOccurrencesShortcut"></span>
         </button>
+        <button class="menu-item" onclick="addCursorAboveAction();closeMenus()"
+                title="Add a cursor on the line above the topmost one, so one edit types on several lines.">
+          <span>Add Cursor Above</span>
+          <span class="menu-item-shortcut" id="addCursorAboveShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="addCursorBelowAction();closeMenus()"
+                title="Add a cursor on the line below the bottommost one, so one edit types on several lines.">
+          <span>Add Cursor Below</span>
+          <span class="menu-item-shortcut" id="addCursorBelowShortcut"></span>
+        </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleCommentAction();closeMenus()">
           <span>Toggle Comment</span>
@@ -3655,6 +3665,10 @@
     window.findReplaceAction = () => { openSearchPanel(editorView); };
     window.selectNextOccurrenceAction = () => { selectNextOccurrence(editorView); editorView.focus(); };
     window.selectAllOccurrencesAction = () => { selectSelectionMatches(editorView); editorView.focus(); };
+    // A touch screen has no modifier to add a cursor with: these are its way,
+    // as VS Code's Selection menu is on a tablet.
+    window.addCursorAboveAction = () => { addCursorVertically(editorView, false); editorView.focus(); };
+    window.addCursorBelowAction = () => { addCursorVertically(editorView, true); editorView.focus(); };
     window.importDefleMaskDmp = importDefleMaskDmp;
     window.importFui = importFui;
     window.importTfi = importTfi;
@@ -3681,6 +3695,8 @@
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
       if (key === 'Mod-Shift-l') return isMac ? '⌘⇧L' : 'Ctrl+Shift+L';
+      if (key === 'Mod-Alt-ArrowUp') return isMac ? '⌘⌥↑' : 'Ctrl+Alt+Up';
+      if (key === 'Mod-Alt-ArrowDown') return isMac ? '⌘⌥↓' : 'Ctrl+Alt+Down';
       if (key === 'Mod-Alt-Shift-l') return isMac ? '⌘⌥⇧L' : 'Ctrl+Alt+Shift+L';
       if (key === 'Mod-z') return isMac ? '⌘Z' : 'Ctrl+Z';
       if (key === 'Mod-Shift-z') return isMac ? '⌘⇧Z' : 'Ctrl+Shift+Z';
@@ -3700,6 +3716,8 @@
         ['findShortcut', 'Mod-f'],
         ['selectNextOccurrenceShortcut', 'Mod-d'],
         ['selectAllOccurrencesShortcut', 'Mod-Shift-l'],
+        ['addCursorAboveShortcut', 'Mod-Alt-ArrowUp'],
+        ['addCursorBelowShortcut', 'Mod-Alt-ArrowDown'],
         ['buildShortcut', 'Mod-b'],
         ['libraryShortcut', 'Mod-k'],
         ['paramsShortcut', 'Mod-j'],
