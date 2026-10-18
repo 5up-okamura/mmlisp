@@ -1118,12 +1118,14 @@ length. The other way round, the notes written at the cursor (or inside the
 selection) are drawn solid in the roll, every time they play — a note in a
 def lights up wherever the def is used.
 
-The grid marks quarter notes from the top of the song. MMLisp has no meter,
-and `|` goes wherever each track's writer wants it, so the roll draws no
-bars. **1× 2× 4×** zooms; a wider pane shows more of the song at the same
-scale, and zoomed in, eighths and sixteenths are marked too. On a phone the
-zoom control can sit over the top note; scrolling the roll shows it. The roll
-shows the last build: after an edit, play or Build to bring it up to date.
+The grid marks quarter notes from the top of the song. MMLisp has no meter, and
+`|` goes wherever each track's writer wants it, so the roll draws no bars.
+**1× 2× 4×** zooms; a wider pane shows more of the song at the same scale, and
+zoomed in, eighths and sixteenths are marked too. On a phone the zoom control
+can sit over the top note; scrolling the roll shows it. Drag the roll sideways
+to move through the song, as the TIME bar does: playing, it plays on from where
+you let go; stopped or paused, it sets where Play starts. The roll shows the
+last build: after an edit, play or Build to bring it up to date.
 
 ### Playing from a point
 
