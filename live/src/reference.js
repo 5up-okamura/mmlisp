@@ -305,10 +305,10 @@ export const REFERENCE = [
   },
   {
     name: '(let …)', aliases: ['let'], cat: 'defs', section: '§7.2', tracks: null,
-    syntax: '(let ((name expr) …) body …)',
+    syntax: '(let [name expr …] body …)',
     summary: 'Local values for the body, evaluated at compile time.',
-    insert: '(let ((root 60)) (note root) (note (+ root 7)))',
-    example: '(fm1 :len 8 (let ((root 60)) (note root) (note (+ root 4)) (note (+ root 7))))',
+    insert: '(let [root 60] (note root) (note (+ root 7)))',
+    example: '(fm1 :len 8 (let [root 60] (note root) (note (+ root 4)) (note (+ root 7))))',
   },
   {
     name: '(note …)', aliases: ['note', 'midi'], cat: 'defs', section: '§7.3', tracks: null,

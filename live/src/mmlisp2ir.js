@@ -29,6 +29,7 @@ import {
   evalValue,
   evalScalarValue,
   evalLet,
+  letPairs,
   evalLengthValue,
   lookupBound,
 } from "./mmlisp-eval.js";
@@ -5567,21 +5568,21 @@ function expandNode(node, defs, paramDefs, depth, diagnostics) {
   // A `let` binding's name is a new name, not a reference: it is not expanded,
   // and naming a snippet with it is E_LET_SHADOWS_DEF (a voice or a sample is
   // caught where the let binds, mmlisp-eval.js).
-  if (head === "let" && node.items[1]?.kind === "list") {
-    const bindings = node.items[1].items.map((b) => {
-      const pair = b.kind === "list" ? b.items.filter((n) => n.kind !== "comment") : null;
-      const name = pair?.[0]?.kind === "atom" ? pair[0].value : null;
-      if (!name) return expandNode(b, defs, paramDefs, depth, diagnostics)[0] ?? b;
-      if (defs.has(name) || paramDefs.has(name))
-        pushDiag(diagnostics, "error", "E_LET_SHADOWS_DEF",
-          `let name '${name}' shadows a def`, nodeSrc(pair[0]), null);
-      return {
-        ...b,
-        items: b.items.flatMap((n) => (n === pair[0] ? [n] : expandNode(n, defs, paramDefs, depth, diagnostics))),
-      };
-    });
-    const rest = node.items.slice(2).flatMap((n) => expandNode(n, defs, paramDefs, depth, diagnostics));
-    return [{ ...node, items: [node.items[0], { ...node.items[1], items: bindings }, ...rest] }];
+  // A malformed vector is left as written, for the let's own E_LET_BINDING.
+  if (head === "let" && node.items[1]?.kind === "list" && node.items[1].bracket === "[]") {
+    let pairs = null;
+    try { pairs = letPairs(node.items[1]); } catch (_) {}
+    if (pairs) {
+      const names = new Set(pairs.map(([n]) => n).filter((n) => n.kind === "atom"));
+      for (const n of names)
+        if (defs.has(n.value) || paramDefs.has(n.value))
+          pushDiag(diagnostics, "error", "E_LET_SHADOWS_DEF",
+            `let name '${n.value}' shadows a def`, nodeSrc(n), null);
+      const bindings = node.items[1].items.flatMap((n) =>
+        names.has(n) ? [n] : expandNode(n, defs, paramDefs, depth, diagnostics));
+      const rest = node.items.slice(2).flatMap((n) => expandNode(n, defs, paramDefs, depth, diagnostics));
+      return [{ ...node, items: [node.items[0], { ...node.items[1], items: bindings }, ...rest] }];
+    }
   }
 
   const newItems = [];

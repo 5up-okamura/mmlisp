@@ -331,7 +331,7 @@ root note or a shared depth you tweak in one place:
 
 ```lisp
 (fm1 :len 8
-  (let ((root 60))
+  (let [root 60]
     (note root) (note (+ root 4)) (note (+ root 7))))   ; c e g, from one root
 ```
 

@@ -608,28 +608,29 @@ chip within the same frame; a later batched flush collapses them).
 
 ### 7.2 `let` — local bindings
 
-`(let ((name value) …) body…)` binds names for its body — sequential
+`(let [name value …] body…)` binds names for its body — sequential
 (`let*`: later bindings see earlier ones), lexically scoped, nestable.
 
 ```lisp
 (fm1 :len 8
-  (let ((root 60))                       ; a value, not a phrase
+  (let [root 60]                         ; a value, not a phrase
     (note root) (note (+ root 4)) (note (+ root 7)))   ; c e g
-  (let ((amp 40))
+  (let [amp 40]
     (macro :pitch (* (sin :from -1 :to 1 :len 4f) amp))))
 ```
 
 - **Item position** (in the note stream): the body compiles in place — sticky
   state changes inside behave as if unwrapped.
-- **Value position**: the body is one expression (`:tl1 (let ((x 30)) (+ x 5))`);
+- **Value position**: the body is one expression (`:tl1 (let [x 30] (+ x 5))`);
   a bare bound name is also a value (`:vel v`).
 - **Bindable**: numbers, curves and `$` expressions (a phrase/stream cannot be
   bound — use a `def`, §9). A `$` expression stays a runtime value, lowered
-  where it is written (§7.1.2): `(let ((lvl (* $a 2))) :tl1 lvl …)`. A
+  where it is written (§7.1.2): `(let [lvl (* $a 2)] :tl1 lvl …)`. A
   self-read `$<param>` needs the parameter, so it binds only in a value-position
-  `let` (`:tl1 (let ((x $tl1)) (+ x 3))`).
-- **Bindings** are a list of `(name expr)` pairs; anything else is
-  `E_LET_BINDING`.
+  `let` (`:tl1 (let [x $tl1] (+ x 3))`).
+- **Bindings** are one vector of names and values in turn, as in Clojure:
+  `[root 60 amp 40]`. A name without its value, or a list in place of the
+  vector (`((root 60))`), is `E_LET_BINDING`.
 - **Names** must not be note/length tokens (so single letters `a`–`g`, `_`,
   `>`, `4t`, `v+` … are rejected — `E_LET_NAME`) and must not shadow a def
   (`E_LET_SHADOWS_DEF`). Use multi-letter words (`root`, `amp`, `base`).
@@ -1292,7 +1293,7 @@ absolute count; an integer parameter (`:phase`, `:duty`, `:skew`, `:octaves`,
 `$slot` (§8), but not an expression with a `$` in it (`E_CURVE_PARAM_RUNTIME`).
 
 ```lisp
-(fm1 (let ((top 40))
+(fm1 (let [top 40]
        (macro :tl1 (sin :from 0 :to top :len (* 2 4) :phase (/ 256 4))))
      c e g)
 ```

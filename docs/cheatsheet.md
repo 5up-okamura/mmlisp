@@ -169,7 +169,7 @@ start written (`40..0`, not `:to 0` alone).
 | `(echo 3 :vel+ -2)` | replay the last note 3 times, quieter; takes time — the mucom import's `\=`; for an echo effect write `(delay …)` (§12) |
 | `(delay 2 :vel* 0.6 :time 1/8)` | echo copies of every following note in the gaps (§12) |
 | `(glide 8)` … `(glide none)` | portamento into each note (§14) |
-| `(let ((root 60)) (note root) (note (+ root 7)))` | computed pitches, MIDI numbers (§7.2, §7.3) |
+| `(let [root 60] (note root) (note (+ root 7)))` | computed pitches, MIDI numbers (§7.2, §7.3) |
 | `:tl1 (+ 20 10)`, `(min 7 5)` | compile-time arithmetic (§7.1) |
 | `:tl1 (+ 40 (* $bright 2))` | runtime expression over a slot (§7.1.2) |
 

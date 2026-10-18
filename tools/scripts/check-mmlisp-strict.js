@@ -90,13 +90,18 @@ async function main() {
     },
     {
       label: "curve params from compile-time values",
-      src: "(def-val v 5)\n(fm1 (let ((n 20) (w 2)) (macro :tl1 [(wait (* w 8)) (sin :from $v :to (* n 2) :len (+ 4 4) :phase (+ 60 4) :rate n)]) :tl2 (linear :from 0 :to n :len (frames 12)) c))",
+      src: "(def-val v 5)\n(fm1 (let [n 20 w 2] (macro :tl1 [(wait (* w 8)) (sin :from $v :to (* n 2) :len (+ 4 4) :phase (+ 60 4) :rate n)]) :tl2 (linear :from 0 :to n :len (frames 12)) c))",
       expected: [],
     },
     {
       label: "curve param expression with a $",
-      src: "(def-val v 5)\n(fm1 (macro :tl1 (linear :from 0 :to (+ $v 4) :len 8)) c (let ((x (* $v 2))) :tl1 (linear :from 0 :to x :len 8) c))",
+      src: "(def-val v 5)\n(fm1 (macro :tl1 (linear :from 0 :to (+ $v 4) :len 8)) c (let [x (* $v 2)] :tl1 (linear :from 0 :to x :len 8) c))",
       expected: ["E_CURVE_PARAM_RUNTIME", "E_CURVE_PARAM_RUNTIME"],
+    },
+    {
+      label: "let binds as a [name expr …] vector",
+      src: "(def riff c d)\n(fm1 :len 8 (let [root 60 up (+ root 2)] (note root) (note up)) :tl1 (let [x 30] (+ x 5)) c (let ((old 1)) c) (let [odd 1 two] c) (let [riff 60] c))",
+      expected: ["E_LET_SHADOWS_DEF", "E_LET_BINDING", "E_LET_BINDING"],
     },
     {
       label: "echo before any note",

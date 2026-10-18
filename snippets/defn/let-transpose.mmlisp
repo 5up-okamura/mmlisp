@@ -9,6 +9,6 @@
 (fm1 :tempo 110 gm-piano
   (triad 60) (minor 57) (triad 53) (triad 55)
   ; the same four bars, a whole step up
-  (let ((up 2))
+  (let [up 2]
     (triad (+ 60 up)) (minor (+ 57 up)) (triad (+ 53 up)) (triad (+ 55 up)))
   :len 2 (note 62))
