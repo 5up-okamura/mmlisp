@@ -1,0 +1,17 @@
+; M4 gate: what a pcm note's gate does to its sound, per :mode
+; (pcm-loop-gate.mjs checks the RETARGET each note's gate sends).
+;   1  :mode gate cuts the sound at the gate: END at the window's start,
+;      WRAP to silence
+;   2  :mode shot plays on: its gate sends nothing
+;   3  :mode loop releases at the gate: END to :pcm-end, WRAP to silence
+;   4  a gate note at full gate is cut at its end, before the rest
+;   5  a tied gate note is cut at the gate of the whole tied length, inside
+;      the tie
+(def-score :pcm-voices 1)
+(def-pcm voice :file "pcmbank.wav")
+(pcm1 voice :tempo 120 :oct 4 :len 4 :vel 15
+  :mode gate :gate 8 c
+  :mode shot c
+  :mode loop c
+  :mode gate :gate 4 c _
+  :gate 4. c ~ c)

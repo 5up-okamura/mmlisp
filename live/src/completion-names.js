@@ -62,4 +62,4 @@ export const AC_PARAMS = [
   ...AC_FM_OP_PARAMS,
 ];
 
-export const AC_MODE_VALUES = ['shot', 'loop'];
+export const AC_MODE_VALUES = ['shot', 'loop', 'gate'];

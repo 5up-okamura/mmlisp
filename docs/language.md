@@ -163,7 +163,7 @@ note keeps its own length, so `~` takes none.
   second's length — one attack, held longer. Equivalent to a longer length token.
   On a PCM track too: the same sample at the same pitch is not struck again —
   a shot plays on, a `:mode loop` note keeps looping and releases at the gate
-  of the whole tied length. A slur, or another sample, strikes anew.
+  of the whole tied length, and a `:mode gate` note is cut there. A slur, or another sample, strikes anew.
 - **Different pitch → slur (legato).** `c ~ e` moves the frequency to `e`
   **without re-keying** — the FM envelope (or the PSG tone) carries over from
   `c`, no new attack. Chains: `c ~ d ~ e` is one attack gliding through all three.
@@ -296,7 +296,7 @@ keywords at the form's first tick.
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
-| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
+| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:shuffle` | 51–90 or `none`           | Swing ratio (§5.2)                                       |
 | `:shuffle-base` | length token         | The swung length (default: eighth, §5.2)                 |
@@ -1767,7 +1767,8 @@ is a place in the wave rather than a place in the bar:
   must keep their order — `pcm-start ≤ loop-start < loop-end ≤ pcm-end` —
   or it is `E_SAMPLE_RANGE`; on a track they are clamped into it.
 
-A **shot** plays the range once and ignores the loop. A **`loop` note** starts
+A **shot** plays the range once and ignores the loop; a **`gate` note** plays
+it the same way and is cut at its gate. A **`loop` note** starts
 at `:pcm-start`, plays on to `:loop-end`, repeats `[:loop-start, :loop-end)`
 while it is held, and at its note-off plays on from where it is to `:pcm-end`
 and parks (*Playback*, below). `:pcm-end` and `:pcm-len` both set the range's
@@ -1971,10 +1972,22 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   until the next `:mode` — and it is the note, not the sample, that decides:
   `shot` (the default) plays the note's range once; `loop` plays the attack,
   cycles the range until KEY-OFF (a `PCM_NOTE_OFF` at the gate), then plays
-  the release tail to the sample's end. A note on a def with no range plays —
-  or loops — the whole sample. Write `:mode shot` to go back.
+  the release tail to the sample's end; `gate` plays the range once, as a
+  shot, and stops it at the gate — the note's end at full gate. A note on a
+  def with no range plays — or loops — the whole sample. Write `:mode shot`
+  to go back.
   > A `shot` plays to its end regardless of the note's `length` / `gate`;
-  > only `loop` mode's sound honors KEY-OFF (a shot's macros do, below).
+  > `loop` releases at KEY-OFF and `gate` is cut there (a shot's macros take
+  > their release there too, below).
+  > A `gate` note's sound ends at its gate, so its macros' release region is
+  > not heard: a fade before the cut is written inside the gate. The cut
+  > lands at the voice's next block edge after the gate's frame — and, as
+  > when a note cuts the one before it, it can click.
+
+  ```lisp
+  (def-pcm hat :file "sounds/hat.wav")
+  (pcm1 hat :mode gate :len 16 :gate 32 c c c :gate 16 c)   ; a closed hat, then an open one
+  ```
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
 - `:vel`, `:vol`, `:master` compose through the standard level stack (§6), but a
   PCM voice's resolution is COARSER than FM's or PSG's: the mixer attenuates by
@@ -2001,7 +2014,7 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
     c (macro :step 1/32 :keyon [1 1 1 1 1 1 1 1]) (macro :vel (linear 8..15 :len 4f)) c)
   ```
 - A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; a word that
-  names no def is `E_UNKNOWN_ATOM`. `:mode shot`/`loop` and
+  names no def is `E_UNKNOWN_ATOM`. `:mode shot`/`loop`/`gate` and
   the range keys on any other channel (fm6 included — it is FM only) are
   `E_UNSUPPORTED_TARGET`. A def-pcm key it does not have is
   `E_UNKNOWN_KEYWORD`; a range that is not a length, or ends at or before it

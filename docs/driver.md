@@ -1521,7 +1521,10 @@ and, inside it, a LOOP; whether it loops is the NOTE's (`:mode loop`, bit 7 of
 the opcode's note byte), not the sample's. A shot plays its range once and
 parks. A looping note starts at the range's start, runs into the loop and
 repeats it; its `PCM_NOTE_OFF` becomes a `PCM_RETARGET` to the range's end
-with WRAP at silence, so the tail plays out.
+with WRAP at silence, so the tail plays out. A `:mode gate` note plays as a
+shot; its `PCM_NOTE_CUT` becomes a `PCM_RETARGET` with END at the window's
+start (`$8000`, which every pointer is past) and WRAP at silence, so the voice
+parks at its next block edge (`pcm_cut`).
 
 **fm6.** A score's first PCM note sends `$2B = $80`, and nothing turns the DAC
 off again: a score that plays PCM owns fm6 as the DAC from then on. A score
@@ -1612,7 +1615,7 @@ rides its `PCM_START`, so a note-on composes without a `PCM_VOL` of its own.
 
 **Macros and the key.** The macro engine runs on the three voices as on FM
 and PSG (§13): `:keyon`, `:vel` and `:vol`. A voice is **keyed** from its
-note-on to its key-off — a `PCM_NOTE_OFF`, a REST, the track's end, or the
+note-on to its key-off — a `PCM_NOTE_OFF` or `PCM_NOTE_CUT`, a REST, the track's end, or the
 host's `KEY_OFF` / `STOP_TRACK` — and the key-off is where a macro's release
 region starts. The key-off also releases a loop (above), which is how a
 `:len 0` loop is let go. The compiler emits a shot's `PCM_NOTE_OFF` only when

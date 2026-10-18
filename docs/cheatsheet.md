@@ -82,7 +82,7 @@ eighth), `N.` dotted, `N/M` a fraction of a whole note, `Nt` `Nf` `Nms`.
 | `:tempo` | 120 | BPM, song-wide, from any track; a curve sweeps it |
 | `:pan` | center | `left` `center` `right` (FM) |
 | `:shuffle` | none | 51–90 swing on eighths (§5.2) |
-| `:mode` | | `noise`: noise mode; `pcm`: `shot` / `loop` |
+| `:mode` | | `noise`: noise mode; `pcm`: `shot` / `loop` / `gate` |
 | `:alg :fb :tl1 :ar2 …` | voice | an FM register: value, curve, `none`, `$slot` (§5.1) |
 
 A trailing `+` adds and `*` multiplies: `:vel+ -2`, `:vel* 0.5`, `:tl1+ 5`
@@ -187,7 +187,8 @@ Four points, as lengths or curves, on the def and the track:
 `:pcm-start` ── `:loop-start` ═ `:loop-end` ── `:pcm-end`. A `shot` plays the
 range (`:pcm-*`) once; `:mode loop` plays from `:pcm-start`, repeats the loop
 (`:loop-*`, default: the whole range) while held, and runs on to `:pcm-end`
-after its note-off. `…-len` keeps the length when its start moves.
+after its note-off; `:mode gate` plays the range once and is cut at the gate.
+`…-len` keeps the length when its start moves.
 
 A note's pitch picks a resampled copy, baked into the 32 KB bank — only what
 the score plays is baked. No pitch moves on PCM (`:pitch`, `(glide)`); levels

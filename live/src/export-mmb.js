@@ -1295,12 +1295,12 @@ export function encodeMmb(ir, opts = {}) {
           // Bit 7: the note loops (`:mode loop`). The entry already carries
           // the pitch; the low bits only name it.
           stream.u8((midiNote(a.pitch) & 0x7f) | (a.mode === "loop" ? 0x80 : 0));
-          // A loop note's release — and a shot's key-off, when its macros
-          // listen for one (the compiler emits it then) — is a PCM_NOTE_OFF at
-          // its gate. A gate shorter than the note has to END the note's dur
+          // A loop note's release, a gate note's cut — and a shot's key-off,
+          // when its macros listen for one (the compiler emits it then) — is
+          // a PCM_NOTE_OFF (a gate note's a PCM_NOTE_CUT) at its gate. A gate shorter than the note has to END the note's dur
           // there, or the off waits for the note's end; the rest of the length
           // becomes the REST the next event's syncClock writes.
-          const keysOff = a.mode === "loop" || Object.keys(a).some((k) => MACRO_ARG_KEYS.has(k));
+          const keysOff = a.mode === "loop" || a.mode === "gate" || Object.keys(a).some((k) => MACRO_ARG_KEYS.has(k));
           const gated = keysOff && a.gate > 0 && a.gate < (a.length ?? 0);
           const dur = gated ? a.gate : a.length ?? 0;
           stream.raw(encodeDuration(dur));
@@ -1309,7 +1309,7 @@ export function encodeMmb(ir, opts = {}) {
         }
         case "PCM_NOTE_OFF": {
           syncClock(ev.tick);
-          stream.u8(OPCODE.PCM_NOTE_OFF);
+          stream.u8(ev.args?.mode === "gate" ? OPCODE.PCM_NOTE_CUT : OPCODE.PCM_NOTE_OFF);
           break;
         }
         default:

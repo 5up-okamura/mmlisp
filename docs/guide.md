@@ -961,7 +961,9 @@ note-off runs on to the range's end — attack, sustain, release. Leave the loop
 out and it is the whole range. All six take lengths — `300ms`, `16`, `6t` — on
 the sample def and on the track, and on the track they also take curves. On a
 track they hold for the notes that follow, like any track parameter — and so
-does `:mode loop`, until a `:mode shot`.
+does `:mode loop`, until a `:mode shot`. A shot plays on through its gate;
+**`:mode gate`** plays the range once and is cut at the gate, so `:gate` is
+how long it sounds — a hi-hat closed short and opened long on one channel.
 
 One thing it can do that nothing else on this machine does: **move its loop
 while the note sounds**:

@@ -2397,7 +2397,7 @@ export class IRPlayer {
         this._dispatchPcmNoteOn(ev, when);
         break;
       case "PCM_NOTE_OFF":
-        this._pcmEv(when, { kind: "off", voice });
+        this._pcmEv(when, { kind: ev.args?.mode === "gate" ? "cut" : "off", voice });
         break;
       case "PARAM_SET":
         this._applyPcmParam(voice, ev.args, when);

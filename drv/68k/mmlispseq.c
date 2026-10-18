@@ -93,6 +93,7 @@ enum {
   OP_FM3_OP_PITCH = 0xa4,
   OP_PCM_NOTE_ON = 0xc0,
   OP_PCM_NOTE_OFF = 0xc1,
+  OP_PCM_NOTE_CUT = 0xc2,
   OP_MACRO_SET = 0xe0,
   OP_PARAM_ADD_VAL = 0xe1,
   OP_PARAM_MUL_VAL = 0xe2,
@@ -1592,6 +1593,15 @@ static void pcm_apply_loop(MMLSeq *s, int vi) {
   pcm_retarget(s, vi, end, wrap);
 }
 
+/* A `:mode gate` note's cut: END at the window's start, which every pointer
+ * is past, and WRAP to silence — the voice parks at its next block edge. */
+static void pcm_cut(MMLSeq *s, int vi) {
+  MMLPcmVoice *v = &s->pcm[vi];
+  if (!v->started) return;
+  v->looping = 0;
+  pcm_retarget(s, vi, MML_PCM_WINDOW, MML_PCM_SILENCE);
+}
+
 /* `loop`: the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7); a shot
  * plays the range once. Every entry carries a range — the def's, or the whole
  * sample — and a loop, the def's or the range, so a note always has both. */
@@ -2225,6 +2235,12 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
       case OP_PCM_NOTE_OFF:
         t->pc += 1;
         channel_off(s, t->channel_id); /* a PCM key-off: the loop's release */
+        break;
+      case OP_PCM_NOTE_CUT:
+        t->pc += 1;
+        /* A key-off that also silences the voice (`:mode gate`). */
+        channel_off(s, t->channel_id);
+        if (t->channel_id >= CH_PCM1 && t->channel_id <= CH_PCM3) pcm_cut(s, t->channel_id - CH_PCM1);
         break;
       case OP_MACRO_SET: {
         uint8_t macro_id = st[t->pc + 1];

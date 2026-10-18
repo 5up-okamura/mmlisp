@@ -764,7 +764,7 @@ function emitCsmRateNoteHz(
 }
 
 function isPcmModeSymbol(value) {
-  return value === "shot" || value === "loop";
+  return value === "shot" || value === "loop" || value === "gate";
 }
 
 function isPcmTrackName(name) {
@@ -882,7 +882,7 @@ function emitNoteForTrack(
     // The head a `~` ties on to (placePcmTieOff).
     trackState.pcmTiedHead = {
       ev: pcmEv, off, segs: [pcmEv], total: lengthTicks, gateSpec: trackState.defaultGate,
-      sample: trackState.pcmSampleName, pitch: fullPitch, loop: mode === "loop", hasMacros,
+      sample: trackState.pcmSampleName, pitch: fullPitch, mode, hasMacros,
     };
     trackState.tick += lengthTicks;
     pushRecentNote(trackState, fullPitch, lengthTicks, trackState.defaultGate,
@@ -1169,9 +1169,9 @@ function placePcmTieOff(h, events) {
   const head = h.ev;
   const gate = resolveGateTicks(h.gateSpec, h.total);
   delete head.args.gate;
-  if (!(gate > 0 && (h.loop || (h.hasMacros && gate < h.total)))) return;
+  if (!(gate > 0 && (h.mode !== "shot" || (h.hasMacros && gate < h.total)))) return;
   const offTick = head.tick + gate;
-  const off = { tick: offTick, cmd: "PCM_NOTE_OFF", args: { sample: h.sample, mode: h.loop ? "loop" : head.args.mode }, src: head.src };
+  const off = { tick: offTick, cmd: "PCM_NOTE_OFF", args: { sample: h.sample, mode: h.mode }, src: head.src };
   h.off = off;
   if (gate < head.args.length) {
     head.args.gate = gate;
@@ -1223,11 +1223,11 @@ function pushPcmNote(trackState, events, note, src) {
   const hasMacros = PCM_MACRO_ARG_KEYS.some((key) => args[key]);
   const ev = { tick: trackState.tick, cmd: "PCM_NOTE_ON", args, src };
   events.push(ev);
-  // The note's key-off: a loop's release, and where a shot's macros take
-  // theirs — a shot with none has nothing that listens, and at full gate the
-  // next note or rest keys it off anyway.
+  // The note's key-off: a loop's release, a gate note's cut, and where a
+  // shot's macros take theirs — a shot with none has nothing that listens,
+  // and at full gate the next note or rest keys it off anyway.
   let off = null;
-  if (gateTicks > 0 && (mode === "loop" || (hasMacros && gateTicks < length))) {
+  if (gateTicks > 0 && (mode !== "shot" || (hasMacros && gateTicks < length))) {
     off = {
       tick: trackState.tick + gateTicks,
       cmd: "PCM_NOTE_OFF",
@@ -3846,7 +3846,7 @@ function compileChannelBody(
                 trackState.pcmMode = rawVal;
               } else {
                 pushDiag(diagnostics, "error", "E_PCM_MODE_INVALID",
-                  "pcm :mode must be shot or loop", nodeSrc(node), trackName);
+                  "pcm :mode must be shot, loop or gate", nodeSrc(node), trackName);
               }
               break;
             }

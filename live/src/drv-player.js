@@ -1435,6 +1435,12 @@ export class DrvPlayer {
           trk.pc += 1;
           this._channelOff(trk.channelId); // a PCM key-off: the loop's release
           break;
+        case OPCODE.PCM_NOTE_CUT:
+          trk.pc += 1;
+          // A key-off that also silences the voice (`:mode gate`).
+          this._channelOff(trk.channelId);
+          if (trk.channelId >= 20 && trk.channelId <= 22) this._pcm.cut(trk.channelId - 20);
+          break;
         case OPCODE.MACRO_SET: {
           const macroId = s[trk.pc + 1];
           trk.pc += 2;
