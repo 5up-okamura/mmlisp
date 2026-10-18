@@ -1123,9 +1123,10 @@ The grid marks quarter notes from the top of the song. MMLisp has no meter, and
 **1× 2× 4×** zooms; a wider pane shows more of the song at the same scale, and
 zoomed in, eighths and sixteenths are marked too. On a phone the zoom control
 can sit over the top note; scrolling the roll shows it. Drag the roll sideways
-to move through the song, as the TIME bar does: playing, it plays on from where
-you let go; stopped or paused, it sets where Play starts. The roll shows the
-last build: after an edit, play or Build to bring it up to date.
+to move through the song, as the TIME bar does: playing, the song pauses while
+you drag and plays on from where you let go; stopped or paused, it sets where
+Play starts. The roll shows the last build: after an edit, play or Build to
+bring it up to date.
 
 ### Playing from a point
 

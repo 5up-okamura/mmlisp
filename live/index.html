@@ -7244,7 +7244,9 @@
     let _runSe = null;  // the effect it plays, or null for the song
     let _vizFrozen = null; // per-track clocks the piano roll holds when not playing (pause, TIME bar)
 
-    function onPause() {
+    // quiet: a pause the piano roll's drag takes and gives back, not the
+    // user's — no log line.
+    function onPause({ quiet = false } = {}) {
       if (!player || !player.isPlaying()) return;
       // The MMLispDRV reference cannot seek; pause degrades to stop.
       if (!(player instanceof IRPlayer)) { onStop(); return; }
@@ -7256,12 +7258,12 @@
       releaseScreen();
       setMediaSession('paused'); // the element plays on (silence): the lock screen keeps its controls
       _paused = true;
-      log('Paused');
+      if (!quiet) log('Paused');
       setPlayIcon(false);
       document.getElementById('btnPlay').classList.remove('active');
     }
 
-    function onResume() {
+    function onResume({ quiet = false } = {}) {
       if (!player || !_paused) return;
       // Edited while paused: build, and play the new score from the same point
       // (a phone has no Build shortcut, so ▶ is the one tap that applies it).
@@ -7275,7 +7277,7 @@
       _paused = false;
       _vizFrozen = null;
       playingStarted();
-      log('Resumed', 'info');
+      if (!quiet) log('Resumed', 'info');
       setPlayIcon(true);
       document.getElementById('btnPlay').classList.add('active');
     }
@@ -10929,12 +10931,13 @@
       c.addEventListener('pointerleave', () => { tip.hidden = true; });
 
       // Dragging the roll sideways seeks, as the TIME bar does (seekTo): the
-      // song follows the hand one to one — no fling — re-seeking every
-      // TIME_SCRUB_MS while playing so the point can be found by ear, and once
-      // more where the drag ends. Ticks turn into seconds at the tempo the
-      // drag began in. A press that moves less than ROLL_DRAG_PX is a click.
+      // song follows the hand one to one — no fling. Playing, the drag pauses
+      // the song and resumes it where it lets go, so the roll holds still
+      // under the hand. The roll is re-held every TIME_SCRUB_MS and once more
+      // where the drag ends. Ticks turn into seconds at the tempo the press
+      // began in. A press that moves less than ROLL_DRAG_PX is a click.
       const ROLL_DRAG_PX = 4;
-      let drag = null; // { x0, sec0, spt, moved, seekAt }
+      let drag = null; // { x0, sec0, spt, moved, resume, seekAt }
       let dragged = false; // the click that ends a drag is not a note's
       const rollSeekable = () => !document.getElementById('sl-time').disabled && _timeSpan?.ir;
       const nowSec = () => wrapTime(player?.isPlaying?.() ? player.positionSec() : _paused ? _pausedSec : _timeCue ?? 0);
@@ -10943,16 +10946,13 @@
         const end = _timeSpan?.end;
         return Math.max(0, end > 0 ? Math.min(end, sec) : sec);
       };
-      const dragSeek = (sec) => {
-        seekTo(sec);
-        if (!player?.isPlaying?.()) showTime(sec);
-      };
+      const dragSeek = (sec) => { seekTo(sec); showTime(sec); };
       c.addEventListener('pointerdown', (e) => {
         dragged = false;
         if (e.button !== 0 || !rollSeekable()) return;
         const spt = (player?.isPlaying?.() ? player : timeProbe(_timeSpan.ir))._secsPerTick;
         if (!(spt > 0)) return;
-        drag = { x0: e.clientX, sec0: nowSec(), spt, moved: false, seekAt: 0 };
+        drag = { x0: e.clientX, sec0: 0, spt, moved: false, resume: false, seekAt: 0 };
         c.setPointerCapture(e.pointerId);
       });
       c.addEventListener('pointermove', (e) => {
@@ -10962,16 +10962,23 @@
           drag.moved = true;
           tip.hidden = true;
           c.style.cursor = 'grabbing';
+          if (player?.isPlaying?.()) { drag.resume = true; onPause({ quiet: true }); }
+          // The drag starts here, from where the song is now: no jump for
+          // the threshold, or for the time it took to cross it.
+          drag.x0 = e.clientX;
+          drag.sec0 = nowSec();
         }
         const now = performance.now();
-        if (player?.isPlaying?.() && now - drag.seekAt < TIME_SCRUB_MS) return;
+        if (now - drag.seekAt < TIME_SCRUB_MS) return;
         drag.seekAt = now;
         dragSeek(dragSec(e));
       });
       const endDrag = (e) => {
         if (!drag) return;
-        if (drag.moved) { dragged = true; dragSeek(dragSec(e)); c.style.cursor = ''; }
+        const { moved, resume } = drag;
+        if (moved) { dragged = true; dragSeek(dragSec(e)); c.style.cursor = ''; }
         drag = null;
+        if (resume) onResume({ quiet: true }); // plays on from where the drag let go
       };
       c.addEventListener('pointerup', endDrag);
       c.addEventListener('pointercancel', endDrag);
