@@ -1297,9 +1297,10 @@ export function encodeMmb(ir, opts = {}) {
           stream.u8((midiNote(a.pitch) & 0x7f) | (a.mode === "loop" ? 0x80 : 0));
           // A loop note's release, a gate note's cut — and a shot's key-off,
           // when its macros listen for one (the compiler emits it then) — is
-          // a PCM_NOTE_OFF (a gate note's a PCM_NOTE_CUT) at its gate. A gate shorter than the note has to END the note's dur
-          // there, or the off waits for the note's end; the rest of the length
-          // becomes the REST the next event's syncClock writes.
+          // a PCM_NOTE_OFF (a gate note's a PCM_NOTE_CUT) at its gate. A gate
+          // shorter than the note has to END the note's dur there, or the off
+          // waits for the note's end; the rest of the length becomes the REST
+          // the next event's syncClock writes.
           const keysOff = a.mode === "loop" || a.mode === "gate" || Object.keys(a).some((k) => MACRO_ARG_KEYS.has(k));
           const gated = keysOff && a.gate > 0 && a.gate < (a.length ?? 0);
           const dur = gated ? a.gate : a.length ?? 0;

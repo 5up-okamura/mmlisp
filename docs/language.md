@@ -163,7 +163,8 @@ note keeps its own length, so `~` takes none.
   second's length — one attack, held longer. Equivalent to a longer length token.
   On a PCM track too: the same sample at the same pitch is not struck again —
   a shot plays on, a `:mode loop` note keeps looping and releases at the gate
-  of the whole tied length, and a `:mode gate` note is cut there. A slur, or another sample, strikes anew.
+  of the whole tied length, and a `:mode gate` note is cut there. A slur, or
+  another sample, strikes anew.
 - **Different pitch → slur (legato).** `c ~ e` moves the frequency to `e`
   **without re-keying** — the FM envelope (or the PSG tone) carries over from
   `c`, no new attack. Chains: `c ~ d ~ e` is one attack gliding through all three.
@@ -1979,10 +1980,12 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   > A `shot` plays to its end regardless of the note's `length` / `gate`;
   > `loop` releases at KEY-OFF and `gate` is cut there (a shot's macros take
   > their release there too, below).
-  > A `gate` note's sound ends at its gate, so its macros' release region is
-  > not heard: a fade before the cut is written inside the gate. The cut
-  > lands at the voice's next block edge after the gate's frame — and, as
-  > when a note cuts the one before it, it can click.
+  > A `gate` note's sound ends at its gate, so the release section (`#rel`)
+  > of its `:vel` and `:vol` macros is not heard: a fade before the cut is
+  > written inside the gate. A `:keyon` step in the release section strikes
+  > the sample again, and that strike plays the range through, as a shot.
+  > The cut lands at the voice's next block edge after the gate's frame —
+  > and, as when a note cuts the one before it, it can click.
 
   ```lisp
   (def-pcm hat :file "sounds/hat.wav")
