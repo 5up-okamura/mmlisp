@@ -5538,15 +5538,51 @@ function resolveSampleExtends(sampleDefs, diagnostics) {
 
 // Replace bare atoms matching a parameter name with the caller's argument node
 // (lexically, within a parametric def body). Args are single nodes (atom/list).
-function substituteParams(node, paramMap) {
-  if (node.kind === "atom")
-    return paramMap.has(node.value) ? { ...paramMap.get(node.value) } : { ...node };
-  if (node.kind === "list")
-    return {
-      ...node,
-      items: node.items.map((it) => substituteParams(it, paramMap)),
-    };
-  return { ...node };
+// A `let`/`for` name in the body is its own scope: it shadows a parameter of
+// the same name, and one that an argument mentions is renamed, so the
+// argument keeps meaning what it meant at the call — `(tri n)` into a body
+// binding `n` does not read the body's `n`.
+let freshNameCounter = 0;
+function atomsIn(node, out = new Set()) {
+  if (node.kind === "atom") out.add(node.value);
+  else if (node.kind === "list") for (const it of node.items) atomsIn(it, out);
+  return out;
+}
+function substituteParams(node, paramMap, argAtoms = null) {
+  if (node.kind === "atom") {
+    const sub = paramMap.get(node.value);
+    if (!sub) return { ...node };
+    // A renamed binding keeps the use site's own position for diagnostics.
+    return sub.rename ? { ...node, value: sub.rename } : { ...sub };
+  }
+  if (node.kind !== "list") return { ...node };
+  argAtoms ??= new Set([...paramMap.values()].flatMap((a) => [...atomsIn(a)]));
+  const head = atomValue(node.items[0]);
+  const vec = node.items[1];
+  if ((head === "let" || head === "for") && vec?.kind === "list" && vec.bracket === "[]") {
+    let pairs = null;
+    try { pairs = letPairs(vec); } catch (_) {}
+    if (pairs) {
+      // Bindings in turn: a value sees the names before it, not its own.
+      const scope = new Map(paramMap);
+      const out = new Map();
+      for (const [name, value] of pairs) {
+        out.set(value, substituteParams(value, scope, argAtoms));
+        if (name.kind !== "atom") { out.set(name, { ...name }); continue; }
+        if (!argAtoms.has(name.value)) { scope.delete(name.value); out.set(name, { ...name }); continue; }
+        const fresh = { ...name, value: `${name.value}__${++freshNameCounter}` };
+        scope.set(name.value, { rename: fresh.value });
+        out.set(name, fresh);
+      }
+      const items = vec.items.map((it) => out.get(it) ?? { ...it });
+      return {
+        ...node,
+        items: [{ ...node.items[0] }, { ...vec, items },
+          ...node.items.slice(2).map((it) => substituteParams(it, scope, argAtoms))],
+      };
+    }
+  }
+  return { ...node, items: node.items.map((it) => substituteParams(it, paramMap, argAtoms)) };
 }
 
 // `depth` counts snippet expansions only — a def expanding into a def — so a

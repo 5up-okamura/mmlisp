@@ -919,7 +919,10 @@ call form `(name arg…)`; each `arg` (one atom or list node) is substituted for
 the matching `param` wherever it appears in the body, then the result is
 expanded like any snippet. Substitution is **token-level only** — there is no
 computation — and a `param` **shadows** any note/length token of the same name
-inside the body. A call whose argument count differs from the parameter count is
+inside the body. A `let` or `for` in the body keeps its own names: one of the
+same name as a `param` shadows it inside, and an argument that mentions a
+name the body binds still means what it meant at the call
+(`(let [n 60] (tri n))` passes 60, whatever `tri` binds). A call whose argument count differs from the parameter count is
 `E_DEF_ARITY`.
 
 ```lisp

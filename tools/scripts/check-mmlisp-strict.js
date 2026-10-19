@@ -109,6 +109,13 @@ async function main() {
       expected: ["E_LET_SHADOWS_DEF", "E_FOR_VALUES", "E_FOR_VALUES", "E_EVAL_TYPE", "E_LET_NAME", "E_FOR_COUNT", "E_FOR_VALUES", "E_EVAL_UNKNOWN_HEAD"],
     },
     {
+      label: "parametric def: a name the argument mentions is not captured",
+      // Captured, (hi n) would play n + n = 200 (E_NOTE_RANGE), and (sh 0)
+      // would bind the name 0 (E_LET_NAME).
+      src: "(def (hi root) (for [n [0 100]] (note (+ root n))))\n(def (sh n) (let [m (+ n 1) n 5] (note (+ 60 m n))))\n(fm1 :len 8 (let [n 20] (hi n)) (sh 0))",
+      expected: [],
+    },
+    {
       label: "echo before any note",
       src: "(fm1 (echo 3 :vel+ -3) c d (echo 2 :vel+ -2))",
       expected: ["W_ECHO_NO_NOTE"],

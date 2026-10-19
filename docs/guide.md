@@ -264,6 +264,8 @@ See `docs/language.md` §13.
 When phrases differ by only a token or two, give the snippet parameters and call
 it as `(name arg…)`. Each argument node is substituted for its parameter in the
 body (token-level only — no arithmetic); a wrong argument count is `E_DEF_ARITY`.
+A `let` or `for` inside the body keeps its own names, so an argument always
+means what it meant where the call is written.
 
 ```lisp
 (def (beat n) (x 8 > n > n <))
