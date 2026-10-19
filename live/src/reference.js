@@ -292,7 +292,7 @@ export const REFERENCE = [
   {
     name: 'def-val', aliases: ['$', 'slot', 'runtime value', ':unit', ':public', 'variable'], cat: 'defs', section: '§8', tracks: null,
     syntax: '(def-val name init [A..B] [:public])  ·  $name  ·  :name value|curve',
-    summary: 'A runtime value: $name reads it where a value goes, :name writes or sweeps it from any track; :public lets the game (or a Live slider) write it too.',
+    summary: 'A runtime value: $name reads it where a value goes, :name writes or sweeps it from any track, and a Live slider moves it; :public lets the game write it too.',
     insert: '(def-val bright 20 0..40 :public)',
     example: '(def-val bright 20 0..40 :public)\n(def-val swell 0)\n(fm1 :len 8 :swell (linear 0..20 :len 1) (x 2 :tl1 (+ $bright $swell) c e g e))',
   },

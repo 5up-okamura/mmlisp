@@ -733,8 +733,8 @@ non-zero, else `else`.
 
 ## 8. Dynamic values — `(def-val …)`, `$name`
 
-Runtime values: the score's variables, and — marked `:public` — the inputs a
-host (the game, or the live app's sliders) writes. The score reads them
+Runtime values: the score's variables, and — marked `:public` — the inputs
+the game writes. The score reads them
 directly (`:tl1 $level`), as an operator operand (`:tl2+ $level`), or combined
 in a runtime value expression (`:tl1 (+ 40 (* $tension 2))`) that lowers to a
 param-opcode chain on the driver (§7.1.2) — and writes them like any
@@ -765,14 +765,15 @@ parameter, by name.
 | `:from` / `:to` | Order-free directional endpoints — the live slider runs from A to B (either direction, negatives fine); `A..B` positionally is the same |
 | `:step`    | Slider granularity, integer > 0 (default `1`)                    |
 | `:unit`    | `frame` (default) or `tick` — how the value is read when the slot feeds a curve `:len` |
-| `:public`  | The host's to write: a live slider, and a name in the MMB's metadata. Without it the value is the score's own |
+| `:public`  | The game's to write: its name goes in the MMB's metadata. Without it the value is the score's own (the live app's panel writes either) |
 
 A score holds 16 slots (`E_DEFVAL_COUNT`). The `:public` ones are indexed
 first, each group in declaration order — so the indices a host writes do not
 move when the score adds a value of its own — and all are emitted in
 `metadata.vals` as `{name, slot, init, min, max, step, reversed, unit,
-public}`. The live app renders one Dynamic Parameters slider per `:public`
-slot. Names must not start with `$`, nor be a keyword the language already
+public}`. The live app renders a Dynamic Parameters slider for every slot,
+the `:public` ones marked — `:public` says what the game may write, not what
+the panel may. Names must not start with `$`, nor be a keyword the language already
 has — `:name` writes the value, so `(def-val vel …)` or `(def-val time …)`
 would mean two things (`E_DEFVAL_NAME`); a non-integer `init` is
 `E_DEFVAL_INIT`, and an unknown or malformed option (`:step 0`, `:unit beat`)

@@ -489,11 +489,22 @@
         </div>
       </div>
 
-      <!-- Dynamic Parameters (def-val sliders) -->
+      <!-- Dynamic Parameters (def-val sliders, and the XY pad that plays two of them) -->
       <div class="rack-section" id="dynParamSection" hidden>
-        <div class="rack-title rack-title-row"><span>Dynamic Parameters</span></div>
+        <div class="rack-title rack-title-row"><span>Dynamic Parameters</span>
+          <button type="button" class="tb-btn dyn-pad-toggle" id="dynPadToggle" hidden
+            title="XY pad: one pointer plays two values" onclick="toggleDynPad(event)">XY</button></div>
         <div class="rack-body">
           <div id="dynParamBody" class="dyn-param-body"></div>
+          <div id="dynPad" class="dyn-pad" hidden>
+            <div id="dynPadSurface" class="dyn-pad-surface">
+              <div class="dyn-pad-area"><div class="dyn-pad-h"></div><div class="dyn-pad-v"></div><div class="dyn-pad-dot"></div></div>
+            </div>
+            <div class="dyn-pad-axes">
+              <label>X <select id="dynPadX" onchange="setDynPadAxis('x', this.value)"></select></label>
+              <label>Y <select id="dynPadY" onchange="setDynPadAxis('y', this.value)"></select></label>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -6230,13 +6241,16 @@
       return _chStripModel.find((e) => e.head === head)?.trackIndex;
     }
 
-    // Dynamic Parameters: one slider per `:public` (def-val …) slot — the
-    // others are the score's own variables (language.md §8). Slider positions
+    // Dynamic Parameters: one slider per (def-val …) slot, the `:public` ones
+    // marked — `:public` says what the game may write (language.md §8), not
+    // what the panel may: a value the score sweeps can be nudged by hand, and
+    // the hand's write ends the sweep as the game's would. Slider positions
     // persist across build/play in _dynVals (declared with the panel state
     // above); onDynParam drives player.setVal live. The section auto-hides when
     // the score declares no def-vals.
+    let _dynValDefs = [];                  // the last render's metadata.vals, for the pad's axes
     function renderDynParams(ir) {
-      const vals = Array.isArray(ir?.metadata?.vals) ? ir.metadata.vals.filter((v) => v.public) : [];
+      const vals = Array.isArray(ir?.metadata?.vals) ? ir.metadata.vals : [];
       const section = document.getElementById('dynParamSection');
       const body = document.getElementById('dynParamBody');
       if (!section || !body) return;
@@ -6244,6 +6258,7 @@
       const next = {};
       for (const v of vals) next[v.name] = v.name in _dynVals ? _dynVals[v.name] : v.init;
       _dynVals = next;
+      _dynValDefs = vals;
       section.hidden = vals.length === 0;
       body.innerHTML = '';
       for (const v of vals) {
@@ -6251,15 +6266,135 @@
         wrap.className = 'knob-wrap';
         const cur = _dynVals[v.name];
         const rtl = v.reversed ? ' style="direction:rtl"' : '';
+        const pub = v.public ? '<span class="pub" title="The game writes this value too">public</span>' : '';
         wrap.innerHTML =
-          `<div class="knob-label">${v.name} <span class="val" id="dynval-${v.name}">${cur}</span></div>` +
+          `<div class="knob-label">${v.name} ${pub}<span class="val" id="dynval-${v.name}">${cur}</span></div>` +
           `<input type="range" min="${v.min}" max="${v.max}" step="${v.step ?? 1}" value="${cur}"${rtl} ` +
           `data-midi-key="val:${v.name}" ` +
           `oninput="onDynParam('${v.name}', this)">`;
         body.appendChild(wrap);
       }
       refreshMidiBadges();
+      renderDynPad();
       renderSeButtons();
+    }
+
+    // ---- The XY pad: one pointer plays two values ----
+    // Two of the score's def-vals are the pad's axes (X across, Y up), each
+    // running the way its slider does (`90..10` runs its axis backwards, as
+    // the slider runs right-to-left). A drag writes both slots, through the
+    // same path as their sliders, which follow; a slider or a learned CC
+    // moving one of them moves the dot. The pad is shown on request (the XY
+    // button in the section's title) once the score has two values; the
+    // choice and the axes are this browser's, as MIDI assignments are.
+    let _dynPadOn = null;                            // read from the prefs on the first render
+    let _dynPadAxes = null;                          // { x: name, y: name } — likewise
+    let _dynPadPointer = null;                       // the pointer that holds the pad
+    function dynPadAxisDef(axis) {
+      return _dynValDefs.find((v) => v.name === _dynPadAxes?.[axis]) ?? null;
+    }
+    function renderDynPad() {
+      const toggle = document.getElementById('dynPadToggle');
+      const pad = document.getElementById('dynPad');
+      if (!toggle || !pad) return;
+      _dynPadOn ??= loadPref('dynPad', 'off') === 'on'; // the prefs helpers follow in this module
+      _dynPadAxes ??= loadPref('dynPadAxes', {});
+      const enough = _dynValDefs.length >= 2;
+      toggle.hidden = !enough;
+      toggle.classList.toggle('active', _dynPadOn);
+      pad.hidden = !(enough && _dynPadOn);
+      if (pad.hidden) return;
+      // The remembered axes where the score has them, else the first two.
+      const names = _dynValDefs.map((v) => v.name);
+      if (!names.includes(_dynPadAxes.x)) _dynPadAxes.x = names[0];
+      if (!names.includes(_dynPadAxes.y) || _dynPadAxes.y === _dynPadAxes.x) {
+        _dynPadAxes.y = names.find((n) => n !== _dynPadAxes.x);
+      }
+      for (const axis of ['x', 'y']) {
+        const sel = document.getElementById(axis === 'x' ? 'dynPadX' : 'dynPadY');
+        sel.innerHTML = '';
+        for (const n of names) {
+          const o = document.createElement('option');
+          o.value = n; o.textContent = n;
+          sel.appendChild(o);
+        }
+        sel.value = _dynPadAxes[axis];
+      }
+      refreshDynPad();
+    }
+    function toggleDynPad(e) {
+      e?.stopPropagation();                          // the title's click collapses the section
+      _dynPadOn = !_dynPadOn;
+      savePref('dynPad', _dynPadOn ? 'on' : 'off');
+      renderDynPad();
+    }
+    window.toggleDynPad = toggleDynPad;
+    function setDynPadAxis(axis, name) {
+      const other = axis === 'x' ? 'y' : 'x';
+      if (_dynPadAxes[other] === name) _dynPadAxes[other] = _dynPadAxes[axis]; // swap, not a doubled axis
+      _dynPadAxes[axis] = name;
+      savePref('dynPadAxes', { ..._dynPadAxes });
+      renderDynPad();
+    }
+    window.setDynPadAxis = setDynPadAxis;
+    // A value's place along its axis, 0..1, and back — the slider's travel,
+    // its step and its direction.
+    function dynPadPos(v, val) {
+      const span = v.max - v.min;
+      const t = span ? Math.max(0, Math.min(1, (val - v.min) / span)) : 0;
+      return v.reversed ? 1 - t : t;
+    }
+    function dynPadValue(v, t) {
+      if (v.reversed) t = 1 - t;
+      const step = v.step || 1;
+      const val = v.min + Math.round((t * (v.max - v.min)) / step) * step;
+      return Math.max(v.min, Math.min(v.max, val));
+    }
+    function refreshDynPad() {
+      const pad = document.getElementById('dynPad');
+      if (!pad || pad.hidden) return;
+      const vx = dynPadAxisDef('x'), vy = dynPadAxisDef('y');
+      if (!vx || !vy) return;
+      const x = dynPadPos(vx, _dynVals[vx.name]) * 100;
+      const y = (1 - dynPadPos(vy, _dynVals[vy.name])) * 100;
+      pad.querySelector('.dyn-pad-v').style.left = `${x}%`;
+      pad.querySelector('.dyn-pad-h').style.top = `${y}%`;
+      const dot = pad.querySelector('.dyn-pad-dot');
+      dot.style.left = `${x}%`;
+      dot.style.top = `${y}%`;
+    }
+    // Writes a value the way its slider does, so the slider, its number and
+    // the player all follow.
+    function setDynVal(name, val) {
+      const el = document.querySelector(`#dynParamBody input[type=range][data-midi-key="val:${CSS.escape(name)}"]`);
+      if (!el || Number(el.value) === val) return;
+      el.value = String(val);
+      onDynParam(name, el);
+    }
+    function dynPadPoint(e) {
+      const vx = dynPadAxisDef('x'), vy = dynPadAxisDef('y');
+      if (!vx || !vy) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      const tx = Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width)));
+      const ty = Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / Math.max(1, r.height)));
+      setDynVal(vx.name, dynPadValue(vx, tx));
+      setDynVal(vy.name, dynPadValue(vy, ty));
+    }
+    {
+      const surface = document.getElementById('dynPadSurface');
+      surface?.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+        e.preventDefault();
+        _dynPadPointer = e.pointerId;
+        surface.setPointerCapture(e.pointerId);
+        dynPadPoint(e);
+      });
+      surface?.addEventListener('pointermove', (e) => {
+        if (e.pointerId === _dynPadPointer) dynPadPoint(e);
+      });
+      const release = (e) => { if (e.pointerId === _dynPadPointer) _dynPadPointer = null; };
+      surface?.addEventListener('pointerup', release);
+      surface?.addEventListener('pointercancel', release);
     }
 
     // ---- Sound Effects: the score's def-se as buttons (MMLispDRV only) ----
@@ -6331,6 +6466,7 @@
       const disp = document.getElementById('dynval-' + name);
       if (disp) disp.textContent = v;
       if (player) player.setVal(name, v);
+      if (name === _dynPadAxes?.x || name === _dynPadAxes?.y) refreshDynPad();
     }
 
     // Push all current slider values into a freshly (re)started player, since

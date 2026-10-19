@@ -854,9 +854,9 @@ smooth changes:
 ## 18b. Dynamic Parameters (`def-val` / `$name`)
 
 Declare a runtime value with `(def-val ...)` and reference it with `$name`
-anywhere a runtime parameter takes a value. Marked `:public`, it is an input
-the game writes, and the live app renders a **Dynamic Parameters** slider for
-it — drag it while the score plays.
+anywhere a runtime parameter takes a value. The live app renders a **Dynamic
+Parameters** slider for each one — drag it while the score plays — and marked
+`:public` it is also an input the game writes.
 
 ```lisp
 (def-val cutoff 30 0..127 :public)
@@ -873,7 +873,9 @@ it — drag it while the score plays.
 - `$time` is built in: elapsed 60 Hz frames since playback started.
 
 **The score's own values.** Without `:public` a `def-val` is a variable of
-the score: no slider, nothing the game sees. The score writes it like any
+the score: nothing the game sees (its slider is still there, so you can nudge
+it by hand — a hand's write ends the score's sweep of it, as the game's
+would). The score writes it like any
 parameter — `:name 12`, `:name+ -4`, `:name (linear 0..40 :len 8)` — from any
 track, and every track reads it. One sweep can then turn a knob across the
 whole song, wherever it is read:
@@ -1236,6 +1238,19 @@ like Play with the cursor inside the `def-se`. An effect that holds (a
 `:len 0` note) sounds while the button is held. The button is lit while
 the effect plays. The IR player plays an effect alone only, so the section
 is not shown with it.
+
+### Two values under one finger: the XY pad
+
+A score with two or more `def-val`s gets an **XY** button in the Dynamic
+Parameters title. It opens a pad under the sliders: pick a value for X and
+one for Y, then drag — the pointer writes both at once, their sliders follow,
+and the score reads them as it does any `$name`. Each axis runs the way its
+slider does (`90..10` runs its axis backwards, and `:step` snaps it), and a
+slider or a learned CC moving one of the two moves the dot. A controller's XY
+pad sends two CCs, so MIDI Learn on the two sliders (below) plays the pad
+from the hardware. Neither value needs `:public` — a value the game never
+sees is still yours to play. The pad and its axes are remembered by this
+browser, as MIDI assignments are.
 
 ### A MIDI keyboard and knobs
 

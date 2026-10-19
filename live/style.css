@@ -787,6 +787,48 @@
     /* MIDI: the CC a slider answers to; MIDI Learn picks a slider by its
        whole .knob-wrap, so the range itself takes no press while learning. */
     .knob-label .midi-cc { color: var(--sub); margin-left: 0.4em; margin-right: auto; }
+    /* A def-val the game writes too (`:public`), named after the slider's name. */
+    .knob-label .pub { color: var(--sub); margin-left: 0.4em; margin-right: auto; font-weight: normal; }
+    /* Dynamic Parameters' XY pad: one pointer plays two values. The surface is
+       a square a third of the panel's width, at the left, its axes' choice stacked
+       beside it; the crosshair and the dot are the two values. They live in
+       an area a pixel short of the right
+       and bottom borders, so a value at its end sits beside the border, not
+       over it (the border is --high while the pointer is there). */
+    .dyn-pad-toggle { margin-left: auto; font-size: 0.58rem; padding: 0 0.4rem; line-height: 1.4; }
+    .dyn-pad { display: flex; align-items: flex-start; gap: 0.6rem; margin-top: 0.5rem; }
+    /* The panel's first select: drawn as the top bar's (size, padding, corners),
+       its arrow our own — the native one sits against the right border, and
+       no padding moves it. */
+    .dyn-pad-axes { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.72rem; color: var(--sub); }
+    .dyn-pad-axes label { position: relative; display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+    .dyn-pad-axes select {
+      flex: 1; min-width: 0; font: inherit; border-radius: 2px; cursor: pointer;
+      -webkit-appearance: none; appearance: none;
+      background: var(--background); color: var(--foreground); border: 1px solid var(--mid);
+      padding: 0.2rem 1.3rem 0.2rem 0.4rem;
+    }
+    .dyn-pad-axes label::after {
+      content: ''; position: absolute; right: 0.5rem; top: 50%;   /* the rotated tip lands 0.4rem in, as the text does on the left */
+      width: 0.3rem; height: 0.3rem; margin-top: -0.25rem;
+      border-right: 1.5px solid var(--foreground); border-bottom: 1.5px solid var(--foreground);
+      transform: rotate(45deg); pointer-events: none;
+    }
+    @media (hover: hover) {
+      .dyn-pad-axes select:hover { border-color: var(--high); color: var(--high); }
+      .dyn-pad-axes label:has(select:hover)::after { border-color: var(--high); }
+    }
+    .dyn-pad-surface {
+      position: relative; flex: 0 0 33%; aspect-ratio: 1;
+      border: 1px solid var(--mid); border-radius: 3px;
+      touch-action: none; -webkit-touch-callout: none; cursor: crosshair;
+    }
+    @media (hover: hover) { .dyn-pad-surface:hover { border-color: var(--high); } }
+    .dyn-pad-area { position: absolute; inset: 0 1px 1px 0; pointer-events: none; }
+    .dyn-pad-h, .dyn-pad-v, .dyn-pad-dot { position: absolute; }
+    .dyn-pad-h { left: 0; right: 0; height: 1px; background: var(--mid); }
+    .dyn-pad-v { top: 0; bottom: 0; width: 1px; background: var(--mid); }
+    .dyn-pad-dot { width: 9px; height: 9px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--foreground); }
     body.midi-learn #rightPanel .knob-wrap { cursor: pointer; border-radius: 3px; outline: 1px dashed var(--mid); outline-offset: 1px; }
     body.midi-learn #rightPanel .knob-wrap input[type=range] { pointer-events: none; }
     body.midi-learn #rightPanel .knob-wrap.midi-learn-target { outline: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) var(--hover), transparent); }

@@ -53,7 +53,7 @@ export default {
     "(param-set …)": ["dab844f6", "Varias escrituras absolutas de registro a la vez."],
     "def": ["c1026cc0", "Un fragmento: sus elementos se pegan donde se escribe el nombre; una frase, una macro, una constante. No lo nombres como una nota (a–g, e8): gana la nota."],
     "def (parametric)": ["272f93a8", "Un fragmento con parámetros: (name arg …) pega el cuerpo con cada argumento en lugar de su parámetro."],
-    "def-val": ["5ffb8784", "Un valor en tiempo de ejecución: $name lo lee donde va un valor, :name lo escribe o lo recorre desde cualquier pista; :public deja que el juego (o un deslizador de Live) lo escriba también."],
+    "def-val": ["4cdcbb23", "Un valor en tiempo de ejecución: $name lo lee donde va un valor, :name lo escribe o lo recorre desde cualquier pista, y un deslizador de Live lo mueve; :public deja que el juego lo escriba también."],
     "def-se": ["faa7c2be", "Un efecto de sonido: partes que el juego lanza por número, tomando canales de la canción mientras suenan."],
     "(let …)": ["ebf8adb8", "Valores locales para el cuerpo, evaluados al compilar."],
     "(for …)": ["2d9e5ca0", "El cuerpo escrito una vez por cada valor: un rango como 0..7 o una lista de números. Las notas son números MIDI, así que un acorde se escribe como distancias desde una raíz de let."],

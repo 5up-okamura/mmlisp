@@ -102,7 +102,7 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 - FM parameter panel: per-channel ALG/FB and per-operator sliders, updated
   live from playback and editable while the song runs
 - Dynamic Parameters panel: one slider per `def-val` slot, driving `$name`
-  values in real time
+  values in real time, and an XY pad that plays two of them under one pointer
 - Channel strips (select / mute / solo), keyboard note preview, and
   keyboard-driven step input
 - FM voice import: DefleMask DMP, Furnace FUI, TFI, VGI, OPNI
