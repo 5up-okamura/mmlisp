@@ -1573,9 +1573,14 @@ export class IRPlayer {
       const trimmedEvents =
         jumpTick >= 0 ? events.filter((ev) => ev.tick <= jumpTick) : events;
 
+      // The loop resumes AT the label: what is written before it on the same
+      // tick — a leading :tempo, :lfo-rate, voice or level — ran once and is
+      // not replayed, as the driver resumes at the label's stream offset
+      // (export-mmb MARKER). Without a label (no backward jump) nothing loops.
       let loopStartIndex = 0;
       for (let i = 0; i < trimmedEvents.length; i++) {
-        if (trimmedEvents[i].tick >= loopStartTick) {
+        const e = trimmedEvents[i];
+        if (e.tick > loopStartTick || (e.cmd === "MARKER" && e.args?.id === jumpTarget)) {
           loopStartIndex = i;
           break;
         }

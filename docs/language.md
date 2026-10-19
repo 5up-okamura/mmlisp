@@ -1479,6 +1479,9 @@ the phrase.
   `E_GO_ARITY`, `E_GO_COUNT`). A `go` without a matching label is
   `E_JUMP_UNRESOLVED`. A label is a compile-time name: the jump is a resolved
   offset, so `#label` itself costs nothing at runtime and emits no bytes.
+- A loop resumes **at** the label: what is written before it plays once, even
+  on the same tick — a leading `:tempo`, `:lfo-rate`, voice or `:vel` ahead of
+  `#label` is not re-applied on the passes that loop back.
 - `(break)` binds to the innermost counted loop, also from inside an infinite
   loop nested in it. With no counted loop around it there is no final pass to
   exit, so it does nothing and is dropped with `W_BREAK_OUTSIDE_LOOP`. It takes

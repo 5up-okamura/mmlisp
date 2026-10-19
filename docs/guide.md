@@ -238,8 +238,10 @@ net octave change is non-zero when it is reused or followed by more notes.
 ```
 
 `(go label N)` compiles to the same loop as `(x N ...)`; the label and the
-`go` may even live in different forms of the same channel. See
-`docs/language.md` §13.
+`go` may even live in different forms of the same channel. A loop resumes at
+the label, so what is written before it — a `:tempo`, `:lfo-rate`, voice or
+`:vel` ahead of `#label` — plays once and is not re-applied on the way round.
+See `docs/language.md` §13.
 
 ---
 
