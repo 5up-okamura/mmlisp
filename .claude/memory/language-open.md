@@ -43,6 +43,20 @@ suffix combines with the target's base (language.md §7.0).
   two never meet. No boolean type — a comparison is a number, and `if` takes
   any non-zero as true. Reserving `mod` cost a gate fixture its `def-fm mod`
   (now `modv`); a score naming a voice `mod` gets `E_DEF_RESERVED`.
+- **Macro-curve `$slot` params stay baked on MMB** (2026-10-20, considered and
+  shelved). Making a macro curve's `:from`/`:to`/`:rate`/`:len` slot-fed on the
+  driver needs a second blob form (a normalized shape + offset/scale per
+  descriptor, i16 for pitch), the player moved to the same integer math for
+  A/B, and per-region descriptors for multi-stage — cost in representation,
+  not cycles. What a score needs is already writable: a live depth is the
+  scaled macro `(* signal $slot)`, a live centre is a slot-relative param
+  (`:tl1+ $x`), and the gap is visible as `W_MMB_DYN_BAKED`. Not per-frame
+  either: a macro reading `:to $x` every frame while an inline sweep reads it
+  once would make one curve mean two things. A two-slot `:from $a :to $b`
+  is the scratch-slot problem (§7.1.2). Reopen only when a real score needs a
+  centre that follows the game every frame — then as an offset slot on the
+  scaled-macro mechanism (`offset + (shape × scale) >> 8`), not as live
+  endpoints.
 
 ## 2. Why the value machine has this shape
 
