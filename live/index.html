@@ -218,6 +218,7 @@
             <button class="menu-item" onclick="importOpni();closeMenus()">OPN2-BANK…</button>
             <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voices…</button>
             <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 Drums…</button>
+            <button class="menu-item" onclick="importSf2();closeMenus()">SoundFont Drums…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">Songs</div>
             <button class="menu-item" onclick="importSong('midi');closeMenus()">MIDI…</button>
@@ -823,6 +824,7 @@
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
+    import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
     import { midiToFnumBlock, CH_NAME_TO_INDEX, PSG_CH_NAME_TO_INDEX, PCM_CH_NAME_TO_INDEX, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, OP_ADDR_OFFSET, fmCarrierOpsForAlg, encode30, encode60, encode80, encodeB0, encodeB4 } from './src/ir-utils.js';
@@ -3020,7 +3022,10 @@
     let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
 
     function loadMucomSource(source, warnings, fileName, label, pcm = null) {
-      loadImportedSource(source, warnings, fileName, label, { tag: 'mucom88', pcm });
+      const song = _mucomSong; // the new document is this song's: a bank applied later re-converts it
+      const done = loadImportedSource(source, warnings, fileName, label, { tag: 'mucom88', pcm });
+      _mucomSong = song;
+      return done;
     }
 
     // An imported song or bank becomes a new, unsaved document.
@@ -3046,6 +3051,21 @@
       setEditorDoc(source);
       await refreshImportsAndCompile(); // a song imports preset sets
       log(label, 'info');
+      for (const w of warnings) log(`${tag}: ${w}`, 'info');
+    }
+
+    // An instrument import (voices, a drum kit) goes in at the cursor, into the
+    // score being edited — only a song replaces the document. Its wav, if any,
+    // is held in memory and offered on Save, as a song's is.
+    function insertImportedInstruments(source, warnings, label, { tag, pcm = null }) {
+      if (pcm) {
+        _mucomPcm = pcm;
+        _mucomPcmUnsaved = true;
+        _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate });
+        log(`${pcm.tag ?? tag}: samples play from "${pcm.wavFile}" held in memory — Save offers to write it next to the score`, 'info');
+      }
+      insertTextAtCursor(source.trimEnd());
+      log(`${label} — press Build to apply`, 'info');
       for (const w of warnings) log(`${tag}: ${w}`, 'info');
     }
 
@@ -3207,6 +3227,51 @@
         structure: !!got.fields.structure,
         fileName,
       }, a);
+    }
+
+    async function importSf2() {
+      let file;
+      try {
+        file = await pickFileWithInput(['.sf2']);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`SoundFont import failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      await importSf2FromFile(file);
+    }
+
+    async function importSf2FromFile(file) {
+      try {
+        const res = await importSf2Bytes(new Uint8Array(await file.arrayBuffer()), file.name);
+        if (!res) return; // cancelled in the dialog
+        insertImportedInstruments(res.source, res.warnings,
+          `Imported ${file.name} (SoundFont) — ${res.pcm.entries.length} drums`, { tag: 'SoundFont', pcm: res.pcm });
+      } catch (e) {
+        log(`SoundFont import failed: ${e?.message || e}`, 'err');
+      }
+    }
+
+    // A SoundFont's drum kit, by role name (import-sf2.js). A file with several
+    // kits asks which; one with none offers every preset, for a kit filed
+    // under a melodic bank.
+    async function importSf2Bytes(bytes, fileName) {
+      const sf2 = parseSf2(bytes);
+      const kits = sf2Kits(sf2);
+      if (!kits.length) throw new Error('no presets in this SoundFont');
+      let kit = kits[0];
+      if (kits.length > 1) {
+        const got = await showImportDialog({
+          title: `Import ${fileName}`,
+          summary: `${sf2.name || 'SoundFont'} · ${kits.length} ${kits[0].bank === 128 ? 'drum kits' : 'presets'}. ` +
+            'Each GM drum key becomes a sample under the kit role name, mono 22,050 Hz, its level set by role.',
+          fields: [{ key: 'kit', label: 'Kit', type: 'select', value: '0',
+            choices: kits.map((k, i) => [String(i), `${k.program} ${k.name}`]) }],
+        });
+        if (!got) return null;
+        kit = kits[Number(got.fields.kit)];
+      }
+      return sf2KitToMmlisp(sf2, kit, fileName);
     }
 
     // MIDI and VGM: repeats folded into (x …) and phrases into defs.
@@ -3396,7 +3461,7 @@
           loadMucomSource(res.source, res.warnings, _mucomSong.fileName, `Reloaded ${_mucomSong.fileName} with voice bank ${datFile.name} (mucom88)`, res.pcm);
         } else {
           const { source, warnings } = voiceBankToMmlisp(datBytes);
-          loadMucomSource(source, warnings, datFile.name, `Loaded voice bank ${datFile.name} (mucom88) — ${(source.match(/\(def @/g) || []).length} voices`);
+          insertImportedInstruments(source, warnings, `Imported voice bank ${datFile.name} (mucom88) — ${(source.match(/\(def-fm /g) || []).length} voices`, { tag: 'mucom88' });
         }
       } catch (e) {
         log(`mucom88 voice bank failed: ${e?.message || e}`, 'err');
@@ -3422,7 +3487,7 @@
     // file lands where they choose (next to the score).
     async function exportMucomPcmWav() {
       if (!_mucomPcm) {
-        log('no imported PCM bank — import a .muc with its .bin, the .bin on its own, or a VGM that plays the DAC', 'err');
+        log('no imported PCM bank — import a .muc with its .bin, the .bin on its own, SoundFont drums, or a VGM that plays the DAC', 'err');
         return;
       }
       const pcm = _mucomPcm;
@@ -3504,8 +3569,8 @@
           return;
         }
         const res = pcmBankToMmlisp(pcmBytes, pcmFile.name);
-        loadMucomSource(res.source, res.warnings, pcmFile.name,
-          `Loaded PCM bank ${pcmFile.name} (mucom88) — ${res.pcm.entries.length} samples`, res.pcm);
+        insertImportedInstruments(res.source, res.warnings,
+          `Imported PCM bank ${pcmFile.name} (mucom88) — ${res.pcm.entries.length} samples`, { tag: 'mucom88', pcm: res.pcm });
       } catch (e) {
         log(`mucom88 PCM bank failed: ${e?.message || e}`, 'err');
       }
@@ -3691,6 +3756,7 @@
     window.importOpni = importOpni;
     window.importMucom88 = importMucom88;
     window.importSong = importSong;
+    window.importSf2 = importSf2;
     window.importMucomVoiceBank = importMucomVoiceBank;
     window.importMucomPcmBank = importMucomPcmBank;
     window.exportMucomPcmWav = exportMucomPcmWav;
@@ -4836,6 +4902,7 @@
       if (songImporterFor(name)) return 'song';
       if (/\.dat$/i.test(name)) return 'mucom-voices';
       if (/\.bin$/i.test(name)) return 'mucom-pcm';
+      if (/\.sf2$/i.test(name)) return 'sf2';
       return null;
     }
 
@@ -4952,7 +5019,7 @@
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
             ? `${entry.file.name}: only .wav is accepted as a sample — the exporters read RIFF WAV only, so convert it first`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .mid .midi .rmi .smf .dmf .fur .vgm .vgz)`,
+            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .sf2 .mid .midi .rmi .smf .dmf .fur .vgm .vgz)`,
           'err',
         );
       }
@@ -4980,6 +5047,7 @@
           else if (kind === 'fmvoice') await importFmVoiceFromFile(entry.file, detectFmImportFormatKey(entry.file.name));
           else if (kind === 'mucom-voices') await importMucomVoiceBankFromFile(entry.file);
           else if (kind === 'mucom-pcm') await importMucomPcmBankFromFile(entry.file);
+          else if (kind === 'sf2') await importSf2FromFile(entry.file);
           else if (kind === 'song') await importSongFromFile(entry.file);
           else if (kind === 'mmb') log(`${entry.file.name} ignored — only one document can be open at a time`, 'info');
         } catch (e) {
@@ -5787,6 +5855,7 @@
     // the FM panel's def-at-cursor from the new document.
     function resetForNewScore() {
       onStop();
+      _mucomSong = null; // a .dat / .bin applied now belongs to the new document, not the song before
       _mutedChannels.clear();
       _soloChannels.clear();
       _channelVol.clear();

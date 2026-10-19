@@ -108,6 +108,8 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 - FM voice import: DefleMask DMP, Furnace FUI, TFI, VGI, OPNI
 - mucom88 `.muc` / `.dat` song and voice-bank import, and its `*pcm.bin` drum
   banks (File > Import > mucom88 Drums…) as samples
+- SoundFont (`.sf2`) drum kits as samples under the preset kits' role names,
+  resampled, mono and levelled like them (File > Import > SoundFont Drums…)
 - Song import with a dialog for tempo and which part goes on which channel:
   MIDI onto the GM voice set; DefleMask and Furnace modules with each pattern
   as a phrase;

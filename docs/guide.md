@@ -1363,7 +1363,8 @@ formats `File > Import` accepts:
 | `.wav`                             | inserts a sample def (§19)                                 |
 | `.dmp` `.fui` `.tfi` `.vgi` `.opni` | inserts the FM voice def                                  |
 | `.muc` / `.mml`                    | mucom88 import — drop its `.dat` / `.bin` alongside to get voices and drums in one go |
-| `.dat` / `.bin` alone              | mucom88 voice bank / PCM bank                              |
+| `.dat` / `.bin` alone              | inserts a mucom88 voice bank / PCM bank's defs             |
+| `.sf2`                             | inserts a SoundFont's drum kit as sample defs (below)      |
 | `.mid`                             | MIDI import, through the import dialog (below)             |
 | `.dmf` / `.fur`                    | DefleMask / Furnace module import, through the import dialog (below) |
 | `.vgm` / `.vgz`                    | VGM import, through the import dialog (below)              |
@@ -1380,6 +1381,21 @@ automatically. If an individual baked sample is still too large, the
 importer can select a lower-rate voice profile with `(def-score :pcm-voices 2)` or
 `3`. A sample that cannot fit even then is omitted, its notes become rests,
 and the log identifies it.
+
+A SoundFont (`.sf2`, also `File > Import > SoundFont Drums…`) gives its drum
+kit, inserted at the cursor like any instrument import — the dialog asks
+which kit when the file has several. Each GM drum key comes
+out under the role name every preset kit uses (`kick`, `snare`, `hat`,
+`tom1`–`tom6`, …), so a score written against `presets/rx5` plays it
+unchanged — and since a local def wins over an import, inserted into a score
+that imports a kit it takes over those names. Keys outside that vocabulary
+are skipped and named in the log.
+A key is rendered as the SoundFont plays it at full velocity — every layer,
+at that key's pitch, through the volume envelope — then shaped like the
+preset kits: mono, 22,050 Hz, shortened with a fade, and its loudest 50 ms
+set to the role's level (`presets/rx5/README.md`). The kit is one wav that
+the defs slice, held in memory until Save writes it, as above. Melodic
+presets are not imported; filters, modulators and LFOs are not read.
 
 ### What a mucom88 import carries
 
