@@ -4612,40 +4612,48 @@
     function updateFolderAccessPrompt(src, hasSamples, sampleDefs) {
       const btn = document.getElementById('folderAccess');
       if (!btn) return;
-      if (typeof window.showDirectoryPicker !== 'function') {
-        // What the app serves (the preset, example and snippet trees) and URLs
-        // load by fetch; the rest only from a file.
-        const reachable = (p) => /^(presets|examples|snippets)\//.test(p) || /^[a-zA-Z][\w+.-]*:\/\//.test(p);
-        const samples = [...new Set(sampleDefs
-          .map((d) => d.resolvedFile ?? d.file ?? '')
-          .filter((p) => p && !reachable(p) && !_pcmSampleCache.has(p)))];
-        // The score's imports, and those of the imported files already held —
-        // each looked for next to its importer, then from the root
-        // (readImportSources), so it is missing only under both names.
-        const held = (from, spec) => _importSources.has(joinImportPath(from, spec)) || _importSources.has(joinImportPath('', spec));
-        const imports = [...new Set([
-          ...collectImports(src).filter((spec) => !held(_lastFileName, spec)),
-          ...[..._importSources].flatMap(([path, text]) => collectImports(text).filter((spec) => !held(path, spec))),
-        ].map((spec) => joinImportPath('', spec)))].filter((p) => !reachable(p));
-        _missingFiles = [
-          ...samples.map((path) => ({ kind: 'sample', path })),
-          ...imports.map((path) => ({ kind: 'import', path })),
-        ];
-        const n = _missingFiles.length;
-        if (n) {
+      const picker = typeof window.showDirectoryPicker === 'function';
+      // A score opened from a file asks for its folder (Chrome, Edge): one grant
+      // resolves every sample and import next to it.
+      if (picker && _sourceHandle && !_sourceDir) {
+        const localImports = /\(import\s+"(?!presets\/)[^"]+"/.test(src);
+        const show = hasSamples || localImports;
+        if (show) {
           document.getElementById('folderAccessLabel').textContent =
-            `Load ${n} missing file${n > 1 ? 's' : ''} (${_missingFiles.map((m) => m.path.split('/').pop()).join(', ')})…`;
+            `Load ${hasSamples ? 'samples' : 'imports'} from ${_sourceHandle.name}'s folder`;
         }
-        btn.hidden = !n;
+        btn.hidden = !show;
         return;
       }
-      const localImports = /\(import\s+"(?!presets\/)[^"]+"/.test(src);
-      const show = Boolean(_sourceHandle) && !_sourceDir && (hasSamples || localImports);
-      if (show) {
+      // Otherwise the missing files themselves are asked for: on a browser with
+      // no folder picker, and on one with it when there is no file to start the
+      // picker from — a score restored from the draft after a reload, a share
+      // link, a new score. A granted folder answers for itself.
+      if (picker && _sourceDir) { _missingFiles = []; btn.hidden = true; return; }
+      // What the app serves (the preset, example and snippet trees) and URLs
+      // load by fetch; the rest only from a file.
+      const reachable = (p) => /^(presets|examples|snippets)\//.test(p) || /^[a-zA-Z][\w+.-]*:\/\//.test(p);
+      const samples = [...new Set(sampleDefs
+        .map((d) => d.resolvedFile ?? d.file ?? '')
+        .filter((p) => p && !reachable(p) && !_pcmSampleCache.has(p)))];
+      // The score's imports, and those of the imported files already held —
+      // each looked for next to its importer, then from the root
+      // (readImportSources), so it is missing only under both names.
+      const held = (from, spec) => _importSources.has(joinImportPath(from, spec)) || _importSources.has(joinImportPath('', spec));
+      const imports = [...new Set([
+        ...collectImports(src).filter((spec) => !held(_lastFileName, spec)),
+        ...[..._importSources].flatMap(([path, text]) => collectImports(text).filter((spec) => !held(path, spec))),
+      ].map((spec) => joinImportPath('', spec)))].filter((p) => !reachable(p));
+      _missingFiles = [
+        ...samples.map((path) => ({ kind: 'sample', path })),
+        ...imports.map((path) => ({ kind: 'import', path })),
+      ];
+      const n = _missingFiles.length;
+      if (n) {
         document.getElementById('folderAccessLabel').textContent =
-          `Load ${hasSamples ? 'samples' : 'imports'} from ${_sourceHandle.name}'s folder`;
+          `Load ${n} missing file${n > 1 ? 's' : ''} (${_missingFiles.map((m) => m.path.split('/').pop()).join(', ')})…`;
       }
-      btn.hidden = !show;
+      btn.hidden = !n;
     }
 
     async function pickMissingFiles() {
@@ -4679,9 +4687,9 @@
     }
 
     async function grantScoreFolder() {
-      if (typeof window.showDirectoryPicker !== 'function') return pickMissingFiles();
+      // No picker, or no file to start it from: the button asked for the files.
+      if (typeof window.showDirectoryPicker !== 'function' || !_sourceHandle) return pickMissingFiles();
       const handle = _sourceHandle;
-      if (!handle) return;
       let dir;
       try {
         dir = await window.showDirectoryPicker({ mode: 'read', startIn: handle });

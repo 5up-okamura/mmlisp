@@ -1344,6 +1344,12 @@ from …'s folder** button appears over the editor: it opens the folder picker
 already in the score's folder, so one click on Open does it. From then on
 Open Recent brings the score back with its folder.
 
+A score that comes with no file at all — brought back from the browser's
+draft after a reload, opened from a share link, or never saved — has no folder
+to start that picker from. Then Chrome and Edge show the same `Load … missing
+files` button as the browsers without pickers: pick the wavs and imports it
+names, or open the score's folder with `File > Open Folder…`.
+
 ## 23. Dragging files into the live app
 
 Drop files anywhere on the window. They are routed by extension — the same
