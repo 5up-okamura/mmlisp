@@ -29,6 +29,7 @@ import {
   evalValue,
   evalScalarValue,
   evalLet,
+  letPairs,
   evalLengthValue,
   lookupBound,
 } from "./mmlisp-eval.js";
@@ -162,7 +163,7 @@ function pcmRejectsPitch(trackState, what, diagnostics, src, trackName) {
 // everywhere: the literal, and both ends of a curve. The IR carries SECONDS;
 // the exporter turns them into the engine's byte offsets at the image's rate
 // (driver.md §5). Events go out through `push(cmd, args)`.
-function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnostics, src, trackName) {
+function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnostics, src, trackName, env = null) {
   if (!trackState.isPcmTrack) {
     pushDiag(diagnostics, "error", "E_UNSUPPORTED_TARGET",
       `${keyword} is only for pcm1-pcm3, not ${String(trackName).split(":")[0]}`,
@@ -175,7 +176,7 @@ function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnos
     return;
   }
   const secOf = (tok) => lengthTokenSeconds(tok, trackState.currentTempo);
-  const rangeCurve = parseCurveSpec(valueNode, diagnostics, src, trackName, true, secOf);
+  const rangeCurve = parseCurveSpec(valueNode, diagnostics, src, trackName, true, secOf, env);
   requireCurveFrom(rangeCurve, diagnostics, trackName, "a PCM point", src);
   if (rangeCurve) {
     push("PARAM_SWEEP", { target, ...rangeCurve });
@@ -764,7 +765,7 @@ function emitCsmRateNoteHz(
 }
 
 function isPcmModeSymbol(value) {
-  return value === "shot" || value === "loop";
+  return value === "shot" || value === "loop" || value === "gate";
 }
 
 function isPcmTrackName(name) {
@@ -882,7 +883,7 @@ function emitNoteForTrack(
     // The head a `~` ties on to (placePcmTieOff).
     trackState.pcmTiedHead = {
       ev: pcmEv, off, segs: [pcmEv], total: lengthTicks, gateSpec: trackState.defaultGate,
-      sample: trackState.pcmSampleName, pitch: fullPitch, loop: mode === "loop", hasMacros,
+      sample: trackState.pcmSampleName, pitch: fullPitch, mode, hasMacros,
     };
     trackState.tick += lengthTicks;
     pushRecentNote(trackState, fullPitch, lengthTicks, trackState.defaultGate,
@@ -1169,9 +1170,9 @@ function placePcmTieOff(h, events) {
   const head = h.ev;
   const gate = resolveGateTicks(h.gateSpec, h.total);
   delete head.args.gate;
-  if (!(gate > 0 && (h.loop || (h.hasMacros && gate < h.total)))) return;
+  if (!(gate > 0 && (h.mode !== "shot" || (h.hasMacros && gate < h.total)))) return;
   const offTick = head.tick + gate;
-  const off = { tick: offTick, cmd: "PCM_NOTE_OFF", args: { sample: h.sample, mode: h.loop ? "loop" : head.args.mode }, src: head.src };
+  const off = { tick: offTick, cmd: "PCM_NOTE_OFF", args: { sample: h.sample, mode: h.mode }, src: head.src };
   h.off = off;
   if (gate < head.args.length) {
     head.args.gate = gate;
@@ -1223,11 +1224,11 @@ function pushPcmNote(trackState, events, note, src) {
   const hasMacros = PCM_MACRO_ARG_KEYS.some((key) => args[key]);
   const ev = { tick: trackState.tick, cmd: "PCM_NOTE_ON", args, src };
   events.push(ev);
-  // The note's key-off: a loop's release, and where a shot's macros take
-  // theirs — a shot with none has nothing that listens, and at full gate the
-  // next note or rest keys it off anyway.
+  // The note's key-off: a loop's release, a gate note's cut, and where a
+  // shot's macros take theirs — a shot with none has nothing that listens,
+  // and at full gate the next note or rest keys it off anyway.
   let off = null;
-  if (gateTicks > 0 && (mode === "loop" || (hasMacros && gateTicks < length))) {
+  if (gateTicks > 0 && (mode !== "shot" || (hasMacros && gateTicks < length))) {
     off = {
       tick: trackState.tick + gateTicks,
       cmd: "PCM_NOTE_OFF",
@@ -2307,9 +2308,13 @@ function parseMacroSpec(
         if (val === "#rel") { stages.push({ waitKeyOff: true }); continue; }
         if (val === "_") { stages.push(stepWait()); continue; }
         if (it.kind === "list" && atomValue(it.items?.[0]) === "wait") {
-          // (wait key-off) or (wait N) or (wait Nf)
-          const arg = atomValue(it.items?.[1]);
-          if (arg === "key-off") {
+          // (wait key-off) or (wait N) or (wait Nf), N a length as a curve's
+          // :wait reads it — a let name or an expression too.
+          const arg = curveParamToken(it.items?.[1], env, "length", "(wait …)", "a stage",
+            false, diagnostics, nodeSrc(it), trackName);
+          if (arg === undefined) {
+            stages.push({ waitTicks: 1 });
+          } else if (arg === "key-off") {
             stages.push({ waitKeyOff: true });
           } else if (isFrameToken(arg)) {
             // Nf / Nms is a wall-clock frame count; carry the unit so the
@@ -2524,6 +2529,57 @@ function isPerNoteLengthAtom(val) {
   return parsePerNoteLength(val) !== null;
 }
 
+// How each curve param reads a number (curveParamToken); `:from` / `:to` are
+// numbers, or lengths on a PCM point. The keys a bare `$slot` feeds (§8).
+const CURVE_PARAM_KIND = {
+  ":len": "length", ":hold": "length", ":wait": "length",
+  ":phase": "int", ":duty": "int", ":skew": "int", ":octaves": "int", ":seed": "int",
+  ":rate": "number", ":jitter": "number", ":beta": "number", ":lacunarity": "number",
+  ":persistence": "number", ":leak": "number",
+};
+const CURVE_DYN_KEYS = new Set([":from", ":to", ":len", ":rate"]);
+
+// A curve parameter's value (language.md §11) as the token its reader takes.
+// An atom is itself — a literal, or a bare `$slot` the caller records as a
+// dynamic source — unless it is a `let` name; a `let` name or an expression is
+// evaluated at compile time and its number written back as the token the same
+// bare number would be. `kind` is how the param reads a number: "int" and
+// "length" round it (a length's number is a note denominator, §7.4, and a
+// `(ticks …)` / `(frames …)` bridge becomes an `Nt` / `Nf` token); "number"
+// keeps it. A `$` inside an expression is an error: the driver reads one slot
+// as-is, so a curve param takes a bare `$slot` or a compile-time value.
+// Returns the token (null when there is none), or undefined after a diagnostic.
+function curveParamToken(node, env, kind, key, head, dynOk, diagnostics, src, trackName) {
+  if (!node) return null;
+  if (node.kind === "atom" && !(env && lookupBound(env, node.value) !== undefined))
+    return node.value;
+  if (node.kind === "atom" || (node.kind === "list" && node.bracket === "()")) {
+    const err = (code, msg) => {
+      if (diagnostics) pushDiag(diagnostics, "error", code, msg, src, trackName);
+    };
+    const runtime = () =>
+      err("E_CURVE_PARAM_RUNTIME",
+        `curve param ${key} on ${head} takes ${dynOk ? "one bare slot ($v) or " : ""}a compile-time value, ` +
+        `not an expression with a $ — the driver reads ${dynOk ? "one slot as-is" : "no slot here"}`);
+    if (exprHasValRef(node)) return runtime();
+    const ctx = {
+      ...makeEvalCtx(diagnostics ?? [], trackName, src),
+      resolveSlot: (raw) => raw.slice(1), // a let name bound to a `$` expression
+    };
+    if (kind === "length") {
+      const lv = evalLengthValue(node, env, ctx);
+      if (lv) return lv.unit === "error" ? undefined : `${lv.value}${lv.unit === "frame" ? "f" : "t"}`;
+    }
+    const r = evalValue(node, env, ctx);
+    if (!r) return undefined;
+    if (r.kind === "runtime") return runtime();
+    if (r.kind === "signal")
+      return err("E_EVAL_TYPE", `curve param ${key} on ${head} takes a number, not a curve`);
+    return String(kind === "number" ? r.value : Math.round(r.value));
+  }
+  return null;
+}
+
 /**
  * Parse an inline curve spec node, e.g. (ease-out :from 28 :to 20 :len 8).
  * Returns a PARAM_SWEEP args object or null if the node is not a curve form.
@@ -2534,10 +2590,12 @@ function parseCurveSpec(
   src = null,
   trackName = null,
   requireCurve = false,
-  // How a value in `:from` / `:to` (and `const`'s positional) is read. The PCM
-  // range points pass a length-token reader here, so `(linear :from 16 :to 64)`
-  // sweeps a 16th note down to a 64th instead of the bare numbers 16 and 64.
+  // How a value in `:from` / `:to` is read. The PCM range points pass a
+  // length-token reader here, so `(linear :from 16 :to 64)` sweeps a 16th
+  // note down to a 64th instead of the bare numbers 16 and 64.
   scalar = null,
+  // The lexical `let` env, so a param can name a binding (§7.2).
+  env = null,
 ) {
   const readScalar = scalar ?? parseNumberLike;
   if (!node || node.kind !== "list" || !node.items || node.items.length === 0)
@@ -2692,7 +2750,7 @@ function parseCurveSpec(
         diagnostics,
         "error",
         "E_CURVE_RANGE_MALFORMED",
-        `malformed range '${k}' (expected A..B)`,
+        `malformed range '${k}' (expected A..B, two numbers; a name or an expression goes in :from / :to)`,
         src ?? nodeSrc(node),
         trackName,
       );
@@ -2718,7 +2776,6 @@ function parseCurveSpec(
       continue;
     }
     if (k && k.startsWith(":") && j + 1 < node.items.length) {
-      const v = atomValue(node.items[j + 1]);
       if ((k === ":from" || k === ":to") && rangeUsed) {
         if (diagnostics) {
           pushDiag(
@@ -2749,6 +2806,13 @@ function parseCurveSpec(
             trackName,
           );
         }
+        j++;
+        continue;
+      }
+      const v = curveParamToken(
+        node.items[j + 1], env, CURVE_PARAM_KIND[k] ?? (scalar ? "length" : "number"), k, head,
+        CURVE_DYN_KEYS.has(k), diagnostics, src ?? nodeSrc(node), trackName);
+      if (v === undefined) {
         j++;
         continue;
       }
@@ -3079,7 +3143,7 @@ function makeEvalCtx(diagnostics, trackName, src, typedDefs = null, stepFrames =
     trackName,
     src,
     curveNames: CURVE_NAMES,
-    parseCurve: (n) => parseCurveSpec(n, diagnostics, nodeSrc(n), trackName, false),
+    parseCurve: (n, env) => parseCurveSpec(n, diagnostics, nodeSrc(n), trackName, false, null, env),
     foldSignal: foldCurveValues,
     isNoteStreamToken,
     // A voice or a sample (the samples ride on the voice map, set once the
@@ -3110,6 +3174,7 @@ function buildTempoSweepFromCurve(
   diagnostics,
   src,
   trackName,
+  env = null,
 ) {
   if (
     !(
@@ -3120,7 +3185,7 @@ function buildTempoSweepFromCurve(
   ) {
     return null;
   }
-  const curveSpec = parseCurveSpec(valueNode, diagnostics, src, trackName, true);
+  const curveSpec = parseCurveSpec(valueNode, diagnostics, src, trackName, true, null, env);
   if (!curveSpec) return null;
 
   const from = parseNumberLike(String(curveSpec.from ?? ""));
@@ -3657,6 +3722,8 @@ function compileChannelBody(
                   nodeSrc(node),
                   trackName,
                   true,
+                  null,
+                  evalEnv,
                 );
                 if (!curveSpec) break;
 
@@ -3747,6 +3814,7 @@ function compileChannelBody(
                 diagnostics,
                 nodeSrc(node),
                 trackName,
+                evalEnv,
               );
               if (swept) {
                 trackState.currentTempo = swept.toBpm;
@@ -3779,7 +3847,7 @@ function compileChannelBody(
                 trackState.pcmMode = rawVal;
               } else {
                 pushDiag(diagnostics, "error", "E_PCM_MODE_INVALID",
-                  "pcm :mode must be shot or loop", nodeSrc(node), trackName);
+                  "pcm :mode must be shot, loop or gate", nodeSrc(node), trackName);
               }
               break;
             }
@@ -3843,7 +3911,7 @@ function compileChannelBody(
               }
               if (PCM_POINT_TARGETS.has(target)) {
                 writePcmPoint(target, val, op, items[i], trackState, push,
-                  diagnostics, nodeSrc(node), trackName);
+                  diagnostics, nodeSrc(node), trackName, evalEnv);
                 break;
               }
               const writtenFrom = events.length;
@@ -4572,7 +4640,7 @@ function compileChannelBody(
             // The same length reading and pcm-track check as the inline write.
             writePcmPoint(target, atomValue(targetNode), null, valueNode, trackState,
               (cmd, args) => events.push({ tick: trackState.tick, cmd, args, src: nodeSrc(targetNode) }),
-              diagnostics, nodeSrc(targetNode), trackName);
+              diagnostics, nodeSrc(targetNode), trackName, evalEnv);
           } else {
             events.push({
               tick: trackState.tick,
@@ -5043,13 +5111,14 @@ function collectDefs(roots, diagnostics) {
   return { defs, paramDefs, typedDefs, sampleDefs, seDefs, vals, fileMeta, imports, mods, remaining };
 }
 
-// The channels a sound effect may play on — every one a song may. A part on
-// CH3 (fm3, fm3-1…fm3-4, fm3-csm, fm3-csm-rate) takes all of CH3 from the song,
-// its operator mode and CSM being chip-wide (driver.md §2.5).
+// The channels a sound effect may play on — every one a song may but CH3.
 const SE_CHANNELS = new Set([
-  "fm1", "fm2", "fm3", "fm4", "fm5", "fm6", "sqr1", "sqr2", "sqr3", "noise",
-  "pcm1", "pcm2", "pcm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate",
+  "fm1", "fm2", "fm4", "fm5", "fm6", "sqr1", "sqr2", "sqr3", "noise",
+  "pcm1", "pcm2", "pcm3",
 ]);
+// CH3 is not an effect's: its operator mode and CSM are chip-wide, and the
+// song's CH3 parts could not play on under an effect (driver.md §2.5).
+const SE_CH3 = new Set(["fm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate"]);
 // What an effect may not write, by IR target: the source keyword to name.
 const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate" };
 
@@ -5121,17 +5190,15 @@ function parseSeDef(root, diagnostics) {
   const seen = new Set();
   for (const part of items.slice(i)) {
     const head = part.kind === "list" ? atomValue(part.items[0]) : null;
-    if (!head || !SE_CHANNELS.has(head)) {
+    if (head && SE_CH3.has(head)) {
       pushDiag(diagnostics, "error", "E_SE_PART",
-        `a def-se part is a channel form, e.g. (fm1 …), not ${head ? `(${head} …)` : "that"}`,
+        `def-se ${name}: an effect cannot play on CH3 (${head}); put it on fm1, fm2 or fm4–fm6`,
         nodeSrc(part), null);
       continue;
     }
-    // CH3 in CSM mode is not CH3 in operator mode: one effect picks one.
-    const csm = /^fm3-csm/.test(head);
-    if ([...seen].some((h) => /^fm3/.test(h) && /^fm3-csm/.test(h) !== csm)) {
+    if (!head || !SE_CHANNELS.has(head)) {
       pushDiag(diagnostics, "error", "E_SE_PART",
-        `def-se ${name}: fm3-csm/fm3-csm-rate cannot share an effect with fm3 or fm3-1…fm3-4`,
+        `a def-se part is a channel form, e.g. (fm1 …), not ${head ? `(${head} …)` : "that"}`,
         nodeSrc(part), null);
       continue;
     }
@@ -5501,21 +5568,21 @@ function expandNode(node, defs, paramDefs, depth, diagnostics) {
   // A `let` binding's name is a new name, not a reference: it is not expanded,
   // and naming a snippet with it is E_LET_SHADOWS_DEF (a voice or a sample is
   // caught where the let binds, mmlisp-eval.js).
-  if (head === "let" && node.items[1]?.kind === "list") {
-    const bindings = node.items[1].items.map((b) => {
-      const pair = b.kind === "list" ? b.items.filter((n) => n.kind !== "comment") : null;
-      const name = pair?.[0]?.kind === "atom" ? pair[0].value : null;
-      if (!name) return expandNode(b, defs, paramDefs, depth, diagnostics)[0] ?? b;
-      if (defs.has(name) || paramDefs.has(name))
-        pushDiag(diagnostics, "error", "E_LET_SHADOWS_DEF",
-          `let name '${name}' shadows a def`, nodeSrc(pair[0]), null);
-      return {
-        ...b,
-        items: b.items.flatMap((n) => (n === pair[0] ? [n] : expandNode(n, defs, paramDefs, depth, diagnostics))),
-      };
-    });
-    const rest = node.items.slice(2).flatMap((n) => expandNode(n, defs, paramDefs, depth, diagnostics));
-    return [{ ...node, items: [node.items[0], { ...node.items[1], items: bindings }, ...rest] }];
+  // A malformed vector is left as written, for the let's own E_LET_BINDING.
+  if (head === "let" && node.items[1]?.kind === "list" && node.items[1].bracket === "[]") {
+    let pairs = null;
+    try { pairs = letPairs(node.items[1]); } catch (_) {}
+    if (pairs) {
+      const names = new Set(pairs.map(([n]) => n).filter((n) => n.kind === "atom"));
+      for (const n of names)
+        if (defs.has(n.value) || paramDefs.has(n.value))
+          pushDiag(diagnostics, "error", "E_LET_SHADOWS_DEF",
+            `let name '${n.value}' shadows a def`, nodeSrc(n), null);
+      const bindings = node.items[1].items.flatMap((n) =>
+        names.has(n) ? [n] : expandNode(n, defs, paramDefs, depth, diagnostics));
+      const rest = node.items.slice(2).flatMap((n) => expandNode(n, defs, paramDefs, depth, diagnostics));
+      return [{ ...node, items: [node.items[0], { ...node.items[1], items: bindings }, ...rest] }];
+    }
   }
 
   const newItems = [];
@@ -5810,8 +5877,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // choice — one image plays 1, 2 or 3 voices at 14.4 / 10.1 / 6.7 kHz. The
   // score states it, or it is the highest pcmN track used.
   // An effect's channels count here too: its PCM needs the voices, and fm6 is
-  // the DAC for an effect as for the song. (Its CH3 mode is its own — the
-  // FM3 checks above are the song's alone.)
+  // the DAC for an effect as for the song.
   const allHeads = new Set(channelHeads);
   for (const se of seDefs.values())
     for (const part of se.parts) allHeads.add(atomValue(part.items[0]));
@@ -6052,25 +6118,16 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   let seIndex = 0;
   for (const se of seDefs.values()) {
     const parts = expandRoots(se.parts, defs, paramDefs, diagnostics);
-    // An effect with operator parts sets CH3's operator mode itself: taking
-    // CH3 leaves it in normal mode (driver.md §2.5), as a song starts. The
-    // first CH3 part carries the switch: a part on another channel may be
-    // primed at load (driver.md §4.1), and CH3's mode is the chip's.
-    let opMode = parts.some((n) => /^fm3-[1-4]$/.test(atomValue(n.items[0])));
     for (const node of parts) {
       const head = atomValue(node.items[0]);
       const trackState = makeTrackState(head, se.tempo, se.tempo, null);
       const trackData = {
         id: 0,
         scoreChannel: head,
-        channel: /^fm3-/.test(head) ? "fm3" : head,
+        channel: head,
         se: { name: se.name, index: seIndex, prio: se.prio },
         events: [{ tick: 0, cmd: "TEMPO_SET", args: { bpm: se.tempo }, src: se.src }],
       };
-      if (opMode && /^fm3(-[1-4])?$/.test(head)) {
-        trackData.events.push({ tick: 0, cmd: "FM3_MODE", args: { mode: "op" }, src: se.src });
-        opMode = false;
-      }
       if (head === "noise")
         trackData.events.push({ tick: 0, cmd: "PARAM_SET",
           args: { target: "NOISE_MODE", value: NOISE_MODE_MAP["white0"] }, src: se.src });
@@ -6138,22 +6195,15 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
 
   // Beside fm3-1..fm3-4 the (fm3 …) track is the shared patch alone: in
   // independent-OP mode the channel's F-number is operator 4's, so a note on
-  // it would fight fm3-4 for pitch and key. Checked per song and per effect.
-  const fm3Groups = new Map();
-  for (const t of tracks) {
-    const key = t.se ? `se:${t.se.index}` : "song";
-    if (!fm3Groups.has(key)) fm3Groups.set(key, []);
-    fm3Groups.get(key).push(t);
-  }
-  for (const group of fm3Groups.values()) {
-    if (!group.some((t) => /^fm3-[1-4]$/.test(t.scoreChannel))) continue;
-    for (const t of group) {
-      if (t.scoreChannel !== "fm3") continue;
+  // it would fight fm3-4 for pitch and key.
+  if (tracks.some((t) => !t.se && /^fm3-[1-4]$/.test(t.scoreChannel))) {
+    for (const t of tracks) {
+      if (t.se || t.scoreChannel !== "fm3") continue;
       const note = t.events.find((ev) => ev.cmd === "NOTE_ON");
       if (note)
         pushDiag(diagnostics, "error", "E_FM3_MODE_CONFLICT",
           "(fm3 …) beside fm3-1..fm3-4 is the shared patch only: it takes no notes",
-          note.src ?? fileSrc, t.se ? `se:${t.se.name}:fm3` : "fm3");
+          note.src ?? fileSrc, "fm3");
     }
   }
 

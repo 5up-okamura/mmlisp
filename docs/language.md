@@ -163,7 +163,8 @@ note keeps its own length, so `~` takes none.
   second's length — one attack, held longer. Equivalent to a longer length token.
   On a PCM track too: the same sample at the same pitch is not struck again —
   a shot plays on, a `:mode loop` note keeps looping and releases at the gate
-  of the whole tied length. A slur, or another sample, strikes anew.
+  of the whole tied length, and a `:mode gate` note is cut there. A slur, or
+  another sample, strikes anew.
 - **Different pitch → slur (legato).** `c ~ e` moves the frequency to `e`
   **without re-keying** — the FM envelope (or the PSG tone) carries over from
   `c`, no new attack. Chains: `c ~ d ~ e` is one attack gliding through all three.
@@ -296,7 +297,7 @@ keywords at the form's first tick.
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
-| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
+| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:shuffle` | 51–90 or `none`           | Swing ratio (§5.2)                                       |
 | `:shuffle-base` | length token         | The swung length (default: eighth, §5.2)                 |
@@ -532,8 +533,8 @@ binds (the target's own round/clamp). A note/length token as an operand is
 `E_EVAL_DEPTH`; wrong argument count → `E_EVAL_ARITY`.
 
 Expressions are accepted in **value positions**: an inline param write
-(`:tl1 (+ 20 10)`), a `(param-set …)` value, and inside `let` / `note` /
-`(ticks …)` / `(frames …)`.
+(`:tl1 (+ 20 10)`), a `(param-set …)` value, a curve parameter
+(`:to (* 2 10)`, §11), and inside `let` / `note` / `(ticks …)` / `(frames …)`.
 
 ```lisp
 (fm1 :tl1 (+ 20 10)              ; = :tl1 30
@@ -607,28 +608,29 @@ chip within the same frame; a later batched flush collapses them).
 
 ### 7.2 `let` — local bindings
 
-`(let ((name value) …) body…)` binds names for its body — sequential
+`(let [name value …] body…)` binds names for its body — sequential
 (`let*`: later bindings see earlier ones), lexically scoped, nestable.
 
 ```lisp
 (fm1 :len 8
-  (let ((root 60))                       ; a value, not a phrase
+  (let [root 60]                         ; a value, not a phrase
     (note root) (note (+ root 4)) (note (+ root 7)))   ; c e g
-  (let ((amp 40))
+  (let [amp 40]
     (macro :pitch (* (sin :from -1 :to 1 :len 4f) amp))))
 ```
 
 - **Item position** (in the note stream): the body compiles in place — sticky
   state changes inside behave as if unwrapped.
-- **Value position**: the body is one expression (`:tl1 (let ((x 30)) (+ x 5))`);
+- **Value position**: the body is one expression (`:tl1 (let [x 30] (+ x 5))`);
   a bare bound name is also a value (`:vel v`).
 - **Bindable**: numbers, curves and `$` expressions (a phrase/stream cannot be
   bound — use a `def`, §9). A `$` expression stays a runtime value, lowered
-  where it is written (§7.1.2): `(let ((lvl (* $a 2))) :tl1 lvl …)`. A
+  where it is written (§7.1.2): `(let [lvl (* $a 2)] :tl1 lvl …)`. A
   self-read `$<param>` needs the parameter, so it binds only in a value-position
-  `let` (`:tl1 (let ((x $tl1)) (+ x 3))`).
-- **Bindings** are a list of `(name expr)` pairs; anything else is
-  `E_LET_BINDING`.
+  `let` (`:tl1 (let [x $tl1] (+ x 3))`).
+- **Bindings** are one vector of names and values in turn, as in Clojure:
+  `[root 60 amp 40]`. A name without its value, or a list in place of the
+  vector (`((root 60))`), is `E_LET_BINDING`.
 - **Names** must not be note/length tokens (so single letters `a`–`g`, `_`,
   `>`, `4t`, `v+` … are rejected — `E_LET_NAME`) and must not shadow a def
   (`E_LET_SHADOWS_DEF`). Use multi-letter words (`root`, `amp`, `base`).
@@ -652,7 +654,8 @@ range 0–127 → `E_NOTE_RANGE`; no pitch, or more than a pitch and a length, i
 
 ### 7.4 Lengths from expressions — `ticks` / `frames`
 
-In a length position (`:len`, `:gate`, a note's second argument) a **bare
+In a length position (`:len`, `:gate`, a note's second argument, a curve's
+`:len` / `:hold` / `:wait` and a stage's `(wait …)`) a **bare
 number is a note denominator** — and a computed number is the same:
 `(+ 2 2)` ≡ `4` ≡ a quarter note; `(* 2 4)` ≡ `8` ≡ an eighth. For an absolute
 duration wrap the unit explicitly:
@@ -740,7 +743,11 @@ host write ends the score's sweep of that slot.
   that cannot fit a 16-bit slot is `E_DEFVAL_INIT`.
 
 **Dynamic curve parameters.** A `$name` may feed a curve's `:from`, `:to`,
-`:rate`, or `:len`. The slot is read **once at note-on** (the note-on sampling
+`:rate`, or `:len` — a **bare** `$name` only: the driver reads one slot as-is,
+so an expression with a `$` in it (`:to (+ $v 4)`, or a `let` name bound to
+one) is `E_CURVE_PARAM_RUNTIME`. (Compute it into a value of its own instead:
+`(def-val lift 0)`, `:lift (+ $v 4)`, then `:to $lift`.) The slot is read
+**once at note-on** (the note-on sampling
 tier), so the value is constant for that note. `:len` uses the slot's
 `def-val :unit` to pick frame/tick interpretation. The macro `:step` clock is
 static. The curve spec records these in a `dyn` map the player resolves at
@@ -975,22 +982,19 @@ A game's sound effects are written once, as defs, and every song carries them.
 
 - **Parts.** Each part is a channel form, written on the channel the effect
   **takes from the song** — `fm1` above is the song's lead's channel. When the
-  effect plays, the song's part there is suspended, and comes back re-keyed
-  when the effect ends (driver.md §2.5) — patch, levels, pan and, on `noise`,
-  its mode, as they were. One part a channel (`E_SE_PART`). An FM effect on a
+  effect plays, the song's part there is suspended — it plays on, unheard —
+  and when the effect ends it comes back where the song is (driver.md §2.5):
+  patch, levels, pan, a sweep still moving and, on `noise`, its mode, with a
+  note it still holds re-keyed. One part a channel (`E_SE_PART`). An FM effect on a
   channel the song leaves free starts sooner: the first effect there has its
   voice loaded with the score (driver.md §4.1).
 - **Not `:master`, `:lfo-rate` or a `def-val`.** Those are the song's — the
   game's fader, the chip's one LFO, the score's values — so an effect does not
   write them (`E_SE_PART`).
-- **CH3 is taken whole.** CH3's operator mode (`fm3-1`…`fm3-4`) and CSM
-  (`fm3-csm`, `fm3-csm-rate`) are chip-wide, so an effect with any part on
-  CH3 — `fm3` included — takes all of it: every song part on CH3 is suspended,
-  the effect plays in whatever mode its own parts set (an effect with operator
-  parts switches CH3 into operator mode itself), and at its end the song gets
-  its mode, CSM rate, patch, levels and held notes back. One effect is either
-  CSM or not: `fm3-csm` parts cannot share an effect with `fm3` / `fm3-1`…
-  (`E_SE_PART`).
+- **Not on CH3.** `fm3`, `fm3-1`…`fm3-4`, `fm3-csm` and `fm3-csm-rate` take
+  no effect part (`E_SE_PART`): CH3's operator mode and CSM are chip-wide,
+  so a song part there could not play on under an effect. Put an FM effect
+  on `fm1`, `fm2` or `fm4`–`fm6`.
 
   ```lisp
   (def-fm kit :alg 7 :fb 0
@@ -1243,6 +1247,9 @@ and `(delay …)` — except the stochastic curves, which are macro-only (below)
 ```
 
 `A..B` is shorthand for `:from A :to B` (signed decimals; `40..0` descends).
+Its ends are numbers only — the range is one token, so a `let` name or an
+expression as an end goes in `:from` / `:to` (`0..n` is
+`E_CURVE_RANGE_MALFORMED`).
 It works anywhere a curve does, including inside arithmetic
 (`(* (sin -1..1 :len 8f) 40)`) and score `:tempo (linear 120..80 :len 4)`.
 Combining it with an explicit `:from`/`:to`, or two ranges, is
@@ -1274,6 +1281,22 @@ is forward only.
 `(…)` in a curve position whose head is not one of these names (a typo, or the
 literal word `curve`) is rejected with `E_EVAL_UNKNOWN_HEAD`, as any unknown
 function is.
+
+**Parameter values.** Every numeric parameter below takes a compile-time
+value: a number, a `let` name (§7.2), a `def` constant, or an expression
+(`:to (* 2 10)`, `:phase (+ root 4)`, §7.1), folded when the score compiles.
+A length parameter (`:len`, `:hold`, `:wait`, a stage's `(wait …)`) reads a
+computed number as the same bare number would read — a note denominator,
+`(* 2 4)` ≡ `8` (§7.4) — and takes a `(ticks …)` / `(frames …)` bridge for an
+absolute count; an integer parameter (`:phase`, `:duty`, `:skew`, `:octaves`,
+`:seed`) rounds it. A curve's `:from`, `:to`, `:len` and `:rate` also take a bare
+`$slot` (§8), but not an expression with a `$` in it (`E_CURVE_PARAM_RUNTIME`).
+
+```lisp
+(fm1 (let [top 40]
+       (macro :tl1 (sin :from 0 :to top :len (* 2 4) :phase (/ 256 4))))
+     c e g)
+```
 
 ### Common parameters (all curves)
 
@@ -1324,7 +1347,8 @@ Normalization rules:
 - Unknown keyword for a curve name → `E_CURVE_PARAM_UNKNOWN` (error).
 - Out-of-range values are clamped with `W_CURVE_PARAM_CLAMPED`.
 - A value that does not read as a number (`:phase x`, `:len 8x`) is ignored,
-  with `W_CURVE_PARAM_INVALID`.
+  with `W_CURVE_PARAM_INVALID`; an expression with a `$` is
+  `E_CURVE_PARAM_RUNTIME`, and one that yields a curve is `E_EVAL_TYPE`.
 - All params are part of the LUT identity; identical curve + params
   combinations share one LUT.
 
@@ -1745,7 +1769,8 @@ is a place in the wave rather than a place in the bar:
   must keep their order — `pcm-start ≤ loop-start < loop-end ≤ pcm-end` —
   or it is `E_SAMPLE_RANGE`; on a track they are clamped into it.
 
-A **shot** plays the range once and ignores the loop. A **`loop` note** starts
+A **shot** plays the range once and ignores the loop; a **`gate` note** plays
+it the same way and is cut at its gate. A **`loop` note** starts
 at `:pcm-start`, plays on to `:loop-end`, repeats `[:loop-start, :loop-end)`
 while it is held, and at its note-off plays on from where it is to `:pcm-end`
 and parks (*Playback*, below). `:pcm-end` and `:pcm-len` both set the range's
@@ -1949,10 +1974,24 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   until the next `:mode` — and it is the note, not the sample, that decides:
   `shot` (the default) plays the note's range once; `loop` plays the attack,
   cycles the range until KEY-OFF (a `PCM_NOTE_OFF` at the gate), then plays
-  the release tail to the sample's end. A note on a def with no range plays —
-  or loops — the whole sample. Write `:mode shot` to go back.
+  the release tail to the sample's end; `gate` plays the range once, as a
+  shot, and stops it at the gate — the note's end at full gate. A note on a
+  def with no range plays — or loops — the whole sample. Write `:mode shot`
+  to go back.
   > A `shot` plays to its end regardless of the note's `length` / `gate`;
-  > only `loop` mode's sound honors KEY-OFF (a shot's macros do, below).
+  > `loop` releases at KEY-OFF and `gate` is cut there (a shot's macros take
+  > their release there too, below).
+  > A `gate` note's sound ends at its gate, so the release section (`#rel`)
+  > of its `:vel` and `:vol` macros is not heard: a fade before the cut is
+  > written inside the gate. A `:keyon` step in the release section strikes
+  > the sample again, and that strike plays the range through, as a shot.
+  > The cut lands at the voice's next block edge after the gate's frame —
+  > and, as when a note cuts the one before it, it can click.
+
+  ```lisp
+  (def-pcm hat :file "sounds/hat.wav")
+  (pcm1 hat :mode gate :len 16 :gate 32 c c c :gate 16 c)   ; a closed hat, then an open one
+  ```
 - `:len 0` holds a loop open until runtime `KEY_OFF` / `STOP_TRACK` (§17).
 - `:vel`, `:vol`, `:master` compose through the standard level stack (§6), but a
   PCM voice's resolution is COARSER than FM's or PSG's: the mixer attenuates by
@@ -1979,7 +2018,7 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
     c (macro :step 1/32 :keyon [1 1 1 1 1 1 1 1]) (macro :vel (linear 8..15 :len 4f)) c)
   ```
 - A PCM note without a bound sample is `E_PCM_SAMPLE_REQUIRED`; a word that
-  names no def is `E_UNKNOWN_ATOM`. `:mode shot`/`loop` and
+  names no def is `E_UNKNOWN_ATOM`. `:mode shot`/`loop`/`gate` and
   the range keys on any other channel (fm6 included — it is FM only) are
   `E_UNSUPPORTED_TARGET`. A def-pcm key it does not have is
   `E_UNKNOWN_KEYWORD`; a range that is not a length, or ends at or before it

@@ -82,7 +82,7 @@ eighth), `N.` dotted, `N/M` a fraction of a whole note, `Nt` `Nf` `Nms`.
 | `:tempo` | 120 | BPM, song-wide, from any track; a curve sweeps it |
 | `:pan` | center | `left` `center` `right` (FM) |
 | `:shuffle` | none | 51–90 swing on eighths (§5.2) |
-| `:mode` | | `noise`: noise mode; `pcm`: `shot` / `loop` |
+| `:mode` | | `noise`: noise mode; `pcm`: `shot` / `loop` / `gate` |
 | `:alg :fb :tl1 :ar2 …` | voice | an FM register: value, curve, `none`, `$slot` (§5.1) |
 
 A trailing `+` adds and `*` multiplies: `:vel+ -2`, `:vel* 0.5`, `:tl1+ 5`
@@ -154,7 +154,9 @@ a macro). `:step` is frames (`2f`) or a note length (`16`, on the beat).
 `(name A..B :len L …)` — `linear`, `ease-in` / `ease-out` / `ease-inout` (and
 `-sine -cubic -expo -back -bounce …`), the loop waves `sin triangle square saw
 ramp`, and the random `noise pink perlin brown` (macro only). Options: `:rate`,
-`:phase`, `:mode loop|shot`, `:wait`, `:duty` (square), `:seed`.
+`:phase`, `:mode loop|shot`, `:wait`, `:duty` (square), `:seed`. A param takes
+a number, a `let` name or an expression (`:to (* 2 top)`); `:from :to :len
+:rate` also a bare `$slot`, never an expression with a `$`.
 
 Where a curve goes: a macro (per note), an inline sweep (`:tl1 (linear 40..0
 :len 2)`, `:vol`, `:pan`), `:tempo`, `(delay …)`. A macro curve needs its
@@ -164,10 +166,10 @@ start written (`40..0`, not `:to 0` alone).
 
 | Write | Means |
 | --- | --- |
-| `(echo 3 :vel+ -2)` | replay the last note 3 times, quieter; takes time (§12) |
+| `(echo 3 :vel+ -2)` | replay the last note 3 times, quieter; takes time — the mucom import's `\=`; for an echo effect write `(delay …)` (§12) |
 | `(delay 2 :vel* 0.6 :time 1/8)` | echo copies of every following note in the gaps (§12) |
 | `(glide 8)` … `(glide none)` | portamento into each note (§14) |
-| `(let ((root 60)) (note root) (note (+ root 7)))` | computed pitches, MIDI numbers (§7.2, §7.3) |
+| `(let [root 60] (note root) (note (+ root 7)))` | computed pitches, MIDI numbers (§7.2, §7.3) |
 | `:tl1 (+ 20 10)`, `(min 7 5)` | compile-time arithmetic (§7.1) |
 | `:tl1 (+ 40 (* $bright 2))` | runtime expression over a slot (§7.1.2) |
 
@@ -185,7 +187,8 @@ Four points, as lengths or curves, on the def and the track:
 `:pcm-start` ── `:loop-start` ═ `:loop-end` ── `:pcm-end`. A `shot` plays the
 range (`:pcm-*`) once; `:mode loop` plays from `:pcm-start`, repeats the loop
 (`:loop-*`, default: the whole range) while held, and runs on to `:pcm-end`
-after its note-off. `…-len` keeps the length when its start moves.
+after its note-off; `:mode gate` plays the range once and is cut at the gate.
+`…-len` keeps the length when its start moves.
 
 A note's pitch picks a resampled copy, baked into the 32 KB bank — only what
 the score plays is baked. No pitch moves on PCM (`:pitch`, `(glide)`); levels

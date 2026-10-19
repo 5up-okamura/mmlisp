@@ -93,6 +93,7 @@ enum {
   OP_FM3_OP_PITCH = 0xa4,
   OP_PCM_NOTE_ON = 0xc0,
   OP_PCM_NOTE_OFF = 0xc1,
+  OP_PCM_NOTE_CUT = 0xc2,
   OP_MACRO_SET = 0xe0,
   OP_PARAM_ADD_VAL = 0xe1,
   OP_PARAM_MUL_VAL = 0xe2,
@@ -226,8 +227,30 @@ MML_HOT void q_push(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
   s->q_head = next;
 }
 
+/* A displaced part plays on into a ghost of its channel (ghost_swap): while
+ * it does, a write addressed to that channel is dropped — the chip and its
+ * shadow are the effect's. The song-wide registers ($22-$2B) and the other
+ * channels' are not the ghost's, and go out.
+ * The channel a YM write addresses (0-5), or -1 for a song-wide register:
+ * $30-$B6 carry it in their low two bits and the port; $A8-$AE are CH3's
+ * operator F-numbers. drv-player.js ymWriteCh / keyWriteCh. */
+MML_HOT int ym_write_ch(uint8_t port, uint8_t addr) {
+  if (addr < 0x30) return -1;
+  if (port == 0 && addr >= 0xa8 && addr <= 0xae) return 2;
+  uint8_t c = addr & 3;
+  return c == 3 ? -1 : port * 3 + c;
+}
+MML_HOT int key_write_ch(uint8_t data) {
+  uint8_t c = data & 3;
+  return c == 3 ? -1 : ((data >> 2) & 1) * 3 + c;
+}
+MML_HOT int ghost_muted(const MMLSeq *s, uint8_t port, uint8_t addr) {
+  return s->ghost_on && ym_write_ch(port, addr) == s->ghost_on - 1;
+}
+
 /* YM parameter write, change-only through the shadow. */
 MML_HOT void ym(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
+  if (ghost_muted(s, port, addr)) return;
   if (s->shadow_set[port][addr] && s->shadow[port][addr] == data) return;
   s->shadow_set[port][addr] = 1;
   s->shadow[port][addr] = data;
@@ -240,16 +263,25 @@ MML_HOT void ym(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
  * of them, so suppressing the high byte would let another channel's
  * intervening write pick the wrong octave (driver.md §8). */
 MML_HOT void ym_always(MMLSeq *s, uint8_t port, uint8_t addr, uint8_t data) {
+  if (ghost_muted(s, port, addr)) return;
   s->shadow_set[port][addr] = 1;
   s->shadow[port][addr] = data;
   q_push(s, port, addr, data);
 }
 
 /* $28 is a key EDGE, not state. */
-MML_HOT void ym_key(MMLSeq *s, uint8_t data) { q_push(s, 0, 0x28, data); }
+MML_HOT void ym_key(MMLSeq *s, uint8_t data) {
+  if (s->ghost_on && key_write_ch(data) == s->ghost_on - 1) return;
+  q_push(s, 0, 0x28, data);
+}
 
-/* The SN76489 has no readable state; its bytes always go out. */
-MML_HOT void psg_byte(MMLSeq *s, uint8_t byte) { q_push(s, 2, 0, byte); }
+/* The SN76489 has no readable state; its bytes always go out. A data byte
+ * belongs to the channel its latch byte named. */
+MML_HOT void psg_byte(MMLSeq *s, uint8_t byte) {
+  if (byte & 0x80) s->psg_latch = (uint8_t)(7 + ((byte >> 5) & 3));
+  if (s->ghost_on && s->psg_latch == s->ghost_on) return;
+  q_push(s, 2, 0, byte);
+}
 
 /* ── PCM command emission (driver.md §6.3) ─────────────────────────────────
  * Every field is resolved HERE: the engine receives register-ready values and
@@ -958,7 +990,6 @@ static void set_reg27(MMLSeq *s, uint8_t value) {
   ym(s, 0, 0x27, s->reg27);
 }
 static void write_timer_a(MMLSeq *s, int period) {
-  s->timer_a = (uint16_t)period; /* what an effect that takes CH3 gives back */
   ym(s, 0, 0x24, (uint8_t)((period >> 2) & 0xff));
   ym(s, 0, 0x25, (uint8_t)(period & 0x03));
 }
@@ -1178,6 +1209,9 @@ static void macro_unbind(MMLSeq *s, int ch, uint8_t target) {
 static void macro_trigger(MMLSeq *s, int ch, uint16_t acc, const MMLTrack *t) {
   ch = macro_ch(ch);
   if (ch < 0) return;
+  /* A ghost's note runs no macros: its binds come back at SE-end, and the
+   * restore re-instantiates them as the note-on it is (ghost_restore). */
+  if (s->ghost_on) return;
   s->mc_se[ch] = (uint8_t)(t && (t->flags & TRACK_FLAG_IS_SE) ? (t - s->trk) + 1 : 0);
   for (int i = 0; i < s->bind_count[ch]; i++) {
     MMLMacroSlot *sl = &s->macro_slots[ch][i];
@@ -1559,6 +1593,15 @@ static void pcm_apply_loop(MMLSeq *s, int vi) {
   pcm_retarget(s, vi, end, wrap);
 }
 
+/* A `:mode gate` note's cut: END at the window's start, which every pointer
+ * is past, and WRAP to silence — the voice parks at its next block edge. */
+static void pcm_cut(MMLSeq *s, int vi) {
+  MMLPcmVoice *v = &s->pcm[vi];
+  if (!v->started) return;
+  v->looping = 0;
+  pcm_retarget(s, vi, MML_PCM_WINDOW, MML_PCM_SILENCE);
+}
+
 /* `loop`: the NOTE loops (`:mode loop`, PCM_NOTE_ON's note bit 7); a shot
  * plays the range once. Every entry carries a range — the def's, or the whole
  * sample — and a loop, the def's or the range, so a note always has both. */
@@ -1693,6 +1736,7 @@ static void apply_patch(MMLSeq *s, int ch, const uint8_t *e) {
 }
 
 static void voice_set(MMLSeq *s, int ch, uint8_t voice_id) {
+  if (ch >= 16 && ch <= 19) ch = 2; /* an operator track's patch is CH3's */
   if (ch >= 6 || voice_id >= s->voice_count) return;
   apply_patch(s, ch, s->voices + (uint32_t)voice_id * 29);
 }
@@ -1862,6 +1906,10 @@ static MMLDur read_dur(const uint8_t *b, uint32_t o) {
 }
 
 static void reclaim_se(MMLSeq *s, MMLTrack *se);
+/* A displaced part's channel (§2.5), defined with the SE code below. */
+static void ghost_swap(MMLSeq *s, int ch);
+static int ghost_in(MMLSeq *s, const MMLTrack *t);
+static void ghost_out(MMLSeq *s, int ch);
 
 static void dispatch(MMLSeq *s, MMLTrack *t) {
   const uint8_t *st = s->stream;
@@ -2188,6 +2236,12 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         t->pc += 1;
         channel_off(s, t->channel_id); /* a PCM key-off: the loop's release */
         break;
+      case OP_PCM_NOTE_CUT:
+        t->pc += 1;
+        /* A key-off that also silences the voice (`:mode gate`). */
+        channel_off(s, t->channel_id);
+        if (t->channel_id >= CH_PCM1 && t->channel_id <= CH_PCM3) pcm_cut(s, t->channel_id - CH_PCM1);
+        break;
       case OP_MACRO_SET: {
         uint8_t macro_id = st[t->pc + 1];
         t->pc += 2;
@@ -2271,6 +2325,7 @@ static void process_fades(MMLSeq *s) {
       t->fade_err -= (int32_t)t->fade_n;
       t->fade_cur--;
     }
+    int gh = ghost_in(s, t); /* a displaced part fades in its ghost */
     param_set(s, t->channel_id, T_VOL, t->fade_cur < 0 ? 0 : (int)t->fade_cur);
     if (t->fade_frame >= t->fade_n) {
       stop_track(s, t);
@@ -2279,6 +2334,7 @@ static void process_fades(MMLSeq *s) {
        * good and the channel keeps the effect's last registers. */
       reclaim_se(s, t);
     }
+    ghost_out(s, gh);
   }
 }
 
@@ -2463,12 +2519,16 @@ static void run_frame(MMLSeq *s) {
         /* A key-off held over from a note keyed in the last frame (gate). */
         if (t->off_next) {
           s->cur_acc = 0;
+          int gh = ghost_in(s, t);
           channel_off(s, t->channel_id);
+          ghost_out(s, gh);
           t->off_next = 0;
         }
         t->keyed_now = 0;
         if (t->running && t->fresh) {
+          int gh = ghost_in(s, t);
           dispatch(s, t);
+          ghost_out(s, gh);
           t->fresh = 0;
         }
       }
@@ -2493,13 +2553,19 @@ static void run_frame(MMLSeq *s) {
           t->gate_left -= k;
           if (t->gate_left == 0) {
             if (t->keyed_now) t->off_next = 1; /* keyed this frame: off at the next */
-            else channel_off(s, t->channel_id);
+            else {
+              int gh = ghost_in(s, t);
+              channel_off(s, t->channel_id);
+              ghost_out(s, gh);
+            }
             t->gate_left = -1;
           }
         }
         if (t->wait > 0) t->wait -= k;
         if (t->wait == 0) {
+          int gh = ghost_in(s, t);
           dispatch(s, t);
+          ghost_out(s, gh);
           if (!t->running || t->held) break;
         }
       }
@@ -2518,6 +2584,16 @@ static void run_frame(MMLSeq *s) {
         }
         if (!s->sweeps[bank][0].active && !s->sweeps[bank][1].active)
           s->sweep_live &= ~(1u << bank);
+      }
+      /* A ghost's sweeps move on with it, unheard, after the live ones. */
+      for (int ch = 0; ch < 10; ch++) {
+        const MMLGhost *gh = &s->ghost[ch];
+        if (!gh->live || !(gh->sweeps[0].active || gh->sweeps[1].active)) continue;
+        ghost_swap(s, ch);
+        MMLSweep *sl = s->sweeps[sweep_bank(ch)];
+        for (int i = 0; i < 2; i++)
+          if (sl[i].active && process_sweep(s, ch, &sl[i])) sl[i].active = 0;
+        ghost_swap(s, ch);
       }
       /* The song-wide targets' sweeps, after every channel's, in slot order. */
       for (uint32_t live = s->gsweep_live, g = 0; live; live >>= 1, g++) {
@@ -2620,7 +2696,7 @@ static void emit_init_writes(MMLSeq *s) {
   }
   ym(s, 0, 0x22, 0); /* LFO off */
   ym(s, 0, 0x27, 0); /* CH3 normal mode, timers off */
-  ym(s, 0, 0x2a, 0); /* DAC data centred — shadow only, the mixer owns it */
+  ym(s, 0, 0x2a, 0); /* DAC data 0 (the DAC is off) — shadow only, the mixer owns it */
   ym(s, 0, 0x2b, 0); /* DAC off — likewise */
 }
 
@@ -2859,118 +2935,179 @@ void mml_start_all(MMLSeq *s) {
 }
 
 /* ── SE: suspend and restore (driver.md §2.5) ──────────────────────────────
- * Mirrors drv-player _snapshotChannel / _restoreChannel / _reclaimSe. The
- * restore's write order — the patch, carrier level, pitch, re-key — is
- * normative: the gate diffs it byte for byte.
+ * Mirrors drv-player _ghostCapture / _restoreGhost / _reclaimSe. The restore's write order — the patch, carrier level, pitch,
+ * re-key — is normative: the gate diffs it byte for byte.
  */
-static void snapshot_channel(const MMLSeq *s, int ch, MMLChanSnap *sn) {
-  int mc = macro_ch(ch);
-  sn->macro_count = mc >= 0 ? s->bind_count[mc] : 0;
-  for (int i = 0; i < sn->macro_count; i++) sn->macros[i] = s->binds[mc][i];
-  if (ch < 6) {
-    const MMLFmCh *c = &s->fm[ch];
-    sn->kind = MML_SNAP_FM;
-    /* The patch as the register shadow holds it, in VOICE_TABLE order — the
-     * shadow is what the chip has, whatever wrote it. */
-    for (int op = 0; op < 4; op++) {
-      const MMLOp *o = &c->ops[op];
-      sn->patch[0 + op] = enc_30(o);
-      sn->patch[4 + op] = o->voiced_tl;
-      sn->patch[8 + op] = (uint8_t)((o->rs << 6) | o->ar);
-      sn->patch[12 + op] = enc_60(o);
-      sn->patch[16 + op] = o->d2r;
-      sn->patch[20 + op] = enc_80(o);
-      sn->patch[24 + op] = o->ssg;
-    }
-    sn->patch[28] = enc_b0(c);
-    sn->ams = c->ams;
-    sn->fms = c->fms;
-    sn->pan = c->pan;
-    sn->note = c->current_note;
-    sn->vel_base = c->vel_base; /* the score's vel, so the resumed track's next note is right */
-    sn->vel = c->vel;
-    sn->vol_base = c->vol_base;
-    sn->vol = c->vol;
-    sn->gate = c->gate;
-    sn->pitch_cents = c->pitch_cents;
-  } else if (ch < 10) {
-    const MMLPsgCh *p = &s->psg[ch - 6];
-    sn->kind = MML_SNAP_PSG;
-    sn->noise_mode = s->noise_mode;
-    sn->note = p->current_note;
-    sn->vel_base = p->vel_base;
-    sn->vel = p->vel;
-    sn->vol_base = p->vol_base;
-    sn->vol = p->vol;
-    sn->gate = p->gate;
-    sn->pitch_cents = p->pitch_cents;
-  } else {
-    sn->kind = MML_SNAP_NONE;
+/* The patch an FM channel's structured shadow encodes, in VOICE_TABLE order
+ * — the shadow is what the chip has, whatever wrote it. drv-player fmPatchOf. */
+static void encode_patch(const MMLFmCh *c, uint8_t *patch) {
+  for (int op = 0; op < 4; op++) {
+    const MMLOp *o = &c->ops[op];
+    patch[0 + op] = enc_30(o);
+    patch[4 + op] = o->voiced_tl;
+    patch[8 + op] = (uint8_t)((o->rs << 6) | o->ar);
+    patch[12 + op] = enc_60(o);
+    patch[16 + op] = o->d2r;
+    patch[20 + op] = enc_80(o);
+    patch[24 + op] = o->ssg;
   }
+  patch[28] = enc_b0(c);
 }
-
-/* The snapshot's patch back on the chip: the voice entry change-only against
- * the structured shadow, as VOICE_SET does it, then $B4 the same way. */
-static void restore_patch(MMLSeq *s, int ch, const MMLChanSnap *sn) {
+/* A ghost's patch back on the chip: the voice entry change-only against the
+ * structured shadow, as VOICE_SET does it, then $B4 the same way. */
+static void restore_patch(MMLSeq *s, int ch, const MMLFmCh *gc) {
   MMLFmCh *c = &s->fm[ch];
-  apply_patch(s, ch, sn->patch);
+  uint8_t patch[29];
+  encode_patch(gc, patch);
+  apply_patch(s, ch, patch);
   uint8_t old = enc_b4(c);
-  c->ams = sn->ams;
-  c->fms = sn->fms;
-  c->pan = sn->pan;
+  c->ams = gc->ams;
+  c->fms = gc->fms;
+  c->pan = gc->pan;
   if (enc_b4(c) != old) ym(s, ch >= 3 ? 1 : 0, (uint8_t)(0xb4 + mod3(ch)), enc_b4(c));
 }
 
-/* Put a snapshotted channel back and re-key its note. An FM envelope cannot
- * resume mid-way, so the note re-attacks — which is the "don't drop the held
- * note" goal, not a compromise of it. */
-static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
-  /* Whatever the SE left bound or sweeping goes first — the channel is changing
-   * hands again, and the rule is the claim's. */
+/* ── The displaced part plays on, unheard ──────────────────────────────────
+ * It keeps its clock: it dispatches, its gates run out and its sweeps and
+ * fade move on, into its channel's ghost (MMLGhost), while every write
+ * addressed to the channel is dropped (ghost_muted). The ghost and the live
+ * channel trade places only around what the part does to its channel
+ * (ghost_in / ghost_out), so in between the effect's own state is the live
+ * one. drv-player _ghostCapture / _ghostSwap / _ghostIn / _ghostOut. */
+static void ghost_capture(MMLSeq *s, int ch) {
+  MMLGhost *g = &s->ghost[ch];
+  int bank = sweep_bank(ch), mc = macro_ch(ch);
+  if (ch < 6) g->c.fm = s->fm[ch];
+  else g->c.psg = s->psg[ch - 6];
+  g->sweeps[0] = s->sweeps[bank][0];
+  g->sweeps[1] = s->sweeps[bank][1];
+  g->bind_count = s->bind_count[mc];
+  for (int i = 0; i < g->bind_count; i++) g->binds[i] = s->binds[mc][i];
+  g->slot_count = 0; /* a ghost runs no macros (macro_trigger) */
+  g->off_acc = s->off_acc[mc];
+  g->mc_se = s->mc_se[mc];
+  g->noise_mode = s->noise_mode;
+  g->live = 1;
+}
+/* Exchange two blocks in place, a word at a time: one pass, no temporary
+ * copy (struct assignment through a temporary is three memcpy calls). The
+ * blocks are structs, so word-aligned and of even size on the 68000. */
+static void swap_words(void *a, void *b, unsigned bytes) {
+  uint16_t *x = a, *y = b;
+  for (unsigned n = bytes >> 1; n; n--) {
+    uint16_t t = *x;
+    *x++ = *y;
+    *y++ = t;
+  }
+}
+typedef char mml_ghost_blocks_even[(sizeof(MMLFmCh) % 2 == 0 && sizeof(MMLPsgCh) % 2 == 0 &&
+                                    sizeof(MMLSweep) % 2 == 0 && sizeof(MMLMacroBind) % 2 == 0)
+                                       ? 1 : -1];
+/* Trade the live channel and its ghost; the same call trades them back. */
+static void ghost_swap(MMLSeq *s, int ch) {
+  MMLGhost *g = &s->ghost[ch];
+  int bank = sweep_bank(ch), mc = macro_ch(ch);
+  if (ch < 6) {
+    swap_words(&s->fm[ch], &g->c.fm, sizeof(MMLFmCh));
+  } else {
+    swap_words(&s->psg[ch - 6], &g->c.psg, sizeof(MMLPsgCh));
+    if (ch == 9) {
+      uint8_t m = s->noise_mode;
+      s->noise_mode = g->noise_mode;
+      g->noise_mode = m;
+    }
+  }
+  swap_words(s->sweeps[bank], g->sweeps, sizeof g->sweeps);
+  int n = s->bind_count[mc] > g->bind_count ? s->bind_count[mc] : g->bind_count;
+  swap_words(s->binds[mc], g->binds, (unsigned)n * sizeof(MMLMacroBind));
+  uint8_t u = s->bind_count[mc];
+  s->bind_count[mc] = g->bind_count;
+  g->bind_count = u;
+  u = s->macro_slot_count[mc];
+  s->macro_slot_count[mc] = g->slot_count;
+  g->slot_count = u;
+  u = s->mc_se[mc];
+  s->mc_se[mc] = g->mc_se;
+  g->mc_se = u;
+  uint16_t a = s->off_acc[mc];
+  s->off_acc[mc] = g->off_acc;
+  g->off_acc = a;
+  s->ghost_on = (uint8_t)(s->ghost_on ? 0 : ch + 1);
+}
+/* Around what a track does to its channel: a displaced one does it to its
+ * ghost. Returns the channel traded in, or -1, for ghost_out. */
+static int ghost_in(MMLSeq *s, const MMLTrack *t) {
+  int ch = t->channel_id;
+  if (!t->suspended || ch >= 10 || !s->ghost[ch].live) return -1;
+  ghost_swap(s, ch);
+  return ch;
+}
+static void ghost_out(MMLSeq *s, int ch) {
+  if (ch >= 0) ghost_swap(s, ch);
+}
+
+/* SE-end: the ghost onto the chip. A note the part is still holding
+ * re-attacks — an FM envelope cannot resume mid-way, so the re-attack is the
+ * design; one that ended under the effect stays ended. The ghost's sweeps go
+ * on from where they are; its binds come back, re-instantiated with the
+ * re-attack as the note-on it is (§13.1) rather than resumed mid-step under an
+ * envelope that did not. drv-player _restoreGhost. */
+static void ghost_restore(MMLSeq *s, int ch) {
+  MMLGhost *g = &s->ghost[ch];
+  if (!g->live) return;
+  g->live = 0;
+  /* Whatever the SE left bound or sweeping goes first — the channel is
+   * changing hands again, and the rule is the claim's. */
   clear_channel_modulators(s, ch);
-  if (sn->kind == MML_SNAP_FM) {
+  int keyed;
+  if (ch < 6) {
     MMLFmCh *c = &s->fm[ch];
-    restore_patch(s, ch, sn);
-    c->vel_base = sn->vel_base;
-    c->vel = sn->vel;
-    c->vol_base = sn->vol_base;
-    c->vol = sn->vol;
-    c->gate = sn->gate;
-    c->pitch_cents = sn->pitch_cents;
-    c->current_note = sn->note;
+    const MMLFmCh *gc = &g->c.fm;
+    restore_patch(s, ch, gc);
+    c->vel_base = gc->vel_base;
+    c->vel = gc->vel;
+    c->vol_base = gc->vol_base;
+    c->vol = gc->vol;
+    c->gate = gc->gate;
+    c->pitch_cents = gc->pitch_cents;
+    c->current_note = gc->current_note;
     /* Carrier level as note_on composes it, so a vel/vol below unity lands. */
     recompose_carriers(s, ch);
-    write_fm_pitch(s, ch, sn->note, sn->pitch_cents);
-    key_off(s, ch);
-    key_on(s, ch);
-  } else if (sn->kind == MML_SNAP_PSG) {
+    keyed = gc->keyed;
+    if (keyed) {
+      write_fm_pitch(s, ch, gc->current_note, gc->pitch_cents);
+      key_off(s, ch);
+      key_on(s, ch);
+    }
+  } else {
     /* The PSG re-attack is a note_on's period + attenuation, in that order. */
     int pc = ch - 6;
     MMLPsgCh *p = &s->psg[pc];
-    p->vel_base = sn->vel_base;
-    p->vel = sn->vel;
-    p->vol_base = sn->vol_base;
-    p->vol = sn->vol;
-    p->gate = sn->gate;
-    p->pitch_cents = sn->pitch_cents;
-    p->current_note = sn->note;
-    p->keyed = 1;
-    if (pc == 3) {
-      s->noise_mode = sn->noise_mode; /* the effect set its own */
-      write_noise_cfg(s);
-    } else write_psg_pitch(s, pc, sn->note, sn->pitch_cents);
-    write_psg_att(s, pc, psg_att(s, p->vel, p->vol));
+    const MMLPsgCh *gp = &g->c.psg;
+    p->vel_base = gp->vel_base;
+    p->vel = gp->vel;
+    p->vol_base = gp->vol_base;
+    p->vol = gp->vol;
+    p->gate = gp->gate;
+    p->pitch_cents = gp->pitch_cents;
+    p->current_note = gp->current_note;
+    p->keyed = gp->keyed;
+    keyed = gp->keyed;
+    if (pc == 3) s->noise_mode = g->noise_mode; /* the effect set its own */
+    if (keyed) {
+      if (pc == 3) write_noise_cfg(s);
+      else write_psg_pitch(s, pc, gp->current_note, gp->pitch_cents);
+      write_psg_att(s, pc, psg_att(s, p->vel, p->vol));
+    }
   }
-  /* The binds come back and are re-instantiated, in note-on order and at the
-   * note-on's place in it (§13.1). The restore already re-keys the note, so
-   * this makes it exactly a note-on with the snapshot's values — rather than
-   * resuming a macro mid-step under an envelope that did not. */
-  int mc = macro_ch(ch);
-  if (mc >= 0 && sn->macro_count) {
-    for (int i = 0; i < sn->macro_count; i++) s->binds[mc][i] = sn->macros[i];
-    s->bind_count[mc] = sn->macro_count;
-    macro_trigger(s, ch, 0, 0); /* a tick clock starts on the tick */
-  }
+  int bank = sweep_bank(ch), mc = macro_ch(ch);
+  s->sweeps[bank][0] = g->sweeps[0];
+  s->sweeps[bank][1] = g->sweeps[1];
+  if (g->sweeps[0].active || g->sweeps[1].active) s->sweep_live |= 1u << bank;
+  for (int i = 0; i < g->bind_count; i++) s->binds[mc][i] = g->binds[i];
+  s->bind_count[mc] = g->bind_count;
+  s->off_acc[mc] = g->off_acc;
+  if (keyed && g->bind_count) macro_trigger(s, ch, 0, 0); /* a tick clock starts on the tick */
 }
 
 /* A suspended track's only way back is the reclaim of the effect that
@@ -2981,210 +3118,24 @@ static void restore_channel(MMLSeq *s, int ch, const MMLChanSnap *sn) {
 static void release_suspended(MMLSeq *s, MMLTrack *t) {
   if (!t->suspended) return;
   t->suspended = 0;
-  t->snap.kind = MML_SNAP_NONE;
+  t->running = 0; /* its ghost is all it had of the channel */
+  t->fading = 0;
+  s->ghost[t->channel_id].live = 0;
   uint8_t idx = (uint8_t)(t - s->trk);
   for (uint8_t i = 0; i < s->track_count; i++)
     if (s->trk[i].is_se && s->trk[i].displaced == idx) s->trk[i].displaced = 0xff;
 }
 
-/* ── CH3 taken whole (driver.md §2.5, MMLCh3Snap) ───────────────────────────
- * The shared channel (2) and the four operator ids (16-19) are one unit to an
- * effect: CH3's operator mode and CSM are chip-wide, so an effect with any
- * part there takes all of it, suspends every song part on it, and gives back
- * the mode, the timer and the channel's state at its end. */
+/* CH3 — the shared channel 2 and the operator ids 16-19 — is one channel its
+ * tracks share, so the ownership rule leaves it alone; an effect never plays
+ * there (the compiler refuses it, E_SE_PART). */
 static int ch3_group(int ch) { return ch == 2 || (ch >= 16 && ch <= 19); }
-
-/* Every key on CH3 off, in whatever mode it is in. */
-static void ch3_silence(MMLSeq *s) {
-  key_off(s, 2);
-  if (s->fm3_op_mask) {
-    s->fm3_op_mask = 0;
-    ym_key(s, 0x02);
-  }
-}
-
-/* What a claim of CH3 leaves: no keys, no modulators, the level state at its
- * defaults, no CSM rate sweep, and the chip in normal mode — an effect's own
- * parts switch the mode they need, as a song's do. */
-static void ch3_clear(MMLSeq *s) {
-  ch3_silence(s);
-  clear_channel_modulators(s, 2);
-  for (int op = 1; op <= 4; op++) {
-    clear_channel_modulators(s, 15 + op);
-    s->fm3_op_vel_base[op - 1] = VEL_MAX;
-    s->fm3_op_vel[op - 1] = VEL_MAX;
-    s->fm3_op_vol[op - 1] = VOL_UNITY;
-    s->fm3_op_vol_base[op - 1] = VOL_UNITY;
-  }
-  s->fm[2].vel_base = VEL_MAX;
-  s->fm[2].vel = VEL_MAX;
-  s->fm[2].vol = VOL_UNITY;
-  s->fm[2].vol_base = VOL_UNITY;
-  s->fm[2].gate = 8;
-  s->csm_sweep.active = 0;
-  set_reg27(s, (uint8_t)(s->reg27 & ~0xc0));
-}
-
-/* Effect `se` takes CH3 at `prio`. 0 = dropped: another effect holds CH3 at a
- * higher priority, and is left alone. */
-static int ch3_claim(MMLSeq *s, uint8_t se, uint8_t prio) {
-  MMLCh3Snap *h = &s->ch3;
-  if (h->active) {
-    /* Against the effect holding it: lower is dropped; equal or higher —
-     * itself played again included — stops its parts and inherits the hold,
-     * so the song comes back after the LAST effect. */
-    if (h->se != se && prio < h->prio) return 0;
-    for (uint8_t i = 0; i < s->track_count; i++) {
-      MMLTrack *o = &s->trk[i];
-      if (o->running && o->is_se && ch3_group(o->channel_id)) {
-        o->running = 0;
-        o->is_se = 0;
-      }
-    }
-  } else {
-    /* A fresh take: the song's parts on CH3 are suspended and CH3 as they
-     * left it is kept — before the clear below resets it. */
-    for (uint8_t i = 0; i < s->track_count; i++) {
-      MMLTrack *o = &s->trk[i];
-      if (o->running && !o->is_se && ch3_group(o->channel_id)) {
-        o->running = 0;
-        o->suspended = 1;
-      }
-    }
-    h->mode = (uint8_t)(s->reg27 & 0xc0);
-    h->timer_a = s->timer_a;
-    h->csm_hold = s->csm_hold;
-    h->fm_keyed = s->fm[2].keyed;
-    h->op_mask = s->fm3_op_mask;
-    snapshot_channel(s, 2, &h->ch);
-    for (int i = 0; i < 4; i++) {
-      h->op_note[i] = s->fm3_op_note[i];
-      h->op_cents[i] = s->fm3_op_cents[i];
-      h->op_vel_base[i] = s->fm3_op_vel_base[i];
-      h->op_vel[i] = s->fm3_op_vel[i];
-      h->op_vol[i] = s->fm3_op_vol[i];
-      h->op_vol_base[i] = s->fm3_op_vol_base[i];
-      int mc = macro_ch(16 + i);
-      h->op_bind_count[i] = s->bind_count[mc];
-      for (int k = 0; k < s->bind_count[mc]; k++) h->op_binds[i][k] = s->binds[mc][k];
-    }
-    h->active = 1;
-  }
-  h->se = se;
-  h->prio = prio;
-  ch3_clear(s);
-  return 1;
-}
-
-/* The holding effect's last CH3 part has ended: CH3 goes back as the song had
- * it — mode, timer, patch, levels, pitches — and its parts resume, the notes
- * they were holding re-keyed (an envelope cannot resume mid-way). */
-static void ch3_restore(MMLSeq *s) {
-  MMLCh3Snap *h = &s->ch3;
-  h->active = 0;
-  int resumed = 0;
-  for (uint8_t i = 0; i < s->track_count; i++)
-    if (s->trk[i].suspended && ch3_group(s->trk[i].channel_id)) resumed = 1;
-  ch3_silence(s);
-  clear_channel_modulators(s, 2);
-  for (int op = 1; op <= 4; op++) clear_channel_modulators(s, 15 + op);
-  s->csm_sweep.active = 0;
-  s->csm_hold = h->csm_hold;
-  set_reg27(s, (uint8_t)((s->reg27 & ~0xc0) | h->mode));
-  if (h->mode & 0x80) write_timer_a(s, h->timer_a);
-  MMLFmCh *c = &s->fm[2];
-  restore_patch(s, 2, &h->ch);
-  c->vel_base = h->ch.vel_base;
-  c->vel = h->ch.vel;
-  c->vol_base = h->ch.vol_base;
-  c->vol = h->ch.vol;
-  c->gate = h->ch.gate;
-  c->pitch_cents = h->ch.pitch_cents;
-  c->current_note = h->ch.note;
-  for (int i = 0; i < 4; i++) {
-    s->fm3_op_note[i] = h->op_note[i];
-    s->fm3_op_cents[i] = h->op_cents[i];
-    s->fm3_op_vel_base[i] = h->op_vel_base[i];
-    s->fm3_op_vel[i] = h->op_vel[i];
-    s->fm3_op_vol[i] = h->op_vol[i];
-    s->fm3_op_vol_base[i] = h->op_vol_base[i];
-  }
-  recompose_carriers(s, 2); /* the operators' own levels, in operator mode */
-  if (h->mode & 0x40)
-    for (int op = 1; op <= 4; op++) write_fm3_op_pitch(s, op, s->fm3_op_note[op - 1], s->fm3_op_cents[op - 1]);
-  else
-    write_fm_pitch(s, 2, c->current_note, c->pitch_cents); /* CSM: all four */
-  if (resumed) {
-    if (h->mode & 0x40) {
-      for (int op = 1; op <= 4; op++)
-        if (h->op_mask & (0x10 << (op - 1))) fm3_key_op(s, op, 1);
-    } else if (!(h->mode & 0x80) && h->fm_keyed) {
-      key_on(s, 2); /* CSM keys from Timer A, not $28 */
-    }
-  }
-  /* The binds come back and re-instantiate, as a note-on's would (§13.1). */
-  int mc = macro_ch(2);
-  for (int k = 0; k < h->ch.macro_count; k++) s->binds[mc][k] = h->ch.macros[k];
-  s->bind_count[mc] = h->ch.macro_count;
-  if (h->ch.macro_count) macro_trigger(s, 2, 0, 0);
-  for (int i = 0; i < 4; i++) {
-    mc = macro_ch(16 + i);
-    for (int k = 0; k < h->op_bind_count[i]; k++) s->binds[mc][k] = h->op_binds[i][k];
-    s->bind_count[mc] = h->op_bind_count[i];
-    if (h->op_bind_count[i]) macro_trigger(s, 16 + i, 0, 0);
-  }
-  for (uint8_t i = 0; i < s->track_count; i++) {
-    MMLTrack *o = &s->trk[i];
-    if (o->suspended && ch3_group(o->channel_id)) {
-      o->suspended = 0;
-      o->running = 1;
-    }
-  }
-}
-
-/* A plain START_TRACK onto CH3 while an effect holds it is a scene change: the
- * effect's parts stop and the suspended song parts lose CH3 for good. What the
- * effect set chip-wide does not outlive it: the song's mode and Timer A come
- * back and CH3's modulators and CSM sweep stop — nothing is re-keyed, the
- * track being started brings its own notes. */
-static void ch3_dissolve(MMLSeq *s) {
-  s->ch3.active = 0;
-  for (uint8_t i = 0; i < s->track_count; i++) {
-    MMLTrack *o = &s->trk[i];
-    if (!ch3_group(o->channel_id)) continue;
-    if (o->running && o->is_se) {
-      o->running = 0;
-      o->is_se = 0;
-    }
-    if (o->suspended) o->suspended = 0;
-  }
-  ch3_silence(s);
-  clear_channel_modulators(s, 2);
-  for (int op = 1; op <= 4; op++) clear_channel_modulators(s, 15 + op);
-  s->csm_sweep.active = 0;
-  s->csm_hold = s->ch3.csm_hold;
-  set_reg27(s, (uint8_t)((s->reg27 & ~0xc0) | s->ch3.mode));
-  if (s->ch3.mode & 0x80) write_timer_a(s, s->ch3.timer_a);
-}
 
 /* SE-end: give back what the SE stole. Hooked at the SE track's END_OF_TRACK,
  * at mml_stop_track and at a fade's terminal stop (a held or looping SE ends
  * on one of the latter two). */
 static void reclaim_se(MMLSeq *s, MMLTrack *se) {
   if (!se->is_se) return;
-  if (ch3_group(se->channel_id)) {
-    /* CH3 comes back when the holding effect's LAST part there has ended. */
-    se->is_se = 0;
-    if (!s->ch3.active || s->ch3.se != se->se_index) return;
-    for (uint8_t i = 0; i < s->track_count; i++) {
-      const MMLTrack *o = &s->trk[i];
-      if (o != se && o->running && o->is_se && ch3_group(o->channel_id) &&
-          o->se_index == se->se_index)
-        return;
-    }
-    ch3_restore(s);
-    return;
-  }
   if (se->pcm_se) {
     /* PCM: the voice's macro binds come back, and the looping BGM note the SE
      * overwrote starts again with them, as a note-on. The engine keeps no
@@ -3213,16 +3164,16 @@ static void reclaim_se(MMLSeq *s, MMLTrack *se) {
   se->displaced = 0xff;
   if (!owner->suspended) return;
   owner->suspended = 0;
-  owner->running = 1;
-  restore_channel(s, owner->channel_id, &owner->snap);
-  owner->snap.kind = MML_SNAP_NONE;
+  /* A part that ended under the effect leaves the channel as the effect did. */
+  if (owner->running) ghost_restore(s, owner->channel_id);
+  else s->ghost[owner->channel_id].live = 0;
 }
 
 /* ── Track lifecycle (driver.md §6.5, §2.2, §2.5) ──────────────────────────
  * Ported from drv-player's _startTrack. START_TRACK evicts the channel's
- * owner (a scene transition); an effect's part (mml_play_se) suspends and
- * snapshots it instead, so the effect's end can put it back — that difference
- * is the whole SE story.
+ * owner (a scene transition); an effect's part (mml_play_se) suspends it
+ * instead, playing on into a ghost of the channel, so the effect's end can put
+ * it back — that difference is the whole SE story.
  */
 static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   int ch = t->channel_id;
@@ -3234,13 +3185,9 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   t->pcm_snap = 0;
   t->pcm_se = 0;
   if (!as_se) t->se_index = 0xff;
-  /* Channel ownership. CH3 — the shared channel 2 and the operator ids 16-19 —
-   * is one unit, taken whole by an effect (ch3_claim, from mml_play_se); a
-   * plain start there while an effect holds it ends the hold. PCM voices have
-   * no channel block, so no owner to displace. */
-  if (ch3_group(ch)) {
-    if (!as_se && s->ch3.active) ch3_dissolve(s);
-  } else if (ch < 10) {
+  /* Channel ownership, on the register channels but CH3 (ch3_group). PCM
+   * voices have no channel block, so no owner to displace. */
+  if (ch < 10 && !ch3_group(ch)) {
     /* The channel's current owner: running and not suspended. For an SE it is
      * either the BGM (a fresh steal) or an SE already playing (preempt). */
     MMLTrack *owner = 0;
@@ -3256,7 +3203,7 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
         /* Same-channel priority. A lower-priority SE is DROPPED, and the drop
          * must not touch the one playing — so the return is before any write.
          * Equal or higher preempts: silence the old SE, inherit the BGM it
-         * displaced (whose snapshot stays on the BGM track; only the last SE
+         * displaced (whose ghost stays on the channel; only the last SE
          * restores it). */
         if (prio < owner->se_prio) return;
         channel_off(s, ch);
@@ -3265,11 +3212,11 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
         owner->running = 0;
         owner->is_se = 0;
       } else if (owner) {
-        /* A fresh steal: silence the owner's note, snapshot it BEFORE the
-         * level reset below, and suspend it. */
+        /* A fresh steal: the owner is suspended and plays on into a ghost of
+         * the channel as it leaves it — taken before the note is silenced, so
+         * the ghost's note is still keyed, and before the level reset below. */
+        ghost_capture(s, ch);
         channel_off(s, ch);
-        snapshot_channel(s, ch, &owner->snap);
-        owner->running = 0;
         owner->suspended = 1;
         t->displaced = (uint8_t)(owner - s->trk);
       }
@@ -3294,7 +3241,7 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
       s->psg[ch - 6].gate = 8;
     }
     /* …and its modulators, for the same reason: they belong to the part that
-     * just lost the channel. An SE snapshotted the owner's binds a few lines
+     * just lost the channel. An SE put the owner's in its ghost a few lines
      * up, so this is also what stops the displaced BGM's macro from playing the
      * SE through. */
     clear_channel_modulators(s, ch);
@@ -3306,6 +3253,9 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
       if (o != t && o->suspended && o->channel_id == ch && i != t->displaced)
         release_suspended(s, o);
     }
+    /* A plain start owns the channel outright; a part it restarts that was
+     * displaced plays from the top, not out of its ghost. */
+    if (!as_se) s->ghost[ch].live = 0;
   } else if (as_se && ch >= CH_PCM1 && ch <= CH_PCM3) {
     /* A PCM SE. Soft-mix voices have no owner track, so nothing is suspended:
      * the SE's PCM_NOTE_ON overwrites the voice. If a BGM loop is live there,
@@ -3364,16 +3314,9 @@ void mml_play_se(MMLSeq *s, uint8_t se, int priority) {
   if (se >= s->se_count) return;
   const uint8_t *e = s->se_table + (uint32_t)se * 3;
   uint8_t prio = priority == MML_SE_PRIO_DEFAULT ? e[0] : (uint8_t)priority;
-  /* CH3 is claimed once for all of the effect's parts there; dropped, those
-   * parts do not start and the others still do. */
-  int ch3 = -1;
   for (uint8_t k = 0; k < e[2]; k++) {
     MMLTrack *t = track_by_id(s, (uint8_t)(e[1] + k));
     if (!t) continue;
-    if (ch3_group(t->channel_id)) {
-      if (ch3 < 0) ch3 = ch3_claim(s, se, prio);
-      if (!ch3) continue;
-    }
     t->se_index = se;
     start_track_ex(s, t, 1, prio);
   }
@@ -3413,9 +3356,8 @@ int mml_se_playing(const MMLSeq *s, uint8_t se) {
  * An effect's part is primed too when it is the first effect part on a channel
  * no song track uses: its voice is then in place before the game fires it, and
  * the effect writes only its levels, pitch and key-on. One a channel — a later
- * part there would replace that voice. Not on CH3, which an effect claims
- * whole when it plays. Its head TEMPO_SET reaches only its own clock (the
- * flag routes it, dispatch), so the song's tempo is untouched.
+ * part there would replace that voice. Its head TEMPO_SET reaches only its
+ * own clock (the flag routes it, dispatch), so the song's tempo is untouched.
  *
  * Skipped: a channel a running track owns (priming would rewrite a sounding
  * voice), channels without a block (FM3 ops, PCM), and CSM tracks, whose setup
@@ -3426,7 +3368,7 @@ void mml_prime_tracks(MMLSeq *s) {
     MMLTrack *t = &s->trk[i];
     const int ch = t->channel_id;
     if (ch >= 10 || (t->flags & TRACK_FLAG_IS_CSM) || t->running) continue;
-    int owned = (t->flags & TRACK_FLAG_IS_SE) && ch3_group(ch);
+    int owned = 0;
     for (uint8_t j = 0; j < s->track_count; j++) {
       const MMLTrack *o = &s->trk[j];
       if (o->channel_id != ch) continue;
@@ -3447,14 +3389,15 @@ void mml_stop_track(MMLSeq *s, uint8_t track_id) {
   for (uint8_t i = 0; i < s->track_count; i++) {
     MMLTrack *t = &s->trk[i];
     if (t->track_id != track_id) continue;
-    if (t->running) {
+    if (t->suspended) {
+      /* A part an effect displaced, and the game asked it to stop: it must not
+       * come back when that effect ends. Its channel is the effect's — nothing
+       * is written. */
+      release_suspended(s, t);
+    } else if (t->running) {
       stop_track(s, t);
       /* An SE stopped by the host gives its channel back like one that ended. */
       reclaim_se(s, t);
-    } else if (t->suspended) {
-      /* A part an effect displaced is not running, and the game still asked it
-       * to stop: it must not come back when that effect ends. */
-      release_suspended(s, t);
     }
   }
 }

@@ -7,7 +7,7 @@ compile them to a compact binary for a Mega Drive sound driver — with a design
 built around *interactive* music: tracks that start, stop, layer, and respond to
 game state at runtime.
 
-- **Try it now:** https://mmlisp.vercel.app/
+- **Try it now:** https://mmlisp.com/
 - **Playback driver:** MMLispDRV (68k sequencer + Z80 PCM/write engine, SGDK
   integration) — trace-verified against the JS reference in emulation.
 
@@ -17,7 +17,7 @@ game state at runtime.
   once and reuse it, factor phrases into definitions, build envelopes and LFOs
   from composable curves, expand echoes and arpeggios at compile time. A
   programming language's expressiveness, aimed at the YM2612 + PSG.
-- **Hear it instantly, accurately.** [MMLisp Live](https://mmlisp.vercel.app/)
+- **Hear it instantly, accurately.** [MMLisp Live](https://mmlisp.com/)
   auditions your score in the browser through a cycle-accurate **Nuked-OPN2**
   (YM2612) core — the same register writes the real chip sees — and hot-swaps
   the recompiled score without stopping playback.
@@ -69,7 +69,7 @@ game state at runtime.
   c c c c  c c c c)
 ```
 
-Paste it into [MMLisp Live](https://mmlisp.vercel.app/), press Cmd/Ctrl+Enter,
+Paste it into [MMLisp Live](https://mmlisp.com/), press Cmd/Ctrl+Enter,
 and you get an FM e-piano arpeggio over a square-wave line with a ticking
 noise hat — synthesized by the same register writes the real chips would see.
 
@@ -90,7 +90,8 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
   multi-cursor editing
 - Hot-swap while playing: typing never compiles; Build (Cmd/Ctrl+B), Play and
   value edits (scrubbing or nudging a number) swap the recompiled score in
-  at the next bar boundary
+  at the next bar boundary; resuming after an edit made while paused builds
+  and plays on from the same point
 - Library (Tools > Library, Cmd/Ctrl+K): one search over the language
   reference, the preset sets, the snippets and the example
   scores (Ref / Presets / Snippets / Scores), each auditionable and insertable
@@ -115,6 +116,8 @@ parameters (`def-val` sliders / `$name`) designed to be driven by game code.
 - VGM, WAV and video export, PCM included; open/save `.mmlisp` sources with the
   File System Access API, File > Open Recent (a score with its folder), and
   `.mmlisp` files opening in the installed app from the OS
+- The score being edited is kept in the browser and comes back on the next
+  launch
 - Share links (File > Share…): a short URL that opens the score in MMLisp Live
 - Edit > Loop Selection wraps the selected notes or channels in a loop;
   Edit > Logical Editor… finds notes by pitch, length or voice and changes them

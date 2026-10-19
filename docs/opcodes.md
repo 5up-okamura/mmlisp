@@ -242,6 +242,7 @@ the deduped MMB and requires an unchanged mismatch baseline.
 | 0xA4 | FM3_OP_PITCH     | op u8 (1–4), note u8                                 |
 | 0xC0 | PCM_NOTE_ON      | sample u8, note u8 (bit7 = loop), dur                |
 | 0xC1 | PCM_NOTE_OFF     | —                                                    |
+| 0xC2 | PCM_NOTE_CUT     | —                                                    |
 | 0xE0 | MACRO_SET        | macro_id u8                                          |
 | 0xE1 | PARAM_ADD_VAL    | target u8, slot u8                                   |
 | 0xE2 | PARAM_MUL_VAL    | target u8, slot u8                                   |
@@ -303,6 +304,10 @@ Notes:
   stands, and the rest of the length is a REST. A shot takes the same
   PCM_NOTE_OFF when its macros listen for a key-off (driver.md §14); its
   sound plays on, only the key is off.
+- **PCM_NOTE_CUT** is a PCM_NOTE_OFF that also silences the voice: a
+  `:mode gate` note's key-off, at its gate (a full gate: at the note's end).
+  The note is a shot otherwise — bit 7 clear — and its dur ends at the gate
+  as a loop note's does.
 - **MACRO_SET / MACRO_CLEAR** drive the macro engine (mmb.md §15,
   driver.md §13). Macros are sticky track state: `MACRO_SET {macro_id}` binds
   MACRO_TABLE[macro_id] as the active macro for its target (replacing any

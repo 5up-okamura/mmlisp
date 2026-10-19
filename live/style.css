@@ -52,7 +52,7 @@
     }
     /* On-screen keyboard up (watchSoftKeyboard, index.html): the app is
        pinned to the part of the screen the keyboard leaves, and the console
-       gives its height to the editor. */
+       and the piano roll give their height to the editor. */
     html.soft-kb body {
       top: var(--kb-top);
       bottom: auto;
@@ -60,7 +60,9 @@
       padding-bottom: 0;
     }
     html.soft-kb #hDivider,
-    html.soft-kb #consolePane { display: none; }
+    html.soft-kb #consolePane,
+    html.soft-kb #rollDivider,
+    html.soft-kb #rollPane { display: none; }
 
     /* ---- top bar ---- */
     #topbar {
@@ -110,6 +112,22 @@
     .tb-btn:disabled { opacity: 0.3; cursor: default; }
     .tb-btn.active { border-color: var(--foreground); color: var(--background); background: var(--foreground); }
     #topbar .spacer { flex: 1; }
+    /* Transport on a touch screen: drawn at the desktop's size, but each
+       button answers across the bar's full height and halfway into the gap
+       beside it, so a finger lands on one or the other. */
+    @media (pointer: coarse) {
+      #btnStop, #btnPlay { position: relative; }
+      #btnPlay { margin-left: 12px; }
+      #btnStop::after, #btnPlay::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: -9px;   /* 8px past the 1px border: half the 16px gap */
+        right: -9px;
+        height: 36px;
+        transform: translateY(-50%);
+      }
+    }
     #btnPanel {
       display: inline-flex;
       align-items: center;
@@ -169,6 +187,7 @@
       white-space: nowrap;
     }
     .menu-sep { height: 0; border-top: 1px solid var(--mid); margin: 0.25rem 0; }
+    .menu-item[hidden], .menu-sep[hidden] { display: none; }
     /* A section's name inside a menu: not a command. */
     .menu-label {
       padding: 0.3rem 0.75rem 0.1rem;
@@ -248,6 +267,18 @@
       display: none;
     }
     #editorWrap.viz-on #vizCanvas { display: block; }
+    /* A video take: the editor is a fixed square (--video-frame, set by the
+       take) without line numbers, so its text wraps and the oscilloscope lays
+       out alike on any screen; the rest of the column may overflow meanwhile. */
+    #editorWrap.video-take {
+      flex: none;
+      width: var(--video-frame);
+      height: var(--video-frame);
+    }
+    #editorWrap.video-take .cm-gutters { display: none; }
+    #editorWrap.video-take .cm-scroller { scrollbar-width: none; } /* a classic scrollbar would narrow the square */
+    #editorWrap.video-take .cm-scroller::-webkit-scrollbar { display: none; }
+    #editorWrap.video-take .cm-content { padding-left: 14px; padding-right: 14px; }
     #editorWrap .cm-editor {
       height: 100%;
       font-size: var(--editor-font-size, 14px);
@@ -259,18 +290,6 @@
     #editorWrap.viz-on .cm-editor,
     #editorWrap.viz-on .cm-scroller,
     #editorWrap.viz-on .cm-gutters { background: transparent; }
-    /* iOS Safari zooms focused editable content when effective size is < 16px:
-       the Font Size setting still applies, but never below that. */
-    @media (hover: none) and (pointer: coarse), (max-width: 768px) {
-      #editorWrap .cm-editor,
-      #editorWrap .cm-content,
-      #editorWrap .cm-line,
-      #editorWrap .cm-gutter,
-      #editorWrap .cm-gutterElement,
-      #editorWrap .cm-textfield {
-        font-size: max(16px, var(--editor-font-size, 16px)) !important;
-      }
-    }
     #editorWrap .cm-scroller { overflow: auto; }
     #editorWrap .cm-content { color: var(--foreground); }
     #editorWrap .cm-gutters {
@@ -1412,7 +1431,6 @@
       .lib-row, .lib-group { padding: 0.6rem 0.55rem; font-size: 0.8rem; }
       .lib-nested { padding-left: 1.2rem; }
       .lib-mini { padding: 0.3rem 0.6rem; font-size: 0.72rem; }
-      #rightPanel .lib-search { font-size: 16px; } /* no zoom-on-focus on iOS */
     }
 
     /* Share: the link modal, and the play prompt a shared link opens with */

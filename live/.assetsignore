@@ -1,0 +1,11 @@
+# Served from live/ — everything but the app itself stays out of the assets.
+.assetsignore
+.certs
+.DS_Store
+.wrangler
+node_modules
+package.json
+package-lock.json
+scripts
+worker
+wrangler.jsonc

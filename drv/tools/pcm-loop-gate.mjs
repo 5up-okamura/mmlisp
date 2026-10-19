@@ -4,7 +4,8 @@
 // share pcm-voices.js's rules, so a wrong rule passes both. This gate derives
 // each note's START/END/WRAP from the language (docs/language.md §16) and
 // checks the driver's START commands carry them, and the RETARGET a loop
-// note's release sends.
+// note's release sends. A second score checks what each :mode does at the
+// gate: a cut, nothing, a release.
 //
 //   node tools/pcm-loop-gate.mjs
 import { dirname, join } from "node:path";
@@ -88,5 +89,44 @@ if (starts.length !== want.length) {
   failed++;
   console.log(`FAIL  ${starts.length} STARTs, want ${want.length}`);
 }
-console.log(failed ? `\nFAIL: ${failed}` : `\n${want.length} notes play the points the score says`);
+
+// What the gate does, per :mode (m4-pcm-gate-mode.mmlisp): each RETARGET, at
+// its frame. At 120 bpm a quarter is 30 frames.
+{
+  const gpath = join(here, "..", "tests", "m4-pcm-gate-mode.mmlisp");
+  const g = buildMmb(gpath);
+  const v = (() => {
+    const e = parsePcmBank(g.sampleBank).entries[g.pcmEntryIds["voice|60"]];
+    return { ...e, src: PCM_WINDOW + (e.base & 0x7fff) };
+  })();
+  const cut = { end: PCM_WINDOW, wrap: PCM_SILENCE_ADDR };
+  const wantGate = [
+    ["note 1  :mode gate cuts at the gate", 15, cut],
+    ["note 3  :mode loop releases to :pcm-end", 75, { end: once(v, 0, v.len).end, wrap: PCM_SILENCE_ADDR }],
+    ["note 4  full gate: cut at the note's end, before the rest", 120, cut],
+    ["note 5  tied: cut at the whole length's gate, inside the tie", 195, cut],
+  ];
+  const p = new DrvPlayer();
+  p.loadMMB(g.bytes, g.sampleBank);
+  const got = [];
+  p.captureSlotLog({ maxFrames: 400, builder: new SlotBuilder() }).slots.forEach((slot, f) => {
+    for (const c of decodeSlot(slot).pcm)
+      if (c[0] === PCM_RETARGET) got.push({ f, end: w16(c, 2), wrap: w16(c, 4) });
+  });
+  wantGate.forEach(([what, f, pts], i) => {
+    const c = got[i];
+    const ok = c && c.f === f && c.end === pts.end && c.wrap === pts.wrap;
+    if (!ok) failed++;
+    const hex = (x) => x?.toString(16);
+    console.log(`${ok ? "ok  " : "FAIL"}  ${what}`
+      + (ok ? "" : `: want frame ${f} end ${hex(pts.end)} wrap ${hex(pts.wrap)}, `
+        + `got ${c ? `frame ${c.f} end ${hex(c.end)} wrap ${hex(c.wrap)}` : "no RETARGET"}`));
+  });
+  // Note 2, the shot, sends nothing: only the four above.
+  if (got.length !== wantGate.length) {
+    failed++;
+    console.log(`FAIL  ${got.length} RETARGETs, want ${wantGate.length} (a shot's gate sends none)`);
+  }
+}
+console.log(failed ? `\nFAIL: ${failed}` : `\n${want.length} notes play the points the score says; each :mode does what it says at the gate`);
 process.exit(failed ? 1 : 0);

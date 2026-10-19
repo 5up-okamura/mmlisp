@@ -44,7 +44,7 @@ export default {
     ":vel": ["51af5a6f", "Velocidad del note-on, 2 dB por paso, 15 = el nivel propio de la voz. Solo atenúa; nunca silencia. Por defecto 15."],
     ":vol": ["99dcd89c", "El fader del canal, con unidad en 31; 0 es un silencio total. Una curva lo funde."],
     ":pan": ["09b9200d", "Estéreo FM: un lado, ambos, o una curva que salta entre ellos."],
-    ":mode": ["a348607f", "En noise: el modo de ruido (persistente). En pcm1–pcm3: si una nota toca la muestra una vez o la repite en bucle mientras se sostiene."],
+    ":mode": ["2f0a0647", "En noise: el modo de ruido (persistente). En pcm1–pcm3: si una nota toca la muestra una vez, la repite en bucle mientras se sostiene, o la toca una vez y la corta en su gate."],
     ":shuffle": ["6d96f822", "Swing: los pares de notas de la duración base (por defecto una corchea) se reparten R : 100−R."],
     "def-fm": ["d2c5f096", "Una voz FM: el :alg :fb :ams :fms del canal y los parámetros de los operadores. Un nombre inicial es la voz que extiende (init-fm es la vacía). Nómbrala en una pista para cambiar a ella."],
     ":key (voice)": ["3ecf68b5", "En una def-fm: c4 suena en la nota MIDI N, y cada nota de la voz se desplaza N − 60; así se afina una voz de percusión."],

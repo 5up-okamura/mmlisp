@@ -6,8 +6,14 @@ personal workflow preferences.
 
 Rules:
 
+- **The goal is an empty directory.** Work that is done is deleted; what a
+  user or composer needs moves into the matching document (`docs/`, a
+  README, the roadmap for what is ahead); only what serves development alone
+  — rulings not to re-propose, measurements, reasons the docs state as bare
+  facts — stays here.
+
 - **One file per AREA, not per feature** — driver, PCM, language, the live
-  app (and the set-aside Z80-only build). A new feature's reasons go into its
+  app. A new feature's reasons go into its
   area's file as a section; a new file only for a new area. Keep each current:
   edit in place, delete an item when the work lands and the repo records the
   outcome. (2026-10-09: thirteen per-feature files had piled up again.)
@@ -26,19 +32,14 @@ Rules:
 - [driver-decisions.md](driver-decisions.md) — **why MMLispDRV is shaped as it
   is**: the measurement that moved the sequencer off the Z80, the reversed
   decisions, the competitor survey, the bugs no gate could see and how the
-  gates fail, the 68000 pass (closed), onset jitter under write bursts, SE and
-  several songs, and the user's rulings on how to work here. The design itself
-  is `docs/driver.md`.
+  gates fail, the 68000's share and the figures to reopen it with, onset
+  jitter under write bursts, SE and several songs, and the user's rulings on
+  how to work here. The design itself is `docs/driver.md`.
 - [pcm.md](pcm.md) — **PCM: the user's decisions with their reasons, the
   multi-bank measurements, and what is open.** Read before touching PCM in any
   layer.
-- [language-open.md](language-open.md) — **the language and IR**: the syntax rulings not to
-  re-propose, why compile-time eval and the value machine have their shape,
-  and the risks still live.
-- [live-app.md](live-app.md) — **the live app**: why the editing aids, the
-  Library panel, the voice picker and the importers have their shape, the
-  user's rulings, device measurements, and what is open.
-- [z80-only.md](z80-only.md) — **a Z80-only build, set aside 2026-09-28**: the
-  user's reasons, the measurements (archived sequencer, poll overhead, the RAM
-  budget, the listening verdicts), the decisions taken, and a second shape seen
-  2026-10-02 (MMLisp as the composing tool over a pre-rendered stream).
+- [language-open.md](language-open.md) — **the language and IR**: the rulings
+  not to re-propose, why the value machine and score-written values have
+  their shape, and one known A/B divergence.
+- [live-app.md](live-app.md) — **the live app**: what was decided against
+  (not to be proposed again) and working lessons.

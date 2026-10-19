@@ -377,7 +377,7 @@ function presets({ set, query }) {
 // on the site, as they do here.
 // ---------------------------------------------------------------------------
 
-const LIVE_URL = process.env.MMLISP_LIVE_URL || "https://mmlisp.vercel.app/";
+const LIVE_URL = process.env.MMLISP_LIVE_URL || "https://mmlisp.com/";
 
 function liveLink(src, name, base = LIVE_URL) {
   const data = zlib.deflateRawSync(Buffer.from(src, "utf8"), { level: 9 }).toString("base64url");

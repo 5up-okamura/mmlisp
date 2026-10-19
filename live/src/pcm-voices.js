@@ -23,7 +23,7 @@ import {
   PCM_TOTAL_MAX_SHIFT,
 } from "./mmb.js";
 import { PCM_START, PCM_START_BANKED, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
-import { pcmNotePoints, PCM_WINDOW } from "./pcm-model.js";
+import { pcmNotePoints, PCM_WINDOW, PCM_SILENCE_ADDR } from "./pcm-model.js";
 import { velFine, VEL_FINE, VEL_FINE_MAX } from "./ir-utils.js";
 
 
@@ -219,6 +219,15 @@ export class PcmVoices {
     this.applyLoop(vi);
   }
 
+  // A `:mode gate` note's cut: END at the window's start, which every pointer
+  // is past, and WRAP to silence — the voice parks at its next block edge.
+  cut(vi) {
+    const v = this.voices[vi];
+    if (!v.started) return;
+    v.looping = false;
+    this.retarget(vi, PCM_WINDOW, PCM_SILENCE_ADDR);
+  }
+
   /**
    * A POINT, as a byte offset into the playing blob (opcodes.md §7).
    * `target` is RANGE_START / RANGE_END / RANGE_LEN (:pcm-*) or LOOP_START /
@@ -292,6 +301,9 @@ export class PcmIrVoices {
       }
       case "off":
         if (v) seq.release(vi);
+        break;
+      case "cut":
+        if (v) seq.cut(vi);
         break;
       case "retrig": { // a :keyon step: the blob again from its start
         if (!v) return false;

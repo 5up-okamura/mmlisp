@@ -331,7 +331,7 @@ root note or a shared depth you tweak in one place:
 
 ```lisp
 (fm1 :len 8
-  (let ((root 60))
+  (let [root 60]
     (note root) (note (+ root 4)) (note (+ root 7))))   ; c e g, from one root
 ```
 
@@ -633,7 +633,8 @@ For true overlapping delay, `def` the phrase and replay it on another channel.
 `(echo ...)` is an inline note-replay that **lengthens** the phrase: its taps
 occupy real time, so later notes shift back. This is the opposite of `(delay
 ...)`, which overlays into gaps without lengthening. `(echo ...)` is relative and
-**one-shot** at its position (not sticky).
+**one-shot** at its position (not sticky). It is how the mucom88 import writes
+`\=`; for an echo effect in your own score, write `(delay ...)`.
 
 ```text
 (echo N :vel+ step [:back B])      ; N taps at the current :len, each `step` further
@@ -960,7 +961,9 @@ note-off runs on to the range's end — attack, sustain, release. Leave the loop
 out and it is the whole range. All six take lengths — `300ms`, `16`, `6t` — on
 the sample def and on the track, and on the track they also take curves. On a
 track they hold for the notes that follow, like any track parameter — and so
-does `:mode loop`, until a `:mode shot`.
+does `:mode loop`, until a `:mode shot`. A shot plays on through its gate;
+**`:mode gate`** plays the range once and is cut at the gate, so `:gate` is
+how long it sounds — a hi-hat closed short and opened long on one channel.
 
 One thing it can do that nothing else on this machine does: **move its loop
 while the note sounds**:
@@ -1078,9 +1081,10 @@ for its bar number and tick count (§4).
 plays. The view stays put as long as they sit comfortably inside the editor —
 a looping pattern never moves it — and glides once one drifts toward the edge,
 turning the page so the notes land near the top. When the tracks are too far
-apart to show at once, it stays with any highlight already on screen, and only
-once none is left there turns to the biggest group that fits, the lowest track
-first. Scrolling, clicking or typing in the editor hands the view back to you
+apart to show at once, it goes where the music is busiest — the biggest group
+of highlights that fits, the lowest track first — but leaves what is on screen
+only for a clearly bigger group, and not again for a few seconds after a
+turn. Scrolling, clicking or typing in the editor hands the view back to you
 for a few seconds.
 
 ### The piano roll
@@ -1091,11 +1095,13 @@ editor; drag the line between them to size it) and **Oscilloscope** (each
 channel's waveform behind the text; a PCM track shows its own voice, not the
 DAC's mix — under MMLispDRV, which streams the DAC itself, their sum). With
 Source off the oscilloscope fills the editor's place; with both off the piano
-roll takes the whole column — a view for listening, or for a phone. In the
-piano roll, every pitched channel shares one pitch axis, with the keys down the
-left, so what the tracks play at one moment — the chord, the spacing, a clash —
-reads at a glance; noise and PCM tracks are rows of onset marks underneath. The
-playhead stands still and the music runs past it.
+roll takes the whole column — a view for listening, or for a phone. While a
+phone's or tablet's on-screen keyboard is up, the piano roll steps aside and
+gives its height to the text. In the piano roll, every pitched channel shares
+one pitch axis, with the keys down the left, so what the tracks play at one
+moment — the chord, the spacing, a clash — reads at a glance; noise and PCM
+tracks are rows of onset marks underneath. The playhead stands still and the
+music runs past it.
 
 One channel is in focus: the one whose form holds the editor cursor, or
 whose note you click. It is drawn bright, the others dim, its sounding keys
@@ -1112,11 +1118,15 @@ length. The other way round, the notes written at the cursor (or inside the
 selection) are drawn solid in the roll, every time they play — a note in a
 def lights up wherever the def is used.
 
-The grid marks quarter notes from the top of the song. MMLisp has no meter,
-and `|` goes wherever each track's writer wants it, so the roll draws no
-bars. **1× 2× 4×** zooms; a wider pane shows more of the song at the same
-scale, and zoomed in, eighths and sixteenths are marked too. The roll shows
-the last build: after an edit, play or Build to bring it up to date.
+The grid marks quarter notes from the top of the song. MMLisp has no meter, and
+`|` goes wherever each track's writer wants it, so the roll draws no bars.
+**1× 2× 4×** zooms; a wider pane shows more of the song at the same scale, and
+zoomed in, eighths and sixteenths are marked too. On a phone the zoom control
+can sit over the top note; scrolling the roll shows it. Drag the roll sideways
+to move through the song, as the TIME bar does: playing, the song pauses while
+you drag and plays on from where you let go; stopped or paused, it sets where
+Play starts. The roll shows the last build: after an edit, play or Build to
+bring it up to date.
 
 ### Playing from a point
 
@@ -1141,8 +1151,8 @@ before the point are in place, not just the notes after it.
 
 `MMLisp > Font Size` sets the editor's text size in pixels, typed or stepped in
 the same popup as a panel value — anywhere from 8 to 96, so it can go large for a
-projector or a recording. It is remembered. On touch screens the text never
-goes below 16 px (smaller makes iOS zoom in when you tap the editor).
+projector or a recording. It is remembered, and holds on touch screens too:
+tapping into the editor does not zoom the page, whatever the size.
 
 ### A voice in the FM panel
 
@@ -1224,6 +1234,31 @@ MIDI, and the menu is not shown there). The choice is remembered.
 
 ### Reopening scores
 
+The score being edited is kept in the browser as you type, and comes back
+when the page is opened again — after a reload, or a phone dropping the tab.
+It is one score, the one in the editor: `File > New` or opening another file
+replaces it. A share link only shows its score; that score takes the place of
+yours at its first edit. The kept copy has no file behind it, so `Save` after
+a reload asks where.
+
+While a song plays the screen stays on (where the browser allows a page to
+ask: Chrome, and Safari from iOS 16.4), and the page goes on playing when it
+is hidden behind another tab or app. On an iPhone or iPad the sound plays as
+media, so the lock screen and Control Center show the song with play, pause
+and stop. In a Safari tab on an iPhone, Safari floats its address bar above
+the on-screen keyboard, and a strip of the page shows around it; the app
+added to the home screen has no such strip.
+
+A browser without file pickers — Safari on iPhone and iPad, Firefox — opens
+with a plain file chooser, has only Save (every save asks where, so there is
+no Save As…), and Save and the exports hand the file over: on a touch device to the share sheet (`Save to Files` on iOS), else as
+a download. An export that took a while to render asks for one more tap in
+the console (`Save…`), since the share sheet needs one. Such a browser cannot
+open a folder, so `Open Folder…` is not offered. When a score's own `:file`
+samples or `(import …)`s are missing, a `Load … missing files` button over the
+editor names them: pick those files (several at once) and they are matched by
+file name and held until the app is closed. Presets and URLs load as usual.
+
 `File > Open Recent` lists the last ten scores opened or saved (Chrome and
 Edge; a browser without file handles has no such menu). A score opened from
 its folder (`File > Open Folder…`) comes back with the folder, so its samples
@@ -1280,12 +1315,13 @@ FM parts A–C / H–J go to `fm1`–`fm6`, SSG D–F to `sqr1`–`sqr3` (the no
 SSG part plays with noise on go to `noise`), ADPCM K to `pcm1`, rhythm G to
 the RX5 kit on one PCM track (`pcm1`, or `pcm2` beside K). Notes, lengths
 and ties land on mucom's clock grid; loops, breaks and the last `L` become the
-loop point (a part without `L` plays once). Key shift `K`/`k`, detune `D`
-(relative `D n+` too), `v`, `)`/`(`, `V`, `q`, reverb `R`, register writes
-`y`, SSG `E` envelopes and `@n` presets, `P`/`w`, inline, `@%` and `.dat`
-voices, macros, echo, portamento, hardware and software LFO and both tempo
-commands all import. Where mucom's driver behaves in a particular way, the
-import does the same rather than approximating:
+loop point (a part without `L` plays once). **Every mucom command imports**:
+key shift `K`/`k`, detune `D` (relative `D n+` too), `v`, `)`/`(`, `V`, `q`,
+reverb `R`, register writes `y`, SSG `E` envelopes and `@n` presets, `P`/`w`,
+slot detune `S`, key-on revise `s`, inline, `@%` and `.dat` voices, macros,
+echo, portamento, hardware and software LFO, and both tempo commands. Where
+mucom's driver behaves in a particular way, the import does the same rather
+than approximating:
 
 - **Loop passes.** `)`/`(`, `D n+`, `q` and ties act on every pass of a loop,
   so a loop whose passes would differ — or one tied into or out of — is
@@ -1302,6 +1338,20 @@ import does the same rather than approximating:
   land on those steps, drawn per `v`. SSG noise at a short `w` shifts faster
   than hearing — most of it is inaudible, while the PSG's is all heard — so
   the noise copy plays that much lower (`w0`: −4.9 dB).
+- **Slot detune** `S a,b,c,d` (part C) puts CH3 in the chip's
+  independent-operator mode and offsets each operator's pitch word — the
+  values are operators 4, 3, 1, 2, as the chip's registers run. The part
+  renders once per operator onto `fm3-1`–`fm3-4`, each copy carrying its
+  offset in the `:pitch` cents it writes per note; the voice and `:pan` ride
+  the first copy (they are the shared channel's), and `v` reaches the
+  carriers alone, as mucom's volume table writes them. All-zero offsets are
+  the normal mode, so a part that only ever writes those stays one `fm3`
+  track.
+- **Key-on revise** `s n` adds n clocks to a note's length and flips the
+  sign, so a run alternates +n, −n — a micro-shuffle whose pairs still add
+  up. Rests keep their length; a tie and a portamento count as notes. The
+  flip is the compiler's, so a loop body plays the lengths it was compiled
+  with, as an `(x …)` body does.
 - **Tempo** is `BPM = 832000 / ((256 − t) × C)`, to two decimals; `T` goes
   through the Timer-B value it compiles to.
 - **ADPCM**: o1 c plays at 16,143.6 Hz, the bank's labelled rate; the driver
@@ -1316,11 +1366,11 @@ import does the same rather than approximating:
   at 15.
 
 The chip's own limits stay visible as warnings: SSG notes below A2 play an
-octave up (the PSG's floor), one
-noise channel serves the first part that uses it, and SSG reverb rings without
-its level drop. Not imported: `S` FM3 slot detune, `s` key-on revise,
-rhythm's per-sound pan, the ADPCM part K's pan `p` and detune `D` (a PCM voice
-has neither), and K's volume mode `vm<n>`.
+octave up (the PSG's floor), one noise channel serves the first part that uses
+it, and SSG reverb rings without its level drop. What the Mega Drive has no
+place for is dropped and said so: rhythm's per-sound pan, the ADPCM part K's
+pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
+`vm<n>`.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM
 
@@ -1371,7 +1421,8 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
 - The pitch effects come along as `:pitch` macros: a vibrato (`04xy`) is a
   shared `(def vib-xy (macro :pitch (sin …)))`, a slide (`01xx`/`02xx`,
   `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a slur that glides
-  in, and fine tune (`E5xx`) an offset rounded to 10 cents.
+  in, and fine tune (`E5xx`) an offset rounded to 10 cents. Furnace's
+  slide/portamento compatibility flags are followed approximately.
 - The log counts the effects that do not come along. On a non-Genesis
   system the channels play their notes on a `presets/waveforms` stand-in
   voice; sample channels are left out. Of a Furnace module, the first
@@ -1422,7 +1473,9 @@ them: a key-on starts a note, a key-off ends it.
   the sample data the file carries is decoded into one wav,
   `<song>-pcm.wav`, sliced by `(def-pcm sega-NN …)`, `pcma-NN`, `pcmb-NN`
   or `oki-NN` defs — one gain for the song brings its loudest sample to full
-  scale — and each hit's level becomes `:vel` (the loudest hit 15).
+  scale, though the X68000's samples still come in a little quiet (a `:fx`
+  `comp` on its defs raises them) — and each hit's level becomes `:vel` (the
+  loudest hit 15).
   **PCM voices** picks how many of pcm1–3 the score uses — the rate the
   driver plays them at — and starts at the most that ring at once, three at
   most. With as many voices as channels, a channel is a track; with fewer,
@@ -1563,8 +1616,10 @@ selected has its other occurrences tinted, so the next press is never a guess.
 Cursors can also be placed by hand: `Alt+click` — or `Cmd/Ctrl+click` — puts one
 wherever you click, and clicking an existing cursor the same way takes it back
 out, so overshooting costs nothing. `Cmd/Ctrl+Alt+↑` / `↓` adds one on the line
-above / below, which turns a column of note lengths into a single edit. `Esc`
-collapses them all back to one cursor.
+above / below, which turns a column of note lengths into a single edit. On a
+touch screen, with no key to hold, **Edit > Add Cursor Above / Below** does the
+same, as VS Code's Selection menu does on a tablet. `Esc` collapses them all
+back to one cursor.
 
 Over a value token, `Alt` is shared with the scrub (§22), and the press decides
 which one you meant: click and it places a cursor, drag and it scrubs the
@@ -1572,14 +1627,17 @@ value.
 
 A "word" in the editor is a whole MMLisp atom — `:vel*`, `def-val`, `1/4`,
 `c4~` — so a double-click, and `Cmd/Ctrl+D` on its own, take the token you see
-rather than a fragment of it.
+rather than a fragment of it. Two things follow from it: a `"` typed right
+before such a character does not close itself, and a double-click in a
+comment takes the punctuation after a word with it.
 
 ### Completions
 
 Typing `(` opens the form and track list; `:` opens the keyword list. Beside
 the highlighted entry the list shows what it is — its syntax and one line from
 the reference (Library's Ref, §25) — and resting the mouse on a keyword or a
-form head in the score shows the same card. Forms with a fixed argument shape
+form head in the score shows the same card (on a touch screen, tapping one);
+it goes when you type, move the cursor or tap it. Forms with a fixed argument shape
 insert a filled-in template instead of a bare name, with `Tab` moving between
 the fields:
 
@@ -1840,12 +1898,14 @@ video with its sound, the score's name on top and the site underneath. Post
 the video, and the link in a reply for anyone who wants to open it.
 
 It plays the score from the top for the length you set (30 seconds by default,
-up to 140, X's limit), in real time; **Stop** ends it early. What the editor
-shows is what the video shows, so frame it first: `MMLisp > Font Size` sets how
-much code fits, and `MMLisp > Follow Playback` moves the picture with the music
-(off, it stays where you left it). The take draws the editor with the
-oscilloscope behind it, on for the take even when
-`MMLisp > View > Oscilloscope` is off (the piano roll's pane is outside the
-frame); with `MMLisp > View > Source` off it is the oscilloscope alone. X takes
+up to 140, X's limit), in real time; **Stop** ends it early. For the take the
+editor becomes a fixed square without line numbers, the same on a phone and a
+desktop — the screen looks off meanwhile and comes back after — and follows the
+music as `MMLisp > Follow Playback` does, even when that is off. What changes
+the picture is yours to pick: the theme's colors, and `MMLisp > Font Size` for
+how much code fits. The take draws the editor with the oscilloscope behind it,
+on for the take even when `MMLisp > View > Oscilloscope` is off (the piano
+roll's pane is outside the frame); with `MMLisp > View > Source` off it is the
+oscilloscope alone. X takes
 H.264 video in MP4, which recent Chrome and Safari record; other browsers say
 so before recording.

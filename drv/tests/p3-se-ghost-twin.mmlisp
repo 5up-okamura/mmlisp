@@ -1,0 +1,8 @@
+; The twin of p3-se-ghost: the same notes, and the effect never fires.
+(def-fm v :alg 7 :fb 0 :ar1 31 :tl1 20 :ml1 1 :ar2 31 :tl2 20 :ml2 1 :ar3 31 :tl3 20 :ml3 1 :ar4 31 :tl4 8 :ml4 1)
+(def-fm w :alg 7 :fb 0 :ar1 31 :tl1 4 :ml1 5 :ar2 31 :tl2 4 :ml2 5 :ar3 31 :tl3 4 :ml3 5 :ar4 31 :tl4 2 :ml4 5)
+(fm1 :tempo 120 v :oct 4 :vel 12 :vol (linear 31..8 :len 120f) c1 :vol 31 :len 4 d e f g)   ; track 0
+(sqr1 :oct 5 :len 4 :gate 6 :vel 12 _ c _ _ e e e e)                                    ; track 1
+(def-se hit :prio 5
+  (fm1 w :oct 6 :len 8 :vel 15 g g)     ; track 2
+  (sqr1 :oct 6 :len 8 :vel 15 c c))     ; track 3

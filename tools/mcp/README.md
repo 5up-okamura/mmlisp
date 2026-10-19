@@ -61,7 +61,7 @@ user a Live link or a WAV — or, with the bridge on, work in the user's editor.
 back to without its link store): the source, deflate-raw + base64url, in the
 URL fragment — nothing is uploaded, and opening it loads the
 score as a new unsaved one with a Play button. It points at
-https://mmlisp.vercel.app/ unless `base` or the `MMLISP_LIVE_URL` environment
+https://mmlisp.com/ unless `base` or the `MMLISP_LIVE_URL` environment
 variable says otherwise (`http://localhost:5173/live/` for `npm run serve`).
 `open: true` also launches the default browser, which only helps when the
 server runs on the user's machine. Imports resolve from the site, so the
@@ -78,7 +78,7 @@ AI subscription; the page never talks to a model.
 1. Run the AI client (Claude Code or Claude Desktop) with this server on the
    same computer as the browser. The server listens on `127.0.0.1:5190`.
 2. In MMLisp Live, turn on **Tools > Connect to AI**, or open the app with
-   `?ai-bridge=5190` (https://mmlisp.vercel.app/?ai-bridge=5190). The choice is
+   `?ai-bridge=5190` (https://mmlisp.com/?ai-bridge=5190). The choice is
    remembered; the log says when the AI connects. Chrome and Edge may ask to let
    the site reach the local network — allow it. (Safari refuses an `https` page
    reaching `http://127.0.0.1`; use the local dev server there.)

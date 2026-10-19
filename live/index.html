@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
   <title>MMLisp authoring environment</title>
   <!-- PWA: installable, runs standalone (full screen) on mobile. The app's own
        files are linked relatively (it is served under /live/); presets and
@@ -180,8 +180,8 @@
           </button>
           <div class="menu-dropdown submenu-dropdown" id="recentList"></div>
         </div>
-        <div class="menu-sep"></div>
-        <button class="menu-item" onclick="openFolder();closeMenus()"
+        <div class="menu-sep" id="openFolderSep"></div>
+        <button class="menu-item" id="openFolderItem" onclick="openFolder();closeMenus()"
                 title="Open a score's folder so its relative :file samples (wav next to the score) load. After a reload, Open Recent brings a score back with its folder. Chrome blocks Desktop/Documents themselves; use a subfolder.">
           <span>Open Folder…</span>
           <span class="menu-item-shortcut" id="sourceDirLabel"></span>
@@ -198,7 +198,7 @@
           <span>Save</span>
           <span class="menu-item-shortcut" id="saveFileShortcut"></span>
         </button>
-        <button class="menu-item" onclick="saveFileAs();closeMenus()">
+        <button class="menu-item" id="saveAsItem" onclick="saveFileAs();closeMenus()">
           <span>Save As…</span>
           <span class="menu-item-shortcut" id="saveFileAsShortcut"></span>
         </button>
@@ -280,6 +280,16 @@
           <span>Select All Occurrences</span>
           <span class="menu-item-shortcut" id="selectAllOccurrencesShortcut"></span>
         </button>
+        <button class="menu-item" onclick="addCursorAboveAction();closeMenus()"
+                title="Add a cursor on the line above the topmost one, so one edit types on several lines.">
+          <span>Add Cursor Above</span>
+          <span class="menu-item-shortcut" id="addCursorAboveShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="addCursorBelowAction();closeMenus()"
+                title="Add a cursor on the line below the bottommost one, so one edit types on several lines.">
+          <span>Add Cursor Below</span>
+          <span class="menu-item-shortcut" id="addCursorBelowShortcut"></span>
+        </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleCommentAction();closeMenus()">
           <span>Toggle Comment</span>
@@ -346,13 +356,15 @@
       </div>
     </div>
 
-    <!-- Transport buttons -->
-    <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" style="margin-left:0.5rem">
+    <!-- Transport buttons: Stop sits left of Play/Pause, where a player keeps
+         "back to the start" — it silences everything and returns to the top. -->
+    <button id="btnStop" class="tb-btn" onclick="onStop()" style="margin-left:0.5rem"
+            title="Stop — everything that sounds, and back to the top">
+      <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10"/></svg>
+    </button>
+    <button id="btnPlay" class="tb-btn" onclick="onPlayToggle()" title="Play / Pause">
       <svg id="iconPlay" width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
       <svg id="iconPause" width="8" height="8" viewBox="0 0 10 10" fill="currentColor" style="display:none"><rect x="0" y="0" width="3" height="10"/><rect x="5" y="0" width="3" height="10"/></svg>
-    </button>
-    <button id="btnStop" class="tb-btn" onclick="onStop()">
-      <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10"/></svg>
     </button>
 
     <div class="spacer"></div>
@@ -736,7 +748,8 @@
         <p>Plays the score from the top and records the editor as it goes — the
         oscilloscope behind it, the notes lighting up — into a square video with
         its sound. Recording takes as long as the video; Stop ends it early.</p>
-        <p>Font Size and Follow Playback (MMLisp menu) frame the picture.</p>
+        <p>The take frames a square of the editor, the same on any screen, and
+        follows the playback; Theme and Font Size (MMLisp menu) set its look.</p>
         <div class="video-field">
           <label for="videoSeconds">Length (seconds)</label>
           <input id="videoSeconds" class="share-url" type="number" min="1" max="140" step="1" value="30">
@@ -793,6 +806,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
+    import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
@@ -827,7 +841,7 @@
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
     const { tags } = cm;
     const { history, historyKeymap, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
-    const { hoverTooltip } = cm;
+    const { hoverTooltip, closeHoverTooltips, hasHoverTooltips, tooltips } = cm;
     const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
 
@@ -903,8 +917,10 @@
 
         for (const e of tr.effects) {
           if (e.is(setPlayheadBase)) {
+            // The document the build was compiled from, and the edits made
+            // while it compiled (null: the current document, none).
             own(); toks.clear(); seqs.clear();
-            builtDoc = tr.state.doc; changes = null;
+            builtDoc = e.value?.doc ?? tr.state.doc; changes = e.value?.changes ?? null;
           } else if (e.is(setTrackLine)) {
             own();
             const { trackIdx, src } = e.value;
@@ -973,25 +989,34 @@
     // leaves it, the view glides to put them at the top of the band — so a
     // looping pattern holds still, a melody turns the page, and the view
     // travels at section changes. Highlights spread wider than the band: the
-    // view holds while any of them is on screen above the bottom band, and only
-    // then turns to the largest group that fits, the lowest track winning a
-    // tie. Scrolling, clicking or typing in the editor hands the view back for
-    // FOLLOW_HOLD_MS. The on/off pref is loaded with the others.
+    // view goes where the music is busiest — the largest group that fits, the
+    // lowest track winning a tie — but only for a group FOLLOW_GAIN larger
+    // than what is on screen above the bottom band, and no sooner than
+    // FOLLOW_DWELL_MS after the last turn, so it does not hop between
+    // near-equal places; with nothing left on screen it turns at once.
+    // Scrolling, clicking or typing in the editor hands the view back for
+    // FOLLOW_HOLD_MS. The on/off pref is loaded with the others; a video take
+    // follows whatever it says (followOn).
     const FOLLOW_BAND = 0.2;
     const FOLLOW_GLIDE_MS = 700;
     const FOLLOW_HOLD_MS = 4000;
+    const FOLLOW_GAIN = 2;
+    const FOLLOW_DWELL_MS = 4000;
     let _follow = false;
+    let _followTake = false; // a video take is recording: follow regardless of the pref
+    const followOn = () => _follow || _followTake;
+    let _followLastTurn = 0;
     let _followHoldUntil = 0;
     let _followRaf = 0;
     let _followAnim = null; // { from, to, t0 } scrollTop glide in flight
 
     function followSchedule(view) {
-      if (!_follow || _followRaf) return;
+      if (!followOn() || _followRaf) return;
       _followRaf = requestAnimationFrame(() => { _followRaf = 0; followCheck(view); });
     }
 
     function followCheck(view) {
-      if (!_follow || performance.now() < _followHoldUntil) return;
+      if (!followOn() || performance.now() < _followHoldUntil) return;
       const v = view.state.field(playheadField);
       const spans = [];
       const addSpan = (r, k) => spans.push({
@@ -1023,14 +1048,16 @@
       // Judge against where a glide in flight is heading, not where it is.
       const at = _followAnim ? _followAnim.to : sc.scrollTop;
       if (best.top >= at + band && best.bottom <= at + h - band) return;
-      // A highlight already on screen, and not yet at the bottom band, is
-      // being followed: do not leave it for a larger group elsewhere.
-      if (spans.some((sp) => sp.top + offset >= at && sp.bottom + offset <= at + h - band)) return;
+      // What is on screen and not yet at the bottom band is kept unless the
+      // busiest group is clearly busier, and not again right after a turn.
+      const onScreen = spans.filter((sp) => sp.top + offset >= at && sp.bottom + offset <= at + h - band).length;
+      if (onScreen && (best.n < onScreen + FOLLOW_GAIN || performance.now() - _followLastTurn < FOLLOW_DWELL_MS)) return;
       const max = sc.scrollHeight - h;
       // Page-turn: the group lands at the top of the band, leaving the rest of
       // the view for what comes next rather than for what just played.
       const target = Math.round(Math.max(0, Math.min(max, best.top - band)));
       if (Math.abs(target - at) < 2) return;
+      _followLastTurn = performance.now();
       followGlide(sc, target);
     }
 
@@ -1057,7 +1084,7 @@
 
     const followPlayhead = [
       EditorView.updateListener.of((u) => {
-        if (_follow && u.startState.field(playheadField) !== u.state.field(playheadField)) followSchedule(u.view);
+        if (followOn() && u.startState.field(playheadField) !== u.state.field(playheadField)) followSchedule(u.view);
       }),
       EditorView.domEventHandlers({
         wheel: () => { followHold(); return false; },
@@ -1310,7 +1337,10 @@
       clearTimeout(_hotSwapTimer);
       _hotSwapTimer = setTimeout(async () => {
         const { ir, ok } = await refreshImportsAndCompile();
-        if (ok && player && typeof player.swapAtNextBar === 'function') player.swapAtNextBar(ir);
+        if (ok && player && typeof player.swapAtNextBar === 'function') {
+          player.swapAtNextBar(ir);
+          _runSrc = _lastGoodSrc;
+        }
       }, 140);
     }
     function applyText(from, to, text) {
@@ -1404,8 +1434,8 @@
       const b = list.find((x) => offset >= x.from - BAR_HIT_SLOP && offset <= x.to + BAR_HIT_SLOP);
       return b ? { ...b, stale } : null;
     }
-    // Re-anchor bar markers to the just-compiled document. Called from compileNow.
-    function refreshBarMarkers() {
+    // Re-anchor bar markers to the just-compiled document. Called from applyCompile.
+    function refreshBarMarkers(base = null) {
       if (!editorView) return;
       const doc = editorView.state.doc;
       const out = [];
@@ -1416,9 +1446,9 @@
         const head = _chStripModel.find((e) => e.trackIndex === ti)?.head ?? `track ${ti + 1}`;
         let prev = 0;
         for (const bar of bars) {
-          let r;
-          try { r = srcToRange(doc, { line: bar.line, column: bar.column, endLine: bar.line, endColumn: bar.column + 1 }); }
-          catch (_) { prev = bar.tick; continue; }
+          const r = resolvePlayhead({ line: bar.line, column: bar.column, endLine: bar.line, endColumn: bar.column + 1 },
+            base?.doc ?? doc, base?.changes ?? null, doc);
+          if (!r) { prev = bar.tick; continue; }
           out.push({ from: r[0], to: r[1], ordinal: bar.ordinal, tick: bar.tick, barLen: bar.tick - prev, head });
           prev = bar.tick;
         }
@@ -2013,11 +2043,11 @@
     function loadPresetDefNames() {
       _acPresetLoad ??= (async () => {
         try {
-          const { sets } = await loadBrowseCatalog();
-          const loaded = await Promise.all(sets.map((path) => loadBrowseSet(path)
+          const { sets } = await loadLibraryCatalog();
+          const loaded = await Promise.all(sets.map((path) => loadLibrarySet(path)
             .catch((e) => { log('Completion: ' + e.message, 'err'); return null; })));
           _acPresetDefs = loaded.filter(Boolean).flatMap((set) =>
-            scanDefNames(set.text, browseSetName(set.path))
+            scanDefNames(set.text, librarySetName(set.path))
               .filter((d) => d.kind === 'voice' || d.kind === 'sample' || d.kind === 'macro')
               .map((d) => ({ ...d, set: set.path })));
         } catch (e) {
@@ -2071,7 +2101,7 @@
       for (const d of [...scoreDefNames(state, text, imported), ..._acPresetDefs]) {
         if (seen.has(d.name)) continue;
         seen.add(d.name);
-        const set = d.set ?? (_browseSetCache.has(d.path) ? d.path : null);
+        const set = d.set ?? (_librarySetCache.has(d.path) ? d.path : null);
         if (fits(d)) out.push(set && !imported.has(set) ? { ...d, importSet: set } : d);
       }
       return own ? [...out.filter((d) => d.kind === own), ...out.filter((d) => d.kind !== own)] : out;
@@ -2177,6 +2207,8 @@
     // Hover: a keyword (`:vel`, `:tl1+`) anywhere, a form head or a channel
     // name right after `(`. Only the words the completion offers — a def's
     // own name, a note or a number is not the reference's to explain.
+    // On a touch screen a tap is the hover and nothing ever leaves it, so the
+    // card also goes on a tap on it, on typing, and when the cursor moves.
     const AC_WORDS = new Set([...AC_FORMS, ...AC_TRACKS, ...AC_PARAMS]);
     const referenceHover = hoverTooltip((view, pos) => {
       const line = view.state.doc.lineAt(pos);
@@ -2192,8 +2224,19 @@
       if (text.slice(0, from).includes(';')) return null;                  // a comment
       const e = referenceFor(word);
       if (!e) return null;
-      return { pos: line.from + from, end: line.from + to, above: true, create: () => ({ dom: referenceCard(e) }) };
-    }, { hoverTime: 500 });
+      return {
+        pos: line.from + from, end: line.from + to, above: true,
+        create: (v) => {
+          const dom = referenceCard(e);
+          dom.addEventListener('click', () => v.dispatch({ effects: closeHoverTooltips }));
+          return { dom };
+        },
+      };
+    }, { hoverTime: 500, hideOnChange: true });
+    const closeReferenceOnMove = EditorView.updateListener.of((u) => {
+      if (!u.selectionSet || u.docChanged || !hasHoverTooltips(u.state)) return;
+      queueMicrotask(() => u.view.dispatch({ effects: closeHoverTooltips })); // not inside this update
+    });
 
     function mmlispCompletions(context) {
       if (_acReplace) {
@@ -3376,13 +3419,7 @@
         await writeMucomPcmWav(_sourceHandle);
         return;
       }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = pcm.wavFile;
-      a.click();
-      URL.revokeObjectURL(url);
-      log(`${pcm.tag ?? 'mucom88'}: downloaded ${pcm.wavFile} — move it next to the score`, 'info');
+      if (await deliverFile(blob, pcm.wavFile)) log(`${pcm.tag ?? 'mucom88'}: saved ${pcm.wavFile} — put it next to the score`, 'info');
     }
 
     // The picker for the bank's wav. `startIn` is the saved score's handle when
@@ -3631,6 +3668,10 @@
     window.findReplaceAction = () => { openSearchPanel(editorView); };
     window.selectNextOccurrenceAction = () => { selectNextOccurrence(editorView); editorView.focus(); };
     window.selectAllOccurrencesAction = () => { selectSelectionMatches(editorView); editorView.focus(); };
+    // A touch screen has no modifier to add a cursor with: these are its way,
+    // as VS Code's Selection menu is on a tablet.
+    window.addCursorAboveAction = () => { addCursorVertically(editorView, false); editorView.focus(); };
+    window.addCursorBelowAction = () => { addCursorVertically(editorView, true); editorView.focus(); };
     window.importDefleMaskDmp = importDefleMaskDmp;
     window.importFui = importFui;
     window.importTfi = importTfi;
@@ -3657,6 +3698,8 @@
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
       if (key === 'Mod-Shift-l') return isMac ? '⌘⇧L' : 'Ctrl+Shift+L';
+      if (key === 'Mod-Alt-ArrowUp') return isMac ? '⌘⌥↑' : 'Ctrl+Alt+Up';
+      if (key === 'Mod-Alt-ArrowDown') return isMac ? '⌘⌥↓' : 'Ctrl+Alt+Down';
       if (key === 'Mod-Alt-Shift-l') return isMac ? '⌘⌥⇧L' : 'Ctrl+Alt+Shift+L';
       if (key === 'Mod-z') return isMac ? '⌘Z' : 'Ctrl+Z';
       if (key === 'Mod-Shift-z') return isMac ? '⌘⇧Z' : 'Ctrl+Shift+Z';
@@ -3676,6 +3719,8 @@
         ['findShortcut', 'Mod-f'],
         ['selectNextOccurrenceShortcut', 'Mod-d'],
         ['selectAllOccurrencesShortcut', 'Mod-Shift-l'],
+        ['addCursorAboveShortcut', 'Mod-Alt-ArrowUp'],
+        ['addCursorBelowShortcut', 'Mod-Alt-ArrowDown'],
         ['buildShortcut', 'Mod-b'],
         ['libraryShortcut', 'Mod-k'],
         ['paramsShortcut', 'Mod-j'],
@@ -3709,6 +3754,11 @@
       // The piano roll follows the cursor: its focus and the notes written there.
       EditorView.updateListener.of((u) => {
         if ((u.selectionSet || u.docChanged) && _vizRoll) rollFollowCursor(u.state);
+      }),
+      // What a running compile will be placed through (refreshImportsAndCompile).
+      EditorView.updateListener.of((u) => {
+        if (_compileRec && u.docChanged)
+          _compileRec.changes = _compileRec.changes ? _compileRec.changes.compose(u.changes) : u.changes;
       }),
       buildFlashLayer,
       bracketField,
@@ -3775,6 +3825,11 @@
       // small window (the list stays complete and scrollable) drops that ~6×.
       autocompletion({ override: [mmlispCompletions], maxRenderedOptions: 12 }),
       referenceHover,
+      closeReferenceOnMove,
+      // Tooltips (the reference card, the completion list) fit inside the
+      // editor: measured against the window, a card over the first lines
+      // went up under the menu bar instead of below its word.
+      tooltips({ tooltipSpace: (view) => view.dom.getBoundingClientRect() }),
       // Auto-close ( [ ", type over the closer, delete the pair on Backspace,
       // and wrap the selection when a bracket is typed with text selected.
       closeBrackets(),
@@ -3818,7 +3873,8 @@
         // applies — see buildAction(). Only the param/cursor UI tracks edits.
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged) syncBracketStatus();
-        if (update.docChanged || update.selectionSet) syncParamUI();
+        if (update.docChanged) scheduleDraftSave();
+        if (update.docChanged || update.selectionSet) syncParamUI({ repaint: false });
         auditionOnSelect(update);
       }),
     ];
@@ -3948,37 +4004,106 @@
 
     // File > Open's picker types; Save As writes only the score's own type.
     const MMLISP_FILE_TYPE = { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } };
+    const SOURCE_FILE_EXT = /\.(mmlisp|mmb|dmp|fui|tfi|vgi|opni)$/i;
     const SOURCE_FILE_TYPES = [
       MMLISP_FILE_TYPE,
       { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
       { description: 'FM voice import', accept: { 'application/octet-stream': ['.dmp', '.fui', '.tfi', '.vgi', '.opni'] } },
     ];
 
+    // Bumped by each new document: a compile's result for the score it
+    // replaced is dropped (refreshImportsAndCompile).
+    let _docEpoch = 0;
     function setEditorDoc(text) {
       // Reset the full state so that undo history does not include the file load.
+      _docEpoch++; // a compile still running is of the score this one replaces
       editorView.setState(EditorState.create({
         doc: text,
         extensions: editorExtensions,
       }));
       syncBracketStatus(); // setState fires no doc-change update
       hideSharedPlay(); // a shared score's prompt belongs to that score alone
+      scheduleDraftSave();
     }
+
+    // The score being edited, kept in this browser so it outlives the page:
+    // a phone drops a background tab, an installed app is relaunched, and iOS
+    // has no way to save to a file at all. Written shortly after each edit and
+    // whenever the page is hidden; read back at startup (unless a share link
+    // brings its own score). Its file name comes back with it, not its file
+    // handle, so Save after a reload asks where — and so does the name it
+    // compiles under, which for a score from the Library is its path there:
+    // its imports and samples resolve against that folder.
+    const DRAFT_KEY = 'mmlisp.draft';
+    let _draftTimer = null;
+    function scheduleDraftSave() {
+      clearTimeout(_draftTimer);
+      _draftTimer = setTimeout(saveDraft, 500);
+    }
+    function saveDraft() {
+      clearTimeout(_draftTimer);
+      _draftTimer = null;
+      if (currentIrURL) return; // a binary .mmb: the editor holds only a placeholder
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({
+          src: editorView.state.doc.toString(),
+          name: _sourceFileName,
+          path: _lastFileName,
+        }));
+      } catch (_) { /* storage off or full: the page still works, unsaved */ }
+    }
+    function loadDraft() {
+      try {
+        const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+        return typeof d?.src === 'string' ? d : null;
+      } catch (_) { return null; }
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && _draftTimer != null) saveDraft();
+    });
+    window.addEventListener('pagehide', () => { if (_draftTimer != null) saveDraft(); });
 
     // A position from an imported file (a preset's macro, a def written
     // there) is a place in that file, not in the score: nothing to outline.
+    // The player calls these once per event; a frame's worth goes to the
+    // editor as one transaction, in order (a sequence's show/hide is a count).
+    // A hidden tab runs no frames but still fires the timers: past a cap the
+    // queue goes out at once.
+    let _playheadFx = [];
+    let _playheadFxRaf = 0;
+    function queuePlayheadFx(effect) {
+      _playheadFx.push(effect);
+      if (_playheadFx.length >= 256) flushPlayheadFx();
+      else _playheadFxRaf ||= requestAnimationFrame(flushPlayheadFx);
+    }
+    function flushPlayheadFx() {
+      if (_playheadFxRaf) cancelAnimationFrame(_playheadFxRaf);
+      _playheadFxRaf = 0;
+      if (!_playheadFx.length) return;
+      const effects = _playheadFx;
+      _playheadFx = [];
+      editorView.dispatch({ effects });
+    }
+    function dropPlayheadFx() {
+      if (_playheadFxRaf) cancelAnimationFrame(_playheadFxRaf);
+      _playheadFxRaf = 0;
+      _playheadFx = [];
+    }
+
     function highlightTrackLine(trackIdx, src) {
-      editorView.dispatch({ effects: setTrackLine.of({ trackIdx, src: src?.file ? null : src }) });
+      queuePlayheadFx(setTrackLine.of({ trackIdx, src: src?.file ? null : src }));
     }
 
     function highlightSeq(show, src) {
       if (src?.file) return;
-      editorView.dispatch({ effects: setSeq.of({ show, src }) });
+      queuePlayheadFx(setSeq.of({ show, src }));
     }
 
     // -----------------------------------------------------------------------
     // Manual compile (Tools > Build / Cmd-Ctrl+B)
     // -----------------------------------------------------------------------
     let _lastGoodIR = null;     // last successfully compiled IR object
+    let _lastGoodSrc = null;    // the source text _lastGoodIR was compiled from
     let _lastSourceMap = null;  // source map from last compile
     let _lastFileName = 'untitled.mmlisp';
     let _sourceHandle = null;
@@ -4148,12 +4273,9 @@
       return map;
     }
 
-    // Resolve the current doc's imports, then compile. Async because file reads
-    // are; the user-action entry points await it.
-    async function refreshImportsAndCompile() {
-      await refreshImportSources(editorView.state.doc.toString());
-      return compileNow();
-    }
+    // Resolve the current doc's imports, then compile: refreshImportsAndCompile,
+    // with the compile (below, beside compileNow). The user-action entry points
+    // await it.
 
     async function decodePcmSample(path) {
       const cached = _pcmSampleCache.get(path);
@@ -4230,7 +4352,7 @@
     // 8-bit, at the image's rate, with its level rungs and loop rounding. So
     // what the editor plays is what the driver will.
     // `target` is the IRPlayer that plays `ir`: it learns the bank's rate, so
-    // its loop lengths round as the driver's do (the browse preview has its own).
+    // its loop lengths round as the driver's do (the Library's preview has its own).
     async function syncPcmBankToWorklet(ir, target = player) {
       if (!workletNode) return;
       const clear = () => {
@@ -4265,6 +4387,7 @@
       _sourceFileName = handle?.name || name || null;
       currentIrURL = null;
       _lastFileName = _sourceFileName || 'untitled.mmlisp';
+      scheduleDraftSave();
     }
 
     async function readFileHandle(handle) {
@@ -4300,14 +4423,31 @@
     }
 
     async function openFile() {
-      const [handle] = await window.showOpenFilePicker({
-        types: SOURCE_FILE_TYPES,
-        multiple: false,
-        // Start in the opened folder when there is one, so Open lands on the
-        // project rather than wherever the OS picker was left.
-        ...(_sourceDir ? { startIn: _sourceDir } : {}),
-      });
-      await openScoreHandle(handle);
+      try {
+        if (!window.showOpenFilePicker) {
+          // No open picker (iOS, Firefox): a plain file input, which gives a
+          // File and no handle — Save then asks where. Unfiltered, since iOS
+          // greys out what it has no type for (.mmlisp); checked here instead.
+          const file = await pickFileWithInput(null);
+          if (!SOURCE_FILE_EXT.test(file.name)) {
+            log(`${file.name}: Open takes .mmlisp, .mmb and FM voices (.dmp .fui .tfi .vgi .opni) — songs and samples are under File > Import`, 'err');
+            return;
+          }
+          clearSourceDir();
+          await readSourceFile(file);
+          return;
+        }
+        const [handle] = await window.showOpenFilePicker({
+          types: SOURCE_FILE_TYPES,
+          multiple: false,
+          // Start in the opened folder when there is one, so Open lands on the
+          // project rather than wherever the OS picker was left.
+          ...(_sourceDir ? { startIn: _sourceDir } : {}),
+        });
+        await openScoreHandle(handle);
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('Open failed: ' + e.message, 'err');
+      }
     }
 
     // Opening a score from outside the folder leaves it stale — reset. A file
@@ -4316,6 +4456,7 @@
     // folder and its samples.
     async function openScoreHandle(handle) {
       if (_sourceDir && !(await _sourceDir.resolve(handle))) clearSourceDir();
+      else if (!_sourceDir) forgetHeldFiles();
       await readFileHandle(handle);
     }
 
@@ -4336,13 +4477,20 @@
     // the new score's, and a stale base resolving `:file` to someone else's wav
     // is worse than no base at all (which at least warns).
     function clearSourceDir() {
+      forgetHeldFiles();
       if (!_sourceDir) return;
       _sourceDir = null;
       _sourceDirScores = [];
-      _pcmSampleCache.clear();
-      _droppedImportSources.clear();
       updateSourceDirLabel();
       renderFolderScores();
+    }
+
+    // The files held in memory for the score that is leaving — dropped or
+    // picked wavs and imports, an imported bank's wav — would otherwise answer
+    // the next score's same bare names.
+    function forgetHeldFiles() {
+      _pcmSampleCache.clear();
+      _droppedImportSources.clear();
     }
 
     async function openFolder() {
@@ -4438,12 +4586,44 @@
     // it, and the browser grants a folder only from a click. So when such a
     // score needs its folder, a button offers the picker, already in that
     // folder: one more click on Open.
-    function updateFolderAccessPrompt(src, hasSamples) {
+    //
+    // A browser that cannot open a folder (iOS, Firefox) asks for the files
+    // themselves instead: the button names how many are missing, and the ones
+    // picked are matched to the score's :file and (import …) paths by file
+    // name and held in memory for this session (_missingFiles, pickMissingFiles).
+    let _missingFiles = [];
+    function updateFolderAccessPrompt(src, hasSamples, sampleDefs) {
       const btn = document.getElementById('folderAccess');
       if (!btn) return;
+      if (typeof window.showDirectoryPicker !== 'function') {
+        // What the app serves (the preset, example and snippet trees) and URLs
+        // load by fetch; the rest only from a file.
+        const reachable = (p) => /^(presets|examples|snippets)\//.test(p) || /^[a-zA-Z][\w+.-]*:\/\//.test(p);
+        const samples = [...new Set(sampleDefs
+          .map((d) => d.resolvedFile ?? d.file ?? '')
+          .filter((p) => p && !reachable(p) && !_pcmSampleCache.has(p)))];
+        // The score's imports, and those of the imported files already held —
+        // each looked for next to its importer, then from the root
+        // (readImportSources), so it is missing only under both names.
+        const held = (from, spec) => _importSources.has(joinImportPath(from, spec)) || _importSources.has(joinImportPath('', spec));
+        const imports = [...new Set([
+          ...collectImports(src).filter((spec) => !held(_lastFileName, spec)),
+          ...[..._importSources].flatMap(([path, text]) => collectImports(text).filter((spec) => !held(path, spec))),
+        ].map((spec) => joinImportPath('', spec)))].filter((p) => !reachable(p));
+        _missingFiles = [
+          ...samples.map((path) => ({ kind: 'sample', path })),
+          ...imports.map((path) => ({ kind: 'import', path })),
+        ];
+        const n = _missingFiles.length;
+        if (n) {
+          document.getElementById('folderAccessLabel').textContent =
+            `Load ${n} missing file${n > 1 ? 's' : ''} (${_missingFiles.map((m) => m.path.split('/').pop()).join(', ')})…`;
+        }
+        btn.hidden = !n;
+        return;
+      }
       const localImports = /\(import\s+"(?!presets\/)[^"]+"/.test(src);
-      const show = Boolean(_sourceHandle) && !_sourceDir
-        && typeof window.showDirectoryPicker === 'function' && (hasSamples || localImports);
+      const show = Boolean(_sourceHandle) && !_sourceDir && (hasSamples || localImports);
       if (show) {
         document.getElementById('folderAccessLabel').textContent =
           `Load ${hasSamples ? 'samples' : 'imports'} from ${_sourceHandle.name}'s folder`;
@@ -4451,7 +4631,38 @@
       btn.hidden = !show;
     }
 
+    async function pickMissingFiles() {
+      let files;
+      try {
+        files = await pickFileWithInput(null, { multiple: true });
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('Load files failed: ' + e.message, 'err');
+        return;
+      }
+      const byName = new Map(files.map((f) => [f.name.toLowerCase(), f]));
+      const loaded = [];
+      for (const m of _missingFiles) {
+        const file = byName.get(m.path.split('/').pop().toLowerCase());
+        if (!file) continue;
+        try {
+          if (m.kind === 'sample') _pcmSampleCache.set(m.path, decodeWav(await file.arrayBuffer()));
+          else _droppedImportSources.set(m.path, await file.text());
+          loaded.push(file.name);
+        } catch (e) {
+          log(`${file.name}: ${e?.message || e}`, 'err');
+        }
+      }
+      if (loaded.length) log(`Loaded ${loaded.join(', ')} — held until the app is closed`, 'info');
+      await refreshImportsAndCompile();
+      // An import just loaded can name files of its own, so what is still
+      // missing is read after the compile.
+      if (_missingFiles.length) {
+        log(`Still missing: ${_missingFiles.map((m) => m.path).join(', ')} — pick the files with these names`, 'err');
+      }
+    }
+
     async function grantScoreFolder() {
+      if (typeof window.showDirectoryPicker !== 'function') return pickMissingFiles();
       const handle = _sourceHandle;
       if (!handle) return;
       let dir;
@@ -4823,7 +5034,55 @@
       }, { capture: true });
     }
 
+    // A file handed over without a save picker (iOS, Firefox): on a touch
+    // device the share sheet ("Save to Files" on iOS — a download there can
+    // fail silently in the installed app), else a download. The share sheet
+    // wants a fresh tap, which an export has spent on its render; then the
+    // console offers a button for one. True once the file is handed over.
+    const _touchSave = window.matchMedia('(pointer: coarse)');
+    async function deliverFile(blob, name) {
+      const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+      if (_touchSave.matches && navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file] });
+          return true;
+        } catch (e) {
+          if (e?.name === 'AbortError') { log(`${name} not saved`, 'info'); return false; }
+          if (e?.name === 'NotAllowedError') { offerShare(file); return false; }
+          // anything else: try the download
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      return true;
+    }
+    function offerShare(file) {
+      const line = log(`${file.name} is ready `, 'info');
+      const btn = document.createElement('button');
+      btn.textContent = 'Save…';
+      btn.onclick = async () => {
+        try {
+          await navigator.share({ files: [file] });
+          btn.remove();
+          log(`Saved ${file.name}`, 'info');
+        } catch (e) {
+          if (e?.name !== 'AbortError') log(`${file.name}: ${e.message}`, 'err');
+        }
+      };
+      line.appendChild(btn);
+    }
+
     async function saveFileAs() {
+      if (!window.showSaveFilePicker) {
+        const name = _sourceFileName || 'untitled.mmlisp';
+        const blob = new Blob([editorView.state.doc.toString()], { type: 'text/plain' });
+        if (await deliverFile(blob, name)) log('Saved ' + name, 'info');
+        return;
+      }
       const handle = await window.showSaveFilePicker({
         types: [MMLISP_FILE_TYPE],
         suggestedName: _sourceFileName || 'untitled.mmlisp',
@@ -4857,19 +5116,13 @@
       }
     }
 
+    // True once written or handed over (deliverFile).
     async function writeExport(target, blob, suggestedName) {
-      if (target.handle) {
-        const writable = await target.handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = suggestedName;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
+      if (!target.handle) return deliverFile(blob, suggestedName);
+      const writable = await target.handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
     }
 
     async function exportPcmBank(ir, what) {
@@ -4928,8 +5181,7 @@
 
       const blob = new Blob([bytes], { type: 'application/octet-stream' });
       try {
-        await writeExport(target, blob, suggestedName);
-        log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
+        if (await writeExport(target, blob, suggestedName)) log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
       } catch (e) {
         if (e?.name !== 'AbortError') log('VGM save failed: ' + e.message, 'err');
       }
@@ -4975,13 +5227,8 @@
           const writable = await mmbHandle.createWritable();
           await writable.write(blob);
           await writable.close();
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = suggestedName;
-          a.click();
-          URL.revokeObjectURL(url);
+        } else if (!(await deliverFile(blob, suggestedName))) {
+          return;
         }
         log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
         // PCM blobs live in a separate sample bank (docs/mmb.md §10), not inside
@@ -5013,13 +5260,8 @@
             const writable = await smpHandle.createWritable();
             await writable.write(smpBlob);
             await writable.close();
-          } else {
-            const url = URL.createObjectURL(smpBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = smpName;
-            a.click();
-            URL.revokeObjectURL(url);
+          } else if (!(await deliverFile(smpBlob, smpName))) {
+            return;
           }
           log(`Exported ${smpName} sample bank (${sampleBank.length} bytes)`, 'info');
         }
@@ -5071,8 +5313,7 @@
 
       const blob = new Blob([bytes], { type: 'audio/wav' });
       try {
-        await writeExport(target, blob, suggestedName);
-        log(`Exported ${suggestedName} (${durationSec.toFixed(1)}s, ${bytes.length} bytes)`, 'info');
+        if (await writeExport(target, blob, suggestedName)) log(`Exported ${suggestedName} (${durationSec.toFixed(1)}s, ${bytes.length} bytes)`, 'info');
       } catch (e) {
         if (e?.name !== 'AbortError') log('WAV save failed: ' + e.message, 'err');
       }
@@ -5081,17 +5322,32 @@
     // -----------------------------------------------------------------------
     // Video export (File > Export > Video…, Share > Make video): plays the
     // score and records the editor in real time — what the screen shows,
-    // redrawn every frame onto a square canvas: the oscilloscope behind
-    // (turned on for the take), the text in its theme colors and Font
-    // Size, the playhead outlines, a title and the site underneath. Follow
-    // Playback is the camera. The sound is the worklet's own output.
-    // MediaRecorder writes H.264 + AAC MP4 where the browser can (recent
-    // Chrome, Safari) — what X takes; elsewhere whatever it has, with a warning.
+    // redrawn onto a square canvas VIDEO_FPS times a second: the oscilloscope
+    // behind (turned on for the take), the text in its theme colors and Font
+    // Size, the playhead outlines, a title and the site underneath. For the
+    // take the editor is a VIDEO_FRAME square without line numbers, whatever
+    // the screen — the text wraps and the oscilloscope's cells lay out alike
+    // on a phone and a desktop, so only Theme and Font Size change the
+    // picture — and Follow Playback is on, as the camera, whatever its pref.
+    // The sound is the worklet's own output.
+    //
+    // Two recorders, both writing H.264 + AAC MP4, what X takes. With
+    // WebCodecs (Chrome) the page stamps each frame itself — frame k at
+    // k/VIDEO_FPS, however late the paint that drew it ran — and
+    // src/mp4-mux.js writes the encoders' output. Without it, MediaRecorder
+    // stamps a frame when it noticed the canvas painted, 5–15 ms off the
+    // vsync under the player's load, which plays back as a stutter; where it
+    // cannot write MP4 either, the video is whatever it has, with a warning.
     // -----------------------------------------------------------------------
     const VIDEO_SIZE = 1080;
+    const VIDEO_FRAME = 720; // the editor's side (CSS px) during a take
     const VIDEO_FPS = 30;
     const VIDEO_MAX_SEC = 140; // X's limit for a posted video
-    // X takes H.264 + AAC in MP4; the rest are fallbacks it may refuse.
+    const VIDEO_BITRATE = 8_000_000;
+    const AUDIO_BITRATE = 192_000;
+    const VIDEO_CODEC = 'avc1.640028'; // H.264 High 4.0
+    const AUDIO_CODEC = 'mp4a.40.2';   // AAC-LC
+    // MediaRecorder's types, X's first; the rest are fallbacks it may refuse.
     const VIDEO_TYPES = [
       'video/mp4;codecs=avc1.640028,mp4a.40.2',
       'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
@@ -5101,6 +5357,8 @@
       'video/webm',
     ];
     const videoForX = (mime) => /avc1/.test(mime) && /mp4a/.test(mime);
+    const hasVideoCodecs = () => typeof VideoEncoder === 'function' && typeof AudioEncoder === 'function'
+      && typeof MediaStreamTrackProcessor === 'function';
     let _videoRec = null;
 
     function videoMimeType() {
@@ -5112,11 +5370,121 @@
       if (_videoRec) return;
       const mime = videoMimeType();
       const warn = document.getElementById('videoWarn');
-      warn.hidden = !!mime && videoForX(mime);
+      warn.hidden = hasVideoCodecs() || (!!mime && videoForX(mime));
       warn.textContent = !mime
         ? 'This browser cannot record video.'
         : 'This browser cannot record H.264 + AAC, which X requires — the video will play elsewhere, but for X use recent Chrome or Safari.';
       window.openInfoModal('videoModal');
+    }
+
+    // The WebCodecs recorder; null where its encoders cannot do H.264 + AAC.
+    // frame(k) encodes the canvas as frame k; stop() resolves to the MP4.
+    async function codecVideoRecorder(canvas) {
+      const vcfg = {
+        codec: VIDEO_CODEC, width: VIDEO_SIZE, height: VIDEO_SIZE, bitrate: VIDEO_BITRATE,
+        framerate: VIDEO_FPS, avc: { format: 'avc' }, latencyMode: 'quality',
+      };
+      const acfg = { codec: AUDIO_CODEC, sampleRate: audioCtx.sampleRate, numberOfChannels: 2, bitrate: AUDIO_BITRATE, aac: { format: 'aac' } };
+      try {
+        if (!(await VideoEncoder.isConfigSupported(vcfg)).supported) return null;
+        if (!(await AudioEncoder.isConfigSupported(acfg)).supported) return null;
+      } catch (_) {
+        return null;
+      }
+      const mux = new Mp4Muxer();
+      let error = null;
+      const fail = (e) => { error ||= e; };
+      const videoEnc = new VideoEncoder({ output: (c, m) => mux.addVideo(c, m), error: fail });
+      videoEnc.configure(vcfg);
+      // The sound: the worklet's output, read as AudioData off a stream and
+      // encoded with the stream's own rate and channel count. Reading starts
+      // with the first frame, so the two tracks start together.
+      const audioEnc = new AudioEncoder({ output: (c, m) => mux.addAudio(c, m), error: fail });
+      const audioDest = audioCtx.createMediaStreamDestination();
+      workletNode.connect(audioDest);
+      const [audioTrack] = audioDest.stream.getAudioTracks();
+      const reader = new MediaStreamTrackProcessor({ track: audioTrack }).readable.getReader();
+      let pump = Promise.resolve();
+      const frameUs = Math.round(1e6 / VIDEO_FPS);
+      let sinceKey = Infinity;
+      return {
+        ext: 'mp4', type: 'video/mp4', paced: true,
+        start() {
+          pump = (async () => {
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) return;
+              if (audioEnc.state === 'unconfigured') {
+                audioEnc.configure({ ...acfg, sampleRate: value.sampleRate, numberOfChannels: value.numberOfChannels });
+              }
+              if (!error) audioEnc.encode(value);
+              value.close();
+            }
+          })().catch(fail);
+        },
+        frame(k) {
+          if (error || videoEnc.encodeQueueSize > 8) return; // the encoder is behind: the last frame holds
+          const f = new VideoFrame(canvas, { timestamp: k * frameUs, duration: frameUs });
+          const keyFrame = sinceKey >= 2 * VIDEO_FPS;
+          videoEnc.encode(f, { keyFrame });
+          f.close();
+          sinceKey = keyFrame ? 1 : sinceKey + 1;
+        },
+        async stop(discard) {
+          try { await reader.cancel(); } catch (_) { /* already closed */ }
+          await pump;
+          try { workletNode.disconnect(audioDest); } catch (_) { /* gone with the context */ }
+          audioTrack.stop();
+          try {
+            if (!discard && !error) {
+              await videoEnc.flush();
+              if (audioEnc.state === 'configured') await audioEnc.flush();
+            }
+          } catch (e) {
+            fail(e);
+          }
+          videoEnc.close();
+          if (audioEnc.state !== 'closed') audioEnc.close();
+          if (discard) return null;
+          if (error) throw error;
+          return mux.finish();
+        },
+      };
+    }
+
+    // The MediaRecorder recorder. The canvas stream emits a frame only when
+    // asked (requestFrame), on the loop's slots; a browser without that
+    // samples the canvas itself at VIDEO_FPS.
+    function streamVideoRecorder(canvas, mime) {
+      const audioDest = audioCtx.createMediaStreamDestination();
+      workletNode.connect(audioDest);
+      let videoTrack = canvas.captureStream(0).getVideoTracks()[0];
+      const paced = typeof videoTrack.requestFrame === 'function';
+      if (!paced) {
+        videoTrack.stop();
+        videoTrack = canvas.captureStream(VIDEO_FPS).getVideoTracks()[0];
+      }
+      const stream = new MediaStream([videoTrack, ...audioDest.stream.getAudioTracks()]);
+      const type = mime.split(';')[0];
+      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: VIDEO_BITRATE, audioBitsPerSecond: AUDIO_BITRATE });
+      const chunks = [];
+      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      return {
+        ext: type === 'video/mp4' ? 'mp4' : 'webm', type, paced,
+        start() { recorder.start(1000); },
+        frame() { if (paced) videoTrack.requestFrame(); },
+        stop(discard) {
+          return new Promise((resolve) => {
+            recorder.onstop = () => {
+              try { workletNode.disconnect(audioDest); } catch (_) { /* gone with the context */ }
+              for (const t of stream.getTracks()) t.stop();
+              resolve(discard || !chunks.length ? null : new Blob(chunks, { type }));
+            };
+            if (recorder.state === 'inactive') recorder.onstop();
+            else recorder.stop();
+          });
+        },
+      };
     }
 
     // The editor's visible text and playhead outlines, drawn in page
@@ -5175,13 +5543,10 @@
       const root = getComputedStyle(document.documentElement);
       const bg = root.getPropertyValue('--background').trim() || '#000';
       const fg = root.getPropertyValue('--foreground').trim() || '#fff';
-      // The crop: a square of the editor, starting at the text's left edge
-      // (no line numbers) and the top of the scroller.
+      // The crop: the editor, a VIDEO_FRAME square during the take.
       const sr = editorView.scrollDOM.getBoundingClientRect();
-      const cr = editorView.contentDOM.getBoundingClientRect();
-      const left = Math.max(sr.left, cr.left - 6);
-      const side = Math.max(1, Math.min(sr.height, sr.right - left));
-      const crop = { left, top: sr.top, right: left + side, bottom: sr.top + side };
+      const side = Math.max(1, Math.min(sr.width, sr.height));
+      const crop = { left: sr.left, top: sr.top, right: sr.left + side, bottom: sr.top + side };
       const k = S / side;
 
       ctx.fillStyle = bg;
@@ -5234,8 +5599,9 @@
       const seconds = Math.round(Math.min(VIDEO_MAX_SEC, Math.max(1, Number(document.getElementById('videoSeconds').value) || 30)));
       window.closeInfoModal('videoModal');
       const mime = videoMimeType();
-      if (!mime) { log('Video: this browser cannot record video', 'err'); return; }
-      const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+      if (!mime && !hasVideoCodecs()) { log('Video: this browser cannot record video', 'err'); return; }
+      const type = hasVideoCodecs() || mime.startsWith('video/mp4') ? 'video/mp4' : mime.split(';')[0];
+      const ext = type === 'video/mp4' ? 'mp4' : 'webm';
       const title = (_sourceFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
       // Where to save is asked now, on the Record click: a file picker needs a
       // user gesture, and the recording ends long after this one.
@@ -5244,7 +5610,7 @@
         try {
           handle = await window.showSaveFilePicker({
             suggestedName: `${title}.${ext}`,
-            types: [{ description: 'Video', accept: { [mime.split(';')[0]]: ['.' + ext] } }],
+            types: [{ description: 'Video', accept: { [type]: ['.' + ext] } }],
           });
         } catch (e) {
           if (e?.name !== 'AbortError') log('Video: ' + e.message, 'err');
@@ -5256,44 +5622,52 @@
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = VIDEO_SIZE;
       const ctx = canvas.getContext('2d');
-      const audioDest = audioCtx.createMediaStreamDestination();
-      workletNode.connect(audioDest);
-      const stream = new MediaStream([
-        ...canvas.captureStream(VIDEO_FPS).getVideoTracks(),
-        ...audioDest.stream.getAudioTracks(),
-      ]);
-      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
-      const chunks = [];
-      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      let recorder = null;
+      if (hasVideoCodecs()) {
+        try { recorder = await codecVideoRecorder(canvas); } catch (e) { log('Video: ' + e.message, 'err'); }
+      }
+      if (!recorder) {
+        if (!mime) { log('Video: this browser cannot record video', 'err'); return; }
+        recorder = streamVideoRecorder(canvas, mime);
+      }
       // The take draws the editor, so it shows the oscilloscope, on for the take
       // (the piano roll is a pane of its own, outside the frame).
       const scopeBefore = _vizScope;
+      const wrap = document.getElementById('editorWrap');
+      wrap.style.setProperty('--video-frame', VIDEO_FRAME + 'px');
+      wrap.classList.add('video-take');
+      _vizPixelRatio = VIDEO_SIZE / VIDEO_FRAME; // the canvas at the video's own scale
       setScope(true);
+      resizeVizCanvas();
+      editorView.requestMeasure();
+      _followTake = true;
+      _followHoldUntil = 0;
+      const endTake = () => {
+        _followTake = false;
+        _vizPixelRatio = 0;
+        wrap.classList.remove('video-take');
+        setScope(scopeBefore);
+        if (_vizScope) resizeVizCanvas();
+        editorView.requestMeasure();
+      };
 
       onStop();
       drawVideoFrame(ctx, title);
-      const rec = { recorder, seconds, t0: 0, raf: 0, done: false, discard: false };
+      const rec = { seconds, t0: 0, raf: 0, done: false, discard: false };
       _videoRec = rec;
       const finish = () => {
         if (rec.done) return;
         rec.done = true;
         cancelAnimationFrame(rec.raf);
         document.getElementById('recBadge').hidden = true;
-        recorder.onstop = async () => {
-          try { workletNode.disconnect(audioDest); } catch (_) {}
-          for (const t of stream.getTracks()) t.stop();
-          setScope(scopeBefore);
-          _videoRec = null;
-          if (rec.discard || !chunks.length) return;
-          const blob = new Blob(chunks, { type: mime.split(';')[0] });
-          await saveVideoBlob(blob, `${title}.${ext}`, handle);
-        };
-        recorder.stop();
         onStop();
+        recorder.stop(rec.discard)
+          .then((blob) => blob && saveVideoBlob(blob, `${title}.${recorder.ext}`, handle),
+            (e) => log('Video: ' + e.message, 'err'))
+          .finally(() => { endTake(); _videoRec = null; });
       };
       rec.finish = finish;
 
-      recorder.start(1000);
       await onPlay();
       if (!aiPlaying()) { // did not start (a compile error is in the log)
         rec.discard = true;
@@ -5301,12 +5675,25 @@
         return;
       }
       rec.t0 = performance.now();
+      recorder.start();
       document.getElementById('recBadge').hidden = false;
       const timeText = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-      const frame = () => {
+      const slot = 1000 / VIDEO_FPS;
+      let nextAt = 0; // the next slot's time, from t0
+      const frame = (ts) => {
         if (rec.done) return;
         const elapsed = performance.now() - rec.t0;
-        drawVideoFrame(ctx, title);
+        // Slots are judged by the frame's vsync time (ts), not by when this
+        // callback got to run: a callback 10 ms late would take the next
+        // slot early and leave a 17 ms / 50 ms pair. A quarter vsync early
+        // still counts, since 2 × 16.67 ms rounds either side of 33.33 ms.
+        const at = ts - rec.t0;
+        if (!recorder.paced || at >= nextAt - 4) {
+          const k = Math.max(0, Math.floor((at + 4) / slot));
+          drawVideoFrame(ctx, title);
+          recorder.frame(k);
+          nextAt = (k + 1) * slot;
+        }
         document.getElementById('recTime').textContent = `${timeText(elapsed)} / ${timeText(seconds * 1000)}`;
         if (elapsed >= seconds * 1000 || !aiPlaying()) { finish(); return; }
         rec.raf = requestAnimationFrame(frame);
@@ -5327,13 +5714,8 @@
           const writable = await handle.createWritable();
           await writable.write(blob);
           await writable.close();
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = name;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(url), 10000);
+        } else if (!(await deliverFile(blob, name))) {
+          return;
         }
         log(`Exported ${handle?.name || name} (${(blob.size / 1e6).toFixed(1)} MB)`, 'info');
       } catch (e) {
@@ -5385,72 +5767,151 @@
     function compileNow() {
       const src = editorView.state.doc.toString();
       try {
-        const { ir, diagnostics, sourceMap } = compileMMLisp(src, _lastFileName, { imports: _importSources });
-        const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
-        // A preset set's samples are served from the site root, so they resolve
-        // whether or not the score has been saved anywhere. So do those of a
-        // score from the served tree (the Library, a share link): its compile name
-        // is its path there, and its samples resolve against its folder.
-        // And a sample already held in memory (a mucom88 bank's wav, seeded at
-        // import) plays without any path resolving at all.
-        const hasSamples = sampleDefs.some((d) => {
-          const path = d.resolvedFile ?? d.file ?? '';
-          return !/^presets\//.test(path) && !_pcmSampleCache.has(path);
-        });
-        const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
-          Boolean(_sourceDir) || _lastFileName.includes('/');
-        updateFolderAccessPrompt(src, hasSamples);
-        if (hasSamples && !hasSavedBase) {
-          if (!_unsavedSamplePathWarned) {
-            log('Sample paths may not resolve reliably until this source is saved (File > Save As...)', 'err');
-            _unsavedSamplePathWarned = true;
-          }
-        } else {
-          _unsavedSamplePathWarned = false;
-        }
-        // Warnings are logged too: a typo the compiler drops (a bad :step, an
-        // echo with nothing to replay) must not go unseen. A compile that says
-        // the same as the last one stays quiet (a value drag recompiles every
-        // 140 ms); Build clears the memory, so it always says them. An unsaved
-        // score's relative sample paths are said once, above.
-        const warnLines = diagnostics
-          .filter(d => d.severity === 'warning' && d.code !== 'W_SAMPLE_BASE_UNKNOWN')
-          .map(d => `[W] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`);
-        const warnSig = warnLines.join('\n');
-        if (warnSig !== _lastWarnSig) {
-          for (const line of warnLines) log(line, 'warn');
-          _lastWarnSig = warnSig;
-        }
-        const errors = diagnostics.filter(d => d.severity === 'error');
-        if (errors.length > 0) {
-          for (const d of errors) {
-            log(`[E] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`, 'err');
-          }
-          return { ir: null, ok: false };
-        }
-        _lastGoodIR = ir;
-        _lastSourceMap = sourceMap;
-        buildChStrips(ir);
-        renderDynParams(ir);
-        if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
-        // When not playing, show the score's starting tempo (the loop drives it live),
-        // and measure TIME's bar for it when the page is idle: the measure renders
-        // the whole song, so it waits until typing pauses.
-        if (_fmLiveRaf == null) {
-          updateTempoDisplay(irInitialBpm(ir));
-          whenIdle(() => { if (_fmLiveRaf == null && _lastGoodIR === ir) refreshTimeBar(ir); });
-        }
-        // Anchor playhead highlights to the document this IR was compiled from.
-        // Later edits (without rebuild) are mapped from here so highlights track
-        // the text. Edits compose into the field even while stopped.
-        editorView.dispatch({ effects: setPlayheadBase.of(null) });
-        // Re-anchor bar markers ( | ) to the just-compiled document too.
-        refreshBarMarkers();
-        return { ir, ok: true };
+        return applyCompile(src, compileMMLisp(src, _lastFileName, { imports: _importSources }), null);
       } catch (e) {
         log('[compile] ' + e.message, 'err');
         return { ir: null, ok: false };
       }
+    }
+
+    // The compile, off the page's thread (src/compile-worker.js): on a long
+    // score it held up Build, Play and a drag's hot-swap. One at a time, in the
+    // order asked, so each compiles the document of its turn, as a synchronous
+    // compile did. Where no worker starts it runs here.
+    let _compileWorker;           // undefined: not tried yet; null: unavailable
+    let _compileId = 0;
+    const _compilePending = new Map(); // id → { resolve, reject, here }
+    function compileOffThread(src, name, imports) {
+      const here = () => compileMMLisp(src, name, { imports });
+      if (_compileWorker === undefined) {
+        try {
+          _compileWorker = new Worker('./src/compile-worker.js', { type: 'module' });
+          _compileWorker.onmessage = (e) => {
+            const p = _compilePending.get(e.data.id);
+            if (!p) return;
+            _compilePending.delete(e.data.id);
+            if (e.data.error) p.reject(new Error(e.data.error));
+            else p.resolve(e.data);
+          };
+          _compileWorker.onerror = () => {
+            _compileWorker.terminate();
+            _compileWorker = null;
+            for (const p of _compilePending.values()) p.here();
+            _compilePending.clear();
+          };
+        } catch (_) { _compileWorker = null; }
+      }
+      if (!_compileWorker) return Promise.resolve().then(here);
+      return new Promise((resolve, reject) => {
+        const id = ++_compileId;
+        const p = { resolve, reject, here: () => { try { resolve(here()); } catch (e) { reject(e); } } };
+        _compilePending.set(id, p);
+        try { _compileWorker.postMessage({ id, src, name, imports }); }
+        catch (_) { _compilePending.delete(id); p.here(); }
+      });
+    }
+    // The edits made while a compile runs, so what it built is placed on the
+    // document as it is now (the playhead, the bar markers).
+    let _compileRec = null; // { doc, changes }
+    let _compileChain = Promise.resolve();
+    // A compile asked for but not started yet: later asks share it, as it reads
+    // the document when its turn comes — so a value drag on a slow machine does
+    // not queue one compile per step and play them all out after the drag.
+    let _compileQueued = null;
+    function refreshImportsAndCompile() {
+      if (_compileQueued) return _compileQueued;
+      const run = _compileChain.then(async () => {
+        if (_compileQueued === run) _compileQueued = null;
+        await refreshImportSources(editorView.state.doc.toString());
+        const doc = editorView.state.doc;
+        const src = doc.toString();
+        const epoch = _docEpoch;
+        const rec = { doc, changes: null };
+        _compileRec = rec;
+        try {
+          const result = await compileOffThread(src, _lastFileName, _importSources);
+          if (epoch !== _docEpoch) return { ir: null, ok: false };
+          return applyCompile(src, result, rec);
+        } catch (e) {
+          log('[compile] ' + e.message, 'err');
+          return { ir: null, ok: false };
+        } finally {
+          if (_compileRec === rec) _compileRec = null;
+        }
+      });
+      _compileQueued = run;
+      _compileChain = run.catch(() => {});
+      return run;
+    }
+
+    // A compile's result onto the page: diagnostics, the last good IR, the
+    // strips, the time bar, the playhead's anchor. `rec` is the document it
+    // was compiled from and the edits since (null: compiled just now).
+    function applyCompile(src, { ir, diagnostics, sourceMap }, rec) {
+      const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
+      // A preset set's samples are served from the site root, so they resolve
+      // whether or not the score has been saved anywhere. So do those of a
+      // score from the served tree (the Library, a share link): its compile name
+      // is its path there, and its samples resolve against its folder.
+      // And a sample already held in memory (a mucom88 bank's wav, seeded at
+      // import) plays without any path resolving at all.
+      const hasSamples = sampleDefs.some((d) => {
+        const path = d.resolvedFile ?? d.file ?? '';
+        return !/^presets\//.test(path) && !_pcmSampleCache.has(path);
+      });
+      const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
+        Boolean(_sourceDir) || _lastFileName.includes('/');
+      updateFolderAccessPrompt(src, hasSamples, sampleDefs);
+      // Without a folder picker the Load button above says what is missing.
+      if (hasSamples && !hasSavedBase && typeof window.showDirectoryPicker === 'function') {
+        if (!_unsavedSamplePathWarned) {
+          log('Sample paths may not resolve reliably until this source is saved (File > Save As...)', 'err');
+          _unsavedSamplePathWarned = true;
+        }
+      } else {
+        _unsavedSamplePathWarned = false;
+      }
+      // Warnings are logged too: a typo the compiler drops (a bad :step, an
+      // echo with nothing to replay) must not go unseen. A compile that says
+      // the same as the last one stays quiet (a value drag recompiles every
+      // 140 ms); Build clears the memory, so it always says them. An unsaved
+      // score's relative sample paths are said once, above.
+      const warnLines = diagnostics
+        .filter(d => d.severity === 'warning' && d.code !== 'W_SAMPLE_BASE_UNKNOWN')
+        .map(d => `[W] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`);
+      const warnSig = warnLines.join('\n');
+      if (warnSig !== _lastWarnSig) {
+        for (const line of warnLines) log(line, 'warn');
+        _lastWarnSig = warnSig;
+      }
+      const errors = diagnostics.filter(d => d.severity === 'error');
+      if (errors.length > 0) {
+        for (const d of errors) {
+          log(`[E] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`, 'err');
+        }
+        return { ir: null, ok: false };
+      }
+      _lastGoodIR = ir;
+      _lastGoodSrc = src;
+      _lastSourceMap = sourceMap;
+      buildChStrips(ir);
+      renderDynParams(ir);
+      if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
+      // When not playing, show the score's starting tempo (the loop drives it
+      // live) and measure TIME's bar for it.
+      if (_fmLiveRaf == null) {
+        updateTempoDisplay(irInitialBpm(ir));
+        refreshTimeBar(ir);
+      }
+      // Anchor playhead highlights to the document this IR was compiled from.
+      // Later edits (without rebuild) are mapped from here so highlights track
+      // the text. Edits compose into the field even while stopped.
+      flushPlayheadFx(); // the old build's positions resolve against its own doc
+      const base = rec && rec.doc !== editorView.state.doc ? rec : null;
+      editorView.dispatch({ effects: setPlayheadBase.of(base) });
+      // Re-anchor bar markers ( | ) to the just-compiled document too.
+      refreshBarMarkers(base);
+      return { ir, ok: true };
     }
 
     // Flash the text background to confirm a build. Toggle off→on (each a no-op
@@ -5483,7 +5944,8 @@
         syncPcmBankToWorklet(ir).catch((e) => {
           log('PCM sync failed: ' + e.message, 'err');
         });
-        player.swapAtNextBar(ir);
+        player.swapAtNextBar(ir); // paused: loaded, and Resume plays it
+        _runSrc = _lastGoodSrc;
         log('Built — applies at next bar', 'info');
       } else if (player) {
         // Backend without gapless swap (MMLispDRV reference): keep the built IR;
@@ -5510,13 +5972,14 @@
     let _pcmCursorDef = null;               // name of the sample def under the cursor
     let _prevFmParamMode = null;            // previous getFmParamMode(), to detect entering cursor-def
     let _prevCursorDefKey = null;           // identity of the def under the cursor, to detect switching defs
+    let _paramSubjectKey = null;            // mode|def|channel the FM panel last showed (syncParamUI)
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
     let _dynVals = {};                     // Dynamic Parameters: name → current slider value (declared here so the startup compileNow can render before the panel functions)
     let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
-    let _browseScorePlayer = null;          // the score or snippet Browse ▶ is playing
-    let _browseScorePath = null;
+    let _libraryScorePlayer = null;          // the score or snippet Library ▶ is playing
+    let _libraryScorePath = null;
     let _fmLiveRaf = null;                  // requestAnimationFrame id for the playback refresh loop
     let _fmLiveLast = 0;                    // last live-tick timestamp (throttle)
     let _fmPanelDragging = false;           // dragging an FM-panel slider → don't let the loop overwrite it
@@ -5525,6 +5988,7 @@
     let _sourceOn = true;                  // MMLisp > View > Source: the score's text shows
     let _vizRoll = false;                  // the piano roll's pane is open
     let _vizScope = false;                 // the oscilloscope draws behind the editor
+    let _vizPixelRatio = 0;                // a video take's canvas scale (0: the screen's devicePixelRatio)
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
     let _chVuEls = new Map();              // head → .ch-vu element (cached for the VU loop)
     let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
@@ -5573,11 +6037,19 @@
       { semitone: 10, whiteAfter: 6 },
     ];
 
-    // Load default source on startup — or the score a share link carries. Its
-    // imports are fetched, so the compile waits for the rest of this module to
-    // have run.
-    setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
-    queueMicrotask(() => (location.hash ? loadSharedFromHash() : refreshImportsAndCompile()));
+    // On startup: the score being edited last time (its draft), else the
+    // template — or, over either, the score a share link carries. Its imports
+    // are fetched, so the compile waits for the rest of this module to have run.
+    const _draft = loadDraft();
+    if (_draft) {
+      _sourceFileName = _draft.name || null;
+      _lastFileName = _draft.path || _sourceFileName || 'untitled.mmlisp';
+    }
+    setEditorDoc(_draft ? _draft.src : DEFAULT_NEW_FILE_SOURCE);
+    queueMicrotask(() => {
+      if (_draft && !location.hash) log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
+      return location.hash ? loadSharedFromHash() : refreshImportsAndCompile();
+    });
     window.addEventListener('hashchange', () => loadSharedFromHash());
 
     // -----------------------------------------------------------------------
@@ -5611,7 +6083,7 @@
     function togglePanel() {
       _panelOpen = !_panelOpen;
       applyPanelState();
-      if (!_panelOpen) stopBrowsePreview();
+      if (!_panelOpen) stopLibraryPreview();
       updateLibraryKeys(); // the keys play Library's pick only while it shows
     }
     window.togglePanel = togglePanel;
@@ -6007,6 +6479,63 @@
     function isCoarsePointerDevice() {
       return window.matchMedia('(hover: none) and (pointer: coarse)').matches;
     }
+    // An iPhone or iPad (iPadOS reports itself as a Mac, with touch).
+    function isIOS() {
+      return /iP(?:hone|ad|od)/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    // ── Sound behind another app (iOS) ─────────────────────────────────────
+    // Safari on iPhone and iPad stops a hidden page's Web Audio unless a media
+    // element of the page is playing: there the synth plays through an <audio>
+    // fed from a MediaStreamAudioDestinationNode instead of the context's own
+    // output, and the lock screen's controls reach the page through the Media
+    // Session. The element starts inside the Play tap, before anything awaits.
+    let _bgAudio = null, _bgDest = null;
+    function synthOutput() {
+      if (!isIOS()) return audioCtx.destination;
+      if (!_bgDest) {
+        _bgDest = audioCtx.createMediaStreamDestination();
+        _bgAudio = document.createElement('audio');
+        _bgAudio.setAttribute('playsinline', '');
+        _bgAudio.srcObject = _bgDest.stream;
+        document.body.appendChild(_bgAudio);
+      }
+      return _bgDest;
+    }
+    function startBackgroundAudio() {
+      if (!isIOS() || !audioCtx) return;
+      synthOutput();
+      if (!_bgAudio.paused) return;
+      // A paused element keeps the stream it had buffered — the song's last
+      // moments before Stop, deeper after a spell in the background — and
+      // would play them first. Attaching the stream again drops them.
+      _bgAudio.srcObject = null;
+      _bgAudio.srcObject = _bgDest.stream;
+      _bgAudio.play().catch(() => {});
+    }
+    function stopBackgroundAudio() {
+      _bgAudio?.pause();
+    }
+    function setMediaSession(state) {
+      const ms = navigator.mediaSession;
+      if (!ms) return;
+      try {
+        if (state === 'playing' && !ms.metadata) {
+          // The icons as absolute URLs: the lock screen shows them, and they
+          // name the site the sound comes from.
+          const artwork = [['./icons/icon-192.png', '192x192'], ['./icons/icon-512.png', '512x512']]
+            .map(([src, sizes]) => ({ src: new URL(src, location.href).href, sizes, type: 'image/png' }));
+          ms.metadata = new MediaMetadata({ title: _lastFileName.replace(/\.mmlisp$/, ''), artist: 'MMLisp Live', artwork });
+          ms.setActionHandler('play', () => { if (_paused) onResume(); else if (!player) onPlay(); });
+          ms.setActionHandler('pause', () => onPause());
+          ms.setActionHandler('stop', () => onStop());
+        } else if (state === 'playing') {
+          ms.metadata.title = _lastFileName.replace(/\.mmlisp$/, '');
+        }
+        ms.playbackState = state;
+      } catch (_) { /* a browser without the Media Session's actions */ }
+    }
 
     function audioWorkletUnavailableReason() {
       const protocol = window.location?.protocol ?? 'unknown';
@@ -6051,7 +6580,7 @@
           onScopeBatch(msg);
         }
       };
-      workletNode.connect(audioCtx.destination);
+      workletNode.connect(synthOutput());
       // Apply the current analog-LPF state to the fresh node, and keep the
       // per-channel tap stream on for its lifetime (feeds scope + VU).
       workletNode.port.postMessage({ type: 'set-analog-lpf', on: analogLpfOn, cutoffHz: ANALOG_LPF_CUTOFF });
@@ -6091,8 +6620,9 @@
 
     // Editor font size (px), MMLisp > Font Size: the panel's number popup, so it
     // is typed or stepped like any other value. Wide on purpose — a projector
-    // or a recording wants it huge. Touch layouts never go under 16px (iOS
-    // zooms a focused field below that; style.css).
+    // or a recording wants it huge. Small sizes hold on touch screens too: the
+    // viewport's maximum-scale keeps iOS from zooming into a focused field
+    // under 16 px.
     const FONT_SIZE_MIN = 8, FONT_SIZE_MAX = 96, FONT_SIZE_DEFAULT = 14;
     let _fontSize = FONT_SIZE_DEFAULT;
     function applyFontSize(px) {
@@ -6185,6 +6715,7 @@
             log('AudioContext @ ' + audioCtx.sampleRate + ' Hz', 'info');
             audioCtx.onstatechange = () => log('AudioContext state: ' + audioCtx.state, 'info');
           }
+          startBackgroundAudio(); // iOS: in the tap, before any await
           // On iOS/Safari this is safest inside the click/touch handler chain.
           // A bare resume() can hang on iOS, so bound it — a timeout settles the
           // promise so a later tap can retry instead of being stuck forever.
@@ -6230,12 +6761,13 @@
     // fromLine: play from that line's first note (the nearest line above with
     // one, unless `exactLine`, when a line with no note plays nothing);
     // fromSec: from that far into the song. Both chase the run (IRPlayer.seek).
-    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride = null } = {}) {
+    // se: an effect's index, null for the song; left out, the cursor decides.
+    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride } = {}) {
       hideSharedPlay();
       _timeCue = null; // a cue set on the time bar is spent by any Play
       const ok = await initAudio();
       if (!ok) return;
-      stopBrowseScorePreview(); // one score owns the chip at a time
+      stopLibraryScorePreview(); // one score owns the chip at a time
       // Manual-compile model: starting from stopped always rebuilds from the
       // current source, so Play reflects the latest edits. On error, compileNow
       // keeps the last good IR; only binary/URL presets with no editable source
@@ -6248,12 +6780,20 @@
       }
       // With the cursor in a (def-se …), Play auditions that effect alone —
       // the song never starts its effects; the game does (driver.md §2.5).
-      const seName = seOverride != null
-        ? (_lastGoodIR?.tracks.find((t) => t.se?.index === seOverride)?.se.name ?? null)
+      const seName = seOverride !== undefined
+        ? (seOverride == null ? null : _lastGoodIR?.tracks.find((t) => t.se?.index === seOverride)?.se.name ?? null)
         : (_lastGoodIR ? findSeDefAtCursor() : null);
       const seTrack = seName ? _lastGoodIR.tracks.find((t) => t.se?.name === seName) : null;
       const se = seTrack ? seTrack.se.index : null;
       const playIr = _lastGoodIR ? songOrEffectIr(_lastGoodIR, se) : null;
+      // Nothing to hear (a new score's empty tracks): do not start a silent run
+      // whose clock would race past a bar with no length. The Library's ▶ says
+      // the same for a score with no notes.
+      if (playIr && !hasNotes(playIr)) {
+        onStop();
+        log('No notes to play', 'info');
+        return;
+      }
 
       // MMLispDRV reference backend: compile → MMB → frame-stepped
       // decoder (drv-player.js). Same worklet, different scheduler — the
@@ -6299,6 +6839,7 @@
           const drv = player;
           player.setOnRunStart(() => applyPlayerChannelState(drv));
           player.play(audioCtx, { se });
+          playingStarted();
           refreshTimeBar(player._ir ?? _lastGoodIR, false); // the reference driver cannot seek
           // After play(): the driver's reset is a power-on, reseeding every value
           // slot from its def-val init, so the live slider values go in behind it
@@ -6319,6 +6860,8 @@
         // Use last successfully compiled IR if available, else load from URL
         if (_lastGoodIR) {
           player.loadJSON(_lastGoodIR, { se });
+          _runSrc = _lastGoodSrc;
+          _runSe = se;
           await syncPcmBankToWorklet(_lastGoodIR);
           log(se != null ? `Playing effect ${seName}` : 'Playing (compiled source)', 'info');
         } else if (currentIrURL) {
@@ -6355,6 +6898,7 @@
         } else {
           player.play(audioCtx);
         }
+        playingStarted();
         _paused = false;
         _vizFrozen = null;
         refreshTimeBar(player._ir);
@@ -6377,7 +6921,7 @@
     }
     function releaseHoldsAction() {
       player?.releaseHolds?.();
-      _browseScorePlayer?.releaseHolds?.(); // a Library ▶ preview holds too
+      _libraryScorePlayer?.releaseHolds?.(); // a Library ▶ preview holds too
     }
     window.releaseHoldsAction = releaseHoldsAction;
 
@@ -6386,14 +6930,49 @@
       log(`trig ${code}` + (ch ? ` \u2014 ${ch.scoreChannel ?? ch.channel}` : ''), 'info');
     }
 
+    // ── Playing on a phone ──────────────────────────────────────────────────
+    // The screen stays on while the song plays (Screen Wake Lock; released by
+    // the browser when the page is hidden, taken again when it is back), and a
+    // hidden page runs its scheduler deeper: the browser lets a hidden page's
+    // timers fire about once a second, so the 0.2 s the players queue ahead
+    // would run dry between two of them.
+    const LOOKAHEAD_VISIBLE = 0.2, LOOKAHEAD_HIDDEN = 3;
+    let _wakeLock = null;
+    async function holdScreen() {
+      if (_wakeLock || !navigator.wakeLock || document.hidden) return;
+      try {
+        const lock = await navigator.wakeLock.request('screen');
+        lock.addEventListener('release', () => { if (_wakeLock === lock) _wakeLock = null; });
+        _wakeLock = lock;
+      } catch (_) { /* denied (low battery, a setting): the screen behaves as usual */ }
+    }
+    function releaseScreen() {
+      _wakeLock?.release().catch(() => {});
+      _wakeLock = null;
+    }
+    function playingStarted() {
+      player?.setLookahead?.(document.hidden ? LOOKAHEAD_HIDDEN : LOOKAHEAD_VISIBLE);
+      holdScreen();
+      startBackgroundAudio(); // a lock-screen Play arrives with no tap
+      setMediaSession('playing');
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!player?.isPlaying?.()) return;
+      player.setLookahead?.(document.hidden ? LOOKAHEAD_HIDDEN : LOOKAHEAD_VISIBLE);
+      if (!document.hidden) holdScreen();
+    });
+
     function onStop() {
-      stopBrowseScorePreview();
+      stopLibraryScorePreview();
       stopFmLiveLoop();
       resetChannelVu();
       _vizFrozen = null;
       player?.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
+      releaseScreen();
+      stopBackgroundAudio();
+      setMediaSession('none');
       _seHeld.clear();
       refreshSeLit();
       _timeCue = null;
@@ -6401,6 +6980,7 @@
       log('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
       setPlayIcon(false);
+      dropPlayheadFx();
       editorView.dispatch({ effects: [setTrackLine.of({ trackIdx: -1 }), setSeq.of({ clear: true })] });
     }
 
@@ -6664,9 +7244,13 @@
     // -----------------------------------------------------------------------
     let _paused = false;
     let _pausedSec = 0; // where pause left the song (IRPlayer.positionSec)
+    let _runSrc = null; // the source the playing (or paused) run was compiled from
+    let _runSe = null;  // the effect it plays, or null for the song
     let _vizFrozen = null; // per-track clocks the piano roll holds when not playing (pause, TIME bar)
 
-    function onPause() {
+    // quiet: a pause the piano roll's drag takes and gives back, not the
+    // user's — no log line.
+    function onPause({ quiet = false } = {}) {
       if (!player || !player.isPlaying()) return;
       // The MMLispDRV reference cannot seek; pause degrades to stop.
       if (!(player instanceof IRPlayer)) { onStop(); return; }
@@ -6675,20 +7259,29 @@
       _vizFrozen = new Map(_vizNotes.map((cell) => [cell.trackIndex, player.trackClock(cell.trackIndex)]));
       player.stop();
       workletNode?.port.postMessage({ type: 'flush' });
+      releaseScreen();
+      setMediaSession('paused'); // the element plays on (silence): the lock screen keeps its controls
       _paused = true;
-      log('Paused');
+      if (!quiet) log('Paused');
       setPlayIcon(false);
       document.getElementById('btnPlay').classList.remove('active');
     }
 
-    function onResume() {
+    function onResume({ quiet = false } = {}) {
       if (!player || !_paused) return;
+      // Edited while paused: build, and play the new score from the same point
+      // (a phone has no Build shortcut, so ▶ is the one tap that applies it).
+      if (editorView.state.doc.toString() !== _runSrc) {
+        onPlay(null, { fromSec: _pausedSec, se: _runSe });
+        return;
+      }
       // Resume is a seek back to where pause left it: the song's clock and state
       // pick up from there.
       player.seek(audioCtx, { sec: _pausedSec });
       _paused = false;
       _vizFrozen = null;
-      log('Resumed', 'info');
+      playingStarted();
+      if (!quiet) log('Resumed', 'info');
       setPlayIcon(true);
       document.getElementById('btnPlay').classList.add('active');
     }
@@ -6740,16 +7333,16 @@
     // score imports, so a listed name can never drift from the def behind it.
     // The index.json files exist only because a directory cannot be listed
     // over HTTP; they hold paths and nothing else.
-    const BROWSE_SETS_INDEX = '/presets/index.json';
-    const BROWSE_SCORES_INDEX = '/examples/index.json';
-    const BROWSE_SNIPPETS_INDEX = '/snippets/index.json';
+    const LIBRARY_SETS_INDEX = '/presets/index.json';
+    const LIBRARY_SCORES_INDEX = '/examples/index.json';
+    const LIBRARY_SNIPPETS_INDEX = '/snippets/index.json';
 
-    let _browseCatalog = null;              // { sets, scores, snippets: [path] }
-    const _browseFileCache = new Map();     // score/snippet path -> { text, about }
-    const _browseSetCache = new Map();      // set path -> { path, text, defs }
+    let _libraryCatalog = null;              // { sets, scores, snippets: [path] }
+    const _libraryFileCache = new Map();     // score/snippet path -> { text, about }
+    const _librarySetCache = new Map();      // set path -> { path, text, defs }
     let _sideAudition = null;               // the sample preview playing beside the song (playAuditionBlob)
-    let _browsePreviewTimers = [];          // note on/off timers for the FM audition
-    let _browsePcmSounding = false;         // the worklet holds a sample preview
+    let _libraryPreviewTimers = [];          // note on/off timers for the FM audition
+    let _libraryPcmSounding = false;         // the worklet holds a sample preview
 
     async function fetchText(path) {
       const res = await fetch(toFetchablePath(path));
@@ -6759,26 +7352,26 @@
 
     // Read once, by the panel or by the editor's completion (which lists
     // every set's names), whichever asks first.
-    let _browseCatalogLoad = null;
-    function loadBrowseCatalog() {
-      _browseCatalogLoad ??= (async () => {
+    let _libraryCatalogLoad = null;
+    function loadLibraryCatalog() {
+      _libraryCatalogLoad ??= (async () => {
         const read = async (url) => {
           try { return JSON.parse(await fetchText(url)); }
           catch (e) { log('Library: ' + e.message, 'err'); return []; }
         };
         const [sets, scores, snippets] = await Promise.all(
-          [read(BROWSE_SETS_INDEX), read(BROWSE_SCORES_INDEX), read(BROWSE_SNIPPETS_INDEX)]);
-        _browseCatalog = { sets, scores, snippets };
-        return _browseCatalog;
+          [read(LIBRARY_SETS_INDEX), read(LIBRARY_SCORES_INDEX), read(LIBRARY_SNIPPETS_INDEX)]);
+        _libraryCatalog = { sets, scores, snippets };
+        return _libraryCatalog;
       })();
-      return _browseCatalogLoad;
+      return _libraryCatalogLoad;
     }
 
-    function browseSetName(path) {
+    function librarySetName(path) {
       return path.replace(/\/[^/]*$/, '').replace(/^presets\//, '');
     }
 
-    function setBrowseNote(text) {
+    function setLibraryNote(text) {
       setTextWithIcons(document.getElementById('libNote'), text);
     }
 
@@ -6805,7 +7398,7 @@
       document.getElementById('rightPanelBody').hidden = _panelTab !== 'params';
       document.getElementById('libraryPane').hidden = _panelTab !== 'library';
       if (_panelTab === 'library') ensureLibrary();
-      else stopBrowsePreview();
+      else stopLibraryPreview();
       updateLibraryKeys();
     }
 
@@ -6983,7 +7576,7 @@
           tracks: e.tracks,
           about: refSummary(e),
           detail: `${e.syntax}\n${refSummary(e)}\n\n${e.example}\n\u2014 language ${e.section}`,
-          audition: () => toggleBrowseScorePreview(file),
+          audition: () => toggleLibraryScorePreview(file),
           keys: null,
           actions: [{ label: 'Insert', title: `Insert ${e.insert.split('\n')[0]} at the cursor`,
             run: () => insertReferenceText(e) }],
@@ -6994,23 +7587,23 @@
     function insertReferenceText(e) {
       const { from, to } = editorView.state.selection.main;
       editorView.dispatch({ changes: { from, to, insert: e.insert } });
-      setBrowseNote(`Inserted ${e.name}`);
+      setLibraryNote(`Inserted ${e.name}`);
       showInserted(from, from + e.insert.length);
     }
 
     // Every source as one array of items (catalog-list.js). A preset's
     // description is the comment line above its def, as the completion shows.
     async function loadLibraryItems() {
-      const catalog = await loadBrowseCatalog();
+      const catalog = await loadLibraryCatalog();
       const items = referenceItems();
       const groupActions = {};
-      const sets = await Promise.all(catalog.sets.map((path) => loadBrowseSet(path)
+      const sets = await Promise.all(catalog.sets.map((path) => loadLibrarySet(path)
         .catch((e) => { log('Library: ' + e.message, 'err'); return null; })));
       for (const set of sets.filter(Boolean)) {
-        const label = browseSetName(set.path);
+        const label = librarySetName(set.path);
         const about = new Map(scanDefNames(set.text, label).map((d) => [d.name, d.about]));
         const importSet = { label: 'Import set', title: `Add (import "${set.path}") to the top of the score`,
-          run: () => insertBrowseImport(set.path) };
+          run: () => insertLibraryImport(set.path) };
         groupActions[set.path] = [importSet];
         for (const def of set.defs) {
           // An FM def or a macro is self-contained text, so a copy can be
@@ -7026,10 +7619,10 @@
             name: def.name,
             kind: def.kind,
             about: about.get(def.name) ?? '',
-            audition: def.kind === 'def' ? null : () => previewBrowseDef(set, def),
+            audition: def.kind === 'def' ? null : () => previewLibraryDef(set, def),
             keys: def.kind === 'fm' || def.kind === 'pcm' ? { kind: def.kind, set, def } : null,
             actions: copy
-              ? [{ label: 'Insert', title: 'Insert the def at the cursor', run: () => insertBrowseDefText(set, def) }]
+              ? [{ label: 'Insert', title: 'Insert the def at the cursor', run: () => insertLibraryDefText(set, def) }]
               : [importSet],
           });
         }
@@ -7037,14 +7630,14 @@
       for (const [source, paths] of [['snippets', catalog.snippets], ['scores', catalog.scores]]) {
         const snippet = source === 'snippets';
         const loaded = await Promise.all(paths.map(async (path) => {
-          try { return { path, ...(await loadBrowseFile(path)) }; }
+          try { return { path, ...(await loadLibraryFile(path)) }; }
           catch (e) { log('Library: ' + e.message, 'err'); return null; }
         }));
         for (const f of loaded.filter(Boolean)) {
           const dir = f.path.replace(/\/[^/]*$/, '');
           const file = { path: f.path, text: f.text, snippet };
           const open = { label: 'Open', title: 'Open in the editor, replacing what is there',
-            run: () => openBrowseScore(f.path, browseCompileName(file)) };
+            run: () => openLibraryScore(f.path, libraryCompileName(file)) };
           items.push({
             key: f.path,
             source,
@@ -7053,10 +7646,10 @@
             name: f.path.split('/').pop().replace(/\.mmlisp$/, ''),
             kind: snippet ? 'snippet' : 'score',
             about: snippet ? snippetAbout(f.path, f.about) : f.about,
-            audition: () => toggleBrowseScorePreview(file),
+            audition: () => toggleLibraryScorePreview(file),
             keys: null,
             actions: snippet
-              ? [{ label: 'Insert', title: 'Insert at the cursor (its imports go to the top)', run: () => insertBrowseSnippet(file) }, open]
+              ? [{ label: 'Insert', title: 'Insert at the cursor (its imports go to the top)', run: () => insertLibrarySnippet(file) }, open]
               : [open],
           });
         }
@@ -7067,15 +7660,15 @@
     // A set is read straight from its source: every top-level (def …) becomes a
     // row, classified the way the FM panel already classifies the def under the
     // cursor.
-    async function loadBrowseSet(path) {
-      const cached = _browseSetCache.get(path);
+    async function loadLibrarySet(path) {
+      const cached = _librarySetCache.get(path);
       if (cached) return cached;
-      const entry = browseSetFromText(path, await fetchText(path));
-      _browseSetCache.set(path, entry);
+      const entry = librarySetFromText(path, await fetchText(path));
+      _librarySetCache.set(path, entry);
       return entry;
     }
 
-    function browseSetFromText(path, text) {
+    function librarySetFromText(path, text) {
       const defs = [];
       const roots = parse(text);
       for (const node of roots) {
@@ -7119,14 +7712,14 @@
     // its imports read `presets/…`, so the text resolves the same way when it
     // is played from here, opened, or pasted into the score in the editor. An
     // example score keeps its own folder (its imports are relative to it).
-    function browseCompileName(file) {
+    function libraryCompileName(file) {
       return file.snippet ? file.path.split('/').pop() : file.path;
     }
 
     // The leading comment block is the file's description; the first sentence
     // of it is what the note line shows.
-    async function loadBrowseFile(path) {
-      const cached = _browseFileCache.get(path);
+    async function loadLibraryFile(path) {
+      const cached = _libraryFileCache.get(path);
       if (cached) return cached;
       const text = await fetchText(path);
       const lead = [];
@@ -7137,7 +7730,7 @@
       }
       const about = lead.join(' ').replace(/\s+/g, ' ').trim();
       const entry = { text, about };
-      _browseFileCache.set(path, entry);
+      _libraryFileCache.set(path, entry);
       return entry;
     }
 
@@ -7149,11 +7742,11 @@
     const PREVIEW_GAP_SEC = 0.02;          // key-off before the slot ends
     const PREVIEW_MIDI = 60;
 
-    function previewBrowseDef(set, def) {
-      if (def.kind === 'fm') return previewBrowseFm(def);
-      if (def.kind === 'pcm') return previewBrowsePcm(set, def);
-      if (def.kind === 'macro') return previewBrowseMacro(set, def);
-      setBrowseNote(`${def.name} is not a voice, a sample or a macro \u2014 nothing to sound.`);
+    function previewLibraryDef(set, def) {
+      if (def.kind === 'fm') return previewLibraryFm(def);
+      if (def.kind === 'pcm') return previewLibraryPcm(set, def);
+      if (def.kind === 'macro') return previewLibraryMacro(set, def);
+      setLibraryNote(`${def.name} is not a voice, a sample or a macro \u2014 nothing to sound.`);
     }
 
     // The completion list's audition (↑ / ↓ over a voice or sample): the Library's
@@ -7162,30 +7755,30 @@
     async function auditionName(d) {
       let set;
       try {
-        if (d.set) set = await loadBrowseSet(d.set);
-        else if (d.path) set = browseSetFromText(d.path, _importSources.get(d.path) ?? '');
-        else set = browseSetFromText(null, editorView.state.doc.toString());
+        if (d.set) set = await loadLibrarySet(d.set);
+        else if (d.path) set = librarySetFromText(d.path, _importSources.get(d.path) ?? '');
+        else set = librarySetFromText(null, editorView.state.doc.toString());
       } catch { return; }
       const def = set.defs.find((x) => x.name === d.name);
       // A score's own sample resolves its :file against the score's folder,
       // which the preview's stand-in score does not have.
       if (!def || (def.kind === 'pcm' && !set.path)) return;
-      previewBrowseDef(set, def);
+      previewLibraryDef(set, def);
     }
 
     // Cancel whatever the panel has in flight. The FM run is a JS timer; the
     // PCM hit is already queued inside the worklet, so only a flush recalls it
     // (safe here because during playback a sample preview plays on the side
     // player instead, which stops on its own).
-    function stopBrowsePreview() {
-      stopBrowseScorePreview();
-      for (const t of _browsePreviewTimers) clearTimeout(t);
-      _browsePreviewTimers = [];
+    function stopLibraryPreview() {
+      stopLibraryScorePreview();
+      for (const t of _libraryPreviewTimers) clearTimeout(t);
+      _libraryPreviewTimers = [];
       previewNoteOff(CURSOR_DEF_PREVIEW_CH);
       _sideAudition?.stop();
-      if (_browsePcmSounding) {
+      if (_libraryPcmSounding) {
         workletNode?.port.postMessage({ type: 'flush' });
-        _browsePcmSounding = false;
+        _libraryPcmSounding = false;
       }
     }
 
@@ -7194,20 +7787,20 @@
     // `:key` voice sounds at its key. A timer rather than a scheduled write, so
     // a second press can cancel the first without flushing a song that may be
     // playing underneath.
-    async function previewBrowseFm(def) {
+    async function previewLibraryFm(def) {
       const midi = def.regs.key ?? PREVIEW_MIDI;
       if (!(await initAudio())) return;
       if (!claimPreviewPlayer()) {
-        setBrowseNote(`${def.name} \u2014 not sounded while the MMLispDRV backend plays`);
+        setLibraryNote(`${def.name} \u2014 not sounded while the MMLispDRV backend plays`);
         return;
       }
       applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH, def.regs);
       _openingVoiceOn = null;
-      stopBrowsePreview();
+      stopLibraryPreview();
       previewNoteOn(CURSOR_DEF_PREVIEW_CH, midi);
-      _browsePreviewTimers.push(setTimeout(
+      _libraryPreviewTimers.push(setTimeout(
         () => previewNoteOff(CURSOR_DEF_PREVIEW_CH), (PREVIEW_NOTE_SEC - PREVIEW_GAP_SEC) * 1000));
-      setBrowseNote(`${def.name} \u2014 c4${def.regs.key != null ? ` (:key ${def.regs.key})` : ''} on ${channelLabel(CURSOR_DEF_PREVIEW_CH)}`);
+      setLibraryNote(`${def.name} \u2014 c4${def.regs.key != null ? ` (:key ${def.regs.key})` : ''} on ${channelLabel(CURSOR_DEF_PREVIEW_CH)}`);
     }
 
     // A sample has no register form to push: it is bytes in a bank. So compile
@@ -7215,12 +7808,12 @@
     // that bank: the export's own bake. The score's bank is displaced until the
     // next Play or Build re-syncs it, which is why this waits for playback to
     // stop.
-    async function previewBrowsePcm(set, def) {
+    async function previewLibraryPcm(set, def) {
       if (!(await initAudio())) return;
-      stopBrowsePreview();
+      stopLibraryPreview();
       try {
         const source = `(import "${set.path}")\n(pcm1 :oct 4 :len 4 ${def.name} c)\n`;
-        const { ir, diagnostics } = compileMMLisp(source, 'browse-preview.mmlisp', {
+        const { ir, diagnostics } = compileMMLisp(source, 'library-preview.mmlisp', {
           imports: new Map([[set.path, set.text]]),
         });
         const errors = diagnostics.filter((d) => d.severity === 'error');
@@ -7232,7 +7825,7 @@
         if (_fmLiveRaf != null) {
           const blob = bakeAuditionBlob(ir, samples, def.name, PREVIEW_MIDI);
           playAuditionBlob(blob, false, 15);
-          setBrowseNote(`${def.name} \u2014 c4, ${blob.data.length} bytes baked`);
+          setLibraryNote(`${def.name} \u2014 c4, ${blob.data.length} bytes baked`);
           return;
         }
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
@@ -7247,11 +7840,11 @@
           kind: 'on', voice: 0, track: 0, sample: def.name,
           midi: PREVIEW_MIDI, mode: 'shot', vel: 15,
         });
-        _browsePcmSounding = true;
-        setBrowseNote(`${def.name} \u2014 c4, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
+        _libraryPcmSounding = true;
+        setLibraryNote(`${def.name} \u2014 c4, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
       } catch (e) {
         log('Library: ' + e.message, 'err');
-        setBrowseNote(String(e.message));
+        setLibraryNote(String(e.message));
       }
     }
 
@@ -7259,35 +7852,35 @@
     // note on sqr1 \u2014 the channel with no voice of its own, which is what an
     // envelope is for \u2014 and a rest, so a release section is heard too. It
     // plays on the Library's own player, as a score does.
-    async function previewBrowseMacro(set, def) {
+    async function previewLibraryMacro(set, def) {
       const source = defSourceText(set, def) + `\n(sqr1 :oct 4 :len 2 :vel 15 ${def.name} c _)\n`;
-      if (await playBrowseSource(source, 'browse-preview.mmlisp', 'macro:' + def.name))
-        setBrowseNote(`${def.name} \u2014 c4 on sqr1`);
+      if (await playLibrarySource(source, 'library-preview.mmlisp', 'macro:' + def.name))
+        setLibraryNote(`${def.name} \u2014 c4 on sqr1`);
     }
 
     // A SCORE PLAYS ON ITS OWN PLAYER, never through the editor's: the song
     // being written keeps its IR, its source map and its mixer state, and the
     // next Play or Build puts its PCM bank back (as a sample preview does).
     // The chip is one chip, so the song stops first.
-    async function toggleBrowseScorePreview(file) {
-      if (_browseScorePlayer && _browseScorePath === file.path) {
-        stopBrowseScorePreview();
-        setBrowseNote('Stopped.');
+    async function toggleLibraryScorePreview(file) {
+      if (_libraryScorePlayer && _libraryScorePath === file.path) {
+        stopLibraryScorePreview();
+        setLibraryNote('Stopped.');
         return;
       }
-      const ir = await playBrowseSource(file.text, browseCompileName(file), file.path);
+      const ir = await playLibrarySource(file.text, libraryCompileName(file), file.path);
       if (!ir) return;
       const sliders = ir.metadata?.vals?.some((v) => v.public)
         ? ' Its sliders appear once you open it.' : '';
-      setBrowseNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
+      setLibraryNote(`\u25b6 ${file.path.split('/').pop()} \u2014 Space stops.${sliders}`);
     }
 
     // Compile `text` under `name` and play it on the Library's player; `key` is
     // what a second \u25b6 on the same thing stops. Returns the IR, or null when
     // nothing played \u2014 the note then says why.
-    async function playBrowseSource(text, name, key) {
+    async function playLibrarySource(text, name, key) {
       if (!(await initAudio())) return null;
-      stopBrowsePreview();
+      stopLibraryPreview();
       if (player) onStop();
       try {
         const imports = await readImportSources(text, name);
@@ -7295,7 +7888,7 @@
         const errors = diagnostics.filter((d) => d.severity === 'error');
         if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
         if (!ir.tracks.some((t) => t.events.some((e) => /NOTE_ON$/.test(e.cmd)))) {
-          setBrowseNote('No tracks to play.');
+          setLibraryNote('No tracks to play.');
           return null;
         }
         const p = new IRPlayer(writeToWorklet);
@@ -7304,22 +7897,22 @@
         p.setOnHold((t) => logHold(ir, t));
         await syncPcmBankToWorklet(ir, p);
         p.play(audioCtx);
-        _browseScorePlayer = p;
-        _browseScorePath = key;
+        _libraryScorePlayer = p;
+        _libraryScorePath = key;
         return ir;
       } catch (e) {
         log('Library: ' + e.message, 'err');
-        setBrowseNote(String(e.message));
+        setLibraryNote(String(e.message));
         return null;
       }
     }
 
-    function stopBrowseScorePreview() {
-      if (!_browseScorePlayer) return;
-      _browseScorePlayer.stop();
+    function stopLibraryScorePreview() {
+      if (!_libraryScorePlayer) return;
+      _libraryScorePlayer.stop();
       workletNode?.port.postMessage({ type: 'flush' });
-      _browseScorePlayer = null;
-      _browseScorePath = null;
+      _libraryScorePlayer = null;
+      _libraryScorePath = null;
     }
 
     function bankBytesUsed(bank) {
@@ -7338,12 +7931,12 @@
       editorView.focus();
     }
 
-    function insertBrowseImport(path) {
+    function insertLibraryImport(path) {
       const doc = editorView.state.doc.toString();
       const line = `(import "${path}")`;
-      if (doc.includes(line)) { setBrowseNote('Already imported.'); return; }
+      if (doc.includes(line)) { setLibraryNote('Already imported.'); return; }
       editorView.dispatch({ changes: { from: 0, to: 0, insert: line + '\n' } });
-      setBrowseNote(`Inserted ${line}`);
+      setLibraryNote(`Inserted ${line}`);
       showInserted(0, line.length);
     }
 
@@ -7355,18 +7948,18 @@
       return lines.slice(from, to + 1).join('\n');
     }
 
-    function insertBrowseDefText(set, def) {
+    function insertLibraryDefText(set, def) {
       const text = defSourceText(set, def);
       const { from, to } = editorView.state.selection.main;
       editorView.dispatch({ changes: { from, to, insert: text + '\n' } });
-      setBrowseNote(`Inserted ${def.name} (${text.split('\n').length} lines)`);
+      setLibraryNote(`Inserted ${def.name} (${text.split('\n').length} lines)`);
       showInserted(from, from + text.length);
     }
 
     // A snippet's imports go to the top of the score, each once; the rest of
     // it lands at the cursor. Both edits are one transaction, so one undo
     // takes the whole snippet back out.
-    function insertBrowseSnippet(file) {
+    function insertLibrarySnippet(file) {
       const importLine = /^\s*\(import\s+"([^"]+)"\)\s*(;.*)?$/;
       const lines = file.text.split('\n');
       const have = new Set(collectImports(editorView.state.doc.toString()));
@@ -7381,7 +7974,7 @@
       changes.push({ from: sel.from, to: sel.to, insert: body });
       editorView.dispatch({ changes });
       const name = file.path.split('/').pop();
-      setBrowseNote(`Inserted ${name}` + (imports.length ? ` and ${imports.length} import${imports.length > 1 ? 's' : ''}` : ''));
+      setLibraryNote(`Inserted ${name}` + (imports.length ? ` and ${imports.length} import${imports.length > 1 ? 's' : ''}` : ''));
       const at = sel.from + head.length; // the imports went in above it
       showInserted(at, at + body.trimEnd().length);
     }
@@ -7390,10 +7983,10 @@
     // imports and its samples' `:file` resolve against its own folder rather
     // than the site root (docs/language.md §9.2, §16). A snippet is written
     // for the root, so it opens under its bare name, like a new score.
-    async function openBrowseScore(path, compileName = path) {
+    async function openLibraryScore(path, compileName = path) {
       try {
         const src = await fetchText(path);
-        stopBrowsePreview();
+        stopLibraryPreview();
         clearSourceDir();
         _sourceHandle = null;
         _sourceFileName = path.split('/').pop();
@@ -7407,7 +8000,7 @@
         log('Opened ' + path, 'info');
       } catch (e) {
         log('Library: ' + e.message, 'err');
-        setBrowseNote(String(e.message));
+        setLibraryNote(String(e.message));
       }
     }
 
@@ -7450,7 +8043,7 @@
       return { n, s, url: location.origin + location.pathname + '#' + (head ? head + '&' : '') + 's=' + s };
     }
 
-    // The short form (/s/<id>) from the deployment's share store (live/api/).
+    // The short form (/s/<id>) from the deployment's share store (live/worker/).
     // null wherever there is none — the dev server, offline, an unconfigured
     // store — and the long link, which needs no server, stands in.
     async function shortShareUrl({ n, s }) {
@@ -7571,6 +8164,10 @@
       _channelVol.clear();
       _masterVolUi = 31;
       setEditorDoc(src);
+      // Only looking at someone's score must not replace your own draft: it
+      // becomes the draft at its first edit.
+      clearTimeout(_draftTimer);
+      _draftTimer = null;
       await refreshImportsAndCompile();
       log('Opened shared score ' + _sourceFileName, 'info');
       document.getElementById('sharedPlayLabel').textContent = 'Play ' + _sourceFileName.replace(/\.mmlisp$/i, '');
@@ -7600,7 +8197,7 @@
     }
 
     // Everything the compiler says about the current text, for the AI link —
-    // including the warnings compileNow() leaves unsaid when they repeat.
+    // including the warnings applyCompile leaves unsaid when they repeat.
     async function aiDiagnostics() {
       const src = editorView.state.doc.toString();
       await refreshImportSources(src);
@@ -8330,7 +8927,7 @@
       const seq = ++_pcmAuditionSeq;
       try {
         const { ir, diagnostics } = libSample
-          ? compileMMLisp(`(import "${libSample.set.path}")\n`, 'browse-preview.mmlisp',
+          ? compileMMLisp(`(import "${libSample.set.path}")\n`, 'library-preview.mmlisp',
             { imports: new Map([[libSample.set.path, libSample.set.text]]) })
           : compileMMLisp(editorView.state.doc.toString(), _lastFileName, { imports: _importSources });
         if (part) {
@@ -9441,7 +10038,12 @@
     }
 
     // ---- sync slider display from player state ----
-    function syncParamUI() {
+    // A caller snapping a moved slider back passes nothing: the slider no
+    // longer shows what the cache holds, so everything is repainted. The
+    // editor's edits and cursor moves pass { repaint: false } and repaint only
+    // when the panel's subject (mode, def, channel) changed — otherwise the
+    // change detection writes just what differs.
+    function syncParamUI({ repaint = true } = {}) {
       _fmCursorDefContext = selectedChannel == null ? findFmDefAtCursor() : null;
       _pcmCursorDef = selectedChannel == null && !_fmCursorDefContext ? findSampleDefAtCursor() : null;
       libraryCursorMoved();
@@ -9463,6 +10065,9 @@
       }
       _prevFmParamMode = mode;
       _prevCursorDefKey = cursorDefKey;
+      const subjectKey = `${mode}|${cursorDefKey}|${selectedCh}`;
+      if (subjectKey !== _paramSubjectKey) repaint = true;
+      _paramSubjectKey = subjectKey;
 
       const regs = mode === 'cursor-def'
         ? _fmCursorDefContext.regs
@@ -9474,8 +10079,7 @@
       // operator toggles persist in the UI.
       const maskCh = mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh;
       const mask = mode !== 'disabled' && player ? player.getOpMask(maskCh) : 0xf0;
-      // Context (channel/def) changed → force a full repaint and cache reset.
-      applyRegsToFmSliders(regs, mask, true);
+      applyRegsToFmSliders(regs, mask, repaint);
       syncLfoSlider();
     }
 
@@ -9497,6 +10101,8 @@
       if (algChanged) {
         _fmSliderCache._alg = regs.algorithm;
         updateOpRoles(regs.algorithm); // redraws the diagram (incl. feedback)
+        // A role is an envelope's colour: redraw all four below.
+        for (let op = 1; op <= 4; op++) delete _fmSliderCache[`_env${op}`];
       }
       if (_fmSliderCache._fb !== regs.feedback) {
         _fmSliderCache._fb = regs.feedback;
@@ -9605,41 +10211,74 @@
       return _timeProbe.player;
     }
     // Safari has no requestIdleCallback.
-    function whenIdle(fn) {
-      if (window.requestIdleCallback) requestIdleCallback(fn, { timeout: 2000 });
-      else setTimeout(fn, 200);
+    // The measure plays the whole song through, so it runs in a worker
+    // (src/time-worker.js); until it answers, the bar shows time but has no
+    // length. Where no worker starts, or the IR does not clone, it runs here.
+    let _timeWorker;           // undefined: not tried yet; null: unavailable
+    let _timeMeasureId = 0;
+    let _timeMeasuring = false; // the worker is on a measure
+    function measureTimeSpan(ir, done) {
+      const id = ++_timeMeasureId;
+      const fallback = () => {
+        try { done(timeProbe(ir).captureRegisterLog()); } catch (_) { done(null); }
+      };
+      if (_timeWorker && _timeMeasuring) { // a rebuild mid-measure: not queued behind it
+        _timeWorker.terminate();
+        _timeWorker = undefined;
+      }
+      if (_timeWorker === undefined) {
+        try { _timeWorker = new Worker('./src/time-worker.js', { type: 'module' }); }
+        catch (_) { _timeWorker = null; }
+      }
+      if (!_timeWorker) { fallback(); return; }
+      _timeWorker.onmessage = (e) => {
+        _timeMeasuring = false;
+        if (e.data.id !== _timeMeasureId) return; // a newer song is being measured
+        done(e.data.error ? null : e.data);
+      };
+      _timeWorker.onerror = () => { _timeWorker = null; _timeMeasuring = false; if (id === _timeMeasureId) fallback(); };
+      try { _timeWorker.postMessage({ id, ir }); _timeMeasuring = true; }
+      catch (_) { fallback(); }
     }
     function refreshTimeBar(ir, seekable = true) {
       const sl = document.getElementById('sl-time');
       if (_timeSpan?.ir === ir && _timeSpan.seekable === seekable) return;
-      let loopStart = null, end = 0;
       const on = seekable && hasNotes(ir);
-      if (on) {
-        try {
-          const cap = timeProbe(ir).captureRegisterLog();
-          // A loop from the very top has no intro to mark.
-          end = Math.max(0, cap.endSec);
-          if (cap.loopStartSec != null) loopStart = Math.max(0, cap.loopStartSec);
-        } catch (_) { /* unmeasured: the bar shows time but has no length */ }
-      }
-      _timeSpan = { ir, seekable, loopStart, end };
-      sl.disabled = !on;
-      sl.max = String(Math.max(0.01, end));
+      const span = { ir, seekable, loopStart: null, end: 0 };
+      _timeSpan = span;
       placeLoopMark();
-      if (!on) showTime(0);
-      else if (!player?.isPlaying?.()) {
-        showTime(_paused ? _pausedSec : _timeCue ?? 0);
-        if (!_paused && _timeCue != null) holdRollAt(ir, _timeCue); // the song changed under the cue
-      }
+      if (!on) { _timeMeasureId++; sl.disabled = true; sl.max = '0.01'; showTime(0); return; }
+      // Until the measure lands the bar keeps its length: the thumb stays put
+      // through a rebuild while playing.
+      measureTimeSpan(ir, (cap) => {
+        if (_timeSpan !== span) return;
+        if (cap) {
+          // A loop from the very top has no intro to mark.
+          span.end = Math.max(0, cap.endSec);
+          if (cap.loopStartSec != null) span.loopStart = Math.max(0, cap.loopStartSec);
+        } // else unmeasured: the bar shows time but has no length
+        sl.disabled = false;
+        sl.max = String(Math.max(0.01, span.end));
+        placeLoopMark();
+        if (!player?.isPlaying?.()) {
+          showTime(_paused ? _pausedSec : _timeCue ?? 0);
+          if (!_paused && _timeCue != null) holdRollAt(ir, _timeCue); // the song changed under the cue
+        }
+      });
     }
-    // The position as the bar shows it: wrapped into the loop once past one pass.
-    function showTime(pos) {
+    // A position as the bar shows it: wrapped into the loop once past one pass.
+    function wrapTime(pos) {
       const span = _timeSpan;
       if (span?.end > 0 && pos > span.end) {
         pos = span.loopStart != null && span.end > span.loopStart
           ? span.loopStart + ((pos - span.loopStart) % (span.end - span.loopStart))
           : span.end;
       }
+      return pos;
+    }
+    function showTime(pos) {
+      const span = _timeSpan;
+      pos = wrapTime(pos);
       if (!_timeDragging) document.getElementById('sl-time').value = String(pos);
       document.getElementById('val-time').textContent =
         span?.end > 0 ? `${fmtTime(pos)} / ${fmtTime(span.end)}` : fmtTime(pos);
@@ -9882,12 +10521,13 @@
       const c = document.getElementById('vizCanvas');
       const wrap = document.getElementById('editorWrap');
       if (!c || !wrap) return;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = _vizPixelRatio || window.devicePixelRatio || 1;
       const w = wrap.clientWidth, h = wrap.clientHeight;
       // Pin the CSS display size to the container (a canvas with no CSS size
       // displays at its backing attribute size, which would feed back and grow).
       c.style.width = w + 'px';
       c.style.height = h + 'px';
+      _scopeDrawnKey = null; // a resize clears the canvas
       c.width = Math.max(1, Math.round(w * dpr));
       c.height = Math.max(1, Math.round(h * dpr));
       c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -9917,6 +10557,7 @@
     const _rollLoops = new Map(); // trackIndex → { last, wrapped }: has its loop come round
     let _rollTrace = null;      // the focus's pitch trace: { head, last, now, note, time, start, pts: [{ u: raw tick, p } | null] }
     let _rollSel = new Set();   // notes written at the cursor (drawn solid)
+    let _rollDrawnKey = null;   // what the still picture on the canvas was drawn from (drawRoll)
     let _rollSelStale = false;  // the model was rebuilt: re-match on the next frame
 
     function rollPitched(cell) { return !ROLL_UNPITCHED.has(cell.head); }
@@ -9946,27 +10587,45 @@
     // channel form the cursor sits in (or has just closed); outside one (in a
     // def), the first channel, pitched before unpitched, that plays a note
     // under it; with neither, there is no focus.
-    function rollFollowCursor(state) {
-      _rollSelStale = false;
-      const { from, to, head: pos } = state.selection.main;
+    // Where each note is written, resolved as the playhead resolves it: it
+    // moves only with the build and the edits since, not with the cursor.
+    let _rollSrcs = null; // { notes, builtDoc, changes, ranges: [from, to, …], refs: [n, cell, range index, …] }
+    function rollSourceRanges(state) {
       const ph = state.field(playheadField);
-      const sel = new Set();
-      const seen = new Map(); // src → under the cursor (a loop's passes share one)
-      let firstHead = null, firstPitched = null;
+      const c = _rollSrcs;
+      if (c && c.notes === _vizNotes && c.builtDoc === ph.builtDoc && c.changes === ph.changes) return c;
+      const ranges = [], refs = [], index = new Map(); // src → range index (a loop's passes share one)
       for (const cell of _vizNotes) {
         for (const n of cell.notes) {
           if (!n.src || n.src.file) continue;
-          let hit = seen.get(n.src);
-          if (hit === undefined) {
+          let i = index.get(n.src);
+          if (i === undefined) {
             const r = resolvePlayhead(n.src, ph.builtDoc, ph.changes, state.doc);
-            hit = !!r && (from === to ? r[0] <= pos && pos <= r[1] : r[0] < to && from < r[1]);
-            seen.set(n.src, hit);
+            i = r ? ranges.push(r[0], r[1]) / 2 - 1 : -1;
+            index.set(n.src, i);
           }
-          if (!hit) continue;
-          sel.add(n);
-          firstHead ??= cell.head;
-          if (rollPitched(cell)) firstPitched ??= cell.head;
+          if (i >= 0) refs.push(n, cell, i);
         }
+      }
+      return (_rollSrcs = { notes: _vizNotes, builtDoc: ph.builtDoc, changes: ph.changes, ranges, refs });
+    }
+    function rollFollowCursor(state) {
+      _rollSelStale = false;
+      const { from, to, head: pos } = state.selection.main;
+      const { ranges, refs } = rollSourceRanges(state);
+      const hits = new Uint8Array(ranges.length / 2);
+      for (let i = 0; i < hits.length; i++) {
+        const a = ranges[2 * i], b = ranges[2 * i + 1];
+        hits[i] = from === to ? a <= pos && pos <= b : a < to && from < b;
+      }
+      const sel = new Set();
+      let firstHead = null, firstPitched = null;
+      for (let j = 0; j < refs.length; j += 3) {
+        if (!hits[refs[j + 2]]) continue;
+        const n = refs[j], cell = refs[j + 1];
+        sel.add(n);
+        firstHead ??= cell.head;
+        if (rollPitched(cell)) firstPitched ??= cell.head;
       }
       _rollSel = sel;
       let top = null; // the outermost form around the cursor, or just closed by it
@@ -10119,12 +10778,21 @@
         c.width = Math.max(1, Math.round(W * dpr));
         c.height = Math.max(1, Math.round(H * dpr));
       }
+      if (_rollSelStale) rollFollowCursor(editorView.state);
+      if (!_vizColors) sampleVizColors();
+      // Not playing and not easing, the picture changes only with what it is
+      // drawn from; each is replaced, never changed in place, so identity
+      // says enough.
+      const easing = _rollView && performance.now() - _rollView.t0 < ROLL_VIEW_MS;
+      const key = player?.isPlaying?.() || easing ? null : [W, H, dpr, _vizNotes, _vizColors, _rollFocus,
+        _rollSel, _rollPxPerBeat, _vizFrozen, _paused, player, _rollTrace, _rollTrace?.pts.length,
+        _rollTrace?.now, _rollView];
+      if (key && _rollDrawnKey?.every((x, i) => x === key[i])) return;
+      _rollDrawnKey = key;
       const ctx = c.getContext('2d');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
       _rollHits = [];
-      if (_rollSelStale) rollFollowCursor(editorView.state);
-      if (!_vizColors) sampleVizColors();
       const { fg, mid } = _vizColors;
       const cells = _vizNotes.filter((cl) => cl.notes.length);
       const pitched = cells.filter(rollPitched);
@@ -10319,7 +10987,7 @@
       const tip = document.getElementById('rollTip');
       const at = (e) => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
       c.addEventListener('pointermove', (e) => {
-        if (e.pointerType !== 'mouse') return;
+        if (e.pointerType !== 'mouse' || e.buttons) return; // a press is a click or a drag
         const [x, y] = at(e);
         const hit = rollHitAt(x, y);
         c.style.cursor = hit ? 'pointer' : '';
@@ -10332,7 +11000,62 @@
         tip.style.top = Math.max(2, y - 24) + 'px';
       });
       c.addEventListener('pointerleave', () => { tip.hidden = true; });
+
+      // Dragging the roll sideways seeks, as the TIME bar does (seekTo): the
+      // song follows the hand one to one — no fling. Playing, the drag pauses
+      // the song and resumes it where it lets go, so the roll holds still
+      // under the hand. The roll is re-held every TIME_SCRUB_MS and once more
+      // where the drag ends. Ticks turn into seconds at the tempo the press
+      // began in. A press that moves less than ROLL_DRAG_PX is a click.
+      const ROLL_DRAG_PX = 4;
+      let drag = null; // { x0, sec0, spt, moved, resume, seekAt }
+      let dragged = false; // the click that ends a drag is not a note's
+      const rollSeekable = () => !document.getElementById('sl-time').disabled && _timeSpan?.ir;
+      const nowSec = () => wrapTime(player?.isPlaying?.() ? player.positionSec() : _paused ? _pausedSec : _timeCue ?? 0);
+      const dragSec = (e) => {
+        const sec = drag.sec0 - ((e.clientX - drag.x0) / (_rollPxPerBeat / vizPpqn())) * drag.spt;
+        const end = _timeSpan?.end;
+        return Math.max(0, end > 0 ? Math.min(end, sec) : sec);
+      };
+      const dragSeek = (sec) => { seekTo(sec); showTime(sec); };
+      c.addEventListener('pointerdown', (e) => {
+        dragged = false;
+        if (e.button !== 0 || !rollSeekable()) return;
+        const spt = (player?.isPlaying?.() ? player : timeProbe(_timeSpan.ir))._secsPerTick;
+        if (!(spt > 0)) return;
+        drag = { x0: e.clientX, sec0: 0, spt, moved: false, resume: false, seekAt: 0 };
+        c.setPointerCapture(e.pointerId);
+      });
+      c.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        if (!drag.moved) {
+          if (Math.abs(e.clientX - drag.x0) < ROLL_DRAG_PX) return;
+          drag.moved = true;
+          tip.hidden = true;
+          c.style.cursor = 'grabbing';
+          if (player?.isPlaying?.()) { drag.resume = true; onPause({ quiet: true }); }
+          // The drag starts here, from where the song is now: no jump for
+          // the threshold, or for the time it took to cross it.
+          drag.x0 = e.clientX;
+          drag.sec0 = nowSec();
+        }
+        const now = performance.now();
+        if (now - drag.seekAt < TIME_SCRUB_MS) return;
+        drag.seekAt = now;
+        dragSeek(dragSec(e));
+      });
+      const endDrag = (e) => {
+        if (!drag) return;
+        const { moved, resume } = drag;
+        if (moved) { dragged = true; dragSeek(dragSec(e)); c.style.cursor = ''; }
+        drag = null;
+        if (resume) onResume({ quiet: true }); // plays on from where the drag let go
+      };
+      c.addEventListener('pointerup', endDrag);
+      c.addEventListener('pointercancel', endDrag);
+
       c.addEventListener('click', (e) => {
+        if (dragged) { dragged = false; return; }
         const hit = rollHitAt(...at(e));
         if (!hit) return;
         revealNoteSource(hit.n.src);
@@ -10392,6 +11115,13 @@
     const SCOPE_DISPLAY_GAIN = 10;  // mix-contribution units → pane half-height
     const _scopeRings = Array.from({ length: SCOPE_CH }, () => new Float32Array(SCOPE_RING));
     const _scopePeaks = new Float32Array(SCOPE_CH); // |peak| of the latest batch
+    // Silence draws one picture: once every tap has held one value for a whole
+    // ring of batches, the scope stops redrawing until a tap moves or the
+    // picture's inputs (size, cells, colours, taps) change (drawScope).
+    const SCOPE_STILL_BATCHES = SCOPE_RING / 1024;
+    const _scopeLastLevel = new Float32Array(SCOPE_CH).fill(NaN);
+    let _scopeStill = 0;       // consecutive batches with every tap held still
+    let _scopeDrawnKey = null; // what the picture on the canvas was drawn from, or null
     let _scopeAbs = 0;              // absolute sample count at the ring write head
     let _scopeFreqs = new Array(SCOPE_CH).fill(0); // latched pitch per channel (Hz)
     let _scopeSR = 48000;           // worklet sample rate (updates per batch)
@@ -10419,19 +11149,23 @@
       _scopePcmVoices = !!msg.fm6IsDac;
       if (_vizRoll) rollTraceBatch(msg.time);
       const pos = _scopeAbs % SCOPE_RING;
-      let len = 0;
+      let len = 0, still = true;
       // Batch length (1024) divides SCOPE_RING, so a copy never wraps.
       for (let c = 0; c < SCOPE_CH && c < msg.ch.length; c++) {
         const v = new Float32Array(msg.ch[c]);
         _scopeRings[c].set(v, pos);
-        let pk = 0;
+        let pk = 0, lo = v[0], hi = v[0];
         for (let i = 0; i < v.length; i++) {
-          const a = Math.abs(v[i]);
+          const x = v[i], a = Math.abs(x);
           if (a > pk) pk = a;
+          if (x < lo) lo = x; else if (x > hi) hi = x;
         }
         _scopePeaks[c] = pk;
+        if (!(lo === hi && lo === _scopeLastLevel[c])) still = false;
+        _scopeLastLevel[c] = lo === hi ? lo : NaN;
         len = v.length;
       }
+      _scopeStill = still ? _scopeStill + 1 : 0;
       _scopeAbs += len;
       // Recycle the transferred buffers back to the worklet.
       workletNode?.port.postMessage({ type: 'scope-return', ch: msg.ch }, msg.ch);
@@ -10452,17 +11186,23 @@
       const c = document.getElementById('vizCanvas');
       const wrap = document.getElementById('editorWrap');
       if (!c || !wrap) return;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = _vizPixelRatio || window.devicePixelRatio || 1;
       const W = wrap.clientWidth, H = wrap.clientHeight;
       if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
         resizeVizCanvas();
       }
+      if (!_vizColors) sampleVizColors();
+      // The same inputs draw the same picture: a frame with no new batch, or
+      // silence held for a ring, leaves the canvas as it is.
+      const key = [W, H, dpr, _vizNotes, _vizColors, _scopePcmVoices,
+        _scopeStill >= SCOPE_STILL_BATCHES ? -1 : _scopeAbs];
+      if (_scopeDrawnKey?.every((x, i) => x === key[i])) return;
+      _scopeDrawnKey = key;
       const ctx = c.getContext('2d');
       ctx.clearRect(0, 0, W, H);
       if (!_scopeRings) return;
       const cells = _vizNotes.filter((cl) => cl.notes.length);
       if (!cells.length) return;
-      if (!_vizColors) sampleVizColors();
       const C = cells.length;
       const cols = Math.max(1, Math.min(3, C, Math.floor(W / VIZ_MIN_CELL_W)));
       const rows = Math.ceil(C / cols);
@@ -10538,6 +11278,7 @@
     function clearVizCanvas() {
       const c = document.getElementById('vizCanvas');
       if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+      _scopeDrawnKey = null;
     }
     // The piano roll (a pane under the editor) and the oscilloscope (behind the
     // editor text) are independent; one frame loop draws whichever are on.
@@ -10666,6 +11407,15 @@
     selectPanelTab(_panelTab);
     initMidi();
     initRecent();
+    // A browser that cannot open a folder (iOS, Firefox) gets no Open Folder…;
+    // Scores in Folder only ever appears with one open.
+    // Without a save picker (iOS, Firefox) a score keeps no file to write
+    // back to: every Save asks where, so Save As… would be the same thing.
+    if (typeof window.showSaveFilePicker !== 'function') document.getElementById('saveAsItem').hidden = true;
+    if (typeof window.showDirectoryPicker !== 'function') {
+      document.getElementById('openFolderItem').hidden = true;
+      document.getElementById('openFolderSep').hidden = true;
+    }
     initLaunchQueue();
     initFileDrop();
 

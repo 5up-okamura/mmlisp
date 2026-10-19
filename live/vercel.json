@@ -1,6 +1,0 @@
-{
-  "regions": ["hnd1"],
-  "rewrites": [
-    { "source": "/s/:id", "destination": "/api/open?id=:id" }
-  ]
-}

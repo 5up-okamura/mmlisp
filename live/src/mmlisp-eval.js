@@ -413,22 +413,30 @@ export function isReservedHead(name) {
 const atomVal = (n) =>
   n && (n.kind === "atom" || n.kind === "string") ? n.value : null;
 
-// Bind a `let` form's `((name expr) …)` list sequentially (let*) into a fresh
+// A `let` form's bindings, `[name expr …]`: the [name, expr] node pairs, in
+// order. Shared with mmlisp2ir.js's def expansion, the one other reader of the
+// shape. Throws E_LET_BINDING when the vector is missing or uneven.
+export function letPairs(bindingNode) {
+  if (!bindingNode || bindingNode.kind !== "list" || bindingNode.bracket !== "[]") {
+    throw new EvalError("E_LET_BINDING", "let binds as [name expr …], e.g. (let [root 60] …)");
+  }
+  const flat = bindingNode.items.filter((n) => n.kind !== "comment");
+  if (flat.length % 2 !== 0) {
+    throw new EvalError("E_LET_BINDING", "let's [name expr …] needs an expr for every name");
+  }
+  const pairs = [];
+  for (let k = 0; k < flat.length; k += 2) pairs.push([flat[k], flat[k + 1]]);
+  return pairs;
+}
+
+// Bind a `let` form's `[name expr …]` vector sequentially (let*) into a fresh
 // child env. Names must be symbols that are not note-stream tokens
 // (ctx.isNoteStreamToken → E_LET_NAME) and not def/paramDef names
 // (ctx.isDefName → E_LET_SHADOWS_DEF). Values evaluate in the growing env and
 // may be scalars or signals. Throws EvalError on any problem.
 function bindLet(items, env, ctx) {
-  const bindingList = items[1];
-  if (!bindingList || bindingList.kind !== "list") {
-    throw new EvalError("E_LET_BINDING", "let needs a ((name expr) …) list");
-  }
   const child = makeEnv(env);
-  for (const b of bindingList.items.filter((n) => n.kind !== "comment")) {
-    const pair = b?.kind === "list" ? b.items.filter((n) => n.kind !== "comment") : null;
-    if (!pair || pair.length !== 2) {
-      throw new EvalError("E_LET_BINDING", "each let binding is (name expr)");
-    }
+  for (const pair of letPairs(items[1])) {
     const name = atomVal(pair[0]);
     if (!name || pair[0].kind !== "atom") {
       throw new EvalError("E_LET_NAME", "let binding name must be a symbol");
@@ -543,7 +551,7 @@ function evalNode(node, env, ctx) {
 
     // Curve head → a symbolic signal (delegated to parseCurveSpec via ctx).
     if (head && ctx.curveNames && ctx.curveNames.has(head)) {
-      const spec = ctx.parseCurve(node);
+      const spec = ctx.parseCurve(node, env);
       if (!spec) {
         throw new EvalError("E_EVAL_UNKNOWN_HEAD", `bad curve '${head}'`);
       }

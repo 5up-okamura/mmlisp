@@ -71,10 +71,15 @@ const CASES = [
     from: 74, to: 130,  // opens after the NTSC restore, the later of the two
     what: "an effect's macro and sweep do not play the restored part",
   },
+  {
+    score: "p3-se-ghost",
+    from: 71, to: 140,  // from the NTSC restore on, the later of the two
+    what: "a displaced part plays on unheard: after the effect, the song as if it never fired",
+  },
 ];
 const MAX_FRAMES = 140;
-// The ledger is checked for longer: an effect that ends late (a CH3 hold in
-// p3-se-ch3 lasts to f151) must be seen giving its hold back.
+// The ledger is checked for longer: an effect that ends late must be seen
+// giving its channel back.
 const INVARIANT_FRAMES = 240;
 
 function slots(stem) {
@@ -110,9 +115,8 @@ function slots(stem) {
 // away (a claim, a preempt) has to keep it true.
 const INVARIANT_SCORES = [
   "m3-se", "m3-se-prio", "p3-se-strand", "p3-se-fade", "p3-se-stopped",
-  "p3-se-overlap", "p3-se-pcm-macro", "p3-se-def", "p3-se-ch3", "p3-se-ch3-op",
-  "p3-se-patch", "p3-se-noise", "p3-se-ch3-dissolve",
-  "p3-claim-se-in", "p3-claim-se-out",
+  "p3-se-overlap", "p3-se-pcm-macro", "p3-se-def", "p3-se-patch", "p3-se-noise",
+  "p3-claim-se-in", "p3-claim-se-out", "p3-se-ghost",
 ];
 
 function checkInvariant(stem) {
@@ -134,22 +138,7 @@ function checkInvariant(stem) {
     for (const c of byFrame.get(f) ?? []) drv._applyMailbox(c.cmd, c.a0 ?? 0, c.a1 ?? 0, c.a2 ?? 0);
     drv.stepFrame();
     drv._slotSink.endFrame();
-    // CH3 is held whole: while an effect holds it, the song's CH3 parts are
-    // suspended under that ONE hold, and the hold needs a running part of the
-    // effect there — else nothing will ever end it and give CH3 back.
-    const ch3 = drv._ch3;
-    const ch3Parts = drv._trk.filter((x) => x.isSe && x.running && drv._ch3Group(x.channelId));
-    if (ch3.active && !ch3Parts.some((x) => x.seIndex === ch3.se)) {
-      return `f${f}: effect ${ch3.se} holds CH3 with no part of it running there`;
-    }
-    if (!ch3.active && ch3Parts.length) {
-      return `f${f}: track ${ch3Parts[0].index} plays on CH3 as an effect with no hold`;
-    }
     for (const t of drv._trk) {
-      if (drv._ch3Group(t.channelId)) {
-        if (t.suspended && !ch3.active) return `f${f}: CH3 track ${t.index} is suspended with no effect holding CH3`;
-        continue;
-      }
       const holders = drv._trk.filter((x) => x.isSe && x.running && x.displaced === t.index);
       if (t.suspended && holders.length !== 1) {
         return `f${f}: track ${t.index} is suspended with ${holders.length} effects holding it`;
@@ -170,16 +159,12 @@ function checkInvariant(stem) {
 
 // ── What an effect set comes back ──────────────────────────────────────────
 // An effect's end puts back what the channel had — as the chip had it, not as
-// a voice number would rebuild it (§2.5) — and a scene change that dissolves a
-// CH3 hold does not leave the effect's chip-wide settings behind. Each case
-// reads that state the frame before the effect and once it is over; the two
-// must match.
+// a voice number would rebuild it (§2.5). Each case reads that state the frame
+// before the effect and once it is over; the two must match.
 //   p3-se-patch: fm1's patch — $30-$9C, the voiced levels (a carrier's $40 is
 //     composed), $B0/$B4 — which no voice number could rebuild: a partial
 //     def-fm, then a mid-song :tl1 and :pan.
 //   p3-se-noise: the noise mode, one register the effect sets its own.
-//   p3-se-ch3-dissolve: CH3's mode and Timer A, and no CSM sweep, after the
-//     song restarts fm3 under a CSM effect.
 const patchOf = (port, off) => (drv) => {
   const out = [];
   for (let a = 0x30; a < 0xa0; a += 4) out.push(drv._shadow[port].get(a + off));
@@ -192,9 +177,6 @@ const STATE_CASES = [
     what: "the effect's end puts the channel's patch back" },
   { score: "p3-se-noise", before: 39, after: 119, read: (d) => `mode ${d._noiseMode}`,
     what: "the effect's end puts the noise mode back" },
-  { score: "p3-se-ch3-dissolve", before: 29, after: 45,
-    read: (d) => `$27 ${d._reg27 & 0xc0} sweep ${!!d._csmRateSweep}`,
-    what: "a dissolved CH3 hold leaves no CSM behind" },
 ];
 
 function stateAt(c) {

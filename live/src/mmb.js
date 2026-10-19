@@ -131,6 +131,7 @@ export const OPCODE = {
   FM3_OP_PITCH: 0xa4,
   PCM_NOTE_ON: 0xc0,
   PCM_NOTE_OFF: 0xc1,
+  PCM_NOTE_CUT: 0xc2,
   MACRO_SET: 0xe0,
   PARAM_ADD_VAL: 0xe1,
   PARAM_MUL_VAL: 0xe2,

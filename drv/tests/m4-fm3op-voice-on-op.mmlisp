@@ -1,0 +1,15 @@
+; M4 gate: independent-operator mode declared without an (fm3 …) form — the
+; shape a mucom `S` import writes. The patch rides the first operator track
+; (language.md §15: any non-pitch parameter there is the shared channel's),
+; the four tracks play the same notes, each detuned by its own :pitch, and the
+; part's level sits on the carriers alone (alg 4: op2 and op4) so the
+; modulators keep their voiced TL.
+(def-fm kit :alg 4 :fb 3
+  :ar1 31 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 24 :ks1 0 :ml1 2 :dt1 0
+  :ar2 31 :dr2 8 :sr2 2 :rr2 8 :sl2 2 :tl2 8 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 28 :ks3 0 :ml3 4 :dt3 0
+  :ar4 31 :dr4 9 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+(fm3-1 kit :tempo 150 :pan center :oct 4 :len 8 :vel 15 :pitch 13 c c g g c c)
+(fm3-2 :oct 4 :len 8 :vel 12 :pitch 13 c c g g :vel 9 c c)
+(fm3-3 :oct 4 :len 8 :vel 15 :pitch 0 c c g g c c)
+(fm3-4 :oct 4 :len 8 :vel 12 :pitch 0 c c g g :vel 9 c c)

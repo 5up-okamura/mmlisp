@@ -1,0 +1,20 @@
+// MMLisp Live on Cloudflare Workers: the static app, plus a Worker for the
+// share-link routes only (worker/index.js). Deploy: `npx wrangler deploy`
+// from live/ (or Workers Builds on push).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mmlisp",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/s/*"]
+  },
+  // Short share links (KV namespace "mmlisp-shares").
+  "kv_namespaces": [{ "binding": "SHARES", "id": "5fc2830c51d94aa8bc7c9c9456c249f0" }],
+  "routes": [
+    { "pattern": "mmlisp.com", "custom_domain": true }
+  ],
+  "observability": { "enabled": true }
+}

@@ -221,9 +221,9 @@ export const REFERENCE = [
     example: '(fm1 :len 8 :pan left c e :pan right g e :pan center c)',
   },
   {
-    name: ':mode', aliases: ['shot', 'loop', 'white0', 'periodic0'], cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
-    syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop',
-    summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once or loops while held.',
+    name: ':mode', aliases: ['shot', 'loop', 'gate', 'white0', 'periodic0'], cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
+    syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop | gate',
+    summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once, loops while held, or plays once and is cut at its gate.',
     insert: ':mode white2',
     example: '(noise :len 8 :mode white0 c c :mode white2 c c :mode periodic1 c c)',
   },
@@ -305,10 +305,10 @@ export const REFERENCE = [
   },
   {
     name: '(let …)', aliases: ['let'], cat: 'defs', section: '§7.2', tracks: null,
-    syntax: '(let ((name expr) …) body …)',
+    syntax: '(let [name expr …] body …)',
     summary: 'Local values for the body, evaluated at compile time.',
-    insert: '(let ((root 60)) (note root) (note (+ root 7)))',
-    example: '(fm1 :len 8 (let ((root 60)) (note root) (note (+ root 4)) (note (+ root 7))))',
+    insert: '(let [root 60] (note root) (note (+ root 7)))',
+    example: '(fm1 :len 8 (let [root 60] (note root) (note (+ root 4)) (note (+ root 7))))',
   },
   {
     name: '(note …)', aliases: ['note', 'midi'], cat: 'defs', section: '§7.3', tracks: null,

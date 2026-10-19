@@ -297,13 +297,22 @@ MMLP_HOT uint8_t fm_channel(const MMLWrite *w) {
  * write's channel, the moved groups' indices, the frame's safety — and the
  * emitting passes only read what it kept: on the 68000 a voice change's frame
  * spent most of its render re-reading the same writes. Producer side only. */
-/* A frame's write count is bounded only by the sequencer's queue (q_push
- * refuses the write that would fill it), so both are queue-sized; frame_p1
- * keeps queue indices rather than pointers, half the RAM on the 68000. */
-static uint8_t frame_ch[MML_WRITE_QUEUE];
-static uint16_t frame_p1[MML_WRITE_QUEUE];
 MMLP_HOT const MMLWrite *next_write(const MMLFrameView *v, const MMLWrite *w) {
   return ++w == v->q + MML_WRITE_QUEUE ? v->q : w;
+}
+/* Whether a write belongs to a group the classifier moved ahead. */
+static inline int is_moved(const MMLWrite *w, uint8_t moved) {
+  if (!moved) return 0;
+  const uint8_t ch = fm_channel(w);
+  return ch < 6 && (moved & (1u << ch));
+}
+/* The port-1 writes held over `n` writes from `w`, in order. Held writes are
+ * found again by a second walk of their span rather than kept in a list: a
+ * frame's write count is bounded only by the sequencer's queue, so a list
+ * would cost queue-sized RAM in every build. */
+static void push_held_p1(MMLPairs *p, const MMLFrameView *v, const MMLWrite *w, uint16_t n, uint8_t moved) {
+  for (; n; n--, w = next_write(v, w))
+    if (w->port == 1 && !is_moved(w, moved)) push(p, 1, w->addr, w->data);
 }
 static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
   const uint16_t n=v->end[MML_SLOT_SUBS-1];
@@ -317,7 +326,6 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
   const MMLWrite *w=first;
   for (uint16_t i=0; i<n; i++, w=next_write(v,w)) {
     const uint8_t ch=fm_channel(w);
-    frame_ch[i]=ch;
     if (ch<6) { if (counts[ch]<8) at[ch][counts[ch]]=i; counts[ch]++; }
     /* A pitch pair is an upper half ($A4-$A6) followed at once by its lower
      * half on the same port; anything else splits a latch. */
@@ -348,21 +356,23 @@ static void banked_writes(MMLPairs *p, const MMLFrameView *v) {
       }
       moved |= (uint8_t)(1u<<ch);
     }
-  /* The rest in order: port 1 held to the frame's end or to an fm4-6 key edge. */
-  uint16_t held=0;
+  /* The rest in order: port 1 held to the frame's end or to an fm4-6 key edge
+   * (the span from the first held write, walked again when it is let go). */
+  const MMLWrite *hold=0;
+  uint16_t span=0;
   w=first;
   for (uint16_t i=0; i<n; i++, w=next_write(v,w)) {
-    const uint8_t ch=frame_ch[i];
-    if (moved && ch<6 && (moved&(1u<<ch))) continue;
+    if (hold) span++;
+    if (is_moved(w,moved)) continue;
     if (w->port==2) { psg_push(p,w->data); continue; }
-    if (w->port==1) { frame_p1[held++]=(uint16_t)(w-v->q); continue; }
-    if (w->addr==0x28 && (w->data&4)) {
-      for (uint16_t k=0; k<held; k++) push(p,1,v->q[frame_p1[k]].addr,v->q[frame_p1[k]].data);
-      held=0;
+    if (w->port==1) { if (!hold) { hold=w; span=1; } continue; }
+    if (w->addr==0x28 && (w->data&4) && hold) {
+      push_held_p1(p,v,hold,span,moved);
+      hold=0;
     }
     push0(p,w->addr,w->data);
   }
-  for (uint16_t k=0; k<held; k++) push(p,1,v->q[frame_p1[k]].addr,v->q[frame_p1[k]].data);
+  if (hold) push_held_p1(p,v,hold,span,moved);
 }
 
 /* THE SGDK HOST'S FRAME, straight from the sequencer's queue (mmlispseq.h

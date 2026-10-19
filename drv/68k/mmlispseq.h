@@ -237,49 +237,30 @@ typedef struct {
   uint32_t o_rs, o_r_bound, o_ls, o_l_bound;
 } MMLPcmVoice;
 
-/* ── SE (driver.md §2.5) ───────────────────────────────────────────────────
- * A channel's live state at the moment an SE steals it. FM: the PATCH as the
- * channel's register shadow holds it — a VOICE_TABLE-shaped entry plus $B4 —
- * so whatever set it (a voice, a partial def-fm, a mid-song :tl or :pan) comes
- * back; and note/vel/vol/gate/pitch. PSG: note + level + pitch (the period and
- * attenuation are re-derived), and on noise its mode. Restore re-keys the note that was sounding.
- * Mirrors drv-player _snapshotChannel / _restoreChannel. */
-enum { MML_SNAP_NONE = 0, MML_SNAP_FM = 1, MML_SNAP_PSG = 2 };
+/* ── SE (driver.md §2.5) ─────────────────────────────────────────────────── */
+/* A DISPLACED PART'S CHANNEL (driver.md §2.5). The part an effect displaces
+ * plays on, unheard: it dispatches, its gates run out, its sweeps and fade
+ * move on — into this ghost of its channel, the channel's state as the part
+ * left it. The ghost and the live channel trade places (ghost_swap) only
+ * around what the part does to its channel, and while they are traded every
+ * write addressed to the channel is dropped; in between, the live state is
+ * the effect's. The effect's end puts the ghost on the chip. One per register
+ * channel 0-9 but CH3, where an effect never plays — a channel has one
+ * displaced part. Mirrors drv-player _ghost[ch]. */
 typedef struct {
-  uint8_t kind;
-  uint8_t patch[29];          /* FM only: the voice entry the shadow encodes */
-  uint8_t ams, fms; int8_t pan; /* FM only: $B4 */
-  uint8_t noise_mode;           /* noise only: the one mode register */
-  uint8_t note, vel_base, vel, vol_base, vol, gate;
-  int16_t pitch_cents;
-  /* The channel's MACRO BINDS, because claiming it wipes them (§2.2) and the
-   * displaced part wants them back. A sweep in flight is not kept: it is a
-   * gesture with a position, and the note it shaped re-attacks (§2.5). */
-  MMLMacroBind macros[MML_MACRO_BINDS];
-  uint8_t macro_count;
-} MMLChanSnap;
-
-/* CH3 TAKEN WHOLE (driver.md §2.5). CH3's operator mode and CSM are chip-wide
- * settings ($27, Timer A), not one channel's, so an effect with a part on
- * fm3, fm3-1…fm3-4, fm3-csm or fm3-csm-rate takes all of CH3 — every song part
- * on it is suspended — and this is what its end puts back: the mode, the
- * Timer A period, the shared channel's snapshot, and the four operators'
- * notes, levels, key bits and macro binds. One hold at a time: an effect that
- * preempts the holder inherits it. */
-typedef struct {
-  uint8_t active;       /* an effect holds CH3 */
-  uint8_t se, prio;     /* which effect (its SE_TABLE number), at what priority */
-  uint8_t mode;         /* $27 bits 7-6 as the song had them */
-  uint16_t timer_a;     /* the song's Timer A period */
-  uint8_t csm_hold;     /* the song's Timer A was stopped by a rate rest */
-  uint8_t fm_keyed;     /* the shared channel was keyed (normal mode) */
-  uint8_t op_mask;      /* the operators' key bits (operator mode) */
-  MMLChanSnap ch;       /* the shared channel, and channel 2's binds */
-  uint8_t op_note[4], op_vel_base[4], op_vel[4], op_vol_base[4], op_vol[4];
-  int16_t op_cents[4];
-  MMLMacroBind op_binds[4][MML_MACRO_BINDS];
-  uint8_t op_bind_count[4];
-} MMLCh3Snap;
+  uint8_t live;
+  union {
+    MMLFmCh fm;
+    MMLPsgCh psg;
+  } c;
+  MMLSweep sweeps[2];
+  MMLMacroBind binds[MML_MACRO_BINDS];
+  uint8_t bind_count;
+  uint8_t slot_count; /* traded with the channel's: a ghost runs no macros */
+  uint8_t mc_se;
+  uint8_t noise_mode; /* the noise channel's ghost only */
+  uint16_t off_acc;
+} MMLGhost;
 
 typedef struct {
   uint8_t running, held;
@@ -289,12 +270,11 @@ typedef struct {
    * (driver.md §4.2). Dispatch stops at the first opcode that sounds or
    * consumes time while it is set. */
   uint8_t fresh;
-  /* SUSPENDED (the fourth track state, beside idle/running/held): a BGM owner
-   * an SE displaced. It keeps its state, does not dispatch and does not own
-   * its channel; the SE's end puts it back. Eviction would be the wrong
-   * primitive — it stops the owner, and the BGM could never resume. */
+  /* SUSPENDED: a BGM owner an SE displaced. It does not own its channel; it
+   * runs on into the channel's ghost (MMLGhost), unheard, and the SE's end
+   * puts the ghost on the chip. Eviction would be the wrong primitive — it
+   * stops the owner, and the BGM could never resume. */
   uint8_t suspended;
-  MMLChanSnap snap; /* the channel as it was when this track was suspended */
   /* An SE track: what it stole, so its end can give it back. `displaced` is
    * the suspended owner's track INDEX (0xFF = none); a preempting SE inherits
    * it from the SE it replaces, so only the LAST SE restores the BGM. */
@@ -379,9 +359,13 @@ typedef struct {
   uint8_t lfo_rate;
   uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */
   uint8_t fm3_op_mask; /* FM3 independent-OP key bits (0x10..0x80 -> $28) */
-  uint16_t timer_a;    /* the Timer A period last written (the CSM rate) */
   uint8_t csm_hold;    /* a rate rest stopped Timer A: LOAD A low, CSM on (§9) */
-  MMLCh3Snap ch3;      /* CH3 as an effect found it, while one holds it */
+  MMLGhost ghost[10];  /* a displaced part's channel, per register channel */
+  /* The ghost traded in now, as its channel + 1 (0 = none): a write addressed
+   * to that channel is dropped. psg_latch is the channel + 1 the last PSG
+   * latch byte named, which a data byte belongs to. */
+  uint8_t ghost_on;
+  uint8_t psg_latch;
 
   MMLSweep sweeps[MML_SWEEP_BANKS][2];
   MMLSweep gsweeps[MML_GLOBAL_SWEEPS]; /* see MML_GLOBAL_SWEEPS */
@@ -483,9 +467,9 @@ void mml_start_track(MMLSeq *s, uint8_t track_id);
 /* A def-se by its number — its place in the score's SE_TABLE, the same in
  * every song of a bundle (mmb.md §16) — at the effect's own priority or
  * `priority` when it is not MML_SE_PRIO_DEFAULT (driver.md §2.5). On each part's
- * channel the current owner is SUSPENDED and its live state snapshotted, not
- * evicted; the part's END_OF_TRACK or mml_stop_se restores the owner
- * mid-note. Against an effect already on the channel, the priority decides:
+ * channel the current owner is SUSPENDED, not evicted, and plays on unheard
+ * into a ghost of its channel; the part's END_OF_TRACK or mml_stop_se puts
+ * the ghost on the chip, re-keying a note the owner still holds. Against an effect already on the channel, the priority decides:
  * lower is dropped (the playing one is untouched), equal or higher preempts
  * it and inherits its restore duty. A PCM part overwrites the voice instead;
  * a looping song note there is restarted at the effect's end.
