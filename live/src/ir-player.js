@@ -500,19 +500,16 @@ export class IRPlayer {
   }
 
   /**
-   * Per-track playback clock for visualizers: the local fractional tick (wraps
-   * within the track's loop, since audioTimeAtTick0 is re-anchored each loop),
-   * the loop length in ticks and the tick the loop jumps back to, if the track
-   * loops. Returns null when not playing.
+   * Per-track playback clock for visualizers: the event tick the track plays
+   * now (trackTickAt — wrapping round its loop), the loop length in ticks and
+   * the tick the loop jumps back to, if the track loops. Returns null when not
+   * playing.
    * @param {number} trackIndex index into ir.tracks (== flattened track index)
    */
   trackClock(trackIndex) {
     const tr = this._tracks?.[trackIndex];
     if (!this._playing || !tr || !this._audioContext) return null;
-    const tick = Math.max(
-      0,
-      (this._audioContext.currentTime - tr.audioTimeAtTick0) / this._secsPerTick,
-    );
+    const tick = Math.max(0, this.trackTickAt(trackIndex, this._audioContext.currentTime).tick);
     return {
       tick,
       loopTicks: tr.hasLoop ? tr.loopDuration : null,
@@ -522,11 +519,13 @@ export class IRPlayer {
 
   /**
    * Where a track is at an AudioContext time: `tick`, the event tick it plays
-   * then (wrapping round its loop as trackClock's does), and `raw`, the ticks
-   * since its first pass began, which keep counting across loop passes.
-   * Worked out from the first pass's anchor, so unlike trackClock it does not
-   * jump a loop early when the scheduler, running ahead, re-anchors the next
-   * pass. Returns null when not playing.
+   * then (wrapping round its loop), and `raw`, the ticks since its first pass
+   * began, which keep counting across loop passes. Worked out from the first
+   * pass's anchor (startAudioTime, kept through seeks, tempo changes and
+   * holds), not audioTimeAtTick0: the scheduler, running ahead, re-anchors
+   * the next pass a lookahead early, and a clock read from that sat at the
+   * loop start — or a loop off — until the audio caught up. Returns null when
+   * not playing.
    * @param {number} trackIndex index into ir.tracks (== flattened track index)
    * @param {number} audioTime seconds on the AudioContext clock
    */
