@@ -665,6 +665,41 @@ duration wrap the unit explicitly:
   authoring tempo, §4). For a literal count the `Nt` / `Nf` suffix is shorter
   (`24t`, `20f`); the form is for computed counts (`(frames (* base 2))`).
 
+### 7.5 `for` — notes generated from values
+
+`(for [name values …] body…)` compiles its body once for each value, in
+place, with `name` bound to it — as if every pass were written out.
+
+```lisp
+(fm1 :len 16
+  (for [i 0..7] (note (+ 60 i)))                    ; c c+ d … g
+  (let [root 48]
+    (for [n [0 4 7 12]] (note (+ root n)) _))       ; an arpeggio with rests
+  (for [o 0..1 n [0 7]] (note (+ 60 (* 12 o) n)))) ; c4 g4 c5 g5
+```
+
+- **Values** are `A..B` — integers, both ends included, either direction
+  (`7..0` counts down) — or a `[…]` of numbers, `let` names and expressions.
+  Notes are written as MIDI numbers (`[60 64 67]`, or offsets from a `let`
+  root as above): a note name is not a number (`E_EVAL_OPERAND`, §7.1). A
+  step is arithmetic in the body (`(* 2 i)`). Anything else is
+  `E_FOR_VALUES`; a `$` value is read at run time and a curve is not a list
+  of numbers, so both are `E_EVAL_TYPE`. `[]` makes no pass.
+- **Several pairs nest**, the first outermost, and a later pair's values may
+  use the earlier names (`[lo [1 2] hi [lo (* lo 10)]]`). More than 4096
+  passes in all is `E_FOR_COUNT`.
+- **Names** follow `let`'s rules (§7.2): not a note or length token
+  (`E_LET_NAME`), not a def's name (`E_LET_SHADOWS_DEF`).
+- **The body** is an item position: sticky changes carry from pass to pass
+  as written out (`(for [i 0..3] c >)` climbs four octaves), a tie at the end
+  of a pass runs into the next, a `(break)` belongs to the `(x N …)` around
+  the `for`, and a `#label` in it would be written once a pass
+  (`E_MARKER_DUP`).
+
+`for` and `(x N …)` differ in what they emit: `(x N …)` repeats one body as a
+loop on the driver; `for` writes each pass out, because each differs. A body
+that does not use its name is `(x N …)`'s job.
+
 ---
 
 ## 8. Dynamic values — `(def-val …)`, `$name`
@@ -773,7 +808,7 @@ declares a value slot (§8); a bare reference in a channel body applies them.
 Definitions are top-level forms and interleave freely
 with track forms (§1); the score's own settings are `def-score` (§1). A def (or parametric def) named after an eval builtin
 (`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `round`, `floor`, `let`, `note`,
-`ticks`, `frames`) is rejected with `E_DEF_RESERVED`. One named like a note or length token is `E_DEF_NAME` (§3).
+`for`, `ticks`, `frames`) is rejected with `E_DEF_RESERVED`. One named like a note or length token is `E_DEF_NAME` (§3).
 
 `def` vs `let` (§7.2): a `def` is a **global** name bound by **token
 substitution** — the body is spliced verbatim wherever the name appears, so it

@@ -394,10 +394,10 @@ BUILTINS.set("floor", { arity: [1, 1], apply: (a, _c, n) => Math.floor(scalarsOn
 const VALUE_HEADS = new Set([...BUILTINS.keys(), "let"]);
 
 // Heads that also read as eval forms elsewhere (item/length positions) —
-// reserved so a def cannot shadow them. `note` is item-only (§7.3);
-// `ticks`/`frames` are length-only bridges (§7.4); they are handled in
-// mmlisp2ir.js, but naming a def after them is still `E_DEF_RESERVED`.
-const RESERVED_HEADS = new Set([...VALUE_HEADS, "note", "ticks", "frames"]);
+// reserved so a def cannot shadow them. `note` and `for` are item-only
+// (§7.3, §7.5); `ticks`/`frames` are length-only bridges (§7.4); they are
+// handled in mmlisp2ir.js, but naming a def after them is still `E_DEF_RESERVED`.
+const RESERVED_HEADS = new Set([...VALUE_HEADS, "note", "for", "ticks", "frames"]);
 
 /** True when `name` dispatches to the evaluator in a value position (arithmetic
  *  builtins + `let`). Curve names are handled separately (via ctx). */
@@ -429,30 +429,30 @@ export function letPairs(bindingNode) {
   return pairs;
 }
 
+// A binding's name, checked: a symbol that is not a note-stream token
+// (ctx.isNoteStreamToken → E_LET_NAME) and not a def/paramDef name
+// (ctx.isDefName → E_LET_SHADOWS_DEF). `form` names the head in messages.
+function bindName(node, ctx, form) {
+  const name = atomVal(node);
+  if (!name || node.kind !== "atom") {
+    throw new EvalError("E_LET_NAME", `${form} binding name must be a symbol`);
+  }
+  if (ctx.isNoteStreamToken && ctx.isNoteStreamToken(name)) {
+    throw new EvalError("E_LET_NAME", `${form} name '${name}' collides with a note/length token`);
+  }
+  if (ctx.isDefName && ctx.isDefName(name)) {
+    throw new EvalError("E_LET_SHADOWS_DEF", `${form} name '${name}' shadows a def`);
+  }
+  return name;
+}
+
 // Bind a `let` form's `[name expr …]` vector sequentially (let*) into a fresh
-// child env. Names must be symbols that are not note-stream tokens
-// (ctx.isNoteStreamToken → E_LET_NAME) and not def/paramDef names
-// (ctx.isDefName → E_LET_SHADOWS_DEF). Values evaluate in the growing env and
-// may be scalars or signals. Throws EvalError on any problem.
+// child env. Values evaluate in the growing env and may be scalars or
+// signals. Throws EvalError on any problem.
 function bindLet(items, env, ctx) {
   const child = makeEnv(env);
   for (const pair of letPairs(items[1])) {
-    const name = atomVal(pair[0]);
-    if (!name || pair[0].kind !== "atom") {
-      throw new EvalError("E_LET_NAME", "let binding name must be a symbol");
-    }
-    if (ctx.isNoteStreamToken && ctx.isNoteStreamToken(name)) {
-      throw new EvalError(
-        "E_LET_NAME",
-        `let name '${name}' collides with a note/length token`,
-      );
-    }
-    if (ctx.isDefName && ctx.isDefName(name)) {
-      throw new EvalError(
-        "E_LET_SHADOWS_DEF",
-        `let name '${name}' shadows a def`,
-      );
-    }
+    const name = bindName(pair[0], ctx, "let");
     const value = evalNode(pair[1], child, { ...ctx, depth: ctx.depth + 1 });
     child.bindings.set(name, value);
   }
@@ -468,6 +468,72 @@ export function evalLet(node, env, ctx) {
   const items = (node.items || []).filter((n) => n.kind !== "comment");
   try {
     return bindLet(items, env ?? makeEnv(null), { ...ctx, depth: 0 });
+  } catch (e) {
+    if (e instanceof EvalError) {
+      ctx.pushDiag(ctx.diagnostics, "error", e.code, e.message, ctx.src, ctx.trackName);
+      return null;
+    }
+    throw e;
+  }
+}
+
+// `(for [name values …] body…)` (§7.5): the env of every pass, in order. A
+// name's values are `A..B` — integers, both ends included, either direction —
+// or a `[…]` of numbers, names and expressions; several pairs nest, the first
+// outermost, and a later pair's values see the earlier names. Every value is
+// a number: a `$` reads at run time and a curve is not a count, so both are
+// E_EVAL_TYPE. More than FOR_MAX passes is E_FOR_COUNT.
+const FOR_MAX = 4096;
+const INT_RANGE_RE = /^(-?\d+)\.\.(-?\d+)$/;
+function forValues(node, env, ctx) {
+  const range = node.kind === "atom" ? INT_RANGE_RE.exec(node.value) : null;
+  if (range) {
+    const a = Number(range[1]), b = Number(range[2]), d = a <= b ? 1 : -1;
+    if (Math.abs(b - a) + 1 > FOR_MAX) throw new EvalError("E_FOR_COUNT", `for: more than ${FOR_MAX} passes`);
+    return Array.from({ length: Math.abs(b - a) + 1 }, (_, k) => a + k * d);
+  }
+  if (node.kind === "list" && node.bracket === "[]") {
+    return node.items.filter((n) => n.kind !== "comment").map((n) => {
+      const v = evalNode(n, env, { ...ctx, depth: ctx.depth + 1 });
+      if (typeof v !== "number") {
+        throw new EvalError("E_EVAL_TYPE", isRuntime(v)
+          ? "for: a $value is read at run time, so it cannot pick the passes"
+          : "for: a value must be a number, not a curve");
+      }
+      return v;
+    });
+  }
+  throw new EvalError("E_FOR_VALUES", "for takes a name's values as A..B (integers) or [v …], e.g. (for [i 0..7] …)");
+}
+function forEnvs(pairs, env, ctx) {
+  if (!pairs.length) return [env];
+  const [[nameNode, valuesNode], ...rest] = pairs;
+  const name = bindName(nameNode, ctx, "for");
+  const out = [];
+  for (const v of forValues(valuesNode, env, ctx)) {
+    const child = makeEnv(env);
+    child.bindings.set(name, v);
+    for (const e of forEnvs(rest, child, ctx)) {
+      out.push(e);
+      if (out.length > FOR_MAX) throw new EvalError("E_FOR_COUNT", `for: more than ${FOR_MAX} passes`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Item-position `for`: the env of every pass, in order, for the caller to
+ * compile the body in (mmlisp2ir.js) — or null after pushing a diagnostic.
+ */
+export function evalFor(node, env, ctx) {
+  const items = (node.items || []).filter((n) => n.kind !== "comment");
+  try {
+    let pairs;
+    try { pairs = letPairs(items[1]); } catch (e) {
+      throw new EvalError("E_FOR_VALUES", "for binds as [name values …], e.g. (for [i 0..7] …)");
+    }
+    if (!pairs.length) throw new EvalError("E_FOR_VALUES", "for needs a name and its values, e.g. (for [i 0..7] …)");
+    return forEnvs(pairs, env ?? makeEnv(null), { ...ctx, depth: 0 });
   } catch (e) {
     if (e instanceof EvalError) {
       ctx.pushDiag(ctx.diagnostics, "error", e.code, e.message, ctx.src, ctx.trackName);
@@ -562,7 +628,9 @@ function evalNode(node, env, ctx) {
     if (!builtin) {
       throw new EvalError(
         "E_EVAL_UNKNOWN_HEAD",
-        `unknown function '${head ?? ""}' (not a curve or an expression)`,
+        head === "for" || head === "note"
+          ? `'${head}' writes notes, so it goes in the note stream, not in a value`
+          : `unknown function '${head ?? ""}' (not a curve or an expression)`,
       );
     }
     const operands = items.slice(1);

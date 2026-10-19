@@ -342,6 +342,21 @@ An optional second argument is its length — a token (`4`, `20f`), `(ticks …)
 `(frames …)`, or an expression (a bare number is a denominator, so `(+ 2 2)` is
 a quarter). `let` names must be words, not note letters (`a`–`g`).
 
+**`for`** writes its body out once for each value — a run, an arpeggio, a
+pattern that shifts each time:
+
+```lisp
+(fm1 :len 16
+  (for [i 0..7] (note (+ 60 i)))              ; c up to g, a semitone at a time
+  (let [root 48]
+    (for [n [0 4 7 12]] (note (+ root n)))))  ; c e g c, offsets from one root
+```
+
+Values are a range (`0..7`, both ends included) or a list of numbers; notes
+are MIDI numbers, so write a chord as offsets from a `let` root. Several
+names nest: `(for [o 0..1 n [0 7]] …)`. When every pass is the same, use
+`(x N …)` instead — it repeats one body on the driver.
+
 ---
 
 ## 8. FM Voice Definitions

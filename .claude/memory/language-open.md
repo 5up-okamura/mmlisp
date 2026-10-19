@@ -29,6 +29,14 @@ suffix combines with the target's base (language.md §7.0).
   not a new concept.
 - **No second sigil (`@vel`)** — more syntax for the same semantics; the `$`
   namespace carries every tier, kept apart by reserved-name checks.
+- **`for` binds numbers only, with `let`'s vector** (2026-10-19). No `:step`
+  (it broke the `[name value …]` pairing; a step is arithmetic in the body),
+  range ends literal integers, and no note names in a value list — the user
+  accepted writing chords as MIDI offsets from a `let` root to keep one
+  mechanism (a value, emitted by `(note …)`) and the no-implicit-note→number
+  rule. If that proves awkward, the next step is a `for` over tokens (a
+  parameterized `def`, close to the roadmap's def-functions), not an
+  exception in the evaluator.
 
 ## 2. Why the value machine has this shape
 
@@ -46,7 +54,11 @@ first round's decisions, and those reasons are what will be argued again:
   opcode chains, with zero new opcodes.
 
 **The governing constraint:** the driver gains no evaluator — only readers and
-flags. A `$slot` is a value kind of the evaluator itself (mmlisp-eval.js
+flags. The user restated it as the direction for the language's growth
+(2026-10-19): Live is the composing environment, so the compile-time
+evaluator may grow (`for` landed; `if` and def-functions are the roadmap's
+next) while the driver's dynamic side stays minimal — an `if` on a `$` value
+is an error, never a runtime branch. A `$slot` is a value kind of the evaluator itself (mmlisp-eval.js
 `Runtime`, the opcode chain kept symbolic like a signal), so the accumulator
 lowering and the scaled macro `(* signal $slot)` are its arithmetic, with no
 separate linearizer or pattern detector in mmlisp2ir.

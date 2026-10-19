@@ -104,6 +104,11 @@ async function main() {
       expected: ["E_LET_SHADOWS_DEF", "E_LET_BINDING", "E_LET_BINDING"],
     },
     {
+      label: "for: values, names, passes",
+      src: "(def riff c d)\n(def-val v 3 0..10)\n(fm1 :len 16 (for [i 0..3 n [0 7]] (note (+ 60 i n))) (for [i 7] c) (for [i 0.5..2] c) (for [i [$v]] c) (for [c 0..1] d) (for [riff 0..1] d) (for [lo 0..99 hi 0..99] c) (for [] c) :tl1 (for [i 0..1] 3))",
+      expected: ["E_LET_SHADOWS_DEF", "E_FOR_VALUES", "E_FOR_VALUES", "E_EVAL_TYPE", "E_LET_NAME", "E_FOR_COUNT", "E_FOR_VALUES", "E_EVAL_UNKNOWN_HEAD"],
+    },
+    {
       label: "echo before any note",
       src: "(fm1 (echo 3 :vel+ -3) c d (echo 2 :vel+ -2))",
       expected: ["W_ECHO_NO_NOTE"],

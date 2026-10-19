@@ -311,6 +311,13 @@ export const REFERENCE = [
     example: '(fm1 :len 8 (let [root 60] (note root) (note (+ root 4)) (note (+ root 7))))',
   },
   {
+    name: '(for …)', aliases: ['for', 'loop over', 'generate'], cat: 'defs', section: '§7.5', tracks: null,
+    syntax: '(for [name values …] body …)',
+    summary: 'The body written out once for each value: a range like 0..7, or a list of numbers. Notes are MIDI numbers, so a chord is offsets from a let root.',
+    insert: '(for [i 0..7] (note (+ 60 i)))',
+    example: '(fm1 :len 16 (for [i 0..7] (note (+ 60 i))) (let [root 48] (for [n [0 4 7 12]] (note (+ root n)))))',
+  },
+  {
     name: '(note …)', aliases: ['note', 'midi'], cat: 'defs', section: '§7.3', tracks: null,
     syntax: '(note expr [len])',
     summary: 'A note at a computed MIDI number (60 = middle C).',

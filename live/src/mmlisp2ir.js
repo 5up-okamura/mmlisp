@@ -29,6 +29,7 @@ import {
   evalValue,
   evalScalarValue,
   evalLet,
+  evalFor,
   letPairs,
   evalLengthValue,
   lookupBound,
@@ -4682,6 +4683,31 @@ function compileChannelBody(
         continue;
       }
 
+      // Item-position `for` (§7.5): the body compiled once a pass, in place,
+      // each pass in its own env — as if every pass were written out.
+      if (head === "for") {
+        const envs = evalFor(
+          node,
+          evalEnv,
+          valueCtx(null, vals, diagnostics, trackName, nodeSrc(node), typedDefs),
+        );
+        for (const passEnv of envs ?? []) {
+          compileChannelBody(
+            node.items.slice(2).filter((n) => n.kind !== "comment"),
+            trackState,
+            events,
+            diagnostics,
+            trackName,
+            typedDefs,
+            loopCounter,
+            vals,
+            passEnv,
+          );
+        }
+        i++;
+        continue;
+      }
+
       // `(note expr [len])` (§7.3): a computed absolute-pitch NOTE_ON.
       if (head === "note") {
         emitEvalNote(node, trackState, events, diagnostics, trackName, typedDefs, evalEnv);
@@ -5565,11 +5591,11 @@ function expandNode(node, defs, paramDefs, depth, diagnostics) {
       .get(head)
       .flatMap((n) => expandNode(n, defs, paramDefs, depth + 1, diagnostics));
 
-  // A `let` binding's name is a new name, not a reference: it is not expanded,
-  // and naming a snippet with it is E_LET_SHADOWS_DEF (a voice or a sample is
-  // caught where the let binds, mmlisp-eval.js).
-  // A malformed vector is left as written, for the let's own E_LET_BINDING.
-  if (head === "let" && node.items[1]?.kind === "list" && node.items[1].bracket === "[]") {
+  // A `let` or `for` binding's name is a new name, not a reference: it is not
+  // expanded, and naming a snippet with it is E_LET_SHADOWS_DEF (a voice or a
+  // sample is caught where the form binds, mmlisp-eval.js).
+  // A malformed vector is left as written, for the form's own diagnostic.
+  if ((head === "let" || head === "for") && node.items[1]?.kind === "list" && node.items[1].bracket === "[]") {
     let pairs = null;
     try { pairs = letPairs(node.items[1]); } catch (_) {}
     if (pairs) {
@@ -5577,7 +5603,7 @@ function expandNode(node, defs, paramDefs, depth, diagnostics) {
       for (const n of names)
         if (defs.has(n.value) || paramDefs.has(n.value))
           pushDiag(diagnostics, "error", "E_LET_SHADOWS_DEF",
-            `let name '${n.value}' shadows a def`, nodeSrc(n), null);
+            `${head} name '${n.value}' shadows a def`, nodeSrc(n), null);
       const bindings = node.items[1].items.flatMap((n) =>
         names.has(n) ? [n] : expandNode(n, defs, paramDefs, depth, diagnostics));
       const rest = node.items.slice(2).flatMap((n) => expandNode(n, defs, paramDefs, depth, diagnostics));

@@ -9,7 +9,7 @@ export const AC_FORMS = [
   'def', 'def-val', 'def-fm', 'def-pcm', 'def-se', 'def-score', 'def-mod', 'import',
   't', 'x', 'go', 'break', 'trig', 'param-set',
   'echo', 'delay', 'glide', 'macro', 'wait',
-  'let', 'note', 'ticks', 'frames',
+  'let', 'for', 'note', 'ticks', 'frames',
   'min', 'max', 'abs', 'round', 'floor',
   'linear',
   'ease-in', 'ease-out', 'ease-inout',
