@@ -23,6 +23,9 @@
       --sel: 28%;
     }
     * { box-sizing: border-box; }
+    /* A field's hint is a note, so it takes the theme's --sub (the browser's own
+       grey ignores the theme; Firefox also fades it, hence the opacity). */
+    ::placeholder { color: var(--sub); opacity: 1; }
     /* Controls answer taps only: iOS otherwise reads two quick presses (a
        play button pressed again) as a double-tap and zooms the page. Pan and
        pinch-zoom still work; touch-action is not inherited, hence the list. */
