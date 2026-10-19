@@ -797,6 +797,7 @@
        over it (the border is --high while the pointer is there). */
     .dyn-pad-toggle { margin-left: auto; font-size: 0.58rem; padding: 0 0.4rem; line-height: 1.4; }
     .dyn-pad { display: flex; align-items: flex-start; gap: 0.6rem; margin-top: 0.5rem; }
+    .dyn-pad[hidden] { display: none; }
     /* The panel's first select: drawn as the top bar's (size, padding, corners),
        its arrow our own — the native one sits against the right border, and
        no padding moves it. */
