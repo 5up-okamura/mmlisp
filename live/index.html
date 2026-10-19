@@ -6169,6 +6169,9 @@
     function renderChStrips() {
       const el = document.getElementById('chStrips');
       if (!el) return;
+      // The row scrolls sideways when the channels outrun the panel; rebuilding
+      // it (a mute, a solo, a pick) must not throw the view back to the start.
+      const scrollLeft = el.querySelector('.ch-strips-row')?.scrollLeft ?? 0;
       el.innerHTML = '';
       const row = document.createElement('div');
       row.className = 'ch-strips-row';
@@ -6195,6 +6198,7 @@
         row.appendChild(col);
       }
       el.appendChild(row);
+      row.scrollLeft = scrollLeft;
       // Cache the VU overlay elements so the playback loop doesn't query per frame.
       _chVuEls = new Map();
       el.querySelectorAll('.ch-vu').forEach((vu) => _chVuEls.set(vu.dataset.head, vu));
