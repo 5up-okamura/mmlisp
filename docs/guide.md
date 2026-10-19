@@ -1131,8 +1131,8 @@ bring it up to date.
 ### Playing from a point
 
 **TIME**, under Global in the panel, shows where the song is, and its bar spans
-one pass of it: the intro and one time round the loop, the loop's start marked
-on the bar. Past the end the position carries on from the loop start, as the
+one pass of it: up to where every part is in its loop — a part that plays once,
+to its end — and one time round from there, that point marked on the bar. Past the end the position carries on from the loop start, as the
 song does. While it plays, tap or drag the bar to play from there; as you
 drag, it keeps playing a moment from under your finger, so the spot can be
 found by ear. Stopped or paused, the bar only sets the point — the piano

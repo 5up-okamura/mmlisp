@@ -1392,10 +1392,14 @@ export class IRPlayer {
       const looping = this._tracks.filter((t) => t.hasLoop);
       this._loop = looping.length > 0;
 
-      // Global loop point = latest per-track loop start (every track is in its
-      // body by then). `refTrack` owns that tick, so its live tick→time mapping
-      // gives an exact loopStartSec even under a tempo set before the loop.
-      // Loop length = LCM of the per-track loop durations.
+      // Global loop point = the latest per-track loop start (every looping
+      // track is in its body by then), or later, the end of the last one-shot
+      // track: a part that plays once must be over, or its tail would be in
+      // the first pass and not the next. `refTrack` owns the loop-start tick,
+      // so its live tick→time mapping gives an exact time even under a tempo
+      // set before the loop; a one-shot track's end is read off its own
+      // mapping when it runs out. From any point past both, the song repeats
+      // every LCM of the per-track loop durations.
       let refTrack = null;
       let loopPeriodTicks = 1;
       for (const t of looping) {
@@ -1404,6 +1408,9 @@ export class IRPlayer {
         }
         loopPeriodTicks = lcm(loopPeriodTicks, t.loopDuration);
       }
+      const oneShot = this._tracks.filter((t) => !t.hasLoop);
+      const endTickOf = (t) => t.events.reduce((m, e) => Math.max(m, e.tick + (e.args?.length ?? 0)), 0);
+      let oneShotEndSec = null; // known once every one-shot track has run out
 
       // Drive a fake clock forward. One-shot pieces stop when fully scheduled;
       // looping pieces never report "done", so we stop once the clock has
@@ -1420,15 +1427,27 @@ export class IRPlayer {
         // looped yet at this point (its jump is later), so audioTimeAtTick0 is
         // still its iteration-1 base.
         if (
+          oneShotEndSec === null &&
+          oneShot.every((t) => t.flatIndex >= t.events.length)
+        ) {
+          oneShotEndSec = oneShot.reduce(
+            (m, t) => Math.max(m, t.audioTimeAtTick0 + endTickOf(t) * this._secsPerTick - BASE),
+            0,
+          );
+        }
+        if (
           loopStartSec === null &&
           refTrack &&
-          refTrack.flatIndex > refTrack.loopStartIndex
+          refTrack.flatIndex > refTrack.loopStartIndex &&
+          oneShotEndSec !== null
         ) {
           const secsPerTick = this._secsPerTick;
-          loopStartSec =
+          loopStartSec = Math.max(
             refTrack.audioTimeAtTick0 +
-            refTrack.loopStartTick * secsPerTick -
-            BASE;
+              refTrack.loopStartTick * secsPerTick -
+              BASE,
+            oneShotEndSec,
+          );
           endSec = loopStartSec + loopPeriodTicks * secsPerTick;
         }
 
