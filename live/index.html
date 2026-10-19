@@ -1910,10 +1910,10 @@
       },
     });
 
-    // Custom highlight: accent for call names / :params, mid for comments.
+    // Custom highlight: accent for call names / :params, sub for comments.
     // Everything else falls through to the editor's default foreground.
     const mmlispHighlight = HighlightStyle.define([
-      { tag: tags.comment, color: 'var(--mid)' },
+      { tag: tags.comment, color: 'var(--sub)' },
       { tag: tags.keyword, color: 'var(--accent)' },
       { tag: tags.atom, color: 'var(--accent)' },
     ]);
@@ -3738,9 +3738,9 @@
       '.cm-content': { caretColor: 'var(--foreground)' },
       '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--foreground)' },
       '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
-        { backgroundColor: 'color-mix(in srgb, var(--foreground) 22%, var(--background))' },
-      '.cm-gutters': { backgroundColor: 'var(--background)', color: 'var(--mid)', border: 'none' },
-      '.cm-foldPlaceholder': { backgroundColor: 'transparent', color: 'var(--mid)', border: 'none' },
+        { backgroundColor: 'color-mix(in srgb, var(--foreground) var(--sel), var(--background))' },
+      '.cm-gutters': { backgroundColor: 'var(--background)', color: 'var(--sub)', border: 'none' },
+      '.cm-foldPlaceholder': { backgroundColor: 'transparent', color: 'var(--sub)', border: 'none' },
     }, { dark: true });
 
     const editorExtensions = [
@@ -9768,7 +9768,10 @@
         const badge = document.createElement('span');
         badge.className = 'midi-cc';
         badge.textContent = midiCcLabel(id);
-        label.insertBefore(badge, label.querySelector('.val'));
+        // After the slider's name (before the value, whichever kind it is —
+        // TIME's reads .time-val): the assignment rides with the name, in the
+        // name's own colour, and the value keeps the right end and the eye.
+        label.insertBefore(badge, label.querySelector('.val, .time-val'));
       }
     }
 
@@ -10515,6 +10518,7 @@
       _vizColors = {
         fg: cs.getPropertyValue('--foreground').trim() || '#cfe',
         mid: cs.getPropertyValue('--mid').trim() || '#678',
+        sub: cs.getPropertyValue('--sub').trim() || '#9bc', // text: note and lane names
       };
     }
     function resizeVizCanvas() {
@@ -10793,7 +10797,7 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
       _rollHits = [];
-      const { fg, mid } = _vizColors;
+      const { fg, mid, sub: subText } = _vizColors;
       const cells = _vizNotes.filter((cl) => cl.notes.length);
       const pitched = cells.filter(rollPitched);
       const lanes = cells.filter((cl) => !rollPitched(cl));
@@ -10925,13 +10929,13 @@
         if (lit.has(m)) { ctx.fillStyle = fg; ctx.fillRect(ROLL_KEY_W - 14, y, 12, rowH); }
         else if (isBlack(m)) { ctx.fillStyle = mid; ctx.fillRect(ROLL_KEY_W - 14, y + 1, 12, Math.max(1, rowH - 2)); }
         if (m % 12 === 0 && rowH * 12 >= 10) { // C names stand an octave apart
-          ctx.fillStyle = m === 60 ? fg : mid;
+          ctx.fillStyle = m === 60 ? fg : subText;
           ctx.fillText(rollNoteName(m), ROLL_KEY_W - 17, y + rowH / 2);
         }
       }
       ctx.restore();
       lanes.forEach((cell, i) => {
-        ctx.fillStyle = cell === focusCell ? fg : mid;
+        ctx.fillStyle = cell === focusCell ? fg : subText;
         ctx.fillText(cell.head, ROLL_KEY_W - 4, laneTop + i * ROLL_LANE_H + ROLL_LANE_H / 2);
       });
       ctx.strokeStyle = mid;
