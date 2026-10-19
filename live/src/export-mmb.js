@@ -121,7 +121,7 @@ export const MACRO_ARG_KEYS = new Set([
 // the drv gate asserts.
 //
 // Returns Map<trackIndex, Map<markerEventIndex, voiceEmitEventIndex>>.
-function planVoiceHoists(ir, plans) {
+export function planVoiceHoists(ir, plans) {
   const hoists = new Map();
   const tracks = ir.tracks ?? [];
   for (let ti = 0; ti < tracks.length; ti++) {
@@ -140,6 +140,7 @@ function planVoiceHoists(ir, plans) {
 
     const candidates = new Map(); // marker event index → voice emit event index
     const rejected = new Set();
+    const motion = voicedMotion(events);
     for (let j = 0; j < events.length; j++) {
       const ev = events[j];
       if (ev.cmd !== "JUMP") continue;
@@ -149,13 +150,89 @@ function planVoiceHoists(ir, plans) {
       // with anything in between, hoisting would reorder that event's writes.
       const v = m + 1;
       if (!plan.emit.has(v) || events[v]?.tick !== events[m].tick) continue;
-      if (voicedStateDisturbed(events, m + 1, j, plan, v)) rejected.add(m);
+      // A macro tail from before the loop may still be writing a voiced
+      // register when iteration 2 comes round: the head VOICE_SET stays.
+      if (motion[m] || voicedStateDisturbed(events, m + 1, j, plan, v)) rejected.add(m);
       else candidates.set(m, v);
     }
     for (const m of rejected) candidates.delete(m); // any dirty path un-hoists
     if (candidates.size) hoists.set(ti, candidates);
   }
   return hoists;
+}
+
+// ── Repeated VOICE_SET elision ──────────────────────────────────────────────
+// A snippet that carries its voice — `(def hh voice c)` played `hh hh hh` —
+// re-applies the same entry at every note. Change-only suppression already
+// keeps those writes off the chip, but each one is 2 stream bytes and a walk of
+// the 29-byte entry against the shadow on the 68000. A VOICE_SET is dropped when
+// the channel is known to hold that voice already: the same track set the same
+// entry last, and nothing since could have moved a voiced register — nor a
+// macro tail from before it (voicedMotion).
+//
+// "Known" is conservative. No control flow between the two (a marker, a jump or
+// a counted loop's edge: arriving from elsewhere, the state is not the linear
+// one); the channel is this track's alone in the song (CH3's group, a :prio
+// layer and fm6 beside PCM are left alone). An effect over the channel is fine:
+// it plays over a ghost and the restore puts the part's voice back (driver.md
+// §2.5). The register trace is unchanged — the ab-gate asserts it.
+//
+// Returns Map<trackIndex, Set<voiceEmitEventIndex>> of the VOICE_SETs to drop.
+const VOICE_FLOW_CMDS = new Set(["MARKER", "JUMP", "LOOP_BEGIN", "LOOP_END", "LOOP_BREAK"]);
+export function planVoiceRepeats(ir, plans) {
+  const tracks = ir.tracks ?? [];
+  const channelOf = (t) => t.scoreChannel ?? t.channel;
+  const songTracksOn = new Map(); // channel → song tracks on it
+  for (const t of tracks) {
+    if (t.se) continue;
+    const ch = channelOf(t);
+    songTracksOn.set(ch, (songTracksOn.get(ch) ?? 0) + 1);
+  }
+  const hasPcm = tracks.some((t) => /^pcm/.test(channelOf(t) ?? ""));
+  const elide = new Map();
+  for (let ti = 0; ti < tracks.length; ti++) {
+    const plan = plans.get(ti);
+    if (!plan) continue;
+    const t = tracks[ti];
+    const ch = channelOf(t) ?? "";
+    if (/^fm3/.test(ch) || (ch === "fm6" && hasPcm)) continue;
+    if (!t.se && songTracksOn.get(ch) !== 1) continue;
+    const events = t.events ?? [];
+    const emits = [...plan.emit.keys()].sort((x, y) => x - y);
+    const motion = voicedMotion(events);
+    const drop = new Set();
+    for (let k = 1; k < emits.length; k++) {
+      const prev = emits[k - 1], at = emits[k];
+      if (plan.emit.get(prev) !== plan.emit.get(at) || motion[at]) continue;
+      let flow = false;
+      for (let e = prev + 1; e < at && !flow; e++) flow = VOICE_FLOW_CMDS.has(events[e].cmd);
+      if (flow || voicedStateDisturbed(events, prev + 1, at - 1, plan, null)) continue;
+      drop.add(at);
+    }
+    if (drop.size) elide.set(ti, drop);
+  }
+  return elide;
+}
+
+// Is a voiced register possibly still being written when event i is reached,
+// by a macro begun on an earlier note? A macro on an op param / ALG / FB keeps
+// its slot writing after the note, for a length that is not a compile-time
+// fact, which makes a later VOICE_SET's write real again — so neither the
+// hoist nor the repeat elision may remove one past it. Conservative: taken as
+// live for the rest of the track. (A sweep needs no such scan: the next
+// VOICE_SET ends it, driver.md §10.) Returns motion[i] for every event index.
+function voicedMotion(events) {
+  const motion = new Array(events.length);
+  let macro = false;
+  for (let i = 0; i < events.length; i++) {
+    motion[i] = macro;
+    const ev = events[i];
+    if (ev.cmd !== "NOTE_ON") continue;
+    for (const key of Object.keys(ev.args ?? {})) {
+      if (MACRO_ARG_KEYS.has(key) && VOICE_TARGETS.has(macroKeyToTarget(key))) macro = true;
+    }
+  }
+  return motion;
 }
 
 // Can anything in events[from..to] leave the channel's voiced registers different
@@ -644,12 +721,18 @@ export function encodeMmb(ir, opts = {}) {
   // proving the move leaves the register trace alone.
   const voiceHoists =
     opts.voiceHoist === false ? new Map() : planVoiceHoists(ir, voices.plans);
+  // Which VOICE_SETs repeat the voice the channel already holds (see
+  // planVoiceRepeats). opts.voiceRepeat === false keeps them — the same A/B
+  // switch as the hoist's.
+  const voiceRepeats =
+    opts.voiceRepeat === false ? new Map() : planVoiceRepeats(ir, voices.plans);
 
   for (const track of ir.tracks ?? []) {
     const trackSeq = trackEntries.length; // this track's index (pushed at tail)
     const vplan = voices.plans.get(trackSeq) ?? null;
     const hoistAt = voiceHoists.get(trackSeq) ?? null; // marker idx → voice emit idx
     const hoisted = new Set(); // voice emit indices already written before a marker
+    const repeated = voiceRepeats.get(trackSeq) ?? null; // voice emit indices to drop
     const label = track.scoreChannel ?? track.channel ?? String(track.id);
     const channelId = resolveChannelId(track.scoreChannel ?? track.channel);
     if (channelId === null) {
@@ -796,7 +879,7 @@ export function encodeMmb(ir, opts = {}) {
       // Voice coalescing: a full-voice PARAM_SET burst folds into one VOICE_SET
       // emitted at its first voice param; the rest of the burst is dropped.
       if (vplan && vplan.drop.has(i)) {
-        if (vplan.emit.has(i) && !hoisted.has(i)) {
+        if (vplan.emit.has(i) && !hoisted.has(i) && !repeated?.has(i)) {
           syncClock(ev.tick);
           evBounds.push({ offset: stream.length, cmd: "VOICE_SET", track: trackSeq });
           stream.u8(OPCODE.VOICE_SET);

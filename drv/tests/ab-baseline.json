@@ -419,6 +419,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-loop-hoist-tail.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-macro-floor.mmlisp": {
     "ok": false,
     "mismatches": 4,
@@ -534,6 +540,12 @@
     "digest": "811c9dc5"
   },
   "m4-voice-hoist.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m4-voice-repeat.mmlisp": {
     "ok": true,
     "mismatches": 0,
     "compileErrors": 0,

@@ -381,6 +381,10 @@ does not re-apply it every iteration (driver.md §10.1). The JUMP target is the
 offset the label resolved to — labels emit no bytes of their own (opcodes.md
 §0x42) — so the hoist simply moves the `VOICE_SET` ahead of that offset.
 
+A `VOICE_SET` that repeats the voice its channel already holds — same track,
+same entry, nothing between that moves a voiced register — is not emitted at
+all (driver.md §10.2).
+
 ## 12. Size Budget and Banking
 
 The sequencer reads the MMB as a plain 68k ROM pointer, so these are encoder

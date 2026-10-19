@@ -1073,6 +1073,19 @@ static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
     if (s->sweeps[bank][i].active && s->sweeps[bank][i].target == target)
       s->sweeps[bank][i].active = 0;
 }
+/* A VOICE_SET is the burst of PARAM_SETs it folds (driver.md §10): like each
+ * of them it ends the sweep on its target — the parameters a coalesced burst
+ * always carries, FB to DT4 (0x10..0x35), in the bank the stream's PARAM_SET
+ * would have used; SSG and AMEN a voice may omit, so theirs are left alone.
+ * Mirrors drv-player _stopVoiceSweeps. */
+static void stop_voice_sweeps(MMLSeq *s, int ch) {
+  int bank = sweep_bank(ch);
+  if (bank < 0) return;
+  for (int i = 0; i < 2; i++)
+    if (s->sweeps[bank][i].active && s->sweeps[bank][i].target >= 0x10 &&
+        s->sweeps[bank][i].target <= 0x35)
+      s->sweeps[bank][i].active = 0;
+}
 /* CLAIMING A CHANNEL WIPES ITS MODULATORS (driver.md §2.2). Macro binds and
  * sweeps are channel state, not track state, and nothing but the stream's own
  * MACRO_CLEAR ever cleared them — so an evicted track's macro went on playing
@@ -2070,6 +2083,7 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         break;
       }
       case OP_VOICE_SET:
+        stop_voice_sweeps(s, t->channel_id);
         voice_set(s, t->channel_id, st[t->pc + 1]);
         t->pc += 2;
         break;

@@ -1,0 +1,45 @@
+; Repeated VOICE_SET elision (driver.md §10.2). A snippet that carries its voice
+; re-applies it at every note; the exporter drops a VOICE_SET only where the
+; channel already holds that voice. voice-repeat-gate counts each track's drops
+; and asserts the register trace is the one the undropped stream plays.
+
+(def-fm lead :alg 4 :fb 3
+  :ar1 28 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 30 :ks1 1 :ml1 2 :dt1 2
+  :ar2 31 :dr2 9 :sr2 2 :rr2 8 :sl2 2 :tl2 6 :ks2 0 :ml2 1 :dt2 0
+  :ar3 26 :dr3 5 :sr3 1 :rr3 6 :sl3 1 :tl3 34 :ks3 1 :ml3 4 :dt3 -2
+  :ar4 31 :dr4 10 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+
+(def-fm stab :alg 7 :fb 2
+  :ar1 31 :dr1 5 :sr1 0 :rr1 7 :sl1 1 :tl1 20 :ks1 0 :ml1 1 :dt1 1
+  :ar2 31 :dr2 6 :sr2 1 :rr2 7 :sl2 2 :tl2 12 :ks2 0 :ml2 3 :dt2 0
+  :ar3 31 :dr3 5 :sr3 0 :rr3 7 :sl3 1 :tl3 20 :ks3 0 :ml3 1 :dt3 2
+  :ar4 31 :dr4 6 :sr4 1 :rr4 7 :sl4 2 :tl4 4 :ks4 0 :ml4 5 :dt4 0)
+
+(def hh lead c)
+(def sn stab c)
+
+; fm1: the same voice eight times — the last seven drop. The host plays the
+; effect over it at frame 14 (m4-voice-repeat.cmds.json): it plays on a ghost
+; of fm1, and the restore puts lead back before the next drop is relied on.
+(fm1 :tempo 150 :oct 4 :len 8 hh hh hh hh hh hh hh hh)
+(def-se hit :prio 5 (fm1 :oct 5 :len 16 sn sn))
+; fm2: a :tl1 a note plays with in between — the next voice puts op 1's level
+; back, so it stays; the one after it drops.
+(fm2 :oct 4 :len 8 hh :tl1 10 c hh hh)
+; fm4: two voices in turn never repeat — nothing drops; then a :vel change,
+; which a voice does not carry, does not stop the drop.
+(fm4 :oct 3 :len 8 hh sn hh sn :vel 9 sn)
+; fm5: a counted loop — the body's first voice follows the loop edge and stays,
+; its second drops.
+(fm5 :oct 3 :len 8 (x 2 hh hh))
+; fm6: a sweep on op 1's level begun before the first voice is ended by it
+; (driver.md §10) — the second drops; a :tl1 a note plays with keeps the next,
+; and the one after drops; then a macro on the level, whose tail outlives its
+; note — nothing drops after it.
+(fm6 :oct 3 :len 8 :tl1 (linear 60..0 :len 2) hh hh :tl1 20 c hh hh
+  (macro :tl1 [10 20 30 #rel 40 50 60 70 80 90]) c (macro :tl1 none) hh hh)
+; fm3: CH3's tracks share the patch — nothing drops.
+(fm3 :oct 4 :len 8 hh hh)
+; sqr1 (the FM channels are spoken for): the voice targets are FM's alone, so
+; the PSG track has no VOICE_SET to drop.
+(sqr1 :oct 4 :len 8 c c)

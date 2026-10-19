@@ -62,7 +62,9 @@ export function withSeImport(sourcePath, src, seFile) {
 // 60 for NTSC, 50 for PAL. It has to be given to the COMPILER, not the
 // exporter — an `Nf` duration is already ticks by the time the IR exists.
 // `seFile` gives the score the game's effects (withSeImport).
-export function buildMmb(sourcePath, { frameHz, seFile, multibank, voiceHoist } = {}) {
+// `voiceHoist` is the compiler's pass (voice-hoist.js); the exporter's two
+// VOICE_SET switches are `loopHoist` (driver.md §10.1) and `voiceRepeat` (§10.2).
+export function buildMmb(sourcePath, { frameHz, seFile, multibank, voiceHoist, loopHoist, voiceRepeat } = {}) {
   const src = withSeImport(sourcePath, readFileSync(sourcePath, "utf8"), seFile);
   const imports = readImportSources(sourcePath, src);
   const { ir, diagnostics } = compileMMLisp(src, sourcePath, { frameHz, imports, voiceHoist });
@@ -74,7 +76,7 @@ export function buildMmb(sourcePath, { frameHz, seFile, multibank, voiceHoist } 
   }
   // PCM songs need the sample blobs (SAMPLE_BANK); load the WAVs the compiler
   // resolved. Non-PCM songs skip this entirely.
-  const opts = { multibank };
+  const opts = { multibank, voiceHoist: loopHoist, voiceRepeat };
   const sampleDiags = [];
   if ((ir.metadata?.samples ?? []).length) {
     opts.samples = loadSamplesForIr(ir, sampleDiags);

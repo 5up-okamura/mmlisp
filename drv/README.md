@@ -53,6 +53,7 @@ npm run verify:all
 | `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same single-bank images, and every generated artifact — those three and the banked ones (`sgdk/mmlispdrv_banked_bin.h`, `68k/mml_banked_rate.h`, `live/src/engine-banked-images.js`) — is what the generators build now |
 | `selftest` | the assembler and the emulator against their own cases |
 | `voice-hoist` | the voice-hoist pass moves time, never notes: every onset stays put and every moved voice write lands in silence, over the corpus and the SGDK example |
+| `voice-repeat` | the exporter's two VOICE_SET elisions move no register write: every test score's trace with and without the repeat drop (driver.md §10.2) and with and without the loop-head hoist (§10.1), `m4-voice-repeat`'s per-track drops, `m4-loop-hoist-tail`'s hoists beside a macro tail and a sweep |
 | `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, over the corpus — every `tests/*.mmlisp` but the claim-gate twins (`corpus()` in `c-gate.mjs`) — and the SGDK example's bundle; the gate prints the count it ran |
 | `c-gate:pal` | the same corpus on PAL-baked streams — the sequencer reads no frame rate, and this is what keeps it that way |
 | `claim-gate` (and `:pal`) | a channel changes hands cleanly: modulators do not outlive their owner, and a part an effect displaced comes back exactly when the effect ends, in time with the song as if the effect had never fired (driver.md §2.2, §2.5) |
@@ -102,7 +103,7 @@ the images' periods come from).
 | `gen-c-tables.mjs`, `c-tables.mjs` | the sequencer's tables — into the tree, or into a gate's temp directory |
 | `mmb-build.mjs`, `wav.mjs` | `.mmlisp` → MMB (+ sample bank) through the live toolchain |
 | `pairs-model.mjs` | the JS twin of `mmlpairs.c` |
-| `c-gate.mjs`, `pairs-gate.mjs`, `engine-*-gate.mjs`, `ab-gate.mjs`, `glide-gate.mjs`, `claim-gate.mjs`, `voice-hoist-gate.mjs`, `pal-gate.mjs`, `pcm-ab-gate.mjs`, `pcm-loop-gate.mjs`, `banked-export-gate.mjs`, `multibank-gate.mjs`, `rate-mirrors.mjs` | the gates above |
+| `c-gate.mjs`, `pairs-gate.mjs`, `engine-*-gate.mjs`, `ab-gate.mjs`, `glide-gate.mjs`, `claim-gate.mjs`, `voice-hoist-gate.mjs`, `voice-repeat-gate.mjs`, `pal-gate.mjs`, `pcm-ab-gate.mjs`, `pcm-loop-gate.mjs`, `banked-export-gate.mjs`, `multibank-gate.mjs`, `rate-mirrors.mjs` | the gates above |
 | `light-study.mjs` | the image-rate study |
 | `pcm-render.mjs` | a score's PCM through the engine model, as a WAV at the image's rate |
 | `onset-timing.mjs` | how late each FM key-on reaches the chip through the light engine, and what the frames ahead of it held |

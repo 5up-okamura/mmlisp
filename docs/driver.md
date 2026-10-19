@@ -1013,6 +1013,13 @@ before its own `$B0` reaches the chip. The comparison is against the
 **structured** shadow, because a PARAM_SET burst only wrote the registers it
 touched (§12.2). Gates: `m3-voice` (both ports, mid-song switch),
 `m4-tl-compose` (the level survives the change, including on CH3's operators).
+Like each PARAM_SET of the burst it folds, a VOICE_SET ends the channel's
+sweeps on the parameters a coalesced burst always carries (FB, ALG and the
+per-operator TL, AR, DR, SR, RR, SL, KS, ML, DT: target ids 0x10–0x35) — so a
+sweep on a level does not run on under a new voice, on the driver as in the
+preview. SSG and AMEN a voice may omit, so their sweeps are left to the burst's
+own PARAM_SETs. A ghost's restore is not a VOICE_SET: the displaced part's
+sweeps come back with it (§2.5).
 The ab-compare gate's `normalize` collapses same-frame YM writes to the
 per-frame final value, which makes the A/B baseline coalescing-invariant.
 
@@ -1022,15 +1029,44 @@ per-frame final value, which makes the A/B baseline coalescing-invariant.
 **before** the loop's jump target, so pass 1 applies it and the backward JUMP
 lands past it. The target is an offset a label resolved to and the label emits
 no bytes (opcodes.md §0x42), so the hoist moves the VOICE_SET across nothing
-that writes a register: the register trace is unchanged — asserted by the gate,
-and by an A/B of the same song encoded with `opts.voiceHoist` on and off.
+that writes a register: the register trace is unchanged — asserted by the
+`voice-repeat` gate, which traces every test score encoded with
+`opts.voiceHoist` on and off.
 
 The hoist is skipped when the loop body can leave the voiced registers different
 from what that VOICE_SET set: another voice change, a PARAM_SET/ADD/MUL/SWEEP on
 an op param / ALG / FB, or a macro on one of those (where it stops is not a
-compile-time fact). Those songs keep the head VOICE_SET inside the loop, which
-restores the voice each iteration. `drv/tests/m3-voice-loop.mmlisp` pins all
-three outcomes.
+compile-time fact). It is skipped too after a macro on one anywhere earlier on
+the track: its tail outlives its note, so it may still be writing when
+iteration 2 comes round. (A sweep from before the loop needs no such rule: the
+head VOICE_SET ends it, §10.) Those songs keep the head VOICE_SET inside the
+loop, which restores the voice each iteration. `drv/tests/m3-voice-loop.mmlisp`
+pins the body's three outcomes, `m4-loop-hoist-tail.mmlisp` the tail and the
+sweep from before.
+
+### 10.2 Repeated VOICE_SET (encode-time elision)
+
+A snippet that carries its voice — `(def hh lead c)` played `hh hh hh` —
+names the voice at every note. `planVoiceRepeats` (`live/src/export-mmb.js`)
+drops a VOICE_SET when the channel already holds that entry: the same track
+set the same voice last, and nothing between could have moved a voiced
+register (the same test as §10.1's: an op param / ALG / FB write, sweep, slot
+read, or a macro on one of those), nor a macro tail from earlier still writing
+one (§10.1). A level a note played with in between — `hh :tl1 10 c hh` — keeps
+the second `hh`, which puts op 1 back; a sweep begun before the first `hh` does
+not, as the first `hh` ended it. It stays
+conservative where the linear order is not the order played: no marker, jump
+or counted-loop edge between the two, and the channel is the track's alone (not
+CH3's group, not a `:prio` layer, not fm6 beside PCM). An effect over the
+channel is no exception — it plays over the ghost, and the restore puts the
+part's voice back (§2.5).
+
+The change-only handler already wrote nothing for such a VOICE_SET; the drop
+saves its 2 stream bytes and the 68000's walk of the entry against the shadow.
+Gate: `voice-repeat` — every test score encoded with `opts.voiceRepeat` on and
+off writes the same registers in the same frames, and
+`drv/tests/m4-voice-repeat.mmlisp` drops on each track what its comments say,
+including under an effect.
 
 ## 11. Current Limits
 

@@ -1250,6 +1250,7 @@ export class DrvPlayer {
         case OPCODE.VOICE_SET: {
           const voiceId = s[trk.pc + 1];
           trk.pc += 2;
+          this._stopVoiceSweeps(trk.channelId);
           this._voiceSet(trk.channelId, voiceId);
           break;
         }
@@ -1922,6 +1923,22 @@ export class DrvPlayer {
     const slots = this._sweeps[bank];
     for (let i = 0; i < slots.length; i++) {
       if (slots[i] && slots[i].target === target) slots[i] = null;
+    }
+  }
+
+  // A VOICE_SET is the burst of PARAM_SETs it folds (driver.md §10): like each
+  // of them it ends the sweep on its target — the parameters a coalesced burst
+  // always carries, FB to DT4 (0x10..0x35), in the bank the stream's PARAM_SET
+  // would have used. SSG and AMEN are left alone: a voice may omit them, and
+  // then its burst wrote no PARAM_SET to end their sweep with. Not the ghost
+  // restore's _applyPatch: a restored part's sweeps come back. Mirrors
+  // mmlispseq.c stop_voice_sweeps.
+  _stopVoiceSweeps(ch) {
+    const bank = this._sweepBank(ch);
+    if (bank < 0) return;
+    const slots = this._sweeps[bank];
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i] && slots[i].target >= TARGET_ID.FM_FB && slots[i].target <= TARGET_ID.FM_DT4) slots[i] = null;
     }
   }
 
