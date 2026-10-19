@@ -37,6 +37,12 @@ suffix combines with the target's base (language.md §7.0).
   rule. If that proves awkward, the next step is a `for` over tokens (a
   parameterized `def`, close to the roadmap's def-functions), not an
   exception in the evaluator.
+- **Comparisons are `=` `<` `>` `<=` `>=`, giving 1/0** (2026-10-19). The
+  user chose the Clojure names over word names (`lt` …) although `<` `>` are
+  also the octave shifts: a list head is never a note-stream token, so the
+  two never meet. No boolean type — a comparison is a number, and `if` takes
+  any non-zero as true. Reserving `mod` cost a gate fixture its `def-fm mod`
+  (now `modv`); a score naming a voice `mod` gets `E_DEF_RESERVED`.
 
 ## 2. Why the value machine has this shape
 
@@ -56,8 +62,8 @@ first round's decisions, and those reasons are what will be argued again:
 **The governing constraint:** the driver gains no evaluator — only readers and
 flags. The user restated it as the direction for the language's growth
 (2026-10-19): Live is the composing environment, so the compile-time
-evaluator may grow (`for` landed; `if` and def-functions are the roadmap's
-next) while the driver's dynamic side stays minimal — an `if` on a `$` value
+evaluator may grow (`for` and `if` landed; recursive def-functions are the
+roadmap's next) while the driver's dynamic side stays minimal — an `if` on a `$` value
 is an error, never a runtime branch. A `$slot` is a value kind of the evaluator itself (mmlisp-eval.js
 `Runtime`, the opcode chain kept symbolic like a signal), so the accumulator
 lowering and the scaled macro `(* signal $slot)` are its arithmetic, with no

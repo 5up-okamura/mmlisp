@@ -318,6 +318,13 @@ export const REFERENCE = [
     example: '(fm1 :len 16 (for [i 0..7] (note (+ 60 i))) (let [root 48] (for [n [0 4 7 12]] (note (+ root n)))))',
   },
   {
+    name: '(if …)', aliases: ['if', 'when', 'condition', 'compare', 'not', '=', '<', '>', '<=', '>='], cat: 'defs', section: '§7.6', tracks: null,
+    syntax: '(if test then [else])',
+    summary: 'A branch chosen when the score compiles: then when test is non-zero, else otherwise. Comparisons (= < > <= >=) and not give 1 or 0; a $value cannot be tested, since the driver does not branch.',
+    insert: '(if (= (mod i 4) 0) (note 72) (note 60))',
+    example: '(fm1 :len 16 (for [i 0..15] (if (= (mod i 4) 0) (note 72) (note 60))))',
+  },
+  {
     name: '(note …)', aliases: ['note', 'midi'], cat: 'defs', section: '§7.3', tracks: null,
     syntax: '(note expr [len])',
     summary: 'A note at a computed MIDI number (60 = middle C).',
@@ -325,9 +332,9 @@ export const REFERENCE = [
     example: '(fm1 :len 8 (note 60) (note 64) (note 67) (note 72 4))',
   },
   {
-    name: 'arithmetic', aliases: ['+', '-', '*', '/', 'min', 'max', 'abs', 'round', 'floor', 'ticks', 'frames'],
+    name: 'arithmetic', aliases: ['+', '-', '*', '/', 'min', 'max', 'abs', 'round', 'floor', 'mod', 'ticks', 'frames'],
     cat: 'defs', section: '§7.1', tracks: null,
-    syntax: '(+ a b)  (- a b)  (* a b)  (/ a b)  (min …)  (max …)  (abs x)  (round x)  (floor x)',
+    syntax: '(+ a b)  (- a b)  (* a b)  (/ a b)  (min …)  (max …)  (abs x)  (round x)  (floor x)  (mod x n)',
     summary: 'Compile-time arithmetic wherever a value goes; with a $slot inside it becomes a runtime expression. (ticks n) / (frames n) make a length.',
     insert: '(+ 20 10)',
     example: '(def depth 20)\n(fm1 :len 8 :tl1 (+ depth 10) c e g e)',

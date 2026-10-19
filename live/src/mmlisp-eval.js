@@ -10,7 +10,8 @@
 // A value is a scalar, a signal (a curve kept symbolic) or a runtime value (a
 // `$slot`-bearing expression kept symbolic as the param-opcode chain that
 // computes it on the driver). The builtins are `+ - * /`, `min max abs round
-// floor`, the curves (via ctx), and `let`; docs/language.md §7, rationale in
+// floor mod`, the comparisons and `not`, the curves (via ctx), `let` and `if`;
+// docs/language.md §7, rationale in
 // .claude/memory/language-open.md §2.
 // ---------------------------------------------------------------------------
 
@@ -388,10 +389,43 @@ BUILTINS.set("max", { arity: [1, null], apply: (a, _c, n) => Math.max(...scalars
 BUILTINS.set("abs", { arity: [1, 1], apply: (a, _c, n) => Math.abs(scalarsOnly(n, a)[0]) });
 BUILTINS.set("round", { arity: [1, 1], apply: (a, _c, n) => Math.round(scalarsOnly(n, a)[0]) });
 BUILTINS.set("floor", { arity: [1, 1], apply: (a, _c, n) => Math.floor(scalarsOnly(n, a)[0]) });
+// Floored: the result takes the divisor's sign, so a count running down or a
+// negative offset still lands in 0..n-1.
+BUILTINS.set("mod", {
+  arity: [2, 2],
+  apply: (a, _c, n) => {
+    const [x, m] = scalarsOnly(n, a);
+    if (m === 0) throw new EvalError("E_EVAL_DIV_ZERO", "mod by zero");
+    return x - m * Math.floor(x / m);
+  },
+});
+
+// Comparisons and `not` give 1 or 0 — a number, as every value is — and
+// `if` (§7.6) takes any non-zero as true. They decide at compile time, so a
+// `$` value, known only on the driver, is E_EVAL_TYPE: the driver never branches.
+const decided = (name, args) => {
+  for (const a of args) {
+    if (isRuntime(a))
+      throw new EvalError("E_EVAL_TYPE", `(${name} …) decides at compile time; a $value is read at run time`);
+    if (isSignal(a)) throw new EvalError("E_EVAL_TYPE", `(${name} …) needs numbers, not a curve`);
+  }
+  return args;
+};
+const compare = (test) => (a, _c, n) => {
+  decided(n, a);
+  for (let k = 1; k < a.length; k++) if (!test(a[k - 1], a[k])) return 0;
+  return 1;
+};
+BUILTINS.set("=", { arity: [2, null], apply: compare((x, y) => x === y) });
+BUILTINS.set("<", { arity: [2, null], apply: compare((x, y) => x < y) });
+BUILTINS.set(">", { arity: [2, null], apply: compare((x, y) => x > y) });
+BUILTINS.set("<=", { arity: [2, null], apply: compare((x, y) => x <= y) });
+BUILTINS.set(">=", { arity: [2, null], apply: compare((x, y) => x >= y) });
+BUILTINS.set("not", { arity: [1, 1], apply: (a, _c, n) => (decided(n, a)[0] === 0 ? 1 : 0) });
 
 // Value-producing heads that dispatch to the evaluator in value positions:
-// the arithmetic/math builtins plus the `let` special form (§7.2).
-const VALUE_HEADS = new Set([...BUILTINS.keys(), "let"]);
+// the builtins plus the `let` and `if` special forms (§7.2, §7.6).
+const VALUE_HEADS = new Set([...BUILTINS.keys(), "let", "if"]);
 
 // Heads that also read as eval forms elsewhere (item/length positions) —
 // reserved so a def cannot shadow them. `note` and `for` are item-only
@@ -543,6 +577,34 @@ export function evalFor(node, env, ctx) {
   }
 }
 
+// An `if`'s test, decided now: true when it is a non-zero number.
+function ifTest(node, env, ctx) {
+  const v = evalNode(node, env, { ...ctx, depth: ctx.depth + 1 });
+  return decided("if", [v])[0] !== 0;
+}
+
+/**
+ * Item-position `(if test then [else])` (§7.6): the branch to compile in place
+ * (mmlisp2ir.js) — an empty list when the test fails with no else — or null
+ * after pushing a diagnostic.
+ */
+export function evalIf(node, env, ctx) {
+  const items = (node.items || []).filter((n) => n.kind !== "comment");
+  try {
+    if (items.length < 3 || items.length > 4) {
+      throw new EvalError("E_EVAL_ARITY", "if takes a test, a then and an optional else: (if test then [else])");
+    }
+    if (ifTest(items[1], env ?? makeEnv(null), { ...ctx, depth: 0 })) return [items[2]];
+    return items.length === 4 ? [items[3]] : [];
+  } catch (e) {
+    if (e instanceof EvalError) {
+      ctx.pushDiag(ctx.diagnostics, "error", e.code, e.message, ctx.src, ctx.trackName);
+      return null;
+    }
+    throw e;
+  }
+}
+
 // A length-grammar smell test: reject note/length/rest atoms as arithmetic
 // operands (no implicit note→number coercion). The
 // authoritative note-stream predicates live in mmlisp2ir.js and reach the
@@ -613,6 +675,16 @@ function evalNode(node, env, ctx) {
         );
       }
       return evalNode(body[0], child, { ...ctx, depth: ctx.depth + 1 });
+    }
+
+    // `if` in a value position: the else is required (a value is always
+    // produced), and only the chosen branch is evaluated (§7.6).
+    if (head === "if") {
+      if (items.length !== 4) {
+        throw new EvalError("E_EVAL_ARITY", "if in a value position takes a test, a then and an else");
+      }
+      const pick = ifTest(items[1], env, ctx) ? items[2] : items[3];
+      return evalNode(pick, env, { ...ctx, depth: ctx.depth + 1 });
     }
 
     // Curve head → a symbolic signal (delegated to parseCurveSpec via ctx).

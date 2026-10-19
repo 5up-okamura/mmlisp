@@ -57,6 +57,7 @@ export default {
     "def-se": ["faa7c2be", "Un efecto de sonido: partes que el juego lanza por número, tomando canales de la canción mientras suenan."],
     "(let …)": ["ebf8adb8", "Valores locales para el cuerpo, evaluados al compilar."],
     "(for …)": ["2d9e5ca0", "El cuerpo escrito una vez por cada valor: un rango como 0..7 o una lista de números. Las notas son números MIDI, así que un acorde se escribe como distancias desde una raíz de let."],
+    "(if …)": ["bbf170a3", "Una rama elegida al compilar la partitura: then cuando test no es cero, else en otro caso. Las comparaciones (= < > <= >=) y not dan 1 o 0; un $value no puede ser la prueba, porque el driver no ramifica."],
     "(note …)": ["6fa62fd1", "Una nota en un número MIDI calculado (60 = do central)."],
     "arithmetic": ["7417cf7d", "Aritmética en tiempo de compilación donde quiera que vaya un valor; con un $slot dentro se vuelve una expresión en tiempo de ejecución. (ticks n) / (frames n) forman una duración."],
     "(macro …)": ["91598f27", "Automatización por nota, persistente: cada nota siguiente la ejecuta hasta que se anula. Destinos: :vel :vol :pitch :semi :keyon :pan :mode y los registros FM (no los globales :master / :lfo-rate)."],

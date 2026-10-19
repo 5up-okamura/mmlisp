@@ -30,6 +30,7 @@ import {
   evalScalarValue,
   evalLet,
   evalFor,
+  evalIf,
   letPairs,
   evalLengthValue,
   lookupBound,
@@ -4708,6 +4709,31 @@ function compileChannelBody(
         continue;
       }
 
+      // Item-position `if` (§7.6): the chosen branch compiled in place, as if
+      // it alone were written; no else and a false test write nothing.
+      if (head === "if") {
+        const branch = evalIf(
+          node,
+          evalEnv,
+          valueCtx(null, vals, diagnostics, trackName, nodeSrc(node), typedDefs),
+        );
+        if (branch?.length) {
+          compileChannelBody(
+            branch,
+            trackState,
+            events,
+            diagnostics,
+            trackName,
+            typedDefs,
+            loopCounter,
+            vals,
+            evalEnv,
+          );
+        }
+        i++;
+        continue;
+      }
+
       // `(note expr [len])` (§7.3): a computed absolute-pitch NOTE_ON.
       if (head === "note") {
         emitEvalNote(node, trackState, events, diagnostics, trackName, typedDefs, evalEnv);
@@ -5626,6 +5652,22 @@ function expandNode(node, defs, paramDefs, depth, diagnostics) {
     return defs
       .get(head)
       .flatMap((n) => expandNode(n, defs, paramDefs, depth + 1, diagnostics));
+
+  // An `if`'s branch is one item: a snippet that expands to several stays one
+  // branch, wrapped in an empty `let` (which compiles in place), so the else
+  // is still the item after it.
+  if (head === "if") {
+    const pos = { line: node.line, column: node.column, file: node.file };
+    const asOne = (n) => {
+      const out = expandNode(n, defs, paramDefs, depth, diagnostics);
+      return out.length === 1 ? out
+        : [{ kind: "list", bracket: "()", ...pos, line: n.line, column: n.column, items: [
+          { kind: "atom", value: "let", ...pos }, { kind: "list", bracket: "[]", ...pos, items: [] }, ...out] }];
+    };
+    let seen = 0; // the head and the test expand as usual; each branch stays one item
+    return [{ ...node, items: node.items.flatMap((n) =>
+      n.kind === "comment" ? [n] : seen++ < 2 ? expandNode(n, defs, paramDefs, depth, diagnostics) : asOne(n)) }];
+  }
 
   // A `let` or `for` binding's name is a new name, not a reference: it is not
   // expanded, and naming a snippet with it is E_LET_SHADOWS_DEF (a voice or a

@@ -525,8 +525,14 @@ compile time** and folds to a static value — zero runtime cost. Heads:
 | `/` | 1+ | `(/ x)` = `1/x`; `/` by zero → `E_EVAL_DIV_ZERO` |
 | `min` `max` | 1+ | scalar only |
 | `abs` `round` `floor` | 1 | scalar only |
+| `mod` | 2 | floored: takes the divisor's sign, `(mod -1 4)` = 3; by zero → `E_EVAL_DIV_ZERO` |
+| `=` `<` `>` `<=` `>=` | 2+ | 1 if each operand holds against the next, else 0: `(< 0 i 8)` |
+| `not` | 1 | 1 for 0, else 0 |
 
 Operands are numbers, nested expressions, and `let`-bound names (§7.2).
+A comparison is a number like any other result — 1 or 0 — so it also
+feeds arithmetic (`(* 12 (= i 0))`); `if` (§7.6) reads it. Comparing a `$`
+value or a curve is `E_EVAL_TYPE`: a comparison decides at compile time.
 Floats flow through a computation; integerization happens only where the value
 binds (the target's own round/clamp). A note/length token as an operand is
 `E_EVAL_OPERAND` (no implicit note→number). Nesting deeper than 32 →
@@ -700,6 +706,29 @@ place, with `name` bound to it — as if every pass were written out.
 loop on the driver; `for` writes each pass out, because each differs. A body
 that does not use its name is `(x N …)`'s job.
 
+### 7.6 `if` — a choice made at compile time
+
+`(if test then [else])` writes one of its branches: `then` when `test` is
+non-zero, else `else`.
+
+```lisp
+(def depth 4)
+(fm1 :len 16
+  (for [i 0..15]
+    (if (= (mod i 4) 0) (note 72) (note 60)))   ; an octave up on each beat
+  :tl1 (if (> depth 3) 20 30))                  ; a def constant decides
+```
+
+- **In the note stream** the chosen branch compiles in place, as if it alone
+  were written; with no `else`, a false test writes nothing. A branch is one
+  item — a note, a form, or a snippet name, which stays one branch whatever it
+  expands to.
+- **In a value position** the `else` is required, and the result is the
+  chosen branch's value — a number, a curve or a `$` expression.
+- **The test** is a number decided now: a `$` value is known only on the
+  driver, and the driver does not branch, so a `$` in the test is
+  `E_EVAL_TYPE`, as is a curve. A wrong number of parts is `E_EVAL_ARITY`.
+
 ---
 
 ## 8. Dynamic values — `(def-val …)`, `$name`
@@ -807,8 +836,8 @@ declares a value slot (§8); a bare reference in a channel body applies them.
 (§9.3). `def-mod` rewrites the notes it selects across the whole score (§9.4).
 Definitions are top-level forms and interleave freely
 with track forms (§1); the score's own settings are `def-score` (§1). A def (or parametric def) named after an eval builtin
-(`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `round`, `floor`, `let`, `note`,
-`for`, `ticks`, `frames`) is rejected with `E_DEF_RESERVED`. One named like a note or length token is `E_DEF_NAME` (§3).
+(`+`, `-`, `*`, `/`, `min`, `max`, `abs`, `round`, `floor`, `mod`, `=`, `<`,
+`>`, `<=`, `>=`, `not`, `let`, `if`, `note`, `for`, `ticks`, `frames`) is rejected with `E_DEF_RESERVED`. One named like a note or length token is `E_DEF_NAME` (§3).
 
 `def` vs `let` (§7.2): a `def` is a **global** name bound by **token
 substitution** — the body is spliced verbatim wherever the name appears, so it

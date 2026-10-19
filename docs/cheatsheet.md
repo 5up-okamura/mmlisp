@@ -171,7 +171,8 @@ start written (`40..0`, not `:to 0` alone).
 | `(glide 8)` … `(glide none)` | portamento into each note (§14) |
 | `(let [root 60] (note root) (note (+ root 7)))` | computed pitches, MIDI numbers (§7.2, §7.3) |
 | `(for [i 0..7] (note (+ 60 i)))`, `(for [n [0 4 7]] (note (+ 48 n)))` | notes generated from values, written out once a pass (§7.5) |
-| `:tl1 (+ 20 10)`, `(min 7 5)` | compile-time arithmetic (§7.1) |
+| `(if (= (mod i 4) 0) (note 72) (note 60))` | a branch chosen at compile time; compare with `= < > <= >= not` (1/0); else optional in the note stream (§7.6) |
+| `:tl1 (+ 20 10)`, `(min 7 5)`, `(mod i 4)` | compile-time arithmetic (§7.1) |
 | `:tl1 (+ 40 (* $bright 2))` | runtime expression over a slot (§7.1.2) |
 
 ## PCM (§16)

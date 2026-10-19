@@ -109,6 +109,11 @@ async function main() {
       expected: ["E_LET_SHADOWS_DEF", "E_FOR_VALUES", "E_FOR_VALUES", "E_EVAL_TYPE", "E_LET_NAME", "E_FOR_COUNT", "E_FOR_VALUES", "E_EVAL_UNKNOWN_HEAD"],
     },
     {
+      label: "if: tests, arity, $ and curve tests",
+      src: "(def riff c e g)\n(def-val v 3 0..10)\n(fm1 :len 16 (for [i 0..7] (if (= (mod i 4) 0) (note 72) (note 60))) (if (< 1 2) riff b) (if 0 c) :tl1 (if (<= 1 1 2) 10 20) (if (= $v 1) c) :tl1 (if 1 2) (if 1) (if (sin :from 0 :to 1 :len 4f) c) (note (mod 3 0)))",
+      expected: ["E_EVAL_TYPE", "E_EVAL_ARITY", "E_EVAL_ARITY", "E_EVAL_TYPE", "E_EVAL_DIV_ZERO"],
+    },
+    {
       label: "parametric def: a name the argument mentions is not captured",
       // Captured, (hi n) would play n + n = 200 (E_NOTE_RANGE), and (sh 0)
       // would bind the name 0 (E_LET_NAME).

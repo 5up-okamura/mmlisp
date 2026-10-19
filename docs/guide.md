@@ -359,6 +359,21 @@ are MIDI numbers, so write a chord as offsets from a `let` root. Several
 names nest: `(for [o 0..1 n [0 7]] …)`. When every pass is the same, use
 `(x N …)` instead — it repeats one body on the driver.
 
+**`if`** chooses between two branches when the score compiles. With `for` it
+varies a pattern pass by pass:
+
+```lisp
+(fm1 :len 16
+  (for [i 0..15]
+    (if (= (mod i 4) 0) (note 72) (note 60))))   ; up an octave on each beat
+```
+
+A comparison (`=` `<` `>` `<=` `>=`) gives 1 or 0, `not` flips it, and `if`
+takes any non-zero as true. In the note stream the `else` may be left out; in
+a value (`:tl1 (if … 20 30)`) it is required. The test cannot read a `$`
+value — the driver does not branch, so a choice made while the song plays is
+written another way (a `$` in the value itself, §7.1.2 of the reference).
+
 ---
 
 ## 8. FM Voice Definitions

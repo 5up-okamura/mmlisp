@@ -38,14 +38,17 @@ Its current limits are `driver.md` §11 — keep the two in step.
   time instead of emitting the arithmetic. A folded `:tl1+ 3` would be
   relative to the value the score wrote, missing a host write in between;
   `(+ $tl1 3)` would stay the live reading.
-- **`if` / def-functions**, and what eval enables past them: parametric
-  phrases as real functions, signal composition (`(+ (sin) (saw))`,
-  `(* env lfo)`), curves as a standard library. All of it compile time — the
-  driver gains no evaluator, so an `if` on a `$` value is an error, not a
-  runtime branch. `for` (§7.5) binds numbers only; a `for` over tokens (note
-  names, samples, lengths) is the next step if writing chords as MIDI
-  offsets proves awkward, and a value-position `for` that builds a step
-  vector after that.
+- **Recursive def-functions**, and what eval enables past them: curves as a
+  standard library, signal composition (`(+ (sin) (saw))`, `(* env lfo)`).
+  All of it compile time — the driver gains no evaluator, so `if` (§7.6)
+  cannot test a `$` value. A parametric def already returns a value
+  (`(def (oct x) (* 12 x))`); what it cannot do is call itself, because defs
+  expand before anything evaluates — recursion needs a call expanded when the
+  evaluator reaches it, which waits for a score that needs it. `and` / `or`
+  join the comparisons when one does. `for` (§7.5) binds numbers only; a
+  `for` over tokens (note names, samples, lengths) is the next step if
+  writing chords as MIDI offsets proves awkward, and a value-position `for`
+  that builds a step vector after that.
   The signal-⊕ region model's first relaxation is loop⊕one-shot, which a
   baked `env × lfo` AM needs (runtime AM is the scaled macro today).
 - **Quantize snap** — a scale mask applied after the pitch sum.

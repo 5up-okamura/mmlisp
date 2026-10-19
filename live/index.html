@@ -1889,10 +1889,11 @@
         }
         if (stream.eat('(')) { state.head = true; return null; }
         if (stream.eat(')') || stream.eat('[') || stream.eat(']')) { state.head = false; return null; }
-        // Arithmetic eval heads (+ - * /) in call position get the call accent,
-        // like an identifier head. Guarded by `head` and a delimiter lookahead so
-        // an operand `+`/`-` (or a signed number) is untouched.
-        if (state.head && stream.match(/^[+\-*/](?=[\s()]|$)/)) { state.head = false; return 'keyword'; }
+        // Arithmetic and comparison eval heads (+ - * / = < > <= >=) in call
+        // position get the call accent, like an identifier head. Guarded by
+        // `head` and a delimiter lookahead so an operand `+`/`-` (or a signed
+        // number) and an octave `<`/`>` in the note stream are untouched.
+        if (state.head && stream.match(/^(?:[+\-*/=]|[<>]=?)(?=[\s()]|$)/)) { state.head = false; return 'keyword'; }
         if (stream.eat(':')) {
           stream.match(/^[a-zA-Z][a-zA-Z0-9#_-]*/);
           state.head = false;
