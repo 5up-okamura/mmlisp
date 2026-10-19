@@ -3020,7 +3020,7 @@
       _lastFileName = _sourceFileName;
       _lastGoodIR = null;
       _lastSourceMap = null;
-      onStop();
+      resetForNewScore();
       // A decoded PCM bank has no file on disk yet, and the score above has no
       // folder — so seed the decode cache under the key `:file` resolves to (a
       // bare name, since there is no base dir). The song then plays immediately;
@@ -4022,6 +4022,10 @@
         extensions: editorExtensions,
       }));
       syncBracketStatus(); // setState fires no doc-change update
+      // Likewise the FM panel's def-at-cursor is this document's, not the last
+      // one's — after the current task, since at startup the panel's state is
+      // declared further down the script.
+      queueMicrotask(syncParamUI);
       hideSharedPlay(); // a shared score's prompt belongs to that score alone
       scheduleDraftSave();
     }
@@ -4402,6 +4406,7 @@
         await importFmVoiceFromFile(file, fmImportKey);
         return;
       }
+      resetForNewScore();
       if (/\.mmb(?:$|\?)/i.test(file.name)) {
         _sourceHandle = null;
         _sourceFileName = file.name;
@@ -5749,15 +5754,31 @@
       _lastFileName = 'untitled.mmlisp';
       _lastGoodIR = null;
       _lastSourceMap = null;
-      // Persisted per-channel mixer state (mute/solo/vol/master) is keyed by
-      // channel name and would otherwise carry into the new file — reset it.
+      resetForNewScore();
+      setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
+      refreshImportsAndCompile(); // the template imports the preset sets
+    }
+
+    // A score replaced whole — New, Open, Open Recent, a drop, Library's Open, a
+    // shared link, a song import: the old one stops, and the panel starts
+    // fresh — the mixer (mute, solo, channel vol, MASTER), the Dynamic
+    // Parameters and the channel pick. They are kept by name, and belong to
+    // the score they were set for. The caller's setEditorDoc then re-reads
+    // the FM panel's def-at-cursor from the new document.
+    function resetForNewScore() {
+      onStop();
       _mutedChannels.clear();
       _soloChannels.clear();
       _channelVol.clear();
       _masterVolUi = 31;
-      setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
-      onStop();
-      refreshImportsAndCompile(); // the template imports the preset sets
+      setSlider('sl-master', 'val-master', 31);
+      _dynVals = {};
+      selectedChannel = null;
+      selectedCh = null;
+      // The old score's channels and slots come down now; the new score's go
+      // up when it compiles (buildChStrips / renderDynParams in applyCompile).
+      buildChStrips(null);
+      renderDynParams(null);
     }
 
     // Compile the current source to IR. Logs diagnostics, updates _lastGoodIR /
@@ -6971,9 +6992,11 @@
       stopFmLiveLoop();
       resetChannelVu();
       _vizFrozen = null;
+      const wasRunning = !!player; // playing or paused
       player?.stop();
       workletNode?.port.postMessage({ type: 'flush' });
       player = null;
+      _paused = false; // a pause is over with the run it held
       releaseScreen();
       stopBackgroundAudio();
       setMediaSession('none');
@@ -6981,7 +7004,7 @@
       refreshSeLit();
       _timeCue = null;
       showTime(0);
-      log('Stopped');
+      if (wasRunning) log('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
       setPlayIcon(false);
       dropPlayheadFx();
@@ -7991,6 +8014,7 @@
       try {
         const src = await fetchText(path);
         stopLibraryPreview();
+        resetForNewScore();
         clearSourceDir();
         _sourceHandle = null;
         _sourceFileName = path.split('/').pop();
@@ -8155,7 +8179,7 @@
         return;
       }
       const name = params.get('n') || 'untitled.mmlisp';
-      onStop();
+      resetForNewScore();
       clearSourceDir();
       _sourceHandle = null;
       _sourceFileName = name.split('/').pop();
@@ -8163,10 +8187,6 @@
       _lastFileName = name;
       _lastGoodIR = null;
       _lastSourceMap = null;
-      _mutedChannels.clear();
-      _soloChannels.clear();
-      _channelVol.clear();
-      _masterVolUi = 31;
       setEditorDoc(src);
       // Only looking at someone's score must not replace your own draft: it
       // becomes the draft at its first edit.
