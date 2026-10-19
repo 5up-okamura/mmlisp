@@ -1072,6 +1072,7 @@
     // width (below the glyphs), filled and faded out via CSS. Driven by a plain
     // flag + a no-op dispatch (see flashBuild) — no StateField needed.
     let _buildFlashOn = false;
+    let _buildFlashRange = null; // { from, to } to flash only those lines, else every visible one
     const buildFlashLayer = layer({
       above: false, // behind the text, so the flash sits under the glyphs
       class: 'cm-buildFlashLayer',
@@ -1081,8 +1082,10 @@
         const markers = [];
         const doc = view.state.doc;
         const { from: vpFrom, to: vpTo } = view.viewport;
-        let pos = vpFrom;
-        while (pos <= vpTo) {
+        const r = _buildFlashRange;
+        const last = r ? Math.min(vpTo, r.to) : vpTo;
+        let pos = r ? Math.max(vpFrom, r.from) : vpFrom;
+        while (pos <= last) {
           const line = doc.lineAt(pos);
           if (line.to > line.from) {
             try {
@@ -5455,8 +5458,9 @@
     // on repeated builds; clear shortly after so lines scrolled into view later
     // don't re-flash.
     let _buildFlashTimer = null;
-    function flashBuild() {
+    function flashBuild(range = null) {
       if (!editorView) return;
+      _buildFlashRange = range;
       _buildFlashOn = false;
       editorView.dispatch({});
       _buildFlashOn = true;
@@ -7971,11 +7975,40 @@
       return regs;
     }
 
+    // The imported files' def-fm nodes by name, each file parsed once per
+    // import set; in import order, so a later one (an `:over` layer) wins.
+    const _importFmDefs = new WeakMap(); // an _importSources map -> Map(name -> { node, path, text })
+    function importedFmDefs() {
+      if (!_importSources) return new Map();
+      let defs = _importFmDefs.get(_importSources);
+      if (!defs) {
+        defs = new Map();
+        for (const [path, text] of _importSources) {
+          let roots = null;
+          try { roots = parse(text); } catch (_) { continue; }
+          for (const n of roots) if (isFmVoiceDefNode(n) && n.items[1]?.kind === 'atom') defs.set(n.items[1].value, { node: n, path, text });
+        }
+        _importFmDefs.set(_importSources, defs);
+      }
+      return defs;
+    }
+
+    // The FM voice the panel shows when no channel is selected, or null:
+    //  - the cursor inside a (def-fm …): that def, edited in place;
+    //  - else the cursor on a voice's name (a track's voice switch, a def-mod
+    //    :voice): the def it names — the score's own, else an import's, as the
+    //    compiler resolves it (a local def wins). An imported one is copied into
+    //    the score on its first edit (setCursorDefParam), where it then wins.
+    // A voice extending another resolves its base the same way, across files.
     function findFmDefAtCursor() {
       const state = editorView.state;
-      const cursorLine = state.doc.lineAt(state.selection.main.head).number;
+      const head = state.selection.main.head;
+      const cursorLine = state.doc.lineAt(head).number;
       const ast = parseCached(state.doc);
       if (!ast) return null;
+      const imported = importedFmDefs();
+      const local = fmDefIn(ast);
+      const lookup = (name) => local(name) ?? imported.get(name)?.node ?? null;
 
       let best = null;
       function visit(node) {
@@ -7991,22 +8024,34 @@
         for (const item of node.items ?? []) visit(item);
       }
       for (const root of ast) visit(root);
-      if (!best) return null;
+      if (!best) {
+        const name = findAtomAt(ast, state.doc, head, null)?.node?.value;
+        if (typeof name !== 'string' || name.startsWith(':')) return null;
+        best = local(name);
+        if (!best) {
+          const imp = imported.get(name);
+          if (!imp) return null;
+          return { name, origin: imp.path, copy: imp, regs: parseFmDefRegs(imp.node, lookup) };
+        }
+      }
 
       const from = state.doc.line(best.line).from;
       const to = state.doc.line(best.endLine ?? best.line).to;
       const nameNode = best.items[1];
       const name = nameNode && nameNode.kind === 'atom' ? nameNode.value : '';
-      // Where a new `:key value` goes: just inside the def's `)` (endColumn
-      // is one past it, 1-based).
-      const closeAt = state.doc.line(best.endLine).from + best.endColumn - 2;
       return {
         name,
         from,
         to,
-        closeAt,
-        regs: parseFmDefRegs(best, fmDefIn(ast)),
+        closeAt: defCloseAt(state.doc, best),
+        regs: parseFmDefRegs(best, lookup),
       };
+    }
+
+    // Where a new `:key value` goes in a def: just inside its `)` (endColumn is
+    // one past it, 1-based).
+    function defCloseAt(doc, node) {
+      return doc.line(node.endLine).from + node.endColumn - 2;
     }
 
     // The sample def under the cursor: `(def-pcm name …)`. What it sounds
@@ -8056,7 +8101,8 @@
         return;
       }
       if (selectedChannel == null && _fmCursorDefContext?.name) {
-        statusEl.textContent = _fmCursorDefContext.name;
+        const { name, origin } = _fmCursorDefContext;
+        statusEl.textContent = origin ? `${name} \u00b7 ${browseSetName(origin)}` : name;
         return;
       }
       statusEl.textContent = '';
@@ -9209,11 +9255,36 @@
       if (!defKey) return false;
       const ctx = _fmCursorDefContext ?? findFmDefAtCursor();
       if (!ctx) return false;
+      if (ctx.copy) return copyImportedVoice(ctx, defKey, String(value));
       const state = editorView.state;
       const oldText = state.doc.sliceString(ctx.from, ctx.to);
       const next = replaceOrInsertDefParam(oldText, defKey, String(value), ctx.closeAt - ctx.from);
       if (next === oldText) return true;
       editorView.dispatch({ changes: { from: ctx.from, to: ctx.to, insert: next } });
+      scheduleHotSwap();
+      return true;
+    }
+
+    // An imported voice's first edit: its def, as written in its file, goes into
+    // the score under the last top-level import — a local def of the same name
+    // wins (language.md §9.2), so the tracks keep their name — with the edit
+    // already in it. One change, so one undo takes the copy back out.
+    function copyImportedVoice(ctx, defKey, valueText) {
+      const { node, text: fileText, path } = ctx.copy;
+      const lines = fileText.split('\n').slice(node.line - 1, node.endLine);
+      const defText = lines.join('\n');
+      const closeAt = lines.slice(0, -1).reduce((n, l) => n + l.length + 1, 0) + node.endColumn - 2;
+      const edited = replaceOrInsertDefParam(defText, defKey, valueText, closeAt);
+      const state = editorView.state;
+      const roots = parseCached(state.doc) ?? [];
+      const lastImport = roots.filter((n) => n.kind === 'list' && n.items?.[0]?.value === 'import').pop();
+      const at = lastImport ? state.doc.line(lastImport.endLine ?? lastImport.line).to : 0;
+      const insert = lastImport ? `\n\n${edited}` : `${edited}\n\n`;
+      editorView.dispatch({ changes: { from: at, insert } });
+      const from = lastImport ? at + 2 : 0;
+      flashBuild({ from, to: from + edited.length });
+      log(`Copied ${ctx.name} from ${path} into the score to edit it (the copy wins over the import; delete it to go back)`, 'info');
+      scheduleHotSwap();
       return true;
     }
 

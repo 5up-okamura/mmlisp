@@ -1144,6 +1144,18 @@ the same popup as a panel value — anywhere from 8 to 96, so it can go large fo
 projector or a recording. It is remembered. On touch screens the text never
 goes below 16 px (smaller makes iOS zoom in when you tap the editor).
 
+### A voice in the FM panel
+
+With no channel picked in the panel's Channels, the FM panel shows the voice
+at the cursor, and the keyboards play it: the `(def-fm …)` the cursor is in,
+or the voice whose name the cursor is on — in a track, or a `def-mod :voice`
+— whether the score defines it or an import does. The panel's title names it,
+with the preset set it comes from. Moving a slider writes the def: in place
+for the score's own, and for an imported one, first a copy of its def, as its
+file writes it, under the score's imports — a def of the same name in the
+score wins over the import's (language.md §9.2), so the tracks keep the name.
+One undo takes the copy back out; deleting it goes back to the preset.
+
 ### Chords on the keyboards
 
 The keys play what is selected: a channel picked in the panel's Channels plays
