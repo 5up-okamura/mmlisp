@@ -30,6 +30,7 @@ export const MACRO_TARGET_RANGE = {
   // KEY-ON scoped
   NOTE_PITCH: { min: -32768, max: 32767 }, // cents
   NOTE_SEMI: { min: -48, max: 48 }, // semitone offsets (×100 cents at playback)
+  SNAP: { min: 0, max: 0xfff }, // pitch-class mask, bit 0 = C; 0 = off
   KEYON: { min: 0, max: 1 }, // gate; thresholded at >= 0.5 at playback
   VEL: { min: 0, max: 15 },
 
@@ -96,6 +97,21 @@ export function clampForTarget(target, v) {
     MACRO_TARGET_RANGE[target.replace(/\d+$/, "")];
   if (!range) return v;
   return Math.max(range.min, Math.min(range.max, v));
+}
+
+/**
+ * `:snap` (language.md §5.3): the integer semitone a channel is about to
+ * write, moved DOWN to the nearest pitch class whose bit is set in `mask`
+ * (bit 0 = C). Mask 0 means off. Runs before the cent offset is added, so a
+ * vibrato or glide rides the snapped note. Mirrors snap_note in mmlispseq.c.
+ */
+export function snapNote(note, mask) {
+  const m = mask & 0xfff;
+  if (!m) return note;
+  for (let n = note, i = 0; i < 12; n--, i++) {
+    if (m & (1 << (((n % 12) + 12) % 12))) return n;
+  }
+  return note;
 }
 
 /**
@@ -742,6 +758,7 @@ export function buildChannelRegState(chIndex) {
     algorithm: 0,
     feedback: 0,
     pan: 0, // -1 (left) / 0 (center) / 1 (right), used for PAN macro
+    snap: 0, // `:snap` pitch-class mask (snapNote); 0 = off
     ams: 0, // LFO AM sensitivity 0-3 (0xB4 bits 5-4)
     fms: 0, // LFO FM sensitivity 0-7 (0xB4 bits 2-0)
     b4: 0xc0, // Cache of YM2612 B4 register (read-only on hardware; we cache to preserve bits)

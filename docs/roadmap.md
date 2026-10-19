@@ -51,7 +51,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
   that builds a step vector after that.
   The signal-⊕ region model's first relaxation is loop⊕one-shot, which a
   baked `env × lfo` AM needs (runtime AM is the scaled macro today).
-- **Quantize snap** — a scale mask applied after the pitch sum.
 - **OP mask** — per-channel operator enable/disable.
 - **Dynamic performance branches** — `|` alternation, random part switching,
   random label jump.

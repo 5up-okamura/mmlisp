@@ -945,6 +945,19 @@ Both tables are generated **from the same code as `ir-utils.js`**
 - **PSG:** `MML_PSG_PERIOD[128]` u16, indexed by the MIDI note number
   (`period = round(3579545 / (32 × freq))`, clamped to 1023; MIDI 45/A2 →
   1017, every note below 45 is 1023).
+- **`:snap` (SNAP, language.md §5.3) runs first.** Every FM and PSG pitch
+  write — a note-on, a `:semi` step, a NOTE_PITCH set or sweep step — passes
+  its whole-semitone note (the note plus any `:semi`) through the channel's
+  12-bit pitch-class mask before the cents below are folded in: the note moves
+  down to the nearest class whose bit is set (bit 0 = C), at most 11 steps of a
+  shift and a test, and a channel with mask 0 skips it. The cents then ride the
+  snapped note, so a vibrato or a glide stays continuous. The mask is sticky
+  channel state (`MMLFmCh.snap`, `MMLPsgCh.snap`; an fm3-N track's writes are
+  CH3's, and every operator snaps on it), kept by a ghost and not reset by a
+  claim, like `:pan`. Setting it re-writes the sounding note's pitch at once,
+  as a NOTE_PITCH write does — which is how a host `SET_PARAM SNAP`, or a
+  `:snap $slot` the host's `SET_VAL` fed, changes the mode under a held note.
+  `snap_note` / `snapNote`; gate `m4-snap`.
 - Fractional pitch (cents — glide, vibrato, NOTE_PITCH sweeps) is folded into
   a whole note plus 0–99 cents and applied as a linear interpolation between
   the note's entry and the next (`fnum_block_for` / `psg_period_for`; the

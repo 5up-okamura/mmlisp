@@ -113,6 +113,7 @@ typedef struct {
   uint8_t vel_base, vel, vol_base, vol, gate;
   uint8_t current_note;
   int16_t pitch_cents;
+  uint16_t snap; /* `:snap` pitch-class mask the pitch writes pass through; 0 = off */
   uint8_t keyed;
 } MMLFmCh;
 
@@ -120,6 +121,7 @@ typedef struct {
   uint8_t vel_base, vel, vol_base, vol, gate;
   uint8_t current_note;
   int16_t pitch_cents;
+  uint16_t snap;
   uint8_t keyed;   /* a note is active */
   uint8_t sounding; /* attenuation < 15 */
 } MMLPsgCh;

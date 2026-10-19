@@ -1,0 +1,19 @@
+; The game picks the mode: :snap keeps every pitch a channel writes on a
+; scale, and here the scale is a $slot the "scale" slider stands in for. The
+; lead plays a line and a chromatic :semi run, the pad a triad — all snapped.
+; A $slot is read where its write fires, so the :snap at the top of each bar
+; takes the slider once a bar: drag it from major (2741) to minor (1453) and
+; the next bar turns minor, vibrato and all. Any other value is some scale.
+(import "presets/gm/set.mmlisp")
+(def-val scale 2741 0..4095 :public)   ; 0xAB5 = major, 0x5AD = minor (bit 0 = C)
+(def run (macro :step 16 :semi [0 1 2 3 4 5 6 7 8 9 10 11 12]))  ; chromatic, until :snap
+
+(fm1 :tempo 120 :oct 4 :len 8 gm-lead-square :vel 12
+  (macro :pitch (sin -15..15 :len 10f))
+  #loop
+  :snap $scale  e g b > c < b g e _
+  :snap $scale  run c1 (macro :semi none)
+  (go loop))
+
+(fm2 :oct 3 :len 2 gm-pad-warm :vel 11
+  #loop :snap $scale  c e g e (go loop))

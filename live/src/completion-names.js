@@ -38,7 +38,7 @@ export const AC_PARAMS = [
   ':tempo', ':lfo-rate', ':master', ':title', ':composer', ':author', ':pcm-voices',
   // track / channel
   ':prio', ':oct', ':oct+', ':len', ':gate', ':gate*', ':gate-',
-  ':vel', ':vel+', ':vel*', ':vol', ':pan', ':mode', ':shuffle', ':shuffle-base',
+  ':vel', ':vel+', ':vel*', ':vol', ':pan', ':snap', ':mode', ':shuffle', ':shuffle-base',
   // note dynamics / sequencer
   ':pitch', ':pitch+', ':semi', ':semi+', ':keyon', ':csm-rate',
   // echo / delay, macro, def-val, def-mod

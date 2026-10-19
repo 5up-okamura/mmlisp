@@ -143,7 +143,7 @@ export const OPCODE_NAME = Object.fromEntries(
 
 // ── Target ids (opcodes.md §7) ────────────────────────────────────────────
 // 0x02 is unassigned and stays parked (opcodes.md §7.1). Width is 2 (i16) for
-// NOTE_PITCH and TEMPO_SCALE, 1 (i8) for everything else.
+// the WIDE_TARGET_IDS below, 1 (i8) for everything else.
 export const TARGET_ID = {
   NOTE_PITCH: 0x01,
   TEMPO_SCALE: 0x03,
@@ -153,6 +153,7 @@ export const TARGET_ID = {
   NOTE_SEMI: 0x07,
   KEYON: 0x08,
   GATE: 0x09,
+  SNAP: 0x0a, // pitch-class mask (12 bits), i16
   FM_FB: 0x10,
   FM_TL1: 0x11,
   FM_TL2: 0x12,
@@ -231,10 +232,10 @@ export const PCM_POINT_TARGET_IDS = new Set([TARGET_ID.LOOP_START, TARGET_ID.LOO
 export const VAL_TARGET_IDS = new Set(Array.from({ length: 16 }, (_, n) => 0x50 + n));
 
 // i16 targets (mmb.md §7.4): NOTE_PITCH (cents), the reserved TEMPO_SCALE,
-// the six PCM points (byte offsets) and the value slots. Every other target
-// is i8.
+// SNAP (a 12-bit mask), the six PCM points (byte offsets) and the value
+// slots. Every other target is i8.
 const WIDE_TARGET_IDS = new Set([TARGET_ID.NOTE_PITCH, TARGET_ID.TEMPO_SCALE,
-  ...PCM_POINT_TARGET_IDS, ...VAL_TARGET_IDS]);
+  TARGET_ID.SNAP, ...PCM_POINT_TARGET_IDS, ...VAL_TARGET_IDS]);
 
 // Byte width (1 = i8, 2 = i16) of a target's PARAM value, by target id.
 export function targetWidth(id) {

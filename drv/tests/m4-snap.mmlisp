@@ -1,0 +1,27 @@
+; A/B + C gate: `:snap` (language.md §5.3) — every pitch write's whole
+; semitone snaps DOWN onto the channel's pitch-class mask, the cents ride.
+; fm1: a chromatic run and a chromatic :semi arp both land on C major; a
+; vibrato wobbles around the snapped note; `none` turns the mask off.
+; fm2: the mask from a value slot — the host writes minor (0x5AD) at frame
+; 90 (m4-snap.cmds.json), and the second `:snap $scale` reads it back, so the
+; same run turns minor; a host SET_PARAM SNAP at frame 150 lands mid-note
+; and moves the sounding e down onto its mask (0x45: c d f+ — so e → d).
+; sqr1: the PSG path, mask + :pitch glide riding the snapped notes.
+(def major [0 2 4 5 7 9 11])
+(def-val scale 2741 0..4095 :public)
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 16
+  :snap major
+  c c+ d d+ e f f+ g g+ a a+ b
+  (macro :step 2f :semi [#sus 0 1 2 3 4 5 6 7]) :len 4 c
+  (macro :semi none) (macro :pitch (sin -30..30 :len 8f)) c+ f+
+  (macro :pitch none) :snap none :len 16 c c+ d d+ e f f+ g)
+(fm2 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 16 :oct 5
+  :snap $scale
+  c c+ d d+ e f f+ g g+ a a+ b
+  :len 2 e ~ e
+  :snap $scale
+  :len 16 c c+ d d+ e f f+ g g+ a a+ b)
+(sqr1 :len 16 :oct 5
+  :snap [0 2 3 5 7 8 10]
+  c c+ d d+ e f f+ g g+ a a+ b
+  :pitch (linear 0..1200 :len 2) :len 2 c c)

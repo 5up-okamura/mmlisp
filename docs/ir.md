@@ -295,7 +295,7 @@ slot name, resolved at dispatch time.
 
 Notes: the readable shadow set is `FM_*` op/channel params (TL reads the
 *voiced* timbre TL, so relative TL composes under vel/vol attenuation),
-`VOL`, `PAN`, and `NOTE_PITCH` / `NOTE_SEMI` (the running cent offset, so
+`VOL`, `PAN`, `SNAP`, and `NOTE_PITCH` / `NOTE_SEMI` (the running cent offset, so
 `:pitch+ N` accumulates). Anything else reads 0.
 
 ### 5.8 PARAM_FROM_VAL
@@ -620,6 +620,7 @@ write.
 | ----------------- | -------------- | ----------------------------------------------------------- |
 | `NOTE_PITCH`      | −32768–32767 cents | Re-applied through F-number (A4/A0, or FM3 op registers) or PSG tone period. |
 | `NOTE_SEMI`       | −48–48         | Semitone offset ×100 cents on the pitch path. **Macro-only** — rejected as a `param-set`/inline PARAM target (`E_UNSUPPORTED_TARGET`). |
+| `SNAP`            | 0–4095         | The channel's pitch-class mask (bit 0 = C; 0 = off): every pitch write's whole semitone — the note plus its `NOTE_SEMI` — snaps down onto it before the cents are added (language.md §5.3). Sticky per FM/PSG channel (an fm3-N track's is CH3's). **Inline-only** — `PARAM_SET` / `PARAM_FROM_VAL`; not a macro target (`E_MACRO_TARGET`), no sweep. |
 | `KEYON`           | 0–1            | Retrigger gate (reg 0x28 key pulses). **Macro-only** — rejected as a PARAM target. |
 | `VEL`             | 0–15           | Velocity ladder (2 dB/step) folded into carrier TL / PSG att. **Macro / `:vel` note-scoped only** — rejected as a PARAM target. |
 | `VOL`             | 0–31           | Channel fader → carrier TL offset (FM) / attenuator (PSG). 0 = hard mute. |
@@ -645,7 +646,7 @@ write.
 | `FM_AMEN1`–`FM_AMEN4` | 0–1        | 0x60+op bit 7.                                               |
 
 CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz). On
-PSG-routed tracks only `VOL`, `NOTE_PITCH` and (on the noise channel)
+PSG-routed tracks only `VOL`, `NOTE_PITCH`, `SNAP` and (on the noise channel)
 `NOISE_MODE` PARAM events are honored.
 
 ## 8. Normalization invariants

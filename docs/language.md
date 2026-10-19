@@ -297,6 +297,7 @@ keywords at the form's first tick.
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
+| `:snap`    | `[pitch classes]`, mask, `$slot`, `none` | The scale every pitch write snaps onto (§5.3) |
 | `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:shuffle` | 51–90 or `none`           | Swing ratio (§5.2)                                       |
@@ -397,6 +398,35 @@ as 90 (`W_SHUFFLE_CLAMPED`); a value that is neither a number nor `none` is
 ```lisp
 (sqr1 :shuffle 66 :len 8  c c c c)
 ```
+
+### 5.3 Snap to a scale (`:snap`)
+
+`:snap` gives an FM or PSG channel a scale, and from then on **every pitch the
+channel writes stays in it**: the notes as written, a `:semi` arpeggio's
+steps, a slot-fed transposition — the whole semitone each pitch write is about
+to sound moves **down** to the nearest pitch class in the scale, and the cents
+(`:pitch`, a vibrato, a glide) ride on the snapped note, so a bend stays
+smooth. The value is the scale's pitch classes (0 = C, 1 = C♯ … 11 = B; a
+number outside that is folded mod 12, so `(+ root n)` transposes), the 12-bit
+mask itself (bit 0 = C), a `$slot` (§8), or `none` (= 0, off):
+
+```lisp
+(def major [0 2 4 5 7 9 11])
+(def-val scale 2741 0..4095 :public)        ; 2741 = 0xAB5 = C major
+
+(fm1 :snap major  c c+ d d+ e f f+ g)        ; sounds c c d d e f f g
+(fm2 :snap major (macro :step 16 :semi [#sus 0 1 2 3 4 5 6 7]) c1) ; a chromatic arp, in key
+(sqr1 :snap $scale  c d e f g a b)           ; the game writes the slot: same line, new mode
+```
+
+The mask is sticky channel state (an fm3-N track's is CH3's, and every
+operator snaps on it); setting it moves a sounding note at once. A mask is
+state, not a level: `:snap` takes no curve and no `+`/`*`, is not a macro
+target (`E_MACRO_TARGET`), and a pitch class that is not a whole number is
+`E_PARAM_VALUE`. A pcm track has no pitch to snap (`E_PCM_NO_PITCH`). A
+`$slot` is read where the `:snap` is written, as any slot-fed parameter is
+(§8); a host changes the mode under a held note by writing the slot and the
+channel's `SNAP` parameter (driver.md §8).
 
 ---
 

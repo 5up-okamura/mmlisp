@@ -72,12 +72,17 @@ const SUPPORTED_TARGETS = new Set([
   ]),
 ]);
 
+// Inline-only targets: sticky channel state with no per-note macro form.
+// SNAP (`:snap`, language.md §5.3) is a pitch-class mask the channel's every
+// pitch write passes through; a mask is set, never swept or stepped.
+const INLINE_TARGETS = new Set(["SNAP"]);
+
 // A PCM voice has no pitch step. The engine advances its pointer one byte
 // a sample and nothing else, so a note picks a BAKED blob and that is the whole
 // pitch mechanism. Every runtime pitch move — cents, semitones, glide, a
 // (macro :pitch …) vibrato — has no hardware to land on; reject it rather than
 // drop it silently (.claude/memory/pcm.md).
-const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI"]);
+const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI", "SNAP"]);
 
 // A PCM note's points (docs/language.md §16): the range it plays,
 // :pcm-start / :pcm-end / :pcm-len (RANGE_*), and inside it the loop a held
@@ -203,6 +208,7 @@ const PARAM_SET_TARGETS = new Set([
   ...[...SUPPORTED_TARGETS].filter(
     (t) => t !== "NOTE_SEMI" && t !== "KEYON" && t !== "VEL",
   ),
+  ...INLINE_TARGETS,
   ...PCM_POINT_TARGETS,
 ]);
 
@@ -1528,7 +1534,7 @@ function exprHasValRef(node) {
 function valueCtx(target, vals, diagnostics, trackName, src, typedDefs = null) {
   return {
     ...makeEvalCtx(diagnostics, trackName, src, typedDefs),
-    i16: target === "NOTE_PITCH",
+    i16: target === "NOTE_PITCH" || target === "SNAP",
     isSelf: (name) => target != null && (canonicalTarget(":" + name) === target ||
       (vals?.has(name) && `VAL${vals.get(name).slot}` === target)),
     resolveSlot: (raw) => resolveValRef(raw, vals, diagnostics, trackName, src),
@@ -1624,6 +1630,32 @@ function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName,
     steps = r.steps;
   }
   emitRuntime(steps, target, push, diagnostics, trackName, src);
+}
+
+// `:snap` (language.md §5.3): a pitch-class mask the channel's pitch writes
+// snap down to. Written as the classes `[0 4 7]` (each folded mod 12, so
+// `(+ root n)` transposes), the mask itself, or a `$slot`; `none` is 0 = off.
+// A mask is state, not a level: no curve, no `+`/`*`.
+function writeSnap(sym, op, valueNode, env, vals, push, diagnostics, src, trackName, typedDefs) {
+  const err = (msg) => pushDiag(diagnostics, "error", "E_PARAM_VALUE", msg, src, trackName);
+  if (op) return err(`${sym} is a mask; it has no '${op}' form`);
+  if (valueNode?.kind === "list" && valueNode.bracket === "[]") {
+    let mask = 0;
+    for (const item of valueNode.items.filter((n) => n.kind !== "comment")) {
+      const v = evalScalarValue(item, env, makeEvalCtx(diagnostics, trackName, src, typedDefs));
+      if (v === null) return;
+      if (!Number.isInteger(v)) return err(`:snap takes whole pitch classes, not ${v}`);
+      mask |= 1 << (((v % 12) + 12) % 12);
+    }
+    push("PARAM_SET", { target: "SNAP", value: mask });
+    return;
+  }
+  const v = readValue(valueNode, env, valueCtx("SNAP", vals, diagnostics, trackName, src, typedDefs));
+  if (!v) return;
+  if (v.kind === "none") push("PARAM_SET", { target: "SNAP", value: 0 });
+  else if (v.kind === "scalar") push("PARAM_SET", { target: "SNAP", value: Math.round(v.value) });
+  else if (v.kind === "runtime") emitRuntime(v.steps, "SNAP", push, diagnostics, trackName, src);
+  else err(`:snap takes pitch classes [0 4 7], a mask, a $value or none, not a ${v.kind === "signal" ? "curve" : `'${v.value}'`}`);
 }
 
 // Target group: a [] vector of macro keywords in target position, e.g.
@@ -3283,7 +3315,8 @@ const BODY_KEYWORDS = new Set(["oct", "len", "gate", "tempo", "shuffle", "shuffl
   "csm-rate", "mode", "vel", "time", "prio", "pcm-voices", "step"]);
 function isLanguageKeyword(name) {
   const t = canonicalTarget(":" + name);
-  return BODY_KEYWORDS.has(name) || SUPPORTED_TARGETS.has(t) || PCM_POINT_TARGETS.has(t);
+  return BODY_KEYWORDS.has(name) || SUPPORTED_TARGETS.has(t) || INLINE_TARGETS.has(t) ||
+    PCM_POINT_TARGETS.has(t);
 }
 
 // Keyword → IR target name (canonicalTarget).
@@ -3293,6 +3326,7 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":master": "MASTER",
   ":pitch": "NOTE_PITCH",
   ":semi": "NOTE_SEMI",
+  ":snap": "SNAP",
   ":keyon": "KEYON",
   // LFO
   ":lfo-rate": "LFO_RATE",
@@ -3862,7 +3896,8 @@ function compileChannelBody(
               // :tempo, whichever track carries it (§8).
               const valDef = vals?.get(stem.slice(1));
               const target = valDef ? `VAL${valDef.slot}` : canonicalTarget(stem);
-              if (!valDef && !SUPPORTED_TARGETS.has(target) && !PCM_POINT_TARGETS.has(target)) {
+              if (!valDef && !SUPPORTED_TARGETS.has(target) && !INLINE_TARGETS.has(target) &&
+                  !PCM_POINT_TARGETS.has(target)) {
                 // Unrecognized `:keyword` — a typo or a stray track-header option
                 // used mid-body. Fail loudly instead of dropping it silently.
                 pushDiag(
@@ -3906,6 +3941,11 @@ function compileChannelBody(
                   args,
                   src: nodeSrc(node),
                 });
+              if (target === "SNAP") {
+                writeSnap(val, op, items[i], evalEnv, vals, push, diagnostics, nodeSrc(node),
+                  trackName, typedDefs);
+                break;
+              }
               if (!op && rawVal === "none") {
                 // Stop a running inline PARAM_SWEEP, freezing the value.
                 push("PARAM_SWEEP_STOP", { target });

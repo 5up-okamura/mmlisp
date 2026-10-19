@@ -221,6 +221,13 @@ export const REFERENCE = [
     example: '(fm1 :len 8 :pan left c e :pan right g e :pan center c)',
   },
   {
+    name: ':snap', aliases: ['scale', 'quantize'], cat: 'track', section: '§5.3', tracks: ['fm', 'psg'],
+    syntax: ':snap [0 2 4 5 7 9 11]  ·  :snap $slot  ·  :snap none',
+    summary: 'The scale the channel stays in: every note, arp step and glide snaps down onto these pitch classes (0 = C). A $slot lets the game change the mode.',
+    insert: ':snap [0 2 4 5 7 9 11]',
+    example: '(fm1 :len 16 :snap [0 2 4 5 7 9 11] c c+ d d+ e f f+ g (macro :step 2f :semi [#sus 0 1 2 3 4 5 6 7]) :len 2 c)',
+  },
+  {
     name: ':mode', aliases: ['shot', 'loop', 'gate', 'white0', 'periodic0'], cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
     syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop | gate',
     summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once, loops while held, or plays once and is cut at its gate.',

@@ -110,6 +110,7 @@ enum {
   T_NOTE_SEMI = 0x07,
   T_KEYON = 0x08,
   T_GATE = 0x09,
+  T_SNAP = 0x0a,
   T_FM_FB = 0x10,
   T_FM_TL1 = 0x11,
   T_FM_ALG = 0x15,
@@ -149,11 +150,11 @@ static int target_point(int target) {
 }
 
 /* The i16 targets (mmb.md §7.4), mirroring WIDE_TARGET_IDS in
- * live/src/mmb.js: cents, the reserved tempo scale, and the PCM points (byte
- * offsets into a blob, up to the bank's 32 KB window). */
+ * live/src/mmb.js: cents, the reserved tempo scale, the snap mask, and the
+ * PCM points (byte offsets into a blob, up to the bank's 32 KB window). */
 static int target_wide(int target) {
-  return target == T_NOTE_PITCH || target == T_TEMPO_SCALE || target_point(target) ||
-         T_IS_VAL(target);
+  return target == T_NOTE_PITCH || target == T_TEMPO_SCALE || target == T_SNAP ||
+         target_point(target) || T_IS_VAL(target);
 }
 
 MML_HOT uint16_t rd16(const uint8_t *b, uint32_t o) {
@@ -521,8 +522,25 @@ static uint16_t psg_period_for(int note, int cents) {
   return (uint16_t)clampi(p, 1, 1023);
 }
 
+/* `:snap` (language.md §5.3): the whole-semitone note a channel is about to
+ * write, moved DOWN to the nearest pitch class whose bit is set in the
+ * channel's mask (bit 0 = C); mask 0 is off. Runs before fold_cents, so the
+ * cents — a vibrato, a glide — ride the snapped note. At most 11 steps, each a
+ * shift and a test; nothing on a channel with no mask. Mirrors snapNote in
+ * live/src/ir-utils.js. */
+static int snap_note(int note, uint16_t mask) {
+  if (!(mask & 0xfff)) return note;
+  for (int n = note, i = 0; i < 12; n--, i++) {
+    int pc = n % 12;
+    if (pc < 0) pc += 12;
+    if (mask & (1 << pc)) return n;
+  }
+  return note;
+}
+
 static void write_fm3_op_pitch(MMLSeq *s, int op, int note, int cents);
 static void write_fm_pitch(MMLSeq *s, int ch, int note, int cents) {
+  note = snap_note(note, s->fm[ch].snap);
   /* CSM (driver.md §9): in this mode CH3's operators 1-3 read their own
    * F-numbers ($A8-$AE) and only op4 the channel's, so the note that sets the
    * channel's pitch sets all four — each operator rings at the note times its
@@ -538,7 +556,7 @@ static void write_fm_pitch(MMLSeq *s, int ch, int note, int cents) {
   ym_always(s, port, (uint8_t)(0xa0 + off), (uint8_t)(fb & 0xff));
 }
 static void write_psg_pitch(MMLSeq *s, int pc, int note, int cents) {
-  uint16_t p = psg_period_for(note, cents);
+  uint16_t p = psg_period_for(snap_note(note, s->psg[pc].snap), cents);
   psg_byte(s, (uint8_t)(0x80 | ((pc & 3) << 5) | (p & 0x0f)));
   psg_byte(s, (uint8_t)((p >> 4) & 0x3f));
 }
@@ -567,7 +585,8 @@ static void fm3_key_op(MMLSeq *s, int op, int on) {
   ym_key(s, (uint8_t)(s->fm3_op_mask | 0x02)); /* ch2 key = 0x02 */
 }
 static void write_fm3_op_pitch(MMLSeq *s, int op, int note, int cents) {
-  uint16_t fb = fnum_block_for(note, cents);
+  /* An operator's note snaps on CH3's mask (:snap on an fm3-N track is CH3's). */
+  uint16_t fb = fnum_block_for(snap_note(note, s->fm[2].snap), cents);
   uint8_t high = (uint8_t)((((fb >> 11) & 7) << 3) | ((fb >> 8) & 7));
   uint8_t low = (uint8_t)(fb & 0xff);
   if (op == 4) {
@@ -761,6 +780,13 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
       write_fm3_op_pitch(s, op, s->fm3_op_note[op - 1], value);
       return;
     }
+    if (op && target == T_SNAP) {
+      /* The mask is CH3's (every operator snaps on it); this operator's note
+       * moves onto it now, as its NOTE_PITCH would. */
+      s->fm[2].snap = (uint16_t)clampi(value, 0, 0xfff);
+      write_fm3_op_pitch(s, op, s->fm3_op_note[op - 1], s->fm3_op_cents[op - 1]);
+      return;
+    }
     if (op && (target == T_VEL || target == T_VOL)) {
       if (target == T_VEL) {
         s->fm3_op_vel[op - 1] = (uint8_t)clampi(value, 0, VEL_MAX);
@@ -791,6 +817,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     } else if (target == T_NOTE_PITCH) {
       st->pitch_cents = (int16_t)value;
       if (pc < 3) write_psg_pitch(s, pc, st->current_note, value);
+    } else if (target == T_SNAP) {
+      /* Sticky mask (language.md §5.3); the sounding note moves onto it. */
+      st->snap = (uint16_t)clampi(value, 0, 0xfff);
+      if (pc < 3) write_psg_pitch(s, pc, st->current_note, st->pitch_cents);
     }
     return;
   }
@@ -835,6 +865,12 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   if (target == T_NOTE_PITCH) {
     c->pitch_cents = (int16_t)value;
     write_fm_pitch(s, ch, c->current_note, value);
+    return;
+  }
+  if (target == T_SNAP) {
+    /* Sticky mask (language.md §5.3); the sounding note moves onto it. */
+    c->snap = (uint16_t)clampi(value, 0, 0xfff);
+    write_fm_pitch(s, ch, c->current_note, c->pitch_cents);
     return;
   }
   if (target == T_VEL || target == T_VOL) {
@@ -950,6 +986,7 @@ static int read_param(const MMLSeq *s, int ch, int target) {
   if (fc < 6) {
     const MMLFmCh *c = &s->fm[fc];
     if (target == T_NOTE_PITCH) return c->pitch_cents;
+    if (target == T_SNAP) return c->snap;
     if (target == T_FM_FB) return c->feedback;
     if (target == T_FM_ALG) return c->algorithm;
     if (target >= T_FM_TL1 && target <= T_FM_TL1 + 3)
@@ -972,6 +1009,8 @@ static int read_param(const MMLSeq *s, int ch, int target) {
     }
   } else if (ch < 10 && target == T_NOTE_PITCH) {
     return s->psg[ch - 6].pitch_cents;
+  } else if (ch < 10 && target == T_SNAP) {
+    return s->psg[ch - 6].snap;
   }
   return 0;
 }
@@ -3085,6 +3124,7 @@ static void ghost_restore(MMLSeq *s, int ch) {
     c->gate = gc->gate;
     c->pitch_cents = gc->pitch_cents;
     c->current_note = gc->current_note;
+    c->snap = gc->snap;
     /* Carrier level as note_on composes it, so a vel/vol below unity lands. */
     recompose_carriers(s, ch);
     keyed = gc->keyed;
@@ -3105,6 +3145,7 @@ static void ghost_restore(MMLSeq *s, int ch) {
     p->gate = gp->gate;
     p->pitch_cents = gp->pitch_cents;
     p->current_note = gp->current_note;
+    p->snap = gp->snap;
     p->keyed = gp->keyed;
     keyed = gp->keyed;
     if (pc == 3) s->noise_mode = g->noise_mode; /* the effect set its own */

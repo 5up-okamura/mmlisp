@@ -65,6 +65,7 @@ import {
   toSlotValue,
   midiToPsgPeriod,
   midiToFnumBlock,
+  snapNote,
   velToTlAtten,
   VEL_FINE,
   VEL_FINE_MAX,
@@ -176,6 +177,7 @@ function freshFmChannel() {
     ams: 0,
     fms: 0,
     pan: 0, // -1/0/+1; B4 defaults to both speakers
+    snap: 0, // `:snap` pitch-class mask (snapNote); 0 = off
     // vel is TWO values (driver.md §7.1). velBase is the score's sticky
     // velocity, written only by a PARAM_SET VEL out of the stream; vel is the
     // live one a macro drives. Every note-on copies base → live, which is what
@@ -464,6 +466,7 @@ export class DrvPlayer {
       gate: 8,
       pitchCents: 0,
       currentNote: 60,
+      snap: 0,
       sounding: false, // audible: att < 15 (change-only / master gate)
       keyed: false, // note active: set at NOTE_ON, cleared at channel-off. A
       // vel macro can drive att to 15 (silent) mid-note without un-keying, so
@@ -746,7 +749,10 @@ export class DrvPlayer {
     return p < 1 ? 1 : p > 1023 ? 1023 : p;
   }
 
+  // Every pitch write passes its whole-semitone note through the channel's
+  // `:snap` mask first (driver.md §8); the cents then ride the snapped note.
   _writeFmPitch(ch, note, cents) {
+    note = snapNote(note, this._fm[ch].snap);
     // CSM (driver.md §9): CH3's operators 1-3 read their own F-numbers
     // ($A8-$AE) in this mode and only op4 the channel's, so the note that sets
     // the channel's pitch sets all four — the formant the voice defines.
@@ -763,7 +769,7 @@ export class DrvPlayer {
     this._ymAlways(port, 0xa0 + off, fnum & 0xff);
   }
   _writePsgPitch(psgCh, note, cents) {
-    const period = this._psgPeriodFor(note, cents);
+    const period = this._psgPeriodFor(snapNote(note, this._psg[psgCh].snap), cents);
     this._psgByte(0x80 | ((psgCh & 0x03) << 5) | (period & 0x0f));
     this._psgByte((period >> 4) & 0x3f);
   }
@@ -939,7 +945,8 @@ export class DrvPlayer {
   }
 
   _writeFm3OpPitch(op, note, cents = 0) {
-    const fb = this._fnumBlockFor(note, cents);
+    // An operator's note snaps on CH3's mask (:snap on an fm3-N track is CH3's).
+    const fb = this._fnumBlockFor(snapNote(note, this._fm[2].snap), cents);
     const high = (((fb >> 11) & 0x07) << 3) | ((fb >> 8) & 0x07);
     const low = fb & 0xff;
     if (op === 4) {
@@ -1678,6 +1685,13 @@ export class DrvPlayer {
         this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], value);
         return;
       }
+      if (op && target === TARGET_ID.SNAP) {
+        // The mask is CH3's (every operator snaps on it); this operator's note
+        // moves onto it now, as its NOTE_PITCH would.
+        this._fm[2].snap = value < 0 ? 0 : value > 0xfff ? 0xfff : value;
+        this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], this._fm3OpCents[op - 1]);
+        return;
+      }
       if (op && (target === TARGET_ID.VEL || target === TARGET_ID.VOL)) {
         if (target === TARGET_ID.VEL) {
           this._fm3OpVel[op - 1] = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
@@ -1710,6 +1724,10 @@ export class DrvPlayer {
       } else if (target === TARGET_ID.NOTE_PITCH) {
         st.pitchCents = value;
         if (psgCh < 3) this._writePsgPitch(psgCh, st.currentNote, value);
+      } else if (target === TARGET_ID.SNAP) {
+        // Sticky mask (language.md §5.3); the sounding note moves onto it.
+        st.snap = value < 0 ? 0 : value > 0xfff ? 0xfff : value;
+        if (psgCh < 3) this._writePsgPitch(psgCh, st.currentNote, st.pitchCents);
       }
       return;
     }
@@ -1752,6 +1770,11 @@ export class DrvPlayer {
       case target === TARGET_ID.NOTE_PITCH:
         regs.pitchCents = value;
         this._writeFmPitch(ch, regs.currentNote, value);
+        return;
+      case target === TARGET_ID.SNAP:
+        // Sticky mask (language.md §5.3); the sounding note moves onto it.
+        regs.snap = value < 0 ? 0 : value > 0xfff ? 0xfff : value;
+        this._writeFmPitch(ch, regs.currentNote, regs.pitchCents);
         return;
       case target === TARGET_ID.VEL:
       case target === TARGET_ID.VOL: {
@@ -2713,6 +2736,7 @@ export class DrvPlayer {
       r.gate = gr.gate;
       r.pitchCents = gr.pitchCents;
       r.currentNote = gr.currentNote;
+      r.snap = gr.snap;
       // Carrier level as a note-on composes it, so a vel/vol below unity lands.
       this._recomposeCarriers(ch);
       keyed = gr.keyed;
@@ -2732,6 +2756,7 @@ export class DrvPlayer {
       st.gate = gs.gate;
       st.pitchCents = gs.pitchCents;
       st.currentNote = gs.currentNote;
+      st.snap = gs.snap;
       st.keyed = keyed = gs.keyed;
       if (psgCh === 3) this._noiseMode = g.noiseMode; // the effect set its own
       if (keyed) {
@@ -2902,6 +2927,7 @@ export class DrvPlayer {
     if (fc < 6) {
       const regs = this._fm[fc];
       if (target === TARGET_ID.NOTE_PITCH) return regs.pitchCents;
+      if (target === TARGET_ID.SNAP) return regs.snap;
       if (target === TARGET_ID.FM_FB) return regs.feedback;
       if (target === TARGET_ID.FM_ALG) return regs.algorithm;
       if (target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4)
@@ -2919,6 +2945,8 @@ export class DrvPlayer {
       }
     } else if (ch < 10 && target === TARGET_ID.NOTE_PITCH) {
       return this._psg[ch - 6].pitchCents;
+    } else if (ch < 10 && target === TARGET_ID.SNAP) {
+      return this._psg[ch - 6].snap;
     }
     return 0;
   }

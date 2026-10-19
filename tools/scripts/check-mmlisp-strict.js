@@ -121,6 +121,11 @@ async function main() {
       expected: [],
     },
     {
+      label: ":snap: a mask, not a level — no operator, curve, word, fraction, note name, macro; not on pcm",
+      src: "(fm1 :len 8 :snap+ 1 c :snap (sin 0..1 :len 4) c :snap foo c :snap [0 4.5] c :snap [c e g] c (macro :snap [0]) c :snap [0 4 7] :snap 2741 :snap none c)\n(pcm1 :snap [0] c)",
+      expected: ["E_PARAM_VALUE", "E_PARAM_VALUE", "E_PARAM_VALUE", "E_PARAM_VALUE", "E_EVAL_OPERAND", "E_MACRO_TARGET", "E_PCM_NO_PITCH", "E_PCM_SAMPLE_REQUIRED"],
+    },
+    {
       label: "echo before any note",
       src: "(fm1 (echo 3 :vel+ -3) c d (echo 2 :vel+ -2))",
       expected: ["W_ECHO_NO_NOTE"],

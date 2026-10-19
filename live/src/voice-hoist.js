@@ -49,10 +49,11 @@ export const VOICE_TARGETS = new Set([
     ["AR", "DR", "SR", "RR", "SL", "TL", "KS", "ML", "DT", "SSG", "AMEN"].map((k) => `FM_${k}${op}`)),
 ]);
 // What moves with a voice: the channel's own settings written before the note
-// (`:vel`, `:vol`, `:pan`, `:pitch`), which would otherwise rewrite the new
-// voice's levels and pitch in the note's frame. A `:vel` alone moves nothing.
-// LFO rate, master and tempo are the whole chip's and stay with the note.
-const MOVE_TARGETS = new Set([...VOICE_TARGETS, "VEL", "VOL", "PAN", "NOTE_PITCH", "NOTE_SEMI"]);
+// (`:vel`, `:vol`, `:pan`, `:pitch`, `:snap`), which would otherwise rewrite
+// the new voice's levels and pitch in the note's frame. A `:vel` alone moves
+// nothing. LFO rate, master and tempo are the whole chip's and stay with the
+// note.
+const MOVE_TARGETS = new Set([...VOICE_TARGETS, "VEL", "VOL", "PAN", "NOTE_PITCH", "NOTE_SEMI", "SNAP"]);
 
 const FM_CHANNELS = new Set(["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"]);
 // Events that may sit between the previous note and this one without ending

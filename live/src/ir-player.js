@@ -21,6 +21,7 @@ import {
   YM2612_MASTER_CLOCK,
   pitchToMidi,
   midiToFnumBlock,
+  snapNote,
   velToTlAtten,
   velFine,
   sumLevelOffsets,
@@ -243,6 +244,7 @@ export class IRPlayer {
     this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
     this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
+    this._psgSnap = new Array(4).fill(0); // `:snap` mask per PSG ch
     // A NOTE_PITCH sweep is scheduled whole at dispatch, leaving the pitch
     // offsets above at its END value. A glide sweep is emitted just before its
     // note's NOTE_ON (same tick), so that note must start from the sweep's
@@ -470,6 +472,7 @@ export class IRPlayer {
     this._csmHold = false; // a rate rest stopped Timer A (driver.md §9)
     this._psgCurrentMidi.fill(60);
     this._psgPitchOffset.fill(0);
+    this._psgSnap.fill(0);
     this._pitchSweepOnset.clear();
     this._psgVol.fill(VOL_UNITY);
     this._psgLastVel.fill(15);
@@ -1844,9 +1847,21 @@ export class IRPlayer {
     return onset && Math.abs(onset.when - when) < 1e-9 ? onset.offset : fallback;
   }
 
-  _writeFm3OpPitch(op, midiNote, when) {
-    const { fnum, block } = midiToFnumBlock(midiNote);
+  // Every pitch write passes its whole-semitone note through the channel's
+  // `:snap` mask first; the cents ride on the snapped note (driver.md §8). An
+  // FM3 operator's note snaps on CH3's mask.
+  _writeFm3OpPitch(op, note, cents, when) {
+    const { fnum, block } = midiToFnumBlock(
+      snapNote(note, this._chRegs[2]?.snap ?? 0) + cents / 100,
+    );
     this._writeFm3OpFnum(op, fnum, block, when);
+  }
+
+  _writeFmNote(port, chOffset, ch, note, cents, when) {
+    const { fnum, block } = midiToFnumBlock(
+      snapNote(note, this._chRegs[ch]?.snap ?? 0) + cents / 100,
+    );
+    this._writeFmFnum(port, chOffset, fnum, block, when);
   }
 
   // A channel's F-number, high byte then low. In CSM (driver.md §9) CH3's
@@ -2071,7 +2086,6 @@ export class IRPlayer {
           when,
           this._chRegs[ch]?.pitchOffset ?? 0,
         );
-        const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
         const chKey = (port << 2) | chOffset; // 0x28 channel key
         const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
@@ -2113,10 +2127,9 @@ export class IRPlayer {
           // on the note, that is the pitch it sounds from, and the plain one is
           // never written — as the driver's note-on (onset_pitch) does.
           let onsetWritten = false;
-          const basePitchWrite = (centOffset, t) => {
+          const basePitchWrite = (centOffset, t, semi = 0) => {
             if (Math.abs(t - when) < 1e-9) onsetWritten = true;
-            const { fnum, block } = midiToFnumBlock(midi + centOffset / 100);
-            this._writeFmFnum(port, chOffset, fnum, block, t);
+            this._writeFmNote(port, chOffset, ch, midi + semi, centOffset, t);
           };
           const fmOffset = () => this._chRegs[ch]?.pitchOffset ?? 0;
           this._schedulePitchMacro(
@@ -2136,15 +2149,15 @@ export class IRPlayer {
             fmOffset,
           );
           // Write F-number high first (block + MSB), then low
-          if (!onsetWritten) this._writeFmFnum(port, chOffset, fnum, block, when);
+          if (!onsetWritten) this._writeFmNote(port, chOffset, ch, midi, centOffset, when);
         } else {
           // FM3 operator note: FM3_OP_PITCH already wrote this operator's
           // F-number with its sticky :pitch offset; its pitch / semi macros
           // write that operator's registers alone (driver.md §13.4).
           const opState = this._fm3Op[fm3Op - 1];
           opState.midi = midi;
-          const fm3PitchWrite = (noteCentOffset, t) => {
-            this._writeFm3OpPitch(fm3Op, midi + noteCentOffset / 100, t);
+          const fm3PitchWrite = (noteCentOffset, t, semi = 0) => {
+            this._writeFm3OpPitch(fm3Op, midi + semi, noteCentOffset, t);
           };
           const fm3Offset = () => opState.offset;
           this._schedulePitchMacro(
@@ -2389,7 +2402,7 @@ export class IRPlayer {
           // left at an undefined frequency. Each fm3-N track's own FM3_OP_PITCH
           // (emitted after this event) overrides its operator's seed.
           for (let op = 1; op <= 4; op++) {
-            this._writeFm3OpPitch(op, 60, when);
+            this._writeFm3OpPitch(op, 60, 0, when);
           }
         }
         break;
@@ -2402,7 +2415,7 @@ export class IRPlayer {
         const st = this._fm3Op[op - 1];
         st.midi = midi;
         const offset = this._onsetPitchOffset(`op:${op}`, when, st.offset);
-        this._writeFm3OpPitch(op, midi + offset / 100, when);
+        this._writeFm3OpPitch(op, midi, offset, when);
         break;
       }
     }
@@ -2785,6 +2798,7 @@ export class IRPlayer {
       case "FM_FMS": return regs.fms ?? 0;
       case "VOL": return regs.vol ?? 0;
       case "PAN": return regs.pan ?? 0;
+      case "SNAP": return regs.snap ?? 0;
       // Inline `:pitch+ N` accumulates onto the running cent offset (else it
       // would read 0 and overwrite rather than add).
       case "NOTE_PITCH":
@@ -3055,17 +3069,26 @@ export class IRPlayer {
         if (op) {
           const st = this._fm3Op[op - 1];
           st.offset = value;
-          this._writeFm3OpPitch(op, st.midi + value / 100, when);
+          this._writeFm3OpPitch(op, st.midi, value, when);
           break;
         }
         // Cent offset applied to the current note on this FM channel (100 cents = 1 semitone).
-        const baseMidi = regs.currentMidi ?? 60;
-        const centOffset = value;
-        regs.pitchOffset = centOffset;
-        const { fnum: pf, block: pb } = midiToFnumBlock(
-          baseMidi + centOffset / 100,
-        );
-        this._writeFmFnum(port, chOffset, pf, pb, when);
+        regs.pitchOffset = value;
+        this._writeFmNote(port, chOffset, ch, regs.currentMidi ?? 60, value, when);
+        break;
+      }
+      case "SNAP": {
+        // The mask is sticky channel state (language.md §5.3); the sounding
+        // note moves onto it at once, as a NOTE_PITCH write would move it. On
+        // an fm3-N track it is CH3's mask, and that operator's note moves.
+        regs.snap = Math.max(0, Math.min(0xfff, Math.round(value)));
+        const op = this._fm3OpOf(ev);
+        if (op) {
+          const st = this._fm3Op[op - 1];
+          this._writeFm3OpPitch(op, st.midi ?? 60, st.offset ?? 0, when);
+        } else {
+          this._writeFmNote(port, chOffset, ch, regs.currentMidi ?? 60, regs.pitchOffset ?? 0, when);
+        }
         break;
       }
 
@@ -3825,10 +3848,12 @@ export class IRPlayer {
   ) {
     if (!semiMacro) return;
 
+    // The semitones stay whole (writeFn's third argument) so the channel's
+    // `:snap` mask sees note + semi, as the driver's write_note_semi does.
     const wf =
       semiMacro.add && offsetGetter
-        ? (semi, t) => writeFn(semi * 100 + offsetGetter(), t)
-        : (semi, t) => writeFn(semi * 100, t);
+        ? (semi, t) => writeFn(offsetGetter(), t, semi)
+        : (semi, t) => writeFn(0, t, semi);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
       when,
       gateTicks,
@@ -4004,14 +4029,11 @@ export class IRPlayer {
           });
         if (opState) {
           opState.offset = centOffset;
-          this._writeFm3OpPitch(op, baseMidi + centOffset / 100, frameWhen);
+          this._writeFm3OpPitch(op, baseMidi, centOffset, frameWhen);
           continue;
         }
         this._chRegs[ch].pitchOffset = centOffset;
-        const { fnum: pf, block: pb } = midiToFnumBlock(
-          baseMidi + centOffset / 100,
-        );
-        this._writeFmFnum(port, chOffset, pf, pb, frameWhen);
+        this._writeFmNote(port, chOffset, ch, baseMidi, centOffset, frameWhen);
       }
       // A bounded glide must land exactly on its target `to`. The frame loop can
       // stop a fraction short (budgetFrames is floored while the phase divides by
@@ -4023,12 +4045,11 @@ export class IRPlayer {
         const endWhen = when + budgetFrames / 60;
         if (opState) {
           opState.offset = to;
-          this._writeFm3OpPitch(op, baseMidi + to / 100, endWhen);
+          this._writeFm3OpPitch(op, baseMidi, to, endWhen);
           return;
         }
         this._chRegs[ch].pitchOffset = to;
-        const { fnum: ef, block: eb } = midiToFnumBlock(baseMidi + to / 100);
-        this._writeFmFnum(port, chOffset, ef, eb, endWhen);
+        this._writeFmNote(port, chOffset, ch, baseMidi, to, endWhen);
       }
       return;
     }
@@ -4332,9 +4353,10 @@ export class IRPlayer {
     this._psgWriteByte(byte, when);
   }
 
-  // Set tone period for a PSG tone channel (ch 0-2).
-  _psgSetPitch(psgCh, midi, when) {
-    const period = midiToPsgPeriod(midi);
+  // Set tone period for a PSG tone channel (ch 0-2): the note through the
+  // channel's `:snap` mask, the cents on top (as _writeFmNote).
+  _psgSetPitch(psgCh, note, cents, when) {
+    const period = midiToPsgPeriod(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100);
     // Latch byte: low 4 bits of period
     this._psgWriteByte(0x80 | ((psgCh & 0x03) << 5) | (period & 0x0f), when);
     // Data byte: high 6 bits of period
@@ -4631,9 +4653,9 @@ export class IRPlayer {
           // Pitch macros first, as on FM: a first sample on the note is the
           // pitch it sounds from (the driver's onset_pitch).
           let onsetWritten = false;
-          const psgPitchWrite = (centOffset, t) => {
+          const psgPitchWrite = (centOffset, t, semi = 0) => {
             if (Math.abs(t - when) < 1e-9) onsetWritten = true;
-            this._psgSetPitch(psgCh, midi + centOffset / 100, t);
+            this._psgSetPitch(psgCh, midi + semi, centOffset, t);
           };
           const psgOffset = () => this._psgPitchOffset[psgCh] ?? 0;
           this._schedulePitchMacro(
@@ -4652,7 +4674,7 @@ export class IRPlayer {
             psgMacroLimit,
             psgOffset,
           );
-          if (!onsetWritten) this._psgSetPitch(psgCh, midi + psgCentOffset / 100, when);
+          if (!onsetWritten) this._psgSetPitch(psgCh, midi, psgCentOffset, when);
         } else {
           this._psgTriggerNoise(when);
           this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);
@@ -4709,10 +4731,24 @@ export class IRPlayer {
         break;
       }
 
+      // A `$slot` write lands as the PARAM_SET of the slot's value (as the FM
+      // path's does).
+      case "PARAM_FROM_VAL":
+        this._dispatchPsgEvent(
+          { ...ev, cmd: "PARAM_SET", args: { target: ev.args?.target, value: this._resolveSrc(ev.args?.src, when) } },
+          when,
+        );
+        break;
+
       case "PARAM_SET":
       case "PARAM_SWEEP": {
         const psgTarget = (ev.args?.target ?? "").toUpperCase();
-        if (psgTarget === "VOL") {
+        if (psgTarget === "SNAP") {
+          // Sticky mask (language.md §5.3); the sounding note moves onto it.
+          this._psgSnap[psgCh] = Math.max(0, Math.min(0xfff, Math.round(Number(ev.args?.value) || 0)));
+          if (psgCh < 3)
+            this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, this._psgPitchOffset[psgCh] ?? 0, when);
+        } else if (psgTarget === "VOL") {
           if (ev.cmd === "PARAM_SET") {
             // Immediate vol: store, and update hardware only if a note is keyed
             // at `when` (otherwise it takes effect at the next NOTE_ON; writing
@@ -4841,7 +4877,8 @@ export class IRPlayer {
               });
             this._psgSetPitch(
               psgCh,
-              baseMidi + centOffset / 100,
+              baseMidi,
+              centOffset,
               ev.cmd === "PARAM_SWEEP" ? this._sweepFrameTime(sw, frame) : when,
             );
           }
@@ -4849,7 +4886,7 @@ export class IRPlayer {
           // mid-slope leaves no residual offset for later notes (see the FM path).
           if (ev.args?.bounded && !this._glideCut(ev, endTick)) {
             this._psgPitchOffset[psgCh] = to;
-            this._psgSetPitch(psgCh, baseMidi + to / 100, when + budgetFrames / 60);
+            this._psgSetPitch(psgCh, baseMidi, to, when + budgetFrames / 60);
           }
         }
         break;

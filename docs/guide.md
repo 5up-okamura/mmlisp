@@ -557,6 +557,20 @@ point.
 (fm1 (macro :step 1/16  :semi [#sus 0 4 7])  c)   ; c–e–g, looping
 ```
 
+### `:snap` — stay in a scale
+
+`:snap` gives the channel a scale (its pitch classes, 0 = C), and every pitch
+it writes from then on — the notes, a `:semi` arp's steps, a transposition —
+snaps down onto it; cents (vibrato, glide) ride the snapped note. So a
+chromatic arp becomes a scale run, and the same line changes mode when the
+mask changes — from a `$slot` the game writes, if you like (§18b).
+
+```lisp
+(def major [0 2 4 5 7 9 11])
+(fm1 :snap major (macro :step 1/16 :semi [#sus 0 1 2 3 4 5 6 7]) c1)  ; c d e f g a b c
+(fm1 :snap none c+)                                                   ; off again
+```
+
 ### `:keyon` — retrigger gate
 
 Sampled once per `:step`; a value `>= 0.5` fires a key-on retrigger (re-attacks
@@ -867,6 +881,9 @@ Parameters** slider for each one — drag it while the score plays — and marke
      (macro :pitch (sin :from -40 :to $depth)) ; dynamic LFO depth
      c e g e)
 ```
+
+A slot can also be a scale: `(def-val scale 2741 0..4095 :public)` and
+`:snap $scale` (§12) — the game writes the mask, and the melody changes mode.
 
 - `:from` / `:to` set the slider's endpoints (either direction); the
   positional value is the initial setting.

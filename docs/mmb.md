@@ -191,9 +191,9 @@ Targets are u8 ids (opcodes.md §7). A parameter value is **i8 when the
 target's clamp range fits in i8, i16 otherwise**; the width is a fixed
 per-target property listed in the target table, known to both encoder and
 decoder (`targetWidth` in `live/src/mmb.js`, `target_wide` in the C). The
-i16 targets are `NOTE_PITCH` (cents), the reserved `TEMPO_SCALE`, the six PCM
-points (byte offsets) and the value slots `VAL0`–`VAL15`; every other target
-is i8.
+i16 targets are `NOTE_PITCH` (cents), the reserved `TEMPO_SCALE`, `SNAP` (a
+12-bit pitch-class mask), the six PCM points (byte offsets) and the value
+slots `VAL0`–`VAL15`; every other target is i8.
 
 ### 7.5 TEMPO_SET payload
 

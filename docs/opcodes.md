@@ -342,6 +342,7 @@ same bounds.
 | 0x07 | NOTE_SEMI   | 1     | −48..48        | key-on pitch offset (macro target) |
 | 0x08 | KEYON       | 1     | 0..1           | gate retrigger (macro target)      |
 | 0x09 | GATE        | 1     | 0..8           | note-off timing state (eighths of dur; §4) |
+| 0x0A | SNAP        | 2     | 0..0xFFF (mask) | the channel's pitch-class mask (`:snap`): every FM/PSG pitch write snaps its semitone down onto it before the cents (driver.md §8); 0 = off |
 | 0x10 | FM_FB       | 1     | 0..7           | YM $B0 bits 5–3                    |
 | 0x11–0x14 | FM_TL1–4 | 1    | 0..127         | YM $40+op                          |
 | 0x15 | FM_ALG      | 1     | 0..7           | YM $B0 bits 2–0                    |
