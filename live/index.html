@@ -8699,7 +8699,7 @@
       }
       if (selectedChannel == null && _fmCursorDefContext?.name) {
         const { name, origin } = _fmCursorDefContext;
-        statusEl.textContent = origin ? `${name} \u00b7 ${browseSetName(origin)}` : name;
+        statusEl.textContent = origin ? `${name} \u00b7 ${librarySetName(origin)}` : name;
         return;
       }
       statusEl.textContent = '';
