@@ -1104,11 +1104,11 @@ including under an effect.
   on one standard. A single-bank PAL score's samples are baked at the NTSC DAC
   rate, so they play at the NTSC image's rate on a PAL machine too; the banked
   images have PAL rates of their own.
-- **Not yet run on hardware.** The images are graded in the JS machine
-  (§12.4) and on BlastEm (§12.7); the slot that binds each rate has no margin,
-  and the one wait the model charges from measurement — a read through the 68k
-  window — was measured on BlastEm. The host writes Z80 RAM with `movep.l`
-  (byte cycles as the 68000 defines them; correct in BlastEm).
+- **Hardware.** The SGDK example and a three-voice multi-bank score play on
+  an Analogue Mega SG (an FPGA Mega Drive) from a Mega EverDrive X7. The images are graded in the JS machine (§12.4) and on BlastEm
+  (§12.7); the slot that binds each rate has no margin, and the one wait the
+  model charges from measurement — a read through the 68k window — was
+  measured on BlastEm. Heavy DMA workloads and PAL have not run on hardware.
 - **Bus stops** — the pumps' and SGDK's own (joypad reads, VBlank DMA) — are
   not repaid (§1.2).
 

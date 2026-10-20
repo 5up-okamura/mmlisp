@@ -9,12 +9,6 @@ needs (CLAUDE.md).
 
 Its current limits are `driver.md` §11 — keep the two in step.
 
-**Before release:**
-
-- **A hardware run.** Everything — the three engine images at a 100% work
-  ceiling, the multi-bank engine, sound effects in the SGDK example — has run
-  only in the JS machine and on BlastEm.
-
 **Next:**
 
 1. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a

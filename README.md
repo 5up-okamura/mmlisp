@@ -44,7 +44,7 @@ game state at runtime.
   frame delays nothing that was ready. Every register write it makes is
   checked **byte-for-byte** against the JS reference at zero tolerance — what
   you hear in the browser is what the driver emits. SGDK integration included;
-  verified in emulation, real hardware next.
+  verified in emulation and played on hardware.
 - **Bring your own voices.** Import FM patches from DefleMask, Furnace and the
   TFI / VGI / OPNI formats, mucom88 songs and voice banks with their drum
   samples, and a SoundFont's drum kit as samples under the preset kits' names.

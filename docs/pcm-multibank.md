@@ -81,6 +81,6 @@ The `encodeMmb` and `buildMmb` APIs accept the equivalent `multibank: true/false
 - All resources must fit in the driver's 4 MiB ROM aperture, including score data, code, and the sample directory.
 - The four distinct banked code spans occupy 12,281 ROM bytes and share a 2,560-byte table block with the single-bank profiles. Identical PAL/NTSC code shares storage. Only the selected code and the shared tables are uploaded to the Z80.
 
-Dense FM instrument changes can still delay FM note onsets; PCM starts go out ahead of the FM writes and do not wait behind them. Multi-bank playback does not guarantee perfectly simultaneous onsets; check timing in the target application. Real hardware and heavy DMA workloads have not yet been validated.
+Dense FM instrument changes can still delay FM note onsets; PCM starts go out ahead of the FM writes and do not wait behind them. Multi-bank playback does not guarantee perfectly simultaneous onsets; check timing in the target application. A three-voice multi-bank score plays on an Analogue Mega SG from a Mega EverDrive X7; heavy DMA workloads have not been run on hardware.
 
 For binary layouts and command payloads, see the [MMB format](mmb.md#103-multi-bank-sample-resources) and [driver specification](driver.md#54-sample-banking).

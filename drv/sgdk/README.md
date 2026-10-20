@@ -12,7 +12,8 @@ an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 > shim. The glue built with SGDK 2.x + m68k-elf-gcc 13.2.0 runs headless in a
 > patched BlastEm on the image the score itself boots (`npm run sgdk:gate`),
 > graded write by write and DAC byte by DAC byte — driver.md §12.7 carries the
-> measurements for all three images. Not yet run on hardware.
+> measurements for all three images. On hardware it plays on an Analogue Mega SG (an FPGA Mega Drive) from a Mega EverDrive X7:
+> the example and a three-voice multi-bank score.
 
 ## Files
 
@@ -540,11 +541,12 @@ Everything the language compiles to:
   (their samples are in the shared bank once).
 - **SGDK's own Z80 halts** (pads, DMA) are outside the driver's budget — see
   "Bus stops that are not the driver's".
-- **Not yet run on hardware.** In particular the pump writes Z80 RAM with
-  `movep.l` (single byte cycles, as the 68000 defines it; correct in BlastEm),
-  and the engine images are placed at a 100% work ceiling — the only unmodelled
-  cycle is the 68k-window read wait, which on real silicon could stretch the
-  binding slot and run the DAC a little slow.
+- **Hardware coverage.** It plays on an Analogue Mega SG from a Mega
+  EverDrive X7 (the example and a three-voice multi-bank score). The engine
+  images are placed at a 100% work ceiling, and the only unmodelled cycle is
+  the 68k-window read wait: a console whose wait is longer than BlastEm's would
+  stretch the binding slot and run the DAC a little slow. Heavy DMA and PAL
+  have not run on hardware.
 
 The design is `docs/driver.md`; building and the gates are `drv/README.md`.
 
