@@ -166,6 +166,37 @@ async function main() {
       src: "(sqr1 :vel1 0.5 c)",
       expected: ["E_UNSUPPORTED_TARGET"],
     },
+    // Targets (language.md §19): what pc88's chips have, and what they do not.
+    {
+      label: "pc88 score accepted",
+      src: '(def-score :target pc88)\n(fm6 c)\n(sqr1 :mode both :noise-rate 12 c)\n(noise c)\n(pcm2 :prio 1 kick :len 4 c c)\n(pcm2 :prio 2 hat :len 8 c c c c)',
+      expected: [],
+    },
+    {
+      label: "pc88 settings ignored, sounds it lacks refused",
+      src: '(def-score :target pc88 :pcm-voices 1)\n(sqr3 c)\n(noise :mode white1 c :mode periodic0 c)\n(pcm1 kick c)\n(pcm2 kick :mode loop d)',
+      expected: ["W_TARGET", "E_TARGET", "W_TARGET", "E_TARGET", "E_TARGET", "E_TARGET", "E_TARGET"],
+    },
+    {
+      label: "Mega Drive refuses the SSG's words",
+      src: '(sqr1 :noise-rate 3 c)',
+      expected: ["E_TARGET"],
+    },
+    {
+      label: "pc88 rhythm by the kit roles",
+      src: '(def-score :target pc88)\n(def-pcm kick :file "/k.wav" :fx [(gain 3)])\n(def-pcm clap :file "/c.wav")\n(pcm1 kick c clap c)\n(pcm2 kick c clap c)',
+      expected: ["W_TARGET", "E_TARGET"],
+    },
+    {
+      label: "the kit roles are built in on pc88 only",
+      src: '(pcm1 kick c)',
+      expected: ["E_UNKNOWN_ATOM", "E_PCM_SAMPLE_REQUIRED"],
+    },
+    {
+      label: "unknown target",
+      src: "(def-score :target nes)\n(fm1 c)",
+      expected: ["E_SCORE_OPTION"],
+    },
   ];
 
   for (const testCase of cases) {

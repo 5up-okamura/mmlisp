@@ -21,7 +21,7 @@
 // in software, so only the mix is what the hardware hears.
 // ---------------------------------------------------------------------------
 
-import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "./ir-utils.js";
+import { targetProfile } from "./targets.js";
 import { PcmLiveEngine, PCM_SILENCE_BYTE, parsePcmBank } from "./pcm-model.js";
 import { PcmIrVoices } from "./pcm-voices.js";
 import { engineImage } from "./engine-images.js";
@@ -55,7 +55,7 @@ const DATA_START = 0x40; // header is 0x40 bytes for version 1.50
  *        the mixed DAC stream from renderPcmDac, or null for none
  * @returns {Uint8Array}
  */
-function encodeVgm(capture, meta = {}, dac = null) {
+function encodeVgm(capture, meta = {}, dac = null, target = targetProfile()) {
   const { writes, loopStartSec } = capture;
   const endSec = Math.max(capture.endSec, dac ? dac.startSec + dac.bytes.length / dac.rateHz : 0);
   const secToSample = (sec) => Math.max(0, Math.round(sec * VGM_SAMPLE_RATE));
@@ -160,8 +160,8 @@ function encodeVgm(capture, meta = {}, dac = null) {
   waitUntil(endSample);
   data.push1(0x66);
 
-  const gd3 = buildGd3(meta);
-  return assembleVgm(data.bytes(), gd3, {
+  const gd3 = buildGd3({ system: target.system, ...meta });
+  return assembleVgm(data.bytes(), gd3, target, {
     totalSamples: endSample,
     loopOffsetInData,
     loopSamples: loopSample == null ? 0 : endSample - loopSample,
@@ -259,11 +259,11 @@ export function renderVgm(player, meta = {}, pcm = null) {
   configurePcmRate(player, pcm);
   const capture = player.captureRegisterLog();
   const dac = pcm ? renderPcmDac(capture, pcm) : null;
-  const bytes = encodeVgm(capture, meta, dac);
+  const bytes = encodeVgm(capture, meta, dac, player._target ?? targetProfile());
   return { bytes, pcmCount: dac ? 0 : capture.pcmCount, dacBytes: dac ? dac.bytes.length : 0 };
 }
 
-function assembleVgm(data, gd3, { totalSamples, loopOffsetInData, loopSamples }) {
+function assembleVgm(data, gd3, target, { totalSamples, loopOffsetInData, loopSamples }) {
   const dataLen = data.length;
   const gd3Start = DATA_START + dataLen; // GD3 (if any) follows the data block
   const gd3Len = gd3 ? gd3.length : 0;
@@ -281,7 +281,7 @@ function assembleVgm(data, gd3, { totalSamples, loopOffsetInData, loopSamples })
   buf[3] = 0x20;
   u32(0x04, total - 0x04); // EOF offset (relative to 0x04)
   u32(0x08, VGM_VERSION);
-  u32(0x0c, PSG_MASTER_CLOCK);
+  u32(0x0c, target.psg.clock);
   u32(0x10, 0); // YM2413 clock
   u32(0x14, gd3 ? gd3Start - 0x14 : 0); // GD3 offset (relative to 0x14)
   u32(0x18, totalSamples);
@@ -297,7 +297,7 @@ function assembleVgm(data, gd3, { totalSamples, loopOffsetInData, loopSamples })
   u16(0x28, SN76489_FEEDBACK);
   buf[0x2a] = SN76489_SHIFT_WIDTH;
   buf[0x2b] = 0; // SN76489 flags
-  u32(0x2c, YM2612_MASTER_CLOCK);
+  u32(0x2c, target.fm.clock);
   u32(0x30, 0); // YM2151 clock
   u32(0x34, DATA_START - 0x34); // VGM data offset (relative to 0x34)
 
@@ -313,7 +313,7 @@ function buildGd3(meta) {
     "", // track name (Japanese)
     "", // game name (English)
     "", // game name (Japanese)
-    meta.system ?? "Sega Mega Drive", // system name (English)
+    meta.system ?? "", // system name (English): the target's (targets.js)
     "", // system name (Japanese)
     meta.composer || meta.author || "", // author (English): GD3's one name, the composer first
     "", // author (Japanese)

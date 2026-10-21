@@ -66,6 +66,12 @@ the default and the editor's preview) or `50` (PAL, `compileMMLisp`'s
 in the IR was resolved against it, and the MMB exporter reads it so a score is
 never compiled for one standard and baked for the other (driver.md §3.3).
 
+`metadata.target` is the machine the score is for (`(def-score :target …)`,
+language.md §19), present only when it is not the Mega Drive: `"pc88"`. A
+consumer reads its chips from `live/src/targets.js`. The MMB exporter refuses
+any target but the Mega Drive, and the IR player one whose preview is not
+built yet.
+
 `metadata.pcmVoices` is how many PCM voices the driver plays, 0–3, from
 `(def-score :pcm-voices N)` or the highest `pcmN` track the score uses. It picks the
 engine image and with it the DAC rate, so the MMB exporter reads it before it
@@ -95,8 +101,9 @@ Notes: the player consumes `name`, `init`, `unit` and `slot`; `min`/`max`/
 | Field          | Type        | Semantics                                          |
 | -------------- | ----------- | --------------------------------------------------- |
 | `name`         | string      | Symbol referenced by `PCM_NOTE_ON.sample`.          |
-| `file`         | string      | As written in the source.                           |
-| `resolvedFile` | string      | `file` resolved against the source file's directory.|
+| `file`         | string\|null | As written in the source; null for a `pc88` built-in rhythm sound. |
+| `resolvedFile` | string\|null | `file` resolved against the source file's directory.|
+| `rhythm`       | string      | On `pc88`, present on the six kit roles (language.md §19): their ROM sound, `bd` `sd` `top` `hh` `tom` `rim`. A pcm2/pcm3 note on it plays that sound. |
 | `rate`         | int\|null   | Source sample rate; also copied per-note as `baseRate`. |
 | `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
 | `startSec`, `endSec` | number\|null | The range a note plays (`:pcm-start` / `:pcm-end` / `:pcm-len`). In SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. Both null: the whole sample; a null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |
@@ -632,6 +639,8 @@ write.
 | `FM_AMS`          | 0–3            | B4 bits 5–4.                                                 |
 | `FM_FMS`          | 0–7            | B4 bits 2–0.                                                 |
 | `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. |
+| `NOISE_RATE`      | 1–31           | `pc88`: the SSG's noise period (reg 0x06), song-wide as `LFO_RATE`; inline or a sweep. |
+| `SSG_MIX`         | 0–2            | `pc88`: an SSG channel's mixer (reg 0x07), 0 tone, 1 noise, 2 both — sqr1–sqr3's `:mode`. |
 | `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits). Persistent noise-channel state via `PARAM_SET` (inline `:mode` / tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
 | `FM_TL1`–`FM_TL4` | 0–127          | 0x40+op. PARAM_SET also updates the voiced (timbre) TL base. |
 | `FM_AR1`–`FM_AR4` | 0–31           | 0x50+op bits 4–0 (shared byte with KS).                      |

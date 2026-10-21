@@ -19,7 +19,7 @@ source file is a sequence of top-level forms, in source order:
 | ----------------- | ------------------------------------------------ |
 | `(def name …)`    | Named definition (snippet, voice, sample, macro) |
 | `(def-val name …)`| Runtime value slot declaration                   |
-| `(def-score …)`   | The score's settings: title, composer, author, PCM voices |
+| `(def-score …)`   | The score's settings: title, composer, author, PCM voices, target |
 | `(def-mod …)`     | Score-wide note modifier (§9.4)                  |
 | `(import "…")`    | Fold another file's defs in at compile time (§9.2) |
 | `(channel …)`     | Track form — any list whose head is a channel name (§2) |
@@ -58,6 +58,9 @@ optional; several `def-score` forms combine, a key given twice is
   highest `pcmN` track the score uses; a `pcmM` track above the stated number
   is `E_PCM_VOICES`, and a value outside 0–3 is the same error. See §16 and
   driver.md §5.
+- **`:target md|pc88`** — the machine the score is for (§19). Default `md`,
+  the Mega Drive; `pc88` is the PC-8801 with Sound Board II (YM2608). Any
+  other value is `E_SCORE_OPTION`.
 - **`:tempo` / `:lfo-rate`** — score-global effects, written on any track
   (leading position or mid-body); they apply to the whole song regardless of
   which track carries them. `:tempo` takes a BPM number or a curve
@@ -299,7 +302,8 @@ keywords at the form's first tick.
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
 | `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
 | `:snap`    | `[pitch classes]`, mask, `$slot`, `none` | The scale every pitch write snaps onto (§5.3) |
-| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3` (both sticky) |
+| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3`; on `pc88`, `sqr1`–`sqr3`: `tone`/`noise`/`both` (§19) (all sticky) |
+| `:noise-rate` | 1–31 or curve        | `pc88` only: the SSG's one noise period, song-wide like `:lfo-rate` (§19) |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:shuffle` | 51–90 or `none`           | Swing ratio (§5.2)                                       |
 | `:shuffle-base` | length token         | The swung length (default: eighth, §5.2)                 |
@@ -2214,3 +2218,71 @@ across tracks to catch length drift before it becomes an audible phase slip.
   c c c c c c c c |
   c c c c c c c c |)   ; two 384-tick bars
 ```
+
+---
+
+## 19. Targets — `:target`
+
+A score is written for one machine, `(def-score :target …)` (§1). The
+language is one; a target decides which chips its channels drive, and what
+those chips cannot do is a compile error, not a different sound.
+
+| Target | Machine | Delivered as |
+| --- | --- | --- |
+| `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
+| `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | — (see below) |
+
+**`pc88` is checked by the compiler; its preview and VGM export are not built
+yet.** Playing or exporting a `pc88` score says so and stops; the MMB is the
+Mega Drive driver's and refuses it. What follows is what the compiler holds a
+`pc88` score to.
+
+**The line.** A setting that has no meaning on the target is ignored with
+`W_TARGET` (`:pcm-voices`, the Mega Drive's white noise modes, which read as
+the nearest `:noise-rate`). Anything that would change what is heard is
+`E_TARGET`.
+
+**FM.** `fm1`–`fm6`, FM3's independent-operator mode and CSM are as on the
+Mega Drive; `fm6` is a plain FM channel (there is no DAC to own). Pitches and
+CSM rates are computed on the YM2608's clock.
+
+**SSG.** `sqr1`–`sqr3` are the SSG's three channels. Each has a mixer,
+`:mode tone|noise|both` (sticky, default `tone`), and the three share one
+noise period, `:noise-rate 1–31` (lower is higher; song-wide, written on any
+track, a value or a sweep, starting at 9). The `noise` track is `sqr3` with
+its mixer on noise: a score has one or the other (`E_TARGET`), and a noise
+note's pitch is not read. A noise `:mode white0`–`white2` reads as
+`:noise-rate` 9, 18, 31 (`W_TARGET`); `white3` and the periodic modes have
+no SSG sound (`E_TARGET`), nor does a `:mode` macro on noise.
+
+**PCM.** `pcm1` is the ADPCM-B: it plays a sample's `:file`, one voice.
+`pcm2` and `pcm3` play the six ROM rhythm sounds, named by the kits' roles
+(guide.md, the kits):
+
+| Name | `kick` | `snare` | `ride` | `hat` | `tom4` | `rim` |
+| --- | --- | --- | --- | --- | --- | --- |
+| ROM sound | BD | SD | TOP | HH | TOM | RIM |
+
+The six are built in, as `init-fm` is, so they play with no def. A score's
+own def of one of these names (a kit's, imported) plays the ROM sound on
+`pcm2`/`pcm3` and its `:file` on `pcm1`; a built-in one has no `:file`, so it
+cannot play on `pcm1`. Any other sample on `pcm2`/`pcm3` is `E_TARGET`. A
+rhythm sound has no pitch (write it at c4) and no loop (`E_TARGET`), and a
+pcm point (`:pcm-start` …) on `pcm2`/`pcm3` is `E_TARGET`; its def's `:fx`
+does not reach the ROM sound (`W_TARGET`). Each sound is a voice of its own,
+so the `:prio` layers of one rhythm track (§1) compete only with the same
+sound's notes, and one track plays all six at once:
+
+```lisp
+(def-score :target pc88)
+
+(pcm2 :prio 1 kick :len 4 c c c c)
+(pcm2 :prio 2 hat :len 8 c c c c c c c c)   ; sounds with every kick
+```
+
+The ADPCM-B repeats a sample's whole range, so a `loop` note whose loop
+starts after its range does is `E_TARGET`.
+
+**Effects.** `def-se` is a sound effect a game starts through the Mega
+Drive's driver; a `pc88` score has none (`E_TARGET`).
+

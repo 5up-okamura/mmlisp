@@ -325,7 +325,7 @@
           <span>Build</span>
           <span class="menu-item-shortcut" id="buildShortcut"></span>
         </button>
-        <button class="menu-item" onclick="releaseHoldsAction();closeMenus()"
+        <button class="menu-item" id="releaseHoldsItem" onclick="releaseHoldsAction();closeMenus()"
                 title="Send the key-off a game would: every :len 0 / :gate 0 hold lets go, and a track stopped at a :len 0 note plays on">
           <span>Release Holds</span>
           <span class="menu-item-shortcut" id="releaseHoldsShortcut"></span>
@@ -343,7 +343,7 @@
           <span class="menu-item-shortcut" id="libraryShortcut"></span>
         </button>
         <div class="menu-sep"></div>
-        <button class="menu-item" onclick="toggleDrvBackend();closeMenus()"
+        <button class="menu-item" id="drvBackendItem" onclick="toggleDrvBackend();closeMenus()"
                 title="Play through the MMLispDRV reference decoder (the exported MMB) instead of the IR player">
           <span>MMLispDRV Backend</span>
           <span class="menu-item-shortcut" id="drvBackendCheck"></span>
@@ -5965,9 +5965,10 @@
       // is its path there, and its samples resolve against its folder.
       // And a sample already held in memory (a mucom88 bank's wav, seeded at
       // import) plays without any path resolving at all.
+      // A built-in ROM rhythm sound (pc88, no :file) has nothing to load.
       const hasSamples = sampleDefs.some((d) => {
         const path = d.resolvedFile ?? d.file ?? '';
-        return !/^presets\//.test(path) && !_pcmSampleCache.has(path);
+        return path && !/^presets\//.test(path) && !_pcmSampleCache.has(path);
       });
       const hasSavedBase = Boolean(_sourceHandle) || Boolean(currentIrURL) ||
         Boolean(_sourceDir) || _lastFileName.includes('/');
@@ -6004,6 +6005,7 @@
       _lastGoodIR = ir;
       _lastGoodSrc = src;
       _lastSourceMap = sourceMap;
+      updateTargetMenus(ir);
       buildChStrips(ir);
       renderDynParams(ir);
       if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
@@ -6918,6 +6920,17 @@
     window.toggleDrvBackend = toggleDrvBackend;
     updateDrvBackendCheck();
 
+    // The Tools items that only the Mega Drive's driver has: the MMLispDRV
+    // backend, and Release Holds (a game's key-off). Off for another
+    // :target (the IR's metadata.target, absent for md).
+    function updateTargetMenus(ir) {
+      const md = !ir?.metadata?.target;
+      for (const id of ['drvBackendItem', 'releaseHoldsItem']) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !md;
+      }
+    }
+
     // Headless A/B hook: compile the current source (or the given one) and
     // diff the IR player's and the driver reference's register logs.
     // Returns the result object; the formatted report goes to the console.
@@ -7040,11 +7053,12 @@
       // tempo fader and Dynamic Parameters are supported (re-applied from the
       // persisted UI state below). Still IR-player-only here: line highlight,
       // pause-resume and PCM per-track gain.
-      if (_drvBackend || (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL))) {
+      const drvBackend = _drvBackend && !_lastGoodIR?.metadata?.target; // md only
+      if (drvBackend || (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL))) {
         try {
           let mmbBytes;
           let mmbSampleBank = null;
-          if (_lastGoodIR && _drvBackend) {
+          if (_lastGoodIR && drvBackend) {
             // PCM blobs ride a separate sample bank now (docs/mmb.md §10); pass it to
             // the player alongside the control MMB. (In the JS player this is a
             // plain array read — on hardware the Z80 engine reads the bank
@@ -7159,6 +7173,7 @@
       log(`${ch ? (ch.scoreChannel ?? ch.channel) + ' ' : ''}is holding (:len 0) \u2014 Tools > Release Holds (${formatShortcutLabel('Mod-Shift-Enter')}) plays on`, 'info');
     }
     function releaseHoldsAction() {
+      if (document.getElementById('releaseHoldsItem')?.disabled) return; // the shortcut too
       player?.releaseHolds?.();
       _libraryScorePlayer?.releaseHolds?.(); // a Library ▶ preview holds too
     }

@@ -21,6 +21,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp-parser.js`              | Tokenize + parse source into a generic list/atom AST                    |
 | `mmlisp2ir.js`                  | Compile AST → IR: voice resolution, macro parsing, event emit           |
 | `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
+| `targets.js`                    | Target profiles (`:target md`/`pc88`): channels, clocks, PSG encoding, PCM model |
 | `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
 | `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
 | `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |

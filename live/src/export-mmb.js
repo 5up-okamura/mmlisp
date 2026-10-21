@@ -406,6 +406,11 @@ function dropRepeatOneBreakTails(ir) {
 }
 
 export function encodeMmb(ir, opts = {}) {
+  // MMB is MMLispDRV's, the Mega Drive's driver; another target's score is
+  // delivered as VGM (docs/roadmap.md).
+  const target = ir.metadata?.target;
+  if (target && target !== "md")
+    throw new Error(`MMB is the Mega Drive driver's format; a :target ${target} score exports as VGM`);
   ir = dropRepeatOneBreakTails(ir);
   const diagnostics = [];
   const diag = (severity, code, message, track = null) =>

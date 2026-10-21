@@ -1937,6 +1937,11 @@ compete for the same names. A kit that lacks a sound the other has simply has
 no def of that name; fill the gap with an alias to one it does have
 (`(def clap snare)`), or copy the def line from the other kit's `set.mmlisp`.
 
+Six of the roles are also the sounds of the YM2608's ROM kit: `kick` BD,
+`snare` SD, `ride` TOP, `hat` HH, `tom4` TOM, `rim` RIM. A `pc88` score plays
+the chip's own sound under the same name on pcm2/pcm3, with or without a kit
+imported (language.md §19).
+
 The FM drums (`presets/fm-drums`) use the same vocabulary with an `fm-`
 prefix — `fm-kick`, `fm-snare`, `fm-tom1` — so they import alongside a PCM
 kit: PCM kick and snare on `pcm1`, FM toms and cymbals on a spare FM channel.

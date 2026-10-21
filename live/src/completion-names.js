@@ -35,7 +35,8 @@ const AC_FM_OP_PARAMS = ['ar', 'dr', 'sr', 'rr', 'sl', 'tl', 'ml', 'dt', 'ks', '
 // the track and note options, the def keys, the curve and effect params).
 export const AC_PARAMS = [
   // song-wide (written on a track; §1) and the def-score keys
-  ':tempo', ':lfo-rate', ':master', ':title', ':composer', ':author', ':pcm-voices',
+  ':tempo', ':lfo-rate', ':master', ':title', ':composer', ':author', ':pcm-voices', ':target',
+  ':noise-rate',
   // track / channel
   ':prio', ':oct', ':oct+', ':len', ':gate', ':gate*', ':gate-',
   ':vel', ':vel+', ':vel*', ':vol', ':pan', ':snap', ':mode', ':shuffle', ':shuffle-base',

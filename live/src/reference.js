@@ -75,6 +75,20 @@ export const REFERENCE = [
     example: '(fm1 :lfo-rate 5 :fms 5 :len 2 c e)',
   },
   {
+    name: ':target', aliases: ['pc88', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
+    syntax: '(def-score :target md | pc88)',
+    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which the compiler checks but cannot play or export yet.',
+    insert: '(def-score :target pc88)',
+    example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(pcm2 :len 4 kick c c snare c c)',
+  },
+  {
+    name: ':noise-rate', cat: 'score', section: '§19', tracks: null,
+    syntax: ':noise-rate 1–31',
+    summary: 'pc88 only: the SSG\'s one noise period, song-wide; lower is higher, 9 to start. A sqr track hears it with :mode noise or both.',
+    insert: ':noise-rate 9',
+    example: '(def-score :target pc88)\n(sqr1 :mode both :noise-rate 4 :len 8 c e :noise-rate (linear 4..31 :len 2) g e c e g e)',
+  },
+  {
     name: ':prio', cat: 'score', section: '§1', tracks: null,
     syntax: '(fm1 :prio N …)',
     summary: 'Right after the channel name only. Forms of one channel with different :prio are layers on one voice: the lower number wins, a lower layer\'s note sounds in the higher one\'s gaps. The voice, :pan and :vol go to the higher layer that sets them. Default 8.',
@@ -228,9 +242,9 @@ export const REFERENCE = [
     example: '(fm1 :len 16 :snap [0 2 4 5 7 9 11] c c+ d d+ e f f+ g (macro :step 2f :semi [#sus 0 1 2 3 4 5 6 7]) :len 2 c)',
   },
   {
-    name: ':mode', aliases: ['shot', 'loop', 'gate', 'white0', 'periodic0'], cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
-    syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop | gate',
-    summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once, loops while held, or plays once and is cut at its gate.',
+    name: ':mode', aliases: ['shot', 'loop', 'gate', 'white0', 'periodic0', 'tone', 'both'], cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
+    syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop | gate  ·  :mode tone | noise | both',
+    summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once, loops while held, or plays once and is cut at its gate. On a pc88 sqr track: its mixer, tone, noise or both.',
     insert: ':mode white2',
     example: '(noise :len 8 :mode white0 c c :mode white2 c c :mode periodic1 c c)',
   },

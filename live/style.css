@@ -204,6 +204,7 @@
     }
     .menu-sep { height: 0; border-top: 1px solid var(--mid); margin: 0.25rem 0; }
     .menu-item[hidden], .menu-sep[hidden] { display: none; }
+    .menu-item:disabled { opacity: var(--off); cursor: default; }
     /* A section's name inside a menu: not a command. */
     .menu-label {
       padding: 0.3rem 0.75rem 0.1rem;
@@ -242,8 +243,8 @@
       flex-shrink: 0;
       pointer-events: none;
     }
-    @media (hover: hover) { .menu-item:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); color: var(--high); } }
-    @media (hover: hover) { .menu-item:hover .menu-item-shortcut { color: var(--high); } }
+    @media (hover: hover) { .menu-item:not(:disabled):hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); color: var(--high); } }
+    @media (hover: hover) { .menu-item:not(:disabled):hover .menu-item-shortcut { color: var(--high); } }
     @media (hover: hover) { .menu-item:hover .submenu-arrow { color: var(--high); } }
 
     /* ---- main area ---- */

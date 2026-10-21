@@ -69,6 +69,10 @@ export const MACRO_TARGET_RANGE = {
 
   // PSG noise mode (0-7 via `:mode` keyword on noise channel)
   NOISE_MODE: { min: 0, max: 7 },
+  // The SSG (pc88): the song's noise period, and a channel's mixer
+  // (0 tone, 1 noise, 2 both).
+  NOISE_RATE: { min: 1, max: 31 },
+  SSG_MIX: { min: 0, max: 2 },
 
   // PCM points (:pcm-* the range, :loop-* the loop), in SECONDS — the IR's unit (the MMB exporter
   // turns them into the engine's byte offsets). The ceiling is what one 32 KB
@@ -192,11 +196,11 @@ export const YM2612_MASTER_CLOCK = 7670454;
  * Timer A's period for a rate in Hz, unrounded and unclamped, and back. The
  * driver sweeps a CSM rate linearly in this period, not in Hz.
  */
-export function csmTimerPeriod(hz) {
-  return 1024 - YM2612_MASTER_CLOCK / (144 * hz);
+export function csmTimerPeriod(hz, clock = YM2612_MASTER_CLOCK) {
+  return 1024 - clock / (144 * hz);
 }
-export function csmTimerHz(period) {
-  return YM2612_MASTER_CLOCK / (144 * (1024 - period));
+export function csmTimerHz(period, clock = YM2612_MASTER_CLOCK) {
+  return clock / (144 * (1024 - period));
 }
 
 /**
@@ -217,22 +221,23 @@ export function midiToPsgPeriod(midiNote) {
   return Math.max(1, Math.min(1023, Math.round(PSG_MASTER_CLOCK / (32 * freq))));
 }
 
-// YM2612 frequency formula: fnum = freq * 2^(21-block) / (MASTER_CLOCK/144)
-// MASTER_CLOCK/144 ≈ 53267 Hz (7,670,454 Hz / 144)
+// OPN frequency formula: fnum = freq * 2^(21-block) / (MASTER_CLOCK/144).
+// `rate` is that MASTER_CLOCK/144 — the target profile's `fm.fnumRate`; the
+// Mega Drive's ≈ 53267 Hz (7,670,454 Hz / 144) is the default.
 // Supports fractional midiNote for cent-precision pitch.
 const FM_CLOCK_DIV = 53267;
 
-export function midiToFnumBlock(midiNote) {
+export function midiToFnumBlock(midiNote, rate = FM_CLOCK_DIV) {
   const freq = midiToHz(midiNote);
   let block = 4;
-  let fnum = Math.round((freq * (1 << (21 - block))) / FM_CLOCK_DIV);
+  let fnum = Math.round((freq * (1 << (21 - block))) / rate);
   while (fnum > 1023 && block < 7) {
     block++;
-    fnum = Math.round((freq * (1 << (21 - block))) / FM_CLOCK_DIV);
+    fnum = Math.round((freq * (1 << (21 - block))) / rate);
   }
   while (fnum < 512 && block > 0) {
     block--;
-    fnum = Math.round((freq * (1 << (21 - block))) / FM_CLOCK_DIV);
+    fnum = Math.round((freq * (1 << (21 - block))) / rate);
   }
   return {
     fnum: Math.max(0, Math.min(2047, fnum)),

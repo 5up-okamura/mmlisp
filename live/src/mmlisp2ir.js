@@ -10,6 +10,7 @@
  */
 
 import { hoistVoiceChanges } from "./voice-hoist.js";
+import { TARGETS, DEFAULT_TARGET as DEFAULT_TARGET_NAME, targetProfile, targetChannelNames } from "./targets.js";
 import { parse } from "./mmlisp-parser.js";
 import {
   clampForTarget,
@@ -55,6 +56,7 @@ const SUPPORTED_TARGETS = new Set([
   "FM_AMS",
   "FM_FMS",
   "LFO_RATE",
+  "NOISE_RATE",
   "PAN",
   "NOISE_MODE",
   ...[1, 2, 3, 4].flatMap((op) => [
@@ -124,7 +126,7 @@ const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI", "SNAP"]);
 // or a curve) but not macro-legal. An …_END and an …_LEN both set their span's
 // far bound, pinning the end vs the length; the last one written wins.
 // The song-wide write targets a macro does not take (a macro is a note's).
-const SONG_TARGETS = new Set(["MASTER", "LFO_RATE"]);
+const SONG_TARGETS = new Set(["MASTER", "LFO_RATE", "NOISE_RATE"]);
 // Song-wide write targets: their sweeps run in slots of their own on the
 // driver, not in the writing channel's two (driver.md §4).
 const isSongTarget = (t) => SONG_TARGETS.has(t) || /^VAL\d+$/.test(t ?? "");
@@ -206,6 +208,13 @@ function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnos
   if (!trackState.isPcmTrack) {
     pushDiag(diagnostics, "error", "E_UNSUPPORTED_TARGET",
       `${keyword} is only for pcm1-pcm3, not ${String(trackName).split(":")[0]}`,
+      src, trackName);
+    return;
+  }
+  const t = trackState.target;
+  if (t.pcm.model === "opna" && trackState.head !== t.pcm.adpcmChannel) {
+    targetDiag(diagnostics, "error",
+      `${keyword}: on ${t.name} ${trackState.head} plays the ROM rhythm sounds, which have no range or loop; ${t.pcm.adpcmChannel} takes it`,
       src, trackName);
     return;
   }
@@ -318,6 +327,29 @@ const NOISE_MODE_MAP = {
   periodic2: 0b0_10, // 2
   periodic3: 0b0_11, // 3
 };
+
+// An SSG channel's mixer (pc88, `:mode` on sqr1–sqr3): tone, noise or both.
+const SSG_MIX_MAP = { tone: 0, noise: 1, both: 2 };
+// The SSG's noise period (`:noise-rate` 1–31) nearest each Mega Drive white
+// noise: the SN76489's 13,983 / 6,991 / 3,496 Hz against the SSG's
+// 124,800 Hz / rate (its clock / 16). white3 follows sqr3's tone and the
+// periodic modes are a sound the SSG does not make.
+const SSG_NOISE_RATE_OF = { white0: 9, white1: 18, white2: 31 };
+// The language's word for "this target has no such thing": a feature that
+// would change what is heard is an error, a setting with no meaning here a
+// warning (docs/roadmap.md, the pc88 item).
+function targetDiag(diagnostics, severity, message, src, track) {
+  pushDiag(diagnostics, severity, severity === "error" ? "E_TARGET" : "W_TARGET", message, src, track);
+}
+// A write target this machine's chips do not have: why, or null.
+function targetLacks(irTarget, sym, target) {
+  const ssg = target.psg.chip === "ssg";
+  if (irTarget === "NOISE_RATE" && !ssg)
+    return `${sym} is the SSG's noise period (pc88); the ${target.system}'s noise takes :mode white0-3 / periodic0-3`;
+  if (irTarget === "NOISE_MODE" && ssg)
+    return `${sym} on noise is the Mega Drive's noise mode; on ${target.name} the noise is :noise-rate 1-31, song-wide`;
+  return null;
+}
 
 // PAN symbolic values → logical range -1/0/+1 (encodeB4 maps these to L/LR/R bits)
 const PAN_MAP = { left: -1, center: 0, right: 1 };
@@ -783,7 +815,7 @@ function emitCsmRateNoteHz(
       fromHz = n !== null ? n : csmPitchToHz(String(override));
     }
     if (!Number.isFinite(fromHz))
-      fromHz = Math.round(csmTimerHz(rampAt(ramp, tick)) * 100) / 100;
+      fromHz = Math.round(csmTimerHz(rampAt(ramp, tick), trackState.fmClock) * 100) / 100;
   }
   if (fromHz != null && fromHz !== hz) {
     emitCsmRateEvent(trackState, events, diagnostics, src, trackName, {
@@ -795,12 +827,12 @@ function emitCsmRateNoteHz(
     trackState.glideRamp = {
       tick,
       ticks: glideTicks,
-      from: csmTimerPeriod(fromHz),
-      to: csmTimerPeriod(hz),
+      from: csmTimerPeriod(fromHz, trackState.fmClock),
+      to: csmTimerPeriod(hz, trackState.fmClock),
     };
   } else {
     emitCsmRateEvent(trackState, events, diagnostics, src, trackName, { hz });
-    trackState.glideRamp = settledRamp(tick, csmTimerPeriod(hz));
+    trackState.glideRamp = settledRamp(tick, csmTimerPeriod(hz, trackState.fmClock));
   }
 }
 
@@ -914,6 +946,7 @@ function emitNoteForTrack(
     }
     const fullPitch = noteName + trackState.defaultOct;
     const mode = trackState.pcmMode; // sticky, like every track parameter
+    checkOpnaPcmNote(trackState, trackState.pcmSampleName, fullPitch, mode, diagnostics, src, trackName);
     const { ev: pcmEv, off, hasMacros } = pushPcmNote(trackState, events, {
       sample: trackState.pcmSampleName, pitch: fullPitch, length: lengthTicks,
       gateSpec: trackState.defaultGate, vel: trackState.defaultVel, mode,
@@ -1237,6 +1270,41 @@ function placePcmTieOff(h, events) {
     }
     return;
   }
+}
+
+// A pcm note where the PCM is the YM2608's (pc88): pcm1 is the ADPCM-B, which
+// plays a sample's :file and loops its whole range only; pcm2 and pcm3 play
+// the ROM rhythm sounds, named by the kit roles (targets.js), which have no
+// pitch and no loop — and no :fx, which is a warning: the score asked for
+// the ROM's sound. Reported once per track, sample and reason.
+function checkOpnaPcmNote(trackState, sampleName, fullPitch, mode, diagnostics, src, trackName) {
+  const t = trackState.target;
+  if (t.pcm.model !== "opna") return;
+  const sample = trackState.sampleDefs?.get(sampleName);
+  if (!sample) return;
+  const seen = (trackState.targetReported ??= new Set());
+  const once = (key, msg, severity = "error") => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    targetDiag(diagnostics, severity, msg, src, trackName);
+  };
+  if (trackState.head === t.pcm.adpcmChannel) {
+    if (!sample.file)
+      once(`file:${sampleName}`, `${sampleName} is the ROM rhythm sound ${sample.rhythm} here, with no :file; ${trackState.head} is the ADPCM-B, which plays a sample's :file — play it on pcm2 or pcm3, or give it a :file`);
+    else if (mode === "loop" && (sample.loopStartSec ?? 0) > (sample.startSec ?? 0))
+      once(`loop:${sampleName}`, `the ADPCM-B repeats a sample's whole range; ${sampleName}'s loop starts after its range does — make the range the loop (:pcm-start at the loop's start)`);
+    return;
+  }
+  if (!sample.rhythm) {
+    once(`adpcm:${sampleName}`, `on ${t.name} pcm2 and pcm3 play the ROM rhythm sounds, ${Object.keys(t.pcm.rhythm).join(" ")}; ${sampleName} is not one — play its :file on ${t.pcm.adpcmChannel} (the ADPCM-B)`);
+    return;
+  }
+  const what = `the ROM rhythm sound ${sample.rhythm} (${sampleName})`;
+  if (mode === "loop") once(`loop:${sampleName}`, `${what} plays once; it has no loop`);
+  if (pitchToMidi(fullPitch) !== 60)
+    once(`pitch:${sampleName}`, `${what} has no pitch: write it at c4, or play its :file on ${t.pcm.adpcmChannel}`);
+  if (sample.fxNode || sample.importFx?.length)
+    once(`fx:${sampleName}`, `${sampleName}'s :fx shapes its :file; ${what} plays as the chip has it`, "warning");
 }
 
 // One pcm note: its PCM_NOTE_ON and, where something listens for it, its
@@ -1855,7 +1923,12 @@ function prioNoteSpan(ev) {
   return l === 0 ? Infinity : (l ?? 0);
 }
 
-function flattenPriorityLayers(head, layers, diagnostics) {
+// `voiceOf(ev)` names the physical voice a note sounds on. A channel is one
+// voice ("" for every note), so its layers compete for it; where one track
+// reaches several voices — the pc88's ROM rhythm, a voice per sound — notes
+// compete only with notes on their own voice, and one track plays them at
+// once.
+function flattenPriorityLayers(head, layers, diagnostics, voiceOf = () => "") {
   // Highest priority first (lowest number). The first layer is the container we
   // reuse for channel/scoreChannel; only its event list is rebuilt.
   layers.sort((a, b) => a.prio - b.prio);
@@ -1870,7 +1943,7 @@ function flattenPriorityLayers(head, layers, diagnostics) {
     }
   }
 
-  const occupied = []; // committed sounding intervals from higher-priority layers
+  const occupied = new Map(); // voice → committed sounding intervals from higher-priority layers
   const drop = new Set();
 
   // An endless loop (the song's `#loop … (go loop)`, an (x …) without a count)
@@ -1939,25 +2012,40 @@ function flattenPriorityLayers(head, layers, diagnostics) {
       .filter((e) => PRIO_NOTE_CMDS.has(e.cmd) && !drop.has(e))
       .sort((a, b) => a.tick - b.tick);
 
-    const committed = [];
-    const higher = intervalIndex(occupied);
+    const committed = new Map(); // voice → this layer's sounding intervals
+    const higherOf = new Map();
+    const higher = (v) => {
+      let h = higherOf.get(v);
+      if (!h) higherOf.set(v, (h = intervalIndex(occupied.get(v) ?? [])));
+      return h;
+    };
+    // Each note's next onset on its own voice in this layer: its retrigger.
+    const voices = notes.map(voiceOf);
+    const nextOnVoice = new Array(notes.length);
+    const ahead = new Map();
+    for (let i = notes.length - 1; i >= 0; i--) {
+      nextOnVoice[i] = ahead.get(voices[i]) ?? Infinity;
+      ahead.set(voices[i], notes[i].tick);
+    }
     for (let i = 0; i < notes.length; i++) {
       const ev = notes[i];
       const t = ev.tick;
+      const v = voices[i];
       // Suppressed: starts while a higher-priority note is sounding.
-      if (higher.sounding(t)) {
+      if (higher(v).sounding(t)) {
         drop.add(ev);
         continue;
       }
       const rawEnd = t + prioNoteSpan(ev); // gate/len end (may be Infinity)
-      const nextSame = notes[i + 1]?.tick ?? Infinity; // own retrigger ends it
-      const nextHi = higher.nextStart(t); // next higher-priority onset
+      const nextSame = nextOnVoice[i]; // own retrigger ends it
+      const nextHi = higher(v).nextStart(t); // next higher-priority onset
       // A higher-priority note interrupts before this note's natural end → cut
       // to silence (no release tail in this version).
       if (nextHi < rawEnd && nextHi < nextSame) ev.args.gate = nextHi - t;
-      committed.push([t, Math.min(rawEnd, nextSame, nextHi)]);
+      if (!committed.has(v)) committed.set(v, []);
+      committed.get(v).push([t, Math.min(rawEnd, nextSame, nextHi)]);
     }
-    occupied.push(...committed);
+    for (const [v, list] of committed) occupied.set(v, [...(occupied.get(v) ?? []), ...list]);
   }
 
   // A layer's rests say nothing once the layers share one voice — a lower
@@ -3380,6 +3468,7 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":keyon": "KEYON",
   // LFO
   ":lfo-rate": "LFO_RATE",
+  ":noise-rate": "NOISE_RATE",
   // PCM points: the range a note plays, and the loop inside it
   ":pcm-start": "RANGE_START",
   ":pcm-end": "RANGE_END",
@@ -3927,7 +4016,32 @@ function compileChannelBody(
               break;
             }
             case ":mode": {
-              if (trackState.isNoiseTrack) {
+              const ssg = trackState.target.psg.chip === "ssg";
+              if (trackState.isNoiseTrack && ssg && rawVal in NOISE_MODE_MAP) {
+                // pc88: the noise is sqr3 on noise, and its one setting the
+                // song-wide :noise-rate.
+                const rate = SSG_NOISE_RATE_OF[rawVal];
+                if (rate) {
+                  targetDiag(diagnostics, "warning",
+                    `noise :mode ${rawVal} is the Mega Drive's; on ${trackState.target.name} it reads as :noise-rate ${rate}`,
+                    nodeSrc(node), trackName);
+                  events.push({ tick: trackState.tick, cmd: "PARAM_SET",
+                    args: { target: "NOISE_RATE", value: rate }, src: nodeSrc(node) });
+                } else {
+                  targetDiag(diagnostics, "error",
+                    `noise :mode ${rawVal} has no ${trackState.target.name} sound: ${
+                      rawVal === "white3" ? "the noise is sqr3 itself" : "the SSG makes no periodic noise"}; set :noise-rate 1-31`,
+                    nodeSrc(node), trackName);
+                }
+              } else if (/^sqr[1-3]$/.test(trackState.head) && ssg) {
+                if (rawVal in SSG_MIX_MAP) {
+                  events.push({ tick: trackState.tick, cmd: "PARAM_SET",
+                    args: { target: "SSG_MIX", value: SSG_MIX_MAP[rawVal] }, src: nodeSrc(node) });
+                } else {
+                  pushDiag(diagnostics, "error", "E_PARAM_VALUE",
+                    "sqr :mode must be tone, noise or both", nodeSrc(node), trackName);
+                }
+              } else if (trackState.isNoiseTrack) {
                 if (rawVal in NOISE_MODE_MAP) {
                   events.push({
                     tick: trackState.tick,
@@ -3946,7 +4060,7 @@ function compileChannelBody(
                   );
                 }
               } else if (!trackState.isPcmTrack) {
-                wrongChannel(val, "noise and pcm1-pcm3");
+                wrongChannel(val, ssg ? "sqr1-sqr3, noise and pcm1-pcm3" : "noise and pcm1-pcm3");
               } else if (isPcmModeSymbol(rawVal)) {
                 trackState.pcmMode = rawVal;
               } else {
@@ -3989,6 +4103,11 @@ function compileChannelBody(
                 )
               )
                 break;
+              const lacks = !valDef && targetLacks(target, val, trackState.target);
+              if (lacks) {
+                targetDiag(diagnostics, "error", lacks, nodeSrc(node), trackName);
+                break;
+              }
               if (!valDef && !PARAM_SET_TARGETS.has(target)) {
                 // A known macro keyword (:semi/:keyon) with no absolute-write
                 // meaning — valid in a (macro …) but not as an inline write.
@@ -4666,6 +4785,11 @@ function compileChannelBody(
                     nodeSrc(rest[j]), trackName);
                   continue;
                 }
+                const lacks = targetLacks(target, groupSym, trackState.target);
+                if (lacks) {
+                  targetDiag(diagnostics, "error", lacks, nodeSrc(rest[j]), trackName);
+                  continue;
+                }
                 if (isClear) {
                   clearMacroTarget(trackState, target);
                   continue;
@@ -4998,7 +5122,7 @@ function collectDefs(roots, diagnostics) {
   const seDefs = new Map();
   const vals = new Map(); // (def-val name init) runtime value slots
   // (def-score :title "…" :composer "…" :author "…" :pcm-voices N) — the score's settings.
-  const fileMeta = { title: null, composer: null, author: null, pcmVoices: null };
+  const fileMeta = { title: null, composer: null, author: null, pcmVoices: null, target: null };
   const imports = []; // (import "path") — [{path, src}]
   const mods = []; // (def-mod …) forms, read once the defs are known (parseModDef)
   const remaining = [];
@@ -5289,16 +5413,16 @@ const SE_CHANNELS = new Set([
 // song's CH3 parts could not play on under an effect (driver.md §2.5).
 const SE_CH3 = new Set(["fm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate"]);
 // What an effect may not write, by IR target: the source keyword to name.
-const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate" };
+const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate", NOISE_RATE: ":noise-rate" };
 
 // (def-se name [:prio N] [:tempo T] (channel body…)…). The head options are
 // the effect's: :prio its default priority (0-255, the host may pass its
 // own), :tempo the clock its parts run on (default 120) — its own, so an
 // effect sounds the same in every song. Each part is a channel form, one per
 // channel, written on the channel it takes from the song.
-// (def-score :title "…" :composer "…" :author "…" :pcm-voices N) — the whole score's
-// settings (language.md §1). Several forms combine; a key given twice is an
-// error, as is one it does not know.
+// (def-score :title "…" :composer "…" :author "…" :pcm-voices N :target T) — the
+// whole score's settings (language.md §1). Several forms combine; a key given
+// twice is an error, as is one it does not know.
 function parseScoreDef(root, fileMeta, diagnostics) {
   const items = root.items.filter((n) => n.kind !== "comment");
   const err = (msg, at) =>
@@ -5306,9 +5430,10 @@ function parseScoreDef(root, fileMeta, diagnostics) {
   for (let k = 1; k < items.length; k += 2) {
     const key = atomValue(items[k]);
     const v = items[k + 1];
-    const field = { ":title": "title", ":composer": "composer", ":author": "author", ":pcm-voices": "pcmVoices" }[key];
+    const field = { ":title": "title", ":composer": "composer", ":author": "author", ":pcm-voices": "pcmVoices",
+      ":target": "target" }[key];
     if (!field) {
-      err(`unknown option ${key ?? describeNodeToken(items[k])} (takes :title :composer :author :pcm-voices)`, items[k]);
+      err(`unknown option ${key ?? describeNodeToken(items[k])} (takes :title :composer :author :pcm-voices :target)`, items[k]);
       continue;
     }
     if (!v) {
@@ -5327,6 +5452,11 @@ function parseScoreDef(root, fileMeta, diagnostics) {
         pushDiag(diagnostics, "error", "E_PCM_VOICES",
           `def-score :pcm-voices takes 0-3 (got ${atomValue(v) ?? "a list"})`, nodeSrc(v), "global");
       else fileMeta.pcmVoices = n;
+    } else if (field === "target") {
+      // The machine the score is for (targets.js): a symbol, md or pc88.
+      const name = v.kind === "atom" ? v.value : null;
+      if (name && Object.hasOwn(TARGETS, name)) fileMeta.target = name;
+      else err(`:target takes ${Object.keys(TARGETS).join(" or ")}, not ${atomValue(v) ?? "a list"}`, v);
     } else if (v.kind === "string") fileMeta[field] = v.value;
     else err(`${key} takes a string`, v);
   }
@@ -5928,6 +6058,18 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   resolveVoices(typedDefs, defs, paramDefs, diagnostics,
     writesVelSens(parsed, defs, paramDefs, typedDefs, seDefs));
   resolveSampleExtends(sampleDefs, diagnostics);
+  // A target with a ROM rhythm kit names its sounds by the kit roles
+  // (targets.js): a def of that name is that sound there, and one the score
+  // does not define is built in, as init-fm is — an empty def (its "needs
+  // :file" diagnostic goes nowhere: the ROM sound is all it is). A copy
+  // either way: an import's defs are its cached bundle's, shared by every
+  // score.
+  const rhythmKit = targetProfile(fileMeta.target).pcm.rhythm;
+  for (const [name, sound] of Object.entries(rhythmKit ?? {}))
+    sampleDefs.set(name, {
+      ...(sampleDefs.get(name) ?? { tag: "sample", ...parseSampleDef([], null, [], null), src: null }),
+      rhythm: sound,
+    });
   typedDefs.sampleNames = sampleDefs; // for a let name shadowing a sample
   const roots = expandRoots(remaining, defs, paramDefs, diagnostics);
 
@@ -6046,28 +6188,10 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     }
   }
 
-  // Lists with a channel name as the form head are tracks
-  const CHANNEL_NAMES = [
-    "fm1",
-    "fm2",
-    "fm3",
-    "fm3-1",
-    "fm3-2",
-    "fm3-3",
-    "fm3-4",
-    "fm3-csm",
-    "fm3-csm-rate",
-    "fm4",
-    "fm5",
-    "fm6",
-    "sqr1",
-    "sqr2",
-    "sqr3",
-    "noise",
-    "pcm1",
-    "pcm2",
-    "pcm3",
-  ];
+  // Lists with a channel name as the form head are tracks: the target's
+  // channels (targets.js).
+  const target = targetProfile(fileMeta.target);
+  const CHANNEL_NAMES = targetChannelNames(target);
 
   const channelHeads = new Set();
   for (const node of roots) {
@@ -6095,7 +6219,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     );
   }
 
-  // The PCM voice count is the engine image, and the image is a whole-song
+  // On the Mega Drive (a target whose PCM is a soft mix on a DAC channel) the
+  // PCM voice count is the engine image, and the image is a whole-song
   // choice — one image plays 1, 2 or 3 voices at 14.4 / 10.1 / 6.7 kHz. The
   // score states it, or it is the highest pcmN track used.
   // An effect's channels count here too: its PCM needs the voices, and fm6 is
@@ -6109,7 +6234,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     if (m) pcmUsed = Math.max(pcmUsed, Number(m[1]));
   }
   const pcmVoices = fileMeta.pcmVoices ?? pcmUsed;
-  if (pcmUsed > pcmVoices) {
+  const dacMix = target.pcm.model === "dac-mix";
+  if (dacMix && pcmUsed > pcmVoices) {
     pushDiag(
       diagnostics,
       "error",
@@ -6121,7 +6247,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   }
   // A score with PCM owns fm6 as the DAC for the whole song — the engine
   // writes $2B once and never gives the channel back.
-  if (pcmVoices > 0 && allHeads.has("fm6")) {
+  if (dacMix && pcmVoices > 0 && allHeads.has(target.pcm.dacChannel)) {
     pushDiag(
       diagnostics,
       "error",
@@ -6132,12 +6258,30 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     );
   }
 
+  // What the target has, and what it does not (targets.js; the line between a
+  // warning and an error is docs/roadmap.md's pc88 item).
+  if (!dacMix && fileMeta.pcmVoices !== null)
+    targetDiag(diagnostics, "warning",
+      `:pcm-voices picks the Mega Drive's PCM engine; ${target.name} has no such choice, so it is ignored`,
+      fileSrc, "global");
+  if (target.psg.chip === "ssg" && allHeads.has("noise") && allHeads.has("sqr3"))
+    targetDiag(diagnostics, "error",
+      `on ${target.name} the noise is sqr3 with its mixer on noise, so a score has one or the other — give sqr3 :mode both, or move its part`,
+      fileSrc, "global");
+  if (!target.preview && seDefs.size > 0)
+    targetDiag(diagnostics, "error",
+      `def-se is a sound effect a game starts on the Mega Drive's driver; a ${target.name} score is a VGM and has none`,
+      [...seDefs.values()][0].src ?? fileSrc, "global");
+
   // A track's compile state — all of it sticky, persisting across
   // consecutive forms of the same channel. `tempoAt` is the song's tempo map
   // (second pass), which an effect's parts do not follow: they run at their
   // own tempo whatever the song does.
   const makeTrackState = (head, bpm, initialBpm, tempoAt) => ({
     tick: 0,
+    head,
+    target, // the machine (targets.js): what its channels have
+    fmClock: target.fm.clock, // the CSM rate's Timer A runs on it
     defaultLength: Math.round(WHOLE_TICKS / 8),
     defaultOct: 4,
     voiceKeyShift: 0, // the current voice's `:key` − 60
@@ -6249,7 +6393,9 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       // Emit default NOISE_MODE (white0) for noise channel. No src: nothing in
       // the score wrote it, and a src (the whole track form) would light the
       // form up as the playhead, and lasting, on a track with no notes.
-      if (head === "noise") {
+      // An SSG's noise has no mode of its own: its period is the song's
+      // :noise-rate, which starts at the target's default (targets.js).
+      if (head === "noise" && target.psg.chip !== "ssg") {
         trackData.events.push({
           tick: 0,
           cmd: "PARAM_SET",
@@ -6322,12 +6468,18 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     layersByHead.set(entry.head, arr);
   }
 
+  // On a target with a ROM rhythm kit, a rhythm track's note sounds on its
+  // sample's sound, one voice each (docs/roadmap.md, the pc88 item).
+  const rhythmVoiceOf = (head) =>
+    target.pcm.rhythm && /^pcm[1-3]$/.test(head) && head !== target.pcm.adpcmChannel
+      ? (ev) => (ev.cmd === "PCM_NOTE_ON" ? sampleDefs.get(ev.args?.sample)?.rhythm ?? "" : "")
+      : undefined;
   const tracks = [];
   for (const [head, layers] of layersByHead) {
     tracks.push(
       layers.length === 1
         ? layers[0].trackData
-        : flattenPriorityLayers(head, layers, diagnostics),
+        : flattenPriorityLayers(head, layers, diagnostics, rhythmVoiceOf(head)),
     );
   }
 
@@ -6471,10 +6623,12 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         unit: v.unit,
         public: v.public,
       })),
+      ...(target.name !== DEFAULT_TARGET_NAME ? { target: target.name } : {}),
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,
+        ...(sample.rhythm ? { rhythm: sample.rhythm } : {}),
         file: sample.file,
-        resolvedFile: resolveSamplePath(sample.file, sampleBaseDir(sample)),
+        resolvedFile: sample.file ? resolveSamplePath(sample.file, sampleBaseDir(sample)) : null,
         rate: sample.rate,
         offset: sample.offset,
         frames: sample.frames,
