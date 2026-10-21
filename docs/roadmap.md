@@ -51,9 +51,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## Importers
 
-- **mucom88**: the MML is imported whole. What a Mega Drive cannot hold is
-  reinterpreted, not carried: part G's rhythm plays the RX5 kit, the ADPCM
-  part its decoded `#pcm` bank, and the SSG lands on the PSG's coarser steps.
 - **VGM**: tempo changes within a song (one grid serves the whole file — Dino
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
   if wanted — envelopes and bends match exactly (TwinBee gives ~26
@@ -74,14 +71,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## Future vision
 
-**A patch ecosystem on `import`.** `(import "path")` already merges another
-file's defs at compile time (language.md §9.2); the idea keeps that surface
-and adds sources — `(import "dx7-brass" :from :patches)`, a community URL —
-resolved at compile time, version-pinned for reproducibility. Patches would be
-FM voices and function effects (delay, arpeggiator, LFO), each with author,
-license, version and lineage (`fork_of`); previews synthesize in the browser,
-since the chip emulators are already there.
-
 **MMLisp as the composing tool for a Z80 stream player.** For a game that
 cannot spare the 68000: the score exported as a pre-rendered stream (Live's
 VGM export → xgmtool → XGM works today, without runtime parameter motion),
@@ -89,7 +78,54 @@ played by a small Z80 player with a little added on top — per-channel level
 offsets on the carrier TL writes, part swapping between layered variant
 streams, and `(trig N)` markers so the game can sync to bars.
 
-**Multi-chip.** The IR is chip-agnostic; only the backend (MMB exporter and
-driver) is chip-specific. YM2151 (OPM), YM2413 (OPLL), SID, the NES 2A03 and
-the PC Engine's HuC6280 would each need a target profile, a register encoder
-and a JS emulator.
+**Other machines, as VGM.** The IR is chip-agnostic; only the backend is
+chip-specific. The Mega Drive keeps its driver and its integrated environment.
+Every other machine gets a *target profile*, a register encoder, a browser
+emulator for the preview and a VGM chip block — and no driver of its own: the
+score is composed in Live and delivered as a VGM, which existing players run.
+Live's preview and the VGM come from the same register log, so they match by
+construction, as the driver's A/B gate does today. What this gives up is
+hardware playback and game integration, deliberately (VGMPlay-MSX plays the
+MSX VGMs on hardware regardless).
+
+A target profile is a first-class part of the language: the channel table,
+which parameters exist and their ranges (language.md §7.0's "target's base",
+`E_UNSUPPORTED_TARGET`), the pitch table for the chip's clock, the voice
+classes it can play, its PCM voices and their constraints, and its kit (below).
+A *portable core* — notes, lengths, flow, the vel/pitch/pan curves, 4-op FM
+voices on the OPN/OPM family, square + noise — compiles for every target; a
+target's own features (FM3 special mode, SSG-EG, duty, waves) are a diagnostic
+on any other.
+
+In order:
+
+1. **PC-8801 SB2 (YM2608).** FM voices carry as they are (OPN family, with
+   FM3 special, SSG-EG and CSM); the SSG takes sqr1-3 + noise. The rhythm part
+   is a *kit* of fixed sounds: a sample def names its ROM counterpart
+   (a `:rhythm bd`-style key), so the same role plays the file on the Mega
+   Drive and the ROM sound here — the reverse of the mucom importer's
+   part G → RX5 mapping. Vel is the instrument's IL, pan its three positions;
+   no pitch, no fx chain. Roles without a ROM counterpart go to ADPCM-B (one
+   voice), and past that a diagnostic drops them. The preview needs the
+   YM2608's internal rhythm ROM, which is Yamaha's and cannot ship: the user
+   brings their own (kept like recent files), and without it the kit's
+   samples stand in.
+2. **X68000 (YM2151 + MSM6258).** OPM voices convert from OPN with DT2 = 0
+   and SSG-EG dropped; KC/KF pitch and channel 8's noise are the profile's.
+   PCM8 is a software mixer, not a chip, so the export does its job: pcm1-3
+   are mixed into the one MSM6258 ADPCM stream at the chip's fixed rate, with
+   pitch absorbed in that mix (`pcm-model.js`'s lineage).
+3. **MSX: PSG, then SCC.** The PSG is the SSG profile again. The SCC brings
+   the *wavetable* voice class, which the PC Engine, the FDS and the Game Boy
+   share later. The FM-PAC (OPLL: 2-op, fifteen preset voices and one user
+   voice) is a different composing surface that none of the 4-op voice assets
+   reach, so it waits for a 2-op voice form; MSX-Audio is left out.
+4. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
+   without a level (the level model needs targets that have none), the
+   noise's two modes, and the DPCM as a one-voice kit of user samples at
+   sixteen fixed rates. Expansions are decided by voice class, not one by one:
+   the 5B is the SSG profile, the VRC7 the OPLL's, the FDS the wavetable
+   class. VRC6, N163 and MMC5 have no VGM block, which bounds the set.
+
+Emulators for the preview: ymfm (BSD) covers the YM2608, YM2151, YM2413,
+Y8950 and the SSG in one library, built to WASM beside the Nuked cores.
