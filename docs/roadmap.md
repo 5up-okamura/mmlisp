@@ -11,9 +11,12 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 **Next:**
 
-1. **Mid-song voice changes** — VOICE_SET bodies in the sample-bank ROM, so a
-   voice change is one pair instead of the ~30 register writes a channel costs
-   today.
+1. **Mid-song voice changes with no silence before them** — VOICE_SET
+   bodies in the sample-bank ROM, so a voice change is one pair instead of
+   the ~30 register writes a channel costs today. A change after a rest or a
+   cut note is already sent ahead in the silence (`voice-hoist.js`) and is
+   not late; what this buys is several channels changing voice legato on one
+   beat.
 2. **Several scores resident at once** (DJ-style transitions, driver.md §2.3).
    Today one score is resident; a bundle's songs share one sample bank.
 3. **Single-bank PAL samples** are baked at the NTSC DAC rate (the multi-bank
@@ -46,6 +49,12 @@ Its current limits are `driver.md` §11 — keep the two in step.
   The signal-⊕ region model's first relaxation is loop⊕one-shot, which a
   baked `env × lfo` AM needs (runtime AM is the scaled macro today).
 - **OP mask** — per-channel operator enable/disable.
+- **More PCM tracks than voices** (considered, waiting for a score that
+  needs it). `:pcm-voices 2` keeps the 10.1 kHz rate; pcm1–pcm3 written
+  beside it would flatten by the `:prio` rule the layers already use, so
+  where three overlap the lowest drops, and the compiler counts the drops.
+  Opt-in by writing more tracks than voices; a merged bake of the overlaps
+  was the alternative, rejected for growing the bank unseen.
 - **Dynamic performance branches** — `|` alternation, random part switching,
   random label jump.
 
@@ -95,21 +104,61 @@ classes it can play, its PCM voices and their constraints, and its kit (below).
 A *portable core* — notes, lengths, flow, the vel/pitch/pan curves, 4-op FM
 voices on the OPN/OPM family, square + noise — compiles for every target; a
 target's own features (FM3 special mode, SSG-EG, duty, waves) are a diagnostic
-on any other.
+on any other, and its own settings a warning.
 
 In order:
 
-1. **PC-8801 SB2 (YM2608).** FM voices carry as they are (OPN family, with
-   FM3 special, SSG-EG and CSM); the SSG takes sqr1-3 + noise. The rhythm part
-   is a *kit* of fixed sounds: a sample def names its ROM counterpart
-   (a `:rhythm bd`-style key), so the same role plays the file on the Mega
-   Drive and the ROM sound here — the reverse of the mucom importer's
-   part G → RX5 mapping. Vel is the instrument's IL, pan its three positions;
-   no pitch, no fx chain. Roles without a ROM counterpart go to ADPCM-B (one
-   voice), and past that a diagnostic drops them. The preview needs the
-   YM2608's internal rhythm ROM, which is Yamaha's and cannot ship: the user
-   brings their own (kept like recent files), and without it the kit's
-   samples stand in.
+1. **PC-8801 SB2 (YM2608)**, chosen in the score as `(def-score :target
+   pc88)` (default `md`; a machine name, since a target is a chip set and
+   its clock). The order of work: the Mega Drive profile is first pulled
+   out of the compiler's channel table and diagnostics, the IR player's
+   register layer and the PCM path with the output unchanged
+   (`check:snapshot` stays green); then the compiler's pc88 side; then the
+   encoder and VGM 1.51, checked by importing mucom88 songs on this target
+   and comparing registers with the real driver's VGM (the A/B the importer
+   was tuned with, now covering parts G and K and the SSG too); then ymfm
+   built to WASM and Live's channel tables.
+   - **FM**: fm1–fm6 as they are, FM3 special mode, CSM, SSG-EG and the LFO
+     included; fm6 is plain FM (no DAC). The pitch table and LFO rates come
+     from the 7.9872 MHz clock. The encoder sets $29 bit 7 first, or
+     fm4–fm6 stay silent (the chip starts in OPN's three-channel mode).
+   - **SSG**: sqr1–sqr3. The 12-bit period has no A2 floor. `:vel`'s
+     2 dB steps quantize once onto the 3 dB attenuator (language.md §6). A
+     sqr track's `:mode tone|noise|both` is the channel's mixer;
+     `:noise-rate 0–31` is the one shared noise period, song-wide like
+     `:lfo-rate`. The `noise` track is sqr3 with `:mode noise`, fixed rather
+     than allocated, so `noise` beside `sqr3` is a diagnostic; a noise note's
+     pitch is not read (the period is `:noise-rate`). The Mega Drive's `white0`–`white2` read as their nearest
+     `:noise-rate`, with a warning. The hardware envelope waits.
+   - **Rhythm**: a def-pcm key `:rhythm bd|sd|top|hh|tom|rim` names a
+     sample's ROM counterpart: the Mega Drive plays its `:file`, pc88 the ROM
+     sound. The bundled kits carry it on kick, snare, ride, hat, tom4 and rim
+     (the mucom importer's G mapping, reversed); a def with `:rhythm` and no
+     `:file` is pc88-only. A rhythm hit's physical channel is its sound, so
+     `:prio` layers flatten per sound and one pcm track plays all six at
+     once. vel + vol + master fold into the sound's IL (0.75 dB, 23 dB deep;
+     RTL stays 63); `:pan` is written with it per hit; `:mode shot` rings
+     out, `gate` dumps at the note's end, `loop` is a diagnostic, and pitch
+     or `:fx` on a ROM sound is a diagnostic.
+   - **ADPCM-B** is pcm1's alone; a sample without `:rhythm` on pcm2/pcm3 is
+     a diagnostic, and a `:rhythm` sample on pcm1 plays its `:file` on
+     ADPCM-B. Delta-N pitches in real time, so `:semi`, `:pitch` and
+     shot/gate need no per-note bake; `loop` repeats the whole range only, so
+     a `:loop-start` past the start is a diagnostic. L/R pan and the 8-bit
+     linear level (dB converted, quantized once) are written per note — the
+     pan mucom's part K has and the Mega Drive drops. The bake runs `:fx`
+     and encodes Yamaha ADPCM (the decoder is `mucom-pcm.js`); 256 KB of
+     RAM, over it a diagnostic.
+   - **Settings with no meaning here are ignored with a warning**
+     (`:pcm-voices`); **what would change what is heard is a diagnostic**.
+     `def-val` slots bake to their defaults (no host), `def-se` has nowhere
+     to go and is a diagnostic. A frame stays 1/60 s, the language's clock.
+   - **VGM** 1.51+: the YM2608 at 7987200 Hz, commands 0x56/0x57, the
+     ADPCM-B RAM image as data block 0x81. The rhythm ROM is the chip's and
+     is not in the file.
+   - **Preview**: ymfm's YM2608 reads the rhythm ROM through the host, as
+     MAME does — it is Yamaha's and does not ship. The user brings their own
+     (kept like recent files); without it a rhythm def's `:file` stands in.
 2. **X68000 (YM2151 + MSM6258).** OPM voices convert from OPN with DT2 = 0
    and SSG-EG dropped; KC/KF pitch and channel 8's noise are the profile's.
    PCM8 is a software mixer, not a chip, so the export does its job: pcm1-3

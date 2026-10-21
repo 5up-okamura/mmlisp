@@ -57,6 +57,14 @@ suffix combines with the target's base (language.md §7.0).
   centre that follows the game every frame — then as an offset slot on the
   scaled-macro mechanism (`offset + (shape × scale) >> 8`), not as live
   endpoints.
+- **PCM levels stay on the 6 dB shift ladder** (2026-10-21). A 3 dB step in
+  the Z80 mixer or level-baked copies were weighed; the user finds 6 dB
+  enough for drums. Do not re-propose finer PCM levels.
+- **No effect (def-se) on CH3** stays (2026-10-21). An effect over the
+  independent-operator or CSM mode would have to save and restore what the
+  frequency registers mean, not just their values; a "normal mode only"
+  exception is writable but adds a conditional rule. Wanted, but not at that
+  price.
 
 ## 2. Why the value machine has this shape
 
