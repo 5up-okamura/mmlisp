@@ -229,6 +229,19 @@ async function main() {
       src: "(def-score :target nes)\n(fm1 c)",
       expected: ["E_SCORE_OPTION"],
     },
+    // A part's word on another part's channel (language.md §19): inline, in
+    // a macro and in a param-set; a song-wide word is any track's.
+    {
+      label: "a channel takes its own part's words",
+      src: '(sqr1 :tl1 30 :pan left :lfo-rate 3 (macro :ar1 [3 1]) (param-set :tl2 3) c)\n(noise :ssg1 8 c)\n(fm1 :pcm-start 4 (macro :mode [white0]) c)\n(def-pcm k :file "/k.wav")\n(pcm1 k :pan left c)',
+      expected: ["E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET",
+        "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET"],
+    },
+    {
+      label: "pc88's parts take pan where the chip has it",
+      src: '(def-score :target pc88)\n(def-pcm k :file "/k.wav")\n(sqr1 :pan left c)\n(pcm1 k :pan left c)\n(pcm2 kick :pan right c)',
+      expected: ["E_UNSUPPORTED_TARGET"],
+    },
   ];
 
   for (const testCase of cases) {

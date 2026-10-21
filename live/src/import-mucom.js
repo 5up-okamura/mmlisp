@@ -1548,8 +1548,9 @@ function renderOps(ops, ctx, out, depth = 0) {
       case "pan":
         if (!fm3Patch(ctx)) break;
         // PCM is a soft-mix voice on the fm6 DAC and owns no FM channel, so it
-        // has no pan lane.
+        // has no pan lane; the SN76489 is mono.
         if (ctx.isPcm) { warnOnce(ctx.warnings, "pcmPan", "part K: pan (p) has no PCM equivalent; dropped"); break; }
+        if (ctx.isSsg) { warnOnce(ctx.warnings, "ssgPan", "SSG parts: pan (p) has no PSG equivalent; dropped"); break; }
         // mucom p: 0=off,1=right,2=left,3=center -> MMLisp :pan
         out.push(`:pan ${{ 1: "right", 2: "left" }[op.v] ?? "center"}`);
         break;

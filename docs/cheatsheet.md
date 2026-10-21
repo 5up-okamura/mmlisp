@@ -211,11 +211,14 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 - A macro target that does not exist — a typo like `(macro :vell [15 9])` —
   is `E_MACRO_TARGET`; the targets are listed under Macros above.
 - In a PCM score an `fm6` track is an error — move it to `fm1`–`fm5`.
+- A channel takes its own chip's words: FM operator keys and `:pan` on a
+  `sqr`/`noise`/`pcm` track, or `:mode white0` on an FM track, are
+  `E_UNSUPPORTED_TARGET`.
 - `(def-score :target pc88)` holds a score to the PC-8801's YM2608 (§19):
   sqr `:mode tone|noise|both`, song-wide `:noise-rate`, `noise` is sqr3,
   pcm1 the ADPCM-B, pcm2/pcm3 the ROM rhythm, built in under the kit roles
-  (`(pcm2 kick c hat c)`, no def). It compiles; it does not play or export
-  yet.
+  (`(pcm2 kick c hat c)`, no def). A word or channel only another target's
+  chips have is `E_TARGET`. It compiles; it does not play or export yet.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

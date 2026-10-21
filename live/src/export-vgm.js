@@ -31,12 +31,6 @@ import { bankedEngineImage } from "./engine-banked-images.js";
 // of the chip clocks below.
 const VGM_SAMPLE_RATE = 44100;
 
-// NTSC Mega Drive clocks (master 53.693175 MHz; YM2612 = /7, SN76489 = /15).
-// SN76489 as wired in the Mega Drive: white-noise feedback taps 0x0009, 16-bit
-// shift register.
-const SN76489_FEEDBACK = 0x0009;
-const SN76489_SHIFT_WIDTH = 16;
-
 const VGM_VERSION = 0x00000150;
 // A one-shot score with PCM ends once the engine has been silent this long
 // after its last event (or at the cap).
@@ -281,7 +275,6 @@ function assembleVgm(data, gd3, target, { totalSamples, loopOffsetInData, loopSa
   buf[3] = 0x20;
   u32(0x04, total - 0x04); // EOF offset (relative to 0x04)
   u32(0x08, VGM_VERSION);
-  u32(0x0c, target.psg.clock);
   u32(0x10, 0); // YM2413 clock
   u32(0x14, gd3 ? gd3Start - 0x14 : 0); // GD3 offset (relative to 0x14)
   u32(0x18, totalSamples);
@@ -294,12 +287,19 @@ function assembleVgm(data, gd3, target, { totalSamples, loopOffsetInData, loopSa
     u32(0x20, 0);
   }
   u32(0x24, 60); // rate (informational)
-  u16(0x28, SN76489_FEEDBACK);
-  buf[0x2a] = SN76489_SHIFT_WIDTH;
-  buf[0x2b] = 0; // SN76489 flags
-  u32(0x2c, target.fm.clock);
   u32(0x30, 0); // YM2151 clock
   u32(0x34, DATA_START - 0x34); // VGM data offset (relative to 0x34)
+  // Each chip's block (chips/): its clock and the fields it has. One past
+  // this version's header needs a later VGM (docs/roadmap.md).
+  for (const chip of Object.values(target.chips)) {
+    const { clock, header = [] } = chip.vgm;
+    for (const [at, size, value] of [[clock, 4, chip.clock], ...header]) {
+      if (at + size > DATA_START) throw new Error(`the ${chip.chip}'s VGM block is past a ${VGM_VERSION.toString(16)} header`);
+      if (size === 4) u32(at, value);
+      else if (size === 2) u16(at, value);
+      else buf[at] = value;
+    }
+  }
 
   buf.set(data, DATA_START);
   if (gd3) buf.set(gd3, gd3Start);

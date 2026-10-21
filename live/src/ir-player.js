@@ -186,6 +186,8 @@ export class IRPlayer {
    */
   constructor(writeCallback) {
     this._target = targetProfile(); // until a score says otherwise (_loadIR)
+    this._fmChip = this._target.chipFor("fm");
+    this._psgChip = this._target.chipFor("sqr");
     this._write = writeCallback;
     this._ir = null;
     this._playing = false;
@@ -366,13 +368,15 @@ export class IRPlayer {
   // synced around every load, including a gapless swap that commits later.
   _loadIR(irObj) {
     this._ir = irObj;
-    // The machine the score is for (targets.js): its clocks, its PSG's
-    // encoding and how its PCM plays. A target whose chips the preview does
-    // not have yet is refused here, rather than played on the Mega Drive's.
+    // The machine the score is for (targets/): its chips' clocks and
+    // encoders. A target whose chips the preview does not have yet is
+    // refused here, rather than played on the Mega Drive's.
     const target = targetProfile(irObj.metadata?.target);
     if (!target.preview)
       throw new Error(`the ${target.system} (:target ${target.name}) is checked by the compiler, but its preview and VGM export are not built yet`);
     this._target = target;
+    this._fmChip = target.chipFor("fm");
+    this._psgChip = target.chipFor("sqr");
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
     // mixer's mute has to hold the timer rather than key the channel off.
     this._csmTrack = (irObj.tracks ?? []).findIndex((t) =>
@@ -1726,7 +1730,7 @@ export class IRPlayer {
   _timerAValueFromHz(hz) {
     const safeHz = Math.max(1, Number(hz) || 1);
     // OPN Timer A: hz ≈ master_clock / (144 * (1024 - TA)).
-    const ta = Math.round(1024 - this._target.fm.clock / (144 * safeHz));
+    const ta = Math.round(1024 - this._fmChip.clock / (144 * safeHz));
     return Math.max(0, Math.min(1023, ta));
   }
 
@@ -1880,7 +1884,7 @@ export class IRPlayer {
   _writeFm3OpPitch(op, note, cents, when) {
     const { fnum, block } = midiToFnumBlock(
       snapNote(note, this._chRegs[2]?.snap ?? 0) + cents / 100,
-      this._target.fm.fnumRate,
+      this._fmChip.fnumRate,
     );
     this._writeFm3OpFnum(op, fnum, block, when);
   }
@@ -1888,7 +1892,7 @@ export class IRPlayer {
   _writeFmNote(port, chOffset, ch, note, cents, when) {
     const { fnum, block } = midiToFnumBlock(
       snapNote(note, this._chRegs[ch]?.snap ?? 0) + cents / 100,
-      this._target.fm.fnumRate,
+      this._fmChip.fnumRate,
     );
     this._writeFmFnum(port, chOffset, fnum, block, when);
   }
@@ -4259,9 +4263,9 @@ export class IRPlayer {
   }
 
   // ---------------------------------------------------------------------------
-  // PSG helpers. The target's PSG (targets.js) encodes each operation as
-  // [port, addr, data] writes — on the Mega Drive SN76489 bytes on port 2,
-  // the worklet protocol's PSG.
+  // PSG helpers. The target's PSG chip (chips/) encodes each operation as
+  // [port, addr, data] writes — the SN76489's bytes on port 2, the worklet
+  // protocol's PSG.
   // ---------------------------------------------------------------------------
 
   _psgWrites(writes, when) {
@@ -4274,7 +4278,7 @@ export class IRPlayer {
     const att = attReg & 0x0f;
     // Track sounding state so master/vol recomputes don't un-silence idle channels.
     this._psgSounding[psgCh] = att < 15;
-    this._psgWrites(this._target.psg.att(psgCh, att), when);
+    this._psgWrites(this._psgChip.att(psgCh, att), when);
   }
 
   // Compose vel (0-15) / vol / master (0-31) into a PSG attenuation (0=loud,
@@ -4425,13 +4429,13 @@ export class IRPlayer {
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
   // modeVal: 0-7 encoding FB(1bit) + NF(2bits) → bits 5-3 of noise register
   _psgSetNoiseCfg(modeVal, when) {
-    this._psgWrites(this._target.psg.noise(modeVal), when);
+    this._psgWrites(this._psgChip.noise(modeVal), when);
   }
 
   // Set tone period for a PSG tone channel (ch 0-2): the note through the
   // channel's `:snap` mask, the cents on top (as _writeFmNote).
   _psgSetPitch(psgCh, note, cents, when) {
-    const psg = this._target.psg;
+    const psg = this._psgChip;
     const period = psg.period(midiToHz(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100));
     this._psgWrites(psg.tone(psgCh, period), when);
   }
@@ -5021,7 +5025,7 @@ export class IRPlayer {
     // Globals, matching the driver's boot patch (driver.md §5.4).
     this._write(0, 0x22, 0); // LFO off
     this._write(0, 0x27, 0); // CH3 normal mode, timers off
-    if (this._target.pcm.model === "dac-mix") {
+    if (this._target.hasPart("dac")) {
       this._write(0, 0x2a, 0); // DAC data 0 — the DAC is off; the engine feeds it
       this._write(0, 0x2b, 0); // DAC off
     }

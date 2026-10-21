@@ -2270,6 +2270,21 @@ yet.** Playing or exporting a `pc88` score says so and stops; the MMB is the
 Mega Drive driver's and refuses it. What follows is what the compiler holds a
 `pc88` score to.
 
+**What a channel is.** Each of a target's channels is a *part* of one of
+its chips — 4-op FM, the SN76489's square or noise, the SSG, the ROM rhythm,
+a sample voice — and a part brings its own words: the FM operator keys, the
+SN76489 noise's `white0`–`periodic3`, the SSG's `:noise-rate`, a sample
+voice's range points, `:pan` where the chip pans (FM, the ADPCM-B, the ROM
+rhythm). A part's word on another part's channel — `:tl1` on `sqr1`, `:pan`
+on a PSG track, `:mode white0` on `fm1` — is `E_UNSUPPORTED_TARGET`, inline,
+in a macro and in a `(param-set …)`, on every target; a word only other
+targets' parts have is `E_TARGET` (`:noise-rate` on `md`). The rest of the
+language — notes, lengths, flow, `:vel`, `:vol`, `:pitch`, `:snap`, the
+song-wide `:tempo` / `:master` / `:lfo-rate`, the curves and macros — is
+every channel's on every target. A channel name only another target has is
+`E_TARGET` too, and two names that are one physical channel on the target
+(the SSG's `noise` and `sqr3`) cannot both be in a score.
+
 **The line.** A setting that has no meaning on the target is ignored with
 `W_TARGET` (`:pcm-voices`, the Mega Drive's white noise modes, which read as
 the nearest `:noise-rate`). Anything that would change what is heard is

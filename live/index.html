@@ -818,6 +818,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
+    import { targetProfile } from './src/targets.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
@@ -6920,14 +6921,14 @@
     window.toggleDrvBackend = toggleDrvBackend;
     updateDrvBackendCheck();
 
-    // The Tools items that only the Mega Drive's driver has: the MMLispDRV
-    // backend, and Release Holds (a game's key-off). Off for another
-    // :target (the IR's metadata.target, absent for md).
+    // The Tools items that only MMLispDRV has: its backend, and Release
+    // Holds (a game's key-off). Off for a :target without that driver
+    // (targets/).
+    const hasDrv = (ir) => targetProfile(ir?.metadata?.target).driver === 'mmlispdrv';
     function updateTargetMenus(ir) {
-      const md = !ir?.metadata?.target;
       for (const id of ['drvBackendItem', 'releaseHoldsItem']) {
         const el = document.getElementById(id);
-        if (el) el.disabled = !md;
+        if (el) el.disabled = !hasDrv(ir);
       }
     }
 
@@ -7053,7 +7054,7 @@
       // tempo fader and Dynamic Parameters are supported (re-applied from the
       // persisted UI state below). Still IR-player-only here: line highlight,
       // pause-resume and PCM per-track gain.
-      const drvBackend = _drvBackend && !_lastGoodIR?.metadata?.target; // md only
+      const drvBackend = _drvBackend && hasDrv(_lastGoodIR);
       if (drvBackend || (currentIrURL && /\.mmb(?:$|\?)/i.test(currentIrURL))) {
         try {
           let mmbBytes;

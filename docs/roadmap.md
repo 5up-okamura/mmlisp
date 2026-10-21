@@ -109,10 +109,12 @@ on any other, and its own settings a warning.
 In order:
 
 1. **PC-8801 SB2 (YM2608): the sound.** The compiler already holds a
-   `:target pc88` score to the chip (language.md §19; `live/src/targets.js`
-   is its profile); nothing plays it yet. What is left, in order:
-   - **The IR player's pc88 side**, register-exact: FM on the 7.9872 MHz
-     clock with $29 bit 7 set first (fm4–fm6 are silent in the chip's
+   `:target pc88` score to the chip (language.md §19; its profile is
+   `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`); nothing
+   plays it yet. What is left, in order:
+   - **The IR player's pc88 side**: the YM2608's encoders beside the
+     SN76489's, register-exact, which turn its `preview` on. FM on the
+     7.9872 MHz clock with $29 bit 7 set first (fm4–fm6 are silent in the chip's
      OPN-compatible start); the SSG's tone and level registers, `:vel`'s
      2 dB quantized once onto its 3 dB steps; the mixer (reg 7) from
      `SSG_MIX` and the noise track, the noise period (reg 6) from
