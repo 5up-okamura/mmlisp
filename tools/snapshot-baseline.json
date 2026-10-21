@@ -685,6 +685,20 @@
   "mmb": "fbd17aaf4343a576",
   "vgm": "5b37f5727bc1eddd"
  },
+ "drv/tests/m4-csm-ops.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f33fe5b3113dee8f",
+  "regs": "829815518a85a2ea",
+  "mmb": "5eac8311c18d435b",
+  "vgm": "98f4288da53714b2"
+ },
+ "drv/tests/m4-csm-ops.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "cabe1d7fda44a08e",
+  "regs": "829815518a85a2ea",
+  "mmb": "f0dbe748c40406e4",
+  "vgm": "98f4288da53714b2"
+ },
  "drv/tests/m4-csm-rest-inline.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "19a637dc1a1f3582",

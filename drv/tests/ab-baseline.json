@@ -293,6 +293,12 @@
     "compileErrors": 0,
     "digest": "bd4b51bf"
   },
+  "m4-csm-ops.mmlisp": {
+    "ok": false,
+    "mismatches": 44,
+    "compileErrors": 0,
+    "digest": "e7d2f769"
+  },
   "m4-csm-rest-inline.mmlisp": {
     "ok": true,
     "mismatches": 0,

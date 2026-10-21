@@ -6207,16 +6207,24 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     channelHeads.has("fm3-2") ||
     channelHeads.has("fm3-3") ||
     channelHeads.has("fm3-4");
-  const hasFm3NormalOrOp = channelHeads.has("fm3") || hasFm3OpTracks;
-  if (hasCsmMode && hasFm3NormalOrOp) {
-    pushDiag(
-      diagnostics,
-      "error",
-      "E_FM3_MODE_CONFLICT",
-      "fm3-csm/fm3-csm-rate cannot be mixed with fm3 or fm3-1..fm3-4 in the same score",
-      fileSrc,
-      "global",
-    );
+  // CSM with the operators as tracks (language.md §15): a note-less
+  // (fm3-csm voice) beside fm3-1..fm3-4 — each operator's F-number and level
+  // is its track's, a formant — and the buzz from an fm3-csm-rate track, the
+  // one rate source there.
+  const hasCsmOps = channelHeads.has("fm3-csm") && hasFm3OpTracks;
+  if (hasCsmMode && channelHeads.has("fm3")) {
+    pushDiag(diagnostics, "error", "E_FM3_MODE_CONFLICT",
+      "fm3-csm/fm3-csm-rate cannot be mixed with fm3 in the same score", fileSrc, "global");
+  }
+  if (hasCsmMode && hasFm3OpTracks && !hasCsmOps) {
+    pushDiag(diagnostics, "error", "E_FM3_MODE_CONFLICT",
+      "fm3-1..fm3-4 beside fm3-csm-rate need a note-less (fm3-csm voice) track for the shared patch",
+      fileSrc, "global");
+  }
+  if (hasCsmOps && !channelHeads.has("fm3-csm-rate")) {
+    pushDiag(diagnostics, "error", "E_CSM_RATE_MISSING",
+      "fm3-csm beside fm3-1..fm3-4 takes its rate from an fm3-csm-rate track; the score has none",
+      fileSrc, "global");
   }
 
   // On the Mega Drive (a target whose PCM is a soft mix on a DAC channel) the
@@ -6437,6 +6445,22 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     }
   }
 
+  // Beside fm3-1..fm3-4 the rate track owns CSM: it turns the mode on at tick
+  // 0 — Timer A held until its first rate — and off at its end, so the voice
+  // sounds exactly while it plays (the note-less fm3-csm track ends at tick 0).
+  if (hasCsmOps) {
+    for (const key of trackOrder) {
+      const { trackData, trackState } = trackByKey.get(key);
+      if (!trackState.isCsmRateTrack) continue;
+      const src = trackData.events[0]?.src;
+      trackData.events.unshift(
+        { tick: 0, cmd: "CSM_ON", args: {}, src },
+        { tick: 0, cmd: "CSM_RATE", args: { run: false }, src },
+      );
+      trackData.events.push({ tick: trackState.tick, cmd: "CSM_OFF", args: {}, src });
+    }
+  }
+
   if (hasInlineCsmRate && hasCompanionCsmRateTrack) {
     pushDiag(
       diagnostics,
@@ -6562,22 +6586,23 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     tracks[0].events.unshift({
       tick: 0,
       cmd: "FM3_MODE",
-      args: { mode: "op" },
+      args: { mode: hasCsmOps ? "csm-op" : "op" },
       src: fileSrc,
     });
   }
 
-  // Beside fm3-1..fm3-4 the (fm3 …) track is the shared patch alone: in
-  // independent-OP mode the channel's F-number is operator 4's, so a note on
-  // it would fight fm3-4 for pitch and key.
+  // Beside fm3-1..fm3-4 the (fm3 …) track — or, in CSM, the (fm3-csm …)
+  // track — is the shared patch alone: the channel's F-number is operator 4's
+  // there, so a note on it would fight fm3-4 for pitch and key.
   if (tracks.some((t) => !t.se && /^fm3-[1-4]$/.test(t.scoreChannel))) {
     for (const t of tracks) {
-      if (t.se || t.scoreChannel !== "fm3") continue;
+      if (t.se || (t.scoreChannel !== "fm3" && t.scoreChannel !== "fm3-csm")) continue;
       const note = t.events.find((ev) => ev.cmd === "NOTE_ON");
       if (note)
         pushDiag(diagnostics, "error", "E_FM3_MODE_CONFLICT",
-          "(fm3 …) beside fm3-1..fm3-4 is the shared patch only: it takes no notes",
-          note.src ?? fileSrc, "fm3");
+          `(${t.scoreChannel} …) beside fm3-1..fm3-4 is the shared patch only: it takes no notes` +
+            (t.scoreChannel === "fm3-csm" ? " (the buzz is the fm3-csm-rate track's)" : ""),
+          note.src ?? fileSrc, t.scoreChannel);
     }
   }
 

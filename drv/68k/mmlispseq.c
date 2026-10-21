@@ -588,19 +588,24 @@ static void write_noise_cfg(MMLSeq *s) {
 }
 
 /* ── FM3 independent-OP mode (driver.md §13.4, opcodes 0xA3/0xA4) ──────────
- * In CH3 special mode ($27 bit6) the channel's four operators carry independent
- * F-numbers and key bits. The four operator tracks are channel ids 16-19;
- * channel 2 is the shared CH3 (patch + channel level).
- * Returns the 1-based operator, or 0 when this channel is an ordinary one. */
+ * With the operators as tracks (FM3_MODE 1, or 3 under CSM) CH3's four
+ * operators carry independent F-numbers, levels and keys. The four operator
+ * tracks are channel ids 16-19; channel 2 is the shared CH3 (patch + channel
+ * level). Returns the 1-based operator, or 0 when this channel is an ordinary
+ * one. */
 MML_HOT int fm3_op_for(const MMLSeq *s, int ch) {
-  if (!(s->reg27 & 0x40)) return 0;
+  if (!s->fm3_ops) return 0;
   if (ch >= 16 && ch <= 19) return ch - 15;
   return 0;
 }
+static void write_fm3_op_tl(MMLSeq *s, int op);
 static void fm3_key_op(MMLSeq *s, int op, int on) {
   uint8_t bit = (uint8_t)(0x10 << (op - 1)); /* OP1=0x10 .. OP4=0x80 */
   if (on) s->fm3_op_mask |= bit;
   else s->fm3_op_mask &= (uint8_t)~bit;
+  /* CSM (driver.md §9): Timer A keys CH3 and $28 must hold no operator, so the
+   * operator's key is its level — its TL on, 127 off (fm3_op_tl). */
+  if (s->reg27 & 0x80) { write_fm3_op_tl(s, op); return; }
   ym_key(s, (uint8_t)(s->fm3_op_mask | 0x02)); /* ch2 key = 0x02 */
 }
 static void write_fm3_op_pitch(MMLSeq *s, int op, int note, int cents) {
@@ -679,6 +684,8 @@ static void channel_off(MMLSeq *s, int ch) {
  * a modulator it is its modulation depth, which is a level too (§13.4). */
 static uint8_t fm3_op_tl(const MMLSeq *s, int op) {
   int i = op - 1;
+  /* CSM: an operator off its note is held at TL 127 (driver.md §9). */
+  if ((s->reg27 & 0x80) && !(s->fm3_op_mask & (0x10 << i))) return 127;
   uint8_t voiced = s->fm[2].ops[i].voiced_tl;
   int k = op_velk(s->fm[2].velk1[i], 1); /* the role's own is 16 on every operator here */
   int faders4 = MML_VOL_TL4[s->fm3_op_vol[i]] + MML_VOL_TL4[s->fm[2].vol] + MML_VOL_TL4[s->master];
@@ -713,7 +720,7 @@ static void recompose_fm3_ops(MMLSeq *s) {
  * algorithm, which is decided before its $B0 goes out. */
 static uint8_t op_level(const MMLSeq *s, int ch, int idx, uint8_t alg) {
   const MMLFmCh *c = &s->fm[ch];
-  if (ch == 2 && (s->reg27 & 0x40)) return fm3_op_tl(s, idx + 1);
+  if (ch == 2 && s->fm3_ops) return fm3_op_tl(s, idx + 1);
   int carrier = (MML_CARRIER_MASK[alg & 7] >> idx) & 1;
   if (!carrier && !c->velk1[idx]) return c->ops[idx].voiced_tl; /* a modulator, the role's own: raw */
   return level_tl(s, c->ops[idx].voiced_tl, c->velk1[idx], c->vel, c->vol, carrier);
@@ -739,7 +746,7 @@ static void recompose_fm3_ops(MMLSeq *s);
 static void recompose_carriers(MMLSeq *s, int ch) {
   /* In special mode CH3's four operators are independent voices with their own
    * levels, so the channel's carrier set is not what decides its TLs (§13.4). */
-  if (ch == 2 && (s->reg27 & 0x40)) { recompose_fm3_ops(s); return; }
+  if (ch == 2 && s->fm3_ops) { recompose_fm3_ops(s); return; }
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   uint8_t mask = MML_CARRIER_MASK[c->algorithm & 7];
@@ -2284,11 +2291,15 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         break;
       }
       case OP_FM3_MODE: {
-        uint8_t mode = st[t->pc + 1]; /* 0 normal, 1 special (per-op), 2 CSM */
+        /* 0 normal, 1 special (per-op), 2 CSM, 3 CSM with the operators as
+         * tracks. The chip keys CSM in mode 2 alone, so mode 3 writes CSM and
+         * keeps "the operators are tracks" in fm3_ops (driver.md §9). */
+        uint8_t mode = st[t->pc + 1];
         t->pc += 2;
+        s->fm3_ops = (uint8_t)(mode == 1 || mode == 3);
         uint8_t r = (uint8_t)(s->reg27 & ~0xc0);
         if (mode == 1) r |= 0x40;
-        else if (mode == 2) r |= 0x80;
+        else if (mode == 2 || mode == 3) r |= 0x80;
         set_reg27(s, r);
         break;
       }

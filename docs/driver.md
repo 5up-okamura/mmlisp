@@ -1012,6 +1012,18 @@ The rate of overflows is the pitch; where the operators ring is the formant.
   read their own F-numbers (`$A8`–`$AE`) and only operator 4 the channel's
   (`$A0`/`$A4`), so a note writes the same F-number to all four and each rings
   at the note times its own multiple, as in normal mode.
+- **Operators as tracks (`FM3_MODE 3`, language.md §15).** With a note-less
+  `fm3-csm` track beside `fm3-1`–`fm3-4`, each operator's F-number and level
+  are its track's (§13.4) — a formant — and the `fm3-csm-rate` track is the
+  voice: it carries `CSM_ON` and a held `CSM_RATE` at tick 0 and `CSM_OFF` at
+  its end, so stopping it clears CSM and the formants sound exactly while it
+  plays. `$27` holds CSM alone (the chip keys CSM in mode 2 only; bit6 would
+  cancel it), so the mode byte, not the register, says the operators are
+  tracks: `fm3_ops`. An operator's key is then its level — `$28` must hold no
+  operator for Timer A to key it — so `fm3_key_op` writes the operator's TL
+  instead of `$28`: composed on, 127 off, and `fm3_op_tl` returns 127 for an
+  operator off its note whatever recomposes it (a level macro's release, the
+  group fader, master). Gate: `m4-csm-ops`.
 - The sequencer's invariant: `MMLisp_stopTrack` (and END_OF_TRACK, and the stop
   side of `MMLisp_fadeTrack`) on the track that turned CSM on (its CSM_ON)
   clears the CSM bits in reg `$27`, so stopping never leaves the chip in CSM
@@ -1499,9 +1511,10 @@ absorbs the transient.
 ### 13.4 FM3 independent-OP mode
 
 `FM3_MODE {mode}` (0xA3) sets CH3's mode register `$27`: mode 1 sets bit6
-(special / independent-OP), mode 2 sets bit7 (CSM), mode 0 clears both. In
+(special / independent-OP), mode 2 sets bit7 (CSM), mode 3 sets bit7 too and
+keeps the operators as tracks (`fm3_ops`, §9), mode 0 clears both. In
 special mode CH3's four operators run at independent F-numbers with their own
-key bits.
+key bits; modes 1 and 3 route channel ids 16-19 to them (`fm3_op_for`).
 
 The score splits this across coexisting tracks: a note-less `(fm3 voice)`
 track carries the shared patch and channel level state, and `fm3-1`–`fm3-4`
@@ -1516,7 +1529,8 @@ Keying is a shared 4-bit mask: each operator's key sets/clears its bit
 off at its gate like any other note, so consecutive operator notes attack
 (opcodes.md §3.1); operator notes never carry the legato flag. The driver derives
 the operator from the channel id (16-19 → 1-4); F-numbers go through the
-change-only shadow, key edges bypass it.
+change-only shadow, key edges bypass it. Under CSM (mode 3) the mask is kept
+but never written: the operator's key is its TL (§9).
 
 **Pitch is per operator.** Each operator keeps its own note (from
 `FM3_OP_PITCH`) and its own sticky `:pitch` offset, and everything that moves
@@ -1526,7 +1540,7 @@ and the NOTE_PITCH / NOTE_SEMI macros. `FM3_OP_PITCH` itself writes the note
 with the operator's offset applied. For that, the operators have sweep banks
 and macro-engine channels of their own — banks 13–16 and macro channels 10–13.
 An operator is *keyed* for the macro engine
-when its own `$28` bit is set. Gate: `m4-fm3op-pitch`
+when its own mask bit is set. Gate: `m4-fm3op-pitch`
 (a glide on op1, a `:pitch` vibrato on op2, a `:semi` arpeggio on op3, a sticky
 `:pitch` plus an inline sweep on op4 — each on its own registers).
 

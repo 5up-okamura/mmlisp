@@ -140,6 +140,38 @@ async function main() {
       src: "(fm1 (macro :tl1 (linear 0..60 :len 8 :wait 4x) :vel [15 (wait zz) (linear 15..0 :len 4)]) c)",
       expected: ["W_WAIT_INVALID", "W_WAIT_INVALID"],
     },
+    // CSM with the operators as tracks (language.md §15): a note-less
+    // (fm3-csm voice) beside fm3-1..fm3-4, the rate from an fm3-csm-rate track.
+    {
+      label: "CSM formant tracks accepted",
+      src: "(def-fm v :alg 7)\n(fm3-csm v)\n(fm3-1 :oct 5 c (macro :vol [31 16]) c)\n(fm3-2 :oct 6 e)\n(fm3-csm-rate :oct 3 c _ c)",
+      expected: [],
+    },
+    {
+      label: "CSM formant tracks: a note on fm3-csm",
+      src: "(def-fm v :alg 7)\n(fm3-csm v c)\n(fm3-1 :oct 5 c)\n(fm3-csm-rate :oct 3 c)",
+      expected: ["E_FM3_MODE_CONFLICT"],
+    },
+    {
+      label: "CSM formant tracks without a rate track",
+      src: "(def-fm v :alg 7)\n(fm3-csm v)\n(fm3-1 :oct 5 c)",
+      expected: ["E_CSM_RATE_MISSING"],
+    },
+    {
+      label: "CSM formant tracks: inline :csm-rate beside the rate track",
+      src: "(def-fm v :alg 7)\n(fm3-csm v :csm-rate 200)\n(fm3-1 :oct 5 c)\n(fm3-csm-rate :oct 3 c)",
+      expected: ["E_CSM_RATE_SOURCE_CONFLICT"],
+    },
+    {
+      label: "fm3-1 beside fm3-csm-rate alone",
+      src: "(fm3-1 :oct 5 c)\n(fm3-csm-rate :oct 3 c)",
+      expected: ["E_FM3_MODE_CONFLICT"],
+    },
+    {
+      label: "fm3 beside fm3-csm",
+      src: "(fm3 c)\n(fm3-csm c)",
+      expected: ["E_FM3_MODE_CONFLICT"],
+    },
     {
       label: "def-se part on CH3",
       src: "(fm1 c)\n(def-se hit (fm3 c) (fm3-1 c) (fm3-csm c) (fm2 c))",

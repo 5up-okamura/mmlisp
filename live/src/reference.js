@@ -520,11 +520,11 @@ export const REFERENCE = [
     example: '(def-fm kit init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)\n(fm3 kit)\n(fm3-1 :oct 5 :len 8 c c)\n(fm3-2 :oct 3 :len 4 c _)',
   },
   {
-    name: 'fm3-csm', aliases: ['csm', 'fm3-csm-rate', ':csm-rate', 'formant'], cat: 'fm3', section: '§15', tracks: FM,
-    syntax: '(fm3-csm voice …)  ·  (fm3-csm-rate …)  ·  :csm-rate Hz',
-    summary: 'CSM: the fm3-csm note is the formant, Timer A\'s rate the buzz pitch — from :csm-rate or an fm3-csm-rate track of notes.',
+    name: 'fm3-csm', aliases: ['csm', 'fm3-csm-rate', ':csm-rate', 'formant', 'vocoder'], cat: 'fm3', section: '§15', tracks: FM,
+    syntax: '(fm3-csm voice …)  ·  (fm3-csm-rate …)  ·  :csm-rate Hz  ·  (fm3-csm voice) (fm3-1 …) … (fm3-csm-rate …)',
+    summary: 'CSM: the fm3-csm note is the formant, Timer A\'s rate the buzz pitch — from :csm-rate or an fm3-csm-rate track of notes. Beside fm3-1–fm3-4 a note-less (fm3-csm voice) makes each operator a formant track and the rate track the voice.',
     insert: '(fm3-csm-rate :oct 6 :len 1 c d e f)',
-    example: '(def-fm brass init-fm :alg 4 :tl1 24 :tl3 24)\n(fm3-csm brass :oct 4 :len 2 c _ e _)\n(fm3-csm-rate :oct 6 :len 1 c d)',
+    example: '(def-fm vowel init-fm :alg 7 :rr1 15 :rr2 15 :rr3 15 :rr4 15)\n(fm3-csm vowel)\n(fm3-1 :oct 5 :len 2 c+ ~ c+)\n(fm3-2 :oct 6 :len 2 f+ (macro :vol [31 28 24 20]) a)\n(fm3-csm-rate :oct 2 :len 4 g g _ a)',
   },
 
   // ---- PCM -----------------------------------------------------------------

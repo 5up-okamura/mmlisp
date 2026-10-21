@@ -367,6 +367,7 @@ typedef struct {
   uint8_t lfo_rate;
   uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */
   uint8_t fm3_op_mask; /* FM3 independent-OP key bits (0x10..0x80 -> $28) */
+  uint8_t fm3_ops;     /* CH3's operators are tracks of their own (FM3_MODE 1 / 3) */
   uint8_t csm_hold;    /* a rate rest stopped Timer A: LOAD A low, CSM on (§9) */
   MMLGhost ghost[10];  /* a displaced part's channel, per register channel */
   /* The ghost traded in now, as its channel + 1 (0 = none): a write addressed

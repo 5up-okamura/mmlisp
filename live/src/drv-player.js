@@ -513,6 +513,7 @@ export class DrvPlayer {
     for (let i = 0; i < 16; i++) this._valSlots[i] = vi[i] ?? 0;
     this._tempoSweep = null;
     this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
+    this._fm3Ops = false; // CH3's operators are tracks of their own (FM3_MODE 1 / 3)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
     this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
     this._csmHold = false; // a rate rest stopped Timer A: LOAD A low, CSM on (§9)
@@ -883,11 +884,12 @@ export class DrvPlayer {
   }
 
   // ── FM3 independent-OP mode (driver.md §13.4 / opcodes.md 0xA3/0xA4) ───────
-  // In special mode ($27 bit6) CH3's four operators have independent F-numbers
-  // and key bits. The four operator tracks are channel ids 16-19; channel 2 is
-  // the shared CH3 (patch + channel level).
+  // With the operators as tracks (FM3_MODE 1, or 3 under CSM) CH3's four
+  // operators have independent F-numbers, levels and keys. The four operator
+  // tracks are channel ids 16-19; channel 2 is the shared CH3 (patch + channel
+  // level).
   _fm3OpFor(ch) {
-    if (!(this._reg27 & 0x40)) return 0; // special mode off → normal channels
+    if (!this._fm3Ops) return 0; // the operators are not tracks → normal channels
     if (ch >= 16 && ch <= 19) return ch - 15;
     return 0;
   }
@@ -908,6 +910,9 @@ export class DrvPlayer {
     const bit = 0x10 << (op - 1); // OP1=0x10 … OP4=0x80 ($28 slot bits)
     if (on) this._fm3OpMask |= bit;
     else this._fm3OpMask &= ~bit;
+    // CSM (driver.md §9): Timer A keys CH3 and $28 must hold no operator, so
+    // the operator's key is its level — its TL on, 127 off (_fm3OpTl).
+    if (this._reg27 & 0x80) { this._writeFm3OpTl(op); return; }
     this._ymKey(this._fm3OpMask | 0x02); // ch2 key = 0x02
   }
 
@@ -921,6 +926,8 @@ export class DrvPlayer {
   // in this mode is 16 on every operator.
   _fm3OpTl(op) {
     const i = op - 1;
+    // CSM: an operator off its note is held at TL 127 (driver.md §9).
+    if (this._reg27 & 0x80 && !(this._fm3OpMask & (0x10 << i))) return 127;
     const { velTl4, volTl4 } = this._luts;
     const o = this._fm[2].ops[i];
     const k = this._velK(o, true);
@@ -955,7 +962,7 @@ export class DrvPlayer {
   // algorithm, which is decided before its $B0 goes out.
   // A modulator its voice makes velocity-sensitive (`:vel2`) composes too.
   _opLevel(ch, idx, alg) {
-    if (ch === 2 && this._reg27 & 0x40) return this._fm3OpTl(idx + 1);
+    if (ch === 2 && this._fm3Ops) return this._fm3OpTl(idx + 1);
     const regs = this._fm[ch];
     const o = regs.ops[idx];
     const carrier = fmCarrierOpsForAlg(alg & 7).includes(idx);
@@ -967,7 +974,7 @@ export class DrvPlayer {
   // operators are independent voices with their own levels, so the carrier
   // set is not what decides its TLs (driver.md §13.4).
   _recomposeCarriers(ch) {
-    if (ch === 2 && this._reg27 & 0x40) { this._recomposeFm3Ops(); return; }
+    if (ch === 2 && this._fm3Ops) { this._recomposeFm3Ops(); return; }
     const regs = this._fm[ch];
     const port = ch >= 3 ? 1 : 0;
     const off = ch % 3;
@@ -1435,12 +1442,15 @@ export class DrvPlayer {
           break;
         }
         case OPCODE.FM3_MODE: {
-          const mode = s[trk.pc + 1]; // 0 normal, 1 special (op), 2 CSM
+          const mode = s[trk.pc + 1]; // 0 normal, 1 special (op), 2 CSM, 3 CSM with op tracks
           trk.pc += 2;
-          // bit6 = CH3 special (independent-OP), bit7 = CSM.
+          // bit6 = CH3 special (independent-OP), bit7 = CSM. The chip keys CSM
+          // in mode 2 alone, so mode 3 writes CSM and keeps "the operators are
+          // tracks" here (driver.md §9).
+          this._fm3Ops = mode === 1 || mode === 3;
           let r = this._reg27 & ~0xc0;
           if (mode === 1) r |= 0x40;
-          else if (mode === 2) r |= 0x80;
+          else if (mode === 2 || mode === 3) r |= 0x80;
           this._setReg27(r);
           break;
         }

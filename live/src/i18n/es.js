@@ -84,7 +84,7 @@ export default {
     "(break)": ["f5432158", "En la última pasada del bucle contado que lo envuelve, sale de él aquí."],
     "(trig N)": ["6c6b55aa", "Una señal que el juego lee (N 0–63): sincronía música-juego. El registro de Live la muestra al pasar."],
     "fm3-1–fm3-4": ["28bc44ab", "FM3 con un tono por operador: cada pista fm3-N toca un operador; un (fm3 voice) sin notas da el patch compartido."],
-    "fm3-csm": ["fcb34953", "CSM: la nota de fm3-csm es el formante, la tasa del Timer A el tono del zumbido; desde :csm-rate o desde una pista fm3-csm-rate de notas."],
+    "fm3-csm": ["315a4134", "CSM: la nota de fm3-csm es el formante, la tasa del Timer A el tono del zumbido; desde :csm-rate o desde una pista fm3-csm-rate de notas. Junto a fm3-1–fm3-4, un (fm3-csm voice) sin notas hace de cada operador una pista de formante, y de la pista de tasa, la voz."],
     "def-pcm": ["63ab330c", "Una muestra desde un WAV, relativo a la partitura; un nombre inicial extiende otra muestra. Horneada a 8 bits en cada tono que se toca."],
     "range points": ["358d80a8", "La parte de la muestra que una nota toca, como duraciones (100ms): en la def, o en la pista como valor o curva."],
     "loop points": ["9d71cdf7", "El bucle que una nota sostenida en :mode loop repite dentro del rango; tras su note-off sigue hasta el final."],

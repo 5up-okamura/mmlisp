@@ -113,19 +113,21 @@ unaffected by layering.
 | `fm6`           | YM2612 FM               | FM only; PCM is `pcm1`–`pcm3`. A score that plays PCM owns fm6 as the DAC, so an `fm6` track in it is `E_FM6_DAC` (§16) |
 | `fm3`           | YM2612 FM3, normal mode | Note-less `(fm3 voice)` declares the shared patch for independent-OP mode |
 | `fm3-1`–`fm3-4` | FM3 independent-OP mode | One track per operator F-number; presence enables the mode (`FM3_MODE op`) |
-| `fm3-csm`       | FM3 CSM mode            | Tonal center; standard note syntax                |
-| `fm3-csm-rate`  | FM3 CSM Timer A         | Buzz frequency as notes / raw Hz                  |
+| `fm3-csm`       | FM3 CSM mode            | Tonal center; standard note syntax. Note-less `(fm3-csm voice)` beside `fm3-1`–`fm3-4`: the shared patch of CSM with formant tracks (§15) |
+| `fm3-csm-rate`  | FM3 CSM Timer A         | Buzz frequency as notes / raw Hz; with formant tracks, the voice itself |
 | `sqr1`–`sqr3`   | SN76489 square channels |                                                   |
 | `noise`         | SN76489 noise channel   | Modes `white0`–`white3`, `periodic0`–`periodic3`  |
 | `pcm1`–`pcm3`   | PCM on the fm6 DAC      | A sample name in the body binds the sample (§16)  |
 
 Mode exclusivity (compile errors, score-wide):
 
-- `fm3-csm`/`fm3-csm-rate` cannot be mixed with `fm3` or `fm3-1`–`fm3-4`
-  (`E_FM3_MODE_CONFLICT`).
-- Beside `fm3-1`–`fm3-4`, `(fm3 …)` is the shared patch only: a note on it
-  is `E_FM3_MODE_CONFLICT` (in that mode the channel's F-number is operator
-  4's). The same holds inside one `def-se`.
+- `fm3-csm`/`fm3-csm-rate` cannot be mixed with `fm3` (`E_FM3_MODE_CONFLICT`).
+  `fm3-1`–`fm3-4` beside them is CSM with formant tracks (§15): it needs the
+  note-less `(fm3-csm voice)` (`E_FM3_MODE_CONFLICT`) and an `fm3-csm-rate`
+  track (`E_CSM_RATE_MISSING`).
+- Beside `fm3-1`–`fm3-4`, `(fm3 …)` — or `(fm3-csm …)` — is the shared patch
+  only: a note on it is `E_FM3_MODE_CONFLICT` (in that mode the channel's
+  F-number is operator 4's). The same holds inside one `def-se`.
 - Inline `:csm-rate` and a companion `fm3-csm-rate` track are mutually
   exclusive (`E_CSM_RATE_SOURCE_CONFLICT`).
 
@@ -1763,6 +1765,37 @@ with neither source produces no Timer A retrigger (fm3-csm plays silently).
   c _ e _ g _)
 (fm3-csm-rate :oct 6 :len 1
   c d e f  g a b 20000)    ; notes → Hz; raw Hz literal above oct 10
+```
+
+### CSM with formant tracks
+
+A formant per operator — a vowel, a vocoder's voice — is CSM with the
+operators as tracks: the independent-operator form's tracks under the CSM
+buzz. A note-less `(fm3-csm voice)` declares the shared patch (a note on it
+is `E_FM3_MODE_CONFLICT`), `fm3-1`–`fm3-4` each drive one operator exactly
+as in independent-operator mode — its F-number from the notes, `:pitch` and
+the pitch macros, its level from `:vel`/`:vol` and their macros — and the
+`fm3-csm-rate` track is the voice itself: its rates are the pitch, a rest on
+it a breath, and the buzz plays exactly while it plays (the mode turns on at
+its start and off at its end). It is the one rate source here: an inline
+`:csm-rate` is `E_CSM_RATE_SOURCE_CONFLICT`, no rate track
+`E_CSM_RATE_MISSING`.
+
+Timer A keys the channel, so an operator's key is its level: a note turns the
+operator's TL on, its gate (or a rest) turns it to 127, and a `:vol` table
+shapes the formant frame by frame. Each operator sounds for one Timer A period
+and decays at its own RR — a fast release (`:rr 15`, `:ks 3`) is a wide
+formant, a slow one a narrow, ringing one. `:keyon` has no meaning here:
+every Timer A overflow is a retrigger.
+
+```lisp
+(def-fm vowel init-fm :alg 7 :rr1 15 :rr2 15 :rr3 15 :rr4 15 :ks1 3 :ks2 3 :ks3 3 :ks4 3)
+
+(fm3-csm vowel)                          ; the patch — no notes here
+(fm3-1 :oct 5 :len 2 c+ ~ c+)            ; F1 ≈ 550 Hz
+(fm3-2 :oct 6 :len 2 f+ (macro :vol [31 28 24 20]) a)   ; F2 moves: "ah" to "eh"
+(fm3-3 :oct 7 :len 1 d+ :vol 20)         ; F3, softer
+(fm3-csm-rate :oct 2 :len 4 g g _ a)     ; the voice: pitch, a breath, pitch
 ```
 
 ---

@@ -854,16 +854,33 @@ play.
 
 ## 17. FM3 CSM Mode
 
-Use `fm3-csm` when you want FM3 to run in CSM mode.
+In CSM, Timer A re-keys FM3 at an audio rate: the rate is the pitch you hear,
+and where the four operators ring is the formant.
 
 ```lisp
-(fm3-csm :csm-rate 60
+(fm3-csm :csm-rate 110
   c _ c _)
 ```
 
-- `fm3-csm` enables the FM3 special mode.
-- `:csm-rate N` sets the Timer A frequency.
-- `:csm-rate (curve ...)` sweeps the rate over time.
+- `fm3-csm` puts FM3 in CSM mode; its notes set the formant (each operator
+  rings at the note times its own `:ml`).
+- `:csm-rate N` sets the Timer A frequency, `:csm-rate (curve ...)` sweeps
+  it; an `fm3-csm-rate` track writes the rate as notes instead.
+
+A formant per operator — a vowel, a vocoder voice — is the same channel with
+the operators as tracks: a note-less `(fm3-csm voice)` holds the patch,
+`fm3-1`–`fm3-4` each put one operator at a frequency and a level, and the
+`fm3-csm-rate` track sings. The buzz plays while that track plays; a rest on it
+is a breath.
+
+```lisp
+(def-fm vowel init-fm :alg 7 :rr1 15 :rr2 15 :rr3 15 :rr4 15)
+(fm3-csm vowel)
+(fm3-1 :oct 5 :len 2 c+ ~ c+)        ; F1 ≈ 550 Hz
+(fm3-2 :oct 6 :len 2 f+ (macro :vol [31 28 24 20]) a)   ; F2 moves: "ah" to "eh"
+(fm3-3 :oct 7 :len 1 d+ :vol 20)     ; F3, softer
+(fm3-csm-rate :oct 2 :len 4 g g _ a)
+```
 
 ---
 

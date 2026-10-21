@@ -238,7 +238,7 @@ the deduped MMB and requires an unchanged mismatch baseline.
 | 0xA0 | CSM_ON           | —                                                    |
 | 0xA1 | CSM_OFF          | —                                                    |
 | 0xA2 | CSM_RATE         | flags u8, then const or swept form (below)           |
-| 0xA3 | FM3_MODE         | mode u8 (0 normal, 1 special/independent-OP, 2 CSM)  |
+| 0xA3 | FM3_MODE         | mode u8 (0 normal, 1 special/independent-OP, 2 CSM, 3 CSM with operator tracks) |
 | 0xA4 | FM3_OP_PITCH     | op u8 (1–4), note u8                                 |
 | 0xC0 | PCM_NOTE_ON      | sample u8, note u8 (bit7 = loop), dur                |
 | 0xC1 | PCM_NOTE_OFF     | —                                                    |
@@ -290,6 +290,10 @@ Notes:
   (op1-4) that keys the operator's `$28` slot bit. NOTE_PITCH sets,
   sweeps and macros on an operator track move that operator alone.
   `FM3_MODE 1` (from the note-less `(fm3 …)` track) sets `$27` bit6 first.
+  `FM3_MODE 3` (a note-less `(fm3-csm …)` track beside operator tracks) sets
+  bit7 instead — the chip keys CSM in that mode alone — and keeps the
+  operators as tracks: under CSM an operator's key is its TL, on at its note
+  and 127 at its gate (driver.md §9).
   There is no raw register-write opcode: the stream has no escape hatch to the
   chip.
 - **PCM_NOTE_ON** plays `sample` (SAMPLE_BANK id). The exporter bakes one

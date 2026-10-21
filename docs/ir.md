@@ -48,7 +48,7 @@ There is **no top-level tempo field.** The initial tempo travels as a
 to 120 BPM); `:lfo-rate` likewise emits a `PARAM_SET LFO_RATE` on its own
 track. The compiler injects two init events: the presence of any
 `fm3-1..fm3-4` track prepends a tick-0 `FM3_MODE { mode: "op" }` into
-`tracks[0]` (and into an effect's first part when the effect has operator
+`tracks[0]` (`"csm-op"` when a note-less `fm3-csm` track stands beside them) (and into an effect's first part when the effect has operator
 parts), and every noise track starts with a tick-0 `PARAM_SET NOISE_MODE 4`
 (`white0`).
 
@@ -402,7 +402,11 @@ a frame; the player re-anchors the clock at each step and on completion pins
 
 No args (`{}`). Emitted on `fm3-csm` tracks: `CSM_ON` once before the first
 note, `CSM_OFF` at the end of the track body. Sets/clears YM2612 reg 0x27 bit
-7 (CSM mode).
+7 (CSM mode). With formant tracks (language.md §15 — a note-less `fm3-csm`
+beside `fm3-1..fm3-4`) the `fm3-csm-rate` track owns them instead: its
+stream opens with `CSM_ON` and a `CSM_RATE { run: false }` at tick 0 (Timer A
+held until its first rate) and closes with `CSM_OFF`, so the voice sounds
+exactly while the rate track plays.
 
 ```json
 { "tick": 0, "cmd": "CSM_ON", "args": {} }
@@ -449,7 +453,7 @@ track's next CSM_RATE (const or swept) ends a running sweep.
 
 | Arg    | Type   | Req | Semantics                                                       |
 | ------ | ------ | --- | ---------------------------------------------------------------- |
-| `mode` | string | yes | Only `"op"` is ever emitted (tick 0, `tracks[0]`, when fm3-1..4 tracks exist). Sets reg 0x27 bit 6 and seeds all four operator F-numbers. |
+| `mode` | string | yes | `"op"`: independent-operator mode (reg 0x27 bit 6); `"csm-op"`: CSM with the operators as tracks (bit 7, with each operator's own level and key — driver.md §9). Emitted at tick 0 into `tracks[0]` when fm3-1..4 tracks exist, `"csm-op"` when a note-less `fm3-csm` track stands beside them. |
 
 ```json
 { "tick": 0, "cmd": "FM3_MODE", "args": { "mode": "op" } }

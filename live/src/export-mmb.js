@@ -1345,7 +1345,7 @@ export function encodeMmb(ir, opts = {}) {
         case "FM3_MODE": {
           syncClock(ev.tick);
           stream.u8(OPCODE.FM3_MODE);
-          stream.u8(a.mode === "op" ? 1 : a.mode === "csm" ? 2 : 0);
+          stream.u8(a.mode === "op" ? 1 : a.mode === "csm" ? 2 : a.mode === "csm-op" ? 3 : 0);
           break;
         }
         case "FM3_OP_PITCH": {
