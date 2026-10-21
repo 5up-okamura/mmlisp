@@ -374,10 +374,13 @@ function formatList(node) {
       groups.push({ sourceLine, valueLine, parts, trailingComment, hasMultiline, alignable });
     }
 
-    // Two rows align when they share a key signature: the keys with trailing
-    // digits stripped (so :ar1/:ar2/… group as one table) and equal length.
-    const signature = (g) =>
-      g.parts.map((p) => p.keyText.replace(/\d+$/, "")).join(" ");
+    // Two rows align when their keys, trailing digits stripped (so
+    // :ar1/:ar2/… group as one table), are the same list — or one list is a
+    // prefix of the other: an operator row that carries a key the others do
+    // not (`:vel3 0.25` after op3's params) still lines up on what they
+    // share, and its extra pairs follow unaligned.
+    const keyList = (g) => g.parts.map((p) => p.keyText.replace(/\d+$/, ""));
+    const isPrefix = (a, b) => a.length <= b.length && a.every((k, i) => k === b[i]);
 
     let prevPairLine =
       pairOffset > 0
@@ -395,13 +398,13 @@ function formatList(node) {
     while (g < groups.length) {
       // Extend an alignment run of same-signature alignable rows.
       let end = g;
+      let common = groups[g].alignable ? keyList(groups[g]) : [];
       if (groups[g].alignable) {
-        const sig = signature(groups[g]);
-        while (
-          end + 1 < groups.length &&
-          groups[end + 1].alignable &&
-          signature(groups[end + 1]) === sig
-        ) {
+        while (end + 1 < groups.length && groups[end + 1].alignable) {
+          const next = keyList(groups[end + 1]);
+          if (isPrefix(common, next)) { /* common stays */ }
+          else if (isPrefix(next, common)) common = next;
+          else break;
           end += 1;
         }
       }
@@ -411,7 +414,8 @@ function formatList(node) {
         // Only columns of bare atoms are padded: right-aligning `(+ 22 $color)`
         // under `(+ 24 (* $color 2))` opens a gap that reads as a mistake, so a
         // column holding an expression falls back to a single space.
-        const numCols = groups[g].parts.length;
+        // The columns every row has are aligned; a row's extra pairs follow.
+        const numCols = common.length;
         const valW = Array.from({ length: numCols }, (_, c) => {
           const vals = Array.from(
             { length: end - g + 1 },
@@ -423,7 +427,7 @@ function formatList(node) {
         for (let r = g; r <= end; r += 1) {
           pushBlanks(groups[r].sourceLine);
           const line = groups[r].parts
-            .map((p, c) => `${p.keyText} ${p.valueText.padStart(valW[c])}`)
+            .map((p, c) => `${p.keyText} ${c < numCols ? p.valueText.padStart(valW[c]) : p.valueText}`)
             .join(" ");
           lines.push(`${childIndent}${line}`);
           prevPairLine = groups[r].valueLine;

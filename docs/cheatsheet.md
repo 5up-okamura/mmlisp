@@ -78,6 +78,7 @@ eighth), `N.` dotted, `N/M` a fraction of a whole note, `Nt` `Nf` `Nms`.
 | `:len` | 8 | default note length; `0` = hold; the track waits for the key-off (§17) |
 | `:gate` `:gate*` `:gate-` | full | sounding part: absolute, a ratio (`0.7`), or length minus (`12t`) |
 | `:vel` | 15 | 0–15, 2 dB a step; never mutes |
+| `:vel1`–`:vel4` | role | an FM operator's velocity sensitivity, 0–1: carriers 1, modulators 0 unless set (§6) |
 | `:vol` / `:master` | 31 | 0–31 fader, `0` mutes; `:master` is song-wide |
 | `:tempo` | 120 | BPM, song-wide, from any track; a curve sweeps it |
 | `:pan` | center | `left` `center` `right` (FM) |
@@ -98,6 +99,7 @@ and a hold carry a note into the next.
 (def-fm lead init-fm :alg 4 :fb 3 :tl1 30 :tl2 0 :tl3 30 :tl4 0)
 (def-fm lead-dark lead :fb 1)           ; extends lead
 (def-fm thud lead :key 35)              ; c4 sounds at MIDI 35, d two above
+(def-fm keys lead :vel1 0.5)            ; modulator op1 takes half the velocity: softer is darker
 (def-pcm hit :file "hit.wav")           ; relative to this file (§16)
 (def-val bright 20 0..40 :public)       ; a slot the game / a slider writes, read as $bright (§8)
 (def-val gain 256 0..512 :public)       ; as a factor, :vol* $gain is ×gain/256

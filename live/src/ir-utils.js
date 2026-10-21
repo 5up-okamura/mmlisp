@@ -60,6 +60,9 @@ export const MACRO_TARGET_RANGE = {
   FM_KS: { min: 0, max: 3 },
   FM_AMEN: { min: 0, max: 1 },
   FM_SSG: { min: 0, max: 15 },
+  // Velocity sensitivity in sixteenths (`:vel1`–`:vel4`); -1 is the role's own
+  // (VEL_K_AUTO below).
+  FM_VEL: { min: -1, max: 16 },
 
   // FM panning — bits 7-6 of B4
   PAN: { min: -1, max: 1 },
@@ -273,6 +276,29 @@ export function sumLevelOffsets(...offs) {
   for (const o of offs) off4 += Math.round(o * 4);
   return (off4 + (off4 >= 0 ? 2 : -2)) >> 2;
 }
+// An operator's velocity sensitivity (language.md §6, `:vel1`–`:vel4`), in
+// sixteenths: 16 takes the note's whole velocity offset, 0 none of it.
+// VEL_K_AUTO, what a voice that does not set it carries, is the role's own:
+// 16 on a carrier (and on every operator in CH3's special mode), 0 on a
+// modulator — the level model every voice had before the key existed.
+export const VEL_K_UNITY = 16;
+export const VEL_K_AUTO = -1;
+export function velK(k, carrier) {
+  return k >= 0 && k <= VEL_K_UNITY ? k : carrier ? VEL_K_UNITY : 0;
+}
+
+/**
+ * sumLevelOffsets with the velocity offset scaled by `k` sixteenths, the
+ * others whole — held in 64ths of a step and rounded once, as the driver does.
+ * At k = 16 it is sumLevelOffsets exactly.
+ */
+export function sumLevelOffsetsK(velOff, k, ...offs) {
+  if (k === VEL_K_UNITY) return sumLevelOffsets(velOff, ...offs);
+  let off64 = Math.round(velOff * 4) * k;
+  for (const o of offs) off64 += Math.round(o * 4) * VEL_K_UNITY;
+  return (off64 + (off64 >= 0 ? 32 : -32)) >> 6;
+}
+
 // vol/master mixer-fader (tunable): VOL_UNITY = 0 dB reference on the 0–31
 // scale. Unity sits at the top (31 = full, no attenuation), so vol/master is a
 // pure attenuator — lower values cut, matching the master fader.

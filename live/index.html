@@ -8780,7 +8780,8 @@
           const v = items[i + 1];
           if (!k || k.kind !== 'atom' || !k.value.startsWith(':')) continue;
           if (!v || v.kind !== 'atom') continue;
-          const n = parseInt(v.value, 10);
+          // A velocity sensitivity is a ratio 0–1, held as sixteenths.
+          const n = /^:vel[1-4]$/.test(k.value) ? Math.round(parseFloat(v.value) * 16) : parseInt(v.value, 10);
           if (Number.isFinite(n)) kv.set(k.value, n);
         }
       };
@@ -8805,6 +8806,7 @@
         if (kv.has(`:ks${op}`)) o.rs = kv.get(`:ks${op}`);
         if (kv.has(`:ssg${op}`)) o.ssg = kv.get(`:ssg${op}`);
         if (kv.has(`:am${op}`)) o.amen = kv.get(`:am${op}`) ? 1 : 0;
+        if (kv.has(`:vel${op}`)) o.velK = Math.max(0, Math.min(16, kv.get(`:vel${op}`)));
       }
 
       return regs;
@@ -9014,6 +9016,7 @@
         ok = setLiveParamForChannel(`FM_KS${op}`, o.rs ?? 0, chIndex) && ok;
         ok = setLiveParamForChannel(`FM_SSG${op}`, o.ssg ?? 0, chIndex) && ok;
         ok = setLiveParamForChannel(`FM_AMEN${op}`, o.amen ?? 0, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_VEL${op}`, o.velK ?? -1, chIndex) && ok;
       }
       return ok;
     }
@@ -10070,22 +10073,40 @@
       if (paramName === 'FM_FB') return ':fb';
       if (paramName === 'FM_AMS') return ':ams';
       if (paramName === 'FM_FMS') return ':fms';
-      const m = paramName.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT|KS|SSG|AMEN)([1-4])$/);
+      const m = paramName.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT|KS|SSG|AMEN|VEL)([1-4])$/);
       if (!m) return null;
       if (m[1] === 'AMEN') return `:am${m[2]}`;
       return `:${m[1].toLowerCase()}${m[2]}`;
     }
 
-    // `closePos`: the def-fm's `)` within defText — a key the voice
-    // does not write yet goes just inside it.
+    // `closePos`: the def-fm's `)` within defText — a key the voice does not
+    // write yet goes after the last pair of its operator (`:vel3` after op3's
+    // `:dt3 0`, so the row stays one row and the formatter aligns it), else
+    // just inside the `)`.
     function replaceOrInsertDefParam(defText, defKey, valueText, closePos) {
       const esc = defKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const re = new RegExp(`(${esc}\\s+)([^\\s\\)\\]]+)`);
       if (re.test(defText)) {
         return defText.replace(re, `$1${valueText}`);
       }
+      const op = /^:[a-z]+([1-4])$/.exec(defKey)?.[1];
+      if (op) {
+        const rowRe = new RegExp(`:[a-z]+${op}\\s+[^\\s\\)\\]]+`, 'g');
+        let last = null;
+        for (const m of defText.matchAll(rowRe)) last = m;
+        if (last) {
+          const at = last.index + last[0].length;
+          return `${defText.slice(0, at)} ${defKey} ${valueText}${defText.slice(at)}`;
+        }
+      }
       if (!(closePos >= 0)) return defText;
       return `${defText.slice(0, closePos)}\n  ${defKey} ${valueText}${defText.slice(closePos)}`;
+    }
+
+    // A velocity sensitivity's sixteenths as the ratio the score writes
+    // (`:vel1 0.5`); every sixteenth is an exact short decimal.
+    function velSensText(k16) {
+      return String(k16 / 16);
     }
 
     function setCursorDefParam(paramName, value) {
@@ -10093,10 +10114,11 @@
       if (!defKey) return false;
       const ctx = _fmCursorDefContext ?? findFmDefAtCursor();
       if (!ctx) return false;
-      if (ctx.copy) return copyImportedVoice(ctx, defKey, String(value));
+      const text = /^FM_VEL/.test(paramName) ? velSensText(value) : String(value);
+      if (ctx.copy) return copyImportedVoice(ctx, defKey, text);
       const state = editorView.state;
       const oldText = state.doc.sliceString(ctx.from, ctx.to);
-      const next = replaceOrInsertDefParam(oldText, defKey, String(value), ctx.closeAt - ctx.from);
+      const next = replaceOrInsertDefParam(oldText, defKey, text, ctx.closeAt - ctx.from);
       if (next === oldText) return true;
       editorView.dispatch({ changes: { from: ctx.from, to: ctx.to, insert: next } });
       scheduleHotSwap();
@@ -10196,6 +10218,8 @@
       { key: 'dt',  label: 'DT',  min: -3, max: 3,  param: (op) => `FM_DT${op}` },
       { key: 'rs',  label: 'KS',  min: 0, max: 3,   param: (op) => `FM_KS${op}` },
       { key: 'ssg', label: 'SSG', min: 0, max: 15,  param: (op) => `FM_SSG${op}` },
+      // Velocity sensitivity, 0–1 in sixteenths (language.md §6).
+      { key: 'vel', label: 'VEL', min: 0, max: 16,  param: (op) => `FM_VEL${op}` },
     ];
 
     const opGridEl = document.getElementById('opGrid');
@@ -10375,6 +10399,13 @@
         setSliderCached(`sl-op${op}-dt`,  `val-op${op}-dt`,  o.dt);
         setSliderCached(`sl-op${op}-rs`,  `val-op${op}-rs`,  o.rs);
         setSliderCached(`sl-op${op}-ssg`, `val-op${op}-ssg`, o.ssg);
+        // A voice that does not set it shows the role's own: 1 on a carrier, 0 on a modulator.
+        const velK = o.velK ?? (fmCarrierOpsForAlg(regs.algorithm ?? 0).includes(op - 1) ? 16 : 0);
+        if (_fmSliderCache[`sl-op${op}-vel`] !== velK) {
+          _fmSliderCache[`sl-op${op}-vel`] = velK;
+          setSlider(`sl-op${op}-vel`, `val-op${op}-vel`, velK);
+          setValueTextById(`val-op${op}-vel`, velSensText(velK));
+        }
         // Redraw the envelope only when one of its parameters changed.
         const envSig = `${o.tl},${o.ar},${o.dr},${o.sl},${o.d2r},${o.rr}`;
         if (_fmSliderCache[`_env${op}`] !== envSig) {
@@ -11627,7 +11658,7 @@
     window.onOpParam = function(slider) {
       const paramName = slider.dataset.param;
       const val = parseInt(slider.value, 10);
-      setDataBoundDisplayValue(slider, val);
+      setDataBoundDisplayValue(slider, /^FM_VEL/.test(paramName) ? velSensText(val) : val);
 
       const om = slider.id.match(/^sl-op(\d)-/);
       if (om) drawOpEnvelope(+om[1]);

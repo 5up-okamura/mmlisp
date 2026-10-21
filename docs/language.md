@@ -293,6 +293,7 @@ keywords at the form's first tick.
 | `:gate*`   | ratio `0.0`–`1.0`         | Gate as a fraction of the note length (`1.0` = full; above 0 it keeps at least one tick) |
 | `:gate-`   | length token              | Gate = note length minus this time; a note no longer than it is not cut (full gate). A gate value that is not a length (or a ratio outside 0–1) is `E_GATE_INVALID` |
 | `:vel`     | 0–15                      | Note-on velocity (also `:vel+` / `:vel*`)                |
+| `:vel1`–`:vel4` | ratio `0`–`1`        | An FM operator's velocity sensitivity (§6); a voice param, also in a `def-fm` |
 | `:vol`     | 0–31 or curve             | Channel fader → `PARAM_SET` / `PARAM_SWEEP`              |
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
@@ -464,6 +465,40 @@ own level and all four compose (§15).
   `0` step does not silence the next one, and a macro's `0` is a very low level
   (about −62 dB on FM), not a mute — `:vol [0 8 16 24 31]` fades a note in.
   The hard mute is the fader's.
+
+**Velocity sensitivity — `:vel1`–`:vel4`.** How much of a note's velocity
+reaches each operator, as a ratio `0`–`1` of the `:vel` offset. A voice that
+does not set it keeps the model above: `1` on a carrier, `0` on a modulator.
+Set on a modulator, velocity moves the timbre — a soft note is darker as well
+as quieter, as on a DX7; set below 1 on a carrier, it narrows how far velocity
+moves the level. `:vol` and `:master` are the mix's faders and keep reaching
+the carriers alone, whatever the sensitivity — a fader that moved a modulator
+would move the timbre:
+
+```text
+carrier TL   = voicedTL[op] + k[op]·dVel + dVol + dMaster
+modulator TL = voicedTL[op] + k[op]·dVel          (k 0 by default: the voiced TL)
+```
+
+```lisp
+(def-fm piano init-fm :alg 4 :fb 5
+  :tl1 28 :vel1 0.5            ; modulator: half the velocity — brighter when struck harder
+  :tl2 0
+  :tl3 32 :vel3 0.25
+  :tl4 0 :vel4 0.75)           ; carrier: a narrower dynamic range than op2
+
+(fm1 piano :len 8 :vel 15 c :vel 9 e :vel 4 g)
+```
+
+The value lands in sixteenths (`0.5`, `0.25`, `0.0625` …); one outside 0–1
+is `E_VOICE_VALUE` in a `def-fm` and `E_PARAM_VALUE` inline. It is part of the
+voice: a `def-fm` holds it, an inline write sets it until the next voice, and
+switching to a voice that does not set it returns every operator to its
+role's own — so it follows the algorithm, if a later `:alg` makes a modulator
+a carrier. It is fixed when written: there is no `+`/`*` form, no curve, no
+`$` value (`E_PARAM_VALUE`) and no macro (`E_MACRO_TARGET`). In FM3's
+independent-operator mode (§15) every operator's own is `1`, as each is a
+voice there. `:vel1` on a PSG or PCM track is `E_UNSUPPORTED_TARGET`.
 
 Authored values are integers — except the ratios after a `*`, such as a
 `:vel*` macro's `[1 0.75 0.5]`; a computed velocity (a `:vel` macro, a delay
@@ -893,7 +928,8 @@ stream bytes is shared by the encoder's CALL/RET pass (opcodes.md §5.2). A `let
 | `(def name (macro :target spec …))`   | A snippet holding a macro form — written alone it applies the macro, and inside another `(macro name …)` it applies first, with its own `:step` |
 
 A `def-fm` holds the channel's `:alg :fb :ams :fms`, the operator params
-`:ar1`…`:am4` and `:key` — anything else is `E_VOICE_PARAM`. A value is anything
+`:ar1`…`:am4`, the velocity sensitivities `:vel1`…`:vel4` (§6) and `:key` —
+anything else is `E_VOICE_PARAM`. A value is anything
 that evaluates to a number (a literal, a snippet constant, an expression); a
 curve or a `$` value is `E_VOICE_VALUE`, since a voice is fixed data. A leading
 name is the voice it extends: the base's params first, the voice's own over

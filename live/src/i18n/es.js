@@ -49,6 +49,7 @@ export default {
     ":shuffle": ["6d96f822", "Swing: los pares de notas de la duración base (por defecto una corchea) se reparten R : 100−R."],
     "def-fm": ["d2c5f096", "Una voz FM: el :alg :fb :ams :fms del canal y los parámetros de los operadores. Un nombre inicial es la voz que extiende (init-fm es la vacía). Nómbrala en una pista para cambiar a ella."],
     ":key (voice)": ["3ecf68b5", "En una def-fm: c4 suena en la nota MIDI N, y cada nota de la voz se desplaza N − 60; así se afina una voz de percusión."],
+    ":vel1–:vel4 (velocity sensitivity)": ["9f88d768", "Cuánta velocidad de una nota llega a un operador. Sin fijar, una portadora la recibe entera y una moduladora nada; en una moduladora hace que una nota más suave suene también más oscura. vol y master siguen llegando solo a las portadoras. En una def-fm o en línea, fijo (sin macro, curva ni $slot)."],
     ":alg :fb :ams :fms": ["424b67be", "El algoritmo del canal, la realimentación del operador 1, y cuánto LFO llega a su nivel (:ams) y a su tono (:fms). En línea, como macro, o en una def-fm."],
     "operator params": ["6cf97a52", "El registro de un operador: un valor, una curva (un barrido), none (detener un barrido), $slot, o :tl1+ N / :tl1* R relativo a su valor actual."],
     "(param-set …)": ["dab844f6", "Varias escrituras absolutas de registro a la vez."],

@@ -215,6 +215,12 @@ export const TARGET_ID = {
   RANGE_START: 0x46,
   RANGE_END: 0x47,
   RANGE_LEN: 0x48,
+  // An operator's velocity sensitivity (language.md §6): 0–16 sixteenths, or
+  // -1 for the role's own (16 on a carrier, 0 on a modulator).
+  FM_VEL1: 0x49,
+  FM_VEL2: 0x4a,
+  FM_VEL3: 0x4b,
+  FM_VEL4: 0x4c,
   // The value slots (def-val, language.md §8) as write targets: VAL0–VAL15,
   // i16 like the slots themselves. Score-global, so their sweeps run in the
   // driver's global sweep slots, not a channel's (driver.md §4).

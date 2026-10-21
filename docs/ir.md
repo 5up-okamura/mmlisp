@@ -644,6 +644,7 @@ write.
 | `FM_KS1`–`FM_KS4` | 0–3            | 0x50+op bits 7–6.                                            |
 | `FM_SSG1`–`FM_SSG4` | 0–15         | 0x90+op. `:ssg1`–`:ssg4`, inline, as a macro or in a voice def. |
 | `FM_AMEN1`–`FM_AMEN4` | 0–1        | 0x60+op bit 7.                                               |
+| `FM_VEL1`–`FM_VEL4` | −1, 0–16     | No register: the operator's velocity sensitivity in sixteenths (`:vel1 0.5` → 8), composed into its TL; −1 is the role's own (16 on a carrier, 0 on a modulator). PARAM_SET only. A score that writes one anywhere has every voice emit all four after its other params, −1 where it sets none (language.md §6). |
 
 CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz). On
 PSG-routed tracks only `VOL`, `NOTE_PITCH`, `SNAP` and (on the noise channel)

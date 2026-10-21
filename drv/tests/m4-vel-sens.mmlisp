@@ -1,0 +1,37 @@
+; M4 gate: an operator's velocity sensitivity, :vel1–:vel4 (language.md §6).
+; The note's vel offset is scaled by it on its way into the operator's TL;
+; vol and master stay the carriers' alone. Unset is the role's own: 1 on a
+; carrier, 0 on a modulator — the level model every voice had before.
+;
+; fm1 (alg 4: op2/op4 carry): op1, a modulator, takes half the velocity, so a
+;   soft note is darker too; op4, a carrier, takes none, so its level is the
+;   fader's alone. Then a voice that sets nothing: both go back to the role's.
+; fm2: an inline :vel2 on a sounding channel re-composes the level at once; a
+;   :vel macro sweeps the sensitive modulator with the carriers; master moves
+;   the carriers and leaves the modulator where its velocity put it.
+; fm3 special mode: the role's own is 1 on every operator; op2's 0.25 holds
+;   it against its own :vel.
+(def-fm bright :alg 4 :fb 3 :vel1 0.5 :vel4 0
+  :ar1 31 :dr1 4 :sr1 0 :rr1 6 :sl1 1 :tl1 30 :ks1 0 :ml1 2 :dt1 0
+  :ar2 31 :dr2 4 :sr2 0 :rr2 6 :sl2 1 :tl2 10 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 4 :sr3 0 :rr3 6 :sl3 1 :tl3 28 :ks3 0 :ml3 3 :dt3 0
+  :ar4 31 :dr4 4 :sr4 0 :rr4 6 :sl4 1 :tl4 12 :ks4 0 :ml4 1 :dt4 0)
+(def-fm plain :alg 4 :fb 3
+  :ar1 31 :dr1 4 :sr1 0 :rr1 6 :sl1 1 :tl1 30 :ks1 0 :ml1 2 :dt1 0
+  :ar2 31 :dr2 4 :sr2 0 :rr2 6 :sl2 1 :tl2 10 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 4 :sr3 0 :rr3 6 :sl3 1 :tl3 28 :ks3 0 :ml3 3 :dt3 0
+  :ar4 31 :dr4 4 :sr4 0 :rr4 6 :sl4 1 :tl4 12 :ks4 0 :ml4 1 :dt4 0)
+(def-fm kit :alg 7 :fb 0 :vel2 0.25
+  :ar1 31 :dr1 4 :sr1 0 :rr1 6 :sl1 1 :tl1 20 :ks1 0 :ml1 1 :dt1 0
+  :ar2 31 :dr2 4 :sr2 0 :rr2 6 :sl2 1 :tl2 20 :ks2 0 :ml2 2 :dt2 0
+  :ar3 31 :dr3 4 :sr3 0 :rr3 6 :sl3 1 :tl3 20 :ks3 0 :ml3 4 :dt3 0
+  :ar4 31 :dr4 4 :sr4 0 :rr4 6 :sl4 1 :tl4 20 :ks4 0 :ml4 8 :dt4 0)
+(fm1 :tempo 120 bright :oct 4 :len 4 :vel 15 c :vel 9 c :vel 3 c :vol 24 c
+  plain :vel 9 c :vel 3 c _ _)
+(fm2 plain :oct 3 :len 2 :vel 6 c :vel3 0.5 :vel1 1
+  (macro :vel [15 12 9 6 3]) :len 2 c :master 20 c :master 31 c)
+(fm3 kit :len 1 _ _)
+(fm3-1 :oct 5 :len 4 :vel 15 c :vel 6 c :vel 15 c :vel 6 c :len 1 c)
+(fm3-2 :oct 4 :len 4 :vel 15 c :vel 6 c :vel 15 c :vel 6 c :len 1 c)
+(fm3-3 :oct 4 :len 1 :vel 9 e e)
+(fm3-4 :oct 4 :len 1 :vel 9 g g)

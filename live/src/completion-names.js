@@ -46,7 +46,7 @@ export const AC_PARAMS = [
   // import
   ':over',
   // def-fm
-  ':key',
+  ':key', ':vel1', ':vel2', ':vel3', ':vel4',
   // def-pcm and the track's PCM points
   ':file', ':rate', ':offset', ':frames',
   ':pcm-start', ':pcm-end', ':pcm-len', ':loop-start', ':loop-end', ':loop-len',

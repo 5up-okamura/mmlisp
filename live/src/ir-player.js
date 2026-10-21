@@ -25,6 +25,8 @@ import {
   velToTlAtten,
   velFine,
   sumLevelOffsets,
+  sumLevelOffsetsK,
+  velK,
   volToTlOffset,
   volToLinearGain,
   velToPsgAtten,
@@ -1782,8 +1784,9 @@ export class IRPlayer {
     const vel = over.vel ?? this._lineAt(lines?.vel, when) ?? st.vel;
     const vol = over.vol ?? this._lineAt(lines?.vol, when)
       ?? (when === undefined ? st.vol : this._fm3OpVolAtTime(op, when));
-    const offset = sumLevelOffsets(
+    const offset = sumLevelOffsetsK(
       velToTlAtten(velFine(vel)),
+      velK(regs.ops[op - 1].velK, true),
       volToTlOffset(vol),
       volToTlOffset(over.group ?? regs.vol ?? VOL_UNITY),
       volToTlOffset(over.master ?? this._masterVol ?? VOL_UNITY),
@@ -1796,8 +1799,9 @@ export class IRPlayer {
     this._write(0, 0x40 + OP_ADDR_OFFSET[op - 1] + 2, o.tl, when);
   }
 
-  // A channel's carriers at `when`, from the LIVE vel / vol (its note's level
-  // macros, else the note's velocity and the fader or its sweep) and master.
+  // A channel's levels at `when`, from the LIVE vel / vol (its note's level
+  // macros, else the note's velocity and the fader or its sweep) and master:
+  // its carriers, and a modulator its voice makes velocity-sensitive (`:vel2`).
   // `over` pins any of vel / vol / master for a caller that has its own value.
   // The one place a normal channel's level is composed (§7).
   _writeFmLevel(ch, when, over = {}) {
@@ -1806,8 +1810,11 @@ export class IRPlayer {
     const vol = over.vol ?? this._fmLiveVolAt(ch, when);
     const master = over.master ?? this._masterAt(when);
     const port = ch >= 3 ? 1 : 0;
-    for (const opIdx of fmCarrierOpsForAlg(regs.algorithm ?? 0)) {
-      const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master);
+    const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
+    for (let opIdx = 0; opIdx < 4; opIdx++) {
+      const carrier = carriers.includes(opIdx);
+      if (!carrier && !velK(regs.ops[opIdx].velK, false)) continue;
+      const tl = this._carrierTl(regs.ops[opIdx], vel, vol, master, carrier);
       regs.ops[opIdx].tl = tl;
       this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + (ch % 3), tl, when);
     }
@@ -1828,14 +1835,14 @@ export class IRPlayer {
     if (ch === 2 && this._reg27 & 0x40) return this._fm3OpTl(opIdx + 1, when);
     const regs = this._chRegs[ch];
     const op = regs.ops[opIdx];
-    if (!fmCarrierOpsForAlg(regs.algorithm ?? 0).includes(opIdx)) {
-      return op.voicedTl ?? 0;
-    }
+    const carrier = fmCarrierOpsForAlg(regs.algorithm ?? 0).includes(opIdx);
+    if (!carrier && !velK(op.velK, false)) return op.voicedTl ?? 0;
     return this._carrierTl(
       op,
       this._fmLiveVelAt(ch, when),
       this._fmLiveVolAt(ch, when),
       this._masterVol ?? VOL_UNITY,
+      carrier,
     );
   }
 
@@ -2858,6 +2865,19 @@ export class IRPlayer {
         this._write(port, opAddr, regs.ops[opIdx].tl, when);
         break;
       }
+      case "FM_VEL1":
+      case "FM_VEL2":
+      case "FM_VEL3":
+      case "FM_VEL4": {
+        // Velocity sensitivity (sixteenths, -1 = the role's own): no register
+        // of its own, it re-composes the operator's level.
+        const opIdx = parseInt(target[6]) - 1;
+        const v = Math.round(value);
+        regs.ops[opIdx].velK = v >= 0 && v <= 16 ? v : undefined;
+        regs.ops[opIdx].tl = this._opLevel(ch, opIdx, when);
+        this._write(port, 0x40 + OP_ADDR_OFFSET[opIdx] + chOffset, regs.ops[opIdx].tl, when);
+        break;
+      }
       case "FM_AR1":
       case "FM_AR2":
       case "FM_AR3":
@@ -3291,14 +3311,23 @@ export class IRPlayer {
   // PMD / MDSDRV coarse volume convention. vel 15 = no attenuation (patch
   // level), vel 0 = a ~-30 dB floor — it never mutes. True silence is a rest,
   // or vol/master 0 (handled as a hard mute at key-on time).
-  _carrierTl(op, vel, vol, master) {
+  //
+  // The vel offset is scaled by the operator's sensitivity (`:vel1`–`:vel4`,
+  // sixteenths). vol and master are the mix's faders, so they reach a carrier
+  // only: a velocity-sensitive modulator (`carrier` false) takes its scaled
+  // vel and nothing else — a fader that moved a modulator would move the
+  // timbre.
+  _carrierTl(op, vel, vol, master, carrier = true) {
     // Sum the signed dB offsets on top of the voiced TL, then quantize once —
     // in the driver's quarter steps, vel on its eighth grid. vel attenuates
     // (floors, never mutes); vol/master are bipolar (boost = negative offset,
     // clamped at TL 0). Uniform across carriers, so the patch's per-carrier
     // balance is preserved.
-    const offset = sumLevelOffsets(
-      velToTlAtten(velFine(vel)), volToTlOffset(vol), volToTlOffset(master));
+    const velOff = velToTlAtten(velFine(vel));
+    const k = velK(op.velK, carrier);
+    const offset = carrier
+      ? sumLevelOffsetsK(velOff, k, volToTlOffset(vol), volToTlOffset(master))
+      : sumLevelOffsetsK(velOff, k);
     return Math.max(0, Math.min(127, Math.round(op.voicedTl ?? 0) + offset));
   }
 

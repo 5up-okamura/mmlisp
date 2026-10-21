@@ -258,6 +258,14 @@ export const REFERENCE = [
     example: '(def-fm thud init-fm :alg 7 :key 35)\n(fm1 thud :len 4 c c d c)',
   },
   {
+    name: ':vel1–:vel4 (velocity sensitivity)', aliases: [':vel1', ':vel2', ':vel3', ':vel4', 'velocity sensitivity'],
+    cat: 'fm', section: '§6', tracks: FM,
+    syntax: ':vel1–:vel4 0–1',
+    summary: 'How much of a note\'s velocity reaches one operator. Unset, a carrier takes all of it and a modulator none; on a modulator it makes a softer note darker too. vol and master still reach the carriers only. In a def-fm or inline, fixed (no macro, curve or $slot).',
+    insert: ':vel1 0.5',
+    example: '(def-fm keys init-fm :alg 4 :fb 5 :tl1 28 :vel1 0.5 :tl2 0 :tl3 32 :tl4 0)\n(fm1 keys :len 8 :vel 15 c :vel 9 e :vel 4 g e)',
+  },
+  {
     name: ':alg :fb :ams :fms', aliases: [':alg', ':fb', ':ams', ':fms', 'algorithm', 'feedback'], cat: 'fm', section: '§10', tracks: FM,
     syntax: ':alg 0–7  ·  :fb 0–7  ·  :ams 0–3  ·  :fms 0–7',
     summary: 'The channel\'s algorithm, operator-1 feedback, and how much of the LFO reaches its level (:ams) and pitch (:fms). Inline, as a macro, or in a def-fm.',

@@ -75,7 +75,39 @@ const SUPPORTED_TARGETS = new Set([
 // Inline-only targets: sticky channel state with no per-note macro form.
 // SNAP (`:snap`, language.md §5.3) is a pitch-class mask the channel's every
 // pitch write passes through; a mask is set, never swept or stepped.
-const INLINE_TARGETS = new Set(["SNAP"]);
+const INLINE_TARGETS = new Set(["SNAP", "FM_VEL1", "FM_VEL2", "FM_VEL3", "FM_VEL4"]);
+
+// An operator's velocity sensitivity, `:vel1`–`:vel4` (language.md §6): a
+// ratio 0–1 of the note's velocity offset, carried as sixteenths. A voice
+// param written in a def-fm or inline, never swept: the driver composes it at
+// each level write, so it has no macro, `+`/`*` or `$` form.
+const VEL_SENS_TARGETS = new Set(["FM_VEL1", "FM_VEL2", "FM_VEL3", "FM_VEL4"]);
+const VEL_SENS_KEYWORDS = new Set([":vel1", ":vel2", ":vel3", ":vel4"]);
+// The IR's value for "the role's own" (16 on a carrier, 0 on a modulator).
+const VEL_SENS_AUTO = -1;
+// A ratio 0–1 → sixteenths, or null when it is not one.
+function velSensSixteenths(v) {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? Math.round(v * 16) : null;
+}
+
+// Does the score write a velocity sensitivity anywhere — in a voice, inline,
+// or in a snippet or effect it defines or imports? Then every voice states all
+// four (resolveVoices), so a voice change also resets what the voice before it
+// set. A score that never writes one emits none and plays exactly as before.
+function writesVelSens(...roots) {
+  const seen = new WeakSet();
+  const walk = (n) => {
+    if (!n || typeof n !== "object" || seen.has(n)) return false;
+    seen.add(n);
+    if (n.kind === "atom") return VEL_SENS_KEYWORDS.has(n.value);
+    if (n instanceof Map) {
+      for (const v of n.values()) if (walk(v)) return true;
+      return false;
+    }
+    return (Array.isArray(n) ? n : Object.values(n)).some(walk);
+  };
+  return roots.some(walk);
+}
 
 // A PCM voice has no pitch step. The engine advances its pointer one byte
 // a sample and nothing else, so a note picks a BAKED blob and that is the whole
@@ -1656,6 +1688,24 @@ function writeSnap(sym, op, valueNode, env, vals, push, diagnostics, src, trackN
   else if (v.kind === "scalar") push("PARAM_SET", { target: "SNAP", value: Math.round(v.value) });
   else if (v.kind === "runtime") emitRuntime(v.steps, "SNAP", push, diagnostics, trackName, src);
   else err(`:snap takes pitch classes [0 4 7], a mask, a $value or none, not a ${v.kind === "signal" ? "curve" : `'${v.value}'`}`);
+}
+
+// An inline `:vel2 0.5`: a ratio 0–1, fixed at compile time, on an FM track.
+function writeVelSens(target, sym, op, valueNode, env, vals, push, diagnostics, src, trackName, typedDefs) {
+  const err = (code, msg) => pushDiag(diagnostics, "error", code, msg, src, trackName);
+  const ch = String(trackName).split(":")[0];
+  if (/^(sqr[1-3]|noise|pcm[1-3]|fm3-csm-rate)$/.test(ch))
+    return err("E_UNSUPPORTED_TARGET", `${sym} is an FM operator's; ${ch} has none`);
+  if (op) return err("E_PARAM_VALUE", `${sym} is a ratio set as a whole; it has no '${op}' form`);
+  const v = readValue(valueNode, env, valueCtx(target, vals, diagnostics, trackName, src, typedDefs));
+  if (!v) return;
+  const k16 = v.kind === "scalar" ? velSensSixteenths(v.value) : null;
+  if (k16 === null) {
+    const what = v.kind === "scalar" ? v.value : v.kind === "signal" ? "a curve"
+      : v.kind === "runtime" ? "a $value" : `'${v.value ?? v.kind}'`;
+    return err("E_PARAM_VALUE", `${sym} takes a ratio 0..1 of the velocity, fixed at compile time, not ${what}`);
+  }
+  push("PARAM_SET", { target, value: k16 });
 }
 
 // Target group: a [] vector of macro keywords in target position, e.g.
@@ -3357,6 +3407,7 @@ const TARGET_KEYWORDS = new Map(Object.entries({
     acc[`:ks${op}`] = `FM_KS${op}`;
     acc[`:am${op}`] = `FM_AMEN${op}`;
     acc[`:ssg${op}`] = `FM_SSG${op}`;
+    acc[`:vel${op}`] = `FM_VEL${op}`;
     return acc;
   }, {}),
 }));
@@ -3418,12 +3469,15 @@ function emitVoice(td, tick, events, src, trackState = null) {
 
 // The canonical targets a voice sets: the channel's ALG/FB/AMS/FMS and every
 // operator param — the registers VOICE_TABLE carries (mmb.md §11).
+// The four velocity sensitivities come last, outside VOICE_TABLE: the driver
+// takes them as PARAM_SETs after the voice (mmb.md §11).
 const VOICE_KEYS = [
   "FM_ALG",
   "FM_FB",
   "FM_AMS",
   "FM_FMS",
   ...[1, 2, 3, 4].flatMap((op) => FM_OP_PARAMS.map((p) => `FM_${p}${op}`)),
+  ...VEL_SENS_TARGETS,
 ];
 const VOICE_KEY_SET = new Set(VOICE_KEYS);
 
@@ -3435,7 +3489,7 @@ const VOICE_KEY = "KEY";
 // base's first and the voice's own writes over it. A value is anything that
 // evaluates to a number — a literal, a snippet constant, an expression. Runs
 // once every def is known, so a base may come from an import.
-function resolveVoices(typedDefs, defs, paramDefs, diagnostics) {
+function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false) {
   const resolve = (name, seen) => {
     const td = typedDefs.get(name);
     if (td.kwMap || td.failed) return td.kwMap ?? null;
@@ -3469,7 +3523,7 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics) {
         : kw?.startsWith(":") ? canonicalTarget(kw) : null;
       if (target !== VOICE_KEY && !VOICE_KEY_SET.has(target)) {
         err("E_VOICE_PARAM",
-          `${kw ?? "(…)"} is not an FM voice parameter (:alg :fb :ams :fms, :ar1 … :am4, :key)`,
+          `${kw ?? "(…)"} is not an FM voice parameter (:alg :fb :ams :fms, :ar1 … :am4, :vel1 … :vel4, :key)`,
           nodeSrc(td.items[k]));
         continue;
       }
@@ -3486,7 +3540,13 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics) {
           (Math.round(v.value) < 0 || Math.round(v.value) > 127))
         err("E_VOICE_VALUE", `:key takes a MIDI note 0..127, got ${Math.round(v.value)}`,
           nodeSrc(td.items[k + 1]));
-      else if (v?.kind === "scalar") kwMap.set(target, Math.round(v.value));
+      else if (v?.kind === "scalar" && VEL_SENS_TARGETS.has(target)) {
+        const k16 = velSensSixteenths(v.value);
+        if (k16 === null)
+          err("E_VOICE_VALUE", `${kw} takes a ratio 0..1 of the velocity, got ${v.value}`,
+            nodeSrc(td.items[k + 1]));
+        else kwMap.set(target, k16);
+      } else if (v?.kind === "scalar") kwMap.set(target, Math.round(v.value));
       else if (v || expanded.length !== 1 || exprHasValRef(expanded[0]))
         err("E_VOICE_VALUE", `${kw} takes a number — a voice is fixed data`,
           nodeSrc(td.items[k + 1]));
@@ -3495,6 +3555,14 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics) {
     return kwMap;
   };
   for (const [name, td] of typedDefs) if (td.tag === "voice") resolve(name, new Set());
+  // A score that writes a sensitivity anywhere has every voice state all four,
+  // the unset ones as the role's own.
+  if (velSens) {
+    for (const td of typedDefs.values()) {
+      if (td.tag !== "voice" || !td.kwMap) continue;
+      for (const t of VEL_SENS_TARGETS) if (!td.kwMap.has(t)) td.kwMap.set(t, VEL_SENS_AUTO);
+    }
+  }
 }
 
 function emitVoiceFromKwMap(kwMap, tick, events, src) {
@@ -3944,6 +4012,11 @@ function compileChannelBody(
               if (target === "SNAP") {
                 writeSnap(val, op, items[i], evalEnv, vals, push, diagnostics, nodeSrc(node),
                   trackName, typedDefs);
+                break;
+              }
+              if (VEL_SENS_TARGETS.has(target)) {
+                writeVelSens(target, val, op, items[i], evalEnv, vals, push, diagnostics,
+                  nodeSrc(node), trackName, typedDefs);
                 break;
               }
               if (!op && rawVal === "none") {
@@ -4678,6 +4751,10 @@ function compileChannelBody(
               nodeSrc(targetNode),
               trackName,
             );
+          } else if (VEL_SENS_TARGETS.has(target)) {
+            writeVelSens(target, atomValue(targetNode), null, valueNode, evalEnv, vals,
+              (cmd, args) => events.push({ tick: trackState.tick, cmd, args, src: nodeSrc(targetNode) }),
+              diagnostics, nodeSrc(targetNode), trackName, typedDefs);
           } else if (PCM_POINT_TARGETS.has(target)) {
             // The same length reading and pcm-track check as the inline write.
             writePcmPoint(target, atomValue(targetNode), null, valueNode, trackState,
@@ -5848,7 +5925,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       src: null,
     });
   }
-  resolveVoices(typedDefs, defs, paramDefs, diagnostics);
+  resolveVoices(typedDefs, defs, paramDefs, diagnostics,
+    writesVelSens(parsed, defs, paramDefs, typedDefs, seDefs));
   resolveSampleExtends(sampleDefs, diagnostics);
   typedDefs.sampleNames = sampleDefs; // for a let name shadowing a sample
   const roots = expandRoots(remaining, defs, paramDefs, diagnostics);

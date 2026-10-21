@@ -368,7 +368,10 @@ a block into the operator shadow and queues the writes with no per-field logic:
 | 0x1C   | 1    | $B0       | FB/ALG                                            |
 
 `$B4` (pan / AMS / FMS) is **not** part of a voice — it is performance state
-set separately. Voice ids are assigned in the coalescing pass's discovery
+set separately. Neither are the operators' velocity sensitivities
+(`FM_VEL1`–`FM_VEL4`): a voice that carries them is followed by their
+PARAM_SETs, so a score that never writes one has entries and streams as
+before. Voice ids are assigned in the coalescing pass's discovery
 order; identical voices dedup to one entry.
 
 Detection rule (exporter): a same-tick PARAM_SET group covering the full voice

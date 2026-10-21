@@ -367,7 +367,8 @@ same bounds.
 | 0x46 | RANGE_START | 2     | 0..0x7F00      | PCM range start (`:pcm-start`) → the next START |
 | 0x47 | RANGE_END   | 2     | 0..0x7F00      | PCM range end (`:pcm-end`) → a shot's, and a released loop note's, END |
 | 0x48 | RANGE_LEN   | 2     | 0..0x7F00      | PCM range length (`:pcm-len`); end = range start + this |
-| 0x49–0x4F | —      | —     | —              | reserved                           |
+| 0x49–0x4C | FM_VEL1–4 | 1   | −1, 0..16      | velocity sensitivity in sixteenths → composed TL (driver.md §7); −1 = the role's own |
+| 0x4D–0x4F | —      | —     | —              | reserved                           |
 | 0x50–0x5F | VAL0–VAL15 | 2   | −32768..32767  | value slot 0–15 (`def-val`) → the slot the PARAM_*_VAL ops and the host read |
 | 0x60–0xFF | —      | —     | —              | reserved                           |
 

@@ -207,6 +207,7 @@ function freshFmChannel() {
       rs: 0,
       amen: 0,
       ssg: 0,
+      velk1: 0, // velocity sensitivity + 1 (sixteenths); 0 = the role's own
     })),
   };
 }
@@ -681,6 +682,25 @@ export class DrvPlayer {
   }
 
   // ── Level composition (driver.md §7; integer end-to-end) ────────────────
+  // An operator's velocity sensitivity in sixteenths (language.md §6): its
+  // own (`velk1` holds it plus one, so a fresh operator is unset), else the
+  // role's — 16 on a carrier, 0 on a modulator.
+  _velK(o, carrier) {
+    return o.velk1 ? o.velk1 - 1 : carrier ? 16 : 0;
+  }
+  // An operator's composed TL. At sensitivity 16 a carrier is _carrierTl; any
+  // other sensitivity holds the sum in 64ths of a step (vel × k, the faders ×
+  // 16) and rounds it once. A modulator takes its scaled vel only — vol and
+  // master are the mix's faders, and a fader must not move the timbre.
+  _levelTl(o, vel, vol, carrier) {
+    const k = this._velK(o, carrier);
+    if (k === 16 && carrier) return this._carrierTl(o.voicedTl, vel, vol);
+    const { velTl4, volTl4 } = this._luts;
+    let off = velTl4[vel] * k;
+    if (carrier) off += (volTl4[vol] + volTl4[this._master]) * 16;
+    const tl = o.voicedTl + ((off + (off >= 0 ? 32 : -32)) >> 6);
+    return tl < 0 ? 0 : tl > 127 ? 127 : tl;
+  }
   _carrierTl(voicedTl, vel, vol) {
     const { velTl4, volTl4 } = this._luts;
     const off4 = velTl4[vel] + volTl4[vol] + volTl4[this._master];
@@ -897,12 +917,22 @@ export class DrvPlayer {
   // current algorithm is not consulted: on alg 7 — four independent voices,
   // the reason the mode exists — this is its volume, and on a modulator it is
   // its modulation depth, which is a level too (driver.md §13.4).
+  // The operator's vel offset is scaled by its sensitivity, whose own value
+  // in this mode is 16 on every operator.
   _fm3OpTl(op) {
     const i = op - 1;
     const { velTl4, volTl4 } = this._luts;
-    const off4 = velTl4[this._fm3OpVel[i]] + volTl4[this._fm3OpVol[i]]
-      + volTl4[this._fm[2].vol] + volTl4[this._master];
-    const tl = this._fm[2].ops[i].voicedTl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+    const o = this._fm[2].ops[i];
+    const k = this._velK(o, true);
+    const faders4 = volTl4[this._fm3OpVol[i]] + volTl4[this._fm[2].vol] + volTl4[this._master];
+    let tl;
+    if (k === 16) {
+      const off4 = velTl4[this._fm3OpVel[i]] + faders4;
+      tl = o.voicedTl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+    } else {
+      const off = velTl4[this._fm3OpVel[i]] * k + faders4 * 16;
+      tl = o.voicedTl + ((off + (off >= 0 ? 32 : -32)) >> 6);
+    }
     return tl < 0 ? 0 : tl > 127 ? 127 : tl;
   }
   _writeFm3OpTl(op) {
@@ -923,23 +953,31 @@ export class DrvPlayer {
   // leaves its modulators raw, where the level is modulation depth, not volume.
   // `alg` is a parameter because VOICE_SET composes against the voice's NEW
   // algorithm, which is decided before its $B0 goes out.
+  // A modulator its voice makes velocity-sensitive (`:vel2`) composes too.
   _opLevel(ch, idx, alg) {
     if (ch === 2 && this._reg27 & 0x40) return this._fm3OpTl(idx + 1);
     const regs = this._fm[ch];
-    if (!fmCarrierOpsForAlg(alg & 7).includes(idx)) return regs.ops[idx].voicedTl;
-    return this._carrierTl(regs.ops[idx].voicedTl, regs.vel, regs.vol);
+    const o = regs.ops[idx];
+    const carrier = fmCarrierOpsForAlg(alg & 7).includes(idx);
+    if (!carrier && !this._velK(o, false)) return o.voicedTl;
+    return this._levelTl(o, regs.vel, regs.vol, carrier);
   }
-  // A channel's carriers, from its voiced levels + vel/vol/master. In special
-  // mode CH3's four operators are independent voices with their own levels, so
-  // the carrier set is not what decides its TLs (driver.md §13.4).
+  // A channel's levels, from its voiced levels + vel/vol/master: its carriers
+  // and its velocity-sensitive modulators. In special mode CH3's four
+  // operators are independent voices with their own levels, so the carrier
+  // set is not what decides its TLs (driver.md §13.4).
   _recomposeCarriers(ch) {
     if (ch === 2 && this._reg27 & 0x40) { this._recomposeFm3Ops(); return; }
     const regs = this._fm[ch];
     const port = ch >= 3 ? 1 : 0;
     const off = ch % 3;
-    for (const opIdx of fmCarrierOpsForAlg(regs.algorithm)) {
-      const tl = this._carrierTl(regs.ops[opIdx].voicedTl, regs.vel, regs.vol);
-      regs.ops[opIdx].tl = tl;
+    const carriers = fmCarrierOpsForAlg(regs.algorithm);
+    for (let opIdx = 0; opIdx < 4; opIdx++) {
+      const o = regs.ops[opIdx];
+      const carrier = carriers.includes(opIdx);
+      if (!carrier && !this._velK(o, false)) continue;
+      const tl = this._levelTl(o, regs.vel, regs.vol, carrier);
+      o.tl = tl;
       this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
     }
   }
@@ -1812,6 +1850,16 @@ export class DrvPlayer {
       case target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4: {
         const { idx, op } = opFor(TARGET_ID.FM_TL1);
         op.voicedTl = value < 0 ? 0 : value > 127 ? 127 : value;
+        op.tl = this._opLevel(ch, idx, regs.algorithm);
+        this._ym(port, 0x40 + OP_ADDR_OFFSET[idx] + off, op.tl);
+        return;
+      }
+      case target >= TARGET_ID.FM_VEL1 && target <= TARGET_ID.FM_VEL4: {
+        // Velocity sensitivity: no register of its own, it re-composes the
+        // operator's level. 0–16 sixteenths; anything else (-1) is the role's.
+        const { idx, op } = opFor(TARGET_ID.FM_VEL1);
+        const k = value & 0xff;
+        op.velk1 = k <= 16 ? k + 1 : 0;
         op.tl = this._opLevel(ch, idx, regs.algorithm);
         this._ym(port, 0x40 + OP_ADDR_OFFSET[idx] + off, op.tl);
         return;

@@ -826,9 +826,12 @@ Implements the level model of docs/language.md §6 — signed dB offsets compose
 addition, quantization once at the write:
 
 ```
-FM  (per carrier op of the current ALG):
+FM  (per carrier op of the current ALG, sensitivity k = 16):
     off4 = vel_tl4[vel] + vol_tl4[vol] + vol_tl4[master]
     TL   = clamp(0, 127, voicedTL[op] + round4(off4))
+FM  (any other k, 0..16 sixteenths; a modulator has no vol/master term):
+    off64 = vel_tl4[vel] × k + (vol_tl4[vol] + vol_tl4[master]) × 16
+    TL    = clamp(0, 127, voicedTL[op] + round64(off64))
 PSG:
     off4 = vel_psg4[vel] + vol_psg4[vol] + vol_psg4[master]
     att  = clamp(0, 15, round4(off4))
@@ -864,6 +867,15 @@ Rules:
   carriers and leaves its modulators raw (there the level is modulation depth,
   not volume); CH3 in special mode composes all four, because each operator
   carries its own level (§13.4). Gate: `m4-tl-compose`.
+- **Velocity sensitivity** (`FM_VEL1`–`FM_VEL4`, language.md §6) scales the
+  vel offset per operator, `k` in sixteenths. Unset (`velk1[op]` 0 in
+  `MMLFmCh`, which holds k + 1; beside the operators so `MMLOp` keeps its
+  12-byte stride) it is the role's: 16 on a carrier — the first formula
+  above, unchanged — and 0 on a modulator, which then stays raw. A modulator
+  with k > 0 composes its scaled vel and nothing else, and joins the ops every
+  level write recomposes. In CH3's special mode every operator's own is 16.
+  The sum at another k is held in 64ths and rounded once, `round64(x) =
+  (x ± 32) >> 6`; the multiply is one `muls.w`. Gate: `m4-vel-sens`.
 - **Same-table requirement:** the JS reference and the 68k C use these
   byte-identical integer tables, and `ir-player.js` composes the same way
   (`sumLevelOffsets`: each term rounded to a quarter step, the sum rounded

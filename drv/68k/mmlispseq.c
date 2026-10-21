@@ -136,6 +136,7 @@ enum {
   T_RANGE_START = 0x46,
   T_RANGE_END = 0x47,
   T_RANGE_LEN = 0x48,
+  T_FM_VEL1 = 0x49, /* FM_VEL1-FM_VEL4: velocity sensitivity, -1 = the role's */
   T_VAL0 = 0x50, /* VAL0-VAL15: the value slots as write targets */
   T_VAL15 = 0x5f
 };
@@ -416,6 +417,24 @@ MML_HOT uint8_t carrier_tl(const MMLSeq *s, uint8_t voiced_tl, uint8_t vel, uint
   int tl = voiced_tl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
   return (uint8_t)clampi(tl, 0, 127);
 }
+/* An operator's velocity sensitivity in sixteenths: its own (`velk1`, the
+ * channel's byte for it, holds it plus one), else the role's. */
+static int op_velk(uint8_t velk1, int carrier) {
+  return velk1 ? velk1 - 1 : carrier ? 16 : 0;
+}
+/* An operator's composed TL. At sensitivity 16 a carrier is carrier_tl; any
+ * other holds the sum in 64ths of a step (vel x k, the faders x 16) and rounds
+ * it once. A modulator takes its scaled vel only: vol and master are the mix's
+ * faders, and a fader must not move the timbre. Mirrors drv-player _levelTl. */
+static uint8_t level_tl(const MMLSeq *s, uint8_t voiced_tl, uint8_t velk1, uint8_t vel, uint8_t vol,
+                        int carrier) {
+  int k = op_velk(velk1, carrier);
+  if (k == 16 && carrier) return carrier_tl(s, voiced_tl, vel, vol);
+  int off = (int)mml_muls(MML_VEL_TL4[vel], (int16_t)k);
+  if (carrier) off += (MML_VOL_TL4[vol] + MML_VOL_TL4[s->master]) << 4;
+  int tl = voiced_tl + ((off + (off >= 0 ? 32 : -32)) >> 6);
+  return (uint8_t)clampi(tl, 0, 127);
+}
 MML_HOT uint8_t psg_att(const MMLSeq *s, uint8_t vel, uint8_t vol) {
   if (vol == 0 || s->master == 0) return 15; /* hard mute (language.md §6) */
   int off4 = MML_VEL_PSG4[vel] + MML_VOL_PSG4[vol] + MML_VOL_PSG4[s->master];
@@ -660,9 +679,17 @@ static void channel_off(MMLSeq *s, int ch) {
  * a modulator it is its modulation depth, which is a level too (§13.4). */
 static uint8_t fm3_op_tl(const MMLSeq *s, int op) {
   int i = op - 1;
-  int off4 = MML_VEL_TL4[s->fm3_op_vel[i]] + MML_VOL_TL4[s->fm3_op_vol[i]]
-             + MML_VOL_TL4[s->fm[2].vol] + MML_VOL_TL4[s->master];
-  int tl = s->fm[2].ops[i].voiced_tl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+  uint8_t voiced = s->fm[2].ops[i].voiced_tl;
+  int k = op_velk(s->fm[2].velk1[i], 1); /* the role's own is 16 on every operator here */
+  int faders4 = MML_VOL_TL4[s->fm3_op_vol[i]] + MML_VOL_TL4[s->fm[2].vol] + MML_VOL_TL4[s->master];
+  int tl;
+  if (k == 16) {
+    int off4 = MML_VEL_TL4[s->fm3_op_vel[i]] + faders4;
+    tl = voiced + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+  } else {
+    int off = (int)mml_muls(MML_VEL_TL4[s->fm3_op_vel[i]], (int16_t)k) + (faders4 << 4);
+    tl = voiced + ((off + (off >= 0 ? 32 : -32)) >> 6);
+  }
   return (uint8_t)clampi(tl, 0, 127);
 }
 static void write_fm3_op_tl(MMLSeq *s, int op) {
@@ -685,10 +712,11 @@ static void recompose_fm3_ops(MMLSeq *s) {
  * `alg` is a parameter because VOICE_SET composes against the voice's NEW
  * algorithm, which is decided before its $B0 goes out. */
 static uint8_t op_level(const MMLSeq *s, int ch, int idx, uint8_t alg) {
-  uint8_t voiced = s->fm[ch].ops[idx].voiced_tl;
+  const MMLFmCh *c = &s->fm[ch];
   if (ch == 2 && (s->reg27 & 0x40)) return fm3_op_tl(s, idx + 1);
-  if (!(MML_CARRIER_MASK[alg & 7] & (1u << idx))) return voiced;
-  return carrier_tl(s, voiced, s->fm[ch].vel, s->fm[ch].vol);
+  int carrier = (MML_CARRIER_MASK[alg & 7] >> idx) & 1;
+  if (!carrier && !c->velk1[idx]) return c->ops[idx].voiced_tl; /* a modulator, the role's own: raw */
+  return level_tl(s, c->ops[idx].voiced_tl, c->velk1[idx], c->vel, c->vol, carrier);
 }
 
 /* A full-gate note meets the next note-on: the key-off it was holding fires
@@ -716,8 +744,10 @@ static void recompose_carriers(MMLSeq *s, int ch) {
   uint8_t port = ch >= 3 ? 1 : 0, off = mod3(ch);
   uint8_t mask = MML_CARRIER_MASK[c->algorithm & 7];
   for (int op = 0; op < 4; op++) {
-    if (!(mask & (1 << op))) continue;
-    uint8_t tl = carrier_tl(s, c->ops[op].voiced_tl, c->vel, c->vol);
+    /* Its carriers, and a modulator its voice makes velocity-sensitive. */
+    int carrier = (mask >> op) & 1;
+    if (!carrier && op_velk(c->velk1[op], 0) == 0) continue;
+    uint8_t tl = level_tl(s, c->ops[op].voiced_tl, c->velk1[op], c->vel, c->vol, carrier);
     c->ops[op].tl = tl;
     ym(s, port, (uint8_t)(0x40 + MML_OP_ADDR_OFFSET[op] + off), tl);
   }
@@ -905,6 +935,7 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
 #define OPRANGE(base) (target >= (base) && target <= (base) + 3)
   int idx = -1;
   if (OPRANGE(T_FM_TL1)) idx = target - T_FM_TL1;
+  else if (OPRANGE(T_FM_VEL1)) idx = target - T_FM_VEL1;
   else if (OPRANGE(T_FM_AR1)) idx = target - T_FM_AR1;
   else if (OPRANGE(T_FM_DR1)) idx = target - T_FM_DR1;
   else if (OPRANGE(T_FM_SR1)) idx = target - T_FM_SR1;
@@ -918,8 +949,11 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   if (idx < 0) return;
   MMLOp *o = &c->ops[idx];
   uint8_t oo = (uint8_t)(MML_OP_ADDR_OFFSET[idx] + off);
-  if (OPRANGE(T_FM_TL1)) {
-    o->voiced_tl = (uint8_t)clampi(value, 0, 127);
+  if (OPRANGE(T_FM_TL1) || OPRANGE(T_FM_VEL1)) {
+    /* A sensitivity has no register of its own: it re-composes the level.
+     * 0-16 sixteenths; anything else (-1) is the role's own. */
+    if (OPRANGE(T_FM_TL1)) o->voiced_tl = (uint8_t)clampi(value, 0, 127);
+    else c->velk1[idx] = (uint8_t)((value & 0xff) <= 16 ? (value & 0xff) + 1 : 0);
     o->tl = op_level(s, ch, idx, c->algorithm);
     ym(s, port, (uint8_t)(0x40 + oo), o->tl);
   } else if (OPRANGE(T_FM_AR1) || OPRANGE(T_FM_KS1)) {

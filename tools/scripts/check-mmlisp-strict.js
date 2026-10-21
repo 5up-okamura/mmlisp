@@ -145,6 +145,27 @@ async function main() {
       src: "(fm1 c)\n(def-se hit (fm3 c) (fm3-1 c) (fm3-csm c) (fm2 c))",
       expected: ["E_SE_PART", "E_SE_PART", "E_SE_PART"],
     },
+    // Velocity sensitivity (:vel1–:vel4): a ratio 0–1, fixed at compile time.
+    {
+      label: "velocity sensitivity accepted",
+      src: "(def-fm v :alg 4 :vel1 0.5 :vel4 0)\n(fm1 v c :vel2 1 (param-set :vel3 0.25) c)",
+      expected: [],
+    },
+    {
+      label: "velocity sensitivity out of range",
+      src: "(def-fm v :vel1 1.5)\n(fm1 v c :vel2 -0.5 c)",
+      expected: ["E_VOICE_VALUE", "E_PARAM_VALUE"],
+    },
+    {
+      label: "velocity sensitivity has no relative, curve, $ or macro form",
+      src: "(def-val x 1)\n(fm1 :vel2+ 0.1 :vel2 (linear 0..1 :len 4) :vel2 $x (macro :vel2 [0 1]) c)",
+      expected: ["E_PARAM_VALUE", "E_PARAM_VALUE", "E_PARAM_VALUE", "E_MACRO_TARGET"],
+    },
+    {
+      label: "velocity sensitivity off FM",
+      src: "(sqr1 :vel1 0.5 c)",
+      expected: ["E_UNSUPPORTED_TARGET"],
+    },
   ];
 
   for (const testCase of cases) {

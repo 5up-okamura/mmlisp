@@ -400,6 +400,27 @@ plus `:alg`/`:fb`/`:ams`/`:fms`; unset params are not emitted, so start from a
 full patch or extend one. See
 `docs/language.md` §9 for the full parameter list.
 
+### Velocity that changes the timbre
+
+`:vel` normally moves only the carriers, so a softer note is quieter but the
+same colour. `:vel1`–`:vel4` give an operator its own share of the velocity,
+a ratio from 0 to 1. On a modulator it makes a soft note darker as well as
+quieter, the way a struck instrument behaves:
+
+```lisp
+(def-fm keys init-fm :alg 4 :fb 5
+  :tl1 28 :vel1 0.5        ; op1 modulates op2: half the velocity
+  :tl2 0
+  :tl3 32 :tl4 0)
+
+(fm1 keys :len 8 :vel 15 c :vel 9 e :vel 4 g e)
+```
+
+Unset, a carrier takes all of it and a modulator none, so existing voices
+sound as before. A carrier below 1 narrows the voice's dynamic range. `:vol`
+and `:master` never reach a modulator, so a fade keeps the timbre. The FM
+panel's VEL row sets it per operator (language.md §6).
+
 ---
 
 ## 9. Macro Basics (`(macro ...)`)

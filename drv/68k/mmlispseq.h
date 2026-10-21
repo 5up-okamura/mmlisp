@@ -115,6 +115,12 @@ typedef struct {
   int16_t pitch_cents;
   uint16_t snap; /* `:snap` pitch-class mask the pitch writes pass through; 0 = off */
   uint8_t keyed;
+  /* Each operator's velocity sensitivity in sixteenths, plus one (language.md
+   * §6): 0 is the role's own — 16 on a carrier, 0 on a modulator — so a
+   * zeroed channel plays as every voice did before `:vel1`–`:vel4` existed.
+   * Beside the operators, not in MMLOp, which stays 12 bytes: a 13-byte
+   * stride costs a multiply on every ops[idx]. */
+  uint8_t velk1[4];
 } MMLFmCh;
 
 typedef struct {
