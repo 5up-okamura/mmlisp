@@ -96,7 +96,10 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 
 The driver has gates — `cd drv && npm run verify:all` must be green — and
 `cd tools && npm run check:mmlisp-strict` (with `check:cheatsheet`,
-`check:reference` and `check:sample-fx`) checks the compiler. To write or
+`check:reference` and `check:sample-fx`) checks the compiler.
+`npm run check:snapshot` holds the toolchain's whole output (IR, the
+preview's register log, MMB, VGM) for every test score to its baseline: a
+refactor that must not change behavior keeps it green. To write or
 check a score as an AI, use the `mmlisp` MCP server (`/.mcp.json`,
 `tools/mcp/README.md`): it compiles with diagnostics, renders WAV, serves the
 docs and snippets, and — with Tools > Connect to AI on — edits and plays the

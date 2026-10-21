@@ -1,0 +1,1710 @@
+{
+ "drv/tests/ab-core.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "bea8a0e9f10efd83",
+  "regs": "90b6a1436ec28bfd",
+  "mmb": "5543395477d0976a",
+  "vgm": "4de81d18dc635659"
+ },
+ "drv/tests/ab-core.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "396af30b98031a63",
+  "regs": "90b6a1436ec28bfd",
+  "mmb": "f0215cfe6721a895",
+  "vgm": "4de81d18dc635659"
+ },
+ "drv/tests/budget-2v-baked.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "3f009a90dbc18370",
+  "regs": "f8065e5f686c19ad",
+  "mmb": "d7b6460bbc46acbb",
+  "vgm": "2f84ee49b1dbd5ed"
+ },
+ "drv/tests/budget-2v-baked.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "fcaca2bc427176f3",
+  "regs": "f8065e5f686c19ad",
+  "mmb": "9b58042e49a2f937",
+  "vgm": "2f84ee49b1dbd5ed"
+ },
+ "drv/tests/budget-2v-edge.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "68c80d214e8615b8",
+  "regs": "77e7d0e853853d25",
+  "mmb": "c29da51f4b1e35f5",
+  "vgm": "2c98e23994d77ab9"
+ },
+ "drv/tests/budget-2v-edge.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "2524a335226a39dd",
+  "regs": "77e7d0e853853d25",
+  "mmb": "7aceca9fb8ecd17a",
+  "vgm": "2c98e23994d77ab9"
+ },
+ "drv/tests/budget-2v.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "0c3bc41ef6cf0e52",
+  "regs": "58cb3dbdbb8630bc",
+  "mmb": "e55ef422575c4d45",
+  "vgm": "017bb184d4f0c425"
+ },
+ "drv/tests/budget-2v.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "f5ee48f03276ab07",
+  "regs": "58cb3dbdbb8630bc",
+  "mmb": "28f5cdc4a308c41f",
+  "vgm": "017bb184d4f0c425"
+ },
+ "drv/tests/m2-csm.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "d62799423e62fa4d",
+  "regs": "6868c82eb1e98a5e",
+  "mmb": "5d0eb3532938ac96",
+  "vgm": "632821894600c4e4"
+ },
+ "drv/tests/m2-csm.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "67d4a3ae0305c8d7",
+  "regs": "6868c82eb1e98a5e",
+  "mmb": "d3dd238c8a60691a",
+  "vgm": "632821894600c4e4"
+ },
+ "drv/tests/m2-mailbox.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "55f6ffe85d439b7f",
+  "regs": "0e8f95e9b3e437e5",
+  "mmb": "74871234001132b0",
+  "vgm": "ddd89603f2acbbc8"
+ },
+ "drv/tests/m2-mailbox.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "195b8eac22f72bac",
+  "regs": "0e8f95e9b3e437e5",
+  "mmb": "083087490e1350d8",
+  "vgm": "ddd89603f2acbbc8"
+ },
+ "drv/tests/m2-motion.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ef11ab299d3fb33f",
+  "regs": "fc0c582d6cdf8144",
+  "mmb": "384db850483cc872",
+  "vgm": "40f0a216c77893d7"
+ },
+ "drv/tests/m2-motion.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c66c515bb2863a1c",
+  "regs": "fc0c582d6cdf8144",
+  "mmb": "e29090a1755651a4",
+  "vgm": "40f0a216c77893d7"
+ },
+ "drv/tests/m2-pcm.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "af51dfd3c2ff074b",
+  "regs": "20c0c5d1f7dce596",
+  "mmb": "42425dccec0a47da",
+  "vgm": "534dbdd3b8dea96e"
+ },
+ "drv/tests/m2-pcm.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "0ecbad9803ceb759",
+  "regs": "20c0c5d1f7dce596",
+  "mmb": "e825050fe9503d6e",
+  "vgm": "534dbdd3b8dea96e"
+ },
+ "drv/tests/m2-pcmloop.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "c4a913ffa3d8a356",
+  "regs": "502b730ce78d5d3b",
+  "mmb": "0968b57464dca64c",
+  "vgm": "5e3635724d8595bc"
+ },
+ "drv/tests/m2-pcmloop.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "7dfefee8d6393515",
+  "regs": "502b730ce78d5d3b",
+  "mmb": "f6f871d9dc095f11",
+  "vgm": "5e3635724d8595bc"
+ },
+ "drv/tests/m2b-pitch.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "63a187219d0d6d1b",
+  "regs": "0010671115e61a36",
+  "mmb": "77ccd7eec939ddc9",
+  "vgm": "5099c9825b6c9906"
+ },
+ "drv/tests/m2b-pitch.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "2493698f56682df5",
+  "regs": "0010671115e61a36",
+  "mmb": "9ec4d03a105794bc",
+  "vgm": "5099c9825b6c9906"
+ },
+ "drv/tests/m3-callret.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9a23fa96fdc82535",
+  "regs": "192912def8caa111",
+  "mmb": "0fe1837a070759de",
+  "vgm": "24f0ac060ff0ec43"
+ },
+ "drv/tests/m3-callret.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "cd0800155e4087a1",
+  "regs": "192912def8caa111",
+  "mmb": "509acdd3b7845a74",
+  "vgm": "24f0ac060ff0ec43"
+ },
+ "drv/tests/m3-dynsweep.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "2940ed249dd3c5fa",
+  "regs": "da52e612c45d1601",
+  "mmb": "918f6f9f608a7c15",
+  "vgm": "373a0554cff8b11f"
+ },
+ "drv/tests/m3-dynsweep.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "46af8e9825aabbcf",
+  "regs": "da52e612c45d1601",
+  "mmb": "50078cc397808c8d",
+  "vgm": "373a0554cff8b11f"
+ },
+ "drv/tests/m3-dynval.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "27c35313a2855861",
+  "regs": "5d3c01d3f747a8cf",
+  "mmb": "e856ce5ae62a436b",
+  "vgm": "4931283b0c116b8b"
+ },
+ "drv/tests/m3-dynval.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "59b01481882feab5",
+  "regs": "5d3c01d3f747a8cf",
+  "mmb": "f7e02218cac33dd8",
+  "vgm": "4931283b0c116b8b"
+ },
+ "drv/tests/m3-fm3op.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9953a8a354c0b24b",
+  "regs": "f69e17e343aec279",
+  "mmb": "b18fc5e01562354d",
+  "vgm": "17ca6c9470b63478"
+ },
+ "drv/tests/m3-fm3op.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0e6603c81c70df98",
+  "regs": "f69e17e343aec279",
+  "mmb": "8198a04418bca86d",
+  "vgm": "17ca6c9470b63478"
+ },
+ "drv/tests/m3-gate-tie.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "303e9cc8d95bd621",
+  "regs": "537b2cd727e35d46",
+  "mmb": "c4ce840fb521c080",
+  "vgm": "46cde91b23c8db17"
+ },
+ "drv/tests/m3-gate-tie.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f182d5ecab418e01",
+  "regs": "537b2cd727e35d46",
+  "mmb": "647572b34df4e39a",
+  "vgm": "46cde91b23c8db17"
+ },
+ "drv/tests/m3-loop-gate.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f025e0916eef7984",
+  "regs": "2aa8156aeba1e49e",
+  "mmb": "020e32b0033c99c1",
+  "vgm": "deefb8f01014b396"
+ },
+ "drv/tests/m3-loop-gate.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "bab40c31ca60b2bc",
+  "regs": "2aa8156aeba1e49e",
+  "mmb": "e2bb6c20096325b0",
+  "vgm": "deefb8f01014b396"
+ },
+ "drv/tests/m3-loop-vel-hold.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "6574fb8bf3d03987",
+  "regs": "1c92dad9852e4a04",
+  "mmb": "e54c8170936c1961",
+  "vgm": "12d0ce1871f57d04"
+ },
+ "drv/tests/m3-loop-vel-hold.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "30f02890f0b7ff30",
+  "regs": "1c92dad9852e4a04",
+  "mmb": "62a16993dc8b797d",
+  "vgm": "12d0ce1871f57d04"
+ },
+ "drv/tests/m3-macro-curve.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "001558b3af9a3534",
+  "regs": "c1941aa37e85fc8a",
+  "mmb": "9bef9ef015e03caa",
+  "vgm": "a43a66f38db80395"
+ },
+ "drv/tests/m3-macro-curve.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "bea58818729ee1bd",
+  "regs": "c1941aa37e85fc8a",
+  "mmb": "336cc747667577e7",
+  "vgm": "a43a66f38db80395"
+ },
+ "drv/tests/m3-macro-keyon.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b9d997b8f6e3346c",
+  "regs": "4c5f294e5a102c16",
+  "mmb": "c17abb448fcc8350",
+  "vgm": "1dd2163caa54c854"
+ },
+ "drv/tests/m3-macro-keyon.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "a3d38c20b4f4444b",
+  "regs": "4c5f294e5a102c16",
+  "mmb": "d3805710f87ce297",
+  "vgm": "1dd2163caa54c854"
+ },
+ "drv/tests/m3-macro-multi.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "df0d0eca365fd615",
+  "regs": "23fd20abd3970b78",
+  "mmb": "399c94abe15b5ecf",
+  "vgm": "657f892a0532b009"
+ },
+ "drv/tests/m3-macro-multi.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "daae1750208193c8",
+  "regs": "23fd20abd3970b78",
+  "mmb": "fbac26cf3e6e9333",
+  "vgm": "657f892a0532b009"
+ },
+ "drv/tests/m3-macro-pitch.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f27d514d64389aad",
+  "regs": "02eed5565c20afd6",
+  "mmb": "ee4bea8fad6a8b2a",
+  "vgm": "fd903853692df36f"
+ },
+ "drv/tests/m3-macro-pitch.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "cd801f5c6e171d2a",
+  "regs": "02eed5565c20afd6",
+  "mmb": "7441cc9ec0a6001e",
+  "vgm": "fd903853692df36f"
+ },
+ "drv/tests/m3-macro-pitchadd.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f50f6e2ff54ed4df",
+  "regs": "d8f0bbaa1cf41196",
+  "mmb": "60d7e95a5217717e",
+  "vgm": "03c1954478c0ece6"
+ },
+ "drv/tests/m3-macro-pitchadd.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "21c755d619fdbaed",
+  "regs": "d8f0bbaa1cf41196",
+  "mmb": "92a44e2fc2e5f5ad",
+  "vgm": "03c1954478c0ece6"
+ },
+ "drv/tests/m3-macro-pitchovr.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "2cb059484a66f2a1",
+  "regs": "0b19f9ac8f35f3fc",
+  "mmb": "5253e0ec7e2475ac",
+  "vgm": "89affbff6e7774a2"
+ },
+ "drv/tests/m3-macro-pitchovr.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "fa2d216d4c3ff3b0",
+  "regs": "0b19f9ac8f35f3fc",
+  "mmb": "f4df4cd579945353",
+  "vgm": "89affbff6e7774a2"
+ },
+ "drv/tests/m3-macro-scale.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ae4140cb4ebe88be",
+  "regs": "5966611f7d8f1d83",
+  "mmb": "d8e85349ee4a7321",
+  "vgm": "daed94f6bd206c11"
+ },
+ "drv/tests/m3-macro-scale.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "15706b2d5bddc2bd",
+  "regs": "5966611f7d8f1d83",
+  "mmb": "77af911e8f40332d",
+  "vgm": "daed94f6bd206c11"
+ },
+ "drv/tests/m3-macro-semi.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "d29fdaf3d57dd5db",
+  "regs": "cb1e4030aafe42d3",
+  "mmb": "9bcca6b40227e15f",
+  "vgm": "b6f4def9ccc228db"
+ },
+ "drv/tests/m3-macro-semi.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "36b945b7fabe7d11",
+  "regs": "cb1e4030aafe42d3",
+  "mmb": "57d410f1ef727c16",
+  "vgm": "b6f4def9ccc228db"
+ },
+ "drv/tests/m3-macro-vel-clear.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f7fdf80b19b224c1",
+  "regs": "a779060e7010386f",
+  "mmb": "5ced691132aa74b3",
+  "vgm": "4f4eff7dd4ff7e9b"
+ },
+ "drv/tests/m3-macro-vel-clear.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "86fcf8369841c20f",
+  "regs": "a779060e7010386f",
+  "mmb": "0e46965314b50d1d",
+  "vgm": "4f4eff7dd4ff7e9b"
+ },
+ "drv/tests/m3-macro-vel.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e580e53b05914c05",
+  "regs": "e3bedb356fba54c7",
+  "mmb": "ef6d00d193f3b7c4",
+  "vgm": "f81f8e31bccb4757"
+ },
+ "drv/tests/m3-macro-vel.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "37146cd4e32a94aa",
+  "regs": "e3bedb356fba54c7",
+  "mmb": "070859f598f3ade1",
+  "vgm": "f81f8e31bccb4757"
+ },
+ "drv/tests/m3-macro.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "3f2e6b18d7349d40",
+  "regs": "c86a0afc65651450",
+  "mmb": "e2b4b92621c6d3c8",
+  "vgm": "29b6d4232f5c7500"
+ },
+ "drv/tests/m3-macro.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ac7a8ee82f334aee",
+  "regs": "c86a0afc65651450",
+  "mmb": "72780bc1d0c46474",
+  "vgm": "29b6d4232f5c7500"
+ },
+ "drv/tests/m3-opparam.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9f00dca17f684a27",
+  "regs": "e0be41b0e3174f30",
+  "mmb": "c88aa7cd888db637",
+  "vgm": "9cfaca7758b1ca92"
+ },
+ "drv/tests/m3-opparam.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "31ebf02e75d2e0c7",
+  "regs": "e0be41b0e3174f30",
+  "mmb": "6e4f99ae7dc76b7f",
+  "vgm": "9cfaca7758b1ca92"
+ },
+ "drv/tests/m3-pcm-baked.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "a06872a5e274d813",
+  "regs": "71d44147ef8506c9",
+  "mmb": "eca88ce0a6532b17",
+  "vgm": "a79d02acaa50c177"
+ },
+ "drv/tests/m3-pcm-baked.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "27950a6b1069fca6",
+  "regs": "71d44147ef8506c9",
+  "mmb": "f2598c7536ef1fe8",
+  "vgm": "a79d02acaa50c177"
+ },
+ "drv/tests/m3-pcm-master.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "6c034a4aa06e60b9",
+  "regs": "a963289335d5ce3e",
+  "mmb": "d79da8be0dffabc4",
+  "vgm": "627c200ce671eb8e"
+ },
+ "drv/tests/m3-pcm-master.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "e5dbf687c824c06d",
+  "regs": "a963289335d5ce3e",
+  "mmb": "9256e9c7e6bfa4ab",
+  "vgm": "627c200ce671eb8e"
+ },
+ "drv/tests/m3-pcm-slice.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "95c91dbf9d87fc31",
+  "regs": "48051cfbbfc2603e",
+  "mmb": "e6f9e99b704dc25a",
+  "vgm": "44a40c718dd8dc98"
+ },
+ "drv/tests/m3-pcm-slice.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "4a04cad595fec873",
+  "regs": "48051cfbbfc2603e",
+  "mmb": "c5ea2ab1042fb880",
+  "vgm": "44a40c718dd8dc98"
+ },
+ "drv/tests/m3-pcm-softmix.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "17a5327d2f57cd15",
+  "regs": "a1e11ffa36a05e6e",
+  "mmb": "36ce5af4c8608c3e",
+  "vgm": "9b87fab865623cc3"
+ },
+ "drv/tests/m3-pcm-softmix.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "6881c2dbe757acd6",
+  "regs": "a1e11ffa36a05e6e",
+  "mmb": "8ecfa23f008f35b0",
+  "vgm": "9b87fab865623cc3"
+ },
+ "drv/tests/m3-pcm-sync.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "cd883672d4de9b42",
+  "regs": "38a6b610b93bde20",
+  "mmb": "1bb7d3ea8b7721d5",
+  "vgm": "ed97af2384137c3e"
+ },
+ "drv/tests/m3-pcm-sync.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "7c2f01b299c7c8f3",
+  "regs": "38a6b610b93bde20",
+  "mmb": "e50adbfde57122fe",
+  "vgm": "ed97af2384137c3e"
+ },
+ "drv/tests/m3-pcm-vol.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "e5d0cc5700ecea22",
+  "regs": "74309bb3e354798d",
+  "mmb": "8fe6f199a24c0faf",
+  "vgm": "3e29ecef7609af49"
+ },
+ "drv/tests/m3-pcm-vol.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "5f9fe47ce480164d",
+  "regs": "74309bb3e354798d",
+  "mmb": "0d3428e52beef5a0",
+  "vgm": "3e29ecef7609af49"
+ },
+ "drv/tests/m3-pcm-volmix.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "4f39211874c0b4a9",
+  "regs": "fc8b75ace4d1d46f",
+  "mmb": "ce1bd194d79876ed",
+  "vgm": "3e5e0bff505eba62"
+ },
+ "drv/tests/m3-pcm-volmix.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "3e7bc9a845c4a441",
+  "regs": "fc8b75ace4d1d46f",
+  "mmb": "a594d30c0d67ca0b",
+  "vgm": "3e5e0bff505eba62"
+ },
+ "drv/tests/m3-psg-release.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "dea3cf9bd46089a4",
+  "regs": "b3120d4c2f9f25f7",
+  "mmb": "b257cab66da111df",
+  "vgm": "b81d29f9e80ede20"
+ },
+ "drv/tests/m3-psg-release.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "29697d7c6df5e173",
+  "regs": "b3120d4c2f9f25f7",
+  "mmb": "473ff476d6c6a616",
+  "vgm": "b81d29f9e80ede20"
+ },
+ "drv/tests/m3-se-prime.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "bb625e207986a9e3",
+  "regs": "acabf504f464eb0d",
+  "mmb": "c3163d6566f6335a",
+  "vgm": "a9ed678f9f6ab8a7"
+ },
+ "drv/tests/m3-se-prime.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "6c55808ec992330c",
+  "regs": "acabf504f464eb0d",
+  "mmb": "108463bf8ffd0ca0",
+  "vgm": "a9ed678f9f6ab8a7"
+ },
+ "drv/tests/m3-se-prio.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5721f7636e435ceb",
+  "regs": "77dddfae49aea93c",
+  "mmb": "ee590bb7e45821a7",
+  "vgm": "e890fd408a96366e"
+ },
+ "drv/tests/m3-se-prio.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e6a4739adec418f9",
+  "regs": "77dddfae49aea93c",
+  "mmb": "4ab6449b78e36a52",
+  "vgm": "e890fd408a96366e"
+ },
+ "drv/tests/m3-se.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "423d5b8f041075b5",
+  "regs": "4e6686e7cc69291e",
+  "mmb": "19319f8c78062f74",
+  "vgm": "e9d1b0c43909a2a3"
+ },
+ "drv/tests/m3-se.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "08f9f943ed211581",
+  "regs": "4e6686e7cc69291e",
+  "mmb": "56d964614c160dcf",
+  "vgm": "e9d1b0c43909a2a3"
+ },
+ "drv/tests/m3-slur.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c61ba1a1ed5b84b9",
+  "regs": "cc7024a60b115e19",
+  "mmb": "88a036c90322086f",
+  "vgm": "6724c6b3c868d733"
+ },
+ "drv/tests/m3-slur.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9ab639a7bb5e9808",
+  "regs": "cc7024a60b115e19",
+  "mmb": "1495e165d29c50cd",
+  "vgm": "6724c6b3c868d733"
+ },
+ "drv/tests/m3-trig.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9918f8c1e1eba9b5",
+  "regs": "6075b7fd9eefabac",
+  "mmb": "672ce42e23f9dd79",
+  "vgm": "8cbc9aafafc06126"
+ },
+ "drv/tests/m3-trig.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4cd2c8a8379c771c",
+  "regs": "6075b7fd9eefabac",
+  "mmb": "45e4a0a514159a77",
+  "vgm": "8cbc9aafafc06126"
+ },
+ "drv/tests/m3-valexpr.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f4586fa74bc3eb24",
+  "regs": "0f9c6a8eb3f44a36",
+  "mmb": "49b7a993f2a8972a",
+  "vgm": "409406d989e65df8"
+ },
+ "drv/tests/m3-valexpr.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "8db1b05357899932",
+  "regs": "0f9c6a8eb3f44a36",
+  "mmb": "4a72685624003126",
+  "vgm": "409406d989e65df8"
+ },
+ "drv/tests/m3-voice-loop.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b580da63d8b828c7",
+  "regs": "0e3b81c5f31a5de8",
+  "mmb": "d596cb4c8752f8a5",
+  "vgm": "339471dc9188dbf6"
+ },
+ "drv/tests/m3-voice-loop.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "adae245321a2c220",
+  "regs": "0e3b81c5f31a5de8",
+  "mmb": "f1e9859f176d93ae",
+  "vgm": "339471dc9188dbf6"
+ },
+ "drv/tests/m3-voice.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "87b458807753e4fd",
+  "regs": "84a50daaaaf6cdc2",
+  "mmb": "f4ed593037159dc6",
+  "vgm": "3e3f4d5e6cae2253"
+ },
+ "drv/tests/m3-voice.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f89b32b43d787036",
+  "regs": "84a50daaaaf6cdc2",
+  "mmb": "eee52feb34271b91",
+  "vgm": "3e3f4d5e6cae2253"
+ },
+ "drv/tests/m4-break-join-dedup.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4b64ee5b7fba8f28",
+  "regs": "28074170b056a82d",
+  "mmb": "dc665677a452f59a",
+  "vgm": "c9b1c6d8653545e2"
+ },
+ "drv/tests/m4-break-join-dedup.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0e3a0a161bc85d55",
+  "regs": "cf418f2a087815c4",
+  "mmb": "18ba15649f0c6fbf",
+  "vgm": "99667747bf95fa09"
+ },
+ "drv/tests/m4-break-once.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "35b4ff4768f8f3e6",
+  "regs": "d23970dd57d780d9",
+  "mmb": "919de043bb1d2a04",
+  "vgm": "b006cbc7ada4d502"
+ },
+ "drv/tests/m4-break-once.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1fb1b48e54559fad",
+  "regs": "d23970dd57d780d9",
+  "mmb": "c368331acce56ed2",
+  "vgm": "b006cbc7ada4d502"
+ },
+ "drv/tests/m4-callret-loop.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1a08a490205e747c",
+  "regs": "465f07e282b952d3",
+  "mmb": "229ed910b51bea88",
+  "vgm": "f46385f1f4090e3b"
+ },
+ "drv/tests/m4-callret-loop.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "58a0d053ce24c46e",
+  "regs": "465f07e282b952d3",
+  "mmb": "01d899cd09505c6a",
+  "vgm": "f46385f1f4090e3b"
+ },
+ "drv/tests/m4-csm-glide.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "a51facd9502a44c8",
+  "regs": "a8c7a8d4703e354e",
+  "mmb": "8438297a34ace79d",
+  "vgm": "5b37f5727bc1eddd"
+ },
+ "drv/tests/m4-csm-glide.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "7eba64fb8f64575b",
+  "regs": "a8c7a8d4703e354e",
+  "mmb": "fbd17aaf4343a576",
+  "vgm": "5b37f5727bc1eddd"
+ },
+ "drv/tests/m4-csm-rest-inline.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "19a637dc1a1f3582",
+  "regs": "bac7299a1d68bd65",
+  "mmb": "5cd8235721251c79",
+  "vgm": "4b1db69d2bc38325"
+ },
+ "drv/tests/m4-csm-rest-inline.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "63992f16a76faeef",
+  "regs": "bac7299a1d68bd65",
+  "mmb": "1a8f24be29301b4f",
+  "vgm": "4b1db69d2bc38325"
+ },
+ "drv/tests/m4-csm-rest.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f9f37281a92faf39",
+  "regs": "b8f2bfd95a82517c",
+  "mmb": "8dc249d5fb58fc04",
+  "vgm": "f014d765813bc8c9"
+ },
+ "drv/tests/m4-csm-rest.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b7e8ba3daebd90fc",
+  "regs": "b8f2bfd95a82517c",
+  "mmb": "ee5c582028bbc371",
+  "vgm": "f014d765813bc8c9"
+ },
+ "drv/tests/m4-delay-prio.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "47dc3ae03591d0b8",
+  "regs": "988a9495c64f63d0",
+  "mmb": "21e99c83f80c261a",
+  "vgm": "8921206879b68f00"
+ },
+ "drv/tests/m4-delay-prio.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5ad73e894e9b7be5",
+  "regs": "988a9495c64f63d0",
+  "mmb": "e081408ca6d6e1b4",
+  "vgm": "8921206879b68f00"
+ },
+ "drv/tests/m4-fm3-voice-track.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c187b452450c1e0c",
+  "regs": "3bc49a03d9ec6c89",
+  "mmb": "274745cea76a538d",
+  "vgm": "57957379d14447e6"
+ },
+ "drv/tests/m4-fm3-voice-track.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "6aa5b07cfee5fed0",
+  "regs": "3bc49a03d9ec6c89",
+  "mmb": "a7140eb18dc85cf3",
+  "vgm": "57957379d14447e6"
+ },
+ "drv/tests/m4-fm3op-keyon.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e3e647e9d2fe1711",
+  "regs": "352d25f8fcc27ba6",
+  "mmb": "bb4548900ae76534",
+  "vgm": "c9abcd954396ebf7"
+ },
+ "drv/tests/m4-fm3op-keyon.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "d49b23201c07731c",
+  "regs": "352d25f8fcc27ba6",
+  "mmb": "0aee7258ffdb7ea9",
+  "vgm": "c9abcd954396ebf7"
+ },
+ "drv/tests/m4-fm3op-level-macros.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "39a8964971ee61f4",
+  "regs": "ecb3e00f7abc4fcd",
+  "mmb": "eebe874b8b8e1758",
+  "vgm": "f176ec85a4d21ea6"
+ },
+ "drv/tests/m4-fm3op-level-macros.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "fcab007db3868f9c",
+  "regs": "ecb3e00f7abc4fcd",
+  "mmb": "be8964b381985b29",
+  "vgm": "f176ec85a4d21ea6"
+ },
+ "drv/tests/m4-fm3op-level.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "12cc00779a1ca808",
+  "regs": "eb0f20d953b0851f",
+  "mmb": "387448e3d05c6e55",
+  "vgm": "67dc6d83ed6f53e7"
+ },
+ "drv/tests/m4-fm3op-level.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1427d69b7f42ca18",
+  "regs": "eb0f20d953b0851f",
+  "mmb": "1da02d2b882426ce",
+  "vgm": "67dc6d83ed6f53e7"
+ },
+ "drv/tests/m4-fm3op-pitch.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1d77491f5b6394c3",
+  "regs": "67ee547a3bed8bdc",
+  "mmb": "50b3f0fcd7a25ad3",
+  "vgm": "eec6daabdf435630"
+ },
+ "drv/tests/m4-fm3op-pitch.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "8a3834747d79afae",
+  "regs": "67ee547a3bed8bdc",
+  "mmb": "18d94b3fb61f833b",
+  "vgm": "eec6daabdf435630"
+ },
+ "drv/tests/m4-fm3op-timbre.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "6bb8b33aaf0e0583",
+  "regs": "376126aa4659f7a8",
+  "mmb": "5ec3ba9d4998463b",
+  "vgm": "e0682fecde5b6036"
+ },
+ "drv/tests/m4-fm3op-timbre.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "2dfa3a4378a04496",
+  "regs": "376126aa4659f7a8",
+  "mmb": "6489519668ef3742",
+  "vgm": "e0682fecde5b6036"
+ },
+ "drv/tests/m4-fm3op-voice-on-op.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "d7ededd7ddb404de",
+  "regs": "01fda7fd1bf7a515",
+  "mmb": "a70f68c903d8940d",
+  "vgm": "8530c667244606e5"
+ },
+ "drv/tests/m4-fm3op-voice-on-op.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "75e4d56feaa321ac",
+  "regs": "01fda7fd1bf7a515",
+  "mmb": "7ba64ded5b5832d4",
+  "vgm": "8530c667244606e5"
+ },
+ "drv/tests/m4-fm6-only.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5b558f31c5e97587",
+  "regs": "c8cabf79f833721d",
+  "mmb": "cf8b29ae0e23cc14",
+  "vgm": "5282411091a4fd18"
+ },
+ "drv/tests/m4-fm6-only.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5b82694d72f6124f",
+  "regs": "c8cabf79f833721d",
+  "mmb": "0037f07eeb86b2f7",
+  "vgm": "5282411091a4fd18"
+ },
+ "drv/tests/m4-gate-past-tie.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4a43b15f34ac9ba2",
+  "regs": "1d30c5a8fbd25daa",
+  "mmb": "640ef8afc2a3b1b9",
+  "vgm": "ded78090f6e2fd33"
+ },
+ "drv/tests/m4-gate-past-tie.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "7e30f751d20eedb1",
+  "regs": "1c3b6537f50bc883",
+  "mmb": "bba7bc4f23670bc0",
+  "vgm": "bde87c1eb29a9c33"
+ },
+ "drv/tests/m4-gate-sub-frame.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "865a6f5e4bc765d2",
+  "regs": "5105aae3a3758980",
+  "mmb": "2706a8a7fed99652",
+  "vgm": "8ab92e8d7135cf7a"
+ },
+ "drv/tests/m4-gate-sub-frame.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4d2cbca789822484",
+  "regs": "5105aae3a3758980",
+  "mmb": "defafbf151a77533",
+  "vgm": "8ab92e8d7135cf7a"
+ },
+ "drv/tests/m4-gate0.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b8737313aab2b6c6",
+  "regs": "85c14b2280789f6a",
+  "mmb": "299c8f566455e00f",
+  "vgm": "6cdc15385b5e7818"
+ },
+ "drv/tests/m4-gate0.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4435ecc1c190dce8",
+  "regs": "85c14b2280789f6a",
+  "mmb": "8873f22eb259d89e",
+  "vgm": "6cdc15385b5e7818"
+ },
+ "drv/tests/m4-glide-lag.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "57a69936202f30fb",
+  "regs": "70f0920ecdc88a41",
+  "mmb": "5350e95eb4a3a9d5",
+  "vgm": "2759205f8759cad5"
+ },
+ "drv/tests/m4-glide-lag.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1ea27fcf023883cf",
+  "regs": "70f0920ecdc88a41",
+  "mmb": "73b0ebfa0a6a8a25",
+  "vgm": "2759205f8759cad5"
+ },
+ "drv/tests/m4-hold-stop.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "3e496c544e849001",
+  "regs": "5461bb1c4ca1f0a0",
+  "mmb": "dfa7b3fd18fc19db",
+  "vgm": "8a46c9ff3dc5565c"
+ },
+ "drv/tests/m4-hold-stop.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "11d4debed2ad458d",
+  "regs": "5461bb1c4ca1f0a0",
+  "mmb": "8c8f72425d991f9d",
+  "vgm": "8a46c9ff3dc5565c"
+ },
+ "drv/tests/m4-keyon-echo.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "23d05dd13e4f3213",
+  "regs": "bf84e982d28125a7",
+  "mmb": "597e74bdacd85c1b",
+  "vgm": "6aa82dcbb8d246c7"
+ },
+ "drv/tests/m4-keyon-echo.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "7d3b1d7e75aa1528",
+  "regs": "bf84e982d28125a7",
+  "mmb": "a66bcbaa4dc749e8",
+  "vgm": "6aa82dcbb8d246c7"
+ },
+ "drv/tests/m4-keyon-pan.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e347d5bf0bf7fc70",
+  "regs": "120d5f1946e65960",
+  "mmb": "f2d0a0b5e99a2729",
+  "vgm": "5bacdeaf5f353276"
+ },
+ "drv/tests/m4-keyon-pan.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5dfaaabf6ddec51a",
+  "regs": "120d5f1946e65960",
+  "mmb": "1ea964f73451361f",
+  "vgm": "5bacdeaf5f353276"
+ },
+ "drv/tests/m4-level-macros.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9b0af9537adf4010",
+  "regs": "986621f7f0c5f794",
+  "mmb": "838fa0c94b4b17cc",
+  "vgm": "0dd49a2e6d0ac07f"
+ },
+ "drv/tests/m4-level-macros.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1a519701d47f9322",
+  "regs": "986621f7f0c5f794",
+  "mmb": "1175ed18f1a52849",
+  "vgm": "0dd49a2e6d0ac07f"
+ },
+ "drv/tests/m4-level-sweeps.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9483799826509243",
+  "regs": "745efc2fc3c32ca8",
+  "mmb": "df868e2fcd63dda9",
+  "vgm": "8d1488d04b07fa76"
+ },
+ "drv/tests/m4-level-sweeps.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c9c58fa15d5049da",
+  "regs": "745efc2fc3c32ca8",
+  "mmb": "6d16128fa762df3d",
+  "vgm": "8d1488d04b07fa76"
+ },
+ "drv/tests/m4-loop-break-state.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "fbcc4774d7de04f7",
+  "regs": "66615a28c1c148ef",
+  "mmb": "a4cf9ad7f21f38af",
+  "vgm": "0f9175b588a62c9a"
+ },
+ "drv/tests/m4-loop-break-state.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "deac5cb35e371ada",
+  "regs": "66615a28c1c148ef",
+  "mmb": "50569afa0aa662f0",
+  "vgm": "0f9175b588a62c9a"
+ },
+ "drv/tests/m4-loop-hoist-tail.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0762a5b68213f3b6",
+  "regs": "9752ad453a66d230",
+  "mmb": "b7e92d90b67bba9d",
+  "vgm": "79b7678c59789406"
+ },
+ "drv/tests/m4-loop-hoist-tail.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0bab11957b7d01ed",
+  "regs": "9752ad453a66d230",
+  "mmb": "fdcbf009a19972c9",
+  "vgm": "79b7678c59789406"
+ },
+ "drv/tests/m4-macro-floor.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "00e77150b1f96ef2",
+  "regs": "d7af0c4eb87e36ed",
+  "mmb": "07da1b7e75b8627f",
+  "vgm": "7dc0bfd71e6ac086"
+ },
+ "drv/tests/m4-macro-floor.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "3a389529eb75a039",
+  "regs": "d7af0c4eb87e36ed",
+  "mmb": "5667ed0c01090f6b",
+  "vgm": "7dc0bfd71e6ac086"
+ },
+ "drv/tests/m4-macro-tick.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b0d553f49f2d2942",
+  "regs": "6c7225cd5240215f",
+  "mmb": "480f7a5557293160",
+  "vgm": "db7630e77db07cbe"
+ },
+ "drv/tests/m4-macro-tick.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "98e9889ff9a485ca",
+  "regs": "6c7225cd5240215f",
+  "mmb": "b1d4decdccaa728a",
+  "vgm": "db7630e77db07cbe"
+ },
+ "drv/tests/m4-mul-slot.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "71ff6bd6ed16a4c7",
+  "regs": "0a8da0e0703cf2b9",
+  "mmb": "07d094dac0ab2317",
+  "vgm": "0c3273bb7b7e6ca5"
+ },
+ "drv/tests/m4-mul-slot.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "d6ae7f84e27e5fe9",
+  "regs": "0a8da0e0703cf2b9",
+  "mmb": "bf7cb7a280f1f960",
+  "vgm": "0c3273bb7b7e6ca5"
+ },
+ "drv/tests/m4-pal-frames.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "93e1d0707e433977",
+  "regs": "f96f5abcb7f8dff8",
+  "mmb": "653a4921e7f46d81",
+  "vgm": "90d2f9d70ff2cf7e"
+ },
+ "drv/tests/m4-pal-frames.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "feadf540658d34b4",
+  "regs": "67b24736b351dd22",
+  "mmb": "efea7a6a8163c481",
+  "vgm": "c1a7d619e611847c"
+ },
+ "drv/tests/m4-pal-sweep.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "6498e3f30f1d0b70",
+  "regs": "15d02941b762b677",
+  "mmb": "11c1541817f6ebb3",
+  "vgm": "35974b2597d2033d"
+ },
+ "drv/tests/m4-pal-sweep.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0f404f465b228213",
+  "regs": "15d02941b762b677",
+  "mmb": "3ca35e2b7a4f3b98",
+  "vgm": "35974b2597d2033d"
+ },
+ "drv/tests/m4-pcm-2v-master.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "6f3984c21227a062",
+  "regs": "bf7ba143ced79961",
+  "mmb": "53ca1fedfcb66e56",
+  "vgm": "ee986caa124705d1"
+ },
+ "drv/tests/m4-pcm-2v-master.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "2b692b52c6a2c4e9",
+  "regs": "bf7ba143ced79961",
+  "mmb": "640b86783fa17892",
+  "vgm": "ee986caa124705d1"
+ },
+ "drv/tests/m4-pcm-3v.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "d371568daac8eb55",
+  "regs": "73fa6beb2a25cc72",
+  "mmb": "b31b86c31b92db73",
+  "vgm": "4baaab94e0269031"
+ },
+ "drv/tests/m4-pcm-3v.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "5db8eb5e78496ff7",
+  "regs": "73fa6beb2a25cc72",
+  "mmb": "7a5ba91f56567561",
+  "vgm": "4baaab94e0269031"
+ },
+ "drv/tests/m4-pcm-gate-mode.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "200bd977c7c75f3c",
+  "regs": "4f1be08ee84b7b5a",
+  "mmb": "f0ee51f6dd806352",
+  "vgm": "aec40bb721c4e157"
+ },
+ "drv/tests/m4-pcm-gate-mode.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "211d423c0b8f6143",
+  "regs": "4f1be08ee84b7b5a",
+  "mmb": "0946c398f857d876",
+  "vgm": "aec40bb721c4e157"
+ },
+ "drv/tests/m4-pcm-hold.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "de09c7918f50c4ae",
+  "regs": "a7fe7ac5d0629c7b",
+  "mmb": "c0510553cfabdfb4",
+  "vgm": "2ad1486de3ba7c42"
+ },
+ "drv/tests/m4-pcm-hold.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "5f6e016aab8b514d",
+  "regs": "a7fe7ac5d0629c7b",
+  "mmb": "2377e64ed436a8b9",
+  "vgm": "2ad1486de3ba7c42"
+ },
+ "drv/tests/m4-pcm-loop-curve.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "91680dced6e4360a",
+  "regs": "3059fd0f963c34ba",
+  "mmb": "e35edf8a97f4b9c5",
+  "vgm": "8b02d7de29067f01"
+ },
+ "drv/tests/m4-pcm-loop-curve.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "3edf0a6ef033a33b",
+  "regs": "3059fd0f963c34ba",
+  "mmb": "ea0e7c66b55bc1ae",
+  "vgm": "8b02d7de29067f01"
+ },
+ "drv/tests/m4-pcm-loop-mode.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "fe177240e8e52833",
+  "regs": "6fe310c6b25523ab",
+  "mmb": "028313da1eb3e2ff",
+  "vgm": "a2e5f25d7c95e748"
+ },
+ "drv/tests/m4-pcm-loop-mode.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "f2e2ded98e86757c",
+  "regs": "6fe310c6b25523ab",
+  "mmb": "acb75ccf50b83d0b",
+  "vgm": "a2e5f25d7c95e748"
+ },
+ "drv/tests/m4-pcm-loop.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "81a0de7a46402980",
+  "regs": "cbd6e7da28226731",
+  "mmb": "dbd836bc4a79aaa8",
+  "vgm": "99573e7d9729d12f"
+ },
+ "drv/tests/m4-pcm-loop.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "d348dee8458e74ba",
+  "regs": "cbd6e7da28226731",
+  "mmb": "1b4cd593c9e9e720",
+  "vgm": "99573e7d9729d12f"
+ },
+ "drv/tests/m4-pcm-macro.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "c66f9c02e4c609b0",
+  "regs": "1cfbe1aa0df60d34",
+  "mmb": "3695f3ea8c13db11",
+  "vgm": "c5c80a499180edc1"
+ },
+ "drv/tests/m4-pcm-macro.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "3faa51b0f57bdd6e",
+  "regs": "1cfbe1aa0df60d34",
+  "mmb": "7bb446fb08402626",
+  "vgm": "c5c80a499180edc1"
+ },
+ "drv/tests/m4-prio-loop.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "818a7c530a1d30ca",
+  "regs": "088f6451f8346494",
+  "mmb": "63e695256a55bc85",
+  "vgm": "ed29569e7eb80afb"
+ },
+ "drv/tests/m4-prio-loop.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e5c0f291ef78f813",
+  "regs": "088f6451f8346494",
+  "mmb": "6f17fbb454867d64",
+  "vgm": "ed29569e7eb80afb"
+ },
+ "drv/tests/m4-psg-vol-macro.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b9c072afb912c9e1",
+  "regs": "8393465f14614c0e",
+  "mmb": "4d0f423ed1a3c396",
+  "vgm": "499edabd4ad4a76f"
+ },
+ "drv/tests/m4-psg-vol-macro.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f50690f2845be03a",
+  "regs": "8393465f14614c0e",
+  "mmb": "b0d72c4f93a0a280",
+  "vgm": "499edabd4ad4a76f"
+ },
+ "drv/tests/m4-snap.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0ba70acf1d711ecc",
+  "regs": "0922b1af97090f63",
+  "mmb": "e7deb55198639f35",
+  "vgm": "59e2ece669f1ebed"
+ },
+ "drv/tests/m4-snap.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "87fd7526fe66644b",
+  "regs": "0922b1af97090f63",
+  "mmb": "f2fa90ff98bbe87e",
+  "vgm": "59e2ece669f1ebed"
+ },
+ "drv/tests/m4-song-sweeps.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b19ed6a29b41184b",
+  "regs": "66d0dff90a0f0421",
+  "mmb": "a6c60dbfb45395fb",
+  "vgm": "5858985e9603ddf7"
+ },
+ "drv/tests/m4-song-sweeps.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "485ea6d484d5ba92",
+  "regs": "66d0dff90a0f0421",
+  "mmb": "e33218c05be65987",
+  "vgm": "5858985e9603ddf7"
+ },
+ "drv/tests/m4-sweep-from-current.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e474ceb6a5b24979",
+  "regs": "98547df79d9d7907",
+  "mmb": "84b00c2af1a681dc",
+  "vgm": "8d41d9d44cbfb6a5"
+ },
+ "drv/tests/m4-sweep-from-current.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "6523b61589864131",
+  "regs": "98547df79d9d7907",
+  "mmb": "13ece67a4bbdc4c5",
+  "vgm": "8d41d9d44cbfb6a5"
+ },
+ "drv/tests/m4-tl-compose.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "27ba42b7b4fea8a4",
+  "regs": "4183fcc62b689809",
+  "mmb": "7e44888fb680dac0",
+  "vgm": "27c62367f18072c7"
+ },
+ "drv/tests/m4-tl-compose.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "3706de51e251f648",
+  "regs": "4183fcc62b689809",
+  "mmb": "8a69409bfa1b301d",
+  "vgm": "27c62367f18072c7"
+ },
+ "drv/tests/m4-trig-loop.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f679128b50b7b573",
+  "regs": "25bf1b16eb30c5f7",
+  "mmb": "030a6ae46780ddec",
+  "vgm": "d8285320159ff689"
+ },
+ "drv/tests/m4-trig-loop.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "40c15c7f68024739",
+  "regs": "25bf1b16eb30c5f7",
+  "mmb": "04ede2afcd4a4a4c",
+  "vgm": "d8285320159ff689"
+ },
+ "drv/tests/m4-vel-sens.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e25a8a1489990063",
+  "regs": "1b795c925226ca31",
+  "mmb": "96482ac02c9ad456",
+  "vgm": "1fa1271cd0492ab0"
+ },
+ "drv/tests/m4-vel-sens.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ee4effe7cf08a4e1",
+  "regs": "1b795c925226ca31",
+  "mmb": "d63d00243696705d",
+  "vgm": "1fa1271cd0492ab0"
+ },
+ "drv/tests/m4-voice-hoist.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e8d339f8b96da304",
+  "regs": "db31689590373145",
+  "mmb": "14772258ea1a5aa7",
+  "vgm": "863fc6b28f948d8b"
+ },
+ "drv/tests/m4-voice-hoist.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "20eff56b6d21a53f",
+  "regs": "db31689590373145",
+  "mmb": "5319dfef1d12cd0f",
+  "vgm": "863fc6b28f948d8b"
+ },
+ "drv/tests/m4-voice-repeat.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "be4040927ddde074",
+  "regs": "940a50cd160b5ac5",
+  "mmb": "cca5cdb0354ade17",
+  "vgm": "a374f1c04cf6fd38"
+ },
+ "drv/tests/m4-voice-repeat.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "fa7475a8c93d03a8",
+  "regs": "940a50cd160b5ac5",
+  "mmb": "4332813311d41766",
+  "vgm": "a374f1c04cf6fd38"
+ },
+ "drv/tests/m4-vol-macro-carry.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b84387afa20d82fe",
+  "regs": "ba16f2c0ae84fcbb",
+  "mmb": "1a3c858bfb0306d5",
+  "vgm": "37fc2a7fe9fe9b6d"
+ },
+ "drv/tests/m4-vol-macro-carry.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c3e4e71672baba06",
+  "regs": "ba16f2c0ae84fcbb",
+  "mmb": "265e28b900de2173",
+  "vgm": "37fc2a7fe9fe9b6d"
+ },
+ "drv/tests/multibank-3v.mmlisp": {
+  "diagnostics": "c64a72b050f23208",
+  "ir": "6857a4383181a2f0",
+  "regs": "ce3f4e15ed9fb1ad",
+  "mmb": "287ac23d7992ac5a",
+  "vgm": "ca42096784e3e213"
+ },
+ "drv/tests/multibank-3v.mmlisp @pal": {
+  "diagnostics": "c64a72b050f23208",
+  "ir": "a432bcdbeaf96fe1",
+  "regs": "ce3f4e15ed9fb1ad",
+  "mmb": "98fa6036c76282ea",
+  "vgm": "20b02d6860efc702"
+ },
+ "drv/tests/multibank-packed.mmlisp": {
+  "diagnostics": "c64a72b050f23208",
+  "ir": "724a45ded92ee676",
+  "regs": "42d52d4223bafcea",
+  "mmb": "c7813ed7d819543e",
+  "vgm": "ea6b89b6ff2b8561"
+ },
+ "drv/tests/multibank-packed.mmlisp @pal": {
+  "diagnostics": "c64a72b050f23208",
+  "ir": "7cec768e11b92ed1",
+  "regs": "42d52d4223bafcea",
+  "mmb": "ba3c14f577564b3c",
+  "vgm": "b452f1bcddfdae2e"
+ },
+ "drv/tests/multibank.mmlisp": {
+  "diagnostics": "c64a72b050f23208",
+  "ir": "0cc4cca18a4b62be",
+  "regs": "e0c81bee3f6ca51a",
+  "mmb": "ee49e41310223515",
+  "vgm": "a8f0fd104d9e5630"
+ },
+ "drv/tests/multibank.mmlisp @pal": {
+  "diagnostics": "c64a72b050f23208",
+  "ir": "736b36a0dcecc1ae",
+  "regs": "e0c81bee3f6ca51a",
+  "mmb": "da0d4eab82d500c1",
+  "vgm": "3b41b63b0bd6be9e"
+ },
+ "drv/tests/onset-3v.mmlisp": {
+  "diagnostics": "c64a72b050f23208",
+  "ir": "3674b946bddae4f1",
+  "regs": "d2b4b41105032cbd",
+  "mmb": "6d3e1ba20336d30f",
+  "vgm": "c4509ae740bc5c90"
+ },
+ "drv/tests/onset-3v.mmlisp @pal": {
+  "diagnostics": "c64a72b050f23208",
+  "ir": "f6869ce7a889f490",
+  "regs": "d2b4b41105032cbd",
+  "mmb": "8db5b07646cb39f1",
+  "vgm": "0d6d14a5d7c54e24"
+ },
+ "drv/tests/p3-claim-evict-twin.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5e67286c7c413811",
+  "regs": "26f6d849690a7828",
+  "mmb": "4a77c3118dd4c17a",
+  "vgm": "49428e47235839f3"
+ },
+ "drv/tests/p3-claim-evict-twin.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "7691ad4564b70e8e",
+  "regs": "26f6d849690a7828",
+  "mmb": "2df0fe4cf9d78df0",
+  "vgm": "49428e47235839f3"
+ },
+ "drv/tests/p3-claim-evict.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "285bdc735ca532ce",
+  "regs": "31fb52e97fb7f9de",
+  "mmb": "388a6e6df4e1399f",
+  "vgm": "8a3d7ea509e96810"
+ },
+ "drv/tests/p3-claim-evict.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "39906efc34e2a7e5",
+  "regs": "31fb52e97fb7f9de",
+  "mmb": "a3f9c99489eecba1",
+  "vgm": "8a3d7ea509e96810"
+ },
+ "drv/tests/p3-claim-se-in-twin.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "365383e76f20ff4c",
+  "regs": "26f6d849690a7828",
+  "mmb": "5fb17ffebb0b068b",
+  "vgm": "3a4ea2be18c957bb"
+ },
+ "drv/tests/p3-claim-se-in-twin.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "29cc98464a79dcec",
+  "regs": "26f6d849690a7828",
+  "mmb": "c486499d2f6886c6",
+  "vgm": "3a4ea2be18c957bb"
+ },
+ "drv/tests/p3-claim-se-in.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "88085f76a096e86b",
+  "regs": "31fb52e97fb7f9de",
+  "mmb": "5b1108918d263f0b",
+  "vgm": "4a099686edf02e47"
+ },
+ "drv/tests/p3-claim-se-in.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "a23192120ddcfd59",
+  "regs": "31fb52e97fb7f9de",
+  "mmb": "16fec423632976ed",
+  "vgm": "4a099686edf02e47"
+ },
+ "drv/tests/p3-claim-se-out-twin.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "2510bc935eba66c8",
+  "regs": "26f6d849690a7828",
+  "mmb": "20f57f43091971c5",
+  "vgm": "287f6478cfedd10f"
+ },
+ "drv/tests/p3-claim-se-out-twin.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9c348116c745699c",
+  "regs": "26f6d849690a7828",
+  "mmb": "08afdf4294d985cd",
+  "vgm": "287f6478cfedd10f"
+ },
+ "drv/tests/p3-claim-se-out.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "02e536ef1f62dfb7",
+  "regs": "26f6d849690a7828",
+  "mmb": "c9eada15862d0505",
+  "vgm": "d9a92679038bbbf2"
+ },
+ "drv/tests/p3-claim-se-out.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f37ae64d1b33868f",
+  "regs": "26f6d849690a7828",
+  "mmb": "f529a41a46984c8d",
+  "vgm": "d9a92679038bbbf2"
+ },
+ "drv/tests/p3-lifecycle.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "310894a55346bab0",
+  "regs": "79e646dd25e91063",
+  "mmb": "fcb88948c50cdf3c",
+  "vgm": "169795f8dff7a73e"
+ },
+ "drv/tests/p3-lifecycle.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f7018e1b3f59f8a3",
+  "regs": "79e646dd25e91063",
+  "mmb": "9ae1c88db9451490",
+  "vgm": "169795f8dff7a73e"
+ },
+ "drv/tests/p3-se-def.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "b4a1e7338d9adf7c",
+  "regs": "39ff319d6b028e56",
+  "mmb": "712792bac8f78b2c",
+  "vgm": "6d42e26a88bf11f1"
+ },
+ "drv/tests/p3-se-def.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "99bd7c475030fc9b",
+  "regs": "39ff319d6b028e56",
+  "mmb": "7d0bdc8dc041e235",
+  "vgm": "6d42e26a88bf11f1"
+ },
+ "drv/tests/p3-se-fade-twin.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0e24f485882d6482",
+  "regs": "20e9b7eb8356fe20",
+  "mmb": "39eedd5d2995e5b6",
+  "vgm": "447d533591f2a443"
+ },
+ "drv/tests/p3-se-fade-twin.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1ce146cd3071e41f",
+  "regs": "20e9b7eb8356fe20",
+  "mmb": "423332b8759d0b12",
+  "vgm": "447d533591f2a443"
+ },
+ "drv/tests/p3-se-fade.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e195df7d9f5744aa",
+  "regs": "20e9b7eb8356fe20",
+  "mmb": "2ccff62c141caecf",
+  "vgm": "965e385e1bc216d1"
+ },
+ "drv/tests/p3-se-fade.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f9363cedb22cb3b5",
+  "regs": "20e9b7eb8356fe20",
+  "mmb": "5fb1f5e6e76b0be1",
+  "vgm": "965e385e1bc216d1"
+ },
+ "drv/tests/p3-se-ghost-twin.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b18b389666d0973a",
+  "regs": "480cb33a4a01a2f1",
+  "mmb": "a274750eb26e4e79",
+  "vgm": "94336b8b1360eecf"
+ },
+ "drv/tests/p3-se-ghost-twin.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "9cda05d7cc34d485",
+  "regs": "480cb33a4a01a2f1",
+  "mmb": "50dc1a6069fe04a3",
+  "vgm": "94336b8b1360eecf"
+ },
+ "drv/tests/p3-se-ghost.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "26b13676b804d68f",
+  "regs": "480cb33a4a01a2f1",
+  "mmb": "3e19977c007e27b0",
+  "vgm": "7b5c889caa0aee12"
+ },
+ "drv/tests/p3-se-ghost.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "a6a59a8d541f65a7",
+  "regs": "480cb33a4a01a2f1",
+  "mmb": "f4cf073e1c0330b1",
+  "vgm": "7b5c889caa0aee12"
+ },
+ "drv/tests/p3-se-noise.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "98327145a851f355",
+  "regs": "0f74c1d0202401b9",
+  "mmb": "39698187e1adc1c8",
+  "vgm": "18f897dd01ffd908"
+ },
+ "drv/tests/p3-se-noise.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "10ae607b2d13b4b4",
+  "regs": "0f74c1d0202401b9",
+  "mmb": "75d4fa00fe1e8f0f",
+  "vgm": "18f897dd01ffd908"
+ },
+ "drv/tests/p3-se-overlap.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "75f13ada5e7c698e",
+  "regs": "aa337edf474cb471",
+  "mmb": "cb451f43c73911f4",
+  "vgm": "f8c447b300ac03e8"
+ },
+ "drv/tests/p3-se-overlap.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "790fda4343c1b6d0",
+  "regs": "aa337edf474cb471",
+  "mmb": "aadf2b07c3d0ba93",
+  "vgm": "f8c447b300ac03e8"
+ },
+ "drv/tests/p3-se-patch.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "a7fe9fda5addd3f4",
+  "regs": "116b55b4dcf640f3",
+  "mmb": "309621fba669a578",
+  "vgm": "560a9f68392c81d9"
+ },
+ "drv/tests/p3-se-patch.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "58860dfdd7b4e7da",
+  "regs": "116b55b4dcf640f3",
+  "mmb": "9bc2da369d8aadfd",
+  "vgm": "560a9f68392c81d9"
+ },
+ "drv/tests/p3-se-pcm-macro.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "328bf7694b321979",
+  "regs": "87d16541a98a9142",
+  "mmb": "27c3ac94f2340551",
+  "vgm": "60d10eb47dec9ca3"
+ },
+ "drv/tests/p3-se-pcm-macro.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "7a025104e037fb62",
+  "regs": "87d16541a98a9142",
+  "mmb": "7b6153313579b881",
+  "vgm": "60d10eb47dec9ca3"
+ },
+ "drv/tests/p3-se-stopped-twin.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f7ce42044a89242e",
+  "regs": "20e9b7eb8356fe20",
+  "mmb": "07ea5281eaf0637c",
+  "vgm": "3c3954ba555b44c7"
+ },
+ "drv/tests/p3-se-stopped-twin.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "889ae3ed5108d780",
+  "regs": "20e9b7eb8356fe20",
+  "mmb": "75a333761d6b8808",
+  "vgm": "3c3954ba555b44c7"
+ },
+ "drv/tests/p3-se-stopped.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4d0add32455abe55",
+  "regs": "20e9b7eb8356fe20",
+  "mmb": "9e6ecf86daaafdcd",
+  "vgm": "865e0c10f32239f6"
+ },
+ "drv/tests/p3-se-stopped.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b021852f33ae19ef",
+  "regs": "20e9b7eb8356fe20",
+  "mmb": "68d72cc13ed0514f",
+  "vgm": "865e0c10f32239f6"
+ },
+ "drv/tests/p3-se-strand.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5f9537bf4a660678",
+  "regs": "26f6d849690a7828",
+  "mmb": "818106ae6144029e",
+  "vgm": "9a4f04d17dfbc47d"
+ },
+ "drv/tests/p3-se-strand.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "6d6819a1f158be2d",
+  "regs": "26f6d849690a7828",
+  "mmb": "7dd2766916e8dd89",
+  "vgm": "9a4f04d17dfbc47d"
+ },
+ "drv/tests/stress-9ch.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "f5aef3b127972413",
+  "regs": "bab03709e2d9b36c",
+  "mmb": "338b6ea4090384ee",
+  "vgm": "0b809075bfc4bdbf"
+ },
+ "drv/tests/stress-9ch.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "f3d59391af4221bd",
+  "regs": "bab03709e2d9b36c",
+  "mmb": "78c35c652a530adc",
+  "vgm": "0b809075bfc4bdbf"
+ },
+ "drv/tests/stress-m1.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "71707864ac12b484",
+  "regs": "6a3707bdebb0b17e",
+  "mmb": "e904a3f047c358e3",
+  "vgm": "a0a1765ee75cb655"
+ },
+ "drv/tests/stress-m1.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "cf5d5de65d1e9cd0",
+  "regs": "6a3707bdebb0b17e",
+  "mmb": "35152c0cef875f5f",
+  "vgm": "a0a1765ee75cb655"
+ },
+ "drv/tests/stress-m2skip.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "d472bee20d00d8cb",
+  "regs": "a41198e2b1041180",
+  "mmb": "0756ba2920f79796",
+  "vgm": "78c3af2abe20e421"
+ },
+ "drv/tests/stress-m2skip.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0647d227cf24ed13",
+  "regs": "a41198e2b1041180",
+  "mmb": "bb73086491d4e5c8",
+  "vgm": "78c3af2abe20e421"
+ },
+ "drv/sgdk/example/demo.mmlisp +se": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "73f0587ef6c7bcce",
+  "regs": "13b5ea857a75aa0d",
+  "mmb": "6b777338554d1ca0",
+  "vgm": "9c5ad8acd74e5c70"
+ },
+ "examples/daisy-bell.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b89bf240be38ac7f",
+  "regs": "420991d8a242cc42",
+  "mmb": "488af072eea2abb1",
+  "vgm": "04611ee69800285b"
+ }
+}
