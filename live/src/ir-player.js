@@ -2398,20 +2398,12 @@ export class IRPlayer {
       }
 
       case "FM3_MODE": {
+        // In CH3 special mode each operator takes its frequency from its own
+        // F-number register. An operator no fm3-N track drives keeps whatever
+        // it holds: it is never keyed, so it stays silent — and the driver
+        // writes nothing for it either (FM3_MODE is $27 alone).
         const opMode = (ev.args?.mode ?? "") === "op";
         this._setReg27State({ fm3SpecialMode: opMode }, when);
-        if (opMode) {
-          // In CH3 special mode each operator takes its frequency from its own
-          // F-number register. A score may drive only a subset of operators
-          // (e.g. only fm3-1), leaving the others at F-number 0. Those operators
-          // are never keyed, so they stay silent regardless — but we seed all
-          // four with a valid pitch as defensive insurance so no operator is
-          // left at an undefined frequency. Each fm3-N track's own FM3_OP_PITCH
-          // (emitted after this event) overrides its operator's seed.
-          for (let op = 1; op <= 4; op++) {
-            this._writeFm3OpPitch(op, 60, 0, when);
-          }
-        }
         break;
       }
 
