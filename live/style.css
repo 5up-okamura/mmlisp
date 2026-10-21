@@ -112,7 +112,7 @@
       color: var(--foreground);
       padding: 0.2rem 0.4rem;
     }
-    #topbar select:hover { border-color: var(--high); color: var(--high); }
+    @media (hover: hover) { #topbar select:hover { border-color: var(--high); color: var(--high); } }
     .tb-btn,
     .kbd-btn {
       background: var(--background);
@@ -121,6 +121,9 @@
       white-space: nowrap;
       padding: 0.15rem 0.5rem;
     }
+    /* Every :hover sits in @media (hover: hover): a touch screen leaves the
+       last-touched element "hovered" — a highlight that stays after a tap or
+       a scroll that started on it. */
     @media (hover: hover) { .tb-btn:hover { border-color: var(--high); color: var(--high); } }
     .tb-btn:disabled { opacity: var(--off); cursor: default; }
     .tb-btn.active { border-color: var(--foreground); color: var(--background); background: var(--foreground); }
@@ -397,10 +400,15 @@
       margin-right: 0.35rem;
       cursor: pointer;
     }
-    #editorWrap .cm-button:hover,
     #editorWrap .cm-button:active {
       background: color-mix(in srgb, var(--foreground) var(--hover), var(--background));
       background-image: none;
+    }
+    @media (hover: hover) {
+      #editorWrap .cm-button:hover {
+        background: color-mix(in srgb, var(--foreground) var(--hover), var(--background));
+        background-image: none;
+      }
     }
     #editorWrap .cm-panel.cm-search [name="close"] {
       color: var(--foreground);
@@ -528,7 +536,7 @@
       cursor: row-resize;
       flex-shrink: 0;
     }
-    #hDivider:hover, #rollDivider:hover { background: var(--mid); }
+    @media (hover: hover) { #hDivider:hover, #rollDivider:hover { background: var(--mid); } }
     #rollDivider { touch-action: none; }
 
     /* MMLisp > View > Source off: the text and line numbers hide (the editor
@@ -767,7 +775,7 @@
       background: var(--foreground);
       border: none;
     }
-    input[type=range]:hover { border-color: var(--high); }
+    @media (hover: hover) { input[type=range]:hover { border-color: var(--high); } }
     input[type=range]:disabled { opacity: var(--off); cursor: default; }
     /* TIME (Global): the song's position, full width; the loop start marked. */
     .time-val { color: var(--foreground); font-variant-numeric: tabular-nums; }
@@ -783,7 +791,7 @@
       background: var(--mid);
       pointer-events: none;
     }
-    .time-track:hover .time-loop { background: var(--high); }
+    @media (hover: hover) { .time-track:hover .time-loop { background: var(--high); } }
     /* MIDI: the CC a slider answers to; MIDI Learn picks a slider by its
        whole .knob-wrap, so the range itself takes no press while learning. */
     .knob-label .midi-cc { color: var(--sub); margin-left: 0.4em; margin-right: auto; }
@@ -874,7 +882,7 @@
       border: 1px solid var(--mid);
       border-radius: 2px;
     }
-    .op-col-title input[type=checkbox]:not(:disabled):hover { border-color: var(--high); }
+    @media (hover: hover) { .op-col-title input[type=checkbox]:not(:disabled):hover { border-color: var(--high); } }
     .op-col-title input[type=checkbox]:focus-visible {
       outline: 1px solid var(--high);
       outline-offset: 1px;
@@ -996,7 +1004,7 @@
       width: 100%;
       text-align: center;
     }
-    .ms-btn:hover { border-color: var(--high); color: var(--high); }
+    @media (hover: hover) { .ms-btn:hover { border-color: var(--high); color: var(--high); } }
     .ms-btn.muted  { background: var(--background); border-color: var(--error); color: var(--error); }
     .ms-btn.soloed { background: var(--background); border-color: var(--accent); color: var(--accent); }
     .ms-btn.ch-sel { background: var(--background); border-color: var(--foreground); color: var(--foreground); }
@@ -1013,7 +1021,7 @@
       flex: 0 0 auto;
       touch-action: none;
     }
-    .ch-knob:hover { border-color: var(--high); }
+    @media (hover: hover) { .ch-knob:hover { border-color: var(--high); } }
     @media (pointer: coarse) { .ch-knob { width: 1.6rem; height: 1.6rem; } }
     .ch-vol-val {
       font-size: 0.55rem;
@@ -1090,7 +1098,7 @@
       pointer-events: none;
       fill: currentColor;
     }
-    .kbd-btn:hover { border-color: var(--high); color: var(--high); }
+    @media (hover: hover) { .kbd-btn:hover { border-color: var(--high); color: var(--high); } }
     .kbd-btn.active {
       background: var(--foreground);
       color: var(--background);
@@ -1386,7 +1394,7 @@
       cursor: pointer;
     }
     .lib-seg-btn:first-child { border-left: none; }
-    .lib-seg-btn:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); }
+    @media (hover: hover) { .lib-seg-btn:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); } }
     .lib-seg-btn.active {
       background: color-mix(in srgb, var(--foreground) var(--sel), var(--background));
       font-weight: bold;
@@ -1412,9 +1420,9 @@
       visibility: hidden;
       pointer-events: none;
     }
-    .lib-chip:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); }
+    @media (hover: hover) { .lib-chip:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); } }
     .lib-chip:disabled { opacity: var(--off); cursor: default; }
-    .lib-chip:disabled:hover { background: none; }
+    @media (hover: hover) { .lib-chip:disabled:hover { background: none; } }
     .lib-chip.active {
       background: color-mix(in srgb, var(--foreground) var(--sel), var(--background));
       border-color: var(--foreground);
@@ -1442,7 +1450,7 @@
     .lib-group { font-weight: bold; }
     .lib-group::before { content: '\203A'; width: 0.6rem; color: var(--sub); }
     .lib-group.open::before { content: '\2304'; }
-    .lib-row:hover, .lib-group:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); }
+    @media (hover: hover) { .lib-row:hover, .lib-group:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); } }
     .lib-row.active, .lib-group.active {
       background: color-mix(in srgb, var(--foreground) var(--sel), var(--background));
       outline: 1px solid var(--foreground);
@@ -1461,7 +1469,7 @@
       padding: 0.05rem 0.3rem;
       cursor: pointer;
     }
-    .lib-mini:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); }
+    @media (hover: hover) { .lib-mini:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); } }
     .lib-empty { padding: 0.6rem; font-size: 0.72rem; color: var(--sub); }
     .lib-note {
       color: var(--sub);
