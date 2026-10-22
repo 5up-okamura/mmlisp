@@ -7,6 +7,7 @@ export const opnFm = {
   name: "fm",
   label: "OPN FM",
   kind: "fm",
+  level: { stepDb: 0.75, steps: 128 },
   words: words(/^FM_/, "PAN"),
   songWords: words("LFO_RATE"),
 };

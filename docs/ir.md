@@ -135,12 +135,13 @@ Tracks have no `name` field; the player routes purely by `channel`.
 ### 3.1 Channel names and player routing
 
 The JSON IR addresses channels **by name**; the player maps names to hardware
-indices at load:
+indices at load through the target's channel table (`live/src/targets/`,
+each name's part and voice index). On the Mega Drive:
 
 | `channel`            | Route                                    | Index                    |
 | -------------------- | ---------------------------------------- | ------------------------ |
-| `fm1` … `fm6`        | YM2612 FM (`CH_NAME_TO_INDEX`)           | 0–5                      |
-| `sqr1` `sqr2` `sqr3` | SN76489 tone (`PSG_CH_NAME_TO_INDEX`)    | PSG 0–2                  |
+| `fm1` … `fm6`        | YM2612 FM                                | 0–5                      |
+| `sqr1` `sqr2` `sqr3` | SN76489 tone                             | PSG 0–2                  |
 | `noise`              | SN76489 noise                            | PSG 3                    |
 | `pcm1` … `pcm3`      | Software PCM worklet, keyed by track id  | (FM index fallback only) |
 

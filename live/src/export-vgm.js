@@ -95,14 +95,14 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile()) {
   // The bank pointer each event leaves behind, for the seek at the loop point.
   let dacNext = 0;
 
+  // Each worklet port's command, from the target's chips (chips/): the
+  // SN76489's 0x50 takes a data byte, an FM chip's an address and a byte.
+  const ports = Object.assign({}, ...Object.values(target.chips).map((c) => c.vgm.ports ?? {}));
   const emitWrite = (w) => {
-    if (w.port === 2) {
-      data.push2(0x50, w.data & 0xff); // SN76489
-    } else if (w.port === 1) {
-      data.push3(0x53, w.addr & 0xff, w.data & 0xff); // YM2612 port 1
-    } else {
-      data.push3(0x52, w.addr & 0xff, w.data & 0xff); // YM2612 port 0
-    }
+    const p = ports[w.port];
+    if (!p) throw new Error(`no VGM command for a write on port ${w.port}`);
+    if (p.addr) data.push3(p.cmd, w.addr & 0xff, w.data & 0xff);
+    else data.push2(p.cmd, w.data & 0xff);
   };
 
   const markLoop = () => {

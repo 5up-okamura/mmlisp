@@ -7,26 +7,24 @@ import { dacMix } from "../chips/dac-mix.js";
 import { sn76489, snSqr, snNoise } from "../chips/sn76489.js";
 
 const fm = (voice) => ({ chip: "opn", part: opnFm, voice });
+const psg = (part, voice) => ({ chip: "psg", part, voice });
+const dac = (voice) => ({ chip: "opn", part: dacMix, voice });
 
 export default {
   name: "md",
   system: "Sega Mega Drive",
   driver: "mmlispdrv",
   chips: { opn: ym2612, psg: sn76489 },
-  // Score channel → its chip, part and physical voice. Names on one voice
-  // with one part are one channel's views (FM3's tracks, the mixed PCM).
+  // Score channel → its chip, part and voice (the index in the part's unit:
+  // the FM channel, the PSG channel, the soft-mix slot). Names on one voice
+  // with one part are one channel's views (FM3's tracks).
   channels: {
-    fm1: fm("ch1"), fm2: fm("ch2"), fm3: fm("ch3"),
-    "fm3-1": fm("ch3"), "fm3-2": fm("ch3"), "fm3-3": fm("ch3"), "fm3-4": fm("ch3"),
-    "fm3-csm": fm("ch3"), "fm3-csm-rate": fm("ch3"),
-    fm4: fm("ch4"), fm5: fm("ch5"), fm6: fm("ch6"),
-    sqr1: { chip: "psg", part: snSqr, voice: "tone0" },
-    sqr2: { chip: "psg", part: snSqr, voice: "tone1" },
-    sqr3: { chip: "psg", part: snSqr, voice: "tone2" },
-    noise: { chip: "psg", part: snNoise, voice: "noise" },
-    pcm1: { chip: "opn", part: dacMix, voice: "dac" },
-    pcm2: { chip: "opn", part: dacMix, voice: "dac" },
-    pcm3: { chip: "opn", part: dacMix, voice: "dac" },
+    fm1: fm(0), fm2: fm(1), fm3: fm(2),
+    "fm3-1": fm(2), "fm3-2": fm(2), "fm3-3": fm(2), "fm3-4": fm(2),
+    "fm3-csm": fm(2), "fm3-csm-rate": fm(2),
+    fm4: fm(3), fm5: fm(4), fm6: fm(5),
+    sqr1: psg(snSqr, 0), sqr2: psg(snSqr, 1), sqr3: psg(snSqr, 2), noise: psg(snNoise, 3),
+    pcm1: dac(0), pcm2: dac(1), pcm3: dac(2),
   },
   // What to write instead of a word the machine lacks.
   hints: { NOISE_RATE: "its noise takes :mode white0-3 / periodic0-3" },

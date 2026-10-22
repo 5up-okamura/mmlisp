@@ -15,5 +15,5 @@ export const ym2608 = {
   // The SSG's period divides clock / 4 by 16; its noise starts at 9, the
   // nearest to the Mega Drive's white0.
   ssg: { clock: 7987200 / 4, noiseRate: 9 },
-  vgm: { clock: 0x48 }, // VGM 1.51's header
+  vgm: { clock: 0x48, ports: { 0: { cmd: 0x56, addr: true }, 1: { cmd: 0x57, addr: true } } }, // VGM 1.51
 };

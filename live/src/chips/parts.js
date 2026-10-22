@@ -5,8 +5,16 @@
 //
 //   name      its word; a target's channel table binds channel names to it
 //   label     what a diagnostic calls it
+//   unit      the physical unit its voices are numbered in, where two parts
+//             share one (the SSG's tone and noise are one channel's mixer);
+//             the name by default. A channel table entry's `voice` is the
+//             index in it — the chip's channel, the PSG's, the sample slot.
 //   kind      the track class the compiler compiles it as:
 //             fm | tone | noise | sample
+//   level     the part's own level step, { stepDb, steps }: the dB offsets
+//             a note's vel / vol / master sum to are quantized once onto it
+//             (language.md §6). FM's TL is 0.75 dB in 128 steps, the
+//             SN76489's attenuator 2 dB in 16, the SSG's 3 dB in 16.
 //   words     the IR write targets only this part's channels take: a target
 //             has the word when one of its parts does, and a channel takes
 //             it when its own part does (`:tl1` on sqr1 is a channel that

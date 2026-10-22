@@ -13,6 +13,8 @@
 // then named in the track (see emitPhrased).
 // ---------------------------------------------------------------------------
 
+import { targetProfile } from "./targets.js";
+
 export const PPQN = 96; // must match mmlisp2ir.js
 /** The time base estimateGrid works in: onsets in samples at this rate. */
 export const RATE = 44100;
@@ -42,9 +44,32 @@ export function gcd(a, b) {
 }
 
 // The destinations an import's dialog offers, in channel order.
-export const FM_DESTS = ["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"];
-export const PSG_DESTS = ["sqr1", "sqr2", "sqr3"];
-export const PCM_DESTS = ["pcm1", "pcm2", "pcm3"];
+// The channels a target offers an import's lanes, by kind (targets/): its FM
+// channels (one name per voice — fm3's operator and CSM tracks are views of
+// fm3), its tones, its noise and its sample voices.
+export function destsFor(target) {
+  const seen = new Set();
+  const plain = (h) => { const k = target.voiceKey(h); if (seen.has(k)) return false; seen.add(k); return true; };
+  return {
+    fm: target.channelNames.filter((h) => target.partOf(h).kind === "fm" && plain(h)),
+    psg: target.channelNames.filter((h) => target.partOf(h).kind === "tone"),
+    noise: target.channelNames.find((h) => target.partOf(h).kind === "noise") ?? null,
+    pcm: target.channelNames.filter((h) => target.partOf(h).kind === "sample"),
+  };
+}
+// The importers write Mega Drive scores (docs/roadmap.md, Importers): a
+// `target` they are given that they cannot write yet is read for md.
+export const WRITER_TARGETS = new Set(["md"]);
+export function writerTarget(target, warnings) {
+  const name = target ?? "md";
+  if (WRITER_TARGETS.has(name)) return name;
+  warnings?.push(`imported for md: writing a ${targetProfile(name).system} (:target ${name}) score is not built yet`);
+  return "md";
+}
+const MD = destsFor(targetProfile("md"));
+export const FM_DESTS = MD.fm;
+export const PSG_DESTS = MD.psg;
+export const PCM_DESTS = MD.pcm;
 
 /** The first of the sorted `list` above `x` (`list.find((v) => v > x)`). */
 function firstAbove(list, x) {

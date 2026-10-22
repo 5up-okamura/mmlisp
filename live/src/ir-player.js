@@ -41,9 +41,6 @@ import {
   encode30,
   encode80,
   fmCarrierOpsForAlg,
-  CH_NAME_TO_INDEX,
-  PSG_CH_NAME_TO_INDEX,
-  PCM_CH_NAME_TO_INDEX,
   KEY_OFF_LEAD_SECS,
   KEY_ORDER_EPS_SECS,
   HOLD_FRAMES,
@@ -377,6 +374,7 @@ export class IRPlayer {
     this._target = target;
     this._fmChip = target.chipFor("fm");
     this._psgChip = target.chipFor("sqr");
+    this._psgStepDb = target.parts.find((p) => p.kind === "tone")?.level.stepDb ?? 2;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
     // mixer's mute has to hold the timer rather than key the channel off.
     this._csmTrack = (irObj.tracks ?? []).findIndex((t) =>
@@ -1123,11 +1121,13 @@ export class IRPlayer {
     this._pendingUiTimers.clear();
   }
 
+  // A track's place on the chip: the target's channel table (targets/) gives
+  // its part and the voice index in it.
   _assignChannel(trackIndex, track) {
-    // If the track declares a PSG channel name, store in _psgTrackChannel.
-    const name = track?.channel;
-    if (name != null && PSG_CH_NAME_TO_INDEX[name] != null) {
-      this._psgTrackChannel.set(trackIndex, PSG_CH_NAME_TO_INDEX[name]);
+    const c = this._target.channels[track?.channel];
+    const kind = c?.part.kind;
+    if (kind === "tone" || kind === "noise") {
+      this._psgTrackChannel.set(trackIndex, c.voice);
       return;
     }
     // PCM tracks own no FM channel: they are software voices summed to the fm6
@@ -1135,18 +1135,12 @@ export class IRPlayer {
     // _trackChannel keeps them off the FM key-off path — otherwise they fall to
     // the index fallback below, land on channel 5, and make _applyAudibility
     // treat an audible PCM track as an audible fm6 (so muting fm6 does nothing).
-    if (name != null && PCM_CH_NAME_TO_INDEX[name] != null) {
-      this._pcmTrackChannel.set(trackIndex, PCM_CH_NAME_TO_INDEX[name]);
+    if (kind === "sample") {
+      this._pcmTrackChannel.set(trackIndex, c.voice);
       return;
     }
-    // Otherwise treat as FM channel.
-    // If the track declares a channel name (e.g. "fm2"), use it.
-    // Otherwise fall back to track index (auto-increment), capped at 5.
-    const chIndex =
-      name != null && CH_NAME_TO_INDEX[name] != null
-        ? CH_NAME_TO_INDEX[name]
-        : Math.min(trackIndex, 5);
-    this._trackChannel.set(trackIndex, chIndex);
+    // An FM channel; a track with no channel name takes its index, capped.
+    this._trackChannel.set(trackIndex, c ? c.voice : Math.min(trackIndex, 5));
   }
 
   // ---------------------------------------------------------------------------
@@ -4286,8 +4280,9 @@ export class IRPlayer {
   // the 16-step attenuator as the driver does. vol or master 0 is a hard mute.
   _composePsgAtt(vel, vol, master) {
     if (vol <= 0 || master <= 0) return 15;
+    const step = this._psgStepDb; // the part's (chips/parts.js `level`)
     const att = sumLevelOffsets(
-      velToPsgAtten(velFine(vel)), volToPsgOffset(vol), volToPsgOffset(master));
+      velToPsgAtten(velFine(vel), step), volToPsgOffset(vol, step), volToPsgOffset(master, step));
     return Math.max(0, Math.min(15, att));
   }
 

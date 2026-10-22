@@ -11,5 +11,6 @@ export const ym2612 = {
   fnumRate: 53267,
   parts: [opnFm, dacMix],
   preview: true,
-  vgm: { clock: 0x2c },
+  // The header's clock offset; the commands the worklet's ports 0 and 1 become.
+  vgm: { clock: 0x2c, ports: { 0: { cmd: 0x52, addr: true }, 1: { cmd: 0x53, addr: true } } },
 };

@@ -16,7 +16,7 @@ import { encodeWav } from "./export-wav.js";
 import { VEL_DB_PER_STEP, fmCarrierOpsForAlg, pitchToMidi } from "./ir-utils.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 import { encodeMmb } from "./export-mmb.js";
-import { PPQN, qstr, noteName } from "./import-song.js";
+import { PPQN, qstr, noteName, writerTarget } from "./import-song.js";
 
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
 const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole note)
@@ -2657,7 +2657,7 @@ function mergeDatVoices(parsed, datVoices) {
  * `#pcm` ADPCM bank (`*pcm.bin`) as `pcmBytes` to import part K — without it
  * K is dropped, since its `@n` would have no samples to name.
  */
-export function importMucom(bytes, datBytes = null, pcmBytes = null) {
+export function importMucom(bytes, datBytes = null, pcmBytes = null, { target } = {}) {
   const pcm = pcmBytes ? decodeMucomPcmForImport(parseMucom(decodeMucText(bytes)).meta.pcmFile, pcmBytes) : null;
   // A fresh parse per render: rendering adds the noise copies to scoreItems.
   const render = (pcmDrop) => {
@@ -2667,6 +2667,7 @@ export function importMucom(bytes, datBytes = null, pcmBytes = null) {
     return mucomToMmlisp(parsed);
   };
   const out = pcm ? fitPcmBank(render, pcm) : render(null);
+  writerTarget(target, out.warnings); // the open score's :target; md is what is written today
   // `pcm` rides along so the caller can save `wav` as `wavFile` beside the score
   // (what the emitted defs reference) and play `mono` before it exists on disk.
   return pcm ? { ...out, pcm } : out;

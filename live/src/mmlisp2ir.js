@@ -6225,9 +6225,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // ways (the SSG's noise is a tone channel's mixer): a score has one.
   const byVoice = new Map();
   for (const head of allHeads) {
-    const c = target.channels[head];
-    if (!c) continue;
-    const key = `${c.chip}:${c.voice}`;
+    const key = target.voiceKey(head);
+    if (!key) continue;
     if (!byVoice.has(key)) byVoice.set(key, []);
     byVoice.get(key).push(head);
   }
@@ -6549,7 +6548,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // a voice's ~36 writes do not share the note's frame on the driver's wire.
   // `options.voiceHoist`: false turns it off; an object sets its windows.
   if (options.voiceHoist !== false)
-    hoistVoiceChanges(tracks, { ppqn: PPQN, ...(options.voiceHoist ?? {}) });
+    hoistVoiceChanges(tracks, { ppqn: PPQN, fmChannels: new Set(target.headsOf("fm")), ...(options.voiceHoist ?? {}) });
 
   // Tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
   // emit their own tick-0 events); the only derived init event is FM3 op mode.

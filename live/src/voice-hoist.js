@@ -40,6 +40,7 @@
 // The IR preview and the driver both play the moved stream, so what the
 // editor plays is still what the driver plays (driver.md §14.3).
 // ---------------------------------------------------------------------------
+import { targetProfile } from "./targets.js";
 import { expandLoops } from "./ir-utils.js";
 
 // A voice: what a `def-fm` compiles to. Its presence is what moves a gap.
@@ -58,7 +59,6 @@ export const VOICE_TARGETS = new Set([
 const MOVE_TARGETS = new Set([...VOICE_TARGETS, "FM_VEL1", "FM_VEL2", "FM_VEL3", "FM_VEL4",
   "VEL", "VOL", "PAN", "NOTE_PITCH", "NOTE_SEMI", "SNAP"]);
 
-const FM_CHANNELS = new Set(["fm1", "fm2", "fm3", "fm4", "fm5", "fm6"]);
 // Events that may sit between the previous note and this one without ending
 // the search: writes that land at the note's tick.
 const GAP_CMDS = new Set(["PARAM_SET", "PARAM_ADD", "PARAM_MUL", "PARAM_FROM_VAL", "PARAM_SWEEP", "PARAM_SWEEP_STOP"]);
@@ -159,7 +159,10 @@ function peelLoopRest(out, e) {
  * §3.1) or by its gate, so the voice always lands at least one tick after a
  * REST begins — never in the same tick as a key-off it would precede.
  */
-export function hoistVoiceChanges(tracks, { ppqn = 96, restFrames = 4, noteFrames = 2, cutTail = false } = {}) {
+export function hoistVoiceChanges(tracks, {
+  ppqn = 96, restFrames = 4, noteFrames = 2, cutTail = false,
+  fmChannels = new Set(targetProfile().headsOf("fm")), // the target's FM tracks (targets/)
+} = {}) {
   const tpf = maxTicksPerFrame(tracks, ppqn);
   const G = Math.ceil(tpf); // one frame in ticks, on either standard
   const restTicks = Math.ceil(restFrames * tpf), noteTicks = Math.ceil(noteFrames * tpf);
@@ -170,7 +173,7 @@ export function hoistVoiceChanges(tracks, { ppqn = 96, restFrames = 4, noteFrame
   const placements = [];
   for (let ti = 0; ti < tracks.length; ti++) {
     const track = tracks[ti];
-    if (!FM_CHANNELS.has(track.channel) || track.se) continue;
+    if (!fmChannels.has(track.channel) || track.se) continue;
     let out = track.events ?? [];
     if (out.some((e) => UNSAFE_TRACK_CMDS.has(e.cmd))) continue;
     const isVoice = (e) => e.cmd === "PARAM_SET" && VOICE_TARGETS.has(e.args?.target);

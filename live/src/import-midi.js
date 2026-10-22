@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimateGrid, regrid,
-  assignBends, PITCH_NONE, FM_DESTS, PSG_DESTS, PCM_DESTS } from "./import-song.js";
+  assignBends, PITCH_NONE, FM_DESTS, PSG_DESTS, PCM_DESTS, writerTarget } from "./import-song.js";
 
 export { FM_DESTS, PSG_DESTS, PCM_DESTS };
 
@@ -392,6 +392,7 @@ export function defaultMidiOptions(analysis) {
  */
 export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const warnings = [];
+  writerTarget(options.target, warnings); // the open score's :target; md is what is written today
   const k = PPQN / analysis.division;
   const beats = options.timing === "beats";
   // q: a file tick → a score tick. Either way the song starts at the first

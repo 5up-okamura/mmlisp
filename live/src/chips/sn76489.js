@@ -15,12 +15,16 @@ export const NOISE_MODE_MAP = {
   periodic3: 0b0_11, // 3
 };
 
-export const snSqr = { name: "sqr", label: "SN76489 tone", kind: "tone", words: NO_WORDS };
+const PSG_LEVEL = { stepDb: 2, steps: 16 }; // the attenuator, 0 loud .. 15 off
+
+export const snSqr = { name: "sqr", label: "SN76489 tone", unit: "psg", kind: "tone", level: PSG_LEVEL, words: NO_WORDS };
 
 export const snNoise = {
   name: "noise",
   label: "SN76489 noise",
+  unit: "psg", // the PSG's fourth channel
   kind: "noise",
+  level: PSG_LEVEL,
   words: words("NOISE_MODE"),
   modes: Object.fromEntries(Object.entries(NOISE_MODE_MAP).map(([k, v]) => [k, ["NOISE_MODE", v]])),
   modeError: { code: "E_NOISE_MODE_INVALID", message: "noise :mode must be white0-3 or periodic0-3" },
@@ -35,9 +39,10 @@ export const sn76489 = {
   clock: 3579545, // NTSC: the master / 15
   parts: [snSqr, snNoise],
   preview: true,
-  // VGM header: the clock's offset, and the chip as the Mega Drive wires it
-  // — white-noise feedback taps 0x0009, a 16-bit shift register, no flags.
-  vgm: { clock: 0x0c, header: [[0x28, 2, 0x0009], [0x2a, 1, 16], [0x2b, 1, 0]] },
+  // VGM: the header's clock offset and the chip as the Mega Drive wires it
+  // (white-noise feedback taps 0x0009, a 16-bit shift register, no flags);
+  // the command a write on the worklet's port 2 becomes, one data byte.
+  vgm: { clock: 0x0c, header: [[0x28, 2, 0x0009], [0x2a, 1, 16], [0x2b, 1, 0]], ports: { 2: { cmd: 0x50, addr: false } } },
   // The tone counter divides the clock by 32 per period step; 1..1023.
   period(hz) {
     return Math.max(1, Math.min(1023, Math.round(this.clock / (32 * hz))));

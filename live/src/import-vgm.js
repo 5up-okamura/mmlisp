@@ -36,7 +36,7 @@
 // ---------------------------------------------------------------------------
 
 import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE,
-  assignBends, PITCH_NONE, gcd, FM_DESTS, PSG_DESTS } from "./import-song.js";
+  assignBends, PITCH_NONE, gcd, FM_DESTS, PSG_DESTS, writerTarget } from "./import-song.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
@@ -977,6 +977,7 @@ export function defaultVgmOptions(a) {
  */
 export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const warnings = [];
+  writerTarget(options.target, warnings); // the open score's :target; md is what is written today
   const followPitch = options.followPitch ?? true;
 
   // The grid: the estimate, a tempo set by hand, or frames.

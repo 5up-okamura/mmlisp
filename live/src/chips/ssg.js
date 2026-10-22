@@ -6,11 +6,14 @@ import { NO_WORDS, words } from "./parts.js";
 
 // The song's noise period; a channel's mixer (0 tone, 1 noise, 2 both).
 const NOISE_RATE = words("NOISE_RATE");
+const SSG_LEVEL = { stepDb: 3, steps: 16 }; // the 4-bit level, 15 loud .. 0 off
 
 export const ssgTone = {
   name: "ssg",
   label: "SSG tone",
+  unit: "ssg",
   kind: "tone",
+  level: SSG_LEVEL,
   words: words("SSG_MIX"),
   songWords: NOISE_RATE,
   modes: { tone: ["SSG_MIX", 0], noise: ["SSG_MIX", 1], both: ["SSG_MIX", 2] },
@@ -20,7 +23,9 @@ export const ssgTone = {
 export const ssgNoise = {
   name: "ssg-noise",
   label: "SSG noise",
+  unit: "ssg",
   kind: "noise",
+  level: SSG_LEVEL,
   words: NO_WORDS,
   songWords: NOISE_RATE,
   modes: {},

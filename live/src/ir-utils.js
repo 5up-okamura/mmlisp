@@ -254,9 +254,9 @@ export function midiToFnumBlock(midiNote, rate = FM_CLOCK_DIV) {
 // the same way (driver.md §7). The helpers below return register-step
 // offsets (FM: dB ÷ 0.75; PSG: dB ÷ 2), as floats.
 //
-// Hardware step sizes, in dB:
-const TL_DB_PER_STEP = 0.75; // YM2612 TL — 128 steps over ~95 dB
-const PSG_DB_PER_STEP = 2; // SN76489 attenuator — 16 steps
+// Hardware step sizes, in dB (a part's `level.stepDb`, chips/parts.js):
+const TL_DB_PER_STEP = 0.75; // an FM chip's TL — 128 steps over ~95 dB
+const PSG_DB_PER_STEP = 2; // the SN76489's attenuator — 16 steps; the SSG's is 3
 // Velocity ladder (PMD / MDSDRV coarse-volume convention):
 export const VEL_DB_PER_STEP = 2;
 // The driver holds a live velocity in eighths of a step (0..15·8): a :vel
@@ -336,14 +336,15 @@ export function volToLinearGain(v) {
   return Math.min(1, Math.pow(10, db / 20));
 }
 
-// PSG attenuator-domain counterparts (register steps = dB ÷ 2).
-export function velToPsgAtten(vel) {
+// PSG attenuator-domain counterparts: register steps = dB ÷ the part's step
+// (the SN76489's 2 dB by default).
+export function velToPsgAtten(vel, stepDb = PSG_DB_PER_STEP) {
   const v = Math.max(0, Math.min(15, vel));
-  return ((15 - v) * VEL_DB_PER_STEP) / PSG_DB_PER_STEP;
+  return ((15 - v) * VEL_DB_PER_STEP) / stepDb;
 }
-export function volToPsgOffset(v) {
+export function volToPsgOffset(v, stepDb = PSG_DB_PER_STEP) {
   const x = Math.max(0, Math.min(31, v));
-  return ((VOL_UNITY - x) * VOL_STEP_DB) / PSG_DB_PER_STEP;
+  return ((VOL_UNITY - x) * VOL_STEP_DB) / stepDb;
 }
 
 // ---------------------------------------------------------------------------
@@ -912,33 +913,6 @@ export function fmCarrierOpsForAlg(alg) {
 // Channel name → index maps
 // ---------------------------------------------------------------------------
 
-// YM2612 channel name → 0-based channel index
-export const CH_NAME_TO_INDEX = {
-  fm1: 0,
-  fm2: 1,
-  fm3: 2,
-  fm4: 3,
-  fm5: 4,
-  fm6: 5,
-};
-
-// SN76489 PSG channel name → 0-based PSG channel index (0-3)
-export const PSG_CH_NAME_TO_INDEX = {
-  sqr1: 0,
-  sqr2: 1,
-  sqr3: 2,
-  noise: 3,
-};
-
-// PCM channel name → 0-based soft-mix voice slot (0-2). These are software
-// voices summed to the single fm6 DAC (driver.md §14), not FM channels — the
-// chip mutes fm6 only while the DAC is on, so they must never be treated as
-// owning an FM channel.
-export const PCM_CH_NAME_TO_INDEX = {
-  pcm1: 0,
-  pcm2: 1,
-  pcm3: 2,
-};
 
 // PSG MASTER_CLOCK (NTSC Mega Drive)
 export const PSG_MASTER_CLOCK = 3579545;

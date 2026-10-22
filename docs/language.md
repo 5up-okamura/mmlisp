@@ -510,7 +510,8 @@ Authored values are integers — except the ratios after a `*`, such as a
 `:vel*` macro's `[1 0.75 0.5]`; a computed velocity (a `:vel` macro, a delay
 tap's `:vel*`) keeps eighths of a step, and the level is quantized once, at the
 chip's own resolution — FM TL 0.75 dB steps, so a `:vel` fade moves smoothly;
-PSG its 2 dB attenuator; PCM its 6 dB mixer shift. A `:vel` macro fades only to
+the SN76489 its 2 dB attenuator, the SSG its 3 dB level (§19); PCM its 6 dB
+mixer shift. A `:vel` macro fades only to
 the velocity floor — for a fade to true silence automate `:tl` (carrier TL →
 127) or use `:vol`.
 

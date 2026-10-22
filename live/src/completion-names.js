@@ -5,6 +5,8 @@
 
 // After '(' — the def heads, the forms, the compile-time eval heads (§7), the
 // curves (§11) and the def-pcm :fx effects (§16).
+import { ALL_CHANNEL_NAMES } from "./targets.js";
+
 export const AC_FORMS = [
   'def', 'def-val', 'def-fm', 'def-pcm', 'def-se', 'def-score', 'def-mod', 'import',
   't', 'x', 'go', 'break', 'trig', 'param-set',
@@ -21,10 +23,7 @@ export const AC_FORMS = [
 ];
 
 export const AC_TRACKS = [
-  'fm1', 'fm2', 'fm3', 'fm3-csm', 'fm3-csm-rate', 'fm3-1', 'fm3-2', 'fm3-3', 'fm3-4',
-  'fm4', 'fm5', 'fm6',
-  'sqr1', 'sqr2', 'sqr3', 'noise',
-  'pcm1', 'pcm2', 'pcm3',
+  ...ALL_CHANNEL_NAMES, // every target's (targets/)
 ];
 
 // FM operator params, one per operator (1–4).

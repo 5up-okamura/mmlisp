@@ -32,6 +32,11 @@ function profile(def) {
     chipOf: (head) => def.chips[def.channels[head]?.chip] ?? null,
     headsOf: (partName) => heads.filter((h) => def.channels[h].part.name === partName),
     hasPart: (partName) => parts.some((p) => p.name === partName),
+    /** The physical voice `head` plays on, as a key two heads can be compared by. */
+    voiceKey(head) {
+      const c = def.channels[head];
+      return c ? `${c.chip}:${c.part.unit ?? c.part.name}:${c.voice}` : null;
+    },
     hasWord: (word) => parts.some((p) => p.words(word) || p.songWords?.(word)),
     /** The chip whose part `partName` is, or null: its clock and encoders. */
     chipFor(partName) {

@@ -778,7 +778,7 @@ const TOOLS = [
   },
 ];
 
-const INSTRUCTIONS = `MMLisp is a Lisp-like DSL for Sega Mega Drive music (YM2612 FM fm1-fm6, PSG sqr1-3/noise, PCM).
+const INSTRUCTIONS = `MMLisp is a Lisp-like DSL for chip music — the Sega Mega Drive first (YM2612 FM fm1-fm6, PSG sqr1-3/noise, PCM; the default), other machines by (def-score :target …).
 Workflow for writing a score:
 1. Before writing, read the cheat sheet: mmlisp_docs (doc "cheatsheet"). For one keyword or form, mmlisp_docs (doc "reference", query ":vel") gives its syntax and a working example; for more, read that section of the language reference (doc "language", section "10" …).
 2. Start from a similar snippet (mmlisp_snippets) and preset voices (mmlisp_presets) rather than inventing syntax.
