@@ -7391,7 +7391,12 @@
       // under its own row, instead of past the screen's edge.
       wrap.classList.remove('inline');
       const sub = wrap.querySelector(':scope > .submenu-dropdown');
-      if (sub && sub.getBoundingClientRect().right > window.innerWidth) wrap.classList.add('inline');
+      if (sub && sub.getBoundingClientRect().right > window.innerWidth) {
+        wrap.classList.add('inline');
+        // The menu it unfolds in now scrolls (style.css): bring the new rows
+        // into view, as far as they fit under the menu's top.
+        sub.scrollIntoView({ block: 'nearest' });
+      }
     }
 
     function toggleSubmenu(id) {

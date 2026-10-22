@@ -233,6 +233,14 @@
       padding-left: 0.75rem;
     }
     .submenu-wrap.inline.open > .menu-item .submenu-arrow { transform: rotate(45deg); }
+    /* A submenu unfolded in place can run the menu past the screen's bottom (a
+       phone, File > Import): then the menu stops there and scrolls. Only then —
+       a scrolling menu would clip a submenu that opens to its right. */
+    .menu-dropdown:has(> .submenu-wrap.inline.open) {
+      max-height: calc(100dvh - var(--menu-top, 2.5rem) - 0.5rem);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
     .submenu-arrow {
       width: 0.38rem;
       height: 0.38rem;
