@@ -1,0 +1,6 @@
+; pc88: the SSG — tone, the mixer (:mode tone|noise|both), the song's noise
+; period (:noise-rate, a value and a sweep), and the noise track on sqr3.
+(def-score :target pc88 :title "pc88 SSG")
+(sqr1 :tempo 132 :len 8 c e g e :vel 12 c e g e |)
+(sqr2 :mode both :noise-rate 6 :len 4 c c :noise-rate (linear 4..24 :len 2) c c |)
+(noise :len 16 c c c c :vel 9 c c c c c c c c c c c c |)

@@ -26,8 +26,10 @@ function profile(def) {
     ...def,
     channelNames: heads,
     parts,
-    // A target previews when the IR player has every one of its chips.
-    preview: Object.values(def.chips).every((c) => c.preview),
+    // How far the toolchain has the target: every chip encoded (the register
+    // log, the VGM), every chip emulated (Play, the WAV).
+    encodes: Object.values(def.chips).every((c) => c.encoder),
+    plays: Object.values(def.chips).every((c) => c.encoder && c.emulator),
     partOf: (head) => def.channels[head]?.part ?? null,
     chipOf: (head) => def.chips[def.channels[head]?.chip] ?? null,
     headsOf: (partName) => heads.filter((h) => def.channels[h].part.name === partName),
@@ -48,6 +50,15 @@ function profile(def) {
 
 export const TARGETS = { md: profile(md), pc88: profile(pc88) };
 export const DEFAULT_TARGET = "md";
+
+/** Why `target` cannot `play` or `encode` yet, or null when it can. */
+export function notYet(target, what) {
+  if (what === "play" ? target.plays : target.encodes) return null;
+  const missing = Object.values(target.chips)
+    .filter((c) => !c.encoder || (what === "play" && !c.emulator))
+    .map((c) => `the ${c.chip.toUpperCase()}'s ${c.encoder ? "emulator" : "register encoder"}`);
+  return `the ${target.system} (:target ${target.name}) compiles, but ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} not built yet`;
+}
 
 /** The profile for `name` (a score's `:target`), or the Mega Drive's. */
 export function targetProfile(name) {

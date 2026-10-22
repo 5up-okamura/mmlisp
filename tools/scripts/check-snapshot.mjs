@@ -12,7 +12,11 @@
 //   mmb   the MMB and its sample bank (encodeMmb)
 //   vgm   File > Export > VGM's bytes (renderVgm, with the PCM)
 //
-// — and fails when any hash moves. A refactor that must not change behavior
+// — each where the score's target has it (live/src/targets/): the MMB on a
+// target with MMLispDRV, the register log and the VGM once its chips have
+// encoders; a target still being built holds its IR and diagnostics, and
+// gains the rest as they arrive (each a --update, after review). Fails when
+// any hash moves. A refactor that must not change behavior
 // keeps it green; a change that should, regenerates the baseline after review.
 //
 //   node scripts/check-snapshot.mjs              # check against the baseline
@@ -26,7 +30,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildMmb } from "../../drv/tools/mmb-build.mjs";
+import { buildMmb, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
+import { targetProfile } from "../../live/src/targets.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 
@@ -38,7 +43,8 @@ process.chdir(ROOT); // corpus paths are repo-relative, so the hashes are too
 const hash = (data) => createHash("sha256").update(data).digest("hex").slice(0, 16);
 
 // The corpus: the driver's test scores on both video standards, the SGDK
-// example with its effects, and the examples. A score added to any of these
+// example with its effects, the examples, and the scores of the targets
+// without a driver (tools/tests/<target>/). A score added to any of these
 // directories joins the gate (and needs a --update).
 function corpus() {
   const list = [];
@@ -49,11 +55,27 @@ function corpus() {
   }
   list.push({ key: "drv/sgdk/example/demo.mmlisp +se", file: "drv/sgdk/example/demo.mmlisp", seFile: "drv/sgdk/example/demo-se.mmlisp" });
   for (const file of dir("examples")) list.push({ key: file, file });
+  for (const t of readdirSync("tools/tests", { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort())
+    for (const file of dir(join("tools/tests", t))) list.push({ key: file, file });
   return list;
 }
 
 // Every output of one score, as bytes/strings ready to hash or dump.
 function outputs({ file, frameHz, seFile }) {
+  const compiled = compileScoreFile(file, { frameHz, seFile });
+  const target = targetProfile(compiled.ir?.metadata?.target);
+  if (target.driver !== "mmlispdrv") {
+    // No MMB; the IR and its diagnostics, and the rest once the chips encode.
+    const { ir, diagnostics } = compiled;
+    const out = { diagnostics: diagnostics.map((d) => d.code ?? d.message).join(","), ir: JSON.stringify(ir, null, 1) };
+    if (!target.encodes || diagnostics.some((d) => d.severity === "error")) return out;
+    const player = new IRPlayer(() => {});
+    player.loadJSON(ir);
+    const vgmPlayer = new IRPlayer(() => {});
+    vgmPlayer.loadJSON(ir);
+    const meta = { title: ir.metadata?.title, composer: ir.metadata?.composer, author: ir.metadata?.author };
+    return { ...out, regs: JSON.stringify(player.captureRegisterLog()), vgm: renderVgm(vgmPlayer, meta, null).bytes };
+  }
   let built;
   try {
     built = buildMmb(file, { frameHz, seFile });
@@ -86,13 +108,11 @@ function outputs({ file, frameHz, seFile }) {
 
 function signature(out) {
   if (out.error) return { error: hash(out.error) };
-  return {
-    diagnostics: hash(out.diagnostics),
-    ir: hash(out.ir),
-    regs: hash(out.regs),
-    mmb: hash(Buffer.concat([Buffer.from(out.mmb), Buffer.from(out.bank)])),
-    vgm: hash(out.vgm),
-  };
+  const sig = { diagnostics: hash(out.diagnostics), ir: hash(out.ir) };
+  if (out.regs) sig.regs = hash(out.regs);
+  if (out.mmb) sig.mmb = hash(Buffer.concat([Buffer.from(out.mmb), Buffer.from(out.bank)]));
+  if (out.vgm) sig.vgm = hash(out.vgm);
+  return sig;
 }
 
 const args = process.argv.slice(2);
@@ -115,6 +135,7 @@ if (dumpAt >= 0) {
     }
     writeFileSync(`${base}.diagnostics.txt`, out.diagnostics + "\n");
     writeFileSync(`${base}.ir.json`, out.ir + "\n");
+    if (!out.regs) continue; // a target whose chips do not encode yet
     // One write per line, so `diff` points at the write that moved.
     const cap = JSON.parse(out.regs);
     const lines = [
@@ -123,8 +144,8 @@ if (dumpAt >= 0) {
       ...(cap.pcmEvents ?? []).map((e) => "pcm " + JSON.stringify(e)),
     ];
     writeFileSync(`${base}.regs.txt`, lines.join("\n") + "\n");
-    writeFileSync(`${base}.mmb`, out.mmb);
-    if (out.bank.length) writeFileSync(`${base}.bank`, out.bank);
+    if (out.mmb) writeFileSync(`${base}.mmb`, out.mmb);
+    if (out.bank?.length) writeFileSync(`${base}.bank`, out.bank);
     writeFileSync(`${base}.vgm`, out.vgm);
   }
   console.log(`check-snapshot: dumped ${items.length} scores to ${dir}`);

@@ -46,7 +46,7 @@ import {
   HOLD_FRAMES,
   expandLoops,
 } from "./ir-utils.js";
-import { targetProfile } from "./targets.js";
+import { targetProfile, notYet } from "./targets.js";
 import {
   curveId, curveUnit8, sweepValue, sweepStep, sweepFrameValue,
   bpmToTickIncrement, tickIncrementToBpm,
@@ -366,11 +366,11 @@ export class IRPlayer {
   _loadIR(irObj) {
     this._ir = irObj;
     // The machine the score is for (targets/): its chips' clocks and
-    // encoders. A target whose chips the preview does not have yet is
-    // refused here, rather than played on the Mega Drive's.
+    // encoders. A target whose chips have no encoder yet is refused here,
+    // rather than written as the Mega Drive's.
     const target = targetProfile(irObj.metadata?.target);
-    if (!target.preview)
-      throw new Error(`the ${target.system} (:target ${target.name}) is checked by the compiler, but its preview and VGM export are not built yet`);
+    const why = notYet(target, "encode");
+    if (why) throw new Error(why);
     this._target = target;
     this._fmChip = target.chipFor("fm");
     this._psgChip = target.chipFor("sqr");

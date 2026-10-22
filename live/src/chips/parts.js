@@ -34,8 +34,11 @@
 //   checkNote (note, ctx) → the part's rules for one note, after compile
 //   checkScore(ctx) → the part's rules for the whole score
 //
-// A chip (ym2612.js …) is a clock and its parts; a target (targets/) is its
-// chips, its channel table and the few readings of another machine's words.
+// A chip (ym2612.js …) is a clock and its parts, and says how far the
+// toolchain has it: `encoder` (the IR player writes its registers, so the
+// register log and the VGM exist) and `emulator` (a core plays them, so Play
+// and WAV do). A target (targets/) is its chips, its channel table and the
+// few readings of another machine's words.
 // ---------------------------------------------------------------------------
 
 /** A `has(word)` test over IR targets: names and/or RegExps. */

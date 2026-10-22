@@ -1,0 +1,7 @@
+; pc88: the ROM rhythm (pcm2/pcm3, the built-in kit roles) and the ADPCM-B
+; (pcm1 — no sample here: its bake is not built, so it has none to play).
+(def-score :target pc88 :title "pc88 rhythm")
+(pcm2 :prio 1 :tempo 132 :len 4 kick c c c c |)
+(pcm2 :prio 2 :len 8 hat c c c c c c c c |)
+(pcm3 :len 2 _ snare c :pan right |)
+(pcm3 :len 4 _ _ _ rim :vel 10 c |)

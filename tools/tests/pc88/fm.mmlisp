@@ -1,0 +1,13 @@
+; pc88: FM on the YM2608's clock — six channels (fm4-fm6 need $29 bit 7),
+; FM3's operator tracks and pan.
+(def-score :target pc88 :title "pc88 FM")
+(def-fm lead :alg 4 :fb 5
+  :ar1 31 :dr1 8 :sr1 0 :rr1 6 :sl1 2 :tl1 28 :ml1 1 :dt1 0 :ks1 0
+  :ar2 31 :dr2 12 :sr2 0 :rr2 7 :sl2 3 :tl2 0 :ml2 1 :dt2 0 :ks2 0
+  :ar3 31 :dr3 10 :sr3 0 :rr3 6 :sl3 2 :tl3 32 :ml3 2 :dt3 0 :ks3 0
+  :ar4 31 :dr4 12 :sr4 0 :rr4 7 :sl4 3 :tl4 0 :ml4 1 :dt4 0 :ks4 0)
+(fm1 :tempo 132 lead :len 8 c e g > c < g e c _ |)
+(fm2 lead :pan left :oct 3 :len 4 c g c g |)
+(fm4 lead :pan right :oct 5 :len 2 e g |)
+(fm5 :vel 10 :len 1 c |)
+(fm6 :len 4 _ c _ c |)

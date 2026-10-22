@@ -1720,5 +1720,17 @@
   "regs": "420991d8a242cc42",
   "mmb": "488af072eea2abb1",
   "vgm": "04611ee69800285b"
+ },
+ "tools/tests/pc88/fm.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ee1731d29eb148b7"
+ },
+ "tools/tests/pc88/rhythm.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "d06e3ee2b126385b"
+ },
+ "tools/tests/pc88/ssg.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5359aeaea21d6803"
  }
 }

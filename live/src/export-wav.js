@@ -21,6 +21,7 @@
 // playback — so exports match what you hear by construction.
 // ---------------------------------------------------------------------------
 
+import { notYet } from "./targets.js";
 import { MegaDriveSynth, NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
 import { renderPcmDac, configurePcmRate } from "./export-vgm.js";
 
@@ -222,6 +223,8 @@ export function encodeWav(L, R, sampleRate) {
  * @returns {Promise<{ bytes:Uint8Array, pcmCount:number, durationSec:number }>}
  */
 export async function renderWav(player, opts = {}) {
+  const why = notYet(player._target, "play"); // a register log with no core to play it
+  if (why) throw new Error(why);
   const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const fadeSec = opts.fadeSec ?? DEFAULT_FADE_SEC;
   const lpfOn = !!opts.lpfOn;

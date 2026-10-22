@@ -28,7 +28,9 @@ Run from tools directory:
 11. `npm run check:scope-trigger` — the oscilloscope's trigger holds a stationary picture
 12. `npm run check:snapshot` — the compiler's IR, the IR player's register log, the MMB
     and the VGM of every score in `drv/tests` (NTSC and PAL), the SGDK example and
-    `examples/` still hash to `snapshot-baseline.json`. A change that should not move
+    `examples/` still hash to `snapshot-baseline.json`; a score in `tests/<target>/`
+    (a target with no driver) holds what its chips have so far — its IR and
+    diagnostics, the register log and VGM once they encode. A change that should not move
     the output keeps it green; one that should, is reviewed (`-- --dump DIR` before and
     after, then `diff -r`) and re-frozen with `-- --update`.
 

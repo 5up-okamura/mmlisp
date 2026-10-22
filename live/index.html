@@ -818,7 +818,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
-    import { targetProfile } from './src/targets.js';
+    import { targetProfile, notYet } from './src/targets.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
@@ -7177,6 +7177,9 @@
     function logHold(ir, trackIdx) {
       const ch = ir?.tracks?.[trackIdx];
       log(`${ch ? (ch.scoreChannel ?? ch.channel) + ' ' : ''}is holding (:len 0) \u2014 Tools > Release Holds (${formatShortcutLabel('Mod-Shift-Enter')}) plays on`, 'info');
+      // A target with no emulator yet plays nothing (its VGM may still export).
+      const notPlayable = _lastGoodIR && notYet(targetProfile(_lastGoodIR.metadata?.target), 'play');
+      if (notPlayable) { log(notPlayable, 'err'); return; }
     }
     function releaseHoldsAction() {
       if (document.getElementById('releaseHoldsItem')?.disabled) return; // the shortcut too

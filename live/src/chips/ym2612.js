@@ -10,7 +10,8 @@ export const ym2612 = {
   // generated from it (rounded: 53,267 Hz).
   fnumRate: 53267,
   parts: [opnFm, dacMix],
-  preview: true,
+  encoder: true, // ir-player writes its registers
+  emulator: true, // Nuked-OPN2 plays them (synth-md.js)
   // The header's clock offset; the commands the worklet's ports 0 and 1 become.
   vgm: { clock: 0x2c, ports: { 0: { cmd: 0x52, addr: true }, 1: { cmd: 0x53, addr: true } } },
 };

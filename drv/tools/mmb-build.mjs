@@ -64,10 +64,16 @@ export function withSeImport(sourcePath, src, seFile) {
 // `seFile` gives the score the game's effects (withSeImport).
 // `voiceHoist` is the compiler's pass (voice-hoist.js); the exporter's two
 // VOICE_SET switches are `loopHoist` (driver.md §10.1) and `voiceRepeat` (§10.2).
-export function buildMmb(sourcePath, { frameHz, seFile, multibank, voiceHoist, loopHoist, voiceRepeat } = {}) {
+/* A score file compiled as buildMmb compiles it (its imports, an effects
+ * file folded in), with no MMB: { ir, diagnostics }. */
+export function compileScoreFile(sourcePath, { frameHz, seFile, voiceHoist } = {}) {
   const src = withSeImport(sourcePath, readFileSync(sourcePath, "utf8"), seFile);
   const imports = readImportSources(sourcePath, src);
-  const { ir, diagnostics } = compileMMLisp(src, sourcePath, { frameHz, imports, voiceHoist });
+  return compileMMLisp(src, sourcePath, { frameHz, imports, voiceHoist });
+}
+
+export function buildMmb(sourcePath, { frameHz, seFile, multibank, voiceHoist, loopHoist, voiceRepeat } = {}) {
+  const { ir, diagnostics } = compileScoreFile(sourcePath, { frameHz, seFile, voiceHoist });
   const errors = diagnostics.filter((d) => d.severity === "error");
   if (errors.length) {
     throw new Error(

@@ -38,7 +38,8 @@ export const sn76489 = {
   chip: "sn76489",
   clock: 3579545, // NTSC: the master / 15
   parts: [snSqr, snNoise],
-  preview: true,
+  encoder: true,
+  emulator: true, // Nuked-PSG
   // VGM: the header's clock offset and the chip as the Mega Drive wires it
   // (white-noise feedback taps 0x0009, a 16-bit shift register, no flags);
   // the command a write on the worklet's port 2 becomes, one data byte.

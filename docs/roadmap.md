@@ -128,7 +128,8 @@ In order:
    `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`); nothing
    plays it yet. What is left, in order:
    - **The IR player's pc88 side**: the YM2608's encoders beside the
-     SN76489's, register-exact, which turn its `preview` on. FM on the
+     SN76489's, register-exact, which turn its `encoder` on — the register
+     log and the VGM, before any emulator. FM on the
      7.9872 MHz clock with $29 bit 7 set first (fm4–fm6 are silent in the chip's
      OPN-compatible start); the SSG's tone and level registers, `:vel`'s
      2 dB quantized once onto its 3 dB steps; the mixer (reg 7) from
