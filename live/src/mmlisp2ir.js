@@ -3158,7 +3158,16 @@ function parseCurveSpec(
         }
       }
       j++;
+      continue;
     }
+    // Every other element of a curve form reads as nothing: the ends are a
+    // range or :from/:to, and every option is written as `:key value`, so a
+    // bare token here is a param written without its keyword — the seed of
+    // `(noise -12..12 3)` would never apply. Say so rather than drop it.
+    if (diagnostics)
+      pushDiag(diagnostics, "error", "E_CURVE_STRAY_VALUE",
+        `curve ${head}: ${k ?? "a value"} is not a param — the ends are A..B (or :from / :to), and every option is written :key value, e.g. ${STOCHASTIC_CURVES.has(head) ? ":seed 3" : ":len 4"}`,
+        src ?? nodeSrc(node), trackName);
   }
 
   const spec = {

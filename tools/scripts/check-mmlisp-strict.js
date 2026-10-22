@@ -84,6 +84,11 @@ async function main() {
       expected: ["W_SWEEP_WAIT"],
     },
     {
+      label: "curve value written without its keyword",
+      src: "(fm1 :len 8 (note (+ 60 (noise -12..12 3))) (macro :tl1 (sin -20..20 8)) c (note (+ 60 (noise -12..12 :seed 3))) (macro :tl1 (sin -20..20 :len 8)) c)",
+      expected: ["E_CURVE_STRAY_VALUE", "E_CURVE_STRAY_VALUE"],
+    },
+    {
       label: "curve param that does not read",
       src: "(fm1 (macro :tl1 (sin :from 0 :to 20 :len 8x :phase p)) c (macro :tl1 (sin :from 0 :to 20 :len 8 :phase 4)) c)",
       expected: ["W_CURVE_PARAM_INVALID", "W_CURVE_PARAM_INVALID"],

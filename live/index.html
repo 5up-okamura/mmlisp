@@ -843,6 +843,7 @@
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
+    import { isReservedHead } from './src/mmlisp-eval.js';
     import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout } from './src/i18n.js';
     import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
     import { precacheApp } from './src/offline-cache.js';
@@ -2218,9 +2219,40 @@
       box.append(syntax, summary);
       return box;
     }
-    function referenceInfo(word) {
-      const e = referenceFor(word);
+    function referenceInfo(word, ctx = null) {
+      const e = referenceFor(word, ctx);
       return e ? () => referenceCard(e) : undefined;
+    }
+
+    // `noise` is two words of the language: the PSG channel at the head of a
+    // track, and a random curve where a value goes. reference.js keeps an
+    // entry for each and picks by `ctx`, so the hover and the completion say
+    // which one the text has at hand. A curve is the value of a keyword
+    // (`:pitch (noise …)`), or an operand of an eval head (`(+ root (noise
+    // …))`, `(macro …)`), or carries a range of its own (`(def wob (noise
+    // -12..12))`); a form head anywhere else is the channel.
+    const CURVE_ONLY_PARAM = /:(?:from|to|seed|hold|jitter|beta|octaves|lacunarity|persistence|leak|phase|rate|duty|skew|wait)\b/;
+    function referenceCtxAt(state, wordFrom) {
+      let before = state.sliceDoc(0, wordFrom);
+      if (before.endsWith('(')) before = before.slice(0, -1); // the word's own '(' encloses nothing
+      const open = [];
+      for (let i = 0; i < before.length; i++) {
+        const ch = before[i];
+        if (ch === '"') { for (i++; i < before.length && before[i] !== '"'; i++) if (before[i] === '\\') i++; }
+        else if (ch === ';') { while (i < before.length && before[i] !== '\n') i++; }
+        else if (ch === '(' || ch === '[') open.push(i);
+        else if (ch === ')' || ch === ']') open.pop();
+      }
+      if (open.length === 0) return 'track';                      // the top level: a track form
+      if (/:[a-zA-Z0-9#_-]+\s*$/.test(before)) return 'value';    // right after a keyword
+      const at = open[open.length - 1];
+      if (before[at] === '[') return 'value';                     // inside a step vector
+      const head = /^[^\s()[\]";]*/.exec(before.slice(at + 1, at + 32))[0];
+      if (isReservedHead(head) || head === 'macro' || head === 'wait') return 'value';
+      const line = state.doc.lineAt(wordFrom);                    // a range of its own, as in a def
+      const rest = line.text.slice(wordFrom - line.from);
+      if (/-?\d\s*\.\.|\.\.\s*-?\d/.test(rest) || CURVE_ONLY_PARAM.test(rest)) return 'value';
+      return 'track';
     }
 
     // Hover: a keyword (`:vel`, `:tl1+`) anywhere, a form head or a channel
@@ -2241,7 +2273,7 @@
       if (!AC_WORDS.has(word)) return null;
       if (!word.startsWith(':') && text[from - 1] !== '(') return null;
       if (text.slice(0, from).includes(';')) return null;                  // a comment
-      const e = referenceFor(word);
+      const e = referenceFor(word, word.startsWith(':') ? null : referenceCtxAt(view.state, line.from + from));
       if (!e) return null;
       return {
         pos: line.from + from, end: line.from + to, above: true,
@@ -2267,11 +2299,12 @@
       const formMatch = context.matchBefore(/\([a-zA-Z0-9_-]*/);
       if (formMatch) {
         const typed = formMatch.text.slice(1); // strip '('
+        const ctx = referenceCtxAt(context.state, formMatch.from + 1);
         const options = [...AC_FORMS, ...AC_TRACKS]
           .filter(s => s.startsWith(typed))
           .map(s => AC_SNIPPETS[s]
-            ? snippetCompletion(AC_SNIPPETS[s], { label: s, type: 'keyword', detail: AC_DETAIL[s], info: referenceInfo(s) })
-            : { label: s, type: 'keyword', apply: s + ' ', info: referenceInfo(s) });
+            ? snippetCompletion(AC_SNIPPETS[s], { label: s, type: 'keyword', detail: AC_DETAIL[s], info: referenceInfo(s, ctx) })
+            : { label: s, type: 'keyword', apply: s + ' ', info: referenceInfo(s, ctx) });
         for (const d of scoreDefNames(context.state))
           if (d.kind === 'fn' && d.name.startsWith(typed)) options.push(defCompletion(d));
         if (options.length === 0 && !context.explicit) return null;

@@ -44,6 +44,12 @@ lessons.
 
 ## Lessons
 
+- **One word, two reference entries.** `noise` heads the PSG channel and the
+  random curve, so reference.js entries carry `ctx` ('track' / 'value') and
+  the hover and completion read the position (`referenceCtxAt`); check:reference
+  holds it. Still first-wins, because neither reading has come up as wrong:
+  `<` `>` (comparison vs octave), `ticks` `frames` (arithmetic vs length
+  suffix), `midi`, `repeat`, `:rate`. Give those a `ctx` when one does.
 - **Make sure a change is deployed before asking for a device test** — a run
   of failed deploys once meant four fixes never reached the device. A push to
   `main` deploys mmlisp.com through Cloudflare Workers Builds; its result is

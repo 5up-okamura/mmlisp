@@ -1507,6 +1507,9 @@ length nor `key-off` is `W_WAIT_INVALID`, and the curve does not wait.
 Normalization rules:
 
 - Unknown keyword for a curve name → `E_CURVE_PARAM_UNKNOWN` (error).
+- A bare value where a param belongs → `E_CURVE_STRAY_VALUE` (error): the
+  ends are `A..B` (or `:from` / `:to`) and every option is written
+  `:key value`, so `(noise -12..12 3)` names no seed — write `:seed 3`.
 - Out-of-range values are clamped with `W_CURVE_PARAM_CLAMPED`.
 - A value that does not read as a number (`:phase x`, `:len 8x`) is ignored,
   with `W_CURVE_PARAM_INVALID`; an expression with a `$` is
@@ -1541,6 +1544,11 @@ stream. `(for …)` draws on every pass, `(x N …)` plays its one draw N times
 (the driver repeats it), and a `let` name bound to the curve draws at each
 use — bind `(round (noise …))` to hold one draw. `pink`, `perlin` and
 `brown` are movement and stay curves there (`E_EVAL_TYPE`).
+
+`noise` is two words of the language, told apart by where it stands: at the
+head of a top-level form it is the PSG channel (§2), and where a value goes it
+is this curve. The editor's hover and completion read the position the same
+way, so each shows the one in hand.
 
 ```lisp
 (fm1 (macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 16 :leak 0.995))

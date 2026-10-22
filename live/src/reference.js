@@ -119,7 +119,7 @@ export const REFERENCE = [
     example: '(sqr1 :oct 5 :len 8 c e g e)',
   },
   {
-    name: 'noise', cat: 'channels', section: '§2', tracks: PSG,
+    name: 'noise', ctx: 'track', cat: 'channels', section: '§2', tracks: PSG,
     syntax: '(noise :mode white0 …)',
     summary: 'The PSG\'s noise channel. :mode white0–white3 or periodic0–periodic3 (sticky); 3 follows sqr3\'s pitch.',
     insert: '(noise :mode white2 :len 8 c c c c)',
@@ -443,7 +443,8 @@ export const REFERENCE = [
     example: '(fm1 :len 2 (macro :pitch (sin -25..25 :len 8f)) c e)',
   },
   {
-    name: 'noise curves', aliases: ['pink', 'perlin', 'brown', 'random', ':seed', ':hold', ':jitter', ':beta',
+    name: 'noise curves', ctx: 'value',
+    aliases: ['noise', 'pink', 'perlin', 'brown', 'random', ':seed', ':hold', ':jitter', ':beta',
       ':octaves', ':lacunarity', ':persistence', ':leak'], cat: 'curves', section: '§11', tracks: null,
     syntax: '(noise A..B :len L [:seed N] [:hold L])  ·  pink  ·  perlin  ·  brown',
     summary: 'Random curves, macro only (the driver has no random source for an inline sweep). :seed picks the sequence; :hold L keeps each value for the length L. Where a number is needed, noise is one draw from its range.',
@@ -640,14 +641,26 @@ export const REFERENCE = [
 // The entry a word of the language belongs to — a form head, a keyword, a
 // track name — by its name, an alias or a prefix; null when none does. The
 // completion's info and the editor's hover read it.
+//
+// One word can belong to two entries, read apart by where it stands: `noise`
+// heads the PSG channel at the top of a score and a random curve where a
+// value goes. Such an entry carries `ctx` ('track' or 'value'), and the
+// caller says which it is looking at; an entry without `ctx` answers
+// anywhere, and with no `ctx` asked for, the first entry wins.
 let _index = null;
-export function referenceFor(word) {
+export function referenceFor(word, ctx = null) {
   if (!_index) {
     _index = { exact: new Map(), prefixes: [] };
     for (const e of REFERENCE) {
-      for (const n of [e.name, ...(e.aliases ?? [])]) if (!_index.exact.has(n)) _index.exact.set(n, e);
+      for (const n of [e.name, ...(e.aliases ?? [])]) {
+        const at = _index.exact.get(n);
+        if (at) at.push(e); else _index.exact.set(n, [e]);
+      }
       for (const p of e.prefixes ?? []) _index.prefixes.push([p, e]);
     }
   }
-  return _index.exact.get(word) ?? _index.prefixes.find(([p]) => word.startsWith(p))?.[1] ?? null;
+  const found = _index.exact.get(word)
+    ?? _index.prefixes.filter(([p]) => word.startsWith(p)).map(([, e]) => e);
+  if (!found || found.length === 0) return null;
+  return (ctx && found.find((e) => e.ctx === ctx)) ?? found.find((e) => !e.ctx) ?? found[0];
 }
