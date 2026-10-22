@@ -3144,11 +3144,11 @@
       // An untouched field (either mode's default) is no override.
       const untouched = bpm === fileBpm || bpm === beatBpm || !(bpm > 0);
       return midiToMmlisp(parsed, {
+        target: _lastGoodIR?.metadata?.target,
         dest: got.rows,
         grid: Number(got.fields.grid),
         timing,
         bpm: untouched ? null : bpm,
-        target: _lastGoodIR?.metadata?.target,
         loop: !!got.fields.loop,
         structure: !!got.fields.structure,
         fileName,
@@ -3178,11 +3178,11 @@
       const dest = {};
       for (const c of a.channels) dest[c.index] = got.rows[String(c.index)] ?? 'drop';
       return trackerToMmlisp(t, {
+        target: _lastGoodIR?.metadata?.target,
         dest, phrases: !!got.fields.phrases,
         bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
         fileName,
       }, a);
-        target: _lastGoodIR?.metadata?.target,
     }
 
     async function importVgmBytes(bytes, fileName) {
@@ -3221,11 +3221,11 @@
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
       return vgmToMmlisp(parsed, {
+        target: _lastGoodIR?.metadata?.target,
         dest: got.rows,
         grid: got.fields.grid,
         bpm: bpm > 0 && bpm !== shown ? bpm : null,
         followPitch: !!got.fields.followPitch,
-        target: _lastGoodIR?.metadata?.target,
         loop: !!got.fields.loop,
         pcmVoices: got.fields.pcmVoices ? Number(got.fields.pcmVoices) : def.pcmVoices,
         structure: !!got.fields.structure,
@@ -5224,7 +5224,8 @@
 
     async function exportPcmBank(ir, what) {
       const pcmVoices = ir.metadata?.pcmVoices ?? 0;
-      if (!pcmVoices) return null;
+      // The bank is the Mega Drive's soft mix (another target's PCM is its chip's).
+      if (!pcmVoices || !targetProfile(ir.metadata?.target).hasPart('dac')) return null;
       try {
         const samples = await pcmSampleBlobsForMmb(ir);
         if (!samples) return null;
@@ -6228,6 +6229,14 @@
     //    PCM track). fm3, fm3-1..4 and fm3-csm all share hardware FM3.
     //  - selIndex: hardware index driving the FM param panel (0-5 FM, 6-9 PSG,
     //    null = no editable FM panel: pcm*). csm edits CH3, the voice it keys.
+    // A head's place on the chip, from the score's target (targets/): its
+    // part's kind and the voice index — the FM channel, the PSG channel, the
+    // PCM slot. Null for a name the target has no channel of.
+    function channelVoice(head) {
+      return targetProfile(_lastGoodIR?.metadata?.target).channels[head] ?? null;
+    }
+    const isFmVoice = (c) => c?.part.kind === 'fm';
+    const isPsgVoice = (c) => c?.part.kind === 'tone' || c?.part.kind === 'noise';
     function channelRouting(head) {
       const c = channelVoice(head);
       if (c?.part.kind === 'sample') return { volKind: 'pcm', volIndex: null, selIndex: null };
@@ -6242,6 +6251,7 @@
     // the sounding fm3-csm track.
     function buildChStripModel(ir) {
       const tracks = ir?.tracks ?? [];
+      const order = targetProfile(ir?.metadata?.target).channelNames.filter((h) => h !== 'fm3-csm-rate');
       const headToTrack = new Map();
       tracks.forEach((t, ti) => {
         const head = t.scoreChannel ?? t.channel;
@@ -6292,14 +6302,6 @@
         const vol = _channelVol.get(h) ?? VOL_UNITY;
         const col = document.createElement('div');
         col.className = 'ch-col';
-    // A head's place on the chip, from the score's target (targets/): its
-    // part's kind and the voice index — the FM channel, the PSG channel, the
-    // PCM slot. Null for a name the target has no channel of.
-    function channelVoice(head) {
-      return targetProfile(_lastGoodIR?.metadata?.target).channels[head] ?? null;
-    }
-    const isFmVoice = (c) => c?.part.kind === 'fm';
-    const isPsgVoice = (c) => c?.part.kind === 'tone' || c?.part.kind === 'noise';
         col.innerHTML = `
           <div class="ch-btns">
             <button class="ms-btn${selCls}" onclick="selectCh('${h}')">${entry.label}</button>
@@ -6313,7 +6315,6 @@
           <div class="ch-vol-val">${vol}</div>
         `;
         row.appendChild(col);
-      const order = targetProfile(ir?.metadata?.target).channelNames.filter((h) => h !== 'fm3-csm-rate');
       }
       el.appendChild(row);
       row.scrollLeft = scrollLeft;
@@ -7114,6 +7115,9 @@
         return;
       }
 
+      // A target with no emulator yet plays nothing (its VGM may still export).
+      const notPlayable = _lastGoodIR && notYet(targetProfile(_lastGoodIR.metadata?.target), 'play');
+      if (notPlayable) { log(notPlayable, 'err'); return; }
       player = new IRPlayer(writeToWorklet);
       try {
         // Use last successfully compiled IR if available, else load from URL
@@ -7177,9 +7181,6 @@
     function logHold(ir, trackIdx) {
       const ch = ir?.tracks?.[trackIdx];
       log(`${ch ? (ch.scoreChannel ?? ch.channel) + ' ' : ''}is holding (:len 0) \u2014 Tools > Release Holds (${formatShortcutLabel('Mod-Shift-Enter')}) plays on`, 'info');
-      // A target with no emulator yet plays nothing (its VGM may still export).
-      const notPlayable = _lastGoodIR && notYet(targetProfile(_lastGoodIR.metadata?.target), 'play');
-      if (notPlayable) { log(notPlayable, 'err'); return; }
     }
     function releaseHoldsAction() {
       if (document.getElementById('releaseHoldsItem')?.disabled) return; // the shortcut too

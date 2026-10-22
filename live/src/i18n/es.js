@@ -24,7 +24,7 @@ export default {
     ":tempo": ["caea17c6", "Tempo de toda la canción, escrito en cualquier pista; una curva lo recorre. Por defecto 120."],
     ":master": ["49b535cc", "Fader de toda la canción, con unidad en 31; 0 es un silencio total. Una curva lo funde."],
     ":lfo-rate": ["a0ab062d", "El único LFO del chip, común a toda la canción; 0 lo apaga. Una voz lo recibe por :ams (nivel) y :fms (tono)."],
-    ":target": ["084c99f5", "La máquina para la que es la partitura. md, la Mega Drive, es el valor por defecto; pc88 es el PC-8801 con Sound Board II (YM2608), que el compilador comprueba pero que aún no puede reproducir ni exportar."],
+    ":target": ["94990ad5", "La máquina para la que es la partitura. md, la Mega Drive, es el valor por defecto; pc88 es el PC-8801 con Sound Board II (YM2608), cuya exportación VGM tiene el FM, el SSG y el ritmo; su previsualización y las muestras del ADPCM-B aún no están hechas."],
     ":noise-rate": ["c86d2866", "Solo pc88: el único periodo de ruido del SSG, para toda la canción; más bajo es más agudo, empieza en 9. Una pista sqr lo oye con :mode noise o both."],
     ":prio": ["18fd3032", "Solo justo después del nombre del canal. Las formas de un mismo canal con distinto :prio son capas sobre una voz: gana el número menor, y una nota de la capa inferior suena en los huecos de la superior. La voz, :pan y :vol van a la capa superior que los fija. Por defecto 8."],
     "def-mod": ["1b7d3f44", "Reescribe cada nota que selecciona, en toda la partitura: :keyon off las convierte en silencios (toca esa parte tú mismo en las teclas), las operaciones vel mueven su velocidad, acotada a 0–15."],

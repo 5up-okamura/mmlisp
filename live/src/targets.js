@@ -40,6 +40,11 @@ function profile(def) {
       return c ? `${c.chip}:${c.part.unit ?? c.part.name}:${c.voice}` : null;
     },
     hasWord: (word) => parts.some((p) => p.words(word) || p.songWords?.(word)),
+    /** The chip of the first part of `kind` (fm, tone, noise, sample), or null. */
+    chipForKind(kind) {
+      const head = heads.find((h) => def.channels[h].part.kind === kind);
+      return head ? def.chips[def.channels[head].chip] : null;
+    },
     /** The chip whose part `partName` is, or null: its clock and encoders. */
     chipFor(partName) {
       const head = heads.find((h) => def.channels[h].part.name === partName);

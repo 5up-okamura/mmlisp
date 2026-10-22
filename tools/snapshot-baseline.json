@@ -1723,14 +1723,20 @@
  },
  "tools/tests/pc88/fm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "ee1731d29eb148b7"
+  "ir": "ee1731d29eb148b7",
+  "regs": "e3da046a7bc3438b",
+  "vgm": "08a9b724a4018b59"
  },
  "tools/tests/pc88/rhythm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "d06e3ee2b126385b"
+  "ir": "d06e3ee2b126385b",
+  "regs": "0d15594128962cce",
+  "vgm": "cea215d680b032a2"
  },
  "tools/tests/pc88/ssg.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "5359aeaea21d6803"
+  "ir": "5359aeaea21d6803",
+  "regs": "306eb9fe0c69d177",
+  "vgm": "db50ef5be4022063"
  }
 }

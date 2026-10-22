@@ -2266,10 +2266,12 @@ those chips cannot do is a compile error, not a different sound.
 | `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
 | `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | — (see below) |
 
-**`pc88` is checked by the compiler; its preview and VGM export are not built
-yet.** Playing or exporting a `pc88` score says so and stops; the MMB is the
-Mega Drive driver's and refuses it. What follows is what the compiler holds a
-`pc88` score to.
+**`pc88` exports VGM (1.51): FM, the SSG and the rhythm.** Two things are
+not built yet: the ADPCM-B's samples (pcm1 writes nothing), and a preview —
+Play and WAV say so and stop. The rhythm sounds are the chip's ROM, so the
+VGM keys them and a player supplies them. The MMB is the Mega Drive driver's
+and refuses a `pc88` score. What follows is what the compiler holds a `pc88`
+score to.
 
 **What a channel is.** Each of a target's channels is a *part* of one of
 its chips — 4-op FM, the SN76489's square or noise, the SSG, the ROM rhythm,

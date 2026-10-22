@@ -69,8 +69,8 @@ never compiled for one standard and baked for the other (driver.md §3.3).
 `metadata.target` is the machine the score is for (`(def-score :target …)`,
 language.md §19), present only when it is not the Mega Drive: `"pc88"`. A
 consumer reads its chips from its profile (`live/src/targets.js`). The MMB exporter refuses
-any target but the Mega Drive, and the IR player one whose preview is not
-built yet.
+any target but the Mega Drive, and the IR player one whose chips have no
+register encoder yet (`live/src/chips/`).
 
 `metadata.pcmVoices` is how many PCM voices the driver plays, 0–3, from
 `(def-score :pcm-voices N)` or the highest `pcmN` track the score uses. It picks the

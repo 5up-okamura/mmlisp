@@ -123,26 +123,17 @@ on any other, and its own settings a warning.
 
 In order:
 
-1. **PC-8801 SB2 (YM2608): the sound.** The compiler already holds a
-   `:target pc88` score to the chip (language.md §19; its profile is
-   `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`); nothing
-   plays it yet. What is left, in order:
-   - **The IR player's pc88 side**: the YM2608's encoders beside the
-     SN76489's, register-exact, which turn its `encoder` on — the register
-     log and the VGM, before any emulator. FM on the
-     7.9872 MHz clock with $29 bit 7 set first (fm4–fm6 are silent in the chip's
-     OPN-compatible start); the SSG's tone and level registers, `:vel`'s
-     2 dB quantized once onto its 3 dB steps; the mixer (reg 7) from
-     `SSG_MIX` and the noise track, the noise period (reg 6) from
-     `NOISE_RATE`, starting at 9. The rhythm: a hit keys its sound ($10),
-     vel + vol + master fold into its IL with the pan bits ($18–$1D), RTL
-     stays 63, `:mode gate` dumps at the note's end. The ADPCM-B: Delta-N
-     per note, its L/R and 8-bit linear level, start/stop/repeat.
-   - **The ADPCM-B bake**: `:fx`, then Yamaha ADPCM (the decoder is
-     `mucom-pcm.js`); 256 KB of RAM, past it a diagnostic.
-   - **VGM 1.51**: the YM2608 at 7987200 Hz, commands 0x56/0x57, the
-     ADPCM-B RAM image as data block 0x81. The rhythm ROM is the chip's and
-     is not in the file.
+1. **PC-8801 SB2 (YM2608): the sound.** A `:target pc88` score compiles
+   and exports VGM 1.51 — FM, the SSG and the rhythm (language.md §19; the
+   profile is `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`,
+   the scores `tools/tests/pc88/`). What is left, in order:
+   - **The ADPCM-B**: the bake (`:fx`, then Yamaha ADPCM — the decoder is
+     `mucom-pcm.js`; 256 KB of RAM, past it a diagnostic), its RAM image as
+     VGM data block 0x81, and pcm1's notes: Delta-N per note, its L/R and
+     8-bit linear level, start/stop/repeat. Today pcm1 writes nothing.
+   - **The rhythm's moving levels**: `:vel` / `:vol` macros and `:vol`
+     sweeps into IL; a hit's level is its note's `:vel` and the track's
+     `:vol` today.
    - **The check**: the mucom importer, for a pc88 score, writes part G on
      the rhythm, K on the ADPCM-B, the SSG's `P` mixer as `:mode` and `w` as
      `:noise-rate` (the Importers section), and their VGM is compared
@@ -151,8 +142,8 @@ In order:
    - **The preview**: ymfm's YM2608 built to WASM beside the Nuked cores. It
      reads the rhythm ROM through the host, as MAME does — Yamaha's, so it
      does not ship: the user brings their own (kept like recent files), and
-     without it an imported kit's `:file` stands in for its role. Then
-     Live's channel tables and VGM export.
+     without it an imported kit's `:file` stands in for its role. It turns
+     the chip's `emulator` on, and with it Play and WAV.
 2. **X68000 (YM2151 + MSM6258).** OPM voices convert from OPN with DT2 = 0
    and SSG-EG dropped; KC/KF pitch and channel 8's noise are the profile's.
    PCM8 is a software mixer, not a chip, so the export does its job: pcm1-3

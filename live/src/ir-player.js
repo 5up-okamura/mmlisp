@@ -184,7 +184,8 @@ export class IRPlayer {
   constructor(writeCallback) {
     this._target = targetProfile(); // until a score says otherwise (_loadIR)
     this._fmChip = this._target.chipFor("fm");
-    this._psgChip = this._target.chipFor("sqr");
+    this._psgChip = this._target.chipForKind("tone")?.psgEncoder() ?? null; // null: a target with no PSG
+    this._trackPart = new Map(); // trackIndex → its part (chips/parts.js)
     this._write = writeCallback;
     this._ir = null;
     this._playing = false;
@@ -373,7 +374,7 @@ export class IRPlayer {
     if (why) throw new Error(why);
     this._target = target;
     this._fmChip = target.chipFor("fm");
-    this._psgChip = target.chipFor("sqr");
+    this._psgChip = target.chipForKind("tone")?.psgEncoder() ?? null; // one per score: it may keep state
     this._psgStepDb = target.parts.find((p) => p.kind === "tone")?.level.stepDb ?? 2;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
     // mixer's mute has to hold the timer rather than key the channel off.
@@ -1126,8 +1127,11 @@ export class IRPlayer {
   _assignChannel(trackIndex, track) {
     const c = this._target.channels[track?.channel];
     const kind = c?.part.kind;
+    if (c) this._trackPart.set(trackIndex, c.part);
+    // The PSG lanes: 0-2 the tones, 3 the noise track (the chip's encoder
+    // maps a lane to its channel — the SSG's noise is its third's mixer).
     if (kind === "tone" || kind === "noise") {
-      this._psgTrackChannel.set(trackIndex, c.voice);
+      this._psgTrackChannel.set(trackIndex, kind === "noise" ? 3 : c.voice);
       return;
     }
     // PCM tracks own no FM channel: they are software voices summed to the fm6
@@ -2483,6 +2487,11 @@ export class IRPlayer {
   // timed, in the order the driver's sequencer would act on them. Global
   // events (tempo/markers/loops) are handled by _dispatchGlobalEvent first.
   _dispatchPcmEvent(ev, when) {
+    // A sample part with registers of its own: the YM2608's rhythm sounds;
+    // its ADPCM-B writes nothing until its bake is built (docs/roadmap.md).
+    const part = this._trackPart.get(ev._trackIndex);
+    if (part?.name === "rhythm") return this._dispatchRhythmEvent(ev, when);
+    if (part?.name === "adpcm-b") return;
     const voice = ev._chIndex ?? 0;
     switch (ev.cmd) {
       case "PCM_NOTE_ON":
@@ -2531,6 +2540,66 @@ export class IRPlayer {
       this._pcmEv(when, { kind: "point", voice, target, value: this._pcmLoopBytes(value) });
     }
     // everything else is FM/PSG-only
+  }
+
+  // The SSG's noise period (NOISE_RATE), song-wide like LFO_RATE: a value, or
+  // a sweep stepped a frame at a time as the driver's sweeps are, written
+  // when it moves and running to the track's next write of it (its budget,
+  // as every sweep's).
+  _writeNoiseRate(ev, when) {
+    const write = (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v)), t);
+    if (ev.cmd === "PARAM_SET") write(Number(ev.args?.value ?? 9), when);
+    if (ev.cmd !== "PARAM_SWEEP") return;
+    const a = ev.args ?? {};
+    const df = this._curveFields(a, when);
+    const from = Math.round(Number(df.from ?? 9)), to = Math.round(Number(df.to ?? from));
+    const len = a.lenFrames
+      ? Math.max(1, Math.round(Number(a.frames ?? 1)))
+      : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
+    const loop = !!a.loop;
+    const budget = this._resolveSweepBudgetFrames(ev);
+    const id = curveId(a.curve);
+    let last = null;
+    for (let f = 0; f < budget; f++) {
+      const v = sweepFrameValue(id, from, to, len, loop, f);
+      if (v !== last) write(v, when + f / 60);
+      last = v;
+      if (!loop && f >= len - 1) break;
+    }
+  }
+
+  // The YM2608's rhythm: a hit writes its sound's level and pan, then keys
+  // it; vel + vol + master fold into the level as an FM carrier's do (the IL
+  // steps 0.75 dB, as TL does), and `:mode gate` dumps it at the note's end.
+  _dispatchRhythmEvent(ev, when) {
+    const ti = ev._trackIndex;
+    const st = (this._rhythmState ??= new Map()).get(ti) ?? { vol: VOL_UNITY, pan: 0 };
+    this._rhythmState.set(ti, st);
+    const enc = this._target.chipFor("rhythm").rhythm;
+    const sound = this._ir?.metadata?.samples?.find((s) => s.name === ev.args?.sample)?.rhythm;
+    switch (ev.cmd) {
+      case "PCM_NOTE_ON": {
+        const master = this._masterVol ?? VOL_UNITY;
+        if (!sound || !this._isTrackAudible(ti) || st.vol <= 0 || master <= 0) break;
+        const att = sumLevelOffsets(velToTlAtten(velFine(Number(ev.args?.vel ?? 15))),
+          volToTlOffset(st.vol), volToTlOffset(master));
+        for (const [p, a, d] of enc.hit(sound, 31 - att, st.pan)) this._write(p, a, d, when);
+        break;
+      }
+      case "PCM_NOTE_OFF":
+        if (sound && ev.args?.mode === "gate")
+          for (const [p, a, d] of enc.dump(sound)) this._write(p, a, d, when);
+        break;
+      case "PARAM_SET": {
+        const target = (ev.args?.target ?? "").toUpperCase();
+        if (target === "VOL") st.vol = Number(ev.args?.value ?? VOL_UNITY);
+        else if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
+        else if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
+        break;
+      }
+      default:
+        break;
+    }
   }
 
   // A swept point, stepped the way the driver steps it: integer from/to
@@ -2668,6 +2737,10 @@ export class IRPlayer {
       case "PARAM_FROM_VAL":
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP": {
+        if (ev.args?.target === "NOISE_RATE") {
+          this._writeNoiseRate(ev, when);
+          return true;
+        }
         const m = /^VAL(\d+)$/.exec(ev.args?.target ?? "");
         if (!m) return false;
         this._writeVal(ev, this._valNames[Number(m[1])], when);
@@ -4265,6 +4338,10 @@ export class IRPlayer {
   _psgWrites(writes, when) {
     for (const [port, addr, data] of writes) this._write(port, addr, data & 0xff, when);
   }
+  // A PSG write on a target with no PSG (its encoder is null) is nothing.
+  _psg(encode) {
+    return this._psgChip ? encode(this._psgChip) : [];
+  }
 
   // Write attenuation for a PSG channel.
   // attReg: 0=max volume, 15=silent (hardware convention).
@@ -4272,7 +4349,7 @@ export class IRPlayer {
     const att = attReg & 0x0f;
     // Track sounding state so master/vol recomputes don't un-silence idle channels.
     this._psgSounding[psgCh] = att < 15;
-    this._psgWrites(this._psgChip.att(psgCh, att), when);
+    this._psgWrites(this._psg((c) => c.att(psgCh, att)), when);
   }
 
   // Compose vel (0-15) / vol / master (0-31) into a PSG attenuation (0=loud,
@@ -4424,15 +4501,14 @@ export class IRPlayer {
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
   // modeVal: 0-7 encoding FB(1bit) + NF(2bits) → bits 5-3 of noise register
   _psgSetNoiseCfg(modeVal, when) {
-    this._psgWrites(this._psgChip.noise(modeVal), when);
+    this._psgWrites(this._psg((c) => c.noise(modeVal)), when);
   }
 
   // Set tone period for a PSG tone channel (ch 0-2): the note through the
   // channel's `:snap` mask, the cents on top (as _writeFmNote).
   _psgSetPitch(psgCh, note, cents, when) {
-    const psg = this._psgChip;
-    const period = psg.period(midiToHz(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100));
-    this._psgWrites(psg.tone(psgCh, period), when);
+    const hz = midiToHz(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100);
+    this._psgWrites(this._psg((c) => c.tone(psgCh, c.period(hz))), when);
   }
 
   // Trigger the noise channel, re-asserting the current persistent noise mode.
@@ -4871,6 +4947,9 @@ export class IRPlayer {
             if (this._psgKeyedUntil[psgCh] > when)
               this._psgVolSweepWrites(psgCh, when, this._psgKeyedUntil[psgCh], this._psgLastVel[psgCh] ?? 15);
           }
+        } else if (psgTarget === "SSG_MIX") {
+          // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
+          this._psgWrites(this._psg((c) => c.mix(psgCh, Math.round(ev.args?.value ?? 0))), when);
         } else if (psgTarget === "NOISE_MODE") {
           // Update the persistent noise mode. Re-asserted on every noise NOTE_ON;
           // if the channel is currently sounding, take effect immediately.
@@ -4980,6 +5059,10 @@ export class IRPlayer {
     // No PSG note is sounding at the start of a run; clear the flags so the
     // master/vol preamble writes don't drone idle channels.
     this._psgSounding.fill(false);
+    // A chip's own start (chips/: the YM2608's $29, its rhythm and SSG),
+    // before any voice is written.
+    for (const chip of Object.values(this._target.chips))
+      for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     // Neutral sine-like patch: ALG=7 (all 4 ops independent carriers), FB=0.
     // All ops: AR=31, DR=0, SL=0, RR=15, TL=0, MUL=1, DT=0.
     for (let ch = 0; ch < 6; ch++) {

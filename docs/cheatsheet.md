@@ -218,7 +218,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   sqr `:mode tone|noise|both`, song-wide `:noise-rate`, `noise` is sqr3,
   pcm1 the ADPCM-B, pcm2/pcm3 the ROM rhythm, built in under the kit roles
   (`(pcm2 kick c hat c)`, no def). A word or channel only another target's
-  chips have is `E_TARGET`. It compiles; it does not play or export yet.
+  chips have is `E_TARGET`. It exports VGM (FM, SSG, rhythm); Play, WAV and
+  pcm1's samples are not built yet.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

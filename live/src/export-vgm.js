@@ -31,12 +31,15 @@ import { bankedEngineImage } from "./engine-banked-images.js";
 // of the chip clocks below.
 const VGM_SAMPLE_RATE = 44100;
 
+// The VGM version a target needs is its chips' newest (chips/ `vgm.version`);
+// 1.50's header is 0x40 bytes, 1.51's 0x80.
 const VGM_VERSION = 0x00000150;
+const vgmVersion = (target) => Math.max(VGM_VERSION, ...Object.values(target.chips).map((c) => c.vgm.version ?? 0));
+const dataStartOf = (version) => (version >= 0x151 ? 0x80 : 0x40);
 // A one-shot score with PCM ends once the engine has been silent this long
 // after its last event (or at the cap).
 const PCM_TAIL_SILENCE_SEC = 0.05;
 const PCM_TAIL_MAX_SEC = 30;
-const DATA_START = 0x40; // header is 0x40 bytes for version 1.50
 
 /**
  * Encode a captured register log into a VGM byte stream.
@@ -57,7 +60,7 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile()) {
   const endSample = secToSample(endSec);
   const loopSample = loopStartSec == null ? null : secToSample(loopStartSec);
 
-  const data = new ByteBuffer(DATA_START + writes.length * 3 + (dac ? dac.bytes.length * 2 : 0));
+  const data = new ByteBuffer(0x80 + writes.length * 3 + (dac ? dac.bytes.length * 2 : 0));
   let curSample = 0;
   let loopOffsetInData = null; // byte position of the loop command within `data`
 
@@ -258,6 +261,8 @@ export function renderVgm(player, meta = {}, pcm = null) {
 }
 
 function assembleVgm(data, gd3, target, { totalSamples, loopOffsetInData, loopSamples }) {
+  const version = vgmVersion(target);
+  const DATA_START = dataStartOf(version);
   const dataLen = data.length;
   const gd3Start = DATA_START + dataLen; // GD3 (if any) follows the data block
   const gd3Len = gd3 ? gd3.length : 0;
@@ -274,7 +279,7 @@ function assembleVgm(data, gd3, target, { totalSamples, loopOffsetInData, loopSa
   buf[2] = 0x6d;
   buf[3] = 0x20;
   u32(0x04, total - 0x04); // EOF offset (relative to 0x04)
-  u32(0x08, VGM_VERSION);
+  u32(0x08, version);
   u32(0x10, 0); // YM2413 clock
   u32(0x14, gd3 ? gd3Start - 0x14 : 0); // GD3 offset (relative to 0x14)
   u32(0x18, totalSamples);
@@ -294,7 +299,7 @@ function assembleVgm(data, gd3, target, { totalSamples, loopOffsetInData, loopSa
   for (const chip of Object.values(target.chips)) {
     const { clock, header = [] } = chip.vgm;
     for (const [at, size, value] of [[clock, 4, chip.clock], ...header]) {
-      if (at + size > DATA_START) throw new Error(`the ${chip.chip}'s VGM block is past a ${VGM_VERSION.toString(16)} header`);
+      if (at + size > DATA_START) throw new Error(`the ${chip.chip}'s VGM block is past a ${version.toString(16)} header`);
       if (size === 4) u32(at, value);
       else if (size === 2) u16(at, value);
       else buf[at] = value;
