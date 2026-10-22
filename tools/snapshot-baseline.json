@@ -687,17 +687,17 @@
  },
  "drv/tests/m4-csm-ops.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "f33fe5b3113dee8f",
-  "regs": "829815518a85a2ea",
-  "mmb": "5eac8311c18d435b",
-  "vgm": "98f4288da53714b2"
+  "ir": "b8d1a75407f0fe16",
+  "regs": "512b067b233658b4",
+  "mmb": "de672e71e2e0b12a",
+  "vgm": "d882afb706da5e77"
  },
  "drv/tests/m4-csm-ops.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "cabe1d7fda44a08e",
-  "regs": "829815518a85a2ea",
-  "mmb": "f0dbe748c40406e4",
-  "vgm": "98f4288da53714b2"
+  "ir": "f8e0ca7f0820d03b",
+  "regs": "512b067b233658b4",
+  "mmb": "7b8dee8e32756cc5",
+  "vgm": "d882afb706da5e77"
  },
  "drv/tests/m4-csm-rest-inline.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

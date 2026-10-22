@@ -3,7 +3,9 @@
 ; F-number and level — a formant — and the fm3-csm-rate track is the voice:
 ; its rates the pitch, its rest the breath, its end the voice's end. In CSM an
 ; operator's key is its level — TL on at its note, 127 at its gate or rest,
-; $28 never keys CH3 — and a :vol table shapes the formant frame by frame.
+; $28 never keys CH3 — a :vol table shapes the formant frame by frame, and a
+; level macro's release plays past the gate before the operator falls silent
+; (op1's second note), as a PSG note's does.
 (def-fm voice :alg 7 :fb 0
   :ar1 31 :rr1 15 :ks1 3 :tl1 20 :ml1 1
   :ar2 31 :rr2 15 :ks2 3 :tl2 24 :ml2 1
@@ -11,7 +13,7 @@
   :ar4 31 :rr4 15 :ks4 3 :tl4 36 :ml4 1)
 (fm3-csm :tempo 120 voice)
 (fm3-1 :oct 5 :len 4 :gate* 0.75
-  c (macro :vol [31 24 16 8]) c (macro none) _ :vol 24 c)
+  c (macro :vol [31 24 #sus 16 #rel 12 8 4]) c (macro none) _ :vol 24 c)
 (fm3-2 :oct 6 :len 2
   e (macro :pitch [0 40 80 40]) g (macro :pitch none))
 (fm3-3 :oct 6 :len 1 b ~ b)

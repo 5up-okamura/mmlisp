@@ -604,8 +604,15 @@ static void fm3_key_op(MMLSeq *s, int op, int on) {
   if (on) s->fm3_op_mask |= bit;
   else s->fm3_op_mask &= (uint8_t)~bit;
   /* CSM (driver.md §9): Timer A keys CH3 and $28 must hold no operator, so the
-   * operator's key is its level — its TL on, 127 off (fm3_op_tl). */
-  if (s->reg27 & 0x80) { write_fm3_op_tl(s, op); return; }
+   * operator's key is its level — its TL from the note, 127 off (fm3_op_tl).
+   * As a PSG note's (channel_off), a level macro's release is the decay: the
+   * operator sounds on through it and falls silent at its end (macro_sample). */
+  if (s->reg27 & 0x80) {
+    if (on) s->fm3_op_sound |= bit;
+    else if (!vel_release_pending(s, 15 + op)) s->fm3_op_sound &= (uint8_t)~bit;
+    write_fm3_op_tl(s, op);
+    return;
+  }
   ym_key(s, (uint8_t)(s->fm3_op_mask | 0x02)); /* ch2 key = 0x02 */
 }
 static void write_fm3_op_pitch(MMLSeq *s, int op, int note, int cents) {
@@ -684,8 +691,9 @@ static void channel_off(MMLSeq *s, int ch) {
  * a modulator it is its modulation depth, which is a level too (§13.4). */
 static uint8_t fm3_op_tl(const MMLSeq *s, int op) {
   int i = op - 1;
-  /* CSM: an operator off its note is held at TL 127 (driver.md §9). */
-  if ((s->reg27 & 0x80) && !(s->fm3_op_mask & (0x10 << i))) return 127;
+  /* CSM: an operator that is not sounding — or any, while a rate rest holds
+   * Timer A: the voice's breath — is held at TL 127 (driver.md §9). */
+  if ((s->reg27 & 0x80) && (s->csm_hold || !(s->fm3_op_sound & (0x10 << i)))) return 127;
   uint8_t voiced = s->fm[2].ops[i].voiced_tl;
   int k = op_velk(s->fm[2].velk1[i], 1); /* the role's own is 16 on every operator here */
   int faders4 = MML_VOL_TL4[s->fm3_op_vol[i]] + MML_VOL_TL4[s->fm[2].vol] + MML_VOL_TL4[s->master];
@@ -1066,8 +1074,22 @@ static void set_reg27(MMLSeq *s, uint8_t value) {
    * rests, and the next rate starts it. Leaving CSM ends the hold. */
   if (!(value & 0x80)) s->csm_hold = 0;
   value = (uint8_t)((value & ~0x01) | ((value & 0x80) && !s->csm_hold ? 0x01 : 0));
+  /* Leaving CSM with the operators as tracks silences them: their key was
+   * their level, and no key-off reaches an operator Timer A keyed — with a
+   * slow RR it would ring on at its last level (§9). */
+  if ((s->reg27 & 0x80) && !(value & 0x80) && s->fm3_ops) {
+    s->fm3_op_sound = 0;
+    for (int op = 0; op < 4; op++) {
+      s->fm[2].ops[op].tl = 127;
+      ym(s, 0, (uint8_t)(0x40 + MML_OP_ADDR_OFFSET[op] + 2), 127);
+    }
+  }
+  /* With the operators as tracks, the hold is also the formants' silence
+   * (fm3_op_tl): their levels follow LOAD A up and down. */
+  int breath = s->fm3_ops && (value & 0x80) && ((s->reg27 ^ value) & 0x01);
   s->reg27 = value;
   ym(s, 0, 0x27, s->reg27);
+  if (breath) recompose_fm3_ops(s);
 }
 static void write_timer_a(MMLSeq *s, int period) {
   ym(s, 0, 0x24, (uint8_t)((period >> 2) & 0xff));
@@ -1399,7 +1421,12 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *d, 
   if (sl->state == MML_MACRO_HOLD) return 0; /* one-shot: hold, await key-off */
   if (sl->state == MML_MACRO_TAIL) {
     if (d->target == T_KEYON) channel_off(s, ch); /* the echo tail's last tap ends */
-    else if (!keyed && s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
+    else if (!keyed && ch >= 6 && ch < 10 && s->psg[ch - 6].sounding) write_psg_att(s, ch - 6, 15);
+    else if (!keyed && fm3_op_for(s, ch)) { /* a CSM operator's release was its decay (§9) */
+      int op = fm3_op_for(s, ch);
+      s->fm3_op_sound &= (uint8_t)~(0x10 << (op - 1));
+      write_fm3_op_tl(s, op);
+    }
     return 1;
   }
 
@@ -1453,7 +1480,8 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *d, 
       /* A PSG level release was the decay: silence the channel a step on. A
        * KEYON release (an echo tail) re-keyed the channel: key it off a step
        * after its last tap, as the note's gate would. */
-      if (((d->target == T_VEL || d->target == T_VOL) && ch >= 6 && ch < 10 && !keyed) ||
+      if (((d->target == T_VEL || d->target == T_VOL) && !keyed &&
+           ((ch >= 6 && ch < 10) || (fm3_op_for(s, ch) && (s->reg27 & 0x80)))) ||
           d->target == T_KEYON) {
         sl->state = MML_MACRO_TAIL;
         return 0;

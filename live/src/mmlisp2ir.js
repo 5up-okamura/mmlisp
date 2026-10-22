@@ -6300,6 +6300,13 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
 
   const hasCompanionCsmRateTrack = channelHeads.has("fm3-csm-rate");
   let hasInlineCsmRate = false;
+  // A stream that ends in `(go label)` never reaches its end: its CSM_OFF
+  // would be unreachable on the driver and, in the preview — which runs a
+  // track's events to their end before it loops — turn CSM off every pass.
+  const endsInLoop = (events) => {
+    const last = events[events.length - 1];
+    return !!last && last.cmd === "JUMP" && last.args?.repeat == null;
+  };
   const trackByKey = new Map();
   const trackOrder = [];
   const loopCounter = { count: 0 };
@@ -6397,7 +6404,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     // Surface bar markers (| … |) for the editor — inspection metadata only.
     if (trackState.bars?.length) trackData.bars = trackState.bars;
 
-    if (trackState.isCsmTrack && trackState.hasCsmOn) {
+    if (trackState.isCsmTrack && trackState.hasCsmOn && !endsInLoop(trackData.events)) {
       trackData.events.push({
         tick: trackState.tick,
         cmd: "CSM_OFF",
@@ -6422,7 +6429,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         { tick: 0, cmd: "CSM_ON", args: {}, src },
         { tick: 0, cmd: "CSM_RATE", args: { run: false }, src },
       );
-      trackData.events.push({ tick: trackState.tick, cmd: "CSM_OFF", args: {}, src });
+      if (!endsInLoop(trackData.events))
+        trackData.events.push({ tick: trackState.tick, cmd: "CSM_OFF", args: {}, src });
     }
   }
 

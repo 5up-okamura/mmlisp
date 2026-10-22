@@ -295,9 +295,9 @@
   },
   "m4-csm-ops.mmlisp": {
     "ok": false,
-    "mismatches": 44,
+    "mismatches": 46,
     "compileErrors": 0,
-    "digest": "e7d2f769"
+    "digest": "9287e671"
   },
   "m4-csm-rest-inline.mmlisp": {
     "ok": true,

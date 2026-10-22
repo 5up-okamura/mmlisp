@@ -516,6 +516,7 @@ export class DrvPlayer {
     this._fm3Ops = false; // CH3's operators are tracks of their own (FM3_MODE 1 / 3)
     this._csmRateSweep = null; // swept Timer A period (driver.md §9)
     this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
+    this._fm3OpSound = 0; // CSM: the operators sounding — from the note to its gate or, with a level macro's release, to its end (§9)
     this._csmHold = false; // a rate rest stopped Timer A: LOAD A low, CSM on (§9)
     // FM3 independent-OP: each operator's own note and sticky :pitch offset
     // (index = op − 1); in special mode the operator's F-number is written from
@@ -911,8 +912,16 @@ export class DrvPlayer {
     if (on) this._fm3OpMask |= bit;
     else this._fm3OpMask &= ~bit;
     // CSM (driver.md §9): Timer A keys CH3 and $28 must hold no operator, so
-    // the operator's key is its level — its TL on, 127 off (_fm3OpTl).
-    if (this._reg27 & 0x80) { this._writeFm3OpTl(op); return; }
+    // the operator's key is its level — its TL from the note, 127 off
+    // (_fm3OpTl). As a PSG note's (_channelOff), a level macro's release is
+    // the decay: the operator sounds on through it and falls silent at its
+    // end (_macroSample).
+    if (this._reg27 & 0x80) {
+      if (on) this._fm3OpSound |= bit;
+      else if (!this._velReleasePending(15 + op)) this._fm3OpSound &= ~bit;
+      this._writeFm3OpTl(op);
+      return;
+    }
     this._ymKey(this._fm3OpMask | 0x02); // ch2 key = 0x02
   }
 
@@ -926,8 +935,9 @@ export class DrvPlayer {
   // in this mode is 16 on every operator.
   _fm3OpTl(op) {
     const i = op - 1;
-    // CSM: an operator off its note is held at TL 127 (driver.md §9).
-    if (this._reg27 & 0x80 && !(this._fm3OpMask & (0x10 << i))) return 127;
+    // CSM: an operator that is not sounding — or any, while a rate rest holds
+    // Timer A: the voice's breath — is held at TL 127 (driver.md §9).
+    if (this._reg27 & 0x80 && (this._csmHold || !(this._fm3OpSound & (0x10 << i)))) return 127;
     const { velTl4, volTl4 } = this._luts;
     const o = this._fm[2].ops[i];
     const k = this._velK(o, true);
@@ -2204,7 +2214,12 @@ export class DrvPlayer {
     if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
     if (slot.state === "tail") {
       if (d.target === TARGET_ID.KEYON) this._channelOff(ch); // the echo tail's last tap ends
-      else if (!keyed && this._psg[ch - 6].sounding) this._writePsgAtt(ch - 6, 15);
+      else if (!keyed && ch >= 6 && ch < 10 && this._psg[ch - 6].sounding) this._writePsgAtt(ch - 6, 15);
+      else if (!keyed && this._fm3OpFor(ch)) { // a CSM operator's release was its decay (§9)
+        const op = this._fm3OpFor(ch);
+        this._fm3OpSound &= ~(0x10 << (op - 1));
+        this._writeFm3OpTl(op);
+      }
       return true;
     }
     let v = d.values[slot.cursor];
@@ -2263,7 +2278,8 @@ export class DrvPlayer {
         // channel a step on (the "tail" state).
         // A KEYON release (an echo tail) re-keyed the channel: key it off a
         // step after its last tap, as the note's gate would.
-        if (((d.target === TARGET_ID.VEL || d.target === TARGET_ID.VOL) && ch >= 6 && ch < 10 && !keyed) ||
+        if (((d.target === TARGET_ID.VEL || d.target === TARGET_ID.VOL) && !keyed &&
+             ((ch >= 6 && ch < 10) || (this._fm3OpFor(ch) && this._reg27 & 0x80))) ||
             d.target === TARGET_ID.KEYON) {
           slot.state = "tail";
           return false;
@@ -2348,8 +2364,23 @@ export class DrvPlayer {
     // CSM ends the hold.
     const v = value & 0xff;
     if (!(v & 0x80)) this._csmHold = false;
-    this._reg27 = (v & ~0x01) | (v & 0x80 && !this._csmHold ? 0x01 : 0);
+    const next = (v & ~0x01) | (v & 0x80 && !this._csmHold ? 0x01 : 0);
+    // Leaving CSM with the operators as tracks silences them: their key was
+    // their level, and no key-off reaches an operator Timer A keyed — with a
+    // slow RR it would ring on at its last level (driver.md §9).
+    if (this._reg27 & 0x80 && !(next & 0x80) && this._fm3Ops) {
+      this._fm3OpSound = 0;
+      for (let op = 0; op < 4; op++) {
+        this._fm[2].ops[op].tl = 127;
+        this._ym(0, 0x40 + OP_ADDR_OFFSET[op] + 2, 127);
+      }
+    }
+    // With the operators as tracks, the hold is also the formants' silence
+    // (_fm3OpTl): their levels follow LOAD A up and down.
+    const breath = this._fm3Ops && next & 0x80 && (this._reg27 ^ next) & 0x01;
+    this._reg27 = next;
     this._ym(0, 0x27, this._reg27);
+    if (breath) this._recomposeFm3Ops();
   }
 
   _writeTimerA(period) {

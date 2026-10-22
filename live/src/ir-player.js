@@ -467,7 +467,13 @@ export class IRPlayer {
       this._psgSetAtt(psgCh, 15);
     }
     // CSM keys CH3 from Timer A, which no key-off reaches: clear the mode
-    // and the timer, or a stopped CSM voice keeps buzzing.
+    // and the timer, or a stopped CSM voice keeps buzzing. Its operators were
+    // never keyed through $28 either, so a key-off starts no release for
+    // them: with a slow RR (a held formant) they would ring on at their last
+    // level — their key is their TL (driver.md §9), so that is what stops them.
+    if (this._reg27 & 0x80)
+      for (let op = 0; op < 4; op++) this._write(0, 0x40 + OP_ADDR_OFFSET[op] + 2, 127);
+    this._fm3TlQueue = [];
     this._reg27 = 0;
     this._fm3Ops = false;
     this._write(0, 0x27, 0);
@@ -1766,6 +1772,15 @@ export class IRPlayer {
     if (!(next & 0x80)) this._csmHold = false;
     next = (next & ~0x01) | (next & 0x80 && !this._csmHold ? 0x01 : 0);
     if (next === this._reg27) return;
+    // Leaving CSM with the operators as tracks silences them: their key was
+    // their level, and no key-off reaches an operator Timer A keyed — with a
+    // slow RR it would ring on at its last level (driver.md §9).
+    if (this._reg27 & 0x80 && !(next & 0x80) && this._fm3Ops) {
+      for (let op = 0; op < 4; op++) {
+        this._fm3Op[op].csmOff = Math.min(this._fm3Op[op].csmOff ?? Infinity, when);
+        this._write(0, 0x40 + OP_ADDR_OFFSET[op] + 2, 127, when);
+      }
+    }
     this._reg27 = next;
     this._writeReg27(when);
   }
@@ -1818,7 +1833,18 @@ export class IRPlayer {
   _writeFm3OpTl(op, when, over = {}) {
     const o = this._chRegs[2].ops[op - 1];
     o.tl = this._fm3OpTl(op, when, over);
+    // Under CSM an operator's level is its key, and a rest on the rate track
+    // dispatched after this note silences it through the rest (driver.md §9):
+    // the write waits in a queue until no later dispatch can reach its frame
+    // (_flushFm3Keys), where a rest spanning it turns it into 127.
+    if (this._reg27 & 0x80 && this._fm3Ops && when !== undefined) {
+      this._fm3TlQueue.push({ t: when, frame: this._eventFrame(when), seq: this._fm3TlSeq++, op, tl: o.tl });
+      return;
+    }
     this._write(0, 0x40 + OP_ADDR_OFFSET[op - 1] + 2, o.tl, when);
+  }
+  _inCsmHold(t) {
+    return this._csmHoldSpans.some(([a, b]) => t >= a - 1e-9 && t < b - 1e-9);
   }
 
   // A channel's levels at `when`, from the LIVE vel / vol (its note's level
@@ -1942,6 +1968,9 @@ export class IRPlayer {
   // no later dispatch can add to their frame (_flushFm3Keys), so the preview
   // writes the driver's mask sequence.
   _resetFm3Keys() {
+    this._fm3TlQueue = []; // CSM operators' level writes, flushed with the key edges
+    this._fm3TlSeq = 0;
+    this._csmHoldSpans = []; // [start, end) in audio time: the rate track's rests
     this._fm3KeyQueue = [];
     this._fm3Mask = 0; // the operator bits $28 holds
     this._fm3Held = 0; // operators keyed by a hold (len 0) note
@@ -1987,18 +2016,31 @@ export class IRPlayer {
   // Write the queued FM3 key edges of every frame up to `uptoFrame`.
   _flushFm3Keys(uptoFrame = Infinity) {
     const q = this._fm3KeyQueue;
-    if (q.length === 0) return;
-    q.sort(fm3KeyOrder);
-    let n = 0;
-    for (; n < q.length && q[n].frame <= uptoFrame; n++) {
-      const e = q[n];
-      if (e.on) this._fm3Mask |= e.bit;
-      else this._fm3Mask &= ~e.bit;
-      // Never behind the previous write: the worklet applies them in time order.
-      this._fm3KeyLast = Math.max(e.t, this._fm3KeyLast);
-      this._write(0, 0x28, this._fm3Mask | 0x02, this._fm3KeyLast);
+    if (q.length) {
+      q.sort(fm3KeyOrder);
+      let n = 0;
+      for (; n < q.length && q[n].frame <= uptoFrame; n++) {
+        const e = q[n];
+        if (e.on) this._fm3Mask |= e.bit;
+        else this._fm3Mask &= ~e.bit;
+        // Never behind the previous write: the worklet applies them in time order.
+        this._fm3KeyLast = Math.max(e.t, this._fm3KeyLast);
+        this._write(0, 0x28, this._fm3Mask | 0x02, this._fm3KeyLast);
+      }
+      q.splice(0, n);
     }
-    q.splice(0, n);
+    // CSM operators' levels (_writeFm3OpTl): a rest on the rate track that
+    // spans a write silences it.
+    const tq = this._fm3TlQueue;
+    if (tq.length) {
+      tq.sort((a, b) => a.frame - b.frame || a.t - b.t || a.seq - b.seq);
+      let n = 0;
+      for (; n < tq.length && tq[n].frame <= uptoFrame; n++) {
+        const e = tq[n];
+        this._write(0, 0x40 + OP_ADDR_OFFSET[e.op - 1] + 2, this._inCsmHold(e.t) ? 127 : e.tl, e.t);
+      }
+      tq.splice(0, n);
+    }
   }
 
   _applyCsmRate(ev, when) {
@@ -2006,7 +2048,17 @@ export class IRPlayer {
     // form, starts it again at the period it has (driver.md §9).
     const run = ev.args?.run;
     if (run !== undefined || this._csmHold) {
+      const held = this._csmHold;
       this._csmHold = run === false;
+      // With the operators as tracks the rest is the voice's breath: the
+      // formants fall silent with Timer A and come back with it (driver.md
+      // §9) — a span the queued level writes read (_flushFm3Keys), and an
+      // edge of their own here.
+      if (this._fm3Ops && this._csmHold !== held) {
+        if (this._csmHold) this._csmHoldSpans.push([when, Infinity]);
+        else if (this._csmHoldSpans.length) this._csmHoldSpans[this._csmHoldSpans.length - 1][1] = when;
+        for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, when);
+      }
       this._setReg27State({}, when);
       if (run !== undefined) return;
     }
@@ -2226,14 +2278,7 @@ export class IRPlayer {
         // (driver.md §13.2) — while its :pitch / :semi (scheduled above) and
         // :pan run on.
         this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, gateTicks, macroLimit);
-        let levelLines = this._levelMacroLines(ev.args ?? {}, when, gateTicks, macroLimit);
-        if (isFm3OpNote && this._reg27 & 0x80 && gateTicks > 0) {
-          // CSM holds the operator at TL 127 past its gate (driver.md §9): a
-          // release region has nothing to move.
-          const end = this._timeAfterTicks(when, gateTicks) - 1e-6;
-          const clip = (l) => l && l.filter(([, t]) => t < end);
-          levelLines = { vel: clip(levelLines.vel), vol: clip(levelLines.vol) };
-        }
+        const levelLines = this._levelMacroLines(ev.args ?? {}, when, gateTicks, macroLimit);
         if (isFm3OpNote) this._fm3LevelLines[fm3Op - 1] = levelLines;
         else this._fmLevelLines[ch] = levelLines;
         this._scheduleFmLevelMacros(ch, fm3Op, levelLines);
@@ -2300,13 +2345,18 @@ export class IRPlayer {
           }
           if (isFm3OpNote && this._reg27 & 0x80) {
             // CSM: Timer A keys CH3 (driver.md §9), so the operator's key is
-            // its level — on at its note (written above), TL 127 at its gate;
-            // a hold note is released by triggerKeyOff. A :keyon retrigger is
+            // its level — on at its note (written above), TL 127 at its gate
+            // or, as a PSG note, after its level macros' release has played
+            // (a tail the next note cuts leaves the level to that note); a
+            // hold note is released by triggerKeyOff. A :keyon retrigger is
             // moot: every Timer A overflow is one.
-            this._fm3Op[fm3Op - 1].csmOff = offWhen ?? Infinity;
-            if (offWhen == null) this._fm3Held |= keyMask & 0xf0;
-            else this._write(0, 0x40 + OP_ADDR_OFFSET[fm3Op - 1] + 2, 127,
-              Math.max(when, offWhen - KEY_ORDER_EPS_SECS));
+            const lines = this._fm3LevelLines[fm3Op - 1];
+            const ends = [lines?.vel?.end, lines?.vol?.end].filter((e) => e != null);
+            const muteAt = offWhen == null ? null : Math.max(offWhen, ...ends);
+            this._fm3Op[fm3Op - 1].csmOff = muteAt ?? Infinity;
+            if (muteAt == null) this._fm3Held |= keyMask & 0xf0;
+            else if (muteAt < macroLimit - 1e-9)
+              this._write(0, 0x40 + OP_ADDR_OFFSET[fm3Op - 1] + 2, 127, Math.max(when, muteAt - KEY_ORDER_EPS_SECS));
           } else if (isFm3OpNote) {
             // Merge this operator's key with the other FM3 operators sharing
             // channel 3's 0x28 register instead of overwriting them. A :keyon
@@ -4382,7 +4432,9 @@ export class IRPlayer {
       const onSeq = this._onSeq;
       this._onSeq = null; // a dry run: no UI callbacks
       try {
-        this._scheduleMacro(spec, noteFrames, gateSecs, when,
+        // ...and when the level is done: after the last release write, else
+        // at the gate (a CSM operator falls silent there, driver.md §9).
+        out.end = this._scheduleMacro(spec, noteFrames, gateSecs, when,
           (v, t) => out.push([clampForTarget(target, v), t]),
           this._stepSecs(spec.step), limitSecs);
       } finally {

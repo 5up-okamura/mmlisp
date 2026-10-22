@@ -1022,8 +1022,16 @@ The rate of overflows is the pitch; where the operators ring is the formant.
   tracks: `fm3_ops`. An operator's key is then its level — `$28` must hold no
   operator for Timer A to key it — so `fm3_key_op` writes the operator's TL
   instead of `$28`: composed on, 127 off, and `fm3_op_tl` returns 127 for an
-  operator off its note whatever recomposes it (a level macro's release, the
-  group fader, master). Gate: `m4-csm-ops`.
+  operator that is not sounding (`fm3_op_sound`) whatever recomposes it (the
+  group fader, master). As on a PSG note, a `:vel` / `:vol` macro's release
+  is the decay: a key-off with a release pending leaves the operator sounding,
+  the release's samples write its TL, and a step after the last it falls
+  silent (the macro's TAIL state, as the PSG's). A rest on the rate track is
+  the voice's breath: with the operators as tracks the hold (`csm_hold`, LOAD A
+  low) also holds every operator at 127, and the next rate recomposes them
+  (`set_reg27` recomposes on a LOAD A edge). Leaving CSM (`CSM_OFF`, a stop)
+  silences the four operators the same way: no key-off reaches an operator
+  Timer A keyed, and with a slow RR it would ring on. Gate: `m4-csm-ops`.
 - The sequencer's invariant: `MMLisp_stopTrack` (and END_OF_TRACK, and the stop
   side of `MMLisp_fadeTrack`) on the track that turned CSM on (its CSM_ON)
   clears the CSM bits in reg `$27`, so stopping never leaves the chip in CSM

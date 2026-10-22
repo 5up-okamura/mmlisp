@@ -1777,14 +1777,20 @@ is `E_FM3_MODE_CONFLICT`), `fm3-1`–`fm3-4` each drive one operator exactly
 as in independent-operator mode — its F-number from the notes, `:pitch` and
 the pitch macros, its level from `:vel`/`:vol` and their macros — and the
 `fm3-csm-rate` track is the voice itself: its rates are the pitch, a rest on
-it a breath, and the buzz plays exactly while it plays (the mode turns on at
-its start and off at its end). It is the one rate source here: an inline
+it a breath — Timer A holds and the formants fall silent until the next rate —
+and the buzz plays exactly while it plays (the mode turns on at its start and
+off at its end). It is the one rate source here: an inline
 `:csm-rate` is `E_CSM_RATE_SOURCE_CONFLICT`, no rate track
 `E_CSM_RATE_MISSING`.
 
 Timer A keys the channel, so an operator's key is its level: a note turns the
 operator's TL on, its gate (or a rest) turns it to 127, and a `:vol` table
-shapes the formant frame by frame. Each operator sounds for one Timer A period
+shapes the formant frame by frame. As on a PSG note, a `:vel` / `:vol` macro's
+release plays past the gate and the operator falls silent at its end — so a
+phrase written `[onset… #sus vowel #rel tail…]` holds its vowel for the gate
+and keeps its tail: a longer note is a longer vowel. When the rate track ends,
+or the song stops, the operators fall silent with it — no key-off reaches an
+operator Timer A keyed, and a slow RR (a held formant) would ring on. Each operator sounds for one Timer A period
 and decays at its own RR — a fast release (`:rr 15`, `:ks 3`) is a wide
 formant, a slow one a narrow, ringing one. `:keyon` has no meaning here:
 every Timer A overflow is a retrigger.
