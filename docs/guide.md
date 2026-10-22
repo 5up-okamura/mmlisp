@@ -1575,8 +1575,16 @@ under the modal.
 
 Give it one note, from its start, with little else under it: the first 0.8 s
 is read. Simple tones (bass, electric piano, bell, organ) come close; a
-complex one (strings, a voice, anything with noise in it) comes out as a
-starting point to adjust. A search takes some 10–20 seconds.
+complex one (strings, a voice) comes out as a starting point to adjust. A
+search takes some 10–20 seconds.
+
+A sound with no pitch — a hat, a snare, a clap, a cymbal — is read as a
+noise. FM makes noise from an operator fed back on itself near the top of
+its range, so the search then looks for the note it plays at as well, and
+compares the sounds by their colour (the spectrum smoothed across
+neighbouring bands) rather than by lines a noise does not have. Its voice
+comes out with that note as `:key`, as the `presets/fm-drums` voices do: c4
+plays it as found, other notes retune it.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM
 

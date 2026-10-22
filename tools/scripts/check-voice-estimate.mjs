@@ -3,7 +3,8 @@
 // its pitch, come within a few dB of it on a short budget, and write a def-fm
 // that compiles. The model itself is held to Nuked by the A/B of a sine and a
 // feedback saw (exact rules, so near-zero error). No recording is kept in the
-// repository.
+// repository. A hiss must be read as a noise and come out with its note as
+// :key.
 import { renderModel, RATE } from "../../live/src/fm-model.js";
 import { estimateVoice, features, distance, patchToDef, patchToRegs } from "../../live/src/voice-estimate.js";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
@@ -63,8 +64,20 @@ if (errs.length) fails.push(`def-fm: ${errs.map((e) => e.code + " " + e.message)
 const regs = patchToRegs(best.patch);
 if (regs.ops.length !== 4 || regs.algorithm !== best.patch.alg) fails.push("regs");
 
+// a noise: no pitch read, the note searched, the voice written with :key
+let seed = 7;
+const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296) * 2 - 1;
+const hiss = Float32Array.from({ length: Math.round(0.15 * RATE) }, (_, i) => rnd() * Math.exp(-i / (0.04 * RATE)) * 0.5);
+const n = estimateVoice(hiss, RATE, { stage1: 80, stage2: 120, ils: 120 });
+if (!n.noisy) fails.push(`a hiss read as pitched (clarity ${n.pitch.clarity.toFixed(2)})`);
+const nb = n.candidates[0];
+const ndef = patchToDef(nb.patch, "hiss.wav", nb.note, "hiss.wav", n.noisy);
+if (!/ :key \d+/.test(ndef)) fails.push("a noise's def-fm has no :key");
+const nc = compileMMLisp(`${ndef}\n(fm1 hiss c)`, "check.mmlisp");
+if (nc.diagnostics.some((x) => x.severity === "error")) fails.push("a noise's def-fm does not compile");
+
 if (fails.length) {
   console.error("FM voice estimate checks FAILED:\n  " + fails.join("\n  "));
   process.exit(1);
 }
-console.log(`FM voice estimate checks passed: model ≡ Nuked, pitch g3, best alg ${best.patch.alg} at ${d.toFixed(2)} dB, def-fm compiles (${secs.toFixed(1)} s)`);
+console.log(`FM voice estimate checks passed: model ≡ Nuked, pitch g3, best alg ${best.patch.alg} at ${d.toFixed(2)} dB, def-fm compiles; a hiss read as a noise, its voice at :key ${nb.note.midi} (${secs.toFixed(1)} s)`);

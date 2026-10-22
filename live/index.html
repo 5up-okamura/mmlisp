@@ -848,7 +848,7 @@
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
     import { analyzeSound, defaultResynthOptions, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
-    import { patchToRegs, patchToDef } from './src/voice-estimate.js';
+    import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/voice-estimate.js';
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
@@ -3489,7 +3489,8 @@
       $('fmvCancel').focus(); // Esc reaches the modal
       insert.onclick = () => {
         if (!chosen) return;
-        const def = patchToDef(chosen.patch, file.name, prep.pitch, file.name);
+        // a noise's voice keeps the note it was found at as :key, whichever search found it
+        const def = patchToDef(chosen.patch, file.name, chosen.note, file.name, prep.noisy);
         close();
         insertImportedInstruments(def, [], `FM voice from ${file.name}: alg ${chosen.patch.alg}`, { tag: 'FM Voice' });
       };
@@ -3497,12 +3498,14 @@
         prep = await pool.run('prepare', { data, sampleRate });
         if (run.cancelled) return;
         const NAMES = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
-        const note = `${NAMES[prep.pitch.midi % 12]}${Math.floor(prep.pitch.midi / 12) - 1}` +
+        // a noise has no pitch: each candidate plays at the note its search found (:key)
+        const note = prep.noisy ? 'no pitch (a noise)' : `${NAMES[prep.pitch.midi % 12]}${Math.floor(prep.pitch.midi / 12) - 1}` +
           (prep.pitch.cents ? ` ${prep.pitch.cents > 0 ? '+' : ''}${prep.pitch.cents}¢` : '');
         const dur = prep.target.length / FM_MODEL_RATE;
         let s = 0; for (const v of prep.target) s += v * v;
         const rms = Math.min(0.25, Math.sqrt(s / prep.target.length) || 0.1);
-        $('fmvSummary').textContent = `${dur.toFixed(2)} s read at ${note}. Searching the eight algorithms…`;
+        const read = prep.noisy ? `${dur.toFixed(2)} s, ${note}` : `${dur.toFixed(2)} s read at ${note}`;
+        $('fmvSummary').textContent = `${read}. Searching the eight algorithms${prep.noisy ? ', as a noise and as a pitch' : ''}…`;
         // the recording's row, playable at once
         const row = (label, onPlay) => {
           const r = document.createElement('div');
@@ -3516,34 +3519,34 @@
           return r;
         };
         row('the recording', () => fmVoicePlay(prep.target, FM_MODEL_RATE, rms));
-        const total = 8 + 3 * Math.max(1, Math.floor(pool.size / 3));
+        const tasks = searchTasks(prep);
+        const total = tasks.length + 3 * Math.max(1, Math.floor(pool.size / 3));
         let done = 0;
         const tick = () => { done++; bar.style.width = `${Math.round((100 * done) / total)}%`; };
-        const s1 = await Promise.all([0, 1, 2, 3, 4, 5, 6, 7].map((alg) =>
-          pool.run('search', { ...prep, alg }).then((r) => { tick(); return r; })));
+        const s1 = await Promise.all(tasks.map((args) => pool.run('search', args).then((r) => { tick(); return r; })));
         if (run.cancelled) return;
-        s1.sort((a, b) => a.pop[0].d - b.pop[0].d);
-        $('fmvSummary').textContent = `${dur.toFixed(2)} s read at ${note}. Refining the best three…`;
+        $('fmvSummary').textContent = `${read}. Refining the best three…`;
         const seeds = Array.from({ length: Math.max(1, Math.floor(pool.size / 3)) }, (_, i) => i + 1);
-        candidates = await Promise.all(s1.slice(0, 3).map(async (st) => {
+        candidates = await Promise.all(refineTasks(prep, s1, 3).map(async (args) => {
           const tries = await Promise.all(seeds.map((seed) =>
-            pool.run('refine', { ...prep, alg: st.alg, pop: st.pop, seed }).then((r) => { tick(); return r; })));
+            pool.run('refine', { ...args, seed }).then((r) => { tick(); return r; })));
           return tries.sort((a, b) => a.d - b.d)[0];
         }));
         if (run.cancelled) return;
         pool.close();
-        candidates.sort((a, b) => a.d - b.d);
+        candidates = rankCandidates(prep, candidates);
         $('fmvProgress').hidden = true;
-        $('fmvSummary').textContent = `${dur.toFixed(2)} s read at ${note}. Three candidates, nearest first: ▶ hears one against the recording, and the keys play the one chosen.`;
+        $('fmvSummary').textContent = `${read}. Three candidates, nearest first: ▶ hears one against the recording, and the keys play the one chosen` +
+          (prep.noisy ? ' — c4 as found, each at its own :key.' : '.');
         const pick = (c, r) => {
           chosen = c;
           for (const x of rows.querySelectorAll('.fmv-row')) x.classList.toggle('chosen', x === r);
-          _fmVoiceAudition = { name: `candidate alg ${c.patch.alg}`, regs: patchToRegs(c.patch) };
+          _fmVoiceAudition = { name: `candidate alg ${c.patch.alg}`, regs: patchToRegs(c.patch, prep.noisy ? c.note.midi : undefined) };
           updateKeyboardUiState();
           insert.disabled = false;
         };
         candidates.forEach((c, i) => {
-          const sound = renderModel(c.patch, prep.pitch.midi, prep.pitch.cents, dur, dur);
+          const sound = renderModel(c.patch, c.note.midi, c.note.cents, dur, dur);
           const r = row(`${i + 1} · alg ${c.patch.alg} · fb ${c.patch.fb} · ${c.d.toFixed(1)} dB`, () => { pick(c, r); fmVoicePlay(sound, FM_MODEL_RATE, rms); });
           r.classList.add('fmv-candidate');
           r.onclick = () => pick(c, r);

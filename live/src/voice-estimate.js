@@ -96,6 +96,19 @@ export function distance(A, B) {
 // The search's distance: the same log-band error, but each band's error is
 // floored at the frame's own peak − 50 dB (what cannot be heard under the
 // rest does not pull), and the first frames — the attack — weigh triple.
+// A noise's spectrum compared as its colour, not its lines: each band's energy
+// averaged with its three neighbours either side.
+export function smoothBands(A, half = 3) {
+  const spec = new Float64Array(A.spec.length);
+  for (let f = 0; f < A.frames; f++)
+    for (let b = 0; b < BANDS; b++) {
+      let e = 0, n = 0;
+      for (let k = Math.max(0, b - half); k <= Math.min(BANDS - 1, b + half); k++) { e += A.spec[f * BANDS + k]; n++; }
+      spec[f * BANDS + b] = e / n;
+    }
+  return { frames: A.frames, spec, loud: A.loud };
+}
+
 export function searchDistance(A, B) {
   const F = Math.min(A.frames, B.frames);
   let sa = 0, sb = 0;
@@ -154,17 +167,26 @@ export function estimatePitch(x) {
   return null;
 }
 
+const NOTE_RANGE = [24, 108]; // where a noise's note may go
 const FIELDS = { ml: [0, 15], tl: [0, 127], ar: [0, 31], dr: [0, 31], sr: [0, 31], sl: [0, 15], ks: [0, 3] };
 const clamp = (v, [a, b]) => Math.max(a, Math.min(b, Math.round(v)));
-const clone = (g) => ({ alg: g.alg, fb: g.fb, ops: g.ops.map((o) => ({ ...o })) });
+const clone = (g) => ({ alg: g.alg, fb: g.fb, note: g.note, ops: g.ops.map((o) => ({ ...o })) });
 const full = (g) => ({ alg: g.alg, fb: g.fb, ops: g.ops.map((o) => ({ ...o, rr: o.rr ?? 7, dt: 0 })) });
 
-export function makeEvaluator(target, midi, cents) {
+// `noisy`: a sound with no pitch (a hat, a snare). The note the patch plays
+// is then searched too (the genome's `note`, starting at `midi`), and the
+// spectra are compared by their colour (smoothBands).
+export function makeEvaluator(target, midi, cents, noisy = false, notes = [midi]) {
   const dur = target.length / RATE;
   const tf = features(target);
+  const ref = noisy ? smoothBands(tf) : tf;
   let evals = 0;
-  const evaluate = (g) => { evals++; return searchDistance(tf, features(renderModel(full(g), midi, cents, dur, dur))); };
-  return { evaluate, tf, dur, count: () => evals };
+  const evaluate = (g) => {
+    evals++;
+    const f = features(renderModel(full(g), g.note ?? midi, g.note != null ? 0 : cents, dur, dur));
+    return searchDistance(ref, noisy ? smoothBands(f) : f);
+  };
+  return { evaluate, tf, dur, noisy, notes, count: () => evals };
 }
 
 // the loudness contour alone, on one sine carrier: AR, DR, SL, SR by coordinate descent
@@ -192,11 +214,16 @@ export function fitEnvelope(ev, midi, cents) {
   return e;
 }
 
-function randomGenome(alg, env, R) {
+function randomGenome(alg, env, R, ev = {}) {
   const car = CARRIERS[alg];
   const pick = (a) => a[Math.floor(R() * a.length)];
   return {
-    alg, fb: Math.floor(R() * 8),
+    alg,
+    // a noise needs an operator in chaos: feedback near the top, mostly
+    fb: ev.noisy && R() < 0.7 ? 5 + Math.floor(R() * 3) : Math.floor(R() * 8),
+    // from one of the starting notes (the spectral centroid's, the one the
+    // autocorrelation picked), within an octave either side
+    note: ev.noisy ? clamp(ev.notes[Math.floor(R() * ev.notes.length)] + (R() - 0.5) * 24, NOTE_RANGE) : undefined,
     ops: [0, 1, 2, 3].map((k) => {
       const isC = car.includes(k);
       const jit = (v, s, r) => clamp(v + (R() - 0.5) * 2 * s, r);
@@ -219,6 +246,7 @@ function mutate(g, R) {
   // one field, then each further one with even odds: mostly small moves
   do {
     if (R() < 0.06) { c.fb = clamp(c.fb + (R() < 0.5 ? -1 : 1), [0, 7]); continue; }
+    if (c.note != null && R() < 0.08) { c.note = clamp(c.note + (R() < 0.3 ? (R() < 0.5 ? -12 : 12) : Math.round((R() - 0.5) * 8) || 1), NOTE_RANGE); continue; }
     const o = c.ops[Math.floor(R() * 4)], k = keys[Math.floor(R() * keys.length)];
     const step = Math.round((R() - 0.5) * 2 * sd[k]) || (R() < 0.5 ? -1 : 1);
     o[k] = k === "ml" && R() < 0.3 ? Math.floor(R() * 16) : clamp(o[k] + step, FIELDS[k]);
@@ -228,13 +256,14 @@ function mutate(g, R) {
 function cross(a, b, R) {
   const c = clone(a);
   if (R() < 0.5) c.fb = b.fb;
+  if (c.note != null && R() < 0.5) c.note = b.note;
   for (let k = 0; k < 4; k++) if (R() < 0.5) c.ops[k] = { ...b.ops[k] };
   return c;
 }
 export function evolve(ev, alg, env, budget, R, seedPop = []) {
   const P = 24;
   let pop = seedPop.slice(0, P).map((g) => ({ g, d: g.d ?? ev.evaluate(g) }));
-  while (pop.length < P) { const g = randomGenome(alg, env, R); pop.push({ g, d: ev.evaluate(g) }); }
+  while (pop.length < P) { const g = randomGenome(alg, env, R, ev); pop.push({ g, d: ev.evaluate(g) }); }
   let spent = P;
   while (spent < budget) {
     pop.sort((x, y) => x.d - y.d);
@@ -256,6 +285,11 @@ export function polish(ev, g, d, passes = 6) {
     let moved = false;
     for (const delta of [-1, 1]) {
       const t = clone(g); t.fb = clamp(t.fb + delta, [0, 7]);
+      const dt = ev.evaluate(t); if (dt < d) { g = t; d = dt; moved = true; }
+    }
+    if (g.note != null) for (const delta of [-12, -2, -1, 1, 2, 12]) {
+      const t = clone(g); t.note = clamp(t.note + delta, NOTE_RANGE);
+      if (t.note === g.note) continue;
       const dt = ev.evaluate(t); if (dt < d) { g = t; d = dt; moved = true; }
     }
     for (let k = 0; k < 4; k++) for (const f of Object.keys(FIELDS)) for (const s of steps[f]) for (const delta of [-s, s]) {
@@ -285,31 +319,97 @@ export function iterate(ev, g, d, budget, R) {
 
 /** The recording as the search reads it: at the chip's rate, from its onset,
  *  at most maxSec long; its pitch and its loudness contour as an envelope. */
+// Below this the sound has no pitch to read: the TR-808's hats, snares, clap
+// and cymbals measure 0.13–0.61 (its side stick 0.72), its kick, toms,
+// cowbell and claves 0.99–1.0, and plucked and bowed notes 0.9–1.0.
+export const NOISY_CLARITY = 0.8;
+
+/** The recording as the search reads it: at the chip's rate, from its onset,
+ *  at most maxSec long; its pitch — or, with none (noisy), a note from its
+ *  spectral centroid for the search to start from — and its loudness
+ *  contour as an envelope. */
 export function prepareVoiceTarget(data, sampleRate, maxSec = 0.8) {
   const target = trimNote(resampleTo(data, sampleRate), maxSec);
   if (target.length < RATE * 0.05) throw new Error("the sound is shorter than 50 ms");
-  const pitch = estimatePitch(target) ?? { midi: 60, cents: 0, hz: 261.6, clarity: 0 };
+  const read = estimatePitch(target);
+  const noisy = !read || read.clarity < NOISY_CLARITY;
+  let pitch = read;
+  if (noisy) {
+    const f = features(target);
+    let e = 0, c = 0;
+    for (let b = 0; b < BANDS; b++) {
+      let be = 0; for (let k = 0; k < f.frames; k++) be += f.spec[k * BANDS + b];
+      const fc = Math.sqrt(edges[b] * edges[b + 1]); e += be; c += be * Math.log2(fc);
+    }
+    const hz = 2 ** (c / (e || 1));
+    // a noisy operator's energy centres some two octaves above its note
+    const centre = Math.max(NOTE_RANGE[0], Math.min(NOTE_RANGE[1], Math.round(69 + 12 * Math.log2(hz / 440)) - 24));
+    pitch = { midi: centre, cents: 0, hz, clarity: read?.clarity ?? 0, starts: read ? [centre, read.midi] : [centre] };
+  }
   const ev = makeEvaluator(target, pitch.midi, pitch.cents);
   const env = fitEnvelope(ev, pitch.midi, pitch.cents);
-  return { target, pitch, env };
+  return { target, pitch, env, noisy, read };
 }
 
 /** Stage 1: a short genetic search on one algorithm; the population back. */
-export function searchAlgorithm({ target, pitch, env, alg, budget = 300, seed = 1 }) {
-  const ev = makeEvaluator(target, pitch.midi, pitch.cents);
+export function searchAlgorithm({ target, pitch, env, noisy = false, alg, budget = 300, seed = 1 }) {
+  const ev = makeEvaluator(target, pitch.midi, pitch.cents, noisy, pitch.starts);
   const pop = evolve(ev, alg, env, budget, rng(seed * 97 + alg));
-  return { alg, pop, evals: ev.count() };
+  return { alg, noisy, pitch, pop, evals: ev.count() };
+}
+
+// ── The plan: which searches run, which go on, how they rank ───────────────
+// A pitched sound runs the eight algorithms once. A noise runs them twice:
+// the noise search (its note searched, its colour compared) and the plain one
+// at the note the autocorrelation picked — each wins on some sounds (a snare
+// and a clap the first, a closed hat and a crash, often, the second), so both
+// go in and their bests are ranked by colour.
+
+/** Stage 1's tasks for a prepared target: the args each searchAlgorithm takes. */
+export function searchTasks(prep, opts = {}) {
+  const tasks = [0, 1, 2, 3, 4, 5, 6, 7].map((alg) => ({ ...prep, alg, ...opts }));
+  if (prep.noisy && prep.read)
+    for (let alg = 0; alg < 8; alg++) tasks.push({ ...prep, alg, noisy: false, pitch: prep.read, ...opts });
+  return tasks;
+}
+
+// How far a result lies from the target, on one scale for all of a run's
+// results: a pitched sound's own distance; a noise's colour distance, whichever
+// search it came from.
+function rankDistance(prep, patch, note, d) {
+  if (!prep.noisy) return d;
+  const dur = prep.target.length / RATE;
+  return searchDistance(smoothBands(features(prep.target)), smoothBands(features(renderModel(full(patch), note.midi, note.cents, dur, dur))));
+}
+
+/** Stage 1's results → the `keep` to refine (each a refineAlgorithm's args
+ *  less its seed): the nearest on the run's scale, one per algorithm and search. */
+export function refineTasks(prep, results, keep = 3, opts = {}) {
+  const scored = results.map((r) => {
+    const g = r.pop[0].g;
+    const note = g.note != null ? { midi: g.note, cents: 0 } : { midi: r.pitch.midi, cents: r.pitch.cents };
+    return { r, score: rankDistance(prep, g, note, r.pop[0].d) };
+  });
+  scored.sort((a, b) => a.score - b.score);
+  return scored.slice(0, keep).map(({ r }) => ({ ...prep, alg: r.alg, noisy: r.noisy, pitch: r.pitch, pop: r.pop, ...opts }));
+}
+
+/** Stage 2's results, nearest first on the run's scale (`d` becomes that). */
+export function rankCandidates(prep, results) {
+  return results.map((c) => ({ ...c, d: rankDistance(prep, c.patch, c.note, c.d) })).sort((a, b) => a.d - b.d);
 }
 
 /** Stage 2: the longer search from stage 1's population, the polish and the
  *  iterated local search; one patch back. */
-export function refineAlgorithm({ target, pitch, env, alg, pop, budget = 1200, ils = 1500, seed = 1 }) {
-  const ev = makeEvaluator(target, pitch.midi, pitch.cents);
+export function refineAlgorithm({ target, pitch, env, noisy = false, alg, pop, budget = 1200, ils = 1500, seed = 1 }) {
+  const ev = makeEvaluator(target, pitch.midi, pitch.cents, noisy, pitch.starts);
   const R = rng(seed * 131 + alg);
   const next = evolve(ev, alg, env, budget, R, pop.map((x) => Object.assign(clone(x.g), { d: x.d })));
   const p = polish(ev, next[0].g, next[0].d);
   const best = iterate(ev, p.g, p.d, ils, R);
-  return { patch: normalizePatch(full(best.g)), d: best.d, evals: ev.count() };
+  // the note it plays: the recording's pitch, or (noisy) the one the search found
+  const note = best.g.note != null ? { midi: best.g.note, cents: 0 } : { midi: pitch.midi, cents: pitch.cents };
+  return { alg, patch: normalizePatch(full(best.g)), d: best.d, note, noisy, evals: ev.count() };
 }
 
 /** The loudest carrier at TL 0, the others kept relative to it: the search
@@ -321,9 +421,9 @@ export function normalizePatch(patch) {
 }
 
 /** The register form the page's preview channel takes (applyFmRegsToChannel). */
-export function patchToRegs(patch) {
+export function patchToRegs(patch, key = undefined) {
   return {
-    algorithm: patch.alg, feedback: patch.fb, ams: 0, fms: 0,
+    algorithm: patch.alg, feedback: patch.fb, ams: 0, fms: 0, key,
     ops: patch.ops.map((o) => ({
       tl: o.tl, voicedTl: o.tl, ar: o.ar, dr: o.dr, sl: o.sl, d2r: o.sr, rr: o.rr ?? 7,
       mul: o.ml, dt: 0, rs: o.ks, ssg: 0, amen: 0, velK: -1,
@@ -331,30 +431,27 @@ export function patchToRegs(patch) {
   };
 }
 
-/** A def-fm for the patch, named after the file; a comment says what it was read from. */
-export function patchToDef(patch, name, pitch, fileName) {
+/** A def-fm for the patch, named after the file; a comment says what it was
+ *  read from. `key`: the note goes into the voice as `:key` (a noise, as
+ *  presets/fm-drums do), so c4 plays it as found. */
+export function patchToDef(patch, name, pitch, fileName, key = false) {
   let id = String(name).toLowerCase().replace(/\.[^.]*$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "voice";
   // a name the score would read as a note or a length (`a`, `c4`, `8`) gets a prefix
   if (/^\d/.test(id) || /^[a-g][+-]?\d*$/.test(id) || /^[ov][+-]?\d*$/.test(id)) id = `fm-${id}`;
   const NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
   const note = `${NAMES[((pitch.midi % 12) + 12) % 12]}${Math.floor(pitch.midi / 12) - 1}`;
   const op = (o, k) => `  :ar${k} ${o.ar} :dr${k} ${o.dr} :sr${k} ${o.sr} :rr${k} ${o.rr ?? 7} :sl${k} ${o.sl} :tl${k} ${o.tl} :ks${k} ${o.ks} :ml${k} ${o.ml} :dt${k} 0`;
-  return `; ${fileName}: an FM voice estimated from the recording, read at ${note}${pitch.cents ? ` ${pitch.cents > 0 ? "+" : ""}${pitch.cents}¢` : ""}\n` +
-    `(def-fm ${id} :alg ${patch.alg} :fb ${patch.fb} :ams 0 :fms 0\n${patch.ops.map((o, i) => op(o, i + 1)).join("\n")})`;
+  const head = key
+    ? `; ${fileName}: an FM voice estimated from the recording — no pitch, a noise; it sounds as found at ${note} (:key), so c4 plays it\n`
+    : `; ${fileName}: an FM voice estimated from the recording, read at ${note}${pitch.cents ? ` ${pitch.cents > 0 ? "+" : ""}${pitch.cents}¢` : ""}\n`;
+  return head + `(def-fm ${id} :alg ${patch.alg} :fb ${patch.fb} :ams 0 :fms 0${key ? ` :key ${pitch.midi}` : ""}\n${patch.ops.map((o, i) => op(o, i + 1)).join("\n")})`;
 }
 
 /** The whole search in one thread (node, tests): stage 1 on every algorithm,
  *  stage 2 on the best `keep`. */
-export function estimateVoice(data, sampleRate, { keep = 3, seed = 1, stage1 = 300, stage2 = 1200, ils = 1500, onProgress = null } = {}) {
+export function estimateVoice(data, sampleRate, { keep = 3, seed = 1, stage1 = 300, stage2 = 1200, ils = 1500 } = {}) {
   const prep = prepareVoiceTarget(data, sampleRate);
-  const s1 = [];
-  for (let alg = 0; alg < 8; alg++) { s1.push(searchAlgorithm({ ...prep, alg, seed, budget: stage1 })); onProgress?.(alg + 1, 8 + keep); }
-  s1.sort((a, b) => a.pop[0].d - b.pop[0].d);
-  const candidates = s1.slice(0, keep).map((s, i) => {
-    const r = refineAlgorithm({ ...prep, alg: s.alg, pop: s.pop, seed, budget: stage2, ils });
-    onProgress?.(9 + i, 8 + keep);
-    return r;
-  });
-  candidates.sort((a, b) => a.d - b.d);
-  return { ...prep, candidates };
+  const s1 = searchTasks(prep, { seed, budget: stage1 }).map(searchAlgorithm);
+  const s2 = refineTasks(prep, s1, keep, { seed, budget: stage2, ils }).map(refineAlgorithm);
+  return { ...prep, candidates: rankCandidates(prep, s2) };
 }
