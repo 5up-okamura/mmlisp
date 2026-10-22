@@ -2314,12 +2314,12 @@ those chips cannot do is a compile error, not a different sound.
 | `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
 | `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | — (see below) |
 
-**`pc88` exports VGM (1.51): FM, the SSG and the rhythm.** Two things are
-not built yet: the ADPCM-B's samples (pcm1 writes nothing), and a preview —
-Play and WAV say so and stop. The rhythm sounds are the chip's ROM, so the
-VGM keys them and a player supplies them. The MMB is the Mega Drive driver's
-and refuses a `pc88` score. What follows is what the compiler holds a `pc88`
-score to.
+**`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
+samples baked into the chip's RAM image, which the VGM carries. The preview
+is not built yet — Play and WAV say so and stop. The rhythm sounds are the
+chip's ROM, so the VGM keys them and a player supplies them. The MMB is the
+Mega Drive driver's and refuses a `pc88` score. What follows is what the
+compiler holds a `pc88` score to.
 
 **What a channel is.** Each of a target's channels is a *part* of one of
 its chips — 4-op FM, the SN76489's square or noise, the SSG, the ROM rhythm,
@@ -2354,7 +2354,15 @@ note's pitch is not read. A noise `:mode white0`–`white2` reads as
 `:noise-rate` 9, 18, 31 (`W_TARGET`); `white3` and the periodic modes have
 no SSG sound (`E_TARGET`), nor does a `:mode` macro on noise.
 
-**PCM.** `pcm1` is the ADPCM-B: it plays a sample's `:file`, one voice.
+**PCM.** `pcm1` is the ADPCM-B: it plays a sample's `:file`, one voice. A
+sample is baked once — its def's range and `:fx`, at its own rate up to
+22.05 kHz, as Yamaha ADPCM into the chip's 256 KB of RAM (a sample past it is
+left out, and the export says so) — and a note plays it at the pitch's rate,
+its level vel + vol + master as the chip's linear level, its pan the
+track's. A `shot` plays to the range's end, a `gate` note stops at its gate,
+a `loop` repeats the range until then. A range the track writes
+(`:pcm-start` …) is read at each key-on, rounded to 8 frames; a curve there
+is read as its start (`W_TARGET`).
 `pcm2` and `pcm3` play the six ROM rhythm sounds, named by the kits' roles
 (guide.md, the kits):
 

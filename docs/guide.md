@@ -1519,8 +1519,10 @@ keeps what the chip has instead of reading it for the Mega Drive
   fader move. An `E` envelope is a `:vel*` macro under it, drawn per `v` and
   reaching 30 dB below the note's top.
 - **FM** is as above, and `fm6` stays (there is no DAC to own).
-- **ADPCM** K comes in on `pcm1` with its bank's defs, but pcm1 writes
-  nothing until the ADPCM-B's bake is built.
+- **ADPCM** K comes in on `pcm1` with its bank's defs, `v` as the fader
+  (the level register mucom88 writes, `v` + 4, to within 1 dB) and `p` as
+  `:pan`; `K` / `k` shift its notes as they do on the chip (on md too). Its
+  volume mode `vm<n>` and detune `D` are not read.
 
 ### Resynthesizing a recording on FM3
 

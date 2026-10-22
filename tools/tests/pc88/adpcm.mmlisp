@@ -1,0 +1,8 @@
+; pc88: the ADPCM-B (pcm1) — a sample baked into its RAM, played at the
+; Delta-N of each note's pitch, its level vel + vol + master, its pan; a loop
+; repeats the range until the note's end, a gate stops at it.
+(def-score :target pc88 :title "pc88 ADPCM-B")
+(def-pcm blip :file "wav/blip.wav")
+(def-pcm blip-tail blip :pcm-start 16 :pcm-end 4)
+(pcm1 :tempo 132 :len 8 blip c e g > c < :vel 10 :pan left c :pan right e :vol 24 :pan center g _ |)
+(pcm1 :mode loop :len 2 blip-tail c :mode gate :gate 50 :len 4 blip c c |)

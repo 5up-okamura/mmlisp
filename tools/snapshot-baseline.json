@@ -1738,5 +1738,11 @@
   "ir": "5359aeaea21d6803",
   "regs": "306eb9fe0c69d177",
   "vgm": "db50ef5be4022063"
+ },
+ "tools/tests/pc88/adpcm.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f613a3fe9e01adc8",
+  "regs": "ece781dc4d3411b7",
+  "vgm": "690550ceb2758b86"
  }
 }

@@ -224,6 +224,15 @@ function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnos
   const rangeCurve = parseCurveSpec(valueNode, diagnostics, src, trackName, true, secOf, env);
   requireCurveFrom(rangeCurve, diagnostics, trackName, "a PCM point", src);
   if (rangeCurve) {
+    // A part that reads its range at key-on (the ADPCM-B's addresses) has no
+    // moving point: the sweep's start is the point.
+    if (trackState.part.pointSweeps === false) {
+      targetDiag(diagnostics, "warning",
+        `${keyword}: the ${trackState.part.label} reads its range at each note's key-on, so a curve is read as its start`,
+        src, trackName);
+      push("PARAM_SET", { target, value: rangeCurve.from });
+      return;
+    }
     push("PARAM_SWEEP", { target, ...rangeCurve });
     return;
   }

@@ -22,6 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { targetProfile } from "./targets.js";
+import { ADPCM_RAM_BYTES } from "./chips/adpcm-b.js";
 import { PcmLiveEngine, PCM_SILENCE_BYTE, parsePcmBank } from "./pcm-model.js";
 import { PcmIrVoices } from "./pcm-voices.js";
 import { engineImage } from "./engine-images.js";
@@ -52,7 +53,7 @@ const PCM_TAIL_MAX_SEC = 30;
  *        the mixed DAC stream from renderPcmDac, or null for none
  * @returns {Uint8Array}
  */
-function encodeVgm(capture, meta = {}, dac = null, target = targetProfile()) {
+function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adpcm = null) {
   const { writes, loopStartSec } = capture;
   const endSec = Math.max(capture.endSec, dac ? dac.startSec + dac.bytes.length / dac.rateHz : 0);
   const secToSample = (sec) => Math.max(0, Math.round(sec * VGM_SAMPLE_RATE));
@@ -79,6 +80,18 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile()) {
   // from the data bank, merged in: a register write at the same sample goes
   // before the DAC byte.
   const dacLen = dac ? dac.bytes.length : 0;
+  // A chip's own sample RAM image, ahead of every command (VGM 1.51: block
+  // type, then the RAM's size and where the image starts in it).
+  if (adpcm?.image?.length) {
+    const block = Object.values(target.chips).find((c) => c.adpcm)?.adpcm.vgmBlock ?? 0x81;
+    const u32le = (v) => [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff];
+    const size = 8 + adpcm.image.length;
+    data.push3(0x67, 0x66, block);
+    data.push4(...u32le(size));
+    data.push4(...u32le(ADPCM_RAM_BYTES));
+    data.push4(0, 0, 0, 0);
+    data.pushBytes(adpcm.image);
+  }
   let regs = writes;
   let regSample = writes.map((w) => secToSample(w.sec));
   if (dacLen) {
@@ -253,6 +266,14 @@ export function configurePcmRate(player, pcm) {
  * it the score's PCM events are skipped and counted in `pcmCount`.
  */
 export function renderVgm(player, meta = {}, pcm = null) {
+  // Another target's PCM is its chip's own RAM image (chips/: the YM2608's
+  // ADPCM-B), not the Mega Drive's mixed DAC stream.
+  if (pcm?.adpcm) {
+    player.setAdpcmBank?.(pcm.adpcm);
+    const capture = player.captureRegisterLog();
+    const bytes = encodeVgm(capture, meta, null, player._target ?? targetProfile(), pcm.adpcm);
+    return { bytes, pcmCount: 0, dacBytes: 0 };
+  }
   configurePcmRate(player, pcm);
   const capture = player.captureRegisterLog();
   const dac = pcm ? renderPcmDac(capture, pcm) : null;

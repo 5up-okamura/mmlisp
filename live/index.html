@@ -840,6 +840,7 @@
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { targetProfile, notYet } from './src/targets.js';
+    import { bakeAdpcmB } from './src/chips/adpcm-b.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
@@ -5530,8 +5531,18 @@
 
     async function exportPcmBank(ir, what) {
       const pcmVoices = ir.metadata?.pcmVoices ?? 0;
-      // The bank is the Mega Drive's soft mix (another target's PCM is its chip's).
-      if (!pcmVoices || !targetProfile(ir.metadata?.target).hasPart('dac')) return null;
+      const target = targetProfile(ir.metadata?.target);
+      // The YM2608's ADPCM-B plays from its own RAM: the samples baked once
+      // (chips/adpcm-b.js), the image riding the VGM.
+      if (target.hasPart('adpcm-b')) {
+        const blobs = await pcmSampleBlobsForMmb(ir);
+        if (!blobs) return null;
+        const adpcm = bakeAdpcmB(ir, blobs, target);
+        for (const w of adpcm.warnings) log(`${what} export: ${w}`, 'warn');
+        return adpcm.image.length ? { adpcm } : null;
+      }
+      // The bank is the Mega Drive's soft mix.
+      if (!pcmVoices || !target.hasPart('dac')) return null;
       try {
         const samples = await pcmSampleBlobsForMmb(ir);
         if (!samples) return null;

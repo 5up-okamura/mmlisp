@@ -10,8 +10,8 @@
  * slices it (`:offset` / `:frames`).
  *
  * Kept out of import-mucom.js on purpose — that file is MML text -> text, while
- * this is binary decode with no MML knowledge (the VGM importer's ADPCM-B uses
- * it too).
+ * this is the ADPCM-B codec with no MML knowledge: the VGM importer's ADPCM-B
+ * decodes with it, and a pc88 score's ADPCM-B bake encodes (chips/adpcm-b.js).
  */
 
 const DIR_ENTRIES = 32;
@@ -100,6 +100,32 @@ export function decodeAdpcmB(bytes, start, length) {
       step = clamp(Math.floor((step * STEP_TABLE[mag]) / 64), STEP_MIN, STEP_MAX);
       out[o++] = acc / 32768;
     }
+  }
+  return out;
+}
+
+/**
+ * Encode mono float to YM2608 ADPCM-B, the inverse of decodeAdpcmB: each
+ * nibble is the step that brings the decoder's accumulator nearest the next
+ * frame, and the step adapts as the decoder's does, so decoding the bytes
+ * plays this signal back. HIGH nibble first; an odd frame count pads one.
+ *
+ * @param {Float32Array} pcm [-1, 1)
+ * @returns {Uint8Array} ceil(frames / 2) bytes
+ */
+export function encodeAdpcmB(pcm) {
+  const out = new Uint8Array((pcm.length + 1) >> 1);
+  let acc = 0;
+  let step = STEP_MIN;
+  for (let i = 0; i < out.length * 2; i++) {
+    const x = i < pcm.length ? clamp(Math.round(pcm[i] * 32768), -32768, 32767) : acc;
+    const diff = x - acc;
+    const mag = clamp(Math.floor((Math.abs(diff) * 4) / step), 0, 7);
+    const nibble = (diff < 0 ? 8 : 0) | mag;
+    const delta = (step * (mag * 2 + 1)) >> 3;
+    acc = clamp(nibble & 8 ? acc - delta : acc + delta, -32768, 32767);
+    step = clamp(Math.floor((step * STEP_TABLE[mag]) / 64), STEP_MIN, STEP_MAX);
+    out[i >> 1] |= i & 1 ? nibble : nibble << 4;
   }
   return out;
 }

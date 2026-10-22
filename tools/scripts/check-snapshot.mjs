@@ -32,6 +32,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { targetProfile } from "../../live/src/targets.js";
+import { bakeAdpcmB } from "../../live/src/chips/adpcm-b.js";
+import { loadSamplesForIr } from "../../drv/tools/wav.mjs";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 
@@ -69,12 +71,17 @@ function outputs({ file, frameHz, seFile }) {
     const { ir, diagnostics } = compiled;
     const out = { diagnostics: diagnostics.map((d) => d.code ?? d.message).join(","), ir: JSON.stringify(ir, null, 1) };
     if (!target.encodes || diagnostics.some((d) => d.severity === "error")) return out;
+    // The chip's own sample RAM (the YM2608's ADPCM-B), baked as Live does.
+    const adpcm = target.hasPart("adpcm-b") && (ir.metadata?.samples ?? []).some((s) => s.file)
+      ? bakeAdpcmB(ir, loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: ir.metadata.samples.filter((s) => s.file) } }), target)
+      : null;
     const player = new IRPlayer(() => {});
     player.loadJSON(ir);
+    player.setAdpcmBank(adpcm);
     const vgmPlayer = new IRPlayer(() => {});
     vgmPlayer.loadJSON(ir);
     const meta = { title: ir.metadata?.title, composer: ir.metadata?.composer, author: ir.metadata?.author };
-    return { ...out, regs: JSON.stringify(player.captureRegisterLog()), vgm: renderVgm(vgmPlayer, meta, null).bytes };
+    return { ...out, regs: JSON.stringify(player.captureRegisterLog()), vgm: renderVgm(vgmPlayer, meta, adpcm ? { adpcm } : null).bytes };
   }
   let built;
   try {

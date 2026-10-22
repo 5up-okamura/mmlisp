@@ -124,25 +124,24 @@ on any other, and its own settings a warning.
 In order:
 
 1. **PC-8801 SB2 (YM2608): the sound.** A `:target pc88` score compiles
-   and exports VGM 1.51 — FM, the SSG and the rhythm (language.md §19; the
+   and exports VGM 1.51 — FM, the SSG, the rhythm and the ADPCM-B with its
+   RAM image (language.md §19; the
    profile is `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`,
    the scores `tools/tests/pc88/`). What is left, in order:
-   - **The ADPCM-B**: the bake (`:fx`, then Yamaha ADPCM — the decoder is
-     `mucom-pcm.js`; 256 KB of RAM, past it a diagnostic), its RAM image as
-     VGM data block 0x81, and pcm1's notes: Delta-N per note, its L/R and
-     8-bit linear level, start/stop/repeat. Today pcm1 writes nothing.
-   - **The rhythm's moving levels**: `:vel` / `:vol` macros and `:vol`
-     sweeps into IL; a hit's level is its note's `:vel` and the track's
-     `:vol` today.
+   - **The PCM's moving levels**: `:vel` / `:vol` macros and `:vol`
+     sweeps into the rhythm's IL and the ADPCM-B's level; a hit's or a
+     note's level is its `:vel` and the track's `:vol` today.
    - **The check, what is left**: the mucom importer's pc88 scores against
      the real driver's VGM (the A/B the importer was tuned with). FM keys and
      pitch, the rhythm's hits, levels and pan, and the SSG's mixer match,
      and its levels mostly (70–99% exact, 86–100% within a step). Open: a
      `v` move inside a tie (one fader step, where mucom's level × (v+1)
-     moves less near the sustain), a `q` note's release start, `(` / `)`
-     inside a macro (rendered once, without the absolute `v`), a hit
-     quieter than the IL's 31 steps (RTL stays 63), and K, with the
-     ADPCM-B.
+     moves less near the sustain), a `q` note's release start, a hit
+     quieter than the IL's 31 steps (RTL stays 63). K's notes, Delta-N,
+     level and pan match (14 of 16 songs to within 1 dB); open are its
+     volume mode `vm<n>`, its detune `D` (a PCM track takes no `:pitch`),
+     and mucom's Delta-N table, which runs a few cents sharp of equal
+     temperament above C (`+200` on every note).
    - **The preview**: ymfm's YM2608 built to WASM beside the Nuked cores. It
      reads the rhythm ROM through the host, as MAME does — Yamaha's, so it
      does not ship: the user brings their own (kept like recent files), and

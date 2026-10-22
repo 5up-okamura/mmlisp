@@ -279,6 +279,11 @@ async function main() {
         "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET"],
     },
     {
+      label: "the ADPCM-B reads a range point at key-on",
+      src: '(def-score :target pc88)\n(def-pcm k :file "/k.wav")\n(pcm1 k :pcm-start 8 c :pcm-len (linear :from 8 :to 16 :len 1) c)',
+      expected: ["W_TARGET"],
+    },
+    {
       label: "pc88's parts take pan where the chip has it",
       src: '(def-score :target pc88)\n(def-pcm k :file "/k.wav")\n(sqr1 :pan left c)\n(pcm1 k :pan left c)\n(pcm2 kick :pan right c)',
       expected: ["E_UNSUPPORTED_TARGET"],

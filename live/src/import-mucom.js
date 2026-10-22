@@ -1108,7 +1108,8 @@ function shiftedNote(letter, acc, shift) {
 const PSG_LOWEST_MIDI = 45;
 
 function noteToken(letter, acc, len, ctx) {
-  const shift = ctx.isPcm ? 0 : (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
+  // K shifts the ADPCM's notes as the FM's; the rhythm (G) has no pitch.
+  const shift = ctx.isPcm && !ctx.isAdpcm ? 0 : (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
   let { name, dOct } = shiftedNote(letter, acc, shift);
   if (ctx.isSsg && !ctx.isNoise && !ctx.pc88) {
     const midi = 12 * (ctx.oct + 1) + SEMI[letter] + acc + shift;
@@ -1604,7 +1605,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (!fm3Patch(ctx)) break;
         // PCM is a soft-mix voice on the fm6 DAC and owns no FM channel, so it
         // has no pan lane; the SN76489 is mono.
-        if (ctx.isPcm) { warnOnce(ctx.warnings, "pcmPan", "part K: pan (p) has no PCM equivalent; dropped"); break; }
+        // On pc88 the ADPCM-B pans, as the FM does.
+        if (ctx.isPcm && !adpcmFader(ctx)) { warnOnce(ctx.warnings, "pcmPan", "part K: pan (p) has no PCM equivalent; dropped"); break; }
         if (ctx.isSsg) { warnOnce(ctx.warnings, "ssgPan", "SSG parts: pan (p) has no PSG equivalent; dropped"); break; }
         // mucom p: 0=off,1=right,2=left,3=center -> MMLisp :pan
         out.push(`:pan ${{ 1: "right", 2: "left" }[op.v] ?? "center"}`);
@@ -1643,7 +1645,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         envBeforeNote(ctx, out);
         lfoBeforeNote(ctx, out, op.to.letter, op.to.acc);
         detuneBeforeNote(ctx, out, op.to.letter, op.to.acc);
-        const shift = ctx.isPcm ? 0 : (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
+        const shift = ctx.isPcm && !ctx.isAdpcm ? 0 : (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
         const from = shiftedNote(op.from.letter, op.from.acc, shift);
         const fromPitch = `${from.name}${ctx.oct + op.from.bo + from.dOct}`;
         const len = op.len ?? ctx.len ?? "4";
@@ -1927,6 +1929,17 @@ function ssgLevelVol(r) {
 }
 const ssgFader = (ctx) => ctx.pc88 && ctx.isSsg;
 
+// pc88: part K's `v` sets the ADPCM-B's linear level register ($0B, 0-255),
+// played as the fader at :vel 15 — :vol's 2 dB steps, to within 1 dB. The
+// driver writes v + TOTALV × 4, and 0 from 250 up (music.asm PL1); mucom88
+// 1.7's runs with TOTALV at 1 (its VGM writes v45 as 49).
+const MUCOM_ADPCM_LEVEL_ADD = 4;
+function adpcmLevelVol(v) {
+  const r = v + MUCOM_ADPCM_LEVEL_ADD;
+  return v <= 0 || r >= 250 ? 0 : clamp(31 + Math.round((20 * Math.log10(r / 255)) / 2), 1, 31);
+}
+const adpcmFader = (ctx) => ctx.pc88 && ctx.isAdpcm;
+
 // An SSG part that ever turns noise on renders twice: its square track keeps
 // the notes played with tone on, its noise copy (ctx.isNoise) the ones with
 // noise on; each rests through the other's.
@@ -1972,6 +1985,7 @@ function noiseModeBeforeNote(ctx, out) {
 function pushVel(ctx, out, v) {
   ctx.vel = v;
   if (ssgFader(ctx)) { out.push(`:vol ${ssgLevelVol(clamp(v, 0, 15))}`); return; }
+  if (adpcmFader(ctx)) { out.push(`:vol ${adpcmLevelVol(clamp(v, 0, 255))}`); return; }
   if (ctx.fm3Op) {
     // A modulator copy holds the patch's level; a carrier's is the part's.
     const carrier = fm3Carrier(ctx);
@@ -2258,7 +2272,7 @@ function detuneBeforeNote(ctx, out, letter, acc) {
 // converts it to steps. Still lossy (16 steps), and v0 stays :vel 0.
 function velToken(v, ctx) {
   // An SSG `v` is the register value an envelope at full level writes.
-  if (ssgFader(ctx)) return 15; // pc88: the level is the fader (ssgLevelVol)
+  if (ssgFader(ctx) || adpcmFader(ctx)) return 15; // pc88: the level is the fader
   if (ctx.isSsg) return ssgRegVel(v, noiseDb(ctx));
   if (!ctx.isPcm) return clamp(v, 0, 15);
   const max = ctx.pcmVelMax || 0;
@@ -2407,18 +2421,21 @@ function mucomToMmlisp(parsed) {
   // render with the PCM ctx — there its `@n` selects a bank sample, not an FM
   // voice, and `v` runs 0-255. mucom songs never share a macro between K and
   // another part, so one ctx per macro is unambiguous.
+  // An SSG part's macros likewise render with the SSG's levels (its `v` is
+  // the register's 0-15, which the PSG's attenuator or pc88's fader plays).
   const pcmMacros = new Set();
-  if (pcm) {
+  const ssgMacros = new Set();
+  const callsIn = (letters, into) => {
     const scan = (ops) => {
       for (const op of ops) {
-        if (op.t === "macroCall") pcmMacros.add(op.n);
+        if (op.t === "macroCall") into.add(op.n);
         else if (op.t === "loop") scan(op.body);
       }
     };
-    for (const it of scoreItems) {
-      if (it.kind === "form" && it.letter in PCM_PARTS && !it.dropped) scan(it.ops);
-    }
-  }
+    for (const it of scoreItems) if (it.kind === "form" && letters(it.letter) && !it.dropped) scan(it.ops);
+  };
+  if (pcm) callsIn((l) => l in PCM_PARTS, pcmMacros);
+  callsIn((l) => l in SSG_PARTS, ssgMacros);
 
   // The loudest `v` anywhere K can reach — its own forms plus the macros it
   // calls, since a drum's volume is often set inside the macro. velToken scales
@@ -2457,7 +2474,8 @@ function mucomToMmlisp(parsed) {
     // must resolve its @n against the bank, and a sample def IS referencable
     // from a macro body by name.
     const isPcm = pcmMacros.has(mn);
-    renderOps(mac.ops, { vel: null, isPcm, octShift: -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
+    const isSsg = !isPcm && ssgMacros.has(mn);
+    renderOps(mac.ops, { vel: null, isPcm, isAdpcm: isPcm, isSsg, pc88: parsed.pc88, octShift: isSsg ? 0 : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
     const content = toks.join(" ").trim();
     if (!content) continue;
     usableMacros.add(mn);
@@ -2491,7 +2509,7 @@ function mucomToMmlisp(parsed) {
     const letter = key[0];
     if (!ctxByLetter.has(key)) {
       const pcmPart = letter in PCM_PARTS || letter === RHYTHM_PART;
-      ctxByLetter.set(key, { pc88: parsed.pc88, pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), fm3Op: Number(/~op(\d)$/.exec(key)?.[1]) || null, vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
+      ctxByLetter.set(key, { pc88: parsed.pc88, isAdpcm: letter in PCM_PARTS, pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), fm3Op: Number(/~op(\d)$/.exec(key)?.[1]) || null, vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
     return ctxByLetter.get(key);
   };

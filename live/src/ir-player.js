@@ -402,6 +402,9 @@ export class IRPlayer {
     this._trackChannel.clear();
     this._psgTrackChannel.clear();
     this._pcmTrackChannel.clear();
+    this._trackPart.clear();
+    this._rhythmState = null; // per-track vol / pan of the chips' own PCM parts
+    this._adpcmState = null;
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
       this._assignChannel(i, irObj.tracks[i]);
     }
@@ -2537,11 +2540,11 @@ export class IRPlayer {
   // timed, in the order the driver's sequencer would act on them. Global
   // events (tempo/markers/loops) are handled by _dispatchGlobalEvent first.
   _dispatchPcmEvent(ev, when) {
-    // A sample part with registers of its own: the YM2608's rhythm sounds;
-    // its ADPCM-B writes nothing until its bake is built (docs/roadmap.md).
+    // A sample part with registers of its own: the YM2608's rhythm sounds and
+    // its ADPCM-B.
     const part = this._trackPart.get(ev._trackIndex);
     if (part?.name === "rhythm") return this._dispatchRhythmEvent(ev, when);
-    if (part?.name === "adpcm-b") return;
+    if (part?.name === "adpcm-b") return this._dispatchAdpcmEvent(ev, when);
     const voice = ev._chIndex ?? 0;
     switch (ev.cmd) {
       case "PCM_NOTE_ON":
@@ -2615,6 +2618,64 @@ export class IRPlayer {
       if (v !== last) write(v, when + f / 60);
       last = v;
       if (!loop && f >= len - 1) break;
+    }
+  }
+
+  // The ADPCM-B's RAM (chips/adpcm-b.js bakeAdpcmB): which range each sample
+  // is, and the rate it plays C4 at. Without it a note writes nothing.
+  setAdpcmBank(bank) {
+    this._adpcmBank = bank ?? null;
+  }
+
+  // The YM2608's ADPCM-B: a note plays its sample's range at the Delta-N of
+  // its pitch, its level vel + vol + master as one linear level (the chip's
+  // $0B), its pan the track's; `shot` plays to the range's end, `gate` stops
+  // at the note's end, `loop` repeats the range until then. A range the track
+  // writes (:pcm-start …) is time as heard (language.md §16), so it reaches
+  // into the sample by the note's pitch; on the RAM it rounds to the 4-byte
+  // address unit, 8 frames.
+  _dispatchAdpcmEvent(ev, when) {
+    const ti = ev._trackIndex;
+    const st = (this._adpcmState ??= new Map()).get(ti) ?? { vol: VOL_UNITY, pan: 0 };
+    this._adpcmState.set(ti, st);
+    const enc = this._target.chipFor("adpcm-b").adpcm;
+    const out = (writes) => { for (const [p, a, d] of writes) this._write(p, a, d, when); };
+    switch (ev.cmd) {
+      case "PCM_NOTE_ON": {
+        const entry = this._adpcmBank?.entries?.[ev.args?.sample];
+        const master = this._masterVol ?? VOL_UNITY;
+        if (!entry || !this._isTrackAudible(ti) || st.vol <= 0 || master <= 0) break;
+        const db = 2 * (15 - velFine(Number(ev.args?.vel ?? 15))) + 2 * (VOL_UNITY - st.vol) + 2 * (VOL_UNITY - master);
+        const level = Math.round(255 * 10 ** (-db / 20));
+        const ratio = 2 ** ((pitchToMidi(ev.args?.pitch ?? "c4") - 60) / 12);
+        const frames = (sec) => sec * entry.rate * ratio;
+        const UNIT_FRAMES = 8;
+        let { start, stop } = entry;
+        const r = st.range ?? {};
+        const a = r.start != null ? frames(r.start) : 0;
+        const b = r.end != null ? frames(r.end) : r.len != null ? a + frames(r.len) : null;
+        if (a > 0) start = Math.min(stop, entry.start + Math.floor(a / UNIT_FRAMES));
+        if (b != null) stop = Math.max(start, Math.min(stop, entry.start + Math.ceil(b / UNIT_FRAMES) - 1));
+        out(enc.note({ start, stop }, enc.deltaN(entry.rate * ratio), level, st.pan, ev.args?.mode === "loop"));
+        break;
+      }
+      case "PCM_NOTE_OFF":
+        if (ev.args?.mode === "gate" || ev.args?.mode === "loop") out(enc.stop());
+        break;
+      case "PARAM_SET": {
+        const target = (ev.args?.target ?? "").toUpperCase();
+        if (target === "VOL") st.vol = Number(ev.args?.value ?? VOL_UNITY);
+        else if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
+        else if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
+        // The range the next notes play (seconds as heard); a loop is the
+        // range itself on this chip (the compiler holds it to that).
+        else if (target === "RANGE_START") (st.range ??= {}).start = Number(ev.args?.value);
+        else if (target === "RANGE_END") { (st.range ??= {}).end = Number(ev.args?.value); st.range.len = null; }
+        else if (target === "RANGE_LEN") { (st.range ??= {}).len = Number(ev.args?.value); st.range.end = null; }
+        break;
+      }
+      default:
+        break;
     }
   }
 

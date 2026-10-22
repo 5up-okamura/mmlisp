@@ -1,7 +1,7 @@
 // The YM2608 (OPNA): six FM channels, the SSG at the clock / 4, the six ROM
 // rhythm sounds and one ADPCM-B voice. The FM is the OPN family's, written by
 // the IR player as the YM2612's is; this file encodes the rest. No emulator
-// yet (docs/roadmap.md), and the ADPCM-B waits for its bake.
+// yet (docs/roadmap.md).
 import { opnFm } from "./opn-fm.js";
 import { ssgTone, ssgNoise } from "./ssg.js";
 import { rhythmRom } from "./rhythm-rom.js";
@@ -21,7 +21,7 @@ export const ym2608 = {
   clock: CLOCK,
   fnumRate: CLOCK / 144,
   parts: [opnFm, ssgTone, ssgNoise, rhythmRom, adpcmB],
-  encoder: true, // FM, SSG, rhythm (the ADPCM-B's notes write nothing yet)
+  encoder: true,
   emulator: false,
   ssg: { clock: SSG_CLOCK, noiseRate: NOISE_RATE_START },
   // Written once before anything else. $29 bit 7 (SCH) opens fm4-fm6, which
@@ -56,6 +56,25 @@ export const ym2608 = {
       else if (mode === 1) mixer |= 1 << c;
       return [[0, 0x07, mixer]];
     }
+  },
+
+  // The ADPCM-B (port 1), in the order mucom88 writes a note: level and pan
+  // off, a reset ($00 bit 0, bit 5 the external RAM), the flags cleared, the
+  // range (address units, chips/adpcm-b.js), Delta-N, start (bit 7, bit 4 to
+  // repeat the range), then the level ($0B, linear) and the pan ($01 bits
+  // 7-6; bits 1-0 = 0, the 1-bit DRAM mucom88's RAM is read as).
+  adpcm: {
+    // Delta-N for a rate in Hz: the chip plays ΔN / 65536 of its clock / 144.
+    deltaN: (hz) => Math.max(256, Math.min(65535, Math.round((hz * 65536) / (CLOCK / 144)))),
+    note: ({ start, stop }, deltaN, level, pan, repeat) => [
+      [1, 0x0b, 0], [1, 0x01, 0], [1, 0x00, 0x21], [1, 0x10, 0x08], [1, 0x10, 0x80],
+      [1, 0x02, start & 0xff], [1, 0x03, (start >> 8) & 0xff], [1, 0x04, stop & 0xff], [1, 0x05, (stop >> 8) & 0xff],
+      [1, 0x09, deltaN & 0xff], [1, 0x0a, (deltaN >> 8) & 0xff],
+      [1, 0x00, 0xa0 | (repeat ? 0x10 : 0)], [1, 0x0b, Math.max(0, Math.min(255, level))], [1, 0x01, PAN_BITS[pan] ?? 0xc0],
+    ],
+    stop: () => [[1, 0x0b, 0], [1, 0x01, 0], [1, 0x00, 0x21]],
+    // VGM's data block type for the RAM image (VGM 1.51: YM2608 DELTA-T).
+    vgmBlock: 0x81,
   },
 
   rhythm: {
