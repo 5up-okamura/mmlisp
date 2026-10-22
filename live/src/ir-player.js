@@ -3548,10 +3548,15 @@ export class IRPlayer {
     // section (before loopStartTick), it must at least survive until first jump.
     // A track that does not loop has no structural loop to bound it: as on
     // the driver, a one-shot runs its length and a loop curve runs to the
-    // song's end.
+    // song's end — and a song with a looping track has none, so there it
+    // runs as far as a looping track's loop curve does (below): a note-less
+    // (fm3-csm …) track's :rr sweep went quiet after the first pass.
+    const songEndTick = (t) => (t.hasLoop
+      ? (t.loopStartTick ?? 0) + (t.loopDuration ?? 1) + this._loopCurveSpanTicks(t)
+      : t.endTick ?? 0);
     let endTick = !track.hasLoop
       ? isLoopCurve
-        ? Math.max(ev.tick + 1, ...this._tracks.map((t) => t.endTick ?? 0))
+        ? Math.max(ev.tick + 1, ...this._tracks.map(songEndTick))
         : Infinity
       : ev.tick < loopStartTick
         ? jumpTick
@@ -3564,10 +3569,20 @@ export class IRPlayer {
     // first loop boundary when there is no explicit overwrite. Keep them alive
     // for multiple loop iterations so channel-level LFO-style sweeps persist.
     if (!hasExplicitStop && isLoopCurve && track.hasLoop) {
-      endTick = Math.max(endTick, jumpTick + loopDuration * 16);
+      endTick = Math.max(endTick, jumpTick + this._loopCurveSpanTicks(track));
     }
 
     return endTick;
+  }
+
+  // How far past a track's first pass a loop curve is scheduled (its writes
+  // go out ahead, so it needs an end): sixteen passes, or five minutes when
+  // that is longer — a short loop's LFO-style sweep (a 1.6 s pass) went quiet
+  // after half a minute of play.
+  _loopCurveSpanTicks(track) {
+    const pass = track.loopDuration ?? 1;
+    const minutes = Math.ceil((300 / Math.max(1e-6, this._secsPerTick)) / pass) * pass;
+    return Math.max(pass * 16, minutes);
   }
 
   // The tick of the next PARAM_SET / PARAM_SWEEP / PARAM_SWEEP_STOP on `target`
