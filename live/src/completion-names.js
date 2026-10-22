@@ -12,7 +12,7 @@ export const AC_FORMS = [
   't', 'x', 'go', 'break', 'trig', 'param-set',
   'echo', 'delay', 'glide', 'macro', 'wait',
   'let', 'for', 'if', 'note', 'ticks', 'frames',
-  'min', 'max', 'abs', 'round', 'floor', 'mod', 'not',
+  'min', 'max', 'abs', 'round', 'floor', 'mod', 'not', 'midi', 'hz',
   'linear',
   'ease-in', 'ease-out', 'ease-inout',
   ...['sine', 'quad', 'cubic', 'quart', 'quint', 'expo', 'circ', 'back', 'elastic', 'bounce']

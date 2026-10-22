@@ -15,7 +15,7 @@
 // .claude/memory/language-open.md §2.
 // ---------------------------------------------------------------------------
 
-import { sampleCurveUnit } from "./ir-utils.js";
+import { sampleCurveUnit, createSeededRng, STOCHASTIC_LUT_SEED, pitchToMidi } from "./ir-utils.js";
 
 const MAX_DEPTH = 32; // eval nesting guard, independent of def-expansion depth
 
@@ -344,19 +344,34 @@ function runtimeFold(op, args, ctx) {
 // the reserved-name check in collectDefs.
 const BUILTINS = new Map();
 
-const scalarsOnly = (name, args) => {
-  for (const a of args) {
+// A `noise` curve where a number is needed draws one value of its range
+// (language.md §11.1): the seed's stream advances with every draw, in compile
+// order, so two draws differ and the same score always draws the same. The
+// streams are the compile's (ctx.drawStreams, one Map per compileScore); the
+// other stochastic curves are movement, and stay curves.
+const isDraw = (v) => isSignal(v) && v.curve === "noise";
+function drawNoise(spec, ctx) {
+  const seed = (spec.params?.seed ?? STOCHASTIC_LUT_SEED) >>> 0;
+  const streams = ctx.drawStreams ?? (ctx.drawStreams = new Map());
+  let rng = streams.get(seed);
+  if (!rng) streams.set(seed, (rng = createSeededRng(seed)));
+  const from = Number(spec.from ?? 0), to = Number(spec.to ?? 0);
+  return from + (to - from) * rng();
+}
+
+const scalarsOnly = (name, args, ctx) =>
+  args.map((a) => {
     if (isRuntime(a))
       throw NOT_LOWERABLE(`${name} with a runtime value has no param-opcode lowering`);
     if (isSignal(a)) {
+      if (isDraw(a)) return drawNoise(a, ctx); // (round (noise …)): a draw, rounded
       throw new EvalError(
         "E_EVAL_SIGNAL_NONAFFINE",
         `(${name} …) is not defined on a signal`,
       );
     }
-  }
-  return args;
-};
+    return a;
+  });
 
 // Affine operators: fold a left-to-right chain, tracking one signal affinely
 // (or materializing when two signals meet — affineCombine handles both).
@@ -384,11 +399,33 @@ BUILTINS.set("/", {
       ? affineFinish(affineCombine("/", affineStart(1), args[0], ctx), ctx) // reciprocal
       : affineOp("/")(args, ctx),
 });
-BUILTINS.set("min", { arity: [1, null], apply: (a, _c, n) => Math.min(...scalarsOnly(n, a)) });
-BUILTINS.set("max", { arity: [1, null], apply: (a, _c, n) => Math.max(...scalarsOnly(n, a)) });
-BUILTINS.set("abs", { arity: [1, 1], apply: (a, _c, n) => Math.abs(scalarsOnly(n, a)[0]) });
-BUILTINS.set("round", { arity: [1, 1], apply: (a, _c, n) => Math.round(scalarsOnly(n, a)[0]) });
-BUILTINS.set("floor", { arity: [1, 1], apply: (a, _c, n) => Math.floor(scalarsOnly(n, a)[0]) });
+// `(midi c+4)` — a note name with its octave, as a MIDI number (C4 = 60);
+// `(hz a4)` — the same note's frequency (A4 = 440), or a MIDI number's
+// (`(hz 69)`, `(hz (+ 60 (noise 0..12)))`). The one place a note name is a
+// number: the octave is written, so the value is the same wherever it is.
+// These take their operand unevaluated (`raw`): a note name is not a number
+// anywhere else (looksLikeMusicToken).
+const NOTE_NAME = /^[a-g][+-]?\d+$/i;
+const noteOperand = (node, head) => {
+  if (node?.kind === "atom" && NOTE_NAME.test(node.value)) return pitchToMidi(node.value);
+  if (head === "midi")
+    throw new EvalError("E_EVAL_OPERAND", `(midi …) takes a note name with its octave (c4, f+3, b-5), not '${node?.value ?? "a list"}'`);
+  return null;
+};
+BUILTINS.set("midi", { arity: [1, 1], raw: (ops) => noteOperand(ops[0], "midi") });
+BUILTINS.set("hz", {
+  arity: [1, 1],
+  raw: (ops, env, ctx) => {
+    let m = noteOperand(ops[0], "hz");
+    if (m === null) m = scalarsOnly("hz", [evalNode(ops[0], env, { ...ctx, depth: ctx.depth + 1 })], ctx)[0];
+    return 440 * 2 ** ((m - 69) / 12);
+  },
+});
+BUILTINS.set("min", { arity: [1, null], apply: (a, c, n) => Math.min(...scalarsOnly(n, a, c)) });
+BUILTINS.set("max", { arity: [1, null], apply: (a, c, n) => Math.max(...scalarsOnly(n, a, c)) });
+BUILTINS.set("abs", { arity: [1, 1], apply: (a, c, n) => Math.abs(scalarsOnly(n, a, c)[0]) });
+BUILTINS.set("round", { arity: [1, 1], apply: (a, c, n) => Math.round(scalarsOnly(n, a, c)[0]) });
+BUILTINS.set("floor", { arity: [1, 1], apply: (a, c, n) => Math.floor(scalarsOnly(n, a, c)[0]) });
 // Floored: the result takes the divisor's sign, so a count running down or a
 // negative offset still lands in 0..n-1.
 BUILTINS.set("mod", {
@@ -713,6 +750,7 @@ function evalNode(node, env, ctx) {
         `(${head} …) arity: expected ${amax === null ? `≥ ${amin}` : amin === amax ? amin : `${amin}..${amax}`}, got ${operands.length}`,
       );
     }
+    if (builtin.raw) return builtin.raw(operands, env, ctx);
     const args = operands.map((n) =>
       evalNode(n, env, { ...ctx, depth: ctx.depth + 1 }),
     );
@@ -760,6 +798,7 @@ export function evalScalarValue(node, env, ctx) {
     return null;
   }
   if (r.kind === "signal") {
+    if (isDraw(r.spec)) return drawNoise(r.spec, ctx); // a number is needed: one draw
     ctx.pushDiag(
       ctx.diagnostics,
       "error",

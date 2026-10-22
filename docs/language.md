@@ -600,6 +600,8 @@ compile time** and folds to a static value — zero runtime cost. Heads:
 | `mod` | 2 | floored: takes the divisor's sign, `(mod -1 4)` = 3; by zero → `E_EVAL_DIV_ZERO` |
 | `=` `<` `>` `<=` `>=` | 2+ | 1 if each operand holds against the next, else 0: `(< 0 i 8)` |
 | `not` | 1 | 1 for 0, else 0 |
+| `midi` | 1 | a note name with its octave as a MIDI number: `(midi c+4)` = 61 (C4 = 60) |
+| `hz` | 1 | a note's frequency: `(hz a4)` = 440; a MIDI number too, `(hz 69)` |
 
 Operands are numbers, nested expressions, and `let`-bound names (§7.2).
 A comparison is a number like any other result — 1 or 0 — so it also
@@ -607,12 +609,21 @@ feeds arithmetic (`(* 12 (= i 0))`); `if` (§7.6) reads it. Comparing a `$`
 value or a curve is `E_EVAL_TYPE`: a comparison decides at compile time.
 Floats flow through a computation; integerization happens only where the value
 binds (the target's own round/clamp). A note/length token as an operand is
-`E_EVAL_OPERAND` (no implicit note→number). Nesting deeper than 32 →
+`E_EVAL_OPERAND` (no implicit note→number): `(midi …)` and `(hz …)` are
+where a note becomes a number, its octave written so the value is the same
+wherever it stands (`:oct` is not read). Nesting deeper than 32 →
 `E_EVAL_DEPTH`; wrong argument count → `E_EVAL_ARITY`.
 
-Expressions are accepted in **value positions**: an inline param write
+Expressions are accepted in **every value position**: an inline param write
 (`:tl1 (+ 20 10)`), a `(param-set …)` value, a curve parameter
-(`:to (* 2 10)`, §11), and inside `let` / `note` / `(ticks …)` / `(frames …)`.
+(`:to (* 2 10)`, §11), inside `let` / `note` / `(ticks …)` / `(frames …)`, and
+every number that resolves at compile time — `:oct`, `:vel`, `:shuffle`,
+`:gate*`, a count (`(x N …)`, `(go label N)`, `(echo N …)`, `(delay N …)`), a
+`(trig N)` id, and the options of `def-score`, `def-se`, `def-val` and
+`def-mod`; a length position takes a length expression (§7.4). Two places
+are tokens, not values, and stay literal: the range shorthand `A..B` (write
+`:from` / `:to` for computed ends) and a bare number on `fm3-csm-rate` (a Hz
+note; `(note …)` computes one).
 
 ```lisp
 (fm1 :tl1 (+ 20 10)              ; = :tl1 30
@@ -728,6 +739,16 @@ range 0–127 → `E_NOTE_RANGE`; no pitch, or more than a pitch and a length, i
 
 ```lisp
 (fm1 :len 8 (note 60) (note (+ 60 7)) (note (* 12 6)))   ; c4 g4 c6
+```
+
+A `noise` curve in the pitch is one draw from its range — the computer's
+pick, fixed by the score (§11.1): every written `(note …)` draws anew, so a
+run of them is a run of different keys, and a `let` gives the root.
+
+```lisp
+(fm1 :len 8 (let [root 60]
+  (note (+ root (noise 0..12))) (note (+ root (noise 0..12)))   ; two keys within the octave above root
+  (for [i 0..3] (note (+ root (noise 0..12))))))               ; four more, each its own draw
 ```
 
 ### 7.4 Lengths from expressions — `ticks` / `frames`
@@ -1510,6 +1531,17 @@ a different run each playback: the same score always moves the same way.
 (sqr1 (macro :pitch (noise :from -60 :to 60 :len 4f :seed 1))  c c c c)
 ```
 
+**A draw.** Where a number is needed — a `(note …)` pitch, a length
+(`(ticks …)`, `(frames …)`), an inline value, `round` / `floor` / `min` /
+`max` / `abs` — a `noise` curve is not a movement but one draw from its
+range: `(+ 60 (noise 0..12))` is a number between 60 and 72. Every draw
+advances the seed's stream, in the score's order, so written notes draw
+different values and the same score always draws the same; `:seed` is another
+stream. `(for …)` draws on every pass, `(x N …)` plays its one draw N times
+(the driver repeats it), and a `let` name bound to the curve draws at each
+use — bind `(round (noise …))` to hold one draw. `pink`, `perlin` and
+`brown` are movement and stay curves there (`E_EVAL_TYPE`).
+
 ```lisp
 (fm1 (macro :tl1 (brown :from 24 :to 34 :len 4 :rate 0.5 :hold 16 :leak 0.995))
   c e g e)
@@ -1748,8 +1780,9 @@ Clearing CSM on `STOP_TRACK` is a driver duty.
 
 Timer A frequency comes from exactly one source per score:
 
-1. **Inline** `:csm-rate N` (constant Hz) or `:csm-rate (ease-out :from A :to
-   B :len L)` (swept Hz) on the `fm3-csm` track, or
+1. **Inline** `:csm-rate N` (constant Hz, or an expression: `(hz a3)`) or
+   `:csm-rate (ease-out :from A :to B :len L)` (swept Hz) on the `fm3-csm`
+   track, or
 2. **Companion track** `fm3-csm-rate`, where note tokens convert to Hz at
    compile time. `:oct` range is 0–10 on this track only (values above are
    clamped, `W_CSM_RATE_OCT_CLAMPED`); bare numeric atoms are raw Hz literals

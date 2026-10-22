@@ -163,7 +163,9 @@ a number, a `let` name or an expression (`:to (* 2 top)`); `:from :to :len
 
 Where a curve goes: a macro (per note), an inline sweep (`:tl1 (linear 40..0
 :len 2)`, `:vol`, `:pan`), `:tempo`, `(delay …)`. A macro curve needs its
-start written (`40..0`, not `:to 0` alone).
+start written (`40..0`, not `:to 0` alone). Where a number is needed,
+`noise` is one draw: `(note (+ (midi c4) (noise 0..12)))` is a random key, the
+same on every build (§11.1); `(midi c+4)` is 61 and `(hz a4)` 440 (§7.1).
 
 ## More forms
 

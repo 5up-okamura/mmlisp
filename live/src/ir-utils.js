@@ -361,10 +361,10 @@ export function sampleSweepPhase(frame, baseFrames, loop, loopPhaseOffset) {
       : Math.min(1, frame / (baseFrames - 1));
 }
 
-const STOCHASTIC_LUT_SEED = 0xdead;
+export const STOCHASTIC_LUT_SEED = 0xdead;
 const STOCHASTIC_LUT_SIZE = 1024;
 
-function createSeededRng(seed) {
+export function createSeededRng(seed) {
   // Scramble the seed first (murmur3's finalizer): the LCG maps nearby seeds
   // to nearby states, so seeds 1, 2, 3 would open on the same value.
   let state = seed >>> 0;

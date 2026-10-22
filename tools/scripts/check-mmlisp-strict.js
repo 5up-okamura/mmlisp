@@ -140,6 +140,37 @@ async function main() {
       src: "(fm1 (macro :tl1 (linear 0..60 :len 8 :wait 4x) :vel [15 (wait zz) (linear 15..0 :len 4)]) c)",
       expected: ["W_WAIT_INVALID", "W_WAIT_INVALID"],
     },
+    // A noise curve where a number is needed is one draw (language.md §11.1).
+    {
+      label: "noise drawn as a note, a length and a rounded value",
+      src: "(fm1 (let [root 60] (note (+ root (noise 0..12))) (note (+ root (noise 0..12)) (frames (round (noise 10..20)))) (for [i 0..1] (note (+ root (round (noise 0..12 :seed 1)))))))",
+      expected: [],
+    },
+    {
+      label: "every compile-time number takes an expression",
+      src: "(def-score :pcm-voices (+ 1 0))\n(def-val g (+ 10 10) :from 0 :to (* 4 10))\n(def-mod :ch fm2 :vel+ (- 2))\n(def-se hit :prio (+ 1 2) (fm1 c))\n(fm4 :shuffle (+ 50 10) c c)\n(fm2 :gate* (/ 1 2) c :gate- (ticks 12) c (x (+ 1 2) c) #a c (go a (+ 1 1)) (trig (+ 1 2)) (echo (+ 1 1) :vel+ -3) c (delay (+ 1 2) :vel+ -4 :time (* 2 4)) c :oct (round (noise 4..6)) c)",
+      expected: [],
+    },
+    {
+      label: "midi and hz",
+      src: "(def (rnd root) (note (+ root (noise 0..12))))\n(fm1 (rnd (midi c+4)) (note (midi b-3)) :tl1 (round (/ (hz a4) 22)))\n(def-fm v :alg 7)\n(fm3-csm v)\n(fm3-1 :oct 5 c)\n(fm3-csm-rate (note (midi e3)))",
+      expected: [],
+    },
+    {
+      label: "hz as an inline CSM rate",
+      src: "(def-fm v :alg 4)\n(fm3-csm v :oct 4 :csm-rate (hz a3) c :csm-rate (* 2 (hz a3)) c)",
+      expected: [],
+    },
+    {
+      label: "midi takes a note name with its octave",
+      src: "(fm1 (note (midi c)) (note (midi 60)))",
+      expected: ["E_EVAL_OPERAND", "E_EVAL_OPERAND"],
+    },
+    {
+      label: "a movement curve where a number is needed",
+      src: "(fm1 (note (+ 60 (pink 0..12))))",
+      expected: ["E_EVAL_TYPE"],
+    },
     // CSM with the operators as tracks (language.md §15): a note-less
     // (fm3-csm voice) beside fm3-1..fm3-4, the rate from an fm3-csm-rate track.
     {

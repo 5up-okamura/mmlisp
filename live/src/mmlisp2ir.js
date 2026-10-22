@@ -622,13 +622,37 @@ function parseGateFamily(keyword, val, bpm = null) {
     : { type: "ticks", value: ticks };
 }
 
+// A compile-time number in a value position (language.md §7.1): a literal, a
+// `let` name, or an expression — `(+ 1 2)`, `(midi c4)`, a `noise` draw. The
+// one reader for every count, id, option, ratio and level that resolves at
+// compile time, so no position takes literals only. isConstNumberNode says
+// whether a node is one (an optional positional asks first); readConstNumber
+// returns the number, null when the node is not one (the caller says what the
+// position takes), or undefined when an expression failed (the evaluator has
+// said why).
+function isConstNumberNode(node, env) {
+  if (!node) return false;
+  if (node.kind === "atom")
+    return parseNumberLike(node.value) !== null || typeof lookupBound(env, node.value) === "number";
+  const head = atomValue(node.items?.[0]);
+  return node.kind === "list" && node.bracket === "()" && (isEvalHead(head) || head === "noise");
+}
+function readConstNumber(node, env, diagnostics, trackName, src, typedDefs = null) {
+  if (!isConstNumberNode(node, env)) return null;
+  if (node.kind === "atom") {
+    const n = parseNumberLike(node.value);
+    return n !== null ? n : lookupBound(env, node.value);
+  }
+  return evalScalarValue(node, env, makeEvalCtx(diagnostics, trackName, src, typedDefs)) ?? undefined;
+}
+
 // `:oct` / `:vel` resolve at compile time (§8): a number, a let-bound name or
 // an expression. A `$slot` or a curve cannot be one — both are errors rather
 // than the silent no-op they used to be.
 function compileTimeScalar(node, raw, op, evalEnv, keyword, diagnostics, trackName, src, typedDefs) {
   if (node?.kind === "list") {
     const head = atomValue(node.items?.[0]);
-    if (isEvalHead(head)) {
+    if (isConstNumberNode(node, evalEnv)) {
       return evalScalarValue(node, evalEnv, makeEvalCtx(diagnostics, trackName, src, typedDefs));
     }
     pushDiag(diagnostics, "error", "E_VALUE_COMPILE_TIME",
@@ -1342,15 +1366,22 @@ function readTapArgs(form, items, env, ctx, diagnostics, trackName, src) {
     return null;
   };
   let j = 1;
-  const count = parseIntLike(atomValue(items[j]));
+  const countValue = isConstNumberNode(items[j], env)
+    ? readConstNumber(items[j], env, diagnostics, trackName, src, ctx.typedDefs ?? null)
+    : null;
+  if (countValue === undefined) return null; // the evaluator has said why
+  const count = countValue === null ? null : Math.round(countValue);
   if (count !== null) j++;
   const kw = atomValue(items[j]);
   if (kw !== ":vel+" && kw !== ":vel*")
     return fail("TARGET", `(${form} …) writes :vel+ (add per tap) or :vel* (multiply per tap), not ${kw ?? "nothing"}`);
   const mode = kw === ":vel*" ? "mul" : "add";
   const vNode = items[j + 1];
-  const opts = {};
-  for (let k = j + 2; k + 1 < items.length; k += 2) opts[atomValue(items[k])] = atomValue(items[k + 1]);
+  const opts = {}, optNodes = {};
+  for (let k = j + 2; k + 1 < items.length; k += 2) {
+    opts[atomValue(items[k])] = atomValue(items[k + 1]);
+    optNodes[atomValue(items[k])] = items[k + 1];
+  }
   let spec;
   if (vNode?.kind === "list" && vNode.bracket === "[]") {
     if (count !== null)
@@ -1375,7 +1406,7 @@ function readTapArgs(form, items, env, ctx, diagnostics, trackName, src) {
       spec = { mode, type: "param", count: Math.max(1, count), by: r.value };
     }
   }
-  return { spec, opts };
+  return { spec, opts, optNodes };
 }
 
 // (echo …): replay the single note `back` positions back (back=1 = the last
@@ -2078,8 +2109,9 @@ function parseModDef(root, channelNames, typedDefs, sampleDefs, diagnostics) {
         ok = false;
       }
     } else if (MOD_VEL_OPS[key]) {
-      const value = parseNumberLike(atomValue(valueNode));
-      if (value === null) {
+      const value = readConstNumber(valueNode, null, diagnostics, "global", nodeSrc(valueNode));
+      if (value === undefined) ok = false;
+      else if (value === null) {
         err("E_MOD_OPTION", `${key} takes a number, not ${atomValue(valueNode) ?? "a list"}`, nodeSrc(valueNode));
         ok = false;
       } else mod.vel.push({ op: MOD_VEL_OPS[key], value });
@@ -3279,10 +3311,14 @@ function rejectNoteName(defHead, name, node, diagnostics) {
   return true;
 }
 
+// The compile's `noise` draw streams, one per seed (mmlisp-eval drawNoise):
+// a score always draws the same, from the top.
+let drawStreams = new Map();
 function makeEvalCtx(diagnostics, trackName, src, typedDefs = null, stepFrames = 1) {
   return {
     pushDiag,
     diagnostics,
+    drawStreams,
     trackName,
     src,
     curveNames: CURVE_NAMES,
@@ -3799,9 +3835,19 @@ function compileChannelBody(
                 trackState.defaultGate = { type: "ticks", value: t };
                 break;
               }
-              const g = parseGateFamily(val, rawVal, trackState.currentTempo);
+              let g;
+              if (items[i]?.kind === "list" && val === ":gate-") {
+                // a length expression: `(ticks 12)`, `(* 2 8)` (§7.4)
+                const t = resolveLengthNode(items[i], 0, trackState,
+                  makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs), evalEnv);
+                g = t > 0 ? { type: "cut", value: t } : null;
+              } else if (items[i]?.kind === "list") {
+                const f = readConstNumber(items[i], evalEnv, diagnostics, trackName, nodeSrc(node), typedDefs);
+                if (f === undefined) break;
+                g = f !== null && f >= 0 && f <= 1 ? { type: "ratio", value: f } : null;
+              } else g = parseGateFamily(val, rawVal, trackState.currentTempo);
               if (g !== null) trackState.defaultGate = g;
-              else gateInvalid(diagnostics, val, rawVal, nodeSrc(node), trackName);
+              else gateInvalid(diagnostics, val, rawVal ?? "an expression out of range", nodeSrc(node), trackName);
               break;
             }
             case ":shuffle":
@@ -3809,7 +3855,9 @@ function compileChannelBody(
               // Swing (§5.2): `none` or under 51 is straight. A change restarts
               // the pair count, so the next swung note is a first beat.
               if (val === ":shuffle") {
-                const v = rawVal === "none" ? 0 : parseIntLike(rawVal);
+                const n = rawVal === "none" ? 0 : readConstNumber(items[i], evalEnv, diagnostics, trackName, nodeSrc(node), typedDefs);
+                if (n === undefined) break;
+                const v = n === null ? null : Math.round(n);
                 if (v === null) {
                   pushDiag(diagnostics, "error", "E_SHUFFLE_INVALID",
                     `:shuffle takes 51..90 or none, not ${rawVal ?? "a list"}`,
@@ -3861,7 +3909,14 @@ function compileChannelBody(
                 break;
               }
               const valueNode = items[i];
-              const hz = parseNumberLike(rawVal);
+              // A number, or an expression (§7.1: `(hz a3)`, `(* 2 110)`) —
+              // a curve head is the swept form below.
+              const isExpr = valueNode?.kind === "list" && valueNode.bracket === "()" &&
+                !CURVE_NAMES.has(atomValue(valueNode.items?.[0]));
+              const hz = isExpr
+                ? evalScalarValue(valueNode, evalEnv, makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs))
+                : parseNumberLike(rawVal);
+              if (isExpr && hz === null) break; // diagnostic already pushed
               if (hz !== null) {
                 emitCsmRateEvent(
                   trackState,
@@ -4354,7 +4409,11 @@ function compileChannelBody(
       // Repeat loop: (x N ...) counts N times; (x ...) loops forever
       // (break) inside the body emits LOOP_BREAK linked to this loop's id
       if (head === "x") {
-        const maybeCount = parseIntLike(atomValue(node.items[1]));
+        const countNode = node.items[1];
+        const countValue = isConstNumberNode(countNode, evalEnv)
+          ? readConstNumber(countNode, evalEnv, diagnostics, trackName, nodeSrc(node), typedDefs)
+          : null;
+        const maybeCount = countValue == null ? (countValue === undefined ? 1 : null) : Math.round(countValue);
         const bodyStart = maybeCount !== null ? 2 : 1;
         // "(x N)" has a space and parens, so no `#name` can spell it (§13).
         const loopId = `(x ${loopCounter.count++})`;
@@ -4495,7 +4554,8 @@ function compileChannelBody(
         }
         let repeat = null;
         if (node.items.length === 3) {
-          repeat = parseIntLike(atomValue(node.items[2]));
+          const r = readConstNumber(node.items[2], evalEnv, diagnostics, trackName, nodeSrc(node), typedDefs);
+          repeat = r == null || !Number.isInteger(r) ? null : r;
           if (repeat === null || repeat < 1) {
             pushDiag(
               diagnostics,
@@ -4598,7 +4658,8 @@ function compileChannelBody(
           i++;
           continue;
         }
-        const code = parseIntLike(atomValue(node.items[1]));
+        const t = readConstNumber(node.items[1], evalEnv, diagnostics, trackName, nodeSrc(node), typedDefs);
+        const code = t == null || !Number.isInteger(t) ? null : t;
         if (code === null || code < 0 || code > 63) {
           pushDiag(
             diagnostics,
@@ -4640,8 +4701,11 @@ function compileChannelBody(
         const tap = readTapArgs(head, items, evalEnv,
           makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs), diagnostics, trackName, nodeSrc(node));
         if (tap && isDelay) {
-          const time = tap.opts[":time"];
-          const ticks = time == null ? null : parseLengthToken(time, null, trackState.currentTempo);
+          const time = tap.opts[":time"], timeNode = tap.optNodes[":time"];
+          // a length token, or a length expression — `(ticks 48)`, `(* 2 8)` (§7.4)
+          const ticks = timeNode?.kind === "list"
+            ? resolveLengthNode(timeNode, 0, trackState, makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs), evalEnv)
+            : time == null ? null : parseLengthToken(time, null, trackState.currentTempo);
           if (ticks > 0) {
             trackState.delaySpec = tap.spec;
             trackState.delayTicks = ticks;
@@ -5153,10 +5217,12 @@ function collectDefs(roots, diagnostics) {
       }
       // Optional positional init (item[2]); absent when options start there
       // (e.g. `(def-val x :from 0 :to -127)`), then init defaults to `from`.
-      const initPos = parseIntLike(atomValue(root.items[2]));
-      const initRaw = atomValue(root.items[2]);
-      if (initPos === null && initRaw != null && !initRaw.startsWith(":")
-        && !parseRangeToken(initRaw)) {
+      const initValue = readConstNumber(root.items[2], null, diagnostics, "global", nodeSrc(root));
+      if (initValue === undefined) continue;
+      const initPos = initValue === null ? null : initValue;
+      const initRaw = atomValue(root.items[2]) ?? (initPos === null ? null : String(initPos));
+      if ((initPos !== null && !Number.isInteger(initPos)) ||
+        (initPos === null && initRaw != null && !initRaw.startsWith(":") && !parseRangeToken(initRaw))) {
         pushDiag(diagnostics, "error", "E_DEFVAL_INIT",
           `def-val ${name}: init must be an integer, not ${initRaw}`, nodeSrc(root), null);
         continue;
@@ -5189,9 +5255,10 @@ function collectDefs(roots, diagnostics) {
           else bad("must be frame or tick");
           continue;
         }
-        const v = parseIntLike(raw);
         if (!new Set([":from", ":to", ":step"]).has(key)) { bad("unknown option"); continue; }
-        if (v === null) { bad("must be an integer"); continue; }
+        const v = readConstNumber(root.items[k + 1], null, diagnostics, "global", nodeSrc(root));
+        if (v === undefined) continue;
+        if (v === null || !Number.isInteger(v)) { bad("must be an integer"); continue; }
         if (key === ":from") from = v;
         else if (key === ":to") to = v;
         else if (key === ":step") { if (v > 0) step = v; else bad("must be > 0"); }
@@ -5414,7 +5481,8 @@ function parseScoreDef(root, fileMeta, diagnostics) {
     if (field === "pcmVoices") {
       // How many PCM voices the driver plays: it picks the engine image and
       // with it the DAC rate (driver.md §5).
-      const n = parseIntLike(atomValue(v));
+      const r = readConstNumber(v, null, diagnostics, "global", nodeSrc(v));
+      const n = r == null || !Number.isInteger(r) ? null : r;
       if (n === null || n < 0 || n > 3)
         pushDiag(diagnostics, "error", "E_PCM_VOICES",
           `def-score :pcm-voices takes 0-3 (got ${atomValue(v) ?? "a list"})`, nodeSrc(v), "global");
@@ -5442,7 +5510,8 @@ function parseSeDef(root, diagnostics) {
   let i = 2;
   for (; i + 1 < items.length && items[i].kind === "atom"; i += 2) {
     const key = atomValue(items[i]);
-    const v = parseNumberLike(atomValue(items[i + 1]));
+    const v = readConstNumber(items[i + 1], null, diagnostics, "global", nodeSrc(items[i + 1]));
+    if (v === undefined) continue;
     if (key === ":prio" && Number.isInteger(v) && v >= 0 && v <= 255) se.prio = v;
     else if (key === ":tempo" && v !== null && v > 0) se.tempo = v;
     else {
@@ -5983,6 +6052,7 @@ function songTempoMap(ir, opening) {
 
 function compileScore(src, filename, options, frameHz, tempoAt) {
   const diagnostics = [];
+  drawStreams = new Map(); // every compile draws from the top (makeEvalCtx)
   const parsed = parse(src);
   const {
     defs,
