@@ -226,6 +226,9 @@
             <button class="menu-item" onclick="importSong('fur');closeMenus()">Furnace…</button>
             <button class="menu-item" onclick="importSong('vgm');closeMenus()">VGM…</button>
             <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88…</button>
+            <div class="menu-sep"></div>
+            <div class="menu-label">Voice</div>
+            <button class="menu-item" onclick="importVoice();closeMenus()">Formants from WAV…</button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -826,6 +829,7 @@
     import { parseFur } from './src/import-fur.js';
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
+    import { analyzeVoice, defaultVoiceOptions, voiceToMmlisp, VOICE_MODES, VOICE_WIDTHS } from './src/import-voice.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
     import { midiToFnumBlock, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, OP_ADDR_OFFSET, fmCarrierOpsForAlg, encode30, encode60, encode80, encodeB0, encodeB4 } from './src/ir-utils.js';
@@ -2791,7 +2795,7 @@
 (import "presets/waveforms/set.mmlisp")
 (import "presets/tr808/set.mmlisp") ; or "presets/gm-drums/set.mmlisp": the same names
 
-(def-score :title "" :composer "" :author "" :pcm-voices 1)
+(def-score :title "" :composer "" :author "" :target md)
 
 ; Score-wide modifiers — uncomment one to try it:
 ; (def-mod :ch fm1 :keyon off)            ; fm1's notes rest: play the part yourself
@@ -3254,6 +3258,64 @@
       } catch (e) {
         log(`SoundFont import failed: ${e?.message || e}`, 'err');
       }
+    }
+
+    // A recording of a voice as formant tracks (import-voice.js, language.md
+    // §15), inserted at the cursor like an instrument: CSM with the operators
+    // as formants and the rate track as the voice, or sine waves on the
+    // formants. An empty document gets the voice's tempo (150 BPM, a frame is
+    // four ticks); a score keeps its own, and the frames round to its ticks.
+    async function importVoice() {
+      let file;
+      try {
+        file = await pickFileWithInput(['.wav']);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`Voice import failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      await importVoiceFromFile(file);
+    }
+
+    async function importVoiceFromFile(file) {
+      try {
+        const blank = editorView.state.doc.toString().trim() === '';
+        const res = await importVoiceBytes(new Uint8Array(await file.arrayBuffer()), file.name, blank);
+        if (!res) return; // cancelled in the dialog
+        insertImportedInstruments(res.source, res.warnings, `Imported ${file.name} (voice)`, { tag: 'Voice' });
+        if (!blank) log('Voice: the formant tables run a value a frame; at 150 BPM a frame is four ticks, at this score’s tempo the frames round', 'info');
+      } catch (e) {
+        log(`Voice import failed: ${e?.message || e}`, 'err');
+      }
+    }
+
+    async function importVoiceBytes(bytes, fileName, withTempo = true) {
+      const { data, sampleRate } = decodeWav(bytes);
+      const a = analyzeVoice(data, sampleRate);
+      const def = defaultVoiceOptions(a);
+      const fields = [
+        { key: 'mode', label: 'Synthesis', type: 'select', value: def.mode, choices: VOICE_MODES },
+        { key: 'pitchHz', label: 'Buzz pitch (Hz)', type: 'number', value: def.pitchHz,
+          hint: `0 = the recording’s, phrase by phrase` + (a.pitchHz ? ` (about ${Math.round(a.pitchHz)} Hz)` : '') + ' · CSM only' },
+        { key: 'width', label: 'Formant width', type: 'select', value: def.width, choices: VOICE_WIDTHS, hint: 'CSM only: how fast each ring decays' },
+        { key: 'noiseDb', label: 'Consonants (dB)', type: 'number', value: def.noiseDb,
+          hint: 'the noise track against the formants — a shorter ring wants it lower (ringing −8, wide −10)' },
+        { key: 'start', label: 'From (s)', type: 'number', value: def.start },
+        { key: 'end', label: 'To (s)', type: 'number', value: def.end },
+      ];
+      const got = await showImportDialog({
+        title: `Import ${fileName}`,
+        summary: `${a.duration.toFixed(1)} s at ${sampleRate} Hz · ${a.segments.length} phrase${a.segments.length === 1 ? '' : 's'}` +
+          (a.pitchHz ? ` · pitch about ${Math.round(a.pitchHz)} Hz` : '') +
+          '. Four formants, one a frame, on fm3-1–fm3-4; the hiss on noise — inserted at the cursor.',
+        fields,
+      });
+      if (!got) return null;
+      const f = got.fields;
+      return voiceToMmlisp(a, {
+        mode: f.mode, pitchHz: Math.max(0, +f.pitchHz || 0), width: f.width, noiseDb: +f.noiseDb || 0,
+        comp: def.comp, start: Math.max(0, +f.start || 0), end: +f.end || def.end, tempo: withTempo,
+      }, fileName);
     }
 
     // A SoundFont's drum kit, by role name (import-sf2.js). A file with several
@@ -3761,6 +3823,7 @@
     window.importMucom88 = importMucom88;
     window.importSong = importSong;
     window.importSf2 = importSf2;
+    window.importVoice = importVoice;
     window.importMucomVoiceBank = importMucomVoiceBank;
     window.importMucomPcmBank = importMucomPcmBank;
     window.exportMucomPcmWav = exportMucomPcmWav;

@@ -33,6 +33,8 @@ Run from tools directory:
     diagnostics, the register log and VGM once they encode. A change that should not move
     the output keeps it green; one that should, is reviewed (`-- --dump DIR` before and
     after, then `diff -r`) and re-frozen with `-- --update`.
+13. `npm run check:import-voice` — the voice importer finds a synthesized vowel's
+    formants and its hiss, and both scores it writes compile
 
 ## i18n
 

@@ -1498,6 +1498,35 @@ place for is dropped and said so: rhythm's per-sound pan, the ADPCM part K's
 pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
 `vm<n>`.
 
+### A voice from a recording
+
+`File > Import > Formants from WAV…` reads a recording of a voice as formant
+tracks (language §15): every 60 Hz frame gets a loudness, a pitch and the
+four peaks of its spectrum, and each peak becomes one `fm3-N` track — a long
+note per phrase with a `:pitch` table for its frequency and a `:vol` table
+for its level, one value a frame — while the frames that hiss rather than
+buzz become bursts on the `noise` track. The dialog chooses the synthesis:
+
+- **CSM** — a note-less `(fm3-csm formant)`, the operators as the formants
+  and an `fm3-csm-rate` track as the voice, its rates the recording's pitch
+  phrase by phrase (or the one given) and its rests the breaths: a vocoder's
+  voice. The formant width is each ring's decay (`:rr` / `:ks`).
+- **Sine waves** — the four operators as sine waves on the formants:
+  sine-wave speech, a whistled voice with no pitch of its own.
+
+The voice goes in at the cursor, like an instrument. In an empty document it
+brings its tempo, 150 BPM, where a frame is four ticks and every table lands
+on its frame; in a score it takes the score's tempo and the frames round to
+its ticks, the same way on every track. The recording is read down to 8 kHz
+(formants live below 4 kHz); a few seconds of a clear, dry voice work best,
+and the consonants' level is a dial. The result is a sketch of the voice to
+edit — a table's values are the score's, so a formant can be redrawn, a phrase
+retimed, the rate track given a melody. Under CSM each phrase's tables hold
+their vowel (`#sus`) and carry their tail (`#rel`), and the note is gated at
+the vowel: a longer note and gate hold the vowel longer, the tail follows by
+itself (the rate track's `:len` and the noise track's rest are stretched by
+hand to match).
+
 ### Song imports: MIDI, DefleMask / Furnace, VGM
 
 **A song import opens a dialog first**: what the file holds, the timing and

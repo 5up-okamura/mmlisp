@@ -15,7 +15,8 @@
     "check:i18n": "node scripts/i18n-sync.mjs",
     "mcp": "node mcp/mmlisp-mcp.mjs",
     "check:scope-trigger": "node scripts/check-scope-trigger.mjs",
-    "check:snapshot": "node scripts/check-snapshot.mjs"
+    "check:snapshot": "node scripts/check-snapshot.mjs",
+    "check:import-voice": "node scripts/check-import-voice.mjs"
   },
   "engines": {
     "node": ">=18"
