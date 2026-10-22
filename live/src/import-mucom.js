@@ -1324,7 +1324,7 @@ function lfoBeforeNote(ctx, out, letter, acc) {
   const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
   const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
   const name = lfoName(ctx, lfoSpec(sw.lfo, ctx.isSsg, sw.wholeClocks, pc, sw.maxClocks, ctx.tempo));
-  if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
+  if (name !== ctx.lfoActive || ctx.verbose || stale(ctx, "lfoActive")) { out.push(name); ctx.lfoActive = name; }
 }
 
 // --- rhythm (part G) ----------------------------------------------------------
@@ -1438,6 +1438,7 @@ function scratchCtx(ctx) {
     warnings: [],
     warnedVoices: new Set(ctx.warnedVoices),
     chain: null, // a trial must not patch the real output (finishChain)
+    stale: ctx.stale ? new Set(ctx.stale) : ctx.stale, // nor use up the real render's
     crossActive: [...(ctx.crossActive || [])],
     crossSnap: new Map(ctx.crossSnap || []),
     newUnrollCross: null, // a trial decides nothing
@@ -1455,6 +1456,19 @@ function setRuntimeState(ctx, st, out) {
   ctx.reverb = st.reverb;
   if (st.gateCut != null) emitGate(ctx, out);
   if ((st.detune ?? 0) !== (ctx.detune ?? 0) && !ctx.isPcm) { ctx.detune = st.detune ?? 0; detuneChanged(ctx, out); }
+}
+
+// The runtime values a render writes only when they change. An (x …) body is
+// rendered once, from the loop's entry, so a write that matches the entry is
+// elided — but pass two starts where pass one ended (a mucom loop replays its
+// bytes, and an (x …) its tokens, so both carry the state over). A value the
+// pass leaves different from the entry is "stale" in the body: its first
+// write there is kept.
+const RUNTIME_FIELDS = ["vel", "velTok", "ssgMode", "noiseMode", "lfoActive", "envActive", "pitchOut", "gateCut"];
+function stale(ctx, field) {
+  if (!ctx.stale?.has(field)) return false;
+  ctx.stale.delete(field);
+  return true;
 }
 
 // Would a loop across lines play differently pass to pass? The same trial
@@ -1514,7 +1528,12 @@ function renderLoop(op, ctx, out, depth) {
   } else if (rest > 1) {
     if (k > 0) setCompileState(ctx, ct0, out);
     const inner = [];
+    const outer = ctx.stale;
+    ctx.stale = new Set([...(outer ?? []), ...RUNTIME_FIELDS.filter((f) => a[f] !== ctx[f])]);
     renderOps(op.body, ctx, inner, depth + 1); // a `/` renders as (break)
+    // What the body wrote is written; the rest of the outer set still waits.
+    const left = ctx.stale;
+    ctx.stale = outer && new Set([...outer].filter((f) => left.has(f)));
     if (inner.length) out.push(`(x ${rest} ${inner.join(" ")})`);
     if (bi >= 0) {
       // The last pass left at the break: the runtime state is the head's, not
@@ -1682,7 +1701,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         const spec = lfoSpec(lfo, ctx.isSsg, op.wholeClocks, null, op.maxClocks, ctx.tempo);
         if (ctx.lfoRegistry) {
           const name = lfoName(ctx, spec);
-          if (name !== ctx.lfoActive || ctx.verbose) { out.push(name); ctx.lfoActive = name; }
+          if (name !== ctx.lfoActive || ctx.verbose || stale(ctx, "lfoActive")) { out.push(name); ctx.lfoActive = name; }
         } else {
           out.push(`(macro ${spec})`);
         }
@@ -1717,7 +1736,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         ctx.mix = op.v;
         if (ctx.pc88 && ctx.isSsg && op.v > 0) {
           const mode = ["tone", "tone", "noise", "both"][op.v & 3];
-          if (mode !== (ctx.ssgMode ?? "tone") || ctx.verbose) { out.push(`:mode ${mode}`); ctx.ssgMode = mode; }
+          if (mode !== (ctx.ssgMode ?? "tone") || ctx.verbose || stale(ctx, "ssgMode")) { out.push(`:mode ${mode}`); ctx.ssgMode = mode; }
         }
         break;
       case "noiseFreq":
@@ -1726,7 +1745,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.pc88 && ctx.isSsg) out.push(`:noise-rate ${clamp(op.n, 1, 31)}`);
         break;
       case "vel":
-        if (op.v !== ctx.vel || ctx.verbose) pushVel(ctx, out, op.v);
+        if (op.v !== ctx.vel || ctx.verbose || stale(ctx, "vel")) pushVel(ctx, out, op.v);
         break;
       case "gateCut":
         // mucom q<n> -> :gate- (key off n clocks early); convert clocks to ticks.
@@ -1748,7 +1767,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "velAdj": {
         const nv = clamp((ctx.vel ?? (ctx.isPcm ? MUCOM_PCM_VEL_DEFAULT : 12)) + op.d, 0, ctx.isPcm ? MUCOM_PCM_VEL_MAX : 15);
-        if (nv !== ctx.vel || ctx.verbose) pushVel(ctx, out, nv);
+        if (nv !== ctx.vel || ctx.verbose || stale(ctx, "vel")) pushVel(ctx, out, nv);
         break;
       }
       case "echo": {
@@ -1860,6 +1879,14 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.unrollCross?.has(op.label)) break;
         flushSlur(ctx, out); // into a kept #label loop every pass ties in — best effort
         out.push(`#${op.label}`);
+        // A kept loop's passes two on start where pass one ends: a value the
+        // body leaves different from here keeps its first write (stale).
+        const tree = ctx.crossTrees?.get(op.label);
+        if (tree && op.count !== 1) {
+          const trial = scratchCtx(ctx);
+          renderOps(tree.filter((o) => o.t !== "loopBreak"), trial, [], depth + 1);
+          ctx.stale = new Set([...(ctx.stale ?? []), ...RUNTIME_FIELDS.filter((f) => trial[f] !== ctx[f])]);
+        }
         break;
       }
       case "loopGo": {
@@ -1887,6 +1914,9 @@ function renderOps(ops, ctx, out, depth = 0) {
         ctx.pendingSlur = false;
         finishChain(ctx, out);
         if (!ctx.hasGlobalLoop) { out.push("#loop"); ctx.hasGlobalLoop = true; }
+        // A loop back lands here with the song's end state, not this one: every
+        // runtime value keeps its first write after the label (stale).
+        ctx.stale = new Set([...(ctx.stale ?? []), ...RUNTIME_FIELDS]);
         break;
       case "loop":
         // Single-line loop -> (x N …), or written out pass by pass (renderLoop).
@@ -1970,7 +2000,7 @@ function noiseModeBeforeNote(ctx, out) {
   let best = 0;
   for (let k = 1; k < rates.length; k++) if (Math.abs(Math.log(f / rates[k])) < Math.abs(Math.log(f / rates[best]))) best = k;
   const mode = `white${best}`;
-  if (mode !== ctx.noiseMode || ctx.verbose) { out.push(`:mode ${mode}`); ctx.noiseMode = mode; }
+  if (mode !== ctx.noiseMode || ctx.verbose || stale(ctx, "noiseMode")) { out.push(`:mode ${mode}`); ctx.noiseMode = mode; }
 }
 
 // --- level moves inside a tie ---------------------------------------------
@@ -2003,7 +2033,7 @@ function pushVel(ctx, out, v) {
 function fm3VelBeforeNote(ctx, out) {
   if (!ctx.fm3Op || ctx.vel == null) return;
   const tok = fm3Carrier(ctx) ? velToken(ctx.vel, ctx) : 15;
-  if (tok !== ctx.velTok || ctx.verbose) { out.push(`:vel ${tok}`); ctx.velTok = tok; }
+  if (tok !== ctx.velTok || ctx.verbose || stale(ctx, "velTok")) { out.push(`:vel ${tok}`); ctx.velTok = tok; }
 }
 
 function startChain(ctx, out) {
@@ -2119,7 +2149,7 @@ function envBeforeNote(ctx, out) {
   const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15), ctx.tempo, noiseDb(ctx), ctx.pc88);
   let name = ctx.envRegistry.get(spec);
   if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
-  if (name !== ctx.envActive || ctx.verbose) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
+  if (name !== ctx.envActive || ctx.verbose || stale(ctx, "envActive")) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
 }
 
 // Write a pending `&` as MMLisp's `~`, just before the note it slurs into.
@@ -2214,7 +2244,7 @@ function pcmNoteUse(ctx, op, continuation) {
 // The :gate- in force: the part's q, or none while FM reverb holds notes on.
 function emitGate(ctx, out) {
   const cut = ctx.reverb ? 0 : ctx.qCut ?? 0;
-  if (cut !== ctx.gateCut || ctx.verbose) { out.push(`:gate- ${cut}t`); ctx.gateCut = cut; }
+  if (cut !== ctx.gateCut || ctx.verbose || stale(ctx, "gateCut")) { out.push(`:gate- ${cut}t`); ctx.gateCut = cut; }
 }
 
 // --- slot detune (part C's `S`) ---------------------------------------------
@@ -2253,7 +2283,7 @@ function detuneChanged(ctx, out) {
   ctx.detunePerNote = ctx.fm3Op != null || Math.max(...cents) - Math.min(...cents) > DETUNE_SPREAD_CENTS;
   if (ctx.detunePerNote) return;
   const mean = Math.round(cents.reduce((a, b) => a + b, 0) / 12);
-  if (mean !== ctx.pitchOut || ctx.verbose) { out.push(`:pitch ${mean}`); ctx.pitchOut = mean; }
+  if (mean !== ctx.pitchOut || ctx.verbose || stale(ctx, "pitchOut")) { out.push(`:pitch ${mean}`); ctx.pitchOut = mean; }
 }
 
 function detuneBeforeNote(ctx, out, letter, acc) {
@@ -2261,7 +2291,7 @@ function detuneBeforeNote(ctx, out, letter, acc) {
   const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
   const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
   const cents = Math.round(lfoCents(ctx.isSsg, pc, rawDetune(ctx)));
-  if (cents !== ctx.pitchOut || ctx.verbose) { out.push(`:pitch ${cents}`); ctx.pitchOut = cents; }
+  if (cents !== ctx.pitchOut || ctx.verbose || stale(ctx, "pitchOut")) { out.push(`:pitch ${cents}`); ctx.pitchOut = cents; }
 }
 
 // mucom velocity -> MMLisp :vel. FM shares MMLisp's 2 dB ladder one-to-one
