@@ -2882,8 +2882,9 @@ function parseCurveSpec(
   };
 
   let rangeUsed = false; // positional `A..B` seen (conflicts with :from/:to)
-  for (let j = 1; j < node.items.length; j++) {
-    const k = atomValue(node.items[j]);
+  const items = node.items.filter((n) => n.kind !== "comment"); // not elements
+  for (let j = 1; j < items.length; j++) {
+    const k = atomValue(items[j]);
     // Positional range sugar: `(sin -1..1 :rate 6 :len 4)` sets from/to.
     const range = parseRangeToken(k);
     if (range && scalar) {
@@ -2920,21 +2921,23 @@ function parseCurveSpec(
     }
     // A `..`-bearing token that is not a clean range is a range typo (no other
     // token contains `..`); flag it instead of silently ignoring it.
-    if (typeof k === "string" && k.includes("..") && diagnostics) {
-      pushDiag(
-        diagnostics,
-        "error",
-        "E_CURVE_RANGE_MALFORMED",
-        `malformed range '${k}' (expected A..B, two numbers; a name or an expression goes in :from / :to)`,
-        src ?? nodeSrc(node),
-        trackName,
-      );
+    if (typeof k === "string" && k.includes("..")) {
+      if (diagnostics) {
+        pushDiag(
+          diagnostics,
+          "error",
+          "E_CURVE_RANGE_MALFORMED",
+          `malformed range '${k}' (expected A..B, two numbers; a name or an expression goes in :from / :to)`,
+          src ?? nodeSrc(node),
+          trackName,
+        );
+      }
       continue;
     }
     if (k === ":mode") {
       // `:mode loop` cycles any curve (forward) — an easing curve as a
       // cycling sustain stage; `:mode shot` plays a loop wave once.
-      const m = atomValue(node.items[j + 1]);
+      const m = atomValue(items[j + 1]);
       if (m === "loop" || m === "shot") loopMode = m === "loop";
       else if (diagnostics)
         pushDiag(diagnostics, "error", "E_CURVE_MODE",
@@ -2943,14 +2946,14 @@ function parseCurveSpec(
       j++;
       continue;
     }
-    if (k && k.startsWith(":") && j + 1 >= node.items.length) {
+    if (k && k.startsWith(":") && j + 1 >= items.length) {
       // Every curve param takes a value; a trailing keyword has none.
       if (diagnostics)
         pushDiag(diagnostics, "error", "E_CURVE_PARAM_UNKNOWN",
           `curve param ${k} on ${head} has no value`, src ?? nodeSrc(node), trackName);
       continue;
     }
-    if (k && k.startsWith(":") && j + 1 < node.items.length) {
+    if (k && k.startsWith(":") && j + 1 < items.length) {
       if ((k === ":from" || k === ":to") && rangeUsed) {
         if (diagnostics) {
           pushDiag(
@@ -2985,7 +2988,7 @@ function parseCurveSpec(
         continue;
       }
       const v = curveParamToken(
-        node.items[j + 1], env, CURVE_PARAM_KIND[k] ?? (scalar ? "length" : "number"), k, head,
+        items[j + 1], env, CURVE_PARAM_KIND[k] ?? (scalar ? "length" : "number"), k, head,
         CURVE_DYN_KEYS.has(k), diagnostics, src ?? nodeSrc(node), trackName);
       if (v === undefined) {
         j++;

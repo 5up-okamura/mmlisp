@@ -1510,6 +1510,7 @@ Normalization rules:
 - A bare value where a param belongs → `E_CURVE_STRAY_VALUE` (error): the
   ends are `A..B` (or `:from` / `:to`) and every option is written
   `:key value`, so `(noise -12..12 3)` names no seed — write `:seed 3`.
+  A comment is not an element of the form and may sit anywhere inside it.
 - Out-of-range values are clamped with `W_CURVE_PARAM_CLAMPED`.
 - A value that does not read as a number (`:phase x`, `:len 8x`) is ignored,
   with `W_CURVE_PARAM_INVALID`; an expression with a `$` is

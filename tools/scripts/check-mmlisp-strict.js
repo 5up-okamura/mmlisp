@@ -84,6 +84,11 @@ async function main() {
       expected: ["W_SWEEP_WAIT"],
     },
     {
+      label: "comments inside a curve form are not elements",
+      src: "(fm1 :tl1 (linear 0..60 ; open up\n  :len 8) c (macro :tl1 (sin 0..20 :len ; held\n  4 :rate 2)) e)",
+      expected: [],
+    },
+    {
       label: "curve value written without its keyword",
       src: "(fm1 :len 8 (note (+ 60 (noise -12..12 3))) (macro :tl1 (sin -20..20 8)) c (note (+ 60 (noise -12..12 :seed 3))) (macro :tl1 (sin -20..20 :len 8)) c)",
       expected: ["E_CURVE_STRAY_VALUE", "E_CURVE_STRAY_VALUE"],

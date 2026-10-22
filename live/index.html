@@ -2229,9 +2229,28 @@
     // entry for each and picks by `ctx`, so the hover and the completion say
     // which one the text has at hand. A curve is the value of a keyword
     // (`:pitch (noise …)`), or an operand of an eval head (`(+ root (noise
-    // …))`, `(macro …)`), or carries a range of its own (`(def wob (noise
-    // -12..12))`); a form head anywhere else is the channel.
-    const CURVE_ONLY_PARAM = /:(?:from|to|seed|hold|jitter|beta|octaves|lacunarity|persistence|leak|phase|rate|duty|skew|wait)\b/;
+    // …))`, `(macro …)`), or names its own ends — which a track form never
+    // does, so that is what tells the two apart under a `def`, which holds
+    // either. A form head anywhere else is the channel.
+    //
+    // The ends must be the form's OWN: a track's inline sweep puts a range in
+    // a nested form (`(noise :vol (linear 15..0 :len 8) c)`), so only the
+    // direct children count, and they are read across lines.
+    function curveNamesItsEnds(text, open) {
+      let depth = 0;
+      for (let i = open; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"') { for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++; continue; }
+        if (ch === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
+        if (ch === '(' || ch === '[') { depth++; continue; }
+        if (ch === ')' || ch === ']') { if (--depth === 0) return false; continue; }
+        if (depth !== 1 || /\s/.test(ch)) continue;
+        const token = /^[^\s()[\]";]*/.exec(text.slice(i))[0];
+        i += token.length - 1;
+        if (token === ':from' || token === ':to' || /^-?[\d.]+\.\.-?[\d.]+$/.test(token)) return true;
+      }
+      return false;
+    }
     function referenceCtxAt(state, wordFrom) {
       let before = state.sliceDoc(0, wordFrom);
       if (before.endsWith('(')) before = before.slice(0, -1); // the word's own '(' encloses nothing
@@ -2249,10 +2268,8 @@
       if (before[at] === '[') return 'value';                     // inside a step vector
       const head = /^[^\s()[\]";]*/.exec(before.slice(at + 1, at + 32))[0];
       if (isReservedHead(head) || head === 'macro' || head === 'wait') return 'value';
-      const line = state.doc.lineAt(wordFrom);                    // a range of its own, as in a def
-      const rest = line.text.slice(wordFrom - line.from);
-      if (/-?\d\s*\.\.|\.\.\s*-?\d/.test(rest) || CURVE_ONLY_PARAM.test(rest)) return 'value';
-      return 'track';
+      // Under a `def`, which holds a track form or a curve: its own ends say.
+      return curveNamesItsEnds(state.sliceDoc(0, state.doc.length), wordFrom - 1) ? 'value' : 'track';
     }
 
     // Hover: a keyword (`:vel`, `:tl1+`) anywhere, a form head or a channel
