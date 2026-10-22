@@ -16,7 +16,8 @@
     "mcp": "node mcp/mmlisp-mcp.mjs",
     "check:scope-trigger": "node scripts/check-scope-trigger.mjs",
     "check:snapshot": "node scripts/check-snapshot.mjs",
-    "check:resynth": "node scripts/check-resynth.mjs"
+    "check:resynth": "node scripts/check-resynth.mjs",
+    "check:voice-estimate": "node scripts/check-voice-estimate.mjs"
   },
   "engines": {
     "node": ">=18"

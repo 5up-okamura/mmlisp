@@ -116,6 +116,9 @@ driven by game code.
 - Any recording resynthesized on FM3's four operators — CSM through its
   spectral peaks, a vocoder's voice, or sine waves on them (File > Import >
   WAV on FM3…)
+- A recorded note as an FM voice: a patch searched for on a model of the
+  chip, three candidates to hear and play on the keys before one goes in as
+  a def-fm (File > Import > WAV as FM Voice…)
 - Song import with a dialog for tempo and which part goes on which channel:
   MIDI onto the GM voice set; DefleMask and Furnace modules with each pattern
   as a phrase;

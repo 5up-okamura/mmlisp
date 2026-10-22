@@ -35,6 +35,9 @@ Run from tools directory:
     after, then `diff -r`) and re-frozen with `-- --update`.
 13. `npm run check:resynth` — the FM3 resynthesis finds a synthesized vowel's
     formants and its hiss, and both scores it writes compile
+14. `npm run check:voice-estimate` — the FM voice estimate: its chip model held to
+    Nuked, and a known patch's pitch read, its sound come within a few dB, and
+    its def-fm compile
 
 ## i18n
 

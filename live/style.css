@@ -465,6 +465,19 @@
     .cm-logical-match { background: color-mix(in srgb, var(--accent) var(--sel), transparent); border-radius: 2px; }
     .cm-logical-shared { background: none; outline: 1px dashed var(--accent); }
     .modal-overlay.logical-overlay { background: none; justify-content: flex-end; align-items: flex-start; pointer-events: none; }
+    /* File > Import > WAV as FM Voice: the page stays live under it (the keys play the candidate) */
+    .modal-overlay.fmv-overlay { background: none; align-items: flex-start; pointer-events: none; }
+    .fmv-modal { pointer-events: auto; margin-top: 3.2rem; width: min(420px, 92vw); box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
+    .fmv-progress { height: 3px; background: color-mix(in srgb, var(--foreground) var(--fill), transparent); margin-bottom: 0.75rem; }
+    .fmv-progress[hidden] { display: none; }
+    .fmv-progress-bar { height: 100%; width: 0; background: var(--mid); transition: width 0.2s; }
+    .fmv-rows { display: flex; flex-direction: column; gap: 0.25rem; }
+    .fmv-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.2rem 0.3rem; border-radius: 2px;
+      color: var(--foreground); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+    .fmv-row.fmv-candidate { cursor: pointer; }
+    .fmv-row.chosen { background: color-mix(in srgb, var(--foreground) var(--fill), transparent); }
+    .fmv-play { min-width: 1.8rem; }
+    .fmv-note { color: var(--sub); margin: 0.75rem 0 0; }
     .logical-modal { pointer-events: auto; margin: 3.2rem 1rem 0 0; width: min(330px, 92vw); box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
     .logical-modal .le-pair { display: flex; gap: 0.3rem; }
     .logical-modal input[type=text] {

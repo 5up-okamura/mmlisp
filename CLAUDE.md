@@ -32,6 +32,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM and the OKIM6258), DefleMask / Furnace |
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
 | `import-resynth.js`             | File > Import > WAV on FM3: a recording's four spectral peaks as fm3-N tracks, under CSM or as sine waves (`tools npm run check:resynth`) |
+| `voice-estimate.js` (+ `voice-estimate-worker.js`, `fm-model.js`) | File > Import > WAV as FM Voice: a patch searched for one recorded note, on a fast model of one YM2612 channel held to Nuked (`tools npm run check:voice-estimate`) |
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |

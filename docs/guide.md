@@ -1556,6 +1556,28 @@ the vowel: a longer note and gate hold the vowel longer, the tail follows by
 itself (the rate track's `:len` and the noise track's rest are stretched by
 hand to match).
 
+### An FM voice from a recording
+
+`File > Import > WAV as FM Voice…` estimates a YM2612 patch for one note of
+a recording — a bass, a piano, a bell, a pluck. FM has no way back from a
+sound to its patch, so this searches: candidate patches are played on a fast
+model of the chip, compared with the recording, and moved towards it. The
+pitch and the loudness contour are read first; then every algorithm is
+searched side by side (in as many workers as the computer has cores), and the
+best three are refined.
+
+A modal lists the recording and the three candidates, nearest first. ▶ plays
+one against the recording at the same loudness, and the keyboard — on screen
+or MIDI — plays the one chosen on the chip, so you can hear it across the
+range before deciding. **Insert** puts it at the cursor as a `def-fm` named
+after the file; a comment says the note it was read at. The page stays live
+under the modal.
+
+Give it one note, from its start, with little else under it: the first 0.8 s
+is read. Simple tones (bass, electric piano, bell, organ) come close; a
+complex one (strings, a voice, anything with noise in it) comes out as a
+starting point to adjust. A search takes some 10–20 seconds.
+
 ### Song imports: MIDI, DefleMask / Furnace, VGM
 
 **A song import opens a dialog first**: what the file holds, the timing and

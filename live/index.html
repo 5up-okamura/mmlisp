@@ -229,6 +229,7 @@
             <div class="menu-sep"></div>
             <div class="menu-label">Resynthesis</div>
             <button class="menu-item" onclick="importResynth();closeMenus()">WAV on FM3…</button>
+            <button class="menu-item" onclick="importWavAsFmVoice();closeMenus()">WAV as FM Voice…</button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -608,6 +609,23 @@
     </div>
   </div>
 
+  <!-- File > Import > WAV as FM Voice: the search's candidates to hear and
+       choose; the page stays live under it, so the keys play the one chosen
+       (importWavAsFmVoiceFromFile) -->
+  <div id="fmVoiceModal" class="modal-overlay fmv-overlay" hidden>
+    <div class="modal fmv-modal" role="dialog" aria-labelledby="fmvTitle">
+      <div class="modal-title" id="fmvTitle"></div>
+      <div class="import-summary" id="fmvSummary"></div>
+      <div class="fmv-progress" id="fmvProgress"><div class="fmv-progress-bar" id="fmvProgressBar"></div></div>
+      <div class="fmv-rows" id="fmvRows"></div>
+      <div class="import-summary fmv-note" id="fmvNote"></div>
+      <div class="modal-actions">
+        <button class="tb-btn" id="fmvCancel">Cancel</button>
+        <button class="tb-btn" id="fmvInsert" disabled>Insert</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Edit > Logical Editor: a panel beside the editor, so the matches it
        marks stay in view (openLogicalEditor) -->
   <div id="logicalModal" class="modal-overlay logical-overlay" hidden>
@@ -830,6 +848,8 @@
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
     import { analyzeSound, defaultResynthOptions, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
+    import { patchToRegs, patchToDef } from './src/voice-estimate.js';
+    import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
     import { midiToFnumBlock, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, OP_ADDR_OFFSET, fmCarrierOpsForAlg, encode30, encode60, encode80, encodeB0, encodeB4 } from './src/ir-utils.js';
@@ -3368,6 +3388,175 @@
       }, fileName);
     }
 
+    // A recording's note as an FM voice (voice-estimate.js): the search runs
+    // in a pool of workers — stage 1's eight algorithms side by side, then the
+    // best three twice each with different seeds where the pool has room —
+    // and the modal lists the three candidates to hear against the recording
+    // and play on the keys before one goes in at the cursor as a def-fm.
+    let _fmVoiceAudition = null; // { name, regs } the keys play while the modal is open
+    let _fmVoiceRun = null; // the open search: { close } — a second import closes the first
+    let _fmVoicePlaying = null; // the buffer source the modal's ▶ plays
+
+    async function importWavAsFmVoice() {
+      let file;
+      try {
+        file = await pickFileWithInput(['.wav']);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`FM voice failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      await importWavAsFmVoiceFromFile(file);
+    }
+
+    function fmVoicePool() {
+      const n = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+      const workers = Array.from({ length: n }, () => new Worker('./src/voice-estimate-worker.js', { type: 'module' }));
+      let seq = 0, turn = 0;
+      const run = (op, args) => new Promise((resolve, reject) => {
+        const w = workers[turn++ % n], id = ++seq;
+        const onMsg = (e) => {
+          if (e.data.id !== id) return;
+          w.removeEventListener('message', onMsg);
+          if (e.data.error) reject(new Error(e.data.error)); else resolve(e.data.result);
+        };
+        w.addEventListener('message', onMsg);
+        w.postMessage({ id, op, args });
+      });
+      return { workers, size: n, run, close: () => workers.forEach((w) => w.terminate()) };
+    }
+
+    function fmVoiceStop() {
+      try { _fmVoicePlaying?.stop(); } catch (_) {}
+      _fmVoicePlaying = null;
+    }
+    // A note as WebAudio plays it, at the level `rms` (the recording and the
+    // candidates side by side at one loudness).
+    function fmVoicePlay(data, rate, rms) {
+      fmVoiceStop();
+      if (!audioCtx) return;
+      let s = 0; for (const v of data) s += v * v;
+      const own = Math.sqrt(s / Math.max(1, data.length)) || 1;
+      const buf = audioCtx.createBuffer(1, data.length, rate);
+      buf.getChannelData(0).set(data);
+      const src = audioCtx.createBufferSource(), gain = audioCtx.createGain();
+      src.buffer = buf;
+      gain.gain.value = Math.min(4, rms / own);
+      src.connect(gain).connect(audioCtx.destination);
+      src.onended = () => { if (_fmVoicePlaying === src) _fmVoicePlaying = null; };
+      src.start();
+      _fmVoicePlaying = src;
+    }
+
+    async function importWavAsFmVoiceFromFile(file) {
+      const modal = document.getElementById('fmVoiceModal');
+      const $ = (id) => document.getElementById(id);
+      const rows = $('fmvRows'), insert = $('fmvInsert'), bar = $('fmvProgressBar');
+      let data, sampleRate;
+      try {
+        ({ data, sampleRate } = decodeWav(new Uint8Array(await file.arrayBuffer())));
+      } catch (e) {
+        log(`FM voice failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      await initAudio();
+      _fmVoiceRun?.close();
+      $('fmvTitle').textContent = `FM Voice from ${file.name}`;
+      $('fmvSummary').textContent = 'Reading the note…';
+      $('fmvNote').textContent = '';
+      rows.replaceChildren();
+      insert.disabled = true;
+      bar.style.width = '0%';
+      $('fmvProgress').hidden = false;
+      modal.hidden = false;
+      const pool = fmVoicePool();
+      const run = { cancelled: false, close: null };
+      _fmVoiceRun = run;
+      let chosen = null, candidates = [], prep = null;
+      const close = run.close = () => {
+        run.cancelled = true;
+        pool.close();
+        fmVoiceStop();
+        _fmVoiceAudition = null;
+        if (_fmVoiceRun === run) _fmVoiceRun = null;
+        updateKeyboardUiState();
+        modal.hidden = true;
+        modal.removeEventListener('keydown', onKey);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+      modal.addEventListener('keydown', onKey);
+      $('fmvCancel').onclick = close;
+      $('fmvCancel').focus(); // Esc reaches the modal
+      insert.onclick = () => {
+        if (!chosen) return;
+        const def = patchToDef(chosen.patch, file.name, prep.pitch, file.name);
+        close();
+        insertImportedInstruments(def, [], `FM voice from ${file.name}: alg ${chosen.patch.alg}`, { tag: 'FM Voice' });
+      };
+      try {
+        prep = await pool.run('prepare', { data, sampleRate });
+        if (run.cancelled) return;
+        const NAMES = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
+        const note = `${NAMES[prep.pitch.midi % 12]}${Math.floor(prep.pitch.midi / 12) - 1}` +
+          (prep.pitch.cents ? ` ${prep.pitch.cents > 0 ? '+' : ''}${prep.pitch.cents}¢` : '');
+        const dur = prep.target.length / FM_MODEL_RATE;
+        let s = 0; for (const v of prep.target) s += v * v;
+        const rms = Math.min(0.25, Math.sqrt(s / prep.target.length) || 0.1);
+        $('fmvSummary').textContent = `${dur.toFixed(2)} s read at ${note}. Searching the eight algorithms…`;
+        // the recording's row, playable at once
+        const row = (label, onPlay) => {
+          const r = document.createElement('div');
+          r.className = 'fmv-row';
+          const b = document.createElement('button');
+          b.className = 'tb-btn fmv-play'; b.textContent = '▶'; b.title = 'Play';
+          b.onclick = (e) => { e.stopPropagation(); onPlay(); };
+          const t = document.createElement('span'); t.textContent = label;
+          r.append(b, t);
+          rows.append(r);
+          return r;
+        };
+        row('the recording', () => fmVoicePlay(prep.target, FM_MODEL_RATE, rms));
+        const total = 8 + 3 * Math.max(1, Math.floor(pool.size / 3));
+        let done = 0;
+        const tick = () => { done++; bar.style.width = `${Math.round((100 * done) / total)}%`; };
+        const s1 = await Promise.all([0, 1, 2, 3, 4, 5, 6, 7].map((alg) =>
+          pool.run('search', { ...prep, alg }).then((r) => { tick(); return r; })));
+        if (run.cancelled) return;
+        s1.sort((a, b) => a.pop[0].d - b.pop[0].d);
+        $('fmvSummary').textContent = `${dur.toFixed(2)} s read at ${note}. Refining the best three…`;
+        const seeds = Array.from({ length: Math.max(1, Math.floor(pool.size / 3)) }, (_, i) => i + 1);
+        candidates = await Promise.all(s1.slice(0, 3).map(async (st) => {
+          const tries = await Promise.all(seeds.map((seed) =>
+            pool.run('refine', { ...prep, alg: st.alg, pop: st.pop, seed }).then((r) => { tick(); return r; })));
+          return tries.sort((a, b) => a.d - b.d)[0];
+        }));
+        if (run.cancelled) return;
+        pool.close();
+        candidates.sort((a, b) => a.d - b.d);
+        $('fmvProgress').hidden = true;
+        $('fmvSummary').textContent = `${dur.toFixed(2)} s read at ${note}. Three candidates, nearest first: ▶ hears one against the recording, and the keys play the one chosen.`;
+        const pick = (c, r) => {
+          chosen = c;
+          for (const x of rows.querySelectorAll('.fmv-row')) x.classList.toggle('chosen', x === r);
+          _fmVoiceAudition = { name: `candidate alg ${c.patch.alg}`, regs: patchToRegs(c.patch) };
+          updateKeyboardUiState();
+          insert.disabled = false;
+        };
+        candidates.forEach((c, i) => {
+          const sound = renderModel(c.patch, prep.pitch.midi, prep.pitch.cents, dur, dur);
+          const r = row(`${i + 1} · alg ${c.patch.alg} · fb ${c.patch.fb} · ${c.d.toFixed(1)} dB`, () => { pick(c, r); fmVoicePlay(sound, FM_MODEL_RATE, rms); });
+          r.classList.add('fmv-candidate');
+          r.onclick = () => pick(c, r);
+          if (i === 0) pick(c, r);
+        });
+        $('fmvNote').textContent = 'The search compares spectra; the ear decides. dB is how far a candidate lies from the recording.';
+      } catch (e) {
+        if (run.cancelled) return;
+        close();
+        log(`FM voice failed: ${e?.message || e}`, 'err');
+      }
+    }
+
     // A SoundFont's drum kit, by role name (import-sf2.js). A file with several
     // kits asks which; one with none offers every preset, for a kit filed
     // under a melodic bank.
@@ -3874,6 +4063,7 @@
     window.importSong = importSong;
     window.importSf2 = importSf2;
     window.importResynth = importResynth;
+    window.importWavAsFmVoice = importWavAsFmVoice;
     window.importMucomVoiceBank = importMucomVoiceBank;
     window.importMucomPcmBank = importMucomPcmBank;
     window.exportMucomPcmWav = exportMucomPcmWav;
@@ -9100,6 +9290,9 @@
     }
 
     function getKeyboardTargetContext() {
+      // WAV as FM Voice's chosen candidate, while its modal is open.
+      if (_fmVoiceAudition)
+        return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmVoiceAudition };
       // Library's highlighted voice or sample, while the list shows.
       const lib = libraryKeyTarget();
       if (lib?.kind === 'fm')
