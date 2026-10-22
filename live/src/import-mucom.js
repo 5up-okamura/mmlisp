@@ -1197,6 +1197,56 @@ function lfoPerPitchClass(lfo, isSsg) {
   return Math.max(...d) - Math.min(...d) > LFO_DEPTH_SPREAD_CENTS;
 }
 
+// How far each software LFO's notes run (`maxClocks`, the length a sweep is
+// drawn to), measured as the part plays: a loop's passes one after another
+// (the last stopping at its `/`), a loop across lines likewise, a macro's
+// notes where it is called. A tie or `&` runs the LFO on into the next note,
+// so `[b8&)]7` is one note of seven eighths — the tokenizer, which sees a
+// loop's body once, would count one. A new `M` starts the count again.
+function measureLfoRuns(forms, macroOps) {
+  const byLetter = new Map();
+  for (const f of forms) {
+    const list = byLetter.get(f.letter) ?? [];
+    if (!list.includes(f.ops)) list.push(f.ops); // a part's copies share their ops
+    byLetter.set(f.letter, list);
+  }
+  const MAX_PASSES = 64, MAX_DEPTH = 8;
+  for (const opsList of byLetter.values()) {
+    const st = { lfo: null, run: 0, slur: false };
+    const seen = new Map(); // loopMarker label -> the ops since it, for its (go)
+    const walk = (ops, depth) => {
+      if (depth > MAX_DEPTH) return;
+      for (const op of ops) {
+        for (const list of seen.values()) list.push(op);
+        if (op.t === "loop") {
+          const n = Math.min(MAX_PASSES, Math.max(1, op.count || 2));
+          const cut = op.body.findIndex((o) => o.t === "loopBreak");
+          for (let p = 1; p <= n; p++) walk(p === n && cut >= 0 ? op.body.slice(0, cut) : op.body, depth + 1);
+          continue;
+        }
+        if (op.t === "loopMarker") { seen.set(op.label, []); continue; }
+        if (op.t === "loopGo") {
+          const body = seen.get(op.label) ?? [];
+          seen.delete(op.label);
+          const cut = body.findIndex((o) => o.t === "loopBreak");
+          const n = Math.min(MAX_PASSES, Math.max(1, op.count || 2));
+          for (let p = 2; p <= n; p++) walk(p === n && cut >= 0 ? body.slice(0, cut) : body, depth + 1);
+          continue;
+        }
+        if (op.t === "macroCall") { if (macroOps.has(op.n)) walk(macroOps.get(op.n), depth + 1); continue; }
+        if (op.t === "lfoSet") { st.lfo = op; st.run = 0; op.maxClocks = op.maxClocks ?? 0; continue; }
+        if (op.clocks != null && op.t !== "rest") {
+          st.run = op.t === "tie" || st.slur ? st.run + op.clocks : op.clocks;
+          if (st.lfo) st.lfo.maxClocks = Math.max(st.lfo.maxClocks ?? 0, st.run);
+        }
+        if (op.t === "slur") st.slur = true;
+        else if (op.t === "note" || op.t === "rest" || op.t === "porta") st.slur = false;
+      }
+    };
+    for (const ops of opsList) walk(ops, 0);
+  }
+}
+
 // The (macro :pitch+ …) spec for a software LFO on pitch class `pc` (null: one
 // for every note). A vibrato is a looping triangle; a sweep is the exact curve,
 // fitted with linear segments, as far as its longest note (`maxClocks`).
@@ -2471,6 +2521,7 @@ function mucomToMmlisp(parsed) {
   }
 
   const forms = scoreItems.filter((it) => it.kind === "form" && !it.dropped);
+  measureLfoRuns(forms, macroOps);
   const keyOf = (f) => f.key ?? f.letter;
 
   // Octave base per letter: mucom default o6 (= :oct 5 after the -1 shift),

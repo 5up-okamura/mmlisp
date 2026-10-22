@@ -74,9 +74,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
   said so, as today. The importers take `target` and Live passes the open
   score's; the mucom importer writes md and pc88 (guide.md, "For pc88"),
   the others md, and say so for any other.
-- **mucom**: a software LFO sweep stops where its macro ends (a
-  `M1,1,-9,250` pitch fall holds after ~50 ms; the real driver runs it to
-  the end) — on both targets; part G's per-sound pan `p$xy` is not read.
+- **mucom**: part G's per-sound pan `p$xy` is not read.
 - **VGM**: tempo changes within a song (one grid serves the whole file — Dino
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
   if wanted — envelopes and bends match exactly (TwinBee gives ~26

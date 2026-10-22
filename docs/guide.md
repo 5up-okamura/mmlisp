@@ -1455,8 +1455,11 @@ than approximating:
 - **Software LFO and detune** move the raw pitch word, so their cents depend
   on the note. An LFO that keeps the word in range is a triangle, however
   slow; one that carries into the block is a sweep, drawn per pitch class from
-  the exact curve as far as its longest note. An LFO or SSG envelope longer
-  than a driver macro holds (255 steps) is sampled at a coarser `:step`.
+  the exact curve as far as its longest note — counted as the part plays, so
+  a note tied through a loop's passes (`[b8&)]7`) is one long note. An LFO or
+  SSG envelope longer than a driver macro holds (255 steps) is sampled at a
+  coarser `:step`. The driver steps its LFO on its own clock and a macro steps
+  on the frame, so a fast vibrato drifts against mucom's by up to a step.
 - **Levels.** mucom sets every carrier TL from its volume table and ignores
   the voice's own, so voices come in with carrier TL 2 (the `v15` value). An
   SSG level (3 dB steps) plays as the PSG `:vel` nearest in dB on the Mega
