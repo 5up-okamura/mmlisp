@@ -113,8 +113,9 @@ driven by game code.
   banks (File > Import > mucom88 Drums…) as samples
 - SoundFont (`.sf2`) drum kits as samples under the preset kits' role names,
   resampled, mono and levelled like them (File > Import > SoundFont Drums…)
-- A recording of a voice as formant tracks on FM3 — CSM through the formants,
-  a vocoder's voice, or sine-wave speech (File > Import > Formants from WAV…)
+- Any recording resynthesized on FM3's four operators — CSM through its
+  spectral peaks, a vocoder's voice, or sine waves on them (File > Import >
+  WAV on FM3…)
 - Song import with a dialog for tempo and which part goes on which channel:
   MIDI onto the GM voice set; DefleMask and Furnace modules with each pattern
   as a phrase;

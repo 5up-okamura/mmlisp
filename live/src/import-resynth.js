@@ -1,9 +1,13 @@
 /**
- * A WAV as a voice: formant tracks for FM3 (language.md §15).
+ * A WAV resynthesized on FM3: four spectral peaks as fm3-N tracks
+ * (language.md §15).
  *
- * The recording is read as speech: every 60 Hz frame gets a loudness (its
- * RMS), a voicing (autocorrelation), a pitch and an LPC envelope, and the
- * envelope's peaks are followed through the frames as four formants. Each
+ * Any sound reads: every 60 Hz frame gets a loudness (its RMS), a voicing
+ * (autocorrelation), a pitch and an LPC envelope, and the envelope's peaks
+ * are followed through the frames as four formants. What it reads best is a
+ * sound whose envelope has a shape — a voice, a wah, a moving filter, a
+ * drum's body; one whose colour is its partials (a bell) or that has no
+ * envelope shape (noise, a dense chord) reads as its rough outline. Each
  * formant becomes one `fm3-N` track — a note per phrase under a def holding
  * its `:pitch` table (cents, one a frame) and its `:vol` table; under CSM the
  * tables hold the vowel (`#sus`) and carry the tail (`#rel`) and the note is
@@ -23,7 +27,7 @@
  */
 
 const FPS = 60;
-export const VOICE_RATE = 8000; // formants live below 4 kHz; the analysis runs here
+export const ANALYSIS_RATE = 8000; // formants live below 4 kHz; the analysis runs here
 const BPM = 150; // one 60 Hz frame = 4 ticks
 const NOMINAL = [550, 1500, 2500, 3400]; // where the four formants start out
 const F_LOW = 150, F_HIGH = 3900; // the band a formant may sit in
@@ -36,9 +40,9 @@ const LPC_ORDER = 12;
  * @param {number} sampleRate their rate
  * @returns {{ rate, duration, frames, tracks, segments, unvoiced, active, rmsDb, peakRms, pitchHz }}
  */
-export function analyzeVoice(data, sampleRate) {
-  const x = highPass(resample(data, sampleRate, VOICE_RATE), VOICE_RATE, 100);
-  const rate = VOICE_RATE;
+export function analyzeSound(data, sampleRate) {
+  const x = highPass(resample(data, sampleRate, ANALYSIS_RATE), ANALYSIS_RATE, 100);
+  const rate = ANALYSIS_RATE;
   const frames = analyzeFrames(x, rate);
   const n = frames.length;
   const dB = (v) => 20 * Math.log10(v + 1e-12);
@@ -232,11 +236,11 @@ function trackFormants(frames, rate) {
 
 // ── Options and the score ──────────────────────────────────────────────────
 
-export const VOICE_MODES = [["csm", "CSM — the buzz through the formants (a vocoder's voice)"], ["sine", "sine waves on the formants (sine-wave speech)"]];
+export const RESYNTH_MODES = [["csm", "CSM — the buzz through the formants (a vocoder's voice)"], ["sine", "sine waves on the formants (sine-wave speech)"]];
 // Each ring's decay: how a formant is heard. Held, the operator is a sine
 // wave whose phase Timer A resets every period — the loudest, a synthesizer's
 // voice; a decay makes the ring shorter and the formant wider, towards speech.
-export const VOICE_WIDTHS = [
+export const RESYNTH_WIDTHS = [
   ["held", "held (RR 0) — the loudest; a synthesizer's voice"],
   ["ringing", "ringing (RR 12, KS 1) — fuller, the high formants stay"],
   ["wide", "wide (RR 15, KS 3) — a short ring, closer to speech"],
@@ -246,20 +250,20 @@ const WIDTH_ENV = { held: [0, 0], ringing: [12, 1], wide: [15, 3] };
 // falls as the rings shorten): what keeps a recording's hiss-to-voice balance.
 const WIDTH_NOISE_DB = { held: 0, ringing: -8, wide: -10 };
 
-export function defaultVoiceOptions(a, width = "held") {
+export function defaultResynthOptions(a, width = "held") {
   return { mode: "csm", pitchHz: 0, width, noiseDb: WIDTH_NOISE_DB[width] ?? 0, comp: 0.6, start: 0, end: +a.duration.toFixed(2), tempo: true };
 }
 
 /**
- * @param {ReturnType<typeof analyzeVoice>} a
+ * @param {ReturnType<typeof analyzeSound>} a
  * @param {{ mode, pitchHz, width, noiseDb, comp, start, end, tempo }} opts  tempo: write
  *        `:tempo 150`, where a frame is four ticks (false when the voice joins a
  *        score that has its own tempo: the frames then round to its ticks, the
  *        same way on every track)
  * @returns {{ source: string, warnings: string[] }}
  */
-export function voiceToMmlisp(a, opts, fileName = "voice.wav") {
-  const o = { ...defaultVoiceOptions(a), ...opts };
+export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
+  const o = { ...defaultResynthOptions(a), ...opts };
   const warnings = [];
   const csm = o.mode === "csm";
   const f0 = Math.floor(Math.max(0, o.start) * FPS);

@@ -1,9 +1,9 @@
-// The voice importer (live/src/import-voice.js) on a voice it can be checked
+// The FM3 resynthesis (live/src/import-resynth.js) on a voice it can be checked
 // against: a synthesized vowel — a pulse train through three resonators — and
 // a hiss. The formants it finds must sit on the resonators, the hiss must land
 // on the noise track, and both scores it writes must compile with every track
 // the same length. No recording is kept in the repository.
-import { analyzeVoice, voiceToMmlisp } from "../../live/src/import-voice.js";
+import { analyzeSound, resynthToMmlisp } from "../../live/src/import-resynth.js";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 
 const RATE = 16000;
@@ -23,7 +23,7 @@ for (let i = 0; i < x.length; i++) {
   if (t >= 1.1 && t < 1.4) x[i] = rnd() * 0.3 * (1 - Math.abs(t - 1.25) / 0.15);
 }
 
-const a = analyzeVoice(x, RATE);
+const a = analyzeSound(x, RATE);
 const fails = [];
 const vowel = [];
 for (let i = Math.round(0.2 * 60); i < Math.round(0.9 * 60); i++) vowel.push(i);
@@ -40,7 +40,7 @@ if (hiss.filter((i) => a.unvoiced[i]).length < hiss.length * 0.8) fails.push("th
 if (Math.abs(a.pitchHz / PITCH - 1) > 0.05) fails.push(`pitch ${a.pitchHz.toFixed(1)} Hz for ${PITCH} Hz`);
 
 for (const mode of ["csm", "sine"]) {
-  const { source, warnings } = voiceToMmlisp(a, { mode }, "vowel.wav");
+  const { source, warnings } = resynthToMmlisp(a, { mode }, "vowel.wav");
   const r = compileMMLisp(source, `vowel-${mode}.mmlisp`);
   const errors = r.diagnostics.filter((d) => d.severity === "error");
   if (errors.length) fails.push(`${mode}: ${errors.map((d) => d.code + " " + d.message).join("; ")}`);
@@ -53,7 +53,7 @@ for (const mode of ["csm", "sine"]) {
 }
 
 if (fails.length) {
-  console.error("Voice import checks FAILED:\n  " + fails.join("\n  "));
+  console.error("Resynthesis checks FAILED:\n  " + fails.join("\n  "));
   process.exit(1);
 }
-console.log(`Voice import checks passed: formants ${F.map((f, s) => med(vowel.map((i) => a.tracks[s][i].f)).toFixed(0)).join("/")} Hz for ${F.join("/")}, pitch ${a.pitchHz.toFixed(1)} Hz, csm and sine scores compile`);
+console.log(`Resynthesis checks passed: formants ${F.map((f, s) => med(vowel.map((i) => a.tracks[s][i].f)).toFixed(0)).join("/")} Hz for ${F.join("/")}, pitch ${a.pitchHz.toFixed(1)} Hz, csm and sine scores compile`);

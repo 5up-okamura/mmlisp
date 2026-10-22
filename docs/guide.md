@@ -1516,11 +1516,11 @@ keeps what the chip has instead of reading it for the Mega Drive
 - **ADPCM** K comes in on `pcm1` with its bank's defs, but pcm1 writes
   nothing until the ADPCM-B's bake is built.
 
-### A voice from a recording
+### Resynthesizing a recording on FM3
 
-`File > Import > Formants from WAV…` reads a recording of a voice as formant
-tracks (language §15): every 60 Hz frame gets a loudness, a pitch and the
-four peaks of its spectrum, and each peak becomes one `fm3-N` track — a long
+`File > Import > WAV on FM3…` reads any recording as four formant tracks
+(language §15): every 60 Hz frame gets a loudness, a pitch and the four peaks
+of its spectral envelope, and each peak becomes one `fm3-N` track — a long
 note per phrase with a `:pitch` table for its frequency and a `:vol` table
 for its level, one value a frame — while the frames that hiss rather than
 buzz become bursts on the `noise` track. The dialog chooses the synthesis:
@@ -1532,12 +1532,17 @@ buzz become bursts on the `noise` track. The dialog chooses the synthesis:
 - **Sine waves** — the four operators as sine waves on the formants:
   sine-wave speech, a whistled voice with no pitch of its own.
 
-The voice goes in at the cursor, like an instrument. In an empty document it
+It reads best what has a shaped envelope — a voice, a wah or a moving
+filter, a drum's body. A sound whose colour is its partials (a bell, a
+metallic hit) or that has no envelope shape (noise, a dense chord) comes out
+as its rough outline.
+
+The result goes in at the cursor, like an instrument. In an empty document it
 brings its tempo, 150 BPM, where a frame is four ticks and every table lands
 on its frame; in a score it takes the score's tempo and the frames round to
 its ticks, the same way on every track. The recording is read down to 8 kHz
-(formants live below 4 kHz); a few seconds of a clear, dry voice work best,
-and the consonants' level is a dial. The result is a sketch of the voice to
+(formants live below 4 kHz); a few seconds of a clear, dry sound work best,
+and the noise track's level is a dial. The result is a sketch of the sound to
 edit — a table's values are the score's, so a formant can be redrawn, a phrase
 retimed, the rate track given a melody. Under CSM each phrase's tables hold
 their vowel (`#sus`) and carry their tail (`#rel`), and the note is gated at

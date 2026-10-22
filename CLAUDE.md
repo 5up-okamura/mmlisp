@@ -31,7 +31,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
 | `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM and the OKIM6258), DefleMask / Furnace |
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
-| `import-voice.js`               | File > Import > Formants from WAV: a recording's formants as fm3-N tracks, under CSM or as sine waves (`tools npm run check:import-voice`) |
+| `import-resynth.js`             | File > Import > WAV on FM3: a recording's four spectral peaks as fm3-N tracks, under CSM or as sine waves (`tools npm run check:resynth`) |
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |
