@@ -1909,17 +1909,23 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v | 0)); }
 // value plays as the :vel whose level is nearest in dB (:vel = 15 - atten).
 const PSG_LEVELS = [1.0, 0.772, 0.622, 0.485, 0.382, 0.29, 0.229, 0.174, 0.132, 0.096, 0.072, 0.051, 0.034, 0.019, 0.009];
 const PSG_LEVEL_DB = PSG_LEVELS.map((x) => 20 * Math.log10(x));
-// On pc88 the register's 3 dB steps are the target's own: the :vel whose
-// 2 dB steps quantize back onto the same register value (ym2608.js), so a
-// level imports exactly down to v5 (below, the :vel ladder's 30 dB ends).
-function ssgRegVel(r, offsetDb = 0, pc88 = false) {
+function ssgRegVel(r, offsetDb = 0) {
   if (r <= 0) return 0;
-  if (pc88) return clamp(15 - Math.round((15 - Math.min(15, r)) * 1.5), 0, 15);
   const db = -3 * (15 - Math.min(15, r)) + offsetDb;
   let best = 0;
   for (let a = 1; a < PSG_LEVEL_DB.length; a++) if (Math.abs(PSG_LEVEL_DB[a] - db) < Math.abs(PSG_LEVEL_DB[best] - db)) best = a;
   return 15 - best;
 }
+
+// pc88: an SSG part's level is its fader. A register level 0-15 is the :vol
+// that plays it at :vel 15 — :vol's 2 dB steps quantize back onto the SSG's
+// 3 dB ones (ym2608.js), every one of them, where :vel's ladder ends 30 dB
+// down at register 5 — and 0 is the fader's mute. A level move inside a tie
+// is then a fader move (no chain), and an envelope a :vel* macro under it.
+function ssgLevelVol(r) {
+  return r <= 0 ? 0 : 31 - Math.round(1.5 * (15 - Math.min(15, r)));
+}
+const ssgFader = (ctx) => ctx.pc88 && ctx.isSsg;
 
 // An SSG part that ever turns noise on renders twice: its square track keeps
 // the notes played with tone on, its noise copy (ctx.isNoise) the ones with
@@ -1965,6 +1971,7 @@ function noiseModeBeforeNote(ctx, out) {
 // place in the out arrays they were written to.
 function pushVel(ctx, out, v) {
   ctx.vel = v;
+  if (ssgFader(ctx)) { out.push(`:vol ${ssgLevelVol(clamp(v, 0, 15))}`); return; }
   if (ctx.fm3Op) {
     // A modulator copy holds the patch's level; a carrier's is the part's.
     const carrier = fm3Carrier(ctx);
@@ -1987,7 +1994,7 @@ function fm3VelBeforeNote(ctx, out) {
 
 function startChain(ctx, out) {
   finishChain(ctx, out);
-  if (ctx.isPcm || ctx.vel == null || !fm3Carrier(ctx)) return;
+  if (ctx.isPcm || ctx.vel == null || !fm3Carrier(ctx) || ssgFader(ctx)) return;
   ctx.chain = { arr: out, idx: out.length, base: ctx.vel, toks: [], cand: [] };
 }
 
@@ -2008,7 +2015,7 @@ function finishChain(ctx, out) {
   // :vol steps add to the attenuator's, whose bottom ones are wide: the step
   // count is the attenuator's between the two at the envelope's sustain.
   const sl = ctx.isSsg ? (ctx.ssgEnv?.sl ?? 255) : 255;
-  const velAt = (v) => (ctx.isSsg ? ssgRegVel(Math.floor((sl * (v + 1)) / 256), noiseDb(ctx), ctx.pc88) : velToken(v, ctx));
+  const velAt = (v) => (ctx.isSsg ? ssgRegVel(Math.floor((sl * (v + 1)) / 256), noiseDb(ctx)) : velToken(v, ctx));
   const vol = (v) => Math.max(0, 31 - (velAt(top) - velAt(v)));
   ch.arr[ch.idx] = `:vel ${velToken(top, ctx)} :vol ${vol(ch.base)} ${ch.arr[ch.idx]}`;
   for (const t of ch.toks) t.arr[t.idx] = `:vol ${vol(t.v)}`;
@@ -2028,11 +2035,18 @@ function finishChain(ctx, out) {
 // clock by clock, fitted with straight pieces. One envelope therefore draws
 // per `v`, named like the LFO's pitch classes.
 const SSG_ENV_TOLERANCE = 1; // :vel steps, the straight-piece fit of a stage
+// On pc88 the note plays at :vel 15 under its fader (ssgLevelVol), so a
+// level is the :vel that, with the fader's steps, lands on its register value
+// — a fraction is fine, the macro's ratio carries it — down to 30 dB below
+// the note's top.
 function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
   const factor = WHOLE_TICKS / wholeClocks;
   let ticks = 0; // the stages' whole length, for macroStep
-  const vel = Math.max(1, ssgRegVel(v, offsetDb, pc88));
-  const played = (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256), offsetDb, pc88);
+  const faderDb = 2 * (31 - ssgLevelVol(v));
+  const vel = pc88 ? 15 : Math.max(1, ssgRegVel(v, offsetDb));
+  const played = pc88
+    ? (level) => Math.max(0, Math.min(15, 15 - (3 * (15 - Math.floor((level * (v + 1)) / 256)) - faderDb) / 2))
+    : (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256), offsetDb);
   const ratio = (x) => Math.round((100 * x) / vel) / 100;
   const items = [];
   // A stage from level a towards b, `rate` a clock — SOFENV steps the level
@@ -2065,6 +2079,11 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
   if (al < 255) {
     if (ar > 0) stage(al, 255, ar);
     else items.push(`${ratio(played(al))}`); // AR 0: it never rises
+  } else if (ar > 0) {
+    // At the top already, the attack still takes its clock: SOFENV adds AR,
+    // finds 0FFH and only then turns to the decay (music.asm SOFEV1).
+    items.push(`(linear 1..1 :len ${Math.round(factor)}t)`);
+    ticks += Math.round(factor);
   }
   if (al >= 255 || ar > 0) {
     if (sl < 255) stage(255, sl, dr);
@@ -2239,7 +2258,8 @@ function detuneBeforeNote(ctx, out, letter, acc) {
 // converts it to steps. Still lossy (16 steps), and v0 stays :vel 0.
 function velToken(v, ctx) {
   // An SSG `v` is the register value an envelope at full level writes.
-  if (ctx.isSsg) return ssgRegVel(v, noiseDb(ctx), ctx.pc88);
+  if (ssgFader(ctx)) return 15; // pc88: the level is the fader (ssgLevelVol)
+  if (ctx.isSsg) return ssgRegVel(v, noiseDb(ctx));
   if (!ctx.isPcm) return clamp(v, 0, 15);
   const max = ctx.pcmVelMax || 0;
   if (v <= 0 || max <= 0) return 0;

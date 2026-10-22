@@ -136,9 +136,11 @@ In order:
      `:vol` today.
    - **The check, what is left**: the mucom importer's pc88 scores against
      the real driver's VGM (the A/B the importer was tuned with). FM keys and
-     pitch, the rhythm's hits, levels and pan, and the SSG's mixer match;
-     open are the SSG's levels under its soft envelope `E` and tied level
-     moves (40–90% exact, drawn for the Mega Drive's attenuator), a hit
+     pitch, the rhythm's hits, levels and pan, and the SSG's mixer match,
+     and its levels mostly (70–99% exact, 86–100% within a step). Open: a
+     `v` move inside a tie (one fader step, where mucom's level × (v+1)
+     moves less near the sustain), a `q` note's release start, `(` / `)`
+     inside a macro (rendered once, without the absolute `v`), a hit
      quieter than the IL's 31 steps (RTL stays 63), and K, with the
      ADPCM-B.
    - **The preview**: ymfm's YM2608 built to WASM beside the Nuked cores. It

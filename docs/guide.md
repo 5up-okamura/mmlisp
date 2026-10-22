@@ -1512,9 +1512,12 @@ keeps what the chip has instead of reading it for the Mega Drive
   the ROM has it); `v`'s total and per-sound levels become an absolute
   `:vel`, which the chip's level takes back.
 - **SSG** `P` is the channel's `:mode tone|noise|both` (`P0` rests the
-  notes), `w` the song's `:noise-rate`; no part is split into a noise copy,
-  low notes stay where they are, and a level lands on the SSG's own 3 dB
-  steps (exact from `v5` up).
+  notes), `w` the song's `:noise-rate`; no part is split into a noise copy
+  and low notes stay where they are. A level is the channel's fader: `v` is
+  the `:vol` that lands on the same register step, every one of the sixteen
+  (`:vel`'s ladder would end 30 dB down), so a `(` / `)` inside a tie is a
+  fader move. An `E` envelope is a `:vel*` macro under it, drawn per `v` and
+  reaching 30 dB below the note's top.
 - **FM** is as above, and `fm6` stays (there is no DAC to own).
 - **ADPCM** K comes in on `pcm1` with its bank's defs, but pcm1 writes
   nothing until the ADPCM-B's bake is built.
