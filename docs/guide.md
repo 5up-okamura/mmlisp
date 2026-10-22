@@ -1498,6 +1498,24 @@ place for is dropped and said so: rhythm's per-sound pan, the ADPCM part K's
 pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
 `vm<n>`.
 
+**For pc88.** A `.muc` is written for the YM2608, so importing it into a
+`:target pc88` score — write `(def-score :target pc88)` first, or open one —
+keeps what the chip has instead of reading it for the Mega Drive
+(language.md §19):
+
+- **Rhythm** G plays the chip's own sounds on `pcm2`, the kit roles
+  (`kick` `snare` `ride` `hat` `tom4` `rim`) one `:prio` layer each with no
+  kit imported and no `:gate` (each sound is a voice of its own, and rings as
+  the ROM has it); `v`'s total and per-sound levels become an absolute
+  `:vel`, which the chip's level takes back.
+- **SSG** `P` is the channel's `:mode tone|noise|both` (`P0` rests the
+  notes), `w` the song's `:noise-rate`; no part is split into a noise copy,
+  low notes stay where they are, and a level lands on the SSG's own 3 dB
+  steps (exact from `v5` up).
+- **FM** is as above, and `fm6` stays (there is no DAC to own).
+- **ADPCM** K comes in on `pcm1` with its bank's defs, but pcm1 writes
+  nothing until the ADPCM-B's bake is built.
+
 ### A voice from a recording
 
 `File > Import > Formants from WAV…` reads a recording of a voice as formant

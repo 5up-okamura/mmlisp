@@ -72,9 +72,11 @@ Its current limits are `driver.md` §11 — keep the two in step.
   read as what ("a YM2608 song, read for md; for pc88 write
   `(def-score :target pc88)` first"); what the target lacks is dropped and
   said so, as today. The importers take `target` and Live passes the open
-  score's; today they write md and say so for any other. The pc88 writing
-  itself — part G on the rhythm, K on the ADPCM-B, the SSG's mixer and noise
-  period as they are — is the pc88 item's check below.
+  score's; the mucom importer writes md and pc88 (guide.md, "For pc88"),
+  the others md, and say so for any other.
+- **mucom**: a software LFO sweep stops where its macro ends (a
+  `M1,1,-9,250` pitch fall holds after ~50 ms; the real driver runs it to
+  the end) — on both targets; part G's per-sound pan `p$xy` is not read.
 - **VGM**: tempo changes within a song (one grid serves the whole file — Dino
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
   if wanted — envelopes and bends match exactly (TwinBee gives ~26
@@ -134,11 +136,13 @@ In order:
    - **The rhythm's moving levels**: `:vel` / `:vol` macros and `:vol`
      sweeps into IL; a hit's level is its note's `:vel` and the track's
      `:vol` today.
-   - **The check**: the mucom importer, for a pc88 score, writes part G on
-     the rhythm, K on the ADPCM-B, the SSG's `P` mixer as `:mode` and `w` as
-     `:noise-rate` (the Importers section), and their VGM is compared
-     register by register with the real driver's (the A/B the importer was
-     tuned with, now covering G, K and the SSG too).
+   - **The check, what is left**: the mucom importer's pc88 scores against
+     the real driver's VGM (the A/B the importer was tuned with). FM keys and
+     pitch, the rhythm's hits, levels and pan, and the SSG's mixer match;
+     open are the SSG's levels under its soft envelope `E` and tied level
+     moves (40–90% exact, drawn for the Mega Drive's attenuator), a hit
+     quieter than the IL's 31 steps (RTL stays 63), and K, with the
+     ADPCM-B.
    - **The preview**: ymfm's YM2608 built to WASM beside the Nuked cores. It
      reads the rhythm ROM through the host, as MAME does — Yamaha's, so it
      does not ship: the user brings their own (kept like recent files), and
