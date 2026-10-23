@@ -60,20 +60,14 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## Importers
 
-- **The target an import is for.** An import writes the open score's
-  `:target` (the machine is the language's to say, not a dialog's): a voice
-  or sample import joins that score, and a song import — MIDI, VGM,
-  DefleMask / Furnace, mucom — writes a new document for the same target,
-  its lanes placed on that target's channel table by kind (FM, tone, noise,
-  sample) instead of the Mega Drive's names. What the importer knows is the
-  file's chips, not where the music came from or went: the VGM header's
-  clocks, the module's system id, a `.muc` is MUCOM88's and so the YM2608's,
-  MIDI has none. Where they differ from the target's, the import says what it
-  read as what ("a YM2608 song, read for md; for pc88 write
-  `(def-score :target pc88)` first"); what the target lacks is dropped and
-  said so, as today. The importers take `target` and Live passes the open
-  score's; the mucom importer writes md and pc88 (guide.md, "For pc88"),
-  the others md, and say so for any other.
+- **The target an import is for.** A voice or sample import joins the open
+  score, whatever its `:target`. A song import is a conversion, written as a
+  new document for a machine its importer knows — not for every target: an
+  importer writes only what it is built to write, and offers only that. The
+  mucom importer writes pc88 (the song's own chip, the default) or md, chosen
+  in its import dialog; MIDI, VGM and DefleMask / Furnace write md and show no
+  choice. A target is added to an importer when a song needs it, not to fill
+  the matrix.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
 - **VGM**: tempo changes within a song (one grid serves the whole file — Dino
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,

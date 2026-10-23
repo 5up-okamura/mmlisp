@@ -25,7 +25,7 @@
 // fine tune (E5xx) an offset. Everything else is counted and reported.
 // ---------------------------------------------------------------------------
 
-import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS, writerTarget } from "./import-song.js";
+import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS } from "./import-song.js";
 import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
 
 // What each source channel kind is, for the defaults and the voice: an FM
@@ -146,7 +146,6 @@ const slug = (s) => String(s || "").toLowerCase().normalize("NFKD")
  */
 export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const warnings = [];
-  writerTarget(options.target, warnings); // the open score's :target; md is what is written today
   const fxSkipped = new Map();
   const rowTicks = PPQN / a.rowsPerBeat;
   const ticksPerFrame = rowTicks / a.framesPerRow;

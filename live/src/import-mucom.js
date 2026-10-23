@@ -16,7 +16,7 @@ import { encodeWav } from "./export-wav.js";
 import { VEL_DB_PER_STEP, fmCarrierOpsForAlg, pitchToMidi } from "./ir-utils.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 import { encodeMmb } from "./export-mmb.js";
-import { PPQN, qstr, noteName, writerTarget } from "./import-song.js";
+import { PPQN, qstr, noteName } from "./import-song.js";
 
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
 const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole note)
@@ -2797,7 +2797,9 @@ function mergeDatVoices(parsed, datVoices) {
 // A `.muc` is MUCOM88's, so its chip is the YM2608: written for pc88 it
 // keeps the chip's own rhythm, SSG mixer and noise period; written for md
 // they are read as the Mega Drive's (docs/roadmap.md, Importers).
-const MUCOM_TARGETS = new Set(["md", "pc88"]);
+// The targets a song is written for, the song's own chip first
+// (docs/roadmap.md, Importers).
+export const MUCOM_TARGETS = ["pc88", "md"];
 
 /**
  * Convenience: bytes -> { source, warnings }. Pass the referenced `.dat` voice
@@ -2805,9 +2807,9 @@ const MUCOM_TARGETS = new Set(["md", "pc88"]);
  * `#pcm` ADPCM bank (`*pcm.bin`) as `pcmBytes` to import part K — without it
  * K is dropped, since its `@n` would have no samples to name.
  */
-export function importMucom(bytes, datBytes = null, pcmBytes = null, { target } = {}) {
-  const warnings = [];
-  const writes = writerTarget(target, warnings, MUCOM_TARGETS); // the open score's :target
+export function importMucom(bytes, datBytes = null, pcmBytes = null, { target = MUCOM_TARGETS[0] } = {}) {
+  if (!MUCOM_TARGETS.includes(target)) throw new Error(`mucom88 writes ${MUCOM_TARGETS.join(" or ")}, not ${target}`);
+  const writes = target;
   const pcm = pcmBytes ? decodeMucomPcmForImport(parseMucom(decodeMucText(bytes)).meta.pcmFile, pcmBytes) : null;
   // A fresh parse per render: rendering adds the noise copies to scoreItems.
   const render = (pcmDrop) => {
@@ -2820,9 +2822,6 @@ export function importMucom(bytes, datBytes = null, pcmBytes = null, { target } 
   // The 32 KB bank fit is the Mega Drive's soft mix; the YM2608's ADPCM-B has
   // its own RAM.
   const out = pcm && writes === "md" ? fitPcmBank(render, pcm) : render(null);
-  if (writes === "md")
-    warnings.push("a YM2608 song (MUCOM88), read for md: for pc88 — its rhythm, SSG mixer and noise as the chip has them — write (def-score :target pc88) first");
-  out.warnings.unshift(...warnings);
   // `pcm` rides along so the caller can save `wav` as `wavFile` beside the score
   // (what the emitted defs reference) and play `mono` before it exists on disk.
   return pcm ? { ...out, pcm } : out;

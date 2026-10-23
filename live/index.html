@@ -844,7 +844,7 @@
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
-    import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
+    import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from './src/import-vgm.js';
@@ -3053,7 +3053,7 @@
     // A song's banks are best picked with it in one multi-select dialog; a bank
     // picked alone in File > Import > Song… is for when they weren't, since each
     // menu click is a fresh user gesture and so can always open a picker.
-    let _mucomSong = null; // { bytes, fileName, datBytes, pcmBytes }
+    let _mucomSong = null; // { bytes, fileName, target, datBytes, pcmBytes }
     let _mucomPcm = null; // last decoded PCM bank { wav, wavFile, mono, rate, entries }
     let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
 
@@ -3226,7 +3226,6 @@
       // An untouched field (either mode's default) is no override.
       const untouched = bpm === fileBpm || bpm === beatBpm || !(bpm > 0);
       return midiToMmlisp(parsed, {
-        target: editorTarget(),
         dest: got.rows,
         grid: Number(got.fields.grid),
         timing,
@@ -3260,7 +3259,6 @@
       const dest = {};
       for (const c of a.channels) dest[c.index] = got.rows[String(c.index)] ?? 'drop';
       return trackerToMmlisp(t, {
-        target: editorTarget(),
         dest, phrases: !!got.fields.phrases,
         bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
         fileName,
@@ -3303,7 +3301,6 @@
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
       return vgmToMmlisp(parsed, {
-        target: editorTarget(),
         dest: got.rows,
         grid: got.fields.grid,
         bpm: bpm > 0 && bpm !== shown ? bpm : null,
@@ -3710,21 +3707,6 @@
       });
     }
 
-    // The open score's :target, read from the editor's source as it stands
-    // (the last good compile may be older, or there may be none): an import
-    // writes for that machine.
-    function editorTarget() {
-      try {
-        for (const form of parse(editorView.state.doc.toString())) {
-          const items = form.kind === 'list' ? form.items : null;
-          if (items?.[0]?.value !== 'def-score') continue;
-          const at = items.findIndex((it) => it.value === ':target');
-          if (at > 0) return items[at + 1]?.value;
-        }
-      } catch { /* an unparsable source falls back to the last compile */ }
-      return _lastGoodIR?.metadata?.target;
-    }
-
     // mucom88 .muc: convert the whole song to MMLisp source and load it as a
     // new untitled document: FM and SSG parts, rhythm G and ADPCM K on PCM
     // tracks (with their banks); what does not convert is reported. The song
@@ -3740,15 +3722,26 @@
       }
       const datPick = byExt(/\.dat$/i);
       const pcmPick = byExt(/\.bin$/i);
+      // The machine it is written for: the song's own chip, or the Mega Drive.
+      const got = await showImportDialog({
+        title: `Import ${file.name}`,
+        summary: 'A MUCOM88 song, written for the YM2608. ' +
+          (datPick || pcmPick ? `With ${[datPick?.name, pcmPick?.name].filter(Boolean).join(' and ')}.` : 'Its .dat / .bin, if it uses them, come in the same selection.'),
+        fields: [{ key: 'target', label: 'Target', type: 'select', value: MUCOM_TARGETS[0],
+          choices: MUCOM_TARGETS.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
+          hint: 'pc88 keeps the chip’s rhythm, SSG mixer and noise; md reads them for the Mega Drive' }],
+      });
+      if (!got) return;
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         _mucomSong = {
           bytes,
           fileName: file.name,
+          target: got.fields.target,
           datBytes: datPick ? new Uint8Array(await datPick.arrayBuffer()) : null,
           pcmBytes: pcmPick ? new Uint8Array(await pcmPick.arrayBuffer()) : null,
         };
-        const res = importMucom(_mucomSong.bytes, _mucomSong.datBytes, _mucomSong.pcmBytes, { target: editorTarget() });
+        const res = importMucom(_mucomSong.bytes, _mucomSong.datBytes, _mucomSong.pcmBytes, { target: _mucomSong.target });
         const withs = [datPick && `voices ${datPick.name}`, pcmPick && `PCM ${pcmPick.name}`].filter(Boolean);
         loadMucomSource(res.source, res.warnings, file.name,
           `Imported ${file.name}${withs.length ? ' with ' + withs.join(' + ') : ''} (mucom88) — review and Build`,
@@ -3782,7 +3775,7 @@
         if (toSong && _mucomSong) {
           _mucomSong.datBytes = datBytes;
           // Keep any PCM bank already applied — re-converting must not lose it.
-          const res = importMucom(_mucomSong.bytes, datBytes, _mucomSong.pcmBytes, { target: editorTarget() });
+          const res = importMucom(_mucomSong.bytes, datBytes, _mucomSong.pcmBytes, { target: _mucomSong.target });
           loadMucomSource(res.source, res.warnings, _mucomSong.fileName, `Reloaded ${_mucomSong.fileName} with voice bank ${datFile.name} (mucom88)`, res.pcm);
         } else {
           const { source, warnings } = voiceBankToMmlisp(datBytes);
@@ -3799,7 +3792,7 @@
     async function applyMucomPcmBank(bankName) {
       const song = _mucomSong;
       if (!song) return;
-      const res = importMucom(song.bytes, song.datBytes, song.pcmBytes, { target: editorTarget() });
+      const res = importMucom(song.bytes, song.datBytes, song.pcmBytes, { target: song.target });
       const n = res.pcm?.entries.length ?? 0;
       loadMucomSource(res.source, res.warnings, song.fileName, `Reloaded ${song.fileName} with PCM bank ${bankName} (mucom88) — ${n} samples decoded`, res.pcm);
     }

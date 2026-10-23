@@ -57,16 +57,6 @@ export function destsFor(target) {
     pcm: target.channelNames.filter((h) => target.partOf(h).kind === "sample"),
   };
 }
-// The targets an importer writes (docs/roadmap.md, Importers): md for every
-// one, and those its own writer knows (`writes`); a `target` it cannot write
-// yet is read for md, and said so.
-export const WRITER_TARGETS = new Set(["md"]);
-export function writerTarget(target, warnings, writes = WRITER_TARGETS) {
-  const name = target ?? "md";
-  if (writes.has(name)) return name;
-  warnings?.push(`imported for md: writing a ${targetProfile(name).system} (:target ${name}) score is not built yet`);
-  return "md";
-}
 const MD = destsFor(targetProfile("md"));
 export const FM_DESTS = MD.fm;
 export const PSG_DESTS = MD.psg;

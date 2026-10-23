@@ -1502,10 +1502,10 @@ place for is dropped and said so: rhythm's per-sound pan, the ADPCM part K's
 pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
 `vm<n>`.
 
-**For pc88.** A `.muc` is written for the YM2608, so importing it into a
-`:target pc88` score — write `(def-score :target pc88)` first, or open one —
-keeps what the chip has instead of reading it for the Mega Drive
-(language.md §19):
+**For pc88.** A `.muc` is written for the YM2608, so the import dialog's
+**Target** starts at pc88 (the NEC PC-8801), which keeps what the chip has
+instead of reading it for the Mega Drive (language.md §19); md converts it
+for the Mega Drive as above:
 
 - **Rhythm** G plays the chip's own sounds on `pcm2`, the kit roles
   (`kick` `snare` `ride` `hat` `tom4` `rim`) one `:prio` layer each with no
