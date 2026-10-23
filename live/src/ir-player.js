@@ -57,6 +57,8 @@ const PCM_LOOP_MAX = 0x7f00;
 const FM_CHANNELS = 8;
 // A held PSG note's key in _holdChannels: past every FM channel.
 const PSG_HOLD_BASE = FM_CHANNELS;
+// The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
+const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
 // Half a millisecond: late enough to sort after every event of its frame,
 // far too early to hear.
 const PCM_SWEEP_AFTER = 0.0005;
@@ -2201,6 +2203,11 @@ export class IRPlayer {
   _dispatchEvent(ev, when) {
     this._syncMasterSweep(ev, when);
     if (this._dispatchGlobalEvent(ev, when)) return;
+    // The chip's LFO is the song's, written on any track (language.md §1):
+    // a PSG or PCM track's write goes where an FM track's does, as the
+    // driver takes it from any track.
+    if ((ev._isPsg || ev._isPcm) && LFO_TARGETS.has(ev.args?.target) && /^PARAM_/.test(ev.cmd))
+      ev = { ...ev, _isPsg: false, _isPcm: false, _chIndex: 0 };
 
     // Route PSG events to PSG handler
     if (ev._isPsg) {

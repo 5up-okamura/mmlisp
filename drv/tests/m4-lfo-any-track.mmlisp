@@ -1,0 +1,5 @@
+; The song-wide LFO written on a PSG track: a value, then a sweep, which an
+; FM channel hears through :fms. The driver takes a song-wide word from any
+; track; the IR preview must too.
+(sqr1 :lfo-rate 5 :len 1 c :lfo-rate (linear 1..8 :len 1) d)
+(fm1 :fms 7 :len 1 c c)

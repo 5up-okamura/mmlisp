@@ -979,6 +979,20 @@
   "mmb": "6d16128fa762df3d",
   "vgm": "8d1488d04b07fa76"
  },
+ "drv/tests/m4-lfo-any-track.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "7ecef3aac6d1db85",
+  "regs": "773f348e14bf61cf",
+  "mmb": "0c0ac874590979db",
+  "vgm": "8f8989cc9904080c"
+ },
+ "drv/tests/m4-lfo-any-track.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "35b23e93e9a59c0a",
+  "regs": "773f348e14bf61cf",
+  "mmb": "1dfeadfc9b78663c",
+  "vgm": "8f8989cc9904080c"
+ },
  "drv/tests/m4-loop-break-state.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "fbcc4774d7de04f7",
