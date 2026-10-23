@@ -34,7 +34,7 @@ const UNIT = 4;
 const BAKE_MAX_RATE = 22050;
 
 // A box-filtered resample to `to` Hz (to < from), enough for a downsample.
-function resample(data, from, to) {
+export function resample(data, from, to) {
   if (to >= from) return data;
   const ratio = from / to, n = Math.floor(data.length / ratio), out = new Float32Array(n);
   for (let i = 0; i < n; i++) {

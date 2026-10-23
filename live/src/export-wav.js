@@ -16,14 +16,22 @@
 // and tiled with the loop like the register writes. Without a bank the PCM
 // events are skipped and counted in pcmCount.
 //
-// The actual synthesis (FM resample, PSG decimate, mix, analog LPF) lives in
-// the shared MegaDriveSynth core (synth-md.js) — the same DSP that drives live
-// playback — so exports match what you hear by construction.
+// The actual synthesis lives in the machine's synth core — synth-md.js for
+// the Mega Drive, synth-pc88.js for the PC-8801 — the same DSP that drives
+// live playback, so exports match what you hear by construction. A pc88
+// score's PCM is the chip's own: the ADPCM-B's RAM image (`pcm.adpcm`, as
+// the VGM export takes it) and the rhythm ROM the user brings (`rhythmRom`).
 // ---------------------------------------------------------------------------
 
 import { notYet } from "./targets.js";
 import { MegaDriveSynth, NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
+import { Pc88Synth } from "./synth-pc88.js";
 import { renderPcmDac, configurePcmRate } from "./export-vgm.js";
+import { RHYTHM_BIT } from "./chips/ym2608.js";
+import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
+
+/** The synth core that plays `target`'s chips (its name: md, pc88). */
+export const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth };
 
 const DEFAULT_SAMPLE_RATE = 48000; // match live AudioContext (and the LPF coeff)
 const DEFAULT_FADE_SEC = 4;
@@ -95,7 +103,7 @@ function buildTimeline(capture, sampleRate, fadeSec = DEFAULT_FADE_SEC) {
 }
 
 /**
- * Render the timeline to stereo float buffers via the shared MegaDriveSynth
+ * Render the timeline to stereo float buffers through the machine's synth
  * core. Writes are applied sample-accurately through the renderInto onFrame
  * callback (the offline path has no realtime constraint). With `dac` (the
  * PCM stream, see renderWav) the DAC is claimed at its first byte and fed from
@@ -105,16 +113,14 @@ function buildTimeline(capture, sampleRate, fadeSec = DEFAULT_FADE_SEC) {
  * @returns {Promise<{ L: Float32Array, R: Float32Array }>}
  */
 async function renderSamples(
+  synth,
   fmWrites,
   psgWrites,
   totalFrames,
   sampleRate,
-  lpfOn,
   dac = null,
   onProgress = null,
 ) {
-  const synth = await MegaDriveSynth.create(sampleRate);
-  synth.setLpf(lpfOn);
 
   const L = new Float32Array(totalFrames);
   const R = new Float32Array(totalFrames);
@@ -157,6 +163,30 @@ async function renderSamples(
   }
 
   return { L, R };
+}
+
+// When a pc88 one-shot's last sounds end: an ADPCM-B shot plays its range
+// out, a rhythm hit its ROM sound — both past their key-on write. 0 when the
+// target has neither.
+function pc88TailSec(capture, target) {
+  const chip = target?.chipFor?.("rhythm") ?? target?.chipFor?.("adpcm-b");
+  if (!chip?.rhythm && !chip?.adpcm) return 0;
+  const regs = new Uint8Array(0x11); // the ADPCM-B's, as last written
+  let tail = 0;
+  for (const w of capture.writes) {
+    if (w.port === 0 && w.addr === 0x10 && !(w.data & 0x80)) {
+      for (const [sound, bit] of Object.entries(RHYTHM_BIT))
+        if (w.data & (1 << bit)) tail = Math.max(tail, w.sec + ROM_SOUND_SEC[sound]);
+    }
+    if (w.port !== 1 || w.addr > 0x10) continue;
+    regs[w.addr] = w.data;
+    if (w.addr === 0 && (w.data & 0x80) && !(w.data & 0x10)) {
+      const start = regs[2] | (regs[3] << 8), stop = regs[4] | (regs[5] << 8);
+      const rate = (((regs[9] | (regs[10] << 8)) / 65536) * chip.clock) / 144;
+      if (rate > 0) tail = Math.max(tail, w.sec + ((stop - start + 1) * 8) / rate);
+    }
+  }
+  return tail;
 }
 
 /** Linear gain ramp 1->0 across [fadeStartFrame, totalFrames). In place. */
@@ -217,9 +247,13 @@ export function encodeWav(L, R, sampleRate) {
  *
  * @param {IRPlayer} player  player with IR already loaded
  * @param {{ sampleRate?:number, lpfOn?:boolean, fadeSec?:number,
- *           pcm?:{bank:Uint8Array, entryIds:object, pcmVoices:number},
+ *           pcm?:{bank:Uint8Array, entryIds:object, pcmVoices:number}
+ *               | {adpcm:{image:Uint8Array, entries:object}},
+ *           rhythmRom?:Uint8Array,
  *           onProgress?:(fraction:number)=>void }} [opts]
- *        `pcm` is the score's bank (see export-vgm.js renderPcmDac)
+ *        `pcm` is the score's bank (see export-vgm.js renderPcmDac) or a
+ *        pc88 score's ADPCM-B image (chips/adpcm-b.js bakeAdpcmB);
+ *        `rhythmRom` the YM2608's (without it the rhythm is silent)
  * @returns {Promise<{ bytes:Uint8Array, pcmCount:number, durationSec:number }>}
  */
 export async function renderWav(player, opts = {}) {
@@ -227,21 +261,31 @@ export async function renderWav(player, opts = {}) {
   if (why) throw new Error(why);
   const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const fadeSec = opts.fadeSec ?? DEFAULT_FADE_SEC;
-  const lpfOn = !!opts.lpfOn;
+  const target = player._target;
+  const synth = await (SYNTHS[target?.name] ?? MegaDriveSynth).create(sampleRate);
+  synth.setLpf(!!opts.lpfOn);
 
-  configurePcmRate(player, opts.pcm);
+  const adpcm = opts.pcm?.adpcm ?? null;
+  if (adpcm) {
+    player.setAdpcmBank?.(adpcm);
+    synth.setAdpcmRam(adpcm.image);
+  }
+  if (opts.rhythmRom) synth.setRhythmRom?.(opts.rhythmRom);
+  if (!adpcm) configurePcmRate(player, opts.pcm);
   const capture = player.captureRegisterLog();
-  const dac = opts.pcm ? renderPcmDac(capture, opts.pcm) : null;
+  const dac = opts.pcm?.bank ? renderPcmDac(capture, opts.pcm) : null;
   // A one-shot PCM tail can outlast the last register write.
   if (dac && capture.loopStartSec == null)
     capture.endSec = Math.max(capture.endSec, dac.startSec + dac.bytes.length / dac.rateHz);
+  if (capture.loopStartSec == null)
+    capture.endSec = Math.max(capture.endSec, pc88TailSec(capture, target) + 0.05);
   const tl = buildTimeline(capture, sampleRate, fadeSec);
   const { L, R } = await renderSamples(
+    synth,
     tl.fmWrites,
     tl.psgWrites,
     tl.totalFrames,
     sampleRate,
-    lpfOn,
     dac && { ...dac, loopStartSec: capture.loopStartSec, endSec: capture.endSec },
     opts.onProgress ?? null,
   );

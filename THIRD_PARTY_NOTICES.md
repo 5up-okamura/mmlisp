@@ -54,6 +54,36 @@ that component: keep `third_party/Nuked-PSG/LICENSE` with the distribution and
 offer the corresponding source. This repository is that source, and the app's
 Licenses dialog links it.
 
+## ymfm
+
+- Upstream: https://github.com/aaronsgiles/ymfm
+- Project: `ymfm` (commit 81aec25)
+- Copyright: (c) 2021, Aaron Giles
+- License: BSD-3-Clause
+
+Included files (the YM2608's: OPN family FM, SSG, ADPCM-A/B):
+
+- `third_party/ymfm/ymfm.h`
+- `third_party/ymfm/ymfm_fm.h`, `ymfm_fm.ipp`
+- `third_party/ymfm/ymfm_opn.h`, `ymfm_opn.cpp`
+- `third_party/ymfm/ymfm_ssg.h`, `ymfm_ssg.cpp`
+- `third_party/ymfm/ymfm_adpcm.h`, `ymfm_adpcm.cpp`
+- `third_party/ymfm/README.md`
+- `third_party/ymfm/LICENSE`
+
+Local integration files in this repository:
+
+- `wasm/ym2608_adapter.cpp`
+- `wasm/build-ym2608.sh`
+- `live/ymfm-ym2608.js` (the built WASM wrapper this repository ships)
+
+The upstream license text is preserved at `third_party/ymfm/LICENSE`; keep it
+with any distribution that includes the generated wrapper.
+
+The YM2608's rhythm ROM is Yamaha's and is not included: the chip reads it
+through the host, and MMLisp Live plays the rhythm only from a ROM the user
+supplies.
+
 ## corrscope
 
 - Upstream: https://github.com/corrscope/corrscope

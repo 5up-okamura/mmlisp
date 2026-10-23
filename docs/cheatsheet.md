@@ -221,7 +221,9 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   pcm1 the ADPCM-B, pcm2/pcm3 the ROM rhythm, built in under the kit roles
   (`(pcm2 kick c hat c)`, no def). A word or channel only another target's
   chips have is `E_TARGET`. It exports VGM (FM, SSG, rhythm, the ADPCM-B
-  with its RAM image); Play and WAV are not built yet.
+  with its RAM image) and plays and renders WAV through ymfm's YM2608; the
+  rhythm plays from the user's own ROM (MMLisp ▸ YM2608 Rhythm ROM…), else
+  from an imported kit's `:file`s, cut to the ROM sounds' lengths.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

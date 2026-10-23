@@ -5,9 +5,13 @@
 //
 // Reopening asks the browser for access again unless it already holds it — an
 // installed Chrome app can keep the grant between launches.
+//
+// The same database keeps the ROM images the user brings (MMLisp > YM2608
+// Rhythm ROM…): the bytes themselves, which need no grant to read back.
 
 const DB_NAME = 'mmlisp';
 const STORE = 'recent';
+const ROM_STORE = 'rom';
 const KEY = 'list';
 const RECENT_MAX = 10;
 
@@ -16,19 +20,29 @@ export const recentSupported = typeof indexedDB !== 'undefined'
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = () => {
+      for (const name of [STORE, ROM_STORE])
+        if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name);
+    };
+    req.onsuccess = () => {
+      // Another tab on a newer build wants the store upgraded: let go, and
+      // this tab's next open reads it fresh.
+      req.result.onversionchange = () => req.result.close();
+      resolve(req.result);
+    };
     req.onerror = () => reject(req.error);
+    // A tab on an older build holds the store open: nothing to wait for.
+    req.onblocked = () => reject(new Error('the storage is open in another tab'));
   });
 }
 
-async function withStore(mode, fn) {
+async function withStore(mode, fn, store = STORE) {
   const db = await openDb();
   try {
     return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const req = fn(tx.objectStore(STORE));
+      const tx = db.transaction(store, mode);
+      const req = fn(tx.objectStore(store));
       tx.oncomplete = () => resolve(req?.result);
       tx.onerror = () => reject(tx.error);
     });
@@ -88,6 +102,26 @@ export async function ensureReadAccess(handle) {
   try {
     if ((await handle.queryPermission({ mode: 'read' })) === 'granted') return true;
     return (await handle.requestPermission({ mode: 'read' })) === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+// A ROM image by name ('ym2608-rhythm'), or null. Never throws.
+export async function loadRom(name) {
+  try {
+    const bytes = await withStore('readonly', (s) => s.get(name), ROM_STORE);
+    return bytes instanceof Uint8Array ? bytes : null;
+  } catch {
+    return null;
+  }
+}
+
+// False when the browser keeps nothing (a private window, storage off).
+export async function saveRom(name, bytes) {
+  try {
+    await withStore('readwrite', (s) => s.put(bytes, name), ROM_STORE);
+    return true;
   } catch {
     return false;
   }

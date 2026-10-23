@@ -1508,9 +1508,10 @@ keeps what the chip has instead of reading it for the Mega Drive
 
 - **Rhythm** G plays the chip's own sounds on `pcm2`, the kit roles
   (`kick` `snare` `ride` `hat` `tom4` `rim`) one `:prio` layer each with no
-  kit imported and no `:gate` (each sound is a voice of its own, and rings as
-  the ROM has it); `v`'s total and per-sound levels become an absolute
-  `:vel`, which the chip's level takes back.
+  `:gate` (each sound is a voice of its own, and rings as the ROM has it);
+  `v`'s total and per-sound levels become an absolute `:vel`, which the
+  chip's level takes back. The RX5 kit is imported beside it: its sounds
+  stand in for the ROM's until you load yours (MMLisp ▸ YM2608 Rhythm ROM…).
 - **SSG** `P` is the channel's `:mode tone|noise|both` (`P0` rests the
   notes), `w` the song's `:noise-rate`; no part is split into a noise copy
   and low notes stay where they are. A level is the channel's fader: `v` is
@@ -2047,7 +2048,9 @@ no def of that name; fill the gap with an alias to one it does have
 Six of the roles are also the sounds of the YM2608's ROM kit: `kick` BD,
 `snare` SD, `ride` TOP, `hat` HH, `tom4` TOM, `rim` RIM. A `pc88` score plays
 the chip's own sound under the same name on pcm2/pcm3, with or without a kit
-imported (language.md §19).
+imported (language.md §19). The ROM is the user's to bring (MMLisp ▸ YM2608
+Rhythm ROM…); until then an imported kit's sounds stand in, cut to the ROM
+sounds' lengths.
 
 The FM drums (`presets/fm-drums`) use the same vocabulary with an `fm-`
 prefix — `fm-kick`, `fm-snare`, `fm-tom1` — so they import alongside a PCM

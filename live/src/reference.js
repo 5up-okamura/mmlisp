@@ -77,7 +77,7 @@ export const REFERENCE = [
   {
     name: ':target', aliases: ['pc88', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
     syntax: '(def-score :target md | pc88)',
-    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), whose VGM export has FM, the SSG, the rhythm and the ADPCM-B; its preview is not built yet.',
+    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (MMLisp > YM2608 Rhythm ROM…), else from an imported kit\'s files.',
     insert: '(def-score :target pc88)',
     example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(pcm2 :len 4 kick c c snare c c)',
   },

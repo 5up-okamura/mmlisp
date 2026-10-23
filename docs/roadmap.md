@@ -123,11 +123,14 @@ on any other, and its own settings a warning.
 
 In order:
 
-1. **PC-8801 SB2 (YM2608): the sound.** A `:target pc88` score compiles
-   and exports VGM 1.51 — FM, the SSG, the rhythm and the ADPCM-B with its
-   RAM image (language.md §19; the
+1. **PC-8801 SB2 (YM2608): the sound.** A `:target pc88` score compiles,
+   exports VGM 1.51 — FM, the SSG, the rhythm and the ADPCM-B with its
+   RAM image — and plays and renders WAV through ymfm's YM2608, its rhythm
+   from the user's own ROM or, without one, the kit's `:file`s in the ROM's
+   layout (language.md §19; the
    profile is `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`,
-   the scores `tools/tests/pc88/`). What is left, in order:
+   the synth `live/src/synth-pc88.js`, the scores `tools/tests/pc88/`). What
+   is left, in order:
    - **The PCM's moving levels**: `:vel` / `:vol` macros and `:vol`
      sweeps into the rhythm's IL and the ADPCM-B's level; a hit's or a
      note's level is its `:vel` and the track's `:vol` today.
@@ -142,11 +145,8 @@ In order:
      volume mode `vm<n>`, its detune `D` (a PCM track takes no `:pitch`),
      and mucom's Delta-N table, which runs a few cents sharp of equal
      temperament above C (`+200` on every note).
-   - **The preview**: ymfm's YM2608 built to WASM beside the Nuked cores. It
-     reads the rhythm ROM through the host, as MAME does — Yamaha's, so it
-     does not ship: the user brings their own (kept like recent files), and
-     without it an imported kit's `:file` stands in for its role. It turns
-     the chip's `emulator` on, and with it Play and WAV.
+   - **The preview's scope**: ymfm gives no per-channel outputs, so the
+     oscilloscope stays blank on a `pc88` score.
 2. **X68000 (YM2151 + MSM6258).** OPM voices convert from OPN with DT2 = 0
    and SSG-EG dropped; KC/KF pitch and channel 8's noise are the profile's.
    PCM8 is a software mixer, not a chip, so the export does its job: pcm1-3

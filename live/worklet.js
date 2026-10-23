@@ -25,6 +25,12 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'scope-enable', on: boolean }
  *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
+ *   { type: 'set-machine', name: 'md'|'pc88' }  — the synth the writes play
+ *       on (src/synth-md.js, src/synth-pc88.js); a pc88's ports 0/1 are the
+ *       YM2608's two address spaces. Answered with { type: 'machine', name }
+ *       once that synth plays (its core may still be loading)
+ *   { type: 'adpcm-ram', image: Uint8Array|null }  — the YM2608's ADPCM-B RAM
+ *   { type: 'rhythm-rom', rom: Uint8Array|null }  — the YM2608's rhythm ROM
  *
  * Messages to the main thread include (while scope is enabled):
  *   { type: 'scope', sampleRate, time, freq: number[13], fm6IsDac: boolean,
@@ -47,6 +53,10 @@ import {
   SCOPE_CHANNELS,
   SCOPE_PCM_CHANNELS,
 } from "./src/synth-md.js";
+import { Pc88Synth } from "./src/synth-pc88.js";
+
+// The machines' synth cores, by target name.
+const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth };
 
 // PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3 — the
 // preview must sound like the driver): the same voice model the 68000
@@ -80,8 +90,15 @@ class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
     super(options);
 
-    // The shared synth (both chips + DSP); null until the cores finish loading.
+    // The machine's synth (its chips + DSP); null until the cores finish
+    // loading. The Mega Drive's at first; set-machine swaps, each kept once
+    // made. The YM2608's two memories are kept here, for a pc88 synth made
+    // after they arrive.
     this._synth = null;
+    this._machine = "md";
+    this._synths = {};
+    this._adpcmRam = null;
+    this._rhythmRom = null;
 
     // FM native rate, used to advance PCM/DAC voices (the DAC stream is written
     // once per FM native sample). Constant; equals the core's reported rate.
@@ -156,21 +173,9 @@ class YM2612Processor extends AudioWorkletProcessor {
       return this._pcmByte;
     };
 
-    MegaDriveSynth.create(sampleRate)
-      .then((synth) => {
-        synth.setLpf(this._lpfOn, this._lpfCutoff);
-        synth.pcmTaps = this._pcmTaps;
-        this._synth = synth;
-        // Signal the main thread that the WASM cores are live — lets it
-        // distinguish "context never started" from "synth never initialized".
-        this.port.postMessage({ type: "ready", sampleRate });
-      })
-      .catch((error) => {
-        this.port.postMessage({
-          type: "error",
-          message: String(error?.message ?? error),
-        });
-      });
+    // Signal the main thread once the WASM cores are live — lets it
+    // distinguish "context never started" from "synth never initialized".
+    this._setMachine("md").then((ok) => { if (ok) this.port.postMessage({ type: "ready", sampleRate }); });
 
     this.port.onmessage = (event) => {
       const msg = event.data;
@@ -218,7 +223,7 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._lpfOn = !!msg.on;
         const c = Number(msg.cutoffHz);
         if (Number.isFinite(c) && c > 0) this._lpfCutoff = c;
-        this._synth?.setLpf(this._lpfOn, this._lpfCutoff);
+        for (const synth of Object.values(this._synths)) synth.setLpf(this._lpfOn, this._lpfCutoff);
       } else if (msg.type === "scope-enable") {
         this._scopeOn = !!msg.on;
         this._scopeBufs = null;
@@ -230,6 +235,14 @@ class YM2612Processor extends AudioWorkletProcessor {
             this._scopePool.push(b);
           }
         }
+      } else if (msg.type === "set-machine") {
+        this._setMachine(msg.name);
+      } else if (msg.type === "adpcm-ram") {
+        this._adpcmRam = msg.image ?? null;
+        this._synths.pc88?.setAdpcmRam(this._adpcmRam);
+      } else if (msg.type === "rhythm-rom") {
+        this._rhythmRom = msg.rom ?? null;
+        this._synths.pc88?.setRhythmRom(this._rhythmRom);
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap); a new run plays
         // its channels from the top, held or not.
@@ -242,6 +255,36 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._dacFromVoices = false;
       }
     };
+  }
+
+  // Play the writes on `name`'s synth (SYNTHS), made the first time. Until
+  // it is, process() plays silence and the queues wait — so the page waits
+  // for the 'machine' answer before it starts a score, or the writes
+  // scheduled meanwhile would all land in the block the core comes up in.
+  // Resolves to whether that synth plays now.
+  async _setMachine(name) {
+    const key = SYNTHS[name] ? name : "md";
+    this._machine = key;
+    if (!this._synths[key]) {
+      this._synth = null;
+      try {
+        const synth = await SYNTHS[key].create(sampleRate);
+        synth.setLpf(this._lpfOn, this._lpfCutoff);
+        synth.pcmTaps = this._pcmTaps;
+        if (key === "pc88") {
+          synth.setAdpcmRam(this._adpcmRam);
+          synth.setRhythmRom(this._rhythmRom);
+        }
+        this._synths[key] = synth;
+      } catch (error) {
+        this.port.postMessage({ type: "error", message: String(error?.message ?? error) });
+        return false;
+      }
+    }
+    if (this._machine !== key) return false;
+    this._synth = this._synths[key];
+    this.port.postMessage({ type: "machine", name: key });
+    return true;
   }
 
   // Queue a write for the instant it was scheduled for. The sort key is that
@@ -289,11 +332,11 @@ class YM2612Processor extends AudioWorkletProcessor {
     // set_dac_sample folds the byte into the next render's own clock budget.
     // Tracking 0x2b through setDacEnabled also keeps the synth's notion of the
     // DAC in step with the backend's, which decides the FM batch path.
-    if (p === 0 && a === 0x2a) {
+    if (this._machine === "md" && p === 0 && a === 0x2a) {
       this._synth.setDacSample(d);
       return;
     }
-    if (p === 0 && a === 0x2b) {
+    if (this._machine === "md" && p === 0 && a === 0x2b) {
       this._synth.setDacEnabled(!!(d & 0x80));
       return;
     }

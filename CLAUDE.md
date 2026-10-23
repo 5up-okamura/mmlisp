@@ -27,7 +27,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
 | `edit-tools.js`                 | Edit > Loop Selection and the Logical Editor: score-text edits, testable in node |
-| `synth-md.js`, `scope-trigger.js` | Chip wiring for the browser, and the oscilloscope's trigger           |
+| `synth-md.js`, `synth-pc88.js`, `scope-trigger.js` | Chip wiring for the browser — the Mega Drive's, the PC-8801's (ymfm's YM2608) — and the oscilloscope's trigger |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
 | `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM and the OKIM6258), DefleMask / Furnace |
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
@@ -36,7 +36,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |
-| `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB |
+| `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB, and the YM2608 rhythm ROM the user brings |
 | `catalog-list.js`              | The side panel's Library list: search, filters, groups, keys, for every source |
 | `reference.js`                 | The language reference's entries (Library's Ref, completion info, hover, MCP) |
 | `completion-names.js`          | The words the editor's completion offers, each held to a reference entry |
@@ -48,7 +48,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `offline-cache.js`             | Fills the service worker's cache so the installed app runs offline |
 | `time-worker.js`               | TIME's bar length, measured off the page's thread (`IRPlayer.captureRegisterLog`) |
 | `compile-worker.js`            | The score's compile (`compileMMLisp`) off the page's thread, for Build, Play and a drag's hot-swap |
-| `../nuked-opn2.js`, `../nuked-psg.js` | YM2612 / PSG cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
+| `../nuked-opn2.js`, `../nuked-psg.js`, `../ymfm-ym2608.js` | YM2612 / PSG / YM2608 cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
 `export-mmb.js` (IR → MMB v0.4 + the sample bank), `mmb-voices.js` and

@@ -1,7 +1,7 @@
 // The YM2608 (OPNA): six FM channels, the SSG at the clock / 4, the six ROM
 // rhythm sounds and one ADPCM-B voice. The FM is the OPN family's, written by
-// the IR player as the YM2612's is; this file encodes the rest. No emulator
-// yet (docs/roadmap.md).
+// the IR player as the YM2612's is; this file encodes the rest. ymfm's
+// YM2608 plays them (synth-pc88.js).
 import { opnFm } from "./opn-fm.js";
 import { ssgTone, ssgNoise } from "./ssg.js";
 import { rhythmRom } from "./rhythm-rom.js";
@@ -13,7 +13,7 @@ const NOISE_RATE_START = 9; // the nearest to the Mega Drive's white0
 
 // The rhythm sounds' bits in $10 (key, and dump with bit 7) and their level
 // registers $18 + bit: pan in bits 7-6 (L, R), the level IL in bits 4-0.
-const RHYTHM_BIT = { bd: 0, sd: 1, top: 2, hh: 3, tom: 4, rim: 5 };
+export const RHYTHM_BIT = { bd: 0, sd: 1, top: 2, hh: 3, tom: 4, rim: 5 };
 const PAN_BITS = { [-1]: 0x80, 0: 0xc0, 1: 0x40 };
 
 export const ym2608 = {
@@ -22,7 +22,7 @@ export const ym2608 = {
   fnumRate: CLOCK / 144,
   parts: [opnFm, ssgTone, ssgNoise, rhythmRom, adpcmB],
   encoder: true,
-  emulator: false,
+  emulator: true,
   ssg: { clock: SSG_CLOCK, noiseRate: NOISE_RATE_START },
   // Written once before anything else. $29 bit 7 (SCH) opens fm4-fm6, which
   // the chip starts without (its OPN-compatible mode); the rhythm's total

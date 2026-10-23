@@ -133,6 +133,11 @@
           <span>Analog LPF</span>
           <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
+        <button class="menu-item" onclick="chooseRhythmRom();closeMenus()"
+                title="Your YM2608 rhythm ROM (8 KB), kept in this browser: :target pc88's rhythm plays from it">
+          <span>YM2608 Rhythm ROM…</span>
+          <span class="menu-item-shortcut" id="rhythmRomCheck"></span>
+        </button>
         <div class="menu-wrap submenu-wrap" id="menuMMLispMidi" hidden>
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispMidi')">
             <span>MIDI</span>
@@ -694,7 +699,7 @@
         <p>Version v0.7<br>
         © 2026 Hiroshi Okamura (5&amp;UP Inc.) — MIT License</p>
         <p><a href="https://github.com/5up-okamura/mmlisp" target="_blank" rel="noopener">github.com/5up-okamura/mmlisp</a></p>
-        <p>Sound emulation by Nuked-OPN2 &amp; Nuked-PSG — see
+        <p>Sound emulation by Nuked-OPN2, Nuked-PSG &amp; ymfm — see
         <a href="#" onclick="closeInfoModal('aboutModal');openInfoModal('licenseModal');return false;">Licenses</a>.</p>
       </div>
       <div class="modal-actions">
@@ -721,6 +726,11 @@
           <b>Nuked-PSG</b> (PSG emulation) — GPL-2.0-or-later · © 2021 Nuke.YKT<br>
           <a href="https://github.com/5up-okamura/mmlisp/blob/main/third_party/Nuked-PSG/LICENSE" target="_blank" rel="noopener">License</a> ·
           <a href="https://github.com/nukeykt/Nuked-PSG" target="_blank" rel="noopener">Source</a>
+        </div>
+        <div class="license-row">
+          <b>ymfm</b> (YM2608 emulation) — BSD-3-Clause · © 2021 Aaron Giles<br>
+          <a href="https://github.com/5up-okamura/mmlisp/blob/main/third_party/ymfm/LICENSE" target="_blank" rel="noopener">License</a> ·
+          <a href="https://github.com/aaronsgiles/ymfm" target="_blank" rel="noopener">Source</a>
         </div>
         <div class="license-row">
           <b>TR-909 samples</b> (<code>presets/tr909</code>) — CC BY 4.0 · Janne G:son Berg, via altemark (Freesound)<br>
@@ -841,6 +851,7 @@
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { targetProfile, notYet } from './src/targets.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
+    import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
     import { importMucom, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
@@ -869,7 +880,7 @@
     import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
-    import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess } from './src/recent-files.js';
+    import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess, loadRom, saveRom } from './src/recent-files.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey } from './src/import-fm-voices.js';
 
     // -----------------------------------------------------------------------
@@ -3219,7 +3230,7 @@
       // An untouched field (either mode's default) is no override.
       const untouched = bpm === fileBpm || bpm === beatBpm || !(bpm > 0);
       return midiToMmlisp(parsed, {
-        target: _lastGoodIR?.metadata?.target,
+        target: editorTarget(),
         dest: got.rows,
         grid: Number(got.fields.grid),
         timing,
@@ -3253,7 +3264,7 @@
       const dest = {};
       for (const c of a.channels) dest[c.index] = got.rows[String(c.index)] ?? 'drop';
       return trackerToMmlisp(t, {
-        target: _lastGoodIR?.metadata?.target,
+        target: editorTarget(),
         dest, phrases: !!got.fields.phrases,
         bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
         fileName,
@@ -3296,7 +3307,7 @@
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
       return vgmToMmlisp(parsed, {
-        target: _lastGoodIR?.metadata?.target,
+        target: editorTarget(),
         dest: got.rows,
         grid: got.fields.grid,
         bpm: bpm > 0 && bpm !== shown ? bpm : null,
@@ -3683,6 +3694,21 @@
       });
     }
 
+    // The open score's :target, read from the editor's source as it stands
+    // (the last good compile may be older, or there may be none): an import
+    // writes for that machine.
+    function editorTarget() {
+      try {
+        for (const form of parse(editorView.state.doc.toString())) {
+          const items = form.kind === 'list' ? form.items : null;
+          if (items?.[0]?.value !== 'def-score') continue;
+          const at = items.findIndex((it) => it.value === ':target');
+          if (at > 0) return items[at + 1]?.value;
+        }
+      } catch { /* an unparsable source falls back to the last compile */ }
+      return _lastGoodIR?.metadata?.target;
+    }
+
     // mucom88 .muc: convert the whole song to MMLisp source and load it as a
     // new untitled document: FM and SSG parts, rhythm G and ADPCM K on PCM
     // tracks (with their banks); what does not convert is reported.
@@ -3720,7 +3746,7 @@
           datBytes: datPick ? new Uint8Array(await datPick.arrayBuffer()) : null,
           pcmBytes: pcmPick ? new Uint8Array(await pcmPick.arrayBuffer()) : null,
         };
-        const res = importMucom(_mucomSong.bytes, _mucomSong.datBytes, _mucomSong.pcmBytes, { target: _lastGoodIR?.metadata?.target });
+        const res = importMucom(_mucomSong.bytes, _mucomSong.datBytes, _mucomSong.pcmBytes, { target: editorTarget() });
         const withs = [datPick && `voices ${datPick.name}`, pcmPick && `PCM ${pcmPick.name}`].filter(Boolean);
         loadMucomSource(res.source, res.warnings, file.name,
           `Imported ${file.name}${withs.length ? ' with ' + withs.join(' + ') : ''} (mucom88) — review and Build`,
@@ -3766,7 +3792,7 @@
         if (_mucomSong) {
           _mucomSong.datBytes = datBytes;
           // Keep any PCM bank already applied — re-converting must not lose it.
-          const res = importMucom(_mucomSong.bytes, datBytes, _mucomSong.pcmBytes, { target: _lastGoodIR?.metadata?.target });
+          const res = importMucom(_mucomSong.bytes, datBytes, _mucomSong.pcmBytes, { target: editorTarget() });
           loadMucomSource(res.source, res.warnings, _mucomSong.fileName, `Reloaded ${_mucomSong.fileName} with voice bank ${datFile.name} (mucom88)`, res.pcm);
         } else {
           const { source, warnings } = voiceBankToMmlisp(datBytes);
@@ -3783,7 +3809,7 @@
     async function applyMucomPcmBank(bankName) {
       const song = _mucomSong;
       if (!song) return;
-      const res = importMucom(song.bytes, song.datBytes, song.pcmBytes, { target: _lastGoodIR?.metadata?.target });
+      const res = importMucom(song.bytes, song.datBytes, song.pcmBytes, { target: editorTarget() });
       const n = res.pcm?.entries.length ?? 0;
       loadMucomSource(res.source, res.warnings, song.fileName, `Reloaded ${song.fileName} with PCM bank ${bankName} (mucom88) — ${n} samples decoded`, res.pcm);
     }
@@ -4739,6 +4765,21 @@
       return Object.keys(blobs).length > 0 ? blobs : null;
     }
 
+    // The synth the worklet plays on, by target name: resolved once it does
+    // (its core may be loading for the first time), or after 5 s regardless —
+    // a core that failed has said so in the log, and the score still starts.
+    const _machineWaiters = [];
+    function setWorkletMachine(name) {
+      return new Promise((resolve) => {
+        _machineWaiters.push(resolve);
+        setTimeout(() => {
+          const i = _machineWaiters.indexOf(resolve);
+          if (i >= 0) { _machineWaiters.splice(i, 1); resolve(null); }
+        }, 5000);
+        workletNode.port.postMessage({ type: 'set-machine', name });
+      });
+    }
+
     // THE IR PREVIEW PLAYS THE EXPORT'S OWN BANK (docs/driver.md §14.3):
     // the samples are baked here exactly as encodeMmb bakes them for an .mmb,
     // and the worklet runs the driver's voice model and engine on that bank —
@@ -4746,8 +4787,22 @@
     // what the editor plays is what the driver will.
     // `target` is the IRPlayer that plays `ir`: it learns the bank's rate, so
     // its loop lengths round as the driver's do (the Library's preview has its own).
+    // It also picks the synth the worklet plays on, the score's machine's.
     async function syncPcmBankToWorklet(ir, target = player) {
       if (!workletNode) return;
+      const machine = targetProfile(ir?.metadata?.target);
+      await setWorkletMachine(machine.name);
+      // The YM2608's ADPCM-B plays from its own RAM: the samples baked once
+      // (chips/adpcm-b.js), as the VGM and WAV exports bake them.
+      if (machine.hasPart('adpcm-b')) {
+        const blobs = await pcmSampleBlobsForMmb(ir);
+        const adpcm = blobs ? bakeAdpcmB(ir, blobs, machine) : null;
+        for (const w of adpcm?.warnings ?? []) log(w, 'warn');
+        target?.setAdpcmBank?.(adpcm);
+        workletNode.port.postMessage({ type: 'adpcm-ram', image: adpcm?.image ?? null });
+        workletNode.port.postMessage({ type: 'rhythm-rom', rom: rhythmRomFor(ir, machine, blobs) });
+        return;
+      }
       const clear = () => {
         target?.setPcmBankRate?.(null);
         workletNode.port.postMessage({ type: 'pcm-set-bank', bank: null, pcmVoices: 0 });
@@ -5714,8 +5769,10 @@
         const stamp = line.textContent.slice(0, line.textContent.indexOf(']') + 1);
         const offline = new IRPlayer(() => {});
         offline.loadJSON(ir);
+        const machine = targetProfile(ir.metadata?.target);
+        const rhythmRom = machine.hasPart('rhythm') ? rhythmRomFor(ir, machine, await pcmSampleBlobsForMmb(ir)) : null;
         ({ bytes, pcmCount, durationSec } = await renderWav(offline, {
-          lpfOn: analogLpfOn, pcm,
+          lpfOn: analogLpfOn, pcm, rhythmRom,
           onProgress: (f) => { line.textContent = `${stamp} Rendering WAV… ${Math.floor(f * 100)}%`; },
         }));
       } catch (e) {
@@ -6374,10 +6431,25 @@
       const { ir, ok } = await refreshImportsAndCompile();
       if (!ok) return;
       flashBuild();
+      // Another machine is another synth: no gapless swap across it — the
+      // old chip's sounding notes would hang over. Stop, and play again from
+      // the top if it was playing.
+      const machineOf = (x) => targetProfile(x?.metadata?.target).name;
+      if (player?._ir && typeof player.swapAtNextBar === 'function' && machineOf(player._ir) !== machineOf(ir)) {
+        const wasPlaying = player.isPlaying();
+        onStop();
+        log(`Built — the target is now ${machineOf(ir)}`, 'info');
+        if (wasPlaying) await onPlay();
+        return;
+      }
       if (player && typeof player.swapAtNextBar === 'function') {
-        syncPcmBankToWorklet(ir).catch((e) => {
+        // The new IR's samples first: a swap that lands before its bank (or
+        // the ADPCM-B's RAM) would play its first notes on the old one.
+        try {
+          await syncPcmBankToWorklet(ir);
+        } catch (e) {
           log('PCM sync failed: ' + e.message, 'err');
-        });
+        }
         player.swapAtNextBar(ir); // paused: loaded, and Resume plays it
         _runSrc = _lastGoodSrc;
         log('Built — applies at next bar', 'info');
@@ -7141,6 +7213,8 @@
           log('Worklet error: ' + msg.message, 'err');
         } else if (msg?.type === 'ready') {
           log('Synth ready @ ' + msg.sampleRate + ' Hz', 'info');
+        } else if (msg?.type === 'machine') {
+          _machineWaiters.splice(0).forEach((resolve) => resolve(msg.name));
         } else if (msg?.type === 'scope') {
           onScopeBatch(msg);
         }
@@ -7150,6 +7224,7 @@
       // per-channel tap stream on for its lifetime (feeds scope + VU).
       workletNode.port.postMessage({ type: 'set-analog-lpf', on: analogLpfOn, cutoffHz: ANALOG_LPF_CUTOFF });
       workletNode.port.postMessage({ type: 'scope-enable', on: true });
+      if (_rhythmRom) workletNode.port.postMessage({ type: 'rhythm-rom', rom: _rhythmRom });
       _workletReady = true;
     }
 
@@ -7182,6 +7257,64 @@
     // Module-scope functions aren't global; expose for the inline onclick.
     window.toggleAnalogLpf = toggleAnalogLpf;
     updateAnalogLpfCheck(); // reflect the restored state in the menu
+
+    // MMLisp > YM2608 Rhythm ROM…: the YM2608 reads its six rhythm sounds from
+    // a ROM of Yamaha's, which does not ship. The user brings theirs, kept in
+    // this browser (src/recent-files.js); :target pc88's rhythm plays from it,
+    // in the worklet and the WAV export. Without one the score's kit stands in
+    // (chips/rhythm-rom.js), and a role with no :file is silent.
+    const RHYTHM_ROM_KEY = 'ym2608-rhythm';
+    const RHYTHM_ROM_BYTES = 0x2000;
+    let _rhythmRom = null;
+    loadRom(RHYTHM_ROM_KEY).then((rom) => {
+      if (rom?.length !== RHYTHM_ROM_BYTES || _rhythmRom) return;
+      _rhythmRom = rom;
+      updateRhythmRomCheck();
+      workletNode?.port.postMessage({ type: 'rhythm-rom', rom });
+    });
+    function updateRhythmRomCheck() {
+      const el = document.getElementById('rhythmRomCheck');
+      if (el) el.textContent = _rhythmRom ? '✓' : '';
+    }
+    async function chooseRhythmRom() {
+      let file;
+      try {
+        file = await pickFileWithInput(['.bin', '.rom']);
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('Rhythm ROM: ' + e.message, 'err');
+        return;
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (bytes.length !== RHYTHM_ROM_BYTES) {
+        log(`${file.name}: a YM2608 rhythm ROM is 8 KB (8192 bytes); this file is ${bytes.length}`, 'err');
+        return;
+      }
+      _rhythmRom = bytes;
+      updateRhythmRomCheck();
+      workletNode?.port.postMessage({ type: 'rhythm-rom', rom: bytes });
+      const kept = await saveRom(RHYTHM_ROM_KEY, bytes);
+      log(`YM2608 rhythm ROM: ${file.name}${kept ? ', kept in this browser' : ' (this session only: the browser keeps no storage here)'}`, 'info');
+    }
+    window.chooseRhythmRom = chooseRhythmRom;
+    // The rhythm ROM `ir` plays from: the user's, else its kit's stand-in
+    // (null for none), baked once per IR — and said once: which roles stand
+    // in and which are silent. `blobs` are the score's decoded samples.
+    const _standInByIr = new WeakMap();
+    function rhythmRomFor(ir, machine, blobs) {
+      if (_rhythmRom) return _rhythmRom;
+      if (_standInByIr.has(ir)) return _standInByIr.get(ir);
+      const heads = new Set(machine.headsOf('rhythm'));
+      const played = new Set();
+      for (const t of ir?.tracks ?? [])
+        if (heads.has(t.scoreChannel ?? t.channel))
+          for (const e of t.events ?? []) if (e.cmd === 'PCM_NOTE_ON') played.add(e.args?.sample);
+      const standIn = played.size ? bakeRhythmStandIn(ir, blobs) : null;
+      const silent = [...played].filter((n) => !standIn?.roles.includes(n));
+      if (standIn) log(`No YM2608 rhythm ROM: the kit's ${standIn.roles.join(', ')} stand in, cut to the ROM's lengths`, 'info');
+      if (silent.length) log(`No YM2608 rhythm ROM: ${silent.join(', ')} ${silent.length > 1 ? 'are' : 'is'} silent (no :file) — MMLisp > YM2608 Rhythm ROM… loads yours`, 'warn');
+      _standInByIr.set(ir, standIn?.rom ?? null);
+      return standIn?.rom ?? null;
+    }
 
     // Editor font size (px), MMLisp > Font Size: the panel's number popup, so it
     // is typed or stepped like any other value. Wide on purpose — a projector

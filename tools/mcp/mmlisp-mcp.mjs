@@ -28,6 +28,9 @@ const { formatMMLisp } = await load("mmlisp-formatter.js");
 const { IRPlayer } = await load("ir-player.js");
 const { renderWav } = await load("export-wav.js");
 const { encodeMmb } = await load("export-mmb.js");
+const { targetProfile } = await load("targets.js");
+const { bakeAdpcmB } = await load("chips/adpcm-b.js");
+const { bakeRhythmStandIn } = await load("chips/rhythm-rom.js");
 const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
 const { pitchToMidi } = await load("ir-utils.js");
 const { REFERENCE, REFERENCE_CATEGORIES, referenceFor } = await load("reference.js");
@@ -597,7 +600,8 @@ const TOOLS = [
     name: "mmlisp_render",
     description:
       "Render a score to a 48 kHz stereo WAV the user can listen to (FM + PSG through the Nuked cores, same DSP as the " +
-      "editor's WAV export; PCM plays through the driver's engine). A looping song plays intro + 2 loops + 4 s fade. " +
+      "editor's WAV export; PCM plays through the driver's engine; a :target pc88 score through ymfm's YM2608, its " +
+      "rhythm from the user's ROM, else the kit's :files cut to the ROM's lengths). A looping song plays intro + 2 loops + 4 s fade. " +
       "Returns the file path and levels (peak/RMS, clipping, silence) — a sanity check, since you cannot hear it.",
     inputSchema: {
       type: "object",
@@ -605,6 +609,7 @@ const TOOLS = [
         ...scoreProps,
         out: { type: "string", description: "Output .wav path (default: a file in the system temp dir)." },
         lpf: { type: "boolean", description: "Apply the Mega Drive analog low-pass (default off)." },
+        rhythmRom: { type: "string", description: "pc88: the path of the user's YM2608 rhythm ROM (8 KB); without it the score's kit stands in, and a role with no :file is silent." },
       },
     },
     async run(args) {
@@ -615,13 +620,28 @@ const TOOLS = [
       // PCM: the bank an .mmb would ship, its WAVs read from the repo.
       let pcm = null;
       const sampleDefs = ir.metadata?.samples ?? [];
-      if (ir.metadata?.pcmVoices && sampleDefs.length) {
+      const target = targetProfile(ir.metadata?.target);
+      let rhythmRom = null;
+      if (args.rhythmRom && target.hasPart("rhythm")) {
+        rhythmRom = new Uint8Array(fs.readFileSync(path.resolve(ROOT, args.rhythmRom)));
+        if (rhythmRom.length !== 0x2000)
+          return { isError: true, text: `not rendered — a YM2608 rhythm ROM is 8192 bytes; ${args.rhythmRom} is ${rhythmRom.length}` };
+      }
+      if (target.hasPart("adpcm-b") && sampleDefs.some((s) => s.file)) {
+        // The YM2608's ADPCM-B: its RAM image, baked as Live bakes it; the
+        // kit stands in for a rhythm ROM the user has not given.
+        const abs = sampleDefs.filter((s) => s.file).map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
+        const blobs = loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []);
+        const adpcm = bakeAdpcmB(ir, blobs, target);
+        if (adpcm.image.length) pcm = { adpcm };
+        rhythmRom ??= bakeRhythmStandIn(ir, blobs)?.rom ?? null;
+      } else if (ir.metadata?.pcmVoices && sampleDefs.length) {
         const abs = sampleDefs.map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
         const samples = loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []);
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
         if (sampleBank) pcm = { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices: ir.metadata.pcmVoices };
       }
-      const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm });
+      const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm, rhythmRom });
       const out = args.out
         ? path.resolve(ROOT, args.out)
         : path.join(os.tmpdir(), "mmlisp-mcp", path.basename(name).replace(/\.mmlisp$/, "") + ".wav");

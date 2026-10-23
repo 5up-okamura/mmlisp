@@ -2312,14 +2312,20 @@ those chips cannot do is a compile error, not a different sound.
 | Target | Machine | Delivered as |
 | --- | --- | --- |
 | `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
-| `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | — (see below) |
+| `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | VGM, WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
-samples baked into the chip's RAM image, which the VGM carries. The preview
-is not built yet — Play and WAV say so and stop. The rhythm sounds are the
-chip's ROM, so the VGM keys them and a player supplies them. The MMB is the
-Mega Drive driver's and refuses a `pc88` score. What follows is what the
-compiler holds a `pc88` score to.
+samples baked into the chip's RAM image, which the VGM carries. Play and WAV
+run ymfm's YM2608. The rhythm sounds are the chip's ROM, Yamaha's, which
+MMLisp does not ship: the VGM keys them and a player supplies them, and Live
+plays them from the user's own ROM (MMLisp ▸ YM2608 Rhythm ROM…, 8 KB, kept
+in the browser). Without it the score's kit stands in: each role's `:file`,
+encoded as the chip's ADPCM-A into the ROM's layout and cut to the ROM
+sound's length (`kick` 48 ms, `snare` 69 ms, `ride` 0.64 s, `hat` 42 ms,
+`tom4` 138 ms, `rim` 28 ms), plays with the hit's level and pan as the ROM
+would; a built-in role with no `:file` is silent, and Play and WAV say so.
+The MMB is the Mega Drive driver's and refuses a `pc88` score. What follows
+is what the compiler holds a `pc88` score to.
 
 **What a channel is.** Each of a target's channels is a *part* of one of
 its chips — 4-op FM, the SN76489's square or noise, the SSG, the ROM rhythm,
