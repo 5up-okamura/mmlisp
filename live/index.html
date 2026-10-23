@@ -233,8 +233,8 @@
             <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">Resynthesis</div>
-            <button class="menu-item" onclick="importResynth();closeMenus()">WAV on FM3…</button>
-            <button class="menu-item" onclick="importWavAsFmVoice();closeMenus()">WAV as FM Voice…</button>
+            <button class="menu-item" onclick="importResynth();closeMenus()">Audio on FM3…</button>
+            <button class="menu-item" onclick="importAudioAsFmVoice();closeMenus()">Audio as FM Voice…</button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -614,9 +614,9 @@
     </div>
   </div>
 
-  <!-- File > Import > WAV as FM Voice: the search's candidates to hear and
+  <!-- File > Import > Audio as FM Voice: the search's candidates to hear and
        choose; the page stays live under it, so the keys play the one chosen
-       (importWavAsFmVoiceFromFile) -->
+       (importAudioAsFmVoiceFromFile) -->
   <div id="fmVoiceModal" class="modal-overlay fmv-overlay" hidden>
     <div class="modal fmv-modal" role="dialog" aria-labelledby="fmvTitle">
       <div class="modal-title" id="fmvTitle"></div>
@@ -3342,7 +3342,39 @@
       }
     }
 
-    // A WAV resynthesized on FM3 (import-resynth.js, language.md §15): its four
+    // The two resynthesis imports read any audio the browser decodes — MP3,
+    // AAC / M4A, FLAC, Ogg, Opus — besides WAV: both resample what they read,
+    // so the browser's own decoder (which brings it to the AudioContext's
+    // rate) serves where a sample's frame-exact read (wav-decode.js) would
+    // not. Mono, every channel averaged.
+    const RESYNTH_AUDIO = ['.wav', '.mp3', '.m4a', '.aac', '.mp4', '.flac', '.ogg', '.oga', '.opus', '.webm', '.aif', '.aiff', '.caf', 'audio/*'];
+    async function decodeAudioFile(bytes, fileName) {
+      const isRiff = bytes.length >= 12 && String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF'
+        && String.fromCharCode(...bytes.subarray(8, 12)) === 'WAVE';
+      if (isRiff) {
+        try {
+          return decodeWav(bytes);
+        } catch (_) {
+          // a WAV the frame-exact reader does not take (ADPCM, µ-law): the browser may
+        }
+      }
+      await initAudio();
+      if (!audioCtx) throw new Error('no audio output to decode with');
+      let buf;
+      try {
+        buf = await audioCtx.decodeAudioData(bytes.slice().buffer);
+      } catch (_) {
+        throw new Error(`${fileName}: this browser cannot decode it — try another browser, or convert it to WAV`);
+      }
+      const n = buf.length, data = new Float32Array(n);
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const ch = buf.getChannelData(c);
+        for (let i = 0; i < n; i++) data[i] += ch[i] / buf.numberOfChannels;
+      }
+      return { data, sampleRate: buf.sampleRate };
+    }
+
+    // A recording resynthesized on FM3 (import-resynth.js, language.md §15): its four
     // spectral peaks as fm3-N tracks, inserted at the cursor like an
     // instrument — CSM with the operators as formants and the rate track as
     // the voice, or sine waves on them. An empty document gets its tempo (150 BPM, a frame is
@@ -3350,7 +3382,7 @@
     async function importResynth() {
       let file;
       try {
-        file = await pickFileWithInput(['.wav']);
+        file = await pickFileWithInput(RESYNTH_AUDIO);
       } catch (e) {
         if (e && e.name === 'AbortError') return;
         log(`Resynthesis failed: ${e?.message || e}`, 'err');
@@ -3372,7 +3404,7 @@
     }
 
     async function importResynthBytes(bytes, fileName, withTempo = true) {
-      const { data, sampleRate } = decodeWav(bytes);
+      const { data, sampleRate } = await decodeAudioFile(bytes, fileName);
       const a = analyzeSound(data, sampleRate);
       const def = defaultResynthOptions(a);
       const fields = [
@@ -3409,16 +3441,16 @@
     let _fmVoiceRun = null; // the open search: { close } — a second import closes the first
     let _fmVoicePlaying = null; // the buffer source the modal's ▶ plays
 
-    async function importWavAsFmVoice() {
+    async function importAudioAsFmVoice() {
       let file;
       try {
-        file = await pickFileWithInput(['.wav']);
+        file = await pickFileWithInput(RESYNTH_AUDIO);
       } catch (e) {
         if (e && e.name === 'AbortError') return;
         log(`FM voice failed: ${e?.message || e}`, 'err');
         return;
       }
-      await importWavAsFmVoiceFromFile(file);
+      await importAudioAsFmVoiceFromFile(file);
     }
 
     function fmVoicePool() {
@@ -3460,13 +3492,13 @@
       _fmVoicePlaying = src;
     }
 
-    async function importWavAsFmVoiceFromFile(file) {
+    async function importAudioAsFmVoiceFromFile(file) {
       const modal = document.getElementById('fmVoiceModal');
       const $ = (id) => document.getElementById(id);
       const rows = $('fmvRows'), insert = $('fmvInsert'), bar = $('fmvProgressBar');
       let data, sampleRate;
       try {
-        ({ data, sampleRate } = decodeWav(new Uint8Array(await file.arrayBuffer())));
+        ({ data, sampleRate } = await decodeAudioFile(new Uint8Array(await file.arrayBuffer()), file.name));
       } catch (e) {
         log(`FM voice failed: ${e?.message || e}`, 'err');
         return;
@@ -4093,7 +4125,7 @@
     window.importSong = importSong;
     window.importSf2 = importSf2;
     window.importResynth = importResynth;
-    window.importWavAsFmVoice = importWavAsFmVoice;
+    window.importAudioAsFmVoice = importAudioAsFmVoice;
     window.importMucomVoiceBank = importMucomVoiceBank;
     window.importMucomPcmBank = importMucomPcmBank;
     window.exportMucomPcmWav = exportMucomPcmWav;
@@ -5384,7 +5416,7 @@
         if (kind) continue;
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
-            ? `${entry.file.name}: only .wav is accepted as a sample — the exporters read RIFF WAV only, so convert it first`
+            ? `${entry.file.name}: a sample is .wav only (the exporters read RIFF WAV); File > Import > Audio on FM3… or Audio as FM Voice… reads it as it is`
             : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .sf2 .mid .midi .rmi .smf .dmf .fur .vgm .vgz)`,
           'err',
         );
@@ -9437,7 +9469,7 @@
     }
 
     function getKeyboardTargetContext() {
-      // WAV as FM Voice's chosen candidate, while its modal is open.
+      // Audio as FM Voice's chosen candidate, while its modal is open.
       if (_fmVoiceAudition)
         return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmVoiceAudition };
       // Library's highlighted voice or sample, while the list shows.

@@ -465,7 +465,7 @@
     .cm-logical-match { background: color-mix(in srgb, var(--accent) var(--sel), transparent); border-radius: 2px; }
     .cm-logical-shared { background: none; outline: 1px dashed var(--accent); }
     .modal-overlay.logical-overlay { background: none; justify-content: flex-end; align-items: flex-start; pointer-events: none; }
-    /* File > Import > WAV as FM Voice: the page stays live under it (the keys play the candidate) */
+    /* File > Import > Audio as FM Voice: the page stays live under it (the keys play the candidate) */
     .modal-overlay.fmv-overlay { background: none; align-items: flex-start; pointer-events: none; }
     .fmv-modal { pointer-events: auto; margin-top: 3.2rem; width: min(420px, 92vw); box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
     .fmv-progress { height: 3px; background: color-mix(in srgb, var(--foreground) var(--fill), transparent); margin-bottom: 0.75rem; }

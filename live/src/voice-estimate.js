@@ -1,6 +1,6 @@
 /**
  * WAV → FM voice: a YM2612 patch estimated for one note (File > Import >
- * Resynthesis > WAV as FM Voice…).
+ * Resynthesis > Audio as FM Voice…).
  *
  * FM has no inverse — a patch's sound is easy to compute, the patch of a
  * sound is not — so this searches: candidate patches are rendered on the fast

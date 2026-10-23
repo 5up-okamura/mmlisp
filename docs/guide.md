@@ -1527,7 +1527,8 @@ keeps what the chip has instead of reading it for the Mega Drive
 
 ### Resynthesizing a recording on FM3
 
-`File > Import > WAV on FM3…` reads any recording as four formant tracks
+`File > Import > Audio on FM3…` reads any recording — WAV, or whatever the
+browser decodes (MP3, AAC / M4A, FLAC, Ogg, Opus) — as four formant tracks
 (language §15): every 60 Hz frame gets a loudness, a pitch and the four peaks
 of its spectral envelope, and each peak becomes one `fm3-N` track — a long
 note per phrase with a `:pitch` table for its frequency and a `:vol` table
@@ -1561,8 +1562,9 @@ hand to match).
 
 ### An FM voice from a recording
 
-`File > Import > WAV as FM Voice…` estimates a YM2612 patch for one note of
-a recording — a bass, a piano, a bell, a pluck. FM has no way back from a
+`File > Import > Audio as FM Voice…` estimates a YM2612 patch for one note of
+a recording — a bass, a piano, a bell, a pluck — in WAV or any format the
+browser decodes. FM has no way back from a
 sound to its patch, so this searches: candidate patches are played on a fast
 model of the chip, compared with the recording, and moved towards it. The
 pitch and the loudness contour are read first; then every algorithm is
