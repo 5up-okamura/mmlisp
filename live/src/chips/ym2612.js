@@ -1,6 +1,6 @@
 // The YM2612 (OPN2): six FM channels, the sixth also the DAC the Mega
 // Drive's PCM is mixed into.
-import { opnFm } from "./opn-fm.js";
+import { opnFm, opnFmEncoder } from "./opn-fm.js";
 import { dacMix } from "./dac-mix.js";
 
 export const ym2612 = {
@@ -12,6 +12,9 @@ export const ym2612 = {
   parts: [opnFm, dacMix],
   encoder: true, // ir-player writes its registers
   emulator: true, // Nuked-OPN2 plays them (synth-md.js)
+  fmEncoder() {
+    return opnFmEncoder(this.fnumRate);
+  },
   // The header's clock offset; the commands the worklet's ports 0 and 1 become.
   vgm: { clock: 0x2c, ports: { 0: { cmd: 0x52, addr: true }, 1: { cmd: 0x53, addr: true } } },
 };

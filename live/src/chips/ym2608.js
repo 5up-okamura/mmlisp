@@ -2,7 +2,7 @@
 // rhythm sounds and one ADPCM-B voice. The FM is the OPN family's, written by
 // the IR player as the YM2612's is; this file encodes the rest. ymfm's
 // YM2608 plays them (synth-pc88.js).
-import { opnFm } from "./opn-fm.js";
+import { opnFm, opnFmEncoder } from "./opn-fm.js";
 import { ssgTone, ssgNoise } from "./ssg.js";
 import { rhythmRom } from "./rhythm-rom.js";
 import { adpcmB } from "./adpcm-b.js";
@@ -23,6 +23,9 @@ export const ym2608 = {
   parts: [opnFm, ssgTone, ssgNoise, rhythmRom, adpcmB],
   encoder: true,
   emulator: true,
+  fmEncoder() {
+    return opnFmEncoder(this.fnumRate);
+  },
   ssg: { clock: SSG_CLOCK, noiseRate: NOISE_RATE_START },
   // Written once before anything else. $29 bit 7 (SCH) opens fm4-fm6, which
   // the chip starts without (its OPN-compatible mode); the rhythm's total
