@@ -208,7 +208,7 @@
             <span>Import</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
-          <!-- "Tool…", under what it becomes: defs at the cursor, or a score -->
+          <!-- by what an import does: Song… replaces the document, Instruments… inserts at the cursor -->
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="importSongMenu();closeMenus()"
                     title="A song as a new document: MIDI, DefleMask .dmf, Furnace .fur, VGM, mucom88 .muc (with its .dat / .bin)">Song…</button>
@@ -3146,6 +3146,10 @@
       }
       const dat = picked.find((f) => /\.dat$/i.test(f.name));
       const bin = picked.find((f) => /\.bin$/i.test(f.name));
+      if (!dat && !bin) {
+        log(`${picked.map((f) => f.name).join(', ')}: not a song file (.mid .vgm .dmf .fur .muc, or a mucom88 .dat / .bin)`, 'err');
+        return;
+      }
       if (!_mucomSong) {
         log('mucom88: no song to apply the bank to — pick the .muc with it, or File > Import > Instruments… for its defs', 'err');
         return;
