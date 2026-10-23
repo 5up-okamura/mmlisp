@@ -73,15 +73,18 @@ export const ym2608 = {
       [1, 0x00, 0xa0 | (repeat ? 0x10 : 0)], [1, 0x0b, Math.max(0, Math.min(255, level))], [1, 0x01, PAN_BITS[pan] ?? 0xc0],
     ],
     stop: () => [[1, 0x0b, 0], [1, 0x01, 0], [1, 0x00, 0x21]],
+    // A sounding note's level moving (linear, 0-255).
+    level: (level) => [[1, 0x0b, Math.max(0, Math.min(255, level))]],
     // VGM's data block type for the RAM image (VGM 1.51: YM2608 DELTA-T).
     vgmBlock: 0x81,
   },
 
   rhythm: {
     // A hit: its level and pan, then its key.
-    hit: (sound, il, pan) => [
+    hit: (sound, il, pan) => [...ym2608.rhythm.level(sound, il, pan), [0, 0x10, 1 << RHYTHM_BIT[sound]]],
+    // A sound's level IL (and its pan, the same register), sounding or not.
+    level: (sound, il, pan) => [
       [0, 0x18 + RHYTHM_BIT[sound], (PAN_BITS[pan] ?? 0xc0) | Math.max(0, Math.min(31, il))],
-      [0, 0x10, 1 << RHYTHM_BIT[sound]],
     ],
     // `:mode gate`'s end: the dump bit stops the sound.
     dump: (sound) => [[0, 0x10, 0x80 | (1 << RHYTHM_BIT[sound])]],

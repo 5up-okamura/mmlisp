@@ -2393,6 +2393,14 @@ sound's notes, and one track plays all six at once:
 (pcm2 :prio 2 hat :len 8 c c c c c c c c)   ; sounds with every kick
 ```
 
+A sounding voice's level moves with the track's `:vol` (a value, a curve, a
+`$slot`), the note's `:vel` / `:vol` macros and `:master`, a frame at a time:
+the ADPCM-B's linear level, a rhythm sound's IL. A rhythm sound is one
+register however many tracks hit it; it follows the track that keyed it
+last. The IL reaches 23 dB down (31 steps of 0.75 dB): a hit starts no
+quieter than that, and a sound whose level falls below it while it sounds,
+or reaches `:vol 0`, is dumped (it stops).
+
 The ADPCM-B repeats a sample's whole range, so a `loop` note whose loop
 starts after its range does is `E_TARGET`.
 
