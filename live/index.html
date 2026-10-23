@@ -854,7 +854,7 @@
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
-    import { midiToFnumBlock, VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, OP_ADDR_OFFSET, fmCarrierOpsForAlg, encode30, encode60, encode80, encodeB0, encodeB4 } from './src/ir-utils.js';
+    import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -9514,12 +9514,6 @@
       return chIndex >= 6 && chIndex < 10;
     }
 
-    function fmPortAndOffset(chIndex) {
-      return {
-        port: chIndex >= 3 ? 1 : 0,
-        chOffset: chIndex % 3,
-      };
-    }
 
     // `vel` (0-15) is given only by a MIDI keyboard with Velocity on; without
     // it a preview plays at the level the channel already has.
@@ -9548,34 +9542,33 @@
       workletNode?.port.postMessage({ type: 'write', port, addr, data, preview: true });
     }
 
+    // The preview's writes for one FM operation, from the player's FM
+    // encoder (src/chips/): the score's chip, at its clock.
+    function writePreviews(writes) {
+      for (const [port, addr, data] of writes) writePreview(port, addr, data);
+    }
+
     function previewFmNoteOn(chIndex, midi, vel) {
-      const { fnum, block } = midiToFnumBlock(midi);
+      if (!player) return;
+      const fm = player._fmEnc;
       const borrowed = _borrowedKeyMask.get(chIndex);
       // The carriers' TL at this velocity, composed as a note's would be (a
       // borrowed channel had its level written with its patch).
-      if (vel != null && player && borrowed == null) player._writeFmLevel(chIndex, audioCtx?.currentTime, { vel });
-      const { port, chOffset } = fmPortAndOffset(chIndex);
-      const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
-      const low = fnum & 0xff;
-      writePreview(port, 0xa4 + chOffset, high);
-      writePreview(port, 0xa0 + chOffset, low);
-      // CH3 may be left in FM3 special mode (separate per-operator frequencies)
-      // after editing/playing an fm3-N score; the base A0/A4 write above only
-      // reaches OP4 in that mode. Mirror the pitch onto every operator's
-      // F-number so all keyed operators play in unison. These supplementary
-      // registers are inert in normal mode, so this is harmless there.
-      if (chIndex === 2 && player && typeof player._writeFm3OpPitch === 'function') {
+      if (vel != null && borrowed == null) player._writeFmLevel(chIndex, audioCtx?.currentTime, { vel });
+      writePreviews(fm.pitch(chIndex, midi));
+      // An OPN's CH3 may be left in FM3 special mode (separate per-operator
+      // frequencies) after editing/playing an fm3-N score; the channel's
+      // pitch above only reaches OP4 in that mode. Mirror the pitch onto
+      // every operator's F-number so all keyed operators play in unison.
+      // These supplementary registers are inert in normal mode.
+      if (chIndex === 2 && fm.csm) {
         for (let op = 1; op <= 4; op++) player._writeFm3OpPitch(op, midi);
       }
-      const keyMask = borrowed ?? (player ? player.getOpMask(chIndex) : 0xf0);
-      const chKey = (port << 2) | chOffset;
-      writePreview(0, 0x28, keyMask | chKey);
+      writePreviews(fm.key(chIndex, borrowed ?? player.getOpMask(chIndex)));
     }
 
     function previewFmNoteOff(chIndex) {
-      const { port, chOffset } = fmPortAndOffset(chIndex);
-      const chKey = (port << 2) | chOffset;
-      writePreview(0, 0x28, chKey);
+      if (player) writePreviews(player._fmEnc.key(chIndex, 0));
     }
 
     // The player an FM or PSG preview writes through. The MMLispDRV reference
@@ -10249,25 +10242,19 @@
     // and the channel goes back to. Carriers at the voiced level, or at `vel`
     // composed as a note's would be; the pan stays the channel's.
     function writeBorrowedPatch(ch, regs, vel) {
-      const { port, chOffset: c } = fmPortAndOffset(ch);
+      const fm = player._fmEnc;
       const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
       regs.ops.forEach((o, i) => {
-        const a = OP_ADDR_OFFSET[i] + c;
         const voiced = o.voicedTl ?? o.tl ?? 0;
         const tl = vel != null && carriers.includes(i)
           ? player._carrierTl({ voicedTl: voiced }, vel, VOL_UNITY, player._masterVol ?? VOL_UNITY)
           : voiced;
-        writePreview(port, 0x30 + a, encode30(o));
-        writePreview(port, 0x40 + a, tl & 0x7f);
-        writePreview(port, 0x50 + a, ((o.rs ?? 0) << 6) | (o.ar ?? 0));
-        writePreview(port, 0x60 + a, encode60(o));
-        writePreview(port, 0x70 + a, o.d2r ?? 0);
-        writePreview(port, 0x80 + a, encode80(o));
-        writePreview(port, 0x90 + a, (o.ssg ?? 0) & 0x0f);
+        const op = { ...o, tl: tl & 0x7f, rs: o.rs ?? 0, ar: o.ar ?? 0, d2r: o.d2r ?? 0, ssg: o.ssg ?? 0 };
+        for (const reg of ['dt-ml', 'tl', 'ks-ar', 'am-dr', 'sr', 'sl-rr', 'ssg-eg']) writePreviews(fm.op(ch, i, reg, op));
       });
-      writePreview(port, 0xb0 + c, encodeB0(regs));
+      writePreviews(fm.alg(ch, regs));
       const pan = player._chRegs?.[ch]?.pan ?? 0;
-      writePreview(port, 0xb4 + c, encodeB4({ pan, ams: regs.ams ?? 0, fms: regs.fms ?? 0 }));
+      writePreviews(fm.pan(ch, { pan, ams: regs.ams ?? 0, fms: regs.fms ?? 0 }));
     }
 
     async function onPhysicalKeyDown(e) {
@@ -12167,7 +12154,10 @@
       if (player) return;
       if (!workletNode) return;
       player = new IRPlayer(writeToWorklet);
-      player.loadJSON({ ppqn: 120, tracks: [] });
+      // The score's machine, so the keys write its chip at its clock.
+      const target = _lastGoodIR?.metadata?.target;
+      const encodes = target && !notYet(targetProfile(target), 'encode');
+      player.loadJSON({ ppqn: 120, tracks: [], ...(encodes ? { metadata: { target } } : {}) });
       player._initDefaultVoices();
       syncParamUI();
     }

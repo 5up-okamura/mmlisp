@@ -1,8 +1,9 @@
 /**
  * MMLisp IR player.
  *
- * Loads an IR JSON file, translates events into YM2612 register writes,
- * and schedules them via a write callback timed by the Web Audio clock.
+ * Loads an IR JSON file, translates events into the target's register writes
+ * (its chips' encoders, chips/), and schedules them via a write callback
+ * timed by the Web Audio clock.
  *
  * Usage:
  *   const player = new IRPlayer(writeCallback);
@@ -10,8 +11,8 @@
  *   player.play();
  *   player.stop();
  *
- * writeCallback(port, addr, data) matches the YM2612 write() interface,
- * which in practice posts messages to the AudioWorklet.
+ * writeCallback(port, addr, data) is the chip's write, which in practice
+ * posts messages to the AudioWorklet.
  */
 
 import {
@@ -185,7 +186,7 @@ export class IRPlayer {
   constructor(writeCallback) {
     this._target = targetProfile(); // until a score says otherwise (_loadIR)
     this._fmChip = this._target.chipFor("fm");
-    this._fm = this._fmChip.fmEncoder(); // the FM's registers (chips/)
+    this._fmEnc = this._fmChip.fmEncoder(); // the FM's registers (chips/)
     this._psgChip = this._target.chipForKind("tone")?.psgEncoder() ?? null; // null: a target with no PSG
     this._trackPart = new Map(); // trackIndex → its part (chips/parts.js)
     this._write = writeCallback;
@@ -236,7 +237,7 @@ export class IRPlayer {
     this._fm3Ops = false; // CH3's operators are tracks of their own (FM3_MODE op / csm-op)
 
     // Track → channel mapping (defaults to index 0 for demo)
-    this._trackChannel = new Map(); // trackIndex → chIndex (0-5)
+    this._trackChannel = new Map(); // trackIndex → FM chIndex (0 … the chip's channels − 1)
 
     // PCM channel routing. Kept out of _trackChannel: PCM voices own no FM
     // channel, so they must not appear on the FM key-off path.
@@ -381,7 +382,7 @@ export class IRPlayer {
     if (why) throw new Error(why);
     this._target = target;
     this._fmChip = target.chipFor("fm");
-    this._fm = this._fmChip.fmEncoder();
+    this._fmEnc = this._fmChip.fmEncoder();
     this._psgChip = target.chipForKind("tone")?.psgEncoder() ?? null; // one per score: it may keep state
     this._psgStepDb = target.parts.find((p) => p.kind === "tone")?.level.stepDb ?? 2;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
@@ -470,7 +471,7 @@ export class IRPlayer {
     }
     this._clearPendingUiTimers();
     // All notes off (FM)
-    for (let ch = 0; ch < this._fm.channels; ch++) {
+    for (let ch = 0; ch < this._fmEnc.channels; ch++) {
       this._writeKeyOff(ch);
     }
     // Silence all PSG channels
@@ -487,7 +488,7 @@ export class IRPlayer {
     this._fm3TlQueue = [];
     this._reg27 = 0;
     this._fm3Ops = false;
-    if (this._fm.csm) this._write(0, 0x27, 0);
+    if (this._fmEnc.csm) this._write(0, 0x27, 0);
   }
 
   // The chip and channel state belongs to one run. A run's sticky state (a
@@ -645,10 +646,10 @@ export class IRPlayer {
         if (k === "vol" || k === "vel" || k === "master") this._write({ ...w.msg, when: at });
         continue;
       }
-      if (this._fm.isKeyOn(w.port, w.addr, w.data)) continue;
+      if (this._fmEnc.isKeyOn(w.port, w.addr, w.data)) continue;
       this._write(w.port, w.addr, w.data, at);
     }
-    for (let ch = 0; ch < this._fm.channels; ch++) this._writeKeyOff(ch);
+    for (let ch = 0; ch < this._fmEnc.channels; ch++) this._writeKeyOff(ch);
     for (let psgCh = 0; psgCh < 4; psgCh++) this._psgSetAtt(psgCh, 15, at);
     for (let v = 0; v < pcmVoices; v++) this._pcmEv(at, { kind: "off", voice: v });
 
@@ -952,7 +953,7 @@ export class IRPlayer {
 
   /**
    * Trigger KEY-OFF for a hold note (len=0) on the given channel.
-   * @param {number} ch  0-5 FM, 6-9 PSG, 20-22 PCM
+   * @param {number} ch  an FM channel, PSG_HOLD_BASE + a PSG lane, 20 + a PCM voice
    */
   triggerKeyOff(ch) {
     if (!this._holdChannels.has(ch)) return;
@@ -989,11 +990,11 @@ export class IRPlayer {
 
   /**
    * Set operator key-on mask for a channel.
-   * @param {number} ch    0-5
+   * @param {number} ch    an FM channel
    * @param {number} mask  0xf0 = all on; bit7=op4, bit6=op3, bit5=op2, bit4=op1
    */
   setOpMask(ch, mask) {
-    if (!Number.isInteger(ch) || ch < 0 || ch > 5) {
+    if (!Number.isInteger(ch) || ch < 0 || ch >= this._fmEnc.channels) {
       throw new Error(`Invalid channel index for setOpMask: ${ch}`);
     }
     const keyMask = Number(mask) & 0xf0;
@@ -1005,7 +1006,7 @@ export class IRPlayer {
 
   /** Get current op mask for a channel. */
   getOpMask(ch) {
-    if (!Number.isInteger(ch) || ch < 0 || ch > 5) {
+    if (!Number.isInteger(ch) || ch < 0 || ch >= this._fmEnc.channels) {
       throw new Error(`Invalid channel index for getOpMask: ${ch}`);
     }
     return this._opMasks[ch] ?? 0xf0;
@@ -1198,7 +1199,7 @@ export class IRPlayer {
       return;
     }
     // An FM channel; a track with no channel name takes its index, capped.
-    this._trackChannel.set(trackIndex, c ? c.voice : Math.min(trackIndex, 5));
+    this._trackChannel.set(trackIndex, c ? c.voice : Math.min(trackIndex, this._fmEnc.channels - 1));
   }
 
   // ---------------------------------------------------------------------------
@@ -1989,7 +1990,7 @@ export class IRPlayer {
       for (let op = 1; op <= 4; op++) this._writeFm3OpFnum(op, fnum, block, when);
       return;
     }
-    this._fmWrites(this._fm.pitch(ch, midi), when);
+    this._fmWrites(this._fmEnc.pitch(ch, midi), when);
   }
 
   _writeFm3OpFnum(op, fnum, block, when) {
@@ -3348,7 +3349,7 @@ export class IRPlayer {
           0,
           7,
         );
-        this._fmWrites(this._fm.alg(ch, regs), when);
+        this._fmWrites(this._fmEnc.alg(ch, regs), when);
         break;
       case "FM_ALG":
         set(
@@ -3358,7 +3359,7 @@ export class IRPlayer {
           0,
           7,
         );
-        this._fmWrites(this._fm.alg(ch, regs), when);
+        this._fmWrites(this._fmEnc.alg(ch, regs), when);
         break;
       case "FM_TL1":
       case "FM_TL2":
@@ -3458,7 +3459,7 @@ export class IRPlayer {
           0,
           3,
         );
-        this._fmWrites(this._fm.pan(ch, regs), when);
+        this._fmWrites(this._fmEnc.pan(ch, regs), when);
         break;
       case "FM_FMS":
         set(
@@ -3468,18 +3469,18 @@ export class IRPlayer {
           0,
           7,
         );
-        this._fmWrites(this._fm.pan(ch, regs), when);
+        this._fmWrites(this._fmEnc.pan(ch, regs), when);
         break;
       case "PAN": {
         const pan = this._snapMacroOutput("PAN", value);
         regs.pan = pan;
-        this._fmWrites(this._fm.pan(ch, regs), when);
+        this._fmWrites(this._fmEnc.pan(ch, regs), when);
         break;
       }
       case "LFO_RATE": {
         const rate = Math.max(0, Math.min(8, Math.round(value)));
         this._lfoRate = rate;
-        this._fmWrites(this._fm.lfo(rate), when);
+        this._fmWrites(this._fmEnc.lfo(rate), when);
         break;
       }
       case "FM_RR1":
@@ -3645,7 +3646,7 @@ export class IRPlayer {
     const master = Math.max(0, Math.min(31, Math.round(value)));
     this._masterVol = master;
     // FM channels: update carrier TL
-    for (let ci = 0; ci < this._fm.channels; ci++) {
+    for (let ci = 0; ci < this._fmEnc.channels; ci++) {
       if (ci === 2 && this._fm3Ops) { this._recomposeFm3Ops(when); continue; }
       // a :vol macro's level then, else a running :vol sweep's at frame F
       const vol = this._lineAt(this._fmLevelLines[ci]?.vol, when) ?? this._fmVolAtFrame(ci, F);
@@ -4677,7 +4678,7 @@ export class IRPlayer {
    * External real-time parameter write.
    * target: e.g. 'FM_TL1', 'FM_FB', 'FM_ALG'
    * value: absolute value (always SET, not ADD)
-   * chIndex: 0-5 (default 0)
+   * chIndex: an FM channel (default 0)
    */
   setParam(target, value, chIndex = 0) {
     this._applyParam(chIndex, {
@@ -5435,11 +5436,11 @@ export class IRPlayer {
     for (const [port, addr, data] of writes) this._write(port, addr, data, when);
   }
   _fmKey(ch, mask, when) {
-    this._fmWrites(this._fm.key(ch, mask), when);
+    this._fmWrites(this._fmEnc.key(ch, mask), when);
   }
   // One operator register, from the channel's shadow state.
   _fmOp(ch, opIdx, reg, when) {
-    this._fmWrites(this._fm.op(ch, opIdx, reg, this._chRegs[ch].ops[opIdx]), when);
+    this._fmWrites(this._fmEnc.op(ch, opIdx, reg, this._chRegs[ch].ops[opIdx]), when);
   }
 
   _initDefaultVoices() {
@@ -5452,14 +5453,14 @@ export class IRPlayer {
       for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     // Neutral sine-like patch: ALG=7 (all 4 ops independent carriers), FB=0.
     // All ops: AR=31, DR=0, SL=0, RR=15, TL=0, MUL=1, DT=0.
-    for (let ch = 0; ch < this._fm.channels; ch++) {
+    for (let ch = 0; ch < this._fmEnc.channels; ch++) {
       const regs = this._chRegs[ch];
 
       regs.algorithm = 7;
       regs.feedback = 0;
-      this._fmWrites(this._fm.alg(ch, regs));
+      this._fmWrites(this._fmEnc.alg(ch, regs));
       // Stereo: both, the LFO sensitivities 0
-      this._fmWrites(this._fm.pan(ch, { pan: 0, ams: 0, fms: 0 }));
+      this._fmWrites(this._fmEnc.pan(ch, { pan: 0, ams: 0, fms: 0 }));
 
       for (let slot = 0; slot < 4; slot++) {
         regs.ops[slot] = {
@@ -5479,8 +5480,8 @@ export class IRPlayer {
       }
     }
     // Globals, matching the driver's boot patch (driver.md §5.4).
-    this._fmWrites(this._fm.lfo(0)); // LFO off
-    if (this._fm.csm) this._write(0, 0x27, 0); // CH3 normal mode, timers off
+    this._fmWrites(this._fmEnc.lfo(0)); // LFO off
+    if (this._fmEnc.csm) this._write(0, 0x27, 0); // CH3 normal mode, timers off
     if (this._target.hasPart("dac")) {
       this._write(0, 0x2a, 0); // DAC data 0 — the DAC is off; the engine feeds it
       this._write(0, 0x2b, 0); // DAC off
