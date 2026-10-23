@@ -2318,7 +2318,7 @@ those chips cannot do is a compile error, not a different sound.
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
 run ymfm's YM2608. The rhythm sounds are the chip's ROM, Yamaha's, which
 MMLisp does not ship: the VGM keys them and a player supplies them, and Live
-plays them from the user's own ROM (MMLisp ▸ YM2608 Rhythm ROM…, 8 KB, kept
+plays them from the user's own ROM (File ▸ Import ▸ YM2608 Rhythm ROM…, 8 KB, kept
 in the browser). Without it the score's kit stands in: each role's `:file`,
 encoded as the chip's ADPCM-A into the ROM's layout and cut to the ROM
 sound's length (`kick` 48 ms, `snare` 69 ms, `ride` 0.64 s, `hat` 42 ms,

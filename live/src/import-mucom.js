@@ -2527,7 +2527,7 @@ function mucomToMmlisp(parsed) {
   // pc88: G plays the chip's ROM sounds; the kit stands in for them where the
   // user has loaded no ROM (language.md §19).
   if (rhythmPlays && pc88)
-    metaDefs.push(`(import ${qstr(RHYTHM_KIT)})  ; part G's sounds without a rhythm ROM (MMLisp > YM2608 Rhythm ROM…)`);
+    metaDefs.push(`(import ${qstr(RHYTHM_KIT)})  ; part G's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)`);
   // LFO defs (if any) are spliced in here once rendering has discovered them.
   const lfoDefAnchor = lines.length;
   lines.push("");

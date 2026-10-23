@@ -133,11 +133,6 @@
           <span>Analog LPF</span>
           <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
-        <button class="menu-item" onclick="chooseRhythmRom();closeMenus()"
-                title="Your YM2608 rhythm ROM (8 KB), kept in this browser: :target pc88's rhythm plays from it">
-          <span>YM2608 Rhythm ROM…</span>
-          <span class="menu-item-shortcut" id="rhythmRomCheck"></span>
-        </button>
         <div class="menu-wrap submenu-wrap" id="menuMMLispMidi" hidden>
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispMidi')">
             <span>MIDI</span>
@@ -235,6 +230,13 @@
             <div class="menu-label">Resynthesis</div>
             <button class="menu-item" onclick="importResynth();closeMenus()">Audio on FM3…</button>
             <button class="menu-item" onclick="importAudioAsFmVoice();closeMenus()">Audio as FM Voice…</button>
+            <div class="menu-sep"></div>
+            <div class="menu-label">ROMs</div>
+            <button class="menu-item" onclick="chooseRhythmRom();closeMenus()"
+                    title="Your YM2608 rhythm ROM (8 KB), kept in this browser: :target pc88's rhythm plays from it">
+              <span>YM2608 Rhythm ROM…</span>
+              <span class="menu-item-shortcut" id="rhythmRomCheck"></span>
+            </button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
@@ -7290,7 +7292,7 @@
     window.toggleAnalogLpf = toggleAnalogLpf;
     updateAnalogLpfCheck(); // reflect the restored state in the menu
 
-    // MMLisp > YM2608 Rhythm ROM…: the YM2608 reads its six rhythm sounds from
+    // File > Import > YM2608 Rhythm ROM…: the YM2608 reads its six rhythm sounds from
     // a ROM of Yamaha's, which does not ship. The user brings theirs, kept in
     // this browser (src/recent-files.js); :target pc88's rhythm plays from it,
     // in the worklet and the WAV export. Without one the score's kit stands in
@@ -7343,7 +7345,7 @@
       const standIn = played.size ? bakeRhythmStandIn(ir, blobs) : null;
       const silent = [...played].filter((n) => !standIn?.roles.includes(n));
       if (standIn) log(`No YM2608 rhythm ROM: the kit's ${standIn.roles.join(', ')} stand in, cut to the ROM's lengths`, 'info');
-      if (silent.length) log(`No YM2608 rhythm ROM: ${silent.join(', ')} ${silent.length > 1 ? 'are' : 'is'} silent (no :file) — MMLisp > YM2608 Rhythm ROM… loads yours`, 'warn');
+      if (silent.length) log(`No YM2608 rhythm ROM: ${silent.join(', ')} ${silent.length > 1 ? 'are' : 'is'} silent (no :file) — File > Import > YM2608 Rhythm ROM… loads yours`, 'warn');
       _standInByIr.set(ir, standIn?.rom ?? null);
       return standIn?.rom ?? null;
     }

@@ -6,7 +6,7 @@
 // Reopening asks the browser for access again unless it already holds it — an
 // installed Chrome app can keep the grant between launches.
 //
-// The same database keeps the ROM images the user brings (MMLisp > YM2608
+// The same database keeps the ROM images the user brings (File > Import > YM2608
 // Rhythm ROM…): the bytes themselves, which need no grant to read back.
 
 const DB_NAME = 'mmlisp';
