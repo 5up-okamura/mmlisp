@@ -35,6 +35,12 @@ const PCM_PARTS = { K: "pcm1" };
 // Below this spread across the pitch classes one `:pitch` serves every note;
 // above it the part re-states `:pitch` per pitch class.
 const DETUNE_SPREAD_CENTS = 10;
+// Part K's notes: the Delta-N mucom's table gives each pitch class (music.asm
+// PCMNMB, one octave), which D adds to before the octave's shift (PCMGFQ) —
+// so on the ADPCM-B too a D's cents depend on the note.
+const PCMNMB = [0x49ba, 0x4e1c, 0x52c1, 0x57ad, 0x5ce4, 0x626a, 0x6844, 0x6e77, 0x7509, 0x7bfe, 0x835e, 0x8b2d]
+  .map((n, pc) => n + (pc === 9 ? 120 : 200));
+const pcmDetuneCents = (pc, d) => (PCMNMB[pc] + d <= 0 ? -4800 : 1200 * Math.log2((PCMNMB[pc] + d) / PCMNMB[pc]));
 // The software LFO (`M`) is modelled from the driver itself (music.asm
 // PLLFO), not with a cents-per-unit factor: it adds a vector to the channel's
 // raw pitch word every few clocks, so its depth in cents depends on the note
@@ -478,10 +484,10 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
 
     // Volume: v<0-15>, ) raise, ( lower
     // `v` is written plus the part's V offset (muc88.asm SETVOL; TOTALV). On K,
-    // `vm<n>` picks the ADPCM volume mode instead — nothing to carry over.
+    // `vm<n>` picks the ADPCM volume mode (music.asm PVMCHG).
     if (c === "v") {
       i++;
-      if (body[i] === "m") { i++; readInt(); continue; }
+      if (body[i] === "m") { i++; push({ t: "pcmVolMode", n: readInt() ?? 0 }); continue; }
       if (partLetter === RHYTHM_PART) {
         // v total,BD,SD,TOP,HH,TOM,RIM — a level left out keeps its value.
         const levels = [readInt()];
@@ -1455,7 +1461,7 @@ function setRuntimeState(ctx, st, out) {
   ctx.qCut = st.qCut;
   ctx.reverb = st.reverb;
   if (st.gateCut != null) emitGate(ctx, out);
-  if ((st.detune ?? 0) !== (ctx.detune ?? 0) && !ctx.isPcm) { ctx.detune = st.detune ?? 0; detuneChanged(ctx, out); }
+  if ((st.detune ?? 0) !== (ctx.detune ?? 0) && (!ctx.isPcm || adpcmFader(ctx))) { ctx.detune = st.detune ?? 0; detuneChanged(ctx, out); }
 }
 
 // The runtime values a render writes only when they change. An (x …) body is
@@ -1631,7 +1637,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         out.push(`:pan ${{ 1: "right", 2: "left" }[op.v] ?? "center"}`);
         break;
       case "detune": {
-        if (ctx.isPcm) { warnOnce(ctx.warnings, "pcmDetune", "part K: detune (D) not supported on PCM; dropped"); break; }
+        // pc88's ADPCM-B takes :pitch; the Mega Drive's soft-mixed PCM does not.
+        if (ctx.isPcm && !adpcmFader(ctx)) { warnOnce(ctx.warnings, "pcmDetune", "part K: detune (D) has no PCM equivalent on md; dropped"); break; }
         // Track the raw mucom D value (so relative D+ accumulates), then map to
         // cents with the chip's representative factor.
         ctx.detune = op.rel ? (ctx.detune ?? 0) + op.val : op.val;
@@ -1747,6 +1754,14 @@ function renderOps(ops, ctx, out, depth = 0) {
       case "vel":
         if (op.v !== ctx.vel || ctx.verbose || stale(ctx, "vel")) pushVel(ctx, out, op.v);
         break;
+      case "pcmVolMode":
+        // vm<n> (K): non-zero, a sample brings its bank level and `v` adds to
+        // it (music.asm OTOPCM/PCMVOL). pc88's level is the fader; on md the
+        // part's levels are normalized to its loudest, which this would move.
+        if (!adpcmFader(ctx)) { if (op.n) warnOnce(ctx.warnings, "pcmVolMode", "part K: volume mode (vm) is read for pc88 only; dropped"); break; }
+        ctx.pvMode = op.n;
+        if (ctx.vel != null) pushVel(ctx, out, ctx.vel);
+        break;
       case "gateCut":
         // mucom q<n> -> :gate- (key off n clocks early); convert clocks to ticks.
         ctx.qCut = Math.round(op.n * (WHOLE_TICKS / op.wholeClocks));
@@ -1802,7 +1817,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.macroOps && ctx.macroOps.has(op.n)) {
           const m = scratchCtx(ctx);
           renderOps(ctx.macroOps.get(op.n), m, [], depth + 1);
-          for (const key of ["pcmSample", "pcmMuted", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "keyShift", "lastNote", "lfoPerPc", "lfoActive", "slotOffs", "velTok"]) ctx[key] = m[key];
+          for (const key of ["pcmSample", "pcmMuted", "pvMode", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "keyShift", "lastNote", "lfoPerPc", "lfoActive", "slotOffs", "velTok"]) ctx[key] = m[key];
         }
         // Reference a (def *n …); skip macros whose body had no supported content.
         if (ctx.usableMacros && ctx.usableMacros.has(op.n)) out.push(`*${op.n}`);
@@ -1831,6 +1846,7 @@ function renderOps(ops, ctx, out, depth = 0) {
             ctx.pcmSample = op.n;
             ctx.pcmMuted = false;
             out.push(entry.label);
+            if (ctx.pvMode && adpcmFader(ctx) && ctx.vel != null) pushVel(ctx, out, ctx.vel); // its bank level
           } else if (!ctx.warnedVoices.has(`pcm@${op.n}`)) {
             ctx.warnedVoices.add(`pcm@${op.n}`);
             ctx.warnings.push(`part K: @${op.n} is not in the PCM bank; dropped`);
@@ -2015,7 +2031,12 @@ function noiseModeBeforeNote(ctx, out) {
 function pushVel(ctx, out, v) {
   ctx.vel = v;
   if (ssgFader(ctx)) { out.push(`:vol ${ssgLevelVol(clamp(v, 0, 15))}`); return; }
-  if (adpcmFader(ctx)) { out.push(`:vol ${adpcmLevelVol(clamp(v, 0, 255))}`); return; }
+  if (adpcmFader(ctx)) {
+    // Under vm, the level is the sample's bank level plus v.
+    const level = ctx.pvMode ? (ctx.pcmEntries?.get(ctx.pcmSample)?.defaultVol ?? 0) + v : v;
+    out.push(`:vol ${adpcmLevelVol(clamp(level, 0, 255))}`);
+    return;
+  }
   if (ctx.fm3Op) {
     // A modulator copy holds the patch's level; a carrier's is the part's.
     const carrier = fm3Carrier(ctx);
@@ -2093,6 +2114,11 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
     : (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256), offsetDb);
   const ratio = (x) => Math.round((100 * x) / vel) / 100;
   const items = [];
+  // pc88: the tick the held note's register reaches 0. SOFENV's level falls
+  // to silence there, which a :vel* cannot (:vel 0 is 30 dB down): the
+  // envelope's :vol holds the fader until then and drops to 0, so the note is
+  // silent from there, released or not.
+  let held = true, zeroTick = null;
   // A stage from level a towards b, `rate` a clock — SOFENV steps the level
   // once a clock and holds it between, so a note keeps its start level for
   // its first clock — as the played :vel per tick, fitted greedily with pieces
@@ -2103,8 +2129,9 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
     ticks += total;
     const dir = b > a ? 1 : -1;
     const y = Array.from({ length: total + 1 }, (_, j) => {
-      const lv = a + dir * Math.floor(j / factor) * rate;
-      return played(dir > 0 ? Math.min(b, lv) : Math.max(b, lv));
+      const lv = dir > 0 ? Math.min(b, a + Math.floor(j / factor) * rate) : Math.max(b, a - Math.floor(j / factor) * rate);
+      if (pc88 && held && dir < 0 && zeroTick == null && Math.floor((lv * (v + 1)) / 256) === 0) zeroTick = ticks - total + j;
+      return played(lv);
     });
     let i = 0;
     while (i < total) {
@@ -2138,8 +2165,11 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
   // start written, so it is SL — exact for a note that reached the sustain
   // and has not decayed far into it.
   items.push("(wait key-off)");
+  held = false;
   if (sl > 0 && rr > 0) stage(sl, 0, rr);
-  return `${macroStep((ticks / PPQN) * (60 / (bpm || 120)) * 60)}:vel* [ ${items.join(" ")} ]`;
+  const fader = ssgLevelVol(v);
+  const mute = zeroTick == null ? "" : zeroTick > 0 ? ` :vol [ (linear ${fader}..${fader} :len ${zeroTick}t) 0 ]` : " :vol [ 0 ]";
+  return `${macroStep((ticks / PPQN) * (60 / (bpm || 120)) * 60)}:vel* [ ${items.join(" ")} ]${mute}`;
 }
 
 // Before an SSG note: the envelope drawn for its `v`, if not already active.
@@ -2277,7 +2307,7 @@ const fm3Carrier = (ctx) =>
 function detuneChanged(ctx, out) {
   if (ctx.isNoise) return;
   const raw = rawDetune(ctx);
-  const cents = Array.from({ length: 12 }, (_, pc) => lfoCents(ctx.isSsg, pc, raw));
+  const cents = Array.from({ length: 12 }, (_, pc) => (ctx.isPcm ? pcmDetuneCents(pc, raw) : lfoCents(ctx.isSsg, pc, raw)));
   // In operator mode the point is the small distance between the operators, and
   // one `:pitch` per part would blur it: those parts always write per note.
   ctx.detunePerNote = ctx.fm3Op != null || Math.max(...cents) - Math.min(...cents) > DETUNE_SPREAD_CENTS;
@@ -2287,10 +2317,10 @@ function detuneChanged(ctx, out) {
 }
 
 function detuneBeforeNote(ctx, out, letter, acc) {
-  if (!ctx.detunePerNote || ctx.isPcm || ctx.isNoise) return;
+  if (!ctx.detunePerNote || (ctx.isPcm && !adpcmFader(ctx)) || ctx.isNoise) return;
   const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
   const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
-  const cents = Math.round(lfoCents(ctx.isSsg, pc, rawDetune(ctx)));
+  const cents = Math.round(ctx.isPcm ? pcmDetuneCents(pc, rawDetune(ctx)) : lfoCents(ctx.isSsg, pc, rawDetune(ctx)));
   if (cents !== ctx.pitchOut || ctx.verbose || stale(ctx, "pitchOut")) { out.push(`:pitch ${cents}`); ctx.pitchOut = cents; }
 }
 

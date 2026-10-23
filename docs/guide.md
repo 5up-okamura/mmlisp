@@ -1519,12 +1519,14 @@ for the Mega Drive as above:
   the `:vol` that lands on the same register step, every one of the sixteen
   (`:vel`'s ladder would end 30 dB down), so a `(` / `)` inside a tie is a
   fader move. An `E` envelope is a `:vel*` macro under it, drawn per `v` and
-  reaching 30 dB below the note's top.
+  reaching 30 dB below the note's top; where mucom's level reaches silence,
+  its `:vol` drops to 0.
 - **FM** is as above, and `fm6` stays (there is no DAC to own).
 - **ADPCM** K comes in on `pcm1` with its bank's defs, `v` as the fader
   (the level register mucom88 writes, `v` + 4, to within 1 dB) and `p` as
-  `:pan`; `K` / `k` shift its notes as they do on the chip (on md too). Its
-  volume mode `vm<n>` and detune `D` are not read.
+  `:pan`; `K` / `k` shift its notes as they do on the chip (on md too).
+  `D` is the `:pitch` it moves the note's Delta-N by, and under `vm<n>` each
+  sample brings its bank level, which `v` adds to.
 
 ### Resynthesizing a recording on FM3
 

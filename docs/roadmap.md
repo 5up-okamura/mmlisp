@@ -128,14 +128,15 @@ In order:
    - **The check, what is left**: the mucom importer's pc88 scores against
      the real driver's VGM (the A/B the importer was tuned with). FM keys and
      pitch, the rhythm's hits, levels and pan, and the SSG's mixer match,
-     and its levels mostly (70–99% exact, 86–100% within a step). Open: a
-     `v` move inside a tie (one fader step, where mucom's level × (v+1)
-     moves less near the sustain), a `q` note's release start, a hit
-     quieter than the IL's 31 steps (RTL stays 63). K's notes, Delta-N,
-     level and pan match (14 of 16 songs to within 1 dB); open are its
-     volume mode `vm<n>`, its detune `D` (a PCM track takes no `:pitch`),
-     and mucom's Delta-N table, which runs a few cents sharp of equal
-     temperament above C (`+200` on every note).
+     and its levels mostly (70–99% exact, 86–100% within a step); an `E`
+     envelope falls silent where mucom's does. Open: a `v` move inside a
+     tie (one fader step, where mucom's level × (v+1) moves less near the
+     sustain), a note released mid-decay (a macro's release starts from
+     its sustain level, mucom's from where the level is — a language
+     question), a hit quieter than the IL's 31 steps (RTL stays 63). K's
+     notes, Delta-N, level, pan, `D` (as `:pitch`) and `vm<n>` match;
+     mucom's Delta-N table, which runs a few cents sharp of equal
+     temperament (`+200` on every note), is not reproduced.
    - **The preview's scope**: ymfm gives no per-channel outputs, so the
      oscilloscope stays blank on a `pc88` score.
 2. **X68000 (YM2151 + MSM6258).** OPM voices convert from OPN with DT2 = 0
