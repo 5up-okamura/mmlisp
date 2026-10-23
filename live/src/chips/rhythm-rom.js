@@ -48,6 +48,9 @@ export const rhythmRom = {
 // other of those.
 const ROM_BYTES = 0x2000;
 const ADPCM_A_RATE = 7987200 / 432;
+// A kit's samples are normalized near full scale, which the ROM's sounds are
+// not: the stand-in plays them this much lower (by ear, against mucom88).
+const STAND_IN_DB = -3;
 const SLOTS = {
   bd: [0x0000, 0x01bf, 1], sd: [0x01c0, 0x043f, 1], top: [0x0440, 0x1b7f, 1],
   hh: [0x1b80, 0x1cff, 1], tom: [0x1d00, 0x1f7f, 2], rim: [0x1f80, 0x1fff, 2],
@@ -118,6 +121,8 @@ export function bakeRhythmStandIn(ir, blobs) {
     const rate = ADPCM_A_RATE / div;
     const bytes = end - start + 1;
     const pcm = Float32Array.from(toRate(blob.data.subarray(a, Math.max(a, b)), srcRate, rate).subarray(0, bytes * 2));
+    const g = 10 ** (STAND_IN_DB / 20);
+    for (let i = 0; i < pcm.length; i++) pcm[i] *= g;
     const fade = Math.min(pcm.length, Math.round(rate * 0.002));
     if (pcm.length === bytes * 2) for (let i = 0; i < fade; i++) pcm[pcm.length - 1 - i] *= i / fade;
     rom.set(encodeAdpcmA(pcm, bytes), start);
