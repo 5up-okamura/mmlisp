@@ -494,6 +494,7 @@ export class IRPlayer {
     this._lfoRate = 0;
     this._masterVol = VOL_UNITY;
     this._chipPcm = null; // the YM2608's sample voices' levels (_chipPcmFrames)
+    this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
     this._csmHold = false; // a rate rest stopped Timer A (driver.md §9)
@@ -2580,10 +2581,12 @@ export class IRPlayer {
         this._applyPcmParam(voice, { target: ev.args?.target, value }, when);
         break;
       }
-      case "PARAM_SWEEP":
-        if (PCM_POINT_TARGETS.has((ev.args?.target ?? "").toUpperCase()))
-          this._schedulePcmLoopSweep(voice, ev, when);
+      case "PARAM_SWEEP": {
+        const target = (ev.args?.target ?? "").toUpperCase();
+        if (PCM_POINT_TARGETS.has(target)) this._schedulePcmLoopSweep(voice, ev, when);
+        else if (target === "VOL") this._schedulePcmVolSweep(voice, ev, when);
         break;
+      }
       default:
         break;
     }
@@ -2601,9 +2604,35 @@ export class IRPlayer {
     return Math.max(0, Math.min(PCM_LOOP_MAX, Math.round(Number(sec ?? 0) * rate)));
   }
 
+  // A :vol sweep on a PCM voice: the fader stepped a frame at a time, as the
+  // driver's sweep engine steps the voice's bank (driver.md §14), from where
+  // it is unless the sweep names a :from, to the track's next :vol write.
+  _schedulePcmVolSweep(voice, ev, when) {
+    const a = ev.args ?? {};
+    const df = this._curveFields(a, when);
+    const from = Math.max(0, Math.min(31, Number(df.from ?? this._pcmVolNow?.[voice] ?? VOL_UNITY)));
+    const baseFrames = a.lenFrames
+      ? Math.max(1, Math.round(Number(a.frames ?? 1)))
+      : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
+    const sw = {
+      from, to: Math.max(0, Math.min(31, Number(df.to ?? from))), curve: a.curve ?? "linear",
+      params: df.params, baseFrames, loop: !!a.loop, startFrame: this._eventFrame(when), startWhen: when,
+    };
+    const budget = this._resolveSweepBudgetFrames(ev);
+    let last = null;
+    for (let f = 0; f < budget; f++) {
+      const v = Math.round(this._sweepAt(sw, f));
+      if (v !== last) this._pcmEv(this._sweepFrameTime(sw, f), { kind: "vol", voice, value: v });
+      last = v;
+      if (!sw.loop && f >= baseFrames - 1) break;
+    }
+    (this._pcmVolNow ??= [])[voice] = last;
+  }
+
   _applyPcmParam(voice, args, when) {
     const target = (args?.target ?? "").toUpperCase();
     const value = args?.value ?? 0;
+    if (target === "VOL") (this._pcmVolNow ??= [])[voice] = value;
     if (target === "VOL" || target === "VEL") {
       this._pcmEv(when, { kind: target === "VOL" ? "vol" : "vel", voice, value });
     } else if (target === "MASTER") {
