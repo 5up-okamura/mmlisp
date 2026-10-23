@@ -210,22 +210,10 @@
           </button>
           <!-- "Tool…", under what it becomes: defs at the cursor, or a score -->
           <div class="menu-dropdown submenu-dropdown">
-            <div class="menu-label">Instruments</div>
-            <button class="menu-item" onclick="importDefleMaskDmp();closeMenus()">DefleMask…</button>
-            <button class="menu-item" onclick="importFui();closeMenus()">Furnace…</button>
-            <button class="menu-item" onclick="importTfi();closeMenus()">TFM Music Maker…</button>
-            <button class="menu-item" onclick="importVgi();closeMenus()">VGM Music Maker…</button>
-            <button class="menu-item" onclick="importOpni();closeMenus()">OPN2-BANK…</button>
-            <button class="menu-item" onclick="importMucomVoiceBank();closeMenus()">mucom88 Voices…</button>
-            <button class="menu-item" onclick="importMucomPcmBank();closeMenus()">mucom88 Drums…</button>
-            <button class="menu-item" onclick="importSf2();closeMenus()">SoundFont Drums…</button>
-            <div class="menu-sep"></div>
-            <div class="menu-label">Songs</div>
-            <button class="menu-item" onclick="importSong('midi');closeMenus()">MIDI…</button>
-            <button class="menu-item" onclick="importSong('dmf');closeMenus()">DefleMask…</button>
-            <button class="menu-item" onclick="importSong('fur');closeMenus()">Furnace…</button>
-            <button class="menu-item" onclick="importSong('vgm');closeMenus()">VGM…</button>
-            <button class="menu-item" onclick="importMucom88();closeMenus()">mucom88…</button>
+            <button class="menu-item" onclick="importSongMenu();closeMenus()"
+                    title="A song as a new document: MIDI, DefleMask .dmf, Furnace .fur, VGM, mucom88 .muc (with its .dat / .bin)">Song…</button>
+            <button class="menu-item" onclick="importInstrumentsMenu();closeMenus()"
+                    title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2)">Instruments…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">Resynthesis</div>
             <button class="menu-item" onclick="importResynth();closeMenus()">Audio on FM3…</button>
@@ -3061,51 +3049,10 @@
       });
     }
 
-    async function importFmVoiceFile(options) {
-      try {
-        // A plain file input, not the File System Access picker: that one
-        // refuses folders it deems to "contain system files" on some platforms.
-        const file = await pickFileWithInput(options.extensions);
-        await importFmVoiceFromFile(file, options.key);
-      } catch (e) {
-        if (e && e.name === 'AbortError') return;
-        log(`${options.label} import failed: ${e?.message || e}`, 'err');
-      }
-    }
-
-    function importFmVoiceByKey(key) {
-      const fmt = FM_IMPORT_FORMATS[key];
-      if (!fmt) {
-        log(`Unknown import format: ${key}`, 'err');
-        return Promise.resolve();
-      }
-      return importFmVoiceFile(fmt);
-    }
-
-    async function importDefleMaskDmp() {
-      return importFmVoiceByKey('DMP');
-    }
-
-    async function importTfi() {
-      return importFmVoiceByKey('TFI');
-    }
-
-    async function importFui() {
-      return importFmVoiceByKey('FUI');
-    }
-
-    async function importVgi() {
-      return importFmVoiceByKey('VGI');
-    }
-
-    async function importOpni() {
-      return importFmVoiceByKey('OPNI');
-    }
-
     // Remember the last imported mucom song so a bank can be applied afterwards.
-    // A song's banks are best picked with it in one multi-select dialog; the
-    // File-menu items exist for when they weren't, since each menu click is a
-    // fresh user gesture and so can always open a picker.
+    // A song's banks are best picked with it in one multi-select dialog; a bank
+    // picked alone in File > Import > Song… is for when they weren't, since each
+    // menu click is a fresh user gesture and so can always open a picker.
     let _mucomSong = null; // { bytes, fileName, datBytes, pcmBytes }
     let _mucomPcm = null; // last decoded PCM bank { wav, wavFile, mono, rate, entries }
     let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
@@ -3171,17 +3118,64 @@
       return Object.values(SONG_IMPORTERS).find((imp) => imp.re.test(name)) || null;
     }
 
-    async function importSong(kind) {
-      const imp = SONG_IMPORTERS[kind];
-      let file;
+    // File > Import > Song… replaces the document; Instruments… inserts at the
+    // cursor. Each picks by extension, as a drop does. A mucom88 song comes
+    // with its .dat / .bin in the same selection (one dialog, one gesture),
+    // and a bank picked here alone re-converts the last mucom88 song with it.
+    const MUCOM_SONG_EXTS = ['.muc', '.mml', '.dat', '.bin'];
+    const INSTRUMENT_EXTS = [...Object.values(FM_IMPORT_FORMATS).flatMap((f) => f.extensions), '.dat', '.bin', '.sf2'];
+
+    async function importSongMenu() {
+      let picked;
       try {
-        file = await pickFileWithInput(imp.exts);
+        picked = await pickFileWithInput([...Object.values(SONG_IMPORTERS).flatMap((imp) => imp.exts), ...MUCOM_SONG_EXTS], { multiple: true });
       } catch (e) {
         if (e && e.name === 'AbortError') return;
-        log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
+        log(`Song import failed: ${e?.message || e}`, 'err');
         return;
       }
-      await importSongFromFile(file, imp);
+      if (picked.some((f) => /\.(muc|mml)$/i.test(f.name))) {
+        await importMucom88FromFiles(picked);
+        return;
+      }
+      const song = picked.find((f) => songImporterFor(f.name));
+      if (song) {
+        for (const f of picked) if (f !== song) log(`${f.name} ignored — a song import takes one file`, 'info');
+        await importSongFromFile(song);
+        return;
+      }
+      const dat = picked.find((f) => /\.dat$/i.test(f.name));
+      const bin = picked.find((f) => /\.bin$/i.test(f.name));
+      if (!_mucomSong) {
+        log('mucom88: no song to apply the bank to — pick the .muc with it, or File > Import > Instruments… for its defs', 'err');
+        return;
+      }
+      if (dat) await importMucomVoiceBankFromFile(dat, { toSong: true });
+      if (bin) await importMucomPcmBankFromFile(bin, { toSong: true });
+    }
+
+    async function importInstrumentsMenu() {
+      let picked;
+      try {
+        picked = await pickFileWithInput(INSTRUMENT_EXTS, { multiple: true });
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        log(`Instrument import failed: ${e?.message || e}`, 'err');
+        return;
+      }
+      for (const f of picked) {
+        // One bad file must not abort the rest of the selection.
+        try {
+          const fmKey = detectFmImportFormatKey(f.name);
+          if (fmKey) await importFmVoiceFromFile(f, fmKey);
+          else if (/\.dat$/i.test(f.name)) await importMucomVoiceBankFromFile(f);
+          else if (/\.bin$/i.test(f.name)) await importMucomPcmBankFromFile(f);
+          else if (/\.sf2$/i.test(f.name)) await importSf2FromFile(f);
+          else log(`${f.name}: not an instrument file (${INSTRUMENT_EXTS.join(' ')})`, 'err');
+        } catch (e) {
+          log(`${f.name}: ${e?.message || e}`, 'err');
+        }
+      }
     }
 
     async function importSongFromFile(file, imp = songImporterFor(file.name)) {
@@ -3319,18 +3313,6 @@
         structure: !!got.fields.structure,
         fileName,
       }, a);
-    }
-
-    async function importSf2() {
-      let file;
-      try {
-        file = await pickFileWithInput(['.sf2']);
-      } catch (e) {
-        if (e && e.name === 'AbortError') return;
-        log(`SoundFont import failed: ${e?.message || e}`, 'err');
-        return;
-      }
-      await importSf2FromFile(file);
     }
 
     async function importSf2FromFile(file) {
@@ -3745,24 +3727,10 @@
 
     // mucom88 .muc: convert the whole song to MMLisp source and load it as a
     // new untitled document: FM and SSG parts, rhythm G and ADPCM K on PCM
-    // tracks (with their banks); what does not convert is reported.
-    async function importMucom88() {
-      // One dialog for the song AND its banks. Chaining a second picker after
-      // the first `await` loses the user gesture, so the browser blocks it —
-      // multi-select spends the one gesture we have on everything at once.
-      let picked;
-      try {
-        picked = await pickFileWithInput(['.muc', '.mml', '.dat', '.bin'], { multiple: true });
-      } catch (e) {
-        if (e && e.name === 'AbortError') return;
-        log(`mucom88 import failed: ${e?.message || e}`, 'err');
-        return;
-      }
-      await importMucom88FromFiles(picked);
-    }
-
-    // The song + banks triage, split from the picker so a multi-file drop can
-    // hand over the same set the multi-select dialog would have produced.
+    // tracks (with their banks); what does not convert is reported. The song
+    // and its banks come in one set — one multi-select dialog (Song…) or one
+    // drop: chaining a second picker after the first `await` loses the user
+    // gesture, so the browser blocks it.
     async function importMucom88FromFiles(picked) {
       const byExt = (re) => picked.find((f) => re.test(f.name));
       const file = byExt(/\.(muc|mml)$/i);
@@ -3787,7 +3755,7 @@
           res.pcm);
 
         // Point at whatever the song wants but wasn't handed to us. Applying a
-        // bank from the File menu is a fresh gesture, so it always works.
+        // bank from File > Import > Song… is a fresh gesture, so it always works.
         let voiceFile = null, pcmFile = null;
         try {
           const head = new TextDecoder('shift-jis', { fatal: false }).decode(bytes.subarray(0, 4096));
@@ -3795,35 +3763,23 @@
           pcmFile = (head.match(/^#pcm\s+(\S+)/im) || [])[1] || null;
         } catch { /* detection is best-effort */ }
         if (voiceFile && !datPick) {
-          log(`mucom88: ${file.name} uses external voices "${voiceFile}" — using default voices. Load it via File ▸ Import ▸ mucom88 Voices…, or re-import selecting the .muc and .dat together`, 'info');
+          log(`mucom88: ${file.name} uses external voices "${voiceFile}" — using default voices. Pick the .dat in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .dat together`, 'info');
         }
         if (pcmFile && !pcmPick) {
-          log(`mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Load it via File ▸ Import ▸ mucom88 Drums…, or re-import selecting the .muc and .bin together`, 'info');
+          log(`mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Pick the .bin in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .bin together`, 'info');
         }
       } catch (e) {
         log(`mucom88 import failed: ${e?.message || e}`, 'err');
       }
     }
 
-    // Load a mucom .dat voice bank. If a song was just imported, re-convert it
-    // with the bank so external @"name"/@n voices resolve; otherwise load the
-    // bank on its own as a library of (def-fm @name …) voice definitions.
-    async function importMucomVoiceBank() {
-      let datFile;
-      try {
-        datFile = await pickFileWithInput(['.dat']);
-      } catch (e) {
-        if (e && e.name === 'AbortError') return;
-        log(`mucom88 voice bank failed: ${e?.message || e}`, 'err');
-        return;
-      }
-      await importMucomVoiceBankFromFile(datFile);
-    }
-
-    async function importMucomVoiceBankFromFile(datFile) {
+    // Load a mucom .dat voice bank. With toSong (File > Import > Song…), re-convert
+    // the last imported song with the bank so external @"name"/@n voices
+    // resolve; otherwise insert the bank as (def-fm @name …) voice definitions.
+    async function importMucomVoiceBankFromFile(datFile, { toSong = false } = {}) {
       try {
         const datBytes = new Uint8Array(await datFile.arrayBuffer());
-        if (_mucomSong) {
+        if (toSong && _mucomSong) {
           _mucomSong.datBytes = datBytes;
           // Keep any PCM bank already applied — re-converting must not lose it.
           const res = importMucom(_mucomSong.bytes, datBytes, _mucomSong.pcmBytes, { target: editorTarget() });
@@ -3913,26 +3869,14 @@
       await writeMucomPcmWav(scoreHandle);
     }
 
-    // Load a mucom PCM bank (part K drums). If a song was just imported,
-    // re-convert it with the bank so its `@n` resolve; otherwise decode the bank
+    // Load a mucom PCM bank (part K drums). With toSong, re-convert the last
+    // imported song with the bank so its `@n` resolve; otherwise decode the bank
     // on its own into a sample library — a drum kit, useful with no mucom song
-    // in sight (mirrors importMucomVoiceBank).
-    async function importMucomPcmBank() {
-      let pcmFile;
-      try {
-        pcmFile = await pickFileWithInput(['.bin']);
-      } catch (e) {
-        if (e && e.name === 'AbortError') return;
-        log(`mucom88 PCM bank failed: ${e?.message || e}`, 'err');
-        return;
-      }
-      await importMucomPcmBankFromFile(pcmFile);
-    }
-
-    async function importMucomPcmBankFromFile(pcmFile) {
+    // in sight (mirrors importMucomVoiceBankFromFile).
+    async function importMucomPcmBankFromFile(pcmFile, { toSong = false } = {}) {
       try {
         const pcmBytes = new Uint8Array(await pcmFile.arrayBuffer());
-        if (_mucomSong) {
+        if (toSong && _mucomSong) {
           _mucomSong.pcmBytes = pcmBytes;
           await applyMucomPcmBank(pcmFile.name);
           return;
@@ -4118,18 +4062,10 @@
     // as VS Code's Selection menu is on a tablet.
     window.addCursorAboveAction = () => { addCursorVertically(editorView, false); editorView.focus(); };
     window.addCursorBelowAction = () => { addCursorVertically(editorView, true); editorView.focus(); };
-    window.importDefleMaskDmp = importDefleMaskDmp;
-    window.importFui = importFui;
-    window.importTfi = importTfi;
-    window.importVgi = importVgi;
-    window.importOpni = importOpni;
-    window.importMucom88 = importMucom88;
-    window.importSong = importSong;
-    window.importSf2 = importSf2;
+    window.importSongMenu = importSongMenu;
+    window.importInstrumentsMenu = importInstrumentsMenu;
     window.importResynth = importResynth;
     window.importAudioAsFmVoice = importAudioAsFmVoice;
-    window.importMucomVoiceBank = importMucomVoiceBank;
-    window.importMucomPcmBank = importMucomPcmBank;
     window.exportMucomPcmWav = exportMucomPcmWav;
 
     function formatShortcutLabel(key) {

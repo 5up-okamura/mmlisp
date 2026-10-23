@@ -1391,7 +1391,8 @@ names, or open the score's folder with `File > Open Folder…`.
 ## 23. Dragging files into the live app
 
 Drop files anywhere on the window. They are routed by extension — the same
-formats `File > Import` accepts:
+formats `File > Import` accepts, where `Song…` opens a song as a new document
+and `Instruments…` inserts voices and drum kits at the cursor:
 
 | Dropped                            | Result                                                    |
 | ---------------------------------- | --------------------------------------------------------- |
@@ -1420,7 +1421,7 @@ importer can select a lower-rate voice profile with `(def-score :pcm-voices 2)` 
 `3`. A sample that cannot fit even then is omitted, its notes become rests,
 and the log identifies it.
 
-A SoundFont (`.sf2`, also `File > Import > SoundFont Drums…`) gives its drum
+A SoundFont (`.sf2`, also `File > Import > Instruments…`) gives its drum
 kit, inserted at the cursor like any instrument import — the dialog asks
 which kit when the file has several. Each GM drum key comes
 out under the role name every preset kit uses (`kick`, `snare`, `hat`,
