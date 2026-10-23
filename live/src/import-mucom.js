@@ -2162,12 +2162,14 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
     else if (sr > 0 && sl > 0) stage(sl, 0, sr);
   }
   // Key-off releases from wherever the level is: a release without its :from
-  // falls from where the macro is, to 0 in the time RR takes from SL (one
-  // straight piece — the played level is linear in SOFENV's on pc88).
+  // falls from where the macro is, to 0 in the time RR takes from SL — from
+  // the top when there is no sustain level (one straight piece: the played
+  // level is linear in SOFENV's on pc88). Its length is fixed where mucom's
+  // is the level's own over RR.
   items.push("(wait key-off)");
   held = false;
-  if (sl > 0 && rr > 0) {
-    const total = Math.max(1, Math.round(Math.ceil(sl / rr) * factor));
+  if (rr > 0) {
+    const total = Math.max(1, Math.round(Math.ceil((sl > 0 ? sl : 255) / rr) * factor));
     ticks += total;
     items.push(`(linear :to 0 :len ${total}t)`);
   }

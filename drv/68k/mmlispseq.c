@@ -1241,7 +1241,7 @@ static int macro_desc(const MMLSeq *s, int id, MMLMacro *m) {
  * and the scale slot. */
 static int macro_rel_to(const MMLMacro *m) {
   int wide = m->flags & 1;
-  const uint8_t *p = m->values + (uint32_t)m->count * (wide ? 2 : 1) + m->has_scale;
+  const uint8_t *p = m->values + ((uint32_t)m->count << wide) + m->has_scale;
   return wide ? (int16_t)rd16(p, 0) : (int8_t)p[0];
 }
 
@@ -1447,7 +1447,8 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *d, 
      * i16 macro — toward zero. */
     if (sl->state == MML_MACRO_RELEASE && (d->flags & 16)) {
       int to = macro_rel_to(d), span = sl->last - to;
-      int mag = (int)(((uint32_t)(span < 0 ? -span : span) * (uint32_t)v) >> ((d->flags & 1) ? 15 : 7));
+      /* |span| fits 16 bits, r 15: one mulu.w. */
+      int mag = (int)(mml_mulu((uint16_t)(span < 0 ? -span : span), (uint16_t)v) >> ((d->flags & 1) ? 15 : 7));
       v = to + (span < 0 ? -mag : mag);
     } else {
       sl->last = (int16_t)v;

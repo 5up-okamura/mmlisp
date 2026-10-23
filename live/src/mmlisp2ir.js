@@ -1550,7 +1550,7 @@ function velMacroPeak(spec) {
   if (spec.type === "stages") {
     return (spec.stages || []).reduce(
       (m, st) =>
-        st && st.from !== undefined ? Math.max(m, st.from, st.to ?? 0) : m,
+        st && st.from !== undefined ? Math.max(m, st.from, st.to ?? 0) : st?.fromNow ? Math.max(m, st.to ?? 0) : m,
       0,
     );
   }
@@ -2506,7 +2506,7 @@ function parseMacroSpec(
         if (fromNow && val !== "_") bad(it, "a release without its :from starts where the level is and is the whole release; nothing may follow it");
         if (val === "#sus") { sus = it; continue; }
         if (val === "#rel") { stages.push({ waitKeyOff: true }); atRelease = true; continue; }
-        if (val === "_") { stages.push(stepWait()); continue; }
+        if (val === "_") { stages.push(stepWait()); atRelease = false; continue; }
         if (it.kind === "list" && atomValue(it.items?.[0]) === "wait") {
           // (wait key-off) or (wait N) or (wait Nf), N a length as a curve's
           // :wait reads it — a let name or an expression too.
@@ -2549,8 +2549,9 @@ function parseMacroSpec(
         }
         if (!spec) { atRelease = false; continue; }
         if (atRelease && spec.from === undefined && !spec.steps && !spec.stages && !sus) {
-          if (spec.to === undefined) bad(it, "a release without its :from needs its :to");
-          spec = { ...spec, fromNow: true };
+          // fromNow: the driver's share steps — 128 of the way, 32768 on the
+          // i16 :pitch (mmb.md §15) — which the preview follows.
+          spec = { ...spec, fromNow: target === "NOTE_PITCH" ? 32768 : 128 };
           fromNow = it;
         } else requireCurveFrom(spec, diagnostics, trackName, "a macro");
         atRelease = false;
@@ -3320,7 +3321,9 @@ function foldCurveValues(spec, fn) {
       stages: spec.stages.map((st) =>
         st && st.from !== undefined
           ? { ...st, from: fn(st.from), to: fn(st.to ?? 0) }
-          : st,
+          : st?.fromNow // a release from where the level is: its end alone
+            ? { ...st, to: fn(st.to ?? 0) }
+            : st,
       ),
     };
   }

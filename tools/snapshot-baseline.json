@@ -1023,17 +1023,17 @@
  },
  "drv/tests/m4-macro-release-now.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "c9358a770d944bac",
-  "regs": "b3857a45b1f3c75d",
+  "ir": "2569965bcc8681a6",
+  "regs": "22025d01302efebd",
   "mmb": "a21631f1812d89d8",
-  "vgm": "04ee8a1fe6f1957a"
+  "vgm": "e1a118a3a956451b"
  },
  "drv/tests/m4-macro-release-now.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "e0d7324881915df2",
-  "regs": "b3857a45b1f3c75d",
+  "ir": "4c7736a5968398af",
+  "regs": "22025d01302efebd",
   "mmb": "e4b968cec482d0ff",
-  "vgm": "04ee8a1fe6f1957a"
+  "vgm": "e1a118a3a956451b"
  },
  "drv/tests/m4-macro-tick.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

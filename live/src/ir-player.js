@@ -4139,6 +4139,11 @@ export class IRPlayer {
         const fields = this._curveFields(stage, when);
         const to = fields.to ?? 0, params = fields.params;
         const from = stage.fromNow ? last ?? to : fields.from ?? 0;
+        // A release from where the level is moves by the driver's share of
+        // the way, r of stage.fromNow (export-mmb.js), so the preview and the
+        // driver agree.
+        const one = stage.fromNow;
+        const share = (u) => (one ? 1 - Math.max(0, Math.min(one - 1, Math.round((1 - u) * one))) / one : u);
         const baseFrames = lenUnits(stage, rawFrames);
         // A looping stage runs until key-off; a keyed one-shot is cut there.
         const untilOff =
@@ -4159,7 +4164,7 @@ export class IRPlayer {
             : baseFrames <= 1
               ? 1
               : Math.min(1, frame / (baseFrames - 1));
-          const v = from + (to - from) * sampleCurveUnit(curve, phase, params);
+          const v = from + (to - from) * share(sampleCurveUnit(curve, phase, params));
           if (keyed) last = v;
           writeFn(v, keyed ? adv(t, frame) : Math.max(offT, adv(t, frame)));
         }

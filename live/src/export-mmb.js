@@ -670,7 +670,7 @@ export function encodeMmb(ir, opts = {}) {
         // an i16 one; most at the start, 0 at the end.
         if (release === 0xff) release = values.length;
         const n = Math.max(1, Math.ceil(baseFrames / step));
-        const one = target === "NOTE_PITCH" ? 32768 : 128;
+        const one = stage.fromNow; // 128, or 32768 on the i16 :pitch
         for (let i = 0; i < n; i++) {
           const u = sampleCurveUnit(stage.curve ?? "linear", baseFrames <= 1 ? 1 : Math.min(1, (i * step) / (baseFrames - 1)), stage.params);
           values.push(Math.max(0, Math.min(one - 1, Math.round((1 - u) * one))));
