@@ -2192,7 +2192,8 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   no practical-range clamp — any note works, it just costs bank space. What is
   rejected is every RUNTIME pitch move on a pcm track: `:pitch`, `:semi`,
   `(glide …)` and a `(macro :pitch …)` vibrato are `E_PCM_NO_PITCH` rather
-  than silently dropped.
+  than silently dropped. (A chip that pitches its own sample voice takes
+  them: `pc88`'s ADPCM-B, §19.)
 - **`:mode`** is sticky track state like every other parameter — it holds
   until the next `:mode` — and it is the note, not the sample, that decides:
   `shot` (the default) plays the note's range once; `loop` plays the attack,
@@ -2365,7 +2366,9 @@ sample is baked once — its def's range and `:fx`, at its own rate up to
 22.05 kHz, as Yamaha ADPCM into the chip's 256 KB of RAM (a sample past it is
 left out, and the export says so) — and a note plays it at the pitch's rate,
 its level vel + vol + master as the chip's linear level, its pan the
-track's. A `shot` plays to the range's end, a `gate` note stops at its gate,
+track's. The chip pitches the voice while it plays (Delta-N), so `pcm1`
+takes the pitch moves FM does — `:pitch`, `(glide …)`, `(macro :pitch …)`
+and `(macro :semi …)` — though not `:snap`. A `shot` plays to the range's end, a `gate` note stops at its gate,
 a `loop` repeats the range until then. A range the track writes
 (`:pcm-start` …) is read at each key-on, rounded to 8 frames; a curve there
 is read as its start (`W_TARGET`).

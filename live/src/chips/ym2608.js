@@ -73,8 +73,9 @@ export const ym2608 = {
       [1, 0x00, 0xa0 | (repeat ? 0x10 : 0)], [1, 0x0b, Math.max(0, Math.min(255, level))], [1, 0x01, PAN_BITS[pan] ?? 0xc0],
     ],
     stop: () => [[1, 0x0b, 0], [1, 0x01, 0], [1, 0x00, 0x21]],
-    // A sounding note's level moving (linear, 0-255).
+    // A sounding note's level moving (linear, 0-255), and its pitch.
     level: (level) => [[1, 0x0b, Math.max(0, Math.min(255, level))]],
+    pitch: (deltaN) => [[1, 0x09, deltaN & 0xff], [1, 0x0a, (deltaN >> 8) & 0xff]],
     // VGM's data block type for the RAM image (VGM 1.51: YM2608 DELTA-T).
     vgmBlock: 0x81,
   },

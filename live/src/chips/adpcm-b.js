@@ -10,6 +10,7 @@ export const adpcmB = {
   kind: "sample",
   words: words(/^(?:RANGE|LOOP)_/, "PAN"),
   pointSweeps: false, // the range is its address registers, read at key-on
+  pitch: true, // Delta-N, written while the note plays
   checkNote({ sample, sampleName, head, mode, target, once }) {
     if (!sample.file)
       once(`file:${sampleName}`, `${sampleName} is the ROM rhythm sound ${sample.rhythm} here, with no :file; ${head} is the ADPCM-B, which plays a sample's :file — play it on ${target.headsOf("rhythm").join(" or ")}, or give it a :file`);

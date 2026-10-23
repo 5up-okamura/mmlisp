@@ -2686,6 +2686,7 @@ export class IRPlayer {
   _chipPcmState() {
     return (this._chipPcm ??= {
       vol: new Map(), // track → [{ t, v } | { t, sweep }]
+      pitch: new Map(), // the same, in cents
       pan: new Map(), // track → pan
       hits: new Map(), // voice ("adpcm" or a rhythm sound) → [hit]
       master: [{ t: -Infinity, v: this._masterVol ?? VOL_UNITY }],
@@ -2693,35 +2694,36 @@ export class IRPlayer {
     });
   }
 
-  // A pc88 sample track's :vol event, onto its line.
-  _chipPcmVol(ev, when) {
-    const line = this._chipPcmState().vol;
+  // A pc88 sample track's :vol or :pitch event, onto its line: a value, or
+  // a sweep from where it is (or its :from). :vol is 0-31, :pitch cents.
+  _chipPcmParam(ev, when, key) {
+    const lines = this._chipPcmState()[key];
     const ti = ev._trackIndex;
-    if (!line.has(ti)) line.set(ti, []);
+    if (!lines.has(ti)) lines.set(ti, []);
+    const fit = CHIP_PCM_PARAM[key].fit;
     if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_FROM_VAL") {
       const v = ev.cmd === "PARAM_SET" ? ev.args?.value : this._resolveSrc(ev.args?.src, when);
-      insertLine(line.get(ti), when, Math.max(0, Math.min(31, Number(v ?? VOL_UNITY))));
+      insertLine(lines.get(ti), when, fit(Number(v ?? CHIP_PCM_PARAM[key].rest)));
     } else if (ev.cmd === "PARAM_SWEEP") {
-      const prev = this._chipPcmVolAt(ti, when);
       const df = this._curveFields(ev.args ?? {}, when);
-      const from = Math.max(0, Math.min(31, Number(df.from ?? prev)));
+      const from = fit(Number(df.from ?? this._chipPcmParamAt(ti, key, when)));
       const baseFrames = ev.args?.lenFrames
         ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
         : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * this._secsPerTick * 60));
       const sweep = {
-        from, to: Math.max(0, Math.min(31, Number(df.to ?? from))), curve: ev.args?.curve ?? "linear",
+        from, to: fit(Number(df.to ?? from)), curve: ev.args?.curve ?? "linear",
         params: df.params, baseFrames, loop: !!ev.args?.loop, startFrame: this._eventFrame(when),
       };
-      const l = line.get(ti);
+      const l = lines.get(ti);
       const at = l.findIndex((e) => e.t > when);
       l.splice(at < 0 ? l.length : at, 0, { t: when, sweep });
     }
   }
 
-  _chipPcmVolAt(ti, when) {
-    const e = lineEntryAt(this._chipPcm?.vol.get(ti), when);
-    if (!e) return VOL_UNITY;
-    return e.sweep ? this._sweepVolAtFrame(e.sweep, this._eventFrame(when)) : e.v;
+  _chipPcmParamAt(ti, key, when) {
+    const e = lineEntryAt(this._chipPcm?.[key].get(ti), when);
+    if (!e) return CHIP_PCM_PARAM[key].rest;
+    return e.sweep ? CHIP_PCM_PARAM[key].fit(this._sweepAtFrame(e.sweep, this._eventFrame(when))) : e.v;
   }
 
   // A hit (or an ADPCM-B note) keyed on `voice`: its own :vel / :vol macros
@@ -2731,7 +2733,7 @@ export class IRPlayer {
   // writes a key: the first, then each step's.
   _chipPcmHit(voice, ev, when, end, fields, key) {
     const st = this._chipPcmState();
-    const { keyon, velMacro, vol: volMacro } = ev.args ?? {};
+    const { keyon, velMacro, vol: volMacro, pitchMacro, note_semi: semiMacro } = ev.args ?? {};
     const hit = { t: when, end, ti: ev._trackIndex, vel: Number(ev.args?.vel ?? 15), velLine: null, volLine: null, ...fields };
     const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
@@ -2740,7 +2742,8 @@ export class IRPlayer {
     const held = ev.args?.mode === "gate" || ev.args?.mode === "loop";
     const retrigs = (this._keyonRetrigTimes(keyon, when, gateTicks, limit) ?? []).filter((t) => !held || t < gateSecs);
     this._envRetrigs = retrigs;
-    for (const [spec, k, target] of [[velMacro, "velLine", "VEL"], [volMacro, "volLine", "VOL"]]) {
+    for (const [spec, k, target] of [[velMacro, "velLine", "VEL"], [volMacro, "volLine", "VOL"],
+      [pitchMacro, "pitchLine", "NOTE_PITCH"], [semiMacro, "semiLine", "NOTE_SEMI"]]) {
       if (!spec) continue;
       const line = (hit[k] = []); // [value, time], as _lineAt reads
       this._scheduleMacro(spec, noteFrames, gateSecs, when,
@@ -2771,9 +2774,18 @@ export class IRPlayer {
   _chipPcmLevelAt(hit, when) {
     return {
       vel: this._lineAt(hit.velLine, when) ?? hit.vel,
-      vol: this._lineAt(hit.volLine, when) ?? this._chipPcmVolAt(hit.ti, when),
+      vol: this._lineAt(hit.volLine, when) ?? this._chipPcmParamAt(hit.ti, "vol", when),
       master: lineEntryAt(this._chipPcm.master, when)?.v ?? VOL_UNITY,
     };
+  }
+
+  // The ADPCM-B's Delta-N for a hit at `when`: its note, the track's :pitch
+  // and the note's :pitch / :semi macros, in cents over the sample's rate.
+  _adpcmDeltaN(hit, when) {
+    const cents = this._chipPcmParamAt(hit.ti, "pitch", when) + (this._lineAt(hit.pitchLine, when) ?? 0) +
+      100 * (this._lineAt(hit.semiLine, when) ?? 0);
+    const enc = this._target.chipFor("adpcm-b").adpcm;
+    return enc.deltaN(hit.rate * 2 ** ((hit.midi - 60) / 12 + cents / 1200));
   }
 
   // The rhythm's attenuation in IL steps (0.75 dB, as an FM carrier's TL) and
@@ -2806,9 +2818,15 @@ export class IRPlayer {
         const lv = this._chipPcmLevelAt(h, t);
         if (voice === "adpcm") {
           const level = IRPlayer._adpcmLevel(lv);
-          if (level === h.level) continue;
-          h.level = level;
-          for (const [p, a, d] of chip.adpcm.level(level)) this._write(p, a, d, t);
+          if (level !== h.level) {
+            h.level = level;
+            for (const [p, a, d] of chip.adpcm.level(level)) this._write(p, a, d, t);
+          }
+          const deltaN = this._adpcmDeltaN(h, t);
+          if (deltaN !== h.deltaN) {
+            h.deltaN = deltaN;
+            for (const [p, a, d] of chip.adpcm.pitch(deltaN)) this._write(p, a, d, t);
+          }
         } else {
           const att = IRPlayer._rhythmAtt(lv);
           // Turned off, or falling below what the IL reaches: the sound stops.
@@ -2858,11 +2876,14 @@ export class IRPlayer {
         if (a > 0) start = Math.min(stop, entry.start + Math.floor(a / UNIT_FRAMES));
         if (b != null) stop = Math.max(start, Math.min(stop, entry.start + Math.ceil(b / UNIT_FRAMES) - 1));
         const mode = ev.args?.mode;
-        const deltaN = enc.deltaN(entry.rate * ratio);
-        const shotEnd = when + ((stop - start + 1) * UNIT_FRAMES) / ((deltaN / 65536) * (this._target.chipFor("adpcm-b").clock / 144));
-        this._chipPcmHit("adpcm", ev, when, mode === "shot" || !mode ? shotEnd : Infinity, {}, (t, h) => {
+        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        const playHz = (deltaN) => (deltaN / 65536) * (this._target.chipFor("adpcm-b").clock / 144);
+        // A shot ends where its range does at the pitch it keys at.
+        const shotLen = ((stop - start + 1) * UNIT_FRAMES) / playHz(enc.deltaN(entry.rate * ratio));
+        this._chipPcmHit("adpcm", ev, when, mode === "shot" || !mode ? when + shotLen : Infinity, { rate: entry.rate, midi }, (t, h) => {
           h.level = IRPlayer._adpcmLevel(this._chipPcmLevelAt(h, t));
-          for (const [p, a, d] of enc.note({ start, stop }, deltaN, h.level, st.pan, mode === "loop")) this._write(p, a, d, t);
+          h.deltaN = this._adpcmDeltaN(h, t);
+          for (const [p, a, d] of enc.note({ start, stop }, h.deltaN, h.level, st.pan, mode === "loop")) this._write(p, a, d, t);
         });
         break;
       }
@@ -2878,7 +2899,8 @@ export class IRPlayer {
       case "PARAM_SWEEP":
       case "PARAM_FROM_VAL": {
         const target = (ev.args?.target ?? "").toUpperCase();
-        if (target === "VOL") this._chipPcmVol(ev, when);
+        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
+        else if (target === "NOTE_PITCH") this._chipPcmParam(ev, when, "pitch");
         if (ev.cmd !== "PARAM_SET") break;
         if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
         else if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
@@ -2933,7 +2955,7 @@ export class IRPlayer {
       case "PARAM_SWEEP":
       case "PARAM_FROM_VAL": {
         const target = (ev.args?.target ?? "").toUpperCase();
-        if (target === "VOL") this._chipPcmVol(ev, when);
+        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
         if (ev.cmd !== "PARAM_SET") break;
         if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
         else if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
@@ -5469,6 +5491,13 @@ export class IRPlayer {
     }
   }
 }
+
+// The pc88 sample voices' moving parameters: their range, and their value
+// before the track writes one.
+const CHIP_PCM_PARAM = {
+  vol: { fit: (v) => Math.max(0, Math.min(31, v)), rest: VOL_UNITY },
+  pitch: { fit: (v) => v, rest: 0 },
+};
 
 // A level line, [{ t, v }] by time: the entry in force at `t`.
 function lineEntryAt(line, t) {

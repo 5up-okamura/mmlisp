@@ -187,9 +187,13 @@ const PCM_PITCH_KEYWORD = { NOTE_PITCH: ":pitch", NOTE_SEMI: ":semi" };
 // chip registers a soft-mixed voice does not have.
 const PCM_MACRO_TARGETS = new Set(["KEYON", "VEL", "VOL"]);
 const PCM_MACRO_ARG_KEYS = ["keyon", "velMacro", "vol"];
+// A part that pitches its voice (parts.js `pitch`) takes the pitch words
+// but :snap, and their macros.
+const PITCHED_PCM_MACRO_ARG_KEYS = [...PCM_MACRO_ARG_KEYS, "pitchMacro", "note_semi"];
+const pcmTakesPitch = (trackState, irTarget) => !!trackState?.part?.pitch && irTarget !== "SNAP";
 
-function pcmRejectsPitch(trackState, what, diagnostics, src, trackName) {
-  if (!trackState?.isPcmTrack) return false;
+function pcmRejectsPitch(trackState, what, diagnostics, src, trackName, irTarget = "NOTE_PITCH") {
+  if (!trackState?.isPcmTrack || pcmTakesPitch(trackState, irTarget)) return false;
   pushDiag(
     diagnostics ?? [],
     "error",
@@ -963,6 +967,8 @@ function emitNoteForTrack(
       return;
     }
     const fullPitch = noteName + trackState.defaultOct;
+    // A voice the chip pitches glides as FM does (parts.js `pitch`).
+    if (trackState.part?.pitch) emitGlideIfNeeded(trackState, fullPitch, events, trackState.glide, src);
     const mode = trackState.pcmMode; // sticky, like every track parameter
     const { ev: pcmEv, off, hasMacros } = pushPcmNote(trackState, events, {
       sample: trackState.pcmSampleName, pitch: fullPitch, length: lengthTicks,
@@ -976,6 +982,7 @@ function emitNoteForTrack(
       sample: trackState.pcmSampleName, pitch: fullPitch, mode, hasMacros,
     };
     trackState.tick += lengthTicks;
+    if (trackState.part?.pitch) trackState.lastNotePitch = fullPitch;
     pushRecentNote(trackState, fullPitch, lengthTicks, trackState.defaultGate,
       trackState.defaultVel ?? 15, { sample: trackState.pcmSampleName, mode });
     return;
@@ -1331,7 +1338,8 @@ function pushPcmNote(trackState, events, note, src) {
   // scaled by this note's vel, tick lengths at this tempo).
   if (macros) {
     const withMacros = makeNoteArgs(pitch, length, gateSpec, vel, macros, trackState.currentTempo);
-    for (const key of PCM_MACRO_ARG_KEYS) if (withMacros[key]) args[key] = withMacros[key];
+    const keys = trackState.part?.pitch ? PITCHED_PCM_MACRO_ARG_KEYS : PCM_MACRO_ARG_KEYS;
+    for (const key of keys) if (withMacros[key]) args[key] = withMacros[key];
   }
   const hasMacros = PCM_MACRO_ARG_KEYS.some((key) => args[key]);
   const ev = { tick: trackState.tick, cmd: "PCM_NOTE_ON", args, src };
@@ -1473,10 +1481,11 @@ function applyMacroEntryToState(trackState, irTarget, spec, ctx) {
       ctx?.diagnostics,
       ctx?.src,
       ctx?.trackName,
+      irTarget,
     )
   )
     return;
-  if (trackState?.isPcmTrack && !PCM_MACRO_TARGETS.has(irTarget)) {
+  if (trackState?.isPcmTrack && !PCM_MACRO_TARGETS.has(irTarget) && !(PCM_PITCH_TARGETS.has(irTarget) && pcmTakesPitch(trackState, irTarget))) {
     pushDiag(
       ctx?.diagnostics ?? [],
       "error",
@@ -4127,6 +4136,7 @@ function compileChannelBody(
                   diagnostics,
                   nodeSrc(node),
                   trackName,
+                  target,
                 )
               )
                 break;

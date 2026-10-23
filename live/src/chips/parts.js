@@ -27,6 +27,9 @@
 //   modeError { code, message } for a `:mode` symbol it does not have
 //   init      PARAM_SETs every track of the part starts with
 //   points    false: the part's notes have no :pcm-start/:loop-* range
+//   pitch     true: a sample part whose chip pitches the voice while it
+//             plays, so its notes take :pitch, :semi, (glide …) and their
+//             macros (not :snap); a soft-mixed voice plays its blob as baked
 //   pointSweeps false: a range is read at key-on, so a swept point is its start
 //   settings  def-score keys only this part reads (`:pcm-voices`)
 //   kit       kit role → its sound: samples built in under those names
