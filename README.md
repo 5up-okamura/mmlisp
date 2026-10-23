@@ -45,6 +45,13 @@ game state at runtime.
   checked **byte-for-byte** against the JS reference at zero tolerance — what
   you hear in the browser is what the driver emits. SGDK integration included;
   verified in emulation and played on hardware.
+- **Beyond the Mega Drive: the PC-8801.** The same language writes for the
+  PC-8801's Sound Board II (YM2608) with `(def-score :target pc88)`: FM, the
+  SSG, the ROM rhythm and the ADPCM-B, auditioned in Live through **ymfm**'s
+  YM2608 and exported as a VGM — and a mucom88 song imports as the chip has
+  it. The rhythm ROM is Yamaha's and not included: Live plays your own, or
+  stands the score's kit in for it. Other machines are on the
+  [roadmap](docs/roadmap.md).
 - **Bring your own voices.** Import FM patches from DefleMask, Furnace and the
   TFI / VGI / OPNI formats, mucom88 songs and voice banks with their drum
   samples, and a SoundFont's drum kit as samples under the preset kits' names.
