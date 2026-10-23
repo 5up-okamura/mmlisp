@@ -380,7 +380,7 @@ export const REFERENCE = [
   {
     name: '#sus #rel', aliases: ['#sus', '#rel', 'sustain', 'release', 'loop point'], cat: 'macros', section: '§10', tracks: null,
     syntax: '[15 #sus 13 #rel 8 4 0]',
-    summary: 'Marks in a step vector: the steps after #sus loop until key-off, then the run from #rel plays.',
+    summary: 'Marks in a step vector: the steps after #sus loop until key-off, then the run from #rel plays. A curve right after #rel without its :from falls from where the macro is at the key-off.',
     insert: '(macro :vel [15 #sus 13 #rel 8 4 0])',
     example: '(sqr1 :oct 5 :len 4 :gate* 0.6 (macro :vel [15 #sus 13 #rel 8 4 0]) c e g e)',
   },

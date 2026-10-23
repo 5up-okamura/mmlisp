@@ -123,20 +123,16 @@ In order:
    from the user's own ROM or, without one, the kit's `:file`s in the ROM's
    layout (language.md §19; the
    profile is `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`,
-   the synth `live/src/synth-pc88.js`, the scores `tools/tests/pc88/`). What
-   is left, in order:
-   - **The check, what is left**: the mucom importer's pc88 scores against
-     the real driver's VGM (the A/B the importer was tuned with). FM keys and
-     pitch, the rhythm's hits, levels and pan, and the SSG's mixer match,
-     and its levels mostly (70–99% exact, 86–100% within a step); an `E`
-     envelope falls silent where mucom's does. Open: a `v` move inside a
-     tie (one fader step, where mucom's level × (v+1) moves less near the
-     sustain), a note released mid-decay (a macro's release starts from
-     its sustain level, mucom's from where the level is — a language
-     question), a hit quieter than the IL's 31 steps (RTL stays 63). K's
-     notes, Delta-N, level, pan, `D` (as `:pitch`) and `vm<n>` match;
-     mucom's Delta-N table, which runs a few cents sharp of equal
-     temperament (`+200` on every note), is not reproduced.
+   the synth `live/src/synth-pc88.js`, the scores `tools/tests/pc88/`). The
+   mucom importer's pc88 scores hold to the real driver's VGM (the A/B the
+   importer was tuned with): FM keys and pitch, the rhythm's hits, levels
+   and pan, the SSG's mixer, its levels and `E` envelopes (released from
+   where they are, silent where mucom's are), K's notes, level, pan, `D` and
+   `vm<n>`. The differences kept are the model's: a `v` move inside a tie
+   is a fader step where mucom's level × (v+1) moves less near the sustain;
+   an `E` tail and a rhythm hit stop at the level's floor (`:vel` 30 dB,
+   the IL 23 dB down) where mucom's go lower; mucom's Delta-N table, a few
+   cents sharp of equal temperament, is not reproduced.
 2. **X68000 (YM2151 + MSM6258).** OPM voices convert from OPN with DT2 = 0
    and SSG-EG dropped; KC/KF pitch and channel 8's noise are the profile's.
    PCM8 is a software mixer, not a chip, so the export does its job: pcm1-3

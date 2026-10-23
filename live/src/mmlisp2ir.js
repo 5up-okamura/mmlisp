@@ -1574,7 +1574,9 @@ function mapMacroValues(spec, fn) {
       stages: (spec.stages || []).map((st) =>
         st && st.from !== undefined
           ? { ...st, from: s(st.from), to: s(st.to ?? 0) }
-          : st,
+          : st?.fromNow // a release from where the level is: its end alone
+            ? { ...st, to: s(st.to ?? 0) }
+            : st,
       ),
     };
   }
@@ -2495,10 +2497,15 @@ function parseMacroSpec(
         diagnostics && pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID", msg, nodeSrc(it), trackName);
       const stages = [];
       let sus = null; // the #sus waiting for its stage
+      // The stage right after (wait key-off) may leave out its :from: the
+      // release then starts from where the macro is at the key-off (the
+      // driver reads its last value). It must be the whole release.
+      let atRelease = false, fromNow = null;
       for (const it of items) {
         const val = atomValue(it);
+        if (fromNow && val !== "_") bad(it, "a release without its :from starts where the level is and is the whole release; nothing may follow it");
         if (val === "#sus") { sus = it; continue; }
-        if (val === "#rel") { stages.push({ waitKeyOff: true }); continue; }
+        if (val === "#rel") { stages.push({ waitKeyOff: true }); atRelease = true; continue; }
         if (val === "_") { stages.push(stepWait()); continue; }
         if (it.kind === "list" && atomValue(it.items?.[0]) === "wait") {
           // (wait key-off) or (wait N) or (wait Nf), N a length as a curve's
@@ -2509,6 +2516,8 @@ function parseMacroSpec(
             stages.push({ waitTicks: 1 });
           } else if (arg === "key-off") {
             stages.push({ waitKeyOff: true });
+            atRelease = true;
+            continue;
           } else if (isFrameToken(arg)) {
             // Nf / Nms is a wall-clock frame count; carry the unit so the
             // player's frame branch schedules it directly (a stage wait is a
@@ -2538,8 +2547,13 @@ function parseMacroSpec(
           if (n !== null) spec = stepStage(clampVal(n));
           else bad(it, `${val ?? "(…)"} is not a value for this macro`);
         }
-        if (!spec) continue;
-        requireCurveFrom(spec, diagnostics, trackName, "a macro");
+        if (!spec) { atRelease = false; continue; }
+        if (atRelease && spec.from === undefined && !spec.steps && !spec.stages && !sus) {
+          if (spec.to === undefined) bad(it, "a release without its :from needs its :to");
+          spec = { ...spec, fromNow: true };
+          fromNow = it;
+        } else requireCurveFrom(spec, diagnostics, trackName, "a macro");
+        atRelease = false;
         if (sus) {
           spec = { ...spec, loop: true };
           sus = null;

@@ -1237,6 +1237,14 @@ static int macro_desc(const MMLSeq *s, int id, MMLMacro *m) {
   return 1;
 }
 
+/* A release from where the macro is (flags bit4): its :to, after the values
+ * and the scale slot. */
+static int macro_rel_to(const MMLMacro *m) {
+  int wide = m->flags & 1;
+  const uint8_t *p = m->values + (uint32_t)m->count * (wide ? 2 : 1) + m->has_scale;
+  return wide ? (int16_t)rd16(p, 0) : (int8_t)p[0];
+}
+
 /* One sample. The hold sentinel (0x80 / 0x8000) means "no write this step" —
  * which is how a macro leaves a parameter alone without knowing its value. */
 static int macro_value(const MMLMacro *m, int idx, int *hold) {
@@ -1337,6 +1345,7 @@ static void macro_trigger(MMLSeq *s, int ch, uint16_t acc, const MMLTrack *t) {
     sl->cursor = 0;
     sl->step_clock = 0;
     sl->acc = acc;
+    sl->last = MML_MACRO_NONE;
     /* An empty attack/sustain (`[#rel …]`) writes nothing until key-off. */
     if (macro_desc(s, sl->macro_id, &sl->d)) {
       if (sl->d.release == 0) sl->state = MML_MACRO_HOLD;
@@ -1433,6 +1442,16 @@ static int macro_sample(MMLSeq *s, int ch, MMLMacroSlot *sl, const MMLMacro *d, 
   int hold;
   int v = macro_value(d, (int)sl->cursor, &hold);
   if (!hold) {
+    /* A release from where the macro is (flags bit4): the step is the share
+     * still to go of the way from that value to :to — r/128, or r/32768 on an
+     * i16 macro — toward zero. */
+    if (sl->state == MML_MACRO_RELEASE && (d->flags & 16)) {
+      int to = macro_rel_to(d), span = sl->last - to;
+      int mag = (int)(((uint32_t)(span < 0 ? -span : span) * (uint32_t)v) >> ((d->flags & 1) ? 15 : 7));
+      v = to + (span < 0 ? -mag : mag);
+    } else {
+      sl->last = (int16_t)v;
+    }
     if (d->has_scale) v = scale_macro_sample(v, read_slot(s, d->scale_slot));
     int add = (d->flags & 2) != 0;
     if (d->target == T_NOTE_SEMI) {
@@ -1510,6 +1529,9 @@ static int step_macro(MMLSeq *s, int ch, int mc, MMLMacroSlot *sl, int keyed) {
       sl->state = MML_MACRO_RELEASE;
       sl->cursor = d->release;
       sl->step_clock = 0; /* release[0] fires on the key-off frame */
+      /* A release from where the macro is starts from its last value (none
+       * yet: from its end); `last` holds it through the release. */
+      if ((d->flags & 16) && sl->last == MML_MACRO_NONE) sl->last = (int16_t)macro_rel_to(d);
       /* ...and a tick clock restarts from the key-off's tick: this frame's
        * ticks after it, less the share the next line adds back. */
       if (d->flags & 8)

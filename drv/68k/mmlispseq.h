@@ -181,6 +181,7 @@ typedef struct {
 /* TAIL: a PSG :vel release has played out; its next step silences the
  * channel (the release was the note's decay, so key-off left the level). */
 enum { MML_MACRO_RUN = 0, MML_MACRO_HOLD = 1, MML_MACRO_RELEASE = 2, MML_MACRO_TAIL = 3 };
+#define MML_MACRO_NONE ((int16_t)-32768)
 
 /* One descriptor, decoded from MACRO_TABLE (mmb.md §15) once a note, into the
  * slot it instantiates. The values stay in the table, ROM on the target. */
@@ -198,6 +199,8 @@ typedef struct {
   uint16_t cursor;
   int16_t step_clock; /* frames left on this step; signed, a step of 0 free-runs */
   uint16_t acc;       /* tick clock (flags bit3): the note's track accumulator, 8.8 */
+  int16_t last;       /* the last sample written (MML_MACRO_NONE: none yet); a
+                       * release from where it is (flags bit4) holds its start */
   MMLMacro d;         /* the macro's descriptor, decoded at the instantiate;
                        * values 0 = an unknown id (target 0xff), ended at its step */
 } MMLMacroSlot;

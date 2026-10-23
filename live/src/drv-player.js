@@ -407,6 +407,9 @@ export class DrvPlayer {
         }
         // Scaled macro (flags bit2, mmb.md §15): one slot-id byte follows the values.
         const scaleSlot = (flags & 4) !== 0 ? macroTable[off] : null;
+        if (flags & 4) off += 1;
+        // A release from where the macro is (flags bit4): its :to follows.
+        const relTo = (flags & 16) === 0 ? null : wide ? i16(u16(macroTable, off)) : (macroTable[off] << 24) >> 24;
         macros.push({
           target: macroTable[e],
           flags,
@@ -416,6 +419,7 @@ export class DrvPlayer {
           count,
           values,
           scaleSlot,
+          relTo,
         });
       }
     }
@@ -2091,7 +2095,7 @@ export class DrvPlayer {
       // `fresh`: this slot's first sample lands in the note's own frame.
       // An empty attack/sustain (`[#rel …]`) writes nothing until key-off.
       const state = this._macros[macroId]?.release === 0 ? "hold" : "run";
-      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state, fresh: true, acc });
+      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state, fresh: true, acc, last: null });
     }
     this._macroSlots[mc] = slots;
   }
@@ -2172,6 +2176,9 @@ export class DrvPlayer {
         slot.state = "release";
         slot.cursor = d.release;
         slot.stepClock = 0; // release[0] fires on the key-off frame
+        // A release from where the macro is starts from its last value (none
+        // yet: from its end); `last` holds it through the release.
+        if (d.relTo !== null && slot.last === null) slot.last = d.relTo;
         // ...and a tick clock restarts from the key-off's tick: this frame's
         // ticks after it, less the share the next step adds back.
         if (d.flags & 8)
@@ -2224,6 +2231,14 @@ export class DrvPlayer {
     }
     let v = d.values[slot.cursor];
     if (v !== null && v !== undefined) {
+      // A release from where the macro is (flags bit4): the step is the share
+      // still to go of the way from that value to :to — r/128, or r/32768 on
+      // an i16 macro — toward zero.
+      if (slot.state === "release" && d.relTo !== null) {
+        const span = slot.last - d.relTo;
+        const mag = Math.floor((Math.abs(span) * v) / (d.flags & 1 ? 32768 : 128));
+        v = d.relTo + (span < 0 ? -mag : mag);
+      } else slot.last = v;
       // Scaled macro (driver.md §13.2): a value slot is a per-frame depth knob.
       // Multiply the sample by the slot low byte and shift 8 (toward-zero,
       // signed by the sample) before it reaches the target.

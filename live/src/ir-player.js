@@ -4112,6 +4112,7 @@ export class IRPlayer {
       const offFrame = offT === Infinity ? Infinity : this._eventFrame(gateSecs + KEY_OFF_LEAD_SECS);
 
       let t = when;
+      let last = null; // the last value written: a release without :from starts there
       for (let i = 0; i < stages.length; i++) {
         const stage = stages[i];
         const keyed = i < rel;
@@ -4134,7 +4135,9 @@ export class IRPlayer {
         if (!stage.curve) continue; // pure wait stage
         // Regular curve stage (dynamic :from/:to/:rate resolved per note)
         const { curve = "linear", frames: rawFrames = 1, loop = false } = stage;
-        const { from = 0, to = 0, params } = this._curveFields(stage, when);
+        const fields = this._curveFields(stage, when);
+        const to = fields.to ?? 0, params = fields.params;
+        const from = stage.fromNow ? last ?? to : fields.from ?? 0;
         const baseFrames = lenUnits(stage, rawFrames);
         // A looping stage runs until key-off; a keyed one-shot is cut there.
         const untilOff =
@@ -4155,10 +4158,9 @@ export class IRPlayer {
             : baseFrames <= 1
               ? 1
               : Math.min(1, frame / (baseFrames - 1));
-          writeFn(
-            from + (to - from) * sampleCurveUnit(curve, phase, params),
-            keyed ? adv(t, frame) : Math.max(offT, adv(t, frame)),
-          );
+          const v = from + (to - from) * sampleCurveUnit(curve, phase, params);
+          if (keyed) last = v;
+          writeFn(v, keyed ? adv(t, frame) : Math.max(offT, adv(t, frame)));
         }
         t = cut ? offT : adv(t, budget);
         if (keyed && (cut || t >= offT - 1e-9)) i = rel - 1; // key-off: on to the release

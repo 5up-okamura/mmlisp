@@ -1,0 +1,20 @@
+; M4 gate: a release without its :from starts where the macro is at the
+; key-off (driver.md §13.2, mmb.md §15 flags bit4).
+;
+; fm1 / sqr1: a :vel decay keyed off mid-decay, then after it holds, so the
+; release starts from two different levels. sqr2: the same on a tick :step.
+; fm2: an i16 :pitch fall from wherever a vibrato is. sqr3: `[#rel …]` writes
+; nothing before the key-off, so its release starts at its :to.
+(def-fm voi :alg 7 :fb 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 6 :sl1 0 :tl1 20 :ks1 0 :ml1 1 :dt1 0 :am1 0 :ssg1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 6 :sl2 0 :tl2 20 :ks2 0 :ml2 1 :dt2 0 :am2 0 :ssg2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 6 :sl3 0 :tl3 20 :ks3 0 :ml3 1 :dt3 0 :am3 0 :ssg3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 6 :sl4 0 :tl4 20 :ks4 0 :ml4 1 :dt4 0 :am4 0 :ssg4 0)
+(def decay (macro :vel [ (linear 15..3 :len 40f) (wait key-off) (linear :to 0 :len 12f) ]))
+(fm1 :tempo 120 voi :oct 4 decay :len 4 :gate 1/16 c _ :gate 4 e _)
+(sqr1 decay :len 4 :gate 1/16 c _ :gate 4 e _)
+(sqr2 (macro :step 1/64 :vel [ (linear 15..3 :len 2) (wait key-off) (ease-out :to 0 :len 1/8) ])
+  :len 4 :gate 1/16 c _ :gate 4 e _)
+(fm2 voi :oct 4 (macro :pitch [ #sus (sin -60..60 :len 12f) (wait key-off) (linear :to -1200 :len 20f) ])
+  :len 4 :gate 1/8 c _ g _)
+(sqr3 (macro :vel [ #rel (linear :to 4 :len 10f) ]) :len 4 c _ e _)

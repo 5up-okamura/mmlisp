@@ -472,7 +472,7 @@ Macro descriptor (8 bytes):
 | Offset | Size | Field       | Notes                                            |
 | ------ | ---- | ----------- | ------------------------------------------------ |
 | 0x00   | 1    | target      | target id (opcodes.md §7); also fixes value width |
-| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bit1 = additive (`:pitch+`/`:semi+` — driver composes each sample with the channel's live pitch offset instead of overwriting it); bit2 = scaled (`(* <LFO> $slot)` — driver multiplies each sample by a value slot read live per frame, driver.md §13.2; see the appended slot byte below); bit3 = tick clock (`step` counts the note's track ticks, driver.md §13.2); bits4–7 reserved 0 |
+| 0x01   | 1    | flags       | bit0 = i16 values (only NOTE_PITCH); bit1 = additive (`:pitch+`/`:semi+` — driver composes each sample with the channel's live pitch offset instead of overwriting it); bit2 = scaled (`(* <LFO> $slot)` — driver multiplies each sample by a value slot read live per frame, driver.md §13.2; see the appended slot byte below); bit3 = tick clock (`step` counts the note's track ticks, driver.md §13.2); bit4 = release from where the macro is (below); bits5–7 reserved 0 |
 | 0x02   | 1    | step        | `:step` clock, 1–255: frames of the score's clock (§4: 60 or 50 Hz), or ticks when `flags` bit3 |
 | 0x03   | 1    | loop_start  | step index the sustain loop begins; `0xFF` = one-shot (hold the last attack value) |
 | 0x04   | 1    | release     | step index the release begins; `0xFF` = no release |
@@ -495,6 +495,16 @@ free value: NOTE_PITCH's range bottoms out at exactly −32768, so **the exporte
 moves a real −32768 to −32767** (and −128 to −127) rather than let a macro
 driven to its floor silently stop writing. One step of the target's own
 resolution is inaudible; a dropped write is not. Gate: `m4-macro-floor`.
+A **release from where the macro is** (`flags` bit4: the release curve left
+out its `:from`, language.md §10) stores its release region as the share
+still to go, `r`, not as values: 0…127 of 128 on an i8 macro, 0…32767 of
+32768 on an i16 one — most at the release's first step, 0 at its last. Its
+`:to` follows the values (after the scale slot, if any), one value of the
+macro's width. The driver takes the last value the macro wrote before the
+key-off as `from` (the `:to` itself when it wrote none) and writes
+`to + (from − to) × r / 128` (or `/ 32768`), the product on the magnitude,
+re-signed toward zero.
+
 Regions inside the array:
 
 ```

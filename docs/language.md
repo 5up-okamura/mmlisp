@@ -1315,9 +1315,21 @@ vector holding any stage — a curve, `(wait …)`, arithmetic on a curve, or a
 - `(wait N)` holds the current value for a length token, `(wait key-off)`
   until key-off (a `N` that is not a length waits one tick, `W_WAIT_INVALID`);
 - `#sus` makes the stage after it loop until key-off, and `#rel` is where the
-  release starts (as `(wait key-off)`).
+  release starts (as `(wait key-off)`);
+- the curve right after `(wait key-off)` / `#rel` may leave out its `:from`:
+  the release then starts where the macro is at the key-off — a note let go
+  mid-decay falls from there, not from a fixed level — and it must be the
+  whole release (a stage after it is `E_MACRO_VALUE_INVALID`). Its `:to`
+  is 0 unless written.
 
 A flat run is a curve from a value to itself, `(linear 1..1 :len 8)`.
+
+```lisp
+(def pluck (macro :vel [
+  (ease-out :from 15 :to 4 :len 1)    ; decay
+  (wait key-off)
+  (linear :to 0 :len 8f)]))           ; release from wherever the decay is
+```
 
 ```lisp
 (def organ (macro :vel [
@@ -1477,7 +1489,9 @@ sweep (`:tl1 (linear :to 60 :len 2)`, `:vol`, a PSG level, `:pitch`) reads the
 parameter when it starts, and `:tempo` starts from the tempo in force. A macro
 curve is baked per note, a `(delay …)` envelope and a PCM range point are laid
 out at compile time, and arithmetic on a curve shifts its start — so those
-need the `:from` written (`E_CURVE_FROM`).
+need the `:from` written (`E_CURVE_FROM`). The one macro curve that may leave
+it out is a release's (§10): the driver reads where the macro is at the
+key-off.
 
 **`:wait`** delays a curve where it runs per note — in a `(macro …)` or as a
 stage. An inline sweep starts where it is written, so a `:wait` on one does

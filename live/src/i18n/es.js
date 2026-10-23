@@ -65,7 +65,7 @@ export default {
     "(note …)": ["af522c70", "Una nota en un número MIDI calculado (60 = do central); una curva noise dentro es una sola extracción: una tecla al azar, fijada por la partitura."],
     "arithmetic": ["26efd176", "Aritmética en tiempo de compilación donde vaya un valor; con un $slot dentro se vuelve una expresión en tiempo de ejecución. (ticks n) / (frames n) hacen una longitud; (midi c+4) es el número MIDI de una nota, (hz a4) su frecuencia."],
     "(macro …)": ["91598f27", "Automatización por nota, persistente: cada nota siguiente la ejecuta hasta que se anula. Destinos: :vel :vol :pitch :semi :keyon :pan :mode y los registros FM (no los globales :master / :lfo-rate)."],
-    "#sus #rel": ["40ce9bbc", "Marcas en un vector de pasos: los pasos tras #sus se repiten hasta el key-off, y luego se toca la secuencia desde #rel."],
+    "#sus #rel": ["fe02bb1c", "Marcas en un vector de pasos: los pasos tras #sus se repiten hasta el key-off, y luego suena la serie desde #rel. Una curva justo después de #rel sin su :from cae desde donde está la macro en el key-off."],
     ":step": ["1a2ff04d", "Cuánto dura cada valor de la macro: cuadros (2f) o una duración de nota (16, a tiempo). Por defecto un cuadro."],
     ":pitch": ["d4eee9b8", "Un desplazamiento de tono en cents, sin nuevo ataque: vibrato como macro, un bend en línea. :pitch+ suma al desplazamiento actual."],
     ":semi": ["e66e6da0", "Pasos de semitono (±48) sin nuevo ataque: el arpegio chiptune."],

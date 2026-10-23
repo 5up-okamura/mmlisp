@@ -1423,6 +1423,12 @@ region; `(wait key-off)` marks the release boundary).
   its tick `:len`s resolved to frames at the note's tempo (compiler side). A
   tick `:step` (`16`, `1/16`, `24t`) clocks it on the note's track ticks
   (MACRO_TABLE `flags` bit3, §13.2), its lengths resolved to ticks.
+- A release that left out its `:from` (MACRO_TABLE `flags` bit4, mmb.md §15)
+  starts from the last value the slot wrote before the key-off: the slot
+  keeps that sample (`last`, 2 bytes; none yet: the release's `:to`), and
+  each release step writes `to + (from − to) × r / 128` (`/ 32768` on an i16
+  macro) from the stored share `r`, so a note let go mid-decay falls from
+  where it is.
 - Dynamic (val-slot) `:from`/`:to`/`:rate`/`:len` are dropped with a warning.
 
 The hard gate is C ≡ `drv-player` at zero tolerance; the `ir-player` A/B is

@@ -650,6 +650,7 @@ export function encodeMmb(ir, opts = {}) {
     let loopStart = 0xff;
     let release = 0xff;
     let afterLoop = false;
+    let relTo = null; // a release from where the macro is (flags bit4): its end
     for (const stage of spec.stages ?? []) {
       if (stage.waitKeyOff) {
         if (release === 0xff) release = values.length;
@@ -662,7 +663,20 @@ export function encodeMmb(ir, opts = {}) {
       if (afterLoop && release === 0xff) release = values.length;
       const baseFrames = clockLen(stage, tick);
       if (baseFrames == null) return skip("stage has no :len on the macro's clock");
-      if (stage.loop) {
+      if (stage.fromNow) {
+        // The release starts where the macro is at the key-off, which the
+        // driver reads: each step is the share still to go of the way from
+        // that value to :to (mmb.md §15) — r/128 on an i8 macro, r/32768 on
+        // an i16 one; most at the start, 0 at the end.
+        if (release === 0xff) release = values.length;
+        const n = Math.max(1, Math.ceil(baseFrames / step));
+        const one = target === "NOTE_PITCH" ? 32768 : 128;
+        for (let i = 0; i < n; i++) {
+          const u = sampleCurveUnit(stage.curve ?? "linear", baseFrames <= 1 ? 1 : Math.min(1, (i * step) / (baseFrames - 1)), stage.params);
+          values.push(Math.max(0, Math.min(one - 1, Math.round((1 - u) * one))));
+        }
+        relTo = macroSample(target, Number(stage.to ?? 0));
+      } else if (stage.loop) {
         loopStart = values.length;
         afterLoop = true;
         const period = Math.max(1, Math.round(baseFrames / step));
@@ -678,7 +692,7 @@ export function encodeMmb(ir, opts = {}) {
     }
     if (values.length === 0) return null;
     if (values.length > 255) return skip(`has ${values.length} steps, over the 255 a macro holds (raise :step)`);
-    return { step, loopStart, release, values };
+    return { step, loopStart, release, values, ...(relTo != null ? { relTo } : {}) };
   };
 
   const internMacro = (spec, target, trackLabel) => {
@@ -695,12 +709,14 @@ export function encodeMmb(ir, opts = {}) {
     // bit2 = scaled (mmb.md §15). The intern key folds in `flags` + the scale slot, so
     // additive/override/scaled and distinct slots intern separately.
     // bit3 = the :step clock is the note's track ticks (driver.md §13.2).
+    // bit4 = the release starts from where the macro is (mmb.md §15).
     const flags =
       (target === "NOTE_PITCH" ? 1 : 0) |
       (spec.add ? 2 : 0) |
       (scaleSlot != null ? 4 : 0) |
-      (lowered.tick ? 8 : 0);
-    const key = `${target}|${flags}|${scaleSlot ?? ""}|${lowered.step}|${lowered.loopStart}|${lowered.release}|${lowered.values
+      (lowered.tick ? 8 : 0) |
+      (lowered.relTo != null ? 16 : 0);
+    const key = `${target}|${flags}|${scaleSlot ?? ""}|${lowered.relTo ?? ""}|${lowered.step}|${lowered.loopStart}|${lowered.release}|${lowered.values
       .map((v) => (v == null ? "_" : v))
       .join(",")}`;
     const hit = macroRegistry.get(key);
@@ -1665,7 +1681,8 @@ function buildMacroTable(registry) {
   let off = 0;
   for (const e of entries) {
     offsets.push(off);
-    off += e.values.length * (e.flags & 1 ? 2 : 1) + (e.flags & 4 ? 1 : 0);
+    const width = e.flags & 1 ? 2 : 1;
+    off += e.values.length * width + (e.flags & 4 ? 1 : 0) + (e.flags & 16 ? width : 0);
   }
   entries.forEach((e, i) => {
     desc.u8(TARGET_ID[e.target]);
@@ -1688,6 +1705,10 @@ function buildMacroTable(registry) {
       else blob.u8(v == null ? 0x80 : (v === -128 ? 0x81 : v & 0xff));
     }
     if (e.flags & 4) blob.u8(e.scaleSlot & 0xff); // scaled: appended slot id
+    if (e.flags & 16) { // a release from where the macro is: its :to
+      if (e.flags & 1) blob.u16(e.relTo & 0xffff);
+      else blob.u8(e.relTo & 0xff);
+    }
   }
   return [...desc.bytes, ...blob.bytes];
 }

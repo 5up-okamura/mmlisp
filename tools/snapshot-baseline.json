@@ -1021,6 +1021,20 @@
   "mmb": "5667ed0c01090f6b",
   "vgm": "7dc0bfd71e6ac086"
  },
+ "drv/tests/m4-macro-release-now.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c9358a770d944bac",
+  "regs": "b3857a45b1f3c75d",
+  "mmb": "a21631f1812d89d8",
+  "vgm": "04ee8a1fe6f1957a"
+ },
+ "drv/tests/m4-macro-release-now.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e0d7324881915df2",
+  "regs": "b3857a45b1f3c75d",
+  "mmb": "e4b968cec482d0ff",
+  "vgm": "04ee8a1fe6f1957a"
+ },
  "drv/tests/m4-macro-tick.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b0d553f49f2d2942",
@@ -1721,6 +1735,12 @@
   "mmb": "488af072eea2abb1",
   "vgm": "04611ee69800285b"
  },
+ "tools/tests/pc88/adpcm.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "f613a3fe9e01adc8",
+  "regs": "ece781dc4d3411b7",
+  "vgm": "690550ceb2758b86"
+ },
  "tools/tests/pc88/fm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ee1731d29eb148b7",
@@ -1738,11 +1758,5 @@
   "ir": "5359aeaea21d6803",
   "regs": "306eb9fe0c69d177",
   "vgm": "db50ef5be4022063"
- },
- "tools/tests/pc88/adpcm.mmlisp": {
-  "diagnostics": "e3b0c44298fc1c14",
-  "ir": "f613a3fe9e01adc8",
-  "regs": "ece781dc4d3411b7",
-  "vgm": "690550ceb2758b86"
  }
 }

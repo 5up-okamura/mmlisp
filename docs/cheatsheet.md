@@ -140,6 +140,7 @@ vib, vib-delay, slide-up, drop; combine one of each; they work on FM too).
 ```lisp
 (def pluck (macro :vel [15 12 8 4 0]))              ; one value per :step (1 frame)
 (macro :vel [15 #sus 13 #rel 8 4 0])                ; #sus loops till key-off, #rel after
+(macro :vel [(linear 15..4 :len 1) #rel (linear :to 0 :len 8f)]) ; release from where it is
 (macro :pitch (sin -30..30 :len 8f))                ; vibrato, ±30 cents
 (macro :step 1/16 :semi [#sus 0 4 7] :keyon 1)      ; arpeggio, re-keyed each 16th
 (macro [:tl1 :tl2] (linear 40..0 :len 8))           ; one curve on two targets
@@ -163,7 +164,9 @@ a number, a `let` name or an expression (`:to (* 2 top)`); `:from :to :len
 
 Where a curve goes: a macro (per note), an inline sweep (`:tl1 (linear 40..0
 :len 2)`, `:vol`, `:pan`), `:tempo`, `(delay …)`. A macro curve needs its
-start written (`40..0`, not `:to 0` alone). Where a number is needed,
+start written (`40..0`, not `:to 0` alone) — but the release's curve, right
+after `#rel` / `(wait key-off)`: without `:from` it falls from where the macro
+is at the key-off. Where a number is needed,
 `noise` is one draw: `(note (+ (midi c4) (noise 0..12)))` is a random key, the
 same on every build (§11.1); `(midi c+4)` is 61 and `(hz a4)` 440 (§7.1).
 

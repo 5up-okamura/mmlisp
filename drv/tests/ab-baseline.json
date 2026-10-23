@@ -437,6 +437,12 @@
     "compileErrors": 0,
     "digest": "2873494d"
   },
+  "m4-macro-release-now.mmlisp": {
+    "ok": false,
+    "mismatches": 21,
+    "compileErrors": 0,
+    "digest": "b06aa1b7"
+  },
   "m4-macro-tick.mmlisp": {
     "ok": true,
     "mismatches": 0,

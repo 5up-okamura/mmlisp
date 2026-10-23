@@ -2161,12 +2161,16 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
     if (dr === 0 && sl < 255) items.push("1"); // DR 0: it holds at the top
     else if (sr > 0 && sl > 0) stage(sl, 0, sr);
   }
-  // Key-off releases from wherever the level is; a macro curve needs its
-  // start written, so it is SL — exact for a note that reached the sustain
-  // and has not decayed far into it.
+  // Key-off releases from wherever the level is: a release without its :from
+  // falls from where the macro is, to 0 in the time RR takes from SL (one
+  // straight piece — the played level is linear in SOFENV's on pc88).
   items.push("(wait key-off)");
   held = false;
-  if (sl > 0 && rr > 0) stage(sl, 0, rr);
+  if (sl > 0 && rr > 0) {
+    const total = Math.max(1, Math.round(Math.ceil(sl / rr) * factor));
+    ticks += total;
+    items.push(`(linear :to 0 :len ${total}t)`);
+  }
   const fader = ssgLevelVol(v);
   const mute = zeroTick == null ? "" : zeroTick > 0 ? ` :vol [ (linear ${fader}..${fader} :len ${zeroTick}t) 0 ]` : " :vol [ 0 ]";
   return `${macroStep((ticks / PPQN) * (60 / (bpm || 120)) * 60)}:vel* [ ${items.join(" ")} ]${mute}`;
