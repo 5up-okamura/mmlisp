@@ -2399,7 +2399,10 @@ the ADPCM-B's linear level, a rhythm sound's IL. A rhythm sound is one
 register however many tracks hit it; it follows the track that keyed it
 last. The IL reaches 23 dB down (31 steps of 0.75 dB): a hit starts no
 quieter than that, and a sound whose level falls below it while it sounds,
-or reaches `:vol 0`, is dumped (it stops).
+or reaches `:vol 0`, is dumped (it stops). A note's `:keyon` macro keys
+its sound or its ADPCM-B note again at each step, the level envelopes
+starting over with it, as on the Mega Drive's PCM; a `gate` or `loop`
+note's steps play inside its gate.
 
 The ADPCM-B repeats a sample's whole range, so a `loop` note whose loop
 starts after its range does is `E_TARGET`.

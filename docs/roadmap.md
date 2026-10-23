@@ -125,9 +125,6 @@ In order:
    profile is `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`,
    the synth `live/src/synth-pc88.js`, the scores `tools/tests/pc88/`). What
    is left, in order:
-   - **`:keyon` macros on the PCM**: a step re-keying the rhythm sound or
-     the ADPCM-B note (a roll, a flam); the levels move, the re-key is not
-     played yet.
    - **The check, what is left**: the mucom importer's pc88 scores against
      the real driver's VGM (the A/B the importer was tuned with). FM keys and
      pitch, the rhythm's hits, levels and pan, and the SSG's mixer match,

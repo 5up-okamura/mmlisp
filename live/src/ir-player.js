@@ -2696,26 +2696,46 @@ export class IRPlayer {
   }
 
   // A hit (or an ADPCM-B note) keyed on `voice`: its own :vel / :vol macros
-  // run from it, to the track's next note.
-  _chipPcmHit(voice, ev, when, end, fields) {
+  // run from it, to the track's next note, and each :keyon step re-keys the
+  // voice — a hit of its own, the level envelopes starting over with it, as
+  // on FM and PSG (a gate or loop note's only inside its gate). `key(t, hit)`
+  // writes a key: the first, then each step's.
+  _chipPcmHit(voice, ev, when, end, fields, key) {
     const st = this._chipPcmState();
-    const { velMacro, vol: volMacro } = ev.args ?? {};
+    const { keyon, velMacro, vol: volMacro } = ev.args ?? {};
     const hit = { t: when, end, ti: ev._trackIndex, vel: Number(ev.args?.vel ?? 15), velLine: null, volLine: null, ...fields };
-    if (velMacro || volMacro) {
-      const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
-      const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-      const { secs: nextNote } = this._nextNote(ev);
-      const limit = Number.isFinite(nextNote) ? nextNote - KEY_OFF_LEAD_SECS : Infinity;
-      for (const [spec, key, target] of [[velMacro, "velLine", "VEL"], [volMacro, "volLine", "VOL"]]) {
-        if (!spec) continue;
-        const line = (hit[key] = []); // [value, time], as _lineAt reads
-        this._scheduleMacro(spec, noteFrames, gateSecs, when,
-          (v, t) => line.push([clampForTarget(target, v), t]), this._stepSecs(spec.step), limit);
-      }
+    const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const { secs: nextNote } = this._nextNote(ev);
+    const limit = Number.isFinite(nextNote) ? nextNote - KEY_OFF_LEAD_SECS : Infinity;
+    const held = ev.args?.mode === "gate" || ev.args?.mode === "loop";
+    const retrigs = (this._keyonRetrigTimes(keyon, when, gateTicks, limit) ?? []).filter((t) => !held || t < gateSecs);
+    this._envRetrigs = retrigs;
+    for (const [spec, k, target] of [[velMacro, "velLine", "VEL"], [volMacro, "volLine", "VOL"]]) {
+      if (!spec) continue;
+      const line = (hit[k] = []); // [value, time], as _lineAt reads
+      this._scheduleMacro(spec, noteFrames, gateSecs, when,
+        (v, t) => line.push([clampForTarget(target, v), t]), this._stepSecs(spec.step), limit);
     }
+    this._envRetrigs = null;
     if (!st.hits.has(voice)) st.hits.set(voice, []);
-    st.hits.get(voice).push(hit);
+    const hits = st.hits.get(voice);
+    for (const h of [hit, ...retrigs.map((t) => ({ ...hit, t, end: end + (t - when) }))]) {
+      let i = hits.length;
+      while (i > 0 && hits[i - 1].t > h.t) i--;
+      hits.splice(i, 0, h);
+      key(h.t, h);
+    }
     return hit;
+  }
+
+  // The hit that holds `voice` at `when`, if it is `ti`'s: a gate's end
+  // stops only the track's own sound.
+  _chipPcmOwnHit(voice, ti, when) {
+    const hits = this._chipPcm?.hits.get(voice) ?? [];
+    for (let i = hits.length - 1; i >= 0; i--)
+      if (hits[i].t <= when + 1e-9) return hits[i].ti === ti ? hits[i] : null;
+    return null;
   }
 
   // A hit's level at `when`: { vel, vol, master }.
@@ -2811,18 +2831,18 @@ export class IRPlayer {
         const mode = ev.args?.mode;
         const deltaN = enc.deltaN(entry.rate * ratio);
         const shotEnd = when + ((stop - start + 1) * UNIT_FRAMES) / ((deltaN / 65536) * (this._target.chipFor("adpcm-b").clock / 144));
-        const hit = this._chipPcmHit("adpcm", ev, when, mode === "shot" || !mode ? shotEnd : Infinity, {});
-        const level = IRPlayer._adpcmLevel(this._chipPcmLevelAt(hit, when));
-        hit.level = level;
-        out(enc.note({ start, stop }, deltaN, level, st.pan, mode === "loop"));
+        this._chipPcmHit("adpcm", ev, when, mode === "shot" || !mode ? shotEnd : Infinity, {}, (t, h) => {
+          h.level = IRPlayer._adpcmLevel(this._chipPcmLevelAt(h, t));
+          for (const [p, a, d] of enc.note({ start, stop }, deltaN, h.level, st.pan, mode === "loop")) this._write(p, a, d, t);
+        });
         break;
       }
       case "PCM_NOTE_OFF":
         // Only the track that keyed the voice last stops it.
         if (ev.args?.mode === "gate" || ev.args?.mode === "loop") {
-          const h = cp.hits.get("adpcm")?.at(-1);
-          if (!h || h.ti === ti) out(enc.stop());
-          if (h?.ti === ti) h.end = Math.min(h.end, when);
+          const h = this._chipPcmOwnHit("adpcm", ti, when);
+          if (!cp.hits.get("adpcm")?.length || h) out(enc.stop());
+          if (h) h.end = Math.min(h.end, when);
         }
         break;
       case "PARAM_SET":
@@ -2858,25 +2878,26 @@ export class IRPlayer {
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
         if (!sound || !this._isTrackAudible(ti)) break;
-        const hit = this._chipPcmHit(sound, ev, when, when + ROM_SOUND_SEC[sound], { pan: st.pan });
-        const lv = this._chipPcmLevelAt(hit, when);
-        // A hit at :vol 0 is silence: it takes the sound from an earlier one.
-        if (lv.vol <= 0 || lv.master <= 0) {
-          hit.dumped = true;
-          for (const [p, a, d] of enc.dump(sound)) this._write(p, a, d, when);
-          break;
-        }
-        hit.att = IRPlayer._rhythmAtt(lv);
-        hit.il = 31 - Math.min(31, hit.att);
-        for (const [p, a, d] of enc.hit(sound, hit.il, st.pan)) this._write(p, a, d, when);
+        this._chipPcmHit(sound, ev, when, when + ROM_SOUND_SEC[sound], { pan: st.pan }, (t, h) => {
+          const lv = this._chipPcmLevelAt(h, t);
+          // A hit at :vol 0 is silence: it takes the sound from an earlier one.
+          const silent = lv.vol <= 0 || lv.master <= 0;
+          h.dumped = silent;
+          h.att = IRPlayer._rhythmAtt(lv);
+          h.il = 31 - Math.min(31, h.att);
+          const writes = silent ? enc.dump(sound) : enc.hit(sound, h.il, st.pan);
+          for (const [p, a, d] of writes) this._write(p, a, d, t);
+        });
         break;
       }
       case "PCM_NOTE_OFF":
         // Only the track that keyed the sound last dumps it.
         if (sound && ev.args?.mode === "gate") {
-          const h = this._chipPcm?.hits.get(sound)?.at(-1);
-          if (!h || h.ti === ti) for (const [p, a, d] of enc.dump(sound)) this._write(p, a, d, when);
-          if (h?.ti === ti) h.end = Math.min(h.end, when);
+          const h = this._chipPcmOwnHit(sound, ti, when);
+          if (h) {
+            for (const [p, a, d] of enc.dump(sound)) this._write(p, a, d, when);
+            h.end = Math.min(h.end, when);
+          }
         }
         break;
       case "PARAM_SET":
