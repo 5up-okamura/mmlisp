@@ -1,6 +1,6 @@
 # The live app — decisions not to redo, and lessons
 
-What the app does is `docs/guide.md` (§22–§27); why the code is shaped the
+What the app does is `docs/guide.md` (§22–§28); why the code is shaped the
 way it is lives in its comments; what is ahead is `docs/roadmap.md`. Kept
 here: what was decided against (so it is not proposed again), and working
 lessons.

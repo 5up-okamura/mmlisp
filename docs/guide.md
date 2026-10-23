@@ -2133,3 +2133,40 @@ roll's pane is outside the frame); with `MMLisp > View > Source` off it is the
 oscilloscope alone. X takes
 H.264 video in MP4, which recent Chrome and Safari record; other browsers say
 so before recording.
+
+---
+
+## 28. Keyboard shortcuts in the live app
+
+| macOS              | Windows / Linux     | Action                                   |
+| ------------------ | ------------------- | ---------------------------------------- |
+| **File and play**  |                     |                                          |
+| `Cmd+O`            | `Ctrl+O`            | Open                                     |
+| `Cmd+S`            | `Ctrl+S`            | Save                                     |
+| `Cmd+Shift+S`      | `Ctrl+Shift+S`      | Save As                                  |
+| `Cmd+B`            | `Ctrl+B`            | Build                                    |
+| `Cmd+Return`       | `Ctrl+Enter`        | Play / Pause                             |
+| `Cmd+.`            | `Ctrl+.`            | Stop                                     |
+| `Cmd+Shift+Return` | `Ctrl+Shift+Enter`  | Release Holds — the key-off a game sends: `:len 0` / `:gate 0` holds let go, a held track plays on |
+| **Side panel**     |                     |                                          |
+| `Cmd+J`            | `Ctrl+J`            | Params — open the panel on it, or close it |
+| `Cmd+K`            | `Ctrl+K`            | Library — search the reference, presets, snippets, scores |
+| **Editor**         |                     |                                          |
+| `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / Redo                  |
+| `Cmd+F`            | `Ctrl+F`            | Find / Replace                           |
+| `Cmd+D`            | `Ctrl+D`            | Add next occurrence                      |
+| `Cmd+Shift+L`      | `Ctrl+Shift+L`      | Add all occurrences                      |
+| `Cmd+Option+↑` / `↓` | `Ctrl+Alt+↑` / `↓` | Add a cursor on the line above / below |
+| `Esc`              | `Esc`               | Back to one cursor                       |
+| `Option+↑` / `↓`   | `Alt+↑` / `↓`       | Grow / shrink the selection by form      |
+| `Cmd+/`            | `Ctrl+/`            | Comment / uncomment lines                |
+| `Cmd+Option+]`     | `Ctrl+Alt+]`        | Close the open brackets                  |
+| `Cmd+Shift+F`      | `Ctrl+Shift+F`      | Format current score                     |
+| `Cmd+Shift+.` / `,` | `Ctrl+Shift+.` / `,` | Nudge the value at the cursor up / down (add `Option` / `Alt` for a coarse step) |
+| `Cmd+Option+Shift+L` | `Ctrl+Alt+Shift+L` | Loop Selection — `#loop` … `(go loop)` around the selected notes, `#top` … `(go top)` around whole channels |
+| **Library list**   |                     |                                          |
+| `↑` `↓`            | `↑` `↓`             | Move through the list (from the search box too) |
+| `Return`           | `Enter`             | Insert / open the highlighted row, or fold a group |
+| `Space`            | `Space`             | Play the highlighted row (in the list)   |
+| `←` `→`            | `←` `→`             | Fold / open a group (in the list)        |
+| `Esc`              | `Esc`               | Clear the search, then back to the score |
