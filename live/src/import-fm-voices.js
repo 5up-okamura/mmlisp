@@ -523,6 +523,7 @@ function buildMmlispVoiceFromDmp(parsed, voiceName) {
       `:${key}${n} ${String(get(op)).padStart(widths[c])}`);
     if (op.ssg !== 0) parts.push(`:ssg${n} ${op.ssg}`);
     if (op.am !== 0) parts.push(`:am${n} ${op.am}`);
+    if (op.dt2) parts.push(`:dt2-${n} ${op.dt2}`); // the OPM's (x68k)
     lines.push('  ' + parts.join(' '));
   }
   lines.push(')');
@@ -577,16 +578,64 @@ function detectFmImportFormatKey(fileName) {
   return null;
 }
 
+// A VOPM / MiOPMdrv bank (.opm), text: per voice `@:N name`, `LFO:`, `CH: PAN
+// FL CON AMS PMS SLOT NE`, then M1 C1 M2 C2 — the OPN's op1-op4 in chain
+// order — each `AR D1R D2R RR D1L TL KS MUL DT1 DT2 AMS-EN`. The voices as
+// def-fm, DT2 as :dt2-N (an x68k score's); the bank's unnamed defaults
+// ("no Name") are left out. The LFO and the noise are a song's, not a
+// voice's, and the slot mask is the score's (:keyon), so they are said, not
+// written.
+function opmBankToMmlisp(text, fileName = 'bank.opm') {
+  const voices = [];
+  let v = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.replace(/\/\/.*$/, '').trim();
+    const m = /^(@|LFO|CH|M1|C1|M2|C2):\s*(.*)$/.exec(line);
+    if (!m) continue;
+    if (m[1] === '@') {
+      const [, num, name = ''] = /^(\d+)\s*(.*)$/.exec(m[2]) ?? [null, String(voices.length), m[2]];
+      voices.push((v = { num: Number(num), name: name.trim(), ops: [] }));
+      continue;
+    }
+    if (!v) continue;
+    const n = m[2].split(/[\s,]+/).filter(Boolean).map(Number);
+    if (m[1] === 'CH') Object.assign(v, { fb: n[1], alg: n[2], ams: n[3], fms: n[4], slot: n[5], ne: n[6] });
+    else if (m[1] === 'LFO') v.lfo = n;
+    else v.ops.push({ ar: n[0], dr: n[1], sr: n[2], rr: n[3], sl: n[4], tl: n[5], rs: n[6], mul: n[7], dt: n[8], dt2: n[9], am: n[10] ? 1 : 0, ssg: 0 });
+  }
+  const used = new Set();
+  const lines = [];
+  const warnings = [];
+  let count = 0;
+  for (const voice of voices) {
+    if (voice.ops.length !== 4 || /^no\s*name$/i.test(voice.name)) continue;
+    let name = '@' + slugFromFileName(voice.name, `opm${voice.num}`);
+    if (used.has(name)) name = `${name}-${voice.num}`;
+    used.add(name);
+    const parsed = normalizeFmPatchFields({ ...voice, ops: voice.ops.map((o) => ({ ...normalizeFmOp(o), dt2: clampDmpValue(o.dt2, 0, 3) })) });
+    lines.push('', buildMmlispVoiceFromDmp(parsed, name));
+    count++;
+    if (voice.slot != null && (voice.slot & 0x78) !== 0x78) warnings.push(`${name} keys only some operators (SLOT ${voice.slot}): the voice is written whole`);
+    if (voice.ne) warnings.push(`${name} turns the noise on: on x68k that is the noise track's`);
+  }
+  if (voices.some((x) => x.lfo?.some((k) => k))) warnings.push('the bank\'s LFO settings are the song\'s (:lfo-freq :lfo-pmd :lfo-amd :lfo-wave) and are not written');
+  if (!count) warnings.push('no named voices in this bank');
+  return { source: [`; ${fileName} — ${count} OPM voice${count === 1 ? '' : 's'}`, ...lines].join('\n') + '\n', warnings, count };
+}
+
 // A song importer's FM instrument (the raw register fields, operators in
-// hardware slot order, as every format here stores them) as a def-fm.
-function fmVoiceDef(voiceName, raw) {
-  const parsed = normalizeFmPatchFields({ ...raw, ops: raw.ops.slice(0, 4).map(normalizeFmOp) });
+// hardware slot order, as every format here stores them) as a def-fm; with
+// `dt2`, an OPM's operators keep their DT2 (an x68k score's :dt2-N).
+function fmVoiceDef(voiceName, raw, { dt2 = false } = {}) {
+  const op = (o) => ({ ...normalizeFmOp(o), dt2: dt2 ? clampDmpValue(o.dt2 ?? 0, 0, 3) : 0 });
+  const parsed = normalizeFmPatchFields({ ...raw, ops: raw.ops.slice(0, 4).map(op) });
   parsed.ops = slotToDisplayOps(parsed.ops);
   return buildMmlispVoiceFromDmp(parsed, voiceName);
 }
 
 export {
   fmVoiceDef,
+  opmBankToMmlisp,
   dtRegFromFurnace,
   FM_IMPORT_FORMATS,
   buildMmlispVoiceFromDmp,

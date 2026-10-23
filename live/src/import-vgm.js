@@ -9,7 +9,9 @@
 //   YM2612, YM2203, YM2608, YM2610   voices and notes (FM), SSG → PSG
 //                                    (the YM2608 is FM + SSG only: its
 //                                    rhythm and ADPCM-B are reported)
-//   YM2151 (OPM)                     voices (DT2 dropped) and notes
+//   YM2151 (OPM)                     voices and notes — DT2 kept when the
+//                                    score is the X68000's (:target x68k),
+//                                    dropped on the Mega Drive
 //   SN76489, AY-3-8910               notes (square, noise)
 //   YM2413, YM3812/3526/Y8950, YMF262 notes, on a stand-in voice
 //
@@ -30,13 +32,16 @@
 // as the fallback when the onsets do not fit one.
 //
 //   parseVgm(bytes)                  → the file's chips and channels' events
-//   analyzeVgm(parsed)               → what the import dialog shows
-//   defaultVgmOptions(analysis)      → its defaults
+//   analyzeVgm(parsed)               → what the import dialog shows, and the
+//                                      targets it can write (md; x68k for a
+//                                      YM2151's file)
+//   defaultVgmOptions(analysis, target) → its defaults on that target
 //   vgmToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
 import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE,
-  assignBends, PITCH_NONE, gcd, FM_DESTS, PSG_DESTS } from "./import-song.js";
+  assignBends, PITCH_NONE, gcd, destsFor } from "./import-song.js";
+import { targetProfile } from "./targets.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
@@ -154,7 +159,7 @@ function opmChip(clock, { ev }) {
       ops.push({
         dt: (r[0x40 + o] >> 4) & 7, mul: r[0x40 + o] & 15, tl: r[0x60 + o] & 127,
         rs: r[0x80 + o] >> 6, ar: r[0x80 + o] & 31, am: r[0xa0 + o] >> 7, dr: r[0xa0 + o] & 31,
-        sr: r[0xc0 + o] & 31, sl: r[0xe0 + o] >> 4, rr: r[0xe0 + o] & 15, ssg: 0,
+        sr: r[0xc0 + o] & 31, dt2: r[0xc0 + o] >> 6, sl: r[0xe0 + o] >> 4, rr: r[0xe0 + o] & 15, ssg: 0,
       });
     }
     const rl = r[0x20 + c] >> 6;
@@ -945,29 +950,51 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   const pcmPoly = pcmPolyphony(parsed.pcmHits ?? []);
   // A file without a loop point says it does not loop (a jingle).
   const fileLoop = parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
-  return { channels, grid, frameRate, followPitch, fileLoop, pcmPoly };
+  // The machines it can be written for: the Mega Drive, and the X68000 for
+  // a YM2151's — by default when the OPM is its only tone chip.
+  const opm = channels.some((c) => c.kind === "opm");
+  const targets = opm ? ["x68k", "md"] : ["md"];
+  const target = opm && channels.every((c) => c.kind === "opm" || c.kind === "chip-pcm") ? "x68k" : "md";
+  return { channels, grid, frameRate, followPitch, fileLoop, pcmPoly, targets, target };
 }
 
-export function defaultVgmOptions(a) {
+/** The channels `target`'s score offers an imported VGM's rows (import-song.js destsFor). */
+export function vgmDests(targetName = "md") {
+  const d = destsFor(targetProfile(targetName));
+  return { fm: d.fm, psg: d.psg, noise: d.noise, pcm: d.pcm };
+}
+
+export function defaultVgmOptions(a, targetName = a.target ?? "md") {
+  const dests = vgmDests(targetName);
   // With PCM in the song, fm6 is the DAC: FM is offered fm1–fm5.
-  const pcmToo = a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm");
-  const fm = FM_DESTS.filter((d) => !(pcmToo && d === "fm6"));
-  const sqr = [...PSG_DESTS];
-  let noise = "noise";
+  const pcmToo = dests.pcm.length > 0 && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm");
+  const fm = dests.fm.filter((d) => !(pcmToo && d === "fm6"));
+  const sqr = [...dests.psg];
+  let noise = dests.noise;
   const dest = {};
   const order = ["fm", "opm", "psg", "noise", "pcm", "opl", "opll"];
-  const sorted = [...a.channels].sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind) || y.notes - x.notes);
+  // The busiest channels first — but a YM2151 whose eight all fit (an x68k
+  // score's fm1–fm8) keeps its own order, FM1 on fm1.
+  const opmFits = a.channels.filter((c) => c.kind === "opm").length <= fm.length;
+  const sorted = [...a.channels].sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind) ||
+    (x.kind === "opm" && opmFits ? x.key.localeCompare(y.key, "en", { numeric: true }) : y.notes - x.notes));
   for (const ch of sorted) {
     let d = "drop";
     if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? "drop";
     else if (ch.kind === "psg") d = sqr.shift() ?? "drop";
     else if (ch.kind === "noise") { d = noise ?? "drop"; noise = null; }
-    else if (ch.kind === "pcm") d = "pcm1";
-    else if (ch.kind === "chip-pcm") d = "pcm";
+    else if (ch.kind === "pcm") d = dests.pcm.length ? "pcm1" : "drop";
+    else if (ch.kind === "chip-pcm") d = dests.pcm.length ? "pcm" : "drop";
     else d = fm.shift() ?? sqr.shift() ?? "drop";
     dest[ch.key] = d;
   }
-  return { dest, bpm: null, grid: a.grid.frames ? "frames" : "beats", followPitch: a.followPitch, loop: a.fileLoop,
+  // Two names on one physical channel (x68k's noise is fm8's fourth
+  // operator): the FM channel keeps it, the noise is dropped.
+  const target = targetProfile(targetName);
+  const fmVoices = new Set(Object.values(dest).filter((d) => dests.fm.includes(d)).map((d) => target.voiceKey(d)));
+  for (const [k, d] of Object.entries(dest))
+    if (d === dests.noise && fmVoices.has(target.voiceKey(d))) dest[k] = "drop";
+  return { target: targetName, dest, bpm: null, grid: a.grid.frames ? "frames" : "beats", followPitch: a.followPitch, loop: a.fileLoop,
     pcmVoices: Math.max(1, Math.min(3, a.pcmPoly ?? 1)) };
 }
 
@@ -977,6 +1004,9 @@ export function defaultVgmOptions(a) {
  */
 export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const warnings = [];
+  const target = targetProfile(options.target ?? "md");
+  const dests = vgmDests(target.name);
+  const keepDt2 = target.hasWord("FM_DT2_1");
   const followPitch = options.followPitch ?? true;
 
   // The grid: the estimate, a tempo set by hand, or frames.
@@ -1010,7 +1040,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const voiceKey = (v) => {
     const car = CARRIERS[v.alg];
     const minTl = Math.min(...car.map((s) => v.ops[s].tl));
-    const ops = v.ops.map((o, s) => (car.includes(s) ? { ...o, tl: o.tl - minTl } : o));
+    const ops = v.ops.map((o, s) => ({ ...o, tl: car.includes(s) ? o.tl - minTl : o.tl, dt2: keepDt2 ? o.dt2 ?? 0 : 0 }));
     return { key: JSON.stringify({ alg: v.alg, fb: v.fb, ams: v.ams, fms: v.fms, ops }), minTl, ops };
   };
   const standIns = new Set();
@@ -1018,8 +1048,10 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   for (const ch of a.channels) {
     const d = dest[ch.key] ?? "drop";
     if (d === "drop" || ch.kind === "pcm" || ch.kind === "chip-pcm") continue; // PCM: below
-    if (taken.has(d)) { warnings.push(`${ch.key}: ${d} is already taken — dropped`); continue; }
-    taken.add(d);
+    // One physical channel takes one row (x68k's noise is fm8's).
+    const voice = target.voiceKey(d) ?? d;
+    if (taken.has(voice)) { warnings.push(`${ch.key}: ${d} is already taken — dropped`); continue; }
+    taken.add(voice);
     const onFm = d.startsWith("fm");
     const raw = channelNotes(parsed, ch.key, followPitch);
     const notes = [];
@@ -1119,11 +1151,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // The DAC, to a PCM track: the data bank one wav, each sample a def that
   // slices it — so with DAC on, FM6 is not there to play.
   const dacDest = dest[DAC_KEY] ?? "drop";
-  const dacOut = dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName) : null;
+  const dacOut = dests.pcm.length > 0 && dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName) : null;
   // SegaPCM / ADPCM: the channels kept, on as many voices as asked.
   const chipKeys = a.channels.filter((c) => c.kind === "chip-pcm" && (dest[c.key] ?? "drop") !== "drop").map((c) => c.key);
   const pcmVoices = Math.max(1, Math.min(3, options.pcmVoices ?? Math.min(3, a.pcmPoly ?? 1)));
-  const chipOut = !dacOut && chipKeys.length ? chipPcmTracks(parsed, chipKeys, pcmVoices, tickOf, endTick, options.fileName) : null;
+  const chipOut = dests.pcm.length > 0 && !dacOut && chipKeys.length ? chipPcmTracks(parsed, chipKeys, pcmVoices, tickOf, endTick, options.fileName) : null;
+  if (!dests.pcm.length && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm"))
+    warnings.push(`the ${target.system} has no PCM part yet — the PCM is left out`);
   if (dacOut && chipKeys.length) warnings.push("the YM2612 DAC takes the PCM channels — the other chips' PCM is left out");
   if (chipOut) warnings.push(...chipOut.warnings);
   if (dacOut || chipOut) {
@@ -1131,7 +1165,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (fm6 >= 0) { warnings.push(`${tracks[fm6].ch.key}: fm6 is the DAC in a score with PCM — dropped`); tracks.splice(fm6, 1); }
   }
 
-  const order = [...FM_DESTS, ...PSG_DESTS, "noise"];
+  const order = [...dests.fm, ...dests.psg, dests.noise];
   tracks.sort((x, y) => order.indexOf(x.d) - order.indexOf(y.d));
   const out = tracks.map(({ d, notes }) => {
     const head = notes[0].pre;
@@ -1152,7 +1186,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
 
   const header = [`; Imported from ${options.fileName ?? "a VGM file"} (VGM: ${parsed.chips.join(", ")})`];
   const title = [parsed.title, parsed.game && parsed.title ? `(${parsed.game})` : parsed.game].filter(Boolean).join(" ");
-  const score = [title && `:title ${qstr(title)}`, parsed.author && `:composer ${qstr(parsed.author)}`,
+  const score = [target.name !== "md" && `:target ${target.name}`, title && `:title ${qstr(title)}`, parsed.author && `:composer ${qstr(parsed.author)}`,
     dacOut && ":pcm-voices 1", chipOut && `:pcm-voices ${chipOut.voices}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
@@ -1163,7 +1197,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   for (const rec of voices.values()) {
     const car = CARRIERS[rec.v.alg];
     const ops = rec.ops.map((o, s) => (car.includes(s) ? { ...o, tl: Math.min(127, o.tl + rec.base) } : o));
-    header.push("", fmVoiceDef(rec.name, { alg: rec.v.alg, fb: rec.v.fb, ams: rec.v.ams, fms: rec.v.fms, ops }));
+    header.push("", fmVoiceDef(rec.name, { alg: rec.v.alg, fb: rec.v.fb, ams: rec.v.ams, fms: rec.v.fms, ops }, { dt2: keepDt2 }));
   }
   const song = { header, bars, endTick, loopTick, tracks: out };
   const pcm = dacOut?.pcm ?? chipOut?.pcm ?? null;
