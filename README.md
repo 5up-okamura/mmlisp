@@ -61,8 +61,9 @@ game state at runtime.
   SSG, the ROM rhythm and the ADPCM-B, auditioned in Live through **ymfm**'s
   YM2608 and exported as a VGM — and a mucom88 song imports as the chip has
   it. The rhythm ROM is Yamaha's and not included: Live plays your own, or
-  stands the score's kit in for it. Other machines are on the
-  [roadmap](docs/roadmap.md).
+  stands the score's kit in for it. The X68000's YM2151 follows with
+  `(def-score :target x68k)`: eight FM channels with DT2 and the OPM's LFO,
+  and its noise. Other machines are on the [roadmap](docs/roadmap.md).
 
 ## What it looks like
 

@@ -1,0 +1,18 @@
+; x68k: FM on the YM2151 at the X68000's 4 MHz — eight channels, DT2, pan,
+; and the OPM's own LFO beside the OPN's :lfo-rate.
+(def-score :target x68k :title "x68k FM")
+(def-fm bell :alg 4 :fb 3 :ams 0 :fms 3
+  :ar1 31 :dr1 6 :sr1 0 :rr1 5 :sl1 2 :tl1 30 :ml1 3 :dt1 1 :ks1 0 :dt2-1 1
+  :ar2 31 :dr2 8 :sr2 2 :rr2 6 :sl2 3 :tl2 0 :ml2 1 :dt2 0 :ks2 0
+  :ar3 31 :dr3 6 :sr3 0 :rr3 5 :sl3 2 :tl3 34 :ml3 7 :dt3 0 :ks3 0 :dt2-3 2
+  :ar4 31 :dr4 8 :sr4 2 :rr4 6 :sl4 3 :tl4 0 :ml4 1 :dt4 0 :ks4 0)
+(def-fm pad init-fm :alg 7 :tl1 127 :tl2 127 :tl3 127 :tl4 0 :ar4 12 :rr4 4)
+(fm1 :tempo 120 :lfo-freq 200 :lfo-pmd 40 :lfo-wave triangle
+  bell :len 8 c e g > c < g e c _ |)
+(fm2 bell :pan left :oct 3 :len 4 c g c g |)
+(fm3 bell :pan right :oct 5 :len 2 e g |)
+(fm4 pad :len 1 c |)
+(fm5 pad :oct 3 :len 1 g |)
+(fm6 pad :fms 2 :len 1 e :lfo-rate 5 e |)
+(fm7 :vel 10 :len 2 c d |)
+(fm8 bell :dt2-2 3 :oct 5 :len 4 c _ c _ |)

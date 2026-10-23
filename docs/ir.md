@@ -67,7 +67,8 @@ in the IR was resolved against it, and the MMB exporter reads it so a score is
 never compiled for one standard and baked for the other (driver.md §3.3).
 
 `metadata.target` is the machine the score is for (`(def-score :target …)`,
-language.md §19), present only when it is not the Mega Drive: `"pc88"`. A
+language.md §19), present only when it is not the Mega Drive: `"pc88"`,
+`"x68k"`. A
 consumer reads its chips from its profile (`live/src/targets.js`). The MMB exporter refuses
 any target but the Mega Drive, and the IR player one whose chips have no
 register encoder yet (`live/src/chips/`).
@@ -637,14 +638,17 @@ write.
 | `VEL`             | 0–15           | Velocity ladder (2 dB/step) folded into carrier TL / PSG att. **Macro / `:vel` note-scoped only** — rejected as a PARAM target. |
 | `VOL`             | 0–31           | Channel fader → carrier TL offset (FM) / attenuator (PSG). 0 = hard mute. |
 | `MASTER`          | 0–31           | Global fader → all FM carrier TLs + all sounding PSG channels. Song-wide: inline only, not a macro target. |
-| `LFO_RATE`        | 0–8            | Reg 0x22 (0 = off, 1–8 = `0x08 \| rate−1`). Song-wide, as `MASTER`. |
+| `LFO_RATE`        | 0–8            | Reg 0x22 (0 = off, 1–8 = `0x08 \| rate−1`). Song-wide, as `MASTER`. On `x68k`: 0 both depths 0, 1–8 the nearest LFRQ at depth 127. |
+| `LFO_FREQ`        | 0–255          | `x68k`: the YM2151's LFRQ (reg 0x18). Song-wide, as `MASTER`. |
+| `LFO_PMD` / `LFO_AMD` | 0–127      | `x68k`: the LFO's pitch / level depth (reg 0x19, bit 7 set / clear). Song-wide. |
+| `LFO_WAVE`        | 0–3            | `x68k`: the LFO's waveform (reg 0x1B bits 1–0): saw, square, triangle, noise. Song-wide. |
 | `VAL0`–`VAL15`    | −32768–32767   | Value slot n (`:name` of a `def-val`, language.md §8). Song-wide, as `MASTER`; no register. |
 | `FM_ALG`          | 0–7            | B0 bits 2–0.                                                 |
 | `FM_FB`           | 0–7            | B0 bits 5–3.                                                 |
 | `FM_AMS`          | 0–3            | B4 bits 5–4.                                                 |
 | `FM_FMS`          | 0–7            | B4 bits 2–0.                                                 |
 | `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. |
-| `NOISE_RATE`      | 1–31           | `pc88`: the SSG's noise period (reg 0x06), song-wide as `LFO_RATE`; inline or a sweep. |
+| `NOISE_RATE`      | 1–31           | `pc88`: the SSG's noise period (reg 0x06); `x68k`: NFRQ = 32 − n (reg 0x0F). Song-wide as `LFO_RATE`; inline or a sweep. |
 | `SSG_MIX`         | 0–2            | `pc88`: an SSG channel's mixer (reg 0x07), 0 tone, 1 noise, 2 both — sqr1–sqr3's `:mode`. |
 | `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits). Persistent noise-channel state via `PARAM_SET` (inline `:mode` / tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
 | `FM_TL1`–`FM_TL4` | 0–127          | 0x40+op. PARAM_SET also updates the voiced (timbre) TL base. |
@@ -657,6 +661,7 @@ write.
 | `FM_DT1`–`FM_DT4` | −3–3           | 0x30+op bits 6–4, sign-magnitude at the write.               |
 | `FM_KS1`–`FM_KS4` | 0–3            | 0x50+op bits 7–6.                                            |
 | `FM_SSG1`–`FM_SSG4` | 0–15         | 0x90+op. `:ssg1`–`:ssg4`, inline, as a macro or in a voice def. |
+| `FM_DT2_1`–`FM_DT2_4` | 0–3        | `x68k`: the YM2151's DT2, 0xC0+slot bits 7–6. `:dt2-1`–`:dt2-4`, inline, as a macro or in a voice def. |
 | `FM_AMEN1`–`FM_AMEN4` | 0–1        | 0x60+op bit 7.                                               |
 | `FM_VEL1`–`FM_VEL4` | −1, 0–16     | No register: the operator's velocity sensitivity in sixteenths (`:vel1 0.5` → 8), composed into its TL; −1 is the role's own (16 on a carrier, 0 on a modulator). PARAM_SET only. A score that writes one anywhere has every voice emit all four after its other params, −1 where it sets none (language.md §6). |
 

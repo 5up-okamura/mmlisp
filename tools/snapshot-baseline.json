@@ -1758,5 +1758,17 @@
   "ir": "5359aeaea21d6803",
   "regs": "306eb9fe0c69d177",
   "vgm": "db50ef5be4022063"
+ },
+ "tools/tests/x68k/fm.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "6cc2c5c664ff7766",
+  "regs": "554627227138fe44",
+  "vgm": "9bfe3a50d3d84cac"
+ },
+ "tools/tests/x68k/noise.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "7b6cb8066f48783f",
+  "regs": "ac3ead265753fd6b",
+  "vgm": "e1362c996a4d8ad0"
  }
 }

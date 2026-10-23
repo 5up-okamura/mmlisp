@@ -18,6 +18,7 @@
 
 import md from "./targets/md.js";
 import pc88 from "./targets/pc88.js";
+import x68k from "./targets/x68k.js";
 
 function profile(def) {
   const heads = Object.keys(def.channels);
@@ -33,6 +34,7 @@ function profile(def) {
     partOf: (head) => def.channels[head]?.part ?? null,
     chipOf: (head) => def.chips[def.channels[head]?.chip] ?? null,
     headsOf: (partName) => heads.filter((h) => def.channels[h].part.name === partName),
+    headsOfKind: (kind) => heads.filter((h) => def.channels[h].part.kind === kind),
     hasPart: (partName) => parts.some((p) => p.name === partName),
     /** The physical voice `head` plays on, as a key two heads can be compared by. */
     voiceKey(head) {
@@ -53,7 +55,7 @@ function profile(def) {
   };
 }
 
-export const TARGETS = { md: profile(md), pc88: profile(pc88) };
+export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k) };
 export const DEFAULT_TARGET = "md";
 
 /** Why `target` cannot `play` or `encode` yet, or null when it can. */

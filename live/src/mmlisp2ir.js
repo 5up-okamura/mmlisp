@@ -57,6 +57,10 @@ const SUPPORTED_TARGETS = new Set([
   "FM_AMS",
   "FM_FMS",
   "LFO_RATE",
+  "LFO_FREQ",
+  "LFO_PMD",
+  "LFO_AMD",
+  "LFO_WAVE",
   "NOISE_RATE",
   "PAN",
   "NOISE_MODE",
@@ -72,6 +76,7 @@ const SUPPORTED_TARGETS = new Set([
     `FM_DT${op}`,
     `FM_SSG${op}`,
     `FM_AMEN${op}`,
+    `FM_DT2_${op}`,
   ]),
 ]);
 
@@ -127,7 +132,7 @@ const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI", "SNAP"]);
 // or a curve) but not macro-legal. An …_END and an …_LEN both set their span's
 // far bound, pinning the end vs the length; the last one written wins.
 // The song-wide write targets a macro does not take (a macro is a note's).
-const SONG_TARGETS = new Set(["MASTER", "LFO_RATE", "NOISE_RATE"]);
+const SONG_TARGETS = new Set(["MASTER", "LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE", "NOISE_RATE"]);
 // Song-wide write targets: their sweeps run in slots of their own on the
 // driver, not in the writing channel's two (driver.md §4).
 const isSongTarget = (t) => SONG_TARGETS.has(t) || /^VAL\d+$/.test(t ?? "");
@@ -355,6 +360,8 @@ function trackLacks(irTarget, sym, trackState) {
 
 // PAN symbolic values → logical range -1/0/+1 (encodeB4 maps these to L/LR/R bits)
 const PAN_MAP = { left: -1, center: 0, right: 1 };
+// A target's own symbols: the pan's places, the OPM LFO's waveforms.
+const TARGET_SYMBOLS = { PAN: PAN_MAP, LFO_WAVE: { saw: 0, square: 1, triangle: 2, noise: 3 } };
 
 function atomValue(node) {
   if (!node) return null;
@@ -1721,8 +1728,8 @@ function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName,
     return;
   }
   if (v.kind === "symbol") {
-    if (!op && target === "PAN" && v.value in PAN_MAP)
-      push("PARAM_SET", { target, value: PAN_MAP[v.value] });
+    if (!op && v.value in (TARGET_SYMBOLS[target] ?? {}))
+      push("PARAM_SET", { target, value: TARGET_SYMBOLS[target][v.value] });
     else
       err("E_PARAM_VALUE",
         `${sym} takes a number, a curve or a $value, not '${v.value}'`);
@@ -3522,6 +3529,10 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":keyon": "KEYON",
   // LFO
   ":lfo-rate": "LFO_RATE",
+  ":lfo-freq": "LFO_FREQ",
+  ":lfo-pmd": "LFO_PMD",
+  ":lfo-amd": "LFO_AMD",
+  ":lfo-wave": "LFO_WAVE",
   ":noise-rate": "NOISE_RATE",
   // PCM points: the range a note plays, and the loop inside it
   ":pcm-start": "RANGE_START",
@@ -3551,6 +3562,7 @@ const TARGET_KEYWORDS = new Map(Object.entries({
     acc[`:am${op}`] = `FM_AMEN${op}`;
     acc[`:ssg${op}`] = `FM_SSG${op}`;
     acc[`:vel${op}`] = `FM_VEL${op}`;
+    acc[`:dt2-${op}`] = `FM_DT2_${op}`; // the OPM's DT2 (op N's DT1 is :dtN)
     return acc;
   }, {}),
 }));
@@ -3575,6 +3587,7 @@ const FM_OP_PARAMS = [
   "DT",
   "SSG",
   "AMEN",
+  "DT2_",
 ];
 
 function createInitFmKwMap() {
@@ -3603,7 +3616,7 @@ function createInitFmKwMap() {
 // A def-fm voice switch: its registers as of `tick`, and the key shift its
 // :key sets on the track.
 function emitVoice(td, tick, events, src, trackState = null) {
-  if (td.kwMap) emitVoiceFromKwMap(td.kwMap, tick, events, src);
+  if (td.kwMap) emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.target);
   if (trackState) {
     const key = td.kwMap?.get(VOICE_KEY);
     trackState.voiceKeyShift = key === undefined ? 0 : key - 60;
@@ -3632,7 +3645,7 @@ const VOICE_KEY = "KEY";
 // base's first and the voice's own writes over it. A value is anything that
 // evaluates to a number — a literal, a snippet constant, an expression. Runs
 // once every def is known, so a base may come from an import.
-function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false) {
+function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false, machine = null) {
   const resolve = (name, seen) => {
     const td = typedDefs.get(name);
     if (td.kwMap || td.failed) return td.kwMap ?? null;
@@ -3689,7 +3702,14 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false)
           err("E_VOICE_VALUE", `${kw} takes a ratio 0..1 of the velocity, got ${v.value}`,
             nodeSrc(td.items[k + 1]));
         else kwMap.set(target, k16);
-      } else if (v?.kind === "scalar") kwMap.set(target, Math.round(v.value));
+      } else if (v?.kind === "scalar") {
+        kwMap.set(target, Math.round(v.value));
+        // A register this machine lacks: the voice plays without it here
+        // (emitVoiceFromKwMap) and keeps it for the machines that have one.
+        // Said only where it would have sounded — `:ssg1 0` is no difference.
+        const lacks = machine && Math.round(v.value) !== 0 && targetLacks(target, kw, machine);
+        if (lacks) pushDiag(diagnostics, "warning", "W_TARGET", `${lacks} — '${name}' plays without it`, nodeSrc(td.items[k]), null);
+      }
       else if (v || expanded.length !== 1 || exprHasValRef(expanded[0]))
         err("E_VOICE_VALUE", `${kw} takes a number — a voice is fixed data`,
           nodeSrc(td.items[k + 1]));
@@ -3708,9 +3728,15 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false)
   }
 }
 
-function emitVoiceFromKwMap(kwMap, tick, events, src) {
+// A voice is the OPN/OPM family's patch on every target: what `machine` has
+// no register for (SSG-EG on the OPM, DT2 on the OPN) is left out of it, and
+// on a chip with DT2 a voice without one states it 0, so a voice change
+// resets it.
+function emitVoiceFromKwMap(kwMap, tick, events, src, machine = null) {
   for (const target of VOICE_KEYS) {
-    const value = kwMap.get(target);
+    let value = kwMap.get(target);
+    if (machine && partsWithWord(target).length && !machine.hasWord(target)) continue;
+    if (value === undefined && machine && /^FM_DT2_\d$/.test(target)) value = 0;
     if (value !== undefined)
       events.push({ tick, cmd: "PARAM_SET", args: { target, value }, src });
   }
@@ -5495,7 +5521,8 @@ const SE_CHANNELS = new Set([
 // song's CH3 parts could not play on under an effect (driver.md §2.5).
 const SE_CH3 = new Set(["fm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate"]);
 // What an effect may not write, by IR target: the source keyword to name.
-const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate", NOISE_RATE: ":noise-rate" };
+const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate", LFO_FREQ: ":lfo-freq", LFO_PMD: ":lfo-pmd",
+  LFO_AMD: ":lfo-amd", LFO_WAVE: ":lfo-wave", NOISE_RATE: ":noise-rate" };
 
 // (def-se name [:prio N] [:tempo T] (channel body…)…). The head options are
 // the effect's: :prio its default priority (0-255, the host may pass its
@@ -6141,7 +6168,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     });
   }
   resolveVoices(typedDefs, defs, paramDefs, diagnostics,
-    writesVelSens(parsed, defs, paramDefs, typedDefs, seDefs));
+    writesVelSens(parsed, defs, paramDefs, typedDefs, seDefs), targetProfile(fileMeta.target));
   resolveSampleExtends(sampleDefs, diagnostics);
   // A target with a ROM rhythm kit names its sounds by the kit roles
   // (targets.js): a def of that name is that sound there, and one the score
@@ -6361,7 +6388,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // Sound effects are started by a game through the target's driver.
   if (!target.driver && seDefs.size > 0)
     targetDiag(diagnostics, "error",
-      `def-se is a sound effect a game starts through the Mega Drive's driver; a ${target.name} score is a VGM and has none`,
+      `def-se is a sound effect a game starts through the Mega Drive's driver; the ${target.system}'s score (:target ${target.name}) is a VGM and has none`,
       [...seDefs.values()][0].src ?? fileSrc, "global");
 
   // A track's compile state — all of it sticky, persisting across
@@ -6373,7 +6400,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     head,
     target, // the machine (targets/): what its channels have
     part: target.partOf(head), // what the channel is (chips/parts.js)
-    fmClock: target.chipFor("fm")?.clock, // the CSM rate's Timer A runs on it
+    fmClock: target.chipForKind("fm")?.clock, // the CSM rate's Timer A runs on it
     defaultLength: Math.round(WHOLE_TICKS / 8),
     defaultOct: 4,
     voiceKeyShift: 0, // the current voice's `:key` − 60
@@ -6674,7 +6701,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // a voice's ~36 writes do not share the note's frame on the driver's wire.
   // `options.voiceHoist`: false turns it off; an object sets its windows.
   if (options.voiceHoist !== false)
-    hoistVoiceChanges(tracks, { ppqn: PPQN, fmChannels: new Set(target.headsOf("fm")), ...(options.voiceHoist ?? {}) });
+    hoistVoiceChanges(tracks, { ppqn: PPQN, fmChannels: new Set(target.headsOfKind("fm")), ...(options.voiceHoist ?? {}) });
 
   // Tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
   // emit their own tick-0 events); the only derived init event is FM3 op mode.

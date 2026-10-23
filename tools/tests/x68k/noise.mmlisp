@@ -1,0 +1,4 @@
+; x68k: the YM2151's noise — fm8's fourth operator, its rate song-wide.
+(def-score :target x68k :title "x68k noise")
+(fm1 :tempo 120 :len 4 c e g e |)
+(noise :noise-rate 4 :len 8 c c :vel 10 c c :noise-rate 20 c _ c c |)

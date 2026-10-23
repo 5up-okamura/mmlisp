@@ -2328,6 +2328,7 @@ those chips cannot do is a compile error, not a different sound.
 | --- | --- | --- |
 | `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
 | `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | VGM, WAV |
+| `x68k` | Sharp X68000: YM2151 (FM, its noise) | VGM, WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2426,4 +2427,35 @@ starts after its range does is `E_TARGET`.
 
 **Effects.** `def-se` is a sound effect a game starts through the Mega
 Drive's driver; a `pc88` score has none (`E_TARGET`).
+
+### `x68k`
+
+**`x68k` exports VGM** with the YM2151 at the X68000's 4 MHz, and Play and
+WAV run ymfm's YM2151. The MSM6258's ADPCM is not a part yet: `pcm1`–`pcm3`
+are `E_TARGET`, as are `sqr1`–`sqr3`.
+
+**FM.** `fm1`–`fm8`, the OPN's language: the same voices, operator words and
+`:pan`, pitches on the chip's clock. The OPM has no SSG-EG (`:ssg1`… is
+`E_TARGET`) and no FM3 modes, and it has a second detune, **`:dt2-1`–`:dt2-4`
+0–3**, the operator's coarse one (×1, ×1.41, ×1.57, ×1.73 on its multiple;
+`:dtN` stays the fine one) — inline, as a macro, or in a `def-fm`. A voice
+is the OPN/OPM family's on every target: a register the machine lacks
+(`:ssg1` here, `:dt2-1` on `md` and `pc88`) is left out where the voice
+plays, with `W_TARGET` when it is set to anything but 0, and on `x68k` a
+voice without `:dt2-N` states it 0,
+so a voice change resets it.
+
+**LFO.** The OPM's one LFO is the song's, written on any track:
+**`:lfo-freq 0–255`**, **`:lfo-pmd 0–127`**, **`:lfo-amd 0–127`** (how deep it
+moves pitch and level) and **`:lfo-wave saw | square | triangle | noise`**; a
+voice takes it through `:fms` and `:ams` as on the OPN. They start at 0. The
+OPN's `:lfo-rate` reads as the OPM's: 0 sets both depths 0, 1–8 the nearest
+`:lfo-freq` to the YM2612's rate with both depths at 127. These words are
+`E_TARGET` on the OPN targets.
+
+**Noise.** `noise` is fm8's fourth operator with the chip's noise on it, so
+a score has `noise` or `fm8` (`E_TARGET`). Its period is the song's
+**`:noise-rate 1–31`** (lower is higher, 9 to start), 125 kHz / n — what
+the same rate is on `pc88`'s SSG. A noise note's pitch is not read, and it
+has no `:mode`.
 

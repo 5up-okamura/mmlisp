@@ -38,8 +38,12 @@ export const MACRO_TARGET_RANGE = {
   VOL: { min: 0, max: 31 },
   MASTER: { min: 0, max: 31 },
 
-  // LFO
+  // LFO: the OPN's rate; the OPM's frequency, depths and waveform
   LFO_RATE: { min: 0, max: 8 },
+  LFO_FREQ: { min: 0, max: 255 },
+  LFO_PMD: { min: 0, max: 127 },
+  LFO_AMD: { min: 0, max: 127 },
+  LFO_WAVE: { min: 0, max: 3 },
 
   // FM channel params
   FM_ALG: { min: 0, max: 7 },
@@ -60,6 +64,7 @@ export const MACRO_TARGET_RANGE = {
   FM_KS: { min: 0, max: 3 },
   FM_AMEN: { min: 0, max: 1 },
   FM_SSG: { min: 0, max: 15 },
+  FM_DT2_: { min: 0, max: 3 }, // the OPM's DT2 (FM_DT2_1–4)
   // Velocity sensitivity in sixteenths (`:vel1`–`:vel4`); -1 is the role's own
   // (VEL_K_AUTO below).
   FM_VEL: { min: -1, max: 16 },
@@ -808,6 +813,7 @@ export function buildChannelRegState(chIndex) {
         rs: 0,
         amen: 0,
         ssg: 0,
+        dt2: 0, // the OPM's second detune
       },
       {
         tl: 0,
@@ -822,6 +828,7 @@ export function buildChannelRegState(chIndex) {
         rs: 0,
         amen: 0,
         ssg: 0,
+        dt2: 0, // the OPM's second detune
       },
       {
         tl: 0,
@@ -836,6 +843,7 @@ export function buildChannelRegState(chIndex) {
         rs: 0,
         amen: 0,
         ssg: 0,
+        dt2: 0, // the OPM's second detune
       },
       {
         tl: 0,
@@ -850,6 +858,7 @@ export function buildChannelRegState(chIndex) {
         rs: 0,
         amen: 0,
         ssg: 0,
+        dt2: 0, // the OPM's second detune
       },
     ],
   };

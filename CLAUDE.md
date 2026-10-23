@@ -21,13 +21,13 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp-parser.js`              | Tokenize + parse source into a generic list/atom AST                    |
 | `mmlisp2ir.js`                  | Compile AST → IR: voice resolution, macro parsing, event emit           |
 | `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
-| `targets.js` (+ `targets/`, `chips/`) | `:target md`/`pc88`: a target is its chips and a channel table (name → chip, part, voice); a chip (`chips/ym2612.js` …) its clock, parts and encoders; a part (`chips/parts.js`) the words, `:mode` symbols and rules of one kind of sound |
+| `targets.js` (+ `targets/`, `chips/`) | `:target md`/`pc88`/`x68k`: a target is its chips and a channel table (name → chip, part, voice); a chip (`chips/ym2612.js` …) its clock, parts and encoders; a part (`chips/parts.js`) the words, `:mode` symbols and rules of one kind of sound |
 | `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
 | `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
 | `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
 | `edit-tools.js`                 | Edit > Loop Selection and the Logical Editor: score-text edits, testable in node |
-| `synth-md.js`, `synth-pc88.js`, `scope-trigger.js` | Chip wiring for the browser — the Mega Drive's, the PC-8801's (ymfm's YM2608) — and the oscilloscope's trigger |
+| `synth-md.js`, `synth-pc88.js`, `synth-x68k.js`, `scope-trigger.js` | Chip wiring for the browser — the Mega Drive's, the PC-8801's (ymfm's YM2608), the X68000's (ymfm's YM2151) — and the oscilloscope's trigger |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
 | `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM and the OKIM6258), DefleMask / Furnace |
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
@@ -48,7 +48,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `offline-cache.js`             | Fills the service worker's cache so the installed app runs offline |
 | `time-worker.js`               | TIME's bar length, measured off the page's thread (`IRPlayer.captureRegisterLog`) |
 | `compile-worker.js`            | The score's compile (`compileMMLisp`) off the page's thread, for Build, Play and a drag's hot-swap |
-| `../nuked-opn2.js`, `../nuked-psg.js`, `../ymfm-ym2608.js` | YM2612 / PSG / YM2608 cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
+| `../nuked-opn2.js`, `../nuked-psg.js`, `../ymfm-ym2608.js`, `../ymfm-ym2151.js` | YM2612 / PSG / YM2608 / YM2151 cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
 `export-mmb.js` (IR → MMB v0.4 + the sample bank), `mmb-voices.js` and

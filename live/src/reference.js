@@ -70,21 +70,28 @@ export const REFERENCE = [
   {
     name: ':lfo-rate', cat: 'score', section: '§1', tracks: null,
     syntax: ':lfo-rate 0–8',
-    summary: 'The chip\'s one LFO, song-wide; 0 is off. A voice takes it through :ams (level) and :fms (pitch).',
+    summary: 'The chip\'s one LFO, song-wide; 0 is off. A voice takes it through :ams (level) and :fms (pitch). On x68k it sets the OPM\'s LFO to the nearest frequency at full depth.',
     insert: ':lfo-rate 5',
     example: '(fm1 :lfo-rate 5 :fms 5 :len 2 c e)',
   },
   {
-    name: ':target', aliases: ['pc88', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
-    syntax: '(def-score :target md | pc88)',
-    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files.',
+    name: ':lfo-freq', aliases: [':lfo-pmd', ':lfo-amd', ':lfo-wave'], cat: 'score', section: '§19', tracks: null,
+    syntax: ':lfo-freq 0–255  ·  :lfo-pmd 0–127  ·  :lfo-amd 0–127  ·  :lfo-wave saw | square | triangle | noise',
+    summary: 'x68k only: the YM2151\'s LFO, song-wide — its frequency, how deep it moves pitch and level, and its waveform. A voice takes it through :fms and :ams as on the OPN.',
+    insert: ':lfo-freq 200',
+    example: '(def-score :target x68k)\n(fm1 :lfo-freq 200 :lfo-pmd 40 :lfo-wave triangle :fms 4 :len 2 c e)',
+  },
+  {
+    name: ':target', aliases: ['pc88', 'x68k', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
+    syntax: '(def-score :target md | pc88 | x68k)',
+    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV.',
     insert: '(def-score :target pc88)',
     example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(pcm2 :len 4 kick c c snare c c)',
   },
   {
     name: ':noise-rate', cat: 'score', section: '§19', tracks: null,
     syntax: ':noise-rate 1–31',
-    summary: 'pc88 only: the SSG\'s one noise period, song-wide; lower is higher, 9 to start. A sqr track hears it with :mode noise or both.',
+    summary: 'pc88 and x68k: the chip\'s one noise period, song-wide; lower is higher, 9 to start. On pc88 a sqr track hears it with :mode noise or both; on x68k the noise track.',
     insert: ':noise-rate 9',
     example: '(def-score :target pc88)\n(sqr1 :mode both :noise-rate 4 :len 8 c e :noise-rate (linear 4..31 :len 2) g e c e g e)',
   },
@@ -105,9 +112,9 @@ export const REFERENCE = [
 
   // ---- channels ------------------------------------------------------------
   {
-    name: 'fm1–fm6', aliases: ['fm1', 'fm2', 'fm3', 'fm4', 'fm5', 'fm6'], cat: 'channels', section: '§2', tracks: FM,
+    name: 'fm1–fm6', aliases: ['fm1', 'fm2', 'fm3', 'fm4', 'fm5', 'fm6', 'fm7', 'fm8'], cat: 'channels', section: '§2', tracks: FM,
     syntax: '(fm1 …)',
-    summary: 'The YM2612\'s six FM channels. A score that plays PCM owns fm6 as the DAC, so there an fm6 track is an error.',
+    summary: 'The YM2612\'s six FM channels. A score that plays PCM owns fm6 as the DAC, so there an fm6 track is an error. On x68k the YM2151 has eight, fm1–fm8.',
     insert: '(fm1 :len 8 c d e f)',
     example: '(fm1 :len 8 c d e f g a b > c)',
   },
@@ -121,7 +128,7 @@ export const REFERENCE = [
   {
     name: 'noise', ctx: 'track', cat: 'channels', section: '§2', tracks: PSG,
     syntax: '(noise :mode white0 …)',
-    summary: 'The PSG\'s noise channel. :mode white0–white3 or periodic0–periodic3 (sticky); 3 follows sqr3\'s pitch.',
+    summary: 'The PSG\'s noise channel. :mode white0–white3 or periodic0–periodic3 (sticky); 3 follows sqr3\'s pitch. On x68k it is fm8\'s fourth operator, its period the song\'s :noise-rate.',
     insert: '(noise :mode white2 :len 8 c c c c)',
     example: '(noise :mode white2 :len 8 (macro :vel [12 6 0]) c c c c c c c c)',
   },
@@ -294,6 +301,13 @@ export const REFERENCE = [
     summary: 'One operator\'s register: a value, a curve (a sweep), none (stop a sweep), $slot, or :tl1+ N / :tl1* R relative to its live value.',
     insert: ':tl1 30',
     example: '(fm1 :len 8 c e :tl1 (linear 0..60 :len 1) g e c e g e)',
+  },
+  {
+    name: ':dt2-1', aliases: [':dt2-2', ':dt2-3', ':dt2-4'], cat: 'fm', section: '§19', tracks: FM,
+    syntax: ':dt2-1–:dt2-4 0–3',
+    summary: 'x68k only: one operator\'s DT2, the YM2151\'s coarse detune (×1, ×1.41, ×1.57, ×1.73 on its multiple) — :dtN is its fine one. Inline, as a macro, or in a def-fm; a voice without it states 0.',
+    insert: ':dt2-1 1',
+    example: '(def-score :target x68k)\n(def-fm bell init-fm :alg 4 :ml1 3 :dt2-1 2 :tl1 30 :tl3 127)\n(fm1 bell :len 4 c e g e)',
   },
   {
     name: '(param-set …)', aliases: ['param-set'], cat: 'fm', section: '§5.1', tracks: null,

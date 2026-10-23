@@ -1,10 +1,10 @@
-# WASM Sound Cores (YM2612, PSG, YM2608)
+# WASM Sound Cores (YM2612, PSG, YM2608, YM2151)
 
 This folder holds the build scaffold for the chip cores MMLisp Live plays
-through: the Mega Drive's YM2612 (FM) and SEGA PSG, and the PC-8801's YM2608.
-The build emits single-file ES modules and syncs them to `live/nuked-opn2.js`,
-`live/nuked-psg.js` and `live/ymfm-ym2608.js`, which are the copies the app
-ships.
+through: the Mega Drive's YM2612 (FM) and SEGA PSG, the PC-8801's YM2608 and
+the X68000's YM2151. The build emits single-file ES modules and syncs them to
+`live/nuked-opn2.js`, `live/nuked-psg.js`, `live/ymfm-ym2608.js` and
+`live/ymfm-ym2151.js`, which are the copies the app ships.
 
 Chosen cores:
 
@@ -14,8 +14,8 @@ Chosen cores:
   the same core Furnace exposes as its accurate PSG option.
   License: GPL-2.0-or-later.
 - `ymfm` by Aaron Giles — the YM2608 (OPNA): FM, SSG, the rhythm (ADPCM-A)
-  and the ADPCM-B, the chip MAME runs. Only the OPN family's files are
-  vendored. License: BSD-3-Clause.
+  and the ADPCM-B, and the YM2151 (OPM), the chips MAME runs. Only the OPN
+  and OPM families' files are vendored. License: BSD-3-Clause.
 
 Local source layout:
 
@@ -30,6 +30,7 @@ third_party/
   ymfm/
     ymfm.h  ymfm_fm.h  ymfm_fm.ipp
     ymfm_opn.h  ymfm_opn.cpp
+    ymfm_opm.h  ymfm_opm.cpp
     ymfm_ssg.h  ymfm_ssg.cpp
     ymfm_adpcm.h  ymfm_adpcm.cpp
 ```
@@ -41,10 +42,12 @@ wasm/dist/
   nuked-opn2.js
   nuked-psg.js
   ymfm-ym2608.js
+  ymfm-ym2151.js
 live/
    nuked-opn2.js
    nuked-psg.js
    ymfm-ym2608.js
+   ymfm-ym2151.js
 ```
 
 Build prerequisites:
@@ -58,6 +61,7 @@ Build:
 wasm/build-nuked.sh   # FM (YM2612)
 wasm/build-psg.sh     # PSG (SN76489)
 wasm/build-ym2608.sh  # YM2608 (ymfm)
+wasm/build-ym2151.sh  # YM2151 (ymfm)
 ```
 
 If `emcc` aborts with a Python syntax error, point Emscripten at a modern
@@ -74,12 +78,15 @@ Integration notes:
    handing out FM + rhythm + ADPCM-B (stereo) and the SSG apart. It reads
    the rhythm ROM and the ADPCM-B's RAM through the host, from buffers the
    caller fills; with no ROM loaded the rhythm is not keyed.
-2. `build-nuked.sh` / `build-psg.sh` / `build-ym2608.sh` build single-file ES modules for
+   `wasm/ym2151_adapter.cpp` runs ymfm's YM2151 at its own rate (clock / 64),
+   stereo, with each channel's output beside it for the scope.
+2. `build-nuked.sh` / `build-psg.sh` / `build-ym2608.sh` / `build-ym2151.sh` build single-file ES modules for
    AudioWorklet loading, and sync copies to `live/` for static deploys
    that only publish the `live/` directory.
 3. `live/src/synth-md.js` imports the generated modules (`../nuked-opn2.js`,
-   `../nuked-psg.js`) and `live/src/synth-pc88.js` imports
-   `../ymfm-ym2608.js`; the worklet and the WAV export both run the chips
+   `../nuked-psg.js`), `live/src/synth-pc88.js` imports
+   `../ymfm-ym2608.js` and `live/src/synth-x68k.js` `../ymfm-ym2151.js`; the
+   worklet and the WAV export both run the chips
    through them, the score's target picking which.
 
 Notes:

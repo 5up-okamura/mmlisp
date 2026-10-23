@@ -47,7 +47,7 @@ import { expandLoops } from "./ir-utils.js";
 export const VOICE_TARGETS = new Set([
   "FM_ALG", "FM_FB", "FM_AMS", "FM_FMS",
   ...[1, 2, 3, 4].flatMap((op) =>
-    ["AR", "DR", "SR", "RR", "SL", "TL", "KS", "ML", "DT", "SSG", "AMEN"].map((k) => `FM_${k}${op}`)),
+    ["AR", "DR", "SR", "RR", "SL", "TL", "KS", "ML", "DT", "SSG", "AMEN", "DT2_"].map((k) => `FM_${k}${op}`)),
 ]);
 // What moves with a voice: the channel's own settings written before the note
 // (`:vel`, `:vol`, `:pan`, `:pitch`, `:snap`), which would otherwise rewrite
@@ -161,7 +161,7 @@ function peelLoopRest(out, e) {
  */
 export function hoistVoiceChanges(tracks, {
   ppqn = 96, restFrames = 4, noteFrames = 2, cutTail = false,
-  fmChannels = new Set(targetProfile().headsOf("fm")), // the target's FM tracks (targets/)
+  fmChannels = new Set(targetProfile().headsOfKind("fm")), // the target's FM tracks (targets/)
 } = {}) {
   const tpf = maxTicksPerFrame(tracks, ppqn);
   const G = Math.ceil(tpf); // one frame in ticks, on either standard

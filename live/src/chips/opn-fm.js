@@ -9,7 +9,7 @@ export const opnFm = {
   label: "OPN FM",
   kind: "fm",
   level: { stepDb: 0.75, steps: 128 },
-  words: words(/^FM_/, "PAN"),
+  words: words(/^FM_(?!DT2_)/, "PAN"), // DT2 is the OPM's
   songWords: words("LFO_RATE"),
 };
 

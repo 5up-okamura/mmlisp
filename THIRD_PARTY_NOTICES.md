@@ -61,11 +61,13 @@ Licenses dialog links it.
 - Copyright: (c) 2021, Aaron Giles
 - License: BSD-3-Clause
 
-Included files (the YM2608's: OPN family FM, SSG, ADPCM-A/B):
+Included files (the YM2608's: OPN family FM, SSG, ADPCM-A/B; the YM2151's:
+OPM):
 
 - `third_party/ymfm/ymfm.h`
 - `third_party/ymfm/ymfm_fm.h`, `ymfm_fm.ipp`
 - `third_party/ymfm/ymfm_opn.h`, `ymfm_opn.cpp`
+- `third_party/ymfm/ymfm_opm.h`, `ymfm_opm.cpp`
 - `third_party/ymfm/ymfm_ssg.h`, `ymfm_ssg.cpp`
 - `third_party/ymfm/ymfm_adpcm.h`, `ymfm_adpcm.cpp`
 - `third_party/ymfm/README.md`
@@ -76,6 +78,9 @@ Local integration files in this repository:
 - `wasm/ym2608_adapter.cpp`
 - `wasm/build-ym2608.sh`
 - `live/ymfm-ym2608.js` (the built WASM wrapper this repository ships)
+- `wasm/ym2151_adapter.cpp`
+- `wasm/build-ym2151.sh`
+- `live/ymfm-ym2151.js` (the built WASM wrapper this repository ships)
 
 The upstream license text is preserved at `third_party/ymfm/LICENSE`; keep it
 with any distribution that includes the generated wrapper.

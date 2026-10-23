@@ -84,7 +84,7 @@ const OP_MACRO_MAP = [
   ["fm_ams", "FM_AMS"],
   ["fm_fms", "FM_FMS"],
   ...[1, 2, 3, 4].flatMap((op) =>
-    ["TL", "AR", "DR", "SR", "RR", "SL", "ML", "DT", "KS", "AMEN", "SSG"].map(
+    ["TL", "AR", "DR", "SR", "RR", "SL", "ML", "DT", "KS", "AMEN", "SSG", "DT2_"].map(
       (f) => [`fm_${f.toLowerCase()}${op}`, `FM_${f}${op}`],
     ),
   ),
@@ -93,7 +93,7 @@ const OP_MACRO_MAP = [
 // An FM operator target's field in the shadow register file (_readParam).
 const OP_REG_FIELD = {
   TL: "voicedTl", AR: "ar", DR: "dr", SR: "d2r", RR: "rr",
-  SL: "sl", ML: "mul", DT: "dt", KS: "rs", AMEN: "amen", SSG: "ssg",
+  SL: "sl", ML: "mul", DT: "dt", KS: "rs", AMEN: "amen", SSG: "ssg", DT2_: "dt2",
 };
 
 export function songOrEffectIr(ir, se) {
@@ -185,9 +185,9 @@ export class IRPlayer {
    */
   constructor(writeCallback) {
     this._target = targetProfile(); // until a score says otherwise (_loadIR)
-    this._fmChip = this._target.chipFor("fm");
+    this._fmChip = this._target.chipForKind("fm");
     this._fmEnc = this._fmChip.fmEncoder(); // the FM's registers (chips/)
-    this._psgChip = this._target.chipForKind("tone")?.psgEncoder() ?? null; // null: a target with no PSG
+    this._psgChip = this._psgChipOf(this._target); // null: a target with no PSG
     this._trackPart = new Map(); // trackIndex → its part (chips/parts.js)
     this._write = writeCallback;
     this._ir = null;
@@ -381,9 +381,9 @@ export class IRPlayer {
     const why = notYet(target, "encode");
     if (why) throw new Error(why);
     this._target = target;
-    this._fmChip = target.chipFor("fm");
+    this._fmChip = target.chipForKind("fm");
     this._fmEnc = this._fmChip.fmEncoder();
-    this._psgChip = target.chipForKind("tone")?.psgEncoder() ?? null; // one per score: it may keep state
+    this._psgChip = this._psgChipOf(target); // one per score: it may keep state
     this._psgStepDb = target.parts.find((p) => p.kind === "tone")?.level.stepDb ?? 2;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
     // mixer's mute has to hold the timer rather than key the channel off.
@@ -3307,7 +3307,7 @@ export class IRPlayer {
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
     if (fm3Op && t === "NOTE_PITCH") return this._fm3Op[fm3Op - 1].offset;
-    const m = t.match(/^FM_([A-Z]+)([1-4])$/);
+    const m = t.match(/^FM_([A-Z]+(?:2_)?)([1-4])$/);
     if (m) {
       const f = OP_REG_FIELD[m[1]];
       return f ? (regs.ops[+m[2] - 1]?.[f] ?? 0) : 0;
@@ -3481,6 +3481,29 @@ export class IRPlayer {
         const rate = Math.max(0, Math.min(8, Math.round(value)));
         this._lfoRate = rate;
         this._fmWrites(this._fmEnc.lfo(rate), when);
+        break;
+      }
+      // The OPM's own LFO (chips/ym2151.js).
+      case "LFO_FREQ":
+        this._fmWrites(this._fmEnc.lfoFreq?.(Math.round(value)) ?? [], when);
+        break;
+      case "LFO_PMD":
+        this._fmWrites(this._fmEnc.lfoPmd?.(Math.round(value)) ?? [], when);
+        break;
+      case "LFO_AMD":
+        this._fmWrites(this._fmEnc.lfoAmd?.(Math.round(value)) ?? [], when);
+        break;
+      case "LFO_WAVE":
+        this._fmWrites(this._fmEnc.lfoWave?.(Math.round(value)) ?? [], when);
+        break;
+      case "FM_DT2_1":
+      case "FM_DT2_2":
+      case "FM_DT2_3":
+      case "FM_DT2_4": {
+        // The OPM's second detune, beside the operator's SR.
+        const opIdx = parseInt(target[7]) - 1;
+        set((v) => { regs.ops[opIdx].dt2 = v; }, 0, 3);
+        this._fmOp(ch, opIdx, "sr", when);
         break;
       }
       case "FM_RR1":
@@ -4721,6 +4744,11 @@ export class IRPlayer {
   _psgWrites(writes, when) {
     for (const [port, addr, data] of writes) this._write(port, addr, data & 0xff, when);
   }
+  // The target's PSG encoder: its tone chip's, or a noise alone (the OPM's,
+  // chips/ym2151.js), or null.
+  _psgChipOf(target) {
+    return (target.chipForKind("tone") ?? target.chipForKind("noise"))?.psgEncoder() ?? null;
+  }
   // A PSG write on a target with no PSG (its encoder is null) is nothing.
   _psg(encode) {
     return this._psgChip ? encode(this._psgChip) : [];
@@ -5480,6 +5508,7 @@ export class IRPlayer {
           rs: 0,
           amen: 0,
           ssg: 0,
+          dt2: 0,
         };
         for (const reg of ["dt-ml", "tl", "ks-ar", "am-dr", "sr", "sl-rr", "ssg-eg"]) this._fmOp(ch, slot, reg);
       }

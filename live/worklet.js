@@ -11,7 +11,7 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *         write, without it the write applies at the next block; `preview`
  *         marks a key's audition write, which a hold does not swallow and
  *         the song's register shadow does not record
- *   { type: 'hold-ch', ch: 0-5, on: boolean }  — the keys hold an FM channel
+ *   { type: 'hold-ch', ch: 0-7, on: boolean }  — the keys hold an FM channel
  *       over a playing song (index.html previewTake)
  *   { type: 'pcm-set-bank', bank: Uint8Array|null, pcmVoices: 0-3, entryIds: {"name|midi": id} }
  *       — the score's baked sample bank (the one an export ships), which the
@@ -25,9 +25,10 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'scope-enable', on: boolean }
  *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
- *   { type: 'set-machine', name: 'md'|'pc88' }  — the synth the writes play
- *       on (src/synth-md.js, src/synth-pc88.js); a pc88's ports 0/1 are the
- *       YM2608's two address spaces. Answered with { type: 'machine', name }
+ *   { type: 'set-machine', name: 'md'|'pc88'|'x68k' }  — the synth the writes
+ *       play on (src/synth-md.js, src/synth-pc88.js, src/synth-x68k.js); a
+ *       pc88's ports 0/1 are the YM2608's two address spaces, an x68k's port 0
+ *       the YM2151's one. Answered with { type: 'machine', name }
  *       once that synth plays (its core may still be loading)
  *   { type: 'adpcm-ram', image: Uint8Array|null }  — the YM2608's ADPCM-B RAM
  *   { type: 'rhythm-rom', rom: Uint8Array|null }  — the YM2608's rhythm ROM
@@ -54,13 +55,15 @@ import {
   SCOPE_PCM_CHANNELS,
 } from "./src/synth-md.js";
 import { Pc88Synth, SCOPE_LANES as PC88_SCOPE_LANES, YM2608_NATIVE_SAMPLE_RATE } from "./src/synth-pc88.js";
+import { X68kSynth } from "./src/synth-x68k.js";
+import { kcToHz } from "./src/chips/ym2151.js";
 
 // The most scope lanes a machine has (the pc88's), for the latches.
 const SCOPE_MAX = Math.max(SCOPE_CHANNELS, PC88_SCOPE_LANES);
 const YM2608_SSG_CLOCK = YM2608_NATIVE_SAMPLE_RATE * 144 / 4;
 
 // The machines' synth cores, by target name.
-const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth };
+const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth };
 
 // PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3 — the
 // preview must sound like the driver): the same voice model the 68000
@@ -89,6 +92,37 @@ function ymWriteChannel(port, addr, data) {
   if (port === 0 && addr >= 0xa8 && addr < 0xb0) return 2;
   return -1;
 }
+
+// How a machine's FM writes name their channel and its key, and which of
+// its registers a held channel replays, in order, when the song takes it
+// back (_replaySongRegs): the OPN's (md, pc88) and the OPM's (x68k).
+const OPN_BUS = {
+  channelOf: ymWriteChannel,
+  isKey: (a) => a === 0x28,
+  keyOn: (d) => (d & 0xf0) !== 0,
+  // Operators, $B0/$B4, then the F-numbers high byte first (CH3's operator
+  // ones too).
+  replay(ch) {
+    const p = ch >= 3 ? 1 : 0, c = ch % 3, list = [];
+    for (let a = 0x30 + c; a < 0xa0; a += 4) list.push([p, a]);
+    list.push([p, 0xb0 + c], [p, 0xb4 + c], [p, 0xa4 + c], [p, 0xa0 + c]);
+    if (ch === 2) for (const a of [0xac, 0xa8, 0xad, 0xa9, 0xae, 0xaa]) list.push([0, a]);
+    return list;
+  },
+};
+const OPM_BUS = {
+  channelOf: (_p, a, d) => (a === 0x08 ? d & 7 : a >= 0x20 ? a & 7 : -1),
+  isKey: (a) => a === 0x08,
+  keyOn: (d) => (d & 0x78) !== 0,
+  // Operators, $20/$38, then KC and KF.
+  replay(ch) {
+    const list = [];
+    for (let a = 0x40 + ch; a < 0x100; a += 8) list.push([0, a]);
+    list.push([0, 0x20 + ch], [0, 0x38 + ch], [0, 0x28 + ch], [0, 0x30 + ch]);
+    return list;
+  },
+};
+const BUSES = { md: OPN_BUS, pc88: OPN_BUS, x68k: OPM_BUS };
 
 class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
@@ -149,6 +183,8 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._scopeFreq = new Float64Array(SCOPE_MAX); // Hz, 0 = unknown
     this._ssgPeriod = new Uint16Array(3); // the YM2608's SSG tone periods
     this._fmFnumHi = new Uint8Array(6); // latched 0xA4+c (block/fnum-hi)
+    this._opmKc = new Uint8Array(8); // the YM2151's KC and KF, $28+c / $30+c
+    this._opmKf = new Uint8Array(8);
     this._psgTone = new Uint16Array(3); // 10-bit tone periods
     this._psgLatch = 0; // last PSG latch byte
 
@@ -162,7 +198,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     // for the song's next key-on — the preview's release rings until then —
     // and that key-on lands on the song's registers replayed first.
     // 0 = the song's, 1 = held, 2 = let go (the song's at its next key-on).
-    this._chHold = new Uint8Array(6);
+    this._chHold = new Uint8Array(8);
     this._songRegs = [new Int16Array(256).fill(-1), new Int16Array(256).fill(-1)];
 
     // DAC byte provider handed to the synth, once per FM native sample: the
@@ -207,7 +243,7 @@ class YM2612Processor extends AudioWorkletProcessor {
         }
       } else if (msg.type === "hold-ch") {
         const ch = msg.ch | 0;
-        if (ch >= 0 && ch < 6) this._chHold[ch] = msg.on ? 1 : this._chHold[ch] ? 2 : 0;
+        if (ch >= 0 && ch < 8) this._chHold[ch] = msg.on ? 1 : this._chHold[ch] ? 2 : 0;
       } else if (msg.type === "pcm-set-bank") {
         this._setPcmBank(msg);
       } else if (msg.type === "pcm-ev") {
@@ -346,10 +382,11 @@ class YM2612Processor extends AudioWorkletProcessor {
       return;
     }
     if (!preview) {
-      if (a !== 0x28) this._songRegs[p & 1][a] = d;
-      const ch = ymWriteChannel(p, a, d);
+      const bus = BUSES[this._machine];
+      if (!bus.isKey(a)) this._songRegs[p & 1][a] = d;
+      const ch = bus.channelOf(p, a, d);
       if (ch >= 0 && this._chHold[ch] !== 0) {
-        if (this._chHold[ch] === 1 || a !== 0x28 || (d & 0xf0) === 0) return;
+        if (this._chHold[ch] === 1 || !bus.isKey(a) || !bus.keyOn(d)) return;
         this._chHold[ch] = 0;
         this._replaySongRegs(ch);
       }
@@ -359,23 +396,14 @@ class YM2612Processor extends AudioWorkletProcessor {
   }
 
   // A held channel going back to the song: every register of it the song has
-  // written, as the song last left it — operators, $B0/$B4, then the
-  // F-numbers high byte first (CH3's operator ones too).
+  // written, as the song last left it (the machine's BUSES order).
   _replaySongRegs(ch) {
-    const p = ch >= 3 ? 1 : 0;
-    const c = ch % 3;
-    const r = this._songRegs[p];
-    const put = (a) => {
-      if (r[a] < 0) return;
-      this._latchYmPitch(p, a, r[a]);
-      this._synth.writeYM(p, a, r[a]);
-    };
-    for (let a = 0x30 + c; a < 0xa0; a += 4) put(a);
-    put(0xb0 + c);
-    put(0xb4 + c);
-    put(0xa4 + c);
-    put(0xa0 + c);
-    if (ch === 2) for (const a of [0xac, 0xa8, 0xad, 0xa9, 0xae, 0xaa]) put(a);
+    for (const [p, a] of BUSES[this._machine].replay(ch)) {
+      const v = this._songRegs[p][a];
+      if (v < 0) continue;
+      this._latchYmPitch(p, a, v);
+      this._synth.writeYM(p, a, v);
+    }
   }
 
   // True while a backend has DAC bytes queued for this block. Each is meant for
@@ -398,6 +426,14 @@ class YM2612Processor extends AudioWorkletProcessor {
   // FM pitch latch: 0xA4+c holds block/fnum-hi until the 0xA0+c write applies
   // the pair (hardware latch order). Channel = port*3 + register offset.
   _latchYmPitch(port, addr, data) {
+    // The YM2151's KC ($28+c) and KF ($30+c).
+    if (this._machine === "x68k") {
+      if (addr < 0x28 || addr >= 0x38) return;
+      const ch = addr & 7;
+      (addr < 0x30 ? this._opmKc : this._opmKf)[ch] = data;
+      this._scopeFreq[ch] = kcToHz(this._opmKc[ch], this._opmKf[ch]);
+      return;
+    }
     // The YM2608's SSG: a channel's 12-bit tone period, $00-$05.
     if (this._machine === "pc88" && port === 0 && addr < 6) {
       const ch = addr >> 1;
