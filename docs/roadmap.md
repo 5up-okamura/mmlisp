@@ -137,8 +137,6 @@ In order:
      notes, Delta-N, level, pan, `D` (as `:pitch`) and `vm<n>` match;
      mucom's Delta-N table, which runs a few cents sharp of equal
      temperament (`+200` on every note), is not reproduced.
-   - **The preview's scope**: ymfm gives no per-channel outputs, so the
-     oscilloscope stays blank on a `pc88` score.
 2. **X68000 (YM2151 + MSM6258).** OPM voices convert from OPN with DT2 = 0
    and SSG-EG dropped; KC/KF pitch and channel 8's noise are the profile's.
    PCM8 is a software mixer, not a chip, so the export does its job: pcm1-3

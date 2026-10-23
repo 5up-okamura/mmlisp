@@ -6605,23 +6605,52 @@
     // channel order (targets/). fm3-csm-rate (Timer-A control) has no strip of
     // its own — it folds into the single "fm3-csm" (csm) strip, which targets
     // the sounding fm3-csm track.
+    //
+    // The YM2608's sample voices are the mixer's strips there, not the tracks
+    // that key them: pcm1 is the ADPCM-B, and the rhythm tracks give way to
+    // one strip per ROM sound the score plays (BD … RIM), whichever track hits
+    // it — so one sound mutes, solos or fades alone. Each carries `voice`
+    // (IRPlayer muteVoice / soloVoice / setVoiceVol) and its scope lane.
+    const RHYTHM_STRIPS = ['bd', 'sd', 'top', 'hh', 'tom', 'rim'];
     function buildChStripModel(ir) {
       const tracks = ir?.tracks ?? [];
-      const order = targetProfile(ir?.metadata?.target).channelNames.filter((h) => h !== 'fm3-csm-rate');
+      const target = targetProfile(ir?.metadata?.target);
+      const order = target.channelNames.filter((h) => h !== 'fm3-csm-rate');
       const headToTrack = new Map();
       tracks.forEach((t, ti) => {
         const head = t.scoreChannel ?? t.channel;
         if (head != null && !headToTrack.has(head)) headToTrack.set(head, ti);
       });
+      const rhythmHeads = new Set(target.hasPart('rhythm') ? target.headsOf('rhythm') : []);
+      const soundOf = new Map((ir?.metadata?.samples ?? []).filter((d) => d.rhythm).map((d) => [d.name, d.rhythm]));
+      const sounds = new Set();
+      const rhythmTracks = [];
+      tracks.forEach((t, ti) => {
+        if (!rhythmHeads.has(t.scoreChannel ?? t.channel)) return;
+        rhythmTracks.push(ti);
+        for (const e of t.events ?? []) if (e.cmd === 'PCM_NOTE_ON' && soundOf.has(e.args?.sample)) sounds.add(soundOf.get(e.args.sample));
+      });
       const model = [];
+      let rhythmDone = false;
       for (const head of order) {
         if (!headToTrack.has(head)) continue;
-        model.push({
-          head,
-          label: channelLabelOf(head),
-          trackIndex: headToTrack.get(head),
-          ...channelRouting(head),
-        });
+        if (rhythmHeads.has(head)) {
+          if (rhythmDone) continue;
+          rhythmDone = true;
+          RHYTHM_STRIPS.forEach((sound, k) => {
+            if (!sounds.has(sound)) return;
+            // The roll's row: this sound's hits, from every rhythm track.
+            const samples = new Set([...soundOf].filter(([, r]) => r === sound).map(([n]) => n));
+            model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), voice: sound, scope: 11 + k,
+              volKind: 'voice', volIndex: null, selIndex: null, trackIndex: rhythmTracks[0], rhythmTracks, samples });
+          });
+          continue;
+        }
+        const entry = { head, label: channelLabelOf(head), trackIndex: headToTrack.get(head), ...channelRouting(head) };
+        // pc88's pcm1: the ADPCM-B voice, on its own scope lane.
+        if (target.hasPart('adpcm-b') && channelVoice(head)?.part.name === 'adpcm-b')
+          Object.assign(entry, { voice: 'adpcm', scope: 10, volKind: 'voice' });
+        model.push(entry);
       }
       return model;
     }
@@ -6918,19 +6947,28 @@
       for (const name in _dynVals) player.setVal(name, _dynVals[name]);
     }
 
+    // A strip's mute / solo onto the player: a voice strip's (the YM2608's
+    // sample voices) by voice, the rest by track.
+    function applyMute(p, entry, on) {
+      if (entry?.voice) p?.muteVoice?.(entry.voice, on);
+      else if (entry?.trackIndex != null) p?.muteTrack(entry.trackIndex, on);
+    }
+    function applySolo(p, entry, on) {
+      if (entry?.voice) p?.soloVoice?.(entry.voice, on);
+      else if (entry?.trackIndex != null) p?.soloTrack(entry.trackIndex, on);
+    }
+
     function toggleMute(head) {
       const on = !_mutedChannels.has(head);
       if (on) _mutedChannels.add(head); else _mutedChannels.delete(head);
-      const ti = _trackIndexOf(head);
-      if (ti != null) player?.muteTrack(ti, on);
+      applyMute(player, _chStripModel.find((e) => e.head === head), on);
       renderChStrips();
     }
 
     function toggleSolo(head) {
       const on = !_soloChannels.has(head);
       if (on) _soloChannels.add(head); else _soloChannels.delete(head);
-      const ti = _trackIndexOf(head);
-      if (ti != null) player?.soloTrack(ti, on);
+      applySolo(player, _chStripModel.find((e) => e.head === head), on);
       renderChStrips();
     }
 
@@ -6941,7 +6979,8 @@
       // PCM track gain is an IR-player mixer feature: the MMLispDRV reference
       // soft-mixes PCM into the DAC itself and has no per-track gain, so this
       // no-ops there rather than throwing.
-      if (entry.volKind === 'pcm') player.setPcmTrackVol?.(entry.trackIndex, vol);
+      if (entry.volKind === 'voice') player.setVoiceVol?.(entry.voice, vol);
+      else if (entry.volKind === 'pcm') player.setPcmTrackVol?.(entry.trackIndex, vol);
       else if (entry.volKind === 'psg') player.setPsgVol(entry.volIndex, vol);
       else if (entry.volIndex != null) player.setParam('VOL', vol, entry.volIndex);
     }
@@ -7025,8 +7064,8 @@
       // The guard stays for param-only//stub players that lack the API.
       const supportsVol = typeof p.setParam === 'function';
       for (const entry of _chStripModel) {
-        if (_mutedChannels.has(entry.head)) p.muteTrack(entry.trackIndex, true);
-        if (_soloChannels.has(entry.head)) p.soloTrack(entry.trackIndex, true);
+        if (_mutedChannels.has(entry.head)) applyMute(p, entry, true);
+        if (_soloChannels.has(entry.head)) applySolo(p, entry, true);
         const vol = _channelVol.get(entry.head);
         if (vol != null && supportsVol) setChannelVolLive(entry, vol);
       }
@@ -11165,7 +11204,10 @@
     function buildVizNotes(getEvents) {
       const model = [];
       for (const entry of _chStripModel) {
-        const evs = getEvents(entry.trackIndex);
+        const evs = entry.rhythmTracks
+          ? entry.rhythmTracks.flatMap((ti) => getEvents(ti) ?? [])
+            .filter((ev) => entry.samples.has(ev.args?.sample)).sort((a, b) => a.tick - b.tick)
+          : getEvents(entry.trackIndex);
         if (!evs) continue;
         const notes = [];
         let lo = 127, hi = 0;
@@ -11835,7 +11877,7 @@
     // Channel order is fixed: 0-5 FM 1-6 (FM6 carries the DAC while PCM
     // plays — the sum of the PCM voices), 6-8 PSG tone, 9 noise, 10-12 PCM
     // voices 1-3 (pcm1-pcm3, each its own term of the DAC byte).
-    const SCOPE_CH = 13;
+    const SCOPE_CH = 17; // the most lanes a synth posts (synth-pc88.js SCOPE_LANES)
     const SCOPE_RING = 16384;       // ~340ms at 48k: 2+ periods of any audible pitch
     const SCOPE_DISPLAY_GAIN = 10;  // mix-contribution units → pane half-height
     const _scopeRings = Array.from({ length: SCOPE_CH }, () => new Float32Array(SCOPE_RING));
@@ -11901,6 +11943,8 @@
     // track shows FM6's tap, their sum. The fm3 variants share hardware FM3.
     let _scopePcmVoices = false; // the latest batch's taps 10-12 are live
     function scopeChannelOf(head) {
+      const lane = _chStripModel.find((e) => e.head === head)?.scope;
+      if (lane != null) return lane;
       const r = channelRouting(head);
       if (r.volKind === 'pcm') return _scopePcmVoices ? 10 + Number(head.slice(3)) - 1 : 5;
       if (r.volKind === 'psg') return 6 + r.volIndex;

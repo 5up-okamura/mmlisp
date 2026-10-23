@@ -287,6 +287,11 @@ export class IRPlayer {
     // soloed tracks sound.
     this._mutedTracks = new Set();
     this._soloTracks = new Set();
+    // The YM2608's sample voices as the mixer has them: the six rhythm sounds
+    // ("bd" … "rim") and the ADPCM-B ("adpcm"), whichever track keys them.
+    this._mutedVoices = new Set();
+    this._soloVoices = new Set();
+    this._voiceUiVol = new Map(); // voice → the mixer's vol 0-31
 
     // Channels holding a note until triggerKeyOff() (`:len 0` or `:gate 0`):
     // channel id → the track that keyed it.
@@ -776,10 +781,33 @@ export class IRPlayer {
     this._applyAudibility();
   }
 
+  /**
+   * Mute, solo or set the mixer level of one of the YM2608's sample voices
+   * ("bd" "sd" "top" "hh" "tom" "rim", "adpcm"): the mixer's strip for a
+   * rhythm sound is the sound, whichever pc88 track hits it.
+   */
+  muteVoice(voice, muted) {
+    if (muted) this._mutedVoices.add(voice);
+    else this._mutedVoices.delete(voice);
+    this._applyAudibility();
+  }
+
+  soloVoice(voice, on) {
+    if (on) this._soloVoices.add(voice);
+    else this._soloVoices.delete(voice);
+    this._applyAudibility();
+  }
+
+  setVoiceVol(voice, vol) {
+    this._voiceUiVol.set(voice, Math.max(0, Math.min(31, Math.round(vol))));
+  }
+
   /** Clear all mute and solo state. */
   clearChannelStates() {
     this._mutedTracks.clear();
     this._soloTracks.clear();
+    this._mutedVoices.clear();
+    this._soloVoices.clear();
     // No note is sounding on a freshly (re)configured player, so a subsequent
     // master/vol preamble must not re-write a non-silent att to any PSG channel.
     this._psgSounding.fill(false);
@@ -787,8 +815,14 @@ export class IRPlayer {
 
   /** Whether a track currently sounds (solo overrides mute). */
   _isTrackAudible(ti) {
-    if (this._soloTracks.size > 0) return this._soloTracks.has(ti);
+    if (this._soloTracks.size > 0 || this._soloVoices.size > 0) return this._soloTracks.has(ti);
     return !this._mutedTracks.has(ti);
+  }
+
+  /** Whether a YM2608 sample voice sounds: its own strip's mute and solo. */
+  _isVoiceAudible(voice) {
+    if (this._soloTracks.size > 0 || this._soloVoices.size > 0) return this._soloVoices.has(voice);
+    return !this._mutedVoices.has(voice);
   }
 
   /**
@@ -837,6 +871,13 @@ export class IRPlayer {
     }
     // CSM: Timer A keys CH3, so muting the CSM voice holds the timer instead.
     if (this._reg27 & 0x80) this._writeReg27(when);
+    // The YM2608's sample voices: dump a rhythm sound, stop the ADPCM-B.
+    const chip = this._target?.chipFor?.("rhythm") ?? this._target?.chipFor?.("adpcm-b");
+    for (const voice of this._chipPcm?.hits.keys() ?? []) {
+      if (this._isVoiceAudible(voice)) continue;
+      const writes = voice === "adpcm" ? chip.adpcm.stop() : chip.rhythm.dump(voice);
+      for (const [p, a, d] of writes) this._write(p, a, d, when);
+    }
   }
 
   /**
@@ -869,6 +910,8 @@ export class IRPlayer {
    */
   setPcmTrackVol(trackIndex, vol) {
     if (trackIndex == null) return;
+    // pc88's pcm1 is the chip's ADPCM-B, not a voice of the worklet's engine.
+    if (this._trackPart?.get(trackIndex)?.name === "adpcm-b") return this.setVoiceVol("adpcm", vol);
     this._write({
       type: "pcm-set-vol",
       track: trackIndex,
@@ -2734,7 +2777,7 @@ export class IRPlayer {
   _chipPcmHit(voice, ev, when, end, fields, key) {
     const st = this._chipPcmState();
     const { keyon, velMacro, vol: volMacro, pitchMacro, note_semi: semiMacro } = ev.args ?? {};
-    const hit = { t: when, end, ti: ev._trackIndex, vel: Number(ev.args?.vel ?? 15), velLine: null, volLine: null, ...fields };
+    const hit = { t: when, end, voice, ti: ev._trackIndex, vel: Number(ev.args?.vel ?? 15), velLine: null, volLine: null, ...fields };
     const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const { secs: nextNote } = this._nextNote(ev);
@@ -2773,6 +2816,7 @@ export class IRPlayer {
   // A hit's level at `when`: { vel, vol, master }.
   _chipPcmLevelAt(hit, when) {
     return {
+      ui: this._voiceUiVol.get(hit.voice) ?? VOL_UNITY,
       vel: this._lineAt(hit.velLine, when) ?? hit.vel,
       vol: this._lineAt(hit.volLine, when) ?? this._chipPcmParamAt(hit.ti, "vol", when),
       master: lineEntryAt(this._chipPcm.master, when)?.v ?? VOL_UNITY,
@@ -2790,12 +2834,12 @@ export class IRPlayer {
 
   // The rhythm's attenuation in IL steps (0.75 dB, as an FM carrier's TL) and
   // the ADPCM-B's linear level, from vel + vol + master.
-  static _rhythmAtt({ vel, vol, master }) {
-    return sumLevelOffsets(velToTlAtten(velFine(vel)), volToTlOffset(vol), volToTlOffset(master));
+  static _rhythmAtt({ vel, vol, master, ui }) {
+    return sumLevelOffsets(velToTlAtten(velFine(vel)), volToTlOffset(vol), volToTlOffset(master), volToTlOffset(ui));
   }
-  static _adpcmLevel({ vel, vol, master }) {
-    if (vol <= 0 || master <= 0) return 0;
-    const db = 2 * (15 - velFine(vel)) + 2 * (VOL_UNITY - vol) + 2 * (VOL_UNITY - master);
+  static _adpcmLevel({ vel, vol, master, ui }) {
+    if (vol <= 0 || master <= 0 || ui <= 0) return 0;
+    const db = 2 * (15 - velFine(vel)) + 2 * (VOL_UNITY - vol) + 2 * (VOL_UNITY - master) + 2 * (VOL_UNITY - ui);
     return Math.round(255 * 10 ** (-db / 20));
   }
 
@@ -2832,7 +2876,7 @@ export class IRPlayer {
           // Turned off, or falling below what the IL reaches: the sound stops.
           const falling = att > (h.lastAtt ?? h.att);
           h.lastAtt = att;
-          if (lv.vol <= 0 || lv.master <= 0 || (att > 31 && falling)) {
+          if (lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0 || (att > 31 && falling)) {
             h.dumped = true;
             for (const [p, a, d] of chip.rhythm.dump(voice)) this._write(p, a, d, t);
             continue;
@@ -2865,7 +2909,7 @@ export class IRPlayer {
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
         const entry = this._adpcmBank?.entries?.[ev.args?.sample];
-        if (!entry || !this._isTrackAudible(ti)) break;
+        if (!entry || !this._isTrackAudible(ti) || !this._isVoiceAudible("adpcm")) break;
         const ratio = 2 ** ((pitchToMidi(ev.args?.pitch ?? "c4") - 60) / 12);
         const frames = (sec) => sec * entry.rate * ratio;
         const UNIT_FRAMES = 8;
@@ -2928,11 +2972,11 @@ export class IRPlayer {
     const sound = this._ir?.metadata?.samples?.find((s) => s.name === ev.args?.sample)?.rhythm;
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
-        if (!sound || !this._isTrackAudible(ti)) break;
+        if (!sound || !this._isVoiceAudible(sound)) break;
         this._chipPcmHit(sound, ev, when, when + ROM_SOUND_SEC[sound], { pan: st.pan }, (t, h) => {
           const lv = this._chipPcmLevelAt(h, t);
           // A hit at :vol 0 is silence: it takes the sound from an earlier one.
-          const silent = lv.vol <= 0 || lv.master <= 0;
+          const silent = lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0;
           h.dumped = silent;
           h.att = IRPlayer._rhythmAtt(lv);
           h.il = 31 - Math.min(31, h.att);

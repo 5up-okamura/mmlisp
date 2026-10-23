@@ -44,7 +44,7 @@ em++ \
   -s ENVIRONMENT=web,worker \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s FILESYSTEM=0 \
-  -s EXPORTED_FUNCTIONS='["_malloc","_free","_y8_init","_y8_reset","_y8_write_reg","_y8_render","_y8_get_buffer_ptr","_y8_get_rom_ptr","_y8_set_rom_loaded","_y8_get_ram_ptr"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free","_y8_init","_y8_reset","_y8_write_reg","_y8_render","_y8_get_buffer_ptr","_y8_get_tap_ptr","_y8_get_rom_ptr","_y8_set_rom_loaded","_y8_get_ram_ptr"]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAP16","HEAPU8"]' \
   -o "$out_file"
 

@@ -53,7 +53,11 @@ import {
   SCOPE_CHANNELS,
   SCOPE_PCM_CHANNELS,
 } from "./src/synth-md.js";
-import { Pc88Synth } from "./src/synth-pc88.js";
+import { Pc88Synth, SCOPE_LANES as PC88_SCOPE_LANES, YM2608_NATIVE_SAMPLE_RATE } from "./src/synth-pc88.js";
+
+// The most scope lanes a machine has (the pc88's), for the latches.
+const SCOPE_MAX = Math.max(SCOPE_CHANNELS, PC88_SCOPE_LANES);
+const YM2608_SSG_CLOCK = YM2608_NATIVE_SAMPLE_RATE * 144 / 4;
 
 // The machines' synth cores, by target name.
 const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth };
@@ -138,11 +142,12 @@ class YM2612Processor extends AudioWorkletProcessor {
     // 'scope-return'. Pitch latches always run (they're a few compares per
     // register write) so a scope enabled mid-note shows the right period.
     this._scopeOn = false;
-    this._scopeScratch = null; // SCOPE_CHANNELS per-block tap arrays
-    this._scopeBufs = null; // SCOPE_CHANNELS flush-batch arrays (lazy)
+    this._scopeScratch = null; // the synth's scopeLanes per-block tap arrays
+    this._scopeBufs = null; // the same, flush-batch arrays (lazy)
     this._scopePos = 0;
     this._scopePool = []; // recycled ArrayBuffers from 'scope-return'
-    this._scopeFreq = new Float64Array(SCOPE_CHANNELS); // Hz, 0 = unknown
+    this._scopeFreq = new Float64Array(SCOPE_MAX); // Hz, 0 = unknown
+    this._ssgPeriod = new Uint16Array(3); // the YM2608's SSG tone periods
     this._fmFnumHi = new Uint8Array(6); // latched 0xA4+c (block/fnum-hi)
     this._psgTone = new Uint16Array(3); // 10-bit tone periods
     this._psgLatch = 0; // last PSG latch byte
@@ -231,7 +236,7 @@ class YM2612Processor extends AudioWorkletProcessor {
       } else if (msg.type === "scope-return") {
         for (const b of msg.ch || []) {
           // Cap the pool at a few in-flight batches so a disable can't leak.
-          if (b instanceof ArrayBuffer && this._scopePool.length < 4 * SCOPE_CHANNELS) {
+          if (b instanceof ArrayBuffer && this._scopePool.length < 4 * SCOPE_MAX) {
             this._scopePool.push(b);
           }
         }
@@ -393,6 +398,13 @@ class YM2612Processor extends AudioWorkletProcessor {
   // FM pitch latch: 0xA4+c holds block/fnum-hi until the 0xA0+c write applies
   // the pair (hardware latch order). Channel = port*3 + register offset.
   _latchYmPitch(port, addr, data) {
+    // The YM2608's SSG: a channel's 12-bit tone period, $00-$05.
+    if (this._machine === "pc88" && port === 0 && addr < 6) {
+      const ch = addr >> 1;
+      const p = (this._ssgPeriod[ch] = addr & 1 ? (this._ssgPeriod[ch] & 0xff) | ((data & 15) << 8) : (this._ssgPeriod[ch] & 0xf00) | data);
+      this._scopeFreq[6 + ch] = p ? YM2608_SSG_CLOCK / (16 * p) : 0;
+      return;
+    }
     if (addr >= 0xa4 && addr <= 0xa6) {
       this._fmFnumHi[(port ? 3 : 0) + (addr - 0xa4)] = data;
     } else if (addr >= 0xa0 && addr <= 0xa2) {
@@ -401,8 +413,9 @@ class YM2612Processor extends AudioWorkletProcessor {
       const fnum = ((hi & 7) << 8) | data;
       const block = (hi >> 3) & 7;
       // freq = fnum * 2^(block-1) * (chip clock / 144) / 2^20
+      const native = this._machine === "pc88" ? YM2608_NATIVE_SAMPLE_RATE : NUKED_NATIVE_SAMPLE_RATE;
       this._scopeFreq[ch] = fnum
-        ? (fnum * Math.pow(2, block - 1) * NUKED_NATIVE_SAMPLE_RATE) / (1 << 20)
+        ? (fnum * Math.pow(2, block - 1) * native) / (1 << 20)
         : 0;
     }
   }
@@ -559,12 +572,12 @@ class YM2612Processor extends AudioWorkletProcessor {
     return true; // keep processor alive
   }
 
+  // One tap array per lane of the playing synth (its scopeLanes; the Mega
+  // Drive's SCOPE_CHANNELS).
   _scopeScratchFor(blockSize) {
-    if (!this._scopeScratch || this._scopeScratch[0].length !== blockSize) {
-      this._scopeScratch = Array.from(
-        { length: SCOPE_CHANNELS },
-        () => new Float32Array(blockSize),
-      );
+    const lanes = this._synth?.scopeLanes ?? SCOPE_CHANNELS;
+    if (!this._scopeScratch || this._scopeScratch.length !== lanes || this._scopeScratch[0].length !== blockSize) {
+      this._scopeScratch = Array.from({ length: lanes }, () => new Float32Array(blockSize));
     }
     return this._scopeScratch;
   }
@@ -574,10 +587,12 @@ class YM2612Processor extends AudioWorkletProcessor {
   // flush boundary, so any render quantum size works.
   _scopeAccumulate(scope, blockSize) {
     let src = 0;
+    // Another machine's lanes start a fresh batch.
+    if (this._scopeBufs && this._scopeBufs.length !== scope.length) this._scopeBufs = null;
     while (src < blockSize) {
       if (!this._scopeBufs) {
         this._scopeBufs = [];
-        for (let c = 0; c < SCOPE_CHANNELS; c++) {
+        for (let c = 0; c < scope.length; c++) {
           const recycled = this._scopePool.pop();
           this._scopeBufs.push(
             recycled && recycled.byteLength === SCOPE_FLUSH * 4
@@ -588,7 +603,7 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._scopePos = 0;
       }
       const n = Math.min(blockSize - src, SCOPE_FLUSH - this._scopePos);
-      for (let c = 0; c < SCOPE_CHANNELS; c++) {
+      for (let c = 0; c < scope.length; c++) {
         const chunk =
           src === 0 && n === blockSize ? scope[c] : scope[c].subarray(src, src + n);
         this._scopeBufs[c].set(chunk, this._scopePos);
