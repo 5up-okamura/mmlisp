@@ -19,6 +19,7 @@
 import md from "./targets/md.js";
 import pc88 from "./targets/pc88.js";
 import x68k from "./targets/x68k.js";
+import msx from "./targets/msx.js";
 
 function profile(def) {
   const heads = Object.keys(def.channels);
@@ -55,7 +56,7 @@ function profile(def) {
   };
 }
 
-export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k) };
+export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k), msx: profile(msx) };
 export const DEFAULT_TARGET = "md";
 
 /** Why `target` cannot `play` or `encode` yet, or null when it can. */

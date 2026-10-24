@@ -18,8 +18,8 @@
 //
 // The actual synthesis lives in the machine's synth core — synth-md.js for
 // the Mega Drive, synth-pc88.js for the PC-8801, synth-x68k.js for the
-// X68000 — the same DSP that drives live playback, so exports match what
-// you hear by construction. A pc88
+// X68000, synth-msx.js for the MSX — the same DSP that drives live playback,
+// so exports match what you hear by construction. A pc88
 // score's PCM is the chip's own: the ADPCM-B's RAM image (`pcm.adpcm`, as
 // the VGM export takes it) and the rhythm ROM the user brings (`rhythmRom`).
 // ---------------------------------------------------------------------------
@@ -28,13 +28,14 @@ import { notYet } from "./targets.js";
 import { MegaDriveSynth, NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
 import { Pc88Synth } from "./synth-pc88.js";
 import { X68kSynth, Pcm8Stream } from "./synth-x68k.js";
+import { MsxSynth } from "./synth-msx.js";
 import { renderPcm8, decodePcm8 } from "./chips/msm6258.js";
 import { renderPcmDac, configurePcmRate } from "./export-vgm.js";
 import { RHYTHM_BIT } from "./chips/ym2608.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 
-/** The synth core that plays `target`'s chips (its name: md, pc88, x68k). */
-export const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth };
+/** The synth core that plays `target`'s chips (its name: md, pc88, x68k, msx). */
+export const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth, msx: MsxSynth };
 
 const DEFAULT_SAMPLE_RATE = 48000; // match live AudioContext (and the LPF coeff)
 const DEFAULT_FADE_SEC = 4;

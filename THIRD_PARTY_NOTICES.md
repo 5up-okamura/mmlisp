@@ -81,6 +81,9 @@ Local integration files in this repository:
 - `wasm/ym2151_adapter.cpp`
 - `wasm/build-ym2151.sh`
 - `live/ymfm-ym2151.js` (the built WASM wrapper this repository ships)
+- `wasm/ay8910_adapter.cpp`
+- `wasm/build-ay8910.sh`
+- `live/ymfm-ay8910.js` (the built WASM wrapper this repository ships)
 
 The upstream license text is preserved at `third_party/ymfm/LICENSE`; keep it
 with any distribution that includes the generated wrapper.

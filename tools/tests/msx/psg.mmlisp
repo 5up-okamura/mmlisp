@@ -1,0 +1,5 @@
+; msx: the AY-3-8910's three tones, a mixer on both, and the noise period.
+(def-score :target msx :title "msx psg")
+(sqr1 :tempo 132 :len 8 (macro :vel (linear 15..9 :len 4)) c e g > c < g e c e |)
+(sqr2 :len 4 :vol 12 c g e g |)
+(sqr3 :mode both :noise-rate 4 :len 8 c c :noise-rate (linear 4..31 :len 2) c c c c c c |)

@@ -25,11 +25,12 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'scope-enable', on: boolean }
  *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
- *   { type: 'set-machine', name: 'md'|'pc88'|'x68k' }  — the synth the writes
- *       play on (src/synth-md.js, src/synth-pc88.js, src/synth-x68k.js); a
- *       pc88's ports 0/1 are the YM2608's two address spaces, an x68k's port 0
- *       the YM2151's one. Answered with { type: 'machine', name }
- *       once that synth plays (its core may still be loading)
+ *   { type: 'set-machine', name: 'md'|'pc88'|'x68k'|'msx' }  — the synth the
+ *       writes play on (src/synth-md.js, src/synth-pc88.js, src/synth-x68k.js,
+ *       src/synth-msx.js); a pc88's ports 0/1 are the YM2608's two address
+ *       spaces, an x68k's port 0 the YM2151's one, an msx's the AY-3-8910's.
+ *       Answered with { type: 'machine', name } once that synth plays (its
+ *       core may still be loading)
  *   { type: 'adpcm-ram', image: Uint8Array|null }  — the YM2608's ADPCM-B RAM
  *   { type: 'pcm8-bank', bank }  — the X68000's PCM8 samples (src/chips/msm6258.js bakePcm8)
  *   { type: 'pcm8', when, kind: 'on' | 'gain' | 'step' | 'off' | 'cut', voice, … }
@@ -59,14 +60,17 @@ import {
 } from "./src/synth-md.js";
 import { Pc88Synth, SCOPE_LANES as PC88_SCOPE_LANES, YM2608_NATIVE_SAMPLE_RATE } from "./src/synth-pc88.js";
 import { X68kSynth, Pcm8Live } from "./src/synth-x68k.js";
+import { MsxSynth } from "./src/synth-msx.js";
+import { ay8910 } from "./src/chips/ay8910.js";
 import { kcToHz } from "./src/chips/ym2151.js";
 
 // The most scope lanes a machine has (the pc88's), for the latches.
 const SCOPE_MAX = Math.max(SCOPE_CHANNELS, PC88_SCOPE_LANES);
-const YM2608_SSG_CLOCK = YM2608_NATIVE_SAMPLE_RATE * 144 / 4;
+// The SSG's clock, by machine: a tone divides it by 16 per period step.
+const SSG_CLOCK = { pc88: YM2608_NATIVE_SAMPLE_RATE * 144 / 4, msx: ay8910.clock };
 
 // The machines' synth cores, by target name.
-const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth };
+const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth, msx: MsxSynth };
 
 // PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3 — the
 // preview must sound like the driver): the same voice model the 68000
@@ -125,7 +129,9 @@ const OPM_BUS = {
     return list;
   },
 };
-const BUSES = { md: OPN_BUS, pc88: OPN_BUS, x68k: OPM_BUS };
+// The MSX has no FM: no write is a channel's to hold.
+const NO_FM_BUS = { channelOf: () => -1, isKey: () => false, keyOn: () => false, replay: () => [] };
+const BUSES = { md: OPN_BUS, pc88: OPN_BUS, x68k: OPM_BUS, msx: NO_FM_BUS };
 
 class YM2612Processor extends AudioWorkletProcessor {
   constructor(options) {
@@ -186,7 +192,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._scopePos = 0;
     this._scopePool = []; // recycled ArrayBuffers from 'scope-return'
     this._scopeFreq = new Float64Array(SCOPE_MAX); // Hz, 0 = unknown
-    this._ssgPeriod = new Uint16Array(3); // the YM2608's SSG tone periods
+    this._ssgPeriod = new Uint16Array(3); // the SSG's tone periods (pc88, msx)
     this._fmFnumHi = new Uint8Array(6); // latched 0xA4+c (block/fnum-hi)
     this._opmKc = new Uint8Array(8); // the YM2151's KC and KF, $28+c / $30+c
     this._opmKf = new Uint8Array(8);
@@ -448,13 +454,15 @@ class YM2612Processor extends AudioWorkletProcessor {
       this._scopeFreq[ch] = kcToHz(this._opmKc[ch], this._opmKf[ch]);
       return;
     }
-    // The YM2608's SSG: a channel's 12-bit tone period, $00-$05.
-    if (this._machine === "pc88" && port === 0 && addr < 6) {
+    // The SSG (the YM2608's, the AY-3-8910's): a channel's 12-bit tone period,
+    // $00-$05. The MSX has nothing else.
+    if (SSG_CLOCK[this._machine] && port === 0 && addr < 6) {
       const ch = addr >> 1;
       const p = (this._ssgPeriod[ch] = addr & 1 ? (this._ssgPeriod[ch] & 0xff) | ((data & 15) << 8) : (this._ssgPeriod[ch] & 0xf00) | data);
-      this._scopeFreq[6 + ch] = p ? YM2608_SSG_CLOCK / (16 * p) : 0;
+      this._scopeFreq[6 + ch] = p ? SSG_CLOCK[this._machine] / (16 * p) : 0;
       return;
     }
+    if (this._machine === "msx") return;
     if (addr >= 0xa4 && addr <= 0xa6) {
       this._fmFnumHi[(port ? 3 : 0) + (addr - 0xa4)] = data;
     } else if (addr >= 0xa0 && addr <= 0xa2) {

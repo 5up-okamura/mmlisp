@@ -63,7 +63,8 @@ game state at runtime.
   it. The rhythm ROM is Yamaha's and not included: Live plays your own, or
   stands the score's kit in for it. The X68000's YM2151 follows with
   `(def-score :target x68k)`: eight FM channels with DT2 and the OPM's LFO,
-  its noise, and PCM8's eight voices mixed into the MSM6258's ADPCM. Other machines are on the [roadmap](docs/roadmap.md).
+  its noise, and PCM8's eight voices mixed into the MSM6258's ADPCM, and the
+  MSX's PSG with `(def-score :target msx)`. Other machines are on the [roadmap](docs/roadmap.md).
 
 ## What it looks like
 

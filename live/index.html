@@ -9655,10 +9655,18 @@
       return player != null;
     }
 
+    // A key meant for an FM channel the score's chip lacks (none on the MSX)
+    // plays sqr1 instead.
+    function previewChannelOf(chIndex) {
+      if (isPsgPreviewChannel(chIndex) || chIndex < (player?._fmEnc.channels ?? 0)) return chIndex;
+      return PSG_UI_BASE;
+    }
+
     function previewNoteOn(chIndex, midi, vel) {
       if (!workletNode) return;
       if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOn(midi, vel); return; }
       if (!claimPreviewPlayer()) return;
+      chIndex = previewChannelOf(chIndex);
 
       if (isPsgPreviewChannel(chIndex)) {
         previewPsgNoteOn(chIndex, midi, vel);
@@ -9671,6 +9679,7 @@
     function previewNoteOff(chIndex) {
       if (!workletNode) return;
       if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOff(); return; }
+      chIndex = previewChannelOf(chIndex);
 
       if (isPsgPreviewChannel(chIndex)) {
         previewPsgNoteOff(chIndex);
@@ -10861,7 +10870,9 @@
     // when the panel's subject (mode, def, channel) changed — otherwise the
     // change detection writes just what differs.
     function syncParamUI({ repaint = true } = {}) {
-      _fmCursorDefContext = selectedChannel == null ? findFmDefAtCursor() : null;
+      // A def-fm on a target with no FM (the MSX) has nothing to audition on.
+      const hasFm = !!targetProfile(_lastGoodIR?.metadata?.target).chipForKind('fm');
+      _fmCursorDefContext = selectedChannel == null && hasFm ? findFmDefAtCursor() : null;
       _pcmCursorDef = selectedChannel == null && !_fmCursorDefContext ? findSampleDefAtCursor() : null;
       libraryCursorMoved();
       updateFmParamStatus();

@@ -1749,6 +1749,18 @@
   "mmb": "488af072eea2abb1",
   "vgm": "04611ee69800285b"
  },
+ "tools/tests/msx/noise.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "111741b8ffc56e43",
+  "regs": "cdf56c7689f2ba2f",
+  "vgm": "1347cab670652185"
+ },
+ "tools/tests/msx/psg.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4dda600eb0be41f4",
+  "regs": "8bdefa59535c5653",
+  "vgm": "a9e9e9bd1a3c3cd1"
+ },
  "tools/tests/pc88/adpcm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "f613a3fe9e01adc8",

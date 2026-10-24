@@ -2329,6 +2329,7 @@ those chips cannot do is a compile error, not a different sound.
 | `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
 | `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | VGM, WAV |
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
+| `msx` | MSX: the PSG, an AY-3-8910 | VGM, WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2477,3 +2478,23 @@ The VGM carries the encoded stream as one data block that DAC stream
 control plays; Play and WAV decode the same encoding, so all three sound
 alike, ADPCM grain included.
 
+
+### `msx`
+
+**`msx` exports VGM (1.51)** with the MSX's PSG, an AY-3-8910 at 1.79 MHz,
+and Play and WAV run ymfm's SSG. There is no FM and no PCM: `fm1`–`fm6` and
+`pcm1`–`pcm3` are `E_TARGET`, and a `def-fm` plays nowhere (its keys are
+`W_TARGET`).
+
+**PSG.** `sqr1`–`sqr3` and `noise` are the SSG's, as on `pc88`: each
+channel's mixer, `:mode tone|noise|both`, the song's noise period
+**`:noise-rate 1–31`** (112 kHz / n; 8 to start, the nearest to the Mega
+Drive's `white0`), and `noise` as `sqr3` with its mixer on noise (a score
+has one or the other). A noise `:mode white0`–`white2` reads as
+`:noise-rate` 8, 16, 31 (`W_TARGET`); `white3` and the periodic modes are
+`E_TARGET`. The level is the chip's 4-bit one, 3 dB a step. The mixer
+keeps the I/O ports' directions as the BIOS sets them, so the VGM is safe
+to play on the machine. The hardware envelope (R11–R13) is not a word yet.
+
+**Effects.** `def-se` is the Mega Drive driver's; an `msx` score has none
+(`E_TARGET`).

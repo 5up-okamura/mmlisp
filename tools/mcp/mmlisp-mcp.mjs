@@ -601,7 +601,7 @@ const TOOLS = [
     description:
       "Render a score to a 48 kHz stereo WAV the user can listen to (FM + PSG through the Nuked cores, same DSP as the " +
       "editor's WAV export; PCM plays through the driver's engine; a :target pc88 score through ymfm's YM2608, its " +
-      "rhythm from the user's ROM, else the kit's :files cut to the ROM's lengths; a :target x68k score through ymfm's YM2151). A looping song plays intro + 2 loops + 4 s fade. " +
+      "rhythm from the user's ROM, else the kit's :files cut to the ROM's lengths; a :target x68k score through ymfm's YM2151; a :target msx score through ymfm's SSG). A looping song plays intro + 2 loops + 4 s fade. " +
       "Returns the file path and levels (peak/RMS, clipping, silence) — a sanity check, since you cannot hear it.",
     inputSchema: {
       type: "object",

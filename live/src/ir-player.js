@@ -179,6 +179,10 @@ function fm3KeyOrder(a, b) {
   );
 }
 
+// The FM encoder of a target with no FM (the MSX's PSG alone): no channels,
+// so nothing reaches it but the run's globals.
+const NO_FM = { channels: 0, csm: false, isKeyOn: () => false, lfo: () => [] };
+
 // ---------------------------------------------------------------------------
 // IRPlayer
 // ---------------------------------------------------------------------------
@@ -189,7 +193,7 @@ export class IRPlayer {
   constructor(writeCallback) {
     this._target = targetProfile(); // until a score says otherwise (_loadIR)
     this._fmChip = this._target.chipForKind("fm");
-    this._fmEnc = this._fmChip.fmEncoder(); // the FM's registers (chips/)
+    this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM; // the FM's registers (chips/)
     this._psgChip = this._psgChipOf(this._target); // null: a target with no PSG
     this._trackPart = new Map(); // trackIndex → its part (chips/parts.js)
     this._write = writeCallback;
@@ -385,7 +389,7 @@ export class IRPlayer {
     if (why) throw new Error(why);
     this._target = target;
     this._fmChip = target.chipForKind("fm");
-    this._fmEnc = this._fmChip.fmEncoder();
+    this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM;
     this._psgChip = this._psgChipOf(target); // one per score: it may keep state
     this._psgStepDb = target.parts.find((p) => p.kind === "tone")?.level.stepDb ?? 2;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the

@@ -4130,7 +4130,7 @@ function compileChannelBody(
                   args: { target, value }, src: nodeSrc(node) });
               } else if (reading?.write) {
                 targetDiag(diagnostics, "warning",
-                  `${trackState.head} :mode ${rawVal} is not a ${machine.system} mode; it reads as ${reading.as}`,
+                  `${trackState.head} :mode ${rawVal} is not a mode the ${machine.system} has; it reads as ${reading.as}`,
                   nodeSrc(node), trackName);
                 const [target, value] = reading.write;
                 events.push({ tick: trackState.tick, cmd: "PARAM_SET",

@@ -250,6 +250,17 @@ async function main() {
       src: '(def-score :target pc88 :pcm-voices 1)\n(sqr3 c)\n(noise :mode white1 c :mode periodic0 c)\n(pcm1 kick c)\n(pcm2 kick :mode loop d)',
       expected: ["W_TARGET", "E_TARGET", "W_TARGET", "E_TARGET", "E_TARGET", "E_TARGET", "E_TARGET"],
     },
+    // msx: the AY-3-8910 alone, the SSG's language.
+    {
+      label: "msx score accepted",
+      src: '(def-score :target msx)\n(sqr1 :mode both :noise-rate 12 c)\n(sqr2 c)\n(noise c)',
+      expected: [],
+    },
+    {
+      label: "msx has the PSG and nothing else",
+      src: '(def-score :target msx)\n(def-fm v init-fm :alg 4)\n(fm1 c)\n(sqr1 :pan left :lfo-rate 3 c)\n(noise :mode white0 c)',
+      expected: ["W_TARGET", "E_TARGET", "E_TARGET", "E_TARGET", "W_TARGET"],
+    },
     {
       label: "Mega Drive refuses the SSG's words",
       src: '(sqr1 :noise-rate 3 c)',

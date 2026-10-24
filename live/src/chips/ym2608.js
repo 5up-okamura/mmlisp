@@ -3,7 +3,7 @@
 // the IR player as the YM2612's is; this file encodes the rest. ymfm's
 // YM2608 plays them (synth-pc88.js).
 import { opnFm, opnFmEncoder } from "./opn-fm.js";
-import { ssgTone, ssgNoise } from "./ssg.js";
+import { ssgTone, ssgNoise, ssgEncoder } from "./ssg.js";
 import { rhythmRom } from "./rhythm-rom.js";
 import { adpcmB } from "./adpcm-b.js";
 
@@ -34,31 +34,9 @@ export const ym2608 = {
   init: [[0, 0x29, 0x80], [0, 0x11, 0x3f], [0, 0x07, 0x38], [0, 0x06, NOISE_RATE_START]],
   vgm: { version: 0x151, clock: 0x48, ports: { 0: { cmd: 0x56, addr: true }, 1: { cmd: 0x57, addr: true } } },
 
-  // The SSG as the IR player's PSG: lanes 0-2 are the tone channels, lane 3
-  // the noise track, which is channel 3's (index 2) mixer on noise. One per
-  // player: it keeps the mixer register the channels share.
+  // The SSG as the IR player's PSG (chips/ssg.js).
   psgEncoder() {
-    let mixer = 0x38; // bits 0-2 tone off, 3-5 noise off, per channel
-    const phys = (lane) => (lane === 3 ? 2 : lane);
-    return {
-      // The 12-bit period divides the SSG's clock by 16.
-      period: (hz) => Math.max(1, Math.min(4095, Math.round(SSG_CLOCK / (16 * hz)))),
-      // The player's attenuation, 0 loud .. 15 off, is the level upside down.
-      att: (lane, att) => [[0, 0x08 + phys(lane), 15 - (att & 0x0f)]],
-      tone: (lane, p) => [[0, 2 * lane, p & 0xff], [0, 2 * lane + 1, (p >> 8) & 0x0f]],
-      // A noise note: its channel's mixer on noise alone (the SSG's noise
-      // has no mode; its period is the song's NOISE_RATE).
-      noise: () => mix(3, 1),
-      mix: (lane, mode) => mix(lane, mode),
-      noiseRate: (rate) => [[0, 0x06, Math.max(1, Math.min(31, Math.round(rate)))]],
-    };
-    function mix(lane, mode) { // SSG_MIX: 0 tone, 1 noise, 2 both
-      const c = phys(lane);
-      mixer &= ~((1 << c) | (8 << c));
-      if (mode === 0) mixer |= 8 << c;
-      else if (mode === 1) mixer |= 1 << c;
-      return [[0, 0x07, mixer]];
-    }
+    return ssgEncoder(SSG_CLOCK);
   },
 
   // The ADPCM-B (port 1), in the order mucom88 writes a note: level and pan
