@@ -1154,8 +1154,12 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const dacOut = dests.pcm.length > 0 && dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName) : null;
   // SegaPCM / ADPCM: the channels kept, on as many voices as asked.
   const chipKeys = a.channels.filter((c) => c.kind === "chip-pcm" && (dest[c.key] ?? "drop") !== "drop").map((c) => c.key);
-  const pcmVoices = Math.max(1, Math.min(3, options.pcmVoices ?? Math.min(3, a.pcmPoly ?? 1)));
-  const chipOut = dests.pcm.length > 0 && !dacOut && chipKeys.length ? chipPcmTracks(parsed, chipKeys, pcmVoices, tickOf, endTick, options.fileName) : null;
+  // The Mega Drive's voices are its engine's 1-3; the X68000's PCM8 has eight.
+  const dacMix = target.hasPart("dac");
+  const maxVoices = dacMix ? 3 : dests.pcm.length;
+  const pcmVoices = Math.max(1, Math.min(maxVoices, dacMix ? options.pcmVoices ?? Math.min(3, a.pcmPoly ?? 1) : a.pcmPoly ?? 1));
+  const chipOut = dests.pcm.length > 0 && !dacOut && chipKeys.length
+    ? chipPcmTracks(parsed, chipKeys, pcmVoices, tickOf, endTick, options.fileName, { bankFit: dacMix }) : null;
   if (!dests.pcm.length && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm"))
     warnings.push(`the ${target.system} has no PCM part yet — the PCM is left out`);
   if (dacOut && chipKeys.length) warnings.push("the YM2612 DAC takes the PCM channels — the other chips' PCM is left out");
@@ -1187,7 +1191,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const header = [`; Imported from ${options.fileName ?? "a VGM file"} (VGM: ${parsed.chips.join(", ")})`];
   const title = [parsed.title, parsed.game && parsed.title ? `(${parsed.game})` : parsed.game].filter(Boolean).join(" ");
   const score = [target.name !== "md" && `:target ${target.name}`, title && `:title ${qstr(title)}`, parsed.author && `:composer ${qstr(parsed.author)}`,
-    dacOut && ":pcm-voices 1", chipOut && `:pcm-voices ${chipOut.voices}`].filter(Boolean);
+    dacOut && ":pcm-voices 1", chipOut && dacMix && `:pcm-voices ${chipOut.voices}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   if (envs.length) header.push("", ...envs);
@@ -1444,7 +1448,7 @@ function pcmPolyphony(hits) {
  * never an ADPCM-B note, the one melodic part — and a hit with nothing to
  * take is dropped. Levels are the song's own, the loudest hit :vel 15.
  */
-function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName) {
+function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFit = true } = {}) {
   const warnings = [];
   const kept = new Set(keys);
   const hits = parsed.pcmHits.filter((h) => kept.has(pcmKey(h)) && tickOf(h.t) < endTick);
@@ -1549,18 +1553,20 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName) {
 
   // A note bakes one blob at the engine's rate, and a blob must fit one
   // 32 KB bank: a sample longer than that at the lowest pitch it plays is
-  // cut to fit.
+  // cut to fit. (Not on the X68000: its PCM8 plays the sample as it is.)
   const V = tracks.length ? Math.max(...tracks.map((t) => +t.channel.slice(3))) : voices;
-  const engineHz = Math.max(engineImage(V).rateHz, bankedEngineImage(V, 60).rateHz);
-  const lowest = new Map();
-  for (const h of hits) lowest.set(h.sample, Math.min(lowest.get(h.sample) ?? Infinity, h.rate));
-  const cut = [];
-  for (const sm of samples.values()) {
-    const most = Math.floor(((BLOB_MAX - 16) * lowest.get(sm)) / engineHz);
-    if (sm.frames > most) { sm.frames = most; cut.push(sm.name); }
-    if (sm.loopMs != null && (sm.loopMs * sm.rate) / 1000 >= sm.frames) sm.loopMs = null;
+  if (bankFit) {
+    const engineHz = Math.max(engineImage(V).rateHz, bankedEngineImage(V, 60).rateHz);
+    const lowest = new Map();
+    for (const h of hits) lowest.set(h.sample, Math.min(lowest.get(h.sample) ?? Infinity, h.rate));
+    const cut = [];
+    for (const sm of samples.values()) {
+      const most = Math.floor(((BLOB_MAX - 16) * lowest.get(sm)) / engineHz);
+      if (sm.frames > most) { sm.frames = most; cut.push(sm.name); }
+      if (sm.loopMs != null && (sm.loopMs * sm.rate) / 1000 >= sm.frames) sm.loopMs = null;
+    }
+    if (cut.length) warnings.push(`PCM: ${cut.join(", ")} cut to fit a 32 KB bank at ${plural(V, "voice")}`);
   }
-  if (cut.length) warnings.push(`PCM: ${cut.join(", ")} cut to fit a 32 KB bank at ${plural(V, "voice")}`);
 
   const base = String(fileName || "vgm").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
   const wavFile = `${base}-pcm.wav`;

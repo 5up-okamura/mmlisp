@@ -1777,12 +1777,18 @@
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "6cc2c5c664ff7766",
   "regs": "554627227138fe44",
-  "vgm": "9bfe3a50d3d84cac"
+  "vgm": "067395fb563f6b8c"
  },
  "tools/tests/x68k/noise.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "7b6cb8066f48783f",
   "regs": "ac3ead265753fd6b",
-  "vgm": "e1362c996a4d8ad0"
+  "vgm": "b5b9b4a0321de63b"
+ },
+ "tools/tests/x68k/pcm.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e7a2fae6c9caa34b",
+  "regs": "47bf0f58b86e2ea6",
+  "vgm": "98a109e62df84a83"
  }
 }

@@ -138,15 +138,11 @@ In order:
    `:dt2-N` and the OPM's LFO, and `noise` on fm8's fourth operator
    (language.md §19; the profile is `live/src/targets/x68k.js`, the chip
    `live/src/chips/ym2151.js`, the synth `live/src/synth-x68k.js`, the scores
-   `tools/tests/x68k/`). A `.opm` voice bank imports its voices with DT2, and
-   a YM2151's VGM imports as an `x68k` score. What is left:
-   - **PCM.** PCM8 is a software mixer, not a chip, so the export does its
-     job: `pcm1`–`pcm8` are mixed into the one MSM6258 ADPCM stream at
-     15.6 kHz, pitch absorbed in that mix (`pcm-model.js`'s lineage), and the
-     VGM carries it as a data block played by DAC Stream Control. The preview
-     runs the same mix through the OKI ADPCM encoder and decoder, so it
-     sounds as the VGM does; the stream has one pan, so a pcm track's `:pan`
-     is `E_TARGET`.
+   `tools/tests/x68k/`), and `pcm1`–`pcm8` are PCM8's voices mixed into the
+   MSM6258's ADPCM stream (`live/src/chips/msm6258.js`). A `.opm` voice bank
+   imports its voices with DT2, and a YM2151's VGM imports as an `x68k`
+   score, its OKIM6258 samples on PCM8. What is left: the VGM importer's
+   YM2151 noise onto `noise`.
 3. **MSX: PSG, then SCC.** The PSG is the SSG profile again. The SCC brings
    the *wavetable* voice class, which the PC Engine, the FDS and the Game Boy
    share later. The FM-PAC (OPLL: 2-op, fifteen preset voices and one user

@@ -19,6 +19,12 @@
 // re-seeked with 0xE0 at the loop point. The stream is not compressible into
 // per-sample DAC stream control (0x90-0x95): the engine mixes several voices
 // in software, so only the mix is what the hardware hears.
+//
+// The X68000's PCM8 is a software mix too (chips/msm6258.js): its stream of
+// OKI ADPCM goes into one data block (type 0x04) that DAC stream control
+// feeds to the MSM6258's data register two samples a byte; at the loop point
+// the chip is stopped and started again (its decoder starts over, as the
+// stream's body was encoded) and the stream re-started at the body.
 // ---------------------------------------------------------------------------
 
 import { targetProfile } from "./targets.js";
@@ -26,6 +32,7 @@ import { ADPCM_RAM_BYTES } from "./chips/adpcm-b.js";
 import { PcmLiveEngine, PCM_SILENCE_BYTE, parsePcmBank } from "./pcm-model.js";
 import { PcmIrVoices } from "./pcm-voices.js";
 import { engineImage } from "./engine-images.js";
+import { renderPcm8, MSM6258_CLOCK } from "./chips/msm6258.js";
 import { bankedEngineImage } from "./engine-banked-images.js";
 
 // VGM timing is always referenced to a fixed 44100 Hz sample clock, regardless
@@ -36,7 +43,7 @@ const VGM_SAMPLE_RATE = 44100;
 // 1.50's header is 0x40 bytes, 1.51's 0x80.
 const VGM_VERSION = 0x00000150;
 const vgmVersion = (target) => Math.max(VGM_VERSION, ...Object.values(target.chips).map((c) => c.vgm.version ?? 0));
-const dataStartOf = (version) => (version >= 0x151 ? 0x80 : 0x40);
+const dataStartOf = (version) => (version >= 0x161 ? 0xc0 : version >= 0x151 ? 0x80 : 0x40);
 // A one-shot score with PCM ends once the engine has been silent this long
 // after its last event (or at the cap).
 const PCM_TAIL_SILENCE_SEC = 0.05;
@@ -53,9 +60,10 @@ const PCM_TAIL_MAX_SEC = 30;
  *        the mixed DAC stream from renderPcmDac, or null for none
  * @returns {Uint8Array}
  */
-function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adpcm = null) {
+function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adpcm = null, oki = null) {
   const { writes, loopStartSec } = capture;
-  const endSec = Math.max(capture.endSec, dac ? dac.startSec + dac.bytes.length / dac.rateHz : 0);
+  const endSec = Math.max(capture.endSec, dac ? dac.startSec + dac.bytes.length / dac.rateHz : 0,
+    oki ? oki.startSec + (2 * oki.bytes.length) / oki.rateHz : 0);
   const secToSample = (sec) => Math.max(0, Math.round(sec * VGM_SAMPLE_RATE));
 
   const endSample = secToSample(endSec);
@@ -94,6 +102,29 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adp
   }
   let regs = writes;
   let regSample = writes.map((w) => secToSample(w.sec));
+  // The MSM6258's stream: its block, the stream set up on the chip's data
+  // register at a byte per two samples, and a start where the stream does.
+  const u32le = (v) => [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff];
+  const okiStart = (offset) => {
+    data.push3(0xb7, 0x00, 0x01); // stop: the next play starts the decoder over
+    data.push3(0xb7, 0x00, 0x02); // play
+    data.push3(0x93, 0x00, offset & 0xff);
+    data.push4((offset >> 8) & 0xff, (offset >> 16) & 0xff, (offset >>> 24) & 0xff, 0x03); // to the end
+    data.push4(0, 0, 0, 0);
+  };
+  if (oki?.bytes.length) {
+    data.push3(0x67, 0x66, 0x04);
+    data.push4(...u32le(oki.bytes.length));
+    data.pushBytes(oki.bytes);
+    data.push4(0x90, 0x00, 0x17, 0x00); data.push1(0x01); // stream 0 → OKIM6258, register 1
+    data.push4(0x91, 0x00, 0x04, 0x01); data.push1(0x00); // from block type 4, a byte a step
+    data.push2(0x92, 0x00); data.push4(...u32le(Math.round(MSM6258_CLOCK / 1024))); // bytes a second
+    const timed = regs.map((w, i) => ({ w, s: regSample[i] }));
+    timed.push({ w: { oki: 0 }, s: secToSample(oki.startSec) });
+    timed.sort((a, b) => a.s - b.s);
+    regs = timed.map((x) => x.w);
+    regSample = timed.map((x) => x.s);
+  }
   if (dacLen) {
     const timed = writes.map((w, i) => ({ w, s: regSample[i] }));
     timed.push({ w: { port: 0, addr: 0x2b, data: 0x80 }, s: secToSample(dac.startSec) });
@@ -115,6 +146,7 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adp
   // SN76489's 0x50 takes a data byte, an FM chip's an address and a byte.
   const ports = Object.assign({}, ...Object.values(target.chips).map((c) => c.vgm.ports ?? {}));
   const emitWrite = (w) => {
+    if (w.oki != null) return okiStart(w.oki);
     const p = ports[w.port];
     if (!p) throw new Error(`no VGM command for a write on port ${w.port}`);
     if (p.addr) data.push3(p.cmd, w.addr & 0xff, w.data & 0xff);
@@ -131,6 +163,8 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adp
       data.push1(0xe0);
       data.push4(p & 0xff, (p >> 8) & 0xff, (p >> 16) & 0xff, (p >>> 24) & 0xff);
     }
+    // The MSM6258's stream: the body, its decoder started over.
+    if (oki?.loopByte != null) okiStart(oki.loopByte);
   };
 
   let r = 0; // the next register write
@@ -266,6 +300,14 @@ export function configurePcmRate(player, pcm) {
  * it the score's PCM events are skipped and counted in `pcmCount`.
  */
 export function renderVgm(player, meta = {}, pcm = null) {
+  // The X68000's PCM8: the mix, encoded, as the MSM6258's stream.
+  if (pcm?.pcm8) {
+    player.setPcm8Bank?.(pcm.pcm8);
+    const capture = player.captureRegisterLog();
+    const oki = renderPcm8(capture.pcm8Events, pcm.pcm8, capture);
+    const bytes = encodeVgm(capture, meta, null, player._target ?? targetProfile(), null, oki);
+    return { bytes, pcmCount: 0, dacBytes: oki ? oki.bytes.length : 0 };
+  }
   // Another target's PCM is its chip's own RAM image (chips/: the YM2608's
   // ADPCM-B), not the Mega Drive's mixed DAC stream.
   if (pcm?.adpcm) {

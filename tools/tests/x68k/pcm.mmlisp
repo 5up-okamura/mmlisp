@@ -1,0 +1,12 @@
+; x68k: PCM8 — pcm1-pcm8 mixed into the MSM6258's one ADPCM stream at
+; 15.6 kHz: a note plays its sample at its pitch, its level vel + vol +
+; master; a loop repeats until the note's end, a gate stops at it; a
+; :pitch move bends a sounding voice.
+(def-score :target x68k :title "x68k PCM8")
+(def-pcm blip :file "wav/blip.wav")
+(def-pcm blip-tail blip :pcm-start 16 :pcm-end 4)
+(fm1 :tempo 132 :len 2 c e |)
+(pcm1 :len 8 blip c e g > c < :vel 10 c e :vol 24 g _ |)
+(pcm2 :mode loop :len 2 blip-tail c :mode gate :gate 50 :len 4 blip c c |)
+(pcm3 :len 4 blip _ c :pitch (linear 0..-1200 :len 4) c _ |)
+(pcm8 :len 1 _ blip :oct 3 c |)

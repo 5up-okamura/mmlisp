@@ -841,6 +841,7 @@
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { targetProfile, notYet } from './src/targets.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
+    import { bakePcm8 } from './src/chips/msm6258.js';
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
@@ -4791,6 +4792,15 @@
       await setWorkletMachine(machine.name);
       // The YM2608's ADPCM-B plays from its own RAM: the samples baked once
       // (chips/adpcm-b.js), as the VGM and WAV exports bake them.
+      // The X68000's PCM8: the samples the worklet mixes (src/chips/msm6258.js).
+      if (machine.hasPart('pcm8')) {
+        const blobs = await pcmSampleBlobsForMmb(ir);
+        const pcm8 = blobs ? bakePcm8(ir, blobs) : null;
+        for (const w of pcm8?.warnings ?? []) log(w, 'warn');
+        target?.setPcm8Bank?.(pcm8);
+        workletNode.port.postMessage({ type: 'pcm8-bank', bank: pcm8 });
+        return;
+      }
       if (machine.hasPart('adpcm-b')) {
         const blobs = await pcmSampleBlobsForMmb(ir);
         const adpcm = blobs ? bakeAdpcmB(ir, blobs, machine) : null;
@@ -5594,6 +5604,14 @@
         const adpcm = bakeAdpcmB(ir, blobs, target);
         for (const w of adpcm.warnings) log(`${what} export: ${w}`, 'warn');
         return adpcm.image.length ? { adpcm } : null;
+      }
+      // The X68000's PCM8: the samples the export mixes into the MSM6258's stream.
+      if (target.hasPart('pcm8')) {
+        const blobs = await pcmSampleBlobsForMmb(ir);
+        if (!blobs) return null;
+        const pcm8 = bakePcm8(ir, blobs);
+        for (const w of pcm8.warnings) log(`${what} export: ${w}`, 'warn');
+        return Object.keys(pcm8.entries).length ? { pcm8 } : null;
       }
       // The bank is the Mega Drive's soft mix.
       if (!pcmVoices || !target.hasPart('dac')) return null;
@@ -6687,6 +6705,9 @@
         // pc88's pcm1: the ADPCM-B voice, on its own scope lane.
         if (target.hasPart('adpcm-b') && channelVoice(head)?.part.name === 'adpcm-b')
           Object.assign(entry, { voice: 'adpcm', scope: 10, volKind: 'voice' });
+        // x68k's PCM8: a voice of the one ADPCM stream, which is scope lane 8.
+        if (channelVoice(head)?.part.name === 'pcm8')
+          Object.assign(entry, { voice: `pcm8-${channelVoice(head).voice}`, scope: 8, volKind: 'voice' });
         // x68k's noise is fm8's fourth operator: fm8's scope lane.
         if (channelVoice(head)?.part.name === 'opm-noise') entry.scope = channelVoice(head).voice;
         model.push(entry);

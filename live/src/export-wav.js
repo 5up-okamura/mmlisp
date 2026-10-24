@@ -27,7 +27,8 @@
 import { notYet } from "./targets.js";
 import { MegaDriveSynth, NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
 import { Pc88Synth } from "./synth-pc88.js";
-import { X68kSynth } from "./synth-x68k.js";
+import { X68kSynth, Pcm8Stream } from "./synth-x68k.js";
+import { renderPcm8, decodePcm8 } from "./chips/msm6258.js";
 import { renderPcmDac, configurePcmRate } from "./export-vgm.js";
 import { RHYTHM_BIT } from "./chips/ym2608.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
@@ -170,6 +171,19 @@ async function renderSamples(
 // When a pc88 one-shot's last sounds end: an ADPCM-B shot plays its range
 // out, a rhythm hit its ROM sound — both past their key-on write. 0 when the
 // target has neither.
+// A capture's events tiled as buildTimeline tiles its writes: intro and the
+// first body as captured, then the body twice more, cut where the fade ends.
+function tileEvents(events, capture, fadeSec) {
+  const { loopStartSec, endSec } = capture;
+  if (loopStartSec == null) return events;
+  const P = endSec - loopStartSec, total = endSec + P + fadeSec;
+  const body = events.filter((e) => e.sec >= loopStartSec && e.sec < endSec);
+  const out = events.slice();
+  for (let k = 1; k <= 2; k++) for (const e of body) if (e.sec + k * P < total) out.push({ ...e, sec: e.sec + k * P });
+  return out.sort((a, b) => a.sec - b.sec);
+}
+const wavEndSec = ({ loopStartSec, endSec }, fadeSec) => (loopStartSec == null ? endSec : endSec + (endSec - loopStartSec) + fadeSec);
+
 function pc88TailSec(capture, target) {
   const chip = target?.chipFor?.("rhythm") ?? target?.chipFor?.("adpcm-b");
   if (!chip?.rhythm && !chip?.adpcm) return 0;
@@ -272,9 +286,21 @@ export async function renderWav(player, opts = {}) {
     player.setAdpcmBank?.(adpcm);
     synth.setAdpcmRam(adpcm.image);
   }
+  const pcm8 = opts.pcm?.pcm8 ?? null;
+  if (pcm8) player.setPcm8Bank?.(pcm8);
   if (opts.rhythmRom) synth.setRhythmRom?.(opts.rhythmRom);
-  if (!adpcm) configurePcmRate(player, opts.pcm);
+  if (!adpcm && !pcm8) configurePcmRate(player, opts.pcm);
   const capture = player.captureRegisterLog();
+  // The X68000's PCM8: the stream the VGM carries, decoded as the chip plays
+  // it. The WAV's loop tiles the register writes; the stream is rendered for
+  // the WAV's whole length, its events tiled the same way.
+  if (pcm8 && capture.pcm8Events?.length) {
+    const once = renderPcm8(capture.pcm8Events, pcm8, { endSec: capture.endSec });
+    if (capture.loopStartSec == null) capture.endSec = Math.max(capture.endSec, once.startSec + (2 * once.bytes.length) / once.rateHz);
+    const events = tileEvents(capture.pcm8Events, capture, fadeSec);
+    const s = renderPcm8(events, pcm8, { endSec: wavEndSec(capture, fadeSec) });
+    synth.pcm8 = new Pcm8Stream(decodePcm8(s.bytes), s.startSec);
+  }
   const dac = opts.pcm?.bank ? renderPcmDac(capture, opts.pcm) : null;
   // A one-shot PCM tail can outlast the last register write.
   if (dac && capture.loopStartSec == null)

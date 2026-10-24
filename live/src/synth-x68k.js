@@ -6,12 +6,17 @@
 // renderInto(outL, outR, count, onFrame?, getDacByte?, scope?). The core is
 // ymfm's YM2151 (../ymfm-ym2151.js, wasm/ym2151_adapter.cpp), which hands
 // out samples at the chip's rate, clock / 64, linear-interpolated to the
-// output rate as synth-md.js does the YM2612's. The scope gets each FM
-// channel's own part, lanes 0-7.
+// output rate as synth-md.js does the YM2612's. The MSM6258's ADPCM joins
+// it at the chip's rate (chips/msm6258.js), held between its samples as the
+// chip's DAC holds them, from `pcm8` — a source whose tick() is the next
+// sample: the worklet's live mix (Pcm8Live), or a rendered stream for the
+// WAV (Pcm8Stream). The scope gets each FM channel's own part, lanes 0-7,
+// and the ADPCM, lane 8.
 // ---------------------------------------------------------------------------
 
 import createYm2151Module from "../ymfm-ym2151.js";
 import { ym2151 } from "./chips/ym2151.js";
+import { PCM8_RATE, Pcm8Mixer, OkiEncoder, OkiDecoder, okiOut } from "./chips/msm6258.js";
 
 export const YM2151_NATIVE_SAMPLE_RATE = ym2151.clock / 64;
 
@@ -21,8 +26,35 @@ const MAX_RENDER = 4096; // the adapter's cap on one y5_render()
 // Drive's does through Nuked at its gain (about −12 dBFS), so a score moved
 // between the targets keeps its level. Tunable by ear.
 const MASTER_OUTPUT_GAIN = 1.0;
+// The ADPCM at full scale against the FM: twice one carrier at TL 0, about
+// −6 dBFS. Tunable by ear.
+const PCM8_GAIN = 0.5;
 
-export const SCOPE_LANES = 8;
+export const SCOPE_LANES = 9;
+const FM_LANES = 8;
+
+/** PCM8 played live: the mix, encoded and decoded as the chip hears it. */
+export class Pcm8Live {
+  constructor(bank) {
+    this.mix = new Pcm8Mixer(bank);
+    this.enc = new OkiEncoder();
+    this.dec = new OkiDecoder();
+  }
+  apply(e) { this.mix.apply(e); }
+  tick() { return okiOut(this.dec.next(this.enc.next(this.mix.next()))); }
+}
+
+/** A rendered stream's decoded samples, from `startSec` (chips/msm6258.js decodePcm8). */
+export class Pcm8Stream {
+  constructor(samples, startSec) {
+    this.samples = samples;
+    this.i = -Math.round(startSec * PCM8_RATE);
+  }
+  tick() {
+    const k = this.i++;
+    return k >= 0 && k < this.samples.length ? this.samples[k] : 0;
+  }
+}
 
 export class X68kSynth {
   static async create(outputSR) {
@@ -39,7 +71,8 @@ export class X68kSynth {
     this._tapCur = new Float32Array(SCOPE_LANES);
     this._tapNext = new Float32Array(SCOPE_LANES);
     this._ratio = YM2151_NATIVE_SAMPLE_RATE / outputSR;
-    this.pcmTaps = null; // the contract's; this chip has no PCM yet
+    this.pcmTaps = null; // the contract's; PCM8 is its own lane
+    this.pcm8 = null; // Pcm8Live | Pcm8Stream
     this._resetResampleState();
   }
 
@@ -50,6 +83,8 @@ export class X68kSynth {
     this._tapNext?.fill(0);
     this._batch = 0; // samples rendered into the core's buffer
     this._batchPos = 0;
+    this._pcmAcc = 0; // the ADPCM's clock against the native one
+    this._pcmVal = 0;
     this._next = this._nativeOne();
   }
 
@@ -83,11 +118,18 @@ export class X68kSynth {
       const swap = this._tapCur;
       this._tapCur = this._tapNext;
       this._tapNext = swap;
-      const t = (this._tapPtr >> 1) + SCOPE_LANES * this._batchPos;
-      for (let c = 0; c < SCOPE_LANES; c++) swap[c] = heap[t + c] * SAMPLE_SCALE;
+      const t = (this._tapPtr >> 1) + FM_LANES * this._batchPos;
+      for (let c = 0; c < FM_LANES; c++) swap[c] = heap[t + c] * SAMPLE_SCALE;
     }
+    // The ADPCM's next sample when its clock comes round.
+    this._pcmAcc += PCM8_RATE;
+    if (this._pcmAcc >= YM2151_NATIVE_SAMPLE_RATE) {
+      this._pcmAcc -= YM2151_NATIVE_SAMPLE_RATE;
+      this._pcmVal = this.pcm8 ? this.pcm8.tick() * PCM8_GAIN : 0;
+    }
+    if (taps && this._tapNext) this._tapNext[FM_LANES] = this._pcmVal;
     const k = (this._bufPtr >> 1) + 2 * this._batchPos++;
-    return [heap[k] * SAMPLE_SCALE, heap[k + 1] * SAMPLE_SCALE];
+    return [heap[k] * SAMPLE_SCALE + this._pcmVal, heap[k + 1] * SAMPLE_SCALE + this._pcmVal];
   }
 
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {

@@ -32,7 +32,7 @@ export default {
     "fm1–fm6": ["5ae062a0", "Los seis canales FM del YM2612. Una partitura que toca PCM ocupa fm6 como DAC, así que allí una pista fm6 es un error. En x68k el YM2151 tiene ocho, fm1–fm8."],
     "sqr1–sqr3": ["4bcd4d7e", "Los tres canales de onda cuadrada del PSG. Sin voz propia: da forma a la nota con una macro."],
     "noise": ["15147589", "El canal de ruido del PSG. :mode white0–white3 o periodic0–periodic3 (persistente); 3 sigue el tono de sqr3. En x68k es el cuarto operador de fm8, y su periodo el :noise-rate de la canción."],
-    "pcm1–pcm3": ["f49ff722", "Muestras, mezcladas por software en el DAC de fm6. Nombra una muestra def-pcm antes de sus notas; el tono de una nota elige una copia remuestreada."],
+    "pcm1–pcm3": ["cd51b4c8", "Muestras, mezcladas por software en el DAC de fm6. Nombra una muestra def-pcm antes de sus notas; el tono de una nota elige una copia remuestreada. En x68k pcm1–pcm8 son las voces de PCM8, mezcladas en el ADPCM del MSM6258, y aceptan movimientos de :pitch."],
     "notes": ["7df5e1e7", "Nombres de nota en el :oct y :len de la pista. :oct 4 es el do central (MIDI 60)."],
     "_ (rest)": ["3620db3e", "Un silencio de :len, o de su propia duración. `r` no es un silencio."],
     "length suffix": ["ad825ba1", "La duración propia de una nota: un denominador (4 negra), con puntillo, una fracción de redonda, ticks (negra = 96), cuadros, milisegundos. Afecta solo a esa nota."],

@@ -2328,7 +2328,7 @@ those chips cannot do is a compile error, not a different sound.
 | --- | --- | --- |
 | `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
 | `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | VGM, WAV |
-| `x68k` | Sharp X68000: YM2151 (FM, its noise) | VGM, WAV |
+| `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2430,9 +2430,9 @@ Drive's driver; a `pc88` score has none (`E_TARGET`).
 
 ### `x68k`
 
-**`x68k` exports VGM** with the YM2151 at the X68000's 4 MHz, and Play and
-WAV run ymfm's YM2151. The MSM6258's ADPCM is not a part yet: `pcm1`–`pcm3`
-are `E_TARGET`, as are `sqr1`–`sqr3`.
+**`x68k` exports VGM (1.61)** with the YM2151 at the X68000's 4 MHz and the
+MSM6258's ADPCM stream, and Play and WAV run ymfm's YM2151 beside the same
+stream. There is no PSG: `sqr1`–`sqr3` are `E_TARGET`.
 
 **FM.** `fm1`–`fm8`, the OPN's language: the same voices, operator words and
 `:pan`, pitches on the chip's clock. The OPM has no SSG-EG (`:ssg1`… is
@@ -2458,4 +2458,22 @@ a score has `noise` or `fm8` (`E_TARGET`). Its period is the song's
 **`:noise-rate 1–31`** (lower is higher, 9 to start), 125 kHz / n — what
 the same rate is on `pc88`'s SSG. A noise note's pitch is not read, and it
 has no `:mode`.
+
+**PCM.** `pcm1`–`pcm8` are PCM8's eight voices: a software mix, as the
+X68000's PCM8 driver makes one, into the MSM6258's single 4-bit ADPCM
+stream at 15.6 kHz (15,624 Hz: the VGM streams the chip whole bytes a
+second). A note plays its sample's `:file` — its def's range and `:fx`, at
+the sample's own rate — stepped at the note's pitch, so `pcm1`–`pcm8` take
+the pitch moves FM does (`:pitch`, `(glide …)`, `(macro :pitch …)`,
+`(macro :semi …)`, though not `:snap`); its level is vel + vol + master as
+one linear gain, moving while it sounds. A `shot` plays to the range's end,
+a `gate` note is cut at its gate, a `loop` repeats the loop (`:loop-start`
+… within the range, the def's or the track's) until its gate and plays the
+rest out. A point the track writes is read at each key-on (a curve there is
+read as its start, `W_TARGET`). The eight voices sum and saturate at the
+chip's 12 bits — eight loud voices clip, as they do on the machine. The
+stream has one pan, so a pcm track has no `:pan` (`E_UNSUPPORTED_TARGET`).
+The VGM carries the encoded stream as one data block that DAC stream
+control plays; Play and WAV decode the same encoding, so all three sound
+alike, ADPCM grain included.
 

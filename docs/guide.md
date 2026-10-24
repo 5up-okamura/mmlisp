@@ -1657,8 +1657,9 @@ them: a key-on starts a note, a key-off ends it.
 - On the YM2612, YM2203, YM2608, YM2610 and YM2151 the voice is the
   channel's registers at the key-on. A file with a YM2151 asks for its
   **Target**: x68k (the default when the YM2151 is its only tone chip) keeps
-  the eight channels on `fm1`–`fm8` and DT2 as `:dt2-N`, but not its PCM yet;
-  md fits them to the Mega Drive and drops DT2. The
+  the eight channels on `fm1`–`fm8`, DT2 as `:dt2-N` and the OKIM6258's
+  samples on PCM8's `pcm1`–`pcm8`, whole; md fits them to the Mega Drive and
+  drops DT2. The
   carriers' TL is taken relative to the voice's loudest use and the rest
   becomes `:vel`. The SSG and the SN76489 become `sqr` and `noise` tracks;
   the YM2413 and the OPL chips give notes on a stand-in voice. A chip tuned

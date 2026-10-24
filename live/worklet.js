@@ -31,6 +31,9 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *       the YM2151's one. Answered with { type: 'machine', name }
  *       once that synth plays (its core may still be loading)
  *   { type: 'adpcm-ram', image: Uint8Array|null }  — the YM2608's ADPCM-B RAM
+ *   { type: 'pcm8-bank', bank }  — the X68000's PCM8 samples (src/chips/msm6258.js bakePcm8)
+ *   { type: 'pcm8', when, kind: 'on' | 'gain' | 'step' | 'off' | 'cut', voice, … }
+ *       — PCM8's events, mixed, encoded and decoded as the MSM6258 plays them
  *   { type: 'rhythm-rom', rom: Uint8Array|null }  — the YM2608's rhythm ROM
  *
  * Messages to the main thread include (while scope is enabled):
@@ -55,7 +58,7 @@ import {
   SCOPE_PCM_CHANNELS,
 } from "./src/synth-md.js";
 import { Pc88Synth, SCOPE_LANES as PC88_SCOPE_LANES, YM2608_NATIVE_SAMPLE_RATE } from "./src/synth-pc88.js";
-import { X68kSynth } from "./src/synth-x68k.js";
+import { X68kSynth, Pcm8Live } from "./src/synth-x68k.js";
 import { kcToHz } from "./src/chips/ym2151.js";
 
 // The most scope lanes a machine has (the pc88's), for the latches.
@@ -151,6 +154,8 @@ class YM2612Processor extends AudioWorkletProcessor {
     // nativeRate / engineRate FM native samples, the way the DAC holds a $2A
     // write until the next.
     this._pcmTimedQueue = []; // timed PCM events: [{frame, type: 'pcm-ev', ...}]
+    this._pcm8TimedQueue = []; // the X68000's PCM8 events, applied at their sample
+    this._pcm8Bank = null;
     this._pcmBank = null;     // {entries, entryIds, img}
     this._pcmLive = null;     // PcmLiveEngine
     this._pcmSeq = null;      // PcmIrVoices: the IR's events → engine commands
@@ -246,6 +251,12 @@ class YM2612Processor extends AudioWorkletProcessor {
         if (ch >= 0 && ch < 8) this._chHold[ch] = msg.on ? 1 : this._chHold[ch] ? 2 : 0;
       } else if (msg.type === "pcm-set-bank") {
         this._setPcmBank(msg);
+      } else if (msg.type === "pcm8") {
+        const t = msg.when ?? (currentFrame + WORKLET_BLOCK) / sampleRate;
+        this._insertTimed(this._pcm8TimedQueue, t, msg);
+      } else if (msg.type === "pcm8-bank") {
+        this._pcm8Bank = msg.bank ?? null;
+        this._pcm8Restart();
       } else if (msg.type === "pcm-ev") {
         // Timed, and applied in time order: a note, a level and every step of
         // a loop-point sweep interleave exactly as the score orders them.
@@ -292,6 +303,8 @@ class YM2612Processor extends AudioWorkletProcessor {
         this._psgTimedQueue = [];
         this._pcmTimedQueue = [];
         this._pcmRestart();
+        this._pcm8TimedQueue = [];
+        this._pcm8Restart();
         this._synth?.setDacEnabled(false);
         this._dacFromVoices = false;
       }
@@ -317,6 +330,7 @@ class YM2612Processor extends AudioWorkletProcessor {
           synth.setRhythmRom(this._rhythmRom);
         }
         this._synths[key] = synth;
+        if (key === "x68k") this._pcm8Restart();
       } catch (error) {
         this.port.postMessage({ type: "error", message: String(error?.message ?? error) });
         return false;
@@ -501,6 +515,12 @@ class YM2612Processor extends AudioWorkletProcessor {
 
   // A fresh engine and voice model on the current bank: what a reset, a flush
   // (hot-swap) or a new bank starts from.
+  // PCM8's mix from silence, on the x68k synth.
+  _pcm8Restart() {
+    const synth = this._synths.x68k;
+    if (synth) synth.pcm8 = this._pcm8Bank ? new Pcm8Live(this._pcm8Bank) : null;
+  }
+
   _pcmRestart() {
     this._pcmAcc = 0;
     this._pcmByte = 0x80;
@@ -594,11 +614,17 @@ class YM2612Processor extends AudioWorkletProcessor {
     // applied and the synth can render PSG (and batch FM) in one call.
     // getDacByte is ours to supply only when our voices own the DAC — passing it
     // while a backend streams would overwrite the backend's bytes with silence.
-    const onFrame = dacStreaming
-      ? (i) =>
-          this._drainTimedQueue(this._timedQueue, currentFrame + i + 1, (op) => {
-            this._applyYmWrite(op.port, op.addr, op.data, op.preview);
-          })
+    // PCM8's events land at their own sample, as the export's mix takes them.
+    const pcm8 = this._machine === "x68k" && synth.pcm8 && this._pcm8TimedQueue[0]?.frame < blockEnd ? synth.pcm8 : null;
+    if (!synth.pcm8) this._pcm8TimedQueue = [];
+    const onFrame = dacStreaming || pcm8
+      ? (i) => {
+          if (dacStreaming)
+            this._drainTimedQueue(this._timedQueue, currentFrame + i + 1, (op) => {
+              this._applyYmWrite(op.port, op.addr, op.data, op.preview);
+            });
+          if (pcm8) this._drainTimedQueue(this._pcm8TimedQueue, currentFrame + i + 1, (op) => pcm8.apply(op));
+        }
       : null;
     const getDacByte = pcmActive ? this._getDacByte : null;
     const scope = this._scopeOn ? this._scopeScratchFor(blockSize) : null;

@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import { buildMmb, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { targetProfile } from "../../live/src/targets.js";
 import { bakeAdpcmB } from "../../live/src/chips/adpcm-b.js";
+import { bakePcm8 } from "../../live/src/chips/msm6258.js";
 import { loadSamplesForIr } from "../../drv/tools/wav.mjs";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
@@ -71,17 +72,21 @@ function outputs({ file, frameHz, seFile }) {
     const { ir, diagnostics } = compiled;
     const out = { diagnostics: diagnostics.map((d) => d.code ?? d.message).join(","), ir: JSON.stringify(ir, null, 1) };
     if (!target.encodes || diagnostics.some((d) => d.severity === "error")) return out;
-    // The chip's own sample RAM (the YM2608's ADPCM-B), baked as Live does.
-    const adpcm = target.hasPart("adpcm-b") && (ir.metadata?.samples ?? []).some((s) => s.file)
-      ? bakeAdpcmB(ir, loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: ir.metadata.samples.filter((s) => s.file) } }), target)
-      : null;
+    // The chip's own sample RAM (the YM2608's ADPCM-B) or PCM8's samples,
+    // baked as Live does.
+    const withFiles = (ir.metadata?.samples ?? []).some((s) => s.file);
+    const blobs = () => loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: ir.metadata.samples.filter((s) => s.file) } });
+    const adpcm = target.hasPart("adpcm-b") && withFiles ? bakeAdpcmB(ir, blobs(), target) : null;
+    const pcm8 = target.hasPart("pcm8") && withFiles ? bakePcm8(ir, blobs()) : null;
     const player = new IRPlayer(() => {});
     player.loadJSON(ir);
     player.setAdpcmBank(adpcm);
+    player.setPcm8Bank(pcm8);
     const vgmPlayer = new IRPlayer(() => {});
     vgmPlayer.loadJSON(ir);
     const meta = { title: ir.metadata?.title, composer: ir.metadata?.composer, author: ir.metadata?.author };
-    return { ...out, regs: JSON.stringify(player.captureRegisterLog()), vgm: renderVgm(vgmPlayer, meta, adpcm ? { adpcm } : null).bytes };
+    const pcm = adpcm ? { adpcm } : pcm8 ? { pcm8 } : null;
+    return { ...out, regs: JSON.stringify(player.captureRegisterLog()), vgm: renderVgm(vgmPlayer, meta, pcm).bytes };
   }
   let built;
   try {

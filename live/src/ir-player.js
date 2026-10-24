@@ -49,6 +49,7 @@ import {
 } from "./mmb.js";
 import { engineImage } from "./engine-images.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
+import { PCM8_RATE, PCM8_VOICES } from "./chips/msm6258.js";
 // The largest point a PCM point target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
 const PCM_LOOP_MAX = 0x7f00;
@@ -654,6 +655,7 @@ export class IRPlayer {
     for (let ch = 0; ch < this._fmEnc.channels; ch++) this._writeKeyOff(ch);
     for (let psgCh = 0; psgCh < 4; psgCh++) this._psgSetAtt(psgCh, 15, at);
     for (let v = 0; v < pcmVoices; v++) this._pcmEv(at, { kind: "off", voice: v });
+    if (this._target.hasPart("pcm8")) for (let v = 0; v < PCM8_VOICES; v++) this._pcm8Ev(at, { kind: "cut", voice: v });
 
     this._audioContext = audioContext;
     this._onRunStart?.();
@@ -824,7 +826,7 @@ export class IRPlayer {
     return !this._mutedTracks.has(ti);
   }
 
-  /** Whether a YM2608 sample voice sounds: its own strip's mute and solo. */
+  /** Whether a chip sample voice (the YM2608's, PCM8's) sounds: its own strip's mute and solo. */
   _isVoiceAudible(voice) {
     if (this._soloTracks.size > 0 || this._soloVoices.size > 0) return this._soloVoices.has(voice);
     return !this._mutedVoices.has(voice);
@@ -877,8 +879,11 @@ export class IRPlayer {
     if (this._reg27 & 0x80) this._writeReg27(when);
     // The YM2608's sample voices: dump a rhythm sound, stop the ADPCM-B.
     const chip = this._target?.chipFor?.("rhythm") ?? this._target?.chipFor?.("adpcm-b");
-    for (const voice of this._chipPcm?.hits.keys() ?? []) {
+    for (const [voice, hits] of this._chipPcm?.hits ?? []) {
       if (this._isVoiceAudible(voice)) continue;
+      // A PCM8 voice is cut from the mix.
+      const h = hits.at(-1);
+      if (h?.pcm8 != null) { this._pcm8Ev(when, { kind: "cut", voice: h.pcm8 }); continue; }
       const writes = voice === "adpcm" ? chip.adpcm.stop() : chip.rhythm.dump(voice);
       for (const [p, a, d] of writes) this._write(p, a, d, when);
     }
@@ -965,7 +970,8 @@ export class IRPlayer {
     this._resumeHeldTrack(tIdx, when);
     if (ch >= 20) {
       // PCM: the key-off releases a `:len 0` loop; its tail plays out.
-      this._pcmEv(when, { kind: "off", voice: ch - 20 });
+      if (this._trackPart.get(tIdx)?.name === "pcm8") this._pcm8Ev(when, { kind: "off", voice: ch - 20 });
+      else this._pcmEv(when, { kind: "off", voice: ch - 20 });
     } else if (ch >= PSG_HOLD_BASE) {
       // PSG channels: silence by setting attenuation to 15 (max att = silent)
       const psgCh = ch - PSG_HOLD_BASE;
@@ -1414,8 +1420,10 @@ export class IRPlayer {
 
     const writes = [];
     let pcmCount = 0;
-    // The PCM events the worklet would get (pcm-ev), for drv/tools/pcm-ab-gate.mjs.
+    // The PCM events the worklet would get (pcm-ev), for drv/tools/pcm-ab-gate.mjs,
+    // and the X68000's PCM8 events, which the VGM and the WAV mix (chips/msm6258.js).
     const pcmEvents = [];
+    const pcm8Events = [];
 
     const saved = {
       write: this._write,
@@ -1441,6 +1449,10 @@ export class IRPlayer {
         pcmCount++; // DAC/PCM event — not encoded into VGM yet
         if (portOrMsg.type === "pcm-ev")
           pcmEvents.push({ ...portOrMsg, sec: (portOrMsg.when == null ? BASE : portOrMsg.when) - BASE });
+        if (portOrMsg.type === "pcm8") {
+          pcmCount--; // the VGM carries it
+          pcm8Events.push({ ...portOrMsg, sec: (portOrMsg.when == null ? BASE : portOrMsg.when) - BASE });
+        }
         return;
       }
       const sec = (when == null ? BASE : when) - BASE;
@@ -1581,10 +1593,11 @@ export class IRPlayer {
       // end to fully populate the window; those overflow writes belong to the
       // next iteration and are dropped (the VGM player replays them via loop).
       const kept = writes.filter((w) => w.sec < endSec);
-      return { writes: kept, pcmCount, pcmEvents, loopStartSec, endSec };
+      const pcm8 = pcm8Events.filter((e) => e.sec < endSec);
+      return { writes: kept, pcmCount, pcmEvents, ...(pcm8.length ? { pcm8Events: pcm8 } : {}), loopStartSec, endSec };
     }
 
-    return { writes, pcmCount, pcmEvents, loopStartSec, endSec };
+    return { writes, pcmCount, pcmEvents, ...(pcm8Events.length ? { pcm8Events } : {}), loopStartSec, endSec };
   }
 
   _flattenTracks() {
@@ -2599,6 +2612,7 @@ export class IRPlayer {
     const part = this._trackPart.get(ev._trackIndex);
     if (part?.name === "rhythm") return this._dispatchRhythmEvent(ev, when);
     if (part?.name === "adpcm-b") return this._dispatchAdpcmEvent(ev, when);
+    if (part?.name === "pcm8") return this._dispatchPcm8Event(ev, when);
     const voice = ev._chIndex ?? 0;
     switch (ev.cmd) {
       case "PCM_NOTE_ON":
@@ -2707,6 +2721,12 @@ export class IRPlayer {
   // is, and the rate it plays C4 at. Without it a note writes nothing.
   setAdpcmBank(bank) {
     this._adpcmBank = bank ?? null;
+  }
+
+  // The X68000's PCM8 samples (chips/msm6258.js bakePcm8): each one's frames
+  // and the rate it plays C4 at. Without it a note writes nothing.
+  setPcm8Bank(bank) {
+    this._pcm8Bank = bank ?? null;
   }
 
   // The YM2608's sample voices — the ADPCM-B and the six rhythm sounds — and
@@ -2828,6 +2848,13 @@ export class IRPlayer {
   static _rhythmAtt({ vel, vol, master, ui }) {
     return sumLevelOffsets(velToTlAtten(velFine(vel)), volToTlOffset(vol), volToTlOffset(master), volToTlOffset(ui));
   }
+  // PCM8's voice gain, linear: vel + vol + master in 2 dB steps, as the
+  // ADPCM-B's level is, without its 8-bit register.
+  static _pcm8Gain({ vel, vol, master, ui }) {
+    if (vol <= 0 || master <= 0 || ui <= 0) return 0;
+    const db = 2 * (15 - velFine(vel)) + 2 * (VOL_UNITY - vol) + 2 * (VOL_UNITY - master) + 2 * (VOL_UNITY - ui);
+    return 10 ** (-db / 20);
+  }
   static _adpcmLevel({ vel, vol, master, ui }) {
     if (vol <= 0 || master <= 0 || ui <= 0) return 0;
     const db = 2 * (15 - velFine(vel)) + 2 * (VOL_UNITY - vol) + 2 * (VOL_UNITY - master) + 2 * (VOL_UNITY - ui);
@@ -2851,7 +2878,12 @@ export class IRPlayer {
         for (let i = hits.length - 1; i >= 0; i--) if (hits[i].t <= t + 1e-9) { h = hits[i]; break; }
         if (!h || h.dumped || t >= h.end) continue;
         const lv = this._chipPcmLevelAt(h, t);
-        if (voice === "adpcm") {
+        if (h.pcm8 != null) {
+          const gain = IRPlayer._pcm8Gain(lv);
+          if (gain !== h.gain) { h.gain = gain; this._pcm8Ev(t, { kind: "gain", voice: h.pcm8, value: gain }); }
+          const step = this._pcm8Step(h, t);
+          if (step !== h.step) { h.step = step; this._pcm8Ev(t, { kind: "step", voice: h.pcm8, value: step }); }
+        } else if (voice === "adpcm") {
           const level = IRPlayer._adpcmLevel(lv);
           if (level !== h.level) {
             h.level = level;
@@ -2944,6 +2976,87 @@ export class IRPlayer {
         else if (target === "RANGE_START") (st.range ??= {}).start = Number(ev.args?.value);
         else if (target === "RANGE_END") { (st.range ??= {}).end = Number(ev.args?.value); st.range.len = null; }
         else if (target === "RANGE_LEN") { (st.range ??= {}).len = Number(ev.args?.value); st.range.end = null; }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  _pcm8Ev(when, fields) {
+    this._write({ type: "pcm8", when, ...fields });
+  }
+
+  // A PCM8 voice's step through its sample a mix sample: the note's pitch,
+  // the track's :pitch and the note's :pitch / :semi macros, over the rate
+  // the sample plays C4 at.
+  _pcm8Step(hit, when) {
+    const cents = this._chipPcmParamAt(hit.ti, "pitch", when) + (this._lineAt(hit.pitchLine, when) ?? 0) +
+      100 * (this._lineAt(hit.semiLine, when) ?? 0);
+    return (hit.rate * 2 ** ((hit.midi - 60) / 12 + cents / 1200)) / PCM8_RATE;
+  }
+
+  // The X68000's PCM8 (chips/msm6258.js): a note plays its sample from the
+  // range's start at its pitch's step, its gain vel + vol + master moving
+  // with them while it sounds (_chipPcmFrames); `shot` plays to the range's
+  // end, `gate` is cut at the note's end, `loop` repeats the loop until then
+  // and plays the rest out. A point the track writes (:pcm-start …) is time
+  // as heard, read at the key-on, so it reaches into the sample by the
+  // note's pitch.
+  _dispatchPcm8Event(ev, when) {
+    const ti = ev._trackIndex;
+    const voice = ev._chIndex ?? 0;
+    const key = `pcm8-${voice}`;
+    const st = (this._pcm8State ??= new Map()).get(ti) ?? {};
+    this._pcm8State.set(ti, st);
+    switch (ev.cmd) {
+      case "PCM_NOTE_ON": {
+        const entry = this._pcm8Bank?.entries?.[ev.args?.sample];
+        if (!entry || !this._isTrackAudible(ti) || !this._isVoiceAudible(key)) break;
+        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        const perSec = entry.rate * 2 ** ((midi - 60) / 12); // sample frames a second, as heard
+        const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
+        const r = st.range ?? {}, l = st.loop ?? {};
+        const start = at(r.start) ?? 0;
+        const end = r.end != null ? at(r.end) : r.len != null ? start + at(r.len) : entry.data.length;
+        const loopStart = l.start != null ? at(l.start) : undefined;
+        const loopEnd = l.end != null ? at(l.end) : l.len != null ? (loopStart ?? entry.loopStart) + at(l.len) : undefined;
+        const mode = ev.args?.mode;
+        const shotEnd = when + Math.max(0, Math.min(end, entry.data.length) - start) / perSec;
+        // A held note (:len 0) waits for triggerKeyOff, as the Mega Drive's does.
+        if (this._resolveGateTicks(ev.args?.gate, ev.args?.length) === 0) this._holdChannels.set(20 + voice, ti);
+        this._chipPcmHit(key, ev, when, mode === "shot" || !mode ? shotEnd : Infinity,
+          { rate: entry.rate, midi, pcm8: voice }, (t, h) => {
+            h.gain = IRPlayer._pcm8Gain(this._chipPcmLevelAt(h, t));
+            h.step = this._pcm8Step(h, t);
+            this._pcm8Ev(t, { kind: "on", voice, sample: ev.args.sample, gain: h.gain, step: h.step,
+              start, end, loopStart, loopEnd, mode: mode ?? "shot" });
+          });
+        break;
+      }
+      case "PCM_NOTE_OFF": {
+        // Only the track that keyed the voice last stops it.
+        const h = this._chipPcmOwnHit(key, ti, when);
+        if (!h) break;
+        if (ev.args?.mode === "gate") { this._pcm8Ev(when, { kind: "cut", voice }); h.end = Math.min(h.end, when); }
+        else if (ev.args?.mode === "loop") this._pcm8Ev(when, { kind: "off", voice });
+        break;
+      }
+      case "PARAM_SET":
+      case "PARAM_SWEEP":
+      case "PARAM_FROM_VAL": {
+        const target = (ev.args?.target ?? "").toUpperCase();
+        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
+        else if (target === "NOTE_PITCH") this._chipPcmParam(ev, when, "pitch");
+        if (ev.cmd !== "PARAM_SET") break;
+        const v = Number(ev.args?.value);
+        if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
+        else if (target === "RANGE_START") (st.range ??= {}).start = v;
+        else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
+        else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
+        else if (target === "LOOP_START") (st.loop ??= {}).start = v;
+        else if (target === "LOOP_END") { (st.loop ??= {}).end = v; st.loop.len = null; }
+        else if (target === "LOOP_LEN") { (st.loop ??= {}).len = v; st.loop.end = null; }
         break;
       }
       default:

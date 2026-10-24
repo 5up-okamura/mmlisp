@@ -231,7 +231,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 - `(def-score :target x68k)` holds a score to the X68000's YM2151 (§19):
   `fm1`–`fm8`, `noise` (fm8's fourth operator, song-wide `:noise-rate`), DT2
   as `:dt2-1`–`:dt2-4` 0–3, the LFO as `:lfo-freq` `:lfo-pmd` `:lfo-amd`
-  `:lfo-wave`; no SSG-EG, no FM3 modes, no PCM yet. VGM and WAV (ymfm).
+  `:lfo-wave`; `pcm1`–`pcm8` PCM8's voices mixed into the MSM6258's ADPCM
+  (pitch moves allowed, no `:pan`); no SSG-EG, no FM3 modes. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).
