@@ -841,7 +841,7 @@
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { targetProfile, notYet } from './src/targets.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
-    import { bakePcm8 } from './src/chips/msm6258.js';
+    import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
@@ -9730,6 +9730,20 @@
         if (!samples) throw new Error(`"${name}" did not load`);
         const loop = def.startSec != null || def.endSec != null;
         if (seq !== _pcmAuditionSeq || (loop && _pcmReleasedSeq === seq)) return; // superseded or let go
+        // The X68000's PCM8: the def baked as the song's are, on a voice of
+        // its own (the last), mixed and through the ADPCM as the chip plays.
+        if (_fmLiveRaf == null && targetProfile(ir.metadata?.target).hasPart('pcm8')) {
+          const bank = bakePcm8(ir, samples, [name]);
+          const s = bank.entries[name];
+          if (!s) throw new Error(`"${name}" did not load`);
+          await setWorkletMachine('x68k');
+          workletNode.port.postMessage({ type: 'pcm8-bank', bank });
+          workletNode.port.postMessage({
+            type: 'pcm8', kind: 'on', voice: PCM8_VOICES - 1, sample: name, mode: loop ? 'loop' : 'shot',
+            step: (s.rate * 2 ** ((midi - 60) / 12)) / PCM8_RATE, gain: 10 ** (-(2 * (15 - Math.max(0, Math.min(15, vel)))) / 20),
+          });
+          return;
+        }
         // During playback the engine is the song's: the same bake plays on a
         // plain buffer source beside it, so the keys can play along.
         if (_fmLiveRaf != null) {
@@ -9755,6 +9769,7 @@
       // range plays out, as the engine's release does.
       if (_sideAudition) _sideAudition.loop = false;
       workletNode?.port.postMessage({ type: 'pcm-ev', kind: 'off', voice: 0, track: 0 });
+      workletNode?.port.postMessage({ type: 'pcm8', kind: 'off', voice: PCM8_VOICES - 1 });
     }
 
     // The keys' sample audition while the song plays (previewPcmNoteOn): the

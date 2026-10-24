@@ -11,7 +11,8 @@
 //                                    rhythm and ADPCM-B are reported)
 //   YM2151 (OPM)                     voices and notes — DT2 kept when the
 //                                    score is the X68000's (:target x68k),
-//                                    dropped on the Mega Drive
+//                                    dropped on the Mega Drive; channel 8's
+//                                    noise (NE) as noise notes
 //   SN76489, AY-3-8910               notes (square, noise)
 //   YM2413, YM3812/3526/Y8950, YMF262 notes, on a stand-in voice
 //
@@ -51,6 +52,12 @@ import { bankedEngineImage } from "./engine-banked-images.js";
 
 const CARRIERS = [[3], [3], [3], [3], [2, 3], [1, 2, 3], [1, 2, 3], [0, 1, 2, 3]]; // by ALG, in slot order
 const STAND_IN = { psg: "wave-square", noise: "wave-square", opl: "wave-sine", opll: "wave-saw" };
+// The SN76489's white noises (Hz on the Mega Drive) and the noise rates
+// that come nearest them where a noise is a rate (125 kHz / rate).
+const NOISE_WHITE = ["white0", "white1", "white2"];
+const WHITE_HZ = [13983, 6991, 3496];
+const NOISE_RATE_OF = { white0: 9, white1: 18, white2: 31 };
+const nearestWhite = (hz) => WHITE_HZ.reduce((b, w, i) => (Math.abs(Math.log(w / hz)) < Math.abs(Math.log(WHITE_HZ[b] / hz)) ? i : b), 0);
 
 /** gzip (.vgz) → bytes */
 async function gunzip(u8) {
@@ -169,9 +176,30 @@ function opmChip(clock, { ev }) {
     };
   };
   const key = (c) => `YM2151 FM${c + 1}`;
+  // Channel 8 with the noise on (NE, $0F bit 7) and its fourth operator keyed
+  // is the chip's noise: a noise note, its frequency from NFRQ (clock / 32 /
+  // (32 − NFRQ) Hz), its level that operator's TL — taken linearly, as the
+  // noise is. The channel's FM is not read then. The note ends at the
+  // operator's key-off or where the noise is turned off.
+  const NOISE = "YM2151 noise";
+  let noiseOn = false;
+  const noiseHz = () => clock / 32 / (32 - (r[0x0f] & 31));
+  const noiseVel = () => {
+    const g = Math.max(1e-3, (1023 - 8 * (r[0x60 + 24 + 7] & 127)) / 1023);
+    return Math.max(0, Math.min(15, Math.round(15 + (20 * Math.log10(g)) / 2)));
+  };
   return {
     name: "YM2151",
     write(a, d, t) {
+      if (a === 0x0f && noiseOn && !(d & 0x80)) { ev(NOISE, { t, kind: "off" }); noiseOn = false; }
+      if (a === 0x08 && (d & 7) === 7 && ((r[0x0f] & 0x80) || noiseOn)) {
+        const on = (d & 0x40) !== 0 && (r[0x0f] & 0x80) !== 0; // C2, the fourth operator
+        if (on && !noiseOn) ev(NOISE, { t, kind: "on", pitch: 60, vel: noiseVel(), noiseHz: noiseHz(), kindOf: "noise" });
+        else if (!on && noiseOn) ev(NOISE, { t, kind: "off" });
+        noiseOn = on;
+        return;
+      }
+      if (a === 0x7f && noiseOn) ev(NOISE, { t, kind: "vel", vel: (r[a] = d, noiseVel()) });
       if (a === 0x08) {
         const c = d & 7;
         const on = (d & 0x78) !== 0;
@@ -679,7 +707,7 @@ function notesOf(events, followPitch, endT, tune = 0) {
       close(e.t);
       if (e.pitch == null && base.pitch == null) continue;
       cur = { t: e.t, pitch: e.pitch ?? base.pitch, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
-        pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, levels: [], pitches: [] };
+        pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, noiseHz: e.noiseHz ?? base.noiseHz, levels: [], pitches: [] };
       if (!cur.voice) cur.lv0 = cur.vel;
     } else if (e.kind === "off") close(e.t);
     else if (!cur) continue;
@@ -952,9 +980,9 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   const fileLoop = parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
   // The machines it can be written for: the Mega Drive, and the X68000 for
   // a YM2151's — by default when the OPM is its only tone chip.
-  const opm = channels.some((c) => c.kind === "opm");
+  const opm = channels.some((c) => c.key.startsWith("YM2151"));
   const targets = opm ? ["x68k", "md"] : ["md"];
-  const target = opm && channels.every((c) => c.kind === "opm" || c.kind === "chip-pcm") ? "x68k" : "md";
+  const target = opm && channels.every((c) => c.key.startsWith("YM2151") || c.kind === "chip-pcm") ? "x68k" : "md";
   return { channels, grid, frameRate, followPitch, fileLoop, pcmPoly, targets, target };
 }
 
@@ -1007,6 +1035,21 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const target = targetProfile(options.target ?? "md");
   const dests = vgmDests(target.name);
   const keepDt2 = target.hasWord("FM_DT2_1");
+  // A noise note as the target's noise says it: the SN76489's :mode, or the
+  // song's :noise-rate (the SSG's, the OPM's — 125 kHz / rate on both). A
+  // noise's frequency reads as the nearest of either, and a white mode as
+  // the nearest rate (the readings a pc88 score gives a Mega Drive mode,
+  // targets/pc88.js).
+  const noisePart = dests.noise ? target.partOf(dests.noise) : null;
+  const noiseWord = (n) => {
+    if (!noisePart) return null;
+    if (Object.keys(noisePart.modes ?? {}).length) {
+      const mode = n.mode ?? (n.noiseHz ? NOISE_WHITE[nearestWhite(n.noiseHz)] : null);
+      return mode ? `:mode ${mode}` : null;
+    }
+    const rate = n.noiseHz ? Math.max(1, Math.min(31, Math.round(125000 / n.noiseHz))) : NOISE_RATE_OF[n.mode] ?? 9;
+    return `:noise-rate ${rate}`;
+  };
   const followPitch = options.followPitch ?? true;
 
   // The grid: the estimate, a tempo set by hand, or frames.
@@ -1089,7 +1132,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       }
       note.stand = voice;
       note.pan = onFm && n.pan ? n.pan : null;
-      note.mode = d === "noise" ? n.mode : null;
+      note.mode = d === dests.noise ? noiseWord(n) : null;
       // Two notes quantized onto one start: the later wins; an overlap is cut.
       const prev = notes[notes.length - 1];
       if (prev && prev.tick >= tick) notes.pop();
@@ -1136,7 +1179,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         env: n.envName ?? (anyEnv ? ENV_NONE : null),
         pitch: n.bendName ?? (anyBend ? PITCH_NONE : null),
         pan: n.pan ? `:pan ${n.pan}` : null,
-        mode: n.mode ? `:mode ${n.mode}` : null,
+        mode: n.mode,
       };
       n.pre = [];
       for (const k of ["voice", "env", "pitch", "pan", "mode"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);

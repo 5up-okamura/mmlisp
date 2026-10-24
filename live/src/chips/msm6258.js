@@ -89,14 +89,16 @@ export const okiOut = (signal) => (signal & ~3) / 2048;
 /**
  * The samples a score's PCM8 tracks play: each def's `:fx` and range, at its
  * own rate (the mix resamples). `blobs` are the decoded files ({ name: { data,
- * baseRate } }, as the other bakes take them). Returns { entries: { name:
- * { data, rate, loopStart, loopEnd } }, warnings } — rate the Hz it plays C4
- * at, the loop in frames of `data`.
+ * baseRate } }, as the other bakes take them); `names`, the samples to bake
+ * where not the ones the score plays (an audition's). Returns { entries:
+ * { name: { data, rate, loopStart, loopEnd } }, warnings } — rate the Hz it
+ * plays C4 at, the loop in frames of `data`.
  */
-export function bakePcm8(ir, blobs) {
-  const played = new Set();
-  for (const t of ir.tracks ?? [])
-    for (const e of t.events ?? []) if (e.cmd === "PCM_NOTE_ON" && e.args?.sample) played.add(e.args.sample);
+export function bakePcm8(ir, blobs, names = null) {
+  const played = new Set(names ?? []);
+  if (!names)
+    for (const t of ir.tracks ?? [])
+      for (const e of t.events ?? []) if (e.cmd === "PCM_NOTE_ON" && e.args?.sample) played.add(e.args.sample);
   const warnings = [];
   const entries = {};
   for (const s of ir.metadata?.samples ?? []) {

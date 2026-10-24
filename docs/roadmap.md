@@ -141,8 +141,7 @@ In order:
    `tools/tests/x68k/`), and `pcm1`–`pcm8` are PCM8's voices mixed into the
    MSM6258's ADPCM stream (`live/src/chips/msm6258.js`). A `.opm` voice bank
    imports its voices with DT2, and a YM2151's VGM imports as an `x68k`
-   score, its OKIM6258 samples on PCM8. What is left: the VGM importer's
-   YM2151 noise onto `noise`.
+   score, its noise on `noise` and its OKIM6258 samples on PCM8.
 3. **MSX: PSG, then SCC.** The PSG is the SSG profile again. The SCC brings
    the *wavetable* voice class, which the PC Engine, the FDS and the Game Boy
    share later. The FM-PAC (OPLL: 2-op, fifteen preset voices and one user
