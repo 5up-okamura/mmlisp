@@ -129,7 +129,7 @@
         </button>
         <div class="menu-sep"></div>
         <!-- sound and input -->
-        <button class="menu-item" onclick="toggleAnalogLpf();closeMenus()">
+        <button class="menu-item" data-needs="analogLpf" onclick="toggleAnalogLpf();closeMenus()">
           <span>Analog LPF</span>
           <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
@@ -220,7 +220,7 @@
             <button class="menu-item" onclick="importAudioAsFmVoice();closeMenus()">Audio as FM Voice…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">ROMs</div>
-            <button class="menu-item" onclick="chooseRhythmRom();closeMenus()"
+            <button class="menu-item" data-needs="part:rhythm" onclick="chooseRhythmRom();closeMenus()"
                     title="Your YM2608 rhythm ROM (8 KB), kept in this browser: :target pc88's rhythm plays from it">
               <span>YM2608 Rhythm ROM…</span>
               <span class="menu-item-shortcut" id="rhythmRomCheck"></span>
@@ -233,7 +233,7 @@
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown">
-            <button class="menu-item" onclick="exportMmb();closeMenus()">MMB…</button>
+            <button class="menu-item" data-needs="driver" onclick="exportMmb();closeMenus()">MMB…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">Recording</div>
             <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
@@ -324,7 +324,7 @@
           <span>Build</span>
           <span class="menu-item-shortcut" id="buildShortcut"></span>
         </button>
-        <button class="menu-item" id="releaseHoldsItem" onclick="releaseHoldsAction();closeMenus()"
+        <button class="menu-item" id="releaseHoldsItem" data-needs="driver" onclick="releaseHoldsAction();closeMenus()"
                 title="Send the key-off a game would: every :len 0 / :gate 0 hold lets go, and a track stopped at a :len 0 note plays on">
           <span>Release Holds</span>
           <span class="menu-item-shortcut" id="releaseHoldsShortcut"></span>
@@ -342,7 +342,7 @@
           <span class="menu-item-shortcut" id="libraryShortcut"></span>
         </button>
         <div class="menu-sep"></div>
-        <button class="menu-item" id="drvBackendItem" onclick="toggleDrvBackend();closeMenus()"
+        <button class="menu-item" id="drvBackendItem" data-needs="driver" onclick="toggleDrvBackend();closeMenus()"
                 title="Play through the MMLispDRV reference decoder (the exported MMB) instead of the IR player">
           <span>MMLispDRV Backend</span>
           <span class="menu-item-shortcut" id="drvBackendCheck"></span>
@@ -426,7 +426,7 @@
 
       <!-- Global Parameters -->
       <div class="rack-section">
-        <div class="rack-title">Global</div>
+        <div class="rack-title rack-title-row"><span>Global</span><span id="targetBadge"></span></div>
         <div class="rack-body">
         <div class="param-grid" style="grid-template-columns: repeat(3, 1fr)">
           <div class="knob-wrap">
@@ -437,7 +437,7 @@
             <div class="knob-label">TEMPO <span class="val" id="val-tempo">120</span></div>
             <input type="range" id="sl-tempo" min="20" max="400" value="120" oninput="onTempo(this)">
           </div>
-          <div class="knob-wrap">
+          <div class="knob-wrap" data-needs="word:LFO_RATE">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
             <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onLfo(this)">
           </div>
@@ -463,7 +463,7 @@
       </div>
 
       <!-- FM Parameters -->
-      <div class="rack-section" id="fmParamSection">
+      <div class="rack-section" id="fmParamSection" data-needs="kind:fm">
         <div class="rack-title rack-title-row"><span>FM Parameters</span><span id="fmParamStatus"></span></div>
         <div class="rack-body">
         <div class="alg-grid">
@@ -6401,7 +6401,7 @@
       _lastGoodIR = ir;
       _lastGoodSrc = src;
       _lastSourceMap = sourceMap;
-      updateTargetMenus(ir);
+      applyTargetUi(ir);
       buildChStrips(ir);
       renderDynParams(ir);
       if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
@@ -6666,7 +6666,6 @@
     // one strip per ROM sound the score plays (BD … RIM), whichever track hits
     // it — so one sound mutes, solos or fades alone. Each carries `voice`
     // (IRPlayer muteVoice / soloVoice / setVoiceVol) and its scope lane.
-    const RHYTHM_STRIPS = ['bd', 'sd', 'top', 'hh', 'tom', 'rim'];
     function buildChStripModel(ir) {
       const tracks = ir?.tracks ?? [];
       const target = targetProfile(ir?.metadata?.target);
@@ -6692,24 +6691,23 @@
         if (rhythmHeads.has(head)) {
           if (rhythmDone) continue;
           rhythmDone = true;
-          RHYTHM_STRIPS.forEach((sound, k) => {
+          // The part's sounds in its order, from the head's lane (targets.js scopeLane).
+          Object.values(target.partOf(head).kit).forEach((sound, k) => {
             if (!sounds.has(sound)) return;
             // The roll's row: this sound's hits, from every rhythm track.
             const samples = new Set([...soundOf].filter(([, r]) => r === sound).map(([n]) => n));
-            model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), voice: sound, scope: 11 + k,
+            model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), voice: sound, scope: target.scopeLane(head) + k,
               volKind: 'voice', volIndex: null, selIndex: null, trackIndex: rhythmTracks[0], rhythmTracks, samples });
           });
           continue;
         }
         const entry = { head, label: channelLabelOf(head), trackIndex: headToTrack.get(head), ...channelRouting(head) };
-        // pc88's pcm1: the ADPCM-B voice, on its own scope lane.
-        if (target.hasPart('adpcm-b') && channelVoice(head)?.part.name === 'adpcm-b')
-          Object.assign(entry, { voice: 'adpcm', scope: 10, volKind: 'voice' });
-        // x68k's PCM8: a voice of the one ADPCM stream, which is scope lane 8.
+        // A chip's own sample voice is the IR player's voice to mute or fade
+        // (muteVoice, setVoiceVol): the ADPCM-B, a voice of PCM8.
+        if (channelVoice(head)?.part.name === 'adpcm-b')
+          Object.assign(entry, { voice: 'adpcm', volKind: 'voice' });
         if (channelVoice(head)?.part.name === 'pcm8')
-          Object.assign(entry, { voice: `pcm8-${channelVoice(head).voice}`, scope: 8, volKind: 'voice' });
-        // x68k's noise is fm8's fourth operator: fm8's scope lane.
-        if (channelVoice(head)?.part.name === 'opm-noise') entry.scope = channelVoice(head).voice;
+          Object.assign(entry, { voice: `pcm8-${channelVoice(head).voice}`, volKind: 'voice' });
         model.push(entry);
       }
       return model;
@@ -7443,14 +7441,37 @@
     window.toggleDrvBackend = toggleDrvBackend;
     updateDrvBackendCheck();
 
-    // The Tools items that only MMLispDRV has: its backend, and Release
-    // Holds (a game's key-off). Off for a :target without that driver
-    // (targets/).
     const hasDrv = (ir) => targetProfile(ir?.metadata?.target).driver === 'mmlispdrv';
-    function updateTargetMenus(ir) {
-      for (const id of ['drvBackendItem', 'releaseHoldsItem']) {
-        const el = document.getElementById(id);
-        if (el) el.disabled = !hasDrv(ir);
+
+    // WHAT THE PAGE SHOWS IS THE SCORE'S MACHINE'S. An element names what it
+    // needs in `data-needs`, read against the target's profile (targets.js):
+    //   kind:K   a part of kind K (fm, tone, noise, sample)
+    //   part:P   the part named P (rhythm, adpcm-b …)
+    //   word:W   the IR word W (LFO_RATE, FM_DT2_1 …), as the compiler reads it
+    //   driver   MMLispDRV: the MMB, its backend, a game's key-off
+    //   analogLpf the machine's output filter (the Mega Drive Model 1's)
+    // A panel element the machine lacks is hidden; a menu item is disabled,
+    // so the menus keep their places and still say what the app can do.
+    // Global's title names the machine.
+    function targetHas(target, need) {
+      const [what, arg] = need.split(':');
+      if (what === 'kind') return target.headsOfKind(arg).length > 0;
+      if (what === 'part') return target.hasPart(arg);
+      if (what === 'word') return target.hasWord(arg);
+      if (what === 'driver') return target.driver === 'mmlispdrv';
+      return !!target[what];
+    }
+    function applyTargetUi(ir) {
+      const target = targetProfile(ir?.metadata?.target);
+      for (const el of document.querySelectorAll('[data-needs]')) {
+        const has = targetHas(target, el.dataset.needs);
+        if (el.classList.contains('menu-item')) el.disabled = !has;
+        else el.hidden = !has;
+      }
+      const badge = document.getElementById('targetBadge');
+      if (badge) {
+        badge.textContent = target.name.toUpperCase();
+        badge.title = target.system;
       }
     }
 
@@ -9270,6 +9291,29 @@
       }
     }
 
+    // The operator rows, one per IR word: the panel's sliders, a def-fm's
+    // keys (fmParamToDefKey) and the regs field (`key`) each one reads. A row
+    // shows when the score's target has its word (applyTargetUi): SSG-EG is
+    // the OPN's, DT2 the OPM's.
+    const OP_PARAMS = [
+      { key: 'tl',  label: 'TL',  min: 0, max: 127, param: (op) => `FM_TL${op}` },
+      { key: 'ar',  label: 'AR',  min: 0, max: 31,  param: (op) => `FM_AR${op}` },
+      { key: 'dr',  label: 'DR',  min: 0, max: 31,  param: (op) => `FM_DR${op}` },
+      { key: 'sl',  label: 'SL',  min: 0, max: 15,  param: (op) => `FM_SL${op}` },
+      { key: 'd2r', label: 'SR',  min: 0, max: 31,  param: (op) => `FM_SR${op}` },
+      { key: 'rr',  label: 'RR',  min: 0, max: 15,  param: (op) => `FM_RR${op}` },
+      { key: 'mul', label: 'MUL', min: 0, max: 15,  param: (op) => `FM_ML${op}` },
+      { key: 'dt',  label: 'DT',  min: -3, max: 3,  param: (op) => `FM_DT${op}` },
+      { key: 'dt2', label: 'DT2', min: 0, max: 3,   param: (op) => `FM_DT2_${op}` },
+      { key: 'rs',  label: 'KS',  min: 0, max: 3,   param: (op) => `FM_KS${op}` },
+      { key: 'ssg', label: 'SSG', min: 0, max: 15,  param: (op) => `FM_SSG${op}` },
+      // Velocity sensitivity, 0–1 in sixteenths (language.md §6).
+      { key: 'vel', label: 'VEL', min: 0, max: 16,  param: (op) => `FM_VEL${op}` },
+    ];
+    // The rows that are a register value, read and written alike (VEL is a
+    // sensitivity, kept as velK with its role's default).
+    const OP_REG_PARAMS = OP_PARAMS.filter((pp) => pp.key !== 'vel');
+
     function defaultFmRegs() {
       return {
         algorithm: 0,
@@ -9278,16 +9322,7 @@
         ams: 0,
         fms: 0,
         ops: Array.from({ length: 4 }, () => ({
-          tl: 0,
-          ar: 0,
-          dr: 0,
-          sl: 0,
-          d2r: 0,
-          rr: 0,
-          mul: 0,
-          dt: 0,
-          rs: 0,
-          ssg: 0,
+          ...Object.fromEntries(OP_REG_PARAMS.map((pp) => [pp.key, 0])),
           amen: 0,
         })),
       };
@@ -9341,16 +9376,10 @@
 
       for (let op = 1; op <= 4; op++) {
         const o = regs.ops[op - 1];
-        if (kv.has(`:tl${op}`)) o.tl = kv.get(`:tl${op}`);
-        if (kv.has(`:ar${op}`)) o.ar = kv.get(`:ar${op}`);
-        if (kv.has(`:dr${op}`)) o.dr = kv.get(`:dr${op}`);
-        if (kv.has(`:sl${op}`)) o.sl = kv.get(`:sl${op}`);
-        if (kv.has(`:sr${op}`)) o.d2r = kv.get(`:sr${op}`);
-        if (kv.has(`:rr${op}`)) o.rr = kv.get(`:rr${op}`);
-        if (kv.has(`:ml${op}`)) o.mul = kv.get(`:ml${op}`);
-        if (kv.has(`:dt${op}`)) o.dt = kv.get(`:dt${op}`);
-        if (kv.has(`:ks${op}`)) o.rs = kv.get(`:ks${op}`);
-        if (kv.has(`:ssg${op}`)) o.ssg = kv.get(`:ssg${op}`);
+        for (const pp of OP_REG_PARAMS) {
+          const k = fmParamToDefKey(pp.param(op));
+          if (kv.has(k)) o[pp.key] = kv.get(k);
+        }
         if (kv.has(`:am${op}`)) o.amen = kv.get(`:am${op}`) ? 1 : 0;
         if (kv.has(`:vel${op}`)) o.velK = Math.max(0, Math.min(16, kv.get(`:vel${op}`)));
       }
@@ -9547,6 +9576,7 @@
 
     function applyFmRegsToChannel(chIndex, regs) {
       if (!regs) return false;
+      const target = targetProfile(_lastGoodIR?.metadata?.target);
       let ok = true;
       ok = setLiveParamForChannel('FM_ALG', regs.algorithm, chIndex) && ok;
       ok = setLiveParamForChannel('FM_FB', regs.feedback, chIndex) && ok;
@@ -9554,16 +9584,11 @@
       ok = setLiveParamForChannel('FM_FMS', regs.fms ?? 0, chIndex) && ok;
       for (let op = 1; op <= 4; op++) {
         const o = regs.ops?.[op - 1] ?? {};
-        ok = setLiveParamForChannel(`FM_TL${op}`, o.tl ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_AR${op}`, o.ar ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_DR${op}`, o.dr ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_SL${op}`, o.sl ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_SR${op}`, o.d2r ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_RR${op}`, o.rr ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_ML${op}`, o.mul ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_DT${op}`, o.dt ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_KS${op}`, o.rs ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_SSG${op}`, o.ssg ?? 0, chIndex) && ok;
+        // Only the words the score's chip has (SSG-EG is the OPN's, DT2 the OPM's).
+        for (const pp of OP_REG_PARAMS) {
+          if (!target.hasWord(pp.param(op))) continue;
+          ok = setLiveParamForChannel(pp.param(op), o[pp.key] ?? 0, chIndex) && ok;
+        }
         ok = setLiveParamForChannel(`FM_AMEN${op}`, o.amen ?? 0, chIndex) && ok;
         ok = setLiveParamForChannel(`FM_VEL${op}`, o.velK ?? -1, chIndex) && ok;
       }
@@ -10551,7 +10576,8 @@
       _midiCcRaf = 0;
       for (const [key, value] of _midiCcPending) {
         const el = midiSliderByKey(key);
-        if (!el || el.disabled) continue;
+        // Off, or a word the score's machine lacks (applyTargetUi hides it).
+        if (!el || el.disabled || el.closest('[hidden]')) continue;
         const v = ccToSliderValue(value, Number(el.min), Number(el.max),
           Number(el.step) || 1, getComputedStyle(el).direction === 'rtl');
         if (Number(el.value) === v) continue;
@@ -10634,9 +10660,10 @@
       if (paramName === 'FM_FB') return ':fb';
       if (paramName === 'FM_AMS') return ':ams';
       if (paramName === 'FM_FMS') return ':fms';
-      const m = paramName.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT|KS|SSG|AMEN|VEL)([1-4])$/);
+      const m = paramName.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT2_|DT|KS|SSG|AMEN|VEL)([1-4])$/);
       if (!m) return null;
       if (m[1] === 'AMEN') return `:am${m[2]}`;
+      if (m[1] === 'DT2_') return `:dt2-${m[2]}`;
       return `:${m[1].toLowerCase()}${m[2]}`;
     }
 
@@ -10768,21 +10795,6 @@
     }
 
     // Build operator grids
-    const OP_PARAMS = [
-      { key: 'tl',  label: 'TL',  min: 0, max: 127, param: (op) => `FM_TL${op}` },
-      { key: 'ar',  label: 'AR',  min: 0, max: 31,  param: (op) => `FM_AR${op}` },
-      { key: 'dr',  label: 'DR',  min: 0, max: 31,  param: (op) => `FM_DR${op}` },
-      { key: 'sl',  label: 'SL',  min: 0, max: 15,  param: (op) => `FM_SL${op}` },
-      { key: 'd2r', label: 'SR',  min: 0, max: 31,  param: (op) => `FM_SR${op}` },
-      { key: 'rr',  label: 'RR',  min: 0, max: 15,  param: (op) => `FM_RR${op}` },
-      { key: 'mul', label: 'MUL', min: 0, max: 15,  param: (op) => `FM_ML${op}` },
-      { key: 'dt',  label: 'DT',  min: -3, max: 3,  param: (op) => `FM_DT${op}` },
-      { key: 'rs',  label: 'KS',  min: 0, max: 3,   param: (op) => `FM_KS${op}` },
-      { key: 'ssg', label: 'SSG', min: 0, max: 15,  param: (op) => `FM_SSG${op}` },
-      // Velocity sensitivity, 0–1 in sixteenths (language.md §6).
-      { key: 'vel', label: 'VEL', min: 0, max: 16,  param: (op) => `FM_VEL${op}` },
-    ];
-
     const opGridEl = document.getElementById('opGrid');
     for (let op = 1; op <= 4; op++) {
       const col = document.createElement('div');
@@ -10805,6 +10817,7 @@
       for (const pp of OP_PARAMS) {
         const wrap = document.createElement('div');
         wrap.className = 'knob-wrap';
+        wrap.dataset.needs = `word:${pp.param(op)}`;
         const labelId = `val-op${op}-${pp.key}`;
         const sliderId = `sl-op${op}-${pp.key}`;
         wrap.innerHTML = `
@@ -10817,6 +10830,7 @@
       }
       opGridEl.appendChild(col);
     }
+    applyTargetUi(null); // the default machine's rows until a score compiles
     syncParamUI(); // initialize sliders and op role colors on startup
 
     // Draw operator op's ADSR envelope (from its TL/AR/DR/SL/SR/RR sliders).
@@ -10952,16 +10966,7 @@
       }
       for (let op = 1; op <= 4; op++) {
         const o = regs.ops[op - 1];
-        setSliderCached(`sl-op${op}-tl`,  `val-op${op}-tl`,  o.tl);
-        setSliderCached(`sl-op${op}-ar`,  `val-op${op}-ar`,  o.ar);
-        setSliderCached(`sl-op${op}-dr`,  `val-op${op}-dr`,  o.dr);
-        setSliderCached(`sl-op${op}-sl`,  `val-op${op}-sl`,  o.sl);
-        setSliderCached(`sl-op${op}-d2r`, `val-op${op}-d2r`, o.d2r);
-        setSliderCached(`sl-op${op}-rr`,  `val-op${op}-rr`,  o.rr);
-        setSliderCached(`sl-op${op}-mul`, `val-op${op}-mul`, o.mul);
-        setSliderCached(`sl-op${op}-dt`,  `val-op${op}-dt`,  o.dt);
-        setSliderCached(`sl-op${op}-rs`,  `val-op${op}-rs`,  o.rs);
-        setSliderCached(`sl-op${op}-ssg`, `val-op${op}-ssg`, o.ssg);
+        for (const pp of OP_REG_PARAMS) setSliderCached(`sl-op${op}-${pp.key}`, `val-op${op}-${pp.key}`, o[pp.key] ?? 0);
         // A voice that does not set it shows the role's own: 1 on a carrier, 0 on a modulator.
         const velK = o.velK ?? (fmCarrierOpsForAlg(regs.algorithm ?? 0).includes(op - 1) ? 16 : 0);
         if (_fmSliderCache[`sl-op${op}-vel`] !== velK) {
@@ -12010,18 +12015,17 @@
       // Recycle the transferred buffers back to the worklet.
       workletNode?.port.postMessage({ type: 'scope-return', ch: msg.ch }, msg.ch);
     }
-    // The strip head's scope channel: a PCM track has its voice's own tap
-    // while the worklet's engine feeds the DAC; under MMLispDRV the driver
+    // The strip head's scope channel, the target's (targets.js scopeLane), a
+    // rhythm sound's its strip's. A Mega Drive PCM track has its voice's own
+    // tap while the worklet's engine feeds the DAC; under MMLispDRV the driver
     // streams the DAC itself, so the voices are not taken apart and every PCM
     // track shows FM6's tap, their sum. The fm3 variants share hardware FM3.
     let _scopePcmVoices = false; // the latest batch's taps 10-12 are live
     function scopeChannelOf(head) {
       const lane = _chStripModel.find((e) => e.head === head)?.scope;
       if (lane != null) return lane;
-      const r = channelRouting(head);
-      if (r.volKind === 'pcm') return _scopePcmVoices ? 10 + Number(head.slice(3)) - 1 : 5;
-      if (r.volKind === 'psg') return 6 + channelVoice(head).voice; // the synth's PSG lanes from 6
-      return r.volIndex;
+      if (channelRouting(head).volKind === 'pcm' && !_scopePcmVoices) return 5;
+      return targetProfile(_lastGoodIR?.metadata?.target).scopeLane(head);
     }
     // One cell per strip channel, in the strips' order.
     function drawScope() {

@@ -7,7 +7,7 @@ import { rhythmRom } from "../chips/rhythm-rom.js";
 import { adpcmB } from "../chips/adpcm-b.js";
 
 const fm = (voice) => ({ chip: "opna", part: opnFm, voice });
-const on = (part, voice) => ({ chip: "opna", part, voice });
+const on = (part, voice, scope) => ({ chip: "opna", part, voice, scope });
 
 // A Mega Drive noise mode, read on the SSG: white0-2 as the nearest noise
 // period (the SN76489's 13,983 / 6,991 / 3,496 Hz against the SSG's
@@ -35,7 +35,8 @@ export default {
     sqr1: on(ssgTone, 0), sqr2: on(ssgTone, 1), sqr3: on(ssgTone, 2),
     noise: on(ssgNoise, 2), // sqr3 with its mixer on noise
     pcm1: on(adpcmB, 0),
-    pcm2: on(rhythmRom, 0), pcm3: on(rhythmRom, 0), // two tracks on the one kit
+    // Two tracks on the one kit; its six sounds are scope lanes 11-16.
+    pcm2: on(rhythmRom, 0, 11), pcm3: on(rhythmRom, 0, 11),
   },
   readsAs: { modes: { "ssg-noise": NOISE_MODES } },
   hints: { NOISE_MODE: "the noise is :noise-rate 1-31, song-wide" },

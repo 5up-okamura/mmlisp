@@ -21,6 +21,8 @@ import pc88 from "./targets/pc88.js";
 import x68k from "./targets/x68k.js";
 import msx from "./targets/msx.js";
 
+const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10 };
+
 function profile(def) {
   const heads = Object.keys(def.channels);
   const parts = [...new Set(heads.map((h) => def.channels[h].part))];
@@ -43,6 +45,18 @@ function profile(def) {
       return c ? `${c.chip}:${c.part.unit ?? c.part.name}:${c.voice}` : null;
     },
     hasWord: (word) => parts.some((p) => p.words(word) || p.songWords?.(word)),
+    /**
+     * The oscilloscope lane `head` sounds on, in the synths' layout
+     * (synth-*.js SCOPE_LANES): FM channel n at n, the PSG's channel n at
+     * 6 + n, sample voice n at 10 + n — or the channel table's `scope` where
+     * a synth puts it elsewhere. A part of several sounds (the ROM rhythm)
+     * has its first sound's lane, the rest after it.
+     */
+    scopeLane(head) {
+      const c = def.channels[head];
+      if (!c) return null;
+      return c.scope ?? SCOPE_BASE[c.part.kind] + c.voice;
+    },
     /** The chip of the first part of `kind` (fm, tone, noise, sample), or null. */
     chipForKind(kind) {
       const head = heads.find((h) => def.channels[h].part.kind === kind);

@@ -14,6 +14,9 @@ export default {
   name: "md",
   system: "Sega Mega Drive",
   driver: "mmlispdrv",
+  // The Model 1's analog low-pass on the output (synth-md.js), which Live
+  // plays through when Analog LPF is on.
+  analogLpf: true,
   chips: { opn: ym2612, psg: sn76489 },
   // Score channel → its chip, part and voice (the index in the part's unit:
   // the FM channel, the PSG channel, the soft-mix slot). Names on one voice

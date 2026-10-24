@@ -734,6 +734,13 @@
       gap: 0.4rem;
     }
     .rack-title-row::before { margin-right: 0; }
+    /* The score's machine, at Global's title (applyTargetUi). */
+    #targetBadge {
+      margin-left: auto;
+      color: var(--foreground);
+      font-size: 0.58rem;
+      white-space: nowrap;
+    }
     #fmParamStatus {
       margin-left: auto;
       color: var(--sub);
@@ -761,6 +768,7 @@
     .se-btn .se-num { color: var(--sub); margin-right: 0.4em; font-size: 0.6rem; }
     .se-btn.active .se-num { color: var(--background); }
     .knob-wrap { display: flex; flex-direction: column; gap: 0; }
+    .knob-wrap[hidden] { display: none; } /* a word the score's machine lacks (applyTargetUi) */
     .knob-label {
       font-size: 0.58rem;
       color: var(--sub);
