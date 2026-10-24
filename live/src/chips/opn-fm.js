@@ -64,3 +64,33 @@ export function opnFmEncoder(fnumRate) {
     lfo: (rate) => [[0, 0x22, rate === 0 ? 0x00 : 0x08 | ((rate - 1) & 0x07)]],
   };
 }
+
+// The OPN's FM in Live's worklet, for a channel the keys hold over the song:
+// which channel a write is (-1 a global; CH3's operator F-numbers $A8-$AE are
+// CH3's), which write is the key and keys on, and the channel's registers in
+// the order they are written back when the song takes it again.
+export const opnHoldBus = {
+  channelOf(port, addr, data) {
+    if (addr === 0x28) {
+      const c = data & 3;
+      return c === 3 ? -1 : c + (data & 4 ? 3 : 0);
+    }
+    if ((addr >= 0x30 && addr < 0xa8) || (addr >= 0xb0 && addr < 0xb8)) {
+      const c = addr & 3;
+      return c === 3 ? -1 : c + (port ? 3 : 0);
+    }
+    if (port === 0 && addr >= 0xa8 && addr < 0xb0) return 2;
+    return -1;
+  },
+  isKey: (a) => a === 0x28,
+  keyOn: (d) => (d & 0xf0) !== 0,
+  // Operators, $B0/$B4, then the F-numbers high byte first (CH3's operator
+  // ones too).
+  replay(ch) {
+    const p = ch >= 3 ? 1 : 0, c = ch % 3, list = [];
+    for (let a = 0x30 + c; a < 0xa0; a += 4) list.push([p, a]);
+    list.push([p, 0xb0 + c], [p, 0xb4 + c], [p, 0xa4 + c], [p, 0xa0 + c]);
+    if (ch === 2) for (const a of [0xac, 0xa8, 0xad, 0xa9, 0xae, 0xaa]) list.push([0, a]);
+    return list;
+  },
+};

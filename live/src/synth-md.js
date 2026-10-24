@@ -12,6 +12,12 @@
 //   writeYM/writePSG (or the system's register buses)
 //   setLpf / setDacEnabled / reset
 //   renderInto(outL, outR, count, onFrame?, getDacByte?, scope?)
+//   pitch     the chips' scope pitch latches (scope-pitch.js)
+//   bus       the FM's hold bus (chips/opn-fm.js opnHoldBus), or none
+// and, where the machine has them, what the worklet hands it beside the
+// writes: takeWrite / isDacWrite (a register that is not the chip's own —
+// the Mega Drive's DAC pair), setAdpcmRam / setRhythmRom (the YM2608's
+// memories), pcm8 (the X68000's PCM8 source).
 //
 // renderInto serves both timing models via onFrame:
 //   - onFrame == null : writes were already applied for the whole block
@@ -25,7 +31,9 @@
 
 import createNukedModule from "../nuked-opn2.js";
 import createPsgModule from "../nuked-psg.js";
-import { YM2612_MASTER_CLOCK } from "./ir-utils.js";
+import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "./ir-utils.js";
+import { opnHoldBus } from "./chips/opn-fm.js";
+import { pitchLatches, opnPitch, snPitch } from "./scope-pitch.js";
 
 // NTSC Mega Drive native rates (master 53.693175 MHz; YM2612 /144).
 export const NUKED_NATIVE_SAMPLE_RATE = YM2612_MASTER_CLOCK / 144;
@@ -84,6 +92,8 @@ export class MegaDriveSynth {
     this._ym = ym;
     this._psg = psg;
     this._outputSR = outputSR;
+    this.pitch = pitchLatches(opnPitch(NUKED_NATIVE_SAMPLE_RATE), snPitch(PSG_MASTER_CLOCK));
+    this.bus = opnHoldBus;
 
     ym._nopn_init();
     psg._psg_init();
@@ -139,6 +149,22 @@ export class MegaDriveSynth {
     this._lpfYL = 0;
     this._lpfYR = 0;
     this._resetResampleState();
+  }
+
+  // The DAC pair never goes through the register path. A backend that streams
+  // the DAC itself (MMLispDRV replays the driver's ~175 bytes a frame) would
+  // otherwise spend 48 chip cycles per byte and run the chip far too fast;
+  // set_dac_sample folds the byte into the next render's own clock budget.
+  // Tracking 0x2b through setDacEnabled also keeps the synth's notion of the
+  // DAC in step with the backend's, which decides the FM batch path.
+  isDacWrite(port, addr) {
+    return port === 0 && addr === 0x2a;
+  }
+  takeWrite(port, addr, data) {
+    if (port !== 0 || (addr !== 0x2a && addr !== 0x2b)) return false;
+    if (addr === 0x2a) this.setDacSample(data);
+    else this.setDacEnabled(!!(data & 0x80));
+    return true;
   }
 
   writeYM(port, addr, data) {

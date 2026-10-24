@@ -15,7 +15,8 @@
 // ---------------------------------------------------------------------------
 
 import createYm2151Module from "../ymfm-ym2151.js";
-import { ym2151 } from "./chips/ym2151.js";
+import { ym2151, opmHoldBus } from "./chips/ym2151.js";
+import { opmPitch } from "./scope-pitch.js";
 import { PCM8_RATE, Pcm8Mixer, OkiEncoder, OkiDecoder, okiOut } from "./chips/msm6258.js";
 
 export const YM2151_NATIVE_SAMPLE_RATE = ym2151.clock / 64;
@@ -64,6 +65,8 @@ export class X68kSynth {
   constructor(core, outputSR) {
     this._core = core;
     this._outputSR = outputSR;
+    this.pitch = opmPitch();
+    this.bus = opmHoldBus;
     core._y5_init();
     this._bufPtr = core._y5_get_buffer_ptr();
     this._tapPtr = core._y5_get_tap_ptr();

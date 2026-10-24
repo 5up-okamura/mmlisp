@@ -13,6 +13,7 @@
 
 import createAy8910Module from "../ymfm-ay8910.js";
 import { ay8910 } from "./chips/ay8910.js";
+import { ssgPitch } from "./scope-pitch.js";
 
 export const AY8910_NATIVE_SAMPLE_RATE = ay8910.clock / 32;
 
@@ -36,6 +37,8 @@ export class MsxSynth {
   constructor(core, outputSR) {
     this._core = core;
     this._outputSR = outputSR;
+    this.pitch = ssgPitch(ay8910.clock);
+    this.bus = null; // no FM to hold
     core._a8_init();
     this._bufPtr = core._a8_get_buffer_ptr();
     this.scopeLanes = SCOPE_LANES;

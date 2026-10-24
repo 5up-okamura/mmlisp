@@ -21,6 +21,8 @@
 
 import createYm2608Module from "../ymfm-ym2608.js";
 import { ym2608 } from "./chips/ym2608.js";
+import { opnHoldBus } from "./chips/opn-fm.js";
+import { pitchLatches, opnPitch, ssgPitch } from "./scope-pitch.js";
 
 export const YM2608_NATIVE_SAMPLE_RATE = ym2608.clock / 144;
 export const RHYTHM_ROM_BYTES = 0x2000;
@@ -54,6 +56,8 @@ export class Pc88Synth {
   constructor(core, outputSR) {
     this._core = core;
     this._outputSR = outputSR;
+    this.pitch = pitchLatches(opnPitch(YM2608_NATIVE_SAMPLE_RATE), ssgPitch(ym2608.ssg.clock));
+    this.bus = opnHoldBus;
     core._y8_init();
     this._bufPtr = core._y8_get_buffer_ptr();
     this._tapPtr = core._y8_get_tap_ptr();

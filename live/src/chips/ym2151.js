@@ -66,6 +66,21 @@ export function kcToHz(kc, kfReg) {
   return 440 * 2 ** ((midi - 69) / 12);
 }
 
+// The OPM's FM in Live's worklet, for a channel the keys hold (chips/opn-fm.js
+// opnHoldBus): $08 keys it, $20-$FF are its own; written back operators,
+// $20/$38, then KC and KF.
+export const opmHoldBus = {
+  channelOf: (_p, a, d) => (a === 0x08 ? d & 7 : a >= 0x20 ? a & 7 : -1),
+  isKey: (a) => a === 0x08,
+  keyOn: (d) => (d & 0x78) !== 0,
+  replay(ch) {
+    const list = [];
+    for (let a = 0x40 + ch; a < 0x100; a += 8) list.push([0, a]);
+    list.push([0, 0x20 + ch], [0, 0x38 + ch], [0, 0x28 + ch], [0, 0x30 + ch]);
+    return list;
+  },
+};
+
 export const ym2151 = {
   chip: "ym2151",
   clock: CLOCK,
