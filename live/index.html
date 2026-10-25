@@ -6402,6 +6402,7 @@
       _lastGoodSrc = src;
       _lastSourceMap = sourceMap;
       applyTargetUi(ir);
+      keysFollowTarget(ir);
       buildChStrips(ir);
       renderDynParams(ir);
       if ((_vizRoll || _vizScope) && _fmLiveRaf == null) rebuildVizNotes(); // refresh viz cells while editing stopped
@@ -10284,11 +10285,21 @@
       return { notes, fm3Mode };
     }
 
+    // The page's channels of `t`'s kind the score's machine has (targets/):
+    // its FM channels, or its PSG's tones.
+    function previewKindChannels(t) {
+      const machine = targetProfile(_lastGoodIR?.metadata?.target);
+      const kind = isFmChannel(t) ? 'fm' : 'tone';
+      const base = kind === 'fm' ? 0 : PSG_UI_BASE;
+      return [...new Set(machine.headsOfKind(kind).map((h) => base + machine.channels[h].voice))];
+    }
+
     function previewPool(target, { notes, fm3Mode }) {
       const t = target.chIndex;
-      if (t === PCM_PREVIEW_CH || t === 9) return [t];
+      // The noise is one channel: the keys play it alone.
+      if (t === PCM_PREVIEW_CH || t === PSG_UI_BASE + 3) return [t];
       const fm = isFmChannel(t);
-      const kind = fm ? [0, 1, 2, 3, 4, 5] : [6, 7, 8];
+      const kind = previewKindChannels(t);
       const free = kind.filter((c) => !notes.has(c));
       if (free.includes(t)) return [t, ...free.filter((c) => c !== t)];
       // Song FM channels the keys can hold, least busy first: not CH3 in
@@ -12239,6 +12250,16 @@
       const writeState = handleParamWriteByMode(paramName, val);
       if (writeState.handled) return;
     };
+
+    // The keys play the score's machine. While no run plays or holds a pause,
+    // a param-only player made for another machine is let go (the next key
+    // makes one on this one) and the worklet's synth follows the score.
+    function keysFollowTarget(ir) {
+      if (player?.isPlaying?.() || _paused) return;
+      const name = targetProfile(ir?.metadata?.target).name;
+      if (player instanceof IRPlayer && player._target.name !== name) player = null;
+      if (workletNode) setWorkletMachine(name);
+    }
 
     function initParamOnlyPlayer() {
       if (player) return;
