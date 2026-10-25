@@ -40,7 +40,34 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   $18=$C0 $28=$01), other notes move it by semitones; a shared pair takes
   the last hit's pitch, with one `W_TARGET` a score when its two sounds are
   written at different pitches. Pitch macros and glide on a rhythm hit come
-  later (a tom's pitch-down), on the FM pitch path.
+  later (a tom's pitch-down), on the FM pitch path. Like the SCC, the
+  FM-PAC is a cartridge in `:target msx`: an optional chip (`optional:
+  true`), started at its first write, absent from a VGM that has no OPLL
+  track.
+
+## FM-PAC: how to build it (findings, 2026-10-25)
+
+- **Engine.** `third_party/ymfm` is trimmed and has no OPLL. Upstream
+  ymfm `main` (github.com/aaronsgiles/ymfm, `src/`) has `ymfm.h`,
+  `ymfm_fm.h`, `ymfm_fm.ipp`, `ymfm_ssg.h`, `ymfm_opn.h` and
+  `ymfm_adpcm.h` byte-identical to the vendored ones, so `ymfm_opl.h/.cpp`
+  can be added as they are, with `ymfm_pcm.h/.cpp` (ymfm_opl.h includes
+  it). emcc is installed. Build as `wasm/build-ym2151.sh` and
+  `ym2151_adapter.cpp` do: per-channel scope taps by `m_fm.output(o, 5,
+  256, 1u << ch)` per channel (opll_base::generate's shift/range; 9
+  channels, the rhythm sounds in channels 6-8), the chip at clock / 72.
+  VGM: `0x51 aa dd`, the YM2413 clock at header 0x10 (VGM 1.00).
+- **ROM voices.** `ym2413::s_default_instruments` in ymfm_opl.cpp: 15
+  voices × 8 bytes in the user voice's $00-$07 layout (Violin, Guitar,
+  Piano, Flute, Clarinet, Oboe, Trumpet, Organ, Horn, Synthesizer,
+  Harpsichord, Vibraphone, Synthesizer Bass, Acoustic Bass, Electric
+  Guitar), then 3 rhythm patches — the source of the built-in names'
+  parameters.
+- **Stages.** 1 engine (WASM, synth-msx.js port, VGM) → 2 language and
+  player (the OPLL part: 2 ops, `:ws1` `:eg1` `:ksl1` `:vib1` `:sus` on the
+  FM_ prefix, per-part ranges, the built-in voices, the IR player's FM
+  level through the encoder — a channel volume, not carrier TLs) → 3 the
+  rhythm mode → 4 the panel's 2-op FM editor. Commit each.
 
 ## Plan, in order (each keeps md/pc88/x68k/msx output: check:snapshot green)
 
