@@ -49,9 +49,14 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   ROM rhythm roles), their dumped parameters letting a def-fm extend one and
   other targets play an approximation; the name prefix is open (`opll-`?),
   and no `:inst` number. Rhythm mode: channels `rhythm1`-`rhythm5` under the
-  kit roles (kick snare tom4 ride hat; rim none), as pc88's. Still to
-  discuss: the mode song-wide (fm7-9 then `E_TARGET`?), and pitch (ch7-9's
-  F-number tunes the drums, SD/HH and TOM/CY pairs shared — later wins?).
+  kit roles (kick snare tom4 ride hat; rim none), as pc88's. The mode is
+  song-wide: a score with a rhythm track has it on, and fm7-fm9 are
+  `E_TARGET` there. A hit's pitch tunes its channel (ch7 BD, ch8 SD/HH,
+  ch9 TOM/CY): c4 is the datasheet's ($16=$20 $26=$05, $17=$50 $27=$05,
+  $18=$C0 $28=$01), other notes move it by semitones; a shared pair takes
+  the last hit's pitch, with one `W_TARGET` a score when its two sounds are
+  written at different pitches. Pitch macros and glide on a rhythm hit come
+  later (a tom's pitch-down), on the FM pitch path.
 
 ## Plan, in order (each keeps md/pc88/x68k/msx output: check:snapshot green)
 
