@@ -958,7 +958,8 @@ stream bytes is shared by the encoder's CALL/RET pass (opcodes.md §5.2). A `let
 | `(def name (macro :target spec …))`   | A snippet holding a macro form — written alone it applies the macro, and inside another `(macro name …)` it applies first, with its own `:step` |
 
 A `def-fm` holds the channel's `:alg :fb :ams :fms`, the operator params
-`:ar1`…`:am4`, the velocity sensitivities `:vel1`…`:vel4` (§6) and `:key` —
+`:ar1`…`:am4` (and the FM-PAC's `:ws1` `:eg1` `:ksl1` `:vib1`, §19 `msx`),
+the velocity sensitivities `:vel1`…`:vel4` (§6) and `:key` —
 anything else is `E_VOICE_PARAM`. A value is anything
 that evaluates to a number (a literal, a snippet constant, an expression); a
 curve or a `$` value is `E_VOICE_VALUE`, since a voice is fixed data. A leading
@@ -966,7 +967,8 @@ name is the voice it extends: the base's params first, the voice's own over
 them, as a sample does (§16). Unset operator parameters are not emitted —
 start from a full patch (or extend one) for deterministic timbres. The
 built-in voice `init-fm` (ALG 7, AR 31, RR 15, ML 1, TL 0 on all operators)
-is always available:
+is always available, as are the FM-PAC's fifteen ROM voices, `opll-piano`
+… (§19 `msx`):
 
 ```lisp
 (def-fm lead init-fm
@@ -2331,7 +2333,7 @@ those chips cannot do is a compile error, not a different sound.
 | `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
 | `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | VGM, WAV |
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
-| `msx` | MSX: the PSG, an AY-3-8910, and the SCC cartridge (K051649) | VGM, WAV |
+| `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2498,11 +2500,10 @@ alike, ADPCM grain included.
 ### `msx`
 
 **`msx` exports VGM** with the MSX's PSG, an AY-3-8910 at 1.79 MHz, and
-the SCC cartridge's K051649 at the same clock — 1.51, or 1.61 with the SCC,
-which a score has only when it writes a wave channel. Play and WAV run
-ymfm's SSG and an SCC of the toolchain's own. There is no FM and no PCM:
-`fm1`–`fm6` and `pcm1`–`pcm3` are `E_TARGET`, and a `def-fm` plays nowhere
-(its keys are `W_TARGET`).
+two cartridges a score has only when it plays their channels: the SCC's
+K051649 at the same clock (VGM 1.61) and the FM-PAC's YM2413 at 3.58 MHz.
+Play and WAV run ymfm's SSG, an SCC of the toolchain's own and ymfm's
+YM2413. There is no PCM: `pcm1`–`pcm3` are `E_TARGET`.
 
 **PSG.** `sqr1`–`sqr3` and `noise` are the SSG's, as on `pc88`: each
 channel's mixer, `:mode tone|noise|both`, the song's noise period
@@ -2559,6 +2560,54 @@ no wave memory is `E_UNSUPPORTED_TARGET`, a number alone (`:wave 3`)
 vol + master composed as one gain (§6) and rounded to its 16 steps. `wave4`
 and `wave5` share one wave memory: two tracks that name different waves there
 play whichever was written last, and the compiler says so (`W_TARGET`).
+
+**FM.** `fm1`–`fm9` are the FM-PAC's nine channels: 2-op FM, `op1` the
+modulator and `op2` the carrier, mono. Its words are the OPN's on two
+operators, narrower where the chip is — `:fb` 0–7, `:ar1` `:dr1` 0–15,
+`:sl1` `:rr1` `:ml1` 0–15, `:ks1` 0–1, `:am1`, and `:tl1` 0–63 on the
+modulator alone — and four of its own, each `1`–`2`:
+
+| Word | Range | |
+| --- | --- | --- |
+| `:ws1` | 0–1 | 1: the half-wave rectified sine |
+| `:eg1` | 0–1 | 1: the envelope holds at SL while keyed; 0 decays on at RR |
+| `:ksl1` | 0–3 | the level's key scale |
+| `:vib1` | 0–1 | the chip's vibrato |
+
+They are `def-fm` keys, written inline and swept as macros as the OPN's
+are. The carrier has no TL: its level is the channel's 4-bit volume, 3 dB
+a step to −45 dB, where vel + vol + master are composed (§6); a
+`:vel2` voice is velocity-sensitive there, a `:vel1` voice on op1's TL. A
+channel's **`:sus 1`** (sticky, 0 to start) releases its keyed-off notes
+at the slow rate 5 rather than at the voice's RR — a piano's pedal; it is
+the channel's, not the voice's. There is no algorithm, `:dt`, `:sr`,
+`:ssg`, `:pan`, LFO word or FM3 mode (`E_TARGET`); a 4-op voice plays its
+op1 and op2 (`W_TARGET` for the rest).
+
+**Voices.** The chip has fifteen voices in ROM, built in by name as
+`init-fm` is, with the values read from the chip's die:
+
+```lisp
+(def-score :target msx)
+(def-fm reed opll-clarinet :ws1 1 :rr2 6)       ; extends one: the user voice
+(fm1 opll-piano :len 8 c e g > c)
+(fm2 opll-synth-bass :oct 2 :len 4 c c g g)
+(fm3 reed :len 4 e g)
+```
+
+`opll-violin` `opll-guitar` `opll-piano` `opll-flute` `opll-clarinet`
+`opll-oboe` `opll-trumpet` `opll-organ` `opll-horn` `opll-synth`
+`opll-harpsichord` `opll-vibraphone` `opll-synth-bass` `opll-acoustic-bass`
+`opll-electric-guitar`. A channel plays a voice from the ROM when its
+registers are one of these, and from the chip's **one user voice**
+otherwise: a voice that extends a ROM one, a `def-fm` of its own, a voice
+an inline write or a macro has moved. Every channel on the user voice
+plays the one last written — a voice is settled at a note's key-on, so it
+is not moved ahead of its note (§9) — and
+the compiler says so when the FM tracks name two such voices
+(`W_TARGET`). On the other targets the fifteen names are 4-op voices, op1
+into op2 on algorithm 4 with op3 and op4 silent, the rates on the 4-op
+scale; their KSL, waveform and vibrato have no register there.
 
 **Effects.** `def-se` is the Mega Drive driver's; an `msx` score has none
 (`E_TARGET`).

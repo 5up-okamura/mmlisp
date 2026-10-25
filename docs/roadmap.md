@@ -141,7 +141,11 @@ In order:
    `tools/tests/x68k/`), and `pcm1`–`pcm8` are PCM8's voices mixed into the
    MSM6258's ADPCM stream (`live/src/chips/msm6258.js`). A `.opm` voice bank
    imports its voices with DT2, and a YM2151's VGM imports as an `x68k`
-   score, its noise on `noise` and its OKIM6258 samples on PCM8.
+   score, its noise on `noise` and its OKIM6258 samples on PCM8. **Songs
+   in:** MXDRV's `.mdx` (with its `.pdx` ADPCM), read as the binary it is
+   — its MML sources are rarely published, the format is documented and
+   carries its voices — held to mdxmini's register log; ZMUSIC follows
+   only if MDX leaves a need.
 3. **MSX: PSG and SCC.** A `:target msx` score compiles, exports VGM and
    plays and renders WAV: the PSG through ymfm's SSG — `sqr1`–`sqr3` and
    `noise`, the SSG profile again — and the SCC cartridge through the
@@ -154,10 +158,14 @@ In order:
    channels are named by the class so those machines reuse them, and a wave
    is 32 signed 8-bit steps in the IR, which a chip of fewer bits reads
    down. A wave editor in Live is still to come. The FM-PAC (OPLL: 2-op,
-   fifteen ROM voices and one user voice) is under way: its engine is in
-   (ymfm's YM2413, `live/src/chips/ym2413.js`, the worklet's port 4, VGM
-   `0x51`), its channels, words and rhythm mode come next on `def-fm`
+   fifteen ROM voices and one user voice) plays `fm1`–`fm9` on `def-fm`
+   (language.md §19; the chip `live/src/chips/ym2413.js`, ymfm's YM2413 on
+   the worklet's port 4, VGM `0x51`, the scores `tools/tests/msx/`); its
+   rhythm mode comes next, then a 2-op editor in Live's panel
    (`.claude/memory/targets.md` holds the plan); MSX-Audio is left out.
+   **Songs in:** MGSDRV's MML (MGSC), the MSX's most-written driver, whose
+   PSG + SCC + OPLL is this target's set — read as mucom's `.muc` is, held
+   to MGSDRV's own register log (msxplay.js runs its compiler and driver).
 4. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
    without a level (the level model needs targets that have none), the
    noise's two modes, and the DPCM as a one-voice kit of user samples at

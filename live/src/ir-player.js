@@ -406,8 +406,13 @@ export class IRPlayer {
     this._laneWave.fill(null);
     this._laneExpr.fill(null);
     this._drawnWaves.clear();
-    // The FM core's level ladder (chips/parts.js `level`): its TL.
-    this._fmLevel = target.parts.find((p) => p.kind === "fm")?.level ?? null;
+    // The FM core's level ladder (chips/parts.js `level`): its TL — the
+    // OPLL's, its channel volume, and op1's TL for a modulator (`modLevel`).
+    // A part's narrower registers (`ranges`) clamp its writes.
+    const fmPart = target.parts.find((p) => p.kind === "fm");
+    this._fmLevel = fmPart?.level ?? null;
+    this._fmModLevel = fmPart?.modLevel ?? this._fmLevel;
+    this._fmRanges = fmPart?.ranges ?? null;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
     // mixer's mute has to hold the timer rather than key the channel off.
     this._csmTrack = (irObj.tracks ?? []).findIndex((t) =>
@@ -1976,7 +1981,7 @@ export class IRPlayer {
     const vel = over.vel ?? this._fmLiveVelAt(ch, when);
     const vol = over.vol ?? this._fmLiveVolAt(ch, when);
     const master = over.master ?? this._masterAt(when);
-    const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
+    const carriers = this._carrierOps(regs);
     for (let opIdx = 0; opIdx < 4; opIdx++) {
       const carrier = carriers.includes(opIdx);
       if (!carrier && !velK(regs.ops[opIdx].velK, false)) continue;
@@ -2001,7 +2006,7 @@ export class IRPlayer {
     if (ch === 2 && this._fm3Ops) return this._fm3OpTl(opIdx + 1, when);
     const regs = this._chRegs[ch];
     const op = regs.ops[opIdx];
-    const carrier = fmCarrierOpsForAlg(regs.algorithm ?? 0).includes(opIdx);
+    const carrier = this._carrierOps(regs).includes(opIdx);
     if (!carrier && !velK(op.velK, false)) return op.voicedTl ?? 0;
     return this._carrierTl(
       op,
@@ -2043,7 +2048,7 @@ export class IRPlayer {
       for (let op = 1; op <= 4; op++) this._writeFm3OpFnum(op, fnum, block, when);
       return;
     }
-    this._fmWrites(this._fmEnc.pitch(ch, midi), when);
+    this._fmWrites(this._fmEnc.pitch(ch, midi, when), when);
   }
 
   _writeFm3OpFnum(op, fnum, block, when) {
@@ -3485,8 +3490,10 @@ export class IRPlayer {
 
     // Helper to round, clamp and apply. All hardware register targets are integers;
     // rounding here means curves routed through _applyParam never store floats.
+    const range = this._fmRanges?.[target.replace(/\d+$/, "")];
     const set = (apply, min, max) => {
-      const next = Math.max(min, Math.min(max, Math.round(value)));
+      const [lo, hi] = range ?? [min, max];
+      const next = Math.max(lo, Math.min(hi, Math.round(value)));
       apply(next);
     };
 
@@ -3499,7 +3506,7 @@ export class IRPlayer {
           0,
           7,
         );
-        this._fmWrites(this._fmEnc.alg(ch, regs), when);
+        this._fmWrites(this._fmEnc.alg(ch, regs, when), when);
         break;
       case "FM_ALG":
         set(
@@ -3509,7 +3516,7 @@ export class IRPlayer {
           0,
           7,
         );
-        this._fmWrites(this._fmEnc.alg(ch, regs), when);
+        this._fmWrites(this._fmEnc.alg(ch, regs, when), when);
         break;
       case "FM_TL1":
       case "FM_TL2":
@@ -3731,6 +3738,27 @@ export class IRPlayer {
         this._fmOp(ch, opIdx, "ks-ar", when);
         break;
       }
+      // The OPLL's (chips/ym2413.js): the waveform, the envelope type, the
+      // level's key scale and the vibrato, each a bit (KSL two) of its voice.
+      case "FM_WS1":
+      case "FM_WS2":
+      case "FM_EG1":
+      case "FM_EG2":
+      case "FM_KSL1":
+      case "FM_KSL2":
+      case "FM_VIB1":
+      case "FM_VIB2": {
+        const opIdx = Number(target.slice(-1)) - 1;
+        const field = { WS: "ws", EG: "eg", KSL: "ksl", VIB: "vib" }[target.slice(3, -1)];
+        set((v) => { regs.ops[opIdx][field] = v; }, 0, field === "ksl" ? 3 : 1);
+        this._fmOp(ch, opIdx, "voice", when);
+        break;
+      }
+      // The OPLL's sustain: a keyed-off note releases at RR 5.
+      case "FM_SUS":
+        set((v) => { regs.sus = v; }, 0, 1);
+        this._fmWrites(this._fmEnc.sus?.(ch, regs.sus, when) ?? [], when);
+        break;
       case "FM_SSG1":
       case "FM_SSG2":
       case "FM_SSG3":
@@ -3988,7 +4016,7 @@ export class IRPlayer {
     // (floors, never mutes); vol/master are bipolar (boost = negative offset,
     // clamped at TL 0). Uniform across carriers, so the patch's per-carrier
     // balance is preserved.
-    return levelSteps(this._fmLevel, {
+    return levelSteps(carrier ? this._fmLevel : this._fmModLevel, {
       base: op.voicedTl ?? 0, vel, k: velK(op.velK, carrier), faders: carrier ? [vol, master] : [],
     });
   }
@@ -5722,16 +5750,24 @@ export class IRPlayer {
     this._fmKey(chIndex, 0); // all operators off
   }
 
-  // FM writes, through the target's FM encoder (chips/).
+  // The operators a channel's level is: its algorithm's carriers, or the
+  // encoder's where the chip has one algorithm (the OPLL's op2).
+  _carrierOps(regs) {
+    return this._fmEnc.carriers ?? fmCarrierOpsForAlg(regs.algorithm ?? 0);
+  }
+
+  // FM writes, through the target's FM encoder (chips/). An encoder that
+  // keeps state is told each write's time too: the player sends a note's
+  // key-off as the note starts, ahead of the writes between (chips/ym2413.js).
   _fmWrites(writes, when) {
     for (const [port, addr, data] of writes) this._write(port, addr, data, when);
   }
   _fmKey(ch, mask, when) {
-    this._fmWrites(this._fmEnc.key(ch, mask), when);
+    this._fmWrites(this._fmEnc.key(ch, mask, when), when);
   }
   // One operator register, from the channel's shadow state.
   _fmOp(ch, opIdx, reg, when) {
-    this._fmWrites(this._fmEnc.op(ch, opIdx, reg, this._chRegs[ch].ops[opIdx]), when);
+    this._fmWrites(this._fmEnc.op(ch, opIdx, reg, this._chRegs[ch].ops[opIdx], when), when);
   }
 
   _initDefaultVoices() {
@@ -5744,6 +5780,7 @@ export class IRPlayer {
     this._chipsStarted.clear();
     for (const chip of Object.values(this._target.chips))
       if (!chip.optional) for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
+    this._fmEnc.reset?.(); // an encoder that keeps the chip's state starts over
     // Neutral sine-like patch: ALG=7 (all 4 ops independent carriers), FB=0.
     // All ops: AR=31, DR=0, SL=0, RR=15, TL=0, MUL=1, DT=0.
     for (let ch = 0; ch < this._fmEnc.channels; ch++) {

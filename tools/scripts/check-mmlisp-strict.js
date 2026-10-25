@@ -257,9 +257,29 @@ async function main() {
       expected: [],
     },
     {
-      label: "msx has the PSG and nothing else",
-      src: '(def-score :target msx)\n(def-fm v init-fm :alg 4)\n(fm1 c)\n(sqr1 :pan left :lfo-rate 3 c)\n(noise :mode white0 c)',
+      label: "msx has no PCM, pan or LFO rate",
+      src: '(def-score :target msx)\n(def-fm v init-fm :alg 4)\n(pcm1 c)\n(sqr1 :pan left :lfo-rate 3 c)\n(noise :mode white0 c)',
       expected: ["W_TARGET", "E_TARGET", "E_TARGET", "E_TARGET", "W_TARGET"],
+    },
+    {
+      label: "the FM-PAC: two operators, no algorithm, no op2 level",
+      src: '(def-score :target msx)\n(fm1 opll-piano :ws1 1 :eg2 0 :ksl1 2 :vib2 1 :sus 1 :tl2 3 :alg 4 c)\n(fm2 :ws3 1 c)',
+      expected: ["E_TARGET", "E_TARGET", "E_UNKNOWN_KEYWORD"],
+    },
+    {
+      label: "the FM-PAC's words are its own elsewhere",
+      src: '(def-fm reed init-fm :ws1 1)\n(fm1 reed c)\n(fm2 :sus 1 c)',
+      expected: ["W_TARGET", "E_TARGET"],
+    },
+    {
+      label: "the FM-PAC has one user voice; the ROM's need none",
+      src: '(def-score :target msx)\n(def-fm reed opll-flute :ar2 9)\n(def-fm brass opll-oboe :ml1 7)\n(fm1 reed c)\n(fm2 opll-oboe c)\n(fm3 reed brass c)',
+      expected: ["W_TARGET"],
+    },
+    {
+      label: "a ROM voice name plays everywhere",
+      src: '(fm1 opll-violin c)\n(def-score :target x68k)',
+      expected: [],
     },
     {
       label: "a voice on a channel with no FM keeps only its :key",

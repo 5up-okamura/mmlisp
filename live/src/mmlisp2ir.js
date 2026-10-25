@@ -13,6 +13,7 @@ import { hoistVoiceChanges } from "./voice-hoist.js";
 import { TARGETS, DEFAULT_TARGET as DEFAULT_TARGET_NAME, targetProfile, partsWithWord, partsWithSetting, ALL_CHANNEL_NAMES } from "./targets.js";
 import { NOISE_MODE_MAP } from "./chips/sn76489.js";
 import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords } from "./chips/fm-words.js";
+import { opllRomVoices } from "./chips/ym2413.js";
 import { parse } from "./mmlisp-parser.js";
 import {
   clampForTarget,
@@ -3513,8 +3514,9 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":loop-len": "LOOP_LEN",
   ":pan": "PAN",
   ":mode": "NOISE_MODE",
-  // The FM family's: the channel's, and each operator's (:tl1–:tl4 …).
-  ...Object.fromEntries([...FM_CHANNEL_WORDS, ...opWords()].map((w) => [w.kw, w.word])),
+  // The FM family's: the channel's, and each operator's (:tl1–:tl4 …) that
+  // some part has — the OPLL's own words on its two operators only.
+  ...Object.fromEntries([...FM_CHANNEL_WORDS, ...opWords()].filter((w) => partsWithWord(w.word).length).map((w) => [w.kw, w.word])),
 }));
 
 // The keyword a canonical target is written as (FM_SSG1 → :ssg1).
@@ -3573,6 +3575,9 @@ function createInitFmKwMap() {
 // (emitVoiceFromKwMap): a voice named on a channel with no FM (sqr1, pcm1)
 // keeps only its :key there, and says so once per track and voice.
 function emitVoice(td, tick, events, src, trackState = null, name = null, diagnostics = null, trackName = null) {
+  // A part with a rule over the voices its channels play (chips/parts.js
+  // `checkVoices`, the OPLL's one user voice) sees each one named.
+  if (td.kwMap && trackState?.part?.checkVoices) (trackState.voiceUse ??= []).push({ name, kwMap: td.kwMap });
   if (td.kwMap) {
     const dropped = emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.part, trackState?.target);
     const said = trackState ? (trackState.voicesSaid ??= new Set()) : null;
@@ -3766,7 +3771,7 @@ function emitWave(trackState, events, src, name, diagnostics, trackName) {
 // The four velocity sensitivities come last, outside VOICE_TABLE: the driver
 // takes them as PARAM_SETs after the voice (mmb.md §11).
 const VOICE_KEYS = [
-  ...FM_CHANNEL_WORDS.map((w) => w.word),
+  ...FM_CHANNEL_WORDS.filter((w) => !w.track).map((w) => w.word),
   ...opWords(FM_OP_WORDS.filter((w) => !w.inline)).map((w) => w.word),
   ...VEL_SENS_TARGETS,
 ];
@@ -3814,7 +3819,7 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false,
         : kw?.startsWith(":") ? canonicalTarget(kw) : null;
       if (target !== VOICE_KEY && !VOICE_KEY_SET.has(target)) {
         err("E_VOICE_PARAM",
-          `${kw ?? "(…)"} is not an FM voice parameter (:alg :fb :ams :fms, :ar1 … :am4, :vel1 … :vel4, :key)`,
+          `${kw ?? "(…)"} is not an FM voice parameter (:alg :fb :ams :fms, :ar1 … :am4, :ws1 :eg1 :ksl1 :vib1 …, :vel1 … :vel4, :key)`,
           nodeSrc(td.items[k]));
         continue;
       }
@@ -6366,6 +6371,11 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       src: null,
     });
   }
+  // The OPLL's fifteen ROM voices are built in on every target, as init-fm
+  // is: the chip's own on its channels, a 4-op reading elsewhere
+  // (chips/ym2413.js). A score's own def of the name is that def.
+  for (const [name, kwMap] of opllRomVoices(targetProfile(fileMeta.target).parts.find((p) => p.kind === "fm")))
+    if (!typedDefs.has(name)) typedDefs.set(name, { tag: "voice", extends: null, items: [], kwMap, src: null });
   resolveVoices(typedDefs, defs, paramDefs, diagnostics,
     writesVelSens(parsed, defs, paramDefs, typedDefs, seDefs), targetProfile(fileMeta.target));
   const waves = resolveWaves(typedDefs, defs, paramDefs, diagnostics);
@@ -6836,6 +6846,15 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       targetDiag(diagnostics, "warning",
         `${[...heads].join(" and ")} share one wave memory, so the wave named last plays on both`, fileSrc, "global");
 
+  // A part's rule over the voices its channels play (chips/parts.js
+  // `checkVoices`: the OPLL's one user voice).
+  for (const part of target.parts) {
+    if (!part.checkVoices) continue;
+    const uses = trackOrder.map((key) => trackByKey.get(key).trackState)
+      .filter((ts) => ts.part === part).flatMap((ts) => ts.voiceUse ?? []);
+    part.checkVoices({ uses, push: (severity, code, message) => pushDiag(diagnostics, severity, code, message, fileSrc, "global") });
+  }
+
   const tracks = [];
   for (const [head, layers] of layersByHead) {
     tracks.push(
@@ -6914,8 +6933,14 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // Voice changes move into the silence before their note (voice-hoist.js), so
   // a voice's ~36 writes do not share the note's frame on the driver's wire.
   // `options.voiceHoist`: false turns it off; an object sets its windows.
+  // A part whose chip takes the voice at the key-on (chips/parts.js
+  // `voiceAtKey`, the OPLL's) has nothing to move.
   if (options.voiceHoist !== false)
-    hoistVoiceChanges(tracks, { ppqn: PPQN, fmChannels: new Set(target.headsOfKind("fm")), ...(options.voiceHoist ?? {}) });
+    hoistVoiceChanges(tracks, {
+      ppqn: PPQN,
+      fmChannels: new Set(target.headsOfKind("fm").filter((h) => !target.partOf(h).voiceAtKey)),
+      ...(options.voiceHoist ?? {}),
+    });
 
   // Tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
   // emit their own tick-0 events); the only derived init event is FM3 op mode.

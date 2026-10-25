@@ -10,7 +10,11 @@ export const opnFm = {
   label: "OPN FM",
   kind: "fm",
   level: { stepDb: 0.75, steps: 128 },
-  words: fmWords({ except: ["FM_DT2_"], more: ["PAN"] }), // DT2 is the OPM's
+  words: fmWords({
+    channel: ["FM_ALG", "FM_FB", "FM_AMS", "FM_FMS"],
+    op: ["FM_AR", "FM_DR", "FM_SR", "FM_RR", "FM_SL", "FM_TL", "FM_KS", "FM_ML", "FM_DT", "FM_SSG", "FM_AMEN", "FM_VEL"],
+    more: ["PAN"],
+  }),
   songWords: words("LFO_RATE"),
 };
 
@@ -36,8 +40,8 @@ export function opnFmEncoder(fnumRate) {
     // One operator register, from the operator's shadow state `o`.
     op(ch, opIdx, reg, o) {
       const [port, off] = at(ch);
-      const [base, encode] = OP_REG[reg];
-      return [[port, base + OP_ADDR_OFFSET[opIdx] + off, encode(o)]];
+      const r = OP_REG[reg];
+      return r ? [[port, r[0] + OP_ADDR_OFFSET[opIdx] + off, r[1](o)]] : []; // another family's register
     },
     // The algorithm and feedback.
     alg(ch, regs) {

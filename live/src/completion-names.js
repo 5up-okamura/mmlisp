@@ -5,7 +5,7 @@
 
 // After '(' — the def heads, the forms, the compile-time eval heads (§7), the
 // curves (§11) and the def-pcm :fx effects (§16).
-import { ALL_CHANNEL_NAMES } from "./targets.js";
+import { ALL_CHANNEL_NAMES, partsWithWord } from "./targets.js";
 import { FM_CHANNEL_WORDS, opWords } from "./chips/fm-words.js";
 
 export const AC_FORMS = [
@@ -28,8 +28,8 @@ export const AC_TRACKS = [
 ];
 
 // The FM family's words (chips/fm-words.js): the channel's, and each
-// operator's (1–4).
-const AC_FM_PARAMS = [...FM_CHANNEL_WORDS, ...opWords()].map((w) => w.kw);
+// operator's (1–4) some part has — the OPLL's own words on its two.
+const AC_FM_PARAMS = [...FM_CHANNEL_WORDS, ...opWords()].filter((w) => partsWithWord(w.word).length).map((w) => w.kw);
 
 // After ':' — the keywords the compiler accepts (mmlisp2ir.js: canonicalTarget,
 // the track and note options, the def keys, the curve and effect params).

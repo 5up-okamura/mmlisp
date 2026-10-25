@@ -113,9 +113,9 @@ export const REFERENCE = [
 
   // ---- channels ------------------------------------------------------------
   {
-    name: 'fm1–fm6', aliases: ['fm1', 'fm2', 'fm3', 'fm4', 'fm5', 'fm6', 'fm7', 'fm8'], cat: 'channels', section: '§2', tracks: FM,
+    name: 'fm1–fm6', aliases: ['fm1', 'fm2', 'fm3', 'fm4', 'fm5', 'fm6', 'fm7', 'fm8', 'fm9'], cat: 'channels', section: '§2', tracks: FM,
     syntax: '(fm1 …)',
-    summary: 'The YM2612\'s six FM channels. A score that plays PCM owns fm6 as the DAC, so there an fm6 track is an error. On x68k the YM2151 has eight, fm1–fm8.',
+    summary: 'The YM2612\'s six FM channels. A score that plays PCM owns fm6 as the DAC, so there an fm6 track is an error. On x68k the YM2151 has eight, fm1–fm8; on msx the FM-PAC\'s YM2413 nine 2-op ones, fm1–fm9.',
     insert: '(fm1 :len 8 c d e f)',
     example: '(fm1 :len 8 c d e f g a b > c)',
   },
@@ -330,6 +330,29 @@ export const REFERENCE = [
     summary: 'x68k only: one operator\'s DT2, the YM2151\'s coarse detune (×1, ×1.41, ×1.57, ×1.73 on its multiple) — :dtN is its fine one. Inline, as a macro, or in a def-fm; a voice without it states 0.',
     insert: ':dt2-1 1',
     example: '(def-score :target x68k)\n(def-fm bell init-fm :alg 4 :ml1 3 :dt2-1 2 :tl1 30 :tl3 127)\n(fm1 bell :len 4 c e g e)',
+  },
+  {
+    name: ':ws1', aliases: [':ws2', ':eg1', ':eg2', ':ksl1', ':ksl2', ':vib1', ':vib2'], prefixes: [':ws', ':eg', ':ksl', ':vib'],
+    cat: 'fm', section: '§19', tracks: FM,
+    syntax: ':ws1 :ws2 0–1  ·  :eg1 :eg2 0–1  ·  :ksl1 :ksl2 0–3  ·  :vib1 :vib2 0–1',
+    summary: 'msx only, the FM-PAC\'s two operators: the half-wave rectified sine (:ws 1), a sustained envelope (:eg 1; 0 decays on at RR), the level\'s key scale and the vibrato. Its :ar :dr are 0–15, :tl1 0–63 (op1, the modulator), :ks 0–1.',
+    insert: ':ws1 1',
+    example: '(def-score :target msx)\n(def-fm reed opll-clarinet :ws1 1 :eg2 0 :rr2 6)\n(fm1 reed :len 4 c e g e)',
+  },
+  {
+    name: ':sus', cat: 'fm', section: '§19', tracks: FM,
+    syntax: ':sus 0|1',
+    summary: 'msx only: a channel of the FM-PAC whose notes, keyed off, release at the slow rate 5 rather than their voice\'s RR — a piano\'s pedal. Sticky, 0 to start.',
+    insert: ':sus 1',
+    example: '(def-score :target msx)\n(fm1 opll-piano :sus 1 :len 4 :gate 1/2 c e g e)',
+  },
+  {
+    name: 'opll-piano …', aliases: ['opll-violin', 'opll-guitar', 'opll-piano', 'opll-flute', 'opll-clarinet', 'opll-oboe', 'opll-trumpet', 'opll-organ', 'opll-horn', 'opll-synth', 'opll-harpsichord', 'opll-vibraphone', 'opll-synth-bass', 'opll-acoustic-bass', 'opll-electric-guitar', 'rom voice'],
+    cat: 'fm', section: '§19', tracks: FM,
+    syntax: 'opll-violin … opll-electric-guitar',
+    summary: 'The YM2413\'s fifteen ROM voices, built in as init-fm is. On msx a channel plays the ROM\'s own; a def-fm that extends one is the chip\'s one user voice. Elsewhere each is read as a 4-op voice, op1 into op2.',
+    insert: 'opll-piano',
+    example: '(def-score :target msx)\n(fm1 opll-piano :len 8 c e g > c)\n(fm2 opll-synth-bass :oct 2 :len 4 c c g g)',
   },
   {
     name: '(param-set …)', aliases: ['param-set'], cat: 'fm', section: '§5.1', tracks: null,

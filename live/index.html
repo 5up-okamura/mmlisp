@@ -6662,7 +6662,7 @@
     // Channel strips: mute / solo (driven by the compiled score)
     // -----------------------------------------------------------------------
     // Hardware-index labels, still used by the FM param-panel status (channelLabel).
-    const FM_LABELS  = ['F1','F2','F3','F4','F5','F6','F7','F8'];
+    const FM_LABELS  = ['F1','F2','F3','F4','F5','F6','F7','F8','F9'];
     const PSG_LABELS = ['S1','S2','S3','N1','W1','W2','W3','W4','W5']; // by tone lane
 
     // Score channel name (head) → short strip label: the name's first letter
@@ -10616,7 +10616,7 @@
     // composed as a note's would be; the pan stays the channel's.
     function writeBorrowedPatch(ch, regs, vel) {
       const fm = player._fmEnc;
-      const carriers = fmCarrierOpsForAlg(regs.algorithm ?? 0);
+      const carriers = player._carrierOps(regs);
       regs.ops.forEach((o, i) => {
         const voiced = o.voicedTl ?? o.tl ?? 0;
         const tl = vel != null && carriers.includes(i)

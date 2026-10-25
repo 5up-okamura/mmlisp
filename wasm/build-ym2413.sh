@@ -44,7 +44,7 @@ em++ \
   -s ENVIRONMENT=web,worker \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s FILESYSTEM=0 \
-  -s EXPORTED_FUNCTIONS='["_malloc","_free","_ol_init","_ol_reset","_ol_write_reg","_ol_render","_ol_get_buffer_ptr","_ol_get_tap_ptr"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free","_ol_init","_ol_reset","_ol_write_reg","_ol_render","_ol_get_buffer_ptr","_ol_get_tap_ptr","_ol_get_rom_ptr","_ol_set_rom"]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAP16","HEAPU8"]' \
   -o "$out_file"
 

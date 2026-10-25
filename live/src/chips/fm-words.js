@@ -16,6 +16,8 @@
 //   init   the value `init-fm`, the empty voice, holds; absent: not set
 //   inline an operator word written inline or in a def-fm only, never a
 //          macro's (the velocity sensitivity)
+//   track  a channel word that is the track's, not the voice's: no def-fm
+//          key (the OPLL's sustain, a bit of its key register)
 // The order is the order a voice's writes go into the IR.
 // ---------------------------------------------------------------------------
 
@@ -24,6 +26,7 @@ export const FM_CHANNEL_WORDS = [
   { kw: ":fb", word: "FM_FB", min: 0, max: 7, init: 0 },
   { kw: ":ams", word: "FM_AMS", min: 0, max: 3, init: 0 },
   { kw: ":fms", word: "FM_FMS", min: 0, max: 7, init: 0 },
+  { kw: ":sus", word: "FM_SUS", min: 0, max: 1, track: true }, // the OPLL's: a keyed-off note releases at RR 5
 ];
 
 export const FM_OP_WORDS = [
@@ -39,6 +42,12 @@ export const FM_OP_WORDS = [
   { kw: ":ssg", word: "FM_SSG", field: "ssg", label: "SSG", min: 0, max: 15, init: 0 }, // the OPN's SSG-EG
   { kw: ":am", word: "FM_AMEN", field: "amen", label: "AM", min: 0, max: 1, init: 0 },
   { kw: ":dt2-", word: "FM_DT2_", field: "dt2", label: "DT2", min: 0, max: 3 }, // the OPM's DT2 (op N's DT1 is :dtN)
+  // The OPLL's: the waveform (1 the half-wave rectified sine), the envelope
+  // type (1 sustained, 0 percussive), the level's key scale, the vibrato.
+  { kw: ":ws", word: "FM_WS", field: "ws", label: "WS", min: 0, max: 1 },
+  { kw: ":eg", word: "FM_EG", field: "eg", label: "EG", min: 0, max: 1 },
+  { kw: ":ksl", word: "FM_KSL", field: "ksl", label: "KSL", min: 0, max: 3 },
+  { kw: ":vib", word: "FM_VIB", field: "vib", label: "VIB", min: 0, max: 1 },
   // Velocity sensitivity in sixteenths (language.md §6); -1 is the role's own.
   { kw: ":vel", word: "FM_VEL", field: "velK", label: "VEL", min: -1, max: 16, inline: true },
 ];
@@ -56,17 +65,15 @@ export function opWords(ws = FM_OP_WORDS, ops = FM_OPS) {
 }
 
 /**
- * An FM part's `words` (chips/parts.js): the channel words, the operator
- * words for operators 1..`ops` (`except` those the chip lacks, by base word),
- * and `more` (PAN). A closed list: a word added to the family is no part's
- * until a part names it.
+ * An FM part's `words` (chips/parts.js): the channel words `channel`, the
+ * operator words `op` (base words, FM_TL …) for operators 1..`ops` — or
+ * `op(n)`, operator n's — and `more` (PAN). A closed list: a word added to
+ * the family is no part's until a part names it.
  */
-export function fmWords({ ops = FM_OPS, except = [], more = [] } = {}) {
-  const has = new Set([
-    ...FM_CHANNEL_WORDS.map((w) => w.word),
-    ...opWords(FM_OP_WORDS.filter((w) => !except.includes(w.word)), ops).map((w) => w.word),
-    ...more,
-  ]);
+export function fmWords({ channel, op, ops = FM_OPS, more = [] }) {
+  const opsOf = typeof op === "function" ? op : () => op;
+  const has = new Set([...channel, ...more]);
+  for (let n = 1; n <= ops; n++) for (const w of opsOf(n)) has.add(`${w}${n}`);
   return (word) => has.has(word);
 }
 

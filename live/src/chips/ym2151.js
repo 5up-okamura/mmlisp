@@ -20,7 +20,11 @@ export const opmFm = {
   unit: "opm", // the noise is the eighth channel's
   kind: "fm",
   level: { stepDb: 0.75, steps: 128 },
-  words: fmWords({ except: ["FM_SSG"], more: ["PAN"] }), // SSG-EG is the OPN's
+  words: fmWords({
+    channel: ["FM_ALG", "FM_FB", "FM_AMS", "FM_FMS"],
+    op: ["FM_AR", "FM_DR", "FM_SR", "FM_RR", "FM_SL", "FM_TL", "FM_KS", "FM_ML", "FM_DT", "FM_DT2_", "FM_AMEN", "FM_VEL"],
+    more: ["PAN"],
+  }), // no SSG-EG, the OPN's; DT2 its own
   songWords: words("LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"),
 };
 

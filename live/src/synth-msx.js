@@ -23,7 +23,7 @@ import createAy8910Module from "../ymfm-ay8910.js";
 import createYm2413Module from "../ymfm-ym2413.js";
 import { ay8910 } from "./chips/ay8910.js";
 import { k051649, WAVE_LEN, sccWaveRam } from "./chips/k051649.js";
-import { ym2413, OPLL_PORT } from "./chips/ym2413.js";
+import { ym2413, OPLL_PORT, OPLL_ROM_BYTES } from "./chips/ym2413.js";
 import { pitchLatches, ssgPitch, sccPitch, opllPitch } from "./scope-pitch.js";
 
 export const AY8910_NATIVE_SAMPLE_RATE = ay8910.clock / 32;
@@ -136,6 +136,9 @@ export class MsxSynth {
     this.scopeLanes = SCOPE_LANES;
     this._ratio = AY8910_NATIVE_SAMPLE_RATE / outputSR;
     opll._ol_init();
+    // The chip's ROM voices, the table the encoder names them from.
+    opll.HEAPU8.set(OPLL_ROM_BYTES, opll._ol_get_rom_ptr());
+    opll._ol_set_rom();
     this._olBufPtr = opll._ol_get_buffer_ptr();
     this._olTapPtr = opll._ol_get_tap_ptr();
     this._olRatio = YM2413_NATIVE_SAMPLE_RATE / outputSR;

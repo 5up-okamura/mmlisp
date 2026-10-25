@@ -45,6 +45,14 @@
 //   kit       kit role → its sound: samples built in under those names
 //   checkNote (note, ctx) → the part's rules for one note, after compile
 //   checkScore(ctx) → the part's rules for the whole score
+//   checkVoices({ uses, push }) → the part's rules over the voices its
+//             channels name, uses [{ name, kwMap }] (the OPLL's one user voice)
+//   voiceAtKey true: the chip takes a channel's voice at its key-on, so no
+//             voice change moves ahead of its note (voice-hoist.js)
+//   modLevel  an FM part's ladder for a velocity-sensitive modulator's TL,
+//             where its carrier's level is another register (the OPLL's)
+//   ranges    { word: [min, max] }: an FM part's registers narrower than the
+//             family's (chips/fm-words.js), which its writes are clamped to
 //
 // A chip (ym2612.js …) is a clock and its parts, and says how far the
 // toolchain has it: `encoder` (the IR player writes its registers, so the

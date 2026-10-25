@@ -6,7 +6,9 @@
 // channel's own part — nine lanes a sample, for the oscilloscope, the rhythm
 // sounds in channels 6-8 as the chip plays them: the chip's sample is
 // recomputed with each channel's output kept (ym2413_taps), which sums to
-// what ymfm's own generate() makes.
+// what ymfm's own generate() makes. The ROM voices are the caller's
+// (ol_set_rom: live/src/chips/ym2413.js holds the chip's), so the encoder
+// that names a ROM voice and the emulator that plays it read one table.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +51,7 @@ host g_host;
 ym2413_taps *g_chip = nullptr;
 int16_t g_buffer[OL_MAX_RENDER_SAMPLES];
 int16_t g_taps[OL_MAX_RENDER_SAMPLES * ym2413_taps::LANES];
+uint8_t g_rom[18 * 8]; // fifteen voices and three rhythm patches, $00-$07 each
 
 // ymfm applies a write at once and reads the key state once a sample, so a
 // channel keyed off and on again within one sample never sees the off, and
@@ -118,6 +121,14 @@ void ol_write_reg(int addr, int data) {
 }
 
 int ol_get_buffer_ptr(void) { return (int)(intptr_t)g_buffer; }
+int ol_get_rom_ptr(void) { return (int)(intptr_t)g_rom; }
+
+// The ROM the caller wrote at ol_get_rom_ptr(), in place of ymfm's own.
+void ol_set_rom(void) {
+  ensure_init();
+  g_chip->set_instrument_data(g_rom);
+  g_chip->invalidate_caches();
+}
 int ol_get_tap_ptr(void) { return (int)(intptr_t)g_taps; }
 
 // Render `count` samples at clock / 72 into the buffer; returns the count.
