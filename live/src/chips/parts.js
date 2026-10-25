@@ -37,6 +37,8 @@
 //             macros (not :snap); a soft-mixed voice plays its blob as baked
 //   pointSweeps false: a range is read at key-on, so a swept point is its start
 //   settings  def-score keys only this part reads (`:pcm-voices`)
+//   claims    { kind, voice }: a channel of another part its notes take over
+//             while they sound (the Mega Drive's DAC mix, fm6)
 //   kit       kit role → its sound: samples built in under those names
 //   voiceOf   (ev, sampleDefs) → the physical voice a note sounds on, where
 //             one track reaches several (`:prio` layers flatten per voice)

@@ -6497,14 +6497,16 @@
     let _initAudioPromise = null;
     let player = null;
     let currentIrURL = null;
-    let selectedCh = null;                 // hardware FM/PSG index (0-9) or null — drives the FM param panel
+    let selectedCh = null;                 // the page's FM/PSG channel number (below) or null — drives the FM param panel
     let selectedChannel = null;            // head of the selected strip (e.g. "fm3-1", "pcm1"), or null: none is selected
                                            // (a PCM strip leaves selectedCh null, so test this one for "none")
     const CURSOR_DEF_PREVIEW_CH = 0;        // FM channel used to audition a cursor FM def (incl. its op mask)
     const PCM_PREVIEW_CH = 'pcm';           // the keyboard's target while the cursor is on a sample def
     // The page's channel numbers (selIndex, selectedCh, the keys' targets):
-    // FM 0-7 (the most a target has, the X68000's), the PSG lanes from 8.
-    const PSG_UI_BASE = 8;
+    // FM from 0, as many as the most a target has (targets/), then the PSG's
+    // four lanes — the IR player's: three tones, then the noise.
+    const PSG_UI_BASE = Math.max(...Object.values(TARGETS).flatMap((t) => t.headsOfKind('fm').map((h) => t.channels[h].voice + 1)));
+    const psgLaneOf = (c) => (c.part.kind === 'noise' ? 3 : c.voice);
     let _pcmCursorDef = null;               // name of the sample def under the cursor
     let _prevFmParamMode = null;            // previous getFmParamMode(), to detect entering cursor-def
     let _prevCursorDefKey = null;           // identity of the def under the cursor, to detect switching defs
@@ -6660,7 +6662,7 @@
       const c = channelVoice(head);
       if (c?.part.kind === 'sample') return { volKind: 'pcm', volIndex: null, selIndex: null };
       // The IR player's PSG lane: a tone's voice, the noise's lane 3.
-      const lane = c?.part.kind === 'noise' ? 3 : c?.voice;
+      const lane = c && isPsgVoice(c) ? psgLaneOf(c) : c?.voice;
       if (isPsgVoice(c)) return { volKind: 'psg', volIndex: lane, selIndex: PSG_UI_BASE + lane };
       const fm = isFmVoice(c) ? c.voice : null;
       return { volKind: 'fm', volIndex: fm, selIndex: fm };
@@ -10267,10 +10269,12 @@
         for (const tr of _lastGoodIR?.tracks ?? []) {
           if (tr.se) continue;
           const n = tr.events?.filter((e) => e.cmd === 'NOTE_ON').length ?? 0;
-          // A PCM note claims fm6 for the DAC, which mutes it as an FM channel.
+          // A sample note that takes over an FM channel while it sounds (the
+          // Mega Drive's DAC, fm6: chips/parts.js `claims`) keeps the keys off it.
           const cv = channelVoice(tr.channel);
           if (cv?.part.kind === 'sample') {
-            if (tr.events?.some((e) => e.cmd === 'PCM_NOTE_ON')) notes.set(5, Infinity);
+            const claim = cv.part.claims;
+            if (claim?.kind === 'fm' && tr.events?.some((e) => e.cmd === 'PCM_NOTE_ON')) notes.set(claim.voice, Infinity);
             continue;
           }
           // A track with no notes (a def-mod :keyon off) leaves its channel to
@@ -10278,7 +10282,7 @@
           const fm3 = /^fm3-/.test(tr.scoreChannel ?? '');
           if (n === 0 && !fm3) continue;
           const fm = fm3 ? 2 : isFmVoice(cv) ? cv.voice : undefined;
-          const psg = isPsgVoice(cv) ? (cv.part.kind === 'noise' ? 3 : cv.voice) : undefined;
+          const psg = isPsgVoice(cv) ? psgLaneOf(cv) : undefined;
           const c = fm ?? (psg != null ? PSG_UI_BASE + psg : null);
           // CH3 in operator or CSM mode is never free, even with no notes.
           if (fm3) fm3Mode = true;
