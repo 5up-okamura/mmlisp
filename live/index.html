@@ -9610,7 +9610,7 @@
       if (psgCh === 3) {
         player._psgTriggerNoise(when);
       } else {
-        player._psgSetPitch(psgCh, midi, when);
+        player._psgSetPitch(psgCh, midi, 0, when);
       }
       // 0 = loudest attenuation, 15 = silent
       player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(vel, VOL_UNITY, VOL_UNITY), when);
