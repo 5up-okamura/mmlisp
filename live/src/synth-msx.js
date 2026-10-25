@@ -38,6 +38,10 @@ const SCC_PORT = 3;
 // One SCC channel at full volume, as a square, against one PSG channel at
 // full level: the same. Tunable by ear.
 const SCC_GAIN = 0.27 / 128;
+// The scope's taps, on the page's scale (index.html SCOPE_DISPLAY_GAIN): a
+// channel at full level peaks about where one of the Mega Drive's FM
+// channels does.
+const SCOPE_SCALE = 0.3;
 
 // The K051649 (chips/k051649.js): each channel steps its 32-byte wave one
 // sample every period + 1 clocks, the step times the 4-bit volume / 16 its
@@ -198,7 +202,7 @@ export class MsxSynth {
         const v = this._cur[c] * (1 - t) + this._next[c] * t;
         mix += v;
         const lane = c < 3 ? PSG_LANE + c : SCC_LANE + c - 3;
-        if (scope?.[lane]) scope[lane][i] = v;
+        if (scope?.[lane]) scope[lane][i] = v * SCOPE_SCALE;
       }
       this._frac += this._ratio;
       while (this._frac >= 1) {
