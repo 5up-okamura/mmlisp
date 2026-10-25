@@ -3395,8 +3395,7 @@
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary: `MGS${mgs.version}${mgs.title ? ' · ' + mgs.title : ''} · ${a.bpm} BPM at the start. ` +
-          'Written for the MSX (:target msx): the PSG on sqr1–3, the SCC on wave1–5, the FM-PAC on fm1–fm9. ' +
-          (played.some((t) => t.name === 'FM rhythm') ? 'The FM-PAC’s rhythm is not imported yet (the msx target’s rhythm mode is to come).' : '') +
+          'Written for the MSX (:target msx): the PSG on sqr1–3, the SCC on wave1–5, the FM-PAC on fm1–fm9 (its rhythm on rhythm1–5).' +
           ' Tracks: ' + played.map((t) => t.label).join(' · ') + '.',
         fields: [STRUCTURE_FIELD],
       });

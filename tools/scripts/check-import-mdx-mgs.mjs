@@ -55,7 +55,10 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
   const B = [0xfd, 1, 0xfb, 10, 0xfc, 1, 0xf2, ...be16(256 * 64 / 96 * 2 | 0), ...N(48, 96), 0xfc, 2, ...N(52, 96), ...END];
   const H = [0xfd, 2, 0xed, 0x80 | 20, ...N(60, 24), ...N(60, 24), ...END];
   const P = [0xed, 2, ...N(15, 48), 0xed, 4, ...N(16, 48), ...END];
-  const tracks = [A, B, END, END, END, END, END, H, P];
+  // C: a tie through a rest — MXDRV keys off at the rest's end, not at a
+  // second rest's — and an end whose second byte is not 0.
+  const C = [0xfd, 1, 0xf7, ...N(60, 24), ...R(24), ...R(24), ...N(62, 24), 0xf1, 0, 0x55];
+  const tracks = [A, B, C, END, END, END, END, H, P];
   const voices = [
     { num: 1, con: 4, fb: 5, ops: [op(), op({ tl: 0 }), op({ tl: 20, dt2: 1 }), op({ tl: 0 })] },
     { num: 2, con: 7, fb: 0, ops: [op({ tl: 127 }), op({ tl: 127 }), op({ tl: 127 }), op({ tl: 0 })] },
@@ -73,6 +76,8 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
   assert.equal(a.bpm, 87.19); // Timer B 200
   assert.equal(a.tracks[0].notes.length, 3 + 5 + 1, "A: three notes, the repeat's five, one after");
   assert.equal(a.tracks[0].loopClock, 192);
+  assert.equal(a.tracks[2].end, 96, "C: $F1 $00 ends the track, whatever follows");
+  assert.equal(a.tracks[2].loopClock, null);
   for (const structure of [true, false]) {
     const { source, warnings, pcm } = mdxToMmlisp(mdx, { pdx, structure, fileName: "test.mdx" }, a);
     const what = `MDX (${structure ? "folded" : "flat"})`;
@@ -85,6 +90,7 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     has(source, /#top/, what);
     has(source, /\(go top\)/, what);
     has(source, /:pan left[\s\S]*:pan right/, what);
+    has(source, /\(fm3[\s\S]*c4? _8 d/, what); // held through the first rest only
     has(source, /\(fm2[\s\S]*\(macro :pitch\+ \(linear 0\.\./, what);
     has(source, /\(noise[\s\S]*:noise-rate 12/, what); // NFRQ 20 → 32 - 20
     has(source, /\(def-pcm pdx-000 :file "test-pdx\.wav" :rate 7812/, what);
@@ -147,7 +153,7 @@ function compressMgs(u8) {
   // FM 1: the @v voice, then ROM voice 3 with the sustain on; FM rhythm
   // (#opll_mode 1): a kick.
   const fm1 = [0xd3, 0xcf, 0x80, ...T(0, 48), 0x83, 0x5b, 1, ...T(4, 48), 0xff];
-  const rhythm = [0x30, 48, 0xff];
+  const rhythm = [0x45, 0x00 | 11, 0x31, 48, 0xa1, 0xff]; // vb11, b+h with a length, then h at l
   const mgsBytes = buildMgs({ title: "MGS test", tempo: 120, defs, opll: 1,
     tracks: [psg1, psg2, null, scc1, null, null, null, null, fm1, null, null, null, null, null, rhythm] });
   const plain = parseMgs(mgsBytes);
@@ -178,7 +184,8 @@ function compressMgs(u8) {
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
     has(source, /\(def-fm mgs-v00 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
     has(source, /\(fm1[\s\S]*mgs-v00[\s\S]*piano :sus 1/, what);
-    assert.ok(warnings.some((w) => /rhythm \(1 hit\)/.test(w)), `${what}: the FM-PAC's rhythm is reported`);
+    has(source, /\(rhythm1[\s\S]*kick :vol 25/, what); // vb11 (3 dB steps)
+    has(source, /\(rhythm2[\s\S]*hat/, what);
     clean(source, what);
   }
 }

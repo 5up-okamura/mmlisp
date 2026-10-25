@@ -1783,9 +1783,10 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   words, `@1`–`@15` without one the ROM's (`violin` …), `so` / `sf`
   `:sus`, `v` the channel volume's 3 dB steps. `q`, `k` and `&` set the
   lengths, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento.
-  The FM-PAC's rhythm is not imported yet (the `msx` target's rhythm mode is
-  still to come), nor the PSG's hardware envelope; the log counts what was
-  left out.
+  The rhythm track goes to `rhythm1`–`rhythm5`, a track a sound (`b s m c
+  h` as `kick snare tom4 ride hat`), each hit at c4 ringing to the sound's
+  next, `vb` … `vh` its `:vol`. The PSG's hardware envelope is not imported
+  yet; the log counts what was left out.
 
 **A MIDI, VGM, MDX or MGS import is structured** (untick **Fold repeats** for one bar
 after another): bars that repeat back to back become `(x n …)`, a run that

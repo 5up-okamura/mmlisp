@@ -28,9 +28,11 @@
 //   h, ho / hf      the software LFO as a :pitch+ triangle
 //   _               a portamento: a :pitch+ line from the base note
 //   t, #tempo       :tempo (BPM)
-// Not yet: the FM-PAC's rhythm (track 15 in #opll_mode 1) waits for the
-// msx target's rhythm mode; the PSG's hardware envelope (s, m) waits for its
-// word. Both, and whatever else the file holds, are counted and reported.
+//   FM rhythm       (track 15 in #opll_mode 1) rhythm1-rhythm5, a track a
+//                   sound — b s m c h as kick snare tom4 ride hat — each hit
+//                   at c4 until the sound's next; vb vs vm vc vh its :vol
+// Not yet: the PSG's hardware envelope (s, m) waits for its word; it, and
+// whatever else the file holds, is counted and reported.
 //
 // MGSDRV's own behavior is read from the format and its demos, not held to
 // the driver: envelopes scale v (v × level / 15), an @e step is a frame,
@@ -183,6 +185,7 @@ function newState(kind) {
   return {
     oct: 4, len: 48, q: 8, k: 0, vol: 15, voice: null, env: null, mode: 1, nfreq: null, detune: 0,
     lfo: null, lfoOn: false, porta: null, tie: false, sus: 0, kind,
+    rvol: [15, 15, 15, 15, 15], // the rhythm's levels: BD SD TOM CYM HH
   };
 }
 
@@ -222,7 +225,7 @@ function playTrack(mgs, track, skipped) {
     if (rhythm) {
       if (c <= 0x3f || (c & 0xe0) === 0xa0) {
         const n = c <= 0x1f ? counts(u8, p + 1).reduce((x, y) => x + y, 0) : c <= 0x3f ? a1 || 256 : st.len;
-        if (c & 0x1f) notes.push({ step, count: n, midi: 60, rhythm: c & 0x1f, tieOn: false, st: { ...st } });
+        if (c & 0x1f) notes.push({ step, count: n, midi: 60, rhythm: c & 0x1f, tieOn: false, st: { ...st, rvol: [...st.rvol] } });
         step += n;
         p += len;
         continue;
@@ -245,7 +248,8 @@ function playTrack(mgs, track, skipped) {
       case 0x42: st.len = a1 || 256; break;
       case 0x43: st.len = u16(u8, p + 1); break;
       case 0x44: st.q = a1 & 15; break;
-      case 0x45: case 0x47: skip("rhythm levels (vb vs vm vc vh)"); break;
+      case 0x45: if ((a1 >> 5) < 5) st.rvol[a1 >> 5] = a1 & 15; break;
+      case 0x47: if ((a1 >> 5) < 5) st.rvol[a1 >> 5] = Math.max(0, Math.min(15, st.rvol[a1 >> 5] + ((a1 & 0x1f) >= 16 ? (a1 & 0x1f) - 32 : a1 & 0x1f))); break;
       case 0x46: st.vol = Math.max(0, Math.min(15, st.vol + s8(a1))); break;
       case 0x48: st.k = a1; break;
       case 0x49: st.env = a1 & 31; break;
@@ -279,7 +283,7 @@ function playTrack(mgs, track, skipped) {
         stack.pop();
         break;
       }
-      case 0x5a: if (!rhythm) st.lfoOn = a1 !== 0; break;
+      case 0x5a: if (!rhythm) st.lfoOn = a1 !== 0; else skip("the rhythm's ko / kf"); break;
       case 0x5b: st.sus = a1 ? 1 : 0; break;
       case 0x5c: skip("y (a register write)"); break;
       case 0x5d: if (!stack.length) dollar = { step }; else skip("a `$` inside a repeat"); break;
@@ -318,9 +322,7 @@ export function analyzeMgs(mgs) {
   const skipped = new Map();
   const tracks = mgs.tracks.map((t) => {
     const kind = kindOf(t.index);
-    // The rhythm is counted, not written: what it holds goes unsaid.
-    const rhythm = mgs.opllMode === 1 && t.index === 15;
-    const r = playTrack(mgs, t, rhythm ? new Map() : skipped);
+    const r = playTrack(mgs, t, skipped);
     const name = mgs.opllMode === 1 && t.index === 15 ? "FM rhythm" : TRACK_NAME(t.index);
     return { ...t, ...r, kind, name, label: `${name} · ${r.notes.length} notes${r.loopStep != null ? ", loops" : ""}` };
   });
@@ -421,6 +423,26 @@ function envelopeSpec(env, v, volOf) {
   return frameVector(x.levels.map((lv) => volOf(Math.round((v * lv) / 15))), x.sus);
 }
 
+// The rhythm track's hits → rhythm1-rhythm5, a track a sound, in the key-on
+// bits' order (b s m c h). A sound rings until its next hit, which keys it
+// again; its level is its own `vb`… at the hit.
+const RHYTHM_SOUNDS = [[0x10, "kick", 0], [0x08, "snare", 1], [0x04, "tom4", 2], [0x02, "ride", 3], [0x01, "hat", 4]];
+function rhythmTracks(tr, tick) {
+  const out = [];
+  RHYTHM_SOUNDS.forEach(([bit, role, lv]) => {
+    const hits = tr.notes.filter((n) => n.rhythm & bit);
+    if (!hits.length) return;
+    const endTick = tick(tr.end);
+    const notes = hits.map((n, k) => {
+      const next = hits[k + 1]?.step ?? tr.end;
+      return { tick: tick(n.step), len: Math.max(1, tick(next - n.step)), midi: 60, vel: 15, state: [role, `:vol ${ssgVol(n.st.rvol[lv])}`] };
+    });
+    const marks = !out.length ? tr.tempos.map((tm) => ({ tick: tick(tm.step), tokens: [`:tempo ${tm.bpm}`] })) : [];
+    out.push({ channel: `rhythm${out.length + 1}`, notes, marks, endTick, loopTick: tr.loopStep != null ? tick(tr.loopStep) : null });
+  });
+  return out;
+}
+
 /**
  * @param options { structure?: boolean, fileName? }
  */
@@ -490,8 +512,6 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     return expanded.get(num);
   };
 
-  const rhythm = a.tracks.find((t) => mgs.opllMode === 1 && t.index === 15 && t.notes.length);
-  if (rhythm) warnings.push(`the FM-PAC's rhythm (${rhythm.notes.length} hit${rhythm.notes.length > 1 ? "s" : ""}) is not imported yet — the msx target's rhythm mode is still to come`);
   // An @v voice as a def-fm on the OPLL's words; @1-@15 without one, the ROM's.
   const voiceDefs = new Map();
   const fmVoice = (n) => {
@@ -513,7 +533,11 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   const songOut = [];
   let endMax = 0;
   for (const tr of a.tracks) {
-    if (!tr.notes.length || (mgs.opllMode === 1 && tr.index >= 15)) continue;
+    if (!tr.notes.length || (mgs.opllMode === 1 && tr.index >= 16)) continue;
+    if (mgs.opllMode === 1 && tr.index === 15) {
+      for (const t of rhythmTracks(tr, tick)) { songOut.push(t); endMax = Math.max(endMax, t.endTick); }
+      continue;
+    }
     const isPsg = tr.kind === "psg", isFm = tr.kind === "fm";
     const channel = isPsg ? `sqr${tr.index}` : isFm ? `fm${tr.index - 8}` : `wave${tr.index - 3}`;
     const volOf = tr.kind === "scc" ? sccVol : ssgVol; // the OPLL's volume steps 3 dB as the SSG's

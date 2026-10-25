@@ -113,7 +113,9 @@ Next:
   envelope mode 0 keeps the track's mixer.
 - MGS's FM tracks play on fm1-fm9 (@v → def-fm mgs-vNN, else ROM voice n,
   so/sf → :sus, v as :vol on the 3 dB ladder); the rhythm track (15 in
-  #opll_mode 1) waits for stage 3, then maps b s m c h to the kit roles.
+  #opll_mode 1) is rhythm1-rhythm5, b s m c h as kick snare tom4 ride hat,
+  each hit ringing to its sound's next — how MGSDRV keys a sound off (and
+  what ko / kf do) is not known.
 - `import-mdx.js` follows MXDRV itself (portable_mdx's port of its 68000
   code), not mdxmini, which is wrong on volume, gates after a tie, `k`, the
   LFO shapes and MA. Not modelled: the LFOs' free run without MD (the import

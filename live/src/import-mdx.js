@@ -177,9 +177,10 @@ function playTrack(mdx, track, skipped) {
     if (!len) { skip(`command $${c.toString(16)} (the track stops there)`); end = clock; break; }
     const a1 = u8[p + 1], a2 = u8[p + 2];
     if (c <= 0x7f) {
-      // A tied note sounds on through the rests after it, to their end.
+      // A tied note sounds on through the rest after it, to its end (the
+      // rest's own gate keys it off).
       const last = notes[notes.length - 1];
-      if (last?.tieOn && last.clock + last.count + (last.held ?? 0) === clock) last.held = (last.held ?? 0) + c + 1;
+      if (last?.tieOn && last.held == null && last.clock + last.count === clock) last.held = c + 1;
       st.tie = false;
       clock += c + 1;
     } else if (c <= 0xdf) {
@@ -229,7 +230,7 @@ function playTrack(mdx, track, skipped) {
         case 0xf3: st.detune = s16(u8, p + 1); break;
         case 0xf2: st.porta = s16(u8, p + 1); break;
         case 0xf1:
-          if (a1 === 0 && a2 === 0) { end = clock; break; }
+          if (a1 === 0) { end = clock; break; } // $F1 $00: the end (its second byte is not read)
           {
             const to = p + 3 + s16(u8, p + 1);
             if (visits.has(to)) loopClock = visits.get(to);

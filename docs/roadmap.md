@@ -69,9 +69,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
   choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
   the matrix.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
-- **MGS**: the FM-PAC's rhythm (track 15 in `#opll_mode 1`) once the msx
-  target has its rhythm mode; the PSG's hardware envelope (`s`, `m`) once it
-  is a word; an envelope's wave changes as it runs (a note keeps the first),
+- **MGS**: the PSG's hardware envelope (`s`, `m`) once it is a word; the
+  rhythm's `ko` / `kf`; an envelope's wave changes as it runs (a note keeps the first),
   `#psg_tune` / `#opll_tune`, `@\` on FM.
 - **MDX**: sync between tracks (`$EF`/`$EE`, the tracks run free), the
   OPM LFO's sync, MP / MA's random shape, and their phase: MXDRV restarts
