@@ -560,6 +560,9 @@ export function voiceDefNames(texts) {
 //             wave): writeVector then writes the whole vector over `span`
 //   curve     true for a macro written as a curve: shown as the steps it
 //             plays (at `bpm`, its :step), and drawing on it writes them
+//   writable  whether a stroke can be written back: not an import's wave,
+//             nor a stage vector, which is shown only
+//   note      why it is shown only, for the panel
 //   span      the vector's [from, to), or null when it cannot be written
 //             here (a def in an imported file)
 // ---------------------------------------------------------------------------
@@ -647,7 +650,7 @@ export function vectorAt(text, pos, { waves = new Map(), bpm = 120, roots = pars
       const stepAt = sib.findIndex((n) => n.kind === "atom" && n.value === ":step");
       const step = stepAt >= 0 && sib[stepAt + 1]?.kind === "atom" ? sib[stepAt + 1].value : null;
       const literal = !isKey ? null
-        : vec.bracket === "[]" ? literalSteps(vec, starts)
+        : vec.bracket === "[]" ? literalSteps(vec, starts) ?? stageSteps(vec, keyword.value, step, bpm)
         : curveSteps(vec, keyword.value, step, bpm);
       const range = literal && macroRange(keyword.value, literal.values);
       if (range) {
@@ -658,9 +661,14 @@ export function vectorAt(text, pos, { waves = new Map(), bpm = 120, roots = pars
           name: typeof owner === "string" ? owner : null, keyword: keyword.value,
           values: literal.values, marks: literal.marks, ...range, slots: literal.slots, span,
           ...(literal.curve ? { curve: true } : {}),
+          writable: !literal.stages,
+          ...(literal.stages ? { note: "stages: shown, not drawn" } : {}),
         };
       }
     }
+    // Inside a stage vector's stage (a curve, a wait): the vector is the subject.
+    if (path.length >= 3 && parent?.bracket === "[]" && path.at(-3).items[0]?.value === "macro")
+      return vectorAt(text, nodeSpan(parent, starts).from, { waves, bpm, roots });
     // Anywhere in a def-wave.
     const def = path.find((n) => n.items?.[0]?.value === "def-wave");
     if (def) return waveSubject(def, items(def)[1]?.value);
@@ -702,6 +710,7 @@ function waveSubjectOf(def, name, starts, waves) {
     marks: [], min: WAVE.min, max: WAVE.max, relative: false,
     slots: whole ? literal.slots : null,
     span: at ? nodeSpan(at, starts) : null,
+    writable: !!(def && at),
   };
 }
 
@@ -721,6 +730,43 @@ function curveSteps(node, keyword, step, bpm) {
   return { values: got.values.map(round), marks: got.loop ? [{ at: 0, label: "#sus" }] : [], slots: null, curve: true };
 }
 
+// A stage vector (language.md §10) as the steps it plays, for showing: a
+// number one step, `_` a hold, a curve its steps (a release that leaves :from
+// out starting from the step before it; a looping one, one cycle between
+// `loop` and `key-off` marks), `(wait N)` holds, `(wait key-off)` and `#sus` /
+// `#rel` marks. Null when a stage is one it cannot read alone.
+function stageSteps(list, keyword, step, bpm) {
+  const values = [];
+  const marks = [];
+  const round = keyword.endsWith("*") ? (v) => Math.round(v * 100) / 100 : Math.round;
+  const last = () => [...values].reverse().find((v) => v != null) ?? null;
+  for (const it of items(list)) {
+    if (it.kind === "atom") {
+      if (MARKS.has(it.value)) { marks.push({ at: values.length, label: it.value }); continue; }
+      const v = it.value === "_" ? null : numberOf(it.value);
+      if (v === null && it.value !== "_") return null;
+      values.push(v);
+      continue;
+    }
+    if (it.kind !== "list") return null;
+    if (it.items[0]?.value === "wait") {
+      const arg = items(it)[1];
+      if (arg?.value === "key-off") { marks.push({ at: values.length, label: "key-off" }); continue; }
+      const held = arg?.kind === "atom" ? macroCurveSteps(parse(`(linear 0..0 :len ${arg.value})`)[0], { step, bpm }) : null;
+      if (!held) return null;
+      for (const _ of held.values) values.push(null);
+      continue;
+    }
+    const c = macroCurveSteps(it, { step, bpm, from: last() });
+    if (!c) return null;
+    if (c.loop) marks.push({ at: values.length, label: "loop" });
+    values.push(...c.values.map(round));
+    // A looping stage runs until key-off: what follows is the release.
+    if (c.loop) marks.push({ at: values.length, label: "key-off" });
+  }
+  return { values, marks, slots: null, stages: true };
+}
+
 function atomAtPos(roots, starts, pos) {
   let hit = null;
   const visit = (n) => {
@@ -736,14 +782,14 @@ function atomAtPos(roots, starts, pos) {
 /**
  * The changes that write `values` (one per step; null a hold) into the
  * subject's text: each step that changed, in place, so the vector keeps its
- * layout and marks; a subject that is not a literal vector (a curve) is
- * written whole over it, its marks in place, 16 steps a line. [] when it
- * cannot be written here.
+ * layout and marks; a subject that is not a literal vector (a curve), or
+ * whose length changed, is written whole over it, its marks in place, 16
+ * steps a line. [] when it cannot be written here.
  */
 export function writeVector(text, subject, values) {
-  if (!subject.span) return [];
+  if (!subject.span || subject.writable === false) return [];
   const str = (v) => (v == null ? "_" : String(v));
-  if (subject.slots) {
+  if (subject.slots?.length === values.length) {
     return subject.slots.flatMap((slot, i) => {
       const insert = str(values[i]);
       return text.slice(slot.from, slot.to) === insert ? [] : [{ ...slot, insert }];
@@ -754,6 +800,7 @@ export function writeVector(text, subject, values) {
   for (let i = 0; i < values.length; i += 16) {
     const row = [];
     for (let k = i; k < Math.min(i + 16, values.length); k++) {
+      // A mark past the last step (the vector shortened under it) goes with it.
       for (const m of subject.marks) if (m.at === k) row.push(m.label);
       row.push(str(values[k]));
     }

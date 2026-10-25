@@ -1281,7 +1281,13 @@ on it writes those steps as a vector, a loop curve's cycle after `#sus`; the
 steps no longer follow the tempo, as a written vector does not. While a stroke goes,
 a wave sounds at once on every channel playing it, so a held note changes as
 you draw; with the cursor on a `def-wave`, the keys play it on a wave
-channel. A def-wave from an import is shown but not drawn on.
+channel. With Alt (Option) held, a stroke over a macro's steps makes them
+holds (`_`); − and + under a macro's vector take its last step off or add
+one, a copy of the last. A def-wave from an import is copied into the score
+at the first stroke, under its imports, as an imported voice is. A macro
+written as stages (`[(ease-in …) (wait key-off) (linear …)]`) is shown — each
+stage's steps, a looping one's cycle between `loop` and `key-off`, a
+`(wait key-off)` as a mark — but not drawn on.
 
 ### Chords on the keyboards
 

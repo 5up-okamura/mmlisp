@@ -5,7 +5,8 @@
 // vectorAt) gives the length, the range and the marks; the editor only draws
 // inside the range, rounded to the subject's grain (`quantum`: whole steps,
 // or a `*` macro's hundredths), so what it hands back is what the score can
-// hold.
+// hold. With Alt (Option) held, a macro's steps the stroke passes become
+// holds (`_`); a wave has none.
 //
 //   new VectorEditor(canvas, { onDraw(values, done), onHover(step, value) })
 //   .show(subject)   draw a subject (null: nothing)
@@ -39,7 +40,7 @@ export class VectorEditor {
   }
 
   get editable() {
-    return !!this.subject?.span;
+    return !!this.subject?.writable;
   }
 
   // The step and value at a pointer event, the value rounded and kept in range.
@@ -49,6 +50,7 @@ export class VectorEditor {
     const n = this.values.length;
     const step = Math.max(0, Math.min(n - 1, Math.floor(((e.clientX - r.left) / r.width) * n)));
     const y = 1 - (e.clientY - r.top) / r.height;
+    if (e.altKey && this.subject.kind === "macro") return [step, null];
     const q = this.subject.quantum ?? 1;
     const value = Math.max(min, Math.min(max, Math.round((min + y * (max - min)) / q) * q));
     return [step, q < 1 ? Number(value.toFixed(6)) : value];
@@ -81,8 +83,13 @@ export class VectorEditor {
     const lo = Math.min(s0, step), hi = Math.max(s0, step);
     let changed = false;
     for (let s = lo; s <= hi; s++) {
+      if (value == null) { // a hold stroke
+        if (this.values[s] !== null) { this.values[s] = null; changed = true; }
+        continue;
+      }
       const q = this.subject.quantum ?? 1;
-      const lerp = hi === lo ? value : v0 + ((value - v0) * (s - s0)) / (step - s0);
+      const from = v0 ?? value; // after a hold stroke's point, from here
+      const lerp = hi === lo ? value : from + ((value - from) * (s - s0)) / (step - s0);
       const v = q < 1 ? Number((Math.round(lerp / q) * q).toFixed(6)) : Math.round(lerp);
       if (this.values[s] !== v) { this.values[s] = v; changed = true; }
     }

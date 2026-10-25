@@ -22,13 +22,9 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 
 ## Rulings for what comes next (2026-10-25, not built yet)
 
-- **The editor panel** (one editor for the last-touched subject, the
-  vector editor) is built; still open: swap only once the cursor rests when
-  it moves by keys (if passing through feels busy), changing a vector's
-  length, drawing a step back to a hold (`_`), drawing on an imported
-  def-wave (copy it in, as an imported def-fm is), a stage vector
-  (`[(ease-in …) (wait key-off) …]`) shown and drawn, and a 2-op FM editor
-  for the OPLL.
+- **The editor panel** is built; still open: swap only once the cursor
+  rests when it moves by keys (if passing through feels busy), drawing on a
+  stage vector, and a 2-op FM editor for the OPLL.
 - **Waves are expressions**, as values are (§7.1.2): without a `$slot` folded
   at compile time (mixes, generators such as harmonics), with one
   re-evaluated by the player when the slot moves and written whole (≤ once a

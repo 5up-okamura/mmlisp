@@ -496,7 +496,10 @@
         <div class="rack-body">
           <div class="vec-axis"><span id="vecMax"></span><span id="vecReadout"></span></div>
           <canvas id="vecCanvas" class="vec-canvas"></canvas>
-          <div class="vec-axis"><span id="vecMin"></span><span id="vecLen"></span></div>
+          <div class="vec-axis"><span id="vecMin"></span><span><span id="vecLen"></span>
+            <span id="vecLenCtl" class="vec-len-ctl" hidden><button type="button" class="tb-btn" title="One step fewer"
+              onclick="resizeVector(-1)">−</button><button type="button" class="tb-btn" title="One step more (a copy of the last)"
+              onclick="resizeVector(1)">+</button></span></span></div>
         </div>
       </div>
 
@@ -9509,19 +9512,73 @@
         const s = _vecSubject;
         if (!s || !_vecActive) return;
         if (s.kind === 'wave') player?.setWave?.(s.name, values);
-        if (!done) return;
-        const text = editorView.state.doc.toString();
-        const changes = writeVector(text, s, values);
-        if (changes.length) {
-          editorView.dispatch({ changes });
-          scheduleHotSwap();
-        }
+        if (done) writeVectorToScore(s, values);
       },
       onHover: (step, value) => {
         document.getElementById('vecReadout').textContent =
           step == null ? '' : `${step + 1}: ${value == null ? '_' : value}`;
       },
     });
+
+    // A stroke (or a length change) into the score, as one edit: in place, or
+    // for an imported def-wave, first a copy of its def under the score's
+    // imports — a def of the same name in the score wins (language.md §9.2),
+    // as an imported voice's first edit does (copyImportedVoice).
+    function writeVectorToScore(s, values) {
+      if (s.importCopy) {
+        const { node, text: fileText, path } = s.importCopy;
+        const lines = fileText.split('\n').slice(node.line - 1, node.endLine);
+        const defText = lines.join('\n');
+        const own = vectorOfWave(defText, s.name);
+        const edits = own ? writeVector(defText, { ...own, writable: true }, values) : [];
+        if (!edits.length) {
+          log(`${s.name}'s :wave in ${path} is not a vector or a curve read alone; copy the def into the score to draw on it`, 'info');
+          return;
+        }
+        const edited = edits.reduceRight((t, c) => t.slice(0, c.from) + c.insert + t.slice(c.to), defText);
+        const state = editorView.state;
+        const roots = parseCached(state.doc) ?? [];
+        const lastImport = roots.filter((n) => n.kind === 'list' && n.items?.[0]?.value === 'import').pop();
+        const at = lastImport ? state.doc.line(lastImport.endLine ?? lastImport.line).to : 0;
+        editorView.dispatch({ changes: { from: at, insert: lastImport ? `\n\n${edited}` : `${edited}\n\n` } });
+        log(`Copied ${s.name} from ${path} into the score to edit it (the copy wins over the import; delete it to go back)`, 'info');
+        scheduleHotSwap();
+        return;
+      }
+      const changes = writeVector(editorView.state.doc.toString(), s, values);
+      if (!changes.length) return;
+      editorView.dispatch({ changes });
+      scheduleHotSwap();
+    }
+
+    // The − / + under a macro's vector: one step fewer, or one more, a copy
+    // of the last.
+    function resizeVector(by) {
+      const s = _vecSubject;
+      if (!_vecActive || s?.kind !== 'macro' || !s.writable) return;
+      const values = by < 0 ? _vecEditor.values.slice(0, Math.max(1, _vecEditor.values.length - 1))
+        : [..._vecEditor.values, _vecEditor.values.at(-1) ?? null];
+      writeVectorToScore(s, values);
+    }
+    window.resizeVector = resizeVector;
+
+    // The def-waves the score's imports define: name → { node, path, text }.
+    let _importWaveDefs = new WeakMap();
+    function importedWaveDefs() {
+      if (!_importSources) return new Map();
+      let defs = _importWaveDefs.get(_importSources);
+      if (!defs) {
+        defs = new Map();
+        for (const [path, text] of _importSources) {
+          let roots = null;
+          try { roots = parse(text); } catch (_) { continue; }
+          for (const n of roots)
+            if (n?.kind === 'list' && n.items?.[0]?.value === 'def-wave' && n.items[1]?.kind === 'atom') defs.set(n.items[1].value, { node: n, path, text });
+        }
+        _importWaveDefs.set(_importSources, defs);
+      }
+      return defs;
+    }
 
     // The wave lanes the score's machine has (targets.js toneLaneOf).
     function waveLanes() {
@@ -9573,7 +9630,10 @@
       if (!_vecEditor) return;
       // A strip's, when no def under the cursor leads (they are set only then).
       const strip = !cursorVec && !_fmCursorDefContext && !_pcmCursorDef ? waveStripSubject() : null;
-      const subject = cursorVec ?? strip;
+      let subject = cursorVec ?? strip;
+      // An imported def-wave is drawn on by copying it in at the first stroke.
+      if (subject?.kind === 'wave' && !subject.writable && importedWaveDefs().has(subject.name))
+        subject = { ...subject, writable: true, importCopy: importedWaveDefs().get(subject.name) };
       if (subject) _editorKind = 'vector';
       else if (_fmCursorDefContext || isFmChannel(selectedCh)) _editorKind = 'fm';
       else _editorKind ??= hasFm ? 'fm' : null;
@@ -9587,19 +9647,21 @@
       section.classList.toggle('editor-away', _editorKind !== 'vector' || !_vecSubject);
       document.getElementById('fmParamSection').classList.toggle('editor-away', _editorKind === 'vector');
       section.classList.toggle('vec-off', !_vecActive);
-      section.classList.toggle('vec-readonly', _vecActive && !_vecSubject?.span);
+      section.classList.toggle('vec-readonly', _vecActive && !_vecSubject?.writable);
+      document.getElementById('vecLenCtl').hidden = !(_vecActive && _vecSubject?.kind === 'macro' && _vecSubject.writable);
       const s = _vecSubject;
       document.getElementById('vecKind').textContent = s?.label ?? 'Vector';
       document.getElementById('vecStatus').textContent = s?.name ?? '';
       document.getElementById('vecMax').textContent = s ? String(s.max) : '';
       document.getElementById('vecMin').textContent = s ? String(s.min) : '';
       document.getElementById('vecLen').textContent = !s ? ''
-        : `${s.values.length} steps${!s.span ? ' · imported: read only' : s.curve ? ' · a curve: drawing writes steps' : ''}`;
+        : `${s.values.length} steps${s.note ? ` · ${s.note}` : s.importCopy ? ' · imported: drawing copies it in'
+          : !s.writable ? ' · imported: read only' : s.curve ? ' · a curve: drawing writes steps' : ''}`;
       // A dimmed subject is not drawn on (no span to write to). A stroke in
       // progress keeps its own values; a subject that still holds them only
       // takes the new spans.
       if (s && !_vecEditor._last) {
-        const shown = _vecActive ? s : { ...s, span: null };
+        const shown = _vecActive ? s : { ...s, writable: false };
         if (_vecEditor.subject?.key === s.key && _vecEditor.values.join() === s.values.join()) _vecEditor.subject = shown;
         else _vecEditor.show(shown);
       }

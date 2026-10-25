@@ -3526,13 +3526,17 @@ function keywordOf(target) {
  * edit-tools.js vectorAt): `node` a curve form, `step` its macro's :step token
  * (1f when unwritten), `bpm` the tempo its lengths are read at. One value per
  * step, unrounded — a loop curve's one cycle — or null when the curve is not
- * one the steps stand for (no :from, a $value, a :wait, no length).
+ * one the steps stand for (no :from, a $value, a :wait, no length). `from`
+ * stands in for a :from the curve leaves out.
  */
-export function macroCurveSteps(node, { step = null, bpm = 120 } = {}) {
+export function macroCurveSteps(node, { step = null, bpm = 120, from = null } = {}) {
   // Read alone, a param that names a def or a let (`:to top`) has no value:
   // any word the curve could not read means its steps are not these.
   const said = [];
   const spec = parseCurveSpec(node, said);
+  // A release stage may leave :from out: it starts where the macro is
+  // (`from`, the stage before it's last value).
+  if (spec && spec.from == null && from != null) spec.from = from;
   if (!spec || said.length || spec.from == null || spec.dyn || spec.waitTicks != null || spec.waitFrames != null || spec.waitKeyOff)
     return null;
   const clock = (step != null ? parseStepToken(step) : null) ?? { unit: "frame", value: 1 };
