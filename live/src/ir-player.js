@@ -496,6 +496,21 @@ export class IRPlayer {
     this._reg27 = 0;
     this._fm3Ops = false;
     if (this._fmEnc.csm) this._write(0, 0x27, 0);
+    this._silenceChipPcm();
+  }
+
+  // Every voice the chips' own sample parts sound — the ADPCM-B, the ROM
+  // rhythm's six, PCM8's eight — stopped at `when` (now when absent): a run's
+  // end and a seek's point, where nothing the song keyed may ring on.
+  _silenceChipPcm(when) {
+    const write = (writes) => { for (const [p, a, d] of writes) this._write(p, a, d, when); };
+    const adpcm = this._target.chipFor("adpcm-b")?.adpcm;
+    if (adpcm) write(adpcm.stop());
+    const rhythm = this._target.chipFor("rhythm")?.rhythm;
+    const kit = this._target.parts.find((p) => p.name === "rhythm")?.kit;
+    if (rhythm && kit) for (const sound of Object.values(kit)) write(rhythm.dump(sound));
+    const t = when ?? this._audioContext?.currentTime ?? 0;
+    if (this._target.hasPart("pcm8")) for (let v = 0; v < PCM8_VOICES; v++) this._pcm8Ev(t, { kind: "cut", voice: v });
   }
 
   // The chip and channel state belongs to one run. A run's sticky state (a
@@ -659,7 +674,7 @@ export class IRPlayer {
     for (let ch = 0; ch < this._fmEnc.channels; ch++) this._writeKeyOff(ch);
     for (let psgCh = 0; psgCh < 4; psgCh++) this._psgSetAtt(psgCh, 15, at);
     for (let v = 0; v < pcmVoices; v++) this._pcmEv(at, { kind: "off", voice: v });
-    if (this._target.hasPart("pcm8")) for (let v = 0; v < PCM8_VOICES; v++) this._pcm8Ev(at, { kind: "cut", voice: v });
+    this._silenceChipPcm(at);
 
     this._audioContext = audioContext;
     this._onRunStart?.();
