@@ -966,9 +966,12 @@ curve or a `$` value is `E_VOICE_VALUE`, since a voice is fixed data. A leading
 name is the voice it extends: the base's params first, the voice's own over
 them, as a sample does (§16). Unset operator parameters are not emitted —
 start from a full patch (or extend one) for deterministic timbres. The
-built-in voice `init-fm` (ALG 7, AR 31, RR 15, ML 1, TL 0 on all operators)
-is always available, as are the FM-PAC's fifteen ROM voices, `piano`
-… (§19 `msx`):
+built-in voice `init-fm` is always available: a sine, as the score's FM
+chip makes one — on the OPN and the OPM ALG 7, AR 31, RR 15, ML 1, TL 0 on
+all operators; on the FM-PAC its modulator silent (`:tl1 63`), both
+operators AR 15, RR 15, ML 1, `:eg 1` (§19 `msx`). A track that names no
+voice plays it. The FM-PAC's fifteen ROM voices, `piano` … (§19 `msx`), are
+built in the same way:
 
 ```lisp
 (def-fm lead init-fm
@@ -978,10 +981,11 @@ is always available, as are the FM-PAC's fifteen ROM voices, `piano`
 (fm1 lead c e g e)
 ```
 
-**A voice change is sent ahead of its note.** A voice is about 36 register
-writes, and the chip takes them a few per millisecond; sent with the note, they
-would delay that note and every other channel's note in the same frame. So the
-compiler moves a voice written before a note into the silence before it,
+**On the Mega Drive, a voice change is sent ahead of its note.** A voice is
+about 36 register writes, and the driver's wire takes them a few per
+millisecond; sent with the note, they would delay that note and every other
+channel's note in the same frame. So on `md` the compiler moves a voice
+written before a note into the silence before it,
 together with the channel's own `:vel`, `:vol`, `:pan` and `:pitch` written
 there (`:lfo-rate` and `:master` stay with the note):
 
@@ -1008,7 +1012,8 @@ before.
 Nothing moves inside a slur (`c ~ lead e`), across a `#label` or `(go …)`, at a
 track's start (it is sent at load, driver.md §4.1), at a loop's head, on an
 `fm3-N` operator track or with CSM, or in an effect's part. Note onsets never
-move. The editor plays the same moved stream as the driver.
+move. The editor plays the same moved stream as the driver. A VGM target
+(`pc88`, `x68k`, `msx`) has no wire: a voice is written at its note.
 
 **`:key N`** gives a voice its own pitch: c4 sounds at MIDI note `N`
 (0–127, else `E_VOICE_VALUE`), and every note written on the voice moves by
@@ -2602,8 +2607,7 @@ op1 and op2 (`W_TARGET` for the rest).
 registers are one of these, and from the chip's **one user voice**
 otherwise: a voice that extends a ROM one, a `def-fm` of its own, a voice
 an inline write or a macro has moved. Every channel on the user voice
-plays the one last written — a voice is settled at a note's key-on, so it
-is not moved ahead of its note (§9) — and
+plays the one last written — a voice is settled at a note's key-on — and
 the compiler says so when the FM tracks name two such voices
 (`W_TARGET`). On the other targets the fifteen names are 4-op voices, op1
 into op2 on algorithm 4 with op3 and op4 silent, the rates on the 4-op

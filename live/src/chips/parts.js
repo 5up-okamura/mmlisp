@@ -47,8 +47,8 @@
 //   checkScore(ctx) → the part's rules for the whole score
 //   checkVoices({ uses, push }) → the part's rules over the voices its
 //             channels name, uses [{ name, kwMap }] (the OPLL's one user voice)
-//   voiceAtKey true: the chip takes a channel's voice at its key-on, so no
-//             voice change moves ahead of its note (voice-hoist.js)
+//   initVoice an FM part's `init-fm`, where the family's init values are not
+//             its sine (chips/fm-words.js fmInitVoice): Map word → value
 //   modLevel  an FM part's ladder for a velocity-sensitive modulator's TL,
 //             where its carrier's level is another register (the OPLL's)
 //   ranges    { word: [min, max] }: an FM part's registers narrower than the

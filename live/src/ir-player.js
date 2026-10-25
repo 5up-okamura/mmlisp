@@ -50,7 +50,7 @@ import {
 import { engineImage } from "./engine-images.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 import { PCM8_RATE, PCM8_VOICES } from "./chips/msm6258.js";
-import { FM_CHANNEL_WORDS, FM_OP_WORDS, FM_OPS, opWords } from "./chips/fm-words.js";
+import { FM_CHANNEL_WORDS, FM_OP_WORDS, FM_OPS, opWords, fmInitVoice, fmOpWord } from "./chips/fm-words.js";
 // The largest point a PCM point target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
 const PCM_LOOP_MAX = 0x7f00;
@@ -5821,33 +5821,30 @@ export class IRPlayer {
     for (const chip of Object.values(this._target.chips))
       if (!chip.optional) for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     this._fmEnc.reset?.(); // an encoder that keeps the chip's state starts over
-    // Neutral sine-like patch: ALG=7 (all 4 ops independent carriers), FB=0.
-    // All ops: AR=31, DR=0, SL=0, RR=15, TL=0, MUL=1, DT=0.
+    // Every channel starts on `init-fm`, the part's sine (chips/fm-words.js
+    // fmInitVoice): the OPN's ALG 7, FB 0, all four operators AR 31, DR 0,
+    // SL 0, RR 15, TL 0, MUL 1, DT 0 — the driver's boot patch (driver.md
+    // §5.4) — or the OPLL's.
+    const init = fmInitVoice(this._target.parts.find((p) => p.kind === "fm"));
     for (let ch = 0; ch < this._fmEnc.channels; ch++) {
       const regs = this._chRegs[ch];
 
-      regs.algorithm = 7;
-      regs.feedback = 0;
+      regs.algorithm = init.get("FM_ALG") ?? 7;
+      regs.feedback = init.get("FM_FB") ?? 0;
       this._fmWrites(this._fmEnc.alg(ch, regs));
       // Stereo: both, the LFO sensitivities 0
       this._fmWrites(this._fmEnc.pan(ch, { pan: 0, ams: 0, fms: 0 }));
 
       for (let slot = 0; slot < 4; slot++) {
-        regs.ops[slot] = {
-          tl: 0,
-          ar: 31,
-          dr: 0,
-          d2r: 0,
-          sl: 0,
-          rr: 15,
-          mul: 1,
-          dt: 0,
-          rs: 0,
-          amen: 0,
-          ssg: 0,
-          dt2: 0,
-        };
-        for (const reg of ["dt-ml", "tl", "ks-ar", "am-dr", "sr", "sl-rr", "ssg-eg"]) this._fmOp(ch, slot, reg);
+        const o = { tl: 0, ar: 31, dr: 0, d2r: 0, sl: 0, rr: 15, mul: 1, dt: 0, rs: 0, amen: 0, ssg: 0, dt2: 0 };
+        for (const [word, v] of init) {
+          const m = /^(FM_[A-Z]+?_?)(\d)$/.exec(word);
+          if (!m || Number(m[2]) !== slot + 1) continue;
+          const field = fmOpWord(m[1])?.field;
+          if (field && field !== "velK") o[field] = v;
+        }
+        regs.ops[slot] = o;
+        for (const reg of ["dt-ml", "tl", "ks-ar", "am-dr", "sr", "sl-rr", "ssg-eg", "voice"]) this._fmOp(ch, slot, reg);
       }
     }
     // Globals, matching the driver's boot patch (driver.md §5.4).

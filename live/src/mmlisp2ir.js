@@ -12,7 +12,7 @@
 import { hoistVoiceChanges } from "./voice-hoist.js";
 import { TARGETS, DEFAULT_TARGET as DEFAULT_TARGET_NAME, targetProfile, partsWithWord, partsWithSetting, ALL_CHANNEL_NAMES } from "./targets.js";
 import { NOISE_MODE_MAP } from "./chips/sn76489.js";
-import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords } from "./chips/fm-words.js";
+import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords, fmInitVoice } from "./chips/fm-words.js";
 import { opllRomVoices } from "./chips/ym2413.js";
 import { parse } from "./mmlisp-parser.js";
 import {
@@ -3566,9 +3566,9 @@ export function canonicalTarget(symbol) {
   return PCM_POINT_TARGETS.has(t) ? null : t;
 }
 
-// `init-fm`, the empty voice: the family's init values (chips/fm-words.js).
-function createInitFmKwMap() {
-  return new Map([...FM_CHANNEL_WORDS, ...opWords()].filter((w) => w.init !== undefined).map((w) => [w.word, w.init]));
+// `init-fm`, the empty voice: a sine on the machine's FM part (chips/fm-words.js fmInitVoice).
+function createInitFmKwMap(target) {
+  return fmInitVoice(target.parts.find((p) => p.kind === "fm"));
 }
 
 // A def-fm voice switch: its registers as of `tick`, and the key shift its
@@ -6368,7 +6368,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       tag: "voice",
       extends: null,
       items: [],
-      kwMap: createInitFmKwMap(),
+      kwMap: createInitFmKwMap(targetProfile(fileMeta.target)),
       src: null,
     });
   }
@@ -6934,17 +6934,13 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     if (stray.length) track.events = track.events.filter((ev) => !stray.includes(ev));
   }
   for (const track of tracks) validateTrack(track, diagnostics);
-  // Voice changes move into the silence before their note (voice-hoist.js), so
-  // a voice's ~36 writes do not share the note's frame on the driver's wire.
-  // `options.voiceHoist`: false turns it off; an object sets its windows.
-  // A part whose chip takes the voice at the key-on (chips/parts.js
-  // `voiceAtKey`, the OPLL's) has nothing to move.
-  if (options.voiceHoist !== false)
-    hoistVoiceChanges(tracks, {
-      ppqn: PPQN,
-      fmChannels: new Set(target.headsOfKind("fm").filter((h) => !target.partOf(h).voiceAtKey)),
-      ...(options.voiceHoist ?? {}),
-    });
+  // On the driver's machine, voice changes move into the silence before
+  // their note (voice-hoist.js), so a voice's ~36 writes do not share the
+  // note's frame on the driver's wire. A VGM target has no wire: a voice is
+  // written at its note. `options.voiceHoist`: false turns it off; an
+  // object sets its windows.
+  if (options.voiceHoist !== false && target.driver)
+    hoistVoiceChanges(tracks, { ppqn: PPQN, fmChannels: new Set(target.headsOfKind("fm")), ...(options.voiceHoist ?? {}) });
 
   // Tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
   // emit their own tick-0 events); the only derived init event is FM3 op mode.

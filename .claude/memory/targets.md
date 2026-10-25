@@ -18,6 +18,12 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   `ranges`). `MACRO_TARGET_RANGE` stays the family's widest: a macro is
   clamped there, the part's range clamps at the write.
 - In the Live panel, what a machine lacks is hidden; a menu item is disabled.
+- **The voice hoist is the driver's alone** (`target.driver`; 2026-10-25,
+  the user's reading): on a VGM target it only cut notes 40 ms and moved
+  voices off their beat. No `voiceAtKey` per part.
+- **`init-fm` is the FM part's** (`initVoice`, else the family's init
+  values): a sine on each chip. The player's boot patch is the same map,
+  so a track with no voice plays init-fm on every target.
 
 ## Rulings for what comes next (2026-10-25, not built yet)
 

@@ -854,7 +854,7 @@
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { TARGETS, TONE_LANES, toneLaneOf, targetProfile, notYet } from './src/targets.js';
-    import { fmOpWord, FM_CHANNEL_WORDS, opWords } from './src/chips/fm-words.js';
+    import { fmOpWord, fmInitVoice } from './src/chips/fm-words.js';
     import { opllRomVoices } from './src/chips/ym2413.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
@@ -9512,12 +9512,11 @@
     }
 
     // A built-in voice's registers on the score's machine (init-fm, the
-    // family's init values, and the OPLL's ROM voices: mmlisp2ir's own), or null.
+    // part's sine, and the OPLL's ROM voices: mmlisp2ir's own), or null.
     function builtinFmVoice(name) {
-      if (name === 'init-fm')
-        return new Map([...FM_CHANNEL_WORDS, ...opWords()].filter((w) => w.init !== undefined).map((w) => [w.word, w.init]));
-      const machine = targetProfile(_lastGoodIR?.metadata?.target);
-      return opllRomVoices(machine.parts.find((p) => p.kind === 'fm')).get(name) ?? null;
+      const part = targetProfile(_lastGoodIR?.metadata?.target).parts.find((p) => p.kind === 'fm');
+      if (name === 'init-fm') return fmInitVoice(part);
+      return opllRomVoices(part).get(name) ?? null;
     }
 
     // The imported files' def-fm nodes by name, each file parsed once per
@@ -11356,7 +11355,7 @@
         const o = regs.ops[op - 1];
         for (const pp of OP_REG_PARAMS) setSliderCached(`sl-op${op}-${pp.key}`, `val-op${op}-${pp.key}`, o[pp.key] ?? 0);
         // A voice that does not set it shows the role's own: 1 on a carrier, 0 on a modulator.
-        const velK = o.velK ?? (ALG_CARRIERS[shownAlg(regs.algorithm ?? 0)].includes(op) ? 16 : 0);
+        const velK = o.velK ?? ((ALG_CARRIERS[shownAlg(regs.algorithm ?? 0)] ?? []).includes(op) ? 16 : 0);
         if (_fmSliderCache[`sl-op${op}-vel`] !== velK) {
           _fmSliderCache[`sl-op${op}-vel`] = velK;
           setSlider(`sl-op${op}-vel`, `val-op${op}-vel`, velK);

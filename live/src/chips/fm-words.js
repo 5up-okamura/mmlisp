@@ -77,5 +77,15 @@ export function fmWords({ channel, op, ops = FM_OPS, more = [] }) {
   return (word) => has.has(word);
 }
 
+/**
+ * `init-fm`, the empty voice, on `part` (an FM part, or null): the part's
+ * own (`initVoice`), else the family's init values — the OPN's and the
+ * OPM's sine, every operator a carrier at TL 0. A Map word → value.
+ */
+export function fmInitVoice(part) {
+  if (part?.initVoice) return new Map(part.initVoice);
+  return new Map([...FM_CHANNEL_WORDS, ...opWords()].filter((w) => w.init !== undefined).map((w) => [w.word, w.init]));
+}
+
 /** The operator word `word` (FM_TL, no number) in the table. */
 export const fmOpWord = (word) => FM_OP_WORDS.find((w) => w.word === word);

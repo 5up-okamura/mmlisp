@@ -150,7 +150,15 @@ export const opllFm = {
   }),
   // The registers narrower than the family's (chips/fm-words.js).
   ranges: { FM_AR: [0, 15], FM_DR: [0, 15], FM_TL: [0, 63], FM_KS: [0, 1] },
-  voiceAtKey: true, // the encoder settles a voice at the key-on
+  // `init-fm` here: a sine — the modulator silent (TL 63), both operators
+  // at once, held while keyed (EG 1), released at once.
+  initVoice: new Map([
+    ["FM_FB", 0],
+    ...[1, 2].flatMap((n) => Object.entries({
+      FM_AR: 15, FM_DR: 0, FM_SL: 0, FM_RR: 15, FM_KS: 0, FM_ML: 1, FM_AMEN: 0, FM_WS: 0, FM_EG: 1, FM_KSL: 0, FM_VIB: 0,
+      ...(n === 1 ? { FM_TL: 63 } : {}),
+    }).map(([w, v]) => [`${w}${n}`, v])),
+  ]),
   // The chip has one user voice: two a score plays on its channels are one
   // register set, which the last written has.
   checkVoices({ uses, push }) {
