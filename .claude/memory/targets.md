@@ -104,13 +104,14 @@ Next:
   antiques/mgsc mgs-format.md, mgsrc-js) and the msxplay-js demo songs —
   **not held to the driver**: no MGSDRV run was compared (libkss can render
   MGS through the real driver, and kss2vgm would give the A/B the mucom
-  importer had). Settled by the user (2026-10-25): an @e's levels
-  add to v (15 is v, each step below one quieter), and `k` keys off k
-  frames early. Rejected against the format and the demos: `/` `\` `_` as
-  envelope volume moves or a loop (MGSC writes `/n` as the mixer mode $An,
-  `\n` as a signed detune $12, loops as `[ ]`), and a rhythm hit's digits
-  as its level (grider.mml `h4h4h8` with `vh12`; $20-$3F carry a length).
-  Guesses still to check against it: @r scales v (v × level / 255), `n:c` slides,
+  importer had). Not to be re-read from a secondary source: an
+  AI answer's `/` `\` `_` as envelope volume moves or a loop, and a rhythm
+  hit's digits as its level, contradict the format and the demos (MGSC
+  writes `/n` as the mixer mode $An, `\n` as a signed detune $12, loops as
+  `[ ]`; grider.mml has `h4h4h8` with `vh12`, and $20-$3F carry a length).
+  Guesses to check against the driver or MGSC111.TXT: an @e's levels add to
+  v (15 is v; taken from that same answer, unconfirmed), `k` keys off k
+  frames early (likewise), @r scales v (v × level / 255), `n:c` slides,
   an @e's `\` steps are + up (the reverse of the track's `\`, which MGSC
   stores as a period offset — chosen because the other reading sends
   `@e22`-style toms up 60 semitones), `h` is delay, quarter-cycle frames,
