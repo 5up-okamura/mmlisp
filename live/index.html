@@ -9730,7 +9730,7 @@
 
     // The PCM strip selected in Channels (its head, e.g. "pcm1"), or null.
     function selectedPcmPart() {
-      return /^pcm[1-3]$/.test(selectedChannel ?? '') ? selectedChannel : null;
+      return channelVoice(selectedChannel)?.part.kind === 'sample' ? selectedChannel : null;
     }
 
     async function previewPcmNoteOn(midi, vel = 15) {
