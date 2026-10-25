@@ -839,7 +839,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
-    import { targetProfile, notYet } from './src/targets.js';
+    import { TARGETS, targetProfile, notYet } from './src/targets.js';
     import { fmOpWord } from './src/chips/fm-words.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
@@ -2105,10 +2105,18 @@
       return _acPresetDefs ? fn() : loadPresetDefNames().then(fn);
     }
 
-    // What kind of name the track at `pos` takes: an fm… track plays voices, a
-    // pcm… track samples, a PSG track macros — an envelope is the voice it
-    // does not have. Outside a track — a def, the top level — everything.
+    // What kind of name the track at `pos` takes, by its channel's part
+    // (targets/: the score's machine's, else the first that has the name): an
+    // FM channel plays voices, a sample channel samples, a PSG channel
+    // macros — an envelope is the voice it does not have. Outside a track — a
+    // def, the top level — everything.
     const AC_TRACK_SET = new Set(AC_TRACKS);
+    const TRACK_KIND_OF_PART = { fm: 'voice', sample: 'sample', tone: 'psg', noise: 'psg' };
+    function headPartKind(head) {
+      const part = targetProfile(_lastGoodIR?.metadata?.target).partOf(head)
+        ?? Object.values(TARGETS).find((t) => t.partOf(head))?.partOf(head);
+      return TRACK_KIND_OF_PART[part?.kind] ?? null;
+    }
     function trackKindAt(text, pos) {
       const open = [];
       for (let i = 0; i < pos; i++) {
@@ -2120,7 +2128,7 @@
       }
       for (let k = open.length - 1; k >= 0; k--) {
         const head = /^[^\s()[\]";]*/.exec(text.slice(open[k] + 1, open[k] + 32))[0];
-        if (AC_TRACK_SET.has(head)) return /^fm/.test(head) ? 'voice' : /^pcm/.test(head) ? 'sample' : 'psg';
+        if (AC_TRACK_SET.has(head)) return headPartKind(head);
       }
       return null;
     }

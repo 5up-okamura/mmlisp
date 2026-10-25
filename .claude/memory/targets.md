@@ -49,4 +49,4 @@ Next:
 
 - pc88 `pcm1` (ADPCM-B) and the ROM rhythm are silent on the keys while
   stopped: `previewPcmNoteOn` knows the md DAC and PCM8 only. Lands with
-  step 3's preview adapters.
+  step 1's preview adapters.

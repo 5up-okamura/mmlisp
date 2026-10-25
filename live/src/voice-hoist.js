@@ -286,7 +286,7 @@ export function hoistVoiceChanges(tracks, {
     }
     track.events = out;
   }
-  spreadVoices(tracks, placements, G, stats);
+  spreadVoices(tracks, placements, G, stats, fmChannels);
   return stats;
 }
 
@@ -297,11 +297,11 @@ export function hoistVoiceChanges(tracks, {
  * Looked at on the expanded timeline, so a voice inside a loop is checked at
  * each of its repeats, against every track's key-ons at theirs.
  */
-function spreadVoices(tracks, placements, G, stats) {
+function spreadVoices(tracks, placements, G, stats, fmChannels) {
   const keyOns = [], at = new Map();
   for (const t of tracks) {
     if (t.se) continue;
-    const fm = typeof t.channel === "string" && t.channel.startsWith("fm");
+    const fm = fmChannels.has(t.channel);
     for (const e of expandLoops(t.events ?? [])) {
       if (fm && e.cmd === "NOTE_ON" && !e.args?.legato) keyOns.push(e.tick);
       if (e._hoist !== undefined && e.cmd === "PARAM_SET" && MOVE_TARGETS.has(e.args?.target)) {
