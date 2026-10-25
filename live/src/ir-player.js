@@ -38,7 +38,7 @@ import {
   HOLD_FRAMES,
   expandLoops,
 } from "./ir-utils.js";
-import { targetProfile, notYet } from "./targets.js";
+import { TARGETS, targetProfile, notYet } from "./targets.js";
 import {
   curveId, curveUnit8, sweepValue, sweepStep, sweepFrameValue,
   bpmToTickIncrement, tickIncrementToBpm,
@@ -46,13 +46,17 @@ import {
 import { engineImage } from "./engine-images.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 import { PCM8_RATE, PCM8_VOICES } from "./chips/msm6258.js";
-import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords } from "./chips/fm-words.js";
+import { FM_CHANNEL_WORDS, FM_OP_WORDS, FM_OPS, opWords } from "./chips/fm-words.js";
 // The largest point a PCM point target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
 const PCM_LOOP_MAX = 0x7f00;
-// The most FM channels a target has (chips/: the OPN's six); a channel's
-// shadow state and per-channel arrays are this long whatever the chip.
-const FM_CHANNELS = 8;
+// The most FM channels a target has (targets/: the OPM's eight); a
+// channel's shadow state and per-channel arrays are this long whatever the
+// chip.
+const FM_CHANNELS = Math.max(
+  ...Object.values(TARGETS).map((t) => t.chipForKind("fm")?.fmEncoder().channels ?? 0));
+// The PSG encoder's lanes (chips/: psgEncoder): three tones and the noise.
+const PSG_LANES = 4;
 // The player's cores, by a part's kind (chips/parts.js): the FM core, the PSG
 // core (tone and noise, through the chip's PSG encoder: lanes 0-2 the tones,
 // 3 the noise) and the sample core. A part of another kind has no core yet.
@@ -252,25 +256,25 @@ export class IRPlayer {
     // model the worklet runs (src/pcm-voices.js) — so this side only forwards
     // the score's events, in time order.
 
-    this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
-    this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
-    this._psgSnap = new Array(4).fill(0); // `:snap` mask per PSG ch
+    this._psgCurrentMidi = new Array(PSG_LANES).fill(60); // last NOTE_ON midi per PSG ch
+    this._psgPitchOffset = new Array(PSG_LANES).fill(0); // cents offset per PSG ch
+    this._psgSnap = new Array(PSG_LANES).fill(0); // `:snap` mask per PSG ch
     // A NOTE_PITCH sweep is scheduled whole at dispatch, leaving the pitch
     // offsets above at its END value. A glide sweep is emitted just before its
     // note's NOTE_ON (same tick), so that note must start from the sweep's
     // FIRST value instead — else its onset write lands on the target pitch for
     // a frame before the slide begins. Keyed "fm:ch" / "psg:ch" / "op:n".
     this._pitchSweepOnset = new Map(); // key → { when, offset }
-    this._psgVol = new Array(4).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
-    this._psgLastVel = new Array(4).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
-    this._psgLevelAhead = new Array(4).fill(false); // the current note's level macros took its :vol sets in
-    this._psgVolSweep = new Array(4).fill(null); // active VOL sweep state per PSG ch
-    this._psgKeyedUntil = new Array(4).fill(0); // when the current note keys off
+    this._psgVol = new Array(PSG_LANES).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
+    this._psgLastVel = new Array(PSG_LANES).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
+    this._psgLevelAhead = new Array(PSG_LANES).fill(false); // the current note's level macros took its :vol sets in
+    this._psgVolSweep = new Array(PSG_LANES).fill(null); // active VOL sweep state per PSG ch
+    this._psgKeyedUntil = new Array(PSG_LANES).fill(0); // when the current note keys off
     // Whether each PSG ch is currently sounding a note (att < 15). A PSG channel
     // drones whenever its attenuation is non-silent, regardless of frequency, so
     // master/vol recomputes must NOT re-write a non-silent att to an idle channel
     // (that would un-silence it into a tone). Updated on every _psgSetAtt.
-    this._psgSounding = new Array(4).fill(false);
+    this._psgSounding = new Array(PSG_LANES).fill(false);
     // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
     // current value; PARAM_SET NOISE_MODE updates it; the mode macro is a
     // temporary override layered on top. Default white0 (0b1_00) matches the
@@ -280,7 +284,7 @@ export class IRPlayer {
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(FM_CHANNELS).fill(null);
     this._fmLevelLines = new Array(FM_CHANNELS).fill(null); // a note's :vel/:vol macro timelines
-    this._fm3LevelLines = new Array(4).fill(null); // ...an FM3 operator note's
+    this._fm3LevelLines = new Array(FM_OPS).fill(null); // ...an FM3 operator note's
     // Inline sweeps on the other FM params, per channel: target → sweep. The
     // sweep's frames are scheduled at once (leaving the shadow state at `to`),
     // so later events on the channel first re-sync their state to the sweep's
@@ -309,7 +313,7 @@ export class IRPlayer {
     // FM3 independent-OP: each operator's own note, sticky :pitch offset
     // and level (index = op − 1) — what its F-number and TL are written
     // from (driver.md §13.4).
-    this._fm3Op = Array.from({ length: 4 }, () => ({
+    this._fm3Op = Array.from({ length: FM_OPS }, () => ({
       midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
     }));
 
@@ -414,7 +418,7 @@ export class IRPlayer {
     this._loopCount.clear();
     this._routes.clear();
     // Each PSG lane's level ladder: its part's (_assignChannel).
-    this._psgLevel = new Array(4).fill(null);
+    this._psgLevel = new Array(PSG_LANES).fill(null);
     this._rhythmState = null; // per-track vol / pan of the chips' own PCM parts
     this._adpcmState = null;
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
@@ -447,7 +451,7 @@ export class IRPlayer {
     // FM3 independent-OP: each operator's own note, sticky :pitch offset
     // and level (index = op − 1) — what its F-number and TL are written
     // from (driver.md §13.4).
-    this._fm3Op = Array.from({ length: 4 }, () => ({
+    this._fm3Op = Array.from({ length: FM_OPS }, () => ({
       midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
     }));
     this._pendingKeyOff.fill(false);
@@ -478,7 +482,7 @@ export class IRPlayer {
       this._writeKeyOff(ch);
     }
     // Silence all PSG channels
-    for (let psgCh = 0; psgCh < 4; psgCh++) {
+    for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) {
       this._psgSetAtt(psgCh, 15);
     }
     // CSM keys CH3 from Timer A, which no key-off reaches: clear the mode
@@ -668,7 +672,7 @@ export class IRPlayer {
       this._write(w.port, w.addr, w.data, at);
     }
     for (let ch = 0; ch < this._fmEnc.channels; ch++) this._writeKeyOff(ch);
-    for (let psgCh = 0; psgCh < 4; psgCh++) this._psgSetAtt(psgCh, 15, at);
+    for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) this._psgSetAtt(psgCh, 15, at);
     for (let v = 0; v < pcmVoices; v++) this._pcmEv(at, { kind: "off", voice: v });
     this._silenceChipPcm(at);
 
@@ -711,7 +715,7 @@ export class IRPlayer {
       this._frameOrigin = start;
       this._initDefaultVoices();
       this._resetFm3Keys();
-      this._fm3Op = Array.from({ length: 4 }, () => ({
+      this._fm3Op = Array.from({ length: FM_OPS }, () => ({
         midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
       }));
       this._pendingKeyOff.fill(false);
@@ -1507,7 +1511,7 @@ export class IRPlayer {
       // FM3 independent-OP: each operator's own note, sticky :pitch offset
       // and level (index = op − 1) — what its F-number and TL are written
       // from (driver.md §13.4).
-      this._fm3Op = Array.from({ length: 4 }, () => ({
+      this._fm3Op = Array.from({ length: FM_OPS }, () => ({
         midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
       }));
       this._pendingKeyOff.fill(false);
@@ -3803,7 +3807,7 @@ export class IRPlayer {
     // PSG channels: recalculate attenuation from vel * vol * master, but only
     // for channels currently sounding — re-writing a non-silent att to an idle
     // channel (e.g. at play start, before any note) would drone a tone.
-    for (let psgCh = 0; psgCh < 4; psgCh++) {
+    for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) {
       // Not keyed then, or silent now: a sweep's frames are written ahead, and
       // a held note's key-off (triggerKeyOff) is not known in advance.
       // (A held note has no known key-off: nothing is written ahead to it.)
