@@ -153,9 +153,11 @@ In order:
    class, which the PC Engine, the FDS and the Game Boy share later; its
    channels are named by the class so those machines reuse them, and a wave
    is 32 signed 8-bit steps in the IR, which a chip of fewer bits reads
-   down. A wave editor in Live is still to come. The FM-PAC (OPLL: 2-op, fifteen preset voices and one user
-   voice) is a different composing surface that none of the 4-op voice assets
-   reach, so it waits for a 2-op voice form; MSX-Audio is left out.
+   down. A wave editor in Live is still to come. The FM-PAC (OPLL: 2-op,
+   fifteen ROM voices and one user voice) is under way: its engine is in
+   (ymfm's YM2413, `live/src/chips/ym2413.js`, the worklet's port 4, VGM
+   `0x51`), its channels, words and rhythm mode come next on `def-fm`
+   (`.claude/memory/targets.md` holds the plan); MSX-Audio is left out.
 4. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
    without a level (the level model needs targets that have none), the
    noise's two modes, and the DPCM as a one-voice kit of user samples at
