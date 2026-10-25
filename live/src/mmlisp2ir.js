@@ -22,6 +22,8 @@ import {
   pitchToMidi,
   sampleCurveUnit,
   WAVE,
+  waveCombine,
+  waveSteps,
   expandLoops,
   FRAME_HZ_NTSC,
   FRAME_HZ_PAL,
@@ -3588,19 +3590,37 @@ function emitVoice(td, tick, events, src, trackState = null, name = null, diagno
   }
 }
 
-// A def-wave's `:wave`: its values, a vector or one curve sampled over a
-// cycle, each a signed 8-bit step. Every wave that reads is listed, in def
-// order, as the IR's metadata.waves; `index` maps its name to its place.
+// A def-wave's `:wave`: a vector of its steps, or a wave expression
+// (waveExpr) — a curve, another def-wave, and `+ - * /` over them and numbers.
+// A written step out of range is an error; what an expression computes is
+// rounded and kept in range, as a register write keeps it. Every wave that
+// reads is listed, in def order, as the IR's metadata.waves; `index` maps its
+// name to its place, and a track's anonymous wave (a `:wave` expression with
+// no $slot) is added to it as the track compiles (waveIndexOf).
 const WAVE_LEN = WAVE.len;
 function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
-  const waves = [];
-  const index = new Map();
-  for (const [name, td] of typedDefs) {
-    if (td.tag !== "wave") continue;
-    if (td.data) { // an import's, read in its own compile
-      index.set(name, waves.push({ name, data: td.data }) - 1);
-      continue;
+  const read = new Map(); // name → steps, null when its def does not read
+  const reading = new Set();
+  const dataOf = (name, at) => {
+    const td = typedDefs.get(name);
+    if (td?.tag !== "wave") {
+      pushDiag(diagnostics, "error", "E_WAVE_VALUE", `${name} is not a def-wave`, nodeSrc(at), null);
+      return null;
     }
+    if (td.data) return td.data; // an import's, read in its own compile
+    if (read.has(name)) return read.get(name);
+    if (reading.has(name)) {
+      pushDiag(diagnostics, "error", "E_WAVE_VALUE", `def-wave ${name} is made of itself`, td.src, null);
+      return null;
+    }
+    reading.add(name);
+    const data = readWaveDef(td);
+    reading.delete(name);
+    read.set(name, data);
+    if (data) td.data = data;
+    return data;
+  };
+  const readWaveDef = (td) => {
     const err = (msg, src = td.src) => pushDiag(diagnostics, "error", "E_WAVE_VALUE", msg, src, null);
     const ctx = makeEvalCtx(diagnostics, null, td.src, typedDefs);
     let data = null;
@@ -3613,44 +3633,96 @@ function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
       }
       const at = td.items[k + 1];
       if (!at) { err(":wave has no value", nodeSrc(td.items[k])); continue; }
-      const one = (n) => {
+      const expanded = (n) => {
         const ex = expandNode(n, defs, paramDefs, 0, diagnostics);
-        return ex.length === 1 && !exprHasValRef(ex[0]) ? evalValue(ex[0], makeEnv(null), ctx) : null;
+        return ex.length === 1 ? ex[0] : null;
       };
-      let vals = null;
       if (at.kind === "list" && at.bracket === "[]") {
         const items = at.items.filter((n) => n.kind !== "comment");
-        vals = items.map((n) => {
-          const v = one(n);
+        const vals = items.map((n) => {
+          const e = expanded(n);
+          const v = e && !exprHasValRef(e) ? evalValue(e, makeEnv(null), ctx) : null;
           if (v?.kind !== "scalar") err(`a :wave value is a number, not ${atomValue(n) ?? "a list"}`, nodeSrc(n));
-          return v?.kind === "scalar" ? v.value : 0;
+          return v?.kind === "scalar" ? Math.round(v.value) : 0;
         });
-        if (vals.length !== WAVE_LEN) {
-          err(`:wave takes ${WAVE_LEN} values, not ${vals.length}`, nodeSrc(at));
-          continue;
-        }
-      } else {
-        const v = one(at);
-        if (v?.kind !== "signal" || v.spec.steps || v.spec.stages) {
-          err(`:wave takes [${WAVE_LEN} values] or one curve ((sin -128..127) …)`, nodeSrc(at));
-          continue;
-        }
-        vals = waveCycle(v.spec);
+        if (vals.length !== WAVE_LEN) { err(`:wave takes ${WAVE_LEN} values, not ${vals.length}`, nodeSrc(at)); continue; }
+        const out = vals.find((x) => x < WAVE.min || x > WAVE.max);
+        if (out !== undefined) { err(`a :wave value is ${WAVE.min}..${WAVE.max}, not ${out}`, nodeSrc(at)); continue; }
+        data = vals;
+        continue;
       }
-      vals = vals.map((x) => Math.round(x));
-      const out = vals.find((x) => x < WAVE.min || x > WAVE.max);
-      if (out !== undefined) { err(`a :wave value is ${WAVE.min}..${WAVE.max}, not ${out}`, nodeSrc(at)); continue; }
-      data = vals;
+      const e = expanded(at);
+      const r = e && waveExpr(e, { waveOf: dataOf, diagnostics, trackName: null });
+      if (!r) continue;
+      if (r.data) data = waveSteps(r.data);
+      else err(r.tree ? "a def-wave is fixed data: a $value goes in a track's :wave" : `:wave takes a wave, not the number ${r.n}`, nodeSrc(at));
     }
-    if (!data) {
-      if (!td.items.some((n) => atomValue(n) === ":wave")) err("def-wave needs :wave");
-      continue;
-    }
-    td.data = data;
-    index.set(name, waves.push({ name, data }) - 1);
+    if (!data && !td.items.some((n) => atomValue(n) === ":wave")) err("def-wave needs :wave");
+    return data;
+  };
+  const waves = [];
+  const index = new Map();
+  for (const [name, td] of typedDefs) {
+    if (td.tag !== "wave") continue;
+    const data = dataOf(name, null);
+    if (data) index.set(name, waves.push({ name, data }) - 1);
   }
   waves.index = index;
+  waves.dataOf = dataOf;
   return waves;
+}
+
+// A wave expression (language.md §19) as the compiler reads it: a def-wave's
+// name, a curve (one cycle), a number, a `$slot` (`runtime`: a track's
+// `:wave`), and `+ - * /` over them. What has no $slot is folded here (the
+// shared ir-utils.js waveCombine); the rest is left as the tree the IR player
+// runs. Returns { n } | { data } | { tree }, or null after a diagnostic.
+const WAVE_OPS = new Set(["+", "-", "*", "/"]);
+function waveExpr(node, { waveOf, vals = null, runtime = false, diagnostics, trackName }) {
+  const err = (msg) => {
+    pushDiag(diagnostics, "error", "E_WAVE_VALUE", msg, nodeSrc(node), trackName);
+    return null;
+  };
+  if (node?.kind === "atom") {
+    const v = node.value;
+    const n = parseNumberLike(v);
+    if (n !== null) return { n };
+    if (typeof v === "string" && v.startsWith("$")) {
+      if (!runtime) return err(`a def-wave is fixed data: ${v} goes in a track's :wave`);
+      if (!vals?.has(v.slice(1))) return err(`${v} is not a def-val`);
+      return { tree: { val: v.slice(1) } };
+    }
+    const data = waveOf(v, node);
+    return data ? { data } : null;
+  }
+  const head = node?.kind === "list" && node.bracket === "()" ? atomValue(node.items[0]) : null;
+  if (CURVE_NAMES.has(head)) {
+    const spec = parseCurveSpec(node, diagnostics, nodeSrc(node), trackName);
+    return spec ? { data: waveCycle(spec) } : null;
+  }
+  if (WAVE_OPS.has(head)) {
+    const args = node.items.slice(1).filter((n) => n.kind !== "comment")
+      .map((n) => waveExpr(n, { waveOf, vals, runtime, diagnostics, trackName }));
+    if (!args.length) return err(`(${head}) has nothing to work on`);
+    if (args.some((a) => !a)) return null;
+    if (args.some((a) => a.tree)) {
+      const leaf = (a) => a.tree ?? (a.data ? { data: a.data.map((x) => Math.round(x * 1000) / 1000) } : { n: a.n });
+      return { tree: { op: head, args: args.map(leaf) } };
+    }
+    const r = waveCombine(head, args.map((a) => a.data ?? a.n));
+    return Array.isArray(r) ? { data: r } : { n: r };
+  }
+  return err("a wave is def-wave names, curves and numbers under + - * /");
+}
+
+// A track's anonymous wave (a folded `:wave` expression): listed with the
+// def-waves under `name`, its place in metadata.waves — the same place on
+// the compile's second pass.
+function waveIndexOf(waves, name, data) {
+  const at = waves.index.get(name);
+  if (at != null) { waves[at].data = data; return at; }
+  waves.index.set(name, waves.push({ name, data }) - 1);
+  return waves.length - 1;
 }
 
 // One cycle of a curve, whatever its :len, as a def-wave's steps (unrounded).
@@ -4184,6 +4256,36 @@ function compileChannelBody(
                 trackState.currentTempo = swept.toBpm;
                 events.push(swept.event);
               }
+              break;
+            }
+            case ":wave": {
+              // A wave expression (language.md §19): folded, an anonymous wave
+              // the track names as it would a def-wave; with a $slot, the tree
+              // the IR player runs as the slot moves. A bare name is the
+              // def-wave itself, as written alone in the body.
+              const { part, target: machine } = trackState;
+              if (!part?.words("WAVE")) {
+                wrongChannel(val, machine.headsOfKind("wave").join(", ") || "a wave channel");
+                break;
+              }
+              const valueNode = items[i];
+              if (valueNode?.kind === "atom" && trackState.waves?.index.has(valueNode.value)) {
+                emitWave(trackState, events, nodeSrc(node), valueNode.value, diagnostics, trackName);
+                break;
+              }
+              const r = waveExpr(valueNode, {
+                waveOf: (name, at) => trackState.waves?.dataOf(name, at) ?? null,
+                vals, runtime: true, diagnostics, trackName,
+              });
+              if (!r) break;
+              if (r.n != null) {
+                pushDiag(diagnostics, "error", "E_WAVE_VALUE", `:wave takes a wave, not the number ${r.n}`, nodeSrc(valueNode), trackName);
+                break;
+              }
+              const args = r.tree
+                ? { target: "WAVE", expr: r.tree }
+                : { target: "WAVE", value: waveIndexOf(trackState.waves, `${trackState.head}@${valueNode.line}:${valueNode.column}`, waveSteps(r.data)) };
+              events.push({ tick: trackState.tick, cmd: "PARAM_SET", args, src: nodeSrc(node) });
               break;
             }
             case ":mode": {

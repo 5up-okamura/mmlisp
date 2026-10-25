@@ -1761,6 +1761,12 @@
   "regs": "8bdefa59535c5653",
   "vgm": "a9e9e9bd1a3c3cd1"
  },
+ "tools/tests/msx/scc-expr.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1836c7356b41e763",
+  "regs": "39c5b814dba74842",
+  "vgm": "ac36cc1eaa46a9cb"
+ },
  "tools/tests/msx/scc.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "337b898dbb2c5270",

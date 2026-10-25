@@ -2526,14 +2526,36 @@ it does a voice:
 (wave1 saw :len 8 c e g > c < hollow g e c e)
 ```
 
-`:wave` is 32 values, each −128..127 (signed 8-bit, the chip's), or one
-curve, read over one cycle whatever its `:len` (§11); a count or a value
-outside that is `E_WAVE_VALUE`, another key `E_WAVE_PARAM`. A channel plays a
+`:wave` is 32 values, each −128..127 (signed 8-bit, the chip's), or a wave
+expression: a curve, read over one cycle whatever its `:len` (§11), another
+def-wave's name, and `+ - * /` over them and numbers, taken step by step
+(`(+ (* saw 0.6) (* soft 0.4))`). A written value outside −128..127 or a
+count other than 32 is `E_WAVE_VALUE`, as is a def-wave made of itself; what
+an expression computes is rounded and kept in range, as the chip's register
+keeps it. Another key is `E_WAVE_PARAM`. A channel plays a
 square until its track names a wave; the wave is written to the channel's
 memory where it is named, so a switch is heard from the next sample on. The
 pitch is the chip's 12-bit period (1.79 MHz / 32 / (n + 1)), and every pitch
 move a PSG channel has works the same — `:pitch`, `(glide …)`, the pitch and
-`:semi` macros, `:snap`. The level is the chip's 4-bit linear volume, vel +
+`:semi` macros, `:snap`.
+
+A track's **`:wave`** takes a wave expression where a name will not do:
+
+```lisp
+(def-val x 0 0..100)
+(wave1 :wave (* soft 0.5) c)                                     ; folded: a wave of its own
+(wave2 :wave (+ (* saw (- 1 (/ $x 100))) (* soft (/ $x 100))) :len 1 c)   ; follows $x
+```
+
+Without a `$slot` it is folded when the score compiles, into a wave of its
+own the track names. With one it is a wave that follows its slots: the
+channel's memory is written again in each frame a slot it reads has moved —
+a host's write, a slider or the XY pad, or the score's own sweep of the
+slot (`:x (linear 0..100 :len 1)`) — until the track names another wave. A
+mix of two waves is `+` and `*` over them; a `def` names one to reuse
+(`(def (mix a b t) (+ (* a (- 1 t)) (* b t)))`). `:wave` on a channel with
+no wave memory is `E_UNSUPPORTED_TARGET`, a number alone (`:wave 3`)
+`E_WAVE_VALUE`. The level is the chip's 4-bit linear volume, vel +
 vol + master composed as one gain (§6) and rounded to its 16 steps. `wave4`
 and `wave5` share one wave memory: two tracks that name different waves there
 play whichever was written last, and the compiler says so (`W_TARGET`).

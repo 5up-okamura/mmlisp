@@ -1,0 +1,12 @@
+; msx: wave expressions — def-waves made of others, a track's folded :wave,
+; and one that follows a def-val as the score sweeps it.
+(def-score :target msx :title "msx scc expressions")
+(def-val x 0 0..100)
+(def-wave saw :wave (saw -128..127))
+(def-wave soft :wave (sin -100..100))
+(def (mix a b t) (+ (* a (- 1 t)) (* b t)))
+(def-wave half :wave (mix saw soft 0.5))
+(def-wave loud :wave (* saw 3))
+(wave1 :tempo 120 :wave (mix saw soft (/ $x 100)) :len 1 c |)
+(wave2 :wave (* soft 0.5) :len 4 c e half g loud c |)
+(sqr1 :x (linear 0..100 :len 1) :len 1 _ |)

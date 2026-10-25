@@ -37,6 +37,10 @@ import {
   KEY_ORDER_EPS_SECS,
   HOLD_FRAMES,
   expandLoops,
+  WAVE,
+  waveEval,
+  waveSlots,
+  waveSteps,
 } from "./ir-utils.js";
 import { TARGETS, TONE_LANES, toneLaneOf, targetProfile, notYet } from "./targets.js";
 import {
@@ -279,6 +283,7 @@ export class IRPlayer {
     // (that would un-silence it into a tone). Updated on every _psgSetAtt.
     this._psgSounding = new Array(PSG_LANES).fill(false);
     this._laneWave = new Array(PSG_LANES).fill(null); // the def-wave each wave lane plays (by name)
+    this._laneExpr = new Array(PSG_LANES).fill(null); // a lane's wave expression with $slots: { tree, slots, vals, nextFrame }
     this._drawnWaves = new Map(); // def-wave name → the steps the editor drew over it (setWave)
     // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
     // current value; PARAM_SET NOISE_MODE updates it; the mode macro is a
@@ -399,6 +404,7 @@ export class IRPlayer {
     this._toneEnc = this._toneEncodersOf(target, this._psgChip);
     this._chipsStarted.clear();
     this._laneWave.fill(null);
+    this._laneExpr.fill(null);
     this._drawnWaves.clear();
     // The FM core's level ladder (chips/parts.js `level`): its TL.
     this._fmLevel = target.parts.find((p) => p.kind === "fm")?.level ?? null;
@@ -537,6 +543,7 @@ export class IRPlayer {
     this._lfoRate = 0;
     this._masterVol = VOL_UNITY;
     this._chipPcm = null; // the YM2608's sample voices' levels (_chipPcmFrames)
+    this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
     this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
@@ -1294,6 +1301,9 @@ export class IRPlayer {
   // of the real audio timer.
   _scheduleStep(now, horizon) {
     const done = this._scheduleEvents(now, horizon);
+    // A wave expression follows its slots to the horizon — and once the song
+    // is done, to the end of its last note.
+    this._waveExprFrames(done ? Math.max(horizon, this._songEndTime()) : horizon);
     // Every hit up to `horizon` is known now: the chip's sample voices'
     // levels can be written up to it — and once the song is done, on to the
     // end of what still sounds.
@@ -4939,6 +4949,43 @@ export class IRPlayer {
     this._psgWrites(this._lane(lane, (e, ch) => e.wave?.(ch, data) ?? []), this._audioContext?.currentTime ?? 0);
   }
 
+  // When the last of the tracks' notes ends, on their own clocks.
+  _songEndTime() {
+    let end = 0;
+    for (const t of this._tracks ?? []) {
+      const ticks = t.events.reduce((m, e) => Math.max(m, e.tick + (e.args?.length ?? 0)), 0);
+      end = Math.max(end, t.audioTimeAtTick0 + ticks * this._secsPerTick);
+    }
+    return end;
+  }
+
+  // A lane's wave expression, evaluated with its slots as they are at `when`.
+  _writeWaveExpr(lane, when) {
+    const x = this._laneExpr[lane];
+    const v = waveEval(x.tree, (name) => this._resolveSrc(name, when));
+    const data = waveSteps(Array.isArray(v) ? v : new Array(WAVE.len).fill(v));
+    this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, data)), when);
+  }
+
+  // Each wave expression's frames up to `horizon`: one whose slots moved
+  // since the frame before (a host's setVal, a def-val sweep) is written in
+  // that frame — at most once a frame, as the driver would.
+  _waveExprFrames(horizon) {
+    const last = this._eventFrame(horizon);
+    this._laneExpr.forEach((x, lane) => {
+      if (!x) return;
+      for (let f = x.nextFrame; f <= last; f++) {
+        const t = this._frameOrigin + f / 60;
+        const vals = x.slots.map((n) => this._resolveSrc(n, t));
+        if (vals.some((v, k) => v !== x.vals[k])) {
+          x.vals = vals;
+          this._writeWaveExpr(lane, t);
+        }
+      }
+      x.nextFrame = Math.max(x.nextFrame, last + 1);
+    });
+  }
+
   /** The def-wave lane `lane` last played, or null. */
   laneWave(lane) {
     return this._laneWave[lane] ?? null;
@@ -5555,9 +5602,19 @@ export class IRPlayer {
           this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, Math.round(ev.args?.value ?? 0))), when);
         } else if (psgTarget === "WAVE") {
           // A wave channel's def-wave (metadata.waves): its memory written
-          // whole (chips/k051649.js — channels 4 and 5 share one).
+          // whole (chips/k051649.js — channels 4 and 5 share one). A wave
+          // expression with a $slot (`expr`) is written now and again in
+          // each frame its slots have moved (_waveExprFrames).
+          this._laneExpr[psgCh] = null;
+          if (ev.args?.expr) {
+            this._laneWave[psgCh] = null;
+            const slots = [...waveSlots(ev.args.expr)];
+            const vals = slots.map((n) => this._resolveSrc(n, when));
+            this._laneExpr[psgCh] = { tree: ev.args.expr, slots, vals, nextFrame: this._eventFrame(when) + 1 };
+            this._writeWaveExpr(psgCh, when);
+          }
           const index = Math.round(ev.args?.value ?? -1);
-          const wave = this._ir?.metadata?.waves?.[index];
+          const wave = ev.args?.expr ? null : this._ir?.metadata?.waves?.[index];
           if (wave) {
             this._laneWave[psgCh] = wave.name;
             const data = this._drawnWaves.get(wave.name) ?? wave.data;

@@ -288,8 +288,8 @@ export const REFERENCE = [
   },
   {
     name: 'def-wave', aliases: [':wave', 'wave'], cat: 'defs', section: '§19', tracks: WAVE,
-    syntax: '(def-wave name :wave [v1 … v32])  ·  (def-wave name :wave (curve A..B))',
-    summary: 'A wave for the wave channels: 32 steps, each -128..127, or one cycle of a curve. Name it in a track to switch to it; on a channel with no wave memory it is left out.',
+    syntax: '(def-wave name :wave [v1 … v32])  ·  (def-wave name :wave (curve A..B))  ·  (wave1 :wave expr …)',
+    summary: 'A wave for the wave channels: 32 steps, each -128..127, one cycle of a curve, or + - * / over def-waves, curves and numbers. Name it in a track to switch to it; a track\'s :wave takes an expression, and one with a $value follows it as it moves.',
     insert: '(def-wave soft :wave (sin -100..100))',
     example: '(def-score :target msx)\n(def-wave soft :wave (sin -100..100))\n(wave1 soft :len 8 c e g > c)',
   },

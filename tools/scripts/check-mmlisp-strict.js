@@ -282,6 +282,11 @@ async function main() {
       expected: ["E_TARGET"],
     },
     {
+      label: "wave expressions: what a def-wave and a track's :wave refuse",
+      src: '(def-score :target msx)\n(def-val x 0 0..1)\n(def-wave wa :wave (+ wb 1))\n(def-wave wb :wave (+ wa 1))\n(def-wave wc :wave (* (sin -1..1) $x))\n(def-wave wd :wave (saw -128..127))\n(wave1 :wave 3 c :wave (* wd $x) c)\n(sqr1 :wave wd c)',
+      expected: ["E_WAVE_VALUE", "E_WAVE_VALUE", "E_WAVE_VALUE", "E_UNSUPPORTED_TARGET"],
+    },
+    {
       label: "the kit roles are built in on pc88 only",
       src: '(pcm1 kick c)',
       expected: ["E_UNKNOWN_ATOM", "E_PCM_SAMPLE_REQUIRED"],

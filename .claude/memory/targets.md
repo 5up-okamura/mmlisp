@@ -25,13 +25,9 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 - **The editor panel** is built; still open: swap only once the cursor
   rests when it moves by keys (if passing through feels busy), drawing on a
   stage vector, and a 2-op FM editor for the OPLL.
-- **Waves are expressions**, as values are (§7.1.2): without a `$slot` folded
-  at compile time (mixes, generators such as harmonics), with one
-  re-evaluated by the player when the slot moves and written whole (≤ once a
-  frame). One evaluator shared by compiler and player; the XY pad, sliders,
-  MIDI CC and def-val sweeps all drive it through slots; the editor drawing
-  live writes the data. Goal: draw / morph a held note's wave in real time
-  (Koshiro's mucom VSTi).
+- **Wave expressions** are built (`+ - * /`, a track's `:wave` with
+  `$slot`s); still open: generators (`(harmonics 1 0.5 0.33)` …), once the
+  expressions are in use.
 - **FM-PAC (OPLL).** The one user voice: the last written wins, with
   `W_TARGET`. The 15 ROM voices are built-in voice names (as init-fm, the
   ROM rhythm roles), their dumped parameters letting a def-fm extend one and

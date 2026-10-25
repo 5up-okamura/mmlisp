@@ -239,7 +239,9 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   song-wide `:noise-rate`, `noise` is sqr3); `wave1`–`wave5` the SCC's
   wavetable channels, each playing the `def-wave` named in it
   (`(def-wave saw :wave (saw -128..127))` — 32 values −128..127 or one
-  curve's cycle; wave4 and wave5 share one); no FM, no PCM. VGM and WAV.
+  curve's cycle, or `+ - * /` over def-waves, curves and numbers; a track's
+  `:wave (+ (* saw (- 1 $x)) (* soft $x))` follows `$x` as it moves; wave4
+  and wave5 share one); no FM, no PCM. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

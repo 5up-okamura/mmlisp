@@ -663,7 +663,7 @@ write.
 | `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. |
 | `NOISE_RATE`      | 1–31           | `pc88`: the SSG's noise period (reg 0x06); `x68k`: NFRQ = 32 − n (reg 0x0F). Song-wide as `LFO_RATE`; inline or a sweep. |
 | `SSG_MIX`         | 0–2            | `pc88`: an SSG channel's mixer (reg 0x07), 0 tone, 1 noise, 2 both — sqr1–sqr3's `:mode`. |
-| `WAVE`            | index          | `msx`: a wave channel's wave, an entry of `metadata.waves` (§2.3), written whole to the channel's SCC memory. A track naming a def-wave emits it. |
+| `WAVE`            | index          | `msx`: a wave channel's wave, an entry of `metadata.waves` (§2.3), written whole to the channel's SCC memory. A track naming a def-wave emits it; a folded `:wave` expression is an entry of its own, named `<channel>@<line>:<column>`. One with a `$slot` carries `expr` instead of `value`: a tree of `{n}` (a number), `{data}` (32 steps), `{val}` (a slot's name) and `{op: "+"\|"-"\|"*"\|"/", args}`, taken step by step (`live/src/ir-utils.js` waveEval); the player writes it at once and again in every frame a slot it reads has moved, rounded and kept in −128..127. |
 | `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits). Persistent noise-channel state via `PARAM_SET` (inline `:mode` / tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
 | `FM_TL1`–`FM_TL4` | 0–127          | 0x40+op. PARAM_SET also updates the voiced (timbre) TL base. |
 | `FM_AR1`–`FM_AR4` | 0–31           | 0x50+op bits 4–0 (shared byte with KS).                      |

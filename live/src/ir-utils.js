@@ -79,6 +79,46 @@ export const MACRO_TARGET_RANGE = {
 // signed range, which a chip of fewer bits reads down.
 export const WAVE = { len: 32, min: -128, max: 127, bits: 8 };
 
+// A wave expression (language.md §19), as the compiler folds it and the IR
+// player runs what is left (ir.md, a WAVE's `expr`): a tree of { n } (a
+// number), { data } (a wave's steps), { val } (a value slot's name) and
+// { op: "+" | "-" | "*" | "/", args }, its ops taken step by step across a
+// wave and a number alike. Its value, at the slots `valOf` reads: a number,
+// or a wave's steps (unrounded).
+export function waveEval(t, valOf) {
+  if (t.n != null) return t.n;
+  if (t.data) return t.data;
+  if (t.val != null) return valOf(t.val);
+  return waveCombine(t.op, t.args.map((a) => waveEval(a, valOf)));
+}
+
+/** The value slots a wave expression's tree reads. */
+export function waveSlots(t, out = new Set()) {
+  if (t.val != null) out.add(t.val);
+  for (const a of t.args ?? []) waveSlots(a, out);
+  return out;
+}
+
+/** `op` over numbers and waves' steps, step by step: a wave if any is one. */
+export function waveCombine(op, xs) {
+  const at = (x, i) => (Array.isArray(x) ? x[i] : x);
+  const step = (i) => {
+    let acc = at(xs[0], i);
+    if (xs.length === 1) return op === "-" ? -acc : op === "/" ? 1 / acc : acc;
+    for (let k = 1; k < xs.length; k++) {
+      const v = at(xs[k], i);
+      acc = op === "+" ? acc + v : op === "-" ? acc - v : op === "*" ? acc * v : acc / v;
+    }
+    return acc;
+  };
+  return xs.some(Array.isArray) ? Array.from({ length: WAVE.len }, (_, i) => step(i)) : step(0);
+}
+
+/** A wave's steps as a chip takes them: whole, in range (a step that is not a number, 0). */
+export function waveSteps(data) {
+  return data.map((v) => (Number.isFinite(v) ? Math.max(WAVE.min, Math.min(WAVE.max, Math.round(v))) : v > 0 ? WAVE.max : v < 0 ? WAVE.min : 0));
+}
+
 /**
  * Clamp a macro output value to the hardware range for the given target.
  * Clamp only — never rounds (values stay float; the register write quantizes).
