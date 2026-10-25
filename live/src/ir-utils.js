@@ -257,11 +257,9 @@ export function midiToFnumBlock(midiNote, rate = FM_CLOCK_DIV) {
 // float) on top of an operator's voiced TL, and quantized once at the register
 // write. This is the PMD/MDSDRV table style, and the 68000 sequencer composes
 // the same way (driver.md §7). The helpers below return register-step
-// offsets (FM: dB ÷ 0.75; PSG: dB ÷ 2), as floats.
+// offsets — dB ÷ the part's step (chips/parts.js `level`: an FM chip's TL
+// 0.75 dB, the SN76489's attenuator 2, the SSG's 3) — as floats.
 //
-// Hardware step sizes, in dB (a part's `level.stepDb`, chips/parts.js):
-const TL_DB_PER_STEP = 0.75; // an FM chip's TL — 128 steps over ~95 dB
-const PSG_DB_PER_STEP = 2; // the SN76489's attenuator — 16 steps; the SSG's is 3
 // Velocity ladder (PMD / MDSDRV coarse-volume convention):
 export const VEL_DB_PER_STEP = 2;
 // The driver holds a live velocity in eighths of a step (0..15·8): a :vel
@@ -315,41 +313,49 @@ export function sumLevelOffsetsK(velOff, k, ...offs) {
 const VOL_STEP_DB = 2;
 export const VOL_UNITY = 31;
 
-// Velocity (0-15) → TL attenuation (float, register steps). 2 dB/step ladder:
-// vel 15 = 0 (patch level), vel 0 ≈ -30 dB floor. Attenuation only — never
-// mutes (silence is a rest, or vol/master 0). Caller rounds once.
-export function velToTlAtten(vel) {
-  const v = Math.max(0, Math.min(15, vel));
-  return ((15 - v) * VEL_DB_PER_STEP) / TL_DB_PER_STEP;
-}
-
-// vol or master (0-31) → signed TL offset (float). Bipolar mixer-fader around
-// VOL_UNITY (0 dB): v > unity boosts (negative offset, louder), v < unity cuts.
-// 0 is a hard mute handled by the caller (this curve does not reach silence).
-export function volToTlOffset(v) {
-  const x = Math.max(0, Math.min(31, v));
-  return ((VOL_UNITY - x) * VOL_STEP_DB) / TL_DB_PER_STEP;
-}
-
-// vol (0-31) → linear gain for the software-mixed PCM/DAC path. Same dB-per-step
-// fader as FM/PSG, referenced to VOL_UNITY (0 dB). 0 is a hard mute. Boost above
-// unity is clamped to 1.0 since the 8-bit DAC stream is already at full scale.
-export function volToLinearGain(v) {
-  const x = Math.max(0, Math.min(31, v));
-  if (x <= 0) return 0;
-  const db = (x - VOL_UNITY) * VOL_STEP_DB;
-  return Math.min(1, Math.pow(10, db / 20));
-}
-
-// PSG attenuator-domain counterparts: register steps = dB ÷ the part's step
-// (the SN76489's 2 dB by default).
-export function velToPsgAtten(vel, stepDb = PSG_DB_PER_STEP) {
+// Velocity (0-15) → attenuation in register steps of `stepDb` (a part's
+// `level.stepDb`; float). 2 dB/step ladder: vel 15 = 0 (patch level), vel 0
+// ≈ -30 dB floor. Attenuation only — never mutes (silence is a rest, or
+// vol/master 0). Caller rounds once.
+export function velSteps(vel, stepDb) {
   const v = Math.max(0, Math.min(15, vel));
   return ((15 - v) * VEL_DB_PER_STEP) / stepDb;
 }
-export function volToPsgOffset(v, stepDb = PSG_DB_PER_STEP) {
+
+// A fader — vol, master, a mixer strip (0-31) — → its offset in register
+// steps of `stepDb` (float). VOL_UNITY is 0 dB; 0 is a hard mute handled by
+// the caller (this curve does not reach silence).
+export function faderSteps(v, stepDb) {
   const x = Math.max(0, Math.min(31, v));
   return ((VOL_UNITY - x) * VOL_STEP_DB) / stepDb;
+}
+
+/**
+ * The one level composition (language.md §6), for a part whose `level` is a
+ * dB ladder (chips/parts.js): vel scaled by `k` sixteenths, plus each fader,
+ * in the part's steps, summed as the driver does and rounded once. Unclamped:
+ * levelSteps puts it on the register.
+ */
+export function levelOffset(level, { vel = 15, faders = [], k = VEL_K_UNITY }) {
+  const step = level.stepDb;
+  return sumLevelOffsetsK(velSteps(velFine(vel), step), k, ...faders.map((f) => faderSteps(f, step)));
+}
+
+/** levelOffset on top of `base` (an FM operator's voiced TL), as the register: 0 loud .. steps − 1. */
+export function levelSteps(level, { base = 0, ...terms }) {
+  return Math.max(0, Math.min(level.steps - 1, Math.round(base) + levelOffset(level, terms)));
+}
+
+/**
+ * The same composition for a part whose level is linear (`level.scale:
+ * "linear"` — the ADPCM-B, PCM8, a mixer's gain): a gain 0..1, 0 when a
+ * fader is at 0 (the hard mute).
+ */
+export function levelGain({ vel = 15, faders = [] }) {
+  if (faders.some((f) => f <= 0)) return 0;
+  let db = (15 - velFine(vel)) * VEL_DB_PER_STEP;
+  for (const f of faders) db += (VOL_UNITY - Math.min(31, f)) * VOL_STEP_DB;
+  return 10 ** (-db / 20);
 }
 
 // ---------------------------------------------------------------------------

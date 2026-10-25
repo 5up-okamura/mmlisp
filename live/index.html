@@ -9613,7 +9613,7 @@
         player._psgSetPitch(psgCh, midi, 0, when);
       }
       // 0 = loudest attenuation, 15 = silent
-      player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(vel, VOL_UNITY, VOL_UNITY), when);
+      player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(psgCh, vel, VOL_UNITY, VOL_UNITY), when);
     }
 
     function previewPsgNoteOff(chIndex) {

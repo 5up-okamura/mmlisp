@@ -66,12 +66,10 @@ import {
   midiToPsgPeriod,
   midiToFnumBlock,
   snapNote,
-  velToTlAtten,
+  velSteps,
   VEL_FINE,
   VEL_FINE_MAX,
-  volToTlOffset,
-  velToPsgAtten,
-  volToPsgOffset,
+  faderSteps,
   VOL_UNITY,
   OP_ADDR_OFFSET,
   encodeB0,
@@ -110,15 +108,18 @@ function buildLuts() {
   // composition sums them and rounds once (integer end result), matching the
   // player's float-sum-then-quantize within the documented ±2 TL band.
   // To keep the runtime integer-only the offsets are stored in 1/4 steps.
-  // vel is indexed in eighths of a step (driver.md §7.1).
+  // vel is indexed in eighths of a step (driver.md §7.1). The ladders are the
+  // Mega Drive's parts' (chips/: the YM2612's TL, the SN76489's attenuator).
+  const TL_STEP_DB = opnFm.level.stepDb;
+  const PSG_STEP_DB = snSqr.level.stepDb;
   const velTl4 = new Int16Array(VEL_FINE_MAX + 1);
-  for (let v = 0; v <= VEL_FINE_MAX; v++) velTl4[v] = Math.round(velToTlAtten(v / VEL_FINE) * 4);
+  for (let v = 0; v <= VEL_FINE_MAX; v++) velTl4[v] = Math.round(velSteps(v / VEL_FINE, TL_STEP_DB) * 4);
   const volTl4 = new Int16Array(32);
-  for (let v = 0; v < 32; v++) volTl4[v] = Math.round(volToTlOffset(v) * 4);
+  for (let v = 0; v < 32; v++) volTl4[v] = Math.round(faderSteps(v, TL_STEP_DB) * 4);
   const velPsg4 = new Int16Array(VEL_FINE_MAX + 1);
-  for (let v = 0; v <= VEL_FINE_MAX; v++) velPsg4[v] = Math.round(velToPsgAtten(v / VEL_FINE) * 4);
+  for (let v = 0; v <= VEL_FINE_MAX; v++) velPsg4[v] = Math.round(velSteps(v / VEL_FINE, PSG_STEP_DB) * 4);
   const volPsg4 = new Int16Array(32);
-  for (let v = 0; v < 32; v++) volPsg4[v] = Math.round(volToPsgOffset(v) * 4);
+  for (let v = 0; v < 32; v++) volPsg4[v] = Math.round(faderSteps(v, PSG_STEP_DB) * 4);
   return { fnumBlock, psgPeriod, velTl4, volTl4, velPsg4, volPsg4 };
 }
 
@@ -221,6 +222,8 @@ import {
 import { PcmLiveEngine, PCM_WINDOW, PCM_SILENCE_ADDR, parsePcmBank } from "./pcm-model.js";
 import { PcmVoices } from "./pcm-voices.js";
 import { engineImage } from "./engine-images.js";
+import { opnFm } from "./chips/opn-fm.js";
+import { snSqr } from "./chips/sn76489.js";
 
 // NTSC: a frame is 896,040 master clocks. The engine's DAC period is the
 // image's `periodMaster`, so the samples a frame are an exact ratio of the two.

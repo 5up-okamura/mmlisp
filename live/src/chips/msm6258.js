@@ -20,6 +20,7 @@ export const pcm8 = {
   kind: "sample",
   // One ADPCM stream, one pan: a voice has none.
   words: words(/^(?:RANGE|LOOP)_/),
+  level: { scale: "linear" }, // a voice's gain in the mix
   pointSweeps: false, // a note's points are read at its key-on
   pitch: true, // the mix steps a voice at its pitch, frame by frame
 };

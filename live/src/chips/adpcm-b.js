@@ -9,6 +9,7 @@ export const adpcmB = {
   label: "ADPCM-B",
   kind: "sample",
   words: words(/^(?:RANGE|LOOP)_/, "PAN"),
+  level: { scale: "linear", steps: 256 }, // $0B, linear 0-255
   pointSweeps: false, // the range is its address registers, read at key-on
   pitch: true, // Delta-N, written while the note plays
   checkNote({ sample, sampleName, head, mode, target, once }) {

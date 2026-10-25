@@ -11,10 +11,15 @@
 //             index in it — the chip's channel, the PSG's, the sample slot.
 //   kind      the track class the compiler compiles it as:
 //             fm | tone | noise | sample
-//   level     the part's own level step, { stepDb, steps }: the dB offsets
-//             a note's vel / vol / master sum to are quantized once onto it
-//             (language.md §6). FM's TL is 0.75 dB in 128 steps, the
-//             SN76489's attenuator 2 dB in 16, the SSG's 3 dB in 16.
+//   level     the part's level register, which the dB a note's vel / vol /
+//             master (and a mixer strip) sum to is quantized onto once
+//             (language.md §6; ir-utils.js levelSteps / levelGain): a
+//             ladder { stepDb, steps }, 0 loud — FM's TL 0.75 dB in 128
+//             steps, the SN76489's attenuator 2 dB in 16, the SSG's 3 dB in
+//             16, the ROM rhythm's IL 0.75 dB in 32 — or { scale: "linear",
+//             steps? }, a gain (the ADPCM-B's 0-255, PCM8's voice). The
+//             Mega Drive's DAC voices have none: the driver's voice model
+//             composes them (pcm-voices.js).
 //   words     the IR write targets only this part's channels take: a target
 //             has the word when one of its parts does, and a channel takes
 //             it when its own part does (`:tl1` on sqr1 is a channel that

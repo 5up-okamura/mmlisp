@@ -12,6 +12,7 @@ export const rhythmRom = {
   label: "ROM rhythm",
   kind: "sample",
   words: words("PAN"), // each hit's, with its level
+  level: { stepDb: 0.75, steps: 32 }, // the IL, 31 loud .. 0
   points: false,
   kit: { kick: "bd", snare: "sd", ride: "top", hat: "hh", tom4: "tom", rim: "rim" },
   // A hit sounds on its sound: the `:prio` layers of one track compete only

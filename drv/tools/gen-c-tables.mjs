@@ -18,15 +18,15 @@ import { fileURLToPath } from "node:url";
 import {
   midiToFnumBlock,
   PSG_MASTER_CLOCK,
-  velToTlAtten,
-  volToTlOffset,
-  velToPsgAtten,
+  velSteps,
+  faderSteps,
   VEL_FINE,
   VEL_FINE_MAX,
-  volToPsgOffset,
   fmCarrierOpsForAlg,
   OP_ADDR_OFFSET,
 } from "../../live/src/ir-utils.js";
+import { opnFm } from "../../live/src/chips/opn-fm.js";
+import { snSqr } from "../../live/src/chips/sn76489.js";
 import { SIN_LUT, pcmBankStamp } from "../../live/src/mmb.js";
 import { ENGINE_IMAGES } from "../../live/src/engine-images.js";
 
@@ -88,10 +88,13 @@ for (let n = 0; n < 128; n++) {
 // float-sum-then-quantize inside the documented band (driver.md §7).
 // Velocity in eighths of a step (VEL_FINE): a :vel macro moves finer than the
 // ladder (driver.md §7.1).
-const velTl4 = [...Array(VEL_FINE_MAX + 1)].map((_, v) => Math.round(velToTlAtten(v / VEL_FINE) * 4));
-const volTl4 = [...Array(32)].map((_, v) => Math.round(volToTlOffset(v) * 4));
-const velPsg4 = [...Array(VEL_FINE_MAX + 1)].map((_, v) => Math.round(velToPsgAtten(v / VEL_FINE) * 4));
-const volPsg4 = [...Array(32)].map((_, v) => Math.round(volToPsgOffset(v) * 4));
+// The Mega Drive's ladders (chips/: the YM2612's TL, the SN76489's attenuator).
+const TL_STEP_DB = opnFm.level.stepDb;
+const PSG_STEP_DB = snSqr.level.stepDb;
+const velTl4 = [...Array(VEL_FINE_MAX + 1)].map((_, v) => Math.round(velSteps(v / VEL_FINE, TL_STEP_DB) * 4));
+const volTl4 = [...Array(32)].map((_, v) => Math.round(faderSteps(v, TL_STEP_DB) * 4));
+const velPsg4 = [...Array(VEL_FINE_MAX + 1)].map((_, v) => Math.round(velSteps(v / VEL_FINE, PSG_STEP_DB) * 4));
+const volPsg4 = [...Array(32)].map((_, v) => Math.round(faderSteps(v, PSG_STEP_DB) * 4));
 const carrierMask = [...Array(8)].map((_, alg) =>
   fmCarrierOpsForAlg(alg).reduce((m, op) => m | (1 << op), 0),
 );

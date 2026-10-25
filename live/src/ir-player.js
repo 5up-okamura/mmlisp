@@ -22,15 +22,11 @@ import {
   pitchToMidi,
   midiToFnumBlock,
   snapNote,
-  velToTlAtten,
   velFine,
-  sumLevelOffsets,
-  sumLevelOffsetsK,
   velK,
-  volToTlOffset,
-  volToLinearGain,
-  velToPsgAtten,
-  volToPsgOffset,
+  levelOffset,
+  levelSteps,
+  levelGain,
   VOL_UNITY,
   sampleSweepPhase,
   sampleCurveUnit,
@@ -398,7 +394,8 @@ export class IRPlayer {
     this._fmChip = target.chipForKind("fm");
     this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM;
     this._psgChip = this._psgChipOf(target); // one per score: it may keep state
-    this._psgStepDb = target.parts.find((p) => p.kind === "tone")?.level.stepDb ?? 2;
+    // The FM core's level ladder (chips/parts.js `level`): its TL.
+    this._fmLevel = target.parts.find((p) => p.kind === "fm")?.level ?? null;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
     // mixer's mute has to hold the timer rather than key the channel off.
     this._csmTrack = (irObj.tracks ?? []).findIndex((t) =>
@@ -423,6 +420,8 @@ export class IRPlayer {
     this._currentTick = 0;
     this._loopCount.clear();
     this._routes.clear();
+    // Each PSG lane's level ladder: its part's (_assignChannel).
+    this._psgLevel = new Array(4).fill(null);
     this._rhythmState = null; // per-track vol / pan of the chips' own PCM parts
     this._adpcmState = null;
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
@@ -930,7 +929,7 @@ export class IRPlayer {
     const when = this._audioContext?.currentTime ?? 0;
     const vel = this._psgLastVel[psgCh] ?? 15;
     const master = this._masterVol ?? VOL_UNITY;
-    this._psgSetAtt(psgCh, this._composePsgAtt(vel, v, master), when);
+    this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, vel, v, master), when);
   }
 
   /**
@@ -947,7 +946,7 @@ export class IRPlayer {
     this._write({
       type: "pcm-set-vol",
       track: trackIndex,
-      gain: volToLinearGain(vol),
+      gain: levelGain({ faders: [vol] }),
     });
   }
 
@@ -1228,6 +1227,7 @@ export class IRPlayer {
       throw new Error(`the IR player cannot play ${track.channel} yet (${c.part.label})`);
     const lane = c.part.kind === "noise" ? 3 : c.voice;
     this._routes.set(trackIndex, { core, part: c.part, lane });
+    if (core === "psg") this._psgLevel[lane] = c.part.level;
   }
 
   // [trackIndex, lane] of every track the `core` plays (a sample core's: of
@@ -1926,14 +1926,10 @@ export class IRPlayer {
     const vel = over.vel ?? this._lineAt(lines?.vel, when) ?? st.vel;
     const vol = over.vol ?? this._lineAt(lines?.vol, when)
       ?? (when === undefined ? st.vol : this._fm3OpVolAtTime(op, when));
-    const offset = sumLevelOffsetsK(
-      velToTlAtten(velFine(vel)),
-      velK(regs.ops[op - 1].velK, true),
-      volToTlOffset(vol),
-      volToTlOffset(over.group ?? regs.vol ?? VOL_UNITY),
-      volToTlOffset(over.master ?? this._masterVol ?? VOL_UNITY),
-    );
-    return Math.max(0, Math.min(127, Math.round(regs.ops[op - 1].voicedTl ?? 0) + offset));
+    return levelSteps(this._fmLevel, {
+      base: regs.ops[op - 1].voicedTl ?? 0, vel, k: velK(regs.ops[op - 1].velK, true),
+      faders: [vol, over.group ?? regs.vol ?? VOL_UNITY, over.master ?? this._masterVol ?? VOL_UNITY],
+    });
   }
   _writeFm3OpTl(op, when, over = {}) {
     const o = this._chRegs[2].ops[op - 1];
@@ -2863,22 +2859,18 @@ export class IRPlayer {
     return enc.deltaN(hit.rate * 2 ** ((hit.midi - 60) / 12 + cents / 1200));
   }
 
-  // The rhythm's attenuation in IL steps (0.75 dB, as an FM carrier's TL) and
-  // the ADPCM-B's linear level, from vel + vol + master.
-  static _rhythmAtt({ vel, vol, master, ui }) {
-    return sumLevelOffsets(velToTlAtten(velFine(vel)), volToTlOffset(vol), volToTlOffset(master), volToTlOffset(ui));
+  // A chip-own sample voice's level from vel + vol + master + its strip, on
+  // its part's ladder (chips/parts.js `level`): the rhythm's IL attenuation
+  // (unclamped — a sound falling past what the IL reaches is dumped), the
+  // ADPCM-B's linear register, PCM8's gain.
+  static _rhythmAtt(level, { vel, vol, master, ui }) {
+    return levelOffset(level, { vel, faders: [vol, master, ui] });
   }
-  // PCM8's voice gain, linear: vel + vol + master in 2 dB steps, as the
-  // ADPCM-B's level is, without its 8-bit register.
   static _pcm8Gain({ vel, vol, master, ui }) {
-    if (vol <= 0 || master <= 0 || ui <= 0) return 0;
-    const db = 2 * (15 - velFine(vel)) + 2 * (VOL_UNITY - vol) + 2 * (VOL_UNITY - master) + 2 * (VOL_UNITY - ui);
-    return 10 ** (-db / 20);
+    return levelGain({ vel, faders: [vol, master, ui] });
   }
-  static _adpcmLevel({ vel, vol, master, ui }) {
-    if (vol <= 0 || master <= 0 || ui <= 0) return 0;
-    const db = 2 * (15 - velFine(vel)) + 2 * (VOL_UNITY - vol) + 2 * (VOL_UNITY - master) + 2 * (VOL_UNITY - ui);
-    return Math.round(255 * 10 ** (-db / 20));
+  static _adpcmLevel(level, { vel, vol, master, ui }) {
+    return Math.round((level.steps - 1) * levelGain({ vel, faders: [vol, master, ui] }));
   }
 
   // Write each sounding voice's level, a frame at a time, up to `horizon`,
@@ -2904,7 +2896,7 @@ export class IRPlayer {
           const step = this._pcm8Step(h, t);
           if (step !== h.step) { h.step = step; this._pcm8Ev(t, { kind: "step", voice: h.pcm8, value: step }); }
         } else if (voice === "adpcm") {
-          const level = IRPlayer._adpcmLevel(lv);
+          const level = IRPlayer._adpcmLevel(this._routes.get(h.ti).part.level, lv);
           if (level !== h.level) {
             h.level = level;
             for (const [p, a, d] of chip.adpcm.level(level)) this._write(p, a, d, t);
@@ -2915,7 +2907,7 @@ export class IRPlayer {
             for (const [p, a, d] of chip.adpcm.pitch(deltaN)) this._write(p, a, d, t);
           }
         } else {
-          const att = IRPlayer._rhythmAtt(lv);
+          const att = IRPlayer._rhythmAtt(this._routes.get(h.ti).part.level, lv);
           // Turned off, or falling below what the IL reaches: the sound stops.
           const falling = att > (h.lastAtt ?? h.att);
           h.lastAtt = att;
@@ -2968,7 +2960,7 @@ export class IRPlayer {
         // A shot ends where its range does at the pitch it keys at.
         const shotLen = ((stop - start + 1) * UNIT_FRAMES) / playHz(enc.deltaN(entry.rate * ratio));
         this._chipPcmHit("adpcm", ev, when, mode === "shot" || !mode ? when + shotLen : Infinity, { rate: entry.rate, midi }, (t, h) => {
-          h.level = IRPlayer._adpcmLevel(this._chipPcmLevelAt(h, t));
+          h.level = IRPlayer._adpcmLevel(this._routes.get(h.ti).part.level, this._chipPcmLevelAt(h, t));
           h.deltaN = this._adpcmDeltaN(h, t);
           for (const [p, a, d] of enc.note({ start, stop }, h.deltaN, h.level, st.pan, mode === "loop")) this._write(p, a, d, t);
         });
@@ -3102,7 +3094,7 @@ export class IRPlayer {
           // A hit at :vol 0 is silence: it takes the sound from an earlier one.
           const silent = lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0;
           h.dumped = silent;
-          h.att = IRPlayer._rhythmAtt(lv);
+          h.att = IRPlayer._rhythmAtt(this._routes.get(h.ti).part.level, lv);
           h.il = 31 - Math.min(31, h.att);
           const writes = silent ? enc.dump(sound) : enc.hit(sound, h.il, st.pan);
           for (const [p, a, d] of writes) this._write(p, a, d, t);
@@ -3828,7 +3820,7 @@ export class IRPlayer {
       const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
       const vol = this._psgVolAtFrame(psgCh, F); // 0-31
       const sounding = this._psgSounding[psgCh];
-      this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
+      this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, velLevel, vol, master), when);
       this._psgSounding[psgCh] = sounding; // may be ahead of time (a sweep frame)
     }
     // PCM voices ride master too: the voice model recomposes every voice.
@@ -3978,12 +3970,9 @@ export class IRPlayer {
     // (floors, never mutes); vol/master are bipolar (boost = negative offset,
     // clamped at TL 0). Uniform across carriers, so the patch's per-carrier
     // balance is preserved.
-    const velOff = velToTlAtten(velFine(vel));
-    const k = velK(op.velK, carrier);
-    const offset = carrier
-      ? sumLevelOffsetsK(velOff, k, volToTlOffset(vol), volToTlOffset(master))
-      : sumLevelOffsetsK(velOff, k);
-    return Math.max(0, Math.min(127, Math.round(op.voicedTl ?? 0) + offset));
+    return levelSteps(this._fmLevel, {
+      base: op.voicedTl ?? 0, vel, k: velK(op.velK, carrier), faders: carrier ? [vol, master] : [],
+    });
   }
 
   // Snap curve/function outputs to discrete hardware lanes when needed.
@@ -4906,12 +4895,10 @@ export class IRPlayer {
   // Compose vel (0-15) / vol / master (0-31) into a PSG attenuation (0=loud,
   // 15=silent) via the same additive dB-offset model as FM, quantized once to
   // the 16-step attenuator as the driver does. vol or master 0 is a hard mute.
-  _composePsgAtt(vel, vol, master) {
+  // A PSG lane's attenuation, 0 loud .. 15 off, on its part's level ladder.
+  _composePsgAtt(psgCh, vel, vol, master) {
     if (vol <= 0 || master <= 0) return 15;
-    const step = this._psgStepDb; // the part's (chips/parts.js `level`)
-    const att = sumLevelOffsets(
-      velToPsgAtten(velFine(vel), step), volToPsgOffset(vol, step), volToPsgOffset(master, step));
-    return Math.max(0, Math.min(15, att));
+    return levelSteps(this._psgLevel[psgCh], { vel, faders: [vol, master] });
   }
 
   // Returns the current VOL (0-31) for a PSG channel at the given audio time,
@@ -5076,7 +5063,7 @@ export class IRPlayer {
     // Compose vel / vol / master → PSG attenuation (additive dB model).
     const vol = this._psgVolAtNoteOn(psgCh, noteWhen);
     const master = this._masterAtNoteOn(noteWhen);
-    const att = this._composePsgAtt(baseVel, vol, master);
+    const att = this._composePsgAtt(psgCh, baseVel, vol, master);
 
     this._psgSetAtt(psgCh, att, noteWhen);
     // A running :vol sweep moves the level every frame the note is keyed.
@@ -5105,7 +5092,7 @@ export class IRPlayer {
     const sounding = this._psgSounding[psgCh];
     for (let F = this._eventFrame(fromWhen); F < last; F++) {
       const t = Math.max(fromWhen, this._frameOrigin + F / 60);
-      const att = this._composePsgAtt(vel, this._psgVolAtFrame(psgCh, F), this._masterAtFrame(F));
+      const att = this._composePsgAtt(psgCh, vel, this._psgVolAtFrame(psgCh, F), this._masterAtFrame(F));
       this._psgSetAtt(psgCh, att, t);
     }
     this._psgSounding[psgCh] = sounding;
@@ -5224,7 +5211,7 @@ export class IRPlayer {
       : this._psgVolAtNoteOn(psgCh, noteWhen);
     this._psgSetAtt(
       psgCh,
-      this._composePsgAtt(first, firstVol, this._masterAtNoteOn(noteWhen)),
+      this._composePsgAtt(psgCh, first, firstVol, this._masterAtNoteOn(noteWhen)),
       noteWhen,
     );
     // Frame by frame, in the driver's order: a running :vol or :master sweep
@@ -5259,7 +5246,7 @@ export class IRPlayer {
     for (let F = F0; F <= lastF; F++) {
       const t = F === F0 ? noteWhen : Math.max(noteWhen, this._frameOrigin + F / 60);
       const master = this._masterAtFrame(F);
-      const write = () => this._psgSetAtt(psgCh, this._composePsgAtt(velLive, volAtF(F), master), t);
+      const write = () => this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, velLive, volAtF(F), master), t);
       if (F < keyEnd && volAhead.has(F)) {
         volNow = volAhead.get(F);
         write();
@@ -5466,7 +5453,7 @@ export class IRPlayer {
               if (!this._psgLevelAhead[psgCh]) {
                 const velLevel = this._psgLastVel[psgCh] ?? 15;
                 const master = this._masterVol ?? VOL_UNITY;
-                this._psgSetAtt(psgCh, this._composePsgAtt(velLevel, vol, master), when);
+                this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, velLevel, vol, master), when);
               }
             }
           } else {
