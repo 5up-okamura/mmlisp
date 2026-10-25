@@ -41,7 +41,7 @@ export const FM_OP_WORDS = [
   { kw: ":dt", word: "FM_DT", field: "dt", label: "DT", min: -3, max: 3, init: 0 }, // signed; encode30 maps it to the register
   { kw: ":ssg", word: "FM_SSG", field: "ssg", label: "SSG", min: 0, max: 15, init: 0 }, // the OPN's SSG-EG
   { kw: ":am", word: "FM_AMEN", field: "amen", label: "AM", min: 0, max: 1, init: 0 },
-  { kw: ":dt2-", word: "FM_DT2_", field: "dt2", label: "DT2", min: 0, max: 3 }, // the OPM's DT2 (op N's DT1 is :dtN)
+  { kw: ":dt2-", word: "FM_DT2_", field: "dt2", label: "DT2", min: 0, max: 3, init: 0 }, // the OPM's DT2 (op N's DT1 is :dtN)
   // The OPLL's: the waveform (1 the half-wave rectified sine), the envelope
   // type (1 sustained, 0 percussive), the level's key scale, the vibrato.
   { kw: ":ws", word: "FM_WS", field: "ws", label: "WS", min: 0, max: 1 },

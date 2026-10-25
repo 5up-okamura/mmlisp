@@ -3657,6 +3657,8 @@ export class IRPlayer {
       case "LFO_RATE": {
         const rate = Math.max(0, Math.min(8, Math.round(value)));
         this._lfoRate = rate;
+        // On the OPM it is a reading of its own LFO, which the panel shows.
+        Object.assign(this._opmLfo, this._fmEnc.lfoReading?.(rate) ?? {});
         this._fmWrites(this._fmEnc.lfo(rate), when);
         break;
       }

@@ -146,6 +146,8 @@ export const ym2151 = {
       lfo: (rate) => rate === 0
         ? [[0, 0x19, 0x00], [0, 0x19, 0x80]]
         : [[0, 0x18, OPN_LFRQ[rate - 1]], [0, 0x19, 0x7f], [0, 0x19, 0xff]],
+      // What :lfo-rate reads as, in the OPM's own LFO words (the panel's).
+      lfoReading: (rate) => (rate === 0 ? { pmd: 0, amd: 0 } : { freq: OPN_LFRQ[rate - 1], pmd: 127, amd: 127 }),
       lfoFreq: (v) => [[0, 0x18, v & 0xff]],
       lfoPmd: (v) => [[0, 0x19, 0x80 | (v & 0x7f)]],
       lfoAmd: (v) => [[0, 0x19, v & 0x7f]],
