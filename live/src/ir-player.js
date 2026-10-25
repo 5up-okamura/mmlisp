@@ -56,8 +56,21 @@ const PCM_LOOP_MAX = 0x7f00;
 // The most FM channels a target has (chips/: the OPN's six); a channel's
 // shadow state and per-channel arrays are this long whatever the chip.
 const FM_CHANNELS = 8;
-// A held PSG note's key in _holdChannels: past every FM channel.
-const PSG_HOLD_BASE = FM_CHANNELS;
+// The player's cores, by a part's kind (chips/parts.js): the FM core, the PSG
+// core (tone and noise, through the chip's PSG encoder: lanes 0-2 the tones,
+// 3 the noise) and the sample core. A part of another kind has no core yet.
+const CORE_OF_KIND = { fm: "fm", tone: "psg", noise: "psg", sample: "sample" };
+// The sample core's handler for each sample part: the chips' own voices (the
+// YM2608's rhythm and ADPCM-B), PCM8's mix, the Mega Drive driver's DAC mix.
+// Where a PSG or sample track's song-wide LFO write goes: the FM core's
+// channel 0, as the driver takes it from any track.
+const FM_LFO_ROUTE = { core: "fm", part: null, lane: 0 };
+const SAMPLE_HANDLERS = {
+  rhythm: "_dispatchRhythmEvent",
+  "adpcm-b": "_dispatchAdpcmEvent",
+  pcm8: "_dispatchPcm8Event",
+  dac: "_dispatchDacEvent",
+};
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
 const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
 // Half a millisecond: late enough to sort after every event of its frame,
@@ -195,7 +208,10 @@ export class IRPlayer {
     this._fmChip = this._target.chipForKind("fm");
     this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM; // the FM's registers (chips/)
     this._psgChip = this._psgChipOf(this._target); // null: a target with no PSG
-    this._trackPart = new Map(); // trackIndex → its part (chips/parts.js)
+    // Each track's route (_assignChannel): { core, part, lane } — the core
+    // that plays it, its part, and its lane in that core (the FM channel, the
+    // PSG lane, the sample voice).
+    this._routes = new Map();
     this._write = writeCallback;
     this._ir = null;
     this._playing = false;
@@ -243,19 +259,10 @@ export class IRPlayer {
     this._reg27 = 0;
     this._fm3Ops = false; // CH3's operators are tracks of their own (FM3_MODE op / csm-op)
 
-    // Track → channel mapping (defaults to index 0 for demo)
-    this._trackChannel = new Map(); // trackIndex → FM chIndex (0 … the chip's channels − 1)
-
-    // PCM channel routing. Kept out of _trackChannel: PCM voices own no FM
-    // channel, so they must not appear on the FM key-off path.
-    this._pcmTrackChannel = new Map(); // trackIndex → pcm voice slot (0-2)
-
     // PCM levels are composed where the driver composes them — in the voice
     // model the worklet runs (src/pcm-voices.js) — so this side only forwards
     // the score's events, in time order.
 
-    // PSG channel routing
-    this._psgTrackChannel = new Map(); // trackIndex → psgCh (0-3)
     this._psgCurrentMidi = new Array(4).fill(60); // last NOTE_ON midi per PSG ch
     this._psgPitchOffset = new Array(4).fill(0); // cents offset per PSG ch
     this._psgSnap = new Array(4).fill(0); // `:snap` mask per PSG ch
@@ -415,10 +422,7 @@ export class IRPlayer {
     this._eventIndex = 0;
     this._currentTick = 0;
     this._loopCount.clear();
-    this._trackChannel.clear();
-    this._psgTrackChannel.clear();
-    this._pcmTrackChannel.clear();
-    this._trackPart.clear();
+    this._routes.clear();
     this._rhythmState = null; // per-track vol / pan of the chips' own PCM parts
     this._adpcmState = null;
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
@@ -864,10 +868,10 @@ export class IRPlayer {
     // FM: key off an inaudible channel — unless another audible track shares it
     // (FM3 operator mode routes several tracks through channel 3's 0x28).
     const audibleFm = new Set();
-    for (const [ti, ch] of this._trackChannel) {
+    for (const [ti, ch] of this._lanesOf("fm")) {
       if (this._isTrackAudible(ti)) audibleFm.add(ch);
     }
-    for (const [ti, ch] of this._trackChannel) {
+    for (const [ti, ch] of this._lanesOf("fm")) {
       if (this._isTrackAudible(ti) || audibleFm.has(ch)) continue;
       this._fmKey(ch, 0, when);
     }
@@ -887,11 +891,11 @@ export class IRPlayer {
       this._write(0, 0x28, this._fm3Mask | 0x02, this._fm3KeyLast);
     }
     // PSG: force silent attenuation on an inaudible channel.
-    for (const [ti, psgCh] of this._psgTrackChannel) {
+    for (const [ti, psgCh] of this._lanesOf("psg")) {
       if (!this._isTrackAudible(ti)) this._psgSetAtt(psgCh, 15, when);
     }
-    // PCM has no key: release an inaudible track's voice (its loop ends).
-    for (const [ti, voice] of this._pcmTrackChannel) {
+    // The DAC mix has no key: release an inaudible track's voice (its loop ends).
+    for (const [ti, voice] of this._lanesOf("sample", "dac")) {
       if (!this._isTrackAudible(ti)) this._pcmEv(when, { kind: "off", voice });
     }
     // CSM: Timer A keys CH3, so muting the CSM voice holds the timer instead.
@@ -939,7 +943,7 @@ export class IRPlayer {
   setPcmTrackVol(trackIndex, vol) {
     if (trackIndex == null) return;
     // pc88's pcm1 is the chip's ADPCM-B, not a voice of the worklet's engine.
-    if (this._trackPart?.get(trackIndex)?.name === "adpcm-b") return this.setVoiceVol("adpcm", vol);
+    if (this._routes.get(trackIndex)?.part.name === "adpcm-b") return this.setVoiceVol("adpcm", vol);
     this._write({
       type: "pcm-set-vol",
       track: trackIndex,
@@ -979,23 +983,23 @@ export class IRPlayer {
 
   /**
    * Trigger KEY-OFF for a hold note (len=0) on the given channel.
-   * @param {number} ch  an FM channel, PSG_HOLD_BASE + a PSG lane, 20 + a PCM voice
+   * @param {string} key  the held channel (_holdKey): "fm:2", "psg:3", "sample:0"
    */
-  triggerKeyOff(ch) {
-    if (!this._holdChannels.has(ch)) return;
-    const tIdx = this._holdChannels.get(ch);
-    this._holdChannels.delete(ch);
+  triggerKeyOff(key) {
+    if (!this._holdChannels.has(key)) return;
+    const tIdx = this._holdChannels.get(key);
+    this._holdChannels.delete(key);
     const when = this._audioContext?.currentTime ?? 0;
     this._resumeHeldTrack(tIdx, when);
-    if (ch >= 20) {
+    const { core, part, lane: ch } = this._routes.get(tIdx);
+    if (core === "sample") {
       // PCM: the key-off releases a `:len 0` loop; its tail plays out.
-      if (this._trackPart.get(tIdx)?.name === "pcm8") this._pcm8Ev(when, { kind: "off", voice: ch - 20 });
-      else this._pcmEv(when, { kind: "off", voice: ch - 20 });
-    } else if (ch >= PSG_HOLD_BASE) {
+      if (part.name === "pcm8") this._pcm8Ev(when, { kind: "off", voice: ch });
+      else this._pcmEv(when, { kind: "off", voice: ch });
+    } else if (core === "psg") {
       // PSG channels: silence by setting attenuation to 15 (max att = silent)
-      const psgCh = ch - PSG_HOLD_BASE;
-      this._psgKeyedUntil[psgCh] = Math.min(this._psgKeyedUntil[psgCh], when);
-      this._psgSetAtt(psgCh, 15, when);
+      this._psgKeyedUntil[ch] = Math.min(this._psgKeyedUntil[ch], when);
+      this._psgSetAtt(ch, 15, when);
     } else {
       if (ch === 2 && this._fm3Held) {
         // Release only the held FM3 operators; any timed operators stay keyed.
@@ -1204,29 +1208,39 @@ export class IRPlayer {
     this._pendingUiTimers.clear();
   }
 
-  // A track's place on the chip: the target's channel table (targets/) gives
-  // its part and the voice index in it.
+  // A track's route: the target's channel table (targets/) gives its part
+  // and the voice index in it; the part's kind, the core that plays it
+  // (CORE_OF_KIND). A sample track owns no FM channel — on the Mega Drive its
+  // voice is summed to fm6's DAC, which mutes fm6 only while the DAC is on —
+  // so it never reaches the FM key-off path. The PSG's noise is lane 3 (the
+  // chip's encoder maps a lane to its channel — the SSG's noise is its
+  // third's mixer).
   _assignChannel(trackIndex, track) {
     const c = this._target.channels[track?.channel];
-    const kind = c?.part.kind;
-    if (c) this._trackPart.set(trackIndex, c.part);
-    // The PSG lanes: 0-2 the tones, 3 the noise track (the chip's encoder
-    // maps a lane to its channel — the SSG's noise is its third's mixer).
-    if (kind === "tone" || kind === "noise") {
-      this._psgTrackChannel.set(trackIndex, kind === "noise" ? 3 : c.voice);
+    if (!c) {
+      // A track with no channel name: an FM channel by its index, capped.
+      this._routes.set(trackIndex, { core: "fm", part: null, lane: Math.min(trackIndex, this._fmEnc.channels - 1) });
       return;
     }
-    // PCM tracks own no FM channel: they are software voices summed to the fm6
-    // DAC, and the chip mutes fm6 only while the DAC is on. Leaving them out of
-    // _trackChannel keeps them off the FM key-off path — otherwise they fall to
-    // the index fallback below, land on channel 5, and make _applyAudibility
-    // treat an audible PCM track as an audible fm6 (so muting fm6 does nothing).
-    if (kind === "sample") {
-      this._pcmTrackChannel.set(trackIndex, c.voice);
-      return;
-    }
-    // An FM channel; a track with no channel name takes its index, capped.
-    this._trackChannel.set(trackIndex, c ? c.voice : Math.min(trackIndex, this._fmEnc.channels - 1));
+    const core = CORE_OF_KIND[c.part.kind];
+    if (!core) throw new Error(`the IR player cannot play ${track.channel} yet (${c.part.label})`);
+    if (core === "sample" && !SAMPLE_HANDLERS[c.part.name])
+      throw new Error(`the IR player cannot play ${track.channel} yet (${c.part.label})`);
+    const lane = c.part.kind === "noise" ? 3 : c.voice;
+    this._routes.set(trackIndex, { core, part: c.part, lane });
+  }
+
+  // [trackIndex, lane] of every track the `core` plays (a sample core's: of
+  // the part named `partName` alone, when given).
+  *_lanesOf(core, partName = null) {
+    for (const [ti, r] of this._routes)
+      if (r.core === core && (!partName || r.part?.name === partName)) yield [ti, r.lane];
+  }
+
+  // The key a held note's channel is kept under in _holdChannels.
+  _holdKey(ev) {
+    const r = ev._route;
+    return `${r.core}:${r.lane}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -1623,29 +1637,22 @@ export class IRPlayer {
     if (!this._ir?.tracks) return [];
 
     return this._ir.tracks.map((track, ti) => {
-      const isPsg = this._psgTrackChannel.has(ti);
+      const route = this._routes.get(ti);
       // fm3-1..4: the FM3 operator this track drives (0 = not an operator
       // track). Its :pitch, glide and pitch macros bend that operator alone.
       const fm3Op = Number(/^fm3-([1-4])$/.exec(track.scoreChannel ?? "")?.[1] ?? 0);
-      const isPcm = this._pcmTrackChannel.has(ti);
-      const psgCh = isPsg ? this._psgTrackChannel.get(ti) : null;
-      // PCM events carry their soft-mix voice slot (0-2) as _chIndex — that is
-      // what the worklet keys loop-voice replacement on. FM tracks carry their
-      // FM channel; PSG carries 0 (it routes via _psgCh).
-      const chIndex = isPsg
-        ? 0
-        : (this._pcmTrackChannel.get(ti) ??
-          this._trackChannel.get(ti) ??
-          0);
+      // Every event carries its track's route, and its lane as _chIndex (the
+      // FM channel; a sample voice, which the worklet keys loop-voice
+      // replacement on) or _psgCh.
+      const isPsg = route.core === "psg";
       const flatEvs = this._expandLoops(track.events ?? []);
       const events = flatEvs
         .map((ev) => ({
           ...ev,
-          _chIndex: chIndex,
+          _route: route,
+          _chIndex: isPsg ? 0 : route.lane,
           _trackIndex: ti,
-          _isPsg: isPsg,
-          _isPcm: isPcm,
-          _psgCh: psgCh,
+          _psgCh: isPsg ? route.lane : null,
         }))
         .sort((a, b) => a.tick - b.tick);
 
@@ -1740,9 +1747,7 @@ export class IRPlayer {
         audioTimeAtTick0: 0,
         loopCount: 0,
         startAudioTime: 0,
-        chIndex,
-        isPsg,
-        psgCh,
+        route,
         fm3Op,
       };
     });
@@ -2238,20 +2243,22 @@ export class IRPlayer {
     // The chip's LFO is the song's, written on any track (language.md §1):
     // a PSG or PCM track's write goes where an FM track's does, as the
     // driver takes it from any track.
-    if ((ev._isPsg || ev._isPcm) && LFO_TARGETS.has(ev.args?.target) && /^PARAM_/.test(ev.cmd))
-      ev = { ...ev, _isPsg: false, _isPcm: false, _chIndex: 0 };
+    const core = ev._route.core;
+    if (core !== "fm" && LFO_TARGETS.has(ev.args?.target) && /^PARAM_/.test(ev.cmd))
+      ev = { ...ev, _route: FM_LFO_ROUTE, _chIndex: 0 };
 
-    // Route PSG events to PSG handler
-    if (ev._isPsg) {
+    // The PSG core.
+    if (ev._route.core === "psg") {
       this._dispatchPsgEvent(ev, when);
       return;
     }
 
-    // Route PCM (soft-mix) events. A PCM track's _chIndex is its voice slot
-    // (0-2), which collides with FM channel indices — its PARAM_SETs must NOT
-    // fall through to the FM path (they would corrupt FM ch 1-3's TL).
-    if (ev._isPcm) {
-      this._dispatchPcmEvent(ev, when);
+    // The sample core, by the track's part (SAMPLE_HANDLERS). A sample
+    // track's _chIndex is its voice, which collides with FM channel indices —
+    // its PARAM_SETs must NOT fall through to the FM path (they would corrupt
+    // FM ch 1-3's TL).
+    if (ev._route.core === "sample") {
+      this[SAMPLE_HANDLERS[ev._route.part.name]](ev, when);
       return;
     }
 
@@ -2512,7 +2519,7 @@ export class IRPlayer {
           }
         } else {
           // Hold note: register the channel for runtime key-off
-          this._holdChannels.set(ch, ev._trackIndex);
+          this._holdChannels.set(this._holdKey(ev), ev._trackIndex);
         }
         break;
       }
@@ -2625,13 +2632,7 @@ export class IRPlayer {
   // across is the score's events — note, release, level, master, loop point —
   // timed, in the order the driver's sequencer would act on them. Global
   // events (tempo/markers/loops) are handled by _dispatchGlobalEvent first.
-  _dispatchPcmEvent(ev, when) {
-    // A sample part with registers of its own: the YM2608's rhythm sounds and
-    // its ADPCM-B.
-    const part = this._trackPart.get(ev._trackIndex);
-    if (part?.name === "rhythm") return this._dispatchRhythmEvent(ev, when);
-    if (part?.name === "adpcm-b") return this._dispatchAdpcmEvent(ev, when);
-    if (part?.name === "pcm8") return this._dispatchPcm8Event(ev, when);
+  _dispatchDacEvent(ev, when) {
     const voice = ev._chIndex ?? 0;
     switch (ev.cmd) {
       case "PCM_NOTE_ON":
@@ -3043,7 +3044,7 @@ export class IRPlayer {
         const mode = ev.args?.mode;
         const shotEnd = when + Math.max(0, Math.min(end, entry.data.length) - start) / perSec;
         // A held note (:len 0) waits for triggerKeyOff, as the Mega Drive's does.
-        if (this._resolveGateTicks(ev.args?.gate, ev.args?.length) === 0) this._holdChannels.set(20 + voice, ti);
+        if (this._resolveGateTicks(ev.args?.gate, ev.args?.length) === 0) this._holdChannels.set(this._holdKey(ev), ti);
         this._chipPcmHit(key, ev, when, mode === "shot" || !mode ? shotEnd : Infinity,
           { rate: entry.rate, midi, pcm8: voice }, (t, h) => {
             h.gain = IRPlayer._pcm8Gain(this._chipPcmLevelAt(h, t));
@@ -3192,7 +3193,7 @@ export class IRPlayer {
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const { secs: nextNote } = this._nextNote(ev);
     const limit = Number.isFinite(nextNote) ? nextNote - KEY_OFF_LEAD_SECS : Infinity;
-    if (gateTicks === 0) this._holdChannels.set(20 + voice, ev._trackIndex); // waits for KEY_OFF
+    if (gateTicks === 0) this._holdChannels.set(this._holdKey(ev), ev._trackIndex); // waits for KEY_OFF
     const levels = [];
     this._envRetrigs = this._keyonRetrigTimes(keyon, when, gateTicks, limit);
     for (const [spec, kind, target] of [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"]]) {
@@ -4702,7 +4703,7 @@ export class IRPlayer {
         }
         while (cursor < track.events.length) {
           const ne = track.events[cursor++];
-          if (ne.cmd !== "NOTE_ON" || ne._isPsg) continue;
+          if (ne.cmd !== "NOTE_ON" || ne._route.core === "psg") continue;
           nextNoteTick = ne.tick;
           nextNoteMidi = pitchToMidi(ne.args?.pitch ?? "c4");
           return;
@@ -5387,8 +5388,8 @@ export class IRPlayer {
           this._envRetrigs = null;
         }
         if (psgGateTicks === 0) {
-          // Hold note: register for runtime key-off via triggerKeyOff(PSG_HOLD_BASE + psgCh)
-          this._holdChannels.set(PSG_HOLD_BASE + psgCh, ev._trackIndex);
+          // Hold note: register for runtime key-off (triggerKeyOff)
+          this._holdChannels.set(this._holdKey(ev), ev._trackIndex);
         }
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
@@ -5543,7 +5544,7 @@ export class IRPlayer {
             }
             while (cursor < track.events.length) {
               const ne = track.events[cursor++];
-              if (ne.cmd !== "NOTE_ON" || !ne._isPsg) continue;
+              if (ne.cmd !== "NOTE_ON" || ne._route.core !== "psg") continue;
               if ((ne._psgCh ?? 0) !== psgCh) continue;
               nextNoteTick = ne.tick;
               nextNoteMidi = pitchToMidi(ne.args?.pitch ?? "c4");
