@@ -29,7 +29,7 @@ asymmetries matter for the Z80 driver.
   "ppqn": 96,
   "metadata": {
     "title": "...", "composer": "...", "author": "...", "source": "song.mmlisp", "pcmVoices": 2,
-    "vals": [ ... ], "samples": [ ... ]
+    "vals": [ ... ], "samples": [ ... ], "waves": [ ... ]
   },
   "tracks": [ ... ]
 }
@@ -111,6 +111,18 @@ Notes: the player consumes `name`, `init`, `unit` and `slot`; `min`/`max`/
 | `startSec`, `endSec` | number\|null | The range a note plays (`:pcm-start` / `:pcm-end` / `:pcm-len`). In SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. Both null: the whole sample; a null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |
 | `loopStartSec`, `loopEndSec` | number\|null | The loop a held loop note repeats, inside the range (`:loop-start` / `:loop-end` / `:loop-len`), in the same seconds. A null point follows the range (its start, its end). The compiler has checked `startSec ≤ loopStartSec < loopEndSec ≤ endSec`. |
 | `fx`           | array       | The sample's whole chain — its imports' `:fx` (outermost first), then the def's own — resolved: one `{type, …params}` per effect in order, every param filled in (defaults included), times in SECONDS (at the score's opening tempo, like the range), levels in dB. `gain {db}`, `normalize {peak}`, `comp {threshold, ratio, attack, release, knee, makeup}`, `limit {ceiling, release}`, `crush {bits}`, `hpf {freq}`, `lpf {freq}` (Hz), `drive {db}`, `fade {at\|null, len, curve}`, `reverb {size, damp, mix, predelay, tail}`. `[]` when the def has none. The exporter runs it (`live/src/sample-fx.js`) before baking. |
+
+### 2.3 `metadata.waves[]` — wave defs (`(def-wave name …)`)
+
+Present when the score has a def-wave (language.md §19, `msx`); a
+`PARAM_SET WAVE` names an entry by its index, in def order.
+
+| Field  | Type  | Semantics                                              |
+| ------ | ----- | ------------------------------------------------------ |
+| `name` | string | The def's name.                                       |
+| `len`  | int   | Steps in one cycle: 32.                                 |
+| `bits` | int   | The steps' resolution: 8, signed.                       |
+| `data` | int[] | The `len` steps, each −128..127.                        |
 
 ## 3. Track object
 
@@ -651,6 +663,7 @@ write.
 | `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. |
 | `NOISE_RATE`      | 1–31           | `pc88`: the SSG's noise period (reg 0x06); `x68k`: NFRQ = 32 − n (reg 0x0F). Song-wide as `LFO_RATE`; inline or a sweep. |
 | `SSG_MIX`         | 0–2            | `pc88`: an SSG channel's mixer (reg 0x07), 0 tone, 1 noise, 2 both — sqr1–sqr3's `:mode`. |
+| `WAVE`            | index          | `msx`: a wave channel's wave, an entry of `metadata.waves` (§2.3), written whole to the channel's SCC memory. A track naming a def-wave emits it. |
 | `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits). Persistent noise-channel state via `PARAM_SET` (inline `:mode` / tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
 | `FM_TL1`–`FM_TL4` | 0–127          | 0x40+op. PARAM_SET also updates the voiced (timbre) TL base. |
 | `FM_AR1`–`FM_AR4` | 0–31           | 0x50+op bits 4–0 (shared byte with KS).                      |

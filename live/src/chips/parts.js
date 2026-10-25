@@ -10,14 +10,15 @@
 //             the name by default. A channel table entry's `voice` is the
 //             index in it — the chip's channel, the PSG's, the sample slot.
 //   kind      the track class the compiler compiles it as:
-//             fm | tone | noise | sample
+//             fm | tone | noise | wave | sample
 //   level     the part's level register, which the dB a note's vel / vol /
 //             master (and a mixer strip) sum to is quantized onto once
 //             (language.md §6; ir-utils.js levelSteps / levelGain): a
 //             ladder { stepDb, steps }, 0 loud — FM's TL 0.75 dB in 128
 //             steps, the SN76489's attenuator 2 dB in 16, the SSG's 3 dB in
 //             16, the ROM rhythm's IL 0.75 dB in 32 — or { scale: "linear",
-//             steps? }, a gain (the ADPCM-B's 0-255, PCM8's voice). The
+//             steps? }, a gain (the ADPCM-B's 0-255, PCM8's voice, the SCC's
+//             0-15). The
 //             Mega Drive's DAC voices have none: the driver's voice model
 //             composes them (pcm-voices.js).
 //   words     the IR write targets only this part's channels take: a target
@@ -39,6 +40,8 @@
 //   settings  def-score keys only this part reads (`:pcm-voices`)
 //   claims    { kind, voice }: a channel of another part its notes take over
 //             while they sound (the Mega Drive's DAC mix, fm6)
+//   waveRam   (voice) → the wave memory a `wave` part's channel plays, where
+//             channels share one (the SCC's 4 and 5)
 //   kit       kit role → its sound: samples built in under those names
 //   voiceOf   (ev, sampleDefs) → the physical voice a note sounds on, where
 //             one track reaches several (`:prio` layers flatten per voice)

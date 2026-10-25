@@ -1,10 +1,9 @@
-# Targets beyond the Mega Drive — the restructure before SCC and OPLL
+# Targets beyond the Mega Drive — the restructure before OPLL
 
 The toolchain grew from the Mega Drive; pc88, x68k and msx were added on the
-part / chip / target layering (`live/src/chips/parts.js`). Before the
-wavetable class (SCC, `wave1`–`wave5`) and 2-op FM (OPLL) land, the layers
-below the compiler are being restructured so a part decides how it plays,
-shows and takes voices — not only which words it accepts. This file holds the
+part / chip / target layering (`live/src/chips/parts.js`). Before 2-op FM
+(OPLL) lands, the layers below the compiler are being restructured so a
+part decides how it plays, shows and takes voices — not only which words it accepts. This file holds the
 rulings and the plan's state; delete each item once the repo records it.
 
 ## Rulings (2026-10-25)
@@ -34,13 +33,15 @@ Next:
 1. Live page: a strip carries its channel entry (`selectedCh` numbers,
    `PSG_UI_BASE`, `isFmChannel` go), kind adapters for preview / mixer /
    panel, a def-kind registry for "the voice under the cursor", Library
-   Fits from the part (not `/^fm/`, `/^pcm/`).
-2. VGM: a `sub` byte in `vgm.ports` for the SCC's `0xD2 pp aa dd`; one
-   data-block hook for the DAC / ADPCM-B / OKI special cases (optional).
+   Fits from the part (not `/^fm/`, `/^pcm/`). The wave editor would sit on
+   that.
+2. VGM: one data-block hook for the DAC / ADPCM-B / OKI special cases
+   (optional).
 3. IR player, when OPLL lands: the FM level through the encoder (OPLL has
    a channel volume, not carrier TLs), per-part ranges; FM3 / CSM / Timer A
    into the OPN encoder (hygiene; gated by `csm` today).
 4. `targets.js` SCOPE_BASE: OPLL's fm7-fm9 would land on the PSG's lanes —
    set `scope` in its channel table or rebase.
-5. Then SCC (`kind: wave`, `def-wave`, `metadata.waves[]` + a `WAVE` word —
-   the IR form still to confirm with the user), then OPLL.
+5. OPLL (FM-PAC) needs design talks first: one user voice shared by every
+   channel, the 15 ROM voices (`:inst`), rhythm mode vs the `rhythm-*`
+   strips.

@@ -235,7 +235,10 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   (pitch moves allowed, no `:pan`); no SSG-EG, no FM3 modes. VGM and WAV.
 - `(def-score :target msx)` holds a score to the MSX's PSG, an AY-3-8910
   (§19): `sqr1`–`sqr3` and `noise` as on pc88 (`:mode tone|noise|both`,
-  song-wide `:noise-rate`, `noise` is sqr3); no FM, no PCM. VGM and WAV.
+  song-wide `:noise-rate`, `noise` is sqr3); `wave1`–`wave5` the SCC's
+  wavetable channels, each playing the `def-wave` named in it
+  (`(def-wave saw :wave (saw -128..127))` — 32 values −128..127 or one
+  curve's cycle; wave4 and wave5 share one); no FM, no PCM. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

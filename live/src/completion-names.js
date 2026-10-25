@@ -9,7 +9,7 @@ import { ALL_CHANNEL_NAMES } from "./targets.js";
 import { FM_CHANNEL_WORDS, opWords } from "./chips/fm-words.js";
 
 export const AC_FORMS = [
-  'def', 'def-val', 'def-fm', 'def-pcm', 'def-se', 'def-score', 'def-mod', 'import',
+  'def', 'def-val', 'def-fm', 'def-pcm', 'def-wave', 'def-se', 'def-score', 'def-mod', 'import',
   't', 'x', 'go', 'break', 'trig', 'param-set',
   'echo', 'delay', 'glide', 'macro', 'wait',
   'let', 'for', 'if', 'note', 'ticks', 'frames',
@@ -50,6 +50,7 @@ export const AC_PARAMS = [
   ':key',
   // def-pcm and the track's PCM points
   ':file', ':rate', ':offset', ':frames',
+  ':wave', // def-wave
   ':pcm-start', ':pcm-end', ':pcm-len', ':loop-start', ':loop-end', ':loop-len',
   // :fx effect params
   ':fx', ':db', ':peak', ':threshold', ':ratio', ':attack', ':release',

@@ -839,7 +839,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
-    import { TARGETS, targetProfile, notYet } from './src/targets.js';
+    import { TARGETS, TONE_LANES, toneLaneOf, targetProfile, notYet } from './src/targets.js';
     import { fmOpWord } from './src/chips/fm-words.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
@@ -1356,7 +1356,7 @@
     // A written voice or sample name is a token too: its long-press opens the
     // completion list on it (openNamePicker), so the pick replaces it. Not the
     // name a def is defining.
-    const NAME_DEF_HEADS = new Set(['def', 'def-fm', 'def-pcm', 'def-val']);
+    const NAME_DEF_HEADS = new Set(['def', 'def-fm', 'def-pcm', 'def-wave', 'def-val']);
     let _nameKindsFor = [], _nameKinds = null;
     function nameFields(state, hit) {
       if (hit.prev && NAME_DEF_HEADS.has(hit.prev)) return null;
@@ -1364,7 +1364,7 @@
       if (!_nameKinds || key.some((k, i) => k !== _nameKindsFor[i])) {
         _nameKinds = new Map();
         for (const d of [...scoreDefNames(state), ...(_acPresetDefs ?? [])])
-          if ((d.kind === 'voice' || d.kind === 'sample') && !_nameKinds.has(d.name)) _nameKinds.set(d.name, d.kind);
+          if ((d.kind === 'voice' || d.kind === 'sample' || d.kind === 'wave') && !_nameKinds.has(d.name)) _nameKinds.set(d.name, d.kind);
         _nameKindsFor = key;
       }
       const name = String(hit.node.value);
@@ -1975,6 +1975,7 @@
       'def-val': 'def-val ${1:name} ${2:0} ${3:0..127}',
       'def-fm': 'def-fm ${1:name} init-fm ${2}',
       'def-pcm': 'def-pcm ${1:name} :file "${2:sounds/kick.wav}"',
+      'def-wave': 'def-wave ${1:name} :wave (${2:sin} -128..127)',
       'def-se': 'def-se ${1:name} :prio ${2:5} (${3:fm1} ${4})',
       'def-score': 'def-score :title "${1}"',
       'def-mod': 'def-mod :ch ${1:fm1} :keyon off',
@@ -2020,7 +2021,7 @@
     // what each voice is there: "GM 1 / MIDI 0: * GrandPiano"). Given
     // `imports`, the same pass collects the (import "…") paths written — so
     // an edit in progress (unbalanced parens) does not hide them.
-    const AC_DEF_RE = /^[ \t]*\((def-val|def-fm|def-pcm|def)[ \t]+(\()?([^\s()]+)[ \t]*([^\s()]*)(\()?/;
+    const AC_DEF_RE = /^[ \t]*\((def-val|def-fm|def-pcm|def-wave|def)[ \t]+(\()?([^\s()]+)[ \t]*([^\s()]*)(\()?/;
     function scanDefNames(text, from, imports = null) {
       const out = [];
       let comment = '';
@@ -2032,6 +2033,7 @@
           if (head === 'def-val') kind = 'val';
           else if (head === 'def-fm') kind = 'voice';
           else if (head === 'def-pcm') kind = 'sample';
+          else if (head === 'def-wave') kind = 'wave';
           else if (fnParen) kind = 'fn';
           else if (next === '' && listAfter) kind = /^\s*\(def[ \t]+\S+[ \t]+\(macro\b/.test(line) ? 'macro' : 'def';
           else kind = 'def';
@@ -2111,7 +2113,7 @@
     // macros — an envelope is the voice it does not have. Outside a track — a
     // def, the top level — everything.
     const AC_TRACK_SET = new Set(AC_TRACKS);
-    const TRACK_KIND_OF_PART = { fm: 'voice', sample: 'sample', tone: 'psg', noise: 'psg' };
+    const TRACK_KIND_OF_PART = { fm: 'voice', sample: 'sample', tone: 'psg', noise: 'psg', wave: 'wave' };
     function headPartKind(head) {
       const part = targetProfile(_lastGoodIR?.metadata?.target).partOf(head)
         ?? Object.values(TARGETS).find((t) => t.partOf(head))?.partOf(head);
@@ -2143,8 +2145,9 @@
     function pickableNames(state, pos) {
       const text = state.doc.toString();
       const track = trackKindAt(text, pos);
-      const fits = (d) => d.kind === 'voice' ? track !== 'sample' && track !== 'psg'
-        : d.kind === 'sample' ? track !== 'voice' && track !== 'psg'
+      const fits = (d) => d.kind === 'voice' ? track == null || track === 'voice'
+        : d.kind === 'sample' ? track == null || track === 'sample'
+        : d.kind === 'wave' ? track == null || track === 'wave'
         : d.kind !== 'val' && d.kind !== 'fn';
       const own = track === 'psg' ? 'macro' : track;
       const imported = new Set();
@@ -6503,10 +6506,11 @@
     const CURSOR_DEF_PREVIEW_CH = 0;        // FM channel used to audition a cursor FM def (incl. its op mask)
     const PCM_PREVIEW_CH = 'pcm';           // the keyboard's target while the cursor is on a sample def
     // The page's channel numbers (selIndex, selectedCh, the keys' targets):
-    // FM from 0, as many as the most a target has (targets/), then the PSG's
-    // four lanes — the IR player's: three tones, then the noise.
+    // FM from 0, as many as the most a target has (targets/), then the tone
+    // lanes — the IR player's: the PSG's three tones and its noise, then the
+    // wave channels (targets.js toneLaneOf).
     const PSG_UI_BASE = Math.max(...Object.values(TARGETS).flatMap((t) => t.headsOfKind('fm').map((h) => t.channels[h].voice + 1)));
-    const psgLaneOf = (c) => (c.part.kind === 'noise' ? 3 : c.voice);
+    const psgLaneOf = toneLaneOf;
     let _pcmCursorDef = null;               // name of the sample def under the cursor
     let _prevFmParamMode = null;            // previous getFmParamMode(), to detect entering cursor-def
     let _prevCursorDefKey = null;           // identity of the def under the cursor, to detect switching defs
@@ -6634,7 +6638,7 @@
     // -----------------------------------------------------------------------
     // Hardware-index labels, still used by the FM param-panel status (channelLabel).
     const FM_LABELS  = ['F1','F2','F3','F4','F5','F6','F7','F8'];
-    const PSG_LABELS = ['S1','S2','S3','N1'];
+    const PSG_LABELS = ['S1','S2','S3','N1','W1','W2','W3','W4','W5']; // by tone lane
 
     // Score channel name (head) → short strip label: the name's first letter
     // and its numbers ("fm3-1" → "F3-1", "sqr2" → "S2"); the CSM strip is
@@ -6657,7 +6661,7 @@
       return targetProfile(_lastGoodIR?.metadata?.target).channels[head] ?? null;
     }
     const isFmVoice = (c) => c?.part.kind === 'fm';
-    const isPsgVoice = (c) => c?.part.kind === 'tone' || c?.part.kind === 'noise';
+    const isPsgVoice = (c) => toneLaneOf(c) != null; // a tone lane's: the PSG's, a wave channel
     function channelRouting(head) {
       const c = channelVoice(head);
       if (c?.part.kind === 'sample') return { volKind: 'pcm', volIndex: null, selIndex: null };
@@ -8277,7 +8281,7 @@
       const track = trackKindAt(state.doc.toString(), state.selection.main.head);
       _libFitsKind = track;
       if (track == null) return null;
-      const chip = { voice: 'fm', sample: 'pcm', psg: 'psg' }[track];
+      const chip = { voice: 'fm', sample: 'pcm', psg: 'psg', wave: 'wave' }[track];
       return (it) => it.source === 'ref' ? !it.tracks || it.tracks.includes(chip)
         : it.source !== 'presets' ? true
         : it.kind === 'macro' || (track === 'voice' && it.kind === 'fm') || (track === 'sample' && it.kind === 'pcm');
@@ -9341,7 +9345,7 @@
     function channelLabel(ch) {
       if (ch == null) return '';
       if (ch >= 0 && ch < PSG_UI_BASE) return FM_LABELS[ch] ?? '';
-      if (ch >= PSG_UI_BASE && ch < PSG_UI_BASE + 4) return PSG_LABELS[ch - PSG_UI_BASE] ?? '';
+      if (ch >= PSG_UI_BASE && ch < PSG_UI_BASE + TONE_LANES) return PSG_LABELS[ch - PSG_UI_BASE] ?? '';
       return '';
     }
 
@@ -9602,7 +9606,7 @@
     }
 
     function isPsgPreviewChannel(chIndex) {
-      return Number.isInteger(chIndex) && chIndex >= PSG_UI_BASE && chIndex < PSG_UI_BASE + 4;
+      return Number.isInteger(chIndex) && chIndex >= PSG_UI_BASE && chIndex < PSG_UI_BASE + TONE_LANES;
     }
 
 
@@ -10333,12 +10337,13 @@
     }
 
     // The page's channels of `t`'s kind the score's machine has (targets/):
-    // its FM channels, or its PSG's tones.
+    // its FM channels, its PSG's tones, or its wave channels.
     function previewKindChannels(t) {
       const machine = targetProfile(_lastGoodIR?.metadata?.target);
-      const kind = isFmChannel(t) ? 'fm' : 'tone';
-      const base = kind === 'fm' ? 0 : PSG_UI_BASE;
-      return [...new Set(machine.headsOfKind(kind).map((h) => base + machine.channels[h].voice))];
+      const chOf = (c) => (c.part.kind === 'fm' ? c.voice : PSG_UI_BASE + toneLaneOf(c));
+      const own = isFmChannel(t) ? 'fm'
+        : Object.values(machine.channels).find((c) => isPsgVoice(c) && chOf(c) === t)?.part.kind ?? 'tone';
+      return [...new Set(machine.headsOfKind(own).map((h) => chOf(machine.channels[h])))];
     }
 
     function previewPool(target, { notes, fm3Mode }) {

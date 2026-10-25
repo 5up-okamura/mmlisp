@@ -142,14 +142,18 @@ In order:
    MSM6258's ADPCM stream (`live/src/chips/msm6258.js`). A `.opm` voice bank
    imports its voices with DT2, and a YM2151's VGM imports as an `x68k`
    score, its noise on `noise` and its OKIM6258 samples on PCM8.
-3. **MSX: PSG, then SCC.** The PSG is done: a `:target msx` score compiles,
-   exports VGM and plays and renders WAV through ymfm's SSG — `sqr1`–`sqr3`
-   and `noise`, the SSG profile again (language.md §19; the profile is
-   `live/src/targets/msx.js`, the chip `live/src/chips/ay8910.js`, the synth
-   `live/src/synth-msx.js`, the scores `tools/tests/msx/`). Its hardware
-   envelope is not a word yet. The SCC brings the *wavetable* voice class,
-   which the PC Engine, the FDS and the Game Boy share later; its channels
-   are `wave1`–`wave5`, named by the class so those machines reuse them. The FM-PAC (OPLL: 2-op, fifteen preset voices and one user
+3. **MSX: PSG and SCC.** A `:target msx` score compiles, exports VGM and
+   plays and renders WAV: the PSG through ymfm's SSG — `sqr1`–`sqr3` and
+   `noise`, the SSG profile again — and the SCC cartridge through the
+   toolchain's own K051649 — `wave1`–`wave5`, each playing a `def-wave`
+   (language.md §19; the profile is `live/src/targets/msx.js`, the chips
+   `live/src/chips/ay8910.js` and `k051649.js`, the synth
+   `live/src/synth-msx.js`, the scores `tools/tests/msx/`). The PSG's
+   hardware envelope is not a word yet. The SCC is the *wavetable* voice
+   class, which the PC Engine, the FDS and the Game Boy share later; its
+   channels are named by the class so those machines reuse them, and a wave
+   is 32 signed 8-bit steps in the IR, which a chip of fewer bits reads
+   down. A wave editor in Live is still to come. The FM-PAC (OPLL: 2-op, fifteen preset voices and one user
    voice) is a different composing surface that none of the 4-op voice assets
    reach, so it waits for a 2-op voice form; MSX-Audio is left out.
 4. **Famicom: the 2A03.** New to the language: pulse duty, a triangle

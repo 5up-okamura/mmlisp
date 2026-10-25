@@ -38,7 +38,7 @@ import {
   HOLD_FRAMES,
   expandLoops,
 } from "./ir-utils.js";
-import { TARGETS, targetProfile, notYet } from "./targets.js";
+import { TARGETS, TONE_LANES, toneLaneOf, targetProfile, notYet } from "./targets.js";
 import {
   curveId, curveUnit8, sweepValue, sweepStep, sweepFrameValue,
   bpmToTickIncrement, tickIncrementToBpm,
@@ -55,12 +55,13 @@ const PCM_LOOP_MAX = 0x7f00;
 // chip.
 const FM_CHANNELS = Math.max(
   ...Object.values(TARGETS).map((t) => t.chipForKind("fm")?.fmEncoder().channels ?? 0));
-// The PSG encoder's lanes (chips/: psgEncoder): three tones and the noise.
-const PSG_LANES = 4;
 // The player's cores, by a part's kind (chips/parts.js): the FM core, the PSG
-// core (tone and noise, through the chip's PSG encoder: lanes 0-2 the tones,
-// 3 the noise) and the sample core. A part of another kind has no core yet.
-const CORE_OF_KIND = { fm: "fm", tone: "psg", noise: "psg", sample: "sample" };
+// core and the sample core. The PSG core plays the tone lanes (targets.js
+// toneLaneOf), each through its chip's encoder: the PSG's tones at 0-2 and
+// its noise at 3 (chips/: psgEncoder), the wave channels from 4 (waveEncoder).
+// A part of another kind has no core yet.
+const CORE_OF_KIND = { fm: "fm", tone: "psg", noise: "psg", wave: "psg", sample: "sample" };
+const PSG_LANES = TONE_LANES; // the PSG core's
 // The sample core's handler for each sample part: the chips' own voices (the
 // YM2608's rhythm and ADPCM-B), PCM8's mix, the Mega Drive driver's DAC mix.
 // Where a PSG or sample track's song-wide LFO write goes: the FM core's
@@ -201,6 +202,8 @@ export class IRPlayer {
     this._fmChip = this._target.chipForKind("fm");
     this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM; // the FM's registers (chips/)
     this._psgChip = this._psgChipOf(this._target); // null: a target with no PSG
+    this._toneEnc = this._toneEncodersOf(this._target, this._psgChip);
+    this._chipsStarted = new Set(); // the optional chips written to this run (_lane)
     // Each track's route (_assignChannel): { core, part, lane } — the core
     // that plays it, its part, and its lane in that core (the FM channel, the
     // PSG lane, the sample voice).
@@ -391,6 +394,8 @@ export class IRPlayer {
     this._fmChip = target.chipForKind("fm");
     this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM;
     this._psgChip = this._psgChipOf(target); // one per score: it may keep state
+    this._toneEnc = this._toneEncodersOf(target, this._psgChip);
+    this._chipsStarted.clear();
     // The FM core's level ladder (chips/parts.js `level`): its TL.
     this._fmLevel = target.parts.find((p) => p.kind === "fm")?.level ?? null;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
@@ -422,7 +427,7 @@ export class IRPlayer {
     // keys play any of them.
     this._psgLevel = new Array(PSG_LANES).fill(null);
     for (const c of Object.values(target.channels))
-      if (CORE_OF_KIND[c.part.kind] === "psg") this._psgLevel[c.part.kind === "noise" ? 3 : c.voice] = c.part.level;
+      if (CORE_OF_KIND[c.part.kind] === "psg") this._psgLevel[toneLaneOf(c)] = c.part.level;
     this._rhythmState = null; // per-track vol / pan of the chips' own PCM parts
     this._adpcmState = null;
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
@@ -919,7 +924,7 @@ export class IRPlayer {
    * @param {number} vol   0-31
    */
   setPsgVol(psgCh, vol) {
-    if (psgCh < 0 || psgCh > 3) return;
+    if (psgCh < 0 || psgCh >= PSG_LANES) return;
     const v = Math.max(0, Math.min(31, vol));
     this._psgVol[psgCh] = v;
     this._psgVolSweep[psgCh] = null;
@@ -1212,9 +1217,8 @@ export class IRPlayer {
   // and the voice index in it; the part's kind, the core that plays it
   // (CORE_OF_KIND). A sample track owns no FM channel — on the Mega Drive its
   // voice is summed to fm6's DAC, which mutes fm6 only while the DAC is on —
-  // so it never reaches the FM key-off path. The PSG's noise is lane 3 (the
-  // chip's encoder maps a lane to its channel — the SSG's noise is its
-  // third's mixer).
+  // so it never reaches the FM key-off path. A PSG core track's lane is its
+  // tone lane (targets.js toneLaneOf).
   _assignChannel(trackIndex, track) {
     const c = this._target.channels[track?.channel];
     if (!c) {
@@ -1226,7 +1230,7 @@ export class IRPlayer {
     if (!core) throw new Error(`the IR player cannot play ${track.channel} yet (${c.part.label})`);
     if (core === "sample" && !SAMPLE_HANDLERS[c.part.name])
       throw new Error(`the IR player cannot play ${track.channel} yet (${c.part.label})`);
-    const lane = c.part.kind === "noise" ? 3 : c.voice;
+    const lane = core === "psg" ? toneLaneOf(c) : c.voice;
     this._routes.set(trackIndex, { core, part: c.part, lane });
   }
 
@@ -4878,9 +4882,38 @@ export class IRPlayer {
   _psgChipOf(target) {
     return (target.chipForKind("tone") ?? target.chipForKind("noise"))?.psgEncoder() ?? null;
   }
+  // Each tone lane's { enc, ch, chip }: the PSG encoder `psg`'s lanes 0-3
+  // (its own numbering), a wave chip's encoder for its channels. A lane the
+  // target lacks is null.
+  _toneEncodersOf(target, psg) {
+    const lanes = new Array(PSG_LANES).fill(null);
+    if (psg) for (let l = 0; l < 4; l++) lanes[l] = { enc: psg, ch: l, chip: null };
+    const waveEnc = new Map();
+    for (const c of Object.values(target.channels)) {
+      if (c.part.kind !== "wave") continue;
+      const chip = target.chips[c.chip];
+      if (!waveEnc.has(chip)) waveEnc.set(chip, chip.waveEncoder());
+      lanes[toneLaneOf(c)] = { enc: waveEnc.get(chip), ch: c.voice, chip };
+    }
+    return lanes;
+  }
   // A PSG write on a target with no PSG (its encoder is null) is nothing.
   _psg(encode) {
     return this._psgChip ? encode(this._psgChip) : [];
+  }
+  // A tone lane's writes, `encode(enc, ch)` on its chip's encoder; nothing on
+  // a lane the target lacks. An optional chip (the SCC cartridge) is started
+  // with its first write of the run — unless that write is a silence, which
+  // a chip never started already is: a score that plays none has none.
+  _lane(psgCh, encode, silence = false) {
+    const l = this._toneEnc[psgCh];
+    if (!l) return [];
+    if (l.chip?.optional && !this._chipsStarted.has(l.chip)) {
+      if (silence) return [];
+      this._chipsStarted.add(l.chip);
+      return [...l.chip.init, ...encode(l.enc, l.ch)];
+    }
+    return encode(l.enc, l.ch);
   }
 
   // Write attenuation for a PSG channel.
@@ -4889,7 +4922,7 @@ export class IRPlayer {
     const att = attReg & 0x0f;
     // Track sounding state so master/vol recomputes don't un-silence idle channels.
     this._psgSounding[psgCh] = att < 15;
-    this._psgWrites(this._psg((c) => c.att(psgCh, att)), when);
+    this._psgWrites(this._lane(psgCh, (e, ch) => e.att(ch, att), att === 15), when);
   }
 
   // Compose vel (0-15) / vol / master (0-31) into a PSG attenuation (0=loud,
@@ -4899,6 +4932,8 @@ export class IRPlayer {
   _composePsgAtt(psgCh, vel, vol, master) {
     const level = this._psgLevel[psgCh];
     if (!level || vol <= 0 || master <= 0) return 15; // no such lane here: silent
+    if (level.scale === "linear") // a linear volume (the SCC's), upside down
+      return level.steps - 1 - Math.round(levelGain({ vel, faders: [vol, master] }) * (level.steps - 1));
     return levelSteps(level, { vel, faders: [vol, master] });
   }
 
@@ -5048,7 +5083,7 @@ export class IRPlayer {
   // channel's `:snap` mask, the cents on top (as _writeFmNote).
   _psgSetPitch(psgCh, note, cents, when) {
     const hz = midiToHz(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100);
-    this._psgWrites(this._psg((c) => c.tone(psgCh, c.period(hz))), when);
+    this._psgWrites(this._lane(psgCh, (e, ch) => e.tone(ch, e.period(hz))), when);
   }
 
   // Trigger the noise channel, re-asserting the current persistent noise mode.
@@ -5320,7 +5355,7 @@ export class IRPlayer {
           break;
         }
 
-        const isNoise = psgCh === 3;
+        const isNoise = psgCh === 3; // the PSG's noise lane
         const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
@@ -5434,7 +5469,7 @@ export class IRPlayer {
         if (psgTarget === "SNAP") {
           // Sticky mask (language.md §5.3); the sounding note moves onto it.
           this._psgSnap[psgCh] = Math.max(0, Math.min(0xfff, Math.round(Number(ev.args?.value) || 0)));
-          if (psgCh < 3)
+          if (psgCh !== 3)
             this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, this._psgPitchOffset[psgCh] ?? 0, when);
         } else if (psgTarget === "VOL") {
           if (ev.cmd === "PARAM_SET") {
@@ -5489,7 +5524,12 @@ export class IRPlayer {
           }
         } else if (psgTarget === "SSG_MIX") {
           // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
-          this._psgWrites(this._psg((c) => c.mix(psgCh, Math.round(ev.args?.value ?? 0))), when);
+          this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, Math.round(ev.args?.value ?? 0))), when);
+        } else if (psgTarget === "WAVE") {
+          // A wave channel's def-wave (metadata.waves): its memory written
+          // whole (chips/k051649.js — channels 4 and 5 share one).
+          const wave = this._ir?.metadata?.waves?.[Math.round(ev.args?.value ?? -1)];
+          if (wave) this._psgWrites(this._lane(psgCh, (e, ch) => e.wave(ch, wave.data)), when);
         } else if (psgTarget === "NOISE_MODE") {
           // Update the persistent noise mode. Re-asserted on every noise NOTE_ON;
           // if the channel is currently sounding, take effect immediately.
@@ -5609,9 +5649,11 @@ export class IRPlayer {
     // master/vol preamble writes don't drone idle channels.
     this._psgSounding.fill(false);
     // A chip's own start (chips/: the YM2608's $29, its rhythm and SSG),
-    // before any voice is written.
+    // before any voice is written; an optional chip's, at its first write
+    // (_lane).
+    this._chipsStarted.clear();
     for (const chip of Object.values(this._target.chips))
-      for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
+      if (!chip.optional) for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     // Neutral sine-like patch: ALG=7 (all 4 ops independent carriers), FB=0.
     // All ops: AR=31, DR=0, SL=0, RR=15, TL=0, MUL=1, DT=0.
     for (let ch = 0; ch < this._fmEnc.channels; ch++) {

@@ -21,7 +21,7 @@ import pc88 from "./targets/pc88.js";
 import x68k from "./targets/x68k.js";
 import msx from "./targets/msx.js";
 
-const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10 };
+const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10, wave: 10 };
 
 function profile(def) {
   // A register write names its chip by the worklet's port (chips/ `vgm.ports`:
@@ -58,7 +58,7 @@ function profile(def) {
     /**
      * The oscilloscope lane `head` sounds on, in the synths' layout
      * (synth-*.js SCOPE_LANES): FM channel n at n, the PSG's channel n at
-     * 6 + n, sample voice n at 10 + n — or the channel table's `scope` where
+     * 6 + n, sample voice n (or wave channel n) at 10 + n — or the channel table's `scope` where
      * a synth puts it elsewhere. A part of several sounds (the ROM rhythm)
      * has its first sound's lane, the rest after it.
      */
@@ -92,6 +92,18 @@ export function notYet(target, what) {
   return `the ${target.system} (:target ${target.name}) compiles, but ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} not built yet`;
 }
 
+// The tone lanes: the IR player's (and the page's) channels with a pitch
+// and a level and nothing else to them — the PSG's three tones at 0-2, its
+// noise at 3 (the SSG's is a tone channel's mixer, the encoder's to map),
+// the wave channels from 4.
+const TONE_LANE_BASE = { tone: 0, noise: 3, wave: 4 };
+
+/** The tone lane of a channel table entry, or null for a part with none (FM, a sample). */
+export function toneLaneOf(c) {
+  const base = TONE_LANE_BASE[c?.part.kind];
+  return base == null ? null : c.part.kind === "noise" ? base : base + c.voice;
+}
+
 /** The profile for `name` (a score's `:target`), or the Mega Drive's. */
 export function targetProfile(name) {
   return TARGETS[name ?? DEFAULT_TARGET] ?? TARGETS[DEFAULT_TARGET];
@@ -105,6 +117,10 @@ const ALL_PARTS = [...new Set(Object.values(TARGETS).flatMap((t) => t.parts))];
 export function partsWithWord(word) {
   return ALL_PARTS.filter((p) => p.words(word) || p.songWords?.(word));
 }
+
+/** How many tone lanes the most of any target has: the PSG's four at least. */
+export const TONE_LANES = Math.max(4, ...Object.values(TARGETS).flatMap((t) =>
+  Object.values(t.channels).map((c) => (toneLaneOf(c) ?? -1) + 1)));
 
 /** Every channel name some target has. */
 export const ALL_CHANNEL_NAMES = new Set(Object.values(TARGETS).flatMap((t) => t.channelNames));

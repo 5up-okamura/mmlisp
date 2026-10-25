@@ -10,7 +10,7 @@
 //   cat      its category (REFERENCE_CATEGORIES)
 //   syntax   how it is written
 //   summary  one or two sentences: what it does, its range and default
-//   tracks   the tracks it applies to — 'fm' / 'psg' / 'pcm' — or null for
+//   tracks   the tracks it applies to — 'fm' / 'psg' / 'pcm' / 'wave' — or null for
 //            anywhere (Library's Fits track filter reads it)
 //   insert   the text Insert puts at the cursor
 //   example  a whole score that compiles clean; ▶ plays it
@@ -36,6 +36,7 @@ const FM = ['fm'];
 const PSG = ['psg'];
 const PCM = ['pcm'];
 const FM_PSG = ['fm', 'psg'];
+const WAVE = ['wave'];
 
 export const REFERENCE = [
   // ---- score and song-wide -------------------------------------------------
@@ -124,6 +125,13 @@ export const REFERENCE = [
     summary: 'The PSG\'s three square-wave channels. No voice of their own: shape a note with a macro.',
     insert: '(sqr1 :len 8 c e g e)',
     example: '(sqr1 :oct 5 :len 8 c e g e)',
+  },
+  {
+    name: 'wave1–wave5', aliases: ['wave1', 'wave2', 'wave3', 'wave4', 'wave5', 'scc', 'wavetable'], cat: 'channels', section: '§19', tracks: WAVE,
+    syntax: '(def-score :target msx) (wave1 name …)',
+    summary: 'msx: the SCC\'s five wavetable channels. Each plays the def-wave named in it (a square until then), at a 4-bit volume; wave4 and wave5 share one wave memory.',
+    insert: '(wave1 :len 8 c e g e)',
+    example: '(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(wave1 saw :len 8 c e g > c)',
   },
   {
     name: 'noise', ctx: 'track', cat: 'channels', section: '§2', tracks: PSG,
@@ -270,6 +278,13 @@ export const REFERENCE = [
     summary: 'An FM voice: the channel\'s :alg :fb :ams :fms and the operator params. A leading name is the voice it extends (init-fm is the blank one). Name it in a track to switch to it.',
     insert: '(def-fm lead init-fm :alg 4 :fb 3 :tl1 30 :tl2 0 :tl3 30 :tl4 0)',
     example: '(def-fm lead init-fm :alg 4 :fb 3 :tl1 30 :tl2 0 :tl3 30 :tl4 0)\n(fm1 lead :len 8 c e g > c)',
+  },
+  {
+    name: 'def-wave', aliases: [':wave', 'wave'], cat: 'defs', section: '§19', tracks: WAVE,
+    syntax: '(def-wave name :wave [v1 … v32])  ·  (def-wave name :wave (curve A..B))',
+    summary: 'A wave for the wave channels: 32 steps, each -128..127, or one cycle of a curve. Name it in a track to switch to it; on a channel with no wave memory it is left out.',
+    insert: '(def-wave soft :wave (sin -100..100))',
+    example: '(def-score :target msx)\n(def-wave soft :wave (sin -100..100))\n(wave1 soft :len 8 c e g > c)',
   },
   {
     name: ':key (voice)', aliases: [':key', 'drum voice'], cat: 'fm', section: '§9', tracks: FM,

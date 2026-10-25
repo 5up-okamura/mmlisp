@@ -39,10 +39,16 @@ import { bankedEngineImage } from "./engine-banked-images.js";
 // of the chip clocks below.
 const VGM_SAMPLE_RATE = 44100;
 
-// The VGM version a target needs is its chips' newest (chips/ `vgm.version`);
-// 1.50's header is 0x40 bytes, 1.51's 0x80.
+// The VGM version a score needs is its chips' newest (chips/ `vgm.version`);
+// 1.50's header is 0x40 bytes, 1.51's 0x80, 1.61's 0xC0.
 const VGM_VERSION = 0x00000150;
-const vgmVersion = (target) => Math.max(VGM_VERSION, ...Object.values(target.chips).map((c) => c.vgm.version ?? 0));
+const vgmVersion = (chips) => Math.max(VGM_VERSION, ...chips.map((c) => c.vgm.version ?? 0));
+// The target's chips a capture has: an optional one (a cartridge, the SCC)
+// only when some write is its.
+const chipsOf = (target, writes) => {
+  const written = new Set(writes.map((w) => String(w.port)));
+  return Object.values(target.chips).filter((c) => !c.optional || Object.keys(c.vgm.ports ?? {}).some((p) => written.has(p)));
+};
 const dataStartOf = (version) => (version >= 0x161 ? 0xc0 : version >= 0x151 ? 0x80 : 0x40);
 // A one-shot score with PCM ends once the engine has been silent this long
 // after its last event (or at the cap).
@@ -143,13 +149,15 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adp
   let dacNext = 0;
 
   // Each worklet port's command, from the target's chips (chips/): the
-  // SN76489's 0x50 takes a data byte, an FM chip's an address and a byte.
+  // SN76489's 0x50 takes a data byte, an FM chip's an address and a byte,
+  // the SCC's 0xD2 a port of its own and an address in it (`sub`).
   const ports = Object.assign({}, ...Object.values(target.chips).map((c) => c.vgm.ports ?? {}));
   const emitWrite = (w) => {
     if (w.oki != null) return okiStart(w.oki);
     const p = ports[w.port];
     if (!p) throw new Error(`no VGM command for a write on port ${w.port}`);
-    if (p.addr) data.push3(p.cmd, w.addr & 0xff, w.data & 0xff);
+    if (p.sub) data.push4(p.cmd, ...p.sub(w.addr & 0xff), w.data & 0xff);
+    else if (p.addr) data.push3(p.cmd, w.addr & 0xff, w.data & 0xff);
     else data.push2(p.cmd, w.data & 0xff);
   };
 
@@ -205,7 +213,7 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adp
   data.push1(0x66);
 
   const gd3 = buildGd3({ system: target.system, ...meta });
-  return assembleVgm(data.bytes(), gd3, target, {
+  return assembleVgm(data.bytes(), gd3, chipsOf(target, writes), {
     totalSamples: endSample,
     loopOffsetInData,
     loopSamples: loopSample == null ? 0 : endSample - loopSample,
@@ -323,8 +331,8 @@ export function renderVgm(player, meta = {}, pcm = null) {
   return { bytes, pcmCount: dac ? 0 : capture.pcmCount, dacBytes: dac ? dac.bytes.length : 0 };
 }
 
-function assembleVgm(data, gd3, target, { totalSamples, loopOffsetInData, loopSamples }) {
-  const version = vgmVersion(target);
+function assembleVgm(data, gd3, chips, { totalSamples, loopOffsetInData, loopSamples }) {
+  const version = vgmVersion(chips);
   const DATA_START = dataStartOf(version);
   const dataLen = data.length;
   const gd3Start = DATA_START + dataLen; // GD3 (if any) follows the data block
@@ -359,7 +367,7 @@ function assembleVgm(data, gd3, target, { totalSamples, loopOffsetInData, loopSa
   u32(0x34, DATA_START - 0x34); // VGM data offset (relative to 0x34)
   // Each chip's block (chips/): its clock and the fields it has. One past
   // this version's header needs a later VGM (docs/roadmap.md).
-  for (const chip of Object.values(target.chips)) {
+  for (const chip of chips) {
     const { clock, header = [] } = chip.vgm;
     for (const [at, size, value] of [[clock, 4, chip.clock], ...header]) {
       if (at + size > DATA_START) throw new Error(`the ${chip.chip}'s VGM block is past a ${version.toString(16)} header`);

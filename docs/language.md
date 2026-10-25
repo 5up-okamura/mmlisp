@@ -923,8 +923,9 @@ the live player while the slot stays at its init.
 ## 9. `def` forms
 
 Each definition head means one thing. `def` names a **snippet** — any
-inline-writable notation, expanded where its name is written. `def-fm` and
-`def-pcm` declare **named data** (an FM voice, a PCM sample), as `def-val`
+inline-writable notation, expanded where its name is written. `def-fm`,
+`def-pcm` and `def-wave` declare **named data** (an FM voice, a PCM sample, a
+wave for the wave channels, §19 `msx`), as `def-val`
 declares a value slot (§8); a bare reference in a channel body applies them.
 `def-se` declares a **sound effect** — tracks the game starts, not the song
 (§9.3). `def-mod` rewrites the notes it selects across the whole score (§9.4).
@@ -951,6 +952,7 @@ stream bytes is shared by the encoder's CALL/RET pass (opcodes.md §5.2). A `let
 | `(def-fm name … :key N …)`            | FM voice that sounds c4 at MIDI note `N` — every note on it moves by `N − 60` (below) |
 | `(def-pcm name :file "…" …)`          | PCM sample (§16)                        |
 | `(def-pcm name base …)`               | PCM sample extending another sample (§16) |
+| `(def-wave name :wave …)`             | A wave channel's wave (§19, `msx`)      |
 | `(def-se name [:prio N] [:tempo T] (ch …)…)` | Sound effect: parts the game plays by number (§9.3) |
 | `(def-mod [:ch …] [:voice …] action…)` | Score-wide modifier: silence or re-level the notes it selects (§9.4) |
 | `(def name (macro :target spec …))`   | A snippet holding a macro form — written alone it applies the macro, and inside another `(macro name …)` it applies first, with its own `:step` |
@@ -2329,7 +2331,7 @@ those chips cannot do is a compile error, not a different sound.
 | `md` (default) | Sega Mega Drive: YM2612 + SN76489, PCM on fm6's DAC | MMB for MMLispDRV, VGM, WAV |
 | `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | VGM, WAV |
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
-| `msx` | MSX: the PSG, an AY-3-8910 | VGM, WAV |
+| `msx` | MSX: the PSG, an AY-3-8910, and the SCC cartridge (K051649) | VGM, WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2345,8 +2347,8 @@ The MMB is the Mega Drive driver's and refuses a `pc88` score. What follows
 is what the compiler holds a `pc88` score to.
 
 **What a channel is.** Each of a target's channels is a *part* of one of
-its chips — 4-op FM, the SN76489's square or noise, the SSG, the ROM rhythm,
-a sample voice — and a part brings its own words: the FM operator keys, the
+its chips — 4-op FM, the SN76489's square or noise, the SSG, a wavetable
+channel, the ROM rhythm, a sample voice — and a part brings its own words: the FM operator keys, the
 SN76489 noise's `white0`–`periodic3`, the SSG's `:noise-rate`, a sample
 voice's range points, `:pan` where the chip pans (FM, the ADPCM-B, the ROM
 rhythm). A part's word on another part's channel — `:tl1` on `sqr1`, `:pan`
@@ -2363,7 +2365,9 @@ A `def-fm` voice is data, not a word: named on a channel, it plays what that
 channel's part has of it. A register the target's chips lack (SSG-EG on the
 OPM, DT2 on the OPN) is left out with `W_TARGET` at the def; a voice named on
 a channel with no FM (`sqr1`, `pcm1`) keeps only its `:key` there, with
-`W_TARGET` once per track and voice.
+`W_TARGET` once per track and voice. A `def-wave` is data the same way: named
+on a channel with no wave memory it is left out, with `W_TARGET` once per
+track and wave.
 
 **The line.** A setting that has no meaning on the target is ignored with
 `W_TARGET` (`:pcm-voices`, the Mega Drive's white noise modes, which read as
@@ -2487,10 +2491,12 @@ alike, ADPCM grain included.
 
 ### `msx`
 
-**`msx` exports VGM (1.51)** with the MSX's PSG, an AY-3-8910 at 1.79 MHz,
-and Play and WAV run ymfm's SSG. There is no FM and no PCM: `fm1`–`fm6` and
-`pcm1`–`pcm3` are `E_TARGET`, and a `def-fm` plays nowhere (its keys are
-`W_TARGET`).
+**`msx` exports VGM** with the MSX's PSG, an AY-3-8910 at 1.79 MHz, and
+the SCC cartridge's K051649 at the same clock — 1.51, or 1.61 with the SCC,
+which a score has only when it writes a wave channel. Play and WAV run
+ymfm's SSG and an SCC of the toolchain's own. There is no FM and no PCM:
+`fm1`–`fm6` and `pcm1`–`pcm3` are `E_TARGET`, and a `def-fm` plays nowhere
+(its keys are `W_TARGET`).
 
 **PSG.** `sqr1`–`sqr3` and `noise` are the SSG's, as on `pc88`: each
 channel's mixer, `:mode tone|noise|both`, the song's noise period
@@ -2501,6 +2507,30 @@ has one or the other). A noise `:mode white0`–`white2` reads as
 `E_TARGET`. The level is the chip's 4-bit one, 3 dB a step. The mixer
 keeps the I/O ports' directions as the BIOS sets them, so the VGM is safe
 to play on the machine. The hardware envelope (R11–R13) is not a word yet.
+
+**SCC.** `wave1`–`wave5` are the SCC's five channels. Each plays a wave of
+32 steps, which a `def-wave` names and a track switches to by naming it, as
+it does a voice:
+
+```lisp
+(def-score :target msx)
+(def-wave saw :wave (saw -128..127))            ; one cycle of a curve
+(def-wave hollow :wave [0 90 127 90 0 -90 -127 -90 0 90 127 90 0 -90 -127 -90
+                        0 40 60 40 0 -40 -60 -40 0 40 60 40 0 -40 -60 -40])
+(wave1 saw :len 8 c e g > c < hollow g e c e)
+```
+
+`:wave` is 32 values, each −128..127 (signed 8-bit, the chip's), or one
+curve, read over one cycle whatever its `:len` (§11); a count or a value
+outside that is `E_WAVE_VALUE`, another key `E_WAVE_PARAM`. A channel plays a
+square until its track names a wave; the wave is written to the channel's
+memory where it is named, so a switch is heard from the next sample on. The
+pitch is the chip's 12-bit period (1.79 MHz / 32 / (n + 1)), and every pitch
+move a PSG channel has works the same — `:pitch`, `(glide …)`, the pitch and
+`:semi` macros, `:snap`. The level is the chip's 4-bit linear volume, vel +
+vol + master composed as one gain (§6) and rounded to its 16 steps. `wave4`
+and `wave5` share one wave memory: two tracks that name different waves there
+play whichever was written last, and the compiler says so (`W_TARGET`).
 
 **Effects.** `def-se` is the Mega Drive driver's; an `msx` score has none
 (`E_TARGET`).

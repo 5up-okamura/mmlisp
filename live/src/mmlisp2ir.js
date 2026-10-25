@@ -3574,6 +3574,91 @@ function emitVoice(td, tick, events, src, trackState = null, name = null, diagno
   }
 }
 
+// A def-wave's `:wave`: its values, a vector or one curve sampled over a
+// cycle, each a signed 8-bit step. Every wave that reads is listed, in def
+// order, as the IR's metadata.waves; `index` maps its name to its place.
+const WAVE_LEN = 32;
+function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
+  const waves = [];
+  const index = new Map();
+  for (const [name, td] of typedDefs) {
+    if (td.tag !== "wave") continue;
+    if (td.data) { // an import's, read in its own compile
+      index.set(name, waves.push({ name, data: td.data }) - 1);
+      continue;
+    }
+    const err = (msg, src = td.src) => pushDiag(diagnostics, "error", "E_WAVE_VALUE", msg, src, null);
+    const ctx = makeEvalCtx(diagnostics, null, td.src, typedDefs);
+    let data = null;
+    for (let k = 0; k < td.items.length; k += 2) {
+      const kw = atomValue(td.items[k]);
+      if (kw !== ":wave") {
+        pushDiag(diagnostics, "error", "E_WAVE_PARAM", `def-wave has no key ${kw ?? "(…)"}; its one key is :wave`,
+          nodeSrc(td.items[k]) ?? td.src, null);
+        continue;
+      }
+      const at = td.items[k + 1];
+      if (!at) { err(":wave has no value", nodeSrc(td.items[k])); continue; }
+      const one = (n) => {
+        const ex = expandNode(n, defs, paramDefs, 0, diagnostics);
+        return ex.length === 1 && !exprHasValRef(ex[0]) ? evalValue(ex[0], makeEnv(null), ctx) : null;
+      };
+      let vals = null;
+      if (at.kind === "list" && at.bracket === "[]") {
+        const items = at.items.filter((n) => n.kind !== "comment");
+        vals = items.map((n) => {
+          const v = one(n);
+          if (v?.kind !== "scalar") err(`a :wave value is a number, not ${atomValue(n) ?? "a list"}`, nodeSrc(n));
+          return v?.kind === "scalar" ? v.value : 0;
+        });
+        if (vals.length !== WAVE_LEN) {
+          err(`:wave takes ${WAVE_LEN} values, not ${vals.length}`, nodeSrc(at));
+          continue;
+        }
+      } else {
+        const v = one(at);
+        if (v?.kind !== "signal" || v.spec.steps || v.spec.stages) {
+          err(`:wave takes [${WAVE_LEN} values] or one curve ((sin -128..127) …)`, nodeSrc(at));
+          continue;
+        }
+        // One cycle of the curve, whatever its :len: a loop wave's period.
+        const { from = 0, to = 0, curve, params } = v.spec;
+        vals = Array.from({ length: WAVE_LEN }, (_, i) => from + (to - from) * sampleCurveUnit(curve, i / WAVE_LEN, params));
+      }
+      vals = vals.map((x) => Math.round(x));
+      const out = vals.find((x) => x < -128 || x > 127);
+      if (out !== undefined) { err(`a :wave value is -128..127, not ${out}`, nodeSrc(at)); continue; }
+      data = vals;
+    }
+    if (!data) {
+      if (!td.items.some((n) => atomValue(n) === ":wave")) err("def-wave needs :wave");
+      continue;
+    }
+    td.data = data;
+    index.set(name, waves.push({ name, data }) - 1);
+  }
+  waves.index = index;
+  return waves;
+}
+
+// A def-wave named on a track: the channel plays it from here, on a part
+// with wave memory; anywhere else it is nothing, said once per track and
+// wave.
+function emitWave(trackState, events, src, name, diagnostics, trackName) {
+  const index = trackState.waves?.index.get(name);
+  if (index == null) return; // its def did not read
+  const { part, head } = trackState;
+  if (part?.words("WAVE")) {
+    events.push({ tick: trackState.tick, cmd: "PARAM_SET", args: { target: "WAVE", value: index }, src });
+    return;
+  }
+  const said = (trackState.voicesSaid ??= new Set());
+  if (said.has(name)) return;
+  said.add(name);
+  pushDiag(diagnostics, "warning", "W_TARGET",
+    `'${name}' is a wave; ${head} (${part?.label ?? "this channel"}) has no wave memory, so it is left out`, src, trackName);
+}
+
 // The canonical targets a voice sets: the channel's ALG/FB/AMS/FMS and every
 // operator param — the registers VOICE_TABLE carries (mmb.md §11).
 // The four velocity sensitivities come last, outside VOICE_TABLE: the driver
@@ -4289,6 +4374,13 @@ function compileChannelBody(
       // Bare identifier: a sample binds on a pcm track, as a voice does on FM
       if (trackState.isPcmTrack && trackState.sampleDefs?.has(val)) {
         trackState.pcmSampleName = val;
+        i++;
+        continue;
+      }
+
+      // Bare identifier: a def-wave (the wave the channel plays from here)
+      if (typedDefs?.get(val)?.tag === "wave") {
+        emitWave(trackState, events, nodeSrc(node), val, diagnostics, trackName);
         i++;
         continue;
       }
@@ -5385,6 +5477,24 @@ function collectDefs(roots, diagnostics) {
       continue;
     }
 
+    // (def-wave name :wave [v …]) — a wavetable channel's wave, named data
+    // like a def-fm voice; resolveWaves reads its values once every def is
+    // known.
+    if (head === "def-wave") {
+      const items = root.items.filter((n) => n.kind !== "comment");
+      const name = atomValue(items[1]);
+      if (name && items[1].kind === "atom" && rejectNoteName(head, name, root, diagnostics)) continue;
+      if (!name || items[1].kind !== "atom" || isReservedHead(name) || name.startsWith(":")) {
+        pushDiag(diagnostics, "error", name && isReservedHead(name) ? "E_DEF_RESERVED" : "E_DEF_NAME",
+          name && isReservedHead(name) ? `'${name}' is a reserved eval builtin and cannot be a def name`
+            : `${head} name must be a symbol`,
+          nodeSrc(root), null);
+        continue;
+      }
+      typedDefs.set(name, { tag: "wave", items: items.slice(2), src: nodeSrc(root) });
+      continue;
+    }
+
     if (head === "def") {
       // Parametric snippet def: (def (name param…) body…). Token substitution
       // only — no computation; params shadow note/length tokens inside the body.
@@ -6126,6 +6236,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   }
   resolveVoices(typedDefs, defs, paramDefs, diagnostics,
     writesVelSens(parsed, defs, paramDefs, typedDefs, seDefs), targetProfile(fileMeta.target));
+  const waves = resolveWaves(typedDefs, defs, paramDefs, diagnostics);
   resolveSampleExtends(sampleDefs, diagnostics);
   // A target with a ROM rhythm kit names its sounds by the kit roles
   // (targets.js): a def of that name is that sound there, and one the score
@@ -6381,6 +6492,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     pcmSampleName: null, // bound by a bare sample name in the body
     pcmMode: "shot",
     sampleDefs,
+    waves, // the def-waves, by name in waves.index (resolveWaves)
     hasInlineCsmRate: false,
     hasCsmOn: false,
     defaultVel: 15, // per-note velocity, KEY-ON scoped, 0-15
@@ -6572,6 +6684,26 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     checkPartNotes(trackData.events, trackState, sampleDefs, diagnostics, key);
   }
 
+  // Channels that share one wave memory (chips/parts.js `waveRam`: the SCC's
+  // wave4 and wave5) play whichever wave was written last: said once when
+  // their tracks name different ones.
+  const waveRams = new Map();
+  for (const key of trackOrder) {
+    const { trackData, trackState } = trackByKey.get(key);
+    const c = target.channels[trackState.head];
+    if (!c?.part.waveRam) continue;
+    const ram = `${c.chip}:${c.part.waveRam(c.voice)}`;
+    const used = waveRams.get(ram) ?? { heads: new Set(), waves: new Set() };
+    used.heads.add(trackState.head);
+    for (const ev of trackData.events)
+      if (ev.cmd === "PARAM_SET" && ev.args?.target === "WAVE") used.waves.add(ev.args.value);
+    waveRams.set(ram, used);
+  }
+  for (const { heads, waves: named } of waveRams.values())
+    if (heads.size > 1 && named.size > 1)
+      targetDiag(diagnostics, "warning",
+        `${[...heads].join(" and ")} share one wave memory, so the wave named last plays on both`, fileSrc, "global");
+
   // Where one track reaches several voices (the ROM rhythm, a voice per
   // sound), its notes compete for their own voice (chips/parts.js `voiceOf`).
   const voiceOfHead = (head) => {
@@ -6728,6 +6860,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         public: v.public,
       })),
       ...(target.name !== DEFAULT_TARGET_NAME ? { target: target.name } : {}),
+      // The def-waves (ir.md): a PARAM_SET WAVE's value is the index.
+      ...(waves.length ? { waves: waves.map((w) => ({ name: w.name, len: w.data.length, bits: 8, data: w.data })) } : {}),
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,
         ...(sample.rhythm ? { rhythm: sample.rhythm } : {}),

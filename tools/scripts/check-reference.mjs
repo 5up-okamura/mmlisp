@@ -30,8 +30,8 @@ for (const e of REFERENCE) {
   for (const n of [e.name, ...(e.aliases ?? [])]) {
     if (claims.has(n)) claims.get(n).push(e); else claims.set(n, [e]);
   }
-  if (e.tracks != null && !(Array.isArray(e.tracks) && e.tracks.every((t) => ["fm", "psg", "pcm"].includes(t))))
-    fail(`tracks must be null or a list of fm / psg / pcm`);
+  if (e.tracks != null && !(Array.isArray(e.tracks) && e.tracks.every((t) => ["fm", "psg", "pcm", "wave"].includes(t))))
+    fail(`tracks must be null or a list of fm / psg / pcm / wave`);
   try { parse(e.insert); } catch (err) { fail(`insert does not parse: ${err.message}`); }
   let imports;
   try {
