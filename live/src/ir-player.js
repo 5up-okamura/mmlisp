@@ -2337,6 +2337,13 @@ export class IRPlayer {
           this._followMasterSweep(ch, when);
         }
 
+        // An encoder that reads whether a write is inside a note (the
+        // OPLL's) hears of the key-on before the note's pitch and voice
+        // macros go out, which are sent ahead of it (chips/ym2413.js).
+        if (!isFm3OpNote && !ev.args?.legato && !this._csmKeysCh3(ch)
+          && this._isTrackAudible(ev._trackIndex) && !this._fmNoteSilent(ch, when))
+          this._fmWrites(this._fmEnc.noteOn?.(ch, when) ?? [], when);
+
         // FM3 operator notes had their F-number written by FM3_OP_PITCH.
         const writesBasePitch = !isFm3OpNote;
         if (writesBasePitch) {
@@ -2415,10 +2422,7 @@ export class IRPlayer {
         // so when a volume control is 0 we skip key-on entirely to guarantee
         // silence. vol and master are "volume": 0 mutes. (vel never mutes — it
         // floors at its lowest ladder step.)
-        const isFmSilent =
-          ((regs?.vol != null || this._fmVolSweep[ch] != null) &&
-            this._fmVolAtTime(ch, when) === 0) ||
-          (this._masterVol ?? VOL_UNITY) === 0;
+        const isFmSilent = this._fmNoteSilent(ch, when);
         const secsPerTick = this._secsPerTick;
         // Key off at the gate boundary, always — on FM the key transition IS
         // the attack, so a note that ran into the next one without keying off
@@ -5750,6 +5754,14 @@ export class IRPlayer {
     this._fmKey(chIndex, 0); // all operators off
   }
 
+  // Whether a note at `when` keys nothing: its channel's vol or the master
+  // at 0 (a vol is volume, so 0 mutes; vel never does).
+  _fmNoteSilent(ch, when) {
+    const regs = this._chRegs[ch];
+    return ((regs?.vol != null || this._fmVolSweep[ch] != null) && this._fmVolAtTime(ch, when) === 0)
+      || (this._masterVol ?? VOL_UNITY) === 0;
+  }
+
   // The operators a channel's level is: its algorithm's carriers, or the
   // encoder's where the chip has one algorithm (the OPLL's op2).
   _carrierOps(regs) {
@@ -5757,10 +5769,11 @@ export class IRPlayer {
   }
 
   // FM writes, through the target's FM encoder (chips/). An encoder that
-  // keeps state is told each write's time too: the player sends a note's
-  // key-off as the note starts, ahead of the writes between (chips/ym2413.js).
+  // keeps state is told each write's time too — the player sends a note's
+  // key-off as the note starts, ahead of the writes between — and may hand
+  // back a write of an earlier time, as its fourth element (chips/ym2413.js).
   _fmWrites(writes, when) {
-    for (const [port, addr, data] of writes) this._write(port, addr, data, when);
+    for (const [port, addr, data, at] of writes) this._write(port, addr, data, at ?? when);
   }
   _fmKey(ch, mask, when) {
     this._fmWrites(this._fmEnc.key(ch, mask, when), when);

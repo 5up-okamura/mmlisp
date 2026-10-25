@@ -242,7 +242,7 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   curve's cycle, or `+ - * /` over def-waves, curves and numbers; a track's
   `:wave (+ (* saw (- 1 $x)) (* soft $x))` follows `$x` as it moves; wave4
   and wave5 share one); `fm1`–`fm9` the FM-PAC's YM2413, 2-op (op1 into
-  op2): the fifteen ROM voices built in as `opll-piano`, `opll-violin` …
+  op2): the fifteen ROM voices built in as `piano`, `violin` …
   (a `def-fm` that extends one, or its own, is the chip's one user voice),
   `:ar` `:dr` 0–15, `:tl1` 0–63, `:ks` 0–1, its own `:ws1` `:eg1` `:ksl1`
   `:vib1` and the channel's `:sus 1`; no `:alg`, `:tl2`, `:pan`. No PCM.

@@ -967,7 +967,7 @@ name is the voice it extends: the base's params first, the voice's own over
 them, as a sample does (§16). Unset operator parameters are not emitted —
 start from a full patch (or extend one) for deterministic timbres. The
 built-in voice `init-fm` (ALG 7, AR 31, RR 15, ML 1, TL 0 on all operators)
-is always available, as are the FM-PAC's fifteen ROM voices, `opll-piano`
+is always available, as are the FM-PAC's fifteen ROM voices, `piano`
 … (§19 `msx`):
 
 ```lisp
@@ -2589,16 +2589,16 @@ op1 and op2 (`W_TARGET` for the rest).
 
 ```lisp
 (def-score :target msx)
-(def-fm reed opll-clarinet :ws1 1 :rr2 6)       ; extends one: the user voice
-(fm1 opll-piano :len 8 c e g > c)
-(fm2 opll-synth-bass :oct 2 :len 4 c c g g)
+(def-fm reed clarinet :ws1 1 :rr2 6)       ; extends one: the user voice
+(fm1 piano :len 8 c e g > c)
+(fm2 synth-bass :oct 2 :len 4 c c g g)
 (fm3 reed :len 4 e g)
 ```
 
-`opll-violin` `opll-guitar` `opll-piano` `opll-flute` `opll-clarinet`
-`opll-oboe` `opll-trumpet` `opll-organ` `opll-horn` `opll-synth`
-`opll-harpsichord` `opll-vibraphone` `opll-synth-bass` `opll-acoustic-bass`
-`opll-electric-guitar`. A channel plays a voice from the ROM when its
+`violin` `guitar` `piano` `flute` `clarinet`
+`oboe` `trumpet` `organ` `horn` `synth`
+`harpsichord` `vibraphone` `synth-bass` `acoustic-bass`
+`electric-guitar`. A channel plays a voice from the ROM when its
 registers are one of these, and from the chip's **one user voice**
 otherwise: a voice that extends a ROM one, a `def-fm` of its own, a voice
 an inline write or a macro has moved. Every channel on the user voice

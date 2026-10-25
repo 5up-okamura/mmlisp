@@ -61,7 +61,7 @@ export default {
     ":dt2-1": ["46ce50d6", "Solo x68k: el DT2 de un operador, la desafinación gruesa del YM2151 (×1, ×1.41, ×1.57, ×1.73 sobre su múltiplo) — la fina es :dtN. En línea, como macro o en un def-fm; una voz sin él lo fija en 0."],
     ":ws1": ["c532f2c5", "Solo msx, los dos operadores del FM-PAC: el seno rectificado de media onda (:ws 1), una envolvente sostenida (:eg 1; 0 sigue cayendo a RR), el escalado por tecla del nivel y el vibrato. Sus :ar :dr van de 0 a 15, :tl1 de 0 a 63 (op1, la moduladora), :ks de 0 a 1."],
     ":sus": ["65b65dc1", "Solo msx: un canal del FM-PAC cuyas notas, tras el key-off, se liberan a la tasa lenta 5 en vez de al RR de su voz — el pedal de un piano. Persistente, 0 al inicio."],
-    "opll-piano …": ["1235c4a5", "Las quince voces de la ROM del YM2413, integradas como init-fm. En msx un canal toca la de la ROM; un def-fm que extiende una es la única voz de usuario del chip. En otros destinos cada una se lee como una voz de 4 operadores, op1 sobre op2."],
+    "ROM voices": ["79bfa033", "Las quince voces de la ROM del YM2413, integradas como init-fm; un def con el mismo nombre es el de la partitura. En msx un canal toca la de la ROM; un def-fm que extiende una es la única voz de usuario del chip. En otros destinos cada una se lee como una voz de 4 operadores, op1 sobre op2."],
     "(param-set …)": ["dab844f6", "Varias escrituras absolutas de registro a la vez."],
     "def": ["c1026cc0", "Un fragmento: sus elementos se pegan donde se escribe el nombre; una frase, una macro, una constante. No lo nombres como una nota (a–g, e8): gana la nota."],
     "def (parametric)": ["272f93a8", "Un fragmento con parámetros: (name arg …) pega el cuerpo con cada argumento en lugar de su parámetro."],

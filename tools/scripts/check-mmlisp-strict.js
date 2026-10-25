@@ -263,7 +263,7 @@ async function main() {
     },
     {
       label: "the FM-PAC: two operators, no algorithm, no op2 level",
-      src: '(def-score :target msx)\n(fm1 opll-piano :ws1 1 :eg2 0 :ksl1 2 :vib2 1 :sus 1 :tl2 3 :alg 4 c)\n(fm2 :ws3 1 c)',
+      src: '(def-score :target msx)\n(fm1 piano :ws1 1 :eg2 0 :ksl1 2 :vib2 1 :sus 1 :tl2 3 :alg 4 c)\n(fm2 :ws3 1 c)',
       expected: ["E_TARGET", "E_TARGET", "E_UNKNOWN_KEYWORD"],
     },
     {
@@ -273,12 +273,12 @@ async function main() {
     },
     {
       label: "the FM-PAC has one user voice; the ROM's need none",
-      src: '(def-score :target msx)\n(def-fm reed opll-flute :ar2 9)\n(def-fm brass opll-oboe :ml1 7)\n(fm1 reed c)\n(fm2 opll-oboe c)\n(fm3 reed brass c)',
+      src: '(def-score :target msx)\n(def-fm reed flute :ar2 9)\n(def-fm brass oboe :ml1 7)\n(fm1 reed c)\n(fm2 oboe c)\n(fm3 reed brass c)',
       expected: ["W_TARGET"],
     },
     {
       label: "a ROM voice name plays everywhere",
-      src: '(fm1 opll-violin c)\n(def-score :target x68k)',
+      src: '(fm1 violin c)\n(def-score :target x68k)',
       expected: [],
     },
     {

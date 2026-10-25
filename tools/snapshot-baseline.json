@@ -1751,9 +1751,9 @@
  },
  "tools/tests/msx/fm-pac.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "6c5442413e0677a6",
-  "regs": "cd29db475c16afb9",
-  "vgm": "16f6523b2ca3b567"
+  "ir": "3e29b95e6e2e9a72",
+  "regs": "e8c38b5c69bda074",
+  "vgm": "b902f4db31a746b6"
  },
  "tools/tests/msx/noise.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

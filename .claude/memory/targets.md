@@ -28,8 +28,8 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   `$slot`s); still open: generators (`(harmonics 1 0.5 0.33)` …), once the
   expressions are in use.
 - **FM-PAC (OPLL).** The one user voice and the 15 ROM voices are built
-  (stage 2; language.md §19 msx). The `opll-` prefix was chosen in the
-  build, not by the user: confirm or rename. Rhythm mode: channels `rhythm1`-`rhythm5` under the
+  (stage 2; language.md §19 msx), named with no prefix (the user's
+  ruling, 2026-10-25: `piano`, not `opll-piano`). Rhythm mode: channels `rhythm1`-`rhythm5` under the
   kit roles (kick snare tom4 ride hat; rim none), as pc88's. The mode is
   song-wide: a score with a rhythm track has it on, and fm7-fm9 are
   `E_TARGET` there. A hit's pitch tunes its channel (ch7 BD, ch8 SD/HH,
@@ -46,21 +46,19 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 
 - **Stages.** 1 engine and 2 language and player are built; next 3 the
   rhythm mode, then 4 the panel's 2-op FM editor. Commit each.
-- **How the encoder works (chips/ym2413.js), and why.** The IR player sends
-  a note's key-off as the note starts (a gated note) or as the next one
-  does (full gate), ahead of writes inside the note, so the encoder never
-  reads its own write order: each channel keeps its latest note's span
-  (on, off) from the times the player passes, and a write is inside a note
-  when its time is in that span. No dedup against "what the chip holds"
-  for the same reason. A voice is settled at key-on (ROM index when the
-  registers match the ROM, else the user voice's 8 bytes); a voice write
-  inside a note moves it at once; one between notes waits for the key-on,
-  so a voice switch's run of PARAM_SETs never leaves the shared user voice
-  half-written. The voice hoist is off for the part (`voiceAtKey`): it only
-  cut notes 40 ms. Known: a new note's pitch write, sent before a
-  full-gate note's deferred key-off, carries the key bit, so the re-key
-  edge is at the pitch write in the same instant (harmless in ymfm's
-  adapter, which holds a second $2x of a sample for the next).
+- **How the encoder works (chips/ym2413.js), and why.** The IR player does
+  not send a channel's writes in time order: a note's pitch, level and op
+  macros go out before its key-on, its key-off as it starts (gated) or with
+  the next note (full gate). A first build read state from the order and
+  lost every macro on the FM-PAC (a vibrato wrote nothing; the review
+  caught it). So all of a channel's state is timelines (voice bytes, volume,
+  pitch, sustain) and note spans; the player sends `noteOn(ch, when)` before
+  a keyed note's macros, and each write reads the state at its own time. A
+  run of voice writes at one time is held to the channel's next call and
+  written then, stamped with its own time (a write's fourth element,
+  `_fmWrites`), so a voice switch never leaves the shared user voice
+  half-written. Known: a pitch step inside a `:keyon` macro's off-step is
+  written keyed (the retrigger's key-offs go out after the pitch steps).
 - **Open from stage 2.** The volume's floor is −45 dB (vol 15): `:vol 0`
   and a mixer mute do not silence a sounding FM-PAC note (the md's TL 127
   does) — key it off, or take the floor as the chip's. The Live key

@@ -50,7 +50,7 @@ export const OPLL_ROM_BYTES = Uint8Array.from([...ROM, ...ROM_RHYTHM].flat());
 export const OPLL_ROM_NAMES = [
   "violin", "guitar", "piano", "flute", "clarinet", "oboe", "trumpet", "organ", "horn",
   "synth", "harpsichord", "vibraphone", "synth-bass", "acoustic-bass", "electric-guitar",
-].map((n) => `opll-${n}`);
+];
 
 // An operator's fields as the user voice packs them, with their ranges:
 // [word, field (the IR player's shadow), bits]. op1's TL and both KSLs and
@@ -155,56 +155,108 @@ export const opllFm = {
     const user = [...new Set(uses.filter((u) => !romIndex(voiceBytes((w) => u.kwMap.get(w)))).map((u) => u.name))];
     if (user.length > 1)
       push("warning", "W_TARGET",
-        `the OPLL has one user voice, and ${user.map((n) => `'${n}'`).join(", ")} each need it — the last written wins; a ROM voice (opll-piano …) needs none`);
+        `the OPLL has one user voice, and ${user.map((n) => `'${n}'`).join(", ")} each need it — the last written wins; a ROM voice (piano …) needs none`);
   },
 };
 
 // The OPLL as the IR player's FM (chips/opn-fm.js has the contract). One per
-// player: it keeps each channel's voice, volume, pitch and sustain, and the
-// span its latest note is keyed for. Nothing is written until a channel
-// first keys on — a cartridge a score with no FM track does not have.
+// player. Nothing is written until a channel first keys on — a cartridge a
+// score with no FM track does not have.
 //
 // A channel's voice is settled at its key-on: the ROM's when its registers
 // are one, else the user voice, written there (another channel may have
-// written its own since). A voice change while a note is keyed moves the
-// note at once; one between notes waits for the next key-on, so a voice
-// switch's run of writes never leaves the user voice half-written.
+// written its own since). A voice change inside a note moves the note at
+// once; one between notes waits for the next key-on, so a voice switch's
+// run of writes never leaves the user voice half-written.
 //
-// The player sends a note's key-off as the note starts, ahead of the writes
-// inside the note, so whether a write's time is inside a note is read from
-// that span, not from the order the writes come in.
+// The player does not send a channel's writes in time order: a note's pitch,
+// level and voice macros go before its key-on, its key-off as it starts (or
+// as the next note does). So every channel's state is kept by time — its
+// voice, volume, pitch and sustain as timelines, its notes as spans that
+// open at the player's word that a note keys (noteOn, sent before those
+// macros) or at the key-on, and close at the key-off — and each write reads
+// the state at its own time. A write is inside a note when its time falls
+// in a span after the onset (the key-on write sets the key bit there). A
+// run of voice writes at one time (a voice switch, a macro's step) is held
+// until the channel's next call and moved then, at its own time — the
+// write's fourth element — so a key-off sent after it is known first.
+const KEEP = 128; // the entries a timeline keeps: well past the player's lookahead
+const EPS = 1e-9;
+
+/** A value over time: set(t, v) in any order, get(t) the one in force. */
+function timeline(init) {
+  const list = [{ t: -Infinity, v: init }];
+  return {
+    set(t, v) {
+      let i = list.length;
+      while (i > 1 && list[i - 1].t > t + EPS) i--;
+      if (Math.abs(list[i - 1].t - t) < EPS) list[i - 1] = { t, v };
+      else list.splice(i, 0, { t, v });
+      if (list.length > KEEP) list.splice(1, list.length - KEEP);
+    },
+    get: (t) => list.findLast((e) => e.t <= t + EPS)?.v ?? list[0].v,
+  };
+}
+
 function opllEncoder() {
-  let started, ops, fb, vol, inst, fnum, block, sus, span;
+  let started, ops, fb, voice, vol, pitch, sus, spans, moved;
   const reset = () => {
     started = false;
-    ops = Array.from({ length: CHANNELS }, () => [{}, {}]);
+    ops = Array.from({ length: CHANNELS }, () => [{}, {}]); // the latest operator fields
     fb = new Array(CHANNELS).fill(0);
-    vol = new Array(CHANNELS).fill(0);
-    inst = new Array(CHANNELS).fill(0);
-    fnum = new Array(CHANNELS).fill(0);
-    block = new Array(CHANNELS).fill(0);
-    sus = new Array(CHANNELS).fill(0);
-    span = Array.from({ length: CHANNELS }, () => ({ on: Infinity, off: Infinity }));
+    voice = Array.from({ length: CHANNELS }, () => timeline(voiceBytes(() => 0)));
+    vol = Array.from({ length: CHANNELS }, () => timeline(0));
+    pitch = Array.from({ length: CHANNELS }, () => timeline({ fnum: 0, block: 0 }));
+    sus = Array.from({ length: CHANNELS }, () => timeline(0));
+    spans = Array.from({ length: CHANNELS }, () => []);
+    moved = new Array(CHANNELS).fill(null); // the time of a voice move not yet written
   };
   reset();
   const at = (when) => when ?? -Infinity; // a write with no time is the run's start
-  const keyedAt = (ch, when) => at(when) >= span[ch].on - 1e-9 && at(when) < span[ch].off - 1e-9;
-  const w = (a, d) => [OPLL_PORT, a, d];
-  const r2x = (ch, keyed) => (sus[ch] << 5) | (keyed ? 0x10 : 0) | (block[ch] << 1) | (fnum[ch] >> 8);
-  const opWord = (ch, word) => {
-    if (word === "FM_FB") return fb[ch];
-    const n = Number(word.slice(-1));
-    const field = word === "FM_TL1" ? "tl" : OP_FIELDS.find(([x]) => `${x}${n}` === word)?.[1];
-    return ops[ch][n - 1][field];
+  const keyedAt = (ch, t) => spans[ch].some((sp) => t > sp.on + EPS && t < sp.off - EPS);
+  // A note keyed at `t`: a span of its own unless one opens there already.
+  // A note still open before it ends there — the player keys the channel
+  // off for it (a full-gate note's key-off comes with the next note, after
+  // that note's macros; a slur keys nothing and opens nothing).
+  const open = (ch, t) => {
+    started = true;
+    const list = spans[ch];
+    if (list.some((sp) => Math.abs(sp.on - t) < EPS && sp.off === Infinity)) return;
+    for (const sp of list) if (sp.off === Infinity && sp.on < t - EPS) sp.off = t;
+    list.push({ on: t, off: Infinity });
+    if (list.length > KEEP) list.shift();
   };
-  // The channel's voice into the chip: the user voice's bytes when it is no
-  // ROM voice, and $30's voice and volume.
-  const settle = (ch) => {
-    const b = voiceBytes((word) => opWord(ch, word));
-    inst[ch] = romIndex(b);
-    return [...(inst[ch] ? [] : b.map((d, a) => w(a, d))), w(0x30 + ch, (inst[ch] << 4) | vol[ch])];
+  const w = (a, d, t) => (t === undefined ? [OPLL_PORT, a, d] : [OPLL_PORT, a, d, t]);
+  const r2x = (ch, keyed, t) => {
+    const { fnum, block } = pitch[ch].get(t);
+    return (sus[ch].get(t) << 5) | (keyed ? 0x10 : 0) | (block << 1) | (fnum >> 8);
   };
-  const voiceMoved = (ch, when) => (started && keyedAt(ch, when) ? settle(ch) : []);
+  const r3x = (ch, t) => (romIndex(voice[ch].get(t)) << 4) | vol[ch].get(t);
+  // The channel's voice into the chip at `t`: the user voice's bytes when it
+  // is no ROM voice, and $30's voice and volume (`stamp`: each write's time).
+  const settle = (ch, t, stamp) => {
+    const b = voice[ch].get(t);
+    return [...(romIndex(b) ? [] : b.map((d, a) => w(a, d, stamp))), w(0x30 + ch, r3x(ch, t), stamp)];
+  };
+  // A held voice move: written, at its time, if a note sounds then.
+  const flush = (ch) => {
+    const t = moved[ch];
+    moved[ch] = null;
+    return t !== null && started && keyedAt(ch, t) ? settle(ch, t, t) : [];
+  };
+  // The channel's voice, from its latest fields, as of `t`; a move at
+  // another time than the one held writes that one first.
+  const voiceMoved = (ch, t) => {
+    const out = moved[ch] !== null && Math.abs(moved[ch] - t) > EPS ? flush(ch) : [];
+    voice[ch].set(t, voiceBytes((word) => {
+      if (word === "FM_FB") return fb[ch];
+      const n = Number(word.slice(-1));
+      const field = word === "FM_TL1" ? "tl" : OP_FIELDS.find(([x]) => `${x}${n}` === word)?.[1];
+      return ops[ch][n - 1][field];
+    }));
+    moved[ch] = t;
+    return out;
+  };
   return {
     channels: CHANNELS,
     csm: false,
@@ -213,41 +265,50 @@ function opllEncoder() {
     op(ch, opIdx, reg, o, when) {
       if (opIdx > 1) return [];
       if (opIdx === 1 && reg === "tl") {
-        vol[ch] = fit(o.tl, 4);
-        return started ? [w(0x30 + ch, (inst[ch] << 4) | vol[ch])] : [];
+        vol[ch].set(at(when), fit(o.tl, 4));
+        return [...flush(ch), ...(started ? [w(0x30 + ch, r3x(ch, at(when)))] : [])];
       }
       Object.assign(ops[ch][opIdx], o);
-      return voiceMoved(ch, when);
+      return voiceMoved(ch, at(when));
     },
     alg(ch, regs, when) {
       fb[ch] = fit(regs.feedback, 3);
-      return voiceMoved(ch, when);
+      return voiceMoved(ch, at(when));
     },
     pan: () => [], // mono
     // A (fractional) MIDI note: the lowest block whose F-number fits 9 bits.
     pitch(ch, midi, when) {
+      const t = at(when);
       const hz = 440 * 2 ** ((midi - 69) / 12);
-      let b = 0;
-      let f = Math.round((hz * 2 ** 19) / (RATE * 2 ** b));
-      while (f > 511 && b < 7) f = Math.round((hz * 2 ** 19) / (RATE * 2 ** ++b));
-      fnum[ch] = Math.max(0, Math.min(511, f));
-      block[ch] = b;
-      return started ? [w(0x10 + ch, fnum[ch] & 0xff), w(0x20 + ch, r2x(ch, keyedAt(ch, when)))] : [];
+      let block = 0;
+      let f = Math.round((hz * 2 ** 19) / RATE);
+      while (f > 511 && block < 7) f = Math.round((hz * 2 ** 19) / (RATE * 2 ** ++block));
+      const fnum = Math.max(0, Math.min(511, f));
+      pitch[ch].set(t, { fnum, block });
+      return [...flush(ch), ...(started ? [w(0x10 + ch, fnum & 0xff), w(0x20 + ch, r2x(ch, keyedAt(ch, t), t))] : [])];
     },
-    // The key: both operators at once, on any mask but 0.
+    // The player's word, before a note's macros, that it keys at `when`.
+    noteOn(ch, when) {
+      open(ch, at(when));
+      return flush(ch);
+    },
+    // The key: both operators at once, on any mask but 0. A key-off closes
+    // the latest span open at its time.
     key(ch, mask, when) {
+      const t = at(when);
       if (!mask) {
-        if (at(when) >= span[ch].on) span[ch].off = at(when);
-        return started ? [w(0x20 + ch, r2x(ch, false))] : [];
+        const sp = spans[ch].findLast((x) => x.off === Infinity && x.on <= t + EPS);
+        if (sp) sp.off = t;
+        return [...flush(ch), ...(started ? [w(0x20 + ch, r2x(ch, false, t))] : [])];
       }
-      started = true;
-      span[ch] = { on: at(when), off: Infinity };
-      return [...settle(ch), w(0x10 + ch, fnum[ch] & 0xff), w(0x20 + ch, r2x(ch, true))];
+      open(ch, t);
+      return [...flush(ch), ...settle(ch, t), w(0x10 + ch, pitch[ch].get(t).fnum & 0xff), w(0x20 + ch, r2x(ch, true, t))];
     },
     // :sus, $2x bit 5.
     sus(ch, v, when) {
-      sus[ch] = v ? 1 : 0;
-      return started ? [w(0x20 + ch, r2x(ch, keyedAt(ch, when)))] : [];
+      const t = at(when);
+      sus[ch].set(t, v ? 1 : 0);
+      return [...flush(ch), ...(started ? [w(0x20 + ch, r2x(ch, keyedAt(ch, t), t))] : [])];
     },
     isKeyOn: (port, addr, data) => port === OPLL_PORT && addr >= 0x20 && addr <= 0x28 && (data & 0x10) !== 0,
     lfo: () => [], // the OPLL's LFO is fixed
