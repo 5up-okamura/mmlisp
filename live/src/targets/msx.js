@@ -1,9 +1,10 @@
 // The MSX: its PSG, an AY-3-8910, and two cartridges a score has when it
 // names their channels — the SCC's five wave channels and the FM-PAC's
-// YM2413, nine 2-op FM channels. No driver: the score is delivered as VGM.
+// YM2413, nine 2-op FM channels, or six and its five rhythm sounds. No
+// driver: the score is delivered as VGM.
 import { ay8910 } from "../chips/ay8910.js";
 import { k051649, sccWave } from "../chips/k051649.js";
-import { ym2413, opllFm } from "../chips/ym2413.js";
+import { ym2413, opllFm, opllRhythm } from "../chips/ym2413.js";
 import { ssgTone, ssgNoise } from "../chips/ssg.js";
 
 const on = (part, voice) => ({ chip: "psg", part, voice });
@@ -34,6 +35,9 @@ export default {
     wave1: wave(0), wave2: wave(1), wave3: wave(2), wave4: wave(3), wave5: wave(4),
     fm1: fm(0), fm2: fm(1), fm3: fm(2), fm4: fm(3), fm5: fm(4),
     fm6: fm(5), fm7: fm(6), fm8: fm(7), fm9: fm(8),
+    // The FM-PAC's rhythm kit: a track for each of its five sounds at most,
+    // any of them playing any sound, on fm7-fm9's scope lanes.
+    ...Object.fromEntries([1, 2, 3, 4, 5].map((n) => [`rhythm${n}`, { chip: "opll", part: opllRhythm, voice: 0, scope: 15 }])),
   },
   readsAs: { modes: { "ssg-noise": NOISE_MODES } },
   hints: {

@@ -67,12 +67,14 @@ const FM_CHANNELS = Math.max(
 const CORE_OF_KIND = { fm: "fm", tone: "psg", noise: "psg", wave: "psg", sample: "sample" };
 const PSG_LANES = TONE_LANES; // the PSG core's
 // The sample core's handler for each sample part: the chips' own voices (the
-// YM2608's rhythm and ADPCM-B), PCM8's mix, the Mega Drive driver's DAC mix.
+// YM2608's rhythm and ADPCM-B, the OPLL's rhythm), PCM8's mix, the Mega
+// Drive driver's DAC mix.
 // Where a PSG or sample track's song-wide LFO write goes: the FM core's
 // channel 0, as the driver takes it from any track.
 const FM_LFO_ROUTE = { core: "fm", part: null, lane: 0 };
 const SAMPLE_HANDLERS = {
   rhythm: "_dispatchRhythmEvent",
+  "opll-rhythm": "_dispatchRhythmEvent",
   "adpcm-b": "_dispatchAdpcmEvent",
   pcm8: "_dispatchPcm8Event",
   dac: "_dispatchDacEvent",
@@ -205,6 +207,7 @@ export class IRPlayer {
     this._target = targetProfile(); // until a score says otherwise (_loadIR)
     this._fmChip = this._target.chipForKind("fm");
     this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM; // the FM's registers (chips/)
+    this._rhythmEnc = this._rhythmEncOf(this._target);
     this._psgChip = this._psgChipOf(this._target); // null: a target with no PSG
     this._toneEnc = this._toneEncodersOf(this._target, this._psgChip);
     this._chipsStarted = new Set(); // the optional chips written to this run (_lane)
@@ -400,6 +403,7 @@ export class IRPlayer {
     this._target = target;
     this._fmChip = target.chipForKind("fm");
     this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM;
+    this._rhythmEnc = this._rhythmEncOf(target);
     this._psgChip = this._psgChipOf(target); // one per score: it may keep state
     this._toneEnc = this._toneEncodersOf(target, this._psgChip);
     this._chipsStarted.clear();
@@ -530,9 +534,8 @@ export class IRPlayer {
     const write = (writes) => { for (const [p, a, d] of writes) this._write(p, a, d, when); };
     const adpcm = this._target.chipFor("adpcm-b")?.adpcm;
     if (adpcm) write(adpcm.stop());
-    const rhythm = this._target.chipFor("rhythm")?.rhythm;
-    const kit = this._target.parts.find((p) => p.name === "rhythm")?.kit;
-    if (rhythm && kit) for (const sound of Object.values(kit)) write(rhythm.dump(sound));
+    const kit = this._target.parts.find((p) => p.kit)?.kit;
+    if (this._rhythmEnc && kit) for (const sound of Object.values(kit)) write(this._rhythmEnc.dump(sound));
     const t = when ?? this._audioContext?.currentTime ?? 0;
     if (this._target.hasPart("pcm8")) for (let v = 0; v < PCM8_VOICES; v++) this._pcm8Ev(t, { kind: "cut", voice: v });
   }
@@ -921,14 +924,14 @@ export class IRPlayer {
     }
     // CSM: Timer A keys CH3, so muting the CSM voice holds the timer instead.
     if (this._reg27 & 0x80) this._writeReg27(when);
-    // The YM2608's sample voices: dump a rhythm sound, stop the ADPCM-B.
-    const chip = this._target?.chipFor?.("rhythm") ?? this._target?.chipFor?.("adpcm-b");
+    // The chips' own sample voices: dump a rhythm sound, stop the ADPCM-B.
+    const adpcm = this._target?.chipFor?.("adpcm-b")?.adpcm;
     for (const [voice, hits] of this._chipPcm?.hits ?? []) {
       if (this._isVoiceAudible(voice)) continue;
       // A PCM8 voice is cut from the mix.
       const h = hits.at(-1);
       if (h?.pcm8 != null) { this._pcm8Ev(when, { kind: "cut", voice: h.pcm8 }); continue; }
-      const writes = voice === "adpcm" ? chip.adpcm.stop() : chip.rhythm.dump(voice);
+      const writes = voice === "adpcm" ? adpcm.stop() : this._rhythmEnc.dump(voice, when);
       for (const [p, a, d] of writes) this._write(p, a, d, when);
     }
   }
@@ -1320,6 +1323,9 @@ export class IRPlayer {
           if (Number.isFinite(end)) until = Math.max(until, end);
         }
       this._chipPcmFrames(until);
+      // A rhythm whose registers hold several sounds (the OPLL's) writes its
+      // queue now, in time order (chips/ym2413.js).
+      for (const [p, a, d, t] of this._rhythmEnc?.flush?.(until) ?? []) this._write(p, a, d, t);
     }
     return done;
   }
@@ -2904,7 +2910,7 @@ export class IRPlayer {
   // where it moved since the last write.
   _chipPcmFrames(horizon) {
     const st = this._chipPcm;
-    const chip = this._target.chipFor("rhythm") ?? this._target.chipFor("adpcm-b");
+    const chip = this._target.chipFor("adpcm-b");
     const k0 = Math.max(Math.floor((st.doneUntil - this._frameOrigin) * 60) + 1, 0);
     const k1 = Math.floor((horizon - this._frameOrigin) * 60);
     st.doneUntil = Math.max(st.doneUntil, this._frameOrigin + k1 / 60);
@@ -2934,19 +2940,21 @@ export class IRPlayer {
             for (const [p, a, d] of chip.adpcm.pitch(deltaN)) this._write(p, a, d, t);
           }
         } else {
-          const att = IRPlayer._rhythmAtt(this._routes.get(h.ti).part.level, lv);
-          // Turned off, or falling below what the IL reaches: the sound stops.
+          const level = this._routes.get(h.ti).part.level;
+          const top = level.steps - 1;
+          const att = IRPlayer._rhythmAtt(level, lv);
+          // Turned off, or falling below what the level reaches: the sound stops.
           const falling = att > (h.lastAtt ?? h.att);
           h.lastAtt = att;
-          if (lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0 || (att > 31 && falling)) {
+          if (lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0 || (att > top && falling)) {
             h.dumped = true;
-            for (const [p, a, d] of chip.rhythm.dump(voice)) this._write(p, a, d, t);
+            for (const [p, a, d] of this._rhythmEnc.dump(voice, t)) this._write(p, a, d, t);
             continue;
           }
-          const il = 31 - Math.min(31, att);
+          const il = top - Math.min(top, att);
           if (il === h.il) continue;
           h.il = il;
-          for (const [p, a, d] of chip.rhythm.level(voice, il, h.pan)) this._write(p, a, d, t);
+          for (const [p, a, d] of this._rhythmEnc.level(voice, il, h.pan, t)) this._write(p, a, d, t);
         }
       }
       // A hit is done with once a later one owns the voice.
@@ -3103,27 +3111,33 @@ export class IRPlayer {
     }
   }
 
-  // The YM2608's rhythm: a hit writes its sound's level and pan, then keys
-  // it; vel + vol + master fold into the level as an FM carrier's do (the IL
-  // steps 0.75 dB, as TL does) and move it while the sound plays
-  // (_chipPcmFrames), and `:mode gate` dumps it at the note's end.
+  // A chip's ROM rhythm (the YM2608's, the OPLL's): a hit writes its sound's
+  // level and pan, then keys it; vel + vol + master fold into the level as
+  // an FM carrier's do, on the part's ladder (the YM2608's IL 0.75 dB a
+  // step, the OPLL's volume 3 dB), and move it while the sound plays
+  // (_chipPcmFrames), and `:mode gate` dumps it at the note's end. On the
+  // OPLL a hit's note tunes its channel.
   _dispatchRhythmEvent(ev, when) {
     const ti = ev._trackIndex;
     const st = (this._rhythmState ??= new Map()).get(ti) ?? { pan: 0 };
     this._rhythmState.set(ti, st);
-    const enc = this._target.chipFor("rhythm").rhythm;
+    const enc = this._rhythmEnc;
+    const part = ev._route.part;
     const sound = this._ir?.metadata?.samples?.find((s) => s.name === ev.args?.sample)?.rhythm;
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
         if (!sound || !this._isVoiceAudible(sound)) break;
-        this._chipPcmHit(sound, ev, when, when + ROM_SOUND_SEC[sound], { pan: st.pan }, (t, h) => {
+        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        const sec = part.soundSec?.[sound] ?? ROM_SOUND_SEC[sound];
+        this._chipPcmHit(sound, ev, when, when + sec, { pan: st.pan }, (t, h) => {
           const lv = this._chipPcmLevelAt(h, t);
           // A hit at :vol 0 is silence: it takes the sound from an earlier one.
           const silent = lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0;
+          const top = part.level.steps - 1;
           h.dumped = silent;
-          h.att = IRPlayer._rhythmAtt(this._routes.get(h.ti).part.level, lv);
-          h.il = 31 - Math.min(31, h.att);
-          const writes = silent ? enc.dump(sound) : enc.hit(sound, h.il, st.pan);
+          h.att = IRPlayer._rhythmAtt(part.level, lv);
+          h.il = top - Math.min(top, h.att);
+          const writes = silent ? enc.dump(sound, t) : enc.hit(sound, h.il, st.pan, t, midi);
           for (const [p, a, d] of writes) this._write(p, a, d, t);
         });
         break;
@@ -3133,7 +3147,7 @@ export class IRPlayer {
         if (sound && ev.args?.mode === "gate") {
           const h = this._chipPcmOwnHit(sound, ti, when);
           if (h) {
-            for (const [p, a, d] of enc.dump(sound)) this._write(p, a, d, when);
+            for (const [p, a, d] of enc.dump(sound, when)) this._write(p, a, d, when);
             h.end = Math.min(h.end, when);
           }
         }
@@ -5760,6 +5774,16 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     return ((regs?.vol != null || this._fmVolSweep[ch] != null) && this._fmVolAtTime(ch, when) === 0)
       || (this._masterVol ?? VOL_UNITY) === 0;
+  }
+
+  // The ROM rhythm's encoder (hit, level, dump; chips/ym2608.js): the FM
+  // encoder's own where the rhythm shares its chip's state (the OPLL's),
+  // else the chip's.
+  _rhythmEncOf(target) {
+    const part = target.parts.find((p) => p.kit);
+    if (!part) return null;
+    const chip = target.chipFor(part.name);
+    return (chip === this._fmChip ? this._fmEnc.rhythm : null) ?? chip?.rhythm ?? null;
   }
 
   // The operators a channel's level is: its algorithm's carriers, or the

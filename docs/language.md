@@ -2609,5 +2609,36 @@ the compiler says so when the FM tracks name two such voices
 into op2 on algorithm 4 with op3 and op4 silent, the rates on the 4-op
 scale; their KSL, waveform and vibrato have no register there.
 
+**Rhythm.** `rhythm1`–`rhythm5` play the FM-PAC's five rhythm sounds,
+named by the kits' roles and built in as `pc88`'s are — as many tracks as
+the kit has sounds, each playing any of them:
+
+| Name | `kick` | `snare` | `tom4` | `ride` | `hat` |
+| --- | --- | --- | --- | --- | --- |
+| ROM sound | BD | SD | TOM | TOP-CYM | HH |
+
+The rhythm takes the chip's channels 7–9, so a score with a rhythm track
+has no `fm7`–`fm9` (`E_TARGET`); the mode is the whole song's. There is no
+`rim` and no `:pan`. A hit's level is vel + vol + master on the sound's
+4-bit volume (3 dB a step, as a channel's), moving while it sounds; a
+`:vol 0` releases it. A sound is keyed until its next hit — which keys it
+off and on, so it starts over — or, with `:mode gate`, until its note
+ends, where it releases.
+
+A hit's note tunes its sound: c4 is the chip's datasheet tuning, and every
+other note moves it by its semitones (`(rhythm1 tom4 c g > c)` plays three
+toms). Two sounds share each tuned channel — SD with HH, TOM with the
+cymbal — so a pair sounds at the pitch of whichever was hit last, and the
+compiler says so once when a score writes a pair at different pitches
+(`W_TARGET`).
+
+```lisp
+(def-score :target msx)
+(fm1 piano :len 8 c e g e)
+(rhythm1 kick :len 4 c c c c)
+(rhythm2 hat :len 8 c c c c c c c c)
+(rhythm3 snare :len 2 _ c)
+```
+
 **Effects.** `def-se` is the Mega Drive driver's; an `msx` score has none
 (`E_TARGET`).

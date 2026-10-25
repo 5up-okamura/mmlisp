@@ -1296,7 +1296,8 @@ function placePcmTieOff(h, events) {
 // A part's rules for its notes (chips/parts.js `checkNote`), over a compiled
 // layer's PCM notes — every one the layer wrote, before :prio flattening
 // drops any. Reported once per layer, sample and reason.
-function checkPartNotes(events, trackState, sampleDefs, diagnostics, trackName) {
+// `shared` is the part's across the score's tracks (one rule said once).
+function checkPartNotes(events, trackState, sampleDefs, diagnostics, trackName, shared = {}) {
   const { part, head, target } = trackState;
   if (!part?.checkNote) return;
   const seen = new Set();
@@ -1305,7 +1306,7 @@ function checkPartNotes(events, trackState, sampleDefs, diagnostics, trackName) 
     const sample = sampleDefs.get(ev.args?.sample);
     if (!sample) continue;
     part.checkNote({
-      sample, sampleName: ev.args.sample, pitch: ev.args.pitch, mode: ev.args.mode, head, target,
+      sample, sampleName: ev.args.sample, pitch: ev.args.pitch, mode: ev.args.mode, head, target, shared,
       once(key, msg, severity = "error") {
         if (seen.has(key)) return;
         seen.add(key);
@@ -6821,9 +6822,12 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   }
 
   // A part's rules for its notes, on every layer before flattening.
+  const partShared = new Map();
   for (const key of trackOrder) {
     const { trackData, trackState } = trackByKey.get(key);
-    checkPartNotes(trackData.events, trackState, sampleDefs, diagnostics, key);
+    const { part } = trackState;
+    if (part && !partShared.has(part)) partShared.set(part, {});
+    checkPartNotes(trackData.events, trackState, sampleDefs, diagnostics, key, partShared.get(part));
   }
 
   // Channels that share one wave memory (chips/parts.js `waveRam`: the SCC's

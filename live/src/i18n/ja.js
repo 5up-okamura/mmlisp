@@ -33,7 +33,7 @@ export default {
     "sqr1–sqr3": ["4bcd4d7e", "PSG の 3 つの矩形波チャンネル。固有の音色はなく、音はマクロで作る。"],
     "wave1–wave5": ["f675b74e", "msx: SCC の 5 つの波形メモリ音源チャンネル。それぞれトラックで名前を書いた def-wave を鳴らす（それまでは矩形波）。音量は 4 ビット。wave4 と wave5 は 1 つの波形メモリを共有。"],
     "noise": ["15147589", "PSG のノイズチャンネル。:mode white0–white3 または periodic0–periodic3（以後も有効）。3 は sqr3 のピッチに従う。x68k では fm8 の第 4 オペレータで、周期は曲の :noise-rate。"],
-    "rhythm1–rhythm6": ["59477021", "pc88: YM2608 の ROM リズム。6 つの音をキットの役名（kick snare ride hat tom4 rim）で鳴らす。def は不要。トラックは 1 本の流れで、:prio のレイヤーは他のチャンネルと同じく競合する。同時に鳴らす音は、それぞれ自分の :vol と :pan を持つ別のトラックに置く。"],
+    "rhythm1–rhythm6": ["97ae1b5b", "pc88: YM2608 の ROM リズム。6 つの音をキットの役名（kick snare ride hat tom4 rim）で鳴らす。def は不要。トラックは 1 本の流れで、:prio のレイヤーは他のチャンネルと同じく競合する。同時に鳴らす音は、それぞれ自分の :vol と :pan を持つ別のトラックに置く。msx: FM-PAC の 5 音（rim なし、:pan なし）を rhythm1–rhythm5 で、fm7–fm9 の代わりに鳴らす。打鍵の音高がその音を調律する。"],
     "pcm1–pcm3": ["cd51b4c8", "サンプル。fm6 の DAC 上でソフトミックスされる。音符の前に def-pcm のサンプル名を書く。音符のピッチはリサンプル済みのコピーを選ぶ。x68k では pcm1–pcm8 が PCM8 の音声で、MSM6258 の ADPCM にミックスされ、:pitch の動きも受ける。"],
     "notes": ["7df5e1e7", "トラックの :oct と :len で読まれる音名。:oct 4 が中央ハ（MIDI 60）。"],
     "_ (rest)": ["3620db3e", ":len の長さ、または自分の長さの休符。`r` は休符ではない。"],

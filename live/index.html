@@ -6767,7 +6767,9 @@
         const head = t.scoreChannel ?? t.channel;
         if (head != null && !headToTrack.has(head)) headToTrack.set(head, ti);
       });
-      const rhythmHeads = new Set(target.hasPart('rhythm') ? target.headsOf('rhythm') : []);
+      // The ROM rhythm (a part with a kit: the YM2608's, the OPLL's).
+      const kitPart = target.parts.find((p) => p.kit);
+      const rhythmHeads = new Set(kitPart ? target.headsOf(kitPart.name) : []);
       const soundOf = new Map((ir?.metadata?.samples ?? []).filter((d) => d.rhythm).map((d) => [d.name, d.rhythm]));
       const sounds = new Set();
       const rhythmTracks = [];
@@ -6783,12 +6785,15 @@
         if (rhythmHeads.has(head)) {
           if (rhythmDone) continue;
           rhythmDone = true;
-          // The part's sounds in its order, from the head's lane (targets.js scopeLane).
+          // The part's sounds in its order, from the head's lane (targets.js
+          // scopeLane) — or where the part puts each (`kitLane`: the OPLL's
+          // pairs share a channel's).
+          const kitLane = target.partOf(head).kitLane;
           Object.values(target.partOf(head).kit).forEach((sound, k) => {
             if (!sounds.has(sound)) return;
             // The roll's row: this sound's hits, from every rhythm track.
             const samples = new Set([...soundOf].filter(([, r]) => r === sound).map(([n]) => n));
-            model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), voice: sound, scope: target.scopeLane(head) + k,
+            model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), voice: sound, scope: target.scopeLane(head) + (kitLane?.[sound] ?? k),
               volKind: 'voice', volIndex: null, selIndex: null, trackIndex: rhythmTracks[0], rhythmTracks, samples });
           });
           continue;
@@ -10006,13 +10011,18 @@
       // the def from sounding.
       const lib = libraryKeyTarget();
       const libSample = lib?.kind === 'pcm' ? lib : null;
-      // The YM2608's ROM rhythm: a rhythm sound's strip keys its sound as a
-      // hit (it plays from the user's ROM; while the song plays, beside it).
+      // A ROM rhythm: a rhythm sound's strip keys its sound as a hit (while
+      // the song plays, beside it) — the YM2608's from the user's ROM, the
+      // OPLL's through the player's encoder, whose queue holds the song's
+      // hits by time: a hit with none is written at once (flush(-Infinity)).
       const rhythm = libSample ? null : selectedRhythmStrip();
       if (rhythm) {
-        if (!_rhythmRom) { log('The rhythm plays from your ROM — File > Import > YM2608 Rhythm ROM…', 'err'); return; }
-        const enc = targetProfile(_lastGoodIR?.metadata?.target).chipFor('rhythm').rhythm;
-        for (const [p, a, d] of enc.hit(rhythm.voice, 31, 0)) writePreview(p, a, d);
+        const machine = targetProfile(_lastGoodIR?.metadata?.target);
+        if (machine.hasPart('rhythm') && !_rhythmRom) { log('The rhythm plays from your ROM — File > Import > YM2608 Rhythm ROM…', 'err'); return; }
+        const part = machine.parts.find((p) => p.kit);
+        const enc = player?._rhythmEnc ?? machine.chipFor(part.name).rhythm;
+        const writes = [...enc.hit(rhythm.voice, part.level.steps - 1, 0), ...(enc.flush?.(-Infinity) ?? [])];
+        for (const [p, a, d] of writes) writePreview(p, a, d);
         return;
       }
       const part = libSample ? null : selectedPcmPart();

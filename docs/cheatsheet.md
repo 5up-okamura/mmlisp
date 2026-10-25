@@ -245,8 +245,10 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   op2): the fifteen ROM voices built in as `piano`, `violin` …
   (a `def-fm` that extends one, or its own, is the chip's one user voice),
   `:ar` `:dr` 0–15, `:tl1` 0–63, `:ks` 0–1, its own `:ws1` `:eg1` `:ksl1`
-  `:vib1` and the channel's `:sus 1`; no `:alg`, `:tl2`, `:pan`. No PCM.
-  VGM and WAV.
+  `:vib1` and the channel's `:sus 1`; no `:alg`, `:tl2`, `:pan`.
+  `rhythm1`–`rhythm5` the FM-PAC's rhythm (`kick snare tom4 ride hat`, no
+  def; a hit's note tunes it, c4 the chip's) in place of `fm7`–`fm9`. No
+  PCM. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

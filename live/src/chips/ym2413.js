@@ -12,6 +12,8 @@
 // A voice is one of the ROM's when its registers are, and the user voice
 // otherwise — one for the chip, the last written winning.
 import { fmWords } from "./fm-words.js";
+import { NO_WORDS } from "./parts.js";
+import { pitchToMidi } from "../ir-utils.js";
 
 const CLOCK = 3579545; // the MSX's 3.58 MHz
 export const OPLL_PORT = 4;
@@ -159,6 +161,67 @@ export const opllFm = {
   },
 };
 
+// The rhythm mode: channels 7-9 (6-8 here) give way to five ROM rhythm
+// sounds, keyed by $0E bits 4-0, their 4-bit volumes in $36-$38 (0 loud),
+// each channel's F-number tuning its sounds: BD on 6; HH and SD on 7; TOM
+// and the top cymbal on 8. The kits' roles name them, as the YM2608's
+// (chips/rhythm-rom.js); there is no rim. A sound is keyed until its next
+// hit or its gate's end, where it releases.
+const RHYTHM = {
+  bd: { bit: 0x10, ch: 6, vol: [0x36, 0] },
+  sd: { bit: 0x08, ch: 7, vol: [0x37, 0] },
+  hh: { bit: 0x01, ch: 7, vol: [0x37, 4] },
+  tom: { bit: 0x04, ch: 8, vol: [0x38, 4] },
+  top: { bit: 0x02, ch: 8, vol: [0x38, 0] },
+};
+// c4 is the datasheet's tuning of each channel: $1x, $2x (block, F-number bit 8).
+const RHYTHM_C4 = { 6: [0x20, 0x05], 7: [0x50, 0x05], 8: [0xc0, 0x01] };
+// The pairs on one channel, which a hit tunes for both.
+const RHYTHM_PAIRS = [["sd", "hh"], ["tom", "top"]];
+
+export const opllRhythm = {
+  name: "opll-rhythm",
+  label: "OPLL rhythm",
+  kind: "sample",
+  words: NO_WORDS, // mono: no :pan
+  level: { stepDb: 3, steps: 16 }, // the 4-bit volume, 15 loud .. 0 (the register's 0 .. 15)
+  points: false,
+  kit: { kick: "bd", snare: "sd", tom4: "tom", ride: "top", hat: "hh" },
+  // A sound's scope lane after its part's first (targets.js scopeLane): its
+  // channel's, the pairs sharing one.
+  kitLane: { bd: 0, sd: 1, hh: 1, tom: 2, top: 2 },
+  // How long a hit's level is followed: the ROM sounds have died by then.
+  soundSec: { bd: 2, sd: 2, hh: 2, tom: 2, top: 2 },
+  checkNote({ sample, sampleName, pitch, mode, target, once, shared }) {
+    if (!sample.rhythm) {
+      const heads = target.headsOf(this.name);
+      once(`kit:${sampleName}`, `on ${target.name} ${heads[0]}–${heads.at(-1)} play the FM-PAC's rhythm sounds, ${Object.keys(this.kit).join(" ")}; ${sampleName} is not one, and the ${target.system} has no sample channel`);
+      return;
+    }
+    const what = `the FM-PAC's rhythm sound ${sample.rhythm} (${sampleName})`;
+    if (mode === "loop") once(`loop:${sampleName}`, `${what} plays once; it has no loop`);
+    if (sample.fxNode || sample.importFx?.length)
+      once(`fx:${sampleName}`, `${sampleName}'s :fx shapes its :file; ${what} plays as the chip has it`, "warning");
+    // A pair on one channel plays at the pitch hit last: said once a score.
+    const pitches = (shared.pitches ??= {});
+    (pitches[sample.rhythm] ??= new Set()).add(pitchToMidi(pitch));
+    for (const [a, b] of RHYTHM_PAIRS) {
+      if (shared.pairSaid || !pitches[a] || !pitches[b]) continue;
+      if ([...pitches[a], ...pitches[b]].some((m) => m !== [...pitches[a]][0])) {
+        shared.pairSaid = true;
+        once("pair", `${a} and ${b} are one channel of the FM-PAC, tuned by the pitch of whichever is hit last; they are written at different pitches`, "warning");
+      }
+    }
+  },
+  // The rhythm takes channels 7-9 from the FM: a score has one or the other.
+  checkScore({ target, allHeads, push }) {
+    const rhythm = [...allHeads].filter((h) => target.partOf(h) === this);
+    const fm = [...allHeads].filter((h) => target.partOf(h) === opllFm && target.channels[h].voice >= 6);
+    if (rhythm.length && fm.length)
+      push("error", "E_TARGET", `the FM-PAC's rhythm (${rhythm.join(", ")}) plays on its channels 7-9, so ${fm.join(", ")} cannot play beside it`);
+  },
+};
+
 // The OPLL as the IR player's FM (chips/opn-fm.js has the contract). One per
 // player. Nothing is written until a channel first keys on — a cartridge a
 // score with no FM track does not have.
@@ -200,6 +263,7 @@ function timeline(init) {
 
 function opllEncoder() {
   let started, ops, fb, voice, vol, pitch, sus, spans, moved;
+  let rmode, rq, rkeys, rvols, rtune; // the rhythm: on, its queue, keys, volume bytes, channel tunings
   const reset = () => {
     started = false;
     ops = Array.from({ length: CHANNELS }, () => [{}, {}]); // the latest operator fields
@@ -210,6 +274,11 @@ function opllEncoder() {
     sus = Array.from({ length: CHANNELS }, () => timeline(0));
     spans = Array.from({ length: CHANNELS }, () => []);
     moved = new Array(CHANNELS).fill(null); // the time of a voice move not yet written
+    rmode = false;
+    rq = [];
+    rkeys = 0;
+    rvols = { 0x36: 0, 0x37: 0, 0x38: 0 };
+    rtune = {};
   };
   reset();
   const at = (when) => when ?? -Infinity; // a write with no time is the run's start
@@ -293,9 +362,11 @@ function opllEncoder() {
       return flush(ch);
     },
     // The key: both operators at once, on any mask but 0. A key-off closes
-    // the latest span open at its time.
+    // the latest span open at its time. Channels 7-9 are the rhythm's in
+    // its mode, and an FM key does not reach them.
     key(ch, mask, when) {
       const t = at(when);
+      if (rmode && ch >= 6) return [];
       if (!mask) {
         const sp = spans[ch].findLast((x) => x.off === Infinity && x.on <= t + EPS);
         if (sp) sp.off = t;
@@ -312,13 +383,84 @@ function opllEncoder() {
     },
     isKeyOn: (port, addr, data) => port === OPLL_PORT && addr >= 0x20 && addr <= 0x28 && (data & 0x10) !== 0,
     lfo: () => [], // the OPLL's LFO is fixed
+    rhythm: rhythmOps(),
   };
+
+  // The rhythm as the IR player's (chips/ym2608.js `rhythm` has the
+  // contract: hit, level, dump). $0E and the volume bytes hold several
+  // sounds each, and the player sends hits out of time order, so every call
+  // is queued with its time and the player's flush(horizon) — once every
+  // event up to the horizon is sent — writes them in time order. A hit keys
+  // its sound (off first if it is keyed, so it starts over), at its level,
+  // its channel tuned to its note.
+  function rhythmOps() {
+    const queue = (op) => { rq.push(op); return []; };
+    const tune = (out, ch, midi, t) => {
+      const [lo, hi] = RHYTHM_C4[ch];
+      const c4 = (lo | ((hi & 1) << 8)) * 2 ** ((hi >> 1) & 7);
+      const abs = c4 * 2 ** ((midi - 60) / 12);
+      let block = 0;
+      while (block < 7 && Math.round(abs / 2 ** block) > 511) block++;
+      const fnum = Math.max(1, Math.min(511, Math.round(abs / 2 ** block)));
+      const key = (block << 9) | fnum;
+      if (rtune[ch] === key) return;
+      rtune[ch] = key;
+      out.push(w(0x10 + ch, fnum & 0xff, t), w(0x20 + ch, (block << 1) | (fnum >> 8), t));
+    };
+    const volume = (out, sound, il, t) => {
+      const [addr, shift] = RHYTHM[sound].vol;
+      const v = 15 - Math.max(0, Math.min(15, il));
+      rvols[addr] = (rvols[addr] & ~(15 << shift)) | (v << shift);
+      out.push(w(addr, rvols[addr], t));
+    };
+    const keys = (out, bits, t) => {
+      rkeys = bits;
+      out.push(w(0x0e, 0x20 | rkeys, t));
+    };
+    return {
+      hit: (sound, il, _pan, when, midi = 60) => queue({ t: at(when), k: "hit", sound, il, midi }),
+      level: (sound, il, _pan, when) => queue({ t: at(when), k: "level", sound, il }),
+      // A dump with no time is a stop: the queue is dropped and every sound
+      // keyed off now.
+      dump(sound, when) {
+        if (when !== undefined) return queue({ t: at(when), k: "dump", sound });
+        rq = [];
+        if (!rmode || !rkeys) return [];
+        const out = [];
+        keys(out, 0);
+        return out;
+      },
+      flush(horizon) {
+        const due = rq.filter((op) => op.t <= horizon + EPS).sort((a, b) => a.t - b.t);
+        if (!due.length) return [];
+        rq = rq.filter((op) => op.t > horizon + EPS);
+        const out = [];
+        for (const op of due) {
+          const r = RHYTHM[op.sound];
+          if (!rmode) {
+            // The mode, and the volumes' start, at the first rhythm write.
+            started = rmode = true;
+            out.push(w(0x0e, 0x20, op.t));
+            for (const a of [0x36, 0x37, 0x38]) out.push(w(a, rvols[a], op.t));
+          }
+          if (op.k === "hit") {
+            volume(out, op.sound, op.il, op.t);
+            tune(out, r.ch, op.midi, op.t);
+            if (rkeys & r.bit) keys(out, rkeys & ~r.bit, op.t);
+            keys(out, rkeys | r.bit, op.t);
+          } else if (op.k === "level") volume(out, op.sound, op.il, op.t);
+          else if (rkeys & r.bit) keys(out, rkeys & ~r.bit, op.t);
+        }
+        return out;
+      },
+    };
+  }
 }
 
 export const ym2413 = {
   chip: "ym2413",
   clock: CLOCK,
-  parts: [opllFm],
+  parts: [opllFm, opllRhythm],
   encoder: true,
   emulator: true,
   // A cartridge, as the SCC: a score with no OPLL write has no OPLL in its

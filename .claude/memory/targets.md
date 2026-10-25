@@ -29,23 +29,27 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   expressions are in use.
 - **FM-PAC (OPLL).** The one user voice and the 15 ROM voices are built
   (stage 2; language.md §19 msx), named with no prefix (the user's
-  ruling, 2026-10-25: `piano`, not `opll-piano`). Rhythm mode: channels `rhythm1`-`rhythm5` under the
-  kit roles (kick snare tom4 ride hat; rim none), as pc88's. The mode is
-  song-wide: a score with a rhythm track has it on, and fm7-fm9 are
-  `E_TARGET` there. A hit's pitch tunes its channel (ch7 BD, ch8 SD/HH,
-  ch9 TOM/CY): c4 is the datasheet's ($16=$20 $26=$05, $17=$50 $27=$05,
-  $18=$C0 $28=$01), other notes move it by semitones; a shared pair takes
-  the last hit's pitch, with one `W_TARGET` a score when its two sounds are
-  written at different pitches. Pitch macros and glide on a rhythm hit come
-  later (a tom's pitch-down), on the FM pitch path. Like the SCC, the
-  FM-PAC is a cartridge in `:target msx`: an optional chip (`optional:
-  true`), started at its first write, absent from a VGM that has no OPLL
-  track.
+  ruling, 2026-10-25: `piano`, not `opll-piano`). The rhythm mode is
+  built (stage 3; language.md §19 msx). Pitch macros and glide on a rhythm
+  hit come later (a tom's pitch-down), on the FM pitch path.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
-- **Stages.** 1 engine and 2 language and player are built; next 3 the
-  rhythm mode, then 4 the panel's 2-op FM editor. Commit each.
+- **Stages.** 1 engine, 2 language and player, 3 the rhythm mode are
+  built; next 4 the panel's 2-op FM editor.
+- **The rhythm's encoder.** $0E's keys and the $36-$38 volume bytes hold
+  several sounds, and hits from different tracks reach the encoder out of
+  time order (each track is dispatched to the horizon in turn), so a write
+  built from "the current state" would key another sound off. The OPLL's
+  rhythm ops are queued with their times and written by `flush(horizon)`,
+  which the player calls in `_scheduleStep` once every track is dispatched
+  to the horizon (as `_chipPcmFrames`). A dump with no time (a stop) drops
+  the queue. The player's rhythm path is the kit part's (`_rhythmEncOf`),
+  not the YM2608's by name; the level is the part's ladder (il = top - att).
+  Open: a dense score with the rhythm clips (ymfm doubles the rhythm
+  output; the test score clips 87 samples) — the levels wait for a
+  listening pass; the scope shows SD with HH and TOM with TOP, one lane per
+  channel.
 - **How the encoder works (chips/ym2413.js), and why.** The IR player does
   not send a channel's writes in time order: a note's pitch, level and op
   macros go out before its key-on, its key-off as it starts (gated) or with

@@ -1,0 +1,11 @@
+; msx: the FM-PAC's rhythm mode — the five sounds under the kit roles on
+; rhythm1-rhythm5, re-hits, :vol and a level macro, a gate, a hit's note
+; tuning its channel (the toms), and FM on fm1-fm6 beside it.
+(def-score :target msx :title "msx fm-pac rhythm")
+(fm1 :tempo 132 piano :len 8 c e g e c e g e |)
+(fm2 synth-bass :oct 2 :len 4 c c g g |)
+(rhythm1 kick :len 4 c c c c |)
+(rhythm2 hat :len 8 :vol 24 c c c c c c c c |)
+(rhythm3 snare :len 4 _ c _ (macro :vel (linear 15..6 :len 8)) c |)
+(rhythm4 tom4 :len 8 _ _ _ _ g e c < g |)
+(rhythm5 ride :len 2 :gate 1/2 c c |)
