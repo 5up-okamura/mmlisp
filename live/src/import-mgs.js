@@ -35,8 +35,9 @@
 // whatever else the file holds, is counted and reported.
 //
 // MGSDRV's own behavior is read from the format and its demos, not held to
-// the driver: envelopes scale v (v × level / 15), an @e step is a frame,
-// `n:c` slides to n over c frames, `q` is eighths.
+// the driver: an @e's levels are relative to v (15 is v), an @r scales v
+// (v × level / 255), an @e step is a frame, `n:c` slides to n over c frames,
+// `q` is eighths and `k` keys off that many frames early.
 //
 //   parseMgs(bytes)               → the song: header, definitions, tracks
 //   analyzeMgs(mgs)               → what the import dialog shows
@@ -420,7 +421,9 @@ function envelopeSpec(env, v, volOf) {
     return `[${st.join(" ")}]`;
   }
   const x = expandEnv(env);
-  return frameVector(x.levels.map((lv) => volOf(Math.round((v * lv) / 15))), x.sus);
+  // An @e's level is relative to v: 15 is v itself, each step below one
+  // step quieter.
+  return frameVector(x.levels.map((lv) => volOf(Math.max(0, v + lv - 15))), x.sus);
 }
 
 // The rhythm track's hits → rhythm1-rhythm5, a track a sound, in the key-on
@@ -452,6 +455,9 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   const skip = (k) => skipped.set(k, (skipped.get(k) ?? 0) + 1);
   const defs = [];
   const tick = (s) => s * TICKS_PER_STEP;
+  // The song's tempo at a step: #tempo, then any track's t.
+  const tempoLine = a.tracks.flatMap((t) => t.tempos).sort((x, y) => x.step - y.step);
+  const tempoAt = (step) => { let bpm = mgs.tempo; for (const t of tempoLine) { if (t.step > step) break; bpm = t.bpm; } return bpm; };
 
   const waveDefs = new Map();
   const waveName = (n) => {
@@ -578,9 +584,11 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       }
       if (pitch && !pitch.startsWith("(")) state.push(pitch);
       else state.push(pitch ?? "(macro :pitch none)");
-      // q eighths of the note, k steps short of that.
+      // q eighths of the note, k frames short of that.
       const q = st.q >= 1 && st.q <= 8 ? st.q : 8;
-      const gate = n.tieOn ? n.count : Math.max(1, Math.floor((n.count * q) / 8) - st.k);
+      // k frames short of that: at t BPM a frame is t / 75 steps.
+      const kSteps = Math.round((st.k * tempoAt(n.step)) / 75);
+      const gate = n.tieOn ? n.count : Math.max(1, Math.floor((n.count * q) / 8) - kSteps);
       const legato = !!prev && prev.tieOn && prev.step + prev.count === n.step;
       notes.push({ tick: tick(n.step), len: tick(gate), midi: n.midi, vel: 15, state, tieIn: legato });
       prev = n;

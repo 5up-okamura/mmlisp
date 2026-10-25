@@ -104,12 +104,17 @@ Next:
   antiques/mgsc mgs-format.md, mgsrc-js) and the msxplay-js demo songs —
   **not held to the driver**: no MGSDRV run was compared (libkss can render
   MGS through the real driver, and kss2vgm would give the A/B the mucom
-  importer had). Guesses to check against it: an envelope scales v
-  multiplicatively (v × level / 15, @r's 0-255 likewise), `n:c` slides,
+  importer had). Settled by the user (2026-10-25): an @e's levels
+  add to v (15 is v, each step below one quieter), and `k` keys off k
+  frames early. Rejected against the format and the demos: `/` `\` `_` as
+  envelope volume moves or a loop (MGSC writes `/n` as the mixer mode $An,
+  `\n` as a signed detune $12, loops as `[ ]`), and a rhythm hit's digits
+  as its level (grider.mml `h4h4h8` with `vh12`; $20-$3F carry a length).
+  Guesses still to check against it: @r scales v (v × level / 255), `n:c` slides,
   an @e's `\` steps are + up (the reverse of the track's `\`, which MGSC
   stores as a period offset — chosen because the other reading sends
   `@e22`-style toms up 60 semitones), `h` is delay, quarter-cycle frames,
-  mode, depth in periods, `k` keys off k steps early, `q` is eighths, an
+  mode, depth in periods, `q` is eighths, an
   envelope mode 0 keeps the track's mixer.
 - MGS's FM tracks play on fm1-fm9 (@v → def-fm mgs-vNN, else ROM voice n,
   so/sf → :sus, v as :vol on the 3 dB ladder); the rhythm track (15 in

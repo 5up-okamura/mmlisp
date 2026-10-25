@@ -147,7 +147,8 @@ function compressMgs(u8) {
   // break.
   const psg1 = [0xd3, 0xcd, 0x44, 6, ...T(0, 48), 0x53, 0, ...T(4, 48), 0x40, ...T(7, 48), ...T(7, 48), 0x5d,
     0x50, 0xfb, ...T(9, 96), 0xff];
-  const psg2 = [0xd2, 0xcf, 0x80, ...T(0, 24), 0x82, ...T(0, 24), 0x2c, 48, 0xff];
+  const psg2 = [0xd2, 0xcf, 0x80, ...T(0, 24), 0x82, ...T(0, 24), 0x2c, 48,
+    0xcc, 0x48, 2, 0x80, ...T(0, 24), 0xff]; // v12, k2: @e0 below v, 2 frames short
   const scc1 = [0x41, ...[150, 0], ...new Array(48).fill(1), 0xd4, 0xcc, 0x80, 0x49, 1, 0x54, 13, 3, 1, 4,
     0x57, 2, 0, 0, ...T(0, 24), 0x58, 0, 0, ...T(4, 24), 0x59, 0, 0, 0, ...T(7, 48), 0xff];
   // FM 1: the @v voice, then ROM voice 3 with the sustain on; FM rhythm
@@ -177,6 +178,8 @@ function compressMgs(u8) {
     has(source, /#top[\s\S]*:pitch -?\d+[\s\S]*\(go top\)/, what); // `$`, then \ 5
     has(source, /\(sqr2[\s\S]*:mode noise :noise-rate 31/, what);
     has(source, /\(def vol-e0-v15 \(macro :vol \[31 23 \(wait 3f\) 0\]\)\)/, what);
+    has(source, /\(def vol-e0-v12 \(macro :vol \[26 19 \(wait 3f\) 0\]\)\)/, what); // relative to v
+    has(source, /vol-e0-v12 (\(macro :pitch none\) )?c(40t|5\/48)/, what); // k2 at t150: 4 steps short
     has(source, /\(def bend-e2-c3 \(macro :pitch\+ \[-?\d+ -?\d+\]\)\)/, what);
     has(source, /\(def-wave scc-00 :wave \[0 8 16/, what);
     has(source, /\(def vol-r1-v12-scc \(macro :vol \[\(linear /, what);
