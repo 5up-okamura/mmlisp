@@ -856,7 +856,7 @@
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
-    import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg } from './src/ir-utils.js';
+    import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -9765,6 +9765,16 @@
           const err = diagnostics.find((d) => d.severity === 'error');
           throw new Error(err ? `${err.code} ${err.message}` : `"${name}" is not a sample`);
         }
+        const machine = targetProfile(ir.metadata?.target);
+        // The YM2608's ROM rhythm: a rhythm strip's sound is the chip's own,
+        // keyed as a hit (it plays from the user's ROM).
+        if (_fmLiveRaf == null && part && machine.partOf(part)?.name === 'rhythm') {
+          if (!def.rhythm) throw new Error(`${part} plays the ROM rhythm's six sounds; "${name}" is not one`);
+          if (!_rhythmRom) throw new Error('the rhythm plays from your ROM — File > Import > YM2608 Rhythm ROM…');
+          const enc = machine.chipFor('rhythm').rhythm;
+          for (const [p, a, d] of enc.hit(def.rhythm, 31, 0)) writePreview(p, a, d);
+          return;
+        }
         const one = { ...ir, metadata: { ...ir.metadata, pcmVoices: 1 } };
         const samples = await pcmSampleBlobsForMmb(one, new Set([name]));
         if (!samples) throw new Error(`"${name}" did not load`);
@@ -9782,6 +9792,23 @@
             type: 'pcm8', kind: 'on', voice: PCM8_VOICES - 1, sample: name, mode: loop ? 'loop' : 'shot',
             step: (s.rate * 2 ** ((midi - 60) / 12)) / PCM8_RATE, gain: 10 ** (-(2 * (15 - Math.max(0, Math.min(15, vel)))) / 20),
           });
+          return;
+        }
+        // The YM2608's ADPCM-B: the def baked into the chip's RAM as the song's
+        // are, keyed at the note's Delta-N and its level (the next Play or
+        // Build puts the song's RAM back).
+        if (_fmLiveRaf == null && machine.hasPart('adpcm-b')) {
+          const head = machine.headsOf('adpcm-b')[0];
+          const solo = { ...ir, tracks: [{ channel: head, scoreChannel: head, events: [{ cmd: 'PCM_NOTE_ON', args: { sample: name } }] }] };
+          const { image, entries } = bakeAdpcmB(solo, samples, machine);
+          const entry = entries[name];
+          if (!entry) throw new Error(`"${name}" did not load`);
+          workletNode.port.postMessage({ type: 'adpcm-ram', image });
+          const enc = machine.chipFor('adpcm-b').adpcm;
+          const level = Math.round(255 * levelGain({ vel }));
+          const deltaN = enc.deltaN(entry.rate * 2 ** ((midi - 60) / 12));
+          for (const [p, a, d] of enc.note(entry, deltaN, level, 0, loop)) writePreview(p, a, d);
+          _pcmAuditionChip = loop ? enc : null; // a shot plays its range out
           return;
         }
         // During playback the engine is the song's: the same bake plays on a
@@ -9803,8 +9830,15 @@
       }
     }
 
+    // The chip encoder a looping audition keyed on (the ADPCM-B's), which its key-off stops.
+    let _pcmAuditionChip = null;
     function previewPcmNoteOff() {
       _pcmReleasedSeq = _pcmAuditionSeq;
+      if (_pcmAuditionChip) {
+        for (const [p, a, d] of _pcmAuditionChip.stop()) writePreview(p, a, d);
+        _pcmAuditionChip = null;
+        return;
+      }
       // A looping audition on the side player lets go: the loop ends and the
       // range plays out, as the engine's release does.
       if (_sideAudition) _sideAudition.loop = false;

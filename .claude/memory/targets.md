@@ -44,9 +44,3 @@ Next:
    set `scope` in its channel table or rebase.
 5. Then SCC (`kind: wave`, `def-wave`, `metadata.waves[]` + a `WAVE` word —
    the IR form still to confirm with the user), then OPLL.
-
-## Open
-
-- pc88 `pcm1` (ADPCM-B) and the ROM rhythm are silent on the keys while
-  stopped: `previewPcmNoteOn` knows the md DAC and PCM8 only. Lands with
-  step 1's preview adapters.
