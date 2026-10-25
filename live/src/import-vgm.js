@@ -1455,7 +1455,7 @@ const OKI_DIFF = (() => {
   return t;
 })();
 const OKI_INC = [-1, -1, -1, -1, 2, 4, 6, 8];
-function decodeOki(rom, start, length) {
+export function decodeOki(rom, start, length) {
   const out = new Float32Array(length * 2);
   let signal = -2, step = 0, o = 0;
   for (let i = 0; i < length; i++) {

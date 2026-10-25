@@ -1,0 +1,177 @@
+#!/usr/bin/env node
+// The MDX (X68000) and MGS (MSX) song importers on files built here: each
+// command family they read lands where it should, and every score they
+// write compiles clean for its target. The files are made up — real songs
+// are their composers', and stay out of the repo.
+import assert from "node:assert/strict";
+import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
+import { parseMgs, analyzeMgs, mgsToMmlisp } from "../../live/src/import-mgs.js";
+import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+
+const clean = (source, what) => {
+  const { diagnostics } = compileMMLisp(source, `${what}.mmlisp`);
+  const bad = diagnostics.filter((d) => d.severity !== "warning" && !/^W_/.test(d.code));
+  if (bad.length) {
+    console.error(source);
+    for (const d of bad) console.error(`${d.code} ${d.line}:${d.column} ${d.message}`);
+    throw new Error(`${what}: the imported score does not compile clean`);
+  }
+};
+const has = (source, re, what) => {
+  if (!re.test(source)) { console.error(source); assert.fail(`${what}: expected ${re}`); }
+};
+
+// ── MDX ───────────────────────────────────────────────────────────────────
+
+const be16 = (n) => [(n >> 8) & 255, n & 255];
+function buildMdx({ title, pdx = "", tracks, voices }) {
+  const head = [...Buffer.from(title, "latin1"), 0x0d, 0x0a, 0x1a, ...Buffer.from(pdx, "latin1"), 0];
+  const table = 2 + tracks.length * 2;
+  const body = [], offs = [];
+  for (const t of tracks) { offs.push(table + body.length); body.push(...t); }
+  const voiceAt = table + body.length;
+  for (const v of voices) {
+    body.push(v.num, (v.fb << 3) | v.con, 15);
+    for (const f of [(o) => (o.dt << 4) | o.mul, (o) => o.tl, (o) => (o.ks << 6) | o.ar, (o) => (o.am << 7) | o.dr,
+      (o) => (o.dt2 << 6) | o.sr, (o) => (o.sl << 4) | o.rr]) for (const o of v.ops) body.push(f(o));
+  }
+  return new Uint8Array([...head, ...be16(voiceAt), ...offs.flatMap(be16), ...body]);
+}
+const op = (o = {}) => ({ dt: 0, mul: 1, tl: 30, ks: 0, ar: 31, am: 0, dr: 10, dt2: 0, sr: 0, sl: 5, rr: 7, ...o });
+const N = (midi, clocks) => [0x80 + midi - 15, clocks - 1]; // $80 is d+0, MIDI 15
+const R = (clocks) => [clocks - 1];
+const END = [0xf1, 0, 0];
+const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(0xf1, ...be16(off & 0xffff)); };
+
+{
+  // A: tempo, voice, v, q, a tie, detune, an LFO, a repeat with a break and
+  // the song's loop. B: pan and a portamento. H: the noise. ADPCM: two
+  // samples at two rates.
+  const A = [0xff, 200, 0xfd, 1, 0xfb, 15, 0xf8, 6, ...N(60, 48), 0xf7, ...N(62, 48), ...N(64, 48), ...R(48)];
+  const top = A.length;
+  A.push(0xf3, ...be16(32), 0xec, 2, ...be16(8), ...be16(64 * 256),
+    0xf6, 2, 0, ...N(60, 24), ...N(64, 24), 0xf4, 0, 0, ...N(67, 48), 0xf5, 0, 0, ...N(72, 96));
+  loopTo(A, top);
+  const B = [0xfd, 1, 0xfb, 10, 0xfc, 1, 0xf2, ...be16(256 * 64 / 96 * 2 | 0), ...N(48, 96), 0xfc, 2, ...N(52, 96), ...END];
+  const H = [0xfd, 2, 0xed, 0x80 | 20, ...N(60, 24), ...N(60, 24), ...END];
+  const P = [0xed, 2, ...N(15, 48), 0xed, 4, ...N(16, 48), ...END];
+  const tracks = [A, B, END, END, END, END, END, H, P];
+  const voices = [
+    { num: 1, con: 4, fb: 5, ops: [op(), op({ tl: 0 }), op({ tl: 20, dt2: 1 }), op({ tl: 0 })] },
+    { num: 2, con: 7, fb: 0, ops: [op({ tl: 127 }), op({ tl: 127 }), op({ tl: 127 }), op({ tl: 0 })] },
+  ];
+  // The PDX: a bank of 96 (offset, size), two samples of ADPCM after it.
+  const pdx = new Uint8Array(768 + 256);
+  const put32 = (p, v) => { pdx[p] = v >>> 24; pdx[p + 1] = (v >> 16) & 255; pdx[p + 2] = (v >> 8) & 255; pdx[p + 3] = v & 255; };
+  put32(0, 768); put32(4, 128); put32(8, 896); put32(12, 128);
+  for (let i = 768; i < pdx.length; i++) pdx[i] = (i * 37) & 255 | 0x11;
+
+  const mdx = parseMdx(buildMdx({ title: "Test song", pdx: "test", tracks, voices }));
+  assert.equal(mdx.title, "Test song");
+  assert.equal(mdx.pdxName, "test.PDX");
+  const a = analyzeMdx(mdx);
+  assert.equal(a.bpm, 87.19); // Timer B 200
+  assert.equal(a.tracks[0].notes.length, 3 + 5 + 1, "A: three notes, the repeat's five, one after");
+  assert.equal(a.tracks[0].loopClock, 192);
+  for (const structure of [true, false]) {
+    const { source, warnings, pcm } = mdxToMmlisp(mdx, { pdx, structure, fileName: "test.mdx" }, a);
+    const what = `MDX (${structure ? "folded" : "flat"})`;
+    has(source, /\(def-score :target x68k :title "Test song"\)/, what);
+    has(source, /\(def-fm voice-01[\s\S]*:dt2-2 1/, what); // C1, the third in register order, is op2
+    has(source, /:tempo 87\.19/, what);
+    has(source, /c8\. _16 d4? ~ e/, what); // q6, then & : d held legato into e
+    has(source, /:pitch 50/, what); // D 32 = half a semitone
+    has(source, /\(macro :pitch\+ \(triangle /, what);
+    has(source, /#top/, what);
+    has(source, /\(go top\)/, what);
+    has(source, /:pan left[\s\S]*:pan right/, what);
+    has(source, /\(fm2[\s\S]*\(macro :pitch\+ \(linear 0\.\./, what);
+    has(source, /\(noise[\s\S]*:noise-rate 12/, what); // NFRQ 20 → 32 - 20
+    has(source, /\(def-pcm pdx-000 :file "test-pdx\.wav" :rate 7812/, what);
+    has(source, /\(pcm1[\s\S]*pdx-001/, what);
+    assert.ok(pcm && pcm.entries.length === 2, `${what}: two samples in the wav`);
+    assert.deepEqual(warnings.filter((w) => !/keys only some/.test(w)), [], `${what}: no warnings`);
+    clean(source, what);
+  }
+  // Without its PDX the ADPCM is left out, and said so.
+  const { source, warnings } = mdxToMmlisp(mdx, { fileName: "test.mdx" }, a);
+  assert.ok(!/\(pcm1/.test(source) && warnings.some((w) => /test\.PDX/.test(w)), "MDX without its PDX");
+  clean(source, "MDX without PDX");
+}
+
+// ── MGS ───────────────────────────────────────────────────────────────────
+
+function buildMgs({ title, tempo, tracks, defs, opll = 0 }) {
+  const ascii = [...Buffer.from(`MGS313\r\n${title}\r\n`, "latin1"), 0x1a];
+  const header = 4 + 18 * 2;
+  const body = [], offs = new Array(18).fill(0);
+  [defs, ...tracks].forEach((t, i) => { if (!t) return; offs[i] = header + body.length; body.push(...t); });
+  const le = (n) => [n & 255, (n >> 8) & 255];
+  return new Uint8Array([...ascii, 0, opll, ...le(tempo), ...offs.flatMap(le), ...body]);
+}
+// MGSARC's form of a file: literals only, then the end code.
+function compressMgs(u8) {
+  let head = 0;
+  while (u8[head] !== 0) head++;
+  const data = u8.subarray(head + 2);
+  const out = [...u8.subarray(0, head + 2), 0, 0];
+  out[3] = 0x41; // "A13"
+  out[head + 1] |= 0x80;
+  let ctrl = out.length, bit = 0;
+  out.push(0);
+  const put = (b) => { if (b) out[ctrl] |= 0x80 >> bit; if (++bit === 8) { bit = 0; ctrl = out.length; out.push(0); } };
+  for (const byte of data) { put(1); out.push(byte); }
+  put(0); put(1); out.push(0, 0, 0);
+  return new Uint8Array(out);
+}
+
+{
+  const wave = Array.from({ length: 32 }, (_, i) => (i < 16 ? i * 8 : (i - 32) * 8) & 255);
+  const defs = [
+    0x02, 0, 0x40 | 31, 4, 0x0f, 0x20 | 10, 4, 0x00, // @e0: noise 31; f, a=4, 0
+    0x02, 1, 0x80, 128, 32, 12, 64, 0, 8, // @r1
+    0x02, 2, 0x20, 6, 0x12, 0xf6, 0x0f, 0x12, 5, 0x0f, // @e2: \-10 f, \5 f
+    0x03, 0, ...wave, 0xff,
+  ];
+  const T = (n, len) => [0x20 | n, len]; // c=0 … b=11, rest 12
+  // PSG 1: o4, v13, q6, a portamento, a tie, the loop at `$`; PSG 2: the
+  // envelope and the noise; SCC 1: a wave, @r, an LFO and a repeat with a
+  // break.
+  const psg1 = [0xd3, 0xcd, 0x44, 6, ...T(0, 48), 0x53, 0, ...T(4, 48), 0x40, ...T(7, 48), ...T(7, 48), 0x5d,
+    0x50, 0xfb, ...T(9, 96), 0xff];
+  const psg2 = [0xd2, 0xcf, 0x80, ...T(0, 24), 0x82, ...T(0, 24), 0x2c, 48, 0xff];
+  const scc1 = [0x41, ...[150, 0], ...new Array(48).fill(1), 0xd4, 0xcc, 0x80, 0x49, 1, 0x54, 13, 3, 1, 4,
+    0x57, 2, 0, 0, ...T(0, 24), 0x58, 0, 0, ...T(4, 24), 0x59, 0, 0, 0, ...T(7, 48), 0xff];
+  const fm1 = [0xd3, 0xcf, ...T(0, 48), 0xff];
+  const mgsBytes = buildMgs({ title: "MGS test", tempo: 120, defs, tracks: [psg1, psg2, null, scc1, null, null, null, null, fm1] });
+  const plain = parseMgs(mgsBytes);
+  const packed = parseMgs(compressMgs(mgsBytes));
+  assert.deepEqual([...packed.u8], [...plain.u8], "MGSARC's form decompresses to the file");
+  const a = analyzeMgs(plain);
+  assert.equal(plain.title, "MGS test");
+  assert.equal(a.bpm, 150); // SCC 1 sets t150 at the start, over #tempo 120
+  const by = (i) => a.tracks.find((t) => t.index === i);
+  assert.equal(by(1).loopStep, 192);
+  assert.equal(by(4).notes.length, 4, "SCC: the repeat's c e c, then g");
+  for (const structure of [true, false]) {
+    const { source, warnings } = mgsToMmlisp(plain, { structure, fileName: "test.mgs" }, a);
+    const what = `MGS (${structure ? "folded" : "flat"})`;
+    has(source, /\(def-score :target msx :title "MGS test"\)/, what);
+    has(source, /:tempo 150/, what);
+    has(source, /\(sqr1[\s\S]*:mode tone[\s\S]*c(8\.)? _16/, what); // q6
+    has(source, /\(macro :pitch\+ \(linear -400\.\.0 :len 96t\)\)/, what); // c_e: from c to e
+    has(source, /g4? ~ g/, what);
+    has(source, /#top[\s\S]*:pitch -?\d+[\s\S]*\(go top\)/, what); // `$`, then \ 5
+    has(source, /\(sqr2[\s\S]*:mode noise :noise-rate 31/, what);
+    has(source, /\(def vol-e0-v15 \(macro :vol \[31 23 \(wait 3f\) 0\]\)\)/, what);
+    has(source, /\(def bend-e2-c3 \(macro :pitch\+ \[-?\d+ -?\d+\]\)\)/, what);
+    has(source, /\(def-wave scc-00 :wave \[0 8 16/, what);
+    has(source, /\(def vol-r1-v12-scc \(macro :vol \[\(linear /, what);
+    has(source, /#rel \(linear :len \d+f\)/, what);
+    has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
+    assert.ok(warnings.some((w) => /FM-PAC/.test(w)), `${what}: the FM-PAC is reported`);
+    clean(source, what);
+  }
+}
+
+console.log("MDX / MGS import checks passed");

@@ -1442,6 +1442,8 @@ and `Instruments…` inserts voices and drum kits at the cursor:
 | `.mid`                             | MIDI import, through the import dialog (below)             |
 | `.dmf` / `.fur`                    | DefleMask / Furnace module import, through the import dialog (below) |
 | `.vgm` / `.vgz`                    | VGM import, through the import dialog (below)              |
+| `.mdx` (+ `.pdx`)                  | MDX import as an `x68k` score — drop its `.pdx` alongside for the ADPCM (below) |
+| `.mgs`                             | MGS import as an `msx` score, through the import dialog (below) |
 
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
@@ -1630,7 +1632,7 @@ neighbouring bands) rather than by lines a noise does not have. Its voice
 comes out with that note as `:key`, as the `presets/fm-drums` voices do: c4
 plays it as found, other notes retune it.
 
-### Song imports: MIDI, DefleMask / Furnace, VGM
+### Song imports: MIDI, DefleMask / Furnace, VGM, MDX, MGS
 
 **A song import opens a dialog first**: what the file holds, the timing and
 tempo, the loop, and one row per source part with its destination.
@@ -1752,7 +1754,36 @@ them: a key-on starts a note, a key-off ends it.
   log reports. Tempo changes within the song are not imported either: one grid
   serves the whole file.
 
-**A MIDI or VGM import is structured** (untick **Fold repeats** for one bar
+**MDX (X68000) and MGS (MSX).** A song compiled for MXDRV (`.mdx`) or
+MGSDRV (`.mgs`, MGSARC's compressed form too) is played as its driver plays
+it — repeats unrolled, each track up to its own loop point or its end — and
+written for the song's own machine: an MDX as an `x68k` score, an MGS as an
+`msx` one. Both count in steps of 48 a quarter, so the timing is exact (no
+tempo is estimated) and the tempo commands become `:tempo`. Each track keeps
+its own loop, `#top … (go top)`, as the drivers loop each track on its own.
+
+- **MDX:** FM A–H go to `fm1`–`fm8`, each voice a `def-fm` with its DT2 (and
+  the track's `MH` sensitivities as `:fms` / `:ams`); `v` / `@v` become
+  `:vel` (0.75 dB a TL step), `p` `:pan`, `q` / `@q`, `&` and `k` the notes'
+  lengths, `D` `:pitch`, `_` and the software LFOs (`MP`, `MA`) `:pitch+` /
+  `:vel+` macros, `MH` the OPM's LFO words, and track H's notes with the noise
+  on (`w`) go to `noise`. The ADPCM — one track, or eight under PCM8 — plays
+  the song's PDX: pick (or drop) the `.pdx` together with the `.mdx`; its
+  samples are decoded into one wav, `<song>-pdx.wav`, a `def-pcm pdx-NNN`
+  each, held in memory until Save writes it. Without the PDX the PCM tracks
+  are left out, and the log says so.
+- **MGS:** the PSG goes to `sqr1`–`sqr3`, its mixer (`/`, or an envelope's
+  mode) as `:mode tone | noise | both` and `n` as `:noise-rate`; the SCC to
+  `wave1`–`wave5`, each `@s` wave a `def-wave scc-NN`. `v` is `:vol` (the
+  SSG's 3 dB steps, the SCC's linear volume), and an `@e` or `@r` envelope a
+  `(def vol-… (macro :vol …))` at that `v`, frame by frame — `@r`'s release
+  after `#rel`, an `@e`'s `\` steps a `(def bend-… (macro :pitch+ …))` on the
+  notes it plays. `q`, `k` and `&` set the lengths, `\` / `@\` `:pitch`, `h`
+  a `:pitch+` triangle, `_` a portamento. The FM-PAC's tracks are not imported
+  yet (the `msx` target's OPLL channels are still to come), nor the PSG's
+  hardware envelope; the log counts what was left out.
+
+**A MIDI, VGM, MDX or MGS import is structured** (untick **Fold repeats** for one bar
 after another): bars that repeat back to back become `(x n …)`, a run that
 comes round once more cut short becomes `(x n A (break) B)`, and a run that
 comes back elsewhere becomes a `(def fm1-a …)` named in place. Bars match

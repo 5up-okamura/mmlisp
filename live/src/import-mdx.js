@@ -1,0 +1,566 @@
+// ---------------------------------------------------------------------------
+// MDX (.mdx, + its .pdx) → MMLisp, :target x68k
+//
+// MDX is MXDRV's compiled song for the X68000: eight FM tracks on the YM2151
+// (A-H) and the ADPCM (track 9, or tracks 9-16 under PCM8), each a stream of
+// notes and commands timed in clocks (48 a quarter, so a clock is two MMLisp
+// ticks — the import is exact, no tempo is estimated). The tracks are played
+// as MXDRV plays them (mdxmini's mdxmml_ym2151.c, Kouno's mdxform.doc):
+// repeats unrolled, each track up to its own loop (`L`, a jump back at its
+// end) or its end, and then written by the shared back end (import-song.js),
+// which folds the repeats again and keeps each track's own loop point.
+//
+// What maps:
+//   @n                 the voice, a def-fm (DT2 kept) — with the track's MH
+//                      PMS/AMS as its :fms / :ams
+//   v / @v / ( )       :vel — v's table is a TL offset (2-42), @v the TL
+//                      itself, 0.75 dB a step on the 2 dB ladder
+//   p                  :pan (p0 mutes the track's notes)
+//   q / @q, &, k       the note's length: q n/8 of it, @q n clocks short of
+//                      it, & legato (a tie, or a slur to another note), k a
+//                      key-on n clocks late
+//   D, _               :pitch (1/64 semitone a step), a portamento as a
+//                      :pitch+ line over the note
+//   MP / MA, MD        the software LFOs as :pitch+ / :vel+ curves (saw,
+//                      square, triangle), MD their delay
+//   MH                 the OPM's LFO: :lfo-wave :lfo-freq :lfo-pmd :lfo-amd
+//   w                  the noise (on track H, NE): its notes go to `noise`
+//                      at :noise-rate 32 - NFRQ
+//   @t, y$12           :tempo (Timer B: 4882.8125 / (256 - n) BPM)
+//   y                  an operator's or the channel's registers as words
+//   ADPCM              the PDX's samples, one wav, a def-pcm each; a note is
+//                      its sample at c4, F its rate (3.9-15.6 kHz)
+// Reported and left out: sync (tracks run free), the fade out, other
+// registers.
+//
+//   parseMdx(bytes)                → the song: header, voices, tracks
+//   analyzeMdx(mdx)                → what the import dialog shows
+//   mdxToMmlisp(mdx, options, a)   → { source, warnings, pcm }
+//     options: { pdx: Uint8Array | null, structure, fileName }
+// ---------------------------------------------------------------------------
+
+import { emitSong, emitStructured, barEnds, qstr, PPQN, stateChange } from "./import-song.js";
+import { fmVoiceDef } from "./import-fm-voices.js";
+import { decodeOki } from "./import-vgm.js";
+import { encodeWav } from "./export-wav.js";
+
+const TICKS_PER_CLOCK = PPQN / 48;
+// v0-v15 as TL added to the carriers (MXDRV's table).
+const V_ATTEN = [42, 40, 37, 34, 32, 29, 26, 24, 21, 18, 16, 13, 10, 8, 5, 2];
+const TL_DB = 0.75;
+const VEL_DB = 2;
+// F0-F4: the ADPCM's rates (Hz), 15.6 kHz the one MXDRV starts at.
+const PCM_RATES = [3906, 5208, 7812, 10417, 15625];
+const NOTE_MIDI = 15; // note $80 is o0 d+ (KC 0 at the X68000's 4 MHz)
+const MAX_CLOCKS = 48 * 4 * 4000; // a track that never ends is cut here
+const LFO_WAVES = ["saw", "square", "triangle", "noise"];
+
+const be16 = (u8, p) => (u8[p] << 8) | u8[p + 1];
+const s16 = (u8, p) => { const v = be16(u8, p); return v >= 0x8000 ? v - 0x10000 : v; };
+const sjis = (u8) => { try { return new TextDecoder("shift-jis").decode(u8); } catch { return String.fromCharCode(...u8); } };
+const round2 = (x) => (Math.abs(x - Math.round(x)) < 0.005 ? Math.round(x) : +x.toFixed(2));
+export const mdxBpm = (tb) => round2(4882.8125 / (256 - Math.min(255, tb)));
+
+// Bytes each command takes after its own (MDX command set, mdx.h).
+function cmdLength(u8, p) {
+  const c = u8[p];
+  if (c <= 0x7f) return 1;
+  if (c <= 0xdf) return 2;
+  switch (c) {
+    case 0xff: case 0xfd: case 0xfc: case 0xfb: case 0xf8: case 0xf0: case 0xef: case 0xed: case 0xe9: return 2;
+    case 0xfe: case 0xf6: case 0xf5: case 0xf4: case 0xf3: case 0xf2: case 0xf1: return 3;
+    case 0xfa: case 0xf9: case 0xf7: case 0xee: case 0xe8: return 1;
+    case 0xec: case 0xeb: case 0xea: return u8[p + 1] === 0x80 || u8[p + 1] === 0x81 ? 2 : 6;
+    case 0xe7: return u8[p + 1] === 0x00 ? 2 : 3;
+    default: return 0; // undefined: MXDRV stops the track
+  }
+}
+
+/** The file → { title, pdxName, voices: Map(num → voice), tracks: [{index, start}], pcm8 }. */
+export function parseMdx(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let p = 0;
+  while (p + 2 < u8.length && !(u8[p] === 0x0d && u8[p + 1] === 0x0a && u8[p + 2] === 0x1a)) p++;
+  if (p + 2 >= u8.length) throw new Error("not an MDX file (no title terminator)");
+  const title = sjis(u8.subarray(0, p)).trim();
+  p += 3;
+  const nameStart = p;
+  while (p < u8.length && u8[p] !== 0) p++;
+  let pdxName = String.fromCharCode(...u8.subarray(nameStart, p)).trim();
+  if (pdxName && !/\.pdx$/i.test(pdxName)) pdxName += ".PDX";
+  const base = p + 1;
+  if (base + 4 > u8.length) throw new Error("not an MDX file (truncated header)");
+  const voiceAt = base + be16(u8, base);
+  const first = base + be16(u8, base + 2);
+  const pcm8 = u8[first] === 0xe8;
+  const count = pcm8 ? 16 : 9;
+  const tracks = [];
+  for (let i = 0; i < count; i++) {
+    const at = base + be16(u8, base + 2 + i * 2);
+    if (at >= u8.length) throw new Error(`MDX track ${i + 1} points past the file`);
+    tracks.push({ index: i, start: at });
+  }
+  const voices = new Map();
+  for (let q = voiceAt; q + 27 <= u8.length; q += 27) {
+    const num = u8[q];
+    const b = (k, i) => u8[q + 3 + k * 4 + i];
+    const ops = [];
+    for (let i = 0; i < 4; i++) {
+      ops.push({
+        dt: (b(0, i) >> 4) & 7, mul: b(0, i) & 15, tl: b(1, i) & 127,
+        rs: b(2, i) >> 6, ar: b(2, i) & 31, am: b(3, i) >> 7, dr: b(3, i) & 31,
+        dt2: b(4, i) >> 6, sr: b(4, i) & 31, sl: b(5, i) >> 4, rr: b(5, i) & 15, ssg: 0,
+      });
+    }
+    voices.set(num, { num, alg: u8[q + 1] & 7, fb: (u8[q + 1] >> 3) & 7, slot: u8[q + 2], ops });
+  }
+  return { u8, title, pdxName, voices, tracks, pcm8 };
+}
+
+/**
+ * A PDX bank → its samples, decoded: [{index, data: Float32Array}] (96 a
+ * bank, the bank's table of 8-byte offset/size pairs first).
+ */
+export function parsePdx(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const out = new Map();
+  let dataTop = u8.length;
+  for (let bank = 0; bank * 768 < dataTop && bank < 16; bank++) {
+    for (let i = 0; i < 96; i++) {
+      const q = bank * 768 + i * 8;
+      if (q + 8 > dataTop) break;
+      const at = ((u8[q] << 24) | (u8[q + 1] << 16) | (u8[q + 2] << 8) | u8[q + 3]) >>> 0;
+      const size = ((u8[q + 4] << 24) | (u8[q + 5] << 16) | (u8[q + 6] << 8) | u8[q + 7]) >>> 0;
+      if (!at || !size || at + size > u8.length) continue;
+      if (at < dataTop) dataTop = at;
+      out.set(bank * 96 + i, decodeOki(u8, at, size));
+    }
+  }
+  return out;
+}
+
+// ── Playing a track ───────────────────────────────────────────────────────
+
+function newState() {
+  return {
+    voice: 0, atten: V_ATTEN[8], normal: 8, lastNormal: true, pan: 3, q: 8, qMinus: 0,
+    detune: 0, porta: 0, tie: false, keyDelay: 0,
+    plfo: null, plfoOn: false, alfo: null, alfoOn: false, lfoDelay: 0,
+    hlfo: null, hlfoOn: false, pmsAms: 0, noise: 0, pcmRate: 4, regs: [],
+  };
+}
+
+/**
+ * One track as MXDRV plays it, to its end or its loop: the notes it keys
+ * ({clock, len, gate, midi, legato, st}, the state in force), the tempo
+ * changes, where it loops ({loopClock}) and what was left out.
+ */
+function playTrack(mdx, track, skipped) {
+  const { u8 } = mdx;
+  const st = newState();
+  const notes = [];
+  const tempos = [];
+  const visits = new Map(); // ptr → clock, the first time at the top level
+  const stack = []; // [{start, left}]
+  let p = track.start;
+  let clock = 0;
+  let loopClock = null;
+  let end = null;
+  let steps = 0;
+  const skip = (k) => skipped.set(k, (skipped.get(k) ?? 0) + 1);
+  while (p < u8.length && clock < MAX_CLOCKS && ++steps < 2e6) {
+    if (!stack.length && !visits.has(p)) visits.set(p, clock);
+    const c = u8[p];
+    const len = cmdLength(u8, p);
+    if (!len) { skip(`command $${c.toString(16)} (the track stops there)`); end = clock; break; }
+    const a1 = u8[p + 1], a2 = u8[p + 2];
+    if (c <= 0x7f) {
+      // A rest keys off (unless the note before it ties on).
+      if (st.tie) st.tie = false;
+      clock += c + 1;
+    } else if (c <= 0xdf) {
+      const count = a1 + 1;
+      notes.push({ clock, count, midi: c - 0x80, tieOn: st.tie, st: snapshot(st) });
+      st.tie = false;
+      st.porta = 0; // a portamento is the next note's alone
+      clock += count;
+    } else {
+      switch (c) {
+        case 0xff: if (a1 >= 2) tempos.push({ clock, tb: a1 }); break;
+        case 0xfe:
+          if (a1 === 0x12) tempos.push({ clock, tb: a2 });
+          else st.regs = [...st.regs.filter((r) => r.reg !== a1), { reg: a1, val: a2 }];
+          break;
+        case 0xfd: st.voice = a1; st.regs = []; break;
+        case 0xfc: st.pan = a1 & 3; break;
+        case 0xfb:
+          if (a1 < 16) { st.normal = a1; st.atten = V_ATTEN[a1]; st.lastNormal = true; }
+          else if (a1 >= 0x80) { st.atten = a1 - 0x80; st.lastNormal = false; }
+          break;
+        case 0xfa: case 0xf9: {
+          const d = c === 0xf9 ? 1 : -1; // ) louder, ( softer
+          if (st.lastNormal) { st.normal = Math.max(0, Math.min(15, st.normal + d)); st.atten = V_ATTEN[st.normal]; }
+          else st.atten = Math.max(0, Math.min(127, st.atten - d));
+          break;
+        }
+        case 0xf8: if (a1 < 9) { st.q = a1; st.qMinus = 0; } else { st.q = 8; st.qMinus = 0x100 - a1; } break;
+        case 0xf7: st.tie = true; break;
+        case 0xf6: stack.push({ start: p + 3, left: a1 || 256 }); break;
+        case 0xf5: {
+          const top = stack[stack.length - 1];
+          if (top && --top.left > 0) { p = top.start; continue; }
+          stack.pop();
+          break;
+        }
+        case 0xf4: {
+          const top = stack[stack.length - 1];
+          if (top && top.left === 1) {
+            // The last pass leaves here: past the loop's end.
+            stack.pop();
+            p = loopEnd(u8, p + 3);
+            continue;
+          }
+          break;
+        }
+        case 0xf3: st.detune = s16(u8, p + 1); break;
+        case 0xf2: st.porta = s16(u8, p + 1); break;
+        case 0xf1:
+          if (a1 === 0 && a2 === 0) { end = clock; break; }
+          {
+            const to = p + 3 + s16(u8, p + 1);
+            if (visits.has(to)) loopClock = visits.get(to);
+            else skip("a loop point inside a repeat (the track is written to its end)");
+          }
+          end = clock;
+          break;
+        case 0xf0: st.keyDelay = a1; break;
+        case 0xef: case 0xee: skip("sync between tracks (each track runs free)"); break;
+        case 0xed: if (track.index >= 8) st.pcmRate = a1; else st.noise = a1; break;
+        case 0xec: lfoCmd(u8, p, st, "plfo"); break;
+        case 0xeb: lfoCmd(u8, p, st, "alfo"); break;
+        case 0xea:
+          if (a1 === 0x80 || a1 === 0x81) st.hlfoOn = a1 === 0x81;
+          else {
+            st.hlfo = { wave: a1 & 3, sync: (a1 & 0x40) !== 0, freq: a2, pmd: u8[p + 3] & 127, amd: u8[p + 4] & 127 };
+            st.pmsAms = u8[p + 5];
+            st.hlfoOn = true;
+          }
+          break;
+        case 0xe9: st.lfoDelay = a1; break;
+        case 0xe8: break; // PCM8 mode: the track count
+        case 0xe7: skip("fade out"); break;
+      }
+      if (end != null) break;
+    }
+    p += len;
+  }
+  if (end == null) {
+    end = clock;
+    if (clock >= MAX_CLOCKS) skip("a track that never reaches its end (cut)");
+  }
+  return { notes, tempos, loopClock, end };
+}
+
+// Past the F5 that closes the repeat a break at `p` is in.
+function loopEnd(u8, p) {
+  let depth = 0;
+  while (p < u8.length) {
+    const c = u8[p];
+    const n = cmdLength(u8, p);
+    if (!n) return p;
+    if (c === 0xf6) depth++;
+    else if (c === 0xf5) { if (depth === 0) return p + 3; depth--; }
+    p += n;
+  }
+  return p;
+}
+
+function lfoCmd(u8, p, st, key) {
+  const a1 = u8[p + 1];
+  if (a1 === 0x80 || a1 === 0x81) { st[`${key}On`] = a1 === 0x81 && st[key] != null; return; }
+  const clock = be16(u8, p + 2);
+  let depth = s16(u8, p + 4);
+  if (key === "plfo" && a1 > 4) depth *= 256;
+  st[key] = { form: a1 & 3, clock: Math.max(1, clock), depth };
+  st[`${key}On`] = true;
+}
+
+const snapshot = (st) => ({ ...st, plfo: st.plfoOn ? st.plfo : null, alfo: st.alfoOn ? st.alfo : null,
+  hlfo: st.hlfo, pmsAms: st.hlfoOn ? st.pmsAms : 0 });
+
+/** A note's sounding length in clocks: its gate (q, @q, a tie). */
+function gateOf(n) {
+  if (n.tieOn) return n.count; // & : keyed on into what follows
+  const q = n.st.qMinus ? n.count - n.st.qMinus : Math.floor((n.count * n.st.q) / 8);
+  return Math.max(1, Math.min(n.count, q));
+}
+
+// ── Analysis ──────────────────────────────────────────────────────────────
+
+const TRACK_NAMES = "ABCDEFGHPQRSTUVW";
+
+export function analyzeMdx(mdx) {
+  const skipped = new Map();
+  const tracks = mdx.tracks.map((t) => {
+    const r = playTrack(mdx, t, skipped);
+    const pcm = t.index >= 8;
+    const name = pcm ? (mdx.pcm8 ? `PCM ${t.index - 7}` : "ADPCM") : `FM ${TRACK_NAMES[t.index]}`;
+    return { ...t, ...r, pcm, name, label: `${name} · ${r.notes.length} notes${r.loopClock != null ? ", loops" : ""}` };
+  });
+  const tempo = tracks.flatMap((t) => t.tempos).sort((a, b) => a.clock - b.clock)[0];
+  return { tracks, skipped, bpm: mdxBpm(tempo && tempo.clock === 0 ? tempo.tb : 200) };
+}
+
+// ── Writing ───────────────────────────────────────────────────────────────
+
+const panWord = (p) => (p === 1 ? "left" : p === 2 ? "right" : "center");
+// v as :vel: v15 (TL +2) at 15, 0.75 dB a TL step on the 2 dB ladder.
+const velOf = (atten) => Math.max(0, Math.min(15, 15 - Math.round(((atten - 2) * TL_DB) / VEL_DB)));
+const cents = (kf) => Math.round((kf * 100) / 64);
+
+// The software pitch LFO (MXDRV: a step each clock, 1/256 of a KF unit) as
+// a :pitch+ curve; the volume LFO (TL steps) as a :vel+ one.
+function lfoCurve(lfo, scale) {
+  const { form, clock, depth } = lfo;
+  const t = (n) => `${n * TICKS_PER_CLOCK}t`;
+  if (form === 0) {
+    const top = Math.round(depth * (clock - 1) * scale);
+    return top ? `(saw 0..${top} :len ${t(clock)})` : null;
+  }
+  if (form === 1) {
+    const h = Math.round((depth / 2) * scale);
+    return h ? `(square ${h}..${-h} :len ${t(clock * 2)})` : null;
+  }
+  const a = Math.round(depth * Math.floor(clock / 2) * scale);
+  return a ? `(triangle ${-a}..${a} :len ${t(clock * 2)} :phase 64)` : null;
+}
+
+const OP_OF_SLOT = [1, 3, 2, 4]; // register order M1 M2 C1 C2 → op1-op4
+const DT_WORD = [0, 1, 2, 3, 0, -1, -2, -3];
+
+// A `y` on the track's own channel as words, or null.
+function regWords(reg, val, ch) {
+  if (reg >= 0x40 && (reg & 7) === ch) {
+    const n = OP_OF_SLOT[(reg >> 3) & 3];
+    switch (reg & 0xe0) {
+      case 0x40: return `:dt${n} ${DT_WORD[(val >> 4) & 7]} :ml${n} ${val & 15}`;
+      case 0x60: return `:tl${n} ${val & 127}`;
+      case 0x80: return `:ks${n} ${val >> 6} :ar${n} ${val & 31}`;
+      case 0xa0: return `:am${n} ${val >> 7} :dr${n} ${val & 31}`;
+      case 0xc0: return `:dt2-${n} ${val >> 6} :sr${n} ${val & 31}`;
+      case 0xe0: return `:sl${n} ${val >> 4} :rr${n} ${val & 15}`;
+    }
+  }
+  if (reg === 0x20 + ch) return `:fb ${(val >> 3) & 7} :alg ${val & 7}`;
+  return null;
+}
+
+/**
+ * @param options { pdx?: Uint8Array, structure?: boolean, fileName? }
+ */
+export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
+  const warnings = [];
+  const skipped = new Map(a.skipped);
+  const skip = (k) => skipped.set(k, (skipped.get(k) ?? 0) + 1);
+  const defs = [];
+  const usedNames = new Set();
+  const uniq = (base) => { let n = base; for (let k = 2; usedNames.has(n); k++) n = `${base}-${k}`; usedNames.add(n); return n; };
+
+  // Voices: one def per voice and LFO sensitivity it plays with.
+  const voiceDefs = new Map();
+  const voiceName = (num, pmsAms) => {
+    const key = `${num}:${pmsAms}`;
+    if (!voiceDefs.has(key)) {
+      const v = mdx.voices.get(num);
+      if (!v) { voiceDefs.set(key, null); warnings.push(`voice @${num} is not in the file — its notes play the voice before`); return null; }
+      const fms = (pmsAms >> 4) & 7, ams = pmsAms & 3;
+      const name = uniq(`voice-${String(num).padStart(2, "0")}${pmsAms ? `-p${fms}a${ams}` : ""}`);
+      defs.push(fmVoiceDef(name, { alg: v.alg, fb: v.fb, ams, fms, ops: v.ops }, { dt2: true }));
+      if ((v.slot & 15) !== 15) warnings.push(`voice @${num} keys only some operators (slot mask ${v.slot & 15}): it is written whole`);
+      voiceDefs.set(key, name);
+    }
+    return voiceDefs.get(key);
+  };
+
+  // The PDX's samples: those the song plays, in one wav.
+  const pdx = options.pdx ? parsePdx(options.pdx) : null;
+  const pcmTracks = a.tracks.filter((t) => t.pcm && t.notes.length);
+  if (pcmTracks.length && !pdx)
+    warnings.push(`the ADPCM tracks need ${mdx.pdxName || "the song's PDX"} — pick it with the MDX; they are left out`);
+  const samples = new Map(); // index → {name, data, rates}
+  const sampleOf = (n) => {
+    const index = n.st.voice * 96 + n.midi;
+    if (!pdx?.has(index)) return null;
+    if (!samples.has(index)) samples.set(index, { index, name: `pdx-${String(index).padStart(3, "0")}`, data: pdx.get(index), rates: new Map() });
+    const sm = samples.get(index);
+    const r = PCM_RATES[Math.min(4, n.st.pcmRate)];
+    sm.rates.set(r, (sm.rates.get(r) ?? 0) + 1);
+    return sm;
+  };
+
+  // Track H's noise: its notes go to `noise` when most are played with NE on.
+  const trackH = a.tracks[7];
+  const noisy = trackH ? trackH.notes.filter((n) => n.st.noise & 0x80).length : 0;
+  const hToNoise = trackH && noisy > trackH.notes.length / 2;
+  if (trackH && noisy && !hToNoise) warnings.push(`FM H: ${noisy} notes played with the noise on are played as FM (fm8)`);
+  if (hToNoise && noisy < trackH.notes.length) warnings.push(`FM H: ${trackH.notes.length - noisy} notes played without the noise are left out (the noise is fm8's fourth operator)`);
+
+  const songOut = [];
+  let endMax = 0;
+  for (const tr of a.tracks) {
+    if (!tr.notes.length) continue;
+    let channel;
+    if (tr.pcm) {
+      if (!pdx) continue;
+      channel = `pcm${tr.index - 7}`;
+    } else channel = tr.index === 7 && hToNoise ? "noise" : `fm${tr.index + 1}`;
+    const isNoise = channel === "noise";
+    const tick = (c) => c * TICKS_PER_CLOCK;
+    const notes = [];
+    let prev = null; // the note before, as played
+    tr.notes.forEach((n) => {
+      const st = n.st;
+      if (isNoise && !(st.noise & 0x80)) return;
+      if (!tr.pcm && st.pan === 0) return; // p0: not keyed
+      const delay = Math.min(st.keyDelay, n.count - 1);
+      const gate = gateOf(n);
+      const len = Math.max(1, gate - delay);
+      const legato = !!prev && prev.tieOn && prev.clock + prev.count === n.clock;
+      prev = n;
+      const state = [];
+      let midi = n.midi + NOTE_MIDI;
+      let vel = velOf(st.atten);
+      if (tr.pcm) {
+        const sm = sampleOf(n);
+        if (!sm) { skip("an ADPCM note with no sample in the PDX"); return; }
+        state.push(sm.name);
+        midi = { sm, rate: PCM_RATES[Math.min(4, st.pcmRate)] }; // a pitch once the sample's rate is known
+      } else if (isNoise) {
+        const v = mdx.voices.get(st.voice);
+        vel = velOf(st.atten + (v ? v.ops[3].tl : 0));
+        state.push(`:noise-rate ${Math.max(1, Math.min(31, 32 - (st.noise & 31)))}`);
+        midi = 60;
+      } else {
+        const name = voiceName(st.voice, st.pmsAms);
+        if (name) state.push(name);
+        for (const r of st.regs) {
+          const w = regWords(r.reg, r.val, tr.index);
+          if (w) state.push(w);
+          else skip(`y$${r.reg.toString(16)} (a register outside the track's channel)`);
+        }
+        state.push(`:pan ${panWord(st.pan)}`);
+        if (st.hlfo) state.push(`:lfo-wave ${LFO_WAVES[st.hlfo.wave]} :lfo-freq ${st.hlfo.freq} :lfo-pmd ${st.hlfo.pmd} :lfo-amd ${st.hlfo.amd}`);
+        if (st.hlfo?.sync) skip("MH's LFO sync (the LFO is not reset at each note)");
+        if (st.detune) state.push(`:pitch ${cents(st.detune)}`);
+      }
+      // The note's own moves: a portamento, the LFOs.
+      const pitch = [];
+      if (!tr.pcm && !isNoise) {
+        if (st.porta) {
+          const total = cents((st.porta * gate) / 256);
+          if (total) pitch.push(`(linear 0..${total} :len ${tick(gate)}t)`);
+        }
+        if (st.plfo) {
+          const c = lfoCurve(st.plfo, 100 / 64 / 256);
+          if (c) pitch.push(st.lfoDelay ? c.replace(/\)$/, ` :wait ${tick(st.lfoDelay)}t)`) : c);
+        }
+      }
+      if (pitch.length > 1) skip("a portamento under the pitch LFO (the LFO is dropped for that note)");
+      state.push(pitch.length ? `(macro :pitch+ ${pitch[0]})` : "(macro :pitch none)");
+      if (!tr.pcm && st.alfo) {
+        const c = lfoCurve(st.alfo, -TL_DB / VEL_DB);
+        state.push(c ? `(macro :vel+ ${st.lfoDelay ? c.replace(/\)$/, ` :wait ${tick(st.lfoDelay)}t)`) : c})` : "(macro :vel none)");
+      } else if (!tr.pcm) state.push("(macro :vel none)");
+      notes.push({ tick: tick(n.clock + delay), len: tick(len), midi, vel, state, tieIn: legato && !tr.pcm });
+    });
+    if (!notes.length) continue;
+    const marks = [];
+    for (const tm of tr.tempos) marks.push({ tick: tick(tm.clock), tokens: [`:tempo ${mdxBpm(tm.tb)}`] });
+    const endTick = tick(tr.end);
+    const loopTick = tr.loopClock != null ? tick(tr.loopClock) : null;
+    // The tempo in force where the track loops is restated there.
+    if (loopTick != null && marks.length && !marks.some((m) => m.tick === loopTick)) {
+      const inForce = marks.filter((m) => m.tick < loopTick).pop();
+      if (inForce) marks.push({ tick: loopTick, tokens: inForce.tokens });
+      marks.sort((x, y) => x.tick - y.tick);
+    }
+    songOut.push({ channel, notes: dropIdleNones(notes), marks, endTick, loopTick, tr });
+    endMax = Math.max(endMax, endTick);
+  }
+  if (songOut.length && !songOut.some((t) => t.marks.some((m) => m.tick === 0)))
+    songOut[0].marks.unshift({ tick: 0, tokens: [`:tempo ${mdxBpm(200)}`] });
+
+  // The samples' wav. A note at another rate than its sample's is that many
+  // semitones off c4.
+  let pcm = null;
+  if (samples.size) {
+    const list = [...samples.values()].sort((x, y) => x.index - y.index);
+    let offset = 0;
+    for (const sm of list) {
+      let frames = sm.data.length;
+      while (frames > 1 && Math.abs(sm.data[frames - 1]) < 1 / 256) frames--;
+      sm.frames = frames;
+      sm.offset = offset;
+      offset += frames;
+      sm.rate = [...sm.rates].reduce((x, y) => (y[1] > x[1] ? y : x))[0];
+    }
+    const mono = new Float32Array(offset);
+    for (const sm of list) mono.set(sm.data.subarray(0, sm.frames), sm.offset);
+    let peak = 0;
+    for (const v of mono) peak = Math.max(peak, Math.abs(v));
+    if (peak > 0 && peak < 0.99) for (let i = 0; i < mono.length; i++) mono[i] /= peak;
+    const base = String(options.fileName || mdx.pdxName || "mdx").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
+    const wavFile = `${base}-pdx.wav`;
+    const wavRate = list[0].rate;
+    for (const sm of list)
+      defs.push(`(def-pcm ${sm.name} :file ${qstr(wavFile)} :rate ${sm.rate} :offset ${sm.offset} :frames ${sm.frames})`);
+    for (const t of songOut)
+      for (const nn of t.notes) if (typeof nn.midi === "object") nn.midi = 60 + Math.round(12 * Math.log2(nn.midi.rate / nn.midi.sm.rate));
+    pcm = { wavFile, rate: wavRate, mono, wav: encodeWav(mono, null, wavRate),
+      entries: list.map((sm) => ({ name: sm.name, offset: sm.offset, frames: sm.frames, rate: sm.rate })), tag: "MDX" };
+  }
+
+  for (const [k, n] of skipped) warnings.push(`${k} (${n}×)`);
+  if (!songOut.length) warnings.push("no notes to import");
+
+  const header = [`; Imported from ${options.fileName ?? "an MDX file"} (MDX${mdx.pcm8 ? ", PCM8" : ""}${mdx.pdxName ? `, ${mdx.pdxName}` : ""})`];
+  const score = [":target x68k", mdx.title && `:title ${qstr(mdx.title)}`].filter(Boolean);
+  header.push(`(def-score ${score.join(" ")})`);
+  for (const d of defs) header.push("", d);
+
+  const bars = barEnds([], Math.max(1, endMax));
+  const song = {
+    header, bars, endTick: endMax, loopTick: null,
+    tracks: songOut.map((t) => ({ channel: t.channel, head: [], notes: t.notes, marks: t.marks, endTick: t.endTick, loopTick: t.loopTick })),
+  };
+  const source = options.structure === false ? emitSong(withPre(song)) : emitStructured(song);
+  return { source, warnings, pcm };
+}
+
+// For the plain writer: each note's switches that changed, as `pre`.
+export function withPre(song) {
+  return {
+    ...song,
+    tracks: song.tracks.map((tr) => {
+      let cur = tr.notes[0]?.state ?? [];
+      const notes = tr.notes.map((n, i) => {
+        const pre = i ? stateChange(cur, n.state) : undefined;
+        cur = n.state;
+        return { ...n, pre };
+      });
+      return { ...tr, head: tr.notes[0]?.state ?? [], notes };
+    }),
+  };
+}
+
+// A macro target no note of the track sets needs no `none` either. A def
+// names its target by its prefix (import-song.js switchKind).
+const DEF_TARGET = { vol: "vol", env: "vel", bend: "pitch", vib: "pitch" };
+const macroTarget = (x) => (x.startsWith("(macro :") ? (x.endsWith(" none)") ? null : /^\(macro :([a-z]+)/.exec(x)[1])
+  : DEF_TARGET[/^([a-z]+)-/.exec(x)?.[1]] ?? null);
+export function dropIdleNones(notes) {
+  const idle = ["pitch", "vel", "vol"].filter((t) => !notes.some((n) => n.state.some((x) => macroTarget(x) === t)));
+  if (!idle.length) return notes;
+  const nones = new Set(idle.map((t) => `(macro :${t} none)`));
+  return notes.map((n) => ({ ...n, state: n.state.filter((x) => !nones.has(x)) }));
+}

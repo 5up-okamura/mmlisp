@@ -34,7 +34,7 @@ game state at runtime.
   voices, nearest first, to hear against the recording and play on the
   keyboard before one goes into the score.
   Voices and songs import too: DefleMask, Furnace, TFI / VGI / OPNI, mucom88,
-  MIDI, VGM and a SoundFont's drum kit.
+  MIDI, VGM, MDX (X68000), MGS (MSX) and a SoundFont's drum kit.
 - **Compose with an AI.** An [MCP server](tools/mcp/README.md) gives Claude
   Code, Claude Desktop or any MCP client the language reference, the real
   compiler's diagnostics and WAV renders — and, with **Tools > Connect to AI**,
@@ -119,7 +119,7 @@ for a controller's knobs.
   samples from mucom88 PCM banks and SoundFont kits
 - Songs from MIDI, DefleMask, Furnace, VGM (with its PCM: the YM2612 DAC,
   SegaPCM, YM2610 ADPCM, the OKIM6258) and mucom88, through a dialog for tempo
-  and channels
+  and channels; MDX (with its PDX) as an X68000 score and MGS as an MSX one
 - Recordings, in WAV or any format the browser decodes: **Audio on FM3** (a
   sound's spectral peaks on FM3's operators — CSM's vocoder voice, or
   sine-wave speech) and **Audio as FM Voice** (a patch searched for one note,

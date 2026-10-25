@@ -66,9 +66,14 @@ Its current limits are `driver.md` §11 — keep the two in step.
   importer writes only what it is built to write, and offers only that. The
   mucom importer writes pc88 (the song's own chip, the default) or md, chosen
   in its import dialog; MIDI, VGM and DefleMask / Furnace write md and show no
-  choice. A target is added to an importer when a song needs it, not to fill
+  choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
   the matrix.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
+- **MGS**: the FM-PAC's tracks (9-17, the rhythm) once the msx target has the
+  OPLL's channels; the PSG's hardware envelope (`s`, `m`) once it is a word;
+  an envelope's wave changes as it runs (a note keeps the first), `#psg_tune`.
+- **MDX**: sync between tracks (`$EF`/`$EE`, the tracks run free), the
+  OPM LFO's sync.
 - **VGM**: tempo changes within a song (one grid serves the whole file — Dino
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
   if wanted — envelopes and bends match exactly (TwinBee gives ~26

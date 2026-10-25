@@ -95,3 +95,19 @@ Next:
 3. IR player: FM3 / CSM / Timer A into the OPN encoder (hygiene; gated by
    `csm` today). The OPLL's level through its encoder and per-part ranges
    are built (stage 2).
+
+## Song importers for msx / x68k (MGS, MDX; 2026-10-25)
+
+- `import-mgs.js` reads MGSDRV's semantics from the format (digital-sound-
+  antiques/mgsc mgs-format.md, mgsrc-js) and the msxplay-js demo songs —
+  **not held to the driver**: no MGSDRV run was compared (libkss can render
+  MGS through the real driver, and kss2vgm would give the A/B the mucom
+  importer had). Guesses to check against it: an envelope scales v
+  multiplicatively (v × level / 15, @r's 0-255 likewise), `n:c` slides,
+  an @e's `\` steps are + up (the reverse of the track's `\`, which MGSC
+  stores as a period offset — chosen because the other reading sends
+  `@e22`-style toms up 60 semitones), `h` is delay, quarter-cycle frames,
+  mode, depth in periods, `k` keys off k steps early, `q` is eighths, an
+  envelope mode 0 keeps the track's mixer.
+- The OPLL's channels are in (6f0489e): the MGS importer's FM tracks (9-17,
+  rhythm on 15 in #opll_mode 1, @v voices in track 0) are its next step.

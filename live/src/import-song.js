@@ -222,6 +222,13 @@ const playable = (m) => (m == null ? m : m < 12 ? playable(m + 12) : m > 127 ? p
 const inRange = (notes) => (notes.every((n) => n.midi == null || (n.midi >= 12 && n.midi <= 127)) ? notes
   : notes.map((n) => ({ ...n, midi: playable(n.midi) })));
 const songInRange = (song) => ({ ...song, tracks: song.tracks.map((tr) => ({ ...tr, notes: inRange(tr.notes) })) });
+// A track's end and loop point: its own, else the song's. A loop with nothing
+// in it (the track ends where it loops) is no loop.
+function trackSpan(song, tr) {
+  const endTick = tr.endTick ?? song.endTick;
+  const loopTick = tr.loopTick !== undefined ? tr.loopTick : song.loopTick ?? null;
+  return { endTick, loopTick: loopTick != null && loopTick < endTick ? loopTick : null };
+}
 
 /**
  * The whole score.
@@ -230,25 +237,29 @@ const songInRange = (song) => ({ ...song, tracks: song.tracks.map((tr) => ({ ...
  *   header: string[]        top-level lines (comments, title, imports, defs)
  *   bars: number[]          bar end ticks
  *   endTick, loopTick?
- *   tracks: [{channel, head: string[], notes, marks?, vel?}]
+ *   tracks: [{channel, head: string[], notes, marks?, vel?,
+ *             endTick?, loopTick?}]  a track's own end and loop, where its
+ *                           driver loops each track on its own (MDX, MGS)
  * }
  */
 export function emitSong(song) {
   song = songInRange(song);
   const out = [...song.header];
   for (const tr of song.tracks) {
+    const { endTick, loopTick } = trackSpan(song, tr);
+    const bars = song.bars.filter((b) => b < endTick).concat(endTick);
     const notes = tr.notes;
     const first = notes.find((n) => n.midi != null);
     const oct = first ? octOf(first.midi) : 4;
-    const defLen = commonLen(notes, song.bars, song.endTick);
+    const defLen = commonLen(notes, bars, endTick);
     const vel = notes.find((n) => n.vel != null)?.vel ?? 15;
     const body = writeBody(notes, {
-      bars: song.bars, endTick: song.endTick, loopTick: song.loopTick ?? null,
+      bars, endTick, loopTick,
       marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: tr.channel.startsWith("pcm"),
     });
     const head = [tr.channel, ...tr.head, `:oct ${oct}`, `:len ${lenToken(defLen)}`];
     if (vel !== 15) head.push(`:vel ${vel}`);
-    if (song.loopTick != null) body.push("(go top)");
+    if (loopTick != null) body.push("(go top)");
     out.push("", `(${head.join(" ")}`, ...body.map((l) => "  " + l));
     out[out.length - 1] += ")";
   }
@@ -509,18 +520,19 @@ export function regrid(g, bpm) {
 
 const MAX_BLOCK = 16; // units in one repeated block or phrase
 
-// A switch's kind: a keyword by its name, a macro (or an `env-`, `vib-` or
-// `bend-` def, an imported envelope or bend) by its target, any other name
-// — the voice or the sample — as "name".
+// A switch's kind: a keyword by its name, a macro (or an `env-`, `vol-`,
+// `vib-` or `bend-` def, an imported envelope or bend) by its target, any
+// other name — the voice or the sample — as "name".
 const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0]
   : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}`
-    : /^env-/.test(t) ? "macro:vel" : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";
+    : /^env-/.test(t) ? "macro:vel" : /^vol-/.test(t) ? "macro:vol"
+      : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";
 
 // The switches a note needs written, given those in force: by kind — a
 // keyword (`:pan`, `:mode`) by its name, a macro by its target, a bare name
 // (a voice, a sample, an envelope def) by its place — only what changed.
 // With nothing known in force (after a loop's break), all of them.
-function stateChange(from, to) {
+export function stateChange(from, to) {
   if (!from.length) return to;
   const kind = (toks) => new Map(toks.map((t) => [switchKind(t), t]));
   const a = kind(from), b = kind(to);
@@ -718,7 +730,7 @@ function planTrack(tr, bars, endTick, loopTick) {
  */
 export function bestBars(song) {
   song = songInRange(song);
-  const { endTick, loopTick = null } = song;
+  const { endTick } = song;
   let best = null;
   for (const bar of [384, 768, 192, 576, 288]) {
     for (let pickup = 0; pickup < bar; pickup += 96) {
@@ -726,7 +738,10 @@ export function bestBars(song) {
       for (let t = pickup || bar; t < endTick; t += bar) bars.push(t);
       bars.push(endTick);
       let ticks = 0;
-      for (const tr of song.tracks) ticks += planTrack(tr, bars, endTick, loopTick).ticks;
+      for (const tr of song.tracks) {
+        const span = trackSpan(song, tr);
+        ticks += planTrack(tr, bars.filter((b) => b < span.endTick).concat(span.endTick), span.endTick, span.loopTick).ticks;
+      }
       // A 4/4 bar reads best: another length has to fold 8% more to win.
       if (bar !== 384) ticks *= 1.08;
       if (!best || ticks < best.ticks) best = { bars, ticks };
@@ -743,10 +758,11 @@ export function emitStructured(song) {
   song = songInRange(song);
   const out = [...song.header];
   const forms = [];
-  const loopTick = song.loopTick ?? null;
   for (const tr of song.tracks) {
-    const defLen = commonLen(tr.notes, song.bars, song.endTick);
-    const { segs, lists, defs } = planTrack(tr, song.bars, song.endTick, loopTick);
+    const { endTick, loopTick } = trackSpan(song, tr);
+    const bars = song.bars.filter((b) => b < endTick).concat(endTick);
+    const defLen = commonLen(tr.notes, bars, endTick);
+    const { segs, lists, defs } = planTrack(tr, bars, endTick, loopTick);
     const byRun = new Map(defs.map((d) => [d.runKey, d]));
     // Switches the compiler binds to the notes as it goes (like the octave),
     // not writes the chip gets: a macro, and a PCM track's sample.
