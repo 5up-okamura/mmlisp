@@ -417,8 +417,12 @@ export class IRPlayer {
     this._currentTick = 0;
     this._loopCount.clear();
     this._routes.clear();
-    // Each PSG lane's level ladder: its part's (_assignChannel).
+    // Each PSG lane's level ladder: its part's, from the target's channel
+    // table — every lane the machine has, not only the score's, since the
+    // keys play any of them.
     this._psgLevel = new Array(PSG_LANES).fill(null);
+    for (const c of Object.values(target.channels))
+      if (CORE_OF_KIND[c.part.kind] === "psg") this._psgLevel[c.part.kind === "noise" ? 3 : c.voice] = c.part.level;
     this._rhythmState = null; // per-track vol / pan of the chips' own PCM parts
     this._adpcmState = null;
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
@@ -1224,7 +1228,6 @@ export class IRPlayer {
       throw new Error(`the IR player cannot play ${track.channel} yet (${c.part.label})`);
     const lane = c.part.kind === "noise" ? 3 : c.voice;
     this._routes.set(trackIndex, { core, part: c.part, lane });
-    if (core === "psg") this._psgLevel[lane] = c.part.level;
   }
 
   // [trackIndex, lane] of every track the `core` plays (a sample core's: of
@@ -4894,8 +4897,9 @@ export class IRPlayer {
   // the 16-step attenuator as the driver does. vol or master 0 is a hard mute.
   // A PSG lane's attenuation, 0 loud .. 15 off, on its part's level ladder.
   _composePsgAtt(psgCh, vel, vol, master) {
-    if (vol <= 0 || master <= 0) return 15;
-    return levelSteps(this._psgLevel[psgCh], { vel, faders: [vol, master] });
+    const level = this._psgLevel[psgCh];
+    if (!level || vol <= 0 || master <= 0) return 15; // no such lane here: silent
+    return levelSteps(level, { vel, faders: [vol, master] });
   }
 
   // Returns the current VOL (0-31) for a PSG channel at the given audio time,

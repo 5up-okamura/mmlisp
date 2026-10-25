@@ -9733,9 +9733,15 @@
     let _pcmAuditionSeq = 0;
     let _pcmReleasedSeq = 0;
 
-    // The PCM strip selected in Channels (its head, e.g. "pcm1"), or null.
+    // The PCM strip selected in Channels (its head, e.g. "pcm1"), or null. A
+    // ROM rhythm sound's strip ("rhythm-bd", buildChStripModel) counts.
     function selectedPcmPart() {
-      return channelVoice(selectedChannel)?.part.kind === 'sample' ? selectedChannel : null;
+      if (channelVoice(selectedChannel)?.part.kind === 'sample') return selectedChannel;
+      return selectedRhythmStrip() ? selectedChannel : null;
+    }
+    function selectedRhythmStrip() {
+      const e = _chStripModel.find((e) => e.head === selectedChannel);
+      return e?.rhythmTracks ? e : null;
     }
 
     async function previewPcmNoteOn(midi, vel = 15) {
@@ -9744,6 +9750,15 @@
       // the def from sounding.
       const lib = libraryKeyTarget();
       const libSample = lib?.kind === 'pcm' ? lib : null;
+      // The YM2608's ROM rhythm: a rhythm sound's strip keys its sound as a
+      // hit (it plays from the user's ROM; while the song plays, beside it).
+      const rhythm = libSample ? null : selectedRhythmStrip();
+      if (rhythm) {
+        if (!_rhythmRom) { log('The rhythm plays from your ROM — File > Import > YM2608 Rhythm ROM…', 'err'); return; }
+        const enc = targetProfile(_lastGoodIR?.metadata?.target).chipFor('rhythm').rhythm;
+        for (const [p, a, d] of enc.hit(rhythm.voice, 31, 0)) writePreview(p, a, d);
+        return;
+      }
       const part = libSample ? null : selectedPcmPart();
       let name = libSample ? libSample.def.name : part ? null : _pcmCursorDef;
       if (!name && !part) return;
@@ -9766,15 +9781,6 @@
           throw new Error(err ? `${err.code} ${err.message}` : `"${name}" is not a sample`);
         }
         const machine = targetProfile(ir.metadata?.target);
-        // The YM2608's ROM rhythm: a rhythm strip's sound is the chip's own,
-        // keyed as a hit (it plays from the user's ROM).
-        if (_fmLiveRaf == null && part && machine.partOf(part)?.name === 'rhythm') {
-          if (!def.rhythm) throw new Error(`${part} plays the ROM rhythm's six sounds; "${name}" is not one`);
-          if (!_rhythmRom) throw new Error('the rhythm plays from your ROM — File > Import > YM2608 Rhythm ROM…');
-          const enc = machine.chipFor('rhythm').rhythm;
-          for (const [p, a, d] of enc.hit(def.rhythm, 31, 0)) writePreview(p, a, d);
-          return;
-        }
         const one = { ...ir, metadata: { ...ir.metadata, pcmVoices: 1 } };
         const samples = await pcmSampleBlobsForMmb(one, new Set([name]));
         if (!samples) throw new Error(`"${name}" did not load`);

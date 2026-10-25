@@ -3559,8 +3559,8 @@ function createInitFmKwMap() {
 function emitVoice(td, tick, events, src, trackState = null, name = null, diagnostics = null, trackName = null) {
   if (td.kwMap) {
     const dropped = emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.part, trackState?.target);
-    const said = (trackState.voicesSaid ??= new Set());
-    if (dropped && diagnostics && !said.has(name)) {
+    const said = trackState ? (trackState.voicesSaid ??= new Set()) : null;
+    if (dropped && said && diagnostics && !said.has(name)) {
       said.add(name);
       const { part, head } = trackState;
       pushDiag(diagnostics, "warning", "W_TARGET",
