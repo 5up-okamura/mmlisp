@@ -437,9 +437,29 @@
             <div class="knob-label">TEMPO <span class="val" id="val-tempo">120</span></div>
             <input type="range" id="sl-tempo" min="20" max="400" value="120" oninput="onTempo(this)">
           </div>
-          <div class="knob-wrap" data-needs="word:LFO_RATE">
+          <!-- The OPN's LFO rate; the OPM has its own LFO (below), which
+               reads :lfo-rate too but shows its own words -->
+          <div class="knob-wrap" data-needs="part:fm">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
             <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onLfo(this)">
+          </div>
+        </div>
+        <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)" data-needs="word:LFO_FREQ">
+          <div class="knob-wrap">
+            <div class="knob-label">LFRQ <span class="val" id="val-lfo-freq">0</span></div>
+            <input type="range" id="sl-lfo-freq" min="0" max="255" value="0" oninput="onOpmLfo('LFO_FREQ', this)">
+          </div>
+          <div class="knob-wrap">
+            <div class="knob-label">PMD <span class="val" id="val-lfo-pmd">0</span></div>
+            <input type="range" id="sl-lfo-pmd" min="0" max="127" value="0" oninput="onOpmLfo('LFO_PMD', this)">
+          </div>
+          <div class="knob-wrap">
+            <div class="knob-label">AMD <span class="val" id="val-lfo-amd">0</span></div>
+            <input type="range" id="sl-lfo-amd" min="0" max="127" value="0" oninput="onOpmLfo('LFO_AMD', this)">
+          </div>
+          <div class="knob-wrap">
+            <div class="knob-label">WAVE <span class="val" id="val-lfo-wave">saw</span></div>
+            <input type="range" id="sl-lfo-wave" min="0" max="3" value="0" oninput="onOpmLfo('LFO_WAVE', this)">
           </div>
         </div>
         <!-- Song position: one pass of the song (intro + one loop), the loop
@@ -7192,9 +7212,31 @@
       player?.setParam('LFO_RATE', val, 0);
     }
     window.onLfo = onLfo;
+    // The OPM LFO's waveform names (language.md §19 x68k, :lfo-wave).
+    const LFO_WAVES = ['saw', 'square', 'triangle', 'noise'];
     function syncLfoSlider() {
-      setSliderCached('sl-lfo', 'val-lfo', player?.getChRegs?.(0)?.lfoRate ?? 0);
+      const regs = player?.getChRegs?.(0);
+      setSliderCached('sl-lfo', 'val-lfo', regs?.lfoRate ?? 0);
+      const opm = regs?.opmLfo ?? { freq: 0, pmd: 0, amd: 0, wave: 0 };
+      setSliderCached('sl-lfo-freq', 'val-lfo-freq', opm.freq);
+      setSliderCached('sl-lfo-pmd', 'val-lfo-pmd', opm.pmd);
+      setSliderCached('sl-lfo-amd', 'val-lfo-amd', opm.amd);
+      if (_fmSliderCache['sl-lfo-wave'] !== opm.wave) {
+        _fmSliderCache['sl-lfo-wave'] = opm.wave;
+        setSlider('sl-lfo-wave', 'val-lfo-wave', opm.wave);
+        setValueTextById('val-lfo-wave', LFO_WAVES[opm.wave] ?? opm.wave);
+      }
     }
+
+    // The OPM's own LFO, song-wide: a knob writes its word live, as :lfo-freq
+    // … written on a track would.
+    window.onOpmLfo = function(word, slider) {
+      const val = parseInt(slider.value, 10);
+      setSliderDisplayValue(slider, val);
+      if (word === 'LFO_WAVE') setValueTextById('val-lfo-wave', LFO_WAVES[val] ?? val);
+      if (!player) initParamOnlyPlayer();
+      player?.setParam(word, val, 0);
+    };
 
     function onMaster(slider) {
       const val = parseInt(slider.value, 10);

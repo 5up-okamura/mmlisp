@@ -257,6 +257,7 @@ export class IRPlayer {
 
     // Global YM2612 state
     this._lfoRate = 0; // 0 = off, 1-8 = rate index
+    this._opmLfo = { freq: 0, pmd: 0, amd: 0, wave: 0 }; // the OPM's own LFO, as last written
     this._masterVol = VOL_UNITY; // 0 = silent, 31 = full (additive TL offset applied to all channels)
     this._masterSweep = null; // a running :master sweep (its frames are scheduled up front)
     this._reg27 = 0;
@@ -549,6 +550,7 @@ export class IRPlayer {
     this._chRegs = Array.from({ length: FM_CHANNELS }, (_, i) => buildChannelRegState(i));
     this._pcmSample = [null, null, null];
     this._lfoRate = 0;
+    this._opmLfo = { freq: 0, pmd: 0, amd: 0, wave: 0 };
     this._masterVol = VOL_UNITY;
     this._chipPcm = null; // the YM2608's sample voices' levels (_chipPcmFrames)
     this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
@@ -3659,16 +3661,21 @@ export class IRPlayer {
         break;
       }
       // The OPM's own LFO (chips/ym2151.js).
+      // The OPM's own LFO (chips/ym2151.js), kept for the panel.
       case "LFO_FREQ":
+        this._opmLfo.freq = Math.round(value);
         this._fmWrites(this._fmEnc.lfoFreq?.(Math.round(value)) ?? [], when);
         break;
       case "LFO_PMD":
+        this._opmLfo.pmd = Math.round(value);
         this._fmWrites(this._fmEnc.lfoPmd?.(Math.round(value)) ?? [], when);
         break;
       case "LFO_AMD":
+        this._opmLfo.amd = Math.round(value);
         this._fmWrites(this._fmEnc.lfoAmd?.(Math.round(value)) ?? [], when);
         break;
       case "LFO_WAVE":
+        this._opmLfo.wave = Math.round(value);
         this._fmWrites(this._fmEnc.lfoWave?.(Math.round(value)) ?? [], when);
         break;
       case "FM_DT2_1":
@@ -4927,6 +4934,7 @@ export class IRPlayer {
       ams: r.ams,
       fms: r.fms,
       lfoRate: this._lfoRate,
+      opmLfo: { ...this._opmLfo },
       ops: r.ops.map((o) => ({ ...o })),
     };
   }
