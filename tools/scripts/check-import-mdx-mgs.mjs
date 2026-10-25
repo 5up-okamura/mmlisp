@@ -131,7 +131,9 @@ function compressMgs(u8) {
     0x02, 0, 0x40 | 31, 4, 0x0f, 0x20 | 10, 4, 0x00, // @e0: noise 31; f, a=4, 0
     0x02, 1, 0x80, 128, 32, 12, 64, 0, 8, // @r1
     0x02, 2, 0x20, 6, 0x12, 0xf6, 0x0f, 0x12, 5, 0x0f, // @e2: \-10 f, \5 f
-    0x03, 0, ...wave, 0xff,
+    0x03, 0, ...wave,
+    0x00, 0, 0x21, 0x01, 0x1e, 0x0f, 0xf0, 0xf4, 0x24, 0x13, // @v0
+    0xff,
   ];
   const T = (n, len) => [0x20 | n, len]; // c=0 … b=11, rest 12
   // PSG 1: o4, v13, q6, a portamento, a tie, the loop at `$`; PSG 2: the
@@ -142,8 +144,12 @@ function compressMgs(u8) {
   const psg2 = [0xd2, 0xcf, 0x80, ...T(0, 24), 0x82, ...T(0, 24), 0x2c, 48, 0xff];
   const scc1 = [0x41, ...[150, 0], ...new Array(48).fill(1), 0xd4, 0xcc, 0x80, 0x49, 1, 0x54, 13, 3, 1, 4,
     0x57, 2, 0, 0, ...T(0, 24), 0x58, 0, 0, ...T(4, 24), 0x59, 0, 0, 0, ...T(7, 48), 0xff];
-  const fm1 = [0xd3, 0xcf, ...T(0, 48), 0xff];
-  const mgsBytes = buildMgs({ title: "MGS test", tempo: 120, defs, tracks: [psg1, psg2, null, scc1, null, null, null, null, fm1] });
+  // FM 1: the @v voice, then ROM voice 3 with the sustain on; FM rhythm
+  // (#opll_mode 1): a kick.
+  const fm1 = [0xd3, 0xcf, 0x80, ...T(0, 48), 0x83, 0x5b, 1, ...T(4, 48), 0xff];
+  const rhythm = [0x30, 48, 0xff];
+  const mgsBytes = buildMgs({ title: "MGS test", tempo: 120, defs, opll: 1,
+    tracks: [psg1, psg2, null, scc1, null, null, null, null, fm1, null, null, null, null, null, rhythm] });
   const plain = parseMgs(mgsBytes);
   const packed = parseMgs(compressMgs(mgsBytes));
   assert.deepEqual([...packed.u8], [...plain.u8], "MGSARC's form decompresses to the file");
@@ -157,6 +163,7 @@ function compressMgs(u8) {
     const { source, warnings } = mgsToMmlisp(plain, { structure, fileName: "test.mgs" }, a);
     const what = `MGS (${structure ? "folded" : "flat"})`;
     has(source, /\(def-score :target msx :title "MGS test"\)/, what);
+    assert.ok(!/\(fm7/.test(source), `${what}: no fm7 in #opll_mode 1`);
     has(source, /:tempo 150/, what);
     has(source, /\(sqr1[\s\S]*:mode tone[\s\S]*c(8\.)? _16/, what); // q6
     has(source, /\(macro :pitch\+ \(linear -400\.\.0 :len 96t\)\)/, what); // c_e: from c to e
@@ -169,7 +176,9 @@ function compressMgs(u8) {
     has(source, /\(def vol-r1-v12-scc \(macro :vol \[\(linear /, what);
     has(source, /#rel \(linear :len \d+f\)/, what);
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
-    assert.ok(warnings.some((w) => /FM-PAC/.test(w)), `${what}: the FM-PAC is reported`);
+    has(source, /\(def-fm mgs-v00 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
+    has(source, /\(fm1[\s\S]*mgs-v00[\s\S]*opll-piano :sus 1/, what);
+    assert.ok(warnings.some((w) => /rhythm \(1 hit\)/.test(w)), `${what}: the FM-PAC's rhythm is reported`);
     clean(source, what);
   }
 }

@@ -5,7 +5,8 @@
 // (A-H) and the ADPCM (track 9, or tracks 9-16 under PCM8), each a stream of
 // notes and commands timed in clocks (48 a quarter, so a clock is two MMLisp
 // ticks — the import is exact, no tempo is estimated). The tracks are played
-// as MXDRV plays them (mdxmini's mdxmml_ym2151.c, Kouno's mdxform.doc):
+// as MXDRV plays them (its 68000 code as portable_mdx ports it — where
+// mdxmini's mdxmml_ym2151.c differs, MXDRV's is followed):
 // repeats unrolled, each track up to its own loop (`L`, a jump back at its
 // end) or its end, and then written by the shared back end (import-song.js),
 // which folds the repeats again and keeps each track's own loop point.
@@ -22,7 +23,8 @@
 //   D, _               :pitch (1/64 semitone a step), a portamento as a
 //                      :pitch+ line over the note
 //   MP / MA, MD        the software LFOs as :pitch+ / :vel+ curves (saw,
-//                      square, triangle), MD their delay
+//                      square, triangle), MD their delay — restarted at each
+//                      note, where MXDRV restarts them only with an MD
 //   MH                 the OPM's LFO: :lfo-wave :lfo-freq :lfo-pmd :lfo-amd
 //   w                  the noise (on track H, NE): its notes go to `noise`
 //                      at :noise-rate 32 - NFRQ
@@ -175,8 +177,10 @@ function playTrack(mdx, track, skipped) {
     if (!len) { skip(`command $${c.toString(16)} (the track stops there)`); end = clock; break; }
     const a1 = u8[p + 1], a2 = u8[p + 2];
     if (c <= 0x7f) {
-      // A rest keys off (unless the note before it ties on).
-      if (st.tie) st.tie = false;
+      // A tied note sounds on through the rests after it, to their end.
+      const last = notes[notes.length - 1];
+      if (last?.tieOn && last.clock + last.count + (last.held ?? 0) === clock) last.held = (last.held ?? 0) + c + 1;
+      st.tie = false;
       clock += c + 1;
     } else if (c <= 0xdf) {
       const count = a1 + 1;
@@ -241,7 +245,9 @@ function playTrack(mdx, track, skipped) {
         case 0xea:
           if (a1 === 0x80 || a1 === 0x81) st.hlfoOn = a1 === 0x81;
           else {
-            st.hlfo = { wave: a1 & 3, sync: (a1 & 0x40) !== 0, freq: a2, pmd: u8[p + 3] & 127, amd: u8[p + 4] & 127 };
+            // Both bytes go to $19: bit 7 says PMD, else AMD.
+            const pm = [u8[p + 3], u8[p + 4]].filter((b) => b & 0x80).pop(), am = [u8[p + 3], u8[p + 4]].filter((b) => !(b & 0x80)).pop();
+            st.hlfo = { wave: a1 & 3, sync: (a1 & 0x40) !== 0, freq: a2, pmd: (pm ?? 0) & 127, amd: am ?? 0 };
             st.pmsAms = u8[p + 5];
             st.hlfoOn = true;
           }
@@ -280,7 +286,7 @@ function lfoCmd(u8, p, st, key) {
   if (a1 === 0x80 || a1 === 0x81) { st[`${key}On`] = a1 === 0x81 && st[key] != null; return; }
   const clock = be16(u8, p + 2);
   let depth = s16(u8, p + 4);
-  if (key === "plfo" && a1 > 4) depth *= 256;
+  if (key === "plfo" && a1 >= 4) depth *= 256;
   st[key] = { form: a1 & 3, clock: Math.max(1, clock), depth };
   st[`${key}On`] = true;
 }
@@ -290,7 +296,7 @@ const snapshot = (st) => ({ ...st, plfo: st.plfoOn ? st.plfo : null, alfo: st.al
 
 /** A note's sounding length in clocks: its gate (q, @q, a tie). */
 function gateOf(n) {
-  if (n.tieOn) return n.count; // & : keyed on into what follows
+  if (n.tieOn) return n.count + (n.held ?? 0); // & : keyed on into what follows
   const q = n.st.qMinus ? n.count - n.st.qMinus : Math.floor((n.count * n.st.q) / 8);
   return Math.max(1, Math.min(n.count, q));
 }
@@ -318,21 +324,25 @@ const panWord = (p) => (p === 1 ? "left" : p === 2 ? "right" : "center");
 const velOf = (atten) => Math.max(0, Math.min(15, 15 - Math.round(((atten - 2) * TL_DB) / VEL_DB)));
 const cents = (kf) => Math.round((kf * 100) / 64);
 
-// The software pitch LFO (MXDRV: a step each clock, 1/256 of a KF unit) as
-// a :pitch+ curve; the volume LFO (TL steps) as a :vel+ one.
-function lfoCurve(lfo, scale) {
-  const { form, clock, depth } = lfo;
-  const t = (n) => `${n * TICKS_PER_CLOCK}t`;
-  if (form === 0) {
-    const top = Math.round(depth * (clock - 1) * scale);
-    return top ? `(saw 0..${top} :len ${t(clock)})` : null;
-  }
-  if (form === 1) {
-    const h = Math.round((depth / 2) * scale);
-    return h ? `(square ${h}..${-h} :len ${t(clock * 2)})` : null;
-  }
-  const a = Math.round(depth * Math.floor(clock / 2) * scale);
-  return a ? `(triangle ${-a}..${a} :len ${t(clock * 2)} :phase 64)` : null;
+// The software LFOs, MXDRV's shapes: the pitch LFO (MP; a step a clock of
+// depth/256 in 1/64 semitone) bipolar — a saw rising from 0 over its period,
+// a square ±depth, a triangle a period of 2P rising first — as a :pitch+
+// curve; the volume LFO (MA; depth/256 TL a clock) only ever quieter, from 0,
+// as a :vel+ one. Its random shape (3) is left out.
+const t2 = (n) => `${n * TICKS_PER_CLOCK}t`;
+function pitchLfoCurve({ form, clock: P, depth }) {
+  const u = (x) => Math.round((x * 100) / 64 / 256); // cents
+  if (form === 0) { const a = u((depth * P) / 2); return a ? `(saw ${-a}..${a} :len ${t2(P)} :phase 128)` : null; }
+  if (form === 1) { const a = u(depth); return a ? `(square ${a}..${-a} :len ${t2(P * 2)})` : null; }
+  if (form === 2) { const a = u((depth * P) / 2); return a ? `(triangle ${-a}..${a} :len ${t2(P * 2)} :phase 64)` : null; }
+  return null;
+}
+function volLfoCurve({ form, clock: P, depth }) {
+  const v = (tl) => -Math.round(((Math.abs(tl) / 256) * TL_DB * 100) / VEL_DB) / 100; // :vel steps, quieter
+  if (form === 0) { const a = v(depth * P); return a ? `(saw 0..${a} :len ${t2(P)})` : null; }
+  if (form === 1) { const a = v(depth); return a ? `(square 0..${a} :len ${t2(P * 2)})` : null; }
+  if (form === 2) { const a = v(depth * P); return a ? `(triangle 0..${a} :len ${t2(P * 2)})` : null; }
+  return null;
 }
 
 const OP_OF_SLOT = [1, 3, 2, 4]; // register order M1 M2 C1 C2 → op1-op4
@@ -389,7 +399,8 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     warnings.push(`the ADPCM tracks need ${mdx.pdxName || "the song's PDX"} — pick it with the MDX; they are left out`);
   const samples = new Map(); // index → {name, data, rates}
   const sampleOf = (n) => {
-    const index = n.st.voice * 96 + n.midi;
+    // D moves the sample index (1/64 a step, +5); the bank is PCM8's.
+    const index = (mdx.pcm8 ? n.st.voice * 96 : 0) + ((n.midi * 64 + 5 + n.st.detune) >> 6);
     if (!pdx?.has(index)) return null;
     if (!samples.has(index)) samples.set(index, { index, name: `pdx-${String(index).padStart(3, "0")}`, data: pdx.get(index), rates: new Map() });
     const sm = samples.get(index);
@@ -430,6 +441,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       const state = [];
       let midi = n.midi + NOTE_MIDI;
       let vel = velOf(st.atten);
+      if (tr.pcm && st.atten >= 0x2b) { skip("an ADPCM note too quiet for PCM8 (muted)"); return; }
       if (tr.pcm) {
         const sm = sampleOf(n);
         if (!sm) { skip("an ADPCM note with no sample in the PDX"); return; }
@@ -457,18 +469,19 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       const pitch = [];
       if (!tr.pcm && !isNoise) {
         if (st.porta) {
-          const total = cents((st.porta * gate) / 256);
-          if (total) pitch.push(`(linear 0..${total} :len ${tick(gate)}t)`);
+          // It bends on past the key-off, to the next note.
+          const total = cents((st.porta * n.count) / 256);
+          if (total) pitch.push(`(linear 0..${total} :len ${tick(n.count)}t)`);
         }
         if (st.plfo) {
-          const c = lfoCurve(st.plfo, 100 / 64 / 256);
+          const c = pitchLfoCurve(st.plfo);
           if (c) pitch.push(st.lfoDelay ? c.replace(/\)$/, ` :wait ${tick(st.lfoDelay)}t)`) : c);
         }
       }
       if (pitch.length > 1) skip("a portamento under the pitch LFO (the LFO is dropped for that note)");
       state.push(pitch.length ? `(macro :pitch+ ${pitch[0]})` : "(macro :pitch none)");
       if (!tr.pcm && st.alfo) {
-        const c = lfoCurve(st.alfo, -TL_DB / VEL_DB);
+        const c = volLfoCurve(st.alfo);
         state.push(c ? `(macro :vel+ ${st.lfoDelay ? c.replace(/\)$/, ` :wait ${tick(st.lfoDelay)}t)`) : c})` : "(macro :vel none)");
       } else if (!tr.pcm) state.push("(macro :vel none)");
       notes.push({ tick: tick(n.clock + delay), len: tick(len), midi, vel, state, tieIn: legato && !tr.pcm });

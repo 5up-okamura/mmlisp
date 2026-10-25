@@ -16,7 +16,11 @@
 //   PSG 1-3         sqr1-sqr3; `/` (and an envelope's mode) the mixer as
 //                   :mode tone | noise | both, `n` the song's :noise-rate
 //   SCC 4-8         wave1-wave5; `@n` the @s wave, a def-wave
-//   v, v+ / v-      :vol — the SSG's 3 dB steps, the SCC's linear volume
+//   FM 9-17         fm1-fm9 (fm1-fm6 in #opll_mode 1); `@n` an @v voice,
+//                   a def-fm on the OPLL's words, else ROM voice n
+//                   (opll-violin …); so / sf :sus
+//   v, v+ / v-      :vol — the SSG's and the OPLL's 3 dB steps, the SCC's
+//                   linear volume
 //   @e / @r, @n     the level envelope (PSG: `@n` selects it) as a :vol
 //                   macro scaled by v, frame by frame; @r's RR its release
 //   q, &            the note's length (q n/8 of it), & legato
@@ -24,9 +28,9 @@
 //   h, ho / hf      the software LFO as a :pitch+ triangle
 //   _               a portamento: a :pitch+ line from the base note
 //   t, #tempo       :tempo (BPM)
-// Not yet: the FM-PAC (tracks 9-17) waits for the msx target's OPLL
-// channels; the PSG's hardware envelope (s, m) waits for its word. Both, and
-// whatever else the file holds, are counted and reported.
+// Not yet: the FM-PAC's rhythm (track 15 in #opll_mode 1) waits for the
+// msx target's rhythm mode; the PSG's hardware envelope (s, m) waits for its
+// word. Both, and whatever else the file holds, are counted and reported.
 //
 // MGSDRV's own behavior is read from the format and its demos, not held to
 // the driver: envelopes scale v (v × level / 15), an @e step is a frame,
@@ -39,6 +43,7 @@
 
 import { emitSong, emitStructured, barEnds, qstr, PPQN } from "./import-song.js";
 import { withPre, dropIdleNones } from "./import-mdx.js";
+import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
 
 const TICKS_PER_STEP = PPQN / 48;
 const NOTE_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
@@ -142,6 +147,7 @@ export function parseMgs(bytes) {
 // ── Playing a track ───────────────────────────────────────────────────────
 
 const kindOf = (i) => (i <= 3 ? "psg" : i <= 8 ? "scc" : "fm");
+const OPLL_CLOCK = 3579545;
 
 // Bytes a command takes, its own included (0: the track ends or is unknown).
 function cmdLength(u8, p, rhythm) {
@@ -176,7 +182,7 @@ function counts(u8, p) {
 function newState(kind) {
   return {
     oct: 4, len: 48, q: 8, k: 0, vol: 15, voice: null, env: null, mode: 1, nfreq: null, detune: 0,
-    lfo: null, lfoOn: false, porta: null, tie: false, kind,
+    lfo: null, lfoOn: false, porta: null, tie: false, sus: 0, kind,
   };
 }
 
@@ -273,8 +279,8 @@ function playTrack(mgs, track, skipped) {
         stack.pop();
         break;
       }
-      case 0x5a: if (kind !== "fm") st.lfoOn = a1 !== 0; else skip("hf / ho"); break;
-      case 0x5b: skip("so / sf"); break;
+      case 0x5a: if (!rhythm) st.lfoOn = a1 !== 0; break;
+      case 0x5b: st.sus = a1 ? 1 : 0; break;
       case 0x5c: skip("y (a register write)"); break;
       case 0x5d: if (!stack.length) dollar = { step }; else skip("a `$` inside a repeat"); break;
       case 0x5f: skip("@\\ on FM"); break;
@@ -312,8 +318,9 @@ export function analyzeMgs(mgs) {
   const skipped = new Map();
   const tracks = mgs.tracks.map((t) => {
     const kind = kindOf(t.index);
-    // The FM-PAC's tracks are counted, not written: what they hold goes unsaid.
-    const r = playTrack(mgs, t, kind === "fm" ? new Map() : skipped);
+    // The rhythm is counted, not written: what it holds goes unsaid.
+    const rhythm = mgs.opllMode === 1 && t.index === 15;
+    const r = playTrack(mgs, t, rhythm ? new Map() : skipped);
     const name = mgs.opllMode === 1 && t.index === 15 ? "FM rhythm" : TRACK_NAME(t.index);
     return { ...t, ...r, kind, name, label: `${name} · ${r.notes.length} notes${r.loopStep != null ? ", loops" : ""}` };
   });
@@ -333,6 +340,12 @@ const MODES = [null, "tone", "noise", "both"];
 // as cents there.
 function detuneCents(kind, midi, d) {
   const hz = 440 * 2 ** ((midi - 69) / 12);
+  if (kind === "fm") {
+    // An F-number offset, at the block that holds the note in 256-511.
+    let f = (hz * 72 * 2 ** 19) / OPLL_CLOCK;
+    while (f >= 512) f /= 2;
+    return Math.round(1200 * Math.log2(Math.max(1, f + d) / f));
+  }
   const p = kind === "psg" ? PSG_CLOCK / 16 / hz : PSG_CLOCK / 32 / hz - 1;
   const q = Math.max(1, Math.min(4095, p + d)); // the 12-bit period
   return Math.round(1200 * Math.log2((kind === "psg" ? p : p + 1) / (kind === "psg" ? q : q + 1)));
@@ -433,7 +446,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   };
   const envDefs = new Map();
   const envName = (num, v, kind) => {
-    const key = `${num}:${v}:${kind}`;
+    const key = `${num}:${v}:${kind === "scc" ? "scc" : "ssg"}`;
     if (!envDefs.has(key)) {
       const env = mgs.defs.envs.get(num);
       if (!env) { envDefs.set(key, null); warnings.push(`@e${num} is not in the file — its notes play without an envelope`); }
@@ -443,7 +456,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
         const flat = /^\[(\d+)\]$/.exec(spec);
         if (flat) envDefs.set(key, { vol: Number(flat[1]) });
         else {
-          const name = `vol-${env.type}${num}-v${v}${kind === "scc" ? "-scc" : ""}`;
+          const name = `vol-${env.type}${num}-v${v}${kind === "scc" ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
           defs.push(`(def ${name} (macro :vol ${spec}))`);
           envDefs.set(key, { name });
         }
@@ -459,7 +472,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const cents = x.offsets.map((o) => (o ? Math.round(detuneCents(kind, midi, -o) / 5) * 5 : 0));
       let name = null;
       if (cents.some(Boolean)) {
-        name = `bend-e${num}-${NOTE_NAMES[midi % 12].replace("+", "s")}${Math.floor(midi / 12) - 1}${kind === "scc" ? "-scc" : ""}`;
+        name = `bend-e${num}-${NOTE_NAMES[midi % 12].replace("+", "s")}${Math.floor(midi / 12) - 1}${kind === "psg" ? "" : `-${kind}`}`;
         defs.push(`(def ${name} (macro :pitch+ ${frameVector(cents, x.sus)}))`);
       }
       bendDefs.set(key, name);
@@ -477,17 +490,33 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     return expanded.get(num);
   };
 
-  const fm = a.tracks.filter((t) => t.kind === "fm" && t.notes.length);
-  if (fm.length)
-    warnings.push(`the FM-PAC's ${fm.length} track${fm.length > 1 ? "s" : ""} (${fm.reduce((s, t) => s + t.notes.length, 0)} notes) are not imported yet — the msx target's OPLL channels are still to come`);
+  const rhythm = a.tracks.find((t) => mgs.opllMode === 1 && t.index === 15 && t.notes.length);
+  if (rhythm) warnings.push(`the FM-PAC's rhythm (${rhythm.notes.length} hit${rhythm.notes.length > 1 ? "s" : ""}) is not imported yet — the msx target's rhythm mode is still to come`);
+  // An @v voice as a def-fm on the OPLL's words; @1-@15 without one, the ROM's.
+  const voiceDefs = new Map();
+  const fmVoice = (n) => {
+    if (!voiceDefs.has(n)) {
+      const d = mgs.defs.voices.get(n);
+      if (d) {
+        const name = `mgs-v${String(n).padStart(2, "0")}`;
+        const op = (k, b0, ar, sl, ksl, ws, tl) => [`:am${k} ${b0 >> 7}`, `:vib${k} ${(b0 >> 6) & 1}`, `:eg${k} ${(b0 >> 5) & 1}`,
+          `:ks${k} ${(b0 >> 4) & 1}`, `:ml${k} ${b0 & 15}`, `:ksl${k} ${ksl}`, ...(tl != null ? [`:tl${k} ${tl}`] : []),
+          `:ws${k} ${ws}`, `:ar${k} ${ar >> 4}`, `:dr${k} ${ar & 15}`, `:sl${k} ${sl >> 4}`, `:rr${k} ${sl & 15}`].join(" ");
+        defs.push(`(def-fm ${name} :fb ${d[3] & 7}\n  ${op(1, d[0], d[4], d[6], d[2] >> 6, (d[3] >> 3) & 1, d[2] & 63)}\n  ${op(2, d[1], d[5], d[7], d[3] >> 6, (d[3] >> 4) & 1, null)})`);
+        voiceDefs.set(n, name);
+      } else if (n >= 1 && n <= 15) voiceDefs.set(n, OPLL_ROM_NAMES[n - 1]);
+      else { voiceDefs.set(n, null); warnings.push(`FM @${n} has no @v definition — its notes play the voice before`); }
+    }
+    return voiceDefs.get(n);
+  };
 
   const songOut = [];
   let endMax = 0;
   for (const tr of a.tracks) {
-    if (tr.kind === "fm" || !tr.notes.length) continue;
-    const isPsg = tr.kind === "psg";
-    const channel = isPsg ? `sqr${tr.index}` : `wave${tr.index - 3}`;
-    const volOf = isPsg ? ssgVol : sccVol;
+    if (!tr.notes.length || (mgs.opllMode === 1 && tr.index >= 15)) continue;
+    const isPsg = tr.kind === "psg", isFm = tr.kind === "fm";
+    const channel = isPsg ? `sqr${tr.index}` : isFm ? `fm${tr.index - 8}` : `wave${tr.index - 3}`;
+    const volOf = tr.kind === "scc" ? sccVol : ssgVol; // the OPLL's volume steps 3 dB as the SSG's
     const notes = [];
     let prev = null;
     for (const n of tr.notes) {
@@ -495,7 +524,8 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const x = st.env != null ? envX(st.env) : null;
       const state = [];
       const wave = x?.wave ?? st.voice;
-      if (!isPsg && wave != null) { const w = waveName(wave); if (w) state.push(w); }
+      if (isFm) { const v = st.voice != null ? fmVoice(st.voice) : null; if (v) state.push(v); state.push(`:sus ${st.sus}`); }
+      else if (!isPsg && wave != null) { const w = waveName(wave); if (w) state.push(w); }
       if (isPsg) {
         const mix = x ?? { mode: null, nfreq: null };
         const mode = mix.mode ?? st.mode;
@@ -550,7 +580,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
 
   if (mgs.defs.notes.length) warnings.push(`${[...new Set(mgs.defs.notes)].join(", ")}: the tuning tables are not read (equal temperament, o4a = 440 Hz)`);
   for (const [k, n] of skipped) warnings.push(`${k} (${n}×)`);
-  if (!songOut.length) warnings.push("no PSG or SCC notes to import");
+  if (!songOut.length) warnings.push("no notes to import");
 
   const header = [`; Imported from ${options.fileName ?? "an MGS file"} (MGS${mgs.version}${mgs.opllMode ? ", #opll_mode 1" : ""})`];
   const score = [":target msx", mgs.title && `:title ${qstr(mgs.title)}`].filter(Boolean);

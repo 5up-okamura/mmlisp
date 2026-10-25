@@ -109,5 +109,10 @@ Next:
   `@e22`-style toms up 60 semitones), `h` is delay, quarter-cycle frames,
   mode, depth in periods, `k` keys off k steps early, `q` is eighths, an
   envelope mode 0 keeps the track's mixer.
-- The OPLL's channels are in (6f0489e): the MGS importer's FM tracks (9-17,
-  rhythm on 15 in #opll_mode 1, @v voices in track 0) are its next step.
+- MGS's FM tracks play on fm1-fm9 (@v → def-fm mgs-vNN, else ROM voice n,
+  so/sf → :sus, v as :vol on the 3 dB ladder); the rhythm track (15 in
+  #opll_mode 1) waits for stage 3, then maps b s m c h to the kit roles.
+- `import-mdx.js` follows MXDRV itself (portable_mdx's port of its 68000
+  code), not mdxmini, which is wrong on volume, gates after a tie, `k`, the
+  LFO shapes and MA. Not modelled: the LFOs' free run without MD (the import
+  restarts them each note), the random shape, sync.

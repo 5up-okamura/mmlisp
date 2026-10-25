@@ -47,7 +47,7 @@ const ROM_RHYTHM = [
 export const OPLL_ROM_BYTES = Uint8Array.from([...ROM, ...ROM_RHYTHM].flat());
 
 // The ROM voices' built-in names (language.md §19, msx), in the ROM's order.
-const ROM_NAMES = [
+export const OPLL_ROM_NAMES = [
   "violin", "guitar", "piano", "flute", "clarinet", "oboe", "trumpet", "organ", "horn",
   "synth", "harpsichord", "vibraphone", "synth-bass", "acoustic-bass", "electric-guitar",
 ].map((n) => `opll-${n}`);
@@ -122,7 +122,7 @@ function voiceAs4op(b) {
  * words, the OPLL's own where `part` is the OPLL's, else the 4-op reading.
  */
 export function opllRomVoices(part) {
-  return new Map(ROM.map((b, i) => [ROM_NAMES[i], part === opllFm ? voiceWords(b) : voiceAs4op(b)]));
+  return new Map(ROM.map((b, i) => [OPLL_ROM_NAMES[i], part === opllFm ? voiceWords(b) : voiceAs4op(b)]));
 }
 
 /** The ROM voice (1-15) whose registers `bytes` are, or 0: the user voice. */
