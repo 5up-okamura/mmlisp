@@ -1772,21 +1772,26 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   samples are decoded into one wav, `<song>-pdx.wav`, a `def-pcm pdx-NNN`
   each, held in memory until Save writes it. Without the PDX the PCM tracks
   are left out, and the log says so.
-- **MGS:** the PSG goes to `sqr1`–`sqr3`, its mixer (`/`, or an envelope's
-  mode) as `:mode tone | noise | both` and `n` as `:noise-rate`; the SCC to
+- **MGS:** read as MGSC 1.11's reference (MGSC111.TXT) defines the MML.
+  The PSG goes to `sqr1`–`sqr3`, its mixer (`/`, or the mode an `@` sets)
+  as `:mode tone | noise | both` and `n` as `:noise-rate`; the SCC to
   `wave1`–`wave5`, each `@s` wave a `def-wave scc-NN`. `v` is `:vol` (the
-  SSG's 3 dB steps, the SCC's linear volume), and an `@e` or `@r` envelope a
-  `(def vol-… (macro :vol …))` at that `v`, frame by frame — `@r`'s release
-  after `#rel`, an `@e`'s `\` steps a `(def bend-… (macro :pitch+ …))` on the
-  notes it plays. The FM-PAC goes to `fm1`–`fm9` (`fm1`–`fm6` beside the
-  rhythm, `#opll_mode 1`): an `@v` voice is a `def-fm mgs-vNN` on the OPLL's
-  words, `@0`–`@14` without one the ROM's voices 1–15 (`violin` …), `so` / `sf`
-  `:sus`, `v` the channel volume's 3 dB steps. `q`, `k` and `&` set the
-  lengths, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento.
-  The rhythm track goes to `rhythm1`–`rhythm5`, a track a sound (`b s m c
-  h` as `kick snare tom4 ride hat`), each hit at c4 ringing to the sound's
-  next, `vb` … `vh` its `:vol`. The PSG's hardware envelope is not imported
-  yet; the log counts what was left out.
+  SSG's and the OPLL's 3 dB steps, the SCC's linear volume; 0 until a `v`).
+  A tone's envelope — the `@e` or `@r` of its number, or the one `@e<n>`
+  puts in — is a `(def vol-… (macro :vol …))` at that `v`, frame by frame
+  (`n:c` held, `n=c` moved to, `[ ]` the sustain loop); `@r`'s RR, or `k`
+  on the PSG and the SCC, is its release after `#rel`, and an `@e`'s `\`
+  steps a `(def bend-… (macro :pitch+ …))`. The FM-PAC goes to `fm1`–`fm9`
+  (`fm1`–`fm6` beside the rhythm, `#opll_mode 1`): `@0`–`@14` are the ROM's
+  voices 1–15 (`violin` …, as `@#` assigns them), a tone on the original
+  voice its `@v` as a `def-fm mgs-vNN` on the OPLL's words; `so` / `sf` are
+  `:sus`, and `q0` holds a note to the next `/`. `q` and `&` set the
+  lengths, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento
+  and `p` a fall. The rhythm track goes to `rhythm1`–`rhythm5`, a track a
+  sound (`b s m c h` as `kick snare tom4 ride hat`), each hit at c4 ringing
+  to the sound's next (`kf`: to the next hit of any), `v` and `vb` … `vh`
+  its `:vol`. The PSG's hardware envelope is not imported yet; the log
+  counts what was left out.
 
 **A MIDI, VGM, MDX or MGS import is structured** (untick **Fold repeats** for one bar
 after another): bars that repeat back to back become `(x n …)`, a run that

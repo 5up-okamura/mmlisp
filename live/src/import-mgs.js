@@ -12,32 +12,42 @@
 // `[ … ]0`) or its end — and written by the shared back end
 // (import-song.js), which folds the repeats again.
 //
-// What maps:
-//   PSG 1-3         sqr1-sqr3; `/` (and an envelope's mode) the mixer as
+// What maps (MGSC 1.11's MML reference, MGSC111.TXT, for what each command
+// means):
+//   PSG 1-3         sqr1-sqr3; `/` (and the mode an @ sets) the mixer as
 //                   :mode tone | noise | both, `n` the song's :noise-rate
 //   SCC 4-8         wave1-wave5; `@n` the @s wave, a def-wave
-//   FM 9-17         fm1-fm9 (fm1-fm6 in #opll_mode 1); `@n` an @v voice,
-//                   a def-fm on the OPLL's words, else ROM voice n + 1
-//                   (violin …); so / sf :sus
+//   FM 9-17         fm1-fm9 (fm1-fm6 in #opll_mode 1); `@n` ROM voice n + 1
+//                   for @0-@14 (as @# assigns them), else the @v voice, a
+//                   def-fm on the OPLL's words; so / sf :sus; `/` and q0
+//                   key off and hold
 //   v, v+ / v-      :vol — the SSG's and the OPLL's 3 dB steps, the SCC's
-//                   linear volume
-//   @e / @r, @n     the level envelope (PSG: `@n` selects it) as a :vol
-//                   macro scaled by v, frame by frame; @r's RR its release
+//                   linear volume; 0 to start
+//   @n, @e / @r     a tone's envelope (the @e or @r of its number; @e<n>
+//                   puts another in), a :vol macro frame by frame: `n` a
+//                   level a count, `n:c` held c counts, `n=c` moved to over
+//                   c counts, `[ ]` the sustain loop, `\` pitch steps; @r's
+//                   RR, or k on the PSG and the SCC, its release
 //   q, &            the note's length (q n/8 of it), & legato
-//   \ / @\          :pitch — a period offset, in cents at each note
-//   h, ho / hf      the software LFO as a :pitch+ triangle
-//   _               a portamento: a :pitch+ line from the base note
+//   \ / @\          :pitch — on the PSG and the SCC an offset on the
+//                   octave-1 period (+ up; 128 about a semitone), on FM on
+//                   MGSDRV's F-numbers (@\ 255 a semitone)
+//   h, ho / hf, @p  the software LFO as a :pitch+ triangle
+//   _, p            a portamento from the base note, p's fall: :pitch+ lines
 //   t, #tempo       :tempo (BPM)
 //   FM rhythm       (track 15 in #opll_mode 1) rhythm1-rhythm5, a track a
 //                   sound — b s m c h as kick snare tom4 ride hat — each hit
-//                   at c4 until the sound's next; vb vs vm vc vh its :vol
+//                   at c4 until the sound's next (kf: the next of any);
+//                   v and vb … vh its :vol
 // Not yet: the PSG's hardware envelope (s, m) waits for its word; it, and
 // whatever else the file holds, is counted and reported.
 //
-// MGSDRV's own behavior is read from the format and its demos, not held to
-// the driver: an @e's levels are relative to v (15 is v), an @r scales v
-// (v × level / 255), an @e step is a frame, `n:c` slides to n over c frames,
-// `q` is eighths and `k` keys off that many frames early.
+// Not in the reference, and not held to the driver: an @e's levels are
+// relative to v (15 is v), an @r scales v (v × level / 255), k loses a
+// level step every k frames, p falls p periods a frame, h's swing is
+// depth × coarseness / 4 either way over 2 (depth + 1) speed frames (as
+// msx-music-alchemy's MGS exporter has it, run on MGSDRV through libkss),
+// @p is coarseness × 256.
 //
 //   parseMgs(bytes)               → the song: header, definitions, tracks
 //   analyzeMgs(mgs)               → what the import dialog shows
@@ -95,13 +105,13 @@ function uncompress(inp, head) {
 
 /** The definitions track: envelopes, SCC waves, OPLL voices, tunings. */
 function parseDefs(u8, p) {
-  const envs = new Map(), waves = new Map(), voices = new Map();
+  const envs = new Map(), waves = new Map(), voices = new Map(), roms = new Map();
   const notes = [];
   while (p < u8.length) {
     const c = u8[p++];
     if (c === 0xff) break;
     if (c === 0x00) { voices.set(u8[p] & 31, [...u8.subarray(p + 1, p + 9)]); p += 9; }
-    else if (c === 0x01) p += 2;
+    else if (c === 0x01) { roms.set(u8[p] & 31, u8[p + 1] & 15); p += 2; } // @#
     else if (c === 0x02) {
       const num = u8[p] & 31, m = u8[p + 1];
       const env = { num, mode: (m >> 5) & 3, nfreq: m & 31 };
@@ -119,7 +129,7 @@ function parseDefs(u8, p) {
     else if (c === 0x06) { p++; while (p < u8.length && u8[p++] !== 0); }
     else throw new Error(`MGS: unknown definition $${c.toString(16)}`);
   }
-  return { envs, waves, voices, notes };
+  return { envs, waves, voices, roms, notes };
 }
 
 /** The file → { title, version, opllMode, tempo, defs, tracks: [{index, start}] }. */
@@ -137,7 +147,7 @@ export function parseMgs(bytes) {
   const flags = u8[head + 1];
   const tempo = u16(u8, head + 2) || 75;
   const tracks = [];
-  let defs = { envs: new Map(), waves: new Map(), voices: new Map(), notes: [] };
+  let defs = { envs: new Map(), waves: new Map(), voices: new Map(), roms: new Map(), notes: [] };
   for (let i = 0; i < 18; i++) {
     const off = u16(u8, head + 4 + i * 2);
     if (!off) continue;
@@ -187,9 +197,9 @@ function counts(u8, p) {
 
 function newState(kind) {
   return {
-    oct: 4, len: 48, q: 8, k: 0, vol: 15, voice: null, env: null, mode: 1, nfreq: null, detune: 0,
-    lfo: null, lfoOn: false, porta: null, tie: false, sus: 0, kind,
-    rvol: [15, 15, 15, 15, 15], // the rhythm's levels: BD SD TOM CYM HH
+    oct: 4, len: 48, q: 8, k: 0, vol: 0, voice: null, env: null, mode: 1, nfreq: null, detune: 0, fmFine: 0,
+    lfo: null, lfoOn: false, porta: null, fall: 0, tie: false, sus: 0, kind,
+    rvol: [0, 0, 0, 0, 0], kf: false, // the rhythm's levels (BD SD TOM CYM HH), and kf
   };
 }
 
@@ -208,10 +218,21 @@ function playTrack(mgs, track, skipped) {
   let p = track.start, step = 0, loopStep = null, end = null, guard = 0;
   let dollar = null; // where `$` marks the loop
   const skip = (k) => skipped.set(k, (skipped.get(k) ?? 0) + 1);
+  // A tone's envelope; on the PSG its mode and noise are set here, once.
+  const setEnv = (n, psg) => {
+    const env = mgs.defs.envs.get(n);
+    st.env = env ? n : null;
+    if (psg && env?.mode) { st.mode = env.mode; if (env.mode & 2) st.nfreq = env.nfreq; }
+  };
   const note = (n, count) => {
     const base = st.porta;
     st.porta = null;
-    if (n >= 12) { st.tie = false; step += count; return; } // a rest
+    if (n >= 12) {
+      // FM at q0 is not keyed off: the note sounds on through the rest.
+      const last = notes[notes.length - 1];
+      if (kind === "fm" && last && last.st.q === 0 && last.cut == null && last.step + last.count + (last.held ?? 0) === step) last.held = (last.held ?? 0) + count;
+      st.tie = false; step += count; return;
+    }
     notes.push({ step, count, midi: midiOf(kind, st.oct, n), base, tieOn: st.tie, st: { ...st } });
     st.tie = false;
     step += count;
@@ -241,9 +262,14 @@ function playTrack(mgs, track, skipped) {
     } else if ((c >= 0x10 && c <= 0x1c) || (c >= 0x30 && c <= 0x3c)) { note(c & 15, st.len); p += len; continue; }
     else if (c >= 0x20 && c <= 0x2c) { note(c & 15, a1 || 256); p += len; continue; }
     if (c >= 0x80 && c <= 0x9f) {
-      // @n: the PSG's envelope, the SCC's wave, the FM's voice.
-      if (kind === "psg") st.env = c & 31; else st.voice = c & 31;
-    } else if (c >= 0xc0 && c <= 0xcf) st.vol = c & 15;
+      // @n: tone n — the SCC's wave or the FM's voice, and on every channel
+      // the envelope of its number, whose mode and noise the PSG takes now.
+      if (kind !== "psg") st.voice = c & 31;
+      setEnv(c & 31, kind === "psg");
+    } else if (c >= 0xc0 && c <= 0xcf) {
+      st.vol = c & 15;
+      if (rhythm) st.rvol.fill(c & 15); // v on the rhythm: every sound's
+    }
     else if (c >= 0xd0 && c <= 0xdf) st.oct = (c & 7) + 1;
     else if (c >= 0xe0 && c <= 0xef) st.mode = c & 3;
     else switch (c) {
@@ -254,20 +280,33 @@ function playTrack(mgs, track, skipped) {
       case 0x44: st.q = a1 & 15; break;
       case 0x45: if ((a1 >> 5) < 5) st.rvol[a1 >> 5] = a1 & 15; break;
       case 0x47: if ((a1 >> 5) < 5) st.rvol[a1 >> 5] = Math.max(0, Math.min(15, st.rvol[a1 >> 5] + ((a1 & 0x1f) >= 16 ? (a1 & 0x1f) - 32 : a1 & 0x1f))); break;
-      case 0x46: st.vol = Math.max(0, Math.min(15, st.vol + s8(a1))); break;
+      case 0x46:
+        st.vol = Math.max(0, Math.min(15, st.vol + s8(a1)));
+        if (rhythm) st.rvol = st.rvol.map((v) => Math.max(0, Math.min(15, v + s8(a1))));
+        break;
       case 0x48: st.k = a1; break;
-      case 0x49: st.env = a1 & 31; break;
-      case 0x4a: break; // an FM key-off
+      case 0x49: setEnv(a1 & 31, kind === "psg"); break; // @e<n> / @r<n>: the tone's envelope
+      case 0x4a: {
+        // FM: a key-off now (the note before, held by q0 or not).
+        const last = notes[notes.length - 1];
+        if (kind === "fm" && last) last.cut = step - last.step;
+        break;
+      }
       case 0x4b: case 0x4c: skip("the PSG's hardware envelope (s, m)"); break;
       case 0x4d: st.nfreq = a1 & 31; break;
       case 0x4e: st.oct = Math.min(8, st.oct + 1); break;
       case 0x4f: st.oct = Math.max(1, st.oct - 1); break;
-      case 0x50: st.detune = s8(a1); break;
+      // \ and @\ in MML's sense, + up: MGSC stores \ negated on the PSG and
+      // the SCC (a period offset), @\ as written; FM's @\ is 0-255 a semitone.
+      case 0x50: st.detune = kind === "fm" ? s8(a1) : -s8(a1); st.fmFine = 0; break;
       case 0x51: st.detune = s16(u8, p + 1); break;
-      case 0x52: break; // the bend speed: a portamento spans its note
+      case 0x5f: st.fmFine = a1; st.detune = 0; break;
+      case 0x52: st.fall = a1; break;
       case 0x53: st.porta = { n: a1 & 15, oct: st.oct }; break;
+      // h delay, depth, speed, coarseness (MGSC stores delay + 1, speed + 1,
+      // and on the PSG and the SCC the coarseness negated).
       case 0x54: st.lfo = { delay: a1 - 1, count: u8[p + 2], speed: u8[p + 3], depth: s8(u8[p + 4]) }; st.lfoOn = true; break;
-      case 0x55: skip("@p"); break;
+      case 0x55: if (st.lfo) st.lfo = { ...st.lfo, depth: s16(u8, p + 1) / 256 }; break; // @p: the coarseness, finer
       case 0x57: stack.push({ start: p + len, left: a1, infinite: a1 === 0, step }); break;
       case 0x58: {
         const top = stack[stack.length - 1];
@@ -287,11 +326,10 @@ function playTrack(mgs, track, skipped) {
         stack.pop();
         break;
       }
-      case 0x5a: if (!rhythm) st.lfoOn = a1 !== 0; else skip("the rhythm's ko / kf"); break;
+      case 0x5a: if (!rhythm) st.lfoOn = a1 !== 0; else st.kf = a1 !== 0; break; // ho / hf; ko / kf
       case 0x5b: st.sus = a1 ? 1 : 0; break;
       case 0x5c: skip("y (a register write)"); break;
       case 0x5d: if (!stack.length) dollar = { step }; else skip("a `$` inside a repeat"); break;
-      case 0x5f: skip("@\\ on FM"); break;
       case 0x60: break; // @m: a message
       case 0x61: skip("@o"); break;
       case 0x63: skip("@f"); break;
@@ -342,31 +380,34 @@ const ssgVol = (r) => (r <= 0 ? 0 : 31 - Math.round(1.5 * (15 - Math.min(15, r))
 const sccVol = (r) => (r <= 0 ? 0 : Math.max(1, Math.min(31, 31 + Math.round((20 * Math.log10(Math.min(15, r) / 15)) / 2))));
 const MODES = [null, "tone", "noise", "both"];
 
-// An offset as cents at a note: on FM an F-number offset on MGSDRV's table,
-// on the PSG (o4a = 440 Hz) and the SCC a period offset.
+// An offset (+ up) as cents at a note: on FM on MGSDRV's F-numbers, on the
+// PSG (o4a = 440 Hz) and the SCC on the octave-1 period of its pitch class,
+// which the octave then shifts (#psg_tune's data), so the cents are the
+// same in every octave.
 function detuneCents(kind, midi, d) {
+  const pc = ((midi % 12) + 12) % 12;
   if (kind === "fm") {
-    const f = FM_FNUM[((midi % 12) + 12) % 12];
+    const f = FM_FNUM[pc];
     return Math.round(1200 * Math.log2(Math.max(1, f + d) / f));
   }
-  const hz = 440 * 2 ** ((midi - 69) / 12);
+  const hz = 440 * 2 ** ((24 + pc - 69) / 12); // o1
   const p = kind === "psg" ? PSG_CLOCK / 16 / hz : PSG_CLOCK / 32 / hz - 1;
-  const q = Math.max(1, Math.min(4095, p + d)); // the 12-bit period
+  const q = Math.max(1, Math.min(4095, p - d));
   return Math.round(1200 * Math.log2((kind === "psg" ? p : p + 1) / (kind === "psg" ? q : q + 1)));
 }
 
 const ENV_MAX_FRAMES = 600;
 
 /**
- * An @e envelope frame by frame: the level and the pitch offset (its `\`
- * steps add up, + up — the track's `\` MGSC stores as a period offset, but
- * an envelope is any channel's) of each, where its `[` loops from, and the
- * mixer, noise and wave its steps set before the first level.
+ * An @e envelope frame by frame (a count a frame): the level and the pitch
+ * offset (its `\` steps add up, + up, in MML's `\` units) of each, where its
+ * `[` loops from, and the mixer, noise and wave its steps set before the
+ * first level (the mode and noise the @ sets are the track's).
  */
 function expandEnv(env) {
   const levels = [], offsets = [];
   let level = 15, off = 0, sus = null, i = 0;
-  let mode = env.mode || null, nfreq = env.mode & 2 ? env.nfreq : null, wave = null, moves = 0;
+  let mode = null, nfreq = null, wave = null, moves = 0;
   const d = env.data;
   const frame = (n) => { for (let k = 0; k < n && levels.length < ENV_MAX_FRAMES; k++) { levels.push(level); offsets.push(off); } };
   while (i < d.length && levels.length < ENV_MAX_FRAMES) {
@@ -376,16 +417,17 @@ function expandEnv(env) {
     else if (c === 0x10) { const w = d[i++] & 31; if (first) wave = w; else moves++; }
     else if (c === 0x11) i += 2;
     else if (c === 0x12) off += s8(d[i++]);
-    else if (c >= 0x20 && c <= 0x2f) { level = c & 15; frame(d[i++] || 256); }
+    else if (c >= 0x20 && c <= 0x2f) {
+      // `n=c`: from the level there to n over c counts.
+      const to = c & 15, n = d[i++] || 256, from = level;
+      for (let k = 1; k <= n; k++) { level = Math.round(from + ((to - from) * k) / n); frame(1); }
+    }
     else if (c === 0x40) sus ??= levels.length;
     else if (c === 0x60) break;
     else if (c >= 0x80 && c <= 0x9f) { if (first) nfreq = c & 31; }
     else if (c >= 0xa0 && c <= 0xaf) { if (first) mode = c & 3 || mode; }
-    else if (c >= 0xe0 && c <= 0xef) {
-      // `n:c`: from the level there to n over c frames.
-      const to = c & 15, n = d[i++] || 256, from = level;
-      for (let k = 1; k <= n; k++) { level = Math.round(from + ((to - from) * k) / n); frame(1); }
-    } else break;
+    else if (c >= 0xe0 && c <= 0xef) { level = c & 15; frame(d[i++] || 256); } // `n:c`: n for c counts
+    else break;
   }
   if (!levels.length) frame(1);
   if (sus != null && sus >= levels.length) sus = null;
@@ -407,8 +449,12 @@ function frameVector(values, sus) {
   return `[${items.join(" ")}]`;
 }
 
-/** An envelope at a level `v` as a :vol macro spec. */
-function envelopeSpec(env, v, volOf) {
+/**
+ * An envelope at a level `v` as a :vol macro spec; `k` (an @e's, or none's)
+ * the release after the key-off, a level step every k frames.
+ */
+const kRelease = (k, v) => (k > 0 && v > 0 ? ` #rel (linear :len ${k * v}f)` : "");
+function envelopeSpec(env, v, volOf, k = 0) {
   if (env.type === "r") {
     const E = (x) => volOf(Math.round((v * x) / 255));
     const st = [];
@@ -424,7 +470,8 @@ function envelopeSpec(env, v, volOf) {
   const x = expandEnv(env);
   // An @e's level is relative to v: 15 is v itself, each step below one
   // step quieter.
-  return frameVector(x.levels.map((lv) => volOf(Math.max(0, v + lv - 15))), x.sus);
+  const levels = x.levels.map((lv) => Math.max(0, v + lv - 15));
+  return frameVector(levels.map(volOf), x.sus).replace(/\]$/, kRelease(k, levels[levels.length - 1]) + "]");
 }
 
 // The rhythm track's hits → rhythm1-rhythm5, a track a sound, in the key-on
@@ -438,7 +485,8 @@ function rhythmTracks(tr, tick) {
     if (!hits.length) return;
     const endTick = tick(tr.end);
     const notes = hits.map((n, k) => {
-      const next = hits[k + 1]?.step ?? tr.end;
+      // ko: a sound rings to its own next hit; kf: to the next hit of any.
+      const next = (n.st.kf ? tr.notes.find((m) => m.step > n.step)?.step : hits[k + 1]?.step) ?? tr.end;
       return { tick: tick(n.step), len: Math.max(1, tick(next - n.step)), midi: 60, vel: 15, state: [role, `:vol ${ssgVol(n.st.rvol[lv])}`] };
     });
     const marks = !out.length ? tr.tempos.map((tm) => ({ tick: tick(tm.step), tokens: [`:tempo ${tm.bpm}`] })) : [];
@@ -474,18 +522,18 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     return waveDefs.get(n);
   };
   const envDefs = new Map();
-  const envName = (num, v, kind) => {
-    const key = `${num}:${v}:${kind === "scc" ? "scc" : "ssg"}`;
+  const envName = (num, v, kind, k) => {
+    const key = `${num}:${v}:${kind === "scc" ? "scc" : "ssg"}:${k}`;
     if (!envDefs.has(key)) {
       const env = mgs.defs.envs.get(num);
       if (!env) { envDefs.set(key, null); warnings.push(`@e${num} is not in the file — its notes play without an envelope`); }
       else {
-        const spec = envelopeSpec(env, v, kind === "scc" ? sccVol : ssgVol);
+        const spec = envelopeSpec(env, v, kind === "scc" ? sccVol : ssgVol, k);
         // One level held: the note's :vol, no macro.
         const flat = /^\[(\d+)\]$/.exec(spec);
         if (flat) envDefs.set(key, { vol: Number(flat[1]) });
         else {
-          const name = `vol-${env.type}${num}-v${v}${kind === "scc" ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
+          const name = `vol-${env.type}${num}-v${v}${k ? `-k${k}` : ""}${kind === "scc" ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
           defs.push(`(def ${name} (macro :vol ${spec}))`);
           envDefs.set(key, { name });
         }
@@ -496,12 +544,12 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   // An @e's pitch steps on one note, as a :pitch+ macro (a def a note).
   const bendDefs = new Map();
   const envBend = (num, midi, kind, x) => {
-    const key = `${num}:${midi}:${kind}`;
+    const key = `${num}:${midi % 12}:${kind}`; // the same in every octave
     if (!bendDefs.has(key)) {
-      const cents = x.offsets.map((o) => (o ? Math.round(detuneCents(kind, midi, -o) / 5) * 5 : 0));
+      const cents = x.offsets.map((o) => (o ? Math.round(detuneCents(kind, midi, o) / 5) * 5 : 0));
       let name = null;
       if (cents.some(Boolean)) {
-        name = `bend-e${num}-${NOTE_NAMES[midi % 12].replace("+", "s")}${Math.floor(midi / 12) - 1}${kind === "psg" ? "" : `-${kind}`}`;
+        name = `bend-e${num}-${NOTE_NAMES[midi % 12].replace("+", "s")}${kind === "psg" ? "" : `-${kind}`}`;
         defs.push(`(def ${name} (macro :pitch+ ${frameVector(cents, x.sus)}))`);
       }
       bendDefs.set(key, name);
@@ -512,27 +560,29 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   const envX = (num) => {
     if (!expanded.has(num)) {
       const env = mgs.defs.envs.get(num);
-      const x = env?.type === "e" ? expandEnv(env) : env ? { mode: env.mode || null, nfreq: env.mode & 2 ? env.nfreq : null, wave: null, moves: 0, offsets: [] } : null;
+      const x = env?.type === "e" ? expandEnv(env) : env ? { mode: null, nfreq: null, wave: null, moves: 0, offsets: [] } : null;
       if (x?.moves) warnings.push(`@e${num} changes the wave ${x.moves} time${x.moves > 1 ? "s" : ""} as it runs: its notes keep the first`);
       expanded.set(num, x);
     }
     return expanded.get(num);
   };
 
-  // An @v voice as a def-fm on the OPLL's words; @0-@14 without one, ROM voices 1-15.
+  // Tone n: the ROM voice @# gives it (@0-@14 are ROM voices 1-15 to
+  // start), else (ROM 0, the original) its @v as a def-fm on the OPLL's words.
   const voiceDefs = new Map();
   const fmVoice = (n) => {
     if (!voiceDefs.has(n)) {
+      const rom = mgs.defs.roms.get(n) ?? (n <= 14 ? n + 1 : 0);
       const d = mgs.defs.voices.get(n);
-      if (d) {
+      if (rom) voiceDefs.set(n, OPLL_ROM_NAMES[rom - 1]);
+      else if (d) {
         const name = `mgs-v${String(n).padStart(2, "0")}`;
         const op = (k, b0, ar, sl, ksl, ws, tl) => [`:am${k} ${b0 >> 7}`, `:vib${k} ${(b0 >> 6) & 1}`, `:eg${k} ${(b0 >> 5) & 1}`,
           `:ks${k} ${(b0 >> 4) & 1}`, `:ml${k} ${b0 & 15}`, `:ksl${k} ${ksl}`, ...(tl != null ? [`:tl${k} ${tl}`] : []),
           `:ws${k} ${ws}`, `:ar${k} ${ar >> 4}`, `:dr${k} ${ar & 15}`, `:sl${k} ${sl >> 4}`, `:rr${k} ${sl & 15}`].join(" ");
         defs.push(`(def-fm ${name} :fb ${d[3] & 7}\n  ${op(1, d[0], d[4], d[6], d[2] >> 6, (d[3] >> 3) & 1, d[2] & 63)}\n  ${op(2, d[1], d[5], d[7], d[3] >> 6, (d[3] >> 4) & 1, null)})`);
         voiceDefs.set(n, name);
-      } else if (n <= 14) voiceDefs.set(n, OPLL_ROM_NAMES[n]); // @0-@14: ROM voices 1-15
-      else { voiceDefs.set(n, null); warnings.push(`FM @${n} has no @v definition — its notes play the voice before`); }
+      } else { voiceDefs.set(n, null); warnings.push(`FM @${n} has no @v definition — its notes play the voice before`); }
     }
     return voiceDefs.get(n);
   };
@@ -564,11 +614,16 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
         state.push(`:mode ${MODES[mode]}`);
         if (mode & 2) state.push(`:noise-rate ${Math.max(1, mix.nfreq ?? st.nfreq ?? 8)}`);
       }
-      const e = st.env != null ? envName(st.env, st.vol, tr.kind) : null;
+      // k: the release, on the PSG and the SCC, under an @e or none (an @r
+      // has its RR).
+      const env = st.env != null ? mgs.defs.envs.get(st.env) : null;
+      const k = !isFm && env?.type !== "r" ? st.k : 0;
+      const e = env ? envName(st.env, st.vol, tr.kind, k) : null;
+      const rel = !env && kRelease(k, st.vol);
       state.push(`:vol ${e?.vol ?? volOf(st.vol)}`);
-      state.push(e?.name ?? "(macro :vol none)");
-      if (st.detune) state.push(`:pitch ${detuneCents(tr.kind, n.midi, st.detune)}`);
-      else state.push(":pitch 0");
+      state.push(e?.name ?? (rel ? `(macro :vol [${volOf(st.vol)}${rel}])` : "(macro :vol none)"));
+      const detune = isFm && st.fmFine ? Math.round((st.fmFine * 100) / 255) : st.detune ? detuneCents(tr.kind, n.midi, st.detune) : 0;
+      state.push(`:pitch ${detune}`);
       // The note's own pitch move: the envelope's, a portamento, the LFO.
       let pitch = null;
       const bend = x?.offsets.some(Boolean) ? envBend(st.env, n.midi, tr.kind, x) : null;
@@ -576,6 +631,12 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       else if (n.base) {
         const from = midiOf(tr.kind, n.base.oct, n.base.n);
         if (from !== n.midi) pitch = `(macro :pitch+ (linear ${(from - n.midi) * 100}..0 :len ${tick(n.count)}t))`;
+      } else if (st.fall && !isFm) {
+        // p: the pitch falls p periods a frame (128-255 read as p - 128).
+        const frames = Math.max(1, Math.round((n.count * 75) / tempoAt(n.step)));
+        const c = detuneCents(tr.kind, n.midi, -(st.fall & 127) * frames);
+        if (st.fall > 127) skip("p 128-255 (read as p - 128)");
+        if (c) pitch = `(macro :pitch+ (linear 0..${c} :len ${tick(n.count)}t))`;
       } else if (st.lfoOn && st.lfo && st.lfo.depth && st.lfo.count > 0 && st.lfo.speed > 0) {
         // h delay+1, count, speed, step: a triangle of 2 (count + 1) speed
         // frames, count × step / 4 either way (as msx-music-alchemy's
@@ -586,11 +647,11 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       }
       if (pitch && !pitch.startsWith("(")) state.push(pitch);
       else state.push(pitch ?? "(macro :pitch none)");
-      // q eighths of the note, k frames short of that.
+      // q eighths of the note; q0 (FM) holds it through the rests after it,
+      // to a `/`.
       const q = st.q >= 1 && st.q <= 8 ? st.q : 8;
-      // k frames short of that: at t BPM a frame is t / 75 steps.
-      const kSteps = Math.round((st.k * tempoAt(n.step)) / 75);
-      const gate = n.tieOn ? n.count : Math.max(1, Math.floor((n.count * q) / 8) - kSteps);
+      let gate = n.tieOn || (isFm && st.q === 0) ? n.count + (n.held ?? 0) : Math.max(1, Math.floor((n.count * q) / 8));
+      if (n.cut != null) gate = Math.max(1, Math.min(gate, n.cut));
       const legato = !!prev && prev.tieOn && prev.step + prev.count === n.step;
       notes.push({ tick: tick(n.step), len: tick(gate), midi: n.midi, vel: 15, state, tieIn: legato });
       prev = n;

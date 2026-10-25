@@ -134,11 +134,12 @@ function compressMgs(u8) {
 {
   const wave = Array.from({ length: 32 }, (_, i) => (i < 16 ? i * 8 : (i - 32) * 8) & 255);
   const defs = [
-    0x02, 0, 0x40 | 31, 4, 0x0f, 0x20 | 10, 4, 0x00, // @e0: noise 31; f, a=4, 0
+    0x02, 0, 0x40 | 31, 4, 0x0f, 0x20 | 10, 4, 0x00, // @e0: noise 31; f, a=4 (to a over 4), 0
     0x02, 1, 0x80, 128, 32, 12, 64, 0, 8, // @r1
     0x02, 2, 0x20, 6, 0x12, 0xf6, 0x0f, 0x12, 5, 0x0f, // @e2: \-10 f, \5 f
+    0x02, 3, 0x20, 3, 0xe8, 3, 0x05, // @e3: 8:3 (8 for 3 counts), 5
     0x03, 0, ...wave,
-    0x00, 0, 0x21, 0x01, 0x1e, 0x0f, 0xf0, 0xf4, 0x24, 0x13, // @v0
+    0x00, 15, 0x21, 0x01, 0x1e, 0x0f, 0xf0, 0xf4, 0x24, 0x13, // @v15 (@0-@14 are the ROM's)
     0xff,
   ];
   const T = (n, len) => [0x20 | n, len]; // c=0 … b=11, rest 12
@@ -148,15 +149,20 @@ function compressMgs(u8) {
   const psg1 = [0xd3, 0xcd, 0x44, 6, ...T(0, 48), 0x53, 0, ...T(4, 48), 0x40, ...T(7, 48), ...T(7, 48), 0x5d,
     0x50, 0xfb, ...T(9, 96), 0xff];
   const psg2 = [0xd2, 0xcf, 0x80, ...T(0, 24), 0x82, ...T(0, 24), 0x2c, 48,
-    0xcc, 0x48, 2, 0x80, ...T(0, 24), 0xff]; // v12, k2: @e0 below v, 2 frames short
+    0xcc, 0x48, 2, 0x80, ...T(0, 24), // v12, k2: @e0 below v
+    0x83, 0xcf, ...T(0, 24), // @e3 at v15
+    0x86, 0xcc, 0x48, 3, ...T(0, 24), 0xff]; // no envelope, v12, k3: a release
   const scc1 = [0x41, ...[150, 0], ...new Array(48).fill(1), 0xd4, 0xcc, 0x80, 0x49, 1, 0x54, 13, 3, 1, 4,
     0x57, 2, 0, 0, ...T(0, 24), 0x58, 0, 0, ...T(4, 24), 0x59, 0, 0, 0, ...T(7, 48), 0xff];
   // FM 1: the @v voice, then ROM voice 3 with the sustain on; FM rhythm
   // (#opll_mode 1): a kick.
-  const fm1 = [0xd3, 0xcf, 0x80, ...T(0, 48), 0x82, 0x5b, 1, ...T(4, 48), 0xff]; // @2: ROM voice 3
-  const rhythm = [0x45, 0x00 | 11, 0x31, 48, 0xa1, 0xff]; // vb11, b+h with a length, then h at l
+  const fm1 = [0xd3, 0xcf, 0x8f, ...T(0, 48), 0x82, 0x5b, 1, ...T(4, 48), 0xff]; // @15, then @2: ROM voice 3
+  // FM 2: q0 holds c through a rest, to the `/`.
+  const fm2 = [0xd3, 0xcf, 0x84, 0x44, 0, ...T(0, 24), ...T(12, 24), 0x4a, ...T(12, 24), 0x44, 8, ...T(2, 24), 0xff];
+  const rhythm = [0x45, 0x00 | 11, 0x45, 0x80 | 9, 0x31, 48, 0xa1, // vb11 vh9, b+h with a length, then h at l
+    0x5a, 1, 0x30, 24, 0x21, 24, 0x30, 24, 0xff]; // kf: the kick cut by the hat
   const mgsBytes = buildMgs({ title: "MGS test", tempo: 120, defs, opll: 1,
-    tracks: [psg1, psg2, null, scc1, null, null, null, null, fm1, null, null, null, null, null, rhythm] });
+    tracks: [psg1, psg2, null, scc1, null, null, null, null, fm1, fm2, null, null, null, null, rhythm] });
   const plain = parseMgs(mgsBytes);
   const packed = parseMgs(compressMgs(mgsBytes));
   assert.deepEqual([...packed.u8], [...plain.u8], "MGSARC's form decompresses to the file");
@@ -177,18 +183,21 @@ function compressMgs(u8) {
     has(source, /g4? ~ g/, what);
     has(source, /#top[\s\S]*:pitch -?\d+[\s\S]*\(go top\)/, what); // `$`, then \ 5
     has(source, /\(sqr2[\s\S]*:mode noise :noise-rate 31/, what);
-    has(source, /\(def vol-e0-v15 \(macro :vol \[31 23 \(wait 3f\) 0\]\)\)/, what);
-    has(source, /\(def vol-e0-v12 \(macro :vol \[26 19 \(wait 3f\) 0\]\)\)/, what); // relative to v
-    has(source, /vol-e0-v12 (\(macro :pitch none\) )?c(40t|5\/48)/, what); // k2 at t150: 4 steps short
-    has(source, /\(def bend-e2-c3 \(macro :pitch\+ \[-?\d+ -?\d+\]\)\)/, what);
+    has(source, /\(def vol-e0-v15 \(macro :vol \[31 29 28 25 23 0\]\)\)/, what); // a=4: a slide
+    has(source, /\(def vol-e0-v12-k2 \(macro :vol \[26 25 23 20 19 0\]\)\)/, what); // relative to v
+    has(source, /\(def bend-e2-c \(macro :pitch\+ \[-\d+\]\)\)/, what); // \-10 then \5: down, the same in any octave
     has(source, /\(def-wave scc-00 :wave \[0 8 16/, what);
     has(source, /\(def vol-r1-v12-scc \(macro :vol \[\(linear /, what);
     has(source, /#rel \(linear :len \d+f\)/, what);
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
-    has(source, /\(def-fm mgs-v00 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
-    has(source, /\(fm1[\s\S]*mgs-v00[\s\S]*:oct 3[\s\S]*piano :sus 1/, what); // FM's o4 is an octave below the PSG's
+    has(source, /\(def-fm mgs-v15 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
+    has(source, /\(fm1[\s\S]*mgs-v15[\s\S]*:oct 3[\s\S]*piano :sus 1/, what); // FM's o4 is an octave below the PSG's
     has(source, /\(rhythm1[\s\S]*kick :vol 25/, what); // vb11 (3 dB steps)
-    has(source, /\(rhythm2[\s\S]*hat/, what);
+    has(source, /\(rhythm2[\s\S]*hat :vol 22/, what);
+    has(source, /\(rhythm1[\s\S]*kick :vol 25[^|]*c2 c(8)? _(8)? c/, what); // ko: rings to its next; kf: to the hat's hit
+    has(source, /\(def vol-e3-v15-k2 \(macro :vol \[20 \(wait 2f\) 16 #rel \(linear :len 10f\)\]\)\)/, what); // 8:3 holds; k2 from level 5
+    has(source, /\(macro :vol \[26 #rel \(linear :len 36f\)\]\)/, what); // k3 at v12
+    has(source, /\(fm2[^\n]*:len 4\n  [^|]*c _8 d8/, what); // q0 holds c through the rest, to the `/`
     clean(source, what);
   }
 }
