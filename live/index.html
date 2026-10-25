@@ -462,9 +462,11 @@
         </div>
       </div>
 
-      <!-- FM Parameters -->
+      <!-- The editor: one, for the panel's subject — the strip picked or the
+           def / vector the cursor went into last (syncParamUI). FM's, or the
+           vector editor's (a def-wave, a macro's steps). -->
       <div class="rack-section" id="fmParamSection" data-needs="kind:fm">
-        <div class="rack-title rack-title-row"><span>FM Parameters</span><span id="fmParamStatus"></span></div>
+        <div class="rack-title rack-title-row"><span>FM</span><span id="fmParamStatus"></span></div>
         <div class="rack-body">
         <div class="alg-grid">
           <div class="knob-wrap" style="grid-area:a">
@@ -486,6 +488,15 @@
           <canvas id="algDiagram" class="alg-diagram" title="Click to preview (last note)"></canvas>
         </div>
         <div class="op-grid" id="opGrid"></div>
+        </div>
+      </div>
+
+      <div class="rack-section editor-away" id="vecSection">
+        <div class="rack-title rack-title-row"><span id="vecKind">Vector</span><span id="vecStatus"></span></div>
+        <div class="rack-body">
+          <div class="vec-axis"><span id="vecMax"></span><span id="vecReadout"></span></div>
+          <canvas id="vecCanvas" class="vec-canvas"></canvas>
+          <div class="vec-axis"><span id="vecMin"></span><span id="vecLen"></span></div>
         </div>
       </div>
 
@@ -863,7 +874,8 @@
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
-    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, lengthTicks, voiceDefNames } from './src/edit-tools.js';
+    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, lengthTicks, voiceDefNames, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
+    import { VectorEditor } from './src/vector-editor.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
@@ -6515,6 +6527,16 @@
     let _prevFmParamMode = null;            // previous getFmParamMode(), to detect entering cursor-def
     let _prevCursorDefKey = null;           // identity of the def under the cursor, to detect switching defs
     let _paramSubjectKey = null;            // mode|def|channel the FM panel last showed (syncParamUI)
+    // The panel's subject is what was touched last: a strip (selectCh), or the
+    // def / vector the cursor went into. The cursor leads from entering one
+    // until it leaves it, and then a selected strip leads again.
+    let _subjectFrom = 'strip';             // 'strip' | 'cursor'
+    let _cursorSubjectKey = null;           // the def / vector under the cursor, to see it entered
+    let _editorKind = null;                 // 'fm' | 'vector': the one editor shown (null: the target's own)
+    let _vecSubject = null;                 // the vector editor's subject (edit-tools.js vectorAt), shown even dimmed
+    let _vecActive = false;                 // the vector subject is the panel's now (not dimmed)
+    let _vecEditor = null;                  // the vector editor (src/vector-editor.js), once its section is built
+    let _fmShownRegs = null;                // the FM editor's last subject's registers, kept while dimmed
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
@@ -7938,6 +7960,7 @@
       if (_themeReady) {
         drawAlgDiagram();
         for (let op = 1; op <= 4; op++) drawOpEnvelope(op);
+        _vecEditor?.draw();
         _vizColors = null; // piano roll re-samples colors on its next frame
       }
     }
@@ -9476,6 +9499,113 @@
       return doc.line(node.endLine).from + node.endColumn - 2;
     }
 
+    // ---- the vector editor (src/vector-editor.js) ----
+    // Its subject is the vector the cursor is on (edit-tools.js vectorAt), or
+    // a selected wave strip's def-wave; a stroke is heard at once on the
+    // channels playing that wave (IRPlayer.setWave) and lands in the score as
+    // one edit when the pointer lets go.
+    _vecEditor = new VectorEditor(document.getElementById('vecCanvas'), {
+      onDraw: (values, done) => {
+        const s = _vecSubject;
+        if (!s || !_vecActive) return;
+        if (s.kind === 'wave') player?.setWave?.(s.name, values);
+        if (!done) return;
+        const text = editorView.state.doc.toString();
+        const changes = writeVector(text, s, values);
+        if (changes.length) {
+          editorView.dispatch({ changes });
+          scheduleHotSwap();
+        }
+      },
+      onHover: (step, value) => {
+        document.getElementById('vecReadout').textContent =
+          step == null ? '' : `${step + 1}: ${value == null ? '_' : value}`;
+      },
+    });
+
+    // The wave lanes the score's machine has (targets.js toneLaneOf).
+    function waveLanes() {
+      const machine = targetProfile(_lastGoodIR?.metadata?.target);
+      return machine.headsOfKind('wave').map((h) => toneLaneOf(machine.channels[h]));
+    }
+
+    // The compiled def-waves by name: a wave written as a curve, or imported.
+    function compiledWaves() {
+      return new Map((_lastGoodIR?.metadata?.waves ?? []).map((w) => [w.name, w.data]));
+    }
+
+    // The song's opening tempo (its last tick-0 TEMPO_SET): what a macro
+    // curve's lengths are read at when the editor shows it as steps.
+    function openingBpm() {
+      let bpm = 120;
+      for (const t of _lastGoodIR?.tracks ?? [])
+        for (const e of t.events ?? []) if (e.cmd === 'TEMPO_SET' && !e.tick && e.args?.bpm > 0) bpm = e.args.bpm;
+      return bpm;
+    }
+
+    function findVectorAtCursor() {
+      const state = editorView.state;
+      return vectorAt(state.doc.toString(), state.selection.main.head,
+        { waves: compiledWaves(), bpm: openingBpm(), roots: parseCached(state.doc) });
+    }
+
+    // A selected wave strip's subject: the def-wave its channel plays now, else
+    // the first its track names.
+    function waveStripSubject() {
+      const c = channelVoice(selectedChannel);
+      if (c?.part.kind !== 'wave') return null;
+      const ir = _lastGoodIR;
+      let name = player?.laneWave?.(toneLaneOf(c)) ?? null;
+      if (!name) {
+        const tr = ir?.tracks?.find((t) => (t.scoreChannel ?? t.channel) === selectedChannel);
+        const i = tr?.events?.find((e) => e.cmd === 'PARAM_SET' && e.args?.target === 'WAVE')?.args.value;
+        name = ir?.metadata?.waves?.[i]?.name ?? null;
+      }
+      const doc = editorView.state.doc;
+      return name ? vectorOfWave(doc.toString(), name, { waves: compiledWaves(), roots: parseCached(doc) }) : null;
+    }
+
+    // Which editor the panel shows, and the vector editor's subject: the
+    // cursor's vector while it leads, else a wave strip's; an FM def or FM
+    // strip brings the FM editor back. Leaving a subject dims the editor and
+    // keeps it showing what it had.
+    function syncVectorEditor(cursorVec, hasFm) {
+      if (!_vecEditor) return;
+      // A strip's, when no def under the cursor leads (they are set only then).
+      const strip = !cursorVec && !_fmCursorDefContext && !_pcmCursorDef ? waveStripSubject() : null;
+      const subject = cursorVec ?? strip;
+      if (subject) _editorKind = 'vector';
+      else if (_fmCursorDefContext || isFmChannel(selectedCh)) _editorKind = 'fm';
+      else _editorKind ??= hasFm ? 'fm' : null;
+      if (subject) _vecSubject = subject;
+      // A dimmed def-wave the score no longer has is let go.
+      else if (_vecSubject?.kind === 'wave' && !vectorOfWave(editorView.state.doc.toString(), _vecSubject.name,
+        { waves: compiledWaves(), roots: parseCached(editorView.state.doc) }))
+        _vecSubject = null;
+      _vecActive = !!subject;
+      const section = document.getElementById('vecSection');
+      section.classList.toggle('editor-away', _editorKind !== 'vector' || !_vecSubject);
+      document.getElementById('fmParamSection').classList.toggle('editor-away', _editorKind === 'vector');
+      section.classList.toggle('vec-off', !_vecActive);
+      section.classList.toggle('vec-readonly', _vecActive && !_vecSubject?.span);
+      const s = _vecSubject;
+      document.getElementById('vecKind').textContent = s?.label ?? 'Vector';
+      document.getElementById('vecStatus').textContent = s?.name ?? '';
+      document.getElementById('vecMax').textContent = s ? String(s.max) : '';
+      document.getElementById('vecMin').textContent = s ? String(s.min) : '';
+      document.getElementById('vecLen').textContent = !s ? ''
+        : `${s.values.length} steps${!s.span ? ' · imported: read only' : s.curve ? ' · a curve: drawing writes steps' : ''}`;
+      // A dimmed subject is not drawn on (no span to write to). A stroke in
+      // progress keeps its own values; a subject that still holds them only
+      // takes the new spans.
+      if (s && !_vecEditor._last) {
+        const shown = _vecActive ? s : { ...s, span: null };
+        if (_vecEditor.subject?.key === s.key && _vecEditor.values.join() === s.values.join()) _vecEditor.subject = shown;
+        else _vecEditor.show(shown);
+      }
+      _vecEditor.draw(); // a section just shown has its size only now
+    }
+
     // The sample def under the cursor: `(def-pcm name …)`. What it sounds
     // like is decided at the key, by compiling the text as it is then.
     function findSampleDefAtCursor() {
@@ -9505,29 +9635,30 @@
       return null;
     }
 
+    // The cursor's def / vector is the subject over a selected strip while it
+    // leads (_subjectFrom).
+    const cursorLeads = () => selectedChannel == null || _subjectFrom === 'cursor';
+
     function getFmParamMode() {
+      if (_fmCursorDefContext) return 'cursor-def'; // set only while the cursor leads
       if (isFmChannel(selectedCh)) return 'channel';
-      if (selectedChannel == null && _fmCursorDefContext) return 'cursor-def';
       return 'disabled';
     }
 
     function updateFmParamStatus() {
       const statusEl = document.getElementById('fmParamStatus');
       if (!statusEl) return;
-      // Priority:
-      // 1) selected FM channel -> show F1-F6
-      // 2) no channel selected + cursor on FM def -> show def name
-      // 3) otherwise -> no status
-      if (isFmChannel(selectedCh)) {
-        statusEl.textContent = channelLabel(selectedCh);
-        return;
-      }
-      if (selectedChannel == null && _fmCursorDefContext?.name) {
+      // The cursor's def while the cursor leads, else the selected FM channel.
+      if (_fmCursorDefContext?.name) {
         const { name, origin } = _fmCursorDefContext;
         statusEl.textContent = origin ? `${name} \u00b7 ${librarySetName(origin)}` : name;
         return;
       }
-      statusEl.textContent = '';
+      if (isFmChannel(selectedCh)) {
+        statusEl.textContent = channelLabel(selectedCh);
+        return;
+      }
+      // Dimmed: the subject it showed last stays named.
     }
 
     function updateFmControlInteractivity(mode) {
@@ -9550,6 +9681,16 @@
       if (lib?.kind === 'fm')
         return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: { name: lib.def.name, regs: lib.def.regs } };
       if (lib?.kind === 'pcm') return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
+      // The cursor's def while the cursor leads (its def-wave plays on the
+      // first wave channel, written there with the key).
+      if (_pcmCursorDef) return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
+      if (_fmCursorDefContext?.regs) return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmCursorDefContext };
+      // A def-wave (the cursor's, or a wave strip's own) plays on the selected
+      // wave channel, else the first.
+      if (_vecActive && _vecSubject?.kind === 'wave' && waveLanes().length) {
+        const picked = waveLanes().includes(selectedCh - PSG_UI_BASE);
+        return { chIndex: picked ? selectedCh : PSG_UI_BASE + waveLanes()[0], useCursorDef: false, replaces: picked, wave: _vecSubject };
+      }
       // A selected channel is a part the keys replace (previewPool plays it
       // before any other song channel); without one, chIndex only names where
       // the patch comes from.
@@ -9561,12 +9702,6 @@
       }
       // A selected PCM part plays its own sample (previewPcmNoteOn).
       if (selectedPcmPart()) return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
-      if (selectedChannel == null && _pcmCursorDef) {
-        return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
-      }
-      if (selectedChannel == null && _fmCursorDefContext?.regs) {
-        return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmCursorDefContext };
-      }
       // Keep the keyboard usable even when PSG is selected or no channel is selected.
       // Fallback target is FM1 preview.
       return { chIndex: 0, useCursorDef: false };
@@ -9704,6 +9839,10 @@
       chIndex = previewChannelOf(chIndex);
 
       if (isPsgPreviewChannel(chIndex)) {
+        // A def-wave the panel is on plays on the wave channel the key took.
+        const wave = getKeyboardTargetContext().wave;
+        const lane = chIndex - PSG_UI_BASE;
+        if (wave && waveLanes().includes(lane)) player.previewWave(lane, _vecEditor.values, wave.name);
         previewPsgNoteOn(chIndex, midi, vel);
         return;
       }
@@ -10853,6 +10992,7 @@
         selectedChannel = head;
         selectedCh = _chStripModel.find((e) => e.head === head)?.selIndex ?? null;
       }
+      _subjectFrom = 'strip';
       renderChStrips();
       syncParamUI();
     }
@@ -10949,8 +11089,20 @@
     function syncParamUI({ repaint = true } = {}) {
       // A def-fm on a target with no FM (the MSX) has nothing to audition on.
       const hasFm = !!targetProfile(_lastGoodIR?.metadata?.target).chipForKind('fm');
-      _fmCursorDefContext = selectedChannel == null && hasFm ? findFmDefAtCursor() : null;
-      _pcmCursorDef = selectedChannel == null && !_fmCursorDefContext ? findSampleDefAtCursor() : null;
+      // What the cursor is on: a vector (a def-wave, a macro's steps), an FM
+      // def, a sample def. Entering one makes the cursor lead; leaving it
+      // hands the panel back to a selected strip.
+      const cursorVec = findVectorAtCursor();
+      const fmDef = !cursorVec && hasFm ? findFmDefAtCursor() : null;
+      const sampleDef = !cursorVec && !fmDef ? findSampleDefAtCursor() : null;
+      const cursorKey = cursorVec?.key ?? (fmDef ? `fm:${fmDef.name || fmDef.from}` : sampleDef ? `pcm:${sampleDef}` : null);
+      if (cursorKey && cursorKey !== _cursorSubjectKey) _subjectFrom = 'cursor';
+      else if (!cursorKey && _subjectFrom === 'cursor' && selectedChannel != null) _subjectFrom = 'strip';
+      _cursorSubjectKey = cursorKey;
+      const leads = cursorLeads();
+      _fmCursorDefContext = leads ? fmDef : null;
+      _pcmCursorDef = leads ? sampleDef : null;
+      syncVectorEditor(leads ? cursorVec : null, hasFm);
       libraryCursorMoved();
       updateFmParamStatus();
       updateKeyboardUiState();
@@ -10974,11 +11126,13 @@
       if (subjectKey !== _paramSubjectKey) repaint = true;
       _paramSubjectKey = subjectKey;
 
+      // Dimmed, the panel keeps what it showed last.
       const regs = mode === 'cursor-def'
         ? _fmCursorDefContext.regs
         : (mode === 'channel' && player)
           ? player.getChRegs(selectedCh)
-          : defaultFmRegs();
+          : _fmShownRegs ?? defaultFmRegs();
+      if (mode !== 'disabled') _fmShownRegs = regs;
 
       // In cursor-def mode reflect the preview channel's mask so auditioned
       // operator toggles persist in the UI.

@@ -1245,17 +1245,43 @@ the same popup as a panel value — anywhere from 8 to 96, so it can go large fo
 projector or a recording. It is remembered, and holds on touch screens too:
 tapping into the editor does not zoom the page, whatever the size.
 
-### A voice in the FM panel
+### The panel's editor
 
-With no channel picked in the panel's Channels, the FM panel shows the voice
-at the cursor, and the keyboards play it: the `(def-fm …)` the cursor is in,
-or the voice whose name the cursor is on — in a track, or a `def-mod :voice`
-— whether the score defines it or an import does. The panel's title names it,
-with the preset set it comes from. Moving a slider writes the def: in place
-for the score's own, and for an imported one, first a copy of its def, as its
-file writes it, under the score's imports — a def of the same name in the
-score wins over the import's (language.md §9.2), so the tracks keep the name.
-One undo takes the copy back out; deleting it goes back to the preset.
+Below Channels the panel has one editor, for what you touched last: a strip
+picked in Channels, or the def or vector the cursor went into. Its title
+says what it edits — `FM`, `Wave`, `Macro :vel` — and names it. An FM
+channel or voice brings the FM editor; a wave channel, a `def-wave` or a
+macro's step vector brings the vector editor. When the cursor leaves what
+it was on, a picked strip is the subject again; with none picked, the editor
+dims and keeps showing what it had, until something else is touched.
+
+**A voice in the FM editor.** The cursor's voice is the `(def-fm …)` it is
+in, or the voice whose name it is on — in a track, or a `def-mod :voice` —
+whether the score defines it or an import does, and the keyboards play it.
+The title names it, with the preset set it comes from. Moving a slider writes
+the def: in place for the score's own, and for an imported one, first a copy
+of its def, as its file writes it, under the score's imports — a def of the
+same name in the score wins over the import's (language.md §9.2), so the
+tracks keep the name. One undo takes the copy back out; deleting it goes back
+to the preset.
+
+**A vector in the vector editor.** A `def-wave`'s wave, or a macro's step
+vector (`(macro :vel [15 #sus 12 10 #rel 6 0])`), drawn as bars: press and
+drag across, and every step the pointer passes takes the value under it, as
+an array is drawn in Max or Pd. The editor draws only what the score can
+hold — a wave's 32 steps at −128..127, a macro target's range (§10), and for
+a relative one (`:pitch`, `:semi`, a `+` or `*` macro) a view around its
+values — whole numbers, so nothing it writes is out of range. `#sus` and
+`#rel` show as marks, a hold (`_`) as an empty step. Letting go writes the
+vector into the score, each changed step in place (a wave written as a curve
+becomes its 32 values); one undo takes the stroke back. A macro written as
+one curve (`(macro :vel (ease-out 15..0 :len 4))`) shows as the steps it
+plays — at its `:step`, its lengths at the song's opening tempo — and drawing
+on it writes those steps as a vector, a loop curve's cycle after `#sus`; the
+steps no longer follow the tempo, as a written vector does not. While a stroke goes,
+a wave sounds at once on every channel playing it, so a held note changes as
+you draw; with the cursor on a `def-wave`, the keys play it on a wave
+channel. A def-wave from an import is shown but not drawn on.
 
 ### Chords on the keyboards
 
@@ -1263,7 +1289,9 @@ The keys play what is selected: a channel picked in the panel's Channels plays
 its voice — the one the score has on it while it plays, the one its part
 opens with while stopped (a PCM part, its sample: the one it last played, or
 opens with) — and with no channel picked, the voice or sample under the
-cursor, else FM1's.
+cursor, else FM1's. The cursor's voice or sample wins over a picked
+channel from when the cursor goes into it until it leaves (The panel's
+editor, above).
 
 Every keyboard — on screen, the computer's, MIDI — is polyphonic: each held
 key takes a channel of its own, with the voice copied onto it. An FM voice

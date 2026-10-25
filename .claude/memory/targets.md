@@ -22,21 +22,13 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 
 ## Rulings for what comes next (2026-10-25, not built yet)
 
-- **Live editor panel: one editor, for the subject.** The subject is what
-  was touched last — a strip, or the def / vector the cursor went into. The
-  panel shows that kind's editor (FM 4-op, FM 2-op, wave, vector); the
-  cursor leaving it dims it (never hides); a subject of another kind swaps
-  the editor in. No pin. Keep the panel's order (Global, Channels, editor,
-  Dynamic Parameters, Sound Effects: by priority); its heading becomes the
-  subject's kind (`FM` / `Wave` / `Macro :vel`) with the subject on the
-  right, where `fmParamStatus` is. Open: swap on a click at once, but only
-  once the cursor rests when it moves by keys.
-- **One vector editor** (Max/pd arrays) for every vector: def-wave, macro
-  step vectors (`#sus` / `#rel` as markers), later chips' waves. The subject
-  gives the length and the range (the part's / MACRO_TARGET_RANGE); a
-  relative target (`:pitch`, `:semi`) has a view range the user sets.
-  Clamping: the editor cannot draw out of range; a literal out of range is
-  the compiler's error; a computed value is clamped at the register write.
+- **The editor panel** (one editor for the last-touched subject, the
+  vector editor) is built; still open: swap only once the cursor rests when
+  it moves by keys (if passing through feels busy), changing a vector's
+  length, drawing a step back to a hold (`_`), drawing on an imported
+  def-wave (copy it in, as an imported def-fm is), a stage vector
+  (`[(ease-in …) (wait key-off) …]`) shown and drawn, and a 2-op FM editor
+  for the OPLL.
 - **Waves are expressions**, as values are (§7.1.2): without a `$slot` folded
   at compile time (mixes, generators such as harmonics), with one
   re-evaluated by the player when the slot moves and written whole (≤ once a

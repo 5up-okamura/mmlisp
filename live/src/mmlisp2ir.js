@@ -21,6 +21,7 @@ import {
   midiToHz,
   pitchToMidi,
   sampleCurveUnit,
+  WAVE,
   expandLoops,
   FRAME_HZ_NTSC,
   FRAME_HZ_PAL,
@@ -3520,6 +3521,34 @@ function keywordOf(target) {
   return KEYWORD_OF.get(target) ?? `:${target.toLowerCase().replace(/_/g, "-")}`;
 }
 
+/**
+ * A macro's curve as the steps it plays (the vector editor's view of it,
+ * edit-tools.js vectorAt): `node` a curve form, `step` its macro's :step token
+ * (1f when unwritten), `bpm` the tempo its lengths are read at. One value per
+ * step, unrounded — a loop curve's one cycle — or null when the curve is not
+ * one the steps stand for (no :from, a $value, a :wait, no length).
+ */
+export function macroCurveSteps(node, { step = null, bpm = 120 } = {}) {
+  // Read alone, a param that names a def or a let (`:to top`) has no value:
+  // any word the curve could not read means its steps are not these.
+  const said = [];
+  const spec = parseCurveSpec(node, said);
+  if (!spec || said.length || spec.from == null || spec.dyn || spec.waitTicks != null || spec.waitFrames != null || spec.waitKeyOff)
+    return null;
+  const clock = (step != null ? parseStepToken(step) : null) ?? { unit: "frame", value: 1 };
+  const lens = resolveMacroLen({ type: "curve", ...spec, step: clock }, bpm);
+  const base = lens.frames;
+  if (!(base > 0) || !(clock.value > 0)) return null;
+  const at = (phase) => spec.from + (spec.to - spec.from) * sampleCurveUnit(spec.curve, phase, spec.params);
+  if (![spec.from, spec.to].every(Number.isFinite)) return null;
+  if (spec.loop) {
+    const period = Math.max(1, Math.round(base / clock.value));
+    return { values: Array.from({ length: period }, (_, i) => at((i * clock.value) / base)), loop: true };
+  }
+  const n = Math.max(1, Math.ceil(base / clock.value));
+  return { values: Array.from({ length: n }, (_, i) => at(base <= 1 ? 1 : Math.min(1, (i * clock.value) / (base - 1)))), loop: false };
+}
+
 export function canonicalTarget(symbol) {
   const known = TARGET_KEYWORDS.get(symbol);
   if (known) return known;
@@ -3558,7 +3587,7 @@ function emitVoice(td, tick, events, src, trackState = null, name = null, diagno
 // A def-wave's `:wave`: its values, a vector or one curve sampled over a
 // cycle, each a signed 8-bit step. Every wave that reads is listed, in def
 // order, as the IR's metadata.waves; `index` maps its name to its place.
-const WAVE_LEN = 32;
+const WAVE_LEN = WAVE.len;
 function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
   const waves = [];
   const index = new Map();
@@ -3602,13 +3631,11 @@ function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
           err(`:wave takes [${WAVE_LEN} values] or one curve ((sin -128..127) …)`, nodeSrc(at));
           continue;
         }
-        // One cycle of the curve, whatever its :len: a loop wave's period.
-        const { from = 0, to = 0, curve, params } = v.spec;
-        vals = Array.from({ length: WAVE_LEN }, (_, i) => from + (to - from) * sampleCurveUnit(curve, i / WAVE_LEN, params));
+        vals = waveCycle(v.spec);
       }
       vals = vals.map((x) => Math.round(x));
-      const out = vals.find((x) => x < -128 || x > 127);
-      if (out !== undefined) { err(`a :wave value is -128..127, not ${out}`, nodeSrc(at)); continue; }
+      const out = vals.find((x) => x < WAVE.min || x > WAVE.max);
+      if (out !== undefined) { err(`a :wave value is ${WAVE.min}..${WAVE.max}, not ${out}`, nodeSrc(at)); continue; }
       data = vals;
     }
     if (!data) {
@@ -3620,6 +3647,24 @@ function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
   }
   waves.index = index;
   return waves;
+}
+
+// One cycle of a curve, whatever its :len, as a def-wave's steps (unrounded).
+function waveCycle({ from = 0, to = 0, curve, params }) {
+  return Array.from({ length: WAVE_LEN }, (_, i) => from + (to - from) * sampleCurveUnit(curve, i / WAVE_LEN, params));
+}
+
+/**
+ * A def-wave's curve as its steps, rounded, for the vector editor
+ * (edit-tools.js): null when the curve is not read alone (a param naming a
+ * def or a let) or leaves the range.
+ */
+export function waveCurveSteps(node) {
+  const said = [];
+  const spec = parseCurveSpec(node, said);
+  if (!spec || said.length || ![spec.from ?? 0, spec.to].every(Number.isFinite)) return null;
+  const vals = waveCycle(spec).map((x) => Math.round(x));
+  return vals.every((x) => x >= WAVE.min && x <= WAVE.max) ? vals : null;
 }
 
 // A def-wave named on a track: the channel plays it from here, on a part
@@ -6836,7 +6881,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       })),
       ...(target.name !== DEFAULT_TARGET_NAME ? { target: target.name } : {}),
       // The def-waves (ir.md): a PARAM_SET WAVE's value is the index.
-      ...(waves.length ? { waves: waves.map((w) => ({ name: w.name, len: w.data.length, bits: 8, data: w.data })) } : {}),
+      ...(waves.length ? { waves: waves.map((w) => ({ name: w.name, len: w.data.length, bits: WAVE.bits, data: w.data })) } : {}),
       samples: [...sampleDefs.entries()].map(([name, sample]) => ({
         name,
         ...(sample.rhythm ? { rhythm: sample.rhythm } : {}),

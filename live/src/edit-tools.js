@@ -1,10 +1,13 @@
-// Edit > Loop Selection: text edits the editor applies to the score, kept
-// apart from the page so they can be run (and checked) in node. Every function
-// here takes source text and offsets and returns CodeMirror-style changes
-// ({from, to, insert}); nothing touches the editor.
+// Edit > Loop Selection, the Logical Editor and the vector editor: text edits
+// the editor applies to the score, kept apart from the page so they can be run
+// (and checked) in node. Every function here takes source text and offsets and
+// returns CodeMirror-style changes ({from, to, insert}); nothing touches the
+// editor.
 
 import { parse } from "./mmlisp-parser.js";
 import { AC_TRACKS } from "./completion-names.js";
+import { canonicalTarget, macroCurveSteps, waveCurveSteps } from "./mmlisp2ir.js";
+import { MACRO_TARGET_RANGE, WAVE } from "./ir-utils.js";
 
 const TRACKS = new Set(AC_TRACKS);
 
@@ -534,4 +537,227 @@ export function voiceDefNames(texts) {
     }
   }
   return names;
+}
+
+// ---------------------------------------------------------------------------
+// The vector editor's subject: the vector the cursor is on, as the panel
+// draws it (index.html) — a def-wave's wave, or a macro target's step vector
+// (language.md §10). The subject says how long the vector is and what range
+// its values take, so the editor draws only what the score can hold:
+//
+//   kind      "wave" | "macro"
+//   key       identity across cursor moves (the def's name, the vector's start)
+//   label     what the panel's heading says (`Wave`, `Macro :vel`)
+//   name      the def-wave's or the macro def's name, when there is one
+//   values    one per step, a number or null (a hold, `_`)
+//   marks     [{ at, label }]: `#sus` / `#rel` before step `at`
+//   min, max  the range drawn: the target's own, or for a relative target
+//             (`:pitch`, `:semi`, a `+` / `*` macro) a view around its values
+//   relative  true for a relative target
+//   quantum   the values' grain: 1, or 0.01 for a `*` macro's ratios
+//   slots     where each step is written in the text ([{from, to}]), or null
+//             when the vector is not written as one (a curve, an import's
+//             wave): writeVector then writes the whole vector over `span`
+//   curve     true for a macro written as a curve: shown as the steps it
+//             plays (at `bpm`, its :step), and drawing on it writes them
+//   span      the vector's [from, to), or null when it cannot be written
+//             here (a def in an imported file)
+// ---------------------------------------------------------------------------
+
+const MARKS = new Set(["#sus", "#rel"]);
+const PAN_SYMBOLS = { left: -1, center: 0, right: 1 };
+
+// A relative target's view before its values widen it.
+const RELATIVE_VIEW = { NOTE_SEMI: 12, NOTE_PITCH: 100 };
+
+function numberOf(value) {
+  if (value in PAN_SYMBOLS) return PAN_SYMBOLS[value];
+  if (!/^[-+]?(?:\d+\.?\d*|\.\d+)$/.test(value)) return null;
+  return Number(value);
+}
+
+// A literal step vector's steps, marks and slots, or null when it holds
+// anything else (a curve, a stage, a symbol the target names) — the editor
+// draws numbers only.
+function literalSteps(list, starts) {
+  const values = [];
+  const marks = [];
+  const slots = [];
+  for (const it of list.items) {
+    if (it.kind === "comment") continue;
+    if (it.kind !== "atom") return null;
+    if (MARKS.has(it.value)) { marks.push({ at: values.length, label: it.value }); continue; }
+    const v = it.value === "_" ? null : numberOf(it.value);
+    if (v === null && it.value !== "_") return null;
+    values.push(v);
+    slots.push(nodeSpan(it, starts));
+  }
+  return { values, marks, slots };
+}
+
+// A macro keyword's range: the target's (ir-utils.js MACRO_TARGET_RANGE), or
+// for a relative one a view around 0 wide enough for its values.
+function macroRange(keyword, values) {
+  const op = /[+*]$/.exec(keyword)?.[0] ?? null;
+  const target = canonicalTarget(keyword.replace(/[+*]$/, ""));
+  const own = MACRO_TARGET_RANGE[target] ?? MACRO_TARGET_RANGE[target?.replace(/\d+$/, "")] ?? null;
+  const nums = values.filter((v) => v != null);
+  const relative = op != null || target in RELATIVE_VIEW;
+  if (!relative) return own ? { min: own.min, max: own.max, relative } : null;
+  if (op === "*") return { min: 0, max: Math.max(2, ...nums), relative, quantum: 0.01 };
+  const half = RELATIVE_VIEW[target] ?? (own ? Math.ceil((own.max - own.min) / 2) : 16);
+  const reach = Math.max(half, ...nums.map(Math.abs));
+  return { min: -reach, max: reach, relative };
+}
+
+/**
+ * The subject at offset `pos` of `text`, or null. `waves` maps a def-wave's
+ * name to its compiled steps (the IR's metadata.waves), for a wave written
+ * as a curve or defined in an import; `bpm` is the tempo a macro curve's
+ * lengths are read at; `roots`, the text already parsed.
+ */
+export function vectorAt(text, pos, { waves = new Map(), bpm = 120, roots = parsed(text) } = {}) {
+  if (!roots) return null;
+  const starts = lineStarts(text);
+  const inside = (node) => {
+    const { from, to } = nodeSpan(node, starts);
+    return from <= pos && pos <= to;
+  };
+  const defWaves = defWavesIn(roots);
+  const waveSubject = (def, name) => waveSubjectOf(def, name, starts, waves);
+
+  // The innermost list holding the cursor, with its parents.
+  let path = null;
+  const visit = (node, parents) => {
+    if (node?.kind !== "list" || !inside(node)) return;
+    path = [...parents, node];
+    for (const n of node.items) visit(n, path);
+  };
+  for (const r of roots) visit(r, []);
+
+  if (path) {
+    // A macro's step vector, or its curve: `(macro … :target [steps] …)`,
+    // `(macro … :target (curve …) …)`.
+    const vec = path.at(-1);
+    const parent = path.at(-2);
+    if (parent?.bracket === "()" && parent.items[0]?.value === "macro") {
+      const sib = items(parent);
+      const keyword = sib[sib.indexOf(vec) - 1];
+      const isKey = keyword?.kind === "atom" && keyword.value.startsWith(":") && keyword.value !== ":step";
+      const stepAt = sib.findIndex((n) => n.kind === "atom" && n.value === ":step");
+      const step = stepAt >= 0 && sib[stepAt + 1]?.kind === "atom" ? sib[stepAt + 1].value : null;
+      const literal = !isKey ? null
+        : vec.bracket === "[]" ? literalSteps(vec, starts)
+        : curveSteps(vec, keyword.value, step, bpm);
+      const range = literal && macroRange(keyword.value, literal.values);
+      if (range) {
+        const span = nodeSpan(vec, starts);
+        const owner = path.length > 2 && path.at(-3).items[0]?.value === "def" ? items(path.at(-3))[1]?.value : null;
+        return {
+          kind: "macro", key: `macro:${span.from}`, label: `Macro ${keyword.value}`,
+          name: typeof owner === "string" ? owner : null, keyword: keyword.value,
+          values: literal.values, marks: literal.marks, ...range, slots: literal.slots, span,
+          ...(literal.curve ? { curve: true } : {}),
+        };
+      }
+    }
+    // Anywhere in a def-wave.
+    const def = path.find((n) => n.items?.[0]?.value === "def-wave");
+    if (def) return waveSubject(def, items(def)[1]?.value);
+  }
+  // A def-wave's name where it is played (a track's body).
+  const atom = atomAtPos(roots, starts, pos);
+  if (atom && (defWaves.has(atom.value) || waves.has(atom.value))) {
+    const own = defWaves.get(atom.value) ?? null;
+    const s = waveSubject(own, atom.value);
+    return s && (own ? s : { ...s, slots: null, span: null });
+  }
+  return null;
+}
+
+const items = (node) => node.items.filter((n) => n.kind !== "comment");
+
+function parsed(text) {
+  try { return parse(text); } catch { return null; }
+}
+
+const defWavesIn = (roots) => new Map(roots.filter((n) => n?.kind === "list" && n.items?.[0]?.value === "def-wave")
+  .map((n) => [items(n)[1]?.value, n]));
+
+// A def-wave's subject: its literal vector, else its compiled steps (`waves`);
+// `def` null for one defined elsewhere (an import), which is not written here.
+function waveSubjectOf(def, name, starts, waves) {
+  const body = def ? items(def) : [];
+  const k = body.findIndex((n) => n.kind === "atom" && n.value === ":wave");
+  const at = k >= 0 ? body[k + 1] : null;
+  const literal = at?.kind === "list" && at.bracket === "[]" ? literalSteps(at, starts) : null;
+  const whole = literal?.values.length === WAVE.len;
+  // A curve is read here, as the text has it now; one it cannot read alone,
+  // or an import's wave, comes compiled (`waves`).
+  const curve = at?.kind === "list" && at.bracket === "()" ? waveCurveSteps(at) : null;
+  const values = whole ? literal.values : curve ?? waves.get(name) ?? null;
+  if (!values) return null;
+  return {
+    kind: "wave", key: `wave:${name}`, label: "Wave", name, values,
+    marks: [], min: WAVE.min, max: WAVE.max, relative: false,
+    slots: whole ? literal.slots : null,
+    span: at ? nodeSpan(at, starts) : null,
+  };
+}
+
+/** The def-wave `name`'s subject, as vectorAt gives it, or null. */
+export function vectorOfWave(text, name, { waves = new Map(), roots = parsed(text) } = {}) {
+  if (!roots) return null;
+  return waveSubjectOf(defWavesIn(roots).get(name) ?? null, name, lineStarts(text), waves);
+}
+
+// A macro curve as a subject's steps (mmlisp2ir.js macroCurveSteps): whole
+// values (a `*` macro's ratios kept to hundredths), a loop curve's cycle
+// marked `#sus` as the vector that plays it would be.
+function curveSteps(node, keyword, step, bpm) {
+  const got = macroCurveSteps(node, { step, bpm });
+  if (!got) return null;
+  const round = keyword.endsWith("*") ? (v) => Math.round(v * 100) / 100 : Math.round;
+  return { values: got.values.map(round), marks: got.loop ? [{ at: 0, label: "#sus" }] : [], slots: null, curve: true };
+}
+
+function atomAtPos(roots, starts, pos) {
+  let hit = null;
+  const visit = (n) => {
+    if (n?.kind === "atom") {
+      const { from, to } = nodeSpan(n, starts);
+      if (from <= pos && pos <= to) hit = n;
+    } else if (n?.kind === "list") n.items.forEach(visit);
+  };
+  roots.forEach(visit);
+  return hit;
+}
+
+/**
+ * The changes that write `values` (one per step; null a hold) into the
+ * subject's text: each step that changed, in place, so the vector keeps its
+ * layout and marks; a subject that is not a literal vector (a curve) is
+ * written whole over it, its marks in place, 16 steps a line. [] when it
+ * cannot be written here.
+ */
+export function writeVector(text, subject, values) {
+  if (!subject.span) return [];
+  const str = (v) => (v == null ? "_" : String(v));
+  if (subject.slots) {
+    return subject.slots.flatMap((slot, i) => {
+      const insert = str(values[i]);
+      return text.slice(slot.from, slot.to) === insert ? [] : [{ ...slot, insert }];
+    });
+  }
+  const col = subject.span.from - text.lastIndexOf("\n", subject.span.from - 1) - 1;
+  const rows = [];
+  for (let i = 0; i < values.length; i += 16) {
+    const row = [];
+    for (let k = i; k < Math.min(i + 16, values.length); k++) {
+      for (const m of subject.marks) if (m.at === k) row.push(m.label);
+      row.push(str(values[k]));
+    }
+    rows.push(row.join(" "));
+  }
+  return [{ ...subject.span, insert: `[${rows.join(`\n${" ".repeat(col + 1)}`)}]` }];
 }

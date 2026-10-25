@@ -278,6 +278,8 @@ export class IRPlayer {
     // master/vol recomputes must NOT re-write a non-silent att to an idle channel
     // (that would un-silence it into a tone). Updated on every _psgSetAtt.
     this._psgSounding = new Array(PSG_LANES).fill(false);
+    this._laneWave = new Array(PSG_LANES).fill(null); // the def-wave each wave lane plays (by name)
+    this._drawnWaves = new Map(); // def-wave name → the steps the editor drew over it (setWave)
     // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
     // current value; PARAM_SET NOISE_MODE updates it; the mode macro is a
     // temporary override layered on top. Default white0 (0b1_00) matches the
@@ -396,6 +398,8 @@ export class IRPlayer {
     this._psgChip = this._psgChipOf(target); // one per score: it may keep state
     this._toneEnc = this._toneEncodersOf(target, this._psgChip);
     this._chipsStarted.clear();
+    this._laneWave.fill(null);
+    this._drawnWaves.clear();
     // The FM core's level ladder (chips/parts.js `level`): its TL.
     this._fmLevel = target.parts.find((p) => p.kind === "fm")?.level ?? null;
     // The fm3-csm voice: the track that turns CSM on. Timer A keys it, so the
@@ -4916,6 +4920,30 @@ export class IRPlayer {
     return encode(l.enc, l.ch);
   }
 
+  /**
+   * The def-wave `name`'s steps are now `data` (the editor drawing it): the
+   * loaded score plays them from here — until the next load, which has them
+   * in its IR — and every lane playing it hears them at once.
+   */
+  setWave(name, data) {
+    this._drawnWaves.set(name, [...data]);
+    const when = this._audioContext?.currentTime ?? 0;
+    this._laneWave.forEach((n, lane) => {
+      if (n === name) this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, data)), when);
+    });
+  }
+
+  /** Put `data` on wave lane `lane` for the keys, as the def-wave `name` (null: none). */
+  previewWave(lane, data, name = null) {
+    this._laneWave[lane] = name;
+    this._psgWrites(this._lane(lane, (e, ch) => e.wave?.(ch, data) ?? []), this._audioContext?.currentTime ?? 0);
+  }
+
+  /** The def-wave lane `lane` last played, or null. */
+  laneWave(lane) {
+    return this._laneWave[lane] ?? null;
+  }
+
   // Write attenuation for a PSG channel.
   // attReg: 0=max volume, 15=silent (hardware convention).
   _psgSetAtt(psgCh, attReg, when) {
@@ -5528,8 +5556,13 @@ export class IRPlayer {
         } else if (psgTarget === "WAVE") {
           // A wave channel's def-wave (metadata.waves): its memory written
           // whole (chips/k051649.js — channels 4 and 5 share one).
-          const wave = this._ir?.metadata?.waves?.[Math.round(ev.args?.value ?? -1)];
-          if (wave) this._psgWrites(this._lane(psgCh, (e, ch) => e.wave(ch, wave.data)), when);
+          const index = Math.round(ev.args?.value ?? -1);
+          const wave = this._ir?.metadata?.waves?.[index];
+          if (wave) {
+            this._laneWave[psgCh] = wave.name;
+            const data = this._drawnWaves.get(wave.name) ?? wave.data;
+            this._psgWrites(this._lane(psgCh, (e, ch) => e.wave(ch, data)), when);
+          }
         } else if (psgTarget === "NOISE_MODE") {
           // Update the persistent noise mode. Re-asserted on every noise NOTE_ON;
           // if the channel is currently sounding, take effect immediately.

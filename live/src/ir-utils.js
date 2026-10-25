@@ -75,6 +75,10 @@ export const MACRO_TARGET_RANGE = {
   VAL: { min: -32768, max: 32767 },
 };
 
+// A def-wave's form (language.md §19, ir.md §2.3): its steps and their
+// signed range, which a chip of fewer bits reads down.
+export const WAVE = { len: 32, min: -128, max: 127, bits: 8 };
+
 /**
  * Clamp a macro output value to the hardware range for the given target.
  * Clamp only — never rounds (values stay float; the register write quantizes).
