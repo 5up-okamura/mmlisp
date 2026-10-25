@@ -1,11 +1,12 @@
-# WASM Sound Cores (YM2612, PSG, YM2608, YM2151, AY-3-8910)
+# WASM Sound Cores (YM2612, PSG, YM2608, YM2151, AY-3-8910, YM2413)
 
 This folder holds the build scaffold for the chip cores MMLisp Live plays
 through: the Mega Drive's YM2612 (FM) and SEGA PSG, the PC-8801's YM2608,
-the X68000's YM2151 and the MSX's AY-3-8910. The build emits single-file ES
-modules and syncs them to `live/nuked-opn2.js`, `live/nuked-psg.js`,
-`live/ymfm-ym2608.js`, `live/ymfm-ym2151.js` and `live/ymfm-ay8910.js`, which
-are the copies the app ships.
+the X68000's YM2151, the MSX's AY-3-8910 and the FM-PAC's YM2413. The build
+emits single-file ES modules and syncs them to `live/nuked-opn2.js`,
+`live/nuked-psg.js`, `live/ymfm-ym2608.js`, `live/ymfm-ym2151.js`,
+`live/ymfm-ay8910.js` and `live/ymfm-ym2413.js`, which are the copies the app
+ships.
 
 Chosen cores:
 
@@ -15,9 +16,10 @@ Chosen cores:
   the same core Furnace exposes as its accurate PSG option.
   License: GPL-2.0-or-later.
 - `ymfm` by Aaron Giles — the YM2608 (OPNA): FM, SSG, the rhythm (ADPCM-A)
-  and the ADPCM-B, the YM2151 (OPM), and its SSG engine alone as the MSX's
-  AY-3-8910, the chips MAME runs. Only the OPN and OPM families' files are
-  vendored. License: BSD-3-Clause.
+  and the ADPCM-B, the YM2151 (OPM), its SSG engine alone as the MSX's
+  AY-3-8910, and the YM2413 (OPLL), the chips MAME runs. The OPN, OPM and
+  OPL families' files are vendored (`ymfm_opl` includes `ymfm_pcm`, for the
+  OPL4). License: BSD-3-Clause.
 
 Local source layout:
 
@@ -35,6 +37,8 @@ third_party/
     ymfm_opm.h  ymfm_opm.cpp
     ymfm_ssg.h  ymfm_ssg.cpp
     ymfm_adpcm.h  ymfm_adpcm.cpp
+    ymfm_opl.h  ymfm_opl.cpp
+    ymfm_pcm.h  ymfm_pcm.cpp
 ```
 
 Generated output:
@@ -46,12 +50,14 @@ wasm/dist/
   ymfm-ym2608.js
   ymfm-ym2151.js
   ymfm-ay8910.js
+  ymfm-ym2413.js
 live/
    nuked-opn2.js
    nuked-psg.js
    ymfm-ym2608.js
    ymfm-ym2151.js
    ymfm-ay8910.js
+   ymfm-ym2413.js
 ```
 
 Build prerequisites:
@@ -67,6 +73,7 @@ wasm/build-psg.sh     # PSG (SN76489)
 wasm/build-ym2608.sh  # YM2608 (ymfm)
 wasm/build-ym2151.sh  # YM2151 (ymfm)
 wasm/build-ay8910.sh  # AY-3-8910 (ymfm's SSG)
+wasm/build-ym2413.sh  # YM2413 (ymfm)
 ```
 
 If `emcc` aborts with a Python syntax error, point Emscripten at a modern
@@ -88,14 +95,17 @@ Integration notes:
    `wasm/ay8910_adapter.cpp` clocks ymfm's SSG engine at the chip's clock / 8
    and averages four of its states into one sample (clock / 32), the three
    channels apart (unipolar), which the caller sums and DC-blocks.
+   `wasm/ym2413_adapter.cpp` runs ymfm's YM2413 at its own rate (clock / 72),
+   mono — the melody and rhythm outputs (MO, RO) summed — with each of its
+   nine channels' output beside it for the scope.
 2. `build-nuked.sh` / `build-psg.sh` / `build-ym2608.sh` / `build-ym2151.sh` /
-   `build-ay8910.sh` build single-file ES modules for
+   `build-ay8910.sh` / `build-ym2413.sh` build single-file ES modules for
    AudioWorklet loading, and sync copies to `live/` for static deploys
    that only publish the `live/` directory.
 3. `live/src/synth-md.js` imports the generated modules (`../nuked-opn2.js`,
    `../nuked-psg.js`), `live/src/synth-pc88.js` imports
    `../ymfm-ym2608.js`, `live/src/synth-x68k.js` `../ymfm-ym2151.js` and
-   `live/src/synth-msx.js` `../ymfm-ay8910.js`; the
+   `live/src/synth-msx.js` `../ymfm-ay8910.js` and `../ymfm-ym2413.js`; the
    worklet and the WAV export both run the chips
    through them, the score's target picking which.
 

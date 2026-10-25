@@ -47,23 +47,25 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
-- **Engine.** `third_party/ymfm` is trimmed and has no OPLL. Upstream
-  ymfm `main` (github.com/aaronsgiles/ymfm, `src/`) has `ymfm.h`,
-  `ymfm_fm.h`, `ymfm_fm.ipp`, `ymfm_ssg.h`, `ymfm_opn.h` and
-  `ymfm_adpcm.h` byte-identical to the vendored ones, so `ymfm_opl.h/.cpp`
-  can be added as they are, with `ymfm_pcm.h/.cpp` (ymfm_opl.h includes
-  it). emcc is installed. Build as `wasm/build-ym2151.sh` and
-  `ym2151_adapter.cpp` do: per-channel scope taps by `m_fm.output(o, 5,
-  256, 1u << ch)` per channel (opll_base::generate's shift/range; 9
-  channels, the rhythm sounds in channels 6-8), the chip at clock / 72.
-  VGM: `0x51 aa dd`, the YM2413 clock at header 0x10 (VGM 1.00).
+- **Engine (stage 1, built 2026-10-25).** ymfm's YM2413 on the worklet's
+  port 4 of `:target msx` (`chips/ym2413.js`, `parts: []` until stage 2),
+  `wasm/ym2413_adapter.cpp` → `live/ymfm-ym2413.js`, synth-msx.js rendering
+  it from its first write; VGM `0x51`, clock at 0x10. Left for stage 2:
+  ymfm puts the rhythm on output 1 (RO) — the adapter sums MO + RO, the
+  levels between them not yet held to a recording; `OPLL_GAIN` is set by
+  the numbers, not by ear; the scope has fm1-fm6 at lanes 0-5 and fm7-fm9
+  at 15-17 (scope-pitch `opllPitch` too), which the channel table's `scope`
+  must name; the worklet's `_songRegs` is indexed `port & 1`, so an OPLL
+  hold bus (port 4 → 0, the PSG's) needs it per port first.
 - **ROM voices.** `ym2413::s_default_instruments` in ymfm_opl.cpp: 15
   voices × 8 bytes in the user voice's $00-$07 layout (Violin, Guitar,
   Piano, Flute, Clarinet, Oboe, Trumpet, Organ, Horn, Synthesizer,
   Harpsichord, Vibraphone, Synthesizer Bass, Acoustic Bass, Electric
   Guitar), then 3 rhythm patches — the source of the built-in names'
-  parameters.
-- **Stages.** 1 engine (WASM, synth-msx.js port, VGM) → 2 language and
+  parameters. They are not a dump of Yamaha's ROM: ymfm ships the
+  copyright-free set by David Viens and Hubert Lamontagne (2015), tuned by
+  ear to it — whether the built-in voices take these or a dump is open.
+- **Stages.** 1 engine (WASM, synth-msx.js port, VGM; done) → 2 language and
   player (the OPLL part: 2 ops, `:ws1` `:eg1` `:ksl1` `:vib1` `:sus` on the
   FM_ prefix, per-part ranges, the built-in voices, the IR player's FM
   level through the encoder — a channel volume, not carrier TLs) → 3 the

@@ -49,7 +49,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `offline-cache.js`             | Fills the service worker's cache so the installed app runs offline |
 | `time-worker.js`               | TIME's bar length, measured off the page's thread (`IRPlayer.captureRegisterLog`) |
 | `compile-worker.js`            | The score's compile (`compileMMLisp`) off the page's thread, for Build, Play and a drag's hot-swap |
-| `../nuked-opn2.js`, `../nuked-psg.js`, `../ymfm-ym2608.js`, `../ymfm-ym2151.js`, `../ymfm-ay8910.js` | YM2612 / PSG / YM2608 / YM2151 / AY-3-8910 cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
+| `../nuked-opn2.js`, `../nuked-psg.js`, `../ymfm-ym2608.js`, `../ymfm-ym2151.js`, `../ymfm-ay8910.js`, `../ymfm-ym2413.js` | YM2612 / PSG / YM2608 / YM2151 / AY-3-8910 / YM2413 cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
 
 The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
 `export-mmb.js` (IR → MMB v0.4 + the sample bank), `mmb-voices.js` and

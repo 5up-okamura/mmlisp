@@ -1,8 +1,10 @@
-// The MSX: its PSG, an AY-3-8910, and the SCC cartridge's five wave
-// channels (a score that names none has no SCC). No driver: the score is
-// delivered as VGM.
+// The MSX: its PSG, an AY-3-8910, the SCC cartridge's five wave channels
+// (a score that names none has no SCC) and the FM-PAC's YM2413, whose
+// channels are not in the table yet (chips/ym2413.js). No driver: the score
+// is delivered as VGM.
 import { ay8910 } from "../chips/ay8910.js";
 import { k051649, sccWave } from "../chips/k051649.js";
+import { ym2413 } from "../chips/ym2413.js";
 import { ssgTone, ssgNoise } from "../chips/ssg.js";
 
 const on = (part, voice) => ({ chip: "psg", part, voice });
@@ -24,7 +26,7 @@ export default {
   name: "msx",
   system: "MSX",
   driver: null,
-  chips: { psg: ay8910, scc: k051649 },
+  chips: { psg: ay8910, scc: k051649, opll: ym2413 },
   channels: {
     sqr1: on(ssgTone, 0), sqr2: on(ssgTone, 1), sqr3: on(ssgTone, 2),
     noise: on(ssgNoise, 2), // sqr3 with its mixer on noise

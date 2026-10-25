@@ -62,7 +62,7 @@ Licenses dialog links it.
 - License: BSD-3-Clause
 
 Included files (the YM2608's: OPN family FM, SSG, ADPCM-A/B; the YM2151's:
-OPM):
+OPM; the YM2413's: the OPL family, which brings `ymfm_pcm` with it):
 
 - `third_party/ymfm/ymfm.h`
 - `third_party/ymfm/ymfm_fm.h`, `ymfm_fm.ipp`
@@ -70,6 +70,8 @@ OPM):
 - `third_party/ymfm/ymfm_opm.h`, `ymfm_opm.cpp`
 - `third_party/ymfm/ymfm_ssg.h`, `ymfm_ssg.cpp`
 - `third_party/ymfm/ymfm_adpcm.h`, `ymfm_adpcm.cpp`
+- `third_party/ymfm/ymfm_opl.h`, `ymfm_opl.cpp`
+- `third_party/ymfm/ymfm_pcm.h`, `ymfm_pcm.cpp`
 - `third_party/ymfm/README.md`
 - `third_party/ymfm/LICENSE`
 
@@ -84,6 +86,9 @@ Local integration files in this repository:
 - `wasm/ay8910_adapter.cpp`
 - `wasm/build-ay8910.sh`
 - `live/ymfm-ay8910.js` (the built WASM wrapper this repository ships)
+- `wasm/ym2413_adapter.cpp`
+- `wasm/build-ym2413.sh`
+- `live/ymfm-ym2413.js` (the built WASM wrapper this repository ships)
 
 The upstream license text is preserved at `third_party/ymfm/LICENSE`; keep it
 with any distribution that includes the generated wrapper.
