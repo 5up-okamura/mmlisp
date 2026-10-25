@@ -3567,6 +3567,12 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   }, {}),
 }));
 
+// The keyword a canonical target is written as (FM_SSG1 → :ssg1).
+const KEYWORD_OF = new Map([...TARGET_KEYWORDS].map(([kw, t]) => [t, kw]));
+function keywordOf(target) {
+  return KEYWORD_OF.get(target) ?? `:${target.toLowerCase().replace(/_/g, "-")}`;
+}
+
 export function canonicalTarget(symbol) {
   const known = TARGET_KEYWORDS.get(symbol);
   if (known) return known;
@@ -3614,9 +3620,21 @@ function createInitFmKwMap() {
 }
 
 // A def-fm voice switch: its registers as of `tick`, and the key shift its
-// :key sets on the track.
-function emitVoice(td, tick, events, src, trackState = null) {
-  if (td.kwMap) emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.target);
+// :key sets on the track. The track's part takes what it has of the voice
+// (emitVoiceFromKwMap): a voice named on a channel with no FM (sqr1, pcm1)
+// keeps only its :key there, and says so once per track and voice.
+function emitVoice(td, tick, events, src, trackState = null, name = null, diagnostics = null, trackName = null) {
+  if (td.kwMap) {
+    const dropped = emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.part, trackState?.target);
+    const said = (trackState.voicesSaid ??= new Set());
+    if (dropped && diagnostics && !said.has(name)) {
+      said.add(name);
+      const { part, head } = trackState;
+      pushDiag(diagnostics, "warning", "W_TARGET",
+        `'${name}' is an FM voice; ${head} (${part.label}) ${part.kind === "fm" ? `plays it without ${dropped}` : "has no FM, so only its :key applies"}`,
+        src, trackName);
+    }
+  }
   if (trackState) {
     const key = td.kwMap?.get(VOICE_KEY);
     trackState.voiceKeyShift = key === undefined ? 0 : key - 60;
@@ -3728,18 +3746,27 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false,
   }
 }
 
-// A voice is the OPN/OPM family's patch on every target: what `machine` has
-// no register for (SSG-EG on the OPM, DT2 on the OPN) is left out of it, and
-// on a chip with DT2 a voice without one states it 0, so a voice change
-// resets it.
-function emitVoiceFromKwMap(kwMap, tick, events, src, machine = null) {
+// A voice is the OPN/OPM family's patch on every channel that takes FM:
+// what the track's `part` has no register for (SSG-EG on the OPM, DT2 on the
+// OPN, all of it on a PSG) is left out, and on a part with DT2 a voice
+// without one states it 0, so a voice change resets it. Returns the first
+// word left out that the voice set to something and `machine` has — a
+// word the machine lacks was said at the def (resolveVoices) — or null.
+// With no part every key is written.
+function emitVoiceFromKwMap(kwMap, tick, events, src, part = null, machine = null) {
+  let dropped = null;
   for (const target of VOICE_KEYS) {
     let value = kwMap.get(target);
-    if (machine && partsWithWord(target).length && !machine.hasWord(target)) continue;
-    if (value === undefined && machine && /^FM_DT2_\d$/.test(target)) value = 0;
+    if (part && !part.words(target)) {
+      if (value !== undefined && value !== 0 && value !== VEL_SENS_AUTO && machine?.hasWord(target))
+        dropped ??= keywordOf(target);
+      continue;
+    }
+    if (value === undefined && part && /^FM_DT2_\d$/.test(target)) value = 0;
     if (value !== undefined)
       events.push({ tick, cmd: "PARAM_SET", args: { target, value }, src });
   }
+  return dropped;
 }
 
 function pushDiag(diagnostics, severity, code, message, src, track) {
@@ -4338,7 +4365,7 @@ function compileChannelBody(
 
       // Bare identifier: a def-fm voice (a voice switch)
       if (typedDefs?.has(val)) {
-        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node), trackState);
+        emitVoice(typedDefs.get(val), trackState.tick, events, nodeSrc(node), trackState, val, diagnostics, trackName);
         trackState.voiceName = val; // what a def-mod :voice matches
 
         i++;
@@ -6339,21 +6366,20 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       fileSrc, "global");
   }
 
-  // On the Mega Drive (a target whose PCM is a soft mix on a DAC channel) the
-  // PCM voice count is the engine image, and the image is a whole-song
-  // choice — one image plays 1, 2 or 3 voices at 14.4 / 10.1 / 6.7 kHz. The
-  // score states it, or it is the highest pcmN track used.
+  // A part that reads :pcm-voices (the Mega Drive's DAC soft mix) plays as
+  // many voices as its engine image, a whole-song choice — one image plays
+  // 1, 2 or 3 voices at 14.4 / 10.1 / 6.7 kHz. The score states it, or it is
+  // the highest of the part's voices a track uses. Any other target has none.
   // An effect's channels count here too: its PCM needs the voices, and fm6 is
   // the DAC for an effect as for the song.
   const allHeads = new Set(channelHeads);
   for (const se of seDefs.values())
     for (const part of se.parts) allHeads.add(atomValue(part.items[0]));
+  const countsVoices = (part) => part?.settings?.includes(":pcm-voices");
   let pcmUsed = 0;
-  for (const head of allHeads) {
-    const m = /^pcm([1-3])$/.exec(head);
-    if (m) pcmUsed = Math.max(pcmUsed, Number(m[1]));
-  }
-  const pcmVoices = fileMeta.pcmVoices ?? pcmUsed;
+  for (const head of allHeads)
+    if (countsVoices(target.partOf(head))) pcmUsed = Math.max(pcmUsed, target.channels[head].voice + 1);
+  const pcmVoices = target.parts.some(countsVoices) ? fileMeta.pcmVoices ?? pcmUsed : 0;
 
   // What the target has, and what it does not: its parts' rules
   // (chips/parts.js `checkScore`), then the rules every target shares. The

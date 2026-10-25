@@ -2359,6 +2359,12 @@ every channel's on every target. A channel name only another target has is
 `E_TARGET` too, and two names that are one physical channel on the target
 (the SSG's `noise` and `sqr3`) cannot both be in a score.
 
+A `def-fm` voice is data, not a word: named on a channel, it plays what that
+channel's part has of it. A register the target's chips lack (SSG-EG on the
+OPM, DT2 on the OPN) is left out with `W_TARGET` at the def; a voice named on
+a channel with no FM (`sqr1`, `pcm1`) keeps only its `:key` there, with
+`W_TARGET` once per track and voice.
+
 **The line.** A setting that has no meaning on the target is ignored with
 `W_TARGET` (`:pcm-voices`, the Mega Drive's white noise modes, which read as
 the nearest `:noise-rate`). Anything that would change what is heard is

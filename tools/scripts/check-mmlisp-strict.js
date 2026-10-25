@@ -262,6 +262,11 @@ async function main() {
       expected: ["W_TARGET", "E_TARGET", "E_TARGET", "E_TARGET", "W_TARGET"],
     },
     {
+      label: "a voice on a channel with no FM keeps only its :key",
+      src: '(def-fm bell init-fm :alg 4 :tl2 3)\n(sqr1 bell c bell d)\n(def-pcm k :file "/k.wav")\n(pcm1 bell k c)',
+      expected: ["W_TARGET", "W_TARGET"],
+    },
+    {
       label: "Mega Drive refuses the SSG's words",
       src: '(sqr1 :noise-rate 3 c)',
       expected: ["E_TARGET"],

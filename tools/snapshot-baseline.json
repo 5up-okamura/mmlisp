@@ -1763,7 +1763,7 @@
  },
  "tools/tests/pc88/adpcm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "f613a3fe9e01adc8",
+  "ir": "d8da6c2be4e0eb7f",
   "regs": "ece781dc4d3411b7",
   "vgm": "690550ceb2758b86"
  },
@@ -1775,7 +1775,7 @@
  },
  "tools/tests/pc88/rhythm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "d06e3ee2b126385b",
+  "ir": "916acd4bb11a84b7",
   "regs": "0d15594128962cce",
   "vgm": "cea215d680b032a2"
  },
@@ -1799,7 +1799,7 @@
  },
  "tools/tests/x68k/pcm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "e7a2fae6c9caa34b",
+  "ir": "31f48b9564112a42",
   "regs": "47bf0f58b86e2ea6",
   "vgm": "98a109e62df84a83"
  }
