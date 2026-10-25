@@ -111,16 +111,16 @@ Next:
 ## Song importers for msx / x68k (MGS, MDX; 2026-10-25)
 
 - `import-mgs.js` follows MGSC 1.11's MML reference (MGSC111.TXT, from the
-  user: gigamix.jp is out of this environment's reach) and
-  kanon-ai/msx-music-alchemy's exporter, which was run on MGSDRV through
-  libkss. **Not in either, and not held to the driver** (libkss's kss2vgm
-  would give the A/B the mucom importer had): how an envelope's level
-  combines with v (an @e adds to it, 15 is v; an @r scales it, v × E / 255),
-  k's rate (a level step every k frames), p's (p periods a frame; 128-255
-  "corrected differently", read as p - 128), h's swing (depth × coarseness
-  / 4 either way over 2 (depth + 1) speed frames — the exporter's fit), @p's
-  scale (coarseness × 256), whether a q0 note re-keys at the next note.
-  A secondary source (an AI answer) had `/` `\` `_` in an envelope as volume
+  user: gigamix.jp is out of this environment's reach) and is held to the
+  real MGSDRV: `tools/scripts/ab-mgsdrv.mjs` (libkss-js, installed with
+  `npm i --no-save libkss-js`, runs the driver and writes VGM) compares an
+  import frame by frame. On the five msxplay-js demos (copyrighted, kept
+  out of the repo) sounding agrees 86-100% a channel, pitch within 50 cents
+  92-100% (a PSG drum part 51%: tones near the period's floor, where our
+  exact pitch and the driver's integer period part), levels within a step.
+  What is left is a frame of phase on short notes. Not compared: the
+  rhythm (the tool reads no $0E), y writes.
+- A secondary source (an AI answer) had `/` `\` `_` in an envelope as volume
   moves or a loop and a rhythm hit's digits as its level: the reference
   says otherwise — not to be re-read from such a source.
 - The msxplay-js demo Contrail (PSG + SCC + FM + rhythm, its rhythm at v15)

@@ -180,14 +180,14 @@ function compressMgs(u8) {
     has(source, /:tempo 150/, what);
     has(source, /\(sqr1[\s\S]*:mode tone[\s\S]*c(8\.)? _16/, what); // q6
     has(source, /\(macro :pitch\+ \(linear -400\.\.0 :len 96t\)\)/, what); // c_e: from c to e
-    has(source, /g4? ~ g/, what);
+    has(source, /e4? (\(macro :pitch none\) )?~ g/, what); // e & g: the e slurs into the g
     has(source, /#top[\s\S]*:pitch -?\d+[\s\S]*\(go top\)/, what); // `$`, then \ 5
     has(source, /\(sqr2[\s\S]*:mode noise :noise-rate 31/, what);
-    has(source, /\(def vol-e0-v15 \(macro :vol \[31 29 28 25 23 0\]\)\)/, what); // a=4: a slide
-    has(source, /\(def vol-e0-v12-k2 \(macro :vol \[26 25 23 20 19 0\]\)\)/, what); // relative to v
-    has(source, /\(def bend-e2-c \(macro :pitch\+ \[-\d+\]\)\)/, what); // \-10 then \5: down, the same in any octave
+    has(source, /\(def vol-e0-v15 \(macro :vol \[31 \(wait 1f\) 29 28 26 0\]\)\)/, what); // a=4: toward a, a step short (MGSDRV's)
+    has(source, /\(def vol-e0-v12-k2 \(macro :vol \[26 \(wait 1f\) 25 23 22 0\]\)\)/, what); // relative to v
+    has(source, /\(def bend-e2-c3 \(macro :pitch\+ \[-20 -10\]\)\)/, what); // \-10 then \5: the period's own units, + up
     has(source, /\(def-wave scc-00 :wave \[0 8 16/, what);
-    has(source, /\(def vol-r1-v12-scc \(macro :vol \[\(linear /, what);
+    has(source, /\(def vol-r1-v12-scc \(macro :vol \[28 29 30 \(wait 4f\) 29 [^\]]*#rel \(linear :len 8f\)\]\)\)/, what); // (E × 13) >> 8
     has(source, /#rel \(linear :len \d+f\)/, what);
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
     has(source, /\(def-fm mgs-v15 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);

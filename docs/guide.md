@@ -1772,7 +1772,9 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   samples are decoded into one wav, `<song>-pdx.wav`, a `def-pcm pdx-NNN`
   each, held in memory until Save writes it. Without the PDX the PCM tracks
   are left out, and the log says so.
-- **MGS:** read as MGSC 1.11's reference (MGSC111.TXT) defines the MML.
+- **MGS:** read as MGSC 1.11's reference (MGSC111.TXT) defines the MML,
+  and held to MGSDRV itself where the reference leaves numbers open (the
+  pitch tables, the tempo's frames, the envelopes, the detunes).
   The PSG goes to `sqr1`–`sqr3`, its mixer (`/`, or the mode an `@` sets)
   as `:mode tone | noise | both` and `n` as `:noise-rate`; the SCC to
   `wave1`–`wave5`, each `@s` wave a `def-wave scc-NN`. `v` is `:vol` (the
