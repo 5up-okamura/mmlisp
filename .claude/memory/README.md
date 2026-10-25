@@ -43,3 +43,6 @@ Rules:
   their shape, and one known A/B divergence.
 - [live-app.md](live-app.md) — **the live app**: what was decided against
   (not to be proposed again) and working lessons.
+- [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings
+  for SCC / OPLL and the restructure plan (and its state) that comes before
+  them.
