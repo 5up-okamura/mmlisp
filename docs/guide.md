@@ -1508,8 +1508,9 @@ pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
 instead of reading it for the Mega Drive (language.md §19); md converts it
 for the Mega Drive as above:
 
-- **Rhythm** G plays the chip's own sounds on `pcm2`, the kit roles
-  (`kick` `snare` `ride` `hat` `tom4` `rim`) one `:prio` layer each with no
+- **Rhythm** G plays the chip's own sounds, a track each — BD on
+  `rhythm1`, SD on `rhythm2`, TOP, HH, TOM and RIM on `rhythm3`–`rhythm6`,
+  under the kit roles (`kick` `snare` `ride` `hat` `tom4` `rim`) with no
   `:gate` (each sound is a voice of its own, and rings as the ROM has it);
   `v`'s total and per-sound levels become an absolute `:vel`, which the
   chip's level takes back. The RX5 kit is imported beside it: its sounds
@@ -2058,7 +2059,7 @@ no def of that name; fill the gap with an alias to one it does have
 
 Six of the roles are also the sounds of the YM2608's ROM kit: `kick` BD,
 `snare` SD, `ride` TOP, `hat` HH, `tom4` TOM, `rim` RIM. A `pc88` score plays
-the chip's own sound under the same name on pcm2/pcm3, with or without a kit
+the chip's own sound under the same name on `rhythm1`–`rhythm6`, with or without a kit
 imported (language.md §19). The ROM is the user's to bring (File ▸ Import ▸
 YM2608 Rhythm ROM…); until then an imported kit's sounds stand in, cut to the ROM
 sounds' lengths.

@@ -85,7 +85,8 @@ const SSG_PRESETS = [
 // G is the OPNA's built-in rhythm generator: six sounds in the chip's ROM, each
 // with its own voice. They become the RX5 kit's samples on one PCM track, so
 // where two overlap one is chosen by priority (rhythmLayers). Its channel is pcm1, or pcm2 when
-// part K plays.
+// part K plays. On pc88 they are the chip's own sounds, each a voice of its
+// own: a track per sound, rhythm1-rhythm6 in key-on bit order, no :prio.
 const RHYTHM_PART = "G";
 // The six, in the order of the key-on bits (`@` is a mask) and of `v`'s
 // levels: the sample, its priority (lower wins, as :prio) and how long it
@@ -2432,7 +2433,7 @@ function mucomToMmlisp(parsed) {
   const rhythmPlays = layers.some(Boolean);
   // Each G line becomes its layers' forms, in RHYTHM_SOUNDS order; a layer's
   // first form names its sample — and on md sets its ring as the :gate, where
-  // pc88's ROM sound rings as the chip has it, on pcm2 (pcm1 is the ADPCM-B).
+  // pc88's ROM sound rings as the chip has it, on its own rhythm track.
   for (const [i, f] of rhythmForms.entries()) {
     const copies = [];
     layers.forEach((per, k) => {
@@ -2441,7 +2442,7 @@ function mucomToMmlisp(parsed) {
       const head = i !== 0 ? []
         : pc88 ? [{ t: "raw", text: s.name }]
         : [{ t: "raw", text: `${s.name} :gate ${Math.max(1, Math.round((s.ringMs / 1000) * ((tempo ?? 120) / 60) * PPQN))}t` }];
-      copies.push({ kind: "form", letter: f.letter, key: `${f.letter}~${s.name}`, ch: pc88 || kPlays ? "pcm2" : "pcm1", prio: s.prio, ops: [...head, ...per[i]], comment: copies.length ? null : f.comment });
+      copies.push({ kind: "form", letter: f.letter, key: `${f.letter}~${s.name}`, ch: pc88 ? `rhythm${k + 1}` : kPlays ? "pcm2" : "pcm1", prio: pc88 ? null : s.prio, ops: [...head, ...per[i]], comment: copies.length ? null : f.comment });
     });
     scoreItems.splice(scoreItems.indexOf(f), 1, ...copies);
   }

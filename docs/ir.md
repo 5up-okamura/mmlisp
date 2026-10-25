@@ -105,7 +105,7 @@ Notes: the player consumes `name`, `init`, `unit` and `slot`; `min`/`max`/
 | `name`         | string      | Symbol referenced by `PCM_NOTE_ON.sample`.          |
 | `file`         | string\|null | As written in the source; null for a `pc88` built-in rhythm sound. |
 | `resolvedFile` | string\|null | `file` resolved against the source file's directory.|
-| `rhythm`       | string      | On `pc88`, present on the six kit roles (language.md §19): their ROM sound, `bd` `sd` `top` `hh` `tom` `rim`. A pcm2/pcm3 note on it plays that sound. |
+| `rhythm`       | string      | On `pc88`, present on the six kit roles (language.md §19): their ROM sound, `bd` `sd` `top` `hh` `tom` `rim`. A `rhythm1`–`rhythm6` note on it plays that sound. |
 | `rate`         | int\|null   | Source sample rate; also copied per-note as `baseRate`. |
 | `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
 | `startSec`, `endSec` | number\|null | The range a note plays (`:pcm-start` / `:pcm-end` / `:pcm-len`). In SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. Both null: the whole sample; a null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |

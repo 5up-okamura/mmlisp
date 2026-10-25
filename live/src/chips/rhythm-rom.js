@@ -15,16 +15,13 @@ export const rhythmRom = {
   level: { stepDb: 0.75, steps: 32 }, // the IL, 31 loud .. 0
   points: false,
   kit: { kick: "bd", snare: "sd", ride: "top", hat: "hh", tom4: "tom", rim: "rim" },
-  // A hit sounds on its sound: the `:prio` layers of one track compete only
-  // with the same sound's notes, and one track plays all six at once.
-  voiceOf(ev, sampleDefs) {
-    return ev.cmd === "PCM_NOTE_ON" ? sampleDefs.get(ev.args?.sample)?.rhythm ?? "" : "";
-  },
   checkNote({ sample, sampleName, pitch, mode, target, once }) {
     const file = target.headsOf("adpcm-b")[0];
     const elsewhere = file ? `play its :file on ${file} (the ADPCM-B)` : "it has no sound here";
     if (!sample.rhythm) {
-      once(`adpcm:${sampleName}`, `on ${target.name} ${target.headsOf("rhythm").join(" and ")} play the ROM rhythm sounds, ${Object.keys(this.kit).join(" ")}; ${sampleName} is not one — ${elsewhere}`);
+      const heads = target.headsOf("rhythm");
+      const tracks = heads.length > 2 ? `${heads[0]}–${heads.at(-1)}` : heads.join(" and ");
+      once(`adpcm:${sampleName}`, `on ${target.name} ${tracks} play the ROM rhythm sounds, ${Object.keys(this.kit).join(" ")}; ${sampleName} is not one — ${elsewhere}`);
       return;
     }
     const what = `the ROM rhythm sound ${sample.rhythm} (${sampleName})`;

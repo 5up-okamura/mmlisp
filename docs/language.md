@@ -2398,28 +2398,34 @@ and `(macro :semi …)` — though not `:snap`. A `shot` plays to the range's en
 a `loop` repeats the range until then. A range the track writes
 (`:pcm-start` …) is read at each key-on, rounded to 8 frames; a curve there
 is read as its start (`W_TARGET`).
-`pcm2` and `pcm3` play the six ROM rhythm sounds, named by the kits' roles
-(guide.md, the kits):
+`rhythm1`–`rhythm6` play the six ROM rhythm sounds, named by the kits' roles
+(guide.md, the kits) — as many tracks as the kit has sounds, so each sound
+can have a track, its `:vol` and `:pan`, of its own:
 
 | Name | `kick` | `snare` | `ride` | `hat` | `tom4` | `rim` |
 | --- | --- | --- | --- | --- | --- | --- |
 | ROM sound | BD | SD | TOP | HH | TOM | RIM |
 
 The six are built in, as `init-fm` is, so they play with no def. A score's
-own def of one of these names (a kit's, imported) plays the ROM sound on
-`pcm2`/`pcm3` and its `:file` on `pcm1`; a built-in one has no `:file`, so it
-cannot play on `pcm1`. Any other sample on `pcm2`/`pcm3` is `E_TARGET`. A
+own def of one of these names (a kit's, imported) plays the ROM sound on a
+rhythm track and its `:file` on `pcm1`; a built-in one has no `:file`, so it
+cannot play on `pcm1`. Any other sample on a rhythm track is `E_TARGET`. A
 rhythm sound has no pitch (write it at c4) and no loop (`E_TARGET`), and a
-pcm point (`:pcm-start` …) on `pcm2`/`pcm3` is `E_TARGET`; its def's `:fx`
-does not reach the ROM sound (`W_TARGET`). Each sound is a voice of its own,
-so the `:prio` layers of one rhythm track (§1) compete only with the same
-sound's notes, and one track plays all six at once:
+pcm point (`:pcm-start` …) on a rhythm track is `E_TARGET`; its def's `:fx`
+does not reach the ROM sound (`W_TARGET`). A rhythm track is one line, as
+any channel is: its `:prio` layers (§1) compete — a lower one's hit is
+dropped while a higher one's sounds — and its `:vol` and `:pan` are the
+track's, one of each, for every sound it plays. Sounds that ring together
+are on tracks of their own, as many as the kit has:
 
 ```lisp
 (def-score :target pc88)
 
-(pcm2 :prio 1 kick :len 4 c c c c)
-(pcm2 :prio 2 hat :len 8 c c c c c c c c)   ; sounds with every kick
+(rhythm1 kick :len 4 c c c c)
+(rhythm2 hat :len 8 c c c c c c c c)          ; with every kick
+(rhythm3 snare :pan right :len 2 _ c)         ; its own track, its own pan
+(rhythm4 :prio 1 tom4 :len 4 c _ c _)
+(rhythm4 :prio 2 rim :len 8 c c c c c c c c)  ; only where no tom sounds
 ```
 
 A sounding voice's level moves with the track's `:vol` (a value, a curve, a

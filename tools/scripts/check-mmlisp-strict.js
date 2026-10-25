@@ -242,12 +242,12 @@ async function main() {
     // Targets (language.md §19): what pc88's chips have, and what they do not.
     {
       label: "pc88 score accepted",
-      src: '(def-score :target pc88)\n(fm6 c)\n(sqr1 :mode both :noise-rate 12 c)\n(noise c)\n(pcm2 :prio 1 kick :len 4 c c)\n(pcm2 :prio 2 hat :len 8 c c c c)',
+      src: '(def-score :target pc88)\n(fm6 c)\n(sqr1 :mode both :noise-rate 12 c)\n(noise c)\n(rhythm1 :prio 1 kick :len 4 c c)\n(rhythm1 :prio 2 hat :len 8 c c c c)\n(rhythm2 :pan right snare c)',
       expected: [],
     },
     {
       label: "pc88 settings ignored, sounds it lacks refused",
-      src: '(def-score :target pc88 :pcm-voices 1)\n(sqr3 c)\n(noise :mode white1 c :mode periodic0 c)\n(pcm1 kick c)\n(pcm2 kick :mode loop d)',
+      src: '(def-score :target pc88 :pcm-voices 1)\n(sqr3 c)\n(noise :mode white1 c :mode periodic0 c)\n(pcm1 kick c)\n(rhythm1 kick :mode loop d)',
       expected: ["W_TARGET", "E_TARGET", "W_TARGET", "E_TARGET", "E_TARGET", "E_TARGET", "E_TARGET"],
     },
     // msx: the AY-3-8910 alone, the SSG's language.
@@ -273,8 +273,13 @@ async function main() {
     },
     {
       label: "pc88 rhythm by the kit roles",
-      src: '(def-score :target pc88)\n(def-pcm kick :file "/k.wav" :fx [(gain 3)])\n(def-pcm clap :file "/c.wav")\n(pcm1 kick c clap c)\n(pcm2 kick c clap c)',
+      src: '(def-score :target pc88)\n(def-pcm kick :file "/k.wav" :fx [(gain 3)])\n(def-pcm clap :file "/c.wav")\n(pcm1 kick c clap c)\n(rhythm1 kick c clap c)',
       expected: ["W_TARGET", "E_TARGET"],
+    },
+    {
+      label: "pc88's rhythm is its own channels, not a pcm track's",
+      src: '(def-score :target pc88)\n(pcm2 kick c)\n(rhythm1 kick c)',
+      expected: ["E_TARGET"],
     },
     {
       label: "the kit roles are built in on pc88 only",
@@ -301,7 +306,7 @@ async function main() {
     },
     {
       label: "pc88's parts take pan where the chip has it",
-      src: '(def-score :target pc88)\n(def-pcm k :file "/k.wav")\n(sqr1 :pan left c)\n(pcm1 k :pan left c)\n(pcm2 kick :pan right c)',
+      src: '(def-score :target pc88)\n(def-pcm k :file "/k.wav")\n(sqr1 :pan left c)\n(pcm1 k :pan left c)\n(rhythm1 kick :pan right c)',
       expected: ["E_UNSUPPORTED_TARGET"],
     },
   ];

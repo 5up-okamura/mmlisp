@@ -222,8 +222,9 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `E_UNSUPPORTED_TARGET`.
 - `(def-score :target pc88)` holds a score to the PC-8801's YM2608 (§19):
   sqr `:mode tone|noise|both`, song-wide `:noise-rate`, `noise` is sqr3,
-  pcm1 the ADPCM-B, pcm2/pcm3 the ROM rhythm, built in under the kit roles
-  (`(pcm2 kick c hat c)`, no def). A word or channel only another target's
+  pcm1 the ADPCM-B, `rhythm1`–`rhythm6` the ROM rhythm, built in under the
+  kit roles (`(rhythm1 kick c hat c)`, no def; a track per sound for its own
+  `:vol`/`:pan`). A word or channel only another target's
   chips have is `E_TARGET`. It exports VGM (FM, SSG, rhythm, the ADPCM-B
   with its RAM image) and plays and renders WAV through ymfm's YM2608; the
   rhythm plays from the user's own ROM (File ▸ Import ▸ YM2608 Rhythm ROM…), else

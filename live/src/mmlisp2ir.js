@@ -1938,12 +1938,8 @@ function prioNoteSpan(ev) {
   return l === 0 ? Infinity : (l ?? 0);
 }
 
-// `voiceOf(ev)` names the physical voice a note sounds on. A channel is one
-// voice ("" for every note), so its layers compete for it; where one track
-// reaches several voices — the pc88's ROM rhythm, a voice per sound — notes
-// compete only with notes on their own voice, and one track plays them at
-// once.
-function flattenPriorityLayers(head, layers, diagnostics, voiceOf = () => "") {
+// A channel is one voice, so its layers compete for it.
+function flattenPriorityLayers(head, layers, diagnostics) {
   // Highest priority first (lowest number). The first layer is the container we
   // reuse for channel/scoreChannel; only its event list is rebuilt.
   layers.sort((a, b) => a.prio - b.prio);
@@ -1958,7 +1954,7 @@ function flattenPriorityLayers(head, layers, diagnostics, voiceOf = () => "") {
     }
   }
 
-  const occupied = new Map(); // voice → committed sounding intervals from higher-priority layers
+  let occupied = []; // committed sounding intervals from higher-priority layers
   const drop = new Set();
 
   // An endless loop (the song's `#loop … (go loop)`, an (x …) without a count)
@@ -2027,40 +2023,25 @@ function flattenPriorityLayers(head, layers, diagnostics, voiceOf = () => "") {
       .filter((e) => PRIO_NOTE_CMDS.has(e.cmd) && !drop.has(e))
       .sort((a, b) => a.tick - b.tick);
 
-    const committed = new Map(); // voice → this layer's sounding intervals
-    const higherOf = new Map();
-    const higher = (v) => {
-      let h = higherOf.get(v);
-      if (!h) higherOf.set(v, (h = intervalIndex(occupied.get(v) ?? [])));
-      return h;
-    };
-    // Each note's next onset on its own voice in this layer: its retrigger.
-    const voices = notes.map(voiceOf);
-    const nextOnVoice = new Array(notes.length);
-    const ahead = new Map();
-    for (let i = notes.length - 1; i >= 0; i--) {
-      nextOnVoice[i] = ahead.get(voices[i]) ?? Infinity;
-      ahead.set(voices[i], notes[i].tick);
-    }
+    const committed = []; // this layer's sounding intervals
+    const higher = intervalIndex(occupied);
     for (let i = 0; i < notes.length; i++) {
       const ev = notes[i];
       const t = ev.tick;
-      const v = voices[i];
       // Suppressed: starts while a higher-priority note is sounding.
-      if (higher(v).sounding(t)) {
+      if (higher.sounding(t)) {
         drop.add(ev);
         continue;
       }
       const rawEnd = t + prioNoteSpan(ev); // gate/len end (may be Infinity)
-      const nextSame = nextOnVoice[i]; // own retrigger ends it
-      const nextHi = higher(v).nextStart(t); // next higher-priority onset
+      const nextSame = notes[i + 1]?.tick ?? Infinity; // own retrigger ends it
+      const nextHi = higher.nextStart(t); // next higher-priority onset
       // A higher-priority note interrupts before this note's natural end → cut
       // to silence (no release tail in this version).
       if (nextHi < rawEnd && nextHi < nextSame) ev.args.gate = nextHi - t;
-      if (!committed.has(v)) committed.set(v, []);
-      committed.get(v).push([t, Math.min(rawEnd, nextSame, nextHi)]);
+      committed.push([t, Math.min(rawEnd, nextSame, nextHi)]);
     }
-    for (const [v, list] of committed) occupied.set(v, [...(occupied.get(v) ?? []), ...list]);
+    occupied = [...occupied, ...committed];
   }
 
   // A layer's rests say nothing once the layers share one voice — a lower
@@ -6704,18 +6685,12 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       targetDiag(diagnostics, "warning",
         `${[...heads].join(" and ")} share one wave memory, so the wave named last plays on both`, fileSrc, "global");
 
-  // Where one track reaches several voices (the ROM rhythm, a voice per
-  // sound), its notes compete for their own voice (chips/parts.js `voiceOf`).
-  const voiceOfHead = (head) => {
-    const part = target.partOf(head);
-    return part?.voiceOf ? (ev) => part.voiceOf(ev, sampleDefs) : undefined;
-  };
   const tracks = [];
   for (const [head, layers] of layersByHead) {
     tracks.push(
       layers.length === 1
         ? layers[0].trackData
-        : flattenPriorityLayers(head, layers, diagnostics, voiceOfHead(head)),
+        : flattenPriorityLayers(head, layers, diagnostics),
     );
   }
 

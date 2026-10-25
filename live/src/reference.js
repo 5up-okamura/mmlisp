@@ -87,7 +87,7 @@ export const REFERENCE = [
     syntax: '(def-score :target md | pc88 | x68k | msx)',
     summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV.',
     insert: '(def-score :target pc88)',
-    example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(pcm2 :len 4 kick c c snare c c)',
+    example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(rhythm1 :len 4 kick c c snare c c)',
   },
   {
     name: ':noise-rate', cat: 'score', section: '§19', tracks: null,
@@ -139,6 +139,13 @@ export const REFERENCE = [
     summary: 'The PSG\'s noise channel. :mode white0–white3 or periodic0–periodic3 (sticky); 3 follows sqr3\'s pitch. On x68k it is fm8\'s fourth operator, its period the song\'s :noise-rate.',
     insert: '(noise :mode white2 :len 8 c c c c)',
     example: '(noise :mode white2 :len 8 (macro :vel [12 6 0]) c c c c c c c c)',
+  },
+  {
+    name: 'rhythm1–rhythm6', aliases: ['rhythm1', 'rhythm2', 'rhythm3', 'rhythm4', 'rhythm5', 'rhythm6', 'rhythm', 'drums'], cat: 'channels', section: '§19', tracks: PCM,
+    syntax: '(def-score :target pc88) (rhythm1 kick c …)',
+    summary: 'pc88: the YM2608\'s ROM rhythm, its six sounds named by the kit roles (kick snare ride hat tom4 rim) with no def. A track is one line, its :prio layers competing as on any channel; sounds that ring together, each with its own :vol and :pan, go on tracks of their own.',
+    insert: '(rhythm1 :len 4 kick c snare c)',
+    example: '(def-score :target pc88)\n(rhythm1 :prio 1 :len 4 kick c c c c)\n(rhythm1 :prio 2 :len 8 hat c c c c c c c c)\n(rhythm2 :pan right :len 2 snare _ c)',
   },
   {
     name: 'pcm1–pcm3', aliases: ['pcm1', 'pcm2', 'pcm3', 'pcm4', 'pcm5', 'pcm6', 'pcm7', 'pcm8'], cat: 'channels', section: '§16', tracks: PCM,

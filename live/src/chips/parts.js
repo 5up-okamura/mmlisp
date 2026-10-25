@@ -43,8 +43,6 @@
 //   waveRam   (voice) → the wave memory a `wave` part's channel plays, where
 //             channels share one (the SCC's 4 and 5)
 //   kit       kit role → its sound: samples built in under those names
-//   voiceOf   (ev, sampleDefs) → the physical voice a note sounds on, where
-//             one track reaches several (`:prio` layers flatten per voice)
 //   checkNote (note, ctx) → the part's rules for one note, after compile
 //   checkScore(ctx) → the part's rules for the whole score
 //

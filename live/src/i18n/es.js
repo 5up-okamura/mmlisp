@@ -33,6 +33,7 @@ export default {
     "sqr1–sqr3": ["4bcd4d7e", "Los tres canales de onda cuadrada del PSG. Sin voz propia: da forma a la nota con una macro."],
     "wave1–wave5": ["f675b74e", "msx: los cinco canales de tabla de ondas del SCC. Cada uno toca el def-wave nombrado en él (una onda cuadrada hasta entonces), con un volumen de 4 bits; wave4 y wave5 comparten una memoria de onda."],
     "noise": ["15147589", "El canal de ruido del PSG. :mode white0–white3 o periodic0–periodic3 (persistente); 3 sigue el tono de sqr3. En x68k es el cuarto operador de fm8, y su periodo el :noise-rate de la canción."],
+    "rhythm1–rhythm6": ["59477021", "pc88: el ritmo en ROM del YM2608, sus seis sonidos nombrados por los roles del kit (kick snare ride hat tom4 rim), sin def. Una pista es una sola línea y sus capas :prio compiten como en cualquier canal; los sonidos que suenan juntos, cada uno con su propio :vol y :pan, van en pistas propias."],
     "pcm1–pcm3": ["cd51b4c8", "Muestras, mezcladas por software en el DAC de fm6. Nombra una muestra def-pcm antes de sus notas; el tono de una nota elige una copia remuestreada. En x68k pcm1–pcm8 son las voces de PCM8, mezcladas en el ADPCM del MSM6258, y aceptan movimientos de :pitch."],
     "notes": ["7df5e1e7", "Nombres de nota en el :oct y :len de la pista. :oct 4 es el do central (MIDI 60)."],
     "_ (rest)": ["3620db3e", "Un silencio de :len, o de su propia duración. `r` no es un silencio."],

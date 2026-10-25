@@ -35,8 +35,9 @@ export default {
     sqr1: on(ssgTone, 0), sqr2: on(ssgTone, 1), sqr3: on(ssgTone, 2),
     noise: on(ssgNoise, 2), // sqr3 with its mixer on noise
     pcm1: on(adpcmB, 0),
-    // Two tracks on the one kit; its six sounds are scope lanes 11-16.
-    pcm2: on(rhythmRom, 0, 11), pcm3: on(rhythmRom, 0, 11),
+    // The ROM kit: a track for each of its six sounds at most, any of them
+    // playing any sound; the sounds are scope lanes 11-16.
+    ...Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => [`rhythm${n}`, on(rhythmRom, 0, 11)])),
   },
   readsAs: { modes: { "ssg-noise": NOISE_MODES } },
   hints: { NOISE_MODE: "the noise is :noise-rate 1-31, song-wide" },

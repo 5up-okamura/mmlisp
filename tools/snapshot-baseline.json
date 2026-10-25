@@ -1781,9 +1781,9 @@
  },
  "tools/tests/pc88/rhythm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "916acd4bb11a84b7",
-  "regs": "0d15594128962cce",
-  "vgm": "cea215d680b032a2"
+  "ir": "70bef0fe436c5599",
+  "regs": "179af8adea1728c1",
+  "vgm": "b72508d03f0d285f"
  },
  "tools/tests/pc88/ssg.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
