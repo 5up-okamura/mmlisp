@@ -23,22 +23,25 @@ rulings and the plan's state; delete each item once the repo records it.
 
 ## Plan, in order (each keeps md/pc88/x68k/msx output: check:snapshot green)
 
-1. Contract written down: per-kind encoder interface; part fields `lanes`,
-   `level { scale: db|linear, stepDb, steps }`, `voiceForm`, closed `words`,
-   `ranges`. Not started.
-2. IR player: one `route` per track (`{kind, part, lane}` + handler by part
-   then kind; the Mega Drive DAC an explicit handler, not the default; an
-   unknown kind an error), lanes sized from the target (today `FM_CHANNELS =
-   8`, 4 PSG lanes, hold ids 8 / 20), one level composition quantized by the
-   part's `level` (seven today), FM3/CSM/Timer A moved into the OPN encoder,
-   the FM/PSG pitch-sweep copies merged. Not started.
-3. Live page: a strip carries its channel entry (`selectedCh` numbers and
-   `PSG_UI_BASE` go), kind adapters for preview / mixer / panel, a def-kind
-   registry for "the voice under the cursor", Library tags from the part.
-   Not started.
-4. Exports: a chip-owned VGM emit (SCC's `0xD2 pp aa dd` does not fit
-   `ports`), worklet ports assigned by the profile, one data-block hook for
-   the DAC / ADPCM-B / OKI special cases. Not started.
+Done (2026-10-25): one route per track in the IR player (`_routes`, cores by
+kind, SAMPLE_HANDLERS with the DAC explicit, holds keyed `core:lane`); one
+level composition (ir-utils `levelSteps` / `levelGain`) quantized on each
+part's `level`; the FM family's words in one table (`chips/fm-words.js`)
+with closed per-part lists; FM channels sized from the targets; one synth
+registry (`src/synths.js`) and a port-collision check per target.
+
+Next:
+1. Live page: a strip carries its channel entry (`selectedCh` numbers,
+   `PSG_UI_BASE`, `isFmChannel` go), kind adapters for preview / mixer /
+   panel, a def-kind registry for "the voice under the cursor", Library
+   Fits from the part (not `/^fm/`, `/^pcm/`).
+2. VGM: a `sub` byte in `vgm.ports` for the SCC's `0xD2 pp aa dd`; one
+   data-block hook for the DAC / ADPCM-B / OKI special cases (optional).
+3. IR player, when OPLL lands: the FM level through the encoder (OPLL has
+   a channel volume, not carrier TLs), per-part ranges; FM3 / CSM / Timer A
+   into the OPN encoder (hygiene; gated by `csm` today).
+4. `targets.js` SCOPE_BASE: OPLL's fm7-fm9 would land on the PSG's lanes —
+   set `scope` in its channel table or rebase.
 5. Then SCC (`kind: wave`, `def-wave`, `metadata.waves[]` + a `WAVE` word —
    the IR form still to confirm with the user), then OPLL.
 
