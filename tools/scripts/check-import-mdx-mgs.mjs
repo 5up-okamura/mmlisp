@@ -177,7 +177,7 @@ function compressMgs(u8) {
     has(source, /#rel \(linear :len \d+f\)/, what);
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
     has(source, /\(def-fm mgs-v00 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
-    has(source, /\(fm1[\s\S]*mgs-v00[\s\S]*opll-piano :sus 1/, what);
+    has(source, /\(fm1[\s\S]*mgs-v00[\s\S]*piano :sus 1/, what);
     assert.ok(warnings.some((w) => /rhythm \(1 hit\)/.test(w)), `${what}: the FM-PAC's rhythm is reported`);
     clean(source, what);
   }

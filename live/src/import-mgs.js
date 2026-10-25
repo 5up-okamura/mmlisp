@@ -18,7 +18,7 @@
 //   SCC 4-8         wave1-wave5; `@n` the @s wave, a def-wave
 //   FM 9-17         fm1-fm9 (fm1-fm6 in #opll_mode 1); `@n` an @v voice,
 //                   a def-fm on the OPLL's words, else ROM voice n
-//                   (opll-violin …); so / sf :sus
+//                   (violin …); so / sf :sus
 //   v, v+ / v-      :vol — the SSG's and the OPLL's 3 dB steps, the SCC's
 //                   linear volume
 //   @e / @r, @n     the level envelope (PSG: `@n` selects it) as a :vol

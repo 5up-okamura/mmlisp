@@ -1780,7 +1780,7 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   after `#rel`, an `@e`'s `\` steps a `(def bend-… (macro :pitch+ …))` on the
   notes it plays. The FM-PAC goes to `fm1`–`fm9` (`fm1`–`fm6` beside the
   rhythm, `#opll_mode 1`): an `@v` voice is a `def-fm mgs-vNN` on the OPLL's
-  words, `@1`–`@15` without one the ROM's (`opll-violin` …), `so` / `sf`
+  words, `@1`–`@15` without one the ROM's (`violin` …), `so` / `sf`
   `:sus`, `v` the channel volume's 3 dB steps. `q`, `k` and `&` set the
   lengths, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento.
   The FM-PAC's rhythm is not imported yet (the `msx` target's rhythm mode is
