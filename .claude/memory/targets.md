@@ -113,13 +113,21 @@ Next:
   hit's digits as its level, contradict the format and the demos (MGSC
   writes `/n` as the mixer mode $An, `\n` as a signed detune $12, loops as
   `[ ]`; grider.mml has `h4h4h8` with `vh12`, and $20-$3F carry a length).
+  kanon-ai/msx-music-alchemy's MGS exporter (mgs.py, mgs_extended.py) was
+  run on the real MGSDRV through libkss (its docs/MGSDRV_EXPORT.md): taken
+  from it — @0-@14 are ROM voices 1-15, FM's octave is one below the PSG's
+  (o4c on FM is MIDI 48), FM's `\` and `h` move MGSDRV's F-numbers
+  172-326 (c-b), `h` is delay+1, count, speed, step (a triangle of
+  2 (count + 1) speed frames, about count × step / 4 either way — their fit),
+  rhythm $45 is (target << 5) | level 1-15. Contrail's rhythm at full level
+  clips the msx synth's mix (the OPLL's rhythm level beside the other chips
+  is untested); its rhythm track's own `v15` is not read.
   Guesses to check against the driver or MGSC111.TXT: an @e's levels add to
   v (15 is v; taken from that same answer, unconfirmed), `k` keys off k
   frames early (likewise), @r scales v (v × level / 255), `n:c` slides,
   an @e's `\` steps are + up (the reverse of the track's `\`, which MGSC
   stores as a period offset — chosen because the other reading sends
-  `@e22`-style toms up 60 semitones), `h` is delay, quarter-cycle frames,
-  mode, depth in periods, `q` is eighths, an
+  `@e22`-style toms up 60 semitones), `q` is eighths, an
   envelope mode 0 keeps the track's mixer.
 - MGS's FM tracks play on fm1-fm9 (@v → def-fm mgs-vNN, else ROM voice n,
   so/sf → :sus, v as :vol on the 3 dB ladder); the rhythm track (15 in

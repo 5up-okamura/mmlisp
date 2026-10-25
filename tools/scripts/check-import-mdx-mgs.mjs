@@ -153,7 +153,7 @@ function compressMgs(u8) {
     0x57, 2, 0, 0, ...T(0, 24), 0x58, 0, 0, ...T(4, 24), 0x59, 0, 0, 0, ...T(7, 48), 0xff];
   // FM 1: the @v voice, then ROM voice 3 with the sustain on; FM rhythm
   // (#opll_mode 1): a kick.
-  const fm1 = [0xd3, 0xcf, 0x80, ...T(0, 48), 0x83, 0x5b, 1, ...T(4, 48), 0xff];
+  const fm1 = [0xd3, 0xcf, 0x80, ...T(0, 48), 0x82, 0x5b, 1, ...T(4, 48), 0xff]; // @2: ROM voice 3
   const rhythm = [0x45, 0x00 | 11, 0x31, 48, 0xa1, 0xff]; // vb11, b+h with a length, then h at l
   const mgsBytes = buildMgs({ title: "MGS test", tempo: 120, defs, opll: 1,
     tracks: [psg1, psg2, null, scc1, null, null, null, null, fm1, null, null, null, null, null, rhythm] });
@@ -186,7 +186,7 @@ function compressMgs(u8) {
     has(source, /#rel \(linear :len \d+f\)/, what);
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
     has(source, /\(def-fm mgs-v00 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
-    has(source, /\(fm1[\s\S]*mgs-v00[\s\S]*piano :sus 1/, what);
+    has(source, /\(fm1[\s\S]*mgs-v00[\s\S]*:oct 3[\s\S]*piano :sus 1/, what); // FM's o4 is an octave below the PSG's
     has(source, /\(rhythm1[\s\S]*kick :vol 25/, what); // vb11 (3 dB steps)
     has(source, /\(rhythm2[\s\S]*hat/, what);
     clean(source, what);

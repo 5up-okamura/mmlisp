@@ -17,7 +17,7 @@
 //                   :mode tone | noise | both, `n` the song's :noise-rate
 //   SCC 4-8         wave1-wave5; `@n` the @s wave, a def-wave
 //   FM 9-17         fm1-fm9 (fm1-fm6 in #opll_mode 1); `@n` an @v voice,
-//                   a def-fm on the OPLL's words, else ROM voice n
+//                   a def-fm on the OPLL's words, else ROM voice n + 1
 //                   (violin …); so / sf :sus
 //   v, v+ / v-      :vol — the SSG's and the OPLL's 3 dB steps, the SCC's
 //                   linear volume
@@ -150,7 +150,10 @@ export function parseMgs(bytes) {
 // ── Playing a track ───────────────────────────────────────────────────────
 
 const kindOf = (i) => (i <= 3 ? "psg" : i <= 8 ? "scc" : "fm");
-const OPLL_CLOCK = 3579545;
+// MGSDRV's OPLL F-numbers, c to b: what `\` and `h` move on FM.
+const FM_FNUM = [172, 182, 193, 205, 217, 230, 244, 258, 274, 290, 307, 326];
+// o4a is 440 Hz on the PSG and the SCC; MGSDRV's FM table is an octave below.
+const midiOf = (kind, oct, n) => 12 * (oct + (kind === "fm" ? 0 : 1)) + n;
 
 // Bytes a command takes, its own included (0: the track ends or is unknown).
 function cmdLength(u8, p, rhythm) {
@@ -209,7 +212,7 @@ function playTrack(mgs, track, skipped) {
     const base = st.porta;
     st.porta = null;
     if (n >= 12) { st.tie = false; step += count; return; } // a rest
-    notes.push({ step, count, midi: 12 * (st.oct + 1) + n, base, tieOn: st.tie, st: { ...st } });
+    notes.push({ step, count, midi: midiOf(kind, st.oct, n), base, tieOn: st.tie, st: { ...st } });
     st.tie = false;
     step += count;
   };
@@ -263,7 +266,7 @@ function playTrack(mgs, track, skipped) {
       case 0x51: st.detune = s16(u8, p + 1); break;
       case 0x52: break; // the bend speed: a portamento spans its note
       case 0x53: st.porta = { n: a1 & 15, oct: st.oct }; break;
-      case 0x54: st.lfo = { delay: a1 - 1, speed: u8[p + 2], mode: u8[p + 3] - 1, depth: s8(u8[p + 4]) }; st.lfoOn = true; break;
+      case 0x54: st.lfo = { delay: a1 - 1, count: u8[p + 2], speed: u8[p + 3], depth: s8(u8[p + 4]) }; st.lfoOn = true; break;
       case 0x55: skip("@p"); break;
       case 0x57: stack.push({ start: p + len, left: a1, infinite: a1 === 0, step }); break;
       case 0x58: {
@@ -339,16 +342,14 @@ const ssgVol = (r) => (r <= 0 ? 0 : 31 - Math.round(1.5 * (15 - Math.min(15, r))
 const sccVol = (r) => (r <= 0 ? 0 : Math.max(1, Math.min(31, 31 + Math.round((20 * Math.log10(Math.min(15, r) / 15)) / 2))));
 const MODES = [null, "tone", "noise", "both"];
 
-// A note's period on the PSG (o4a = 440 Hz) or the SCC, and a period offset
-// as cents there.
+// An offset as cents at a note: on FM an F-number offset on MGSDRV's table,
+// on the PSG (o4a = 440 Hz) and the SCC a period offset.
 function detuneCents(kind, midi, d) {
-  const hz = 440 * 2 ** ((midi - 69) / 12);
   if (kind === "fm") {
-    // An F-number offset, at the block that holds the note in 256-511.
-    let f = (hz * 72 * 2 ** 19) / OPLL_CLOCK;
-    while (f >= 512) f /= 2;
+    const f = FM_FNUM[((midi % 12) + 12) % 12];
     return Math.round(1200 * Math.log2(Math.max(1, f + d) / f));
   }
+  const hz = 440 * 2 ** ((midi - 69) / 12);
   const p = kind === "psg" ? PSG_CLOCK / 16 / hz : PSG_CLOCK / 32 / hz - 1;
   const q = Math.max(1, Math.min(4095, p + d)); // the 12-bit period
   return Math.round(1200 * Math.log2((kind === "psg" ? p : p + 1) / (kind === "psg" ? q : q + 1)));
@@ -518,7 +519,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     return expanded.get(num);
   };
 
-  // An @v voice as a def-fm on the OPLL's words; @1-@15 without one, the ROM's.
+  // An @v voice as a def-fm on the OPLL's words; @0-@14 without one, ROM voices 1-15.
   const voiceDefs = new Map();
   const fmVoice = (n) => {
     if (!voiceDefs.has(n)) {
@@ -530,7 +531,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
           `:ws${k} ${ws}`, `:ar${k} ${ar >> 4}`, `:dr${k} ${ar & 15}`, `:sl${k} ${sl >> 4}`, `:rr${k} ${sl & 15}`].join(" ");
         defs.push(`(def-fm ${name} :fb ${d[3] & 7}\n  ${op(1, d[0], d[4], d[6], d[2] >> 6, (d[3] >> 3) & 1, d[2] & 63)}\n  ${op(2, d[1], d[5], d[7], d[3] >> 6, (d[3] >> 4) & 1, null)})`);
         voiceDefs.set(n, name);
-      } else if (n >= 1 && n <= 15) voiceDefs.set(n, OPLL_ROM_NAMES[n - 1]);
+      } else if (n <= 14) voiceDefs.set(n, OPLL_ROM_NAMES[n]); // @0-@14: ROM voices 1-15
       else { voiceDefs.set(n, null); warnings.push(`FM @${n} has no @v definition — its notes play the voice before`); }
     }
     return voiceDefs.get(n);
@@ -573,14 +574,15 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const bend = x?.offsets.some(Boolean) ? envBend(st.env, n.midi, tr.kind, x) : null;
       if (bend) pitch = bend;
       else if (n.base) {
-        const from = 12 * (n.base.oct + 1) + n.base.n;
+        const from = midiOf(tr.kind, n.base.oct, n.base.n);
         if (from !== n.midi) pitch = `(macro :pitch+ (linear ${(from - n.midi) * 100}..0 :len ${tick(n.count)}t))`;
-      } else if (st.lfoOn && st.lfo && st.lfo.depth && st.lfo.speed > 0) {
-        // h delay, speed, mode, depth: a triangle `depth` periods wide, a
-        // quarter of it `speed` frames.
-        const { delay, speed, depth } = st.lfo;
-        const amp = Math.round(Math.abs(detuneCents(tr.kind, n.midi, depth)) / 10) * 10; // to 10 cents, so notes share it
-        if (amp) pitch = `(macro :pitch+ (triangle ${-amp}..${amp} :len ${4 * speed}f :phase ${depth > 0 ? 192 : 64}${delay > 0 ? ` :wait ${delay}f` : ""}))`;
+      } else if (st.lfoOn && st.lfo && st.lfo.depth && st.lfo.count > 0 && st.lfo.speed > 0) {
+        // h delay+1, count, speed, step: a triangle of 2 (count + 1) speed
+        // frames, count × step / 4 either way (as msx-music-alchemy's
+        // exporter has it, held to MGSDRV on libkss).
+        const { delay, count, speed, depth } = st.lfo;
+        const amp = Math.round(Math.abs(detuneCents(tr.kind, n.midi, (count * depth) / 4)) / 10) * 10; // to 10 cents, so notes share it
+        if (amp) pitch = `(macro :pitch+ (triangle ${-amp}..${amp} :len ${2 * (count + 1) * speed}f :phase 64${delay > 0 ? ` :wait ${delay}f` : ""}))`;
       }
       if (pitch && !pitch.startsWith("(")) state.push(pitch);
       else state.push(pitch ?? "(macro :pitch none)");
