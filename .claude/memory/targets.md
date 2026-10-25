@@ -62,9 +62,12 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   Piano, Flute, Clarinet, Oboe, Trumpet, Organ, Horn, Synthesizer,
   Harpsichord, Vibraphone, Synthesizer Bass, Acoustic Bass, Electric
   Guitar), then 3 rhythm patches — the source of the built-in names'
-  parameters. They are not a dump of Yamaha's ROM: ymfm ships the
-  copyright-free set by David Viens and Hubert Lamontagne (2015), tuned by
-  ear to it — whether the built-in voices take these or a dump is open.
+  layout. ymfm's own table is not Yamaha's ROM but the copyright-free set
+  by David Viens and Hubert Lamontagne (2015), tuned by ear to it. **Ruling
+  (2026-10-25): the built-in voices take the real ROM's dumped values**, and
+  the emulator plays the same ones (`ym2413(intf, instrument_data)` /
+  `set_instrument_data` in the adapter), so what a def-fm extends is what
+  the preview plays. The level (`OPLL_GAIN`, MO + RO summed) stays as set.
 - **Stages.** 1 engine (WASM, synth-msx.js port, VGM; done) → 2 language and
   player (the OPLL part: 2 ops, `:ws1` `:eg1` `:ksl1` `:vib1` `:sus` on the
   FM_ prefix, per-part ranges, the built-in voices, the IR player's FM
