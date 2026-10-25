@@ -46,6 +46,7 @@ import {
 import { engineImage } from "./engine-images.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 import { PCM8_RATE, PCM8_VOICES } from "./chips/msm6258.js";
+import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords } from "./chips/fm-words.js";
 // The largest point a PCM point target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
 const PCM_LOOP_MAX = 0x7f00;
@@ -91,22 +92,14 @@ const DRIVER_SWEEP_CURVES = new Set([
 // with it (_scheduleFmLevelMacros); these are the channel's other targets.
 const OP_MACRO_MAP = [
   ["pan", "PAN"],
-  ["fm_alg", "FM_ALG"],
-  ["fm_fb", "FM_FB"],
-  ["fm_ams", "FM_AMS"],
-  ["fm_fms", "FM_FMS"],
-  ...[1, 2, 3, 4].flatMap((op) =>
-    ["TL", "AR", "DR", "SR", "RR", "SL", "ML", "DT", "KS", "AMEN", "SSG", "DT2_"].map(
-      (f) => [`fm_${f.toLowerCase()}${op}`, `FM_${f}${op}`],
-    ),
-  ),
+  // The FM family's (chips/fm-words.js): a macro's key is its word lower-cased.
+  ...[...FM_CHANNEL_WORDS, ...opWords(FM_OP_WORDS.filter((w) => !w.inline))].map((w) => [w.word.toLowerCase(), w.word]),
 ];
 
-// An FM operator target's field in the shadow register file (_readParam).
-const OP_REG_FIELD = {
-  TL: "voicedTl", AR: "ar", DR: "dr", SR: "d2r", RR: "rr",
-  SL: "sl", ML: "mul", DT: "dt", KS: "rs", AMEN: "amen", SSG: "ssg", DT2_: "dt2",
-};
+// An FM operator target's field in the shadow register file (_readParam):
+// the table's, the TL's being the voiced level the composition starts from.
+const OP_REG_FIELD = Object.fromEntries(
+  FM_OP_WORDS.filter((w) => !w.inline).map((w) => [w.word.slice(3), w.word === "FM_TL" ? "voicedTl" : w.field]));
 
 export function songOrEffectIr(ir, se) {
   const tracks = (ir?.tracks ?? []).filter((t) => (se == null ? !t.se : t.se?.index === se));

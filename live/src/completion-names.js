@@ -6,6 +6,7 @@
 // After '(' — the def heads, the forms, the compile-time eval heads (§7), the
 // curves (§11) and the def-pcm :fx effects (§16).
 import { ALL_CHANNEL_NAMES } from "./targets.js";
+import { FM_CHANNEL_WORDS, opWords } from "./chips/fm-words.js";
 
 export const AC_FORMS = [
   'def', 'def-val', 'def-fm', 'def-pcm', 'def-se', 'def-score', 'def-mod', 'import',
@@ -26,9 +27,9 @@ export const AC_TRACKS = [
   ...ALL_CHANNEL_NAMES, // every target's (targets/)
 ];
 
-// FM operator params, one per operator (1–4).
-const AC_FM_OP_PARAMS = ['ar', 'dr', 'sr', 'rr', 'sl', 'tl', 'ml', 'dt', 'ks', 'ssg', 'am']
-  .flatMap((p) => [1, 2, 3, 4].map((op) => `:${p}${op}`));
+// The FM family's words (chips/fm-words.js): the channel's, and each
+// operator's (1–4).
+const AC_FM_PARAMS = [...FM_CHANNEL_WORDS, ...opWords()].map((w) => w.kw);
 
 // After ':' — the keywords the compiler accepts (mmlisp2ir.js: canonicalTarget,
 // the track and note options, the def keys, the curve and effect params).
@@ -46,7 +47,7 @@ export const AC_PARAMS = [
   // import
   ':over',
   // def-fm
-  ':key', ':vel1', ':vel2', ':vel3', ':vel4',
+  ':key',
   // def-pcm and the track's PCM points
   ':file', ':rate', ':offset', ':frames',
   ':pcm-start', ':pcm-end', ':pcm-len', ':loop-start', ':loop-end', ':loop-len',
@@ -57,10 +58,8 @@ export const AC_PARAMS = [
   // curve params
   ':from', ':to', ':phase', ':wait', ':duty', ':skew', ':hold', ':jitter',
   ':beta', ':octaves', ':lacunarity', ':persistence', ':leak', ':seed',
-  // FM channel
-  ':alg', ':fb', ':ams', ':fms',
-  ...AC_FM_OP_PARAMS,
-  ':dt2-1', ':dt2-2', ':dt2-3', ':dt2-4', // the OPM's (x68k)
+  // FM
+  ...AC_FM_PARAMS,
 ];
 
 export const AC_MODE_VALUES = ['shot', 'loop', 'gate'];

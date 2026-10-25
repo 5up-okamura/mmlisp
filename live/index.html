@@ -840,6 +840,7 @@
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { targetProfile, notYet } from './src/targets.js';
+    import { fmOpWord } from './src/chips/fm-words.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
@@ -9296,21 +9297,15 @@
     // keys (fmParamToDefKey) and the regs field (`key`) each one reads. A row
     // shows when the score's target has its word (applyTargetUi): SSG-EG is
     // the OPN's, DT2 the OPM's.
-    const OP_PARAMS = [
-      { key: 'tl',  label: 'TL',  min: 0, max: 127, param: (op) => `FM_TL${op}` },
-      { key: 'ar',  label: 'AR',  min: 0, max: 31,  param: (op) => `FM_AR${op}` },
-      { key: 'dr',  label: 'DR',  min: 0, max: 31,  param: (op) => `FM_DR${op}` },
-      { key: 'sl',  label: 'SL',  min: 0, max: 15,  param: (op) => `FM_SL${op}` },
-      { key: 'd2r', label: 'SR',  min: 0, max: 31,  param: (op) => `FM_SR${op}` },
-      { key: 'rr',  label: 'RR',  min: 0, max: 15,  param: (op) => `FM_RR${op}` },
-      { key: 'mul', label: 'MUL', min: 0, max: 15,  param: (op) => `FM_ML${op}` },
-      { key: 'dt',  label: 'DT',  min: -3, max: 3,  param: (op) => `FM_DT${op}` },
-      { key: 'dt2', label: 'DT2', min: 0, max: 3,   param: (op) => `FM_DT2_${op}` },
-      { key: 'rs',  label: 'KS',  min: 0, max: 3,   param: (op) => `FM_KS${op}` },
-      { key: 'ssg', label: 'SSG', min: 0, max: 15,  param: (op) => `FM_SSG${op}` },
-      // Velocity sensitivity, 0–1 in sixteenths (language.md §6).
-      { key: 'vel', label: 'VEL', min: 0, max: 16,  param: (op) => `FM_VEL${op}` },
-    ];
+    // In the panel's order (the envelope's first), each row the FM family's
+    // word (src/chips/fm-words.js): its range, label and regs field. VEL's
+    // slider runs 0–1 in sixteenths (language.md §6), not its -1 "the role's own".
+    const OP_PARAMS = ['FM_TL', 'FM_AR', 'FM_DR', 'FM_SL', 'FM_SR', 'FM_RR', 'FM_ML', 'FM_DT', 'FM_DT2_', 'FM_KS', 'FM_SSG', 'FM_VEL']
+      .map((word) => fmOpWord(word))
+      .map((w) => {
+        const vel = w.word === 'FM_VEL';
+        return { key: vel ? 'vel' : w.field, label: w.label, min: vel ? 0 : w.min, max: w.max, param: (op) => `${w.word}${op}` };
+      });
     // The rows that are a register value, read and written alike (VEL is a
     // sensitivity, kept as velK with its role's default).
     const OP_REG_PARAMS = OP_PARAMS.filter((pp) => pp.key !== 'vel');

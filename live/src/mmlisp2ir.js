@@ -12,6 +12,7 @@
 import { hoistVoiceChanges } from "./voice-hoist.js";
 import { TARGETS, DEFAULT_TARGET as DEFAULT_TARGET_NAME, targetProfile, partsWithWord, partsWithSetting, ALL_CHANNEL_NAMES } from "./targets.js";
 import { NOISE_MODE_MAP } from "./chips/sn76489.js";
+import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords } from "./chips/fm-words.js";
 import { parse } from "./mmlisp-parser.js";
 import {
   clampForTarget,
@@ -52,10 +53,6 @@ const SUPPORTED_TARGETS = new Set([
   "VEL",
   "VOL",
   "MASTER",
-  "FM_ALG",
-  "FM_FB",
-  "FM_AMS",
-  "FM_FMS",
   "LFO_RATE",
   "LFO_FREQ",
   "LFO_PMD",
@@ -64,33 +61,22 @@ const SUPPORTED_TARGETS = new Set([
   "NOISE_RATE",
   "PAN",
   "NOISE_MODE",
-  ...[1, 2, 3, 4].flatMap((op) => [
-    `FM_AR${op}`,
-    `FM_DR${op}`,
-    `FM_SR${op}`,
-    `FM_RR${op}`,
-    `FM_SL${op}`,
-    `FM_TL${op}`,
-    `FM_KS${op}`,
-    `FM_ML${op}`,
-    `FM_DT${op}`,
-    `FM_SSG${op}`,
-    `FM_AMEN${op}`,
-    `FM_DT2_${op}`,
-  ]),
+  // The FM family's (chips/fm-words.js), the inline-only ones aside.
+  ...FM_CHANNEL_WORDS.map((w) => w.word),
+  ...opWords(FM_OP_WORDS.filter((w) => !w.inline)).map((w) => w.word),
 ]);
 
 // Inline-only targets: sticky channel state with no per-note macro form.
 // SNAP (`:snap`, language.md §5.3) is a pitch-class mask the channel's every
 // pitch write passes through; a mask is set, never swept or stepped.
-const INLINE_TARGETS = new Set(["SNAP", "FM_VEL1", "FM_VEL2", "FM_VEL3", "FM_VEL4"]);
+const INLINE_TARGETS = new Set(["SNAP", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
 
 // An operator's velocity sensitivity, `:vel1`–`:vel4` (language.md §6): a
 // ratio 0–1 of the note's velocity offset, carried as sixteenths. A voice
 // param written in a def-fm or inline, never swept: the driver composes it at
 // each level write, so it has no macro, `+`/`*` or `$` form.
-const VEL_SENS_TARGETS = new Set(["FM_VEL1", "FM_VEL2", "FM_VEL3", "FM_VEL4"]);
-const VEL_SENS_KEYWORDS = new Set([":vel1", ":vel2", ":vel3", ":vel4"]);
+const VEL_SENS_TARGETS = new Set(opWords(FM_OP_WORDS.filter((w) => w.word === "FM_VEL")).map((w) => w.word));
+const VEL_SENS_KEYWORDS = new Set(opWords(FM_OP_WORDS.filter((w) => w.word === "FM_VEL")).map((w) => w.kw));
 // The IR's value for "the role's own" (16 on a carrier, 0 on a modulator).
 const VEL_SENS_AUTO = -1;
 // A ratio 0–1 → sixteenths, or null when it is not one.
@@ -3541,30 +3527,10 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":loop-start": "LOOP_START",
   ":loop-end": "LOOP_END",
   ":loop-len": "LOOP_LEN",
-  // FM channel-level
-  ":alg": "FM_ALG",
-  ":fb": "FM_FB",
-  ":ams": "FM_AMS",
-  ":fms": "FM_FMS",
   ":pan": "PAN",
   ":mode": "NOISE_MODE",
-  // FM operator params — :tl1–:tl4, :ar1–:ar4, etc.
-  ...[1, 2, 3, 4].reduce((acc, op) => {
-    acc[`:tl${op}`] = `FM_TL${op}`;
-    acc[`:ar${op}`] = `FM_AR${op}`;
-    acc[`:dr${op}`] = `FM_DR${op}`;
-    acc[`:sr${op}`] = `FM_SR${op}`;
-    acc[`:rr${op}`] = `FM_RR${op}`;
-    acc[`:sl${op}`] = `FM_SL${op}`;
-    acc[`:ml${op}`] = `FM_ML${op}`;
-    acc[`:dt${op}`] = `FM_DT${op}`;
-    acc[`:ks${op}`] = `FM_KS${op}`;
-    acc[`:am${op}`] = `FM_AMEN${op}`;
-    acc[`:ssg${op}`] = `FM_SSG${op}`;
-    acc[`:vel${op}`] = `FM_VEL${op}`;
-    acc[`:dt2-${op}`] = `FM_DT2_${op}`; // the OPM's DT2 (op N's DT1 is :dtN)
-    return acc;
-  }, {}),
+  // The FM family's: the channel's, and each operator's (:tl1–:tl4 …).
+  ...Object.fromEntries([...FM_CHANNEL_WORDS, ...opWords()].map((w) => [w.kw, w.word])),
 }));
 
 // The keyword a canonical target is written as (FM_SSG1 → :ssg1).
@@ -3581,42 +3547,9 @@ export function canonicalTarget(symbol) {
   return PCM_POINT_TARGETS.has(t) ? null : t;
 }
 
-const FM_OP_PARAMS = [
-  "AR",
-  "DR",
-  "SR",
-  "RR",
-  "SL",
-  "TL",
-  "KS",
-  "ML",
-  "DT",
-  "SSG",
-  "AMEN",
-  "DT2_",
-];
-
+// `init-fm`, the empty voice: the family's init values (chips/fm-words.js).
 function createInitFmKwMap() {
-  const kwMap = new Map([
-    ["FM_ALG", 7],
-    ["FM_FB", 0],
-    ["FM_AMS", 0],
-    ["FM_FMS", 0],
-  ]);
-  for (const op of [1, 2, 3, 4]) {
-    kwMap.set(`FM_AR${op}`, 31);
-    kwMap.set(`FM_DR${op}`, 0);
-    kwMap.set(`FM_SR${op}`, 0);
-    kwMap.set(`FM_RR${op}`, 15);
-    kwMap.set(`FM_SL${op}`, 0);
-    kwMap.set(`FM_TL${op}`, 0);
-    kwMap.set(`FM_KS${op}`, 0);
-    kwMap.set(`FM_ML${op}`, 1);
-    kwMap.set(`FM_DT${op}`, 0);
-    kwMap.set(`FM_SSG${op}`, 0);
-    kwMap.set(`FM_AMEN${op}`, 0);
-  }
-  return kwMap;
+  return new Map([...FM_CHANNEL_WORDS, ...opWords()].filter((w) => w.init !== undefined).map((w) => [w.word, w.init]));
 }
 
 // A def-fm voice switch: its registers as of `tick`, and the key shift its
@@ -3646,11 +3579,8 @@ function emitVoice(td, tick, events, src, trackState = null, name = null, diagno
 // The four velocity sensitivities come last, outside VOICE_TABLE: the driver
 // takes them as PARAM_SETs after the voice (mmb.md §11).
 const VOICE_KEYS = [
-  "FM_ALG",
-  "FM_FB",
-  "FM_AMS",
-  "FM_FMS",
-  ...[1, 2, 3, 4].flatMap((op) => FM_OP_PARAMS.map((p) => `FM_${p}${op}`)),
+  ...FM_CHANNEL_WORDS.map((w) => w.word),
+  ...opWords(FM_OP_WORDS.filter((w) => !w.inline)).map((w) => w.word),
   ...VEL_SENS_TARGETS,
 ];
 const VOICE_KEY_SET = new Set(VOICE_KEYS);

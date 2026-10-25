@@ -6,6 +6,7 @@
 // (`:dt2-1`…`:dt2-4`) and no SSG-EG. The IR player writes it through
 // fmEncoder as it writes the OPN's.
 import { NO_WORDS, words } from "./parts.js";
+import { fmWords } from "./fm-words.js";
 import { encode30, encode80 } from "../ir-utils.js";
 
 const CLOCK = 4000000; // the X68000's
@@ -19,7 +20,7 @@ export const opmFm = {
   unit: "opm", // the noise is the eighth channel's
   kind: "fm",
   level: { stepDb: 0.75, steps: 128 },
-  words: words(/^FM_(?!SSG)/, "PAN"),
+  words: fmWords({ except: ["FM_SSG"], more: ["PAN"] }), // SSG-EG is the OPN's
   songWords: words("LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"),
 };
 

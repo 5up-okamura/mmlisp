@@ -2,6 +2,7 @@
 // registers, the algorithm and feedback, the chip's one LFO, and FM3's
 // independent-operator and CSM tracks.
 import { words } from "./parts.js";
+import { fmWords } from "./fm-words.js";
 import { OP_ADDR_OFFSET, encodeB0, encodeB4, encode30, encode60, encode80, midiToFnumBlock } from "../ir-utils.js";
 
 export const opnFm = {
@@ -9,7 +10,7 @@ export const opnFm = {
   label: "OPN FM",
   kind: "fm",
   level: { stepDb: 0.75, steps: 128 },
-  words: words(/^FM_(?!DT2_)/, "PAN"), // DT2 is the OPM's
+  words: fmWords({ except: ["FM_DT2_"], more: ["PAN"] }), // DT2 is the OPM's
   songWords: words("LFO_RATE"),
 };
 

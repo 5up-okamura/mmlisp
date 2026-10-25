@@ -11,6 +11,8 @@
  *   - Channel name → index maps
  */
 
+import { FM_CHANNEL_WORDS, FM_OP_WORDS } from "./chips/fm-words.js";
+
 // ---------------------------------------------------------------------------
 // Macro target range table
 // ---------------------------------------------------------------------------
@@ -45,29 +47,9 @@ export const MACRO_TARGET_RANGE = {
   LFO_AMD: { min: 0, max: 127 },
   LFO_WAVE: { min: 0, max: 3 },
 
-  // FM channel params
-  FM_ALG: { min: 0, max: 7 },
-  FM_FB: { min: 0, max: 7 },
-  FM_AMS: { min: 0, max: 3 },
-  FM_FMS: { min: 0, max: 7 },
-
-  // FM operator params — shared by FM_TL1–FM_TL4, FM_AR1–FM_AR4, etc.
-  // clampForTarget() strips the trailing digit before lookup.
-  FM_TL: { min: 0, max: 127 },
-  FM_AR: { min: 0, max: 31 },
-  FM_DR: { min: 0, max: 31 },
-  FM_SR: { min: 0, max: 31 },
-  FM_RR: { min: 0, max: 15 },
-  FM_SL: { min: 0, max: 15 },
-  FM_ML: { min: 0, max: 15 },
-  FM_DT: { min: -3, max: 3 }, // signed detune; encode30 maps it to the register
-  FM_KS: { min: 0, max: 3 },
-  FM_AMEN: { min: 0, max: 1 },
-  FM_SSG: { min: 0, max: 15 },
-  FM_DT2_: { min: 0, max: 3 }, // the OPM's DT2 (FM_DT2_1–4)
-  // Velocity sensitivity in sixteenths (`:vel1`–`:vel4`); -1 is the role's own
-  // (VEL_K_AUTO below).
-  FM_VEL: { min: -1, max: 16 },
+  // The FM family's, channel and operator (chips/fm-words.js) — an operator
+  // word's range is its base's: clampForTarget() strips the trailing digit.
+  ...Object.fromEntries([...FM_CHANNEL_WORDS, ...FM_OP_WORDS].map((w) => [w.word, { min: w.min, max: w.max }])),
 
   // FM panning — bits 7-6 of B4
   PAN: { min: -1, max: 1 },
