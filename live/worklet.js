@@ -52,21 +52,16 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
 // and the offline WAV renderer (src/export-wav.js) stay in lockstep.
 // Path is relative to the worklet file's URL.
 import {
-  MegaDriveSynth,
   NUKED_NATIVE_SAMPLE_RATE,
   MD_LPF_DEFAULT_CUTOFF,
   SCOPE_CHANNELS,
   SCOPE_PCM_CHANNELS,
 } from "./src/synth-md.js";
-import { Pc88Synth, SCOPE_LANES as PC88_SCOPE_LANES } from "./src/synth-pc88.js";
-import { X68kSynth, Pcm8Live, SCOPE_LANES as X68K_SCOPE_LANES } from "./src/synth-x68k.js";
-import { MsxSynth, SCOPE_LANES as MSX_SCOPE_LANES } from "./src/synth-msx.js";
-
-// The machines' synth cores, by target name. Everything a machine has of its
-// own is its synth's (synth-md.js, the contract): this file names none.
-const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth, msx: MsxSynth };
-// The most scope lanes a synth posts, for the pitch latches.
-const SCOPE_MAX = Math.max(SCOPE_CHANNELS, PC88_SCOPE_LANES, X68K_SCOPE_LANES, MSX_SCOPE_LANES);
+import { Pcm8Live } from "./src/synth-x68k.js";
+// The machines' synth cores, by target name (src/synths.js). Everything a
+// machine has of its own is its synth's (synth-md.js, the contract): this
+// file names none. SCOPE_MAX sizes the pitch latches.
+import { SYNTHS, SCOPE_MAX } from "./src/synths.js";
 
 // PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3 — the
 // preview must sound like the driver): the same voice model the 68000

@@ -24,6 +24,16 @@ import msx from "./targets/msx.js";
 const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10 };
 
 function profile(def) {
+  // A register write names its chip by the worklet's port (chips/ `vgm.ports`:
+  // the YM's 0 and 1, the SN76489's 2 …): two chips of one target on one port
+  // would play each other's writes.
+  const portOwner = new Map();
+  for (const chip of Object.values(def.chips))
+    for (const port of Object.keys(chip.vgm?.ports ?? {})) {
+      if (portOwner.has(port))
+        throw new Error(`targets/${def.name}: the ${portOwner.get(port)} and the ${chip.chip} both write port ${port}`);
+      portOwner.set(port, chip.chip);
+    }
   const heads = Object.keys(def.channels);
   const parts = [...new Set(heads.map((h) => def.channels[h].part))];
   return {

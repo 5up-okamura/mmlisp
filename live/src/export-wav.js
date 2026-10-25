@@ -25,17 +25,13 @@
 // ---------------------------------------------------------------------------
 
 import { notYet } from "./targets.js";
-import { MegaDriveSynth, NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
-import { Pc88Synth } from "./synth-pc88.js";
-import { X68kSynth, Pcm8Stream } from "./synth-x68k.js";
-import { MsxSynth } from "./synth-msx.js";
+import { NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
+import { Pcm8Stream } from "./synth-x68k.js";
+import { synthFor } from "./synths.js";
 import { renderPcm8, decodePcm8 } from "./chips/msm6258.js";
 import { renderPcmDac, configurePcmRate } from "./export-vgm.js";
 import { RHYTHM_BIT } from "./chips/ym2608.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
-
-/** The synth core that plays `target`'s chips (its name: md, pc88, x68k, msx). */
-export const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth, msx: MsxSynth };
 
 const DEFAULT_SAMPLE_RATE = 48000; // match live AudioContext (and the LPF coeff)
 const DEFAULT_FADE_SEC = 4;
@@ -279,7 +275,7 @@ export async function renderWav(player, opts = {}) {
   const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const fadeSec = opts.fadeSec ?? DEFAULT_FADE_SEC;
   const target = player._target;
-  const synth = await (SYNTHS[target?.name] ?? MegaDriveSynth).create(sampleRate);
+  const synth = await synthFor(target?.name).create(sampleRate);
   synth.setLpf(!!opts.lpfOn);
 
   const adpcm = opts.pcm?.adpcm ?? null;

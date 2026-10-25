@@ -21,13 +21,13 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp-parser.js`              | Tokenize + parse source into a generic list/atom AST                    |
 | `mmlisp2ir.js`                  | Compile AST → IR: voice resolution, macro parsing, event emit           |
 | `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
-| `targets.js` (+ `targets/`, `chips/`) | `:target md`/`pc88`/`x68k`/`msx`: a target is its chips and a channel table (name → chip, part, voice); a chip (`chips/ym2612.js` …) its clock, parts and encoders; a part (`chips/parts.js`) the words, `:mode` symbols and rules of one kind of sound |
+| `targets.js` (+ `targets/`, `chips/`, `chips/fm-words.js`) | `:target md`/`pc88`/`x68k`/`msx`: a target is its chips and a channel table (name → chip, part, voice); a chip (`chips/ym2612.js` …) its clock, parts and encoders; a part (`chips/parts.js`) the words, `:mode` symbols and rules of one kind of sound |
 | `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
 | `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
 | `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
 | `edit-tools.js`                 | Edit > Loop Selection and the Logical Editor: score-text edits, testable in node |
-| `synth-md.js`, `synth-pc88.js`, `synth-x68k.js`, `synth-msx.js`, `scope-pitch.js`, `scope-trigger.js` | Chip wiring for the browser — the Mega Drive's, the PC-8801's (ymfm's YM2608), the X68000's (ymfm's YM2151), the MSX's (ymfm's SSG as the AY-3-8910); everything a machine has of its own is its synth's, so the worklet names none — and the oscilloscope's pitch latches and trigger |
+| `synths.js`, `synth-md.js`, `synth-pc88.js`, `synth-x68k.js`, `synth-msx.js`, `scope-pitch.js`, `scope-trigger.js` | Chip wiring for the browser, registered by target in `synths.js` — the Mega Drive's, the PC-8801's (ymfm's YM2608), the X68000's (ymfm's YM2151), the MSX's (ymfm's SSG as the AY-3-8910); everything a machine has of its own is its synth's, so the worklet names none — and the oscilloscope's pitch latches and trigger |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
 | `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM and the OKIM6258), DefleMask / Furnace |
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
