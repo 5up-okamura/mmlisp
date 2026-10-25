@@ -3,8 +3,8 @@
 The toolchain grew from the Mega Drive; pc88, x68k and msx were added on the
 part / chip / target layering (`live/src/chips/parts.js`). Before 2-op FM
 (OPLL) lands, the layers below the compiler are being restructured so a
-part decides how it plays, shows and takes voices — not only which words it accepts. This file holds the
-rulings and the plan's state; delete each item once the repo records it.
+part decides how it plays, shows and takes voices — not only which words
+it accepts. This file holds the rulings and the plan's state; delete each item once the repo records it.
 
 ## Rulings (2026-10-25)
 
@@ -14,11 +14,44 @@ rulings and the plan's state; delete each item once the repo records it.
   out with `W_TARGET`, not refused (as SSG-EG on the OPM already was); a voice
   on a channel with no FM keeps its `:key`.
 - **OPLL's words share the `FM_` prefix** (`:ws1`, `:eg1`, `:ksl1`, `:vib1`,
-  `:inst`, `:sus` new; AR/DR/SL/RR/KS/TL the same words with narrower
+  `:sus` new; AR/DR/SL/RR/KS/TL the same words with narrower
   ranges). What must change instead: a part's `words` become a closed list
   (opn-fm's `/^FM_(?!DT2_)/` claims any future `FM_*` word), and ranges
   become per part (`MACRO_TARGET_RANGE` is per word today).
 - In the Live panel, what a machine lacks is hidden; a menu item is disabled.
+
+## Rulings for what comes next (2026-10-25, not built yet)
+
+- **Live editor panel: one editor, for the subject.** The subject is what
+  was touched last — a strip, or the def / vector the cursor went into. The
+  panel shows that kind's editor (FM 4-op, FM 2-op, wave, vector); the
+  cursor leaving it dims it (never hides); a subject of another kind swaps
+  the editor in. No pin. Keep the panel's order (Global, Channels, editor,
+  Dynamic Parameters, Sound Effects: by priority); its heading becomes the
+  subject's kind (`FM` / `Wave` / `Macro :vel`) with the subject on the
+  right, where `fmParamStatus` is. Open: swap on a click at once, but only
+  once the cursor rests when it moves by keys.
+- **One vector editor** (Max/pd arrays) for every vector: def-wave, macro
+  step vectors (`#sus` / `#rel` as markers), later chips' waves. The subject
+  gives the length and the range (the part's / MACRO_TARGET_RANGE); a
+  relative target (`:pitch`, `:semi`) has a view range the user sets.
+  Clamping: the editor cannot draw out of range; a literal out of range is
+  the compiler's error; a computed value is clamped at the register write.
+- **Waves are expressions**, as values are (§7.1.2): without a `$slot` folded
+  at compile time (mixes, generators such as harmonics), with one
+  re-evaluated by the player when the slot moves and written whole (≤ once a
+  frame). One evaluator shared by compiler and player; the XY pad, sliders,
+  MIDI CC and def-val sweeps all drive it through slots; the editor drawing
+  live writes the data. Goal: draw / morph a held note's wave in real time
+  (Koshiro's mucom VSTi).
+- **FM-PAC (OPLL).** The one user voice: the last written wins, with
+  `W_TARGET`. The 15 ROM voices are built-in voice names (as init-fm, the
+  ROM rhythm roles), their dumped parameters letting a def-fm extend one and
+  other targets play an approximation; the name prefix is open (`opll-`?),
+  and no `:inst` number. Rhythm mode: channels `rhythm1`-`rhythm5` under the
+  kit roles (kick snare tom4 ride hat; rim none), as pc88's. Still to
+  discuss: the mode song-wide (fm7-9 then `E_TARGET`?), and pitch (ch7-9's
+  F-number tunes the drums, SD/HH and TOM/CY pairs shared — later wins?).
 
 ## Plan, in order (each keeps md/pc88/x68k/msx output: check:snapshot green)
 
