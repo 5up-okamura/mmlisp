@@ -35,8 +35,11 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
-- **Stages.** 1 engine, 2 language and player, 3 the rhythm mode are
-  built; next 4 the panel's 2-op FM editor.
+- **Stages.** All four are built (1 engine, 2 language and player, 3 the
+  rhythm mode, 4 the panel: a target with FM and no `:alg` shows two
+  operator columns, op1 into op2, its rows by `data-needs`, its sliders on
+  the part's `ranges`; a def extending a ROM voice or init-fm shows the
+  base's values).
 - **The rhythm's encoder.** $0E's keys and the $36-$38 volume bytes hold
   several sounds, and hits from different tracks reach the encoder out of
   time order (each track is dispatched to the horizon in turn), so a write
@@ -63,15 +66,16 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   `_fmWrites`), so a voice switch never leaves the shared user voice
   half-written. Known: a pitch step inside a `:keyon` macro's off-step is
   written keyed (the retrigger's key-offs go out after the pitch steps).
-- **Open from stage 2.** The volume's floor is −45 dB (vol 15): `:vol 0`
-  and a mixer mute do not silence a sounding FM-PAC note (the md's TL 127
-  does) — key it off, or take the floor as the chip's. The Live key
-  preview and a channel hold on the OPLL are untried: `writeBorrowedPatch`
-  writes through the song's encoder with no time, and the worklet's
-  `_songRegs` is indexed `port & 1` (port 4 → the PSG's), so a hold bus
-  needs it per port first. The panel shows the 4-op editor on fm1-fm9.
-  Not heard yet: the ROM voices against a recording, MO + RO and
-  `OPLL_GAIN` by ear; a dense score clips a few samples as the md's does.
+- **Open.** The levels wait for the user's listening pass (2026-10-25:
+  "decide after hearing"): `OPLL_GAIN`, MO + RO, the rhythm against the
+  melody — a score with the rhythm clips. The volume's floor is −45 dB
+  (vol 15): `:vol 0` and a mixer mute do not silence a sounding FM-PAC note
+  (the md's TL 127 does). A call with no time (a live edit, a key preview)
+  is the encoder's latest time, and `IRPlayer.setParam` writes the edit at
+  once (`live`); checked in node, not by ear. The worklet has no hold bus
+  for the OPLL (the msx synth's `bus` is null; `_songRegs` is indexed
+  `port & 1`), so a key preview over a song channel is not held. A cursor
+  on a ROM voice's name (`piano`) shows nothing in the panel, as on init-fm.
 - **ROM voices.** The values are Nuked-OPLL's `patch_ym2413` (read from
   the die), packed into the user voice's layout in chips/ym2413.js; the
   emulator takes the same table (`ol_set_rom`), so a ROM voice and the same

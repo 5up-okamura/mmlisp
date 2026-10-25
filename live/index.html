@@ -469,7 +469,7 @@
         <div class="rack-title rack-title-row"><span>FM</span><span id="fmParamStatus"></span></div>
         <div class="rack-body">
         <div class="alg-grid">
-          <div class="knob-wrap" style="grid-area:a">
+          <div class="knob-wrap" style="grid-area:a" data-needs="word:FM_ALG">
             <div class="knob-label">ALG <span class="val" id="val-alg">0</span></div>
             <input type="range" id="sl-alg" min="0" max="7" value="0" oninput="onChParam('FM_ALG', this)">
           </div>
@@ -477,11 +477,11 @@
             <div class="knob-label">FB <span class="val" id="val-fb">0</span></div>
             <input type="range" id="sl-fb" min="0" max="7" value="0" oninput="onChParam('FM_FB', this)">
           </div>
-          <div class="knob-wrap" style="grid-area:c">
+          <div class="knob-wrap" style="grid-area:c" data-needs="word:FM_AMS">
             <div class="knob-label">AMS <span class="val" id="val-ams">0</span></div>
             <input type="range" id="sl-ams" min="0" max="3" value="0" oninput="onChParam('FM_AMS', this)">
           </div>
-          <div class="knob-wrap" style="grid-area:e">
+          <div class="knob-wrap" style="grid-area:e" data-needs="word:FM_FMS">
             <div class="knob-label">FMS <span class="val" id="val-fms">0</span></div>
             <input type="range" id="sl-fms" min="0" max="7" value="0" oninput="onChParam('FM_FMS', this)">
           </div>
@@ -854,7 +854,8 @@
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
     import { TARGETS, TONE_LANES, toneLaneOf, targetProfile, notYet } from './src/targets.js';
-    import { fmOpWord } from './src/chips/fm-words.js';
+    import { fmOpWord, FM_CHANNEL_WORDS, opWords } from './src/chips/fm-words.js';
+    import { opllRomVoices } from './src/chips/ym2413.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
@@ -7564,6 +7565,20 @@
         if (el.classList.contains('menu-item')) el.disabled = !has;
         else el.hidden = !has;
       }
+      // The FM panel on the machine's FM part: a 2-op chain where it has no
+      // algorithm (the OPLL's), each operator slider on its register's range.
+      const fmPart = target.parts.find((p) => p.kind === 'fm');
+      const twoOp = !!fmPart && !target.hasWord('FM_ALG');
+      const repaint = twoOp !== _fmTwoOp;
+      _fmTwoOp = twoOp;
+      for (let op = 1; op <= 4; op++)
+        for (const pp of OP_REG_PARAMS) {
+          const sl = document.getElementById(`sl-op${op}-${pp.key}`);
+          const base = pp.param(op).replace(/\d+$/, '');
+          const range = fmPart?.ranges?.[base];
+          if (sl) sl.max = range ? range[1] : pp.max;
+        }
+      if (repaint && _themeReady) syncParamUI();
       const badge = document.getElementById('targetBadge');
       if (badge) {
         badge.textContent = target.name.toUpperCase();
@@ -9264,9 +9279,17 @@
       [2, 3, 4],       // ALG 5: 1→(2+3+4)
       [2, 3, 4],       // ALG 6: (1→2)+3+4
       [1, 2, 3, 4],    // ALG 7: 1+2+3+4
+      [2],             // the OPLL's two operators: 1→2 (TWO_OP)
     ];
+    // The diagram's and the roles' algorithm on a 2-op FM (the OPLL's), which
+    // has none of its own: op1 into op2. Set from the score's target
+    // (applyTargetUi): a target with FM and no :alg.
+    const TWO_OP = 8;
+    let _fmTwoOp = false;
+    const shownAlg = (alg) => (_fmTwoOp ? TWO_OP : alg);
 
     function updateOpRoles(alg) {
+      alg = shownAlg(alg);
       const carriers = new Set(ALG_CARRIERS[alg] ?? []);
       for (let op = 1; op <= 4; op++) {
         const colEl = document.getElementById(`op-col-${op}`);
@@ -9288,6 +9311,7 @@
       [[1,2],[1,3],[1,4]],   // 5
       [[1,2]],               // 6
       [],                    // 7
+      [[1,2]],               // TWO_OP
     ];
     // Operator grid positions [col,row]: modulators left → carriers right (carriers
     // sit in the rightmost column so they collect into the output bus on the right).
@@ -9300,10 +9324,12 @@
       { 1:[0,1], 2:[1,0], 3:[1,1], 4:[1,2] },  // 5: 1→(2+3+4)
       { 1:[0,0], 2:[1,0], 3:[1,1], 4:[1,2] },  // 6: (1→2)+3+4
       { 1:[0,0], 2:[1,1], 3:[2,2], 4:[3,3] },  // 7: 1+2+3+4 (staggered so it isn't cramped)
+      { 1:[0,0], 2:[1,0] },                     // TWO_OP: 1→2
     ];
 
     function drawAlgDiagram(alg) {
       if (alg == null) alg = parseInt(document.getElementById('sl-alg')?.value ?? '0', 10) || 0;
+      alg = shownAlg(alg);
       const c = document.getElementById('algDiagram');
       const pos = ALG_LAYOUT[alg];
       if (!c || !pos) return;
@@ -9372,7 +9398,7 @@
       // operator boxes (op1 emphasised while feedback is active)
       ctx.font = `${Math.round(box * 0.62)}px ui-monospace, monospace`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      for (let op = 1; op <= 4; op++) {
+      for (const op of Object.keys(pos).map(Number)) {
         const col = carriers.has(op) ? fg : accent;
         const emph = op === 1 && fb > 0;
         const ox = cx(op), oy = cy(op), x = ox - box / 2, y = oy - box / 2;
@@ -9391,11 +9417,13 @@
     // The operator rows, one per IR word: the panel's sliders, a def-fm's
     // keys (fmParamToDefKey) and the regs field (`key`) each one reads. A row
     // shows when the score's target has its word (applyTargetUi): SSG-EG is
-    // the OPN's, DT2 the OPM's.
+    // the OPN's, DT2 the OPM's, WS / EG / KSL / VIB the OPLL's, and the OPLL
+    // has two operators, op1's TL alone.
     // In the panel's order (the envelope's first), each row the FM family's
     // word (src/chips/fm-words.js): its range, label and regs field. VEL's
     // slider runs 0–1 in sixteenths (language.md §6), not its -1 "the role's own".
-    const OP_PARAMS = ['FM_TL', 'FM_AR', 'FM_DR', 'FM_SL', 'FM_SR', 'FM_RR', 'FM_ML', 'FM_DT', 'FM_DT2_', 'FM_KS', 'FM_SSG', 'FM_VEL']
+    const OP_PARAMS = ['FM_TL', 'FM_AR', 'FM_DR', 'FM_SL', 'FM_SR', 'FM_RR', 'FM_ML', 'FM_DT', 'FM_DT2_', 'FM_KS', 'FM_SSG',
+      'FM_WS', 'FM_EG', 'FM_KSL', 'FM_VIB', 'FM_VEL']
       .map((word) => fmOpWord(word))
       .map((w) => {
         const vel = w.word === 'FM_VEL';
@@ -9446,6 +9474,11 @@
         if (lookup && base?.kind === 'atom' && !base.value.startsWith(':') && !seen.has(base.value)) {
           const baseNode = lookup(base.value);
           if (baseNode) collect(baseNode, new Set([...seen, base.value]));
+          else for (const [word, v] of builtinFmVoice(base.value) ?? []) {
+            // A built-in base (a ROM voice): its registers, as the compiler has them.
+            const k = fmParamToDefKey(word);
+            if (k) kv.set(k, v);
+          }
         }
         for (let i = 2; i + 1 < items.length; i++) {
           const k = items[i];
@@ -9476,6 +9509,15 @@
       }
 
       return regs;
+    }
+
+    // A built-in voice's registers on the score's machine (init-fm, the
+    // family's init values, and the OPLL's ROM voices: mmlisp2ir's own), or null.
+    function builtinFmVoice(name) {
+      if (name === 'init-fm')
+        return new Map([...FM_CHANNEL_WORDS, ...opWords()].filter((w) => w.init !== undefined).map((w) => [w.word, w.init]));
+      const machine = targetProfile(_lastGoodIR?.metadata?.target);
+      return opllRomVoices(machine.parts.find((p) => p.kind === 'fm')).get(name) ?? null;
     }
 
     // The imported files' def-fm nodes by name, each file parsed once per
@@ -10012,16 +10054,15 @@
       const libSample = lib?.kind === 'pcm' ? lib : null;
       // A ROM rhythm: a rhythm sound's strip keys its sound as a hit (while
       // the song plays, beside it) — the YM2608's from the user's ROM, the
-      // OPLL's through the player's encoder, whose queue holds the song's
-      // hits by time: a hit with none is written at once (flush(-Infinity)).
+      // OPLL's through the player's encoder, which writes a hit with no time
+      // at once.
       const rhythm = libSample ? null : selectedRhythmStrip();
       if (rhythm) {
         const machine = targetProfile(_lastGoodIR?.metadata?.target);
         if (machine.hasPart('rhythm') && !_rhythmRom) { log('The rhythm plays from your ROM — File > Import > YM2608 Rhythm ROM…', 'err'); return; }
         const part = machine.parts.find((p) => p.kit);
         const enc = player?._rhythmEnc ?? machine.chipFor(part.name).rhythm;
-        const writes = [...enc.hit(rhythm.voice, part.level.steps - 1, 0), ...(enc.flush?.(-Infinity) ?? [])];
-        for (const [p, a, d] of writes) writePreview(p, a, d);
+        for (const [p, a, d] of enc.hit(rhythm.voice, part.level.steps - 1, 0)) writePreview(p, a, d);
         return;
       }
       const part = libSample ? null : selectedPcmPart();
@@ -10984,7 +11025,7 @@
       if (paramName === 'FM_FB') return ':fb';
       if (paramName === 'FM_AMS') return ':ams';
       if (paramName === 'FM_FMS') return ':fms';
-      const m = paramName.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT2_|DT|KS|SSG|AMEN|VEL)([1-4])$/);
+      const m = paramName.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT2_|DT|KSL|KS|SSG|AMEN|VEL|WS|EG|VIB)([1-4])$/);
       if (!m) return null;
       if (m[1] === 'AMEN') return `:am${m[2]}`;
       if (m[1] === 'DT2_') return `:dt2-${m[2]}`;
@@ -11125,6 +11166,7 @@
       const col = document.createElement('div');
       col.className = 'op-col';
       col.id = `op-col-${op}`;
+      col.dataset.needs = `word:FM_AR${op}`; // an operator the machine has
       col.innerHTML = `<div class="op-col-title" id="op-title-${op}">
         <input type="checkbox" id="chk-op${op}" checked
           onchange="onOpToggle(${op}, this.checked)">
@@ -11172,8 +11214,15 @@
       const ctx = c.getContext('2d');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
-      const v = (k) => parseInt(document.getElementById(`sl-op${op}-${k}`)?.value ?? '0', 10) || 0;
-      const tl = v('tl'), ar = v('ar'), dr = v('dr'), sl = v('sl'), d2r = v('d2r'), rr = v('rr');
+      // Each value on its slider's range (the OPLL's AR and DR are 0-15, its
+      // TL 0-63), read as the OPN's 31 / 127; a row the machine lacks is 0.
+      // An OPLL envelope that does not hold (EG 0) decays on at RR.
+      const el = (k) => document.getElementById(`sl-op${op}-${k}`);
+      const v = (k) => parseInt(el(k)?.value ?? '0', 10) || 0;
+      const on = (k) => !el(k)?.closest('.knob-wrap')?.hidden;
+      const scaled = (k, top) => (on(k) ? (v(k) * top) / (parseInt(el(k).max, 10) || top) : 0);
+      const tl = scaled('tl', 127), ar = scaled('ar', 31), dr = scaled('dr', 31), sl = v('sl'), rr = v('rr');
+      const d2r = on('eg') ? (v('eg') ? 0 : rr * 2) : scaled('d2r', 31);
       const color = getComputedStyle(colEl).getPropertyValue('--op-color').trim() || '#7c9';
 
       const pad = 2, x0 = pad, x1 = W - pad, y0 = pad, y1 = H - pad;
@@ -11307,7 +11356,7 @@
         const o = regs.ops[op - 1];
         for (const pp of OP_REG_PARAMS) setSliderCached(`sl-op${op}-${pp.key}`, `val-op${op}-${pp.key}`, o[pp.key] ?? 0);
         // A voice that does not set it shows the role's own: 1 on a carrier, 0 on a modulator.
-        const velK = o.velK ?? (fmCarrierOpsForAlg(regs.algorithm ?? 0).includes(op - 1) ? 16 : 0);
+        const velK = o.velK ?? (ALG_CARRIERS[shownAlg(regs.algorithm ?? 0)].includes(op) ? 16 : 0);
         if (_fmSliderCache[`sl-op${op}-vel`] !== velK) {
           _fmSliderCache[`sl-op${op}-vel`] = velK;
           setSlider(`sl-op${op}-vel`, `val-op${op}-vel`, velK);

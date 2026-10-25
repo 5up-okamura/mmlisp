@@ -262,7 +262,7 @@ function timeline(init) {
 }
 
 function opllEncoder() {
-  let started, ops, fb, voice, vol, pitch, sus, spans, moved;
+  let started, ops, fb, voice, vol, pitch, sus, spans, moved, latest;
   let rmode, rq, rkeys, rvols, rtune; // the rhythm: on, its queue, keys, volume bytes, channel tunings
   const reset = () => {
     started = false;
@@ -274,6 +274,7 @@ function opllEncoder() {
     sus = Array.from({ length: CHANNELS }, () => timeline(0));
     spans = Array.from({ length: CHANNELS }, () => []);
     moved = new Array(CHANNELS).fill(null); // the time of a voice move not yet written
+    latest = -Infinity; // the latest time a call has named
     rmode = false;
     rq = [];
     rkeys = 0;
@@ -281,7 +282,13 @@ function opllEncoder() {
     rtune = {};
   };
   reset();
-  const at = (when) => when ?? -Infinity; // a write with no time is the run's start
+  // A call with no time — the run's start, a live edit, a key preview — is
+  // now: the latest time the encoder has heard of.
+  const at = (when) => {
+    if (when === undefined || when === null) return latest;
+    if (when > latest) latest = when;
+    return when;
+  };
   const keyedAt = (ch, t) => spans[ch].some((sp) => t > sp.on + EPS && t < sp.off - EPS);
   // A note keyed at `t`: a span of its own unless one opens there already.
   // A note still open before it ends there — the player keys the channel
@@ -381,6 +388,13 @@ function opllEncoder() {
       sus[ch].set(t, v ? 1 : 0);
       return [...flush(ch), ...(started ? [w(0x20 + ch, r2x(ch, keyedAt(ch, t), t))] : [])];
     },
+    // A live edit (IRPlayer.setParam: the panel, a MIDI CC, the AI link) is
+    // heard at once, sounding or not: the channel's voice, now.
+    live(ch) {
+      if (ch < 0 || ch >= CHANNELS || !started || (rmode && ch >= 6)) return [];
+      moved[ch] = null;
+      return settle(ch, latest);
+    },
     isKeyOn: (port, addr, data) => port === OPLL_PORT && addr >= 0x20 && addr <= 0x28 && (data & 0x10) !== 0,
     lfo: () => [], // the OPLL's LFO is fixed
     rhythm: rhythmOps(),
@@ -417,13 +431,38 @@ function opllEncoder() {
       rkeys = bits;
       out.push(w(0x0e, 0x20 | rkeys, t));
     };
+    // One op into the chip; `t` its time, stamped on its writes (none: now).
+    const apply = (out, op, t) => {
+      const r = RHYTHM[op.sound];
+      if (!rmode) {
+        // The mode, and the volumes' start, at the first rhythm write.
+        started = rmode = true;
+        out.push(w(0x0e, 0x20, t));
+        for (const a of [0x36, 0x37, 0x38]) out.push(w(a, rvols[a], t));
+      }
+      if (op.k === "hit") {
+        volume(out, op.sound, op.il, t);
+        tune(out, r.ch, op.midi, t);
+        if (rkeys & r.bit) keys(out, rkeys & ~r.bit, t);
+        keys(out, rkeys | r.bit, t);
+      } else if (op.k === "level") volume(out, op.sound, op.il, t);
+      else if (rkeys & r.bit) keys(out, rkeys & ~r.bit, t);
+    };
+    // A call with a time joins the queue; one with none (an audition, a
+    // live edit) is written now.
+    const take = (when, op) => {
+      if (when !== undefined && when !== null) return queue({ ...op, t: at(when) });
+      const out = [];
+      apply(out, op);
+      return out;
+    };
     return {
-      hit: (sound, il, _pan, when, midi = 60) => queue({ t: at(when), k: "hit", sound, il, midi }),
-      level: (sound, il, _pan, when) => queue({ t: at(when), k: "level", sound, il }),
+      hit: (sound, il, _pan, when, midi = 60) => take(when, { k: "hit", sound, il, midi }),
+      level: (sound, il, _pan, when) => take(when, { k: "level", sound, il }),
       // A dump with no time is a stop: the queue is dropped and every sound
       // keyed off now.
       dump(sound, when) {
-        if (when !== undefined) return queue({ t: at(when), k: "dump", sound });
+        if (when !== undefined && when !== null) return queue({ t: at(when), k: "dump", sound });
         rq = [];
         if (!rmode || !rkeys) return [];
         const out = [];
@@ -435,22 +474,7 @@ function opllEncoder() {
         if (!due.length) return [];
         rq = rq.filter((op) => op.t > horizon + EPS);
         const out = [];
-        for (const op of due) {
-          const r = RHYTHM[op.sound];
-          if (!rmode) {
-            // The mode, and the volumes' start, at the first rhythm write.
-            started = rmode = true;
-            out.push(w(0x0e, 0x20, op.t));
-            for (const a of [0x36, 0x37, 0x38]) out.push(w(a, rvols[a], op.t));
-          }
-          if (op.k === "hit") {
-            volume(out, op.sound, op.il, op.t);
-            tune(out, r.ch, op.midi, op.t);
-            if (rkeys & r.bit) keys(out, rkeys & ~r.bit, op.t);
-            keys(out, rkeys | r.bit, op.t);
-          } else if (op.k === "level") volume(out, op.sound, op.il, op.t);
-          else if (rkeys & r.bit) keys(out, rkeys & ~r.bit, op.t);
-        }
+        for (const op of due) apply(out, op, op.t);
         return out;
       },
     };

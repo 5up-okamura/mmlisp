@@ -769,6 +769,7 @@
     .se-btn.active .se-num { color: var(--background); }
     .knob-wrap { display: flex; flex-direction: column; gap: 0; }
     .knob-wrap[hidden] { display: none; } /* a word the score's machine lacks (applyTargetUi) */
+    .op-col[hidden] { display: none; } /* an operator it lacks (the OPLL's two) */
     .knob-label {
       font-size: 0.58rem;
       color: var(--sub);

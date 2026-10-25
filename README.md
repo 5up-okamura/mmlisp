@@ -108,7 +108,8 @@ them together. The reference and snippets read in English, Japanese or Spanish.
 **Hearing and playing.** A Nuked-OPN2 (YM2612) WebAssembly core in an
 AudioWorklet; Build (Cmd/Ctrl+B), Play and value edits swap the recompiled
 score in at the next bar without stopping. A piano roll, an oscilloscope and
-Follow Playback; the FM parameter panel, live from playback and editable while
+Follow Playback; the FM parameter panel — the machine's own operators and
+registers, the FM-PAC's two on msx — live from playback and editable while
 it runs; one slider per `def-val` and an XY pad; channel mute / solo; the
 on-screen keyboard and a MIDI keyboard to play and step-input, with MIDI Learn
 for a controller's knobs.

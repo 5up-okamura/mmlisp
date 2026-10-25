@@ -4906,6 +4906,9 @@ export class IRPlayer {
       cmd: "PARAM_SET",
       args: { target, value },
     });
+    // An encoder that holds a voice change for the note's key-on (the
+    // OPLL's) writes a live edit now.
+    this._fmWrites(this._fmEnc.live?.(chIndex) ?? []);
   }
 
   /** The sample a PCM voice (0-2) last played, or null. */
