@@ -78,9 +78,10 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   `_fmWrites`), so a voice switch never leaves the shared user voice
   half-written. Known: a pitch step inside a `:keyon` macro's off-step is
   written keyed (the retrigger's key-offs go out after the pitch steps).
-- **Open.** The levels wait for the user's listening pass (2026-10-25:
-  "decide after hearing"): `OPLL_GAIN`, MO + RO, the rhythm against the
-  melody — a score with the rhythm clips. The volume's floor is −45 dB
+- **Levels.** `OPLL_GAIN` is set against the PSG and SCC as libkss
+  (MSXplay) mixes them, measured on an MGS song (G2_00.MGS) chip by chip;
+  confirmed by ear 2026-10-26.
+- **Open.** A dense score with the rhythm may still clip. The volume's floor is −45 dB
   (vol 15): `:vol 0` and a mixer mute do not silence a sounding FM-PAC note
   (the md's TL 127 does). A call with no time (a live edit, a key preview)
   is the encoder's latest time, and `IRPlayer.setParam` writes the edit at
