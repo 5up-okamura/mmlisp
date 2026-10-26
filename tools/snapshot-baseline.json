@@ -601,6 +601,20 @@
   "mmb": "4a72685624003126",
   "vgm": "409406d989e65df8"
  },
+ "drv/tests/m3-vel-eighths.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c7e2b500999719fd",
+  "regs": "5256ab45b56abfbd",
+  "mmb": "a17322f10db171e4",
+  "vgm": "e05bb0a42ca317be"
+ },
+ "drv/tests/m3-vel-eighths.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c830abb375476893",
+  "regs": "5256ab45b56abfbd",
+  "mmb": "50fbf617144d158c",
+  "vgm": "e05bb0a42ca317be"
+ },
  "drv/tests/m3-voice-loop.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b580da63d8b828c7",

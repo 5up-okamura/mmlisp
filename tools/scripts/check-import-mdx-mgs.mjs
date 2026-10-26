@@ -238,7 +238,7 @@ function compressMgs(u8) {
     has(source, /\(def vol-e0-v12-k2 \(macro :vol \[26 \(wait 1f\) 25 23 22 0\]\)\)/, what); // relative to v
     has(source, /\(def bend-e2-c3 \(macro :pitch\+ \[-20 -10\]\)\)/, what); // \-10 then \5: the period's own units, + up
     has(source, /\(def-wave scc-00 :wave \[0 8 16/, what);
-    has(source, /\(def vol-r1-v12-scc \(macro :vol \[28 29 30 \(wait 4f\) 29 [^\]]*#rel 22 \(wait 2f\) 19 \(wait 1f\) 0\]\)\)/, what); // (E × 13) >> 8, RR a step on E a frame
+    has(source, /\(def env-r1-v12-scc \(macro :vel \[12\.25 12\.75 13\.625 14 [^\]]*#rel 6\.25 \(wait 2f\) 3\.25 \(wait 1f\) 0\]\)\)/, what); // (E × 13) >> 8 as the SCC's levels in :vel eighths, RR a step on E a frame
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
     has(source, /\(def-fm mgs-v15 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
     has(source, /\(fm1[\s\S]*mgs-v15[\s\S]*:oct 3[\s\S]*piano :sus 1/, what); // FM's o4 is an octave below the PSG's
@@ -322,8 +322,8 @@ function compressMgs(u8) {
   const mgs = parseMgs(buildMgs({ title: "k", tempo: 210, defs, tracks: [null, null, null, scc1] }));
   const { source } = mgsToMmlisp(mgs, { fileName: "k.mgs" });
   const what = "MGS k from the key-off";
-  has(source, /\(def vol-e0-v5-k2-r5-scc \(macro :vol \[[^\]]*#rel 26 25 \(wait 1f\) 24 \(wait 1f\) /, what); // v5 held a frame, then v4 two, v3 two
-  has(source, /\(wave1[^|]*vol-e0-v5-k2-r5-scc/, what);
+  has(source, /\(def env-e0-v5-k2-r5-scc \(macro :vel \[[^\]]*#rel 10\.25 9\.25 \(wait 1f\) 8 \(wait 1f\) /, what); // v5 held a frame, then v4 two, v3 two (the SCC's levels, :vel eighths)
+  has(source, /\(wave1[^|]*:vol 31 env-e0-v5-k2-r5-scc/, what);
   clean(source, what);
 }
 

@@ -47,7 +47,7 @@ export default {
     ":oct": ["254bcb58", "La octava en que se leen las notas. Por defecto 4 (do central)."],
     ":len": ["cadb8cab", "La duración de nota por defecto. Por defecto 8; 0 sostiene la nota y la pista espera el key-off (Tools > Release Holds en el editor)."],
     ":gate": ["25e9de54", "Cuánto suena una nota dentro de su hueco: una duración absoluta, una proporción, o el hueco menos una duración. Toda nota hace key-off en su gate, así que la siguiente vuelve a atacar."],
-    ":vel": ["51af5a6f", "Velocidad del note-on, 2 dB por paso, 15 = el nivel propio de la voz. Solo atenúa; nunca silencia. Por defecto 15."],
+    ":vel": ["9f3e5074", "Velocidad del note-on, 2 dB por paso, 15 = el nivel propio de la voz; los octavos de paso se escriben como fracciones (14.5, 13.625). Solo atenúa; nunca silencia. Por defecto 15."],
     ":vol": ["99dcd89c", "El fader del canal, con unidad en 31; 0 es un silencio total. Una curva lo funde."],
     ":pan": ["09b9200d", "Estéreo FM: un lado, ambos, o una curva que salta entre ellos."],
     ":snap": ["6c70a19d", "La escala en la que se queda el canal: cada nota, paso de arpegio y glide baja a estas clases de altura (0 = C). Con un $slot, el juego cambia el modo."],

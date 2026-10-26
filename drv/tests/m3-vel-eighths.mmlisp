@@ -1,0 +1,8 @@
+; Velocity in eighths of a step (language.md §6): an inline :vel and a :vel
+; macro written finer than a step, on FM (TL 0.75 dB) and on the PSG, as the
+; driver holds them.
+(def-fm bell init-fm :alg 7 :tl1 0 :tl2 0 :tl3 0 :tl4 0)
+(fm1 :tempo 120 bell :oct 4 :len 8
+  :vel 15 c :vel 14.5 c :vel 13.625 c :vel+ 0.25 c
+  (macro :vel [15 14.75 14.5 14.25 14 13.75]) e e (macro :vel none) :vel 12.125 g g |)
+(sqr1 :oct 5 :len 8 :vel 14.375 c c (macro :vel [15 13.5 12 10.5]) e e g g c c |)

@@ -509,9 +509,11 @@ independent-operator mode (§15) every operator's own is `1`, as each is a
 voice there. `:vel1` on a PSG or PCM track is `E_UNSUPPORTED_TARGET`.
 
 Authored values are integers — except the ratios after a `*`, such as a
-`:vel*` macro's `[1 0.75 0.5]`; a computed velocity (a `:vel` macro, a delay
-tap's `:vel*`) keeps eighths of a step, and the level is quantized once, at the
-chip's own resolution — FM TL 0.75 dB steps, so a `:vel` fade moves smoothly;
+`:vel*` macro's `[1 0.75 0.5]`, and a velocity: `:vel` (inline, `+`, and a
+macro's values) takes eighths of a step, as the driver holds it — `14.5`,
+`13.625`, a finer value rounded to the eighth. A computed velocity (a `:vel`
+macro's curve, a delay tap's `:vel*`) keeps eighths too, and the level is
+quantized once, at the chip's own resolution — FM TL 0.75 dB steps, so a `:vel` fade moves smoothly;
 the SN76489 its 2 dB attenuator, the SSG its 3 dB level (§19); PCM its 6 dB
 mixer shift. A `:vel` macro fades only to
 the velocity floor — for a fade to true silence automate `:tl` (carrier TL →

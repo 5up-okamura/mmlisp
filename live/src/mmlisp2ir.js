@@ -28,6 +28,7 @@ import {
   expandLoops,
   FRAME_HZ_NTSC,
   FRAME_HZ_PAL,
+  VEL_FINE,
 } from "./ir-utils.js";
 import {
   makeEnv,
@@ -679,7 +680,9 @@ function readConstNumber(node, env, diagnostics, trackName, src, typedDefs = nul
 // `:oct` / `:vel` resolve at compile time (§8): a number, a let-bound name or
 // an expression. A `$slot` or a curve cannot be one — both are errors rather
 // than the silent no-op they used to be.
-function compileTimeScalar(node, raw, op, evalEnv, keyword, diagnostics, trackName, src, typedDefs) {
+// `fraction`: a value that keeps a fraction (:vel's eighths) — else a whole
+// number, but for a `*` ratio.
+function compileTimeScalar(node, raw, op, evalEnv, keyword, diagnostics, trackName, src, typedDefs, fraction = false) {
   if (node?.kind === "list") {
     const head = atomValue(node.items?.[0]);
     if (isConstNumberNode(node, evalEnv)) {
@@ -692,7 +695,7 @@ function compileTimeScalar(node, raw, op, evalEnv, keyword, diagnostics, trackNa
   }
   const bound = lookupBound(evalEnv, raw);
   if (typeof bound === "number") return bound;
-  const v = op === "*" ? parseFloat(raw) : parseIntLike(raw);
+  const v = op === "*" || fraction ? parseNumberLike(raw) : parseIntLike(raw);
   if (v !== null && !Number.isNaN(v)) return v;
   pushDiag(diagnostics, "error", "E_VALUE_COMPILE_TIME",
     typeof raw === "string" && raw.startsWith("$")
@@ -2483,7 +2486,8 @@ function parseMacroSpec(
   // Relative (+/*) macros carry signed offsets / ratios; leave them unclamped
   // here and clamp only after combining with the base (add/scaleMacroValues).
   const clampVal = (v) => (clamp ? clampForTarget(target, v) : v);
-  const roundVal = (n) => (ratio ? n : Math.round(n));
+  // A velocity keeps eighths of a step, as the driver holds it (§6).
+  const roundVal = (n) => (ratio ? n : target === "VEL" ? Math.round(n * VEL_FINE) / VEL_FINE : Math.round(n));
   // One macro value: a number (rounded where it binds, like every value) or
   // the target's own symbol (`white2`, `left`), in a vector and as a scalar.
   const tokenValue = (val) => {
@@ -4167,14 +4171,15 @@ function compileChannelBody(
               // *multiply against the running vel base (default 15).
               const { op } = opSuffix(val);
               const raw = compileTimeScalar(
-                items[i], rawVal, op, evalEnv, val, diagnostics, trackName, nodeSrc(node), typedDefs,
+                items[i], rawVal, op, evalEnv, val, diagnostics, trackName, nodeSrc(node), typedDefs, true,
               );
               warnEnvLevel(trackState, val, diagnostics, nodeSrc(node), trackName);
               if (raw !== null && !Number.isNaN(raw)) {
                 const cur = trackState.defaultVel ?? 15;
                 const next =
                   op === "+" ? cur + raw : op === "*" ? cur * raw : raw;
-                trackState.defaultVel = Math.max(0, Math.min(15, Math.round(next)));
+                // On the driver's grid: eighths of a step (language.md §6).
+                trackState.defaultVel = Math.max(0, Math.min(15, Math.round(next * VEL_FINE) / VEL_FINE));
               }
               break;
             }

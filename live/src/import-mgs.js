@@ -442,7 +442,10 @@ export function analyzeMgs(mgs) {
 // A register level as :vol — the SSG's 3 dB steps, the SCC's linear 4 bits —
 // on the fader's 2 dB ones; 0 is the fader's mute.
 const ssgVol = (r) => (r <= 0 ? 0 : 31 - Math.round(1.5 * (15 - Math.min(15, r))));
-const sccVol = (r) => (r <= 0 ? 0 : Math.max(1, Math.min(31, 31 + Math.round((20 * Math.log10(Math.min(15, r) / 15)) / 2))));
+// The SCC's linear volume as a velocity in eighths of a step (language.md
+// §6), which the player's 16-step linear level reads back exactly — :vol's
+// 2 dB steps cannot tell its top levels apart; 0 is silent there.
+const sccVel = (r) => (r <= 0 ? 0 : Math.round((15 + (20 * Math.log10(Math.min(15, r) / 15)) / 2) * 8) / 8);
 const MODES = [null, "tone", "noise", "both"];
 
 // A note's period on the PSG's table, which the SCC plays too (an octave
@@ -707,13 +710,16 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const env = env0;
       if (!env) { envDefs.set(key, null); warnings.push(`@e${num} is not in the file — its notes play without an envelope`); }
       else {
-        const spec = envelopeSpec(env, v, kind === "scc" ? sccVol : ssgVol, k, relTag != null ? off : null);
-        // One level held: the note's :vol, no macro.
-        const flat = /^\[(\d+)\]$/.exec(spec);
-        if (flat) envDefs.set(key, { vol: Number(flat[1]) });
+        // The SCC's levels as :vel (sccVel), the others' as :vol.
+        const scc = kind === "scc";
+        const spec = envelopeSpec(env, v, scc ? sccVel : ssgVol, k, relTag != null ? off : null);
+        // One level held: the note's level, no macro.
+        const flat = /^\[([\d.]+)\]$/.exec(spec);
+        if (flat) envDefs.set(key, { level: Number(flat[1]) });
         else {
-          const name = `vol-${env.type}${num}-v${v}${k ? `-k${k}` : ""}${relTag != null ? `-r${relTag}` : ""}${kind === "scc" ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
-          defs.push(`(def ${name} (macro :vol ${spec}))`);
+          // vel-/vol- name the target, as the score writer reads them (import-song.js).
+          const name = `${scc ? "env" : "vol"}-${env.type}${num}-v${v}${k ? `-k${k}` : ""}${relTag != null ? `-r${relTag}` : ""}${scc ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
+          defs.push(`(def ${name} (macro ${scc ? ":vel" : ":vol"} ${spec}))`);
           envDefs.set(key, { name });
         }
       }
@@ -782,7 +788,9 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     // Under a y14's rhythm FM 7-9 are the rhythm's channels: their notes
     // key its sounds (rhythmOfFm), their own voice and pitch moves aside.
     const rhythmCh = a.rhythmY && isFm && tr.index >= 15 ? tr.index - 15 : null;
-    const volOf = tr.kind === "scc" ? sccVol : ssgVol; // the OPLL's volume steps 3 dB as the SSG's
+    // A level: the SCC's as :vel, the SSG's and the OPLL's (3 dB steps) as :vol.
+    const isScc = tr.kind === "scc";
+    const volOf = isScc ? sccVel : ssgVol;
     const notes = [];
     let prev = null;
     let head = null; // the note a tie continues: the one keyed, or slurred to
@@ -848,9 +856,15 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const rel = !env && kRelease(k, st.vol, volOf);
       // On the hardware envelope the level is the envelope's: s drops the
       // software envelope, and k does nothing.
+      let noteVel = 15;
       if (st.henv != null) state.push("(macro :vol none)");
-      else {
-        state.push(`:vol ${e?.vol ?? volOf(st.vol)}`);
+      else if (isScc) {
+        // The SCC: the note's velocity is its level, its envelope a :vel macro.
+        noteVel = e?.level ?? volOf(st.vol);
+        state.push(":vol 31");
+        state.push(e?.name ?? (rel ? `(macro :vel [${volOf(st.vol)}${rel}])` : "(macro :vel none)"));
+      } else {
+        state.push(`:vol ${e?.level ?? volOf(st.vol)}`);
         state.push(e?.name ?? (rel ? `(macro :vol [${volOf(st.vol)}${rel}])` : "(macro :vol none)"));
       }
       const detune = detuneOf(tr.kind, n.midi, st);
@@ -922,7 +936,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       // A note keyed on into the next sounds its whole slot whatever its
       // gate: it keeps the one in force, so none is written for it.
       if (gated) state.push((gateInForce = n.tieOn && n.held == null ? gateInForce : gateTok ?? ":gate* 1"));
-      const note = { tick: tick(n.step), len: tick(len), midi: n.midi, vel: 15, state, tieIn: legato, voice: st.voice };
+      const note = { tick: tick(n.step), len: tick(len), midi: n.midi, vel: noteVel, state, tieIn: legato, voice: st.voice };
       notes.push(note);
       // A tie's gate is its head's, over the whole tied length; MGSDRV cuts
       // the last note by its own q: the head takes that cut, exact.

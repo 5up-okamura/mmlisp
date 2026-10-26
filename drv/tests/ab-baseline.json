@@ -257,6 +257,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m3-vel-eighths.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m3-voice-loop.mmlisp": {
     "ok": true,
     "mismatches": 0,

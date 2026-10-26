@@ -245,7 +245,7 @@ export const REFERENCE = [
   {
     name: ':vel', aliases: [':vel+', ':vel*', 'velocity'], cat: 'track', section: '§6', tracks: null,
     syntax: ':vel 0–15  ·  :vel+ N  ·  :vel* R',
-    summary: 'Note-on velocity, 2 dB a step, 15 = the voice\'s own level. Attenuation only — never a mute. Default 15.',
+    summary: 'Note-on velocity, 2 dB a step, 15 = the voice\'s own level; eighths of a step are written as fractions (14.5, 13.625). Attenuation only — never a mute. Default 15.',
     insert: ':vel 12',
     example: '(fm1 :len 8 :vel 15 c :vel 11 c :vel 7 c :vel 3 c)',
   },

@@ -77,7 +77,7 @@ eighth), `N.` dotted, `N/M` a fraction of a whole note, `Nt` `Nf` `Nms`.
 | `:oct` | 4 | octave |
 | `:len` | 8 | default note length; `0` = hold; the track waits for the key-off (§17) |
 | `:gate` `:gate*` `:gate-` | full | sounding part: absolute, a ratio (`0.7`), or length minus (`12t`) |
-| `:vel` | 15 | 0–15, 2 dB a step; never mutes |
+| `:vel` | 15 | 0–15, 2 dB a step, in eighths (`14.5`); never mutes |
 | `:vel1`–`:vel4` | role | an FM operator's velocity sensitivity, 0–1: carriers 1, modulators 0 unless set (§6) |
 | `:vol` / `:master` | 31 | 0–31 fader, `0` mutes; `:master` is song-wide |
 | `:tempo` | 120 | BPM, song-wide, from any track; a curve sweeps it |
