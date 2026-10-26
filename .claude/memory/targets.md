@@ -154,8 +154,8 @@ Next:
   quarter read off the notes (quarterOf) was checked on the Sho set
   (g_shomdx2: 176-clock bars, 44 a quarter; two tracks carry 7-9-clock
   runs, hence the nine-in-ten rule).
-- Open: the IR player puts every target's tempo through `drvBpm` (the
-  driver's fixed point), so a VGM target plays 0.02-0.04 % off its BPM
-  (120 → 0.500122 s a beat; 150 exact) — 50 ms over a 2.5-minute MDX
-  against MXDRV. Harmless to the ear; exact tempo for a driver-less target
-  would be the fix, and would move the pc88/x68k/msx snapshot hashes.
+- Ruled (2026-10-26, the user): the IR player's `drvBpm` rounding on the
+  driver-less targets (0.02-0.04 % off the BPM, ~50 ms over a 2.5-minute
+  MDX against MXDRV) stays — not to be "fixed". An import compared against
+  its driver drifts that much; compare note lengths (on → off), not
+  absolute times, past the first minute.

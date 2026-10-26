@@ -1766,9 +1766,10 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
 
 - **MDX:** FM A–H go to `fm1`–`fm8`, each voice a `def-fm` with its DT2 (and
   the track's `MH` sensitivities as `:fms` / `:ams`); `v` / `@v` become
-  `:vel` (0.75 dB a TL step), `p` `:pan`, `q` / `@q`, `&` and `k` the notes'
-  lengths, `D` `:pitch`, `_` and the software LFOs (`MP`, `MA`) `:pitch+` /
-  `:vel+` macros, `MH` the OPM's LFO words, and track H's notes with the noise
+  `:vel` (0.75 dB a TL step), `p` `:pan`, `q` / `@q` `:gate*` / `:gate-` on
+  notes written their whole length, `&` a tie or slur, `k` a late key-on,
+  `D` `:pitch`, `_` and the software LFOs (`MP`, `MA`) `:pitch+` / `:vel+`
+  macros, `MH` the OPM's LFO words, and track H's notes with the noise
   on (`w`) go to `noise`. A track with no notes that only sets the tempo — a
   loop dithering it between two Timer B values, for one in between — becomes
   its average, one `:tempo`. The ADPCM — one track, or eight under PCM8 — plays

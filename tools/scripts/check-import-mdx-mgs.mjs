@@ -91,7 +91,7 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     has(source, /\(def-score :target x68k :title "Test song"\)/, what);
     has(source, /\(def-fm voice-01[\s\S]*:dt2-2 1/, what); // C1, the third in register order, is op2
     assert.ok(!/:tempo 87\.19/.test(source), `${what}: A's @t at clock 0 is E's at once`);
-    has(source, /c8\. _16 d4? ~ e/, what); // q6, then & : d held legato into e
+    has(source, /:gate\* 0\.75[\s\S]*? c d ~ e/, what); // q6 as the gate, the notes whole; & : d legato into e
     has(source, /:pitch 50/, what); // D 32 = half a semitone
     has(source, /\(macro :pitch\+ \(triangle /, what);
     has(source, /#top/, what);
@@ -114,6 +114,17 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     assert.ok(pcm && pcm.entries.length === 2, `${what}: two samples in the wav`);
     assert.deepEqual(warnings.filter((w) => !/keys only some/.test(w)), [], `${what}: no warnings`);
     clean(source, what);
+  }
+  // @q as :gate- (clocks short), q under a tie: the chain's head takes the
+  // last note's cut, exact; q8 after a q writes the full gate back.
+  {
+    const A4 = [0xfd, 1, 0xff, 200, 0xf8, 6, 0xf7, ...N(60, 24), ...N(60, 24), ...N(62, 24), 0xf8, 8, ...N(64, 24), ...END];
+    const A5 = [0xfd, 1, 0xf8, 0x100 - 12, ...N(60, 24), ...N(62, 48), ...END]; // @q12
+    const mdx3 = parseMdx(buildMdx({ title: "Gates", tracks: [A4, A5, END, END, END, END, END, END, END], voices }));
+    const { source } = mdxToMmlisp(mdx3, { structure: false, fileName: "gates.mdx" }, analyzeMdx(mdx3));
+    has(source, /\(fm1[^\n]*:gate- 32 [\s\S]*? c ~ c :gate\* 0\.75 d :gate\* 1 e/, "MDX gates");
+    has(source, /\(fm2[^\n]*:gate- 16 [\s\S]*?c d4/, "MDX gates");
+    clean(source, "MDX gates");
   }
   // A song on its composer's own grid: 22-clock 8ths, 176-clock bars. Its
   // quarter is 44 clocks, the tempo 48/44 faster, the notes plain 8ths.

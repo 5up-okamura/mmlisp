@@ -27,7 +27,7 @@ export const octOf = (midi) => Math.floor(midi / 12) - 1;
 export const noteName = (midi) => NOTE_NAMES[((midi % 12) + 12) % 12];
 
 /** A length in ticks as written after a note: `4`, `8.`, `3/2`, or `Nt`. */
-function lenToken(d) {
+export function lenToken(d) {
   if (d <= 0) return "0";
   // Denominators up to a 64th read as notes; finer is clearer in ticks.
   if (WHOLE % d === 0 && WHOLE / d <= 64) return String(WHOLE / d);
@@ -523,7 +523,8 @@ const MAX_BLOCK = 16; // units in one repeated block or phrase
 // A switch's kind: a keyword by its name, a macro (or an `env-`, `vol-`,
 // `vib-` or `bend-` def, an imported envelope or bend) by its target, any
 // other name — the voice or the sample — as "name".
-const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0]
+// :gate, :gate* and :gate- set the one gate: one kind.
+const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0].replace(/^:gate[*-]$/, ":gate")
   : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}`
     : /^env-/.test(t) ? "macro:vel" : /^vol-/.test(t) ? "macro:vol"
       : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";

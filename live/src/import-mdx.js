@@ -22,9 +22,9 @@
 //                      ADPCM, PCM8's volume MXDRV picks for it (v8 the
 //                      sample as it is, v15 +14 dB: the def's :fx gain)
 //   p                  :pan (p0 mutes the track's notes)
-//   q / @q, &, k       the note's length: q n/8 of it, @q n clocks short of
-//                      it, & legato (a tie, or a slur to another note), k a
-//                      key-on n clocks late
+//   q / @q, &, k       q as :gate* n/8, @q as :gate- n clocks, the note its
+//                      full length; & legato (a tie, or a slur to another
+//                      note), k a key-on n clocks late
 //   D, _               :pitch (1/64 semitone a step), a portamento as a
 //                      :pitch+ line over the note
 //   MP / MA, MD        the software LFOs as :pitch+ / :vel+ curves (saw,
@@ -47,7 +47,7 @@
 //     options: { pdx: Uint8Array | null, structure, fileName }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, barEnds, qstr, PPQN, stateChange } from "./import-song.js";
+import { emitSong, emitStructured, barEnds, qstr, PPQN, stateChange, lenToken } from "./import-song.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { decodeOki } from "./import-vgm.js";
 import { encodeWav } from "./export-wav.js";
@@ -474,13 +474,26 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     let detuned = false; // a D seen: from then on every note states its :pitch, 0 too
     let head = null; // the note a tie continues: the one keyed, or slurred to
     let keyedAt = 0; // the tick of the last key-on
+    let gated = false; // a q or @q seen: from then on every note states its gate
+    let gateInForce = ":gate* 1";
     tr.notes.forEach((n) => {
       const st = n.st;
       if (isNoise && !(st.noise & 0x80)) return;
       if (!tr.pcm && st.pan === 0) return; // p0: not keyed
       const delay = Math.min(st.keyDelay, n.count - 1);
       const gate = gateOf(n);
-      const len = Math.max(1, gate - delay);
+      // The note keeps its whole slot (a tie into a rest, the rest too) and
+      // q / @q are its gate, as the MML has them: q n/8 of it, @q n short.
+      // A gate the slot can't hold (@q past a short note, the ADPCM's
+      // shots) is the note's own length instead.
+      const span = n.tieOn ? gate : n.count;
+      let len = Math.max(1, span - delay);
+      let gateTok = null;
+      if (!tr.pcm && gate < span) {
+        if (gate - delay >= 1 && (st.qMinus ? st.qMinus < len : true)) gateTok = st.qMinus ? `:gate- ${lenToken(tick(st.qMinus))}` : `:gate* ${st.q / 8}`;
+        else len = Math.max(1, gate - delay);
+      }
+      if (gateTok) gated = true;
       const legato = !!prev && prev.tieOn && prev.clock + prev.count === n.clock;
       prev = n;
       // MD's delay runs from the key-on: a note played legato is into it.
@@ -537,8 +550,22 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
         const c = volLfoCurve(st.alfo, tick);
         state.push(c ? `(macro :vel+ ${waited(c)})` : "(macro :vel none)");
       } else if (!tr.pcm) state.push("(macro :vel none)");
+      // A note keyed on into the next (&) sounds its whole slot whatever its
+      // gate: it keeps the one in force, so none is written for it. One held
+      // on through a rest is that long, at a full gate.
+      if (gated && !tr.pcm) state.push((gateInForce = n.tieOn && n.held == null ? gateInForce : gateTok ?? ":gate* 1"));
       const note = { tick: at, len: Math.max(1, tick(n.clock + delay + len) - at), midi, vel, state, tieIn: legato && !tr.pcm };
       notes.push(note);
+      // A tie's gate is the chain's head's, over the whole tied length; MXDRV
+      // cuts the last note by its own q: the head takes that cut, exact.
+      if (gated && note.tieIn && head && head.midi === note.midi) {
+        const cut = n.count - gate;
+        const tok = cut > 0 ? `:gate- ${lenToken(tick(n.clock + n.count) - tick(n.clock + gate))}` : ":gate* 1";
+        const g = head.state.findIndex((t) => t.startsWith(":gate"));
+        if (g >= 0) head.state[g] = tok;
+        else head.state.push(tok);
+        state[state.length - 1] = gateInForce = tok;
+      }
       // A tie starts nothing — its moves are read at the note it continues —
       // so a portamento on a tied note starts there, :wait'ed to its place.
       if (note.tieIn && head && head.midi === note.midi) {
@@ -549,6 +576,12 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
             // The tied note restates it, so nothing is written there.
             state[state.indexOf(`(macro :pitch+ ${pitch[0]})`)] = head.state[slot];
           } else skip("a portamento on a tied note under the first note's own pitch move (left out)");
+        }
+        // Nor does it restart the LFOs: its macros are the head's, unwritten.
+        for (let i = 0; i < state.length; i++) {
+          const kind = state[i].match(/^\(macro :(pitch|vel)\b/)?.[1];
+          const h = kind && head.state.find((t) => t.startsWith(`(macro :${kind}`));
+          if (h) state[i] = h;
         }
       } else head = note;
     });
