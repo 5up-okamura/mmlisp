@@ -75,7 +75,10 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   nibbles; the WAVE block and pointer type 5 from papers/format.md). Open:
   the Furnace side has run on no real .fur (check:import-tracker builds a
   DMF only); an old (<240) .fur's properNoiseLayout is not read (default
-  true). Next for pce: the VGM importer's 0xB9; then DDA, the LFO.
+  true). VGMs import too (import-vgm.js pceChip / sccChip: a note carries
+  its wave, each distinct one a def-wave; the HuC6280's noise a row of its
+  own; round-tripped in check:import-vgm). Next for pce: DDA, the LFO —
+  both wait for a design discussion.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 

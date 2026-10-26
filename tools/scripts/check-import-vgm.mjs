@@ -10,6 +10,7 @@ import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
+import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -21,7 +22,8 @@ async function vgmOf(file) {
 function imported(parsed, target, structure = true) {
   const a = analyzeVgm(parsed);
   const { source } = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, target), structure, fileName: "t.vgm" }, a);
-  const bad = compileMMLisp(source, "t.mmlisp").diagnostics.filter((d) => d.severity === "error");
+  // Compiled as Live compiles an import: a stand-in voice's presets read from the repo.
+  const bad = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) }).diagnostics.filter((d) => d.severity === "error");
   assert.deepEqual(bad.map((d) => d.code), [], `${target}: the imported score compiles clean`);
   return { a, source };
 }
@@ -80,6 +82,66 @@ function imported(parsed, target, structure = true) {
   assert.equal(mdOpt.dest["YM2608 SSG noise"], "noise");
   assert.equal(mdOpt.dest["YM2608 SSGC"], "drop");
   assert.match(imported(parsed, "md").source, /\(noise /, "md: the noise on noise");
+}
+
+// A wavetable chip: each distinct wave a def-wave the track names where it
+// changes. The HuC6280's file is the PC Engine's by default: each channel on
+// its own wave channel, a channel on its noise a row of its own on noise5 /
+// noise6 at the rate it played (the original's $07 writes again), its pan as
+// a place between the sides; on md the waves are stand-ins and the noise
+// goes to noise.
+const writesOf = (source, addr) => {
+  const { ir } = compileMMLisp(source, "t.mmlisp");
+  let sel = -1;
+  const out = new Set();
+  for (const w of new IRPlayer(() => {}).loadJSON(ir).captureRegisterLog().writes) {
+    if (w.addr === 0) sel = w.data;
+    else if (w.addr === addr && (addr !== 7 || w.data & 0x80)) out.add(`${sel}:${w.data}`);
+  }
+  return [...out].sort().join(" ");
+};
+{
+  const parsed = await vgmOf("tools/tests/pce/wave.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["pce", ["pce", "md"]]);
+  assert.equal(defaultVgmOptions(a, "pce").dest["HuC6280 CH3"], "wave3", "pce: a channel keeps its number");
+  const { source } = imported(parsed, "pce");
+  assert.match(source, /\(def-wave wave-01 :wave \[-128 -120 /, "pce: the saw, at the chip's 5 bits");
+  assert.match(source, /\(wave1[\s\S]*wave-0\d[\s\S]*wave-0\d/, "pce: wave1 switches its wave");
+  imported(parsed, "md");
+}
+{
+  const src = fs.readFileSync(path.join(ROOT, "tools/tests/pce/noise.mmlisp"), "utf8");
+  const parsed = await vgmOf("tools/tests/pce/noise.mmlisp");
+  const a = analyzeVgm(parsed);
+  const opt = defaultVgmOptions(a, "pce");
+  assert.equal(opt.dest["HuC6280 CH5 noise"], "noise5");
+  assert.equal(opt.dest["HuC6280 CH6 noise"], "noise6");
+  const { source } = imported(parsed, "pce", false);
+  assert.equal(writesOf(source, 7), writesOf(src, 7), "pce: the noise at the rates it played");
+  assert.equal(defaultVgmOptions(a, "md").dest["HuC6280 CH6 noise"], "noise", "md: the busier noise on noise");
+  imported(parsed, "md");
+}
+{
+  const src = fs.readFileSync(path.join(ROOT, "tools/tests/pce/pan.mmlisp"), "utf8");
+  const parsed = await vgmOf("tools/tests/pce/pan.mmlisp");
+  const { source } = imported(parsed, "pce", false);
+  assert.match(source, /\(wave2 wave-01 :pan -1 /, "pce: a hard pan");
+  assert.match(source, /:pan 0\.53/, "pce: 0.5 as the levels hold it (7 of 15)");
+  // A pan written with a note comes back with it (noise5's −0.3: its right
+  // side 10 of 15); one moving under a note (a sweep, a macro) does not.
+  for (const pan of ["0:127", "1:240", "4:15", "4:250"]) assert.ok(writesOf(source, 5).split(" ").includes(pan), `pce: the pan ${pan}`);
+}
+// The SCC: an msx score's wave channels come back as msx's.
+{
+  const parsed = await vgmOf("tools/tests/msx/scc.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["msx", ["msx", "md"]]);
+  const opt = defaultVgmOptions(a, "msx");
+  for (let c = 1; c <= 5; c++) assert.equal(opt.dest[`K051649 CH${c}`], `wave${c}`);
+  const { source } = imported(parsed, "msx");
+  assert.match(source, /\(def-wave wave-01 :wave \[-128 -120 -112 -104 /, "msx: the saw at the SCC's 8 bits");
+  imported(parsed, "md");
 }
 
 console.log("VGM import checks passed");

@@ -38,7 +38,15 @@
 //   analyzeVgm(parsed)               → what the import dialog shows, and the
 //                                      targets it can write (md; x68k for a
 //                                      YM2151's file, pc88 for a YM2608's or
-//                                      YM2203's, msx for an AY-3-8910's)
+//                                      YM2203's, msx for an AY-3-8910's or an
+//                                      SCC's, pce for a HuC6280's)
+//
+// A wavetable chip's note (the SCC's, the HuC6280's) carries the wave in its
+// channel's memory as it starts (`wave`, 32 steps −128..127): on a target
+// with wave channels each distinct wave is a def-wave, named where a
+// track's wave changes. The HuC6280's channels 5 and 6 on their noise are
+// rows of their own (`HuC6280 CH5 noise`), their notes the rate (c2 the
+// slowest, chips/huc6280.js).
 //   vgmChannels(analysis, target)    → its rows on that target
 //   defaultVgmOptions(analysis, target) → its defaults on that target
 //   vgmToMmlisp(parsed, options, analysis) → { source, warnings }
@@ -466,6 +474,120 @@ function oplChip(name, clock, divisor, { ev }) {
   };
 }
 
+// ── Wavetable chips ───────────────────────────────────────────────────────
+
+// A level as :vel: a 5-bit volume at 1.5 dB a step (the HuC6280's), or a
+// 4-bit linear one (the SCC's), against 2 dB a :vel step.
+const velOfDb = (db) => Math.max(0, Math.min(15, Math.round((15 + db / VEL_DB_PER_STEP) * 8) / 8));
+const waveOf = (steps, top) => steps.map((v) => Math.max(-128, Math.min(127, Math.round((v * 255) / top) - 128)));
+
+// The HuC6280 (chips/huc6280.js): $00 selects a channel, whose $02/$03 is
+// its frequency (the clock / 32 / f), $04 its on bit, DDA bit and 5-bit
+// volume, $05 its left / right levels, $06 its wave (a step a write, from
+// step 0 after the DDA bit drops), $07 — on channels 5 and 6 — its noise.
+// A note is the channel on at a volume; on the noise, its row's (the rate
+// as the note: c2 the slowest).
+function pceChip(clock, { ev, skip }) {
+  let sel = 0;
+  const N = 6;
+  const freq = new Uint16Array(N), ctrl = new Uint8Array(N), bal = new Uint8Array(N).fill(0xff);
+  const ram = Array.from({ length: N }, () => new Uint8Array(32)), index = new Uint8Array(N), noise = new Uint8Array(N);
+  const sounding = new Array(N).fill(null); // the row a channel's note is on
+  const key = (c) => `HuC6280 CH${c + 1}`;
+  const vol = (c) => (ctrl[c] & 0x80 && !(ctrl[c] & 0x40) ? ctrl[c] & 31 : 0);
+  const vel = (c) => velOfDb(-(31 - vol(c)) * 1.5);
+  const hz = (c) => clock / (32 * (freq[c] || 0x1000));
+  const onNoise = (c) => c >= 4 && !!(noise[c] & 0x80);
+  // The levels as a place between the sides: the louder full, the other as far down.
+  const pan = (c) => { const p = ((bal[c] & 15) - (bal[c] >> 4)) / 15; return p ? String(+p.toFixed(2)) : "center"; };
+  const strike = (c, t) => {
+    const nz = onNoise(c);
+    const row = nz ? `${key(c)} noise` : key(c);
+    sounding[c] = row;
+    const rate = noise[c] & 31;
+    ev(row, nz
+      ? { t, kind: "on", pitch: 36 + rate, vel: vel(c), pan: pan(c), noiseHz: clock / (64 * Math.max(0.5, 31 - rate)), kindOf: "noise" }
+      : { t, kind: "on", pitch: pitchOf(hz(c)), vel: vel(c), pan: pan(c), wave: waveOf([...ram[c]], 31), kindOf: "wave" });
+  };
+  const release = (c, t) => { if (sounding[c]) ev(sounding[c], { t, kind: "off" }); sounding[c] = null; };
+  return {
+    name: "HuC6280",
+    write(a, d, t) {
+      if (a === 0x00) { sel = d & 7; return; }
+      const c = sel;
+      if (c >= N) return;
+      if (a === 0x02 || a === 0x03) {
+        freq[c] = a === 0x02 ? (freq[c] & 0xf00) | d : (freq[c] & 0xff) | ((d & 15) << 8);
+        if (sounding[c] && !onNoise(c)) ev(sounding[c], { t, kind: "pitch", pitch: pitchOf(hz(c)) });
+      } else if (a === 0x04) {
+        if (ctrl[c] & 0x40 && !(d & 0x40)) index[c] = 0;
+        if (d & 0x40 && d & 0x80) skip("HuC6280 DDA");
+        const was = vol(c);
+        ctrl[c] = d;
+        const now = vol(c);
+        if (!was && now) strike(c, t);
+        else if (was && !now) release(c, t);
+        else if (now !== was && sounding[c]) ev(sounding[c], { t, kind: "vel", vel: vel(c) });
+      } else if (a === 0x05) {
+        bal[c] = d;
+        if (sounding[c]) ev(sounding[c], { t, kind: "pan", pan: pan(c) });
+      }
+      else if (a === 0x06) {
+        if (ctrl[c] & 0x40) return; // DDA: a sample, not a wave
+        ram[c][index[c]] = d & 31;
+        if (!(ctrl[c] & 0x80)) index[c] = (index[c] + 1) & 31;
+      } else if (a === 0x07 && c >= 4) {
+        const changed = (d & 0x80) !== (noise[c] & 0x80);
+        noise[c] = d;
+        // A channel turned to or from its noise while it sounds: another note.
+        if (changed && vol(c)) { release(c, t); strike(c, t); }
+        else if (onNoise(c) && sounding[c]) ev(sounding[c], { t, kind: "retrig", pitch: 36 + (d & 31), pan: pan(c) });
+      } else if (a === 0x08 || a === 0x09) skip("HuC6280 LFO");
+    },
+  };
+}
+
+// The K051649, the SCC (chips/k051649.js), as VGM 0xD2 splits it: port 0
+// the four wave memories (channels 4 and 5 share the fourth), 1 the periods
+// (the clock / 32 / (p + 1)), 2 the 4-bit volumes, 3 the key bits.
+function sccChip(clock, { ev }) {
+  const N = 5;
+  const ram = Array.from({ length: 4 }, () => new Int8Array(32)), period = new Uint16Array(N), volume = new Uint8Array(N);
+  let keys = 0;
+  const on = new Array(N).fill(false);
+  const key = (c) => `K051649 CH${c + 1}`;
+  const audible = (c) => !!((keys >> c) & 1) && volume[c] > 0 && period[c] >= 9;
+  const vel = (c) => velOfDb(volume[c] ? 20 * Math.log10(volume[c] / 15) : -96);
+  const hz = (c) => clock / (32 * (period[c] + 1));
+  const wave = (c) => [...ram[Math.min(c, 3)]];
+  const check = (c, t) => {
+    const now = audible(c);
+    if (now && !on[c]) ev(key(c), { t, kind: "on", pitch: pitchOf(hz(c)), vel: vel(c), wave: wave(c), kindOf: "wave" });
+    else if (!now && on[c]) ev(key(c), { t, kind: "off" });
+    on[c] = now;
+  };
+  return {
+    name: "K051649",
+    write(port, a, d, t) {
+      if (port === 0 && a < 0x80) ram[a >> 5][a & 31] = (d << 24) >> 24;
+      else if (port === 1 && a < 10) {
+        const c = a >> 1;
+        period[c] = a & 1 ? (period[c] & 0xff) | ((d & 15) << 8) : (period[c] & 0xf00) | d;
+        if (on[c]) ev(key(c), { t, kind: "pitch", pitch: pitchOf(hz(c)) });
+        else check(c, t);
+      } else if (port === 2 && a < 5) {
+        const was = volume[a];
+        volume[a] = d & 15;
+        if (on[a] && volume[a] && volume[a] !== was) ev(key(a), { t, kind: "vel", vel: vel(a) });
+        check(a, t);
+      } else if (port === 3) {
+        keys = d & 31;
+        for (let c = 0; c < N; c++) check(c, t);
+      }
+    },
+  };
+}
+
 // ── The file ──────────────────────────────────────────────────────────────
 
 /**
@@ -515,6 +637,8 @@ export async function parseVgm(bytes) {
     y8950: [0x58, 3579545, (c) => oplChip("Y8950", c, 72, { ev })],
     opl3: [0x5c, 14318180, (c) => oplChip("YMF262", c, 288, { ev })],
     ay: [0x74, 1789773, (c) => ayChip("AY-3-8910", c, { ev })],
+    scc: [0x9c, 1789773, (c) => sccChip(c, { ev })],
+    pce: [0xa4, 3579545, (c) => pceChip(c, { ev, skip })],
   };
   const chip = (key) => {
     if (made.has(key)) return made.get(key);
@@ -668,7 +792,16 @@ export async function parseVgm(bytes) {
     // stream, which is what the import reads.
     if (c === 0xb7) { if (!okiUsed) { okiUsed = true; chips.push("OKIM6258"); } p += 3; continue; }
     if (c === 0x68) { p += 12; continue; }
-    if (c === 0xd2) { skip("K051649 (SCC)"); p += 4; continue; }
+    if (c === 0xd2) {
+      if (!(u8[p + 1] & 0x80)) chip("scc").write(u8[p + 1] & 0x7f, u8[p + 2], u8[p + 3], t);
+      else skip("second K051649");
+      p += 4; continue;
+    }
+    if (c === 0xb9) {
+      if (!(u8[p + 1] & 0x80)) chip("pce").write(u8[p + 1], u8[p + 2], t);
+      else skip("second HuC6280");
+      p += 3; continue;
+    }
     if (c === 0x50) { chip("sn").write(u8[p + 1], t); p += 2; continue; }
     if (c === 0x51) { chip("opll").write(u8[p + 1], u8[p + 2], t); p += 3; continue; }
     if (c === 0x52 || c === 0x53) {
@@ -789,6 +922,7 @@ function notesOf(events, followPitch, endT, tune = 0) {
       const held = base.pitches?.length ? base.pitches[base.pitches.length - 1][1] : base.pitch;
       cur = { t: e.t, pitch: e.pitch ?? held, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
         pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, noiseHz: e.noiseHz ?? base.noiseHz, ssg: e.ssg ?? base.ssg, fresh: !!e.fresh,
+        wave: e.wave ?? base.wave,
         levels: [], pitches: [] };
       if (!cur.voice) cur.lv0 = cur.vel;
     } else if (e.kind === "off") close(e.t);
@@ -799,6 +933,8 @@ function notesOf(events, followPitch, endT, tune = 0) {
     else if (e.kind === "pitch" && e.pitch != null && (e.t - cur.t <= SETUP_T || cur.pitch == null)) cur.pitch = e.pitch;
     else if (e.kind === "pitch" && e.pitch != null) cur.pitches.push([e.t, e.pitch]);
     else if (e.kind === "vel" || e.kind === "tl") cur.levels.push([e.t, e.vel ?? e.tl]);
+    // A pan written in the note's setup burst (after its key-on) is the note's.
+    else if (e.kind === "pan" && e.t - cur.t <= SETUP_T) cur.pan = e.pan;
     else if (e.kind === "mode") cur.mode = e.mode;
   }
   if (cur) { cur.end = Infinity; out.push(cur); }
@@ -1073,7 +1209,7 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   // YM2203's, the MSX for an AY-3-8910's — by default when that chip plays
   // every channel.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
-  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^AY-3-8910/]]
+  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649)/], ["pce", /^HuC6280/]]
     .filter(([, re]) => tones.some((c) => re.test(c.key)));
   const targets = [...own.map(([t]) => t), "md"];
   const target = own.find(([, re]) => tones.length && tones.every((c) => re.test(c.key)))?.[0] ?? "md";
@@ -1089,7 +1225,8 @@ export function vgmDests(targetName = "md") {
   const t = targetProfile(targetName);
   const d = destsFor(t);
   // Where the SSG's channels mix the noise, `noise` is one of them: not a row's.
-  return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: mixesNoise(t) ? null : d.noise, pcm: d.pcm };
+  return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: mixesNoise(t) ? null : d.noise, pcm: d.pcm,
+    wave: d.wave, noises: mixesNoise(t) ? [] : d.noises };
 }
 
 // Whether the target's tone channels play the noise themselves (the SSG's
@@ -1121,9 +1258,10 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   const pcmToo = dests.pcm.length > 0 && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm");
   const fm = dests.fm.filter((d) => !(pcmToo && d === "fm6"));
   const sqr = [...dests.psg];
+  const waves = [...dests.wave];
   let noise = dests.noise;
   const dest = {};
-  const order = ["fm", "opm", "psg", "noise", "pcm", "opl", "opll"];
+  const order = ["fm", "opm", "psg", "wave", "noise", "pcm", "opl", "opll"];
   // The busiest channels first — but a YM2151 whose eight all fit (an x68k
   // score's fm1–fm8) keeps its own order, FM1 on fm1.
   const opmFits = a.channels.filter((c) => c.kind === "opm").length <= fm.length;
@@ -1145,6 +1283,19 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     // where the target's channels do not mix it.
     else if (ch.kind === "psg" && !mixesNoise(target) && ch.ssgNoise === ch.notes) d = "drop";
     else if (ch.kind === "psg") d = sqr.shift() ?? "drop";
+    // A wavetable chip's channel on a target with wave channels: its own
+    // number where it has one (the HuC6280's CH3 on wave3), else the next.
+    else if (ch.kind === "wave" && waves.length) {
+      const own = `wave${ch.key.match(/CH(\d+)$/)?.[1]}`;
+      d = waves.includes(own) ? own : waves[0];
+      waves.splice(waves.indexOf(d), 1);
+    }
+    // The HuC6280's noise rows on a target with a noise per channel: CH5's
+    // on noise5.
+    else if (ch.kind === "noise" && dests.noises.length > 1) {
+      const own = `noise${ch.key.match(/CH(\d+) noise$/)?.[1]}`;
+      d = dests.noises.includes(own) ? own : "drop";
+    }
     else if (ch.kind === "noise") { d = noise ?? "drop"; noise = null; }
     else if (ch.kind === "pcm") d = dests.pcm.length ? "pcm1" : "drop";
     else if (ch.kind === "chip-pcm") d = dests.pcm.length ? "pcm" : "drop";
@@ -1156,6 +1307,16 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   const fmVoices = new Set(Object.values(dest).filter((d) => dests.fm.includes(d)).map((d) => target.voiceKey(d)));
   for (const [k, d] of Object.entries(dest))
     if (d === dests.noise && fmVoices.has(target.voiceKey(d))) dest[k] = "drop";
+  // A wave channel and its noise (the HuC6280's CH5 and CH5 noise): the
+  // row with more notes keeps the channel.
+  const notesOf = new Map(a.channels.map((c) => [c.key, c.notes]));
+  const byVoice = new Map();
+  for (const [k, d] of Object.entries(dest)) {
+    if (d === "drop" || !dests.noises.includes(d)) continue;
+    const rival = Object.entries(dest).find(([k2, d2]) => k2 !== k && d2 !== "drop" && target.voiceKey(d2) === target.voiceKey(d));
+    if (rival) byVoice.set(k, rival[0]);
+  }
+  for (const [k, r] of byVoice) if (dest[k] !== "drop" && dest[r] !== "drop") dest[(notesOf.get(k) ?? 0) >= (notesOf.get(r) ?? 0) ? r : k] = "drop";
   return { target: targetName, dest, bpm: null, grid: a.grid.frames ? "frames" : "beats", followPitch: a.followPitch, loop: a.fileLoop,
     pcmVoices: Math.max(1, Math.min(3, a.pcmPoly ?? 1)) };
 }
@@ -1177,7 +1338,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const noisePart = dests.noise ? target.partOf(dests.noise) : null;
   const noiseRate = (base, hz) => `:noise-rate ${Math.max(1, Math.min(31, Math.round(base / hz)))}`;
   const noiseWord = (n) => {
-    if (!noisePart) return null;
+    // A noise pitched by its notes (the PC Engine's) has no word to say.
+    if (!noisePart || (!Object.keys(noisePart.modes ?? {}).length && !target.hasWord("NOISE_RATE"))) return null;
     if (Object.keys(noisePart.modes ?? {}).length) {
       const mode = n.mode ?? (n.noiseHz ? NOISE_WHITE[nearestWhite(n.noiseHz)] : null);
       return mode ? `:mode ${mode}` : null;
@@ -1306,6 +1468,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     });
   };
   const standIns = new Set();
+  // The waves the wave channels play: one def-wave each, by its steps.
+  const waveDefs = new Map(); // steps → name
+  const waveName = (steps) => {
+    const k = steps.join(" ");
+    if (!waveDefs.has(k)) waveDefs.set(k, `wave-${String(waveDefs.size + 1).padStart(2, "0")}`);
+    return waveDefs.get(k);
+  };
   const tracks = [];
   for (const ch of vgmChannels(a, target.name)) {
     const d = dest[ch.key] ?? "drop";
@@ -1360,7 +1529,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         standIns.add(voice);
       }
       note.stand = voice;
-      note.pan = onFm && n.pan ? n.pan : null;
+      // A wave channel's note names the wave it starts with.
+      if (dests.wave.includes(d) && n.wave) note.stand = waveName(n.wave);
+      note.pan = (onFm || target.partOf(d)?.words?.("PAN")) && n.pan ? n.pan : null;
       note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
       note.rate = fmNoise && n.noiseHz ? noiseRate(125000, n.noiseHz) : null;
       // The SSG's noise period: the song's, written where due (songWrites).
@@ -1467,7 +1638,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (fm6 >= 0) { warnings.push(`${tracks[fm6].ch.key}: fm6 is the DAC in a score with PCM — dropped`); tracks.splice(fm6, 1); }
   }
 
-  const order = [...dests.fm, ...dests.psg, dests.noise];
+  const order = [...dests.fm, ...dests.psg, ...dests.wave, ...dests.noises, dests.noise];
   tracks.sort((x, y) => order.indexOf(x.d) - order.indexOf(y.d));
   const out = tracks.map((tr) => {
     const { d, notes } = tr;
@@ -1493,6 +1664,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     dacOut && ":pcm-voices 1", chipOut && dacMix && `:pcm-voices ${chipOut.voices}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
+  if (waveDefs.size) header.push("", ...[...waveDefs].map(([steps, name]) => `(def-wave ${name} :wave [${steps}])`));
   if (envs.length) header.push("", ...envs);
   if (bends.length) header.push("", ...bends);
   if (dacOut) header.push("", ...dacOut.defs);

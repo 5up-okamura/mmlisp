@@ -55,6 +55,9 @@ export function destsFor(target) {
     psg: target.channelNames.filter((h) => target.partOf(h).kind === "tone"),
     noise: target.channelNames.find((h) => target.partOf(h).kind === "noise") ?? null,
     pcm: target.channelNames.filter((h) => target.partOf(h).kind === "sample"),
+    wave: target.channelNames.filter((h) => target.partOf(h).kind === "wave"),
+    // Every noise channel: the PC Engine's two (noise5, noise6).
+    noises: target.channelNames.filter((h) => target.partOf(h).kind === "noise"),
   };
 }
 const MD = destsFor(targetProfile("md"));

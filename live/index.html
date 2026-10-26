@@ -3352,7 +3352,7 @@
       // another target rebuilds them at its defaults.
       const rowsFor = (target) => {
         const d = vgmDests(target), dd = defaultVgmOptions(a, target);
-        const choices = ['drop', ...d.fm, ...d.psg, ...(d.noise ? [d.noise] : [])];
+        const choices = ['drop', ...d.fm, ...d.psg, ...d.wave, ...new Set([...(d.noise ? [d.noise] : []), ...d.noises])];
         const pcmChoices = d.pcm.length ? ['drop', 'pcm1'] : ['drop'];
         const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', 'pcm1–3']] : ['drop'];
         return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],

@@ -1750,8 +1750,20 @@ them: a key-on starts a note, a key-off ends it.
   the driver does not start the envelope over for runs it on, slurred. On
   md the envelope has no sound — the log counts the notes on it, which play
   at their level — and a buzzer plays as a square at its pitch. The MSX's
-  FM-PAC (YM2413) and SCC channels are not imported onto it yet, nor the
-  YM2608's rhythm and ADPCM-B onto the PC-8801's.
+  FM-PAC (YM2413) channels are not imported onto it yet, nor the YM2608's
+  rhythm and ADPCM-B onto the PC-8801's.
+- A wavetable chip's channels — the SCC's (an MSX file, `:target msx`) and
+  the HuC6280's (a **PC Engine** file, `:target pce`, the default when it
+  plays every channel) — go to the target's `wave` channels, each keeping
+  its number. Each distinct wave they start a note with becomes a
+  `def-wave` (`wave-01` …), named where a track's wave changes; a wave
+  rewritten under a sounding note is not followed. A HuC6280 channel on
+  its noise is a row of its own (`HuC6280 CH5 noise`) that goes to
+  `noise5` / `noise6` at the rate it played, and where a channel plays
+  both, the row with more notes keeps it. Its left and right levels come
+  back as `:pan` with the note (a pan moving under a note is not
+  followed); its LFO and DDA are counted. On md the waves play on a
+  `presets/waveforms` stand-in and the busier noise on `noise`.
 - A pitch moved during a note is followed — untick it to keep only the
   struck pitch. A jump it then stays at is a new note, slurred (`~`); a
   wobble is a vibrato, a shared `(def vib-40-10 (macro :pitch (sin -40..40

@@ -66,7 +66,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
   importer writes only what it is built to write, and offers only that. The
   mucom importer writes pc88 (the song's own chip, the default) or md, chosen
   in its import dialog; VGM writes md or the machine of its chip — x68k for
-  a YM2151's, pc88 for a YM2608's or YM2203's, msx for an AY-3-8910's —
+  a YM2151's, pc88 for a YM2608's or YM2203's, msx for an AY-3-8910's or
+  an SCC's, pce for a HuC6280's —
   chosen in its dialog; DefleMask / Furnace write md, or pce for a PC
   Engine module (the default), chosen in their dialog; MIDI writes md and
   shows no choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
@@ -81,7 +82,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
   if wanted — envelopes and bends match exactly (TwinBee gives ~26
   envelopes), and rounding near ones together is the lever;
   second chips, the YM2608's rhythm and ADPCM-B (onto pc88's rhythm and
-  pcm1), the MSX's FM-PAC and SCC (onto msx's fm and wave channels), the
+  pcm1), the MSX's FM-PAC (onto msx's fm channels), a wave rewritten
+  under a sounding note (SCC), the HuC6280's DDA and LFO, the
   remaining PCM chips (OKI MSM6295, QSound, K054539, C140, …).
 - **DefleMask / Furnace**: sample channels, the macros of pre-INS2 Furnace
   instruments, subsongs after the first.
@@ -125,8 +127,8 @@ on any other, and its own settings a warning.
 
 Built: the PC-8801 (`pc88`), the X68000 (`x68k`), the MSX with the SCC
 and the FM-PAC (`msx`) and the PC Engine (`pce`: its waves, noise and
-`:pan`, and DefleMask / Furnace PCE modules as `pce` scores; DDA, the LFO
-and the HuC6280's VGM import are still to come) — language.md §19. Next:
+`:pan`, DefleMask / Furnace PCE modules and HuC6280 VGMs as `pce` scores;
+DDA and the LFO are still to come) — language.md §19. Next:
 
 1. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
    without a level (the level model needs targets that have none), the

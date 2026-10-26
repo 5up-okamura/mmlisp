@@ -41,7 +41,9 @@ Run from tools directory:
 15. `npm run check:import-mdx-mgs` — the MDX and MGS song imports, on files built
     there: each command family lands where it should, and every score compiles
 16. `npm run check:import-vgm` — the VGM import, on the toolchain's own VGM of a
-    test score: the YM2151's noise as x68k's fm8 `:mode noise`, md's `noise`
+    test score: the YM2151's noise as x68k's fm8 `:mode noise`, md's `noise`;
+    the SSG's mixer and envelope; the SCC's and the HuC6280's waves as def-waves,
+    the HuC6280's noise at the rates it played and its pan
 17. `npm run check:import-tracker` — a PC Engine DefleMask module written there,
     byte by byte: its wavetables, wave macro, `10xx`, `08xy` and noise come back
     as pce, and both its pce and md scores compile
