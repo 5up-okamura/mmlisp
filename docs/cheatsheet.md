@@ -258,6 +258,12 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   def; a hit's note tunes it, c4 the chip's, and `:pitch` / `(glide …)` /
   pitch macros move it on through the release) in place of `fm7`–`fm9`. No
   PCM. VGM and WAV.
+- `(def-score :target pce)` holds a score to the PC Engine's HuC6280 (§19):
+  `wave1`–`wave6` wave channels as the SCC's (`def-wave`, `:wave`; a wave
+  named under a note waits for its next key-on; 5-bit volume, 1.5 dB a
+  step), `noise5` / `noise6` in place of wave5 / wave6, pitched by their
+  notes (c2 the slowest rate, g4 the fastest). No FM, square, PCM, `:pan`,
+  `:noise-rate` or `:mode`. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

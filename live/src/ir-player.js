@@ -299,12 +299,13 @@ export class IRPlayer {
     this._psgLevelAhead = new Array(PSG_LANES).fill(false); // the current note's level macros took its :vol sets in
     this._psgVolSweep = new Array(PSG_LANES).fill(null); // active VOL sweep state per PSG ch
     this._psgKeyedUntil = new Array(PSG_LANES).fill(0); // when the current note keys off
-    // Whether each PSG ch is currently sounding a note (att < 15). A PSG channel
+    // Whether each PSG ch is currently sounding a note (att under its off). A PSG channel
     // drones whenever its attenuation is non-silent, regardless of frequency, so
     // master/vol recomputes must NOT re-write a non-silent att to an idle channel
     // (that would un-silence it into a tone). Updated on every _psgSetAtt.
     this._psgSounding = new Array(PSG_LANES).fill(false);
     this._laneWave = new Array(PSG_LANES).fill(null); // the def-wave each wave lane plays (by name)
+    this._laneWaveHeld = new Array(PSG_LANES).fill(null); // a wave written under a note, for its next key-on (waveAtKeyOn)
     this._laneExpr = new Array(PSG_LANES).fill(null); // a lane's wave expression with $slots: { tree, slots, vals, nextFrame }
     this._drawnWaves = new Map(); // def-wave name → the steps the editor drew over it (setWave)
     // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
@@ -444,6 +445,7 @@ export class IRPlayer {
     this._toneEnc = this._toneEncodersOf(target, this._psgChip);
     this._chipsStarted.clear();
     this._laneWave.fill(null);
+    this._laneWaveHeld.fill(null);
     this._laneExpr.fill(null);
     this._drawnWaves.clear();
     // The FM core's level ladder (chips/parts.js `level`): its TL — the
@@ -547,7 +549,7 @@ export class IRPlayer {
     }
     // Silence all PSG channels
     for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) {
-      this._psgSetAtt(psgCh, 15);
+      this._psgSetAtt(psgCh, this._psgOff(psgCh));
     }
     // CSM keys CH3 from Timer A, which no key-off reaches: clear the mode
     // and the timer, or a stopped CSM voice keeps buzzing. Its operators were
@@ -590,6 +592,7 @@ export class IRPlayer {
     this._masterVol = VOL_UNITY;
     this._chipPcm = null; // the YM2608's sample voices' levels (_chipPcmFrames)
     this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
+    this._laneWaveHeld?.fill(null);
     this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
@@ -746,7 +749,7 @@ export class IRPlayer {
       this._write(w.port, w.addr, w.data, at);
     }
     for (let ch = 0; ch < this._fmEnc.channels; ch++) this._writeKeyOff(ch);
-    for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) this._psgSetAtt(psgCh, 15, at);
+    for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) this._psgSetAtt(psgCh, this._psgOff(psgCh), at);
     for (let v = 0; v < pcmVoices; v++) this._pcmEv(at, { kind: "off", voice: v });
     this._silenceChipPcm(at);
 
@@ -970,7 +973,7 @@ export class IRPlayer {
     }
     // PSG: force silent attenuation on an inaudible channel.
     for (const [ti, psgCh] of this._lanesOf("psg")) {
-      if (!this._isTrackAudible(ti)) this._psgSetAtt(psgCh, 15, when);
+      if (!this._isTrackAudible(ti)) this._psgSetAtt(psgCh, this._psgOff(psgCh), when);
     }
     // The DAC mix has no key: release an inaudible track's voice (its loop ends).
     for (const [ti, voice] of this._lanesOf("sample", "dac")) {
@@ -1077,7 +1080,7 @@ export class IRPlayer {
     } else if (core === "psg") {
       // PSG channels: silence by setting attenuation to 15 (max att = silent)
       this._psgKeyedUntil[ch] = Math.min(this._psgKeyedUntil[ch], when);
-      this._psgSetAtt(ch, 15, when);
+      this._psgSetAtt(ch, this._psgOff(ch), when);
     } else {
       if (ch === 2 && this._fm3Held) {
         // Release only the held FM3 operators; any timed operators stay keyed.
@@ -5037,7 +5040,7 @@ export class IRPlayer {
   _psgChipOf(target) {
     // The FM encoder goes along: a chip whose noise is an FM register (the
     // OPM's $0F) shares it.
-    return (target.chipForKind("tone") ?? target.chipForKind("noise"))?.psgEncoder(this._fmEnc) ?? null;
+    return (target.chipForKind("tone") ?? target.chipForKind("noise"))?.psgEncoder?.(this._fmEnc) ?? null;
   }
   // Each tone lane's { enc, ch, chip }: the PSG encoder `psg`'s lanes 0-3
   // (its own numbering), a wave chip's encoder for its channels. A lane the
@@ -5047,10 +5050,15 @@ export class IRPlayer {
     if (psg) for (let l = 0; l < 4; l++) lanes[l] = { enc: psg, ch: l, chip: null };
     const waveEnc = new Map();
     for (const c of Object.values(target.channels)) {
-      if (c.part.kind !== "wave") continue;
+      // A wave chip's channels, and its channels turned to noise (the PC
+      // Engine's fifth and sixth, chips/huc6280.js): the encoder's noise
+      // view, on a lane of the part's own.
+      const asNoise = c.part.kind === "noise" && c.part.toneLane;
+      if (c.part.kind !== "wave" && !asNoise) continue;
       const chip = target.chips[c.chip];
       if (!waveEnc.has(chip)) waveEnc.set(chip, chip.waveEncoder());
-      lanes[toneLaneOf(c)] = { enc: waveEnc.get(chip), ch: c.voice, chip };
+      const enc = waveEnc.get(chip);
+      lanes[toneLaneOf(c)] = { enc: asNoise ? enc.noise : enc, ch: c.voice, chip, part: c.part };
     }
     return lanes;
   }
@@ -5082,7 +5090,7 @@ export class IRPlayer {
     this._drawnWaves.set(name, [...data]);
     const when = this._audioContext?.currentTime ?? 0;
     this._laneWave.forEach((n, lane) => {
-      if (n === name) this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, data)), when);
+      if (n === name) this._writeLaneWave(lane, data, when);
     });
   }
 
@@ -5123,12 +5131,25 @@ export class IRPlayer {
     return end;
   }
 
+  // A wave onto a lane's channel memory. A chip that loads a wave with the
+  // channel off (the PC Engine's, chips/huc6280.js `waveAtKeyOn`) would cut
+  // the note sounding there, so under a note the wave is held to the lane's
+  // next key-on (_dispatchPsgEvent NOTE_ON); off, or on the SCC, it is
+  // written where it is named.
+  _writeLaneWave(lane, data, when) {
+    // Under a note: before its key-off (scheduled ahead of this write, so the
+    // sounding flag alone is already off), or into the next note of a slur.
+    const held = this._toneEnc[lane]?.part?.waveAtKeyOn && when < (this._psgKeyedUntil[lane] ?? 0) - 1e-6;
+    if (held) this._laneWaveHeld[lane] = data;
+    else this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, data)), when);
+  }
+
   // A lane's wave expression, evaluated with its slots as they are at `when`.
   _writeWaveExpr(lane, when) {
     const x = this._laneExpr[lane];
     const v = waveEval(x.tree, (name) => this._resolveSrc(name, when));
     const data = waveSteps(Array.isArray(v) ? v : new Array(WAVE.len).fill(v));
-    this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, data)), when);
+    this._writeLaneWave(lane, data, when);
   }
 
   // Each wave expression's frames up to `horizon`: one whose slots moved
@@ -5158,12 +5179,18 @@ export class IRPlayer {
   // Write attenuation for a PSG channel.
   // attReg: 0=max volume, 15=silent (hardware convention). A sounding SSG
   // lane on the envelope (:env) has the envelope for its level.
+  // The lane's silence: the last step of its part's ladder (the PSG's 15,
+  // the PC Engine's 31), which `_psgSetAtt` takes as the key-off.
+  _psgOff(psgCh) {
+    return (this._psgLevel[psgCh]?.steps ?? 16) - 1;
+  }
   _psgSetAtt(psgCh, attReg, when) {
-    const att = attReg & 0x0f;
+    const off = this._psgOff(psgCh);
+    const att = Math.max(0, Math.min(off, attReg | 0));
     // Track sounding state so master/vol recomputes don't un-silence idle channels.
-    this._psgSounding[psgCh] = att < 15;
-    const env = att < 15 && this._psgEnv[psgCh] >= 0;
-    this._psgWrites(this._lane(psgCh, (e, ch) => (env ? e.envLevel(ch) : e.att(ch, att)), att === 15), when);
+    this._psgSounding[psgCh] = att < off;
+    const env = att < off && this._psgEnv[psgCh] >= 0;
+    this._psgWrites(this._lane(psgCh, (e, ch) => (env ? e.envLevel(ch) : e.att(ch, att)), att === off), when);
   }
 
   // The SSG envelope's period for a cycle of `shape` at `hz`, moved `semi`
@@ -5182,7 +5209,7 @@ export class IRPlayer {
   // A PSG lane's attenuation, 0 loud .. 15 off, on its part's level ladder.
   _composePsgAtt(psgCh, vel, vol, master) {
     const level = this._psgLevel[psgCh];
-    if (!level || vol <= 0 || master <= 0) return 15; // no such lane here: silent
+    if (!level || vol <= 0 || master <= 0) return this._psgOff(psgCh); // no such lane here: silent
     if (level.scale === "linear") // a linear volume (the SCC's), upside down
       return level.steps - 1 - Math.round(levelGain({ vel, faders: [vol, master] }) * (level.steps - 1));
     return levelSteps(level, { vel, faders: [vol, master] });
@@ -5360,7 +5387,7 @@ export class IRPlayer {
     this._psgVolSweepWrites(psgCh, noteWhen, this._psgKeyedUntil[psgCh], baseVel);
     // Silence at the gate boundary; offWhen is null when the note holds or slurs
     // into the next (legato).
-    if (offWhen != null) this._psgSetAtt(psgCh, 15, offWhen);
+    if (offWhen != null) this._psgSetAtt(psgCh, this._psgOff(psgCh), offWhen);
   }
 
   // Write a PSG channel's :vol sweep frames in [fromWhen, untilWhen) — the
@@ -5565,7 +5592,7 @@ export class IRPlayer {
     const ends = [vel.end, vol.end].filter((e) => e !== null);
     const silenceAt = ends.length ? Math.max(...ends) : null;
     if (silenceAt !== null && offWhen != null && silenceAt < limitSecs - 1e-9) {
-      this._psgSetAtt(psgCh, 15, silenceAt);
+      this._psgSetAtt(psgCh, this._psgOff(psgCh), silenceAt);
     }
   }
 
@@ -5618,8 +5645,15 @@ export class IRPlayer {
           // tail) ends at this note-on, and if it was queued before a mute or
           // solo landed it would drone on.
           this._psgKeyedUntil[psgCh] = Math.min(this._psgKeyedUntil[psgCh], when);
-          this._psgSetAtt(psgCh, 15, when);
+          this._psgSetAtt(psgCh, this._psgOff(psgCh), when);
           break;
+        }
+        // A wave held under the note before (waveAtKeyOn): loaded now, with
+        // the channel off between the notes.
+        if (this._laneWaveHeld[psgCh]) {
+          const data = this._laneWaveHeld[psgCh];
+          this._laneWaveHeld[psgCh] = null;
+          this._psgWrites(this._lane(psgCh, (e, ch) => e.wave(ch, data)), when);
         }
 
         const isNoise = psgCh === 3; // the PSG's noise lane
@@ -5846,7 +5880,7 @@ export class IRPlayer {
           if (wave) {
             this._laneWave[psgCh] = wave.name;
             const data = this._drawnWaves.get(wave.name) ?? wave.data;
-            this._psgWrites(this._lane(psgCh, (e, ch) => e.wave(ch, data)), when);
+            this._writeLaneWave(psgCh, data, when);
           }
         } else if (psgTarget === "NOISE_MODE") {
           // Update the persistent noise mode. Re-asserted on every noise NOTE_ON;

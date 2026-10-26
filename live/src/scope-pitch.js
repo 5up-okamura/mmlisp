@@ -83,6 +83,25 @@ export function sccPitch(clock) {
 }
 
 /**
+ * The HuC6280's (port 0, chips/huc6280.js) frequencies: $00 selects the
+ * channel, $02 its low byte and $03 its high nibble; a channel's tone is
+ * the clock / 32 / f. On the page's wave lanes 10-15.
+ */
+export function pcePitch(clock) {
+  const freq = new Uint16Array(6);
+  let sel = 0;
+  return {
+    write(port, addr, data, out) {
+      if (port !== 0) return;
+      if (addr === 0x00) { sel = data & 7; return; }
+      if (sel > 5 || (addr !== 0x02 && addr !== 0x03)) return;
+      const f = (freq[sel] = addr === 0x02 ? (freq[sel] & 0xf00) | data : (freq[sel] & 0xff) | ((data & 15) << 8));
+      out[10 + sel] = clock / (32 * (f || 0x1000));
+    },
+  };
+}
+
+/**
  * The OPLL's (port 4, chips/ym2413.js) F-numbers: $10+c the low 8 bits,
  * $20+c the top bit and the block, as the chip reads them each sample. Its
  * channels 0-5 draw on lanes 0-5, 6-8 on 15-17 (synth-msx.js); a tone is

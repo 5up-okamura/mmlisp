@@ -2344,6 +2344,7 @@ those chips cannot do is a compile error, not a different sound.
 | `pc88` | NEC PC-8801 with Sound Board II: YM2608 (FM, SSG, rhythm, ADPCM-B) | VGM, WAV |
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 | `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
+| `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2715,3 +2716,49 @@ gate: a kick's or a tom's pitch-down (`(rhythm1 kick (macro :pitch+
 
 **Effects.** `def-se` is the Mega Drive driver's; an `msx` score has none
 (`E_TARGET`).
+
+### `pce`
+
+**`pce` exports VGM (1.61)** with the HuC6280's PSG at the PC Engine's
+3.58 MHz, and Play and WAV run a HuC6280 of the toolchain's own. There is
+no FM, no PSG square and no PCM: `fm1`, `sqr1`, `pcm1` and `noise` are
+`E_TARGET`, so are `:pan`, `:noise-rate` and `:mode`. The chip hears the
+song a frame (1/60 s) at a time, as on `msx`.
+
+**Waves.** `wave1`–`wave6` are the chip's six channels. Each plays a wave
+of 32 steps, which a `def-wave` names and a track switches to by naming it,
+as on the SCC — the same `def-wave`, `:wave` expressions and `$slot`
+waves (`msx` above), written at the chip's 5 bits (a −128..127 step is its
+top five). A channel plays a square until its track names a wave. The chip
+loads a wave with the channel off, so a wave named under a note is held to
+the channel's next key-on; between notes it is written where it is named.
+The level is the chip's 5-bit volume, 1.5 dB a step, vel + vol + master
+composed once onto it (§6). The pitch is the chip's 12-bit frequency
+(3.58 MHz / 32 / n), and every pitch move a PSG channel has works the same
+— `:pitch`, `(glide …)`, the pitch and `:semi` macros, `:snap`.
+
+```lisp
+(def-score :target pce)
+(def-wave saw :wave (saw -128..127))
+(def-wave soft :wave (sin -100..100))
+(wave1 saw :len 8 c e g > c < soft g e c e)
+(wave2 soft :len 2 (macro :pitch (sin -30..30 :len 8f)) e g)
+```
+
+**Noise.** `noise5` and `noise6` are channels 5 and 6 turned to noise:
+a score has `wave5` or `noise5`, `wave6` or `noise6` (`E_TARGET`). Each
+is pitched by its notes — the chip has 32 noise rates a channel, and a
+note picks one: c2 the slowest (its LFSR clocked at 1.8 kHz), each
+semitone the next, g4 the fastest — at the channel's level, with `:vel`,
+`:vol` and their macros as on a wave channel; `:pitch` moves of less than
+a semitone do nothing.
+
+```lisp
+(def-score :target pce)
+(noise5 :len 8 :oct 2 c c :vel 10 c c :oct 4 c _ c c)
+(noise6 :len 4 :oct 3 (macro :vel [15 10 5 0]) c c c c)
+```
+
+Not yet: DDA (a channel as a 5-bit DAC), the ch2 → ch1 LFO, and `:pan`
+on the chip's 4-bit left and right levels.
+

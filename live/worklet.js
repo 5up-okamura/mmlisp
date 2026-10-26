@@ -25,7 +25,7 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'scope-enable', on: boolean }
  *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
- *   { type: 'set-machine', name: 'md'|'pc88'|'x68k'|'msx' }  — the synth the
+ *   { type: 'set-machine', name: 'md'|'pc88'|'x68k'|'msx'|'pce' }  — the synth the
  *       writes play on (src/synth-md.js, src/synth-pc88.js, src/synth-x68k.js,
  *       src/synth-msx.js); a pc88's ports 0/1 are the YM2608's two address
  *       spaces, an x68k's port 0 the YM2151's one, an msx's the AY-3-8910's.

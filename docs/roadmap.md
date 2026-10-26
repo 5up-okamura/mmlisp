@@ -122,8 +122,11 @@ voices on the OPN/OPM family, square + noise — compiles for every target; a
 target's own features (FM3 special mode, SSG-EG, duty, waves) are a diagnostic
 on any other, and its own settings a warning.
 
-Built: the PC-8801 (`pc88`), the X68000 (`x68k`) and the MSX with the SCC
-and the FM-PAC (`msx`) — language.md §19. Next:
+Built: the PC-8801 (`pc88`), the X68000 (`x68k`), the MSX with the SCC
+and the FM-PAC (`msx`) and the PC Engine (`pce`: its waves and noise; DDA,
+the LFO and `:pan` on its left and right levels are still to come, and its
+song imports — Furnace / DefleMask's PCE as a `pce` score, the HuC6280's
+VGM) — language.md §19. Next:
 
 1. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
    without a level (the level model needs targets that have none), the

@@ -55,6 +55,20 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   `noise5` / `noise6`; fc `sqr1`-`sqr2`, `tri`, `noise`, `pcm1` (DPCM).
 - **pce's first build is the wave channels and the noise only** — DDA (the
   5-bit direct PCM) and the ch2 → ch1 LFO wait, as the SCC came in stages.
+  Built 2026-10-27 (chips/huc6280.js, targets/pce.js, synth-pce.js): the
+  chip's reading is MAME's c6280.cpp and Mednafen's pce_psg.cpp (fetched,
+  they agree): tone = clock / 32 / f, the LFSR clocked every (31 − n) × 64,
+  the volume 1.5 dB a step capped at the table's 48 dB with the L/R and
+  main levels added, a wave loaded with the channel off from a DDA 1 → 0
+  edge. Rulings built in: a noise note is a rate index (c2 slowest … g4),
+  not a Hz — the rates are LFSR clocks (1.8 kHz up), so a Hz mapping
+  would have put every note at rate 0; a `:wave` under a note is held to
+  the next key-on (ir-player `_writeLaneWave`, part `waveAtKeyOn`); a
+  score has wave5 or noise5 (the SSG's one-or-the-other rule). The PSG
+  core's off level is the lane's ladder's last step (`_psgOff`), no longer
+  15. Not yet listened to by the user: the synth's level against the other
+  machines (CHANNEL_GAIN) and the noise. Next for pce: `:pan` onto $05,
+  DDA, the LFO; Furnace / DefleMask → pce, the VGM importer's 0xB9.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 

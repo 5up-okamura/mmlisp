@@ -83,9 +83,9 @@ export const REFERENCE = [
     example: '(def-score :target x68k)\n(fm1 :lfo-freq 200 :lfo-pmd 40 :lfo-wave triangle :fms 4 :len 2 c e)',
   },
   {
-    name: ':target', aliases: ['pc88', 'x68k', 'msx', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
-    syntax: '(def-score :target md | pc88 | x68k | msx)',
-    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV.',
+    name: ':target', aliases: ['pc88', 'x68k', 'msx', 'pce', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
+    syntax: '(def-score :target md | pc88 | x68k | msx | pce)',
+    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV. pce is the PC Engine\'s HuC6280: six wave channels, wave1–wave6, two of them noise, as VGM and WAV.',
     insert: '(def-score :target pc88)',
     example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(rhythm1 :len 4 kick c c snare c c)',
   },
@@ -134,11 +134,18 @@ export const REFERENCE = [
     example: '(sqr1 :oct 5 :len 8 c e g e)',
   },
   {
-    name: 'wave1–wave5', aliases: ['wave1', 'wave2', 'wave3', 'wave4', 'wave5', 'scc', 'wavetable'], cat: 'channels', section: '§19', tracks: WAVE,
+    name: 'wave1–wave6', aliases: ['wave1', 'wave2', 'wave3', 'wave4', 'wave5', 'wave6', 'scc', 'wavetable'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target msx) (wave1 name …)',
-    summary: 'msx: the SCC\'s five wavetable channels. Each plays the def-wave named in it (a square until then), at a 4-bit volume; wave4 and wave5 share one wave memory.',
+    summary: 'msx: the SCC\'s five wavetable channels, wave1–wave5; pce: the HuC6280\'s six. Each plays the def-wave named in it (a square until then) — at a 4-bit volume on the SCC, where wave4 and wave5 share one wave memory; at a 5-bit one on pce, where a wave named under a note waits for its next key-on.',
     insert: '(wave1 :len 8 c e g e)',
     example: '(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(wave1 saw :len 8 c e g > c)',
+  },
+  {
+    name: 'noise5–noise6', aliases: ['noise5', 'noise6'], cat: 'channels', section: '§19', tracks: WAVE,
+    syntax: '(def-score :target pce) (noise5 …)',
+    summary: 'pce: the HuC6280\'s channels 5 and 6 turned to noise, in place of wave5 / wave6. A note picks one of the 32 rates: c2 the slowest, each semitone the next, g4 the fastest; the level is the channel\'s.',
+    insert: '(noise5 :len 8 :oct 3 c c c c)',
+    example: '(def-score :target pce)\n(noise5 :len 8 :oct 2 c c :vel 10 c c :oct 4 c _ c c)',
   },
   {
     name: 'noise', ctx: 'track', cat: 'channels', section: '§2', tracks: PSG,

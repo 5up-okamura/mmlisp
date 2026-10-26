@@ -3501,7 +3501,7 @@
       // YM2608's; on x68k the formants are sine waves on fm1's operators (the
       // hiss fm8's noise), on msx on the SCC's wave1–wave4 (the PSG's noise).
       const target = blankScoreTarget(withTempo);
-      const fm3 = target !== 'x68k' && target !== 'msx';
+      const fm3 = target !== 'x68k' && target !== 'msx' && target !== 'pce';
       const def = defaultResynthOptions(a, 'held', target);
       const fields = [
         { key: 'mode', label: 'Synthesis', type: 'select', value: def.mode, choices: fm3 ? RESYNTH_MODES : RESYNTH_MODES.filter(([m]) => m === 'sine') },
@@ -6601,7 +6601,7 @@
       { length: Math.max(...Object.values(TARGETS).flatMap((t) => t.headsOfKind('fm').map((h) => t.channels[h].voice + 1))) },
       (_, ch) => ({ kind: 'fm', ch, label: `F${ch + 1}` }));
     const TONE_SLOTS = Array.from({ length: TONE_LANES },
-      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5'][lane] ?? '' }));
+      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'N5', 'N6'][lane] ?? '' }));
     const NOISE_SLOT = TONE_SLOTS[toneLaneOf({ part: { kind: 'noise' } })]; // one channel: the keys play it alone
     const PCM_SLOT = { kind: 'pcm', label: '' };
     let selectedCh = null;                 // the selected strip's FM or tone slot, or null — drives the FM param panel
@@ -9974,7 +9974,7 @@
 
     function previewPsgNoteOff(psgCh) {
       if (!player || typeof player._psgSetAtt !== 'function') return;
-      player._psgSetAtt(psgCh, 15, audioCtx?.currentTime);
+      player._psgSetAtt(psgCh, player._psgOff(psgCh), audioCtx?.currentTime);
     }
 
     // A preview's own register write: it reaches a channel the keys hold over

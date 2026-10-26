@@ -1861,6 +1861,22 @@
   "regs": "d38e81b1547f3aa7",
   "vgm": "69ffba8389b33aa2"
  },
+ "tools/tests/pce/noise.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "12b27d107ee89887",
+  "regs": "5b3c853c40d56e01",
+  "vgm": "1e75dd9506553e11"
+ },
+ "tools/tests/pce/share.mmlisp": {
+  "diagnostics": "094e230e16d53635",
+  "ir": "feae5d40fc08c8c1"
+ },
+ "tools/tests/pce/wave.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "3f9599390de9bd9a",
+  "regs": "99086e28f991e61b",
+  "vgm": "6deb557acddde7e1"
+ },
  "tools/tests/x68k/fm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "6cc2c5c664ff7766",

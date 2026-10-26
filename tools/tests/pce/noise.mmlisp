@@ -1,0 +1,7 @@
+; pce: channels 5 and 6 as noise, each pitched by its notes; the waves beside
+; them on the other four.
+(def-score :target pce :title "pce noise")
+(def-wave saw :wave (saw -128..127))
+(wave1 :tempo 120 saw :len 4 c e g e |)
+(noise5 :len 8 :oct 2 c c :vel 10 c c :oct 5 c _ c c |)
+(noise6 :len 4 :oct 3 (macro :vel [15 10 5 0]) c c c c |)

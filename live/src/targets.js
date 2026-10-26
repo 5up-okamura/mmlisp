@@ -20,6 +20,7 @@ import md from "./targets/md.js";
 import pc88 from "./targets/pc88.js";
 import x68k from "./targets/x68k.js";
 import msx from "./targets/msx.js";
+import pce from "./targets/pce.js";
 
 const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10, wave: 10 };
 
@@ -80,7 +81,7 @@ function profile(def) {
   };
 }
 
-export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k), msx: profile(msx) };
+export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k), msx: profile(msx), pce: profile(pce) };
 export const DEFAULT_TARGET = "md";
 
 /** Why `target` cannot `play` or `encode` yet, or null when it can. */
@@ -95,11 +96,13 @@ export function notYet(target, what) {
 // The tone lanes: the IR player's (and the page's) channels with a pitch
 // and a level and nothing else to them — the PSG's three tones at 0-2, its
 // noise at 3 (the SSG's is a tone channel's mixer, the encoder's to map),
-// the wave channels from 4.
+// the wave channels from 4 — or where the part puts its channel
+// (`toneLane`: the PC Engine's two pitched noises, after its waves).
 const TONE_LANE_BASE = { tone: 0, noise: 3, wave: 4 };
 
 /** The tone lane of a channel table entry, or null for a part with none (FM, a sample). */
 export function toneLaneOf(c) {
+  if (c?.part.toneLane) return c.part.toneLane(c);
   const base = TONE_LANE_BASE[c?.part.kind];
   return base == null ? null : c.part.kind === "noise" ? base : base + c.voice;
 }
