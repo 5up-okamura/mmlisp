@@ -37,8 +37,13 @@
 //   t, #tempo       :tempo (BPM)
 //   FM rhythm       (track 15 in #opll_mode 1) rhythm1-rhythm5, a track a
 //                   sound — b s m c h as kick snare tom4 ride hat — each hit
-//                   at c4 until the sound's next (kf: the next of any);
-//                   v and vb … vh its :vol
+//                   ringing to the sound's next (kf: keyed off, :mode gate,
+//                   at the next of any); v and vb … vh its :vol
+//   y               on FM the user voice's registers ($00-$07) as the
+//                   OPLL's words after the @v voice; on the PSG the mixer
+//                   ($07) and the noise ($06); on the rhythm its levels
+//                   ($36-$38) and tunings ($16-$18, $26-$28, a hit's note,
+//                   c4 the datasheet's); any other is reported
 // Not yet: the PSG's hardware envelope (s, m) waits for its word; it, and
 // whatever else the file holds, is counted and reported.
 //
@@ -49,8 +54,9 @@
 // is v) and `n=c` stopping a step short; @r's level (E × (v + 1)) >> 8; k a
 // level step every k frames; `\` on the period the octave plays, @\ and @p
 // on the octave-1 one; FM's F-numbers kept in 172-344 by ±173 and a block;
-// p's fall; h's shape; q0 holding FM's key into the next note. Not measured:
-// the rhythm (ko / kf, a sound's ring), y.
+// p's fall; h's shape; q0 holding FM's key into the next note; the
+// rhythm's keys ($0E: ko adds a hit, kf keys the others off, the end all),
+// levels and tunings; y.
 //
 //   parseMgs(bytes)               → the song: header, definitions, tracks
 //   analyzeMgs(mgs)               → what the import dialog shows
@@ -209,6 +215,10 @@ function newState(kind) {
     oct: 4, len: 48, q: 8, k: 0, vol: 0, voice: null, env: null, mode: 1, nfreq: null, detune: 0, atDetune: 0, fmFine: 0,
     lfo: null, lfoOn: false, porta: null, fall: 0, sus: 0, kind,
     rvol: [0, 0, 0, 0, 0], kf: false, // the rhythm's levels (BD SD TOM CYM HH), and kf
+    // y: the user voice's registers this track has written since its @, and
+    // the rhythm's tuning (F-number and block of channels 7-9, the
+    // datasheet's to start: MGSDRV writes them once)
+    voiceRegs: {}, rtune: [[0x20, 2], [0x150, 2], [0x1c0, 0]],
   };
 }
 
@@ -234,6 +244,34 @@ function playTrack(mgs, track, skipped) {
     if (psg && env?.mode) { st.mode = env.mode; if (env.mode & 2) st.nfreq = env.nfreq; }
   };
   const tieLast = () => { const last = notes[notes.length - 1]; if (last && last.step + last.count === step) last.tieOn = true; };
+  // y r,d: what MGSDRV leaves standing (held to it on libkss) — the user
+  // voice's registers 0-7 on FM, until the next @; the noise (6) and the
+  // mixer (7) on the PSG; the rhythm's tuning (16-18, 26-28) and levels
+  // (36-38). Anything else the next note writes over, and is skipped.
+  const yWrite = (r, d) => {
+    if (kind === "fm" && !rhythm && r <= 7) { st.voiceRegs = { ...st.voiceRegs, [r]: d }; return; }
+    if (kind === "psg" && r === 6) { st.nfreq = d & 31; return; }
+    if (kind === "psg" && r === 7) {
+      const ch = track.index - 1, tone = !((d >> ch) & 1), noise = !((d >> (ch + 3)) & 1);
+      st.mode = (tone ? 1 : 0) | (noise ? 2 : 0);
+      return;
+    }
+    if (rhythm && ((r >= 0x16 && r <= 0x18) || (r >= 0x26 && r <= 0x28))) {
+      const ch = (r & 15) - 6;
+      const [f, b] = st.rtune[ch];
+      st.rtune = st.rtune.map((t, i) => (i !== ch ? t : r < 0x20 ? [(f & 0x100) | d, b] : [(f & 0xff) | ((d & 1) << 8), (d >> 1) & 7]));
+      return;
+    }
+    if (rhythm && r >= 0x36 && r <= 0x38) {
+      // BD in $36's low nibble; HH and SD in $37's high and low; TOM and
+      // CYM in $38's (attenuation: 15 - level).
+      const lv = { 0x36: [[0, 0]], 0x37: [[4, 4], [1, 0]], 0x38: [[2, 4], [3, 0]] }[r];
+      st.rvol = st.rvol.slice();
+      for (const [i, sh] of lv) st.rvol[i] = 15 - ((d >> sh) & 15);
+      return;
+    }
+    skip(`y${r},${d} on ${rhythm ? "the rhythm" : kind === "fm" ? "FM" : kind === "psg" ? "the PSG" : "the SCC"} (rewritten by the next note, or not read)`);
+  };
   const note = (n, count) => {
     const base = st.porta;
     st.porta = null;
@@ -277,7 +315,7 @@ function playTrack(mgs, track, skipped) {
     if (c >= 0x80 && c <= 0x9f) {
       // @n: tone n — the SCC's wave or the FM's voice, and on every channel
       // the envelope of its number, whose mode and noise the PSG takes now.
-      if (kind !== "psg") st.voice = c & 31;
+      if (kind !== "psg") { st.voice = c & 31; st.voiceRegs = {}; }
       setEnv(c & 31, kind === "psg");
     } else if (c >= 0xc0 && c <= 0xcf) {
       st.vol = c & 15;
@@ -344,7 +382,7 @@ function playTrack(mgs, track, skipped) {
       }
       case 0x5a: if (!rhythm) st.lfoOn = a1 !== 0; else st.kf = a1 !== 0; break; // ho / hf; ko / kf
       case 0x5b: st.sus = a1 ? 1 : 0; break;
-      case 0x5c: skip("y (a register write)"); break;
+      case 0x5c: yWrite(a1, u8[p + 2]); break;
       case 0x5d: if (!stack.length) dollar = { step }; else skip("a `$` inside a repeat"); break;
       case 0x60: break; // @m: a message
       case 0x61: skip("@o"); break;
@@ -513,22 +551,43 @@ function envelopeSpec(env, v, volOf, k = 0) {
 // The rhythm track's hits → rhythm1-rhythm5, a track a sound, in the key-on
 // bits' order (b s m c h). A sound rings until its next hit, which keys it
 // again; its level is its own `vb`… at the hit.
-const RHYTHM_SOUNDS = [[0x10, "kick", 0], [0x08, "snare", 1], [0x04, "tom4", 2], [0x02, "ride", 3], [0x01, "hat", 4]];
+const RHYTHM_SOUNDS = [[0x10, "kick", 0, 0], [0x08, "snare", 1, 1], [0x04, "tom4", 2, 2], [0x02, "ride", 3, 2], [0x01, "hat", 4, 1]];
+// A rhythm channel's tuning as the note that plays it: c4 is the datasheet's,
+// a semitone a step (the target tunes a hit by its note).
+const RHYTHM_C4 = [[0x20, 2], [0x150, 2], [0x1c0, 0]];
+const rhythmNote = (ch, [f, b]) => 60 + Math.round(12 * Math.log2(((f || 1) * 2 ** b) / (RHYTHM_C4[ch][0] * 2 ** RHYTHM_C4[ch][1])));
 function rhythmTracks(tr, tick) {
   const out = [];
-  RHYTHM_SOUNDS.forEach(([bit, role, lv]) => {
+  RHYTHM_SOUNDS.forEach(([bit, role, lv, ch]) => {
     const hits = tr.notes.filter((n) => n.rhythm & bit);
     if (!hits.length) return;
     const endTick = tick(tr.end);
+    // ko: a sound rings to its own next hit; kf: is keyed off at the next
+    // hit of any. A hit under kf keys off every other sound, and the
+    // driver keys all off at the track's end: those notes end as `:mode
+    // gate`, the others ring on.
+    const cut = (n) => (n.st.kf ? tr.notes.find((m) => m.step > n.step) : tr.notes.find((m) => m.step > n.step && m.st.kf))?.step ?? (tr.loopStep == null ? tr.end : Infinity);
+    const ends = hits.map((n, k) => { const own = hits[k + 1]?.step ?? tr.end, c = cut(n); return c < own || (c === own && !hits[k + 1]) ? [c, true] : [own, false]; });
+    const gated = ends.some(([, g]) => g);
     const notes = hits.map((n, k) => {
-      // ko: a sound rings to its own next hit; kf: to the next hit of any.
-      const next = (n.st.kf ? tr.notes.find((m) => m.step > n.step)?.step : hits[k + 1]?.step) ?? tr.end;
-      return { tick: tick(n.step), len: Math.max(1, tick(next - n.step)), midi: 60, vel: 15, state: [role, `:vol ${ssgVol(n.st.rvol[lv])}`] };
+      const [next, gate] = ends[k];
+      const state = [role, `:vol ${ssgVol(n.st.rvol[lv])}`];
+      if (gated) state.push(`:mode ${gate ? "gate" : "shot"}`);
+      return { tick: tick(n.step), len: Math.max(1, tick(next - n.step)), midi: rhythmNote(ch, n.st.rtune[ch]), vel: 15, state };
     });
     const marks = !out.length ? tr.tempos.map((tm) => ({ tick: tick(tm.step), tokens: [`:tempo ${mgsBpm(tm.bpm)}`] })) : [];
     out.push({ channel: `rhythm${out.length + 1}`, notes, marks, endTick, loopTick: tr.loopStep != null ? tick(tr.loopStep) : null });
   });
   return out;
+}
+
+// One of the user voice's registers ($00-$07) as the words that set it.
+function opllRegWords(r, d) {
+  if (r <= 1) { const k = r + 1; return `:am${k} ${d >> 7} :vib${k} ${(d >> 6) & 1} :eg${k} ${(d >> 5) & 1} :ks${k} ${(d >> 4) & 1} :ml${k} ${d & 15}`; }
+  if (r === 2) return `:ksl1 ${d >> 6} :tl1 ${d & 63}`;
+  if (r === 3) return `:ksl2 ${d >> 6} :ws2 ${(d >> 4) & 1} :ws1 ${(d >> 3) & 1} :fb ${d & 7}`;
+  const k = (r & 1) + 1;
+  return r <= 5 ? `:ar${k} ${d >> 4} :dr${k} ${d & 15}` : `:sl${k} ${d >> 4} :rr${k} ${d & 15}`;
 }
 
 /**
@@ -643,7 +702,14 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const state = [];
       const wave = x?.wave ?? st.voice;
       // An envelope's leading @n sets the tone's voice or wave at the key-on.
-      if (isFm) { const vn = x?.wave ?? st.voice; const v = vn != null ? fmVoice(vn) : null; if (v) state.push(v); state.push(`:sus ${st.sus}`); }
+      if (isFm) {
+        const vn = x?.wave ?? st.voice; const v = vn != null ? fmVoice(vn) : null;
+        if (v) state.push(v);
+        const regs = Object.entries(st.voiceRegs);
+        if (regs.length && v && OPLL_ROM_NAMES.includes(v)) skip("y on the user voice while the track plays a ROM voice");
+        else for (const [r, d] of regs) state.push(opllRegWords(Number(r), d));
+        state.push(`:sus ${st.sus}`);
+      }
       else if (!isPsg && wave != null) { const w = waveName(wave); if (w) state.push(w); }
       if (isPsg) {
         const mix = x ?? { mode: null, nfreq: null };

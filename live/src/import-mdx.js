@@ -3,8 +3,11 @@
 //
 // MDX is MXDRV's compiled song for the X68000: eight FM tracks on the YM2151
 // (A-H) and the ADPCM (track 9, or tracks 9-16 under PCM8), each a stream of
-// notes and commands timed in clocks (48 a quarter, so a clock is two MMLisp
-// ticks — the import is exact, no tempo is estimated). The tracks are played
+// notes and commands timed in clocks — 48 a quarter as MXDRV's MML has it,
+// but a song is written on whatever grid its composer chose, and the import
+// reads the quarter off the notes (analyzeMdx: 176-clock bars are 44 a
+// quarter, so its notes are 8ths and 16ths, its tempo 48/44 faster); the
+// timing is exact, no tempo is estimated. The tracks are played
 // as MXDRV plays them (its 68000 code as portable_mdx ports it — where
 // mdxmini's mdxmml_ym2151.c differs, MXDRV's is followed):
 // repeats unrolled, each track up to its own loop (`L`, a jump back at its
@@ -49,7 +52,9 @@ import { fmVoiceDef } from "./import-fm-voices.js";
 import { decodeOki } from "./import-vgm.js";
 import { encodeWav } from "./export-wav.js";
 
-const TICKS_PER_CLOCK = PPQN / 48;
+// MXDRV's clock: 48 a quarter at Timer B's rate — the grid the file's
+// timing is read against, unless its notes sit on another (analyzeMdx).
+const CLOCKS_PER_QUARTER = 48;
 // v0-v15 as TL added to the carriers (MXDRV's table).
 const V_ATTEN = [42, 40, 37, 34, 32, 29, 26, 24, 21, 18, 16, 13, 10, 8, 5, 2];
 const TL_DB = 0.75;
@@ -72,7 +77,8 @@ const be16 = (u8, p) => (u8[p] << 8) | u8[p + 1];
 const s16 = (u8, p) => { const v = be16(u8, p); return v >= 0x8000 ? v - 0x10000 : v; };
 const sjis = (u8) => { try { return new TextDecoder("shift-jis").decode(u8); } catch { return String.fromCharCode(...u8); } };
 const round2 = (x) => (Math.abs(x - Math.round(x)) < 0.005 ? Math.round(x) : +x.toFixed(2));
-export const mdxBpm = (tb) => round2(4882.8125 / (256 - Math.min(255, tb)));
+export const mdxBpm = (tb, quarter = CLOCKS_PER_QUARTER) =>
+  round2((4882.8125 / (256 - Math.min(255, tb))) * (CLOCKS_PER_QUARTER / quarter));
 
 // Bytes each command takes after its own (MDX command set, mdx.h).
 function cmdLength(u8, p) {
@@ -325,9 +331,31 @@ export function analyzeMdx(mdx) {
     const name = pcm ? (mdx.pcm8 ? `PCM ${t.index - 7}` : "ADPCM") : `FM ${TRACK_NAMES[t.index]}`;
     return { ...t, ...r, pcm, name, label: `${name} · ${r.notes.length} notes${r.loopClock != null ? ", loops" : ""}` };
   });
+  const quarter = quarterOf(tracks);
   // At clock 0 the tracks run in order: the last track's tempo is the one in force.
   const tempo = tracks.flatMap((t) => t.tempos).filter((t) => t.clock === 0).pop();
-  return { tracks, skipped, bpm: mdxBpm(tempo ? tempo.tb : 200) };
+  return { tracks, skipped, quarter, bpm: mdxBpm(tempo ? tempo.tb : 200, quarter) };
+}
+
+// The quarter note in clocks: the coarsest grid nine notes in ten sit on
+// (onset and length — a run of 7- and 9-clock notes, a grace, a `k`, are
+// the tenth), times 2^k · 3^j where that lands nearest MXDRV's 48 — so a
+// song on MXDRV's own grid (a 16th 12 clocks, a triplet 8) reads as 48,
+// and one its composer wrote on 22-clock 8ths (176-clock bars) as 44.
+function quarterOf(tracks) {
+  const vals = tracks.flatMap((t) => t.notes.flatMap((n) => [n.clock, n.count]));
+  let g = 1;
+  for (let u = CLOCKS_PER_QUARTER; u > 2; u--) {
+    if (vals.filter((v) => v % u === 0).length >= vals.length * 0.9) { g = u; break; }
+  }
+  if (g === 1) return CLOCKS_PER_QUARTER;
+  let best = CLOCKS_PER_QUARTER, err = Infinity;
+  for (const j of [1, 3])
+    for (let q = g * j; q < CLOCKS_PER_QUARTER * 2; q *= 2) {
+      const e = Math.abs(Math.log(q / CLOCKS_PER_QUARTER));
+      if (e < err) { err = e; best = q; }
+    }
+  return best;
 }
 
 // ── Writing ───────────────────────────────────────────────────────────────
@@ -342,15 +370,16 @@ const cents = (kf) => Math.round((kf * 100) / 64);
 // a square ±depth, a triangle a period of 2P rising first — as a :pitch+
 // curve; the volume LFO (MA; depth/256 TL a clock) only ever quieter, from 0,
 // as a :vel+ one. Its random shape (3) is left out.
-const t2 = (n) => `${n * TICKS_PER_CLOCK}t`;
-function pitchLfoCurve({ form, clock: P, depth }) {
+function pitchLfoCurve({ form, clock: P, depth }, tick) {
+  const t2 = (n) => `${tick(n)}t`;
   const u = (x) => Math.round((x * 100) / 64 / 256); // cents
   if (form === 0) { const a = u((depth * P) / 2); return a ? `(saw ${-a}..${a} :len ${t2(P)} :phase 128)` : null; }
   if (form === 1) { const a = u(depth); return a ? `(square ${a}..${-a} :len ${t2(P * 2)})` : null; }
   if (form === 2) { const a = u((depth * P) / 2); return a ? `(triangle ${-a}..${a} :len ${t2(P * 2)} :phase 64)` : null; }
   return null;
 }
-function volLfoCurve({ form, clock: P, depth }) {
+function volLfoCurve({ form, clock: P, depth }, tick) {
+  const t2 = (n) => `${tick(n)}t`;
   const v = (tl) => -Math.round(((Math.abs(tl) / 256) * TL_DB * 100) / VEL_DB) / 100; // :vel steps, quieter
   if (form === 0) { const a = v(depth * P); return a ? `(saw 0..${a} :len ${t2(P)})` : null; }
   if (form === 1) { const a = v(depth); return a ? `(square 0..${a} :len ${t2(P * 2)})` : null; }
@@ -439,7 +468,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       channel = `pcm${tr.index - 7}`;
     } else channel = tr.index === 7 && hToNoise ? "noise" : `fm${tr.index + 1}`;
     const isNoise = channel === "noise";
-    const tick = (c) => c * TICKS_PER_CLOCK;
+    const tick = (c) => Math.round((c * PPQN) / a.quarter);
     const notes = [];
     let prev = null; // the note before, as played
     let detuned = false; // a D seen: from then on every note states its :pitch, 0 too
@@ -498,17 +527,17 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
           if (total) pitch.push(`(linear 0..${total} :len ${tick(n.count)}t)`);
         }
         if (st.plfo) {
-          const c = pitchLfoCurve(st.plfo);
+          const c = pitchLfoCurve(st.plfo, tick);
           if (c) pitch.push(waited(c));
         }
       }
       if (pitch.length > 1) skip("a portamento under the pitch LFO (the LFO is dropped for that note)");
       state.push(pitch.length ? `(macro :pitch+ ${pitch[0]})` : "(macro :pitch none)");
       if (!tr.pcm && st.alfo) {
-        const c = volLfoCurve(st.alfo);
+        const c = volLfoCurve(st.alfo, tick);
         state.push(c ? `(macro :vel+ ${waited(c)})` : "(macro :vel none)");
       } else if (!tr.pcm) state.push("(macro :vel none)");
-      const note = { tick: at, len: tick(len), midi, vel, state, tieIn: legato && !tr.pcm };
+      const note = { tick: at, len: Math.max(1, tick(n.clock + delay + len) - at), midi, vel, state, tieIn: legato && !tr.pcm };
       notes.push(note);
       // A tie starts nothing — its moves are read at the note it continues —
       // so a portamento on a tied note starts there, :wait'ed to its place.
@@ -525,7 +554,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     });
     if (!notes.length) continue;
     const marks = [];
-    for (const tm of tr.tempos) marks.push({ tick: tick(tm.clock), tokens: [`:tempo ${mdxBpm(tm.tb)}`] });
+    for (const tm of tr.tempos) marks.push({ tick: tick(tm.clock), tokens: [`:tempo ${mdxBpm(tm.tb, a.quarter)}`] });
     const endTick = tick(tr.end);
     const loopTick = tr.loopClock != null ? tick(tr.loopClock) : null;
     // The tempo in force where the track loops is restated there.
@@ -564,18 +593,18 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     if (add.length) {
       // A track's marks are its tempos: the host's are written again, all of
       // them, one a tick, and the one in force restated at its loop.
-      const tick = (c) => c * TICKS_PER_CLOCK;
+      const tick = (c) => Math.round((c * PPQN) / a.quarter);
       const at = new Map();
       for (const tm of [...host.tr.tempos, ...add].sort((x, y) => x.clock - y.clock)) at.set(tick(tm.clock), tm.tb);
       if (host.loopTick != null && !at.has(host.loopTick)) {
         const before = [...at].filter(([t]) => t < host.loopTick).pop();
         if (before) at.set(host.loopTick, before[1]);
       }
-      host.marks = [...at].sort((x, y) => x[0] - y[0]).map(([t, tb]) => ({ tick: t, tokens: [`:tempo ${mdxBpm(tb)}`] }));
+      host.marks = [...at].sort((x, y) => x[0] - y[0]).map(([t, tb]) => ({ tick: t, tokens: [`:tempo ${mdxBpm(tb, a.quarter)}`] }));
     }
   }
   if (songOut.length && !songOut.some((t) => t.marks.some((m) => m.tick === 0)))
-    songOut[0].marks.unshift({ tick: 0, tokens: [`:tempo ${mdxBpm(200)}`] });
+    songOut[0].marks.unshift({ tick: 0, tokens: [`:tempo ${mdxBpm(200, a.quarter)}`] });
 
   // The samples' wav, at the chip's own scale. A note at another rate than
   // its sample's is that many semitones off c4; a sample PCM8 plays louder

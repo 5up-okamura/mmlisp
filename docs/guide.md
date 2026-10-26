@@ -1758,8 +1758,10 @@ them: a key-on starts a note, a key-off ends it.
 MGSDRV (`.mgs`, MGSARC's compressed form too) is played as its driver plays
 it — repeats unrolled, each track up to its own loop point or its end — and
 written for the song's own machine: an MDX as an `x68k` score, an MGS as an
-`msx` one. Both count in steps of 48 a quarter, so the timing is exact (no
-tempo is estimated) and the tempo commands become `:tempo`. Each track keeps
+`msx` one. Both count in clocks, 48 a quarter, so the timing is exact (no
+tempo is estimated); an MDX whose notes sit on another grid (176-clock
+bars: 44 a quarter) is read on that one, its notes 8ths and 16ths and its
+tempo scaled to match and the tempo commands become `:tempo`. Each track keeps
 its own loop, `#top … (go top)`, as the drivers loop each track on its own.
 
 - **MDX:** FM A–H go to `fm1`–`fm8`, each voice a `def-fm` with its DT2 (and
@@ -1794,9 +1796,12 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   `:sus`, and `q0` holds a note to the next `/`. `q` and `&` set the
   lengths, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento
   and `p` a fall. The rhythm track goes to `rhythm1`–`rhythm5`, a track a
-  sound (`b s m c h` as `kick snare tom4 ride hat`), each hit at c4 ringing
-  to the sound's next (`kf`: to the next hit of any), `v` and `vb` … `vh`
-  its `:vol`. The PSG's hardware envelope is not imported yet; the log
+  sound (`b s m c h` as `kick snare tom4 ride hat`), each hit ringing
+  to the sound's next (`kf`: keyed off at the next hit of any, `:mode
+  gate`), `v` and `vb` … `vh` its `:vol`. `y` is read where MGSDRV reads
+  it: the user voice's registers as the OPLL's words after its `def-fm`,
+  the PSG's mixer and noise, the rhythm's levels and tunings (a hit's
+  note, c4 the chip's datasheet tuning). The PSG's hardware envelope is not imported yet; the log
   counts what was left out.
 
 **A MIDI, VGM, MDX or MGS import is structured** (a MIDI or VGM import's

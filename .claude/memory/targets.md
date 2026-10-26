@@ -124,8 +124,10 @@ Next:
   out of the repo) sounding agrees 86-100% a channel, pitch within 50 cents
   92-100% (a PSG drum part 51%: tones near the period's floor, where our
   exact pitch and the driver's integer period part), levels within a step.
-  What is left is a frame of phase on short notes. Not compared: the
-  rhythm (the tool reads no $0E), y writes.
+  What is left is a frame of phase on short notes. The rhythm is held to
+  $0E's key bits (ko / kf, the end's all-off; Grider and Contrail agree
+  99.8-100% a frame), $36-$38's levels and $16-$28's tunings, and y to the
+  driver's register writes (a user voice's $00-$07, the PSG's $06/$07).
 - A secondary source (an AI answer) had `/` `\` `_` in an envelope as volume
   moves or a loop and a rhythm hit's digits as its level: the reference
   says otherwise — not to be re-read from such a source.
@@ -148,4 +150,12 @@ Next:
   the import at 60 Hz), `v` rounded to :vel's 2 dB (≤ 1 dB), a looping
   tempo-only track averaged (≤ 1 % over its loop). The x68k synth's
   FM : PCM8 balance was measured on the same build (X68Sound: a TL 0
-  carrier 3660/32768, PCM8 volume 8 at full scale 26886/32768).
+  carrier 3660/32768, PCM8 volume 8 at full scale 26886/32768). The
+  quarter read off the notes (quarterOf) was checked on the Sho set
+  (g_shomdx2: 176-clock bars, 44 a quarter; two tracks carry 7-9-clock
+  runs, hence the nine-in-ten rule).
+- Open: the IR player puts every target's tempo through `drvBpm` (the
+  driver's fixed point), so a VGM target plays 0.02-0.04 % off its BPM
+  (120 → 0.500122 s a beat; 150 exact) — 50 ms over a 2.5-minute MDX
+  against MXDRV. Harmless to the ear; exact tempo for a driver-less target
+  would be the fix, and would move the pc88/x68k/msx snapshot hashes.
