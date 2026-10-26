@@ -69,11 +69,9 @@ Its current limits are `driver.md` §11 — keep the two in step.
   choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
   the matrix.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
-- **MGS**: the PSG's hardware envelope (`s`, `m`) once it is a word; the
-  rhythm's `ko` / `kf`; an envelope's wave changes as it runs (a note keeps the first),
+- **MGS**: an envelope's wave changes as it runs (a note keeps the first),
   `#psg_tune` / `#opll_tune`, `@\` on FM.
-- **MDX**: sync between tracks (`$EF`/`$EE`, the tracks run free), the
-  OPM LFO's sync, MP / MA's random shape, and their phase: MXDRV restarts
+- **MDX**: the OPM LFO's sync, MP / MA's random shape, and their phase: MXDRV restarts
   them at a note only under an MD, where the import restarts them always.
 - **VGM**: tempo changes within a song (one grid serves the whole file — Dino
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
@@ -121,58 +119,10 @@ voices on the OPN/OPM family, square + noise — compiles for every target; a
 target's own features (FM3 special mode, SSG-EG, duty, waves) are a diagnostic
 on any other, and its own settings a warning.
 
-In order:
+Built: the PC-8801 (`pc88`), the X68000 (`x68k`) and the MSX with the SCC
+and the FM-PAC (`msx`) — language.md §19. Next:
 
-1. **PC-8801 SB2 (YM2608): the sound.** A `:target pc88` score compiles,
-   exports VGM 1.51 — FM, the SSG, the rhythm and the ADPCM-B with its
-   RAM image — and plays and renders WAV through ymfm's YM2608, its rhythm
-   from the user's own ROM or, without one, the kit's `:file`s in the ROM's
-   layout (language.md §19; the
-   profile is `live/src/targets/pc88.js`, the chip `live/src/chips/ym2608.js`,
-   the synth `live/src/synth-pc88.js`, the scores `tools/tests/pc88/`). The
-   mucom importer's pc88 scores hold to the real driver's VGM (the A/B the
-   importer was tuned with): FM keys and pitch, the rhythm's hits, levels
-   and pan, the SSG's mixer, its levels and `E` envelopes (released from
-   where they are, silent where mucom's are), K's notes, level, pan, `D` and
-   `vm<n>`. The differences kept are the model's: a `v` move inside a tie
-   is a fader step where mucom's level × (v+1) moves less near the sustain;
-   an `E` tail and a rhythm hit stop at the level's floor (`:vel` 30 dB,
-   the IL 23 dB down) where mucom's go lower; mucom's Delta-N table, a few
-   cents sharp of equal temperament, is not reproduced.
-2. **X68000 (YM2151 + MSM6258).** A `:target x68k` score compiles, exports
-   VGM and plays and renders WAV through ymfm's YM2151: `fm1`–`fm8` with
-   `:dt2-N` and the OPM's LFO, and `noise` on fm8's fourth operator
-   (language.md §19; the profile is `live/src/targets/x68k.js`, the chip
-   `live/src/chips/ym2151.js`, the synth `live/src/synth-x68k.js`, the scores
-   `tools/tests/x68k/`), and `pcm1`–`pcm8` are PCM8's voices mixed into the
-   MSM6258's ADPCM stream (`live/src/chips/msm6258.js`). A `.opm` voice bank
-   imports its voices with DT2, and a YM2151's VGM imports as an `x68k`
-   score, its noise on `noise` and its OKIM6258 samples on PCM8. **Songs
-   in:** MXDRV's `.mdx` (with its `.pdx` ADPCM), read as the binary it is
-   — its MML sources are rarely published, the format is documented and
-   carries its voices — held to mdxmini's register log; ZMUSIC follows
-   only if MDX leaves a need.
-3. **MSX: PSG and SCC.** A `:target msx` score compiles, exports VGM and
-   plays and renders WAV: the PSG through ymfm's SSG — `sqr1`–`sqr3` and
-   `noise`, the SSG profile again — and the SCC cartridge through the
-   toolchain's own K051649 — `wave1`–`wave5`, each playing a `def-wave`
-   (language.md §19; the profile is `live/src/targets/msx.js`, the chips
-   `live/src/chips/ay8910.js` and `k051649.js`, the synth
-   `live/src/synth-msx.js`, the scores `tools/tests/msx/`). The PSG's
-   hardware envelope is not a word yet. The SCC is the *wavetable* voice
-   class, which the PC Engine, the FDS and the Game Boy share later; its
-   channels are named by the class so those machines reuse them, and a wave
-   is 32 signed 8-bit steps in the IR, which a chip of fewer bits reads
-   down. A wave editor in Live is still to come. The FM-PAC (OPLL: 2-op,
-   fifteen ROM voices and one user voice) plays `fm1`–`fm9` on `def-fm`
-   (language.md §19; the chip `live/src/chips/ym2413.js`, ymfm's YM2413 on
-   the worklet's port 4, VGM `0x51`, the scores `tools/tests/msx/`); its
-   rhythm mode comes next, then a 2-op editor in Live's panel
-   (`.claude/memory/targets.md` holds the plan); MSX-Audio is left out.
-   **Songs in:** MGSDRV's MML (MGSC), the MSX's most-written driver, whose
-   PSG + SCC + OPLL is this target's set — read as mucom's `.muc` is, held
-   to MGSDRV's own register log (msxplay.js runs its compiler and driver).
-4. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
+1. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
    without a level (the level model needs targets that have none), the
    noise's two modes, and the DPCM as a one-voice kit of user samples at
    sixteen fixed rates. Expansions are decided by voice class, not one by one:

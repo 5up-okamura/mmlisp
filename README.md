@@ -1,11 +1,12 @@
 # MMLisp
 
-MMLisp is a Lisp-like music language for the Sega Mega Drive (YM2612 FM +
-SN76489 PSG). You write scores as s-expressions, audition them instantly in a
-browser authoring environment running a cycle-accurate chip emulator, and
-compile them to a compact binary for a Mega Drive sound driver — with a design
-built around *interactive* music: tracks that start, stop, layer, and respond to
-game state at runtime.
+MMLisp is a Lisp-like music language for retro sound chips, built first for the
+Sega Mega Drive (YM2612 FM + SN76489 PSG). You write scores as s-expressions,
+audition them instantly in a browser authoring environment running the chips'
+emulators, and compile them to a compact binary for a Mega Drive sound driver —
+with a design built around *interactive* music: tracks that start, stop, layer,
+and respond to game state at runtime. The same language writes for the
+PC-8801, the X68000 and the MSX, auditioned in the browser and exported as VGM.
 
 - **Try it now:** https://mmlisp.com/
 - **Playback driver:** MMLispDRV (68k sequencer + Z80 PCM/write engine, SGDK
@@ -21,30 +22,19 @@ game state at runtime.
   never pays for them. A programming language's expressiveness, aimed at the
   YM2612 + PSG.
 - **Hear it instantly, accurately.** [MMLisp Live](https://mmlisp.com/)
-  auditions your score in the browser through a cycle-accurate **Nuked-OPN2**
-  (YM2612) core — the same register writes the real chip sees — and hot-swaps
+  auditions your score in the browser through the chips' emulators — a
+  cycle-accurate **Nuked-OPN2** for the YM2612, **ymfm** for the other
+  machines' — fed the same register writes the real chips see, and hot-swaps
   the recompiled score without stopping playback.
-- **Turn a recording into FM.** Give MMLisp Live a recording — WAV, MP3, M4A,
-  FLAC — and the chip plays it back, two ways. **Audio on FM3** follows the
-  sound's four spectral peaks frame by frame on FM3's four operators: under
-  CSM the buzz through them is a vocoder's voice — say a phrase and the Mega
-  Drive says it back — and as sine waves it is sine-wave speech. **Audio as FM
-  Voice** searches a model of the YM2612 for a patch: give it one recorded
-  note — a bass, an electric piano, a bell, a snare — and it offers three
-  voices, nearest first, to hear against the recording and play on the
-  keyboard before one goes into the score.
-  Voices and songs import too: DefleMask, Furnace, TFI / VGI / OPNI, mucom88,
-  MIDI, VGM, MDX (X68000), MGS (MSX) and a SoundFont's drum kit.
-- **Compose with an AI.** An [MCP server](tools/mcp/README.md) gives Claude
-  Code, Claude Desktop or any MCP client the language reference, the real
-  compiler's diagnostics and WAV renders — and, with **Tools > Connect to AI**,
-  the score open in MMLisp Live: the AI edits it and plays it while you listen,
-  every change one undo away. Plain text scores are a language an AI can write.
 - **The whole chip, as language.** Per-operator envelope and LFO macros,
   cent-accurate glide and vibrato, chiptune arpeggios (`:semi`) and drum rolls
   (`:keyon`), **FM3 independent-operator mode** and CSM, and samples on the
   fm6 DAC (`pcm1`–`pcm3`, one to three voices) — advanced YM2612 techniques
   you write, not hand-poke, in the browser and on the driver alike.
+- **Beyond the Mega Drive.** `(def-score :target pc88)`, `x68k` or `msx`
+  holds a score to the PC-8801, the X68000 or the MSX: their chips' own
+  channels and words, auditioned in Live and exported as VGM — see
+  [Machines](#machines).
 - **Interactive by design.** Tracks start, stop, layer and fade at runtime,
   sound effects take channels from the song and give them back, and `def-val`
   slots let game code drive parameters live via `$name` — in Live, an XY pad
@@ -56,15 +46,46 @@ game state at runtime.
   checked **byte-for-byte** against the JS reference at zero tolerance — what
   you hear in the browser is what the driver emits. SGDK integration included;
   verified in emulation and played on hardware.
-- **Beyond the Mega Drive: the PC-8801.** The same language writes for the
-  PC-8801's Sound Board II (YM2608) with `(def-score :target pc88)`: FM, the
-  SSG, the ROM rhythm and the ADPCM-B, auditioned in Live through **ymfm**'s
-  YM2608 and exported as a VGM — and a mucom88 song imports as the chip has
-  it. The rhythm ROM is Yamaha's and not included: Live plays your own, or
-  stands the score's kit in for it. The X68000's YM2151 follows with
-  `(def-score :target x68k)`: eight FM channels with DT2 and the OPM's LFO,
-  its noise, and PCM8's eight voices mixed into the MSM6258's ADPCM, and the
-  MSX's PSG with `(def-score :target msx)`. Other machines are on the [roadmap](docs/roadmap.md).
+- **Turn a recording into FM.** Give MMLisp Live a recording — WAV, MP3, M4A,
+  FLAC — and the chip plays it back, two ways. **Audio on FM3** follows the
+  sound's four spectral peaks frame by frame on FM3's four operators: under
+  CSM the buzz through them is a vocoder's voice — say a phrase and the Mega
+  Drive says it back — and as sine waves it is sine-wave speech. **Audio as FM
+  Voice** searches a model of the YM2612 for a patch: give it one recorded
+  note — a bass, an electric piano, a bell, a snare — and it offers three
+  voices, nearest first, to hear against the recording and play on the
+  keyboard before one goes into the score.
+- **Bring songs and voices in.** DefleMask, Furnace, TFI / VGI / OPNI,
+  mucom88, MIDI, VGM and a SoundFont's drum kit import as scores and voices.
+  Driver songs import for their own machine as their driver plays them —
+  MDX (X68000) held to MXDRV, MGS (MSX) to MGSDRV, mucom88 (PC-8801) to
+  mucom88, each compared against the driver frame by frame — and come out
+  as readable scores, their repeats folded back into loops and definitions.
+- **Compose with an AI.** An [MCP server](tools/mcp/README.md) gives Claude
+  Code, Claude Desktop or any MCP client the language reference, the real
+  compiler's diagnostics and WAV renders — and, with **Tools > Connect to AI**,
+  the score open in MMLisp Live: the AI edits it and plays it while you listen,
+  every change one undo away. Plain text scores are a language an AI can write.
+
+## Machines
+
+| `:target` | Machine | Chips | In Live | Out |
+| --- | --- | --- | --- | --- |
+| `md` (default) | Sega Mega Drive | YM2612 FM + DAC PCM, SN76489 PSG | Nuked-OPN2, Nuked-PSG | MMB for MMLispDRV, VGM, WAV |
+| `pc88` | PC-8801 + Sound Board II | YM2608: FM, SSG, ROM rhythm, ADPCM-B | ymfm | VGM, WAV |
+| `x68k` | X68000 | YM2151 FM, MSM6258 ADPCM (PCM8's eight voices) | ymfm | VGM, WAV |
+| `msx` | MSX + SCC + FM-PAC | AY-3-8910 PSG, Konami SCC, YM2413 FM | ymfm, the SCC's own | VGM, WAV |
+
+The Mega Drive has a driver for games (below); the other machines are
+composed in Live and delivered as VGM, which existing players run. Each
+machine's own sound is language: FM3's independent operators and CSM on the
+Mega Drive; the SSG's hardware envelope as a buzzer (`:env 8 :env-rate note`)
+on the PC-8801 and the MSX; DT2 and the OPM's LFO on the X68000; the SCC's
+32-step waves as `def-wave` — drawn by hand, or `+ - * /` over curves that
+move with a `$` value — and the FM-PAC's two operators, fifteen ROM voices
+and its rhythm, pitched and bent per hit. The YM2608's rhythm ROM is
+Yamaha's and not included: Live plays your own, or stands the score's kit in
+for it. Other machines are on the [roadmap](docs/roadmap.md).
 
 ## What it looks like
 
@@ -99,7 +120,10 @@ installable to run offline.
 **Writing.** A CodeMirror editor with MMLisp highlighting, template
 completions, a voice/sample picker (`@`, or long-press a name), formatting,
 structure help (bracket auto-close, enclosing-form highlight, select by form)
-and multi-cursor find / replace. The Library (Cmd/Ctrl+K) searches the
+and multi-cursor find / replace. The panel's editor follows the cursor: in a
+voice it is the FM operators (four, or the FM-PAC's two), in a `def-wave` or
+a macro's steps a vector editor where the values are drawn as bars and
+written back to the score. The Library (Cmd/Ctrl+K) searches the
 language reference, the preset sets, the snippets and the example scores, each
 auditionable and insertable. Edit > Loop Selection wraps notes or channels in a
 loop; Edit > Logical Editor finds notes by pitch, length or voice and changes
@@ -174,7 +198,8 @@ graded write by write and DAC byte by DAC byte in an emulator. See
   that lets an AI client write and check scores ([tools/mcp](tools/mcp/README.md))
 - `presets/` — the voice and sample sets the app ships
 - `mmlisp-syntax/` — VS Code TextMate grammar for `.mmlisp`
-- `wasm/`, `third_party/` — the vendored YM2612 / PSG cores and their WASM build
+- `wasm/`, `third_party/` — the vendored chip cores (Nuked-OPN2, Nuked-PSG,
+  ymfm) and their WASM build
 
 File extensions: `.mmlisp` (source score) · `.mmb` (compiled binary song data).
 
@@ -227,6 +252,8 @@ This project directly references the following works in its design and implement
 - **[NDP](https://ndp.squares.net/web/)** — PSG sound driver and MML authoring tool for MSX by naruto2413. Influenced the score and MML authoring model.
 - **[mucom88](https://github.com/onitama/mucom88)** — MML sound driver for the PC-8801 (OPNA) by Yuzo Koshiro, maintained by onitama; licensed CC BY-NC-SA 4.0. Referenced for the `.muc` / `.dat` import path — MML command model and clock-grid note timing.
 - **[Furnace](https://github.com/tildearrow/furnace)** / **[DefleMask](https://www.deflemask.com/)** — Multi-system chiptune trackers referenced for tracker workflow, pattern sequencing, and chip-focused composition practices.
+- **MXDRV** — MML sound driver for the X68000. Its MDX format and its playback, as [portable_mdx](https://github.com/yosshin4004/portable_mdx) ports its 68000 code, are the reference for the `.mdx` / `.pdx` import.
+- **[MGSDRV](https://gigamix.hatenablog.com/entry/mgsdrv/)** — MML sound driver for the MSX by Ain / GIGAMIX. MGSC's MML reference and the driver's playback are the reference for the `.mgs` import.
 
 ## License
 
@@ -234,12 +261,13 @@ MIT License — Copyright (c) 2026 Hiroshi Okamura (5&UP Inc.)
 
 See [LICENSE](LICENSE) for the full text.
 
-This repository also vendors the two chip cores it emulates with, each licensed
-separately: `Nuked-OPN2` (LGPL-2.1-or-later) and `Nuked-PSG`
-(**GPL-2.0-or-later**), both under `third_party/`. MMLisp Live ships builds of
-both as `live/nuked-opn2.js` and `live/nuked-psg.js`, so a distribution of the
-app carries those terms for those components. See `THIRD_PARTY_NOTICES.md` and
-each core's `LICENSE`.
+This repository also vendors the chip cores it emulates with, each licensed
+separately: `Nuked-OPN2` (LGPL-2.1-or-later), `Nuked-PSG`
+(**GPL-2.0-or-later**) and `ymfm` (BSD-3-Clause), all under `third_party/`.
+MMLisp Live ships builds of them (`live/nuked-opn2.js`, `live/nuked-psg.js`
+and the `live/ymfm-*.js` cores), so a distribution of the app carries those
+terms for those components. See `THIRD_PARTY_NOTICES.md` and each core's
+`LICENSE`.
 
 ### mucom88 import
 

@@ -38,8 +38,8 @@
 //   y                  an operator's or the channel's registers as words
 //   ADPCM              the PDX's samples, one wav, a def-pcm each; a note is
 //                      its sample at c4, F its rate (3.9-15.6 kHz)
-// Reported and left out: sync (tracks run free), the fade out, other
-// registers.
+//   ef / ee            sync: a track waits for another's flag (playTrack)
+// Reported and left out: the fade out, other registers.
 //
 //   parseMdx(bytes)                → the song: header, voices, tracks
 //   analyzeMdx(mdx)                → what the import dialog shows
