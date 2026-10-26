@@ -1772,8 +1772,8 @@
  "tools/tests/msx/env.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "2964df1381fd7816",
-  "regs": "065275e48159a109",
-  "vgm": "c2c66aff8108430d"
+  "regs": "cbfbadeec792eef8",
+  "vgm": "d8ac3ad83af8e5a6"
  },
  "tools/tests/msx/fm-pac-rhythm-pitch.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

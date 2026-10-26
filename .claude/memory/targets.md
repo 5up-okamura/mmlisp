@@ -80,7 +80,9 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 - **Levels.** `OPLL_GAIN` is set against the PSG and SCC as libkss
   (MSXplay) mixes them, measured on an MGS song (G2_00.MGS) chip by chip;
   confirmed by ear 2026-10-26.
-- **Open.** A dense score with the rhythm may still clip. The volume's floor is −45 dB
+- **Open.** The levels passed the user's listening (2026-10-26: the
+  rhythm against the melody, the clipping and the level beside the other
+  targets are fine as they are). The volume's floor is −45 dB
   (vol 15): `:vol 0` and a mixer mute do not silence a sounding FM-PAC note
   (the md's TL 127 does). A call with no time (a live edit, a key preview)
   is the encoder's latest time, and `IRPlayer.setParam` writes the edit at
@@ -138,10 +140,6 @@ Next:
   CYM) ring once at the `y` at levels the file does not give (MGSDRV
   writes HH 3 with no `@`), so they are left out; only a song's first
   `y14` is read.
-- Not yet held to MGSDRV (2026-10-26): the PSG's hardware envelope — `s`
-  on, `v` off (MGSC111.TXT says `v` "等" restores the software envelope: @
-  may too), a key-on rewriting R13, and `m` as `:env-rate` Hz. Check with
-  ab-mgsdrv on a song that uses `s` before trusting the import's levels.
 - A secondary source (an AI answer) had `/` `\` `_` in an envelope as volume
   moves or a loop and a rhythm hit's digits as its level: the reference
   says otherwise — not to be re-read from such a source.

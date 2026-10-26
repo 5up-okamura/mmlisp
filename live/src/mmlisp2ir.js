@@ -1733,6 +1733,9 @@ const atomNode = (value) => ({ kind: "atom", value: String(value) });
 // Targets written as a value alone: no curve, no `+` / `*` (the envelope's
 // moves are read where its period is written, language.md §19).
 const SET_ONLY_TARGETS = new Set(["ENV_SEMI", "ENV_DETUNE"]);
+// Targets whose literal keeps its fraction: a rate in Hz (an SSG
+// envelope's period is a step of it at the bass).
+const FRACTIONAL_TARGETS = new Set(["ENV_RATE"]);
 
 // Write a hardware parameter from a readValue result. An operator reads the
 // parameter itself: `:tl1+ e` is `(+ $tl1 e)` and `:tl1* e` is `(* $tl1 e)`,
@@ -1774,7 +1777,7 @@ function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName,
     return;
   }
   if (!op && v.kind === "scalar") {
-    push("PARAM_SET", { target, value: Math.round(v.value) });
+    push("PARAM_SET", { target, value: FRACTIONAL_TARGETS.has(target) ? v.value : Math.round(v.value) });
     return;
   }
   let steps = v.steps;

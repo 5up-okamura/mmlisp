@@ -285,6 +285,9 @@ function compressMgs(u8) {
   const what = "MGS s / m";
   has(source, /\(sqr1[^|]*:env 8 :env-rate 65\.3392 [^|]* c :env 14 :env-rate 32\.6696 c [^|]*:env none :vol 26 c \|/, what);
   clean(source, what);
+  // A tie under s: MGSDRV writes the tied note's level as 15, the envelope off.
+  const tie = parseMgs(buildMgs({ title: "s&", tempo: 120, defs: [0xff], tracks: [[0xd2, 0xcf, 0x4b, 8, 0x4c, 107, 0, ...T(0, 48), 0x40, ...T(0, 48), 0xff]] }));
+  has(mgsToMmlisp(tie, { fileName: "s&.mgs" }).source, /:env 8 [^|]* c [^|]*:env none [^|]*:vol 31 ~ c/, `${what}, tied`);
 }
 
 // y14 in #opll_mode 0: FM 7-9 key the rhythm. $0E 0x23 holds HH and CYM

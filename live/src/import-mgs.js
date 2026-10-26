@@ -911,6 +911,14 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       else if (gate < span) gateTok = `:gate* ${q / 8}`;
       if (gateTok) gated = true;
       const legato = !!prev && prev.tieOn && prev.step + prev.count + (prev.held ?? 0) === n.step;
+      // Under `s`, MGSDRV writes a tied or slurred note's level as 15 with
+      // the envelope off (held to it on libkss): the buzz stops there.
+      if (legato && isPsg && st.henv != null) {
+        const i = state.findIndex((t) => t.startsWith(":env "));
+        if (i >= 0) state[i] = ":env none";
+        const m = state.indexOf("(macro :vol none)");
+        if (m >= 0) state.splice(m, 0, `:vol ${ssgVol(15)}`);
+      }
       // A note keyed on into the next sounds its whole slot whatever its
       // gate: it keeps the one in force, so none is written for it.
       if (gated) state.push((gateInForce = n.tieOn && n.held == null ? gateInForce : gateTok ?? ":gate* 1"));

@@ -2805,12 +2805,13 @@ export class IRPlayer {
   // song-wide like LFO_RATE: a value, or a sweep stepped a frame at a time as
   // the driver's sweeps are, written when it moves and running to the
   // track's next write of it (its budget, as every sweep's).
-  _writeSongRate(ev, when, start, write) {
+  // `scale`: the sweep's steps a whole value's fraction (ENV_RATE's Hz).
+  _writeSongRate(ev, when, start, write, scale = 1) {
     if (ev.cmd === "PARAM_SET") write(Number(ev.args?.value ?? start), when);
     if (ev.cmd !== "PARAM_SWEEP") return;
     const a = ev.args ?? {};
     const df = this._curveFields(a, when);
-    const from = Math.round(Number(df.from ?? start)), to = Math.round(Number(df.to ?? from));
+    const from = Math.round(Number(df.from ?? start) * scale), to = Math.round(Number(df.to ?? from / scale) * scale);
     const len = a.lenFrames
       ? Math.max(1, Math.round(Number(a.frames ?? 1)))
       : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
@@ -2819,7 +2820,7 @@ export class IRPlayer {
     const id = curveId(a.curve);
     let last = null;
     for (let f = 0; f < budget; f++) {
-      const v = sweepFrameValue(id, from, to, len, loop, f);
+      const v = sweepFrameValue(id, from, to, len, loop, f) / scale;
       if (v !== last) write(v, when + f / 60);
       last = v;
       if (!loop && f >= len - 1) break;
@@ -3409,7 +3410,7 @@ export class IRPlayer {
           this._envFollow = null;
           // The writing lane's shape and moves, as they are now.
           const by = lane != null ? { shape: this._psgEnv[lane], semi: this._envSemi[lane], detune: this._envDetune[lane] } : {};
-          this._writeSongRate(ev, when, 0, (v, t) => this._writeEnvPeriod(v, by, t));
+          this._writeSongRate(ev, when, 0, (v, t) => this._writeEnvPeriod(v, by, t), 64);
           return true;
         }
         const m = /^VAL(\d+)$/.exec(ev.args?.target ?? "");
