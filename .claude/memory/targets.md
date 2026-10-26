@@ -33,9 +33,9 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 
 ## Rulings for what comes next (2026-10-25, not built yet)
 
-- **The editor panel** is built; still open: swap only once the cursor
-  rests when it moves by keys (if passing through feels busy), drawing on a
-  stage vector, and a 2-op FM editor for the OPLL.
+- **The editor panel** is built, the OPLL's 2-op operators too; still
+  open: drawing on a stage vector. (Ruled 2026-10-26: no wait for the
+  cursor to rest before the panel swaps.)
 - **Wave expressions** are built (`+ - * /`, a track's `:wave` with
   `$slot`s); still open: generators (`(harmonics 1 0.5 0.33)` …), once the
   expressions are in use.
@@ -127,13 +127,15 @@ Next:
   $0E's key bits (ko / kf, the end's all-off; Grider and Contrail agree
   99.8-100% a frame), $36-$38's levels and $16-$28's tunings, and y to the
   driver's register writes (a user voice's $00-$07, the PSG's $06/$07).
-- Open on MGS (2026-10-26, from G2_00 and BF_4TH against libkss): a PSG
-  note under an `@e` followed by a rest rings on past its slot in MGSDRV
-  (the envelope runs ~2 frames into the rest; k0's release is unread), and
-  our level macro lags its first step a frame. BF_4TH's scc:0/scc:1 sound
-  in a fifth of MGSDRV's frames (so before this work too). A `y14`'s held
-  keys (HH, CYM) ring once at the `y` and are left out; only a song's
-  first `y14` is read (none seen switching the rhythm mid-song).
+- MGSDRV's frame, as measured on libkss (2026-10-26, crafted MGS files,
+  scratch `g2/mgsq.mjs`): it acts on whole frames, so its notes start a
+  frame apart from ours, which write at the tick's own time (the msx
+  target has no driver) — a player-wide choice, not taken yet; a q8 note
+  before a rest keys off a frame late; libkss runs the MSX at 59.92 Hz,
+  so a comparison in 60 Hz VGM frames drifts 0.13 % (not ours). A `y14`'s
+  held keys (HH, CYM) ring once at the `y` at levels the file does not
+  give (MGSDRV writes HH 3 with no `@`), so they are left out; only a
+  song's first `y14` is read.
 - Not yet held to MGSDRV (2026-10-26): the PSG's hardware envelope — `s`
   on, `v` off (MGSC111.TXT says `v` "等" restores the software envelope: @
   may too), a key-on rewriting R13, and `m` as `:env-rate` Hz. Check with

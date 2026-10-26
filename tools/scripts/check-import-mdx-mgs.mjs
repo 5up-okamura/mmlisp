@@ -245,8 +245,8 @@ function compressMgs(u8) {
     has(source, /\(rhythm1[\s\S]*kick :vol 25/, what); // vb11 (3 dB steps)
     has(source, /\(rhythm2[\s\S]*hat :vol 22/, what);
     has(source, /\(rhythm1[\s\S]*kick :vol 25 :mode shot[^|]*c2 :mode gate c(8)? _(8)? c/, what); // ko: rings to its next; kf: keyed off at the hat's hit
-    has(source, /\(def vol-e3-v15-k2 \(macro :vol \[20 \(wait 2f\) 16 #rel 14 \(wait 1f\) 13 \(wait 1f\) 11 \(wait 1f\) 10 \(wait 1f\) 0\]\)\)/, what); // 8:3 holds; k2 a level each 2 frames from 5
-    has(source, /\(macro :vol \[26 #rel 25 \(wait 2f\) 23 \(wait 2f\) [^\]]*10 \(wait 2f\) 0\]\)/, what); // k3 at v12
+    has(source, /\(def vol-e3-v15-k2 \(macro :vol \[20 \(wait 2f\) 16 #rel 16 14 \(wait 1f\) 13 \(wait 1f\) 11 \(wait 1f\) 10 \(wait 1f\) 0\]\)\)/, what); // 8:3 holds; k2 holds a frame, then a level each 2 from 5
+    has(source, /\(macro :vol \[26 #rel 26 \(wait 1f\) 25 \(wait 2f\) 23 \(wait 2f\) [^\]]*10 \(wait 2f\) 0\]\)/, what); // k3 at v12: holds 2 frames, then a level each 3
     has(source, /\(fm2[^\n]*:len 4\n  [^|]*c _8 d8/, what); // q0 holds c through the rest, to the `/`
     clean(source, what);
   }
@@ -306,6 +306,21 @@ function compressMgs(u8) {
   has(source, /\(rhythm2[^|]*snare :vol 28 :mode gate/, what); // v13
   assert.ok(!/ hat | ride /.test(source), `${what}: the held HH and CYM are left out`);
   assert.ok(warnings.some((w) => /held keys \(ride, hat\)/.test(w)), `${what}: the held keys are reported`);
+  clean(source, what);
+}
+
+// k's release from the level at the key-off: an @e falling to 0, keyed off
+// by q1 on its first frame, releases from there (BF_4TH's SCC; held to
+// MGSDRV on libkss), not from its last level (0: no release).
+{
+  const T = (n, len) => [0x20 | n, len];
+  const defs = [0x02, 0, 0x20, 5, 15, 13, 12, 0x20, 50, 0xff]; // @e0: 15 13 12, to 0 over 50
+  const scc1 = [0xc5, 0x80, 0x48, 2, 0x44, 1, ...T(0, 24), 0xff]; // v5 @0 k2 q1
+  const mgs = parseMgs(buildMgs({ title: "k", tempo: 210, defs, tracks: [null, null, null, scc1] }));
+  const { source } = mgsToMmlisp(mgs, { fileName: "k.mgs" });
+  const what = "MGS k from the key-off";
+  has(source, /\(def vol-e0-v5-k2-r5-scc \(macro :vol \[[^\]]*#rel 26 25 \(wait 1f\) 24 \(wait 1f\) /, what); // v5 held a frame, then v4 two, v3 two
+  has(source, /\(wave1[^|]*vol-e0-v5-k2-r5-scc/, what);
   clean(source, what);
 }
 

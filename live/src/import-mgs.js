@@ -532,31 +532,61 @@ function frameVector(values, sus) {
 
 /**
  * An envelope at a level `v` as a :vol macro spec; `k` (an @e's, or none's)
- * the release after the key-off, a level step every k frames from the key-off's
- * own (held to MGSDRV on libkss) — written as its steps, which a line on :vol
- * is not on the SCC's linear volume.
+ * the release after the key-off, a level step every k frames, the first k
+ * frames after it (held to MGSDRV on libkss: k1 steps on the key-off's own
+ * frame, k2 holds it one) — written as its steps, which a line on :vol is
+ * not on the SCC's linear volume.
  */
 function kRelease(k, v, volOf) {
   if (!(k > 0 && v > 0)) return "";
-  const steps = [];
+  const steps = new Array(k - 1).fill(volOf(v));
   for (let lv = v - 1; lv >= 0; lv--) for (let i = 0; i < k; i++) steps.push(volOf(lv));
   return ` #rel ${frameVector(steps, null).slice(1, -1)}`;
 }
-function envelopeSpec(env, v, volOf, k = 0) {
+// An @e's level (relative to v) at frame `f`: through its sustain loop, or
+// held at its last.
+function envLevelAt(x, v, f) {
+  const n = x.levels.length;
+  const i = f < n ? f : x.sus != null ? x.sus + ((f - x.sus) % (n - x.sus)) : n - 1;
+  return Math.max(0, v + x.levels[Math.max(0, i)] - 15);
+}
+
+// MGSDRV's ADSR's E, frame by frame (held to it on libkss): it starts at
+// AL + AR, climbs by AR to 255, falls by DR to SL (stopping on it), then by
+// SR to 0 — to where it holds.
+function adsrSteps(env) {
+  const out = [];
+  let E = env.al, phase = env.ar > 0 ? 0 : 1;
+  for (let f = 0; f < ENV_MAX_FRAMES; f++) {
+    if (phase === 0) { E += env.ar; if (E >= 255) { E = 255; phase = 1; } }
+    else if (phase === 1) { E -= env.dr; if (E <= env.sl) { E = env.sl; phase = 2; } }
+    else E = Math.max(0, E - env.sr);
+    out.push(E);
+    if ((phase === 2 && (!env.sr || E === 0)) || (phase === 1 && !env.dr)) break;
+  }
+  return out;
+}
+// Where an envelope's release starts: an @e's level (relative to v) or an
+// @r's E on the frame before its note keys off (`off`; held to MGSDRV on
+// libkss), or, with none, where the envelope ends.
+function releaseFrom(env, v, off) {
   if (env.type === "r") {
-    // MGSDRV's ADSR, frame by frame (held to it on libkss): E starts at
-    // AL + AR, climbs by AR to 255, falls by DR to SL (stopping on it), then
-    // by SR to 0; the level is (E × (v + 1)) >> 8. The release falls by RR
-    // from where it is.
-    const out = [];
-    let E = env.al, phase = env.ar > 0 ? 0 : 1;
-    for (let f = 0; f < ENV_MAX_FRAMES; f++) {
-      if (phase === 0) { E += env.ar; if (E >= 255) { E = 255; phase = 1; } }
-      else if (phase === 1) { E -= env.dr; if (E <= env.sl) { E = env.sl; phase = 2; } }
-      else E = Math.max(0, E - env.sr);
-      out.push(volOf((E * (v + 1)) >> 8));
-      if ((phase === 2 && (!env.sr || E === 0)) || (phase === 1 && !env.dr)) break;
-    }
+    const Es = adsrSteps(env);
+    return Es[off == null ? Es.length - 1 : Math.min(Es.length - 1, Math.max(0, off - 1))];
+  }
+  const x = expandEnv(env);
+  return envLevelAt(x, v, off == null ? x.levels.length - 1 : off - 1);
+}
+
+// `off`: the frame its note keys off on, where the release (k's, or an
+// @r's RR) starts from the level of the frame before — its last level when
+// none is given.
+function envelopeSpec(env, v, volOf, k = 0, off = null) {
+  if (env.type === "r") {
+    // The level is (E × (v + 1)) >> 8; the release falls by RR from where
+    // it is.
+    const out = adsrSteps(env).map((E) => volOf((E * (v + 1)) >> 8));
+    const E = releaseFrom(env, v, off);
     // The release as its steps: a line on :vol is not one on E, a linear level.
     const steps = [];
     if (env.rr > 0) for (let e = E - env.rr; ; e -= env.rr) { steps.push(volOf((Math.max(0, e) * (v + 1)) >> 8)); if (e <= 0) break; }
@@ -567,7 +597,7 @@ function envelopeSpec(env, v, volOf, k = 0) {
   // An @e's level is relative to v: 15 is v itself, each step below one
   // step quieter.
   const levels = x.levels.map((lv) => Math.max(0, v + lv - 15));
-  return frameVector(levels.map(volOf), x.sus).replace(/\]$/, kRelease(k, levels[levels.length - 1], volOf) + "]");
+  return frameVector(levels.map(volOf), x.sus).replace(/\]$/, kRelease(k, releaseFrom(env, v, off), volOf) + "]");
 }
 
 // The rhythm track's hits → rhythm1-rhythm5, a track a sound, in the key-on
@@ -664,18 +694,25 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     return waveDefs.get(n);
   };
   const envDefs = new Map();
-  const envName = (num, v, kind, k) => {
-    const key = `${num}:${v}:${kind === "scc" ? "scc" : "ssg"}:${k}`;
+  // `off`: the note's key-off frame, where the release starts (an envelope
+  // still moving there releases from where it is: a def for each level —
+  // an @e's k release, an @r's RR).
+  const envName = (num, v, kind, k, off = null) => {
+    const env0 = mgs.defs.envs.get(num);
+    const releases = env0 && (env0.type === "r" ? env0.rr > 0 : k > 0);
+    const rel = releases && off != null ? releaseFrom(env0, v, off) : null;
+    const relTag = rel != null && rel !== releaseFrom(env0, v, null) ? rel : null;
+    const key = `${num}:${v}:${kind === "scc" ? "scc" : "ssg"}:${k}:${relTag}`;
     if (!envDefs.has(key)) {
-      const env = mgs.defs.envs.get(num);
+      const env = env0;
       if (!env) { envDefs.set(key, null); warnings.push(`@e${num} is not in the file — its notes play without an envelope`); }
       else {
-        const spec = envelopeSpec(env, v, kind === "scc" ? sccVol : ssgVol, k);
+        const spec = envelopeSpec(env, v, kind === "scc" ? sccVol : ssgVol, k, relTag != null ? off : null);
         // One level held: the note's :vol, no macro.
         const flat = /^\[(\d+)\]$/.exec(spec);
         if (flat) envDefs.set(key, { vol: Number(flat[1]) });
         else {
-          const name = `vol-${env.type}${num}-v${v}${k ? `-k${k}` : ""}${kind === "scc" ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
+          const name = `vol-${env.type}${num}-v${v}${k ? `-k${k}` : ""}${relTag != null ? `-r${relTag}` : ""}${kind === "scc" ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
           defs.push(`(def ${name} (macro :vol ${spec}))`);
           envDefs.set(key, { name });
         }
@@ -795,7 +832,19 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       // has its RR).
       const env = st.env != null ? mgs.defs.envs.get(st.env) : null;
       const k = !isFm && env?.type !== "r" ? st.k : 0;
-      const e = env ? envName(st.env, st.vol, tr.kind, k) : null;
+      // The note's key-off frame, as MGSDRV and the msx target count it:
+      // the note starts on frame round(step · 75 / bpm) and keys off q
+      // eighths of its frames later, rounded down, one at least (all of a
+      // held one).
+      const bpm = tempoAt(n.step);
+      const frameAt = (st8) => Math.floor((st8 * 75) / bpm + 0.5 + 0.01);
+      const f0 = frameAt(n.step);
+      const qn = st.q >= 1 && st.q <= 8 ? st.q : 8;
+      const held = n.tieOn || (isFm && st.q === 0);
+      const offFrame = held
+        ? Math.max(1, frameAt(n.step + n.count + (n.held ?? 0)) - f0)
+        : Math.max(1, Math.floor(((frameAt(n.step + n.count) - f0) * qn) / 8 + 1e-6));
+      const e = env ? envName(st.env, st.vol, tr.kind, k, offFrame) : null;
       const rel = !env && kRelease(k, st.vol, volOf);
       // On the hardware envelope the level is the envelope's: s drops the
       // software envelope, and k does nothing.
