@@ -263,7 +263,7 @@ async function main() {
     },
     {
       label: "the FM-PAC: two operators, no algorithm, no op2 level",
-      src: '(def-score :target msx)\n(fm1 piano :ws1 1 :eg2 0 :ksl1 2 :vib2 1 :sus 1 :tl2 3 :alg 4 c)\n(fm2 :ws3 1 c)',
+      src: '(def-score :target msx)\n(fm1 piano :ws1 1 :eg2 0 :ksl1 2 :vib2 1 :sus 1 :tl2 3 :alg 4 :len 4 c)\n(fm2 :len 4 _ :ws3 1 c)',
       expected: ["E_TARGET", "E_TARGET", "E_UNKNOWN_KEYWORD"],
     },
     {
@@ -272,9 +272,14 @@ async function main() {
       expected: ["W_TARGET", "E_TARGET"],
     },
     {
-      label: "the FM-PAC has one user voice; the ROM's need none",
-      src: '(def-score :target msx)\n(def-fm reed flute :ar2 9)\n(def-fm brass oboe :ml1 7)\n(fm1 reed c)\n(fm2 oboe c)\n(fm3 reed brass c)',
+      label: "the FM-PAC plays one user voice at a time; the ROM's need none",
+      src: '(def-score :target msx)\n(def-fm reed flute :ar2 9)\n(def-fm brass oboe :ml1 9)\n(fm1 :len 2 reed c c)\n(fm2 oboe c)\n(fm3 :len 2 _ brass c)',
       expected: ["W_TARGET"],
+    },
+    {
+      label: "user voices one after another, on one channel or taking turns, are fine",
+      src: '(def-score :target msx)\n(def-fm reed flute :ar2 9)\n(def-fm brass oboe :ml1 9)\n(fm1 :len 4 reed c brass c reed c _)\n(fm2 :len 4 _ _ _ brass c)',
+      expected: [],
     },
     {
       label: "the FM-PAC's rhythm: in place of fm7-fm9, no rim, no pan, a pair at one pitch",

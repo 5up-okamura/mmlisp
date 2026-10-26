@@ -18,6 +18,11 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   `ranges`). `MACRO_TARGET_RANGE` stays the family's widest: a macro is
   clamped there, the part's range clamps at the write.
 - In the Live panel, what a machine lacks is hidden; a menu item is disabled.
+- **The OPLL's one user voice is one at a time, not one a score** (the
+  user's reading of MGS songs, 2026-10-26): a key-on writes the user voice,
+  so a channel switches freely; `W_TARGET` only where notes on different
+  channels sound together on different user voices (`checkTracks`, on the
+  tracks' loops written out, init-fm counting as one).
 - **The voice hoist is the driver's alone** (`target.driver`; 2026-10-25,
   the user's reading): on a VGM target it only cut notes 40 ms and moved
   voices off their beat. No `voiceAtKey` per part.

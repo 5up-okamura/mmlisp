@@ -3576,9 +3576,6 @@ function createInitFmKwMap(target) {
 // (emitVoiceFromKwMap): a voice named on a channel with no FM (sqr1, pcm1)
 // keeps only its :key there, and says so once per track and voice.
 function emitVoice(td, tick, events, src, trackState = null, name = null, diagnostics = null, trackName = null) {
-  // A part with a rule over the voices its channels play (chips/parts.js
-  // `checkVoices`, the OPLL's one user voice) sees each one named.
-  if (td.kwMap && trackState?.part?.checkVoices) (trackState.voiceUse ??= []).push({ name, kwMap: td.kwMap });
   if (td.kwMap) {
     const dropped = emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.part, trackState?.target);
     const said = trackState ? (trackState.voicesSaid ??= new Set()) : null;
@@ -6850,15 +6847,6 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       targetDiag(diagnostics, "warning",
         `${[...heads].join(" and ")} share one wave memory, so the wave named last plays on both`, fileSrc, "global");
 
-  // A part's rule over the voices its channels play (chips/parts.js
-  // `checkVoices`: the OPLL's one user voice).
-  for (const part of target.parts) {
-    if (!part.checkVoices) continue;
-    const uses = trackOrder.map((key) => trackByKey.get(key).trackState)
-      .filter((ts) => ts.part === part).flatMap((ts) => ts.voiceUse ?? []);
-    part.checkVoices({ uses, push: (severity, code, message) => pushDiag(diagnostics, severity, code, message, fileSrc, "global") });
-  }
-
   const tracks = [];
   for (const [head, layers] of layersByHead) {
     tracks.push(
@@ -6866,6 +6854,21 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         ? layers[0].trackData
         : flattenPriorityLayers(head, layers, diagnostics),
     );
+  }
+
+  // A part's rule over what its channels play together (chips/parts.js
+  // `checkTracks`: the OPLL's one user voice), on each track's loops
+  // written out, with the voices the score names.
+  for (const part of target.parts) {
+    if (!part.checkTracks) continue;
+    const heads = new Set(target.channelNames.filter((h) => target.partOf(h) === part));
+    const own = tracks.filter((t) => heads.has(t.channel));
+    const named = [...typedDefs].filter(([, td]) => td.tag === "voice" && td.kwMap).map(([name, td]) => ({ name, kwMap: td.kwMap }));
+    part.checkTracks({
+      tracks: own.map((t) => ({ head: t.channel, events: expandLoops(t.events ?? []) })),
+      named,
+      push: (severity, code, message) => pushDiag(diagnostics, severity, code, message, fileSrc, "global"),
+    });
   }
 
   // Sound effects (def-se), after the song's tracks: each part is a track of

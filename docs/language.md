@@ -2606,10 +2606,12 @@ op1 and op2 (`W_TARGET` for the rest).
 `electric-guitar`. A channel plays a voice from the ROM when its
 registers are one of these, and from the chip's **one user voice**
 otherwise: a voice that extends a ROM one, a `def-fm` of its own, a voice
-an inline write or a macro has moved. Every channel on the user voice
-plays the one last written — a voice is settled at a note's key-on — and
-the compiler says so when the FM tracks name two such voices
-(`W_TARGET`). On the other targets the fifteen names are 4-op voices, op1
+an inline write or a macro has moved. A voice is settled at a note's
+key-on, which writes the user voice when the chip holds another, so a
+score may have as many user voices as it likes and a channel may switch
+between them freely. What the chip cannot do is play two at once: when
+notes on different channels sound together on different user voices, the
+note keyed last sets it for both, and the compiler says so (`W_TARGET`). On the other targets the fifteen names are 4-op voices, op1
 into op2 on algorithm 4 with op3 and op4 silent, the rates on the 4-op
 scale; their KSL, waveform and vibrato have no register there.
 

@@ -159,13 +159,44 @@ export const opllFm = {
       ...(n === 1 ? { FM_TL: 63 } : {}),
     }).map(([w, v]) => [`${w}${n}`, v])),
   ]),
-  // The chip has one user voice: two a score plays on its channels are one
-  // register set, which the last written has.
-  checkVoices({ uses, push }) {
-    const user = [...new Set(uses.filter((u) => !romIndex(voiceBytes((w) => u.kwMap.get(w)))).map((u) => u.name))];
-    if (user.length > 1)
-      push("warning", "W_TARGET",
-        `the OPLL has one user voice, and ${user.map((n) => `'${n}'`).join(", ")} each need it — the last written wins; a ROM voice (piano …) needs none`);
+  // The chip has one user voice, which a key-on writes (the encoder): a
+  // channel may switch between user voices freely, but two channels whose
+  // notes sound together on different ones share one register set, and the
+  // note keyed last sets it for both. Said once, naming the tracks and the
+  // voices where a def names them. `tracks` [{ head, events }], loops
+  // written out; `named` [{ name, kwMap }], the voices the score names.
+  checkTracks({ tracks, named, push }) {
+    const key = (b) => b.join(",");
+    const names = new Map();
+    for (const { name, kwMap } of named) {
+      const b = voiceBytes((w) => kwMap.get(w));
+      if (!romIndex(b) && !names.has(key(b))) names.set(key(b), name);
+    }
+    // Each track's notes on a user voice: [start, end, voice] in ticks, the
+    // voice its registers as of the note (init-fm until it names one).
+    const spans = tracks.map(({ head, events }) => {
+      const regs = new Map(this.initVoice);
+      const out = [];
+      for (const e of events) {
+        if (e.cmd === "PARAM_SET" && /^FM_/.test(e.args?.target ?? "")) regs.set(e.args.target, e.args.value);
+        if (e.cmd !== "NOTE_ON") continue;
+        const b = voiceBytes((w) => regs.get(w));
+        if (romIndex(b)) continue;
+        const len = Math.min(e.args?.length ?? 0, e.args?.gate ?? Infinity);
+        out.push([e.tick, e.tick + Math.max(1, len), key(b)]);
+      }
+      return { head, out };
+    });
+    for (let i = 0; i < spans.length; i++)
+      for (let j = i + 1; j < spans.length; j++)
+        for (const [a0, a1, va] of spans[i].out) {
+          const hit = spans[j].out.find(([b0, b1, vb]) => vb !== va && a0 < b1 && b0 < a1);
+          if (!hit) continue;
+          const voice = (k) => (names.has(k) ? `'${names.get(k)}'` : "a voice of its own");
+          push("warning", "W_TARGET",
+            `${spans[i].head} (${voice(va)}) and ${spans[j].head} (${voice(hit[2])}) sound two user voices at once; the OPLL has one, and the note keyed last sets it for both — a ROM voice (piano …) needs none`);
+          return;
+        }
   },
 };
 
