@@ -44,6 +44,18 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   ruling, 2026-10-25: `piano`, not `opll-piano`). The rhythm mode is
   built (stage 3; language.md §19 msx), its hits' pitch moves too.
 
+## PC Engine, then the Famicom (rulings, 2026-10-27)
+
+- **The PC Engine (HuC6280) comes first**, the Famicom (2A03) after it: the
+  PCE fits the parts as they are (wave, a noise sharing its channel) and
+  tests the "resolution is the encoder's" ruling; the 2A03 brings new words
+  (`:duty`, a triangle with no level, DPCM).
+- **Target names `pce` and `fc`.** Channel names reuse the existing ones:
+  pce `wave1`-`wave6`, the noise its channels 5 and 6 switch to as
+  `noise5` / `noise6`; fc `sqr1`-`sqr2`, `tri`, `noise`, `pcm1` (DPCM).
+- **pce's first build is the wave channels and the noise only** — DDA (the
+  5-bit direct PCM) and the ch2 → ch1 LFO wait, as the SCC came in stages.
+
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
 - **Stages.** All four are built (1 engine, 2 language and player, 3 the
