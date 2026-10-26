@@ -63,6 +63,7 @@ const SUPPORTED_TARGETS = new Set([
   "LFO_AMD",
   "LFO_WAVE",
   "NOISE_RATE",
+  "ENV_RATE",
   "PAN",
   "NOISE_MODE",
   // The FM family's (chips/fm-words.js), the inline-only ones aside.
@@ -73,7 +74,9 @@ const SUPPORTED_TARGETS = new Set([
 // Inline-only targets: sticky channel state with no per-note macro form.
 // SNAP (`:snap`, language.md §5.3) is a pitch-class mask the channel's every
 // pitch write passes through; a mask is set, never swept or stepped.
-const INLINE_TARGETS = new Set(["SNAP", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
+// SSG_ENV (`:env`, language.md §19) is the SSG channel's envelope shape, or
+// none: a channel's setting, no level.
+const INLINE_TARGETS = new Set(["SNAP", "SSG_ENV", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
 
 // An operator's velocity sensitivity, `:vel1`–`:vel4` (language.md §6): a
 // ratio 0–1 of the note's velocity offset, carried as sixteenths. A voice
@@ -122,7 +125,7 @@ const PCM_PITCH_TARGETS = new Set(["NOTE_PITCH", "NOTE_SEMI", "SNAP"]);
 // or a curve) but not macro-legal. An …_END and an …_LEN both set their span's
 // far bound, pinning the end vs the length; the last one written wins.
 // The song-wide write targets a macro does not take (a macro is a note's).
-const SONG_TARGETS = new Set(["MASTER", "LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE", "NOISE_RATE"]);
+const SONG_TARGETS = new Set(["MASTER", "LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE", "NOISE_RATE", "ENV_RATE"]);
 // Song-wide write targets: their sweeps run in slots of their own on the
 // driver, not in the writing channel's two (driver.md §4).
 const isSongTarget = (t) => SONG_TARGETS.has(t) || /^VAL\d+$/.test(t ?? "");
@@ -350,8 +353,15 @@ function trackLacks(irTarget, sym, trackState) {
 
 // PAN symbolic values → logical range -1/0/+1 (encodeB4 maps these to L/LR/R bits)
 const PAN_MAP = { left: -1, center: 0, right: 1 };
-// A target's own symbols: the pan's places, the OPM LFO's waveforms.
-const TARGET_SYMBOLS = { PAN: PAN_MAP, LFO_WAVE: { saw: 0, square: 1, triangle: 2, noise: 3 } };
+// A target's own symbols: the pan's places, the OPM LFO's waveforms, the
+// SSG's `:env none` (the 4-bit level back) and `:env-rate note` (the
+// envelope's period on the writing track's notes, language.md §19).
+const TARGET_SYMBOLS = {
+  PAN: PAN_MAP,
+  LFO_WAVE: { saw: 0, square: 1, triangle: 2, noise: 3 },
+  SSG_ENV: { none: -1 },
+  ENV_RATE: { note: 0 },
+};
 
 function atomValue(node) {
   if (!node) return null;
@@ -1716,6 +1726,10 @@ const atomNode = (value) => ({ kind: "atom", value: String(value) });
 function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName, src) {
   if (!v) return;
   const err = (code, msg) => pushDiag(diagnostics, "error", code, msg, src, trackName);
+  if (v.kind === "none" && !op && TARGET_SYMBOLS[target]?.none !== undefined) {
+    push("PARAM_SET", { target, value: TARGET_SYMBOLS[target].none });
+    return;
+  }
   if (v.kind === "none") {
     // Stop a running inline PARAM_SWEEP, freezing the value.
     if (op) err("E_PARAM_VALUE", `${sym} needs a number or a $value, not none`);
@@ -1754,6 +1768,16 @@ function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName,
     steps = r.steps;
   }
   emitRuntime(steps, target, push, diagnostics, trackName, src);
+}
+
+// A level written on an SSG channel on its envelope (`:env`): the envelope
+// is the level there, so a :vol or :vel only silences at 0. Said once a track.
+function warnEnvLevel(trackState, sym, diagnostics, src, trackName) {
+  if (!trackState.ssgEnv || trackState.envLevelSaid) return;
+  trackState.envLevelSaid = true;
+  pushDiag(diagnostics, "warning", "W_TARGET",
+    `${sym} does not set the level of ${trackState.head} on :env (the envelope is its level; 0 still silences)`,
+    src, trackName);
 }
 
 // `:snap` (language.md §5.3): a pitch-class mask the channel's pitch writes
@@ -3510,6 +3534,8 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":lfo-amd": "LFO_AMD",
   ":lfo-wave": "LFO_WAVE",
   ":noise-rate": "NOISE_RATE",
+  ":env": "SSG_ENV",
+  ":env-rate": "ENV_RATE",
   // PCM points: the range a note plays, and the loop inside it
   ":pcm-start": "RANGE_START",
   ":pcm-end": "RANGE_END",
@@ -4119,6 +4145,7 @@ function compileChannelBody(
               const raw = compileTimeScalar(
                 items[i], rawVal, op, evalEnv, val, diagnostics, trackName, nodeSrc(node), typedDefs,
               );
+              warnEnvLevel(trackState, val, diagnostics, nodeSrc(node), trackName);
               if (raw !== null && !Number.isNaN(raw)) {
                 const cur = trackState.defaultVel ?? 15;
                 const next =
@@ -4404,7 +4431,7 @@ function compileChannelBody(
                   nodeSrc(node), trackName, typedDefs);
                 break;
               }
-              if (!op && rawVal === "none") {
+              if (!op && rawVal === "none" && TARGET_SYMBOLS[target]?.none === undefined) {
                 // Stop a running inline PARAM_SWEEP, freezing the value.
                 push("PARAM_SWEEP_STOP", { target });
                 break;
@@ -4419,6 +4446,9 @@ function compileChannelBody(
                 evalEnv, vals, diagnostics, trackName, nodeSrc(node));
               if (target === "NOTE_PITCH")
                 noteUserPitchWrites(trackState, events.slice(writtenFrom));
+              if (target === "SSG_ENV")
+                trackState.ssgEnv = (events.at(-1)?.args?.value ?? -1) >= 0;
+              if (target === "VOL") warnEnvLevel(trackState, val, diagnostics, nodeSrc(node), trackName);
               break;
             }
           }
@@ -5728,7 +5758,8 @@ const SE_CHANNELS = new Set([
 const SE_CH3 = new Set(["fm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate"]);
 // What an effect may not write, by IR target: the source keyword to name.
 const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate", LFO_FREQ: ":lfo-freq", LFO_PMD: ":lfo-pmd",
-  LFO_AMD: ":lfo-amd", LFO_WAVE: ":lfo-wave", NOISE_RATE: ":noise-rate" };
+  LFO_AMD: ":lfo-amd", LFO_WAVE: ":lfo-wave", NOISE_RATE: ":noise-rate",
+  ENV_RATE: ":env-rate" };
 
 // (def-se name [:prio N] [:tempo T] (channel body…)…). The head options are
 // the effect's: :prio its default priority (0-255, the host may pass its

@@ -15,7 +15,10 @@
 // What maps (MGSC 1.11's MML reference, MGSC111.TXT, for what each command
 // means):
 //   PSG 1-3         sqr1-sqr3; `/` (and the mode an @ sets) the mixer as
-//                   :mode tone | noise | both, `n` the song's :noise-rate
+//                   :mode tone | noise | both, `n` the song's :noise-rate;
+//                   `s` the hardware envelope's shape, :env, which `v`
+//                   turns off (as MGSC's reference has it; not yet held to
+//                   MGSDRV), `m` its period, the song's :env-rate
 //   SCC 4-8         wave1-wave5; `@n` the @s wave, a def-wave
 //   FM 9-17         fm1-fm9 (fm1-fm6 in #opll_mode 1); `@n` ROM voice n + 1
 //                   for @0-@14 (as @# assigns them), else the @v voice, a
@@ -44,8 +47,7 @@
 //                   ($07) and the noise ($06); on the rhythm its levels
 //                   ($36-$38) and tunings ($16-$18, $26-$28, a hit's note,
 //                   c4 the datasheet's); any other is reported
-// Not yet: the PSG's hardware envelope (s, m) waits for its word; it, and
-// whatever else the file holds, is counted and reported.
+// Not yet: whatever else the file holds is counted and reported.
 //
 // Where the reference leaves the numbers open, they were measured on MGSDRV
 // itself (libkss-js runs it; tools/scripts/ab-mgsdrv.mjs compares an import
@@ -214,6 +216,7 @@ function newState(kind) {
   return {
     oct: 4, len: 48, q: 8, k: 0, vol: 0, voice: null, env: null, mode: 1, nfreq: null, detune: 0, atDetune: 0, fmFine: 0,
     lfo: null, lfoOn: false, porta: null, fall: 0, sus: 0, kind,
+    henv: null, hperiod: null, // s and m: the hardware envelope's shape (null: off) and period
     rvol: [0, 0, 0, 0, 0], kf: false, // the rhythm's levels (BD SD TOM CYM HH), and kf
     // y: the user voice's registers this track has written since its @, and
     // the rhythm's tuning (F-number and block of channels 7-9, the
@@ -319,6 +322,7 @@ function playTrack(mgs, track, skipped) {
       setEnv(c & 31, kind === "psg");
     } else if (c >= 0xc0 && c <= 0xcf) {
       st.vol = c & 15;
+      st.henv = null; // v on the PSG: the hardware envelope off
       if (rhythm) st.rvol.fill(c & 15); // v on the rhythm: every sound's
     }
     else if (c >= 0xd0 && c <= 0xdf) st.oct = (c & 7) + 1;
@@ -343,7 +347,8 @@ function playTrack(mgs, track, skipped) {
         if (kind === "fm" && last) last.cut = step - last.step;
         break;
       }
-      case 0x4b: case 0x4c: skip("the PSG's hardware envelope (s, m)"); break;
+      case 0x4b: if (kind === "psg") st.henv = a1 & 15; break; // s: the envelope's shape, on
+      case 0x4c: if (kind === "psg") st.hperiod = Math.max(1, u16(u8, p + 1)); break; // m: its period
       case 0x4d: st.nfreq = a1 & 31; break;
       case 0x4e: st.oct = Math.min(8, st.oct + 1); break;
       case 0x4f: st.oct = Math.max(1, st.oct - 1); break;
@@ -699,6 +704,8 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     let head = null; // the note a tie continues: the one keyed, or slurred to
     let gated = false; // a q below 8 seen: from then on every note states its gate
     let gateInForce = ":gate* 1";
+    // s on any note: every note says whether it is on the envelope.
+    const henv = isPsg && tr.notes.some((n) => n.st.henv != null);
     for (const n of tr.notes) {
       const st = n.st;
       const x = st.env != null ? envX(st.env) : null;
@@ -720,6 +727,10 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
         if (!MODES[mode]) { skip("a PSG note with its mixer off (silent)"); prev = n; continue; }
         state.push(`:mode ${MODES[mode]}`);
         if (mode & 2) state.push(`:noise-rate ${Math.max(1, mix.nfreq ?? st.nfreq ?? 8)}`);
+        if (henv) state.push(`:env ${st.henv ?? "none"}`);
+        // m's period as a cycle's Hz on the shape (a triangle's cycle is two).
+        if (st.henv != null && st.hperiod)
+          state.push(`:env-rate ${+(PSG_CLOCK / ((st.henv === 10 || st.henv === 14 ? 512 : 256) * st.hperiod)).toPrecision(6)}`);
       }
       // k: the release, on the PSG and the SCC, under an @e or none (an @r
       // has its RR).
@@ -727,8 +738,13 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const k = !isFm && env?.type !== "r" ? st.k : 0;
       const e = env ? envName(st.env, st.vol, tr.kind, k) : null;
       const rel = !env && kRelease(k, st.vol);
-      state.push(`:vol ${e?.vol ?? volOf(st.vol)}`);
-      state.push(e?.name ?? (rel ? `(macro :vol [${volOf(st.vol)}${rel}])` : "(macro :vol none)"));
+      // On the hardware envelope the level is the envelope's: s drops the
+      // software envelope, and k does nothing.
+      if (st.henv != null) state.push("(macro :vol none)");
+      else {
+        state.push(`:vol ${e?.vol ?? volOf(st.vol)}`);
+        state.push(e?.name ?? (rel ? `(macro :vol [${volOf(st.vol)}${rel}])` : "(macro :vol none)"));
+      }
       const detune = detuneOf(tr.kind, n.midi, st);
       state.push(`:pitch ${detune}`);
       // The note's own pitch move: the envelope's, a portamento, the LFO.

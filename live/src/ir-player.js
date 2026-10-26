@@ -294,6 +294,11 @@ export class IRPlayer {
     // temporary override layered on top. Default white0 (0b1_00) matches the
     // compiler's tick-0 default emission.
     this._psgNoiseMode = 0b1_00;
+    // The SSG's hardware envelope (chips/ssg.js): each lane's shape (-1: its
+    // 4-bit level), and the lane whose notes the period the lanes share
+    // follows (`:env-rate note`), or null.
+    this._psgEnv = new Array(PSG_LANES).fill(-1);
+    this._envFollow = null;
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(FM_CHANNELS).fill(null);
@@ -565,6 +570,8 @@ export class IRPlayer {
     this._psgVol.fill(VOL_UNITY);
     this._psgLastVel.fill(15);
     this._psgNoiseMode = 0b1_00;
+    this._psgEnv.fill(-1);
+    this._envFollow = null;
     this._holdChannels.clear();
     this._loopCount.clear();
     this._fmVolSweep.fill(null);
@@ -2742,17 +2749,16 @@ export class IRPlayer {
     // everything else is FM/PSG-only
   }
 
-  // The SSG's noise period (NOISE_RATE), song-wide like LFO_RATE: a value, or
-  // a sweep stepped a frame at a time as the driver's sweeps are, written
-  // when it moves and running to the track's next write of it (its budget,
-  // as every sweep's).
-  _writeNoiseRate(ev, when) {
-    const write = (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v)), t);
-    if (ev.cmd === "PARAM_SET") write(Number(ev.args?.value ?? 9), when);
+  // The SSG's noise period (NOISE_RATE) and envelope rate (ENV_RATE),
+  // song-wide like LFO_RATE: a value, or a sweep stepped a frame at a time as
+  // the driver's sweeps are, written when it moves and running to the
+  // track's next write of it (its budget, as every sweep's).
+  _writeSongRate(ev, when, start, write) {
+    if (ev.cmd === "PARAM_SET") write(Number(ev.args?.value ?? start), when);
     if (ev.cmd !== "PARAM_SWEEP") return;
     const a = ev.args ?? {};
     const df = this._curveFields(a, when);
-    const from = Math.round(Number(df.from ?? 9)), to = Math.round(Number(df.to ?? from));
+    const from = Math.round(Number(df.from ?? start)), to = Math.round(Number(df.to ?? from));
     const len = a.lenFrames
       ? Math.max(1, Math.round(Number(a.frames ?? 1)))
       : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
@@ -3305,7 +3311,20 @@ export class IRPlayer {
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP": {
         if (ev.args?.target === "NOISE_RATE") {
-          this._writeNoiseRate(ev, when);
+          this._writeSongRate(ev, when, 9, (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v)), t));
+          return true;
+        }
+        if (ev.args?.target === "ENV_RATE") {
+          // 0 follows the writing track's notes (a tone lane's), from its
+          // next; a rate is a cycle of the writing track's shape as it is now.
+          const lane = ev._psgCh != null && ev._psgCh < 4 ? ev._psgCh : null;
+          if (ev.cmd === "PARAM_SET" && !Number(ev.args?.value)) {
+            this._envFollow = lane !== 3 ? lane : null;
+            return true;
+          }
+          this._envFollow = null;
+          const shape = lane != null ? this._psgEnv[lane] : -1;
+          this._writeSongRate(ev, when, 0, (v, t) => this._writeEnvPeriod(v, shape, t));
           return true;
         }
         const m = /^VAL(\d+)$/.exec(ev.args?.target ?? "");
@@ -5051,12 +5070,19 @@ export class IRPlayer {
   }
 
   // Write attenuation for a PSG channel.
-  // attReg: 0=max volume, 15=silent (hardware convention).
+  // attReg: 0=max volume, 15=silent (hardware convention). A sounding SSG
+  // lane on the envelope (:env) has the envelope for its level.
   _psgSetAtt(psgCh, attReg, when) {
     const att = attReg & 0x0f;
     // Track sounding state so master/vol recomputes don't un-silence idle channels.
     this._psgSounding[psgCh] = att < 15;
-    this._psgWrites(this._lane(psgCh, (e, ch) => e.att(ch, att), att === 15), when);
+    const env = att < 15 && this._psgEnv[psgCh] >= 0;
+    this._psgWrites(this._lane(psgCh, (e, ch) => (env ? e.envLevel(ch) : e.att(ch, att)), att === 15), when);
+  }
+
+  // The SSG envelope's period for a cycle of `shape` at `hz`.
+  _writeEnvPeriod(hz, shape, when) {
+    if (hz > 0) this._psgWrites(this._psg((c) => c.envPeriod?.(hz, shape) ?? []), when);
   }
 
   // Compose vel (0-15) / vol / master (0-31) into a PSG attenuation (0=loud,
@@ -5218,6 +5244,8 @@ export class IRPlayer {
   _psgSetPitch(psgCh, note, cents, when) {
     const hz = midiToHz(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100);
     this._psgWrites(this._lane(psgCh, (e, ch) => e.tone(ch, e.period(hz))), when);
+    // `:env-rate note`: the envelope's period on this lane's pitch.
+    if (this._envFollow === psgCh) this._writeEnvPeriod(hz, this._psgEnv[psgCh], when);
   }
 
   // Trigger the noise channel, re-asserting the current persistent noise mode.
@@ -5548,6 +5576,10 @@ export class IRPlayer {
           // Hold note: register for runtime key-off (triggerKeyOff)
           this._holdChannels.set(this._holdKey(ev), ev._trackIndex);
         }
+        // A lane on the envelope starts it over at a key-on (a slur's goes on).
+        const envShape = this._psgEnv[psgCh];
+        if (envShape >= 0 && !ev.args?.legato)
+          this._psgWrites(this._psg((c) => c.envShape?.(envShape) ?? []), when);
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
         // Silence at the gate boundary; suppressed when the gate fills the note
@@ -5655,6 +5687,15 @@ export class IRPlayer {
             this._psgVol[psgCh] = from; // initial value for MASTER recalc fallback
             if (this._psgKeyedUntil[psgCh] > when)
               this._psgVolSweepWrites(psgCh, when, this._psgKeyedUntil[psgCh], this._psgLastVel[psgCh] ?? 15);
+          }
+        } else if (psgTarget === "SSG_ENV") {
+          // The lane's level on the envelope (a shape), or its own (-1): a
+          // sounding note changes over now; the shape starts at its key-on.
+          const shape = Math.round(Number(ev.args?.value ?? -1));
+          this._psgEnv[psgCh] = shape < 0 ? -1 : Math.min(15, shape);
+          if (this._psgSounding[psgCh] && when < (this._psgKeyedUntil[psgCh] ?? 0) - 1e-6) {
+            const att = this._composePsgAtt(psgCh, this._psgLastVel[psgCh] ?? 15, this._psgVol[psgCh], this._masterVol ?? VOL_UNITY);
+            this._psgSetAtt(psgCh, att, when);
           }
         } else if (psgTarget === "SSG_MIX") {
           // The SSG channel's mixer: tone, noise or both (chips/ssg.js).

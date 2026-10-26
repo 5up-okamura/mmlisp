@@ -1,12 +1,14 @@
 // The SSG (the YM2608's, the AY-3-8910's): three channels, each with a mixer
 // that sends it tone, noise or both, one noise period the three share, and
-// a 4-bit level. The `noise` track is a channel with its mixer on noise —
-// on the YM2608 and the AY-3-8910 the third (targets/pc88.js,
-// targets/msx.js).
-import { NO_WORDS, words } from "./parts.js";
+// a 4-bit level — or, a channel at a time, the hardware envelope, one the
+// three share: its shape (R13) and its period (R11-R12). The `noise` track
+// is a channel with its mixer on noise — on the YM2608 and the AY-3-8910
+// the third (targets/pc88.js, targets/msx.js).
+import { words } from "./parts.js";
 
-// The song's noise period; a channel's mixer (0 tone, 1 noise, 2 both).
-const NOISE_RATE = words("NOISE_RATE");
+// The song's noise period and envelope rate; a channel's mixer (0 tone,
+// 1 noise, 2 both, 3 neither: the envelope alone) and envelope shape.
+const SONG_WORDS = words("NOISE_RATE", "ENV_RATE");
 const SSG_LEVEL = { stepDb: 3, steps: 16 }; // the 4-bit level, 15 loud .. 0 off
 
 export const ssgTone = {
@@ -15,10 +17,10 @@ export const ssgTone = {
   unit: "ssg",
   kind: "tone",
   level: SSG_LEVEL,
-  words: words("SSG_MIX"),
-  songWords: NOISE_RATE,
-  modes: { tone: ["SSG_MIX", 0], noise: ["SSG_MIX", 1], both: ["SSG_MIX", 2] },
-  modeError: { code: "E_PARAM_VALUE", message: "sqr :mode must be tone, noise or both" },
+  words: words("SSG_MIX", "SSG_ENV"),
+  songWords: SONG_WORDS,
+  modes: { tone: ["SSG_MIX", 0], noise: ["SSG_MIX", 1], both: ["SSG_MIX", 2], env: ["SSG_MIX", 3] },
+  modeError: { code: "E_PARAM_VALUE", message: "sqr :mode must be tone, noise, both or env" },
 };
 
 export const ssgNoise = {
@@ -27,13 +29,16 @@ export const ssgNoise = {
   unit: "ssg",
   kind: "noise",
   level: SSG_LEVEL,
-  words: NO_WORDS,
-  songWords: NOISE_RATE,
+  words: words("SSG_ENV"),
+  songWords: SONG_WORDS,
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "the SSG's noise has no :mode; its period is the song's :noise-rate 1-31" },
   // It is a tone channel's mixer on noise: the two names are one channel.
   shareHint: (other) => `give ${other} :mode both, or move its part`,
 };
+
+// The envelope's triangles: an up and a down a cycle.
+const ENV_TRIANGLES = new Set([10, 14]);
 
 // The SSG as the IR player's PSG, on a chip whose SSG divides `clock` by 16
 // for a tone: lanes 0-2 are the tone channels, lane 3 the noise track, which
@@ -54,12 +59,23 @@ export function ssgEncoder(clock, io = 0) {
     noise: () => mix(3, 1),
     mix: (lane, mode) => mix(lane, mode),
     noiseRate: (rate) => [[0, 0x06, Math.max(1, Math.min(31, Math.round(rate)))]],
+    // The envelope: a channel's level on it (the M bit), its shape (a write
+    // starts it over), and its period for a cycle at `hz` — 32 steps of
+    // clock / 16 / period, so a tone's period / 16; a triangle (10, 14)
+    // runs up and down a cycle, half the period.
+    envLevel: (lane) => [[0, 0x08 + phys(lane), 0x10]],
+    envShape: (shape) => [[0, 0x0d, shape & 0x0f]],
+    envPeriod: (hz, shape) => {
+      const ep = Math.max(1, Math.min(65535, Math.round(clock / ((ENV_TRIANGLES.has(shape) ? 512 : 256) * hz))));
+      return [[0, 0x0b, ep & 0xff], [0, 0x0c, ep >> 8]];
+    },
   };
-  function mix(lane, mode) { // SSG_MIX: 0 tone, 1 noise, 2 both
+  function mix(lane, mode) { // SSG_MIX: 0 tone, 1 noise, 2 both, 3 neither
     const c = phys(lane);
     mixer &= ~((1 << c) | (8 << c));
     if (mode === 0) mixer |= 8 << c;
     else if (mode === 1) mixer |= 1 << c;
+    else if (mode === 3) mixer |= (1 << c) | (8 << c);
     return [[0, 0x07, mixer]];
   }
 }

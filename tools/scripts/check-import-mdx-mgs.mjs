@@ -265,4 +265,16 @@ function compressMgs(u8) {
   clean(source, what);
 }
 
+// s and m: the PSG's hardware envelope — its shape on, its period as a
+// cycle's Hz (a triangle's cycle two periods), and v turning it off.
+{
+  const T = (n, len) => [0x20 | n, len];
+  const psg1 = [0xd2, 0xcf, 0x4b, 8, 0x4c, 107, 0, ...T(0, 48), 0x4b, 14, ...T(0, 48), 0xcc, ...T(0, 48), 0xff];
+  const mgs = parseMgs(buildMgs({ title: "s", tempo: 120, defs: [0xff], tracks: [psg1] }));
+  const { source } = mgsToMmlisp(mgs, { fileName: "s.mgs" });
+  const what = "MGS s / m";
+  has(source, /\(sqr1[^|]*:env 8 :env-rate 65\.3392 [^|]* c :env 14 :env-rate 32\.6696 c [^|]*:env none :vol 26 c \|/, what);
+  clean(source, what);
+}
+
 console.log("MDX / MGS import checks passed");

@@ -2396,6 +2396,32 @@ note's pitch is not read. A noise `:mode white0`–`white2` reads as
 `:noise-rate` 9, 18, 31 (`W_TARGET`); `white3` and the periodic modes have
 no SSG sound (`E_TARGET`), nor does a `:mode` macro on noise.
 
+**The SSG's hardware envelope.** A channel's level can be the envelope the
+three channels share instead of its own 4-bit one: **`:env 0–15`** (sticky,
+on `sqr1`–`sqr3` and `noise`) puts it on, the number the chip's shape (R13 —
+8 and 12 the saws, 10 and 14 the triangles, 0 and 9 a decay, 11 and 13 an
+attack that holds), and `:env none` gives the channel its level back. Each
+key-on starts the envelope over (a slur's `~` goes on); the level a note
+composes from `:vel`, `:vol` and `:master` is not heard on it, though 0
+still silences (`W_TARGET` once on a track that writes one). The envelope's
+period is the song's **`:env-rate`**, written on any track as `:noise-rate`
+is: a rate in Hz (a value, `(hz a2)`, or a sweep) for one cycle of its
+shape, or **`:env-rate note`**, which follows the writing track's pitch from
+its next note — pitch macros, glide and vibrato with it. A triangle's period
+is halved, so the cycle sounds the note written: a rate is for the shape of
+the track that writes it, as the track has it then. The period is the chip's
+tone period / 16, so a rate keeps to bass notes (at a4 one step is about a
+semitone). **`:mode env`** turns the channel's tone and noise off: what it
+plays is the envelope alone, a saw or a triangle at the rate — the buzzer.
+The shape and the period are the chip's one: a channel's key-on starts
+every channel's envelope over, and the later rate wins.
+
+```lisp
+(def-score :target msx)
+(sqr1 :env 8 :env-rate note :mode env :oct 2 :len 8   ; a saw buzzer bass
+  c c g g a a g _)
+```
+
 **PCM.** `pcm1` is the ADPCM-B: it plays a sample's `:file`, one voice. A
 sample is baked once — its def's range and `:fx`, at its own rate up to
 22.05 kHz, as Yamaha ADPCM into the chip's 256 KB of RAM (a sample past it is
@@ -2522,7 +2548,8 @@ has one or the other). A noise `:mode white0`–`white2` reads as
 `:noise-rate` 8, 16, 31 (`W_TARGET`); `white3` and the periodic modes are
 `E_TARGET`. The level is the chip's 4-bit one, 3 dB a step. The mixer
 keeps the I/O ports' directions as the BIOS sets them, so the VGM is safe
-to play on the machine. The hardware envelope (R11–R13) is not a word yet.
+to play on the machine. The hardware envelope is as on `pc88`: `:env`,
+`:env-rate` and `:mode env`.
 
 **SCC.** `wave1`–`wave5` are the SCC's five channels. Each plays a wave of
 32 steps, which a `def-wave` names and a track switches to by naming it, as

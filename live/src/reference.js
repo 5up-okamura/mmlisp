@@ -97,6 +97,13 @@ export const REFERENCE = [
     example: '(def-score :target pc88)\n(sqr1 :mode both :noise-rate 4 :len 8 c e :noise-rate (linear 4..31 :len 2) g e c e g e)',
   },
   {
+    name: ':env', aliases: ['envelope', 'buzzer', ':env-rate'], cat: 'track', section: '§19', tracks: ['psg'],
+    syntax: ':env 0–15 | none  ·  :env-rate Hz | note',
+    summary: 'pc88 and msx: the SSG channel\'s level is the hardware envelope, the number its shape (8 and 12 saws, 10 and 14 triangles, 0 and 9 a decay), started over at each key-on; none gives the level back. :env-rate is the song\'s one period, a cycle\'s Hz or note (the writing track\'s pitch). With :mode env the envelope alone sounds: a buzzer.',
+    insert: ':env 8 :env-rate note :mode env',
+    example: '(def-score :target msx)\n(sqr1 :env 8 :env-rate note :mode env :oct 2 :len 8 c c g g a a g _)',
+  },
+  {
     name: ':prio', cat: 'score', section: '§1', tracks: null,
     syntax: '(fm1 :prio N …)',
     summary: 'Right after the channel name only. Forms of one channel with different :prio are layers on one voice: the lower number wins, a lower layer\'s note sounds in the higher one\'s gaps. The voice, :pan and :vol go to the higher layer that sets them. Default 8.',
@@ -265,8 +272,8 @@ export const REFERENCE = [
   },
   {
     name: ':mode', aliases: ['shot', 'loop', 'gate', 'white0', 'periodic0', 'tone', 'both'], cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
-    syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop | gate  ·  :mode tone | noise | both',
-    summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once, loops while held, or plays once and is cut at its gate. On a pc88 or msx sqr track: its mixer, tone, noise or both.',
+    syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop | gate  ·  :mode tone | noise | both | env',
+    summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once, loops while held, or plays once and is cut at its gate. On a pc88 or msx sqr track: its mixer, tone, noise, both, or env (neither: the hardware envelope alone).',
     insert: ':mode white2',
     example: '(noise :len 8 :mode white0 c c :mode white2 c c :mode periodic1 c c)',
   },

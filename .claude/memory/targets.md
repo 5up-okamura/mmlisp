@@ -128,6 +128,10 @@ Next:
   $0E's key bits (ko / kf, the end's all-off; Grider and Contrail agree
   99.8-100% a frame), $36-$38's levels and $16-$28's tunings, and y to the
   driver's register writes (a user voice's $00-$07, the PSG's $06/$07).
+- Not yet held to MGSDRV (2026-10-26): the PSG's hardware envelope — `s`
+  on, `v` off (MGSC111.TXT says `v` "等" restores the software envelope: @
+  may too), a key-on rewriting R13, and `m` as `:env-rate` Hz. Check with
+  ab-mgsdrv on a song that uses `s` before trusting the import's levels.
 - A secondary source (an AI answer) had `/` `\` `_` in an envelope as volume
   moves or a loop and a rhythm hit's digits as its level: the reference
   says otherwise — not to be re-read from such a source.

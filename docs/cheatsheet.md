@@ -221,7 +221,11 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `sqr`/`noise`/`pcm` track, or `:mode white0` on an FM track, are
   `E_UNSUPPORTED_TARGET`.
 - `(def-score :target pc88)` holds a score to the PC-8801's YM2608 (§19):
-  sqr `:mode tone|noise|both`, song-wide `:noise-rate`, `noise` is sqr3,
+  sqr `:mode tone|noise|both|env`, song-wide `:noise-rate`, `noise` is sqr3,
+  the hardware envelope as a channel's level — `:env 0–15` its shape (8/12
+  saws, 10/14 triangles; `none` off), restarted at each key-on, the
+  song-wide `:env-rate` Hz or `note` (the track's pitch); `:mode env` plays
+  the envelope alone, a buzzer (`(sqr1 :env 8 :env-rate note :mode env c)`),
   pcm1 the ADPCM-B, `rhythm1`–`rhythm6` the ROM rhythm, built in under the
   kit roles (`(rhythm1 kick c hat c)`, no def; a track per sound for its own
   `:vol`/`:pan`). A word or channel only another target's
@@ -235,8 +239,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `:lfo-wave`; `pcm1`–`pcm8` PCM8's voices mixed into the MSM6258's ADPCM
   (pitch moves allowed, no `:pan`); no SSG-EG, no FM3 modes. VGM and WAV.
 - `(def-score :target msx)` holds a score to the MSX's PSG, an AY-3-8910
-  (§19): `sqr1`–`sqr3` and `noise` as on pc88 (`:mode tone|noise|both`,
-  song-wide `:noise-rate`, `noise` is sqr3); `wave1`–`wave5` the SCC's
+  (§19): `sqr1`–`sqr3` and `noise` as on pc88 (`:mode tone|noise|both|env`,
+  song-wide `:noise-rate`, `noise` is sqr3, `:env` / `:env-rate`); `wave1`–`wave5` the SCC's
   wavetable channels, each playing the `def-wave` named in it
   (`(def-wave saw :wave (saw -128..127))` — 32 values −128..127 or one
   curve's cycle, or `+ - * /` over def-waves, curves and numbers; a track's

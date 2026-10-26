@@ -1763,6 +1763,12 @@
   "mmb": "488af072eea2abb1",
   "vgm": "04611ee69800285b"
  },
+ "tools/tests/msx/env.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "2964df1381fd7816",
+  "regs": "6fafc448e3b60119",
+  "vgm": "3300db898280bda5"
+ },
  "tools/tests/msx/fm-pac-rhythm.mmlisp": {
   "diagnostics": "b4e4c9ef89c5b72c",
   "ir": "fbdedacabedb4132",

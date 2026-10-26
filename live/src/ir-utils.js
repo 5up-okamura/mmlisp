@@ -56,10 +56,14 @@ export const MACRO_TARGET_RANGE = {
 
   // PSG noise mode (0-7 via `:mode` keyword on noise channel)
   NOISE_MODE: { min: 0, max: 7 },
-  // The SSG (pc88): the song's noise period, and a channel's mixer
-  // (0 tone, 1 noise, 2 both).
+  // The SSG (pc88, msx): the song's noise period, and a channel's mixer
+  // (0 tone, 1 noise, 2 both, 3 neither: the envelope alone).
   NOISE_RATE: { min: 1, max: 31 },
-  SSG_MIX: { min: 0, max: 2 },
+  SSG_MIX: { min: 0, max: 3 },
+  // Its hardware envelope: a channel's shape (R13; -1 none, the 4-bit level),
+  // and the song's rate in Hz (0: the writing track's notes).
+  SSG_ENV: { min: -1, max: 15 },
+  ENV_RATE: { min: 0, max: 8000 },
 
   // PCM points (:pcm-* the range, :loop-* the loop), in SECONDS — the IR's unit (the MMB exporter
   // turns them into the engine's byte offsets). The ceiling is what one 32 KB
