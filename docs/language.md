@@ -1285,7 +1285,7 @@ If the same target is set twice, the last one wins.
 | `:keyon`   | `KEYON`      | 0–1          | Retrigger gate, thresholded at ≥ 0.5   |
 | `:vol`     | `VOL`        | 0–31         |                                        |
 | `:master`  | `MASTER`     | 0–31         | Song-wide (§5): inline only — a macro is a note's (`E_MACRO_TARGET`); sweep it instead |
-| `:pan`     | `PAN`        | −1–1         | Values snap to −1 / 0 / +1; symbols `left center right` |
+| `:pan`     | `PAN`        | −1–1         | Each chip so far has a left and a right bit: values snap to −1 / 0 / +1; symbols `left center right` |
 | `:mode`    | `NOISE_MODE` | 0–7          | Symbols `white0`–`white3` (4–7), `periodic0`–`periodic3` (0–3); on a `pc88` / `msx` sqr track `SSG_MIX`, symbols `tone noise both env` (§19) |
 | `:lfo-rate`| `LFO_RATE`   | 0–8          | Song-wide (§5): inline only, as `:master` |
 | `:noise-rate` | `NOISE_RATE` | 1–31      | Song-wide, but a macro on a `pc88` / `msx` SSG track steps it from the note (the later write wins, §19) |

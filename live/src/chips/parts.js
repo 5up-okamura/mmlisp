@@ -60,7 +60,10 @@
 // A chip (ym2612.js …) is a clock and its parts, and says how far the
 // toolchain has it: `encoder` (the IR player writes its registers, so the
 // register log and the VGM exist) and `emulator` (a core plays them, so Play
-// and WAV do). A target (targets/) is its chips, its channel table and the
+// and WAV do). An encoder takes a value at the language's widest — a wave's
+// steps −128..127 (ir-utils WAVE), a pan −1..1 — and writes it at its chip's
+// resolution (the SCC's 8 bits; the OPN's left and right bits, ir-utils
+// panSide). A target (targets/) is its chips, its channel table and the
 // few readings of another machine's words.
 // ---------------------------------------------------------------------------
 

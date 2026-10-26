@@ -911,10 +911,21 @@ export function encodeB0(regs) {
   return ((regs.feedback & 0x07) << 3) | (regs.algorithm & 0x07);
 }
 
+/**
+ * A pan, −1..1, on a chip whose stereo is a left and a right bit (the OPN's,
+ * the OPM's, the YM2608's rhythm and ADPCM-B): left −1, both 0, right +1.
+ * The player hands an encoder the pan as written; a chip with finer stereo
+ * reads it at its own resolution.
+ */
+export function panSide(pan) {
+  return Math.max(-1, Math.min(1, Math.round(Number(pan) || 0)));
+}
+
 // Encode B4 register (pan + AMS/FMS)
 export function encodeB4(regs) {
   // PAN: -1 (left) → 0b10, 0 (center) → 0b11, 1 (right) → 0b01
-  const panBits = regs.pan < 0 ? 0b10 : regs.pan > 0 ? 0b01 : 0b11;
+  const side = panSide(regs.pan);
+  const panBits = side < 0 ? 0b10 : side > 0 ? 0b01 : 0b11;
   return (panBits << 6) | ((regs.ams & 0x03) << 4) | (regs.fms & 0x07);
 }
 

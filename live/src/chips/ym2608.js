@@ -6,6 +6,7 @@ import { opnFm, opnFmEncoder } from "./opn-fm.js";
 import { ssgTone, ssgNoise, ssgEncoder } from "./ssg.js";
 import { rhythmRom } from "./rhythm-rom.js";
 import { adpcmB } from "./adpcm-b.js";
+import { panSide } from "../ir-utils.js";
 
 const CLOCK = 7987200;
 const SSG_CLOCK = CLOCK / 4; // its tone and noise divide this by 16
@@ -51,7 +52,7 @@ export const ym2608 = {
       [1, 0x0b, 0], [1, 0x01, 0], [1, 0x00, 0x21], [1, 0x10, 0x08], [1, 0x10, 0x80],
       [1, 0x02, start & 0xff], [1, 0x03, (start >> 8) & 0xff], [1, 0x04, stop & 0xff], [1, 0x05, (stop >> 8) & 0xff],
       [1, 0x09, deltaN & 0xff], [1, 0x0a, (deltaN >> 8) & 0xff],
-      [1, 0x00, 0xa0 | (repeat ? 0x10 : 0)], [1, 0x0b, Math.max(0, Math.min(255, level))], [1, 0x01, PAN_BITS[pan] ?? 0xc0],
+      [1, 0x00, 0xa0 | (repeat ? 0x10 : 0)], [1, 0x0b, Math.max(0, Math.min(255, level))], [1, 0x01, PAN_BITS[panSide(pan)]],
     ],
     stop: () => [[1, 0x0b, 0], [1, 0x01, 0], [1, 0x00, 0x21]],
     // A sounding note's level moving (linear, 0-255), and its pitch.
@@ -66,7 +67,7 @@ export const ym2608 = {
     hit: (sound, il, pan) => [...ym2608.rhythm.level(sound, il, pan), [0, 0x10, 1 << RHYTHM_BIT[sound]]],
     // A sound's level IL (and its pan, the same register), sounding or not.
     level: (sound, il, pan) => [
-      [0, 0x18 + RHYTHM_BIT[sound], (PAN_BITS[pan] ?? 0xc0) | Math.max(0, Math.min(31, il))],
+      [0, 0x18 + RHYTHM_BIT[sound], PAN_BITS[panSide(pan)] | Math.max(0, Math.min(31, il))],
     ],
     // `:mode gate`'s end: the dump bit stops the sound.
     dump: (sound) => [[0, 0x10, 0x80 | (1 << RHYTHM_BIT[sound])]],

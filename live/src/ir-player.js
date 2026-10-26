@@ -4177,8 +4177,9 @@ export class IRPlayer {
   _snapMacroOutput(target, value) {
     const t = String(target || "").toUpperCase();
     if (t === "PAN") {
-      // Tri-state pan lane: left(-1) / center(0) / right(+1)
-      return Math.max(-1, Math.min(1, Math.round(Number(value) || 0)));
+      // -1 (left) .. +1 (right); the encoder reads it at its chip's
+      // resolution (ir-utils panSide: left / both / right).
+      return Math.max(-1, Math.min(1, Number(value) || 0));
     }
     if (t === "NOISE_MODE") {
       // SN76489 mode is a 3-bit integer (0..7)

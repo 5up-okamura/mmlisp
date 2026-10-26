@@ -13,7 +13,7 @@
 // the one $0F (noiseReg).
 import { NO_WORDS, words } from "./parts.js";
 import { fmWords } from "./fm-words.js";
-import { encode30, encode80 } from "../ir-utils.js";
+import { encode30, encode80, panSide } from "../ir-utils.js";
 
 const CLOCK = 4000000; // the X68000's
 // The KC table is the chip's at 3.579545 MHz, where KC $4A is A4 = 440 Hz;
@@ -138,7 +138,7 @@ export const ym2151 = {
         return [[0, 0x20 + ch, r20[ch]]];
       },
       pan(ch, regs) {
-        r20[ch] = (r20[ch] & 0x3f) | (PAN_BITS[regs.pan < 0 ? -1 : regs.pan > 0 ? 1 : 0]);
+        r20[ch] = (r20[ch] & 0x3f) | PAN_BITS[panSide(regs.pan)];
         return [[0, 0x20 + ch, r20[ch]], [0, 0x38 + ch, ((regs.fms & 7) << 4) | (regs.ams & 3)]];
       },
       // KC: octave (3 bits) and note (4, C# D D# _ E F F# _ G G# A _ A# B C _

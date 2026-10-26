@@ -105,6 +105,17 @@ part's `level`; the FM family's words in one table (`chips/fm-words.js`)
 with closed per-part lists; FM channels sized from the targets; one synth
 registry (`src/synths.js`) and a port-collision check per target.
 
+Ruled for the 2A03 / HuC6280 (2026-10-26, the user): a part's resolution
+is its encoder's, written at the write (parts.js header) — so `def-wave`
+stays 32 steps of −128..127 (the HuC6280's 5 bits are its encoder's
+shift), and `:pan` reaches the encoder unsnapped (`panSide` for the
+left/right-bit chips; the HuC6280's 4-bit L/R reads it whole). A step count
+other than 32 waits for the FDS (64): a wave repeated a whole number of
+times only, never interpolated; 64 → 32 a `W_TARGET`. A part with no level
+(the 2A03's triangle) is "play what can be played": `:vel` / `:vol` a
+`W_TARGET`, built with the 2A03. Order: the part model before the Live
+strip (node-checkable first; the strip's entry carries the part).
+
 Next:
 1. Live page: a strip carries its channel entry (`selectedCh` numbers,
    `PSG_UI_BASE`, `isFmChannel` go), kind adapters for preview / mixer /

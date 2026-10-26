@@ -11,19 +11,21 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 **Next:**
 
-1. **Mid-song voice changes with no silence before them** — VOICE_SET
+1. **Single-bank PAL samples** are baked at the NTSC DAC rate (the multi-bank
+   images have PAL rates of their own).
+2. **Integration breadth** — more game-scene mappings worth shipping as
+   examples beside `drv/sgdk/example`, and a hardware-verified reference
+   build — heavy DMA workloads and PAL on hardware first (driver.md §11).
+3. **Mid-song voice changes with no silence before them** — VOICE_SET
    bodies in the sample-bank ROM, so a voice change is one pair instead of
    the ~30 register writes a channel costs today. A change after a rest or a
    cut note is already sent ahead in the silence (`voice-hoist.js`) and is
    not late; what this buys is several channels changing voice legato on one
-   beat.
-2. **Several scores resident at once** (DJ-style transitions, driver.md §2.3).
+   beat. The bodies would be the Z80's reads through the 68k window, on a lap
+   whose rate-binding slot has no margin (driver.md §11): measure what it
+   costs in the JS machine before building it.
+4. **Several scores resident at once** (DJ-style transitions, driver.md §2.3).
    Today one score is resident; a bundle's songs share one sample bank.
-3. **Single-bank PAL samples** are baked at the NTSC DAC rate (the multi-bank
-   images have PAL rates of their own).
-4. **Integration breadth** — more game-scene mappings worth shipping as
-   examples beside `drv/sgdk/example`, and a hardware-verified reference
-   build.
 
 ## Language
 
