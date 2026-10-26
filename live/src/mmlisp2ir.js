@@ -1119,7 +1119,11 @@ function connectionState(ts) {
     lastNotePitch: ts.lastNotePitch,
     glideRamp: ts.glideRamp,
     pendingLegato: ts.pendingLegato,
-    tiedHead: ts.tiedHead,
+    // The head as it stands here: a tie after this point (the body's, past a
+    // (break)) extends the copy in force, not this one — else the tie after
+    // the loop would count the body's too, and the gate land past the note.
+    // Its event is the same one: whichever path writes last sets its gate.
+    tiedHead: ts.tiedHead && { ...ts.tiedHead },
   };
 }
 function restoreConnectionState(ts, st) {

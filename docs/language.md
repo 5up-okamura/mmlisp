@@ -179,7 +179,9 @@ body connects to the body's first note on the passes that loop back, and one
 before `(go label)` to the label's first note — when that note is a tie
 continuation (`c ~ #loop (x 2 c2 …`), the tail is tied into it. With a `(break)`
 the last pass leaves from the break, so the note after the loop connects to
-the note before the `(break)` (a `~` on the body's tail does not reach it).
+the note before the `(break)` (a `~` on the body's tail does not reach it); a
+relative gate on that note resolves over each way on alone — into the body
+on the passes that loop, out of the loop on the last.
 
 The left note of a slur always sounds its **full slot**: its gate (`:gate`,
 `:gate*`, `:gate-`) is ignored, so it never keys off before the connection (a

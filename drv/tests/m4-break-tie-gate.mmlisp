@@ -1,0 +1,10 @@
+; M4 gate: a relative gate on a note tied out of a loop's (break). The note
+; before the (break) is tied on two ways — into the body's tail on the passes
+; that loop, out of the loop on the last — and each is that note's whole tied
+; length alone. The compiler counted both (the head the break saved was the
+; one the body's tie had extended), so the gate landed past the note and the
+; next one was not keyed (an MGS import, G2_00 fm9, through `:gate* 0.75`).
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :len 4 :gate* 0.75
+  (x 2 d c (break) ~ c d) ~ c e)
+(sqr1 :len 4 :gate- 8
+  (x 2 a e (break) ~ e a) ~ e c)

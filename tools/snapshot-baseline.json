@@ -657,6 +657,20 @@
   "mmb": "c368331acce56ed2",
   "vgm": "b006cbc7ada4d502"
  },
+ "drv/tests/m4-break-tie-gate.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "2568692f7e6995fd",
+  "regs": "68106c9f0db333e1",
+  "mmb": "bef650cb2f78a684",
+  "vgm": "5ed4ae433b0ceb7b"
+ },
+ "drv/tests/m4-break-tie-gate.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "8d3fd85c16d69150",
+  "regs": "68106c9f0db333e1",
+  "mmb": "37077ec7624b295f",
+  "vgm": "5ed4ae433b0ceb7b"
+ },
  "drv/tests/m4-callret-loop.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "1a08a490205e747c",
