@@ -126,6 +126,17 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     has(source, /\(fm2[^\n]*:gate- 16 [\s\S]*?c d4/, "MDX gates");
     clean(source, "MDX gates");
   }
+  // Sync: B waits (`ee`) and plays a note each time A raises its flag
+  // (`ef 1`), going round its loop for as long as it is woken.
+  {
+    const A6 = [0xfd, 1, ...N(60, 48), 0xef, 1, ...N(62, 48), ...N(64, 48), 0xef, 1, ...N(65, 48), ...END];
+    const B6 = [0xfd, 1, 0xee, ...N(72, 24)];
+    loopTo(B6, 2);
+    const mdx6 = parseMdx(buildMdx({ title: "Sync", tracks: [A6, B6, END, END, END, END, END, END, END], voices }));
+    const a6 = analyzeMdx(mdx6);
+    assert.deepEqual(a6.tracks[1].notes.map((n) => n.clock), [48, 144], "MDX sync: B on A's two ef 1");
+    clean(mdxToMmlisp(mdx6, { fileName: "sync.mdx" }, a6).source, "MDX sync");
+  }
   // A song on its composer's own grid: 22-clock 8ths, 176-clock bars. Its
   // quarter is 44 clocks, the tempo 48/44 faster, the notes plain 8ths.
   {

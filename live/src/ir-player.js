@@ -889,6 +889,14 @@ export class IRPlayer {
   }
 
   /**
+   * Whether track `ti` sounds on its sample voice: the voice's strip decides
+   * the solo (a soloed voice is not a soloed track), a mute of either holds.
+   */
+  _isVoiceTrackAudible(ti, voice) {
+    return !this._mutedTracks.has(ti) && this._isVoiceAudible(voice);
+  }
+
+  /**
    * Immediately silence any channel whose track just became inaudible, so a
    * held/sustained note stops at once instead of only gating the next note-on.
    * Audible channels are left alone and resume at their next note. No-op when
@@ -2987,7 +2995,7 @@ export class IRPlayer {
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
         const entry = this._adpcmBank?.entries?.[ev.args?.sample];
-        if (!entry || !this._isTrackAudible(ti) || !this._isVoiceAudible("adpcm")) break;
+        if (!entry || !this._isVoiceTrackAudible(ti, "adpcm")) break;
         const ratio = 2 ** ((pitchToMidi(ev.args?.pitch ?? "c4") - 60) / 12);
         const frames = (sec) => sec * entry.rate * ratio;
         const UNIT_FRAMES = 8;
@@ -3067,7 +3075,7 @@ export class IRPlayer {
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
         const entry = this._pcm8Bank?.entries?.[ev.args?.sample];
-        if (!entry || !this._isTrackAudible(ti) || !this._isVoiceAudible(key)) break;
+        if (!entry || !this._isVoiceTrackAudible(ti, key)) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const perSec = entry.rate * 2 ** ((midi - 60) / 12); // sample frames a second, as heard
         const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));

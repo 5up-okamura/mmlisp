@@ -173,8 +173,16 @@ function newState() {
  * One track as MXDRV plays it, to its end or its loop: the notes it keys
  * ({clock, len, gate, midi, legato, st}, the state in force), the tempo
  * changes, where it loops ({loopClock}) and what was left out.
+ *
+ * Sync: `ef n` raises track n's flag ({to, clock} in `sends`); `ee` lowers
+ * the track's own and goes on, or stops the track until the flag is raised
+ * (MXDRV's L001498 / L0014b0 / L001192). `recv` is when this track's flag
+ * goes up — the clocks the other tracks' `ef`s land at — or null while they
+ * are not known yet: then an `ee` ends the track. A track that waits plays
+ * on through its own loop for as long as it is woken, up to `until` (the
+ * song's end: a track that waited once, in its intro, comes round no more).
  */
-function playTrack(mdx, track, skipped) {
+function playTrack(mdx, track, skipped, recv = null, until = Infinity) {
   const { u8 } = mdx;
   const st = newState();
   const notes = [];
@@ -186,6 +194,9 @@ function playTrack(mdx, track, skipped) {
   let loopClock = null;
   let end = null;
   let steps = 0;
+  const sends = [];
+  let waits = false; // an `ee` seen: the track runs on its wake-ups, not its loop
+  let lowered = -1; // the clock the flag was last lowered at
   const skip = (k) => skipped.set(k, (skipped.get(k) ?? 0) + 1);
   while (p < u8.length && clock < MAX_CLOCKS && ++steps < 2e6) {
     if (!stack.length && !visits.has(p)) visits.set(p, clock);
@@ -250,13 +261,26 @@ function playTrack(mdx, track, skipped) {
           if (a1 === 0) { end = clock; break; } // $F1 $00: the end (its second byte is not read)
           {
             const to = p + 3 + s16(u8, p + 1);
+            // A track that waits goes round for as long as it is woken.
+            if (waits && recv && clock < until) { p = to; visits.clear(); continue; }
             if (visits.has(to)) loopClock = visits.get(to);
             else skip("a loop point inside a repeat (the track is written to its end)");
           }
           end = clock;
           break;
         case 0xf0: st.keyDelay = a1; break;
-        case 0xef: case 0xee: skip("sync between tracks (each track runs free)"); break;
+        case 0xef: sends.push({ to: a1, clock }); break;
+        case 0xee: {
+          waits = true;
+          const up = recv?.find((t) => t > lowered && t <= clock);
+          if (up == null) {
+            const next = recv?.find((t) => t > clock);
+            if (next == null) { end = clock; break; } // never woken: it stops here
+            clock = next;
+          }
+          lowered = clock;
+          break;
+        }
         case 0xed: if (track.index >= 8) st.pcmRate = a1; else st.noise = a1; break;
         case 0xec: lfoCmd(u8, p, st, "plfo"); break;
         case 0xeb: lfoCmd(u8, p, st, "alfo"); break;
@@ -282,7 +306,7 @@ function playTrack(mdx, track, skipped) {
     end = clock;
     if (clock >= MAX_CLOCKS) skip("a track that never reaches its end (cut)");
   }
-  return { notes, tempos, loopClock, end };
+  return { notes, tempos, loopClock, end, sends, waits };
 }
 
 // Past the F5 that closes the repeat a break at `p` is in.
@@ -323,10 +347,36 @@ function gateOf(n) {
 
 const TRACK_NAMES = "ABCDEFGHPQRSTUVW";
 
+// Every track as MXDRV plays it, the waiting ones on the others' `ef`s: a
+// track's flag goes up at an `ef`'s clock, seen that tick by the tracks
+// after the sender (MXDRV runs them in order) and the next by those before.
+// A waiting track that sends wakes others in turn: replayed till it settles.
+// Its loop is its waker's — it is woken from that track's loop, pass after
+// pass, where the import plays one.
+function playAll(mdx, skipped) {
+  let res = mdx.tracks.map((t) => playTrack(mdx, t, new Map()));
+  const until = Math.max(0, ...res.filter((r) => !r.waits).map((r) => r.end));
+  for (let round = 0; round < 4 && res.some((r) => r.waits); round++) {
+    const recv = mdx.tracks.map((t) =>
+      res.flatMap((r, s) => r.sends.filter((x) => x.to === t.index).map((x) => x.clock + (s < t.index ? 0 : 1))).sort((x, y) => x - y));
+    res = mdx.tracks.map((t, i) => (res[i].waits ? playTrack(mdx, t, new Map(), recv[i], until) : res[i]));
+  }
+  // Once more, counting what is left out once.
+  const final = mdx.tracks.map((t, i) => {
+    if (!res[i].waits) return playTrack(mdx, t, skipped);
+    const recv = res.flatMap((r, s) => r.sends.filter((x) => x.to === t.index).map((x) => ({ at: x.clock + (s < t.index ? 0 : 1), s })));
+    const r = playTrack(mdx, t, skipped, recv.map((x) => x.at).sort((x, y) => x - y), until);
+    const waker = res[recv.at(-1)?.s];
+    return waker ? { ...r, loopClock: waker.loopClock, end: Math.max(r.end, waker.end) } : r;
+  });
+  return final;
+}
+
 export function analyzeMdx(mdx) {
   const skipped = new Map();
-  const tracks = mdx.tracks.map((t) => {
-    const r = playTrack(mdx, t, skipped);
+  const played = playAll(mdx, skipped);
+  const tracks = mdx.tracks.map((t, i) => {
+    const r = played[i];
     const pcm = t.index >= 8;
     const name = pcm ? (mdx.pcm8 ? `PCM ${t.index - 7}` : "ADPCM") : `FM ${TRACK_NAMES[t.index]}`;
     return { ...t, ...r, pcm, name, label: `${name} · ${r.notes.length} notes${r.loopClock != null ? ", loops" : ""}` };
