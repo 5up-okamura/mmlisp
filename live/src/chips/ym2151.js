@@ -93,6 +93,10 @@ export const ym2151 = {
   encoder: true,
   emulator: true,
   vgm: { clock: 0x30, ports: { 0: { cmd: 0x54, addr: true } } },
+  // A run starts the chip-wide registers over: the noise off (fm8's fourth
+  // operator a sine again), the LFO stopped at no depth on the saw — the
+  // chip's reset, where a song before this one may have left them.
+  init: [[0, 0x0f, 0x00], [0, 0x18, 0x00], [0, 0x19, 0x00], [0, 0x19, 0x80], [0, 0x1b, 0x00]],
 
   // The FM as the IR player writes it (chips/opn-fm.js has the contract).
   // One per player: it keeps $20, where the pan and the algorithm meet.

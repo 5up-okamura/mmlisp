@@ -1864,19 +1864,19 @@
  "tools/tests/x68k/fm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "6cc2c5c664ff7766",
-  "regs": "554627227138fe44",
-  "vgm": "067395fb563f6b8c"
+  "regs": "b127ffc90abc5bd0",
+  "vgm": "c7b80b449d76c506"
  },
  "tools/tests/x68k/noise.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "7b6cb8066f48783f",
-  "regs": "ac3ead265753fd6b",
-  "vgm": "b5b9b4a0321de63b"
+  "regs": "105b602619d11db0",
+  "vgm": "70b2c25ba9143b7e"
  },
  "tools/tests/x68k/pcm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "31f48b9564112a42",
-  "regs": "47bf0f58b86e2ea6",
-  "vgm": "98a109e62df84a83"
+  "regs": "1af3691b89e1d263",
+  "vgm": "5d33e6b3c558d2b4"
  }
 }
