@@ -84,7 +84,8 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   rhythm against the melody, the clipping and the level beside the other
   targets are fine as they are). The volume's floor is −45 dB
   (vol 15): `:vol 0` and a mixer mute do not silence a sounding FM-PAC note
-  (the md's TL 127 does). A call with no time (a live edit, a key preview)
+  (the md's TL 127 does) — ruled 2026-10-26 to stay: the chip cannot, and
+  MGSDRV's v0 is the same; a mute keys off as on md. A call with no time (a live edit, a key preview)
   is the encoder's latest time, and `IRPlayer.setParam` writes the edit at
   once (`live`); checked in node, not by ear. The worklet has no hold bus
   for the OPLL (the msx synth's `bus` is null; `_songRegs` is indexed
