@@ -429,6 +429,23 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
 
 ## 12. Decisions that answer a question someone will ask again
 
+- **VOICE_SET bodies in ROM: what they would buy** (measured 2026-10-27, not
+  built; the roadmap item). A ROM-fed YM write in a pad, priced by hand at
+  ~134 cycles inline (two window reads at `windowWait` 3, the address/data
+  writes, the $2A latch put back, a constant-time end) — `call`ed, ~161, fits
+  no slot. Slots with a pad >= 134 (the light images' placement tables):
+  pcm1 55 a lap = ~7,060 writes/s (a 30-write body in 4.2 ms); pcm2 5 = ~630/s
+  (below the 960/s wire: no gain); pcm3 8 = ~1,110/s (the pads are 137, so
+  the estimate has 3 cycles of slack). Upper bound on the corpus
+  (onset-timing with every frame's >= 8-write channel body taken off the wire,
+  2-20 s, 123 single-bank scores): late key-ons (> 8 ms over usual) 122 -> 93,
+  all of it on two synthetic scores (m3-voice-loop 38 -> 9, stress-m1's max
+  34.8 -> 27.3). It would also need a fence (a key-on pair must wait for its
+  body) and a twin in every layer. The user's ruling (2026-10-27): today's
+  performance is enough — the mucom benchmark songs are fine. Reopen only
+  when a score written with MMLisp's full feature set shows lateness that
+  survives the hoist and key-ons last (re-run this counterfactual on it).
+
 - **Keep LOOP and CALL/RET separate — do NOT add a count to CALL.** A
   single-use `(x N …)` is L+3 bytes as a LOOP but L+5 as a counted CALL (the
   body forced out of line, plus a RET and a dest pointer). Counted-CALL wins

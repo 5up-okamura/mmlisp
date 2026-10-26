@@ -19,9 +19,9 @@ Its current limits are `driver.md` §11 — keep the two in step.
    the ~30 register writes a channel costs today. A change after a rest or a
    cut note is already sent ahead in the silence (`voice-hoist.js`) and is
    not late; what this buys is several channels changing voice legato on one
-   beat. The bodies would be the Z80's reads through the 68k window, on a lap
-   whose rate-binding slot has no margin (driver.md §11): measure what it
-   costs in the JS machine before building it.
+   beat. Measured, not built: only `pcm1` (and a score without PCM) has the
+   spare cycles to write a body from ROM faster than the wire; waits for a
+   score whose key-ons are still late after the hoist.
 3. **Several scores resident at once** (DJ-style transitions, driver.md §2.3).
    Today one score is resident; a bundle's songs share one sample bank.
 
