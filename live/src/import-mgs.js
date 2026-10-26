@@ -891,7 +891,10 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       if (inForce) { marks.push({ tick: loopTick, tokens: inForce.tokens }); marks.sort((x, y) => x.tick - y.tick); }
     }
     if (rhythmCh != null) {
-      for (const t of rhythmOfFm(rhythmCh, clean, a.rhythmY)) songOut.push({ ...t, channel: `rhythm${++rhythmN}`, marks: rhythmN === 1 ? marks : [], endTick, loopTick });
+      // The track's tempo marks go with its first sound.
+      rhythmOfFm(rhythmCh, clean, a.rhythmY).forEach((t, k) => songOut.push({ ...t, channel: `rhythm${++rhythmN}`, marks: k ? [] : marks, endTick, loopTick }));
+      const before = clean.filter((n) => n.tick < a.rhythmY.step * TICKS_PER_STEP).length;
+      if (before) skip(`FM ${tr.index - 8} notes before the y14 that makes it the rhythm's`);
       endMax = Math.max(endMax, endTick);
       continue;
     }

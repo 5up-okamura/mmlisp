@@ -5102,6 +5102,7 @@ function compileChannelBody(
                 // A `:mode` macro on a part whose modes are its mixer's (the
                 // SSG's) steps the mixer.
                 if (target === "NOISE_MODE" && trackState.part?.modes?.tone?.[0] === "SSG_MIX") target = "SSG_MIX";
+                else if (target === "SSG_MIX") target = null; // reached by :mode alone
                 // A keyword that names no target is a typo, as it is inline
                 // (E_UNKNOWN_KEYWORD) — never a macro that silently drops.
                 if (!MACRO_TARGETS.has(target)) {

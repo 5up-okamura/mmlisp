@@ -2399,7 +2399,9 @@ no SSG sound (`E_TARGET`), nor does a `:mode` macro on noise. A note's
 macro steps the mixer and the noise period as a drum moves them through its
 hit: `(macro :mode [both noise])` on a sqr track, and `(macro :noise-rate
 [2 4 6 8])` on a sqr or the noise track, which writes the song's one period
-while the note sounds (the later write wins, as for `:env-rate`).
+while the note sounds (the later write wins, as for `:env-rate`). A macro is
+its note's: the next note without one has the track's `:mode` and the
+song's `:noise-rate` back.
 
 **The SSG's hardware envelope.** A channel's level can be the envelope the
 three channels share instead of its own 4-bit one: **`:env 0–15`** (sticky,

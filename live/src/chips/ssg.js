@@ -49,8 +49,16 @@ const ENV_TRIANGLES = new Set([10, 14]);
 // is channel 3's (index 2) mixer on noise. One per player: it keeps the mixer
 // register the channels share. `io` is the mixer's bits 7-6, the I/O ports'
 // directions, written with it on a chip that has them wired (the MSX's).
+//
+// The player sends the channels' mixer changes out of time order (each
+// track to the horizon in turn, a note's `:mode` macro its whole length
+// ahead), so one built from "the mixer now" would carry another channel's
+// later state. A change with a time is queued, and flush(horizon) — once
+// every track is dispatched to it — writes them in time order (as the
+// OPLL's rhythm, chips/ym2413.js); one with none is written now.
 export function ssgEncoder(clock, io = 0) {
   let mixer = io | 0x38; // bits 0-2 tone off, 3-5 noise off, per channel
+  let queue = []; // [{ t, lane, mode }]
   const phys = (lane) => (lane === 3 ? 2 : lane);
   return {
     // The 12-bit period divides the clock by 16.
@@ -60,8 +68,18 @@ export function ssgEncoder(clock, io = 0) {
     tone: (lane, p) => [[0, 2 * lane, p & 0xff], [0, 2 * lane + 1, (p >> 8) & 0x0f]],
     // A noise note: its channel's mixer on noise alone (the SSG's noise
     // has no mode; its period is the song's NOISE_RATE).
-    noise: () => mix(3, 1),
-    mix: (lane, mode) => mix(lane, mode),
+    noise: (_mode, when) => take(3, 1, when),
+    mix: (lane, mode, when) => take(lane, mode, when),
+    flush(horizon) {
+      const due = queue.filter((op) => op.t <= horizon + 1e-9).sort((a, b) => a.t - b.t);
+      if (!due.length) return [];
+      queue = queue.filter((op) => op.t > horizon + 1e-9);
+      return due.map((op) => [...mix(op.lane, op.mode)[0], op.t]);
+    },
+    // A stop or a seek: what is queued does not play.
+    drop() {
+      queue = [];
+    },
     noiseRate: (rate) => [[0, 0x06, Math.max(1, Math.min(31, Math.round(rate)))]],
     // The envelope: a channel's level on it (the M bit), its shape (a write
     // starts it over), and its period for a cycle at `hz` — 32 steps of
@@ -74,6 +92,11 @@ export function ssgEncoder(clock, io = 0) {
       return [[0, 0x0b, ep & 0xff], [0, 0x0c, ep >> 8]];
     },
   };
+  function take(lane, mode, when) {
+    if (when === undefined || when === null) return mix(lane, mode);
+    queue.push({ t: when, lane, mode });
+    return [];
+  }
   function mix(lane, mode) { // SSG_MIX: 0 tone, 1 noise, 2 both, 3 neither
     const c = phys(lane);
     mixer &= ~((1 << c) | (8 << c));

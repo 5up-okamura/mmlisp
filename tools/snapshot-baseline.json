@@ -1766,14 +1766,14 @@
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "602742d8cea2f201",
-  "regs": "fdfb66599a15de32",
-  "vgm": "4ccead5db2b645e3"
+  "regs": "ff41637455805834",
+  "vgm": "567975462b681425"
  },
  "tools/tests/msx/env.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "2964df1381fd7816",
-  "regs": "6fafc448e3b60119",
-  "vgm": "3300db898280bda5"
+  "regs": "cc5cbddd817282e0",
+  "vgm": "a9aa2a70e69b8d53"
  },
  "tools/tests/msx/fm-pac-rhythm-pitch.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
@@ -1796,14 +1796,14 @@
  "tools/tests/msx/noise.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "74a1b89a608c2c34",
-  "regs": "cdf56c7689f2ba2f",
-  "vgm": "1347cab670652185"
+  "regs": "66dcc57873d00aa8",
+  "vgm": "160910ff28cc7966"
  },
  "tools/tests/msx/psg.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "32e197dddd94da7b",
-  "regs": "8bdefa59535c5653",
-  "vgm": "a9e9e9bd1a3c3cd1"
+  "regs": "db027fdbae78189a",
+  "vgm": "14e9200933b15eab"
  },
  "tools/tests/msx/scc-expr.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
@@ -1838,14 +1838,14 @@
  "tools/tests/pc88/ssg-macro.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ef787b3d5d3c3f23",
-  "regs": "48454dc44218b147",
-  "vgm": "e60ade1c9ef4378c"
+  "regs": "4391890e0955ca51",
+  "vgm": "9f5690c69d9fe1d3"
  },
  "tools/tests/pc88/ssg.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5359aeaea21d6803",
-  "regs": "306eb9fe0c69d177",
-  "vgm": "db50ef5be4022063"
+  "regs": "d38e81b1547f3aa7",
+  "vgm": "69ffba8389b33aa2"
  },
  "tools/tests/x68k/fm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

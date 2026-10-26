@@ -305,6 +305,12 @@ export class IRPlayer {
     this._envSemi = new Array(PSG_LANES).fill(0);
     this._envDetune = new Array(PSG_LANES).fill(0);
     this._psgHz = new Array(PSG_LANES).fill(0);
+    // The SSG's mixer each lane's :mode sets and the song's noise period,
+    // which a note after one whose macro moved them writes back; and the
+    // lanes whose last note's macro did.
+    this._ssgMixBase = new Array(PSG_LANES).fill(null);
+    this._noiseRateBase = null;
+    this._ssgMacroed = new Array(PSG_LANES).fill(null); // { mix, rate }
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(FM_CHANNELS).fill(null);
@@ -548,6 +554,7 @@ export class IRPlayer {
     if (adpcm) write(adpcm.stop());
     const kit = this._target.parts.find((p) => p.kit)?.kit;
     if (this._rhythmEnc && kit) for (const sound of Object.values(kit)) write(this._rhythmEnc.dump(sound));
+    this._psgChip?.drop?.(); // the SSG's queued mixer changes
     const t = when ?? this._audioContext?.currentTime ?? 0;
     if (this._target.hasPart("pcm8")) for (let v = 0; v < PCM8_VOICES; v++) this._pcm8Ev(t, { kind: "cut", voice: v });
   }
@@ -581,6 +588,9 @@ export class IRPlayer {
     this._envSemi.fill(0);
     this._envDetune.fill(0);
     this._psgHz.fill(0);
+    this._ssgMixBase.fill(null);
+    this._noiseRateBase = null;
+    this._ssgMacroed.fill(null);
     this._holdChannels.clear();
     this._loopCount.clear();
     this._fmVolSweep.fill(null);
@@ -1338,6 +1348,8 @@ export class IRPlayer {
     // A wave expression follows its slots to the horizon — and once the song
     // is done, to the end of its last note.
     this._waveExprFrames(done ? Math.max(horizon, this._songEndTime()) : horizon);
+    // The SSG's mixer changes up to `horizon`, in time order (chips/ssg.js).
+    for (const [p, a, d, t] of this._psgChip?.flush?.(done ? Infinity : horizon) ?? []) this._write(p, a, d, t);
     // Every hit up to `horizon` is known now: the chip's sample voices'
     // levels can be written up to it — and once the song is done, on to the
     // end of what still sounds.
@@ -2912,6 +2924,16 @@ export class IRPlayer {
     };
   }
 
+  // Has the sound sharing `voice`'s channel (the kit's lane) been hit since
+  // `hit`, by `t`?
+  _pairHitSince(voice, hit, t) {
+    const lanes = this._routes.get(hit.ti)?.part?.kitLane;
+    if (!lanes) return false;
+    for (const [v, hits] of this._chipPcm.hits)
+      if (v !== voice && lanes[v] === lanes[voice] && hits.some((x) => x.t > hit.t && x.t <= t + 1e-9)) return true;
+    return false;
+  }
+
   // A hit's pitch move at `when`, in cents: the track's :pitch and the
   // note's :pitch / :semi macros.
   _hitCents(hit, when) {
@@ -2956,8 +2978,9 @@ export class IRPlayer {
         let h = null;
         for (let i = hits.length - 1; i >= 0; i--) if (hits[i].t <= t + 1e-9) { h = hits[i]; break; }
         // An OPLL rhythm hit's pitch moves its channel while the sound rings
-        // and on through its release, to the voice's next hit.
-        if (h?.tune) {
+        // and on through its release, to the next hit on the channel: its
+        // own or its pair's (SD with HH, TOM with the cymbal), which tunes it.
+        if (h?.tune && !this._pairHitSince(voice, h, t)) {
           const midi = h.midi + this._hitCents(h, t) / 100;
           if (midi !== h.tuned) {
             h.tuned = midi;
@@ -3348,6 +3371,7 @@ export class IRPlayer {
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP": {
         if (ev.args?.target === "NOISE_RATE") {
+          if (ev.cmd === "PARAM_SET") this._noiseRateBase = Number(ev.args?.value ?? 9);
           this._writeSongRate(ev, when, 9, (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v)), t));
           return true;
         }
@@ -5279,7 +5303,7 @@ export class IRPlayer {
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
   // modeVal: 0-7 encoding FB(1bit) + NF(2bits) → bits 5-3 of noise register
   _psgSetNoiseCfg(modeVal, when) {
-    this._psgWrites(this._psg((c) => c.noise(modeVal)), when);
+    this._psgWrites(this._psg((c) => c.noise(modeVal, when)), when);
   }
 
   // Set tone period for a PSG tone channel (ch 0-2): the note through the
@@ -5634,10 +5658,19 @@ export class IRPlayer {
           this._holdChannels.set(this._holdKey(ev), ev._trackIndex);
         }
         // The SSG's mixer and its (song-wide) noise period stepped by the
-        // note's `:mode` / `:noise-rate` macros, frame by frame.
-        this._schedulePsgWordMacro(ev.args?.ssg_mix, when, psgGateTicks, psgMacroLimit,
-          (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v)) ?? []), t));
-        this._schedulePsgWordMacro(ev.args?.noise_rate, when, psgGateTicks, psgMacroLimit,
+        // note's `:mode` / `:noise-rate` macros, frame by frame. A macro is
+        // its note's: after one, a note without it has the track's :mode and
+        // the song's :noise-rate back.
+        const mixMacro = ev.args?.ssg_mix, rateMacro = ev.args?.noise_rate;
+        const was = this._ssgMacroed[psgCh];
+        if (was?.mix && !mixMacro && this._ssgMixBase[psgCh] != null)
+          this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, this._ssgMixBase[psgCh], when) ?? []), when);
+        if (was?.rate && !rateMacro && this._noiseRateBase != null)
+          this._psgWrites(this._psg((c) => c.noiseRate?.(this._noiseRateBase) ?? []), when);
+        this._ssgMacroed[psgCh] = mixMacro || rateMacro ? { mix: !!mixMacro, rate: !!rateMacro } : null;
+        this._schedulePsgWordMacro(mixMacro, when, psgGateTicks, psgMacroLimit,
+          (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v), t) ?? []), t));
+        this._schedulePsgWordMacro(rateMacro, when, psgGateTicks, psgMacroLimit,
           (v, t) => this._psgWrites(this._psg((c) => c.noiseRate?.(v) ?? []), t));
         // A lane on the envelope starts it over at a key-on (a slur's goes on).
         const envShape = this._psgEnv[psgCh];
@@ -5769,7 +5802,8 @@ export class IRPlayer {
             this._writeEnvPeriod(this._psgHz[psgCh], this._envBy(psgCh), when);
         } else if (psgTarget === "SSG_MIX") {
           // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
-          this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, Math.round(ev.args?.value ?? 0))), when);
+          this._ssgMixBase[psgCh] = Math.round(ev.args?.value ?? 0);
+          this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, this._ssgMixBase[psgCh], when)), when);
         } else if (psgTarget === "WAVE") {
           // A wave channel's def-wave (metadata.waves): its memory written
           // whole (chips/k051649.js — channels 4 and 5 share one). A wave
