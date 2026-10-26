@@ -296,7 +296,10 @@ export class CorrelationTrigger {
     const quality = this._quality;
     const corr = this._corr;
     const peaks = this._peaks;
-    let bufferOn = BUFFER_STRENGTH > 0 && RESPONSIVENESS > 0;
+    // An unknown period zeroes the buffer's window (gaussianWindow): an
+    // unpitched channel (noise, a sample) learns nothing into the buffer, so
+    // it triggers on the edge alone — and skips a full-width correlation.
+    let bufferOn = BUFFER_STRENGTH > 0 && RESPONSIVENESS > 0 && period > 0;
 
     // Candidate range: the trigger may not move more than TRIGGER_RADIUS_PERIODS
     // from the window center, so nothing outside it needs correlating.

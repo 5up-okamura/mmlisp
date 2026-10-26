@@ -2495,7 +2495,9 @@ a `gate` note is cut at its gate, a `loop` repeats the loop (`:loop-start`
 … within the range, the def's or the track's) until its gate and plays the
 rest out. A point the track writes is read at each key-on (a curve there is
 read as its start, `W_TARGET`). The eight voices sum and saturate at the
-chip's 12 bits — eight loud voices clip, as they do on the machine. The
+chip's 12 bits — eight loud voices clip, as they do on the machine. Play
+and WAV mix it with the FM as X68Sound (the players MXDRV runs in) does: a
+full-scale sample at vel 15 is 17 dB above one carrier at TL 0. The
 stream has one pan, so a pcm track has no `:pan` (`E_UNSUPPORTED_TARGET`).
 The VGM carries the encoded stream as one data block that DAC stream
 control plays; Play and WAV decode the same encoding, so all three sound

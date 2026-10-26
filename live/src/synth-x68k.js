@@ -11,28 +11,28 @@
 // chip's DAC holds them, from `pcm8` — a source whose tick() is the next
 // sample: the worklet's live mix (Pcm8Live), or a rendered stream for the
 // WAV (Pcm8Stream). The scope gets each FM channel's own part, lanes 0-7,
-// and the ADPCM, lane 8.
+// and each PCM8 voice's part of the mix, lanes 8-15 (Pcm8Live's; the WAV's
+// stream has none).
 // ---------------------------------------------------------------------------
 
 import createYm2151Module from "../ymfm-ym2151.js";
 import { ym2151, opmHoldBus } from "./chips/ym2151.js";
 import { opmPitch } from "./scope-pitch.js";
-import { PCM8_RATE, Pcm8Mixer, OkiEncoder, OkiDecoder, okiOut } from "./chips/msm6258.js";
+import { PCM8_RATE, PCM8_VOICES, Pcm8Mixer, OkiEncoder, OkiDecoder, okiOut } from "./chips/msm6258.js";
 
 export const YM2151_NATIVE_SAMPLE_RATE = ym2151.clock / 64;
 
 const SAMPLE_SCALE = 1 / 32768; // int16 chip output -> float
 const MAX_RENDER = 4096; // the adapter's cap on one y5_render()
-// One carrier at TL 0 through ymfm's OPM (±8192) peaks where the Mega
-// Drive's does through Nuked at its gain (about −12 dBFS), so a score moved
-// between the targets keeps its level. Tunable by ear.
-const MASTER_OUTPUT_GAIN = 1.0;
-// The ADPCM at full scale against the FM: twice one carrier at TL 0, about
-// −6 dBFS. Tunable by ear.
-const PCM8_GAIN = 0.5;
+// The mix as X68Sound (MXDRV's own players) makes it, measured there: one
+// carrier at TL 0 peaks at 3660 of 32768 (about −19 dBFS), PCM8 at volume 8
+// on a full-scale sample at 26886 (about −2 dBFS), 17 dB above it. ymfm's
+// carrier is ±8192, a quarter of full scale; the ADPCM comes in at ±1.
+const MASTER_OUTPUT_GAIN = 3660 / 8192;
+const PCM8_GAIN = 26886 / 3660 / 4;
 
-export const SCOPE_LANES = 9;
 const FM_LANES = 8;
+export const SCOPE_LANES = FM_LANES + PCM8_VOICES;
 
 /** PCM8 played live: the mix, encoded and decoded as the chip hears it. */
 export class Pcm8Live {
@@ -43,6 +43,7 @@ export class Pcm8Live {
   }
   apply(e) { this.mix.apply(e); }
   tick() { return okiOut(this.dec.next(this.enc.next(this.mix.next()))); }
+  get taps() { return this.mix.taps; }
 }
 
 /** A rendered stream's decoded samples, from `startSec` (chips/msm6258.js decodePcm8). */
@@ -55,6 +56,7 @@ export class Pcm8Stream {
     const k = this.i++;
     return k >= 0 && k < this.samples.length ? this.samples[k] : 0;
   }
+  get taps() { return null; }
 }
 
 export class X68kSynth {
@@ -128,11 +130,16 @@ export class X68kSynth {
     this._pcmAcc += PCM8_RATE;
     if (this._pcmAcc >= YM2151_NATIVE_SAMPLE_RATE) {
       this._pcmAcc -= YM2151_NATIVE_SAMPLE_RATE;
-      this._pcmVal = this.pcm8 ? this.pcm8.tick() * PCM8_GAIN : 0;
+      this._pcmVal = this.pcm8 ? this.pcm8.tick() : 0;
     }
-    if (taps && this._tapNext) this._tapNext[FM_LANES] = this._pcmVal;
+    // The voices' lanes, on the chip's own scale as the FM's are.
+    if (taps && this._tapNext) {
+      const v = this.pcm8?.taps;
+      for (let c = 0; c < PCM8_VOICES; c++) this._tapNext[FM_LANES + c] = v ? v[c] : 0;
+    }
+    const pcm = this._pcmVal * PCM8_GAIN;
     const k = (this._bufPtr >> 1) + 2 * this._batchPos++;
-    return [heap[k] * SAMPLE_SCALE + this._pcmVal, heap[k + 1] * SAMPLE_SCALE + this._pcmVal];
+    return [heap[k] * SAMPLE_SCALE + pcm, heap[k + 1] * SAMPLE_SCALE + pcm];
   }
 
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {

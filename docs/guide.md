@@ -1443,7 +1443,7 @@ and `Instruments…` inserts voices and drum kits at the cursor:
 | `.dmf` / `.fur`                    | DefleMask / Furnace module import, through the import dialog (below) |
 | `.vgm` / `.vgz`                    | VGM import, through the import dialog (below)              |
 | `.mdx` (+ `.pdx`)                  | MDX import as an `x68k` score — drop its `.pdx` alongside for the ADPCM (below) |
-| `.mgs`                             | MGS import as an `msx` score, through the import dialog (below) |
+| `.mgs`                             | MGS import as an `msx` score (below)                        |
 
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
@@ -1767,11 +1767,15 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   `:vel` (0.75 dB a TL step), `p` `:pan`, `q` / `@q`, `&` and `k` the notes'
   lengths, `D` `:pitch`, `_` and the software LFOs (`MP`, `MA`) `:pitch+` /
   `:vel+` macros, `MH` the OPM's LFO words, and track H's notes with the noise
-  on (`w`) go to `noise`. The ADPCM — one track, or eight under PCM8 — plays
+  on (`w`) go to `noise`. A track with no notes that only sets the tempo — a
+  loop dithering it between two Timer B values, for one in between — becomes
+  its average, one `:tempo`. The ADPCM — one track, or eight under PCM8 — plays
   the song's PDX: pick (or drop) the `.pdx` together with the `.mdx`; its
   samples are decoded into one wav, `<song>-pdx.wav`, a `def-pcm pdx-NNN`
-  each, held in memory until Save writes it. Without the PDX the PCM tracks
-  are left out, and the log says so.
+  each, held in memory until Save writes it. Their `v` is PCM8's volume, as
+  MXDRV sets it: `v8` the sample as it is (`:vel 15`), louder above — the
+  loudest a sample plays at becomes its def's `:fx [(gain …)]`. Without the
+  PDX the PCM tracks are left out, and the log says so.
 - **MGS:** read as MGSC 1.11's reference (MGSC111.TXT) defines the MML,
   and held to MGSDRV itself where the reference leaves numbers open (the
   pitch tables, the tempo's frames, the envelopes, the detunes).
@@ -1795,10 +1799,11 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   its `:vol`. The PSG's hardware envelope is not imported yet; the log
   counts what was left out.
 
-**A MIDI, VGM, MDX or MGS import is structured** (untick **Fold repeats** for one bar
-after another): bars that repeat back to back become `(x n …)`, a run that
-comes round once more cut short becomes `(x n A (break) B)`, and a run that
-comes back elsewhere becomes a `(def fm1-a …)` named in place. Bars match
+**A MIDI, VGM, MDX or MGS import is structured** (a MIDI or VGM import's
+dialog has **Fold repeats** to untick, for one bar after another): bars that
+repeat back to back become `(x n …)`, a run that comes round once more cut
+short becomes `(x n A (break) B)`, and a run that comes back elsewhere
+becomes a `(def fm1-a …)` named in place. Bars match
 when they play the same — velocity compared at its 16 steps. A part that
 plays behind the beat (an echo a 16th late) has every bar tied on from the
 last; its repeats fold as `~ (x n … ~)` — the `~` before the loop ties the

@@ -136,3 +136,16 @@ Next:
   code), not mdxmini, which is wrong on volume, gates after a tie, `k`, the
   LFO shapes and MA. Not modelled: the LFOs' free run without MD (the import
   restarts them each note), the random shape, sync.
+- How an MDX import is held to MXDRV (2026-10-26, on the user's Assault
+  set): clone portable_mdx, add to `Opm::OpmPoke` an `fprintf(stderr, "W
+  %ld %02x %02x", tick, reg, data)` with `tick` counted up in the Timer B
+  interrupt (`OpmIntProc` call), build `examples/simple_mdx2wav`, run it on
+  the MDX + PDX; turn the ticks to seconds from the `$12` writes (a clock
+  is 1024·(256−TB)/4 MHz); compare against `IRPlayer.captureRegisterLog`
+  of the import: key-ons ($08) per channel within 5 ms, KC/KF at each
+  key-on, and the pitch held between. What still differs: the software
+  LFOs' phase and depth within a note (MXDRV steps them a clock, ~10 ms;
+  the import at 60 Hz), `v` rounded to :vel's 2 dB (≤ 1 dB), a looping
+  tempo-only track averaged (≤ 1 % over its loop). The x68k synth's
+  FM : PCM8 balance was measured on the same build (X68Sound: a TL 0
+  carrier 3660/32768, PCM8 volume 8 at full scale 26886/32768).

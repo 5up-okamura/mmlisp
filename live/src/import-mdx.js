@@ -15,7 +15,9 @@
 //   @n                 the voice, a def-fm (DT2 kept) — with the track's MH
 //                      PMS/AMS as its :fms / :ams
 //   v / @v / ( )       :vel — v's table is a TL offset (2-42), @v the TL
-//                      itself, 0.75 dB a step on the 2 dB ladder
+//                      itself, 0.75 dB a step on the 2 dB ladder; on the
+//                      ADPCM, PCM8's volume MXDRV picks for it (v8 the
+//                      sample as it is, v15 +14 dB: the def's :fx gain)
 //   p                  :pan (p0 mutes the track's notes)
 //   q / @q, &, k       the note's length: q n/8 of it, @q n clocks short of
 //                      it, & legato (a tie, or a slur to another note), k a
@@ -28,7 +30,8 @@
 //   MH                 the OPM's LFO: :lfo-wave :lfo-freq :lfo-pmd :lfo-amd
 //   w                  the noise (on track H, NE): its notes go to `noise`
 //                      at :noise-rate 32 - NFRQ
-//   @t, y$12           :tempo (Timer B: 4882.8125 / (256 - n) BPM)
+//   @t, y$12           :tempo (Timer B: 4882.8125 / (256 - n) BPM); a track
+//                      of no notes looping between two values is their average
 //   y                  an operator's or the channel's registers as words
 //   ADPCM              the PDX's samples, one wav, a def-pcm each; a note is
 //                      its sample at c4, F its rate (3.9-15.6 kHz)
@@ -51,6 +54,14 @@ const TICKS_PER_CLOCK = PPQN / 48;
 const V_ATTEN = [42, 40, 37, 34, 32, 29, 26, 24, 21, 18, 16, 13, 10, 8, 5, 2];
 const TL_DB = 0.75;
 const VEL_DB = 2;
+// An ADPCM note's level: MXDRV turns the TL offset into PCM8's volume
+// (0-15), PCM8 scales the sample by its table's n/16 — 8 the sample as it is.
+const PCM8_VOLUME = [
+  15, 15, 15, 14, 14, 14, 13, 13, 13, 12, 12, 11, 11, 11, 10, 10, 10, 9, 9, 8, 8, 8,
+  7, 7, 7, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0,
+];
+const PCM8_SCALE = [2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64, 80];
+const pcm8Gain = (atten) => PCM8_SCALE[PCM8_VOLUME[atten]] / 16;
 // F0-F4: the ADPCM's rates (Hz), 15.6 kHz the one MXDRV starts at.
 const PCM_RATES = [3906, 5208, 7812, 10417, 15625];
 const NOTE_MIDI = 15; // note $80 is o0 d+ (KC 0 at the X68000's 4 MHz)
@@ -314,8 +325,9 @@ export function analyzeMdx(mdx) {
     const name = pcm ? (mdx.pcm8 ? `PCM ${t.index - 7}` : "ADPCM") : `FM ${TRACK_NAMES[t.index]}`;
     return { ...t, ...r, pcm, name, label: `${name} · ${r.notes.length} notes${r.loopClock != null ? ", loops" : ""}` };
   });
-  const tempo = tracks.flatMap((t) => t.tempos).sort((a, b) => a.clock - b.clock)[0];
-  return { tracks, skipped, bpm: mdxBpm(tempo && tempo.clock === 0 ? tempo.tb : 200) };
+  // At clock 0 the tracks run in order: the last track's tempo is the one in force.
+  const tempo = tracks.flatMap((t) => t.tempos).filter((t) => t.clock === 0).pop();
+  return { tracks, skipped, bpm: mdxBpm(tempo ? tempo.tb : 200) };
 }
 
 // ── Writing ───────────────────────────────────────────────────────────────
@@ -430,6 +442,9 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     const tick = (c) => c * TICKS_PER_CLOCK;
     const notes = [];
     let prev = null; // the note before, as played
+    let detuned = false; // a D seen: from then on every note states its :pitch, 0 too
+    let head = null; // the note a tie continues: the one keyed, or slurred to
+    let keyedAt = 0; // the tick of the last key-on
     tr.notes.forEach((n) => {
       const st = n.st;
       if (isNoise && !(st.noise & 0x80)) return;
@@ -439,6 +454,11 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       const len = Math.max(1, gate - delay);
       const legato = !!prev && prev.tieOn && prev.clock + prev.count === n.clock;
       prev = n;
+      // MD's delay runs from the key-on: a note played legato is into it.
+      const at = tick(n.clock + delay);
+      if (!legato || tr.pcm) keyedAt = at;
+      const lfoWait = Math.max(0, tick(st.lfoDelay) - (at - keyedAt));
+      const waited = (c) => (lfoWait ? c.replace(/\)$/, ` :wait ${lfoWait}t)`) : c);
       const state = [];
       let midi = n.midi + NOTE_MIDI;
       let vel = velOf(st.atten);
@@ -448,6 +468,8 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
         if (!sm) { skip("an ADPCM note with no sample in the PDX"); return; }
         state.push(sm.name);
         midi = { sm, rate: PCM_RATES[Math.min(4, st.pcmRate)] }; // a pitch once the sample's rate is known
+        vel = { sm, gain: pcm8Gain(st.atten) }; // a :vel once the sample's loudest is known
+        sm.gain = Math.max(sm.gain ?? 0, vel.gain);
       } else if (isNoise) {
         const v = mdx.voices.get(st.voice);
         vel = velOf(st.atten + (v ? v.ops[3].tl : 0));
@@ -464,7 +486,8 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
         state.push(`:pan ${panWord(st.pan)}`);
         if (st.hlfo) state.push(`:lfo-wave ${LFO_WAVES[st.hlfo.wave]} :lfo-freq ${st.hlfo.freq} :lfo-pmd ${st.hlfo.pmd} :lfo-amd ${st.hlfo.amd}`);
         if (st.hlfo?.sync) skip("MH's LFO sync (the LFO is not reset at each note)");
-        if (st.detune) state.push(`:pitch ${cents(st.detune)}`);
+        if (st.detune) detuned = true;
+        if (detuned) state.push(`:pitch ${cents(st.detune)}`);
       }
       // The note's own moves: a portamento, the LFOs.
       const pitch = [];
@@ -476,16 +499,29 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
         }
         if (st.plfo) {
           const c = pitchLfoCurve(st.plfo);
-          if (c) pitch.push(st.lfoDelay ? c.replace(/\)$/, ` :wait ${tick(st.lfoDelay)}t)`) : c);
+          if (c) pitch.push(waited(c));
         }
       }
       if (pitch.length > 1) skip("a portamento under the pitch LFO (the LFO is dropped for that note)");
       state.push(pitch.length ? `(macro :pitch+ ${pitch[0]})` : "(macro :pitch none)");
       if (!tr.pcm && st.alfo) {
         const c = volLfoCurve(st.alfo);
-        state.push(c ? `(macro :vel+ ${st.lfoDelay ? c.replace(/\)$/, ` :wait ${tick(st.lfoDelay)}t)`) : c})` : "(macro :vel none)");
+        state.push(c ? `(macro :vel+ ${waited(c)})` : "(macro :vel none)");
       } else if (!tr.pcm) state.push("(macro :vel none)");
-      notes.push({ tick: tick(n.clock + delay), len: tick(len), midi, vel, state, tieIn: legato && !tr.pcm });
+      const note = { tick: at, len: tick(len), midi, vel, state, tieIn: legato && !tr.pcm };
+      notes.push(note);
+      // A tie starts nothing — its moves are read at the note it continues —
+      // so a portamento on a tied note starts there, :wait'ed to its place.
+      if (note.tieIn && head && head.midi === note.midi) {
+        if (st.porta && pitch.length) {
+          const slot = head.state.indexOf("(macro :pitch none)");
+          if (slot >= 0) {
+            head.state[slot] = `(macro :pitch+ ${pitch[0].replace(/\)$/, ` :wait ${note.tick - head.tick}t)`)})`;
+            // The tied note restates it, so nothing is written there.
+            state[state.indexOf(`(macro :pitch+ ${pitch[0]})`)] = head.state[slot];
+          } else skip("a portamento on a tied note under the first note's own pitch move (left out)");
+        }
+      } else head = note;
     });
     if (!notes.length) continue;
     const marks = [];
@@ -501,11 +537,49 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     songOut.push({ channel, notes: dropIdleNones(notes), marks, endTick, loopTick, tr });
     endMax = Math.max(endMax, endTick);
   }
+  // A track written out of the score (no notes — one that only sets the
+  // tempo — or ADPCM without its PDX) still sets it: its changes go on the
+  // first track. A loop of them (MXDRV's way to a tempo between two Timer B
+  // values: a few clocks of each, over and over) is its average, once.
+  const host = songOut[0];
+  if (host) {
+    const written = new Set(songOut.map((t) => t.tr));
+    const add = [];
+    for (const tr of a.tracks) {
+      if (written.has(tr) || !tr.tempos.length) continue;
+      const looped = tr.loopClock != null && tr.end > tr.loopClock;
+      for (const tm of tr.tempos) if (!looped || tm.clock < tr.loopClock) add.push(tm);
+      if (looped) {
+        // Clocks are Timer B periods of 256 - tb: the body's time over its clocks.
+        let inForce = tr.tempos.filter((tm) => tm.clock <= tr.loopClock).pop();
+        let span = 0, at = tr.loopClock;
+        for (const tm of [...tr.tempos.filter((t) => t.clock > tr.loopClock), { clock: tr.end }]) {
+          span += (tm.clock - at) * (256 - (inForce?.tb ?? 200));
+          at = tm.clock;
+          if (tm.tb != null) inForce = tm;
+        }
+        add.push({ clock: tr.loopClock, tb: 256 - span / (tr.end - tr.loopClock) });
+      }
+    }
+    if (add.length) {
+      // A track's marks are its tempos: the host's are written again, all of
+      // them, one a tick, and the one in force restated at its loop.
+      const tick = (c) => c * TICKS_PER_CLOCK;
+      const at = new Map();
+      for (const tm of [...host.tr.tempos, ...add].sort((x, y) => x.clock - y.clock)) at.set(tick(tm.clock), tm.tb);
+      if (host.loopTick != null && !at.has(host.loopTick)) {
+        const before = [...at].filter(([t]) => t < host.loopTick).pop();
+        if (before) at.set(host.loopTick, before[1]);
+      }
+      host.marks = [...at].sort((x, y) => x[0] - y[0]).map(([t, tb]) => ({ tick: t, tokens: [`:tempo ${mdxBpm(tb)}`] }));
+    }
+  }
   if (songOut.length && !songOut.some((t) => t.marks.some((m) => m.tick === 0)))
     songOut[0].marks.unshift({ tick: 0, tokens: [`:tempo ${mdxBpm(200)}`] });
 
-  // The samples' wav. A note at another rate than its sample's is that many
-  // semitones off c4.
+  // The samples' wav, at the chip's own scale. A note at another rate than
+  // its sample's is that many semitones off c4; a sample PCM8 plays louder
+  // than it is gets that as its def's gain, its notes' :vel under it.
   let pcm = null;
   if (samples.size) {
     const list = [...samples.values()].sort((x, y) => x.index - y.index);
@@ -520,16 +594,22 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     }
     const mono = new Float32Array(offset);
     for (const sm of list) mono.set(sm.data.subarray(0, sm.frames), sm.offset);
-    let peak = 0;
-    for (const v of mono) peak = Math.max(peak, Math.abs(v));
-    if (peak > 0 && peak < 0.99) for (let i = 0; i < mono.length; i++) mono[i] /= peak;
     const base = String(options.fileName || mdx.pdxName || "mdx").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
     const wavFile = `${base}-pdx.wav`;
     const wavRate = list[0].rate;
-    for (const sm of list)
-      defs.push(`(def-pcm ${sm.name} :file ${qstr(wavFile)} :rate ${sm.rate} :offset ${sm.offset} :frames ${sm.frames})`);
+    const db = (g) => Math.round(20 * Math.log10(g) * 10) / 10;
+    for (const sm of list) {
+      const fx = sm.gain > 1 ? ` :fx [(gain ${db(sm.gain)})]` : "";
+      defs.push(`(def-pcm ${sm.name} :file ${qstr(wavFile)} :rate ${sm.rate} :offset ${sm.offset} :frames ${sm.frames}${fx})`);
+    }
     for (const t of songOut)
-      for (const nn of t.notes) if (typeof nn.midi === "object") nn.midi = 60 + Math.round(12 * Math.log2(nn.midi.rate / nn.midi.sm.rate));
+      for (const nn of t.notes) {
+        if (typeof nn.midi === "object") nn.midi = 60 + Math.round(12 * Math.log2(nn.midi.rate / nn.midi.sm.rate));
+        if (typeof nn.vel === "object") {
+          const under = 20 * Math.log10(nn.vel.gain / Math.max(1, nn.vel.sm.gain));
+          nn.vel = Math.max(0, 15 + Math.round(under / VEL_DB));
+        }
+      }
     pcm = { wavFile, rate: wavRate, mono, wav: encodeWav(mono, null, wavRate),
       entries: list.map((sm) => ({ name: sm.name, offset: sm.offset, frames: sm.frames, rate: sm.rate })), tag: "MDX" };
   }

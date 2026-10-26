@@ -3390,38 +3390,28 @@
       }, a);
     }
 
-    // MDX (X68000, MXDRV) and MGS (MSX, MGSDRV): clock-exact, so the dialog
-    // has no tempo to estimate — what it shows is what the file holds.
-    async function importMdxBytes(bytes, fileName, pdx) {
+    // MDX (X68000, MXDRV) and MGS (MSX, MGSDRV): clock-exact, so there is no
+    // tempo to estimate and nothing to set — no dialog. What the file holds
+    // goes to the log; repeats are always folded (a run through MXDRV's or
+    // MGSDRV's loops is nothing but repeats).
+    function importMdxBytes(bytes, fileName, pdx) {
       const mdx = parseMdx(bytes);
       const a = analyzeMdx(mdx);
       const played = a.tracks.filter((t) => t.notes.length);
       const hasPcm = played.some((t) => t.pcm);
-      const got = await showImportDialog({
-        title: `Import ${fileName}`,
-        summary: `MDX${mdx.pcm8 ? ' (PCM8)' : ''}${mdx.title ? ' · ' + mdx.title : ''} · ${a.bpm} BPM at the start. ` +
-          'Written for the X68000 (:target x68k): FM A–H on fm1–fm8, the ADPCM on pcm1' + (mdx.pcm8 ? '–pcm8' : '') + '. ' +
-          (hasPcm ? (pdx ? `Samples from ${mdx.pdxName || 'the PDX'}.` : `The ADPCM needs ${mdx.pdxName || 'its PDX'}, picked with the MDX — without it the PCM tracks are left out.`) : '') +
-          ' Tracks: ' + played.map((t) => t.label).join(' · ') + '.',
-        fields: [STRUCTURE_FIELD],
-      });
-      if (!got) return null;
-      return mdxToMmlisp(mdx, { pdx, structure: !!got.fields.structure, fileName }, a);
+      log(`${fileName}: MDX${mdx.pcm8 ? ' (PCM8)' : ''}${mdx.title ? ' · ' + mdx.title : ''} · ${a.bpm} BPM at the start · ` +
+        played.map((t) => t.label).join(' · '), 'info');
+      if (hasPcm && !pdx) log(`${fileName}: the ADPCM needs ${mdx.pdxName || 'its PDX'}, picked (or dropped) with the MDX — its tracks are left out`, 'warn');
+      return mdxToMmlisp(mdx, { pdx, structure: true, fileName }, a);
     }
 
-    async function importMgsBytes(bytes, fileName) {
+    function importMgsBytes(bytes, fileName) {
       const mgs = parseMgs(bytes);
       const a = analyzeMgs(mgs);
       const played = a.tracks.filter((t) => t.notes.length);
-      const got = await showImportDialog({
-        title: `Import ${fileName}`,
-        summary: `MGS${mgs.version}${mgs.title ? ' · ' + mgs.title : ''} · ${a.bpm} BPM at the start. ` +
-          'Written for the MSX (:target msx): the PSG on sqr1–3, the SCC on wave1–5, the FM-PAC on fm1–fm9 (its rhythm on rhythm1–5).' +
-          ' Tracks: ' + played.map((t) => t.label).join(' · ') + '.',
-        fields: [STRUCTURE_FIELD],
-      });
-      if (!got) return null;
-      return mgsToMmlisp(mgs, { structure: !!got.fields.structure, fileName }, a);
+      log(`${fileName}: MGS${mgs.version}${mgs.title ? ' · ' + mgs.title : ''} · ${a.bpm} BPM at the start · ` +
+        played.map((t) => t.label).join(' · '), 'info');
+      return mgsToMmlisp(mgs, { structure: true, fileName }, a);
     }
 
     async function importSf2FromFile(file) {
@@ -12451,9 +12441,10 @@
     // track shows FM6's tap, their sum. The fm3 variants share hardware FM3.
     let _scopePcmVoices = false; // the latest batch's taps 10-12 are live
     function scopeChannelOf(head) {
-      const lane = _chStripModel.find((e) => e.head === head)?.scope;
-      if (lane != null) return lane;
-      if (channelRouting(head).volKind === 'pcm' && !_scopePcmVoices) return 5;
+      const entry = _chStripModel.find((e) => e.head === head);
+      if (entry?.scope != null) return entry.scope;
+      // A chip's own sample voice (PCM8's, the ADPCM-B) is 'voice', its own lane.
+      if ((entry ?? channelRouting(head)).volKind === 'pcm' && !_scopePcmVoices) return 5;
       return targetProfile(_lastGoodIR?.metadata?.target).scopeLane(head);
     }
     // One cell per strip channel, in the strips' order.
@@ -12518,21 +12509,44 @@
           ctx.moveTo(x0 + cellW / 2 + 0.5, y0);
           ctx.lineTo(x0 + cellW / 2 + 0.5, y0 + cellH);
           ctx.stroke();
-          // waveform polyline — one point per sample of the window
+          // waveform — a polyline, one point per sample of the window; or,
+          // where the window holds more samples than the pane has pixels (a
+          // bass note's 40 ms), each pixel column filled from its lowest to
+          // its highest sample: the same trace, and no wide stroke over a
+          // dense zigzag (which the GPU's raster spends whole frames on).
           ctx.globalAlpha = 0.9;
-          ctx.strokeStyle = _vizColors.fg;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
           const amp = cellH / 2 - 4;
-          const sx = cellW / win;
-          for (let i = 0; i < win; i++) {
+          const yOf = (i) => {
             const s = ring[(((start + i) % SCOPE_RING) + SCOPE_RING) % SCOPE_RING];
-            const v = Math.max(-1, Math.min(1, s * SCOPE_DISPLAY_GAIN));
-            const y = midY - v * amp;
-            if (i === 0) ctx.moveTo(x0, y);
-            else ctx.lineTo(x0 + i * sx, y);
+            return midY - Math.max(-1, Math.min(1, s * SCOPE_DISPLAY_GAIN)) * amp;
+          };
+          const cols = Math.max(1, Math.floor(cellW));
+          if (win <= 2 * cols) {
+            ctx.strokeStyle = _vizColors.fg;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            const sx = cellW / win;
+            for (let i = 0; i < win; i++) {
+              if (i === 0) ctx.moveTo(x0, yOf(0));
+              else ctx.lineTo(x0 + i * sx, yOf(i));
+            }
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = _vizColors.fg;
+            const per = win / cols, cw = cellW / cols;
+            let prev = yOf(0);
+            for (let col = 0; col < cols; col++) {
+              // From the column before's last sample, so a steep edge joins.
+              let lo = prev, hi = prev;
+              for (let i = Math.floor(col * per), e = Math.floor((col + 1) * per); i < e; i++) {
+                const y = yOf(i);
+                if (y < lo) lo = y;
+                if (y > hi) hi = y;
+                prev = y;
+              }
+              ctx.fillRect(x0 + col * cw, lo - 0.75, Math.max(cw, 1.5), hi - lo + 1.5);
+            }
           }
-          ctx.stroke();
         }
         // channel name as the score writes it (bottom-right)
         ctx.globalAlpha = 0.8;

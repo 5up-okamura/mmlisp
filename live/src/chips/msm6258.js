@@ -129,6 +129,7 @@ export class Pcm8Mixer {
   constructor(bank) {
     this.bank = bank;
     this.voices = Array.from({ length: PCM8_VOICES }, () => null);
+    this.taps = new Float32Array(PCM8_VOICES); // each voice's part of the last sample, the scope's
   }
 
   apply(e) {
@@ -160,11 +161,14 @@ export class Pcm8Mixer {
     let sum = 0;
     for (let k = 0; k < PCM8_VOICES; k++) {
       const v = this.voices[k];
+      this.taps[k] = 0;
       if (!v) continue;
       if (v.loop && v.loopEnd > v.loopStart && v.pos >= v.loopEnd) v.pos = v.loopStart + ((v.pos - v.loopStart) % (v.loopEnd - v.loopStart));
       if (v.pos >= v.end - 1) { this.voices[k] = null; continue; }
       const i = Math.floor(v.pos), f = v.pos - i;
-      sum += (v.data[i] * (1 - f) + v.data[i + 1] * f) * v.gain;
+      const x = (v.data[i] * (1 - f) + v.data[i + 1] * f) * v.gain;
+      this.taps[k] = x;
+      sum += x;
       v.pos += v.step;
     }
     return Math.max(-2048, Math.min(2047, Math.round(sum * 2048)));

@@ -54,11 +54,18 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
   loopTo(A, top);
   const B = [0xfd, 1, 0xfb, 10, 0xfc, 1, 0xf2, ...be16(256 * 64 / 96 * 2 | 0), ...N(48, 96), 0xfc, 2, ...N(52, 96), ...END];
   const H = [0xfd, 2, 0xed, 0x80 | 20, ...N(60, 24), ...N(60, 24), ...END];
-  const P = [0xed, 2, ...N(15, 48), 0xed, 4, ...N(16, 48), ...END];
+  const P = [0xed, 2, ...N(15, 48), 0xed, 4, 0xfb, 15, ...N(16, 48), ...END]; // v8, then v15
   // C: a tie through a rest — MXDRV keys off at the rest's end, not at a
   // second rest's — and an end whose second byte is not 0.
   const C = [0xfd, 1, 0xf7, ...N(60, 24), ...R(24), ...R(24), ...N(62, 24), 0xf1, 0, 0x55];
-  const tracks = [A, B, C, END, END, END, END, H, P];
+  // D: a D, then back to 0 (stated: :pitch sticks); a portamento on a note
+  // tied to (it starts at the note the tie continues). E: a track of no
+  // notes that dithers the tempo, looping — MXDRV's way to a tempo between
+  // two Timer B values: imported as its average.
+  const D = [0xfd, 1, 0xf3, 0, 64, ...N(60, 24), 0xf3, 0, 0, ...N(60, 24), 0xf7, ...N(62, 24), 0xf2, ...be16(256), ...N(62, 48), ...END];
+  const E = [0xff, 213, ...R(73), 0xff, 214, ...R(64)];
+  loopTo(E, 0);
+  const tracks = [A, B, C, D, E, END, END, H, P];
   const voices = [
     { num: 1, con: 4, fb: 5, ops: [op(), op({ tl: 0 }), op({ tl: 20, dt2: 1 }), op({ tl: 0 })] },
     { num: 2, con: 7, fb: 0, ops: [op({ tl: 127 }), op({ tl: 127 }), op({ tl: 127 }), op({ tl: 0 })] },
@@ -73,7 +80,7 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
   assert.equal(mdx.title, "Test song");
   assert.equal(mdx.pdxName, "test.PDX");
   const a = analyzeMdx(mdx);
-  assert.equal(a.bpm, 87.19); // Timer B 200
+  assert.equal(a.bpm, 113.55); // Timer B 213: E's, set after A's 200
   assert.equal(a.tracks[0].notes.length, 3 + 5 + 1, "A: three notes, the repeat's five, one after");
   assert.equal(a.tracks[0].loopClock, 192);
   assert.equal(a.tracks[2].end, 96, "C: $F1 $00 ends the track, whatever follows");
@@ -83,7 +90,7 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     const what = `MDX (${structure ? "folded" : "flat"})`;
     has(source, /\(def-score :target x68k :title "Test song"\)/, what);
     has(source, /\(def-fm voice-01[\s\S]*:dt2-2 1/, what); // C1, the third in register order, is op2
-    has(source, /:tempo 87\.19/, what);
+    assert.ok(!/:tempo 87\.19/.test(source), `${what}: A's @t at clock 0 is E's at once`);
     has(source, /c8\. _16 d4? ~ e/, what); // q6, then & : d held legato into e
     has(source, /:pitch 50/, what); // D 32 = half a semitone
     has(source, /\(macro :pitch\+ \(triangle /, what);
@@ -93,8 +100,17 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     has(source, /\(fm3[\s\S]*c4? _8 d/, what); // held through the first rest only
     has(source, /\(fm2[\s\S]*\(macro :pitch\+ \(linear 0\.\./, what);
     has(source, /\(noise[\s\S]*:noise-rate 12/, what); // NFRQ 20 → 32 - 20
+    has(source, /\(fm4[\s\S]*:pitch 100[\s\S]*:pitch 0 /, what);
+    has(source, /\(fm4[\s\S]*\(macro :pitch\+ \(linear 0\.\.75 :len 96t :wait 48t\)\) d ~ d/, what);
+    // E's dither is its average, 42.53 Timer B periods a clock, from the start.
+    assert.ok(!/\(fm5/.test(source), `${what}: no track for E's tempo`);
+    has(source, /\(fm1[^]*?:tempo 114\.8 /, what);
     has(source, /\(def-pcm pdx-000 :file "test-pdx\.wav" :rate 7812/, what);
     has(source, /\(pcm1[\s\S]*pdx-001/, what);
+    // PCM8's volume, as MXDRV sets it: v8 the sample as it is, v15 ×5 (+14 dB).
+    has(source, /\(def-pcm pdx-000 [^\n]*:frames \d+\)/, what);
+    has(source, /\(def-pcm pdx-001 [^\n]*:fx \[\(gain 14\)\]\)/, what);
+    assert.ok(!/\(pcm1[^\n]*:vel/.test(source), `${what}: both ADPCM notes at their sample's full level`);
     assert.ok(pcm && pcm.entries.length === 2, `${what}: two samples in the wav`);
     assert.deepEqual(warnings.filter((w) => !/keys only some/.test(w)), [], `${what}: no warnings`);
     clean(source, what);

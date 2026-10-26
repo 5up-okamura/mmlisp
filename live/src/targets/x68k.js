@@ -4,8 +4,8 @@ import { ym2151, opmFm, opmNoise } from "../chips/ym2151.js";
 import { msm6258, pcm8 } from "../chips/msm6258.js";
 
 const fm = (voice) => ({ chip: "opm", part: opmFm, voice });
-// PCM8's voices are one stream, the synth's scope lane 8.
-const pcm = (voice) => ({ chip: "adpcm", part: pcm8, voice, scope: 8 });
+// PCM8's voices: the synth's scope lanes 8-15, each voice's part of the mix.
+const pcm = (voice) => ({ chip: "adpcm", part: pcm8, voice, scope: 8 + voice });
 
 export default {
   name: "x68k",

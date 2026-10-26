@@ -30,6 +30,7 @@ const { renderWav } = await load("export-wav.js");
 const { encodeMmb } = await load("export-mmb.js");
 const { targetProfile } = await load("targets.js");
 const { bakeAdpcmB } = await load("chips/adpcm-b.js");
+const { bakePcm8 } = await load("chips/msm6258.js");
 const { bakeRhythmStandIn } = await load("chips/rhythm-rom.js");
 const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
 const { pitchToMidi } = await load("ir-utils.js");
@@ -601,7 +602,7 @@ const TOOLS = [
     description:
       "Render a score to a 48 kHz stereo WAV the user can listen to (FM + PSG through the Nuked cores, same DSP as the " +
       "editor's WAV export; PCM plays through the driver's engine; a :target pc88 score through ymfm's YM2608, its " +
-      "rhythm from the user's ROM, else the kit's :files cut to the ROM's lengths; a :target x68k score through ymfm's YM2151; a :target msx score through ymfm's SSG). A looping song plays intro + 2 loops + 4 s fade. " +
+      "rhythm from the user's ROM, else the kit's :files cut to the ROM's lengths; a :target x68k score through ymfm's YM2151 and PCM8 on the MSM6258; a :target msx score through ymfm's SSG). A looping song plays intro + 2 loops + 4 s fade. " +
       "Returns the file path and levels (peak/RMS, clipping, silence) — a sanity check, since you cannot hear it.",
     inputSchema: {
       type: "object",
@@ -635,6 +636,11 @@ const TOOLS = [
         const adpcm = bakeAdpcmB(ir, blobs, target);
         if (adpcm.image.length) pcm = { adpcm };
         rhythmRom ??= bakeRhythmStandIn(ir, blobs)?.rom ?? null;
+      } else if (target.hasPart("pcm8") && sampleDefs.some((s) => s.file)) {
+        // The X68000's PCM8: the mix, encoded to the MSM6258's ADPCM.
+        const abs = sampleDefs.filter((s) => s.file).map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
+        const pcm8 = bakePcm8(ir, loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []));
+        if (Object.keys(pcm8.entries).length) pcm = { pcm8 };
       } else if (ir.metadata?.pcmVoices && sampleDefs.length) {
         const abs = sampleDefs.map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
         const samples = loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []);
