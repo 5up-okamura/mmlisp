@@ -5,9 +5,10 @@
 // register bus writeYM(port, addr, data) — port 0 the PSG —
 // setLpf / setDacEnabled / reset, renderInto(outL, outR, count, onFrame?,
 // getDacByte?, scope?). The chip is the toolchain's own (Pce below), written
-// from MAME's c6280.cpp and Mednafen's pce_psg.cpp where they agree: each
-// channel steps its 32-step wave every `frequency` chip clocks, the noise
-// channels clock an 18-bit LFSR every (31 − rate) × 64, a channel's level
+// from MAME's c6280.cpp and Mednafen's pce_psg.cpp: each channel steps its
+// 32-step wave every `frequency` chip clocks, the noise channels clock an
+// 18-bit LFSR every (31 − rate) × 64 — at rate 31 every 32, as Mednafen has
+// it (MAME's every clock is the one place the two part) — a channel's level
 // is its 5-bit volume (1.5 dB a step) with its 4-bit left and right levels
 // and the chip's main ones added (3 dB a step), capped at the table's 48
 // dB. The channels run at the clock / 32, each averaged over those 32
@@ -113,8 +114,8 @@ class Pce {
       if (ctrl & 0x40) {
         acc = (this.dda[ch] - 16) * clocks;
       } else if (this.noiseCtl[ch] & 0x80) {
-        // The LFSR, clocked every (31 − rate) × 64 clocks (rate 31: every one).
-        const reload = ((this.noiseCtl[ch] & 0x1f) ^ 0x1f) << 6;
+        // The LFSR, clocked every (31 − rate) × 64 clocks (rate 31: every 32).
+        const reload = ((this.noiseCtl[ch] & 0x1f) ^ 0x1f) << 6 || 32;
         let count = this.noiseCount[ch], seed = this.lfsr[ch];
         for (let rem = clocks; rem > 0; ) {
           const n = Math.max(1, Math.min(rem, count));

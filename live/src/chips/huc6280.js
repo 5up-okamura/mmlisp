@@ -13,8 +13,9 @@
 // dropped (1 → 0) puts the step at — and $07, on channels 5 and 6, the
 // noise: bit 7 on, bits 4-0 its rate. How the chip reads them (the tone's
 // step, the volume's 1.5 dB, the noise's clock, the wave's centre at 16) is
-// MAME's c6280.cpp and Mednafen's pce_psg.cpp, which agree.
-import { words } from "./parts.js";
+// MAME's c6280.cpp and Mednafen's pce_psg.cpp, which agree but for the
+// noise at rate 31 (Mednafen's taken: synth-pce.js).
+import { NO_WORDS, words } from "./parts.js";
 
 const CLOCK = 3579545; // the CPU's 7.16 MHz / 2
 const PORT = 0;
@@ -50,7 +51,7 @@ export const pceNoise = {
   unit: "pce",
   kind: "noise",
   level: LEVEL,
-  words: () => false,
+  words: NO_WORDS,
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "the PC Engine's noise has no :mode; its rate is the note, c2 to g4" },
   toneLane: NOISE_LANE,
