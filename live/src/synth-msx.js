@@ -51,10 +51,11 @@ const SCC_GAIN = 0.27 / 128;
 // channel at full level peaks about where one of the Mega Drive's FM
 // channels does.
 const SCOPE_SCALE = 0.3;
-// The OPLL: one channel at volume 0 through ymfm (±3641) peaks where one of
-// the Mega Drive's FM carriers at TL 0 does (about −12 dBFS), so a score
-// moved between the targets keeps its level. Tunable by ear.
-const OPLL_GAIN = 2.25;
+// The OPLL against the PSG and the SCC as an MSX mixes them: MSXplay's
+// (libkss) balance, measured on an MGS song with all three (tools
+// ab-mgsdrv.mjs's song, each chip alone): 8.5 dB under the level one
+// channel at volume 0 peaking where a Mega Drive carrier does would give.
+const OPLL_GAIN = 2.25 * 10 ** (-8.5 / 20);
 const OPLL_LANES = 9;
 const OPLL_LANE = [0, 1, 2, 3, 4, 5, 15, 16, 17]; // a channel's scope lane
 
