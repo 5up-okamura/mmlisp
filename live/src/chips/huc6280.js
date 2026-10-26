@@ -3,7 +3,7 @@
 // a step) and a 4-bit level a side; channels 5 and 6 can turn to noise
 // instead, each at its own 5-bit rate. A score's waves are its def-waves
 // (language.md §19, pce), their −128..127 steps written at the chip's 5 bits.
-// Not here yet: DDA (a channel as a 5-bit DAC), the ch2 → ch1 LFO, :pan.
+// Not here yet: DDA (a channel as a 5-bit DAC), the ch2 → ch1 LFO.
 //
 // Its registers, as the CPU maps them at $0800 (the worklet's port 0): $00
 // the channel select, $01 the main level (L high, R low), then the selected
@@ -15,7 +15,7 @@
 // step, the volume's 1.5 dB, the noise's clock, the wave's centre at 16) is
 // MAME's c6280.cpp and Mednafen's pce_psg.cpp, which agree but for the
 // noise at rate 31 (Mednafen's taken: synth-pce.js).
-import { NO_WORDS, words } from "./parts.js";
+import { words } from "./parts.js";
 
 const CLOCK = 3579545; // the CPU's 7.16 MHz / 2
 const PORT = 0;
@@ -39,7 +39,7 @@ export const pceWave = {
   unit: "pce",
   kind: "wave",
   level: LEVEL,
-  words: words("WAVE"),
+  words: words("WAVE", "PAN"),
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "a PC Engine channel has no :mode; its sound is its def-wave, or noise5 / noise6" },
   waveAtKeyOn: true,
@@ -51,7 +51,7 @@ export const pceNoise = {
   unit: "pce",
   kind: "noise",
   level: LEVEL,
-  words: NO_WORDS,
+  words: words("PAN"),
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "the PC Engine's noise has no :mode; its rate is the note, c2 to g4" },
   toneLane: NOISE_LANE,
@@ -61,6 +61,17 @@ export const pceNoise = {
 
 // The default wave a channel plays until its track names one: a square.
 export const DEFAULT_WAVE = Array.from({ length: WAVE_LEN }, (_, i) => (i < WAVE_LEN / 2 ? 127 : -128));
+
+/**
+ * A pan, −1..1, as $05's left (high) and right (low) levels, 15 each at the
+ * centre: a side away from the pan is lowered a step (3 dB) for every
+ * fifteenth of the way, so ±1 is that side alone, as on the chips with a
+ * left and a right bit.
+ */
+export const panLevels = (p) => {
+  const v = Math.max(-1, Math.min(1, Number(p) || 0));
+  return ((15 - Math.round(15 * Math.max(0, v))) << 4) | (15 - Math.round(15 * Math.max(0, -v)));
+};
 
 /** A −128..127 step as the chip's 5-bit value, 0..31. */
 export const waveStep = (v) => Math.max(0, Math.min(31, (Math.round(v) + 128) >> 3));
@@ -86,6 +97,7 @@ function pceEncoder() {
     period: freqOf,
     att: level,
     tone: (ch, f) => [sel(ch), [PORT, 0x02, f & 0xff], [PORT, 0x03, (f >> 8) & 0x0f]],
+    pan: (ch, p) => [sel(ch), [PORT, 0x05, panLevels(p)]],
     // The wave, 32 steps with the channel off: the DDA bit raised and dropped
     // puts the step at 0, each write then takes the next; then on again as
     // it was (silent while it loads: a switch under a note is held to its
@@ -101,6 +113,7 @@ function pceEncoder() {
   const noiseRate = (hz) => Math.max(0, Math.min(31, Math.round(69 + 12 * Math.log2(hz / 440)) - NOISE_NOTE_BASE));
   enc.noise = {
     period: noiseRate,
+    pan: enc.pan,
     att: (ch, att) => [...level(ch, att), [PORT, 0x07, noise[ch] = (on[ch] ? 0x80 : 0) | (noise[ch] & 0x1f)]],
     tone: (ch, n) => [sel(ch), [PORT, 0x07, noise[ch] = 0x80 | (n & 0x1f)]],
   };

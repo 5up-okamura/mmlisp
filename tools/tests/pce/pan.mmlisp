@@ -1,0 +1,7 @@
+; pce: :pan on the channels' own left and right levels — a value between
+; the sides, a sweep across, a note's pan macro, the noise's pan.
+(def-score :target pce :title "pce pan")
+(def-wave saw :wave (saw -128..127))
+(wave1 :tempo 120 saw :len 4 :pan 0.5 c :pan left e (macro :pan [-1 -0.5 0 0.5 1]) g e |)
+(wave2 saw :len 1 :oct 3 :pan (linear -1..1 :len 1) c |)
+(noise5 :len 4 :oct 3 :pan right c :pan -0.3 c c c |)

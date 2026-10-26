@@ -50,7 +50,7 @@ export default {
     ":gate": ["25e9de54", "Cuánto suena una nota dentro de su hueco: una duración absoluta, una proporción, o el hueco menos una duración. Toda nota hace key-off en su gate, así que la siguiente vuelve a atacar."],
     ":vel": ["9f3e5074", "Velocidad del note-on, 2 dB por paso, 15 = el nivel propio de la voz; los octavos de paso se escriben como fracciones (14.5, 13.625). Solo atenúa; nunca silencia. Por defecto 15."],
     ":vol": ["99dcd89c", "El fader del canal, con unidad en 31; 0 es un silencio total. Una curva lo funde."],
-    ":pan": ["09b9200d", "Estéreo FM: un lado, ambos, o una curva que salta entre ellos."],
+    ":pan": ["63280693", "Estéreo FM: un lado, ambos o una curva que salta entre ellos. En pce un canal de onda o de ruido toma −1..1 entero, sobre sus propios niveles izquierdo y derecho."],
     ":snap": ["6c70a19d", "La escala en la que se queda el canal: cada nota, paso de arpegio y glide baja a estas clases de altura (0 = C). Con un $slot, el juego cambia el modo."],
     ":mode": ["f6173178", "En noise: el modo de ruido (persistente). En pcm1–pcm3: si una nota toca la muestra una vez, la repite mientras se mantiene, o la toca una vez y la corta en su gate. En una pista sqr de pc88 o msx: su mezclador, tone, noise, both o env (ninguno: solo la envolvente por hardware), que un (macro :mode [both noise]) mueve paso a paso. En fm8 de x68k: tone, o noise — su cuarto operador pasa a ser el ruido, con la voz entera."],
     ":shuffle": ["6d96f822", "Swing: los pares de notas de la duración base (por defecto una corchea) se reparten R : 100−R."],

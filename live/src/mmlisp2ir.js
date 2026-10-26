@@ -1738,7 +1738,9 @@ const atomNode = (value) => ({ kind: "atom", value: String(value) });
 const SET_ONLY_TARGETS = new Set(["ENV_SEMI", "ENV_DETUNE"]);
 // Targets whose literal keeps its fraction: a rate in Hz (an SSG
 // envelope's period is a step of it at the bass).
-const FRACTIONAL_TARGETS = new Set(["ENV_RATE"]);
+// Targets whose value keeps its fraction to the encoder: the envelope's Hz,
+// and a pan, which each chip reads at its own resolution (chips/parts.js).
+const FRACTIONAL_TARGETS = new Set(["ENV_RATE", "PAN"]);
 
 // Write a hardware parameter from a readValue result. An operator reads the
 // parameter itself: `:tl1+ e` is `(+ $tl1 e)` and `:tl1* e` is `(* $tl1 e)`,
@@ -2487,7 +2489,8 @@ function parseMacroSpec(
   // here and clamp only after combining with the base (add/scaleMacroValues).
   const clampVal = (v) => (clamp ? clampForTarget(target, v) : v);
   // A velocity keeps eighths of a step, as the driver holds it (§6).
-  const roundVal = (n) => (ratio ? n : target === "VEL" ? Math.round(n * VEL_FINE) / VEL_FINE : Math.round(n));
+  const roundVal = (n) => (ratio || FRACTIONAL_TARGETS.has(target) ? n
+    : target === "VEL" ? Math.round(n * VEL_FINE) / VEL_FINE : Math.round(n));
   // One macro value: a number (rounded where it binds, like every value) or
   // the target's own symbol (`white2`, `left`), in a vector and as a scalar.
   const tokenValue = (val) => {

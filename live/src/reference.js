@@ -265,8 +265,8 @@ export const REFERENCE = [
   },
   {
     name: ':pan', cat: 'track', section: '§5', tracks: FM,
-    syntax: ':pan left | center | right  ·  :pan (curve …)',
-    summary: 'FM stereo: one side, both, or a curve snapping between them.',
+    syntax: ':pan left | center | right | −1..1  ·  :pan (curve …)',
+    summary: 'FM stereo: one side, both, or a curve snapping between them. On pce a wave or noise channel takes −1..1 whole, on its own left and right levels.',
     insert: ':pan left',
     example: '(fm1 :len 8 :pan left c e :pan right g e :pan center c)',
   },

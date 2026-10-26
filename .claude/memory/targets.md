@@ -67,8 +67,10 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   score has wave5 or noise5 (the SSG's one-or-the-other rule). The PSG
   core's off level is the lane's ladder's last step (`_psgOff`), no longer
   15. Not yet listened to by the user: the synth's level against the other
-  machines (CHANNEL_GAIN) and the noise. Next for pce: `:pan` onto $05,
-  DDA, the LFO; Furnace / DefleMask → pce, the VGM importer's 0xB9.
+  machines (CHANNEL_GAIN) and the noise. `:pan` is built (a value, a
+  sweep, a note's macro onto $05, the IR keeping its fraction:
+  FRACTIONAL_TARGETS). Next for pce: Furnace / DefleMask → pce, the VGM
+  importer's 0xB9; then DDA, the LFO.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 

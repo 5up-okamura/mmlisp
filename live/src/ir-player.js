@@ -306,6 +306,7 @@ export class IRPlayer {
     this._psgSounding = new Array(PSG_LANES).fill(false);
     this._laneWave = new Array(PSG_LANES).fill(null); // the def-wave each wave lane plays (by name)
     this._laneWaveHeld = new Array(PSG_LANES).fill(null); // a wave written under a note, for its next key-on (waveAtKeyOn)
+    this._psgPan = new Array(PSG_LANES).fill(0); // each lane's pan as last written (a chip with a pan per channel: the PC Engine's)
     this._laneExpr = new Array(PSG_LANES).fill(null); // a lane's wave expression with $slots: { tree, slots, vals, nextFrame }
     this._drawnWaves = new Map(); // def-wave name → the steps the editor drew over it (setWave)
     // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
@@ -593,6 +594,7 @@ export class IRPlayer {
     this._chipPcm = null; // the YM2608's sample voices' levels (_chipPcmFrames)
     this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
     this._laneWaveHeld?.fill(null);
+    this._psgPan?.fill(0);
     this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
@@ -5131,6 +5133,12 @@ export class IRPlayer {
     return end;
   }
 
+  // A lane's pan, −1..1, on its chip's own resolution (chips/huc6280.js).
+  _psgSetPan(psgCh, v, when) {
+    this._psgPan[psgCh] = Math.max(-1, Math.min(1, Number(v) || 0));
+    this._psgWrites(this._lane(psgCh, (e, ch) => e.pan?.(ch, this._psgPan[psgCh]) ?? []), when);
+  }
+
   // A wave onto a lane's channel memory. A chip that loads a wave with the
   // channel off (the PC Engine's, chips/huc6280.js `waveAtKeyOn`) would cut
   // the note sounding there, so under a note the wave is held to the lane's
@@ -5726,6 +5734,12 @@ export class IRPlayer {
         if (was?.rate && !rateMacro && this._noiseRateBase != null)
           this._psgWrites(this._psg((c) => c.noiseRate?.(this._noiseRateBase) ?? []), when);
         this._ssgMacroed[psgCh] = mixMacro || rateMacro ? { mix: !!mixMacro, rate: !!rateMacro } : null;
+        // A note's (macro :pan …), where the channel has a pan of its own.
+        if (ev.args?.pan) {
+          const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgGateTicks);
+          this._scheduleMacro(ev.args.pan, noteFrames, gateSecs, when,
+            (v, t) => this._psgSetPan(psgCh, v, t), this._stepSecs(ev.args.pan.step), psgMacroLimit);
+        }
         this._schedulePsgWordMacro(mixMacro, when, psgGateTicks, psgMacroLimit,
           (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v), t) ?? []), t));
         this._schedulePsgWordMacro(rateMacro, when, psgGateTicks, psgMacroLimit,
@@ -5862,6 +5876,10 @@ export class IRPlayer {
           // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
           this._ssgMixBase[psgCh] = Math.round(ev.args?.value ?? 0);
           this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, this._ssgMixBase[psgCh], when)), when);
+        } else if (psgTarget === "PAN") {
+          // A channel's own pan (the PC Engine's $05): a value, or a sweep a
+          // frame at a time, on the encoder's fifteenths of a side.
+          this._writeSongRate(ev, when, this._psgPan[psgCh], (v, t) => this._psgSetPan(psgCh, v, t), 15);
         } else if (psgTarget === "WAVE") {
           // A wave channel's def-wave (metadata.waves): its memory written
           // whole (chips/k051649.js — channels 4 and 5 share one). A wave

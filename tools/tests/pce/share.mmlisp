@@ -1,5 +1,5 @@
 ; pce: wave5 and noise5 are one channel — a score has one or the other
-; (an error), and :pan, :noise-rate and :mode are not the chip's (errors).
+; (an error), and :noise-rate and :mode are not the chip's (errors).
 (def-score :target pce :title "pce share")
 (wave5 :len 4 c e g e :pan left c |)
 (noise5 :len 4 :noise-rate 8 :mode white1 c c c c |)
