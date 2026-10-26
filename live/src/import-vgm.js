@@ -1309,14 +1309,14 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     if (d === dests.noise && fmVoices.has(target.voiceKey(d))) dest[k] = "drop";
   // A wave channel and its noise (the HuC6280's CH5 and CH5 noise): the
   // row with more notes keeps the channel.
-  const notesOf = new Map(a.channels.map((c) => [c.key, c.notes]));
+  const count = new Map(a.channels.map((c) => [c.key, c.notes]));
   const byVoice = new Map();
   for (const [k, d] of Object.entries(dest)) {
     if (d === "drop" || !dests.noises.includes(d)) continue;
     const rival = Object.entries(dest).find(([k2, d2]) => k2 !== k && d2 !== "drop" && target.voiceKey(d2) === target.voiceKey(d));
     if (rival) byVoice.set(k, rival[0]);
   }
-  for (const [k, r] of byVoice) if (dest[k] !== "drop" && dest[r] !== "drop") dest[(notesOf.get(k) ?? 0) >= (notesOf.get(r) ?? 0) ? r : k] = "drop";
+  for (const [k, r] of byVoice) if (dest[k] !== "drop" && dest[r] !== "drop") dest[(count.get(k) ?? 0) >= (count.get(r) ?? 0) ? r : k] = "drop";
   return { target: targetName, dest, bpm: null, grid: a.grid.frames ? "frames" : "beats", followPitch: a.followPitch, loop: a.fileLoop,
     pcmVoices: Math.max(1, Math.min(3, a.pcmPoly ?? 1)) };
 }
