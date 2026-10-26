@@ -216,7 +216,7 @@
                     title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), OPM voice banks (.opm), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2)">Instruments…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">Resynthesis</div>
-            <button class="menu-item" onclick="importResynth();closeMenus()">Audio on FM3…</button>
+            <button class="menu-item" onclick="importResynth();closeMenus()">Audio as Formants…</button>
             <button class="menu-item" onclick="importAudioAsFmVoice();closeMenus()">Audio as FM Voice…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">ROMs</div>
@@ -3497,13 +3497,14 @@
     async function importResynthBytes(bytes, fileName, withTempo = true) {
       const { data, sampleRate } = await decodeAudioFile(bytes, fileName);
       const a = analyzeSound(data, sampleRate);
-      // For the score it goes into: x68k's YM2151 has no FM3 modes — the
-      // formants are sine waves on fm1–fm4, the hiss fm8's noise.
+      // For the score it goes into: FM3's modes are the YM2612's and the
+      // YM2608's; on x68k the formants are sine waves on fm1's operators (the
+      // hiss fm8's noise), on msx on the SCC's wave1–wave4 (the PSG's noise).
       const target = blankScoreTarget(withTempo);
-      const opm = target === 'x68k';
+      const fm3 = target !== 'x68k' && target !== 'msx';
       const def = defaultResynthOptions(a, 'held', target);
       const fields = [
-        { key: 'mode', label: 'Synthesis', type: 'select', value: def.mode, choices: opm ? RESYNTH_MODES.filter(([m]) => m === 'sine') : RESYNTH_MODES },
+        { key: 'mode', label: 'Synthesis', type: 'select', value: def.mode, choices: fm3 ? RESYNTH_MODES : RESYNTH_MODES.filter(([m]) => m === 'sine') },
         { key: 'pitchHz', label: 'Buzz pitch (Hz)', type: 'number', value: def.pitchHz,
           hint: `0 = the recording’s, phrase by phrase` + (a.pitchHz ? ` (about ${Math.round(a.pitchHz)} Hz)` : '') + ' · CSM only' },
         { key: 'width', label: 'Formant width', type: 'select', value: def.width, choices: RESYNTH_WIDTHS, hint: 'CSM only: how fast each ring decays' },
@@ -3516,8 +3517,9 @@
         title: `Import ${fileName}`,
         summary: `${a.duration.toFixed(1)} s at ${sampleRate} Hz · ${a.segments.length} phrase${a.segments.length === 1 ? '' : 's'}` +
           (a.pitchHz ? ` · pitch about ${Math.round(a.pitchHz)} Hz` : '') +
-          (opm ? '. Four formants, one a frame, as sine waves on fm1–fm4; the hiss on fm8’s noise — inserted at the cursor.'
-            : '. Four formants, one a frame, on fm3-1–fm3-4; the hiss on noise — inserted at the cursor.'),
+          (target === 'x68k' ? '. Four formants, one a frame, as sine waves on fm1’s four operators; the hiss on fm8’s noise — inserted at the cursor.'
+            : target === 'msx' ? '. Four formants, one a frame, as sine waves on the SCC’s wave1–wave4; the hiss on noise — inserted at the cursor.'
+              : '. Four formants, one a frame, on fm3-1–fm3-4; the hiss on noise — inserted at the cursor.'),
         fields,
       });
       if (!got) return null;
@@ -5488,7 +5490,7 @@
         if (kind) continue;
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
-            ? `${entry.file.name}: a sample is .wav only (the exporters read RIFF WAV); File > Import > Audio on FM3… or Audio as FM Voice… reads it as it is`
+            ? `${entry.file.name}: a sample is .wav only (the exporters read RIFF WAV); File > Import > Audio as Formants… or Audio as FM Voice… reads it as it is`
             : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .opm .muc .mml .dat .bin .sf2 .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs)`,
           'err',
         );

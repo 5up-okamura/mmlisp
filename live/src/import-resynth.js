@@ -31,6 +31,10 @@
  * ratios its :ml / :dt2- tables, the levels its :tl tables; the hiss is
  * fm8's :mode noise. CSM is not offered there.
  *
+ * On msx the four sines are the SCC's: wave1–wave4 each playing one cycle of
+ * a sine (`def-wave sine`) at its formant, its level the chip's 4-bit linear
+ * volume; the hiss is the PSG's noise. No CSM there either.
+ *
  * At 150 BPM one frame is four ticks, so every table lands on the frame it
  * was measured in and the tracks come out the same length.
  */
@@ -264,7 +268,7 @@ const WIDTH_ENV = { held: [0, 0], ringing: [12, 1], wide: [15, 3] };
 const WIDTH_NOISE_DB = { held: 0, ringing: -8, wide: -10 };
 
 export function defaultResynthOptions(a, width = "held", target = "md") {
-  return { mode: target === "x68k" ? "sine" : "csm", pitchHz: 0, width, noiseDb: WIDTH_NOISE_DB[width] ?? 0, comp: 0.6, start: 0, end: +a.duration.toFixed(2), tempo: true, target };
+  return { mode: target === "x68k" || target === "msx" ? "sine" : "csm", pitchHz: 0, width, noiseDb: WIDTH_NOISE_DB[width] ?? 0, comp: 0.6, start: 0, end: +a.duration.toFixed(2), tempo: true, target };
 }
 
 /**
@@ -278,10 +282,12 @@ export function defaultResynthOptions(a, width = "held", target = "md") {
 export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
   const o = { ...defaultResynthOptions(a), ...opts };
   const warnings = [];
-  // x68k: the formants on fm1–fm4, the hiss on fm8's noise; no CSM.
+  // x68k: the formants on fm1's operators, the hiss on fm8's noise; msx: on
+  // the SCC's wave1–wave4. Neither has a CSM of one channel.
   const opm = o.target === "x68k";
-  if (opm && o.mode === "csm") warnings.push("x68k has no CSM of one channel: the formants are sine waves");
-  const csm = o.mode === "csm" && !opm;
+  const scc = o.target === "msx";
+  if ((opm || scc) && o.mode === "csm") warnings.push(`${o.target} has no CSM of one channel: the formants are sine waves`);
+  const csm = o.mode === "csm" && !opm && !scc;
   const f0 = Math.floor(Math.max(0, o.start) * FPS);
   const f1 = Math.min(a.frames.length, Math.ceil(Math.max(o.start, o.end) * FPS));
   const n = f1 - f0;
@@ -302,6 +308,9 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
   // where the Mega Drive's PSG noise stands beside FM: its formants go 6 dB
   // down so the consonants keep their place against the vowels.
   const OPM_FORMANT_DB = -6;
+  // msx's PSG noise stands some 5 dB over the SCC's sines at full level
+  // (where the Mega Drive's sits 4 dB under FM): it goes down that much.
+  const SCC_NOISE_DB = -5;
   const opDb = (s, i) => {
     const top = Math.max(...a.tracks.map((t) => t[idx(i)].db));
     return loud(i) + Math.max(FLOOR_DB, a.tracks[s][idx(i)].db - top) + (opm ? OPM_FORMANT_DB : 0);
@@ -348,6 +357,7 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
       at = q;
     });
     if (n > at) parts.push(rest(n - at));
+    if (scc) return `(wave${s + 1}${s === 0 && o.tempo ? ` :tempo ${BPM}` : ""} sine\n    ${parts.join("\n    ")})`;
     return `(fm3-${s + 1}\n    ${parts.join("\n    ")})`;
   };
   // x68k: the four formants on fm1's four operators (see the top). A frame's
@@ -411,7 +421,7 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
     let at = 0;
     segs.forEach(([p, q], k) => {
       if (p > at) parts.push(rest(p - at));
-      const vols = []; for (let i = p; i < q; i++) vols.push(a.unvoiced[idx(i)] ? (opm ? toNoiseVol : toVol)(loud(i) + o.noiseDb) : 0);
+      const vols = []; for (let i = p; i < q; i++) vols.push(a.unvoiced[idx(i)] ? (opm ? toNoiseVol : toVol)(loud(i) + o.noiseDb + (scc ? SCC_NOISE_DB : 0)) : 0);
       if (vols.some((v) => v > 0)) {
         defs.push({ k, name: `p${k + 1}-n`, body: `(macro :vol [${wrap(vols)}])` });
         parts.push(`p${k + 1}-n :gate ${q - p}f c${q - p}f`);
@@ -458,17 +468,19 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
     ? `; ${name}: CSM with formant tracks (language.md §15). Each fm3-N follows one\n; formant of the recording — its frequency as a :pitch table, its level as a\n; :vol table, one value a frame — the fm3-csm-rate track is the voice (its\n; rates the pitch, its rests the breaths), and the noise track the consonants.`
     : opm
       ? `; ${name}: sine-wave speech. fm1's four operators are sine waves on the\n; recording's four formants — the channel's pitch a :pitch table, each\n; operator's ratio of it :ml / :dt2- tables, its level a :tl table, one value\n; a frame — and fm8's noise the consonants.`
-      : `; ${name}: sine-wave speech. Each fm3-N is a sine wave on one formant of the\n; recording — its frequency as a :pitch table, its level as a :vol table, one\n; value a frame — and the noise track the consonants.`;
+      : scc
+        ? `; ${name}: sine-wave speech. Each of wave1–wave4 plays a sine wave on one\n; formant of the recording — its frequency as a :pitch table, its level as a\n; :vol table, one value a frame — and the PSG's noise the consonants.`
+        : `; ${name}: sine-wave speech. Each fm3-N is a sine wave on one formant of the\n; recording — its frequency as a :pitch table, its level as a :vol table, one\n; value a frame — and the noise track the consonants.`;
   const tracks = (opm ? opmFormantLine() : [0, 1, 2, 3].map(formantLine).join("\n")) + "\n" + (csm ? rateLine() + "\n" : "") + noiseLine() + "\n";
   const defBlock = segs.map(([p, q], k) =>
     `; phrase ${k + 1}: ${((p + f0) / FPS).toFixed(2)}–${((q + f0) / FPS).toFixed(2)} s\n` +
     defs.filter((d) => d.k === k).map((d) => `(def ${d.name} ${d.body})`).join("\n")).join("\n\n");
   const source =
     `${head}\n` +
-    `(def-fm formant :alg 7 :fb 0 :ams 0 :fms 0\n  ${ops})\n\n` +
+    (scc ? `(def-wave sine :wave (sin -127..127))\n\n` : `(def-fm formant :alg 7 :fb 0 :ams 0 :fms 0\n  ${ops})\n\n`) +
     (opm ? `(def-fm hiss formant :tl1 127 :tl2 127 :tl3 127)\n\n` : "") +
     (defBlock ? defBlock + "\n\n" : "") +
-    (opm ? "" : csm ? `(fm3-csm formant)\n` : `(fm3${o.tempo ? ` :tempo ${BPM}` : ""} formant)\n`) +
+    (opm || scc ? "" : csm ? `(fm3-csm formant)\n` : `(fm3${o.tempo ? ` :tempo ${BPM}` : ""} formant)\n`) +
     tracks;
   return { source, warnings };
 }

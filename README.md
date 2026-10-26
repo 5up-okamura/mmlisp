@@ -47,8 +47,8 @@ PC-8801, the X68000 and the MSX, auditioned in the browser and exported as VGM.
   you hear in the browser is what the driver emits. SGDK integration included;
   verified in emulation and played on hardware.
 - **Turn a recording into FM.** Give MMLisp Live a recording — WAV, MP3, M4A,
-  FLAC — and the chip plays it back, two ways. **Audio on FM3** follows the
-  sound's four spectral peaks frame by frame on FM3's four operators: under
+  FLAC — and the chip plays it back, two ways. **Audio as Formants** follows
+  the sound's four spectral peaks frame by frame on FM3's four operators: under
   CSM the buzz through them is a vocoder's voice — say a phrase and the Mega
   Drive says it back — and as sine waves it is sine-wave speech. **Audio as FM
   Voice** searches a model of the YM2612 for a patch: give it one recorded
@@ -145,9 +145,9 @@ for a controller's knobs.
 - Songs from MIDI, DefleMask, Furnace, VGM (with its PCM: the YM2612 DAC,
   SegaPCM, YM2610 ADPCM, the OKIM6258) and mucom88, through a dialog for tempo
   and channels; MDX (with its PDX) as an X68000 score and MGS as an MSX one
-- Recordings, in WAV or any format the browser decodes: **Audio on FM3** (a
-  sound's spectral peaks on FM3's operators — CSM's vocoder voice, or
-  sine-wave speech) and **Audio as FM Voice** (a patch searched for one note,
+- Recordings, in WAV or any format the browser decodes: **Audio as Formants**
+  (a sound's spectral peaks on FM3's operators — CSM's vocoder voice, or
+  sine-wave speech; on x68k and msx the sine waves) and **Audio as FM Voice** (a patch searched for one note,
   three candidates to hear and play before choosing)
 
 **Saving and sharing.** VGM, WAV and video export, PCM included; `.mmlisp`

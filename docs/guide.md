@@ -1568,7 +1568,7 @@ for the Mega Drive as above:
 
 ### Resynthesizing a recording on FM3
 
-`File > Import > Audio on FM3…` reads any recording — WAV, or whatever the
+`File > Import > Audio as Formants…` reads any recording — WAV, or whatever the
 browser decodes (MP3, AAC / M4A, FLAC, Ogg, Opus) — as four formant tracks
 (language §15): every 60 Hz frame gets a loudness, a pitch and the four peaks
 of its spectral envelope, and each peak becomes one `fm3-N` track — a long
@@ -1591,7 +1591,12 @@ frame's pitch is the base whose ratios come nearest the four formants — a few
 tens of cents off at worst, under the analysis's own wander — written as
 `:pitch`, `:ml1`–`:ml4`, `:dt2-1`–`:dt2-4` and `:tl1`–`:tl4` tables. The hiss
 is `fm8`'s `:mode noise`, and the formants sit 6 dB down so the consonants,
-the OPM's noise being quieter than a sine, keep their place.
+the OPM's noise being quieter than a sine, keep their place. On `msx` the
+sine waves are the SCC's: `wave1`–`wave4` each play one cycle of a sine
+(`def-wave sine`) at a formant, its level the chip's 16 linear steps, and
+the hiss is the PSG's `noise`, 5 dB down against the SCC. The SCC's period
+grows coarse up high (some 50 cents a step near 3.4 kHz), about what x68k's
+ratios give.
 
 It reads best what has a shaped envelope — a voice, a wah or a moving
 filter, a drum's body. A sound whose colour is its partials (a bell, a
