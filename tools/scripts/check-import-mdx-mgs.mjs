@@ -218,7 +218,7 @@ function compressMgs(u8) {
     has(source, /\(def-score :target msx :title "MGS test"\)/, what);
     assert.ok(!/\(fm7/.test(source), `${what}: no fm7 in #opll_mode 1`);
     has(source, /:tempo 150/, what);
-    has(source, /\(sqr1[\s\S]*:mode tone[\s\S]*c(8\.)? _16/, what); // q6
+    has(source, /\(sqr1[\s\S]*?:gate\* 0\.75[\s\S]*? c /, what); // q6 as the gate, c its whole quarter
     has(source, /\(macro :pitch\+ \(linear -400\.\.0 :len 96t\)\)/, what); // c_e: from c to e
     has(source, /e4? (\(macro :pitch none\) )?~ g/, what); // e & g: the e slurs into the g
     has(source, /#top[\s\S]*:pitch -?\d+[\s\S]*\(go top\)/, what); // `$`, then \ 5

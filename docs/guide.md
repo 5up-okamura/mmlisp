@@ -1794,8 +1794,8 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   (`fm1`–`fm6` beside the rhythm, `#opll_mode 1`): `@0`–`@14` are the ROM's
   voices 1–15 (`violin` …, as `@#` assigns them), a tone on the original
   voice its `@v` as a `def-fm mgs-vNN` on the OPLL's words; `so` / `sf` are
-  `:sus`, and `q0` holds a note to the next `/`. `q` and `&` set the
-  lengths, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento
+  `:sus`, and `q0` holds a note to the next `/`. `q` is `:gate*` on notes
+  written their whole length, `&` a tie or slur, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento
   and `p` a fall. The rhythm track goes to `rhythm1`–`rhythm5`, a track a
   sound (`b s m c h` as `kick snare tom4 ride hat`), each hit ringing
   to the sound's next (`kf`: keyed off at the next hit of any, `:mode

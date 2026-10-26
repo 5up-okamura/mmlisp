@@ -28,7 +28,7 @@
 //                   level a count, `n:c` held c counts, `n=c` moved to over
 //                   c counts, `[ ]` the sustain loop, `\` pitch steps; @r's
 //                   RR, or k on the PSG and the SCC, its release
-//   q, &            the note's length (q n/8 of it), & legato
+//   q, &            q as :gate* n/8, the note its full length; & legato
 //   \ / @\          :pitch — on the PSG and the SCC an offset on the
 //                   octave-1 period (+ up; 128 about a semitone), on FM on
 //                   MGSDRV's F-numbers (@\ 255 a semitone)
@@ -63,7 +63,7 @@
 //   mgsToMmlisp(mgs, options, a)  → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, barEnds, qstr, PPQN } from "./import-song.js";
+import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken } from "./import-song.js";
 import { withPre, dropIdleNones } from "./import-mdx.js";
 import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
 
@@ -696,6 +696,9 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     const volOf = tr.kind === "scc" ? sccVol : ssgVol; // the OPLL's volume steps 3 dB as the SSG's
     const notes = [];
     let prev = null;
+    let head = null; // the note a tie continues: the one keyed, or slurred to
+    let gated = false; // a q below 8 seen: from then on every note states its gate
+    let gateInForce = ":gate* 1";
     for (const n of tr.notes) {
       const st = n.st;
       const x = st.env != null ? envX(st.env) : null;
@@ -761,13 +764,34 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       }
       if (pitch && !pitch.startsWith("(")) state.push(pitch);
       else state.push(pitch ?? "(macro :pitch none)");
-      // q eighths of the note; q0 (FM) holds it through the rests after it,
-      // to a `/`.
+      // q eighths of the note as its gate, the note its whole slot; q0 (FM)
+      // holds it through the rests after it, to a `/` — which keys a note
+      // off where it falls: that note is that long.
       const q = st.q >= 1 && st.q <= 8 ? st.q : 8;
-      let gate = n.tieOn || (isFm && st.q === 0) ? n.count + (n.held ?? 0) : Math.max(1, Math.floor((n.count * q) / 8));
-      if (n.cut != null) gate = Math.max(1, Math.min(gate, n.cut));
+      const hold = n.tieOn || (isFm && st.q === 0);
+      const span = hold ? n.count + (n.held ?? 0) : n.count;
+      const gate = hold ? span : Math.max(1, Math.floor((n.count * q) / 8));
+      let len = span, gateTok = null;
+      if (n.cut != null && n.cut < span) len = Math.max(1, Math.min(gate, n.cut));
+      else if (gate < span) gateTok = `:gate* ${q / 8}`;
+      if (gateTok) gated = true;
       const legato = !!prev && prev.tieOn && prev.step + prev.count + (prev.held ?? 0) === n.step;
-      notes.push({ tick: tick(n.step), len: tick(gate), midi: n.midi, vel: 15, state, tieIn: legato });
+      // A note keyed on into the next sounds its whole slot whatever its
+      // gate: it keeps the one in force, so none is written for it.
+      if (gated) state.push((gateInForce = n.tieOn && n.held == null ? gateInForce : gateTok ?? ":gate* 1"));
+      const note = { tick: tick(n.step), len: tick(len), midi: n.midi, vel: 15, state, tieIn: legato };
+      notes.push(note);
+      // A tie's gate is its head's, over the whole tied length; MGSDRV cuts
+      // the last note by its own q: the head takes that cut, exact.
+      if (legato && head && head.midi === n.midi) {
+        if (gated) {
+          const tok = gate < span ? `:gate- ${lenToken(tick(span - gate))}` : ":gate* 1";
+          const g = head.state.findIndex((t) => t.startsWith(":gate"));
+          if (g >= 0) head.state[g] = tok;
+          else head.state.push(tok);
+          state[state.length - 1] = gateInForce = tok;
+        }
+      } else head = note;
       prev = n;
     }
     if (!notes.length) continue;
