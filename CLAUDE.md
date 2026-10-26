@@ -30,7 +30,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `vector-editor.js`              | The panel's vector editor: a def-wave's or a macro's steps drawn as bars, as Max/Pd arrays are |
 | `synths.js`, `synth-md.js`, `synth-pc88.js`, `synth-x68k.js`, `synth-msx.js`, `scope-pitch.js`, `scope-trigger.js` | Chip wiring for the browser, registered by target in `synths.js` — the Mega Drive's, the PC-8801's (ymfm's YM2608), the X68000's (ymfm's YM2151), the MSX's (ymfm's SSG as the AY-3-8910, and its own SCC); everything a machine has of its own is its synth's, so the worklet names none — and the oscilloscope's pitch latches and trigger |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
-| `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM and the OKIM6258), DefleMask / Furnace |
+| `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM and the OKIM6258; `tools npm run check:import-vgm`), DefleMask / Furnace |
 | `import-mdx.js`, `import-mgs.js` | Driver songs played clock-exact: MDX (MXDRV, + its PDX) as `:target x68k`, MGS (MGSDRV) as `:target msx` (`tools npm run check:import-mdx-mgs`) |
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
 | `import-resynth.js`             | File > Import > Audio on FM3: a recording's four spectral peaks as fm3-N tracks, under CSM or as sine waves (`tools npm run check:resynth`) |

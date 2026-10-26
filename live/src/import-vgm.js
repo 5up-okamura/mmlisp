@@ -177,10 +177,13 @@ function opmChip(clock, { ev }) {
   };
   const key = (c) => `YM2151 FM${c + 1}`;
   // Channel 8 with the noise on (NE, $0F bit 7) and its fourth operator keyed
-  // is the chip's noise: a noise note, its frequency from NFRQ (clock / 32 /
-  // (32 − NFRQ) Hz), its level that operator's TL — taken linearly, as the
-  // noise is. The channel's FM is not read then. The note ends at the
-  // operator's key-off or where the noise is turned off.
+  // is the chip's noise, read two ways. As a noise note: its frequency from
+  // NFRQ (clock / 32 / (32 − NFRQ) Hz), its level that operator's TL — taken
+  // linearly, as the noise is — ending at the operator's key-off or where
+  // the noise is turned off; a target whose noise is a channel of its own
+  // (md's) plays that. And as FM8's note, the voice whole, flagged with the
+  // noise's frequency: a target whose fm8 turns the noise on (x68k's :mode
+  // noise) plays that, as the chip did.
   const NOISE = "YM2151 noise";
   let noiseOn = false;
   const noiseHz = () => clock / 32 / (32 - (r[0x0f] & 31));
@@ -197,7 +200,6 @@ function opmChip(clock, { ev }) {
         if (on && !noiseOn) ev(NOISE, { t, kind: "on", pitch: 60, vel: noiseVel(), noiseHz: noiseHz(), kindOf: "noise" });
         else if (!on && noiseOn) ev(NOISE, { t, kind: "off" });
         noiseOn = on;
-        return;
       }
       if (a === 0x7f && noiseOn) ev(NOISE, { t, kind: "vel", vel: (r[a] = d, noiseVel()) });
       if (a === 0x08) {
@@ -205,7 +207,8 @@ function opmChip(clock, { ev }) {
         const on = (d & 0x78) !== 0;
         if (on && !keyed[c]) {
           const v = voice(c);
-          ev(key(c), { t, kind: "on", pitch: pitch(c), voice: v, pan: v.pan, kindOf: "opm" });
+          const noise = c === 7 && (r[0x0f] & 0x80) ? noiseHz() : null;
+          ev(key(c), { t, kind: "on", pitch: pitch(c), voice: v, pan: v.pan, kindOf: "opm", ...(noise ? { noiseHz: noise } : {}) });
         } else if (!on && keyed[c]) ev(key(c), { t, kind: "off" });
         keyed[c] = on;
         return;
@@ -951,8 +954,10 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
     const notes = channelNotes(parsed, key, followPitch);
     if (!notes.length) continue;
     const kind = parsed.kinds.get(key) ?? "psg";
-    for (const n of notes) if (!n.slur) onsets.push(n.t);
-    channels.push({ key, kind, notes: notes.length, label: `${key} · ${notes.length} notes` });
+    // A YM2151's FM8 noise note is its noise channel's too: counted once.
+    for (const n of notes) if (!n.slur && !(kind === "opm" && n.noiseHz)) onsets.push(n.t);
+    const noisy = kind === "opm" ? notes.filter((n) => n.noiseHz).length : 0;
+    channels.push({ key, kind, notes: notes.length, noisy, label: `${key} · ${notes.length} notes${noisy ? `, ${noisy} with the noise` : ""}` });
   }
   const frameRate = 60;
   const grid = estimateGrid(onsets, { frameRate });
@@ -1006,9 +1011,18 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   const opmFits = a.channels.filter((c) => c.kind === "opm").length <= fm.length;
   const sorted = [...a.channels].sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind) ||
     (x.kind === "opm" && opmFits ? x.key.localeCompare(y.key, "en", { numeric: true }) : y.notes - x.notes));
+  // A YM2151 channel that only plays the noise is the noise channel's where
+  // the target's fm8 cannot turn it on.
+  const target = targetProfile(targetName);
+  const fmNoise = dests.fm.some((d) => target.channels[d]?.modes?.noise);
   for (const ch of sorted) {
     let d = "drop";
-    if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? "drop";
+    // A YM2151 that fits keeps its channels' own numbers: FM8 on fm8, which
+    // is where x68k's noise is.
+    const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}` : null;
+    if (ch.kind === "opm" && !fmNoise && ch.noisy === ch.notes) d = "drop";
+    else if (own && fm.includes(own)) { d = own; fm.splice(fm.indexOf(own), 1); }
+    else if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? "drop";
     else if (ch.kind === "psg") d = sqr.shift() ?? "drop";
     else if (ch.kind === "noise") { d = noise ?? "drop"; noise = null; }
     else if (ch.kind === "pcm") d = dests.pcm.length ? "pcm1" : "drop";
@@ -1018,7 +1032,6 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   }
   // Two names on one physical channel (x68k's noise is fm8's fourth
   // operator): the FM channel keeps it, the noise is dropped.
-  const target = targetProfile(targetName);
   const fmVoices = new Set(Object.values(dest).filter((d) => dests.fm.includes(d)).map((d) => target.voiceKey(d)));
   for (const [k, d] of Object.entries(dest))
     if (d === dests.noise && fmVoices.has(target.voiceKey(d))) dest[k] = "drop";
@@ -1097,8 +1110,14 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     taken.add(voice);
     const onFm = d.startsWith("fm");
     const raw = channelNotes(parsed, ch.key, followPitch);
+    // A YM2151's FM8 noise: fm8's :mode noise where the target has it, else
+    // the noise channel's (its notes dropped here).
+    const opm = ch.kind === "opm";
+    const fmNoise = opm && onFm && target.channels[d]?.modes?.noise;
+    const noisy = opm && raw.some((n) => n.noiseHz);
     const notes = [];
     for (const n of raw) {
+      if (opm && n.noiseHz && !fmNoise) continue;
       const tick = tickOf(n.t);
       const end = n.end === Infinity ? endTick : Math.min(endTick, tickOf(n.end));
       if (tick >= endTick) break;
@@ -1132,7 +1151,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       }
       note.stand = voice;
       note.pan = onFm && n.pan ? n.pan : null;
-      note.mode = d === dests.noise ? noiseWord(n) : null;
+      note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
+      note.rate = fmNoise && n.noiseHz ? `:noise-rate ${Math.max(1, Math.min(31, Math.round(125000 / n.noiseHz)))}` : null;
       // Two notes quantized onto one start: the later wins; an overlap is cut.
       const prev = notes[notes.length - 1];
       if (prev && prev.tick >= tick) notes.pop();
@@ -1169,7 +1189,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // A track with any envelope states one for every note — `(macro :vel
   // none)` where there is none, since a macro stays until cleared.
   for (const tr of tracks) {
-    let cur = { voice: null, env: null, pitch: null, pan: null, mode: null };
+    let cur = { voice: null, env: null, pitch: null, pan: null, mode: null, rate: null };
     const anyEnv = tr.notes.some((n) => n.envName);
     const anyBend = tr.notes.some((n) => n.bendName);
     for (const n of tr.notes) {
@@ -1180,13 +1200,15 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         pitch: n.bendName ?? (anyBend ? PITCH_NONE : null),
         pan: n.pan ? `:pan ${n.pan}` : null,
         mode: n.mode,
+        // fm8's noise period, the one in force on its tone notes too.
+        rate: n.rate ?? cur.rate,
       };
       n.pre = [];
-      for (const k of ["voice", "env", "pitch", "pan", "mode"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
+      for (const k of ["voice", "env", "pitch", "pan", "mode", "rate"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
       // Nothing to clear before the first envelope or bend.
       if (cur.env == null && st.env === ENV_NONE) n.pre = n.pre.filter((t) => t !== ENV_NONE);
       if (cur.pitch == null && st.pitch === PITCH_NONE) n.pre = n.pre.filter((t) => t !== PITCH_NONE);
-      n.state = [st.voice, st.env, st.pitch, st.pan, st.mode].filter(Boolean);
+      n.state = [st.voice, st.env, st.pitch, st.pan, st.mode, st.rate].filter(Boolean);
       cur = st;
     }
   }

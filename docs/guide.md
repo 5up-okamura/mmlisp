@@ -1694,9 +1694,10 @@ them: a key-on starts a note, a key-off ends it.
 - On the YM2612, YM2203, YM2608, YM2610 and YM2151 the voice is the
   channel's registers at the key-on. A file with a YM2151 asks for its
   **Target**: x68k (the default when the YM2151 is its only tone chip) keeps
-  the eight channels on `fm1`–`fm8`, DT2 as `:dt2-N`, channel 8's noise on
-  `noise` (its period as `:noise-rate`) and the OKIM6258's samples on PCM8's
-  `pcm1`–`pcm8`, whole; md fits them to the Mega Drive, drops DT2 and reads
+  the eight channels on `fm1`–`fm8` (on their own numbers when they all
+  fit), DT2 as `:dt2-N`, channel 8's noise as `fm8`'s `:mode noise` — its
+  voice whole, its period as `:noise-rate` — and the OKIM6258's samples on
+  PCM8's `pcm1`–`pcm8`, whole; md fits them to the Mega Drive, drops DT2 and reads
   the noise's period as the nearest `:mode white0`–`white2`. The
   carriers' TL is taken relative to the voice's loudest use and the rest
   becomes `:vel`. The SSG and the SN76489 become `sqr` and `noise` tracks;

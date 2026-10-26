@@ -38,6 +38,10 @@ Run from tools directory:
 14. `npm run check:voice-estimate` — the FM voice estimate: its chip model held to
     Nuked, and a known patch's pitch read, its sound come within a few dB, and
     its def-fm compile
+15. `npm run check:import-mdx-mgs` — the MDX and MGS song imports, on files built
+    there: each command family lands where it should, and every score compiles
+16. `npm run check:import-vgm` — the VGM import, on the toolchain's own VGM of a
+    test score: the YM2151's noise as x68k's fm8 `:mode noise`, md's `noise`
 
 ## i18n
 

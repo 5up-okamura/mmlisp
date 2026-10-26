@@ -18,7 +18,8 @@
     "check:snapshot": "node scripts/check-snapshot.mjs",
     "check:resynth": "node scripts/check-resynth.mjs",
     "check:voice-estimate": "node scripts/check-voice-estimate.mjs",
-    "check:import-mdx-mgs": "node scripts/check-import-mdx-mgs.mjs"
+    "check:import-mdx-mgs": "node scripts/check-import-mdx-mgs.mjs",
+    "check:import-vgm": "node scripts/check-import-vgm.mjs"
   },
   "engines": {
     "node": ">=18"
