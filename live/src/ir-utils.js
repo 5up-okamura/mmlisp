@@ -46,6 +46,8 @@ export const MACRO_TARGET_RANGE = {
   LFO_PMD: { min: 0, max: 127 },
   LFO_AMD: { min: 0, max: 127 },
   LFO_WAVE: { min: 0, max: 3 },
+  // fm8's :mode on the OPM: 0 tone, 1 noise (chips/ym2151.js)
+  FM_NOISE: { min: 0, max: 1 },
 
   // The FM family's, channel and operator (chips/fm-words.js) — an operator
   // word's range is its base's: clampForTarget() strips the trailing digit.

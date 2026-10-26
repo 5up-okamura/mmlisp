@@ -92,7 +92,7 @@ export const REFERENCE = [
   {
     name: ':noise-rate', cat: 'score', section: '§19', tracks: null,
     syntax: ':noise-rate 1–31',
-    summary: 'pc88, x68k and msx: the chip\'s one noise period, song-wide; lower is higher, 9 to start (8 on msx). On pc88 and msx a sqr track hears it with :mode noise or both, and a note\'s (macro :noise-rate …) steps it through a drum hit; on x68k the noise track.',
+    summary: 'pc88, x68k and msx: the chip\'s one noise period, song-wide; lower is higher, 9 to start (8 on msx). On pc88 and msx a sqr track hears it with :mode noise or both, and a note\'s (macro :noise-rate …) steps it through a drum hit; on x68k fm8 with :mode noise, or the noise track.',
     insert: ':noise-rate 9',
     example: '(def-score :target pc88)\n(sqr1 :mode both :noise-rate 4 :len 8 c e :noise-rate (linear 4..31 :len 2) g e c e g e)',
   },
@@ -143,7 +143,7 @@ export const REFERENCE = [
   {
     name: 'noise', ctx: 'track', cat: 'channels', section: '§2', tracks: PSG,
     syntax: '(noise :mode white0 …)',
-    summary: 'The PSG\'s noise channel. :mode white0–white3 or periodic0–periodic3 (sticky); 3 follows sqr3\'s pitch. On x68k it is fm8\'s fourth operator, its period the song\'s :noise-rate.',
+    summary: 'The PSG\'s noise channel. :mode white0–white3 or periodic0–periodic3 (sticky); 3 follows sqr3\'s pitch. On x68k it is fm8\'s fourth operator alone, its period the song\'s :noise-rate (fm8\'s :mode noise plays it with a voice).',
     insert: '(noise :mode white2 :len 8 c c c c)',
     example: '(noise :mode white2 :len 8 (macro :vel [12 6 0]) c c c c c c c c)',
   },
@@ -273,7 +273,7 @@ export const REFERENCE = [
   {
     name: ':mode', aliases: ['shot', 'loop', 'gate', 'white0', 'periodic0', 'tone', 'both'], cat: 'track', section: '§5', tracks: ['psg', 'pcm'],
     syntax: ':mode white0–3 | periodic0–3  ·  :mode shot | loop | gate  ·  :mode tone | noise | both | env',
-    summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once, loops while held, or plays once and is cut at its gate. On a pc88 or msx sqr track: its mixer, tone, noise, both, or env (neither: the hardware envelope alone), which a (macro :mode [both noise]) steps.',
+    summary: 'On noise: the noise mode (sticky). On pcm1–pcm3: whether a note plays the sample once, loops while held, or plays once and is cut at its gate. On a pc88 or msx sqr track: its mixer, tone, noise, both, or env (neither: the hardware envelope alone), which a (macro :mode [both noise]) steps. On x68k fm8: tone, or noise — its fourth operator the noise, the voice whole.',
     insert: ':mode white2',
     example: '(noise :len 8 :mode white0 c c :mode white2 c c :mode periodic1 c c)',
   },

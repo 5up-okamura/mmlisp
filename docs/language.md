@@ -2525,11 +2525,19 @@ OPN's `:lfo-rate` reads as the OPM's: 0 sets both depths 0, 1–8 the nearest
 `:lfo-freq` to the YM2612's rate with both depths at 127. These words are
 `E_TARGET` on the OPN targets.
 
-**Noise.** `noise` is fm8's fourth operator with the chip's noise on it, so
-a score has `noise` or `fm8` (`E_TARGET`). Its period is the song's
-**`:noise-rate 1–31`** (lower is higher, 9 to start), 125 kHz / n — what
-the same rate is on `pc88`'s SSG. A noise note's pitch is not read, and it
-has no `:mode`.
+**Noise.** The OPM's noise is fm8's fourth operator turned to noise. On
+fm8, **`:mode noise`** turns it (and **`:mode tone`**, the default, back):
+the voice plays whole — its algorithm, its envelope, its other three
+operators still FM — as MXDRV plays a noise, so a hi-hat is a `def-fm`
+with a fast decay on its fourth operator; `:vel` moves it as on any FM
+note (the noise's part follows the operator's attenuation linearly, not
+its 0.75 dB steps). `:mode` is fm8's alone (`E_UNSUPPORTED_TARGET`
+elsewhere). `noise` is the same operator played alone, sine-voiced at a
+plain level, for a score written for the PSG's noise: a score has `noise`
+or `fm8` (`E_TARGET`). The period is the song's **`:noise-rate 1–31`**
+(lower is higher, 9 to start), 125 kHz / n — what the same rate is on
+`pc88`'s SSG — whichever plays it. A noise note's pitch is not read, and
+`noise` has no `:mode`.
 
 **PCM.** `pcm1`–`pcm8` are PCM8's eight voices: a software mix, as the
 X68000's PCM8 driver makes one, into the MSM6258's single 4-bit ADPCM

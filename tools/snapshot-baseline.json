@@ -1867,6 +1867,12 @@
   "regs": "b127ffc90abc5bd0",
   "vgm": "c7b80b449d76c506"
  },
+ "tools/tests/x68k/fm8-noise.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "00193d9049b831db",
+  "regs": "e0af9aaa76d35c9e",
+  "vgm": "afdc74643b369fac"
+ },
  "tools/tests/x68k/noise.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "7b6cb8066f48783f",

@@ -167,6 +167,10 @@ Next:
   quarter read off the notes (quarterOf) was checked on the Sho set
   (g_shomdx2: 176-clock bars, 44 a quarter; two tracks carry 7-9-clock
   runs, hence the nine-in-ten rule).
+- Ruled (2026-10-26): the OPM's voiced noise is fm8's `:mode noise`, not a
+  `def-fm` on the `noise` channel — a voice there is fm8 under another name
+  (its pitch, :tl, :alg), two ways to write one thing. `noise` stays the
+  operator alone, for scores moved from the PSG targets.
 - Ruled (2026-10-26, the user): the IR player's `drvBpm` rounding on the
   driver-less targets (0.02-0.04 % off the BPM, ~50 ms over a 2.5-minute
   MDX against MXDRV) stays — not to be "fixed". An import compared against

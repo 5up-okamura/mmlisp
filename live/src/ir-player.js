@@ -3785,6 +3785,10 @@ export class IRPlayer {
         this._opmLfo.wave = Math.round(value);
         this._fmWrites(this._fmEnc.lfoWave?.(Math.round(value)) ?? [], when);
         break;
+      // fm8's :mode on the OPM: its fourth operator the noise, or a sine.
+      case "FM_NOISE":
+        this._fmWrites(this._fmEnc.noise?.(Math.round(value) === 1) ?? [], when);
+        break;
       case "FM_DT2_1":
       case "FM_DT2_2":
       case "FM_DT2_3":
@@ -5074,7 +5078,9 @@ export class IRPlayer {
   // The target's PSG encoder: its tone chip's, or a noise alone (the OPM's,
   // chips/ym2151.js), or null.
   _psgChipOf(target) {
-    return (target.chipForKind("tone") ?? target.chipForKind("noise"))?.psgEncoder() ?? null;
+    // The FM encoder goes along: a chip whose noise is an FM register (the
+    // OPM's $0F) shares it.
+    return (target.chipForKind("tone") ?? target.chipForKind("noise"))?.psgEncoder(this._fmEnc) ?? null;
   }
   // Each tone lane's { enc, ch, chip }: the PSG encoder `psg`'s lanes 0-3
   // (its own numbering), a wave chip's encoder for its channels. A lane the

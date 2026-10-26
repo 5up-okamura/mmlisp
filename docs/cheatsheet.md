@@ -237,7 +237,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   rhythm plays from the user's own ROM (File ▸ Import ▸ YM2608 Rhythm ROM…), else
   from an imported kit's `:file`s, cut to the ROM sounds' lengths.
 - `(def-score :target x68k)` holds a score to the X68000's YM2151 (§19):
-  `fm1`–`fm8`, `noise` (fm8's fourth operator, song-wide `:noise-rate`), DT2
+  `fm1`–`fm8` (fm8 `:mode noise`: its fourth operator the noise, the voice
+  whole), `noise` (that operator alone), song-wide `:noise-rate`, DT2
   as `:dt2-1`–`:dt2-4` 0–3, the LFO as `:lfo-freq` `:lfo-pmd` `:lfo-amd`
   `:lfo-wave`; `pcm1`–`pcm8` PCM8's voices mixed into the MSM6258's ADPCM
   (pitch moves allowed, no `:pan`); no SSG-EG, no FM3 modes. VGM and WAV.

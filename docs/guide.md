@@ -1769,8 +1769,9 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   `:vel` (0.75 dB a TL step), `p` `:pan`, `q` / `@q` `:gate*` / `:gate-` on
   notes written their whole length, `&` a tie or slur, `k` a late key-on,
   `D` `:pitch`, `_` and the software LFOs (`MP`, `MA`) `:pitch+` / `:vel+`
-  macros, `MH` the OPM's LFO words, and track H's notes with the noise
-  on (`w`) go to `noise`. A track with no notes that only sets the tempo — a
+  macros, `MH` the OPM's LFO words, and track H's noise (`w`, or `y$0F`)
+  stays on `fm8` as its `:mode noise` / `:mode tone`, the voice whole — a
+  hi-hat keeps its envelope. A track with no notes that only sets the tempo — a
   loop dithering it between two Timer B values, for one in between — becomes
   its average, one `:tempo`. The ADPCM — one track, or eight under PCM8 — plays
   the song's PDX: pick (or drop) the `.pdx` together with the `.mdx`; its

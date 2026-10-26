@@ -31,8 +31,9 @@
 //                      square, triangle), MD their delay — restarted at each
 //                      note, where MXDRV restarts them only with an MD
 //   MH                 the OPM's LFO: :lfo-wave :lfo-freq :lfo-pmd :lfo-amd
-//   w                  the noise (on track H, NE): its notes go to `noise`
-//                      at :noise-rate 32 - NFRQ
+//   w                  the noise (on track H, NE): fm8's :mode noise — the
+//                      voice whole, its fourth operator the noise — at
+//                      :noise-rate 32 - NFRQ
 //   @t, y$12           :tempo (Timer B: 4882.8125 / (256 - n) BPM); a track
 //                      of no notes looping between two values is their average
 //   y                  an operator's or the channel's registers as words
@@ -222,6 +223,7 @@ function playTrack(mdx, track, skipped, recv = null, until = Infinity) {
         case 0xff: if (a1 >= 2) tempos.push({ clock, tb: a1 }); break;
         case 0xfe:
           if (a1 === 0x12) tempos.push({ clock, tb: a2 });
+          else if (a1 === 0x0f) st.noise = a2; // the noise's register: as w
           else st.regs = [...st.regs.filter((r) => r.reg !== a1), { reg: a1, val: a2 }];
           break;
         case 0xfd: st.voice = a1; st.regs = []; break;
@@ -501,12 +503,9 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     return sm;
   };
 
-  // Track H's noise: its notes go to `noise` when most are played with NE on.
-  const trackH = a.tracks[7];
-  const noisy = trackH ? trackH.notes.filter((n) => n.st.noise & 0x80).length : 0;
-  const hToNoise = trackH && noisy > trackH.notes.length / 2;
-  if (trackH && noisy && !hToNoise) warnings.push(`FM H: ${noisy} notes played with the noise on are played as FM (fm8)`);
-  if (hToNoise && noisy < trackH.notes.length) warnings.push(`FM H: ${trackH.notes.length - noisy} notes played without the noise are left out (the noise is fm8's fourth operator)`);
+  // Track H's noise (w: NE and NFRQ) is fm8's :mode noise — the voice whole,
+  // its fourth operator the noise, as MXDRV plays it.
+  const hNoisy = !!a.tracks[7]?.notes.some((n) => n.st.noise & 0x80);
 
   const songOut = [];
   let endMax = 0;
@@ -516,8 +515,8 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     if (tr.pcm) {
       if (!pdx) continue;
       channel = `pcm${tr.index - 7}`;
-    } else channel = tr.index === 7 && hToNoise ? "noise" : `fm${tr.index + 1}`;
-    const isNoise = channel === "noise";
+    } else channel = `fm${tr.index + 1}`;
+    const noisy = tr.index === 7 && hNoisy;
     const tick = (c) => Math.round((c * PPQN) / a.quarter);
     const notes = [];
     let prev = null; // the note before, as played
@@ -528,7 +527,6 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     let gateInForce = ":gate* 1";
     tr.notes.forEach((n) => {
       const st = n.st;
-      if (isNoise && !(st.noise & 0x80)) return;
       if (!tr.pcm && st.pan === 0) return; // p0: not keyed
       const delay = Math.min(st.keyDelay, n.count - 1);
       const gate = gateOf(n);
@@ -562,11 +560,6 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
         midi = { sm, rate: PCM_RATES[Math.min(4, st.pcmRate)] }; // a pitch once the sample's rate is known
         vel = { sm, gain: pcm8Gain(st.atten) }; // a :vel once the sample's loudest is known
         sm.gain = Math.max(sm.gain ?? 0, vel.gain);
-      } else if (isNoise) {
-        const v = mdx.voices.get(st.voice);
-        vel = velOf(st.atten + (v ? v.ops[3].tl : 0));
-        state.push(`:noise-rate ${Math.max(1, Math.min(31, 32 - (st.noise & 31)))}`);
-        midi = 60;
       } else {
         const name = voiceName(st.voice, st.pmsAms);
         if (name) state.push(name);
@@ -576,6 +569,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
           else skip(`y$${r.reg.toString(16)} (a register outside the track's channel)`);
         }
         state.push(`:pan ${panWord(st.pan)}`);
+        if (noisy) state.push(`:mode ${st.noise & 0x80 ? "noise" : "tone"}`, `:noise-rate ${Math.max(1, Math.min(31, 32 - (st.noise & 31)))}`);
         if (st.hlfo) state.push(`:lfo-wave ${LFO_WAVES[st.hlfo.wave]} :lfo-freq ${st.hlfo.freq} :lfo-pmd ${st.hlfo.pmd} :lfo-amd ${st.hlfo.amd}`);
         if (st.hlfo?.sync) skip("MH's LFO sync (the LFO is not reset at each note)");
         if (st.detune) detuned = true;
@@ -583,7 +577,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       }
       // The note's own moves: a portamento, the LFOs.
       const pitch = [];
-      if (!tr.pcm && !isNoise) {
+      if (!tr.pcm) {
         if (st.porta) {
           // It bends on past the key-off, to the next note.
           const total = cents((st.porta * n.count) / 256);

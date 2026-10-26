@@ -655,6 +655,7 @@ write.
 | `LFO_FREQ`        | 0–255          | `x68k`: the YM2151's LFRQ (reg 0x18). Song-wide, as `MASTER`. |
 | `LFO_PMD` / `LFO_AMD` | 0–127      | `x68k`: the LFO's pitch / level depth (reg 0x19, bit 7 set / clear). Song-wide. |
 | `LFO_WAVE`        | 0–3            | `x68k`: the LFO's waveform (reg 0x1B bits 1–0): saw, square, triangle, noise. Song-wide. |
+| `FM_NOISE`        | 0–1            | `x68k` fm8's `:mode`: 1 noise (reg 0x0F bit 7, NE: its fourth operator the noise), 0 tone. |
 | `VAL0`–`VAL15`    | −32768–32767   | Value slot n (`:name` of a `def-val`, language.md §8). Song-wide, as `MASTER`; no register. |
 | `FM_ALG`          | 0–7            | B0 bits 2–0.                                                 |
 | `FM_FB`           | 0–7            | B0 bits 5–3.                                                 |

@@ -5,6 +5,12 @@
 // The FM is the OPN's language: the same operator words, DT2 beside DT1
 // (`:dt2-1`…`:dt2-4`) and no SSG-EG. The IR player writes it through
 // fmEncoder as it writes the OPN's.
+//
+// The noise is $0F: NE turns fm8's fourth operator into noise, NFRQ its
+// period. fm8 turns it on as its `:mode noise` (targets/x68k.js) — the voice
+// whole, its envelope and its other operators, as MXDRV plays a noise — and
+// the `noise` channel plays it alone on that operator; both encoders keep
+// the one $0F (noiseReg).
 import { NO_WORDS, words } from "./parts.js";
 import { fmWords } from "./fm-words.js";
 import { encode30, encode80 } from "../ir-utils.js";
@@ -39,7 +45,7 @@ export const opmNoise = {
   words: NO_WORDS,
   songWords: words("NOISE_RATE"),
   modes: {},
-  modeError: { code: "E_PARAM_VALUE", message: "the OPM's noise has no :mode; its period is the song's :noise-rate 1-31" },
+  modeError: { code: "E_PARAM_VALUE", message: "the OPM's noise has no :mode; its period is the song's :noise-rate 1-31 (fm8's :mode noise plays it with a voice)" },
   shareHint: (other) => `the noise is fm8's fourth operator; move ${other} to another channel`,
 };
 
@@ -102,6 +108,9 @@ export const ym2151 = {
   // One per player: it keeps $20, where the pan and the algorithm meet.
   fmEncoder() {
     const r20 = new Array(8).fill(0xc0);
+    // $0F, which the PSG encoder shares (psgEncoder(fm)): NE and NFRQ.
+    const noiseReg = { ne: false, nfrq: 32 - NOISE_RATE_START };
+    const r0f = () => [[0, 0x0f, (noiseReg.ne ? 0x80 : 0) | noiseReg.nfrq]];
     const semis = 12 * Math.log2(CLOCK / KC_CLOCK);
     const OP_REG = {
       "dt-ml": [0x40, encode30],
@@ -114,6 +123,12 @@ export const ym2151 = {
     return {
       channels: 8,
       csm: false,
+      noiseReg,
+      // A run starts with the noise off (the chip's init writes $0F 0).
+      reset() { noiseReg.ne = false; noiseReg.nfrq = 32 - NOISE_RATE_START; },
+      // fm8's :mode: noise turns its fourth operator into the noise, tone
+      // back into a sine.
+      noise(on) { noiseReg.ne = !!on; return r0f(); },
       op(ch, opIdx, reg, o) {
         const r = OP_REG[reg];
         return r ? [[0, r[0] + SLOT[opIdx] + ch, r[1](o)]] : []; // no SSG-EG
@@ -161,14 +176,15 @@ export const ym2151 = {
 
   // The noise as the IR player's PSG: lane 3 is fm8's fourth operator with
   // the chip's noise on it (the default voice leaves it AR 31, RR 15); the
-  // tone lanes are none. One per player: it keeps whether the noise is on —
-  // which a score using fm8 for FM never turns, so its silences then leave
-  // fm8 alone — and whether the operator is keyed.
-  psgEncoder() {
+  // tone lanes are none. One per player: it keeps whether the noise channel
+  // has played — which a score using fm8 for FM never makes it, so its
+  // silences then leave fm8 alone — and whether the operator is keyed. $0F
+  // is the FM encoder's (`fm`), so :noise-rate keeps fm8's :mode noise on.
+  psgEncoder(fm = null) {
     let on = false;
     let keyed = false;
-    let nfrq = 32 - NOISE_RATE_START;
-    const ne = () => [[0, 0x0f, (on ? 0x80 : 0) | nfrq]];
+    const reg = fm?.noiseReg ?? { ne: false, nfrq: 32 - NOISE_RATE_START };
+    const ne = () => [[0, 0x0f, (reg.ne ? 0x80 : 0) | reg.nfrq]];
     const key = (k) => { keyed = k; return [[0, 0x08, (k ? 0x08 << 3 : 0) | NOISE_CH]]; };
     return {
       period: () => 0,
@@ -187,7 +203,7 @@ export const ym2151 = {
       mix: () => [],
       // A noise note: the noise on, the operator re-keyed by its level.
       noise() {
-        on = true;
+        on = reg.ne = true;
         keyed = false;
         return [...ne(), ...key(false)];
       },
@@ -195,7 +211,7 @@ export const ym2151 = {
       // here, as the PC-8801's SSG has it at 124.8 kHz / n — a rate reads
       // the same on both.
       noiseRate(rate) {
-        nfrq = 32 - Math.max(1, Math.min(31, Math.round(rate)));
+        reg.nfrq = 32 - Math.max(1, Math.min(31, Math.round(rate)));
         return ne();
       },
     };

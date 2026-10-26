@@ -1,0 +1,9 @@
+; x68k: fm8's :mode noise — its fourth operator the noise, the voice whole
+; (a hi-hat: a fast decay on op4, the other operators quiet), as MXDRV plays
+; a noise; :mode tone turns it back into FM. The period is the song's
+; :noise-rate, whichever plays it.
+(def-score :target x68k :title "x68k fm8 noise")
+(def-fm hat init-fm :alg 7 :tl1 127 :tl2 127 :tl3 127 :tl4 0 :ar4 31 :dr4 20 :sl4 15 :rr4 12)
+(fm1 :tempo 132 :len 2 c e |)
+(fm8 hat :noise-rate 17 :mode noise :len 16 c c c c c c :noise-rate 4 c c
+  :mode tone :oct 5 :len 4 c |)

@@ -4354,15 +4354,19 @@ function compileChannelBody(
             case ":mode": {
               // The part's symbols (chips/parts.js), else the target's reading
               // of another machine's (targets/), else the part's error.
+              // A channel may have its own (the OPM's fm8: its noise).
               const { part, target: machine } = trackState;
+              const own = machine.channels?.[trackState.head];
+              const modes = own?.modes ?? part.modes;
+              const modeError = own?.modes ? own.modeError : part.modeError;
               const reading = machine.readsAs?.modes?.[part.name]?.[rawVal];
               if (part.kind === "sample") {
                 if (isPcmModeSymbol(rawVal)) trackState.pcmMode = rawVal;
                 else
                   pushDiag(diagnostics, "error", "E_PCM_MODE_INVALID",
                     "pcm :mode must be shot, loop or gate", nodeSrc(node), trackName);
-              } else if (part.modes && Object.hasOwn(part.modes, rawVal)) {
-                const [target, value] = part.modes[rawVal];
+              } else if (modes && Object.hasOwn(modes, rawVal)) {
+                const [target, value] = modes[rawVal];
                 events.push({ tick: trackState.tick, cmd: "PARAM_SET",
                   args: { target, value }, src: nodeSrc(node) });
               } else if (reading?.write) {
@@ -4376,12 +4380,12 @@ function compileChannelBody(
                 targetDiag(diagnostics, "error",
                   `${trackState.head} :mode ${rawVal} has no ${machine.name} sound: ${reading.none}`,
                   nodeSrc(node), trackName);
-              } else if (part.modeError) {
-                pushDiag(diagnostics, "error", part.modeError.code, part.modeError.message,
+              } else if (modeError) {
+                pushDiag(diagnostics, "error", modeError.code, modeError.message,
                   nodeSrc(node), trackName);
               } else {
                 wrongChannel(val, machine.channelNames.filter((h) =>
-                  machine.partOf(h).kind === "sample" || machine.partOf(h).modes).join(", "));
+                  machine.partOf(h).kind === "sample" || Object.keys(machine.channels[h].modes ?? machine.partOf(h).modes ?? {}).length).join(", "));
               }
               break;
             }
