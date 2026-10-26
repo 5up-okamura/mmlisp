@@ -886,7 +886,7 @@
     import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
-    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmDests } from './src/import-vgm.js';
+    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmDests, vgmChannels } from './src/import-vgm.js';
     import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import-mdx.js';
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
@@ -3342,17 +3342,17 @@
         const choices = ['drop', ...d.fm, ...d.psg, ...(d.noise ? [d.noise] : [])];
         const pcmChoices = d.pcm.length ? ['drop', 'pcm1'] : ['drop'];
         const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', 'pcm1–3']] : ['drop'];
-        return a.channels.map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
+        return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
           choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : choices }));
       };
       const g = a.grid;
       const shown = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
       const fields = [];
-      // A YM2151's file can be the X68000's score (DT2 kept) or the Mega Drive's.
+      // A file of one machine's chip can be that machine's score or the Mega Drive's.
       if (a.targets.length > 1)
         fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
           choices: a.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
-          hint: 'x68k keeps the YM2151’s eight channels and DT2; md reads them for the Mega Drive' });
+          hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); md reads them for the Mega Drive' });
       fields.push(
         { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: shown,
           hint: g.frames ? 'no steady beat found — the frame grid is used'

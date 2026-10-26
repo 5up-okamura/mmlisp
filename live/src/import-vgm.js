@@ -13,7 +13,9 @@
 //                                    score is the X68000's (:target x68k),
 //                                    dropped on the Mega Drive; channel 8's
 //                                    noise (NE) as noise notes
-//   SN76489, AY-3-8910               notes (square, noise)
+//   SN76489, AY-3-8910               notes (square, noise); the SSG's mixer
+//                                    and hardware envelope on a PC-8801 or
+//                                    MSX score (:target pc88 / msx)
 //   YM2413, YM3812/3526/Y8950, YMF262 notes, on a stand-in voice
 //
 // Carrier TL is how most drivers set a channel's level, so a voice's
@@ -35,7 +37,9 @@
 //   parseVgm(bytes)                  → the file's chips and channels' events
 //   analyzeVgm(parsed)               → what the import dialog shows, and the
 //                                      targets it can write (md; x68k for a
-//                                      YM2151's file)
+//                                      YM2151's file, pc88 for a YM2608's or
+//                                      YM2203's, msx for an AY-3-8910's)
+//   vgmChannels(analysis, target)    → its rows on that target
 //   defaultVgmOptions(analysis, target) → its defaults on that target
 //   vgmToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
@@ -43,6 +47,7 @@
 import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE,
   assignBends, PITCH_NONE, gcd, destsFor } from "./import-song.js";
 import { targetProfile } from "./targets.js";
+import { envCycle } from "./chips/ssg.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
@@ -67,6 +72,8 @@ async function gunzip(u8) {
 }
 
 const pitchOf = (hz) => (hz > 0 ? 69 + 12 * Math.log2(hz / 440) : null);
+// A driver's writes for one note land within this of each other (samples).
+const SETUP_T = 0.002 * RATE;
 
 // ── Chips ─────────────────────────────────────────────────────────────────
 // Each chip model keeps its registers and calls `ev(channelKey, event)`:
@@ -284,30 +291,85 @@ function snChip(clock, { ev }) {
 }
 
 // AY-3-8910 and the OPN family's SSG: `clock` is the tone clock (f = clock / 16 / TP).
+// A channel sounds while its level is up and its mixer passes tone, noise,
+// or — on the hardware envelope (the level's M bit) — neither, where what is
+// heard is the envelope itself at its rate (a buzzer, pitched by R11-R12).
+// A note carries the mixer and the envelope it starts with (`ssg`); a write
+// to R13 starts the envelope over, which on a channel on it is a new note.
+// Every note is its channel's; one on the noise alone is the shared noise
+// row's too (`SSG noise`), for a target whose noise is a channel of its own
+// (vgmChannels picks one of the two).
 function ayChip(name, clock, { ev, prefix = name }) {
   const r = new Uint8Array(16);
   const on = [false, false, false];
-  const asNoise = [false, false, false];
+  const ssgAt = ["", "", ""]; // the mixer / shape a sounding note started with
   const ampAt = [-1, -1, -1];
   const tpAt = [-1, -1, -1];
   const key = (c) => `${prefix} SSG${String.fromCharCode(65 + c)}`;
+  const noiseKey = `${prefix} SSG noise`;
   const hz = (c) => {
     const tp = r[2 * c] | ((r[2 * c + 1] & 15) << 8);
     return tp > 0 ? clock / (16 * tp) : 0;
   };
-  const amp = (c) => (r[8 + c] & 16 ? 15 : r[8 + c] & 15);
+  const onEnv = (c) => !!(r[8 + c] & 16);
+  const amp = (c) => (onEnv(c) ? 15 : r[8 + c] & 15);
+  const tone = (c) => !(r[7] & (1 << c));
+  const noise = (c) => !(r[7] & (8 << c));
+  const ep = () => r[11] | (r[12] << 8);
+  // A cycle of the envelope's shape (a triangle's is two ramps), as
+  // chips/ssg.js reads :env-rate.
+  const shape = () => r[13] & 15;
+  const envHz = () => (ep() > 0 ? clock / (envCycle(shape()) * ep()) : 0);
+  const noiseHz = () => clock / (16 * Math.max(1, r[6] & 31));
+  const mixOf = (c) => (tone(c) && noise(c) ? "both" : tone(c) ? "tone" : noise(c) ? "noise" : "env");
+  const ssgOf = (c) => ({ mix: mixOf(c), env: onEnv(c) ? shape() : null, envHz: onEnv(c) ? envHz() : null });
+  // What makes a note another: its mixer and shape (a rate is its start's).
+  const sig = (c) => `${mixOf(c)}/${onEnv(c) ? shape() : ""}`;
+  // A note's pitch: the tone's, a buzzer's the envelope's; one on the noise
+  // alone has none to read (its tone period may be anything), so c4.
+  const pitchNow = (c) => (mixOf(c) === "noise" ? 60 : pitchOf(mixOf(c) === "env" ? envHz() : hz(c)));
+  // To the channel, and — a note on the noise alone — to the noise row.
+  const wasNoise = [false, false, false]; // the channel's note is the noise row's too
+  // A driver sets a note up in a burst — the level, the mixer, then the
+  // envelope's shape and period: writes within SETUP of a note's start are
+  // its own (its event amended), not a new note. `fresh`: the envelope
+  // started over with it (an R13 write), as an MMLisp key-on starts it.
+  const SETUP = SETUP_T;
+  const last = [null, null, null]; // each channel's last note event
+  let r13At = -Infinity;
+  const amend = (c, t, fresh) => {
+    const e = last[c];
+    if (!e || t - e.t > SETUP) return false;
+    e.ssg = ssgOf(c);
+    if (e.ssg.mix === "env") e.pitch = pitchNow(c);
+    if (fresh) e.fresh = true;
+    ssgAt[c] = sig(c);
+    return true;
+  };
+  const send = (c, e) => {
+    ev(key(c), e);
+    if (wasNoise[c]) ev(noiseKey, e);
+  };
+  const start = (c, t, kind) => {
+    const g = ssgOf(c);
+    // From the noise to another mixer: the noise row's note ends.
+    if (wasNoise[c] && g.mix !== "noise") ev(noiseKey, { t, kind: "off" });
+    ssgAt[c] = sig(c);
+    const noisy = g.mix === "noise" || g.mix === "both";
+    ev(key(c), (last[c] = { t, kind, pitch: pitchNow(c), vel: amp(c), ssg: g, ...(noisy ? { noiseHz: noiseHz() } : {}),
+      ...(g.env != null && t - r13At <= SETUP ? { fresh: true } : {}), kindOf: "psg" }));
+    if (g.mix === "noise")
+      ev(noiseKey, { t, kind: wasNoise[c] ? kind : "on", pitch: 60, vel: amp(c), noiseHz: noiseHz(), ssg: g, kindOf: "noise" });
+    wasNoise[c] = g.mix === "noise";
+  };
   const update = (c, t) => {
-    const tone = !(r[7] & (1 << c));
-    const noise = !(r[7] & (8 << c));
-    const audible = amp(c) > 0 && (tone || noise);
-    if (audible && !on[c]) {
-      asNoise[c] = !tone;
-      const k = asNoise[c] ? `${prefix} SSG noise` : key(c);
-      ev(k, asNoise[c]
-        ? { t, kind: "on", pitch: 60, vel: amp(c), mode: "white2", kindOf: "noise" }
-        : { t, kind: "on", pitch: pitchOf(hz(c)), vel: amp(c), kindOf: "psg" });
-    } else if (!audible && on[c]) {
-      ev(asNoise[c] ? `${prefix} SSG noise` : key(c), { t, kind: "off" });
+    const audible = amp(c) > 0 && (tone(c) || noise(c) || onEnv(c));
+    if (audible && !on[c]) start(c, t, "on");
+    else if (!audible && on[c]) { send(c, { t, kind: "off" }); wasNoise[c] = false; }
+    // The mixer or shape changed under it: a new note, but in its setup
+    // burst (and not to or from the noise row) the note's own.
+    else if (audible && sig(c) !== ssgAt[c]) {
+      if (mixOf(c) === "noise" || wasNoise[c] || !amend(c, t, false)) start(c, t, "retrig");
     }
     on[c] = audible;
   };
@@ -320,18 +382,31 @@ function ayChip(name, clock, { ev, prefix = name }) {
       if (a < 6) {
         const c = a >> 1;
         tpAt[c] = t;
-        if (on[c] && !asNoise[c])
-          ev(key(c), { t, kind: ampAt[c] === t ? "retrig" : "pitch", pitch: pitchOf(hz(c)), vel: amp(c) });
+        if (on[c] && (mixOf(c) === "tone" || mixOf(c) === "both"))
+          ev(key(c), ampAt[c] === t ? { t, kind: "retrig", pitch: pitchNow(c), vel: amp(c), ssg: ssgOf(c) } : { t, kind: "pitch", pitch: pitchNow(c) });
       } else if (a === 7) {
         for (let c = 0; c < 3; c++) update(c, t);
       } else if (a >= 8 && a <= 10) {
         const c = a - 8;
         ampAt[c] = t;
-        if (on[c] && !asNoise[c] && tpAt[c] === t && amp(c) > 0)
-          ev(key(c), { t, kind: "retrig", pitch: pitchOf(hz(c)), vel: amp(c) });
-        else if (on[c] && amp(c) > prev + 2) ev(asNoise[c] ? `${prefix} SSG noise` : key(c), { t, kind: "retrig", vel: amp(c) });
-        else if (on[c] && amp(c) > 0) ev(asNoise[c] ? `${prefix} SSG noise` : key(c), { t, kind: "vel", vel: amp(c) });
+        if (on[c] && amp(c) > 0 && sig(c) !== ssgAt[c]) update(c, t);
+        else if (on[c] && mixOf(c) !== "noise" && tpAt[c] === t && amp(c) > 0) start(c, t, "retrig");
+        else if (on[c] && amp(c) > prev + 2) send(c, { t, kind: "retrig", vel: amp(c) });
+        else if (on[c] && amp(c) > 0) send(c, { t, kind: "vel", vel: amp(c) });
         update(c, t);
+      } else if (a === 11 || a === 12) {
+        // The period: a buzzer's pitch; a rate a tone note keeps from its start.
+        for (let c = 0; c < 3; c++) {
+          if (!on[c] || !onEnv(c) || amend(c, t, false)) continue;
+          if (mixOf(c) === "env") ev(key(c), { t, kind: "pitch", pitch: pitchNow(c) });
+        }
+      } else if (a === 13) {
+        // A write starts the envelope over: each channel on it strikes again.
+        r13At = t;
+        for (let c = 0; c < 3; c++) {
+          if (!on[c] || !onEnv(c) || amend(c, t, true)) continue;
+          start(c, t, "retrig"); // fresh: r13At is now
+        }
       }
     },
   };
@@ -593,6 +668,7 @@ export async function parseVgm(bytes) {
     // stream, which is what the import reads.
     if (c === 0xb7) { if (!okiUsed) { okiUsed = true; chips.push("OKIM6258"); } p += 3; continue; }
     if (c === 0x68) { p += 12; continue; }
+    if (c === 0xd2) { skip("K051649 (SCC)"); p += 4; continue; }
     if (c === 0x50) { chip("sn").write(u8[p + 1], t); p += 2; continue; }
     if (c === 0x51) { chip("opll").write(u8[p + 1], u8[p + 2], t); p += 3; continue; }
     if (c === 0x52 || c === 0x53) {
@@ -708,12 +784,19 @@ function notesOf(events, followPitch, endT, tune = 0) {
     if (e.kind === "on" || (e.kind === "retrig" && cur)) {
       const base = cur ?? {};
       close(e.t);
-      if (e.pitch == null && base.pitch == null) continue;
-      cur = { t: e.t, pitch: e.pitch ?? base.pitch, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
-        pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, noiseHz: e.noiseHz ?? base.noiseHz, levels: [], pitches: [] };
+      // A strike that does not say its pitch has the one in force: the last
+      // the note before moved to.
+      const held = base.pitches?.length ? base.pitches[base.pitches.length - 1][1] : base.pitch;
+      cur = { t: e.t, pitch: e.pitch ?? held, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
+        pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, noiseHz: e.noiseHz ?? base.noiseHz, ssg: e.ssg ?? base.ssg, fresh: !!e.fresh,
+        levels: [], pitches: [] };
       if (!cur.voice) cur.lv0 = cur.vel;
     } else if (e.kind === "off") close(e.t);
     else if (!cur) continue;
+    // A pitch set in the note's setup burst (a driver keying on, then
+    // writing the period a byte at a time) is the note's own.
+    // A note keyed on before it has one (a period of 0) takes the first.
+    else if (e.kind === "pitch" && e.pitch != null && (e.t - cur.t <= SETUP_T || cur.pitch == null)) cur.pitch = e.pitch;
     else if (e.kind === "pitch" && e.pitch != null) cur.pitches.push([e.t, e.pitch]);
     else if (e.kind === "vel" || e.kind === "tl") cur.levels.push([e.t, e.vel ?? e.tl]);
     else if (e.kind === "mode") cur.mode = e.mode;
@@ -957,7 +1040,9 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
     // A YM2151's FM8 noise note is its noise channel's too: counted once.
     for (const n of notes) if (!n.slur && !(kind === "opm" && n.noiseHz)) onsets.push(n.t);
     const noisy = kind === "opm" ? notes.filter((n) => n.noiseHz).length : 0;
-    channels.push({ key, kind, notes: notes.length, noisy, label: `${key} · ${notes.length} notes${noisy ? `, ${noisy} with the noise` : ""}` });
+    // An SSG channel's notes on the noise alone (the noise row's too).
+    const ssgNoise = kind === "psg" ? notes.filter((n) => n.ssg?.mix === "noise").length : 0;
+    channels.push({ key, kind, notes: notes.length, noisy, ssgNoise, label: `${key} · ${notes.length} notes${noisy ? `, ${noisy} with the noise` : ""}` });
   }
   const frameRate = 60;
   const grid = estimateGrid(onsets, { frameRate });
@@ -983,18 +1068,51 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   const pcmPoly = pcmPolyphony(parsed.pcmHits ?? []);
   // A file without a loop point says it does not loop (a jingle).
   const fileLoop = parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
-  // The machines it can be written for: the Mega Drive, and the X68000 for
-  // a YM2151's — by default when the OPM is its only tone chip.
-  const opm = channels.some((c) => c.key.startsWith("YM2151"));
-  const targets = opm ? ["x68k", "md"] : ["md"];
-  const target = opm && channels.every((c) => c.key.startsWith("YM2151") || c.kind === "chip-pcm") ? "x68k" : "md";
+  // The machines it can be written for: the Mega Drive, and the machine of
+  // its own chip — the X68000 for a YM2151's, the PC-8801 for a YM2608's or
+  // YM2203's, the MSX for an AY-3-8910's — by default when that chip plays
+  // every channel.
+  const tones = channels.filter((c) => c.kind !== "chip-pcm");
+  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^AY-3-8910/]]
+    .filter(([, re]) => tones.some((c) => re.test(c.key)));
+  const targets = [...own.map(([t]) => t), "md"];
+  const target = own.find(([, re]) => tones.length && tones.every((c) => re.test(c.key)))?.[0] ?? "md";
   return { channels, grid, frameRate, followPitch, fileLoop, pcmPoly, targets, target };
 }
 
-/** The channels `target`'s score offers an imported VGM's rows (import-song.js destsFor). */
+/**
+ * The channels `target`'s score offers an imported VGM's rows (import-song.js
+ * destsFor). Not the FM-PAC's: its voices are its ROM's and one of the
+ * user's, and an imported voice is a four-operator one.
+ */
 export function vgmDests(targetName = "md") {
-  const d = destsFor(targetProfile(targetName));
-  return { fm: d.fm, psg: d.psg, noise: d.noise, pcm: d.pcm };
+  const t = targetProfile(targetName);
+  const d = destsFor(t);
+  // Where the SSG's channels mix the noise, `noise` is one of them: not a row's.
+  return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: mixesNoise(t) ? null : d.noise, pcm: d.pcm };
+}
+
+// Whether the target's tone channels play the noise themselves (the SSG's
+// mixer): there a channel's noise notes are its own track's, `:mode noise`,
+// and the shared noise row is not offered; elsewhere they are that row's.
+const mixesNoise = (target) => {
+  const d = destsFor(target).psg[0];
+  return !!(d && target.partOf(d).modes?.noise);
+};
+
+/** The rows `target`'s score offers: every channel, but the SSG's noise row where the channels keep it. */
+export function vgmChannels(a, targetName = a.target ?? "md") {
+  const own = mixesNoise(targetProfile(targetName));
+  return a.channels.filter((c) => !(own && / SSG noise$/.test(c.key)));
+}
+
+// The tone clock of the target's SSG (f = clock / 16 / period), or null.
+function ssgClockOf(target) {
+  for (const chip of Object.values(target.chips)) {
+    if (chip.ssg?.clock) return chip.ssg.clock;
+    if (chip.parts?.some((p) => p.name === "ssg")) return chip.clock;
+  }
+  return null;
 }
 
 export function defaultVgmOptions(a, targetName = a.target ?? "md") {
@@ -1009,7 +1127,7 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   // The busiest channels first — but a YM2151 whose eight all fit (an x68k
   // score's fm1–fm8) keeps its own order, FM1 on fm1.
   const opmFits = a.channels.filter((c) => c.kind === "opm").length <= fm.length;
-  const sorted = [...a.channels].sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind) ||
+  const sorted = vgmChannels(a, targetName).sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind) ||
     (x.kind === "opm" && opmFits ? x.key.localeCompare(y.key, "en", { numeric: true }) : y.notes - x.notes));
   // A YM2151 channel that only plays the noise is the noise channel's where
   // the target's fm8 cannot turn it on.
@@ -1023,6 +1141,9 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     if (ch.kind === "opm" && !fmNoise && ch.noisy === ch.notes) d = "drop";
     else if (own && fm.includes(own)) { d = own; fm.splice(fm.indexOf(own), 1); }
     else if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? "drop";
+    // An SSG channel that only plays the noise is the noise row's alone
+    // where the target's channels do not mix it.
+    else if (ch.kind === "psg" && !mixesNoise(target) && ch.ssgNoise === ch.notes) d = "drop";
     else if (ch.kind === "psg") d = sqr.shift() ?? "drop";
     else if (ch.kind === "noise") { d = noise ?? "drop"; noise = null; }
     else if (ch.kind === "pcm") d = dests.pcm.length ? "pcm1" : "drop";
@@ -1054,15 +1175,19 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // the nearest rate (the readings a pc88 score gives a Mega Drive mode,
   // targets/pc88.js).
   const noisePart = dests.noise ? target.partOf(dests.noise) : null;
+  const noiseRate = (base, hz) => `:noise-rate ${Math.max(1, Math.min(31, Math.round(base / hz)))}`;
   const noiseWord = (n) => {
     if (!noisePart) return null;
     if (Object.keys(noisePart.modes ?? {}).length) {
       const mode = n.mode ?? (n.noiseHz ? NOISE_WHITE[nearestWhite(n.noiseHz)] : null);
       return mode ? `:mode ${mode}` : null;
     }
-    const rate = n.noiseHz ? Math.max(1, Math.min(31, Math.round(125000 / n.noiseHz))) : NOISE_RATE_OF[n.mode] ?? 9;
-    return `:noise-rate ${rate}`;
+    return n.noiseHz ? noiseRate(125000, n.noiseHz) : `:noise-rate ${NOISE_RATE_OF[n.mode] ?? 9}`;
   };
+  // The SSG's: its noise rates divide its clock / 16, its hardware envelope
+  // a target's with an SSG has.
+  const ssgClock = ssgClockOf(target);
+  const hasEnv = target.hasWord("SSG_ENV");
   const followPitch = options.followPitch ?? true;
 
   // The grid: the estimate, a tempo set by hand, or frames.
@@ -1099,9 +1224,90 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     const ops = v.ops.map((o, s) => ({ ...o, tl: car.includes(s) ? o.tl - minTl : o.tl, dt2: keepDt2 ? o.dt2 ?? 0 : 0 }));
     return { key: JSON.stringify({ alg: v.alg, fb: v.fb, ams: v.ams, fms: v.fms, ops }), minTl, ops };
   };
+  // The SSG's mixer and hardware envelope on its tracks (`ssg`, from
+  // ayChip), where the target has them: a note's :mode — tone, both, or env,
+  // the buzzer — and its :env shape, the level the envelope's (the :vel of
+  // the note before, so none is written under it). The rate is `:env-rate
+  // note` where it follows the notes — a buzzer's own pitch, or a track
+  // whose tone sets it from its period (four notes in five a whole number of
+  // semitones off, a step at most: :env-semi, :env-detune) — else its cycle
+  // in Hz. Elsewhere, what a target without it cannot play is said.
+  const ssgState = (tracks) => {
+    const shaped = tracks.filter((tr) => tr.notes.some((n) => n.ssg?.env != null));
+    if (!hasEnv) {
+      const lost = shaped.reduce((k, tr) => k + tr.notes.filter((n) => n.ssg?.env != null && n.ssg.mix !== "env").length, 0);
+      return lost ? `the SSG's hardware envelope has no ${target.system} sound: ${lost} notes on it play at their level` : null;
+    }
+    const ep = (hz, shape) => Math.round(ssgClock / (envCycle(shape) * hz));
+    const etHz = (midi) => 440 * 2 ** ((midi - 69) / 12);
+    const offNote = (n, semi = Math.round(12 * Math.log2(n.ssg.envHz / etHz(n.midi)))) =>
+      ({ semi, detune: ep(n.ssg.envHz, n.ssg.env) - ep(etHz(n.midi) * 2 ** (semi / 12), n.ssg.env) });
+    for (const tr of tracks) {
+      const notes = tr.notes.filter((n) => n.ssg);
+      // Only on an SSG channel: a row routed elsewhere (an FM one) keeps its notes plain.
+      if (!notes.length || !target.partOf(tr.d)?.words?.("SSG_ENV")) continue;
+      const modes = target.partOf(tr.d)?.modes ?? {};
+      const anyMix = notes.some((n) => n.ssg.mix !== "tone");
+      const anyEnv = notes.some((n) => n.ssg.env != null);
+      // The tone notes' rate, read off their pitch where four in five agree.
+      const toned = tr.d === dests.noise ? [] : notes.filter((n) => n.ssg.env != null && n.ssg.mix !== "env" && n.ssg.envHz > 0);
+      let follow = null;
+      if (toned.length >= 2 && new Set(toned.map((n) => ep(n.ssg.envHz, n.ssg.env))).size > 1) {
+        const by = new Map();
+        for (const o of toned.map((n) => offNote(n))) if (Math.abs(o.detune) <= 1 && Math.abs(o.semi) <= 48) by.set(o.semi, (by.get(o.semi) ?? 0) + 1);
+        const [semi, k] = [...by].sort((x, y) => y[1] - x[1])[0] ?? [];
+        if (k >= 0.8 * toned.length) follow = semi;
+      }
+      let vel = 15;
+      for (const n of tr.notes) {
+        const g = n.ssg;
+        if (!g) continue;
+        if (modes[g.mix] && anyMix) n.mode = `:mode ${g.mix}`;
+        if (anyEnv) n.henv = g.env != null ? `:env ${g.env}` : ":env none";
+        if (g.env == null) { vel = n.vel; continue; }
+        n.vel = vel;
+        if (!(g.envHz > 0)) continue;
+        // A buzzer below the notes (C0) is a level moving, not a pitch: its Hz.
+        const semi = g.mix === "env" ? (g.envHz >= 16.35 ? 0 : null) : follow;
+        if (semi != null && tr.d !== dests.noise) {
+          const o = offNote(n, semi);
+          n.envRate = ":env-rate note";
+          n.envSemi = `:env-semi ${o.semi}`;
+          n.envDetune = `:env-detune ${o.detune}`;
+        } else n.envRate = `:env-rate ${+g.envHz.toPrecision(4)}`;
+      }
+      // A rate the track writes moves by its :env-semi and :env-detune: where
+      // its notes set them, its Hz notes put them back.
+      if (tr.notes.some((n) => n.envSemi))
+        for (const n of tr.notes) if (n.envRate && !n.envSemi) { n.envSemi = ":env-semi 0"; n.envDetune = ":env-detune 0"; }
+    }
+    return null;
+  };
+  // The song-wide values a note wants — the SSG's envelope rate and noise
+  // period — as marks where due: in time order, a note writes one only
+  // where the song's is not already what it wants (a track's `:env-rate
+  // note` stays its own until another track writes a rate). Of notes on one
+  // tick, the one the file set it for last (the score would take the later
+  // track's). Not the tracks' state, which a block or a track's head
+  // restates.
+  const songWrites = (tracks, key) => {
+    const due = tracks.flatMap((tr) => tr.notes.filter((n) => n[key]).map((n) => ({ n, tr })))
+      .sort((x, y) => x.n.tick - y.n.tick || x.n.srcT - y.n.srcT);
+    let song = null;
+    let looped = loopTick == null;
+    due.forEach(({ n, tr }, i) => {
+      if (due[i + 1]?.n.tick === n.tick) return;
+      // `(go top)` comes back with the end's value: the first due after the
+      // loop point writes its own again.
+      if (!looped && n.tick >= loopTick) { looped = true; song = null; }
+      const want = n[key] === ":env-rate note" ? `note/${tr.d}` : n[key];
+      if (want !== song) (tr.marks ??= []).push({ tick: n.tick, tokens: [n[key]] });
+      song = want;
+    });
+  };
   const standIns = new Set();
   const tracks = [];
-  for (const ch of a.channels) {
+  for (const ch of vgmChannels(a, target.name)) {
     const d = dest[ch.key] ?? "drop";
     if (d === "drop" || ch.kind === "pcm" || ch.kind === "chip-pcm") continue; // PCM: below
     // One physical channel takes one row (x68k's noise is fm8's).
@@ -1109,7 +1315,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (taken.has(voice)) { warnings.push(`${ch.key}: ${d} is already taken — dropped`); continue; }
     taken.add(voice);
     const onFm = d.startsWith("fm");
-    const raw = channelNotes(parsed, ch.key, followPitch);
+    // An SSG channel's notes on the noise alone: its own where the target's
+    // channel mixes the noise, else the noise row's (not here).
+    const ownNoise = mixesNoise(target);
+    const envHere = !!target.partOf(d)?.words?.("SSG_ENV");
+    const raw = channelNotes(parsed, ch.key, followPitch).filter((n) => ownNoise || ch.kind !== "psg" || n.ssg?.mix !== "noise");
     // A YM2151's FM8 noise: fm8's :mode noise where the target has it, else
     // the noise channel's (its notes dropped here).
     const opm = ch.kind === "opm";
@@ -1122,7 +1332,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       const end = n.end === Infinity ? endTick : Math.min(endTick, tickOf(n.end));
       if (tick >= endTick) break;
       const note = { tick, len: Math.max(1, end - tick), midi: Math.round(n.pitch), vel: n.vel, tieIn: n.slur,
-        bend: n.bend };
+        bend: n.bend, ssg: n.voice ? null : n.ssg ?? null, srcT: n.t };
       const endT = n.end === Infinity ? parsed.totalSamples : n.end;
       let voice = null;
       if (onFm && n.voice) {
@@ -1152,9 +1362,16 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       note.stand = voice;
       note.pan = onFm && n.pan ? n.pan : null;
       note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
-      note.rate = fmNoise && n.noiseHz ? `:noise-rate ${Math.max(1, Math.min(31, Math.round(125000 / n.noiseHz)))}` : null;
+      note.rate = fmNoise && n.noiseHz ? noiseRate(125000, n.noiseHz) : null;
+      // The SSG's noise period: the song's, written where due (songWrites).
+      if (ownNoise && n.noiseHz && (n.ssg?.mix === "noise" || n.ssg?.mix === "both"))
+        note.noiseRate = noiseRate(ssgClock / 16, n.noiseHz);
       // Two notes quantized onto one start: the later wins; an overlap is cut.
       const prev = notes[notes.length - 1];
+      // On the hardware envelope a note the driver did not start it over for
+      // (no R13 write) runs it on: a slur, where it follows on the shape
+      // (the lengths pass keeps it one only where it runs into it).
+      if (envHere && n.ssg?.env != null && !n.fresh && prev?.ssg?.env === n.ssg.env && prev.tick < tick) note.tieIn = true;
       if (prev && prev.tick >= tick) notes.pop();
       else if (prev && prev.tick + prev.len > tick) prev.len = tick - prev.tick;
       notes.push(note);
@@ -1164,6 +1381,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (notes.every((n) => !n.pan || n.pan === "center")) for (const n of notes) n.pan = null;
     tracks.push({ ch, d, notes });
   }
+
+  const envWarn = ssgState(tracks);
+  if (envWarn) warnings.push(envWarn);
 
   // A note slurred on into the next keeps its whole envelope.
   for (const tr of tracks)
@@ -1184,12 +1404,15 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       if (n.tieIn && (i === 0 || tr.notes[i - 1].tick + tr.notes[i - 1].len !== n.tick)) n.tieIn = false;
     }
   }
+  songWrites(tracks, "envRate");
+  songWrites(tracks, "noiseRate");
   // Then levels and state, now that every voice's base is known. A slur
   // keeps the voice it slides on.
   // A track with any envelope states one for every note — `(macro :vel
   // none)` where there is none, since a macro stays until cleared.
   for (const tr of tracks) {
-    let cur = { voice: null, env: null, pitch: null, pan: null, mode: null, rate: null };
+    let cur = { voice: null, env: null, pitch: null, pan: null, mode: null, rate: null,
+      henv: null, envSemi: null, envDetune: null };
     const anyEnv = tr.notes.some((n) => n.envName);
     const anyBend = tr.notes.some((n) => n.bendName);
     for (const n of tr.notes) {
@@ -1202,13 +1425,23 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         mode: n.mode,
         // fm8's noise period, the one in force on its tone notes too.
         rate: n.rate ?? cur.rate,
+        // The SSG's hardware envelope: its shape and the track's moves on the
+        // rate. The rate is the song's, written where ssgState says — not a
+        // track's state for a block to restate.
+        henv: n.henv ?? cur.henv,
+        envSemi: n.envSemi ?? cur.envSemi,
+        envDetune: n.envDetune ?? cur.envDetune,
       };
       n.pre = [];
-      for (const k of ["voice", "env", "pitch", "pan", "mode", "rate"]) if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
-      // Nothing to clear before the first envelope or bend.
+      for (const k of ["voice", "env", "pitch", "pan", "mode", "rate", "henv", "envSemi", "envDetune"])
+        if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
+      // Nothing to clear before the first envelope or bend, nor to move.
       if (cur.env == null && st.env === ENV_NONE) n.pre = n.pre.filter((t) => t !== ENV_NONE);
+      if (cur.henv == null && st.henv === ":env none") n.pre = n.pre.filter((t) => t !== ":env none");
+      for (const z of [":env-semi 0", ":env-detune 0"])
+        if (n.pre.includes(z) && cur[z.startsWith(":env-semi") ? "envSemi" : "envDetune"] == null) n.pre = n.pre.filter((t) => t !== z);
       if (cur.pitch == null && st.pitch === PITCH_NONE) n.pre = n.pre.filter((t) => t !== PITCH_NONE);
-      n.state = [st.voice, st.env, st.pitch, st.pan, st.mode, st.rate].filter(Boolean);
+      n.state = [st.voice, st.env, st.pitch, st.pan, st.mode, st.rate, st.henv, st.envSemi, st.envDetune].filter(Boolean);
       cur = st;
     }
   }
@@ -1236,10 +1469,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
 
   const order = [...dests.fm, ...dests.psg, dests.noise];
   tracks.sort((x, y) => order.indexOf(x.d) - order.indexOf(y.d));
-  const out = tracks.map(({ d, notes }) => {
+  const out = tracks.map((tr) => {
+    const { d, notes } = tr;
     const head = notes[0].pre;
     notes[0] = { ...notes[0], pre: undefined };
-    return { channel: d, head, notes, marks: [] };
+    return { channel: d, head, notes, marks: tr.marks ?? [] };
   });
   if (dacOut) out.push(dacOut.track);
   if (chipOut) out.push(...chipOut.tracks);

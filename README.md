@@ -143,8 +143,10 @@ for a controller's knobs.
 - FM voices from DefleMask, Furnace, TFI, VGI, OPNI and mucom88 banks; drum
   samples from mucom88 PCM banks and SoundFont kits
 - Songs from MIDI, DefleMask, Furnace, VGM (with its PCM: the YM2612 DAC,
-  SegaPCM, YM2610 ADPCM, the OKIM6258) and mucom88, through a dialog for tempo
-  and channels; MDX (with its PDX) as an X68000 score and MGS as an MSX one
+  SegaPCM, YM2610 ADPCM, the OKIM6258; a YM2151's, a YM2608's or an
+  AY-3-8910's as its own machine's score, the SSG's hardware envelope
+  included) and mucom88, through a dialog for tempo and channels; MDX (with
+  its PDX) as an X68000 score and MGS as an MSX one
 - Recordings, in WAV or any format the browser decodes: **Audio as Formants**
   (a sound's spectral peaks on FM3's operators — CSM's vocoder voice, or
   sine-wave speech; on x68k and msx the sine waves) and **Audio as FM Voice** (a patch searched for one note,

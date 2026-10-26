@@ -41,8 +41,11 @@ export const ssgNoise = {
   shareHint: (other) => `give ${other} :mode both, or move its part`,
 };
 
-// The envelope's triangles: an up and a down a cycle.
+// The envelope's triangles: an up and a down a cycle. A cycle of `shape`
+// is this many periods' steps of clock / 16 / period — what a rate in Hz
+// is read on (the encoder, the importers).
 const ENV_TRIANGLES = new Set([10, 14]);
+export const envCycle = (shape) => (ENV_TRIANGLES.has(shape) ? 512 : 256);
 
 // The SSG as the IR player's PSG, on a chip whose SSG divides `clock` by 16
 // for a tone: lanes 0-2 are the tone channels, lane 3 the noise track, which
@@ -88,7 +91,7 @@ export function ssgEncoder(clock, io = 0) {
     envLevel: (lane) => [[0, 0x08 + phys(lane), 0x10]],
     envShape: (shape) => [[0, 0x0d, shape & 0x0f]],
     envPeriod: (hz, shape, detune = 0) => {
-      const ep = Math.max(1, Math.min(65535, Math.round(clock / ((ENV_TRIANGLES.has(shape) ? 512 : 256) * hz)) + detune));
+      const ep = Math.max(1, Math.min(65535, Math.round(clock / (envCycle(shape) * hz)) + detune));
       return [[0, 0x0b, ep & 0xff], [0, 0x0c, ep >> 8]];
     },
   };

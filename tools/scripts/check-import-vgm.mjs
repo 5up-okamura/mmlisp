@@ -44,4 +44,42 @@ function imported(parsed, target, structure = true) {
   assert.ok(!/:mode tone|:mode noise/.test(md.replace(/\(noise[\s\S]*?\n\)/, "")), "md: no fm :mode");
 }
 
+// The SSG's hardware envelope, read back on the machine of its chip. A saw
+// buzzer comes back as :mode env with its rate following the notes, a fixed
+// rate as Hz on the shapes the channels share, and a channel off the
+// envelope as :env none; the AY-3-8910's file is the MSX's by default, and
+// on md the envelope is said lost.
+{
+  const parsed = await vgmOf("tools/tests/msx/env.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["msx", ["msx", "md"]]);
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "msx", structure);
+    assert.match(source, /\(sqr1[\s\S]*:mode env[\s\S]*:env 8[\s\S]*:env-rate note/, "msx: the buzzer, its rate the notes'");
+    assert.match(source, /\(sqr2[\s\S]*:env 0[\s\S]*:env-rate 19\.9\d[\s\S]*:env none/, "msx: a fixed rate, then the channel's own level");
+  }
+  const md = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, "md"), fileName: "t.vgm" }, a);
+  assert.ok(!/:env/.test(md.source), "md: no :env");
+  assert.ok(md.warnings.some((w) => /hardware envelope/.test(w)), "md: the envelope said lost");
+}
+
+// The SSG's mixer: a YM2608's file is the PC-8801's by default; there a
+// channel's noise stays on its own track (:mode noise, the song's
+// :noise-rate) and the shared noise row is not offered; on md that row
+// takes the noise and the channel that only played it is dropped.
+{
+  const parsed = await vgmOf("tools/tests/pc88/ssg.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["pc88", ["pc88", "md"]]);
+  const opt = defaultVgmOptions(a, "pc88");
+  assert.ok(!("YM2608 SSG noise" in opt.dest), "pc88: no noise row");
+  const { source } = imported(parsed, "pc88");
+  assert.match(source, /\(sqr2[\s\S]*:mode both[\s\S]*:noise-rate \d/, "pc88: tone and noise, the period");
+  assert.match(source, /\(sqr3[\s\S]*:mode noise[\s\S]*:noise-rate 6/, "pc88: the noise on its channel");
+  const mdOpt = defaultVgmOptions(a, "md");
+  assert.equal(mdOpt.dest["YM2608 SSG noise"], "noise");
+  assert.equal(mdOpt.dest["YM2608 SSGC"], "drop");
+  assert.match(imported(parsed, "md").source, /\(noise /, "md: the noise on noise");
+}
+
 console.log("VGM import checks passed");

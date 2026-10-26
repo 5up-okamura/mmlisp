@@ -17,6 +17,8 @@ import { VEL_DB_PER_STEP, fmCarrierOpsForAlg, pitchToMidi } from "./ir-utils.js"
 import { compileMMLisp } from "./mmlisp2ir.js";
 import { encodeMmb } from "./export-mmb.js";
 import { PPQN, qstr, noteName } from "./import-song.js";
+import { ym2608 } from "./chips/ym2608.js";
+import { envCycle } from "./chips/ssg.js";
 
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
 const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole note)
@@ -779,6 +781,12 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
       continue;
     }
 
+    // The SSG's hardware envelope (mucomDotNET; mucom88 itself rejects both):
+    // `S n` its shape, n written to R13 as it is (music2.cs HRDENV, 0-15),
+    // `m n` its period, R11-R12 (ENVPOD). A `v` turns it off (PSGVOL).
+    if (c === "S" && isSsg) { i++; const v = readInt(); if (v != null) push({ t: "hwEnv", n: v }); continue; }
+    if (c === "m" && isSsg) { i++; const v = readInt(); if (v != null) push({ t: "hwEnvPeriod", n: v }); continue; }
+
     // Slot detune `S a,b,c,d` (part C only — the compiler rejects it elsewhere;
     // muc88.asm SETSE): CH3's four operators each take an unsigned 0-255 offset
     // on the pitch word, and the channel goes to the chip's CH3 special mode.
@@ -1471,7 +1479,7 @@ function setRuntimeState(ctx, st, out) {
 // bytes, and an (x …) its tokens, so both carry the state over). A value the
 // pass leaves different from the entry is "stale" in the body: its first
 // write there is kept.
-const RUNTIME_FIELDS = ["vel", "velTok", "ssgMode", "noiseMode", "lfoActive", "envActive", "pitchOut", "gateCut"];
+const RUNTIME_FIELDS = ["vel", "velTok", "ssgMode", "noiseMode", "lfoActive", "envActive", "pitchOut", "gateCut", "hwEnv"];
 function stale(ctx, field) {
   if (!ctx.stale?.has(field)) return false;
   ctx.stale.delete(field);
@@ -1742,10 +1750,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         // on the PSG square while tone is on, and on the noise copy of the part
         // while noise is on (mucomToMmlisp renders such a part twice).
         ctx.mix = op.v;
-        if (ctx.pc88 && ctx.isSsg && op.v > 0) {
-          const mode = ["tone", "tone", "noise", "both"][op.v & 3];
-          if (mode !== (ctx.ssgMode ?? "tone") || ctx.verbose || stale(ctx, "ssgMode")) { out.push(`:mode ${mode}`); ctx.ssgMode = mode; }
-        }
+        if (ctx.pc88 && ctx.isSsg && op.v > 0) ssgModeTo(ctx, out, ["tone", "tone", "noise", "both"][op.v & 3]);
+        else if (ctx.pc88 && ctx.isSsg && ctx.hwEnv != null) ssgModeTo(ctx, out, "env"); // P0 on the envelope: the buzzer
         break;
       case "noiseFreq":
         ctx.noiseW = op.n;
@@ -1753,7 +1759,27 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.pc88 && ctx.isSsg) out.push(`:noise-rate ${clamp(op.n, 1, 31)}`);
         break;
       case "vel":
+        // On the SSG, `v` takes the channel off the hardware envelope (also in
+        // a loop body a pass may enter on it).
+        if (ctx.isSsg && (ctx.hwEnv != null || stale(ctx, "hwEnv"))) {
+          ctx.hwEnv = null;
+          ctx.envActive = null;
+          if (ctx.pc88) out.push(":env none");
+        }
         if (op.v !== ctx.vel || ctx.verbose || stale(ctx, "vel")) pushVel(ctx, out, op.v);
+        break;
+      case "hwEnv":
+        ctx.hwEnv = op.n & 15;
+        if (!ssgFader(ctx)) { warnOnce(ctx.warnings, "hwEnv", "the SSG's hardware envelope (S, m) has no PSG sound on md; dropped"); break; }
+        out.push(`:env ${ctx.hwEnv}`);
+        if (ctx.mix === 0) ssgModeTo(ctx, out, "env"); // P0 on it: the envelope alone, the buzzer
+        // A rate is for the shape in force: one from a saw to a triangle is written again.
+        if (ctx.hwEp != null && envCycle(ctx.hwEnv) !== envCycle(ctx.hwEpShape)) pushEnvRate(ctx, out);
+        break;
+      case "hwEnvPeriod":
+        ctx.hwEp = op.n;
+        if (!ssgFader(ctx)) { warnOnce(ctx.warnings, "hwEnv", "the SSG's hardware envelope (S, m) has no PSG sound on md; dropped"); break; }
+        pushEnvRate(ctx, out);
         break;
       case "pcmVolMode":
         // vm<n> (K): non-zero, a sample brings its bank level and `v` adds to
@@ -1782,6 +1808,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         emitGate(ctx, out);
         break;
       case "velAdj": {
+        // `)` and `(` are not read on the hardware envelope (mucomDotNET).
+        if (ssgFader(ctx) && ctx.hwEnv != null) break;
         const nv = clamp((ctx.vel ?? (ctx.isPcm ? MUCOM_PCM_VEL_DEFAULT : 12)) + op.d, 0, ctx.isPcm ? MUCOM_PCM_VEL_MAX : 15);
         if (nv !== ctx.vel || ctx.verbose || stale(ctx, "vel")) pushVel(ctx, out, nv);
         break;
@@ -1993,7 +2021,9 @@ const adpcmFader = (ctx) => ctx.pc88 && ctx.isAdpcm;
 function mutedHere(ctx) {
   if (!ctx.isSsg) return false;
   const mix = ctx.mix ?? 1;
-  if (ctx.pc88) return mix === 0; // P0: the channel's mixer passes nothing
+  // P0: the channel's mixer passes nothing — but on the hardware envelope
+  // the envelope itself is heard (:mode env).
+  if (ctx.pc88) return mix === 0 && ctx.hwEnv == null;
   return ctx.isNoise ? !(mix & 2) : !(mix & 1);
 }
 
@@ -2181,12 +2211,34 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
 
 // Before an SSG note: the envelope drawn for its `v`, if not already active.
 function envBeforeNote(ctx, out) {
+  // On the hardware envelope the level is the envelope's: the driver works
+  // the software one out and writes none of it (music2.cs SSSUB3), so its
+  // macro is off — its :vol would silence the note where it reaches 0.
+  if (ctx.isSsg && ctx.pc88 && ctx.hwEnv != null) {
+    if (ctx.ssgEnv && ctx.envActive !== HW_ENV) { out.push("(macro :vel* none :vol none)"); ctx.envActive = HW_ENV; }
+    return;
+  }
   const env = ctx.ssgEnv;
   if (!env || !ctx.envRegistry) return;
   const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15), ctx.tempo, noiseDb(ctx), ctx.pc88);
   let name = ctx.envRegistry.get(spec);
   if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
   if (name !== ctx.envActive || ctx.verbose || stale(ctx, "envActive")) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
+}
+
+const HW_ENV = "hardware envelope"; // envActive while the software one is off
+
+// The SSG's mixer as :mode, written where it changes.
+function ssgModeTo(ctx, out, mode) {
+  if (mode !== (ctx.ssgMode ?? "tone") || ctx.verbose || stale(ctx, "ssgMode")) { out.push(`:mode ${mode}`); ctx.ssgMode = mode; }
+}
+
+// The envelope's period `m` as the song's :env-rate: a cycle's Hz on the
+// shape in force (a triangle's cycle is two ramps — chips/ssg.js envCycle).
+function pushEnvRate(ctx, out) {
+  ctx.hwEpShape = ctx.hwEnv ?? 0;
+  const hz = ym2608.ssg.clock / (envCycle(ctx.hwEpShape) * Math.max(1, ctx.hwEp));
+  out.push(`:env-rate ${+hz.toPrecision(6)}`);
 }
 
 // Write a pending `&` as MMLisp's `~`, just before the note it slurs into.

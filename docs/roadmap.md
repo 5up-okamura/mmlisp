@@ -65,7 +65,9 @@ Its current limits are `driver.md` §11 — keep the two in step.
   new document for a machine its importer knows — not for every target: an
   importer writes only what it is built to write, and offers only that. The
   mucom importer writes pc88 (the song's own chip, the default) or md, chosen
-  in its import dialog; MIDI, VGM and DefleMask / Furnace write md and show no
+  in its import dialog; VGM writes md or the machine of its chip — x68k for
+  a YM2151's, pc88 for a YM2608's or YM2203's, msx for an AY-3-8910's —
+  chosen in its dialog; MIDI and DefleMask / Furnace write md and show no
   choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
   the matrix.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
@@ -77,8 +79,9 @@ Its current limits are `driver.md` §11 — keep the two in step.
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
   if wanted — envelopes and bends match exactly (TwinBee gives ~26
   envelopes), and rounding near ones together is the lever;
-  second chips, the YM2608's rhythm and ADPCM-B, the remaining PCM chips (OKI
-  MSM6295, QSound, K054539, C140, …).
+  second chips, the YM2608's rhythm and ADPCM-B (onto pc88's rhythm and
+  pcm1), the MSX's FM-PAC and SCC (onto msx's fm and wave channels), the
+  remaining PCM chips (OKI MSM6295, QSound, K054539, C140, …).
 - **DefleMask / Furnace**: sample channels, the macros of pre-INS2 Furnace
   instruments, subsongs after the first.
 - **MIDI**: per-note pan (a channel's first pan serves the song), and CC7/CC11

@@ -1482,7 +1482,8 @@ and ties land on mucom's clock grid; loops, breaks and the last `L` become the
 loop point (a part without `L` plays once). **Every mucom command imports**:
 key shift `K`/`k`, detune `D` (relative `D n+` too), `v`, `)`/`(`, `V`, `q`,
 reverb `R`, register writes `y`, SSG `E` envelopes and `@n` presets, `P`/`w`,
-slot detune `S`, key-on revise `s`, inline, `@%` and `.dat` voices, macros,
+slot detune `S`, key-on revise `s`, mucomDotNET's SSG hardware envelope `S`
+/ `m`, inline, `@%` and `.dat` voices, macros,
 echo, portamento, hardware and software LFO, and both tempo commands. Where
 mucom's driver behaves in a particular way, the import does the same rather
 than approximating:
@@ -1514,6 +1515,13 @@ than approximating:
   carriers alone, as mucom's volume table writes them. All-zero offsets are
   the normal mode, so a part that only ever writes those stays one `fm3`
   track.
+- **The SSG's hardware envelope** (mucomDotNET's `S n` / `m n` on D–F;
+  mucom88 itself rejects them) imports on pc88 as `:env n` — the shape, R13
+  as written — and the song's `:env-rate`, `m`'s period as a cycle's Hz on
+  the shape in force. `v` turns it off (`:env none`), `)`/`(` are not read
+  under it, a `P0` on it is the envelope alone (`:mode env`), and the `E`
+  envelope's macro is off while it plays, as the driver writes none of it.
+  On md it is dropped, with a warning.
 - **Key-on revise** `s n` adds n clocks to a note's length and flips the
   sign, so a run alternates +n, −n — a micro-shuffle whose pairs still add
   up. Rests keep their length; a tie and a portamento count as notes. The
@@ -1720,6 +1728,20 @@ them: a key-on starts a note, a key-off ends it.
   off A440 on the whole (an arcade board's clock) is taken back onto the
   semitones; a header that gives a chip no clock gets the chip's usual one
   (some arrangements leave it 0).
+- A file with a YM2608 or YM2203 can be the **PC-8801**'s score
+  (`:target pc88`), and one with an AY-3-8910 the **MSX**'s (`:target
+  msx`) — each the default when that chip plays every channel. There the
+  SSG is the machine's own: each channel keeps its noise (`:mode noise`, or
+  `:mode both` with the tone) with the song's `:noise-rate`, so the shared
+  noise row is not offered, and its hardware envelope comes back as `:env`
+  — the shape — and the song's `:env-rate`: `note` where the period follows
+  the notes (a buzzer, `:mode env`, at its own pitch; a tone whose period
+  sets it, with `:env-semi` / `:env-detune`), else the cycle in Hz. A note
+  the driver does not start the envelope over for runs it on, slurred. On
+  md the envelope has no sound — the log counts the notes on it, which play
+  at their level — and a buzzer plays as a square at its pitch. The MSX's
+  FM-PAC (YM2413) and SCC channels are not imported onto it yet, nor the
+  YM2608's rhythm and ADPCM-B onto the PC-8801's.
 - A pitch moved during a note is followed — untick it to keep only the
   struck pitch. A jump it then stays at is a new note, slurred (`~`); a
   wobble is a vibrato, a shared `(def vib-40-10 (macro :pitch (sin -40..40

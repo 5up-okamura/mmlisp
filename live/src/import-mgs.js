@@ -68,6 +68,7 @@
 import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken } from "./import-song.js";
 import { withPre, dropIdleNones } from "./import-mdx.js";
 import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
+import { envCycle } from "./chips/ssg.js";
 
 const TICKS_PER_STEP = PPQN / 48;
 const NOTE_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
@@ -834,7 +835,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
         if (henv) state.push(`:env ${st.henv ?? "none"}`);
         // m's period as a cycle's Hz on the shape (a triangle's cycle is two).
         if (st.henv != null && st.hperiod)
-          state.push(`:env-rate ${+(PSG_CLOCK / ((st.henv === 10 || st.henv === 14 ? 512 : 256) * st.hperiod)).toPrecision(6)}`);
+          state.push(`:env-rate ${+(PSG_CLOCK / (envCycle(st.henv) * st.hperiod)).toPrecision(6)}`);
       }
       // k: the release, on the PSG and the SCC, under an @e or none (an @r
       // has its RR).
