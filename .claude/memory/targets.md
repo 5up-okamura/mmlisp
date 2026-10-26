@@ -124,8 +124,10 @@ Next:
   out of the repo) sounding agrees 86-100% a channel, pitch within 50 cents
   92-100% (a PSG drum part 51%: tones near the period's floor, where our
   exact pitch and the driver's integer period part), levels within a step.
-  What is left is a frame of phase on short notes. Not compared: the
-  rhythm (the tool reads no $0E), y writes.
+  What is left is a frame of phase on short notes. The rhythm is held to
+  $0E's key bits (ko / kf, the end's all-off; Grider and Contrail agree
+  99.8-100% a frame), $36-$38's levels and $16-$28's tunings, and y to the
+  driver's register writes (a user voice's $00-$07, the PSG's $06/$07).
 - A secondary source (an AI answer) had `/` `\` `_` in an envelope as volume
   moves or a loop and a rhythm hit's digits as its level: the reference
   says otherwise — not to be re-read from such a source.
