@@ -1585,9 +1585,13 @@ buzz become bursts on the `noise` track. The dialog chooses the synthesis:
 
 The tracks are the score's machine's: on `pc88` the same as on the Mega
 Drive (the YM2608's FM3 has both modes); on `x68k`, whose YM2151 has neither,
-the sine waves only — `fm1`–`fm4` each one formant (its fourth operator
-alone) and the hiss on `fm8` as its `:mode noise`, the formants 6 dB down so
-the consonants, the OPM noise being quieter than a sine, keep their place.
+the sine waves only, all four on `fm1`. Its operators share the channel's
+pitch, each at a ratio of it (`:ml` ½–15 times `:dt2-` ×1–×1.73), so each
+frame's pitch is the base whose ratios come nearest the four formants — a few
+tens of cents off at worst, under the analysis's own wander — written as
+`:pitch`, `:ml1`–`:ml4`, `:dt2-1`–`:dt2-4` and `:tl1`–`:tl4` tables. The hiss
+is `fm8`'s `:mode noise`, and the formants sit 6 dB down so the consonants,
+the OPM's noise being quieter than a sine, keep their place.
 
 It reads best what has a shaped envelope — a voice, a wah or a moving
 filter, a drum's body. A sound whose colour is its partials (a bell, a

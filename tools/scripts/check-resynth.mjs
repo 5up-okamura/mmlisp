@@ -40,7 +40,7 @@ if (hiss.filter((i) => a.unvoiced[i]).length < hiss.length * 0.8) fails.push("th
 if (Math.abs(a.pitchHz / PITCH - 1) > 0.05) fails.push(`pitch ${a.pitchHz.toFixed(1)} Hz for ${PITCH} Hz`);
 
 // The score's machine: md and pc88 alike (the YM2608's FM3 has both modes);
-// x68k sine waves on fm1-fm4 and the hiss on fm8's noise.
+// x68k sine waves on fm1's four operators and the hiss on fm8's noise.
 for (const [mode, target] of [["csm", "md"], ["sine", "md"], ["csm", "pc88"], ["sine", "pc88"], ["sine", "x68k"]]) {
   const { source, warnings } = resynthToMmlisp(a, { mode, target }, "vowel.wav");
   const score = target === "md" ? source : `(def-score :target ${target})\n${source}`;
@@ -53,8 +53,8 @@ for (const [mode, target] of [["csm", "md"], ["sine", "md"], ["csm", "pc88"], ["
   if (ends.size !== 1) fails.push(`${mode} ${target}: the tracks end at ${[...ends].join(", ")} ticks`);
   if (mode === "csm" && !/\(fm3-csm formant\)/.test(source)) fails.push("csm: no note-less fm3-csm track");
   if (mode === "csm" && !/\(fm3-csm-rate /.test(source)) fails.push("csm: no rate track");
-  if (target === "x68k" && !(/\(fm4[^\n]* formant/.test(source) && /\(fm8 formant :mode noise/.test(source) && !/fm3-/.test(source)))
-    fails.push("x68k: not fm1-fm4 and fm8's noise");
+  if (target === "x68k" && !(/\(fm1[^\n]* formant/.test(source) && /:ml4 \[/.test(source) && /\(fm8 hiss :mode noise/.test(source) && !/fm3-|\(fm2/.test(source)))
+    fails.push("x68k: not the four formants on fm1's operators and fm8's noise");
 }
 // x68k has no CSM: asked for, it is the sine waves, said so.
 if (!resynthToMmlisp(a, { mode: "csm", target: "x68k" }, "vowel.wav").warnings.some((w) => /no CSM/.test(w))) fails.push("x68k csm: not reported");

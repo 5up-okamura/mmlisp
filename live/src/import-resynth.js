@@ -23,9 +23,13 @@
  *   pitch of its own.
  *
  * On x68k (the score the sound goes into; `target`) the YM2151 has neither
- * FM3's modes nor a CSM of one channel, so the four sines are four channels,
- * fm1–fm4, each its fourth operator alone (every channel has its own pitch),
- * and the hiss is fm8's :mode noise; CSM is not offered there.
+ * FM3's modes nor a CSM of one channel: its four operators share the
+ * channel's pitch, each at a ratio of it — MUL (½, 1-15) times DT2's (×1,
+ * ×√2, ×1.570, ×1.731). So the four sines are still one channel, fm1: a
+ * frame's pitch is the base whose ratios come nearest the four formants
+ * (a few tens of cents at worst, under the analysis's own wander), the
+ * ratios its :ml / :dt2- tables, the levels its :tl tables; the hiss is
+ * fm8's :mode noise. CSM is not offered there.
  *
  * At 150 BPM one frame is four ticks, so every table lands on the frame it
  * was measured in and the tracks come out the same length.
@@ -37,6 +41,10 @@ const BPM = 150; // one 60 Hz frame = 4 ticks
 const NOMINAL = [550, 1500, 2500, 3400]; // where the four formants start out
 const F_LOW = 150, F_HIGH = 3900; // the band a formant may sit in
 const LPC_ORDER = 12;
+// The YM2151's operator ratios: MUL (0 is ½) times DT2's (+0, +600, +781,
+// +950 cents), each with its register values.
+const OPM_RATIOS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].flatMap((ml) =>
+  [0, 600, 781, 950].map((c, dt2) => ({ ml, dt2, r: (ml || 0.5) * 2 ** (c / 1200) })));
 
 // ── Analysis ───────────────────────────────────────────────────────────────
 
@@ -340,8 +348,63 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
       at = q;
     });
     if (n > at) parts.push(rest(n - at));
-    if (opm) return `(fm${s + 1}${s === 0 && o.tempo ? ` :tempo ${BPM}` : ""} formant\n    ${parts.join("\n    ")})`;
     return `(fm3-${s + 1}\n    ${parts.join("\n    ")})`;
+  };
+  // x68k: the four formants on fm1's four operators (see the top). A frame's
+  // ratios are kept while they stay within HOLD_CENTS of the best, so the
+  // operators do not hop between near-equal pairs.
+  const opmFormantLine = () => {
+    const HOLD_CENTS = 10;
+    const cents = (x) => 1200 * Math.log2(x);
+    // A ratio set's best base and worst error: the base centres the errors.
+    const fit = (fs, rs) => {
+      const d = fs.map((f, s) => cents(f / rs[s]));
+      const hi = Math.max(...d), lo = Math.min(...d);
+      return { base: 2 ** ((hi + lo) / 2 / 1200), err: (hi - lo) / 2 };
+    };
+    // The base kept in 30-4000 Hz (the KC's octaves), where any set lands.
+    const best = (fs) => {
+      let out = null, any = null;
+      for (const r0 of OPM_RATIOS) {
+        const b = fs[0] / r0.r;
+        const rs = fs.map((f, s) => (s === 0 ? r0 : OPM_RATIOS.reduce((x, y) => (Math.abs(cents(f / (b * y.r))) < Math.abs(cents(f / (b * x.r))) ? y : x))));
+        const ft = { ...fit(fs, rs.map((r) => r.r)), rs };
+        if (!any || ft.err < any.err) any = ft;
+        if (ft.base < 30 || ft.base > 4000) continue;
+        if (!out || ft.err < out.err) out = ft;
+      }
+      return out ?? any;
+    };
+    const parts = [];
+    let at = 0;
+    segs.forEach(([p, q], k) => {
+      if (p > at) parts.push(rest(p - at));
+      const frames = [];
+      let prev = null;
+      for (let i = p; i < q; i++) {
+        const fs = [0, 1, 2, 3].map((s) => a.tracks[s][idx(i)].f);
+        let pick = best(fs);
+        if (prev) {
+          const kept = fit(fs, prev.rs.map((r) => r.r));
+          if (kept.err <= pick.err + HOLD_CENTS) pick = { ...kept, rs: prev.rs };
+        }
+        frames.push(pick);
+        prev = pick;
+      }
+      const m = Math.round(midiOf(median(frames.map((x) => x.base))));
+      const note = 440 * 2 ** ((m - 69) / 12);
+      const tables = [`:pitch [${wrap(frames.map((x) => Math.round(cents(x.base / note))))}]`];
+      for (let s = 0; s < 4; s++) {
+        const ml = frames.map((x) => x.rs[s].ml), dt2 = frames.map((x) => x.rs[s].dt2);
+        const tl = []; for (let i = p; i < q; i++) tl.push(sounding(i) ? Math.min(127, Math.round(-opDb(s, i) / 0.75)) : 127);
+        tables.push(`:ml${s + 1} [${wrap(ml)}]`, `:dt2-${s + 1} [${wrap(dt2)}]`, `:tl${s + 1} [${wrap(tl)}]`);
+      }
+      defs.push({ k, name: `p${k + 1}-f`, body: `(macro ${tables.join("\n    ")})` });
+      parts.push(`p${k + 1}-f :gate ${q - p}f :oct ${Math.floor(m / 12) - 1} ${NAMES[m % 12]}${q - p}f`);
+      at = q;
+    });
+    if (n > at) parts.push(rest(n - at));
+    return `(fm1${o.tempo ? ` :tempo ${BPM}` : ""} formant\n    ${parts.join("\n    ")})`;
   };
   const noiseLine = () => {
     const parts = [];
@@ -356,8 +419,8 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
       at = q;
     });
     if (n > at) parts.push(rest(n - at));
-    // The same sine, its fourth operator turned to noise.
-    if (opm) return `(fm8 formant :mode noise\n    ${parts.join("\n    ")})`;
+    // The fourth operator alone, turned to noise.
+    if (opm) return `(fm8 hiss :mode noise\n    ${parts.join("\n    ")})`;
     return `(noise\n    ${parts.join("\n    ")})`;
   };
   // the voice: one rate per voiced run (its median pitch, or the one given),
@@ -388,21 +451,22 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
 
   const [rr, ks] = WIDTH_ENV[o.width] ?? WIDTH_ENV.held;
   const ops = [1, 2, 3, 4]
-    .map((k) => `:ar${k} 31 :dr${k} 0 :sr${k} 0 :rr${k} ${csm ? rr : 15} :sl${k} 0 :tl${k} ${opm && k < 4 ? 127 : 0} :ks${k} ${csm ? ks : 0} :ml${k} 1 :dt${k} 0`)
+    .map((k) => `:ar${k} 31 :dr${k} 0 :sr${k} 0 :rr${k} ${csm ? rr : 15} :sl${k} 0 :tl${k} 0 :ks${k} ${csm ? ks : 0} :ml${k} 1 :dt${k} 0`)
     .join("\n  ");
   const name = fileName.replace(/\.[^.]*$/, "");
   const head = csm
     ? `; ${name}: CSM with formant tracks (language.md §15). Each fm3-N follows one\n; formant of the recording — its frequency as a :pitch table, its level as a\n; :vol table, one value a frame — the fm3-csm-rate track is the voice (its\n; rates the pitch, its rests the breaths), and the noise track the consonants.`
     : opm
-      ? `; ${name}: sine-wave speech. Each of fm1–fm4 is a sine wave on one formant of\n; the recording — its frequency as a :pitch table, its level as a :vol table,\n; one value a frame — and fm8's noise the consonants.`
+      ? `; ${name}: sine-wave speech. fm1's four operators are sine waves on the\n; recording's four formants — the channel's pitch a :pitch table, each\n; operator's ratio of it :ml / :dt2- tables, its level a :tl table, one value\n; a frame — and fm8's noise the consonants.`
       : `; ${name}: sine-wave speech. Each fm3-N is a sine wave on one formant of the\n; recording — its frequency as a :pitch table, its level as a :vol table, one\n; value a frame — and the noise track the consonants.`;
-  const tracks = [0, 1, 2, 3].map(formantLine).join("\n") + "\n" + (csm ? rateLine() + "\n" : "") + noiseLine() + "\n";
+  const tracks = (opm ? opmFormantLine() : [0, 1, 2, 3].map(formantLine).join("\n")) + "\n" + (csm ? rateLine() + "\n" : "") + noiseLine() + "\n";
   const defBlock = segs.map(([p, q], k) =>
     `; phrase ${k + 1}: ${((p + f0) / FPS).toFixed(2)}–${((q + f0) / FPS).toFixed(2)} s\n` +
     defs.filter((d) => d.k === k).map((d) => `(def ${d.name} ${d.body})`).join("\n")).join("\n\n");
   const source =
     `${head}\n` +
     `(def-fm formant :alg 7 :fb 0 :ams 0 :fms 0\n  ${ops})\n\n` +
+    (opm ? `(def-fm hiss formant :tl1 127 :tl2 127 :tl3 127)\n\n` : "") +
     (defBlock ? defBlock + "\n\n" : "") +
     (opm ? "" : csm ? `(fm3-csm formant)\n` : `(fm3${o.tempo ? ` :tempo ${BPM}` : ""} formant)\n`) +
     tracks;
