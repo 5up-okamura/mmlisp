@@ -210,12 +210,35 @@ function compressMgs(u8) {
     has(source, /\(fm1[\s\S]*mgs-v15[\s\S]*:oct 3[\s\S]*piano :sus 1/, what); // FM's o4 is an octave below the PSG's
     has(source, /\(rhythm1[\s\S]*kick :vol 25/, what); // vb11 (3 dB steps)
     has(source, /\(rhythm2[\s\S]*hat :vol 22/, what);
-    has(source, /\(rhythm1[\s\S]*kick :vol 25[^|]*c2 c(8)? _(8)? c/, what); // ko: rings to its next; kf: to the hat's hit
+    has(source, /\(rhythm1[\s\S]*kick :vol 25 :mode shot[^|]*c2 :mode gate c(8)? _(8)? c/, what); // ko: rings to its next; kf: keyed off at the hat's hit
     has(source, /\(def vol-e3-v15-k2 \(macro :vol \[20 \(wait 2f\) 16 #rel \(linear :len 10f\)\]\)\)/, what); // 8:3 holds; k2 from level 5
     has(source, /\(macro :vol \[26 #rel \(linear :len 36f\)\]\)/, what); // k3 at v12
     has(source, /\(fm2[^\n]*:len 4\n  [^|]*c _8 d8/, what); // q0 holds c through the rest, to the `/`
     clean(source, what);
   }
+}
+
+// y: the user voice's registers, the PSG's mixer and noise, the rhythm's
+// levels and tuning; kf keying a ko hit off.
+{
+  const T = (n, len) => [0x20 | n, len];
+  const Y = (r, d) => [0x5c, r, d];
+  const defs = [0x00, 15, 0x21, 0x01, 0x1e, 0x0f, 0xf0, 0xf4, 0x24, 0x13, 0xff];
+  const psg1 = [0xd4, 0xcf, ...Y(6, 20), ...Y(7, 0b110110), ...T(0, 48), 0xff]; // noise 20; A: tone and noise
+  const fm1 = [0xd4, 0xcf, 0x8f, ...Y(2, 0x45), ...Y(4, 0xa3), ...T(0, 48), 0xff]; // @15, y2 (KSL 1, TL 5), y4 (AR 10, DR 3)
+  const fm2 = [0xd4, 0xcf, 0x82, ...Y(2, 0x45), ...T(0, 48), 0xff]; // a ROM voice: y on it is not read
+  const rhythm = [0x45, 0x00 | 11, ...Y(0x36, 6), ...Y(0x17, 0x80), ...Y(0x27, 0x05), ...Y(0x37, 0x40), // BD 9, SD tuned, HH 11 SD 15
+    0x30, 24, 0x5a, 1, 0x28, 24, 0x30, 24, 0xff]; // b; kf: s (keys the b off), b
+  const mgs = parseMgs(buildMgs({ title: "y", tempo: 120, defs, opll: 1,
+    tracks: [psg1, null, null, null, null, null, null, null, fm1, fm2, null, null, null, null, rhythm] }));
+  const { source } = mgsToMmlisp(mgs, { fileName: "y.mgs" });
+  const what = "MGS y";
+  has(source, /\(sqr1[^|]*:mode both :noise-rate 20/, what);
+  has(source, /\(fm1[^|]*mgs-v15 :ksl1 1 :tl1 5 :ar1 10 :dr1 3/, what);
+  has(source, /\(fm2[^|]*\n  piano :sus 0 :vol/, what);
+  has(source, /\(rhythm1[^|]*kick :vol 22 :mode gate[^|]*c _ c \|/, what); // y $36: 6 down; keyed off by the snare, and at the end
+  has(source, /\(rhythm2[^|]*snare :vol 31 :mode gate[^|]*_ d _ \|/, what); // $180 at block 2: d4
+  clean(source, what);
 }
 
 console.log("MDX / MGS import checks passed");
