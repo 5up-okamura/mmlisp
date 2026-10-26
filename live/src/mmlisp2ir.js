@@ -359,13 +359,16 @@ function trackLacks(irTarget, sym, trackState) {
 // PAN symbolic values → logical range -1/0/+1 (encodeB4 maps these to L/LR/R bits)
 const PAN_MAP = { left: -1, center: 0, right: 1 };
 // A target's own symbols: the pan's places, the OPM LFO's waveforms, the
-// SSG's `:env none` (the 4-bit level back) and `:env-rate note` (the
-// envelope's period on the writing track's notes, language.md §19).
+// SSG's `:env none` (the 4-bit level back), `:env-semi none` and
+// `:env-detune none` (no move), and `:env-rate note` (the envelope's period
+// on the writing track's notes, language.md §19).
 const TARGET_SYMBOLS = {
   PAN: PAN_MAP,
   LFO_WAVE: { saw: 0, square: 1, triangle: 2, noise: 3 },
   SSG_ENV: { none: -1 },
   ENV_RATE: { note: 0 },
+  ENV_SEMI: { none: 0 },
+  ENV_DETUNE: { none: 0 },
   // The SSG mixer's, as a `:mode` macro steps it (its inline :mode is the part's modes).
   SSG_MIX: { tone: 0, noise: 1, both: 2, env: 3 },
 };

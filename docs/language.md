@@ -2420,7 +2420,8 @@ the track that writes it, as the track has it then.
 **`:env-semi n`** moves the period a track gives — its notes', or a rate it
 writes — by n semitones (−48–48; `-12` an octave below the tone), and
 **`:env-detune n`** adds n register steps to it (−1000–1000; + is lower).
-Each is sticky on the track, a number or a `$value` read at the write; a
+Each is sticky on the track, a number, a `$value` read at the write, or
+`none` (0, no move); a
 following period moves at once, a rate at the track's next `:env-rate`.
 With the tone on (`:mode tone`), the tone gates the envelope, and a period a
 step off the note's turns the two against each other: the timbre beats,

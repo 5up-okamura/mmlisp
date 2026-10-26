@@ -98,7 +98,7 @@ export const REFERENCE = [
   },
   {
     name: ':env', aliases: ['envelope', 'buzzer', ':env-rate', ':env-semi', ':env-detune'], cat: 'track', section: '§19', tracks: ['psg'],
-    syntax: ':env 0–15 | none  ·  :env-rate Hz | note  ·  :env-semi n  ·  :env-detune n',
+    syntax: ':env 0–15 | none  ·  :env-rate Hz | note  ·  :env-semi n | none  ·  :env-detune n | none',
     summary: 'pc88 and msx: the SSG channel\'s level is the hardware envelope, the number its shape (8 and 12 saws, 10 and 14 triangles, 0 and 9 a decay), started over at each key-on; none gives the level back. :env-rate is the song\'s one period, a cycle\'s Hz or note (the writing track\'s pitch), which the track\'s :env-semi moves by semitones and :env-detune by register steps (+ lower). With :mode env the envelope alone sounds: a buzzer; with :mode tone a step of detune beats the timbre.',
     insert: ':env 8 :env-rate note :mode env',
     example: '(def-score :target msx)\n(sqr1 :env 8 :env-rate note :mode env :oct 2 :len 8 c c g g a a g _)',
