@@ -514,6 +514,10 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   hardware measurement.**
 - **No single number is a pass.** Not the nominal rate, not the frame-processing
   rate, not "the DAC bytes are identical", not how it sounds.
+- **PAL: supported, not verified, low priority** (2026-10-27). PAL is a CLI
+  export only (`--pal`; Live stays NTSC), and it needs to be correct by
+  construction, not gated or run on hardware: no PAL DAC gate, no PAL
+  hardware pass, no PAL UI. Do not propose them.
 - **Do not stack unproven work.** While two voices are unsettled, three voices,
   arbitrary pitch and better interpolation are more unknowns on top of an
   unknown.

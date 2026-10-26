@@ -13,7 +13,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 1. **Integration breadth** — more game-scene mappings worth shipping as
    examples beside `drv/sgdk/example`, and a hardware-verified reference
-   build — heavy DMA workloads and PAL on hardware first (driver.md §11).
+   build — heavy DMA workloads on hardware first (driver.md §11).
 2. **Mid-song voice changes with no silence before them** — VOICE_SET
    bodies in the sample-bank ROM, so a voice change is one pair instead of
    the ~30 register writes a channel costs today. A change after a rest or a

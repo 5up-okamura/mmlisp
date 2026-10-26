@@ -50,7 +50,7 @@ optional; several `def-score` forms combine, a key given twice is
   all three; the VGM GD3 tag has one name, the composer (else the author).
 - **`:pcm-voices N`** — how many PCM voices the driver plays, 0–3. This is
   a whole-song choice: it picks the engine image, and with it the DAC rate
-  (1 voice 14.4 kHz, 2 voices 10.1 kHz, 3 voices 6.7 kHz) and how much sample
+  (1 voice 14.4 kHz, 2 voices 10.1 kHz, 3 voices 6.7 kHz; 0.9% lower on PAL) and how much sample
   data fits in a single bank (2.3 / 3.2 / 4.9 seconds). NTSC and PAL scores with one
   to three voices automatically use multi-bank PCM when needed, both at
   about 10.1/10.0 kHz for one or two voices and 6.65/6.59 kHz for three (NTSC/PAL); see [Multi-bank PCM](pcm-multibank.md). Fewer voices
