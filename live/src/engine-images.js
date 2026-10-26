@@ -5,11 +5,21 @@
 // the IDLE pairs a host must put after a generation pair, and the addresses
 // the host writes (docs/driver.md §5).
 
+// The same image runs on both standards: on PAL its period is the same count
+// of a slower clock, so a PAL score's samples are baked at the PAL rate.
+
 export const ENGINE_IMAGES = Object.freeze({
-  1: Object.freeze({"voices":1,"periodCycles":249,"periodMaster":3735,"rateHz":14375.683,"lapSamples":112,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0],"lightAt":[11,12,13],"xpSlots":[0,15,31,47,56,70,84,98],"idleAfterGen":1,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2554,"stamp":"8bd849f2e098"}),
-  2: Object.freeze({"voices":2,"periodCycles":354,"periodMaster":5310,"rateHz":10111.709,"lapSamples":80,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0,8],"lightAt":[11,12,13],"xpSlots":[0,15,23,31,40,55,63,71],"idleAfterGen":1,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2790,"stamp":"3e42f3c32d62"}),
-  3: Object.freeze({"voices":3,"periodCycles":538,"periodMaster":8070,"rateHz":6653.429,"lapSamples":48,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0,5,11],"lightAt":[1,12,13],"xpSlots":[4,7,12,20,28,33,37,44],"idleAfterGen":5,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2326,"stamp":"3ac606d09b47"}),
+  1: Object.freeze({"voices":1,"periodCycles":249,"periodMaster":3735,"rateHz":14375.683,"lapSamples":112,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0],"lightAt":[11,12,13],"xpSlots":[0,15,31,47,56,70,84,98],"idleAfterGen":1,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2554,"stamp":"8bd849f2e098","frameHz":60,"frameMaster":896040}),
+  2: Object.freeze({"voices":2,"periodCycles":354,"periodMaster":5310,"rateHz":10111.709,"lapSamples":80,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0,8],"lightAt":[11,12,13],"xpSlots":[0,15,23,31,40,55,63,71],"idleAfterGen":1,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2790,"stamp":"3e42f3c32d62","frameHz":60,"frameMaster":896040}),
+  3: Object.freeze({"voices":3,"periodCycles":538,"periodMaster":8070,"rateHz":6653.429,"lapSamples":48,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0,5,11],"lightAt":[1,12,13],"xpSlots":[4,7,12,20,28,33,37,44],"idleAfterGen":5,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2326,"stamp":"3ac606d09b47","frameHz":60,"frameMaster":896040}),
 });
 
-/** The image a score with `pcm-voices` N plays on (a score with none uses pcm1's). */
-export const engineImage = (pcmVoices) => ENGINE_IMAGES[Math.max(1, Math.min(3, pcmVoices | 0))];
+export const ENGINE_IMAGES_PAL = Object.freeze({
+  1: Object.freeze({"voices":1,"periodCycles":249,"periodMaster":3735,"rateHz":14244.55,"lapSamples":112,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0],"lightAt":[11,12,13],"xpSlots":[0,15,31,47,56,70,84,98],"idleAfterGen":1,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2554,"stamp":"8bd849f2e098","frameHz":50,"frameMaster":1070460}),
+  2: Object.freeze({"voices":2,"periodCycles":354,"periodMaster":5310,"rateHz":10019.472,"lapSamples":80,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0,8],"lightAt":[11,12,13],"xpSlots":[0,15,23,31,40,55,63,71],"idleAfterGen":1,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2790,"stamp":"3e42f3c32d62","frameHz":50,"frameMaster":1070460}),
+  3: Object.freeze({"voices":3,"periodCycles":538,"periodMaster":8070,"rateHz":6592.738,"lapSamples":48,"stepsPerLap":8,"lead":18,"blockSamples":16,"voiceOffsets":[0,5,11],"lightAt":[1,12,13],"xpSlots":[4,7,12,20,28,33,37,44],"idleAfterGen":5,"lutPage":19,"silence":65280,"fifo":7424,"fifoPairs":128,"state":7984,"opStride":9,"opLimit":34,"fifoLo":8045,"ready":8046,"readyMark":210,"binSize":6912,"codeEnd":2326,"stamp":"3ac606d09b47","frameHz":50,"frameMaster":1070460}),
+});
+
+/** The image a score with `pcm-voices` N plays on (a score with none uses pcm1's), on its standard. */
+export const engineImage = (pcmVoices, frameHz = 60) =>
+  (frameHz === 50 ? ENGINE_IMAGES_PAL : ENGINE_IMAGES)[Math.max(1, Math.min(3, pcmVoices | 0))];

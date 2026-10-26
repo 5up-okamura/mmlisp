@@ -2758,7 +2758,7 @@ export class IRPlayer {
   // same multiply and clamp the MMB exporter applies (export-mmb.js
   // targetValue), at the rate of the image the score names.
   _pcmLoopBytes(sec) {
-    const rate = this._pcmBankRate ?? engineImage(Math.max(1, this._ir?.metadata?.pcmVoices ?? 1)).rateHz;
+    const rate = this._pcmBankRate ?? engineImage(Math.max(1, this._ir?.metadata?.pcmVoices ?? 1), this._ir?.metadata?.frameHz).rateHz;
     return Math.max(0, Math.min(PCM_LOOP_MAX, Math.round(Number(sec ?? 0) * rate)));
   }
 

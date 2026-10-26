@@ -11,6 +11,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLightImage } from "./build-engine.mjs";
+import { NTSC, PAL } from "../engine/config.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, "..", "..", "live", "src", "engine-images.js");
@@ -25,12 +26,23 @@ export function imagesSource() {
   L.push("// the IDLE pairs a host must put after a generation pair, and the addresses");
   L.push("// the host writes (docs/driver.md §5).");
   L.push("");
-  L.push("export const ENGINE_IMAGES = Object.freeze({");
-  for (const d of rows) L.push(`  ${d.voices}: Object.freeze(${JSON.stringify(d)}),`);
-  L.push("});");
+  L.push("// The same image runs on both standards: on PAL its period is the same count");
+  L.push("// of a slower clock, so a PAL score's samples are baked at the PAL rate.");
   L.push("");
-  L.push("/** The image a score with `pcm-voices` N plays on (a score with none uses pcm1's). */");
-  L.push("export const engineImage = (pcmVoices) => ENGINE_IMAGES[Math.max(1, Math.min(3, pcmVoices | 0))];");
+  const table = (name, machine, frameHz) => {
+    L.push(`export const ${name} = Object.freeze({`);
+    for (const d of rows) {
+      const row = { ...d, rateHz: +(machine.masterHz / d.periodMaster).toFixed(3), frameHz, frameMaster: machine.frameMaster };
+      L.push(`  ${d.voices}: Object.freeze(${JSON.stringify(row)}),`);
+    }
+    L.push("});");
+    L.push("");
+  };
+  table("ENGINE_IMAGES", NTSC, 60);
+  table("ENGINE_IMAGES_PAL", PAL, 50);
+  L.push("/** The image a score with `pcm-voices` N plays on (a score with none uses pcm1's), on its standard. */");
+  L.push("export const engineImage = (pcmVoices, frameHz = 60) =>");
+  L.push("  (frameHz === 50 ? ENGINE_IMAGES_PAL : ENGINE_IMAGES)[Math.max(1, Math.min(3, pcmVoices | 0))];");
   L.push("");
   return L.join("\n");
 }

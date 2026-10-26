@@ -438,7 +438,7 @@ export function encodeMmb(ir, opts = {}) {
   // the bank is baked at that image's rate.
   const pcmVoices = scorePcmVoices(ir);
   const multibank = !!opts.multibank;
-  const rateHz = (multibank ? bankedEngineImage(Math.max(1, pcmVoices), frameHz) : engineImage(pcmVoices)).rateHz;
+  const rateHz = (multibank ? bankedEngineImage(Math.max(1, pcmVoices), frameHz) : engineImage(pcmVoices, frameHz)).rateHz;
   // The single-bank bake below overflowed and re-entered here as multi-bank:
   // say so, and at what rate — a one-voice song drops from 14.4 to 10.1 kHz.
   if (opts.multibankAuto)
@@ -2048,7 +2048,7 @@ function buildSampleBank(ir, blobs, diag, usage = new Map(), rateHz) {
  * @returns {{ sampleBank: Uint8Array, entryIds: Record<string, number> }}
  */
 export function bakeAuditionBank(ir, blobs, name, midi) {
-  const rateHz = engineImage(scorePcmVoices(ir)).rateHz;
+  const rateHz = engineImage(scorePcmVoices(ir), ir.metadata?.frameHz).rateHz;
   const { bytes, entryIds } = buildSampleBank(ir, blobs, () => {}, new Map([[name, new Set([midi])]]), rateHz);
   if (bytes.length > 0x7f00) throw new RangeError(`sample bank is ${bytes.length} bytes at this note; the window holds 32512`);
   const sampleBank = new Uint8Array(0x8000);
@@ -2076,7 +2076,7 @@ export function bakeAuditionBlob(ir, blobs, name, midi) {
   const u16 = (k) => v.getUint16(at + k, true);
   return {
     data: new Int8Array(sampleBank.buffer, tableEnd + off, len),
-    rateHz: engineImage(scorePcmVoices(ir)).rateHz,
+    rateHz: engineImage(scorePcmVoices(ir), ir.metadata?.frameHz).rateHz,
     range: flags & 1 ? [u16(0x10), u16(0x12)] : null,
     loop: flags & 6 ? [u16(0x14), u16(0x16)] : null,
   };

@@ -2988,9 +2988,11 @@ int mml_load_samples(MMLSeq *s, const uint8_t *bank, uint32_t len, uint32_t rom_
   /* The bank stamps the image rate its blobs were baked at (mmb.md §10). Baked
    * data is bound to that rate; under another the pitch is quietly wrong, so a
    * bank baked for a different engine image is refused here, not heard later. */
-  static const uint16_t STAMP[4] = {MML_PCM_STAMP_1, MML_PCM_STAMP_1, MML_PCM_STAMP_2, MML_PCM_STAMP_3};
+  static const uint16_t STAMP[2][4] = {
+    {MML_PCM_STAMP_1, MML_PCM_STAMP_1, MML_PCM_STAMP_2, MML_PCM_STAMP_3},
+    {MML_PCM_STAMP_PAL_1, MML_PCM_STAMP_PAL_1, MML_PCM_STAMP_PAL_2, MML_PCM_STAMP_PAL_3}};
   if ((rd16(bank, 2) & 0x8000) != (s->pcm_banked ? 0x8000 : 0)) return -3;
-  if ((rd16(bank, 2) & 0x7fff) != (s->pcm_banked ? MML_BANKED_STAMPS[s->frame_hz == 50][s->pcm_voices ? s->pcm_voices-1 : 0] : STAMP[s->pcm_voices & 3])) return -3;
+  if ((rd16(bank, 2) & 0x7fff) != (s->pcm_banked ? MML_BANKED_STAMPS[s->frame_hz == 50][s->pcm_voices ? s->pcm_voices-1 : 0] : STAMP[s->frame_hz == 50][s->pcm_voices & 3])) return -3;
   if (len && 4 + (uint32_t)n * MML_SAMPLE_ENTRY > len) return -2;
   if (n > 256 || (s->pcm_banked && ((rom_base & 0x7fff) || (len && (len & 0x7fff))))) return -2;
   const uint32_t blobs = s->pcm_banked ? 0x8000 : 4 + (uint32_t)n * MML_SAMPLE_ENTRY;

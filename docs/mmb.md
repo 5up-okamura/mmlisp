@@ -275,7 +275,9 @@ that reaches `$7F00` and pads the file to `$8000`; the BIN resource is
 `BIN song_smp "song.smp" 32768` (aligned, uncompressed).
 
 `bake_stamp` is the rounded DAC rate of the image named by the header's
-PCM_VOICES (§4; `pcm1` for a score without PCM), and a loader **refuses a bank
+PCM_VOICES (§4; `pcm1` for a score without PCM) on the standard its
+PAL_TIMEBASE names — 14376 / 10112 / 6653 on NTSC, 14245 / 10019 / 6593 on
+PAL, the same image on a slower clock — and a loader **refuses a bank
 whose stamp is not its image's** (`mml_load_samples` returns -3). Baked data is
 bound to the rate it was baked for; played under another the pitch is quietly
 wrong, which is the least debuggable failure there is.

@@ -82,7 +82,6 @@ import {
   FRAME_HZ_NTSC,
 } from "./ir-utils.js";
 
-const FRAMES_PER_SEC = 60;
 // The channels the macro engine runs on: 0-9 and FM3's four operators
 // (mmlispseq.h MML_MACRO_CHANNELS).
 const MACRO_CHANNELS = 17;
@@ -225,10 +224,6 @@ import { engineImage } from "./engine-images.js";
 import { opnFm } from "./chips/opn-fm.js";
 import { snSqr } from "./chips/sn76489.js";
 
-// NTSC: a frame is 896,040 master clocks. The engine's DAC period is the
-// image's `periodMaster`, so the samples a frame are an exact ratio of the two.
-const FRAME_MASTER = 896040;
-
 // Sub-tick share of a frame's tempo increment (driver.md §3.5). Bresenham:
 // step_j = ((j+1)·inc)/K − (j·inc)/K, so the K steps sum to exactly `inc` and
 // §3.2's zero-drift-over-loops property is untouched — the frame still advances
@@ -370,7 +365,7 @@ export class DrvPlayer {
       // The bank stamps the image rate its blobs were baked at (mmb.md §10).
       // Baked data is bound to that rate: played under another the pitch is
       // quietly wrong, so the mismatch is reported here rather than heard.
-      const want = pcmBankStamp((pcmBanked ? bankedEngineImage(Math.max(1,pcmVoices),this._frameHz) : engineImage(pcmVoices)).rateHz);
+      const want = pcmBankStamp((pcmBanked ? bankedEngineImage(Math.max(1,pcmVoices),this._frameHz) : engineImage(pcmVoices, this._frameHz)).rateHz);
       if (stamp !== want) {
         if (pcmBanked) throw new RangeError(`banked PCM stamp ${stamp} does not match ${want}`);
         this._diagnostics.push({
@@ -545,7 +540,7 @@ export class DrvPlayer {
     // Live playback of a PCM score runs the engine model for the DAC bytes;
     // an offline capture (no audio context) compares commands and builds none.
     this._pcmModel = this._audioContext && song?.sampleData && song.pcmVoices
-      ? new PcmLiveEngine(song.pcmBanked ? bankedEngineImage(song.pcmVoices,this._frameHz) : engineImage(song.pcmVoices), song.sampleData)
+      ? new PcmLiveEngine(song.pcmBanked ? bankedEngineImage(song.pcmVoices,this._frameHz) : engineImage(song.pcmVoices, this._frameHz), song.sampleData)
       : null;
     this._pcmSampleRem = 0;
     this._pcmSampleIndex = 0;
@@ -2421,15 +2416,16 @@ export class DrvPlayer {
 
   // ── PCM (driver.md §14) ──────────────────────────────────────────────────
   // The sample clock of the score's engine image: `periodMaster` master clocks
-  // a sample against the frame's 896,040, so a frame is an exact ratio of
-  // samples and each $2A byte gets its own instant. Stamping them all at the
+  // a sample against its standard's `frameMaster` (NTSC 896,040, PAL
+  // 1,070,460), so a frame is an exact ratio of samples and each $2A byte
+  // gets its own instant. Stamping them all at the
   // frame start would let a realtime consumer collapse ~200 of them to the last
   // value — the waveform would come out as a click.
   _whenSample(sampleIndex) {
     if (!this._audioContext) return undefined;
-    const img = this._song?.pcmBanked ? bankedEngineImage(this._song.pcmVoices,this._frameHz) : engineImage(this._song?.pcmVoices ?? 1);
+    const img = this._song?.pcmBanked ? bankedEngineImage(this._song.pcmVoices,this._frameHz) : engineImage(this._song?.pcmVoices ?? 1, this._frameHz);
     if (img.multibank) return this._startAudioTime + sampleIndex / img.rateHz;
-    return this._startAudioTime + (sampleIndex * img.periodMaster) / (FRAMES_PER_SEC * FRAME_MASTER);
+    return this._startAudioTime + (sampleIndex * img.periodMaster) / (img.frameHz * img.frameMaster);
   }
 
   /** The window address a sample entry's blob sits at (the host maps the bank). */
@@ -3000,7 +2996,7 @@ export class DrvPlayer {
   _pcmFrame() {
     if (!this._pcmModel) return;
     const img = this._pcmModel.img;
-    this._pcmSampleRem += img.multibank ? img.masterHz / this._frameHz : FRAME_MASTER;
+    this._pcmSampleRem += img.multibank ? img.masterHz / this._frameHz : img.frameMaster;
     while (this._pcmSampleRem >= img.periodMaster) {
       this._pcmSampleRem -= img.periodMaster;
       const byte = this._pcmModel.next();

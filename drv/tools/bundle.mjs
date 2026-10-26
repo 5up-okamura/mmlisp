@@ -149,7 +149,7 @@ export function buildBundle(manifest, { baseDir = ".", frameHz, multibankAuto = 
     s.ir.metadata = { ...(s.ir.metadata ?? {}), pcmVoices };
   }
   const multibank = !!manifest.multibank;
-  const rateHz = (multibank ? bankedEngineImage(Math.max(1, pcmVoices), songs[0].ir.metadata.frameHz) : engineImage(pcmVoices)).rateHz;
+  const rateHz = (multibank ? bankedEngineImage(Math.max(1, pcmVoices), songs[0].ir.metadata.frameHz) : engineImage(pcmVoices, songs[0].ir.metadata.frameHz)).rateHz;
   if (multibankAuto)
     diag("info", "I_MMB_MULTIBANK",
       `the shared bank exceeds one 32 KB bank; built as multi-bank PCM, baked at ${Math.round(rateHz)} Hz (docs/pcm-multibank.md)`);

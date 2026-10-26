@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ENGINE_IMAGES } from "../../live/src/engine-images.js";
+import { ENGINE_IMAGES, ENGINE_IMAGES_PAL } from "../../live/src/engine-images.js";
 import { pcmBankStamp } from "../../live/src/mmb.js";
 
 const drv = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -31,6 +31,12 @@ for (const r of rows) {
   if (!ok) bad++;
   console.log(`${ok ? "ok  " : "FAIL"}  ${r.rel.padEnd(26)} ${r.stamps ? r.stamps.join(" / ") : "no RATE-STAMPS"} Hz — ${r.what}`);
 }
+// The PAL stamps: the same images on PAL's clock, which only the 68k checks.
+const palM = /RATE-STAMPS-PAL\s+(\d+)\s+(\d+)\s+(\d+)/.exec(readFileSync(join(drv, "68k/mml_rate.h"), "utf8"));
+const palWant = [1, 2, 3].map((v) => pcmBankStamp(ENGINE_IMAGES_PAL[v].rateHz));
+const palOk = palM && palM.slice(1).every((x, i) => Number(x) === palWant[i]);
+if (!palOk) bad++;
+console.log(`${palOk ? "ok  " : "FAIL"}  ${"68k/mml_rate.h (PAL)".padEnd(26)} ${palM ? palM.slice(1).join(" / ") : "no RATE-STAMPS-PAL"} Hz — against ${palWant.join(" / ")}`);
 if (bad) {
   console.log("\nFAIL: the committed artifacts describe different engine images. Regenerate:");
   console.log("    node tools/emit-images.mjs && node tools/gen-c-tables.mjs && node tools/emit-bin.mjs");

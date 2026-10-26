@@ -3,11 +3,16 @@
 #define MML_RATE_H
 
 /* The DAC rate, rounded, of the engine image for 1, 2 and 3 PCM voices: the
- * stamp a sample bank baked for that image carries (mmb.md §10). */
+ * stamp a sample bank baked for that image carries (mmb.md §10). The same
+ * image runs slower on PAL, and a PAL score's bank is baked at that rate. */
 #define MML_PCM_STAMP_1 14376
 #define MML_PCM_STAMP_2 10112
 #define MML_PCM_STAMP_3 6653
+#define MML_PCM_STAMP_PAL_1 14245
+#define MML_PCM_STAMP_PAL_2 10019
+#define MML_PCM_STAMP_PAL_3 6593
 
 /* RATE-STAMPS 14376 10112 6653 — see tools/rate-mirrors.mjs. */
+/* RATE-STAMPS-PAL 14245 10019 6593 */
 
 #endif

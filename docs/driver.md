@@ -316,12 +316,13 @@ it lands on the beat on both standards. One with a frame `:step` resolves a
 tick-written `:len` to frames at compile time, on the target clock like a
 sweep, and the rounding happens on each standard independently.
 
-Not covered: **PCM pitch.** A bank is baked at the image's DAC rate, which
-comes from the Z80 clock, and the PAL Z80 runs 0.92% slower — so samples play
-about 16 cents flat there. The engine is free-running and cycle-paced, so
-nothing else about it changes; a PAL frame gives it 19.5% *more* cycles, which
-is the safe direction. Re-baking a bank at the PAL rate would fix the pitch and
-has not been done.
+**PCM pitch follows the same split.** The engine is the same image on both
+standards — free-running and cycle-paced, so its period is the same count of
+Z80 cycles — but the PAL Z80 runs 0.92% slower, so its DAC rate is lower
+(10,019 Hz against 10,112 at two voices). A PAL score's bank is baked at its
+image's PAL rate and stamped with it (mmb.md §10), so a sample plays at its
+pitch on the machine it was baked for. A PAL frame gives the engine 19.5%
+*more* cycles, which is the safe direction.
 
 Gate: `npm run pal-gate` (§12.8), plus `npm run c-gate:pal`, which runs the
 whole c-gate corpus on PAL-baked streams — the C matching its reference there
@@ -1132,10 +1133,8 @@ including under an effect.
   `"se"` file; the control data is small, the samples are shared). A PCM SE
   restarts the BGM loop from the sample's head, not from where it was. No
   effect plays on CH3.
-- **PAL:** supported by baking a second score (§3.3); one MMB plays correctly
-  on one standard. A single-bank PAL score's samples are baked at the NTSC DAC
-  rate, so they play at the NTSC image's rate on a PAL machine too; the banked
-  images have PAL rates of their own.
+- **PAL:** supported by baking a second score (§3.3); one MMB, and its sample
+  bank, plays correctly on one standard.
 - **Hardware.** The SGDK example and a three-voice multi-bank score play on
   an Analogue Mega SG (an FPGA Mega Drive) from a Mega EverDrive X7. The images are graded in the JS machine (§12.4) and on BlastEm
   (§12.7); the slot that binds each rate has no margin, and the one wait the
