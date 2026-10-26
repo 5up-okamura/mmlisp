@@ -770,6 +770,7 @@
     .knob-wrap { display: flex; flex-direction: column; gap: 0; }
     .knob-wrap[hidden] { display: none; } /* a word the score's machine lacks (applyTargetUi) */
     .op-col[hidden] { display: none; } /* an operator it lacks (the OPLL's two) */
+    .knob-wrap.op-gap { visibility: hidden; } /* a row this operator lacks and another has: its place kept */
     .param-grid[hidden] { display: none; } /* a row of words it lacks (the OPM's LFO) */
     .knob-label {
       font-size: 0.58rem;
@@ -965,6 +966,20 @@
       cursor: pointer; /* click to preview the last-played note */
     }
     #fmParamSection.fm-disabled .alg-diagram { opacity: var(--off); cursor: default; }
+    /* A 2-op FM (the OPLL's): the diagram and FB in the operators' free
+       columns (applyTargetUi moves them in) — the diagram on the band of the
+       operators' titles and envelopes, FB on their first row. */
+    #fmParamSection.two-op .alg-grid {
+      grid-column: 3 / 5;
+      grid-row: 1;
+      align-self: start;
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas: "d d" "b .";
+    }
+    #fmParamSection.two-op .alg-diagram {
+      height: calc(0.8rem + 0.5rem + 30px); /* .op-col-title + .op-col gap + .op-env */
+      min-height: 0;
+    }
     /* The editor slot holds one editor: the other is away. */
     .rack-section.editor-away { display: none; }
     /* The vector editor: a step vector drawn as bars (src/vector-editor.js). */

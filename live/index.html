@@ -488,7 +488,8 @@
       <div class="rack-section" id="fmParamSection" data-needs="kind:fm">
         <div class="rack-title rack-title-row"><span>FM</span><span id="fmParamStatus"></span></div>
         <div class="rack-body">
-        <div class="alg-grid">
+        <div id="algHome">
+        <div class="alg-grid" id="algGrid">
           <div class="knob-wrap" style="grid-area:a" data-needs="word:FM_ALG">
             <div class="knob-label">ALG <span class="val" id="val-alg">0</span></div>
             <input type="range" id="sl-alg" min="0" max="7" value="0" oninput="onChParam('FM_ALG', this)">
@@ -506,6 +507,7 @@
             <input type="range" id="sl-fms" min="0" max="7" value="0" oninput="onChParam('FM_FMS', this)">
           </div>
           <canvas id="algDiagram" class="alg-diagram" title="Click to preview (last note)"></canvas>
+        </div>
         </div>
         <div class="op-grid" id="opGrid"></div>
         </div>
@@ -7599,10 +7601,28 @@
       }
       // The FM panel on the machine's FM part: a 2-op chain where it has no
       // algorithm (the OPLL's), each operator slider on its register's range.
+      // There the diagram and FB move into the operators' free columns.
       const fmPart = target.parts.find((p) => p.kind === 'fm');
       const twoOp = !!fmPart && !target.hasWord('FM_ALG');
       const repaint = twoOp !== _fmTwoOp;
       _fmTwoOp = twoOp;
+      document.getElementById('fmParamSection')?.classList.toggle('two-op', twoOp);
+      const algGrid = document.getElementById('algGrid');
+      (twoOp ? document.getElementById('opGrid') : document.getElementById('algHome'))?.appendChild(algGrid);
+      // A row one operator lacks and another has (the OPLL's op2 TL) keeps
+      // its place, so each row lines up across the operators.
+      for (const pp of OP_PARAMS) {
+        const wraps = [1, 2, 3, 4]
+          .filter((op) => !document.getElementById(`op-col-${op}`)?.hidden)
+          .map((op) => document.getElementById(`sl-op${op}-${pp.key}`)?.closest('.knob-wrap'));
+        const some = wraps.some((w) => w && !w.hidden);
+        for (const w of wraps) {
+          if (!w) continue;
+          const gap = some && w.hidden;
+          w.classList.toggle('op-gap', gap);
+          if (gap) w.hidden = false;
+        }
+      }
       for (let op = 1; op <= 4; op++)
         for (const pp of OP_REG_PARAMS) {
           const sl = document.getElementById(`sl-op${op}-${pp.key}`);
@@ -11250,7 +11270,10 @@
       // An OPLL envelope that does not hold (EG 0) decays on at RR.
       const el = (k) => document.getElementById(`sl-op${op}-${k}`);
       const v = (k) => parseInt(el(k)?.value ?? '0', 10) || 0;
-      const on = (k) => !el(k)?.closest('.knob-wrap')?.hidden;
+      const on = (k) => {
+        const w = el(k)?.closest('.knob-wrap');
+        return !!w && !w.hidden && !w.classList.contains('op-gap');
+      };
       const scaled = (k, top) => (on(k) ? (v(k) * top) / (parseInt(el(k).max, 10) || top) : 0);
       const tl = scaled('tl', 127), ar = scaled('ar', 31), dr = scaled('dr', 31), sl = v('sl'), rr = v('rr');
       const d2r = on('eg') ? (v('eg') ? 0 : rr * 2) : scaled('d2r', 31);
