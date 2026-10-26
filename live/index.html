@@ -10003,7 +10003,7 @@
       // every operator's F-number so all keyed operators play in unison.
       // These supplementary registers are inert in normal mode.
       if (ch === 2 && fm.csm) {
-        for (let op = 1; op <= 4; op++) player._writeFm3OpPitch(op, midi);
+        for (let op = 1; op <= 4; op++) player._writeFm3OpPitch(op, midi, 0);
       }
       writePreviews(fm.key(ch, borrowed ?? player.getOpMask(ch)));
     }
