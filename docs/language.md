@@ -2556,7 +2556,11 @@ alike, ADPCM grain included.
 two cartridges a score has only when it plays their channels: the SCC's
 K051649 at the same clock (VGM 1.61) and the FM-PAC's YM2413 at 3.58 MHz.
 Play and WAV run ymfm's SSG, an SCC of the toolchain's own and ymfm's
-YM2413. There is no PCM: `pcm1`–`pcm3` are `E_TARGET`.
+YM2413. There is no PCM: `pcm1`–`pcm3` are `E_TARGET`. The chips hear the
+song a frame (1/60 s) at a time, as the MSX's drivers play it on the video
+frame: a note starts on the frame nearest its time, its macros step from
+there, and a gate keys it off whole frames later — its share of the
+note's frames, rounded down, one at least.
 
 **PSG.** `sqr1`–`sqr3` and `noise` are the SSG's, as on `pc88`: each
 channel's mixer, `:mode tone|noise|both`, the song's noise period

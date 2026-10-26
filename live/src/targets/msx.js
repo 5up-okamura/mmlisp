@@ -28,6 +28,11 @@ export default {
   name: "msx",
   system: "MSX",
   driver: null,
+  // Its drivers (MGSDRV's, every MSX MML driver's) run on the video frame's
+  // interrupt: the chips hear a song a frame at a time (the IR player snaps
+  // each write to the frame it lands in). The PC-8801's and the X68000's run
+  // on the sound chip's timer, the tick the score's tempo is set to.
+  frameClock: true,
   chips: { psg: ay8910, scc: k051649, opll: ym2413 },
   channels: {
     sqr1: on(ssgTone, 0), sqr2: on(ssgTone, 1), sqr3: on(ssgTone, 2),

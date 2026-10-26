@@ -1766,56 +1766,56 @@
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "602742d8cea2f201",
-  "regs": "ff41637455805834",
-  "vgm": "567975462b681425"
+  "regs": "8bfd1d708886d7c2",
+  "vgm": "b5c9e5eff4f5c0ac"
  },
  "tools/tests/msx/env.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "2964df1381fd7816",
-  "regs": "cc5cbddd817282e0",
-  "vgm": "a9aa2a70e69b8d53"
+  "regs": "065275e48159a109",
+  "vgm": "c2c66aff8108430d"
  },
  "tools/tests/msx/fm-pac-rhythm-pitch.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "c7d892d2aca943e6",
-  "regs": "4306eb4acb090712",
+  "regs": "793b4cbb8ec9562f",
   "vgm": "1db7426aae373b69"
  },
  "tools/tests/msx/fm-pac-rhythm.mmlisp": {
   "diagnostics": "b4e4c9ef89c5b72c",
   "ir": "fbdedacabedb4132",
-  "regs": "6ab3bafc662d7736",
-  "vgm": "a10509eb5472884d"
+  "regs": "47f4a2e4ebfc60a8",
+  "vgm": "009485f1f1300b2c"
  },
  "tools/tests/msx/fm-pac.mmlisp": {
   "diagnostics": "b4e4c9ef89c5b72c",
   "ir": "2c7c563b5d8c5496",
-  "regs": "e8c38b5c69bda074",
-  "vgm": "b902f4db31a746b6"
+  "regs": "447408c00b8039cb",
+  "vgm": "17acd09c8fa446eb"
  },
  "tools/tests/msx/noise.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "74a1b89a608c2c34",
-  "regs": "66dcc57873d00aa8",
-  "vgm": "160910ff28cc7966"
+  "regs": "1486feaf5273cfee",
+  "vgm": "508c7306ed6e0707"
  },
  "tools/tests/msx/psg.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "32e197dddd94da7b",
-  "regs": "db027fdbae78189a",
-  "vgm": "14e9200933b15eab"
+  "regs": "710f7eef5ff8e68b",
+  "vgm": "adcbe90505d8fd59"
  },
  "tools/tests/msx/scc-expr.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "1cc9b1ede7ea18da",
-  "regs": "39c5b814dba74842",
-  "vgm": "ac36cc1eaa46a9cb"
+  "regs": "573c1cf568b1e844",
+  "vgm": "4c68007898366368"
  },
  "tools/tests/msx/scc.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5dbef8f70c479ae6",
-  "regs": "848e36d4681bdf12",
-  "vgm": "d9e2bddeb0ceb484"
+  "regs": "48b59f4097b08615",
+  "vgm": "9f70060e3a3e181d"
  },
  "tools/tests/pc88/adpcm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

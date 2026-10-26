@@ -128,14 +128,15 @@ Next:
   99.8-100% a frame), $36-$38's levels and $16-$28's tunings, and y to the
   driver's register writes (a user voice's $00-$07, the PSG's $06/$07).
 - MGSDRV's frame, as measured on libkss (2026-10-26, crafted MGS files,
-  scratch `g2/mgsq.mjs`): it acts on whole frames, so its notes start a
-  frame apart from ours, which write at the tick's own time (the msx
-  target has no driver) — a player-wide choice, not taken yet; a q8 note
-  before a rest keys off a frame late; libkss runs the MSX at 59.92 Hz,
-  so a comparison in 60 Hz VGM frames drifts 0.13 % (not ours). A `y14`'s
-  held keys (HH, CYM) ring once at the `y` at levels the file does not
-  give (MGSDRV writes HH 3 with no `@`), so they are left out; only a
-  song's first `y14` is read.
+  scratch `g2/mgsq.mjs`, `g2/mgstempo.mjs`): count c starts on frame
+  round(c · W / 192), W = floor(14400 / t), a half up; a gate keys off
+  floor(note frames · q / 8) frames in, one at least — the msx target
+  plays so (`frameClock`, built). Left: a q8 note before a rest keys off
+  one or two frames late in MGSDRV. libkss runs the MSX at 59.92 Hz:
+  ab-mgsdrv reads it on that frame, mid-frame. A `y14`'s held keys (HH,
+  CYM) ring once at the `y` at levels the file does not give (MGSDRV
+  writes HH 3 with no `@`), so they are left out; only a song's first
+  `y14` is read.
 - Not yet held to MGSDRV (2026-10-26): the PSG's hardware envelope — `s`
   on, `v` off (MGSC111.TXT says `v` "等" restores the software envelope: @
   may too), a key-on rewriting R13, and `m` as `:env-rate` Hz. Check with

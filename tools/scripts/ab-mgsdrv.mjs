@@ -37,14 +37,18 @@ player.loadJSON(ir);
 const ourVgm = renderVgm(player, {}, null).bytes;
 
 // A VGM → the chips' registers at the end of each 1/60 s frame.
-function frames(u8) {
+// Each side read on its own frame, in the frame's middle (a write on its
+// edge is on one side of it): MGSDRV's on libkss at the MSX's 59.92 Hz
+// (3579545 / 228 / 262), ours at the player's 60 Hz — so frame n is frame n.
+const MSX_FRAME = 44100 / (3579545 / 228 / 262);
+function frames(u8, step = 735) {
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   let p = dv.getUint32(8, true) >= 0x150 ? 0x34 + dv.getUint32(0x34, true) : 0x40;
   const ay = new Uint8Array(16), opll = new Uint8Array(64);
   const scc = { freq: new Uint16Array(5), vol: new Uint8Array(5), key: 0 };
   const out = [];
-  let t = 0, next = 735;
-  const wait = (n) => { t += n; while (t >= next) { out.push({ ay: ay.slice(), opll: opll.slice(), scc: { freq: scc.freq.slice(), vol: scc.vol.slice(), key: scc.key } }); next += 735; } };
+  let t = 0, next = step / 2;
+  const wait = (n) => { t += n; while (t >= next) { out.push({ ay: ay.slice(), opll: opll.slice(), scc: { freq: scc.freq.slice(), vol: scc.vol.slice(), key: scc.key } }); next += step; } };
   while (p < u8.length) {
     const c = u8[p];
     if (c === 0x66) break;
@@ -99,7 +103,7 @@ function channel(f, id) {
     vol: 15 - (f.opll[0x30 + i] & 15), text: `i${f.opll[0x30 + i] >> 4} s${(hi >> 5) & 1}` };
 }
 
-const R = frames(refVgm), O = frames(ourVgm);
+const R = frames(refVgm, MSX_FRAME), O = frames(ourVgm);
 const ids = [0, 1, 2].map((i) => `psg:${i}`).concat([0, 1, 2, 3, 4].map((i) => `scc:${i}`), [...Array(9).keys()].map((i) => `fm:${i}`),
   [0, 1, 2, 3, 4].map((i) => `rh:${i}`)); // rh: BD SD TOM CYM HH
 const N = Math.min(R.length, O.length);

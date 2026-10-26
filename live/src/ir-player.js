@@ -215,7 +215,27 @@ export class IRPlayer {
     // that plays it, its part, and its lane in that core (the FM channel, the
     // PSG lane, the sample voice).
     this._routes = new Map();
-    this._write = writeCallback;
+    // Every chip write goes out through `_write`, whatever writer is set (a
+    // capture, a seek set their own); on a target whose drivers run on the
+    // video frame (`frameClock`, the MSX) a write's time is moved to the
+    // frame it falls on, where the driver would make it (_frameTime). The
+    // wrapper read is the writer's own, so one saved and set back (a capture
+    // restoring the page's) is that writer again.
+    let rawWrite = writeCallback;
+    let framed = null;
+    Object.defineProperty(this, "_write", {
+      get: () => {
+        if (!this._target?.frameClock) return rawWrite;
+        if (framed?.raw !== rawWrite) {
+          const raw = rawWrite;
+          framed = (port, addr, data, when) => raw(port, addr, data, this._frameTime(when));
+          framed.raw = raw;
+        }
+        return framed;
+      },
+      set: (fn) => { rawWrite = fn?.raw ?? fn; },
+      configurable: true,
+    });
     this._ir = null;
     this._playing = false;
     this._loopCount = new Map(); // loopId → iteration count
@@ -1458,7 +1478,10 @@ export class IRPlayer {
         // label's line (#top) counts, so it plays from the label.
         const w = this._chaseWatch;
         if (w && w.time == null && ev.src?.line === w.line) w.time = evTime;
-        this._dispatchEvent(ev, evTime);
+        // On a frame-clocked target an event happens on the frame its time
+        // falls in, so a note's key-on and its macros' steps count from one
+        // frame (_frameTime).
+        this._dispatchEvent(ev, this._target.frameClock ? this._frameStart(evTime) : evTime);
         // `:len 0`: the track waits here for its key-off (_resumeHeldTrack).
         if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev.args?.length === 0) {
           track.held = { tick: ev.tick, when: evTime };
@@ -2346,7 +2369,7 @@ export class IRPlayer {
         );
         const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
-        const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+        const gateTicks = this._frameGate(when, this._resolveGateTicks(ev.args?.gate, lengthTicks), lengthTicks);
         // Monophonic priority: macro tails (echo/retrigger/curve) are cut a
         // key-off lead before the next note on this channel, so they cannot
         // bleed onto it and the next note keeps its normal lead-in.
@@ -3987,6 +4010,20 @@ export class IRPlayer {
     return rawGate != null ? Math.min(rawGate, lengthTicks) : lengthTicks;
   }
 
+  // A note's gate on a frame-clocked target (the MSX, `frameClock`): in the
+  // note's own frames as its driver counts them — it starts on its key-on's
+  // frame (_frameOf) and keys off whole frames later, its share
+  // of the frames to its end rounded down, one at least (held to MGSDRV on
+  // libkss: q6 of a 15-frame note is 11). Returned in ticks; a held or
+  // full-length gate is as it was.
+  _frameGate(when, gateTicks, lengthTicks) {
+    if (!this._target?.frameClock || !(gateTicks > 0) || !(gateTicks < lengthTicks)) return gateTicks;
+    const f0 = this._frameOf(when), f1 = this._frameOf(this._timeAfterTicks(when, lengthTicks));
+    const g = Math.max(1, Math.floor(((f1 - f0) * gateTicks) / lengthTicks + 1e-6));
+    const off = this._frameOrigin + (f0 + g) / 60;
+    return Math.min(lengthTicks, Math.max(0, (off - when) / this._secsPerTick));
+  }
+
   // Compute { noteFrames, gateSecs } for macro scheduling.
   // gateTicks === 0 = hold note (runs until triggerKeyOff).
   _resolveNoteFramesAndGate(when, gateTicks) {
@@ -4022,7 +4059,9 @@ export class IRPlayer {
       }
       spt = 60 / (c.bpm * this._ppqn);
     }
-    return t + left * spt;
+    // On a frame-clocked target a time the ticks reach is a frame's: a gate's
+    // end and the next note's key-on fall on one frame, in the order written.
+    return this._target?.frameClock ? this._frameStart(t + left * spt) : t + left * spt;
   }
 
   // The tempo changes still to come that are already known: the sweep's
@@ -5089,6 +5128,27 @@ export class IRPlayer {
     this._psgWrites(this._lane(lane, (e, ch) => e.wave?.(ch, data) ?? []), this._audioContext?.currentTime ?? 0);
   }
 
+  // The frame a time falls on, on a frame-clocked target: the nearest, a
+  // half up (MGSDRV's count c starts on frame round(c · W / 192), W the
+  // whole note's floor(14400 / t) frames — held to it on libkss), with a
+  // hair over for the tempo's rounded tick (drvBpm).
+  _frameOf(when) {
+    return Math.floor((when - this._frameOrigin) * 60 + 0.5 + 0.01);
+  }
+  // A write's time on a frame-clocked target (`_write`): its frame's start,
+  // the writes in it kept in their order (1e-4 of a frame between the
+  // first and the last). None (now) stays none.
+  _frameTime(when) {
+    if (when === undefined || when === null || typeof when !== "number") return when;
+    const f = (when - this._frameOrigin) * 60;
+    const F = this._frameOf(when);
+    return this._frameOrigin + (F + (f - F + 0.51) * 1e-4) / 60;
+  }
+  // The frame boundary a time's event happens on.
+  _frameStart(when) {
+    return this._frameOrigin + this._frameOf(when) / 60;
+  }
+
   // When the last of the tracks' notes ends, on their own clocks.
   _songEndTime() {
     let end = 0;
@@ -5601,7 +5661,7 @@ export class IRPlayer {
         const isNoise = psgCh === 3; // the PSG's noise lane
         const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
-        const psgGateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+        const psgGateTicks = this._frameGate(when, this._resolveGateTicks(ev.args?.gate, lengthTicks), lengthTicks);
         // Monophonic priority: cut this note's macro tail a key-off lead before
         // the next note on this channel.
         const psgNextNote = this._nextNote(ev).secs;
