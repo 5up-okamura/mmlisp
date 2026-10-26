@@ -11566,6 +11566,9 @@
         span?.end > 0 ? `${fmtTime(pos)} / ${fmtTime(span.end)}` : fmtTime(pos);
     }
     function seekTo(sec) {
+      // The pitch trace is what sounded before the jump, laid out on the clock
+      // as it ran then: it no longer lines up with the roll, so it goes.
+      _rollTrace = null;
       if (player instanceof IRPlayer && player.isPlaying() && player._ir) {
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });
