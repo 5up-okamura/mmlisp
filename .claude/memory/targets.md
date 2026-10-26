@@ -116,15 +116,16 @@ times only, never interpolated; 64 → 32 a `W_TARGET`. A part with no level
 `W_TARGET`, built with the 2A03. Order: the part model before the Live
 strip (node-checkable first; the strip's entry carries the part).
 
+Done (2026-10-27): the Live page's channels are slots (`FM_SLOTS`,
+`TONE_SLOTS`, `PCM_SLOT`; a strip carries `slot`), nothing reads a kind off
+a number; ruled with it: no kind-adapter registry (14 `kind` switches are
+enough), the Library's Fits and the def under the cursor already come from
+the parts.
+
 Next:
-1. Live page: a strip carries its channel entry (`selectedCh` numbers,
-   `PSG_UI_BASE`, `isFmChannel` go), kind adapters for preview / mixer /
-   panel, a def-kind registry for "the voice under the cursor", Library
-   Fits from the part (not `/^fm/`, `/^pcm/`). The wave editor would sit on
-   that.
-2. VGM: one data-block hook for the DAC / ADPCM-B / OKI special cases
+1. VGM: one data-block hook for the DAC / ADPCM-B / OKI special cases
    (optional).
-3. IR player: FM3 / CSM / Timer A into the OPN encoder (hygiene; gated by
+2. IR player: FM3 / CSM / Timer A into the OPN encoder (hygiene; gated by
    `csm` today). The OPLL's level through its encoder and per-part ranges
    are built (stage 2).
 

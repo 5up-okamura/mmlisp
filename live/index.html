@@ -1724,14 +1724,14 @@
           if (ev.cmd !== 'NOTE_ON' || !ev.src) continue;
           let r; try { r = srcToRange(doc, ev.src); } catch (_) { continue; }
           if (r[0] === tokenStart) {
-            return { midi: pitchToMidi(ev.args?.pitch ?? 'c4'), chIndex: entry.selIndex ?? 0 };
+            return { midi: pitchToMidi(ev.args?.pitch ?? 'c4'), slot: entry.slot ?? FM_SLOTS[0] };
           }
         }
       }
       return null;
     }
     function buildPitchRow(el, tokenStart, idx, field) {
-      const ctx = resolveNoteContext(tokenStart) ?? { midi: 60, chIndex: 0 };
+      const ctx = resolveNoteContext(tokenStart) ?? { midi: 60, slot: FM_SLOTS[0] };
       const octaveBase = Math.floor(ctx.midi / 12) * 12;
       const curIdx = NOTE_TO_IDX[field.value.note];
       // Reuse the dock keyboard's construction (KB_WHITE_SEMITONES / KB_BLACK_DEFS
@@ -1746,7 +1746,7 @@
       const press = (s, btn) => {
         const f = liveField(tokenStart, idx);
         if (!f) { closePopup(); return; }
-        startPreviewNote(ctx.chIndex, octaveBase + s);
+        startPreviewNote(ctx.slot, octaveBase + s);
         applyText(f.range[0], f.range[1], CHROMA[s]);
         piano.querySelectorAll('.kb-key.cur').forEach((k) => k.classList.remove('cur'));
         btn.classList.add('cur');
@@ -1756,7 +1756,7 @@
         btn.type = 'button';
         btn.className = cls + (s === curIdx ? ' cur' : '');
         btn.onpointerdown = (e) => { e.preventDefault(); btn.classList.add('down'); press(s, btn); };
-        btn.onpointerup = btn.onpointerleave = () => { btn.classList.remove('down'); previewNoteOff(ctx.chIndex); };
+        btn.onpointerup = btn.onpointerleave = () => { btn.classList.remove('down'); previewNoteOff(ctx.slot); };
         return btn;
       };
       for (const s of KB_WHITE_SEMITONES) whiteRow.appendChild(mkKey(s, 'kb-key'));
@@ -6591,17 +6591,26 @@
     let _initAudioPromise = null;
     let player = null;
     let currentIrURL = null;
-    let selectedCh = null;                 // the page's FM/PSG channel number (below) or null — drives the FM param panel
+    // The page's channels — what a strip selects, the panel edits and the keys
+    // play — one object each, compared by identity: an FM channel by its
+    // number on the chip (as many as the most a target has, targets/), a tone
+    // lane by the IR player's (targets.js toneLaneOf: the PSG's tones, its
+    // noise, the wave channels), and the one sample voice the keys audition.
+    // The player is handed `ch` / `lane`; nothing reads a kind off a number.
+    const FM_SLOTS = Array.from(
+      { length: Math.max(...Object.values(TARGETS).flatMap((t) => t.headsOfKind('fm').map((h) => t.channels[h].voice + 1))) },
+      (_, ch) => ({ kind: 'fm', ch, label: `F${ch + 1}` }));
+    const TONE_SLOTS = Array.from({ length: TONE_LANES },
+      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5'][lane] ?? '' }));
+    const NOISE_SLOT = TONE_SLOTS[toneLaneOf({ part: { kind: 'noise' } })]; // one channel: the keys play it alone
+    const PCM_SLOT = { kind: 'pcm', label: '' };
+    let selectedCh = null;                 // the selected strip's FM or tone slot, or null — drives the FM param panel
     let selectedChannel = null;            // head of the selected strip (e.g. "fm3-1", "pcm1"), or null: none is selected
                                            // (a PCM strip leaves selectedCh null, so test this one for "none")
-    const CURSOR_DEF_PREVIEW_CH = 0;        // FM channel used to audition a cursor FM def (incl. its op mask)
-    const PCM_PREVIEW_CH = 'pcm';           // the keyboard's target while the cursor is on a sample def
-    // The page's channel numbers (selIndex, selectedCh, the keys' targets):
-    // FM from 0, as many as the most a target has (targets/), then the tone
-    // lanes — the IR player's: the PSG's three tones and its noise, then the
-    // wave channels (targets.js toneLaneOf).
-    const PSG_UI_BASE = Math.max(...Object.values(TARGETS).flatMap((t) => t.headsOfKind('fm').map((h) => t.channels[h].voice + 1)));
-    const psgLaneOf = toneLaneOf;
+    const CURSOR_DEF_PREVIEW_CH = FM_SLOTS[0]; // where a cursor FM def is auditioned (incl. its op mask)
+    const PCM_PREVIEW_CH = PCM_SLOT;        // the keyboard's target while the cursor is on a sample def
+    const isFmSlot = (slot) => slot?.kind === 'fm';
+    const isToneSlot = (slot) => slot?.kind === 'tone';
     let _pcmCursorDef = null;               // name of the sample def under the cursor
     let _prevFmParamMode = null;            // previous getFmParamMode(), to detect entering cursor-def
     let _prevCursorDefKey = null;           // identity of the def under the cursor, to detect switching defs
@@ -6618,7 +6627,7 @@
     let _fmShownRegs = null;                // the FM editor's last subject's registers, kept while dimmed
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
-    let _chStripModel = [];                // [{ head, label, trackIndex, selIndex }] built from the current IR
+    let _chStripModel = [];                // [{ head, label, trackIndex, slot }] built from the current IR
     let _dynVals = {};                     // Dynamic Parameters: name → current slider value (declared here so the startup compileNow can render before the panel functions)
     let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
     let _libraryScorePlayer = null;          // the score or snippet Library ▶ is playing
@@ -6639,7 +6648,7 @@
     let _stepInputEnabled = false;
     let _kbBaseOctave = 3;
     const _kbPointerMap = new Map();
-    const _kbPhysicalMap = new Map();      // physical-keyboard note down: e.code → { chIndex, midi }
+    const _kbPhysicalMap = new Map();      // physical-keyboard note down: e.code → { slot, midi }
     let _lastPreviewMidi = 60;             // last previewed pitch (initial C4 = MIDI 60)
     let _algPreviewTimer = null;           // fixed-gate timer for the algorithm-diagram tap preview
     const PREVIEW_GATE_MS = 600;           // tap-preview note length (long enough to hear sustain/release)
@@ -6737,10 +6746,6 @@
     // -----------------------------------------------------------------------
     // Channel strips: mute / solo (driven by the compiled score)
     // -----------------------------------------------------------------------
-    // Hardware-index labels, still used by the FM param-panel status (channelLabel).
-    const FM_LABELS  = ['F1','F2','F3','F4','F5','F6','F7','F8','F9'];
-    const PSG_LABELS = ['S1','S2','S3','N1','W1','W2','W3','W4','W5']; // by tone lane
-
     // Score channel name (head) → short strip label: the name's first letter
     // and its numbers ("fm3-1" → "F3-1", "sqr2" → "S2"); the CSM strip is
     // "CSM", and the one noise is "N1".
@@ -6753,8 +6758,8 @@
     // Per-head routing, computed once per strip:
     //  - volKind/volIndex: where the live vol fader writes (FM channel / PSG ch /
     //    PCM track). fm3, fm3-1..4 and fm3-csm all share hardware FM3.
-    //  - selIndex: hardware index driving the FM param panel (0-7 FM, 8-11 PSG,
-    //    null = no editable FM panel: pcm*). csm edits CH3, the voice it keys.
+    //  - slot: the page's channel the strip selects (FM_SLOTS / TONE_SLOTS),
+    //    null for a sample voice. csm edits CH3, the voice it keys.
     // A head's place on the chip, from the score's target (targets/): its
     // part's kind and the voice index — the FM channel, the PSG channel, the
     // PCM slot. Null for a name the target has no channel of.
@@ -6765,12 +6770,11 @@
     const isPsgVoice = (c) => toneLaneOf(c) != null; // a tone lane's: the PSG's, a wave channel
     function channelRouting(head) {
       const c = channelVoice(head);
-      if (c?.part.kind === 'sample') return { volKind: 'pcm', volIndex: null, selIndex: null };
+      if (c?.part.kind === 'sample') return { volKind: 'pcm', volIndex: null, slot: null };
       // The IR player's PSG lane: a tone's voice, the noise's lane 3.
-      const lane = c && isPsgVoice(c) ? psgLaneOf(c) : c?.voice;
-      if (isPsgVoice(c)) return { volKind: 'psg', volIndex: lane, selIndex: PSG_UI_BASE + lane };
+      if (isPsgVoice(c)) return { volKind: 'psg', volIndex: toneLaneOf(c), slot: TONE_SLOTS[toneLaneOf(c)] };
       const fm = isFmVoice(c) ? c.voice : null;
-      return { volKind: 'fm', volIndex: fm, selIndex: fm };
+      return { volKind: 'fm', volIndex: fm, slot: fm == null ? null : FM_SLOTS[fm] };
     }
 
     // Build the strip model from the IR's used channels, in the target's
@@ -6819,7 +6823,7 @@
             // The roll's row: this sound's hits, from every rhythm track.
             const samples = new Set([...soundOf].filter(([, r]) => r === sound).map(([n]) => n));
             model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), voice: sound, scope: target.scopeLane(head) + (kitLane?.[sound] ?? k),
-              volKind: 'voice', volIndex: null, selIndex: null, trackIndex: rhythmTracks[0], rhythmTracks, samples });
+              volKind: 'voice', volIndex: null, slot: null, trackIndex: rhythmTracks[0], rhythmTracks, samples });
           });
           continue;
         }
@@ -7251,8 +7255,8 @@
       player?.setParam('MASTER', val, 0);
       // Reflect the new master on the selected FM channel's TL immediately (the
       // live refresh loop only runs while playing).
-      if (player && isFmChannel(selectedCh) && getFmParamMode() === 'channel') {
-        applyRegsToFmSliders(player.getChRegs(selectedCh), player.getOpMask(selectedCh));
+      if (player && isFmSlot(selectedCh) && getFmParamMode() === 'channel') {
+        applyRegsToFmSliders(player.getChRegs(selectedCh.ch), player.getOpMask(selectedCh.ch));
       }
     }
 
@@ -8779,13 +8783,13 @@
         setLibraryNote(`${def.name} \u2014 not sounded while the MMLispDRV backend plays`);
         return;
       }
-      applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH, def.regs);
+      applyFmRegsToChannel(CURSOR_DEF_PREVIEW_CH.ch, def.regs);
       _openingVoiceOn = null;
       stopLibraryPreview();
       previewNoteOn(CURSOR_DEF_PREVIEW_CH, midi);
       _libraryPreviewTimers.push(setTimeout(
         () => previewNoteOff(CURSOR_DEF_PREVIEW_CH), (PREVIEW_NOTE_SEC - PREVIEW_GAP_SEC) * 1000));
-      setLibraryNote(`${def.name} \u2014 c4${def.regs.key != null ? ` (:key ${def.regs.key})` : ''} on ${channelLabel(CURSOR_DEF_PREVIEW_CH)}`);
+      setLibraryNote(`${def.name} \u2014 c4${def.regs.key != null ? ` (:key ${def.regs.key})` : ''} on ${CURSOR_DEF_PREVIEW_CH.label}`);
     }
 
     // A sample has no register form to push: it is bytes in a bank. So compile
@@ -9512,16 +9516,6 @@
       };
     }
 
-    function isFmChannel(ch) {
-      return Number.isInteger(ch) && ch >= 0 && ch < PSG_UI_BASE;
-    }
-
-    function channelLabel(ch) {
-      if (ch == null) return '';
-      if (ch >= 0 && ch < PSG_UI_BASE) return FM_LABELS[ch] ?? '';
-      if (ch >= PSG_UI_BASE && ch < PSG_UI_BASE + TONE_LANES) return PSG_LABELS[ch - PSG_UI_BASE] ?? '';
-      return '';
-    }
 
     function isFmVoiceDefNode(node) {
       return node?.kind === 'list' && node.items?.[0]?.value === 'def-fm';
@@ -9796,7 +9790,7 @@
       if (subject?.kind === 'wave' && !subject.writable && importedWaveDefs().has(subject.name))
         subject = { ...subject, writable: true, importCopy: importedWaveDefs().get(subject.name) };
       if (subject) _editorKind = 'vector';
-      else if (_fmCursorDefContext || isFmChannel(selectedCh)) _editorKind = 'fm';
+      else if (_fmCursorDefContext || isFmSlot(selectedCh)) _editorKind = 'fm';
       else _editorKind ??= hasFm ? 'fm' : null;
       if (subject) _vecSubject = subject;
       // A dimmed def-wave the score no longer has is let go.
@@ -9864,7 +9858,7 @@
 
     function getFmParamMode() {
       if (_fmCursorDefContext) return 'cursor-def'; // set only while the cursor leads
-      if (isFmChannel(selectedCh)) return 'channel';
+      if (isFmSlot(selectedCh)) return 'channel';
       return 'disabled';
     }
 
@@ -9877,8 +9871,8 @@
         statusEl.textContent = origin ? `${name} \u00b7 ${librarySetName(origin)}` : name;
         return;
       }
-      if (isFmChannel(selectedCh)) {
-        statusEl.textContent = channelLabel(selectedCh);
+      if (isFmSlot(selectedCh)) {
+        statusEl.textContent = selectedCh.label;
         return;
       }
       // Dimmed: the subject it showed last stays named.
@@ -9898,39 +9892,39 @@
     function getKeyboardTargetContext() {
       // Audio as FM Voice's chosen candidate, while its modal is open.
       if (_fmVoiceAudition)
-        return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmVoiceAudition };
+        return { slot: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmVoiceAudition };
       // Library's highlighted voice or sample, while the list shows.
       const lib = libraryKeyTarget();
       if (lib?.kind === 'fm')
-        return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: { name: lib.def.name, regs: lib.def.regs } };
-      if (lib?.kind === 'pcm') return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
+        return { slot: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: { name: lib.def.name, regs: lib.def.regs } };
+      if (lib?.kind === 'pcm') return { slot: PCM_PREVIEW_CH, useCursorDef: false };
       // The cursor's def while the cursor leads (its def-wave plays on the
       // first wave channel, written there with the key).
-      if (_pcmCursorDef) return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
-      if (_fmCursorDefContext?.regs) return { chIndex: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmCursorDefContext };
+      if (_pcmCursorDef) return { slot: PCM_PREVIEW_CH, useCursorDef: false };
+      if (_fmCursorDefContext?.regs) return { slot: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: _fmCursorDefContext };
       // A def-wave (the cursor's, or a wave strip's own) plays on the selected
       // wave channel, else the first.
       if (_vecActive && _vecSubject?.kind === 'wave' && waveLanes().length) {
-        const picked = waveLanes().includes(selectedCh - PSG_UI_BASE);
-        return { chIndex: picked ? selectedCh : PSG_UI_BASE + waveLanes()[0], useCursorDef: false, replaces: picked, wave: _vecSubject };
+        const picked = isToneSlot(selectedCh) && waveLanes().includes(selectedCh.lane);
+        return { slot: picked ? selectedCh : TONE_SLOTS[waveLanes()[0]], useCursorDef: false, replaces: picked, wave: _vecSubject };
       }
       // A selected channel is a part the keys replace (previewPool plays it
-      // before any other song channel); without one, chIndex only names where
+      // before any other song channel); without one, slot only names where
       // the patch comes from.
-      if (isFmChannel(selectedCh)) {
-        return { chIndex: selectedCh, useCursorDef: false, replaces: true };
+      if (isFmSlot(selectedCh)) {
+        return { slot: selectedCh, useCursorDef: false, replaces: true };
       }
-      if (isPsgPreviewChannel(selectedCh)) {
-        return { chIndex: selectedCh, useCursorDef: false, replaces: true };
+      if (isToneSlot(selectedCh)) {
+        return { slot: selectedCh, useCursorDef: false, replaces: true };
       }
       // A selected PCM part plays its own sample (previewPcmNoteOn).
-      if (selectedPcmPart()) return { chIndex: PCM_PREVIEW_CH, useCursorDef: false };
+      if (selectedPcmPart()) return { slot: PCM_PREVIEW_CH, useCursorDef: false };
       // Keep the keyboard usable even when PSG is selected or no channel is selected.
       // Fallback target is FM1 preview.
-      return { chIndex: 0, useCursorDef: false };
+      return { slot: FM_SLOTS[0], useCursorDef: false };
     }
 
-    function setLiveParamForChannel(paramName, value, chIndex) {
+    function setLiveParamForChannel(paramName, value, ch) {
       if (!player) {
         initParamOnlyPlayer();
       }
@@ -9938,41 +9932,36 @@
       // Both players take live slider edits (the MMLispDRV reference through
       // its own PARAM_SET apply path).
       if (typeof player.setParam !== 'function') return false;
-      player.setParam(paramName, value, chIndex);
+      player.setParam(paramName, value, ch);
       return true;
     }
 
-    function applyFmRegsToChannel(chIndex, regs) {
+    function applyFmRegsToChannel(ch, regs) {
       if (!regs) return false;
       const target = targetProfile(_lastGoodIR?.metadata?.target);
       let ok = true;
-      ok = setLiveParamForChannel('FM_ALG', regs.algorithm, chIndex) && ok;
-      ok = setLiveParamForChannel('FM_FB', regs.feedback, chIndex) && ok;
-      ok = setLiveParamForChannel('FM_AMS', regs.ams ?? 0, chIndex) && ok;
-      ok = setLiveParamForChannel('FM_FMS', regs.fms ?? 0, chIndex) && ok;
+      ok = setLiveParamForChannel('FM_ALG', regs.algorithm, ch) && ok;
+      ok = setLiveParamForChannel('FM_FB', regs.feedback, ch) && ok;
+      ok = setLiveParamForChannel('FM_AMS', regs.ams ?? 0, ch) && ok;
+      ok = setLiveParamForChannel('FM_FMS', regs.fms ?? 0, ch) && ok;
       for (let op = 1; op <= 4; op++) {
         const o = regs.ops?.[op - 1] ?? {};
         // Only the words the score's chip has (SSG-EG is the OPN's, DT2 the OPM's).
         for (const pp of OP_REG_PARAMS) {
           if (!target.hasWord(pp.param(op))) continue;
-          ok = setLiveParamForChannel(pp.param(op), o[pp.key] ?? 0, chIndex) && ok;
+          ok = setLiveParamForChannel(pp.param(op), o[pp.key] ?? 0, ch) && ok;
         }
-        ok = setLiveParamForChannel(`FM_AMEN${op}`, o.amen ?? 0, chIndex) && ok;
-        ok = setLiveParamForChannel(`FM_VEL${op}`, o.velK ?? -1, chIndex) && ok;
+        ok = setLiveParamForChannel(`FM_AMEN${op}`, o.amen ?? 0, ch) && ok;
+        ok = setLiveParamForChannel(`FM_VEL${op}`, o.velK ?? -1, ch) && ok;
       }
       return ok;
-    }
-
-    function isPsgPreviewChannel(chIndex) {
-      return Number.isInteger(chIndex) && chIndex >= PSG_UI_BASE && chIndex < PSG_UI_BASE + TONE_LANES;
     }
 
 
     // `vel` (0-15) is given only by a MIDI keyboard with Velocity on; without
     // it a preview plays at the level the channel already has.
-    function previewPsgNoteOn(chIndex, midi, vel) {
+    function previewPsgNoteOn(psgCh, midi, vel) {
       if (!player || typeof player._psgSetAtt !== 'function') return;
-      const psgCh = chIndex - PSG_UI_BASE;
       const when = audioCtx?.currentTime;
       if (psgCh === 3) {
         player._psgTriggerNoise(when);
@@ -9983,9 +9972,8 @@
       player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(psgCh, vel, VOL_UNITY, VOL_UNITY), when);
     }
 
-    function previewPsgNoteOff(chIndex) {
+    function previewPsgNoteOff(psgCh) {
       if (!player || typeof player._psgSetAtt !== 'function') return;
-      const psgCh = chIndex - PSG_UI_BASE;
       player._psgSetAtt(psgCh, 15, audioCtx?.currentTime);
     }
 
@@ -10001,27 +9989,27 @@
       for (const [port, addr, data] of writes) writePreview(port, addr, data);
     }
 
-    function previewFmNoteOn(chIndex, midi, vel) {
+    function previewFmNoteOn(ch, midi, vel) {
       if (!player) return;
       const fm = player._fmEnc;
-      const borrowed = _borrowedKeyMask.get(chIndex);
+      const borrowed = _borrowedKeyMask.get(ch);
       // The carriers' TL at this velocity, composed as a note's would be (a
       // borrowed channel had its level written with its patch).
-      if (vel != null && borrowed == null) player._writeFmLevel(chIndex, audioCtx?.currentTime, { vel });
-      writePreviews(fm.pitch(chIndex, midi));
+      if (vel != null && borrowed == null) player._writeFmLevel(ch, audioCtx?.currentTime, { vel });
+      writePreviews(fm.pitch(ch, midi));
       // An OPN's CH3 may be left in FM3 special mode (separate per-operator
       // frequencies) after editing/playing an fm3-N score; the channel's
       // pitch above only reaches OP4 in that mode. Mirror the pitch onto
       // every operator's F-number so all keyed operators play in unison.
       // These supplementary registers are inert in normal mode.
-      if (chIndex === 2 && fm.csm) {
+      if (ch === 2 && fm.csm) {
         for (let op = 1; op <= 4; op++) player._writeFm3OpPitch(op, midi);
       }
-      writePreviews(fm.key(chIndex, borrowed ?? player.getOpMask(chIndex)));
+      writePreviews(fm.key(ch, borrowed ?? player.getOpMask(ch)));
     }
 
-    function previewFmNoteOff(chIndex) {
-      if (player) writePreviews(player._fmEnc.key(chIndex, 0));
+    function previewFmNoteOff(ch) {
+      if (player) writePreviews(player._fmEnc.key(ch, 0));
     }
 
     // The player an FM or PSG preview writes through. The MMLispDRV reference
@@ -10050,40 +10038,39 @@
 
     // A key meant for an FM channel the score's chip lacks (none on the MSX)
     // plays sqr1 instead.
-    function previewChannelOf(chIndex) {
-      if (isPsgPreviewChannel(chIndex) || chIndex < (player?._fmEnc.channels ?? 0)) return chIndex;
-      return PSG_UI_BASE;
+    function previewChannelOf(slot) {
+      if (isToneSlot(slot) || slot.ch < (player?._fmEnc.channels ?? 0)) return slot;
+      return TONE_SLOTS[0];
     }
 
-    function previewNoteOn(chIndex, midi, vel) {
+    function previewNoteOn(slot, midi, vel) {
       if (!workletNode) return;
-      if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOn(midi, vel); return; }
+      if (slot === PCM_PREVIEW_CH) { previewPcmNoteOn(midi, vel); return; }
       if (!claimPreviewPlayer()) return;
-      chIndex = previewChannelOf(chIndex);
+      slot = previewChannelOf(slot);
 
-      if (isPsgPreviewChannel(chIndex)) {
+      if (isToneSlot(slot)) {
         // A def-wave the panel is on plays on the wave channel the key took.
         const wave = getKeyboardTargetContext().wave;
-        const lane = chIndex - PSG_UI_BASE;
-        if (wave && waveLanes().includes(lane)) player.previewWave(lane, _vecEditor.values, wave.name);
-        previewPsgNoteOn(chIndex, midi, vel);
+        if (wave && waveLanes().includes(slot.lane)) player.previewWave(slot.lane, _vecEditor.values, wave.name);
+        previewPsgNoteOn(slot.lane, midi, vel);
         return;
       }
 
-      previewFmNoteOn(chIndex, midi, vel);
+      previewFmNoteOn(slot.ch, midi, vel);
     }
 
-    function previewNoteOff(chIndex) {
+    function previewNoteOff(slot) {
       if (!workletNode) return;
-      if (chIndex === PCM_PREVIEW_CH) { previewPcmNoteOff(); return; }
-      chIndex = previewChannelOf(chIndex);
+      if (slot === PCM_PREVIEW_CH) { previewPcmNoteOff(); return; }
+      slot = previewChannelOf(slot);
 
-      if (isPsgPreviewChannel(chIndex)) {
-        previewPsgNoteOff(chIndex);
+      if (isToneSlot(slot)) {
+        previewPsgNoteOff(slot.lane);
         return;
       }
 
-      previewFmNoteOff(chIndex);
+      previewFmNoteOff(slot.ch);
     }
 
     // A SAMPLE ON THE KEYBOARD: Library's highlighted one, else a selected PCM
@@ -10250,16 +10237,16 @@
 
     // Single entry point for note-on so every preview surface (on-screen keyboard,
     // physical keyboard, algorithm-diagram tap) records the last-played pitch.
-    function startPreviewNote(chIndex, midi, vel, shift = previewKeyShift(chIndex)) {
+    function startPreviewNote(slot, midi, vel, shift = previewKeyShift(slot)) {
       _lastPreviewMidi = midi;
-      previewNoteOn(chIndex, Math.max(0, Math.min(127, midi + shift)), vel);
+      previewNoteOn(slot, Math.max(0, Math.min(127, midi + shift)), vel);
     }
 
     // A `:key` voice under the cursor moves what the keys play as the compiler
     // moves its notes: c4 sounds at the key (language.md §9).
-    function previewKeyShift(chIndex) {
+    function previewKeyShift(slot) {
       const t = getKeyboardTargetContext();
-      const key = t?.useCursorDef && t.chIndex === chIndex ? t.defCtx.regs.key : undefined;
+      const key = t?.useCursorDef && t.slot === slot ? t.defCtx.regs.key : undefined;
       return key == null ? 0 : key - 60;
     }
 
@@ -10623,7 +10610,7 @@
     // and the next one starts every channel from the default voice.
     function ensurePreviewDefApplied(target) {
       if (!target.useCursorDef) return;
-      applyFmRegsToChannel(target.chIndex, target.defCtx.regs);
+      applyFmRegsToChannel(target.slot.ch, target.defCtx.regs);
       _openingVoiceOn = null;
     }
 
@@ -10665,8 +10652,8 @@
     // go its release rings until the song's next note takes the channel back.
     // CH3 in operator or CSM mode is played over, not held. A sample (one
     // bank) and the noise channel stay one voice.
-    const _previewVoices = new Map(); // chIndex → the voice (key) holding it
-    const _borrowedKeyMask = new Map(); // a held song channel → the keys' op mask
+    const _previewVoices = new Map(); // slot → the voice (key) holding it
+    const _borrowedKeyMask = new Map(); // a held song FM channel (its number) → the keys' op mask
     let _previewSeq = 0;
 
     // What the playing song does with each channel: NOTE_ONs per channel
@@ -10684,16 +10671,14 @@
           const cv = channelVoice(tr.channel);
           if (cv?.part.kind === 'sample') {
             const claim = cv.part.claims;
-            if (claim?.kind === 'fm' && tr.events?.some((e) => e.cmd === 'PCM_NOTE_ON')) notes.set(claim.voice, Infinity);
+            if (claim?.kind === 'fm' && tr.events?.some((e) => e.cmd === 'PCM_NOTE_ON')) notes.set(FM_SLOTS[claim.voice], Infinity);
             continue;
           }
           // A track with no notes (a def-mod :keyon off) leaves its channel to
           // the keys — they take it first when it is the target.
           const fm3 = /^fm3-/.test(tr.scoreChannel ?? '');
           if (n === 0 && !fm3) continue;
-          const fm = fm3 ? 2 : isFmVoice(cv) ? cv.voice : undefined;
-          const psg = isPsgVoice(cv) ? psgLaneOf(cv) : undefined;
-          const c = fm ?? (psg != null ? PSG_UI_BASE + psg : null);
+          const c = fm3 ? FM_SLOTS[2] : slotOfChannel(cv);
           // CH3 in operator or CSM mode is never free, even with no notes.
           if (fm3) fm3Mode = true;
           if (c != null) notes.set(c, (notes.get(c) ?? 0) + Math.max(n, fm3 ? 1 : 0));
@@ -10702,21 +10687,26 @@
       return { notes, fm3Mode };
     }
 
+    // A channel table entry's page slot: its FM channel's, its tone lane's.
+    function slotOfChannel(c) {
+      if (isFmVoice(c)) return FM_SLOTS[c.voice];
+      return isPsgVoice(c) ? TONE_SLOTS[toneLaneOf(c)] : null;
+    }
+
     // The page's channels of `t`'s kind the score's machine has (targets/):
     // its FM channels, its PSG's tones, or its wave channels.
     function previewKindChannels(t) {
       const machine = targetProfile(_lastGoodIR?.metadata?.target);
-      const chOf = (c) => (c.part.kind === 'fm' ? c.voice : PSG_UI_BASE + toneLaneOf(c));
-      const own = isFmChannel(t) ? 'fm'
-        : Object.values(machine.channels).find((c) => isPsgVoice(c) && chOf(c) === t)?.part.kind ?? 'tone';
-      return [...new Set(machine.headsOfKind(own).map((h) => chOf(machine.channels[h])))];
+      const own = isFmSlot(t) ? 'fm'
+        : Object.values(machine.channels).find((c) => isPsgVoice(c) && slotOfChannel(c) === t)?.part.kind ?? 'tone';
+      return [...new Set(machine.headsOfKind(own).map((h) => slotOfChannel(machine.channels[h])))];
     }
 
     function previewPool(target, { notes, fm3Mode }) {
-      const t = target.chIndex;
+      const t = target.slot;
       // The noise is one channel: the keys play it alone.
-      if (t === PCM_PREVIEW_CH || t === PSG_UI_BASE + 3) return [t];
-      const fm = isFmChannel(t);
+      if (t === PCM_PREVIEW_CH || t === NOISE_SLOT) return [t];
+      const fm = isFmSlot(t);
       const kind = previewKindChannels(t);
       const free = kind.filter((c) => !notes.has(c));
       if (free.includes(t)) return [t, ...free.filter((c) => c !== t)];
@@ -10725,7 +10715,7 @@
       // it borrows one channel at most.
       const busy = kind.filter((c) => notes.has(c) && !(target.replaces && c === t))
         .sort((a, b) => notes.get(a) - notes.get(b));
-      const held = fm ? busy.filter((c) => Number.isFinite(notes.get(c)) && !(c === 2 && fm3Mode)) : [];
+      const held = fm ? busy.filter((c) => Number.isFinite(notes.get(c)) && !(c === FM_SLOTS[2] && fm3Mode)) : [];
       if (target.replaces) return [...free, t, ...held];
       if (free.length + held.length > 0) return [...free, ...held];
       // Nothing to hold: play over the least busy channel.
@@ -10734,7 +10724,7 @@
 
     function previewTake(target, midi, vel) {
       // The driver's run keeps its channels (and op masks) to itself.
-      if (target.chIndex !== PCM_PREVIEW_CH && !claimPreviewPlayer()) return null;
+      if (target.slot !== PCM_PREVIEW_CH && !claimPreviewPlayer()) return null;
       const use = previewSongUse();
       const { notes, fm3Mode } = use;
       const pool = previewPool(target, use);
@@ -10744,25 +10734,27 @@
         _previewVoices.get(ch).ch = null; // its key no longer holds a channel
         previewNoteOff(ch);
       }
-      if (_fmLiveRaf == null && target.replaces && isFmChannel(target.chIndex)) {
-        applyOpeningVoice(target.chIndex);
+      if (_fmLiveRaf == null && target.replaces && isFmSlot(target.slot)) {
+        applyOpeningVoice(target.slot.ch);
       }
-      const borrow = isFmChannel(ch) && Number.isFinite(notes.get(ch)) && !(ch === 2 && fm3Mode);
+      // The patch a key carries comes from the target's FM channel (none for a tone).
+      const from = target.slot.ch;
+      const borrow = isFmSlot(ch) && Number.isFinite(notes.get(ch)) && !(ch === FM_SLOTS[2] && fm3Mode);
       if (borrow) {
-        workletNode.port.postMessage({ type: 'hold-ch', ch, on: true });
-        const regs = target.useCursorDef ? target.defCtx.regs : player.getChRegs(target.chIndex);
-        writeBorrowedPatch(ch, regs, vel);
-        _borrowedKeyMask.set(ch, player.getOpMask(target.chIndex));
-      } else if (ch === target.chIndex) {
+        workletNode.port.postMessage({ type: 'hold-ch', ch: ch.ch, on: true });
+        const regs = target.useCursorDef ? target.defCtx.regs : player.getChRegs(from);
+        writeBorrowedPatch(ch.ch, regs, vel);
+        _borrowedKeyMask.set(ch.ch, player.getOpMask(from));
+      } else if (ch === target.slot) {
         ensurePreviewDefApplied(target);
-      } else if (isFmChannel(ch)) {
-        const regs = target.useCursorDef ? target.defCtx.regs : player?.getChRegs(target.chIndex);
-        if (regs) applyFmRegsToChannel(ch, { ...regs, ops: regs.ops.map((o) => ({ ...o, tl: o.voicedTl ?? o.tl })) });
-        player?.setOpMask?.(ch, player.getOpMask(target.chIndex));
+      } else if (isFmSlot(ch)) {
+        const regs = target.useCursorDef ? target.defCtx.regs : player?.getChRegs(from);
+        if (regs) applyFmRegsToChannel(ch.ch, { ...regs, ops: regs.ops.map((o) => ({ ...o, tl: o.voicedTl ?? o.tl })) });
+        player?.setOpMask?.(ch.ch, player.getOpMask(from));
       }
       const voice = { ch, seq: ++_previewSeq };
       _previewVoices.set(ch, voice);
-      startPreviewNote(ch, midi, vel, previewKeyShift(target.chIndex));
+      startPreviewNote(ch, midi, vel, previewKeyShift(target.slot));
       return voice;
     }
 
@@ -10770,8 +10762,8 @@
       if (voice?.ch == null || _previewVoices.get(voice.ch) !== voice) return;
       _previewVoices.delete(voice.ch);
       previewNoteOff(voice.ch);
-      if (_borrowedKeyMask.delete(voice.ch)) {
-        workletNode?.port.postMessage({ type: 'hold-ch', ch: voice.ch, on: false });
+      if (isFmSlot(voice.ch) && _borrowedKeyMask.delete(voice.ch.ch)) {
+        workletNode?.port.postMessage({ type: 'hold-ch', ch: voice.ch.ch, on: false });
       }
     }
 
@@ -10850,12 +10842,12 @@
       ensurePreviewDefApplied(target);
       if (_algPreviewTimer) {           // stop the previous tap before retriggering
         clearTimeout(_algPreviewTimer);
-        previewNoteOff(target.chIndex);
+        previewNoteOff(target.slot);
         _algPreviewTimer = null;
       }
-      startPreviewNote(target.chIndex, _lastPreviewMidi);
+      startPreviewNote(target.slot, _lastPreviewMidi);
       _algPreviewTimer = setTimeout(() => {
-        previewNoteOff(target.chIndex);
+        previewNoteOff(target.slot);
         _algPreviewTimer = null;
       }, PREVIEW_GATE_MS);
     }
@@ -11166,7 +11158,7 @@
     }
 
     function setLiveChannelParam(paramName, value) {
-      return setLiveParamForChannel(paramName, value, selectedCh);
+      return setLiveParamForChannel(paramName, value, selectedCh?.ch);
     }
 
     function setLiveOperatorEnabled(op, enabled) {
@@ -11185,7 +11177,7 @@
         syncParamUI();
         return false;
       }
-      const ch = mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh;
+      const ch = (mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh).ch;
       const bit = 1 << (op + 3); // op1=bit4, op2=bit5, op3=bit6, op4=bit7
       const cur = player.getOpMask(ch);
       const next = enabled ? (cur | bit) : (cur & ~bit);
@@ -11217,7 +11209,7 @@
         selectedCh = null;
       } else {
         selectedChannel = head;
-        selectedCh = _chStripModel.find((e) => e.head === head)?.selIndex ?? null;
+        selectedCh = _chStripModel.find((e) => e.head === head)?.slot ?? null;
       }
       _subjectFrom = 'strip';
       renderChStrips();
@@ -11356,11 +11348,11 @@
         : null;
       if (mode === 'cursor-def'
           && (_prevFmParamMode !== 'cursor-def' || cursorDefKey !== _prevCursorDefKey)) {
-        player?.setOpMask(CURSOR_DEF_PREVIEW_CH, 0xf0);
+        player?.setOpMask(CURSOR_DEF_PREVIEW_CH.ch, 0xf0);
       }
       _prevFmParamMode = mode;
       _prevCursorDefKey = cursorDefKey;
-      const subjectKey = `${mode}|${cursorDefKey}|${selectedCh}`;
+      const subjectKey = `${mode}|${cursorDefKey}|${selectedCh?.label}`;
       if (subjectKey !== _paramSubjectKey) repaint = true;
       _paramSubjectKey = subjectKey;
 
@@ -11368,13 +11360,13 @@
       const regs = mode === 'cursor-def'
         ? _fmCursorDefContext.regs
         : (mode === 'channel' && player)
-          ? player.getChRegs(selectedCh)
+          ? player.getChRegs(selectedCh.ch)
           : _fmShownRegs ?? defaultFmRegs();
       if (mode !== 'disabled') _fmShownRegs = regs;
 
       // In cursor-def mode reflect the preview channel's mask so auditioned
       // operator toggles persist in the UI.
-      const maskCh = mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh;
+      const maskCh = (mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh)?.ch;
       const mask = mode !== 'disabled' && player ? player.getOpMask(maskCh) : 0xf0;
       applyRegsToFmSliders(regs, mask, repaint);
       syncLfoSlider();
@@ -11454,8 +11446,8 @@
       updateChannelVu();
       syncLfoSlider();
       refreshSeLit();
-      if (_fmPanelDragging || !isFmChannel(selectedCh) || getFmParamMode() !== 'channel') return;
-      applyRegsToFmSliders(player.getChRegs(selectedCh), player.getOpMask(selectedCh));
+      if (_fmPanelDragging || !isFmSlot(selectedCh) || getFmParamMode() !== 'channel') return;
+      applyRegsToFmSliders(player.getChRegs(selectedCh.ch), player.getOpMask(selectedCh.ch));
     }
     function startFmLiveLoop() {
       if (_fmLiveRaf == null) _fmLiveRaf = requestAnimationFrame(liveTick);
