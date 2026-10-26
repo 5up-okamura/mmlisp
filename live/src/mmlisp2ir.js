@@ -6940,7 +6940,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // written at its note. `options.voiceHoist`: false turns it off; an
   // object sets its windows.
   if (options.voiceHoist !== false && target.driver)
-    hoistVoiceChanges(tracks, { ppqn: PPQN, fmChannels: new Set(target.headsOfKind("fm")), ...(options.voiceHoist ?? {}) });
+    hoistVoiceChanges(tracks, { ppqn: PPQN, ...(options.voiceHoist ?? {}) });
 
   // Tempo and LFO rate are written on tracks (body `:tempo` / `:lfo-rate`
   // emit their own tick-0 events); the only derived init event is FM3 op mode.

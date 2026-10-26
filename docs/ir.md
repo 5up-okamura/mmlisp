@@ -704,8 +704,9 @@ PSG-routed tracks only `VOL`, `NOTE_PITCH`, `SNAP` and (on the noise channel)
   application (language.md §9.4) → `:prio` layer flattening (note
   drop/truncate under higher-priority layers) → track re-numbering →
   counted-jump conversion → removal of a stray `LOOP_BREAK` no counted loop
-  claims (`W_BREAK_OUTSIDE_LOOP`) → validation → voice hoisting
-  (`voice-hoist.js`: a voice change moves into the silence before its note)
+  claims (`W_BREAK_OUTSIDE_LOOP`) → validation → voice hoisting, on the
+  Mega Drive alone (`voice-hoist.js`: a voice change moves into the silence
+  before its note, for the driver's wire)
   → tick-0 `FM3_MODE` unshifted into `tracks[0]` (when fm3-1..4 tracks
   exist).
 - Transient fields (`_delay`) are stripped; `src` spans are the only

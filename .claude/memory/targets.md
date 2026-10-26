@@ -22,7 +22,8 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   the user's reading): on a VGM target it only cut notes 40 ms and moved
   voices off their beat. No `voiceAtKey` per part.
 - **`init-fm` is the FM part's** (`initVoice`, else the family's init
-  values): a sine on each chip. The player's boot patch is the same map,
+  values of the words the part has — the OPM's with DT2 0 and no SSG-EG,
+  the OPN's the reverse; the user's ruling, 2026-10-26): a sine on each chip. The player's boot patch is the same map,
   so a track with no voice plays init-fm on every target.
 
 ## Rulings for what comes next (2026-10-25, not built yet)

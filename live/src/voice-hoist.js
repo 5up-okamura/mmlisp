@@ -41,13 +41,17 @@
 // editor plays is still what the driver plays (driver.md §14.3).
 // ---------------------------------------------------------------------------
 import { targetProfile } from "./targets.js";
+
+// The tracks the pass moves: the Mega Drive's FM channels. It is the
+// driver's (its wire); a VGM target writes a voice at its note (mmlisp2ir.js).
+const FM_CHANNELS = new Set(targetProfile("md").headsOfKind("fm"));
 import { expandLoops } from "./ir-utils.js";
 
 // A voice: what a `def-fm` compiles to. Its presence is what moves a gap.
 export const VOICE_TARGETS = new Set([
   "FM_ALG", "FM_FB", "FM_AMS", "FM_FMS",
   ...[1, 2, 3, 4].flatMap((op) =>
-    ["AR", "DR", "SR", "RR", "SL", "TL", "KS", "ML", "DT", "SSG", "AMEN", "DT2_"].map((k) => `FM_${k}${op}`)),
+    ["AR", "DR", "SR", "RR", "SL", "TL", "KS", "ML", "DT", "SSG", "AMEN"].map((k) => `FM_${k}${op}`)),
 ]);
 // What moves with a voice: the channel's own settings written before the note
 // (`:vel`, `:vol`, `:pan`, `:pitch`, `:snap`), which would otherwise rewrite
@@ -161,7 +165,6 @@ function peelLoopRest(out, e) {
  */
 export function hoistVoiceChanges(tracks, {
   ppqn = 96, restFrames = 4, noteFrames = 2, cutTail = false,
-  fmChannels = new Set(targetProfile().headsOfKind("fm")), // the target's FM tracks (targets/)
 } = {}) {
   const tpf = maxTicksPerFrame(tracks, ppqn);
   const G = Math.ceil(tpf); // one frame in ticks, on either standard
@@ -173,7 +176,7 @@ export function hoistVoiceChanges(tracks, {
   const placements = [];
   for (let ti = 0; ti < tracks.length; ti++) {
     const track = tracks[ti];
-    if (!fmChannels.has(track.channel) || track.se) continue;
+    if (!FM_CHANNELS.has(track.channel) || track.se) continue;
     let out = track.events ?? [];
     if (out.some((e) => UNSAFE_TRACK_CMDS.has(e.cmd))) continue;
     const isVoice = (e) => e.cmd === "PARAM_SET" && VOICE_TARGETS.has(e.args?.target);
@@ -286,7 +289,7 @@ export function hoistVoiceChanges(tracks, {
     }
     track.events = out;
   }
-  spreadVoices(tracks, placements, G, stats, fmChannels);
+  spreadVoices(tracks, placements, G, stats);
   return stats;
 }
 
@@ -297,11 +300,11 @@ export function hoistVoiceChanges(tracks, {
  * Looked at on the expanded timeline, so a voice inside a loop is checked at
  * each of its repeats, against every track's key-ons at theirs.
  */
-function spreadVoices(tracks, placements, G, stats, fmChannels) {
+function spreadVoices(tracks, placements, G, stats) {
   const keyOns = [], at = new Map();
   for (const t of tracks) {
     if (t.se) continue;
-    const fm = fmChannels.has(t.channel);
+    const fm = FM_CHANNELS.has(t.channel);
     for (const e of expandLoops(t.events ?? [])) {
       if (fm && e.cmd === "NOTE_ON" && !e.args?.legato) keyOns.push(e.tick);
       if (e._hoist !== undefined && e.cmd === "PARAM_SET" && MOVE_TARGETS.has(e.args?.target)) {
