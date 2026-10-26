@@ -69,8 +69,13 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   15. Not yet listened to by the user: the synth's level against the other
   machines (CHANNEL_GAIN) and the noise. `:pan` is built (a value, a
   sweep, a note's macro onto $05, the IR keeping its fraction:
-  FRACTIONAL_TARGETS). Next for pce: Furnace / DefleMask → pce, the VGM
-  importer's 0xB9; then DDA, the LFO.
+  FRACTIONAL_TARGETS). DefleMask / Furnace PCE modules import as pce
+  (import-tracker.js; Furnace's rules read from its pce.cpp: noise rate =
+  note & 31 under properNoiseLayout, else a 12-entry table; 08xy the $05
+  nibbles; the WAVE block and pointer type 5 from papers/format.md). Open:
+  the Furnace side has run on no real .fur (check:import-tracker builds a
+  DMF only); an old (<240) .fur's properNoiseLayout is not read (default
+  true). Next for pce: the VGM importer's 0xB9; then DDA, the LFO.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 

@@ -67,8 +67,9 @@ Its current limits are `driver.md` §11 — keep the two in step.
   mucom importer writes pc88 (the song's own chip, the default) or md, chosen
   in its import dialog; VGM writes md or the machine of its chip — x68k for
   a YM2151's, pc88 for a YM2608's or YM2203's, msx for an AY-3-8910's —
-  chosen in its dialog; MIDI and DefleMask / Furnace write md and show no
-  choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
+  chosen in its dialog; DefleMask / Furnace write md, or pce for a PC
+  Engine module (the default), chosen in their dialog; MIDI writes md and
+  shows no choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
   the matrix.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
 - **MGS**: an envelope's wave changes as it runs (a note keeps the first),
@@ -124,8 +125,8 @@ on any other, and its own settings a warning.
 
 Built: the PC-8801 (`pc88`), the X68000 (`x68k`), the MSX with the SCC
 and the FM-PAC (`msx`) and the PC Engine (`pce`: its waves, noise and
-`:pan`; DDA and the LFO are still to come, and its song imports — Furnace / DefleMask's PCE as a `pce` score, the HuC6280's
-VGM) — language.md §19. Next:
+`:pan`, and DefleMask / Furnace PCE modules as `pce` scores; DDA, the LFO
+and the HuC6280's VGM import are still to come) — language.md §19. Next:
 
 1. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
    without a level (the level model needs targets that have none), the

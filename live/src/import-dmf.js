@@ -22,7 +22,9 @@ const DMF_SYSTEMS = {
   0x03: { name: "Master System", channels: sn },
   0x43: { name: "Master System + FM", channels: [...sn, ...Array.from({ length: 9 }, (_, i) => ch("opll", `FM${i + 1}`))] },
   0x04: { name: "Game Boy", channels: [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Wave"), ch("noise", "Noise")] },
-  0x05: { name: "PC Engine", channels: Array.from({ length: 6 }, (_, i) => ch("wave", `CH${i + 1}`)) },
+  // The HuC6280's channels (chips/huc6280.js): a 5-bit volume, their own
+  // wavetables, 5 and 6 able to turn to noise.
+  0x05: { name: "PC Engine", channels: Array.from({ length: 6 }, (_, i) => ({ ...ch("wave", `CH${i + 1}`), chip: "pce", volMax: 31 })) },
   0x06: { name: "NES", channels: nes },
   0x46: { name: "NES + VRC7", channels: [...nes, ...Array.from({ length: 6 }, (_, i) => ch("opll", `VRC7 ${i + 1}`))] },
   0x86: { name: "NES + FDS", channels: [...nes, ch("wave", "FDS")] },
@@ -110,17 +112,22 @@ export async function parseDmf(bytes) {
       const arpFixed = c();
       if (!arpFixed) arp.values = arp.values.map((v) => v - 12);
       macro(); // duty / noise
-      macro(); // wavetable
+      const wave = macro(); // the wavetable each tick: an index into `waves`
       if (sysId === 0x07 || sysId === 0x47) p += 20; // SID settings
       if (gb) p += 4; // GB envelope
-      instruments.push({ name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed: !!arpFixed });
+      instruments.push({ name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed: !!arpFixed, wave });
     }
   }
 
+  // The wavetables: each its steps, 0..31 on the systems with a 5-bit wave
+  // (DefleMask's wavetable height is the system's).
+  const waves = [];
   const nwaves = c();
   for (let i = 0; i < nwaves; i++) {
     const len = i32();
-    p += len * 4;
+    const values = [];
+    for (let j = 0; j < len; j++) values.push(i32());
+    waves.push({ name: "", values, height: sysId === 0x05 ? 31 : 15 });
   }
 
   const channels = system.channels.map((sc) => ({ ...sc, patterns: new Map() }));
@@ -150,9 +157,10 @@ export async function parseDmf(bytes) {
     format: "DefleMask", system: system.name, title, author, hz,
     rowsPerBeat: hilightA, rowsPerBar: hilightB,
     speeds: [speed1 * (timeBase + 1), speed2 * (timeBase + 1)],
-    patLen, orders, channels, instruments,
+    patLen, orders, channels, instruments, waves,
     fmVolMax: 127, psgVolMax: 15,
     linearPitch: true, pitchSlideSpeed: 4, // as Furnace plays a DMF
+    properNoiseLayout: false, // the PC Engine's noise rate by DefleMask's table
   };
 }
 

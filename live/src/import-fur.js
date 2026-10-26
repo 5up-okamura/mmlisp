@@ -53,7 +53,7 @@ const FUR_SYSTEMS = {
   0xa4: () => [...named("OPL3", k("opl", 15, "FM")), ...k("pcm", 5, "Drum ")],
   0x04: () => named("GB", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Wave" }, { kind: "noise", name: "Noise" }]),
   0x06: () => named("NES", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Triangle" }, { kind: "noise", name: "Noise" }, { kind: "pcm", name: "DPCM" }]),
-  0x05: () => named("PCE", k("wave", 6, "CH")),
+  0x05: () => named("PCE", k("wave", 6, "CH")).map((c) => ({ ...c, chip: "pce", volMax: 31 })),
   0x07: () => named("SID", k("psg", 3, "CH")),
   0x47: () => named("SID", k("psg", 3, "CH")),
   0x8b: () => named("MMC5", [...k("psg", 2, "Pulse"), { kind: "pcm", name: "PCM" }]),
@@ -123,10 +123,11 @@ export async function parseFur(bytes) {
   p = infoSeek;
 
   let title, author, chans, hz, speeds, patLen, ordersLen, hilightA, hilightB, vtN = 1, vtD = 1;
-  let orders, insPtr = [], patPtr = [];
+  let orders, insPtr = [], patPtr = [], wavePtr = [];
   // Pitch: linear (1/128 semitone steps) unless the song says not, and the
-  // multiplier on slide speeds (compat flags).
-  let linearPitch = 1, pitchSlideSpeed = 4, cflgPtr = 0;
+  // multiplier on slide speeds (compat flags); the PC Engine's noise rate
+  // straight from the note (Furnace's default since it has the flag).
+  let linearPitch = 1, pitchSlideSpeed = 4, properNoiseLayout = true, cflgPtr = 0;
   const channels = [];
   const effectCols = [];
 
@@ -156,6 +157,7 @@ export async function parseFur(bytes) {
       for (let i = 0; i < n; i++) ptrs.push(i32());
       if (type === 1) subPtr.push(...ptrs); // subsongs
       else if (type === 4) insPtr = ptrs; // instruments
+      else if (type === 5) wavePtr = ptrs; // wavetables
       else if (type === 7) patPtr = ptrs; // patterns
       else if (type === 8) cflgPtr = ptrs[0] ?? 0; // compat flags
     }
@@ -199,7 +201,8 @@ export async function parseFur(bytes) {
     if (version >= 37) linearPitch = u8[p + 1];
     p += 20; // compatibility flags
     for (let i = 0; i < insLen; i++) insPtr.push(i32());
-    p += 4 * (waveLen + sampleLen);
+    for (let i = 0; i < waveLen; i++) wavePtr.push(i32());
+    p += 4 * sampleLen;
     for (let i = 0; i < nPats; i++) patPtr.push(i32());
     orders = Array.from({ length: ordersLen }, () => new Array(chans).fill(0));
     for (let j = 0; j < chans; j++) for (let o = 0; o < ordersLen; o++) orders[o][j] = c();
@@ -321,6 +324,7 @@ export async function parseFur(bytes) {
     let fm = null;
     const vol = { values: [], loop: null };
     const arp = { values: [], loop: null };
+    const wave = { values: [], loop: null };
     let arpFixed = false;
     while (p + 2 <= stop) {
       const code = String.fromCharCode(u8[p], u8[p + 1]);
@@ -366,6 +370,7 @@ export async function parseFur(bytes) {
           }
           const macro = { values: vals, loop: loop < mlen ? loop : null };
           if (mc === 0) Object.assign(vol, macro);
+          else if (mc === 3) Object.assign(wave, macro); // the wavetable
           else if (mc === 1) {
             arpFixed = vals.some((v) => v & 0x40000000);
             Object.assign(arp, macro);
@@ -375,8 +380,27 @@ export async function parseFur(bytes) {
       p = fend;
     }
     if (fm && (type === 1 || type === 33)) return { name, kind: "fm", fm };
-    return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed };
+    return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave };
   }
+
+  // The wavetables: "WAVE", a size, its name, width, a reserved word, its
+  // height (the top value), then `width` steps.
+  const waves = wavePtr.map((ptr) => {
+    try {
+      p = ptr;
+      if (magic() !== "WAVE") return null;
+      p += 8;
+      const name = str();
+      const width = i32();
+      i32();
+      const height = i32();
+      const values = [];
+      for (let i = 0; i < width; i++) values.push(i32());
+      return { name, values, height };
+    } catch {
+      return null;
+    }
+  });
 
   if (cflgPtr) {
     // "CFLG", a size, then `key=value` lines.
@@ -387,6 +411,7 @@ export async function parseFur(bytes) {
         const [k, v] = line.split("=");
         if (k === "linearPitch") linearPitch = +v;
         if (k === "pitchSlideSpeed") pitchSlideSpeed = +v || 4;
+        if (k === "properNoiseLayout") properNoiseLayout = +v > 0;
       }
     }
   }
@@ -397,10 +422,10 @@ export async function parseFur(bytes) {
     rowsPerBeat: hilightA, rowsPerBar: hilightB,
     speeds, patLen, orders,
     channels: channels.map((ch, i) => ({ ...ch, patterns: pats[i] })),
-    instruments,
+    instruments, waves,
     fmVolMax: 127, psgVolMax: 15,
     oldMacros: instruments.some((x) => x.oldMacros),
-    linearPitch: linearPitch > 0, pitchSlideSpeed,
+    linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout,
   };
 }
 

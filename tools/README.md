@@ -42,6 +42,9 @@ Run from tools directory:
     there: each command family lands where it should, and every score compiles
 16. `npm run check:import-vgm` — the VGM import, on the toolchain's own VGM of a
     test score: the YM2151's noise as x68k's fm8 `:mode noise`, md's `noise`
+17. `npm run check:import-tracker` — a PC Engine DefleMask module written there,
+    byte by byte: its wavetables, wave macro, `10xx`, `08xy` and noise come back
+    as pce, and both its pce and md scores compile
 
 ## i18n
 

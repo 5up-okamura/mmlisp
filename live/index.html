@@ -893,7 +893,7 @@
     import { analyzeSound, defaultResynthOptions, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
     import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/voice-estimate.js';
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
-    import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from './src/import-tracker.js';
+    import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
     import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
@@ -3302,23 +3302,35 @@
       }, a);
     }
 
-    // A tracker module (DMF, FUR): tempo, phrases, a destination per channel.
+    // A tracker module (DMF, FUR): tempo, phrases, a destination per channel
+    // — and, for a PC Engine module, the target (pce or md), which rebuilds
+    // the rows at that target's defaults.
     async function importTrackerSong(t, fileName) {
       const a = analyzeTracker(t);
       const def = defaultTrackerOptions(a);
-      const choices = ['drop', ...FM_DESTS, ...PSG_DESTS, 'noise'];
       const played = a.channels.filter((c) => c.notes > 0);
+      const rowsFor = (target) => {
+        const d = defaultTrackerOptions(a, target), choices = ['drop', ...trackerDests(target)];
+        return played.map((c) => ({ key: String(c.index), label: c.label, value: d.dest[c.index], choices }));
+      };
+      const fields = [];
+      if (a.targets.length > 1)
+        fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
+          choices: a.targets.map((tg) => [tg, `${targetProfile(tg).system} (:target ${tg})`]),
+          hint: 'pce keeps the module’s wavetables, noise and per-channel pan; md reads the channels for the Mega Drive' });
+      fields.push(
+        { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
+          hint: `${a.rowsPerBeat} rows a beat at ${a.framesPerRow} frames a row, ${t.hz} Hz` },
+        { key: 'phrases', label: 'One def per pattern (the tracks lay them out in order)', type: 'checkbox', value: def.phrases },
+      );
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary: `${t.format} · ${t.system} · ${a.seq.length} orders of ${t.patLen} rows` +
           (a.loopIndex > 0 ? `, looping from order ${a.seq[a.loopIndex].order}` : '') + '. ' +
           'A channel with no notes is left out.',
-        fields: [
-          { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
-            hint: `${a.rowsPerBeat} rows a beat at ${a.framesPerRow} frames a row, ${t.hz} Hz` },
-          { key: 'phrases', label: 'One def per pattern (the tracks lay them out in order)', type: 'checkbox', value: def.phrases },
-        ],
-        rows: played.map((c) => ({ key: String(c.index), label: c.label, value: def.dest[c.index], choices })),
+        fields,
+        rows: rowsFor(def.target),
+        rowsFor,
       });
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
@@ -3327,6 +3339,7 @@
       return trackerToMmlisp(t, {
         dest, phrases: !!got.fields.phrases,
         bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
+        target: got.fields.target ?? def.target,
         fileName,
       }, a);
     }

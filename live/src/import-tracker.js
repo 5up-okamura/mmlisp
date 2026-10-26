@@ -23,9 +23,17 @@
 // effects as `:pitch` macros — vibrato (04xy) a shared `(def vib-xy …)` of a
 // sine, slides (01xx/02xx, E1xy/E2xy) and portamento (03xx, a slur) a line,
 // fine tune (E5xx) an offset. Everything else is counted and reported.
+//
+// A PC Engine module can be a `pce` score (the default) or an md one. As
+// pce, its wavetables are def-waves, an instrument's wave macro (its first
+// step) and 10xx the wave a channel plays, 11xx channel 5 or 6 the noise
+// (the channel's notes then on noise5 / noise6, the rate Furnace's: the
+// note straight, or DefleMask's table), 08xy the channel's left and right
+// levels as `:pan`, and the volume column the chip's 5-bit volume.
 // ---------------------------------------------------------------------------
 
 import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS } from "./import-song.js";
+import { VEL_DB_PER_STEP } from "./ir-utils.js";
 import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
 
 // What each source channel kind is, for the defaults and the voice: an FM
@@ -40,6 +48,15 @@ const STAND_IN = { psg: "wave-square", wave: "wave-triangle", noise: "wave-squar
 const VOL_MAX = { opl: 63 };
 
 const PITCH_CODES = new Set([0x01, 0x02, 0x03, 0x04, 0xe1, 0xe2, 0xe5]);
+
+// The PC Engine as a pce score: its channels' places, and its noise. The
+// rate a noise note plays is the note itself (Furnace's properNoiseLayout)
+// or, as DefleMask had it, one of twelve by the note's name.
+const PCE_WAVES = ["wave1", "wave2", "wave3", "wave4", "wave5", "wave6"];
+const PCE_NOISE = { 4: "noise5", 5: "noise6" };
+const PCE_NOISE_TABLE = [4, 13, 15, 18, 21, 23, 25, 27, 29, 31, 0, 2];
+const PCE_NOISE_BASE = 36; // chips/huc6280.js NOISE_NOTE_BASE: c2 is rate 0
+const PCE_FX = { 0x10: "wave", 0x11: "noise", 0x12: "LFO mode", 0x13: "LFO speed", 0x17: "DDA" };
 
 const FX_NAMES = {
   0x01: "pitch slide up", 0x02: "pitch slide down", 0x03: "portamento", 0x04: "vibrato",
@@ -99,15 +116,28 @@ export function analyzeTracker(t) {
   const framesPerRow = (t.speeds[0] + t.speeds[1]) / 2 || 6;
   const bpm = (60 * t.hz) / (framesPerRow * rowsPerBeat);
   const channels = t.channels.map((chn, c) => {
-    let notes = 0;
+    let notes = 0, noiseNotes = 0, noise = false;
     for (const { order, rows } of seq) {
       const pat = chn.patterns.get(t.orders[order][c]) ?? [];
-      for (let r = 0; r < rows; r++) if (typeof pat[r]?.note === "number") notes++;
+      for (let r = 0; r < rows; r++) {
+        for (const [code, v] of pat[r]?.fx ?? []) if (chn.chip === "pce" && code === 0x11 && v >= 0) noise = v > 0;
+        if (typeof pat[r]?.note !== "number") continue;
+        notes++;
+        if (noise) noiseNotes++;
+      }
     }
-    return { index: c, kind: chn.kind, name: chn.name, notes,
-      label: `${chn.name} · ${CHANNEL_KINDS[chn.kind]} · ${notes} notes` };
+    return { index: c, kind: chn.kind, name: chn.name, chip: chn.chip, notes, noiseNotes,
+      label: `${chn.name} · ${noiseNotes > notes / 2 ? "noise" : CHANNEL_KINDS[chn.kind]} · ${notes} notes` };
   });
-  return { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels };
+  // A PC Engine module may be its own machine's score.
+  const pce = t.channels.length > 0 && t.channels.every((c) => c.chip === "pce");
+  const targets = pce ? ["pce", "md"] : ["md"];
+  return { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels, targets, target: targets[0] };
+}
+
+/** The channels a `target` score offers a module's rows. */
+export function trackerDests(target = "md") {
+  return target === "pce" ? [...PCE_WAVES, ...Object.values(PCE_NOISE)] : [...FM_DESTS, ...PSG_DESTS, "noise"];
 }
 
 /**
@@ -115,7 +145,17 @@ export function analyzeTracker(t) {
  * wavetable and OPLL channels take what is left; samples are dropped, as is
  * a channel with no notes.
  */
-export function defaultTrackerOptions(a) {
+export function defaultTrackerOptions(a, target = a.target ?? "md") {
+  // A PC Engine module on pce: each channel its own, channels 5 and 6 on
+  // the noise where most of their notes are.
+  if (target === "pce") {
+    const dest = {};
+    for (const ch of a.channels) {
+      const noise = PCE_NOISE[ch.index] && ch.noiseNotes > ch.notes / 2;
+      dest[ch.index] = ch.notes === 0 ? "drop" : noise ? PCE_NOISE[ch.index] : PCE_WAVES[ch.index] ?? "drop";
+    }
+    return { dest, phrases: true, bpm: null, target };
+  }
   const fm = [...FM_DESTS];
   const sqr = [...PSG_DESTS];
   let noise = "noise";
@@ -134,7 +174,7 @@ export function defaultTrackerOptions(a) {
     if (ch.kind === "fm3op") dest[ch.index] = fm.shift() ?? "drop";
     else if (ch.kind === "wave" || ch.kind === "opll" || ch.kind === "opl") dest[ch.index] = fm.shift() ?? sqr.shift() ?? "drop";
   }
-  return { dest, phrases: true, bpm: null };
+  return { dest, phrases: true, bpm: null, target };
 }
 
 const slug = (s) => String(s || "").toLowerCase().normalize("NFKD")
@@ -142,10 +182,11 @@ const slug = (s) => String(s || "").toLowerCase().normalize("NFKD")
 
 /**
  * @param options {dest: {channelIndex: channel | "drop"}, phrases: bool,
- *                 bpm?: number | null, fileName?}
+ *                 bpm?: number | null, target?: "md" | "pce", fileName?}
  */
 export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const warnings = [];
+  const onPce = options.target === "pce";
   const fxSkipped = new Map();
   const rowTicks = PPQN / a.rowsPerBeat;
   const ticksPerFrame = rowTicks / a.framesPerRow;
@@ -209,6 +250,26 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     return defs.get(key).name;
   };
   const standIns = new Set();
+  // A module wavetable as a def-wave: its steps 0..height onto −128..127,
+  // 32 of them (a wider or narrower table read at 32 points).
+  let waveResampled = 0;
+  const waveDef = (i) => {
+    const w = t.waves?.[i];
+    if (!w || !w.values.length) return null;
+    const key = `wave:${i}`;
+    if (!defs.has(key)) {
+      if (w.values.length !== 32) waveResampled++;
+      const top = Math.max(1, w.height ?? 31);
+      const steps = Array.from({ length: 32 }, (_, k) => {
+        const v = w.values[Math.floor((k * w.values.length) / 32)] ?? 0;
+        return Math.max(-128, Math.min(127, Math.round((Math.max(0, Math.min(top, v)) * 255) / top) - 128));
+      });
+      const name = uniq(`wave-${slug(w.name) || i}`);
+      defs.set(key, { name, text: `(def-wave ${name} :wave [${steps.join(" ")}])` });
+    }
+    return defs.get(key).name;
+  };
+  let waveMacroSteps = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0;
 
   // Pitch effects → one `:pitch` macro a note. A tracker tick is a frame at
   // the song's rate; a slide moves `speed × pitchSlideSpeed` 128ths of a
@@ -268,9 +329,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const onFm = ch.dest.startsWith("fm");
     const fmVol = ["fm", "opm", "fm3op"].includes(ch.kind);
     const volMax = VOL_MAX[ch.kind] ?? (fmVol ? t.fmVolMax : t.psgVolMax);
+    // On pce the volume column is the chip's 5-bit volume, 1.5 dB a step.
+    const pceVol = onPce && chn.chip === "pce";
+    const toNoise = onPce && ch.dest.startsWith("noise");
     const velOf = (v) => {
       if (v < 0) return 15;
       if (fmVol) return Math.max(0, Math.min(15, Math.round(15 - ((volMax - v) * 0.75) / 2)));
+      if (pceVol) return Math.max(0, Math.min(15, Math.round((15 - ((chn.volMax ?? 31) - v) * 1.5 / VEL_DB_PER_STEP) * 8) / 8));
       return Math.max(0, Math.min(15, Math.round((v * 15) / volMax)));
     };
     const standIn = STAND_IN[ch.kind] ?? "wave-square";
@@ -281,7 +346,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       (chn.patterns.get(t.orders[order][ch.index]) ?? []).slice(0, rows).some((r) => r?.fx.some(([c]) => c === code)));
     let ins = -1;
     let vol = -1;
-    let pan = onFm && uses(0x08) ? "center" : null;
+    let pan = (onFm || pceVol) && uses(0x08) ? "center" : null;
+    let wave = -1; // the wavetable the channel plays (pce)
+    let noise = false; // channel 5 or 6 on its noise (pce, 11xx)
     let arp = 0;
     let usedMacro = false;
     const voiceTokens = () => {
@@ -340,7 +407,14 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if (code === 0xe5 && val >= 0) detune = v < 0 ? 0 : Math.round((val - 0x80) * 100 / 128 / 10) * 10 || 0;
           else if (code === 0x08 && onFm && val >= 0) {
             pan = (val >> 4) && (val & 15) ? "center" : val >> 4 ? "left" : val & 15 ? "right" : "center";
-          } else if (code === 0x00 && val >= 0) { arp = val; usedArp = true; }
+          } else if (code === 0x08 && pceVol && val >= 0) {
+            // The channel's left and right levels: the louder side full, the
+            // other as far down as their difference (chips/huc6280.js panLevels).
+            const p = ((val & 15) - (val >> 4)) / 15;
+            pan = p === 0 ? "center" : String(+p.toFixed(2));
+          } else if (code === 0x10 && pceVol && val >= 0) wave = val;
+          else if (code === 0x11 && pceVol && val >= 0) noise = val > 0;
+          else if (code === 0x00 && val >= 0) { arp = val; usedArp = true; }
           else if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
           else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
           else if ((code === 0x09 || code === 0x0f) && val > 0) {
@@ -348,22 +422,38 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             speedChanged = true;
           } else if (code === 0x0b || code === 0x0d) { /* the order walk */ }
           else if (code >= 0) {
-            const k = FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
+            const k = (pceVol ? PCE_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
         }
         if (speedChanged && tempoTrack) marks.push({ tick: at, tokens: [tempoOf((speeds[0] + speeds[1]) / 2)] });
-        if (row.ins >= 0 && t.instruments[row.ins]) ins = row.ins;
+        if (row.ins >= 0 && t.instruments[row.ins]) {
+          ins = row.ins;
+          // An instrument's wave macro sets the wave at its notes (its first
+          // step; a wave moving under a note is not imported).
+          const wm = pceVol ? t.instruments[ins].wave : null;
+          if (wm?.values.length && typeof row.note === "number") {
+            wave = wm.values[0];
+            if (wm.values.some((x) => x !== wm.values[0])) waveMacroSteps++;
+          }
+        }
         if (row.vol >= 0) vol = row.vol;
         if (row.note === "off") {
+          if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
+          sounding = null;
+        } else if (typeof row.note === "number" && pceVol && noise !== toNoise) {
+          // Channel 5 or 6 playing the other of its wave and its noise: a
+          // score has one of them there.
+          if (noise) noiseDropped++; else waveDropped++;
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
           sounding = null;
         } else if (typeof row.note === "number") {
           const start = at + Math.min(delay, rowTicks - 1);
           const legatoFrom = rp.porta && sounding && lastMidi != null ? lastMidi : null;
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, start);
+          const waveName = pceVol && !toNoise && wave >= 0 ? waveDef(wave) : null;
           const st = {
-            voice: voiceTokens(),
+            voice: waveName ? [waveName, ...voiceTokens()] : voiceTokens(),
             pan: pan ? `:pan ${pan}` : null,
             arp: usedArp ? arpToken() : null,
           };
@@ -374,20 +464,24 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (st.arp && (st.arp !== cur.arp || (voiceChanged && arp))) pre.push(st.arp);
           if (st.pan && st.pan !== cur.pan) pre.push(st.pan);
           cur = st;
-          const midi = row.note + 12;
+          // A noise note is its rate: c2 the slowest (chips/huc6280.js).
+          const midi = toNoise
+            ? PCE_NOISE_BASE + (t.properNoiseLayout ? row.note & 31 : PCE_NOISE_TABLE[((row.note % 12) + 12) % 12])
+            : row.note + 12;
+          if (toNoise && (rp.slide || rp.porta || vib)) noisePitch++;
           const v = velOf(vol);
           if (!fmVol && vol === 0) { sounding = null; continue; } // silent
           sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st),
             voiceChanged,
-            p: { vib: vib && { ...vib }, detune, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
+            p: toNoise ? null : { vib: vib && { ...vib }, detune, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
               slides: rp.slide && !rp.slide.stop ? [{ ...rp.slide, off: 0 }] : [], vibLater: null } };
-          if (legatoFrom != null) sounding.tieIn = true;
+          if (legatoFrom != null && !toNoise) sounding.tieIn = true;
           notes.push(sounding);
           lastMidi = midi;
         } else {
           if (cut != null && sounding) sounding.end = Math.min(sounding.end ?? Infinity, at + Math.max(1, cut));
           // Pitch effects inside a note: from where they start in it.
-          if (sounding) {
+          if (sounding?.p) {
             const off = at - sounding.tick;
             const ps = sounding.p;
             if (rp.vib && !ps.vib && !ps.vibLater && vib) ps.vibLater = { ...vib, off };
@@ -437,9 +531,14 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0))
     warnings.push("sample channels are not imported");
   if (t.oldMacros) warnings.push("instrument macros of this old Furnace version are not imported");
+  if (waveMacroSteps) warnings.push(`a wave macro that moves under a note keeps its first wave (${waveMacroSteps}×)`);
+  if (waveResampled) warnings.push(`${waveResampled} wavetable(s) not 32 steps wide are read at 32 points`);
+  if (noiseDropped) warnings.push(`noise notes on a channel imported as its wave are dropped (${noiseDropped}×)`);
+  if (waveDropped) warnings.push(`wave notes on a channel imported as noise are dropped (${waveDropped}×)`);
+  if (noisePitch) warnings.push(`a slide or vibrato on a noise note is dropped: its pitch is its rate (${noisePitch}×)`);
 
   const header = [`; Imported from ${options.fileName ?? "a tracker module"} (${t.format}, ${t.system})`];
-  const score = [t.title && `:title ${qstr(t.title)}`, t.author && `:author ${qstr(t.author)}`].filter(Boolean);
+  const score = [onPce && ":target pce", t.title && `:title ${qstr(t.title)}`, t.author && `:author ${qstr(t.author)}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   for (const d of defs.values()) header.push("", d.text);
