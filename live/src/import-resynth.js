@@ -22,6 +22,11 @@
  *   independent-operator mode) — sine-wave speech, a whistled voice with no
  *   pitch of its own.
  *
+ * On x68k (the score the sound goes into; `target`) the YM2151 has neither
+ * FM3's modes nor a CSM of one channel, so the four sines are four channels,
+ * fm1–fm4, each its fourth operator alone (every channel has its own pitch),
+ * and the hiss is fm8's :mode noise; CSM is not offered there.
+ *
  * At 150 BPM one frame is four ticks, so every table lands on the frame it
  * was measured in and the tracks come out the same length.
  */
@@ -250,13 +255,13 @@ const WIDTH_ENV = { held: [0, 0], ringing: [12, 1], wide: [15, 3] };
 // falls as the rings shorten): what keeps a recording's hiss-to-voice balance.
 const WIDTH_NOISE_DB = { held: 0, ringing: -8, wide: -10 };
 
-export function defaultResynthOptions(a, width = "held") {
-  return { mode: "csm", pitchHz: 0, width, noiseDb: WIDTH_NOISE_DB[width] ?? 0, comp: 0.6, start: 0, end: +a.duration.toFixed(2), tempo: true };
+export function defaultResynthOptions(a, width = "held", target = "md") {
+  return { mode: target === "x68k" ? "sine" : "csm", pitchHz: 0, width, noiseDb: WIDTH_NOISE_DB[width] ?? 0, comp: 0.6, start: 0, end: +a.duration.toFixed(2), tempo: true, target };
 }
 
 /**
  * @param {ReturnType<typeof analyzeSound>} a
- * @param {{ mode, pitchHz, width, noiseDb, comp, start, end, tempo }} opts  tempo: write
+ * @param {{ mode, pitchHz, width, noiseDb, comp, start, end, tempo, target }} opts  tempo: write
  *        `:tempo 150`, where a frame is four ticks (false when the voice joins a
  *        score that has its own tempo: the frames then round to its ticks, the
  *        same way on every track)
@@ -265,7 +270,10 @@ export function defaultResynthOptions(a, width = "held") {
 export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
   const o = { ...defaultResynthOptions(a), ...opts };
   const warnings = [];
-  const csm = o.mode === "csm";
+  // x68k: the formants on fm1–fm4, the hiss on fm8's noise; no CSM.
+  const opm = o.target === "x68k";
+  if (opm && o.mode === "csm") warnings.push("x68k has no CSM of one channel: the formants are sine waves");
+  const csm = o.mode === "csm" && !opm;
   const f0 = Math.floor(Math.max(0, o.start) * FPS);
   const f1 = Math.min(a.frames.length, Math.ceil(Math.max(o.start, o.end) * FPS));
   const n = f1 - f0;
@@ -275,9 +283,20 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
   const FLOOR_DB = -24;
   const loud = (i) => o.comp * (a.rmsDb[idx(i)] - a.peakRms);
   const toVol = (d) => Math.max(0, Math.min(31, Math.round(31 + d / 2)));
+  // The OPM's noise follows its operator's attenuation linearly: a level d
+  // dB down is the TL that leaves 10^(d/20) of it, and :vol moves the TL
+  // 2 / 0.75 a step (chips/ym2151.js).
+  const toNoiseVol = (d) => {
+    const tl = (1023 * (1 - 10 ** (Math.min(0, d) / 20))) / 8;
+    return Math.max(0, Math.min(31, Math.round(31 - (tl * 0.75) / 2)));
+  };
+  // x68k's noise at its loudest is some 9 dB under a sine at the same TL,
+  // where the Mega Drive's PSG noise stands beside FM: its formants go 6 dB
+  // down so the consonants keep their place against the vowels.
+  const OPM_FORMANT_DB = -6;
   const opDb = (s, i) => {
     const top = Math.max(...a.tracks.map((t) => t[idx(i)].db));
-    return loud(i) + Math.max(FLOOR_DB, a.tracks[s][idx(i)].db - top);
+    return loud(i) + Math.max(FLOOR_DB, a.tracks[s][idx(i)].db - top) + (opm ? OPM_FORMANT_DB : 0);
   };
   const sounding = (i) => a.active[idx(i)] && !a.unvoiced[idx(i)];
   const NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
@@ -321,6 +340,7 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
       at = q;
     });
     if (n > at) parts.push(rest(n - at));
+    if (opm) return `(fm${s + 1}${s === 0 && o.tempo ? ` :tempo ${BPM}` : ""} formant\n    ${parts.join("\n    ")})`;
     return `(fm3-${s + 1}\n    ${parts.join("\n    ")})`;
   };
   const noiseLine = () => {
@@ -328,7 +348,7 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
     let at = 0;
     segs.forEach(([p, q], k) => {
       if (p > at) parts.push(rest(p - at));
-      const vols = []; for (let i = p; i < q; i++) vols.push(a.unvoiced[idx(i)] ? toVol(loud(i) + o.noiseDb) : 0);
+      const vols = []; for (let i = p; i < q; i++) vols.push(a.unvoiced[idx(i)] ? (opm ? toNoiseVol : toVol)(loud(i) + o.noiseDb) : 0);
       if (vols.some((v) => v > 0)) {
         defs.push({ k, name: `p${k + 1}-n`, body: `(macro :vol [${wrap(vols)}])` });
         parts.push(`p${k + 1}-n :gate ${q - p}f c${q - p}f`);
@@ -336,6 +356,8 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
       at = q;
     });
     if (n > at) parts.push(rest(n - at));
+    // The same sine, its fourth operator turned to noise.
+    if (opm) return `(fm8 formant :mode noise\n    ${parts.join("\n    ")})`;
     return `(noise\n    ${parts.join("\n    ")})`;
   };
   // the voice: one rate per voiced run (its median pitch, or the one given),
@@ -366,12 +388,14 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
 
   const [rr, ks] = WIDTH_ENV[o.width] ?? WIDTH_ENV.held;
   const ops = [1, 2, 3, 4]
-    .map((k) => `:ar${k} 31 :dr${k} 0 :sr${k} 0 :rr${k} ${csm ? rr : 15} :sl${k} 0 :tl${k} 0 :ks${k} ${csm ? ks : 0} :ml${k} 1 :dt${k} 0`)
+    .map((k) => `:ar${k} 31 :dr${k} 0 :sr${k} 0 :rr${k} ${csm ? rr : 15} :sl${k} 0 :tl${k} ${opm && k < 4 ? 127 : 0} :ks${k} ${csm ? ks : 0} :ml${k} 1 :dt${k} 0`)
     .join("\n  ");
   const name = fileName.replace(/\.[^.]*$/, "");
   const head = csm
     ? `; ${name}: CSM with formant tracks (language.md §15). Each fm3-N follows one\n; formant of the recording — its frequency as a :pitch table, its level as a\n; :vol table, one value a frame — the fm3-csm-rate track is the voice (its\n; rates the pitch, its rests the breaths), and the noise track the consonants.`
-    : `; ${name}: sine-wave speech. Each fm3-N is a sine wave on one formant of the\n; recording — its frequency as a :pitch table, its level as a :vol table, one\n; value a frame — and the noise track the consonants.`;
+    : opm
+      ? `; ${name}: sine-wave speech. Each of fm1–fm4 is a sine wave on one formant of\n; the recording — its frequency as a :pitch table, its level as a :vol table,\n; one value a frame — and fm8's noise the consonants.`
+      : `; ${name}: sine-wave speech. Each fm3-N is a sine wave on one formant of the\n; recording — its frequency as a :pitch table, its level as a :vol table, one\n; value a frame — and the noise track the consonants.`;
   const tracks = [0, 1, 2, 3].map(formantLine).join("\n") + "\n" + (csm ? rateLine() + "\n" : "") + noiseLine() + "\n";
   const defBlock = segs.map(([p, q], k) =>
     `; phrase ${k + 1}: ${((p + f0) / FPS).toFixed(2)}–${((q + f0) / FPS).toFixed(2)} s\n` +
@@ -380,7 +404,7 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
     `${head}\n` +
     `(def-fm formant :alg 7 :fb 0 :ams 0 :fms 0\n  ${ops})\n\n` +
     (defBlock ? defBlock + "\n\n" : "") +
-    (csm ? `(fm3-csm formant)\n` : `(fm3${o.tempo ? ` :tempo ${BPM}` : ""} formant)\n`) +
+    (opm ? "" : csm ? `(fm3-csm formant)\n` : `(fm3${o.tempo ? ` :tempo ${BPM}` : ""} formant)\n`) +
     tracks;
   return { source, warnings };
 }

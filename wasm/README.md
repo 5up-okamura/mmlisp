@@ -89,7 +89,10 @@ Integration notes:
    averages three of its samples into one at the FM's rate (clock / 144),
    handing out FM + rhythm + ADPCM-B (stereo) and the SSG apart. It reads
    the rhythm ROM and the ADPCM-B's RAM through the host, from buffers the
-   caller fills; with no ROM loaded the rhythm is not keyed.
+   caller fills; with no ROM loaded the rhythm is not keyed. The host runs
+   the two timers ymfm leaves to it (144 input clocks a sample), so Timer A
+   keys FM3 under CSM; as ymfm reads a channel's key only in a sample it was
+   written, the sample after a CSM key-on rewrites FM3's $B2 for the key-off.
    `wasm/ym2151_adapter.cpp` runs ymfm's YM2151 at its own rate (clock / 64),
    stereo, with each channel's output beside it for the scope.
    `wasm/ay8910_adapter.cpp` clocks ymfm's SSG engine at the chip's clock / 8

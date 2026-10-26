@@ -3481,19 +3481,29 @@
         const blank = editorView.state.doc.toString().trim() === '';
         const res = await importResynthBytes(new Uint8Array(await file.arrayBuffer()), file.name, blank);
         if (!res) return; // cancelled in the dialog
-        insertImportedInstruments(res.source, res.warnings, `Resynthesized ${file.name} on FM3`, { tag: 'Resynthesis' });
+        insertImportedInstruments(res.source, res.warnings, `Resynthesized ${file.name}`, { tag: 'Resynthesis' });
         if (!blank) log('Resynthesis: the formant tables run a value a frame; at 150 BPM a frame is four ticks, at this score’s tempo the frames round', 'info');
       } catch (e) {
         log(`Resynthesis failed: ${e?.message || e}`, 'err');
       }
     }
 
+    // The machine of the score an import goes into: the last good build's, or
+    // md for an empty document (which has no def-score yet).
+    function blankScoreTarget(blank) {
+      return blank ? 'md' : targetProfile(_lastGoodIR?.metadata?.target).name;
+    }
+
     async function importResynthBytes(bytes, fileName, withTempo = true) {
       const { data, sampleRate } = await decodeAudioFile(bytes, fileName);
       const a = analyzeSound(data, sampleRate);
-      const def = defaultResynthOptions(a);
+      // For the score it goes into: x68k's YM2151 has no FM3 modes — the
+      // formants are sine waves on fm1–fm4, the hiss fm8's noise.
+      const target = blankScoreTarget(withTempo);
+      const opm = target === 'x68k';
+      const def = defaultResynthOptions(a, 'held', target);
       const fields = [
-        { key: 'mode', label: 'Synthesis', type: 'select', value: def.mode, choices: RESYNTH_MODES },
+        { key: 'mode', label: 'Synthesis', type: 'select', value: def.mode, choices: opm ? RESYNTH_MODES.filter(([m]) => m === 'sine') : RESYNTH_MODES },
         { key: 'pitchHz', label: 'Buzz pitch (Hz)', type: 'number', value: def.pitchHz,
           hint: `0 = the recording’s, phrase by phrase` + (a.pitchHz ? ` (about ${Math.round(a.pitchHz)} Hz)` : '') + ' · CSM only' },
         { key: 'width', label: 'Formant width', type: 'select', value: def.width, choices: RESYNTH_WIDTHS, hint: 'CSM only: how fast each ring decays' },
@@ -3506,14 +3516,15 @@
         title: `Import ${fileName}`,
         summary: `${a.duration.toFixed(1)} s at ${sampleRate} Hz · ${a.segments.length} phrase${a.segments.length === 1 ? '' : 's'}` +
           (a.pitchHz ? ` · pitch about ${Math.round(a.pitchHz)} Hz` : '') +
-          '. Four formants, one a frame, on fm3-1–fm3-4; the hiss on noise — inserted at the cursor.',
+          (opm ? '. Four formants, one a frame, as sine waves on fm1–fm4; the hiss on fm8’s noise — inserted at the cursor.'
+            : '. Four formants, one a frame, on fm3-1–fm3-4; the hiss on noise — inserted at the cursor.'),
         fields,
       });
       if (!got) return null;
       const f = got.fields;
       return resynthToMmlisp(a, {
         mode: f.mode, pitchHz: Math.max(0, +f.pitchHz || 0), width: f.width, noiseDb: +f.noiseDb || 0,
-        comp: def.comp, start: Math.max(0, +f.start || 0), end: +f.end || def.end, tempo: withTempo,
+        comp: def.comp, start: Math.max(0, +f.start || 0), end: +f.end || def.end, tempo: withTempo, target,
       }, fileName);
     }
 

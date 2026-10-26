@@ -1583,6 +1583,12 @@ buzz become bursts on the `noise` track. The dialog chooses the synthesis:
 - **Sine waves** — the four operators as sine waves on the formants:
   sine-wave speech, a whistled voice with no pitch of its own.
 
+The tracks are the score's machine's: on `pc88` the same as on the Mega
+Drive (the YM2608's FM3 has both modes); on `x68k`, whose YM2151 has neither,
+the sine waves only — `fm1`–`fm4` each one formant (its fourth operator
+alone) and the hiss on `fm8` as its `:mode noise`, the formants 6 dB down so
+the consonants, the OPM noise being quieter than a sine, keep their place.
+
 It reads best what has a shaped envelope — a voice, a wah or a moving
 filter, a drum's body. A sound whose colour is its partials (a bell, a
 metallic hit) or that has no envelope shape (noise, a dense chord) comes out

@@ -15,6 +15,14 @@
 // The chip reads two external memories through the host, as MAME's does: the
 // rhythm ROM (ACCESS_ADPCM_A, 8 KB, Yamaha's — the caller brings it) and the
 // ADPCM-B's RAM (ACCESS_ADPCM_B, 256 KB, the score's baked image).
+//
+// The host also runs the chip's two timers, which ymfm leaves to it: a
+// timer set counts down in input clocks, 144 a rendered sample, and on
+// expiry the chip is told (engine_timer_expired) — the status flags, and
+// CSM: Timer A keying FM3 (fm3-csm), which no key-on register writes. The
+// chip keys CSM on for one sample; ymfm reads a channel's key only in a
+// sample something was written to it, so the next sample rewrites FM3's
+// $B2 as it stands — the key-off then lands, and the next expiry re-attacks.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +48,31 @@ class host : public ymfm::ymfm_interface {
 
   void ymfm_external_write(ymfm::access_class type, uint32_t address, uint8_t data) override {
     if (type == ymfm::ACCESS_ADPCM_B && address < Y8_RAM_BYTES) ram[address] = data;
+  }
+
+  // Each timer's input clocks to go, or -1 when it is stopped.
+  int32_t timer_left[2] = { -1, -1 };
+
+  void ymfm_set_timer(uint32_t tnum, int32_t duration_in_clocks) override {
+    if (tnum < 2) timer_left[tnum] = duration_in_clocks;
+  }
+
+  // `clocks` of the chip's input clock gone by: a timer that runs out
+  // expires (and is set again by the chip, the overshoot carried). True when
+  // Timer A expired.
+  bool run_timers(int32_t clocks) {
+    bool a = false;
+    for (uint32_t t = 0; t < 2; t++) {
+      if (timer_left[t] < 0) continue;
+      timer_left[t] -= clocks;
+      if (timer_left[t] > 0) continue;
+      const int32_t over = timer_left[t];
+      timer_left[t] = -1;
+      m_engine->engine_timer_expired(t);
+      if (timer_left[t] > 0) timer_left[t] += over;
+      if (t == 0) a = true;
+    }
+    return a;
   }
 };
 
@@ -116,6 +149,8 @@ const int Y8_QUEUE = 8192;
 pending g_queue[Y8_QUEUE];
 int g_qhead = 0, g_qlen = 0;
 uint8_t g_keyed = 0; // channels ($28 bits 2-0) keyed in this sample
+uint8_t g_b2 = 0; // FM3's $B2 as last written (the CSM key-off's rewrite)
+bool g_csm_off = false; // Timer A keyed CSM last sample: the key-off is due
 
 void ensure_init() {
   if (g_chip) return;
@@ -134,6 +169,7 @@ bool apply_write(int port, int addr, int data) {
     g_keyed |= bit;
   }
   if (!(port & 1) && addr == 0x10 && !g_has_rom) return true;
+  if (!(port & 1) && addr == 0xb2) g_b2 = (uint8_t)data;
   if (port & 1) {
     g_chip->write_address_hi((uint8_t)addr);
     g_chip->write_data_hi((uint8_t)data);
@@ -165,8 +201,11 @@ int y8_init(void) {
 void y8_reset(void) {
   ensure_init();
   g_chip->reset();
+  g_host.timer_left[0] = g_host.timer_left[1] = -1;
   g_qlen = 0;
   g_keyed = 0;
+  g_b2 = 0;
+  g_csm_off = false;
 }
 
 // port 0: $00-$FF of the first address space (SSG, rhythm, FM ch1-3);
@@ -212,6 +251,11 @@ int y8_render(int count) {
   int16_t *tap = g_taps;
   for (int i = 0; i < count; i++) {
     drain_queue();
+    if (g_csm_off) {
+      g_chip->write_address(0xb2);
+      g_chip->write_data(g_b2);
+    }
+    g_csm_off = g_host.run_timers(144);
     g_chip->generate3(out);
     g_keyed = 0;
     for (int k = 0; k < 3; k++)
