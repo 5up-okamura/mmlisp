@@ -25,7 +25,7 @@ export const ym2608 = {
   encoder: true,
   emulator: true,
   fmEncoder() {
-    return opnFmEncoder(this.fnumRate);
+    return opnFmEncoder(this.fnumRate, this.clock);
   },
   ssg: { clock: SSG_CLOCK, noiseRate: NOISE_RATE_START },
   // Written once before anything else. $29 bit 7 (SCH) opens fm4-fm6, which

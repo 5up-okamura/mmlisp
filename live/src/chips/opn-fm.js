@@ -21,9 +21,9 @@ export const opnFm = {
 // The OPN's FM as the IR player's FM: each operation as [port, addr, data]
 // writes. Six channels, three per port; a channel's operator registers are
 // its base + the operator's slot offset + the channel within the port. FM3's
-// independent operators, CSM and Timer A stay the IR player's own: only an
-// OPN target has the tracks that reach them (`csm`).
-export function opnFmEncoder(fnumRate) {
+// independent operators, CSM and Timer A are CH3's own modes (`csm`): the IR
+// player keeps their state (driver.md §9, §13.4), their registers are here.
+export function opnFmEncoder(fnumRate, clock) {
   const at = (ch) => [ch >= 3 ? 1 : 0, ch % 3];
   const OP_REG = {
     "dt-ml": [0x30, encode30],
@@ -67,6 +67,24 @@ export function opnFmEncoder(fnumRate) {
     isKeyOn: (port, addr, data) => port === 0 && addr === 0x28 && (data & 0xf0) !== 0,
     // :lfo-rate: 0 off, 1-8 on at that rate.
     lfo: (rate) => [[0, 0x22, rate === 0 ? 0x00 : 0x08 | ((rate - 1) & 0x07)]],
+    // $27: CH3's mode (bit 6 FM3 special, bit 7 CSM) and the timers' control.
+    mode: (reg27) => [[0, 0x27, reg27]],
+    // Timer A's value for a rate: hz = clock / (144 · (1024 − TA)).
+    timerAOf: (hz) => Math.max(0, Math.min(1023, Math.round(1024 - clock / (144 * Math.max(1, Number(hz) || 1))))),
+    timerA: (ta) => [[0, 0x24, (ta >> 2) & 0xff], [0, 0x25, ta & 0x03]],
+    // CH3's operator `opIdx` (0-3) TL — under CSM its key (driver.md §9).
+    ch3Tl: (opIdx, tl) => [[0, 0x40 + OP_ADDR_OFFSET[opIdx] + 2, tl]],
+    // An FM3 operator's own pitch (op 1-4), high byte first: op4 reads the
+    // channel's ($A6/$A2), op1-3 their own, which are NOT in order — on the
+    // chip (Nuked-OPN2's fnum_3ch decode) OP1 reads $AD/$A9, OP2 $AE/$AA and
+    // OP3 $AC/$A8.
+    ch3OpPitch(op, midi) {
+      const { fnum, block } = midiToFnumBlock(midi, fnumRate);
+      const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07), low = fnum & 0xff;
+      if (op === 4) return [[0, 0xa6, high], [0, 0xa2, low]];
+      const idx = [1, 2, 0][op - 1];
+      return idx == null ? [] : [[0, 0xac + idx, high], [0, 0xa8 + idx, low]];
+    },
   };
 }
 

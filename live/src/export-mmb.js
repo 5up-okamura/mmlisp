@@ -346,7 +346,7 @@ function ticksToFrames(ticks, bpm, frameHz) {
   return Math.max(1, Math.round((Number(ticks) * frameHz * 60) / (bpm * 96)));
 }
 
-// Timer A period from Hz (same formula as ir-player.js _setCsmRateHz).
+// Timer A period from Hz (same formula as chips/opn-fm.js timerAOf).
 function hzToTimerA(hz) {
   const safeHz = Math.max(52, Math.min(53270, Number(hz) || 52));
   const ta = Math.round(1024 - YM2612_MASTER_CLOCK / (144 * safeHz));

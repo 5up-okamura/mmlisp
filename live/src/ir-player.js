@@ -20,7 +20,6 @@ import {
   toSlotValue,
   midiToHz,
   pitchToMidi,
-  midiToFnumBlock,
   snapNote,
   velFine,
   velK,
@@ -30,7 +29,6 @@ import {
   VOL_UNITY,
   sampleSweepPhase,
   sampleCurveUnit,
-  OP_ADDR_OFFSET,
   buildChannelRegState,
   fmCarrierOpsForAlg,
   KEY_OFF_LEAD_SECS,
@@ -557,11 +555,11 @@ export class IRPlayer {
     // them: with a slow RR (a held formant) they would ring on at their last
     // level — their key is their TL (driver.md §9), so that is what stops them.
     if (this._reg27 & 0x80)
-      for (let op = 0; op < 4; op++) this._write(0, 0x40 + OP_ADDR_OFFSET[op] + 2, 127);
+      for (let op = 0; op < 4; op++) this._fmWrites(this._fmEnc.ch3Tl(op, 127));
     this._fm3TlQueue = [];
     this._reg27 = 0;
     this._fm3Ops = false;
-    if (this._fmEnc.csm) this._write(0, 0x27, 0);
+    if (this._fmEnc.csm) this._fmWrites(this._fmEnc.mode(0));
     this._silenceChipPcm();
   }
 
@@ -968,7 +966,7 @@ export class IRPlayer {
       this._fm3Held &= ~fm3Off;
       this._fm3Mask &= ~fm3Off;
       this._fm3KeyLast = Math.max(when, this._fm3KeyLast);
-      this._write(0, 0x28, this._fm3Mask | 0x02, this._fm3KeyLast);
+      this._fmKey(2, this._fm3Mask, this._fm3KeyLast);
     }
     // PSG: force silent attenuation on an inaudible channel.
     for (const [ti, psgCh] of this._lanesOf("psg")) {
@@ -1091,7 +1089,7 @@ export class IRPlayer {
           this._fm3KeyQueue = this._fm3KeyQueue.filter((e) => !(e.on && e.bit & held));
           this._fm3Mask &= ~held;
           this._fm3KeyLast = Math.max(when, this._fm3KeyLast);
-          this._write(0, 0x28, this._fm3Mask | 0x02, this._fm3KeyLast);
+          this._fmKey(2, this._fm3Mask, this._fm3KeyLast);
         }
       } else {
         this._fmKey(ch, 0, when);
@@ -1926,22 +1924,8 @@ export class IRPlayer {
     if (sw && !sw.steps.length) this._tempoSweep = null;
   }
 
-  _timerAValueFromHz(hz) {
-    const safeHz = Math.max(1, Number(hz) || 1);
-    // OPN Timer A: hz ≈ master_clock / (144 * (1024 - TA)).
-    const ta = Math.round(1024 - this._fmChip.clock / (144 * safeHz));
-    return Math.max(0, Math.min(1023, ta));
-  }
-
-  _writeTimerAValue(ta, when) {
-    const hi = (ta >> 2) & 0xff;
-    const lo = ta & 0x03;
-    this._write(0, 0x24, hi, when);
-    this._write(0, 0x25, lo, when);
-  }
-
   _setCsmRateHz(hz, when) {
-    this._writeTimerAValue(this._timerAValueFromHz(hz), when);
+    this._fmWrites(this._fmEnc.timerA(this._fmEnc.timerAOf(hz)), when);
   }
 
   // In CSM, Timer A keys CH3: its overflow forces a key-on for one sample and
@@ -1973,7 +1957,7 @@ export class IRPlayer {
     if (this._reg27 & 0x80 && !(next & 0x80) && this._fm3Ops) {
       for (let op = 0; op < 4; op++) {
         this._fm3Op[op].csmOff = Math.min(this._fm3Op[op].csmOff ?? Infinity, when);
-        this._write(0, 0x40 + OP_ADDR_OFFSET[op] + 2, 127, when);
+        this._fmWrites(this._fmEnc.ch3Tl(op, 127), when);
       }
     }
     this._reg27 = next;
@@ -1986,7 +1970,7 @@ export class IRPlayer {
   _writeReg27(when) {
     const muted = (this._reg27 & 0x80) !== 0 && this._csmTrack >= 0
       && !this._isTrackAudible(this._csmTrack);
-    this._write(0, 0x27, muted ? this._reg27 & ~0x01 : this._reg27, when);
+    this._fmWrites(this._fmEnc.mode(muted ? this._reg27 & ~0x01 : this._reg27), when);
   }
 
   // An FM3 operator's TL in special mode: its OWN vel and vol, the shared
@@ -2032,7 +2016,7 @@ export class IRPlayer {
       this._fm3TlQueue.push({ t: when, frame: this._eventFrame(when), seq: this._fm3TlSeq++, op, tl: o.tl });
       return;
     }
-    this._write(0, 0x40 + OP_ADDR_OFFSET[op - 1] + 2, o.tl, when);
+    this._fmWrites(this._fmEnc.ch3Tl(op - 1, o.tl), when);
   }
   _inCsmHold(t) {
     return this._csmHoldSpans.some(([a, b]) => t >= a - 1e-9 && t < b - 1e-9);
@@ -2096,11 +2080,7 @@ export class IRPlayer {
   // `:snap` mask first; the cents ride on the snapped note (driver.md §8). An
   // FM3 operator's note snaps on CH3's mask.
   _writeFm3OpPitch(op, note, cents, when) {
-    const { fnum, block } = midiToFnumBlock(
-      snapNote(note, this._chRegs[2]?.snap ?? 0) + cents / 100,
-      this._fmChip.fnumRate,
-    );
-    this._writeFm3OpFnum(op, fnum, block, when);
+    this._fmWrites(this._fmEnc.ch3OpPitch(op, snapNote(note, this._chRegs[2]?.snap ?? 0) + cents / 100), when);
   }
 
   // A channel's pitch. In CSM (driver.md §9) CH3's operators 1-3 read their
@@ -2111,34 +2091,10 @@ export class IRPlayer {
   _writeFmNote(ch, note, cents, when) {
     const midi = snapNote(note, this._chRegs[ch]?.snap ?? 0) + cents / 100;
     if (ch === 2 && this._reg27 & 0x80) {
-      const { fnum, block } = midiToFnumBlock(midi, this._fmChip.fnumRate);
-      for (let op = 1; op <= 4; op++) this._writeFm3OpFnum(op, fnum, block, when);
+      for (let op = 1; op <= 4; op++) this._fmWrites(this._fmEnc.ch3OpPitch(op, midi), when);
       return;
     }
     this._fmWrites(this._fmEnc.pitch(ch, midi, when), when);
-  }
-
-  _writeFm3OpFnum(op, fnum, block, when) {
-    const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07);
-    const low = fnum & 0xff;
-
-    if (op === 4) {
-      // OP4 follows the channel-3 base FNUM path.
-      this._write(0, 0xa4 + 2, high, when);
-      this._write(0, 0xa0 + 2, low, when);
-      return;
-    }
-
-    if (op >= 1 && op <= 3) {
-      // OP1..3 use the FM3 special-mode FNUM registers A8-AA / AC-AE.
-      // The register-to-operator order is NOT sequential: on real hardware
-      // (and in Nuked-OPN2's fnum_3ch[] decode) OP1 reads A9/AD, OP2 reads
-      // AA/AE, and OP3 reads A8/AC. Mapping op -> offset from the A8/AC base:
-      //   OP1 -> 1, OP2 -> 2, OP3 -> 0.
-      const idx = [1, 2, 0][op - 1];
-      this._write(0, 0xac + idx, high, when);
-      this._write(0, 0xa8 + idx, low, when);
-    }
   }
 
   // FM3 operator keys share one register: $28 holds all four operators' bits,
@@ -2192,7 +2148,7 @@ export class IRPlayer {
     for (let op = 1; op <= 4; op++) {
       if (!(bits & (0x10 << (op - 1)))) continue;
       this._fm3Op[op - 1].csmOff = Math.min(this._fm3Op[op - 1].csmOff ?? Infinity, when);
-      this._write(0, 0x40 + OP_ADDR_OFFSET[op - 1] + 2, 127, when);
+      this._fmWrites(this._fmEnc.ch3Tl(op - 1, 127), when);
     }
   }
 
@@ -2208,7 +2164,7 @@ export class IRPlayer {
         else this._fm3Mask &= ~e.bit;
         // Never behind the previous write: the worklet applies them in time order.
         this._fm3KeyLast = Math.max(e.t, this._fm3KeyLast);
-        this._write(0, 0x28, this._fm3Mask | 0x02, this._fm3KeyLast);
+        this._fmKey(2, this._fm3Mask, this._fm3KeyLast);
       }
       q.splice(0, n);
     }
@@ -2220,7 +2176,7 @@ export class IRPlayer {
       let n = 0;
       for (; n < tq.length && tq[n].frame <= uptoFrame; n++) {
         const e = tq[n];
-        this._write(0, 0x40 + OP_ADDR_OFFSET[e.op - 1] + 2, this._inCsmHold(e.t) ? 127 : e.tl, e.t);
+        this._fmWrites(this._fmEnc.ch3Tl(e.op - 1, this._inCsmHold(e.t) ? 127 : e.tl), e.t);
       }
       tq.splice(0, n);
     }
@@ -2262,8 +2218,8 @@ export class IRPlayer {
     const frames = Math.max(1, Math.round(lenTicks * this._secsPerTick * 60));
     // Swept in Timer A's period between the two rounded ends, as the driver
     // sweeps it (a linear sweep in Hz would bow away from it mid-way).
-    const taFrom = this._timerAValueFromHz(from);
-    const taTo = this._timerAValueFromHz(to);
+    const taFrom = this._fmEnc.timerAOf(from);
+    const taTo = this._fmEnc.timerAOf(to);
     // The track's next rate ends the sweep, as on the driver: a glide longer
     // than its rate note is cut by the next one.
     let runFrames = frames;
@@ -2280,7 +2236,7 @@ export class IRPlayer {
     for (let frame = 0; frame < runFrames; frame++) {
       const phase = frames <= 1 ? 1 : frame / (frames - 1);
       const unit = sampleCurveUnit(curve, phase, ev.args?.params);
-      this._writeTimerAValue(Math.round(taFrom + (taTo - taFrom) * unit), when + frame / 60);
+      this._fmWrites(this._fmEnc.timerA(Math.round(taFrom + (taTo - taFrom) * unit)), when + frame / 60);
     }
   }
 
@@ -2545,7 +2501,7 @@ export class IRPlayer {
             this._fm3Op[fm3Op - 1].csmOff = muteAt ?? Infinity;
             if (muteAt == null) this._fm3Held |= keyMask & 0xf0;
             else if (muteAt < macroLimit - 1e-9)
-              this._write(0, 0x40 + OP_ADDR_OFFSET[fm3Op - 1] + 2, 127, Math.max(when, muteAt - KEY_ORDER_EPS_SECS));
+              this._fmWrites(this._fmEnc.ch3Tl(fm3Op - 1, 127), Math.max(when, muteAt - KEY_ORDER_EPS_SECS));
           } else if (isFm3OpNote) {
             // Merge this operator's key with the other FM3 operators sharing
             // channel 3's 0x28 register instead of overwriting them. A :keyon
@@ -6072,7 +6028,7 @@ export class IRPlayer {
     }
     // Globals, matching the driver's boot patch (driver.md §5.4).
     this._fmWrites(this._fmEnc.lfo(0)); // LFO off
-    if (this._fmEnc.csm) this._write(0, 0x27, 0); // CH3 normal mode, timers off
+    if (this._fmEnc.csm) this._fmWrites(this._fmEnc.mode(0)); // CH3 normal mode, timers off
     if (this._target.hasPart("dac")) {
       this._write(0, 0x2a, 0); // DAC data 0 — the DAC is off; the engine feeds it
       this._write(0, 0x2b, 0); // DAC off

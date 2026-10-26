@@ -122,12 +122,12 @@ a number; ruled with it: no kind-adapter registry (14 `kind` switches are
 enough), the Library's Fits and the def under the cursor already come from
 the parts.
 
-Next:
-1. VGM: one data-block hook for the DAC / ADPCM-B / OKI special cases
-   (optional).
-2. IR player: FM3 / CSM / Timer A into the OPN encoder (hygiene; gated by
-   `csm` today). The OPLL's level through its encoder and per-part ranges
-   are built (stage 2).
+Done (2026-10-27): CH3's $27, Timer A, its operators' TL and F-numbers are
+the OPN encoder's (`mode`, `timerA`/`timerAOf`, `ch3Tl`, `ch3OpPitch`); the
+IR player keeps only their state.
+
+Next (optional): VGM — one data-block hook for the DAC / ADPCM-B / OKI
+special cases.
 
 ## Song importers for msx / x68k (MGS, MDX; 2026-10-25)
 
