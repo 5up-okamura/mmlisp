@@ -42,8 +42,7 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 - **FM-PAC (OPLL).** The one user voice and the 15 ROM voices are built
   (stage 2; language.md §19 msx), named with no prefix (the user's
   ruling, 2026-10-25: `piano`, not `opll-piano`). The rhythm mode is
-  built (stage 3; language.md §19 msx). Pitch macros and glide on a rhythm
-  hit come later (a tom's pitch-down), on the FM pitch path.
+  built (stage 3; language.md §19 msx), its hits' pitch moves too.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
@@ -128,6 +127,13 @@ Next:
   $0E's key bits (ko / kf, the end's all-off; Grider and Contrail agree
   99.8-100% a frame), $36-$38's levels and $16-$28's tunings, and y to the
   driver's register writes (a user voice's $00-$07, the PSG's $06/$07).
+- Open on MGS (2026-10-26, from G2_00 and BF_4TH against libkss): a PSG
+  note under an `@e` followed by a rest rings on past its slot in MGSDRV
+  (the envelope runs ~2 frames into the rest; k0's release is unread), and
+  our level macro lags its first step a frame. BF_4TH's scc:0/scc:1 sound
+  in a fifth of MGSDRV's frames (so before this work too). A `y14`'s held
+  keys (HH, CYM) ring once at the `y` and are left out; only a song's
+  first `y14` is read (none seen switching the rhythm mid-song).
 - Not yet held to MGSDRV (2026-10-26): the PSG's hardware envelope — `s`
   on, `v` off (MGSC111.TXT says `v` "等" restores the software envelope: @
   may too), a key-on rewriting R13, and `m` as `:env-rate` Hz. Check with

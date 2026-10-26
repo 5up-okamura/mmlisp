@@ -64,6 +64,10 @@ export const MACRO_TARGET_RANGE = {
   // and the song's rate in Hz (0: the writing track's notes).
   SSG_ENV: { min: -1, max: 15 },
   ENV_RATE: { min: 0, max: 8000 },
+  // A channel's moves on the period its notes or rates give: semitones,
+  // and register steps added to it (+ lower).
+  ENV_SEMI: { min: -48, max: 48 },
+  ENV_DETUNE: { min: -1000, max: 1000 },
 
   // PCM points (:pcm-* the range, :loop-* the loop), in SECONDS — the IR's unit (the MMB exporter
   // turns them into the engine's byte offsets). The ceiling is what one 32 KB

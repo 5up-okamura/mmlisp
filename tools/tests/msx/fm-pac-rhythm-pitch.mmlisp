@@ -1,0 +1,7 @@
+; msx: the FM-PAC's rhythm moved in pitch — a kick's pitch-down that runs on
+; through its release past a gate, a tom's glide, and :pitch on a snare.
+(def-score :target msx :title "msx rhythm pitch")
+(rhythm1 :tempo 150 kick :mode gate :gate* 0.25 :len 8
+  (macro :pitch+ (linear 1200..0 :len 12f)) c _ c c _ c _ c |)
+(rhythm2 tom4 :len 8 (glide 8) c > c < g e c _ _ _ |)
+(rhythm3 snare :len 4 _ c :pitch -100 _ c |)

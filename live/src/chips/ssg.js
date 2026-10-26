@@ -17,8 +17,11 @@ export const ssgTone = {
   unit: "ssg",
   kind: "tone",
   level: SSG_LEVEL,
-  words: words("SSG_MIX", "SSG_ENV"),
+  words: words("SSG_MIX", "SSG_ENV", "ENV_SEMI", "ENV_DETUNE"),
   songWords: SONG_WORDS,
+  // The noise period a note's macro may step (the later write wins): the
+  // SSG's drums move it through a hit.
+  songMacros: words("NOISE_RATE"),
   modes: { tone: ["SSG_MIX", 0], noise: ["SSG_MIX", 1], both: ["SSG_MIX", 2], env: ["SSG_MIX", 3] },
   modeError: { code: "E_PARAM_VALUE", message: "sqr :mode must be tone, noise, both or env" },
 };
@@ -29,8 +32,9 @@ export const ssgNoise = {
   unit: "ssg",
   kind: "noise",
   level: SSG_LEVEL,
-  words: words("SSG_ENV"),
+  words: words("SSG_ENV", "ENV_SEMI", "ENV_DETUNE"),
   songWords: SONG_WORDS,
+  songMacros: words("NOISE_RATE"),
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "the SSG's noise has no :mode; its period is the song's :noise-rate 1-31" },
   // It is a tone channel's mixer on noise: the two names are one channel.
@@ -62,11 +66,11 @@ export function ssgEncoder(clock, io = 0) {
     // The envelope: a channel's level on it (the M bit), its shape (a write
     // starts it over), and its period for a cycle at `hz` — 32 steps of
     // clock / 16 / period, so a tone's period / 16; a triangle (10, 14)
-    // runs up and down a cycle, half the period.
+    // runs up and down a cycle, half the period — `detune` steps added.
     envLevel: (lane) => [[0, 0x08 + phys(lane), 0x10]],
     envShape: (shape) => [[0, 0x0d, shape & 0x0f]],
-    envPeriod: (hz, shape) => {
-      const ep = Math.max(1, Math.min(65535, Math.round(clock / ((ENV_TRIANGLES.has(shape) ? 512 : 256) * hz))));
+    envPeriod: (hz, shape, detune = 0) => {
+      const ep = Math.max(1, Math.min(65535, Math.round(clock / ((ENV_TRIANGLES.has(shape) ? 512 : 256) * hz)) + detune));
       return [[0, 0x0b, ep & 0xff], [0, 0x0c, ep >> 8]];
     },
   };

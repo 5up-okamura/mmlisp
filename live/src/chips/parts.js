@@ -28,6 +28,8 @@
 //             …) is the portable core, on every channel of every target.
 //   songWords the song-wide write targets the part brings (`:lfo-rate`):
 //             the target has them, and any of its tracks may write them
+//   songMacros those of them a note's (macro …) may step on the part's
+//             tracks (the SSG's noise period), the later write winning
 //   modes     a track's `:mode` symbols → [IR target, value]; a `sample`
 //             part's modes are the language's shot/loop/gate instead
 //   modeError { code, message } for a `:mode` symbol it does not have

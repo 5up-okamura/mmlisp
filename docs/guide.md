@@ -1783,27 +1783,33 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   and held to MGSDRV itself where the reference leaves numbers open (the
   pitch tables, the tempo's frames, the envelopes, the detunes).
   The PSG goes to `sqr1`–`sqr3`, its mixer (`/`, or the mode an `@` sets)
-  as `:mode tone | noise | both` and `n` as `:noise-rate`; the SCC to
+  as `:mode tone | noise | both` and `n` as `:noise-rate`, `s` and `m` as
+  the hardware envelope's `:env` and `:env-rate` (`v` turns it off); the SCC to
   `wave1`–`wave5`, each `@s` wave a `def-wave scc-NN`. `v` is `:vol` (the
   SSG's and the OPLL's 3 dB steps, the SCC's linear volume; 0 until a `v`).
   A tone's envelope — the `@e` or `@r` of its number, or the one `@e<n>`
   puts in — is a `(def vol-… (macro :vol …))` at that `v`, frame by frame
   (`n:c` held, `n=c` moved to, `[ ]` the sustain loop); `@r`'s RR, or `k`
-  on the PSG and the SCC, is its release after `#rel`, and an `@e`'s `\`
-  steps a `(def bend-… (macro :pitch+ …))`. The FM-PAC goes to `fm1`–`fm9`
+  on the PSG and the SCC, is its release after `#rel`, written as its level
+  steps, and an `@e`'s `\` steps a `(def bend-… (macro :pitch+ …))` — its
+  noise and mixer steps a note's `(macro :noise-rate …)` and `(macro :mode …)`. The FM-PAC goes to `fm1`–`fm9`
   (`fm1`–`fm6` beside the rhythm, `#opll_mode 1`): `@0`–`@14` are the ROM's
   voices 1–15 (`violin` …, as `@#` assigns them), a tone on the original
   voice its `@v` as a `def-fm mgs-vNN` on the OPLL's words; `so` / `sf` are
   `:sus`, and `q0` holds a note to the next `/`. `q` is `:gate*` on notes
   written their whole length, `&` a tie or slur, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento
-  and `p` a fall. The rhythm track goes to `rhythm1`–`rhythm5`, a track a
+  (a frame's cents each, a line on the period, on FM the F-number) and `p` a fall. The rhythm track goes to `rhythm1`–`rhythm5`, a track a
   sound (`b s m c h` as `kick snare tom4 ride hat`), each hit ringing
   to the sound's next (`kf`: keyed off at the next hit of any, `:mode
   gate`), `v` and `vb` … `vh` its `:vol`. `y` is read where MGSDRV reads
   it: the user voice's registers as the OPLL's words after its `def-fm`,
   the PSG's mixer and noise, the rhythm's levels and tunings (a hit's
-  note, c4 the chip's datasheet tuning). The PSG's hardware envelope is not imported yet; the log
-  counts what was left out.
+  note, c4 the chip's datasheet tuning). A `y14` that turns the rhythm on
+  outside `#opll_mode 1` makes `fm7`–`fm9`'s notes its hits: `fm7` the kick,
+  `fm8` the snare and hat, `fm9` the tom and ride, each at its note's pitch
+  with its pitch moves, its gate and its `v` (the hat's and the tom's level
+  their channel's `@`), less the sounds the `y` holds keyed. The log counts
+  what was left out.
 
 **A MIDI, VGM, MDX or MGS import is structured** (a MIDI or VGM import's
 dialog has **Fold repeats** to untick, for one bar after another): bars that

@@ -71,6 +71,8 @@ function frames(u8) {
 }
 
 const CLOCK = 1789772.5;
+// The OPLL's rhythm sounds: [$0E bit, channel, volume register, its shift].
+const RHYTHM = [[0x10, 6, 0x36, 0], [0x08, 7, 0x37, 0], [0x04, 8, 0x38, 4], [0x02, 8, 0x38, 0], [0x01, 7, 0x37, 4]];
 const midiOf = (hz) => (hz > 0 ? 69 + 12 * Math.log2(hz / 440) : null);
 function channel(f, id) {
   const [kind, n] = id.split(":"), i = Number(n);
@@ -83,13 +85,23 @@ function channel(f, id) {
     const vol = f.scc.vol[i];
     return { on: !!((f.scc.key >> i) & 1) && vol > 0, midi: midiOf(CLOCK / 32 / (f.scc.freq[i] + 1)), vol, text: "" };
   }
+  if (kind === "rh") {
+    // A rhythm sound: keyed by its $0E bit or by its channel's key (a
+    // driver may key either), at its channel's pitch and its volume nibble.
+    const [bit, ch, reg, sh] = RHYTHM[i], hi = f.opll[0x20 + ch];
+    const fnum = f.opll[0x10 + ch] | ((hi & 1) << 8), block = (hi >> 1) & 7;
+    const on = !!(f.opll[0x0e] & 0x20) && (!!(f.opll[0x0e] & bit) || !!((hi >> 4) & 1));
+    return { on, midi: fnum ? midiOf((fnum * 3579545) / 72 / 2 ** (19 - block)) : null, vol: 15 - ((f.opll[reg] >> sh) & 15), text: "" };
+  }
   const hi = f.opll[0x20 + i], fnum = f.opll[0x10 + i] | ((hi & 1) << 8), block = (hi >> 1) & 7;
-  return { on: !!((hi >> 4) & 1), midi: fnum ? midiOf((fnum * 3579545) / 72 / 2 ** (19 - block)) : null,
+  // Under the rhythm channels 7-9 are its (rh:), not FM.
+  return { on: !!((hi >> 4) & 1) && !(i >= 6 && f.opll[0x0e] & 0x20), midi: fnum ? midiOf((fnum * 3579545) / 72 / 2 ** (19 - block)) : null,
     vol: 15 - (f.opll[0x30 + i] & 15), text: `i${f.opll[0x30 + i] >> 4} s${(hi >> 5) & 1}` };
 }
 
 const R = frames(refVgm), O = frames(ourVgm);
-const ids = [0, 1, 2].map((i) => `psg:${i}`).concat([0, 1, 2, 3, 4].map((i) => `scc:${i}`), [...Array(9).keys()].map((i) => `fm:${i}`));
+const ids = [0, 1, 2].map((i) => `psg:${i}`).concat([0, 1, 2, 3, 4].map((i) => `scc:${i}`), [...Array(9).keys()].map((i) => `fm:${i}`),
+  [0, 1, 2, 3, 4].map((i) => `rh:${i}`)); // rh: BD SD TOM CYM HH
 const N = Math.min(R.length, O.length);
 let off = 0, best = -1;
 for (let o = -10; o <= 10; o++) {

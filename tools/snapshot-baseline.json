@@ -1763,11 +1763,23 @@
   "mmb": "488af072eea2abb1",
   "vgm": "04611ee69800285b"
  },
+ "tools/tests/msx/env-detune.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "602742d8cea2f201",
+  "regs": "fdfb66599a15de32",
+  "vgm": "4ccead5db2b645e3"
+ },
  "tools/tests/msx/env.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "2964df1381fd7816",
   "regs": "6fafc448e3b60119",
   "vgm": "3300db898280bda5"
+ },
+ "tools/tests/msx/fm-pac-rhythm-pitch.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "c7d892d2aca943e6",
+  "regs": "4306eb4acb090712",
+  "vgm": "1db7426aae373b69"
  },
  "tools/tests/msx/fm-pac-rhythm.mmlisp": {
   "diagnostics": "b4e4c9ef89c5b72c",
@@ -1822,6 +1834,12 @@
   "ir": "70bef0fe436c5599",
   "regs": "179af8adea1728c1",
   "vgm": "b72508d03f0d285f"
+ },
+ "tools/tests/pc88/ssg-macro.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ef787b3d5d3c3f23",
+  "regs": "48454dc44218b147",
+  "vgm": "e60ade1c9ef4378c"
  },
  "tools/tests/pc88/ssg.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

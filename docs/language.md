@@ -1284,8 +1284,9 @@ If the same target is set twice, the last one wins.
 | `:vol`     | `VOL`        | 0–31         |                                        |
 | `:master`  | `MASTER`     | 0–31         | Song-wide (§5): inline only — a macro is a note's (`E_MACRO_TARGET`); sweep it instead |
 | `:pan`     | `PAN`        | −1–1         | Values snap to −1 / 0 / +1; symbols `left center right` |
-| `:mode`    | `NOISE_MODE` | 0–7          | Symbols `white0`–`white3` (4–7), `periodic0`–`periodic3` (0–3) |
+| `:mode`    | `NOISE_MODE` | 0–7          | Symbols `white0`–`white3` (4–7), `periodic0`–`periodic3` (0–3); on a `pc88` / `msx` sqr track `SSG_MIX`, symbols `tone noise both env` (§19) |
 | `:lfo-rate`| `LFO_RATE`   | 0–8          | Song-wide (§5): inline only, as `:master` |
+| `:noise-rate` | `NOISE_RATE` | 1–31      | Song-wide, but a macro on a `pc88` / `msx` SSG track steps it from the note (the later write wins, §19) |
 | `:alg` `:fb` | `FM_ALG` `FM_FB` | 0–7    |                                        |
 | `:ams`     | `FM_AMS`     | 0–3          |                                        |
 | `:fms`     | `FM_FMS`     | 0–7          |                                        |
@@ -2394,7 +2395,11 @@ track, a value or a sweep, starting at 9). The `noise` track is `sqr3` with
 its mixer on noise: a score has one or the other (`E_TARGET`), and a noise
 note's pitch is not read. A noise `:mode white0`–`white2` reads as
 `:noise-rate` 9, 18, 31 (`W_TARGET`); `white3` and the periodic modes have
-no SSG sound (`E_TARGET`), nor does a `:mode` macro on noise.
+no SSG sound (`E_TARGET`), nor does a `:mode` macro on noise. A note's
+macro steps the mixer and the noise period as a drum moves them through its
+hit: `(macro :mode [both noise])` on a sqr track, and `(macro :noise-rate
+[2 4 6 8])` on a sqr or the noise track, which writes the song's one period
+while the note sounds (the later write wins, as for `:env-rate`).
 
 **The SSG's hardware envelope.** A channel's level can be the envelope the
 three channels share instead of its own 4-bit one: **`:env 0–15`** (sticky,
@@ -2409,7 +2414,15 @@ is: a rate in Hz (a value, `(hz a2)`, or a sweep) for one cycle of its
 shape, or **`:env-rate note`**, which follows the writing track's pitch from
 its next note — pitch macros, glide and vibrato with it. A triangle's period
 is halved, so the cycle sounds the note written: a rate is for the shape of
-the track that writes it, as the track has it then. The period is the chip's
+the track that writes it, as the track has it then.
+**`:env-semi n`** moves the period a track gives — its notes', or a rate it
+writes — by n semitones (−48–48; `-12` an octave below the tone), and
+**`:env-detune n`** adds n register steps to it (−1000–1000; + is lower).
+Each is sticky on the track, a number or a `$value` read at the write; a
+following period moves at once, a rate at the track's next `:env-rate`.
+With the tone on (`:mode tone`), the tone gates the envelope, and a period a
+step off the note's turns the two against each other: the timbre beats,
+about 0.6 Hz a step at c2, faster as the note rises. The period is the chip's
 tone period / 16, so a rate keeps to bass notes (at a4 one step is about a
 semitone). **`:mode env`** turns the channel's tone and noise off: what it
 plays is the envelope alone, a saw or a triangle at the rate — the buzzer.
@@ -2420,6 +2433,8 @@ every channel's envelope over, and the later rate wins.
 (def-score :target msx)
 (sqr1 :env 8 :env-rate note :mode env :oct 2 :len 8   ; a saw buzzer bass
   c c g g a a g _)
+(sqr2 :env 8 :env-detune 1 :mode tone :oct 3 :len 2   ; the tone over it, beating
+  c g)
 ```
 
 **PCM.** `pcm1` is the ADPCM-B: it plays a sample's `:file`, one voice. A
@@ -2667,7 +2682,11 @@ other note moves it by its semitones (`(rhythm1 tom4 c g > c)` plays three
 toms). Two sounds share each tuned channel — SD with HH, TOM with the
 cymbal — so a pair sounds at the pitch of whichever was hit last, and the
 compiler says so once when a score writes a pair at different pitches
-(`W_TARGET`).
+(`W_TARGET`). The channel's tuning moves as an FM channel's pitch does —
+`:pitch`, `:semi`, `(glide …)` and their macros — and a note's pitch macro
+runs its whole length, on through the sound's release past a `:mode gate`
+gate: a kick's or a tom's pitch-down (`(rhythm1 kick (macro :pitch+
+(linear 1200..0 :len 12f)) c c)`). It moves a pair together.
 
 ```lisp
 (def-score :target msx)

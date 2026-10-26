@@ -222,10 +222,13 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `E_UNSUPPORTED_TARGET`.
 - `(def-score :target pc88)` holds a score to the PC-8801's YM2608 (§19):
   sqr `:mode tone|noise|both|env`, song-wide `:noise-rate`, `noise` is sqr3,
+  a drum's steps as macros (`(macro :mode [both noise] :noise-rate [2 4 6])`),
   the hardware envelope as a channel's level — `:env 0–15` its shape (8/12
   saws, 10/14 triangles; `none` off), restarted at each key-on, the
-  song-wide `:env-rate` Hz or `note` (the track's pitch); `:mode env` plays
-  the envelope alone, a buzzer (`(sqr1 :env 8 :env-rate note :mode env c)`),
+  song-wide `:env-rate` Hz or `note` (the track's pitch), moved by the
+  track's `:env-semi` semitones and `:env-detune` register steps (+ lower;
+  with `:mode tone` a step off beats the timbre); `:mode env` plays the
+  envelope alone, a buzzer (`(sqr1 :env 8 :env-rate note :mode env c)`),
   pcm1 the ADPCM-B, `rhythm1`–`rhythm6` the ROM rhythm, built in under the
   kit roles (`(rhythm1 kick c hat c)`, no def; a track per sound for its own
   `:vol`/`:pan`). A word or channel only another target's
@@ -251,7 +254,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `:ar` `:dr` 0–15, `:tl1` 0–63, `:ks` 0–1, its own `:ws1` `:eg1` `:ksl1`
   `:vib1` and the channel's `:sus 1`; no `:alg`, `:tl2`, `:pan`.
   `rhythm1`–`rhythm5` the FM-PAC's rhythm (`kick snare tom4 ride hat`, no
-  def; a hit's note tunes it, c4 the chip's) in place of `fm7`–`fm9`. No
+  def; a hit's note tunes it, c4 the chip's, and `:pitch` / `(glide …)` /
+  pitch macros move it on through the release) in place of `fm7`–`fm9`. No
   PCM. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks

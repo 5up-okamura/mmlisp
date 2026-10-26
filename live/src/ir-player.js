@@ -299,6 +299,12 @@ export class IRPlayer {
     // follows (`:env-rate note`), or null.
     this._psgEnv = new Array(PSG_LANES).fill(-1);
     this._envFollow = null;
+    // Each lane's moves on the period it gives (:env-semi semitones,
+    // :env-detune steps), and the pitch it last wrote, which a following
+    // envelope's period is rewritten from when they change.
+    this._envSemi = new Array(PSG_LANES).fill(0);
+    this._envDetune = new Array(PSG_LANES).fill(0);
+    this._psgHz = new Array(PSG_LANES).fill(0);
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
     this._fmVolSweep = new Array(FM_CHANNELS).fill(null);
@@ -572,6 +578,9 @@ export class IRPlayer {
     this._psgNoiseMode = 0b1_00;
     this._psgEnv.fill(-1);
     this._envFollow = null;
+    this._envSemi.fill(0);
+    this._envDetune.fill(0);
+    this._psgHz.fill(0);
     this._holdChannels.clear();
     this._loopCount.clear();
     this._fmVolSweep.fill(null);
@@ -2861,11 +2870,15 @@ export class IRPlayer {
     const held = ev.args?.mode === "gate" || ev.args?.mode === "loop";
     const retrigs = (this._keyonRetrigTimes(keyon, when, gateTicks, limit) ?? []).filter((t) => !held || t < gateSecs);
     this._envRetrigs = retrigs;
+    // A tuned hit's (the OPLL rhythm's) pitch runs its note's whole length:
+    // the channel keeps moving through the sound's release.
+    const slot = fields.tune ? this._resolveNoteFramesAndGate(when, ev.args?.length ?? gateTicks) : null;
     for (const [spec, k, target] of [[velMacro, "velLine", "VEL"], [volMacro, "volLine", "VOL"],
       [pitchMacro, "pitchLine", "NOTE_PITCH"], [semiMacro, "semiLine", "NOTE_SEMI"]]) {
       if (!spec) continue;
       const line = (hit[k] = []); // [value, time], as _lineAt reads
-      this._scheduleMacro(spec, noteFrames, gateSecs, when,
+      const span = slot && (target === "NOTE_PITCH" || target === "NOTE_SEMI") ? slot : { noteFrames, gateSecs };
+      this._scheduleMacro(spec, span.noteFrames, span.gateSecs, when,
         (v, t) => line.push([clampForTarget(target, v), t]), this._stepSecs(spec.step), limit);
     }
     this._envRetrigs = null;
@@ -2899,13 +2912,18 @@ export class IRPlayer {
     };
   }
 
-  // The ADPCM-B's Delta-N for a hit at `when`: its note, the track's :pitch
-  // and the note's :pitch / :semi macros, in cents over the sample's rate.
-  _adpcmDeltaN(hit, when) {
-    const cents = this._chipPcmParamAt(hit.ti, "pitch", when) + (this._lineAt(hit.pitchLine, when) ?? 0) +
+  // A hit's pitch move at `when`, in cents: the track's :pitch and the
+  // note's :pitch / :semi macros.
+  _hitCents(hit, when) {
+    return this._chipPcmParamAt(hit.ti, "pitch", when) + (this._lineAt(hit.pitchLine, when) ?? 0) +
       100 * (this._lineAt(hit.semiLine, when) ?? 0);
+  }
+
+  // The ADPCM-B's Delta-N for a hit at `when`: its note and its pitch move
+  // over the sample's rate.
+  _adpcmDeltaN(hit, when) {
     const enc = this._target.chipFor("adpcm-b").adpcm;
-    return enc.deltaN(hit.rate * 2 ** ((hit.midi - 60) / 12 + cents / 1200));
+    return enc.deltaN(hit.rate * 2 ** ((hit.midi - 60) / 12 + this._hitCents(hit, when) / 1200));
   }
 
   // A chip-own sample voice's level from vel + vol + master + its strip, on
@@ -2937,6 +2955,15 @@ export class IRPlayer {
         // the frame wrote its own level with its key).
         let h = null;
         for (let i = hits.length - 1; i >= 0; i--) if (hits[i].t <= t + 1e-9) { h = hits[i]; break; }
+        // An OPLL rhythm hit's pitch moves its channel while the sound rings
+        // and on through its release, to the voice's next hit.
+        if (h?.tune) {
+          const midi = h.midi + this._hitCents(h, t) / 100;
+          if (midi !== h.tuned) {
+            h.tuned = midi;
+            for (const [p, a, d] of this._rhythmEnc.tune(voice, midi, t)) this._write(p, a, d, t);
+          }
+        }
         if (!h || h.dumped || t >= h.end) continue;
         const lv = this._chipPcmLevelAt(h, t);
         if (h.pcm8 != null) {
@@ -3145,7 +3172,7 @@ export class IRPlayer {
         if (!sound || !this._isVoiceAudible(sound)) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const sec = part.soundSec?.[sound] ?? ROM_SOUND_SEC[sound];
-        this._chipPcmHit(sound, ev, when, when + sec, { pan: st.pan }, (t, h) => {
+        this._chipPcmHit(sound, ev, when, when + sec, { pan: st.pan, midi, tune: !!enc.tune }, (t, h) => {
           const lv = this._chipPcmLevelAt(h, t);
           // A hit at :vol 0 is silence: it takes the sound from an earlier one.
           const silent = lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0;
@@ -3153,7 +3180,8 @@ export class IRPlayer {
           h.dumped = silent;
           h.att = IRPlayer._rhythmAtt(part.level, lv);
           h.il = top - Math.min(top, h.att);
-          const writes = silent ? enc.dump(sound, t) : enc.hit(sound, h.il, st.pan, t, midi);
+          h.tuned = midi + this._hitCents(h, t) / 100;
+          const writes = silent ? enc.dump(sound, t) : enc.hit(sound, h.il, st.pan, t, h.tuned);
           for (const [p, a, d] of writes) this._write(p, a, d, t);
         });
         break;
@@ -3173,6 +3201,7 @@ export class IRPlayer {
       case "PARAM_FROM_VAL": {
         const target = (ev.args?.target ?? "").toUpperCase();
         if (target === "VOL") this._chipPcmParam(ev, when, "vol");
+        else if (target === "NOTE_PITCH" && enc.tune) this._chipPcmParam(ev, when, "pitch");
         if (ev.cmd !== "PARAM_SET") break;
         if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
         else if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
@@ -3331,8 +3360,9 @@ export class IRPlayer {
             return true;
           }
           this._envFollow = null;
-          const shape = lane != null ? this._psgEnv[lane] : -1;
-          this._writeSongRate(ev, when, 0, (v, t) => this._writeEnvPeriod(v, shape, t));
+          // The writing lane's shape and moves, as they are now.
+          const by = lane != null ? { shape: this._psgEnv[lane], semi: this._envSemi[lane], detune: this._envDetune[lane] } : {};
+          this._writeSongRate(ev, when, 0, (v, t) => this._writeEnvPeriod(v, by, t));
           return true;
         }
         const m = /^VAL(\d+)$/.exec(ev.args?.target ?? "");
@@ -5088,9 +5118,14 @@ export class IRPlayer {
     this._psgWrites(this._lane(psgCh, (e, ch) => (env ? e.envLevel(ch) : e.att(ch, att)), att === 15), when);
   }
 
-  // The SSG envelope's period for a cycle of `shape` at `hz`.
-  _writeEnvPeriod(hz, shape, when) {
-    if (hz > 0) this._psgWrites(this._psg((c) => c.envPeriod?.(hz, shape) ?? []), when);
+  // The SSG envelope's period for a cycle of `shape` at `hz`, moved `semi`
+  // semitones and `detune` register steps.
+  _writeEnvPeriod(hz, { shape = -1, semi = 0, detune = 0 }, when) {
+    if (hz > 0) this._psgWrites(this._psg((c) => c.envPeriod?.(hz * 2 ** (semi / 12), shape, detune) ?? []), when);
+  }
+  // A lane's own envelope moves, for the period it writes.
+  _envBy(lane) {
+    return { shape: this._psgEnv[lane], semi: this._envSemi[lane], detune: this._envDetune[lane] };
   }
 
   // Compose vel (0-15) / vol / master (0-31) into a PSG attenuation (0=loud,
@@ -5253,7 +5288,8 @@ export class IRPlayer {
     const hz = midiToHz(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100);
     this._psgWrites(this._lane(psgCh, (e, ch) => e.tone(ch, e.period(hz))), when);
     // `:env-rate note`: the envelope's period on this lane's pitch.
-    if (this._envFollow === psgCh) this._writeEnvPeriod(hz, this._psgEnv[psgCh], when);
+    this._psgHz[psgCh] = hz;
+    if (this._envFollow === psgCh) this._writeEnvPeriod(hz, this._envBy(psgCh), when);
   }
 
   // Trigger the noise channel, re-asserting the current persistent noise mode.
@@ -5485,6 +5521,19 @@ export class IRPlayer {
     }
   }
 
+  // A PSG note's macro on a register word (the SSG's mixer, its noise
+  // period): each step written as it comes, where it moved.
+  _schedulePsgWordMacro(spec, noteWhen, gateTicks, limitSecs, write) {
+    if (!spec) return;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
+    let last = null;
+    this._scheduleMacro(spec, noteFrames, gateSecs, noteWhen, (v, t) => {
+      const r = Math.round(v);
+      if (r !== last) write(r, t);
+      last = r;
+    }, this._stepSecs(spec.step), limitSecs);
+  }
+
   _schedulePsgModeMacro(
     psgCh,
     modeMacro,
@@ -5584,6 +5633,12 @@ export class IRPlayer {
           // Hold note: register for runtime key-off (triggerKeyOff)
           this._holdChannels.set(this._holdKey(ev), ev._trackIndex);
         }
+        // The SSG's mixer and its (song-wide) noise period stepped by the
+        // note's `:mode` / `:noise-rate` macros, frame by frame.
+        this._schedulePsgWordMacro(ev.args?.ssg_mix, when, psgGateTicks, psgMacroLimit,
+          (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v)) ?? []), t));
+        this._schedulePsgWordMacro(ev.args?.noise_rate, when, psgGateTicks, psgMacroLimit,
+          (v, t) => this._psgWrites(this._psg((c) => c.noiseRate?.(v) ?? []), t));
         // A lane on the envelope starts it over at a key-on (a slur's goes on).
         const envShape = this._psgEnv[psgCh];
         if (envShape >= 0 && !ev.args?.legato)
@@ -5705,6 +5760,13 @@ export class IRPlayer {
             const att = this._composePsgAtt(psgCh, this._psgLastVel[psgCh] ?? 15, this._psgVol[psgCh], this._masterVol ?? VOL_UNITY);
             this._psgSetAtt(psgCh, att, when);
           }
+        } else if (psgTarget === "ENV_SEMI" || psgTarget === "ENV_DETUNE") {
+          // The lane's moves on its envelope's period: a period following
+          // its notes moves now, a rate it writes at its next write.
+          const v = Math.round(Number(ev.args?.value ?? 0));
+          (psgTarget === "ENV_SEMI" ? this._envSemi : this._envDetune)[psgCh] = v;
+          if (this._envFollow === psgCh && this._psgHz[psgCh] > 0)
+            this._writeEnvPeriod(this._psgHz[psgCh], this._envBy(psgCh), when);
         } else if (psgTarget === "SSG_MIX") {
           // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
           this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, Math.round(ev.args?.value ?? 0))), when);

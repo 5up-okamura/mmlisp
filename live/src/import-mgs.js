@@ -221,7 +221,7 @@ function newState(kind) {
     // y: the user voice's registers this track has written since its @, and
     // the rhythm's tuning (F-number and block of channels 7-9, the
     // datasheet's to start: MGSDRV writes them once)
-    voiceRegs: {}, rtune: [[0x20, 2], [0x150, 2], [0x1c0, 0]],
+    voiceRegs: {}, rtune: [[0x120, 2], [0x150, 2], [0x1c0, 0]],
   };
 }
 
@@ -239,6 +239,7 @@ function playTrack(mgs, track, skipped) {
   const stack = []; // [{start, left, infinite}]
   let p = track.start, step = 0, loopStep = null, end = null, guard = 0;
   let dollar = null; // where `$` marks the loop
+  let rhythmY = null; // a y14 that turns the rhythm on: { step, held }
   const skip = (k) => skipped.set(k, (skipped.get(k) ?? 0) + 1);
   // A tone's envelope; on the PSG its mode and noise are set here, once.
   const setEnv = (n, psg) => {
@@ -253,6 +254,9 @@ function playTrack(mgs, track, skipped) {
   // (36-38). Anything else the next note writes over, and is skipped.
   const yWrite = (r, d) => {
     if (kind === "fm" && !rhythm && r <= 7) { st.voiceRegs = { ...st.voiceRegs, [r]: d }; return; }
+    // $0E's rhythm bit outside #opll_mode 1: from here FM 7-9 key the
+    // rhythm (mgsToMmlisp), and the keys it holds standing never retrigger.
+    if (kind === "fm" && r === 0x0e && (d & 0x20) && !rhythmY) { rhythmY = { step, held: d & 0x1f }; return; }
     if (kind === "psg" && r === 6) { st.nfreq = d & 31; return; }
     if (kind === "psg" && r === 7) {
       const ch = track.index - 1, tone = !((d >> ch) & 1), noise = !((d >> (ch + 3)) & 1);
@@ -398,7 +402,7 @@ function playTrack(mgs, track, skipped) {
     p += len;
   }
   if (end == null) { end = step; if (step >= MAX_STEPS) skip("a track that never reaches its end (cut)"); }
-  return { notes, tempos, loopStep, end };
+  return { notes, tempos, loopStep, end, rhythmY };
 }
 
 // Past the `]` that closes the repeat a `|` at `p` is in.
@@ -428,7 +432,9 @@ export function analyzeMgs(mgs) {
     return { ...t, ...r, kind, name, label: `${name} · ${r.notes.length} notes${r.loopStep != null ? ", loops" : ""}` };
   });
   const bpm = mgsBpm(tracks.flatMap((t) => t.tempos).find((x) => x.step === 0)?.bpm ?? mgs.tempo);
-  return { tracks, skipped, bpm };
+  // The rhythm a y14 turns on (#opll_mode 0): the song's, as the target's is.
+  const rhythmY = mgs.opllMode === 1 ? null : tracks.map((t) => t.rhythmY).find(Boolean) ?? null;
+  return { tracks, skipped, bpm, rhythmY };
 }
 
 // ── Writing ───────────────────────────────────────────────────────────────
@@ -478,11 +484,12 @@ const ENV_MAX_FRAMES = 600;
  * first level (the mode and noise the @ sets are the track's).
  */
 function expandEnv(env) {
-  const levels = [], offsets = [];
+  const levels = [], offsets = [], nfreqs = [], modes = [];
   let level = 15, off = 0, sus = null, i = 0;
   let mode = null, nfreq = null, wave = null, moves = 0;
+  let curN = null, curM = null; // the noise and the mixer as the steps set them (null: the note's)
   const d = env.data;
-  const frame = (n) => { for (let k = 0; k < n && levels.length < ENV_MAX_FRAMES; k++) { levels.push(level); offsets.push(off); } };
+  const frame = (n) => { for (let k = 0; k < n && levels.length < ENV_MAX_FRAMES; k++) { levels.push(level); offsets.push(off); nfreqs.push(curN); modes.push(curM); } };
   while (i < d.length && levels.length < ENV_MAX_FRAMES) {
     const c = d[i++];
     const first = !levels.length;
@@ -498,14 +505,14 @@ function expandEnv(env) {
     }
     else if (c === 0x40) sus ??= levels.length;
     else if (c === 0x60) break;
-    else if (c >= 0x80 && c <= 0x9f) { if (first) nfreq = c & 31; }
-    else if (c >= 0xa0 && c <= 0xaf) { if (first) mode = c & 3 || mode; }
+    else if (c >= 0x80 && c <= 0x9f) { curN = c & 31; if (first) nfreq = c & 31; }
+    else if (c >= 0xa0 && c <= 0xaf) { if (c & 3) curM = c & 3; if (first) mode = c & 3 || mode; }
     else if (c >= 0xe0 && c <= 0xef) { level = c & 15; frame(d[i++] || 256); } // `n:c`: n for c counts
     else break;
   }
   if (!levels.length) frame(1);
   if (sus != null && sus >= levels.length) sus = null;
-  return { levels, offsets, sus, mode, nfreq, wave, moves };
+  return { levels, offsets, nfreqs, modes, sus, mode, nfreq, wave, moves };
 }
 
 // Frame values as a macro vector: a run of one value is the value and a wait.
@@ -525,9 +532,16 @@ function frameVector(values, sus) {
 
 /**
  * An envelope at a level `v` as a :vol macro spec; `k` (an @e's, or none's)
- * the release after the key-off, a level step every k frames.
+ * the release after the key-off, a level step every k frames from the key-off's
+ * own (held to MGSDRV on libkss) — written as its steps, which a line on :vol
+ * is not on the SCC's linear volume.
  */
-const kRelease = (k, v) => (k > 0 && v > 0 ? ` #rel (linear :len ${k * v}f)` : "");
+function kRelease(k, v, volOf) {
+  if (!(k > 0 && v > 0)) return "";
+  const steps = [];
+  for (let lv = v - 1; lv >= 0; lv--) for (let i = 0; i < k; i++) steps.push(volOf(lv));
+  return ` #rel ${frameVector(steps, null).slice(1, -1)}`;
+}
 function envelopeSpec(env, v, volOf, k = 0) {
   if (env.type === "r") {
     // MGSDRV's ADSR, frame by frame (held to it on libkss): E starts at
@@ -543,14 +557,17 @@ function envelopeSpec(env, v, volOf, k = 0) {
       out.push(volOf((E * (v + 1)) >> 8));
       if ((phase === 2 && (!env.sr || E === 0)) || (phase === 1 && !env.dr)) break;
     }
-    const rel = env.rr > 0 && E > 0 ? ` #rel (linear :len ${Math.max(1, Math.ceil(E / env.rr))}f)` : "";
+    // The release as its steps: a line on :vol is not one on E, a linear level.
+    const steps = [];
+    if (env.rr > 0) for (let e = E - env.rr; ; e -= env.rr) { steps.push(volOf((Math.max(0, e) * (v + 1)) >> 8)); if (e <= 0) break; }
+    const rel = steps.length && E > 0 ? ` #rel ${frameVector(steps, null).slice(1, -1)}` : "";
     return frameVector(out, null).replace(/\]$/, rel + "]");
   }
   const x = expandEnv(env);
   // An @e's level is relative to v: 15 is v itself, each step below one
   // step quieter.
   const levels = x.levels.map((lv) => Math.max(0, v + lv - 15));
-  return frameVector(levels.map(volOf), x.sus).replace(/\]$/, kRelease(k, levels[levels.length - 1]) + "]");
+  return frameVector(levels.map(volOf), x.sus).replace(/\]$/, kRelease(k, levels[levels.length - 1], volOf) + "]");
 }
 
 // The rhythm track's hits → rhythm1-rhythm5, a track a sound, in the key-on
@@ -559,7 +576,7 @@ function envelopeSpec(env, v, volOf, k = 0) {
 const RHYTHM_SOUNDS = [[0x10, "kick", 0, 0], [0x08, "snare", 1, 1], [0x04, "tom4", 2, 2], [0x02, "ride", 3, 2], [0x01, "hat", 4, 1]];
 // A rhythm channel's tuning as the note that plays it: c4 is the datasheet's,
 // a semitone a step (the target tunes a hit by its note).
-const RHYTHM_C4 = [[0x20, 2], [0x150, 2], [0x1c0, 0]];
+const RHYTHM_C4 = [[0x120, 2], [0x150, 2], [0x1c0, 0]];
 const rhythmNote = (ch, [f, b]) => 60 + Math.round(12 * Math.log2(((f || 1) * 2 ** b) / (RHYTHM_C4[ch][0] * 2 ** RHYTHM_C4[ch][1])));
 function rhythmTracks(tr, tick) {
   const out = [];
@@ -584,6 +601,31 @@ function rhythmTracks(tr, tick) {
     out.push({ channel: `rhythm${out.length + 1}`, notes, marks, endTick, loopTick: tr.loopStep != null ? tick(tr.loopStep) : null });
   });
   return out;
+}
+
+// FM 7-9 under a y14's rhythm (#opll_mode 0): channel `ch`'s key-ons key
+// its sounds — BD on 7, SD and HH on 8, TOM and CYM on 9 — but those $0E
+// holds standing, which a channel key never retriggers. A hit is the
+// note's pitch on the channel (c4 the datasheet's tuning), keyed off at its
+// gate, its pitch moves the channel's; its level is the channel's volume (BD, SD, CYM: the track's v and
+// envelope) or its instrument nibble (HH, TOM: 15 - the voice's number).
+const RHYTHM_OF_CH = [[0x10], [0x08, 0x01], [0x04, 0x02]];
+const RHYTHM_INST = new Set([0x01, 0x04]);
+const fbMidi = ([f, b]) => 69 + 12 * Math.log2((f * 3579545) / 72 / 2 ** (19 - b) / 440);
+function rhythmOfFm(ch, notes, rhythmY) {
+  const inst = (voice) => (voice == null || voice > 14 ? 0 : voice + 1);
+  return RHYTHM_OF_CH[ch].filter((bit) => !(rhythmY.held & bit)).map((bit) => {
+    const [, role] = RHYTHM_SOUNDS.find(([b]) => b === bit);
+    return {
+      notes: notes.filter((n) => n.tick >= rhythmY.step * TICKS_PER_STEP).map((n) => {
+        const level = RHYTHM_INST.has(bit)
+          ? [`:vol ${ssgVol(15 - inst(n.voice))}`, "(macro :vol none)"]
+          : n.state.filter((t) => t.startsWith(":vol") || t.startsWith("(macro :vol") || /^vol-/.test(t));
+        const rest = n.state.filter((t) => t.startsWith(":gate") || t.startsWith(":pitch") || t.startsWith("(macro :pitch") || /^(vib|bend)-/.test(t));
+        return { ...n, midi: 60 + Math.round(n.midi - fbMidi(RHYTHM_C4[ch])), state: [role, ...level, ":mode gate", ...rest] };
+      }),
+    };
+  });
 }
 
 // One of the user voice's registers ($00-$07) as the words that set it.
@@ -690,6 +732,8 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
 
   const songOut = [];
   let endMax = 0;
+  let rhythmN = 0; // the rhythm tracks written
+  if (a.rhythmY?.held) skip(`y14's held keys (${RHYTHM_SOUNDS.filter(([bit]) => a.rhythmY.held & bit).map(([, r]) => r).join(", ")}): they sound once, at the y, and are left out`);
   for (const tr of a.tracks) {
     if (!tr.notes.length || (mgs.opllMode === 1 && tr.index >= 16)) continue;
     if (mgs.opllMode === 1 && tr.index === 15) {
@@ -698,6 +742,9 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     }
     const isPsg = tr.kind === "psg", isFm = tr.kind === "fm";
     const channel = isPsg ? `sqr${tr.index}` : isFm ? `fm${tr.index - 8}` : `wave${tr.index - 3}`;
+    // Under a y14's rhythm FM 7-9 are the rhythm's channels: their notes
+    // key its sounds (rhythmOfFm), their own voice and pitch moves aside.
+    const rhythmCh = a.rhythmY && isFm && tr.index >= 15 ? tr.index - 15 : null;
     const volOf = tr.kind === "scc" ? sccVol : ssgVol; // the OPLL's volume steps 3 dB as the SSG's
     const notes = [];
     let prev = null;
@@ -706,13 +753,16 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     let gateInForce = ":gate* 1";
     // s on any note: every note says whether it is on the envelope.
     const henv = isPsg && tr.notes.some((n) => n.st.henv != null);
+    // An @e moving the noise or the mixer on any note: every note says its own.
+    const moving = (x) => !!x && [x.nfreqs, x.modes].some((v) => v && new Set(v.filter((n) => n != null)).size + (v.includes(null) ? 1 : 0) > 1);
+    const envMoves = isPsg && tr.notes.some((n) => n.st.env != null && moving(envX(n.st.env)));
     for (const n of tr.notes) {
       const st = n.st;
       const x = st.env != null ? envX(st.env) : null;
       const state = [];
       const wave = x?.wave ?? st.voice;
       // An envelope's leading @n sets the tone's voice or wave at the key-on.
-      if (isFm) {
+      if (isFm && rhythmCh == null) {
         const vn = x?.wave ?? st.voice; const v = vn != null ? fmVoice(vn) : null;
         if (v) state.push(v);
         const regs = Object.entries(st.voiceRegs);
@@ -727,6 +777,15 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
         if (!MODES[mode]) { skip("a PSG note with its mixer off (silent)"); prev = n; continue; }
         state.push(`:mode ${MODES[mode]}`);
         if (mode & 2) state.push(`:noise-rate ${Math.max(1, mix.nfreq ?? st.nfreq ?? 8)}`);
+        // An @e that moves the noise or the mixer as it runs: those steps as
+        // the note's :noise-rate and :mode macros (held to MGSDRV on libkss).
+        if (envMoves) {
+          const steps = (vals, start) => { let v = start; return vals.map((x) => (v = x ?? v)); };
+          const ns = x?.nfreqs ? steps(x.nfreqs, Math.max(1, mix.nfreq ?? st.nfreq ?? 8)) : [];
+          const ms = x?.modes ? steps(x.modes, mode) : [];
+          state.push(new Set(ns).size > 1 ? `(macro :noise-rate ${frameVector(ns, x.sus)})` : "(macro :noise-rate none)");
+          state.push(new Set(ms).size > 1 ? `(macro :mode ${frameVector(ms.map((m) => MODES[m]), x.sus)})` : "(macro :mode none)");
+        }
         if (henv) state.push(`:env ${st.henv ?? "none"}`);
         // m's period as a cycle's Hz on the shape (a triangle's cycle is two).
         if (st.henv != null && st.hperiod)
@@ -737,7 +796,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const env = st.env != null ? mgs.defs.envs.get(st.env) : null;
       const k = !isFm && env?.type !== "r" ? st.k : 0;
       const e = env ? envName(st.env, st.vol, tr.kind, k) : null;
-      const rel = !env && kRelease(k, st.vol);
+      const rel = !env && kRelease(k, st.vol, volOf);
       // On the hardware envelope the level is the envelope's: s drops the
       // software envelope, and k does nothing.
       if (st.henv != null) state.push("(macro :vol none)");
@@ -752,8 +811,19 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const bend = x?.offsets.some(Boolean) ? envBend(st.env, n.midi, tr.kind, x) : null;
       if (bend) pitch = bend;
       else if (n.base) {
+        // A portamento over the note's frames, a line on the PSG's and the
+        // SCC's period and on FM's F-number, so a line on the frequency
+        // (held to MGSDRV on libkss): each frame's cents.
         const from = midiOf(tr.kind, n.base.oct, n.base.n);
-        if (from !== n.midi) pitch = `(macro :pitch+ (linear ${(from - n.midi) * 100}..0 :len ${tick(n.count)}t))`;
+        if (from !== n.midi) {
+          const frames = Math.max(1, Math.round((n.count * 75) / tempoAt(n.step)));
+          const r = 2 ** ((from - n.midi) / 12); // the start's frequency over the note's
+          const cents = Array.from({ length: frames + 1 }, (_, f) => {
+            const k = f / frames;
+            return Math.round(1200 * Math.log2(isFm ? r + (1 - r) * k : 1 / (1 / r + (1 - 1 / r) * k)));
+          });
+          pitch = `(macro :pitch+ ${frameVector(cents, null)})`;
+        }
       } else if (st.fall && !isFm) {
         // p: the period grows each frame — 2p on the octave-1 period below
         // 128, (p - 128) × (9 - octave) on the octave's own from 128 (held
@@ -795,7 +865,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       // A note keyed on into the next sounds its whole slot whatever its
       // gate: it keeps the one in force, so none is written for it.
       if (gated) state.push((gateInForce = n.tieOn && n.held == null ? gateInForce : gateTok ?? ":gate* 1"));
-      const note = { tick: tick(n.step), len: tick(len), midi: n.midi, vel: 15, state, tieIn: legato };
+      const note = { tick: tick(n.step), len: tick(len), midi: n.midi, vel: 15, state, tieIn: legato, voice: st.voice };
       notes.push(note);
       // A tie's gate is its head's, over the whole tied length; MGSDRV cuts
       // the last note by its own q: the head takes that cut, exact.
@@ -819,6 +889,11 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     if (loopTick != null && marks.length && !marks.some((m) => m.tick === loopTick)) {
       const inForce = marks.filter((m) => m.tick < loopTick).pop();
       if (inForce) { marks.push({ tick: loopTick, tokens: inForce.tokens }); marks.sort((x, y) => x.tick - y.tick); }
+    }
+    if (rhythmCh != null) {
+      for (const t of rhythmOfFm(rhythmCh, clean, a.rhythmY)) songOut.push({ ...t, channel: `rhythm${++rhythmN}`, marks: rhythmN === 1 ? marks : [], endTick, loopTick });
+      endMax = Math.max(endMax, endTick);
+      continue;
     }
     songOut.push({ channel, notes: dropIdleNones(clean), marks, endTick, loopTick });
     endMax = Math.max(endMax, endTick);

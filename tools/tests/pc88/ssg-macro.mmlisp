@@ -1,0 +1,8 @@
+; pc88: an SSG drum's steps — the mixer from both to noise and the song's
+; noise period moved through each hit, with a pitch fall on its tone.
+(def-score :target pc88 :title "pc88 ssg macro")
+(sqr3 :tempo 150 :len 8 :mode both :noise-rate 2
+  (macro :mode [both noise] :noise-rate [2 (wait 1f) 4 (wait 1f) 6 (wait 1f) 8]
+         :vol [28 26 24 22 20 0] :pitch+ [0 -200 -400 -600])
+  c _ c c _ c _ c |)
+(sqr1 :len 4 :oct 3 c e g e |)

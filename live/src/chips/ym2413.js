@@ -205,7 +205,9 @@ export const opllFm = {
 // each channel's F-number tuning its sounds: BD on 6; HH and SD on 7; TOM
 // and the top cymbal on 8. The kits' roles name them, as the YM2608's
 // (chips/rhythm-rom.js); there is no rim. A sound is keyed until its next
-// hit or its gate's end, where it releases.
+// hit or its gate's end, where it releases. Its channel's F-number is its
+// pitch, which the player moves while it sounds and on through its release
+// (:pitch, :semi, glide and their macros).
 const RHYTHM = {
   bd: { bit: 0x10, ch: 6, vol: [0x36, 0] },
   sd: { bit: 0x08, ch: 7, vol: [0x37, 0] },
@@ -225,6 +227,7 @@ export const opllRhythm = {
   words: NO_WORDS, // mono: no :pan
   level: { stepDb: 3, steps: 16 }, // the 4-bit volume, 15 loud .. 0 (the register's 0 .. 15)
   points: false,
+  pitch: true, // the channel's F-number, written while the sound rings
   kit: { kick: "bd", snare: "sd", tom4: "tom", ride: "top", hat: "hh" },
   // A sound's scope lane after its part's first (targets.js scopeLane): its
   // channel's, the pairs sharing one.
@@ -282,7 +285,11 @@ export const opllRhythm = {
 // run of voice writes at one time (a voice switch, a macro's step) is held
 // until the channel's next call and moved then, at its own time — the
 // write's fourth element — so a key-off sent after it is known first.
-const KEEP = 128; // the entries a timeline keeps: well past the player's lookahead
+const KEEP = 128; // the spans a channel keeps: well past the player's lookahead
+// How far behind its latest entry a timeline keeps what was in force: a
+// note's macros are set ahead whole (a long note's vibrato, hundreds of
+// frames), so a count would drop the note's own onset before its key reads it.
+const KEEP_SECS = 30;
 const EPS = 1e-9;
 
 /** A value over time: set(t, v) in any order, get(t) the one in force. */
@@ -294,7 +301,11 @@ function timeline(init) {
       while (i > 1 && list[i - 1].t > t + EPS) i--;
       if (Math.abs(list[i - 1].t - t) < EPS) list[i - 1] = { t, v };
       else list.splice(i, 0, { t, v });
-      if (list.length > KEEP) list.splice(1, list.length - KEEP);
+      // Entries older than the window go, but the last one before it stays.
+      const cut = list[list.length - 1].t - KEEP_SECS;
+      let j = 1;
+      while (j + 1 < list.length && list[j + 1].t <= cut) j++;
+      if (j > 1) list.splice(1, j - 1);
     },
     get: (t) => list.findLast((e) => e.t <= t + EPS)?.v ?? list[0].v,
   };
@@ -485,6 +496,7 @@ function opllEncoder() {
         if (rkeys & r.bit) keys(out, rkeys & ~r.bit, t);
         keys(out, rkeys | r.bit, t);
       } else if (op.k === "level") volume(out, op.sound, op.il, t);
+      else if (op.k === "tune") tune(out, r.ch, op.midi, t);
       else if (rkeys & r.bit) keys(out, rkeys & ~r.bit, t);
     };
     // A call with a time joins the queue; one with none (an audition, a
@@ -498,6 +510,8 @@ function opllEncoder() {
     return {
       hit: (sound, il, _pan, when, midi = 60) => take(when, { k: "hit", sound, il, midi }),
       level: (sound, il, _pan, when) => take(when, { k: "level", sound, il }),
+      // The sound's channel at `midi` (fractional: a pitch move's frame).
+      tune: (sound, midi, when) => take(when, { k: "tune", sound, midi }),
       // A dump with no time is a stop: the queue is dropped and every sound
       // keyed off now.
       dump(sound, when) {

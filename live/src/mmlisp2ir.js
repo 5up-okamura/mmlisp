@@ -71,12 +71,17 @@ const SUPPORTED_TARGETS = new Set([
   ...opWords(FM_OP_WORDS.filter((w) => !w.inline)).map((w) => w.word),
 ]);
 
+// What a (macro …) may step: the supported targets, and the SSG's mixer,
+// which a `:mode` macro on it becomes (its inline :mode is the part's).
+const MACRO_TARGETS = new Set([...SUPPORTED_TARGETS, "SSG_MIX"]);
+
 // Inline-only targets: sticky channel state with no per-note macro form.
 // SNAP (`:snap`, language.md §5.3) is a pitch-class mask the channel's every
 // pitch write passes through; a mask is set, never swept or stepped.
 // SSG_ENV (`:env`, language.md §19) is the SSG channel's envelope shape, or
-// none: a channel's setting, no level.
-const INLINE_TARGETS = new Set(["SNAP", "SSG_ENV", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
+// none: a channel's setting, no level; ENV_SEMI and ENV_DETUNE (`:env-semi`,
+// `:env-detune`) move the period the channel's notes or rates give it.
+const INLINE_TARGETS = new Set(["SNAP", "SSG_ENV", "ENV_SEMI", "ENV_DETUNE", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
 
 // An operator's velocity sensitivity, `:vel1`–`:vel4` (language.md §6): a
 // ratio 0–1 of the note's velocity offset, carried as sixteenths. A voice
@@ -361,6 +366,8 @@ const TARGET_SYMBOLS = {
   LFO_WAVE: { saw: 0, square: 1, triangle: 2, noise: 3 },
   SSG_ENV: { none: -1 },
   ENV_RATE: { note: 0 },
+  // The SSG mixer's, as a `:mode` macro steps it (its inline :mode is the part's modes).
+  SSG_MIX: { tone: 0, noise: 1, both: 2, env: 3 },
 };
 
 function atomValue(node) {
@@ -1484,7 +1491,7 @@ function emitEchoReplay(trackState, events, spec, back, src) {
 }
 
 function applyMacroEntryToState(trackState, irTarget, spec, ctx) {
-  if (!spec || !SUPPORTED_TARGETS.has(irTarget)) return;
+  if (!spec || !MACRO_TARGETS.has(irTarget)) return;
   if (
     PCM_PITCH_TARGETS.has(irTarget) &&
     pcmRejectsPitch(
@@ -1514,7 +1521,7 @@ function applyMacroEntryToState(trackState, irTarget, spec, ctx) {
 
 // `(macro :target none)` clears one active macro; `(macro none)` clears all.
 function clearMacroTarget(trackState, irTarget) {
-  if (irTarget && SUPPORTED_TARGETS.has(irTarget))
+  if (irTarget && MACRO_TARGETS.has(irTarget))
     delete trackState.activeMacros[irTarget];
 }
 
@@ -1720,6 +1727,10 @@ function readValue(node, env, ctx) {
 
 const atomNode = (value) => ({ kind: "atom", value: String(value) });
 
+// Targets written as a value alone: no curve, no `+` / `*` (the envelope's
+// moves are read where its period is written, language.md §19).
+const SET_ONLY_TARGETS = new Set(["ENV_SEMI", "ENV_DETUNE"]);
+
 // Write a hardware parameter from a readValue result. An operator reads the
 // parameter itself: `:tl1+ e` is `(+ $tl1 e)` and `:tl1* e` is `(* $tl1 e)`,
 // lowered like any other runtime expression (PARAM_ADD / PARAM_MUL).
@@ -1742,6 +1753,10 @@ function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName,
     else
       err("E_PARAM_VALUE",
         `${sym} takes a number, a curve or a $value, not '${v.value}'`);
+    return;
+  }
+  if ((v.kind === "signal" || op) && SET_ONLY_TARGETS.has(target)) {
+    err("E_PARAM_VALUE", `${sym} takes a number or a $value, read at the write`);
     return;
   }
   if (v.kind === "signal") {
@@ -2469,6 +2484,7 @@ function parseMacroSpec(
     if (typeof val !== "string") return null;
     if (target === "NOISE_MODE" && val in NOISE_MODE_MAP) return NOISE_MODE_MAP[val];
     if (target === "PAN" && val in PAN_MAP) return PAN_MAP[val];
+    if (target === "SSG_MIX" && val in TARGET_SYMBOLS.SSG_MIX) return TARGET_SYMBOLS.SSG_MIX[val];
     const n = parseNumberLike(val);
     return n === null ? null : roundVal(n);
   };
@@ -3536,6 +3552,8 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":noise-rate": "NOISE_RATE",
   ":env": "SSG_ENV",
   ":env-rate": "ENV_RATE",
+  ":env-semi": "ENV_SEMI",
+  ":env-detune": "ENV_DETUNE",
   // PCM points: the range a note plays, and the loop inside it
   ":pcm-start": "RANGE_START",
   ":pcm-end": "RANGE_END",
@@ -5080,10 +5098,13 @@ function compileChannelBody(
               // Target group [:tl1 :tl2 ...] applies the one spec (or clear)
               // to every keyword — sugar for writing the pair per target.
               for (const groupSym of group ?? [sym]) {
-                const { target, op } = macroKeyword(groupSym);
+                let { target, op } = macroKeyword(groupSym);
+                // A `:mode` macro on a part whose modes are its mixer's (the
+                // SSG's) steps the mixer.
+                if (target === "NOISE_MODE" && trackState.part?.modes?.tone?.[0] === "SSG_MIX") target = "SSG_MIX";
                 // A keyword that names no target is a typo, as it is inline
                 // (E_UNKNOWN_KEYWORD) — never a macro that silently drops.
-                if (!SUPPORTED_TARGETS.has(target)) {
+                if (!MACRO_TARGETS.has(target)) {
                   pushDiag(diagnostics, "error", "E_MACRO_TARGET",
                     `${groupSym} is not a macro target (language.md §10 lists them)`,
                     nodeSrc(rest[j]), trackName);
@@ -5091,7 +5112,7 @@ function compileChannelBody(
                 }
                 // A macro runs from a note's key-on; the song's own values
                 // are not a note's. A looping sweep moves them over time.
-                if (SONG_TARGETS.has(target)) {
+                if (SONG_TARGETS.has(target) && !trackState.part?.songMacros?.(target)) {
                   pushDiag(diagnostics, "error", "E_MACRO_TARGET",
                     `${groupSym} is the song's, not a note's, so it takes no macro — sweep it instead (${groupSym} (sin …))`,
                     nodeSrc(rest[j]), trackName);

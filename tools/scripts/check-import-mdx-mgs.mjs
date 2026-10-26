@@ -230,7 +230,7 @@ function compressMgs(u8) {
     assert.ok(!/\(fm7/.test(source), `${what}: no fm7 in #opll_mode 1`);
     has(source, /:tempo 150/, what);
     has(source, /\(sqr1[\s\S]*?:gate\* 0\.75[\s\S]*? c /, what); // q6 as the gate, c its whole quarter
-    has(source, /\(macro :pitch\+ \(linear -400\.\.0 :len 96t\)\)/, what); // c_e: from c to e
+    has(source, /\(macro :pitch\+ \[-400 -385 -370 [^\]]* -19 0\]\)/, what); // c_e: from c to e, a line on the period a frame
     has(source, /e4? (\(macro :pitch none\) )?~ g/, what); // e & g: the e slurs into the g
     has(source, /#top[\s\S]*:pitch -?\d+[\s\S]*\(go top\)/, what); // `$`, then \ 5
     has(source, /\(sqr2[\s\S]*:mode noise :noise-rate 31/, what);
@@ -238,16 +238,15 @@ function compressMgs(u8) {
     has(source, /\(def vol-e0-v12-k2 \(macro :vol \[26 \(wait 1f\) 25 23 22 0\]\)\)/, what); // relative to v
     has(source, /\(def bend-e2-c3 \(macro :pitch\+ \[-20 -10\]\)\)/, what); // \-10 then \5: the period's own units, + up
     has(source, /\(def-wave scc-00 :wave \[0 8 16/, what);
-    has(source, /\(def vol-r1-v12-scc \(macro :vol \[28 29 30 \(wait 4f\) 29 [^\]]*#rel \(linear :len 8f\)\]\)\)/, what); // (E × 13) >> 8
-    has(source, /#rel \(linear :len \d+f\)/, what);
+    has(source, /\(def vol-r1-v12-scc \(macro :vol \[28 29 30 \(wait 4f\) 29 [^\]]*#rel 22 \(wait 2f\) 19 \(wait 1f\) 0\]\)\)/, what); // (E × 13) >> 8, RR a step on E a frame
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
     has(source, /\(def-fm mgs-v15 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
     has(source, /\(fm1[\s\S]*mgs-v15[\s\S]*:oct 3[\s\S]*piano :sus 1/, what); // FM's o4 is an octave below the PSG's
     has(source, /\(rhythm1[\s\S]*kick :vol 25/, what); // vb11 (3 dB steps)
     has(source, /\(rhythm2[\s\S]*hat :vol 22/, what);
     has(source, /\(rhythm1[\s\S]*kick :vol 25 :mode shot[^|]*c2 :mode gate c(8)? _(8)? c/, what); // ko: rings to its next; kf: keyed off at the hat's hit
-    has(source, /\(def vol-e3-v15-k2 \(macro :vol \[20 \(wait 2f\) 16 #rel \(linear :len 10f\)\]\)\)/, what); // 8:3 holds; k2 from level 5
-    has(source, /\(macro :vol \[26 #rel \(linear :len 36f\)\]\)/, what); // k3 at v12
+    has(source, /\(def vol-e3-v15-k2 \(macro :vol \[20 \(wait 2f\) 16 #rel 14 \(wait 1f\) 13 \(wait 1f\) 11 \(wait 1f\) 10 \(wait 1f\) 0\]\)\)/, what); // 8:3 holds; k2 a level each 2 frames from 5
+    has(source, /\(macro :vol \[26 #rel 25 \(wait 2f\) 23 \(wait 2f\) [^\]]*10 \(wait 2f\) 0\]\)/, what); // k3 at v12
     has(source, /\(fm2[^\n]*:len 4\n  [^|]*c _8 d8/, what); // q0 holds c through the rest, to the `/`
     clean(source, what);
   }
@@ -285,6 +284,28 @@ function compressMgs(u8) {
   const { source } = mgsToMmlisp(mgs, { fileName: "s.mgs" });
   const what = "MGS s / m";
   has(source, /\(sqr1[^|]*:env 8 :env-rate 65\.3392 [^|]* c :env 14 :env-rate 32\.6696 c [^|]*:env none :vol 26 c \|/, what);
+  clean(source, what);
+}
+
+// y14 in #opll_mode 0: FM 7-9 key the rhythm. $0E 0x23 holds HH and CYM
+// keyed, so FM 8 is the snare alone and FM 9 the tom; FM 7's portamento is
+// the kick's pitch-down, and the melody keeps the user voice.
+{
+  const T = (n, len) => [0x20 | n, len];
+  const defs = [0x00, 15, 0x21, 0x01, 0x1e, 0x0f, 0xf0, 0xf4, 0x24, 0x13, 0xff];
+  const fm1 = [0xd4, 0xcf, 0x8f, ...T(0, 48), 0xff]; // @15: the user voice
+  const fm7 = [0x5c, 0x0e, 0x23, 0xcf, 0xd3, 0x53, 9, 0x4f, ...T(9, 24), 0x4e, ...T(9, 24), 0xff]; // y14,35; a_<a
+  const fm8 = [0xcd, 0xd3, ...T(12, 24), ...T(0, 24), 0xff]; // v13: rest, c
+  const mgs = parseMgs(buildMgs({ title: "y14", tempo: 120, defs,
+    tracks: [null, null, null, null, null, null, null, null, fm1, null, null, null, null, null, fm7, fm8] }));
+  const { source, warnings } = mgsToMmlisp(mgs, { fileName: "y14.mgs" });
+  const what = "MGS y14";
+  has(source, /\(fm1[^|]*mgs-v15/, what);
+  assert.ok(!/\(fm7|\(fm8/.test(source), `${what}: FM 7-8 are the rhythm's`);
+  has(source, /\(rhythm1[^|]*kick :vol 31 :mode gate[^|]*\(macro :pitch\+ \[1200 /, what); // the kick's pitch-down, a line on the F-number a frame
+  has(source, /\(rhythm2[^|]*snare :vol 28 :mode gate/, what); // v13
+  assert.ok(!/ hat | ride /.test(source), `${what}: the held HH and CYM are left out`);
+  assert.ok(warnings.some((w) => /held keys \(ride, hat\)/.test(w)), `${what}: the held keys are reported`);
   clean(source, what);
 }
 

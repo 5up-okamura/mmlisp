@@ -1,0 +1,7 @@
+; msx: the envelope's period moved — a step of :env-detune under the tone
+; (the timbre beats), a $value, :env-semi an octave below the notes, and a
+; fixed rate the track writes, moved as it is then.
+(def-score :target msx :title "msx env detune")
+(def-val d 2 -10..10)
+(sqr1 :tempo 120 :env 8 :env-rate note :mode tone :oct 2 :len 4
+  c :env-detune 1 c :env-detune $d c :env-semi -12 :env-detune 0 c :env-rate 100 c |)

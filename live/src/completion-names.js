@@ -39,7 +39,7 @@ export const AC_PARAMS = [
   ':noise-rate', ':env-rate', ':lfo-freq', ':lfo-pmd', ':lfo-amd', ':lfo-wave',
   // track / channel
   ':prio', ':oct', ':oct+', ':len', ':gate', ':gate*', ':gate-',
-  ':vel', ':vel+', ':vel*', ':vol', ':pan', ':snap', ':mode', ':env', ':shuffle', ':shuffle-base',
+  ':vel', ':vel+', ':vel*', ':vol', ':pan', ':snap', ':mode', ':env', ':env-semi', ':env-detune', ':shuffle', ':shuffle-base',
   // note dynamics / sequencer
   ':pitch', ':pitch+', ':semi', ':semi+', ':keyon', ':csm-rate',
   // echo / delay, macro, def-val, def-mod
