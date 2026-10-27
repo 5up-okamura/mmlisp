@@ -115,7 +115,8 @@ export const fcNoise = {
 export const fcDpcm = {
   name: "fc-dpcm",
   label: "2A03 DPCM",
-  unit: "apu",
+  // Its own unit: its voice is the sample slot, not one of the APU's tone
+  // channels (sqr1 is voice 0 there).
   kind: "sample",
   level: { scale: "linear", steps: 64 }, // the DAC's swing about its middle
   words: words(/^(?:RANGE|LOOP)_/),
@@ -255,6 +256,9 @@ function apuEncoder() {
   const att = (ch, a, when) => {
     const v = 15 - Math.max(0, Math.min(15, a | 0));
     if (v || when === undefined || when === null) return take({ kind: "vol", ch, v }, when);
+    // A key-off at the time of a write still queued (a note shorter than
+    // the frame it lands in): queued after it, so it comes after.
+    if (queue.some((op) => op.ch === ch && op.t >= when - 1e-9)) return take({ kind: "vol", ch, v: 0 }, when);
     queue.push({ kind: "vol", ch, v: 0, silent: true, t: when });
     return [[PORT, ctlAddr(ch), ctlByte(ch, 0)]];
   };

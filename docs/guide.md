@@ -1721,6 +1721,31 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   over the wave where they meet (§19's `:prio` across a channel's names).
   The LFO (`12xx` `13xx`) and DDA (`17xx`) are left out. `08xy` is the channel's pan between its left and right
   levels, the volume column the chip's 5-bit volume (1.5 dB a step).
+- An **NES** module offers `fc` (the default where the 2A03 plays every
+  note; an expansion's channels — VRC7, FDS — make `md` the default) or
+  `md`. As `fc` the pulses go to `sqr1` / `sqr2`, the triangle to `tri`,
+  the noise to `noise`, as Furnace plays them: a pulse's duty is its
+  instrument's duty macro (a `(macro :duty …)`, starting over at each note)
+  and `12xx`, from 12.5 % where nothing sets it (Furnace's), written as
+  `:duty`; the volume column is the chip's linear 4-bit level, as `:vel`
+  in dB, and the volume macro a `:vol` macro in dB — scaling the column
+  (Furnace's newer modules) or adding its steps to it (a DefleMask module,
+  an older Furnace one: a def for each column level it plays at, named
+  `-v8` …). A `12xx` under a sounding note takes effect at the next note
+  (the log counts it). The triangle has no level: its notes say no `:vel`;
+  its volume macro's 0 silences it, and a column of 0 only where a volume
+  macro reads it. A noise note is its rate
+  (Furnace's: the note's low four bits; a DefleMask module's: its table),
+  its mode the duty macro's first step or `12xx` (`:mode white` /
+  `periodic`). A Furnace module's DPCM channel comes in on `pcm1`: each
+  note its instrument's sample (its note map's, or its one) at the DMC rate
+  the note picks (an NES instrument's map or the note's low four bits; a
+  sample instrument's note, C-4 its rate, at the nearest DMC rate), played
+  to the next note or a note off (`:mode gate`, or `:mode loop` for a
+  looping sample) — a `def-pcm` for each sample and rate, all in one wav
+  (`<song>-dpcm.wav`, Save writes it beside the score). A DefleMask
+  module's samples are not read. The sweep (`13xy` `14xy`) and the other
+  2A03 effects are left out.
 
 **VGM.** A VGM is a log of register writes, so its notes are rebuilt from
 them: a key-on starts a note, a key-off ends it.
@@ -1735,7 +1760,11 @@ them: a key-on starts a note, a key-off ends it.
   the noise's period as the nearest `:mode white0`–`white2`. The
   carriers' TL is taken relative to the voice's loudest use and the rest
   becomes `:vel`. The SSG and the SN76489 become `sqr` and `noise` tracks;
-  the YM2413 and the OPL chips give notes on a stand-in voice. A chip tuned
+  the OPL chips give notes on a stand-in voice. The YM2413's notes keep
+  their voice, read on four operators: a ROM voice by its name (`piano`), a
+  VRC7's ROM voice (its YM2413 clock's bit 31) as `vrc7-1`…`vrc7-15`, the
+  user voice as `opll-user-01` … each as it stood at the key-on, at the
+  channel's volume (3 dB a step). A chip tuned
   off A440 on the whole (an arcade board's clock) is taken back onto the
   semitones; a header that gives a chip no clock gets the chip's usual one
   (some arrangements leave it 0).
@@ -1776,17 +1805,25 @@ them: a key-on starts a note, a key-off ends it.
   `presets/waveforms` stand-in and the busier noise on `noise`.
 - A **Famicom** file (the 2A03, `:target fc` by default) goes to `sqr1`,
   `sqr2`, `tri` and `noise`, each keeping its place. A pulse's duty comes
-  back as `:duty` (12.5 / 25 / 50 / 75 % as 2 / 4 / 8 / 12): a duty
+  back as `:duty` (12.5 / 25 / 50 / 75 % as 2 / 4 / 8 / 12), its sweep as
+  the pitch moving under the note (a bend; a sweep that mutes a high
+  period, a silence): a duty
   macro's steps through a note's first frames are its attack, and the note
   takes the duty it settles on; one moved later under the note starts a
   new note. Its hardware envelope comes back as a `:vel+` envelope,
-  its length counter as the note's end, its sweep counted. The triangle
+  its length counter as the note's end. The channels start enabled (a rip
+  of an NSF often leaves out the player's `$4015`), and the 2A03's pitches
+  are read as its clock gives them (no tuning estimate). The triangle
   has no level, so its notes say no `:vel`; a note ends where its linear
-  counter runs out. The noise's notes are its rates (c2 the slowest) with
+  counter runs out, and a `$400B` starts a new one except in a glide (a
+  drum's fall crossing a high byte). The noise's notes are its rates (c2 the slowest) with
   `:mode white` or `periodic`. The DMC's samples come from the memory
   blocks the file carries, each hit's the memory as it stood (a bank
   switched is another sample), decoded to one wav and `pcm1`; a sample the
-  driver loops is a `:mode loop` note. On md the triangle is `sqr3`, the
+  driver loops is a `:mode loop` note. On md the triangle is an FM
+  channel's on `wave-triangle` (the SN76489 stops at 109 Hz, above a
+  triangle's bass and drums), a tone channel past `sqr3` (a Sunsoft 5B's)
+  goes to a free FM channel, the
   noise's modes the nearest `white` / `periodic` rate, and the duties are
   left out; the DAC written on and on by the CPU (a PCM the game streams)
   is counted, not imported.

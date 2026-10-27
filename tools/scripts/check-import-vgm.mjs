@@ -185,8 +185,9 @@ const writesOf = (source, addr) => {
 
 // The 2A03: its pulses keep their numbers on fc with their :duty, the
 // triangle goes to tri with no :vel (it has none), the noise's notes are
-// its rates with :mode white / periodic; on md the triangle is sqr3 and the
-// noise's modes read as the nearest white / periodic. The DMC: a hit's
+// its rates with :mode white / periodic; on md the triangle is fm1's (a
+// triangle wave, below the SN76489's floor too) and the noise's modes read
+// as the nearest white / periodic. The DMC: a hit's
 // sample is the memory as it stood at the hit (a 0xC2 block), one wav, a
 // loop a loop.
 {
@@ -204,7 +205,8 @@ const writesOf = (source, addr) => {
     assert.match(source, /\(noise[\s\S]*:mode white :oct 2 [^|]*c c\+[\s\S]*:mode periodic[\s\S]*:mode white/, "fc: the noise's rates as notes, its modes");
   }
   const md = imported(parsed, "md").source;
-  assert.equal(defaultVgmOptions(a, "md").dest["2A03 TRI"], "sqr3");
+  assert.equal(defaultVgmOptions(a, "md").dest["2A03 TRI"], "fm1");
+  assert.match(md, /\(fm1[^)]*\s+wave-triangle/, "md: the triangle on a triangle wave");
   assert.match(md, /\(noise[\s\S]*:mode white\d[\s\S]*:mode periodic\d/, "md: the modes at the nearest rate");
   assert.doesNotMatch(md, /:duty/, "md: no duty");
 }
@@ -241,6 +243,18 @@ const writesOf = (source, addr) => {
       assert.match(pcm1, typeof tok === "string" ? new RegExp(tok) : tok, `pc88: ${tok} on pcm1`);
   }
   imported(parsed, "md");
+}
+
+// The YM2413 on md: each key-on's voice — a ROM voice by its built-in name
+// (piano, guitar), the user voice as a def-fm of its registers (the 4-op
+// reading, chips/ym2413.js) — not a stand-in.
+{
+  const parsed = await vgmOf("tools/tests/msx/fm-pac.mmlisp");
+  const { source } = imported(parsed, "md");
+  assert.match(source, /\(fm1[^)]*\bpiano\b/, "md: the ROM's piano by name");
+  assert.match(source, /\bguitar g g opll-user-01\b/, "md: a ROM voice, then the user voice");
+  assert.match(source, /\(def-fm opll-user-01 :alg 4 /, "md: the user voice as a def-fm");
+  assert.doesNotMatch(source, /wave-saw/, "md: no stand-in");
 }
 
 console.log("VGM import checks passed");

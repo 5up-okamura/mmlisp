@@ -152,11 +152,13 @@ for a controller's knobs.
 - FM voices from DefleMask, Furnace, TFI, VGI, OPNI and mucom88 banks; drum
   samples from mucom88 PCM banks and SoundFont kits
 - Songs from MIDI, DefleMask, Furnace (a PC Engine module as a `pce`
-  score), VGM (with its PCM: the YM2612 DAC, SegaPCM, YM2610 ADPCM, the
-  OKIM6258; a YM2151's, a YM2608's, an AY-3-8910's, an SCC's or a
-  HuC6280's as its own machine's score, the SSG's hardware envelope
-  included) and mucom88, through a dialog for tempo and channels; MDX (with
-  its PDX) as an X68000 score and MGS as an MSX one
+  score, an NES one as an `fc` score with its DPCM samples), VGM (with its
+  PCM: the YM2612 DAC, SegaPCM, YM2610 ADPCM, the OKIM6258, the 2A03's DMC;
+  a YM2151's, a YM2608's, an AY-3-8910's, an SCC's, a HuC6280's or a
+  2A03's as its own machine's score, the SSG's hardware envelope included;
+  a YM2413's or a VRC7's notes on their own voices, read on four
+  operators) and mucom88, through a dialog for tempo and channels; MDX
+  (with its PDX) as an X68000 score and MGS as an MSX one
 - Recordings, in WAV or any format the browser decodes: **Audio as Formants**
   (a sound's spectral peaks on FM3's operators — CSM's vocoder voice, or
   sine-wave speech; on x68k and msx the sine waves) and **Audio as FM Voice** (a patch searched for one note,
@@ -263,6 +265,7 @@ This project directly references the following works in its design and implement
 - **[PMD](https://en.touhouwiki.net/wiki/User:Mami/Music_Dev/PMD)** — Professional Music Driver for PC-98 by KAJA. Influenced the MML command model and track sequencing design.
 - **[NDP](https://ndp.squares.net/web/)** — PSG sound driver and MML authoring tool for MSX by naruto2413. Influenced the score and MML authoring model.
 - **[mucom88](https://github.com/onitama/mucom88)** — MML sound driver for the PC-8801 (OPNA) by Yuzo Koshiro, maintained by onitama; licensed CC BY-NC-SA 4.0. Referenced for the `.muc` / `.dat` import path — MML command model and clock-grid note timing.
+- **[Nuked-OPLL](https://github.com/nukeykt/Nuked-OPLL)** — YM2413 emulator by nukeykt. Its dumps of the YM2413's and the VRC7's ROM voices are the FM-PAC's built-in voices and the VGM import's VRC7 voices.
 - **[Furnace](https://github.com/tildearrow/furnace)** / **[DefleMask](https://www.deflemask.com/)** — Multi-system chiptune trackers referenced for tracker workflow, pattern sequencing, and chip-focused composition practices.
 - **MXDRV** — MML sound driver for the X68000. Its MDX format and its playback, as [portable_mdx](https://github.com/yosshin4004/portable_mdx) ports its 68000 code, are the reference for the `.mdx` / `.pdx` import.
 - **[MGSDRV](https://gigamix.hatenablog.com/entry/mgsdrv/)** — MML sound driver for the MSX by Ain / GIGAMIX. MGSC's MML reference and the driver's playback are the reference for the `.mgs` import.

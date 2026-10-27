@@ -299,9 +299,9 @@ export function emitPhrased(song) {
     for (const sg of tr.segments) {
       const { pre, vel, oct } = sg.state;
       const body = writeBody(sg.notes, {
-        bars: sg.bars, endTick: sg.len, marks: sg.marks ?? [], defLen, oct, vel, pre,
+        bars: sg.bars, endTick: sg.len, marks: sg.marks ?? [], defLen, oct, vel, pre, noVel: tr.noVel,
       });
-      const head = [...pre, `:oct ${oct}`, `:vel ${vel}`].join(" ");
+      const head = [...pre, `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${vel}`])].join(" ");
       const text = [head, ...body].join("\n  ");
       let name = byText.get(text);
       if (!name) {
@@ -1061,14 +1061,18 @@ function bendSpec(b) {
   if (b.kind === "vib")
     return `(sin ${b.centre - b.depth}..${b.centre + b.depth} :len ${b.period}f${b.wait ? ` :wait ${b.wait}f` : ""})`;
   if (b.kind === "steps") return `[${b.values.join(" ")}]`;
-  // Lines: a stage each; a level held is a wait.
+  // Lines: a stage each; a level held is a wait. A curve plays both its
+  // ends, so a line on from the one before starts a frame in (`at`: the
+  // frame the next stage's first value lands on).
   const st = [];
   const { pts } = b;
+  let at = 0;
   for (let i = 0; i + 1 < pts.length; i++) {
     const [f0, v0] = pts[i], [f1, v1] = pts[i + 1];
     const len = f1 - f0;
-    if (v0 === v1 && (i > 0 || v0 === 0)) st.push(`(wait ${len}f)`);
-    else st.push(`(linear ${v0}..${v1} :len ${len}f)`);
+    if (v0 === v1 && (i > 0 || v0 === 0)) { st.push(`(wait ${len}f)`); at = at > f0 ? f1 + 1 : f1; }
+    else if (at > f0) { st.push(`(linear ${Math.round(v0 + (v1 - v0) / len)}..${v1} :len ${len}f)`); at = f1 + 1; }
+    else { st.push(`(linear ${v0}..${v1} :len ${len + 1}f)`); at = f1 + 1; }
   }
   while (st.length && st[st.length - 1].startsWith("(wait")) st.pop(); // the last value holds
   if (!st.length) return null;

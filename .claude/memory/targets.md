@@ -170,8 +170,58 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   before any 0xC2 block lost. Approximations kept: a halt cleared under a
   held counter leaves it held; the sweep's mute of a high period (negate
   clear, target > $7FF) is not applied; $4017's immediate clock in 5-step
-  mode is not. Not yet run on a real rip (vgmrips' NES packs): the
-  frame-grid / envelope reading of a real driver is untested there. The curve option `:duty` is 1–255 (128 = 50 %) while the track
+  mode is not.
+- Held to real rips (2026-10-27, the user's vgmrips packs, kept outside
+  the repo in their Dropbox: Balloon Fight, SMB3, Kirby, Contra, Super
+  Contra, Fantasy Zone): scratchpad abfc.mjs renders the VGM's own writes
+  and the import's on FcSynth and compares each channel a frame at a time
+  (sounding ±1 frame, the chip's own periods). What it found and fixed:
+  most rips never write $4015 (an NSF player sets it) — start enabled;
+  a length counter's sub-frame blip was a 1-tick note that keyed off in its
+  own frame before it keyed on (the encoder now queues a same-time key-off
+  behind its key-on; the import gives a note a frame at least on a
+  frame-clocked target); the triangle's reload is taken at the next quarter
+  frame from $4008 as it is then (drivers write $400B before $4008); a
+  strike is a level up or a pitch jump within a setup burst (2 ms), not at
+  the exact same sample; no tuning estimate for the 2A03; the sweep is
+  followed on half frames (and its mute); pitchShape keeps a fall that goes
+  on into the note's last two frames, and a burst's last pitch only (a
+  period written a byte at a time); the triangle's $400B is a new note but
+  in a glide (decided once the burst's low byte is in — Gimmick writes
+  $400B first); bendSpec's chained lines start a frame in (a curve plays
+  both its ends, so each joint held two frames). After those, most tracks
+  agree to a few frames (Gimmick 01 TRI pitch 59 → 87 %, Balloon Fight 07
+  SQ1 19 → 49 %: the rest is a fast fall a sub-frame off the frame grid).
+  Open: a note cut off by its level going to 0 takes a shared envelope
+  whose #rel tail then sounds after the key-off (Kirby 03 SQ1, 222 extra
+  frames at a low level — assignEnvelopes' `fits` lets a no-release note
+  take a shape with a release); Gimmick's Sunsoft 5B is read as an
+  AY-3-8910 (on msx the 2A03 takes sqr1–3 and the AY is dropped; on md the
+  triangle is fm1's wave-triangle and the 5B's channels fill sqr3 / FM);
+  VRC7 (YM2413 with clock bit 31): its ROM (Nuked-OPLL patch_ds1001,
+  checked by packing patch_ym2413 the same way = ym2413.js's ROM) as
+  vrc7-N def-fms on voiceAs4op at the channel volume (a lift to the
+  loudest key-on, tried with the wave-saw stand-in, made the FM too loud
+  over the DPCM once the voices were real — removed; Lagrange Point's
+  balance not yet heard again);
+  Kirby's DPCM not A/B'd.
+- DefleMask / Furnace NES modules built 2026-10-27 (import-tracker.js, the
+  readers' NES channels `chip: "nes"`), read from Furnace's nes.cpp
+  (fetched): the noise's register rate 15 − (note & 15) under
+  properNoiseLayout, else its 253-entry noiseTable (DMFs); the duty
+  macro's first step the noise's mode (&1, or > 1 → 1); the volume macro
+  and column (VOL_SCALE_LINEAR_BROKEN) multiply under newVolumeScaling
+  (in dB they add: the column :vel, the macro :vol) and otherwise add their
+  4-bit steps (VOL_SCALE_LOG, clamp(v + m − 15)): DMFs and .fur < 99 (the
+  flag the compat block's tenth byte, or CFLG's key), a :vol def per
+  column; the triangle on while a volume macro is not 0;
+  the pulses' duty 0 (12.5 %) until something sets it, and a duty macro's
+  last step held after its note. Open: no real .fur / .dmf run (the check
+  builds a DMF); module DPCM read from .fur only (SMP2/SMPL 8/16-bit and
+  1-bit DPCM; DMF samples, the DAC start `dpcmDelta`, a loop's part and a
+  sample instrument's pitch not cross-checked against Furnace by ear); the duty's
+  12xx on a DMF read as Furnace's (DefleMask's own NES 12xx not
+  cross-checked). The curve option `:duty` is 1–255 (128 = 50 %) while the track
   word is in sixteenths, as ruled — two scales under one name; raise it if
   it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3);
   Import > Audio as Formants on an fc score writes fm3 tracks (pce is

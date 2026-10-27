@@ -14,7 +14,9 @@ import { inflate } from "./import-tracker.js";
 const ch = (kind, name) => ({ kind, name });
 const fm = (n, from = 1) => Array.from({ length: n }, (_, i) => ch("fm", `FM${i + from}`));
 const sn = [ch("psg", "SQ1"), ch("psg", "SQ2"), ch("psg", "SQ3"), ch("noise", "Noise")];
-const nes = [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Triangle"), ch("noise", "Noise"), ch("pcm", "DPCM")];
+// The 2A03's channels (chips/rp2a03.js), which an fc score keeps.
+const nes = [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Triangle"), ch("noise", "Noise"), ch("pcm", "DPCM")]
+  .map((c) => ({ ...c, chip: "nes" }));
 const DMF_SYSTEMS = {
   0x02: { name: "Genesis", channels: [...fm(6), ...sn] },
   0x42: { name: "Genesis (ext. CH3)", channels: [...fm(2), ch("fm3op", "FM3 OP1"), ch("fm3op", "FM3 OP2"),
@@ -161,6 +163,7 @@ export async function parseDmf(bytes) {
     fmVolMax: 127, psgVolMax: 15,
     linearPitch: true, pitchSlideSpeed: 4, // as Furnace plays a DMF
     properNoiseLayout: false, // the PC Engine's noise rate by DefleMask's table
+    newVolumeScaling: false, // a volume macro's 4-bit steps added to the column's (Furnace's dmf.cpp)
   };
 }
 

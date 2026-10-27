@@ -52,7 +52,8 @@ const FUR_SYSTEMS = {
   0xa3: () => [...named("OPL2", k("opl", 6, "FM")), ...k("pcm", 5, "Drum ")],
   0xa4: () => [...named("OPL3", k("opl", 15, "FM")), ...k("pcm", 5, "Drum ")],
   0x04: () => named("GB", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Wave" }, { kind: "noise", name: "Noise" }]),
-  0x06: () => named("NES", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Triangle" }, { kind: "noise", name: "Noise" }, { kind: "pcm", name: "DPCM" }]),
+  0x06: () => named("NES", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Triangle" }, { kind: "noise", name: "Noise" }, { kind: "pcm", name: "DPCM" }])
+    .map((c) => ({ ...c, chip: "nes" })),
   0x05: () => named("PCE", k("wave", 6, "CH")).map((c) => ({ ...c, chip: "pce", volMax: 31 })),
   0x07: () => named("SID", k("psg", 3, "CH")),
   0x47: () => named("SID", k("psg", 3, "CH")),
@@ -123,11 +124,11 @@ export async function parseFur(bytes) {
   p = infoSeek;
 
   let title, author, chans, hz, speeds, patLen, ordersLen, hilightA, hilightB, vtN = 1, vtD = 1;
-  let orders, insPtr = [], patPtr = [], wavePtr = [];
+  let orders, insPtr = [], patPtr = [], wavePtr = [], samplePtr = [];
   // Pitch: linear (1/128 semitone steps) unless the song says not, and the
   // multiplier on slide speeds (compat flags); the PC Engine's noise rate
   // straight from the note (Furnace's default since it has the flag).
-  let linearPitch = 1, pitchSlideSpeed = 4, properNoiseLayout = true, cflgPtr = 0;
+  let linearPitch = 1, pitchSlideSpeed = 4, properNoiseLayout = true, newVolumeScaling = true, cflgPtr = 0;
   const channels = [];
   const effectCols = [];
 
@@ -158,6 +159,7 @@ export async function parseFur(bytes) {
       if (type === 1) subPtr.push(...ptrs); // subsongs
       else if (type === 4) insPtr = ptrs; // instruments
       else if (type === 5) wavePtr = ptrs; // wavetables
+      else if (type === 6) samplePtr = ptrs; // samples
       else if (type === 7) patPtr = ptrs; // patterns
       else if (type === 8) cflgPtr = ptrs[0] ?? 0; // compat flags
     }
@@ -202,10 +204,13 @@ export async function parseFur(bytes) {
     // properNoiseLayout from version 43 — off before it (Furnace fur.cpp).
     if (version >= 37) linearPitch = u8[p + 1];
     properNoiseLayout = version >= 43 ? u8[p + 3] > 0 : false;
+    // newVolumeScaling (a volume macro × the column, else their 4-bit steps
+    // added) from version 99, the tenth flag; off before it.
+    newVolumeScaling = version >= 99 ? u8[p + 9] > 0 : false;
     p += 20; // compatibility flags
     for (let i = 0; i < insLen; i++) insPtr.push(i32());
     for (let i = 0; i < waveLen; i++) wavePtr.push(i32());
-    p += 4 * sampleLen;
+    for (let i = 0; i < sampleLen; i++) samplePtr.push(i32());
     for (let i = 0; i < nPats; i++) patPtr.push(i32());
     orders = Array.from({ length: ordersLen }, () => new Array(chans).fill(0));
     for (let j = 0; j < chans; j++) for (let o = 0; o < ordersLen; o++) orders[o][j] = c();
@@ -320,7 +325,9 @@ export async function parseFur(bytes) {
       // C64 (24) and Amiga (16) data, each macro's length and loop (pitch
       // and the extras from version 17), the arp's fixed mode (before 112),
       // three heights or reserved, then the values, 4 bytes each.
-      p += 4 + 24 + 16;
+      p += 4 + 24;
+      const sampleMap = { init: s16(), noteMap: null }; // the Amiga data's first word
+      p += 14;
       const n = iv >= 17 ? 8 : 4;
       const lens = Array.from({ length: n }, () => i32());
       const loops = Array.from({ length: n }, () => i32());
@@ -333,7 +340,7 @@ export async function parseFur(bytes) {
       // Before version 31 the arp's values were stored 12 up.
       if (iv < 31) arp.values = arp.values.map((v) => v - 12);
       const arpFixed = iv < 112 ? !!arpFixedOld : arp.values.some((v) => v & 0x40000000);
-      return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave, duty };
+      return { name, kind: "std", type, vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave, duty, sampleMap };
     }
     if (m !== "INS2" && m !== "FINS") throw new Error("not an instrument");
     const len = m === "INS2" ? i32() : u8.length - p;
@@ -347,6 +354,11 @@ export async function parseFur(bytes) {
     const wave = { values: [], loop: null };
     const duty = { values: [], loop: null };
     let arpFixed = false;
+    // The sample map (SM, and NE's DPCM rate and DAC start per note):
+    // Furnace's notes from C-5 (0), C-0 at 60; files before 246 store
+    // C-0 up.
+    const sampleMap = { init: 0, noteMap: null };
+    const mapAt = (k) => (sampleMap.noteMap[k] ??= { freq: k, sample: -1, dpcmFreq: -1, dpcmDelta: -1 });
     while (p + 2 <= stop) {
       const code = String.fromCharCode(u8[p], u8[p + 1]);
       p += 2;
@@ -372,6 +384,28 @@ export async function parseFur(bytes) {
         }
         while (ops.length < 4) ops.push({ dt: 3, mul: 1, tl: 127, rs: 0, ar: 31, am: 0, dr: 0, sr: 0, sl: 0, rr: 15, ssg: 0 });
         fm = { alg, fb, fms, ams, ops };
+      } else if (code === "SM") {
+        sampleMap.init = s16();
+        const useMap = c() & 1;
+        c(); // wave length
+        if (useMap) {
+          sampleMap.noteMap ??= [];
+          for (let k = version >= 246 ? 0 : 60; k < 180; k++) {
+            const e = mapAt(k);
+            e.freq = s16() + (version >= 246 ? 0 : 60);
+            e.sample = s16();
+            if (version < 152) e.freq = k;
+          }
+        }
+      } else if (code === "NE") {
+        if (c()) {
+          sampleMap.noteMap ??= [];
+          for (let k = version >= 246 ? 0 : 60; k < 180; k++) {
+            const e = mapAt(k);
+            e.dpcmFreq = (c() << 24) >> 24;
+            e.dpcmDelta = (c() << 24) >> 24;
+          }
+        }
       } else if (code === "MA") {
         const hlen = u16();
         while (p < fend) {
@@ -402,7 +436,7 @@ export async function parseFur(bytes) {
       p = fend;
     }
     if (fm && (type === 1 || type === 33)) return { name, kind: "fm", fm };
-    return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave, duty };
+    return { name, kind: "std", type, sampleMap, vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave, duty };
   }
 
   // The wavetables: "WAVE", a size, its name, width, a reserved word, its
@@ -424,6 +458,52 @@ export async function parseFur(bytes) {
     }
   });
 
+  // The samples (sample.cpp readSampleData): SMP2 from version 102, else
+  // the older SMPL; each as floats at its rate (C-4's), the 8- and 16-bit
+  // PCM and the 1-bit DPCM (each bit a step of the 7-bit DAC, as Furnace
+  // renders it). Another depth is null.
+  const samples = samplePtr.map((ptr) => {
+    try {
+      p = ptr;
+      const m = magic();
+      if (m !== "SMP2" && m !== "SMPL") return null;
+      p += 8;
+      const name = str();
+      const length = i32();
+      let rate = i32(), depth, loopStart = -1, loopEnd = length;
+      if (m === "SMP2") {
+        rate = i32();
+        depth = c();
+        p += 3; // loop mode, BRR emphasis, dither
+        loopStart = i32(); loopEnd = i32();
+        p += 16; // the render masks
+      } else {
+        if (version < 58) return null; // a legacy sample, pitch-scaled
+        p += 4;
+        depth = c();
+        c();
+        if (version >= 38) rate = u16(); else p += 2;
+        loopStart = version >= 19 ? i32() : -1;
+      }
+      let data = null;
+      if (depth === 8) data = Float32Array.from(u8.subarray(p, p + length), (v) => ((v << 24) >> 24) / 128);
+      else if (depth === 16) data = Float32Array.from({ length }, (_, i) => dv.getInt16(p + 2 * i, true) / 32768);
+      else if (depth === 1) {
+        data = new Float32Array(length);
+        let acc = 0;
+        for (let i = 0; i < length; i++) {
+          acc = Math.max(-64, Math.min(63, acc + ((u8[p + (i >> 3)] >> (i & 7)) & 1 ? 1 : -1)));
+          data[i] = acc / 64;
+        }
+      }
+      if (!data) return { name, rate, depth, data: null };
+      const loop = loopStart >= 0 && loopEnd > loopStart && loopEnd <= length ? { start: loopStart, end: loopEnd } : null;
+      return { name, rate: rate || 8000, depth, data, loop };
+    } catch {
+      return null;
+    }
+  });
+
   if (cflgPtr) {
     // "CFLG", a size, then `key=value` lines.
     p = cflgPtr;
@@ -434,6 +514,7 @@ export async function parseFur(bytes) {
         if (k === "linearPitch") linearPitch = +v;
         if (k === "pitchSlideSpeed") pitchSlideSpeed = +v || 4;
         if (k === "properNoiseLayout") properNoiseLayout = +v > 0;
+        if (k === "newVolumeScaling") newVolumeScaling = +v > 0;
       }
     }
   }
@@ -444,9 +525,12 @@ export async function parseFur(bytes) {
     rowsPerBeat: hilightA, rowsPerBar: hilightB,
     speeds, patLen, orders,
     channels: channels.map((ch, i) => ({ ...ch, patterns: pats[i] })),
-    instruments, waves,
+    instruments, waves, samples,
+    // The NES's DPCM channel as the DMC (from version 154; before, a PCM
+    // the CPU writes to the DAC at the note's rate).
+    dpcmMode: version >= 154,
     fmVolMax: 127, psgVolMax: 15,
-    linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout,
+    linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout, newVolumeScaling,
   };
 }
 

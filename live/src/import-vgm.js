@@ -23,7 +23,9 @@
 //                                    counter), the triangle, the noise (its
 //                                    rate the note, its mode), the DMC's
 //                                    samples from the file's RAM blocks
-//   YM2413, YM3812/3526/Y8950, YMF262 notes, on a stand-in voice
+//   YM2413 (and VRC7)                 notes on their voices, read on four
+//                                    operators (chips/ym2413.js)
+//   YM3812/3526/Y8950, YMF262 notes, on a stand-in voice
 //
 // Carrier TL is how most drivers set a channel's level, so a voice's
 // carriers are taken relative to their loudest use and the rest becomes
@@ -59,7 +61,7 @@
 //   vgmToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE,
+import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, RATE, PPQN,
   assignBends, PITCH_NONE, gcd, destsFor } from "./import-song.js";
 import { targetProfile } from "./targets.js";
 import { envCycle } from "./chips/ssg.js";
@@ -69,6 +71,7 @@ import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./import-mucom.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
+import { OPLL_ROM, OPLL_ROM_NAMES, VRC7_ROM, opllVoiceDef } from "./chips/ym2413.js";
 import { VEL_DB_PER_STEP } from "./ir-utils.js";
 import { engineImage } from "./engine-images.js";
 import { bankedEngineImage } from "./engine-banked-images.js";
@@ -432,8 +435,15 @@ function ayChip(name, clock, { ev, prefix = name }) {
   };
 }
 
-function opllChip(clock, { ev }) {
+// A channel's voice at its key-on (`opll`): its number ($3x's top four
+// bits) and its registers — the ROM's (the YM2413's, or the VRC7's) or the
+// user voice as it stands.
+function opllChip(clock, { ev, vrc7 = false }) {
   const r = new Uint8Array(64);
+  const voiceOf = (c) => {
+    const inst = r[0x30 + c] >> 4;
+    return { inst, vrc7, bytes: inst ? (vrc7 ? VRC7_ROM : OPLL_ROM)[inst - 1] : [...r.subarray(0, 8)] };
+  };
   const keyed = new Array(9).fill(false);
   const hz = (c) => {
     const fnum = r[0x10 + c] | ((r[0x20 + c] & 1) << 8);
@@ -450,7 +460,7 @@ function opllChip(clock, { ev }) {
       if (c > 8) return;
       if ((a & 0xf0) === 0x20) {
         const on = !!(d & 0x10);
-        if (on && !keyed[c]) ev(key(c), { t, kind: "on", pitch: pitchOf(hz(c)), vel: Math.max(0, 15 - Math.round((r[0x30 + c] & 15) * 1.5)), kindOf: "opll" });
+        if (on && !keyed[c]) ev(key(c), { t, kind: "on", pitch: pitchOf(hz(c)), vel: Math.max(0, 15 - Math.round((r[0x30 + c] & 15) * 1.5)), kindOf: "opll", opll: voiceOf(c) });
         else if (!on && keyed[c]) ev(key(c), { t, kind: "off" });
         else if (on) ev(key(c), { t, kind: "pitch", pitch: pitchOf(hz(c)) });
         keyed[c] = on;
@@ -574,8 +584,9 @@ function pceChip(clock, { ev, skip }) {
 // each write first lets the time pass (`advance`): a note ends where its
 // counter ran out, its level steps where the envelope stepped. The frame
 // counter's mode ($4017) sets the quarter frame's length, 4-step or 5-step,
-// on the average. Not followed: the sweep (counted), its mute of a high
-// period, a halt cleared under a held counter (the counter stays held).
+// on the average, the sweep on its half frames (a pitch moving under the
+// note) and its mute. Not followed: a halt cleared under a held counter
+// (the counter stays held).
 const APU_LENGTHS = [10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30];
 const NES_RAM = 0xc2; // VGM's RAM-write block for the NES's memory
 function apuChip(clock, { ev, skip, pcm, ram }) {
@@ -587,7 +598,9 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
   const KEY = ["2A03 SQ1", "2A03 SQ2", "2A03 TRI", "2A03 noise"];
   // The counters start at 0 (silent until a load).
   const ch = [0, 1, 2, 3].map(() => ({ on: false, lenEnd: -Infinity, linEnd: -Infinity, env: null, vel: 0, pitch: null, duty: null, mode: null, velAt: -1, pitchAt: -1 }));
-  let enable = 0;
+  // The channels start enabled: an NSF player sets $4015 before the song
+  // starts, and a rip of it often does not log that write.
+  let enable = 0x0f;
   const dmc = { playing: false, end: Infinity, dac: 0, dacAt: -Infinity };
   const ctlOf = (c) => r[c === 3 ? 0x0c : 4 * c];
   const haltOf = (c) => (c === 2 ? r[0x08] & 0x80 : ctlOf(c) & 0x20);
@@ -610,11 +623,19 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
   const endAt = (c) => Math.min(ch[c].lenEnd, c === 2 ? ch[c].linEnd : Infinity);
   // A looping envelope passes 0 for a step and starts over: it stays on.
   const loopEnv = (c) => c !== 2 && !!ch[c].env && (ctlOf(c) & 0x30) === 0x20;
-  const sounding = (c, t) => !!(enable & (1 << c)) && endAt(c) > t && (level(c, t) > 0 || loopEnv(c)) && (c === 3 || period(c) >= (c === 2 ? 2 : 8));
+  const sounding = (c, t) => !!(enable & (1 << c)) && endAt(c) > t && (level(c, t) > 0 || loopEnv(c)) && !sweepMuted(c) && (c === 3 || period(c) >= (c === 2 ? 2 : 8));
+  // The pitch a write burst started from (`burstPitch`), and the way the
+  // last burst moved it under the note (`glide`): what the triangle's
+  // $400B compares.
+  const pitchMoved = (st, t) => {
+    if (t - st.pitchAt > SETUP_T) { st.burstPitch = st.pitch; st.lastGlide = st.glide; st.glide = null; }
+    st.pitchAt = t;
+  };
   const onEvent = (c, t, kind) => {
     const st = ch[c];
     st.vel = level(c, t);
-    st.velAt = st.pitchAt = t;
+    pitchMoved(st, t);
+    st.velAt = t;
     if (c === 3) {
       st.pitch = NOISE_NOTE_BASE + 15 - rate();
       st.mode = mode();
@@ -638,39 +659,92 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
       // together (no key-off between): a new note, as on the SN76489 — where
       // the level came up, or the pitch jumped a semitone or more (a level
       // envelope under a vibrato, written each frame, is one note).
-      const struck = (vCh && st.pitchAt === t && (v > st.vel || Math.abs(p - st.pitch) >= 0.5)) ||
-        (pCh && st.velAt === t && (v > st.vel || Math.abs(p - st.pitch) >= 0.5));
-      if (struck) { ev(KEY[c], onEvent(c, t, "retrig")); return; }
+      // (Together: within a driver's setup burst of each other.)
+      const jump = c !== 3 && Math.abs(p - st.pitch) >= 0.5;
+      const struck = (vCh && t - st.pitchAt <= SETUP_T && (v > st.vel || jump)) ||
+        (pCh && t - st.velAt <= SETUP_T && (v > st.vel || jump));
+      if (struck && !st.pendingB) { ev(KEY[c], onEvent(c, t, "retrig")); return; }
       if (vCh) { st.vel = v; st.velAt = t; ev(KEY[c], { t, kind: "vel", vel: velOf(v) }); }
       if (c === 3) {
         if (rate() !== NOISE_NOTE_BASE + 15 - st.pitch || mode() !== st.mode)
           ev(KEY[c], onEvent(c, t, "retrig"));
       } else {
-        if (pCh) { st.pitch = p; st.pitchAt = t; ev(KEY[c], { t, kind: "pitch", pitch: p }); }
+        if (pCh) {
+          pitchMoved(st, t);
+          st.glide = { t, way: Math.sign(p - st.burstPitch) };
+          st.pitch = p;
+          ev(KEY[c], { t, kind: "pitch", pitch: p });
+        }
         const d = c < 2 ? DUTIES[ctlOf(c) >> 6] : null;
         if (d !== st.duty) { st.duty = d; ev(KEY[c], { t, kind: "duty", duty: d }); }
       }
     }
   };
-  // The time between writes: the envelopes' steps, the counters' ends.
+  // The sweep (a pulse's $4001): its target period, whether it mutes the
+  // channel (a period under 8, or a target over $7FF when it adds), and its
+  // divider, stepped every half frame (sweepHalf).
+  const sweep = [{ div: 0, reload: false }, { div: 0, reload: false }];
+  const sweepTarget = (c) => {
+    const p = period(c), d = p >> (r[4 * c + 1] & 7);
+    return r[4 * c + 1] & 8 ? p - d - (c === 0 ? 1 : 0) : p + d;
+  };
+  const sweepMuted = (c) => c < 2 && (period(c) < 8 || (!(r[4 * c + 1] & 8) && sweepTarget(c) > 0x7ff));
+  const sweeping = (c) => c < 2 && ch[c].on && r[4 * c + 1] & 0x80 && r[4 * c + 1] & 7;
+  const sweepHalf = (c, at) => {
+    const sw = sweep[c], reg = r[4 * c + 1];
+    if (sw.div === 0 && reg & 0x80 && reg & 7 && !sweepMuted(c)) {
+      const p = Math.max(0, sweepTarget(c));
+      r[4 * c + 2] = p & 0xff;
+      r[4 * c + 3] = (r[4 * c + 3] & 0xf8) | ((p >> 8) & 7);
+      sync(c, at);
+    }
+    if (sw.div === 0 || sw.reload) { sw.div = (reg >> 4) & 7; sw.reload = false; } else sw.div--;
+  };
+  // The frame counter's half frames, from its last $4017 write.
+  let fcT0 = 0, nextHalf = null;
+  const halfAfter = (t) => fcT0 + (Math.floor((t - fcT0) / (2 * QUARTER)) + 1) * 2 * QUARTER;
+  // The time between writes, in order: the envelopes' steps, the sweeps'
+  // half frames, the counters' ends.
   const advance = (t) => {
-    for (let c = 0; c < 4; c++) {
-      const st = ch[c];
-      if (!st.on) continue;
-      const e = c !== 2 && !(ctlOf(c) & 0x10) ? st.env : null;
-      if (e) {
-        for (let at = e.t0 + (e.next + 1) * e.div * QUARTER; at <= t && st.on; at = e.t0 + (e.next + 1) * e.div * QUARTER) {
-          e.next++;
-          if (at < lastT) continue; // stepped while the level was the volume's: nothing to say
-          if (at > endAt(c)) break;
-          const v = level(c, at);
-          if (v === 0 && !loopEnv(c)) { st.on = false; ev(KEY[c], { t: at, kind: "off" }); }
-          else if (v !== st.vel) { st.vel = v; ev(KEY[c], { t: at, kind: "vel", vel: velOf(v) }); }
-        }
+    for (;;) {
+      let at = Infinity, what = null, cc = -1;
+      for (let c = 0; c < 4; c++) {
+        const st = ch[c];
+        if (!st.on) continue;
+        const e = c !== 2 && !(ctlOf(c) & 0x10) ? st.env : null;
+        const step = e ? e.t0 + (e.next + 1) * e.div * QUARTER : Infinity;
+        if (step < at) { at = step; what = "env"; cc = c; }
+        if (endAt(c) < at) { at = endAt(c); what = "end"; cc = c; }
       }
-      if (st.on && endAt(c) <= t) { st.on = false; ev(KEY[c], { t: endAt(c), kind: "off" }); }
+      if (sweeping(0) || sweeping(1)) {
+        if (nextHalf == null || nextHalf <= lastT) nextHalf = halfAfter(Math.max(lastT, fcT0));
+        if (nextHalf < at) { at = nextHalf; what = "half"; }
+      } else nextHalf = null;
+      if (at > t) break;
+      if (what === "end") { ch[cc].on = false; ev(KEY[cc], { t: at, kind: "off" }); continue; }
+      if (what === "half") { for (const c of [0, 1]) if (sweeping(c)) sweepHalf(c, at); nextHalf = at + 2 * QUARTER; continue; }
+      const st = ch[cc], e = st.env;
+      e.next++;
+      if (at < lastT) continue; // stepped while the level was the volume's: nothing to say
+      const v = level(cc, at);
+      if (v === 0 && !loopEnv(cc)) { st.on = false; ev(KEY[cc], { t: at, kind: "off" }); }
+      else if (v !== st.vel) { st.vel = v; ev(KEY[cc], { t: at, kind: "vel", vel: velOf(v) }); }
     }
     if (dmc.playing && dmc.end <= t) dmc.playing = false;
+  };
+  // The triangle's linear counter reloaded at `at` from $4008: held (the
+  // control bit) at its value — on, or 0 silent — else counting down.
+  const triReload = (at) => {
+    const v = r[0x08] & 0x7f;
+    ch[2].linEnd = r[0x08] & 0x80 ? (v ? Infinity : -Infinity) : v ? at + v * QUARTER : -Infinity;
+  };
+  const resolveB = (t) => {
+    const st = ch[2], pb = st.pendingB;
+    st.pendingB = null;
+    if (!st.on) return;
+    const step = st.pitch - pb.from, g = pb.glide;
+    const gliding = g && pb.t - g.t <= 1.5 * FRAME && Math.sign(step) === g.way && Math.abs(step) < 3;
+    if (!gliding) ev(KEY[2], onEvent(2, t, "retrig"));
   };
   const load = (c, t) => {
     ch[c].lenEnd = haltOf(c) ? Infinity : t + APU_LENGTHS[r[c === 2 ? 0x0b : c === 3 ? 0x0f : 4 * c + 3] >> 3] * 2 * QUARTER;
@@ -679,19 +753,24 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
     name: "2A03",
     write(a, d, t) {
       if (a > 0x17) return;
+      if (ch[2].pendingB && t - ch[2].pendingB.t > SETUP_T) resolveB(ch[2].pendingB.t);
       advance(t);
       lastT = t;
       r[a] = d;
-      if (a === 0x17) { QUARTER = (RATE * (d & 0x80 ? 37282 : 29830)) / (4 * clock); return; }
+      if (a === 0x17) { QUARTER = (RATE * (d & 0x80 ? 37282 : 29830)) / (4 * clock); fcT0 = t; nextHalf = null; return; }
       if (a < 0x10) {
         const c = a >> 2, reg = a & 3;
-        if (c < 2 && reg === 1) { if (d & 0x80 && d & 7) skip("2A03 sweep"); return; }
+        // The sweep: its divider reloaded at the next half frame; its mute now.
+        if (c < 2 && reg === 1) { sweep[c].reload = true; sync(c, t); return; }
         if (c === 2 && reg === 0) {
           // The linear counter. With its control bit set the reload flag
           // stays set, so the counter is the reload value every quarter
           // frame: up while it is nonzero, silent at 0. The bit cleared, it
-          // counts the reload down from there.
-          if (d & 0x80) ch[2].linEnd = d & 0x7f ? Infinity : -Infinity;
+          // counts the reload down from there. A $400B's reload is taken at
+          // the next quarter frame, from $4008 as it is then: a $4008 written
+          // just after it (a driver's order) is the one read.
+          if (t - (ch[2].reloadAt ?? -Infinity) < QUARTER) triReload(ch[2].reloadAt);
+          else if (d & 0x80) ch[2].linEnd = d & 0x7f ? Infinity : -Infinity;
           else if (!Number.isFinite(ch[2].linEnd)) ch[2].linEnd = t + (d & 0x7f) * QUARTER; // the flag still set: reloaded
           if (Number.isFinite(ch[2].lenEnd) && d & 0x80) ch[2].lenEnd = Infinity;
           sync(2, t);
@@ -710,12 +789,24 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
           // The length load: the envelope started over, the pulse's phase
           // too — a new note.
           if (enable & (1 << c)) load(c, t);
-          if (c !== 2) ch[c].env = { t0: t, div: (ctlOf(c) & 15) + 1, next: 0 };
-          else ch[2].linEnd = r[0x08] & 0x80 ? (r[0x08] & 0x7f ? Infinity : -Infinity) : t + (r[0x08] & 0x7f) * QUARTER;
-          sync(c, t, true);
+          if (c !== 2) { ch[c].env = { t0: t, div: (ctlOf(c) & 15) + 1, next: 0 }; sync(c, t, true); return; }
+          // The triangle's phase runs on through it: a new note, but not
+          // in a glide — a pitch moved the frame before, going on the same
+          // way a step (a drum's fall crossing a high byte).
+          // Decided on the pitch the burst settles on: a driver may write
+          // the low byte after it (resolveB).
+          ch[2].reloadAt = t;
+          triReload(t);
+          const st = ch[2];
+          if (!st.on) { sync(2, t, true); return; }
+          const lowFirst = t - st.pitchAt <= SETUP_T;
+          st.pendingB = { t, from: lowFirst ? st.burstPitch ?? st.pitch : st.pitch, glide: lowFirst ? st.lastGlide : st.glide };
+          sync(2, t);
+          if (lowFirst) resolveB(t);
           return;
         }
         sync(c, t);
+        if (c === 2 && reg === 2 && ch[2].pendingB) resolveB(t);
         return;
       }
       if (a === 0x15) {
@@ -848,7 +939,7 @@ export async function parseVgm(bytes) {
   const made = new Map();
   const CHIPS = {
     sn: [0x0c, 3579545, (c) => snChip(c, { ev })],
-    opll: [0x10, 3579545, (c) => opllChip(c, { ev })],
+    opll: [0x10, 3579545, (c) => opllChip(c, { ev, vrc7: hdr(0x10) >>> 31 === 1 })], // bit 31: the VRC7
     opn2: [0x2c, 7670453, (c) => opnChip("YM2612", c, 144, { ev })],
     opm: [0x30, 3579545, (c) => opmChip(c, { ev })],
     opn: [0x44, 3993600, (c) => opnChip("YM2203", c, 72, { ssgDiv: 2, channels: 3, ev })],
@@ -1174,7 +1265,7 @@ function notesOf(events, followPitch, endT, tune = 0) {
       const held = base.pitches?.length ? base.pitches[base.pitches.length - 1][1] : base.pitch;
       cur = { t: e.t, pitch: e.pitch ?? held, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
         pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, noiseHz: e.noiseHz ?? base.noiseHz, ssg: e.ssg ?? base.ssg, fresh: !!e.fresh,
-        wave: e.wave ?? base.wave, duty: e.duty ?? base.duty,
+        wave: e.wave ?? base.wave, duty: e.duty ?? base.duty, opll: e.opll ?? base.opll,
         levels: [], pitches: [] };
       if (!cur.voice) cur.lv0 = cur.vel;
     } else if (e.kind === "off") close(e.t);
@@ -1213,6 +1304,10 @@ function notesOf(events, followPitch, endT, tune = 0) {
 function tuningOf(parsed) {
   const by = new Map();
   for (const [key, events] of parsed.events) {
+    // The 2A03's: its pitches are its NTSC clock's periods, which fc writes
+    // back as they were — a short song's high notes, far off the grid by
+    // the 11-bit period, are not a tuning.
+    if (/^2A03 /.test(key)) continue;
     const chip = group(key);
     if (!by.has(chip)) by.set(chip, [0, 0]);
     const acc = by.get(chip);
@@ -1257,7 +1352,18 @@ const STAY = 4; // frames at a level that make a jump a new note
 function pitchShape(n, endT) {
   const end = n.end === Infinity ? endT : n.end;
   const F = Math.min(600, Math.max(1, Math.round((end - n.t) / FRAME)));
-  const moves = n.pitches.filter(([t]) => t < end - 2 * FRAME);
+  // (One that goes on the way it was going — a sweep's fall to the note's
+  // end — is the note's.)
+  // (A burst's writes are its last: a period written a byte at a time
+  // passes through a pitch it never plays.)
+  const settled = n.pitches.filter(([t], i) => !(n.pitches[i + 1]?.[0] - t <= SETUP_T));
+  const early = settled.filter(([t]) => t < end - 2 * FRAME);
+  const way = early.length ? Math.sign(early[early.length - 1][1] - n.pitch) : 0;
+  const moves = [...early];
+  for (const m of settled.slice(early.length)) {
+    if (!way || Math.sign(m[1] - moves[moves.length - 1][1]) !== way) break;
+    moves.push(m);
+  }
   if (!moves.length) return [n];
   // The pitch a frame, in cents from the struck one.
   const p = [];
@@ -1502,7 +1608,8 @@ export function vgmDests(targetName = "md") {
   // The RX5 kit stands in for it where the PCM is the DAC's mix of voices
   // (md): its first, the sounds layered on it. Not on another sample part —
   // msx's are the FM-PAC's rhythm, pce's the DDA its wave1 shares.
-  const pcm = d.pcm.filter((h) => !romRhythm(h));
+  // (Nor the FM-PAC's rhythm: its ROM drums play no sample.)
+  const pcm = d.pcm.filter((h) => !romRhythm(h) && t.partOf(h).name !== "opll-rhythm");
   return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: mixesNoise(t) ? null : d.noise,
     pcm, rhythm: d.pcm.filter(romRhythm), kit: t.hasPart("dac") ? pcm[0] ?? null : null,
     wave: d.wave, noises: mixesNoise(t) ? [] : d.noises };
@@ -1564,12 +1671,17 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     // An SSG channel that only plays the noise is the noise row's alone
     // where the target's channels do not mix it.
     else if (ch.kind === "psg" && !mixesNoise(target) && ch.ssgNoise === ch.notes) d = "drop";
+    // The 2A03's triangle, where the target's channels are not the 2A03's
+    // and it has FM: an FM channel's (a triangle wave, its whole range — a
+    // PSG's floor, the SN76489's 109 Hz, stops a drum's fall).
+    else if (ch.key === "2A03 TRI" && targetName !== "fc" && fm.length) d = fm.shift();
     // The 2A03's pulses and triangle keep their places: SQ1 on sqr1, the
-    // triangle on the third tone channel (fc's tri).
+    // triangle on the third tone channel (fc's tri). A tone channel past the
+    // target's own plays on FM where it is free.
     else if (ch.kind === "psg") {
       const own = ch.key.match(/^2A03 (?:SQ(\d)|(TRI))$/);
       const name = own ? dests.psg[own[2] ? 2 : own[1] - 1] : null;
-      if (name && sqr.includes(name)) { d = name; sqr.splice(sqr.indexOf(name), 1); } else d = sqr.shift() ?? "drop";
+      if (name && sqr.includes(name)) { d = name; sqr.splice(sqr.indexOf(name), 1); } else d = sqr.shift() ?? fm.shift() ?? "drop";
     }
     // A wavetable chip's channel on a target with wave channels: its own
     // number where it has one (the HuC6280's CH3 on wave3), else the next.
@@ -1770,6 +1882,18 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (!waveDefs.has(k)) waveDefs.set(k, `wave-${String(waveDefs.size + 1).padStart(2, "0")}`);
     return waveDefs.get(k);
   };
+  // A YM2413's voice on FM: its ROM voice by its built-in name, the VRC7's
+  // ROM voices and a user voice as defs (chips/ym2413.js's 4-op reading).
+  const opllDefs = new Map(); // bytes → {name, text}
+  const opllVoice = ({ inst, vrc7, bytes }) => {
+    if (inst && !vrc7) return OPLL_ROM_NAMES[inst - 1];
+    const key = bytes.join(",");
+    if (!opllDefs.has(key)) {
+      const name = inst ? `vrc7-${inst}` : `opll-user-${String([...opllDefs.values()].filter((d) => d.user).length + 1).padStart(2, "0")}`;
+      opllDefs.set(key, { name, user: !inst, text: opllVoiceDef(name, bytes) });
+    }
+    return opllDefs.get(key).name;
+  };
   const tracks = [];
   for (const ch of vgmChannels(a, target.name)) {
     const d = dest[ch.key] ?? "drop";
@@ -1795,7 +1919,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       const tick = tickOf(n.t);
       const end = n.end === Infinity ? endTick : Math.min(endTick, tickOf(n.end));
       if (tick >= endTick) break;
-      const note = { tick, len: Math.max(1, end - tick), midi: Math.round(n.pitch), vel: n.vel, tieIn: n.slur,
+      // On a machine whose driver plays a frame at a time (fc, msx, pce) a
+      // note shorter than a frame — a length counter's blip — keys off in
+      // the frame it keys on: it sounds its one frame.
+      const minLen = target.frameClock ? Math.max(1, Math.ceil((PPQN * g.bpm) / 3600)) : 1;
+      const note = { tick, len: Math.max(minLen, end - tick), midi: Math.round(n.pitch), vel: n.vel, tieIn: n.slur,
         bend: n.bend, ssg: n.voice ? null : n.ssg ?? null, srcT: n.t };
       const endT = n.end === Infinity ? parsed.totalSamples : n.end;
       let voice = null;
@@ -1819,8 +1947,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         note.t0 = n.t;
         note.canRelease = true;
       }
-      if (onFm && !n.voice) {
-        voice = STAND_IN[ch.kind] ?? "wave-square";
+      if (onFm && !n.voice && n.opll) voice = opllVoice(n.opll);
+      else if (onFm && !n.voice) {
+        voice = ch.key === "2A03 TRI" ? "wave-triangle" : STAND_IN[ch.kind] ?? "wave-square";
         standIns.add(voice);
       }
       note.stand = voice;
@@ -1994,6 +2123,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     dacMix && (dacOut || chipOut || kitRhythm) && `:pcm-voices ${pcmUsed + (kitRhythm ? 1 : 0)}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
+  if (opllDefs.size) header.push("", ...[...opllDefs.values()].map((d) => d.text));
   // The rhythm's kit: its samples on md; on pc88 the stand-in for a ROM the
   // user has not loaded (language.md §19).
   if (rhythmOut.length)

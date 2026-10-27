@@ -33,11 +33,24 @@
 // (the channel's notes then on noise5 / noise6, the rate Furnace's: the
 // note straight, or DefleMask's table), 08xy the channel's left and right
 // levels as `:pan`, and the volume column the chip's 5-bit volume.
+//
+// An NES module can be an `fc` score (the default) or an md one. As fc
+// (Furnace's nes.cpp, as it plays a DMF too): the pulses on sqr1 / sqr2,
+// their duty macro and 12xx as `:duty`; the triangle on tri, on while its
+// volume is not 0 (no :vel); the noise on noise, a note its rate — 15 −
+// (note & 15) under properNoiseLayout, else its table — its duty macro's
+// first step and 12xx the mode. The 4-bit volume column is linear, as
+// :vel in dB; the volume macro scales it (newVolumeScaling, a :vol fader in
+// dB) or adds its steps to it (a DMF, an older .fur: a :vol macro for each
+// column level it plays at). The triangle stops at a volume macro's 0, and
+// at a column of 0 only under one. A .fur's DPCM channel is pcm1 (dpcmTrack).
 // ---------------------------------------------------------------------------
 
 import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS } from "./import-song.js";
 import { VEL_DB_PER_STEP } from "./ir-utils.js";
 import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
+import { DMC_RATES } from "./chips/rp2a03.js";
+import { encodeWav } from "./export-wav.js";
 
 // What each source channel kind is, for the defaults and the voice: an FM
 // channel whose instruments are OPN voices; OPM / OPLL / wavetable channels
@@ -62,6 +75,23 @@ const PCE_NOISE = { 4: "noise5", 5: "noise6" };
 const PCE_NOISE_TABLE = [4, 13, 15, 18, 21, 23, 25, 27, 29, 31, 0, 2];
 const PCE_NOISE_BASE = 36; // chips/huc6280.js NOISE_NOTE_BASE: c2 is rate 0
 const PCE_FX = { 0x10: "wave", 0x11: "noise", 0x12: "LFO mode", 0x13: "LFO speed", 0x17: "DDA" };
+// The 2A03 as an fc score: its channels' places, and the noise's register
+// rate (0 the fastest) for a note — Furnace's, which DefleMask's modules
+// play by (nes.cpp noiseTable, properNoiseLayout off).
+const FC_DESTS = ["sqr1", "sqr2", "tri", "noise"];
+const FC_NOISE_UP = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4], FC_NOISE_TOP = [3, 2, 1, 0, 11, 10, 9, 8, 7, 6, 5, 4];
+const FC_NOISE_TABLE = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,
+  ...FC_NOISE_UP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP]; // then 15
+const fcNoiseRate = (note, proper) => (proper ? 15 - (note & 15) : FC_NOISE_TABLE[Math.max(0, Math.min(252, note))] ?? 15);
+const FC_NOISE_BASE = 36; // chips/rp2a03.js NOISE_NOTE_BASE: c2 is the slowest (register 15)
+const FC_DUTIES = [2, 4, 8, 12]; // chips/rp2a03.js DUTIES: 12xx / the duty macro's 0-3
+const FC_FX = { 0x11: "DMC counter", 0x13: "sweep up", 0x14: "sweep down", 0x15: "envelope mode", 0x16: "length counter",
+  0x17: "frame counter mode", 0x18: "PCM mode", 0x19: "triangle linear counter", 0x20: "DPCM frequency" };
+// Furnace's DMC rate for a sample's playback rate (nes.cpp calcDPCMRate).
+const FC_DMC_STEPS = [4450, 5000, 5400, 5900, 6650, 7450, 8100, 8800, 10200, 11700, 13300, 15900, 18900, 23500, 29000];
+const dmcRateOf = (hz) => { const i = FC_DMC_STEPS.findIndex((x) => hz < x); return i < 0 ? 15 : i; };
+// A 4-bit linear level as dB below full.
+const linDb = (x) => (x > 0 ? 20 * Math.log10(Math.min(15, x) / 15) : -Infinity);
 // An instrument's duty macro at a note: the PC Engine's noise switch.
 const dutyNoise = (ins) => (ins?.duty?.values.length ? ins.duty.values[0] > 0 : null);
 
@@ -138,14 +168,18 @@ export function analyzeTracker(t) {
     return { index: c, kind: chn.kind, name: chn.name, chip: chn.chip, notes, noiseNotes,
       label: `${chn.name} · ${noiseNotes > notes / 2 ? "noise" : CHANNEL_KINDS[chn.kind]} · ${notes} notes` };
   });
-  // A PC Engine module may be its own machine's score.
+  // A PC Engine module may be its own machine's score; an NES one the
+  // Famicom's — an expansion's channels (VRC6, FDS …) left out, as md
+  // would leave them.
   const pce = t.channels.length > 0 && t.channels.every((c) => c.chip === "pce");
-  const targets = pce ? ["pce", "md"] : ["md"];
+  const nes = t.channels.some((c) => c.chip === "nes");
+  const targets = pce ? ["pce", "md"] : nes ? ["fc", "md"] : ["md"];
   return { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels, targets, target: targets[0] };
 }
 
 /** The channels a `target` score offers a module's rows. */
 export function trackerDests(target = "md") {
+  if (target === "fc") return [...FC_DESTS, "pcm1"];
   return target === "pce" ? [...PCE_WAVES, ...Object.values(PCE_NOISE)] : [...FM_DESTS, ...PSG_DESTS, "noise"];
 }
 
@@ -162,6 +196,16 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
     for (const ch of a.channels) {
       const noise = PCE_NOISE[ch.index] && ch.noiseNotes > ch.notes / 2;
       dest[ch.index] = ch.notes === 0 ? "drop" : noise ? PCE_NOISE[ch.index] : PCE_WAVES[ch.index] ?? "drop";
+    }
+    return { dest, phrases: true, bpm: null, target };
+  }
+  // An NES module on fc: the 2A03's channels in their places; the DPCM and
+  // an expansion's are not the target's.
+  if (target === "fc") {
+    const dest = {};
+    for (const ch of a.channels) {
+      const i = a.channels.filter((c) => c.chip === "nes" && c.index < ch.index).length;
+      dest[ch.index] = !(ch.notes > 0 && ch.chip === "nes") ? "drop" : ch.kind === "pcm" ? "pcm1" : FC_DESTS[i] ?? "drop";
     }
     return { dest, phrases: true, bpm: null, target };
   }
@@ -196,6 +240,7 @@ const slug = (s) => String(s || "").toLowerCase().normalize("NFKD")
 export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const warnings = [];
   const onPce = options.target === "pce";
+  const onFc = options.target === "fc";
   // A PC Engine module (its volume macros in the chip's 1.5 dB steps).
   const pceSong = t.channels.length > 0 && t.channels.every((c) => c.chip === "pce");
   const fxSkipped = new Map();
@@ -257,13 +302,19 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // table, not by semitones: its :semi is the table's step from there.
   // `onWave`: a note on a PC Engine wave, which its wave macro steps
   // (:wave over the module's wavetables as def-waves).
-  const env = (i, nz = null, onWave = false) => {
+  // `fc`: the 2A03 channel the note is on ("pulse", "tri", "noise"), whose
+  // volume macro is a linear level (the triangle's on / off) and whose duty
+  // macro a pulse's `:duty`; a noise's arp moves its note through Furnace's
+  // table where the layout is not proper (`nz` its note there).
+  const env = (i, nz = null, onWave = false, fc = null, col = null) => {
     if (!t.instruments[i]?.arp?.values.some((x) => x !== 0)) nz = null;
+    // The column a macro's steps add to (no newVolumeScaling): its own def.
+    if (!fc || fc === "tri" || t.newVolumeScaling !== false || !t.instruments[i]?.vol?.values.length) col = null;
     const wm = t.instruments[i]?.wave;
     const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map(waveDef) : null;
     if (waveNames?.includes(null)) waveMacroSteps++;
     const waves = waveNames?.every((n) => n) ? waveNames : null;
-    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${waves ? ":w" : ""}`;
+    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}`;
     if (!defs.has(key)) {
       const ins = t.instruments[i];
       const parts = [];
@@ -277,16 +328,31 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       // its macro's attenuation adds to the volume column's (Furnace): a :vol
       // macro, the fader beside the column's :vel — 2 dB a step, 0 a mute.
       // Elsewhere a ratio of the column's level.
-      if (ins.vol?.values.length && pceSong)
+      if (ins.vol?.values.length && fc === "tri")
+        parts.push(`:vol ${arr(ins.vol, (x) => (x > 0 ? 31 : 0))}`);
+      else if (ins.vol?.values.length && fc && col != null) {
+        // Furnace's VOL_SCALE_LOG: the column and the step added, less 15.
+        const out = (x) => Math.max(0, Math.min(15, col + Math.min(15, x) - 15));
+        parts.push(`:vol ${arr(ins.vol, (x) => (out(x) <= 0 ? 0 : Math.max(1, Math.round(31 + (linDb(out(x)) - linDb(col)) / 2))))}`);
+      } else if (ins.vol?.values.length && fc)
+        parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 + linDb(x) / 2))))}`);
+      else if (ins.vol?.values.length && pceSong)
         parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 - ((31 - Math.min(31, x)) * 1.5) / 2))))}`);
       else if (ins.vol?.values.length)
         parts.push(`:vel* ${arr(ins.vol, (x) => Math.max(0, Math.min(1, Math.round((x * 100) / volMax) / 100)))}`);
       const rate = (k) => PCE_NOISE_TABLE[((k % 12) + 12) % 12];
+      // (fc's table counts down: a rate's note is 15 − it; under
+      // properNoiseLayout the note's low four bits, wrapping.)
+      const step = (x) => (fc === "noise"
+        ? (t.properNoiseLayout ? ((nz + x) & 15) - (nz & 15) : fcNoiseRate(nz, false) - fcNoiseRate(nz + x, false))
+        : rate(nz + x) - rate(nz));
       if (ins.arp?.values.length && ins.arp.values.some((x) => x !== 0))
-        parts.push(`:semi ${arr(ins.arp, (x) => (nz == null ? x : rate(nz + x) - rate(nz)))}`);
+        parts.push(`:semi ${arr(ins.arp, (x) => (nz == null ? x : step(x)))}`);
+      if (fc === "pulse" && ins.duty?.values.length)
+        parts.push(`:duty ${arr(ins.duty, (x) => FC_DUTIES[x & 3])}`);
       if (waves) parts.push(`:wave ${arr(wm, (_, k) => waves[k])}`);
       if (ins.arpFixed && nz == null) warnings.push(`instrument "${ins.name}": a fixed-pitch arpeggio macro is not imported`);
-      const name = uniq(`env-${slug(ins.name) || i}${nz == null ? "" : `-nz${nz}`}`);
+      const name = uniq(`env-${slug(ins.name) || i}${nz == null ? "" : `-nz${nz}`}${fc && fc !== "pulse" ? `-${fc}` : ""}${col == null ? "" : `-v${col}`}`);
       defs.set(key, { name, text: `(def ${name} (macro none)${parts.length ? ` (macro ${parts.join(" ")})` : ""})` });
     }
     return defs.get(key).name;
@@ -311,7 +377,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     return defs.get(key).name;
   };
-  let waveMacroSteps = 0, dutyMoves = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0;
+  let waveMacroSteps = 0, dutyMoves = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0, dutyUnderNote = 0;
 
   // Pitch effects → one `:pitch` macro a note. A tracker tick is a frame at
   // the song's rate; a slide moves `speed × pitchSlideSpeed` 128ths of a
@@ -380,19 +446,131 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       }
     });
   }
+  // The NES's DPCM channel on fc's pcm1: a note plays its instrument's
+  // sample (its note map's, or its one), at the DMC rate the note picks — an
+  // NES instrument's map or the note's low four bits, else the sample's
+  // rate at the note (C-4 its own) nearest a DMC rate — until the next note
+  // or a note off. A def-pcm for each sample and rate, its :rate the rate
+  // (c4 plays it), all in one wav; the 1-bit samples decoded as Furnace
+  // renders them.
+  const dpcm = { defs: new Map(), offsets: new Map(), parts: [], frames: 0, missing: 0, loopPart: 0 };
+  const wavFile = `${String(options.fileName || "module").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "")}-dpcm.wav`;
+  const dpcmDef = (si, hz) => {
+    const sm = t.samples[si];
+    const key = `${si}:${Math.round(hz)}`;
+    if (!dpcm.defs.has(key)) {
+      if (!dpcm.offsets.has(si)) {
+        dpcm.offsets.set(si, dpcm.frames);
+        dpcm.parts.push(sm.data);
+        dpcm.frames += sm.data.length;
+        if (sm.loop && (sm.loop.start > 0 || sm.loop.end < sm.data.length)) dpcm.loopPart++;
+      }
+      const name = uniq(`dpcm-${slug(sm.name) || si}`);
+      defs.set(`dpcm:${key}`, { name, text: `(def-pcm ${name} :file ${qstr(wavFile)} :rate ${Math.round(hz)} :offset ${dpcm.offsets.get(si)} :frames ${sm.data.length})` });
+      dpcm.defs.set(key, { name, loop: !!sm.loop });
+    }
+    return dpcm.defs.get(key);
+  };
+  const dpcmTrack = (ch, chn) => {
+    const notes = [];
+    // The DMC mode: the song's, set by an NES instrument's note (Furnace
+    // switches to it there) and by 18xx.
+    let ins = -1, sounding = null, lastRate = 0, prev = null, dmcMode = t.dpcmMode;
+    const hitOf = (it, note) => {
+      const map = it?.sampleMap?.noteMap;
+      const e = map ? map[Math.max(0, Math.min(179, note + 60))] : null;
+      const si = map ? e?.sample ?? -1 : it?.sampleMap?.init ?? -1;
+      if (!t.samples?.[si]?.data) return null;
+      let hz;
+      if (it.type === 34) {
+        dmcMode = true;
+        // (A map's rate out of range is the last a map gave — Furnace's.)
+        let r = note & 15;
+        if (map) { r = e?.dpcmFreq ?? -1; if (r < 0 || r > 15) r = lastRate; lastRate = r; }
+        hz = DMC_RATES[r];
+      } else {
+        hz = t.samples[si].rate * 2 ** (((map ? (e?.freq ?? note + 60) - 60 : note) - 48) / 12);
+        if (dmcMode) hz = DMC_RATES[dmcRateOf(hz)];
+      }
+      return dpcmDef(si, hz);
+    };
+    a.seq.forEach(({ order, rows }, si) => {
+      const pat = chn.patterns.get(t.orders[order][ch.index]) ?? [];
+      for (let r = 0; r < rows; r++) {
+        const row = pat[r];
+        if (!row) continue;
+        const at = segStart[si] + r * rowTicks;
+        let delay = 0, cut = null;
+        for (const [code, val] of row.fx) {
+          if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
+          else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
+          else if (code === 0x18 && val >= 0) dmcMode = val > 0;
+          else if (code === 0x09 || code === 0x0f || code === 0x0b || code === 0x0d) { /* the song's speed, the order walk */ }
+          else if (code >= 0) {
+            const k = FC_FX[code] ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
+            fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
+          }
+        }
+        if (row.ins >= 0) ins = row.ins;
+        if (row.note === "off") {
+          if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
+          sounding = null;
+        } else if (typeof row.note === "number") {
+          const start = at + Math.min(delay, rowTicks - 1);
+          if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, start);
+          sounding = null;
+          const hit = hitOf(t.instruments[ins], row.note);
+          if (!hit) { dpcm.missing++; continue; }
+          // Played until the next note or an off: a loop to there, else cut there.
+          const state = [hit.name, hit.loop ? ":mode loop" : ":mode gate"];
+          sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi: 60, vel: 15,
+            pre: state.filter((x, k) => prev?.[k] !== x), state };
+          prev = state;
+          notes.push(sounding);
+        } else if (cut != null && sounding) sounding.end = Math.min(sounding.end ?? Infinity, at + Math.max(1, cut));
+      }
+    });
+    notes.forEach((n, i) => {
+      const next = i + 1 < notes.length ? notes[i + 1].tick : endTick;
+      n.len = Math.max(1, Math.min(n.end ?? next, next, endTick) - n.tick);
+    });
+    return notes.length ? { ch, notes, marks: [], noVel: true } : null;
+  };
+
+  // The wav the DPCM defs read (Save writes it beside the score).
+  const dpcmPcm = () => {
+    if (!dpcm.parts.length) return undefined;
+    const mono = new Float32Array(dpcm.frames);
+    let o = 0;
+    for (const d of dpcm.parts) { mono.set(d, o); o += d.length; }
+    const rate = Math.round(DMC_RATES[15]);
+    return { wavFile, rate, mono, wav: encodeWav(mono, null, rate), entries: [...dpcm.defs.values()], tag: t.format };
+  };
+
   let volUnderNote = 0;
   const tracks = [];
   let tempoTrack = true;
   for (const ch of used) {
     const chn = t.channels[ch.index];
+    if (onFc && chn.chip === "nes" && ch.kind === "pcm") {
+      const tr = dpcmTrack(ch, chn);
+      if (!tr) continue;
+      tracks.push(tr);
+      if (tempoTrack) { tr.marks.push(...speedMarks); tempoTrack = false; }
+      continue;
+    }
     const onFm = ch.dest.startsWith("fm");
     const fmVol = ["fm", "opm", "fm3op"].includes(ch.kind);
     const volMax = VOL_MAX[ch.kind] ?? (fmVol ? t.fmVolMax : t.psgVolMax);
     // On pce the volume column is the chip's 5-bit volume, 1.5 dB a step.
     const pceVol = onPce && chn.chip === "pce";
     const toNoise = onPce && ch.dest.startsWith("noise");
+    // A 2A03 channel on fc: which of its kinds (env's `fc`).
+    const fcCh = onFc && chn.chip === "nes" ? (ch.dest === "tri" ? "tri" : ch.dest === "noise" ? "noise" : "pulse") : null;
+    const noiseRow = toNoise || fcCh === "noise"; // a note is a rate: no pitch effects
     const velOf = (v) => {
       if (v < 0) return 15;
+      if (fcCh) return v <= 0 ? 0 : Math.max(0, Math.min(15, Math.round((15 + linDb(v) / VEL_DB_PER_STEP) * 8) / 8));
       if (fmVol) return Math.max(0, Math.min(15, Math.round(15 - ((volMax - v) * 0.75) / 2)));
       if (pceVol) return Math.max(0, Math.min(15, Math.round((15 - ((chn.volMax ?? 31) - v) * 1.5 / VEL_DB_PER_STEP) * 8) / 8));
       return Math.max(0, Math.min(15, Math.round((v * 15) / volMax)));
@@ -408,6 +586,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     let pan = (onFm || pceVol) && uses(0x08) ? "center" : null;
     let wave = -1; // the wavetable the channel plays (pce)
     let noise = false; // channel 5 or 6 on its noise (pce, 11xx)
+    // The 2A03's duty (12xx, the duty macro: Furnace's 0-3, 0 at the start)
+    // — a pulse's shape, the noise's mode.
+    let duty = 0;
     let arp = 0;
     let usedMacro = false;
     const voiceTokens = (nz = null, onWave = false) => {
@@ -423,19 +604,20 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return usedMacro ? ["(macro none)"] : [];
       }
       usedMacro = true;
-      const e = env(ins, nz, onWave);
+      const e = env(ins, nz, onWave, fcCh, vol < 0 ? 15 : vol);
       if (onFm) { standIns.add(standIn); return [standIn, e]; }
       return [e];
     };
     const arpToken = () => (arp ? `(macro :semi [#sus 0 ${arp >> 4} ${arp & 15}])` : "(macro :semi none)");
     let usedArp = uses(0x00);
-    let cur = { voice: voiceTokens(), pan: null, arp: null };
+    let cur = { voice: voiceTokens(), pan: null, arp: null, duty: null };
+    const dutyToken = () => (fcCh === "pulse" ? `:duty ${FC_DUTIES[duty & 3]}` : fcCh === "noise" ? `:mode ${duty & 1 ? "periodic" : "white"}` : null);
     // Pitch effects: the vibrato and fine tune in force, and each note's
     // own (worked into a `:pitch` macro once its length is known).
     let vib = null;
     let detune = 0;
     let lastMidi = null;
-    const flat = (st) => [...st.voice, ...(st.arp ? [st.arp] : []), ...(st.pan ? [st.pan] : [])];
+    const flat = (st) => [...st.voice, ...(st.arp ? [st.arp] : []), ...(st.pan ? [st.pan] : []), ...(st.duty ? [st.duty] : [])];
 
     const notes = [];
     const marks = [];
@@ -471,13 +653,19 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             pan = p === 0 ? "center" : String(+p.toFixed(2));
           } else if (code === 0x10 && pceVol && val >= 0) wave = val;
           else if (code === 0x11 && pceVol && val >= 0) noise = val > 0;
+          else if (code === 0x12 && fcCh && fcCh !== "tri" && val >= 0) {
+            duty = val;
+            // Under a sounding note Furnace writes it at once; here it is
+            // the next note's.
+            if (typeof row.note !== "number" && sounding) dutyUnderNote++;
+          }
           else if (code === 0x00 && val >= 0) { arp = val; usedArp = true; }
           else if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
           else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
           else if ((code === 0x09 || code === 0x0f) && val > 0) { /* the song's speed: speedMarks */ }
           else if (code === 0x0b || code === 0x0d) { /* the order walk */ }
           else if (code >= 0) {
-            const k = (pceVol ? PCE_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
+            const k = (pceVol ? PCE_FX[code] : fcCh ? FC_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
         }
@@ -491,13 +679,25 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (duty?.values.some((x) => (x > 0) !== (duty.values[0] > 0))) dutyMoves++;
           noise = dutyNoise(t.instruments[ins]) ?? noise;
         }
+        // The 2A03's duty macro starts over at each note: the noise's mode
+        // is its first step (Furnace: properNoiseLayout keeps bit 0, else
+        // anything over 1 is 1); a pulse's runs as the note's :duty macro,
+        // its first step the note's duty.
+        const dm = fcCh && typeof row.note === "number" ? t.instruments[ins]?.duty : null;
+        const dutyOf = (x) => (fcCh === "noise" ? (t.properNoiseLayout ? x & 1 : Math.min(1, x)) : x & 3);
+        if (dm?.values.length && fcCh !== "tri") {
+          duty = dutyOf(dm.values[0]);
+          if (fcCh === "noise" && dm.values.some((y) => dutyOf(y) !== duty)) dutyMoves++;
+        }
         if (row.vol >= 0) {
           // A volume written under a sounding note (no note on the row): 0
           // silences it (a wave or a PSG channel's volume 0 is off); another
           // moves it, which is not imported.
           if (typeof row.note !== "number" && sounding && !fmVol && row.vol !== vol) {
-            if (row.vol === 0) { sounding.end = Math.min(sounding.end ?? Infinity, at); sounding = null; }
-            else volUnderNote++;
+            // (The triangle has no level: only a 0 its volume macro reads stops it.)
+            const triLevel = fcCh !== "tri" || !!t.instruments[ins]?.vol?.values.length;
+            if (row.vol === 0 && triLevel) { sounding.end = Math.min(sounding.end ?? Infinity, at); sounding = null; }
+            else if (fcCh !== "tri") volUnderNote++;
           }
           vol = row.vol;
         }
@@ -514,12 +714,23 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           const start = at + Math.min(delay, rowTicks - 1);
           const legatoFrom = rp.porta && sounding && lastMidi != null ? lastMidi : null;
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, start);
+          // A note at volume 0 is silent — and states nothing, so the next
+          // note states what this one would have. (The 2A03's triangle
+          // keeps sounding at a column of 0 where no volume macro reads it.)
+          const triOn = fcCh === "tri" && !t.instruments[ins]?.vol?.values.length;
+          // After a duty macro the duty stays at its last step (Furnace), a
+          // silent note's too.
+          const noteDuty = dutyToken();
+          if (dm?.values.length && fcCh !== "tri") duty = dutyOf(dm.values[dm.values.length - 1]);
+          if (!fmVol && vol === 0 && !triOn) { sounding = null; continue; }
           const waveName = pceVol && !toNoise && wave >= 0 ? waveDef(wave) : null;
           const st = {
             voice: waveName ? [waveName, ...voiceTokens(null, true)]
-              : voiceTokens(toNoise && !t.properNoiseLayout ? ((row.note % 12) + 12) % 12 : null),
+              : voiceTokens(toNoise && !t.properNoiseLayout ? ((row.note % 12) + 12) % 12
+                : fcCh === "noise" ? (t.properNoiseLayout ? row.note & 15 : Math.max(0, Math.min(252, row.note))) : null),
             pan: pan ? `:pan ${pan}` : null,
             arp: usedArp ? arpToken() : null,
+            duty: noteDuty,
           };
           const pre = [];
           const voiceChanged = st.voice.join(" ") !== cur.voice.join(" ");
@@ -527,19 +738,20 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           // A voice switch clears the macros: the arpeggio goes again.
           if (st.arp && (st.arp !== cur.arp || (voiceChanged && arp))) pre.push(st.arp);
           if (st.pan && st.pan !== cur.pan) pre.push(st.pan);
+          if (st.duty && st.duty !== cur.duty) pre.push(st.duty);
           cur = st;
-          // A noise note is its rate: c2 the slowest (chips/huc6280.js).
-          const midi = toNoise
-            ? PCE_NOISE_BASE + (t.properNoiseLayout ? row.note & 31 : PCE_NOISE_TABLE[((row.note % 12) + 12) % 12])
+          // A noise note is its rate: c2 the slowest (chips/huc6280.js,
+          // chips/rp2a03.js — the 2A03's register counts down).
+          const midi = fcCh === "noise" ? FC_NOISE_BASE + 15 - fcNoiseRate(row.note, t.properNoiseLayout)
+            : toNoise ? PCE_NOISE_BASE + (t.properNoiseLayout ? row.note & 31 : PCE_NOISE_TABLE[((row.note % 12) + 12) % 12])
             : row.note + 24;
-          if (toNoise && (rp.slide || rp.porta || vib)) noisePitch++;
+          if (noiseRow && (rp.slide || rp.porta || vib)) noisePitch++;
           const v = velOf(vol);
-          if (!fmVol && vol === 0) { sounding = null; continue; } // silent
           sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st),
             voiceChanged,
-            p: toNoise ? null : { vib: vib && { ...vib }, detune, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
+            p: noiseRow ? null : { vib: vib && { ...vib }, detune, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
               slides: rp.slide && !rp.slide.stop ? [{ ...rp.slide, off: 0 }] : [], vibLater: null } };
-          if (legatoFrom != null && !toNoise) sounding.tieIn = true;
+          if (legatoFrom != null && !noiseRow) sounding.tieIn = true;
           notes.push(sounding);
           lastMidi = midi;
         } else {
@@ -573,7 +785,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         curP = tok;
       });
     }
-    tracks.push({ ch, notes, marks });
+    tracks.push({ ch, notes, marks, noVel: fcCh === "tri" });
     if (tempoTrack) { marks.push(...speedMarks); tempoTrack = false; }
   }
 
@@ -593,17 +805,23 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (vibUnderSlide) warnings.push(`a vibrato under a slide is dropped for that note (${vibUnderSlide}×)`);
   if (volUnderNote) warnings.push(`a volume moved under a sounding note keeps the note's first (${volUnderNote}×)`);
   if (!tracks.length) warnings.push("no notes to import");
-  if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0))
+  if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0) && !(onFc && used.some((c) => c.kind === "pcm" && t.channels[c.index].chip === "nes")))
     warnings.push("sample channels are not imported");
+  if (dpcm.missing) warnings.push(t.samples ? `a DPCM note with no sample (or one of a depth not read) is left out (${dpcm.missing}×)`
+    : "the DPCM channel's samples are not read from a DefleMask module");
+  if (dpcm.loopPart) warnings.push(`a DPCM sample looping a part of itself loops whole (${dpcm.loopPart}×)`);
+  if (onFc && a.channels.some((c) => c.notes > 0 && t.channels[c.index].chip !== "nes"))
+    warnings.push("an expansion chip's channels have no fc part — left out");
   if (waveMacroSteps) warnings.push(`a wave macro naming a wavetable the module lacks is left out (${waveMacroSteps}×)`);
-  if (dutyMoves) warnings.push(`a duty macro switching noise and wave under a note keeps its first step (${dutyMoves}×)`);
+  if (dutyUnderNote) warnings.push(`a 12xx under a sounding note takes effect at the next note (${dutyUnderNote}×)`);
+  if (dutyMoves) warnings.push(`a duty macro switching ${onFc ? "the noise's mode" : "noise and wave"} under a note keeps its first step (${dutyMoves}×)`);
   if (waveResampled) warnings.push(`${waveResampled} wavetable(s) not 32 steps wide are read at 32 points`);
   if (noiseDropped) warnings.push(`noise notes on a channel imported as its wave are dropped (${noiseDropped}×)`);
   if (waveDropped) warnings.push(`wave notes on a channel imported as noise are dropped (${waveDropped}×)`);
   if (noisePitch) warnings.push(`a slide or vibrato on a noise note is dropped: its pitch is its rate (${noisePitch}×)`);
 
   const header = [`; Imported from ${options.fileName ?? "a tracker module"} (${t.format}, ${t.system})`];
-  const score = [onPce && ":target pce", t.title && `:title ${qstr(t.title)}`, t.author && `:author ${qstr(t.author)}`].filter(Boolean);
+  const score = [onPce && ":target pce", onFc && ":target fc", t.title && `:title ${qstr(t.title)}`, t.author && `:author ${qstr(t.author)}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   for (const d of defs.values()) header.push("", d.text);
@@ -621,17 +839,17 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     a.seq.forEach((s, i) => { for (const x of segBars(s.rows * rowTicks)) bars.push(segStart[i] + x); });
     const source = emitSong({
       header, bars, endTick, loopTick: segStart[loopIndex],
-      tracks: tracks.map(({ ch, notes, marks }) => {
+      tracks: tracks.map(({ ch, notes, marks, noVel }) => {
         const head = notes[0].state ?? [];
         const ns = notes.map((n, i) => (i === 0 ? { ...n, pre: undefined } : n));
-        return { channel: ch.dest, head, notes: ns, marks };
+        return { channel: ch.dest, head, notes: ns, marks, noVel };
       }),
     });
-    return { source, warnings };
+    return { source, warnings, pcm: dpcmPcm() };
   }
 
   // Phrases: cut each track at the segment edges.
-  const ptracks = tracks.map(({ ch, notes, marks }) => {
+  const ptracks = tracks.map(({ ch, notes, marks, noVel }) => {
     const segments = a.seq.map((s, si) => {
       const s0 = segStart[si];
       const len = s.rows * rowTicks;
@@ -665,7 +883,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         state: { pre: src?.state ?? [], vel: src?.vel ?? 15, oct: octOf(midi) },
       };
     });
-    return { channel: ch.dest, head: [], loopIndex, segments };
+    return { channel: ch.dest, head: [], loopIndex, segments, noVel };
   });
-  return { source: emitPhrased({ header, tracks: ptracks }), warnings };
+  return { source: emitPhrased({ header, tracks: ptracks }), warnings, pcm: dpcmPcm() };
 }

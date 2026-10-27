@@ -45,9 +45,10 @@ Run from tools directory:
     the SSG's mixer and envelope; the SCC's and the HuC6280's waves as def-waves,
     the HuC6280's noise at the rates it played and its pan; the 2A03's duties,
     triangle and noise modes, and its DMC samples from the file's memory blocks
-17. `npm run check:import-tracker` — a PC Engine DefleMask module written there,
-    byte by byte: its wavetables, wave macro, `10xx`, `08xy` and noise come back
-    as pce, and both its pce and md scores compile
+17. `npm run check:import-tracker` — a PC Engine and an NES DefleMask module
+    written there, byte by byte: the PC Engine's wavetables, wave macro, `10xx`,
+    `08xy` and noise come back as pce; the NES's duty macro and `12xx`, linear
+    volumes, triangle and noise rates and modes as fc; every score compiles
 
 ## i18n
 
