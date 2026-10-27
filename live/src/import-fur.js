@@ -198,7 +198,10 @@ export async function parseFur(bytes) {
     p += 32 + 32 + 128; // chip volumes, pans, flag pointers
     title = str(); author = str();
     p += 4; // tuning
+    // The compatibility flags: limitSlides, linearPitch, loopModality, then
+    // properNoiseLayout from version 43 — off before it (Furnace fur.cpp).
     if (version >= 37) linearPitch = u8[p + 1];
+    properNoiseLayout = version >= 43 ? u8[p + 3] > 0 : false;
     p += 20; // compatibility flags
     for (let i = 0; i < insLen; i++) insPtr.push(i32());
     for (let i = 0; i < waveLen; i++) wavePtr.push(i32());

@@ -7,6 +7,9 @@
 //     orders: [[pattern index per channel] per order],
 //     channels: [{kind, name, patterns: Map(index → rows)}],
 //       rows: [{note: semitone (C-0 = 0) | "off" | null, vol: -1 | n,
+//               (a tracker's C-0 is 32.70 Hz, MIDI 24: Furnace's octaves are
+//               one under scientific pitch — its A-3 is 440 Hz — and it plays
+//               DefleMask's modules so)
 //               ins: -1 | n, fx: [[code, value], …]}]
 //     instruments: [{name, kind: "fm", fm: {alg, fb, fms, ams, ops}}
 //                 | {name, kind: "std", vol: {values, loop}, arp: {values, loop}}],
@@ -249,8 +252,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     return defs.get(key).name;
   };
-  const env = (i) => {
-    const key = `env:${i}`;
+  // `nz`: a PC Engine noise note's place in DefleMask's twelve-rate table
+  // (no properNoiseLayout), where the arp macro moves the note through the
+  // table, not by semitones: its :semi is the table's step from there.
+  const env = (i, nz = null) => {
+    if (!t.instruments[i]?.arp?.values.some((x) => x !== 0)) nz = null;
+    const key = nz == null ? `env:${i}` : `env:${i}:nz${nz}`;
     if (!defs.has(key)) {
       const ins = t.instruments[i];
       const parts = [];
@@ -268,9 +275,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 - ((31 - Math.min(31, x)) * 1.5) / 2))))}`);
       else if (ins.vol?.values.length)
         parts.push(`:vel* ${arr(ins.vol, (x) => Math.max(0, Math.min(1, Math.round((x * 100) / volMax) / 100)))}`);
-      if (ins.arp?.values.length && ins.arp.values.some((x) => x !== 0)) parts.push(`:semi ${arr(ins.arp, (x) => x)}`);
-      if (ins.arpFixed) warnings.push(`instrument "${ins.name}": a fixed-pitch arpeggio macro is not imported`);
-      const name = uniq(`env-${slug(ins.name) || i}`);
+      const rate = (k) => PCE_NOISE_TABLE[((k % 12) + 12) % 12];
+      if (ins.arp?.values.length && ins.arp.values.some((x) => x !== 0))
+        parts.push(`:semi ${arr(ins.arp, (x) => (nz == null ? x : rate(nz + x) - rate(nz)))}`);
+      if (ins.arpFixed && nz == null) warnings.push(`instrument "${ins.name}": a fixed-pitch arpeggio macro is not imported`);
+      const name = uniq(`env-${slug(ins.name) || i}${nz == null ? "" : `-nz${nz}`}`);
       defs.set(key, { name, text: `(def ${name} (macro none)${parts.length ? ` (macro ${parts.join(" ")})` : ""})` });
     }
     return defs.get(key).name;
@@ -348,6 +357,23 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     return d ? `(macro :pitch ${d})` : null;
   };
 
+  // The song's speed: a 09xx / 0Fxx on any channel is the song's (Furnace
+  // plays them so), its rows' tempo the two speeds' average from there.
+  const speedMarks = [];
+  {
+    const sp = [...t.speeds];
+    a.seq.forEach(({ order, rows }, si) => {
+      for (let r = 0; r < rows; r++) {
+        let changed = false;
+        t.channels.forEach((chn, c) => {
+          for (const [code, val] of chn.patterns.get(t.orders[order][c])?.[r]?.fx ?? [])
+            if ((code === 0x09 || code === 0x0f) && val > 0) { sp[code === 0x09 ? 0 : 1] = val; changed = true; }
+        });
+        if (changed) speedMarks.push({ tick: segStart[si] + r * rowTicks, tokens: [tempoOf((sp[0] + sp[1]) / 2)] });
+      }
+    });
+  }
+  let volUnderNote = 0;
   const tracks = [];
   let tempoTrack = true;
   for (const ch of used) {
@@ -377,7 +403,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     let noise = false; // channel 5 or 6 on its noise (pce, 11xx)
     let arp = 0;
     let usedMacro = false;
-    const voiceTokens = () => {
+    const voiceTokens = (nz = null) => {
       const it = t.instruments[ins];
       if (!it) {
         if (onFm) { standIns.add(standIn); return usedMacro ? [standIn, "(macro none)"] : [standIn]; }
@@ -390,7 +416,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return usedMacro ? ["(macro none)"] : [];
       }
       usedMacro = true;
-      const e = env(ins);
+      const e = env(ins, nz);
       if (onFm) { standIns.add(standIn); return [standIn, e]; }
       return [e];
     };
@@ -407,7 +433,6 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const notes = [];
     const marks = [];
     let sounding = null;
-    let speeds = [...t.speeds];
     a.seq.forEach(({ order, rows }, si) => {
       const pat = chn.patterns.get(t.orders[order][ch.index]) ?? [];
       for (let r = 0; r < rows; r++) {
@@ -415,7 +440,6 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         const at = segStart[si] + r * rowTicks;
         let delay = 0;
         let cut = null;
-        let speedChanged = false;
         const rp = {}; // this row's pitch effects
         for (const [code, v] of row.fx) {
           // An effect with no value is 00 (Furnace reads it so).
@@ -443,16 +467,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if (code === 0x00 && val >= 0) { arp = val; usedArp = true; }
           else if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
           else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
-          else if ((code === 0x09 || code === 0x0f) && val > 0) {
-            if (code === 0x09) speeds[0] = val; else speeds[1] = val;
-            speedChanged = true;
-          } else if (code === 0x0b || code === 0x0d) { /* the order walk */ }
+          else if ((code === 0x09 || code === 0x0f) && val > 0) { /* the song's speed: speedMarks */ }
+          else if (code === 0x0b || code === 0x0d) { /* the order walk */ }
           else if (code >= 0) {
             const k = (pceVol ? PCE_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
         }
-        if (speedChanged && tempoTrack) marks.push({ tick: at, tokens: [tempoOf((speeds[0] + speeds[1]) / 2)] });
         if (row.ins >= 0 && t.instruments[row.ins]) ins = row.ins;
         // The instrument's macros start over at each of its notes: its wave
         // macro sets the wave (its first step; a wave moving under a note is
@@ -465,7 +486,16 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           }
           noise = dutyNoise(t.instruments[ins]) ?? noise;
         }
-        if (row.vol >= 0) vol = row.vol;
+        if (row.vol >= 0) {
+          // A volume written under a sounding note (no note on the row): 0
+          // silences it (a wave or a PSG channel's volume 0 is off); another
+          // moves it, which is not imported.
+          if (typeof row.note !== "number" && sounding && !fmVol && row.vol !== vol) {
+            if (row.vol === 0) { sounding.end = Math.min(sounding.end ?? Infinity, at); sounding = null; }
+            else volUnderNote++;
+          }
+          vol = row.vol;
+        }
         if (row.note === "off") {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
           sounding = null;
@@ -481,7 +511,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, start);
           const waveName = pceVol && !toNoise && wave >= 0 ? waveDef(wave) : null;
           const st = {
-            voice: waveName ? [waveName, ...voiceTokens()] : voiceTokens(),
+            voice: waveName ? [waveName, ...voiceTokens()]
+              : voiceTokens(toNoise && !t.properNoiseLayout ? ((row.note % 12) + 12) % 12 : null),
             pan: pan ? `:pan ${pan}` : null,
             arp: usedArp ? arpToken() : null,
           };
@@ -495,7 +526,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           // A noise note is its rate: c2 the slowest (chips/huc6280.js).
           const midi = toNoise
             ? PCE_NOISE_BASE + (t.properNoiseLayout ? row.note & 31 : PCE_NOISE_TABLE[((row.note % 12) + 12) % 12])
-            : row.note + 12;
+            : row.note + 24;
           if (toNoise && (rp.slide || rp.porta || vib)) noisePitch++;
           const v = velOf(vol);
           if (!fmVol && vol === 0) { sounding = null; continue; } // silent
@@ -538,7 +569,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       });
     }
     tracks.push({ ch, notes, marks });
-    if (tempoTrack) tempoTrack = false;
+    if (tempoTrack) { marks.push(...speedMarks); tempoTrack = false; }
   }
 
   // The tempo the song starts with; the loop restates its own.
@@ -555,6 +586,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
 
   for (const [k, n] of fxSkipped) warnings.push(`effect ${k} skipped (${n}×)`);
   if (vibUnderSlide) warnings.push(`a vibrato under a slide is dropped for that note (${vibUnderSlide}×)`);
+  if (volUnderNote) warnings.push(`a volume moved under a sounding note keeps the note's first (${volUnderNote}×)`);
   if (!tracks.length) warnings.push("no notes to import");
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0))
     warnings.push("sample channels are not imported");

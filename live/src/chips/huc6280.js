@@ -196,10 +196,20 @@ function pceEncoder() {
   // Channels 5 and 6 as noise: the note (the player hands its Hz) is one of
   // the 32 rates from NOISE_NOTE_BASE, its level the channel's.
   const noiseRate = (hz) => Math.max(0, Math.min(31, Math.round(69 + 12 * Math.log2(hz / 440)) - NOISE_NOTE_BASE));
+  // The level writes $07 only where the noise turns on or off: the player
+  // sends a note's level and pitch macros each ahead in turn, so the rate
+  // held here is the last one sent, not the one at this write's time.
   enc.noise = {
     period: noiseRate,
     pan: enc.pan,
-    att: (ch, att) => [...level(ch, att), [PORT, 0x07, noise[ch] = (on[ch] ? 0x80 : 0) | (noise[ch] & 0x1f)]],
+    att: (ch, att) => {
+      const was = noise[ch] & 0x80;
+      const writes = level(ch, att);
+      const now = on[ch] ? 0x80 : 0;
+      if (now === was) return writes;
+      noise[ch] = now | (noise[ch] & 0x1f);
+      return [...writes, [PORT, 0x07, noise[ch]]];
+    },
     tone: (ch, n) => [sel(ch), [PORT, 0x07, noise[ch] = 0x80 | (n & 0x1f)]],
   };
   return enc;
