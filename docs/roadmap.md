@@ -135,9 +135,11 @@ scores) and the Famicom (`fc`: the 2A03's pulses with `:duty`, the
 triangle with no level, the noise's rates and two modes, the DMC's
 samples) — language.md §19. Next:
 
-1. **Famicom: songs in.** Which format a Famicom song comes in by is to be
-   discussed (ppmck's MML, VGM 0xB4, DefleMask / Furnace NES modules, NSF);
-   then that import. Expansions are decided by
+1. **Famicom: songs in.** A VGM's 2A03 imports as `fc` (guide.md). Next
+   DefleMask / Furnace NES modules as `fc` (import-tracker.js reads them;
+   Furnace's own VGM export is the A/B), then ppmck's MML if a composer's
+   files call for it (no NSF: a 6502 is too much to carry). Expansions
+   are decided by
    voice class, not one by one: the 5B is the SSG profile, the VRC7 the
    OPLL's, the FDS the wavetable class. VRC6, N163 and MMC5 have no VGM block, which bounds the set.
 

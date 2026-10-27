@@ -148,7 +148,30 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   2026-10-27): a restart under a sounding hit carries up to 16 of its bits
   past $4011 (a DC offset, as on the chip); a `:len 0` hold on pcm1 is not
   released by triggerKeyOff (DDA's the same: sample handlers do not
-  register holds). A long song's VGM grows a block a hit. The curve option `:duty` is 1–255 (128 = 50 %) while the track
+  register holds). A long song's VGM grows a block a hit.
+- **Songs in, ruled 2026-10-27 (the user): VGM first, then Furnace /
+  DefleMask NES modules, ppmck's MML only if wanted; no NSF.** VGM built
+  2026-10-27 (import-vgm.js apuChip): the length and linear counters and
+  the envelope run between writes (`advance`), so a note ends where its
+  counter ran out and an envelope is a level envelope; the sweep is only
+  counted; a DMC hit's sample is the memory as it stood (`bytes` on the
+  hit, identity by content) since 0xC2 blocks rewrite it (bank switches);
+  `$4011` written on and on is counted as CPU PCM, not imported. A review
+  (2026-10-27) fixed: the 5-step frame counter (QUARTER on $4017, the
+  average), a joint period + level write read as a strike only where the
+  level came up or the pitch jumped ≥ 50 cents (a volume macro under a
+  vibrato is one note), an envelope's steps never emitted before the last
+  write (event order per key), a looping envelope kept on through its 0,
+  the divider read from a $4000 written after $4003, the counters starting
+  at 0, the triangle's reload with the flag still set, a duty step within
+  4 frames of a note's start folded into it (the attack's macro: the note
+  takes the value it settles on), a note quantized onto the one before
+  keeping that one's slur, $4011 counted only on a change, a DMC hit
+  before any 0xC2 block lost. Approximations kept: a halt cleared under a
+  held counter leaves it held; the sweep's mute of a high period (negate
+  clear, target > $7FF) is not applied; $4017's immediate clock in 5-step
+  mode is not. Not yet run on a real rip (vgmrips' NES packs): the
+  frame-grid / envelope reading of a real driver is untested there. The curve option `:duty` is 1–255 (128 = 50 %) while the track
   word is in sixteenths, as ruled — two scales under one name; raise it if
   it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3);
   Import > Audio as Formants on an fc score writes fm3 tracks (pce is

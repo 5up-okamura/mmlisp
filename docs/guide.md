@@ -1774,6 +1774,22 @@ them: a key-on starts a note, a key-off ends it.
   back as `:pan` with the note (a pan moving under a note is not
   followed); its LFO and DDA are counted. On md the waves play on a
   `presets/waveforms` stand-in and the busier noise on `noise`.
+- A **Famicom** file (the 2A03, `:target fc` by default) goes to `sqr1`,
+  `sqr2`, `tri` and `noise`, each keeping its place. A pulse's duty comes
+  back as `:duty` (12.5 / 25 / 50 / 75 % as 2 / 4 / 8 / 12): a duty
+  macro's steps through a note's first frames are its attack, and the note
+  takes the duty it settles on; one moved later under the note starts a
+  new note. Its hardware envelope comes back as a `:vel+` envelope,
+  its length counter as the note's end, its sweep counted. The triangle
+  has no level, so its notes say no `:vel`; a note ends where its linear
+  counter runs out. The noise's notes are its rates (c2 the slowest) with
+  `:mode white` or `periodic`. The DMC's samples come from the memory
+  blocks the file carries, each hit's the memory as it stood (a bank
+  switched is another sample), decoded to one wav and `pcm1`; a sample the
+  driver loops is a `:mode loop` note. On md the triangle is `sqr3`, the
+  noise's modes the nearest `white` / `periodic` rate, and the duties are
+  left out; the DAC written on and on by the CPU (a PCM the game streams)
+  is counted, not imported.
 - A pitch moved during a note is followed — untick it to keep only the
   struck pitch. A jump it then stays at is a new note, slurred (`~`); a
   wobble is a vibrato, a shared `(def vib-40-10 (macro :pitch (sin -40..40

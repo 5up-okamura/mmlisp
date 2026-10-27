@@ -27,7 +27,7 @@
 // (targets.js scopeLane).
 // ---------------------------------------------------------------------------
 
-import { rp2a03, RAM_PORT, DMC_PERIODS } from "./chips/rp2a03.js";
+import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "./chips/rp2a03.js";
 import { pitchLatches, fcPitch } from "./scope-pitch.js";
 
 const CLOCK = rp2a03.clock;
@@ -54,7 +54,6 @@ const DUTY = [
   [1, 1, 1, 1, 1, 1, 0, 0],
 ];
 const TRI = Array.from({ length: 32 }, (_, i) => (i < 16 ? 15 - i : i - 16));
-const NOISE_PERIODS = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
 // The frame counter's quarter frames, in CPU clocks; a half frame on the
 // second and the last (4-step: every 29830, 5-step: 37282, the fourth step
 // silent).

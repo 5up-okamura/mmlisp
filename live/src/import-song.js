@@ -157,7 +157,7 @@ function writeBody(notes, opts) {
       // `(go top)` arrives with the end's state: restate what the loop's
       // first pass has here.
       line.push("#top", ...lastPre, `:oct ${oct}`);
-      if (vel !== opts.vel || lastPre.length) line.push(`:vel ${vel}`);
+      if (!opts.noVel && (vel !== opts.vel || lastPre.length)) line.push(`:vel ${vel}`);
     }
     if (marksAt.has(t)) line.push(...marksAt.get(t));
     if (tie || (cont && loopTick === t)) {
@@ -173,7 +173,7 @@ function writeBody(notes, opts) {
       if (n.pre?.length) line.push(...n.pre);
       lastPre = n.state ?? n.pre ?? lastPre;
       if (n.vel != null && n.vel !== vel) {
-        line.push(`:vel ${n.vel}`);
+        if (!opts.noVel) line.push(`:vel ${n.vel}`);
         vel = n.vel;
       }
       const end = Math.min(n.tick + n.len, b);
@@ -259,10 +259,10 @@ export function emitSong(song) {
     const vel = notes.find((n) => n.vel != null)?.vel ?? 15;
     const body = writeBody(notes, {
       bars, endTick, loopTick,
-      marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: tr.channel.startsWith("pcm"),
+      marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: tr.channel.startsWith("pcm"), noVel: tr.noVel,
     });
     const head = [tr.channel, ...(tr.open ?? []), ...tr.head, `:oct ${oct}`, `:len ${lenToken(defLen)}`];
-    if (vel !== 15) head.push(`:vel ${vel}`);
+    if (vel !== 15 && !tr.noVel) head.push(`:vel ${vel}`);
     if (loopTick != null) body.push("(go top)");
     out.push("", `(${head.join(" ")}`, ...body.map((l) => "  " + l));
     out[out.length - 1] += ")";
@@ -782,7 +782,7 @@ export function emitStructured(song) {
         running = p.st;
         return { tick: p.tick, len: p.len, midi: p.midi, vel: p.vel, tieIn: p.tieIn, pre };
       });
-      const lines = writeBody(notes, { bars: [u.len], endTick: u.len, marks: u.marks, defLen, oct: st.oct, vel: st.vel, pre: st.st });
+      const lines = writeBody(notes, { bars: [u.len], endTick: u.len, marks: u.marks, defLen, oct: st.oct, vel: st.vel, pre: st.st, noVel: tr.noVel });
       const lastP = u.pieces[u.pieces.length - 1];
       const next = lastP ? { oct: octOf(lastP.midi), vel: lastP.vel, st: lastP.st } : st;
       return { lines, st: next };
@@ -801,7 +801,7 @@ export function emitStructured(song) {
       if (whole) {
         // At the track's start there is no macro to clear.
         const sw = start ? p.st.filter((t) => !/^\(macro :[a-z+*-]+ none\)$/.test(t)) : p.st;
-        return { tokens: [...sw, `:oct ${oct}`, `:vel ${p.vel}`], st: { oct, vel: p.vel, st: p.st } };
+        return { tokens: [...sw, `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${p.vel}`])], st: { oct, vel: p.vel, st: p.st } };
       }
       const sw = st.st.length ? stateChange(st.st, p.st) : p.st;
       const back = around ? stateChange(around.st, p.st).filter((t) => !baked(t)) : [];

@@ -39,6 +39,15 @@ const DEFAULT_DUTY = 2; // 50 %
 // pce's noise (chips/huc6280.js), since the rates are a clock, not a pitch.
 export const NOISE_NOTE_BASE = 36;
 export const NOISE_RATES = 16;
+// The noise's periods (CPU clocks between LFSR steps, NTSC), $400E's 0-15.
+export const NOISE_PERIODS = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
+/** The note (c2 the slowest) whose rate is the nearest to a noise clocked at `hz`. */
+export function noiseNoteOfHz(hz) {
+  let best = 0;
+  for (let i = 1; i < NOISE_PERIODS.length; i++)
+    if (Math.abs(Math.log(CLOCK / NOISE_PERIODS[i] / hz)) < Math.abs(Math.log(CLOCK / NOISE_PERIODS[best] / hz))) best = i;
+  return NOISE_NOTE_BASE + 15 - best;
+}
 
 const LEVEL = { scale: "linear", steps: 16 }; // the 4-bit volume, 15 loud .. 0 off
 

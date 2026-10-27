@@ -183,6 +183,48 @@ const writesOf = (source, addr) => {
   }
 }
 
+// The 2A03: its pulses keep their numbers on fc with their :duty, the
+// triangle goes to tri with no :vel (it has none), the noise's notes are
+// its rates with :mode white / periodic; on md the triangle is sqr3 and the
+// noise's modes read as the nearest white / periodic. The DMC: a hit's
+// sample is the memory as it stood at the hit (a 0xC2 block), one wav, a
+// loop a loop.
+{
+  const parsed = await vgmOf("tools/tests/fc/apu.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["fc", ["fc", "md"]]);
+  const opt = defaultVgmOptions(a, "fc");
+  assert.deepEqual([opt.dest["2A03 SQ1"], opt.dest["2A03 SQ2"], opt.dest["2A03 TRI"], opt.dest["2A03 noise"]], ["sqr1", "sqr2", "tri", "noise"]);
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "fc", structure);
+    assert.match(source, /\(sqr1[\s\S]*:duty 8[\s\S]*:duty 2/, "fc: sqr1's duty, 50 % then 12.5 %");
+    assert.match(source, /\(sqr2[\s\S]*:duty 12/, "fc: sqr2's 75 %");
+    assert.doesNotMatch(source.slice(source.indexOf("(tri"), source.indexOf("(noise")), /:vel/, "fc: the triangle says no :vel");
+    assert.match(source, /\(tri[^)]*\bc _/, "fc: the triangle's rest (its linear counter at 0)");
+    assert.match(source, /\(noise[\s\S]*:mode white :oct 2 [^|]*c c\+[\s\S]*:mode periodic[\s\S]*:mode white/, "fc: the noise's rates as notes, its modes");
+  }
+  const md = imported(parsed, "md").source;
+  assert.equal(defaultVgmOptions(a, "md").dest["2A03 TRI"], "sqr3");
+  assert.match(md, /\(noise[\s\S]*:mode white\d[\s\S]*:mode periodic\d/, "md: the modes at the nearest rate");
+  assert.doesNotMatch(md, /:duty/, "md: no duty");
+}
+{
+  const { ir } = compileScoreFile(path.join(ROOT, "tools/tests/fc/dpcm.mmlisp"), {});
+  const { frames } = bakedChipSamples(ir, targetProfile("fc"));
+  const v = renderVgm(new IRPlayer(() => {}).loadJSON(ir), {}, { frames });
+  const parsed = await parseVgm(new Uint8Array(v.bytes ?? v));
+  const a = analyzeVgm(parsed);
+  assert.equal(a.target, "fc");
+  assert.equal(defaultVgmOptions(a, "fc").dest.DPCM, "pcm");
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "fc", structure);
+    assert.match(source, /\(def-pcm dpcm-01 :file "t-pcm\.wav" :rate 33144 :offset 0 :frames 6664\)/, "fc: the first hit's sample, 833 bytes at rate 15");
+    assert.match(source, /:loop-start 0ms/, "fc: the looped hit's sample");
+    assert.match(source, /\(pcm1[\s\S]*dpcm-0\d :mode loop/, "fc: the loop on pcm1");
+  }
+  imported(parsed, "md");
+}
+
 // The YM2608's ADPCM-B: its RAM image (data block 0x81) decoded into one
 // wav, a note per key-on at its Δ-N's pitch. On pc88 it is pcm1's again,
 // its level the register's as :vol, its pan the hit's, a repeat a loop.
