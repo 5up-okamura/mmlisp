@@ -119,7 +119,7 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
     resolveLayerNotes, same-name output unchanged). Like the same-name
     :prio pass, it does not count the notes it drops.
 
-## The Famicom (fc) — the design, ruled 2026-10-27, not built yet
+## The Famicom (fc) — the design, ruled 2026-10-27; stage 1 built
 
 Build it as pce was built (chips/huc6280.js, targets/pce.js, synth-pce.js,
 tools/tests/pce are the pattern), in stages: 1. pulses, triangle, noise;
@@ -157,6 +157,29 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   and restarts via $4015. The 1-bit delta (±2 a sample) dulls fast loud
   attacks — say so in the reference. The nonlinear mixer (the DAC level
   lowering tri / noise) is the emulator's, the language says nothing.
+- **Stage 1 built 2026-10-27** (chips/rp2a03.js, targets/fc.js,
+  synth-fc.js, tools/tests/fc). Tables from nesdev's APU pages (fetched):
+  duty sequences, noise periods (NTSC, CPU clocks), triangle, the mixer
+  formulas. The encoder queues its timed writes and `flush(horizon)`s them
+  in time order (as the SSG's): a pulse's $4000 holds volume and duty, which
+  the player sends out of order; a silence is written at once (level 0 is
+  silent at any duty) with its state queued. The noise sits on the PSG's
+  noise lane 3, pitched (part `rateNote`); the PSG encoder hands a view a
+  lane (`lanes`) since each channel's period differs. The triangle's
+  `:vel` / `:vol` warn through warnEnvLevel (part `noLevel`). The synth runs
+  the envelope, sweep, length and frame counter too (for the VGM import to
+  come); `MASTER_OUTPUT_GAIN` 1.6 puts one pulse's RMS at one pce channel's.
+  A review (2026-10-27) caught and fixed: the noise's length counter never
+  loaded (init writes $400F once); a stop's untimed silence deduped away
+  against the horizon's state (an untimed write bypasses `last`); nothing
+  flushed the queue while stopped (`_psgWrites` flushes when not playing);
+  the :mode macro on the pitched noise lane. Open: not listened to by the
+  user (the level beside other targets, the noise rates, the triangle's
+  halt); no VGM player has checked the 0xB4 output. The curve option `:duty` is 1–255 (128 = 50 %) while the track
+  word is in sixteenths, as ruled — two scales under one name; raise it if
+  it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3);
+  Import > Audio as Formants on an fc score writes fm3 tracks (pce is
+  excluded in index.html; fc is not yet).
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 

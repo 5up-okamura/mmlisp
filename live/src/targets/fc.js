@@ -1,0 +1,28 @@
+// The Famicom: its 2A03's APU — two pulses, the triangle, the noise; DPCM
+// (pcm1) is the next stage. No driver: the score is delivered as VGM.
+import { rp2a03, fcPulse, fcTriangle, fcNoise } from "../chips/rp2a03.js";
+
+const on = (part, voice) => ({ chip: "apu", part, voice });
+
+// A Mega Drive noise mode has no 2A03 reading: the rate is the note.
+const none = { none: "the 2A03's noise is :mode white or periodic, its rate the note's pitch" };
+const NOISE_MODES = Object.fromEntries(
+  ["white0", "white1", "white2", "white3", "periodic0", "periodic1", "periodic2", "periodic3"].map((m) => [m, none]));
+
+export default {
+  name: "fc",
+  system: "Famicom",
+  driver: null,
+  // Its drivers run on the video frame's interrupt (60 Hz), as the MSX's do
+  // (targets/msx.js): the chip hears a song a frame at a time.
+  frameClock: true,
+  chips: { apu: rp2a03 },
+  channels: {
+    sqr1: on(fcPulse, 0), sqr2: on(fcPulse, 1), tri: on(fcTriangle, 2), noise: on(fcNoise, 3),
+  },
+  readsAs: { modes: { "fc-noise": NOISE_MODES } },
+  hints: {
+    NOISE_RATE: "the noise's rate is its note's pitch, c2 the slowest",
+    PAN: "the Famicom is mono",
+  },
+};

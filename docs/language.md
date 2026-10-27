@@ -1292,7 +1292,8 @@ If the same target is set twice, the last one wins.
 | `:vol`     | `VOL`        | 0–31         |                                        |
 | `:master`  | `MASTER`     | 0–31         | Song-wide (§5): inline only — a macro is a note's (`E_MACRO_TARGET`); sweep it instead |
 | `:pan`     | `PAN`        | −1–1         | Symbols `left center right`. A chip with a left and a right bit (the OPN, the OPM) snaps it to −1 / 0 / +1; `pce` takes it whole (§19) |
-| `:mode`    | `NOISE_MODE` | 0–7          | Symbols `white0`–`white3` (4–7), `periodic0`–`periodic3` (0–3); on a `pc88` / `msx` sqr track `SSG_MIX`, symbols `tone noise both env` (§19) |
+| `:mode`    | `NOISE_MODE` | 0–7          | Symbols `white0`–`white3` (4–7), `periodic0`–`periodic3` (0–3); on a `pc88` / `msx` sqr track `SSG_MIX`, symbols `tone noise both env`; on `fc`'s noise `white` (4) and `periodic` (0) (§19) |
+| `:duty`    | `DUTY`       | 0–16         | A pulse's duty in sixteenths, on `fc`'s `sqr1` / `sqr2`: the chip takes the nearest of 2, 4, 8, 12 (§19) |
 | `:lfo-rate`| `LFO_RATE`   | 0–8          | Song-wide (§5): inline only, as `:master` |
 | `:noise-rate` | `NOISE_RATE` | 1–31      | Song-wide, but a macro on a `pc88` / `msx` SSG track steps it from the note (the later write wins, §19) |
 | `:alg` `:fb` | `FM_ALG` `FM_FB` | 0–7    |                                        |
@@ -2351,6 +2352,7 @@ those chips cannot do is a compile error, not a different sound.
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 | `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
+| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle and noise | VGM, WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2824,3 +2826,63 @@ so a drum on `pcm5` punches through a line on `wave5`.
 (pcm6 :len 4 kick c c c c)
 ```
 
+### `fc`
+
+**`fc` exports VGM (1.61)** with the 2A03's APU at the Famicom's 1.79 MHz
+(NTSC), and Play and WAV run a 2A03 of the toolchain's own (nesdev's APU
+pages: the duties, the triangle's steps, the noise's rates and LFSR, the
+nonlinear mixer). Its channels are `sqr1` and `sqr2`, the pulses; `tri`,
+the triangle; and `noise`. There is no FM, no wave memory and no pan (the
+machine is mono): `fm1`, `wave1`, `:pan` and `:noise-rate` are
+`E_TARGET`. DPCM (`pcm1`) is not built yet. The chip hears the song a
+frame (1/60 s) at a time, as on `msx`.
+
+**Pulses.** `sqr1` and `sqr2` take every pitch move a PSG channel has —
+`:pitch`, `(glide …)`, the pitch and `:semi` macros, `:snap` — on the
+chip's 11-bit period (1.79 MHz / 16 / (n + 1), A1 the lowest note, the
+highest held at period 8, about 12.4 kHz). The level is the chip's 4-bit
+volume (linear, 15 loud, 0 the key-off), vel + vol + master composed once
+onto it (§6). The pulse's shape is **`:duty`**, in sixteenths of the cycle
+(sticky, default 8): the chip has 2, 4, 8 and 12 (12.5, 25, 50 and 75 %;
+75 sounds as 25 does), and a value between is the nearest of them, the
+narrower at a tie. It takes a value, a `(macro :duty …)` and a curve,
+stepped a frame at a time. The chip's hardware envelope, sweep and length
+counter are not the language's: the encoder sets the volume itself, turns
+the sweep off (so a low note is not muted by its overflow check) and starts
+a pulse's duty over only where a pitch move crosses its period's top three
+bits.
+
+```lisp
+(def-score :target fc)
+(sqr1 :duty 8 :len 8 (macro :vel (linear 15..4 :len 4)) c e g > c < :duty 2 g e c e)
+(sqr2 :len 4 :oct 3 (macro :duty [2 4 8 12]) c e g e)
+```
+
+**Triangle.** `tri` plays a fixed-level triangle an octave below a pulse
+at the same period (1.79 MHz / 32 / (n + 1)), with the same pitch moves.
+It has no level: a note sounds at the one the chip has, and a rest halts
+it where it stands (the chip's linear counter, from its next quarter
+frame; the output holds, so no click). `:vel` and `:vol` on `tri` say so
+(`W_TARGET`, once a track) and only 0 silences; `:duty` is
+`E_UNSUPPORTED_TARGET`.
+
+```lisp
+(def-score :target fc)
+(tri :len 4 :oct 3 c _ g (macro :pitch (sin -30..30 :len 8f)) g)
+```
+
+**Noise.** The `noise` track's notes pick its rate: the chip has 16, and
+c2 is the slowest (its LFSR clocked every 4068 CPU clocks, 440 Hz), each
+semitone the next, d#3 the fastest; `:pitch` moves of less than a semitone
+do nothing. **`:mode white | periodic`** (sticky, default `white`) is the
+long LFSR or its 93-step loop, which has a pitch of its own. The level is
+the 4-bit volume as a pulse's. The Mega Drive's `white0`–`periodic3` have no
+`fc` sound (`E_TARGET`).
+
+```lisp
+(def-score :target fc)
+(noise :len 8 :oct 2 c c+ :vel 10 d :mode periodic d+ :mode white c _ :oct 3 d d)
+```
+
+**Effects.** `def-se` is the Mega Drive driver's; an `fc` score has none
+(`E_TARGET`).

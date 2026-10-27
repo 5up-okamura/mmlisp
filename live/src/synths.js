@@ -7,11 +7,12 @@ import { Pc88Synth, SCOPE_LANES as PC88_SCOPE_LANES } from "./synth-pc88.js";
 import { X68kSynth, SCOPE_LANES as X68K_SCOPE_LANES } from "./synth-x68k.js";
 import { MsxSynth, SCOPE_LANES as MSX_SCOPE_LANES } from "./synth-msx.js";
 import { PceSynth, SCOPE_LANES as PCE_SCOPE_LANES } from "./synth-pce.js";
+import { FcSynth, SCOPE_LANES as FC_SCOPE_LANES } from "./synth-fc.js";
 
-export const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth, msx: MsxSynth, pce: PceSynth };
+export const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth, msx: MsxSynth, pce: PceSynth, fc: FcSynth };
 
 /** The synth for `name` (a target's), the Mega Drive's for any other. */
 export const synthFor = (name) => SYNTHS[name] ?? MegaDriveSynth;
 
 // The most scope lanes a synth posts.
-export const SCOPE_MAX = Math.max(SCOPE_CHANNELS, PC88_SCOPE_LANES, X68K_SCOPE_LANES, MSX_SCOPE_LANES, PCE_SCOPE_LANES);
+export const SCOPE_MAX = Math.max(SCOPE_CHANNELS, PC88_SCOPE_LANES, X68K_SCOPE_LANES, MSX_SCOPE_LANES, PCE_SCOPE_LANES, FC_SCOPE_LANES);

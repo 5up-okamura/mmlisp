@@ -1777,6 +1777,16 @@
   "mmb": "488af072eea2abb1",
   "vgm": "04611ee69800285b"
  },
+ "tools/tests/fc/apu.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "378fa3baeba19628",
+  "regs": "b803a54b1187eb87",
+  "vgm": "022f105974686274"
+ },
+ "tools/tests/fc/target.mmlisp": {
+  "diagnostics": "c2abed2ca544cbf9",
+  "ir": "2e1d0ce2fe5c5449"
+ },
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "602742d8cea2f201",

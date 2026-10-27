@@ -67,6 +67,7 @@ const SUPPORTED_TARGETS = new Set([
   "ENV_RATE",
   "PAN",
   "NOISE_MODE",
+  "DUTY",
   // The FM family's (chips/fm-words.js), the inline-only ones aside.
   ...FM_CHANNEL_WORDS.map((w) => w.word),
   ...opWords(FM_OP_WORDS.filter((w) => !w.inline)).map((w) => w.word),
@@ -1797,12 +1798,17 @@ function writeParam(target, op, sym, v, push, env, vals, diagnostics, trackName,
 }
 
 // A level written on an SSG channel on its envelope (`:env`): the envelope
-// is the level there, so a :vol or :vel only silences at 0. Said once a track.
+// is the level there, so a :vol or :vel only silences at 0 — and so on a
+// part with no level at all (the 2A03's triangle, `noLevel`). Said once a
+// track.
 function warnEnvLevel(trackState, sym, diagnostics, src, trackName) {
-  if (!trackState.ssgEnv || trackState.envLevelSaid) return;
+  const none = trackState.part?.noLevel;
+  if (!(trackState.ssgEnv || none) || trackState.envLevelSaid) return;
   trackState.envLevelSaid = true;
   pushDiag(diagnostics, "warning", "W_TARGET",
-    `${sym} does not set the level of ${trackState.head} on :env (the envelope is its level; 0 still silences)`,
+    none
+      ? `${sym} does not set the level of ${trackState.head}: the ${trackState.part.label} has none (it sounds or is halted; 0 still silences)`
+      : `${sym} does not set the level of ${trackState.head} on :env (the envelope is its level; 0 still silences)`,
     src, trackName);
 }
 
@@ -2511,6 +2517,7 @@ function parseMacroSpec(
   env = null, // body eval env, so `(let …)` bindings reach macro values
   step = null, // the macro's :step, for signal⊕signal materialization resolution
   ratio = false, // a `*` macro: its values are multipliers, kept unrounded
+  modes = null, // the track's part's :mode symbols (chips/parts.js), for a :mode macro
 ) {
   if (!node) return null;
   // Relative (+/*) macros carry signed offsets / ratios; leave them unclamped
@@ -2523,6 +2530,7 @@ function parseMacroSpec(
   // the target's own symbol (`white2`, `left`), in a vector and as a scalar.
   const tokenValue = (val) => {
     if (typeof val !== "string") return null;
+    if (modes?.[val]?.[0] === target) return modes[val][1];
     if (target === "NOISE_MODE" && val in NOISE_MODE_MAP) return NOISE_MODE_MAP[val];
     if (target === "PAN" && val in PAN_MAP) return PAN_MAP[val];
     if (target === "SSG_MIX" && val in TARGET_SYMBOLS.SSG_MIX) return TARGET_SYMBOLS.SSG_MIX[val];
@@ -3603,6 +3611,7 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":loop-end": "LOOP_END",
   ":loop-len": "LOOP_LEN",
   ":pan": "PAN",
+  ":duty": "DUTY",
   ":mode": "NOISE_MODE",
   // The FM family's: the channel's, and each operator's (:tl1–:tl4 …) that
   // some part has — the OPLL's own words on its two operators only.
@@ -5188,6 +5197,7 @@ function compileChannelBody(
                   evalEnv,
                   macroStep,
                   op === "*",
+                  trackState.part?.modes,
                 );
                 if (spec && macroStep) spec.step = macroStep;
                 if (

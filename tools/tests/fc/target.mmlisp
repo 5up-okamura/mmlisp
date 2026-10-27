@@ -1,0 +1,7 @@
+; fc: what the 2A03 has not — a :vel on the triangle (a warning: it has no
+; level), :duty on the triangle, md's noise modes, :noise-rate and :pan
+; (errors).
+(def-score :target fc :title "fc target")
+(tri :len 4 :vel 10 c :duty 4 e |)
+(noise :len 4 :mode white1 :noise-rate 8 c c |)
+(sqr1 :len 4 :pan left c c |)

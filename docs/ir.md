@@ -198,6 +198,7 @@ FM / PSG note. Also used (with extra fields) on FM3 operator tracks.
 | `keyon`      | spec (§6)  | 0/1     | no  | Retrigger gate: sampled per `:step`; value ≥ 0.5 fires key-off→key-on.         |
 | `pan`        | spec (§6)  | −1/0/+1 | no  | `PAN` macro.                                                                   |
 | `noise_mode` | spec (§6)  | 0–7     | no  | `NOISE_MODE` macro (noise channel notes only).                                 |
+| `duty`       | spec (§6)  | 0–16    | no  | `DUTY` macro: a pulse's duty in sixteenths (`fc`'s `sqr1` / `sqr2`).           |
 | `fm_tl1` … `fm_amen4` | spec (§6) | per target | no | FM operator-param macros: any supported target lower-cased (`FM_TL1` → `fm_tl1`). |
 | `vol`, `fm_alg`, `fm_fb`, `fm_ams`, `fm_fms` | spec (§6) | per target | no | Macros on those targets. |
 | `legato`     | bool       | —       | no  | Present (true) on the right note of a slur (`e ~ g`, language.md §3): the pitch moves without a key-off/key-on (MMB `NOTE_ON_EX` bit3). FM/PSG only. |

@@ -21,6 +21,7 @@ import pc88 from "./targets/pc88.js";
 import x68k from "./targets/x68k.js";
 import msx from "./targets/msx.js";
 import pce from "./targets/pce.js";
+import fc from "./targets/fc.js";
 
 const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10, wave: 10 };
 
@@ -81,7 +82,7 @@ function profile(def) {
   };
 }
 
-export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k), msx: profile(msx), pce: profile(pce) };
+export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k), msx: profile(msx), pce: profile(pce), fc: profile(fc) };
 export const DEFAULT_TARGET = "md";
 
 /** Why `target` cannot `play` or `encode` yet, or null when it can. */

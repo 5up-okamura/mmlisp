@@ -125,16 +125,17 @@ target's own features (FM3 special mode, SSG-EG, duty, waves) are a diagnostic
 on any other, and its own settings a warning.
 
 Built: the PC-8801 (`pc88`), the X68000 (`x68k`), the MSX with the SCC
-and the FM-PAC (`msx`) and the PC Engine (`pce`: its waves, noise and
-`:pan`, DefleMask / Furnace PCE modules and HuC6280 VGMs as `pce` scores;
-DDA and the LFO are still to come) — language.md §19. Next:
+and the FM-PAC (`msx`), the PC Engine (`pce`: its waves, noise, `:pan`,
+LFO and DDA, DefleMask / Furnace PCE modules and HuC6280 VGMs as `pce`
+scores) and the Famicom (`fc`: the 2A03's pulses with `:duty`, the
+triangle with no level, the noise's rates and two modes) — language.md
+§19. Next:
 
-1. **Famicom: the 2A03.** New to the language: pulse duty, a triangle
-   without a level (the level model needs targets that have none), the
-   noise's two modes, and the DPCM as a one-voice kit of user samples at
-   sixteen fixed rates. Expansions are decided by voice class, not one by one:
-   the 5B is the SSG profile, the VRC7 the OPLL's, the FDS the wavetable
-   class. VRC6, N163 and MMC5 have no VGM block, which bounds the set.
+1. **Famicom: the rest of the 2A03.** The DPCM (`pcm1`) as a one-voice kit
+   of user samples at sixteen fixed rates; then DefleMask / Furnace NES
+   modules and VGM 0xB4 imported as `fc` scores. Expansions are decided by
+   voice class, not one by one: the 5B is the SSG profile, the VRC7 the
+   OPLL's, the FDS the wavetable class. VRC6, N163 and MMC5 have no VGM block, which bounds the set.
 
 Emulators for the preview: ymfm (BSD) covers the YM2608, YM2151, YM2413,
 Y8950 and the SSG in one library, built to WASM beside the Nuked cores.

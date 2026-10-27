@@ -270,6 +270,13 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   note baked at its pitch. `waveN` / `noiseN` / `pcmN` are one channel: all
   may be written, and where notes meet, `:prio` decides, else pcm > noise > wave.
   No FM, square, `:noise-rate` or `:mode`. VGM and WAV.
+- `(def-score :target fc)` holds a score to the Famicom's 2A03 (§19):
+  `sqr1` / `sqr2` the pulses, 4-bit linear volume, `:duty` in sixteenths
+  (sticky, default 8; the chip's 2 / 4 / 8 / 12, the nearest taken; a value,
+  a macro or a curve); `tri` the triangle, no level (`:vel` / `:vol` warn,
+  only 0 silences; a rest halts it); `noise` pitched by its notes (c2 the
+  slowest of 16 rates, d#3 the fastest), `:mode white | periodic`. Mono:
+  no `:pan`; no FM, wave, `:noise-rate`, PCM yet. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

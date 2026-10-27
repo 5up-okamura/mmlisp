@@ -314,6 +314,7 @@ export class IRPlayer {
     this._laneWave = new Array(PSG_LANES).fill(null); // the def-wave each wave lane plays (by name)
     this._laneWaveHeld = new Array(PSG_LANES).fill(null); // a wave written under a note, for its next key-on (waveAtKeyOn)
     this._psgPan = new Array(PSG_LANES).fill(0); // each lane's pan as last written (a chip with a pan per channel: the PC Engine's)
+    this._psgDuty = new Array(PSG_LANES).fill(8); // each lane's duty in sixteenths (the 2A03's pulses)
     this._laneExpr = new Array(PSG_LANES).fill(null); // a lane's wave expression with $slots: { tree, slots, vals, nextFrame }
     this._drawnWaves = new Map(); // def-wave name → the steps the editor drew over it (setWave)
     // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
@@ -605,6 +606,7 @@ export class IRPlayer {
     this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
     this._laneWaveHeld?.fill(null);
     this._psgPan?.fill(0);
+    this._psgDuty?.fill(8);
     this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
@@ -5187,6 +5189,9 @@ export class IRPlayer {
 
   _psgWrites(writes, when) {
     for (const [port, addr, data] of writes) this._write(port, addr, data & 0xff, when);
+    // Off the scheduler (a key, a live edit while stopped) nothing would
+    // flush an encoder's queue (chips/rp2a03.js, ssg.js): it is written now.
+    if (!this._playing) for (const [p, a, d, t] of this._psgChip?.flush?.(Infinity) ?? []) this._write(p, a, d, t);
   }
   // The target's PSG encoder: its tone chip's, or a noise alone (the OPM's,
   // chips/ym2151.js), or null.
@@ -5195,12 +5200,17 @@ export class IRPlayer {
     // OPM's $0F) shares it.
     return (target.chipForKind("tone") ?? target.chipForKind("noise"))?.psgEncoder?.(this._fmEnc) ?? null;
   }
-  // Each tone lane's { enc, ch, chip }: the PSG encoder `psg`'s lanes 0-3
-  // (its own numbering), a wave chip's encoder for its channels. A lane the
-  // target lacks is null.
+  // Each tone lane's { enc, ch, chip, part }: the PSG encoder `psg`'s lanes
+  // 0-3 (its own numbering; a chip whose lanes differ — the 2A03's pulses,
+  // triangle and noise, each its own period — hands a view a lane, `lanes`),
+  // a wave chip's encoder for its channels. A lane the target lacks is null.
   _toneEncodersOf(target, psg) {
     const lanes = new Array(PSG_LANES).fill(null);
-    if (psg) for (let l = 0; l < 4; l++) lanes[l] = { enc: psg, ch: l, chip: null };
+    if (psg)
+      for (let l = 0; l < 4; l++) {
+        const c = Object.values(target.channels).find((c) => CORE_OF_KIND[c.part.kind] === "psg" && !c.part.toneLane && toneLaneOf(c) === l);
+        lanes[l] = { enc: psg.lanes?.[l] ?? psg, ch: l, chip: null, part: c?.part };
+      }
     const waveEnc = new Map();
     for (const c of Object.values(target.channels)) {
       // A wave chip's channels, and its channels turned to noise (the PC
@@ -5284,6 +5294,12 @@ export class IRPlayer {
     return end;
   }
 
+  // A lane's duty, in sixteenths (chips/rp2a03.js).
+  _psgSetDuty(psgCh, v, when) {
+    this._psgDuty[psgCh] = Math.max(0, Math.min(16, Number(v) || 0));
+    this._psgWrites(this._lane(psgCh, (e, ch) => e.duty?.(ch, this._psgDuty[psgCh], when) ?? []), when);
+  }
+
   // A lane's pan, −1..1, on its chip's own resolution (chips/huc6280.js).
   _psgSetPan(psgCh, v, when) {
     this._psgPan[psgCh] = Math.max(-1, Math.min(1, Number(v) || 0));
@@ -5349,7 +5365,7 @@ export class IRPlayer {
     // Track sounding state so master/vol recomputes don't un-silence idle channels.
     this._psgSounding[psgCh] = att < off;
     const env = att < off && this._psgEnv[psgCh] >= 0;
-    this._psgWrites(this._lane(psgCh, (e, ch) => (env ? e.envLevel(ch) : e.att(ch, att)), att === off), when);
+    this._psgWrites(this._lane(psgCh, (e, ch) => (env ? e.envLevel(ch) : e.att(ch, att, when)), att === off), when);
   }
 
   // The SSG envelope's period for a cycle of `shape` at `hz`, moved `semi`
@@ -5520,7 +5536,7 @@ export class IRPlayer {
   // channel's `:snap` mask, the cents on top (as _writeFmNote).
   _psgSetPitch(psgCh, note, cents, when) {
     const hz = midiToHz(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100);
-    this._psgWrites(this._lane(psgCh, (e, ch) => e.tone(ch, e.period(hz))), when);
+    this._psgWrites(this._lane(psgCh, (e, ch) => e.tone(ch, e.period(hz), when)), when);
     // `:env-rate note`: the envelope's period on this lane's pitch.
     this._psgHz[psgCh] = hz;
     if (this._envFollow === psgCh) this._writeEnvPeriod(hz, this._envBy(psgCh), when);
@@ -5825,7 +5841,10 @@ export class IRPlayer {
           this._psgWrites(this._lane(psgCh, (e, ch) => e.wave(ch, data)), when);
         }
 
-        const isNoise = psgCh === 3; // the PSG's noise lane
+        // The PSG's noise lane — but for a noise whose note is its rate (the
+        // 2A03's: `rateNote`), pitched as a tone, its mode re-asserted.
+        const rateNote = psgCh === 3 && this._toneEnc[3]?.part?.rateNote;
+        const isNoise = psgCh === 3 && !rateNote;
         const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._frameGate(when, this._resolveGateTicks(ev.args?.gate, lengthTicks), lengthTicks);
@@ -5835,6 +5854,14 @@ export class IRPlayer {
         const psgMacroLimit = Number.isFinite(psgNextNote)
           ? psgNextNote - KEY_OFF_LEAD_SECS
           : Infinity;
+        if (rateNote) {
+          // Its mode re-asserted, and the note's :mode macro, as the PSG's
+          // noise has them; its rate is the pitch below.
+          this._psgTriggerNoise(when);
+          this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);
+          this._schedulePsgModeMacro(psgCh, ev.args?.noise_mode, when, psgGateTicks, psgMacroLimit);
+          this._envRetrigs = null;
+        }
         if (!isNoise) {
           const midi = pitchToMidi(ev.args?.pitch ?? "c4");
           this._psgCurrentMidi[psgCh] = midi;
@@ -5900,6 +5927,12 @@ export class IRPlayer {
           const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgGateTicks);
           this._scheduleMacro(ev.args.pan, noteFrames, gateSecs, when,
             (v, t) => this._psgSetPan(psgCh, v, t), this._stepSecs(ev.args.pan.step), psgMacroLimit);
+        }
+        // A note's (macro :duty …), on a pulse (chips/rp2a03.js).
+        if (ev.args?.duty) {
+          const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgGateTicks);
+          this._scheduleMacro(ev.args.duty, noteFrames, gateSecs, when,
+            (v, t) => this._psgSetDuty(psgCh, v, t), this._stepSecs(ev.args.duty.step), psgMacroLimit);
         }
         this._schedulePsgWordMacro(mixMacro, when, psgGateTicks, psgMacroLimit,
           (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v), t) ?? []), t));
@@ -6040,6 +6073,10 @@ export class IRPlayer {
         } else if (psgTarget === "FM_FMS") {
           // Channel 1 taking the wave chip's LFO (chips/huc6280.js).
           this._psgWrites(this._lane(psgCh, (e, ch) => e.lfo?.(ch, Number(ev.args?.value ?? 0)) ?? []), when);
+        } else if (psgTarget === "DUTY") {
+          // A pulse's duty in sixteenths, a value or a sweep a frame at a
+          // time; the encoder takes the nearest the chip has.
+          this._writeSongRate(ev, when, this._psgDuty[psgCh] ?? 8, (v, t) => this._psgSetDuty(psgCh, v, t));
         } else if (psgTarget === "PAN") {
           // A channel's own pan (the PC Engine's $05): a value, or a sweep a
           // frame at a time, on the encoder's fifteenths of a side.
@@ -6216,6 +6253,7 @@ export class IRPlayer {
     for (const chip of Object.values(this._target.chips))
       if (!chip.optional) for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     this._fmEnc.reset?.(); // an encoder that keeps the chip's state starts over
+    this._psgChip?.reset?.();
     // Every channel starts on `init-fm`, the part's sine (chips/fm-words.js
     // fmInitVoice): the OPN's ALG 7, FB 0, all four operators AR 31, DR 0,
     // SL 0, RR 15, TL 0, MUL 1, DT 0 — the driver's boot patch (driver.md

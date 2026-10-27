@@ -1,0 +1,8 @@
+; fc: the 2A03's two pulses (:duty as a value, a macro and a sweep; a note
+; low enough for the sweep's overflow check), the triangle with no level,
+; and the noise picking its rate by the note, long and periodic.
+(def-score :target fc :title "fc apu")
+(sqr1 :tempo 140 :duty 8 :len 8 (macro :vel (linear 15..4 :len 4)) c e g > c < :duty 2 g e c e |)
+(sqr2 :len 4 :oct 2 (macro :duty [2 4 8 12]) a1 c e (glide 8) a |)
+(tri :len 4 :oct 3 c _ (macro :pitch (sin -30..30 :len 8f)) g ~ g |)
+(noise :len 8 :oct 2 c c+ :vel 10 d :mode periodic d+ :mode white c _ :oct 3 d d |)

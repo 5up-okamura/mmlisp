@@ -45,6 +45,11 @@
 //             where their notes meet the :prio layering decides across the
 //             names, this rank at an equal :prio (0 first); parts without it
 //             are one or the other in a score
+//   noLevel   true: a part whose chip has no level for it (the 2A03's
+//             triangle) — a note sounds or is halted, so a written :vel /
+//             :vol says so (W_TARGET) and only 0 silences
+//   rateNote  true: a noise whose note picks its rate (the 2A03's), pitched
+//             as a tone lane is, on the PSG's noise lane
 //   claims    { kind, voice }: a channel of another part its notes take over
 //             while they sound (the Mega Drive's DAC mix, fm6)
 //   waveRam   (voice) → the wave memory a `wave` part's channel plays, where

@@ -102,6 +102,23 @@ export function pcePitch(clock) {
 }
 
 /**
+ * The 2A03's (port 0, chips/rp2a03.js) periods: $4002/$4003 and
+ * $4006/$4007 the pulses' (the clock / 16 / (p + 1)), $400A/$400B the
+ * triangle's (/ 32), onto the PSG lanes 6-8; the noise is unpitched.
+ */
+export function fcPitch(clock) {
+  const period = new Uint16Array(3);
+  return {
+    write(port, addr, data, out) {
+      if (port !== 0 || addr < 0x02 || addr > 0x0b || (addr & 3) < 2) return;
+      const ch = addr >> 2;
+      const p = (period[ch] = addr & 1 ? (period[ch] & 0xff) | ((data & 7) << 8) : (period[ch] & 0x700) | data);
+      out[6 + ch] = clock / ((ch === 2 ? 32 : 16) * (p + 1));
+    },
+  };
+}
+
+/**
  * The OPLL's (port 4, chips/ym2413.js) F-numbers: $10+c the low 8 bits,
  * $20+c the top bit and the block, as the chip reads them each sample. Its
  * channels 0-5 draw on lanes 0-5, 6-8 on 15-17 (synth-msx.js); a tone is

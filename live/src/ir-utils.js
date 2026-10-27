@@ -62,6 +62,9 @@ export const MACRO_TARGET_RANGE = {
   // (0 tone, 1 noise, 2 both, 3 neither: the envelope alone).
   NOISE_RATE: { min: 1, max: 31 },
   SSG_MIX: { min: 0, max: 3 },
+  // A pulse's duty in sixteenths (the 2A03's: its encoder takes the nearest
+  // of 2 / 4 / 8 / 12).
+  DUTY: { min: 0, max: 16 },
   // Its hardware envelope: a channel's shape (R13; -1 none, the 4-bit level),
   // and the song's rate in Hz (0: the writing track's notes).
   SSG_ENV: { min: -1, max: 15 },
