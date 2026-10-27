@@ -8,7 +8,7 @@
 // block, whose FM part is read). Only the first subsong is imported.
 // ---------------------------------------------------------------------------
 
-import { inflate } from "./import-tracker.js";
+import { inflate, readArp } from "./import-tracker.js";
 
 // Channel layouts by Furnace system id. A chip not listed plays its notes on
 // a stand-in voice (its channel count comes from FUR_CHANNELS, or from the
@@ -337,10 +337,9 @@ export async function parseFur(bytes) {
         const values = Array.from({ length: Math.max(0, len) }, () => i32());
         return { values, loop: loops[k] >= 0 && loops[k] < len ? loops[k] : null };
       });
-      // Before version 31 the arp's values were stored 12 up.
-      if (iv < 31) arp.values = arp.values.map((v) => v - 12);
-      const arpFixed = iv < 112 ? !!arpFixedOld : arp.values.some((v) => v & 0x40000000);
-      return { name, kind: "std", type, vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave, duty, sampleMap };
+      // Before version 31 a relative arp's values were stored 12 up.
+      if (iv < 31 && !arpFixedOld) arp.values = arp.values.map((v) => v - 12);
+      return { name, kind: "std", type, vol, arp: readArp(arp, iv < 112 && !!arpFixedOld), wave, duty, sampleMap };
     }
     if (m !== "INS2" && m !== "FINS") throw new Error("not an instrument");
     const len = m === "INS2" ? i32() : u8.length - p;
@@ -353,7 +352,6 @@ export async function parseFur(bytes) {
     const arp = { values: [], loop: null };
     const wave = { values: [], loop: null };
     const duty = { values: [], loop: null };
-    let arpFixed = false;
     // The sample map (SM, and NE's DPCM rate and DAC start per note):
     // Furnace's notes from C-5 (0), C-0 at 60; files before 246 store
     // C-0 up.
@@ -427,16 +425,13 @@ export async function parseFur(bytes) {
           if (mc === 0) Object.assign(vol, macro);
           else if (mc === 3) Object.assign(wave, macro); // the wavetable
           else if (mc === 2) Object.assign(duty, macro); // duty, or the PC Engine's noise switch
-          else if (mc === 1) {
-            arpFixed = vals.some((v) => v & 0x40000000);
-            Object.assign(arp, macro);
-          }
+          else if (mc === 1) Object.assign(arp, macro);
         }
       }
       p = fend;
     }
     if (fm && (type === 1 || type === 33)) return { name, kind: "fm", fm };
-    return { name, kind: "std", type, sampleMap, vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave, duty };
+    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty };
   }
 
   // The wavetables: "WAVE", a size, its name, width, a reserved word, its

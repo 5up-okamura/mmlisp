@@ -84,6 +84,8 @@ const FC_NOISE_TABLE = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,
   ...FC_NOISE_UP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP]; // then 15
 const fcNoiseRate = (note, proper) => (proper ? 15 - (note & 15) : FC_NOISE_TABLE[Math.max(0, Math.min(252, note))] ?? 15);
 const FC_NOISE_BASE = 36; // chips/rp2a03.js NOISE_NOTE_BASE: c2 is the slowest (register 15)
+// A def name's note (an env for a fixed arp at one played note).
+const FIX_NAMES = ["c", "cs", "d", "ds", "e", "f", "fs", "g", "gs", "a", "as", "b"];
 const FC_DUTIES = [2, 4, 8, 12]; // chips/rp2a03.js DUTIES: 12xx / the duty macro's 0-3
 const FC_FX = { 0x11: "DMC counter", 0x13: "sweep up", 0x14: "sweep down", 0x15: "envelope mode", 0x16: "length counter",
   0x17: "frame counter mode", 0x18: "PCM mode", 0x19: "triangle linear counter", 0x20: "DPCM frequency" };
@@ -103,6 +105,24 @@ const FX_NAMES = {
   0x19: "attack", 0x20: "noise mode", 0xe1: "note slide up", 0xe2: "note slide down",
   0xe5: "fine tune", 0xe0: "arpeggio speed",
 };
+
+/**
+ * An arpeggio macro as the readers hand it on: `fixed[k]` marks a step that
+ * is a note of its own (C-0 = 0, as a row's), not a step from the played
+ * note. Furnace's (engine.cpp calcArp): bit 30 set on a positive value, or
+ * clear on a negative one. A whole-macro fixed mode (DefleMask, .fur before
+ * 112) is every step's; without a loop it ends on a relative 0, back on the
+ * played note (Furnace's loaders append that step).
+ */
+export function readArp({ values, loop }, allFixed = false) {
+  if (allFixed) {
+    const v = loop == null ? [...values, 0] : values;
+    return { values: v, loop, fixed: v.map((_, k) => k < values.length) };
+  }
+  const fixed = values.map((v) => (v < 0 ? !(v & 0x40000000) : !!(v & 0x40000000)));
+  if (!fixed.some(Boolean)) return { values, loop, fixed: null };
+  return { values: values.map((v, k) => (!fixed[k] ? v : v < 0 ? v | 0x40000000 : v & ~0x40000000)), loop, fixed };
+}
 
 /** zlib → bytes, through the platform's DecompressionStream. */
 export async function inflate(bytes) {
@@ -306,15 +326,20 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // volume macro is a linear level (the triangle's on / off) and whose duty
   // macro a pulse's `:duty`; a noise's arp moves its note through Furnace's
   // table where the layout is not proper (`nz` its note there).
-  const env = (i, nz = null, onWave = false, fc = null, col = null) => {
-    if (!t.instruments[i]?.arp?.values.some((x) => x !== 0)) nz = null;
+  // `note`: the row's note, for an arp with fixed steps (each step's :semi
+  // is its note less this one); `pceNoise`: a PC Engine noise note.
+  const env = (i, nz = null, onWave = false, fc = null, col = null, note = null, pceNoise = false) => {
+    const am = t.instruments[i]?.arp;
+    const moves = !!am?.fixed || !!am?.values.some((x) => x !== 0);
+    if (!moves) nz = null;
+    if (!am?.fixed) note = null;
     // The column a macro's steps add to (no newVolumeScaling): its own def.
     if (!fc || fc === "tri" || t.newVolumeScaling !== false || !t.instruments[i]?.vol?.values.length) col = null;
     const wm = t.instruments[i]?.wave;
     const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map(waveDef) : null;
     if (waveNames?.includes(null)) waveMacroSteps++;
     const waves = waveNames?.every((n) => n) ? waveNames : null;
-    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}`;
+    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${note == null ? "" : `:n${note}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}`;
     if (!defs.has(key)) {
       const ins = t.instruments[i];
       const parts = [];
@@ -346,13 +371,19 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       const step = (x) => (fc === "noise"
         ? (t.properNoiseLayout ? ((nz + x) & 15) - (nz & 15) : fcNoiseRate(nz, false) - fcNoiseRate(nz + x, false))
         : rate(nz + x) - rate(nz));
-      if (ins.arp?.values.length && ins.arp.values.some((x) => x !== 0))
-        parts.push(`:semi ${arr(ins.arp, (x) => (nz == null ? x : step(x)))}`);
+      // A fixed step: the chip's place for that note against the played
+      // note's — a noise's rate (its layout as the note's), else semitones.
+      const fixedSemi = (f) => (fc === "noise"
+        ? (t.properNoiseLayout ? (f & 15) - (note & 15) : fcNoiseRate(note, false) - fcNoiseRate(f, false))
+        : pceNoise ? (t.properNoiseLayout ? (f & 31) - (note & 31) : rate(f) - rate(note))
+        : f - note);
+      const semi = (x, k) => (note != null && ins.arp.fixed[k] ? fixedSemi(x) : nz == null ? x : step(x));
+      if (moves && ins.arp.values.some((x, k) => semi(x, k) !== 0))
+        parts.push(`:semi ${arr(ins.arp, semi)}`);
       if (fc === "pulse" && ins.duty?.values.length)
         parts.push(`:duty ${arr(ins.duty, (x) => FC_DUTIES[x & 3])}`);
       if (waves) parts.push(`:wave ${arr(wm, (_, k) => waves[k])}`);
-      if (ins.arpFixed && nz == null) warnings.push(`instrument "${ins.name}": a fixed-pitch arpeggio macro is not imported`);
-      const name = uniq(`env-${slug(ins.name) || i}${nz == null ? "" : `-nz${nz}`}${fc && fc !== "pulse" ? `-${fc}` : ""}${col == null ? "" : `-v${col}`}`);
+      const name = uniq(`env-${slug(ins.name) || i}${note == null ? (nz == null ? "" : `-nz${nz}`) : `-${FIX_NAMES[((note % 12) + 12) % 12]}${Math.floor(note / 12)}`}${fc && fc !== "pulse" ? `-${fc}` : ""}${col == null ? "" : `-v${col}`}`);
       defs.set(key, { name, text: `(def ${name} (macro none)${parts.length ? ` (macro ${parts.join(" ")})` : ""})` });
     }
     return defs.get(key).name;
@@ -591,7 +622,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     let duty = 0;
     let arp = 0;
     let usedMacro = false;
-    const voiceTokens = (nz = null, onWave = false) => {
+    const voiceTokens = (nz = null, onWave = false, note = null) => {
       const it = t.instruments[ins];
       if (!it) {
         if (onFm) { standIns.add(standIn); return usedMacro ? [standIn, "(macro none)"] : [standIn]; }
@@ -604,7 +635,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return usedMacro ? ["(macro none)"] : [];
       }
       usedMacro = true;
-      const e = env(ins, nz, onWave, fcCh, vol < 0 ? 15 : vol);
+      const e = env(ins, nz, onWave, fcCh, vol < 0 ? 15 : vol, note, toNoise);
       if (onFm) { standIns.add(standIn); return [standIn, e]; }
       return [e];
     };
@@ -725,9 +756,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (!fmVol && vol === 0 && !triOn) { sounding = null; continue; }
           const waveName = pceVol && !toNoise && wave >= 0 ? waveDef(wave) : null;
           const st = {
-            voice: waveName ? [waveName, ...voiceTokens(null, true)]
+            voice: waveName ? [waveName, ...voiceTokens(null, true, row.note)]
               : voiceTokens(toNoise && !t.properNoiseLayout ? ((row.note % 12) + 12) % 12
-                : fcCh === "noise" ? (t.properNoiseLayout ? row.note & 15 : Math.max(0, Math.min(252, row.note))) : null),
+                : fcCh === "noise" ? (t.properNoiseLayout ? row.note & 15 : Math.max(0, Math.min(252, row.note))) : null, false, row.note),
             pan: pan ? `:pan ${pan}` : null,
             arp: usedArp ? arpToken() : null,
             duty: noteDuty,

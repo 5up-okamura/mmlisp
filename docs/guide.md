@@ -1702,7 +1702,9 @@ order (`(x 2 …)` for a run); a note held into the next pattern starts that
 phrase with `~`. Untick **One def per pattern** for one long body instead.
 
 - FM instruments become `def-fm`s; a volume or arpeggio macro becomes a
-  `(macro …)` def. The volume column, pan (`08xy`), arpeggio (`00xy`), note
+  `(macro …)` def. A fixed-pitch arpeggio (a drum's pitch sweep) becomes a
+  `:semi` from the note played, so it gets one def for each note it plays.
+  The volume column, pan (`08xy`), arpeggio (`00xy`), note
   cut (`ECxx`) and delay (`EDxx`) come along.
 - The pitch effects come along as `:pitch` macros: a vibrato (`04xy`) is a
   shared `(def vib-xy (macro :pitch (sin …)))`, a slide (`01xx`/`02xx`,

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 import { parseDmf } from "../../live/src/import-dmf.js";
-import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from "../../live/src/import-tracker.js";
+import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, readArp } from "../../live/src/import-tracker.js";
 
 // A DefleMask 0x17 module for the PC Engine (system 0x05): one order of four
 // rows. CH1 plays C-4 with instrument 0 (no wave macro) and 1000 (wave 0),
@@ -85,6 +85,8 @@ assert.deepEqual(bad(md.source), [], "the md score compiles clean");
 // triangle C-3, then a note-off; the noise
 // C-2 and D-2 with "hat", whose duty macro's 1 is the short (periodic)
 // mode, DefleMask's table taking the notes to rates 15 and 13 — c2, d2.
+// A third instrument, "kick", is a fixed arpeggio (C-3, F#-2), no note
+// plays it here.
 function nesDmf() {
   const b = [];
   const u8 = (v) => b.push(v & 0xff);
@@ -98,9 +100,10 @@ function nesDmf() {
   u8(4); u8(16); u8(0); u8(6); u8(6); u8(1); u8(0); for (const ch of "60\0") u8(ch.charCodeAt(0));
   u8(4); u8(1); // pattern length, orders
   for (let ch = 0; ch < 5; ch++) u8(0);
-  u8(2); // instruments
+  u8(3); // instruments
   pstr("lead"); u8(0); macro([15, 10, 5]); macro([]); u8(0); macro([2]); macro([]);
   pstr("hat"); u8(0); macro([15, 8]); macro([]); u8(0); macro([1]); macro([]);
+  pstr("kick"); u8(0); macro([]); macro([36, 30]); u8(1); macro([]); macro([]);
   u8(0); // wavetables
   const empty = { note: 0, oct: 0, vol: -1, fx: [], ins: -1 };
   const rows = Array.from({ length: 5 }, () => Array.from({ length: 4 }, () => ({ ...empty })));
@@ -157,7 +160,7 @@ function nesDmf() {
   t.instruments.push({ name: "dmc", kind: "std", type: 34, sampleMap: { init: 0, noteMap: null },
     vol: { values: [], loop: null }, arp: { values: [], loop: null }, wave: { values: [], loop: null }, duty: { values: [], loop: null } });
   const empty = { note: null, vol: -1, ins: -1, fx: [] };
-  t.channels[4].patterns.set(0, [{ ...empty, note: 48, ins: 2 }, { ...empty, note: 63 }, { ...empty, note: "off" }, empty]);
+  t.channels[4].patterns.set(0, [{ ...empty, note: 48, ins: 3 }, { ...empty, note: 63 }, { ...empty, note: "off" }, empty]);
   const b = analyzeTracker(t);
   const fc = trackerToMmlisp(t, { ...defaultTrackerOptions(b, "fc"), fileName: "t.fur" }, b);
   assert.match(fc.source, /\(def-pcm dpcm-kick :file "t-dpcm\.wav" :rate 4182 :offset 0 :frames 64\)/, "a def-pcm at the DMC's rate 0");
@@ -168,4 +171,26 @@ function nesDmf() {
   assert.deepEqual(bad(fc.source), [], "pcm1 beside sqr1 compiles clean (the DMC is its own channel)");
 }
 
-console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md");
+// Fixed arpeggios (Furnace's calcArp): a DMF's fixed mode is every step's,
+// ending on a relative 0 without a loop; a .fur's own steps by bit 30 (on
+// a positive value, off on a negative one). On the triangle at C-2 the
+// kick's C-3 and F#-2 are a :semi of 12 and 6, then back on the note; at
+// G-2 a :semi of 5 and −1 — an env for each note it plays.
+{
+  const t = await parseDmf(nesDmf());
+  assert.deepEqual(t.instruments[2].arp, { values: [36, 30, 0], loop: null, fixed: [true, true, false] }, "a DMF's fixed arp");
+  assert.deepEqual(readArp({ values: [0x40000000 | 24, 7, -3 & ~0x40000000, -2], loop: 1 }),
+    { values: [24, 7, -3, -2], loop: 1, fixed: [true, false, true, false] }, "a .fur's fixed steps by bit 30");
+  assert.deepEqual(readArp({ values: [3, -1], loop: null }).fixed, null, "no fixed step, no flags");
+  const empty = { note: null, vol: -1, ins: -1, fx: [] };
+  t.channels[2].patterns.set(0, [{ ...empty, note: 24, vol: 15, ins: 2 }, { ...empty, note: 31 }, { ...empty, note: 24 }, empty]);
+  const a = analyzeTracker(t);
+  const { source, warnings } = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "fc"), fileName: "t.dmf" }, a);
+  assert.match(source, /\(def env-kick-c2-tri \(macro none\) \(macro :semi \[12 6 0\]\)\)/, "C-2: the fixed notes as steps from it");
+  assert.match(source, /\(def env-kick-g2-tri \(macro none\) \(macro :semi \[5 -1 0\]\)\)/, "G-2: its own env");
+  assert.equal(source.match(/\(def env-kick-c2-tri /g).length, 1, "one env a note, shared");
+  assert.deepEqual(warnings, [], "nothing left out");
+  assert.deepEqual(bad(source), [], "the fixed arps compile clean");
+}
+
+console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios");

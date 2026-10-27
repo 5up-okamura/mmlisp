@@ -7,7 +7,7 @@
 // once per order entry), and samples, which are not read.
 // ---------------------------------------------------------------------------
 
-import { inflate } from "./import-tracker.js";
+import { inflate, readArp } from "./import-tracker.js";
 
 // The systems, by DMF id: each channel's kind (import-tracker.js
 // CHANNEL_KINDS) and the name the dialog shows.
@@ -117,7 +117,7 @@ export async function parseDmf(bytes) {
       const wave = macro(); // the wavetable each tick: an index into `waves`
       if (sysId === 0x07 || sysId === 0x47) p += 20; // SID settings
       if (gb) p += 4; // GB envelope
-      instruments.push({ name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed: !!arpFixed, wave, duty });
+      instruments.push({ name, kind: "std", vol, arp: readArp(arp, !!arpFixed), wave, duty });
     }
   }
 

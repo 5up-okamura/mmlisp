@@ -218,8 +218,9 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   last step held after its note. Open: Furnace's 22 NES demos
   (/Applications/Furnace/demos/nes) import and compile clean (2026-10-27),
   none A/B'd against Furnace's own VGM yet; no real .dmf run (the check
-  builds a DMF); their commonest warning, 79 instruments, is a fixed-pitch
-  arpeggio macro (drums), not imported on nes or pce; module DPCM read from .fur only (SMP2/SMPL 8/16-bit and
+  builds a DMF); a fixed-pitch arpeggio (drums) is a :semi from the
+  played note, an env a note (2026-10-28), not heard against Furnace yet;
+  module DPCM read from .fur only (SMP2/SMPL 8/16-bit and
   1-bit DPCM; DMF samples, the DAC start `dpcmDelta`, a loop's part and a
   sample instrument's pitch not cross-checked against Furnace by ear); the duty's
   12xx on a DMF read as Furnace's (DefleMask's own NES 12xx not
