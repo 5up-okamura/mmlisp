@@ -1446,6 +1446,9 @@ function assignEnvelopes(notes) {
   for (const n of moving) n.shape = shapeOf(n.env, n.canRelease);
   const fits = (n, c) => {
     if (n.shape.rel) return !!c.rel && same(n.shape.head, c.head) && n.shape.sus === c.sus && same(n.shape.rel, c.rel);
+    // A note that stops dead (its level to 0, then a rest) takes no shape
+    // with a release: that would sound on after it.
+    if (c.rel && n.silentAfter) return false;
     return n.env.every((v, f) => v === (f < c.head.length ? c.head[f] : c.sus));
   };
   // A fit plays the shape's first ENV_KEY frames exactly, so a note that
@@ -1986,9 +1989,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const envWarn = ssgState(tracks);
   if (envWarn) warnings.push(envWarn);
 
-  // A note slurred on into the next keeps its whole envelope.
+  // A note slurred on into the next keeps its whole envelope; one a rest
+  // follows is heard to its end (`silentAfter`).
   for (const tr of tracks)
-    tr.notes.forEach((n, i) => { if (tr.notes[i + 1]?.tieIn) n.canRelease = false; });
+    tr.notes.forEach((n, i) => {
+      if (tr.notes[i + 1]?.tieIn) n.canRelease = false;
+      n.silentAfter = !tr.notes[i + 1] || tr.notes[i + 1].tick > n.tick + n.len;
+    });
   const envs = assignEnvelopes(tracks.flatMap((tr) => tr.notes));
   const bends = assignBends(tracks.flatMap((tr) => tr.notes));
   // A released note is keyed off where its release starts.
@@ -2460,6 +2467,20 @@ export function decodeOki(rom, start, length) {
   return out;
 }
 
+// The X68000's ADPCM without its DC: a 20 Hz high-pass, as an output's
+// coupling would take it out (the cutoff is ours, not the machine's
+// measured one). A song's driver keeps the chip playing from sample to
+// sample, so its signal runs on and drifts (an encoder's bias, to the
+// 12-bit rail); a sample decoded from the state a play starts in carries
+// that drift as DC, a step where the next sample cuts in.
+function dcBlock(x, rate) {
+  const r = Math.exp((-2 * Math.PI * 20) / rate);
+  const out = new Float32Array(x.length);
+  let px = 0, py = 0;
+  for (let i = 0; i < x.length; i++) { py = x[i] - px + r * py; px = x[i]; out[i] = py; }
+  return out;
+}
+
 const PCM_SOURCES = { SegaPCM: "sega", "ADPCM-A": "pcma", "ADPCM-B": "pcmb", OKIM6258: "oki", DPCM: "dpcm" };
 // A ROM byte's frames: SegaPCM's 8 bits one, the ADPCMs' two nibbles two, the DMC's eight bits eight.
 const framesPerByte = (src) => (src === "SegaPCM" ? 1 : src === "DPCM" ? 8 : 2);
@@ -2530,7 +2551,7 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
     let data = h.src === "SegaPCM" ? Float32Array.from(rom.subarray(h.start, h.end), (v) => (v - 128) / 128)
       : h.src === "DPCM" ? decodeDpcm(rom, h.start, h.end - h.start, h.dac0 ?? 64)
       : h.src === "ADPCM-A" ? decodeAdpcmA(rom, h.start, h.end - h.start)
-      : h.src === "OKIM6258" ? decodeOki(rom, h.start, h.end - h.start) : decodeAdpcmB(rom, h.start, h.end - h.start);
+      : h.src === "OKIM6258" ? dcBlock(decodeOki(rom, h.start, h.end - h.start), h.rate) : decodeAdpcmB(rom, h.start, h.end - h.start);
     let frames = data.length;
     if (h.loopStart == null) while (frames > 1 && Math.abs(data[frames - 1]) < 1 / 256) frames--;
     data = data.subarray(0, frames);
