@@ -2057,7 +2057,8 @@ function flattenPriorityLayers(head, layers, diagnostics) {
 function shareChannelLayers(heads, layers, diagnostics) {
   layers.sort((a, b) => a.prio - b.prio || a.rank - b.rank);
   const drop = new Set();
-  alignLayerLoops(heads.join(" and "), heads[0], layers, drop, diagnostics);
+  // Each track keeps its own loop: they stay apart, and every one must jump.
+  alignLayerLoops(heads.join(" and "), heads[0], layers, drop, diagnostics, true);
   resolveLayerNotes(layers, drop);
   for (const { trackData } of layers) trackData.events = trackData.events.filter((ev) => !drop.has(ev));
 }
@@ -2065,9 +2066,9 @@ function shareChannelLayers(heads, layers, diagnostics) {
 // The layers' loops, made one (flattenPriorityLayers, shareChannelLayers): a
 // counted loop is written out, and an endless one must loop over the same
 // ticks on every layer that has one; the highest layer's MARKER and JUMP are
-// kept (returned), the others' and what any layer has past the end go into
-// `drop`.
-function alignLayerLoops(what, head, layers, drop, diagnostics) {
+// kept (returned), the others' (unless `eachOwn`: tracks that stay apart
+// keep theirs) and what any layer has past the end go into `drop`.
+function alignLayerLoops(what, head, layers, drop, diagnostics, eachOwn = false) {
   // A counted loop compiles once, so after one a layer runs on pass-1 ticks
   // while its neighbours run on real ones: each layer's counted loops are
   // written out first (a `(go label N)` becoming the loop pair it stands for).
@@ -2102,11 +2103,12 @@ function alignLayerLoops(what, head, layers, drop, diagnostics) {
     for (const x of looping.slice(1)) if (x) drop.add(x.jump).add(x.marker); // one E_ is enough
   } else if (looping.length) {
     loop = looping[0];
-    for (const x of looping.slice(1)) drop.add(x.jump).add(x.marker);
+    if (!eachOwn) for (const x of looping.slice(1)) drop.add(x.jump).add(x.marker);
+    const jumps = new Set(looping.map((x) => x.jump));
     let lost = false;
     for (const { trackData } of layers) {
       for (const e of trackData.events) {
-        if (e === loop.jump || drop.has(e)) continue;
+        if (jumps.has(e) || drop.has(e)) continue;
         const note = PRIO_NOTE_CMDS.has(e.cmd);
         if (e.tick > loop.to || (note && e.tick === loop.to)) { drop.add(e); lost ||= note; }
       }

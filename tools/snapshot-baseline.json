@@ -1907,9 +1907,9 @@
  },
  "tools/tests/pce/share.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "a9be5729492e8f3a",
-  "regs": "baa98ac321746e42",
-  "vgm": "b3a8629c20702b7a"
+  "ir": "db7929726ae44806",
+  "regs": "e5313606b28140f2",
+  "vgm": "d8a6f466b2c54304"
  },
  "tools/tests/pce/wave.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

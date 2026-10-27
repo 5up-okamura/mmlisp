@@ -1505,6 +1505,8 @@ export class IRPlayer {
       if (tIdx < 0 || evTime > horizon) break;
       const track = this._tracks[tIdx];
       const ev = track.events[track.flatIndex];
+      // When each pass of a loop starts (captureRegisterLog's loop region).
+      if (track.hasLoop && track.flatIndex === track.loopStartIndex) (track.passStarts ??= [])[track.loopCount] = evTime;
       // After a swap commit, _dispatchFloor suppresses the incoming IR's
       // loop catch-up so nothing is written before the boundary; advance
       // past those events without dispatching.
@@ -1653,6 +1655,7 @@ export class IRPlayer {
         t.startAudioTime = BASE;
         t.loopCount = 0;
         t.flatIndex = 0;
+        t.passStarts = null;
         this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
       }
 
@@ -1678,6 +1681,7 @@ export class IRPlayer {
       const oneShot = this._tracks.filter((t) => !t.hasLoop);
       const endTickOf = (t) => t.events.reduce((m, e) => Math.max(m, e.tick + (e.args?.length ?? 0)), 0);
       let oneShotEndSec = null; // known once every one-shot track has run out
+      let refPeriod = null; // measuring the loop's length (below)
 
       // Drive a fake clock forward. One-shot pieces stop when fully scheduled;
       // looping pieces never report "done", so we stop once the clock has
@@ -1702,25 +1706,30 @@ export class IRPlayer {
             0,
           );
         }
-        if (
-          loopStartSec === null &&
-          refTrack &&
-          refTrack.flatIndex > refTrack.loopStartIndex &&
-          oneShotEndSec !== null
-        ) {
-          const secsPerTick = this._secsPerTick;
-          loopStartSec = Math.max(
-            refTrack.audioTimeAtTick0 +
-              refTrack.loopStartTick * secsPerTick -
-              BASE,
-            oneShotEndSec,
-          );
-          endSec = loopStartSec + loopPeriodTicks * secsPerTick;
+        // refTrack's passes start where the scheduler dispatched them
+        // (passStarts): a tempo change re-anchors a track, so its tick 0
+        // and the current tempo no longer give an earlier tick's time.
+        const passes = refTrack?.passStarts;
+        if (loopStartSec === null && passes?.[0] != null && oneShotEndSec !== null) {
+          loopStartSec = Math.max(passes[0] - BASE, oneShotEndSec);
+          // The period's length is measured, not read off one tempo: the
+          // tempo may move inside the loop. It is the time refTrack takes
+          // for the passes making up the LCM — the ones captured, which the
+          // VGM repeats. An LCM past maxSec keeps the one-tempo reading.
+          refPeriod = loopPeriodTicks / refTrack.loopDuration;
+          endSec = loopStartSec + loopPeriodTicks * this._secsPerTick;
+        }
+        if (refPeriod && passes[refPeriod] != null) {
+          // Where it is the one-tempo reading but for rounding, that stands:
+          // a write on the boundary is the next pass's.
+          const measured = loopStartSec + passes[refPeriod] - passes[0];
+          if (Math.abs(measured - endSec) > 1e-9) endSec = measured;
+          refPeriod = null;
         }
 
         if (this._loop) {
           // Keep going until we have captured one full loop body past its end.
-          if (loopStartSec !== null && now - BASE >= endSec) break;
+          if (loopStartSec !== null && !refPeriod && now - BASE >= endSec) break;
         } else if (done) {
           break;
         }
