@@ -32,9 +32,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { targetProfile } from "../../live/src/targets.js";
-import { bakeAdpcmB } from "../../live/src/chips/adpcm-b.js";
-import { bakePcm8 } from "../../live/src/chips/msm6258.js";
-import { loadSamplesForIr } from "../../drv/tools/wav.mjs";
+import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 
@@ -74,10 +72,7 @@ function outputs({ file, frameHz, seFile }) {
     if (!target.encodes || diagnostics.some((d) => d.severity === "error")) return out;
     // The chip's own sample RAM (the YM2608's ADPCM-B) or the samples as
     // frames (PCM8's, the PC Engine's DDA), baked as Live does.
-    const withFiles = (ir.metadata?.samples ?? []).some((s) => s.file);
-    const blobs = () => loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: ir.metadata.samples.filter((s) => s.file) } });
-    const adpcm = target.hasPart("adpcm-b") && withFiles ? bakeAdpcmB(ir, blobs(), target) : null;
-    const frames = target.parts.some((p) => p.frames) && withFiles ? bakePcm8(ir, blobs()) : null;
+    const { adpcm, frames } = bakedChipSamples(ir, target);
     const player = new IRPlayer(() => {});
     player.loadJSON(ir);
     player.setAdpcmBank(adpcm);

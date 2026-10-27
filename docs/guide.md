@@ -1750,8 +1750,7 @@ them: a key-on starts a note, a key-off ends it.
   the driver does not start the envelope over for runs it on, slurred. On
   md the envelope has no sound — the log counts the notes on it, which play
   at their level — and a buzzer plays as a square at its pitch. The MSX's
-  FM-PAC (YM2413) channels are not imported onto it yet, nor the YM2608's
-  ADPCM-B onto the PC-8801's.
+  FM-PAC (YM2413) channels are not imported onto it yet.
 - The **YM2608's rhythm** is a row per ROM sound it keys (`YM2608 rhythm
   BD` … `RIM`), its hits counted with the onsets the tempo is read from. On
   pc88 each comes back on its own `rhythm1`–`rhythm6` track under its kit
@@ -1802,9 +1801,11 @@ them: a key-on starts a note, a key-off ends it.
   `8n` writes and DAC stream control both read; a DAC written byte by byte,
   without a data bank, does not — nor can a driver's own mix of several
   samples be split again. FM6 is the DAC then, so its track is dropped.
-- An arcade or X68000 chip's PCM comes in too: **SegaPCM** (System 16, X,
-  OutRun), the **YM2610's ADPCM-A and ADPCM-B** (Neo Geo, Taito) and the
-  **X68000's OKIM6258**. Each of its channels is a row (`pcm1–3` or drop);
+- An arcade, X68000 or PC-8801 chip's PCM comes in too: **SegaPCM** (System
+  16, X, OutRun), the **YM2610's ADPCM-A and ADPCM-B** (Neo Geo, Taito), the
+  **X68000's OKIM6258** and the **YM2608's ADPCM-B** (its RAM image, data
+  block 0x81, or the bytes a driver loads through the chip). Each of its
+  channels is a row (`pcm1–3` or drop);
   the sample data the file carries is decoded into one wav,
   `<song>-pcm.wav`, sliced by `(def-pcm sega-NN …)`, `pcma-NN`, `pcmb-NN`
   or `oki-NN` defs — one gain for the song brings its loudest sample to full
@@ -1818,7 +1819,12 @@ them: a key-on starts a note, a key-off ends it.
   never an ADPCM-B note, the one melodic part — and the log counts the hits
   cut. A sample too long to bake into one 32 KB bank at its lowest pitch is
   cut to fit; pan is not imported (the DAC is one channel). With PCM in the
-  song, FM is offered fm1–fm5.
+  song, FM is offered fm1–fm5. On pc88 the YM2608's ADPCM-B is `pcm1`
+  again: a note per key-on at its Δ-N's pitch, its level the register's as
+  `:vol` (at `:vel 15`, as a mucom88 part K) and its pan the hit's — what the
+  driver writes just after the key-on (level, pan, Δ-N) counts as the
+  hit's; a level moved while it sounds is not followed. The YM2608's rhythm
+  on md then takes the next voice.
 - The OKI MSM6295, QSound and the other PCM chips are not imported — the log
   names each VGM command it skipped — and neither is a second chip, which the
   log reports. Tempo changes within the song are not imported either: one grid

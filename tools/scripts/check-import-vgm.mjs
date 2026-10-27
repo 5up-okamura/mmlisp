@@ -10,13 +10,23 @@ import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
-import { readImportSources } from "../../drv/tools/mmb-build.mjs";
+import { readImportSources, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
+import { bakedChipSamples } from "../../drv/tools/wav.mjs";
+import { targetProfile } from "../../live/src/targets.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 async function vgmOf(file) {
   const { ir } = compileMMLisp(fs.readFileSync(path.join(ROOT, file), "utf8"), { fileName: file });
   const v = renderVgm(new IRPlayer(() => {}).loadJSON(ir), {});
+  return parseVgm(new Uint8Array(v.bytes ?? v));
+}
+// A pc88 score with its ADPCM-B samples baked into the RAM image, as
+// File > Export > VGM writes it (check-snapshot.mjs).
+async function vgmOfAdpcm(file) {
+  const { ir } = compileScoreFile(path.join(ROOT, file), {});
+  const { adpcm } = bakedChipSamples(ir, targetProfile("pc88"));
+  const v = renderVgm(new IRPlayer(() => {}).loadJSON(ir), {}, { adpcm });
   return parseVgm(new Uint8Array(v.bytes ?? v));
 }
 function imported(parsed, target, structure = true) {
@@ -171,6 +181,24 @@ const writesOf = (source, addr) => {
     assert.equal(o.dest["YM2608 rhythm SD"], "drop", `${t}: the rhythm has no channel`);
     imported(parsed, t);
   }
+}
+
+// The YM2608's ADPCM-B: its RAM image (data block 0x81) decoded into one
+// wav, a note per key-on at its Δ-N's pitch. On pc88 it is pcm1's again,
+// its level the register's as :vol, its pan the hit's, a repeat a loop.
+{
+  const parsed = await vgmOfAdpcm("tools/tests/pc88/adpcm.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.equal(a.target, "pc88");
+  assert.equal(defaultVgmOptions(a, "pc88").dest["ADPCM-B"], "pcm");
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "pc88", structure);
+    assert.match(source, /\(def-pcm pcmb-01 :file "t-pcm\.wav"/, "pc88: the RAM's sample");
+    const pcm1 = source.slice(source.indexOf("(pcm1"));
+    for (const tok of [":pan left", ":pan right", ":mode loop", /:vol \d+/, /\be\b/, /\bg\b/])
+      assert.match(pcm1, typeof tok === "string" ? new RegExp(tok) : tok, `pc88: ${tok} on pcm1`);
+  }
+  imported(parsed, "md");
 }
 
 console.log("VGM import checks passed");

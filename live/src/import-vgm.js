@@ -9,7 +9,8 @@
 //   YM2612, YM2203, YM2608, YM2610   voices and notes (FM), SSG → PSG;
 //                                    the YM2608's rhythm as the ROM's
 //                                    tracks (pc88) or the RX5 kit's
-//                                    (rhythmTracks), its ADPCM-B reported
+//                                    (rhythmTracks), its ADPCM-B a PCM
+//                                    chip's (pc88's pcm1, or pcm1–3)
 //   YM2151 (OPM)                     voices and notes — DT2 kept when the
 //                                    score is the X68000's (:target x68k),
 //                                    dropped on the Mega Drive; channel 8's
@@ -726,7 +727,15 @@ export async function parseVgm(bytes) {
     rom.set(data, start);
   };
   const rhythm = rhythmChip();
-  const pcm = pcmChips({ segaClock: clk(0x38) || 4000000, segaIntf: hdr(0x3c), opnbClock: clk(0x4c) || 8000000 });
+  const pcm = pcmChips({ segaClock: clk(0x38) || 4000000, segaIntf: hdr(0x3c), opnbClock: clk(0x4c) || 8000000,
+    opnaClock: clk(0x48) || 7987200,
+    // The YM2608's RAM, as a driver loads it a byte at a time.
+    ramWrite: (addr, d) => {
+      if (addr >= OPNA_RAM) return;
+      // (A RAM image the file carries may be shorter: the whole RAM then.)
+      if ((roms.get(ADPCMB_RAM)?.length ?? 0) < OPNA_RAM) romWrite(ADPCMB_RAM, OPNA_RAM, 0, new Uint8Array(0));
+      roms.get(ADPCMB_RAM)[addr] = d;
+    } });
   const typed = new Map(); // stream data blocks of a type other than 0: type → {parts, len, blocks}
   let okiUsed = false;
   const LEN = { 0x30: 2, 0x3f: 2, 0x4f: 2, 0x50: 2, 0x94: 2 };
@@ -762,7 +771,7 @@ export async function parseVgm(bytes) {
         tb.blocks.push([tb.len, size]);
         tb.parts.push(u8.subarray(p + 7, p + 7 + size));
         tb.len += size;
-      } else if (type === 0x80 || type === 0x82 || type === 0x83) {
+      } else if (type === 0x80 || type === 0x81 || type === 0x82 || type === 0x83) {
         romWrite(type, u32(p + 7), u32(p + 11), u8.subarray(p + 15, p + 7 + size));
       }
       p += 7 + size; continue;
@@ -841,7 +850,7 @@ export async function parseVgm(bytes) {
       const port = c - 0x56, a = u8[p + 1];
       // The YM2608's rhythm (port 0 $10–$1D) and ADPCM-B (port 1 $00–$10).
       if (port === 0 && a >= 0x10 && a <= 0x1d) { chip("opna"); rhythm.write(a, u8[p + 2], t); }
-      else if (port === 1 && a <= 0x10) { chip("opna"); skip("YM2608 ADPCM-B"); }
+      else if (port === 1 && a <= 0x10) { chip("opna"); pcm.opna(a, u8[p + 2], t); }
       else chip("opna").write(port, a, u8[p + 2], t);
       p += 3; continue;
     }
@@ -921,8 +930,10 @@ export async function parseVgm(bytes) {
     system = s[4] || s[5] || null;
     author = s[6] || s[7] || null;
   }
+  const pcmHits = pcm.finish(end, roms);
+  for (const [src, n] of pcm.lost) skipped.set(`${src} (the file carries no sample data for it)`, n);
   return { chips, skipped, clockNotes, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac,
-    dacBank: bank, dacHits: hits, pcmRoms: roms, pcmHits: pcm.finish(end, roms), rhythmHits: rhythm.hits };
+    dacBank: bank, dacHits: hits, pcmRoms: roms, pcmHits, rhythmHits: rhythm.hits };
 }
 
 // ── Notes ─────────────────────────────────────────────────────────────────
@@ -1246,9 +1257,10 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   // every channel.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
   const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649)/], ["pce", /^HuC6280/]]
-    .filter(([, re]) => tones.some((c) => re.test(c.key)));
+    .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
   const targets = [...own.map(([t]) => t), "md"];
-  const target = own.find(([, re]) => tones.length && tones.every((c) => re.test(c.key)))?.[0] ?? "md";
+  // (A file of PCM alone — a YM2608's ADPCM-B — is its chip's machine's.)
+  const target = own.find(([, re]) => (tones.length ? tones.every((c) => re.test(c.key)) : parsed.chips.some((n) => re.test(n))))?.[0] ?? "md";
   return { channels, grid, frameRate, followPitch, fileLoop, pcmPoly, targets, target };
 }
 
@@ -1298,8 +1310,9 @@ function ssgClockOf(target) {
 export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   const dests = vgmDests(targetName);
   // With PCM in the song, fm6 is the DAC: FM is offered fm1–fm5.
-  // (The rhythm on the kit is PCM too.)
-  const pcmToo = dests.pcm.length > 0 && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm" ||
+  // (The rhythm on the kit is PCM too.) Only the Mega Drive's: elsewhere
+  // the PCM has a part of its own.
+  const pcmToo = targetProfile(targetName).hasPart("dac") && dests.pcm.length > 0 && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm" ||
     (c.kind === "rhythm" && !dests.rhythm.length && dests.kit));
   const fm = dests.fm.filter((d) => !(pcmToo && d === "fm6"));
   const sqr = [...dests.psg];
@@ -1668,6 +1681,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // slices it — so with DAC on, FM6 is not there to play.
   const dacDest = dest[DAC_KEY] ?? "drop";
   const dacOut = dests.pcm.length > 0 && dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName) : null;
+  // The rhythm asked onto the kit: a voice more for the engine.
+  const kitAsked = !!dests.kit && a.channels.some((c) => c.kind === "rhythm" && dest[c.key] === dests.kit);
   // SegaPCM / ADPCM: the channels kept, on as many voices as asked.
   const chipKeys = a.channels.filter((c) => c.kind === "chip-pcm" && (dest[c.key] ?? "drop") !== "drop").map((c) => c.key);
   // The Mega Drive's voices are its engine's 1-3; the X68000's PCM8 has eight.
@@ -1675,7 +1690,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const maxVoices = dacMix ? 3 : dests.pcm.length;
   const pcmVoices = Math.max(1, Math.min(maxVoices, dacMix ? options.pcmVoices ?? Math.min(3, a.pcmPoly ?? 1) : a.pcmPoly ?? 1));
   const chipOut = dests.pcm.length > 0 && !dacOut && chipKeys.length
-    ? chipPcmTracks(parsed, chipKeys, pcmVoices, tickOf, endTick, options.fileName, { bankFit: dacMix }) : null;
+    ? chipPcmTracks(parsed, chipKeys, pcmVoices, tickOf, endTick, options.fileName,
+      { bankFit: dacMix, pan: !!target.partOf(dests.pcm[0])?.words?.("PAN"), more: kitAsked ? 1 : 0,
+        // A part whose level is the chip's own register (pc88's ADPCM-B, $0B):
+        // the hit's level as :vol — not a mix's gain (the DAC's, PCM8's).
+        absolute: !!target.partOf(dests.pcm[0])?.level?.steps }) : null;
   if (!dests.pcm.length && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm"))
     warnings.push(`the ${target.system} has no PCM part yet — the PCM is left out`);
   if (dacOut && chipKeys.length) warnings.push("the YM2612 DAC takes the PCM channels — the other chips' PCM is left out");
@@ -1684,6 +1703,10 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // A ROM track takes one sound (a second row on it is dropped, as any
   // channel taken twice); the kit's sounds share its one track as layers,
   // which the DAC's or a PCM chip's tracks would play over.
+  // With the DAC or a chip's PCM on the first voices, the kit takes the next
+  // (as a mucom88 song's part G beside its K), while there is one.
+  const pcmUsed = dacOut ? 1 : chipOut?.voices ?? 0;
+  const kitVoice = dests.kit && pcmUsed < maxVoices ? `pcm${pcmUsed + 1}` : null;
   const rhythmRows = [];
   for (const c of a.channels) {
     const d = c.kind === "rhythm" ? dest[c.key] ?? "drop" : "drop";
@@ -1691,12 +1714,12 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     const onRom = dests.rhythm.includes(d);
     if (!onRom && d !== dests.kit) { warnings.push(`${c.key}: ${d} cannot play it — dropped`); continue; }
     if (onRom && rhythmRows.some((r) => r.d === d)) { warnings.push(`${c.key}: ${d} is already taken — dropped`); continue; }
-    if (!onRom && (dacOut || chipOut)) { warnings.push(`${c.key}: the PCM takes ${d} — the rhythm is left out`); continue; }
-    rhythmRows.push({ k: c.k, d });
+    if (!onRom && !kitVoice) { warnings.push(`${c.key}: the PCM takes every voice — the rhythm is left out`); continue; }
+    rhythmRows.push({ k: c.k, d: onRom ? d : kitVoice });
   }
   const rhythmOut = rhythmRows.length ? rhythmTracks(parsed, rhythmRows, target, tickOf, endTick, g.bpm) : [];
   const kitRhythm = rhythmOut.length > 0 && !dests.rhythm.length;
-  if (dacOut || chipOut || (kitRhythm && dacMix)) {
+  if (dacMix && (dacOut || chipOut || kitRhythm)) {
     const fm6 = tracks.findIndex((tr) => tr.d === "fm6");
     if (fm6 >= 0) { warnings.push(`${tracks[fm6].ch.key}: fm6 is the DAC in a score with PCM — dropped`); tracks.splice(fm6, 1); }
   }
@@ -1725,7 +1748,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const header = [`; Imported from ${options.fileName ?? "a VGM file"} (VGM: ${parsed.chips.join(", ")})`];
   const title = [parsed.title, parsed.game && parsed.title ? `(${parsed.game})` : parsed.game].filter(Boolean).join(" ");
   const score = [target.name !== "md" && `:target ${target.name}`, title && `:title ${qstr(title)}`, parsed.author && `:composer ${qstr(parsed.author)}`,
-    dacOut && ":pcm-voices 1", chipOut && dacMix && `:pcm-voices ${chipOut.voices}`].filter(Boolean);
+    dacMix && (dacOut || chipOut || kitRhythm) && `:pcm-voices ${pcmUsed + (kitRhythm ? 1 : 0)}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   // The rhythm's kit: its samples on md; on pc88 the stand-in for a ROM the
@@ -1869,7 +1892,8 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName) {
 
 // ── PCM chips with a sample ROM of their own ──────────────────────────────
 
-const SEGA_ROM = 0x80, ADPCMA_ROM = 0x82, ADPCMB_ROM = 0x83;
+const SEGA_ROM = 0x80, ADPCMB_RAM = 0x81, ADPCMA_ROM = 0x82, ADPCMB_ROM = 0x83;
+const OPNA_RAM = 0x40000; // the YM2608's ADPCM RAM, 256 KB
 const BLOB_MAX = 32512; // a baked blob's bytes, below a bank's silence page (pcm-multibank.md)
 const dbOf = (v, full) => (v > 0 ? 20 * Math.log10(v / full) : -96);
 
@@ -1881,8 +1905,9 @@ const dbOf = (v, full) => (v > 0 ? 20 * Math.log10(v / full) : -96);
  * stopped (a key-off, or the channel's next hit). Levels and pitch moved
  * during a hit are not followed.
  */
-function pcmChips({ segaClock, segaIntf, opnbClock }) {
+function pcmChips({ segaClock, segaIntf, opnbClock, opnaClock, ramWrite }) {
   const hits = [];
+  const sided = (lr) => lr === 1 || lr === 2; // L/R bits: one side alone is panned
   const open = new Map(); // `${src}/${ch}` → the hit it is playing
   const start = (h) => {
     const k = `${h.src}/${h.ch}`;
@@ -1935,7 +1960,7 @@ function pcmChips({ segaClock, segaIntf, opnbClock }) {
         if (d & 0x80) { stop("ADPCM-A", ch, t); continue; }
         start({ t, src: "ADPCM-A", ch, rom: ADPCMA_ROM, start: ((ar[0x18 + ch] << 8) | ar[0x10 + ch]) << 8,
           end: (((ar[0x28 + ch] << 8) | ar[0x20 + ch]) << 8) + 256, loopStart: null, rate: opnbClock / 432,
-          db: -0.75 * ((63 - (ar[0x01] & 63)) + (31 - (ar[0x08 + ch] & 31))), pan: (ar[0x08 + ch] >> 6) !== 3 });
+          db: -0.75 * ((63 - (ar[0x01] & 63)) + (31 - (ar[0x08 + ch] & 31))), pan: sided(ar[0x08 + ch] >> 6) });
       }
       return;
     }
@@ -1947,18 +1972,62 @@ function pcmChips({ segaClock, segaIntf, opnbClock }) {
     const from = ((br[0x13] << 8) | br[0x12]) << 8;
     start({ t, src: "ADPCM-B", ch: 0, rom: ADPCMB_ROM, start: from, end: (((br[0x15] << 8) | br[0x14]) << 8) + 256,
       loopStart: d & 0x10 ? from : null, rate: (dn / 65536) * (opnbClock / 144), db: dbOf(br[0x1b], 255),
-      pan: (br[0x11] >> 6) !== 3 });
+      pan: sided(br[0x11] >> 6) });
+  };
+
+  // YM2608: ADPCM-B (port 1, $00–$10) — the YM2610's, but at $00 up, its
+  // pan in $01 bits 7-6, and its RAM addressed in 32-byte units (ROM or
+  // 8-bit RAM, $01 bits 0-1) or 4-byte ones (1-bit RAM), the stop address's
+  // unit included (ymfm address_shift). A driver loads the RAM through $08,
+  // from the start address on, in record + external mode ($00 bits 6-5).
+  const nr = new Uint8Array(0x11);
+  let ramAt = null; // the next RAM byte $08 writes; -1 before the first
+  let last = null; // the hit a key-on started, which its setup burst amends
+  // A hit's rate, level and pan as the registers have them; one panned to
+  // neither side is silent.
+  const shiftNow = () => (nr[0x01] & 3 ? 5 : 2);
+  const set = (h) => {
+    const shift = shiftNow();
+    const lr = nr[0x01] >> 6;
+    h.start = ((nr[0x03] << 8) | nr[0x02]) << shift;
+    h.end = (((nr[0x05] << 8) | nr[0x04]) + 1) << shift;
+    h.loopStart = h.repeat ? h.start : null;
+    h.rate = (((nr[0x0a] << 8) | nr[0x09]) / 65536) * (opnaClock / 144);
+    h.db = lr ? dbOf(nr[0x0b], 255) : -96;
+    h.pan = sided(lr);
+    h.side = ["center", "right", "left", "center"][lr];
+  };
+  const opna = (a, d, t) => {
+    if (a > 0x10) return;
+    nr[a] = d;
+    if (a === 0x08) {
+      if (ramAt == null) return;
+      if (ramAt < 0) ramAt = ((nr[0x03] << 8) | nr[0x02]) << shiftNow();
+      ramWrite(ramAt++, d);
+      return;
+    }
+    // A driver may key on first and then set the level, pan and Δ-N: what
+    // it writes within SETUP_T of the key-on is the hit's.
+    if (a !== 0x00) { if (last && t - last.t <= SETUP_T && (a === 0x01 || a === 0x09 || a === 0x0a || a === 0x0b)) set(last); return; }
+    ramAt = !(d & 0x80) && (d & 0x60) === 0x60 ? -1 : null;
+    if (!(d & 0x80)) { stop("ADPCM-B", 1, t); last = null; return; }
+    last = { t, src: "ADPCM-B", ch: 1, rom: ADPCMB_RAM, repeat: !!(d & 0x10) };
+    set(last);
+    start(last); // a Δ-N of 0 (one written later) is dropped in finish() if it stays so
   };
 
   return {
-    sega, opnb, start, stop,
+    sega, opnb, opna, start, stop,
     get segaUsed() { return segaUsed; },
     /** The hits that play from a ROM the file carries, each with `endT`: when it stops sounding. */
+    /** Hits whose sample data the file does not carry, counted by source (after finish). */
+    lost: new Map(),
     finish(endT, roms) {
       const out = [];
       for (const h of hits) {
         const rom = roms.get(h.rom);
-        if (!rom || h.start >= rom.length || h.end <= h.start || !(h.rate > 0)) continue;
+        if (!rom || h.start >= rom.length) { this.lost.set(h.src, (this.lost.get(h.src) ?? 0) + 1); continue; }
+        if (h.end <= h.start || !(h.rate > 0)) continue;
         h.end = Math.min(h.end, rom.length);
         if (h.loopStart != null && (h.loopStart < h.start || h.loopStart >= h.end)) h.loopStart = null;
         const frames = (h.end - h.start) * (h.src === "SegaPCM" ? 1 : 2);
@@ -2040,7 +2109,7 @@ function pcmPolyphony(hits) {
  * never an ADPCM-B note, the one melodic part — and a hit with nothing to
  * take is dropped. Levels are the song's own, the loudest hit :vel 15.
  */
-function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFit = true } = {}) {
+function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFit = true, pan = false, more = 0, absolute = false } = {}) {
   const warnings = [];
   const kept = new Set(keys);
   const hits = parsed.pcmHits.filter((h) => kept.has(pcmKey(h)) && tickOf(h.t) < endTick);
@@ -2081,8 +2150,11 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
 
   // Levels: the loudest hit is :vel 15, the rest keep their distance on the
   // 2 dB ladder.
-  const top = Math.max(...hits.map((h) => h.db));
-  const velOf = (h) => Math.max(0, Math.min(15, 15 + Math.round((h.db - top) / VEL_DB_PER_STEP)));
+  // On a chip's own ADPCM-B the level is the register's — :vel 15 and the
+  // fader, :vol's 2 dB steps, as the mucom importer writes part K's.
+  const top = hits.reduce((m, h) => Math.max(m, h.db), -Infinity);
+  const velOf = (h) => (absolute ? 15 : Math.max(0, Math.min(15, 15 + Math.round((h.db - top) / VEL_DB_PER_STEP))));
+  const volOf = (h) => (h.db <= -60 ? 0 : Math.max(1, Math.min(31, 31 + Math.round(h.db / 2))));
 
   // Voices.
   const fixed = keys.length <= voices ? new Map(keys.map((k, i) => [k, i])) : null;
@@ -2113,12 +2185,14 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
     const sm = h.sample;
     const loop = h.loopStart != null;
     lane.push({ tick, len: until - tick, loop, midi: 60 + Math.round(12 * Math.log2(h.rate / sm.rate)), vel: velOf(h),
-      state: [sm.name, ...(loop ? [":mode loop"] : [])] });
+      side: h.side ?? "center", state: [sm.name, ...(loop ? [":mode loop"] : []), ...(absolute ? [`:vol ${volOf(h)}`] : [])] });
     Object.assign(state[v], { until, from: tick, melodic: h.src === "ADPCM-B", key });
   }
   if (stolen) warnings.push(`PCM: ${plural(stolen, "hit")} cut an earlier sound short — more rang at once than the score's ${plural(voices, "voice")}`);
   if (dropped) warnings.push(`PCM: ${plural(dropped, "hit")} dropped — every voice held a note that is not cut`);
-  if (hits.some((h) => h.pan)) warnings.push("PCM: pan is not imported — the DAC is one channel");
+  // A part with a pan (pc88's ADPCM-B) takes each hit's; the DAC is one channel.
+  const panned = pan && hits.some((h) => h.side && h.side !== "center");
+  if (!pan && hits.some((h) => h.pan)) warnings.push("PCM: pan is not imported — the DAC is one channel");
 
   const tracks = [];
   lanes.forEach((notes, i) => {
@@ -2131,6 +2205,7 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
       const next = notes[k + 1]?.tick ?? endTick;
       n.len = Math.max(1, n.loop ? Math.min(n.len, next - n.tick) : next - n.tick);
       if (anyLoop && !n.loop) n.state = [...n.state, ":mode shot"];
+      if (panned) n.state = [...n.state, `:pan ${n.side}`];
     });
     let cur = null;
     for (const n of notes) {
@@ -2148,7 +2223,9 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
   // cut to fit. (Not on the X68000: its PCM8 plays the sample as it is.)
   const V = tracks.length ? Math.max(...tracks.map((t) => +t.channel.slice(3))) : voices;
   if (bankFit) {
-    const engineHz = Math.max(engineImage(V).rateHz, bankedEngineImage(V, 60).rateHz);
+    // (`more`: voices the score plays beside these — the rhythm's kit.)
+    const engineVoices = Math.min(3, V + more);
+    const engineHz = Math.max(engineImage(engineVoices).rateHz, bankedEngineImage(engineVoices, 60).rateHz);
     const lowest = new Map();
     for (const h of hits) lowest.set(h.sample, Math.min(lowest.get(h.sample) ?? Infinity, h.rate));
     const cut = [];
@@ -2157,7 +2234,7 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
       if (sm.frames > most) { sm.frames = most; cut.push(sm.name); }
       if (sm.loopMs != null && (sm.loopMs * sm.rate) / 1000 >= sm.frames) sm.loopMs = null;
     }
-    if (cut.length) warnings.push(`PCM: ${cut.join(", ")} cut to fit a 32 KB bank at ${plural(V, "voice")}`);
+    if (cut.length) warnings.push(`PCM: ${cut.join(", ")} cut to fit a 32 KB bank at ${plural(engineVoices, "voice")}`);
   }
 
   const base = String(fileName || "vgm").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");

@@ -3355,7 +3355,9 @@
         const d = vgmDests(target), dd = defaultVgmOptions(a, target);
         const choices = ['drop', ...d.fm, ...d.psg, ...d.wave, ...new Set([...(d.noise ? [d.noise] : []), ...d.noises])];
         const pcmChoices = d.pcm.length ? ['drop', 'pcm1'] : ['drop'];
-        const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', 'pcm1–3']] : ['drop'];
+        // On as many voices as the machine has: the Mega Drive's engine's three, another's PCM part's all.
+        const pcmMost = targetProfile(target).hasPart('dac') ? Math.min(3, d.pcm.length) : d.pcm.length;
+        const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', pcmMost > 1 ? `pcm1–${pcmMost}` : 'pcm1']] : ['drop'];
         // The YM2608's rhythm: the ROM's tracks, or the kit on pcm1.
         const rhythmChoices = ['drop', ...(d.rhythm.length ? d.rhythm : d.kit ? [d.kit] : [])];
         return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
@@ -3381,9 +3383,9 @@
       fields.push({ key: 'loop', label: a.fileLoop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: def.loop });
       // A PCM chip's channels share pcm1–3: how many voices (the rate) is the choice.
       if (a.channels.some((c) => c.kind === 'chip-pcm'))
-        fields.push({ key: 'pcmVoices', label: 'PCM voices', type: 'select', value: String(def.pcmVoices),
+        fields.push({ key: 'pcmVoices', label: 'PCM voices (md)', type: 'select', value: String(def.pcmVoices),
           choices: [['1', '1 — 14.4 kHz'], ['2', '2 — 10.1 kHz'], ['3', '3 — 6.7 kHz']],
-          hint: `up to ${a.pcmPoly} ring at once — with fewer voices, the oldest sound is cut` });
+          hint: `up to ${a.pcmPoly} ring at once — with fewer voices, the oldest sound is cut; another machine plays its own PCM part` });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
