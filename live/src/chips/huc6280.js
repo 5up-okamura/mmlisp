@@ -8,7 +8,9 @@
 // channel 2 on, channel 2's wave steps once every frequency × divider
 // clocks, and each step's sample − 16, shifted, is added to channel 1's
 // frequency (a period: up is lower), wrapping at 12 bits. Channel 2 still
-// sounds. Not here yet: DDA (a channel as a 5-bit DAC).
+// sounds. DDA ($04 bit 6 with bit 7): the channel is a 5-bit DAC, each $06
+// write its output — a sample played as the CPU's timer writes it, here at
+// the timer's 7.16 MHz / 1024 (DDA_RATE), each note baked at its own pitch.
 //
 // Its registers, as the CPU maps them at $0800 (the worklet's port 0): $00
 // the channel select, $01 the main level (L high, R low), then the selected
@@ -37,6 +39,9 @@ const NOISE_LANE = (c) => 4 + CHANNELS + (c.voice - NOISE_CHANNELS[0]);
 // 31 × 64 chip clocks, 1.8 kHz), each semitone the next, up to g4 — as a
 // tracker reads a noise note, since the rates are a clock, not a pitch.
 export const NOISE_NOTE_BASE = 36;
+
+// DDA's rate: the CPU's timer, 7.16 MHz / 1024 — a write a tick.
+export const DDA_RATE = (2 * CLOCK) / 1024;
 
 // The song's LFO speed, as the FM LFO's: any track writes it.
 const SONG_WORDS = words("LFO_FREQ");
@@ -77,6 +82,26 @@ export const pceNoise = {
   // It is a wave channel turned to noise: the two names are one channel.
   shareHint: (other) => `a channel plays its wave or the noise; move ${other} to another channel`,
 };
+
+// A channel as DDA, pcm1-pcm6: a sample a note, baked at DDA_RATE at the
+// note's pitch (no pitch move while it sounds), its level and pan the
+// channel's as a wave's are (the chip's one volume table).
+export const pceDda = {
+  name: "pce-dda",
+  label: "PC Engine DDA",
+  unit: "pce",
+  kind: "sample",
+  level: LEVEL,
+  words: words(/^(?:RANGE|LOOP)_/, "PAN"),
+  songWords: SONG_WORDS,
+  pointSweeps: false, // a note's points are read at its key-on
+  frames: true, // plays the samples' frames as bakePcm8 bakes them
+  // It is a wave channel in DDA mode: the names are one channel.
+  shareHint: (other) => `a channel plays its wave, its noise or DDA; move ${other} to another channel`,
+};
+
+/** A float frame, −1..1, as DDA's 5-bit output, 0..31 (16 the middle). */
+export const ddaStep = (x) => Math.max(0, Math.min(31, Math.round(16 + 15.5 * x)));
 
 // The default wave a channel plays until its track names one: a square.
 export const DEFAULT_WAVE = Array.from({ length: WAVE_LEN }, (_, i) => (i < WAVE_LEN / 2 ? 127 : -128));
@@ -139,6 +164,18 @@ function pceEncoder() {
     },
     // A note starting on a channel: channel 2's restarts the LFO.
     keyOn: (ch) => (ch === LFO_CH && lfoMode ? lfoReset() : []),
+    // DDA: the channel on as a DAC at a level (att 0 loud .. 31 off), each
+    // sample a write; off, the channel back to its wave (off).
+    dda: {
+      level: (ch, att) => {
+        vol[ch] = att < LEVEL.steps - 1 ? LEVEL.steps - 1 - att : 0;
+        on[ch] = 0; // its wave is not playing: a wave load after puts it off
+        return [sel(ch), [PORT, 0x04, 0xc0 | vol[ch]]];
+      },
+      sample: (ch, v) => [sel(ch), [PORT, 0x06, v & 31]],
+      off: (ch) => [sel(ch), [PORT, 0x04, 0x00]],
+      pan: (ch, p) => [sel(ch), [PORT, 0x05, panLevels(p)]],
+    },
     // :lfo-freq 0-255, larger faster, as the FM LFO's: the divider 256 − v
     // (the register's 0 is 256).
     lfoFreq: (v) => [[PORT, 0x08, (256 - Math.max(0, Math.min(255, Math.round(Number(v) || 0)))) & 0xff]],
@@ -167,7 +204,7 @@ function pceEncoder() {
 export const huc6280 = {
   chip: "huc6280",
   clock: CLOCK,
-  parts: [pceWaveLfo, pceWave, pceNoise],
+  parts: [pceWaveLfo, pceWave, pceNoise, pceDda],
   encoder: true,
   emulator: true,
   // Every channel off at full L/R level, the main level full, playing the

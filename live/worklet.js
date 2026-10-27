@@ -106,6 +106,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     // write until the next.
     this._pcmTimedQueue = []; // timed PCM events: [{frame, type: 'pcm-ev', ...}]
     this._pcm8TimedQueue = []; // the X68000's PCM8 events, applied at their sample
+    this._streams = []; // fixed-rate write runs (the PC Engine's DDA), a tick at its sample
     this._pcm8Bank = null;
     this._pcmBank = null;     // {entries, entryIds, img}
     this._pcmLive = null;     // PcmLiveEngine
@@ -191,6 +192,11 @@ class YM2612Processor extends AudioWorkletProcessor {
         } else {
           this._writeQueue.push(msg);
         }
+      } else if (msg.type === "stream") {
+        // Writes at a fixed rate from `when` (the PC Engine's DDA): `perTick`
+        // [addr, data] pairs a tick on `port`, each tick at its own sample.
+        this._streams.push({ start: msg.when * sampleRate, step: sampleRate / msg.rate, port: msg.port ?? 0,
+          per: msg.perTick ?? 1, bytes: msg.bytes, next: 0, ticks: msg.bytes.length / (2 * (msg.perTick ?? 1)) });
       } else if (msg.type === "hold-ch") {
         const ch = msg.ch | 0;
         if (ch >= 0 && ch < 8) this._chHold[ch] = msg.on ? 1 : this._chHold[ch] ? 2 : 0;
@@ -243,6 +249,7 @@ class YM2612Processor extends AudioWorkletProcessor {
       } else if (msg.type === "flush") {
         // Discard pending scheduled writes (before hot-swap); a new run plays
         // its channels from the top, held or not.
+        this._streams = [];
         this._chHold.fill(0);
         this._timedQueue = [];
         this._psgTimedQueue = [];
@@ -301,6 +308,19 @@ class YM2612Processor extends AudioWorkletProcessor {
     let i = queue.length;
     while (i > 0 && queue[i - 1].t > t) i--;
     queue.splice(i, 0, { ...payload, frame, t });
+  }
+
+  // Each stream's ticks due before `endFrame`, written in order; a stream
+  // done is let go.
+  _runStreams(endFrame) {
+    for (const s of this._streams) {
+      while (s.next < s.ticks && s.start + s.next * s.step < endFrame) {
+        const o = 2 * s.next * s.per;
+        for (let j = 0; j < s.per; j++) this._applyYmWrite(s.port, s.bytes[o + 2 * j], s.bytes[o + 2 * j + 1], false);
+        s.next++;
+      }
+    }
+    if (this._streams.some((s) => s.next >= s.ticks)) this._streams = this._streams.filter((s) => s.next < s.ticks);
   }
 
   _drainImmediateQueue(queue, consume) {
@@ -497,13 +517,15 @@ class YM2612Processor extends AudioWorkletProcessor {
     // PCM8's events land at their own sample, as the export's mix takes them.
     const pcm8 = synth.pcm8 && this._pcm8TimedQueue[0]?.frame < blockEnd ? synth.pcm8 : null;
     if (!synth.pcm8) this._pcm8TimedQueue = [];
-    const onFrame = dacStreaming || pcm8
+    const streams = this._streams.length ? this._streams : null;
+    const onFrame = dacStreaming || pcm8 || streams
       ? (i) => {
           if (dacStreaming)
             this._drainTimedQueue(this._timedQueue, currentFrame + i + 1, (op) => {
               this._applyYmWrite(op.port, op.addr, op.data, op.preview);
             });
           if (pcm8) this._drainTimedQueue(this._pcm8TimedQueue, currentFrame + i + 1, (op) => pcm8.apply(op));
+          if (streams) this._runStreams(currentFrame + i + 1);
         }
       : null;
     const getDacByte = pcmActive ? this._getDacByte : null;

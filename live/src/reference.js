@@ -164,7 +164,7 @@ export const REFERENCE = [
   {
     name: 'pcm1–pcm3', aliases: ['pcm1', 'pcm2', 'pcm3', 'pcm4', 'pcm5', 'pcm6', 'pcm7', 'pcm8'], cat: 'channels', section: '§16', tracks: PCM,
     syntax: '(pcm1 sample c …)',
-    summary: 'Samples, soft-mixed on the fm6 DAC. Name a def-pcm sample before its notes; a note\'s pitch picks a resampled copy. On x68k pcm1–pcm8 are PCM8\'s voices, mixed into the MSM6258\'s ADPCM, and take :pitch moves.',
+    summary: 'Samples, soft-mixed on the fm6 DAC. Name a def-pcm sample before its notes; a note\'s pitch picks a resampled copy. On x68k pcm1–pcm8 are PCM8\'s voices, mixed into the MSM6258\'s ADPCM, and take :pitch moves. On pce pcm1–pcm6 are channels 1–6 as DDA: 5 bits at 6.99 kHz, each note baked at its pitch.',
     insert: '(pcm1 :len 8 kick c snare c)',
     example: '(import "presets/tr808/set.mmlisp")\n(pcm1 :len 8 kick c snare c kick c c snare c)',
   },

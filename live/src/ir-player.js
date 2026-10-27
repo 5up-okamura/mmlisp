@@ -48,6 +48,9 @@ import {
 import { engineImage } from "./engine-images.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 import { PCM8_RATE, PCM8_VOICES } from "./chips/msm6258.js";
+import { DDA_RATE, ddaStep } from "./chips/huc6280.js";
+// A held DDA note (:len 0) with no next note: how long its sample is written.
+const DDA_HOLD_SEC = 30;
 import { FM_CHANNEL_WORDS, FM_OP_WORDS, FM_OPS, opWords, fmInitVoice, fmOpWord } from "./chips/fm-words.js";
 // The largest point a PCM point target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
@@ -75,6 +78,7 @@ const SAMPLE_HANDLERS = {
   "opll-rhythm": "_dispatchRhythmEvent",
   "adpcm-b": "_dispatchAdpcmEvent",
   pcm8: "_dispatchPcm8Event",
+  "pce-dda": "_dispatchDdaEvent",
   dac: "_dispatchDacEvent",
 };
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
@@ -234,6 +238,9 @@ export class IRPlayer {
       set: (fn) => { rawWrite = fn?.raw ?? fn; },
       configurable: true,
     });
+    // A write on a timer of the machine's own, not the video frame (the PC
+    // Engine's DDA, a sample a CPU timer tick): the writer itself, unmoved.
+    Object.defineProperty(this, "_writeTimer", { get: () => rawWrite, configurable: true });
     this._ir = null;
     this._playing = false;
     this._loopCount = new Map(); // loopId → iteration count
@@ -578,6 +585,9 @@ export class IRPlayer {
     this._psgChip?.drop?.(); // the SSG's queued mixer changes
     const t = when ?? this._audioContext?.currentTime ?? 0;
     if (this._target.hasPart("pcm8")) for (let v = 0; v < PCM8_VOICES; v++) this._pcm8Ev(t, { kind: "cut", voice: v });
+    // The PC Engine's DDA channels back off (a sample cut where it stands).
+    const dda = this._ddaEncoder();
+    if (dda) for (const [, ch] of this._lanesOf("sample", "pce-dda")) write(dda.off(ch));
   }
 
   // The chip and channel state belongs to one run. A run's sticky state (a
@@ -2800,10 +2810,11 @@ export class IRPlayer {
     this._adpcmBank = bank ?? null;
   }
 
-  // The X68000's PCM8 samples (chips/msm6258.js bakePcm8): each one's frames
-  // and the rate it plays C4 at. Without it a note writes nothing.
-  setPcm8Bank(bank) {
-    this._pcm8Bank = bank ?? null;
+  // The samples as frames (chips/msm6258.js bakePcm8) for a part that plays
+  // them so (`frames`: the X68000's PCM8, the PC Engine's DDA): each one's
+  // frames and the rate it plays C4 at. Without it a note writes nothing.
+  setFrameBank(bank) {
+    this._frameBank = bank ?? null;
   }
 
   // The YM2608's sample voices — the ADPCM-B and the six rhythm sounds — and
@@ -2980,7 +2991,10 @@ export class IRPlayer {
         }
         if (!h || h.dumped || t >= h.end) continue;
         const lv = this._chipPcmLevelAt(h, t);
-        if (h.pcm8 != null) {
+        if (h.dda != null) {
+          const att = levelSteps(this._routes.get(h.ti).part.level, this._ddaLevel(h, t));
+          if (att !== h.att) { h.att = att; for (const [p, a, d] of this._ddaEncoder().level(h.dda, att)) this._write(p, a, d, t); }
+        } else if (h.pcm8 != null) {
           const gain = IRPlayer._pcm8Gain(lv);
           if (gain !== h.gain) { h.gain = gain; this._pcm8Ev(t, { kind: "gain", voice: h.pcm8, value: gain }); }
           const step = this._pcm8Step(h, t);
@@ -3115,7 +3129,7 @@ export class IRPlayer {
     this._pcm8State.set(ti, st);
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
-        const entry = this._pcm8Bank?.entries?.[ev.args?.sample];
+        const entry = this._frameBank?.entries?.[ev.args?.sample];
         if (!entry || !this._isVoiceTrackAudible(ti, key)) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const perSec = entry.rate * 2 ** ((midi - 60) / 12); // sample frames a second, as heard
@@ -3166,6 +3180,107 @@ export class IRPlayer {
       default:
         break;
     }
+  }
+
+  // The PC Engine's DDA encoder (chips/huc6280.js): its wave chip's, shared
+  // with the wave lanes (it keeps the channels' state).
+  _ddaEncoder() {
+    return this._toneEnc?.find((l) => l?.enc.dda)?.enc.dda ?? null;
+  }
+
+  // The PC Engine's DDA (pcm1-pcm6): a note's sample baked at DDA_RATE at
+  // its pitch — its range and loop read as PCM8's are — written a byte a
+  // timer tick to the channel's $06 from its key-on to its end (the
+  // sample's, the next note's, a gate's or loop's at its gate), then the
+  // channel off; its level a frame at a time (_chipPcmFrames), its pan at
+  // its key-on.
+  _dispatchDdaEvent(ev, when) {
+    const ti = ev._trackIndex;
+    const ch = ev._chIndex ?? 0;
+    const key = `dda-${ch}`;
+    const enc = this._ddaEncoder();
+    const st = (this._ddaState ??= new Map()).get(ti) ?? { pan: 0 };
+    this._ddaState.set(ti, st);
+    const write = (writes, t) => { for (const [p, a, d] of writes) this._write(p, a, d, t); };
+    switch (ev.cmd) {
+      case "PCM_NOTE_ON": {
+        const entry = this._frameBank?.entries?.[ev.args?.sample];
+        if (!enc || !entry?.data.length || !this._isVoiceTrackAudible(ti, key)) break;
+        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        const perSec = entry.rate * 2 ** ((midi - 60) / 12); // source frames a second, as heard
+        const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
+        const r = st.range ?? {}, l = st.loop ?? {};
+        const start = Math.min(at(r.start) ?? 0, entry.data.length);
+        const end = Math.min(entry.data.length, r.end != null ? at(r.end) : r.len != null ? start + at(r.len) : entry.data.length);
+        const loopStart = Math.min(end, l.start != null ? at(l.start) : entry.loopStart ?? start);
+        const loopEnd = Math.min(end, l.end != null ? at(l.end) : l.len != null ? loopStart + at(l.len) : entry.loopEnd ?? end);
+        const mode = ev.args?.mode ?? "shot";
+        // Where it stops: the next note on the track; a gate or loop note
+        // also at its gate; a shot when its sample runs out.
+        const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
+        const { secs: nextNote } = this._nextNote(ev);
+        // On the frame the next note starts on, as its writes are; the last
+        // sample before it, so the channel is off before that note keys it.
+        const onFrame = (t) => (this._target.frameClock ? this._frameStart(t) : t);
+        let stop = Number.isFinite(nextNote) ? onFrame(nextNote) : Infinity;
+        if (mode !== "shot" && gateTicks > 0) stop = Math.min(stop, onFrame(this._timeAfterTicks(when, gateTicks)));
+        const maxTicks = Number.isFinite(stop) ? Math.floor((stop - when) * DDA_RATE + 1e-9) : Math.ceil(DDA_HOLD_SEC * DDA_RATE);
+        const step = perSec / DDA_RATE; // source frames a timer tick
+        const bytes = [];
+        for (let pos = start; bytes.length < maxTicks; pos += step) {
+          if (pos >= (mode === "loop" ? loopEnd : end)) {
+            if (mode !== "loop" || loopEnd - loopStart < 1) break;
+            pos = loopStart + ((pos - loopStart) % (loopEnd - loopStart));
+          }
+          const i = Math.floor(pos), f = pos - i;
+          const x = entry.data[i] * (1 - f) + (entry.data[Math.min(i + 1, entry.data.length - 1)] ?? 0) * f;
+          bytes.push(ddaStep(x));
+        }
+        if (!bytes.length) break;
+        const off = when + bytes.length / DDA_RATE;
+        this._chipPcmHit(key, ev, when, off, { dda: ch }, (t, h) => {
+          h.att = levelSteps(ev._route.part.level, this._ddaLevel(h, t));
+          write([...enc.pan(ch, st.pan), ...enc.level(ch, h.att)], t);
+        });
+        // The samples on the CPU's timer, not the video frame: as one stream
+        // where the writer takes one (Live's worklet: a write a tick, each at
+        // its sample), else a write at a time (a capture, the exports).
+        const timed = this._writeTimer;
+        if (timed.stream) {
+          const per = enc.sample(ch, 0);
+          const flat = new Uint8Array(bytes.length * per.length * 2);
+          bytes.forEach((v, k) => enc.sample(ch, v).forEach(([, a, d], j) => { flat[2 * (k * per.length + j)] = a; flat[2 * (k * per.length + j) + 1] = d; }));
+          timed.stream({ when, rate: DDA_RATE, port: per[0][0], perTick: per.length, bytes: flat });
+        } else bytes.forEach((v, k) => { for (const [p, a, d] of enc.sample(ch, v)) timed(p, a, d, when + k / DDA_RATE); });
+        write(enc.off(ch), Math.min(off, stop));
+        break;
+      }
+      case "PARAM_SET":
+      case "PARAM_SWEEP":
+      case "PARAM_FROM_VAL": {
+        const target = (ev.args?.target ?? "").toUpperCase();
+        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
+        if (ev.cmd !== "PARAM_SET") break;
+        const v = Number(ev.args?.value);
+        if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
+        else if (target === "PAN") st.pan = Math.max(-1, Math.min(1, v || 0));
+        else if (target === "RANGE_START") (st.range ??= {}).start = v;
+        else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
+        else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
+        else if (target === "LOOP_START") (st.loop ??= {}).start = v;
+        else if (target === "LOOP_END") { (st.loop ??= {}).end = v; st.loop.len = null; }
+        else if (target === "LOOP_LEN") { (st.loop ??= {}).len = v; st.loop.end = null; }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // A DDA hit's level terms: vel + vol + master + its strip (levelSteps).
+  _ddaLevel(h, t) {
+    const lv = this._chipPcmLevelAt(h, t);
+    return { vel: lv.vel, faders: [lv.vol, lv.master, lv.ui] };
   }
 
   // A chip's ROM rhythm (the YM2608's, the OPLL's): a hit writes its sound's

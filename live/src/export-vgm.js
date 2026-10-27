@@ -308,9 +308,16 @@ export function configurePcmRate(player, pcm) {
  * it the score's PCM events are skipped and counted in `pcmCount`.
  */
 export function renderVgm(player, meta = {}, pcm = null) {
+  // The PC Engine's DDA: the samples as frames, which the player writes as
+  // the chip's own register writes (the log carries them).
+  if (pcm?.frames) {
+    player.setFrameBank?.(pcm.frames);
+    const capture = player.captureRegisterLog();
+    return { bytes: encodeVgm(capture, meta, null, player._target ?? targetProfile()), pcmCount: 0, dacBytes: 0 };
+  }
   // The X68000's PCM8: the mix, encoded, as the MSM6258's stream.
   if (pcm?.pcm8) {
-    player.setPcm8Bank?.(pcm.pcm8);
+    player.setFrameBank?.(pcm.pcm8);
     const capture = player.captureRegisterLog();
     const oki = renderPcm8(capture.pcm8Events, pcm.pcm8, capture);
     const bytes = encodeVgm(capture, meta, null, player._target ?? targetProfile(), null, oki);

@@ -2721,9 +2721,9 @@ gate: a kick's or a tom's pitch-down (`(rhythm1 kick (macro :pitch+
 
 **`pce` exports VGM (1.61)** with the HuC6280's PSG at the PC Engine's
 3.58 MHz, and Play and WAV run a HuC6280 of the toolchain's own. There is
-no FM, no PSG square and no PCM: `fm1`, `sqr1`, `pcm1` and `noise` are
-`E_TARGET`, so are `:noise-rate` and `:mode`. The chip hears the
-song a frame (1/60 s) at a time, as on `msx`.
+no FM and no PSG square: `fm1`, `sqr1` and `noise` are `E_TARGET`, so are
+`:noise-rate` and `:mode`. The chip hears the song a frame (1/60 s) at a
+time, as on `msx` — but for DDA's samples, which the CPU's timer writes.
 
 **Waves.** `wave1`–`wave6` are the chip's six channels. Each plays a wave
 of 32 steps, which a `def-wave` names and a track switches to by naming it,
@@ -2787,5 +2787,21 @@ and a deep sway on a high note wraps round to a low one, as on the chip.
 (wave1 lead :lfo-freq 200 :fms 2 :len 4 c e g e)  ; channel 1 swayed by it
 ```
 
-Not yet: DDA (a channel as a 5-bit DAC).
+**DDA.** `pcm1`–`pcm6` are channels 1–6 as the chip's DDA: the channel a
+5-bit DAC the CPU writes a sample at a time on its timer, 6.99 kHz (7.16
+MHz / 1024). A `def-pcm` plays there as on `md`: each note baked at its
+own pitch (no pitch move while it sounds), its `:pcm-start` / `:loop-*`
+points and `:mode shot | loop | gate`; its level is the channel's 5-bit
+volume as a wave's is, with `:vel`, `:vol` and their macros, and `:pan`
+the channel's. A note writes its samples to its end — the sample's, the
+next note's, a gate's — and the channel goes quiet. A channel is one of
+`waveN`, `noiseN` (5 and 6) and `pcmN` in a score.
+
+```lisp
+(def-score :target pce)
+(def-pcm kick :file "kick.wav")
+(def-wave saw :wave (saw -128..127))
+(wave1 saw :len 4 c e g e)
+(pcm6 :len 4 kick c c c c)
+```
 

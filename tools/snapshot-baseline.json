@@ -1861,6 +1861,12 @@
   "regs": "d38e81b1547f3aa7",
   "vgm": "69ffba8389b33aa2"
  },
+ "tools/tests/pce/dda.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "600e0bd2f932b140",
+  "regs": "66cc8f18b492ba8f",
+  "vgm": "90c89d2adab63759"
+ },
  "tools/tests/pce/lfo.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5070a6499bc7737f",

@@ -1,0 +1,10 @@
+; pce: DDA — pcm1 and pcm6 play a sample at 6.99 kHz, each note baked at its
+; own pitch, a level macro, a pan, a loop held to its gate, a gate cutting
+; a shot, beside a wave channel.
+(def-score :target pce :title "pce DDA")
+(def-pcm blip :file "wav/blip.wav")
+(def-pcm blip-tail blip :pcm-start 16 :pcm-end 4)
+(def-wave saw :wave (saw -128..127))
+(wave2 :tempo 132 saw :len 4 c e g e |)
+(pcm1 :len 8 blip c e g > c < (macro :vel [15 12 9 6]) c e :vol 24 g _ |)
+(pcm6 :pan -0.5 :mode loop :len 2 blip-tail c :pan 0.5 :mode gate :gate 50 :len 4 blip c c |)

@@ -880,6 +880,7 @@
     import { opllRomVoices } from './src/chips/ym2413.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
+    import { DDA_RATE, ddaStep } from './src/chips/huc6280.js';
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
@@ -4907,8 +4908,17 @@
         const blobs = await pcmSampleBlobsForMmb(ir);
         const pcm8 = blobs ? bakePcm8(ir, blobs) : null;
         for (const w of pcm8?.warnings ?? []) log(w, 'warn');
-        target?.setPcm8Bank?.(pcm8);
+        target?.setFrameBank?.(pcm8);
         workletNode.port.postMessage({ type: 'pcm8-bank', bank: pcm8 });
+        return;
+      }
+      // The PC Engine's DDA: the player writes each note's samples as the
+      // chip's own register writes, from the same frames.
+      if (machine.parts.some((p) => p.frames)) {
+        const blobs = await pcmSampleBlobsForMmb(ir);
+        const frames = blobs ? bakePcm8(ir, blobs) : null;
+        for (const w of frames?.warnings ?? []) log(w, 'warn');
+        target?.setFrameBank?.(frames);
         return;
       }
       if (machine.hasPart('adpcm-b')) {
@@ -5728,6 +5738,14 @@
         const pcm8 = bakePcm8(ir, blobs);
         for (const w of pcm8.warnings) log(`${what} export: ${w}`, 'warn');
         return Object.keys(pcm8.entries).length ? { pcm8 } : null;
+      }
+      // The PC Engine's DDA: the frames, which the player writes as registers.
+      if (target.parts.some((p) => p.frames)) {
+        const blobs = await pcmSampleBlobsForMmb(ir);
+        if (!blobs) return null;
+        const frames = bakePcm8(ir, blobs);
+        for (const w of frames.warnings) log(`${what} export: ${w}`, 'warn');
+        return Object.keys(frames.entries).length ? { frames } : null;
       }
       // The bank is the Mega Drive's soft mix.
       if (!pcmVoices || !target.hasPart('dac')) return null;
@@ -7335,6 +7353,9 @@
       }
       workletNode.port.postMessage({ type: 'write', port: portOrMsg, addr, data, when });
     }
+    // A run of writes at a fixed rate (the PC Engine's DDA): one message, the
+    // worklet writing each tick at its own sample.
+    writeToWorklet.stream = (s) => workletNode?.port.postMessage({ type: 'stream', ...s }, [s.bytes.buffer]);
 
     let _workletReady = false;
 
@@ -10168,6 +10189,17 @@
             type: 'pcm8', kind: 'on', voice: PCM8_VOICES - 1, sample: name, mode: loop ? 'loop' : 'shot',
             step: (s.rate * 2 ** ((midi - 60) / 12)) / PCM8_RATE, gain: 10 ** (-(2 * (15 - Math.max(0, Math.min(15, vel)))) / 20),
           });
+          return;
+        }
+        // The PC Engine's DDA: the def at the note's pitch as DDA plays it —
+        // 5 bits at the timer's 6.99 kHz — on a buffer source of its own.
+        if (machine.hasPart('pce-dda')) {
+          const s = bakePcm8(ir, samples, [name]).entries[name];
+          if (!s) throw new Error(`"${name}" did not load`);
+          const step = (s.rate * 2 ** ((midi - 60) / 12)) / DDA_RATE;
+          const n = Math.max(1, Math.floor(s.data.length / step));
+          const data = Int8Array.from({ length: n }, (_, k) => (ddaStep(s.data[Math.floor(k * step)]) - 16) * 8);
+          playAuditionBlob({ data, rateHz: DDA_RATE, range: null, loop: null }, false, vel);
           return;
         }
         // The YM2608's ADPCM-B: the def baked into the chip's RAM as the song's

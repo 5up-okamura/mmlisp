@@ -72,20 +72,20 @@ function outputs({ file, frameHz, seFile }) {
     const { ir, diagnostics } = compiled;
     const out = { diagnostics: diagnostics.map((d) => d.code ?? d.message).join(","), ir: JSON.stringify(ir, null, 1) };
     if (!target.encodes || diagnostics.some((d) => d.severity === "error")) return out;
-    // The chip's own sample RAM (the YM2608's ADPCM-B) or PCM8's samples,
-    // baked as Live does.
+    // The chip's own sample RAM (the YM2608's ADPCM-B) or the samples as
+    // frames (PCM8's, the PC Engine's DDA), baked as Live does.
     const withFiles = (ir.metadata?.samples ?? []).some((s) => s.file);
     const blobs = () => loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: ir.metadata.samples.filter((s) => s.file) } });
     const adpcm = target.hasPart("adpcm-b") && withFiles ? bakeAdpcmB(ir, blobs(), target) : null;
-    const pcm8 = target.hasPart("pcm8") && withFiles ? bakePcm8(ir, blobs()) : null;
+    const frames = target.parts.some((p) => p.frames) && withFiles ? bakePcm8(ir, blobs()) : null;
     const player = new IRPlayer(() => {});
     player.loadJSON(ir);
     player.setAdpcmBank(adpcm);
-    player.setPcm8Bank(pcm8);
+    player.setFrameBank(frames);
     const vgmPlayer = new IRPlayer(() => {});
     vgmPlayer.loadJSON(ir);
     const meta = { title: ir.metadata?.title, composer: ir.metadata?.composer, author: ir.metadata?.author };
-    const pcm = adpcm ? { adpcm } : pcm8 ? { pcm8 } : null;
+    const pcm = adpcm ? { adpcm } : frames ? (target.hasPart("pcm8") ? { pcm8: frames } : { frames }) : null;
     return { ...out, regs: JSON.stringify(player.captureRegisterLog()), vgm: renderVgm(vgmPlayer, meta, pcm).bytes };
   }
   let built;

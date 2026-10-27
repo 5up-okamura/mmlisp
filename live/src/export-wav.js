@@ -284,9 +284,11 @@ export async function renderWav(player, opts = {}) {
     synth.setAdpcmRam(adpcm.image);
   }
   const pcm8 = opts.pcm?.pcm8 ?? null;
-  if (pcm8) player.setPcm8Bank?.(pcm8);
+  if (pcm8) player.setFrameBank?.(pcm8);
+  // The PC Engine's DDA: register writes the player makes from the frames.
+  if (opts.pcm?.frames) player.setFrameBank?.(opts.pcm.frames);
   if (opts.rhythmRom) synth.setRhythmRom?.(opts.rhythmRom);
-  if (!adpcm && !pcm8) configurePcmRate(player, opts.pcm);
+  if (!adpcm && !pcm8 && !opts.pcm?.frames) configurePcmRate(player, opts.pcm);
   const capture = player.captureRegisterLog();
   // The X68000's PCM8: the stream the VGM carries, decoded as the chip plays
   // it. The WAV's loop tiles the register writes; the stream is rendered for

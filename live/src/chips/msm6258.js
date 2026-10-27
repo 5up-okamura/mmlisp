@@ -23,6 +23,7 @@ export const pcm8 = {
   level: { scale: "linear" }, // a voice's gain in the mix
   pointSweeps: false, // a note's points are read at its key-on
   pitch: true, // the mix steps a voice at its pitch, frame by frame
+  frames: true, // plays the samples' frames as bakePcm8 bakes them
 };
 
 export const msm6258 = {

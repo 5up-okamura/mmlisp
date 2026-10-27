@@ -100,6 +100,14 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
     lfo / lfoFreq / keyOn — keyOn a player hook at a PSG lane's NOTE_ON;
     synth-pce.js steps ch2 at freq × divider and moves ch1's period).
     Measured: a4 at :fms 1 / 2 sways ±20 / ±70 Hz. Not yet listened to.
+  - DDA built 2026-10-27 (pceDda, frames: true — bakePcm8's frames, the
+    player's setFrameBank, renamed from setPcm8Bank). A note's bytes are
+    written on the CPU timer (ir-player `_writeTimer`, not the frameClock
+    snap); Live gets them as one `stream` message a note (writeToWorklet.
+    stream → worklet `_runStreams`, a tick at its sample) — per-write
+    messages stalled the page ~100 ms on a looped bar and an O(n²) queue in
+    the worklet. The export / capture path writes them one by one, so the
+    register log, VGM and WAV are the same writes. Not yet listened to.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
