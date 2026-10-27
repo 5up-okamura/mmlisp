@@ -323,14 +323,14 @@ export async function parseFur(bytes) {
       const loops = Array.from({ length: n }, () => i32());
       const arpFixedOld = c();
       p += 3;
-      const [vol, arp, , wave] = lens.map((len, k) => {
+      const [vol, arp, duty, wave] = lens.map((len, k) => {
         const values = Array.from({ length: Math.max(0, len) }, () => i32());
         return { values, loop: loops[k] >= 0 && loops[k] < len ? loops[k] : null };
       });
       // Before version 31 the arp's values were stored 12 up.
       if (iv < 31) arp.values = arp.values.map((v) => v - 12);
       const arpFixed = iv < 112 ? !!arpFixedOld : arp.values.some((v) => v & 0x40000000);
-      return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave };
+      return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave, duty };
     }
     if (m !== "INS2" && m !== "FINS") throw new Error("not an instrument");
     const len = m === "INS2" ? i32() : u8.length - p;
@@ -342,6 +342,7 @@ export async function parseFur(bytes) {
     const vol = { values: [], loop: null };
     const arp = { values: [], loop: null };
     const wave = { values: [], loop: null };
+    const duty = { values: [], loop: null };
     let arpFixed = false;
     while (p + 2 <= stop) {
       const code = String.fromCharCode(u8[p], u8[p + 1]);
@@ -388,6 +389,7 @@ export async function parseFur(bytes) {
           const macro = { values: vals, loop: loop < mlen ? loop : null };
           if (mc === 0) Object.assign(vol, macro);
           else if (mc === 3) Object.assign(wave, macro); // the wavetable
+          else if (mc === 2) Object.assign(duty, macro); // duty, or the PC Engine's noise switch
           else if (mc === 1) {
             arpFixed = vals.some((v) => v & 0x40000000);
             Object.assign(arp, macro);
@@ -397,7 +399,7 @@ export async function parseFur(bytes) {
       p = fend;
     }
     if (fm && (type === 1 || type === 33)) return { name, kind: "fm", fm };
-    return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave };
+    return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave, duty };
   }
 
   // The wavetables: "WAVE", a size, its name, width, a reserved word, its

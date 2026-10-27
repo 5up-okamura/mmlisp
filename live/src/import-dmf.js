@@ -111,11 +111,11 @@ export async function parseDmf(bytes) {
       const arp = macro();
       const arpFixed = c();
       if (!arpFixed) arp.values = arp.values.map((v) => v - 12);
-      macro(); // duty / noise
+      const duty = macro(); // duty, or the noise switch (the PC Engine's)
       const wave = macro(); // the wavetable each tick: an index into `waves`
       if (sysId === 0x07 || sysId === 0x47) p += 20; // SID settings
       if (gb) p += 4; // GB envelope
-      instruments.push({ name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed: !!arpFixed, wave });
+      instruments.push({ name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed: !!arpFixed, wave, duty });
     }
   }
 

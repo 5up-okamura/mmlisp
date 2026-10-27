@@ -49,14 +49,18 @@ const VOL_MAX = { opl: 63 };
 
 const PITCH_CODES = new Set([0x01, 0x02, 0x03, 0x04, 0xe1, 0xe2, 0xe5]);
 
-// The PC Engine as a pce score: its channels' places, and its noise. The
-// rate a noise note plays is the note itself (Furnace's properNoiseLayout)
-// or, as DefleMask had it, one of twelve by the note's name.
+// The PC Engine as a pce score: its channels' places, and its noise — on
+// channels 5 and 6, switched by 11xx or an instrument's duty macro (its
+// first step at each note, as Furnace runs it). The rate a noise note plays
+// is the note itself (Furnace's properNoiseLayout) or, as DefleMask had it,
+// one of twelve by the note's name.
 const PCE_WAVES = ["wave1", "wave2", "wave3", "wave4", "wave5", "wave6"];
 const PCE_NOISE = { 4: "noise5", 5: "noise6" };
 const PCE_NOISE_TABLE = [4, 13, 15, 18, 21, 23, 25, 27, 29, 31, 0, 2];
 const PCE_NOISE_BASE = 36; // chips/huc6280.js NOISE_NOTE_BASE: c2 is rate 0
 const PCE_FX = { 0x10: "wave", 0x11: "noise", 0x12: "LFO mode", 0x13: "LFO speed", 0x17: "DDA" };
+// An instrument's duty macro at a note: the PC Engine's noise switch.
+const dutyNoise = (ins) => (ins?.duty?.values.length ? ins.duty.values[0] > 0 : null);
 
 const FX_NAMES = {
   0x01: "pitch slide up", 0x02: "pitch slide down", 0x03: "portamento", 0x04: "vibrato",
@@ -116,12 +120,14 @@ export function analyzeTracker(t) {
   const framesPerRow = (t.speeds[0] + t.speeds[1]) / 2 || 6;
   const bpm = (60 * t.hz) / (framesPerRow * rowsPerBeat);
   const channels = t.channels.map((chn, c) => {
-    let notes = 0, noiseNotes = 0, noise = false;
+    let notes = 0, noiseNotes = 0, noise = false, ins = -1;
     for (const { order, rows } of seq) {
       const pat = chn.patterns.get(t.orders[order][c]) ?? [];
       for (let r = 0; r < rows; r++) {
         for (const [code, v] of pat[r]?.fx ?? []) if (chn.chip === "pce" && code === 0x11 && v >= 0) noise = v > 0;
+        if (pat[r]?.ins >= 0) ins = pat[r].ins;
         if (typeof pat[r]?.note !== "number") continue;
+        if (chn.chip === "pce") noise = dutyNoise(t.instruments[ins]) ?? noise;
         notes++;
         if (noise) noiseNotes++;
       }
@@ -205,6 +211,18 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     if (d === "drop") continue;
     if (taken.has(d)) { warnings.push(`${ch.name}: ${d} is already taken — dropped`); continue; }
     taken.add(d);
+    // A PC Engine channel playing both its wave and its noise: each kind's
+    // notes on its own name — one channel, the noise over the wave where
+    // they meet (the :prio layering across its names).
+    const both = onPce && t.channels[ch.index].chip === "pce" && PCE_NOISE[ch.index]
+      && ch.noiseNotes > 0 && ch.noiseNotes < ch.notes && (d === PCE_WAVES[ch.index] || d === PCE_NOISE[ch.index]);
+    if (both) {
+      for (const half of [PCE_WAVES[ch.index], PCE_NOISE[ch.index]]) {
+        taken.add(half);
+        used.push({ ...ch, dest: half, split: true });
+      }
+      continue;
+    }
     used.push({ ...ch, dest: d });
   }
   if (t.speeds[0] !== t.speeds[1])
@@ -242,11 +260,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return `[${v.join(" ")}]`;
       };
       const volMax = t.psgVolMax;
-      // The PC Engine's volume is 5 bits at 1.5 dB a step, and its macro's
-      // attenuation adds to the volume column's (Furnace): a :vel+ offset,
-      // in :vel steps. Elsewhere a ratio of the column's level.
+      // The PC Engine's volume is 5 bits at 1.5 dB a step, its 0 silent, and
+      // its macro's attenuation adds to the volume column's (Furnace): a :vol
+      // macro, the fader beside the column's :vel — 2 dB a step, 0 a mute.
+      // Elsewhere a ratio of the column's level.
       if (ins.vol?.values.length && pceSong)
-        parts.push(`:vel+ ${arr(ins.vol, (x) => Math.round((-(31 - Math.max(0, Math.min(31, x))) * 1.5 / VEL_DB_PER_STEP) * 8) / 8)}`);
+        parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 - ((31 - Math.min(31, x)) * 1.5) / 2))))}`);
       else if (ins.vol?.values.length)
         parts.push(`:vel* ${arr(ins.vol, (x) => Math.max(0, Math.min(1, Math.round((x * 100) / volMax) / 100)))}`);
       if (ins.arp?.values.length && ins.arp.values.some((x) => x !== 0)) parts.push(`:semi ${arr(ins.arp, (x) => x)}`);
@@ -434,24 +453,26 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           }
         }
         if (speedChanged && tempoTrack) marks.push({ tick: at, tokens: [tempoOf((speeds[0] + speeds[1]) / 2)] });
-        if (row.ins >= 0 && t.instruments[row.ins]) {
-          ins = row.ins;
-          // An instrument's wave macro sets the wave at its notes (its first
-          // step; a wave moving under a note is not imported).
-          const wm = pceVol ? t.instruments[ins].wave : null;
-          if (wm?.values.length && typeof row.note === "number") {
+        if (row.ins >= 0 && t.instruments[row.ins]) ins = row.ins;
+        // The instrument's macros start over at each of its notes: its wave
+        // macro sets the wave (its first step; a wave moving under a note is
+        // not imported), its duty macro the noise switch.
+        if (pceVol && typeof row.note === "number" && t.instruments[ins]) {
+          const wm = t.instruments[ins].wave;
+          if (wm?.values.length) {
             wave = wm.values[0];
             if (wm.values.some((x) => x !== wm.values[0])) waveMacroSteps++;
           }
+          noise = dutyNoise(t.instruments[ins]) ?? noise;
         }
         if (row.vol >= 0) vol = row.vol;
         if (row.note === "off") {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
           sounding = null;
         } else if (typeof row.note === "number" && pceVol && noise !== toNoise) {
-          // Channel 5 or 6 playing the other of its wave and its noise: a
-          // score has one of them there.
-          if (noise) noiseDropped++; else waveDropped++;
+          // Channel 5 or 6 playing the other of its wave and its noise: that
+          // kind's own track takes it, or (one kind chosen) it is left out.
+          if (!ch.split) { if (noise) noiseDropped++; else waveDropped++; }
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
           sounding = null;
         } else if (typeof row.note === "number") {
