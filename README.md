@@ -13,6 +13,8 @@ browser and exported as VGM.
 - **Playback driver:** MMLispDRV (68k sequencer + Z80 PCM/write engine, SGDK
   integration) — trace-verified against the JS reference in emulation.
 
+![MMLisp Live playing a score: the editor with each channel's oscilloscope behind it, the piano roll, and the FM panel showing fm1's voice](docs/images/live.png)
+
 ## Highlights
 
 - **Music as code, not a tracker.** Scores are Lisp s-expressions — name a voice
