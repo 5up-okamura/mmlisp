@@ -119,6 +119,45 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
     resolveLayerNotes, same-name output unchanged). Like the same-name
     :prio pass, it does not count the notes it drops.
 
+## The Famicom (fc) — the design, ruled 2026-10-27, not built yet
+
+Build it as pce was built (chips/huc6280.js, targets/pce.js, synth-pce.js,
+tools/tests/pce are the pattern), in stages: 1. pulses, triangle, noise;
+2. DPCM; 3. DefleMask / Furnace NES modules as fc (import-tracker.js
+already reads them) and VGM 0xB4. Expansions after, by voice class (FDS
+the only one with a VGM slot: APU clock bit 31; VRC7 as a YM2413 needs its
+own ROM voices, decide then). Facts are from memory: hold every table to
+nesdev and Mesen / MAME (fetch them) before writing the emulator.
+
+- Channels `sqr1` `sqr2` `tri` `noise` `pcm1`; VGM: NES APU clock at $84,
+  command 0xB4, DPCM data in block 0xC2 (writable mid-song, so no 16 KB
+  total limit); frameClock true (60 Hz vblank drivers).
+- **`:duty` in sixteenths** (a new word, macros allowed): the encoder takes
+  the nearest of the chip's steps — 2A03 2/4/8/12 (12.5/25/50/75 %; 75
+  sounds as 25), later VRC6 1–8, MMC5 as 2A03. The "a part's resolution
+  is its encoder's" ruling.
+- **Pulse / noise level** 4-bit linear (`{ scale: "linear", steps: 16 }`),
+  constant-volume mode, volume 0 the key-off. No hardware envelope, no
+  sweep in the language. The encoder writes $4001 = $08 (sweep off, negate
+  set — else notes below ~A2 are muted by the sweep's overflow check),
+  stops at a period under 8, and rewrites $4003 / $4007 only when the high
+  bits change (a write resets the phase: a click).
+- **Triangle** has no level: `:vel` / `:vol` are W_TARGET (the "play what
+  can be played" ruling). A rest halts it with the linear counter (it holds
+  its output: no click; takes effect at the next frame-sequencer tick).
+- **Noise**: the note picks one of the 16 period-table rates (from c2, as
+  pce's noise), `:mode white | periodic` (periodic = the 93-step short
+  mode); md's white0–periodic3 are E_TARGET with a hint.
+- **DPCM (pcm1, one voice)**: one rate per def-pcm — the highest of the 16
+  at which every note of it fits 4081 bytes; each note resampled to its
+  pitch at that rate. Level baked into the amplitude (`:vel`, `:vol`; no
+  change while it sounds). Loops are the whole sample only ($4012/$4013):
+  :pcm-start / :pcm-end are the sample, a different :loop-* is W_TARGET;
+  `:mode loop` works. Each hit writes $4011 to the bake's start level (64)
+  and restarts via $4015. The 1-bit delta (±2 a sample) dulls fast loud
+  attacks — say so in the reference. The nonlinear mixer (the DAC level
+  lowering tri / noise) is the emulator's, the language says nothing.
+
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
 - **Stages.** All four are built (1 engine, 2 language and player, 3 the
