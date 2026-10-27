@@ -161,7 +161,7 @@ for a controller's knobs.
   (with its PDX) as an X68000 score and MGS as an MSX one
 - Recordings, in WAV or any format the browser decodes: **Audio as Formants**
   (a sound's spectral peaks on FM3's operators — CSM's vocoder voice, or
-  sine-wave speech; on x68k and msx the sine waves) and **Audio as FM Voice** (a patch searched for one note,
+  sine-wave speech; on x68k, msx and pce the sine waves) and **Audio as FM Voice** (a patch searched for one note,
   three candidates to hear and play before choosing)
 
 **Saving and sharing.** VGM, WAV and video export, PCM included; `.mmlisp`

@@ -41,8 +41,9 @@ if (Math.abs(a.pitchHz / PITCH - 1) > 0.05) fails.push(`pitch ${a.pitchHz.toFixe
 
 // The score's machine: md and pc88 alike (the YM2608's FM3 has both modes);
 // x68k sine waves on fm1's four operators and the hiss on fm8's noise;
-// msx the SCC's wave1-wave4 and the PSG's noise.
-for (const [mode, target] of [["csm", "md"], ["sine", "md"], ["csm", "pc88"], ["sine", "pc88"], ["sine", "x68k"], ["sine", "msx"]]) {
+// msx the SCC's wave1-wave4 and the PSG's noise; pce its wave1-wave4 and
+// noise5.
+for (const [mode, target] of [["csm", "md"], ["sine", "md"], ["csm", "pc88"], ["sine", "pc88"], ["sine", "x68k"], ["sine", "msx"], ["sine", "pce"]]) {
   const { source, warnings } = resynthToMmlisp(a, { mode, target }, "vowel.wav");
   const score = target === "md" ? source : `(def-score :target ${target})\n${source}`;
   const r = compileMMLisp(score, `vowel-${mode}-${target}.mmlisp`);
@@ -58,13 +59,15 @@ for (const [mode, target] of [["csm", "md"], ["sine", "md"], ["csm", "pc88"], ["
     fails.push("x68k: not the four formants on fm1's operators and fm8's noise");
   if (target === "msx" && !(/\(def-wave sine/.test(source) && /\(wave4 sine/.test(source) && /\(noise/.test(source) && !/\(fm/.test(source)))
     fails.push("msx: not the SCC's wave1-wave4 and the PSG's noise");
+  if (target === "pce" && !(/\(def-wave sine/.test(source) && /\(wave4 sine/.test(source) && /\(noise5/.test(source) && !/\(fm|\(noise\n/.test(source)))
+    fails.push("pce: not wave1-wave4 and noise5");
 }
-// x68k and msx have no CSM: asked for, it is the sine waves, said so.
-for (const target of ["x68k", "msx"])
+// x68k, msx and pce have no CSM: asked for, it is the sine waves, said so.
+for (const target of ["x68k", "msx", "pce"])
   if (!resynthToMmlisp(a, { mode: "csm", target }, "vowel.wav").warnings.some((w) => /no CSM/.test(w))) fails.push(`${target} csm: not reported`);
 
 if (fails.length) {
   console.error("Resynthesis checks FAILED:\n  " + fails.join("\n  "));
   process.exit(1);
 }
-console.log(`Resynthesis checks passed: formants ${F.map((f, s) => med(vowel.map((i) => a.tracks[s][i].f)).toFixed(0)).join("/")} Hz for ${F.join("/")}, pitch ${a.pitchHz.toFixed(1)} Hz, csm and sine scores compile (md, pc88, x68k, msx)`);
+console.log(`Resynthesis checks passed: formants ${F.map((f, s) => med(vowel.map((i) => a.tracks[s][i].f)).toFixed(0)).join("/")} Hz for ${F.join("/")}, pitch ${a.pitchHz.toFixed(1)} Hz, csm and sine scores compile (md, pc88, x68k, msx, pce)`);

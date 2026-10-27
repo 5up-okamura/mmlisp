@@ -1604,7 +1604,10 @@ sine waves are the SCC's: `wave1`–`wave4` each play one cycle of a sine
 (`def-wave sine`) at a formant, its level the chip's 16 linear steps, and
 the hiss is the PSG's `noise`, 5 dB down against the SCC. The SCC's period
 grows coarse up high (some 50 cents a step near 3.4 kHz), about what x68k's
-ratios give.
+ratios give. On `pce` the same four sines are the HuC6280's `wave1`–`wave4`
+(its period as coarse up high as the SCC's), the level its 5-bit volume,
+and the hiss is `noise5` at its fastest rate. The Famicom has neither FM
+nor wave channels to sing on, so the import is disabled there.
 
 It reads best what has a shaped envelope — a voice, a wah or a moving
 filter, a drum's body. A sound whose colour is its partials (a bell, a
