@@ -103,11 +103,17 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   - DDA built 2026-10-27 (pceDda, frames: true — bakePcm8's frames, the
     player's setFrameBank, renamed from setPcm8Bank). A note's bytes are
     written on the CPU timer (ir-player `_writeTimer`, not the frameClock
-    snap); Live gets them as one `stream` message a note (writeToWorklet.
-    stream → worklet `_runStreams`, a tick at its sample) — per-write
-    messages stalled the page ~100 ms on a looped bar and an O(n²) queue in
-    the worklet. The export / capture path writes them one by one, so the
-    register log, VGM and WAV are the same writes. Not yet listened to.
+    snap), a frame at a time from _chipPcmFrames (`_ddaFrame`), so a note
+    of another of the channel's names dispatched meanwhile ends the hit (its
+    off a key-order lead before that key-on; the off waits for its frame
+    and the horizon, or a note starting at the sample's very end came after
+    it). Live gets each frame's ticks as one `stream` message
+    (writeToWorklet.stream → worklet `_runStreams`, a tick at its sample) —
+    per-write messages stalled the page ~100 ms and an O(n²) queue in the
+    worklet; per-frame streams measured the same as a wave-only score (p95
+    ~3 ms, the page's own 30-50 ms long tasks). The export / capture path
+    writes them one by one, so the register log, VGM and WAV are the same
+    writes. Not yet listened to.
   - The cross-name layering built 2026-10-27 (mmlisp2ir shareChannelLayers,
     parts' `sharePrio`; the :prio pass split into alignLayerLoops /
     resolveLayerNotes, same-name output unchanged). Like the same-name

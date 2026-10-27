@@ -2799,7 +2799,8 @@ own pitch (no pitch move while it sounds), its `:pcm-start` / `:loop-*`
 points and `:mode shot | loop | gate`; its level is the channel's 5-bit
 volume as a wave's is, with `:vel`, `:vol` and their macros, and `:pan`
 the channel's. A note writes its samples to its end — the sample's, the
-next note's, a gate's — and the channel goes quiet.
+next note's on any of the channel's names, a gate's — and the channel goes
+quiet.
 
 **One channel, three names.** `waveN`, `noiseN` (5 and 6) and `pcmN` are
 one channel, and a score may write any of them: where their notes meet, the

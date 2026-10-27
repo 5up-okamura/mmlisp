@@ -2989,6 +2989,9 @@ export class IRPlayer {
             for (const [p, a, d] of this._rhythmEnc.tune(voice, midi, t)) this._write(p, a, d, t);
           }
         }
+        // A DDA hit's samples of this frame, as far as the horizon (a note
+        // another name starts at the horizon is not dispatched yet), and its end.
+        if (h?.dda != null && !h.dumped) this._ddaFrame(h, Math.min(t + 1 / 60, horizon));
         if (!h || h.dumped || t >= h.end) continue;
         const lv = this._chipPcmLevelAt(h, t);
         if (h.dda != null) {
@@ -3190,10 +3193,12 @@ export class IRPlayer {
 
   // The PC Engine's DDA (pcm1-pcm6): a note's sample baked at DDA_RATE at
   // its pitch — its range and loop read as PCM8's are — written a byte a
-  // timer tick to the channel's $06 from its key-on to its end (the
-  // sample's, the next note's, a gate's or loop's at its gate), then the
-  // channel off; its level a frame at a time (_chipPcmFrames), its pan at
-  // its key-on.
+  // timer tick to the channel's $06 from its key-on to its end: the
+  // sample's, the track's next note's, a gate's or loop's at its gate, or
+  // the next note of any of the channel's names (wave5 under pcm5, which
+  // ends it where it starts: _dispatchPsgEvent). The bytes go out a frame
+  // at a time with its level (_chipPcmFrames, _ddaFrame), then the channel
+  // off; its pan is written at its key-on.
   _dispatchDdaEvent(ev, when) {
     const ti = ev._trackIndex;
     const ch = ev._chIndex ?? 0;
@@ -3224,7 +3229,10 @@ export class IRPlayer {
         const onFrame = (t) => (this._target.frameClock ? this._frameStart(t) : t);
         let stop = Number.isFinite(nextNote) ? onFrame(nextNote) : Infinity;
         if (mode !== "shot" && gateTicks > 0) stop = Math.min(stop, onFrame(this._timeAfterTicks(when, gateTicks)));
-        const maxTicks = Number.isFinite(stop) ? Math.floor((stop - when) * DDA_RATE + 1e-9) : Math.ceil(DDA_HOLD_SEC * DDA_RATE);
+        // A shot with nothing after it plays its sample out; a loop is held
+        // for a while.
+        const maxTicks = Number.isFinite(stop) ? Math.floor((stop - when) * DDA_RATE + 1e-9)
+          : mode === "loop" ? Math.ceil(DDA_HOLD_SEC * DDA_RATE) : Infinity;
         const step = perSec / DDA_RATE; // source frames a timer tick
         const bytes = [];
         for (let pos = start; bytes.length < maxTicks; pos += step) {
@@ -3238,21 +3246,10 @@ export class IRPlayer {
         }
         if (!bytes.length) break;
         const off = when + bytes.length / DDA_RATE;
-        this._chipPcmHit(key, ev, when, off, { dda: ch }, (t, h) => {
+        this._chipPcmHit(key, ev, when, off, { dda: ch, bytes, sent: 0 }, (t, h) => {
           h.att = levelSteps(ev._route.part.level, this._ddaLevel(h, t));
           write([...enc.pan(ch, st.pan), ...enc.level(ch, h.att)], t);
         });
-        // The samples on the CPU's timer, not the video frame: as one stream
-        // where the writer takes one (Live's worklet: a write a tick, each at
-        // its sample), else a write at a time (a capture, the exports).
-        const timed = this._writeTimer;
-        if (timed.stream) {
-          const per = enc.sample(ch, 0);
-          const flat = new Uint8Array(bytes.length * per.length * 2);
-          bytes.forEach((v, k) => enc.sample(ch, v).forEach(([, a, d], j) => { flat[2 * (k * per.length + j)] = a; flat[2 * (k * per.length + j) + 1] = d; }));
-          timed.stream({ when, rate: DDA_RATE, port: per[0][0], perTick: per.length, bytes: flat });
-        } else bytes.forEach((v, k) => { for (const [p, a, d] of enc.sample(ch, v)) timed(p, a, d, when + k / DDA_RATE); });
-        write(enc.off(ch), Math.min(off, stop));
         break;
       }
       case "PARAM_SET":
@@ -3274,6 +3271,39 @@ export class IRPlayer {
       }
       default:
         break;
+    }
+  }
+
+  // A DDA hit's samples up to `until` (a frame's end), on the CPU's timer,
+  // not the video frame — as one stream a frame where the writer takes one
+  // (Live's worklet, a write a tick at its sample), else a write at a time
+  // (a capture, the exports) — and, once its last is out or its end has
+  // come, the channel off, a key-order lead before its end: past its last
+  // sample, and before the key-on of a note of another of the channel's
+  // names that starts there or ends it (`cut`).
+  _ddaFrame(h, until) {
+    const enc = this._ddaEncoder();
+    const timed = this._writeTimer;
+    const ch = h.dda;
+    const last = Math.min(h.bytes.length, Math.ceil((h.end - h.t) * DDA_RATE - 1e-9));
+    const to = Math.min(last, Math.ceil((until - h.t) * DDA_RATE - 1e-9));
+    if (to > h.sent) {
+      const from = h.sent;
+      if (timed.stream) {
+        const per = enc.sample(ch, 0);
+        const flat = new Uint8Array((to - from) * per.length * 2);
+        for (let k = from; k < to; k++)
+          enc.sample(ch, h.bytes[k]).forEach(([, a, d], j) => { flat[2 * ((k - from) * per.length + j)] = a; flat[2 * ((k - from) * per.length + j) + 1] = d; });
+        timed.stream({ when: h.t + from / DDA_RATE, rate: DDA_RATE, port: per[0][0], perTick: per.length, bytes: flat });
+      } else for (let k = from; k < to; k++) for (const [p, a, d] of enc.sample(ch, h.bytes[k])) timed(p, a, d, h.t + k / DDA_RATE);
+      h.sent = to;
+    }
+    // The off waits for the frame it falls in: a note starting on the
+    // channel at the sample's very end is dispatched before that frame.
+    const at = Math.min(h.end, h.t + last / DDA_RATE) - KEY_ORDER_EPS_SECS;
+    if (h.sent >= last && until > at) {
+      h.dumped = true;
+      for (const [p, a, d] of enc.off(ch)) timed(p, a, d, at);
     }
   }
 
@@ -5780,6 +5810,13 @@ export class IRPlayer {
         // A note starting: a chip that keys something on it hears it (the
         // PC Engine's LFO restarts on channel 2's note, heard or at :vol 0).
         this._psgWrites(this._lane(psgCh, (e, ch) => e.keyOn?.(ch) ?? []), when);
+        // A DDA note on this channel (another of its names) still sounding
+        // ends here, its channel off a key-order lead before this key-on.
+        if (this._toneEnc[psgCh]?.part?.sharePrio != null && this._ddaEncoder()) {
+          const hits = this._chipPcm?.hits.get(`dda-${this._toneEnc[psgCh].ch}`);
+          const h = hits?.findLast((x) => x.t < when - 1e-9 && x.end > when + 1e-9 && !x.dumped);
+          if (h) { h.end = when; h.cut = true; }
+        }
         // A wave held under the note before (waveAtKeyOn): loaded now, with
         // the channel off between the notes.
         if (this._laneWaveHeld[psgCh]) {

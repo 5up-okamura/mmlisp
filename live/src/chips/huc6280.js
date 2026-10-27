@@ -172,7 +172,12 @@ function pceEncoder() {
         return [sel(ch), [PORT, 0x04, 0xc0 | vol[ch]]];
       },
       sample: (ch, v) => [sel(ch), [PORT, 0x06, v & 31]],
-      off: (ch) => [sel(ch), [PORT, 0x04, 0x00]],
+      // Off — but for channel 2 under the LFO, which stays on at volume 0.
+      off: (ch) => {
+        vol[ch] = 0;
+        on[ch] = ch === LFO_CH && lfoMode ? 1 : 0;
+        return [sel(ch), ctl(ch)];
+      },
       pan: (ch, p) => [sel(ch), [PORT, 0x05, panLevels(p)]],
     },
     // :lfo-freq 0-255, larger faster, as the FM LFO's: the divider 256 − v
