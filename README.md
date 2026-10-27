@@ -6,7 +6,8 @@ audition them instantly in a browser authoring environment running the chips'
 emulators, and compile them to a compact binary for a Mega Drive sound driver —
 with a design built around *interactive* music: tracks that start, stop, layer,
 and respond to game state at runtime. The same language writes for the
-PC-8801, the X68000 and the MSX, auditioned in the browser and exported as VGM.
+PC-8801, the X68000, the MSX, the PC Engine and the Famicom, auditioned in the
+browser and exported as VGM.
 
 - **Try it now:** https://mmlisp.com/
 - **Playback driver:** MMLispDRV (68k sequencer + Z80 PCM/write engine, SGDK
@@ -31,8 +32,9 @@ PC-8801, the X68000 and the MSX, auditioned in the browser and exported as VGM.
   (`:keyon`), **FM3 independent-operator mode** and CSM, and samples on the
   fm6 DAC (`pcm1`–`pcm3`, one to three voices) — advanced YM2612 techniques
   you write, not hand-poke, in the browser and on the driver alike.
-- **Beyond the Mega Drive.** `(def-score :target pc88)`, `x68k` or `msx`
-  holds a score to the PC-8801, the X68000 or the MSX: their chips' own
+- **Beyond the Mega Drive.** `(def-score :target pc88)`, `x68k`, `msx`,
+  `pce` or `fc` holds a score to the PC-8801, the X68000, the MSX, the PC
+  Engine or the Famicom: their chips' own
   channels and words, auditioned in Live and exported as VGM — see
   [Machines](#machines).
 - **Interactive by design.** Tracks start, stop, layer and fade at runtime,
@@ -75,6 +77,8 @@ PC-8801, the X68000 and the MSX, auditioned in the browser and exported as VGM.
 | `pc88` | PC-8801 + Sound Board II | YM2608: FM, SSG, ROM rhythm, ADPCM-B | ymfm | VGM, WAV |
 | `x68k` | X68000 | YM2151 FM, MSM6258 ADPCM (PCM8's eight voices) | ymfm | VGM, WAV |
 | `msx` | MSX + SCC + FM-PAC | AY-3-8910 PSG, Konami SCC, YM2413 FM | ymfm, the SCC's own | VGM, WAV |
+| `pce` | PC Engine | HuC6280: six wave channels, noise, LFO, DDA | its own | VGM, WAV |
+| `fc` | Famicom | 2A03: two pulses, triangle, noise, DMC | its own | VGM, WAV |
 
 The Mega Drive has a driver for games (below); the other machines are
 composed in Live and delivered as VGM, which existing players run. Each
@@ -83,7 +87,10 @@ Mega Drive; the SSG's hardware envelope as a buzzer (`:env 8 :env-rate note`)
 on the PC-8801 and the MSX; DT2 and the OPM's LFO on the X68000; the SCC's
 32-step waves as `def-wave` — drawn by hand, or `+ - * /` over curves that
 move with a `$` value — and the FM-PAC's two operators, fifteen ROM voices
-and its rhythm, pitched and bent per hit. The YM2608's rhythm ROM is
+and its rhythm, pitched and bent per hit; the PC Engine's waves stepped by a
+note's `(macro :wave …)`, its LFO written as an FM LFO is, and one channel's
+wave, noise and DDA layered by `:prio`; the Famicom's pulse `:duty`, a
+triangle with no level, and DMC samples. The YM2608's rhythm ROM is
 Yamaha's and not included: Live plays your own, or stands the score's kit in
 for it. Other machines are on the [roadmap](docs/roadmap.md).
 
@@ -142,9 +149,10 @@ for a controller's knobs.
 
 - FM voices from DefleMask, Furnace, TFI, VGI, OPNI and mucom88 banks; drum
   samples from mucom88 PCM banks and SoundFont kits
-- Songs from MIDI, DefleMask, Furnace, VGM (with its PCM: the YM2612 DAC,
-  SegaPCM, YM2610 ADPCM, the OKIM6258; a YM2151's, a YM2608's or an
-  AY-3-8910's as its own machine's score, the SSG's hardware envelope
+- Songs from MIDI, DefleMask, Furnace (a PC Engine module as a `pce`
+  score), VGM (with its PCM: the YM2612 DAC, SegaPCM, YM2610 ADPCM, the
+  OKIM6258; a YM2151's, a YM2608's, an AY-3-8910's, an SCC's or a
+  HuC6280's as its own machine's score, the SSG's hardware envelope
   included) and mucom88, through a dialog for tempo and channels; MDX (with
   its PDX) as an X68000 score and MGS as an MSX one
 - Recordings, in WAV or any format the browser decodes: **Audio as Formants**

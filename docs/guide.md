@@ -1713,12 +1713,13 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
 - A **PC Engine** module offers a **Target**: `pce` (the default) or `md`.
   As `pce` each channel goes to its own `wave1`–`wave6`: the module's
   wavetables become `def-wave`s, and the wave a channel plays is its
-  instrument's wave macro (a `(macro :wave …)` where it moves) and `10xx`. Channel 5 or 6 that
-  turns its noise on (`11xx`) for most of its notes goes to `noise5` /
-  `noise6`, each note at the rate the tracker plays it (Furnace's: the note;
-  a DefleMask module's: its table by the note's name); the notes of the
-  other kind on that channel are left out, as are the LFO (`12xx` `13xx`)
-  and DDA (`17xx`). `08xy` is the channel's pan between its left and right
+  instrument's wave macro (a `(macro :wave …)` where it moves) and `10xx`.
+  Channel 5 or 6 that turns its noise on (an instrument's duty macro, or
+  `11xx`) goes to `noise5` / `noise6`, each note at the rate the tracker
+  plays it (Furnace's: the note; a DefleMask module's: its table by the
+  note's name); one that plays both kinds goes to both names, the noise
+  over the wave where they meet (§19's `:prio` across a channel's names).
+  The LFO (`12xx` `13xx`) and DDA (`17xx`) are left out. `08xy` is the channel's pan between its left and right
   levels, the volume column the chip's 5-bit volume (1.5 dB a step).
 
 **VGM.** A VGM is a log of register writes, so its notes are rebuilt from

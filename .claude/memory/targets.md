@@ -46,78 +46,35 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 
 ## PC Engine, then the Famicom (rulings, 2026-10-27)
 
-- **The PC Engine (HuC6280) comes first**, the Famicom (2A03) after it: the
-  PCE fits the parts as they are (wave, a noise sharing its channel) and
-  tests the "resolution is the encoder's" ruling; the 2A03 brings new words
-  (`:duty`, a triangle with no level, DPCM).
-- **Target names `pce` and `fc`.** Channel names reuse the existing ones:
-  pce `wave1`-`wave6`, the noise its channels 5 and 6 switch to as
-  `noise5` / `noise6`; fc `sqr1`-`sqr2`, `tri`, `noise`, `pcm1` (DPCM).
-- **pce's first build is the wave channels and the noise only** — DDA (the
-  5-bit direct PCM) and the ch2 → ch1 LFO wait, as the SCC came in stages.
-  Built 2026-10-27 (chips/huc6280.js, targets/pce.js, synth-pce.js): the
-  chip's reading is MAME's c6280.cpp and Mednafen's pce_psg.cpp (fetched,
-  they agree): tone = clock / 32 / f, the LFSR clocked every (31 − n) × 64,
-  the volume 1.5 dB a step capped at the table's 48 dB with the L/R and
-  main levels added, a wave loaded with the channel off from a DDA 1 → 0
-  edge. Rulings built in: a noise note is a rate index (c2 slowest … g4),
-  not a Hz — the rates are LFSR clocks (1.8 kHz up), so a Hz mapping
-  would have put every note at rate 0; a `:wave` under a note is
-  written there (the encoder's load turns the channel back on, as
-  Furnace does), and `(macro :wave [defs…])` steps a note's waves; a
-  score has wave5 or noise5 (the SSG's one-or-the-other rule). The PSG
-  core's off level is the lane's ladder's last step (`_psgOff`), no longer
-  15. `:pan` is built (a value, a
-  sweep, a note's macro onto $05, the IR keeping its fraction:
-  FRACTIONAL_TARGETS). DefleMask / Furnace PCE modules import as pce
-  (import-tracker.js; Furnace's rules read from its pce.cpp: noise rate =
-  note & 31 under properNoiseLayout, else a 12-entry table; 08xy the $05
-  nibbles; the WAVE block and pointer type 5 from papers/format.md). Open:
-  the Furnace side has run on no real .fur (check:import-tracker builds a
-  DMF only); an old (<240) .fur's properNoiseLayout is not read (default
-  true). VGMs import too (import-vgm.js pceChip / sccChip: a note carries
-  its wave, each distinct one a def-wave; the HuC6280's noise a row of its
-  own; round-tripped in check:import-vgm).
-- **pce's LFO and DDA, ruled 2026-10-27 (the user):**
-  - LFO, used as the FM LFO is: the song's `:lfo-freq` 0–255, larger is
-    faster ($08 = 256 − v); wave1 takes it with `:fms 0–3` (0 off, 1–3
-    $09's modes); its shape is wave2's def-wave, its speed wave2's pitch
-    / (256 − v). Rule A: while wave1's :fms is not 0, ch2 stays on and is
-    the LFO — wave2's rests and :vol 0 only silence it (volume 0 with the
-    on bit kept), the LFO runs at its last pitch; wave1's :fms 0 stops it.
-    A wave2 key-on resets the LFO's phase ($09 bit 7 pulsed). The depth is
-    in period steps (±16/64/256), so a higher note sways more and a deep
-    one wraps the 12-bit period (Mednafen's & 0xFFF) — not clamped.
-  - DDA: `pcm1`–`pcm6`, channel N in DDA mode; samples baked per note at
-    6.99 kHz (7.16 MHz / 1024), no pitch move while sounding; level and pan
-    as a wave channel's (the same volume table on the chip).
-  - One channel, several kinds (wave5 / noise5 / pcm5): all may be
-    written; where they overlap, :prio decides across the names, and at an
-    equal :prio (the default 8) pcm > noise > wave — the higher's note
-    drops a lower one starting under it and cuts one sounding. Loops must
-    agree, as same-name layers' do. Order of work: LFO → DDA → this pass.
-  - LFO built 2026-10-27 (pceWaveLfo on ch1 takes FM_FMS; the encoder's
-    lfo / lfoFreq / keyOn — keyOn a player hook at a PSG lane's NOTE_ON;
-    synth-pce.js steps ch2 at freq × divider and moves ch1's period).
-    Measured: a4 at :fms 1 / 2 sways ±20 / ±70 Hz.
-  - DDA built 2026-10-27 (pceDda, frames: true — bakePcm8's frames, the
-    player's setFrameBank, renamed from setPcm8Bank). A note's bytes are
-    written on the CPU timer (ir-player `_writeTimer`, not the frameClock
-    snap), a frame at a time from _chipPcmFrames (`_ddaFrame`), so a note
-    of another of the channel's names dispatched meanwhile ends the hit (its
-    off a key-order lead before that key-on; the off waits for its frame
-    and the horizon, or a note starting at the sample's very end came after
-    it). Live gets each frame's ticks as one `stream` message
-    (writeToWorklet.stream → worklet `_runStreams`, a tick at its sample) —
-    per-write messages stalled the page ~100 ms and an O(n²) queue in the
-    worklet; per-frame streams measured the same as a wave-only score (p95
-    ~3 ms, the page's own 30-50 ms long tasks). The export / capture path
-    writes them one by one, so the register log, VGM and WAV are the same
-    writes.
-  - The cross-name layering built 2026-10-27 (mmlisp2ir shareChannelLayers,
-    parts' `sharePrio`; the :prio pass split into alignLayerLoops /
-    resolveLayerNotes, same-name output unchanged). Like the same-name
-    :prio pass, it does not count the notes it drops.
+- **The PC Engine came first**, the Famicom after it: the PCE fit the parts
+  as they were (a wave, a noise sharing its channel); the 2A03 brought new
+  words (`:duty`, a triangle with no level, DPCM).
+- **pce is built** (language.md §19; chips/huc6280.js, targets/pce.js,
+  synth-pce.js). What the docs do not say:
+  - The chip is read from MAME's c6280.cpp and Mednafen's pce_psg.cpp
+    (they agree); the noise at rate 31 clocks every 32 (Mednafen).
+  - A noise note is a rate index, not a Hz: the rates are LFSR clocks (1.8
+    kHz up), so a Hz mapping put every note at rate 0.
+  - A wave named under a note is written there, as Furnace does (the
+    load's channel-off is turned back on in the same writes); it was held
+    to the next key-on until Bad Dudes showed instruments stepping waves
+    through a note (654×) — the reason `(macro :wave …)` exists. A wave
+    step naming the wave already playing writes nothing, as Furnace's
+    macro does; inline `:wave` always writes.
+  - The LFO's depth is in period steps (±16/64/256), so a deep one wraps
+    the 12-bit period (Mednafen's & 0xFFF) — not clamped. Measured: a4 at
+    :fms 1 / 2 sways ±20 / ±70 Hz.
+  - DDA's bytes go out on the CPU timer (`_writeTimer`, not the frame
+    snap), a frame at a time (`_ddaFrame`), so another name's note
+    dispatched meanwhile can cut the hit. Live gets a frame's ticks as one
+    `stream` message: per-write messages stalled the page ~100 ms; streams
+    measured as a wave-only score (p95 ~3 ms).
+  - Furnace import fidelity is held to Furnace's own VGM of a song, frame
+    by frame (pitch, level, wave up to rotation, noise/wave) — a scratch
+    tool, not in the repo; Bad Dudes: channels 1-5 match, 6 differs by its
+    duty flicker (roadmap).
+- **Open:** Bad Dudes as imported since the `:wave` macro is not yet
+  listened to in Live.
 
 ## The Famicom (fc) — the design, ruled 2026-10-27; stages 1-2 built
 
