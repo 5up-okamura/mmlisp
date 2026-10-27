@@ -2,9 +2,10 @@
 // DefleMask module (.dmf) → the tracker model (import-tracker.js)
 //
 // The layout follows Furnace's DMF loader (src/engine/fileOps/dmf.cpp), the
-// reference for every DefleMask version since 0.12: a zlib stream holding
+// reference for every DefleMask version: a zlib stream holding
 // the header, the order matrix, instruments, wavetables, patterns (stored
-// once per order entry), and samples, which are not read.
+// once per order entry), and samples, which are not read. Read from version
+// 0x0d (DefleMask v5.1), with Furnace's conversions of the older layouts.
 // ---------------------------------------------------------------------------
 
 import { inflate, readArp } from "./import-tracker.js";
@@ -56,8 +57,8 @@ export async function parseDmf(bytes) {
 
   if (str(16) !== ".DelekDefleMask.") throw new Error("not a DefleMask module");
   const version = c();
-  if (version < 0x13) throw new Error(`DMF version ${version} is too old (DefleMask 0.12 or later is needed)`);
-  if (version > 0x1b) throw new Error(`DMF version ${version} is newer than this importer knows`);
+  if (version < 0x0d) throw new Error(`DMF version 0x${version.toString(16)} is too old (DefleMask v5.1 or later is needed)`);
+  if (version > 0x1b) throw new Error(`DMF version 0x${version.toString(16)} is newer than this importer knows`);
   const sysId = c();
   const system = DMF_SYSTEMS[sysId];
   if (!system) throw new Error(`DMF system 0x${sysId.toString(16)} is not supported`);
@@ -76,6 +77,7 @@ export async function parseDmf(bytes) {
   if (customHz && +hzText > 0) hz = +hzText;
   const patLen = version > 0x17 ? i32() : c();
   const ordersLen = c();
+  if (version < 0x14) c(); // the arpeggio's tick length (not read)
 
   const orders = Array.from({ length: ordersLen }, () => new Array(nch).fill(0));
   for (let i = 0; i < nch; i++) {
@@ -91,17 +93,26 @@ export async function parseDmf(bytes) {
     const name = pstr();
     const mode = c();
     if (mode) {
-      const alg = c(), fb = c(), fms = c(), ams = c();
+      // Before 0x13 each word had a spare byte after it, the operators
+      // the OPL's words between theirs (Furnace's dmf.cpp).
+      const old = version < 0x13;
+      const alg = c(); if (old) c();
+      const fb = c(); if (old) c();
+      const fms = c(); if (old) { c(); c(); } // spare, the operator count
+      const ams = c();
       const ops = [];
       for (let j = 0; j < 4; j++) {
-        const am = c(), ar = c(), dr = c(), mul = c(), rr = c(), sl = c(), tl = c();
-        c(); // dt2 (OPM)
+        const am = c(), ar = c(); if (old) c(); // dam
+        const dr = c(); if (old) { c(); c(); c(); if (version < 0x11) c(); } // dvb, egt, ksl, ksr
+        const mul = c(), rr = c(), sl = c(); if (old) c(); // sus
+        const tl = c();
+        c(); if (old) c(); // dt2 (OPM); before 0x13 vib, ws
         const rs = c(), dt = c(), sr = c(), ssg = c();
         ops.push({ am, ar, dr, mul, rr, sl, tl, rs, dt, sr, ssg: ssg & 8 ? ssg & 15 : 0 });
       }
       instruments.push({ name, kind: "fm", fm: { alg, fb, fms, ams, ops } });
     } else {
-      const macro = (wide = true) => {
+      const macro = (wide = version >= 0x0e) => {
         const len = c();
         const values = [];
         for (let j = 0; j < len; j++) values.push(wide ? i32() : c());
@@ -109,14 +120,14 @@ export async function parseDmf(bytes) {
         return { values, loop: loop < len ? loop : null };
       };
       const gb = sysId === 0x04;
-      const vol = gb ? { values: [], loop: null } : macro();
+      const vol = gb && version >= 0x12 ? { values: [], loop: null } : macro();
       const arp = macro();
-      const arpFixed = c();
+      const arpFixed = version > 0x0f ? c() : 0;
       if (!arpFixed) arp.values = arp.values.map((v) => v - 12);
       const duty = macro(); // duty, or the noise switch (the PC Engine's)
       const wave = macro(); // the wavetable each tick: an index into `waves`
-      if (sysId === 0x07 || sysId === 0x47) p += 20; // SID settings
-      if (gb) p += 4; // GB envelope
+      if (sysId === 0x07 || sysId === 0x47) p += version < 0x11 ? 23 : 20; // SID settings
+      if (gb && version >= 0x12) p += 4; // GB envelope
       instruments.push({ name, kind: "std", vol, arp: readArp(arp, !!arpFixed), wave, duty });
     }
   }
@@ -128,7 +139,7 @@ export async function parseDmf(bytes) {
   for (let i = 0; i < nwaves; i++) {
     const len = i32();
     const values = [];
-    for (let j = 0; j < len; j++) values.push(i32());
+    for (let j = 0; j < len; j++) values.push(version < 0x0e ? c() : i32());
     waves.push({ name: "", values, height: sysId === 0x05 ? 31 : 15 });
   }
 
@@ -139,13 +150,28 @@ export async function parseDmf(bytes) {
       const rows = [];
       for (let k = 0; k < patLen; k++) {
         const note = s16();
-        const octave = s16();
-        const vol = s16();
+        let octave = s16();
+        // Furnace's corrections (dmf.cpp): the SMS's and the Genesis PSG's
+        // octaves read one lower before 0x0e, the Game Boy noise's two
+        // lower before 0x12, the MSX PSG's one higher (every version).
+        if (octave > 0) {
+          if (version < 0x0e && (sysId === 0x03 || (sysId === 0x02 && i > 5))) octave--;
+          else if (sysId === 0x0a && i < 3) octave++;
+          if (version < 0x12 && sysId === 0x04 && i === 3) octave -= 2;
+        }
+        let vol = s16();
+        // The Game Boy's wave volume was 0-3 before 0x12.
+        if (version < 0x12 && sysId === 0x04 && i === 2 && vol > 0) vol = (vol & 3) * 5;
         const fx = [];
         for (let l = 0; l < cols; l++) {
           const code = s16();
           let val = s16();
           if ((code === 0x09 || code === 0x0f) && val !== -1) val = Math.max(1, Math.min(255, val * (timeBase + 1)));
+          // E5xx: a quarter of the range before 0x14; twice it on the YM2151.
+          if (code === 0xe5 && val !== -1) {
+            if (version < 0x14) val = 128 + Math.trunc((val - 128) / 4);
+            if (sysId === 0x08) val = Math.max(0, Math.min(255, 2 * ((val & 0xff) - 0x80) + 0x80));
+          }
           if (code !== -1) fx.push([code, val]);
         }
         const ins = s16();

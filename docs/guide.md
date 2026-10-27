@@ -1693,7 +1693,8 @@ and drop what does not fit.
   timing is the beat estimated from the notes' times, as for a VGM, instead
   of the file's tempo map; **Timing** switches between the two.
 
-**DefleMask and Furnace.** A module plays its order list as the tracker does
+**DefleMask and Furnace.** A DefleMask module from v5.1 on is read, and a
+module plays its order list as the tracker does
 — `0Bxx` jumps, `0Dxx` breaks, looping where it jumps back to (or to the
 start) — with a row a fixed number of ticks and the speed as `:tempo`. By
 default each pattern of each channel becomes a phrase `(def fm1-p03 …)` that

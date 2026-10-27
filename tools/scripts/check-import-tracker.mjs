@@ -193,4 +193,64 @@ function nesDmf() {
   assert.deepEqual(bad(source), [], "the fixed arps compile clean");
 }
 
-console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios");
+// An old DefleMask module (0x0d, Genesis), in its layout as Furnace's
+// dmf.cpp reads it: the arpeggio's tick length after the order count, an FM
+// instrument with a spare byte after each word and the OPL's operator words,
+// 1-byte macro values, no arp mode; the PSG's notes stored an octave up and
+// E5xx a quarter of today's range. One order of two rows: FM1 C-4 with E590,
+// SQ1 C-4 (stored as octave 5).
+function oldDmf() {
+  const b = [];
+  const u8 = (v) => b.push(v & 0xff);
+  const s16 = (v) => b.push(v & 0xff, (v >> 8) & 0xff);
+  const i32 = (v) => b.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);
+  const pstr = (s) => { u8(s.length); for (const ch of s) u8(ch.charCodeAt(0)); };
+  for (const ch of ".DelekDefleMask.") u8(ch.charCodeAt(0));
+  u8(0x0d); u8(0x02); // version, system: Genesis
+  pstr("old"); pstr("mmlisp");
+  u8(4); u8(16); u8(0); u8(6); u8(6); u8(1); u8(0); for (const ch of "60\0") u8(ch.charCodeAt(0));
+  u8(2); u8(1); u8(1); // pattern length, orders, arpeggio tick length
+  for (let ch = 0; ch < 10; ch++) u8(0);
+  u8(2); // instruments
+  pstr("bell"); u8(1);
+  u8(4); u8(0); u8(5); u8(0); u8(2); u8(0); u8(1); u8(1); // alg, fb, fms (+ spares, operator count), ams
+  for (let j = 0; j < 4; j++) {
+    u8(0); u8(31); u8(0); // am, ar, dam
+    u8(10 + j); u8(0); u8(0); u8(0); u8(0); // dr, dvb, egt, ksl, ksr
+    u8(j + 1); u8(7); u8(2); u8(0); // mul, rr, sl, sus
+    u8(j === 3 ? 0 : 30); u8(0); u8(0); // tl, vib, ws
+    u8(0); u8(3); u8(4); u8(0); // rs, dt, sr, ssg
+  }
+  pstr("sq"); u8(0); u8(2); u8(15); u8(8); u8(255); u8(0); u8(0); u8(0); // vol [15 8], no arp, duty, wave
+  u8(0); // wavetables
+  const empty = { note: 0, oct: 0, vol: -1, fx: [], ins: -1 };
+  const rows = Array.from({ length: 10 }, () => Array.from({ length: 2 }, () => ({ ...empty })));
+  rows[0][0] = { note: 12, oct: 3, vol: -1, fx: [[0xe5, 0x90]], ins: 0 };
+  rows[6][0] = { note: 12, oct: 4, vol: 15, fx: [], ins: 1 };
+  for (let ch = 0; ch < 10; ch++) {
+    u8(1); // effect columns
+    for (const r of rows[ch]) {
+      s16(r.note); s16(r.oct); s16(r.vol);
+      const [code, val] = r.fx[0] ?? [-1, -1]; s16(code); s16(val);
+      s16(r.ins);
+    }
+  }
+  u8(0); // samples
+  return new Uint8Array(b);
+}
+
+{
+  const t = await parseDmf(oldDmf());
+  const fm = t.instruments[0].fm;
+  assert.deepEqual([fm.alg, fm.fb, fm.fms, fm.ams], [4, 5, 2, 1], "the old FM words past their spares");
+  assert.deepEqual(fm.ops.map((o) => [o.dr, o.mul, o.tl, o.dt, o.sr]), [[10, 1, 30, 3, 4], [11, 2, 30, 3, 4], [12, 3, 30, 3, 4], [13, 4, 0, 3, 4]],
+    "the old operators past the OPL's words");
+  assert.deepEqual(t.instruments[1].vol.values, [15, 8], "1-byte macro values");
+  assert.equal(t.channels[6].patterns.get(0)[0].note, 48, "the PSG's C-4, stored an octave up");
+  assert.deepEqual(t.channels[0].patterns.get(0)[0].fx, [[0xe5, 132]], "E590 as a quarter of today's range, E584");
+  const a = analyzeTracker(t);
+  const { source } = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "md"), fileName: "t.dmf" }, a);
+  assert.deepEqual(bad(source), [], "the old module compiles clean");
+}
+
+console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios, an old DMF");
