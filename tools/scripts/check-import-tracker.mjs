@@ -313,4 +313,69 @@ function dacDmf() {
   assert.deepEqual(bad(source), [], "the DAC score compiles clean");
 }
 
-console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios, an old DMF, a DMF's DAC");
+// The level under a sounding note: Pulse 1's C-4 at 15 drops to 8 a row
+// on (no note there), and its D-4 slides down with 0A01, a quarter step a
+// frame — 1.5 a row of six frames, 8 to 5 over two rows. Pulse 2's C-4 at
+// 4 slides up with 0A40, a step a frame, to 15 five frames into its
+// second row (where the slide stops); its D-4 starts there, and F903
+// takes it to 12. On fc the line is a :vel macro, beside the lead's
+// envelope on :vol — the linear column a curve in dB, a line a row; on md
+// a :vol macro under the loudest the note gets, as its :vel, beside the
+// envelope's :vel*.
+{
+  const t = await parseDmf(nesDmf());
+  const e = { note: null, vol: -1, ins: -1, fx: [] };
+  t.channels[0].patterns.set(0, [{ ...e, note: 48, vol: 15, ins: 0 }, { ...e, vol: 8 }, { ...e, note: 50, fx: [[0x0a, 0x01]] }, e]);
+  t.channels[1].patterns.set(0, [{ ...e, note: 48, vol: 4, ins: 0, fx: [[0x0a, 0x40]] }, e, { ...e, note: 50 }, { ...e, fx: [[0xf9, 3]] }]);
+  const a = analyzeTracker(t);
+  const fc = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "fc"), fileName: "t.dmf" }, a);
+  assert.match(fc.source, /\(macro :vel \[\(wait 24t\) \(linear 12\.25\.\.12\.25 :len 24t\)\]\)[^\n]*\n[^\n]* c /, "fc: a volume under the note, a step on its :vel");
+  assert.match(fc.source, /\(macro :vel \[\(linear 12\.25\.\.11\.375 :len 24t\) \(linear 11\.375\.\.10\.25 :len 24t\)\]\) :vel 12\.25 d/, "fc: 0A01 down two rows");
+  assert.match(fc.source, /\(macro :vel \[\(linear 9\.25\.\.13\.25 :len 24t\) \(linear 13\.25\.\.15 :len 20t\)\]\)/, "fc: 0A40 up, stopped at the top");
+  assert.match(fc.source, /\(macro :vel \[\(wait 24t\) \(linear 14\.\.14 :len 24t\)\]\) :vel 15 d/, "fc: the next note from the top, then F903");
+  const md = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "md"), fileName: "t.dmf" }, a);
+  assert.match(md.source, /env-lead \(macro :vol \[\(wait 24t\) \(linear 24\.\.24 :len 24t\)\]\)/, "md: the step 7 :vel steps down, on :vol");
+  assert.match(md.source, /\(macro :vol \[\(linear 31\.\.28 :len 48t\)\]\) :vel 8 d/, "md: 0A01 under the note's :vel, one line over its rows");
+  assert.match(md.source, /env-lead \(macro :vol \[\(linear 20\.\.31 :len 44t\)\]\) :oct 5 :vel 15/, "md: 0A40 up to the note's :vel, its top");
+  for (const { source, warnings } of [fc, md]) {
+    assert.deepEqual(warnings, [], "nothing left out");
+    assert.deepEqual(bad(source), [], "the level lines compile clean");
+  }
+}
+
+// Volume slides as Furnace's playback.cpp stops and pairs them. Pulse 1:
+// 0A02 down a row, an empty 0A (00) stops it; 04 46 under the note, then
+// at D-4 0400 and 0501 — the 46 vibrato again, with a slide. Pulse 2: 0A02,
+// stopped by a tremolo (0742, itself not imported); D-4 with 0310, G-4
+// with 0601 — that portamento again, with a slide. On FM (Genesis): FA0F
+// from 127 reaches 0 two and a half frames into D-4's row, which ends
+// D-4 there; a note at volume 0 is silent (the carriers at TL 127) and
+// left out.
+{
+  const t = await parseDmf(nesDmf());
+  const e = { note: null, vol: -1, ins: -1, fx: [] };
+  t.channels[0].patterns.set(0, [{ ...e, note: 48, vol: 15, ins: 0, fx: [[0x0a, 0x02]] }, { ...e, fx: [[0x0a, -1]] }, { ...e, fx: [[0x04, 0x46]] }, { ...e, note: 50, fx: [[0x04, 0], [0x05, 0x01]] }]);
+  t.channels[1].patterns.set(0, [{ ...e, note: 48, vol: 15, ins: 0, fx: [[0x0a, 0x02]] }, { ...e, fx: [[0x07, 0x42]] }, { ...e, note: 50, fx: [[0x03, 0x10]] }, { ...e, note: 55, fx: [[0x06, 0x01]] }]);
+  const a = analyzeTracker(t);
+  const { source, warnings } = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "fc"), phrases: false, fileName: "t.dmf" }, a);
+  assert.match(source, /\(macro :vel \[\(linear 15\.\.14 :len 24t\)\]\)[^\n]*c8\. /, "an empty 0A stops the slide: one row of it");
+  assert.match(source, /vib-46 \(macro :vel \[\(linear 14\.\.13\.5 :len 24t\)\]\) :vel 14 d/, "0501: the last vibrato and a slide");
+  assert.match(source, /c8 \(macro :vel none\) env-lead-v12/, "the tremolo stops the slide; the line cleared ahead of the voice");
+  assert.match(source, /\(macro :pitch \(linear -500\.\.0 :len 10f\)\) \(macro :vel \[\(linear 14\.\.13\.5 :len 24t\)\]\) ~ g/, "0601: the last portamento and a slide");
+  assert.deepEqual(warnings, ["effect tremolo skipped (1×)"]);
+  assert.deepEqual(bad(source), [], "the slides compile clean");
+}
+{
+  const t = await parseDmf(oldDmf());
+  const e = { note: null, vol: -1, ins: -1, fx: [] };
+  t.channels[0].patterns.set(0, [{ ...e, note: 48, vol: 127, ins: 0, fx: [[0xfa, 0x0f]] }, { ...e, note: 50 }]);
+  t.channels[1].patterns.set(0, [{ ...e, note: 48, vol: 0, ins: 0 }, { ...e, note: 50, vol: 100 }]);
+  const a = analyzeTracker(t);
+  const { source, warnings } = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "md"), phrases: false, fileName: "t.dmf" }, a);
+  assert.match(source, /\(macro :vol \[\(linear 31\.\.17 :len 10t\)\]\) :vel 0 d10t _14t/, "FAxx reaching 0 ends the FM note");
+  assert.match(source, /\(fm2 [^\n]*\n\s+#top ins-bell :oct 5 :vel 5 _ d/, "an FM note at volume 0 left out");
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(bad(source), [], "the FM lines compile clean");
+}
+
+console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios, an old DMF, a DMF's DAC, volume slides");

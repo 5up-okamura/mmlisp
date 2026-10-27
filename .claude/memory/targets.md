@@ -226,7 +226,11 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   legacy sample mode as convertLegacySamples, 2026-10-28; the DAC start
   `dpcmDelta`, a loop's part, a sample instrument's pitch and a DMF's DPCM
   at the sample's rate rather than a DMC rate not cross-checked against
-  Furnace by ear); the duty's
+  Furnace by ear); the level under a sounding note (a column without a
+  note, 0Axy and its kin) as a level line (2026-10-28: :vol under the
+  note's top :vel, :vel on fc / pce), not heard against Furnace — and a
+  DMF's additive volume macro on fc stays baked at the note's column while
+  the line moves it; the duty's
   12xx on a DMF read as Furnace's (DefleMask's own NES 12xx not
   cross-checked). The curve option `:duty` is 1–255 (128 = 50 %) while the track
   word is in sixteenths, as ruled — two scales under one name; raise it if

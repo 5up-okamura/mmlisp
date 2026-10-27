@@ -1707,6 +1707,17 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   `:semi` from the note played, so it gets one def for each note it plays.
   The volume column, pan (`08xy`), arpeggio (`00xy`), note
   cut (`ECxx`) and delay (`EDxx`) come along.
+- The volume column is the note's `:vel`. Where the level moves under a
+  sounding note — a column written on a row without a note, or a volume
+  slide (`0Axy`, `05xy`, `06xy`, `FAxy`, `F3xx`/`F4xx`, `F8xx`/`F9xx`) —
+  the note gets a level line, a `(macro :vol […])` of `(linear …)` and
+  `(wait …)` stages in ticks, under a `:vel` that is the loudest the line
+  reaches (`(macro :vel […])` on `fc` and `pce`, where the instrument's
+  volume macro is the `:vol` one). A slide goes on into the next notes as in
+  the tracker, each starting where it has got to, until `0A00` or a tremolo
+  (`07xy`) stops it; `05xy` and `06xy` also bring back the last vibrato and
+  portamento. A volume of 0 is silent on every chip, FM's too: a note
+  there is left out, and a slide that reaches 0 ends its note.
 - The pitch effects come along as `:pitch` macros: a vibrato (`04xy`) is a
   shared `(def vib-xy (macro :pitch (sin …)))`, a slide (`01xx`/`02xx`,
   `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a slur that glides

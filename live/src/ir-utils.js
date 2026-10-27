@@ -349,7 +349,7 @@ export function sumLevelOffsetsK(velOff, k, ...offs) {
 // vol/master mixer-fader (tunable): VOL_UNITY = 0 dB reference on the 0–31
 // scale. Unity sits at the top (31 = full, no attenuation), so vol/master is a
 // pure attenuator — lower values cut, matching the master fader.
-const VOL_STEP_DB = 2;
+export const VOL_STEP_DB = 2;
 export const VOL_UNITY = 31;
 
 // Velocity (0-15) → attenuation in register steps of `stepDb` (a part's

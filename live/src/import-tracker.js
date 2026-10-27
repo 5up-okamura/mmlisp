@@ -47,7 +47,7 @@
 // ---------------------------------------------------------------------------
 
 import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS } from "./import-song.js";
-import { VEL_DB_PER_STEP } from "./ir-utils.js";
+import { VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY } from "./ir-utils.js";
 import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
 import { DMC_RATES } from "./chips/rp2a03.js";
 import { encodeWav } from "./export-wav.js";
@@ -63,7 +63,8 @@ const STAND_IN = { psg: "wave-square", wave: "wave-triangle", noise: "wave-squar
 // The volume column's top, where it is not the model's FM / PSG one.
 const VOL_MAX = { opl: 63 };
 
-const PITCH_CODES = new Set([0x01, 0x02, 0x03, 0x04, 0xe1, 0xe2, 0xe5]);
+// The effects whose empty value Furnace reads as 00 (a stop, for a slide).
+const EMPTY_IS_00 = new Set([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0a, 0xe1, 0xe2, 0xe5, 0xf3, 0xf4, 0xfa]);
 
 // The PC Engine as a pce score: its channels' places, and its noise — on
 // channels 5 and 6, switched by 11xx or an instrument's duty macro (its
@@ -99,8 +100,7 @@ const dutyNoise = (ins) => (ins?.duty?.values.length ? ins.duty.values[0] > 0 : 
 
 const FX_NAMES = {
   0x01: "pitch slide up", 0x02: "pitch slide down", 0x03: "portamento", 0x04: "vibrato",
-  0x05: "portamento + volume slide", 0x06: "vibrato + volume slide", 0x07: "tremolo",
-  0x0a: "volume slide", 0x10: "LFO", 0x11: "feedback", 0x12: "TL op1", 0x13: "TL op2",
+  0x07: "tremolo", 0x10: "LFO", 0x11: "feedback", 0x12: "TL op1", 0x13: "TL op2",
   0x14: "TL op3", 0x15: "TL op4", 0x16: "multiplier", 0x17: "DAC", 0x18: "ext. CH3",
   0x19: "attack", 0x20: "noise mode", 0xe1: "note slide up", 0xe2: "note slide down",
   0xe5: "fine tune", 0xe0: "arpeggio speed",
@@ -657,7 +657,6 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     return { wavFile, rate, mono, wav: encodeWav(mono, null, rate), entries: [...dpcm.defs.values()], tag: t.format };
   };
 
-  let volUnderNote = 0;
   const tracks = [];
   let tempoTrack = true;
   for (const ch of used) {
@@ -678,12 +677,18 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // A 2A03 channel on fc: which of its kinds (env's `fc`).
     const fcCh = onFc && chn.chip === "nes" ? (ch.dest === "tri" ? "tri" : ch.dest === "noise" ? "noise" : "pulse") : null;
     const noiseRow = toNoise || fcCh === "noise"; // a note is a rate: no pitch effects
+    // The column's top, and a level of it as a velocity, before the clamp
+    // to 0-15 (in eighths where the chip's steps are finer than :vel's).
+    const colMax = pceVol ? chn.volMax ?? 31 : volMax;
+    const velRaw = (v) => (fcCh ? 15 + linDb(v) / VEL_DB_PER_STEP
+      : fmVol ? 15 - ((volMax - v) * 0.75) / 2
+      : pceVol ? 15 - (colMax - v) * 1.5 / VEL_DB_PER_STEP
+      : (v * 15) / volMax);
     const velOf = (v) => {
       if (v < 0) return 15;
-      if (fcCh) return v <= 0 ? 0 : Math.max(0, Math.min(15, Math.round((15 + linDb(v) / VEL_DB_PER_STEP) * 8) / 8));
-      if (fmVol) return Math.max(0, Math.min(15, Math.round(15 - ((volMax - v) * 0.75) / 2)));
-      if (pceVol) return Math.max(0, Math.min(15, Math.round((15 - ((chn.volMax ?? 31) - v) * 1.5 / VEL_DB_PER_STEP) * 8) / 8));
-      return Math.max(0, Math.min(15, Math.round((v * 15) / volMax)));
+      if (fcCh && v <= 0) return 0;
+      const x = velRaw(v);
+      return Math.max(0, Math.min(15, fcCh || pceVol ? Math.round(x * 8) / 8 : Math.round(x)));
     };
     const standIn = STAND_IN[ch.kind] ?? "wave-square";
     // Sticky state: the voice (instrument), the pan, the arpeggio. A channel
@@ -693,6 +698,16 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       (chn.patterns.get(t.orders[order][ch.index]) ?? []).slice(0, rows).some((r) => r?.fx.some(([c]) => c === code)));
     let ins = -1;
     let vol = -1;
+    // The volume slide in force (0Axy, its kin), in column steps a frame,
+    // and the column it has slid to (Furnace keeps the fraction; the next
+    // note starts from its whole part).
+    let slide = 0;
+    let colF = -1;
+    // 0Axy: a quarter step a frame, x up or else y down.
+    const volSlide = (val) => (val & 15 ? -(val & 15) : val >> 4) / 4;
+    // The last vibrato and portamento, for 05xy and 06xy.
+    let lastVib = 0;
+    let lastPorta = 0;
     let pan = (onFm || pceVol) && uses(0x08) ? "center" : null;
     let wave = -1; // the wavetable the channel plays (pce)
     let noise = false; // channel 5 or 6 on its noise (pce, 11xx)
@@ -732,6 +747,77 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const notes = [];
     const marks = [];
     let sounding = null;
+    // The column a sounding note moves through under it: points (tick from
+    // its start, column), a line from each to the next.
+    const levelTo = (n, tick, v) => (n.lv ??= [{ off: 0, v: n.col }]).push({ off: Math.max(0, tick - n.tick), v });
+    // The slide through the row, until the column's top or 0 stops it
+    // (0 silences a note — on FM too, its carriers at TL 127).
+    const slideRow = (at) => {
+      if (!slide) return;
+      const c0 = colF < 0 ? colMax : colF;
+      let c1 = c0 + slide * a.framesPerRow;
+      let end = at + rowTicks;
+      if (c1 >= colMax || c1 <= 0) {
+        const lim = c1 >= colMax ? colMax : 0;
+        end = at + Math.max(0, Math.round(((lim - c0) / slide) * ticksPerFrame));
+        c1 = lim;
+        slide = 0;
+      }
+      if (sounding && c1 !== c0 && fcCh !== "tri") {
+        levelTo(sounding, at, c0);
+        levelTo(sounding, end, c1);
+        if (c1 === 0) { sounding.end = Math.min(sounding.end ?? Infinity, end); sounding = null; }
+      }
+      colF = c1;
+      vol = Math.floor(c1);
+    };
+    // A note's level line as a macro: on :vol, a fader below the note's
+    // :vel, which is the loudest the line reaches; on :vel, the level
+    // itself. Its stages run in score ticks, a hold the last value.
+    const levelToken = (n) => {
+      if (!n.lv) return null;
+      const pts = [];
+      for (const p of n.lv) {
+        if (p.off > n.len) {
+          const q = pts[pts.length - 1];
+          if (q && q.off < n.len) pts.push({ off: n.len, v: q.v + ((p.v - q.v) * (n.len - q.off)) / (p.off - q.off) });
+          break;
+        }
+        const q = pts[pts.length - 1];
+        if (!q || q.off !== p.off || q.v !== p.v) pts.push(p);
+      }
+      if (pts[pts.length - 1].off < n.len) pts.push({ off: n.len, v: pts[pts.length - 1].v });
+      const top = Math.max(...pts.map((p) => p.v));
+      const onVel = n.lineOn === "vel";
+      if (!onVel) n.vel = velOf(top);
+      // The level in the line's units, before rounding.
+      const level = (v) => (onVel ? (fcCh && v <= 0 ? 0 : velRaw(v)) : VOL_UNITY + ((velRaw(v) - velRaw(top)) * VEL_DB_PER_STEP) / VOL_STEP_DB);
+      const unit = (v) => (onVel ? velOf(v) : Math.max(0, Math.min(VOL_UNITY, Math.round(level(v)))));
+      // A slide over many rows is one line: drop a point on the line
+      // through its neighbors (in level: a linear column is not one in dB).
+      for (let i = pts.length - 2; i > 0; i--) {
+        const [p, q, r] = [pts[i - 1], pts[i], pts[i + 1]];
+        const [lp, lq, lr] = [level(p.v), level(q.v), level(r.v)];
+        if (q.off > p.off && r.off > q.off && Math.abs((lq - lp) * (r.off - q.off) - (lr - lq) * (q.off - p.off)) < 1e-6) pts.splice(i, 1);
+      }
+      const stages = [];
+      // The note starts at its :vel, or :vol's top: a hold there waits.
+      let now = onVel ? n.vel : VOL_UNITY;
+      let hold = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const len = pts[i].off - pts[i - 1].off;
+        const a = unit(pts[i - 1].v);
+        const b = unit(pts[i].v);
+        if (!len) continue;
+        if (a === b && a === now) { hold += len; continue; }
+        if (hold) stages.push(`(wait ${hold}t)`);
+        hold = 0;
+        stages.push(`(linear ${a}..${b} :len ${len}t)`);
+        now = b;
+      }
+      if (!stages.length) return null;
+      return `(macro :${n.lineOn} [${stages.join(" ")}])`;
+    };
     a.seq.forEach(({ order, rows }, si) => {
       const pat = chn.patterns.get(t.orders[order][ch.index]) ?? [];
       for (let r = 0; r < rows; r++) {
@@ -739,18 +825,26 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         const at = segStart[si] + r * rowTicks;
         let delay = 0;
         let cut = null;
+        let jump = null; // F8xx / F9xx
         const rp = {}; // this row's pitch effects
         for (const [code, v] of row.fx) {
           // An effect with no value is 00 (Furnace reads it so).
-          const val = v < 0 && PITCH_CODES.has(code) ? 0 : v;
-          if (code === 0x04 && val >= 0) {
-            vib = val >> 4 && val & 15 ? { x: val >> 4, y: val & 15 } : null;
+          const val = v < 0 && EMPTY_IS_00.has(code) ? 0 : v;
+          if ((code === 0x04 || code === 0x05) && val >= 0) {
+            // 05xy: the last 04xy's vibrato again (0500 none), with a
+            // volume slide.
+            if (code === 0x04 && val) lastVib = val;
+            const vv = code === 0x04 ? val : val ? lastVib : 0;
+            vib = vv >> 4 && vv & 15 ? { x: vv >> 4, y: vv & 15 } : null;
             rp.vib = true;
+            if (code === 0x05) slide = volSlide(val);
           } else if ((code === 0x01 || code === 0x02) && val >= 0) {
             rp.slide = val ? { dir: code === 0x01 ? 1 : -1, speed: val } : { stop: true };
           } else if ((code === 0xe1 || code === 0xe2) && val >= 0) {
             if (val & 15 && val >> 4) rp.slide = { dir: code === 0xe1 ? 1 : -1, speed: (val >> 4) * 4, semis: val & 15 };
-          } else if (code === 0x03 && val >= 0) { if (val) rp.porta = val; }
+          } else if (code === 0x03 && val >= 0) { if (val) rp.porta = lastPorta = val; }
+          // 06xy: the last 03xx's portamento again, with a volume slide.
+          else if (code === 0x06 && val >= 0) { if (val && lastPorta) rp.porta = lastPorta; slide = volSlide(val); }
           // Fine tune, to 10 cents (a song tuned note by note — a VGM
           // conversion — would otherwise name an offset on every note).
           else if (code === 0xe5 && val >= 0) detune = v < 0 ? 0 : Math.round((val - 0x80) * 100 / 128 / 10) * 10 || 0;
@@ -770,11 +864,20 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             if (typeof row.note !== "number" && sounding) dutyUnderNote++;
           }
           else if (code === 0x00 && val >= 0) { arp = val; usedArp = true; }
+          // Volume slides (Furnace's playback.cpp): 0Axy (05xy and 06xy
+          // above), FAxy four times as fast, F3xx / F4xx xx/256 of a step a
+          // frame, F8xx / F9xx a jump that stops the slide.
+          else if (code === 0x0a && val >= 0) slide = volSlide(val);
+          else if (code === 0xfa && val >= 0) slide = volSlide(val) * 4;
+          else if ((code === 0xf3 || code === 0xf4) && val >= 0) slide = (code === 0xf3 ? val : -val) / 256;
+          else if ((code === 0xf8 || code === 0xf9) && val >= 0) { slide = 0; jump = code === 0xf8 ? val : -val; }
           else if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
           else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
           else if ((code === 0x09 || code === 0x0f) && val > 0) { /* the song's speed: speedMarks */ }
           else if (code === 0x0b || code === 0x0d) { /* the order walk */ }
           else if (code >= 0) {
+            // A tremolo stops a volume slide (the two do not run at once).
+            if (code === 0x07 && val & 15) slide = 0;
             const k = (pceVol ? PCE_FX[code] : fcCh ? FC_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
@@ -784,6 +887,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         if (typeof row.note === "number" && chn.legacy && (row.legacy != null || isSampleIns(t.instruments[ins]))) {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
           sounding = null;
+          slideRow(at);
           continue;
         }
         // The instrument's macros start over at each of its notes: its wave
@@ -805,17 +909,19 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           duty = dutyOf(dm.values[0]);
           if (fcCh === "noise" && dm.values.some((y) => dutyOf(y) !== duty)) dutyMoves++;
         }
-        if (row.vol >= 0) {
+        if (row.vol >= 0 || jump != null) {
+          const cur = colF < 0 ? colMax : colF;
+          const nv = Math.max(0, Math.min(colMax, (row.vol >= 0 ? row.vol : Math.floor(cur)) + (jump ?? 0)));
           // A volume written under a sounding note (no note on the row): 0
-          // silences it (a wave or a PSG channel's volume 0 is off); another
-          // moves it, which is not imported.
-          if (typeof row.note !== "number" && sounding && !fmVol && row.vol !== vol) {
+          // silences it (FM's carriers at TL 127, a wave or a PSG channel
+          // off); another moves it there.
+          if (typeof row.note !== "number" && sounding && nv !== cur) {
             // (The triangle has no level: only a 0 its volume macro reads stops it.)
             const triLevel = fcCh !== "tri" || !!t.instruments[ins]?.vol?.values.length;
-            if (row.vol === 0 && triLevel) { sounding.end = Math.min(sounding.end ?? Infinity, at); sounding = null; }
-            else if (fcCh !== "tri") volUnderNote++;
+            if (nv === 0 && triLevel) { sounding.end = Math.min(sounding.end ?? Infinity, at); sounding = null; }
+            else if (fcCh !== "tri") { levelTo(sounding, at, cur); levelTo(sounding, at, nv); }
           }
-          vol = row.vol;
+          vol = colF = nv;
         }
         if (row.note === "off") {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
@@ -838,7 +944,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           // silent note's too.
           const noteDuty = dutyToken();
           if (dm?.values.length && fcCh !== "tri") duty = dutyOf(dm.values[dm.values.length - 1]);
-          if (!fmVol && vol === 0 && !triOn) { sounding = null; continue; }
+          if (vol === 0 && !triOn) { sounding = null; slideRow(at); continue; }
           const waveName = pceVol && !toNoise && wave >= 0 ? waveDef(wave) : null;
           const st = {
             voice: waveName ? [waveName, ...voiceTokens(null, true, row.note)]
@@ -863,8 +969,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             : row.note + 24;
           if (noiseRow && (rp.slide || rp.porta || vib)) noisePitch++;
           const v = velOf(vol);
+          // The level line's target: the one the instrument's envelope
+          // leaves free (env's volume macro is a :vol on fc and pce).
+          const insVol = t.instruments[ins]?.kind !== "fm" && !!t.instruments[ins]?.vol?.values.length;
           sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st),
-            voiceChanged,
+            voiceChanged, col: vol < 0 ? colMax : vol, lineOn: insVol && (!!fcCh || pceSong) ? "vel" : "vol",
             p: noiseRow ? null : { vib: vib && { ...vib }, detune, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
               slides: rp.slide && !rp.slide.stop ? [{ ...rp.slide, off: 0 }] : [], vibLater: null } };
           if (legatoFrom != null && !noiseRow) sounding.tieIn = true;
@@ -881,6 +990,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             else if (rp.slide) ps.slides.push({ ...rp.slide, off });
           }
         }
+        slideRow(at);
       }
     });
     for (let i = 0; i < notes.length; i++) {
@@ -901,6 +1011,26 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         curP = tok;
       });
     }
+    // The level lines, stated as the pitch macros are: `(macro :vol none)`
+    // (or :vel) after one.
+    const lvToks = notes.map((n) => levelToken(n));
+    if (lvToks.some(Boolean)) {
+      let curL = null;
+      let curOn = null; // the target the line in force is on
+      notes.forEach((n, i) => {
+        const tok = lvToks[i];
+        // The line before is cleared ahead of the voice, so the clear never
+        // takes an envelope's own target (a :vol line before an fc
+        // instrument whose volume macro is :vol).
+        if (curL && (!tok || curOn !== n.lineOn)) n.pre.unshift(`(macro :${curOn} none)`);
+        if (tok) {
+          if (tok !== curL || n.voiceChanged) n.pre.push(tok);
+          n.state = [...n.state, tok];
+        } else n.state = [...n.state, `(macro :${n.lineOn} none)`];
+        curL = tok;
+        curOn = n.lineOn;
+      });
+    }
     tracks.push({ ch, notes, marks, noVel: fcCh === "tri" });
     if (tempoTrack) { marks.push(...speedMarks); tempoTrack = false; }
   }
@@ -919,7 +1049,6 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
 
   for (const [k, n] of fxSkipped) warnings.push(`effect ${k} skipped (${n}×)`);
   if (vibUnderSlide) warnings.push(`a vibrato under a slide is dropped for that note (${vibUnderSlide}×)`);
-  if (volUnderNote) warnings.push(`a volume moved under a sounding note keeps the note's first (${volUnderNote}×)`);
   if (!tracks.length) warnings.push("no notes to import");
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0) && !(onFc && used.some((c) => c.kind === "pcm" && t.channels[c.index].chip === "nes")))
     warnings.push("sample channels are not imported");
