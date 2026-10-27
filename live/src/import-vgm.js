@@ -6,9 +6,10 @@
 // is the frequency in force, and on an OPN / OPM chip the voice is every
 // register of the channel at key-on. What maps:
 //
-//   YM2612, YM2203, YM2608, YM2610   voices and notes (FM), SSG → PSG
-//                                    (the YM2608 is FM + SSG only: its
-//                                    rhythm and ADPCM-B are reported)
+//   YM2612, YM2203, YM2608, YM2610   voices and notes (FM), SSG → PSG;
+//                                    the YM2608's rhythm as the ROM's
+//                                    tracks (pc88) or the RX5 kit's
+//                                    (rhythmTracks), its ADPCM-B reported
 //   YM2151 (OPM)                     voices and notes — DT2 kept when the
 //                                    score is the X68000's (:target x68k),
 //                                    dropped on the Mega Drive; channel 8's
@@ -56,6 +57,8 @@ import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid
   assignBends, PITCH_NONE, gcd, destsFor } from "./import-song.js";
 import { targetProfile } from "./targets.js";
 import { envCycle } from "./chips/ssg.js";
+import { rhythmRom } from "./chips/rhythm-rom.js";
+import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./import-mucom.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
@@ -588,6 +591,29 @@ function sccChip(clock, { ev }) {
   };
 }
 
+// The YM2608's rhythm: $10 keys the six ROM sounds (bits 0-5: BD SD TOP
+// HH TOM RIM, rhythmRom.kit's order; bit 7 dumps them instead), $11 is the
+// total level, $18-$1D each sound's pan (bits 7-6, L and R) and level. A
+// hit is {t, k, db, pan}: its attenuation from full, 0.75 dB a step of each
+// level, and its pan; one panned to neither side is silent and not a hit.
+function rhythmChip() {
+  const r = new Uint8Array(0x20);
+  const hits = [];
+  return {
+    hits,
+    write(a, d, t) {
+      r[a] = d;
+      if (a !== 0x10 || d & 0x80) return;
+      for (let k = 0; k < 6; k++) {
+        if (!(d >> k & 1)) continue;
+        const lr = r[0x18 + k] >> 6;
+        if (!lr) continue;
+        hits.push({ t, k, db: 0.75 * (63 - (r[0x11] & 63) + 31 - (r[0x18 + k] & 31)), pan: ["", "right", "left", "center"][lr] });
+      }
+    },
+  };
+}
+
 // ── The file ──────────────────────────────────────────────────────────────
 
 /**
@@ -699,6 +725,7 @@ export async function parseVgm(bytes) {
     if (!rom || rom.length < need) { const grown = new Uint8Array(need); if (rom) grown.set(rom); rom = grown; roms.set(type, rom); }
     rom.set(data, start);
   };
+  const rhythm = rhythmChip();
   const pcm = pcmChips({ segaClock: clk(0x38) || 4000000, segaIntf: hdr(0x3c), opnbClock: clk(0x4c) || 8000000 });
   const typed = new Map(); // stream data blocks of a type other than 0: type → {parts, len, blocks}
   let okiUsed = false;
@@ -813,7 +840,7 @@ export async function parseVgm(bytes) {
     if (c === 0x56 || c === 0x57) {
       const port = c - 0x56, a = u8[p + 1];
       // The YM2608's rhythm (port 0 $10–$1D) and ADPCM-B (port 1 $00–$10).
-      if (port === 0 && a >= 0x10 && a <= 0x1d) { chip("opna"); skip("YM2608 rhythm"); }
+      if (port === 0 && a >= 0x10 && a <= 0x1d) { chip("opna"); rhythm.write(a, u8[p + 2], t); }
       else if (port === 1 && a <= 0x10) { chip("opna"); skip("YM2608 ADPCM-B"); }
       else chip("opna").write(port, a, u8[p + 2], t);
       p += 3; continue;
@@ -895,7 +922,7 @@ export async function parseVgm(bytes) {
     author = s[6] || s[7] || null;
   }
   return { chips, skipped, clockNotes, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac,
-    dacBank: bank, dacHits: hits, pcmRoms: roms, pcmHits: pcm.finish(end, roms) };
+    dacBank: bank, dacHits: hits, pcmRoms: roms, pcmHits: pcm.finish(end, roms), rhythmHits: rhythm.hits };
 }
 
 // ── Notes ─────────────────────────────────────────────────────────────────
@@ -1180,6 +1207,15 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
     const ssgNoise = kind === "psg" ? notes.filter((n) => n.ssg?.mix === "noise").length : 0;
     channels.push({ key, kind, notes: notes.length, noisy, ssgNoise, label: `${key} · ${notes.length} notes${noisy ? `, ${noisy} with the noise` : ""}` });
   }
+  // The YM2608's rhythm: a row per ROM sound it keys — the drums the tempo
+  // is best read from.
+  for (let k = 0; k < 6; k++) {
+    const hs = (parsed.rhythmHits ?? []).filter((h) => h.k === k);
+    if (!hs.length) continue;
+    const key = `${RHYTHM_KEY} ${RHYTHM_ROM[k]}`;
+    channels.push({ key, kind: "rhythm", k, notes: hs.length, label: `${key} · ${hs.length} hits` });
+    for (const h of hs) onsets.push(h.t);
+  }
   const frameRate = 60;
   const grid = estimateGrid(onsets, { frameRate });
   // The DAC: one channel of sample hits.
@@ -1225,7 +1261,14 @@ export function vgmDests(targetName = "md") {
   const t = targetProfile(targetName);
   const d = destsFor(t);
   // Where the SSG's channels mix the noise, `noise` is one of them: not a row's.
-  return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: mixesNoise(t) ? null : d.noise, pcm: d.pcm,
+  // The ROM rhythm's tracks (pc88's rhythm1-rhythm6) are its sounds', not a sample row's.
+  const romRhythm = (h) => t.partOf(h).name === "rhythm";
+  // The RX5 kit stands in for it where the PCM is the DAC's mix of voices
+  // (md): its first, the sounds layered on it. Not on another sample part —
+  // msx's are the FM-PAC's rhythm, pce's the DDA its wave1 shares.
+  const pcm = d.pcm.filter((h) => !romRhythm(h));
+  return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: mixesNoise(t) ? null : d.noise,
+    pcm, rhythm: d.pcm.filter(romRhythm), kit: t.hasPart("dac") ? pcm[0] ?? null : null,
     wave: d.wave, noises: mixesNoise(t) ? [] : d.noises };
 }
 
@@ -1255,7 +1298,9 @@ function ssgClockOf(target) {
 export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   const dests = vgmDests(targetName);
   // With PCM in the song, fm6 is the DAC: FM is offered fm1–fm5.
-  const pcmToo = dests.pcm.length > 0 && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm");
+  // (The rhythm on the kit is PCM too.)
+  const pcmToo = dests.pcm.length > 0 && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm" ||
+    (c.kind === "rhythm" && !dests.rhythm.length && dests.kit));
   const fm = dests.fm.filter((d) => !(pcmToo && d === "fm6"));
   const sqr = [...dests.psg];
   const waves = [...dests.wave];
@@ -1299,6 +1344,8 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     else if (ch.kind === "noise") { d = noise ?? "drop"; noise = null; }
     else if (ch.kind === "pcm") d = dests.pcm.length ? "pcm1" : "drop";
     else if (ch.kind === "chip-pcm") d = dests.pcm.length ? "pcm" : "drop";
+    // The ROM rhythm: each sound its own track, or the kit's, layered on pcm1.
+    else if (ch.kind === "rhythm") d = dests.rhythm[ch.k] ?? dests.kit ?? "drop";
     else d = fm.shift() ?? sqr.shift() ?? "drop";
     dest[ch.key] = d;
   }
@@ -1478,7 +1525,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const tracks = [];
   for (const ch of vgmChannels(a, target.name)) {
     const d = dest[ch.key] ?? "drop";
-    if (d === "drop" || ch.kind === "pcm" || ch.kind === "chip-pcm") continue; // PCM: below
+    if (d === "drop" || ch.kind === "pcm" || ch.kind === "chip-pcm" || ch.kind === "rhythm") continue; // PCM, rhythm: below
     // One physical channel takes one row (x68k's noise is fm8's).
     const voice = target.voiceKey(d) ?? d;
     if (taken.has(voice)) { warnings.push(`${ch.key}: ${d} is already taken — dropped`); continue; }
@@ -1633,7 +1680,23 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     warnings.push(`the ${target.system} has no PCM part yet — the PCM is left out`);
   if (dacOut && chipKeys.length) warnings.push("the YM2612 DAC takes the PCM channels — the other chips' PCM is left out");
   if (chipOut) warnings.push(...chipOut.warnings);
-  if (dacOut || chipOut) {
+  // The YM2608's rhythm: the ROM's tracks, or the kit on a PCM track.
+  // A ROM track takes one sound (a second row on it is dropped, as any
+  // channel taken twice); the kit's sounds share its one track as layers,
+  // which the DAC's or a PCM chip's tracks would play over.
+  const rhythmRows = [];
+  for (const c of a.channels) {
+    const d = c.kind === "rhythm" ? dest[c.key] ?? "drop" : "drop";
+    if (d === "drop") continue;
+    const onRom = dests.rhythm.includes(d);
+    if (!onRom && d !== dests.kit) { warnings.push(`${c.key}: ${d} cannot play it — dropped`); continue; }
+    if (onRom && rhythmRows.some((r) => r.d === d)) { warnings.push(`${c.key}: ${d} is already taken — dropped`); continue; }
+    if (!onRom && (dacOut || chipOut)) { warnings.push(`${c.key}: the PCM takes ${d} — the rhythm is left out`); continue; }
+    rhythmRows.push({ k: c.k, d });
+  }
+  const rhythmOut = rhythmRows.length ? rhythmTracks(parsed, rhythmRows, target, tickOf, endTick, g.bpm) : [];
+  const kitRhythm = rhythmOut.length > 0 && !dests.rhythm.length;
+  if (dacOut || chipOut || (kitRhythm && dacMix)) {
     const fm6 = tracks.findIndex((tr) => tr.d === "fm6");
     if (fm6 >= 0) { warnings.push(`${tracks[fm6].ch.key}: fm6 is the DAC in a score with PCM — dropped`); tracks.splice(fm6, 1); }
   }
@@ -1648,6 +1711,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   });
   if (dacOut) out.push(dacOut.track);
   if (chipOut) out.push(...chipOut.tracks);
+  out.push(...rhythmOut);
   // Within a tenth of a whole tempo, the tempo is written whole (the grid
   // keeps the measured one).
   const bpm = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
@@ -1664,6 +1728,10 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     dacOut && ":pcm-voices 1", chipOut && dacMix && `:pcm-voices ${chipOut.voices}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
+  // The rhythm's kit: its samples on md; on pc88 the stand-in for a ROM the
+  // user has not loaded (language.md §19).
+  if (rhythmOut.length)
+    header.push(`(import ${qstr(RHYTHM_KIT)})  ; ${kitRhythm ? "the YM2608 rhythm on the RX5 kit" : "the rhythm's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)"}`);
   if (waveDefs.size) header.push("", ...[...waveDefs].map(([steps, name]) => `(def-wave ${name} :wave [${steps}])`));
   if (envs.length) header.push("", ...envs);
   if (bends.length) header.push("", ...bends);
@@ -1678,6 +1746,59 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const pcm = dacOut?.pcm ?? chipOut?.pcm ?? null;
   if (options.structure === false) return { source: emitSong(song), warnings, pcm };
   return { source: emitStructured({ ...song, bars: bestBars(song) }), warnings, pcm };
+}
+
+// ── The YM2608's rhythm ───────────────────────────────────────────────────
+
+const RHYTHM_KEY = "YM2608 rhythm";
+const RHYTHM_ROM = Object.values(rhythmRom.kit).map((s) => s.toUpperCase()); // BD SD TOP HH TOM RIM, the key bits' order
+
+/**
+ * The rhythm's rows → tracks, each sound under its kit role (rhythmRom.kit,
+ * in key-bit order). On a target with the ROM rhythm (pc88) a sound is a
+ * rhythm track of its own, its level absolute — the IL takes vel + vol +
+ * master, as the chip's total and own level did — and its pan the hit's.
+ * Elsewhere the sounds are the RX5 kit's samples on one PCM track, as the
+ * mucom importer plays part G (RHYTHM_SOUNDS): :prio layers, a hit dropped
+ * while a higher one rings (its :gate), levels against the loudest hit.
+ * `rows`: [{k, d}].
+ */
+function rhythmTracks(parsed, rows, target, tickOf, endTick, bpm) {
+  const roles = Object.keys(rhythmRom.kit);
+  const rom = target.hasPart("rhythm");
+  const keyed = new Set(rows.map((r) => r.k));
+  const hits = parsed.rhythmHits.filter((h) => keyed.has(h.k));
+  const loudest = hits.reduce((m, h) => Math.min(m, h.db), Infinity);
+  const tracks = [];
+  for (const { k, d } of rows) {
+    const s = RHYTHM_SOUNDS[k];
+    const notes = [];
+    for (const h of hits) {
+      if (h.k !== k) continue;
+      const tick = tickOf(h.t);
+      if (tick >= endTick) break;
+      const vel = Math.max(rom ? 0 : 1, Math.min(15, Math.round(15 - (rom ? h.db : h.db - loudest) / VEL_DB_PER_STEP)));
+      const prev = notes[notes.length - 1];
+      if (prev && prev.tick >= tick) notes.pop(); // two on one step: the later
+      notes.push({ tick, len: 1, midi: 60, vel, pan: h.pan });
+    }
+    if (!notes.length) continue;
+    // A hit plays out whatever its length: each lasts to the next.
+    notes.forEach((n, i) => { n.len = Math.max(1, (notes[i + 1]?.tick ?? endTick) - n.tick); });
+    const panned = rom && notes.some((n) => n.pan !== "center");
+    const gate = rom ? null : ringGate(s, bpm);
+    const state = (n) => [roles[k], gate, panned && `:pan ${n.pan}`].filter(Boolean);
+    let cur = null;
+    for (const n of notes) {
+      n.state = state(n);
+      n.pre = n.state.filter((t, i) => cur?.[i] !== t);
+      cur = n.state;
+    }
+    const head = notes[0].pre;
+    notes[0] = { ...notes[0], pre: undefined };
+    tracks.push({ channel: d, open: rom ? [] : [`:prio ${s.prio}`], head, notes, marks: [] });
+  }
+  return tracks;
 }
 
 // ── The DAC ───────────────────────────────────────────────────────────────

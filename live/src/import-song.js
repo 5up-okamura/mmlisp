@@ -242,7 +242,8 @@ function trackSpan(song, tr) {
  *   endTick, loopTick?
  *   tracks: [{channel, head: string[], notes, marks?, vel?,
  *             endTick?, loopTick?}]  a track's own end and loop, where its
- *                           driver loops each track on its own (MDX, MGS)
+ *                           driver loops each track on its own (MDX, MGS);
+ *                           `open`: tokens its form opens with (`:prio n`)
  * }
  */
 export function emitSong(song) {
@@ -260,7 +261,7 @@ export function emitSong(song) {
       bars, endTick, loopTick,
       marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: tr.channel.startsWith("pcm"),
     });
-    const head = [tr.channel, ...tr.head, `:oct ${oct}`, `:len ${lenToken(defLen)}`];
+    const head = [tr.channel, ...(tr.open ?? []), ...tr.head, `:oct ${oct}`, `:len ${lenToken(defLen)}`];
     if (vel !== 15) head.push(`:vel ${vel}`);
     if (loopTick != null) body.push("(go top)");
     out.push("", `(${head.join(" ")}`, ...body.map((l) => "  " + l));
@@ -899,7 +900,7 @@ export function emitStructured(song) {
       st = w.st;
     });
     if (loopTick != null) body.push("(go top)");
-    forms.push("", `(${[tr.channel, `:len ${lenToken(defLen)}`].join(" ")}`, ...body.map((l) => "  " + l));
+    forms.push("", `(${[tr.channel, ...(tr.open ?? []), `:len ${lenToken(defLen)}`].join(" ")}`, ...body.map((l) => "  " + l));
     forms[forms.length - 1] += ")";
   }
   return [...out, ...forms].join("\n") + "\n";

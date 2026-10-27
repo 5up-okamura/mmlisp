@@ -95,7 +95,7 @@ const RHYTHM_PART = "G";
 // rings — the time the RX5 sample stays within 6 dB of its peak, during which
 // a lower-priority hit is dropped rather than cutting it.
 // `ms` is the sample's whole length, for the bank-fit bake.
-const RHYTHM_SOUNDS = [
+export const RHYTHM_SOUNDS = [
   { name: "kick", prio: 4, ringMs: 40, ms: 160 }, // BD
   { name: "snare", prio: 1, ringMs: 60, ms: 220 }, // SD
   { name: "ride", prio: 3, ringMs: 350, ms: 600 }, // TOP (the OPNA's top cymbal is a ride)
@@ -103,7 +103,9 @@ const RHYTHM_SOUNDS = [
   { name: "tom4", prio: 2, ringMs: 65, ms: 400 }, // TOM
   { name: "rim", prio: 5, ringMs: 15, ms: 80 }, // RIM
 ];
-const RHYTHM_KIT = "presets/rx5/set.mmlisp";
+export const RHYTHM_KIT = "presets/rx5/set.mmlisp";
+// A sound's ring time as the :gate its layer's hits hold the line for.
+export const ringGate = (s, bpm) => `:gate ${Math.max(1, Math.round((s.ringMs / 1000) * ((bpm ?? 120) / 60) * PPQN))}t`;
 const RHYTHM_KIT_RATE = 22050;
 const RHYTHM_DB_PER_STEP = 0.75; // the total level (0-63) and each sound's (0-31)
 
@@ -2493,7 +2495,7 @@ function mucomToMmlisp(parsed) {
       const s = RHYTHM_SOUNDS[k];
       const head = i !== 0 ? []
         : pc88 ? [{ t: "raw", text: s.name }]
-        : [{ t: "raw", text: `${s.name} :gate ${Math.max(1, Math.round((s.ringMs / 1000) * ((tempo ?? 120) / 60) * PPQN))}t` }];
+        : [{ t: "raw", text: `${s.name} ${ringGate(s, tempo)}` }];
       copies.push({ kind: "form", letter: f.letter, key: `${f.letter}~${s.name}`, ch: pc88 ? `rhythm${k + 1}` : kPlays ? "pcm2" : "pcm1", prio: pc88 ? null : s.prio, ops: [...head, ...per[i]], comment: copies.length ? null : f.comment });
     });
     scoreItems.splice(scoreItems.indexOf(f), 1, ...copies);

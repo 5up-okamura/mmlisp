@@ -144,4 +144,33 @@ const writesOf = (source, addr) => {
   imported(parsed, "md");
 }
 
+// The YM2608's rhythm: on pc88 each ROM sound keyed comes back on its own
+// rhythm track under its kit role, its pan the hit's; on md the sounds are
+// the RX5 kit's on pcm1, :prio layers as the mucom importer plays part G.
+{
+  const parsed = await vgmOf("tools/tests/pc88/rhythm.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.equal(a.target, "pc88");
+  const opt = defaultVgmOptions(a, "pc88");
+  assert.equal(opt.dest["YM2608 rhythm BD"], "rhythm1");
+  assert.equal(opt.dest["YM2608 rhythm RIM"], "rhythm6");
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "pc88", structure);
+    for (const [ch, role] of [["rhythm1", "kick"], ["rhythm2", "snare"], ["rhythm4", "hat"], ["rhythm5", "tom4"], ["rhythm6", "rim"]])
+      assert.match(source, new RegExp(`\\(${ch} [^(]*\\b${role}\\b`), `pc88: ${role} on ${ch}`);
+    assert.match(source, /\(rhythm6 (?:(?!\n\()[\s\S])*:pan right/, "pc88: the rim's pan, the one hit panned");
+    assert.doesNotMatch(source, /\(rhythm2 (?:(?!\n\()[\s\S])*:pan/, "pc88: the snare centred, as it played");
+  }
+  const md = imported(parsed, "md").source;
+  assert.equal(defaultVgmOptions(a, "md").dest["YM2608 rhythm SD"], "pcm1");
+  assert.match(md, /\(import "presets\/rx5\/set\.mmlisp"\)/, "md: the kit");
+  assert.match(md, /\(pcm1 :prio 1 [^(]*snare :gate \d+t/, "md: the snare's layer, its ring");
+  // Where the PCM is not the DAC's mix there is no kit to fall back on.
+  for (const t of ["msx", "pce"]) {
+    const o = defaultVgmOptions(a, t);
+    assert.equal(o.dest["YM2608 rhythm SD"], "drop", `${t}: the rhythm has no channel`);
+    imported(parsed, t);
+  }
+}
+
 console.log("VGM import checks passed");

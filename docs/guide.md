@@ -1751,7 +1751,17 @@ them: a key-on starts a note, a key-off ends it.
   md the envelope has no sound — the log counts the notes on it, which play
   at their level — and a buzzer plays as a square at its pitch. The MSX's
   FM-PAC (YM2413) channels are not imported onto it yet, nor the YM2608's
-  rhythm and ADPCM-B onto the PC-8801's.
+  ADPCM-B onto the PC-8801's.
+- The **YM2608's rhythm** is a row per ROM sound it keys (`YM2608 rhythm
+  BD` … `RIM`), its hits counted with the onsets the tempo is read from. On
+  pc88 each comes back on its own `rhythm1`–`rhythm6` track under its kit
+  role (`kick`, `snare`, `ride`, `hat`, `tom4`, `rim`), its level the
+  chip's total and own level as `:vel` and its pan the hit's; a hit lower
+  than the IL reaches (23 dB down) plays at that floor. On md the sounds are
+  the RX5 kit's on `pcm1`, as a mucom88 import plays part G: one `:prio`
+  layer a sound, a hit dropped while a higher one rings, levels against the
+  loudest hit — and fm6 gives way to the PCM. Either way the score imports
+  `presets/rx5`, which on pc88 stands in for a rhythm ROM not loaded.
 - A wavetable chip's channels — the SCC's (an MSX file, `:target msx`) and
   the HuC6280's (a **PC Engine** file, `:target pce`, the default when it
   plays every channel) — go to the target's `wave` channels, each keeping

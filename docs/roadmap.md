@@ -81,8 +81,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
   if wanted — envelopes and bends match exactly (TwinBee gives ~26
   envelopes), and rounding near ones together is the lever;
-  second chips, the YM2608's rhythm and ADPCM-B (onto pc88's rhythm and
-  pcm1), the MSX's FM-PAC (onto msx's fm channels), a wave rewritten
+  second chips, the YM2608's ADPCM-B (onto pc88's pcm1), the MSX's FM-PAC (onto msx's fm channels), a wave rewritten
   under a sounding note (SCC), the HuC6280's DDA and LFO, the
   remaining PCM chips (OKI MSM6295, QSound, K054539, C140, …).
 - **DefleMask / Furnace**: sample channels, the macros of pre-INS2 Furnace

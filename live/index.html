@@ -3356,8 +3356,10 @@
         const choices = ['drop', ...d.fm, ...d.psg, ...d.wave, ...new Set([...(d.noise ? [d.noise] : []), ...d.noises])];
         const pcmChoices = d.pcm.length ? ['drop', 'pcm1'] : ['drop'];
         const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', 'pcm1–3']] : ['drop'];
+        // The YM2608's rhythm: the ROM's tracks, or the kit on pcm1.
+        const rhythmChoices = ['drop', ...(d.rhythm.length ? d.rhythm : d.kit ? [d.kit] : [])];
         return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
-          choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : choices }));
+          choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : c.kind === 'rhythm' ? rhythmChoices : choices }));
       };
       const g = a.grid;
       const shown = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
