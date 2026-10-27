@@ -267,7 +267,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   the song's `:lfo-freq` (larger faster), `wave1` `:fms 0–3` taking it, its
   shape and speed `wave2`'s (keep it at `:vol 0` to hear wave1 alone);
   `pcm1`–`pcm6` channel N as DDA, a `def-pcm` at 6.99 kHz, 5 bits, each
-  note baked at its pitch. A channel is one of `waveN` / `noiseN` / `pcmN`.
+  note baked at its pitch. `waveN` / `noiseN` / `pcmN` are one channel: all
+  may be written, and where notes meet, `:prio` decides, else pcm > noise > wave.
   No FM, square, `:noise-rate` or `:mode`. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks

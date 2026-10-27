@@ -1,0 +1,5 @@
+; pce: :noise-rate and :mode are not the chip's (errors); :fms is wave1's alone.
+(def-score :target pce :title "pce errors")
+(wave5 :len 4 c e g e |)
+(noise5 :len 4 :noise-rate 8 :mode white1 c c c c |)
+(wave3 :fms 1 c |)

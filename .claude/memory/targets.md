@@ -108,6 +108,10 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
     messages stalled the page ~100 ms on a looped bar and an O(n²) queue in
     the worklet. The export / capture path writes them one by one, so the
     register log, VGM and WAV are the same writes. Not yet listened to.
+  - The cross-name layering built 2026-10-27 (mmlisp2ir shareChannelLayers,
+    parts' `sharePrio`; the :prio pass split into alignLayerLoops /
+    resolveLayerNotes, same-name output unchanged). Like the same-name
+    :prio pass, it does not count the notes it drops.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 

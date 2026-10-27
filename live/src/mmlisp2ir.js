@@ -2002,7 +2002,58 @@ function flattenPriorityLayers(head, layers, diagnostics) {
   // Highest priority first (lowest number). The first layer is the container we
   // reuse for channel/scoreChannel; only its event list is rebuilt.
   layers.sort((a, b) => a.prio - b.prio);
+  const drop = new Set();
+  const loop = alignLayerLoops(`channel ${head}`, head, layers, drop, diagnostics);
 
+  // The voice, :pan, :vol and the other channel parameters are the channel's
+  // registers, one of each: a parameter a higher-priority layer sets is that
+  // layer's, and a lower layer's writes to it are dropped. One no higher layer
+  // touches is the lower layer's to set, for every layer's notes.
+  const owned = new Set();
+  for (const { trackData } of layers) {
+    const mine = new Set();
+    for (const e of trackData.events) {
+      const target = e.cmd.startsWith("PARAM_") ? e.args?.target : null;
+      if (target == null) continue;
+      if (owned.has(target)) drop.add(e);
+      else mine.add(target);
+    }
+    for (const t of mine) owned.add(t);
+  }
+  resolveLayerNotes(layers, drop);
+
+  // A layer's rests say nothing once the layers share one voice — a lower
+  // layer's note may sound through a higher layer's rest and the other way
+  // round — so the merged stream keeps none: its gaps are rests already (the
+  // MMB exporter writes one wherever time passes without a note).
+  const base = layers[0].trackData;
+  base.events = layers
+    .flatMap((l) => l.trackData.events)
+    .filter((ev) => !drop.has(ev) && ev.cmd !== "REST")
+    .sort((a, b) => a.tick - b.tick || (a === loop?.jump) - (b === loop?.jump));
+  return base;
+}
+
+// One channel played under several names, each a part of its own
+// (chips/parts.js `sharePrio`: the PC Engine's wave, noise and DDA on one
+// channel): the tracks stay their own, and where their notes meet the
+// :prio layering decides across them — a lower :prio first, at an equal one
+// the part's sharePrio (pcm before noise before wave). A note starting under
+// a higher one is dropped, one sounding when a higher one starts is cut.
+function shareChannelLayers(heads, layers, diagnostics) {
+  layers.sort((a, b) => a.prio - b.prio || a.rank - b.rank);
+  const drop = new Set();
+  alignLayerLoops(heads.join(" and "), heads[0], layers, drop, diagnostics);
+  resolveLayerNotes(layers, drop);
+  for (const { trackData } of layers) trackData.events = trackData.events.filter((ev) => !drop.has(ev));
+}
+
+// The layers' loops, made one (flattenPriorityLayers, shareChannelLayers): a
+// counted loop is written out, and an endless one must loop over the same
+// ticks on every layer that has one; the highest layer's MARKER and JUMP are
+// kept (returned), the others' and what any layer has past the end go into
+// `drop`.
+function alignLayerLoops(what, head, layers, drop, diagnostics) {
   // A counted loop compiles once, so after one a layer runs on pass-1 ticks
   // while its neighbours run on real ones: each layer's counted loops are
   // written out first (a `(go label N)` becoming the loop pair it stands for).
@@ -2012,9 +2063,6 @@ function flattenPriorityLayers(head, layers, diagnostics) {
       trackData.events = expandLoops(trackData.events).map((e) => (e.args ? { ...e, args: { ...e.args } } : e));
     }
   }
-
-  let occupied = []; // committed sounding intervals from higher-priority layers
-  const drop = new Set();
 
   // An endless loop (the song's `#loop … (go loop)`, an (x …) without a count)
   // is the channel's, one: layers that loop must loop over the same ticks, and
@@ -2033,7 +2081,7 @@ function flattenPriorityLayers(head, layers, diagnostics) {
       diagnostics,
       "error",
       "E_PRIO_LAYER_LOOP",
-      `the :prio layers on channel ${head} loop over different ticks; a channel has one loop — start and end it at the same tick on every layer that loops`,
+      `the :prio layers on ${what} loop over different ticks; a channel has one loop — start and end it at the same tick on every layer that loops`,
       { line: 1, column: 1 },
       head,
     );
@@ -2054,29 +2102,20 @@ function flattenPriorityLayers(head, layers, diagnostics) {
         diagnostics,
         "warning",
         "W_PRIO_LAYER_PAST_LOOP",
-        `a :prio layer on channel ${head} has notes past the channel's loop end; they never play`,
+        `a :prio layer on ${what} has notes past the channel's loop end; they never play`,
         { line: 1, column: 1 },
         head,
       );
     }
   }
+  return loop;
+}
 
-  // The voice, :pan, :vol and the other channel parameters are the channel's
-  // registers, one of each: a parameter a higher-priority layer sets is that
-  // layer's, and a lower layer's writes to it are dropped. One no higher layer
-  // touches is the lower layer's to set, for every layer's notes.
-  const owned = new Set();
-  for (const { trackData } of layers) {
-    const mine = new Set();
-    for (const e of trackData.events) {
-      const target = e.cmd.startsWith("PARAM_") ? e.args?.target : null;
-      if (target == null) continue;
-      if (owned.has(target)) drop.add(e);
-      else mine.add(target);
-    }
-    for (const t of mine) owned.add(t);
-  }
-
+// The layers' notes, highest first, against the ones above them: a note
+// starting while a higher one sounds goes into `drop`; one a higher one
+// starts under before its end is cut there (its gate).
+function resolveLayerNotes(layers, drop) {
+  let occupied = []; // committed sounding intervals from higher-priority layers
   for (const { trackData } of layers) {
     const notes = trackData.events
       .filter((e) => PRIO_NOTE_CMDS.has(e.cmd) && !drop.has(e))
@@ -2102,17 +2141,6 @@ function flattenPriorityLayers(head, layers, diagnostics) {
     }
     occupied = [...occupied, ...committed];
   }
-
-  // A layer's rests say nothing once the layers share one voice — a lower
-  // layer's note may sound through a higher layer's rest and the other way
-  // round — so the merged stream keeps none: its gaps are rests already (the
-  // MMB exporter writes one wherever time passes without a note).
-  const base = layers[0].trackData;
-  base.events = layers
-    .flatMap((l) => l.trackData.events)
-    .filter((ev) => !drop.has(ev) && ev.cmd !== "REST")
-    .sort((a, b) => a.tick - b.tick || (a === loop?.jump) - (b === loop?.jump));
-  return base;
 }
 
 // (def-mod [:ch c|[c…]] [:voice v|[v…]] action…) — a score-wide rewrite of
@@ -6660,6 +6688,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   for (const heads of byVoice.values()) {
     const parts = new Set(heads.map((h) => target.partOf(h)));
     if (parts.size < 2) continue;
+    // Parts that rank among themselves share it (shareChannelLayers).
+    if ([...parts].every((p) => p.sharePrio != null)) continue;
     const by = heads.find((h) => target.partOf(h).shareHint) ?? heads[1];
     const other = heads.find((h) => target.partOf(h) !== target.partOf(by));
     const hint = target.partOf(by).shareHint?.(other);
@@ -6930,6 +6960,19 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
         : flattenPriorityLayers(head, layers, diagnostics),
     );
   }
+  // One channel under several names of parts that share it by rank
+  // (`sharePrio`): their notes layered across the names. A name's :prio is
+  // its highest layer's.
+  const sharing = new Map();
+  for (const tr of tracks) {
+    const part = target.partOf(tr.channel);
+    const key = target.voiceKey(tr.channel);
+    if (part?.sharePrio == null || !key) continue;
+    if (!sharing.has(key)) sharing.set(key, []);
+    sharing.get(key).push({ prio: Math.min(...layersByHead.get(tr.channel).map((l) => l.prio)), rank: part.sharePrio, trackData: tr });
+  }
+  for (const layers of sharing.values())
+    if (layers.length > 1) shareChannelLayers(layers.map((l) => l.trackData.channel), layers, diagnostics);
 
   // A part's rule over what its channels play together (chips/parts.js
   // `checkTracks`: the OPLL's one user voice), on each track's loops

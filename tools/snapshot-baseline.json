@@ -1867,6 +1867,10 @@
   "regs": "66cc8f18b492ba8f",
   "vgm": "90c89d2adab63759"
  },
+ "tools/tests/pce/errors.mmlisp": {
+  "diagnostics": "3efec109b25476b8",
+  "ir": "4b93411ae23f576a"
+ },
  "tools/tests/pce/lfo.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5070a6499bc7737f",
@@ -1886,8 +1890,10 @@
   "vgm": "f19f19a0fb72daa4"
  },
  "tools/tests/pce/share.mmlisp": {
-  "diagnostics": "d298267fa8699a3c",
-  "ir": "5b17bdfb7f66ccbe"
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "a9be5729492e8f3a",
+  "regs": "e87352da262469cb",
+  "vgm": "ae2888a53d155b7e"
  },
  "tools/tests/pce/wave.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

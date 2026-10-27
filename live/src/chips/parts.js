@@ -40,6 +40,11 @@
 //             macros (not :snap); a soft-mixed voice plays its blob as baked
 //   pointSweeps false: a range is read at key-on, so a swept point is its start
 //   settings  def-score keys only this part reads (`:pcm-voices`)
+//   sharePrio a rank where several parts are one channel's ways (the PC
+//             Engine's wave, noise and DDA): a score writes any of them, and
+//             where their notes meet the :prio layering decides across the
+//             names, this rank at an equal :prio (0 first); parts without it
+//             are one or the other in a score
 //   claims    { kind, voice }: a channel of another part its notes take over
 //             while they sound (the Mega Drive's DAC mix, fm6)
 //   waveRam   (voice) → the wave memory a `wave` part's channel plays, where

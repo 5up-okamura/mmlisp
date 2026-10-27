@@ -1,5 +1,12 @@
-; pce: wave5 and noise5 are one channel — a score has one or the other
-; (an error), and :noise-rate and :mode are not the chip's (errors).
+; pce: one channel under three names — wave5, noise5 and pcm5 all written.
+; Where their notes meet, DDA outranks the noise and the noise the wave (a
+; note starting under a higher one is dropped, one sounding is cut); a
+; :prio on wave6 puts it over pcm6.
 (def-score :target pce :title "pce share")
-(wave5 :len 4 c e g e :pan left c |)
-(noise5 :len 4 :noise-rate 8 :mode white1 c c c c |)
+(def-pcm blip :file "wav/blip.wav")
+(def-wave saw :wave (saw -128..127))
+(wave5 :tempo 120 saw :len 4 c c c c |)
+(pcm5 :len 8 blip _ c _ _ c c _ _ |)
+(noise5 :len 2 :oct 3 _ c |)
+(wave6 :prio 1 saw :len 2 e _ |)
+(pcm6 :len 4 blip c c c c |)

@@ -94,6 +94,12 @@ monophonic event stream:
   priority decides them too: a parameter a higher layer sets is its, and a
   lower layer's writes to it are dropped. One that no higher layer sets is the
   lower layer's to set — for every layer's notes.
+- Where one physical channel has several names of different kinds (`pce`'s
+  `wave5`, `noise5` and `pcm5`, §19), every name may be written, and their
+  notes layer the same way across the names: a lower `:prio` first, and at an
+  equal one the kinds' own order (DDA, then the noise, then the wave). The
+  names stay tracks of their own, each with its own parameters; only their
+  notes are dropped or cut, and their endless loops must agree.
 
 ```lisp
 (fm1 :prio 1 :len 4   c _ _ g _ _)                 ; lead — always sounds
@@ -2745,9 +2751,8 @@ composed once onto it (§6). The pitch is the chip's 12-bit frequency
 (wave2 soft :len 2 (macro :pitch (sin -30..30 :len 8f)) e g)
 ```
 
-**Noise.** `noise5` and `noise6` are channels 5 and 6 turned to noise:
-a score has `wave5` or `noise5`, `wave6` or `noise6` (`E_TARGET`). Each
-is pitched by its notes — the chip has 32 noise rates a channel, and a
+**Noise.** `noise5` and `noise6` are channels 5 and 6 turned to noise.
+Each is pitched by its notes — the chip has 32 noise rates a channel, and a
 note picks one: c2 the slowest (its LFSR clocked at 1.8 kHz), each
 semitone the next, g4 the fastest — at the channel's level, with `:vel`,
 `:vol` and their macros as on a wave channel; `:pitch` moves of less than
@@ -2794,8 +2799,21 @@ own pitch (no pitch move while it sounds), its `:pcm-start` / `:loop-*`
 points and `:mode shot | loop | gate`; its level is the channel's 5-bit
 volume as a wave's is, with `:vel`, `:vol` and their macros, and `:pan`
 the channel's. A note writes its samples to its end — the sample's, the
-next note's, a gate's — and the channel goes quiet. A channel is one of
-`waveN`, `noiseN` (5 and 6) and `pcmN` in a score.
+next note's, a gate's — and the channel goes quiet.
+
+**One channel, three names.** `waveN`, `noiseN` (5 and 6) and `pcmN` are
+one channel, and a score may write any of them: where their notes meet, the
+`:prio` layering decides across the names (§1) — a lower `:prio` first, at
+the default one DDA over the noise over the wave. A note starting under a
+higher one is dropped, one sounding when a higher one starts is cut there,
+so a drum on `pcm5` punches through a line on `wave5`.
+
+```lisp
+(wave5 saw :len 4 c c c c)        ; cut where pcm5 hits, dropped under it
+(pcm5 :len 8 kick _ c _ _ c c _ _)
+(wave6 :prio 1 lead :len 2 e _)   ; :prio 1 puts the wave over DDA here
+(pcm6 :len 4 snare c c c c)
+```
 
 ```lisp
 (def-score :target pce)

@@ -57,6 +57,7 @@ export const pceWave = {
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "a PC Engine channel has no :mode; its sound is its def-wave, or noise5 / noise6" },
   waveAtKeyOn: true,
+  sharePrio: 2, // under noise and DDA on its channel (pcm > noise > wave)
 };
 
 // Channel 1: a wave channel that takes the LFO, as an FM channel does, with
@@ -79,8 +80,7 @@ export const pceNoise = {
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "the PC Engine's noise has no :mode; its rate is the note, c2 to g4" },
   toneLane: NOISE_LANE,
-  // It is a wave channel turned to noise: the two names are one channel.
-  shareHint: (other) => `a channel plays its wave or the noise; move ${other} to another channel`,
+  sharePrio: 1,
 };
 
 // A channel as DDA, pcm1-pcm6: a sample a note, baked at DDA_RATE at the
@@ -96,8 +96,7 @@ export const pceDda = {
   songWords: SONG_WORDS,
   pointSweeps: false, // a note's points are read at its key-on
   frames: true, // plays the samples' frames as bakePcm8 bakes them
-  // It is a wave channel in DDA mode: the names are one channel.
-  shareHint: (other) => `a channel plays its wave, its noise or DDA; move ${other} to another channel`,
+  sharePrio: 0,
 };
 
 /** A float frame, −1..1, as DDA's 5-bit output, 0..31 (16 the middle). */

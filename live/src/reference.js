@@ -143,7 +143,7 @@ export const REFERENCE = [
   {
     name: 'noise5–noise6', aliases: ['noise5', 'noise6'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target pce) (noise5 …)',
-    summary: 'pce: the HuC6280\'s channels 5 and 6 turned to noise, in place of wave5 / wave6. A note picks one of the 32 rates: c2 the slowest, each semitone the next, g4 the fastest; the level is the channel\'s.',
+    summary: 'pce: the HuC6280\'s channels 5 and 6 turned to noise, the same channels as wave5 / wave6 (where their notes meet, the noise wins unless a :prio says otherwise). A note picks one of the 32 rates: c2 the slowest, each semitone the next, g4 the fastest; the level is the channel\'s.',
     insert: '(noise5 :len 8 :oct 3 c c c c)',
     example: '(def-score :target pce)\n(noise5 :len 8 :oct 2 c c :vel 10 c c :oct 4 c _ c c)',
   },
