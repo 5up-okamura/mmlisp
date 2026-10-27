@@ -2564,6 +2564,13 @@ function parseMacroSpec(
     const isStage = (it) =>
       (it.kind === "list" && it.bracket === "()") ||
       (boundOf(it) !== undefined && typeof boundOf(it) === "object");
+    // A :wave macro's steps are def-waves: a let name standing for a curve
+    // would step between them.
+    if (target === "WAVE" && items.some(isStage)) {
+      if (diagnostics) pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID",
+        "a :wave macro is a vector of def-wave names, [saw saw #sus soft]", nodeSrc(node), trackName);
+      return null;
+    }
 
     // One grammar (language.md §10): a vector holding any stage is a stage
     // list, and in it a number is a one-:step stage, `_` waits one step,
