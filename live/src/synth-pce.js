@@ -11,7 +11,11 @@
 // it (MAME's every clock is the one place the two part) — a channel's level
 // is its 5-bit volume (1.5 dB a step) with its 4-bit left and right levels
 // and the chip's main ones added (3 dB a step), capped at the table's 48
-// dB. The channels run at the clock / 32, each averaged over those 32
+// dB. The LFO ($08 / $09): channel 2's wave stepped every frequency ×
+// divider clocks, its sample − 16 shifted 0 / 2 / 4 and added to channel
+// 1's frequency, wrapping at 12 bits (Mednafen's & 0xFFF; MAME does not
+// mask), read once a native sample; $09's bit 7 halts it and puts channel 2
+// at step 0. The channels run at the clock / 32, each averaged over those 32
 // clocks so a high tone does not alias, and are linear-interpolated to the
 // output rate as synth-md.js does the YM2612's. The scope gets each channel,
 // DC-blocked, at the page's wave lanes 10-15 (targets.js scopeLane).
@@ -51,6 +55,8 @@ class Pce {
   reset() {
     this.sel = 0;
     this.balance = 0xff;
+    this.lfoFreq = 0;
+    this.lfoCtrl = 0;
     this.ctrl = new Uint8Array(CHANNELS);
     this.freq = new Uint16Array(CHANNELS);
     this.bal = new Uint8Array(CHANNELS).fill(0xff);
@@ -88,7 +94,15 @@ class Pce {
         }
         break;
       case 0x07: if (ch >= 4 && ch < CHANNELS) this.noiseCtl[ch] = data; break;
-      default: break; // $08/$09, the LFO: not here yet
+      case 0x08: this.lfoFreq = data; break;
+      case 0x09:
+        if (data & 0x80) {
+          this.index[1] = 0;
+          this.tick[1] = this._step(1);
+        }
+        this.lfoCtrl = data;
+        break;
+      default: break;
     }
   }
 
@@ -100,6 +114,23 @@ class Pce {
     const r = Math.min(31, (0x1f - SCALE_TAB[this.balance & 0x0f]) + al + (0x1f - SCALE_TAB[this.bal[ch] & 0x0f]));
     out[0] = LEVEL[l];
     out[1] = LEVEL[r];
+  }
+
+  // Whether the LFO runs: a mode, channel 2 on, not held by $09's bit 7.
+  _lfoOn() {
+    return (this.lfoCtrl & 3) && this.ctrl[1] & 0x80 && !(this.lfoCtrl & 0x80);
+  }
+
+  // A channel's clocks a wave step: its frequency (0 is 4096) — channel 1's
+  // moved by the LFO, channel 2's times the LFO's divider (0 is 256).
+  _step(ch) {
+    if (ch === 0 && this._lfoOn()) {
+      const shift = ((this.lfoCtrl & 3) - 1) << 1;
+      const f = (this.freq[0] + ((this.wave[WAVE_LEN + this.index[1]] - 16) << shift)) & 0xfff;
+      return f || 0x1000;
+    }
+    const f = this.freq[ch] || 0x1000;
+    return ch === 1 && this.lfoCtrl & 3 ? f * (this.lfoFreq || 256) : f;
   }
 
   run(clocks, outL, outR) {
@@ -130,13 +161,16 @@ class Pce {
         this.noiseCount[ch] = count;
         this.lfsr[ch] = seed;
       } else {
-        const step = this.freq[ch] || 0x1000;
+        // Channel 2 held by the LFO's reset bit does not step.
+        const held = ch === 1 && this.lfoCtrl & 0x80;
+        const step = this._step(ch);
         const base = ch * WAVE_LEN;
         let index = this.index[ch], tick = this.tick[ch];
         for (let rem = clocks; rem > 0; ) {
-          const n = Math.min(rem, tick);
+          const n = held ? rem : Math.min(rem, tick);
           acc += (this.wave[base + index] - 16) * n;
           rem -= n;
+          if (held) break;
           tick -= n;
           if (tick <= 0) {
             index = (index + 1) & 0x1f;

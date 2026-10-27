@@ -2766,5 +2766,26 @@ every fifteenth of the way, ±1 that side alone. It takes a value, a
 `(macro :pan …)`, and a curve, stepped a frame at a time (`:pan (linear
 -1..1 :len 1)`).
 
-Not yet: DDA (a channel as a 5-bit DAC) and the ch2 → ch1 LFO.
+**LFO.** The chip's LFO is channel 2 swaying channel 1, and it is written
+as the FM LFO is: the song's **`:lfo-freq 0–255`** sets its speed (larger is
+faster), and `wave1` takes it with **`:fms 0–3`** — 0 off, 1–3 how deep
+(the chip's three modes). Its shape is the def-wave `wave2` plays, its speed
+`wave2`'s pitch / (256 − `:lfo-freq`): wave2 on c5 sways about 2 Hz at
+`:lfo-freq 0`, 9 Hz at 200, and at the top it is a tone of its own (the
+chip's "FM"). While `wave1`'s `:fms` is not 0, channel 2 stays on as the LFO:
+`wave2`'s rests and `:vol 0` only silence it, and the LFO runs on at its last
+pitch; a note of `wave2`, heard or at `:vol 0`, starts the LFO's wave over.
+`:fms 0` stops it. The depth is in the chip's period steps — ±16, ±64 or
+±256 added to channel 1's 12-bit period — so a higher note sways further,
+and a deep sway on a high note wraps round to a low one, as on the chip.
+`:fms` on another channel is `E_UNSUPPORTED_TARGET`.
+
+```lisp
+(def-score :target pce)
+(def-wave tri :wave (triangle -128..127))
+(wave2 tri :vol 0 :oct 5 :len 1 c ~ c)            ; the LFO: its shape, its speed
+(wave1 lead :lfo-freq 200 :fms 2 :len 4 c e g e)  ; channel 1 swayed by it
+```
+
+Not yet: DDA (a channel as a 5-bit DAC).
 

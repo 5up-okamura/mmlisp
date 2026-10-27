@@ -263,8 +263,10 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   named under a note waits for its next key-on; 5-bit volume, 1.5 dB a
   step), `noise5` / `noise6` in place of wave5 / wave6, pitched by their
   notes (c2 the slowest rate, g4 the fastest); `:pan` −1..1 whole, on each
-  channel's 4-bit left / right levels. No FM, square, PCM, `:noise-rate` or
-  `:mode`. VGM and WAV.
+  channel's 4-bit left / right levels; the LFO as the FM LFO is written —
+  the song's `:lfo-freq` (larger faster), `wave1` `:fms 0–3` taking it, its
+  shape and speed `wave2`'s (keep it at `:vol 0` to hear wave1 alone). No
+  FM, square, PCM, `:noise-rate` or `:mode`. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

@@ -1861,17 +1861,23 @@
   "regs": "d38e81b1547f3aa7",
   "vgm": "69ffba8389b33aa2"
  },
+ "tools/tests/pce/lfo.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5070a6499bc7737f",
+  "regs": "e2315bf38d9ca108",
+  "vgm": "96c03d8f292c6393"
+ },
  "tools/tests/pce/noise.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "12b27d107ee89887",
-  "regs": "5b3c853c40d56e01",
-  "vgm": "1e75dd9506553e11"
+  "regs": "d6360c9b62663047",
+  "vgm": "4526b847a2507fa9"
  },
  "tools/tests/pce/pan.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "03e776b55e74ebdb",
-  "regs": "bd417fc4594d438a",
-  "vgm": "3f9192107b46054b"
+  "regs": "ed8465887eedf447",
+  "vgm": "f19f19a0fb72daa4"
  },
  "tools/tests/pce/share.mmlisp": {
   "diagnostics": "d298267fa8699a3c",
@@ -1880,8 +1886,8 @@
  "tools/tests/pce/wave.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "3f9599390de9bd9a",
-  "regs": "99086e28f991e61b",
-  "vgm": "6deb557acddde7e1"
+  "regs": "97bd16c7027991e3",
+  "vgm": "fb9feb7a7a42b091"
  },
  "tools/tests/x68k/fm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

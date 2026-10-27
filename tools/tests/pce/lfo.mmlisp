@@ -1,0 +1,8 @@
+; pce: the LFO — wave2 its shape and speed at :vol 0 (on through its rest),
+; wave1 taking it at each depth, the speed moved, then off; a note of wave2
+; starting the LFO over.
+(def-score :target pce :title "pce lfo")
+(def-wave tri :wave (triangle -128..127))
+(def-wave saw :wave (saw -128..127))
+(wave2 :tempo 120 tri :vol 0 :oct 5 :len 1 c _ c c)
+(wave1 saw :lfo-freq 200 :fms 1 :len 2 a :fms 2 a :fms 3 :oct 3 a :lfo-freq 120 a :fms 0 a a |)

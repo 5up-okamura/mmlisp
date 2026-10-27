@@ -2291,6 +2291,12 @@ export class IRPlayer {
     // a PSG or PCM track's write goes where an FM track's does, as the
     // driver takes it from any track.
     const core = ev._route.core;
+    // A wave chip with an LFO of its own (the PC Engine's) takes its speed.
+    const waveLfo = this._toneEnc.find((l) => l?.enc.lfoFreq)?.enc;
+    if (waveLfo && ev.args?.target === "LFO_FREQ" && /^PARAM_/.test(ev.cmd)) {
+      this._psgWrites(waveLfo.lfoFreq(Number(ev.args?.value ?? 0)), when);
+      return;
+    }
     if (core !== "fm" && LFO_TARGETS.has(ev.args?.target) && /^PARAM_/.test(ev.cmd))
       ev = { ...ev, _route: FM_LFO_ROUTE, _chIndex: 0 };
 
@@ -5656,6 +5662,9 @@ export class IRPlayer {
           this._psgSetAtt(psgCh, this._psgOff(psgCh), when);
           break;
         }
+        // A note starting: a chip that keys something on it hears it (the
+        // PC Engine's LFO restarts on channel 2's note, heard or at :vol 0).
+        this._psgWrites(this._lane(psgCh, (e, ch) => e.keyOn?.(ch) ?? []), when);
         // A wave held under the note before (waveAtKeyOn): loaded now, with
         // the channel off between the notes.
         if (this._laneWaveHeld[psgCh]) {
@@ -5876,6 +5885,9 @@ export class IRPlayer {
           // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
           this._ssgMixBase[psgCh] = Math.round(ev.args?.value ?? 0);
           this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, this._ssgMixBase[psgCh], when)), when);
+        } else if (psgTarget === "FM_FMS") {
+          // Channel 1 taking the wave chip's LFO (chips/huc6280.js).
+          this._psgWrites(this._lane(psgCh, (e, ch) => e.lfo?.(ch, Number(ev.args?.value ?? 0)) ?? []), when);
         } else if (psgTarget === "PAN") {
           // A channel's own pan (the PC Engine's $05): a value, or a sweep a
           // frame at a time, on the encoder's fifteenths of a side.

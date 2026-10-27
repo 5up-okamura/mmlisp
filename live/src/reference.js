@@ -78,7 +78,7 @@ export const REFERENCE = [
   {
     name: ':lfo-freq', aliases: [':lfo-pmd', ':lfo-amd', ':lfo-wave'], cat: 'score', section: '§19', tracks: null,
     syntax: ':lfo-freq 0–255  ·  :lfo-pmd 0–127  ·  :lfo-amd 0–127  ·  :lfo-wave saw | square | triangle | noise',
-    summary: 'x68k only: the YM2151\'s LFO, song-wide — its frequency, how deep it moves pitch and level, and its waveform. A voice takes it through :fms and :ams as on the OPN.',
+    summary: 'x68k: the YM2151\'s LFO, song-wide — its frequency, how deep it moves pitch and level, and its waveform. A voice takes it through :fms and :ams as on the OPN. pce: :lfo-freq is the HuC6280\'s LFO speed (larger faster); wave1 takes it with :fms 0–3, its shape and speed are wave2\'s.',
     insert: ':lfo-freq 200',
     example: '(def-score :target x68k)\n(fm1 :lfo-freq 200 :lfo-pmd 40 :lfo-wave triangle :fms 4 :len 2 c e)',
   },

@@ -77,8 +77,29 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   DMF only); an old (<240) .fur's properNoiseLayout is not read (default
   true). VGMs import too (import-vgm.js pceChip / sccChip: a note carries
   its wave, each distinct one a def-wave; the HuC6280's noise a row of its
-  own; round-tripped in check:import-vgm). Next for pce: DDA, the LFO —
-  both wait for a design discussion.
+  own; round-tripped in check:import-vgm).
+- **pce's LFO and DDA, ruled 2026-10-27 (the user):**
+  - LFO, used as the FM LFO is: the song's `:lfo-freq` 0–255, larger is
+    faster ($08 = 256 − v); wave1 takes it with `:fms 0–3` (0 off, 1–3
+    $09's modes); its shape is wave2's def-wave, its speed wave2's pitch
+    / (256 − v). Rule A: while wave1's :fms is not 0, ch2 stays on and is
+    the LFO — wave2's rests and :vol 0 only silence it (volume 0 with the
+    on bit kept), the LFO runs at its last pitch; wave1's :fms 0 stops it.
+    A wave2 key-on resets the LFO's phase ($09 bit 7 pulsed). The depth is
+    in period steps (±16/64/256), so a higher note sways more and a deep
+    one wraps the 12-bit period (Mednafen's & 0xFFF) — not clamped.
+  - DDA: `pcm1`–`pcm6`, channel N in DDA mode; samples baked per note at
+    6.99 kHz (7.16 MHz / 1024), no pitch move while sounding; level and pan
+    as a wave channel's (the same volume table on the chip).
+  - One channel, several kinds (wave5 / noise5 / pcm5): all may be
+    written; where they overlap, :prio decides across the names, and at an
+    equal :prio (the default 8) pcm > noise > wave — the higher's note
+    drops a lower one starting under it and cuts one sounding. Loops must
+    agree, as same-name layers' do. Order of work: LFO → DDA → this pass.
+  - LFO built 2026-10-27 (pceWaveLfo on ch1 takes FM_FMS; the encoder's
+    lfo / lfoFreq / keyOn — keyOn a player hook at a PSG lane's NOTE_ON;
+    synth-pce.js steps ch2 at freq × divider and moves ch1's period).
+    Measured: a4 at :fms 1 / 2 sways ±20 / ±70 Hz. Not yet listened to.
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
