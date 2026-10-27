@@ -1714,7 +1714,8 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   slide/portamento compatibility flags are followed approximately.
 - The log counts the effects that do not come along. On a non-Genesis
   system the channels play their notes on a `presets/waveforms` stand-in
-  voice; sample channels are left out. Of a Furnace module, the first
+  voice; sample channels are left out, but for the YM2612's DAC: FM6's
+  sample notes come in on `pcm1` (below). Of a Furnace module, the first
   subsong is imported; a song on several chips lists every chip's channels.
 - A **PC Engine** module offers a **Target**: `pce` (the default) or `md`.
   As `pce` each channel goes to its own `wave1`–`wave6`: the module's
@@ -1749,9 +1750,18 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   sample instrument's note, C-4 its rate, at the nearest DMC rate), played
   to the next note or a note off (`:mode gate`, or `:mode loop` for a
   looping sample) — a `def-pcm` for each sample and rate, all in one wav
-  (`<song>-dpcm.wav`, Save writes it beside the score). A DefleMask
-  module's samples are not read. The sweep (`13xy` `14xy`) and the other
-  2A03 effects are left out.
+  (`<song>-dpcm.wav`, Save writes it beside the score). The sweep (`13xy`
+  `14xy`) and the other 2A03 effects are left out.
+- **The DAC and the legacy sample mode.** A Genesis module's FM6 notes that
+  play samples go to `pcm1`, as `md` plays them. While the DAC plays, `fm6`
+  is the DAC's, so FM6's FM notes move to an `fm1`–`fm5` no channel takes,
+  or are left out (the log says which). A sample instrument's note plays
+  its sample. In a DefleMask module, or a Furnace one of a format before
+  239 (which Furnace converts the same way), `17xx` turns FM6's sample mode
+  on and off, and a note plays sample 12 × bank + its place in the octave
+  (`EBxx` the bank) at the sample's rate, as an NES module's DPCM channel
+  always does. Each sample is a `def-pcm` in one wav, `<song>-dac.wav`
+  (`-dpcm` on `fc`), read as Furnace reads it, its amp and pitch applied.
 
 **VGM.** A VGM is a log of register writes, so its notes are rebuilt from
 them: a key-on starts a note, a key-off ends it.

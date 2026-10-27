@@ -8,7 +8,7 @@
 // block, whose FM part is read). Only the first subsong is imported.
 // ---------------------------------------------------------------------------
 
-import { inflate, readArp } from "./import-tracker.js";
+import { inflate, readArp, convertLegacySamples } from "./import-tracker.js";
 
 // Channel layouts by Furnace system id. A chip not listed plays its notes on
 // a stand-in voice (its channel count comes from FUR_CHANNELS, or from the
@@ -20,8 +20,12 @@ const named = (prefix, list) => list.map((c) => ({ ...c, name: `${prefix} ${c.na
 const SN = [...k("psg", 3, "SQ"), { kind: "noise", name: "Noise" }];
 const SSG = k("psg", 3, "SSG");
 const FUR_SYSTEMS = {
-  0x83: () => named("YM2612", k("fm", 6, "FM")),
-  0xa0: () => [...opn3op("YM2612"), ...named("YM2612", k("fm", 3, "FM").map((c, i) => ({ ...c, name: `FM${i + 4}` })))],
+  // (`legacy`: the channel that plays samples — the DAC, the DMC — whose
+  // legacy sample mode a file before 239 has; import-tracker.js
+  // convertLegacySamples.)
+  0x83: () => named("YM2612", k("fm", 6, "FM")).map((c, i) => (i === 5 ? { ...c, legacy: "toggle" } : c)),
+  0xa0: () => [...opn3op("YM2612"), ...named("YM2612", k("fm", 3, "FM").map((c, i) => ({ ...c, name: `FM${i + 4}` })))]
+    .map((c, i) => (i === 8 ? { ...c, legacy: "toggle" } : c)),
   0xbe: () => [...named("YM2612", k("fm", 5, "FM")), ...k("pcm", 2, "DAC")],
   0xbd: () => [...opn3op("YM2612"), { kind: "fm", name: "YM2612 FM4" }, { kind: "fm", name: "YM2612 FM5" }, ...k("pcm", 2, "DAC"),
     { kind: "pcm", name: "CSM" }],
@@ -53,7 +57,7 @@ const FUR_SYSTEMS = {
   0xa4: () => [...named("OPL3", k("opl", 15, "FM")), ...k("pcm", 5, "Drum ")],
   0x04: () => named("GB", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Wave" }, { kind: "noise", name: "Noise" }]),
   0x06: () => named("NES", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Triangle" }, { kind: "noise", name: "Noise" }, { kind: "pcm", name: "DPCM" }])
-    .map((c) => ({ ...c, chip: "nes" })),
+    .map((c, i) => ({ ...c, chip: "nes", ...(i === 4 ? { legacy: "always" } : {}) })),
   0x05: () => named("PCE", k("wave", 6, "CH")).map((c) => ({ ...c, chip: "pce", volMax: 31 })),
   0x07: () => named("SID", k("psg", 3, "CH")),
   0x47: () => named("SID", k("psg", 3, "CH")),
@@ -514,7 +518,7 @@ export async function parseFur(bytes) {
     }
   }
   if (channels.length !== chans) throw new Error(`FUR: ${chans} channels in the song, ${channels.length} in its chips`);
-  return {
+  const t = {
     format: "Furnace", system: describe(channels), title, author,
     hz: (hz || 60) * (vtN / vtD),
     rowsPerBeat: hilightA, rowsPerBar: hilightB,
@@ -527,6 +531,9 @@ export async function parseFur(bytes) {
     fmVolMax: 127, psgVolMax: 15,
     linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout, newVolumeScaling,
   };
+  // Furnace converts the legacy sample mode of a file before 239 on load.
+  if (version < 239) convertLegacySamples(t);
+  return t;
 }
 
 function describe(channels) {

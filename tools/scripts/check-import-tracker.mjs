@@ -253,4 +253,64 @@ function oldDmf() {
   assert.deepEqual(bad(source), [], "the old module compiles clean");
 }
 
-console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios, an old DMF");
+// A DefleMask 0x18 Genesis module whose FM6 plays the DAC (Furnace's
+// legacy sample mode): 1701 there, then C-4 and C#-4 play samples 0 and 1
+// (12 × bank + the note's place); 1700, and D-4 is FM6's FM voice again.
+// Three 8-bit samples: "kick" at 16 kHz (code 3), its amp 100 (2×), its
+// pitch 4 (read every half step: twice as long).
+function dacDmf() {
+  const b = [];
+  const u8 = (v) => b.push(v & 0xff);
+  const s16 = (v) => b.push(v & 0xff, (v >> 8) & 0xff);
+  const i32 = (v) => b.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);
+  const pstr = (s) => { u8(s.length); for (const ch of s) u8(ch.charCodeAt(0)); };
+  for (const ch of ".DelekDefleMask.") u8(ch.charCodeAt(0));
+  u8(0x18); u8(0x02); // version, system: Genesis
+  pstr("dac"); pstr("mmlisp");
+  u8(4); u8(16); u8(0); u8(6); u8(6); u8(1); u8(0); for (const ch of "60\0") u8(ch.charCodeAt(0));
+  i32(4); u8(1); // pattern length, orders
+  for (let ch = 0; ch < 10; ch++) u8(0);
+  u8(1); // instruments
+  pstr("fm"); u8(1); u8(4); u8(0); u8(0); u8(0);
+  for (let j = 0; j < 4; j++) { u8(0); u8(31); u8(5); u8(1); u8(7); u8(2); u8(j === 3 ? 0 : 30); u8(0); u8(0); u8(0); u8(0); u8(0); }
+  u8(0); // wavetables
+  const empty = { note: 0, oct: 0, vol: -1, fx: [], ins: -1 };
+  const rows = Array.from({ length: 10 }, () => Array.from({ length: 4 }, () => ({ ...empty })));
+  rows[5][0] = { note: 12, oct: 3, vol: -1, fx: [[0x17, 1]], ins: 0 };
+  rows[5][1] = { note: 1, oct: 4, vol: -1, fx: [], ins: -1 };
+  rows[5][2] = { note: 2, oct: 4, vol: -1, fx: [[0x17, 0]], ins: -1 };
+  for (let ch = 0; ch < 10; ch++) {
+    u8(1); // effect columns
+    for (const r of rows[ch]) {
+      s16(r.note); s16(r.oct); s16(r.vol);
+      const [code, val] = r.fx[0] ?? [-1, -1]; s16(code); s16(val);
+      s16(r.ins);
+    }
+  }
+  u8(3); // samples
+  for (const [name, amp, pitch] of [["kick.wav", 100, 4], ["snare", 50, 5], ["hat", 50, 5]]) {
+    i32(4); pstr(name); u8(3); u8(pitch); u8(amp); u8(8);
+    for (const v of [0x80, 0xa0, 0x60, 0x80]) s16(v);
+  }
+  return new Uint8Array(b);
+}
+
+{
+  const t = await parseDmf(dacDmf());
+  assert.deepEqual([...t.samples[0].data], [0, 0, 0.5, 0.5, -0.5, -0.5, 0, 0], "amp 100 doubles, pitch 4 reads each word twice");
+  assert.deepEqual([t.samples[1].rate, t.samples[1].data.length], [16000, 4], "rate code 3, pitch 5 as stored");
+  const a = analyzeTracker(t);
+  assert.equal(a.channels[5].sampleNotes, 2, "two notes on the DAC");
+  // FM6 asked onto fm6, which is the DAC's while it plays.
+  const opt = defaultTrackerOptions(a, "md");
+  const { source, warnings, pcm } = trackerToMmlisp(t, { ...opt, dest: { ...opt.dest, 5: "fm6" }, fileName: "t.dmf" }, a);
+  assert.match(source, /\(def-pcm dac-kick :file "t-dac\.wav" :rate 16000 :offset 0 :frames 8\)/, "the kick at its rate, its extension off its name");
+  assert.match(source, /\(def-pcm dac-snare :file "t-dac\.wav" :rate 16000 :offset 8 :frames 4\)/, "the snare after it");
+  assert.match(source, /\((?:def pcm1-p00|pcm1)\s+dac-kick :mode gate[^\n]*\n?\s*c dac-snare c/, "C-4 and C#-4: samples 0 and 1, on pcm1");
+  assert.match(source, /\(def fm\d-p00\s+ins-fm[^)]*_ d \|\)/, "D-4 after 1700: FM6's FM note, its rest where the DAC played");
+  assert.deepEqual(warnings, ["FM6: fm6 is the DAC — its FM notes on fm1"], "17xx read, not skipped; FM6's FM notes off fm6");
+  assert.equal(pcm?.wavFile, "t-dac.wav");
+  assert.deepEqual(bad(source), [], "the DAC score compiles clean");
+}
+
+console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios, an old DMF, a DMF's DAC");

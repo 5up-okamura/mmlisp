@@ -222,9 +222,11 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   one left, Darius II "06 War Oh!", is corrupt at instrument 131), none
   heard against DefleMask; a fixed-pitch arpeggio (drums) is a :semi from the
   played note, an env a note (2026-10-28), not heard against Furnace yet;
-  module DPCM read from .fur only (SMP2/SMPL 8/16-bit and
-  1-bit DPCM; DMF samples, the DAC start `dpcmDelta`, a loop's part and a
-  sample instrument's pitch not cross-checked against Furnace by ear); the duty's
+  module DPCM (.fur SMP2/SMPL 8/16-bit and 1-bit DPCM; DMF samples and the
+  legacy sample mode as convertLegacySamples, 2026-10-28; the DAC start
+  `dpcmDelta`, a loop's part, a sample instrument's pitch and a DMF's DPCM
+  at the sample's rate rather than a DMC rate not cross-checked against
+  Furnace by ear); the duty's
   12xx on a DMF read as Furnace's (DefleMask's own NES 12xx not
   cross-checked). The curve option `:duty` is 1–255 (128 = 50 %) while the track
   word is in sixteenths, as ruled — two scales under one name; raise it if

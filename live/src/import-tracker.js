@@ -124,6 +124,54 @@ export function readArp({ values, loop }, allFixed = false) {
   return { values: values.map((v, k) => (!fixed[k] ? v : v < 0 ? v | 0x40000000 : v & ~0x40000000)), loop, fixed };
 }
 
+/** A sample instrument: Furnace's generic sample type (4), or one a module's legacy mode made. */
+const isSampleIns = (it) => it?.type === 4;
+
+/**
+ * The legacy sample mode, as Furnace converts it on a DMF and a .fur before
+ * 239 (legacySample.cpp): on a channel marked `legacy` — "toggle" where 17xx
+ * turns it on and off (the YM2612's DAC), "always" where it is on from the
+ * start (the NES's DPCM) — a note plays sample 12 × bank + its place in the
+ * octave (EBxx the bank) at the sample's own rate, until an instrument of
+ * the chip's own samples takes over. Such a note's row gets `legacy`: a
+ * bank instrument (type 4) whose map says so, appended to the module's.
+ * Each pattern once, in the order list's order, as Furnace walks them. (Its
+ * row's own instrument stays, so a later note without one is the FM
+ * voice's again, as DefleMask plays it.)
+ */
+export function convertLegacySamples(t) {
+  const banks = new Map();
+  const bankIns = (bank) => {
+    if (!banks.has(bank)) {
+      const noteMap = Array.from({ length: 180 }, (_, k) => ({ freq: 108, sample: 12 * bank + (k % 12), dpcmFreq: -1, dpcmDelta: -1 }));
+      banks.set(bank, t.instruments.length);
+      t.instruments.push({ name: `legacy-${bank}`, kind: "std", type: 4, sampleMap: { init: 0, noteMap },
+        vol: { values: [], loop: null }, arp: { values: [], loop: null, fixed: null }, wave: { values: [], loop: null }, duty: { values: [], loop: null } });
+    }
+    return banks.get(bank);
+  };
+  t.channels.forEach((chn, c) => {
+    if (!chn.legacy) return;
+    let mode = chn.legacy === "always" ? 1 : 0, bank = 0;
+    const done = new Set();
+    for (const ord of t.orders) {
+      if (done.has(ord[c])) continue;
+      done.add(ord[c]);
+      for (const row of chn.patterns.get(ord[c]) ?? []) {
+        if (!row) continue;
+        row.fx = row.fx.filter(([code, v]) => {
+          if (code === 0x17 && chn.legacy === "toggle") { mode = v > 0 ? 1 : 0; return false; }
+          if (code === 0xeb) { bank = Math.max(0, v); return false; }
+          return true;
+        });
+        const it = row.ins >= 0 ? t.instruments[row.ins] : null;
+        if (isSampleIns(it) || (chn.chip === "nes" && it?.type === 34)) mode = 2;
+        if (typeof row.note === "number" && mode === 1) row.legacy = bankIns(bank);
+      }
+    }
+  });
+}
+
 /** zlib → bytes, through the platform's DecompressionStream. */
 export async function inflate(bytes) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -173,7 +221,7 @@ export function analyzeTracker(t) {
   const framesPerRow = (t.speeds[0] + t.speeds[1]) / 2 || 6;
   const bpm = (60 * t.hz) / (framesPerRow * rowsPerBeat);
   const channels = t.channels.map((chn, c) => {
-    let notes = 0, noiseNotes = 0, noise = false, ins = -1;
+    let notes = 0, noiseNotes = 0, sampleNotes = 0, noise = false, ins = -1;
     for (const { order, rows } of seq) {
       const pat = chn.patterns.get(t.orders[order][c]) ?? [];
       for (let r = 0; r < rows; r++) {
@@ -183,10 +231,13 @@ export function analyzeTracker(t) {
         if (chn.chip === "pce") noise = dutyNoise(t.instruments[ins]) ?? noise;
         notes++;
         if (noise) noiseNotes++;
+        if (chn.legacy && (pat[r].legacy != null || isSampleIns(t.instruments[ins]))) sampleNotes++;
       }
     }
-    return { index: c, kind: chn.kind, name: chn.name, chip: chn.chip, notes, noiseNotes,
-      label: `${chn.name} · ${noiseNotes > notes / 2 ? "noise" : CHANNEL_KINDS[chn.kind]} · ${notes} notes` };
+    // (An FM channel's sample notes: the DAC's, md's pcm1.)
+    const dac = sampleNotes > 0 && chn.kind !== "pcm" ? ` (${sampleNotes} on the DAC)` : "";
+    return { index: c, kind: chn.kind, name: chn.name, chip: chn.chip, notes, noiseNotes, sampleNotes,
+      label: `${chn.name} · ${noiseNotes > notes / 2 ? "noise" : CHANNEL_KINDS[chn.kind]} · ${notes} notes${dac}` };
   });
   // A PC Engine module may be its own machine's score; an NES one the
   // Famicom's — an expansion's channels (VRC6, FDS …) left out, as md
@@ -229,13 +280,17 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
     }
     return { dest, phrases: true, bpm: null, target };
   }
-  const fm = [...FM_DESTS];
+  // The channel playing the DAC takes fm6, the DAC's (its FM notes move to
+  // a free fm1-fm5, trackerToMmlisp); no other channel is given it.
+  const dacCh = a.channels.find((c) => c.sampleNotes > 0 && c.kind !== "pcm");
+  const fm = FM_DESTS.filter((f) => !(dacCh && f === "fm6"));
   const sqr = [...PSG_DESTS];
   let noise = "noise";
   const dest = {};
   for (const ch of a.channels) {
     let d = "drop";
-    if (ch.notes === 0 || ch.kind === "pcm") d = "drop";
+    if (ch === dacCh) d = "fm6";
+    else if (ch.notes === 0 || ch.kind === "pcm") d = "drop";
     else if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? "drop";
     else if (ch.kind === "psg") d = sqr.shift() ?? fm.shift() ?? "drop";
     else if (ch.kind === "noise") { d = noise ?? "drop"; noise = null; }
@@ -274,14 +329,32 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const dest = options.dest ?? {};
   const taken = new Set();
   const used = [];
+  // While the DAC plays (md's pcm1), fm6 is the DAC's: a part bound there
+  // moves to an fm1-fm5 no channel asked for, else its FM notes are left out.
+  const dacOn = !onFc && !onPce && a.channels.some((c) => c.sampleNotes > 0 && c.kind !== "pcm" && (dest[c.index] ?? "drop") !== "drop");
+  const freeFm = () => FM_DESTS.filter((f) => f !== "fm6").find((f) => !taken.has(f) && !Object.values(dest).includes(f));
   for (const ch of a.channels) {
-    const d = dest[ch.index] ?? "drop";
+    let d = dest[ch.index] ?? "drop";
     if (d === "drop") continue;
-    if (taken.has(d)) { warnings.push(`${ch.name}: ${d} is already taken — dropped`); continue; }
+    const fmNotes = ch.notes - (ch.sampleNotes ?? 0);
+    if (dacOn && d === "fm6" && fmNotes > 0) {
+      d = freeFm() ?? null;
+      if (d) warnings.push(`${ch.name}: fm6 is the DAC — its FM notes on ${d}`);
+      else warnings.push(`${ch.name}: fm6 is the DAC and fm1-fm5 are taken — its ${fmNotes} FM notes are left out`);
+    }
+    if (!d && !(ch.sampleNotes > 0)) continue;
+    if (d && taken.has(d)) { warnings.push(`${ch.name}: ${d} is already taken — dropped`); continue; }
     taken.add(d);
     // A PC Engine channel playing both its wave and its noise: each kind's
     // notes on its own name — one channel, the noise over the wave where
     // they meet (the :prio layering across its names).
+    // The YM2612's FM6 playing samples (the DAC): those notes on pcm1, the
+    // rest on its FM channel.
+    if (!onFc && !onPce && ch.sampleNotes > 0 && ch.kind !== "pcm") {
+      if (fmNotes > 0 && d) { taken.add(d); used.push({ ...ch, dest: d }); }
+      if (!taken.has("pcm1")) { taken.add("pcm1"); used.push({ ...ch, dest: "pcm1", samples: true }); }
+      continue;
+    }
     const both = onPce && t.channels[ch.index].chip === "pce" && PCE_NOISE[ch.index]
       && ch.noiseNotes > 0 && ch.noiseNotes < ch.notes && (d === PCE_WAVES[ch.index] || d === PCE_NOISE[ch.index]);
     if (both) {
@@ -484,8 +557,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // or a note off. A def-pcm for each sample and rate, its :rate the rate
   // (c4 plays it), all in one wav; the 1-bit samples decoded as Furnace
   // renders them.
-  const dpcm = { defs: new Map(), offsets: new Map(), parts: [], frames: 0, missing: 0, loopPart: 0 };
-  const wavFile = `${String(options.fileName || "module").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "")}-dpcm.wav`;
+  // (On md the same for the YM2612's DAC: FM6's sample notes on pcm1, each
+  // sample at its rate.)
+  const dpcm = { defs: new Map(), offsets: new Map(), parts: [], frames: 0, missing: 0, loopPart: 0, rate: 0 };
+  const pcmWord = onFc ? "dpcm" : "dac";
+  const wavFile = `${String(options.fileName || "module").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "")}-${pcmWord}.wav`;
   const dpcmDef = (si, hz) => {
     const sm = t.samples[si];
     const key = `${si}:${Math.round(hz)}`;
@@ -496,7 +572,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         dpcm.frames += sm.data.length;
         if (sm.loop && (sm.loop.start > 0 || sm.loop.end < sm.data.length)) dpcm.loopPart++;
       }
-      const name = uniq(`dpcm-${slug(sm.name) || si}`);
+      dpcm.rate = Math.max(dpcm.rate, Math.round(hz));
+      const name = uniq(`${pcmWord}-${slug(String(sm.name ?? "").replace(/\.(wav|raw|pcm|bin)$/i, "")) || si}`);
       defs.set(`dpcm:${key}`, { name, text: `(def-pcm ${name} :file ${qstr(wavFile)} :rate ${Math.round(hz)} :offset ${dpcm.offsets.get(si)} :frames ${sm.data.length})` });
       dpcm.defs.set(key, { name, loop: !!sm.loop });
     }
@@ -506,7 +583,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const notes = [];
     // The DMC mode: the song's, set by an NES instrument's note (Furnace
     // switches to it there) and by 18xx.
-    let ins = -1, sounding = null, lastRate = 0, prev = null, dmcMode = t.dpcmMode;
+    let ins = -1, sounding = null, lastRate = 0, prev = null, dmcMode = onFc && t.dpcmMode;
     const hitOf = (it, note) => {
       const map = it?.sampleMap?.noteMap;
       const e = map ? map[Math.max(0, Math.min(179, note + 60))] : null;
@@ -535,22 +612,24 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         for (const [code, val] of row.fx) {
           if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
           else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
-          else if (code === 0x18 && val >= 0) dmcMode = val > 0;
+          else if (code === 0x18 && val >= 0 && onFc) dmcMode = val > 0;
           else if (code === 0x09 || code === 0x0f || code === 0x0b || code === 0x0d) { /* the song's speed, the order walk */ }
-          else if (code >= 0) {
+          else if (code >= 0 && !ch.samples) { // (FM6's: the FM pass counts them)
             const k = FC_FX[code] ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
         }
         if (row.ins >= 0) ins = row.ins;
-        if (row.note === "off") {
+        // FM6's FM note: the DAC stops (the FM pass plays it).
+        const fmNote = ch.samples && typeof row.note === "number" && row.legacy == null && !isSampleIns(t.instruments[ins]);
+        if (row.note === "off" || fmNote) {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
           sounding = null;
         } else if (typeof row.note === "number") {
           const start = at + Math.min(delay, rowTicks - 1);
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, start);
           sounding = null;
-          const hit = hitOf(t.instruments[ins], row.note);
+          const hit = hitOf(t.instruments[row.legacy ?? ins], row.note);
           if (!hit) { dpcm.missing++; continue; }
           // Played until the next note or an off: a loop to there, else cut there.
           const state = [hit.name, hit.loop ? ":mode loop" : ":mode gate"];
@@ -574,7 +653,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const mono = new Float32Array(dpcm.frames);
     let o = 0;
     for (const d of dpcm.parts) { mono.set(d, o); o += d.length; }
-    const rate = Math.round(DMC_RATES[15]);
+    const rate = onFc ? Math.round(DMC_RATES[15]) : dpcm.rate;
     return { wavFile, rate, mono, wav: encodeWav(mono, null, rate), entries: [...dpcm.defs.values()], tag: t.format };
   };
 
@@ -583,7 +662,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   let tempoTrack = true;
   for (const ch of used) {
     const chn = t.channels[ch.index];
-    if (onFc && chn.chip === "nes" && ch.kind === "pcm") {
+    if ((onFc && chn.chip === "nes" && ch.kind === "pcm") || ch.samples) {
       const tr = dpcmTrack(ch, chn);
       if (!tr) continue;
       tracks.push(tr);
@@ -701,6 +780,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           }
         }
         if (row.ins >= 0 && t.instruments[row.ins]) ins = row.ins;
+        // A sample note (the DAC's, on pcm1): FM6's note ends there.
+        if (typeof row.note === "number" && chn.legacy && (row.legacy != null || isSampleIns(t.instruments[ins]))) {
+          if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
+          sounding = null;
+          continue;
+        }
         // The instrument's macros start over at each of its notes: its wave
         // macro sets the wave (its first step; one that moves is the note's
         // :wave macro, env), its duty macro the noise switch (its first step).
@@ -838,9 +923,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (!tracks.length) warnings.push("no notes to import");
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0) && !(onFc && used.some((c) => c.kind === "pcm" && t.channels[c.index].chip === "nes")))
     warnings.push("sample channels are not imported");
-  if (dpcm.missing) warnings.push(t.samples ? `a DPCM note with no sample (or one of a depth not read) is left out (${dpcm.missing}×)`
-    : "the DPCM channel's samples are not read from a DefleMask module");
-  if (dpcm.loopPart) warnings.push(`a DPCM sample looping a part of itself loops whole (${dpcm.loopPart}×)`);
+  const PCM = pcmWord.toUpperCase();
+  if (dpcm.missing) warnings.push(`a ${PCM} note with no sample (or one of a depth not read) is left out (${dpcm.missing}×)`);
+  if (dpcm.loopPart) warnings.push(`a ${PCM} sample looping a part of itself loops whole (${dpcm.loopPart}×)`);
   if (onFc && a.channels.some((c) => c.notes > 0 && t.channels[c.index].chip !== "nes"))
     warnings.push("an expansion chip's channels have no fc part — left out");
   if (waveMacroSteps) warnings.push(`a wave macro naming a wavetable the module lacks is left out (${waveMacroSteps}×)`);

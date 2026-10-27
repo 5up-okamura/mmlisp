@@ -4,11 +4,11 @@
 // The layout follows Furnace's DMF loader (src/engine/fileOps/dmf.cpp), the
 // reference for every DefleMask version: a zlib stream holding
 // the header, the order matrix, instruments, wavetables, patterns (stored
-// once per order entry), and samples, which are not read. Read from version
+// once per order entry), and samples. Read from version
 // 0x0d (DefleMask v5.1), with Furnace's conversions of the older layouts.
 // ---------------------------------------------------------------------------
 
-import { inflate, readArp } from "./import-tracker.js";
+import { inflate, readArp, convertLegacySamples } from "./import-tracker.js";
 
 // The systems, by DMF id: each channel's kind (import-tracker.js
 // CHANNEL_KINDS) and the name the dialog shows.
@@ -16,12 +16,14 @@ const ch = (kind, name) => ({ kind, name });
 const fm = (n, from = 1) => Array.from({ length: n }, (_, i) => ch("fm", `FM${i + from}`));
 const sn = [ch("psg", "SQ1"), ch("psg", "SQ2"), ch("psg", "SQ3"), ch("noise", "Noise")];
 // The 2A03's channels (chips/rp2a03.js), which an fc score keeps.
-const nes = [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Triangle"), ch("noise", "Noise"), ch("pcm", "DPCM")]
+// (`legacy`: a channel of the legacy sample mode — import-tracker.js
+// convertLegacySamples.)
+const nes = [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Triangle"), ch("noise", "Noise"), { ...ch("pcm", "DPCM"), legacy: "always" }]
   .map((c) => ({ ...c, chip: "nes" }));
 const DMF_SYSTEMS = {
-  0x02: { name: "Genesis", channels: [...fm(6), ...sn] },
+  0x02: { name: "Genesis", channels: [...fm(5), { ...ch("fm", "FM6"), legacy: "toggle" }, ...sn] },
   0x42: { name: "Genesis (ext. CH3)", channels: [...fm(2), ch("fm3op", "FM3 OP1"), ch("fm3op", "FM3 OP2"),
-    ch("fm3op", "FM3 OP3"), ch("fm3op", "FM3 OP4"), ...fm(3, 4), ...sn] },
+    ch("fm3op", "FM3 OP3"), ch("fm3op", "FM3 OP4"), ...fm(2, 4), { ...ch("fm", "FM6"), legacy: "toggle" }, ...sn] },
   0x03: { name: "Master System", channels: sn },
   0x43: { name: "Master System + FM", channels: [...sn, ...Array.from({ length: 9 }, (_, i) => ch("opll", `FM${i + 1}`))] },
   0x04: { name: "Game Boy", channels: [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Wave"), ch("noise", "Noise")] },
@@ -43,6 +45,11 @@ const DMF_SYSTEMS = {
   0x0a: { name: "MSX + SCC", channels: [ch("psg", "PSG1"), ch("psg", "PSG2"), ch("psg", "PSG3"),
     ...Array.from({ length: 5 }, (_, i) => ch("wave", `SCC${i + 1}`))] },
 };
+
+// A sample's rate by its code, and the step its pitch reads it at (Furnace's
+// fileToDivRate and samplePitches).
+const DMF_RATES = [4000, 8000, 11025, 16000, 22050, 32000];
+const DMF_PITCHES = [0.1666666666, 0.2, 0.25, 0.333333333, 0.5, 1, 2, 3, 4, 5, 6];
 
 /** @returns {Promise<object>} the tracker model (import-tracker.js) */
 export async function parseDmf(bytes) {
@@ -181,7 +188,36 @@ export async function parseDmf(bytes) {
     }
   }
 
-  return {
+  // The samples, as Furnace reads them: 16-bit words (an 8-bit sample's
+  // unsigned), at one of six rates, stretched by the pitch (5 is 1:1) and
+  // scaled by the amp (50 is 1:1), then cut (from 0x1b).
+  const samples = [];
+  const nsamples = c();
+  for (let i = 0; i < nsamples; i++) {
+    const length = i32();
+    const name = version > 0x16 ? pstr() : "";
+    const rate = DMF_RATES[Math.max(0, Math.min(5, c()))];
+    let pitch = c();
+    if (pitch > 10) pitch = 5;
+    const mult = c() / 50;
+    const depth = version > 0x15 ? (c() === 8 ? 8 : 16) : 16;
+    let cutStart = 0, cutEnd = -1;
+    if (version >= 0x1b) { cutStart = i32(); cutEnd = i32(); }
+    const words = Array.from({ length }, () => s16());
+    const step = DMF_PITCHES[pitch];
+    const top = depth === 8 ? 128 : 32768;
+    const scaled = [];
+    for (let j = 0; j < length && scaled.length < Math.ceil(length / step); j += step) {
+      const v = (depth === 8 ? words[Math.floor(j)] - 0x80 : words[Math.floor(j)]) * mult;
+      scaled.push(Math.trunc(Math.max(-top, Math.min(top - 1, v))) / top);
+    }
+    while (scaled.length < Math.ceil(length / step)) scaled.push(0);
+    const data = Float32Array.from(cutEnd >= cutStart && cutEnd <= scaled.length && (cutStart > 0 || cutEnd < scaled.length)
+      ? scaled.slice(cutStart, cutEnd) : scaled);
+    samples.push({ name, rate, depth, data, loop: null });
+  }
+
+  const t = {
     format: "DefleMask", system: system.name, title, author, hz,
     rowsPerBeat: hilightA, rowsPerBar: hilightB,
     speeds: [speed1 * (timeBase + 1), speed2 * (timeBase + 1)],
@@ -190,7 +226,10 @@ export async function parseDmf(bytes) {
     linearPitch: true, pitchSlideSpeed: 4, // as Furnace plays a DMF
     properNoiseLayout: false, // the PC Engine's noise rate by DefleMask's table
     newVolumeScaling: false, // a volume macro's 4-bit steps added to the column's (Furnace's dmf.cpp)
+    samples,
   };
+  convertLegacySamples(t);
+  return t;
 }
 
 // note 1-12 (C# … C of the next octave) + octave → a semitone count where
