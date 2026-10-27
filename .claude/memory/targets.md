@@ -200,10 +200,8 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   triangle is fm1's wave-triangle and the 5B's channels fill sqr3 / FM);
   VRC7 (YM2413 with clock bit 31): its ROM (Nuked-OPLL patch_ds1001,
   checked by packing patch_ym2413 the same way = ym2413.js's ROM) as
-  vrc7-N def-fms on voiceAs4op at the channel volume (a lift to the
-  loudest key-on, tried with the wave-saw stand-in, made the FM too loud
-  over the DPCM once the voices were real — removed; Lagrange Point's
-  balance not yet heard again);
+  vrc7-N def-fms on voiceAs4op at the channel volume (no lift to the
+  loudest key-on: with the real voices it put the FM over the DPCM);
   Kirby's DPCM not A/B'd.
 - DefleMask / Furnace NES modules built 2026-10-27 (import-tracker.js, the
   readers' NES channels `chip: "nes"`), read from Furnace's nes.cpp
