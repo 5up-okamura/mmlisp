@@ -6869,6 +6869,8 @@
           Object.assign(entry, { voice: 'adpcm', volKind: 'voice' });
         if (channelVoice(head)?.part.name === 'pcm8')
           Object.assign(entry, { voice: `pcm8-${channelVoice(head).voice}`, volKind: 'voice' });
+        if (channelVoice(head)?.part.name === 'fc-dpcm')
+          Object.assign(entry, { voice: 'dpcm', volKind: 'voice' });
         model.push(entry);
       }
       return model;

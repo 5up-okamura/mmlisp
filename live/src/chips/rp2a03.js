@@ -1,6 +1,7 @@
 // The 2A03's APU, the Famicom's sound: two pulses (a 4-bit level, four
-// duties), a triangle with no level, and a noise (a 4-bit level, 16 rates, a
-// long or a 93-step loop). DPCM waits (targets.md: the Famicom's stages).
+// duties), a triangle with no level, a noise (a 4-bit level, 16 rates, a
+// long or a 93-step loop), and the DMC: 1-bit delta samples from the CPU's
+// memory, played at one of 16 rates onto a 7-bit DAC.
 //
 // Its registers, $4000-$4017, are the worklet's port 0 at $00-$17 (VGM's
 // 0xB4 numbering): $4000/$4004 a pulse's duty (7-6), length halt (5),
@@ -9,9 +10,16 @@
 // counter's load — a write that starts the duty over (a click), so it is
 // written only when those bits change. $4008 the triangle's linear counter
 // (bit 7 its control), $400A/$400B its period; $400C the noise's level,
-// $400E its loop bit (7) and rate (3-0), $400F its length; $4015 the
-// channels' enables; $4017 the frame counter. How the chip reads them is
-// nesdev's APU pages (Pulse, Triangle, Noise, Mixer), which Mesen follows.
+// $400E its loop bit (7) and rate (3-0), $400F its length; $4010 the DMC's
+// loop bit (6) and rate (3-0), $4011 its DAC, $4012 its sample's address
+// ($C000 + 64 n), $4013 its length (16 n + 1 bytes); $4015 the channels'
+// enables (bit 4 the DMC's: set, a sample starts; clear, it stops); $4017
+// the frame counter. How the chip reads them is nesdev's APU pages (Pulse,
+// Triangle, Noise, DMC, Mixer), which Mesen follows.
+//
+// The DMC's samples are in the CPU's memory, which the worklet's port 1
+// writes (RAM_PORT): $00 / $01 an address's low and high byte, from $C000,
+// then each $02 a byte there, the address moving on — VGM's 0xC2 block.
 import { words } from "./parts.js";
 
 const CLOCK = 1789773; // NTSC: the master 21.477 MHz / 12
@@ -33,6 +41,16 @@ export const NOISE_NOTE_BASE = 36;
 export const NOISE_RATES = 16;
 
 const LEVEL = { scale: "linear", steps: 16 }; // the 4-bit volume, 15 loud .. 0 off
+
+// The DMC: its rates (CPU clocks a bit, NTSC), the most bytes a sample has
+// ($4013 255: 4081), where the score's samples are put ($C000, $4012 0),
+// and the DAC level a hit starts from (the middle of its 7 bits).
+export const RAM_PORT = 1;
+export const DMC_PERIODS = [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54];
+export const DMC_RATES = DMC_PERIODS.map((p) => CLOCK / p);
+export const DMC_MAX_BYTES = 16 * 255 + 1;
+export const DMC_BASE = 0xc000;
+export const DMC_START = 64;
 
 /** A duty in sixteenths (0-16) as $4000's bits 7-6: the nearest of DUTIES, the narrower at a tie. */
 export function dutyCode(sixteenths) {
@@ -79,6 +97,74 @@ export const fcNoise = {
   modes: { white: ["NOISE_MODE", 0b1_00], periodic: ["NOISE_MODE", 0b0_00] },
   modeError: { code: "E_PARAM_VALUE", message: "the 2A03's noise :mode is white or periodic" },
   rateNote: true,
+};
+
+// pcm1: the DMC, one sample voice. A note's sample is baked at its pitch
+// onto the 1-bit delta at its def-pcm's one rate (`dmcRate`), its level
+// with it (:vel, :vol, the master, read at key-on); a loop is the whole
+// range, as $4012 / $4013 are.
+export const fcDpcm = {
+  name: "fc-dpcm",
+  label: "2A03 DPCM",
+  unit: "apu",
+  kind: "sample",
+  level: { scale: "linear", steps: 64 }, // the DAC's swing about its middle
+  words: words(/^(?:RANGE|LOOP)_/),
+  pointSweeps: false, // a note's points are read at its key-on
+  frames: true, // plays the samples' frames as bakePcm8 bakes them
+  loopIsRange: true,
+  checkNote({ sample, sampleName, mode, once }) {
+    if (mode !== "loop") return;
+    const loops = (sample.loopStartSec ?? sample.startSec ?? 0) !== (sample.startSec ?? 0) ||
+      (sample.loopEndSec != null && sample.loopEndSec !== sample.endSec);
+    if (loops)
+      once(`loop:${sampleName}`, `the 2A03's DPCM loops a sample's whole range; ${sampleName}'s :loop-* points are left out — make the range the loop (:pcm-start / :pcm-end)`, "warning");
+  },
+};
+
+/**
+ * The highest of the DMC's rates at which `sec` seconds of sample fit its
+ * 4081 bytes (the lowest, cut there, where none does): its index.
+ */
+export function dmcRate(sec) {
+  for (let i = DMC_RATES.length - 1; i > 0; i--) if (Math.ceil((sec * DMC_RATES[i]) / 8) <= DMC_MAX_BYTES) return i;
+  return 0;
+}
+
+/**
+ * `bits` levels, −1..1 (the sample at the note's pitch and the DMC's rate,
+ * its level in it), as the DMC's bytes from DMC_START: each bit moves the
+ * DAC 2 up or down, toward the level, as the chip bounds it (up below 126,
+ * down above 1). Padded to 16 n + 1 bytes — a loop with its own start
+ * again, else an even run of ups and downs that holds the level.
+ */
+export function dmcEncode(levels, loop = false) {
+  const n = Math.min(DMC_MAX_BYTES, Math.max(1, ((Math.ceil(levels.length / 8) - 1 + 15) >> 4 << 4) + 1));
+  const bytes = new Uint8Array(n);
+  let dac = DMC_START;
+  for (let k = 0; k < n * 8; k++) {
+    let up;
+    if (k < levels.length || (loop && levels.length)) {
+      const target = DMC_START + 63 * levels[k % levels.length];
+      up = target > dac;
+    } else up = k % 2 === 0;
+    if (up) { if (dac <= 125) dac += 2; } else if (dac >= 2) dac -= 2;
+    if (up) bytes[k >> 3] |= 1 << (k & 7);
+  }
+  return bytes;
+}
+
+// A hit: its bytes into the memory at DMC_BASE (on RAM_PORT), then the DMC
+// set to them, the DAC to DMC_START, and started over ($4015's bit 4
+// dropped and raised). `stop` drops it.
+const dmc = {
+  load: (bytes) => [[RAM_PORT, 0x00, DMC_BASE & 0xff], [RAM_PORT, 0x01, DMC_BASE >> 8], ...Array.from(bytes, (b) => [RAM_PORT, 0x02, b])],
+  start: (bytes, rate, loop) => [
+    [PORT, 0x10, (loop ? 0x40 : 0) | rate], [PORT, 0x11, DMC_START],
+    [PORT, 0x12, ((DMC_BASE - 0xc000) >> 6) & 0xff], [PORT, 0x13, (bytes.length - 1) >> 4],
+    [PORT, 0x15, 0x0f], [PORT, 0x15, 0x1f],
+  ],
+  stop: () => [[PORT, 0x15, 0x0f]],
 };
 
 // The APU as the IR player's PSG: lanes 0-1 the pulses, 2 the triangle, 3
@@ -200,7 +286,7 @@ function apuEncoder() {
 export const rp2a03 = {
   chip: "rp2a03",
   clock: CLOCK,
-  parts: [fcPulse, fcTriangle, fcNoise],
+  parts: [fcPulse, fcTriangle, fcNoise, fcDpcm],
   encoder: true,
   emulator: true,
   // The four channels enabled, the frame counter's IRQ off; the pulses at
@@ -214,8 +300,14 @@ export const rp2a03 = {
     [PORT, 0x00, (DEFAULT_DUTY << 6) | 0x30], [PORT, 0x01, 0x08],
     [PORT, 0x04, (DEFAULT_DUTY << 6) | 0x30], [PORT, 0x05, 0x08],
     [PORT, 0x08, 0x80], [PORT, 0x0c, 0x30], [PORT, 0x0e, 0x00], [PORT, 0x0f, LENGTH],
+    [PORT, 0x11, DMC_START], // the DMC's DAC where every hit starts, so the first is no thump
   ],
-  // VGM 1.61: the clock at $84, the 0xB4 command (register − $4000, data).
-  vgm: { version: 0x161, clock: 0x84, ports: { [PORT]: { cmd: 0xb4, addr: true } } },
+  // VGM 1.61: the clock at $84, the 0xB4 command (register − $4000, data);
+  // the memory's writes as 0xC2 blocks (the address, then the bytes).
+  vgm: {
+    version: 0x161, clock: 0x84,
+    ports: { [PORT]: { cmd: 0xb4, addr: true }, [RAM_PORT]: { ramBlock: 0xc2 } },
+  },
   psgEncoder: apuEncoder,
+  dmc,
 };

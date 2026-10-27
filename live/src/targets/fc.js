@@ -1,6 +1,6 @@
-// The Famicom: its 2A03's APU — two pulses, the triangle, the noise; DPCM
-// (pcm1) is the next stage. No driver: the score is delivered as VGM.
-import { rp2a03, fcPulse, fcTriangle, fcNoise } from "../chips/rp2a03.js";
+// The Famicom: its 2A03's APU — two pulses, the triangle, the noise and the
+// DMC's samples (pcm1). No driver: the score is delivered as VGM.
+import { rp2a03, fcPulse, fcTriangle, fcNoise, fcDpcm } from "../chips/rp2a03.js";
 
 const on = (part, voice) => ({ chip: "apu", part, voice });
 
@@ -19,6 +19,7 @@ export default {
   chips: { apu: rp2a03 },
   channels: {
     sqr1: on(fcPulse, 0), sqr2: on(fcPulse, 1), tri: on(fcTriangle, 2), noise: on(fcNoise, 3),
+    pcm1: on(fcDpcm, 0), // on the scope's first sample lane, 10
   },
   readsAs: { modes: { "fc-noise": NOISE_MODES } },
   hints: {

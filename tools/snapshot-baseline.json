@@ -1780,8 +1780,14 @@
  "tools/tests/fc/apu.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "378fa3baeba19628",
-  "regs": "b803a54b1187eb87",
-  "vgm": "022f105974686274"
+  "regs": "7a851b5ee2079fea",
+  "vgm": "3917fed8ab048533"
+ },
+ "tools/tests/fc/dpcm.mmlisp": {
+  "diagnostics": "b4e4c9ef89c5b72c",
+  "ir": "280f174a84e63f8b",
+  "regs": "67888c5586424a74",
+  "vgm": "17f2e3a58aa198f0"
  },
  "tools/tests/fc/target.mmlisp": {
   "diagnostics": "c2abed2ca544cbf9",

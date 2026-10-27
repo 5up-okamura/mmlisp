@@ -230,6 +230,13 @@ function writePcmPoint(target, keyword, op, valueNode, trackState, push, diagnos
       `${keyword} takes a length, so '${op}' has no meaning on it`, src, trackName);
     return;
   }
+  // A part whose loop is its range (the 2A03's DMC, `loopIsRange`).
+  if (trackState.part.loopIsRange && target.startsWith("LOOP_")) {
+    targetDiag(diagnostics, "warning",
+      `${keyword}: the ${trackState.part.label} loops a note's whole range, so it is left out — set :pcm-start / :pcm-end`,
+      src, trackName);
+    return;
+  }
   const secOf = (tok) => lengthTokenSeconds(tok, trackState.currentTempo);
   const rangeCurve = parseCurveSpec(valueNode, diagnostics, src, trackName, true, secOf, env);
   requireCurveFrom(rangeCurve, diagnostics, trackName, "a PCM point", src);

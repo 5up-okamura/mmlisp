@@ -1,0 +1,10 @@
+; fc: the DMC on pcm1 — a sample (made for this test) at one rate a def,
+; each note baked at its pitch with its level, a loop held to its gate
+; (its :loop-start left out: a warning), a gate cutting a shot, beside the
+; triangle, whose level the DMC's DAC lowers.
+(def-score :target fc :title "fc DPCM")
+(def-pcm kick :file "wav/kick.wav")
+(def-pcm kick-body kick :pcm-start 20ms :pcm-end 60ms)
+(tri :tempo 132 :len 4 :oct 3 c e g e |)
+(pcm1 :len 8 kick c > c < _ c :vel 8 c _ :vol 20 c c |
+      :mode loop :loop-start 10ms :len 4 kick-body c :mode gate :gate 50 kick c |)

@@ -50,6 +50,8 @@
 //             :vol says so (W_TARGET) and only 0 silences
 //   rateNote  true: a noise whose note picks its rate (the 2A03's), pitched
 //             as a tone lane is, on the PSG's noise lane
+//   loopIsRange true: a sample part whose loop is a note's whole range (the
+//             2A03's DMC): a :loop-* point is left out (W_TARGET)
 //   claims    { kind, voice }: a channel of another part its notes take over
 //             while they sound (the Mega Drive's DAC mix, fm6)
 //   waveRam   (voice) → the wave memory a `wave` part's channel plays, where

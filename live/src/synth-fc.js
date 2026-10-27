@@ -13,16 +13,21 @@
 // 6 in its loop mode) at its rate's period, silent while bit 0 is set. The
 // frame counter's quarter and half frames (4- or 5-step) clock the
 // envelopes, the linear counter, the length counters and the sweeps. The
-// mix is nesdev's nonlinear one (pulse_out + tnd_out), with $4011's DAC
-// level in it (DPCM's playback is the next stage). The channels run at the
+// DMC reads its sample's bytes from the memory (port 1, chips/rp2a03.js
+// RAM_PORT) a byte a time into its buffer, and every rate period its
+// output unit moves the 7-bit DAC 2 up or down by the next bit (up below
+// 126, down above 1), silent while its buffer was empty; at the sample's
+// end it starts over (the loop bit) or stops. The mix is nesdev's nonlinear
+// one (pulse_out + tnd_out), the DAC in it. The channels run at the
 // CPU clock / 32, each averaged over those 32 clocks so a high tone does not
 // alias, and are linear-interpolated to the output rate as synth-pce.js
 // does; the Famicom's 37 Hz high-pass is the DC blocker. Mono: both sides
 // the same. The scope gets each channel alone through the mixer, DC-blocked,
-// at the page's PSG lanes 6-9 (targets.js scopeLane).
+// at the page's PSG lanes 6-9 and the DMC at its first sample lane, 10
+// (targets.js scopeLane).
 // ---------------------------------------------------------------------------
 
-import { rp2a03 } from "./chips/rp2a03.js";
+import { rp2a03, RAM_PORT, DMC_PERIODS } from "./chips/rp2a03.js";
 import { pitchLatches, fcPitch } from "./scope-pitch.js";
 
 const CLOCK = rp2a03.clock;
@@ -37,8 +42,9 @@ const MASTER_OUTPUT_GAIN = 1.6;
 // The scope's taps, on the page's scale (index.html SCOPE_DISPLAY_GAIN).
 const SCOPE_SCALE = 0.6;
 
-export const SCOPE_LANES = 10;
+export const SCOPE_LANES = 11;
 const PSG_LANE = 6; // the page's first PSG lane
+const CHANNELS = 5; // pulse 1, pulse 2, the triangle, the noise, the DMC
 
 const LENGTHS = [10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30];
 const DUTY = [
@@ -90,6 +96,14 @@ class Apu {
     this.tri = { ctl: 0, period: 0, length: 0, seq: 0, timer: 1, linear: 0, reload: false };
     this.noise = { ctl: 0, mode: 0, period: NOISE_PERIODS[0], length: 0, timer: NOISE_PERIODS[0], lfsr: 1, env: envelope() };
     this.dac = 0;
+    // The CPU's memory from $8000 (the DMC's address wraps there) and its
+    // writer's address.
+    this.mem = new Uint8Array(0x8000);
+    this.ramAddr = 0;
+    this.dmc = {
+      ctl: 0, addr: 0xc000, len: 1, cur: 0xc000, remaining: 0, buffer: -1,
+      shift: 0, bits: 8, silent: true, timer: DMC_PERIODS[0],
+    };
     this.enable = 0;
     this.frameMode = 0;
     this.frameClock = 0;
@@ -127,14 +141,26 @@ class Apu {
         if (this.enable & 8) nz.length = LENGTHS[data >> 3];
         nz.env.start = true;
         break;
+      case 0x10: this.dmc.ctl = data; break;
       case 0x11: this.dac = data & 0x7f; break;
-      case 0x15:
+      case 0x12: this.dmc.addr = 0xc000 + data * 64; break;
+      case 0x13: this.dmc.len = data * 16 + 1; break;
+      case 0x15: {
         this.enable = data & 0x1f;
         if (!(data & 1)) this.pulse[0].length = 0;
         if (!(data & 2)) this.pulse[1].length = 0;
         if (!(data & 4)) t.length = 0;
         if (!(data & 8)) nz.length = 0;
+        // The DMC: cleared, it stops; set with nothing left, it starts over.
+        const m = this.dmc;
+        if (!(data & 0x10)) m.remaining = 0;
+        else if (!m.remaining) {
+          m.cur = m.addr;
+          m.remaining = m.len;
+          if (m.buffer < 0) this._dmcFetch();
+        }
         break;
+      }
       case 0x17:
         // 5-step mode clocks a quarter and a half frame at once.
         this.frameMode = data & 0x80;
@@ -144,6 +170,60 @@ class Apu {
         break;
       default: break;
     }
+  }
+
+  // A write on the memory's port (chips/rp2a03.js RAM_PORT): the address's
+  // low and high byte, then the bytes, the address moving on.
+  writeRam(addr, data) {
+    if (addr === 0x00) this.ramAddr = (this.ramAddr & 0xff00) | data;
+    else if (addr === 0x01) this.ramAddr = (data << 8) | (this.ramAddr & 0xff);
+    else if (addr === 0x02) {
+      if (this.ramAddr >= 0x8000) this.mem[this.ramAddr - 0x8000] = data;
+      this.ramAddr = (this.ramAddr + 1) & 0xffff;
+    }
+  }
+
+  // The DMC's reader: the next byte into its buffer; at the sample's end it
+  // starts over (the loop bit) or is done.
+  _dmcFetch() {
+    const m = this.dmc;
+    if (!m.remaining) return;
+    m.buffer = this.mem[m.cur - 0x8000];
+    m.cur = m.cur === 0xffff ? 0x8000 : m.cur + 1;
+    if (--m.remaining === 0 && m.ctl & 0x40) {
+      m.cur = m.addr;
+      m.remaining = m.len;
+    }
+  }
+
+  // The DMC's output unit over `clocks`: the DAC's level averaged over them.
+  _runDmc(clocks) {
+    const m = this.dmc;
+    const period = DMC_PERIODS[m.ctl & 15];
+    let acc = 0;
+    for (let rem = clocks; rem > 0; ) {
+      const n = Math.min(rem, m.timer);
+      acc += this.dac * n;
+      rem -= n;
+      m.timer -= n;
+      if (m.timer > 0) continue;
+      m.timer = period;
+      if (!m.silent) {
+        if (m.shift & 1) { if (this.dac <= 125) this.dac += 2; } else if (this.dac >= 2) this.dac -= 2;
+      }
+      m.shift >>= 1;
+      if (--m.bits === 0) {
+        m.bits = 8;
+        if (m.buffer < 0) m.silent = true;
+        else {
+          m.silent = false;
+          m.shift = m.buffer;
+          m.buffer = -1;
+          this._dmcFetch();
+        }
+      }
+    }
+    return acc / clocks;
   }
 
   // A sweep's target period: pulse 1 negates by ones' complement, pulse 2 by two's.
@@ -193,7 +273,8 @@ class Apu {
     }
   }
 
-  // Each channel's level, 0-15, averaged over `clocks`, into out[0..3].
+  // Each channel's level, 0-15 (the DAC 0-127), averaged over `clocks`,
+  // into out[0..4].
   run(clocks, out) {
     this._frame(clocks);
     for (const p of this.pulse) {
@@ -252,6 +333,7 @@ class Apu {
       nz.lfsr = lfsr;
       out[3] = (acc / clocks) * v;
     }
+    out[4] = this._runDmc(clocks);
   }
 }
 
@@ -264,22 +346,22 @@ export class FcSynth {
     this._outputSR = outputSR;
     this.pitch = pitchLatches(fcPitch(CLOCK));
     this._apu = new Apu();
-    this._lv = new Float32Array(4);
-    this._x = new Float32Array(5);
+    this._lv = new Float32Array(CHANNELS);
+    this._x = new Float32Array(CHANNELS + 1);
     this.bus = null; // no FM to hold
     this.scopeLanes = SCOPE_LANES;
     this._ratio = FC_NATIVE_SAMPLE_RATE / outputSR;
-    this.pcmTaps = null; // the contract's; DPCM is the next stage
+    this.pcmTaps = null; // the contract's; the DMC is a register-written voice here
     this._resetResampleState();
   }
 
-  // Index 0 the mix, 1-4 each channel alone (the scope's).
+  // Index 0 the mix, 1-5 each channel alone (the scope's).
   _resetResampleState() {
     this._frac = 0;
-    this._dcX = new Float32Array(5);
-    this._dcY = new Float32Array(5);
-    this._cur = new Float32Array(5);
-    this._next = new Float32Array(5);
+    this._dcX = new Float32Array(CHANNELS + 1);
+    this._dcY = new Float32Array(CHANNELS + 1);
+    this._cur = new Float32Array(CHANNELS + 1);
+    this._next = new Float32Array(CHANNELS + 1);
     // The blocker starts settled on the chip's idle level (the halted
     // triangle holds its step's), so a run starts with no thump.
     this._mix();
@@ -292,9 +374,10 @@ export class FcSynth {
     this._resetResampleState();
   }
 
-  // The APU's registers are port 0, $4000 + addr.
+  // The APU's registers are port 0, $4000 + addr; the memory port 1.
   writeYM(port, addr, data) {
     if (port === 0) this._apu.write(addr & 0xff, data & 0xff);
+    else if (port === RAM_PORT) this._apu.writeRam(addr & 0xff, data & 0xff);
   }
 
   // The Mega Drive's PSG, DAC and low-pass have no counterpart here.
@@ -308,7 +391,7 @@ export class FcSynth {
     this._cur = this._next;
     this._next = swap;
     const x = this._mix(CLOCKS_PER_SAMPLE);
-    for (let c = 0; c < 5; c++) {
+    for (let c = 0; c <= CHANNELS; c++) {
       const y = x[c] - this._dcX[c] + DC_R * this._dcY[c];
       this._dcX[c] = x[c];
       this._dcY[c] = y;
@@ -321,26 +404,26 @@ export class FcSynth {
   _mix(clocks = 0) {
     const lv = this._lv;
     if (clocks) this._apu.run(clocks, lv);
-    else lv.set([0, 0, TRI[this._apu.tri.seq], 0]); // idle: the triangle's held step
-    const d = this._apu.dac;
+    else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac]); // idle: the triangle's held step, the DAC
     const x = this._x;
-    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], d);
+    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]);
     x[1] = pulseOut(lv[0]);
     x[2] = pulseOut(lv[1]);
     x[3] = tndOut(lv[2], 0, 0);
     x[4] = tndOut(0, lv[3], 0);
+    x[5] = tndOut(0, 0, lv[4]);
     return x;
   }
 
   // `getDacByte` is the contract's and unused; `scope` (SCOPE_LANES arrays)
-  // gets the channels at lanes 6-9, the others silence.
+  // gets the channels at lanes 6-10, the others silence.
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {
     if (scope) for (let c = 0; c < PSG_LANE; c++) scope[c]?.fill(0, 0, count);
     for (let i = 0; i < count; i++) {
       if (onFrame) onFrame(i);
       const t = this._frac;
       if (scope)
-        for (let c = 0; c < 4; c++) {
+        for (let c = 0; c < CHANNELS; c++) {
           const lane = scope[PSG_LANE + c];
           if (lane) lane[i] = (this._cur[c + 1] * (1 - t) + this._next[c + 1] * t) * SCOPE_SCALE;
         }

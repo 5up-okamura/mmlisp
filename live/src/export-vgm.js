@@ -152,8 +152,39 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adp
   // SN76489's 0x50 takes a data byte, an FM chip's an address and a byte,
   // the SCC's 0xD2 a port of its own and an address in it (`sub`).
   const ports = Object.assign({}, ...Object.values(target.chips).map((c) => c.vgm.ports ?? {}));
+  // A port that writes a chip's memory (`ramBlock`: the 2A03's, chips/
+  // rp2a03.js RAM_PORT) — an address's low and high byte, then the bytes —
+  // becomes one RAM-write block a run (VGM 1.61, 0xC0-0xDF: the block's
+  // type, then the address the bytes start at).
+  {
+    const outW = [], outS = [];
+    let addr = 0, run = null;
+    for (let i = 0; i < regs.length; i++) {
+      const w = regs[i], p = ports[w.port];
+      if (!p?.ramBlock) { run = null; outW.push(w); outS.push(regSample[i]); continue; }
+      if (w.addr === 0x00) { addr = (addr & 0xff00) | w.data; run = null; }
+      else if (w.addr === 0x01) { addr = (w.data << 8) | (addr & 0xff); run = null; }
+      else if (w.addr === 0x02) {
+        if (!run || outS.at(-1) !== regSample[i]) {
+          run = { ramBlock: p.ramBlock, start: addr, bytes: [] };
+          outW.push(run);
+          outS.push(regSample[i]);
+        }
+        run.bytes.push(w.data & 0xff);
+        addr = (addr + 1) & 0xffff;
+      }
+    }
+    regs = outW;
+    regSample = outS;
+  }
   const emitWrite = (w) => {
     if (w.oki != null) return okiStart(w.oki);
+    if (w.ramBlock) {
+      data.push3(0x67, 0x66, w.ramBlock);
+      data.push4(...u32le(2 + w.bytes.length));
+      data.push2(w.start & 0xff, w.start >> 8);
+      return data.pushBytes(Uint8Array.from(w.bytes));
+    }
     const p = ports[w.port];
     if (!p) throw new Error(`no VGM command for a write on port ${w.port}`);
     if (p.sub) data.push4(p.cmd, ...p.sub(w.addr & 0xff), w.data & 0xff);

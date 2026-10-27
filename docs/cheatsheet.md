@@ -276,8 +276,11 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   (sticky, default 8; the chip's 2 / 4 / 8 / 12, the nearest taken; a value,
   a macro or a curve); `tri` the triangle, no level (`:vel` / `:vol` warn,
   only 0 silences; a rest halts it); `noise` pitched by its notes (c2 the
-  slowest of 16 rates, d#3 the fastest), `:mode white | periodic`. Mono:
-  no `:pan`; no FM, wave, `:noise-rate`, PCM yet. VGM and WAV.
+  slowest of 16 rates, d#3 the fastest), `:mode white | periodic`; `pcm1`
+  the DMC, one voice: a `def-pcm` at one rate a def (the highest its whole
+  sample fits 4081 bytes at), each note baked at its pitch with its level
+  at key-on, a loop the whole range (`:loop-*` warns). Mono: no `:pan`; no
+  FM, wave, `:noise-rate`. VGM and WAV.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

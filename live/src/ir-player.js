@@ -49,8 +49,12 @@ import { engineImage } from "./engine-images.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 import { PCM8_RATE, PCM8_VOICES } from "./chips/msm6258.js";
 import { DDA_RATE, ddaStep } from "./chips/huc6280.js";
+import { DMC_RATES, dmcRate, dmcEncode } from "./chips/rp2a03.js";
 // A held DDA note (:len 0) with no next note: how long its sample is written.
 const DDA_HOLD_SEC = 30;
+// The DMC's sample is loaded this far ahead of its key-on: before the
+// frame's writes start it, after the previous hit has all but ended.
+const DMC_LOAD_LEAD_SECS = 0.0005;
 import { FM_CHANNEL_WORDS, FM_OP_WORDS, FM_OPS, opWords, fmInitVoice, fmOpWord } from "./chips/fm-words.js";
 // The largest point a PCM point target can name: the bank's usable window
 // (export-mmb.js PCM_LOOP_MAX — the same clamp the MMB exporter applies).
@@ -79,6 +83,7 @@ const SAMPLE_HANDLERS = {
   "adpcm-b": "_dispatchAdpcmEvent",
   pcm8: "_dispatchPcm8Event",
   "pce-dda": "_dispatchDdaEvent",
+  "fc-dpcm": "_dispatchDpcmEvent",
   dac: "_dispatchDacEvent",
 };
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
@@ -452,6 +457,10 @@ export class IRPlayer {
     this._psgChip = this._psgChipOf(target); // one per score: it may keep state
     this._toneEnc = this._toneEncodersOf(target, this._psgChip);
     this._chipsStarted.clear();
+    this._dmcRates = null; // the DMC's rates are this score's (_dmcRateOf)
+    // The ports that write a chip's memory, not its registers (chips/ `ramBlock`).
+    this._ramPorts = new Set(Object.values(target.chips).flatMap((c) =>
+      Object.entries(c.vgm?.ports ?? {}).filter(([, p]) => p.ramBlock).map(([port]) => Number(port))));
     this._laneWave.fill(null);
     this._laneExpr.fill(null);
     this._drawnWaves.clear();
@@ -494,6 +503,7 @@ export class IRPlayer {
       if (CORE_OF_KIND[c.part.kind] === "psg") this._psgLevel[toneLaneOf(c)] = c.part.level;
     this._rhythmState = null; // per-track vol / pan of the chips' own PCM parts
     this._adpcmState = null;
+    this._pcm8State = this._ddaState = this._dpcmState = null;
     for (let i = 0; i < (irObj.tracks?.length ?? 0); i++) {
       this._assignChannel(i, irObj.tracks[i]);
     }
@@ -587,6 +597,9 @@ export class IRPlayer {
     // The PC Engine's DDA channels back off (a sample cut where it stands).
     const dda = this._ddaEncoder();
     if (dda) for (const [, ch] of this._lanesOf("sample", "pce-dda")) write(dda.off(ch));
+    // The 2A03's DMC stops.
+    const dmc = this._target.chipFor("fc-dpcm")?.dmc;
+    if (dmc) write(dmc.stop());
   }
 
   // The chip and channel state belongs to one run. A run's sticky state (a
@@ -595,6 +608,9 @@ export class IRPlayer {
   // there; sweeps and keyed spans are kept in audio time, so a previous run's
   // would read as running in this one.
   _resetRunState() {
+    // A sample track's range, loop and pan are its run's: a second run, or
+    // the score reloaded, starts from the track's own again.
+    this._pcm8State = this._ddaState = this._dpcmState = null;
     this._chRegs = Array.from({ length: FM_CHANNELS }, (_, i) => buildChannelRegState(i));
     this._pcmSample = [null, null, null];
     this._lfoRate = 0;
@@ -757,6 +773,9 @@ export class IRPlayer {
         continue;
       }
       if (this._fmEnc.isKeyOn(w.port, w.addr, w.data)) continue;
+      // A chip's memory (the 2A03's DMC samples): each hit loads its own, and
+      // one sounding across the point is stopped — not replayed by the byte.
+      if (this._ramPorts.has(w.port)) continue;
       this._write(w.port, w.addr, w.data, at);
     }
     for (let ch = 0; ch < this._fmEnc.channels; ch++) this._writeKeyOff(ch);
@@ -1002,6 +1021,10 @@ export class IRPlayer {
       const writes = voice === "adpcm" ? adpcm.stop() : this._rhythmEnc.dump(voice, when);
       for (const [p, a, d] of writes) this._write(p, a, d, when);
     }
+    // The 2A03's DMC: its track muted, the sample stops.
+    const dmc = this._target?.chipFor?.("fc-dpcm")?.dmc;
+    if (dmc) for (const [ti] of this._lanesOf("sample", "fc-dpcm"))
+      if (!this._isVoiceTrackAudible(ti, "dpcm")) for (const [p, a, d] of dmc.stop()) this._write(p, a, d, when);
   }
 
   /**
@@ -2814,6 +2837,7 @@ export class IRPlayer {
   // frames and the rate it plays C4 at. Without it a note writes nothing.
   setFrameBank(bank) {
     this._frameBank = bank ?? null;
+    this._dmcRates = null; // the DMC's rate a sample, from the bank and the score
   }
 
   // The YM2608's sample voices — the ADPCM-B and the six rhythm sounds — and
@@ -3266,6 +3290,121 @@ export class IRPlayer {
         else if (target === "LOOP_START") (st.loop ??= {}).start = v;
         else if (target === "LOOP_END") { (st.loop ??= {}).end = v; st.loop.len = null; }
         else if (target === "LOOP_LEN") { (st.loop ??= {}).len = v; st.loop.end = null; }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // The DMC's rate for each sample its notes play (chips/rp2a03.js
+  // dmcRate): the highest at which the whole sample, at the lowest pitch a
+  // note plays it, fits the DMC's 4081 bytes — one rate a def-pcm, as a
+  // driver keeps one.
+  _dmcRateOf(name) {
+    if (!this._dmcRates) {
+      this._dmcRates = new Map();
+      const heads = new Set(this._target.headsOf("fc-dpcm"));
+      const lowest = new Map();
+      for (const t of this._ir?.tracks ?? []) {
+        if (!heads.has(t.scoreChannel ?? t.channel)) continue;
+        for (const e of t.events ?? [])
+          if (e.cmd === "PCM_NOTE_ON" && e.args?.sample) {
+            const midi = pitchToMidi(e.args.pitch ?? "c4");
+            lowest.set(e.args.sample, Math.min(lowest.get(e.args.sample) ?? Infinity, midi));
+          }
+      }
+      for (const [n, midi] of lowest) {
+        const entry = this._frameBank?.entries?.[n];
+        if (entry?.data.length) this._dmcRates.set(n, dmcRate(entry.data.length / (entry.rate * 2 ** ((midi - 60) / 12))));
+      }
+    }
+    return this._dmcRates.get(name) ?? dmcRate(Infinity);
+  }
+
+  // The 2A03's DMC (pcm1): a note's sample — its range as heard, read as
+  // DDA's is — resampled to its pitch at its def-pcm's rate (_dmcRateOf),
+  // its level (vel + vol + master at key-on) in it, and encoded to the
+  // 1-bit delta (chips/rp2a03.js dmcEncode). Each hit loads its bytes into
+  // the memory a hair ahead of its key-on, on the machine's own timing (the
+  // load is not a frame's write), then starts the DMC; `loop` repeats the
+  // range, and a loop or gate note stops at its gate. A shot plays out, or
+  // until the next note starts over.
+  _dispatchDpcmEvent(ev, when) {
+    const ti = ev._trackIndex;
+    const st = (this._dpcmState ??= new Map()).get(ti) ?? {};
+    this._dpcmState.set(ti, st);
+    const dmc = this._target.chipFor("fc-dpcm").dmc;
+    const write = (writes, t) => { for (const [p, a, d] of writes) this._write(p, a, d, t); };
+    switch (ev.cmd) {
+      case "PCM_NOTE_ON": {
+        const name = ev.args?.sample;
+        const entry = this._frameBank?.entries?.[name];
+        if (!entry?.data.length || !this._isVoiceTrackAudible(ti, "dpcm")) break;
+        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        const perSec = entry.rate * 2 ** ((midi - 60) / 12); // source frames a second, as heard
+        const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
+        const r = st.range ?? {};
+        const start = Math.min(at(r.start) ?? 0, entry.data.length);
+        const end = Math.min(entry.data.length, r.end != null ? at(r.end) : r.len != null ? start + at(r.len) : entry.data.length);
+        if (end <= start) break;
+        const mode = ev.args?.mode ?? "shot";
+        // The level at key-on: the note's vel (or its macro's first step),
+        // the track's :vol (or its macro's), the master, the strip.
+        const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
+        const lines = this._levelMacroLines(ev.args ?? {}, when, gateTicks, Infinity);
+        const cp = this._chipPcmState();
+        const gain = levelGain({
+          vel: this._lineAt(lines.vel, when) ?? Number(ev.args?.vel ?? 15),
+          faders: [this._lineAt(lines.vol, when) ?? this._chipPcmParamAt(ti, "vol", when),
+            lineEntryAt(cp.master, when)?.v ?? VOL_UNITY, this._voiceUiVol.get("dpcm") ?? VOL_UNITY],
+        });
+        const rate = this._dmcRateOf(name);
+        const step = perSec / DMC_RATES[rate]; // source frames a bit
+        const levels = [];
+        for (let pos = start; pos < end; pos += step) {
+          const i = Math.floor(pos), f = pos - i;
+          const x = entry.data[i] * (1 - f) + (entry.data[Math.min(i + 1, end - 1)] ?? 0) * f;
+          levels.push(Math.max(-1, Math.min(1, x * gain)));
+        }
+        const bytes = dmcEncode(levels, mode === "loop");
+        const loadAt = (this._target.frameClock ? this._frameStart(when) : when) - DMC_LOAD_LEAD_SECS;
+        // Live's worklet takes the load as one stream tick (thousands of
+        // messages would stall the page); a capture, a write at a time.
+        const load = dmc.load(bytes), timed = this._writeTimer;
+        if (timed.stream) {
+          const flat = new Uint8Array(2 * load.length);
+          load.forEach(([, a, d], k) => { flat[2 * k] = a; flat[2 * k + 1] = d; });
+          timed.stream({ when: loadAt, rate: 1, port: load[0][0], perTick: load.length, bytes: flat });
+        } else for (const [p, a, d] of load) timed(p, a, d, loadAt);
+        // The worklet writes timed writes at its block's start but a stream
+        // at its sample: the start goes as a stream too, so it follows the
+        // load it plays (a capture keeps the order by time).
+        const go = dmc.start(bytes, rate, mode === "loop");
+        if (timed.stream) {
+          const flat = new Uint8Array(2 * go.length);
+          go.forEach(([, a, d], k) => { flat[2 * k] = a; flat[2 * k + 1] = d; });
+          const t = this._target.frameClock ? this._frameTime(when) : when;
+          timed.stream({ when: t, rate: 1, port: go[0][0], perTick: go.length, bytes: flat });
+        } else write(go, when);
+        if (mode !== "shot" && gateTicks > 0) {
+          const gate = this._timeAfterTicks(when, gateTicks);
+          const { secs: nextNote } = this._nextNote(ev);
+          if (gate < nextNote - 1e-6) write(dmc.stop(), gate);
+        }
+        break;
+      }
+      case "PARAM_SET":
+      case "PARAM_SWEEP":
+      case "PARAM_FROM_VAL": {
+        const target = (ev.args?.target ?? "").toUpperCase();
+        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
+        if (ev.cmd !== "PARAM_SET") break;
+        const v = Number(ev.args?.value);
+        if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
+        else if (target === "RANGE_START") (st.range ??= {}).start = v;
+        else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
+        else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
         break;
       }
       default:

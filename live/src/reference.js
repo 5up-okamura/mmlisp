@@ -85,7 +85,7 @@ export const REFERENCE = [
   {
     name: ':target', aliases: ['pc88', 'x68k', 'msx', 'pce', 'fc', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
     syntax: '(def-score :target md | pc88 | x68k | msx | pce | fc)',
-    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV. pce is the PC Engine\'s HuC6280: six wave channels, wave1–wave6, two of them noise, as VGM and WAV. fc is the Famicom\'s 2A03: sqr1 / sqr2 the pulses, tri and noise, as VGM and WAV.',
+    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV. pce is the PC Engine\'s HuC6280: six wave channels, wave1–wave6, two of them noise, as VGM and WAV. fc is the Famicom\'s 2A03: sqr1 / sqr2 the pulses, tri, noise and pcm1 (the DMC), as VGM and WAV.',
     insert: '(def-score :target pc88)',
     example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(rhythm1 :len 4 kick c c snare c c)',
   },
@@ -178,7 +178,7 @@ export const REFERENCE = [
   {
     name: 'pcm1–pcm3', aliases: ['pcm1', 'pcm2', 'pcm3', 'pcm4', 'pcm5', 'pcm6', 'pcm7', 'pcm8'], cat: 'channels', section: '§16', tracks: PCM,
     syntax: '(pcm1 sample c …)',
-    summary: 'Samples, soft-mixed on the fm6 DAC. Name a def-pcm sample before its notes; a note\'s pitch picks a resampled copy. On x68k pcm1–pcm8 are PCM8\'s voices, mixed into the MSM6258\'s ADPCM, and take :pitch moves. On pce pcm1–pcm6 are channels 1–6 as DDA: 5 bits at 6.99 kHz, each note baked at its pitch.',
+    summary: 'Samples, soft-mixed on the fm6 DAC. Name a def-pcm sample before its notes; a note\'s pitch picks a resampled copy. On x68k pcm1–pcm8 are PCM8\'s voices, mixed into the MSM6258\'s ADPCM, and take :pitch moves. On pce pcm1–pcm6 are channels 1–6 as DDA: 5 bits at 6.99 kHz, each note baked at its pitch. On fc pcm1 is the DMC: 1-bit deltas at one rate a def-pcm, each note baked at its pitch with its key-on level; a loop is the whole range.',
     insert: '(pcm1 :len 8 kick c snare c)',
     example: '(import "presets/tr808/set.mmlisp")\n(pcm1 :len 8 kick c snare c kick c c snare c)',
   },

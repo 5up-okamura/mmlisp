@@ -119,7 +119,7 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
     resolveLayerNotes, same-name output unchanged). Like the same-name
     :prio pass, it does not count the notes it drops.
 
-## The Famicom (fc) — the design, ruled 2026-10-27; stage 1 built
+## The Famicom (fc) — the design, ruled 2026-10-27; stages 1-2 built
 
 Build it as pce was built (chips/huc6280.js, targets/pce.js, synth-pce.js,
 tools/tests/pce are the pattern), in stages: 1. pulses, triangle, noise;
@@ -173,9 +173,25 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   loaded (init writes $400F once); a stop's untimed silence deduped away
   against the horizon's state (an untimed write bypasses `last`); nothing
   flushed the queue while stopped (`_psgWrites` flushes when not playing);
-  the :mode macro on the pitched noise lane. Open: not listened to by the
-  user (the level beside other targets, the noise rates, the triangle's
-  halt); no VGM player has checked the 0xB4 output. The curve option `:duty` is 1–255 (128 = 50 %) while the track
+  the :mode macro on the pitched noise lane. Open: no VGM player has
+  checked the 0xB4 output.
+- **Stage 2 (DPCM) built 2026-10-27** (fcDpcm, `frames: true` as pce's
+  DDA; ir-player `_dispatchDpcmEvent`, `_dmcRateOf`). The memory is the
+  chip's port 1 (RAM_PORT: an address latch, then bytes), a VGM 0xC2 block
+  a run (export-vgm `ramBlock`); Live gets a hit's load as one `stream`
+  message. Every hit loads its bytes to $C000 — no cache of what is
+  resident: a VGM's loop jumps back with the RAM as the song's end left it,
+  so a skip decided on the first pass would play the wrong bytes after it.
+  The load goes DMC_LOAD_LEAD_SECS (0.5 ms) ahead of the frame's start
+  writes (streams and timed writes are separate queues in the worklet).
+  In Live the start goes as a stream too: the worklet writes timed writes
+  at its 128-sample block's start but streams at their sample, so a start
+  sent timed played the previous hit's bytes for up to a block. A seek
+  does not replay the loads (`_ramPorts`). Left as they are (review,
+  2026-10-27): a restart under a sounding hit carries up to 16 of its bits
+  past $4011 (a DC offset, as on the chip); a `:len 0` hold on pcm1 is not
+  released by triggerKeyOff (DDA's the same: sample handlers do not
+  register holds). A long song's VGM grows a block a hit. The curve option `:duty` is 1–255 (128 = 50 %) while the track
   word is in sixteenths, as ruled — two scales under one name; raise it if
   it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3);
   Import > Audio as Formants on an fc score writes fm3 tracks (pce is

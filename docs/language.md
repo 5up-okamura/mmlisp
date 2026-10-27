@@ -2846,10 +2846,10 @@ so a drum on `pcm5` punches through a line on `wave5`.
 (NTSC), and Play and WAV run a 2A03 of the toolchain's own (nesdev's APU
 pages: the duties, the triangle's steps, the noise's rates and LFSR, the
 nonlinear mixer). Its channels are `sqr1` and `sqr2`, the pulses; `tri`,
-the triangle; and `noise`. There is no FM, no wave memory and no pan (the
-machine is mono): `fm1`, `wave1`, `:pan` and `:noise-rate` are
-`E_TARGET`. DPCM (`pcm1`) is not built yet. The chip hears the song a
-frame (1/60 s) at a time, as on `msx`.
+the triangle; `noise`; and `pcm1`, the DMC's samples. There is no FM, no
+wave memory and no pan (the machine is mono): `fm1`, `wave1`, `:pan` and
+`:noise-rate` are `E_TARGET`. The chip hears the song a frame (1/60 s) at
+a time, as on `msx`.
 
 **Pulses.** `sqr1` and `sqr2` take every pitch move a PSG channel has —
 `:pitch`, `(glide …)`, the pitch and `:semi` macros, `:snap` — on the
@@ -2896,6 +2896,31 @@ the 4-bit volume as a pulse's. The Mega Drive's `white0`–`periodic3` have no
 ```lisp
 (def-score :target fc)
 (noise :len 8 :oct 2 c c+ :vel 10 d :mode periodic d+ :mode white c _ :oct 3 d d)
+```
+
+**DPCM.** `pcm1` is the chip's DMC, one voice: a `def-pcm` plays there as
+on `md`, its `:pcm-start` / `:pcm-end` range and `:mode shot | loop |
+gate`. The DMC plays 1-bit deltas — each bit moves its 7-bit DAC two steps
+up or down — at one of 16 rates (4.2–33.1 kHz) from at most 4081 bytes of
+memory, so each `def-pcm` gets one rate: the highest at which the whole
+sample, at the lowest note the score plays it on, fits. Each note is baked
+at its own pitch at that rate, with its level in it — `:vel`, `:vol` and
+the master as they stand at its key-on (a level macro's first step; the
+level does not move while it sounds) — loaded into the memory at its
+key-on and started from the DAC's middle. A shot plays out, or until the
+next note; `gate` stops at the note's gate; `loop` repeats the note's whole
+range until it — the chip loops a sample from its start, so a `:loop-*`
+point is left out (`W_TARGET`). A sample longer than 4081 bytes at the
+lowest rate is cut there. The 1-bit delta follows a fast, loud attack only
+two steps a bit, so it dulls and lowers it: a drum is best made loud and
+short. The DAC's level also lowers the triangle and the noise (the chip's
+mixer).
+
+```lisp
+(def-score :target fc)
+(def-pcm kick :file "kick.wav")
+(tri :len 4 :oct 3 c e g e)
+(pcm1 :len 8 kick c > c < _ c :vel 8 c _ c c)
 ```
 
 **Effects.** `def-se` is the Mega Drive driver's; an `fc` score has none
