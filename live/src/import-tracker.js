@@ -255,14 +255,20 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // `nz`: a PC Engine noise note's place in DefleMask's twelve-rate table
   // (no properNoiseLayout), where the arp macro moves the note through the
   // table, not by semitones: its :semi is the table's step from there.
-  const env = (i, nz = null) => {
+  // `onWave`: a note on a PC Engine wave, which its wave macro steps
+  // (:wave over the module's wavetables as def-waves).
+  const env = (i, nz = null, onWave = false) => {
     if (!t.instruments[i]?.arp?.values.some((x) => x !== 0)) nz = null;
-    const key = nz == null ? `env:${i}` : `env:${i}:nz${nz}`;
+    const wm = t.instruments[i]?.wave;
+    const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map(waveDef) : null;
+    if (waveNames?.includes(null)) waveMacroSteps++;
+    const waves = waveNames?.every((n) => n) ? waveNames : null;
+    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${waves ? ":w" : ""}`;
     if (!defs.has(key)) {
       const ins = t.instruments[i];
       const parts = [];
       const arr = (m, map) => {
-        const v = m.values.map(map);
+        const v = m.values.map((x, k) => map(x, k));
         if (m.loop != null) v.splice(m.loop, 0, "#sus");
         return `[${v.join(" ")}]`;
       };
@@ -278,6 +284,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       const rate = (k) => PCE_NOISE_TABLE[((k % 12) + 12) % 12];
       if (ins.arp?.values.length && ins.arp.values.some((x) => x !== 0))
         parts.push(`:semi ${arr(ins.arp, (x) => (nz == null ? x : rate(nz + x) - rate(nz)))}`);
+      if (waves) parts.push(`:wave ${arr(wm, (_, k) => waves[k])}`);
       if (ins.arpFixed && nz == null) warnings.push(`instrument "${ins.name}": a fixed-pitch arpeggio macro is not imported`);
       const name = uniq(`env-${slug(ins.name) || i}${nz == null ? "" : `-nz${nz}`}`);
       defs.set(key, { name, text: `(def ${name} (macro none)${parts.length ? ` (macro ${parts.join(" ")})` : ""})` });
@@ -304,7 +311,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     return defs.get(key).name;
   };
-  let waveMacroSteps = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0;
+  let waveMacroSteps = 0, dutyMoves = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0;
 
   // Pitch effects → one `:pitch` macro a note. A tracker tick is a frame at
   // the song's rate; a slide moves `speed × pitchSlideSpeed` 128ths of a
@@ -403,7 +410,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     let noise = false; // channel 5 or 6 on its noise (pce, 11xx)
     let arp = 0;
     let usedMacro = false;
-    const voiceTokens = (nz = null) => {
+    const voiceTokens = (nz = null, onWave = false) => {
       const it = t.instruments[ins];
       if (!it) {
         if (onFm) { standIns.add(standIn); return usedMacro ? [standIn, "(macro none)"] : [standIn]; }
@@ -416,7 +423,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return usedMacro ? ["(macro none)"] : [];
       }
       usedMacro = true;
-      const e = env(ins, nz);
+      const e = env(ins, nz, onWave);
       if (onFm) { standIns.add(standIn); return [standIn, e]; }
       return [e];
     };
@@ -476,14 +483,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         }
         if (row.ins >= 0 && t.instruments[row.ins]) ins = row.ins;
         // The instrument's macros start over at each of its notes: its wave
-        // macro sets the wave (its first step; a wave moving under a note is
-        // not imported), its duty macro the noise switch.
+        // macro sets the wave (its first step; one that moves is the note's
+        // :wave macro, env), its duty macro the noise switch (its first step).
         if (pceVol && typeof row.note === "number" && t.instruments[ins]) {
-          const wm = t.instruments[ins].wave;
-          if (wm?.values.length) {
-            wave = wm.values[0];
-            if (wm.values.some((x) => x !== wm.values[0])) waveMacroSteps++;
-          }
+          const { wave: wm, duty } = t.instruments[ins];
+          if (wm?.values.length) wave = wm.values[0];
+          if (duty?.values.some((x) => (x > 0) !== (duty.values[0] > 0))) dutyMoves++;
           noise = dutyNoise(t.instruments[ins]) ?? noise;
         }
         if (row.vol >= 0) {
@@ -511,7 +516,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, start);
           const waveName = pceVol && !toNoise && wave >= 0 ? waveDef(wave) : null;
           const st = {
-            voice: waveName ? [waveName, ...voiceTokens()]
+            voice: waveName ? [waveName, ...voiceTokens(null, true)]
               : voiceTokens(toNoise && !t.properNoiseLayout ? ((row.note % 12) + 12) % 12 : null),
             pan: pan ? `:pan ${pan}` : null,
             arp: usedArp ? arpToken() : null,
@@ -590,7 +595,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (!tracks.length) warnings.push("no notes to import");
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0))
     warnings.push("sample channels are not imported");
-  if (waveMacroSteps) warnings.push(`a wave macro that moves under a note keeps its first wave (${waveMacroSteps}×)`);
+  if (waveMacroSteps) warnings.push(`a wave macro naming a wavetable the module lacks is left out (${waveMacroSteps}×)`);
+  if (dutyMoves) warnings.push(`a duty macro switching noise and wave under a note keeps its first step (${dutyMoves}×)`);
   if (waveResampled) warnings.push(`${waveResampled} wavetable(s) not 32 steps wide are read at 32 points`);
   if (noiseDropped) warnings.push(`noise notes on a channel imported as its wave are dropped (${noiseDropped}×)`);
   if (waveDropped) warnings.push(`wave notes on a channel imported as noise are dropped (${waveDropped}×)`);

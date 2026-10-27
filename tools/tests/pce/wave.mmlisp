@@ -1,6 +1,7 @@
 ; pce: the HuC6280's wave channels — def-waves from a vector and a curve,
-; a wave switch under a note (held to the next key-on) and between notes,
-; level and pitch macros, glide, all six channels.
+; a wave switch between notes and a note's wave macro (each step loads its
+; wave, the channel on again in the same writes), level and pitch macros,
+; glide, all six channels.
 (def-score :target pce :title "pce wave")
 (def-wave saw :wave (saw -128..127))
 (def-wave soft :wave (sin -100..100))
@@ -11,4 +12,4 @@
 (wave3 soft :len 2 (macro :pitch (sin -30..30 :len 8f)) e g |)
 (wave4 saw :len 1 (macro :vol (linear 31..8 :len 1)) c |)
 (wave5 saw :len 4 :oct 5 _ c _ c |)
-(wave6 :len 4 :oct 5 c _ c _ |)
+(wave6 :len 4 :oct 5 (macro :wave [saw soft #sus pulse]) c _ c _ |)

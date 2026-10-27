@@ -1907,9 +1907,9 @@
  },
  "tools/tests/pce/wave.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "3f9599390de9bd9a",
-  "regs": "97bd16c7027991e3",
-  "vgm": "fb9feb7a7a42b091"
+  "ir": "d2c2b87c54231428",
+  "regs": "62f3373e8b40318e",
+  "vgm": "1a3c4f5a21f828ef"
  },
  "tools/tests/x68k/fm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

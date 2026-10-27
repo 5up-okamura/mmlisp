@@ -73,9 +73,10 @@ const SUPPORTED_TARGETS = new Set([
   ...opWords(FM_OP_WORDS.filter((w) => !w.inline)).map((w) => w.word),
 ]);
 
-// What a (macro …) may step: the supported targets, and the SSG's mixer,
-// which a `:mode` macro on it becomes (its inline :mode is the part's).
-const MACRO_TARGETS = new Set([...SUPPORTED_TARGETS, "SSG_MIX"]);
+// What a (macro …) may step: the supported targets, the SSG's mixer, which
+// a `:mode` macro on it becomes (its inline :mode is the part's), and a wave
+// channel's wave, stepped through def-wave names (its inline :wave a wave).
+const MACRO_TARGETS = new Set([...SUPPORTED_TARGETS, "SSG_MIX", "WAVE"]);
 
 // Inline-only targets: sticky channel state with no per-note macro form.
 // SNAP (`:snap`, language.md §5.3) is a pitch-class mask the channel's every
@@ -2518,8 +2519,16 @@ function parseMacroSpec(
   step = null, // the macro's :step, for signal⊕signal materialization resolution
   ratio = false, // a `*` macro: its values are multipliers, kept unrounded
   modes = null, // the track's part's :mode symbols (chips/parts.js), for a :mode macro
+  waves = null, // the score's def-waves, for a :wave macro
 ) {
   if (!node) return null;
+  // A :wave macro steps def-wave names, one a step: a step vector alone.
+  if (target === "WAVE" && !(node.kind === "list" && node.bracket === "[]" &&
+      node.items.every((n) => n.kind === "comment" || n.kind === "atom"))) {
+    if (diagnostics) pushDiag(diagnostics, "error", "E_MACRO_VALUE_INVALID",
+      "a :wave macro is a vector of def-wave names, [saw saw #sus soft]", nodeSrc(node), trackName);
+    return null;
+  }
   // Relative (+/*) macros carry signed offsets / ratios; leave them unclamped
   // here and clamp only after combining with the base (add/scaleMacroValues).
   const clampVal = (v) => (clamp ? clampForTarget(target, v) : v);
@@ -2530,6 +2539,7 @@ function parseMacroSpec(
   // the target's own symbol (`white2`, `left`), in a vector and as a scalar.
   const tokenValue = (val) => {
     if (typeof val !== "string") return null;
+    if (target === "WAVE") return waves?.index.get(val) ?? null;
     if (modes?.[val]?.[0] === target) return modes[val][1];
     if (target === "NOISE_MODE" && val in NOISE_MODE_MAP) return NOISE_MODE_MAP[val];
     if (target === "PAN" && val in PAN_MAP) return PAN_MAP[val];
@@ -2654,7 +2664,7 @@ function parseMacroSpec(
         continue;
       }
       const b = boundOf(item);
-      const n = typeof b === "number" ? roundVal(b) : tokenValue(val);
+      const n = typeof b === "number" && target !== "WAVE" ? roundVal(b) : tokenValue(val);
       if (n !== null) {
         steps.push(clampVal(n));
       } else if (val === "_") {
@@ -5198,6 +5208,7 @@ function compileChannelBody(
                   macroStep,
                   op === "*",
                   trackState.part?.modes,
+                  trackState.waves,
                 );
                 if (spec && macroStep) spec.step = macroStep;
                 if (
@@ -6953,8 +6964,10 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     const ram = `${c.chip}:${c.part.waveRam(c.voice)}`;
     const used = waveRams.get(ram) ?? { heads: new Set(), waves: new Set() };
     used.heads.add(trackState.head);
-    for (const ev of trackData.events)
+    for (const ev of trackData.events) {
       if (ev.cmd === "PARAM_SET" && ev.args?.target === "WAVE") used.waves.add(ev.args.value);
+      for (const w of ev.cmd === "NOTE_ON" ? ev.args?.wave?.steps ?? [] : []) if (w != null) used.waves.add(w);
+    }
     waveRams.set(ram, used);
   }
   for (const { heads, waves: named } of waveRams.values())

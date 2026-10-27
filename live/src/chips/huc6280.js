@@ -30,8 +30,9 @@ export const WAVE_LEN = 32;
 export const CHANNELS = 6;
 export const NOISE_CHANNELS = [4, 5];
 const PERIOD_MIN = 1;
-// A wave is loaded with the channel off, so a switch under a note cuts it:
-// the player holds a `:wave` written under a note to the next key-on.
+// A wave is loaded with the channel off (encoder `wave`), and turned back on
+// in the same writes: a wave named under a note starts over from its first
+// step, as a tracker's wave macro does.
 const LEVEL = { stepDb: 1.5, steps: 32 }; // the 5-bit volume, 31 loud .. 0
 // Channels 5 and 6 as noise: the page's tone lanes after the six waves.
 const NOISE_LANE = (c) => 4 + CHANNELS + (c.voice - NOISE_CHANNELS[0]);
@@ -56,7 +57,6 @@ export const pceWave = {
   songWords: SONG_WORDS,
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "a PC Engine channel has no :mode; its sound is its def-wave, or noise5 / noise6" },
-  waveAtKeyOn: true,
   sharePrio: 2, // under noise and DDA on its channel (pcm > noise > wave)
 };
 

@@ -1713,7 +1713,7 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
 - A **PC Engine** module offers a **Target**: `pce` (the default) or `md`.
   As `pce` each channel goes to its own `wave1`–`wave6`: the module's
   wavetables become `def-wave`s, and the wave a channel plays is its
-  instrument's wave macro (its first step) and `10xx`. Channel 5 or 6 that
+  instrument's wave macro (a `(macro :wave …)` where it moves) and `10xx`. Channel 5 or 6 that
   turns its noise on (`11xx`) for most of its notes goes to `noise5` /
   `noise6`, each note at the rate the tracker plays it (Furnace's: the note;
   a DefleMask module's: its table by the note's name); the notes of the

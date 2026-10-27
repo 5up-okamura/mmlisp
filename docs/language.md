@@ -1296,6 +1296,7 @@ If the same target is set twice, the last one wins.
 | `:duty`    | `DUTY`       | 0–16         | A pulse's duty in sixteenths, on `fc`'s `sqr1` / `sqr2`: the chip takes the nearest of 2, 4, 8, 12 (§19) |
 | `:lfo-rate`| `LFO_RATE`   | 0–8          | Song-wide (§5): inline only, as `:master` |
 | `:noise-rate` | `NOISE_RATE` | 1–31      | Song-wide, but a macro on a `pc88` / `msx` SSG track steps it from the note (the later write wins, §19) |
+| `:wave`    | `WAVE`       | def-wave names | A wave channel's wave (`msx`, `pce`), a step vector of def-wave names alone; a step naming the wave already playing writes nothing (§19) |
 | `:alg` `:fb` | `FM_ALG` `FM_FB` | 0–7    |                                        |
 | `:ams`     | `FM_AMS`     | 0–3          |                                        |
 | `:fms`     | `FM_FMS`     | 0–7          |                                        |
@@ -2633,7 +2634,19 @@ slot (`:x (linear 0..100 :len 1)`) — until the track names another wave. A
 mix of two waves is `+` and `*` over them; a `def` names one to reuse
 (`(def (mix a b t) (+ (* a (- 1 t)) (* b t)))`). `:wave` on a channel with
 no wave memory is `E_UNSUPPORTED_TARGET`, a number alone (`:wave 3`)
-`E_WAVE_VALUE`. The level is the chip's 4-bit linear volume, vel +
+`E_WAVE_VALUE`.
+
+A note's **`(macro :wave …)`** steps its waves a frame at a time, as a
+tracker's wave macro does — a vector of def-wave names, with `_`, `#sus` and
+`#rel` as any step vector (§10), and no curve or number:
+
+```lisp
+(wave1 (macro :wave [hollow saw saw #sus soft]) :len 4 c e g)
+```
+
+Each step writes its wave where it differs from the one the channel plays,
+so a held step does not write it again; after the macro the channel keeps
+its last wave. The level is the chip's 4-bit linear volume, vel +
 vol + master composed as one gain (§6) and rounded to its 16 steps. `wave4`
 and `wave5` share one wave memory: two tracks that name different waves there
 play whichever was written last, and the compiler says so (`W_TARGET`).
@@ -2737,9 +2750,10 @@ time, as on `msx` — but for DDA's samples, which the CPU's timer writes.
 of 32 steps, which a `def-wave` names and a track switches to by naming it,
 as on the SCC — the same `def-wave`, `:wave` expressions and `$slot`
 waves (`msx` above), written at the chip's 5 bits (a −128..127 step is its
-top five). A channel plays a square until its track names a wave. The chip
-loads a wave with the channel off, so a wave named under a note is held to
-the channel's next key-on; between notes it is written where it is named.
+top five). A channel plays a square until its track names a wave. A wave
+is written where it is named or a `:wave` macro steps to it, under a note
+too: the chip loads it with the channel off, which the same writes turn
+back on, so the note goes on from the new wave's first step.
 The level is the chip's 5-bit volume, 1.5 dB a step, vel + vol + master
 composed once onto it (§6). The pitch is the chip's 12-bit frequency
 (3.58 MHz / 32 / n), and every pitch move a PSG channel has works the same

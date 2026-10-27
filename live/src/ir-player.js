@@ -312,7 +312,6 @@ export class IRPlayer {
     // (that would un-silence it into a tone). Updated on every _psgSetAtt.
     this._psgSounding = new Array(PSG_LANES).fill(false);
     this._laneWave = new Array(PSG_LANES).fill(null); // the def-wave each wave lane plays (by name)
-    this._laneWaveHeld = new Array(PSG_LANES).fill(null); // a wave written under a note, for its next key-on (waveAtKeyOn)
     this._psgPan = new Array(PSG_LANES).fill(0); // each lane's pan as last written (a chip with a pan per channel: the PC Engine's)
     this._psgDuty = new Array(PSG_LANES).fill(8); // each lane's duty in sixteenths (the 2A03's pulses)
     this._laneExpr = new Array(PSG_LANES).fill(null); // a lane's wave expression with $slots: { tree, slots, vals, nextFrame }
@@ -454,7 +453,6 @@ export class IRPlayer {
     this._toneEnc = this._toneEncodersOf(target, this._psgChip);
     this._chipsStarted.clear();
     this._laneWave.fill(null);
-    this._laneWaveHeld.fill(null);
     this._laneExpr.fill(null);
     this._drawnWaves.clear();
     // The FM core's level ladder (chips/parts.js `level`): its TL — the
@@ -604,7 +602,6 @@ export class IRPlayer {
     this._masterVol = VOL_UNITY;
     this._chipPcm = null; // the YM2608's sample voices' levels (_chipPcmFrames)
     this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
-    this._laneWaveHeld?.fill(null);
     this._psgPan?.fill(0);
     this._psgDuty?.fill(8);
     this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
@@ -5306,17 +5303,21 @@ export class IRPlayer {
     this._psgWrites(this._lane(psgCh, (e, ch) => e.pan?.(ch, this._psgPan[psgCh]) ?? []), when);
   }
 
-  // A wave onto a lane's channel memory. A chip that loads a wave with the
-  // channel off (the PC Engine's, chips/huc6280.js `waveAtKeyOn`) would cut
-  // the note sounding there, so under a note the wave is held to the lane's
-  // next key-on (_dispatchPsgEvent NOTE_ON); off, or on the SCC, it is
-  // written where it is named.
+  // A wave onto a lane's channel memory, where it is named — under a note
+  // too (a chip that loads it with the channel off, the PC Engine's, turns it
+  // back on in the same writes: the wave starts over from its first step).
   _writeLaneWave(lane, data, when) {
-    // Under a note: before its key-off (scheduled ahead of this write, so the
-    // sounding flag alone is already off), or into the next note of a slur.
-    const held = this._toneEnc[lane]?.part?.waveAtKeyOn && when < (this._psgKeyedUntil[lane] ?? 0) - 1e-6;
-    if (held) this._laneWaveHeld[lane] = data;
-    else this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, data)), when);
+    this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, data)), when);
+  }
+
+  // A def-wave (metadata.waves) by its index: the lane plays it from `when`.
+  // A macro's step naming the wave the lane already plays writes nothing, so
+  // a held step does not start the wave over every frame.
+  _writeLaneWaveIndex(lane, index, when, step = false) {
+    const wave = this._ir?.metadata?.waves?.[Math.round(index)];
+    if (!wave || (step && this._laneWave[lane] === wave.name)) return;
+    this._laneWave[lane] = wave.name;
+    this._writeLaneWave(lane, this._drawnWaves.get(wave.name) ?? wave.data, when);
   }
 
   // A lane's wave expression, evaluated with its slots as they are at `when`.
@@ -5833,13 +5834,6 @@ export class IRPlayer {
           const h = hits?.findLast((x) => x.t < when - 1e-9 && x.end > when + 1e-9 && !x.dumped);
           if (h) { h.end = when; h.cut = true; }
         }
-        // A wave held under the note before (waveAtKeyOn): loaded now, with
-        // the channel off between the notes.
-        if (this._laneWaveHeld[psgCh]) {
-          const data = this._laneWaveHeld[psgCh];
-          this._laneWaveHeld[psgCh] = null;
-          this._psgWrites(this._lane(psgCh, (e, ch) => e.wave(ch, data)), when);
-        }
 
         // The PSG's noise lane — but for a noise whose note is its rate (the
         // 2A03's: `rateNote`), pitched as a tone, its mode re-asserted.
@@ -5927,6 +5921,13 @@ export class IRPlayer {
           const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgGateTicks);
           this._scheduleMacro(ev.args.pan, noteFrames, gateSecs, when,
             (v, t) => this._psgSetPan(psgCh, v, t), this._stepSecs(ev.args.pan.step), psgMacroLimit);
+        }
+        // A note's (macro :wave …): its def-waves a step at a time.
+        if (ev.args?.wave) {
+          const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgGateTicks);
+          this._laneExpr[psgCh] = null;
+          this._scheduleMacro(ev.args.wave, noteFrames, gateSecs, when,
+            (v, t) => this._writeLaneWaveIndex(psgCh, v, t, true), this._stepSecs(ev.args.wave.step), psgMacroLimit);
         }
         // A note's (macro :duty …), on a pulse (chips/rp2a03.js).
         if (ev.args?.duty) {
@@ -6094,13 +6095,7 @@ export class IRPlayer {
             this._laneExpr[psgCh] = { tree: ev.args.expr, slots, vals, nextFrame: this._eventFrame(when) + 1 };
             this._writeWaveExpr(psgCh, when);
           }
-          const index = Math.round(ev.args?.value ?? -1);
-          const wave = ev.args?.expr ? null : this._ir?.metadata?.waves?.[index];
-          if (wave) {
-            this._laneWave[psgCh] = wave.name;
-            const data = this._drawnWaves.get(wave.name) ?? wave.data;
-            this._writeLaneWave(psgCh, data, when);
-          }
+          if (!ev.args?.expr) this._writeLaneWaveIndex(psgCh, ev.args?.value ?? -1, when);
         } else if (psgTarget === "NOISE_MODE") {
           // Update the persistent noise mode. Re-asserted on every noise NOTE_ON;
           // if the channel is currently sounding, take effect immediately.

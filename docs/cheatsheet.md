@@ -248,7 +248,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   wavetable channels, each playing the `def-wave` named in it
   (`(def-wave saw :wave (saw -128..127))` — 32 values −128..127 or one
   curve's cycle, or `+ - * /` over def-waves, curves and numbers; a track's
-  `:wave (+ (* saw (- 1 $x)) (* soft $x))` follows `$x` as it moves; wave4
+  `:wave (+ (* saw (- 1 $x)) (* soft $x))` follows `$x` as it moves;
+  `(macro :wave [saw soft #sus saw])` steps def-waves a frame at a time; wave4
   and wave5 share one); `fm1`–`fm9` the FM-PAC's YM2413, 2-op (op1 into
   op2): the fifteen ROM voices built in as `piano`, `violin` …
   (a `def-fm` that extends one, or its own, is the chip's one user voice),
@@ -259,8 +260,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   pitch macros move it on through the release) in place of `fm7`–`fm9`. No
   PCM. VGM and WAV.
 - `(def-score :target pce)` holds a score to the PC Engine's HuC6280 (§19):
-  `wave1`–`wave6` wave channels as the SCC's (`def-wave`, `:wave`; a wave
-  named under a note waits for its next key-on; 5-bit volume, 1.5 dB a
+  `wave1`–`wave6` wave channels as the SCC's (`def-wave`, `:wave`, its
+  macro; a wave named under a note starts it over; 5-bit volume, 1.5 dB a
   step), `noise5` / `noise6` in place of wave5 / wave6, pitched by their
   notes (c2 the slowest rate, g4 the fastest); `:pan` −1..1 whole, on each
   channel's 4-bit left / right levels; the LFO as the FM LFO is written —

@@ -136,7 +136,7 @@ export const REFERENCE = [
   {
     name: 'wave1–wave6', aliases: ['wave1', 'wave2', 'wave3', 'wave4', 'wave5', 'wave6', 'scc', 'wavetable'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target msx) (wave1 name …)',
-    summary: 'msx: the SCC\'s five wavetable channels, wave1–wave5; pce: the HuC6280\'s six. Each plays the def-wave named in it (a square until then) — at a 4-bit volume on the SCC, where wave4 and wave5 share one wave memory; at a 5-bit one on pce, where a wave named under a note waits for its next key-on.',
+    summary: 'msx: the SCC\'s five wavetable channels, wave1–wave5; pce: the HuC6280\'s six. Each plays the def-wave named in it (a square until then) — at a 4-bit volume on the SCC, where wave4 and wave5 share one wave memory; at a 5-bit one on pce, where a wave named under a note starts it over.',
     insert: '(wave1 :len 8 c e g e)',
     example: '(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(wave1 saw :len 8 c e g > c)',
   },
@@ -317,7 +317,7 @@ export const REFERENCE = [
   {
     name: 'def-wave', aliases: [':wave', 'wave'], cat: 'defs', section: '§19', tracks: WAVE,
     syntax: '(def-wave name :wave [v1 … v32])  ·  (def-wave name :wave (curve A..B))  ·  (wave1 :wave expr …)',
-    summary: 'A wave for the wave channels: 32 steps, each -128..127, one cycle of a curve, or + - * / over def-waves, curves and numbers. Name it in a track to switch to it; a track\'s :wave takes an expression, and one with a $value follows it as it moves.',
+    summary: 'A wave for the wave channels: 32 steps, each -128..127, one cycle of a curve, or + - * / over def-waves, curves and numbers. Name it in a track to switch to it; a track\'s :wave takes an expression, and one with a $value follows it as it moves; (macro :wave [a b #sus c]) steps a note through def-waves a frame at a time.',
     insert: '(def-wave soft :wave (sin -100..100))',
     example: '(def-score :target msx)\n(def-wave soft :wave (sin -100..100))\n(wave1 soft :len 8 c e g > c)',
   },

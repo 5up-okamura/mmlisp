@@ -62,8 +62,9 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   main levels added, a wave loaded with the channel off from a DDA 1 → 0
   edge. Rulings built in: a noise note is a rate index (c2 slowest … g4),
   not a Hz — the rates are LFSR clocks (1.8 kHz up), so a Hz mapping
-  would have put every note at rate 0; a `:wave` under a note is held to
-  the next key-on (ir-player `_writeLaneWave`, part `waveAtKeyOn`); a
+  would have put every note at rate 0; a `:wave` under a note is
+  written there (the encoder's load turns the channel back on, as
+  Furnace does), and `(macro :wave [defs…])` steps a note's waves; a
   score has wave5 or noise5 (the SSG's one-or-the-other rule). The PSG
   core's off level is the lane's ladder's last step (`_psgOff`), no longer
   15. `:pan` is built (a value, a
