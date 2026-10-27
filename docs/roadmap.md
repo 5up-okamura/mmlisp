@@ -84,8 +84,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
   second chips, the MSX's FM-PAC (onto msx's fm channels), a wave rewritten
   under a sounding note (SCC), the HuC6280's DDA and LFO, the
   remaining PCM chips (OKI MSM6295, QSound, K054539, C140, …).
-- **DefleMask / Furnace**: sample channels, the macros of pre-INS2 Furnace
-  instruments, subsongs after the first.
+- **DefleMask / Furnace**: sample channels, subsongs after the first.
 - **MIDI**: per-note pan (a channel's first pan serves the song), and CC7/CC11
   moving during a note (they are read at each note-on).
 

@@ -187,6 +187,8 @@ const slug = (s) => String(s || "").toLowerCase().normalize("NFKD")
 export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const warnings = [];
   const onPce = options.target === "pce";
+  // A PC Engine module (its volume macros in the chip's 1.5 dB steps).
+  const pceSong = t.channels.length > 0 && t.channels.every((c) => c.chip === "pce");
   const fxSkipped = new Map();
   const rowTicks = PPQN / a.rowsPerBeat;
   const ticksPerFrame = rowTicks / a.framesPerRow;
@@ -240,7 +242,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return `[${v.join(" ")}]`;
       };
       const volMax = t.psgVolMax;
-      if (ins.vol?.values.length)
+      // The PC Engine's volume is 5 bits at 1.5 dB a step, and its macro's
+      // attenuation adds to the volume column's (Furnace): a :vel+ offset,
+      // in :vel steps. Elsewhere a ratio of the column's level.
+      if (ins.vol?.values.length && pceSong)
+        parts.push(`:vel+ ${arr(ins.vol, (x) => Math.round((-(31 - Math.max(0, Math.min(31, x))) * 1.5 / VEL_DB_PER_STEP) * 8) / 8)}`);
+      else if (ins.vol?.values.length)
         parts.push(`:vel* ${arr(ins.vol, (x) => Math.max(0, Math.min(1, Math.round((x * 100) / volMax) / 100)))}`);
       if (ins.arp?.values.length && ins.arp.values.some((x) => x !== 0)) parts.push(`:semi ${arr(ins.arp, (x) => x)}`);
       if (ins.arpFixed) warnings.push(`instrument "${ins.name}": a fixed-pitch arpeggio macro is not imported`);
@@ -530,7 +537,6 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (!tracks.length) warnings.push("no notes to import");
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0))
     warnings.push("sample channels are not imported");
-  if (t.oldMacros) warnings.push("instrument macros of this old Furnace version are not imported");
   if (waveMacroSteps) warnings.push(`a wave macro that moves under a note keeps its first wave (${waveMacroSteps}×)`);
   if (waveResampled) warnings.push(`${waveResampled} wavetable(s) not 32 steps wide are read at 32 points`);
   if (noiseDropped) warnings.push(`noise notes on a channel imported as its wave are dropped (${noiseDropped}×)`);

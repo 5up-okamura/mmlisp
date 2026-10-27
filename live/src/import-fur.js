@@ -298,7 +298,7 @@ export async function parseFur(bytes) {
     p += 4;
     if (m === "INST") {
       p += 4; // block size
-      p += 2; // format version
+      const iv = u16(); // the format version (the file's)
       const type = c();
       c();
       const name = str();
@@ -313,7 +313,24 @@ export async function parseFur(bytes) {
         ops.push({ am, ar, dr, mul, rr, sl, tl, rs, dt, sr, ssg });
       }
       if (type === 1 || type === 33) return { name, kind: "fm", fm: { alg, fb, fms, ams, ops } };
-      return { name, kind: "std", vol: { values: [], loop: null }, arp: { values: [], loop: null }, oldMacros: true };
+      // The old standard data (papers/oldIns.md): past the Game Boy (4),
+      // C64 (24) and Amiga (16) data, each macro's length and loop (pitch
+      // and the extras from version 17), the arp's fixed mode (before 112),
+      // three heights or reserved, then the values, 4 bytes each.
+      p += 4 + 24 + 16;
+      const n = iv >= 17 ? 8 : 4;
+      const lens = Array.from({ length: n }, () => i32());
+      const loops = Array.from({ length: n }, () => i32());
+      const arpFixedOld = c();
+      p += 3;
+      const [vol, arp, , wave] = lens.map((len, k) => {
+        const values = Array.from({ length: Math.max(0, len) }, () => i32());
+        return { values, loop: loops[k] >= 0 && loops[k] < len ? loops[k] : null };
+      });
+      // Before version 31 the arp's values were stored 12 up.
+      if (iv < 31) arp.values = arp.values.map((v) => v - 12);
+      const arpFixed = iv < 112 ? !!arpFixedOld : arp.values.some((v) => v & 0x40000000);
+      return { name, kind: "std", vol, arp: arpFixed ? { values: [], loop: null } : arp, arpFixed, wave };
     }
     if (m !== "INS2" && m !== "FINS") throw new Error("not an instrument");
     const len = m === "INS2" ? i32() : u8.length - p;
@@ -424,7 +441,6 @@ export async function parseFur(bytes) {
     channels: channels.map((ch, i) => ({ ...ch, patterns: pats[i] })),
     instruments, waves,
     fmVolMax: 127, psgVolMax: 15,
-    oldMacros: instruments.some((x) => x.oldMacros),
     linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout,
   };
 }
