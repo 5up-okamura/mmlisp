@@ -136,7 +136,8 @@ triangle with no level, the noise's rates and two modes, the DMC's
 samples) — language.md §19. Next:
 
 1. **Famicom: songs in.** A VGM's 2A03 and DefleMask / Furnace NES
-   modules import as `fc` (guide.md); a module's DPCM samples are next,
+   modules import as `fc` (guide.md), a Furnace module's DPCM samples
+   with them; a DefleMask module's samples are next,
    then ppmck's MML if a composer's files call for it (no NSF: a 6502 is
    too much to carry). Expansions are decided by
    voice class, not one by one: the 5B is the SSG profile, the VRC7 the

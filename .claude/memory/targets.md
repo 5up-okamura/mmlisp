@@ -76,7 +76,7 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 - **Open:** Bad Dudes as imported since the `:wave` macro is not yet
   listened to in Live.
 
-## The Famicom (fc) — the design, ruled 2026-10-27; stages 1-2 built
+## The Famicom (fc) — the design, ruled 2026-10-27; stages 1-3 built
 
 Build it as pce was built (chips/huc6280.js, targets/pce.js, synth-pce.js,
 tools/tests/pce are the pattern), in stages: 1. pulses, triangle, noise;
@@ -215,16 +215,17 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   flag the compat block's tenth byte, or CFLG's key), a :vol def per
   column; the triangle on while a volume macro is not 0;
   the pulses' duty 0 (12.5 %) until something sets it, and a duty macro's
-  last step held after its note. Open: no real .fur / .dmf run (the check
-  builds a DMF); module DPCM read from .fur only (SMP2/SMPL 8/16-bit and
+  last step held after its note. Open: Furnace's 22 NES demos
+  (/Applications/Furnace/demos/nes) import and compile clean (2026-10-27),
+  none A/B'd against Furnace's own VGM yet; no real .dmf run (the check
+  builds a DMF); their commonest warning, 79 instruments, is a fixed-pitch
+  arpeggio macro (drums), not imported on nes or pce; module DPCM read from .fur only (SMP2/SMPL 8/16-bit and
   1-bit DPCM; DMF samples, the DAC start `dpcmDelta`, a loop's part and a
   sample instrument's pitch not cross-checked against Furnace by ear); the duty's
   12xx on a DMF read as Furnace's (DefleMask's own NES 12xx not
   cross-checked). The curve option `:duty` is 1–255 (128 = 50 %) while the track
   word is in sixteenths, as ruled — two scales under one name; raise it if
-  it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3);
-  Import > Audio as Formants on an fc score writes fm3 tracks (pce is
-  excluded in index.html; fc is not yet).
+  it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3).
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
