@@ -192,10 +192,11 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   both its ends, so each joint held two frames). After those, most tracks
   agree to a few frames (Gimmick 01 TRI pitch 59 → 87 %, Balloon Fight 07
   SQ1 19 → 49 %: the rest is a fast fall a sub-frame off the frame grid).
-  Open: a note cut off by its level going to 0 takes a shared envelope
-  whose #rel tail then sounds after the key-off (Kirby 03 SQ1, 222 extra
-  frames at a low level — assignEnvelopes' `fits` lets a no-release note
-  take a shape with a release); Gimmick's Sunsoft 5B is read as an
+  A note that stops dead before a rest no longer takes a shared envelope
+  with a #rel (`silentAfter` in assignEnvelopes; Kirby 03 SQ1's extra
+  frames 222 → 50). Open: those 50 are a staccato note held to the grid's
+  unit (2.7 frames sounding as a 32nd's 5 at Kirby's tempo) at its
+  sustain level; Gimmick's Sunsoft 5B is read as an
   AY-3-8910 (on msx the 2A03 takes sqr1–3 and the AY is dropped; on md the
   triangle is fm1's wave-triangle and the 5B's channels fill sqr3 / FM);
   VRC7 (YM2413 with clock bit 31): its ROM (Nuked-OPLL patch_ds1001,
