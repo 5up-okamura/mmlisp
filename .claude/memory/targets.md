@@ -66,8 +66,7 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   the next key-on (ir-player `_writeLaneWave`, part `waveAtKeyOn`); a
   score has wave5 or noise5 (the SSG's one-or-the-other rule). The PSG
   core's off level is the lane's ladder's last step (`_psgOff`), no longer
-  15. Not yet listened to by the user: the synth's level against the other
-  machines (CHANNEL_GAIN) and the noise. `:pan` is built (a value, a
+  15. `:pan` is built (a value, a
   sweep, a note's macro onto $05, the IR keeping its fraction:
   FRACTIONAL_TARGETS). DefleMask / Furnace PCE modules import as pce
   (import-tracker.js; Furnace's rules read from its pce.cpp: noise rate =
@@ -99,7 +98,7 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   - LFO built 2026-10-27 (pceWaveLfo on ch1 takes FM_FMS; the encoder's
     lfo / lfoFreq / keyOn — keyOn a player hook at a PSG lane's NOTE_ON;
     synth-pce.js steps ch2 at freq × divider and moves ch1's period).
-    Measured: a4 at :fms 1 / 2 sways ±20 / ±70 Hz. Not yet listened to.
+    Measured: a4 at :fms 1 / 2 sways ±20 / ±70 Hz.
   - DDA built 2026-10-27 (pceDda, frames: true — bakePcm8's frames, the
     player's setFrameBank, renamed from setPcm8Bank). A note's bytes are
     written on the CPU timer (ir-player `_writeTimer`, not the frameClock
@@ -113,7 +112,7 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
     worklet; per-frame streams measured the same as a wave-only score (p95
     ~3 ms, the page's own 30-50 ms long tasks). The export / capture path
     writes them one by one, so the register log, VGM and WAV are the same
-    writes. Not yet listened to.
+    writes.
   - The cross-name layering built 2026-10-27 (mmlisp2ir shareChannelLayers,
     parts' `sharePrio`; the :prio pass split into alignLayerLoops /
     resolveLayerNotes, same-name output unchanged). Like the same-name
