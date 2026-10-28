@@ -49,6 +49,10 @@ Run from tools directory:
     written there, byte by byte: the PC Engine's wavetables, wave macro, `10xx`,
     `08xy` and noise come back as pce; the NES's duty macro and `12xx`, linear
     volumes, triangle and noise rates and modes as fc; every score compiles
+18. `npm run check:archive` — the archives Live opens as folders, on ZIP and LZH
+    files written there (and an `-lh5-` encoder written from LHA's): names,
+    folders, damage; `-- <dir>` also reads every archive under a directory,
+    CRC-checked (lhasa's `test/archives` held the LHA variants to it)
 
 ## i18n
 

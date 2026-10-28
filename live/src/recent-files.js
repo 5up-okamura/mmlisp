@@ -1,7 +1,8 @@
 // File > Open Recent: the scores opened or saved lately, kept as File System
 // Access handles in IndexedDB (a handle survives a reload there; a path would
 // not, and the page never learns one). A score that was opened from its folder
-// keeps the folder's handle with it, so reopening brings its samples back too.
+// keeps the folder's handle with it, so reopening brings its samples back too;
+// one opened from an archive is the archive's handle and its name inside.
 //
 // Reopening asks the browser for access again unless it already holds it — an
 // installed Chrome app can keep the grant between launches.
@@ -51,7 +52,8 @@ async function withStore(mode, fn, store = STORE) {
   }
 }
 
-// [{ file: FileSystemFileHandle, dir: FileSystemDirectoryHandle | null }],
+// [{ file: FileSystemFileHandle, dir: FileSystemDirectoryHandle | null,
+//    inner?: the score's name when `file` is an archive }],
 // newest first. Never throws: no storage means no list.
 export async function loadRecent() {
   try {
@@ -74,19 +76,20 @@ async function sameEntry(a, b) {
 }
 
 // Move (or add) a score to the top. Returns the new list.
-export async function addRecent(file, dir = null) {
+export async function addRecent(file, dir = null, inner = null) {
   const list = await loadRecent();
   const kept = [];
-  for (const e of list) if (!(await sameEntry(e.file, file))) kept.push(e);
-  const next = [{ file, dir }, ...kept].slice(0, RECENT_MAX);
+  for (const e of list) if (!((e.inner ?? null) === inner && (await sameEntry(e.file, file)))) kept.push(e);
+  const next = [{ file, dir, ...(inner ? { inner } : {}) }, ...kept].slice(0, RECENT_MAX);
   await saveRecent(next);
   return next;
 }
 
-export async function removeRecent(file) {
+// Every entry of `file` — or, given `inner`, only that score of an archive.
+export async function removeRecent(file, inner = null) {
   const list = await loadRecent();
   const kept = [];
-  for (const e of list) if (!(await sameEntry(e.file, file))) kept.push(e);
+  for (const e of list) if (!((!inner || e.inner === inner) && (await sameEntry(e.file, file)))) kept.push(e);
   await saveRecent(kept);
   return kept;
 }

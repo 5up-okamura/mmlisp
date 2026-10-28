@@ -2006,10 +2006,18 @@ loads, and paths into subfolders (`:file "sounds/kick.wav"`) work the same way.
 The folder is **session-scoped** — a reload starts clean, so open it again
 rather than have samples silently resolve against an earlier sitting's folder.
 
-Opening a folder loads its first score (alphabetically) straight away; any
-others are listed under **`File > Scores in Folder`** (a check marks the open
-one), so switching between a project's scores is one click and keeps the
-samples resolved.
+Opening a folder loads its first score (alphabetically) straight away — or,
+when the folder holds one file, that file; the others are listed under
+**`File > Files in Folder`** (a check marks the open score), so switching
+between a project's scores is one click and keeps the samples resolved. The
+list also holds the folder's songs (`.vgm` `.mdx` `.muc` …, their format beside
+them), which open converted and keep the folder (guide §22).
+
+An archive (`.zip`, `.lzh`) opened with `File > Open…` or dropped is a folder
+the same way, read in memory — in every browser, a phone's too: its scores and
+songs are listed, and `:file` and `(import …)` paths resolve inside it (names
+matched without regard to case, as DOS-era archives write them upper case).
+An archive holding one folder opens as that folder.
 
 Chrome refuses to grant access to well-known folders themselves (`Desktop`,
 `Documents`, …, reported as "contains system files"), so keep a score in a

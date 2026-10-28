@@ -1397,7 +1397,8 @@ with a plain file chooser, has only Save (every save asks where, so there is
 no Save As…), and Save and the exports hand the file over: on a touch device to the share sheet (`Save to Files` on iOS), else as
 a download. An export that took a while to render asks for one more tap in
 the console (`Save…`), since the share sheet needs one. Such a browser cannot
-open a folder, so `Open Folder…` is not offered. When a score's own `:file`
+open a folder, so `Open Folder…` is not offered — but an archive opens as one
+(below). When a score's own `:file`
 samples or `(import …)`s are missing, a `Load … missing files` button over the
 editor names them: pick those files (several at once) and they are matched by
 file name and held until the app is closed. Presets and URLs load as usual.
@@ -1405,7 +1406,7 @@ file name and held until the app is closed. Presets and URLs load as usual.
 `File > Open Recent` lists the last ten scores opened or saved (Chrome and
 Edge; a browser without file handles has no such menu). A score opened from
 its folder (`File > Open Folder…`) comes back with the folder, so its samples
-play again. The browser may ask for access again the first time after a
+play again; one opened from an archive comes back with the archive. The browser may ask for access again the first time after a
 reload; an installed app can keep the grant. A score that has since moved or
 been deleted drops off the list when picked, and `Clear Menu` empties it.
 
@@ -1420,6 +1421,26 @@ the browser grants only from a click. When it needs them, a **Load samples
 from …'s folder** button appears over the editor: it opens the folder picker
 already in the score's folder, so one click on Open does it. From then on
 Open Recent brings the score back with its folder.
+
+### Folders, archives and songs
+
+`File > Files in Folder` lists what the open folder holds: its scores and its
+songs — `.vgm` `.vgz` `.mid` `.dmf` `.fur` `.mdx` `.mgs` `.muc`, each with its
+format beside it. A song opens as `File > Open…` opens one: converted, through
+the import dialog, as a new unsaved score. Opened from the folder, it keeps the
+folder, so the next song is one click away, and what the song names beside
+itself is read from there — an MDX's `.pdx`, a mucom88 song's `#voice` and
+`#pcm` banks. Opening a folder opens its first score, or its one file when it
+holds only one; a folder of songs only lists them.
+
+An archive — `.zip`, `.lzh` (`.lha`) — opened with `File > Open…` or dropped
+opens as the folder it holds, in every browser, an iPhone's and iPad's too: a
+downloaded song pack needs no unpacking. It is read in memory, each file when
+it is opened; an archive with one folder inside opens as that folder. A score
+in it has no file to write back to, so `Save` asks where. ZIP: stored and
+deflate (not encrypted, not ZIP64). LZH: `-lh0-`, LHarc's `-lh1-`, and
+`-lh4-` to `-lh7-`, header levels 0 to 2. Names are read as UTF-8, or as
+Shift_JIS when they are not UTF-8.
 
 A score that comes with no file at all — brought back from the browser's
 draft after a reload, opened from a share link, or never saved — has no folder
@@ -1436,6 +1457,7 @@ and `Instruments…` inserts voices and drum kits at the cursor:
 | Dropped                            | Result                                                    |
 | ---------------------------------- | --------------------------------------------------------- |
 | a folder                           | same as `File > Open Folder…`                             |
+| `.zip` / `.lzh`                    | opens it as a folder (§22)                                 |
 | `.mmlisp`                          | opens it — **⇧Shift** inserts `(import "…")` instead (§7) |
 | `.mmb`                             | loads it as a binary preset                                |
 | `.wav`                             | inserts a sample def (§19)                                 |

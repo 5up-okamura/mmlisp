@@ -55,7 +55,7 @@
        only tracks the Shift state. -->
   <div id="dropOverlay" hidden aria-hidden="true">
     <div class="drop-open">Drop to open — or import by extension<br>
-      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs — or a folder</span>
+      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs — or a folder, .zip, .lzh</span>
     </div>
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
@@ -182,16 +182,16 @@
         </div>
         <div class="menu-sep" id="openFolderSep"></div>
         <button class="menu-item" id="openFolderItem" onclick="openFolder();closeMenus()"
-                title="Open a score's folder so its relative :file samples (wav next to the score) load. After a reload, Open Recent brings a score back with its folder. Chrome blocks Desktop/Documents themselves; use a subfolder.">
+                title="Open a score's folder so its relative :file samples (wav next to the score) load, and its scores and songs are under Files in Folder. After a reload, Open Recent brings a score back with its folder. Chrome blocks Desktop/Documents themselves; use a subfolder. A .zip or .lzh opens as a folder through Open….">
           <span>Open Folder…</span>
           <span class="menu-item-shortcut" id="sourceDirLabel"></span>
         </button>
-        <div class="menu-wrap submenu-wrap" id="menuFolderScores" hidden>
-          <button class="menu-item" onclick="toggleSubmenu('menuFolderScores')">
-            <span>Scores in Folder</span>
+        <div class="menu-wrap submenu-wrap" id="menuFolderFiles" hidden>
+          <button class="menu-item" onclick="toggleSubmenu('menuFolderFiles')">
+            <span>Files in Folder</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
-          <div class="menu-dropdown submenu-dropdown" id="folderScoresList"></div>
+          <div class="menu-dropdown submenu-dropdown" id="folderFilesList"></div>
         </div>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="saveFile();closeMenus()">
@@ -902,6 +902,8 @@
     import { parse } from './src/mmlisp-parser.js';
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
+    import { ARCHIVE_EXT } from './src/archive.js';
+    import { folderFromHandle, folderFromArchive } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, lengthTicks, voiceDefNames, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
@@ -3107,22 +3109,25 @@
     // A song's banks are best picked with it in one multi-select dialog; a bank
     // picked alone in File > Import > Song… is for when they weren't, since each
     // menu click is a fresh user gesture and so can always open a picker.
-    let _mucomSong = null; // { bytes, fileName, target, datBytes, pcmBytes }
+    let _mucomSong = null; // { bytes, fileName, target, datBytes, pcmBytes, folder }
     let _mucomPcm = null; // last decoded PCM bank { wav, wavFile, mono, rate, entries }
     let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
 
     function loadMucomSource(source, warnings, fileName, label, pcm = null) {
       const song = _mucomSong; // the new document is this song's: a bank applied later re-converts it
-      const done = loadImportedSource(source, warnings, fileName, label, { tag: 'mucom88', pcm });
+      const done = loadImportedSource(source, warnings, fileName, label, { tag: 'mucom88', pcm, folder: song?.folder });
       _mucomSong = song;
       return done;
     }
 
-    // An imported song or bank becomes a new, unsaved document.
-    async function loadImportedSource(source, warnings, fileName, label, { tag, pcm = null }) {
+    // An imported song or bank becomes a new, unsaved document. It keeps the
+    // source folder only when it came from that folder (`folder`); any other
+    // is not its base.
+    async function loadImportedSource(source, warnings, fileName, label, { tag, pcm = null, folder = null }) {
       _sourceHandle = null;
       _sourceFileName = (fileName || tag).replace(/\.[^.]*$/, '') + '.mmlisp';
-      clearSourceDir(); // imported score — the old folder is not its base
+      if (folder && folder === _sourceDir) forgetHeldFiles(); // the last score's, not the folder's
+      else clearSourceDir();
       currentIrURL = null;
       _lastFileName = _sourceFileName;
       _lastGoodIR = null;
@@ -3173,6 +3178,9 @@
     function songImporterFor(name) {
       return Object.values(SONG_IMPORTERS).find((imp) => imp.re.test(name)) || null;
     }
+    // What File > Open… and a folder open as a song: a .pdx only comes with its MDX.
+    const SONG_OPEN_EXTS = [...Object.values(SONG_IMPORTERS).flatMap((imp) => imp.exts).filter((e) => e !== '.pdx'), '.muc', '.mml'];
+    const isSongFile = (name) => /\.(muc|mml)$/i.test(name) || Boolean(songImporterFor(name));
 
     // File > Import > Song… replaces the document; Instruments… inserts at the
     // cursor. Each picks by extension, as a drop does. A mucom88 song comes
@@ -3245,13 +3253,14 @@
       }
     }
 
-    async function importSongFromFile(file, imp = songImporterFor(file.name), { pdx = null } = {}) {
+    // `folder`: the source folder the song came from, which it keeps (openSong).
+    async function importSongFromFile(file, imp = songImporterFor(file.name), { pdx = null, folder = null } = {}) {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         const res = await imp.run(bytes, file.name, { pdx: pdx ? new Uint8Array(await pdx.arrayBuffer()) : null });
         if (!res) return; // cancelled in the dialog
         await loadImportedSource(res.source, res.warnings, file.name,
-          `Imported ${file.name} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null });
+          `Imported ${file.name}${pdx ? ` with ${pdx.name}` : ''} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null, folder });
       } catch (e) {
         log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
       }
@@ -3850,7 +3859,8 @@
     // and its banks come in one set — one multi-select dialog (Song…) or one
     // drop: chaining a second picker after the first `await` loses the user
     // gesture, so the browser blocks it.
-    async function importMucom88FromFiles(picked) {
+    // `folder`: the source folder the song came from, its banks looked up there.
+    async function importMucom88FromFiles(picked, { folder = null } = {}) {
       const byExt = (re) => picked.find((f) => re.test(f.name));
       const file = byExt(/\.(muc|mml)$/i);
       if (!file) {
@@ -3877,6 +3887,7 @@
           target: got.fields.target,
           datBytes: datPick ? new Uint8Array(await datPick.arrayBuffer()) : null,
           pcmBytes: pcmPick ? new Uint8Array(await pcmPick.arrayBuffer()) : null,
+          folder,
         };
         const res = importMucom(_mucomSong.bytes, _mucomSong.datBytes, _mucomSong.pcmBytes, { target: _mucomSong.target });
         const withs = [datPick && `voices ${datPick.name}`, pcmPick && `PCM ${pcmPick.name}`].filter(Boolean);
@@ -3893,10 +3904,14 @@
           pcmFile = (head.match(/^#pcm\s+(\S+)/im) || [])[1] || null;
         } catch { /* detection is best-effort */ }
         if (voiceFile && !datPick) {
-          log(`mucom88: ${file.name} uses external voices "${voiceFile}" — using default voices. Pick the .dat in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .dat together`, 'info');
+          log(folder
+            ? `mucom88: ${file.name} uses external voices "${voiceFile}", which is not in ${folder.name} — using default voices`
+            : `mucom88: ${file.name} uses external voices "${voiceFile}" — using default voices. Pick the .dat in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .dat together`, 'info');
         }
         if (pcmFile && !pcmPick) {
-          log(`mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Pick the .bin in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .bin together`, 'info');
+          log(folder
+            ? `mucom88: ${file.name} plays drums from "${pcmFile}" (part K), which is not in ${folder.name} — imported without them`
+            : `mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Pick the .bin in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .bin together`, 'info');
         }
       } catch (e) {
         log(`mucom88 import failed: ${e?.message || e}`, 'err');
@@ -4527,10 +4542,21 @@
     // File > Open's picker types; Save As writes only the score's own type.
     const MMLISP_FILE_TYPE = { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } };
     const SOURCE_FILE_EXT = /\.(mmlisp|mmb|dmp|fui|tfi|vgi|opni)$/i;
-    const SOURCE_FILE_TYPES = [
+    // The picker starts on its first type, so that one is everything Open
+    // takes — a downloaded .zip must not come up greyed out.
+    const OPEN_TYPES = [
       MMLISP_FILE_TYPE,
+      { description: 'Song (opens converted)', accept: { 'application/octet-stream': SONG_OPEN_EXTS } },
+      { description: 'Archive (opens as a folder)', accept: { 'application/zip': ['.zip'], 'application/x-lzh-compressed': ['.lzh', '.lha'] } },
       { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
       { description: 'FM voice import', accept: { 'application/octet-stream': ['.dmp', '.fui', '.tfi', '.vgi', '.opni'] } },
+    ];
+    const SOURCE_FILE_TYPES = [
+      { description: 'Everything Open takes', accept: OPEN_TYPES.reduce((all, t) => {
+        for (const [mime, exts] of Object.entries(t.accept)) all[mime] = [...(all[mime] ?? []), ...exts];
+        return all;
+      }, {}) },
+      ...OPEN_TYPES,
     ];
 
     // Bumped by each new document: a compile's result for the score it
@@ -4634,26 +4660,15 @@
     let _lastFileName = 'untitled.mmlisp';
     let _sourceHandle = null;
     let _sourceFileName = null;
-    // Source folder (File > Open Folder…): the base a score's relative `:file`
-    // sample paths resolve against. Deliberately session-scoped — a reload
+    // Source folder (File > Open Folder…, or an archive opened): the base a
+    // score's relative `:file` sample paths resolve against — a folder from
+    // src/source-folder.js. Deliberately session-scoped — a reload
     // starts clean rather than silently resolving samples against a folder from
     // some earlier sitting; File > Open Recent brings one back on request.
     let _sourceDir = null;
-    let _sourceDirScores = []; // .mmlisp handles in _sourceDir, for the File menu
+    let _sourceDirFiles = []; // what File > Files in Folder lists: { name, handle, file(), kind }
     let _unsavedSamplePathWarned = false;
     const _pcmSampleCache = new Map();
-
-    // Resolve to true only when the folder is readable now. Never throws: a lost
-    // grant just means we fall back to fetch. The picker grants read for the
-    // session, so this is normally a no-op query.
-    async function ensureSourceDirPermission() {
-      if (!_sourceDir) return false;
-      try {
-        return (await _sourceDir.queryPermission({ mode: 'read' })) === 'granted';
-      } catch {
-        return false;
-      }
-    }
 
     function toFetchablePath(path) {
       if (!path) return null;
@@ -4697,21 +4712,13 @@
     // File > Open Recent brings it back). Returns null when there is no folder or no such file, so the
     // caller can fall back to fetch (URL / server-root paths).
     async function sampleBytesFromSourceDir(path) {
-      if (!_sourceDir) return null;
-      const segs = String(path)
-        .split('/')
-        .filter((s) => s && s !== '.');
-      if (segs.length === 0 || segs.includes('..')) return null;
+      // A lost grant, or no such file: null, and the caller tries fetch.
+      if (!_sourceDir || !(await _sourceDir.readable())) return null;
       try {
-        if (!(await ensureSourceDirPermission())) return null;
-        let dir = _sourceDir;
-        for (const seg of segs.slice(0, -1)) {
-          dir = await dir.getDirectoryHandle(seg);
-        }
-        const fileHandle = await dir.getFileHandle(segs[segs.length - 1]);
-        return await (await fileHandle.getFile()).arrayBuffer();
-      } catch {
-        return null; // not in the folder — let the caller try fetch
+        return await _sourceDir.read(path);
+      } catch (e) {
+        log(`${path}: ${e.message}`, 'err'); // in an archive, but damaged
+        return null;
       }
     }
 
@@ -4732,7 +4739,7 @@
 
     async function importTextForPath(path) {
       const bytes = await sampleBytesFromSourceDir(path);
-      if (bytes) return new TextDecoder().decode(new Uint8Array(bytes));
+      if (bytes) return new TextDecoder().decode(bytes);
       const url = toFetchablePath(path);
       if (url) {
         try {
@@ -4967,7 +4974,7 @@
       return readSourceFile(await handle.getFile(), handle);
     }
 
-    // The extension triage every entry point shares (Open…, Scores in Folder,
+    // The extension triage every entry point shares (Open…, Files in Folder,
     // drag & drop). `handle` is optional so a dropped File still loads.
     async function readSourceFile(file, handle = null) {
       const fmImportKey = detectFmImportFormatKey(file.name);
@@ -5003,22 +5010,22 @@
           // File and no handle — Save then asks where. Unfiltered, since iOS
           // greys out what it has no type for (.mmlisp); checked here instead.
           const file = await pickFileWithInput(null);
-          if (!SOURCE_FILE_EXT.test(file.name)) {
-            log(`${file.name}: Open takes .mmlisp, .mmb and FM voices (.dmp .fui .tfi .vgi .opni) — songs and samples are under File > Import`, 'err');
+          if (!SOURCE_FILE_EXT.test(file.name) && !isSongFile(file.name) && !ARCHIVE_EXT.test(file.name)) {
+            log(`${file.name}: Open takes .mmlisp, .mmb, songs (${SONG_OPEN_EXTS.join(' ')}), archives (.zip .lzh) and FM voices (.dmp .fui .tfi .vgi .opni) — samples are under File > Import`, 'err');
             return;
           }
-          clearSourceDir();
-          await readSourceFile(file);
+          await openPickedFile(file);
           return;
         }
         const [handle] = await window.showOpenFilePicker({
           types: SOURCE_FILE_TYPES,
           multiple: false,
-          // Start in the opened folder when there is one, so Open lands on the
-          // project rather than wherever the OS picker was left.
-          ...(_sourceDir ? { startIn: _sourceDir } : {}),
+          // Start in the opened folder when there is one (an archive's: where
+          // it sits), so Open lands on the project rather than wherever the OS
+          // picker was left.
+          ...(_sourceDir?.handle || _sourceDir?.archive?.handle ? { startIn: _sourceDir.handle ?? _sourceDir.archive.handle } : {}),
         });
-        await openScoreHandle(handle);
+        await openPickedFile(await handle.getFile(), handle);
       } catch (e) {
         if (e?.name !== 'AbortError') log('Open failed: ' + e.message, 'err');
       }
@@ -5029,17 +5036,91 @@
     // drag out of the project folder also is) is still that project, so keep the
     // folder and its samples.
     async function openScoreHandle(handle) {
-      if (_sourceDir && !(await _sourceDir.resolve(handle))) clearSourceDir();
+      if (_sourceDir && !(await _sourceDir.pathOf(handle))) clearSourceDir();
       else if (!_sourceDir) forgetHeldFiles();
       await readFileHandle(handle);
+    }
+
+    // File > Open… by extension: an archive opens as a folder, a song as the
+    // score converted from it, the rest as a score does. `handle` is null from
+    // a plain file input (iOS, Firefox).
+    async function openPickedFile(file, handle = null) {
+      if (ARCHIVE_EXT.test(file.name)) return openArchive(file, handle);
+      if (isSongFile(file.name)) return openSong(file, { folder: await folderHolding(handle) });
+      if (handle) return openScoreHandle(handle);
+      clearSourceDir();
+      return readSourceFile(file);
+    }
+
+    // The open folder when `handle` is inside it, else null.
+    async function folderHolding(handle) {
+      return handle && _sourceDir && (await _sourceDir.pathOf(handle)) ? _sourceDir : null;
+    }
+
+    // An archive opens as the folder it holds (src/source-folder.js), read in
+    // memory — so on every browser, a phone's too. `handle`, when there is one,
+    // is what File > Open Recent brings it back by.
+    async function openArchive(file, handle = null) {
+      let folder;
+      try {
+        folder = await folderFromArchive(file, { handle });
+      } catch (e) {
+        log(`${file.name}: ${e.message}`, 'err');
+        return;
+      }
+      await applySourceDir(folder);
+    }
+
+    // A song opens as the score converted from it (File > Import > Song… does
+    // the same from a multi-select). Opened from the folder it sits in, it
+    // keeps the folder: what the song names beside it — an MDX's PDX, a
+    // mucom88 song's voices and drums — is read from there, and the rest of
+    // the folder stays one click away. `pdx` is one handed over with it (a drop).
+    async function openSong(file, { folder = null, pdx = null } = {}) {
+      if (/\.(muc|mml)$/i.test(file.name)) {
+        await importMucom88FromFiles([file, ...(folder ? await mucomBanksIn(folder, file) : [])], { folder });
+        return;
+      }
+      if (!pdx && folder && /\.mdx$/i.test(file.name)) pdx = await pdxIn(folder, file);
+      await importSongFromFile(file, undefined, { pdx, folder });
+    }
+
+    async function fileIn(folder, name) {
+      try {
+        const bytes = await folder.read(name);
+        return bytes ? new File([bytes], name.split('/').pop()) : null;
+      } catch (e) {
+        log(`${name}: ${e.message}`, 'err');
+        return null;
+      }
+    }
+
+    async function pdxIn(folder, mdxFile) {
+      let name = null;
+      try { name = parseMdx(new Uint8Array(await mdxFile.arrayBuffer())).pdxName; } catch { /* the import says what is wrong */ }
+      return name ? fileIn(folder, name) : null;
+    }
+
+    // The banks a mucom88 song names in its header (#voice, #pcm).
+    async function mucomBanksIn(folder, mucFile) {
+      const head = new TextDecoder('shift-jis', { fatal: false }).decode(new Uint8Array(await mucFile.slice(0, 4096).arrayBuffer()));
+      const out = [];
+      for (const [re, ext] of [[/^#voice\s+(\S+)/im, '.dat'], [/^#pcm\s+(\S+)/im, '.bin']]) {
+        const name = (head.match(re) || [])[1];
+        if (!name) continue;
+        const file = (await fileIn(folder, name)) ?? (/\.[^./]+$/.test(name) ? null : await fileIn(folder, name + ext));
+        // Under the extension the importer sorts the selection by.
+        if (file) out.push(new File([file], file.name.replace(/\.[^.]*$/, '') + ext));
+      }
+      return out;
     }
 
     // Open a score's folder rather than the bare file: a handle from
     // showOpenFilePicker exposes no parent directory, so this is the only way a
     // local score can reach the wavs sitting next to it. The folder lasts the
     // session; File > Open Recent brings it back with the score.
-    function setSourceDir(handle) {
-      _sourceDir = handle;
+    function setSourceDir(folder) {
+      _sourceDir = folder;
       // Paths now resolve against a different base, so both in-memory stand-ins
       // for "dropped from somewhere else" are stale.
       _pcmSampleCache.clear();
@@ -5054,9 +5135,9 @@
       forgetHeldFiles();
       if (!_sourceDir) return;
       _sourceDir = null;
-      _sourceDirScores = [];
+      _sourceDirFiles = [];
       updateSourceDirLabel();
-      renderFolderScores();
+      renderFolderFiles();
     }
 
     // The files held in memory for the score that is leaving — dropped or
@@ -5085,70 +5166,75 @@
         log('Open Folder failed: ' + e.message, 'err');
         return;
       }
-      await applySourceDir(dir);
+      await applySourceDir(folderFromHandle(dir));
     }
 
-    // Adopt a directory handle as the source folder. Split from the picker so a
-    // dropped folder lands exactly where File > Open Folder… does.
-    async function applySourceDir(dir) {
-      setSourceDir(dir);
-      const scores = await refreshFolderScores();
+    // Adopt a folder (src/source-folder.js) as the source folder. Split from
+    // the picker so a dropped folder, and an archive, land exactly where File >
+    // Open Folder… does.
+    async function applySourceDir(folder) {
+      setSourceDir(folder);
+      const files = await refreshFolderFiles();
 
-      // Always land on a score, so opening a folder leaves you editing
-      // something playable rather than staring at an unchanged editor. The rest
-      // are one click away under File > Scores in Folder.
-      if (scores.length > 0) {
-        await openScoreFromFolder(0);
-        if (scores.length > 1) {
-          log(
-            `${scores.length - 1} more score${scores.length > 2 ? 's' : ''} under File > Scores in Folder`,
-            'info',
-          );
-        }
+      // Land on something playable rather than an unchanged editor: the one
+      // file there is, else the first score. A song is not opened unasked
+      // beside others — it asks how to convert it. The rest are one click away
+      // under File > Files in Folder.
+      const pick = files.length === 1 ? files[0] : files.find((f) => f.kind === 'score');
+      if (pick) {
+        await openFromFolder(files.indexOf(pick));
+        if (files.length > 1) log(`${files.length - 1} more under File > Files in Folder`, 'info');
         return;
       }
-      log(`Folder ${dir.name} set for samples (no .mmlisp inside)`, 'info');
+      log(files.length
+        ? `${folder.name}: ${files.length} songs under File > Files in Folder`
+        : `Folder ${folder.name} set for samples (no score or song inside)`, 'info');
       if (_lastGoodIR) compileNow(); // re-resolve samples against the new folder
     }
 
-    // Enumerate the folder's scores and render them into the File menu.
-    async function refreshFolderScores() {
-      _sourceDirScores = [];
-      if (_sourceDir && (await ensureSourceDirPermission())) {
-        try {
-          for await (const [name, entry] of _sourceDir.entries()) {
-            if (entry.kind === 'file' && /\.mmlisp$/i.test(name)) {
-              _sourceDirScores.push(entry);
-            }
-          }
-          _sourceDirScores.sort((a, b) => a.name.localeCompare(b.name));
-        } catch {
-          _sourceDirScores = [];
-        }
-      }
-      renderFolderScores();
-      return _sourceDirScores;
+    // What a folder lists: its scores, and the songs that open as one.
+    function folderFileKind(name) {
+      if (/\.mmlisp$/i.test(name)) return 'score';
+      if (/\.(muc|mml)$/i.test(name)) return 'mucom88';
+      return songImporterFor(name)?.tag ?? null;
     }
 
-    function renderFolderScores() {
-      const wrap = document.getElementById('menuFolderScores');
-      const list = document.getElementById('folderScoresList');
+    // Enumerate the folder's files and render them into the File menu.
+    async function refreshFolderFiles() {
+      _sourceDirFiles = [];
+      if (_sourceDir && (await _sourceDir.readable())) {
+        try {
+          _sourceDirFiles = (await _sourceDir.files())
+            .map((f) => ({ ...f, kind: folderFileKind(f.name) }))
+            .filter((f) => f.kind)
+            .sort((a, b) => a.name.localeCompare(b.name));
+        } catch {
+          _sourceDirFiles = [];
+        }
+      }
+      renderFolderFiles();
+      return _sourceDirFiles;
+    }
+
+    function renderFolderFiles() {
+      const wrap = document.getElementById('menuFolderFiles');
+      const list = document.getElementById('folderFilesList');
       if (!wrap || !list) return;
-      wrap.hidden = _sourceDirScores.length === 0;
+      wrap.hidden = _sourceDirFiles.length === 0;
       list.innerHTML = '';
-      _sourceDirScores.forEach((entry, i) => {
+      _sourceDirFiles.forEach((entry, i) => {
         const b = document.createElement('button');
         b.className = 'menu-item';
-        // Same shape as the other menu items: label + right-aligned marker,
-        // with a check on the score that is currently open.
+        // Same shape as the other menu items: label + right-aligned marker —
+        // a check on the score that is open, a song's format beside it.
         const name = document.createElement('span');
         name.textContent = entry.name;
         const mark = document.createElement('span');
         mark.className = 'menu-item-shortcut';
-        mark.textContent = entry.name === _sourceFileName ? '✓' : '';
+        mark.textContent = entry.kind !== 'score' ? entry.kind : entry.name === _sourceFileName ? '✓' : '';
         b.append(name, mark);
         b.onclick = () => {
-          openScoreFromFolder(i);
+          openFromFolder(i);
           closeMenus();
         };
         list.appendChild(b);
@@ -5186,7 +5272,7 @@
       // no folder picker, and on one with it when there is no file to start the
       // picker from — a score restored from the draft after a reload, a share
       // link, a new score. A granted folder answers for itself.
-      if (picker && _sourceDir) { _missingFiles = []; btn.hidden = true; return; }
+      if (_sourceDir) { _missingFiles = []; btn.hidden = true; return; }
       // What the app serves (the preset, example and snippet trees) and URLs
       // load by fetch; the rest only from a file.
       const reachable = (p) => /^(presets|examples|snippets)\//.test(p) || /^[a-zA-Z][\w+.-]*:\/\//.test(p);
@@ -5259,8 +5345,8 @@
         log(`${handle.name} is not inside ${dir.name} — pick the folder the score is in`, 'err');
         return;
       }
-      setSourceDir(dir);
-      await refreshFolderScores();
+      setSourceDir(folderFromHandle(dir));
+      await refreshFolderFiles();
       rememberRecent(handle); // Open Recent now brings the folder back with it
       log(`Folder ${dir.name} opened for ${handle.name}`, 'info');
       await refreshImportsAndCompile();
@@ -5274,9 +5360,17 @@
     // restores the folder (and with it the samples).
     async function rememberRecent(handle) {
       if (!recentSupported) return;
-      let dir = null;
-      try { if (_sourceDir && (await _sourceDir.resolve(handle))) dir = _sourceDir; } catch (_) {}
+      const dir = _sourceDir?.handle && (await _sourceDir.pathOf(handle)) ? _sourceDir.handle : null;
       _recent = await addRecent(handle, dir);
+      renderRecent();
+    }
+
+    // A score inside an archive is remembered as the archive and its name in
+    // it, when the archive came with a handle to reopen it by.
+    async function rememberArchiveScore(name) {
+      const archive = _sourceDir?.archive?.handle;
+      if (!recentSupported || !archive) return;
+      _recent = await addRecent(archive, null, name);
       renderRecent();
     }
 
@@ -5303,7 +5397,10 @@
         item('No Recent Scores', '', () => {}).disabled = true;
         return;
       }
-      for (const entry of _recent) item(entry.file.name, entry.dir ? entry.dir.name + '/' : '', () => openRecent(entry));
+      for (const entry of _recent) {
+        const where = entry.inner ? entry.file.name : entry.dir?.name;
+        item(entry.inner ?? entry.file.name, where ? where + '/' : '', () => openRecent(entry));
+      }
       const sep = document.createElement('div');
       sep.className = 'menu-sep';
       list.appendChild(sep);
@@ -5313,6 +5410,7 @@
     // The click is the gesture the browser needs to ask for access again; the
     // folder is asked first, since its grant covers the score inside it.
     async function openRecent(entry) {
+      if (entry.inner) return openRecentInArchive(entry);
       try {
         const dirOk = entry.dir ? await ensureReadAccess(entry.dir) : false;
         if (!(await ensureReadAccess(entry.file))) {
@@ -5320,15 +5418,16 @@
           return;
         }
         if (dirOk) {
-          if (!(_sourceDir && (await _sourceDir.isSameEntry(entry.dir)))) {
-            setSourceDir(entry.dir);
-            await refreshFolderScores();
+          const folder = folderFromHandle(entry.dir);
+          if (!(_sourceDir && (await _sourceDir.same(folder)))) {
+            setSourceDir(folder);
+            await refreshFolderFiles();
           }
-        } else if (_sourceDir && !(await _sourceDir.resolve(entry.file))) {
+        } else if (_sourceDir && !(await _sourceDir.pathOf(entry.file))) {
           clearSourceDir();
         }
         await readFileHandle(entry.file);
-        renderFolderScores();
+        renderFolderFiles();
         log(`Opened ${entry.file.name}` + (dirOk ? ` (folder ${entry.dir.name})` : ''), 'info');
       } catch (e) {
         // Moved, renamed or deleted since: it is no longer that score.
@@ -5360,12 +5459,46 @@
       });
     }
 
-    async function openScoreFromFolder(i) {
-      const entry = _sourceDirScores[i];
+    // The archive is read again: its files live only in memory.
+    async function openRecentInArchive(entry) {
+      try {
+        if (!(await ensureReadAccess(entry.file))) {
+          log(`No access to ${entry.file.name}`, 'err');
+          return;
+        }
+        const folder = await folderFromArchive(await entry.file.getFile(), { handle: entry.file });
+        if (!(_sourceDir && (await _sourceDir.same(folder)))) setSourceDir(folder);
+        const files = await refreshFolderFiles();
+        const i = files.findIndex((f) => f.name === entry.inner);
+        if (i < 0) throw new Error(`${entry.inner} is no longer in it`);
+        await openFromFolder(i);
+      } catch (e) {
+        log(`Could not open ${entry.inner} from ${entry.file.name}: ${e.message}`, 'err');
+        _recent = await removeRecent(entry.file, entry.inner);
+        renderRecent();
+      }
+    }
+
+    // File > Files in Folder: a score opens (inside an archive, with nothing
+    // to save back to — Save asks where), a song converts, the folder stays.
+    async function openFromFolder(i) {
+      const entry = _sourceDirFiles[i];
       if (!entry) return;
-      await readFileHandle(entry);
-      log(`Opened ${entry.name} (folder ${_sourceDir?.name ?? '?'})`, 'info');
-      renderFolderScores(); // move the active marker
+      try {
+        if (entry.kind !== 'score') {
+          await openSong(await entry.file(), { folder: _sourceDir });
+        } else if (entry.handle) {
+          await readFileHandle(entry.handle);
+          log(`Opened ${entry.name} (folder ${_sourceDir?.name ?? '?'})`, 'info');
+        } else {
+          await readSourceFile(await entry.file());
+          rememberArchiveScore(entry.name);
+          log(`Opened ${entry.name} (${_sourceDir?.name ?? '?'})`, 'info');
+        }
+      } catch (e) {
+        log(`${entry.name}: ${e.message}`, 'err');
+      }
+      renderFolderFiles(); // move the active marker
     }
 
     function updateSourceDirLabel() {
@@ -5406,14 +5539,8 @@
     // else falls back to the bare name, which only resolves once the file
     // actually sits next to the score.
     async function droppedPath(entry) {
-      if (_sourceDir && entry.handle) {
-        try {
-          const segs = await _sourceDir.resolve(entry.handle);
-          if (segs && segs.length) return { path: segs.join('/'), inFolder: true };
-        } catch {
-          // not inside the folder — fall through to the bare name
-        }
-      }
+      const path = _sourceDir && entry.handle ? await _sourceDir.pathOf(entry.handle) : null;
+      if (path) return { path, inFolder: true };
       return { path: entry.file.name, inFolder: false };
     }
 
@@ -5492,12 +5619,20 @@
       const dir = entries.find((e) => e.kind === 'dir');
       if (dir) {
         if (entries.length > 1) log('Dropped a folder — opening it; the other items were ignored', 'info');
-        await applySourceDir(dir.handle);
+        await applySourceDir(folderFromHandle(dir.handle));
         return;
       }
 
       const files = entries.filter((e) => e.kind === 'file');
       if (!files.length) return;
+
+      // An archive opens as a folder does.
+      const archive = files.find((e) => ARCHIVE_EXT.test(e.file.name));
+      if (archive) {
+        if (entries.length > 1) log(`Dropped ${archive.file.name} — opening it as a folder; the other items were ignored`, 'info');
+        await openArchive(archive.file, archive.handle?.kind === 'file' ? archive.handle : null);
+        return;
+      }
 
       // A mucom song wants its .dat/.bin siblings in the same call, exactly as
       // the multi-select dialog hands them over.
@@ -5512,7 +5647,7 @@
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
             ? `${entry.file.name}: a sample is .wav only (the exporters read RIFF WAV); File > Import > Audio as Formants… or Audio as FM Voice… reads it as it is`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .opm .muc .mml .dat .bin .sf2 .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs)`,
+            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .opm .muc .mml .dat .bin .sf2 .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs .zip .lzh)`,
           'err',
         );
       }
@@ -5543,9 +5678,10 @@
           else if (kind === 'mucom-pcm') await importMucomPcmBankFromFile(entry.file);
           else if (kind === 'sf2') await importSf2FromFile(entry.file);
           else if (kind === 'song') {
-            // An MDX dropped with its PDX takes it as its samples.
+            // An MDX dropped with its PDX takes it as its samples; one dropped
+            // out of the open folder finds it there.
             const pdx = /\.mdx$/i.test(entry.file.name) ? kinds.find((k) => k.kind === 'pdx')?.entry.file ?? null : null;
-            await importSongFromFile(entry.file, undefined, { pdx });
+            await openSong(entry.file, { pdx, folder: await folderHolding(entry.handle) });
           } else if (kind === 'pdx' && !kinds.some((k) => /\.mdx$/i.test(k.entry.file.name)))
             log(`${entry.file.name}: a .pdx is the samples of an MDX song — drop it together with the .mdx`, 'err');
           else if (kind === 'mmb') log(`${entry.file.name} ignored — only one document can be open at a time`, 'info');
@@ -12803,7 +12939,8 @@
     initMidi();
     initRecent();
     // A browser that cannot open a folder (iOS, Firefox) gets no Open Folder…;
-    // Scores in Folder only ever appears with one open.
+    // Files in Folder only ever appears with one open (a folder, or an archive
+    // through Open…, which any browser can do).
     // Without a save picker (iOS, Firefox) a score keeps no file to write
     // back to: every Save asks where, so Save As… would be the same thing.
     if (typeof window.showSaveFilePicker !== 'function') document.getElementById('saveAsItem').hidden = true;

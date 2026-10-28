@@ -37,6 +37,11 @@ lessons.
   4×-throttled thread plus its polyline, and cutting more changes how the
   trace locks — not worth it. (Headless canvas is CPU-drawn, so draw costs
   read high there.)
+- **Archives** (2026-10-28): ZIP and LZH only, both first-party
+  (`src/archive.js`). No RAR / 7z for now — no small decoder of our own;
+  libarchive built to WASM, loaded on demand, if a need shows up. `File >
+  Import > Song…` stays beside Open…: it is the multi-select, the only way a
+  phone (no folder) brings a `.muc` with its `.dat` / `.bin`.
 - **The ja / es translations** stay as machine-written from the glossary
   (user, 2026-10-16: having one helps more than none; a wrong line is fixed
   when found). A fix goes through `i18n-sync.mjs --apply`, never a hand edit

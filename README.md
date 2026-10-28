@@ -163,6 +163,10 @@ for a controller's knobs.
   (a sound's spectral peaks on FM3's operators — CSM's vocoder voice, or
   sine-wave speech; on x68k, msx and pce the sine waves) and **Audio as FM Voice** (a patch searched for one note,
   three candidates to hear and play before choosing)
+- A folder (File > Open Folder…), or a `.zip` / `.lzh` opened as one in any
+  browser, a phone's too: File > Files in Folder lists its scores and songs, a
+  song opens converted and finds its PDX or mucom88 banks beside it, and a
+  downloaded song pack needs no unpacking
 
 **Saving and sharing.** VGM, WAV and video export, PCM included; `.mmlisp`
 files opened and saved in place, File > Open Recent, and the score kept in the
@@ -269,6 +273,7 @@ This project directly references the following works in its design and implement
 - **[Furnace](https://github.com/tildearrow/furnace)** / **[DefleMask](https://www.deflemask.com/)** — Multi-system chiptune trackers referenced for tracker workflow, pattern sequencing, and chip-focused composition practices.
 - **MXDRV** — MML sound driver for the X68000. Its MDX format and its playback, as [portable_mdx](https://github.com/yosshin4004/portable_mdx) ports its 68000 code, are the reference for the `.mdx` / `.pdx` import.
 - **[MGSDRV](https://gigamix.hatenablog.com/entry/mgsdrv/)** — MML sound driver for the MSX by Ain / GIGAMIX. MGSC's MML reference and the driver's playback are the reference for the `.mgs` import.
+- **[Lhasa](https://github.com/fragglet/lhasa)** — LHA decompressor by Simon Howard; ISC license. Its test archives, made by LHA tools on many machines, held the `.lzh` reader to them, and its decoders settled `-lh4-`.
 
 ## License
 

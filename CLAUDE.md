@@ -39,6 +39,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |
 | `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB, and the YM2608 rhythm ROM the user brings |
+| `source-folder.js`, `archive.js` | The source folder `:file` and imports resolve against and File > Files in Folder lists: a granted directory, or a `.zip` / `.lzh` read in memory (`tools npm run check:archive`) |
 | `catalog-list.js`              | The side panel's Library list: search, filters, groups, keys, for every source |
 | `reference.js`                 | The language reference's entries (Library's Ref, completion info, hover, MCP) |
 | `completion-names.js`          | The words the editor's completion offers, each held to a reference entry |
