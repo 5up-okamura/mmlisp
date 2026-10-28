@@ -62,7 +62,9 @@ Run from tools directory:
     `--out <dir> --moves base,now` compiles two sets taken `--flat` (no
     repeats folded, so a note's tick is its time) and lists the tracks whose
     notes lose a pitch move — a rewritten notation that drops a vibrato or a
-    slide shows there, which the diff hides in the lines it rewrites
+    slide shows there, which the diff hides in the lines it rewrites;
+    `--regs base,now` plays them and compares their register writes — a
+    rewrite that must sound the same writes the same
 
 ## i18n
 

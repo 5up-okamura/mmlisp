@@ -19,6 +19,11 @@
 // macro, or a glide's sweep at the key-on), and the songs where fewer do —
 // a notation change that drops a move shows there, which a diff hides in
 // the lines it rewrites.
+//
+//   node scripts/import-snapshot.mjs --out <dir> --regs base,now [--only muc]
+//
+// plays two sets' scores (the preview's player, 90 s each) and compares
+// their register writes: a rewrite that must sound the same writes the same.
 import fs from "node:fs";
 import path from "node:path";
 import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
@@ -29,6 +34,7 @@ import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from "../../li
 import { parseDmf } from "../../live/src/import-dmf.js";
 import { parseFur } from "../../live/src/import-fur.js";
 import { compileMMLisp, collectImports } from "../../live/src/mmlisp2ir.js";
+import { IRPlayer } from "../../live/src/ir-player.js";
 
 // A preset an imported score names, read from live/ (and what it imports).
 const LIVE = new URL("../../live/", import.meta.url);
@@ -50,8 +56,13 @@ const set = opt("--set", "now");
 const only = opt("--only")?.split(",");
 const moves = opt("--moves")?.split(",");
 const flat = args.includes("--flat") && !!args.splice(args.indexOf("--flat"), 1);
+const regs = opt("--regs")?.split(",");
 if (out && moves) {
   compareMoves(...moves.map((m) => path.join(out, m)));
+  process.exit(0);
+}
+if (out && regs) {
+  compareRegs(...regs.map((m) => path.join(out, m)));
   process.exit(0);
 }
 const limit = Number(opt("--limit", 0));
@@ -203,4 +214,28 @@ function compareMoves(a, b) {
   }
   console.log(`moving notes: ${na} → ${nb}; ${fewer.length} tracks lose moves`);
   for (const l of fewer) console.log("  " + l);
+}
+
+// A score's register writes as the preview plays it, a line each.
+function registerLog(file) {
+  const src = fs.readFileSync(file, "utf8");
+  const { ir } = compileMMLisp(src, path.basename(file), { imports: importsOf(src) });
+  const player = new IRPlayer(() => {});
+  player.loadJSON(ir);
+  return player.captureRegisterLog({ maxSec: 90 }).writes.map((w) => `${w.sec.toFixed(4)} ${w.chip ?? ""}${w.port ?? ""}:${w.addr}=${w.data ?? w.val}`);
+}
+function compareRegs(a, b) {
+  const KIND = only && new RegExp(`\\.(${only.join("|")})\\.mmlisp$`, "i");
+  let same = 0;
+  const parted = [];
+  for (const f of fs.readdirSync(b).sort()) {
+    if ((KIND && !KIND.test(f)) || !fs.existsSync(path.join(a, f))) continue;
+    const la = registerLog(path.join(a, f)), lb = registerLog(path.join(b, f));
+    let i = 0;
+    while (i < la.length && i < lb.length && la[i] === lb[i]) i++;
+    if (i === la.length && i === lb.length) same++;
+    else parted.push(`${f}: write ${i} of ${la.length} / ${lb.length}: ${la[i] ?? "(end)"} | ${lb[i] ?? "(end)"}`);
+  }
+  console.log(`${same} write the same; ${parted.length} part`);
+  for (const l of parted) console.log("  " + l);
 }
