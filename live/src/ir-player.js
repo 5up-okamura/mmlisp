@@ -5425,6 +5425,13 @@ export class IRPlayer {
     }
     return encode(enc);
   }
+  // A noise lane the PSG core plays as one (its mode, no pitch): the PSG's,
+  // lane 3, or a tone chip's beside it (the 5B's, chips/sunsoft-5b.js) — not
+  // a wave chip's channel turned to noise (the PC Engine's), pitched as a tone.
+  _isNoiseLane(psgCh) {
+    const l = this._toneEnc[psgCh];
+    return psgCh === 3 || (l?.part?.kind === "noise" && !!l.queue);
+  }
   // A cartridge's start: its encoder's for the score where it lays the chip
   // out by it (`start`, the N163's), else the chip's.
   _startOf(l) {
@@ -6059,8 +6066,8 @@ export class IRPlayer {
 
         // The PSG's noise lane — but for a noise whose note is its rate (the
         // 2A03's: `rateNote`), pitched as a tone, its mode re-asserted.
-        const rateNote = psgCh === 3 && this._toneEnc[3]?.part?.rateNote;
-        const isNoise = psgCh === 3 && !rateNote;
+        const rateNote = this._isNoiseLane(psgCh) && this._toneEnc[psgCh]?.part?.rateNote;
+        const isNoise = this._isNoiseLane(psgCh) && !rateNote;
         const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const psgGateTicks = this._frameGate(when, this._resolveGateTicks(ev.args?.gate, lengthTicks), lengthTicks);
@@ -6220,7 +6227,7 @@ export class IRPlayer {
         if (psgTarget === "SNAP") {
           // Sticky mask (language.md §5.3); the sounding note moves onto it.
           this._psgSnap[psgCh] = Math.max(0, Math.min(0xfff, Math.round(Number(ev.args?.value) || 0)));
-          if (psgCh !== 3)
+          if (!this._isNoiseLane(psgCh))
             this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, this._psgPitchOffset[psgCh] ?? 0, when);
         } else if (psgTarget === "VOL") {
           if (ev.cmd === "PARAM_SET") {

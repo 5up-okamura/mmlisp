@@ -1780,8 +1780,8 @@
  "tools/tests/fc/5b.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "66375f3ae08ca7bb",
-  "regs": "8d5f0062e49bf2da",
-  "vgm": "1bc2a4ed5cd8c25d"
+  "regs": "7017511ba32a3bd6",
+  "vgm": "d6b7a458a3ee0a9b"
  },
  "tools/tests/fc/apu.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
