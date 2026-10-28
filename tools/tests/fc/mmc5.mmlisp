@@ -1,0 +1,7 @@
+; fc: the MMC5 beside the 2A03 — its two pulses (:duty to the nearest of
+; 2 / 4 / 8 / 12 sixteenths, a duty macro, a fade, a glide). Its channels
+; are left out of the VGM.
+(def-score :target fc :title "fc mmc5")
+(sqr1 :tempo 140 :len 8 c e g > c < g e c e |)
+(mmc5-sqr1 :len 8 :duty 2 e g > c e < :duty 12 g e c e |)
+(mmc5-sqr2 :len 4 :oct 3 (macro :duty [2 4 8]) c (glide 8) g (macro :vel (linear 15..0 :len 4)) e c |)

@@ -6883,7 +6883,7 @@
       { length: Math.max(...Object.values(TARGETS).flatMap((t) => t.headsOfKind('fm').map((h) => t.channels[h].voice + 1))) },
       (_, ch) => ({ kind: 'fm', ch, label: `F${ch + 1}` }));
     const TONE_SLOTS = Array.from({ length: TONE_LANES },
-      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'N5', 'N6', 'V1', 'V2', 'VS'][lane] ?? '' }));
+      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'N5', 'N6', 'V1', 'V2', 'VS', 'M1', 'M2'][lane] ?? '' }));
     const NOISE_SLOT = TONE_SLOTS[toneLaneOf({ part: { kind: 'noise' } })]; // one channel: the keys play it alone
     const PCM_SLOT = { kind: 'pcm', label: '' };
     let selectedCh = null;                 // the selected strip's FM or tone slot, or null — drives the FM param panel
@@ -12720,7 +12720,7 @@
     // Channel order is fixed: 0-5 FM 1-6 (FM6 carries the DAC while PCM
     // plays — the sum of the PCM voices), 6-8 PSG tone, 9 noise, 10-12 PCM
     // voices 1-3 (pcm1-pcm3, each its own term of the DAC byte).
-    const SCOPE_CH = 18; // the most lanes a synth posts (synth-msx.js SCOPE_LANES)
+    const SCOPE_CH = 32; // at least the most lanes a synth posts (synths.js SCOPE_MAX)
     const SCOPE_RING = 16384;       // ~340ms at 48k: 2+ periods of any audible pitch
     const SCOPE_DISPLAY_GAIN = 10;  // mix-contribution units → pane half-height
     const _scopeRings = Array.from({ length: SCOPE_CH }, () => new Float32Array(SCOPE_RING));

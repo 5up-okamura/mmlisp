@@ -169,9 +169,16 @@ export const REFERENCE = [
     example: '(def-score :target fc)\n(def-wave tri :wave (triangle -128..127))\n(fds-wave tri :len 4 c e g > c)',
   },
   {
+    name: 'mmc5-sqr1, mmc5-sqr2', aliases: ['mmc5-sqr1', 'mmc5-sqr2', 'mmc5'], cat: 'channels', section: '§19', tracks: PSG,
+    syntax: '(def-score :target fc) (mmc5-sqr1 …)',
+    summary: 'fc: the MMC5\'s two pulses — the 2A03\'s in the language (:duty 2 / 4 / 8 / 12, the 4-bit volume, every pitch move), with no sweep, and the highest notes go on sounding. VGM has no MMC5: an export leaves it out; WAV plays it.',
+    insert: '(mmc5-sqr1 :len 8 c e g e)',
+    example: '(def-score :target fc)\n(mmc5-sqr1 :len 8 :duty 2 e g > c e < :duty 12 g e c e)',
+  },
+  {
     name: ':duty', aliases: ['duty', 'pulse width'], cat: 'track', section: '§19', tracks: PSG,
     syntax: ':duty 0–16  ·  (macro :duty […])  ·  :duty (curve …)',
-    summary: 'fc: a pulse\'s duty in sixteenths of its cycle (sticky, default 8). The 2A03 has 2, 4, 8 and 12 (12.5, 25, 50, 75 %; 75 sounds as 25); a value between is the nearest. The VRC6\'s pulses (vrc6-sqr1, vrc6-sqr2) have 1–8; a wider value is its mirror (12 sounds as 4).',
+    summary: 'fc: a pulse\'s duty in sixteenths of its cycle (sticky, default 8). The 2A03 has 2, 4, 8 and 12 (12.5, 25, 50, 75 %; 75 sounds as 25); a value between is the nearest. The MMC5\'s pulses have the 2A03\'s four. The VRC6\'s pulses (vrc6-sqr1, vrc6-sqr2) have 1–8; a wider value is its mirror (12 sounds as 4).',
     insert: ':duty 4',
     example: '(def-score :target fc)\n(sqr1 :len 8 :duty 2 c e (macro :duty [2 4 8 12]) g e)',
   },

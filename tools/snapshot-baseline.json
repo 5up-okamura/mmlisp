@@ -1795,6 +1795,12 @@
   "regs": "54f08a14a157bbfc",
   "vgm": "bf3e6582e2101b39"
  },
+ "tools/tests/fc/mmc5.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ef573fd9fcbf5220",
+  "regs": "30eea879a6ef3b35",
+  "vgm": "5f8a4bd05e85f14c"
+ },
  "tools/tests/fc/target.mmlisp": {
   "diagnostics": "c2abed2ca544cbf9",
   "ir": "2e1d0ce2fe5c5449"

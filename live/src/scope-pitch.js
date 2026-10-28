@@ -152,6 +152,22 @@ export function fdsPitch(clock) {
 }
 
 /**
+ * The MMC5's (port 5, chips/mmc5.js) 11-bit pulse periods, $02-$03 and
+ * $06-$07, onto the scope's lanes 15-16 (synth-fc.js): clock / 16 / (p + 1).
+ */
+export function mmc5Pitch(clock) {
+  const period = new Uint16Array(2);
+  return {
+    write(port, addr, data, out) {
+      const ch = addr >> 2, reg = addr & 3;
+      if (port !== 5 || ch > 1 || reg < 2) return;
+      const p = (period[ch] = reg === 2 ? (period[ch] & 0x700) | data : (period[ch] & 0xff) | ((data & 7) << 8));
+      out[15 + ch] = clock / (16 * (p + 1));
+    },
+  };
+}
+
+/**
  * The OPLL's (port 4, chips/ym2413.js) F-numbers: $10+c the low 8 bits,
  * $20+c the top bit and the block, as the chip reads them each sample. Its
  * channels 0-5 draw on lanes 0-5, 6-8 on 15-17 (synth-msx.js); a tone is

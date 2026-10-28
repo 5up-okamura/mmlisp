@@ -289,7 +289,9 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   The Disk System's `fds-wave` plays def-waves (a 32-step one each
   step twice in its 64), its gain 0–32 as `:vel`; its modulation is the
   song's `:lfo-wave [32 steps of 0 1 2 4 -1 -2 -4 reset]`, `:lfo-pmd 0–63`
-  (depth), `:lfo-freq 0–4095` (rate). VGM carries it.
+  (depth), `:lfo-freq 0–4095` (rate). VGM carries it. The MMC5's
+  `mmc5-sqr1` / `mmc5-sqr2`: the 2A03's pulses with no sweep (its four
+  duties); VGM leaves them out.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

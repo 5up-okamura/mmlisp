@@ -2882,7 +2882,9 @@ nonlinear mixer). Its channels are `sqr1` and `sqr2`, the pulses; `tri`,
 the triangle; `noise`; and `pcm1`, the DMC's samples — and the expansion
 chips' (below), each named by its chip, as the Famicom has pulses on
 several and waves on two: the VRC6 cartridge's `vrc6-sqr1`, `vrc6-sqr2`
-and `vrc6-saw`, and the Disk System's `fds-wave`. There is no FM, no
+and `vrc6-saw`, the Disk System's `fds-wave`, and the MMC5's `mmc5-sqr1`
+and `mmc5-sqr2`. A chip is in the song when a score names one of its
+channels, and any of them may be at once (as an NSF has them). There is no FM, no
 pan (the machine is mono): `fm1`, `:pan` and `:noise-rate` are
 `E_TARGET`. The chip hears the song a frame (1/60 s) at
 a time, as on `msx`.
@@ -3014,6 +3016,22 @@ arithmetic, its ~2 kHz low-pass; at full 2.4 times a 2A03 pulse at full).
 (def vib [1 1 1 1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 1])
 (fds-wave tri :lfo-wave vib :lfo-freq 20 :len 4 c e :lfo-pmd 8 g
   :lfo-freq (linear 20..400 :len 4) :lfo-pmd 30 c)
+```
+
+**MMC5.** Nintendo's mapper with sound is on `fc` when a score names
+**`mmc5-sqr1`** or **`mmc5-sqr2`**: two more pulses, the 2A03's in the
+language — the same pitch moves on an 11-bit period, the 4-bit volume,
+`:duty` to the nearest of 2, 4, 8 and 12 — with no sweep, and a period
+under 8 sounds where the 2A03's is silent (the highest notes go on up).
+Its PCM channel is not the language's. **VGM has no MMC5**: an exported
+VGM leaves it out, saying so; Play and WAV sound it (nesdev's MMC5 audio
+page: a pulse at full as loud as a 2A03 pulse at full, inverted against
+it — the same note on `sqr1` and `mmc5-sqr1` at once cancels).
+
+```lisp
+(def-score :target fc)
+(mmc5-sqr1 :len 8 :duty 2 e g > c e < :duty 12 g e c e)
+(mmc5-sqr2 :len 4 :oct 3 (macro :duty [2 4 8]) c (glide 8) g e c)
 ```
 
 **Effects.** `def-se` is the Mega Drive driver's; an `fc` score has none

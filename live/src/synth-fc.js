@@ -47,10 +47,16 @@
 // 2.4 times a 2A03 pulse at full (nesdev), through its ~2 kHz low-pass, on
 // the scope's lane 14. Its volume and modulation envelopes are not run: the
 // toolchain writes the gains direct.
+//
+// The MMC5's two pulses (port 5, chips/mmc5.js), from nesdev's MMC5 audio
+// page: the 2A03's pulses with no sweep (a period under 8 sounds), their
+// envelopes and length counters clocked together every quarter frame
+// (~240 Hz, the chip's own timer), their DAC linear and inverted, a pulse
+// at full as loud as a 2A03 pulse at full; on the scope's lanes 15-16.
 // ---------------------------------------------------------------------------
 
 import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "./chips/rp2a03.js";
-import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch } from "./scope-pitch.js";
+import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch, mmc5Pitch } from "./scope-pitch.js";
 import { fdsRegister } from "./chips/fds.js";
 
 const CLOCK = rp2a03.clock;
@@ -65,20 +71,26 @@ const MASTER_OUTPUT_GAIN = 1.6;
 // The scope's taps, on the page's scale (index.html SCOPE_DISPLAY_GAIN).
 const SCOPE_SCALE = 0.6;
 
-export const SCOPE_LANES = 15;
+export const SCOPE_LANES = 17;
 const PSG_LANE = 6; // the page's first PSG lane
-const CHANNELS = 9; // pulse 1, pulse 2, the triangle, the noise, the DMC, the VRC6's pulses and saw, the FDS
+// Pulse 1, pulse 2, the triangle, the noise, the DMC, the VRC6's pulses and
+// saw, the FDS, the MMC5's pulses.
+const CHANNELS = 11;
 const VRC6_PORT = 3;
 const FDS_PORT = 4;
+const MMC5_PORT = 5;
 // The FDS at full (level 63, gain 32, master full) is 2.4 times a 2A03
 // pulse at full (nesdev), its polarity the 2A03's; its ~2 kHz low-pass.
 const FDS_STEP = (2.4 * 95.88) / (8128 / 15 + 100) / (63 * 32);
 const FDS_LPF = 1 - Math.exp((-2 * Math.PI * 2000) / FC_NATIVE_SAMPLE_RATE);
 const FDS_MASTER = [1, 2 / 3, 2 / 4, 2 / 5];
 const FDS_MOD_DELTA = [0, 1, 2, 4, null, -4, -2, -1]; // null: the counter back to 0
-// The VRC6's DAC, a step's share of the mix: a pulse at 15 where a 2A03
-// pulse at 15 is (nesdev), the saw's five bits on the same scale.
-const VRC6_STEP = 95.88 / (8128 / 15 + 100) / 15;
+// A cartridge's linear DAC (the VRC6's, the MMC5's), a step's share of the
+// mix: a pulse at 15 where a 2A03 pulse at 15 is (nesdev), the VRC6 saw's
+// five bits on the same scale.
+const PULSE_STEP = 95.88 / (8128 / 15 + 100) / 15;
+// The MMC5's quarter frame: its own timer, about 240 Hz.
+const MMC5_FRAME = 7457;
 
 const LENGTHS = [10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30];
 const DUTY = [
@@ -450,6 +462,68 @@ class Vrc6 {
   }
 }
 
+// The MMC5's pulses (port 5: $5000-$5015 as $00-$15, chips/mmc5.js).
+class Mmc5 {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.pulse = [0, 1].map((n) => ({ n, ctl: 0, period: 0, length: 0, seq: 0, timer: 2, env: envelope() }));
+    this.enable = 0;
+    this.frameClock = 0;
+  }
+
+  write(addr, data) {
+    if (addr === 0x15) {
+      this.enable = data & 3;
+      for (const p of this.pulse) if (!(this.enable & (1 << p.n))) p.length = 0;
+      return;
+    }
+    if (addr >= 0x08) return; // the PCM's ($10, $11): left out
+    const p = this.pulse[addr >> 2];
+    switch (addr & 3) {
+      case 0: p.ctl = data; break;
+      case 2: p.period = (p.period & 0x700) | data; break;
+      case 3:
+        p.period = (p.period & 0xff) | ((data & 7) << 8);
+        if (this.enable & (1 << p.n)) p.length = LENGTHS[data >> 3];
+        p.seq = 0;
+        p.env.start = true;
+        break;
+      default: break; // $01 / $05: no sweep
+    }
+  }
+
+  // Each pulse's level, 0-15, averaged over `clocks`, into out[k], out[k + 1].
+  run(clocks, out, k) {
+    for (this.frameClock += clocks; this.frameClock >= MMC5_FRAME; this.frameClock -= MMC5_FRAME)
+      for (const p of this.pulse) {
+        clockEnvelope(p.env, p.ctl);
+        if (p.length && !(p.ctl & 0x20)) p.length--;
+      }
+    for (const p of this.pulse) {
+      const v = p.length ? envVolume(p.env, p.ctl) : 0;
+      const duty = DUTY[p.ctl >> 6];
+      const step = 2 * (p.period + 1);
+      let acc = 0, timer = p.timer, seq = p.seq;
+      for (let rem = clocks; rem > 0; ) {
+        const m = Math.min(rem, timer);
+        acc += duty[seq] * m;
+        rem -= m;
+        timer -= m;
+        if (timer <= 0) {
+          seq = (seq - 1) & 7;
+          timer = step;
+        }
+      }
+      p.timer = timer;
+      p.seq = seq;
+      out[k + p.n] = (acc / clocks) * v;
+    }
+  }
+}
+
 // The Disk System's sound (port 4: VGM 0xB4's numbering, chips/fds.js).
 // Its two envelopes — the volume's ($4080) and the modulation depth's
 // ($4084) — step their gain by 1 toward 32 or 0 every 8 × (speed + 1) ×
@@ -603,10 +677,11 @@ export class FcSynth {
 
   constructor(outputSR) {
     this._outputSR = outputSR;
-    this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK), fdsPitch(CLOCK));
+    this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK), fdsPitch(CLOCK), mmc5Pitch(CLOCK));
     this._apu = new Apu();
     this._vrc6 = new Vrc6();
     this._fds = new Fds();
+    this._mmc5 = new Mmc5();
     this._fdsY = 0; // the FDS's low-pass
     this._lv = new Float32Array(CHANNELS);
     this._x = new Float32Array(CHANNELS + 1);
@@ -635,17 +710,19 @@ export class FcSynth {
     this._apu.reset();
     this._vrc6.reset();
     this._fds.reset();
+    this._mmc5.reset();
     this._fdsY = 0;
     this._resetResampleState();
   }
 
   // The APU's registers are port 0, $4000 + addr; the memory port 1; the
-  // VRC6's port 3; the FDS's port 4.
+  // VRC6's port 3; the FDS's port 4; the MMC5's port 5.
   writeYM(port, addr, data) {
     if (port === 0) this._apu.write(addr & 0xff, data & 0xff);
     else if (port === RAM_PORT) this._apu.writeRam(addr & 0xff, data & 0xff);
     else if (port === VRC6_PORT) this._vrc6.write(addr & 0xff, data & 0xff);
     else if (port === FDS_PORT) this._fds.write(addr & 0xff, data & 0xff);
+    else if (port === MMC5_PORT) this._mmc5.write(addr & 0xff, data & 0xff);
   }
 
   // The Mega Drive's PSG, DAC and low-pass have no counterpart here.
@@ -676,21 +753,24 @@ export class FcSynth {
       this._vrc6.run(clocks, lv, 5);
       this._fdsY += FDS_LPF * (this._fds.run(clocks) - this._fdsY);
       lv[8] = this._fdsY;
-    } else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac, 0, 0, 0, this._fdsY]); // idle: the triangle's held step, the DAC
+      this._mmc5.run(clocks, lv, 9);
+    } else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac, 0, 0, 0, this._fdsY, 0, 0]); // idle: the triangle's held step, the DAC
     const x = this._x;
     x[1] = pulseOut(lv[0]);
     x[2] = pulseOut(lv[1]);
     x[3] = tndOut(lv[2], 0, 0);
     x[4] = tndOut(0, lv[3], 0);
     x[5] = tndOut(0, 0, lv[4]);
-    for (let c = 5; c < 8; c++) x[c + 1] = -lv[c] * VRC6_STEP; // the VRC6's DAC, inverted
+    for (let c = 5; c < 8; c++) x[c + 1] = -lv[c] * PULSE_STEP; // the VRC6's DAC, inverted
     x[9] = lv[8] * FDS_STEP;
-    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]) + x[6] + x[7] + x[8] + x[9];
+    for (let c = 9; c < 11; c++) x[c + 1] = -lv[c] * PULSE_STEP; // the MMC5's, inverted
+    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]);
+    for (let c = 6; c <= CHANNELS; c++) x[0] += x[c];
     return x;
   }
 
   // `getDacByte` is the contract's and unused; `scope` (SCOPE_LANES arrays)
-  // gets the channels at lanes 6-14, the others silence.
+  // gets the channels at lanes 6-16, the others silence.
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {
     if (scope) for (let c = 0; c < PSG_LANE; c++) scope[c]?.fill(0, 0, count);
     for (let i = 0; i < count; i++) {

@@ -257,6 +257,9 @@ in that order, any number in one score (as an NSF), each optional.
   2026-10-29; import-tracker.js (the import session's, uncommitted then)
   still writes the old names — theirs to move.
 - **MMC5**: the two pulses only; its PCM ($5011, one game) left out.
+  **Built 2026-10-29** (chips/mmc5.js on chips/queued-tone.js — the
+  VRC6's encoder moved there too; synth-fc.js Mmc5; port 5; tone lanes
+  15-16, scope 15-16). Open: not heard in Live.
 - **N163**: the chip's time-multiplex as is (the 7-8-channel whine heard,
   not averaged away); wave RAM a region per channel, 32 steps while 5 or
   fewer channels fit, 16 for all at 6+ (W_TARGET); 4-bit samples.

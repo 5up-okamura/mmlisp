@@ -20,6 +20,7 @@
 // so a score's VGM leaves its channels out and says so (export-vgm.js); the
 // preview and the WAV play them (synth-fc.js).
 import { words } from "./parts.js";
+import { queuedToneEncoder } from "./queued-tone.js";
 
 const CLOCK = 1789773; // the Famicom's CPU clock, the chip's
 const PORT = 3; // a cartridge's, as the MSX's SCC (2 is the worklet's PSG)
@@ -63,93 +64,24 @@ export const vrc6Saw = {
   toneLane: () => 14,
 };
 
-// The VRC6 as the IR player's lanes (chips/rp2a03.js's pattern): a pulse's
-// $x000 holds its volume and its duty, which the player sends out of time
-// order, so a write with a time is queued and flush(horizon) applies them in
-// time order; a silence is written at once (a level 0 is silent at any
-// duty, a rate 0 holds the saw at 0), its state queued.
-function vrc6Encoder() {
-  let vol, duty, hi, last, queue;
-  const reset = () => {
-    vol = [0, 0, 0];
-    duty = [7, 7]; // 50 %
-    hi = [-1, -1, -1]; // the period's top bits as written; -1 none yet
-    last = new Map();
-    queue = [];
-  };
-  reset();
-  const ctlByte = (ch, v) => (ch < 2 ? (duty[ch] << 4) | v : v);
-  const ctl = (ch) => {
-    const data = ctlByte(ch, vol[ch]);
-    if (last.get(ch) === data) return [];
-    last.set(ch, data);
-    return [[PORT, BASE[ch], data]];
-  };
-  const apply = (op) => {
-    const { ch } = op;
-    switch (op.kind) {
-      case "vol":
-        vol[ch] = op.v;
-        if (op.silent) {
-          last.set(ch, ctlByte(ch, 0));
-          return [];
-        }
-        return ctl(ch);
-      case "duty":
-        duty[ch] = op.v;
-        return ctl(ch);
-      case "tone": {
-        const out = [[PORT, BASE[ch] + 1, op.v & 0xff]];
-        if (hi[ch] !== op.v >> 8) out.push([PORT, BASE[ch] + 2, 0x80 | (hi[ch] = op.v >> 8)]);
-        return out;
-      }
-    }
-    return [];
-  };
-  const take = (op, when) => {
-    if (when === undefined || when === null) {
-      last.delete(op.ch);
-      return apply(op);
-    }
-    queue.push({ ...op, t: when });
-    return [];
-  };
-  // A level: the player's attenuation on the part's ladder (0 loud), upside
-  // down — the pulses' 15 steps, the saw's 63.
-  const att = (ch, a, when) => {
-    const top = ch < 2 ? 15 : 63;
-    const v = top - Math.max(0, Math.min(top, a | 0));
-    if (v || when === undefined || when === null) return take({ kind: "vol", ch, v }, when);
-    if (queue.some((op) => op.ch === ch && op.t >= when - 1e-9)) return take({ kind: "vol", ch, v: 0 }, when);
-    queue.push({ kind: "vol", ch, v: 0, silent: true, t: when });
-    return [[PORT, BASE[ch], ctlByte(ch, 0)]];
-  };
-  // A pulse is the clock / 16 / (period + 1), the saw / 14.
-  const period = (div) => (hz) => Math.max(0, Math.min(PERIOD_MAX, Math.round(CLOCK / (div * hz)) - 1));
-  const view = (ch) => ({
-    period: period(ch < 2 ? 16 : 14),
-    att: (_l, a, when) => att(ch, a, when),
-    tone: (_l, p, when) => take({ kind: "tone", ch, v: p }, when),
-    duty: ch < 2 ? (_l, d, when) => take({ kind: "duty", ch, v: vrc6DutyCode(d) }, when) : undefined,
-  });
-  return {
-    lanes: [view(0), view(1), view(2)],
-    flush(horizon) {
-      const due = queue.filter((op) => op.t <= horizon + 1e-9).sort((a, b) => a.t - b.t);
-      if (!due.length) return [];
-      queue = queue.filter((op) => op.t > horizon + 1e-9);
-      return due.flatMap((op) => apply(op).map((w) => [...w, op.t]));
-    },
-    drop() {
-      queue = [];
-      for (let ch = 0; ch < 3; ch++) {
-        vol[ch] = 0;
-        last.set(ch, ctlByte(ch, 0));
-      }
-    },
-    reset,
-  };
-}
+// The VRC6 as the IR player's lanes (chips/queued-tone.js): a pulse's
+// $x000 holds its volume and its duty; the saw's its rate. A pulse is the
+// clock / 16 / (period + 1), the saw / 14.
+const period = (div) => (hz) => Math.max(0, Math.min(PERIOD_MAX, Math.round(CLOCK / (div * hz)) - 1));
+const vrc6Encoder = () => queuedToneEncoder({
+  port: PORT,
+  channels: 3,
+  pulses: 2,
+  startDuty: 7, // 50 %
+  top: (ch) => (ch < 2 ? 15 : 63), // the pulses' 15 steps, the saw's 63
+  ctl: (ch) => BASE[ch],
+  ctlByte: (ch, duty, v) => (ch < 2 ? (duty << 4) | v : v),
+  lo: (ch) => BASE[ch] + 1,
+  hi: (ch) => BASE[ch] + 2,
+  hiByte: (bits) => 0x80 | bits, // enabled: a channel is keyed by its level
+  period: (ch) => period(ch < 2 ? 16 : 14),
+  duty: vrc6DutyCode,
+});
 
 export const vrc6 = {
   chip: "vrc6",
