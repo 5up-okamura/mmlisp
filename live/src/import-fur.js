@@ -74,7 +74,7 @@ const FUR_SYSTEMS = {
   0x47: () => named("SID", k("psg", 3, "CH")),
   0x8b: () => named("MMC5", [...k("psg", 2, "Pulse"), { kind: "pcm", name: "PCM" }]),
   0x88: () => named("VRC6", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Saw", volMax: 63 }], "vrc6"),
-  0x8a: () => [{ kind: "wave", name: "FDS" }],
+  0x8a: () => [{ kind: "wave", name: "FDS", chip: "fds", volMax: 32 }],
   0xa1: () => named("SCC", k("wave", 5, "CH"), "scc"),
   0xb4: () => named("SCC+", k("wave", 5, "CH"), "scc"),
   0x8c: () => named("N163", k("wave", 8, "CH")),
@@ -431,6 +431,11 @@ export async function parseFur(bytes) {
     // The AY's envelope: its shape (ex2), the auto-envelope's ratio to the
     // tone (ex3 : alg) and its period (ex5).
     const ex2 = none(), ex3 = none(), alg = none(), ex5 = none(), pitch = none();
+    // The FDS's: ex1 its modulation depth, ex2 its speed (fds.cpp).
+    const ex1 = none();
+    // The FDS's modulation (FD): its speed, depth, a table of 32 register
+    // steps (0-7: 0 +1 +2 +4 reset -4 -2 -1), or the first wavetable's.
+    let fds = null;
     // The sample map (SM, and NE's DPCM rate and DAC start per note):
     // Furnace's notes from C-5 (0), C-0 at 60; files before 246 store
     // C-0 up.
@@ -478,6 +483,9 @@ export async function parseFur(bytes) {
             if (version < 152) e.freq = k;
           }
         }
+      } else if (code === "FD") {
+        const speed = i32(), depth = i32(), firstWave = !!c();
+        fds = { speed, depth, firstWave, table: Array.from({ length: 32 }, () => c() & 7) };
       } else if (code === "NE") {
         if (c()) {
           sampleMap.noteMap ??= [];
@@ -513,6 +521,7 @@ export async function parseFur(bytes) {
           // The pitch macro: 1/128 semitones (linear pitch), added up a step
           // at a time where its mode is relative; its delay and speed in ticks.
           else if (mc === 4) Object.assign(pitch, macro, { relative: !!(mode & 1), delay, speed });
+          else if (mc === 5) Object.assign(ex1, macro);
           else if (mc === 6) Object.assign(ex2, macro);
           else if (mc === 7) Object.assign(ex3, macro);
           else if (mc === 8) Object.assign(alg, macro);
@@ -524,7 +533,7 @@ export async function parseFur(bytes) {
     if (fm && (type === 1 || type === 33)) return { name, kind: "fm", fm };
     ayMode(type, wave);
     // (An OPLL instrument keeps its voice beside its macros.)
-    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty, ex2, ex3, alg, ex5, pitch,
+    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty, ex1, ex2, ex3, alg, ex5, pitch, fds,
       ...(fm && type === 13 ? { fm } : {}) };
   }
 

@@ -147,9 +147,12 @@ samples) — language.md §19. Next:
    then ppmck's MML if a composer's files call for it. Expansions are
    decided by voice class, not one by one: the 5B is the SSG profile, the
    VRC7 the OPLL's, the FDS the wavetable class. The VRC6 is on `fc`
-   (`sqr3`, `sqr4`, `saw1`; WAV only, as VGM has no VRC6), and Furnace's
-   VRC6 modules import onto it (a pulse's PCM mode left out). The FDS is
-   on `fc` (`wave1`), and a VGM's comes in on it. Next: NSF in (a 6502
+   (`vrc6-sqr1`, `vrc6-sqr2`, `vrc6-saw`; WAV only, as VGM has no VRC6),
+   and Furnace's VRC6 modules import onto it (a pulse's PCM mode left
+   out). The FDS is on `fc` (`fds-wave`), and a VGM's and a Furnace
+   module's come in on it. The MMC5's pulses, the 5B, the VRC7 and the
+   N163 are on `fc` too (language.md §19), no import reading them yet.
+   Next: NSF in (a 6502
    run for its register writes, import-only — the one source of a VRC6
    song's writes).
 

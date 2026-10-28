@@ -79,7 +79,7 @@ const CHANNEL_KINDS = {
 // module offers the targets whose chips play its notes, the one playing the
 // most first (a tie: this order), and md always.
 const TARGET_CHIPS = {
-  pce: ["pce"], fc: ["nes", "vrc6"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
+  pce: ["pce"], fc: ["nes", "vrc6", "fds"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
   pc88: ["opn", "ssg", "opna-rhythm"], md: ["ym2612", "sn76489"],
 };
 // A target's channels by what they take (import-song.js destsFor), its
@@ -120,7 +120,7 @@ const PCE_FX = { 0x10: "wave", 0x11: "noise", 0x12: "LFO mode", 0x13: "LFO speed
 // play by (nes.cpp noiseTable, properNoiseLayout off).
 const FC_DESTS = ["sqr1", "sqr2", "tri", "noise"];
 // The VRC6's on fc: its pulses and its saw, in Furnace's channel order.
-const VRC6_DESTS = ["sqr3", "sqr4", "saw1"];
+const VRC6_DESTS = ["vrc6-sqr1", "vrc6-sqr2", "vrc6-saw"];
 const FC_NOISE_UP = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4], FC_NOISE_TOP = [3, 2, 1, 0, 11, 10, 9, 8, 7, 6, 5, 4];
 const FC_NOISE_TABLE = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,
   ...FC_NOISE_UP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP]; // then 15
@@ -295,7 +295,7 @@ export function analyzeTracker(t) {
 
 /** The channels a `target` score offers a module's rows. */
 export function trackerDests(target = "md") {
-  if (target === "fc") return [...FC_DESTS, ...VRC6_DESTS, "pcm1"];
+  if (target === "fc") return [...FC_DESTS, ...VRC6_DESTS, "fds-wave", "pcm1"];
   if (target === "pce") return [...PCE_WAVES, ...Object.values(PCE_NOISE)];
   if (target === "md") return [...FM_DESTS, ...PSG_DESTS, "noise"];
   const d = targetDests(target);
@@ -319,13 +319,13 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
     return { dest, phrases: true, bpm: null, target };
   }
   // An NES module on fc: the 2A03's channels in their places, the DPCM on
-  // pcm1, the VRC6's on sqr3, sqr4 and saw1; another expansion's are not
-  // the target's.
+  // pcm1, the VRC6's on vrc6-sqr1, vrc6-sqr2 and vrc6-saw, the FDS's on
+  // fds-wave; another expansion's are not the target's.
   if (target === "fc") {
     const dest = {};
     for (const ch of a.channels) {
       const i = a.channels.filter((c) => c.chip === ch.chip && c.index < ch.index).length;
-      dest[ch.index] = !(ch.notes > 0) ? "drop" : ch.chip === "vrc6" ? VRC6_DESTS[i] ?? "drop"
+      dest[ch.index] = !(ch.notes > 0) ? "drop" : ch.chip === "vrc6" ? VRC6_DESTS[i] ?? "drop" : ch.chip === "fds" ? "fds-wave"
         : ch.chip !== "nes" ? "drop" : ch.kind === "pcm" ? "pcm1" : FC_DESTS[i] ?? "drop";
     }
     return { dest, phrases: true, bpm: null, target };
@@ -520,11 +520,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // Where the chip's level is the column and the step put together in
     // whole steps (Furnace's VOL_SCALE_*: the 2A03's, the SCC's, the
     // VRC6's, an older song's OPLL), a def for each column level it plays at.
-    const linVm = vm === "lin" || vm === "vrc6" || vm === "lin63";
+    const linVm = vm === "lin" || vm === "vrc6" || vm === "lin63" || vm === "fds";
     const perCol = (fc && fc !== "tri") || linVm || (vm === "log" && t.newVolumeScaling === false);
     if (!perCol || !t.instruments[i]?.vol?.values.length) col = null;
     const wm = t.instruments[i]?.wave;
-    const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map(waveDef) : null;
+    const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map((x) => waveDef(x, vm === "fds" ? 64 : 32)) : null;
     if (waveNames?.includes(null)) waveMacroSteps++;
     const waves = waveNames?.every((n) => n) ? waveNames : null;
     const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${note == null ? "" : `:n${note}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}${vm ? `:${vm}` : ""}`;
@@ -554,7 +554,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         // VOL_SCALE_LOG, the two added less the top. As dB on the chip's
         // own scale (linear, or the OPLL's 3 dB steps), a fader under the
         // column's :vel.
-        const top = vm === "lin63" ? 63 : 15;
+        const top = vm === "lin63" ? 63 : vm === "fds" ? 32 : 15;
         const linear = linVm || (fc ? t.newVolumeScaling !== false : true);
         const out = (x) => (linear ? Math.floor((col * Math.min(top, x)) / top) : Math.max(0, Math.min(top, col + Math.min(top, x) - top)));
         const db = (v) => (vm === "log" ? 3 * (v - top) : 20 * Math.log10(v / top));
@@ -602,23 +602,40 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   };
   const standIns = new Set();
   // A module wavetable as a def-wave: its steps 0..height onto −128..127,
-  // 32 of them (a wider or narrower table read at 32 points).
+  // 32 of them (a wider or narrower table read at 32 points) — or 64 where
+  // the chip's memory is (the FDS's), a 64-step table whole.
   let waveResampled = 0;
-  const waveDef = (i) => {
+  const waveDef = (i, len = 32) => {
     const w = t.waves?.[i];
     if (!w || !w.values.length) return null;
-    const key = `wave:${i}`;
+    const n = len === 64 && w.values.length >= 64 ? 64 : 32;
+    const key = `wave:${i}${n === 64 ? ":64" : ""}`;
     return defs.of(key, () => {
-      if (w.values.length !== 32) waveResampled++;
+      if (w.values.length !== n && !(n === 32 && len === 64)) waveResampled++;
       const top = Math.max(1, w.height ?? 31);
-      const steps = Array.from({ length: 32 }, (_, k) => {
-        const v = w.values[Math.floor((k * w.values.length) / 32)] ?? 0;
+      const steps = Array.from({ length: n }, (_, k) => {
+        const v = w.values[Math.floor((k * w.values.length) / n)] ?? 0;
         return Math.max(-128, Math.min(127, Math.round((Math.max(0, Math.min(top, v)) * 255) / top) - 128));
       });
       const name = uniq(`wave-${slug(w.name) || i}`);
       return { name, text: `(def-wave ${name} :wave [${steps.join(" ")}])` };
     }).name;
   };
+  // The FDS's modulation table as a def of the language's steps (register
+  // codes 0-7: 0 +1 +2 +4 reset -4 -2 -1), and one made of a wavetable as
+  // Furnace's 15xx makes it (each of 32 points scaled to 0-7).
+  const MOD_STEPS = [0, 1, 2, 4, "reset", -4, -2, -1];
+  const modTableDef = (codes) => defs.of(`modtab:${codes.join(",")}`, () => {
+    const name = uniq("modtab");
+    return { name, text: `(def ${name} [${codes.map((c) => MOD_STEPS[c & 7]).join(" ")}])` };
+  }).name;
+  const modTableOfWave = (i) => {
+    const w = t.waves?.[i];
+    const top = w?.height ?? 0;
+    return Array.from({ length: 32 }, (_, k) => (!w?.values.length || top < 1 ? 0
+      : Math.max(0, Math.min(7, Math.trunc(((w.values[Math.floor((k * Math.min(32, w.values.length)) / 32)] ?? 0) * 7) / top)))));
+  };
+  let fdsMacroMoves = 0;
   let waveMacroSteps = 0, dutyMoves = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0, dutyUnderNote = 0, vrc6PcmNotes = 0;
 
   // Pitch effects → one `:pitch` macro a note. A tracker tick is a frame at
@@ -920,10 +937,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const sccCh = own && chn.chip === "scc" && part?.kind === "wave";
     const opllCh = own && chn.chip === "opll" && part?.name === "opll-fm";
     const rhythmCh = /^rhythm/.test(ch.dest);
-    const waveCh = pceVol || sccCh; // a channel that plays the module's wavetables
+    // The FDS on fc's fds-wave: its wavetables 64 steps, its gain 0-32 linear,
+    // its modulation unit as the song's :lfo- words.
+    const fdsCh = onFc && chn.chip === "fds" && ch.dest === "fds-wave";
+    const waveCh = pceVol || sccCh || fdsCh; // a channel that plays the module's wavetables
     // The VRC6 on fc: a pulse (its eight duties) or the saw, each column
     // linear (the saw's to 63) and its volume macro a ratio of it.
-    const vrc6Ch = onFc && chn.chip === "vrc6" && VRC6_DESTS.includes(ch.dest) ? (ch.dest === "saw1" ? "saw" : "pulse") : null;
+    const vrc6Ch = onFc && chn.chip === "vrc6" && VRC6_DESTS.includes(ch.dest) ? (ch.dest === "vrc6-saw" ? "saw" : "pulse") : null;
     // A column in log steps of this many dB (the PC Engine's 1.5, the SSG's
     // and the OPLL's 3, the YM2608 rhythm's 0.75); the SCC's is linear.
     const logStep = pceVol ? 1.5 : ssgCh || opllCh || (rhythmCh && chn.chip === "opll-rhythm") ? 3
@@ -931,8 +951,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // (A rhythm sound's: the OPLL's 3 dB steps, the YM2608's 0.75.)
     const vm = ssgCh ? "ssg" : opllCh || (rhythmCh && chn.chip === "opll-rhythm") ? "log"
       : rhythmCh && chn.chip === "opna-rhythm" ? "log31" : sccCh ? "lin"
-      : vrc6Ch === "pulse" ? "vrc6" : vrc6Ch === "saw" ? "lin63" : null;
-    const linCh = sccCh || !!vrc6Ch; // a linear column (the SCC's, the VRC6's)
+      : vrc6Ch === "pulse" ? "vrc6" : vrc6Ch === "saw" ? "lin63" : fdsCh ? "fds" : null;
+    const linCh = sccCh || !!vrc6Ch || fdsCh; // a linear column (the SCC's, the VRC6's, the FDS's)
     const fmPan = onFm && !!part?.words("PAN");
     const toNoise = onPce && ch.dest.startsWith("noise");
     // A 2A03 channel on fc: which of its kinds (env's `fc`).
@@ -976,6 +996,14 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // and the wave macro) and the noise period (21xx, the duty macro: the
     // register 31 less it). `:mode` is said where the channel ever leaves tone.
     let psgMode = 1, noiseFreq = null, vrc6Pcm = false;
+    // The FDS's modulation unit (fds.cpp): its table (32 register steps),
+    // speed and depth — an instrument's where the instrument changes, ex1 /
+    // ex2 and 11xx-13xx, 15xx a table made of a wavetable — and 16xy's
+    // speed as a ratio of the note's frequency. Said as the song's :lfo-
+    // words where the channel ever modulates.
+    let modTable = null, modFreq = 0, modDepth = 0, autoModNum = 0, autoModDen = 0, lastFdsIns = -1;
+    const fdsModSaid = fdsCh && ([0x11, 0x12, 0x13, 0x15, 0x16].some(uses)
+      || t.instruments.some((it) => it?.fds && (it.fds.depth > 0 || it.fds.firstWave || it.fds.table.some(Boolean)) || it?.ex1?.values.some(Boolean)));
     // The hardware envelope (Furnace's AY): its shape (22xy, the ex2
     // macro), its period (23xx / 24xx, ex5) and the auto-envelope's ratio
     // to the tone's (29xy, ex3 : alg), which sets the period from the note.
@@ -1059,6 +1087,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     let lastMidi = null;
     const flat = (st) => [...st.voice, ...(st.arp ? [st.arp] : []), ...(st.pan ? [st.pan] : []), ...(st.duty ? [st.duty] : []),
       ...(st.mode ? [st.mode] : []), ...(st.rate ? [st.rate] : []), ...(st.tune ? [st.tune] : []),
+      ...[st.lfoWave, st.lfoFreq, st.lfoPmd].filter(Boolean),
       ...(st.env && st.env !== ":env none" ? [st.env, st.envRate, st.envSemi].filter(Boolean) : [])];
     // The envelope a note is on: its shape, and its period — the
     // auto-envelope's the note's own (`:env-rate note`, num/den of its
@@ -1202,6 +1231,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             const p = ((val & 15) - (val >> 4)) / 15;
             pan = p === 0 ? "center" : String(+p.toFixed(2));
           } else if (code === 0x10 && waveCh && val >= 0) wave = val;
+          else if (code === 0x11 && fdsCh && val >= 0) modDepth = val & 63;
+          else if (code === 0x12 && fdsCh && val >= 0) modFreq = ((val & 15) << 8) | (modFreq & 0xff);
+          else if (code === 0x13 && fdsCh && val >= 0) modFreq = (modFreq & 0xf00) | val;
+          else if (code === 0x15 && fdsCh && val >= 0) modTable = modTableOfWave(val);
+          else if (code === 0x16 && fdsCh && val >= 0) { autoModNum = val >> 4; autoModDen = val & 15; }
           else if (code === 0x10 && opmNoiseCh && val >= 0) opmNoise = val;
           else if (code === 0x20 && ssgCh && val >= 0) psgMode = (val + 1) & 7;
           else if (code === 0x21 && ssgCh && val >= 0) noiseFreq = 31 - (val & 31);
@@ -1246,6 +1280,18 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         // The instrument's macros start over at each of its notes: its wave
         // macro sets the wave (its first step; one that moves is the note's
         // :wave macro, env), its duty macro the noise switch (its first step).
+        // An FDS instrument's modulation, where the instrument changes: its
+        // own, or (compatible) the first wavetable's as the table.
+        if (fdsCh && typeof row.note === "number" && t.instruments[ins]?.kind === "std") {
+          const it = t.instruments[ins];
+          if (ins !== lastFdsIns && it.fds) {
+            if (it.fds.firstWave) { if (wave < 0) modTable = modTableOfWave(0); }
+            else { modTable = it.fds.table; modFreq = it.fds.speed & 4095; modDepth = it.fds.depth & 63; }
+          }
+          lastFdsIns = ins;
+          if (it.ex1?.values.length) { modDepth = it.ex1.values[0] & 63; if (it.ex1.values.some((x) => x !== it.ex1.values[0])) fdsMacroMoves++; }
+          if (it.ex2?.values.length) { modFreq = it.ex2.values[0] & 4095; if (it.ex2.values.some((x) => x !== it.ex2.values[0])) fdsMacroMoves++; }
+        }
         if (waveCh && typeof row.note === "number" && t.instruments[ins]) {
           const { wave: wm, duty } = t.instruments[ins];
           if (wm?.values.length) wave = wm.values[0];
@@ -1255,8 +1301,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           }
         }
         if (opmNoiseCh && typeof row.note === "number" && t.instruments[ins]?.duty?.values.length) opmNoise = t.instruments[ins].duty.values[0];
-        // The SCC plays its first wavetable until one is named (Furnace).
-        if (sccCh && typeof row.note === "number" && wave < 0 && t.waves?.length) wave = 0;
+        // The SCC and the FDS play the first wavetable until one is named (Furnace).
+        if ((sccCh || fdsCh) && typeof row.note === "number" && wave < 0 && t.waves?.length) wave = 0;
         // The SSG's macros start over at each note: the mixer and the noise
         // period are their first steps.
         if (ssgCh && typeof row.note === "number" && t.instruments[ins]?.kind === "std") {
@@ -1345,7 +1391,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           // as the tone; nothing on, silent).
           const ssgTone = psgMode & 1 || psgMode & 4, ssgNoise = psgMode & 2;
           if (vol === 0 && !triOn || (ssgCh && !ssgTone && !ssgNoise)) { sounding = null; slideRow(at); continue; }
-          const waveName = waveCh && !toNoise && wave >= 0 ? waveDef(wave) : null;
+          const waveName = waveCh && !toNoise && wave >= 0 ? waveDef(wave, fdsCh ? 64 : 32) : null;
+          // 16xy: the modulation's speed the note's frequency register
+          // (1.79 MHz × n / 2^22) times x / y.
+          if (fdsCh && autoModNum > 0 && autoModDen > 0) {
+            const hz = 440 * 2 ** ((row.note + C0_MIDI(chn) - 69 + detune / 100) / 12);
+            modFreq = Math.min(4095, Math.floor((Math.round((hz * 2 ** 22) / 1789773) * autoModNum) / autoModDen));
+          }
           const st = {
             voice: waveName ? [waveName, ...voiceTokens(null, true, row.note)]
               : voiceTokens(toNoise && !t.properNoiseLayout ? ((row.note % 12) + 12) % 12
@@ -1358,6 +1410,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
               : opmNoiseCh && opmNoise > 0 ? `:noise-rate ${Math.max(1, Math.min(31, 33 - opmNoise))}` : cur.rate,
             ...ssgEnvTokens(),
             tune: tuneSaid ? `:pitch ${detune}` : null,
+            lfoWave: fdsModSaid && modTable ? `:lfo-wave ${modTableDef(modTable)}` : null,
+            lfoFreq: fdsModSaid ? `:lfo-freq ${modFreq}` : null,
+            lfoPmd: fdsModSaid ? `:lfo-pmd ${modDepth}` : null,
           };
           const pre = [];
           const voiceChanged = st.voice.join(" ") !== cur.voice.join(" ");
@@ -1369,6 +1424,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (st.mode && st.mode !== cur.mode) pre.push(st.mode);
           if (st.rate && st.rate !== cur.rate) pre.push(st.rate);
           if (st.tune && st.tune !== cur.tune) pre.push(st.tune);
+          for (const k of ["lfoWave", "lfoFreq", "lfoPmd"]) if (st[k] && st[k] !== cur[k]) pre.push(st[k]);
           for (const k of ["env", "envRate", "envSemi"]) if (st[k] && st[k] !== cur[k] && (k === "env" || st.env !== ":env none")) pre.push(st[k]);
           cur = st;
           // A noise note is its rate: c2 the slowest (chips/huc6280.js,
@@ -1478,7 +1534,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const PCM = pcmWord.toUpperCase();
   if (dpcm.missing) warnings.push(`a ${PCM} note with no sample (or one of a depth not read) is left out (${dpcm.missing}×)`);
   if (dpcm.loopPart) warnings.push(`a ${PCM} sample looping a part of itself loops whole (${dpcm.loopPart}×)`);
-  if (onFc && a.channels.some((c) => c.notes > 0 && !["nes", "vrc6"].includes(t.channels[c.index].chip)))
+  if (onFc && a.channels.some((c) => c.notes > 0 && !["nes", "vrc6", "fds"].includes(t.channels[c.index].chip)))
     warnings.push("an expansion chip's channels have no fc part — left out");
   if (waveMacroSteps) warnings.push(`a wave macro naming a wavetable the module lacks is left out (${waveMacroSteps}×)`);
   if (dutyUnderNote) warnings.push(`a 12xx under a sounding note takes effect at the next note (${dutyUnderNote}×)`);
@@ -1487,6 +1543,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (noiseDropped) warnings.push(`noise notes on a channel imported as its wave are dropped (${noiseDropped}×)`);
   if (waveDropped) warnings.push(`wave notes on a channel imported as noise are dropped (${waveDropped}×)`);
   if (patchMoves.size) warnings.push(`an OPLL patch macro plays the patch it settles on (${patchMoves.size}×)`);
+  if (fdsMacroMoves) warnings.push(`an FDS modulation depth or speed macro keeps its first step (${fdsMacroMoves}×)`);
   if (vrc6PcmNotes) warnings.push(`a VRC6 pulse's PCM notes are left out (${vrc6PcmNotes}×)`);
   if (noisePitch) warnings.push(`a slide or vibrato on a noise note is dropped: its pitch is its rate (${noisePitch}×)`);
 

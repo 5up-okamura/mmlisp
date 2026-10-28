@@ -33,7 +33,7 @@ const DMF_SYSTEMS = {
   0x05: { name: "PC Engine", channels: Array.from({ length: 6 }, (_, i) => ({ ...ch("wave", `CH${i + 1}`), chip: "pce", volMax: 31 })) },
   0x06: { name: "NES", channels: nes },
   0x46: { name: "NES + VRC7", channels: [...nes, ...Array.from({ length: 6 }, (_, i) => ch("opll", `VRC7 ${i + 1}`))] },
-  0x86: { name: "NES + FDS", channels: [...nes, ch("wave", "FDS")] },
+  0x86: { name: "NES + FDS", channels: [...nes, { ...ch("wave", "FDS", "fds"), volMax: 32 }] },
   0x07: { name: "C64 (8580)", channels: Array.from({ length: 3 }, (_, i) => ch("psg", `SID ${i + 1}`)) },
   0x47: { name: "C64 (6581)", channels: Array.from({ length: 3 }, (_, i) => ch("psg", `SID ${i + 1}`)) },
   0x08: { name: "Arcade (YM2151 + SegaPCM)", channels: [...Array.from({ length: 8 }, (_, i) => ch("opm", `FM${i + 1}`, "opm")),

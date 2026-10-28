@@ -1808,11 +1808,17 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   The LFO (`12xx` `13xx`) and DDA (`17xx`) are left out. `08xy` is the channel's pan between its left and right
   levels, the volume column the chip's 5-bit volume (1.5 dB a step).
 - An **NES** module offers `fc` (the default where the 2A03 and the VRC6
-  play the most notes) or `md`. The VRC6's channels go to `sqr3`, `sqr4`
-  and `saw1`: a pulse's duty is its duty macro and `12xx` (eight, `:duty
+  play the most notes) or `md`. The VRC6's channels go to `vrc6-sqr1`,
+  `vrc6-sqr2` and `vrc6-saw`: a pulse's duty is its duty macro and `12xx` (eight, `:duty
   1`–`8`), the columns and volume macros linear (the saw's to 63); a
   pulse's PCM mode (a sample instrument, `17xx`) is left out, as are the
-  other expansions' channels (VRC7, FDS, N163, MMC5). As `fc` the pulses go to `sqr1` / `sqr2`, the triangle to `tri`,
+  other expansions' channels (VRC7, N163, MMC5). The FDS goes to `fds-wave`:
+  its wavetables as 64-step def-waves (a 32-step one as it is), its gain
+  0–32 linear, and its modulation unit as the song's `:lfo-wave` (the
+  instrument's table, or `15xx`'s made of a wavetable), `:lfo-freq` (its
+  speed, `12xy` / `13xx`, `16xy` a ratio of each note's frequency) and
+  `:lfo-pmd` (its depth, `11xx`), set where the instrument changes; a
+  moving depth or speed macro keeps its first step (the log counts it). As `fc` the pulses go to `sqr1` / `sqr2`, the triangle to `tri`,
   the noise to `noise`, as Furnace plays them: a pulse's duty is its
   instrument's duty macro (a `(macro :duty …)`, starting over at each note)
   and `12xx`, from 12.5 % where nothing sets it (Furnace's), written as
