@@ -83,7 +83,7 @@ eighth), `N.` dotted, `N/M` a fraction of a whole note, `Nt` `Nf` `Nms`.
 | `:tempo` | 120 | BPM, song-wide, from any track; a curve sweeps it |
 | `:pan` | center | `left` `center` `right` (FM) |
 | `:snap` | none | pitch classes every note snaps down onto: `[0 2 4 5 7 9 11]`, a `$slot`, `none` (§5.3) |
-| `:shuffle` | none | 51–90 swing on eighths (§5.2) |
+| `:shuffle` | none | warps the sixteenth grid (`:shuffle-base`): `66` swings a pair 66:34, `[7 6 3 4]` a 4-step groove (§5.2) |
 | `:mode` | | `noise`: noise mode; `pcm`: `shot` / `loop` / `gate` |
 | `:alg :fb :tl1 :ar2 …` | voice | an FM register: value, curve, `none`, `$slot` (§5.1) |
 

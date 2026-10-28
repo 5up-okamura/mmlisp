@@ -1133,8 +1133,8 @@ function emitEvalNote(node, trackState, events, diagnostics, trackName, typedDef
   const lengthTicks = hasLen
     ? resolveLengthNode(items[2], trackState.defaultLength, trackState, ctx, env)
     : trackState.defaultLength;
-  // Swing goes by the nominal length, written or default (§5.2).
-  const ticks = resolveShuffleTicks(lengthTicks, trackState);
+  // The shuffle warps the written length (§5.2).
+  const ticks = resolveShuffleTicks(lengthTicks, trackState, diagnostics, nodeSrc(node), trackName);
   const { name, octave } = midiToNoteParts(midi);
   const savedOct = trackState.defaultOct;
   trackState.defaultOct = octave;
@@ -1474,9 +1474,10 @@ function emitEchoReplay(trackState, events, spec, back, src) {
   // substitutes the bare note name, inheriting the current length `l` and gate
   // `q`), not the source note's length/gate. The taps are spaced by that
   // length, which is also what an envelope's tap count divides by.
-  const len = trackState.defaultLength;
+  const nominal = trackState.defaultLength;
   const gate = trackState.defaultGate;
-  for (const vel of resolveDelayVels(spec, len, note.vel ?? 15) ?? []) {
+  for (const vel of resolveDelayVels(spec, nominal, note.vel ?? 15) ?? []) {
+    const len = resolveShuffleTicks(nominal, trackState); // a tap is a slot of the grid (§5.2)
     if (note.pcm) {
       pushPcmNote(trackState, events, {
         ...note.pcm, pitch: note.pitch, length: len, gateSpec: gate, vel, macros: null,
@@ -2779,13 +2780,27 @@ function parseMacroSpec(
   }
 }
 
-// A loop body that left the shuffle pairing flipped plays its next pass on
-// the other beats — unless it holds a label, which a second copy would repeat.
-function swingsOtherWay(trackState, parityIn, events, bodyIdx) {
-  return (
-    trackState.subBeatParity !== parityIn &&
-    !events.slice(bodyIdx).some((e) => e.cmd === "MARKER")
-  );
+// How many passes of a loop body it takes to come back to the same place in
+// the shuffle cycle (§5.2): 1 when the body spans whole cycles, else the passes
+// written to a turn — null when that is more than the cycle has steps (a body
+// ending off a step), or the body holds a label a copy would repeat. A body
+// that sets the shuffle (`shuffleIn` is not the one in force) plays every
+// pass as written, as it does a :len.
+function shufflePasses(trackState, phaseIn, shuffleIn, events, bodyIdx) {
+  const sh = trackState.shuffle;
+  if (!sh || sh !== shuffleIn) return 1;
+  const d = (((trackState.shufflePhase - phaseIn) % sh.cycle) + sh.cycle) % sh.cycle;
+  if (d === 0) return 1;
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const k = sh.cycle / gcd(d, sh.cycle);
+  if (k > sh.cuts.length - 1 || events.slice(bodyIdx).some((e) => e.cmd === "MARKER")) return null;
+  return k;
+}
+
+function shuffleLoopWarning(diagnostics, what, src, trackName) {
+  pushDiag(diagnostics, "warning", "W_SHUFFLE_LOOP",
+    `this ${what} ends elsewhere in the shuffle cycle than it starts, so its next pass falls on other steps, but it plays as written — write it in (x …), or make it span whole steps of the cycle`,
+    src, trackName);
 }
 
 function dropLoopBreaks(events, from, to, id) {
@@ -2793,19 +2808,49 @@ function dropLoopBreaks(events, from, to, id) {
     if (events[k].cmd === "LOOP_BREAK" && events[k].args?.id === id) events.splice(k, 1);
 }
 
-function resolveShuffleTicks(nominalTicks, trackState) {
-  if (
-    trackState.shuffleRatio === 0 ||
-    nominalTicks !== trackState.shuffleBase
-  ) {
-    return nominalTicks;
+// `:shuffle` (§5.2) warps the time of the :shuffle-base grid: step i of the
+// cycle (N × base from the origin) plays as its share of the cycle, linearly
+// within the step, so every onset and end lands on the warped grid whatever
+// the lengths. `nominalTicks` is an item's written length; what it plays is
+// the warped distance from where the track is to where the item ends. A note
+// the warp squeezes to nothing keeps one tick, taken back from the items after
+// it (a 0 would be a hold, §17).
+function resolveShuffleTicks(nominalTicks, trackState, diagnostics = null, src = null, trackName = null) {
+  const sh = trackState.shuffle;
+  if (!sh || !(nominalTicks > 0)) return nominalTicks;
+  const at = (p) => {
+    const i = Math.min(Math.floor(p / sh.base), sh.cuts.length - 2);
+    return sh.cuts[i] + Math.round(((p - i * sh.base) * (sh.cuts[i + 1] - sh.cuts[i])) / sh.base);
+  };
+  const p = trackState.shufflePhase;
+  const q = p + nominalTicks;
+  const wraps = Math.floor(q / sh.cycle);
+  const end = q - wraps * sh.cycle;
+  let ticks = wraps * sh.cycle + at(end) - at(p);
+  trackState.shufflePhase = end;
+  if (ticks <= 0) {
+    trackState.shuffleDebt += 1 - ticks;
+    ticks = 1;
+    if (diagnostics)
+      pushDiag(diagnostics, "warning", "W_SHUFFLE_SQUEEZED",
+        `the shuffle leaves this ${nominalTicks}-tick item no time; it plays one tick, taken from what follows`,
+        src, trackName);
+  } else if (trackState.shuffleDebt > 0) {
+    const back = Math.min(trackState.shuffleDebt, ticks - 1);
+    ticks -= back;
+    trackState.shuffleDebt -= back;
   }
-  const pair = 2 * trackState.shuffleBase;
-  const beat1 = Math.round((pair * trackState.shuffleRatio) / 100);
-  const beat2 = pair - beat1;
-  const ticks = trackState.subBeatParity === 0 ? beat1 : beat2;
-  trackState.subBeatParity ^= 1;
   return ticks;
+}
+
+// A cycle's steps → where each starts in the warped cycle.
+function makeShuffle(steps, base) {
+  const cycle = steps.length * base;
+  const total = steps.reduce((s, w) => s + w, 0);
+  const cuts = [0];
+  let acc = 0;
+  for (const w of steps) cuts.push(Math.round((cycle * (acc += w)) / total));
+  return { steps, base, cycle, cuts };
 }
 
 function isNoteAtom(val) {
@@ -4139,7 +4184,7 @@ function compileChannelBody(
           );
         } else {
           labelsHere.set(id, i);
-          (trackState.labelParity ??= new Map()).set(id, trackState.subBeatParity);
+          (trackState.labelPhase ??= new Map()).set(id, { phase: trackState.shufflePhase, shuffle: trackState.shuffle });
           events.push({
             tick: trackState.tick,
             cmd: "MARKER",
@@ -4234,38 +4279,53 @@ function compileChannelBody(
             }
             case ":shuffle":
             case ":shuffle-base": {
-              // Swing (§5.2): `none` or under 51 is straight. A change restarts
-              // the pair count, so the next swung note is a first beat.
+              // The grid warp (§5.2): `R` (1..99, 50 = straight) is a pair's
+              // first share; `[w1 … wN]` a cycle of N steps in those
+              // proportions; `none` (or 0) is straight. A change restarts the
+              // cycle here.
               if (val === ":shuffle") {
-                const n = rawVal === "none" ? 0 : readConstNumber(items[i], evalEnv, diagnostics, trackName, nodeSrc(node), typedDefs);
-                if (n === undefined) break;
-                const v = n === null ? null : Math.round(n);
-                if (v === null) {
-                  pushDiag(diagnostics, "error", "E_SHUFFLE_INVALID",
-                    `:shuffle takes 51..90 or none, not ${rawVal ?? "a list"}`,
-                    nodeSrc(node), trackName);
-                  break;
+                const bad = (what) => pushDiag(diagnostics, "error", "E_SHUFFLE_INVALID",
+                  `:shuffle takes 1..99, a list of step weights [w1 … wN] or none, not ${what}`,
+                  nodeSrc(node), trackName);
+                const vec = items[i]?.kind === "list" && items[i].bracket === "[]";
+                let steps;
+                if (rawVal === "none") steps = null;
+                else if (vec) {
+                  steps = [];
+                  for (const it of items[i].items.filter((n) => n.kind !== "comment")) {
+                    const w = evalScalarValue(it, evalEnv, makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs));
+                    if (w === null) { steps = undefined; break; }
+                    if (!(w > 0)) { bad(`a step of ${w}`); steps = undefined; break; }
+                    steps.push(w);
+                  }
+                  if (steps === undefined) break;
+                  if (!steps.length) { bad("[]"); break; }
+                } else {
+                  const n = readConstNumber(items[i], evalEnv, diagnostics, trackName, nodeSrc(node), typedDefs);
+                  if (n === undefined) break;
+                  if (n === null || n < 0 || n >= 100) { bad(rawVal ?? "that"); break; }
+                  steps = n === 0 ? null : [n, 100 - n];
                 }
-                // 1–50 and over 90 are outside the swing's range: they play
-                // straight / as 90, as before, but a typo should not pass.
-                if (v !== 0 && v < 51)
-                  pushDiag(diagnostics, "warning", "W_SHUFFLE_STRAIGHT",
-                    `:shuffle ${v} is under 51 and plays straight; swing is 51..90 (none or 0 = straight)`,
-                    nodeSrc(items[i]), trackName);
-                else if (v > 90)
-                  pushDiag(diagnostics, "warning", "W_SHUFFLE_CLAMPED",
-                    `:shuffle ${v} is over 90 and plays as 90`, nodeSrc(items[i]), trackName);
-                trackState.shuffleRatio = v < 51 ? 0 : Math.min(90, v);
+                trackState.shuffleSteps = steps && steps.some((w) => w !== steps[0]) ? steps : null;
               } else {
-                trackState.shuffleBase = resolveLengthNode(
+                const b = resolveLengthNode(
                   items[i],
                   trackState.shuffleBase,
                   trackState,
                   makeEvalCtx(diagnostics, trackName, nodeSrc(node), typedDefs),
                   evalEnv,
                 );
+                if (!(b > 0)) {
+                  pushDiag(diagnostics, "error", "E_SHUFFLE_INVALID",
+                    `:shuffle-base takes a length above 0, not ${rawVal ?? "that"}`, nodeSrc(node), trackName);
+                  break;
+                }
+                trackState.shuffleBase = b;
               }
-              trackState.subBeatParity = 0;
+              trackState.shuffle = trackState.shuffleSteps && trackState.shuffleBase > 0
+                ? makeShuffle(trackState.shuffleSteps, trackState.shuffleBase) : null;
+              trackState.shufflePhase = 0;
+              trackState.shuffleDebt = 0;
               break;
             }
             case ":vel":
@@ -4624,7 +4684,7 @@ function compileChannelBody(
       if (isRestAtom(val)) {
         const ticks = resolveShuffleTicks(
           parseRestLength(val, trackState.defaultLength, trackState.currentTempo),
-          trackState,
+          trackState, diagnostics, nodeSrc(node), trackName,
         );
         // A rest on the rate source rests the CSM buzz (language.md §15): Timer
         // A stops, CSM stays on, and the next rate (or, with an inline
@@ -4652,10 +4712,10 @@ function compileChannelBody(
       // Per-note length atom: c4, e8., f+12t, b-6f, a1/2
       if (isPerNoteLengthAtom(val)) {
         const { noteName, lengthStr } = parsePerNoteLength(val);
-        // Swing goes by the nominal length, written or default (§5.2).
+        // The shuffle warps the written length (§5.2).
         const perNoteTicks = resolveShuffleTicks(
           parseLengthToken(lengthStr, trackState.defaultLength, trackState.currentTempo),
-          trackState,
+          trackState, diagnostics, nodeSrc(node), trackName,
         );
         emitNoteForTrack(
           trackState,
@@ -4672,7 +4732,7 @@ function compileChannelBody(
 
       // Bare note: c, d, e, f, g, a, b (with optional + or -)
       if (isNoteAtom(val)) {
-        const ticks = resolveShuffleTicks(trackState.defaultLength, trackState);
+        const ticks = resolveShuffleTicks(trackState.defaultLength, trackState, diagnostics, nodeSrc(node), trackName);
         emitNoteForTrack(
           trackState,
           val,
@@ -4715,7 +4775,7 @@ function compileChannelBody(
         if (rawHz !== null) {
           const ticks = resolveShuffleTicks(
             trackState.defaultLength,
-            trackState,
+            trackState, diagnostics, nodeSrc(node), trackName,
           );
           emitCsmRateNoteHz(
             trackState,
@@ -4807,8 +4867,9 @@ function compileChannelBody(
             continue;
           }
           acc += totalTicks;
-          const slotTicks = Math.floor(acc / n);
-          acc -= slotTicks * n;
+          const nominalSlot = Math.floor(acc / n);
+          acc -= nominalSlot * n;
+          const slotTicks = resolveShuffleTicks(nominalSlot, trackState, diagnostics, nodeSrc(ev), trackName);
           if (evVal === "_") {
             events.push({
               tick: trackState.tick,
@@ -4873,44 +4934,60 @@ function compileChannelBody(
             evalEnv,
           );
         if (maybeCount !== null) {
-          const parityIn = trackState.subBeatParity;
+          const phaseIn = trackState.shufflePhase;
+          const shuffleIn = trackState.shuffle;
           events.push({ tick: trackState.tick, cmd: "LOOP_BEGIN", args: { id: loopId }, src: loopSrc });
           const bodyIdx = events.length;
           compileBody();
           // The loop whose pass is the last one: what follows goes on from it.
           let lastId = loopId;
           let lastCount = maybeCount;
-          let lastIn = parityIn;
-          if (maybeCount > 1 && swingsOtherWay(trackState, parityIn, events, bodyIdx)) {
-            // An odd count of swung notes swings the next pass the other way,
-            // and the IR holds one body: write the loop two passes to a turn
-            // (the second compiled again on the flipped pairing), and an odd
-            // count's last pass after it as a loop of one. The (break) is kept
-            // only where the loop's last pass meets it.
+          let lastIn = phaseIn;
+          const k = maybeCount > 1 ? shufflePasses(trackState, phaseIn, shuffleIn, events, bodyIdx) : 1;
+          if (k === null) shuffleLoopWarning(diagnostics, "(x …) body", loopSrc, trackName);
+          if (k > 1) {
+            // A body that leaves the shuffle cycle elsewhere plays its next
+            // pass on other steps, and the IR holds one body: write the loop
+            // k passes to a turn (each compiled again where the last left),
+            // and the passes left over after it as a loop of one. The (break)
+            // is kept only where the loop's last pass meets it.
             const diagLen = diagnostics.length;
-            const firstEnd = events.length;
-            compileBody();
-            const odd = maybeCount % 2 === 1;
-            dropLoopBreaks(events, bodyIdx, odd ? events.length : firstEnd, loopId);
-            if (odd) {
+            const turns = Math.floor(maybeCount / k);
+            const left = maybeCount % k;
+            const firstPasses = turns > 0 ? k : left;
+            const passEnds = [events.length];
+            for (let n = 1; n < firstPasses; n++) {
+              compileBody();
+              passEnds.push(events.length);
+            }
+            const keepInFirst = turns === 0 || left === 0;
+            dropLoopBreaks(events, bodyIdx, keepInFirst ? passEnds.at(-2) ?? bodyIdx : events.length, loopId);
+            if (!keepInFirst) {
               trackState.loopBreaks?.delete(loopId);
-              trackState.loopBreakParity?.delete(loopId);
+              trackState.loopBreakPhase?.delete(loopId);
             }
             connectAcrossJump(trackState, events, bodyIdx);
             events.push({
               tick: trackState.tick,
               cmd: "LOOP_END",
-              args: { id: loopId, repeat: Math.floor(maybeCount / 2) },
+              args: { id: loopId, repeat: turns > 0 ? turns : 1 },
               src: loopSrc,
             });
-            lastCount = Math.floor(maybeCount / 2);
-            if (odd) {
+            lastCount = turns > 0 ? turns : 1;
+            lastIn = trackState.shufflePhase;
+            if (turns > 0 && left > 0) {
               lastId = `(x ${loopCounter.count++})`;
               trackState.currentLoopId = lastId;
-              lastIn = trackState.subBeatParity;
+              lastIn = trackState.shufflePhase;
               lastCount = 1;
               events.push({ tick: trackState.tick, cmd: "LOOP_BEGIN", args: { id: lastId }, src: loopSrc });
-              compileBody();
+              const leftIdx = events.length;
+              let lastStart = leftIdx;
+              for (let n = 0; n < left; n++) {
+                lastStart = events.length;
+                compileBody();
+              }
+              dropLoopBreaks(events, leftIdx, lastStart, lastId);
               events.push({ tick: trackState.tick, cmd: "LOOP_END", args: { id: lastId, repeat: 1 }, src: loopSrc });
             }
             diagnostics.length = diagLen; // the copies repeat the first pass's
@@ -4935,24 +5012,33 @@ function compileChannelBody(
             restoreConnectionState(trackState, brk);
             trackState.loopBreaks.delete(lastId);
           }
-          // The shuffle pairing goes on from where the last pass leaves — from
-          // its (break), when it has one.
-          const flips = lastIn ^ trackState.subBeatParity;
-          const parityOut = trackState.loopBreakParity?.get(lastId);
-          trackState.subBeatParity =
-            parityOut != null
-              ? parityOut ^ (flips & (lastCount - 1))
-              : lastIn ^ (flips & lastCount);
-          trackState.loopBreakParity?.delete(lastId);
+          // The shuffle cycle goes on from where the last pass leaves — from
+          // its (break), when it has one. A loop written k passes to a turn
+          // comes back each turn; one played as written moves on a pass's
+          // shift each pass — or none, when the body sets the shuffle (every
+          // pass plays as the first).
+          const sh = trackState.shuffle;
+          if (sh) {
+            const out = trackState.loopBreakPhase?.get(lastId);
+            const shift = trackState.shufflePhase - lastIn;
+            const phase = sh !== shuffleIn ? out ?? trackState.shufflePhase
+              : out != null ? out + shift * (lastCount - 1) : lastIn + shift * lastCount;
+            trackState.shufflePhase = ((phase % sh.cycle) + sh.cycle) % sh.cycle;
+          }
+          trackState.loopBreakPhase?.delete(lastId);
         } else {
-          const parityIn = trackState.subBeatParity;
+          const phaseIn = trackState.shufflePhase;
+          const shuffleIn = trackState.shuffle;
           events.push({ tick: trackState.tick, cmd: "MARKER", args: { id: loopId }, src: loopSrc });
           const bodyIdx = events.length;
           compileBody();
-          // Swinging the other way on the next pass: loop two passes at a time.
-          if (swingsOtherWay(trackState, parityIn, events, bodyIdx)) {
+          // Off the cycle on the next pass: loop as many passes at a time as
+          // it takes to come back.
+          const k = shufflePasses(trackState, phaseIn, shuffleIn, events, bodyIdx);
+          if (k === null) shuffleLoopWarning(diagnostics, "(x …) body", loopSrc, trackName);
+          if (k > 1) {
             const diagLen = diagnostics.length;
-            compileBody();
+            for (let n = 1; n < k; n++) compileBody();
             diagnostics.length = diagLen;
           }
           trackState.currentLoopId = savedLoopId;
@@ -5007,24 +5093,22 @@ function compileChannelBody(
             continue;
           }
         }
-        // A section that swings the other way on its next pass: an endless
-        // one written in these items loops two passes at a time, as (x …)
-        // does; any other cannot be copied here, so it is flagged.
+        // A section that leaves the shuffle cycle elsewhere: an endless one
+        // written in these items loops as many passes at a time as it takes
+        // to come back, as (x …) does; any other cannot be copied here, so it
+        // is flagged.
         const target0 = events.findIndex((e) => e.cmd === "MARKER" && e.args?.id === label);
-        const labelParity = trackState.labelParity?.get(label);
-        if (labelParity != null && labelParity !== trackState.subBeatParity) {
+        const atLabel = trackState.labelPhase?.get(label);
+        if (atLabel && atLabel.shuffle === trackState.shuffle && atLabel.phase !== trackState.shufflePhase) {
           const at = labelsHere.get(label);
-          if (repeat === null && at != null && target0 >= 0 &&
-              swingsOtherWay(trackState, labelParity, events, target0 + 1)) {
+          const k = target0 >= 0 ? shufflePasses(trackState, atLabel.phase, atLabel.shuffle, events, target0 + 1) : null;
+          if (repeat === null && at != null && k !== null) {
             const diagLen = diagnostics.length;
-            compileChannelBody(items.slice(at + 1, i), trackState, events, diagnostics,
-              trackName, typedDefs, loopCounter, vals, evalEnv);
+            for (let n = 1; n < k; n++)
+              compileChannelBody(items.slice(at + 1, i), trackState, events, diagnostics,
+                trackName, typedDefs, loopCounter, vals, evalEnv);
             diagnostics.length = diagLen;
-          } else {
-            pushDiag(diagnostics, "warning", "W_SHUFFLE_LOOP",
-              `the #${label} section holds an odd count of swung notes, so its next pass swings the other way, but it plays as written — write it in (x …), or even the count`,
-              nodeSrc(node.items[0]), trackName);
-          }
+          } else shuffleLoopWarning(diagnostics, `#${label} section`, nodeSrc(node.items[0]), trackName);
         }
         // A `~` before the jump connects to the label's first note.
         const target = events.findIndex(
@@ -5065,9 +5149,9 @@ function compileChannelBody(
             trackState.currentLoopId,
             connectionState(trackState),
           );
-          (trackState.loopBreakParity ??= new Map()).set(
+          (trackState.loopBreakPhase ??= new Map()).set(
             trackState.currentLoopId,
-            trackState.subBeatParity,
+            trackState.shufflePhase,
           );
         }
         events.push({
@@ -6837,9 +6921,11 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     lastNotePitch: null, // previous note's pitch for glide calculation
     glideRamp: null, // where the last glide has the pitch (cents) / CSM rate (period): rampAt
     pitchSticky: 0, // the score's `:pitch` offset, null once it is a runtime value
-    shuffleRatio: 0, // per-track swing, 0 = straight (§5.2)
-    shuffleBase: Math.round(WHOLE_TICKS / 8),
-    subBeatParity: 0,
+    shuffleSteps: null, // per-track grid warp, null = straight (§5.2)
+    shuffleBase: Math.round(WHOLE_TICKS / 16),
+    shuffle: null, // the warp in force: makeShuffle(shuffleSteps, shuffleBase)
+    shufflePhase: 0, // written ticks since the warp's origin, mod its cycle
+    shuffleDebt: 0, // ticks a squeezed note borrowed from what follows
     currentLoopId: null, // id of innermost counted (x N ...) loop, for (break)
   });
 

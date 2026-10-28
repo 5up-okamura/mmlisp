@@ -224,6 +224,7 @@ export async function parseDmf(bytes) {
     patLen, orders, channels, instruments, waves,
     fmVolMax: 127, psgVolMax: 15,
     linearPitch: true, pitchSlideSpeed: 4, // as Furnace plays a DMF
+    brokenSpeedSel: true, // its two speeds by the row's parity (dmf.cpp)
     properNoiseLayout: false, // the PC Engine's noise rate by DefleMask's table
     newVolumeScaling: false, // a volume macro's 4-bit steps added to the column's (Furnace's dmf.cpp)
     samples,

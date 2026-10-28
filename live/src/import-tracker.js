@@ -19,8 +19,8 @@
 //     fmVolMax, psgVolMax }
 // and this turns it into a score. The order list plays as the tracker plays
 // it (0Bxx jumps, 0Dxx breaks, the song looping where it jumps back to, or
-// to the start); a row is a fixed number of ticks and the speed becomes the
-// tempo. By default each pattern of each channel becomes a phrase `(def …)`
+// to the start); a row is a fixed number of ticks, the speeds' average the
+// tempo, and their turns (a swing, a groove) each track's `:shuffle`. By default each pattern of each channel becomes a phrase `(def …)`
 // and the tracks lay them out in order (import-song.js emitPhrased).
 //
 // Kept: notes and note-offs, instruments (FM → def-fm, a volume/arpeggio
@@ -708,35 +708,70 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // The song's speed: a 09xx / 0Fxx on any channel is the song's (Furnace
   // plays them so), its rows' tempo the speeds' average from there. The
   // speeds take turns a row each (a swing, a groove); 09xx picks a groove
-  // where the song has them, else sets speed 1, as 0Fxx sets speed 2 of
-  // two (playback.cpp).
+  // where the song has them (from its first speed), else sets speed 1, as
+  // 0Fxx sets speed 2 of two (playback.cpp). Under DefleMask's speed select
+  // the two go by the row's parity instead, the other way round in an odd
+  // order of an odd pattern length. Each row's frames, as played, are
+  // `rowFrames`; the turns are each track's `:shuffle` over a row's
+  // `:shuffle-base`, restated where the speeds or their turn change.
   const speedMarks = [];
-  const patternsPlayed = new Set([t.speeds.join("/")]);
+  const shuffleMarks = [];
+  const rowFrames = [];
   {
     let sp = [...t.speeds];
+    let cur = 0;
+    let written = null; // the :shuffle in force: {steps, from (a row)}
     const grooves = t.grooves ?? [];
+    const base = `:shuffle-base ${4 * a.rowsPerBeat}`;
+    let baseSet = false;
+    const rot = (xs, k) => xs.map((_, i) => xs[(i + k) % xs.length]);
     a.seq.forEach(({ order, rows }, si) => {
       for (let r = 0; r < rows; r++) {
         let changed = false;
         t.channels.forEach((chn, c) => {
           for (const [code, val] of chn.patterns.get(t.orders[order][c])?.[r]?.fx ?? []) {
-            if (code === 0x09 && grooves.length) { if (val >= 0 && val < grooves.length) { sp = [...grooves[val]]; changed = true; } }
+            if (code === 0x09 && grooves.length) { if (val >= 0 && val < grooves.length) { sp = [...grooves[val]]; cur = 0; changed = true; } }
             else if (code === 0x09 && val > 0) { sp[0] = val; changed = true; }
             else if (code === 0x0f && val > 0) { sp[sp.length === 2 && !grooves.length ? 1 : 0] = val; changed = true; }
           }
         });
-        if (changed) {
-          // (One set on the first row is the song's from the start.)
-          if (si === 0 && r === 0) patternsPlayed.clear();
-          patternsPlayed.add(sp.join("/"));
-          speedMarks.push({ tick: segStart[si] + r * rowTicks, tokens: [tempoOf(sp.reduce((s, x) => s + x, 0) / sp.length)] });
+        const tick = segStart[si] + r * rowTicks;
+        // (One set on the first row is the song's from the start.)
+        if (changed) speedMarks.push({ tick, tempo: true, tokens: [tempoOf(sp.reduce((s, x) => s + x, 0) / sp.length)] });
+        let turn = sp;
+        let at;
+        if (t.brokenSpeedSel) {
+          turn = [sp[0], sp[1] ?? sp[0]];
+          at = (r + (t.patLen & 1 && order & 1 ? 1 : 0)) & 1;
+        } else {
+          at = cur;
+          cur = (cur + 1) % sp.length;
+        }
+        const g = rowFrames.length;
+        rowFrames.push(turn[at]);
+        // The warp this row should be on: the speeds from its own.
+        const straight = turn.every((x) => x === turn[0]);
+        const want = straight ? null : rot(turn, at);
+        const on = written && !straight &&
+          rot(written.steps, (g - written.from) % written.steps.length).join(" ") === want.join(" ");
+        if (straight ? written : !on) {
+          const tokens = [];
+          if (want && !baseSet) { tokens.push(base); baseSet = true; }
+          tokens.push(want ? `:shuffle [${want.join(" ")}]` : ":shuffle none");
+          shuffleMarks.push({ tick, tokens });
+          written = want && { steps: want, from: g };
         }
       }
     });
   }
-  for (const sp of patternsPlayed)
-    if (sp.split("/").some((x) => x !== sp.split("/")[0]))
-      warnings.push(`speeds ${sp} take turns a row each (a ${sp.split("/").length > 2 ? "groove" : "swing"}) — imported at their average`);
+  // A row's start and `frames` in, in the score's written ticks: the warp
+  // stretches each row evenly, so a row's frame is its share of the row.
+  const ticksIn = (tick, frames) => {
+    let g = Math.round(tick / rowTicks);
+    let n = 0;
+    while (g < rowFrames.length - 1 && frames >= rowFrames[g]) { frames -= rowFrames[g]; n += rowTicks; g++; }
+    return n + Math.round((frames * rowTicks) / (rowFrames[g] || a.framesPerRow));
+  };
   // The NES's DPCM channel on fc's pcm1: a note plays its instrument's
   // sample (its note map's, or its one), at the DMC rate the note picks — an
   // NES instrument's map or the note's low four bits, else the sample's
@@ -797,8 +832,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         const at = segStart[si] + r * rowTicks;
         let delay = 0, cut = null;
         for (const [code, val] of row.fx) {
-          if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
-          else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
+          if (code === 0xed && val > 0) delay = val;
+          else if (code === 0xec && val >= 0) cut = val;
           else if (code === 0x18 && val >= 0 && onFc) dmcMode = val > 0;
           else if (code === 0x09 || code === 0x0f || code === 0x0b || code === 0x0d) { /* the song's speed, the order walk */ }
           else if (code >= 0 && !ch.samples) { // (FM6's: the FM pass counts them)
@@ -806,6 +841,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
         }
+        // EDxx / ECxx count frames — of this row's speed, so they land on
+        // the frames Furnace plays under the shuffle — the cut's from the
+        // delayed start.
+        if (cut != null) cut = ticksIn(at, delay + cut) - ticksIn(at, delay);
+        if (delay) delay = ticksIn(at, delay);
         if (row.ins >= 0) ins = row.ins;
         // FM6's FM note: the DAC stops (the FM pass plays it).
         const fmNote = ch.samples && typeof row.note === "number" && row.legacy == null && !isSampleIns(t.instruments[ins]);
@@ -853,6 +893,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       if (!tr) continue;
       tracks.push(tr);
       if (tempoTrack) { tr.marks.push(...speedMarks); tempoTrack = false; }
+      tr.marks.push(...shuffleMarks);
       continue;
     }
     const onFm = ch.dest.startsWith("fm");
@@ -1140,8 +1181,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if (code === 0xfa && val >= 0) slide = volSlide(val) * 4;
           else if ((code === 0xf3 || code === 0xf4) && val >= 0) slide = (code === 0xf3 ? val : -val) / 256;
           else if ((code === 0xf8 || code === 0xf9) && val >= 0) { slide = 0; jump = code === 0xf8 ? val : -val; }
-          else if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
-          else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
+          else if (code === 0xed && val > 0) delay = val;
+          else if (code === 0xec && val >= 0) cut = val;
           else if (code === 0x09 || code === 0x0f) { /* the song's speed: speedMarks */ }
           else if (code === 0x0b || code === 0x0d) { /* the order walk */ }
           else if (code >= 0) {
@@ -1151,6 +1192,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
         }
+        // EDxx / ECxx count frames — of this row's speed, so they land on
+        // the frames Furnace plays under the shuffle — the cut's from the
+        // delayed start.
+        if (cut != null) cut = ticksIn(at, delay + cut) - ticksIn(at, delay);
+        if (delay) delay = ticksIn(at, delay);
         if (row.ins >= 0 && t.instruments[row.ins]) ins = row.ins;
         // The instrument's macros start over at each of its notes: its wave
         // macro sets the wave (its first step; one that moves is the note's
@@ -1351,17 +1397,18 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     tracks.push({ ch, notes, marks, noVel: fcCh === "tri" });
     if (tempoTrack) { marks.push(...speedMarks); tempoTrack = false; }
+    marks.push(...shuffleMarks);
   }
 
   // The tempo the song starts with; the loop restates its own.
   if (tracks.length) {
     const m = tracks[0].marks;
-    if (!m.some((x) => x.tick === 0)) m.unshift({ tick: 0, tokens: [tempoOf(a.framesPerRow)] });
+    if (!m.some((x) => x.tempo && x.tick === 0)) m.unshift({ tick: 0, tempo: true, tokens: [tempoOf(a.framesPerRow)] });
   }
-  if (a.loopIndex > 0 && tracks[0]?.marks.length > 1) {
+  if (a.loopIndex > 0 && tracks[0]?.marks.filter((x) => x.tempo).length > 1) {
     const lt = segStart[loopIndex];
-    const inForce = tracks[0].marks.filter((x) => x.tick <= lt).pop();
-    if (inForce && inForce.tick !== lt) tracks[0].marks.push({ tick: lt, tokens: inForce.tokens });
+    const inForce = tracks[0].marks.filter((x) => x.tempo && x.tick <= lt).pop();
+    if (inForce && inForce.tick !== lt) tracks[0].marks.push({ tick: lt, tempo: true, tokens: inForce.tokens });
     tracks[0].marks.sort((x, y) => x.tick - y.tick);
   }
 

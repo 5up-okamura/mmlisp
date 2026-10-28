@@ -146,6 +146,9 @@ export async function parseFur(bytes) {
   // multiplier on slide speeds (compat flags); the PC Engine's noise rate
   // straight from the note (Furnace's default since it has the flag).
   let linearPitch = 1, pitchSlideSpeed = 4, properNoiseLayout = true, newVolumeScaling = true, cflgPtr = 0;
+  // DefleMask's speed select: two speeds by the row's parity, not in turn
+  // (playback.cpp brokenSpeedSel) — a flag from version 70, on before it.
+  let brokenSpeedSel = false;
   const channels = [];
   const effectCols = [];
 
@@ -240,6 +243,7 @@ export async function parseFur(bytes) {
     // newVolumeScaling (a volume macro × the column, else their 4-bit steps
     // added) from version 99, the tenth flag; off before it.
     newVolumeScaling = version >= 99 ? u8[p + 9] > 0 : false;
+    brokenSpeedSel = version < 70;
     p += 20; // compatibility flags
     for (let i = 0; i < insLen; i++) insPtr.push(i32());
     for (let i = 0; i < waveLen; i++) wavePtr.push(i32());
@@ -258,7 +262,7 @@ export async function parseFur(bytes) {
           str();
         }
         if (version >= 59) p += 4;
-        if (version >= 70) { if (version >= 94) pitchSlideSpeed = u8[p + 13] || 4; p += 28; }
+        if (version >= 70) { brokenSpeedSel = u8[p] > 0; if (version >= 94) pitchSlideSpeed = u8[p + 13] || 4; p += 28; }
         vtN = s16() || 1; vtD = s16() || 1;
         // On to the speed pattern (fur.cpp, from version 139): the subsongs,
         // the metadata, each system's output and the patchbay, more flags.
@@ -597,6 +601,7 @@ export async function parseFur(bytes) {
         if (k === "pitchSlideSpeed") pitchSlideSpeed = +v || 4;
         if (k === "properNoiseLayout") properNoiseLayout = +v > 0;
         if (k === "newVolumeScaling") newVolumeScaling = +v > 0;
+        if (k === "brokenSpeedSel") brokenSpeedSel = +v > 0;
       }
     }
   }
@@ -612,7 +617,7 @@ export async function parseFur(bytes) {
     // the CPU writes to the DAC at the note's rate).
     dpcmMode: version >= 154,
     fmVolMax: 127, psgVolMax: 15,
-    linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout, newVolumeScaling,
+    linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout, newVolumeScaling, brokenSpeedSel,
     tuning, // A-4's Hz
     grooves,
   };

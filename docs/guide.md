@@ -165,7 +165,9 @@ Common modifiers:
   mutes**. Default (unset) = `31` (unity).
 - `:master N` — global master level (`0`–`31`); same fader as `:vol`; **`0`
   mutes**
-- `:shuffle N` — swing ratio (`51`–`90`; `none` = straight); per-track (no
+- `:shuffle N` — swing: each pair of `:shuffle-base` lengths (a sixteenth) splits
+  `N` : 100−`N` (`1`–`99`; `none` = straight), and any length lands on the
+  swung grid; `:shuffle [7 6 3 4]` is a groove of four steps; per-track (no
   score-wide default)
 - `(glide T)` — portamento from the pitch sounding over duration `T` (same
   length-token forms as `:len`); a `T` longer than the notes keeps sliding on

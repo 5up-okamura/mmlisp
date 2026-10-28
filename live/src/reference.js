@@ -307,10 +307,10 @@ export const REFERENCE = [
   },
   {
     name: ':shuffle', aliases: [':shuffle-base', 'swing'], cat: 'track', section: '§5.2', tracks: null,
-    syntax: ':shuffle 51–90 | none  ·  :shuffle-base L',
-    summary: 'Swing: note pairs of the base length (default an eighth) split R : 100−R.',
+    syntax: ':shuffle 1–99 | [w1 … wN] | none  ·  :shuffle-base L',
+    summary: 'Swing: warps the base-length grid (default a sixteenth) — each pair splits R : 100−R, or a cycle of N steps in the weights; any length lands on it.',
     insert: ':shuffle 66',
-    example: '(sqr1 :shuffle 66 :len 8 c c c c c c c c)',
+    example: '(sqr1 :shuffle 66 :len 16 c c c c c c c c)',
   },
 
   // ---- FM voices and registers ---------------------------------------------

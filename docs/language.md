@@ -315,8 +315,8 @@ keywords at the form's first tick.
 | `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3`; on `pc88`, `sqr1`–`sqr3`: `tone`/`noise`/`both` (§19) (all sticky) |
 | `:noise-rate` | 1–31 or curve        | `pc88` only: the SSG's one noise period, song-wide like `:lfo-rate` (§19) |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
-| `:shuffle` | 51–90 or `none`           | Swing ratio (§5.2)                                       |
-| `:shuffle-base` | length token         | The swung length (default: eighth, §5.2)                 |
+| `:shuffle` | 1–99, `[w1 … wN]` or `none` | Grid warp: a pair's first share, or a cycle's weights (§5.2) |
+| `:shuffle-base` | length token         | One step of the warped grid (default: sixteenth, §5.2)   |
 | hardware params | value / curve / `none` / `$slot` | `:alg :fb :ams :fms :lfo-rate :tl1`–`:tl4` `:ar :dr :sr :rr :sl :ml :dt :ks :ssg :am`(1–4) — §5.1 |
 
 The gate family decides how *short* a note is inside its slot, never whether
@@ -394,24 +394,45 @@ with `E_UNKNOWN_KEYWORD` rather than silently dropped.
 
 ### 5.2 Shuffle
 
-`:shuffle R` (51–90; `none` = straight) swings note/rest pairs whose nominal
-length — written (`c8`, `_8`) or the default — equals `:shuffle-base`
-(default: eighth). The pair spans 2× the base;
-the first beat takes `R` % of it. Each track sets its own swing, anywhere in
-the body; a change restarts the pairing, so the next swung note is a first
-beat. The pairing runs on through loops as played: a loop body holding an
-odd count of swung notes swings its next pass the other way, so `(x …)` and a
-`#label … (go label)` in one form are written two passes at a time (an odd
-count's last pass after them), and what follows a loop goes on from where its
-last pass left — past every pass, or from the `(break)`. A section that cannot
-be copied so — a counted `(go label N)`, or a label in another form — plays as
-written and is flagged `W_SHUFFLE_LOOP`. `0` plays straight, as `none` does;
-a value 1–50 plays straight too (`W_SHUFFLE_STRAIGHT`), and one above 90 plays
-as 90 (`W_SHUFFLE_CLAMPED`); a value that is neither a number nor `none` is
-`E_SHUFFLE_INVALID`.
+`:shuffle` warps the time of the `:shuffle-base` grid (default: sixteenth, a
+tracker's row). In `:shuffle R` (1–99) a pair — two base lengths — plays its
+first half in `R` % of the pair and its second half in the rest: above 50 the first beat is long
+(a swing, `66` ≈ a triplet feel), below 50 short. `:shuffle [w1 … wN]` is a
+cycle of N base lengths played in those proportions — a tracker's groove:
+`[7 6 3 4]` lays four sixteenths over 7, 6, 3 and 4 parts of the cycle, and
+`:shuffle 70` is `[70 30]`. Within each step the time is stretched evenly, so
+**every onset and end lands on the warped grid, whatever the lengths**: a
+dotted eighth on a sixteenth base ends where the third sixteenth would begin,
+a note of two base lengths spans a whole pair, and a tuplet's notes divide
+their warped span. What the warp moves is the score's timeline — notes,
+rests, ties, tuplets, `(echo …)` taps; what is measured from a note stays in
+real time: `:gate` and `:gate-` (`:gate*` is a share of the warped slot),
+`(glide T)`, `(delay … :time T)`, a macro's `:step` and a curve's `:len`.
+
+Each track sets its own shuffle, anywhere in the body; the cycle starts at the
+track's start, and a `:shuffle` or `:shuffle-base` — even one that restates the
+value in force — starts it again from there. `none`, `0`, `50` and a list of
+equal weights play straight.
+
+The cycle runs on through loops as played: a loop body whose written length
+is not whole cycles starts its next pass elsewhere in the cycle, so `(x …)`
+and a `#label … (go label)` in one form are written as many passes at a time
+as it takes to come back (two for a pair), the passes left over after them,
+and what follows a loop goes on from where its last pass left — past every
+pass, or from the `(break)`. A loop or section that sets the shuffle inside
+plays every pass as written, as it does a `:len`, and what follows goes on
+from where its first pass leaves. A section that cannot be written so — one that
+would take more passes than the cycle has steps (it ends off a step of the
+cycle), a counted `(go label N)`, or a label in another form — plays as
+written and is flagged `W_SHUFFLE_LOOP`. A note the warp leaves no time (a
+fine note in a very short step) plays one tick, taken from what follows
+(`W_SHUFFLE_SQUEEZED`); a value outside 0–99, an empty list, a weight that is
+not above 0 or a `:shuffle-base` of no length is `E_SHUFFLE_INVALID`.
 
 ```lisp
-(sqr1 :shuffle 66 :len 8  c c c c)
+(sqr1 :shuffle 66 :len 16  c c c c)
+(sqr2 :shuffle 66 :shuffle-base 8 :len 8  c c c c)   ; an eighth swing
+(sqr3 :shuffle [7 6 3 4] :len 16  c c c c c8. c16)
 ```
 
 ### 5.3 Snap to a scale (`:snap`)

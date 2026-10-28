@@ -74,9 +74,43 @@ async function main() {
       expected: ["W_SAMPLE_KEY_INVALID", "W_SAMPLE_KEY_INVALID"],
     },
     {
+      label: "shuffle in range: a short first step, a long one, a groove, straight",
+      src: "(sqr1 :shuffle 30 c :shuffle 95 c :shuffle [7 6 3 4] c :shuffle 0 c :shuffle 50 c :shuffle none c)",
+      expected: [],
+    },
+    {
       label: "shuffle out of range",
-      src: "(sqr1 :shuffle 30 c :shuffle 95 c :shuffle 0 c :shuffle 66 c)",
-      expected: ["W_SHUFFLE_STRAIGHT", "W_SHUFFLE_CLAMPED"],
+      src: "(sqr1 :shuffle 100 c :shuffle -5 c :shuffle [] c :shuffle [3 0] c)",
+      expected: ["E_SHUFFLE_INVALID", "E_SHUFFLE_INVALID", "E_SHUFFLE_INVALID", "E_SHUFFLE_INVALID"],
+    },
+    // The shuffle warps the grid (§5.2): every onset lands on it, any length.
+    { label: "shuffle: the sixteenth base by default", src: "(sqr1 :shuffle 70 :len 16 c d e f)", expected: [], onsets: [0, 34, 48, 82] },
+    { label: "shuffle: base-length notes", src: "(sqr1 :shuffle 70 :shuffle-base 16 :len 16 c d e f)", expected: [], onsets: [0, 34, 48, 82] },
+    { label: "shuffle: a dotted note", src: "(sqr1 :shuffle 70 :shuffle-base 16 :len 16 c8. d e f g)", expected: [], onsets: [0, 82, 96, 130, 144] },
+    { label: "shuffle: a dotted rest", src: "(sqr1 :shuffle 70 :shuffle-base 16 :len 16 c _8. d e f)", expected: [], onsets: [0, 96, 130, 144] },
+    { label: "shuffle: a short first step", src: "(sqr1 :shuffle 30 :len 16 c d e)", expected: [], onsets: [0, 14, 48] },
+    { label: "shuffle: a groove", src: "(sqr1 :shuffle [7 6 3 4] :shuffle-base 16 :len 16 c d e f g)", expected: [], onsets: [0, 34, 62, 77, 96] },
+    { label: "shuffle: a tuplet on the grid", src: "(sqr1 :shuffle 66 :len 16 (t c d e) f g)", expected: [], onsets: [0, 11, 21, 32, 48] },
+    // An odd body is written k passes a turn, the leftover pass after it.
+    { label: "shuffle: an odd loop body", src: "(sqr1 :shuffle 70 :len 16 (x 3 c d e) f)", expected: [], onsets: [0, 34, 48, 82, 96, 130, 144, 178, 192, 226] },
+    { label: "shuffle: a groove's loop", src: "(sqr1 :shuffle [7 6 3 4] :shuffle-base 16 :len 16 (x 5 c d e) f)", expected: [],
+      onsets: [0, 34, 62, 77, 96, 130, 158, 173, 192, 226, 254, 269, 288, 322, 350, 365] },
+    { label: "shuffle: an endless section", src: "(sqr1 :shuffle 70 :len 16 #a c d e (go a))", expected: [], onsets: [0, 34, 48, 82, 96, 130] },
+    // A body that sets the shuffle plays every pass as written (as a :len),
+    // and what follows goes on from its first pass's end.
+    { label: "shuffle: a section that starts it", src: "(sqr1 :len 16 #a c d :shuffle 70 e (go a))", expected: [], onsets: [0, 24, 48] },
+    { label: "shuffle: a loop that restates it", src: "(sqr1 :len 16 :shuffle 70 (x 3 :shuffle 70 c d e) f)", expected: [], onsets: [0, 34, 48, 82] },
+    { label: "shuffle: after a loop that sets it", src: "(sqr1 :len 16 (x 4 c d :shuffle 70 e) f g)", expected: [], onsets: [0, 24, 48, 82, 96] },
+    { label: "shuffle-base of no length", src: "(sqr1 :shuffle 70 :shuffle-base 0 c)", expected: ["E_SHUFFLE_INVALID"] },
+    {
+      label: "shuffle squeezes a note to nothing",
+      src: "(sqr1 :shuffle 2 :len 32 c d)",
+      expected: ["W_SHUFFLE_SQUEEZED"],
+    },
+    {
+      label: "shuffle loop off the steps",
+      src: "(sqr1 :shuffle 70 :len 16 (x 3 c32 d) #a c32 d (go a 2))",
+      expected: ["W_SHUFFLE_LOOP", "W_SHUFFLE_LOOP"],
     },
     {
       label: "inline sweep :wait",
@@ -349,6 +383,12 @@ async function main() {
   for (const testCase of cases) {
     const result = await compile(testCase.src, testCase.label);
     assertCodes(result.diagnostics, testCase.expected, testCase.label);
+    // The first track's key-ons, as compiled (a loop's body once a turn).
+    if (testCase.onsets) {
+      const got = (result.ir?.tracks?.[0]?.events ?? []).filter((e) => e.cmd === "NOTE_ON").map((e) => e.tick);
+      if (got.join(" ") !== testCase.onsets.join(" "))
+        throw new Error(`${testCase.label}: key-ons expected [${testCase.onsets.join(" ")}], got [${got.join(" ")}]`);
+    }
   }
 
   console.log(`Strict compiler checks passed: ${cases.length}`);
