@@ -3002,7 +3002,8 @@ a value and a curve (`:lfo-freq` and `:lfo-pmd`), and start at 0; a table
 written starts the counter at 0. A def names a table (`(def vib [1 1 …])`).
 `:lfo-wave`'s OPM waveforms are `E_PARAM_VALUE` here, a table elsewhere.
 The chip's volume and modulation envelopes are not the language's. VGM
-carries the FDS (the 2A03's 0xB4, its clock's bit 31); Play and WAV run
+carries the FDS (the 2A03's 0xB4, its clock's bit 31), both ways (guide.md
+§23); Play and WAV run
 an FDS of the toolchain's own (nesdev's FDS audio page: its modulation's
 arithmetic, its ~2 kHz low-pass; at full 2.4 times a 2A03 pulse at full).
 

@@ -1941,6 +1941,17 @@ them: a key-on starts a note, a key-off ends it.
   noise's modes the nearest `white` / `periodic` rate, and the duties are
   left out; the DAC written on and on by the CPU (a PCM the game streams)
   is counted, not imported.
+  The Disk System's channel (the FDS: the 2A03's clock with bit 31) goes
+  to `wave1`. Its 64-step memory is a `def-wave` — 32 steps where each is
+  held twice, and on a 32-step chip's `wave1` (msx, pce) every other step —
+  rewritten under a note a `(macro :wave …)`; its gain is `:vel`, its
+  volume envelope a `:vel+` envelope; a note starts where the pitch and the
+  gain are written together (the gain up or the pitch a semitone away), or
+  the pitch jumps with the modulation set. The modulation a note starts
+  with is the song's `:lfo-wave` (a def, `lfo-01` …), `:lfo-freq` and
+  `:lfo-pmd`, and a depth moved under a note goes on as a slur with the new
+  one; a rate swept under a note, the modulation's own envelope and the
+  pitch it bends are left to the chip (on msx and pce, left out).
 - A pitch moved during a note is followed — untick it to keep only the
   struck pitch. A jump it then stays at is a new note, slurred (`~`); a
   wobble is a vibrato, a shared `(def vib-40-10 (macro :pitch (sin -40..40

@@ -148,10 +148,10 @@ samples) — language.md §19. Next:
    decided by voice class, not one by one: the 5B is the SSG profile, the
    VRC7 the OPLL's, the FDS the wavetable class. The VRC6 is on `fc`
    (`sqr3`, `sqr4`, `saw1`; WAV only, as VGM has no VRC6), and Furnace's
-   VRC6 modules import onto it (a pulse's PCM mode left out). Next, in order:
-   NSF in (a 6502 run for its register
-   writes, import-only — the one source of a VRC6 song's writes), then the
-   FDS.
+   VRC6 modules import onto it (a pulse's PCM mode left out). The FDS is
+   on `fc` (`wave1`), and a VGM's comes in on it. Next: NSF in (a 6502
+   run for its register writes, import-only — the one source of a VRC6
+   song's writes).
 
 Emulators for the preview: ymfm (BSD) covers the YM2608, YM2151, YM2413,
 Y8950 and the SSG in one library, built to WASM beside the Nuked cores.

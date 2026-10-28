@@ -266,10 +266,13 @@ part's `waveLen` (the FDS 64), a longer wave every other step on a 32-step
 chip (ir-player `_fitWave`, W_TARGET once per track and wave);
 tools/tests/pce/wave64.mmlisp. The wave-chip LFO hook also takes `+`, `*`
 and `$value` (they were dropped). Open: judged only on the test score — the user wants a real FDS song
-heard, and none comes in yet (import-vgm drops the FDS: bit 31 "left out";
-import-tracker leaves expansions out — the import session's); the hardware envelopes (synth-fc.js
+heard. import-vgm reads a VGM's FDS onto wave1 (2026-10-29; its gain
+envelope as a level envelope, its modulation as the LFO words where a note
+starts), checked only on fds.mmlisp's own VGM — no real FDS VGM is on hand
+(the user's VGM - NES folder has none); import-tracker leaves expansions
+out. The hardware envelopes (synth-fc.js
 Fds, Mesen / NSFPlay: 8 × (speed+1) × $408A, not nesdev's +1) are only
-node-checked — no score or import drives them yet; the mod arithmetic is nesdev's, not held to
+node-checked — the import writes gains direct, so no score drives them; the mod arithmetic is nesdev's, not held to
 NSFPlay / Mesen.
 
 **VRC6, as built** (chips/vrc6.js, targets/fc.js, synth-fc.js Vrc6,
