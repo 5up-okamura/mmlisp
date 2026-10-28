@@ -27,8 +27,8 @@
 // macro → a `(macro …)` def), the volume column, speed (09xx/0Fxx), pan
 // (08xy), arpeggio (00xy), note cut (ECxx) and delay (EDxx), and the pitch
 // effects as `:pitch` macros — vibrato (04xy) a shared `(def vib-xy …)` of a
-// sine, slides (01xx/02xx, E1xy/E2xy) and portamento (03xx, a slur) a line,
-// fine tune (E5xx) an offset. Everything else is counted and reported.
+// sine, slides (01xx/02xx, E1xy/E2xy) a line, fine tune (E5xx) an offset —
+// and portamento (03xx) a slur with a (glide Nf). Everything else is counted and reported.
 //
 // A PC Engine module can be a `pce` score (the default) or an md one. As
 // pce, its wavetables are def-waves, an instrument's wave macro (its first
@@ -57,7 +57,7 @@
 // x68k's fm8. Each chip's column in its own steps (3 dB, the SCC's linear).
 // ---------------------------------------------------------------------------
 
-import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS, destsFor } from "./import-song.js";
+import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, GLIDE_NONE, FM_DESTS, PSG_DESTS, destsFor } from "./import-song.js";
 import { targetProfile } from "./targets.js";
 import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
 import { envCycle } from "./chips/ssg.js";
@@ -673,23 +673,27 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }).name;
   };
   let insPitchUnder = 0;
+  // A portamento (03xx) slurs on from the note sounding at its speed: a
+  // glide over the frames it takes, beside the note's pitch macro.
+  const glideOf = (n) => {
+    const porta = n.p?.porta;
+    if (!porta) return null;
+    const D = Math.abs(porta.from - n.midi) * 100;
+    return D ? `(glide ${frames((D / slideCents(porta.speed)) * ticksPerFrame)}f)` : null;
+  };
   const pitchToken = (n) => {
     const p = n.p;
     if (!p) return null;
-    // The instrument's pitch macro: the note's, unless a slide, a
-    // portamento or a vibrato of its row takes the one pitch macro a note has.
+    // The instrument's pitch macro: the note's, unless a slide or a vibrato
+    // of its row takes the one pitch macro a note has.
     if (n.insPitch != null) {
-      if (!p.porta && !p.slides.length && !p.vib && !p.vibLater) return insPitchDef(n.insPitch);
+      if (!p.slides.length && !p.vib && !p.vibLater) return insPitchDef(n.insPitch);
       insPitchUnder++;
     }
     // (A wait in the song's ticks as played, `waitF`, where the note knows it.)
     const waitOf = (scoreTicks, ticks) => (ticks != null ? Math.max(0, Math.round((ticks * 60) / t.hz)) : frames(scoreTicks));
     const line = (from, to, scoreTicks, wait, waitF) =>
       `(macro :pitch+ (linear ${from}..${to} :len ${frames(scoreTicks)}f${wait ? ` :wait ${waitOf(wait, waitF)}f` : ""}))`;
-    if (p.porta) {
-      const D = (p.porta.from - n.midi) * 100;
-      return line(D, 0, (Math.abs(D) / slideCents(p.porta.speed)) * ticksPerFrame);
-    }
     const sl = p.slides[0];
     if (sl) {
       if (p.vib || p.vibLater) vibUnderSlide++;
@@ -1421,6 +1425,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         curP = tok;
       });
     }
+    // The glides, each the note's own: `(glide none)` on the note after one.
+    const glides = notes.map(glideOf);
+    if (glides.some(Boolean))
+      notes.forEach((n, i) => {
+        const g = glides[i] ?? (i && glides[i - 1] ? GLIDE_NONE : null);
+        if (g) { n.pre.push(g); n.state = [...n.state, g]; }
+      });
     // The level lines, stated as the pitch macros are: `(macro :vol none)`
     // (or :vel) after one.
     const lvToks = notes.map((n) => levelToken(n));

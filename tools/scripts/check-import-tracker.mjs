@@ -365,7 +365,8 @@ function dacDmf() {
   assert.match(source, /\(macro :vel \[\(linear 15\.\.14 :len 24t\)\]\)[^\n]*c8\. /, "an empty 0A stops the slide: one row of it");
   assert.match(source, /vib-46 \(macro :vel \[\(linear 14\.\.13\.5 :len 24t\)\]\) :vel 14 d/, "0501: the last vibrato and a slide");
   assert.match(source, /c8 \(macro :vel none\) env-lead-v12/, "the tremolo stops the slide; the line cleared ahead of the voice");
-  assert.match(source, /\(macro :pitch\+ \(linear -500\.\.0 :len 10f\)\) \(macro :vel \[\(linear 14\.\.13\.5 :len 24t\)\]\) ~ g/, "0601: the last portamento and a slide");
+  assert.match(source, /\(glide 4f\)[^~\n]* ~ d /, "0310: a glide from the c, 200 cents at 50 a tick");
+  assert.match(source, /\(glide 10f\) \(macro :vel \[\(linear 14\.\.13\.5 :len 24t\)\]\) ~ g/, "0601: the last portamento and a slide");
   assert.deepEqual(warnings, ["effect tremolo skipped (1×)"]);
   assert.deepEqual(bad(source), [], "the slides compile clean");
 }

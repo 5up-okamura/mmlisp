@@ -1775,8 +1775,9 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
 - The pitch effects come along as `:pitch+` macros over the channel's
   `:pitch`: a vibrato (`04xy`) is a shared `(def vib-xy (macro :pitch+
   (sin …)))`, from the middle rising as Furnace's starts, a slide (`01xx`/`02xx`,
-  `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a slur that glides
-  in, and fine tune (`E5xx`) an offset rounded to 10 cents. Furnace's
+  `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a slur with a
+  `(glide Nf)` over the frames its speed takes (beside the note's vibrato or
+  pitch macro), and fine tune (`E5xx`) an offset rounded to 10 cents. Furnace's
   slide/portamento compatibility flags are followed approximately.
 - The log counts the effects that do not come along. On a non-Genesis
   system the channels play their notes on a `presets/waveforms` stand-in
