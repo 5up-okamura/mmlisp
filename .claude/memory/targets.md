@@ -247,9 +247,27 @@ as drv/tools' Z80 — nothing reaches the score or a driver); 4. the FDS
 NSF: VGM has no VRC6 slot, so an NSF is the only register-level source of
 its songs.
 
+**The rest, ruled 2026-10-29 (the user)**: MMC5, 5B, VRC7, N163 all on fc,
+in that order, any number in one score (as an NSF), each optional.
+- **Names by chip** (the user: numbers said nothing of which chip):
+  `vrc6-sqr1` `vrc6-sqr2` `vrc6-saw`, `fds-wave`, `mmc5-sqr1` `mmc5-sqr2`,
+  `5b-sqr1`-`5b-sqr3` `5b-noise` (as msx's noise: 5b-sqr3's mixer on
+  noise), `vrc7-fm1`-`vrc7-fm6`, `n163-wave1`-`n163-wave8`; a channel's
+  `label` is its strip's (V1, FDS …). Renamed from sqr3/sqr4/saw1/wave1
+  2026-10-29; import-tracker.js (the import session's, uncommitted then)
+  still writes the old names — theirs to move.
+- **MMC5**: the two pulses only; its PCM ($5011, one game) left out.
+- **N163**: the chip's time-multiplex as is (the 7-8-channel whine heard,
+  not averaged away); wave RAM a region per channel, 32 steps while 5 or
+  fewer channels fit, 16 for all at 6+ (W_TARGET); 4-bit samples.
+- **VGM**: VRC7 as YM2413 (clock bit 31), 5B as YM2149 (clock /2 pin);
+  MMC5 and N163 left out, as the VRC6.
+- **VRC7 ROM names** nesdev's: buzzy-bell guitar wurly flute clarinet synth
+  trumpet organ bells vibes vibraphone tutti fretless synth-bass sweep.
+
 **FDS, as built** (chips/fds.js, synth-fc.js Fds, scope-pitch.js
 fdsPitch; language.md §19 fc; tools/tests/fc/fds.mmlisp). Ruled with the
-user 2026-10-28: `wave1`; the modulation is the song's LFO words —
+user 2026-10-28: `fds-wave`; the modulation is the song's LFO words —
 `:lfo-wave [32 steps of 0 1 2 4 -1 -2 -4 reset]` (the chip's own deltas, so
 Furnace's tables and drifting ones are exact), `:lfo-pmd 0-63`,
 `:lfo-freq 0-4095` (the 12-bit rate, the word's range the part's), inline
@@ -266,7 +284,7 @@ part's `waveLen` (the FDS 64), a longer wave every other step on a 32-step
 chip (ir-player `_fitWave`, W_TARGET once per track and wave);
 tools/tests/pce/wave64.mmlisp. The wave-chip LFO hook also takes `+`, `*`
 and `$value` (they were dropped). Open: judged only on the test score — the user wants a real FDS song
-heard. import-vgm reads a VGM's FDS onto wave1 (2026-10-29; its gain
+heard. import-vgm reads a VGM's FDS onto fds-wave (2026-10-29; its gain
 envelope as a level envelope, its modulation as the LFO words where a note
 starts), checked only on fds.mmlisp's own VGM — no real FDS VGM is on hand
 (the user's VGM - NES folder has none); import-tracker leaves expansions
@@ -277,8 +295,8 @@ NSFPlay / Mesen.
 
 **VRC6, as built** (chips/vrc6.js, targets/fc.js, synth-fc.js Vrc6,
 scope-pitch.js vrc6Pitch; language.md §19 fc; tools/tests/fc/vrc6.mmlisp):
-an optional chip on port 3 (2 is the worklet's PSG flag), `sqr3` `sqr4`
-`saw1` on tone lanes 12-14 (the player's `toneEncoder` beside the PSG's,
+an optional chip on port 3 (2 is the worklet's PSG flag), `vrc6-sqr1`
+`vrc6-sqr2` `vrc6-saw` on tone lanes 12-14 (the player's `toneEncoder` beside the PSG's,
 flushed with it), scope lanes 11-13. Rulings kept: the saw's level is its
 6-bit rate, `:vel 15` = 63, wrapping over 42 (≈ :vel 13.25) — Furnace's
 default 63 plays wrapped, so imports keep it; `:duty` the nearest of 1-8,

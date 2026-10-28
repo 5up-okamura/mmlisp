@@ -1791,7 +1791,7 @@
  },
  "tools/tests/fc/fds.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "8a0c66c298f4ea3b",
+  "ir": "b5ab644c21378930",
   "regs": "54f08a14a157bbfc",
   "vgm": "bf3e6582e2101b39"
  },
@@ -1801,7 +1801,7 @@
  },
  "tools/tests/fc/vrc6.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "14e6ff41dd7eff4f",
+  "ir": "f16e8dc87047c746",
   "regs": "74247b5874b07f28",
   "vgm": "abd0e41ad590db18"
  },

@@ -4,6 +4,6 @@
 ; wrapping; a fade). Its channels are left out of the VGM.
 (def-score :target fc :title "fc vrc6")
 (sqr1 :tempo 140 :len 8 c e g > c < g e c e |)
-(sqr3 :len 8 :duty 1 e g > c e < :duty 12 g e c e |)
-(sqr4 :len 4 (macro :duty [1 2 4 8]) g1 |)
-(saw1 :len 4 :oct 2 :vel 13.25 c :vel 15 e (glide 8) g (macro :vel (linear 15..0 :len 4)) c |)
+(vrc6-sqr1 :len 8 :duty 1 e g > c e < :duty 12 g e c e |)
+(vrc6-sqr2 :len 4 (macro :duty [1 2 4 8]) g1 |)
+(vrc6-saw :len 4 :oct 2 :vel 13.25 c :vel 15 e (glide 8) g (macro :vel (linear 15..0 :len 4)) c |)

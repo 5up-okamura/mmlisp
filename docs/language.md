@@ -2879,9 +2879,10 @@ so a drum on `pcm5` punches through a line on `wave5`.
 (NTSC), and Play and WAV run a 2A03 of the toolchain's own (nesdev's APU
 pages: the duties, the triangle's steps, the noise's rates and LFSR, the
 nonlinear mixer). Its channels are `sqr1` and `sqr2`, the pulses; `tri`,
-the triangle; `noise`; and `pcm1`, the DMC's samples — and the VRC6
-cartridge's `sqr3`, `sqr4` and `saw1`, and the Disk System's `wave1`
-(below). There is no FM, no
+the triangle; `noise`; and `pcm1`, the DMC's samples — and the expansion
+chips' (below), each named by its chip, as the Famicom has pulses on
+several and waves on two: the VRC6 cartridge's `vrc6-sqr1`, `vrc6-sqr2`
+and `vrc6-saw`, and the Disk System's `fds-wave`. There is no FM, no
 pan (the machine is mono): `fm1`, `:pan` and `:noise-rate` are
 `E_TARGET`. The chip hears the song a frame (1/60 s) at
 a time, as on `msx`.
@@ -2959,16 +2960,16 @@ mixer).
 ```
 
 **VRC6.** Konami's cartridge chip is on `fc` when a score names its
-channels: **`sqr3`** and **`sqr4`**, two more pulses, and **`saw1`**. Its
+channels: **`vrc6-sqr1`** and **`vrc6-sqr2`**, two more pulses, and **`vrc6-saw`**. Its
 pulses are the 2A03's in the language — the same pitch moves on a 12-bit
 period (1.79 MHz / 16 / (n + 1)), the 4-bit volume, `:duty` — but the chip
 has eight duties, 1–8 sixteenths (6.25–50 %): a value is the nearest of
 them, and a wider one its mirror (12 sounds as 4, as on the chip). The
-`saw1` (1.79 MHz / 14 / (n + 1)) takes the same pitch moves, and its level is
+saw (1.79 MHz / 14 / (n + 1)) takes the same pitch moves, and its level is
 the chip's 6-bit rate, linear, `:vel 15` its top, 63: the rate is added up
 six times a cycle in an 8-bit sum, so above 42 (`:vel` 13.25) the sum
 wraps and the saw turns harsh rather than louder — Furnace's VRC6 saw
-starts at 63, so a module imported keeps that sound. `:duty` on `saw1` is
+starts at 63, so a module imported keeps that sound. `:duty` on `vrc6-saw` is
 `E_UNSUPPORTED_TARGET`; neither has a `:mode`. **VGM has no VRC6**: an
 exported VGM plays the 2A03's channels and leaves the VRC6's out, saying
 so; Play and WAV sound them (a VRC6 of the toolchain's own, nesdev's VRC6
@@ -2976,13 +2977,13 @@ audio page; its pulse at full as loud as a 2A03 pulse at full).
 
 ```lisp
 (def-score :target fc)
-(sqr3 :len 8 :duty 1 e g > c e < :duty 12 g e c e)
-(sqr4 :len 4 (macro :duty [1 2 4 8]) g1)
-(saw1 :len 4 :oct 2 :vel 13.25 c e (glide 8) g (macro :vel (linear 15..0 :len 4)) c)
+(vrc6-sqr1 :len 8 :duty 1 e g > c e < :duty 12 g e c e)
+(vrc6-sqr2 :len 4 (macro :duty [1 2 4 8]) g1)
+(vrc6-saw :len 4 :oct 2 :vel 13.25 c e (glide 8) g (macro :vel (linear 15..0 :len 4)) c)
 ```
 
 **FDS.** The Disk System's wavetable is on `fc` when a score names
-**`wave1`**. It plays def-waves as `msx` and `pce` do (`:wave`, a `(macro
+**`fds-wave`**. It plays def-waves as `msx` and `pce` do (`:wave`, a `(macro
 :wave …)`, a wave expression); the chip's memory is 64 steps of 6 bits: a
 64-step def-wave plays whole, a 32-step one with each step held twice —
 the same wave, never interpolated. Its pitch is 12 bits (1.79 MHz × n / 16 / 2^18 a cycle: A6,
@@ -3011,7 +3012,7 @@ arithmetic, its ~2 kHz low-pass; at full 2.4 times a 2A03 pulse at full).
 (def-score :target fc)
 (def-wave tri :wave (triangle -128..127))
 (def vib [1 1 1 1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 1])
-(wave1 tri :lfo-wave vib :lfo-freq 20 :len 4 c e :lfo-pmd 8 g
+(fds-wave tri :lfo-wave vib :lfo-freq 20 :len 4 c e :lfo-pmd 8 g
   :lfo-freq (linear 20..400 :len 4) :lfo-pmd 30 c)
 ```
 

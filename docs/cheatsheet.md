@@ -281,11 +281,12 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   the DMC, one voice: a `def-pcm` at one rate a def (the highest its whole
   sample fits 4081 bytes at), each note baked at its pitch with its level
   at key-on, a loop the whole range (`:loop-*` warns). Mono: no `:pan`; no
-  FM, wave, `:noise-rate`. VGM and WAV. The VRC6 cartridge when named:
-  `sqr3` / `sqr4` pulses (`:duty` the nearest of 1–8 sixteenths, a wider
-  one its mirror), `saw1` (`:vel` its 6-bit rate, 15 = 63; above 13.25 the
+  FM, wave, `:noise-rate`. VGM and WAV. Expansions, named by chip, when a
+  score names them — the VRC6 cartridge's
+  `vrc6-sqr1` / `vrc6-sqr2` pulses (`:duty` the nearest of 1–8 sixteenths, a wider
+  one its mirror), `vrc6-saw` (`:vel` its 6-bit rate, 15 = 63; above 13.25 the
   saw wraps, harsher, not louder); VGM leaves them out (WAV plays them).
-  The Disk System when named: `wave1` plays def-waves (a 32-step one each
+  The Disk System's `fds-wave` plays def-waves (a 32-step one each
   step twice in its 64), its gain 0–32 as `:vel`; its modulation is the
   song's `:lfo-wave [32 steps of 0 1 2 4 -1 -2 -4 reset]`, `:lfo-pmd 0–63`
   (depth), `:lfo-freq 0–4095` (rate). VGM carries it.
