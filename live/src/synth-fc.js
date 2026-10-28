@@ -67,6 +67,16 @@
 // FM-PAC. It is rendered from its first write, its channels on the scope's
 // FM lanes 0-5; a ROM voice at full about as loud as a 2A03 pulse at full
 // (nesdev gives no measure: tunable by ear).
+//
+// The N163 (port 8, chips/n163.js), from nesdev's Namco 163 audio page: its
+// RAM holds the waves and the channels' registers alike; every 15 CPU
+// clocks it steps the next running channel (channel 8 down to 8 − count +
+// 1) — its phase, kept in the RAM, plus its frequency, wrapped at its
+// length — and outputs that channel's sample − 8 times its volume until the
+// next, so channels time-share the DAC (heard as a whine at seven or
+// eight). A square at full on one channel, run alone, as loud as a 2A03
+// pulse at full (games' levels differ: nesdev); on the scope's lanes 20-27,
+// each channel as it would sound alone.
 // ---------------------------------------------------------------------------
 
 import createAy8910Module from "../ymfm-ay8910.js";
@@ -75,7 +85,7 @@ import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "./chips/rp2a03.js"
 import { sunsoft5b } from "./chips/sunsoft-5b.js";
 import { vrc7 } from "./chips/vrc7.js";
 import { VRC7_ROM_BYTES } from "./chips/ym2413.js";
-import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch, mmc5Pitch, ssgPitch, opllPitch } from "./scope-pitch.js";
+import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch, mmc5Pitch, ssgPitch, opllPitch, n163Pitch } from "./scope-pitch.js";
 import { fdsRegister } from "./chips/fds.js";
 
 const CLOCK = rp2a03.clock;
@@ -90,11 +100,11 @@ const MASTER_OUTPUT_GAIN = 1.6;
 // The scope's taps, on the page's scale (index.html SCOPE_DISPLAY_GAIN).
 const SCOPE_SCALE = 0.6;
 
-export const SCOPE_LANES = 20;
+export const SCOPE_LANES = 28;
 const PSG_LANE = 6; // the page's first PSG lane
 // Pulse 1, pulse 2, the triangle, the noise, the DMC, the VRC6's pulses and
-// saw, the FDS, the MMC5's pulses, the 5B's three.
-const CHANNELS = 14;
+// saw, the FDS, the MMC5's pulses, the 5B's three, the N163's eight.
+const CHANNELS = 22;
 const VRC6_PORT = 3;
 const FDS_PORT = 4;
 const MMC5_PORT = 5;
@@ -104,6 +114,7 @@ const S5B_PORT = 6;
 const S5B_LEVEL = 15 / 16382;
 const S5B_CLOCKS = 64;
 const VRC7_PORT = 7;
+const N163_PORT = 8;
 const VRC7_RATE = vrc7.clock / 72;
 const VRC7_LANES = 6;
 // The VRC7's int16 sample on the mix's scale: a sine at volume 0 as loud
@@ -122,6 +133,9 @@ const FDS_MOD_DELTA = [0, 1, 2, 4, null, -4, -2, -1]; // null: the counter back 
 // mix: a pulse at 15 where a 2A03 pulse at 15 is (nesdev), the VRC6 saw's
 // five bits on the same scale.
 const PULSE_STEP = 95.88 / (8128 / 15 + 100) / 15;
+// The N163's DAC: a full square's swing (15 × 15) where a 2A03 pulse at 15's.
+const N163_STEP = (15 * PULSE_STEP) / 225;
+const N163_SLOT = 15; // CPU clocks a channel's turn
 // The MMC5's quarter frame: its own timer, about 240 Hz.
 const MMC5_FRAME = 7457;
 
@@ -557,6 +571,60 @@ class Mmc5 {
   }
 }
 
+// The N163 (port 8: its RAM, chips/n163.js).
+class N163 {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.ram = new Uint8Array(128);
+    this.slot = 0; // the running channel whose turn it is, 0 = channel 8
+    this.left = N163_SLOT; // clocks to the next turn
+    this.out = 0; // the DAC: the last stepped channel's output
+    this.alone = new Float32Array(8); // each channel's output, held (the scope's)
+  }
+
+  write(addr, data) {
+    this.ram[addr & 0x7f] = data;
+  }
+
+  // Channel `v`'s turn (v 0 is channel 8, at $78): its phase moved on, its
+  // output the sample there − 8 times its volume.
+  _step(v) {
+    const r = this.ram, b = 0x78 - 8 * v;
+    const freq = r[b] | (r[b + 2] << 8) | ((r[b + 4] & 3) << 16);
+    const len = 256 - (r[b + 4] & 0xfc);
+    let phase = r[b + 1] | (r[b + 3] << 8) | (r[b + 5] << 16);
+    phase = (phase + freq) % (len << 16);
+    r[b + 1] = phase & 0xff;
+    r[b + 3] = (phase >> 8) & 0xff;
+    r[b + 5] = phase >> 16;
+    const at = ((phase >> 16) + r[b + 6]) & 0xff;
+    const sample = (r[at >> 1] >> ((at & 1) << 2)) & 15;
+    return (sample - 8) * (r[b + 7] & 15);
+  }
+
+  // The DAC averaged over `clocks` (time-shared, as the chip's), into
+  // out[k]; each channel's held output into out[k + 1 ..].
+  run(clocks, out, k) {
+    const count = ((this.ram[0x7f] >> 4) & 7) + 1;
+    let acc = 0;
+    for (let rem = clocks; rem > 0; ) {
+      const m = Math.min(rem, this.left);
+      acc += this.out * m;
+      rem -= m;
+      this.left -= m;
+      if (this.left > 0) continue;
+      this.left = N163_SLOT;
+      this.slot = (this.slot + 1) % count;
+      this.out = this.alone[this.slot] = this._step(this.slot);
+    }
+    out[k] = acc / clocks;
+    for (let v = 0; v < 8; v++) out[k + 1 + v] = v < count ? this.alone[v] : 0;
+  }
+}
+
 // The Disk System's sound (port 4: VGM 0xB4's numbering, chips/fds.js).
 // Its two envelopes — the volume's ($4080) and the modulation depth's
 // ($4084) — step their gain by 1 toward 32 or 0 every 8 × (speed + 1) ×
@@ -712,7 +780,7 @@ export class FcSynth {
   constructor(ay, opll, outputSR) {
     this._outputSR = outputSR;
     this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK), fdsPitch(CLOCK), mmc5Pitch(CLOCK),
-      ssgPitch(sunsoft5b.clock, S5B_PORT, 17), opllPitch(vrc7.clock, VRC7_PORT));
+      ssgPitch(sunsoft5b.clock, S5B_PORT, 17), opllPitch(vrc7.clock, VRC7_PORT), n163Pitch(CLOCK));
     this._opll = opll;
     opll._ol_init();
     opll.HEAPU8.set(VRC7_ROM_BYTES, opll._ol_get_rom_ptr()); // the VRC7's voices
@@ -731,6 +799,8 @@ export class FcSynth {
     this._vrc6 = new Vrc6();
     this._fds = new Fds();
     this._mmc5 = new Mmc5();
+    this._n163 = new N163();
+    this._n163Out = new Float32Array(9); // the DAC, then each channel alone
     this._fdsY = 0; // the FDS's low-pass
     this._lv = new Float32Array(CHANNELS);
     this._x = new Float32Array(CHANNELS + 1);
@@ -760,6 +830,7 @@ export class FcSynth {
     this._vrc6.reset();
     this._fds.reset();
     this._mmc5.reset();
+    this._n163.reset();
     this._ay._a8_reset();
     this._opll._ol_reset();
     this._resetOpll();
@@ -772,7 +843,7 @@ export class FcSynth {
 
   // The APU's registers are port 0, $4000 + addr; the memory port 1; the
   // VRC6's port 3; the FDS's port 4; the MMC5's port 5; the 5B's port 6;
-  // the VRC7's port 7.
+  // the VRC7's port 7; the N163's port 8.
   writeYM(port, addr, data) {
     if (port === 0) this._apu.write(addr & 0xff, data & 0xff);
     else if (port === RAM_PORT) this._apu.writeRam(addr & 0xff, data & 0xff);
@@ -785,7 +856,7 @@ export class FcSynth {
     } else if (port === VRC7_PORT) {
       this._opllOn = true;
       this._opll._ol_write_reg(addr & 0xff, data & 0xff);
-    }
+    } else if (port === N163_PORT) this._n163.write(addr & 0xff, data & 0xff);
   }
 
   // The Mega Drive's PSG, DAC and low-pass have no counterpart here.
@@ -819,7 +890,15 @@ export class FcSynth {
       this._mmc5.run(clocks, lv, 9);
       this._runAy(clocks);
       lv.set(this._ayOut, 11);
-    } else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac, 0, 0, 0, this._fdsY, 0, 0, 0, 0, 0]); // idle: the triangle's held step, the DAC
+      this._n163.run(clocks, this._n163Out, 0);
+      lv.set(this._n163Out.subarray(1), 14);
+    } else {
+      lv.fill(0); // idle: the triangle's held step, the DAC
+      lv[2] = TRI[this._apu.tri.seq];
+      lv[4] = this._apu.dac;
+      lv[8] = this._fdsY;
+      this._n163Out[0] = 0;
+    }
     const x = this._x;
     x[1] = pulseOut(lv[0]);
     x[2] = pulseOut(lv[1]);
@@ -830,8 +909,9 @@ export class FcSynth {
     x[9] = lv[8] * FDS_STEP;
     for (let c = 9; c < 11; c++) x[c + 1] = -lv[c] * PULSE_STEP; // the MMC5's, inverted
     for (let c = 11; c < 14; c++) x[c + 1] = lv[c] * PULSE_STEP; // the 5B's
-    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]);
-    for (let c = 6; c <= CHANNELS; c++) x[0] += x[c];
+    for (let c = 14; c < 22; c++) x[c + 1] = lv[c] * N163_STEP; // the N163's, each alone
+    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]) + this._n163Out[0] * N163_STEP;
+    for (let c = 6; c < 15; c++) x[0] += x[c];
     return x;
   }
 
@@ -874,7 +954,7 @@ export class FcSynth {
   }
 
   // `getDacByte` is the contract's and unused; `scope` (SCOPE_LANES arrays)
-  // gets the channels at lanes 6-19 and the VRC7's at 0-5 (silence before
+  // gets the channels at lanes 6-27 and the VRC7's at 0-5 (silence before
   // its first write).
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {
     if (scope) for (let c = 0; c < PSG_LANE; c++) scope[c]?.fill(0, 0, count);

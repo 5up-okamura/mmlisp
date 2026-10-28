@@ -190,6 +190,13 @@ export const REFERENCE = [
     example: '(def-score :target fc)\n(vrc7-fm1 wurly :len 8 e g > c e)\n(vrc7-fm2 synth-bass :oct 2 :len 4 c g e c)',
   },
   {
+    name: 'n163-wave1–n163-wave8', aliases: ['n163-wave1', 'n163-wave2', 'n163-wave3', 'n163-wave4', 'n163-wave5', 'n163-wave6', 'n163-wave7', 'n163-wave8', 'n163', 'namco'], cat: 'channels', section: '§19', tracks: WAVE,
+    syntax: '(def-score :target fc) (n163-wave1 name …)',
+    summary: 'fc: the N163\'s wavetable channels — def-waves in 4-bit steps at a 4-bit volume. The highest one the score names sets how many run; the chip plays them in turn, so more channels each sound quieter, and 7–8 whine as on the chip. Up to 5 running, each wave is 32 steps; at 6 or more, 16 (a warning says so). VGM has no N163: an export leaves it out; WAV plays it.',
+    insert: '(n163-wave1 :len 8 c e g e)',
+    example: '(def-score :target fc)\n(def-wave saw :wave (saw -128..127))\n(n163-wave1 saw :len 8 e g > c e)',
+  },
+  {
     name: ':duty', aliases: ['duty', 'pulse width'], cat: 'track', section: '§19', tracks: PSG,
     syntax: ':duty 0–16  ·  (macro :duty […])  ·  :duty (curve …)',
     summary: 'fc: a pulse\'s duty in sixteenths of its cycle (sticky, default 8). The 2A03 has 2, 4, 8 and 12 (12.5, 25, 50, 75 %; 75 sounds as 25); a value between is the nearest. The MMC5\'s pulses have the 2A03\'s four. The VRC6\'s pulses (vrc6-sqr1, vrc6-sqr2) have 1–8; a wider value is its mirror (12 sounds as 4).',

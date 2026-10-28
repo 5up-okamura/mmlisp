@@ -6883,7 +6883,7 @@
       { length: Math.max(...Object.values(TARGETS).flatMap((t) => t.headsOfKind('fm').map((h) => t.channels[h].voice + 1))) },
       (_, ch) => ({ kind: 'fm', ch, label: `F${ch + 1}` }));
     const TONE_SLOTS = Array.from({ length: TONE_LANES },
-      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'N5', 'N6', 'V1', 'V2', 'VS', 'M1', 'M2', 'B1', 'B2', 'B3', 'BN'][lane] ?? '' }));
+      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'N5', 'N6', 'V1', 'V2', 'VS', 'M1', 'M2', 'B1', 'B2', 'B3', 'BN', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8'][lane] ?? '' }));
     const NOISE_SLOT = TONE_SLOTS[toneLaneOf({ part: { kind: 'noise' } })]; // one channel: the keys play it alone
     const PCM_SLOT = { kind: 'pcm', label: '' };
     let selectedCh = null;                 // the selected strip's FM or tone slot, or null — drives the FM param panel

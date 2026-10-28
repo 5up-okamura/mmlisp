@@ -458,7 +458,7 @@ export class IRPlayer {
     this._fmEnc = this._fmChip?.fmEncoder() ?? NO_FM;
     this._rhythmEnc = this._rhythmEncOf(target);
     this._psgChip = this._psgChipOf(target); // one per score: it may keep state
-    this._toneEnc = this._toneEncodersOf(target, this._psgChip);
+    this._toneEnc = this._toneEncodersOf(target, this._psgChip, this._voicesOf(target, irObj));
     this._chipsStarted.clear();
     this._dmcRates = null; // the DMC's rates are this score's (_dmcRateOf)
     // The ports that write a chip's memory, not its registers (chips/ `ramBlock`).
@@ -5369,7 +5369,9 @@ export class IRPlayer {
   // 0-3 (its own numbering; a chip whose lanes differ — the 2A03's pulses,
   // triangle and noise, each its own period — hands a view a lane, `lanes`),
   // a wave chip's encoder for its channels. A lane the target lacks is null.
-  _toneEncodersOf(target, psg) {
+  // `used`: each chip's voices the score plays (_voicesOf), which an encoder
+  // may lay the chip out by (the N163's channel count, chips/n163.js).
+  _toneEncodersOf(target, psg, used = new Map()) {
     const lanes = new Array(PSG_LANES).fill(null);
     if (psg)
       for (let l = 0; l < 4; l++) {
@@ -5382,7 +5384,7 @@ export class IRPlayer {
       // A tone chip of its own beside the PSG (a cartridge's, the VRC6's,
       // chips/vrc6.js): its encoder's view for the channel, on the part's lane.
       if (chip.toneEncoder && c.part.toneLane) {
-        if (!waveEnc.has(chip)) waveEnc.set(chip, chip.toneEncoder());
+        if (!waveEnc.has(chip)) waveEnc.set(chip, chip.toneEncoder(used.get(chip) ?? new Set()));
         lanes[toneLaneOf(c)] = { enc: waveEnc.get(chip).lanes[c.voice], ch: c.voice, chip, part: c.part, queue: waveEnc.get(chip) };
         continue;
       }
@@ -5391,7 +5393,7 @@ export class IRPlayer {
       // view, on a lane of the part's own.
       const asNoise = c.part.kind === "noise" && c.part.toneLane;
       if (c.part.kind !== "wave" && !asNoise) continue;
-      if (!waveEnc.has(chip)) waveEnc.set(chip, chip.waveEncoder());
+      if (!waveEnc.has(chip)) waveEnc.set(chip, chip.waveEncoder(used.get(chip) ?? new Set()));
       const enc = waveEnc.get(chip);
       lanes[toneLaneOf(c)] = { enc: asNoise ? enc.noise : enc, ch: c.voice, chip, part: c.part };
     }
@@ -5419,9 +5421,26 @@ export class IRPlayer {
     const l = enc === this._psgChip ? null : this._toneEnc.find((x) => x?.queue === enc);
     if (l?.chip.optional && !this._chipsStarted.has(l.chip)) {
       this._chipsStarted.add(l.chip);
-      return [...l.chip.init, ...encode(enc)];
+      return [...this._startOf(l), ...encode(enc)];
     }
     return encode(enc);
+  }
+  // A cartridge's start: its encoder's for the score where it lays the chip
+  // out by it (`start`, the N163's), else the chip's.
+  _startOf(l) {
+    return (l.queue ?? l.enc).start?.() ?? l.chip.init;
+  }
+  // Each chip's voices the score's tracks play: chip → Set.
+  _voicesOf(target, ir) {
+    const used = new Map();
+    for (const t of ir?.tracks ?? []) {
+      const c = target.channels[t.scoreChannel ?? t.channel];
+      if (!c) continue;
+      const chip = target.chips[c.chip];
+      if (!used.has(chip)) used.set(chip, new Set());
+      used.get(chip).add(c.voice);
+    }
+    return used;
   }
   // A tone lane's writes, `encode(enc, ch)` on its chip's encoder; nothing on
   // a lane the target lacks. An optional chip (the SCC cartridge) is started
@@ -5433,7 +5452,7 @@ export class IRPlayer {
     if (l.chip?.optional && !this._chipsStarted.has(l.chip)) {
       if (silence) return [];
       this._chipsStarted.add(l.chip);
-      return [...l.chip.init, ...encode(l.enc, l.ch)];
+      return [...this._startOf(l), ...encode(l.enc, l.ch)];
     }
     return encode(l.enc, l.ch);
   }

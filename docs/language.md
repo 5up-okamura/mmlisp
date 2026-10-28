@@ -2382,7 +2382,7 @@ those chips cannot do is a compile error, not a different sound.
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 | `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
-| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG, the VRC7's FM | VGM (without the VRC6 and the MMC5), WAV |
+| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG, the VRC7's FM, the N163's wavetables | VGM (without the VRC6, the MMC5 and the N163), WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2883,8 +2883,8 @@ the triangle; `noise`; and `pcm1`, the DMC's samples — and the expansion
 chips' (below), each named by its chip, as the Famicom has pulses on
 several and waves on two: the VRC6 cartridge's `vrc6-sqr1`, `vrc6-sqr2`
 and `vrc6-saw`, the Disk System's `fds-wave`, the MMC5's `mmc5-sqr1`
-and `mmc5-sqr2`, the Sunsoft 5B's `5b-sqr1`–`5b-sqr3` and `5b-noise`, and
-the VRC7's `vrc7-fm1`–`vrc7-fm6`.
+and `mmc5-sqr2`, the Sunsoft 5B's `5b-sqr1`–`5b-sqr3` and `5b-noise`,
+the VRC7's `vrc7-fm1`–`vrc7-fm6`, and the N163's `n163-wave1`–`n163-wave8`.
 A chip is in the song when a score names one of its channels, and any of
 them may be at once (as an NSF has them); a song-wide word only a
 cartridge has (the 5B's `:noise-rate`, the FDS's `:lfo-*`) in a score
@@ -3073,6 +3073,31 @@ full.
 (def-score :target fc)
 (vrc7-fm1 wurly :len 8 e g > c e < g e c e)
 (vrc7-fm2 synth-bass :oct 2 :len 4 c (glide 8) g e c)
+```
+
+**N163.** Namco's wavetable chip is on `fc` when a score names
+**`n163-wave1`**–**`n163-wave8`**. Each plays def-waves as `msx` and `pce`
+do (`:wave`, a `(macro :wave …)`, a wave expression) in 4-bit steps, at a
+4-bit linear volume, with every pitch move a PSG channel has. The chip runs
+as many channels as the highest one the score names (`n163-wave3` alone
+runs three), and shares its 128 bytes between their registers and their
+waves: while five or fewer run, each wave is 32 steps; at six or more,
+16 — a def-wave plays every other step, and a warning says so (`W_TARGET`).
+The chip does not mix: it plays its running channels in turn, each for
+15 CPU clocks, so each sounds a share of the time — more channels, each
+quieter — and at seven or eight the turns are heard as a high whine, as on
+the chip. Its highest note lowers as more run (an 18-bit frequency over
+the count and the wave's length: about F#7 at five). **VGM has no N163**: an exported
+VGM leaves it out, saying so; Play and WAV sound it (nesdev's Namco 163
+audio page; one channel running a square at full as loud as a 2A03 pulse
+at full — games' boards differ).
+
+```lisp
+(def-score :target fc)
+(def-wave saw :wave (saw -128..127))
+(def-wave soft :wave (sin -120..120))
+(n163-wave1 saw :len 8 e g > c e < g e c e)
+(n163-wave2 soft :oct 3 :len 4 c (glide 8) g e c)
 ```
 
 **Effects.** `def-se` is the Mega Drive driver's; an `fc` score has none

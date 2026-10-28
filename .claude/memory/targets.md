@@ -280,6 +280,15 @@ in that order, any number in one score (as an NSF), each optional.
   full = a 2A03 pulse at full) is a guess; ymfm's YM2413 with the VRC7's
   ROM, not a DS1001 model; import-vgm still reads a VRC7 VGM as vrc7-N
   def-fms for msx (the import session's to move onto fc's VRC7).
+- **N163 built 2026-10-29** (chips/n163.js: port 8 = its RAM; the count
+  the highest channel named — ir-player `_voicesOf` hands each encoder
+  the score's voices, and an encoder's `start()` replaces the chip's
+  static init; wave1 = the chip's channel 8; regions 32 steps to 5
+  running, 16 at 6+ (checkScore W_TARGET); synth-fc.js N163 time-shares
+  the DAC 15 clocks a turn, its scope lanes each channel alone, 20-27).
+  Open: not heard in Live (the 7-8-channel whine included); its level (one
+  channel's square at full = a 2A03 pulse at full; nesdev: games' boards
+  are 11-19.5 dB louder) a choice; no import reads an N163 yet.
 - **N163**: the chip's time-multiplex as is (the 7-8-channel whine heard,
   not averaged away); wave RAM a region per channel, 32 steps while 5 or
   fewer channels fit, 16 for all at 6+ (W_TARGET); 4-bit samples.

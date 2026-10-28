@@ -1,0 +1,8 @@
+; fc: the N163 with all eight channels running (n163-wave8 named): each
+; wave 16 steps of its 128 bytes (a warning says so), the channels taking
+; turns — each an eighth as loud, the turns a whine.
+(def-score :target fc :title "fc n163 eight")
+(def-wave saw :wave (saw -128..127))
+(n163-wave1 saw :tempo 140 :len 4 c e g e |)
+(n163-wave4 saw :oct 3 :len 2 c g |)
+(n163-wave8 saw :oct 5 :len 8 g e c e g e c e |)

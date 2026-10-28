@@ -1,9 +1,9 @@
 // The Famicom: its 2A03's APU — two pulses, the triangle, the noise and the
 // DMC's samples (pcm1) — and the expansions a score has when it names their
 // channels: the VRC6 cartridge's two pulses and its saw, the Disk System's
-// wavetable, the MMC5's two pulses, the Sunsoft 5B's SSG and the VRC7's FM.
-// No driver: the score is delivered as VGM (which has no VRC6 or MMC5: their
-// channels are left out there).
+// wavetable, the MMC5's two pulses, the Sunsoft 5B's SSG, the VRC7's FM and
+// the N163's wavetables. No driver: the score is delivered as VGM (which has
+// no VRC6, MMC5 or N163: their channels are left out there).
 //
 // An expansion's channels are named by their chip (`vrc6-sqr1`, `fds-wave`):
 // the Famicom has pulses on several chips and waves on two, so a number
@@ -14,6 +14,7 @@ import { fds, fdsWave } from "../chips/fds.js";
 import { mmc5, mmc5Pulse } from "../chips/mmc5.js";
 import { sunsoft5b, s5bTone, s5bNoise } from "../chips/sunsoft-5b.js";
 import { vrc7, vrc7Fm } from "../chips/vrc7.js";
+import { n163, n163Wave } from "../chips/n163.js";
 
 const on = (part, voice) => ({ chip: "apu", part, voice });
 // The VRC6's scope lanes follow the DMC's (synth-fc.js): 11-13.
@@ -32,7 +33,7 @@ export default {
   // Its drivers run on the video frame's interrupt (60 Hz), as the MSX's do
   // (targets/msx.js): the chip hears a song a frame at a time.
   frameClock: true,
-  chips: { apu: rp2a03, vrc6, fds, mmc5, "5b": sunsoft5b, vrc7 },
+  chips: { apu: rp2a03, vrc6, fds, mmc5, "5b": sunsoft5b, vrc7, n163 },
   channels: {
     sqr1: on(fcPulse, 0), sqr2: on(fcPulse, 1), tri: on(fcTriangle, 2), noise: on(fcNoise, 3),
     pcm1: on(fcDpcm, 0), // on the scope's first sample lane, 10
@@ -48,6 +49,8 @@ export default {
     "5b-noise": s5b(s5bNoise, 2, "BN"),
     // The VRC7's FM, on the scope's FM lanes (0-5).
     ...Object.fromEntries([0, 1, 2, 3, 4, 5].map((v) => [`vrc7-fm${v + 1}`, { chip: "vrc7", part: vrc7Fm, voice: v, label: `F${v + 1}` }])),
+    // The N163's eight, wave1 its channel 8, on the scope's lanes after the 5B's.
+    ...Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7].map((v) => [`n163-wave${v + 1}`, { chip: "n163", part: n163Wave, voice: v, scope: 20 + v, label: `W${v + 1}` }])),
   },
   readsAs: { modes: { "fc-noise": NOISE_MODES } },
   hints: {

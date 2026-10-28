@@ -171,6 +171,27 @@ export function mmc5Pitch(clock) {
 }
 
 /**
+ * The N163's (port 8, chips/n163.js) channels, read off its registers in
+ * the RAM: channel v (wave1 at $78) on the scope's lane 20 + v; a tone is
+ * clock × f / (15 × 65536 × length × count).
+ */
+export function n163Pitch(clock) {
+  const ram = new Uint8Array(128);
+  return {
+    write(port, addr, data, out) {
+      if (port !== 8) return;
+      ram[addr & 0x7f] = data;
+      const count = ((ram[0x7f] >> 4) & 7) + 1;
+      for (let v = 0; v < 8; v++) {
+        const b = 0x78 - 8 * v;
+        const f = ram[b] | (ram[b + 2] << 8) | ((ram[b + 4] & 3) << 16);
+        out[20 + v] = v < count ? (clock * f) / (15 * 65536 * (256 - (ram[b + 4] & 0xfc)) * count) : 0;
+      }
+    },
+  };
+}
+
+/**
  * The OPLL's (port 4, chips/ym2413.js; the VRC7's on `port` 7) F-numbers: $10+c the low 8 bits,
  * $20+c the top bit and the block, as the chip reads them each sample. Its
  * channels 0-5 draw on lanes 0-5, 6-8 on 15-17 (synth-msx.js); a tone is

@@ -1,0 +1,10 @@
+; fc: the N163 beside the 2A03 — three channels running (the highest named,
+; n163-wave3), so each wave is 32 steps of 4 bits: a saw and a sine from
+; curves, a wave stepped under a note, a fade and a glide. Its channels are
+; left out of the VGM.
+(def-score :target fc :title "fc n163")
+(def-wave saw :wave (saw -128..127))
+(def-wave soft :wave (sin -120..120))
+(sqr1 :tempo 140 :len 8 c e g > c < g e c e |)
+(n163-wave1 saw :len 8 e g > c e < (macro :vel (linear 15..6 :len 4)) g e c e |)
+(n163-wave3 soft :oct 3 :len 4 c (glide 8) g (macro :wave [soft saw #sus soft]) e c |)

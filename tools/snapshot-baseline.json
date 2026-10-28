@@ -1807,6 +1807,18 @@
   "regs": "30eea879a6ef3b35",
   "vgm": "5f8a4bd05e85f14c"
  },
+ "tools/tests/fc/n163-8.mmlisp": {
+  "diagnostics": "b4e4c9ef89c5b72c",
+  "ir": "dd9ae569bb27b75f",
+  "regs": "d14025ebe7defedb",
+  "vgm": "b308242dddd8ce2a"
+ },
+ "tools/tests/fc/n163.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "e083fa9d9f1117e4",
+  "regs": "2006251b08c44051",
+  "vgm": "662d0ec23be6f7f4"
+ },
  "tools/tests/fc/target.mmlisp": {
   "diagnostics": "c2abed2ca544cbf9",
   "ir": "709d44f536a2893c"

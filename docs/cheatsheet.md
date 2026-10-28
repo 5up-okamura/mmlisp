@@ -297,6 +297,10 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `vrc7-fm1`–`vrc7-fm6`: the FM-PAC's 2-op FM with its own ROM voices
   (`buzzy-bell guitar wurly flute clarinet synth trumpet organ bells vibes
   vibraphone tutti fretless synth-bass sweep`), no rhythm; VGM carries it.
+  The N163's `n163-wave1`–`n163-wave8`: def-waves in 4-bit steps, a 4-bit
+  volume; the highest named sets how many run (time-shared: more, each
+  quieter; a whine at 7–8); 32-step waves up to 5, 16 at 6+ (warns); VGM
+  leaves them out.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).
