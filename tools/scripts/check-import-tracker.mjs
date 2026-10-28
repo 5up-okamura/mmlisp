@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 import { parseDmf } from "../../live/src/import-dmf.js";
-import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, readArp } from "../../live/src/import-tracker.js";
+import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, readArp, trackerDests } from "../../live/src/import-tracker.js";
 
 // A DefleMask 0x17 module for the PC Engine (system 0x05): one order of four
 // rows. CH1 plays C-4 with instrument 0 (no wave macro) and 1000 (wave 0),
@@ -385,4 +385,32 @@ function dacDmf() {
   assert.deepEqual(bad(source), [], "the FM lines compile clean");
 }
 
-console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios, an old DMF, a DMF's DAC, volume slides");
+// The FDS on fc: the NES module with a Disk System channel beside it (the
+// model as an NES + FDS module reads, built here): fds-wave with the
+// 64-step wavetable whole, 11xx / 13xx as the song's :lfo-pmd / :lfo-freq,
+// 15xx a modulation table made of the wavetable, 16xy the rate from the
+// note's frequency; the VRC6 rows' names are fc's.
+{
+  const t = await parseDmf(nesDmf());
+  const e = { note: null, vol: -1, ins: -1, fx: [] };
+  t.channels.push({ kind: "wave", name: "FDS", chip: "fds", volMax: 32, patterns: new Map([[0, [
+    { ...e, note: 48, vol: 32, ins: 0, fx: [[0x10, 0], [0x11, 8], [0x13, 20]] },
+    { ...e, note: 52, vol: 20 },
+    { ...e, note: 55, fx: [[0x15, 0]] },
+    { ...e, note: 60, fx: [[0x16, 0x12]] }]]]) });
+  t.orders = t.orders.map((o) => [...o, 0]);
+  t.waves = [{ name: "tri", height: 63, values: Array.from({ length: 64 }, (_, i) => (i < 32 ? i * 2 : 127 - i * 2)) }];
+  const a = analyzeTracker(t);
+  const opt = defaultTrackerOptions(a, "fc");
+  assert.equal(opt.dest[5], "fds-wave");
+  const { source, warnings } = trackerToMmlisp(t, { ...opt, phrases: false, fileName: "t.dmf" }, a);
+  assert.match(source, /\(def-wave wave-tri :wave \[(?:-?\d+ ){63}-124\]\)/, "the 64-step wavetable whole");
+  assert.match(source, /\(fds-wave wave-tri [^\n]*:lfo-freq 20 :lfo-pmd 8/, "13xx and 11xx as the song's LFO words");
+  assert.match(source, /\(def modtab \[0 0 0 0 0 1 [^\]]*reset[^\]]*-2\]\)/, "15xx: a table of the chip's steps made of the wave");
+  assert.match(source, /:lfo-wave modtab g :lfo-freq \d+ > c/, "16xy: the rate set from the note");
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(bad(source), [], "the FDS lines compile clean");
+  assert.deepEqual(trackerDests("fc").filter((d) => /^vrc6-|^fds-/.test(d)), ["vrc6-sqr1", "vrc6-sqr2", "vrc6-saw", "fds-wave"]);
+}
+
+console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios, an old DMF, a DMF's DAC, volume slides, an FDS channel as fc");
