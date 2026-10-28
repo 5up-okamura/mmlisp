@@ -35,8 +35,12 @@
 //   \ / @\          :pitch — on the PSG and the SCC an offset on the
 //                   octave-1 period (+ up; 128 about a semitone), on FM on
 //                   MGSDRV's F-numbers (@\ 255 a semitone)
-//   h, ho / hf, @p  the software LFO as a :pitch+ triangle
-//   _, p            a portamento from the base note, p's fall: :pitch+ lines
+//   h, ho / hf, @p  the software LFO as a :pitch+ triangle, a vib- def a
+//                   setting (its notes' middle swing in cents)
+//   _               a portamento from the base note: (glide base T) over
+//                   the note (a track's first note, which cannot glide, a
+//                   :pitch+ line)
+//   p               the fall: :pitch+ lines
 //   t, #tempo       :tempo (BPM)
 //   FM rhythm       (track 15 in #opll_mode 1) rhythm1-rhythm5, a track a
 //                   sound — b s m c h as kick snare tom4 ride hat — each hit
@@ -65,7 +69,7 @@
 //   mgsToMmlisp(mgs, options, a)  → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones } from "./import-song.js";
+import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones, noteName, octOf, GLIDE_NONE } from "./import-song.js";
 import { defTable, sjis, frameVector } from "./import-shapes.js";
 import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
 import { envCycle } from "./chips/ssg.js";
@@ -730,6 +734,34 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     return { name, text: `(def-fm ${name} :fb ${d[3] & 7}\n  ${op(1, d[0], d[4], d[6], d[2] >> 6, (d[3] >> 3) & 1, d[2] & 63)}\n  ${op(2, d[1], d[5], d[7], d[3] >> 6, (d[3] >> 4) & 1, null)})` };
   })?.name ?? null;
 
+  // h: one vibrato an LFO setting, a def. Its depth is in steps of the
+  // period (or the F-number), so in cents it swings more or less with the
+  // note: the def's is its notes' middle swing, to 10 cents. Each note gets
+  // a stand-in name, the def's once every note is in (vibNames).
+  const vibs = new Map(); // setting → { id, swings, spec }
+  const vibOf = (lfo, kind, up, cents) => {
+    const key = `${kind}:${lfo.delay}:${lfo.count}:${lfo.speed}:${lfo.depth}:${lfo.fine}:${up}`;
+    if (!vibs.has(key)) vibs.set(key, { id: vibs.size, swings: [], lfo, up });
+    const v = vibs.get(key);
+    v.swings.push(cents);
+    return `vib-\0${v.id}`;
+  };
+  const vibNames = () => {
+    const names = new Map();
+    for (const v of vibs.values()) {
+      const s = [...v.swings].sort((a, b) => a - b);
+      const amp = Math.round(s[s.length >> 1] / 10) * 10;
+      const { delay, count, speed } = v.lfo;
+      const len = 2 * (count + 1) * speed, wait = delay + speed - 1;
+      const spec = `(triangle ${-amp}..${amp} :len ${len}f :phase ${v.up ? 64 : 192} :wait ${wait}f)`;
+      names.set(`vib-\0${v.id}`, amp ? defs.of(`vib:${spec}`, () => {
+        const name = `vib-${amp}-${len}${v.up ? "" : "-down"}-w${wait}`;
+        return { name, text: `(def ${name} (macro :pitch+ ${spec}))` };
+      }).name : "(macro :pitch none)");
+    }
+    return names;
+  };
+
   const songOut = [];
   let endMax = 0;
   let rhythmN = 0; // the rhythm tracks written
@@ -827,14 +859,20 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       const detune = detuneOf(tr.kind, n.midi, st);
       state.push(`:pitch ${detune}`);
       // The note's own pitch move: the envelope's, a portamento, the LFO.
-      let pitch = null;
+      // A glide is the note's own; the note after one ends it.
+      let pitch = null, glide = notes[notes.length - 1]?.glides ? GLIDE_NONE : null;
       const bend = x?.offsets.some(Boolean) ? envBend(st.env, n.midi, tr.kind, x) : null;
+      const from = n.base ? midiOf(tr.kind, n.base.oct, n.base.n) : null;
       if (bend) pitch = bend;
-      else if (n.base) {
-        // A portamento over the note's frames, a line on the PSG's and the
-        // SCC's period and on FM's F-number, so a line on the frequency
-        // (held to MGSDRV on libkss): each frame's cents.
-        const from = midiOf(tr.kind, n.base.oct, n.base.n);
+      else if (from != null && from !== n.midi && notes.length) {
+        // A portamento: from the base note to this one over its length, a
+        // glide (MGSDRV's is a line on the frequency, the glide's on the
+        // cents; it starts at the base note without the detune).
+        glide = `(glide ${noteName(from)}${octOf(from)} ${lenToken(tick(n.count))})`;
+      } else if (from != null) {
+        // A track's first note does not glide: its portamento is drawn, a
+        // line on the PSG's and the SCC's period and on FM's F-number, so a
+        // line on the frequency (held to MGSDRV on libkss): each frame's cents.
         if (from !== n.midi) {
           const frames = Math.max(1, Math.round((n.count * 75) / tempoAt(n.step)));
           const r = 2 ** ((from - n.midi) / 12); // the start's frequency over the note's
@@ -864,12 +902,12 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
         const { delay, count, speed } = st.lfo;
         const depth = st.lfo.fine != null && !isFm ? st.lfo.fine / 2 ** (octaveOf(tr.kind, n.midi) - 1) : st.lfo.depth;
         const swing = ((count + 1) / 2) * Math.abs(depth);
-        const amp = Math.round(Math.abs(offsetCents(tr.kind, n.midi, isFm ? swing : -swing)) / 10) * 10; // to 10 cents, so notes share it
         const up = isFm ? depth > 0 : depth < 0;
-        if (amp) pitch = `(macro :pitch+ (triangle ${-amp}..${amp} :len ${2 * (count + 1) * speed}f :phase ${up ? 64 : 192} :wait ${delay + speed - 1}f))`;
+        pitch = vibOf(st.lfo, tr.kind, up, Math.abs(offsetCents(tr.kind, n.midi, isFm ? swing : -swing)));
       }
       if (pitch && !pitch.startsWith("(")) state.push(pitch);
       else state.push(pitch ?? "(macro :pitch none)");
+      if (glide) state.push(glide);
       // q eighths of the note as its gate, the note its whole slot; q0 (FM)
       // holds it through the rests after it, to a `/` — which keys a note
       // off where it falls: that note is that long.
@@ -893,7 +931,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       // A note keyed on into the next sounds its whole slot whatever its
       // gate: it keeps the one in force, so none is written for it.
       if (gated) state.push((gateInForce = n.tieOn && n.held == null ? gateInForce : gateTok ?? ":gate* 1"));
-      const note = { tick: tick(n.step), len: tick(len), midi: n.midi, vel: noteVel, state, tieIn: legato, voice: st.voice };
+      const note = { tick: tick(n.step), len: tick(len), midi: n.midi, vel: noteVel, state, tieIn: legato, voice: st.voice, glides: glide != null && glide !== GLIDE_NONE };
       notes.push(note);
       // A tie's gate is its head's, over the whole tied length; MGSDRV cuts
       // the last note by its own q: the head takes that cut, exact.
@@ -936,6 +974,8 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   if (mgs.defs.notes.length) warnings.push(`${[...new Set(mgs.defs.notes)].join(", ")}: the tuning tables are not read (equal temperament, o4a = 440 Hz)`);
   for (const [k, n] of skipped) warnings.push(`${k} (${n}×)`);
   if (!songOut.length) warnings.push("no notes to import");
+  const vibName = vibNames();
+  for (const t of songOut) for (const n of t.notes) n.state = n.state.map((x) => vibName.get(x) ?? x);
 
   const header = [`; Imported from ${options.fileName ?? "an MGS file"} (MGS${mgs.version}${mgs.opllMode ? ", #opll_mode 1" : ""})`];
   const score = [":target msx", mgs.title && `:title ${qstr(mgs.title)}`].filter(Boolean);

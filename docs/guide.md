@@ -2044,8 +2044,12 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   voices 1–15 (`violin` …, as `@#` assigns them), a tone on the original
   voice its `@v` as a `def-fm mgs-vNN` on the OPLL's words; `so` / `sf` are
   `:sus`, and `q0` holds a note to the next `/`. `q` is `:gate*` on notes
-  written their whole length, `&` a tie or slur, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle, `_` a portamento
-  (a frame's cents each, a line on the period, on FM the F-number) and `p` a fall. The rhythm track goes to `rhythm1`–`rhythm5`, a track a
+  written their whole length, `&` a tie or slur, `\` / `@\` `:pitch`, `h` a `:pitch+` triangle — one `(def vib-…)`
+  a setting, its depth the middle of its notes' swings (in cents a setting's
+  swing grows with the pitch) — `_` a portamento as `(glide <base> T)` over
+  the note (MGSDRV's slide is a line on the frequency, the glide's on the
+  cents; a track's first note, which never glides, keeps it as a `:pitch+`
+  line) and `p` a fall. The rhythm track goes to `rhythm1`–`rhythm5`, a track a
   sound (`b s m c h` as `kick snare tom4 ride hat`), each hit ringing
   to the sound's next (`kf`: keyed off at the next hit of any, `:mode
   gate`), `v` and `vb` … `vh` its `:vol`. `y` is read where MGSDRV reads

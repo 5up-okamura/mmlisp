@@ -535,10 +535,11 @@ export function regrid(g, bpm) {
 const MAX_BLOCK = 16; // units in one repeated block or phrase
 
 // A switch's kind: a keyword by its name, a macro (or an `env-`, `vol-`,
-// `vib-` or `bend-` def, an imported envelope or bend) by its target, any
-// other name — the voice or the sample — as "name".
+// `vib-` or `bend-` def, an imported envelope or bend) by its target, a
+// glide, any other name — the voice or the sample — as "name".
 // :gate, :gate* and :gate- set the one gate: one kind.
 const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0].replace(/^:gate[*-]$/, ":gate")
+  : t.startsWith("(glide") ? "glide"
   : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}`
     : /^env-/.test(t) ? "macro:vel" : /^vol-/.test(t) ? "macro:vol"
       : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";
@@ -546,15 +547,28 @@ const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0].replace(/^:gate[*-
 // The switches a note needs written, given those in force: by kind — a
 // keyword (`:pan`, `:mode`) by its name, a macro by its target, a bare name
 // (a voice, a sample, an envelope def) by its place — only what changed.
-// With nothing known in force (after a loop's break), all of them.
+// With nothing known in force (after a loop's break), all of them. A glide
+// is a note's own, not a switch: a note that glides carries it, and the one
+// after it `(glide none)` — both written wherever they are.
 export function stateChange(from, to) {
   if (!from.length) return to;
-  const kind = (toks) => new Map(toks.map((t) => [switchKind(t), t]));
+  const kind = (toks) => new Map(toks.filter((t) => !isGlide(t)).map((t) => [switchKind(t), t]));
   const a = kind(from), b = kind(to);
   // A different set of kinds (a macro appears or goes): write them all.
   if (a.size !== b.size || [...b.keys()].some((k) => !a.has(k))) return to;
-  return [...b].filter(([k, t]) => a.get(k) !== t).map(([, t]) => t);
+  // Each kind where it first comes, its last word; a glide where it is.
+  const out = [], seen = new Set();
+  for (const t of to) {
+    if (isGlide(t)) { out.push(t); continue; }
+    const k = switchKind(t);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (a.get(k) !== b.get(k)) out.push(b.get(k));
+  }
+  return out;
 }
+export const GLIDE_NONE = "(glide none)";
+const isGlide = (t) => t.startsWith("(glide");
 
 /** Cut a track into units at the bar ends and the loop point. */
 function unitsOf(tr, bars, endTick, loopTick, intern = new Map()) {
@@ -855,7 +869,7 @@ export function emitStructured(song) {
     // Switches the compiler binds to the notes as it goes (like the octave),
     // not writes the chip gets: a macro, the gate, and a PCM track's sample.
     const pcm = tr.channel.startsWith("pcm");
-    const baked = (t) => { const k = switchKind(t); return k.startsWith("macro") || k === ":gate" || (pcm && k === "name"); };
+    const baked = (t) => { const k = switchKind(t); return k.startsWith("macro") || k === "glide" || k === ":gate" || (pcm && k === "name"); };
 
     // Writing: the state carried from item to item, restated at a head.
     const writeUnit = (u, st) => {
@@ -1182,7 +1196,7 @@ export function withPre(song) {
 }
 
 // A macro target no note of the track sets needs no `none` either. A def
-// names its target by its prefix (import-song.js switchKind).
+// names its target by its prefix (switchKind).
 const DEF_TARGET = { vol: "vol", env: "vel", bend: "pitch", vib: "pitch" };
 const macroTarget = (x) => (x.startsWith("(macro :") ? (x.endsWith(" none)") ? null : /^\(macro :([a-z]+)/.exec(x)[1])
   : DEF_TARGET[/^([a-z]+)-/.exec(x)?.[1]] ?? null);

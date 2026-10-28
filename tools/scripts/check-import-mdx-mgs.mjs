@@ -231,8 +231,8 @@ function compressMgs(u8) {
     assert.ok(!/\(fm7/.test(source), `${what}: no fm7 in #opll_mode 1`);
     has(source, /:tempo 150/, what);
     has(source, /\(sqr1[\s\S]*?:gate\* 0\.75[\s\S]*? c /, what); // q6 as the gate, c its whole quarter
-    has(source, /\(macro :pitch\+ \[-400 -385 -370 [^\]]* -19 0\]\)/, what); // c_e: from c to e, a line on the period a frame
-    has(source, /e4? (\(macro :pitch none\) )?~ g/, what); // e & g: the e slurs into the g
+    has(source, /\(glide c4 4\) e4? /, what); // c_e: a glide from c to e over the e
+    has(source, /e4? (\(glide none\) )?~ g/, what); // e & g: the e slurs into the g, no glide
     has(source, /#top[\s\S]*:pitch -?\d+[\s\S]*\(go top\)/, what); // `$`, then \ 5
     has(source, /\(sqr2[\s\S]*:mode noise :noise-rate 31/, what);
     has(source, /\(def vol-e0-v15 \(macro :vol \[31 \(wait 1f\) 29 28 26 0\]\)\)/, what); // a=4: toward a, a step short (MGSDRV's)
@@ -240,7 +240,10 @@ function compressMgs(u8) {
     has(source, /\(def bend-e2-c3 \(macro :pitch\+ \[-20 -10\]\)\)/, what); // \-10 then \5: the period's own units, + up
     has(source, /\(def-wave scc-00 :wave \[0 8 16/, what);
     has(source, /\(def env-r1-v12-scc \(macro :vel \[12\.25 12\.75 13\.625 14 [^\]]*#rel 6\.25 \(wait 2f\) 3\.25 \(wait 1f\) 0\]\)\)/, what); // (E × 13) >> 8 as the SCC's levels in :vel eighths, RR a step on E a frame
-    has(source, /\(wave1[\s\S]*scc-00[\s\S]*\(triangle /, what);
+    // h: one def for the setting, its notes' middle swing in cents
+    has(source, /\(def vib-80-8-down-w13 \(macro :pitch\+ \(triangle -80\.\.80 :len 8f :phase 192 :wait 13f\)\)\)/, what);
+    has(source, /\(wave1[\s\S]*scc-00[\s\S]*vib-80-8-down-w13/, what);
+    if (source.match(/\(macro :pitch\+ \(triangle /g).length > 1) { console.error(source); assert.fail(`${what}: the vibrato is the def's alone`); }
     has(source, /\(def-fm mgs-v15 :fb 7\n  :am1 0 :vib1 0 :eg1 1 :ks1 0 :ml1 1 :ksl1 0 :tl1 30 :ws1 1 :ar1 15 :dr1 0/, what);
     has(source, /\(fm1[\s\S]*mgs-v15[\s\S]*:oct 3[\s\S]*piano :sus 1/, what); // FM's o4 is an octave below the PSG's
     has(source, /\(rhythm1[\s\S]*kick :vol 25/, what); // vb11 (3 dB steps)
