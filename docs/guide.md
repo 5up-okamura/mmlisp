@@ -1735,17 +1735,21 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   `(macro …)` def, its loop a `#sus` and its release point a `#rel` (held
   there until the note is let go). An instrument's pitch macro (Furnace's,
   1/128 semitone a step, relative ones added up, its delay and speed kept)
-  is a `(def pitch-… (macro :pitch […]))` the note names, unless a slide,
+  is a `(def pitch-… (macro :pitch+ […]))` the note names, unless a slide,
   portamento or vibrato on its row takes the note's one pitch macro (the
-  log counts it). A Furnace song's tuning (its A-4) is a `:pitch` offset
-  under every note. Notes sound where Furnace plays them: the FM chips and
+  log counts it). A Furnace song's tuning (its A-4) and the fine tune are
+  the channel's `:pitch`, which the pitch macros and arpeggios ride. Notes sound where Furnace plays them: the FM chips and
   the AY at their names, the SN76489 two octaves up and the other PSGs and
   wavetables (the SCC, the HuC6280, the 2A03, the VRC6) one, as Furnace
   reckons their periods. A fixed-pitch arpeggio (a drum's pitch sweep) becomes a
-  `:semi` from the note played, so it gets one def for each note it plays.
+  `:semi+` from the note played, so it gets one def for each note it plays.
   The volume column, pan (`08xy`; Furnace's `80xx`, a side only at its
   end), arpeggio (`00xy`), note
-  cut (`ECxx`) and delay (`EDxx`) come along.
+  cut (`ECxx`) and delay (`EDxx`) come along. The arpeggio is a `(macro
+  :semi+ …)` that runs on through the notes as Furnace's does — its
+  phase carried from note to note at the song's arpeggio speed (`E0xx`)
+  — and on the PSGs and wave chips (not FM, the OPLL or the SCC) a new
+  note stops it until its row's `00xy` starts it again.
 - The volume column is the note's `:vel`. Where the level moves under a
   sounding note — a column written on a row without a note, or a volume
   slide (`0Axy`, `05xy`, `06xy`, `FAxy`, `F3xx`/`F4xx`, `F8xx`/`F9xx`) —
@@ -1757,8 +1761,9 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   (`07xy`) stops it; `05xy` and `06xy` also bring back the last vibrato and
   portamento. A volume of 0 is silent on every chip, FM's too: a note
   there is left out, and a slide that reaches 0 ends its note.
-- The pitch effects come along as `:pitch` macros: a vibrato (`04xy`) is a
-  shared `(def vib-xy (macro :pitch (sin …)))`, a slide (`01xx`/`02xx`,
+- The pitch effects come along as `:pitch+` macros over the channel's
+  `:pitch`: a vibrato (`04xy`) is a shared `(def vib-xy (macro :pitch+
+  (sin …)))`, from the middle rising as Furnace's starts, a slide (`01xx`/`02xx`,
   `E1xy`/`E2xy`) a line on its note, a portamento (`03xx`) a slur that glides
   in, and fine tune (`E5xx`) an offset rounded to 10 cents. Furnace's
   slide/portamento compatibility flags are followed approximately.

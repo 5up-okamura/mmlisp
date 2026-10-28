@@ -146,6 +146,9 @@ export async function parseFur(bytes) {
   // multiplier on slide speeds (compat flags); the PC Engine's noise rate
   // straight from the note (Furnace's default since it has the flag).
   let linearPitch = 1, pitchSlideSpeed = 4, properNoiseLayout = true, newVolumeScaling = true, cflgPtr = 0;
+  // The arpeggio's speed (ticks a step) and when its phase starts over: on
+  // every row, on every new note (compat flags; otherwise it runs on).
+  let arpSpeed = 1, rowResetsArpPos = false, resetArpPhaseOnNewNote = false;
   // DefleMask's speed select: two speeds by the row's parity, not in turn
   // (playback.cpp brokenSpeedSel) — a flag from version 70, on before it.
   let brokenSpeedSel = false;
@@ -201,7 +204,7 @@ export async function parseFur(bytes) {
     p = subPtr[0];
     if (magic() !== "SNG2") throw new Error("FUR: invalid subsong");
     p += 8;
-    hz = f32(); c(); c(); // arp speed, effect divider
+    hz = f32(); arpSpeed = c() || 1; c(); // arp speed, effect divider
     patLen = u16(); ordersLen = u16();
     hilightA = c(); hilightB = c();
     vtN = u16() || 1; vtD = u16() || 1;
@@ -220,7 +223,7 @@ export async function parseFur(bytes) {
     p += 8;
     const timeBase = c();
     speeds = [c() * (timeBase + 1), c() * (timeBase + 1)];
-    c(); // arp speed
+    arpSpeed = c() || 1;
     hz = f32();
     patLen = s16(); ordersLen = s16();
     hilightA = c(); hilightB = c();
@@ -262,7 +265,12 @@ export async function parseFur(bytes) {
           str();
         }
         if (version >= 59) p += 4;
-        if (version >= 70) { brokenSpeedSel = u8[p] > 0; if (version >= 94) pitchSlideSpeed = u8[p + 13] || 4; p += 28; }
+        if (version >= 70) {
+          brokenSpeedSel = u8[p] > 0;
+          if (version >= 71) rowResetsArpPos = u8[p + 2] > 0;
+          if (version >= 94) pitchSlideSpeed = u8[p + 13] || 4;
+          p += 28;
+        }
         vtN = s16() || 1; vtD = s16() || 1;
         // On to the speed pattern (fur.cpp, from version 139): the subsongs,
         // the metadata, each system's output and the patchbay, more flags.
@@ -274,6 +282,7 @@ export async function parseFur(bytes) {
           p += 12 * ids.filter(Boolean).length; // volume, pan, front/rear pan
           const conns = i32();
           p += 4 * conns; // the patchbay
+          if (version >= 184) resetArpPhaseOnNewNote = u8[p + 1 + 4] > 0;
           p += 1 + 8; // its auto flag, the compatibility flags of 138-200
           const nsp = c();
           const sp = Array.from({ length: 16 }, () => c());
@@ -601,6 +610,8 @@ export async function parseFur(bytes) {
         if (k === "pitchSlideSpeed") pitchSlideSpeed = +v || 4;
         if (k === "properNoiseLayout") properNoiseLayout = +v > 0;
         if (k === "newVolumeScaling") newVolumeScaling = +v > 0;
+        if (k === "rowResetsArpPos") rowResetsArpPos = +v > 0;
+        if (k === "resetArpPhaseOnNewNote") resetArpPhaseOnNewNote = +v > 0;
         if (k === "brokenSpeedSel") brokenSpeedSel = +v > 0;
       }
     }
@@ -619,6 +630,7 @@ export async function parseFur(bytes) {
     fmVolMax: 127, psgVolMax: 15,
     linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout, newVolumeScaling, brokenSpeedSel,
     tuning, // A-4's Hz
+    arpSpeed, rowResetsArpPos, resetArpPhaseOnNewNote,
     grooves,
   };
   // Furnace converts the legacy sample mode of a file before 239 on load.

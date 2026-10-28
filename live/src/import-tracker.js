@@ -93,6 +93,10 @@ const STAND_IN = { psg: "wave-square", wave: "wave-triangle", noise: "wave-squar
 // The volume column's top, where it is not the model's FM / PSG one.
 const VOL_MAX = { opl: 63 };
 
+// The chips whose new note stops a 00xy arpeggio (Furnace's
+// keyOffAffectsArp: the PSGs and the wave chips, not FM, the OPLL or the SCC).
+const ARP_STOPS_AT_NOTE = new Set(["nes", "vrc6", "pce", "sn76489", "ssg"]);
+
 // A row's C-0 as MIDI by its channel (the model, above).
 const C0_MIDI = (chn) => (chn.chip === "sn76489" ? 36
   : ["fm", "fm3op", "opm", "opll", "opl"].includes(chn.kind) || chn.chip === "ssg" ? 12 : 24);
@@ -585,7 +589,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         : f - note);
       const semi = (x, k) => (note != null && ins.arp.fixed[k] ? fixedSemi(x) : nz == null ? x : step(x));
       if (moves && ins.arp.values.some((x, k) => semi(x, k) !== 0))
-        parts.push(`:semi ${arr(ins.arp, semi)}`);
+        parts.push(`:semi+ ${arr(ins.arp, semi)}`);
       if (fc === "pulse" && ins.duty?.values.length)
         parts.push(`:duty ${arr(ins.duty, (x) => FC_DUTIES[x & 3])}`);
       if (vm === "vrc6" && ins.duty?.values.length > 1) parts.push(`:duty ${arr(ins.duty, (x) => (x & 7) + 1)}`);
@@ -631,39 +635,46 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     warnings.push("the song's pitch is not linear: slides and portamento are approximated");
   const frames = (scoreTicks) => Math.max(1, Math.round((scoreTicks / ticksPerFrame) * 60 / t.hz));
   const slideCents = (speed) => (speed * pss * 100) / 128; // a tracker tick
+  // The pitch effects are `:pitch+` macros, from the note's own pitch: they
+  // ride the channel's `:pitch` — the song's tuning and the fine tune,
+  // written as the channel's offset — and an arpeggio's `:semi+` rides it
+  // too, as Furnace adds them all up (a plain macro would write over it).
   let vibUnderSlide = 0;
-  const vibDef = ({ x, y }, d) => {
+  const vibPhase = (x) => (64 + 4 * x) & 255;
+  const vibDef = ({ x, y }) => {
     const depth = Math.round((y * 127 * 100) / (16 * 128));
     const period = Math.max(1, Math.round((64 / x) * 60 / t.hz));
-    const key = `vib:${x}:${y}:${d}`;
+    const key = `vib:${x}:${y}`;
     if (!defs.has(key)) {
-      const name = uniq(`vib-${x.toString(16)}${y.toString(16)}${d ? (d > 0 ? `+${d}` : d) : ""}`);
-      defs.set(key, { name, text: `(def ${name} (macro :pitch (sin ${d - depth}..${d + depth} :len ${period}f)))` });
+      const name = uniq(`vib-${x.toString(16)}${y.toString(16)}`);
+      // (Furnace's sine starts at the middle, rising — a quarter turn in —
+      // and its first tick has already stepped it: `x` 64ths more.)
+      defs.set(key, { name, text: `(def ${name} (macro :pitch+ (sin ${-depth}..${depth} :len ${period}f :phase ${vibPhase(x)})))` });
     }
     return defs.get(key).name;
   };
   // An instrument's pitch macro as a def of the note's pitch a frame at a
   // time, in cents (a step 1/128 semitone): its delay, each step held its
   // speed, a relative macro's steps added up; a loop runs on to two
-  // seconds, or until it has gone four octaves. `d` the fine tune under it.
-  const insPitchDef = (i, d) => {
+  // seconds, or until it has gone four octaves.
+  const insPitchDef = (i) => {
     const m = t.instruments[i]?.pitch;
     if (!m?.values.length || !m.values.some(Boolean)) return null;
-    const key = `ipitch:${i}:${d}`;
+    const key = `ipitch:${i}`;
     if (!defs.has(key)) {
-      const out = new Array(m.delay ?? 0).fill(d);
+      const out = new Array(m.delay ?? 0).fill(0);
       const cap = Math.round(2 * t.hz); // two seconds of ticks
       let acc = 0;
       for (let k = 0; k < m.values.length && out.length < cap;) {
         acc = m.relative ? acc + m.values[k] : m.values[k];
-        const c = d + Math.round((acc * 100) / 128);
+        const c = Math.round((acc * 100) / 128);
         for (let s = 0; s < (m.speed ?? 1); s++) out.push(c);
         if (Math.abs(c) > 4800) break;
         k++;
         if (k === m.values.length && m.loop != null && (m.relative ? m.values.slice(m.loop).some(Boolean) : m.loop < m.values.length - 1)) k = m.loop;
       }
-      const name = uniq(`pitch-${slug(t.instruments[i].name) || i}${d ? (d > 0 ? `+${d}` : d) : ""}`);
-      defs.set(key, { name, text: `(def ${name} (macro :pitch [${out.join(" ")}]))` });
+      const name = uniq(`pitch-${slug(t.instruments[i].name) || i}`);
+      defs.set(key, { name, text: `(def ${name} (macro :pitch+ [${out.join(" ")}]))` });
     }
     return defs.get(key).name;
   };
@@ -671,38 +682,39 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const pitchToken = (n) => {
     const p = n.p;
     if (!p) return null;
-    const d = p.detune;
     // The instrument's pitch macro: the note's, unless a slide, a
     // portamento or a vibrato of its row takes the one pitch macro a note has.
     if (n.insPitch != null) {
-      if (!p.porta && !p.slides.length && !p.vib && !p.vibLater) return insPitchDef(n.insPitch, d);
+      if (!p.porta && !p.slides.length && !p.vib && !p.vibLater) return insPitchDef(n.insPitch);
       insPitchUnder++;
     }
-    const line = (from, to, scoreTicks, wait) =>
-      `(macro :pitch (linear ${from}..${to} :len ${frames(scoreTicks)}f${wait ? ` :wait ${frames(wait)}f` : ""}))`;
+    // (A wait in the song's ticks as played, `waitF`, where the note knows it.)
+    const waitOf = (scoreTicks, ticks) => (ticks != null ? Math.max(0, Math.round((ticks * 60) / t.hz)) : frames(scoreTicks));
+    const line = (from, to, scoreTicks, wait, waitF) =>
+      `(macro :pitch+ (linear ${from}..${to} :len ${frames(scoreTicks)}f${wait ? ` :wait ${waitOf(wait, waitF)}f` : ""}))`;
     if (p.porta) {
       const D = (p.porta.from - n.midi) * 100;
-      return line(D + d, d, (Math.abs(D) / slideCents(p.porta.speed)) * ticksPerFrame);
+      return line(D, 0, (Math.abs(D) / slideCents(p.porta.speed)) * ticksPerFrame);
     }
     const sl = p.slides[0];
     if (sl) {
       if (p.vib || p.vibLater) vibUnderSlide++;
       if (sl.semis) {
         const C = sl.dir * sl.semis * 100;
-        return line(d, d + C, (Math.abs(C) / slideCents(sl.speed)) * ticksPerFrame, sl.off);
+        return line(0, C, (Math.abs(C) / slideCents(sl.speed)) * ticksPerFrame, sl.off, sl.offF);
       }
       const span = Math.max(1, (sl.end ?? n.len) - sl.off);
       const C = Math.round(sl.dir * slideCents(sl.speed) * (span / ticksPerFrame));
-      return line(d, d + C, span, sl.off);
+      return line(0, C, span, sl.off, sl.offF);
     }
-    if (p.vib) return vibDef(p.vib, d);
+    if (p.vib) return vibDef(p.vib);
     if (p.vibLater) {
-      const { x, y, off } = p.vibLater;
+      const { x, y, off, offF } = p.vibLater;
       const depth = Math.round((y * 127 * 100) / (16 * 128));
       const period = Math.max(1, Math.round((64 / x) * 60 / t.hz));
-      return `(macro :pitch (sin ${d - depth}..${d + depth} :len ${period}f :wait ${frames(off)}f))`;
+      return `(macro :pitch+ (sin ${-depth}..${depth} :len ${period}f :phase ${vibPhase(x)} :wait ${waitOf(off, offF)}f))`;
     }
-    return d ? `(macro :pitch ${d})` : null;
+    return null;
   };
 
   // The song's speed: a 09xx / 0Fxx on any channel is the song's (Furnace
@@ -983,6 +995,17 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // — a pulse's shape, the noise's mode.
     let duty = 0;
     let arp = 0;
+    const arpStopsAtNote = ARP_STOPS_AT_NOTE.has(chn.chip);
+    // The 00xy arpeggio's phase, as Furnace runs it (playback.cpp): while
+    // the arpeggio is on, its stage (the note, +x, +y) steps every
+    // `arpSpeed` ticks, playing on across notes — a new note starts it over
+    // only under resetArpPhaseOnNewNote, a row under rowResetsArpPos.
+    let arpStage = -1, arpTicks = 1, arpSpeed = t.arpSpeed || 1, prevFrames = 0;
+    let curFrame = 0; // the row's first tick, counted in the song's ticks
+    const arpRun = (frames) => {
+      for (let f = 0; f < frames && arp; f++)
+        if (--arpTicks < 1) { arpTicks = arpSpeed; arpStage = (arpStage + 1) % 3; }
+    };
     let usedMacro = false;
     const voiceTokens = (nz = null, onWave = false, note = null) => {
       const it = t.instruments[ins];
@@ -1012,7 +1035,17 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       if (onFm) { standIns.add(standIn); return [standIn, e]; }
       return [e];
     };
-    const arpToken = () => (arp ? `(macro :semi [#sus 0 ${arp >> 4} ${arp & 15}])` : "(macro :semi none)");
+    // A note's arpeggio: the stages from its first frame on, a cycle of them.
+    const arpToken = () => {
+      if (!arp) return "(macro :semi none)";
+      let st = arpStage, tk = arpTicks;
+      const steps = [];
+      for (let f = 0; f < 3 * arpSpeed; f++) {
+        if (--tk < 1) { tk = arpSpeed; st = (st + 1) % 3; }
+        steps.push(st === 1 ? arp >> 4 : st === 2 ? arp & 15 : 0);
+      }
+      return `(macro :semi+ [#sus ${steps.join(" ")}])`;
+    };
     let usedArp = uses(0x00);
     let cur = { voice: voiceTokens(), pan: null, arp: null, duty: null, mode: modeSaid || opmNoiseSaid ? ":mode tone" : null, rate: null };
     const dutyToken = () => (fcCh === "pulse" ? `:duty ${FC_DUTIES[duty & 3]}` : fcCh === "noise" ? `:mode ${duty & 1 ? "periodic" : "white"}`
@@ -1022,9 +1055,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     let vib = null;
     // (From the song's tuning: its A-4 against 440 Hz, in cents.)
     let detune = tuneCents;
+    // The channel's offset — the tuning and the fine tune — stated where it
+    // ever is one.
+    const tuneSaid = !noiseRow && (tuneCents !== 0 || uses(0xe5));
     let lastMidi = null;
     const flat = (st) => [...st.voice, ...(st.arp ? [st.arp] : []), ...(st.pan ? [st.pan] : []), ...(st.duty ? [st.duty] : []),
-      ...(st.mode ? [st.mode] : []), ...(st.rate ? [st.rate] : []),
+      ...(st.mode ? [st.mode] : []), ...(st.rate ? [st.rate] : []), ...(st.tune ? [st.tune] : []),
       ...(st.env && st.env !== ":env none" ? [st.env, st.envRate, st.envSemi].filter(Boolean) : [])];
     // The envelope a note is on: its shape, and its period — the
     // auto-envelope's the note's own (`:env-rate note`, num/den of its
@@ -1126,6 +1162,16 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         let cut = null;
         let jump = null; // F8xx / F9xx
         const rp = {}; // this row's pitch effects
+        // The arpeggio steps through the row before (its frames, with the
+        // arpeggio it had), then this row's first tick.
+        arpRun(prevFrames);
+        curFrame += prevFrames;
+        prevFrames = rowFrames[Math.round(segStart[si] / rowTicks) + r] ?? a.framesPerRow;
+        if (t.rowResetsArpPos) arpStage = -1;
+        if (t.resetArpPhaseOnNewNote && typeof row.note === "number") arpStage = -1;
+        // A new note stops the arpeggio on the PSGs and wavetables (Furnace's
+        // keyOffAffectsArp): its row's 00xy starts it again.
+        if (arpStopsAtNote && typeof row.note === "number") arp = 0;
         for (const [code, v] of row.fx) {
           // An effect with no value is 00 (Furnace reads it so).
           const val = v < 0 && EMPTY_IS_00.has(code) ? 0 : v;
@@ -1174,6 +1220,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             if (typeof row.note !== "number" && sounding) dutyUnderNote++;
           }
           else if (code === 0x00 && val >= 0) { arp = val; usedArp = true; }
+          else if (code === 0xe0 && val > 0) arpSpeed = val;
           // Volume slides (Furnace's playback.cpp): 0Axy (05xy and 06xy
           // above), FAxy four times as fast, F3xx / F4xx xx/256 of a step a
           // frame, F8xx / F9xx a jump that stops the slide.
@@ -1312,6 +1359,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             rate: ssgCh && ssgNoise && noiseFreq != null ? `:noise-rate ${Math.max(1, noiseFreq)}`
               : opmNoiseCh && opmNoise > 0 ? `:noise-rate ${Math.max(1, Math.min(31, 33 - opmNoise))}` : cur.rate,
             ...ssgEnvTokens(),
+            tune: tuneSaid ? `:pitch ${detune}` : null,
           };
           const pre = [];
           const voiceChanged = st.voice.join(" ") !== cur.voice.join(" ");
@@ -1322,6 +1370,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (st.duty && st.duty !== cur.duty) pre.push(st.duty);
           if (st.mode && st.mode !== cur.mode) pre.push(st.mode);
           if (st.rate && st.rate !== cur.rate) pre.push(st.rate);
+          if (st.tune && st.tune !== cur.tune) pre.push(st.tune);
           for (const k of ["env", "envRate", "envSemi"]) if (st[k] && st[k] !== cur[k] && (k === "env" || st.env !== ":env none")) pre.push(st[k]);
           cur = st;
           // A noise note is its rate: c2 the slowest (chips/huc6280.js,
@@ -1335,10 +1384,10 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           // The level line's target: the one the instrument's envelope
           // leaves free (env's volume macro is a :vol on fc and pce).
           const insVol = t.instruments[ins]?.kind !== "fm" && !!t.instruments[ins]?.vol?.values.length;
-          sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st),
+          sounding = { tick: start, frame0: curFrame + delay, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st),
             voiceChanged, col: vol < 0 ? colMax : vol, lineOn: insVol && (!!fcCh || pceSong || !!vm) && !rhythmCh ? "vel" : "vol",
             insPitch: !noiseRow && t.instruments[ins]?.kind === "std" && t.instruments[ins].pitch?.values.some(Boolean) ? ins : null,
-            p: noiseRow ? null : { vib: vib && { ...vib }, detune, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
+            p: noiseRow ? null : { vib: vib && { ...vib }, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
               slides: rp.slide && !rp.slide.stop ? [{ ...rp.slide, off: 0 }] : [], vibLater: null } };
           if (legatoFrom != null && !noiseRow) sounding.tieIn = true;
           notes.push(sounding);
@@ -1348,10 +1397,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           // Pitch effects inside a note: from where they start in it.
           if (sounding?.p) {
             const off = at - sounding.tick;
+            // (And in the song's ticks as played: a groove's rows are not
+            // all one length.)
+            const offF = curFrame - sounding.frame0;
             const ps = sounding.p;
-            if (rp.vib && !ps.vib && !ps.vibLater && vib) ps.vibLater = { ...vib, off };
+            if (rp.vib && !ps.vib && !ps.vibLater && vib) ps.vibLater = { ...vib, off, offF };
             if (rp.slide?.stop) { const sl = ps.slides[ps.slides.length - 1]; if (sl && sl.end == null) sl.end = off; }
-            else if (rp.slide) ps.slides.push({ ...rp.slide, off });
+            else if (rp.slide) ps.slides.push({ ...rp.slide, off, offF });
           }
         }
         slideRow(at);
