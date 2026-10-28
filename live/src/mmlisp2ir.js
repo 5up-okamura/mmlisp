@@ -4449,7 +4449,10 @@ function compileChannelBody(
                 pushDiag(diagnostics, "error", "E_WAVE_VALUE", `:wave takes a wave, not the number ${r.n}`, nodeSrc(valueNode), trackName);
                 break;
               }
-              if (r.data) warnWaveLen(trackState, ":wave", r.data, nodeSrc(valueNode), diagnostics, trackName);
+              // (One with a $slot: the longest wave its tree reads.)
+              const longest = (t) => Math.max(t.data?.length ?? 0, ...(t.args ?? []).map(longest));
+              const steps = r.data ?? (r.tree ? { length: longest(r.tree) } : null);
+              if (steps) warnWaveLen(trackState, ":wave", steps, nodeSrc(valueNode), diagnostics, trackName);
               const args = r.tree
                 ? { target: "WAVE", expr: r.tree }
                 : { target: "WAVE", value: waveIndexOf(trackState.waves, `${trackState.head}@${valueNode.line}:${valueNode.column}`, waveSteps(r.data)) };
