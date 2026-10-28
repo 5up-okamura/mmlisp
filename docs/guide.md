@@ -1661,7 +1661,7 @@ plays it as found, other notes retune it.
 ### Song imports: MIDI, DefleMask / Furnace, VGM, MDX, MGS
 
 **A song import opens a dialog first**: what the file holds, the timing and
-tempo, the loop, and one row per source part with its destination.
+tempo (a MIDI file's), the loop, and one row per source part with its destination.
 **Enter** imports with the defaults. The loop is the file's own when it marks
 one; otherwise the box loops the whole song — ticked for a MIDI file (they
 rarely mark one), unticked for a VGM (one without a loop point is usually a
@@ -1690,8 +1690,8 @@ and drop what does not fit.
 - The music starts at the first note: a silent setup section before it, and
   the tempo it runs at, are left out. When the notes do not sit on the
   file's own beat (a recorded performance, a file converted from a log), the
-  timing is the beat estimated from the notes' times, as for a VGM, instead
-  of the file's tempo map; **Timing** switches between the two.
+  timing is the beat estimated from the notes' times instead of the file's
+  tempo map; **Timing** switches between the two.
 
 **DefleMask and Furnace.** A DefleMask module from v5.1 on is read, and a
 module plays its order list as the tracker does
@@ -1867,25 +1867,16 @@ them: a key-on starts a note, a key-off ends it.
   and on the PSG what follows it is the release, so the note is keyed off
   there and plays it as `#rel`. A note cut short names the shape it is the
   start of.
-- The tempo is estimated from the onsets (the dialog shows how well they fit
-  and the other readings, double or half — typing one keeps the measured
-  beat and reads it so); when no beat fits, the notes go on the frame grid
-  (1/60 s = 4 ticks). The grid is as fine as the fastest part needs: where a
-  channel's notes (or the DAC's hits) would share a step, half the unit
-  serves (a 32nd for a song's runs). A driver whose timer drifts is followed onset by onset,
-  so its bars stay bars; a part a little off the beat (a late echo) is put
-  on the nearest step without moving it. The file's loop becomes `#top …
-  (go top)`.
-- A note's length is the grid's — to the next note, or to the step it was
-  keyed off at — so the rhythm reads in the beat's values. Where the driver
-  keyed off sooner the time it cut is measured: a driver cuts by a fixed
-  amount (mucom88's `q`) or a fixed share (MXDRV's), so a track's cuts are
-  gathered into a few values to the tick (on a 4-tick clock when within a
-  tick and a half). The track then says it the way that changes least —
-  the time cut (`:gate- 32`, mucom88's `q3`), the share sounding
-  (`:gate* 0.75`), or the time sounding (`:gate 32`, a note ending by the
-  next beat); `:gate* 1` is back to full. A note across a bar line sounds
-  its whole length.
+- Time is kept, not read as beats: the score runs at 150 BPM, a tick
+  1/240 s (a frame four ticks), and each note sits where the driver wrote
+  it and lasts as long as it sounded — a rest after it where it was keyed
+  off before the next. A groove, a swing, a tempo of the driver's own timer
+  play as they did (to 2 ms on a timer not of the frame), which a beat grid
+  would bend. An import is a performance to listen to and to take voices
+  and pitches from; the bar lines are marks a 4/4 bar of 150 BPM apart, not
+  the song's. The file's loop becomes `#top … (go top)`, at the first note
+  within a frame of the point the file marks (a driver marks it a moment
+  off the notes it goes back to).
 - An SSG level becomes `:vel` by its decibels (the SSG's steps are 3 dB,
   `:vel`'s 2 dB), so a decay keeps its depth; the quietest levels (under
   `:vel`'s 30 dB) sit at its floor.
@@ -1897,8 +1888,8 @@ them: a key-on starts a note, a key-off ends it.
   `8n` writes and DAC stream control both read, and so does a hit the
   stream plays on into without a seek — where the driver turns the DAC on
   again, or a few bytes written straight to it start one (Revenge of
-  Shinobi's). Hits closer than the grid (a flam) follow one another by the
-  time between them. A DAC written byte by byte, without a data bank, does
+  Shinobi's). A seek a few bytes into a sample (a driver a byte late) is
+  that sample's. A DAC written byte by byte, without a data bank, does
   not read — nor can a driver's own mix of several samples be split again.
   FM6 is the DAC then, so its track is dropped.
 - An arcade, X68000 or PC-8801 chip's PCM comes in too: **SegaPCM** (System
@@ -1927,8 +1918,8 @@ them: a key-on starts a note, a key-off ends it.
   on md then takes the next voice.
 - The OKI MSM6295, QSound and the other PCM chips are not imported — the log
   names each VGM command it skipped — and neither is a second chip, which the
-  log reports. Tempo changes within the song are not imported either: one grid
-  serves the whole file.
+  log reports. (A tempo change within the song needs nothing: the notes
+  keep their times.)
 
 **MDX (X68000) and MGS (MSX).** A song compiled for MXDRV (`.mdx`) or
 MGSDRV (`.mgs`, MGSARC's compressed form too) is played as its driver plays
@@ -1999,17 +1990,17 @@ last; its repeats fold as `~ (x n … ~)` — the `~` before the loop ties the
 first pass on, the one ending it each pass into the next. A def states the
 voice, octave and velocity it starts with; a loop body states a voice only
 where one changes — on the way in, or coming back round from its end. Where
-the file gives no bars (a VGM, a MIDI file timed by its notes), the meter
+a MIDI file timed by its notes gives no bars, the meter
 comes from how the song repeats: 3/4 where the song comes back every three
 beats clearly more than every four, 4/4 otherwise. The downbeat comes from
-the drums — a PCM or DAC sample, or the YM2608's rhythm — where a 4/4 song
+the drums (GM's kick and snare) where a 4/4 song
 has a backbeat: the duller drum of the pair on 1 and 3, the other on 2 and
 4 — 1 rather than 3 where clearly more long notes start on it, as chords
 change on 1 — and a pickup where the song starts before that 1. With no backbeat to go
 by the first bar starts at the first note; a change of meter within the
-song is not read. On a PCM track
-a hit is cut at the bar line rather than tied over it: a shot plays out
-whatever its length.
+song is not read. On a PCM or ROM rhythm
+track a hit is cut at the bar line (and the loop point) rather than tied
+over it: a shot plays out whatever its length.
 
 Several files at once are fine. Everything except opening a document appends at
 the cursor, so a handful of `.dmp`s or `.wav`s lands as a block of defs — press

@@ -3363,8 +3363,6 @@
         return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
           choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : c.kind === 'rhythm' ? rhythmChoices : choices }));
       };
-      const g = a.grid;
-      const shown = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
       const fields = [];
       // A file of one machine's chip can be that machine's score or the Mega Drive's.
       if (a.targets.length > 1)
@@ -3372,12 +3370,6 @@
           choices: a.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
           hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); md reads them for the Mega Drive' });
       fields.push(
-        { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: shown,
-          hint: g.frames ? 'no steady beat found — the frame grid is used'
-            : `estimated, onsets fit ${Math.round(g.fit * 100)}%` +
-              readingsHint(g) },
-        { key: 'grid', label: 'Timing', type: 'select', value: def.grid,
-          choices: [['beats', 'the estimated beat'], ['frames', 'frames (1/60 s)']] },
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
       );
       fields.push({ key: 'loop', label: a.fileLoop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: def.loop });
@@ -3390,18 +3382,15 @@
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary: `${parsed.chips.join(' + ')} · ${(parsed.totalSamples / 44100).toFixed(1)} s` +
-          `${parsed.title ? ' · ' + parsed.title : ''}. Notes are rebuilt from the register writes; one row per chip channel that plays.`,
+          `${parsed.title ? ' · ' + parsed.title : ''}. Notes are rebuilt from the register writes, at the times they were written (150 BPM, a tick 1/240 s); one row per chip channel that plays.`,
         fields,
         rows: rowsFor(def.target),
         rowsFor,
       });
       if (!got) return null;
-      const bpm = Number(got.fields.bpm);
       return vgmToMmlisp(parsed, {
         target: got.fields.target ?? def.target,
         dest: got.rows,
-        grid: got.fields.grid,
-        bpm: bpm > 0 && bpm !== shown ? bpm : null,
         followPitch: !!got.fields.followPitch,
         loop: !!got.fields.loop,
         pcmVoices: got.fields.pcmVoices ? Number(got.fields.pcmVoices) : def.pcmVoices,

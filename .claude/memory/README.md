@@ -46,6 +46,3 @@ Rules:
 - [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings
   for SCC / OPLL and the restructure plan (and its state) that comes before
   them.
-- [importers.md](importers.md) — **song importers**: the composers' MML
-  beside their VGMs (32 pairs) as ground truth, how bars and gates are
-  checked against it, and the tempo misreads still open.

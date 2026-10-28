@@ -239,7 +239,7 @@ const writesOf = (source, addr) => {
     const { source } = imported(parsed, "pc88", structure);
     assert.match(source, /\(def-pcm pcmb-01 :file "t-pcm\.wav"/, "pc88: the RAM's sample");
     const pcm1 = source.slice(source.indexOf("(pcm1"));
-    for (const tok of [":pan left", ":pan right", ":mode loop", /:vol \d+/, /\be\b/, /\bg\b/])
+    for (const tok of [":pan left", ":pan right", ":mode loop", /:vol \d+/, /\se(?=[\d\s])/, /\sg(?=[\d\s])/])
       assert.match(pcm1, typeof tok === "string" ? new RegExp(tok) : tok, `pc88: ${tok} on pcm1`);
   }
   imported(parsed, "md");

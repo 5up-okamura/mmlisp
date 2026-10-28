@@ -39,9 +39,11 @@
 // (chipPcmTracks), the oldest sound giving way when more ring at once than
 // the score has voices; other chips' PCM is reported, not imported.
 //
-// The tempo is estimated (estimateGrid): the onsets' common unit, read as a
-// 16th (or whatever puts the tempo in a musical range), with a frame grid
-// as the fallback when the onsets do not fit one.
+// Time is kept, not read as beats: the score runs at 150 BPM, a tick
+// 1/240 s, and each note sits where the driver wrote it — the import is a
+// faithful performance to listen to and take voices and pitches from, not
+// a score rebuilt (a groove, a swing, a driver's own timer would not
+// survive a beat grid).
 //
 //   parseVgm(bytes)                  → the file's chips and channels' events
 //   analyzeVgm(parsed)               → what the import dialog shows, and the
@@ -61,7 +63,7 @@
 //   vgmToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, bestBars, qstr, barEnds, estimateGrid, regrid, lenToken, RATE, PPQN,
+import { emitSong, emitStructured, qstr, barEnds, RATE, PPQN,
   assignBends, PITCH_NONE, gcd, destsFor } from "./import-song.js";
 import { targetProfile } from "./targets.js";
 import { envCycle } from "./chips/ssg.js";
@@ -80,7 +82,6 @@ const CARRIERS = [[3], [3], [3], [3], [2, 3], [1, 2, 3], [1, 2, 3], [0, 1, 2, 3]
 const STAND_IN = { psg: "wave-square", noise: "wave-square", opl: "wave-sine", opll: "wave-saw" };
 // The SN76489's white noises (Hz on the Mega Drive) and the noise rates
 // that come nearest them where a noise is a rate (125 kHz / rate).
-const NOISE_WHITE = ["white0", "white1", "white2"];
 const WHITE_HZ = [13983, 6991, 3496];
 const NOISE_RATE_OF = { white0: 9, white1: 18, white2: 31 };
 const nearestWhite = (hz) => WHITE_HZ.reduce((b, w, i) => (Math.abs(Math.log(w / hz)) < Math.abs(Math.log(WHITE_HZ[b] / hz)) ? i : b), 0);
@@ -1369,10 +1370,11 @@ function channelNotes(parsed, key, followPitch) {
 // go) is not kept.
 
 const STAY = 4; // frames at a level that make a jump a new note
+const MAX_SHAPE = 3600; // frames of a note its pitch is followed through (a minute)
 
 function pitchShape(n, endT) {
   const end = n.end === Infinity ? endT : n.end;
-  const F = Math.min(600, Math.max(1, Math.round((end - n.t) / FRAME)));
+  const F = Math.min(MAX_SHAPE, Math.max(1, Math.round((end - n.t) / FRAME)));
   // (One that goes on the way it was going — a sweep's fall to the note's
   // end — is the note's.)
   // (A burst's writes are its last: a period written a byte at a time
@@ -1402,6 +1404,32 @@ function pitchShape(n, endT) {
     for (let g = f + 1; g < f + STAY; g++) if (Math.abs(p[g] - p[f]) > 25) { stays = false; break; }
     if (stays) cuts.push(f);
   }
+  // Under a deep vibrato the pitch never stays: its centre (a mean over a
+  // vibrato's cycle) moving three quarters of a semitone or more off the
+  // note's and holding there is a new note too, cut at the frame nearby the
+  // pitch jumps most. (Three quarters: a centre near the middle of two
+  // semitones wanders across it.) Held twice as long: a slow glide, a
+  // semitone every few frames, stays one note.
+  const W = 4, HOLD = 2 * STAY;
+  const centre = p.map((_, f) => {
+    let s = 0, k = 0;
+    for (let g = Math.max(0, f - W); g <= Math.min(F - 1, f + W); g++) { s += p[g]; k++; }
+    return s / k;
+  });
+  for (let f = 1, held = Math.round(centre[0] / 100) * 100; f + HOLD <= F; f++) {
+    const off = (c) => Math.abs(c - held) >= 75;
+    if (!off(centre[f])) continue;
+    const to = Math.round(centre[f] / 100) * 100;
+    let stays = true;
+    for (let g = f + 1; g < f + HOLD; g++) if (!off(centre[g]) || Math.abs(centre[g] - to) > 50) { stays = false; break; }
+    if (!stays) continue;
+    held = to;
+    let at = f;
+    for (let g = Math.max(1, f - W); g <= Math.min(F - 1, f + W); g++)
+      if (Math.abs(p[g] - p[g - 1]) > Math.abs(p[at] - p[at - 1])) at = g;
+    if (!cuts.some((c) => Math.abs(c - at) < STAY)) cuts.push(at);
+  }
+  cuts.sort((a, b) => a - b);
   cuts.push(F);
   const segs = [];
   for (let i = 0; i + 1 < cuts.length; i++) {
@@ -1434,12 +1462,11 @@ function pitchShape(n, endT) {
 // ── Envelopes ─────────────────────────────────────────────────────────────
 
 const FRAME = RATE / 60;
+// The score's time: 150 BPM, a tick 1/240 s (a frame four ticks).
+const BPM = 150;
+const TICK = (60 * RATE) / (BPM * PPQN);
 const MAX_ENV = 256; // frames an envelope follows; a level held after it is held on
 const ENV_NONE = "(macro :vel none)";
-const GATE_FULL = ":gate* 1"; // a note sounding its whole length
-// A gate's length: a note value where it is one (`32`, `16.`), else ticks
-// (`42t` — not lenToken's `7/64`, which reads as nothing).
-const gateToken = (d) => (/^\d+\.?$/.test(lenToken(d)) ? lenToken(d) : `${d}t`);
 const ENV_KEY = 4; // frames assignEnvelopes indexes its shapes by
 
 /** A note's level frame by frame (sampled mid-frame), from `start`. */
@@ -1564,38 +1591,26 @@ function envDef(name, { head, sus, rel }) {
 
 export function analyzeVgm(parsed, { followPitch = true } = {}) {
   const channels = [];
-  const onsets = [];
-  const lanes = []; // each channel's own onsets: where a coarse grid would merge two notes
   for (const key of parsed.events.keys()) {
     const notes = channelNotes(parsed, key, followPitch);
     if (!notes.length) continue;
     const kind = parsed.kinds.get(key) ?? "psg";
-    // A YM2151's FM8 noise note is its noise channel's too: counted once.
-    for (const n of notes) if (!n.slur && !(kind === "opm" && n.noiseHz)) onsets.push(n.t);
-    lanes.push(notes.filter((n) => !n.slur).map((n) => n.t));
     const noisy = kind === "opm" ? notes.filter((n) => n.noiseHz).length : 0;
     // An SSG channel's notes on the noise alone (the noise row's too).
     const ssgNoise = kind === "psg" ? notes.filter((n) => n.ssg?.mix === "noise").length : 0;
     channels.push({ key, kind, notes: notes.length, noisy, ssgNoise, label: `${key} · ${notes.length} notes${noisy ? `, ${noisy} with the noise` : ""}` });
   }
-  // The YM2608's rhythm: a row per ROM sound it keys — the drums the tempo
-  // is best read from.
+  // The YM2608's rhythm: a row per ROM sound it keys.
   for (let k = 0; k < 6; k++) {
     const hs = (parsed.rhythmHits ?? []).filter((h) => h.k === k);
     if (!hs.length) continue;
     const key = `${RHYTHM_KEY} ${RHYTHM_ROM[k]}`;
     channels.push({ key, kind: "rhythm", k, notes: hs.length, label: `${key} · ${hs.length} hits` });
-    for (const h of hs) onsets.push(h.t);
-    lanes.push(hs.map((h) => h.t));
   }
-  const frameRate = 60;
-  const grid = estimateGrid(onsets, { frameRate, lanes });
   // The DAC: one channel of sample hits.
   if (parsed.dacHits?.length) {
     channels.push({ key: DAC_KEY, kind: "pcm", notes: parsed.dacHits.length,
       label: `${DAC_KEY} · ${parsed.dacHits.length} hits, ${new Set(parsed.dacHits.map((h) => h.offset)).size} samples` });
-    for (const h of parsed.dacHits) onsets.push(h.t);
-    lanes.push(parsed.dacHits.map((h) => h.t));
   }
   // PCM chips: a row per channel that plays; how many ring at once sets the
   // voices the score asks for.
@@ -1608,7 +1623,6 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   for (const [key, hs] of byKey) {
     channels.push({ key, kind: "chip-pcm", notes: hs.length,
       label: `${key} · ${hs.length} hits, ${plural(new Set(hs.map((h) => h.start)).size, "sample")}` });
-    for (const h of hs) onsets.push(h.t);
   }
   const pcmPoly = pcmPolyphony(parsed.pcmHits ?? []);
   // A file without a loop point says it does not loop (a jingle).
@@ -1623,7 +1637,7 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   const targets = [...own.map(([t]) => t), "md"];
   // (A file of PCM alone — a YM2608's ADPCM-B — is its chip's machine's.)
   const target = own.find(([, re]) => (tones.length ? tones.every((c) => re.test(c.key)) : parsed.chips.some((n) => re.test(n))))?.[0] ?? "md";
-  return { channels, grid, frameRate, followPitch, fileLoop, pcmPoly, targets, target };
+  return { channels, followPitch, fileLoop, pcmPoly, targets, target };
 }
 
 /**
@@ -1751,13 +1765,13 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     if (rival) byVoice.set(k, rival[0]);
   }
   for (const [k, r] of byVoice) if (dest[k] !== "drop" && dest[r] !== "drop") dest[(count.get(k) ?? 0) >= (count.get(r) ?? 0) ? r : k] = "drop";
-  return { target: targetName, dest, bpm: null, grid: a.grid.frames ? "frames" : "beats", followPitch: a.followPitch, loop: a.fileLoop,
+  return { target: targetName, dest, followPitch: a.followPitch, loop: a.fileLoop,
     pcmVoices: Math.max(1, Math.min(3, a.pcmPoly ?? 1)) };
 }
 
 /**
- * @param options {dest: {channelKey: channel | "pcm" | "drop"}, bpm?: number|null,
- *                 grid: "beats" | "frames", followPitch, loop, pcmVoices?, fileName?}
+ * @param options {dest: {channelKey: channel | "pcm" | "drop"}, followPitch,
+ *                 loop, pcmVoices?, fileName?}
  */
 export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const warnings = [];
@@ -1791,34 +1805,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const hasEnv = target.hasWord("SSG_ENV");
   const followPitch = options.followPitch ?? true;
 
-  // The grid: the estimate, a tempo set by hand, or frames.
-  let g = a.grid;
-  if (options.grid === "frames") {
-    const unit = RATE / a.frameRate;
-    g = { unitTicks: 4, frames: true, bpm: (60 * a.frameRate) / 24, readings: [], unit, units: (t) => Math.round(t / unit) };
-  }
-  if (options.bpm > 0 && Math.abs(options.bpm - g.bpm) > 1e-6) g = regrid(g, options.bpm);
-  // The grid starts at the first note; PCM played before it (a drum intro)
-  // moves the whole song on by whole units, so it keeps its place.
-  const early = Math.min(0, ...[...(parsed.pcmHits ?? []), ...(parsed.dacHits ?? [])].map((h) => g.units(h.t)));
-  const tickOf = (t) => Math.max(0, g.units(t) - early) * g.unitTicks;
-  // A note's length is the grid's (to where it was keyed off, or on to the
-  // next note), a staccato's sounding time a `:gate` in quarter units (a
-  // 64th on a 16th grid, and no coarser on a coarser one): the rhythm reads
-  // in the beat's values, and a staccato keys off where it did.
-  const lenQ = Math.max(1, Math.min(PPQN / 16, Math.floor(g.unitTicks / 4)));
-  const stepsOf = (t0, t1) => Math.round((((t1 - t0) / g.unit) * g.unitTicks) / lenQ) * lenQ;
-  const lenOf = (t0, t1) => Math.max(lenQ, stepsOf(t0, t1));
-  // The slot a note at `tick` keyed off at `end` takes: to the grid's end,
-  // or — a staccato the grid ends where it starts — the units its gate needs
-  // (cut back where the next note comes sooner).
-  const slotOf = (tick, end, gate, minLen) => {
-    const len = Math.max(minLen, end - tick);
-    return gate !== Infinity && len < gate ? Math.ceil(gate / g.unitTicks) * g.unitTicks : len;
-  };
-  if (!g.frames && a.grid.fit < 0.95)
-    warnings.push(`the notes fit the ${g.bpm.toFixed(1)} BPM grid loosely (${Math.round(a.grid.fit * 100)}%) — try the frame grid if it sounds off`);
-  if (g.frames) warnings.push("timed on the frame grid (1/60 s = 4 ticks) — no steady beat was found");
+  // Time, not beats: a tick is 1/240 s (150 BPM), a frame four. Notes sit
+  // where the driver wrote them — a groove, a swing, a tempo of its own
+  // timer kept as it plays, to 2 ms on a timer not of the frame — and are
+  // as long as they sounded; the bars are marks a 4/4 bar apart.
+  const tickOf = (t) => Math.max(0, Math.round(t / TICK));
 
   const dest = options.dest ?? {};
   const taken = new Set();
@@ -1828,7 +1819,18 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const endTick0 = tickOf(parsed.totalSamples);
   const bars = barEnds([], Math.max(1, endTick0));
   const endTick = bars[bars.length - 1];
-  const loopTick = !loop ? null : fileLoop ? tickOf(parsed.loopSample) : 0;
+  // A driver marks its loop as it goes back, a moment off the notes the
+  // loop starts with: the loop starts at the first of them within a frame
+  // (else, a tick apart, the note before it strikes again at the top).
+  const loopAt = () => {
+    const near = (t) => t >= parsed.loopSample - FRAME / 2 && t <= parsed.loopSample + FRAME;
+    const times = [
+      ...[...parsed.events.values()].flatMap((evs) => evs.filter((e) => (e.kind === "on" || e.kind === "retrig") && near(e.t)).map((e) => e.t)),
+      ...[parsed.rhythmHits, parsed.dacHits, parsed.pcmHits].flatMap((hs) => (hs ?? []).filter((h) => near(h.t)).map((h) => h.t)),
+    ];
+    return tickOf(times.length ? Math.min(...times) : parsed.loopSample);
+  };
+  const loopTick = !loop ? null : fileLoop ? loopAt() : 0;
 
   // Voices: a key per register set with the carriers relative to their loudest.
   const voices = new Map(); // key → {name, raw, base}
@@ -1968,11 +1970,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       // On a machine whose driver plays a frame at a time (fc, msx, pce) a
       // note shorter than a frame — a length counter's blip — keys off in
       // the frame it keys on: it sounds its one frame.
-      const minLen = target.frameClock ? Math.max(1, Math.ceil((PPQN * g.bpm) / 3600)) : 1;
-      // (A gate under a frame on such a machine would key off in the frame it keys on: silent.)
-      const gate = n.end === Infinity ? Infinity : Math.max(minLen, lenOf(n.t, n.end));
-      const note = { tick, len: slotOf(tick, end, gate, minLen), gate,
-        rawGate: n.end === Infinity ? Infinity : Math.max(minLen, ((n.end - n.t) / g.unit) * g.unitTicks), minLen,
+      const minLen = target.frameClock ? Math.round(FRAME / TICK) : 1;
+      const note = { tick, len: Math.max(minLen, end - tick),
         midi: Math.round(n.pitch), vel: n.vel, tieIn: n.slur, bend: n.bend, ssg: n.voice ? null : n.ssg ?? null, srcT: n.t };
       const endT = n.end === Infinity ? parsed.totalSamples : n.end;
       let voice = null;
@@ -2021,13 +2020,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       // (no R13 write) runs it on: a slur, where it follows on the shape
       // (the lengths pass keeps it one only where it runs into it).
       if (envHere && n.ssg?.env != null && !n.fresh && prev?.ssg?.env === n.ssg.env && prev.tick < tick) note.tieIn = true;
-      // Two a length step or more apart (a part faster than the grid) keep
-      // their distance; closer, the one it replaces was the attack: its
-      // slur, or none, is this one's.
-      if (prev && prev.tick >= tick && ((n.t - prev.srcT) / g.unit) * g.unitTicks >= lenQ) {
-        note.tick = tick = prev.tick + stepsOf(prev.srcT, n.t);
-        note.len = slotOf(tick, end, gate, minLen);
-      }
+      // (Two within a tick: the one it replaces was the attack — its slur,
+      // or none, is this one's.)
       if (prev && prev.tick >= tick) { note.tieIn = prev.tieIn; notes.pop(); }
       else if (prev && prev.tick + prev.len > tick) prev.len = tick - prev.tick;
       notes.push(note);
@@ -2053,25 +2047,22 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // A released note is keyed off where its release starts, to a quarter of
   // a step (its #rel plays on through the rest after it).
   for (const tr of tracks)
-    for (const n of tr.notes) if (n.relFrame != null) n.len = Math.min(n.len, lenOf(n.t0, n.t0 + n.relFrame * FRAME));
+    for (const n of tr.notes) if (n.relFrame != null) n.len = Math.min(n.len, Math.max(1, Math.round((n.relFrame * FRAME) / TICK)));
 
-  // Lengths and slurs first: a gap under half a unit is held through (the
-  // note's gate keeps where it keyed off), and a slur only stays one when
-  // its note runs into it.
+  // Slurs first: one only stays one when its note runs into it.
   for (const tr of tracks) {
     for (let i = 0; i < tr.notes.length; i++) {
       const n = tr.notes[i];
       const next = i + 1 < tr.notes.length ? tr.notes[i + 1].tick : endTick;
-      // (A note slurred on into the next runs into it: it ended where the
-      // pitch moved, which the grid may put a step on.)
-      if (next - (n.tick + n.len) > 0 && (next - (n.tick + n.len) < g.unitTicks / 2 || tr.notes[i + 1]?.tieIn)) n.len = next - n.tick;
+      // (A note slurred on into the next runs into it.)
+      if (next - (n.tick + n.len) > 0 && tr.notes[i + 1]?.tieIn) n.len = next - n.tick;
       if (n.tieIn && (i === 0 || tr.notes[i - 1].tick + tr.notes[i - 1].len !== n.tick)) n.tieIn = false;
     }
   }
   // The DAC, to a PCM track: the data bank one wav, each sample a def that
   // slices it — so with DAC on, FM6 is not there to play.
   const dacDest = dest[DAC_KEY] ?? "drop";
-  const dacOut = dests.pcm.length > 0 && dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName, stepsOf) : null;
+  const dacOut = dests.pcm.length > 0 && dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName) : null;
   // The rhythm asked onto the kit: a voice more for the engine.
   const kitAsked = !!dests.kit && a.channels.some((c) => c.kind === "rhythm" && dest[c.key] === dests.kit);
   // SegaPCM / ADPCM: the channels kept, on as many voices as asked.
@@ -2082,7 +2073,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const pcmVoices = Math.max(1, Math.min(maxVoices, dacMix ? options.pcmVoices ?? Math.min(3, a.pcmPoly ?? 1) : a.pcmPoly ?? 1));
   const chipOut = dests.pcm.length > 0 && !dacOut && chipKeys.length
     ? chipPcmTracks(parsed, chipKeys, pcmVoices, tickOf, endTick, options.fileName,
-      { stepsOf, bankFit: dacMix, pan: !!target.partOf(dests.pcm[0])?.words?.("PAN"), more: kitAsked ? 1 : 0,
+      { bankFit: dacMix, pan: !!target.partOf(dests.pcm[0])?.words?.("PAN"), more: kitAsked ? 1 : 0,
         // A part whose level is the chip's own register (pc88's ADPCM-B, $0B):
         // the hit's level as :vol — not a mix's gain (the DAC's, PCM8's).
         absolute: !!target.partOf(dests.pcm[0])?.level?.steps }) : null;
@@ -2108,78 +2099,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (!onRom && !kitVoice) { warnings.push(`${c.key}: the PCM takes every voice — the rhythm is left out`); continue; }
     rhythmRows.push({ k: c.k, d: onRom ? d : kitVoice });
   }
-  const rhythmOut = rhythmRows.length ? rhythmTracks(parsed, rhythmRows, target, tickOf, endTick, g.bpm) : [];
+  const rhythmOut = rhythmRows.length ? rhythmTracks(parsed, rhythmRows, target, tickOf, endTick) : [];
   const kitRhythm = rhythmOut.length > 0 && !dests.rhythm.length;
   if (dacMix && (dacOut || chipOut || kitRhythm)) {
     const fm6 = tracks.findIndex((tr) => tr.d === "fm6");
     if (fm6 >= 0) { warnings.push(`${tracks[fm6].ch.key}: fm6 is the DAC in a score with PCM — dropped`); tracks.splice(fm6, 1); }
   }
 
-  // The gate: where a note keyed off short of its length, as the time cut
-  // off its end. A driver cuts by a fixed amount (mucom's q: clocks before
-  // the end) or a fixed share (MXDRV's q: eighths of the note), so a track's
-  // cuts come in a few values blurred by a frame: each is put at the middle
-  // of its cluster, to the tick (under two ticks is no cut). Then the track's gates are written the way
-  // that changes least from note to note — the time cut (`:gate-`), the
-  // share sounding (`:gate*`, in eighths), or the time sounding (`:gate`,
-  // for a note ending by the next beat; `:gate-` past it). A note across a
-  // bar line (the bars the score will have, or the loop point) sounds its
-  // whole length: the structure cuts there, and a relative gate on a note
-  // tied into a block resolves against the segment alone, keying off bars
-  // early. The left note of a slur sounds its whole length whatever its
-  // gate (language.md §3).
-  // The bars are chosen once, here, from the notes and drums alone: the
-  // switches these gates add must not move them, or a gate is set against
-  // bar lines the score does not have.
-  // (Not on a grid of frames: with no beat there is no bar to find.)
-  const drums = [...(dacOut ? [dacOut.track] : []), ...(chipOut?.tracks ?? []), ...rhythmOut].map((tr) => ({ notes: tr.notes, drums: true }));
-  const scoreBars = options.structure === false || g.frames ? bars
-    : bestBars({ endTick, tracks: [...tracks.map((tr) => ({ notes: tr.notes })), ...drums] });
-  const lines = new Set([...scoreBars, ...(loopTick != null ? [loopTick] : [])]);
-  const crosses = (n) => [...lines].some((b) => n.tick < b && b < n.tick + n.len);
-  const frameT = (RATE / 60 / g.unit) * g.unitTicks;
-  for (const tr of tracks) {
-    const ns = tr.notes;
-    const cuts = [];
-    ns.forEach((n, i) => {
-      n.cut = 0;
-      const c = n.len - n.rawGate;
-      if (n.rawGate !== Infinity && !ns[i + 1]?.tieIn && c >= 2) cuts.push([c, n]);
-    });
-    cuts.sort((x, y) => x[0] - y[0]);
-    for (let i = 0; i < cuts.length;) {
-      let j = i;
-      while (j < cuts.length && cuts[j][0] - cuts[i][0] <= frameT) j++;
-      // (On a driver clock — a 96th of a whole note, 4 ticks, mucom's and
-      // the common default — when within a tick and a half of one.)
-      const mid = cuts[(i + j) >> 1][0];
-      const c = Math.abs(mid - Math.round(mid / 4) * 4) <= 1.5 ? Math.round(mid / 4) * 4 : Math.round(mid);
-      for (let k = i; k < j; k++) { const n = cuts[k][1]; n.cut = Math.min(c, n.len - n.minLen); }
-      i = j;
-    }
-    const cutTok = (n) => (n.cut <= 0 || crosses(n) ? GATE_FULL : `:gate- ${gateToken(n.cut)}`);
-    const ways = {
-      cut: cutTok,
-      share: (n) => {
-        if (n.cut <= 0 || crosses(n)) return GATE_FULL;
-        const k = Math.round((8 * (n.len - n.cut)) / n.len);
-        return Math.abs(k * n.len - 8 * (n.len - n.cut)) <= 8 && k >= 1 && k < 8 ? `:gate* ${k / 8}` : null;
-      },
-      sound: (n) => {
-        const room = (Math.floor(n.tick / PPQN) + 1) * PPQN - n.tick;
-        return n.cut > 0 && n.len - n.cut <= room ? `:gate ${gateToken(n.len - n.cut)}` : cutTok(n);
-      },
-    };
-    let best = null;
-    for (const [name, way] of Object.entries(ways)) {
-      const toks = ns.map(way);
-      if (toks.includes(null)) continue;
-      let changes = 0;
-      for (let i = 1; i < toks.length; i++) if (toks[i] !== toks[i - 1]) changes++;
-      if (!best || changes < best.changes) best = { changes, toks };
-    }
-    ns.forEach((n, i) => { n.gateTok = best.toks[i]; });
-  }
   songWrites(tracks, "envRate");
   songWrites(tracks, "noiseRate");
   // Then levels and state, now that every voice's base is known. A slur
@@ -2188,9 +2114,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // none)` where there is none, since a macro stays until cleared.
   for (const tr of tracks) {
     let cur = { voice: null, env: null, pitch: null, pan: null, mode: null, rate: null,
-      henv: null, envSemi: null, envDetune: null, duty: null, gate: null };
+      henv: null, envSemi: null, envDetune: null, duty: null };
     const anyEnv = tr.notes.some((n) => n.envName);
-    const anyGate = tr.notes.some((n) => n.gateTok !== GATE_FULL);
     const anyBend = tr.notes.some((n) => n.bendName);
     for (const n of tr.notes) {
       if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - n.voiceRec.base) * 0.75) / 2)));
@@ -2209,20 +2134,17 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         envSemi: n.envSemi ?? cur.envSemi,
         envDetune: n.envDetune ?? cur.envDetune,
         duty: n.duty ?? cur.duty,
-        // A gate stays until changed: a track with any states one for every note.
-        gate: anyGate ? n.gateTok : null,
       };
       n.pre = [];
-      for (const k of ["voice", "env", "pitch", "pan", "mode", "rate", "henv", "envSemi", "envDetune", "duty", "gate"])
+      for (const k of ["voice", "env", "pitch", "pan", "mode", "rate", "henv", "envSemi", "envDetune", "duty"])
         if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
-      // Nothing to clear before the first envelope, bend or gate, nor to move.
+      // Nothing to clear before the first envelope or bend, nor to move.
       if (cur.env == null && st.env === ENV_NONE) n.pre = n.pre.filter((t) => t !== ENV_NONE);
-      if (cur.gate == null && st.gate === GATE_FULL) n.pre = n.pre.filter((t) => t !== GATE_FULL);
       if (cur.henv == null && st.henv === ":env none") n.pre = n.pre.filter((t) => t !== ":env none");
       for (const z of [":env-semi 0", ":env-detune 0"])
         if (n.pre.includes(z) && cur[z.startsWith(":env-semi") ? "envSemi" : "envDetune"] == null) n.pre = n.pre.filter((t) => t !== z);
       if (cur.pitch == null && st.pitch === PITCH_NONE) n.pre = n.pre.filter((t) => t !== PITCH_NONE);
-      n.state = [st.voice, st.env, st.pitch, st.pan, st.mode, st.rate, st.henv, st.envSemi, st.envDetune, st.duty, st.gate].filter(Boolean);
+      n.state = [st.voice, st.env, st.pitch, st.pan, st.mode, st.rate, st.henv, st.envSemi, st.envDetune, st.duty].filter(Boolean);
       cur = st;
     }
   }
@@ -2239,10 +2161,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   if (dacOut) out.push(dacOut.track);
   if (chipOut) out.push(...chipOut.tracks);
   out.push(...rhythmOut);
-  // Within a tenth of a whole tempo, the tempo is written whole (the grid
-  // keeps the measured one).
-  const bpm = Math.abs(g.bpm - Math.round(g.bpm)) < 0.1 ? Math.round(g.bpm) : +g.bpm.toFixed(2);
-  if (out.length) out[0].marks.push({ tick: 0, tokens: [`:tempo ${bpm}`] });
+  if (out.length) out[0].marks.push({ tick: 0, tokens: [`:tempo ${BPM}`] });
   else warnings.push("no notes to import");
 
   if (parsed.dac && !parsed.dacHits?.length) warnings.push("YM2612 DAC written directly (not from a data bank) is not imported");
@@ -2273,17 +2192,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const song = { header, bars, endTick, loopTick, tracks: out };
   const pcm = dacOut?.pcm ?? chipOut?.pcm ?? null;
   if (options.structure === false) return { source: emitSong(song), warnings, pcm };
-  return { source: emitStructured({ ...song, bars: scoreBars }), warnings, pcm };
+  return { source: emitStructured(song), warnings, pcm };
 }
 
 // ── The YM2608's rhythm ───────────────────────────────────────────────────
 
 const RHYTHM_KEY = "YM2608 rhythm";
 const RHYTHM_ROM = Object.values(rhythmRom.kit).map((s) => s.toUpperCase()); // BD SD TOP HH TOM RIM, the key bits' order
-
-// The ROM's kick and snare as drums for bestBars (their brightness only
-// tells one from the other).
-const KIT_DRUMS = { kick: { id: "kick", bright: 0 }, snare: { id: "snare", bright: 1 } };
 
 /**
  * The rhythm's rows → tracks, each sound under its kit role (rhythmRom.kit,
@@ -2295,7 +2210,7 @@ const KIT_DRUMS = { kick: { id: "kick", bright: 0 }, snare: { id: "snare", brigh
  * while a higher one rings (its :gate), levels against the loudest hit.
  * `rows`: [{k, d}].
  */
-function rhythmTracks(parsed, rows, target, tickOf, endTick, bpm) {
+function rhythmTracks(parsed, rows, target, tickOf, endTick) {
   const roles = Object.keys(rhythmRom.kit);
   const rom = target.hasPart("rhythm");
   const keyed = new Set(rows.map((r) => r.k));
@@ -2312,13 +2227,13 @@ function rhythmTracks(parsed, rows, target, tickOf, endTick, bpm) {
       const vel = Math.max(rom ? 0 : 1, Math.min(15, Math.round(15 - (rom ? h.db : h.db - loudest) / VEL_DB_PER_STEP)));
       const prev = notes[notes.length - 1];
       if (prev && prev.tick >= tick) notes.pop(); // two on one step: the later
-      notes.push({ tick, len: 1, midi: 60, vel, pan: h.pan, drum: KIT_DRUMS[roles[k]] });
+      notes.push({ tick, len: 1, midi: 60, vel, pan: h.pan });
     }
     if (!notes.length) continue;
     // A hit plays out whatever its length: each lasts to the next.
     notes.forEach((n, i) => { n.len = Math.max(1, (notes[i + 1]?.tick ?? endTick) - n.tick); });
     const panned = rom && notes.some((n) => n.pan !== "center");
-    const gate = rom ? null : ringGate(s, bpm);
+    const gate = rom ? null : ringGate(s, BPM);
     const state = (n) => [roles[k], gate, panned && `:pan ${n.pan}`].filter(Boolean);
     let cur = null;
     for (const n of notes) {
@@ -2336,6 +2251,7 @@ function rhythmTracks(parsed, rows, target, tickOf, endTick, bpm) {
 // ── The DAC ───────────────────────────────────────────────────────────────
 
 const DAC_KEY = "YM2612 DAC";
+const DAC_SAME = 64; // bytes: seeks this close start one sample (8 ms at 8 kHz)
 
 /**
  * The DAC's hits → a PCM track. The data bank (8-bit unsigned) becomes one
@@ -2345,8 +2261,17 @@ const DAC_KEY = "YM2612 DAC";
  * `:rate`, the C4 the notes play from. A hit at another rate is that many
  * semitones off it (under half of one is none).
  */
-function dacTrack(parsed, channel, tickOf, endTick, fileName, stepsOf) {
-  const { dacBank: bank, dacHits: hits } = parsed;
+function dacTrack(parsed, channel, tickOf, endTick, fileName) {
+  const { dacBank: bank, dacHits: hitsIn } = parsed;
+  // A hit seeking a few bytes into a sample (a driver a byte late, Aa
+  // Harimanada's) is that sample's, not a sample of its own — which would
+  // cut the one before it to those few bytes.
+  const near = new Map();
+  for (const o of [...new Set(hitsIn.map((h) => h.offset))].sort((a, b) => a - b)) {
+    const prev = [...near.values()].pop();
+    near.set(o, prev != null && o - prev < DAC_SAME ? prev : o);
+  }
+  const hits = hitsIn.map((h) => (near.get(h.offset) === h.offset ? h : { ...h, offset: near.get(h.offset) }));
   const starts = [...new Set(hits.map((h) => h.offset))].sort((a, b) => a - b);
   const base = String(fileName || "vgm").replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
   const wavFile = `${base}-dac.wav`;
@@ -2366,23 +2291,17 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName, stepsOf) {
     for (const h of mine) { const r = Math.round(h.rate / 50) * 50; count.set(r, (count.get(r) ?? 0) + 1); }
     const rate = [...count].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
     const name = `dac-${String(i + 1).padStart(2, "0")}`;
-    const drum = drumOf(name, Float32Array.from(bank.subarray(offset, offset + frames), (v) => (v - 128) / 128), rate);
-    samples.set(offset, { name, offset, frames, rate, drum });
+    samples.set(offset, { name, offset, frames, rate });
   });
   const notes = [];
   for (const h of hits) {
     const sm = samples.get(h.offset);
-    let tick = tickOf(h.t);
-    // One the grid puts on the step of the one before (a flam, a roll
-    // finer than the grid) comes after it by the time between them.
-    const last = notes[notes.length - 1];
-    if (last && last.tick >= tick && stepsOf(last.srcT, h.t) > 0) tick = last.tick + stepsOf(last.srcT, h.t);
+    const tick = tickOf(h.t);
     if (tick >= endTick) break;
     const end = Math.min(endTick, tickOf(h.t + (Math.min(h.bytes, sm.frames) / h.rate) * RATE));
     const semis = Math.round(12 * Math.log2(h.rate / sm.rate));
-    const note = { tick, len: Math.max(1, end - tick), midi: 60 + semis, vel: 15, drum: sm.drum, srcT: h.t, state: [sm.name] };
-    // One DAC: a hit cuts the one before; two on one step (closer than the
-    // finest gate step), the later wins.
+    const note = { tick, len: Math.max(1, end - tick), midi: 60 + semis, vel: 15, state: [sm.name] };
+    // One DAC: a hit cuts the one before; two on one tick, the later wins.
     const prev = notes[notes.length - 1];
     if (prev && prev.tick >= tick) notes.pop();
     else if (prev && prev.tick + prev.len > tick) prev.len = tick - prev.tick;
@@ -2658,17 +2577,6 @@ function pcmPolyphony(hits) {
   return most;
 }
 
-// A drum sample's brightness, for where the bars go (bestBars): how often
-// its first 100 ms cross zero, a second — a kick crosses seldom, a snare
-// often. Only a short shot (not a loop, under 0.6 s) is taken for a drum.
-function drumOf(name, data, rate) {
-  if (data.length > 0.6 * rate) return null;
-  const n = Math.min(data.length, Math.round(0.1 * rate));
-  let z = 0;
-  for (let i = 1; i < n; i++) if ((data[i - 1] < 0) !== (data[i] < 0)) z++;
-  return { id: name, bright: (z * rate) / Math.max(1, n) };
-}
-
 /**
  * The chip PCM hits of the channels kept → tracks on pcm1..pcmN. Each place
  * a hit starts from is a sample, decoded into one wav (`(def-pcm …
@@ -2679,7 +2587,7 @@ function drumOf(name, data, rate) {
  * never an ADPCM-B note, the one melodic part — and a hit with nothing to
  * take is dropped. Levels are the song's own, the loudest hit :vel 15.
  */
-function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { stepsOf, bankFit = true, pan = false, more = 0, absolute = false } = {}) {
+function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFit = true, pan = false, more = 0, absolute = false } = {}) {
   const warnings = [];
   const kept = new Set(keys);
   const hits = parsed.pcmHits.filter((h) => kept.has(pcmKey(h)) && tickOf(h.t) < endTick);
@@ -2718,7 +2626,6 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { stepsO
     sm.offset = offset;
     sm.frames = frames;
     sm.loopMs = h.loopStart == null ? null : Math.round(((h.loopStart - h.start) * framesPerByte(h.src) * 1000) / sm.rate);
-    sm.drum = h.loopStart == null ? drumOf(sm.name, data, sm.rate) : null;
     chunks.push(data);
     offset += frames;
   }
@@ -2738,15 +2645,9 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { stepsO
   const state = Array.from({ length: voices }, () => ({ until: -1, from: -1, melodic: false, key: null }));
   const lanes = Array.from({ length: voices }, () => []);
   let stolen = 0, dropped = 0;
-  const lastOf = new Map(); // a channel's last hit: {tick, t}
   for (const h of hits) {
-    let tick = tickOf(h.t);
+    const tick = tickOf(h.t);
     const key = pcmKey(h);
-    // One the grid puts on the step of its channel's last (a flam, a roll
-    // finer than the grid) comes after it by the time between them.
-    const last = lastOf.get(key);
-    if (last && last.tick >= tick && stepsOf && stepsOf(last.t, h.t) > 0) tick = last.tick + stepsOf(last.t, h.t);
-    lastOf.set(key, { tick, t: h.t });
     const until = Math.max(tick + 1, h.endT === Infinity ? endTick : tickOf(h.endT));
     let v;
     if (fixed) v = fixed.get(key);
@@ -2768,7 +2669,7 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { stepsO
     const sm = h.sample;
     const loop = h.loopStart != null;
     lane.push({ tick, len: until - tick, loop, midi: 60 + Math.round(12 * Math.log2(h.rate / sm.rate)), vel: velOf(h),
-      side: h.side ?? "center", drum: sm.drum, state: [sm.name, ...(loop ? [":mode loop"] : []), ...(absolute ? [`:vol ${volOf(h)}`] : [])] });
+      side: h.side ?? "center", state: [sm.name, ...(loop ? [":mode loop"] : []), ...(absolute ? [`:vol ${volOf(h)}`] : [])] });
     Object.assign(state[v], { until, from: tick, melodic: h.src === "ADPCM-B", key });
   }
   if (stolen) warnings.push(`PCM: ${plural(stolen, "hit")} cut an earlier sound short — more rang at once than the score's ${plural(voices, "voice")}`);

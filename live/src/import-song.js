@@ -65,6 +65,9 @@ export const FM_DESTS = MD.fm;
 export const PSG_DESTS = MD.psg;
 export const PCM_DESTS = MD.pcm;
 
+/** A track of shots — PCM, the ROM rhythm — whose hits play out whatever their length. */
+const shots = (channel) => /^(pcm|rhythm)/.test(channel);
+
 /** The first of the sorted `list` above `x` (`list.find((v) => v > x)`). */
 function firstAbove(list, x) {
   let lo = 0, hi = list.length;
@@ -112,8 +115,9 @@ function writeBody(notes, opts) {
   for (const m of marks) bounds.add(m.tick);
   if (loopTick != null) bounds.add(loopTick);
   const sortedBounds = [...bounds].filter((b) => b > 0 && b <= endTick).sort((a, b) => a - b);
-  // A PCM track's notes are shots, which play out whatever their length, so
-  // a note there ends at the next bound rather than tie across it.
+  // A PCM or ROM rhythm track's notes are shots, which play out whatever
+  // their length, so a note there ends at the next bound rather than tie
+  // across it.
   if (opts.noTie) {
     notes = notes.map((n) => {
       const b = firstAbove(sortedBounds, n.tick) ?? endTick;
@@ -259,7 +263,7 @@ export function emitSong(song) {
     const vel = notes.find((n) => n.vel != null)?.vel ?? 15;
     const body = writeBody(notes, {
       bars, endTick, loopTick,
-      marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: tr.channel.startsWith("pcm"), noVel: tr.noVel,
+      marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: shots(tr.channel), noVel: tr.noVel,
     });
     const head = [tr.channel, ...(tr.open ?? []), ...tr.head, `:oct ${oct}`, `:len ${lenToken(defLen)}`];
     if (vel !== 15 && !tr.noVel) head.push(`:vel ${vel}`);
@@ -353,16 +357,14 @@ export function emitPhrased(song) {
  * Onsets within 15 ms are one (a chord, however loosely played).
  *
  * Returns { unitTicks (what a unit is in the score: 24 = a 16th), bpm, fit,
- * frames, readings, unit (its length in samples), units(t) → the unit a
- * time (in samples) falls on }. `lanes`: each part's own onsets, where a
- * unit too coarse would put two notes on one step.
+ * frames, readings, units(t) → the unit a time (in samples) falls on }.
  * Falls back to the frame grid when no unit fits.
  */
-export function estimateGrid(onsetsIn, { frameRate = 60, lanes = null } = {}) {
+export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
   const frameUnit = RATE / frameRate;
   const frame = {
     unitTicks: 4, fit: 1, frames: true, readings: [], bpm: (60 * RATE) / (frameUnit * 24),
-    unit: frameUnit, units: (t) => Math.round(t / frameUnit),
+    units: (t) => Math.round(t / frameUnit),
   };
   const onsets = [...new Set(onsetsIn.map((t) => Math.round(t)))].sort((a, b) => a - b);
   const merged = [];
@@ -410,26 +412,7 @@ export function estimateGrid(onsetsIn, { frameRate = 60, lanes = null } = {}) {
   const top = Math.max(...scored.map((x) => x.fit));
   const best = scored.find((x) => x.fit >= Math.max(0.75, 0.9 * top));
   if (!best) return frame;
-  // The coarsest unit that fits may be too coarse for a fast part: where a
-  // channel's notes come closer than half a unit, two share a step. Half the
-  // unit, if it fits too, takes over while more than 2% of the notes would.
-  const merges = (u) => {
-    let n = 0, all = 0;
-    for (const l of lanes ?? []) {
-      all += l.length;
-      // (Half a unit apart is a merge too: the two round to one step as
-      // often as not.)
-      for (let i = 1; i < l.length; i++) if (l[i] - l[i - 1] < u * 0.525 && l[i] - l[i - 1] > RATE * 0.015) n++;
-    }
-    return all ? n / all : 0;
-  };
-  let unit = best.u, fit = best.fit;
-  for (;;) {
-    const half = scored.find((x) => Math.abs(x.u - unit / 2) / unit < 0.02 && x.fit >= Math.max(0.75, 0.9 * top));
-    if (!half || merges(unit) <= 0.02 || merges(half.u) >= merges(unit)) break;
-    unit = half.u;
-    fit = half.fit;
-  }
+  const unit = best.u, fit = best.fit;
 
   // A song on one steady clock (exact MIDI, most game drivers) keeps one
   // grid end to end: the unit refined against every onset's absolute time,
@@ -514,7 +497,7 @@ export function estimateGrid(onsetsIn, { frameRate = 60, lanes = null } = {}) {
   const walked = span > 0 ? (merged[merged.length - 1] - merged[0]) / span : unit;
   const grids = [fixedGrid(fixedU), fixedGrid(scanU), { u: walked, units }].filter(Boolean);
   const pick = grids.map((gr) => ({ gr, n: misses(gr) })).reduce((a, b) => (b.n < a.n ? b : a)).gr;
-  return readingsOf(pick.u, { fit, frames: false, unit: pick.u, units: pick.units });
+  return readingsOf(pick.u, { fit, frames: false, units: pick.units });
 }
 
 // The unit as a note: whatever puts the beat in 80-200 BPM, a 16th first
@@ -594,8 +577,9 @@ function unitsOf(tr, bars, endTick, loopTick, intern = new Map()) {
       const s = Math.max(n.tick, a);
       const e = Math.min(n.tick + n.len, b);
       if (e <= s) continue;
-      // No ties on PCM (writeBody noTie): a shot's tail over the cut is let go.
-      if (n.tick < a && tr.channel.startsWith("pcm")) continue;
+      // No ties on shots (writeBody noTie): a tail over the cut is let go —
+      // into the loop it would strike again.
+      if (n.tick < a && shots(tr.channel)) continue;
       // Carried over the cut: tied on — except into the loop, which starts over.
       const tieIn = n.tick < a ? a !== loopTick : !!n.tieIn && (n.tick > a || a !== loopTick);
       pieces.push({ tick: s - a, len: e - s, midi: n.midi, vel: n.vel, st: n.st, tieIn });
