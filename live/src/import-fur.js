@@ -12,42 +12,53 @@ import { inflate, readArp, convertLegacySamples } from "./import-tracker.js";
 
 // Channel layouts by Furnace system id. A chip not listed plays its notes on
 // a stand-in voice (its channel count comes from FUR_CHANNELS, or from the
-// file itself from version 240).
+// file itself from version 240). `chip` is the machine's chip family the
+// channel is (import-tracker.js TARGET_CHIPS: the targets that play it as
+// their own); `drum` a rhythm channel's sound.
 const k = (kind, n, name) => Array.from({ length: n }, (_, i) => ({ kind, name: `${name}${n > 1 ? i + 1 : ""}` }));
-const opn3op = (name) => [{ kind: "fm", name: `${name} FM1` }, { kind: "fm", name: `${name} FM2` },
-  ...[1, 2, 3, 4].map((i) => ({ kind: "fm3op", name: `${name} FM3 OP${i}` }))];
-const named = (prefix, list) => list.map((c) => ({ ...c, name: `${prefix} ${c.name}` }));
+const opn3op = (name, chip = "opn") => [{ kind: "fm", name: `${name} FM1` }, { kind: "fm", name: `${name} FM2` },
+  ...[1, 2, 3, 4].map((i) => ({ kind: "fm3op", name: `${name} FM3 OP${i}` }))].map((c) => ({ ...c, chip }));
+const named = (prefix, list, chip) => list.map((c) => ({ ...c, name: `${prefix} ${c.name}`, ...(chip ? { chip } : {}) }));
 const SN = [...k("psg", 3, "SQ"), { kind: "noise", name: "Noise" }];
 const SSG = k("psg", 3, "SSG");
+const fmFrom = (n, from) => k("fm", n, "FM").map((c, i) => ({ ...c, name: `FM${i + from}` }));
+// The YM2608's rhythm (its key bits' order) and the ADPCM-B; the OPLL's
+// rhythm sounds (its channels 7-11 in drums mode).
+const OPNA_RHYTHM = [["Kick", "kick"], ["Snare", "snare"], ["Top", "ride"], ["HiHat", "hat"], ["Tom", "tom4"], ["Rim", "rim"]]
+  .map(([name, drum]) => ({ kind: "rhythm", name, drum, chip: "opna-rhythm", volMax: 31 }));
+const OPNA_PCM = [...OPNA_RHYTHM, { kind: "pcm", name: "ADPCM-B", chip: "adpcm-b" }];
+const OPLL_DRUMS = [["Kick", "kick"], ["Snare", "snare"], ["Tom", "tom4"], ["Top", "ride"], ["HiHat", "hat"]]
+  .map(([name, drum]) => ({ kind: "rhythm", name, drum, chip: "opll-rhythm" }));
+const ADPCM_A = (n) => k("pcm", n, "ADPCM-A ");
 const FUR_SYSTEMS = {
   // (`legacy`: the channel that plays samples — the DAC, the DMC — whose
   // legacy sample mode a file before 239 has; import-tracker.js
   // convertLegacySamples.)
-  0x83: () => named("YM2612", k("fm", 6, "FM")).map((c, i) => (i === 5 ? { ...c, legacy: "toggle" } : c)),
-  0xa0: () => [...opn3op("YM2612"), ...named("YM2612", k("fm", 3, "FM").map((c, i) => ({ ...c, name: `FM${i + 4}` })))]
+  0x83: () => named("YM2612", k("fm", 6, "FM"), "ym2612").map((c, i) => (i === 5 ? { ...c, legacy: "toggle" } : c)),
+  0xa0: () => [...opn3op("YM2612", "ym2612"), ...named("YM2612", fmFrom(3, 4), "ym2612")]
     .map((c, i) => (i === 8 ? { ...c, legacy: "toggle" } : c)),
-  0xbe: () => [...named("YM2612", k("fm", 5, "FM")), ...k("pcm", 2, "DAC")],
-  0xbd: () => [...opn3op("YM2612"), { kind: "fm", name: "YM2612 FM4" }, { kind: "fm", name: "YM2612 FM5" }, ...k("pcm", 2, "DAC"),
+  0xbe: () => [...named("YM2612", k("fm", 5, "FM"), "ym2612"), ...k("pcm", 2, "DAC")],
+  0xbd: () => [...opn3op("YM2612", "ym2612"), ...named("YM2612", fmFrom(2, 4), "ym2612"), ...k("pcm", 2, "DAC"),
     { kind: "pcm", name: "CSM" }],
-  0xc1: () => [...opn3op("YM2612"), ...named("YM2612", k("fm", 3, "FM").map((c, i) => ({ ...c, name: `FM${i + 4}` }))), { kind: "pcm", name: "CSM" }],
-  0x03: () => named("SN76489", SN),
-  0xbf: () => named("T6W28", SN),
-  0x80: () => named("AY", SSG),
-  0x9a: () => named("AY8930", SSG),
-  0x82: () => named("YM2151", k("opm", 8, "FM")),
-  0x8d: () => [...named("YM2203", k("fm", 3, "FM")), ...named("YM2203", SSG)],
-  0xb6: () => [...opn3op("YM2203"), ...named("YM2203", SSG)],
-  0x8e: () => [...named("YM2608", k("fm", 6, "FM")), ...named("YM2608", SSG), ...k("pcm", 7, "Rhythm/ADPCM ")],
-  0xb7: () => [...opn3op("YM2608"), ...named("YM2608", k("fm", 3, "FM").map((c, i) => ({ ...c, name: `FM${i + 4}` }))),
-    ...named("YM2608", SSG), ...k("pcm", 7, "Rhythm/ADPCM ")],
-  0xa5: () => [...named("YM2610", k("fm", 4, "FM")), ...named("YM2610", SSG), ...k("pcm", 7, "ADPCM ")],
-  0xa6: () => [{ kind: "fm", name: "YM2610 FM1" }, ...[1, 2, 3, 4].map((i) => ({ kind: "fm3op", name: `YM2610 FM2 OP${i}` })),
-    { kind: "fm", name: "YM2610 FM3" }, { kind: "fm", name: "YM2610 FM4" }, ...named("YM2610", SSG), ...k("pcm", 7, "ADPCM ")],
-  0x9e: () => [...named("YM2610B", k("fm", 6, "FM")), ...named("YM2610B", SSG), ...k("pcm", 7, "ADPCM ")],
-  0xde: () => [...opn3op("YM2610B"), ...named("YM2610B", k("fm", 3, "FM").map((c, i) => ({ ...c, name: `FM${i + 4}` }))),
-    ...named("YM2610B", SSG), ...k("pcm", 7, "ADPCM ")],
-  0x89: () => named("OPLL", k("opll", 9, "FM")),
-  0xa7: () => [...named("OPLL", k("opll", 6, "FM")), ...k("pcm", 5, "Drum ")],
+  0xc1: () => [...opn3op("YM2612", "ym2612"), ...named("YM2612", fmFrom(3, 4), "ym2612"), { kind: "pcm", name: "CSM" }],
+  0x03: () => named("SN76489", SN, "sn76489"),
+  0xbf: () => named("T6W28", SN, "sn76489"),
+  0x80: () => named("AY", SSG, "ssg"),
+  0x9a: () => named("AY8930", SSG, "ssg"),
+  0x82: () => named("YM2151", k("opm", 8, "FM"), "opm"),
+  0x8d: () => [...named("YM2203", k("fm", 3, "FM"), "opn"), ...named("YM2203", SSG, "ssg")],
+  0xb6: () => [...opn3op("YM2203"), ...named("YM2203", SSG, "ssg")],
+  0x8e: () => [...named("YM2608", k("fm", 6, "FM"), "opn"), ...named("YM2608", SSG, "ssg"), ...named("YM2608", OPNA_PCM)],
+  0xb7: () => [...opn3op("YM2608"), ...named("YM2608", fmFrom(3, 4), "opn"),
+    ...named("YM2608", SSG, "ssg"), ...named("YM2608", OPNA_PCM)],
+  0xa5: () => [...named("YM2610", k("fm", 4, "FM"), "opn"), ...named("YM2610", SSG, "ssg"), ...ADPCM_A(6), { kind: "pcm", name: "ADPCM-B" }],
+  0xa6: () => [{ kind: "fm", name: "YM2610 FM1", chip: "opn" }, ...[1, 2, 3, 4].map((i) => ({ kind: "fm3op", name: `YM2610 FM2 OP${i}`, chip: "opn" })),
+    ...named("YM2610", fmFrom(2, 3), "opn"), ...named("YM2610", SSG, "ssg"), ...ADPCM_A(6), { kind: "pcm", name: "ADPCM-B" }],
+  0x9e: () => [...named("YM2610B", k("fm", 6, "FM"), "opn"), ...named("YM2610B", SSG, "ssg"), ...ADPCM_A(6), { kind: "pcm", name: "ADPCM-B" }],
+  0xde: () => [...opn3op("YM2610B"), ...named("YM2610B", fmFrom(3, 4), "opn"),
+    ...named("YM2610B", SSG, "ssg"), ...ADPCM_A(6), { kind: "pcm", name: "ADPCM-B" }],
+  0x89: () => named("OPLL", k("opll", 9, "FM"), "opll"),
+  0xa7: () => [...named("OPLL", k("opll", 6, "FM"), "opll"), ...named("OPLL", OPLL_DRUMS)],
   0x9d: () => named("VRC7", k("opll", 6, "FM")),
   0x8f: () => named("OPL", k("opl", 9, "FM")),
   0x90: () => named("OPL2", k("opl", 9, "FM")),
@@ -62,10 +73,10 @@ const FUR_SYSTEMS = {
   0x07: () => named("SID", k("psg", 3, "CH")),
   0x47: () => named("SID", k("psg", 3, "CH")),
   0x8b: () => named("MMC5", [...k("psg", 2, "Pulse"), { kind: "pcm", name: "PCM" }]),
-  0x88: () => named("VRC6", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Saw" }]),
+  0x88: () => named("VRC6", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Saw", volMax: 63 }], "vrc6"),
   0x8a: () => [{ kind: "wave", name: "FDS" }],
-  0xa1: () => named("SCC", k("wave", 5, "CH")),
-  0xb4: () => named("SCC+", k("wave", 5, "CH")),
+  0xa1: () => named("SCC", k("wave", 5, "CH"), "scc"),
+  0xb4: () => named("SCC+", k("wave", 5, "CH"), "scc"),
   0x8c: () => named("N163", k("wave", 8, "CH")),
   0x81: () => named("Amiga", k("pcm", 4, "CH")),
   0x87: () => named("SNES", k("pcm", 8, "CH")),
@@ -84,7 +95,7 @@ const FUR_CHANNELS = {
 // The pre-240 compound systems, split the way Furnace splits them.
 // Neo Geo CD keeps its 13 (16) channels: no ADPCM-B.
 const COMPOUND = { 0x02: [0x83, 0x03], 0x42: [0xa0, 0x03], 0x08: [0x82, 0xa9], 0x09: ["ngcd"], 0x49: ["ngcd-ext"] };
-FUR_SYSTEMS.ngcd = () => [...named("YM2610", k("fm", 4, "FM")), ...named("YM2610", SSG), ...k("pcm", 6, "ADPCM-A ")];
+FUR_SYSTEMS.ngcd = () => [...named("YM2610", k("fm", 4, "FM"), "opn"), ...named("YM2610", SSG, "ssg"), ...ADPCM_A(6)];
 FUR_SYSTEMS["ngcd-ext"] = () => FUR_SYSTEMS[0xa6]().slice(0, 16);
 
 function layoutOf(id, count = null) {
@@ -127,6 +138,7 @@ export async function parseFur(bytes) {
   const infoSeek = i32();
   p = infoSeek;
 
+  let tuning = 440;
   let title, author, chans, hz, speeds, patLen, ordersLen, hilightA, hilightB, vtN = 1, vtD = 1;
   let orders, insPtr = [], patPtr = [], wavePtr = [], samplePtr = [];
   // Pitch: linear (1/128 semitone steps) unless the song says not, and the
@@ -141,7 +153,8 @@ export async function parseFur(bytes) {
     p += 8;
     title = str(); author = str();
     str(); str(); str(); str(); str(); str(); // system name, category, Japanese names
-    f32(); c(); // tuning, auto system
+    tuning = f32() || 440;
+    c(); // auto system
     f32(); // master volume
     chans = u16();
     const nsys = u16();
@@ -203,7 +216,7 @@ export async function parseFur(bytes) {
     chans = channels.length;
     p += 32 + 32 + 128; // chip volumes, pans, flag pointers
     title = str(); author = str();
-    p += 4; // tuning
+    tuning = f32() || 440;
     // The compatibility flags: limitSlides, linearPitch, loopModality, then
     // properNoiseLayout from version 43 — off before it (Furnace fur.cpp).
     if (version >= 37) linearPitch = u8[p + 1];
@@ -296,6 +309,7 @@ export async function parseFur(bytes) {
     }
   }
 
+  const none = () => ({ values: [], loop: null });
   const instruments = insPtr.map((ptr) => {
     try {
       p = ptr;
@@ -315,16 +329,21 @@ export async function parseFur(bytes) {
       c();
       const name = str();
       const alg = c(), fb = c(), fms = c(), ams = c();
-      c(); c(); p += 2; // op count, OPLL preset, reserved
+      c(); // op count
+      const opllPreset = c();
+      p += 2; // reserved
       const ops = [];
       for (let i = 0; i < 4; i++) {
         const am = c(), ar = c(), dr = c(), mul = c(), rr = c(), sl = c(), tl = c();
-        c(); // dt2
+        const dt2 = c();
         const rs = c(), dt = c(), sr = c(), ssg = c();
-        p += 20;
-        ops.push({ am, ar, dr, mul, rr, sl, tl, rs, dt, sr, ssg });
+        c(); c(); // dam, dvb
+        const egt = c(), ksl = c(), sus = c(), vib = c(), ws = c(), ksr = c();
+        p += 12;
+        ops.push({ am, ar, dr, mul, rr, sl, tl, rs, dt, sr, ssg, dt2, egt, ksl, sus, vib, ws, ksr });
       }
-      if (type === 1 || type === 33) return { name, kind: "fm", fm: { alg, fb, fms, ams, ops } };
+      const fm = { alg, fb, fms, ams, ops, opllPreset };
+      if (type === 1 || type === 33) return { name, kind: "fm", fm };
       // The old standard data (papers/oldIns.md): past the Game Boy (4),
       // C64 (24) and Amiga (16) data, each macro's length and loop (pitch
       // and the extras from version 17), the arp's fixed mode (before 112),
@@ -337,13 +356,15 @@ export async function parseFur(bytes) {
       const loops = Array.from({ length: n }, () => i32());
       const arpFixedOld = c();
       p += 3;
-      const [vol, arp, duty, wave] = lens.map((len, k) => {
+      const [vol, arp, duty, wave, pitch = none(), , ex2 = none(), ex3 = none()] = lens.map((len, k) => {
         const values = Array.from({ length: Math.max(0, len) }, () => i32());
         return { values, loop: loops[k] >= 0 && loops[k] < len ? loops[k] : null };
       });
       // Before version 31 a relative arp's values were stored 12 up.
       if (iv < 31 && !arpFixedOld) arp.values = arp.values.map((v) => v - 12);
-      return { name, kind: "std", type, vol, arp: readArp(arp, iv < 112 && !!arpFixedOld), wave, duty, sampleMap };
+      ayMode(type, wave);
+      return { name, kind: "std", type, vol, arp: readArp(arp, iv < 112 && !!arpFixedOld), wave, duty, sampleMap,
+        ex2, ex3, alg: none(), ex5: none(), pitch, ...(type === 13 ? { fm } : {}) };
     }
     if (m !== "INS2" && m !== "FINS") throw new Error("not an instrument");
     const len = m === "INS2" ? i32() : u8.length - p;
@@ -356,6 +377,9 @@ export async function parseFur(bytes) {
     const arp = { values: [], loop: null };
     const wave = { values: [], loop: null };
     const duty = { values: [], loop: null };
+    // The AY's envelope: its shape (ex2), the auto-envelope's ratio to the
+    // tone (ex3 : alg) and its period (ex5).
+    const ex2 = none(), ex3 = none(), alg = none(), ex5 = none(), pitch = none();
     // The sample map (SM, and NE's DPCM rate and DAC start per note):
     // Furnace's notes from C-5 (0), C-0 at 60; files before 246 store
     // C-0 up.
@@ -374,18 +398,22 @@ export async function parseFur(bytes) {
         const alg = (nx >> 4) & 7, fb = nx & 7;
         nx = c();
         const ams = (nx >> 3) & 3, fms = nx & 7;
-        c();
+        const opllPreset = c() & 31;
         if (version >= 224) c();
         const ops = [];
+        // (The OPLL's and the OPM's fields too: KSR, sustain, vibrato, KSL,
+        // EG type, DT2, waveform.)
         for (let i = 0; i < opCount; i++) {
           const b = [c(), c(), c(), c(), c(), c(), c(), c()];
           ops.push({
             dt: (b[0] >> 4) & 7, mul: b[0] & 15, tl: b[1] & 127, rs: b[2] >> 6, ar: b[2] & 31,
             am: b[3] >> 7, dr: b[3] & 31, sr: b[4] & 31, sl: b[5] >> 4, rr: b[5] & 15, ssg: b[6] & 15,
+            ksr: b[0] >> 7, sus: b[1] >> 7, vib: (b[2] >> 5) & 1, ksl: (b[3] >> 5) & 3, egt: b[4] >> 7,
+            dt2: (b[7] >> 3) & 3, ws: b[7] & 7,
           });
         }
         while (ops.length < 4) ops.push({ dt: 3, mul: 1, tl: 127, rs: 0, ar: 31, am: 0, dr: 0, sr: 0, sl: 0, rr: 15, ssg: 0 });
-        fm = { alg, fb, fms, ams, ops };
+        fm = { alg, fb, fms, ams, ops, opllPreset };
       } else if (code === "SM") {
         sampleMap.init = s16();
         const useMap = c() & 1;
@@ -415,8 +443,9 @@ export async function parseFur(bytes) {
           const mc = c();
           if (mc === 255) break;
           const mlen = c(), loop = c();
-          c(); c(); // release, mode
-          const ws = c() >> 6;
+          const rel = c(); // the release point: held there until the note's release
+          const mode = c(), ws = c() >> 6;
+          const delay = hlen >= 8 ? c() : 0, speed = hlen >= 8 ? c() || 1 : 1;
           p = hstart + hlen;
           const vals = [];
           for (let i = 0; i < mlen; i++) {
@@ -425,17 +454,33 @@ export async function parseFur(bytes) {
             else if (ws === 2) vals.push(s16());
             else vals.push(i32());
           }
-          const macro = { values: vals, loop: loop < mlen ? loop : null };
+          const macro = { values: vals, loop: loop < mlen ? loop : null, rel: rel < mlen ? rel : null };
           if (mc === 0) Object.assign(vol, macro);
           else if (mc === 3) Object.assign(wave, macro); // the wavetable
           else if (mc === 2) Object.assign(duty, macro); // duty, or the PC Engine's noise switch
           else if (mc === 1) Object.assign(arp, macro);
+          // The pitch macro: 1/128 semitones (linear pitch), added up a step
+          // at a time where its mode is relative; its delay and speed in ticks.
+          else if (mc === 4) Object.assign(pitch, macro, { relative: !!(mode & 1), delay, speed });
+          else if (mc === 6) Object.assign(ex2, macro);
+          else if (mc === 7) Object.assign(ex3, macro);
+          else if (mc === 8) Object.assign(alg, macro);
+          else if (mc === 16) Object.assign(ex5, macro);
         }
       }
       p = fend;
     }
     if (fm && (type === 1 || type === 33)) return { name, kind: "fm", fm };
-    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty };
+    ayMode(type, wave);
+    // (An OPLL instrument keeps its voice beside its macros.)
+    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty, ex2, ex3, alg, ex5, pitch,
+      ...(fm && type === 13 ? { fm } : {}) };
+  }
+
+  // An AY's wave macro is its mixer (1 tone, 2 noise, 4 the envelope),
+  // stored one lower before version 193 (Furnace adds it back on load).
+  function ayMode(type, wave) {
+    if (version < 193 && (type === 6 || type === 7)) wave.values = wave.values.map((v) => v + 1);
   }
 
   // The wavetables: "WAVE", a size, its name, width, a reserved word, its
@@ -530,6 +575,7 @@ export async function parseFur(bytes) {
     dpcmMode: version >= 154,
     fmVolMax: 127, psgVolMax: 15,
     linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout, newVolumeScaling,
+    tuning, // A-4's Hz
   };
   // Furnace converts the legacy sample mode of a file before 239 on load.
   if (version < 239) convertLegacySamples(t);

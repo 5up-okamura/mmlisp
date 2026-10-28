@@ -7,9 +7,12 @@
 //     orders: [[pattern index per channel] per order],
 //     channels: [{kind, name, patterns: Map(index → rows)}],
 //       rows: [{note: semitone (C-0 = 0) | "off" | null, vol: -1 | n,
-//               (a tracker's C-0 is 32.70 Hz, MIDI 24: Furnace's octaves are
-//               one under scientific pitch — its A-3 is 440 Hz — and it plays
-//               DefleMask's modules so)
+//               (a tracker's C-0 is MIDI 12 on FM and the AY's SSG, as
+//               Furnace plays them — its A-4 the song's tuning, 440 Hz
+//               unless it says — MIDI 24, an octave up, on the other PSGs
+//               and wavetables, whose periods it reckons at half the
+//               chip's divider, and MIDI 36 on the SN76489: held to the
+//               VGMs it writes, DefleMask's modules too; C0_MIDI)
 //               ins: -1 | n, fx: [[code, value], …]}]
 //     instruments: [{name, kind: "fm", fm: {alg, fb, fms, ams, ops}}
 //                 | {name, kind: "std", vol: {values, loop}, arp: {values, loop}}],
@@ -44,9 +47,21 @@
 // dB) or adds its steps to it (a DMF, an older .fur: a :vol macro for each
 // column level it plays at). The triangle stops at a volume macro's 0, and
 // at a column of 0 only under one. A .fur's DPCM channel is pcm1 (dpcmTrack).
+//
+// A module of the MSX's, the X68000's or the PC-88's chips can be that
+// machine's score (TARGET_CHIPS): the SSG's mixer, noise period and
+// hardware envelope as :mode, :noise-rate and :env / :env-rate (Furnace's
+// ay.cpp), the SCC's wavetables as the PC Engine's, the YM2413's voices as
+// its ROM's or a 2-op def-fm and its drums on the rhythm tracks, the
+// YM2608's rhythm on pc88's, the YM2151's DT2 and channel 8's noise on
+// x68k's fm8. Each chip's column in its own steps (3 dB, the SCC's linear).
 // ---------------------------------------------------------------------------
 
-import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS } from "./import-song.js";
+import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, FM_DESTS, PSG_DESTS, destsFor } from "./import-song.js";
+import { targetProfile } from "./targets.js";
+import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
+import { envCycle } from "./chips/ssg.js";
+import { RHYTHM_KIT } from "./import-mucom.js";
 import { VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY } from "./ir-utils.js";
 import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
 import { DMC_RATES } from "./chips/rp2a03.js";
@@ -57,11 +72,30 @@ import { encodeWav } from "./export-wav.js";
 // play their notes on a stand-in voice.
 const CHANNEL_KINDS = {
   fm: "FM", fm3op: "FM operator", opm: "OPM FM", opll: "OPLL FM", opl: "OPL FM",
-  psg: "square", wave: "wavetable", noise: "noise", pcm: "sample",
+  psg: "square", wave: "wavetable", noise: "noise", pcm: "sample", rhythm: "rhythm",
+};
+// The chip families (the readers' `chip`) each target plays as its own. A
+// module offers the targets whose chips play its notes, the one playing the
+// most first (a tie: this order), and md always.
+const TARGET_CHIPS = {
+  pce: ["pce"], fc: ["nes", "vrc6"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
+  pc88: ["opn", "ssg", "opna-rhythm"], md: ["ym2612", "sn76489"],
+};
+// A target's channels by what they take (import-song.js destsFor), its
+// rhythm tracks apart from its samples.
+const targetDests = (name) => {
+  const tp = targetProfile(name);
+  const d = destsFor(tp);
+  const rhythm = d.pcm.filter((h) => /rhythm/.test(tp.partOf(h).name));
+  return { ...d, pcm: d.pcm.filter((h) => !rhythm.includes(h)), rhythm };
 };
 const STAND_IN = { psg: "wave-square", wave: "wave-triangle", noise: "wave-square", opll: "wave-saw", opl: "wave-sine", pcm: "wave-saw", fm3op: "wave-sine" };
 // The volume column's top, where it is not the model's FM / PSG one.
 const VOL_MAX = { opl: 63 };
+
+// A row's C-0 as MIDI by its channel (the model, above).
+const C0_MIDI = (chn) => (chn.chip === "sn76489" ? 36
+  : ["fm", "fm3op", "opm", "opll", "opl"].includes(chn.kind) || chn.chip === "ssg" ? 12 : 24);
 
 // The effects whose empty value Furnace reads as 00 (a stop, for a slide).
 const EMPTY_IS_00 = new Set([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0a, 0xe1, 0xe2, 0xe5, 0xf3, 0xf4, 0xfa]);
@@ -80,6 +114,8 @@ const PCE_FX = { 0x10: "wave", 0x11: "noise", 0x12: "LFO mode", 0x13: "LFO speed
 // rate (0 the fastest) for a note — Furnace's, which DefleMask's modules
 // play by (nes.cpp noiseTable, properNoiseLayout off).
 const FC_DESTS = ["sqr1", "sqr2", "tri", "noise"];
+// The VRC6's on fc: its pulses and its saw, in Furnace's channel order.
+const VRC6_DESTS = ["sqr3", "sqr4", "saw1"];
 const FC_NOISE_UP = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4], FC_NOISE_TOP = [3, 2, 1, 0, 11, 10, 9, 8, 7, 6, 5, 4];
 const FC_NOISE_TABLE = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,
   ...FC_NOISE_UP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP]; // then 15
@@ -97,6 +133,9 @@ const dmcRateOf = (hz) => { const i = FC_DMC_STEPS.findIndex((x) => hz < x); ret
 const linDb = (x) => (x > 0 ? 20 * Math.log10(Math.min(15, x) / 15) : -Infinity);
 // An instrument's duty macro at a note: the PC Engine's noise switch.
 const dutyNoise = (ins) => (ins?.duty?.values.length ? ins.duty.values[0] > 0 : null);
+// The SSG's mixer (Furnace's bits: 1 tone, 2 noise, 4 the envelope) as its
+// `:mode`: the envelope alone is `env`, the buzzer.
+const ssgModeName = (m) => (m & 2 ? (m & 1 ? "both" : "noise") : m & 1 ? "tone" : m & 4 ? "env" : "tone");
 
 const FX_NAMES = {
   0x01: "pitch slide up", 0x02: "pitch slide down", 0x03: "portamento", 0x04: "vibrato",
@@ -239,19 +278,22 @@ export function analyzeTracker(t) {
     return { index: c, kind: chn.kind, name: chn.name, chip: chn.chip, notes, noiseNotes, sampleNotes,
       label: `${chn.name} · ${noiseNotes > notes / 2 ? "noise" : CHANNEL_KINDS[chn.kind]} · ${notes} notes${dac}` };
   });
-  // A PC Engine module may be its own machine's score; an NES one the
-  // Famicom's — an expansion's channels (VRC6, FDS …) left out, as md
-  // would leave them.
-  const pce = t.channels.length > 0 && t.channels.every((c) => c.chip === "pce");
-  const nes = t.channels.some((c) => c.chip === "nes");
-  const targets = pce ? ["pce", "md"] : nes ? ["fc", "md"] : ["md"];
+  // A module may be the score of its chips' machine — an MSX one msx, an
+  // NES one the Famicom's (an expansion's channels, VRC6, FDS …, left out
+  // as md would leave them) — or the Mega Drive's.
+  const own = Object.keys(TARGET_CHIPS).map((tg) => ({ tg, n: channels.filter((c) => TARGET_CHIPS[tg].includes(c.chip)).reduce((s, c) => s + c.notes, 0) }))
+    .filter((x) => x.n > 0).sort((x, y) => y.n - x.n).map((x) => x.tg);
+  const targets = own.includes("md") ? own : [...own, "md"];
   return { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels, targets, target: targets[0] };
 }
 
 /** The channels a `target` score offers a module's rows. */
 export function trackerDests(target = "md") {
-  if (target === "fc") return [...FC_DESTS, "pcm1"];
-  return target === "pce" ? [...PCE_WAVES, ...Object.values(PCE_NOISE)] : [...FM_DESTS, ...PSG_DESTS, "noise"];
+  if (target === "fc") return [...FC_DESTS, ...VRC6_DESTS, "pcm1"];
+  if (target === "pce") return [...PCE_WAVES, ...Object.values(PCE_NOISE)];
+  if (target === "md") return [...FM_DESTS, ...PSG_DESTS, "noise"];
+  const d = targetDests(target);
+  return [...d.fm, ...d.psg, ...(d.noise ? [d.noise] : []), ...d.wave, ...d.rhythm];
 }
 
 /**
@@ -270,13 +312,46 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
     }
     return { dest, phrases: true, bpm: null, target };
   }
-  // An NES module on fc: the 2A03's channels in their places; the DPCM and
-  // an expansion's are not the target's.
+  // An NES module on fc: the 2A03's channels in their places, the DPCM on
+  // pcm1, the VRC6's on sqr3, sqr4 and saw1; another expansion's are not
+  // the target's.
   if (target === "fc") {
     const dest = {};
     for (const ch of a.channels) {
-      const i = a.channels.filter((c) => c.chip === "nes" && c.index < ch.index).length;
-      dest[ch.index] = !(ch.notes > 0 && ch.chip === "nes") ? "drop" : ch.kind === "pcm" ? "pcm1" : FC_DESTS[i] ?? "drop";
+      const i = a.channels.filter((c) => c.chip === ch.chip && c.index < ch.index).length;
+      dest[ch.index] = !(ch.notes > 0) ? "drop" : ch.chip === "vrc6" ? VRC6_DESTS[i] ?? "drop"
+        : ch.chip !== "nes" ? "drop" : ch.kind === "pcm" ? "pcm1" : FC_DESTS[i] ?? "drop";
+    }
+    return { dest, phrases: true, bpm: null, target };
+  }
+  // Another machine (msx, x68k, pc88): its own chips' channels in their
+  // kinds' places — FM on FM, the SSG on sqr1-3, the SCC on wave1-5, a
+  // rhythm sound on a rhythm track — and the rest where room is left.
+  if (target !== "md") {
+    const tp = targetProfile(target);
+    const d = targetDests(target);
+    const own = TARGET_CHIPS[target] ?? [];
+    // The FM-PAC's rhythm takes its channels 7-9.
+    const rhythmOn = a.channels.some((c) => c.kind === "rhythm" && c.notes > 0 && own.includes(c.chip));
+    const fm = d.fm.filter((f) => !(rhythmOn && tp.partOf(f).name === "opll-fm" && /^fm[789]$/.test(f)));
+    const sqr = [...d.psg], waves = [...d.wave], rhythm = [...d.rhythm];
+    const order = ["fm", "opm", "opll", "psg", "wave", "rhythm", "noise", "fm3op", "opl"];
+    const dest = {};
+    for (const ch of [...a.channels].sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind))) {
+      let x = "drop";
+      if (ch.notes === 0 || ch.kind === "pcm") x = "drop";
+      else if (ch.kind === "rhythm") x = own.includes(ch.chip) ? rhythm.shift() ?? "drop" : "drop";
+      else if (ch.kind === "fm" || ch.kind === "opm" || ch.kind === "opll") x = fm.shift() ?? "drop";
+      else if (ch.kind === "psg") x = sqr.shift() ?? fm.shift() ?? "drop";
+      else if (ch.kind === "wave") x = waves.shift() ?? fm.shift() ?? sqr.shift() ?? "drop";
+      else if (ch.kind === "noise" && d.noise) {
+        // (The channel the noise is — the SSG's sqr3, x68k's fm8 — only
+        // while no other part has it.)
+        const host = [...d.psg, ...d.fm].find((h) => tp.voiceKey(h) === tp.voiceKey(d.noise));
+        const free = host ? (sqr.includes(host) ? sqr : fm.includes(host) ? fm : null) : null;
+        if (!host || free) { x = d.noise; free?.splice(free.indexOf(host), 1); }
+      } else if (ch.kind !== "noise") x = fm.shift() ?? sqr.shift() ?? "drop";
+      dest[ch.index] = x;
     }
     return { dest, phrases: true, bpm: null, target };
   }
@@ -310,12 +385,15 @@ const slug = (s) => String(s || "").toLowerCase().normalize("NFKD")
 
 /**
  * @param options {dest: {channelIndex: channel | "drop"}, phrases: bool,
- *                 bpm?: number | null, target?: "md" | "pce", fileName?}
+ *                 bpm?: number | null, target?: "md" | "pce" | "fc" | "msx" | "x68k" | "pc88", fileName?}
  */
 export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const warnings = [];
-  const onPce = options.target === "pce";
-  const onFc = options.target === "fc";
+  const tg = options.target ?? "md";
+  const tp = targetProfile(tg);
+  const onMd = tg === "md";
+  const onPce = tg === "pce";
+  const onFc = tg === "fc";
   // A PC Engine module (its volume macros in the chip's 1.5 dB steps).
   const pceSong = t.channels.length > 0 && t.channels.every((c) => c.chip === "pce");
   const fxSkipped = new Map();
@@ -331,7 +409,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const used = [];
   // While the DAC plays (md's pcm1), fm6 is the DAC's: a part bound there
   // moves to an fm1-fm5 no channel asked for, else its FM notes are left out.
-  const dacOn = !onFc && !onPce && a.channels.some((c) => c.sampleNotes > 0 && c.kind !== "pcm" && (dest[c.index] ?? "drop") !== "drop");
+  const dacOn = onMd && a.channels.some((c) => c.sampleNotes > 0 && c.kind !== "pcm" && (dest[c.index] ?? "drop") !== "drop");
   const freeFm = () => FM_DESTS.filter((f) => f !== "fm6").find((f) => !taken.has(f) && !Object.values(dest).includes(f));
   for (const ch of a.channels) {
     let d = dest[ch.index] ?? "drop";
@@ -350,7 +428,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // they meet (the :prio layering across its names).
     // The YM2612's FM6 playing samples (the DAC): those notes on pcm1, the
     // rest on its FM channel.
-    if (!onFc && !onPce && ch.sampleNotes > 0 && ch.kind !== "pcm") {
+    if (onMd && ch.sampleNotes > 0 && ch.kind !== "pcm") {
       if (fmNotes > 0 && d) { taken.add(d); used.push({ ...ch, dest: d }); }
       if (!taken.has("pcm1")) { taken.add("pcm1"); used.push({ ...ch, dest: "pcm1", samples: true }); }
       continue;
@@ -386,7 +464,31 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       const ins = t.instruments[i];
       const name = uniq(`ins-${slug(ins.name) || i}`);
       const raw = { ...ins.fm, ops: ins.fm.ops.map((o) => ({ ...o, dt: dtRegFromFurnace(o.dt) })) };
-      defs.set(key, { name, text: fmVoiceDef(name, raw) });
+      defs.set(key, { name, text: fmVoiceDef(name, raw, { dt2: tp.hasWord("FM_DT2_1") }) });
+    }
+    return defs.get(key).name;
+  };
+  // An OPLL instrument on the FM-PAC: a ROM voice by its name, else the
+  // user voice as a def-fm of the chip's words (op1 the modulator), where
+  // Furnace keeps them (opll.cpp): the EG type in an operator's SSG-EG bit
+  // 3, the rectified sines in AMS (op1) and FMS (op2), the sustain in ALG.
+  // The drums' preset (16) is no voice.
+  // (Its wave macro switches the patch: the one it settles on, its loop's
+  // step or its last, is the note's.)
+  const patchMoves = new Set();
+  const opllVoice = (i) => {
+    const { fm: f, wave: wm } = t.instruments[i];
+    const preset = wm?.values.length ? wm.values[wm.loop ?? wm.values.length - 1] : f.opllPreset;
+    if (wm?.values.some((x) => x !== preset)) patchMoves.add(i);
+    if (preset >= 1 && preset <= 15) return OPLL_ROM_NAMES[preset - 1];
+    if (preset) return null;
+    const key = `opll:${i}`;
+    if (!defs.has(key)) {
+      const name = uniq(`ins-${slug(t.instruments[i].name) || i}`);
+      const op = (o, n) => [["ar", o.ar & 15], ["dr", o.dr & 15], ["sl", o.sl & 15], ["rr", o.rr & 15], ["ml", o.mul & 15],
+        ["ks", o.ksr & 1], ["am", o.am & 1], ["ws", (n === 1 ? f.ams : f.fms) & 1], ["eg", (o.ssg >> 3) & 1], ["ksl", o.ksl & 3], ["vib", o.vib & 1],
+        ...(n === 1 ? [["tl", o.tl & 63]] : [])].map(([w, v]) => `:${w}${n} ${v ?? 0}`).join(" ");
+      defs.set(key, { name, text: `(def-fm ${name} :fb ${f.fb & 7}${f.alg ? " :sus 1" : ""}\n  ${op(f.ops[0], 1)}\n  ${op(f.ops[1], 2)}\n)` });
     }
     return defs.get(key).name;
   };
@@ -401,7 +503,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // table where the layout is not proper (`nz` its note there).
   // `note`: the row's note, for an arp with fixed steps (each step's :semi
   // is its note less this one); `pceNoise`: a PC Engine noise note.
-  const env = (i, nz = null, onWave = false, fc = null, col = null, note = null, pceNoise = false) => {
+  // `vm`: how the volume macro meets the column on the target's own chip —
+  // "log": its steps added to the column's, 3 dB each (the OPLL's), "log31"
+  // 0.75 dB each of 31 (the YM2608's rhythm); "ssg" as "log", and its wave
+  // macro the mixer, its duty macro the noise period, as `:mode` and
+  // `:noise-rate` macros; "lin": a ratio of it (the SCC's), "lin63" of 63
+  // (the VRC6's saw), "vrc6" as "lin" with its duty macro as `:duty`.
+  const env = (i, nz = null, onWave = false, fc = null, col = null, note = null, pceNoise = false, vm = null) => {
     const am = t.instruments[i]?.arp;
     const moves = !!am?.fixed || !!am?.values.some((x) => x !== 0);
     if (!moves) nz = null;
@@ -412,13 +520,17 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map(waveDef) : null;
     if (waveNames?.includes(null)) waveMacroSteps++;
     const waves = waveNames?.every((n) => n) ? waveNames : null;
-    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${note == null ? "" : `:n${note}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}`;
+    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${note == null ? "" : `:n${note}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}${vm ? `:${vm}` : ""}`;
     if (!defs.has(key)) {
       const ins = t.instruments[i];
       const parts = [];
+      // A macro's loop as `#sus`, its release point (Furnace's: held there
+      // until the note is let go, then on) as `#rel` after that step.
       const arr = (m, map) => {
         const v = m.values.map((x, k) => map(x, k));
-        if (m.loop != null) v.splice(m.loop, 0, "#sus");
+        const marks = [[m.loop, "#sus"], [m.rel != null && m.rel < v.length - 1 ? m.rel + 1 : null, "#rel"]]
+          .filter(([at]) => at != null).sort((x, y) => y[0] - x[0]);
+        for (const [at, mark] of marks) v.splice(at, 0, mark);
         return `[${v.join(" ")}]`;
       };
       const volMax = t.psgVolMax;
@@ -434,6 +546,14 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         parts.push(`:vol ${arr(ins.vol, (x) => (out(x) <= 0 ? 0 : Math.max(1, Math.round(31 + (linDb(out(x)) - linDb(col)) / 2))))}`);
       } else if (ins.vol?.values.length && fc)
         parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 + linDb(x) / 2))))}`);
+      else if (ins.vol?.values.length && (vm === "lin" || vm === "vrc6" || vm === "lin63")) {
+        const top = vm === "lin63" ? 63 : 15;
+        parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 + (20 * Math.log10(Math.min(top, x) / top)) / 2))))}`);
+      }
+      else if (ins.vol?.values.length && (vm === "log" || vm === "ssg" || vm === "log31")) {
+        const [top, stepDb] = vm === "log31" ? [31, 0.75] : [15, 3];
+        parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 - ((top - Math.min(top, x)) * stepDb) / 2))))}`);
+      }
       else if (ins.vol?.values.length && pceSong)
         parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 - ((31 - Math.min(31, x)) * 1.5) / 2))))}`);
       else if (ins.vol?.values.length)
@@ -455,7 +575,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         parts.push(`:semi ${arr(ins.arp, semi)}`);
       if (fc === "pulse" && ins.duty?.values.length)
         parts.push(`:duty ${arr(ins.duty, (x) => FC_DUTIES[x & 3])}`);
+      if (vm === "vrc6" && ins.duty?.values.length > 1) parts.push(`:duty ${arr(ins.duty, (x) => (x & 7) + 1)}`);
       if (waves) parts.push(`:wave ${arr(wm, (_, k) => waves[k])}`);
+      if (vm === "ssg" && ins.wave?.values.some((x) => ssgModeName(x) !== ssgModeName(ins.wave.values[0])))
+        parts.push(`:mode ${arr(ins.wave, ssgModeName)}`);
+      if (vm === "ssg" && ins.duty?.values.some((x) => x !== ins.duty.values[0]))
+        parts.push(`:noise-rate ${arr(ins.duty, (x) => Math.max(1, 31 - (x & 31)))}`);
       const name = uniq(`env-${slug(ins.name) || i}${note == null ? (nz == null ? "" : `-nz${nz}`) : `-${FIX_NAMES[((note % 12) + 12) % 12]}${Math.floor(note / 12)}`}${fc && fc !== "pulse" ? `-${fc}` : ""}${col == null ? "" : `-v${col}`}`);
       defs.set(key, { name, text: `(def ${name} (macro none)${parts.length ? ` (macro ${parts.join(" ")})` : ""})` });
     }
@@ -481,13 +606,14 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     return defs.get(key).name;
   };
-  let waveMacroSteps = 0, dutyMoves = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0, dutyUnderNote = 0;
+  let waveMacroSteps = 0, dutyMoves = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0, dutyUnderNote = 0, vrc6PcmNotes = 0;
 
   // Pitch effects → one `:pitch` macro a note. A tracker tick is a frame at
   // the song's rate; a slide moves `speed × pitchSlideSpeed` 128ths of a
   // semitone a tick (Furnace's linear pitch, as it plays a DMF too); a
   // vibrato runs a 64-step sine `x` steps a tick, `y` 16ths of a semitone deep.
   const pss = t.pitchSlideSpeed ?? 4;
+  const tuneCents = Math.round(1200 * Math.log2((t.tuning || 440) / 440));
   if (t.linearPitch === false && used.length)
     warnings.push("the song's pitch is not linear: slides and portamento are approximated");
   const frames = (scoreTicks) => Math.max(1, Math.round((scoreTicks / ticksPerFrame) * 60 / t.hz));
@@ -503,10 +629,42 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     return defs.get(key).name;
   };
+  // An instrument's pitch macro as a def of the note's pitch a frame at a
+  // time, in cents (a step 1/128 semitone): its delay, each step held its
+  // speed, a relative macro's steps added up; a loop runs on to two
+  // seconds, or until it has gone four octaves. `d` the fine tune under it.
+  const insPitchDef = (i, d) => {
+    const m = t.instruments[i]?.pitch;
+    if (!m?.values.length || !m.values.some(Boolean)) return null;
+    const key = `ipitch:${i}:${d}`;
+    if (!defs.has(key)) {
+      const out = new Array(m.delay ?? 0).fill(d);
+      const cap = Math.round(2 * t.hz); // two seconds of ticks
+      let acc = 0;
+      for (let k = 0; k < m.values.length && out.length < cap;) {
+        acc = m.relative ? acc + m.values[k] : m.values[k];
+        const c = d + Math.round((acc * 100) / 128);
+        for (let s = 0; s < (m.speed ?? 1); s++) out.push(c);
+        if (Math.abs(c) > 4800) break;
+        k++;
+        if (k === m.values.length && m.loop != null && (m.relative ? m.values.slice(m.loop).some(Boolean) : m.loop < m.values.length - 1)) k = m.loop;
+      }
+      const name = uniq(`pitch-${slug(t.instruments[i].name) || i}${d ? (d > 0 ? `+${d}` : d) : ""}`);
+      defs.set(key, { name, text: `(def ${name} (macro :pitch [${out.join(" ")}]))` });
+    }
+    return defs.get(key).name;
+  };
+  let insPitchUnder = 0;
   const pitchToken = (n) => {
     const p = n.p;
     if (!p) return null;
     const d = p.detune;
+    // The instrument's pitch macro: the note's, unless a slide, a
+    // portamento or a vibrato of its row takes the one pitch macro a note has.
+    if (n.insPitch != null) {
+      if (!p.porta && !p.slides.length && !p.vib && !p.vibLater) return insPitchDef(n.insPitch, d);
+      insPitchUnder++;
+    }
     const line = (from, to, scoreTicks, wait) =>
       `(macro :pitch (linear ${from}..${to} :len ${frames(scoreTicks)}f${wait ? ` :wait ${frames(wait)}f` : ""}))`;
     if (p.porta) {
@@ -673,22 +831,46 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const volMax = VOL_MAX[ch.kind] ?? (fmVol ? t.fmVolMax : t.psgVolMax);
     // On pce the volume column is the chip's 5-bit volume, 1.5 dB a step.
     const pceVol = onPce && chn.chip === "pce";
+    // A channel on its own chip's part of the target: the SSG (its mixer,
+    // the song's noise period), the SCC (its wavetables), the OPLL (its
+    // voices), a rhythm sound.
+    const own = !!TARGET_CHIPS[tg]?.includes(chn.chip);
+    const part = tp.partOf(ch.dest);
+    const ssgCh = own && chn.chip === "ssg" && part?.name === "ssg";
+    const sccCh = own && chn.chip === "scc" && part?.kind === "wave";
+    const opllCh = own && chn.chip === "opll" && part?.name === "opll-fm";
+    const rhythmCh = /^rhythm/.test(ch.dest);
+    const waveCh = pceVol || sccCh; // a channel that plays the module's wavetables
+    // The VRC6 on fc: a pulse (its eight duties) or the saw, each column
+    // linear (the saw's to 63) and its volume macro a ratio of it.
+    const vrc6Ch = onFc && chn.chip === "vrc6" && VRC6_DESTS.includes(ch.dest) ? (ch.dest === "saw1" ? "saw" : "pulse") : null;
+    // A column in log steps of this many dB (the PC Engine's 1.5, the SSG's
+    // and the OPLL's 3, the YM2608 rhythm's 0.75); the SCC's is linear.
+    const logStep = pceVol ? 1.5 : ssgCh || opllCh || (rhythmCh && chn.chip === "opll-rhythm") ? 3
+      : rhythmCh && chn.chip === "opna-rhythm" ? 0.75 : 0;
+    // (A rhythm sound's: the OPLL's 3 dB steps, the YM2608's 0.75.)
+    const vm = ssgCh ? "ssg" : opllCh || (rhythmCh && chn.chip === "opll-rhythm") ? "log"
+      : rhythmCh && chn.chip === "opna-rhythm" ? "log31" : sccCh ? "lin"
+      : vrc6Ch === "pulse" ? "vrc6" : vrc6Ch === "saw" ? "lin63" : null;
+    const linCh = sccCh || !!vrc6Ch; // a linear column (the SCC's, the VRC6's)
+    const fmPan = onFm && !!part?.words("PAN");
     const toNoise = onPce && ch.dest.startsWith("noise");
     // A 2A03 channel on fc: which of its kinds (env's `fc`).
     const fcCh = onFc && chn.chip === "nes" ? (ch.dest === "tri" ? "tri" : ch.dest === "noise" ? "noise" : "pulse") : null;
-    const noiseRow = toNoise || fcCh === "noise"; // a note is a rate: no pitch effects
+    const noiseRow = toNoise || fcCh === "noise" || rhythmCh; // a note is a rate (a sound): no pitch effects
     // The column's top, and a level of it as a velocity, before the clamp
     // to 0-15 (in eighths where the chip's steps are finer than :vel's).
-    const colMax = pceVol ? chn.volMax ?? 31 : volMax;
+    const colMax = logStep || linCh ? chn.volMax ?? volMax : volMax;
     const velRaw = (v) => (fcCh ? 15 + linDb(v) / VEL_DB_PER_STEP
+      : linCh ? (v > 0 ? 15 + (20 * Math.log10(Math.min(colMax, v) / colMax)) / VEL_DB_PER_STEP : -Infinity)
       : fmVol ? 15 - ((volMax - v) * 0.75) / 2
-      : pceVol ? 15 - (colMax - v) * 1.5 / VEL_DB_PER_STEP
+      : logStep ? 15 - (colMax - v) * logStep / VEL_DB_PER_STEP
       : (v * 15) / volMax);
     const velOf = (v) => {
       if (v < 0) return 15;
-      if (fcCh && v <= 0) return 0;
+      if ((fcCh || linCh) && v <= 0) return 0;
       const x = velRaw(v);
-      return Math.max(0, Math.min(15, fcCh || pceVol ? Math.round(x * 8) / 8 : Math.round(x)));
+      return Math.max(0, Math.min(15, fcCh || linCh || logStep ? Math.round(x * 8) / 8 : Math.round(x)));
     };
     const standIn = STAND_IN[ch.kind] ?? "wave-square";
     // Sticky state: the voice (instrument), the pan, the arpeggio. A channel
@@ -708,8 +890,24 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // The last vibrato and portamento, for 05xy and 06xy.
     let lastVib = 0;
     let lastPorta = 0;
-    let pan = (onFm || pceVol) && uses(0x08) ? "center" : null;
-    let wave = -1; // the wavetable the channel plays (pce)
+    let pan = (fmPan || pceVol) && (uses(0x08) || (fmPan && uses(0x80))) ? "center" : null;
+    let wave = -1; // the wavetable the channel plays (pce, the SCC)
+    // The SSG's mixer (Furnace's: 1 tone, 2 noise, 4 the envelope; 20xx
+    // and the wave macro) and the noise period (21xx, the duty macro: the
+    // register 31 less it). `:mode` is said where the channel ever leaves tone.
+    let psgMode = 1, noiseFreq = null, vrc6Pcm = false;
+    // The hardware envelope (Furnace's AY): its shape (22xy, the ex2
+    // macro), its period (23xx / 24xx, ex5) and the auto-envelope's ratio
+    // to the tone's (29xy, ex3 : alg), which sets the period from the note.
+    let envShape = 0, envPeriod = 0, autoNum = 0, autoDen = 0;
+    const ssgChip = ssgCh ? tp.chipOf(ch.dest) : null;
+    const ssgClock = ssgChip?.ssg?.clock ?? ssgChip?.clock ?? 1789773;
+    // The YM2151's channel 8 on x68k's fm8, whose :mode noise its fourth
+    // operator is (10xx, the duty macro: 0 off, else the period 33 less it).
+    const opmNoiseCh = own && chn.chip === "opm" && /FM8$/.test(chn.name) && !!tp.channels?.[ch.dest]?.modes?.noise;
+    let opmNoise = 0;
+    const opmNoiseSaid = opmNoiseCh && (uses(0x10) || t.instruments.some((it) => it?.duty?.values.some((x) => x > 0)));
+    const modeSaid = ssgCh && (uses(0x20) || t.instruments.some((it) => it?.kind === "std" && it.wave?.values.some((x) => (x & 3) !== 1)));
     let noise = false; // channel 5 or 6 on its noise (pce, 11xx)
     // The 2A03's duty (12xx, the duty macro: Furnace's 0-3, 0 at the start)
     // — a pulse's shape, the noise's mode.
@@ -718,6 +916,17 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     let usedMacro = false;
     const voiceTokens = (nz = null, onWave = false, note = null) => {
       const it = t.instruments[ins];
+      if (rhythmCh) {
+        if (!chn.drum) return [];
+        // Its instrument's volume macro, as the sound's :vol.
+        if (vm && it?.kind === "std" && it.vol?.values.length) { usedMacro = true; return [chn.drum, env(ins, null, false, null, null, null, false, vm)]; }
+        return usedMacro ? [chn.drum, "(macro none)"] : [chn.drum];
+      }
+      if (opllCh) {
+        const v = it?.fm ? opllVoice(ins) : null;
+        if (it?.kind === "std") { usedMacro = true; return [...(v ? [v] : []), env(ins, null, false, null, null, note, false, vm)]; }
+        return usedMacro ? [...(v ? [v] : []), "(macro none)"] : v ? [v] : [];
+      }
       if (!it) {
         if (onFm) { standIns.add(standIn); return usedMacro ? [standIn, "(macro none)"] : [standIn]; }
         return usedMacro ? ["(macro none)"] : [];
@@ -729,20 +938,38 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return usedMacro ? ["(macro none)"] : [];
       }
       usedMacro = true;
-      const e = env(ins, nz, onWave, fcCh, vol < 0 ? 15 : vol, note, toNoise);
+      const e = env(ins, nz, onWave, fcCh, vol < 0 ? 15 : vol, note, toNoise, vm);
       if (onFm) { standIns.add(standIn); return [standIn, e]; }
       return [e];
     };
     const arpToken = () => (arp ? `(macro :semi [#sus 0 ${arp >> 4} ${arp & 15}])` : "(macro :semi none)");
     let usedArp = uses(0x00);
-    let cur = { voice: voiceTokens(), pan: null, arp: null, duty: null };
-    const dutyToken = () => (fcCh === "pulse" ? `:duty ${FC_DUTIES[duty & 3]}` : fcCh === "noise" ? `:mode ${duty & 1 ? "periodic" : "white"}` : null);
+    let cur = { voice: voiceTokens(), pan: null, arp: null, duty: null, mode: modeSaid || opmNoiseSaid ? ":mode tone" : null, rate: null };
+    const dutyToken = () => (fcCh === "pulse" ? `:duty ${FC_DUTIES[duty & 3]}` : fcCh === "noise" ? `:mode ${duty & 1 ? "periodic" : "white"}`
+      : vrc6Ch === "pulse" ? `:duty ${(duty & 7) + 1}` : null); // (the VRC6's: sixteenths less one)
     // Pitch effects: the vibrato and fine tune in force, and each note's
     // own (worked into a `:pitch` macro once its length is known).
     let vib = null;
-    let detune = 0;
+    // (From the song's tuning: its A-4 against 440 Hz, in cents.)
+    let detune = tuneCents;
     let lastMidi = null;
-    const flat = (st) => [...st.voice, ...(st.arp ? [st.arp] : []), ...(st.pan ? [st.pan] : []), ...(st.duty ? [st.duty] : [])];
+    const flat = (st) => [...st.voice, ...(st.arp ? [st.arp] : []), ...(st.pan ? [st.pan] : []), ...(st.duty ? [st.duty] : []),
+      ...(st.mode ? [st.mode] : []), ...(st.rate ? [st.rate] : []),
+      ...(st.env && st.env !== ":env none" ? [st.env, st.envRate, st.envSemi].filter(Boolean) : [])];
+    // The envelope a note is on: its shape, and its period — the
+    // auto-envelope's the note's own (`:env-rate note`, num/den of its
+    // pitch; a triangle's cycle, which MMLisp halves to the note, an octave
+    // under it), else the period register's rate on the target's clock.
+    const ssgEnvTokens = () => {
+      if (!ssgCh || !(psgMode & 4)) return { env: cur.env && ":env none", envRate: cur.envRate, envSemi: cur.envSemi };
+      const tri = envCycle(envShape) === 512;
+      if (autoNum > 0 && autoDen > 0) {
+        const semi = Math.max(-48, Math.min(48, Math.round(12 * Math.log2(autoNum / autoDen)) - (tri ? 12 : 0)));
+        return { env: `:env ${envShape}`, envRate: ":env-rate note", envSemi: `:env-semi ${semi}` };
+      }
+      const hz = ssgClock / (envCycle(envShape) * Math.max(1, envPeriod));
+      return { env: `:env ${envShape}`, envRate: `:env-rate ${+hz.toPrecision(4)}`, envSemi: cur.envSemi };
+    };
 
     const notes = [];
     const marks = [];
@@ -849,17 +1076,28 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if (code === 0x06 && val >= 0) { if (val && lastPorta) rp.porta = lastPorta; slide = volSlide(val); }
           // Fine tune, to 10 cents (a song tuned note by note — a VGM
           // conversion — would otherwise name an offset on every note).
-          else if (code === 0xe5 && val >= 0) detune = v < 0 ? 0 : Math.round((val - 0x80) * 100 / 128 / 10) * 10 || 0;
-          else if (code === 0x08 && onFm && val >= 0) {
+          else if (code === 0xe5 && val >= 0) detune = tuneCents + (v < 0 ? 0 : Math.round((val - 0x80) * 100 / 128 / 10) * 10 || 0);
+          // 80xx: Furnace's linear pan, a side off only at its end (00 left,
+          // FF right), as its FM channels key their sides.
+          else if (code === 0x80 && fmPan && val >= 0) pan = val === 0 ? "left" : val === 0xff ? "right" : "center";
+          else if (code === 0x08 && fmPan && val >= 0) {
             pan = (val >> 4) && (val & 15) ? "center" : val >> 4 ? "left" : val & 15 ? "right" : "center";
           } else if (code === 0x08 && pceVol && val >= 0) {
             // The channel's left and right levels: the louder side full, the
             // other as far down as their difference (chips/huc6280.js panLevels).
             const p = ((val & 15) - (val >> 4)) / 15;
             pan = p === 0 ? "center" : String(+p.toFixed(2));
-          } else if (code === 0x10 && pceVol && val >= 0) wave = val;
+          } else if (code === 0x10 && waveCh && val >= 0) wave = val;
+          else if (code === 0x10 && opmNoiseCh && val >= 0) opmNoise = val;
+          else if (code === 0x20 && ssgCh && val >= 0) psgMode = (val + 1) & 7;
+          else if (code === 0x21 && ssgCh && val >= 0) noiseFreq = 31 - (val & 31);
+          else if (code === 0x22 && ssgCh && val >= 0) { envShape = val >> 4; psgMode = val & 15 ? psgMode | 4 : psgMode & ~4; }
+          else if (code === 0x23 && ssgCh && val >= 0) { envPeriod = (envPeriod & 0xff00) | val; autoNum = autoDen = 0; }
+          else if (code === 0x24 && ssgCh && val >= 0) { envPeriod = (envPeriod & 0xff) | (val << 8); autoNum = autoDen = 0; }
+          else if (code === 0x29 && ssgCh && val >= 0) { autoNum = val >> 4; autoDen = val & 15; }
           else if (code === 0x11 && pceVol && val >= 0) noise = val > 0;
-          else if (code === 0x12 && fcCh && fcCh !== "tri" && val >= 0) {
+          else if (code === 0x17 && vrc6Ch && val >= 0) vrc6Pcm = val > 0;
+          else if (code === 0x12 && ((fcCh && fcCh !== "tri") || vrc6Ch === "pulse") && val >= 0) {
             duty = val;
             // Under a sounding note Furnace writes it at once; here it is
             // the next note's.
@@ -888,18 +1126,42 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         // The instrument's macros start over at each of its notes: its wave
         // macro sets the wave (its first step; one that moves is the note's
         // :wave macro, env), its duty macro the noise switch (its first step).
-        if (pceVol && typeof row.note === "number" && t.instruments[ins]) {
+        if (waveCh && typeof row.note === "number" && t.instruments[ins]) {
           const { wave: wm, duty } = t.instruments[ins];
           if (wm?.values.length) wave = wm.values[0];
-          if (duty?.values.some((x) => (x > 0) !== (duty.values[0] > 0))) dutyMoves++;
-          noise = dutyNoise(t.instruments[ins]) ?? noise;
+          if (pceVol) {
+            if (duty?.values.some((x) => (x > 0) !== (duty.values[0] > 0))) dutyMoves++;
+            noise = dutyNoise(t.instruments[ins]) ?? noise;
+          }
+        }
+        if (opmNoiseCh && typeof row.note === "number" && t.instruments[ins]?.duty?.values.length) opmNoise = t.instruments[ins].duty.values[0];
+        // The SCC plays its first wavetable until one is named (Furnace).
+        if (sccCh && typeof row.note === "number" && wave < 0 && t.waves?.length) wave = 0;
+        // The SSG's macros start over at each note: the mixer and the noise
+        // period are their first steps.
+        if (ssgCh && typeof row.note === "number" && t.instruments[ins]?.kind === "std") {
+          const { wave: wm, duty, ex2, ex3, alg, ex5 } = t.instruments[ins];
+          // (One that moves is the note's macro too: env. The envelope is
+          // on as the mixer settles — its loop's step, else its last.)
+          if (wm?.values.length) {
+            psgMode = wm.values[0] & 3;
+            if (wm.values[wm.loop ?? wm.values.length - 1] & 4) psgMode |= 4;
+          }
+          if (duty?.values.length) noiseFreq = 31 - (duty.values[0] & 31);
+          if (ex2?.values.length) envShape = ex2.values[0] & 15;
+          if (ex5?.values.length) { envPeriod = ex5.values[0]; autoNum = autoDen = 0; }
+          if (ex3?.values.length || alg?.values.length) {
+            autoNum = ex3?.values.length ? ex3.values[0] : 1;
+            autoDen = alg?.values.length ? alg.values[0] : 1;
+          }
         }
         // The 2A03's duty macro starts over at each note: the noise's mode
         // is its first step (Furnace: properNoiseLayout keeps bit 0, else
         // anything over 1 is 1); a pulse's runs as the note's :duty macro,
         // its first step the note's duty.
-        const dm = fcCh && typeof row.note === "number" ? t.instruments[ins]?.duty : null;
-        const dutyOf = (x) => (fcCh === "noise" ? (t.properNoiseLayout ? x & 1 : Math.min(1, x)) : x & 3);
+        // (The VRC6's pulse alike, its eight duties.)
+        const dm = (fcCh || vrc6Ch === "pulse") && typeof row.note === "number" ? t.instruments[ins]?.duty : null;
+        const dutyOf = (x) => (fcCh === "noise" ? (t.properNoiseLayout ? x & 1 : Math.min(1, x)) : vrc6Ch ? x & 7 : x & 3);
         if (dm?.values.length && fcCh !== "tri") {
           duty = dutyOf(dm.values[0]);
           if (fcCh === "noise" && dm.values.some((y) => dutyOf(y) !== duty)) dutyMoves++;
@@ -928,6 +1190,16 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           slideRow(at);
           continue;
         }
+        // The VRC6 in its PCM mode (a sample instrument's note, 17xx) plays
+        // no tone: left out.
+        if (vrc6Ch && typeof row.note === "number") vrc6Pcm = isSampleIns(t.instruments[ins]) || (vrc6Pcm && row.ins < 0);
+        if (vrc6Ch && typeof row.note === "number" && vrc6Pcm) {
+          vrc6PcmNotes++;
+          if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
+          sounding = null;
+          slideRow(at);
+          continue;
+        }
         if (row.note === "off") {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
           sounding = null;
@@ -949,8 +1221,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           // silent note's too.
           const noteDuty = dutyToken();
           if (dm?.values.length && fcCh !== "tri") duty = dutyOf(dm.values[dm.values.length - 1]);
-          if (vol === 0 && !triOn) { sounding = null; slideRow(at); continue; }
-          const waveName = pceVol && !toNoise && wave >= 0 ? waveDef(wave) : null;
+          // The SSG's mixer: tone, noise or both (the envelope's bit read
+          // as the tone; nothing on, silent).
+          const ssgTone = psgMode & 1 || psgMode & 4, ssgNoise = psgMode & 2;
+          if (vol === 0 && !triOn || (ssgCh && !ssgTone && !ssgNoise)) { sounding = null; slideRow(at); continue; }
+          const waveName = waveCh && !toNoise && wave >= 0 ? waveDef(wave) : null;
           const st = {
             voice: waveName ? [waveName, ...voiceTokens(null, true, row.note)]
               : voiceTokens(toNoise && !t.properNoiseLayout ? ((row.note % 12) + 12) % 12
@@ -958,6 +1233,10 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             pan: pan ? `:pan ${pan}` : null,
             arp: usedArp ? arpToken() : null,
             duty: noteDuty,
+            mode: modeSaid ? `:mode ${ssgModeName(psgMode)}` : opmNoiseSaid ? `:mode ${opmNoise > 0 ? "noise" : "tone"}` : null,
+            rate: ssgCh && ssgNoise && noiseFreq != null ? `:noise-rate ${Math.max(1, noiseFreq)}`
+              : opmNoiseCh && opmNoise > 0 ? `:noise-rate ${Math.max(1, Math.min(31, 33 - opmNoise))}` : cur.rate,
+            ...ssgEnvTokens(),
           };
           const pre = [];
           const voiceChanged = st.voice.join(" ") !== cur.voice.join(" ");
@@ -966,19 +1245,24 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (st.arp && (st.arp !== cur.arp || (voiceChanged && arp))) pre.push(st.arp);
           if (st.pan && st.pan !== cur.pan) pre.push(st.pan);
           if (st.duty && st.duty !== cur.duty) pre.push(st.duty);
+          if (st.mode && st.mode !== cur.mode) pre.push(st.mode);
+          if (st.rate && st.rate !== cur.rate) pre.push(st.rate);
+          for (const k of ["env", "envRate", "envSemi"]) if (st[k] && st[k] !== cur[k] && (k === "env" || st.env !== ":env none")) pre.push(st[k]);
           cur = st;
           // A noise note is its rate: c2 the slowest (chips/huc6280.js,
           // chips/rp2a03.js — the 2A03's register counts down).
           const midi = fcCh === "noise" ? FC_NOISE_BASE + 15 - fcNoiseRate(row.note, t.properNoiseLayout)
             : toNoise ? PCE_NOISE_BASE + (t.properNoiseLayout ? row.note & 31 : PCE_NOISE_TABLE[((row.note % 12) + 12) % 12])
-            : row.note + 24;
-          if (noiseRow && (rp.slide || rp.porta || vib)) noisePitch++;
+            : rhythmCh ? 60 // a rhythm sound at its own tuning (c4)
+            : row.note + C0_MIDI(chn);
+          if (noiseRow && !rhythmCh && (rp.slide || rp.porta || vib)) noisePitch++;
           const v = velOf(vol);
           // The level line's target: the one the instrument's envelope
           // leaves free (env's volume macro is a :vol on fc and pce).
           const insVol = t.instruments[ins]?.kind !== "fm" && !!t.instruments[ins]?.vol?.values.length;
           sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi, vel: v, pre, state: flat(st),
-            voiceChanged, col: vol < 0 ? colMax : vol, lineOn: insVol && (!!fcCh || pceSong) ? "vel" : "vol",
+            voiceChanged, col: vol < 0 ? colMax : vol, lineOn: insVol && (!!fcCh || pceSong || !!vm) && !rhythmCh ? "vel" : "vol",
+            insPitch: !noiseRow && t.instruments[ins]?.kind === "std" && t.instruments[ins].pitch?.values.some(Boolean) ? ins : null,
             p: noiseRow ? null : { vib: vib && { ...vib }, detune, porta: legatoFrom != null ? { from: legatoFrom, speed: rp.porta } : null,
               slides: rp.slide && !rp.slide.stop ? [{ ...rp.slide, off: 0 }] : [], vibLater: null } };
           if (legatoFrom != null && !noiseRow) sounding.tieIn = true;
@@ -1053,6 +1337,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   }
 
   for (const [k, n] of fxSkipped) warnings.push(`effect ${k} skipped (${n}×)`);
+  if (insPitchUnder) warnings.push(`an instrument's pitch macro under a row's slide or vibrato gives way to it (${insPitchUnder}×)`);
   if (vibUnderSlide) warnings.push(`a vibrato under a slide is dropped for that note (${vibUnderSlide}×)`);
   if (!tracks.length) warnings.push("no notes to import");
   if (a.channels.some((c) => c.kind === "pcm" && c.notes > 0) && !(onFc && used.some((c) => c.kind === "pcm" && t.channels[c.index].chip === "nes")))
@@ -1060,7 +1345,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const PCM = pcmWord.toUpperCase();
   if (dpcm.missing) warnings.push(`a ${PCM} note with no sample (or one of a depth not read) is left out (${dpcm.missing}×)`);
   if (dpcm.loopPart) warnings.push(`a ${PCM} sample looping a part of itself loops whole (${dpcm.loopPart}×)`);
-  if (onFc && a.channels.some((c) => c.notes > 0 && t.channels[c.index].chip !== "nes"))
+  if (onFc && a.channels.some((c) => c.notes > 0 && !["nes", "vrc6"].includes(t.channels[c.index].chip)))
     warnings.push("an expansion chip's channels have no fc part — left out");
   if (waveMacroSteps) warnings.push(`a wave macro naming a wavetable the module lacks is left out (${waveMacroSteps}×)`);
   if (dutyUnderNote) warnings.push(`a 12xx under a sounding note takes effect at the next note (${dutyUnderNote}×)`);
@@ -1068,12 +1353,18 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (waveResampled) warnings.push(`${waveResampled} wavetable(s) not 32 steps wide are read at 32 points`);
   if (noiseDropped) warnings.push(`noise notes on a channel imported as its wave are dropped (${noiseDropped}×)`);
   if (waveDropped) warnings.push(`wave notes on a channel imported as noise are dropped (${waveDropped}×)`);
+  if (patchMoves.size) warnings.push(`an OPLL patch macro plays the patch it settles on (${patchMoves.size}×)`);
+  if (vrc6PcmNotes) warnings.push(`a VRC6 pulse's PCM notes are left out (${vrc6PcmNotes}×)`);
   if (noisePitch) warnings.push(`a slide or vibrato on a noise note is dropped: its pitch is its rate (${noisePitch}×)`);
 
   const header = [`; Imported from ${options.fileName ?? "a tracker module"} (${t.format}, ${t.system})`];
-  const score = [onPce && ":target pce", onFc && ":target fc", t.title && `:title ${qstr(t.title)}`, t.author && `:author ${qstr(t.author)}`].filter(Boolean);
+  const score = [!onMd && `:target ${tg}`, t.title && `:title ${qstr(t.title)}`, t.author && `:author ${qstr(t.author)}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
+  // The YM2608's rhythm: the RX5 kit stands in for a ROM the user has not
+  // loaded (as the VGM and mucom imports have it).
+  if (tracks.some(({ ch }) => tp.partOf(ch.dest)?.name === "rhythm"))
+    header.push(`(import ${qstr(RHYTHM_KIT)})  ; the rhythm's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)`);
   for (const d of defs.values()) header.push("", d.text);
 
   const barTicks = (t.rowsPerBar > 0 ? t.rowsPerBar : a.rowsPerBeat * 4) * rowTicks;

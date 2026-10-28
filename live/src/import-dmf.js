@@ -11,21 +11,22 @@
 import { inflate, readArp, convertLegacySamples } from "./import-tracker.js";
 
 // The systems, by DMF id: each channel's kind (import-tracker.js
-// CHANNEL_KINDS) and the name the dialog shows.
-const ch = (kind, name) => ({ kind, name });
-const fm = (n, from = 1) => Array.from({ length: n }, (_, i) => ch("fm", `FM${i + from}`));
-const sn = [ch("psg", "SQ1"), ch("psg", "SQ2"), ch("psg", "SQ3"), ch("noise", "Noise")];
+// CHANNEL_KINDS), the name the dialog shows and its chip family (import-fur.js).
+const ch = (kind, name, chip) => ({ kind, name, ...(chip ? { chip } : {}) });
+const fm = (n, from = 1, chip = "ym2612") => Array.from({ length: n }, (_, i) => ch("fm", `FM${i + from}`, chip));
+const sn = [ch("psg", "SQ1", "sn76489"), ch("psg", "SQ2", "sn76489"), ch("psg", "SQ3", "sn76489"), ch("noise", "Noise", "sn76489")];
+const ssg = [1, 2, 3].map((i) => ch("psg", `SSG${i}`, "ssg"));
 // The 2A03's channels (chips/rp2a03.js), which an fc score keeps.
 // (`legacy`: a channel of the legacy sample mode — import-tracker.js
 // convertLegacySamples.)
 const nes = [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Triangle"), ch("noise", "Noise"), { ...ch("pcm", "DPCM"), legacy: "always" }]
   .map((c) => ({ ...c, chip: "nes" }));
 const DMF_SYSTEMS = {
-  0x02: { name: "Genesis", channels: [...fm(5), { ...ch("fm", "FM6"), legacy: "toggle" }, ...sn] },
-  0x42: { name: "Genesis (ext. CH3)", channels: [...fm(2), ch("fm3op", "FM3 OP1"), ch("fm3op", "FM3 OP2"),
-    ch("fm3op", "FM3 OP3"), ch("fm3op", "FM3 OP4"), ...fm(2, 4), { ...ch("fm", "FM6"), legacy: "toggle" }, ...sn] },
+  0x02: { name: "Genesis", channels: [...fm(5), { ...ch("fm", "FM6", "ym2612"), legacy: "toggle" }, ...sn] },
+  0x42: { name: "Genesis (ext. CH3)", channels: [...fm(2), ...[1, 2, 3, 4].map((i) => ch("fm3op", `FM3 OP${i}`, "ym2612")),
+    ...fm(2, 4), { ...ch("fm", "FM6", "ym2612"), legacy: "toggle" }, ...sn] },
   0x03: { name: "Master System", channels: sn },
-  0x43: { name: "Master System + FM", channels: [...sn, ...Array.from({ length: 9 }, (_, i) => ch("opll", `FM${i + 1}`))] },
+  0x43: { name: "Master System + FM", channels: [...sn, ...Array.from({ length: 9 }, (_, i) => ch("opll", `FM${i + 1}`, "opll"))] },
   0x04: { name: "Game Boy", channels: [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Wave"), ch("noise", "Noise")] },
   // The HuC6280's channels (chips/huc6280.js): a 5-bit volume, their own
   // wavetables, 5 and 6 able to turn to noise.
@@ -35,15 +36,14 @@ const DMF_SYSTEMS = {
   0x86: { name: "NES + FDS", channels: [...nes, ch("wave", "FDS")] },
   0x07: { name: "C64 (8580)", channels: Array.from({ length: 3 }, (_, i) => ch("psg", `SID ${i + 1}`)) },
   0x47: { name: "C64 (6581)", channels: Array.from({ length: 3 }, (_, i) => ch("psg", `SID ${i + 1}`)) },
-  0x08: { name: "Arcade (YM2151 + SegaPCM)", channels: [...Array.from({ length: 8 }, (_, i) => ch("opm", `FM${i + 1}`)),
+  0x08: { name: "Arcade (YM2151 + SegaPCM)", channels: [...Array.from({ length: 8 }, (_, i) => ch("opm", `FM${i + 1}`, "opm")),
     ...Array.from({ length: 5 }, (_, i) => ch("pcm", `PCM${i + 1}`))] },
-  0x09: { name: "Neo Geo CD", channels: [...fm(4), ch("psg", "SSG1"), ch("psg", "SSG2"), ch("psg", "SSG3"),
+  0x09: { name: "Neo Geo CD", channels: [...fm(4, 1, "opn"), ...ssg,
     ...Array.from({ length: 6 }, (_, i) => ch("pcm", `ADPCM-A ${i + 1}`))] },
-  0x49: { name: "Neo Geo CD (ext. CH2)", channels: [ch("fm", "FM1"), ch("fm3op", "FM2 OP1"), ch("fm3op", "FM2 OP2"),
-    ch("fm3op", "FM2 OP3"), ch("fm3op", "FM2 OP4"), ch("fm", "FM3"), ch("fm", "FM4"),
-    ch("psg", "SSG1"), ch("psg", "SSG2"), ch("psg", "SSG3"), ...Array.from({ length: 6 }, (_, i) => ch("pcm", `ADPCM-A ${i + 1}`))] },
-  0x0a: { name: "MSX + SCC", channels: [ch("psg", "PSG1"), ch("psg", "PSG2"), ch("psg", "PSG3"),
-    ...Array.from({ length: 5 }, (_, i) => ch("wave", `SCC${i + 1}`))] },
+  0x49: { name: "Neo Geo CD (ext. CH2)", channels: [ch("fm", "FM1", "opn"), ...[1, 2, 3, 4].map((i) => ch("fm3op", `FM2 OP${i}`, "opn")),
+    ch("fm", "FM3", "opn"), ch("fm", "FM4", "opn"), ...ssg, ...Array.from({ length: 6 }, (_, i) => ch("pcm", `ADPCM-A ${i + 1}`))] },
+  0x0a: { name: "MSX + SCC", channels: [ch("psg", "PSG1", "ssg"), ch("psg", "PSG2", "ssg"), ch("psg", "PSG3", "ssg"),
+    ...Array.from({ length: 5 }, (_, i) => ch("wave", `SCC${i + 1}`, "scc"))] },
 };
 
 // A sample's rate by its code, and the step its pitch reads it at (Furnace's

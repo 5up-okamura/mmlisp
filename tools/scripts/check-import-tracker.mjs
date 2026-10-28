@@ -378,7 +378,7 @@ function dacDmf() {
   const a = analyzeTracker(t);
   const { source, warnings } = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "md"), phrases: false, fileName: "t.dmf" }, a);
   assert.match(source, /\(macro :vol \[\(linear 12\.\.0 :len 10t\)\]\) :vel 0 d10t _14t/, "FAxx reaching 0 ends the FM note");
-  assert.match(source, /\(fm2 [^\n]*\n\s+#top ins-bell :oct 5 :vel 5 _ d/, "an FM note at volume 0 left out");
+  assert.match(source, /\(fm2 [^\n]*\n\s+#top ins-bell :oct 4 :vel 5 _ d/, "an FM note at volume 0 left out");
   assert.match(source, /\(macro :vol \[\(wait 36t\) \(linear 21\.\.21 :len 12t\)\]\)/, "ED03: the volume three frames in");
   assert.deepEqual(warnings, []);
   assert.deepEqual(bad(source), [], "the FM lines compile clean");

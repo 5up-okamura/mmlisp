@@ -68,8 +68,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
   in its import dialog; VGM writes md or the machine of its chip — x68k for
   a YM2151's, pc88 for a YM2608's or YM2203's, msx for an AY-3-8910's or
   an SCC's, pce for a HuC6280's —
-  chosen in its dialog; DefleMask / Furnace write md, or pce for a PC
-  Engine module (the default), chosen in their dialog; MIDI writes md and
+  chosen in its dialog; DefleMask / Furnace write md or the machine of
+  their chips — pce, fc, msx, x68k, pc88 — chosen in their dialog; MIDI writes md and
   shows no choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
   the matrix.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
@@ -86,7 +86,11 @@ Its current limits are `driver.md` §11 — keep the two in step.
   second chips, the MSX's FM-PAC (onto msx's fm channels), a wave rewritten
   under a sounding note (SCC), the HuC6280's DDA and LFO, the
   remaining PCM chips (OKI MSM6295, QSound, K054539, C140, …).
-- **DefleMask / Furnace**: sample channels, subsongs after the first. On
+- **DefleMask / Furnace**: sample channels (SegaPCM, ADPCM-A/B, the
+  MSM6258 — x68k's pcm1–pcm8 could take them), subsongs after the first, a
+  module chip's own clock (the SSG's envelope rate is read on the
+  target's), the AY envelope's shape moving in its macro (the first step
+  serves), a YM2413 drum note's pitch (each hit at c4). On
   the PC Engine: the LFO and DDA effects, a duty macro switching noise and
   wave under a note (its first step serves), and the phase a wave loads at
   (Furnace's anti-click carries the running phase over; a load here starts
@@ -141,8 +145,9 @@ samples) — language.md §19. Next:
    then ppmck's MML if a composer's files call for it. Expansions are
    decided by voice class, not one by one: the 5B is the SSG profile, the
    VRC7 the OPLL's, the FDS the wavetable class. The VRC6 is on `fc`
-   (`sqr3`, `sqr4`, `saw1`; WAV only, as VGM has no VRC6). Next, in order:
-   Furnace's VRC6 modules into it, NSF in (a 6502 run for its register
+   (`sqr3`, `sqr4`, `saw1`; WAV only, as VGM has no VRC6), and Furnace's
+   VRC6 modules import onto it (a pulse's PCM mode left out). Next, in order:
+   NSF in (a 6502 run for its register
    writes, import-only — the one source of a VRC6 song's writes), then the
    FDS.
 

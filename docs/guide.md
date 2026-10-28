@@ -1703,9 +1703,19 @@ order (`(x 2 …)` for a run); a note held into the next pattern starts that
 phrase with `~`. Untick **One def per pattern** for one long body instead.
 
 - FM instruments become `def-fm`s; a volume or arpeggio macro becomes a
-  `(macro …)` def. A fixed-pitch arpeggio (a drum's pitch sweep) becomes a
+  `(macro …)` def, its loop a `#sus` and its release point a `#rel` (held
+  there until the note is let go). An instrument's pitch macro (Furnace's,
+  1/128 semitone a step, relative ones added up, its delay and speed kept)
+  is a `(def pitch-… (macro :pitch […]))` the note names, unless a slide,
+  portamento or vibrato on its row takes the note's one pitch macro (the
+  log counts it). A Furnace song's tuning (its A-4) is a `:pitch` offset
+  under every note. Notes sound where Furnace plays them: the FM chips and
+  the AY at their names, the SN76489 two octaves up and the other PSGs and
+  wavetables (the SCC, the HuC6280, the 2A03, the VRC6) one, as Furnace
+  reckons their periods. A fixed-pitch arpeggio (a drum's pitch sweep) becomes a
   `:semi` from the note played, so it gets one def for each note it plays.
-  The volume column, pan (`08xy`), arpeggio (`00xy`), note
+  The volume column, pan (`08xy`; Furnace's `80xx`, a side only at its
+  end), arpeggio (`00xy`), note
   cut (`ECxx`) and delay (`EDxx`) come along.
 - The volume column is the note's `:vel`. Where the level moves under a
   sounding note — a column written on a row without a note, or a volume
@@ -1739,9 +1749,12 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   over the wave where they meet (§19's `:prio` across a channel's names).
   The LFO (`12xx` `13xx`) and DDA (`17xx`) are left out. `08xy` is the channel's pan between its left and right
   levels, the volume column the chip's 5-bit volume (1.5 dB a step).
-- An **NES** module offers `fc` (the default where the 2A03 plays every
-  note; an expansion's channels — VRC7, FDS — make `md` the default) or
-  `md`. As `fc` the pulses go to `sqr1` / `sqr2`, the triangle to `tri`,
+- An **NES** module offers `fc` (the default where the 2A03 and the VRC6
+  play the most notes) or `md`. The VRC6's channels go to `sqr3`, `sqr4`
+  and `saw1`: a pulse's duty is its duty macro and `12xx` (eight, `:duty
+  1`–`8`), the columns and volume macros linear (the saw's to 63); a
+  pulse's PCM mode (a sample instrument, `17xx`) is left out, as are the
+  other expansions' channels (VRC7, FDS, N163, MMC5). As `fc` the pulses go to `sqr1` / `sqr2`, the triangle to `tri`,
   the noise to `noise`, as Furnace plays them: a pulse's duty is its
   instrument's duty macro (a `(macro :duty …)`, starting over at each note)
   and `12xx`, from 12.5 % where nothing sets it (Furnace's), written as
@@ -1766,6 +1779,26 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
 - **The DAC and the legacy sample mode.** A Genesis module's FM6 notes that
   play samples go to `pcm1`, as `md` plays them. While the DAC plays, `fm6`
   is the DAC's, so FM6's FM notes move to an `fm1`–`fm5` no channel takes,
+- A module of another machine's chips offers that machine as its
+  **Target** (the default where its chips play the most notes), and md:
+  `msx` for the AY-3-8910, the SCC and the YM2413, `x68k` for the YM2151,
+  `pc88` for the YM2203, YM2608 and YM2610 (and an AY's songs, after
+  msx). A channel goes to its own chip's part there. The SSG's mixer
+  (the wave macro, `20xx`) is `:mode tone|noise|both|env`, its noise period
+  (the duty macro, `21xx`) `:noise-rate`, each a `(macro …)` where it moves;
+  the hardware envelope is `:env` with its shape (`22xy`, the ex2 macro)
+  and its period — `:env-rate note` with an `:env-semi` for the
+  auto-envelope (`29xy`, ex3 : alg), else `:env-rate` in Hz (`23xx`
+  `24xx`, ex5). The SCC's wavetables are `def-wave`s as the PC Engine's
+  are, its volume linear. A YM2413 instrument is its ROM voice by name
+  (`piano` …) or a 2-op `def-fm` of the FM-PAC's words; its drums mode
+  goes to `rhythm1`–`rhythm5` (`kick` `snare` `tom4` `ride` `hat`), at c4,
+  and takes `fm7`–`fm9`. The YM2608's rhythm goes to pc88's
+  `rhythm1`–`rhythm6`, with the RX5 kit imported to stand in for a
+  rhythm ROM not loaded; the ADPCM is left out. On x68k DT2 comes along
+  and channel 8's noise (`10xx`, the duty macro) is `fm8`'s `:mode noise`
+  with its `:noise-rate`. The SSG's and the YM2413's volume column and
+  macro are 3 dB steps, the rhythm's 0.75 dB.
   or are left out (the log says which). A sample instrument's note plays
   its sample. In a DefleMask module, or a Furnace one of a format before
   239 (which Furnace converts the same way), `17xx` turns FM6's sample mode

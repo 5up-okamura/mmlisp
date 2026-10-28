@@ -3304,8 +3304,8 @@
     }
 
     // A tracker module (DMF, FUR): tempo, phrases, a destination per channel
-    // — and, for a PC Engine module, the target (pce or md), which rebuilds
-    // the rows at that target's defaults.
+    // — and the target (md, or the machine of the module's chips), which
+    // rebuilds the rows at that target's defaults.
     async function importTrackerSong(t, fileName) {
       const a = analyzeTracker(t);
       const def = defaultTrackerOptions(a);
@@ -3318,7 +3318,7 @@
       if (a.targets.length > 1)
         fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
           choices: a.targets.map((tg) => [tg, `${targetProfile(tg).system} (:target ${tg})`]),
-          hint: 'pce keeps the module’s wavetables, noise and per-channel pan; md reads the channels for the Mega Drive' });
+          hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; md reads the channels for the Mega Drive' });
       fields.push(
         { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
           hint: `${a.rowsPerBeat} rows a beat at ${a.framesPerRow} frames a row, ${t.hz} Hz` },
