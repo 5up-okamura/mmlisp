@@ -1151,6 +1151,38 @@ function noteToken(letter, acc, len, ctx) {
   return `${up ? up + " " : ""}${name}${len ?? ""}${down ? " " + down : ""}`;
 }
 
+// --- note lengths -------------------------------------------------------------
+
+// The length a note, rest or tie plays: its own, else the part's default
+// (`l`, ctx.mucLen). The score's `:len` (ctx.len) is chosen as it reads: a
+// run of LEN_RUN notes of one length writes it once, bare notes after it;
+// one of another length is written with its own. Not in a macro's def — its
+// bare notes take the caller's `:len`, and a `:len` it set would carry out
+// to the caller — nor before the part's first `l`.
+const LEN_RUN = 3;
+const TIMED = new Set(["note", "rest", "tie", "porta"]);
+// What a run of one length goes on through: no time, no length, no :len read.
+const LEN_NEUTRAL = new Set(["keyShift", "slur", "bar", "octUp", "octDown", "octSet", "pan", "detune", "slotDetune",
+  "hwLfo", "lfoSet", "ssgEnv", "opReg", "rawReg", "mix", "noiseFreq", "vel", "hwEnv", "hwEnvPeriod", "pcmVolMode",
+  "gateCut", "reverb", "velAdj", "voice", "voiceByName", "tempo"]);
+const playedLen = (op, ctx) => op.len ?? ctx.mucLen ?? ctx.len;
+function lenFor(ops, k, ctx, out) {
+  const op = ops[k];
+  if (ctx.inMacro || ctx.mucLen == null) return op.len ?? "";
+  const e = playedLen(op, ctx);
+  if (e === ctx.len) return "";
+  let run = 0;
+  for (let j = k; j < ops.length && run < LEN_RUN; j++) {
+    const o = ops[j];
+    if (TIMED.has(o.t)) { if (playedLen(o, ctx) !== e) break; run++; }
+    else if (!LEN_NEUTRAL.has(o.t)) break;
+  }
+  if (run < LEN_RUN) return e;
+  out.push(`:len ${e}`);
+  ctx.len = e;
+  return "";
+}
+
 // --- software LFO -------------------------------------------------------------
 
 // The pitch-word offset after each clock of a note, as PLLFO runs it: at key-on
@@ -1445,7 +1477,7 @@ function rhythmLayers(forms, warnings, pc88 = false) {
 // out pass by pass. A tie INTO a loop only ties its first pass, so that pass is
 // peeled off. Between written-out passes the compile-time state is put back.
 
-const compileState = (ctx) => ({ oct: ctx.oct, len: ctx.len, keyShift: ctx.keyShift, lastNote: ctx.lastNote });
+const compileState = (ctx) => ({ oct: ctx.oct, len: ctx.len, mucLen: ctx.mucLen, keyShift: ctx.keyShift, lastNote: ctx.lastNote });
 
 function setCompileState(ctx, st, out) {
   if (st.oct !== ctx.oct) {
@@ -1454,7 +1486,9 @@ function setCompileState(ctx, st, out) {
     out.push(ctx.inMacro ? Array(Math.abs(d)).fill(d > 0 ? ">" : "<").join(" ") : `:oct ${st.oct}`);
     ctx.oct = st.oct;
   }
-  if (st.len != null && st.len !== ctx.len) { out.push(`:len ${st.len}`); ctx.len = st.len; }
+  // (A :len not yet written is none: the notes after state theirs.)
+  if (st.len !== ctx.len) { if (st.len != null) out.push(`:len ${st.len}`); ctx.len = st.len; }
+  ctx.mucLen = st.mucLen;
   ctx.keyShift = st.keyShift;
   ctx.lastNote = st.lastNote;
 }
@@ -1610,7 +1644,7 @@ function renderOps(ops, ctx, out, depth = 0) {
     const op = ops[k];
     switch (op.t) {
       case "note":
-        if (mutedHere(ctx) || ctx.pcmMuted) { ctx.pendingSlur = false; out.push(`_${op.len ?? ""}`); ctx.lastNote = { letter: op.letter, acc: op.acc }; break; }
+        if (mutedHere(ctx) || ctx.pcmMuted) { ctx.pendingSlur = false; out.push(`_${lenFor(ops, k, ctx, out)}`); ctx.lastNote = { letter: op.letter, acc: op.acc }; break; }
         noiseModeBeforeNote(ctx, out);
         envBeforeNote(ctx, out);
         lfoBeforeNote(ctx, out, op.letter, op.acc);
@@ -1618,7 +1652,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         fm3VelBeforeNote(ctx, out);
         pcmNoteUse(ctx, op, ctx.pendingSlur);
         if (ctx.pendingSlur) { flushSlur(ctx, out); continueChain(ctx); } else startChain(ctx, out);
-        if (!reverbNote(ctx, out, op, ops[k + 1])) out.push(noteToken(op.letter, op.acc, op.len, ctx));
+        if (!reverbNote(ctx, out, op, ops[k + 1])) out.push(noteToken(op.letter, op.acc, lenFor(ops, k, ctx, out), ctx));
         ctx.lastNote = { letter: op.letter, acc: op.acc };
         ctx.velHist = [...(ctx.velHist || []).slice(-9), ctx.vel];
         break;
@@ -1627,14 +1661,14 @@ function renderOps(ops, ctx, out, depth = 0) {
         // `~` would reach past the rest and slur into it instead.
         ctx.pendingSlur = false;
         finishChain(ctx, out);
-        out.push(`_${op.len ?? ""}`);
+        out.push(`_${lenFor(ops, k, ctx, out)}`);
         break;
       case "keyShift":
         // Compile-time, like the octave: K and k are separate registers that add.
         ctx.keyShift = { ...(ctx.keyShift || { K: 0, k: 0 }), [op.which]: op.n };
         break;
       case "tie":
-        if (mutedHere(ctx) || ctx.pcmMuted) { ctx.pendingSlur = false; out.push(`_${op.len ?? ""}`); break; }
+        if (mutedHere(ctx) || ctx.pcmMuted) { ctx.pendingSlur = false; out.push(`_${lenFor(ops, k, ctx, out)}`); break; }
         // mucom `^` ties to the SAME pitch as the previous note. MMLisp's `~`
         // is a connector to a note (X ~ Y); bare `~ <length>` is not valid, so
         // repeat the last note's pitch: `~ <pitch><len>` (same pitch = a tie).
@@ -1642,7 +1676,9 @@ function renderOps(ops, ctx, out, depth = 0) {
           const p = ctx.lastNote;
           pcmNoteUse(ctx, { letter: p.letter, acc: p.acc, len: op.len }, true);
           continueChain(ctx);
-          out.push(`~ ${noteToken(p.letter, p.acc, op.len, ctx)}`);
+          const len = []; // a :len goes after the `~`, before the note it ties to
+          const own = lenFor(ops, k, ctx, len);
+          out.push(`~ ${[...len, noteToken(p.letter, p.acc, own, ctx)].join(" ")}`);
         } else {
           out.push("~"); // no preceding note (malformed) — best effort
         }
@@ -1705,8 +1741,10 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.fm3Op) detuneChanged(ctx, out);
         break;
       case "lenSet":
-        ctx.len = op.token;
-        out.push(`:len ${op.token}`);
+        // The part's default length: written where its notes need it
+        // (lenFor), as written in a macro's def.
+        ctx.mucLen = op.token;
+        if (ctx.inMacro) { ctx.len = op.token; out.push(`:len ${op.token}`); }
         break;
       case "porta": {
         // mucom {from len to}: glide from the start pitch to the target over len.
@@ -1715,7 +1753,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           ctx.pendingSlur = false;
           for (let s = op.to.bo; s > 0; s--) { out.push(">"); ctx.oct++; }
           for (let s = op.to.bo; s < 0; s++) { out.push("<"); ctx.oct--; }
-          out.push(`_${op.len ?? ""}`);
+          out.push(`_${lenFor(ops, k, ctx, out)}`);
           ctx.lastNote = { letter: op.to.letter, acc: op.to.acc };
           break;
         }
@@ -1726,12 +1764,12 @@ function renderOps(ops, ctx, out, depth = 0) {
         const shift = ctx.isPcm && !ctx.isAdpcm ? 0 : (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
         const from = shiftedNote(op.from.letter, op.from.acc, shift);
         const fromPitch = `${from.name}${ctx.oct + op.from.bo + from.dOct}`;
-        const len = op.len ?? ctx.len ?? "4";
+        const len = playedLen(op, ctx) ?? "4";
         if (ctx.pendingSlur) { flushSlur(ctx, out); continueChain(ctx); } else startChain(ctx, out);
         out.push(`(glide ${fromPitch} ${len})`);
         for (let s = op.to.bo; s > 0; s--) { out.push(">"); ctx.oct++; }
         for (let s = op.to.bo; s < 0; s++) { out.push("<"); ctx.oct--; }
-        out.push(noteToken(op.to.letter, op.to.acc, op.len, ctx));
+        out.push(noteToken(op.to.letter, op.to.acc, lenFor(ops, k, ctx, out), ctx));
         out.push("(glide none)"); // one porta note only; following notes don't glide
         ctx.lastNote = { letter: op.to.letter, acc: op.to.acc };
         break;
@@ -1873,6 +1911,8 @@ function renderOps(ops, ctx, out, depth = 0) {
         }
         let form = `1 :vel+ ${plus}`;
         if (op.back !== 1) form += ` :back ${op.back}`;
+        // A tap plays at the score's :len, mucom's at the default length.
+        if (!ctx.inMacro && ctx.mucLen != null && ctx.len !== ctx.mucLen) { out.push(`:len ${ctx.mucLen}`); ctx.len = ctx.mucLen; }
         if (ctx.echoRegistry) {
           let name = ctx.echoRegistry.get(form);
           if (!name) { name = `ec${ctx.echoRegistry.size + 1}`; ctx.echoRegistry.set(form, name); }
@@ -1886,13 +1926,17 @@ function renderOps(ops, ctx, out, depth = 0) {
         // A mucom macro is pasted text, and so is a (def *n …): whatever state
         // its body sets carries on after the call. Track it, or a later `)`
         // would count from a stale volume.
+        // Its bare notes play the score's :len, mucom's the default length.
+        const pasted = ctx.usableMacros && ctx.usableMacros.has(op.n);
+        if (pasted && !ctx.inMacro && ctx.mucLen != null && ctx.len !== ctx.mucLen) { out.push(`:len ${ctx.mucLen}`); ctx.len = ctx.mucLen; }
         if (ctx.macroOps && ctx.macroOps.has(op.n)) {
-          const m = scratchCtx(ctx);
+          // Rendered as its def is (inMacro): what the pasted text leaves.
+          const m = { ...scratchCtx(ctx), inMacro: true };
           renderOps(ctx.macroOps.get(op.n), m, [], depth + 1);
-          for (const key of ["pcmSample", "pcmMuted", "pvMode", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "keyShift", "lastNote", "lfoPerPc", "lfoActive", "slotOffs", "velTok"]) ctx[key] = m[key];
+          for (const key of ["pcmSample", "pcmMuted", "pvMode", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "mucLen", "keyShift", "lastNote", "lfoPerPc", "lfoActive", "slotOffs", "velTok"]) ctx[key] = m[key];
         }
         // Reference a (def *n …); skip macros whose body had no supported content.
-        if (ctx.usableMacros && ctx.usableMacros.has(op.n)) out.push(`*${op.n}`);
+        if (pasted) out.push(`*${op.n}`);
         else if (!ctx.warnedVoices.has(`*${op.n}`)) {
           ctx.warnedVoices.add(`*${op.n}`);
           ctx.warnings.push(`macro *${op.n} has no MMLisp-supported content; dropped`);
@@ -1986,7 +2030,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           renderLoop({ t: "loop", count: op.count - 1, body: tree }, ctx, out, depth);
           break;
         }
-        if (snap && tree && op.count > 1 && ctx.newUnrollCross && crossPassesDiffer(snap, tree, depth)) {
+        if (snap && tree && op.count > 1 && ctx.newUnrollCross && (ctx.unfold || crossPassesDiffer(snap, tree, depth))) {
           ctx.newUnrollCross.add(op.label);
         }
         out.push(`(go ${op.label} ${op.count})`);
@@ -2342,7 +2386,7 @@ function tokenTicks(tok) {
 // ties on (`&` next): the driver does nothing at its q point then.
 function reverbNote(ctx, out, op, next) {
   if (!ctx.reverb || ctx.isSsg || ctx.isPcm || ctx.vel == null || !ctx.qCut || next?.t === "slur") return false;
-  const total = tokenTicks(op.len ?? ctx.len);
+  const total = tokenTicks(playedLen(op, ctx));
   const cut = ctx.qCut;
   if (total == null || total <= cut) return false;
   const tailV = ((ctx.vel + 4 + (ctx.reverbAmt ?? 0)) >> 1) - 4;
@@ -2365,7 +2409,7 @@ function reverbNote(ctx, out, op, next) {
 // song's slowest tempo, the safe side.
 function pcmNoteUse(ctx, op, continuation) {
   if (!ctx.isPcm || !ctx.pcmUse || ctx.pcmSample == null) return;
-  const ticks = tokenTicks(op.len ?? ctx.len);
+  const ticks = tokenTicks(playedLen(op, ctx));
   if (ticks == null) return;
   if (!continuation || !ctx.pcmCur) {
     const midi = 12 * (ctx.oct + 1) + SEMI[op.letter] + op.acc;

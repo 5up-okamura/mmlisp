@@ -1534,7 +1534,11 @@ than approximating:
   ends on it. A part stops marking at its first macro call (`*n`, whose
   notes take the length where it is called) or at a loop across lines kept
   as a `#label`. A key shift's octave wrap meeting the part's own `>` / `<`
-  is written as the one move it makes.
+  is written as the one move it makes. `:len` is chosen as the notes read,
+  not copied from `l`: three notes of one length in a row write it once and
+  go bare (`c+ d+ f g+` under `:len 8`), any other is written with its own
+  length — and it is the default length again before an echo tap or a
+  macro, which play at `:len`. A macro's def keeps its lengths as written.
 - **Software LFO and detune** move the raw pitch word, so their cents depend
   on the note. An LFO that keeps the word in range is a triangle, however
   slow — one `lfoN` def a setting, its depth the mean of the twelve pitch
