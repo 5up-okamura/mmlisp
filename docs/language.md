@@ -2382,7 +2382,7 @@ those chips cannot do is a compile error, not a different sound.
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 | `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
-| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle and noise, the VRC6 cartridge (two pulses, a saw) and the Disk System's wavetable (FDS) | VGM (without the VRC6), WAV |
+| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG | VGM (without the VRC6 and the MMC5), WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2882,10 +2882,13 @@ nonlinear mixer). Its channels are `sqr1` and `sqr2`, the pulses; `tri`,
 the triangle; `noise`; and `pcm1`, the DMC's samples — and the expansion
 chips' (below), each named by its chip, as the Famicom has pulses on
 several and waves on two: the VRC6 cartridge's `vrc6-sqr1`, `vrc6-sqr2`
-and `vrc6-saw`, the Disk System's `fds-wave`, and the MMC5's `mmc5-sqr1`
-and `mmc5-sqr2`. A chip is in the song when a score names one of its
-channels, and any of them may be at once (as an NSF has them). There is no FM, no
-pan (the machine is mono): `fm1`, `:pan` and `:noise-rate` are
+and `vrc6-saw`, the Disk System's `fds-wave`, the MMC5's `mmc5-sqr1`
+and `mmc5-sqr2`, and the Sunsoft 5B's `5b-sqr1`–`5b-sqr3` and `5b-noise`.
+A chip is in the song when a score names one of its channels, and any of
+them may be at once (as an NSF has them); a song-wide word only a
+cartridge has (the 5B's `:noise-rate`, the FDS's `:lfo-*`) in a score
+that names none of its channels is `E_TARGET`. There is no FM, no
+pan (the machine is mono): `fm1` and `:pan` are
 `E_TARGET`. The chip hears the song a frame (1/60 s) at
 a time, as on `msx`.
 
@@ -3032,6 +3035,24 @@ it — the same note on `sqr1` and `mmc5-sqr1` at once cancels).
 (def-score :target fc)
 (mmc5-sqr1 :len 8 :duty 2 e g > c e < :duty 12 g e c e)
 (mmc5-sqr2 :len 4 :oct 3 (macro :duty [2 4 8]) c (glide 8) g e c)
+```
+
+**Sunsoft 5B.** Sunsoft's mapper with sound is on `fc` when a score names
+**`5b-sqr1`**–**`5b-sqr3`** or **`5b-noise`**: a YM2149 inside a cartridge,
+the SSG as on `pc88` and `msx` — each channel's `:mode tone | noise | both
+| env`, the song's `:noise-rate 1–31` and `:env-rate`, `:env` and its
+moves, and `5b-noise` as `5b-sqr3` with its mixer on noise (a score has
+one or the other). The chip runs its tones and noise at half an AY's
+speed for its clock (1.79 MHz / 32 / n a tone), and its DAC is the YM2149's, 32 steps of 1.5 dB: the 4-bit level on
+every other one, the envelope on all of them. VGM carries it, as a
+YM2149 (the AY-3-8910's block at 0.89 MHz); Play and WAV run ymfm's SSG
+as the 5B, a channel at full as loud as a 2A03 pulse at full.
+
+```lisp
+(def-score :target fc)
+(5b-sqr1 :len 8 e g > c e < (macro :vel (linear 15..6 :len 4)) g e c e)
+(5b-sqr2 :len 4 :oct 3 :mode env :env-rate 0 :env 14 c g e c)
+(5b-noise :len 8 :noise-rate 4 c c :noise-rate 20 c c)
 ```
 
 **Effects.** `def-se` is the Mega Drive driver's; an `fc` score has none

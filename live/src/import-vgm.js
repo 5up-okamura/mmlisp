@@ -1871,8 +1871,9 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
       waves.splice(waves.indexOf(d), 1);
     }
     // The HuC6280's noise rows on a target with a noise per channel: CH5's
-    // on noise5.
-    else if (ch.kind === "noise" && dests.noises.length > 1) {
+    // on noise5 (another chip's noise row — the 2A03's on fc, beside the
+    // 5B's — takes the target's noise below).
+    else if (ch.kind === "noise" && dests.noises.length > 1 && / CH\d+ noise$/.test(ch.key)) {
       const own = `noise${ch.key.match(/CH(\d+) noise$/)?.[1]}`;
       d = dests.noises.includes(own) ? own : "drop";
     }

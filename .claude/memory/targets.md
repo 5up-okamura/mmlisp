@@ -260,6 +260,17 @@ in that order, any number in one score (as an NSF), each optional.
   **Built 2026-10-29** (chips/mmc5.js on chips/queued-tone.js — the
   VRC6's encoder moved there too; synth-fc.js Mmc5; port 5; tone lanes
   15-16, scope 15-16). Open: not heard in Live.
+- **5B built 2026-10-29** (chips/sunsoft-5b.js: the SSG's parts and
+  encoder on port 6, clock CPU/2 — the YM2149's SEL low; synth-fc.js runs
+  ymfm's SSG a sample per 64 CPU clocks; tone lanes 17-20, scope 17-19).
+  ir-player `_psg(encode, method, lane)`: a lane's own chip, or the first
+  encoder with the method (the APU has no noise period / envelope), a
+  cartridge started first. mmlisp2ir: a song word only optional chips own,
+  in a score naming none of their channels, is E_TARGET (fc's :noise-rate,
+  :lfo-*). Open: not heard in Live; its level vs the 2A03 is a guess (a
+  channel at full = a 2A03 pulse at full; nesdev only says "very loud"),
+  its amplifier's nonlinearity not modelled; import-vgm's AY rows on fc
+  would land on whatever tone channel is free (the import session's).
 - **N163**: the chip's time-multiplex as is (the 7-8-channel whine heard,
   not averaged away); wave RAM a region per channel, 32 steps while 5 or
   fewer channels fit, 16 for all at 6+ (W_TARGET); 4-bit samples.

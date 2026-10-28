@@ -1,8 +1,9 @@
 // The Famicom: its 2A03's APU — two pulses, the triangle, the noise and the
 // DMC's samples (pcm1) — and the expansions a score has when it names their
 // channels: the VRC6 cartridge's two pulses and its saw, the Disk System's
-// wavetable and the MMC5's two pulses. No driver: the score is delivered as
-// VGM (which has no VRC6 or MMC5: their channels are left out there).
+// wavetable, the MMC5's two pulses and the Sunsoft 5B's SSG. No driver: the
+// score is delivered as VGM (which has no VRC6 or MMC5: their channels are
+// left out there).
 //
 // An expansion's channels are named by their chip (`vrc6-sqr1`, `fds-wave`):
 // the Famicom has pulses on several chips and waves on two, so a number
@@ -11,10 +12,12 @@ import { rp2a03, fcPulse, fcTriangle, fcNoise, fcDpcm } from "../chips/rp2a03.js
 import { vrc6, vrc6Pulse, vrc6Saw } from "../chips/vrc6.js";
 import { fds, fdsWave } from "../chips/fds.js";
 import { mmc5, mmc5Pulse } from "../chips/mmc5.js";
+import { sunsoft5b, s5bTone, s5bNoise } from "../chips/sunsoft-5b.js";
 
 const on = (part, voice) => ({ chip: "apu", part, voice });
 // The VRC6's scope lanes follow the DMC's (synth-fc.js): 11-13.
 const cart = (part, voice, label) => ({ chip: "vrc6", part, voice, scope: 11 + voice, label });
+const s5b = (part, voice, label) => ({ chip: "5b", part, voice, scope: 17 + voice, label });
 
 // A Mega Drive noise mode has no 2A03 reading: the rate is the note.
 const none = { none: "the 2A03's noise is :mode white or periodic, its rate the note's pitch" };
@@ -28,7 +31,7 @@ export default {
   // Its drivers run on the video frame's interrupt (60 Hz), as the MSX's do
   // (targets/msx.js): the chip hears a song a frame at a time.
   frameClock: true,
-  chips: { apu: rp2a03, vrc6, fds, mmc5 },
+  chips: { apu: rp2a03, vrc6, fds, mmc5, "5b": sunsoft5b },
   channels: {
     sqr1: on(fcPulse, 0), sqr2: on(fcPulse, 1), tri: on(fcTriangle, 2), noise: on(fcNoise, 3),
     pcm1: on(fcDpcm, 0), // on the scope's first sample lane, 10
@@ -38,10 +41,14 @@ export default {
     // The MMC5's pulses, on the scope's lanes after the FDS's.
     "mmc5-sqr1": { chip: "mmc5", part: mmc5Pulse, voice: 0, scope: 15, label: "M1" },
     "mmc5-sqr2": { chip: "mmc5", part: mmc5Pulse, voice: 1, scope: 16, label: "M2" },
+    // The 5B's SSG, its noise 5b-sqr3's mixer on noise (as msx's), on the
+    // scope's lanes after the MMC5's.
+    "5b-sqr1": s5b(s5bTone, 0, "B1"), "5b-sqr2": s5b(s5bTone, 1, "B2"), "5b-sqr3": s5b(s5bTone, 2, "B3"),
+    "5b-noise": s5b(s5bNoise, 2, "BN"),
   },
   readsAs: { modes: { "fc-noise": NOISE_MODES } },
   hints: {
-    NOISE_RATE: "the noise's rate is its note's pitch, c2 the slowest",
+    NOISE_RATE: "the 2A03 noise's rate is its note's pitch, c2 the slowest",
     PAN: "the Famicom is mono",
   },
 };

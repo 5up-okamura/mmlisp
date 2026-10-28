@@ -281,7 +281,7 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   the DMC, one voice: a `def-pcm` at one rate a def (the highest its whole
   sample fits 4081 bytes at), each note baked at its pitch with its level
   at key-on, a loop the whole range (`:loop-*` warns). Mono: no `:pan`; no
-  FM, wave, `:noise-rate`. VGM and WAV. Expansions, named by chip, when a
+  FM. VGM and WAV. Expansions, named by chip, when a
   score names them — the VRC6 cartridge's
   `vrc6-sqr1` / `vrc6-sqr2` pulses (`:duty` the nearest of 1–8 sixteenths, a wider
   one its mirror), `vrc6-saw` (`:vel` its 6-bit rate, 15 = 63; above 13.25 the
@@ -291,7 +291,9 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   song's `:lfo-wave [32 steps of 0 1 2 4 -1 -2 -4 reset]`, `:lfo-pmd 0–63`
   (depth), `:lfo-freq 0–4095` (rate). VGM carries it. The MMC5's
   `mmc5-sqr1` / `mmc5-sqr2`: the 2A03's pulses with no sweep (its four
-  duties); VGM leaves them out.
+  duties); VGM leaves them out. The 5B's `5b-sqr1`–`5b-sqr3` / `5b-noise`:
+  the SSG as on msx (`:mode tone|noise|both|env`, `:noise-rate`,
+  `:env-rate`, `:env`); VGM carries it (as a YM2149).
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

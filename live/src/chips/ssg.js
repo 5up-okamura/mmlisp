@@ -51,7 +51,8 @@ export const envCycle = (shape) => (ENV_TRIANGLES.has(shape) ? 512 : 256);
 // for a tone: lanes 0-2 are the tone channels, lane 3 the noise track, which
 // is channel 3's (index 2) mixer on noise. One per player: it keeps the mixer
 // register the channels share. `io` is the mixer's bits 7-6, the I/O ports'
-// directions, written with it on a chip that has them wired (the MSX's).
+// directions, written with it on a chip that has them wired (the MSX's);
+// `port` the worklet's port its writes go to (0; the 5B's 6).
 //
 // The player sends the channels' mixer changes out of time order (each
 // track to the horizon in turn, a note's `:mode` macro its whole length
@@ -59,7 +60,7 @@ export const envCycle = (shape) => (ENV_TRIANGLES.has(shape) ? 512 : 256);
 // later state. A change with a time is queued, and flush(horizon) — once
 // every track is dispatched to it — writes them in time order (as the
 // OPLL's rhythm, chips/ym2413.js); one with none is written now.
-export function ssgEncoder(clock, io = 0) {
+export function ssgEncoder(clock, io = 0, port = 0) {
   let mixer = io | 0x38; // bits 0-2 tone off, 3-5 noise off, per channel
   let queue = []; // [{ t, lane, mode }]
   const phys = (lane) => (lane === 3 ? 2 : lane);
@@ -67,8 +68,8 @@ export function ssgEncoder(clock, io = 0) {
     // The 12-bit period divides the clock by 16.
     period: (hz) => Math.max(1, Math.min(4095, Math.round(clock / (16 * hz)))),
     // The player's attenuation, 0 loud .. 15 off, is the level upside down.
-    att: (lane, att) => [[0, 0x08 + phys(lane), 15 - (att & 0x0f)]],
-    tone: (lane, p) => [[0, 2 * lane, p & 0xff], [0, 2 * lane + 1, (p >> 8) & 0x0f]],
+    att: (lane, att) => [[port, 0x08 + phys(lane), 15 - (att & 0x0f)]],
+    tone: (lane, p) => [[port, 2 * lane, p & 0xff], [port, 2 * lane + 1, (p >> 8) & 0x0f]],
     // A noise note: its channel's mixer on noise alone (the SSG's noise
     // has no mode; its period is the song's NOISE_RATE).
     noise: (_mode, when) => take(3, 1, when),
@@ -83,16 +84,16 @@ export function ssgEncoder(clock, io = 0) {
     drop() {
       queue = [];
     },
-    noiseRate: (rate) => [[0, 0x06, Math.max(1, Math.min(31, Math.round(rate)))]],
+    noiseRate: (rate) => [[port, 0x06, Math.max(1, Math.min(31, Math.round(rate)))]],
     // The envelope: a channel's level on it (the M bit), its shape (a write
     // starts it over), and its period for a cycle at `hz` — 32 steps of
     // clock / 16 / period, so a tone's period / 16; a triangle (10, 14)
     // runs up and down a cycle, half the period — `detune` steps added.
-    envLevel: (lane) => [[0, 0x08 + phys(lane), 0x10]],
-    envShape: (shape) => [[0, 0x0d, shape & 0x0f]],
+    envLevel: (lane) => [[port, 0x08 + phys(lane), 0x10]],
+    envShape: (shape) => [[port, 0x0d, shape & 0x0f]],
     envPeriod: (hz, shape, detune = 0) => {
       const ep = Math.max(1, Math.min(65535, Math.round(clock / (envCycle(shape) * hz)) + detune));
-      return [[0, 0x0b, ep & 0xff], [0, 0x0c, ep >> 8]];
+      return [[port, 0x0b, ep & 0xff], [port, 0x0c, ep >> 8]];
     },
   };
   function take(lane, mode, when) {
@@ -106,6 +107,6 @@ export function ssgEncoder(clock, io = 0) {
     if (mode === 0) mixer |= 8 << c;
     else if (mode === 1) mixer |= 1 << c;
     else if (mode === 3) mixer |= (1 << c) | (8 << c);
-    return [[0, 0x07, mixer]];
+    return [[port, 0x07, mixer]];
   }
 }

@@ -1,0 +1,9 @@
+; fc: the Sunsoft 5B beside the 2A03 — its SSG at half an AY's speed: tones
+; and a fade, a channel on the envelope (:mode env, the song's :env-rate
+; following its notes), and 5b-noise at the song's :noise-rate. VGM carries
+; it (the AY-3-8910's block as a YM2149).
+(def-score :target fc :title "fc 5b")
+(sqr1 :tempo 140 :len 8 c e g > c < g e c e |)
+(5b-sqr1 :len 8 e g > c e < (macro :vel (linear 15..6 :len 4)) g e c e |)
+(5b-sqr2 :len 4 :oct 3 :mode env :env-rate 0 :env 14 c g e c |)
+(5b-noise :len 8 :noise-rate 4 c c :noise-rate 20 c c :noise-rate 4 c c (macro :vel [15 10 5]) c c |)

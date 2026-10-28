@@ -92,7 +92,7 @@ export const REFERENCE = [
   {
     name: ':noise-rate', cat: 'score', section: '§19', tracks: null,
     syntax: ':noise-rate 1–31',
-    summary: 'pc88, x68k and msx: the chip\'s one noise period, song-wide; lower is higher, 9 to start (8 on msx). On pc88 and msx a sqr track hears it with :mode noise or both, and a note\'s (macro :noise-rate …) steps it through a drum hit; on x68k fm8 with :mode noise, or the noise track.',
+    summary: 'pc88, x68k, msx and fc\'s 5B: the chip\'s one noise period, song-wide; lower is higher, 9 to start (8 on msx and the 5B). On pc88 and msx a sqr track hears it with :mode noise or both (on fc a 5b-sqr track), and a note\'s (macro :noise-rate …) steps it through a drum hit; on x68k fm8 with :mode noise, or the noise track.',
     insert: ':noise-rate 9',
     example: '(def-score :target pc88)\n(sqr1 :mode both :noise-rate 4 :len 8 c e :noise-rate (linear 4..31 :len 2) g e c e g e)',
   },
@@ -174,6 +174,13 @@ export const REFERENCE = [
     summary: 'fc: the MMC5\'s two pulses — the 2A03\'s in the language (:duty 2 / 4 / 8 / 12, the 4-bit volume, every pitch move), with no sweep, and the highest notes go on sounding. VGM has no MMC5: an export leaves it out; WAV plays it.',
     insert: '(mmc5-sqr1 :len 8 c e g e)',
     example: '(def-score :target fc)\n(mmc5-sqr1 :len 8 :duty 2 e g > c e < :duty 12 g e c e)',
+  },
+  {
+    name: '5b-sqr1–5b-sqr3, 5b-noise', aliases: ['5b-sqr1', '5b-sqr2', '5b-sqr3', '5b-noise', '5b', 'sunsoft'], cat: 'channels', section: '§19', tracks: PSG,
+    syntax: '(def-score :target fc) (5b-sqr1 …)',
+    summary: 'fc: the Sunsoft 5B, a YM2149 in a cartridge — the SSG as on msx: :mode tone / noise / both / env, the song\'s :noise-rate and :env-rate, :env; 5b-noise is 5b-sqr3 with its mixer on noise. Its tones run at half an AY\'s speed for its clock; its level 32 steps of 1.5 dB. VGM carries it as a YM2149.',
+    insert: '(5b-sqr1 :len 8 c e g e)',
+    example: '(def-score :target fc)\n(5b-sqr1 :len 8 e g > c e)\n(5b-noise :len 8 :noise-rate 4 c c :noise-rate 20 c c)',
   },
   {
     name: ':duty', aliases: ['duty', 'pulse width'], cat: 'track', section: '§19', tracks: PSG,

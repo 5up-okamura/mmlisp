@@ -53,15 +53,18 @@ export function opmPitch() {
   };
 }
 
-/** The SSG's (YM2608, AY-3-8910) 12-bit tone periods, $00-$05; a tone is `clock` / 16 / period. */
-export function ssgPitch(clock) {
+/**
+ * The SSG's (YM2608, AY-3-8910, the 5B's) 12-bit tone periods, $00-$05, on
+ * `port`, onto the scope's lanes from `lane`; a tone is `clock` / 16 / period.
+ */
+export function ssgPitch(clock, port = 0, lane = 6) {
   const period = new Uint16Array(3);
   return {
-    write(port, addr, data, freq) {
-      if (port !== 0 || addr >= 6) return;
+    write(p0, addr, data, freq) {
+      if (p0 !== port || addr >= 6) return;
       const ch = addr >> 1;
       const p = (period[ch] = addr & 1 ? (period[ch] & 0xff) | ((data & 15) << 8) : (period[ch] & 0xf00) | data);
-      freq[6 + ch] = p ? clock / (16 * p) : 0;
+      freq[lane + ch] = p ? clock / (16 * p) : 0;
     },
   };
 }

@@ -7164,6 +7164,22 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     });
   }
 
+  // A song-wide word only a cartridge's parts have (an optional chip: the
+  // 5B's :noise-rate, the FDS's :lfo-*), in a score that names none of its
+  // channels: it would move nothing, and start the chip.
+  const playedChips = new Set(tracks.map((t) => target.channels[t.channel]?.chip));
+  const songWritten = new Set(tracks.flatMap((t) => (t.events ?? [])
+    .filter((e) => /^PARAM_/.test(e.cmd) && SONG_TARGETS.has(e.args?.target)).map((e) => e.args.target)));
+  for (const word of songWritten) {
+    const owners = target.channelNames.filter((h) => target.partOf(h).songWords?.(word));
+    const chips = new Set(owners.map((h) => target.channels[h].chip));
+    if (!owners.length || [...chips].some((c) => !target.chips[c].optional || playedChips.has(c))) continue;
+    const hint = target.hints?.[word];
+    targetDiag(diagnostics, "error",
+      `${keywordOf(word)} is the ${[...new Set(owners.map((h) => target.partOf(h).label))].join(" / ")}'s, a cartridge the score names no channel of (${owners.join(", ")})${hint ? ` — ${hint}` : ""}`,
+      fileSrc, "global");
+  }
+
   // Sound effects (def-se), after the song's tracks: each part is a track of
   // its own on the channel it names — never merged into the song's timeline
   // there, since it takes the channel from the song rather than joining it —

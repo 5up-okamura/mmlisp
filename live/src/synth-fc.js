@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Famicom synth core (the 2A03's APU)
+// Famicom synth core (the 2A03's APU and its expansions)
 //
 // The fc sibling of synth-md.js, on its contract: create(outputSR), the
 // register bus writeYM(port, addr, data) — port 0 the APU, $4000 + addr —
@@ -53,10 +53,19 @@
 // envelopes and length counters clocked together every quarter frame
 // (~240 Hz, the chip's own timer), their DAC linear and inverted, a pulse
 // at full as loud as a 2A03 pulse at full; on the scope's lanes 15-16.
+//
+// The Sunsoft 5B (port 6, chips/sunsoft-5b.js) is ymfm's SSG engine
+// (../ymfm-ay8910.js, wasm/ay8910_adapter.cpp: the YM2149's 32-step DAC),
+// clocked as the 5B is, an AY at half the CPU's clock: one of its samples
+// is 64 CPU clocks, two of the 2A03's, each held for both. It is rendered
+// from its first write; a channel at full as loud as a 2A03 pulse at full
+// (nesdev gives no measure: tunable by ear); on the scope's lanes 17-19.
 // ---------------------------------------------------------------------------
 
+import createAy8910Module from "../ymfm-ay8910.js";
 import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "./chips/rp2a03.js";
-import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch, mmc5Pitch } from "./scope-pitch.js";
+import { sunsoft5b } from "./chips/sunsoft-5b.js";
+import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch, mmc5Pitch, ssgPitch } from "./scope-pitch.js";
 import { fdsRegister } from "./chips/fds.js";
 
 const CLOCK = rp2a03.clock;
@@ -71,14 +80,19 @@ const MASTER_OUTPUT_GAIN = 1.6;
 // The scope's taps, on the page's scale (index.html SCOPE_DISPLAY_GAIN).
 const SCOPE_SCALE = 0.6;
 
-export const SCOPE_LANES = 17;
+export const SCOPE_LANES = 20;
 const PSG_LANE = 6; // the page's first PSG lane
 // Pulse 1, pulse 2, the triangle, the noise, the DMC, the VRC6's pulses and
-// saw, the FDS, the MMC5's pulses.
-const CHANNELS = 11;
+// saw, the FDS, the MMC5's pulses, the 5B's three.
+const CHANNELS = 14;
 const VRC6_PORT = 3;
 const FDS_PORT = 4;
 const MMC5_PORT = 5;
+const S5B_PORT = 6;
+// The 5B's sample (ymfm's, unipolar 0-16382 a channel) as a 2A03 pulse's
+// 0-15, and the CPU clocks one of them lasts.
+const S5B_LEVEL = 15 / 16382;
+const S5B_CLOCKS = 64;
 // The FDS at full (level 63, gain 32, master full) is 2.4 times a 2A03
 // pulse at full (nesdev), its polarity the 2A03's; its ~2 kHz low-pass.
 const FDS_STEP = (2.4 * 95.88) / (8128 / 15 + 100) / (63 * 32);
@@ -672,12 +686,19 @@ class Fds {
 
 export class FcSynth {
   static async create(outputSR) {
-    return new FcSynth(outputSR);
+    return new FcSynth(await createAy8910Module(), outputSR);
   }
 
-  constructor(outputSR) {
+  constructor(ay, outputSR) {
     this._outputSR = outputSR;
-    this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK), fdsPitch(CLOCK), mmc5Pitch(CLOCK));
+    this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK), fdsPitch(CLOCK), mmc5Pitch(CLOCK),
+      ssgPitch(sunsoft5b.clock, S5B_PORT, 17));
+    this._ay = ay;
+    ay._a8_init();
+    this._ayBufPtr = ay._a8_get_buffer_ptr();
+    this._ayOn = false; // rendered from its first write
+    this._ayClocks = 0; // CPU clocks into its next sample
+    this._ayOut = new Float32Array(3);
     this._apu = new Apu();
     this._vrc6 = new Vrc6();
     this._fds = new Fds();
@@ -711,18 +732,26 @@ export class FcSynth {
     this._vrc6.reset();
     this._fds.reset();
     this._mmc5.reset();
+    this._ay._a8_reset();
+    this._ayOn = false;
+    this._ayClocks = 0;
+    this._ayOut.fill(0);
     this._fdsY = 0;
     this._resetResampleState();
   }
 
   // The APU's registers are port 0, $4000 + addr; the memory port 1; the
-  // VRC6's port 3; the FDS's port 4; the MMC5's port 5.
+  // VRC6's port 3; the FDS's port 4; the MMC5's port 5; the 5B's port 6.
   writeYM(port, addr, data) {
     if (port === 0) this._apu.write(addr & 0xff, data & 0xff);
     else if (port === RAM_PORT) this._apu.writeRam(addr & 0xff, data & 0xff);
     else if (port === VRC6_PORT) this._vrc6.write(addr & 0xff, data & 0xff);
     else if (port === FDS_PORT) this._fds.write(addr & 0xff, data & 0xff);
     else if (port === MMC5_PORT) this._mmc5.write(addr & 0xff, data & 0xff);
+    else if (port === S5B_PORT) {
+      this._ayOn = true;
+      this._ay._a8_write_reg(addr & 0xff, data & 0xff);
+    }
   }
 
   // The Mega Drive's PSG, DAC and low-pass have no counterpart here.
@@ -754,7 +783,9 @@ export class FcSynth {
       this._fdsY += FDS_LPF * (this._fds.run(clocks) - this._fdsY);
       lv[8] = this._fdsY;
       this._mmc5.run(clocks, lv, 9);
-    } else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac, 0, 0, 0, this._fdsY, 0, 0]); // idle: the triangle's held step, the DAC
+      this._runAy(clocks);
+      lv.set(this._ayOut, 11);
+    } else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac, 0, 0, 0, this._fdsY, 0, 0, 0, 0, 0]); // idle: the triangle's held step, the DAC
     const x = this._x;
     x[1] = pulseOut(lv[0]);
     x[2] = pulseOut(lv[1]);
@@ -764,13 +795,24 @@ export class FcSynth {
     for (let c = 5; c < 8; c++) x[c + 1] = -lv[c] * PULSE_STEP; // the VRC6's DAC, inverted
     x[9] = lv[8] * FDS_STEP;
     for (let c = 9; c < 11; c++) x[c + 1] = -lv[c] * PULSE_STEP; // the MMC5's, inverted
+    for (let c = 11; c < 14; c++) x[c + 1] = lv[c] * PULSE_STEP; // the 5B's
     x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]);
     for (let c = 6; c <= CHANNELS; c++) x[0] += x[c];
     return x;
   }
 
+  // The 5B over `clocks`: a sample of it each 64 CPU clocks, held between.
+  _runAy(clocks) {
+    if (!this._ayOn) return;
+    for (this._ayClocks -= clocks; this._ayClocks <= 0; this._ayClocks += S5B_CLOCKS) {
+      this._ay._a8_render(1);
+      const heap = this._ay.HEAP16, at = this._ayBufPtr >> 1;
+      for (let c = 0; c < 3; c++) this._ayOut[c] = heap[at + c] * S5B_LEVEL;
+    }
+  }
+
   // `getDacByte` is the contract's and unused; `scope` (SCOPE_LANES arrays)
-  // gets the channels at lanes 6-16, the others silence.
+  // gets the channels at lanes 6-19, the others silence.
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {
     if (scope) for (let c = 0; c < PSG_LANE; c++) scope[c]?.fill(0, 0, count);
     for (let i = 0; i < count; i++) {

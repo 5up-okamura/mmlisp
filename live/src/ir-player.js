@@ -3675,15 +3675,15 @@ export class IRPlayer {
       case "PARAM_SWEEP_STOP": {
         if (ev.args?.target === "NOISE_RATE") {
           if (ev.cmd === "PARAM_SET") this._noiseRateBase = Number(ev.args?.value ?? 9);
-          this._writeSongRate(ev, when, 9, (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v)), t));
+          this._writeSongRate(ev, when, 9, (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v), "noiseRate"), t));
           return true;
         }
         if (ev.args?.target === "ENV_RATE") {
           // 0 follows the writing track's notes (a tone lane's), from its
           // next; a rate is a cycle of the writing track's shape as it is now.
-          const lane = ev._psgCh != null && ev._psgCh < 4 ? ev._psgCh : null;
+          const lane = this._toneEnc[ev._psgCh]?.part?.songWords?.("ENV_RATE") ? ev._psgCh : null;
           if (ev.cmd === "PARAM_SET" && !Number(ev.args?.value)) {
-            this._envFollow = lane !== 3 ? lane : null;
+            this._envFollow = this._toneEnc[lane]?.part?.kind !== "noise" ? lane : null;
             return true;
           }
           this._envFollow = null;
@@ -5406,9 +5406,22 @@ export class IRPlayer {
   _flushEncoders(horizon) {
     for (const enc of this._queuedEncoders()) for (const [p, a, d, t] of enc.flush?.(horizon) ?? []) this._write(p, a, d, t);
   }
-  // A PSG write on a target with no PSG (its encoder is null) is nothing.
-  _psg(encode) {
-    return this._psgChip ? encode(this._psgChip) : [];
+  // A PSG write: on `lane`'s chip where a lane is named (a tone chip's
+  // beside the PSG, the 5B's, has its own noise and envelope), else on the
+  // PSG — or, where the PSG has no `method` (the 2A03 has no noise period
+  // or envelope), the first tone chip that has. Nothing where none is.
+  _psg(encode, method = null, lane = null) {
+    const enc = lane != null ? this._toneEnc[lane]?.queue ?? this._psgChip
+      : !method || this._psgChip?.[method] ? this._psgChip
+      : this._queuedEncoders().find((e) => e[method]) ?? null;
+    if (!enc) return [];
+    // A cartridge's chip not yet started is started first, as _lane does.
+    const l = enc === this._psgChip ? null : this._toneEnc.find((x) => x?.queue === enc);
+    if (l?.chip.optional && !this._chipsStarted.has(l.chip)) {
+      this._chipsStarted.add(l.chip);
+      return [...l.chip.init, ...encode(enc)];
+    }
+    return encode(enc);
   }
   // A tone lane's writes, `encode(enc, ch)` on its chip's encoder; nothing on
   // a lane the target lacks. An optional chip (the SCC cartridge) is started
@@ -5562,7 +5575,7 @@ export class IRPlayer {
   // The SSG envelope's period for a cycle of `shape` at `hz`, moved `semi`
   // semitones and `detune` register steps.
   _writeEnvPeriod(hz, { shape = -1, semi = 0, detune = 0 }, when) {
-    if (hz > 0) this._psgWrites(this._psg((c) => c.envPeriod?.(hz * 2 ** (semi / 12), shape, detune) ?? []), when);
+    if (hz > 0) this._psgWrites(this._psg((c) => c.envPeriod?.(hz * 2 ** (semi / 12), shape, detune) ?? [], "envPeriod"), when);
   }
   // A lane's own envelope moves, for the period it writes.
   _envBy(lane) {
@@ -5719,8 +5732,8 @@ export class IRPlayer {
 
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
   // modeVal: 0-7 encoding FB(1bit) + NF(2bits) → bits 5-3 of noise register
-  _psgSetNoiseCfg(modeVal, when) {
-    this._psgWrites(this._psg((c) => c.noise(modeVal, when)), when);
+  _psgSetNoiseCfg(modeVal, when, lane) {
+    this._psgWrites(this._psg((c) => c.noise(modeVal, when), null, lane), when);
   }
 
   // Set tone period for a PSG tone channel (ch 0-2): the note through the
@@ -5734,8 +5747,8 @@ export class IRPlayer {
   }
 
   // Trigger the noise channel, re-asserting the current persistent noise mode.
-  _psgTriggerNoise(when) {
-    this._psgSetNoiseCfg(this._psgNoiseMode, when);
+  _psgTriggerNoise(when, lane) {
+    this._psgSetNoiseCfg(this._psgNoiseMode, when, lane);
   }
 
   // Set PSG attenuation at note-on; schedule silence at note-off.
@@ -5993,7 +6006,7 @@ export class IRPlayer {
       gateSecs,
       noteWhen,
       (v, t) => {
-        this._psgSetNoiseCfg(this._snapMacroOutput("NOISE_MODE", v), t);
+        this._psgSetNoiseCfg(this._snapMacroOutput("NOISE_MODE", v), t, psgCh);
       },
       this._stepSecs(modeMacro.step),
       limitSecs,
@@ -6041,7 +6054,7 @@ export class IRPlayer {
         if (rateNote) {
           // Its mode re-asserted, and the note's :mode macro, as the PSG's
           // noise has them; its rate is the pitch below.
-          this._psgTriggerNoise(when);
+          this._psgTriggerNoise(when, psgCh);
           this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);
           this._schedulePsgModeMacro(psgCh, ev.args?.noise_mode, when, psgGateTicks, psgMacroLimit);
           this._envRetrigs = null;
@@ -6080,7 +6093,7 @@ export class IRPlayer {
           );
           if (!onsetWritten) this._psgSetPitch(psgCh, midi, psgCentOffset, when);
         } else {
-          this._psgTriggerNoise(when);
+          this._psgTriggerNoise(when, psgCh);
           this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);
           this._schedulePsgModeMacro(
             psgCh,
@@ -6104,7 +6117,7 @@ export class IRPlayer {
         if (was?.mix && !mixMacro && this._ssgMixBase[psgCh] != null)
           this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, this._ssgMixBase[psgCh], when) ?? []), when);
         if (was?.rate && !rateMacro && this._noiseRateBase != null)
-          this._psgWrites(this._psg((c) => c.noiseRate?.(this._noiseRateBase) ?? []), when);
+          this._psgWrites(this._psg((c) => c.noiseRate?.(this._noiseRateBase) ?? [], "noiseRate"), when);
         this._ssgMacroed[psgCh] = mixMacro || rateMacro ? { mix: !!mixMacro, rate: !!rateMacro } : null;
         // A note's (macro :pan …), where the channel has a pan of its own.
         if (ev.args?.pan) {
@@ -6128,11 +6141,11 @@ export class IRPlayer {
         this._schedulePsgWordMacro(mixMacro, when, psgGateTicks, psgMacroLimit,
           (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v), t) ?? []), t));
         this._schedulePsgWordMacro(rateMacro, when, psgGateTicks, psgMacroLimit,
-          (v, t) => this._psgWrites(this._psg((c) => c.noiseRate?.(v) ?? []), t));
+          (v, t) => this._psgWrites(this._psg((c) => c.noiseRate?.(v) ?? [], "noiseRate"), t));
         // A lane on the envelope starts it over at a key-on (a slur's goes on).
         const envShape = this._psgEnv[psgCh];
         if (envShape >= 0 && !ev.args?.legato)
-          this._psgWrites(this._psg((c) => c.envShape?.(envShape) ?? []), when);
+          this._psgWrites(this._psg((c) => c.envShape?.(envShape) ?? [], null, psgCh), when);
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
         // Silence at the gate boundary; suppressed when the gate fills the note
@@ -6294,7 +6307,7 @@ export class IRPlayer {
             ev.args?.value ?? 0,
           );
           if (this._psgSounding[psgCh]) {
-            this._psgSetNoiseCfg(this._psgNoiseMode, when);
+            this._psgSetNoiseCfg(this._psgNoiseMode, when, psgCh);
           }
         } else if (psgTarget === "NOTE_PITCH") {
           const from = Number(ev.args?.from ?? ev.args?.value ?? this._psgPitchOffset[psgCh] ?? 0);
