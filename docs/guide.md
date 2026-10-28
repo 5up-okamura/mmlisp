@@ -1756,7 +1756,11 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
 
 - FM instruments become `def-fm`s; a volume or arpeggio macro becomes a
   `(macro …)` def, its loop a `#sus` and its release point a `#rel` (held
-  there until the note is let go). An instrument's pitch macro (Furnace's,
+  there until the note is let go), a step a tick as Furnace runs it: each
+  held its speed, an ADSR or LFO macro run out (the ADSR's release after
+  the point where it rests, the LFO's cycle looped). A sequence's delay
+  before its first step is not kept (the log counts it); an arpeggio that
+  ends holds its last step. An instrument's pitch macro (Furnace's,
   1/128 semitone a step, relative ones added up, its delay and speed kept)
   is a `(def pitch-… (macro :pitch+ […]))` the note names, unless a slide,
   portamento or vibrato on its row takes the note's one pitch macro (the

@@ -111,6 +111,84 @@ function layoutOf(id, count = null) {
   return Array.from({ length: n }, (_, i) => ({ kind: "wave", name: `chip 0x${id.toString(16)} CH${i + 1}` }));
 }
 
+/**
+ * A macro as the frames Furnace runs it (macroInt.cpp, doMacro): a
+ * sequence's steps each held `speed` ticks (its loop and release point with
+ * them); an ADSR from its bottom (val 0) up to its top (val 1) at AR (val
+ * 2), held HT, down to SL (val 5) at DR, held ST, on at SR — its release (RR,
+ * val 8) after the release point where it comes to rest; an LFO (speed val
+ * 11, wave val 12: triangle, saw, pulse; phase val 13) one cycle, looped.
+ * Each in 1/256 steps of the value, as the engine counts.
+ */
+export function macroSteps(m, kind = 0, speed = 1) {
+  const v = m.values;
+  if (kind === 0) {
+    if (speed <= 1) return m;
+    return {
+      values: v.flatMap((x) => new Array(speed).fill(x)),
+      loop: m.loop == null ? null : m.loop * speed,
+      rel: m.rel == null ? null : m.rel * speed + speed - 1,
+    };
+  }
+  const at = (k) => v[k] ?? 0;
+  const lo = at(0), hi = at(1), inv = lo > hi;
+  const BOT = inv ? (lo << 8) | 0xff : lo << 8, TOP = inv ? hi << 8 : (hi << 8) | 0xff;
+  const SUS = inv ? at(5) << 8 : (at(5) << 8) | 0xff;
+  const sgn = inv ? -1 : 1; // the way up
+  const out = [];
+  const CAP = 512;
+  if (kind === 1) {
+    let pos = BOT, stage = 0, wait = 0, rel = null;
+    const past = (x, y) => (inv ? x <= y : x >= y); // x has reached y going up
+    const below = (x, y) => (inv ? x >= y : x <= y); // x has reached y going down
+    const tick = (released) => {
+      if (released && stage < 3) { stage = 3; wait = 0; }
+      if (wait > 0) { wait--; return pos >> 8; }
+      wait = speed - 1;
+      if (stage === 0) { pos += sgn * at(2); if (past(pos, TOP)) { pos = TOP; stage = 1; wait = at(3); } }
+      else if (stage === 1) { pos -= sgn * at(4); if (below(pos, SUS)) { pos = SUS; stage = 2; wait = at(6); } }
+      else if (stage === 2) { pos -= sgn * at(7); if (below(pos, BOT)) { pos = BOT; stage = 4; } }
+      else if (stage === 3) { pos -= sgn * at(8); if (below(pos, BOT)) { pos = BOT; stage = 4; } }
+      return pos >> 8;
+    };
+    // Until it rests: sustaining with no SR (the release point), or ended.
+    // (A sustain at or past the bottom rests nowhere: Furnace takes it to
+    // the bottom, and the macro ends.)
+    while (out.length < CAP) {
+      out.push(tick(false));
+      if (stage === 4) break;
+      if (stage === 2 && at(7) === 0 && wait === 0 && !below(pos, BOT)) { rel = out.length - 1; break; }
+    }
+    if (rel != null) while (out.length < CAP) { out.push(tick(true)); if (stage === 4) break; }
+    return { values: out, loop: null, rel };
+  }
+  // An LFO: its cycle, from its phase — placed on the bottom and top as
+  // they are written, inverted or not (Furnace's init).
+  const wave = at(12) & 3, spd = Math.max(1, at(11)), ph = at(13);
+  const B0 = lo << 8, T0 = (hi << 8) | 0xff;
+  let pos, dir = false;
+  if (wave === 0) { pos = ph & 512 ? T0 + (((B0 - T0) * (ph & 511)) >> 9) : B0 + (((T0 - B0) * ph) >> 9); dir = !!(ph & 512); }
+  else if (wave === 1) pos = B0 + (((T0 - B0) * ph) >> 10);
+  else pos = ph << 6;
+  const period = wave === 0 ? Math.ceil((2 * Math.abs(TOP - BOT)) / spd) : wave === 1 ? Math.ceil(Math.abs(TOP - BOT) / spd) : Math.ceil(65536 / spd);
+  for (let f = 0; f < Math.min(CAP, Math.max(1, period)); f++) {
+    if (wave === 0) {
+      if (dir) { pos -= sgn * spd; if (inv ? pos > BOT : pos < BOT) { dir = false; pos += sgn * spd * 2; } }
+      else { pos += sgn * spd; if (inv ? pos < TOP : pos > TOP) { dir = true; pos -= sgn * spd * 2; } }
+      out.push(pos >> 8);
+    } else if (wave === 1) {
+      pos += sgn * spd;
+      if (inv ? pos < TOP : pos > TOP) pos -= sgn * Math.abs(TOP - BOT);
+      out.push(pos >> 8);
+    } else {
+      pos = (pos + spd) & 65535;
+      out.push(pos & 32768 ? hi : lo);
+    }
+    for (let s = 1; s < speed; s++) out.push(out[out.length - 1]);
+  }
+  return { values: out, loop: 0, rel: null };
+}
+
 /** @returns {Promise<object>} the tracker model (import-tracker.js) */
 export async function parseFur(bytes) {
   const u8 = await inflate(bytes);
@@ -361,6 +439,7 @@ export async function parseFur(bytes) {
   }
 
   const none = () => ({ values: [], loop: null });
+  let macroDelays = 0; // sequences that wait before their first step (not carried)
   const instruments = insPtr.map((ptr) => {
     try {
       p = ptr;
@@ -503,7 +582,8 @@ export async function parseFur(bytes) {
           if (mc === 255) break;
           const mlen = c(), loop = c();
           const rel = c(); // the release point: held there until the note's release
-          const mode = c(), ws = c() >> 6;
+          const mode = c(), wsb = c(), ws = wsb >> 6;
+          const kind = ((wsb & 15) >> 1) & 3; // 0 a sequence, 1 an ADSR, 2 an LFO
           const delay = hlen >= 8 ? c() : 0, speed = hlen >= 8 ? c() || 1 : 1;
           p = hstart + hlen;
           const vals = [];
@@ -513,14 +593,19 @@ export async function parseFur(bytes) {
             else if (ws === 2) vals.push(s16());
             else vals.push(i32());
           }
-          const macro = { values: vals, loop: loop < mlen ? loop : null, rel: rel < mlen ? rel : null };
+          // As frames (macroSteps): an ADSR's or an LFO's run out at its
+          // speed, a sequence's steps each held `speed` ticks — a pitch
+          // sequence's speed and delay are its own (insPitchDef).
+          const macro = macroSteps({ values: vals, loop: loop < mlen ? loop : null, rel: rel < mlen ? rel : null },
+            kind, mc === 4 && kind === 0 ? 1 : speed);
+          if (delay > 0 && mc !== 4) macroDelays++;
           if (mc === 0) Object.assign(vol, macro);
           else if (mc === 3) Object.assign(wave, macro); // the wavetable
           else if (mc === 2) Object.assign(duty, macro); // duty, or the PC Engine's noise switch
           else if (mc === 1) Object.assign(arp, macro);
           // The pitch macro: 1/128 semitones (linear pitch), added up a step
           // at a time where its mode is relative; its delay and speed in ticks.
-          else if (mc === 4) Object.assign(pitch, macro, { relative: !!(mode & 1), delay, speed });
+          else if (mc === 4) Object.assign(pitch, macro, { relative: !!(mode & 1), delay, speed: kind === 0 ? speed : 1 });
           else if (mc === 5) Object.assign(ex1, macro);
           else if (mc === 6) Object.assign(ex2, macro);
           else if (mc === 7) Object.assign(ex3, macro);
@@ -639,6 +724,7 @@ export async function parseFur(bytes) {
     fmVolMax: 127, psgVolMax: 15,
     linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout, newVolumeScaling, brokenSpeedSel,
     tuning, // A-4's Hz
+    macroDelays,
     arpSpeed, rowResetsArpPos, resetArpPhaseOnNewNote,
     grooves,
   };

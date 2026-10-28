@@ -586,8 +586,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         : pceNoise ? (t.properNoiseLayout ? (f & 31) - (note & 31) : rate(f) - rate(note))
         : f - note);
       const semi = (x, k) => (note != null && ins.arp.fixed[k] ? fixedSemi(x) : nz == null ? x : step(x));
+      // A macro that ends holds its last step (Furnace): a `#sus` on it,
+      // so a pitch write after (a vibrato's) keeps the offset.
+      const am2 = ins.arp.loop == null && ins.arp.rel == null && ins.arp.values.length
+        && semi(ins.arp.values[ins.arp.values.length - 1], ins.arp.values.length - 1) !== 0
+        ? { ...ins.arp, loop: ins.arp.values.length - 1 } : ins.arp;
       if (moves && ins.arp.values.some((x, k) => semi(x, k) !== 0))
-        parts.push(`:semi+ ${arr(ins.arp, semi)}`);
+        parts.push(`:semi+ ${arr(am2, semi)}`);
       if (fc === "pulse" && ins.duty?.values.length)
         parts.push(`:duty ${arr(ins.duty, (x) => FC_DUTIES[x & 3])}`);
       if (vm === "vrc6" && ins.duty?.values.length > 1) parts.push(`:duty ${arr(ins.duty, (x) => (x & 7) + 1)}`);
@@ -1543,6 +1548,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   if (noiseDropped) warnings.push(`noise notes on a channel imported as its wave are dropped (${noiseDropped}×)`);
   if (waveDropped) warnings.push(`wave notes on a channel imported as noise are dropped (${waveDropped}×)`);
   if (patchMoves.size) warnings.push(`an OPLL patch macro plays the patch it settles on (${patchMoves.size}×)`);
+  if (t.macroDelays) warnings.push(`an instrument macro's delay before its first step is not kept (${t.macroDelays}×)`);
   if (fdsMacroMoves) warnings.push(`an FDS modulation depth or speed macro keeps its first step (${fdsMacroMoves}×)`);
   if (vrc6PcmNotes) warnings.push(`a VRC6 pulse's PCM notes are left out (${vrc6PcmNotes}×)`);
   if (noisePitch) warnings.push(`a slide or vibrato on a noise note is dropped: its pitch is its rate (${noisePitch}×)`);
