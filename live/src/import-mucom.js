@@ -305,6 +305,7 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
   };
   const push = (op) => {
     if (op.t === "note" || op.t === "rest") finalizeTempos();
+    if (op.clocks != null) op.wc = state.wholeClocks; // the C its clocks count in (barAdvance)
     // How long the notes under a software LFO last (a tie or `&` runs it on):
     // a sweep is drawn only that far (lfoSpec).
     if (op.t === "lfoSet") { op.maxClocks = 0; state.lfoOp = op; state.lfoRun = 0; }
@@ -716,7 +717,9 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
         continue;
       }
       const back = state.echo.back ?? 1;
-      if (back > 0) push({ t: "echo", back, drop: state.echo.drop ?? 0 });
+      // A tap takes the default length (MMLisp's (echo …) plays at :len):
+      // `tapClocks`, for the bar markers alone.
+      if (back > 0) push({ t: "echo", back, drop: state.echo.drop ?? 0, tapClocks: noteClocks(null, 0, null, false, state), wc: state.wholeClocks });
       continue;
     }
 
@@ -1116,6 +1119,14 @@ function shiftedNote(letter, acc, shift) {
   const pc = ((n % 12) + 12) % 12;
   return { name: noteName(pc), dOct: Math.floor(n / 12) }; // relative to this octave's c
 }
+// An octave up and one down side by side go nowhere: a transposed note's
+// `>`…`<` met by the part's own `>` (`> c4 < > d` as `> c4 d`).
+function octavesMet(text) {
+  let t = text, was;
+  do { was = t; t = t.replace(/(^| )(?:< >|> <)(?= |$)/g, "$1").replace(/  +/g, " "); } while (t !== was);
+  return t;
+}
+
 // The SN76489's 10-bit period bottoms out at A2 (~109 Hz); the SSG goes down
 // to C1. A lower SSG note is played an octave (or two) up rather than pinned
 // to the PSG's floor, which would be a wrong pitch.
@@ -1381,9 +1392,9 @@ function rhythmLayers(forms, warnings, pc88 = false) {
         RHYTHM_SOUNDS.forEach((_, k) => {
           if (st.mask >> k & 1) hits[k] = RHYTHM_DB_PER_STEP * (63 - st.levels[0] + 31 - st.levels[k + 1]);
         });
-        return [{ t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, hits }];
+        return [{ t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, wc: op.wc, hits }];
       }
-      case "rest": case "tie": return [{ t: "rest", len: op.len, clocks: op.clocks }];
+      case "rest": case "tie": return [{ t: "rest", len: op.len, clocks: op.clocks, wc: op.wc }];
       case "macroCall":
         warnOnce(warnings, "rhythmMacro", "part G: a macro (*n) is not followed on the rhythm part; dropped");
         return [];
@@ -1405,12 +1416,12 @@ function rhythmLayers(forms, warnings, pc88 = false) {
     const layer = (ops) => ops.flatMap((op) => {
       if (op.t === "loop") return [{ ...op, body: layer(op.body) }];
       if (!op.hits) return [op];
-      if (op.hits[k] == null) return [{ t: "rest", len: op.len, clocks: op.clocks }];
+      if (op.hits[k] == null) return [{ t: "rest", len: op.len, clocks: op.clocks, wc: op.wc }];
       const v = pc88
         ? clamp(Math.round(15 - op.hits[k] / VEL_DB_PER_STEP), 0, 15)
         : clamp(Math.round(15 - (op.hits[k] - loudest) / VEL_DB_PER_STEP), 1, 15);
       const pre = v !== vel ? [{ t: "raw", text: `:vel ${(vel = v)}` }] : [];
-      return [...pre, { t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks }];
+      return [...pre, { t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, wc: op.wc }];
     });
     return items.map(layer);
   });
@@ -1448,6 +1459,7 @@ function scratchCtx(ctx) {
   return {
     verbose: false,
     ...ctx,
+    barPos: null, // a trial writes no bar markers: passes from different places would differ by them
     warnings: [],
     warnedVoices: new Set(ctx.warnedVoices),
     chain: null, // a trial must not patch the real output (finishChain)
@@ -1500,6 +1512,31 @@ function crossPassesDiffer(snap, tree, depth) {
   return !!a.pendingSlur || t1.join(" ") !== t2.join(" ");
 }
 
+// --- bar markers ----------------------------------------------------------------
+
+// mucom has no meter: a bar is a whole note (C clocks). A `|` measures the
+// text, so the part's place (`ctx.barPos`, a fraction of a whole note {n, d})
+// moves on with each note, rest, tie or echo tap written — an (x …) body's
+// once, as the compiler's ticks run through it — and a `|` goes where it
+// lands on a whole one (a note across one gets none). What
+// it cannot follow ends the part's markers (null): a macro (pasted text, its
+// notes take the length where it is called) or a loop across lines kept as
+// a #label.
+const gcdOf = (a, b) => (b ? gcdOf(b, a % b) : a);
+function barAdvance(ctx, w) {
+  if (ctx.barPos === null) return;
+  if (!w) { ctx.barPos = null; return; }
+  const p = ctx.barPos ?? { n: 0, d: 1 };
+  const nn = p.n * w.d + w.n * p.d, dd = p.d * w.d, g = gcdOf(nn, dd) || 1;
+  ctx.barPos = { n: nn / g, d: dd / g };
+}
+function barMark(ctx, out) {
+  const p = ctx.barPos;
+  if (!p || p.n <= 0 || p.n % p.d !== 0 || ctx.barAt === p.n / p.d) return; // one `|` a bar end
+  out.push("|");
+  ctx.barAt = p.n / p.d;
+}
+
 function renderLoop(op, ctx, out, depth) {
   const count = op.count;
   if (count <= 0) return;
@@ -1548,6 +1585,7 @@ function renderLoop(op, ctx, out, depth) {
     const left = ctx.stale;
     ctx.stale = outer && new Set([...outer].filter((f) => left.has(f)));
     if (inner.length) out.push(`(x ${rest} ${inner.join(" ")})`);
+    barMark(ctx, out); // its body moved the bar on as it was written
     if (bi >= 0) {
       // The last pass left at the break: the runtime state is the head's, not
       // the full body's the (x …) left behind.
@@ -1973,6 +2011,10 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (op.bpm !== ctx.tempo || ctx.verbose) { out.push(`:tempo ${op.bpm}`); ctx.tempo = op.bpm; }
         break;
     }
+    // The bar the part is in (barAdvance).
+    const clocks = op.clocks ?? op.tapClocks;
+    if (clocks != null) { barAdvance(ctx, op.wc ? { n: clocks, d: op.wc } : null); barMark(ctx, out); }
+    else if (op.t === "macroCall" || (op.t === "loopGo" && !ctx.unrollCross?.has(op.label))) barAdvance(ctx, null);
   }
 }
 
@@ -2593,8 +2635,8 @@ function mucomToMmlisp(parsed) {
     // from a macro body by name.
     const isPcm = pcmMacros.has(mn);
     const isSsg = !isPcm && ssgMacros.has(mn);
-    renderOps(mac.ops, { vel: null, isPcm, isAdpcm: isPcm, isSsg, pc88: parsed.pc88, octShift: isSsg ? 0 : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
-    const content = toks.join(" ").trim();
+    renderOps(mac.ops, { barPos: null, vel: null, isPcm, isAdpcm: isPcm, isSsg, pc88: parsed.pc88, octShift: isSsg ? 0 : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
+    const content = octavesMet(toks.join(" ")).trim();
     if (!content) continue;
     usableMacros.add(mn);
     const head = (mac.comments || []).join("\n");
@@ -2739,7 +2781,7 @@ function mucomToMmlisp(parsed) {
       lastToks.set(keyOf(f), f.toks);
     }
     for (const [key, toks] of lastToks) finishChain(letterCtx(key), toks);
-    for (const f of forms) { f.text = f.toks.join(" "); delete f.toks; }
+    for (const f of forms) { f.text = octavesMet(f.toks.join(" ")); delete f.toks; }
     if (!found.size) break;
     for (const l of found) unrollCross.add(l);
   }
@@ -2811,7 +2853,9 @@ function mucomToMmlisp(parsed) {
     if (it.kind === "comment") { lines.push(it.text); continue; }
     if (it.dropped) continue; // parsed for tempo only (part K with no #pcm bank)
     if (it.text === "") { if (it.comment) lines.push(it.comment); continue; }
-    const form = `(${it.ch}${it.prio != null ? ` :prio ${it.prio}` : ""} ${it.text})${it.comment ? `  ${it.comment}` : ""}`;
+    // A bar a line: the form's text broken after each `|`.
+    const text = it.text.replace(/ \| (?=\S)/g, " |\n  ");
+    const form = `(${it.ch}${it.prio != null ? ` :prio ${it.prio}` : ""} ${text})${it.comment ? `  ${it.comment}` : ""}`;
     lines.push(it.commentOut ? `; ${form}` : form);
   }
 
