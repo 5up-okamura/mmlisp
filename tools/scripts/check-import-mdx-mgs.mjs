@@ -45,14 +45,14 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
 
 {
   // A: tempo, voice, v, q, a tie, detune, an LFO, a repeat with a break and
-  // the song's loop. B: pan and a portamento. H: the noise. ADPCM: two
+  // the song's loop. B: pan and a portamento that lands on a note. H: the noise. ADPCM: two
   // samples at two rates.
   const A = [0xff, 200, 0xfd, 1, 0xfb, 15, 0xf8, 6, ...N(60, 48), 0xf7, ...N(62, 48), ...N(64, 48), ...R(48)];
   const top = A.length;
   A.push(0xf3, ...be16(32), 0xec, 2, ...be16(8), ...be16(64 * 256),
     0xf6, 2, 0, ...N(60, 24), ...N(64, 24), 0xf4, 0, 0, ...N(67, 48), 0xf5, 0, 0, ...N(72, 96));
   loopTo(A, top);
-  const B = [0xfd, 1, 0xfb, 10, 0xfc, 1, 0xf2, ...be16(256 * 64 / 96 * 2 | 0), ...N(48, 96), 0xfc, 2, ...N(52, 96), ...END];
+  const B = [0xfd, 1, 0xfb, 10, 0xfc, 1, ...N(45, 48), 0xf2, ...be16(256 * 64 / 96 * 2 | 0), ...N(48, 96), 0xfc, 2, ...N(52, 96), ...END];
   const H = [0xfd, 2, 0xed, 0x80 | 20, ...N(60, 24), 0xed, 20, ...N(62, 24), ...END]; // w: the noise, then off
   const P = [0xed, 2, ...N(15, 48), 0xed, 4, 0xfb, 15, ...N(16, 48), ...END]; // v8, then v15
   // C: a tie through a rest — MXDRV keys off at the rest's end, not at a
@@ -98,7 +98,7 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     has(source, /\(go top\)/, what);
     has(source, /:pan left[\s\S]*:pan right/, what);
     has(source, /\(fm3[\s\S]*c4? _8 d/, what); // held through the first rest only
-    has(source, /\(fm2[\s\S]*\(macro :pitch\+ \(linear 0\.\./, what);
+    has(source, /\(fm2[\s\S]*\(glide c3 2\) >? ?d2? [\s\S]*\(glide none\) e/, what); // c_d: d, glided to from c over its length
     has(source, /\(fm8[\s\S]*voice-02[^\n]*:mode noise :noise-rate 12[\s\S]*:mode tone/, what); // NFRQ 20 → 32 - 20, fm8 its voice whole
     assert.ok(!/\(noise /.test(source), `${what}: track H stays fm8`);
     has(source, /\(fm4[\s\S]*:pitch 100[\s\S]*:pitch 0 /, what);

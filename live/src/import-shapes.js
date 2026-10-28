@@ -55,3 +55,43 @@ export function frameVector(values, sus) {
   }
   return `[${items.join(" ")}]`;
 }
+
+// ── Macros written more than once, as defs ────────────────────────────────
+
+// A curve macro's def name, read off its curve: a pitch line a bend (up or
+// down to where it goes), any other pitch curve a vibrato, a :vel curve a tremolo
+// (to its widest), then its length and wait.
+const SHAPE = { triangle: "tri", saw: "saw", square: "sq", sin: "sin" };
+const CURVE = /^\(macro :(pitch|vel)\+? \((linear|triangle|saw|square|sin) (-?[\d.]+)\.\.(-?[\d.]+) :len (\S+?)(?: :phase \d+)?(?: :wait (\S+?))?\)\)$/;
+function macroName(x) {
+  const m = CURVE.exec(x);
+  if (!m) return null;
+  const [, target, curve, a, b, len, wait] = m;
+  const w = wait ? `-w${wait}` : "";
+  const cents = (v) => `${v < 0 ? "down" : "up"}${Math.abs(v)}`;
+  if (target === "pitch" && curve === "linear") return `bend-${Number(a) ? `${cents(a)}-` : ""}${cents(b)}-${len}${w}`;
+  const amp = Math.max(Math.abs(a), Math.abs(b));
+  return `${target === "pitch" ? "vib" : "trem"}-${SHAPE[curve] ?? curve}-${amp}-${len}${w}`;
+}
+
+/**
+ * A curve macro the score writes twice or more becomes a def, named by its
+ * curve (macroName), and the notes name it. A write is where a note's macro
+ * is not the one before it on its track. `tracks`: `{ notes: [{ state }] }`.
+ */
+export function hoistMacros(tracks, defs) {
+  const writes = new Map();
+  for (const t of tracks) {
+    let before = new Set();
+    for (const n of t.notes) {
+      const now = new Set(n.state.filter((x) => CURVE.test(x)));
+      for (const x of now) if (!before.has(x)) writes.set(x, (writes.get(x) ?? 0) + 1);
+      before = now;
+    }
+  }
+  const names = new Map();
+  for (const [x, k] of writes)
+    if (k >= 2) names.set(x, defs.of(`macro:${x}`, () => { const name = defs.uniq(macroName(x)); return { name, text: `(def ${name} ${x})` }; }).name);
+  if (!names.size) return;
+  for (const t of tracks) for (const n of t.notes) n.state = n.state.map((x) => names.get(x) ?? x);
+}

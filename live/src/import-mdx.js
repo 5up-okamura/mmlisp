@@ -25,11 +25,13 @@
 //   q / @q, &, k       q as :gate* n/8, @q as :gate- n clocks, the note its
 //                      full length; & legato (a tie, or a slur to another
 //                      note), k a key-on n clocks late
-//   D, _               :pitch (1/64 semitone a step), a portamento as a
-//                      :pitch+ line over the note
+//   D, _               :pitch (1/64 semitone a step); a portamento that
+//                      lands on a note as that note glided to (`c_e` as
+//                      (glide c T) e), else a :pitch+ line over the note
 //   MP / MA, MD        the software LFOs as :pitch+ / :vel+ curves (saw,
 //                      square, triangle), MD their delay — restarted at each
-//                      note, where MXDRV restarts them only with an MD
+//                      note, where MXDRV restarts them only with an MD; a
+//                      curve written twice or more a def (vib- bend- trem-)
 //   MH                 the OPM's LFO: :lfo-wave :lfo-freq :lfo-pmd :lfo-amd
 //   w                  the noise (on track H, NE): fm8's :mode noise — the
 //                      voice whole, its fourth operator the noise — at
@@ -48,8 +50,8 @@
 //     options: { pdx: Uint8Array | null, structure, fileName }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones } from "./import-song.js";
-import { defTable, sjis } from "./import-shapes.js";
+import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones, noteName, octOf, GLIDE_NONE } from "./import-song.js";
+import { defTable, sjis, hoistMacros } from "./import-shapes.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { decodeOki } from "./import-vgm.js";
 import { encodeWav } from "./export-wav.js";
@@ -567,13 +569,21 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
         if (st.detune) detuned = true;
         if (detuned) state.push(`:pitch ${cents(st.detune)}`);
       }
-      // The note's own moves: a portamento, the LFOs.
+      // The note's own moves: a portamento, the LFOs. A glide is the
+      // note's own; the note after one ends it.
       const pitch = [];
+      let glide = notes[notes.length - 1]?.glides ? GLIDE_NONE : null;
       if (!tr.pcm) {
         if (st.porta) {
-          // It bends on past the key-off, to the next note.
+          // It bends on past the key-off, to the next note. One that lands
+          // on a note is that note, glided to from its own over the length
+          // (`c_e`; on a tied note, `c & c_e` as a slur to the e) — but a
+          // track's first note does not glide.
           const total = cents((st.porta * n.count) / 256);
-          if (total) pitch.push(`(linear 0..${total} :len ${tick(n.count)}t)`);
+          if (total && total % 100 === 0 && notes.length) {
+            glide = `(glide ${noteName(midi)}${octOf(midi)} ${lenToken(tick(n.count))})`;
+            midi += total / 100;
+          } else if (total) pitch.push(`(linear 0..${total} :len ${tick(n.count)}t)`);
         }
         if (st.plfo) {
           const c = pitchLfoCurve(st.plfo, tick);
@@ -582,6 +592,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       }
       if (pitch.length > 1) skip("a portamento under the pitch LFO (the LFO is dropped for that note)");
       state.push(pitch.length ? `(macro :pitch+ ${pitch[0]})` : "(macro :pitch none)");
+      if (glide) state.push(glide);
       if (!tr.pcm && st.alfo) {
         const c = volLfoCurve(st.alfo, tick);
         state.push(c ? `(macro :vel+ ${waited(c)})` : "(macro :vel none)");
@@ -590,7 +601,8 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       // gate: it keeps the one in force, so none is written for it. One held
       // on through a rest is that long, at a full gate.
       if (gated && !tr.pcm) state.push((gateInForce = n.tieOn && n.held == null ? gateInForce : gateTok ?? ":gate* 1"));
-      const note = { tick: at, len: Math.max(1, tick(n.clock + delay + len) - at), midi, vel, state, tieIn: legato && !tr.pcm };
+      const note = { tick: at, len: Math.max(1, tick(n.clock + delay + len) - at), midi, vel, state, tieIn: legato && !tr.pcm,
+        glides: glide != null && glide !== GLIDE_NONE };
       notes.push(note);
       // A tie's gate is the chain's head's, over the whole tied length; MXDRV
       // cuts the last note by its own q: the head takes that cut, exact.
@@ -714,6 +726,9 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
 
   for (const [k, n] of skipped) warnings.push(`${k} (${n}×)`);
   if (!songOut.length) warnings.push("no notes to import");
+
+  // The LFOs and portamentos written more than once, as defs.
+  hoistMacros(songOut, defs);
 
   const header = [`; Imported from ${options.fileName ?? "an MDX file"} (MDX${mdx.pcm8 ? ", PCM8" : ""}${mdx.pdxName ? `, ${mdx.pdxName}` : ""})`];
   const score = [":target x68k", mdx.title && `:title ${qstr(mdx.title)}`].filter(Boolean);

@@ -534,14 +534,14 @@ export function regrid(g, bpm) {
 
 const MAX_BLOCK = 16; // units in one repeated block or phrase
 
-// A switch's kind: a keyword by its name, a macro (or an `env-`, `vol-`,
-// `vib-` or `bend-` def, an imported envelope or bend) by its target, a
+// A switch's kind: a keyword by its name, a macro (or an `env-`, `trem-`,
+// `vol-`, `vib-` or `bend-` def, an imported envelope or bend) by its target, a
 // glide, any other name — the voice or the sample — as "name".
 // :gate, :gate* and :gate- set the one gate: one kind.
 const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0].replace(/^:gate[*-]$/, ":gate")
   : t.startsWith("(glide") ? "glide"
   : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}`
-    : /^env-/.test(t) ? "macro:vel" : /^vol-/.test(t) ? "macro:vol"
+    : /^(env|trem)-/.test(t) ? "macro:vel" : /^vol-/.test(t) ? "macro:vol"
       : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";
 
 // The switches a note needs written, given those in force: by kind — a
@@ -1197,7 +1197,7 @@ export function withPre(song) {
 
 // A macro target no note of the track sets needs no `none` either. A def
 // names its target by its prefix (switchKind).
-const DEF_TARGET = { vol: "vol", env: "vel", bend: "pitch", vib: "pitch" };
+const DEF_TARGET = { vol: "vol", env: "vel", trem: "vel", bend: "pitch", vib: "pitch" };
 const macroTarget = (x) => (x.startsWith("(macro :") ? (x.endsWith(" none)") ? null : /^\(macro :([a-z]+)/.exec(x)[1])
   : DEF_TARGET[/^([a-z]+)-/.exec(x)?.[1]] ?? null);
 export function dropIdleNones(notes) {

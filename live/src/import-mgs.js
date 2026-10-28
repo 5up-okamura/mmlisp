@@ -70,7 +70,7 @@
 // ---------------------------------------------------------------------------
 
 import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones, noteName, octOf, GLIDE_NONE } from "./import-song.js";
-import { defTable, sjis, frameVector } from "./import-shapes.js";
+import { defTable, sjis, frameVector, hoistMacros } from "./import-shapes.js";
 import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
 import { envCycle } from "./chips/ssg.js";
 
@@ -976,6 +976,8 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   if (!songOut.length) warnings.push("no notes to import");
   const vibName = vibNames();
   for (const t of songOut) for (const n of t.notes) n.state = n.state.map((x) => vibName.get(x) ?? x);
+  // The other pitch moves written more than once, as defs.
+  hoistMacros(songOut, defs);
 
   const header = [`; Imported from ${options.fileName ?? "an MGS file"} (MGS${mgs.version}${mgs.opllMode ? ", #opll_mode 1" : ""})`];
   const score = [":target msx", mgs.title && `:title ${qstr(mgs.title)}`].filter(Boolean);

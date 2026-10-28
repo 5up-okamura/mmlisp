@@ -2014,8 +2014,11 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   the track's `MH` sensitivities as `:fms` / `:ams`); `v` / `@v` become
   `:vel` (0.75 dB a TL step), `p` `:pan`, `q` / `@q` `:gate*` / `:gate-` on
   notes written their whole length, `&` a tie or slur, `k` a late key-on,
-  `D` `:pitch`, `_` and the software LFOs (`MP`, `MA`) `:pitch+` / `:vel+`
-  macros, `MH` the OPM's LFO words, and track H's noise (`w`, or `y$0F`)
+  `D` `:pitch`, `_` a portamento — one that lands on a note as that note
+  glided to from its own over the length (`c_e` as `(glide c4 T) e`), else a
+  `:pitch+` line — and the software LFOs (`MP`, `MA`) `:pitch+` / `:vel+`
+  curves, each one written twice or more a def named by its curve
+  (`vib-tri-19-24t`, `bend-up200-24t`, `trem-…`), `MH` the OPM's LFO words, and track H's noise (`w`, or `y$0F`)
   stays on `fm8` as its `:mode noise` / `:mode tone`, the voice whole — a
   hi-hat keeps its envelope. A track with no notes that only sets the tempo — a
   loop dithering it between two Timer B values, for one in between — becomes
