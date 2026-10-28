@@ -88,9 +88,10 @@ export const MACRO_TARGET_RANGE = {
   VAL: { min: -32768, max: 32767 },
 };
 
-// A def-wave's form (language.md §19, ir.md §2.3): its steps and their
-// signed range, which a chip of fewer bits reads down.
-export const WAVE = { len: 32, min: -128, max: 127, bits: 8 };
+// A def-wave's form (language.md §19, ir.md §2.3): its steps — 32, or 64
+// (the FDS's memory; `lens`), a curve sampled at 32 — and their signed
+// range, which a chip of fewer bits reads down.
+export const WAVE = { len: 32, lens: [32, 64], min: -128, max: 127, bits: 8 };
 
 // A wave expression (language.md §19), as the compiler folds it and the IR
 // player runs what is left (ir.md, a WAVE's `expr`): a tree of { n } (a
@@ -112,9 +113,14 @@ export function waveSlots(t, out = new Set()) {
   return out;
 }
 
-/** `op` over numbers and waves' steps, step by step: a wave if any is one. */
+/**
+ * `op` over numbers and waves' steps, step by step: a wave if any is one, as
+ * long as the longest — a shorter wave's steps each held (32 against 64,
+ * each step twice), never interpolated.
+ */
 export function waveCombine(op, xs) {
-  const at = (x, i) => (Array.isArray(x) ? x[i] : x);
+  const len = Math.max(WAVE.len, ...xs.filter(Array.isArray).map((x) => x.length));
+  const at = (x, i) => (Array.isArray(x) ? x[Math.floor((i * x.length) / len)] : x);
   const step = (i) => {
     let acc = at(xs[0], i);
     if (xs.length === 1) return op === "-" ? -acc : op === "/" ? 1 / acc : acc;
@@ -124,7 +130,7 @@ export function waveCombine(op, xs) {
     }
     return acc;
   };
-  return xs.some(Array.isArray) ? Array.from({ length: WAVE.len }, (_, i) => step(i)) : step(0);
+  return xs.some(Array.isArray) ? Array.from({ length: len }, (_, i) => step(i)) : step(0);
 }
 
 /** A wave's steps as a chip takes them: whole, in range (a step that is not a number, 0). */

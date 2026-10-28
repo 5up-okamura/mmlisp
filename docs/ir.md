@@ -114,13 +114,13 @@ Notes: the player consumes `name`, `init`, `unit` and `slot`; `min`/`max`/
 
 ### 2.3 `metadata.waves[]` — wave defs (`(def-wave name …)`)
 
-Present when the score has a def-wave (language.md §19, `msx`); a
+Present when the score has a def-wave (language.md §19, `msx`, `pce`, `fc`); a
 `PARAM_SET WAVE` names an entry by its index, in def order.
 
 | Field  | Type  | Semantics                                              |
 | ------ | ----- | ------------------------------------------------------ |
 | `name` | string | The def's name.                                       |
-| `len`  | int   | Steps in one cycle: 32.                                 |
+| `len`  | int   | Steps in one cycle: 32, or 64 (the FDS's memory).       |
 | `bits` | int   | The steps' resolution: 8, signed.                       |
 | `data` | int[] | The `len` steps, each −128..127.                        |
 
@@ -670,7 +670,7 @@ write.
 | `ENV_SEMI`        | −48–48         | `pc88`, `msx`: semitones the period a channel gives (its notes', or a rate it writes) is moved. Inline only (`:env-semi`), a value; `none` is 0. |
 | `ENV_DETUNE`      | −1000–1000     | `pc88`, `msx`: register steps added to that period (+ lower). Inline only (`:env-detune`), a value; `none` is 0. |
 | `ENV_RATE`        | 0–8000         | `pc88`, `msx`: the envelope's period (regs 0x0B–0x0C) as one cycle's Hz of the writing track's shape then, a triangle's (shapes 10, 14) halved; 0 the writing track's pitch from its next note. Song-wide as `NOISE_RATE`. |
-| `WAVE`            | index          | `msx` / `pce`: a wave channel's wave, an entry of `metadata.waves` (§2.3), written whole to the channel's wave memory. A track naming a def-wave emits it; a folded `:wave` expression is an entry of its own, named `<channel>@<line>:<column>`. One with a `$slot` carries `expr` instead of `value`: a tree of `{n}` (a number), `{data}` (32 steps), `{val}` (a slot's name) and `{op: "+"\|"-"\|"*"\|"/", args}`, taken step by step (`live/src/ir-utils.js` waveEval); the player writes it at once and again in every frame a slot it reads has moved, rounded and kept in −128..127. |
+| `WAVE`            | index          | `msx` / `pce` / `fc`: a wave channel's wave, an entry of `metadata.waves` (§2.3, 32 or 64 steps), written whole to the channel's wave memory (a 64-step wave on a 32-step chip every other step, a 32-step one on the FDS each step twice). A track naming a def-wave emits it; a folded `:wave` expression is an entry of its own, named `<channel>@<line>:<column>`. One with a `$slot` carries `expr` instead of `value`: a tree of `{n}` (a number), `{data}` (32 or 64 steps; one shorter than the longest held step for step), `{val}` (a slot's name) and `{op: "+"\|"-"\|"*"\|"/", args}`, taken step by step (`live/src/ir-utils.js` waveEval); the player writes it at once and again in every frame a slot it reads has moved, rounded and kept in −128..127. |
 | `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits). Persistent noise-channel state via `PARAM_SET` (inline `:mode` / tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
 | `FM_TL1`–`FM_TL4` | 0–127          | 0x40+op. PARAM_SET also updates the voiced (timbre) TL base. |
 | `FM_AR1`–`FM_AR4` | 0–31           | 0x50+op bits 4–0 (shared byte with KS).                      |

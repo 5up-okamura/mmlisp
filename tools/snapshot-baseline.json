@@ -1791,9 +1791,9 @@
  },
  "tools/tests/fc/fds.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "8d3097e99304a844",
-  "regs": "39aaa80fc369f24c",
-  "vgm": "febe2629b299d3ff"
+  "ir": "8a0c66c298f4ea3b",
+  "regs": "54f08a14a157bbfc",
+  "vgm": "bf3e6582e2101b39"
  },
  "tools/tests/fc/target.mmlisp": {
   "diagnostics": "c2abed2ca544cbf9",
@@ -1928,6 +1928,12 @@
   "ir": "d2c2b87c54231428",
   "regs": "62f3373e8b40318e",
   "vgm": "1a3c4f5a21f828ef"
+ },
+ "tools/tests/pce/wave64.mmlisp": {
+  "diagnostics": "d482d5d18a967d61",
+  "ir": "4ee8273ab0a3a165",
+  "regs": "f171c392fee9ea1b",
+  "vgm": "11dee3fcbe935591"
  },
  "tools/tests/x68k/fm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

@@ -241,8 +241,8 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
 Order: 1. VRC6 on fc (**built 2026-10-28**); 2. Furnace's VRC6 into it;
 3. NSF in (reversing the "no NSF" ruling: the 6502 is an import-only tool,
 as drv/tools' Z80 — nothing reaches the score or a driver); 4. the FDS
-(Nintendo's own: wanted as much as the VRC6; **built 2026-10-28**, but
-the 64-step def-wave). 2 and 3 are the import session's (the user,
+(Nintendo's own: wanted as much as the VRC6; **built 2026-10-28**, the
+64-step def-wave with it). 2 and 3 are the import session's (the user,
 2026-10-28: this session is the chips' playback). The VRC6 is the reason for
 NSF: VGM has no VRC6 slot, so an NSF is the only register-level source of
 its songs.
@@ -260,10 +260,13 @@ each step held twice (the same wave, the pitch formula fixed); the gain
 0-32 linear; the player's wave-chip LFO hook now takes LFO_PMD / the table
 and sweeps a frame at a time, through the lane (an optional chip starts
 first) — which also fixed pce's `:lfo-freq` sweep (it wrote 0 once).
-Open: **the 64-step def-wave** (the ruling of 2026-10-26: other than 32
-repeated a whole number of times, 64 → 32 a W_TARGET; WAVE.len 32 is in
-the compiler's def-wave reader, waveCombine, curve sampling and the
-player's expressions); not heard in Live; the volume / modulation
+The 64-step def-wave (2026-10-28): a vector of 64 (a curve still 32);
+waveCombine as long as the longest, a shorter wave held step for step; a
+part's `waveLen` (the FDS 64), a longer wave every other step on a 32-step
+chip (ir-player `_fitWave`, W_TARGET once per track and wave);
+tools/tests/pce/wave64.mmlisp. The wave-chip LFO hook also takes `+`, `*`
+and `$value` (they were dropped). Open: not heard in Live (nor the vector
+editor drawing a 64-step wave); the volume / modulation
 envelopes not emulated (the encoder writes gains direct; an imported VGM's
 envelopes would need them); the mod arithmetic is nesdev's, not held to
 NSFPlay / Mesen.

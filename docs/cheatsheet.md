@@ -246,7 +246,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   (§19): `sqr1`–`sqr3` and `noise` as on pc88 (`:mode tone|noise|both|env`,
   song-wide `:noise-rate`, `noise` is sqr3, `:env` / `:env-rate`); `wave1`–`wave5` the SCC's
   wavetable channels, each playing the `def-wave` named in it
-  (`(def-wave saw :wave (saw -128..127))` — 32 values −128..127 or one
+  (`(def-wave saw :wave (saw -128..127))` — 32 values −128..127 (64 for
+  fc's FDS; on a 32-step chip every other step plays) or one
   curve's cycle, or `+ - * /` over def-waves, curves and numbers; a track's
   `:wave (+ (* saw (- 1 $x)) (* soft $x))` follows `$x` as it moves;
   `(macro :wave [saw soft #sus saw])` steps def-waves a frame at a time; wave4

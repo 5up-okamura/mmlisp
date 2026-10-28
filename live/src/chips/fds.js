@@ -49,6 +49,7 @@ export const fdsWave = {
   // `:lfo-wave` is a table of the modulation's steps here, not the OPM's
   // waveforms (mmlisp2ir.js).
   lfoTable: true,
+  waveLen: 64, // its memory: a 64-step def-wave whole, a 32-step one each step twice
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "the FDS has no :mode; its sound is its def-wave" },
 };

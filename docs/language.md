@@ -2608,13 +2608,17 @@ it does a voice:
 `:wave` is 32 values, each −128..127 (signed 8-bit, the chip's), or a wave
 expression: a curve, read over one cycle whatever its `:len` (§11), another
 def-wave's name, and `+ - * /` over them and numbers, taken step by step
-(`(+ (* saw 0.6) (* soft 0.4))`). A written value outside −128..127 or a
-count other than 32 is `E_WAVE_VALUE`, as is a def-wave made of itself; what
+(`(+ (* saw 0.6) (* soft 0.4))`). It may be 64 values too, for `fc`'s FDS,
+whose memory is 64 steps: an expression over a 64-step wave is 64 steps,
+a 32-step one in it each step held twice (never interpolated); played on a
+32-step chip (the SCC, the HuC6280) every other step sounds, with
+`W_TARGET`. A written value outside −128..127 or a count other than 32 or
+64 is `E_WAVE_VALUE`, as is a def-wave made of itself; what
 an expression computes is rounded and kept in range, as the chip's register
 keeps it. Another key is `E_WAVE_PARAM`. A channel plays a
 square until its track names a wave; the wave is written to the channel's
 memory where it is named, so a switch is heard from the next sample on. The
-pitch is the chip's 12-bit period (1.79 MHz / 32 / (n + 1)), and every pitch
+pitch is the chip's 12-bit period (3.58 MHz / 32 / (n + 1)), and every pitch
 move a PSG channel has works the same — `:pitch`, `(glide …)`, the pitch and
 `:semi` macros, `:snap`.
 
@@ -2950,9 +2954,9 @@ audio page; its pulse at full as loud as a 2A03 pulse at full).
 
 **FDS.** The Disk System's wavetable is on `fc` when a score names
 **`wave1`**. It plays def-waves as `msx` and `pce` do (`:wave`, a `(macro
-:wave …)`, a wave expression); the chip's memory is 64 steps of 6 bits, so
-a 32-step def-wave plays with each step held twice — the same wave, never
-interpolated. Its pitch is 12 bits (1.79 MHz × n / 16 / 2^18 a cycle: A6,
+:wave …)`, a wave expression); the chip's memory is 64 steps of 6 bits: a
+64-step def-wave plays whole, a 32-step one with each step held twice —
+the same wave, never interpolated. Its pitch is 12 bits (1.79 MHz × n / 16 / 2^18 a cycle: A6,
 1.75 kHz, the highest), with every pitch move a PSG channel has. The level
 is the chip's gain, 0–32, linear, `:vel 15` its top. Its **modulation
 unit** bends the pitch, written with the song's LFO words as the PC

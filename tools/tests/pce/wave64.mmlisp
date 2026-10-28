@@ -1,0 +1,10 @@
+; pce: a 64-step def-wave (the FDS's length) on a 32-step chip — every
+; other step plays, with W_TARGET once per track and wave — and mixed with
+; a 32-step one in an expression (64 steps, the shorter each step twice).
+(def-score :target pce :title "pce wave64")
+(def-wave tri :wave (triangle -128..127))
+(def-wave ramp64 :wave [-128 -124 -120 -116 -112 -108 -104 -100 -96 -92 -88 -84 -80 -76 -72 -68
+                       -64 -60 -56 -52 -48 -44 -40 -36 -32 -28 -24 -20 -16 -12 -8 -4
+                       0 4 8 12 16 20 24 28 32 36 40 44 48 52 56 60
+                       64 68 72 76 80 84 88 92 96 100 104 108 112 116 120 124])
+(wave1 :tempo 120 ramp64 :len 4 c e :wave (+ (* ramp64 0.5) (* tri 0.5)) g c |)

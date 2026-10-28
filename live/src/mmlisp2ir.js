@@ -3796,7 +3796,7 @@ function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
           if (v?.kind !== "scalar") err(`a :wave value is a number, not ${atomValue(n) ?? "a list"}`, nodeSrc(n));
           return v?.kind === "scalar" ? Math.round(v.value) : 0;
         });
-        if (vals.length !== WAVE_LEN) { err(`:wave takes ${WAVE_LEN} values, not ${vals.length}`, nodeSrc(at)); continue; }
+        if (!WAVE.lens.includes(vals.length)) { err(`:wave takes ${WAVE_LEN} values (or 64, the FDS's memory), not ${vals.length}`, nodeSrc(at)); continue; }
         const out = vals.find((x) => x < WAVE.min || x > WAVE.max);
         if (out !== undefined) { err(`a :wave value is ${WAVE.min}..${WAVE.max}, not ${out}`, nodeSrc(at)); continue; }
         data = vals;
@@ -3902,6 +3902,7 @@ function emitWave(trackState, events, src, name, diagnostics, trackName) {
   if (index == null) return; // its def did not read
   const { part, head } = trackState;
   if (part?.words("WAVE")) {
+    warnWaveLen(trackState, name, trackState.waves[index].data, src, diagnostics, trackName);
     events.push({ tick: trackState.tick, cmd: "PARAM_SET", args: { target: "WAVE", value: index }, src });
     return;
   }
@@ -3910,6 +3911,19 @@ function emitWave(trackState, events, src, name, diagnostics, trackName) {
   said.add(name);
   pushDiag(diagnostics, "warning", "W_TARGET",
     `'${name}' is a wave; ${head} (${part?.label ?? "this channel"}) has no wave memory, so it is left out`, src, trackName);
+}
+
+// A wave longer than the channel's memory (64 steps on a 32-step chip): every
+// other step plays (ir-player _writeLaneWave), said once per track and wave.
+function warnWaveLen(trackState, name, data, src, diagnostics, trackName) {
+  const { part, head } = trackState;
+  const len = part?.waveLen ?? WAVE.len;
+  if (!data || data.length <= len) return;
+  const said = (trackState.wavesCut ??= new Set());
+  if (said.has(name)) return;
+  said.add(name);
+  pushDiag(diagnostics, "warning", "W_TARGET",
+    `'${name}' is ${data.length} steps; ${head} (${part?.label ?? "this channel"}) has ${len}, so every ${data.length / len === 2 ? "other" : `${data.length / len}th`} step plays`, src, trackName);
 }
 
 // The canonical targets a voice sets: the channel's ALG/FB/AMS/FMS and every
@@ -4435,6 +4449,7 @@ function compileChannelBody(
                 pushDiag(diagnostics, "error", "E_WAVE_VALUE", `:wave takes a wave, not the number ${r.n}`, nodeSrc(valueNode), trackName);
                 break;
               }
+              if (r.data) warnWaveLen(trackState, ":wave", r.data, nodeSrc(valueNode), diagnostics, trackName);
               const args = r.tree
                 ? { target: "WAVE", expr: r.tree }
                 : { target: "WAVE", value: waveIndexOf(trackState.waves, `${trackState.head}@${valueNode.line}:${valueNode.column}`, waveSteps(r.data)) };
@@ -5256,6 +5271,9 @@ function compileChannelBody(
                   trackState.waves,
                 );
                 if (spec && macroStep) spec.step = macroStep;
+                if (target === "WAVE")
+                  for (const ix of new Set(spec?.steps ?? []))
+                    if (trackState.waves?.[ix]) warnWaveLen(trackState, trackState.waves[ix].name, trackState.waves[ix].data, nodeSrc(rest[j + 1]), diagnostics, trackName);
                 if (
                   spec &&
                   op &&

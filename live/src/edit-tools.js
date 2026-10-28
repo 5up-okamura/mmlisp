@@ -699,7 +699,7 @@ function waveSubjectOf(def, name, starts, waves) {
   const k = body.findIndex((n) => n.kind === "atom" && n.value === ":wave");
   const at = k >= 0 ? body[k + 1] : null;
   const literal = at?.kind === "list" && at.bracket === "[]" ? literalSteps(at, starts) : null;
-  const whole = literal?.values.length === WAVE.len;
+  const whole = WAVE.lens.includes(literal?.values.length);
   // A curve is read here, as the text has it now; one it cannot read alone,
   // or an import's wave, comes compiled (`waves`).
   const curve = at?.kind === "list" && at.bracket === "()" ? waveCurveSteps(at) : null;

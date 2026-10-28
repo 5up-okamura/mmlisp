@@ -1,10 +1,16 @@
 ; fc: the Disk System's wavetable — wave1 playing a 32-step def-wave (each
-; step held twice in its 64), its gain as :vel, and its modulation unit:
+; step held twice in its 64) and a 64-step one whole, its gain as :vel, and
+; its modulation unit:
 ; the song's :lfo-wave table (a def), :lfo-pmd depth and :lfo-freq rate, a
 ; slow vibrato, then swept up to an FM-like bend. VGM carries it (0xB4,
 ; the 2A03's clock with bit 31).
 (def-score :target fc :title "fc fds")
 (def-wave tri :wave (triangle -128..127))
+(def-wave sine64 :wave [0 12 25 37 49 60 71 81 90 98 106 112 117 122 125 126
+                    127 126 125 122 117 112 106 98 90 81 71 60 49 37 25 12
+                    0 -12 -25 -37 -49 -60 -71 -81 -90 -98 -106 -112 -117 -122 -125 -126
+                    -127 -126 -125 -122 -117 -112 -106 -98 -90 -81 -71 -60 -49 -37 -25 -12])
 (def vib [1 1 1 1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 1])
-(sqr1 :tempo 120 :len 4 _ _ c e |)
-(wave1 tri :lfo-wave vib :lfo-freq 20 :len 4 c :vel 10 e :lfo-pmd 8 g :lfo-freq (linear 20..400 :len 4) :lfo-pmd 30 c |)
+(sqr1 :tempo 120 :len 4 _ _ c e | c e g e |)
+(wave1 tri :lfo-wave vib :lfo-freq 20 :len 4 c :vel 10 e :lfo-pmd 8 g :lfo-freq (linear 20..400 :len 4) :lfo-pmd 30 c |
+  :lfo-pmd 0 sine64 c (macro :wave [sine64 tri #sus sine64]) e g sine64 c |)

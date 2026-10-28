@@ -2339,12 +2339,23 @@ export class IRPlayer {
     // modulation) takes the song's LFO words it has: a value, or a sweep a
     // frame at a time; the FDS's table whole. Through its lane, so an
     // optional chip (the FDS) is started before its first write.
+    // `+`, `*` and a `$value` (PARAM_ADD / _MUL / _FROM_VAL) are a value
+    // read off the word as last written.
     const lfoLane = this._toneEnc.findIndex((l) => l?.enc.lfoFreq);
-    const lfoWord = lfoLane >= 0 && /^PARAM_(SET|SWEEP)$/.test(ev.cmd) ? WAVE_LFO_WORDS[ev.args?.target] : null;
+    const lfoWord = lfoLane >= 0 && /^PARAM_/.test(ev.cmd) ? WAVE_LFO_WORDS[ev.args?.target] : null;
     if (lfoWord && this._toneEnc[lfoLane].enc[lfoWord]) {
       const write = (v, t) => this._psgWrites(this._lane(lfoLane, (e) => e[lfoWord](v)), t);
-      if (lfoWord === "lfoTable") write(ev.args?.table ?? [], when);
-      else this._writeSongRate(ev, when, this._waveLfo[lfoWord] ?? 0, (v, t) => write((this._waveLfo[lfoWord] = v), t));
+      const cur = this._waveLfo[lfoWord] ?? 0;
+      const a = ev.args ?? {};
+      if (lfoWord === "lfoTable") { if (ev.cmd === "PARAM_SET") write(a.table ?? [], when); }
+      else if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP")
+        this._writeSongRate(ev, when, cur, (v, t) => write((this._waveLfo[lfoWord] = v), t));
+      else {
+        const v = ev.cmd === "PARAM_ADD" ? cur + Number(a.delta ?? 0)
+          : ev.cmd === "PARAM_MUL" ? cur * Number(a.factor ?? 1)
+          : ev.cmd === "PARAM_FROM_VAL" ? Number(this._resolveSrc(a.src, when) ?? cur) : null;
+        if (v != null) write((this._waveLfo[lfoWord] = Math.round(v)), when);
+      }
       return;
     }
     if (core !== "fm" && LFO_TARGETS.has(ev.args?.target) && /^PARAM_/.test(ev.cmd))
@@ -5430,7 +5441,7 @@ export class IRPlayer {
   /** Put `data` on wave lane `lane` for the keys, as the def-wave `name` (null: none). */
   previewWave(lane, data, name = null) {
     this._laneWave[lane] = name;
-    this._psgWrites(this._lane(lane, (e, ch) => e.wave?.(ch, data) ?? []), this._audioContext?.currentTime ?? 0);
+    this._psgWrites(this._lane(lane, (e, ch) => e.wave?.(ch, this._fitWave(lane, data)) ?? []), this._audioContext?.currentTime ?? 0);
   }
 
   // The frame a time falls on, on a frame-clocked target: the nearest, a
@@ -5480,7 +5491,13 @@ export class IRPlayer {
   // too (a chip that loads it with the channel off, the PC Engine's, turns it
   // back on in the same writes: the wave starts over from its first step).
   _writeLaneWave(lane, data, when) {
-    this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, data)), when);
+    this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, this._fitWave(lane, data))), when);
+  }
+  // A wave longer than the lane's memory (a 64-step def-wave on a 32-step
+  // chip): every other step (the compiler says so, W_TARGET).
+  _fitWave(lane, data) {
+    const len = this._toneEnc[lane]?.part?.waveLen ?? WAVE.len;
+    return data.length > len ? data.filter((_, i) => i % (data.length / len) === 0) : data;
   }
 
   // A def-wave (metadata.waves) by its index: the lane plays it from `when`.

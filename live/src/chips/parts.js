@@ -56,6 +56,8 @@
 //             while they sound (the Mega Drive's DAC mix, fm6)
 //   waveRam   (voice) → the wave memory a `wave` part's channel plays, where
 //             channels share one (the SCC's 4 and 5)
+//   waveLen   a `wave` part's memory, in steps (32 by default; the FDS's 64):
+//             a longer def-wave plays every other step (W_TARGET)
 //   kit       kit role → its sound: samples built in under those names
 //   checkNote (note, ctx) → the part's rules for one note, after compile
 //   checkScore(ctx) → the part's rules for the whole score
