@@ -136,6 +136,22 @@ export function vrc6Pitch(clock) {
 }
 
 /**
+ * The FDS's (port 4, chips/fds.js) 12-bit pitch, $22 / $23 ($4082 / $4083):
+ * a 64-step cycle is clock × p / 16 / 2^18, on the scope's lane 14
+ * (synth-fc.js); the modulation's bend is not followed.
+ */
+export function fdsPitch(clock) {
+  let p = 0;
+  return {
+    write(port, addr, data, out) {
+      if (port !== 4 || (addr !== 0x22 && addr !== 0x23)) return;
+      p = addr === 0x22 ? (p & 0xf00) | data : (p & 0xff) | ((data & 15) << 8);
+      out[14] = (clock * p) / (16 * 2 ** 18);
+    },
+  };
+}
+
+/**
  * The OPLL's (port 4, chips/ym2413.js) F-numbers: $10+c the low 8 bits,
  * $20+c the top bit and the block, as the chip reads them each sample. Its
  * channels 0-5 draw on lanes 0-5, 6-8 on 15-17 (synth-msx.js); a tone is

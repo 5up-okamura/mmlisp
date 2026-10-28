@@ -654,9 +654,9 @@ write.
 | `VOL`             | 0–31           | Channel fader → carrier TL offset (FM) / attenuator (PSG). 0 = hard mute. |
 | `MASTER`          | 0–31           | Global fader → all FM carrier TLs + all sounding PSG channels. Song-wide: inline only, not a macro target. |
 | `LFO_RATE`        | 0–8            | Reg 0x22 (0 = off, 1–8 = `0x08 \| rate−1`). Song-wide, as `MASTER`. On `x68k`: 0 both depths 0, 1–8 the nearest LFRQ at depth 127. |
-| `LFO_FREQ`        | 0–255          | `x68k`: the YM2151's LFRQ (reg 0x18). Song-wide, as `MASTER`. |
-| `LFO_PMD` / `LFO_AMD` | 0–127      | `x68k`: the LFO's pitch / level depth (reg 0x19, bit 7 set / clear). Song-wide. |
-| `LFO_WAVE`        | 0–3            | `x68k`: the LFO's waveform (reg 0x1B bits 1–0): saw, square, triangle, noise. Song-wide. |
+| `LFO_FREQ`        | 0–255          | `x68k`: the YM2151's LFRQ (reg 0x18). `pce`: the HuC6280's LFO speed. `fc`: the FDS's modulation rate, 0–4095 ($4086/$4087). Song-wide, as `MASTER`. |
+| `LFO_PMD` / `LFO_AMD` | 0–127      | `x68k`: the LFO's pitch / level depth (reg 0x19, bit 7 set / clear). `fc`: `LFO_PMD` the FDS's modulation depth, 0–63 ($4084). Song-wide. |
+| `LFO_WAVE`        | 0–3            | `x68k`: the LFO's waveform (reg 0x1B bits 1–0): saw, square, triangle, noise. `fc`: no `value` but `table`, the FDS's modulation table — 32 steps, each `0`, `±1`, `±2`, `±4` or `"reset"` ($4088). Song-wide. |
 | `FM_NOISE`        | 0–1            | `x68k` fm8's `:mode`: 1 noise (reg 0x0F bit 7, NE: its fourth operator the noise), 0 tone. |
 | `VAL0`–`VAL15`    | −32768–32767   | Value slot n (`:name` of a `def-val`, language.md §8). Song-wide, as `MASTER`; no register. |
 | `FM_ALG`          | 0–7            | B0 bits 2–0.                                                 |

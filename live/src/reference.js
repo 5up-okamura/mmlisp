@@ -77,8 +77,8 @@ export const REFERENCE = [
   },
   {
     name: ':lfo-freq', aliases: [':lfo-pmd', ':lfo-amd', ':lfo-wave'], cat: 'score', section: '§19', tracks: null,
-    syntax: ':lfo-freq 0–255  ·  :lfo-pmd 0–127  ·  :lfo-amd 0–127  ·  :lfo-wave saw | square | triangle | noise',
-    summary: 'x68k: the YM2151\'s LFO, song-wide — its frequency, how deep it moves pitch and level, and its waveform. A voice takes it through :fms and :ams as on the OPN. pce: :lfo-freq is the HuC6280\'s LFO speed (larger faster); wave1 takes it with :fms 0–3, its shape and speed are wave2\'s.',
+    syntax: ':lfo-freq 0–255  ·  :lfo-pmd 0–127  ·  :lfo-amd 0–127  ·  :lfo-wave saw | square | triangle | noise  ·  fc: :lfo-wave [32 steps]',
+    summary: 'x68k: the YM2151\'s LFO, song-wide — its frequency, how deep it moves pitch and level, and its waveform. A voice takes it through :fms and :ams as on the OPN. pce: :lfo-freq is the HuC6280\'s LFO speed (larger faster); wave1 takes it with :fms 0–3, its shape and speed are wave2\'s. fc: the FDS\'s modulation of wave1 — :lfo-wave a table of 32 steps (0 1 2 4 -1 -2 -4 or reset) added up in a counter, :lfo-pmd 0–63 its depth, :lfo-freq 0–4095 its rate.',
     insert: ':lfo-freq 200',
     example: '(def-score :target x68k)\n(fm1 :lfo-freq 200 :lfo-pmd 40 :lfo-wave triangle :fms 4 :len 2 c e)',
   },
@@ -136,7 +136,7 @@ export const REFERENCE = [
   {
     name: 'wave1–wave6', aliases: ['wave1', 'wave2', 'wave3', 'wave4', 'wave5', 'wave6', 'scc', 'wavetable'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target msx) (wave1 name …)',
-    summary: 'msx: the SCC\'s five wavetable channels, wave1–wave5; pce: the HuC6280\'s six. Each plays the def-wave named in it (a square until then) — at a 4-bit volume on the SCC, where wave4 and wave5 share one wave memory; at a 5-bit one on pce, where a wave named under a note starts it over.',
+    summary: 'msx: the SCC\'s five wavetable channels, wave1–wave5; pce: the HuC6280\'s six; fc: wave1, the Disk System\'s one (64 steps of 6 bits: a 32-step def-wave each step twice, its gain 0–32; its modulation the song\'s :lfo-wave / :lfo-pmd / :lfo-freq). Each plays the def-wave named in it (a square until then) — at a 4-bit volume on the SCC, where wave4 and wave5 share one wave memory; at a 5-bit one on pce, where a wave named under a note starts it over.',
     insert: '(wave1 :len 8 c e g e)',
     example: '(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(wave1 saw :len 8 c e g > c)',
   },

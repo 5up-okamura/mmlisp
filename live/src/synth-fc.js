@@ -35,10 +35,23 @@
 // frequency control's halt stops them, its 16× / 256× shift their periods.
 // Its DAC is linear, a pulse at full about a 2A03 pulse at full (nesdev),
 // and inverted against the 2A03's; its channels go to the scope at 11-13.
+//
+// The Disk System's wavetable (port 4, chips/fds.js), from nesdev's FDS
+// audio page: every 16 clocks its modulation unit adds its rate to a 12-bit
+// accumulator and, on each carry, applies its table's next half-step (each
+// of the 32 entries twice) to a 7-bit signed counter; the counter times the
+// depth scales the pitch (nesdev's arithmetic, rounding and all), which the
+// wave unit adds to a 24-bit accumulator whose top six bits are the step.
+// The output is the step's level times the gain (stopping at 32) times the
+// master volume, held while the memory is open to writes; at full it is
+// 2.4 times a 2A03 pulse at full (nesdev), through its ~2 kHz low-pass, on
+// the scope's lane 14. Its volume and modulation envelopes are not run: the
+// toolchain writes the gains direct.
 // ---------------------------------------------------------------------------
 
 import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "./chips/rp2a03.js";
-import { pitchLatches, fcPitch, vrc6Pitch } from "./scope-pitch.js";
+import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch } from "./scope-pitch.js";
+import { fdsRegister } from "./chips/fds.js";
 
 const CLOCK = rp2a03.clock;
 const CLOCKS_PER_SAMPLE = 32;
@@ -52,10 +65,17 @@ const MASTER_OUTPUT_GAIN = 1.6;
 // The scope's taps, on the page's scale (index.html SCOPE_DISPLAY_GAIN).
 const SCOPE_SCALE = 0.6;
 
-export const SCOPE_LANES = 14;
+export const SCOPE_LANES = 15;
 const PSG_LANE = 6; // the page's first PSG lane
-const CHANNELS = 8; // pulse 1, pulse 2, the triangle, the noise, the DMC, the VRC6's pulses and saw
+const CHANNELS = 9; // pulse 1, pulse 2, the triangle, the noise, the DMC, the VRC6's pulses and saw, the FDS
 const VRC6_PORT = 3;
+const FDS_PORT = 4;
+// The FDS at full (level 63, gain 32, master full) is 2.4 times a 2A03
+// pulse at full (nesdev), its polarity the 2A03's; its ~2 kHz low-pass.
+const FDS_STEP = (2.4 * 95.88) / (8128 / 15 + 100) / (63 * 32);
+const FDS_LPF = 1 - Math.exp((-2 * Math.PI * 2000) / FC_NATIVE_SAMPLE_RATE);
+const FDS_MASTER = [1, 2 / 3, 2 / 4, 2 / 5];
+const FDS_MOD_DELTA = [0, 1, 2, 4, null, -4, -2, -1]; // null: the counter back to 0
 // The VRC6's DAC, a step's share of the mix: a pulse at 15 where a 2A03
 // pulse at 15 is (nesdev), the saw's five bits on the same scale.
 const VRC6_STEP = 95.88 / (8128 / 15 + 100) / 15;
@@ -430,6 +450,102 @@ class Vrc6 {
   }
 }
 
+// The Disk System's sound (port 4: VGM 0xB4's numbering, chips/fds.js).
+class Fds {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.wave = new Uint8Array(64);
+    this.gain = 0;
+    this.pitch = 0;
+    this.waveHalt = false;
+    this.waveAcc = 0;
+    this.waveOpen = false; // $4089 bit 7: the memory writable, the output held
+    this.master = 0;
+    this.held = 0;
+    this.modGain = 0;
+    this.modCounter = 0;
+    this.modFreq = 0;
+    this.modHalt = false;
+    this.modAcc = 0;
+    this.modPos = 0; // the half-step, 0-63 (each entry twice)
+    this.modTable = new Uint8Array(32);
+    this.tick = 0; // CPU clocks into the next 16
+  }
+
+  write(addr, data) {
+    const reg = fdsRegister(addr);
+    if (reg >= 0x4040 && reg < 0x4080) {
+      if (this.waveOpen) this.wave[reg - 0x4040] = data & 63;
+      return;
+    }
+    switch (reg) {
+      case 0x4080: if (data & 0x80) this.gain = data & 63; break; // direct (no envelope)
+      case 0x4082: this.pitch = (this.pitch & 0xf00) | data; break;
+      case 0x4083:
+        this.pitch = (this.pitch & 0xff) | ((data & 15) << 8);
+        this.waveHalt = !!(data & 0x80);
+        if (this.waveHalt) this.waveAcc = 0;
+        break;
+      case 0x4084: if (data & 0x80) this.modGain = data & 63; break;
+      case 0x4085: this.modCounter = ((data & 0x7f) << 25) >> 25; break;
+      case 0x4086: this.modFreq = (this.modFreq & 0xf00) | data; break;
+      case 0x4087:
+        this.modFreq = (this.modFreq & 0xff) | ((data & 15) << 8);
+        this.modHalt = !!(data & 0x80);
+        if (this.modHalt) this.modAcc = 0;
+        break;
+      case 0x4088:
+        // Open while the unit is halted: the entry at the position, which moves on.
+        if (this.modHalt) {
+          this.modTable[this.modPos >> 1] = data & 7;
+          this.modPos = (this.modPos + 2) & 63;
+        }
+        break;
+      case 0x4089:
+        this.waveOpen = !!(data & 0x80);
+        this.master = data & 3;
+        break;
+      default: break;
+    }
+  }
+
+  // The pitch the wave unit adds, the modulation's counter × depth applied
+  // (nesdev's arithmetic).
+  _wavePitch() {
+    let t = this.modCounter * this.modGain;
+    if (t & 0x0f && !(t & 0x800)) t += 0x20;
+    t += 0x400;
+    t = (t >> 4) & 0xff;
+    return (this.pitch * t) & 0xfffff;
+  }
+
+  // The level (0 .. 63 × 32) averaged over `clocks`.
+  run(clocks) {
+    let acc = 0, n = 0;
+    this.tick += clocks;
+    while (this.tick >= 16) {
+      this.tick -= 16;
+      if (!this.modHalt && this.modFreq) {
+        this.modAcc += this.modFreq;
+        if (this.modAcc >= 0x1000) {
+          this.modAcc &= 0xfff;
+          const d = FDS_MOD_DELTA[this.modTable[this.modPos >> 1]];
+          this.modCounter = d === null ? 0 : (((this.modCounter + d) & 0x7f) << 25) >> 25;
+          this.modPos = (this.modPos + 1) & 63;
+        }
+      }
+      if (!this.waveHalt && !this.waveOpen) this.waveAcc = (this.waveAcc + this._wavePitch()) & 0xffffff;
+      if (!this.waveOpen) this.held = this.wave[this.waveAcc >>> 18] * Math.min(32, this.gain) * FDS_MASTER[this.master];
+      acc += this.held;
+      n++;
+    }
+    return n ? acc / n : this.held;
+  }
+}
+
 export class FcSynth {
   static async create(outputSR) {
     return new FcSynth(outputSR);
@@ -437,9 +553,11 @@ export class FcSynth {
 
   constructor(outputSR) {
     this._outputSR = outputSR;
-    this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK));
+    this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK), fdsPitch(CLOCK));
     this._apu = new Apu();
     this._vrc6 = new Vrc6();
+    this._fds = new Fds();
+    this._fdsY = 0; // the FDS's low-pass
     this._lv = new Float32Array(CHANNELS);
     this._x = new Float32Array(CHANNELS + 1);
     this.bus = null; // no FM to hold
@@ -449,7 +567,7 @@ export class FcSynth {
     this._resetResampleState();
   }
 
-  // Index 0 the mix, 1-8 each channel alone (the scope's).
+  // Index 0 the mix, 1-9 each channel alone (the scope's).
   _resetResampleState() {
     this._frac = 0;
     this._dcX = new Float32Array(CHANNELS + 1);
@@ -466,15 +584,18 @@ export class FcSynth {
   reset() {
     this._apu.reset();
     this._vrc6.reset();
+    this._fds.reset();
+    this._fdsY = 0;
     this._resetResampleState();
   }
 
   // The APU's registers are port 0, $4000 + addr; the memory port 1; the
-  // VRC6's port 3.
+  // VRC6's port 3; the FDS's port 4.
   writeYM(port, addr, data) {
     if (port === 0) this._apu.write(addr & 0xff, data & 0xff);
     else if (port === RAM_PORT) this._apu.writeRam(addr & 0xff, data & 0xff);
     else if (port === VRC6_PORT) this._vrc6.write(addr & 0xff, data & 0xff);
+    else if (port === FDS_PORT) this._fds.write(addr & 0xff, data & 0xff);
   }
 
   // The Mega Drive's PSG, DAC and low-pass have no counterpart here.
@@ -503,7 +624,9 @@ export class FcSynth {
     if (clocks) {
       this._apu.run(clocks, lv);
       this._vrc6.run(clocks, lv, 5);
-    } else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac, 0, 0, 0]); // idle: the triangle's held step, the DAC
+      this._fdsY += FDS_LPF * (this._fds.run(clocks) - this._fdsY);
+      lv[8] = this._fdsY;
+    } else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac, 0, 0, 0, this._fdsY]); // idle: the triangle's held step, the DAC
     const x = this._x;
     x[1] = pulseOut(lv[0]);
     x[2] = pulseOut(lv[1]);
@@ -511,12 +634,13 @@ export class FcSynth {
     x[4] = tndOut(0, lv[3], 0);
     x[5] = tndOut(0, 0, lv[4]);
     for (let c = 5; c < 8; c++) x[c + 1] = -lv[c] * VRC6_STEP; // the VRC6's DAC, inverted
-    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]) + x[6] + x[7] + x[8];
+    x[9] = lv[8] * FDS_STEP;
+    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]) + x[6] + x[7] + x[8] + x[9];
     return x;
   }
 
   // `getDacByte` is the contract's and unused; `scope` (SCOPE_LANES arrays)
-  // gets the channels at lanes 6-13, the others silence.
+  // gets the channels at lanes 6-14, the others silence.
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {
     if (scope) for (let c = 0; c < PSG_LANE; c++) scope[c]?.fill(0, 0, count);
     for (let i = 0; i < count; i++) {

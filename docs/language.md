@@ -2353,7 +2353,7 @@ those chips cannot do is a compile error, not a different sound.
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 | `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
-| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle and noise, and the VRC6 cartridge (two pulses, a saw) | VGM (without the VRC6), WAV |
+| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle and noise, the VRC6 cartridge (two pulses, a saw) and the Disk System's wavetable (FDS) | VGM (without the VRC6), WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2847,9 +2847,10 @@ so a drum on `pcm5` punches through a line on `wave5`.
 pages: the duties, the triangle's steps, the noise's rates and LFSR, the
 nonlinear mixer). Its channels are `sqr1` and `sqr2`, the pulses; `tri`,
 the triangle; `noise`; and `pcm1`, the DMC's samples — and the VRC6
-cartridge's `sqr3`, `sqr4` and `saw1` (below). There is no FM, no
-wave memory and no pan (the machine is mono): `fm1`, `wave1`, `:pan` and
-`:noise-rate` are `E_TARGET`. The chip hears the song a frame (1/60 s) at
+cartridge's `sqr3`, `sqr4` and `saw1`, and the Disk System's `wave1`
+(below). There is no FM, no
+pan (the machine is mono): `fm1`, `:pan` and `:noise-rate` are
+`E_TARGET`. The chip hears the song a frame (1/60 s) at
 a time, as on `msx`.
 
 **Pulses.** `sqr1` and `sqr2` take every pitch move a PSG channel has —
@@ -2945,6 +2946,39 @@ audio page; its pulse at full as loud as a 2A03 pulse at full).
 (sqr3 :len 8 :duty 1 e g > c e < :duty 12 g e c e)
 (sqr4 :len 4 (macro :duty [1 2 4 8]) g1)
 (saw1 :len 4 :oct 2 :vel 13.25 c e (glide 8) g (macro :vel (linear 15..0 :len 4)) c)
+```
+
+**FDS.** The Disk System's wavetable is on `fc` when a score names
+**`wave1`**. It plays def-waves as `msx` and `pce` do (`:wave`, a `(macro
+:wave …)`, a wave expression); the chip's memory is 64 steps of 6 bits, so
+a 32-step def-wave plays with each step held twice — the same wave, never
+interpolated. Its pitch is 12 bits (1.79 MHz × n / 16 / 2^18 a cycle: A6,
+1.75 kHz, the highest), with every pitch move a PSG channel has. The level
+is the chip's gain, 0–32, linear, `:vel 15` its top. Its **modulation
+unit** bends the pitch, written with the song's LFO words as the PC
+Engine's LFO is: **`:lfo-wave [s …]`** is its table, 32 steps of the
+chip's — `0`, `1`, `2`, `4`, `-1`, `-2`, `-4`, or `reset` — added up, each
+twice, in a 7-bit signed counter (wrapping, as on the chip; `reset` puts it
+back to 0), so a table whose steps do not sum to 0 drifts from pass to
+pass; **`:lfo-pmd 0–63`** is the depth, the counter times it scaling the
+pitch (deep at once: at 20 a counter of ±16 is about ±30 %); and
+**`:lfo-freq 0–4095`** its rate, a pass of the table every 64 × 16 × 4096
+/ (1.79 MHz × n) seconds — 20 a vibrato of about 8.5 Hz, the hundreds a
+rough, FM-like timbre. They are song-wide (any track may write them), take
+a value and a curve (`:lfo-freq` and `:lfo-pmd`), and start at 0; a table
+written starts the counter at 0. A def names a table (`(def vib [1 1 …])`).
+`:lfo-wave`'s OPM waveforms are `E_PARAM_VALUE` here, a table elsewhere.
+The chip's volume and modulation envelopes are not the language's. VGM
+carries the FDS (the 2A03's 0xB4, its clock's bit 31); Play and WAV run
+an FDS of the toolchain's own (nesdev's FDS audio page: its modulation's
+arithmetic, its ~2 kHz low-pass; at full 2.4 times a 2A03 pulse at full).
+
+```lisp
+(def-score :target fc)
+(def-wave tri :wave (triangle -128..127))
+(def vib [1 1 1 1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 1])
+(wave1 tri :lfo-wave vib :lfo-freq 20 :len 4 c e :lfo-pmd 8 g
+  :lfo-freq (linear 20..400 :len 4) :lfo-pmd 30 c)
 ```
 
 **Effects.** `def-se` is the Mega Drive driver's; an `fc` score has none

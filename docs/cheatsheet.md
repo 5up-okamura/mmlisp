@@ -284,6 +284,10 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `sqr3` / `sqr4` pulses (`:duty` the nearest of 1–8 sixteenths, a wider
   one its mirror), `saw1` (`:vel` its 6-bit rate, 15 = 63; above 13.25 the
   saw wraps, harsher, not louder); VGM leaves them out (WAV plays them).
+  The Disk System when named: `wave1` plays def-waves (a 32-step one each
+  step twice in its 64), its gain 0–32 as `:vel`; its modulation is the
+  song's `:lfo-wave [32 steps of 0 1 2 4 -1 -2 -4 reset]`, `:lfo-pmd 0–63`
+  (depth), `:lfo-freq 0–4095` (rate). VGM carries it.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

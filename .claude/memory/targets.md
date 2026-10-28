@@ -241,9 +241,32 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
 Order: 1. VRC6 on fc (**built 2026-10-28**); 2. Furnace's VRC6 into it;
 3. NSF in (reversing the "no NSF" ruling: the 6502 is an import-only tool,
 as drv/tools' Z80 — nothing reaches the score or a driver); 4. the FDS
-(Nintendo's own: wanted as much as the VRC6). The VRC6 is the reason for
+(Nintendo's own: wanted as much as the VRC6; **built 2026-10-28**, but
+the 64-step def-wave). 2 and 3 are the import session's (the user,
+2026-10-28: this session is the chips' playback). The VRC6 is the reason for
 NSF: VGM has no VRC6 slot, so an NSF is the only register-level source of
 its songs.
+
+**FDS, as built** (chips/fds.js, synth-fc.js Fds, scope-pitch.js
+fdsPitch; language.md §19 fc; tools/tests/fc/fds.mmlisp). Ruled with the
+user 2026-10-28: `wave1`; the modulation is the song's LFO words —
+`:lfo-wave [32 steps of 0 1 2 4 -1 -2 -4 reset]` (the chip's own deltas, so
+Furnace's tables and drifting ones are exact), `:lfo-pmd 0-63`,
+`:lfo-freq 0-4095` (the 12-bit rate, the word's range the part's), inline
+and swept, no per-note macro. Built: port 4 at VGM 0xB4's own numbering
+($20-$3E $4080-, $3F $4023, $40-$7F the memory); the VGM header's 0x84
+bit 31 by the chip's `header` after the 2A03's clock; a 32-step def-wave
+each step held twice (the same wave, the pitch formula fixed); the gain
+0-32 linear; the player's wave-chip LFO hook now takes LFO_PMD / the table
+and sweeps a frame at a time, through the lane (an optional chip starts
+first) — which also fixed pce's `:lfo-freq` sweep (it wrote 0 once).
+Open: **the 64-step def-wave** (the ruling of 2026-10-26: other than 32
+repeated a whole number of times, 64 → 32 a W_TARGET; WAVE.len 32 is in
+the compiler's def-wave reader, waveCombine, curve sampling and the
+player's expressions); not heard in Live; the volume / modulation
+envelopes not emulated (the encoder writes gains direct; an imported VGM's
+envelopes would need them); the mod arithmetic is nesdev's, not held to
+NSFPlay / Mesen.
 
 **VRC6, as built** (chips/vrc6.js, targets/fc.js, synth-fc.js Vrc6,
 scope-pitch.js vrc6Pitch; language.md §19 fc; tools/tests/fc/vrc6.mmlisp):

@@ -1751,6 +1751,30 @@ const SET_ONLY_TARGETS = new Set(["ENV_SEMI", "ENV_DETUNE"]);
 // and a pan, which each chip reads at its own resolution (chips/parts.js).
 const FRACTIONAL_TARGETS = new Set(["ENV_RATE", "PAN"]);
 
+// The FDS's `:lfo-wave` (chips/fds.js): its modulation table, 32 of the
+// chip's steps — 0, ±1, ±2, ±4, or `reset` (the counter back to 0) — as a
+// PARAM_SET carrying them (`table`). Elsewhere `:lfo-wave` is the OPM's
+// waveform, and a table there is an error.
+const LFO_TABLE_STEPS = new Set(["0", "1", "2", "4", "-1", "-2", "-4", "reset"]);
+const LFO_TABLE_LEN = 32;
+function writeLfoTable(sym, op, node, machine, push, diagnostics, src, trackName) {
+  const err = (msg, at = src) => pushDiag(diagnostics, "error", "E_PARAM_VALUE", msg, at, trackName);
+  if (!machine.parts.some((p) => p.lfoTable))
+    return err(`${sym} [steps] is the FDS's modulation table (:target fc, wave1); here ${sym} is saw | square | triangle | noise`);
+  if (op) return err(`${sym} is a table; it has no '${op}' form`);
+  if (node?.kind !== "list" || node.bracket !== "[]")
+    return err(`the FDS's ${sym} is a table of ${LFO_TABLE_LEN} steps: 0, 1, 2, 4, -1, -2, -4 or reset`);
+  const items = node.items.filter((n) => n.kind !== "comment");
+  const table = [];
+  for (const n of items) {
+    const v = atomValue(n);
+    if (!LFO_TABLE_STEPS.has(String(v))) return err(`a ${sym} step is 0, 1, 2, 4, -1, -2, -4 or reset, not ${v ?? "a list"}`, nodeSrc(n) ?? src);
+    table.push(v === "reset" ? "reset" : Number(v));
+  }
+  if (table.length !== LFO_TABLE_LEN) return err(`the FDS's ${sym} takes ${LFO_TABLE_LEN} steps, not ${table.length}`, nodeSrc(node) ?? src);
+  push("PARAM_SET", { target: "LFO_WAVE", table });
+}
+
 // Write a hardware parameter from a readValue result. An operator reads the
 // parameter itself: `:tl1+ e` is `(+ $tl1 e)` and `:tl1* e` is `(* $tl1 e)`,
 // lowered like any other runtime expression (PARAM_ADD / PARAM_MUL).
@@ -4533,6 +4557,11 @@ function compileChannelBody(
               if (!op && rawVal === "none" && TARGET_SYMBOLS[target]?.none === undefined) {
                 // Stop a running inline PARAM_SWEEP, freezing the value.
                 push("PARAM_SWEEP_STOP", { target });
+                break;
+              }
+              if (target === "LFO_WAVE" && (trackState.target.parts.some((p) => p.lfoTable) ||
+                  (items[i]?.kind === "list" && items[i].bracket === "[]"))) {
+                writeLfoTable(val, op, items[i], trackState.target, push, diagnostics, nodeSrc(node), trackName);
                 break;
               }
               if (PCM_POINT_TARGETS.has(target)) {

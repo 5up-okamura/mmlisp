@@ -88,6 +88,8 @@ const SAMPLE_HANDLERS = {
 };
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
 const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
+// The song's LFO words a wave chip's encoder takes (chips/huc6280.js, fds.js).
+const WAVE_LFO_WORDS = { LFO_FREQ: "lfoFreq", LFO_PMD: "lfoPmd", LFO_WAVE: "lfoTable" };
 // Half a millisecond: late enough to sort after every event of its frame,
 // far too early to hear.
 const PCM_SWEEP_AFTER = 0.0005;
@@ -218,6 +220,7 @@ export class IRPlayer {
     this._psgChip = this._psgChipOf(this._target); // null: a target with no PSG
     this._toneEnc = this._toneEncodersOf(this._target, this._psgChip);
     this._chipsStarted = new Set(); // the optional chips written to this run (_lane)
+    this._waveLfo = {}; // a wave chip's LFO words as last written (_initDefaultVoices)
     // Each track's route (_assignChannel): { core, part, lane } — the core
     // that plays it, its part, and its lane in that core (the FM channel, the
     // PSG lane, the sample voice).
@@ -2332,10 +2335,16 @@ export class IRPlayer {
     // a PSG or PCM track's write goes where an FM track's does, as the
     // driver takes it from any track.
     const core = ev._route.core;
-    // A wave chip with an LFO of its own (the PC Engine's) takes its speed.
-    const waveLfo = this._toneEnc.find((l) => l?.enc.lfoFreq)?.enc;
-    if (waveLfo && ev.args?.target === "LFO_FREQ" && /^PARAM_/.test(ev.cmd)) {
-      this._psgWrites(waveLfo.lfoFreq(Number(ev.args?.value ?? 0)), when);
+    // A wave chip with an LFO of its own (the PC Engine's, the FDS's
+    // modulation) takes the song's LFO words it has: a value, or a sweep a
+    // frame at a time; the FDS's table whole. Through its lane, so an
+    // optional chip (the FDS) is started before its first write.
+    const lfoLane = this._toneEnc.findIndex((l) => l?.enc.lfoFreq);
+    const lfoWord = lfoLane >= 0 && /^PARAM_(SET|SWEEP)$/.test(ev.cmd) ? WAVE_LFO_WORDS[ev.args?.target] : null;
+    if (lfoWord && this._toneEnc[lfoLane].enc[lfoWord]) {
+      const write = (v, t) => this._psgWrites(this._lane(lfoLane, (e) => e[lfoWord](v)), t);
+      if (lfoWord === "lfoTable") write(ev.args?.table ?? [], when);
+      else this._writeSongRate(ev, when, this._waveLfo[lfoWord] ?? 0, (v, t) => write((this._waveLfo[lfoWord] = v), t));
       return;
     }
     if (core !== "fm" && LFO_TARGETS.has(ev.args?.target) && /^PARAM_/.test(ev.cmd))
@@ -6413,6 +6422,7 @@ export class IRPlayer {
       if (!chip.optional) for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     this._fmEnc.reset?.(); // an encoder that keeps the chip's state starts over
     for (const enc of this._queuedEncoders()) enc.reset?.();
+    this._waveLfo = {}; // a wave chip's LFO words as last written (a sweep with no :from starts there)
     // Every channel starts on `init-fm`, the part's sine (chips/fm-words.js
     // fmInitVoice): the OPN's ALG 7, FB 0, all four operators AR 31, DR 0,
     // SL 0, RR 15, TL 0, MUL 1, DT 0 — the driver's boot patch (driver.md
