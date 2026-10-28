@@ -236,6 +236,47 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   word is in sixteenths, as ruled — two scales under one name; raise it if
   it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3).
 
+## The Famicom's expansions — ruled 2026-10-28 (the user), not built yet
+
+Order: 1. VRC6 on fc; 2. Furnace's VRC6 into it; 3. NSF in (reversing the
+"no NSF" ruling: the 6502 is an import-only tool, as drv/tools' Z80 —
+nothing reaches the score or a driver); 4. the FDS (Nintendo's own: wanted
+as much as the VRC6). The VRC6 is the reason for NSF: VGM has no VRC6 slot,
+so an NSF is the only register-level source of its songs.
+
+**VRC6 — the design (proposed, to be confirmed before building).** Facts
+from nesdev's VRC6 audio page (fetched 2026-10-28): $9000-$9002 pulse 1,
+$A000-$A002 pulse 2, $B000-$B002 saw, $9003 frequency control (write 0
+at start). $x000: M (bit 7, 100 % duty) DDD (duty, step <= D of a 16-step
+counter: 1/16-8/16) VVVV (volume); $x001 period low; $x002 bit 7 enable
+(clearing it resets the duty, zeroes the saw's accumulator), bits 3-0
+period high (12-bit). Pulse f = CPU / (16 (t + 1)), saw f = CPU / (14 (t
++ 1)). The saw adds its rate A (6 bits) to an 8-bit accumulator each step,
+resets on the 7th, outputs the high 5 bits; A > 42 wraps (distorts). The
+DAC is linear (unlike the 2A03's), a 6-bit sum of the two 4-bit pulses and
+the saw's 5 bits; a pulse at full ≈ a 2A03 pulse at full, inverted.
+Mapper 26 boards (Madara, Esper Dream 2) swap A0/A1 — an NSF's own matter.
+- A cartridge chip as the msx's SCC / FM-PAC: on fc when the score names
+  its channels — `sqr3` `sqr4` (the pulses: the 2A03's part kind, its own
+  encoder) and `saw` (one, as `tri` and `noise` are one).
+- `:duty` in sixteenths takes the nearest of 1-8 (a wider duty its mirror,
+  16 − d, which sounds the same); M (100 %) is not reachable.
+- The saw: a new part kind. Its level is the rate A. **Open (the user
+  asked, 2026-10-28):** 0-42 as `:vel` was agreed, then Furnace was found
+  not to stop at 42 — vrc6.cpp writes the 6-bit volume as it is (GET_VOLMAX
+  63, a channel starting at 63) and its core (vgsound_emu vrcvi) keeps an
+  8-bit accumulator that wraps, so a Furnace VRC6 saw at its default plays
+  wrapped. Clamping an import to 42 would change those songs' timbre: the
+  rate's top (43-63) has to be reachable, and how the language says it is
+  the user's ruling.
+- A rest keys off by the enable bit (a note starts its duty / saw over, as
+  drivers do); the period's high bits written on a change only.
+- VGM has no VRC6: **ruled — the VGM export leaves the VRC6's channels
+  out and says so** (WAV and the preview play them). The emulator: our own, held to
+  nesdev and Mesen's source (fetch it) for the mix against the 2A03.
+- Imports to md: the VRC6 pulses and saw onto FM stand-ins
+  (presets/waveforms), as other non-Genesis channels.
+
 ## FM-PAC: how to build it (findings, 2026-10-25)
 
 - **Stages.** All four are built (1 engine, 2 language and player, 3 the

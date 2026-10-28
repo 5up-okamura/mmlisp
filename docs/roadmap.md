@@ -143,10 +143,12 @@ samples) — language.md §19. Next:
 
 1. **Famicom: songs in.** A VGM's 2A03 and DefleMask / Furnace NES
    modules import as `fc` (guide.md), their DPCM samples with them,
-   then ppmck's MML if a composer's files call for it (no NSF: a 6502 is
-   too much to carry). Expansions are decided by
-   voice class, not one by one: the 5B is the SSG profile, the VRC7 the
-   OPLL's, the FDS the wavetable class. VRC6, N163 and MMC5 have no VGM block, which bounds the set.
+   then ppmck's MML if a composer's files call for it. Expansions are
+   decided by voice class, not one by one: the 5B is the SSG profile, the
+   VRC7 the OPLL's, the FDS the wavetable class. Next, in order: the VRC6
+   on `fc` (its two pulses and its saw), Furnace's VRC6 modules into it,
+   NSF in (a 6502 run for its register writes, import-only — the one
+   source of a VRC6 song's writes, as VGM has no VRC6), then the FDS.
 
 Emulators for the preview: ymfm (BSD) covers the YM2608, YM2151, YM2413,
 Y8950 and the SSG in one library, built to WASM beside the Nuked cores.
