@@ -373,7 +373,18 @@ function ayChip(name, clock, { ev, prefix = name }) {
   // started over with it (an R13 write), as an MMLisp key-on starts it.
   const SETUP = SETUP_T;
   const last = [null, null, null]; // each channel's last note event
-  let r13At = -Infinity;
+  const lastNoise = [null, null, null]; // and its noise row's
+  let r13At = -Infinity, r6At = -Infinity;
+  // A note on the noise alone struck again: its level and a new noise period
+  // written together (in either order) — the rate is the note's, as the
+  // 2A03's. (A period moved alone is another channel's sweep, or one under
+  // the note: not followed.) In the note's setup burst, the note's own.
+  const noiseStrike = (c, t) => {
+    if (last[c] && t - last[c].t <= SETUP) {
+      last[c].noiseHz = noiseHz();
+      if (lastNoise[c]) lastNoise[c].noiseHz = noiseHz();
+    } else start(c, t, "retrig");
+  };
   const amend = (c, t, fresh) => {
     const e = last[c];
     if (!e || t - e.t > SETUP) return false;
@@ -399,7 +410,7 @@ function ayChip(name, clock, { ev, prefix = name }) {
     ev(key(c), (last[c] = { t, kind, pitch: pitchNow(c), vel: velAt(c), ssg: g, ...(noisy ? { noiseHz: noiseHz() } : {}),
       ...(g.env != null && t - r13At <= SETUP ? { fresh: true } : {}), kindOf: "psg" }));
     if (g.mix === "noise")
-      ev(noiseKey, { t, kind: wasNoise[c] ? kind : "on", pitch: 60, vel: velAt(c), noiseHz: noiseHz(), ssg: g, kindOf: "noise" });
+      ev(noiseKey, (lastNoise[c] = { t, kind: wasNoise[c] ? kind : "on", pitch: 60, vel: velAt(c), noiseHz: noiseHz(), ssg: g, kindOf: "noise" }));
     wasNoise[c] = g.mix === "noise";
   };
   const update = (c, t) => {
@@ -418,8 +429,14 @@ function ayChip(name, clock, { ev, prefix = name }) {
     write(a, d, t) {
       if (a > 15) return;
       const prev = a >= 8 && a <= 10 ? amp(a - 8) : 0;
+      const was6 = r[6] & 31;
       r[a] = d;
-      if (a < 6) {
+      if (a === 6 && (d & 31) !== was6) {
+        // (Written unchanged, as a driver writing every register each frame
+        // does, it is nothing.)
+        r6At = t;
+        for (let c = 0; c < 3; c++) if (on[c] && mixOf(c) === "noise" && t - ampAt[c] <= SETUP) noiseStrike(c, t);
+      } else if (a < 6) {
         const c = a >> 1;
         tpAt[c] = t;
         if (on[c] && (mixOf(c) === "tone" || mixOf(c) === "both"))
@@ -430,6 +447,7 @@ function ayChip(name, clock, { ev, prefix = name }) {
         const c = a - 8;
         ampAt[c] = t;
         if (on[c] && amp(c) > 0 && sig(c) !== ssgAt[c]) update(c, t);
+        else if (on[c] && amp(c) > 0 && mixOf(c) === "noise" && t - r6At <= SETUP) noiseStrike(c, t);
         else if (on[c] && mixOf(c) !== "noise" && tpAt[c] === t && amp(c) > 0) start(c, t, "retrig");
         else if (on[c] && amp(c) > prev + 2) send(c, { t, kind: "retrig", vel: velAt(c) });
         else if (on[c] && amp(c) > 0) send(c, { t, kind: "vel", vel: velAt(c) });

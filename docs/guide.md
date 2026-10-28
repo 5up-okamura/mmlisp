@@ -1893,7 +1893,10 @@ them: a key-on starts a note, a key-off ends it.
   msx`) — each the default when that chip plays every channel. There the
   SSG is the machine's own: each channel keeps its noise (`:mode noise`, or
   `:mode both` with the tone) with the song's `:noise-rate`, so the shared
-  noise row is not offered, and its hardware envelope comes back as `:env`
+  noise row is not offered — a note on the noise alone struck again where
+  its level and a new noise period are written together (a drum stepping
+  through two colours is two notes; a period another channel sweeps is
+  not one) — and its hardware envelope comes back as `:env`
   — the shape — and the song's `:env-rate`: `note` where the period follows
   the notes (a buzzer, `:mode env`, at its own pitch; a tone whose period
   sets it, with `:env-semi` / `:env-detune`), else the cycle in Hz. A note
