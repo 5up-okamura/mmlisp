@@ -45,5 +45,5 @@ Rules:
 - [live-app.md](live-app.md) — **the live app**: what was decided against
   (not to be proposed again) and working lessons.
 - [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings
-  for SCC / OPLL and the restructure plan (and its state) that comes before
-  them.
+  and open items per machine (pc88 … the PC Engine, the Famicom and its six
+  expansion chips: their ports, lanes and what is not yet heard).

@@ -81,9 +81,8 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
 Build it as pce was built (chips/huc6280.js, targets/pce.js, synth-pce.js,
 tools/tests/pce are the pattern), in stages: 1. pulses, triangle, noise;
 2. DPCM; 3. DefleMask / Furnace NES modules as fc (import-tracker.js
-already reads them) and VGM 0xB4. Expansions after, by voice class (FDS
-the only one with a VGM slot: APU clock bit 31; VRC7 as a YM2413 needs its
-own ROM voices, decide then). Facts are from memory: hold every table to
+already reads them) and VGM 0xB4. The expansions: their own section
+below. Facts are from memory: hold every table to
 nesdev and Mesen / MAME (fetch them) before writing the emulator.
 
 - Channels `sqr1` `sqr2` `tri` `noise` `pcm1`; VGM: NES APU clock at $84,
@@ -196,14 +195,8 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   with a #rel (`silentAfter` in assignEnvelopes; Kirby 03 SQ1's extra
   frames 222 → 50). Open: those 50 are a staccato note held to the grid's
   unit (2.7 frames sounding as a 32nd's 5 at Kirby's tempo) at its
-  sustain level; Gimmick's Sunsoft 5B is read as an
-  AY-3-8910 (on msx the 2A03 takes sqr1–3 and the AY is dropped; on md the
-  triangle is fm1's wave-triangle and the 5B's channels fill sqr3 / FM);
-  VRC7 (YM2413 with clock bit 31): its ROM (Nuked-OPLL patch_ds1001,
-  checked by packing patch_ym2413 the same way = ym2413.js's ROM) as
-  vrc7-N def-fms on voiceAs4op at the channel volume (no lift to the
-  loudest key-on: with the real voices it put the FM over the DPCM);
-  Kirby's DPCM not A/B'd.
+  sustain level; Kirby's DPCM not A/B'd. (A VGM's 5B and VRC7 land on
+  fc's own chips: the expansions' section.)
 - DefleMask / Furnace NES modules built 2026-10-27 (import-tracker.js, the
   readers' NES channels `chip: "nes"`), read from Furnace's nes.cpp
   (fetched): the noise's register rate 15 − (note & 15) under
@@ -236,111 +229,44 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   word is in sixteenths, as ruled — two scales under one name; raise it if
   it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3).
 
-## The Famicom's expansions — ruled 2026-10-28 (the user)
+## The Famicom's expansions (built 2026-10-28/29)
 
-Order: 1. VRC6 on fc (**built 2026-10-28**); 2. Furnace's VRC6 into it;
-3. NSF in (reversing the "no NSF" ruling: the 6502 is an import-only tool,
-as drv/tools' Z80 — nothing reaches the score or a driver); 4. the FDS
-(Nintendo's own: wanted as much as the VRC6; **built 2026-10-28**, the
-64-step def-wave with it). 2 and 3 are the import session's (the user,
-2026-10-28: this session is the chips' playback). The VRC6 is the reason for
-NSF: VGM has no VRC6 slot, so an NSF is the only register-level source of
-its songs.
+All six are on fc (language.md §19 fc says what the language does): VRC6,
+FDS, MMC5, 5B, VRC7, N163 — any number in one score, each an optional chip
+started at its first write, named by chip (the user, 2026-10-29). NSF in is
+the import session's (a 6502 run, import-only; the one register-level
+source of a VRC6 song).
 
-**The rest, ruled 2026-10-29 (the user)**: MMC5, 5B, VRC7, N163 all on fc,
-in that order, any number in one score (as an NSF), each optional.
-- **Names by chip** (the user: numbers said nothing of which chip):
-  `vrc6-sqr1` `vrc6-sqr2` `vrc6-saw`, `fds-wave`, `mmc5-sqr1` `mmc5-sqr2`,
-  `5b-sqr1`-`5b-sqr3` `5b-noise` (as msx's noise: 5b-sqr3's mixer on
-  noise), `vrc7-fm1`-`vrc7-fm6`, `n163-wave1`-`n163-wave8`; a channel's
-  `label` is its strip's (V1, FDS …).
-- **MMC5**: the two pulses only; its PCM ($5011, one game) left out.
-  **Built 2026-10-29** (chips/mmc5.js on chips/queued-tone.js — the
-  VRC6's encoder moved there too; synth-fc.js Mmc5; port 5; tone lanes
-  15-16, scope 15-16). Open: not heard in Live.
-- **5B built 2026-10-29** (chips/sunsoft-5b.js: the SSG's parts and
-  encoder on port 6, clock CPU/2 — the YM2149's SEL low; synth-fc.js runs
-  ymfm's SSG a sample per 64 CPU clocks; tone lanes 17-20, scope 17-19).
-  ir-player `_psg(encode, method, lane)`: a lane's own chip, or the first
-  encoder with the method (the APU has no noise period / envelope), a
-  cartridge started first. mmlisp2ir: a song word only optional chips own,
-  in a score naming none of their channels, is E_TARGET (fc's :noise-rate,
-  :lfo-*). Open: not heard in Live; its level vs the 2A03 is a guess (a
-  channel at full = a 2A03 pulse at full; nesdev only says "very loud"),
-  its amplifier's nonlinearity not modelled. **Bug (found 2026-10-29 by the
-  import session, not fixed):** `5b-noise` plays and exports as a tone —
-  ir-player hands the noise track the encoder of tone lane `c.voice` (2),
-  so $07 stays 0x38 (tone C on, noise C off); msx's `noise` writes 0x9c.
-  import-vgm reads a 5B (an AY beside a 2A03; flags bit 4 halves the clock)
-  onto 5b-sqr1-3, its noise as 5b-sqr3's :mode noise (Gimmick! read).
-- **VRC7 built 2026-10-29** (chips/vrc7.js: opllFm with the VRC7's ROM and
-  names, opllEncoder({rom, channels: 6, port: 7}); a part's `rom` /
-  `romNames` are its built-in voices — on fc the VRC7's, not the YM2413's;
-  synth-fc.js a second ymfm YM2413 with VRC7_ROM_BYTES, DC-blocked at
-  37 Hz (ymfm's OPLL sits ~0.4 off 0 at this gain; the block settles on its
-  first sample), scope 0-5). Open: not heard in Live; its level (a sine at
-  full = a 2A03 pulse at full) is a guess; ymfm's YM2413 with the VRC7's
-  ROM, not a DS1001 model. import-vgm reads a VRC7 VGM onto vrc7-fm1-6:
-  ROM voices by name, the user voice a 2-op def-fm (Lagrange Point read).
-- **N163 built 2026-10-29** (chips/n163.js: port 8 = its RAM; the count
-  the highest channel named — ir-player `_voicesOf` hands each encoder
-  the score's voices, and an encoder's `start()` replaces the chip's
-  static init; wave1 = the chip's channel 8; regions 32 steps to 5
-  running, 16 at 6+ (checkScore W_TARGET); synth-fc.js N163 time-shares
-  the DAC 15 clocks a turn, its scope lanes each channel alone, 20-27).
-  Open: not heard in Live (the 7-8-channel whine included); its level (one
-  channel's square at full = a 2A03 pulse at full; nesdev: games' boards
-  are 11-19.5 dB louder) a choice; no import reads an N163 yet.
-- **N163**: the chip's time-multiplex as is (the 7-8-channel whine heard,
-  not averaged away); wave RAM a region per channel, 32 steps while 5 or
-  fewer channels fit, 16 for all at 6+ (W_TARGET); 4-bit samples.
-- **VGM**: VRC7 as YM2413 (clock bit 31), 5B as YM2149 (clock /2 pin);
-  MMC5 and N163 left out, as the VRC6.
-- **VRC7 ROM names** nesdev's: buzzy-bell guitar wurly flute clarinet synth
-  trumpet organ bells vibes vibraphone tutti fretless synth-bass sweep.
+Where things are (dev-only):
+- Ports: 0 APU, 1 DMC RAM, (2 the worklet's PSG flag), 3 VRC6, 4 FDS (VGM
+  0xB4's numbering), 5 MMC5, 6 5B, 7 VRC7, 8 N163 (its RAM). Tone lanes:
+  VRC6 12-14, MMC5 15-16, 5B 17-20, N163 21-28. Scope: VRC7 0-5, APU 6-10,
+  VRC6 11-13, FDS 14, MMC5 15-16, 5B 17-19, N163 20-27.
+- chips/queued-tone.js: the VRC6's and the MMC5's encoder. The 5B is
+  ssgEncoder on port 6; ir-player `_psg(encode, method, lane)` routes the
+  SSG's song words to it (the APU has no noise period / envelope) and
+  `_isNoiseLane` makes 5b-noise a noise lane. The VRC7 is opllEncoder({rom,
+  channels, port}); a part's `rom` / `romNames` are its built-in voices.
+  The N163's layout comes from the score (ir-player `_voicesOf` → the
+  encoder; its `start()` replaces the chip's static init).
+- mmlisp2ir: a song word only optional chips own, in a score naming none of
+  their channels, is E_TARGET (fc's :noise-rate, :lfo-*).
 
-**FDS, as built** (chips/fds.js, synth-fc.js Fds, scope-pitch.js
-fdsPitch; language.md §19 fc; tools/tests/fc/fds.mmlisp). Ruled with the
-user 2026-10-28: `fds-wave`; the modulation is the song's LFO words —
-`:lfo-wave [32 steps of 0 1 2 4 -1 -2 -4 reset]` (the chip's own deltas, so
-Furnace's tables and drifting ones are exact), `:lfo-pmd 0-63`,
-`:lfo-freq 0-4095` (the 12-bit rate, the word's range the part's), inline
-and swept, no per-note macro. Built: port 4 at VGM 0xB4's own numbering
-($20-$3E $4080-, $3F $4023, $40-$7F the memory); the VGM header's 0x84
-bit 31 by the chip's `header` after the 2A03's clock; a 32-step def-wave
-each step held twice (the same wave, the pitch formula fixed); the gain
-0-32 linear; the player's wave-chip LFO hook now takes LFO_PMD / the table
-and sweeps a frame at a time, through the lane (an optional chip starts
-first) — which also fixed pce's `:lfo-freq` sweep (it wrote 0 once).
-The 64-step def-wave (2026-10-28): a vector of 64 (a curve still 32);
-waveCombine as long as the longest, a shorter wave held step for step; a
-part's `waveLen` (the FDS 64), a longer wave every other step on a 32-step
-chip (ir-player `_fitWave`, W_TARGET once per track and wave);
-tools/tests/pce/wave64.mmlisp. The wave-chip LFO hook also takes `+`, `*`
-and `$value` (they were dropped). Open: judged only on the test score — the user wants a real FDS song
-heard. import-vgm reads a VGM's FDS onto fds-wave (2026-10-29; its gain
-envelope as a level envelope, its modulation as the LFO words where a note
-starts, a delayed vibrato a tie), Zelda II's Title BGM heard by the user
-(their VGM - NES folder has five Disk System sets); Furnace / DefleMask
-FDS channels import onto fds-wave (2026-10-29), checked only on a module
-built in node — no real FDS module heard. The hardware envelopes (synth-fc.js
-Fds, Mesen / NSFPlay: 8 × (speed+1) × $408A, not nesdev's +1) are only
-node-checked — the import writes gains direct, so no score drives them; the mod arithmetic is nesdev's, not held to
-NSFPlay / Mesen.
-
-**VRC6, as built** (chips/vrc6.js, targets/fc.js, synth-fc.js Vrc6,
-scope-pitch.js vrc6Pitch; language.md §19 fc; tools/tests/fc/vrc6.mmlisp):
-an optional chip on port 3 (2 is the worklet's PSG flag), `vrc6-sqr1`
-`vrc6-sqr2` `vrc6-saw` on tone lanes 12-14 (the player's `toneEncoder` beside the PSG's,
-flushed with it), scope lanes 11-13. Rulings kept: the saw's level is its
-6-bit rate, `:vel 15` = 63, wrapping over 42 (≈ :vel 13.25) — Furnace's
-default 63 plays wrapped, so imports keep it; `:duty` the nearest of 1-8,
-9-15 mirrored, M (100 %) unreachable; the VGM export leaves the VRC6 out
-and says so (renderVgm `leftOut`). Keyed by the level, as the 2A03's
-encoder (the enable bit stays set). Open: the mix is
-nesdev's "a VRC6 pulse at full ≈ a 2A03 pulse at full" (held: RMS 0.120 vs
-0.119), not checked against Mesen's mixer; the saw's step order follows
-NSFPlay (6 adds of 14).
+Open:
+- None heard in Live but the VRC6 and the FDS's test score (MMC5, 5B,
+  VRC7, N163; the N163's 7-8-channel whine).
+- Levels against the 2A03 are choices, not measures: each at full = a 2A03
+  pulse at full (the 5B "very loud" per nesdev, its amp's nonlinearity not
+  modelled; the N163's boards 11-19.5 dB louder). Every chip at once clips.
+- The VRC6 mix not held to Mesen's; its saw's step order NSFPlay's.
+- The FDS: a real song heard only from VGM (Zelda II's title); a Furnace /
+  DefleMask FDS module checked only as one built in node; its hardware
+  envelopes only node-checked (no score or import drives them); the mod
+  arithmetic nesdev's, not held to NSFPlay / Mesen.
+- The VRC7 is ymfm's YM2413 with the VRC7's ROM, not a DS1001 model.
+- No import reads an N163 or an MMC5.
+- Every fc render starts with a click, probably the DMC's $4011 init write
+  (seen 2026-10-29, not checked or fixed).
 
 ## FM-PAC: how to build it (findings, 2026-10-25)
 

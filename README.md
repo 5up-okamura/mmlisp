@@ -80,7 +80,7 @@ browser and exported as VGM.
 | `x68k` | X68000 | YM2151 FM, MSM6258 ADPCM (PCM8's eight voices) | ymfm | VGM, WAV |
 | `msx` | MSX + SCC + FM-PAC | AY-3-8910 PSG, Konami SCC, YM2413 FM | ymfm, the SCC's own | VGM, WAV |
 | `pce` | PC Engine | HuC6280: six wave channels, noise, LFO, DDA | its own | VGM, WAV |
-| `fc` | Famicom | 2A03: two pulses, triangle, noise, DMC | its own | VGM, WAV |
+| `fc` | Famicom + its expansions | 2A03: two pulses, triangle, noise, DMC; VRC6, FDS, MMC5, Sunsoft 5B, VRC7, N163 | its own, ymfm (5B, VRC7) | VGM (without the VRC6, MMC5, N163), WAV |
 
 The Mega Drive has a driver for games (below); the other machines are
 composed in Live and delivered as VGM, which existing players run. Each
@@ -92,7 +92,10 @@ move with a `$` value — and the FM-PAC's two operators, fifteen ROM voices
 and its rhythm, pitched and bent per hit; the PC Engine's waves stepped by a
 note's `(macro :wave …)`, its LFO written as an FM LFO is, and one channel's
 wave, noise and DDA layered by `:prio`; the Famicom's pulse `:duty`, a
-triangle with no level, and DMC samples. The YM2608's rhythm ROM is
+triangle with no level, DMC samples, and every expansion chip a cartridge
+or the Disk System added, named by chip (`vrc6-saw`, `fds-wave` with its
+modulation as the song's LFO, `n163-wave1`–`8` taking turns as the chip
+does). The YM2608's rhythm ROM is
 Yamaha's and not included: Live plays your own, or stands the score's kit in
 for it. Other machines are on the [roadmap](docs/roadmap.md).
 
@@ -152,7 +155,8 @@ for a controller's knobs.
 - FM voices from DefleMask, Furnace, TFI, VGI, OPNI and mucom88 banks; drum
   samples from mucom88 PCM banks and SoundFont kits
 - Songs from MIDI, DefleMask, Furnace (a PC Engine module as a `pce`
-  score, an NES one as an `fc` score with its DPCM samples), VGM (with its
+  score, an NES one as an `fc` score with its DPCM samples, its VRC6 and
+  FDS channels), VGM (with its
   PCM: the YM2612 DAC, SegaPCM, YM2610 ADPCM, the OKIM6258, the 2A03's DMC;
   a YM2151's, a YM2608's, an AY-3-8910's, an SCC's, a HuC6280's or a
   2A03's as its own machine's score, the SSG's hardware envelope included;

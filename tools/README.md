@@ -44,11 +44,14 @@ Run from tools directory:
     test score: the YM2151's noise as x68k's fm8 `:mode noise`, md's `noise`;
     the SSG's mixer and envelope; the SCC's and the HuC6280's waves as def-waves,
     the HuC6280's noise at the rates it played and its pan; the 2A03's duties,
-    triangle and noise modes, and its DMC samples from the file's memory blocks
+    triangle and noise modes, and its DMC samples from the file's memory blocks;
+    the FDS's waves, gain and modulation on `fds-wave`
 17. `npm run check:import-tracker` — a PC Engine and an NES DefleMask module
     written there, byte by byte: the PC Engine's wavetables, wave macro, `10xx`,
     `08xy` and noise come back as pce; the NES's duty macro and `12xx`, linear
-    volumes, triangle and noise rates and modes as fc; every score compiles
+    volumes, triangle and noise rates and modes as fc, and a Disk System
+    channel as fc's `fds-wave` (its 64-step wave, `11xx` `13xx` `15xx` `16xy`
+    as the song's LFO words); every score compiles
 18. `npm run check:archive` — the archives Live opens as folders, on ZIP and LZH
     files written there (and an `-lh5-` encoder written from LHA's): names,
     folders, damage; `-- <dir>` also reads every archive under a directory,
