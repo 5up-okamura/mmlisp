@@ -238,6 +238,44 @@ const writesOf = (source, addr) => {
   assert.doesNotMatch(msx, /:lfo-/, "msx: no modulation");
   imported(parsed, "md");
 }
+// The VRC7 (a YM2413 with its clock's bit 31): its channels on fc's
+// vrc7-fm1-6 by number, a ROM voice by the VRC7's own name, the user voice a
+// 2-op def-fm in the chip's words; on md the 4-op reading.
+{
+  const parsed = await vgmOf("tools/tests/fc/vrc7.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["fc", ["fc", "md"]]);
+  const opt = defaultVgmOptions(a, "fc");
+  for (let c = 1; c <= 3; c++) assert.equal(opt.dest[`VRC7 FM${c}`], `vrc7-fm${c}`);
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "fc", structure);
+    assert.match(source, /\(vrc7-fm1[^)]*\bwurly\b/, "fc: the ROM's wurly by name");
+    assert.match(source, /\(vrc7-fm2[^)]*\bsynth-bass\b/, "fc: the ROM's synth-bass");
+    assert.match(source, /\(def-fm opll-user-01 :fb 5 :tl1 30\n {2}:ar1 15 :dr1 4 :sl1 3 :rr1 7 /, "fc: the user voice in 2-op words");
+  }
+  assert.match(imported(parsed, "md").source, /\(def-fm vrc7-3 :alg 4 /, "md: a ROM voice in the 4-op reading");
+}
+// The Sunsoft 5B (an AY beside a 2A03; a YM2149 with its divider pin low at
+// half its clock): SSGA-C on 5b-sqr1-3 at their pitch, the hardware
+// envelope as the SSG's words.
+{
+  const parsed = await vgmOf("tools/tests/fc/5b.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["fc", ["fc", "md"]]);
+  const opt = defaultVgmOptions(a, "fc");
+  for (const [k, d] of [["A", 1], ["B", 2], ["C", 3]]) assert.equal(opt.dest[`5B SSG${k}`], `5b-sqr${d}`);
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "fc", structure);
+    assert.match(source, /\(5b-sqr1[^)]*:oct 4 [^)]*e[\d\s]/, "fc: 5b-sqr1's e4, at the 5B's clock");
+    assert.match(source, /\(5b-sqr2[^)]*:mode env :env 14 /, "fc: the buzzer");
+  }
+  imported(parsed, "md");
+  // An MSX's AY on fc is no 5B: its channels on the 2A03's, which mix no
+  // noise, so its noise row stays and goes to the 2A03's noise.
+  const msx = await vgmOf("tools/tests/msx/noise.mmlisp");
+  assert.equal(defaultVgmOptions(analyzeVgm(msx), "fc").dest["AY-3-8910 SSG noise"], "noise");
+  assert.match(imported(msx, "fc").source, /\(noise [^)]*:mode white/, "fc: an MSX AY's noise on noise");
+}
 {
   const { ir } = compileScoreFile(path.join(ROOT, "tools/tests/fc/dpcm.mmlisp"), {});
   const { frames } = bakedChipSamples(ir, targetProfile("fc"));

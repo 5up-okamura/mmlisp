@@ -77,7 +77,7 @@ import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./import-mucom.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
-import { OPLL_ROM, OPLL_ROM_NAMES, VRC7_ROM, opllVoiceDef } from "./chips/ym2413.js";
+import { OPLL_ROM, OPLL_ROM_NAMES, VRC7_ROM, opllVoiceDef, opllVoiceDef2op } from "./chips/ym2413.js";
 import { VEL_DB_PER_STEP } from "./ir-utils.js";
 import { engineImage } from "./engine-images.js";
 import { bankedEngineImage } from "./engine-banked-images.js";
@@ -456,6 +456,7 @@ function ayChip(name, clock, { ev, prefix = name }) {
 // bits) and its registers — the ROM's (the YM2413's, or the VRC7's) or the
 // user voice as it stands.
 function opllChip(clock, { ev, vrc7 = false }) {
+  const name = vrc7 ? "VRC7" : "YM2413";
   const r = new Uint8Array(64);
   const voiceOf = (c) => {
     const inst = r[0x30 + c] >> 4;
@@ -467,9 +468,9 @@ function opllChip(clock, { ev, vrc7 = false }) {
     const block = (r[0x20 + c] >> 1) & 7;
     return (fnum * clock) / 72 / 2 ** (19 - block);
   };
-  const key = (c) => `YM2413 FM${c + 1}`;
+  const key = (c) => `${name} FM${c + 1}`;
   return {
-    name: "YM2413",
+    name,
     write(a, d, t) {
       if (a > 0x3f) return;
       r[a] = d;
@@ -1077,6 +1078,7 @@ export async function parseVgm(bytes) {
     if (e.kindOf) kinds.set(k, e.kindOf);
   };
   const chips = [];
+  const ayFlags = 0x79 < dataStart ? u8[0x79] : 0;
   const skipped = new Map();
   const skip = (name) => skipped.set(name, (skipped.get(name) ?? 0) + 1);
   // Each chip's model starts at its first command, on the header's clock —
@@ -1097,7 +1099,9 @@ export async function parseVgm(bytes) {
     opl1: [0x54, 3579545, (c) => oplChip("YM3526", c, 72, { ev })],
     y8950: [0x58, 3579545, (c) => oplChip("Y8950", c, 72, { ev })],
     opl3: [0x5c, 14318180, (c) => oplChip("YMF262", c, 288, { ev })],
-    ay: [0x74, 1789773, (c) => ayChip("AY-3-8910", c, { ev })],
+    // With a 2A03 in the file the AY is the Famicom's Sunsoft 5B. A YM2149
+    // with its divider pin low (flags bit 4) counts at half the clock.
+    ay: [0x74, 1789773, (c) => ayChip(hdr(0x84) ? "5B" : "AY-3-8910", ayFlags & 0x10 ? c / 2 : c, { ev })],
     scc: [0x9c, 1789773, (c) => sccChip(c, { ev })],
     pce: [0xa4, 3579545, (c) => pceChip(c, { ev, skip })],
     apu: [0x84, 1789773, (c) => apuChip(c & 0x7fffffff, { ev, skip, pcm, ram: nesRam })],
@@ -1766,7 +1770,7 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   // YM2203's, the MSX for an AY-3-8910's — by default when that chip plays
   // every channel.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
-  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS)/]]
+  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC7)/]]
     .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
   const targets = [...own.map(([t]) => t), "md"];
   // (A file of PCM alone — a YM2608's ADPCM-B — is its chip's machine's.)
@@ -1790,30 +1794,44 @@ export function vgmDests(targetName = "md") {
   // msx's are the FM-PAC's rhythm, pce's the DDA its wave1 shares.
   // (Nor the FM-PAC's rhythm: its ROM drums play no sample.)
   const pcm = d.pcm.filter((h) => !romRhythm(h) && t.partOf(h).name !== "opll-rhythm");
-  return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: mixesNoise(t) ? null : d.noise,
+  // (fc's 5b-noise is 5b-sqr3's mixer; its noise is the 2A03's.)
+  const mixer = (h) => d.psg.some((p) => t.partOf(p).modes?.noise && t.voiceKey(p) === t.voiceKey(h));
+  const noises = d.noises.filter((h) => !mixer(h));
+  return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: noises[0] ?? null,
     pcm, rhythm: d.pcm.filter(romRhythm), kit: t.hasPart("dac") ? pcm[0] ?? null : null,
-    wave: d.wave, noises: mixesNoise(t) ? [] : d.noises };
+    wave: d.wave, noises };
 }
 
-// Whether the target's tone channels play the noise themselves (the SSG's
-// mixer): there a channel's noise notes are its own track's, `:mode noise`,
-// and the shared noise row is not offered; elsewhere they are that row's.
-const mixesNoise = (target) => {
-  const d = destsFor(target).psg[0];
+// A Famicom expansion's channel on its own name, where the target has it
+// (fc): the FDS on fds-wave, the VRC7's FM2 on vrc7-fm2, the 5B's SSGB on
+// 5b-sqr2.
+const expansion = (key) => {
+  const m = key.match(/^(?:(FDS)|VRC7 FM(\d)|5B SSG([ABC]))$/);
+  return !m ? null : m[1] ? "fds-wave" : m[2] ? `vrc7-fm${m[2]}` : `5b-sqr${" ABC".indexOf(m[3])}`;
+};
+
+// Whether the target's tone channels play a chip's noise themselves (the
+// SSG's mixer — msx's, pc88's, fc's 5B on its own channels): there a
+// channel's noise notes are its own track's, `:mode noise`, and the chip's
+// SSG noise row is not offered; elsewhere they are that row's. `chip` is the
+// rows' prefix (`5B`, `AY-3-8910`).
+const mixesNoise = (target, chip = "") => {
+  const own = expansion(`${chip} SSGA`);
+  const d = own && target.channels[own] ? own : destsFor(target).psg[0];
   return !!(d && target.partOf(d).modes?.noise);
 };
 
-/** The rows `target`'s score offers: every channel, but the SSG's noise row where the channels keep it. */
+/** The rows `target`'s score offers: every channel, but an SSG's noise row where its channels keep it. */
 export function vgmChannels(a, targetName = a.target ?? "md") {
-  const own = mixesNoise(targetProfile(targetName));
-  return a.channels.filter((c) => !(own && / SSG noise$/.test(c.key)));
+  const t = targetProfile(targetName);
+  return a.channels.filter((c) => !(/ SSG noise$/.test(c.key) && mixesNoise(t, c.key.replace(/ SSG noise$/, ""))));
 }
 
 // The tone clock of the target's SSG (f = clock / 16 / period), or null.
 function ssgClockOf(target) {
   for (const chip of Object.values(target.chips)) {
     if (chip.ssg?.clock) return chip.ssg.clock;
-    if (chip.parts?.some((p) => p.name === "ssg")) return chip.clock;
+    if (chip.parts?.some((p) => /(^|-)ssg$/.test(p.name))) return chip.clock;
   }
   return null;
 }
@@ -1840,17 +1858,19 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   // the target's fm8 cannot turn it on.
   const target = targetProfile(targetName);
   const fmNoise = dests.fm.some((d) => target.channels[d]?.modes?.noise);
+  const pools = [fm, sqr, waves];
   for (const ch of sorted) {
     let d = "drop";
     // A YM2151 that fits keeps its channels' own numbers: FM8 on fm8, which
     // is where x68k's noise is.
-    const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}` : null;
+    const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}` : expansion(ch.key);
+    const pool = own && pools.find((l) => l.includes(own));
     if (ch.kind === "opm" && !fmNoise && ch.noisy === ch.notes) d = "drop";
-    else if (own && fm.includes(own)) { d = own; fm.splice(fm.indexOf(own), 1); }
+    else if (pool) { d = own; pool.splice(pool.indexOf(own), 1); }
     else if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? "drop";
     // An SSG channel that only plays the noise is the noise row's alone
     // where the target's channels do not mix it.
-    else if (ch.kind === "psg" && !mixesNoise(target) && ch.ssgNoise === ch.notes) d = "drop";
+    else if (ch.kind === "psg" && !mixesNoise(target, ch.key.replace(/ SSG[ABC]$/, "")) && ch.ssgNoise === ch.notes) d = "drop";
     // The 2A03's triangle, where the target's channels are not the 2A03's
     // and it has FM: an FM channel's (a triangle wave, its whole range — a
     // PSG's floor, the SN76489's 109 Hz, stops a drum's fall).
@@ -2081,13 +2101,18 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   };
   // A YM2413's voice on FM: its ROM voice by its built-in name, the VRC7's
   // ROM voices and a user voice as defs (chips/ym2413.js's 4-op reading).
-  const opllDefs = new Map(); // bytes → {name, text}
-  const opllVoice = ({ inst, vrc7, bytes }) => {
-    if (inst && !vrc7) return OPLL_ROM_NAMES[inst - 1];
-    const key = bytes.join(",");
+  // On an OPLL part of the same ROM (fc's vrc7-fm for the VRC7) a ROM voice
+  // is the part's own name, any other a 2-op def in the chip's words.
+  const opllDefs = new Map(); // `${2op}/${bytes}` → {name, user, text}
+  const opllVoice = ({ inst, vrc7, bytes }, part) => {
+    const twoOp = !!part?.romNames;
+    if (inst && twoOp && part.rom === (vrc7 ? VRC7_ROM : OPLL_ROM)) return part.romNames[inst - 1];
+    if (inst && !twoOp && !vrc7) return OPLL_ROM_NAMES[inst - 1];
+    const key = `${twoOp}/${bytes.join(",")}`;
     if (!opllDefs.has(key)) {
-      const name = inst ? `vrc7-${inst}` : `opll-user-${String([...opllDefs.values()].filter((d) => d.user).length + 1).padStart(2, "0")}`;
-      opllDefs.set(key, { name, user: !inst, text: opllVoiceDef(name, bytes) });
+      const users = [...opllDefs.values()].filter((d) => d.user).length;
+      const name = inst && !twoOp ? `vrc7-${inst}` : `opll-user-${String(users + 1).padStart(2, "0")}`;
+      opllDefs.set(key, { name, user: name.startsWith("opll-user"), text: (twoOp ? opllVoiceDef2op : opllVoiceDef)(name, bytes) });
     }
     return opllDefs.get(key).name;
   };
@@ -2099,10 +2124,10 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     const voice = target.voiceKey(d) ?? d;
     if (taken.has(voice)) { warnings.push(`${ch.key}: ${d} is already taken — dropped`); continue; }
     taken.add(voice);
-    const onFm = d.startsWith("fm");
+    const onFm = d.startsWith("fm") || dests.fm.includes(d);
     // An SSG channel's notes on the noise alone: its own where the target's
     // channel mixes the noise, else the noise row's (not here).
-    const ownNoise = mixesNoise(target);
+    const ownNoise = !!target.partOf(d)?.modes?.noise;
     const envHere = !!target.partOf(d)?.words?.("SSG_ENV");
     const raw = channelNotes(parsed, ch.key, followPitch).filter((n) => ownNoise || ch.kind !== "psg" || n.ssg?.mix !== "noise");
     // A YM2151's FM8 noise: fm8's :mode noise where the target has it, else
@@ -2147,7 +2172,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         note.t0 = n.t;
         note.canRelease = true;
       }
-      if (onFm && !n.voice && n.opll) voice = opllVoice(n.opll);
+      if (onFm && !n.voice && n.opll) voice = opllVoice(n.opll, target.partOf(d));
       else if (onFm && !n.voice) {
         voice = ch.key === "2A03 TRI" ? "wave-triangle" : STAND_IN[ch.kind] ?? "wave-square";
         standIns.add(voice);

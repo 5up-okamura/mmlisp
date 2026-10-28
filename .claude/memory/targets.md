@@ -269,8 +269,12 @@ in that order, any number in one score (as an NSF), each optional.
   in a score naming none of their channels, is E_TARGET (fc's :noise-rate,
   :lfo-*). Open: not heard in Live; its level vs the 2A03 is a guess (a
   channel at full = a 2A03 pulse at full; nesdev only says "very loud"),
-  its amplifier's nonlinearity not modelled; import-vgm's AY rows on fc
-  would land on whatever tone channel is free (the import session's).
+  its amplifier's nonlinearity not modelled. **Bug (found 2026-10-29 by the
+  import session, not fixed):** `5b-noise` plays and exports as a tone —
+  ir-player hands the noise track the encoder of tone lane `c.voice` (2),
+  so $07 stays 0x38 (tone C on, noise C off); msx's `noise` writes 0x9c.
+  import-vgm reads a 5B (an AY beside a 2A03; flags bit 4 halves the clock)
+  onto 5b-sqr1-3, its noise as 5b-sqr3's :mode noise (Gimmick! read).
 - **VRC7 built 2026-10-29** (chips/vrc7.js: opllFm with the VRC7's ROM and
   names, opllEncoder({rom, channels: 6, port: 7}); a part's `rom` /
   `romNames` are its built-in voices — on fc the VRC7's, not the YM2413's;
@@ -278,8 +282,8 @@ in that order, any number in one score (as an NSF), each optional.
   37 Hz (ymfm's OPLL sits ~0.4 off 0 at this gain; the block settles on its
   first sample), scope 0-5). Open: not heard in Live; its level (a sine at
   full = a 2A03 pulse at full) is a guess; ymfm's YM2413 with the VRC7's
-  ROM, not a DS1001 model; import-vgm still reads a VRC7 VGM as vrc7-N
-  def-fms for msx (the import session's to move onto fc's VRC7).
+  ROM, not a DS1001 model. import-vgm reads a VRC7 VGM onto vrc7-fm1-6:
+  ROM voices by name, the user voice a 2-op def-fm (Lagrange Point read).
 - **N163 built 2026-10-29** (chips/n163.js: port 8 = its RAM; the count
   the highest channel named — ir-player `_voicesOf` hands each encoder
   the score's voices, and an encoder's `start()` replaces the chip's
@@ -318,9 +322,9 @@ tools/tests/pce/wave64.mmlisp. The wave-chip LFO hook also takes `+`, `*`
 and `$value` (they were dropped). Open: judged only on the test score — the user wants a real FDS song
 heard. import-vgm reads a VGM's FDS onto fds-wave (2026-10-29; its gain
 envelope as a level envelope, its modulation as the LFO words where a note
-starts), checked only on fds.mmlisp's own VGM — no real FDS VGM is on hand
-(the user's VGM - NES folder has none); import-tracker leaves expansions
-out. The hardware envelopes (synth-fc.js
+starts, a delayed vibrato a tie), Zelda II's Title BGM heard by the user
+(their VGM - NES folder has five Disk System sets); import-tracker leaves
+expansions out. The hardware envelopes (synth-fc.js
 Fds, Mesen / NSFPlay: 8 × (speed+1) × $408A, not nesdev's +1) are only
 node-checked — the import writes gains direct, so no score drives them; the mod arithmetic is nesdev's, not held to
 NSFPlay / Mesen.

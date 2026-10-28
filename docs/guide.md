@@ -1950,7 +1950,7 @@ them: a key-on starts a note, a key-off ends it.
   left out; the DAC written on and on by the CPU (a PCM the game streams)
   is counted, not imported.
   The Disk System's channel (the FDS: the 2A03's clock with bit 31) goes
-  to `wave1`. Its 64-step memory is a `def-wave` — 32 steps where each is
+  to `fds-wave`. Its 64-step memory is a `def-wave` — 32 steps where each is
   held twice, and on a 32-step chip's `wave1` (msx, pce) every other step —
   rewritten under a note a `(macro :wave …)`; its gain is `:vel`, its
   volume envelope a `:vel+` envelope; a note starts where the pitch and the
@@ -1962,6 +1962,15 @@ them: a key-on starts a note, a key-off ends it.
   macro through the tie. A rate swept under a note, the modulation's own
   envelope and the pitch it bends are left to the chip (on msx and pce,
   left out).
+  A YM2413 whose clock has bit 31 set is the VRC7: on `fc` its channels go
+  to `vrc7-fm1`–`vrc7-fm6` by number, a ROM voice by the VRC7's own name
+  (`wurly` …), a user voice a 2-op `def-fm` in the chip's words
+  (`opll-user-01` …); elsewhere it plays as a YM2413 does, on 4-op voices.
+  An AY beside the 2A03 is the Sunsoft 5B: its channels go to `5b-sqr1`–
+  `5b-sqr3` as an MSX's SSG goes to `sqr1`–`sqr3` (its noise a channel's
+  `:mode noise`, its hardware envelope `:env`). A YM2149 the file runs with
+  its divider pin low (the 5B's) plays at half its clock. The MMC5 and the
+  N163 have no VGM slot.
 - A pitch moved during a note is followed — untick it to keep only the
   struck pitch. A jump it then stays at is a new note, slurred (`~`); a
   wobble is a vibrato, a shared `(def vib-40-10 (macro :pitch (sin -40..40

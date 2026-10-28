@@ -151,6 +151,14 @@ export function opllVoiceDef(name, bytes) {
   return `(def-fm ${name} :alg ${w.get("FM_ALG")} :fb ${w.get("FM_FB")} :ams 0 :fms 0\n  ${[1, 2, 3, 4].map(op).join("\n  ")}\n)`;
 }
 
+/** An OPLL voice's bytes as a 2-op `def-fm` in the chip's own words (an OPLL part's: the FM-PAC's, the VRC7's). */
+export function opllVoiceDef2op(name, bytes) {
+  const w = voiceWords(bytes);
+  const op = (n) => ["ar", "dr", "sl", "rr", "ks", "ml", "am", "ws", "eg", "ksl", "vib"]
+    .map((k) => `:${k}${n} ${w.get(`FM_${k === "am" ? "AMEN" : k.toUpperCase()}${n}`)}`).join(" ");
+  return `(def-fm ${name} :fb ${w.get("FM_FB")} :tl1 ${w.get("FM_TL1")}\n  ${op(1)}\n  ${op(2)}\n)`;
+}
+
 /**
  * The ROM voices as built-in def-fm voices (language.md §19): name → its
  * words — a part with a ROM of its own (the OPLL's, the VRC7's) its own
