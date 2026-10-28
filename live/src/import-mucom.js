@@ -1639,6 +1639,12 @@ function renderLoop(op, ctx, out, depth) {
   setCompileState(ctx, ctFull, out);
 }
 
+// A trial pass (verbose) stamps each note with the runtime state it played
+// under (after the writes it makes before itself): a pass that only inherits
+// a value — the body plays a note before it writes `q`, say — writes no
+// token for it, yet sounds otherwise.
+const STAMPED = new Set(["note", "tie", "porta", "echo"]);
+
 function renderOps(ops, ctx, out, depth = 0) {
   for (let k = 0; k < ops.length; k++) {
     const op = ops[k];
@@ -2062,6 +2068,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (op.bpm !== ctx.tempo || ctx.verbose) { out.push(`:tempo ${op.bpm}`); ctx.tempo = op.bpm; }
         break;
     }
+    if (ctx.verbose && STAMPED.has(op.t)) out.push(`\u0000${RUNTIME_FIELDS.map((f) => JSON.stringify(ctx[f] ?? null)).join(",")}`);
     // The bar the part is in (barAdvance).
     const clocks = op.clocks ?? op.tapClocks;
     if (clocks != null) { barAdvance(ctx, op.wc ? { n: clocks, d: op.wc } : null); barMark(ctx, out); }
