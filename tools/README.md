@@ -58,7 +58,11 @@ Run from tools directory:
     of real songs kept outside the repo, each score and its diagnostics written
     under `<dir>/<name>/`. Take a set before an importer change and one after,
     then `diff -r`: a refactor leaves none, a notation change only the ones it
-    means (`--limit N` takes N files of each kind, `--only mdx,mgs` some kinds)
+    means (`--limit N` takes N files of each kind, `--only mdx,mgs` some kinds).
+    `--out <dir> --moves base,now` compiles two sets taken `--flat` (no
+    repeats folded, so a note's tick is its time) and lists the tracks whose
+    notes lose a pitch move — a rewritten notation that drops a vibrato or a
+    slide shows there, which the diff hides in the lines it rewrites
 
 ## i18n
 

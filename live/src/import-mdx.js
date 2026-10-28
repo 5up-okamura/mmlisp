@@ -578,9 +578,11 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
           // It bends on past the key-off, to the next note. One that lands
           // on a note is that note, glided to from its own over the length
           // (`c_e`; on a tied note, `c & c_e` as a slur to the e) — but a
-          // track's first note does not glide.
+          // track's first note does not glide, nor does one a tie would
+          // take on from the note before (`e & c_e`: the same pitch).
           const total = cents((st.porta * n.count) / 256);
-          if (total && total % 100 === 0 && notes.length) {
+          const tie = legato && head && head.midi === midi + total / 100;
+          if (total && total % 100 === 0 && notes.length && !tie) {
             glide = `(glide ${noteName(midi)}${octOf(midi)} ${lenToken(tick(n.count))})`;
             midi += total / 100;
           } else if (total) pitch.push(`(linear 0..${total} :len ${tick(n.count)}t)`);

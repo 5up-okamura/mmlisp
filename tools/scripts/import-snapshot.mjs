@@ -9,7 +9,16 @@
 // A root is a folder searched for .mdx .mgs .muc .mid .dmf .fur, or one
 // file. MDX finds its PDX, and a .muc its voice .dat and PCM .bin, beside
 // it by the names the file gives. `--limit N` takes at most N files of each
-// kind, spread evenly over the sorted list.
+// kind, spread evenly over the sorted list. `--flat` writes the scores
+// unfolded (no repeats or phrase defs), as --moves wants them.
+//
+//   node scripts/import-snapshot.mjs --out <dir> --moves base,now [--only mgs]
+//
+// compares two sets' scores compiled — both written --flat, so a note's
+// tick is its time: the notes whose pitch moves (a pitch
+// macro, or a glide's sweep at the key-on), and the songs where fewer do —
+// a notation change that drops a move shows there, which a diff hides in
+// the lines it rewrites.
 import fs from "node:fs";
 import path from "node:path";
 import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
@@ -39,6 +48,12 @@ const opt = (k, d) => { const i = args.indexOf(k); if (i < 0) return d; const v 
 const out = opt("--out");
 const set = opt("--set", "now");
 const only = opt("--only")?.split(",");
+const moves = opt("--moves")?.split(",");
+const flat = args.includes("--flat") && !!args.splice(args.indexOf("--flat"), 1);
+if (out && moves) {
+  compareMoves(...moves.map((m) => path.join(out, m)));
+  process.exit(0);
+}
 const limit = Number(opt("--limit", 0));
 const noCompile = args.includes("--no-compile") && args.splice(args.indexOf("--no-compile"), 1);
 if (!out || !args.length) {
@@ -71,11 +86,11 @@ const IMPORT = {
   mdx(f, bytes) {
     const mdx = parseMdx(bytes);
     const pdx = beside(f, mdx.pdxName, ".pdx");
-    return mdxToMmlisp(mdx, { pdx, structure: true, fileName: fileName(f) }, analyzeMdx(mdx));
+    return mdxToMmlisp(mdx, { pdx, structure: !flat, fileName: fileName(f) }, analyzeMdx(mdx));
   },
   mgs(f, bytes) {
     const mgs = parseMgs(bytes);
-    return mgsToMmlisp(mgs, { structure: true, fileName: fileName(f) }, analyzeMgs(mgs));
+    return mgsToMmlisp(mgs, { structure: !flat, fileName: fileName(f) }, analyzeMgs(mgs));
   },
   muc(f, bytes) {
     const text = new TextDecoder("shift_jis").decode(bytes);
@@ -87,14 +102,14 @@ const IMPORT = {
   mid(f, bytes) {
     const parsed = parseMidi(bytes);
     const a = analyzeMidi(parsed);
-    return midiToMmlisp(parsed, { ...defaultMidiOptions(a), structure: true, fileName: fileName(f) }, a);
+    return midiToMmlisp(parsed, { ...defaultMidiOptions(a), structure: !flat, fileName: fileName(f) }, a);
   },
   async dmf(f, bytes) { return tracker(await parseDmf(bytes), f); },
   async fur(f, bytes) { return tracker(await parseFur(bytes), f); },
 };
 function tracker(t, f) {
   const a = analyzeTracker(t);
-  return trackerToMmlisp(t, { ...defaultTrackerOptions(a), bpm: null, fileName: fileName(f) }, a);
+  return trackerToMmlisp(t, { ...defaultTrackerOptions(a), bpm: null, fileName: fileName(f), ...(flat ? { phrases: false } : {}) }, a);
 }
 
 const spread = (list) => {
@@ -143,3 +158,49 @@ for (const { root, f, k } of files) {
 }
 console.log(`${files.length} songs → ${dir} in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 for (const [k, c] of Object.entries(counts)) console.log(`  ${k}: ${c.ok} written (${c.errors} with errors), ${c.failed} failed`);
+
+// A score's tracks: the ticks of the notes whose pitch moves, of every
+// note, and of the notes played legato.
+function movingNotes(file) {
+  const src = fs.readFileSync(file, "utf8");
+  const { ir } = compileMMLisp(src, path.basename(file), { imports: importsOf(src) });
+  const tracks = new Map();
+  for (const tr of ir.tracks ?? []) {
+    const sweepAt = new Set();
+    const t = { moving: [], notes: new Set(), legato: new Set() };
+    for (const e of tr.events) {
+      if (e.cmd === "PARAM_SWEEP" && e.args?.target === "NOTE_PITCH") sweepAt.add(e.tick);
+      if (!/NOTE_ON$/.test(e.cmd)) continue;
+      t.notes.add(e.tick);
+      if (e.args?.legato) t.legato.add(e.tick);
+      if (e.args?.pitchMacro || sweepAt.has(e.tick)) t.moving.push(e.tick);
+    }
+    tracks.set(tr.channel ?? tr.id, t);
+  }
+  return tracks;
+}
+// A move is lost where the other set's note there does not move — but not
+// a legato note the other set ties on (no note there: the same pitch, the
+// head's moves going on), nor one whose move the other set has on a note
+// of its own before the next one (a tie's bend it slurs to, glided).
+function compareMoves(a, b) {
+  const KIND = only && new RegExp(`\\.(${only.join("|")})\\.mmlisp$`, "i");
+  let na = 0, nb = 0;
+  const fewer = [];
+  for (const f of fs.readdirSync(b).sort()) {
+    if ((KIND && !KIND.test(f)) || !fs.existsSync(path.join(a, f))) continue;
+    const ma = movingNotes(path.join(a, f)), mb = movingNotes(path.join(b, f));
+    for (const [ch, ta] of ma) {
+      const tb = mb.get(ch) ?? { moving: [], notes: new Set() };
+      const moves = new Set(tb.moving);
+      na += ta.moving.length; nb += moves.size;
+      const keyed = [...ta.notes].sort((x, y) => x - y);
+      const next = (t) => keyed.find((k) => k > t) ?? Infinity;
+      const lost = ta.moving.filter((t) => !moves.has(t) && !(ta.legato.has(t) && !tb.notes.has(t))
+        && !tb.moving.some((m) => m > t && m < next(t)));
+      if (lost.length) fewer.push(`${f} ${ch}: ${lost.length} lost, first at tick ${lost[0]}`);
+    }
+  }
+  console.log(`moving notes: ${na} → ${nb}; ${fewer.length} tracks lose moves`);
+  for (const l of fewer) console.log("  " + l);
+}

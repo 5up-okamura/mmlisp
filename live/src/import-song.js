@@ -549,8 +549,10 @@ const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0].replace(/^:gate[*-
 // (a voice, a sample, an envelope def) by its place — only what changed.
 // With nothing known in force (after a loop's break), all of them. A glide
 // is a note's own, not a switch: a note that glides carries it, and the one
-// after it `(glide none)` — both written wherever they are.
+// after it `(glide none)` — both written wherever they are, but once a note
+// (the same note's state again, a piece of it past a bar, writes nothing).
 export function stateChange(from, to) {
+  if (from === to) return [];
   if (!from.length) return to;
   const kind = (toks) => new Map(toks.filter((t) => !isGlide(t)).map((t) => [switchKind(t), t]));
   const a = kind(from), b = kind(to);
@@ -895,16 +897,18 @@ export function emitStructured(song) {
       for (const it of items) if ((p = firstPiece(it))) break;
       if (!p) return { tokens: [], st };
       const oct = octOf(p.midi);
+      // A glide is not stated at a head: its note writes it, where it is.
+      const held = p.st.filter((t) => !isGlide(t));
       if (whole) {
         // At the track's start there is no macro to clear.
-        const sw = start ? p.st.filter((t) => !/^\(macro :[a-z+*-]+ none\)$/.test(t)) : p.st;
-        return { tokens: [...sw, `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${p.vel}`])], st: { oct, vel: p.vel, st: p.st } };
+        const sw = start ? held.filter((t) => !/^\(macro :[a-z+*-]+ none\)$/.test(t)) : held;
+        return { tokens: [...sw, `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${p.vel}`])], st: { oct, vel: p.vel, st: held } };
       }
-      const sw = st.st.length ? stateChange(st.st, p.st) : p.st;
-      const back = around ? stateChange(around.st, p.st).filter((t) => !baked(t)) : [];
-      const tokens = p.st.filter((t) => sw.includes(t) || back.includes(t));
+      const sw = st.st.length ? stateChange(st.st, held) : held;
+      const back = around ? stateChange(around.st, held).filter((t) => !baked(t)) : [];
+      const tokens = held.filter((t) => sw.includes(t) || back.includes(t));
       if (oct !== st.oct) tokens.push(`:oct ${oct}`);
-      return { tokens, st: { ...st, oct, st: p.st } };
+      return { tokens, st: { ...st, oct, st: held } };
     };
     const defEnd = new Map();
     // `whole`: the run the head restates for — a loop's whole block, though

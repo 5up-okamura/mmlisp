@@ -637,15 +637,18 @@ const RHYTHM_INST = new Set([0x01, 0x04]);
 const fbMidi = ([f, b]) => 69 + 12 * Math.log2((f * 3579545) / 72 / 2 ** (19 - b) / 440);
 function rhythmOfFm(ch, notes, rhythmY) {
   const inst = (voice) => (voice == null || voice > 14 ? 0 : voice + 1);
+  const hit = (midi) => 60 + Math.round(midi - fbMidi(RHYTHM_C4[ch]));
   return RHYTHM_OF_CH[ch].filter((bit) => !(rhythmY.held & bit)).map((bit) => {
     const [, role] = RHYTHM_SOUNDS.find(([b]) => b === bit);
     return {
+      // A hit's note: c4 the sound's own pitch (a glide's from it too).
       notes: notes.filter((n) => n.tick >= rhythmY.step * TICKS_PER_STEP).map((n) => {
         const level = RHYTHM_INST.has(bit)
           ? [`:vol ${ssgVol(15 - inst(n.voice))}`, "(macro :vol none)"]
           : n.state.filter((t) => t.startsWith(":vol") || t.startsWith("(macro :vol") || /^vol-/.test(t));
-        const rest = n.state.filter((t) => t.startsWith(":gate") || t.startsWith(":pitch") || t.startsWith("(macro :pitch") || /^(vib|bend)-/.test(t));
-        return { ...n, midi: 60 + Math.round(n.midi - fbMidi(RHYTHM_C4[ch])), state: [role, ...level, ":mode gate", ...rest] };
+        const rest = n.state.filter((t) => t.startsWith(":gate") || t.startsWith(":pitch") || t.startsWith("(macro :pitch") || /^(vib|bend)-/.test(t) || t.startsWith("(glide"))
+          .map((t) => t.replace(/^\(glide ([a-g]\+?)(-?\d+) /, (_, nm, o) => { const m = hit(NOTE_NAMES.indexOf(nm) + 12 * (Number(o) + 1)); return `(glide ${noteName(m)}${octOf(m)} `; }));
+        return { ...n, midi: hit(n.midi), state: [role, ...level, ":mode gate", ...rest] };
       }),
     };
   });
@@ -750,7 +753,9 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     const names = new Map();
     for (const v of vibs.values()) {
       const s = [...v.swings].sort((a, b) => a - b);
-      const amp = Math.round(s[s.length >> 1] / 10) * 10;
+      // (A setting that swings is not rounded away: 10 cents at the least.)
+      const mid = s[s.length >> 1];
+      const amp = mid > 0 ? Math.max(10, Math.round(mid / 10) * 10) : 0;
       const { delay, count, speed } = v.lfo;
       const len = 2 * (count + 1) * speed, wait = delay + speed - 1;
       const spec = `(triangle ${-amp}..${amp} :len ${len}f :phase ${v.up ? 64 : 192} :wait ${wait}f)`;
@@ -863,16 +868,20 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       let pitch = null, glide = notes[notes.length - 1]?.glides ? GLIDE_NONE : null;
       const bend = x?.offsets.some(Boolean) ? envBend(st.env, n.midi, tr.kind, x) : null;
       const from = n.base ? midiOf(tr.kind, n.base.oct, n.base.n) : null;
+      // (A note a tie takes on from the one before does not glide: `~` on
+      // the same pitch is a tie.)
+      const tie = !!prev && prev.tieOn && prev.step + prev.count + (prev.held ?? 0) === n.step && head?.midi === n.midi;
       if (bend) pitch = bend;
-      else if (from != null && from !== n.midi && notes.length) {
+      else if (from != null && from !== n.midi && notes.length && !tie) {
         // A portamento: from the base note to this one over its length, a
         // glide (MGSDRV's is a line on the frequency, the glide's on the
         // cents; it starts at the base note without the detune).
         glide = `(glide ${noteName(from)}${octOf(from)} ${lenToken(tick(n.count))})`;
       } else if (from != null) {
-        // A track's first note does not glide: its portamento is drawn, a
-        // line on the PSG's and the SCC's period and on FM's F-number, so a
-        // line on the frequency (held to MGSDRV on libkss): each frame's cents.
+        // A track's first note, or a tied one, does not glide: its
+        // portamento is drawn, a line on the PSG's and the SCC's period and
+        // on FM's F-number, so a line on the frequency (held to MGSDRV on
+        // libkss): each frame's cents.
         if (from !== n.midi) {
           const frames = Math.max(1, Math.round((n.count * 75) / tempoAt(n.step)));
           const r = 2 ** ((from - n.midi) / 12); // the start's frequency over the note's
