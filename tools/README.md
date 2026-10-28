@@ -68,6 +68,12 @@ Run from tools directory:
     slide shows there, which the diff hides in the lines it rewrites;
     `--regs base,now` plays them and compares their register writes — a
     rewrite that must sound the same writes the same
+20. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
+    check: a mucom88 import held to the real mucom88's VGM of the song (built
+    from `github.com/onitama/mucom88`, `make OS_SDL=0` with the dummy OS's two
+    missing stubs; it reads the `.muc` as UTF-8 — convert from CP932, not
+    Shift_JIS, or `\` becomes `¥`), frame by frame on FM, SSG and the rhythm:
+    sounding, pitch and level, at the offset and clock ratio that agree best
 
 ## i18n
 
