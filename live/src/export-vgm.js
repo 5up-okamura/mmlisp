@@ -43,12 +43,21 @@ const VGM_SAMPLE_RATE = 44100;
 // 1.50's header is 0x40 bytes, 1.51's 0x80, 1.61's 0xC0.
 const VGM_VERSION = 0x00000150;
 const vgmVersion = (chips) => Math.max(VGM_VERSION, ...chips.map((c) => c.vgm.version ?? 0));
+// A chip VGM has no command for (its port's command `null`, the VRC6's): its
+// writes are left out (leftOut), and it has no header block.
+const noVgm = (c) => { const ps = Object.values(c.vgm.ports ?? {}); return ps.length > 0 && ps.every((p) => p === null); };
 // The target's chips a capture has: an optional one (a cartridge, the SCC)
 // only when some write is its.
 const chipsOf = (target, writes) => {
   const written = new Set(writes.map((w) => String(w.port)));
-  return Object.values(target.chips).filter((c) => !c.optional || Object.keys(c.vgm.ports ?? {}).some((p) => written.has(p)));
+  return Object.values(target.chips).filter((c) => !noVgm(c) && (!c.optional || Object.keys(c.vgm.ports ?? {}).some((p) => written.has(p))));
 };
+/** The chips with no VGM command that `writes` played: their names. */
+function leftOut(target, writes) {
+  const written = new Set(writes.map((w) => String(w.port)));
+  return Object.values(target.chips).filter((c) => noVgm(c) && Object.keys(c.vgm.ports).some((p) => written.has(p)))
+    .map((c) => c.chip.toUpperCase());
+}
 const dataStartOf = (version) => (version >= 0x161 ? 0xc0 : version >= 0x151 ? 0x80 : 0x40);
 // A one-shot score with PCM ends once the engine has been silent this long
 // after its last event (or at the cap).
@@ -67,7 +76,14 @@ const PCM_TAIL_MAX_SEC = 30;
  * @returns {Uint8Array}
  */
 function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adpcm = null, oki = null) {
-  const { writes, loopStartSec } = capture;
+  const { loopStartSec } = capture;
+  // Each worklet port's command, from the target's chips (chips/): the
+  // SN76489's 0x50 takes a data byte, an FM chip's an address and a byte,
+  // the SCC's 0xD2 a port of its own and an address in it (`sub`). A port
+  // whose command is null (leftOut) plays only in the preview: its writes
+  // are dropped; one no chip claims is an error (emitWrite).
+  const ports = Object.assign({}, ...Object.values(target.chips).map((c) => c.vgm.ports ?? {}));
+  const writes = capture.writes.filter((w) => ports[w.port] !== null);
   const endSec = Math.max(capture.endSec, dac ? dac.startSec + dac.bytes.length / dac.rateHz : 0,
     oki ? oki.startSec + (2 * oki.bytes.length) / oki.rateHz : 0);
   const secToSample = (sec) => Math.max(0, Math.round(sec * VGM_SAMPLE_RATE));
@@ -148,10 +164,6 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adp
   // The bank pointer each event leaves behind, for the seek at the loop point.
   let dacNext = 0;
 
-  // Each worklet port's command, from the target's chips (chips/): the
-  // SN76489's 0x50 takes a data byte, an FM chip's an address and a byte,
-  // the SCC's 0xD2 a port of its own and an address in it (`sub`).
-  const ports = Object.assign({}, ...Object.values(target.chips).map((c) => c.vgm.ports ?? {}));
   // A port that writes a chip's memory (`ramBlock`: the 2A03's, chips/
   // rp2a03.js RAM_PORT) — an address's low and high byte, then the bytes —
   // becomes one RAM-write block a run (VGM 1.61, 0xC0-0xDF: the block's
@@ -336,37 +348,39 @@ export function configurePcmRate(player, pcm) {
 /**
  * Build a VGM file from an IRPlayer with IR loaded (capture + encode).
  * `pcm` ({bank, entryIds, pcmVoices}, see renderPcmDac) adds the PCM; without
- * it the score's PCM events are skipped and counted in `pcmCount`.
+ * it the score's PCM events are skipped and counted in `pcmCount`. `leftOut`
+ * names the chips the score played that VGM cannot carry (the VRC6).
  */
 export function renderVgm(player, meta = {}, pcm = null) {
+  const target = player._target ?? targetProfile();
   // The PC Engine's DDA: the samples as frames, which the player writes as
   // the chip's own register writes (the log carries them).
   if (pcm?.frames) {
     player.setFrameBank?.(pcm.frames);
     const capture = player.captureRegisterLog();
-    return { bytes: encodeVgm(capture, meta, null, player._target ?? targetProfile()), pcmCount: 0, dacBytes: 0 };
+    return { bytes: encodeVgm(capture, meta, null, target), pcmCount: 0, dacBytes: 0, leftOut: leftOut(target, capture.writes) };
   }
   // The X68000's PCM8: the mix, encoded, as the MSM6258's stream.
   if (pcm?.pcm8) {
     player.setFrameBank?.(pcm.pcm8);
     const capture = player.captureRegisterLog();
     const oki = renderPcm8(capture.pcm8Events, pcm.pcm8, capture);
-    const bytes = encodeVgm(capture, meta, null, player._target ?? targetProfile(), null, oki);
-    return { bytes, pcmCount: 0, dacBytes: oki ? oki.bytes.length : 0 };
+    const bytes = encodeVgm(capture, meta, null, target, null, oki);
+    return { bytes, pcmCount: 0, dacBytes: oki ? oki.bytes.length : 0, leftOut: leftOut(target, capture.writes) };
   }
   // Another target's PCM is its chip's own RAM image (chips/: the YM2608's
   // ADPCM-B), not the Mega Drive's mixed DAC stream.
   if (pcm?.adpcm) {
     player.setAdpcmBank?.(pcm.adpcm);
     const capture = player.captureRegisterLog();
-    const bytes = encodeVgm(capture, meta, null, player._target ?? targetProfile(), pcm.adpcm);
-    return { bytes, pcmCount: 0, dacBytes: 0 };
+    const bytes = encodeVgm(capture, meta, null, target, pcm.adpcm);
+    return { bytes, pcmCount: 0, dacBytes: 0, leftOut: leftOut(target, capture.writes) };
   }
   configurePcmRate(player, pcm);
   const capture = player.captureRegisterLog();
   const dac = pcm ? renderPcmDac(capture, pcm) : null;
-  const bytes = encodeVgm(capture, meta, dac, player._target ?? targetProfile());
-  return { bytes, pcmCount: dac ? 0 : capture.pcmCount, dacBytes: dac ? dac.bytes.length : 0 };
+  const bytes = encodeVgm(capture, meta, dac, target);
+  return { bytes, pcmCount: dac ? 0 : capture.pcmCount, dacBytes: dac ? dac.bytes.length : 0, leftOut: leftOut(target, capture.writes) };
 }
 
 function assembleVgm(data, gd3, chips, { totalSamples, loopOffsetInData, loopSamples }) {

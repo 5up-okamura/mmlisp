@@ -25,10 +25,20 @@
 // the same. The scope gets each channel alone through the mixer, DC-blocked,
 // at the page's PSG lanes 6-9 and the DMC at its first sample lane, 10
 // (targets.js scopeLane).
+//
+// The VRC6 cartridge (port 3, chips/vrc6.js) beside it, from nesdev's VRC6
+// audio page: each pulse steps a 16-step counter down every period + 1
+// clocks and sounds its volume where the step is at most its duty D (or
+// always, under its mode bit); the saw steps every period + 1 too, adding
+// its rate to an 8-bit accumulator on every other step (wrapping, as
+// NSFPlay's does) and clearing it each 14th, its top five bits out. The
+// frequency control's halt stops them, its 16× / 256× shift their periods.
+// Its DAC is linear, a pulse at full about a 2A03 pulse at full (nesdev),
+// and inverted against the 2A03's; its channels go to the scope at 11-13.
 // ---------------------------------------------------------------------------
 
 import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "./chips/rp2a03.js";
-import { pitchLatches, fcPitch } from "./scope-pitch.js";
+import { pitchLatches, fcPitch, vrc6Pitch } from "./scope-pitch.js";
 
 const CLOCK = rp2a03.clock;
 const CLOCKS_PER_SAMPLE = 32;
@@ -42,9 +52,13 @@ const MASTER_OUTPUT_GAIN = 1.6;
 // The scope's taps, on the page's scale (index.html SCOPE_DISPLAY_GAIN).
 const SCOPE_SCALE = 0.6;
 
-export const SCOPE_LANES = 11;
+export const SCOPE_LANES = 14;
 const PSG_LANE = 6; // the page's first PSG lane
-const CHANNELS = 5; // pulse 1, pulse 2, the triangle, the noise, the DMC
+const CHANNELS = 8; // pulse 1, pulse 2, the triangle, the noise, the DMC, the VRC6's pulses and saw
+const VRC6_PORT = 3;
+// The VRC6's DAC, a step's share of the mix: a pulse at 15 where a 2A03
+// pulse at 15 is (nesdev), the saw's five bits on the same scale.
+const VRC6_STEP = 95.88 / (8128 / 15 + 100) / 15;
 
 const LENGTHS = [10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30];
 const DUTY = [
@@ -336,6 +350,86 @@ class Apu {
   }
 }
 
+// The VRC6 (port 3: $9000-$B002 as (high nibble − 9) × 4 + the low bits).
+class Vrc6 {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.pulse = [0, 1].map(() => ({ ctl: 0, period: 0, enable: false, step: 15, timer: 1 }));
+    this.saw = { rate: 0, period: 0, enable: false, step: 0, acc: 0, timer: 1 };
+    this.freqCtl = 0;
+  }
+
+  write(addr, data) {
+    const ch = addr >> 2, reg = addr & 3;
+    if (addr === 0x03) { this.freqCtl = data & 7; return; }
+    const c = ch < 2 ? this.pulse[ch] : ch === 2 ? this.saw : null;
+    if (!c) return;
+    if (reg === 0) {
+      if (ch < 2) c.ctl = data;
+      else c.rate = data & 0x3f;
+    } else if (reg === 1) c.period = (c.period & 0xf00) | data;
+    else if (reg === 2) {
+      c.period = (c.period & 0xff) | ((data & 15) << 8);
+      c.enable = !!(data & 0x80);
+      // Disabled, a pulse's counter and the saw's accumulator start over.
+      if (!c.enable) {
+        if (ch < 2) c.step = 15;
+        else { c.acc = 0; c.step = 0; }
+      }
+    }
+  }
+
+  // Each channel's level (the pulses 0-15, the saw 0-31) averaged over
+  // `clocks`, into out[k], out[k + 1], out[k + 2].
+  run(clocks, out, k) {
+    const halt = this.freqCtl & 1;
+    const shift = this.freqCtl & 4 ? 8 : this.freqCtl & 2 ? 4 : 0;
+    this.pulse.forEach((p, n) => {
+      if (!p.enable) { out[k + n] = 0; return; }
+      const vol = p.ctl & 15;
+      const d = (p.ctl >> 4) & 7;
+      const always = p.ctl & 0x80;
+      if (halt) { out[k + n] = always || p.step <= d ? vol : 0; return; }
+      const period = (p.period >> shift) + 1;
+      let acc = 0, timer = p.timer, step = p.step;
+      for (let rem = clocks; rem > 0; ) {
+        const m = Math.min(rem, timer);
+        if (always || step <= d) acc += m;
+        rem -= m;
+        timer -= m;
+        if (timer <= 0) {
+          step = (step - 1) & 15;
+          timer = period;
+        }
+      }
+      p.timer = timer;
+      p.step = step;
+      out[k + n] = (acc / clocks) * vol;
+    });
+    const s = this.saw;
+    if (!s.enable) { out[k + 2] = 0; return; }
+    if (halt) { out[k + 2] = s.acc >> 3; return; }
+    const period = (s.period >> shift) + 1;
+    let acc = 0, timer = s.timer;
+    for (let rem = clocks; rem > 0; ) {
+      const m = Math.min(rem, timer);
+      acc += (s.acc >> 3) * m;
+      rem -= m;
+      timer -= m;
+      if (timer <= 0) {
+        timer = period;
+        if (++s.step >= 14) { s.step = 0; s.acc = 0; }
+        else if (!(s.step & 1)) s.acc = (s.acc + s.rate) & 0xff;
+      }
+    }
+    s.timer = timer;
+    out[k + 2] = acc / clocks;
+  }
+}
+
 export class FcSynth {
   static async create(outputSR) {
     return new FcSynth(outputSR);
@@ -343,8 +437,9 @@ export class FcSynth {
 
   constructor(outputSR) {
     this._outputSR = outputSR;
-    this.pitch = pitchLatches(fcPitch(CLOCK));
+    this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK));
     this._apu = new Apu();
+    this._vrc6 = new Vrc6();
     this._lv = new Float32Array(CHANNELS);
     this._x = new Float32Array(CHANNELS + 1);
     this.bus = null; // no FM to hold
@@ -354,7 +449,7 @@ export class FcSynth {
     this._resetResampleState();
   }
 
-  // Index 0 the mix, 1-5 each channel alone (the scope's).
+  // Index 0 the mix, 1-8 each channel alone (the scope's).
   _resetResampleState() {
     this._frac = 0;
     this._dcX = new Float32Array(CHANNELS + 1);
@@ -370,13 +465,16 @@ export class FcSynth {
 
   reset() {
     this._apu.reset();
+    this._vrc6.reset();
     this._resetResampleState();
   }
 
-  // The APU's registers are port 0, $4000 + addr; the memory port 1.
+  // The APU's registers are port 0, $4000 + addr; the memory port 1; the
+  // VRC6's port 3.
   writeYM(port, addr, data) {
     if (port === 0) this._apu.write(addr & 0xff, data & 0xff);
     else if (port === RAM_PORT) this._apu.writeRam(addr & 0xff, data & 0xff);
+    else if (port === VRC6_PORT) this._vrc6.write(addr & 0xff, data & 0xff);
   }
 
   // The Mega Drive's PSG, DAC and low-pass have no counterpart here.
@@ -402,20 +500,23 @@ export class FcSynth {
   // _x: the mix, then each channel alone.
   _mix(clocks = 0) {
     const lv = this._lv;
-    if (clocks) this._apu.run(clocks, lv);
-    else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac]); // idle: the triangle's held step, the DAC
+    if (clocks) {
+      this._apu.run(clocks, lv);
+      this._vrc6.run(clocks, lv, 5);
+    } else lv.set([0, 0, TRI[this._apu.tri.seq], 0, this._apu.dac, 0, 0, 0]); // idle: the triangle's held step, the DAC
     const x = this._x;
-    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]);
     x[1] = pulseOut(lv[0]);
     x[2] = pulseOut(lv[1]);
     x[3] = tndOut(lv[2], 0, 0);
     x[4] = tndOut(0, lv[3], 0);
     x[5] = tndOut(0, 0, lv[4]);
+    for (let c = 5; c < 8; c++) x[c + 1] = -lv[c] * VRC6_STEP; // the VRC6's DAC, inverted
+    x[0] = pulseOut(lv[0] + lv[1]) + tndOut(lv[2], lv[3], lv[4]) + x[6] + x[7] + x[8];
     return x;
   }
 
   // `getDacByte` is the contract's and unused; `scope` (SCOPE_LANES arrays)
-  // gets the channels at lanes 6-10, the others silence.
+  // gets the channels at lanes 6-13, the others silence.
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {
     if (scope) for (let c = 0; c < PSG_LANE; c++) scope[c]?.fill(0, 0, count);
     for (let i = 0; i < count; i++) {

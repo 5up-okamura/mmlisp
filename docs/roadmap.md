@@ -140,10 +140,11 @@ samples) — language.md §19. Next:
    modules import as `fc` (guide.md), their DPCM samples with them,
    then ppmck's MML if a composer's files call for it. Expansions are
    decided by voice class, not one by one: the 5B is the SSG profile, the
-   VRC7 the OPLL's, the FDS the wavetable class. Next, in order: the VRC6
-   on `fc` (its two pulses and its saw), Furnace's VRC6 modules into it,
-   NSF in (a 6502 run for its register writes, import-only — the one
-   source of a VRC6 song's writes, as VGM has no VRC6), then the FDS.
+   VRC7 the OPLL's, the FDS the wavetable class. The VRC6 is on `fc`
+   (`sqr3`, `sqr4`, `saw1`; WAV only, as VGM has no VRC6). Next, in order:
+   Furnace's VRC6 modules into it, NSF in (a 6502 run for its register
+   writes, import-only — the one source of a VRC6 song's writes), then the
+   FDS.
 
 Emulators for the preview: ymfm (BSD) covers the YM2608, YM2151, YM2413,
 Y8950 and the SSG in one library, built to WASM beside the Nuked cores.

@@ -460,7 +460,7 @@ export class IRPlayer {
     this._dmcRates = null; // the DMC's rates are this score's (_dmcRateOf)
     // The ports that write a chip's memory, not its registers (chips/ `ramBlock`).
     this._ramPorts = new Set(Object.values(target.chips).flatMap((c) =>
-      Object.entries(c.vgm?.ports ?? {}).filter(([, p]) => p.ramBlock).map(([port]) => Number(port))));
+      Object.entries(c.vgm?.ports ?? {}).filter(([, p]) => p?.ramBlock).map(([port]) => Number(port))));
     this._laneWave.fill(null);
     this._laneExpr.fill(null);
     this._drawnWaves.clear();
@@ -591,7 +591,7 @@ export class IRPlayer {
     if (adpcm) write(adpcm.stop());
     const kit = this._target.parts.find((p) => p.kit)?.kit;
     if (this._rhythmEnc && kit) for (const sound of Object.values(kit)) write(this._rhythmEnc.dump(sound));
-    this._psgChip?.drop?.(); // the SSG's queued mixer changes
+    for (const enc of this._queuedEncoders()) enc.drop?.(); // the SSG's queued mixer changes, the 2A03's levels
     const t = when ?? this._audioContext?.currentTime ?? 0;
     if (this._target.hasPart("pcm8")) for (let v = 0; v < PCM8_VOICES; v++) this._pcm8Ev(t, { kind: "cut", voice: v });
     // The PC Engine's DDA channels back off (a sample cut where it stands).
@@ -1404,7 +1404,7 @@ export class IRPlayer {
     // is done, to the end of its last note.
     this._waveExprFrames(done ? Math.max(horizon, this._songEndTime()) : horizon);
     // The SSG's mixer changes up to `horizon`, in time order (chips/ssg.js).
-    for (const [p, a, d, t] of this._psgChip?.flush?.(done ? Infinity : horizon) ?? []) this._write(p, a, d, t);
+    this._flushEncoders(done ? Infinity : horizon);
     // Every hit up to `horizon` is known now: the chip's sample voices'
     // levels can be written up to it — and once the song is done, on to the
     // end of what still sounds.
@@ -5336,7 +5336,7 @@ export class IRPlayer {
     for (const [port, addr, data] of writes) this._write(port, addr, data & 0xff, when);
     // Off the scheduler (a key, a live edit while stopped) nothing would
     // flush an encoder's queue (chips/rp2a03.js, ssg.js): it is written now.
-    if (!this._playing) for (const [p, a, d, t] of this._psgChip?.flush?.(Infinity) ?? []) this._write(p, a, d, t);
+    if (!this._playing) this._flushEncoders(Infinity);
   }
   // The target's PSG encoder: its tone chip's, or a noise alone (the OPM's,
   // chips/ym2151.js), or null.
@@ -5358,17 +5358,33 @@ export class IRPlayer {
       }
     const waveEnc = new Map();
     for (const c of Object.values(target.channels)) {
+      const chip = target.chips[c.chip];
+      // A tone chip of its own beside the PSG (a cartridge's, the VRC6's,
+      // chips/vrc6.js): its encoder's view for the channel, on the part's lane.
+      if (chip.toneEncoder && c.part.toneLane) {
+        if (!waveEnc.has(chip)) waveEnc.set(chip, chip.toneEncoder());
+        lanes[toneLaneOf(c)] = { enc: waveEnc.get(chip).lanes[c.voice], ch: c.voice, chip, part: c.part, queue: waveEnc.get(chip) };
+        continue;
+      }
       // A wave chip's channels, and its channels turned to noise (the PC
       // Engine's fifth and sixth, chips/huc6280.js): the encoder's noise
       // view, on a lane of the part's own.
       const asNoise = c.part.kind === "noise" && c.part.toneLane;
       if (c.part.kind !== "wave" && !asNoise) continue;
-      const chip = target.chips[c.chip];
       if (!waveEnc.has(chip)) waveEnc.set(chip, chip.waveEncoder());
       const enc = waveEnc.get(chip);
       lanes[toneLaneOf(c)] = { enc: asNoise ? enc.noise : enc, ch: c.voice, chip, part: c.part };
     }
     return lanes;
+  }
+  // The encoders that queue timed writes for flush(horizon) (chips/rp2a03.js,
+  // ssg.js, vrc6.js): the PSG's and a tone chip's beside it.
+  _queuedEncoders() {
+    const extra = new Set(this._toneEnc.map((l) => l?.queue).filter(Boolean));
+    return [this._psgChip, ...extra].filter(Boolean);
+  }
+  _flushEncoders(horizon) {
+    for (const enc of this._queuedEncoders()) for (const [p, a, d, t] of enc.flush?.(horizon) ?? []) this._write(p, a, d, t);
   }
   // A PSG write on a target with no PSG (its encoder is null) is nothing.
   _psg(encode) {
@@ -6396,7 +6412,7 @@ export class IRPlayer {
     for (const chip of Object.values(this._target.chips))
       if (!chip.optional) for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     this._fmEnc.reset?.(); // an encoder that keeps the chip's state starts over
-    this._psgChip?.reset?.();
+    for (const enc of this._queuedEncoders()) enc.reset?.();
     // Every channel starts on `init-fm`, the part's sine (chips/fm-words.js
     // fmInitVoice): the OPN's ALG 7, FB 0, all four operators AR 31, DR 0,
     // SL 0, RR 15, TL 0, MUL 1, DT 0 — the driver's boot patch (driver.md

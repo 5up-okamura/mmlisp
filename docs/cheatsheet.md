@@ -280,7 +280,10 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   the DMC, one voice: a `def-pcm` at one rate a def (the highest its whole
   sample fits 4081 bytes at), each note baked at its pitch with its level
   at key-on, a loop the whole range (`:loop-*` warns). Mono: no `:pan`; no
-  FM, wave, `:noise-rate`. VGM and WAV.
+  FM, wave, `:noise-rate`. VGM and WAV. The VRC6 cartridge when named:
+  `sqr3` / `sqr4` pulses (`:duty` the nearest of 1–8 sixteenths, a wider
+  one its mirror), `saw1` (`:vel` its 6-bit rate, 15 = 63; above 13.25 the
+  saw wraps, harsher, not louder); VGM leaves them out (WAV plays them).
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

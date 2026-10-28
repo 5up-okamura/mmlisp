@@ -119,6 +119,23 @@ export function fcPitch(clock) {
 }
 
 /**
+ * The VRC6's (port 3, chips/vrc6.js) periods: $x001 the low byte, $x002's
+ * low nibble the top; its pulses (clock / 16 / (period + 1)) and its saw
+ * (clock / 14 / (period + 1)) on the scope's lanes 11-13 (synth-fc.js).
+ */
+export function vrc6Pitch(clock) {
+  const period = new Uint16Array(3);
+  return {
+    write(port, addr, data, out) {
+      const ch = addr >> 2, reg = addr & 3;
+      if (port !== 3 || ch > 2 || (reg !== 1 && reg !== 2)) return;
+      const p = (period[ch] = reg === 1 ? (period[ch] & 0xf00) | data : (period[ch] & 0xff) | ((data & 15) << 8));
+      out[11 + ch] = clock / ((ch === 2 ? 14 : 16) * (p + 1));
+    },
+  };
+}
+
+/**
  * The OPLL's (port 4, chips/ym2413.js) F-numbers: $10+c the low 8 bits,
  * $20+c the top bit and the block, as the chip reads them each sample. Its
  * channels 0-5 draw on lanes 0-5, 6-8 on 15-17 (synth-msx.js); a tone is

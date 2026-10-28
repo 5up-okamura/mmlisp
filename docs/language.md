@@ -2353,7 +2353,7 @@ those chips cannot do is a compile error, not a different sound.
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 | `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
-| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle and noise | VGM, WAV |
+| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle and noise, and the VRC6 cartridge (two pulses, a saw) | VGM (without the VRC6), WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2846,7 +2846,8 @@ so a drum on `pcm5` punches through a line on `wave5`.
 (NTSC), and Play and WAV run a 2A03 of the toolchain's own (nesdev's APU
 pages: the duties, the triangle's steps, the noise's rates and LFSR, the
 nonlinear mixer). Its channels are `sqr1` and `sqr2`, the pulses; `tri`,
-the triangle; `noise`; and `pcm1`, the DMC's samples. There is no FM, no
+the triangle; `noise`; and `pcm1`, the DMC's samples — and the VRC6
+cartridge's `sqr3`, `sqr4` and `saw1` (below). There is no FM, no
 wave memory and no pan (the machine is mono): `fm1`, `wave1`, `:pan` and
 `:noise-rate` are `E_TARGET`. The chip hears the song a frame (1/60 s) at
 a time, as on `msx`.
@@ -2921,6 +2922,29 @@ mixer).
 (def-pcm kick :file "kick.wav")
 (tri :len 4 :oct 3 c e g e)
 (pcm1 :len 8 kick c > c < _ c :vel 8 c _ c c)
+```
+
+**VRC6.** Konami's cartridge chip is on `fc` when a score names its
+channels: **`sqr3`** and **`sqr4`**, two more pulses, and **`saw1`**. Its
+pulses are the 2A03's in the language — the same pitch moves on a 12-bit
+period (1.79 MHz / 16 / (n + 1)), the 4-bit volume, `:duty` — but the chip
+has eight duties, 1–8 sixteenths (6.25–50 %): a value is the nearest of
+them, and a wider one its mirror (12 sounds as 4, as on the chip). The
+`saw1` (1.79 MHz / 14 / (n + 1)) takes the same pitch moves, and its level is
+the chip's 6-bit rate, linear, `:vel 15` its top, 63: the rate is added up
+six times a cycle in an 8-bit sum, so above 42 (`:vel` 13.25) the sum
+wraps and the saw turns harsh rather than louder — Furnace's VRC6 saw
+starts at 63, so a module imported keeps that sound. `:duty` on `saw1` is
+`E_UNSUPPORTED_TARGET`; neither has a `:mode`. **VGM has no VRC6**: an
+exported VGM plays the 2A03's channels and leaves the VRC6's out, saying
+so; Play and WAV sound them (a VRC6 of the toolchain's own, nesdev's VRC6
+audio page; its pulse at full as loud as a 2A03 pulse at full).
+
+```lisp
+(def-score :target fc)
+(sqr3 :len 8 :duty 1 e g > c e < :duty 12 g e c e)
+(sqr4 :len 4 (macro :duty [1 2 4 8]) g1)
+(saw1 :len 4 :oct 2 :vel 13.25 c e (glide 8) g (macro :vel (linear 15..0 :len 4)) c)
 ```
 
 **Effects.** `def-se` is the Mega Drive driver's; an `fc` score has none

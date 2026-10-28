@@ -5781,11 +5781,11 @@
       if (!target) return;
 
       const pcm = await exportPcmBank(ir, 'VGM');
-      let bytes, pcmCount;
+      let bytes, pcmCount, leftOut;
       try {
         const offline = new IRPlayer(() => {});
         offline.loadJSON(ir);
-        ({ bytes, pcmCount } = renderVgm(offline, {
+        ({ bytes, pcmCount, leftOut } = renderVgm(offline, {
           title: ir.metadata?.title,
           composer: ir.metadata?.composer,
           author: ir.metadata?.author,
@@ -5797,6 +5797,8 @@
       if (pcmCount > 0) {
         log(`VGM export: skipped ${pcmCount} DAC/PCM event(s) — the samples did not load`, 'err');
       }
+      // A chip VGM has no command for (the VRC6): its channels are left out.
+      for (const chip of leftOut ?? []) log(`VGM export: the ${chip}'s channels are left out — VGM has no ${chip}; WAV export plays them`, 'err');
 
       const blob = new Blob([bytes], { type: 'application/octet-stream' });
       try {
@@ -6630,7 +6632,7 @@
       { length: Math.max(...Object.values(TARGETS).flatMap((t) => t.headsOfKind('fm').map((h) => t.channels[h].voice + 1))) },
       (_, ch) => ({ kind: 'fm', ch, label: `F${ch + 1}` }));
     const TONE_SLOTS = Array.from({ length: TONE_LANES },
-      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'N5', 'N6'][lane] ?? '' }));
+      (_, lane) => ({ kind: 'tone', lane, label: ['S1', 'S2', 'S3', 'N1', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'N5', 'N6', 'V3', 'V4', 'SAW'][lane] ?? '' }));
     const NOISE_SLOT = TONE_SLOTS[toneLaneOf({ part: { kind: 'noise' } })]; // one channel: the keys play it alone
     const PCM_SLOT = { kind: 'pcm', label: '' };
     let selectedCh = null;                 // the selected strip's FM or tone slot, or null — drives the FM param panel
@@ -6777,9 +6779,9 @@
     // -----------------------------------------------------------------------
     // Score channel name (head) → short strip label: the name's first letter
     // and its numbers ("fm3-1" → "F3-1", "sqr2" → "S2"); the CSM strip is
-    // "CSM", and the one noise is "N1".
+    // "CSM", the one noise is "N1" and the VRC6's saw1 "SAW".
     function channelLabelOf(head) {
-      const label = head === 'fm3-csm' ? 'csm' : head === 'noise' ? 'n1'
+      const label = head === 'fm3-csm' ? 'csm' : head === 'noise' ? 'n1' : head === 'saw1' ? 'saw'
         : head.replace(/^([a-z])[a-z]*/, '$1');
       return label.toUpperCase();
     }

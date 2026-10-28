@@ -1793,6 +1793,12 @@
   "diagnostics": "c2abed2ca544cbf9",
   "ir": "2e1d0ce2fe5c5449"
  },
+ "tools/tests/fc/vrc6.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "14e6ff41dd7eff4f",
+  "regs": "74247b5874b07f28",
+  "vgm": "abd0e41ad590db18"
+ },
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "602742d8cea2f201",
