@@ -1824,10 +1824,11 @@ them: a key-on starts a note, a key-off ends it.
   their voice, read on four operators: a ROM voice by its name (`piano`), a
   VRC7's ROM voice (its YM2413 clock's bit 31) as `vrc7-1`…`vrc7-15`, the
   user voice as `opll-user-01` … each as it stood at the key-on, at the
-  channel's volume (3 dB a step). A chip tuned
-  off A440 on the whole (an arcade board's clock) is taken back onto the
-  semitones; a header that gives a chip no clock gets the chip's usual one
-  (some arrangements leave it 0).
+  channel's volume (3 dB a step). A note keeps
+  the pitch it played: its cents off the semitone (a chip tuned off A440, a
+  driver's table, a step after the strike) are a `:pitch` on it, to 5. A
+  header that gives a chip no clock gets the chip's usual one (some
+  arrangements leave it 0).
 - A file with a YM2608 or YM2203 can be the **PC-8801**'s score
   (`:target pc88`), and one with an AY-3-8910 the **MSX**'s (`:target
   msx`) — each the default when that chip plays every channel. There the
@@ -1855,8 +1856,11 @@ them: a key-on starts a note, a key-off ends it.
   the HuC6280's (a **PC Engine** file, `:target pce`, the default when it
   plays every channel) — go to the target's `wave` channels, each keeping
   its number. Each distinct wave they start a note with becomes a
-  `def-wave` (`wave-01` …), named where a track's wave changes; a wave
-  rewritten under a sounding note is not followed. On the SCC a key let
+  `def-wave` (`wave-01` …), named where a track's wave changes. On the
+  SCC a wave rewritten under a sounding note steps a frame at a time as a
+  `(macro :wave …)` (`wmac-01` …: a driver's frame of a noisier wave as a
+  strike, a timbre stepping through waves); on the HuC6280 it is not
+  followed. On the SCC a key let
   go and taken again within 2 ms is no new note (a driver dropping every
   key for a moment as one channel starts), and a level jumping up three
   steps or more is a new one (the next note on a channel kept keyed). A HuC6280 channel on

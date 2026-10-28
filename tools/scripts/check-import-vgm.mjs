@@ -129,7 +129,8 @@ const writesOf = (source, addr) => {
   assert.equal(opt.dest["HuC6280 CH6 noise"], "noise6");
   const { source } = imported(parsed, "pce", false);
   assert.equal(writesOf(source, 7), writesOf(src, 7), "pce: the noise at the rates it played");
-  assert.equal(defaultVgmOptions(a, "md").dest["HuC6280 CH6 noise"], "noise", "md: the busier noise on noise");
+  // (CH5's seven notes against CH6's four.)
+  assert.equal(defaultVgmOptions(a, "md").dest["HuC6280 CH5 noise"], "noise", "md: the busier noise on noise");
   imported(parsed, "md");
 }
 {

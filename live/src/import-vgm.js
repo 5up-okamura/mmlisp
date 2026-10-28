@@ -880,7 +880,14 @@ function sccChip(clock, { ev }) {
   return {
     name: "K051649",
     write(port, a, d, t) {
-      if (port === 0 && a < 0x80) ram[a >> 5][a & 31] = (d << 24) >> 24;
+      if (port === 0 && a < 0x80) {
+        ram[a >> 5][a & 31] = (d << 24) >> 24;
+        // A wave rewritten under a sounding note: its timbre moving (a
+        // driver's frame of a noisier wave for a strike on the channel) —
+        // a note's still where its key is down for a moment (offEv).
+        for (let c = 0; c < N; c++)
+          if ((on[c] || offEv[c]) && Math.min(c, 3) === a >> 5) ev(key(c), { t, kind: "wave", wave: wave(c) });
+      }
       else if (port === 1 && a < 10) {
         const c = a >> 1;
         period[c] = a & 1 ? (period[c] & 0xff) | ((d & 15) << 8) : (period[c] & 0xf00) | d;
@@ -1291,8 +1298,7 @@ export async function parseVgm(bytes) {
  * pitch moved during a note is shaped (pitchShape): a jump it stays at is a
  * slur to a new note, the rest a `bend` on the note.
  */
-function notesOf(events, followPitch, endT, tune = 0) {
-  if (tune) events = events.map((e) => (e.pitch != null ? { ...e, pitch: e.pitch - tune } : e));
+function notesOf(events, followPitch, endT) {
   const out = [];
   let cur = null;
   const close = (t) => { if (cur) { cur.end = t; out.push(cur); cur = null; } };
@@ -1306,7 +1312,7 @@ function notesOf(events, followPitch, endT, tune = 0) {
       cur = { t: e.t, pitch: e.pitch ?? held, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
         pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, noiseHz: e.noiseHz ?? base.noiseHz, ssg: e.ssg ?? base.ssg, fresh: !!e.fresh,
         wave: e.wave ?? base.wave, duty: e.duty ?? base.duty, opll: e.opll ?? base.opll,
-        levels: [], pitches: [] };
+        levels: [], pitches: [], waves: [] };
       if (!cur.voice) cur.lv0 = cur.vel;
     } else if (e.kind === "off") close(e.t);
     else if (!cur) continue;
@@ -1316,6 +1322,10 @@ function notesOf(events, followPitch, endT, tune = 0) {
     else if (e.kind === "pitch" && e.pitch != null && (e.t - cur.t <= SETUP_T || cur.pitch == null)) cur.pitch = e.pitch;
     else if (e.kind === "pitch" && e.pitch != null) cur.pitches.push([e.t, e.pitch]);
     else if (e.kind === "vel" || e.kind === "tl") cur.levels.push([e.t, e.vel ?? e.tl]);
+    // A wave written in the note's setup burst is the note's; later, its
+    // timbre moving (a :wave macro).
+    else if (e.kind === "wave" && e.t - cur.t <= SETUP_T) cur.wave = e.wave;
+    else if (e.kind === "wave") cur.waves.push([e.t, e.wave]);
     // A pan written in the note's setup burst (after its key-on) is the note's.
     else if (e.kind === "pan" && e.t - cur.t <= SETUP_T) cur.pan = e.pan;
     else if (e.kind === "mode") cur.mode = e.mode;
@@ -1326,7 +1336,7 @@ function notesOf(events, followPitch, endT, tune = 0) {
     else if (e.kind === "duty") {
       const base = cur, lv = base.levels.length ? base.levels[base.levels.length - 1][1] : base.lv0 ?? base.vel;
       close(e.t);
-      cur = { ...base, t: e.t, duty: e.duty, levels: [], pitches: [], slur: true, vel: lv, lv0: lv,
+      cur = { ...base, t: e.t, duty: e.duty, levels: [], pitches: [], waves: [], slur: true, vel: lv, lv0: lv,
         pitch: base.pitches.length ? base.pitches[base.pitches.length - 1][1] : base.pitch };
     }
   }
@@ -1335,46 +1345,15 @@ function notesOf(events, followPitch, endT, tune = 0) {
   return followPitch ? notes.flatMap((n) => pitchShape(n, endT)) : notes;
 }
 
-/**
- * A chip's tuning: how far off the equal-tempered grid its notes start, on
- * the whole (an arcade board's clock, a table a quarter-tone off A440) — per
- * part of the chip. In semitones, 0 when within 15 cents. Each part is taken
- * back onto the grid.
- */
-function tuningOf(parsed) {
-  const by = new Map();
-  for (const [key, events] of parsed.events) {
-    // The 2A03's: its pitches are its NTSC clock's periods, which fc writes
-    // back as they were — a short song's high notes, far off the grid by
-    // the 11-bit period, are not a tuning.
-    if (/^2A03 /.test(key)) continue;
-    const chip = group(key);
-    if (!by.has(chip)) by.set(chip, [0, 0]);
-    const acc = by.get(chip);
-    for (const e of events) if (e.kind === "on" && e.pitch != null && e.kindOf !== "noise") {
-      const a = 2 * Math.PI * (e.pitch - Math.round(e.pitch));
-      acc[0] += Math.cos(a); acc[1] += Math.sin(a);
-    }
-  }
-  const tune = new Map();
-  for (const [chip, [x, y]] of by) {
-    const off = Math.atan2(y, x) / (2 * Math.PI);
-    tune.set(chip, Math.abs(off) > 0.15 ? off : 0);
-  }
-  return (key) => tune.get(group(key)) ?? 0;
-}
-// A chip's part: its FM, its SSG, its squares (each tuned its own way).
-const group = (key) => key.replace(/(\d+|[A-C])$/, "");
-
 // A channel's notes, worked out once per file and setting (the dialog's
 // analysis and every import from it read the same): kept on `parsed`.
-const notesCache = new WeakMap(); // parsed → {tune, byKey: Map(`${followPitch}/${key}` → notes)}
+const notesCache = new WeakMap(); // parsed → Map(`${followPitch}/${key}` → notes)
 function channelNotes(parsed, key, followPitch) {
   let c = notesCache.get(parsed);
-  if (!c) notesCache.set(parsed, (c = { tune: tuningOf(parsed), byKey: new Map() }));
+  if (!c) notesCache.set(parsed, (c = new Map()));
   const k = `${followPitch}/${key}`;
-  if (!c.byKey.has(k)) c.byKey.set(k, notesOf(parsed.events.get(key), followPitch, parsed.totalSamples, c.tune(key)));
-  return c.byKey.get(k);
+  if (!c.has(k)) c.set(k, notesOf(parsed.events.get(key), followPitch, parsed.totalSamples));
+  return c.get(k);
 }
 
 // ── Pitch ─────────────────────────────────────────────────────────────────
@@ -1413,7 +1392,9 @@ function pitchShape(n, endT) {
     while (k < moves.length && moves[k][0] <= at) v = moves[k++][1];
     p.push(Math.round((v - n.pitch) * 100));
   }
-  if (Math.max(...p) - Math.min(...p) <= 30) return [n];
+  // A wobble of 30 cents or less is none: the note is the pitch it spends
+  // its frames at (a driver's tuning step after the strike, kept as :pitch).
+  if (Math.max(...p) - Math.min(...p) <= 30) return [{ ...n, pitch: n.pitch + [...p].sort((x, y) => x - y)[p.length >> 1] / 100 }];
   // Jumps it stays at: cut there.
   const cuts = [0];
   for (let f = 1; f + STAY <= F; f++) {
@@ -1461,9 +1442,12 @@ function pitchShape(n, endT) {
     for (const c of rel) { const m = Math.round(n.pitch + c / 100); at.set(m, (at.get(m) ?? 0) + 1); }
     const midi = [...at].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
     const off = Math.round((n.pitch - midi) * 100);
-    // A wobble of 30 cents or less is none (and the note's own detune with it).
+    // A wobble of 30 cents or less is no bend.
     const moving = Math.max(...rel) - Math.min(...rel) > 30;
-    const seg = { ...n, t: t0, end: t1, pitch: midi + 0.0, slur: i > 0 || n.slur,
+    // (Its pitch keeps its cents off the semitone, its own frames' middle
+    // one: the note's :pitch.)
+    const mid = rel.map((c) => c + off).sort((x, y) => x - y)[rel.length >> 1];
+    const seg = { ...n, t: t0, end: t1, pitch: midi + (Math.abs(mid) < 50 ? mid : 0) / 100, slur: i > 0 || n.slur,
       bend: moving ? rel.map((c) => Math.round((c + off) / 5) * 5) : null };
     if (i > 0) {
       // Its level carries on from the note before.
@@ -1485,6 +1469,7 @@ const BPM = 150;
 const TICK = (60 * RATE) / (BPM * PPQN);
 const MAX_ENV = 256; // frames an envelope follows; a level held after it is held on
 const ENV_NONE = "(macro :vel none)";
+const WAVE_NONE = "(macro :wave none)";
 const ENV_KEY = 4; // frames assignEnvelopes indexes its shapes by
 
 /** A note's level frame by frame (sampled mid-frame), from `start`. */
@@ -1948,6 +1933,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (!waveDefs.has(k)) waveDefs.set(k, `wave-${String(waveDefs.size + 1).padStart(2, "0")}`);
     return waveDefs.get(k);
   };
+  // A wave moving under a note: a :wave macro of its frames, one def each.
+  const waveMacs = new Map(); // steps → name
+  const waveMacName = (steps) => {
+    const k = steps.join(" ");
+    if (!waveMacs.has(k)) waveMacs.set(k, `wmac-${String(waveMacs.size + 1).padStart(2, "0")}`);
+    return waveMacs.get(k);
+  };
   // A YM2413's voice on FM: its ROM voice by its built-in name, the VRC7's
   // ROM voices and a user voice as defs (chips/ym2413.js's 4-op reading).
   const opllDefs = new Map(); // bytes → {name, text}
@@ -1990,7 +1982,10 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       // the frame it keys on: it sounds its one frame.
       const minLen = target.frameClock ? Math.round(FRAME / TICK) : 1;
       const note = { tick, len: Math.max(minLen, end - tick),
-        midi: Math.round(n.pitch), vel: n.vel, tieIn: n.slur, bend: n.bend, ssg: n.voice ? null : n.ssg ?? null, srcT: n.t };
+        midi: Math.round(n.pitch), vel: n.vel,
+        // Its cents off the semitone, to 5: the pitch it played (a chip's
+        // tuning, a driver's table), as :pitch — not on a noise row.
+        detune: d === dests.noise || dests.noises.includes(d) ? 0 : Math.round(((n.pitch - Math.round(n.pitch)) * 100) / 5) * 5, tieIn: n.slur, bend: n.bend, ssg: n.voice ? null : n.ssg ?? null, srcT: n.t };
       const endT = n.end === Infinity ? parsed.totalSamples : n.end;
       let voice = null;
       if (onFm && n.voice) {
@@ -2019,8 +2014,21 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         standIns.add(voice);
       }
       note.stand = voice;
-      // A wave channel's note names the wave it starts with.
-      if (dests.wave.includes(d) && n.wave) note.stand = waveName(n.wave);
+      // A wave channel's note names the wave it starts with; one rewritten
+      // under it steps a frame at a time as a :wave macro (each frame the
+      // wave mid-frame, to its last change).
+      if (dests.wave.includes(d) && n.wave) {
+        const waveAt = (t) => { let w = n.wave; for (const [at, x] of n.waves) if (at <= t) w = x; return w; };
+        note.stand = waveName(waveAt(n.t));
+        const frames = Math.min(MAX_ENV, Math.max(1, Math.round((endT - n.t) / FRAME)));
+        const steps = Array.from({ length: frames }, (_, f) => waveName(waveAt(n.t + (f + 0.5) * FRAME)));
+        let last = 0;
+        for (let f = 1; f < frames; f++) if (steps[f] !== steps[f - 1]) last = f;
+        if (last > 0) {
+          note.waveSteps = steps.slice(0, last + 1);
+          note.waveMac = waveMacName(note.waveSteps);
+        }
+      }
       note.pan = (onFm || target.partOf(d)?.words?.("PAN")) && n.pan ? n.pan : null;
       note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
       // A pulse's duty, where the channel has one (fc's sqr1 / sqr2).
@@ -2131,16 +2139,22 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // A track with any envelope states one for every note — `(macro :vel
   // none)` where there is none, since a macro stays until cleared.
   for (const tr of tracks) {
-    let cur = { voice: null, env: null, pitch: null, pan: null, mode: null, rate: null,
+    let cur = { voice: null, wave: null, env: null, pitch: null, detune: null, pan: null, mode: null, rate: null,
       henv: null, envSemi: null, envDetune: null, duty: null };
+    const anyDetune = tr.notes.some((n) => n.detune);
     const anyEnv = tr.notes.some((n) => n.envName);
+    const anyWave = tr.notes.some((n) => n.waveMac);
     const anyBend = tr.notes.some((n) => n.bendName);
     for (const n of tr.notes) {
       if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - n.voiceRec.base) * 0.75) / 2)));
       const st = {
         voice: n.tieIn && cur.voice ? cur.voice : n.voiceRec ? n.voiceRec.name : n.stand,
+        wave: n.waveMac ?? (anyWave ? WAVE_NONE : null),
         env: n.envName ?? (anyEnv ? ENV_NONE : null),
         pitch: n.bendName ?? (anyBend ? PITCH_NONE : null),
+        // (After the bend: a bend's macro writes the offset itself, the
+        // detune within it.)
+        detune: anyDetune ? `:pitch ${n.detune}` : null,
         pan: n.pan ? `:pan ${n.pan}` : null,
         mode: n.mode,
         // fm8's noise period, the one in force on its tone notes too.
@@ -2154,16 +2168,20 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         duty: n.duty ?? cur.duty,
       };
       n.pre = [];
-      for (const k of ["voice", "env", "pitch", "pan", "mode", "rate", "henv", "envSemi", "envDetune", "duty"])
+      for (const k of ["voice", "wave", "env", "pitch", "detune", "pan", "mode", "rate", "henv", "envSemi", "envDetune", "duty"])
         if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
-      // Nothing to clear before the first envelope or bend, nor to move.
+      // Nothing to clear before the first envelope, wave macro or bend, nor to move.
       if (cur.env == null && st.env === ENV_NONE) n.pre = n.pre.filter((t) => t !== ENV_NONE);
+      if (cur.wave == null && st.wave === WAVE_NONE) n.pre = n.pre.filter((t) => t !== WAVE_NONE);
       if (cur.henv == null && st.henv === ":env none") n.pre = n.pre.filter((t) => t !== ":env none");
       for (const z of [":env-semi 0", ":env-detune 0"])
         if (n.pre.includes(z) && cur[z.startsWith(":env-semi") ? "envSemi" : "envDetune"] == null) n.pre = n.pre.filter((t) => t !== z);
       if (cur.pitch == null && st.pitch === PITCH_NONE) n.pre = n.pre.filter((t) => t !== PITCH_NONE);
-      n.state = [st.voice, st.env, st.pitch, st.pan, st.mode, st.rate, st.henv, st.envSemi, st.envDetune, st.duty].filter(Boolean);
-      cur = st;
+      if (cur.detune == null && st.detune === ":pitch 0") n.pre = n.pre.filter((t) => t !== ":pitch 0");
+      n.state = [st.voice, st.wave, st.env, st.pitch, st.detune, st.pan, st.mode, st.rate, st.henv, st.envSemi, st.envDetune, st.duty].filter(Boolean);
+      // (A wave macro leaves the channel on its last step, a bend the offset
+      // on its last: the next note names its own again.)
+      cur = { ...st, ...(n.waveSteps ? { voice: n.waveSteps[n.waveSteps.length - 1] } : {}), ...(n.bendName ? { detune: "" } : {}) };
     }
   }
 
@@ -2198,6 +2216,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   if (rhythmOut.length)
     header.push(`(import ${qstr(RHYTHM_KIT)})  ; ${kitRhythm ? "the YM2608 rhythm on the RX5 kit" : "the rhythm's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)"}`);
   if (waveDefs.size) header.push("", ...[...waveDefs].map(([steps, name]) => `(def-wave ${name} :wave [${steps}])`));
+  if (waveMacs.size) header.push("", ...[...waveMacs].map(([steps, name]) => `(def ${name} (macro :wave [${steps}]))`));
   if (envs.length) header.push("", ...envs);
   if (bends.length) header.push("", ...bends);
   if (dacOut) header.push("", ...dacOut.defs);

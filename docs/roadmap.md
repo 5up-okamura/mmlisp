@@ -84,7 +84,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
   if wanted — envelopes and bends match exactly (TwinBee gives ~26
   envelopes), and rounding near ones together is the lever;
   second chips, the MSX's FM-PAC (onto msx's fm channels), a wave rewritten
-  under a sounding note (SCC), the HuC6280's DDA and LFO, the
+  under a sounding note (the HuC6280's; the SCC's is a `:wave` macro), the
+  HuC6280's DDA and LFO, the
   remaining PCM chips (OKI MSM6295, QSound, K054539, C140, …).
 - **DefleMask / Furnace**: sample channels (SegaPCM, ADPCM-A/B, the
   MSM6258 — x68k's pcm1–pcm8 could take them), subsongs after the first, a
