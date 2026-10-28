@@ -353,14 +353,16 @@ export function emitPhrased(song) {
  * Onsets within 15 ms are one (a chord, however loosely played).
  *
  * Returns { unitTicks (what a unit is in the score: 24 = a 16th), bpm, fit,
- * frames, readings, units(t) → the unit a time (in samples) falls on }.
+ * frames, readings, unit (its length in samples), units(t) → the unit a
+ * time (in samples) falls on }. `lanes`: each part's own onsets, where a
+ * unit too coarse would put two notes on one step.
  * Falls back to the frame grid when no unit fits.
  */
-export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
+export function estimateGrid(onsetsIn, { frameRate = 60, lanes = null } = {}) {
   const frameUnit = RATE / frameRate;
   const frame = {
     unitTicks: 4, fit: 1, frames: true, readings: [], bpm: (60 * RATE) / (frameUnit * 24),
-    units: (t) => Math.round(t / frameUnit),
+    unit: frameUnit, units: (t) => Math.round(t / frameUnit),
   };
   const onsets = [...new Set(onsetsIn.map((t) => Math.round(t)))].sort((a, b) => a - b);
   const merged = [];
@@ -408,7 +410,26 @@ export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
   const top = Math.max(...scored.map((x) => x.fit));
   const best = scored.find((x) => x.fit >= Math.max(0.75, 0.9 * top));
   if (!best) return frame;
-  const unit = best.u;
+  // The coarsest unit that fits may be too coarse for a fast part: where a
+  // channel's notes come closer than half a unit, two share a step. Half the
+  // unit, if it fits too, takes over while more than 2% of the notes would.
+  const merges = (u) => {
+    let n = 0, all = 0;
+    for (const l of lanes ?? []) {
+      all += l.length;
+      // (Half a unit apart is a merge too: the two round to one step as
+      // often as not.)
+      for (let i = 1; i < l.length; i++) if (l[i] - l[i - 1] < u * 0.525 && l[i] - l[i - 1] > RATE * 0.015) n++;
+    }
+    return all ? n / all : 0;
+  };
+  let unit = best.u, fit = best.fit;
+  for (;;) {
+    const half = scored.find((x) => Math.abs(x.u - unit / 2) / unit < 0.02 && x.fit >= Math.max(0.75, 0.9 * top));
+    if (!half || merges(unit) <= 0.02 || merges(half.u) >= merges(unit)) break;
+    unit = half.u;
+    fit = half.fit;
+  }
 
   // A song on one steady clock (exact MIDI, most game drivers) keeps one
   // grid end to end: the unit refined against every onset's absolute time,
@@ -464,15 +485,17 @@ export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
       .map((gr) => ({ gr, n: misses(gr) })).reduce((p, q) => (q.n < p.n ? q : p)).gr;
   };
 
-  // Walk: each onset's unit, the unit's length following as it goes. A gap
-  // under half a unit (a part played a little late) is the same unit.
+  // Walk: each onset's place in units, the unit's length following as it
+  // goes. The place adds up unrounded and is rounded where it is read: a
+  // gap under half a unit (a part played a little late) is the same unit,
+  // and two half-unit gaps (a 32nd on a 16th grid) are one unit, not two.
   const at = [0];
   const len = [unit];
   let u = unit;
   for (let i = 1; i < merged.length; i++) {
     const d = merged[i] - merged[i - 1];
     const k = Math.round(d / u);
-    at.push(at[i - 1] + k);
+    at.push(at[i - 1] + d / u);
     // A little of each gap's own unit, never far from the song's.
     if (k > 0) u = Math.min(unit * 1.1, Math.max(unit * 0.9, u + 0.1 * (d / k - u)));
     len.push(u);
@@ -481,22 +504,26 @@ export function estimateGrid(onsetsIn, { frameRate = 60 } = {}) {
     if (t <= merged[0]) return Math.round((t - merged[0]) / unit);
     let lo = 0, hi = merged.length - 1;
     while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (merged[mid] <= t) lo = mid; else hi = mid - 1; }
-    return at[lo] + Math.round((t - merged[lo]) / len[lo]);
+    return Math.round(at[lo] + (t - merged[lo]) / len[lo]);
   };
 
   // Whichever grid keeps the onsets' gaps best, a fixed one on a tie (a
   // timer that drifts loses count on any fixed grid).
-  const grids = [fixedGrid(fixedU), fixedGrid(scanU), { u: unit, units }].filter(Boolean);
+  // (The walk's unit, for the tempo, is the one it averages over the song.)
+  const span = at[at.length - 1] - at[0];
+  const walked = span > 0 ? (merged[merged.length - 1] - merged[0]) / span : unit;
+  const grids = [fixedGrid(fixedU), fixedGrid(scanU), { u: walked, units }].filter(Boolean);
   const pick = grids.map((gr) => ({ gr, n: misses(gr) })).reduce((a, b) => (b.n < a.n ? b : a)).gr;
-  return readingsOf(pick.u, { fit: best.fit, frames: false, units: pick.units });
+  return readingsOf(pick.u, { fit, frames: false, unit: pick.u, units: pick.units });
 }
 
-// The unit as a note: whatever puts the beat in 80-160 BPM, a 16th first;
-// the other readings (double, half, … the tempo) ride along.
+// The unit as a note: whatever puts the beat in 80-200 BPM, a 16th first
+// (a run's 32nd grid at 178 is 16ths at 178, not 32nds at 89); the other
+// readings (double, half, … the tempo) ride along.
 function readingsOf(unit, grid) {
   const asNote = [[4, 24], [2, 48], [8, 12], [3, 32], [6, 16], [1, 96], [16, 6], [12, 8], [32, 3], [24, 4]];
   const options = asNote.map(([perBeat, ticks]) => ({ unitTicks: ticks, bpm: (60 * RATE) / (unit * perBeat) }));
-  const pick = options.find((o) => o.bpm >= 80 && o.bpm <= 160) ?? options[0];
+  const pick = options.find((o) => o.bpm >= 80 && o.bpm <= 200) ?? options[0];
   return { ...grid, unitTicks: pick.unitTicks, bpm: pick.bpm, readings: options.filter((o) => o.bpm >= 40 && o.bpm <= 320) };
 }
 
@@ -716,43 +743,115 @@ function lastPiece(items) {
 }
 
 // One track's structure on a given set of bars: its units, folded and
-// phrased, and the ticks it writes out (a loop body and a def once each).
+// phrased.
 function planTrack(tr, bars, endTick, loopTick) {
   const units = unitsOf(tr, bars, endTick, loopTick);
   const segs = loopTick > 0 ? [units.filter((u) => u.start < loopTick), units.filter((u) => u.start >= loopTick)] : [units];
   const lists = segs.map((s) => foldRepeats(s));
   const defs = extractDefs(lists, tr.channel);
-  const written = (items) => items.reduce((t, it) =>
-    t + (it.k === "u" ? it.len : it.k === "x" ? written(it.block) : 0), 0);
-  const ticks = lists.reduce((t, l) => t + written(l), 0) + defs.reduce((t, d) => t + written(d.items), 0);
-  return { segs, lists, defs, ticks };
+  return { segs, lists, defs };
 }
 
 /**
  * Where the bars go when the file does not say (a VGM, a MIDI file timed by
- * its notes): the bar length and pickup under which the song folds most.
- * `|` is editorial, so this changes only how the score reads.
+ * its notes). The meter comes from how the song repeats: the share of its
+ * onsets (a track's pitch at a 16th) that come back one, two and four bars
+ * later, for a 4/4 bar against a 3/4 one. Three is taken only when it
+ * clearly wins, in a song longer than eight 4/4 bars (a song that barely
+ * repeats reads either way, and 4/4 is the commoner).
+ *
+ * The downbeat comes from the drums (a note's `drum`: {id, bright}), in
+ * 4/4: the backbeat is one drum on two 8ths half a bar apart and another
+ * on the two a beat on from them. Of the two the duller (`bright`, a
+ * kick) is on 1 and 3, the other (a snare) on 2 and 4. That puts 1 on
+ * one of two 8ths; it moves off the start only where clearly more long
+ * notes start on it (a chord changes on 1; a track marked `drums` is not
+ * counted) — the drums alone mistake a low snare or offbeat hats for the
+ * pair, and the kick plays 1 and 3 alike. That 8th starts a bar, one
+ * before it a pickup. With no such pair (no drums,
+ * a 3/4 song, a beat with no backbeat) the first bar starts at the first
+ * note.
+ * `|` is editorial, but the structure cuts the score there.
  */
 export function bestBars(song) {
-  song = songInRange(song);
   const { endTick } = song;
-  let best = null;
-  for (const bar of [384, 768, 192, 576, 288]) {
-    for (let pickup = 0; pickup < bar; pickup += 96) {
-      const bars = [];
-      for (let t = pickup || bar; t < endTick; t += bar) bars.push(t);
-      bars.push(endTick);
-      let ticks = 0;
-      for (const tr of song.tracks) {
-        const span = trackSpan(song, tr);
-        ticks += planTrack(tr, bars.filter((b) => b < span.endTick).concat(span.endTick), span.endTick, span.loopTick).ticks;
-      }
-      // A 4/4 bar reads best: another length has to fold 8% more to win.
-      if (bar !== 384) ticks *= 1.08;
-      if (!best || ticks < best.ticks) best = { bars, ticks };
+  const S = PPQN / 4;
+  const n = Math.ceil(endTick / S) + 1;
+  const at = Array.from({ length: n }, () => []);
+  song.tracks.forEach((tr, ti) => {
+    for (const x of tr.notes) {
+      const i = x.tick / S;
+      if (x.midi == null || x.tieIn || !Number.isInteger(i) || i >= n) continue;
+      at[i].push(ti * 128 + x.midi);
+    }
+  });
+  const sim = (lag) => {
+    const k = lag / S;
+    let same = 0, all = 0;
+    for (let i = 0; i + k < n; i++) {
+      if (!at[i].length) continue;
+      all += at[i].length;
+      const later = new Set(at[i + k]);
+      for (const x of at[i]) if (later.has(x)) same++;
+    }
+    return all ? same / all : 0;
+  };
+  const per = (bar) => (sim(bar) + sim(2 * bar) + sim(4 * bar)) / 3;
+  const four = per(WHOLE), three = per((WHOLE * 3) / 4);
+  const bar = 8 * WHOLE < endTick && three > 0 && three >= four * 1.25 ? (WHOLE * 3) / 4 : WHOLE;
+
+  // Each drum's hits on each 8th of the bar, counted from the song's start.
+  const E = PPQN / 2, steps = bar / E, half = steps / 2;
+  const drums = new Map();
+  for (const tr of song.tracks) {
+    for (const x of tr.notes) {
+      if (!x.drum || x.tieIn || x.tick % E) continue;
+      if (!drums.has(x.drum.id)) drums.set(x.drum.id, { bright: x.drum.bright, at: new Array(steps).fill(0), hits: 0 });
+      const d = drums.get(x.drum.id);
+      d.at[(x.tick % bar) / E]++;
+      d.hits++;
     }
   }
-  return best.bars;
+  // A drum's hits on 8th p and p + half a bar, as a share of all of them.
+  const pair = (d, p) => (d.at[p % steps] + d.at[(p + half) % steps]) / d.hits;
+  let s = 0;
+  if (bar === WHOLE) {
+    let best = null;
+    for (const a of drums.values()) {
+      if (a.hits < 16) continue;
+      for (let p = 0; p < half; p++) {
+        if (pair(a, p) < 0.75) continue;
+        for (const b of drums.values()) {
+          if (b === a || b.hits < 16 || pair(b, p + 2) < 0.5) continue;
+          const score = pair(a, p) * a.hits + pair(b, p + 2) * b.hits;
+          if (!best || score > best.score) best = { score, kick: a.bright <= b.bright ? [a, p] : [b, p + 2] };
+        }
+      }
+    }
+    if (best) {
+      // The kick's two are 1 and 3, but which is which — and whether the
+      // pair is a kick and snare at all (a low snare, a hat and a clap on
+      // the offbeats) — the long notes tell (half a bar or more, not a
+      // drum's: chords change on 1). The start holds unless clearly more
+      // start on one of the two: twice as many, and four more.
+      const x = best.kick[1] % half;
+      const long = (j) => {
+        let c = 0;
+        for (const tr of song.tracks) {
+          if (tr.drums) continue;
+          for (const y of tr.notes) if (!y.drum && !y.tieIn && y.midi != null && y.len >= bar / 2 && y.tick % bar === j * E) c++;
+        }
+        return c;
+      };
+      const at0 = long(0);
+      const c = long(x) >= long(x + half) ? x : x + half;
+      if (c && long(c) >= 2 * at0 && long(c) - at0 >= 4) s = c;
+    }
+  }
+  const bars = [];
+  for (let t = s ? s * E : bar; t < endTick; t += bar) bars.push(t);
+  bars.push(endTick);
+  return bars;
 }
 
 /**
@@ -770,9 +869,9 @@ export function emitStructured(song) {
     const { segs, lists, defs } = planTrack(tr, bars, endTick, loopTick);
     const byRun = new Map(defs.map((d) => [d.runKey, d]));
     // Switches the compiler binds to the notes as it goes (like the octave),
-    // not writes the chip gets: a macro, and a PCM track's sample.
+    // not writes the chip gets: a macro, the gate, and a PCM track's sample.
     const pcm = tr.channel.startsWith("pcm");
-    const baked = (t) => { const k = switchKind(t); return k.startsWith("macro") || (pcm && k === "name"); };
+    const baked = (t) => { const k = switchKind(t); return k.startsWith("macro") || k === ":gate" || (pcm && k === "name"); };
 
     // Writing: the state carried from item to item, restated at a head.
     const writeUnit = (u, st) => {

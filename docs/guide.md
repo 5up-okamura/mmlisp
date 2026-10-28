@@ -1870,18 +1870,37 @@ them: a key-on starts a note, a key-off ends it.
 - The tempo is estimated from the onsets (the dialog shows how well they fit
   and the other readings, double or half — typing one keeps the measured
   beat and reads it so); when no beat fits, the notes go on the frame grid
-  (1/60 s = 4 ticks). A driver whose timer drifts is followed onset by onset,
+  (1/60 s = 4 ticks). The grid is as fine as the fastest part needs: where a
+  channel's notes (or the DAC's hits) would share a step, half the unit
+  serves (a 32nd for a song's runs). A driver whose timer drifts is followed onset by onset,
   so its bars stay bars; a part a little off the beat (a late echo) is put
   on the nearest step without moving it. The file's loop becomes `#top …
   (go top)`.
+- A note's length is the grid's — to the next note, or to the step it was
+  keyed off at — so the rhythm reads in the beat's values. Where the driver
+  keyed off sooner the time it cut is measured: a driver cuts by a fixed
+  amount (mucom88's `q`) or a fixed share (MXDRV's), so a track's cuts are
+  gathered into a few values to the tick (on a 4-tick clock when within a
+  tick and a half). The track then says it the way that changes least —
+  the time cut (`:gate- 32`, mucom88's `q3`), the share sounding
+  (`:gate* 0.75`), or the time sounding (`:gate 32`, a note ending by the
+  next beat); `:gate* 1` is back to full. A note across a bar line sounds
+  its whole length.
+- An SSG level becomes `:vel` by its decibels (the SSG's steps are 3 dB,
+  `:vel`'s 2 dB), so a decay keeps its depth; the quietest levels (under
+  `:vel`'s 30 dB) sit at its floor.
 - The YM2612's DAC comes in as a `pcm1` track (the `YM2612 DAC` row). The
   VGM's PCM data bank becomes one wav, `<song>-dac.wav`, and each place the
   driver starts a sample from is a `(def-pcm dac-NN … :offset … :frames …)`
   slicing it, at the rate most of its hits play (`:rate`); a hit at another
   rate is that many semitones off, and each hit lasts to the next. Seeks with
-  `8n` writes and DAC stream control both read; a DAC written byte by byte,
-  without a data bank, does not — nor can a driver's own mix of several
-  samples be split again. FM6 is the DAC then, so its track is dropped.
+  `8n` writes and DAC stream control both read, and so does a hit the
+  stream plays on into without a seek — where the driver turns the DAC on
+  again, or a few bytes written straight to it start one (Revenge of
+  Shinobi's). Hits closer than the grid (a flam) follow one another by the
+  time between them. A DAC written byte by byte, without a data bank, does
+  not read — nor can a driver's own mix of several samples be split again.
+  FM6 is the DAC then, so its track is dropped.
 - An arcade, X68000 or PC-8801 chip's PCM comes in too: **SegaPCM** (System
   16, X, OutRun), the **YM2610's ADPCM-A and ADPCM-B** (Neo Geo, Taito), the
   **X68000's OKIM6258** and the **YM2608's ADPCM-B** (its RAM image, data
@@ -1980,8 +1999,15 @@ last; its repeats fold as `~ (x n … ~)` — the `~` before the loop ties the
 first pass on, the one ending it each pass into the next. A def states the
 voice, octave and velocity it starts with; a loop body states a voice only
 where one changes — on the way in, or coming back round from its end. Where
-the file gives no bars (a VGM, a MIDI file timed by its notes), they are
-placed — bar length and pickup — where the song folds most. On a PCM track
+the file gives no bars (a VGM, a MIDI file timed by its notes), the meter
+comes from how the song repeats: 3/4 where the song comes back every three
+beats clearly more than every four, 4/4 otherwise. The downbeat comes from
+the drums — a PCM or DAC sample, or the YM2608's rhythm — where a 4/4 song
+has a backbeat: the duller drum of the pair on 1 and 3, the other on 2 and
+4 — 1 rather than 3 where clearly more long notes start on it, as chords
+change on 1 — and a pickup where the song starts before that 1. With no backbeat to go
+by the first bar starts at the first note; a change of meter within the
+song is not read. On a PCM track
 a hit is cut at the bar line rather than tied over it: a shot plays out
 whatever its length.
 

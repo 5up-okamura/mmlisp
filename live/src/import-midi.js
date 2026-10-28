@@ -535,6 +535,9 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
         const name = GM_DRUMS[n.key];
         if (!name) { warnings.push(`drum key ${n.key} has no sample in presets/gm-drums — dropped`); continue; }
         note.midi = DRUM_KEY;
+        // The kick and snare tell where the bars go (bestBars).
+        if (n.key === 35 || n.key === 36) note.drum = { id: "kick", bright: 0 };
+        else if (n.key === 38 || n.key === 40) note.drum = { id: "snare", bright: 1 };
         if (name !== cur) { note.pre = [name]; cur = name; }
       } else {
         note.midi = n.key;
@@ -597,10 +600,10 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   if (pcmUsed) header.push('(import "presets/gm-drums/set.mmlisp")');
   if (bendDefs.length) header.push("", ...bendDefs);
 
-  // Timed by its notes, the file's bars say nothing: place them where the
-  // song folds most.
+  // Timed by its notes, the file's bars say nothing: the meter is read
+  // from how the song repeats, the downbeat from the drums (bestBars).
   const song = { header, bars, endTick, loopTick, tracks };
   const source = options.structure === false ? emitSong(song)
-    : emitStructured(beats ? { ...song, bars: bestBars(song) } : song);
+    : emitStructured(beats ? { ...song, bars: bestBars({ ...song, tracks: tracks.map((tr) => ({ ...tr, drums: tr.channel.startsWith("pcm") })) }) } : song);
   return { source, warnings };
 }

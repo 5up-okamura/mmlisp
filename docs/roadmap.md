@@ -77,7 +77,14 @@ Its current limits are `driver.md` §11 — keep the two in step.
   `#psg_tune` / `#opll_tune`, `@\` on FM.
 - **MDX**: the OPM LFO's sync, MP / MA's random shape, and their phase: MXDRV restarts
   them at a note only under an MD, where the import restarts them always.
-- **VGM**: tempo changes within a song (one grid serves the whole file — Dino
+- **VGM tempo**: some drivers' songs read at the wrong beat — the frame grid
+  (Bare Knuckle's Stealthy Steps), or 3/4 or 1.5× of it (The Scheme, Slap
+  Fight MD); the bars follow the beat.
+- **VGM** (and MIDI timed by its notes): a pickup in a song with no
+  sampled backbeat (drums on FM or a noise channel, 3/4), and a change of
+  meter within a song — bestBars reads the downbeat only from a PCM / ROM
+  kick and snare (accents and repeats' edges did not find one reliably on
+  tracker modules, nor is a VGM's loop point on a bar line); tempo changes within a song (one grid serves the whole file — Dino
   Land's title theme estimates a 64th-note grid for all of it); fewer shapes,
   if wanted — envelopes and bends match exactly (TwinBee gives ~26
   envelopes), and rounding near ones together is the lever;

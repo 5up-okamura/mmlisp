@@ -202,7 +202,7 @@ const writesOf = (source, addr) => {
     assert.match(source, /\(sqr2[\s\S]*:duty 12/, "fc: sqr2's 75 %");
     assert.doesNotMatch(source.slice(source.indexOf("(tri"), source.indexOf("(noise")), /:vel/, "fc: the triangle says no :vel");
     assert.match(source, /\(tri[^)]*\bc _/, "fc: the triangle's rest (its linear counter at 0)");
-    assert.match(source, /\(noise[\s\S]*:mode white :oct 2 [^|]*c c\+[\s\S]*:mode periodic[\s\S]*:mode white/, "fc: the noise's rates as notes, its modes");
+    assert.match(source, /\(noise[\s\S]*:mode white (?::gate\* 1 )?:oct 2 [^|]*c c\+[\s\S]*:mode periodic[\s\S]*:mode white/, "fc: the noise's rates as notes, its modes");
   }
   const md = imported(parsed, "md").source;
   assert.equal(defaultVgmOptions(a, "md").dest["2A03 TRI"], "fm1");
