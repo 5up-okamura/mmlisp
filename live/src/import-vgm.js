@@ -1424,8 +1424,8 @@ function notesOf(events, followPitch, endT) {
     const base = cur, lv = base.levels.length ? base.levels[base.levels.length - 1][1] : base.lv0 ?? base.vel;
     const last = (xs, x) => (xs.length ? xs[xs.length - 1][1] : x);
     close(t);
-    cur = { ...base, t, ...change, levels: [], pitches: [], waves: [], slur: true, vel: lv, lv0: lv,
-      pitch: last(base.pitches, base.pitch), wave: last(base.waves, base.wave) };
+    cur = { ...base, t, ...change, levels: [], pitches: [], waves: [], lfos: [], slur: true, vel: lv, lv0: lv,
+      pitch: last(base.pitches, base.pitch), wave: last(base.waves, base.wave), lfo: last(base.lfos, base.lfo) };
   };
   for (const e of events) {
     if (e.kind === "on" || (e.kind === "retrig" && cur)) {
@@ -1437,7 +1437,7 @@ function notesOf(events, followPitch, endT) {
       cur = { t: e.t, pitch: e.pitch ?? held, vel: e.vel ?? base.vel ?? 15, voice: e.voice ?? base.voice,
         pan: e.pan ?? base.pan, mode: e.mode ?? base.mode, noiseHz: e.noiseHz ?? base.noiseHz, ssg: e.ssg ?? base.ssg, fresh: !!e.fresh,
         wave: e.wave ?? base.wave, duty: e.duty ?? base.duty, opll: e.opll ?? base.opll, lfo: "lfo" in e ? e.lfo : base.lfo,
-        levels: [], pitches: [], waves: [] };
+        levels: [], pitches: [], waves: [], lfos: [] };
       if (!cur.voice) cur.lv0 = cur.vel;
     } else if (e.kind === "off") close(e.t);
     else if (!cur) continue;
@@ -1452,10 +1452,16 @@ function notesOf(events, followPitch, endT) {
     else if (e.kind === "wave" && e.t - cur.t <= SETUP_T) cur.wave = e.wave;
     else if (e.kind === "wave") cur.waves.push([e.t, e.wave]);
     // The FDS's modulation set in the setup burst is the note's; its depth
-    // moved later, the note going on with the new one (its rate or table
-    // moved alone, a sweep, is not followed).
+    // moved later, where it moved (`lfos`: a driver's delayed vibrato; its
+    // rate or table moved alone, a sweep, is not followed). The last set at
+    // one time stands (a table rewritten halts the unit for a moment).
     else if (e.kind === "lfo" && e.t - cur.t <= SETUP_T) cur.lfo = e.lfo;
-    else if (e.kind === "lfo" && (e.lfo?.depth ?? 0) !== (cur.lfo?.depth ?? 0)) slurTo(e.t, { lfo: e.lfo });
+    else if (e.kind === "lfo") {
+      const ls = cur.lfos;
+      if (ls.length && ls[ls.length - 1][0] === e.t) ls.pop();
+      const was = ls.length ? ls[ls.length - 1][1] : cur.lfo;
+      if ((e.lfo?.depth ?? 0) !== (was?.depth ?? 0)) ls.push([e.t, e.lfo]);
+    }
     // A pan written in the note's setup burst (after its key-on) is the note's.
     else if (e.kind === "pan" && e.t - cur.t <= SETUP_T) cur.pan = e.pan;
     else if (e.kind === "mode") cur.mode = e.mode;
@@ -2172,7 +2178,12 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       note.pan = (onFm || target.partOf(d)?.words?.("PAN")) && n.pan ? n.pan : null;
       note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
       // The FDS's modulation, where the channel has its table (fc's wave1).
-      if (target.partOf(d)?.lfoTable) note.lfo = n.lfo;
+      // (A slur's part of the note: the depth in force where it starts.)
+      if (target.partOf(d)?.lfoTable) {
+        note.lfo = n.lfo;
+        for (const [t, lfo] of n.lfos) if (t <= n.t) note.lfo = lfo;
+        note.lfos = n.lfos.filter(([t]) => t > n.t && t < n.end);
+      }
       // A pulse's duty, where the channel has one (fc's sqr1 / sqr2).
       note.duty = n.duty != null && target.partOf(d)?.words?.("DUTY") ? `:duty ${n.duty}` : null;
       // A noise whose note is its rate (fc's): another chip's noise at the
@@ -2226,6 +2237,24 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       if (next - (n.tick + n.len) > 0 && tr.notes[i + 1]?.tieIn) n.len = next - n.tick;
       if (n.tieIn && (i === 0 || tr.notes[i - 1].tick + tr.notes[i - 1].len !== n.tick)) n.tieIn = false;
     }
+  }
+  // The FDS's modulation depth moved under a note: the note tied on (`~`)
+  // where it moved, the depth written there — its envelope one macro through
+  // the tie, as the chip's.
+  for (const tr of tracks) {
+    tr.notes = tr.notes.flatMap((n) => {
+      const out = [n];
+      for (const [t, lfo] of n.lfos ?? []) {
+        const prev = out[out.length - 1], k = tickOf(t), end = prev.tick + prev.len;
+        // (Two moves within a tick: the later stands. One past the key-off,
+        // in the release, is not written.)
+        if (k <= prev.tick) { prev.lfo = lfo; continue; }
+        if (k >= end || (lfo?.depth ?? 0) === (prev.lfo?.depth ?? 0)) continue;
+        prev.len = k - prev.tick;
+        out.push({ ...prev, tick: k, len: end - k, tieIn: true, lfoTie: true, lfo });
+      }
+      return out;
+    });
   }
   // The DAC, to a PCM track: the data bank one wav, each sample a def that
   // slices it — so with DAC on, FM6 is not there to play.
@@ -2290,7 +2319,13 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     const anyLfo = tr.notes.some((n) => n.lfo);
     for (const n of tr.notes) {
       if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - n.voiceRec.base) * 0.75) / 2)));
-      const st = {
+      const lfoSt = {
+        lfoWave: n.lfo ? `:lfo-wave ${lfoName(n.lfo.table)}` : cur.lfoWave,
+        lfoFreq: n.lfo ? `:lfo-freq ${n.lfo.freq}` : cur.lfoFreq,
+        lfoPmd: anyLfo ? `:lfo-pmd ${n.lfo?.depth ?? 0}` : null,
+      };
+      // (A tie the modulation moved at says its depth, nothing else.)
+      const st = n.lfoTie ? { ...cur, ...lfoSt } : {
         // (A wave channel's slur names the wave it goes on with.)
         voice: n.tieIn && cur.voice && !n.ownWave ? cur.voice : n.voiceRec ? n.voiceRec.name : n.stand,
         wave: n.waveMac ?? (anyWave ? WAVE_NONE : null),
@@ -2312,9 +2347,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         duty: n.duty ?? cur.duty,
         // The FDS's modulation: its table and rate where it runs, its depth
         // 0 where it does not.
-        lfoWave: n.lfo ? `:lfo-wave ${lfoName(n.lfo.table)}` : cur.lfoWave,
-        lfoFreq: n.lfo ? `:lfo-freq ${n.lfo.freq}` : cur.lfoFreq,
-        lfoPmd: anyLfo ? `:lfo-pmd ${n.lfo?.depth ?? 0}` : null,
+        ...lfoSt,
       };
       n.pre = [];
       for (const k of ["voice", "wave", "env", "pitch", "detune", "pan", "mode", "rate", "henv", "envSemi", "envDetune", "duty", "lfoWave", "lfoFreq", "lfoPmd"])

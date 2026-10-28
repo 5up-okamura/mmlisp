@@ -1949,9 +1949,11 @@ them: a key-on starts a note, a key-off ends it.
   gain are written together (the gain up or the pitch a semitone away), or
   the pitch jumps with the modulation set. The modulation a note starts
   with is the song's `:lfo-wave` (a def, `lfo-01` …), `:lfo-freq` and
-  `:lfo-pmd`, and a depth moved under a note goes on as a slur with the new
-  one; a rate swept under a note, the modulation's own envelope and the
-  pitch it bends are left to the chip (on msx and pce, left out).
+  `:lfo-pmd`; a depth moved under a note (a delayed vibrato) is written
+  where it moved, the note tied on there (`~`), its envelope and release one
+  macro through the tie. A rate swept under a note, the modulation's own
+  envelope and the pitch it bends are left to the chip (on msx and pce,
+  left out).
 - A pitch moved during a note is followed — untick it to keep only the
   struck pitch. A jump it then stays at is a new note, slurred (`~`); a
   wobble is a vibrato, a shared `(def vib-40-10 (macro :pitch (sin -40..40

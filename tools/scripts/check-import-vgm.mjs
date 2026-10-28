@@ -214,8 +214,9 @@ const writesOf = (source, addr) => {
 // The FDS (0xB4 $20-$7F): wave1 again on fc — the 32-step wave held twice
 // back at 32 steps, the 64-step one whole, the gain as :vel, the
 // modulation's table, rate and depth as the song's LFO words where a note
-// starts with them (a sweep under a note is not followed), the wave and the
-// depth moving under a held note; on msx every other step of the 64.
+// starts with them (a sweep under a note is not followed), the wave moving
+// under a held note, its depth moved there a tie with the depth; on msx
+// every other step of the 64.
 {
   const parsed = await vgmOf("tools/tests/fc/fds.mmlisp");
   const a = analyzeVgm(parsed);
@@ -228,8 +229,8 @@ const writesOf = (source, addr) => {
     assert.match(source, /\(def lfo-01 \[1 1 1 1 1 1 1 1 -1 (?:-?1 ){22}1\]\)/, "fc: the modulation's table");
     const wave1 = source.slice(source.indexOf("(wave1"));
     assert.match(wave1, /:vel 10 e/, "fc: the gain");
-    assert.match(wave1, /:lfo-wave lfo-01 :lfo-freq 20 :lfo-pmd 8 g :lfo-pmd 30 c/, "fc: the vibrato, then deeper");
-    assert.match(wave1, /wave-02 :lfo-pmd 0 ~ c/, "fc: the sine and no modulation on the held c");
+    assert.match(wave1, /:lfo-wave lfo-01 :lfo-freq 20 :lfo-pmd 8 g [^|]*:lfo-pmd 30 c/, "fc: the vibrato, then deeper");
+    assert.match(wave1, /:lfo-pmd 0 ~ c (?:\S+ )*~ e/, "fc: no modulation from the held c on, tied where it stops");
     assert.match(wave1, /wmac-01/, "fc: the wave rewritten under a note");
   }
   const msx = imported(parsed, "msx").source;
