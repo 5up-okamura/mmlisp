@@ -66,6 +66,7 @@ import { VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY } from "./ir-utils.js";
 import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
 import { DMC_RATES } from "./chips/rp2a03.js";
 import { encodeWav } from "./export-wav.js";
+import { defTable } from "./import-shapes.js";
 
 // What each source channel kind is, for the defaults and the voice: an FM
 // channel whose instruments are OPN voices; OPM / OPLL / wavetable channels
@@ -459,18 +460,16 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const loopIndex = a.loopIndex;
 
   // Instruments → defs, as each is first used where it lands.
-  const defs = new Map(); // key → {name, text}
-  const usedNames = new Set(["init-fm"]);
-  const uniq = (base) => { let n = base; for (let k = 2; usedNames.has(n); k++) n = `${base}-${k}`; usedNames.add(n); return n; };
+  const defs = defTable(["init-fm"]);
+  const uniq = defs.uniq;
   const fmVoice = (i) => {
     const key = `fm:${i}`;
-    if (!defs.has(key)) {
+    return defs.of(key, () => {
       const ins = t.instruments[i];
       const name = uniq(`ins-${slug(ins.name) || i}`);
       const raw = { ...ins.fm, ops: ins.fm.ops.map((o) => ({ ...o, dt: dtRegFromFurnace(o.dt) })) };
-      defs.set(key, { name, text: fmVoiceDef(name, raw, { dt2: tp.hasWord("FM_DT2_1") }) });
-    }
-    return defs.get(key).name;
+      return { name, text: fmVoiceDef(name, raw, { dt2: tp.hasWord("FM_DT2_1") }) };
+    }).name;
   };
   // An OPLL instrument on the FM-PAC: a ROM voice by its name, else the
   // user voice as a def-fm of the chip's words (op1 the modulator), where
@@ -487,14 +486,13 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     if (preset >= 1 && preset <= 15) return OPLL_ROM_NAMES[preset - 1];
     if (preset) return null;
     const key = `opll:${i}`;
-    if (!defs.has(key)) {
+    return defs.of(key, () => {
       const name = uniq(`ins-${slug(t.instruments[i].name) || i}`);
       const op = (o, n) => [["ar", o.ar & 15], ["dr", o.dr & 15], ["sl", o.sl & 15], ["rr", o.rr & 15], ["ml", o.mul & 15],
         ["ks", o.ksr & 1], ["am", o.am & 1], ["ws", (n === 1 ? f.ams : f.fms) & 1], ["eg", (o.ssg >> 3) & 1], ["ksl", o.ksl & 3], ["vib", o.vib & 1],
         ...(n === 1 ? [["tl", o.tl & 63]] : [])].map(([w, v]) => `:${w}${n} ${v ?? 0}`).join(" ");
-      defs.set(key, { name, text: `(def-fm ${name} :fb ${f.fb & 7}${f.alg ? " :sus 1" : ""}\n  ${op(f.ops[0], 1)}\n  ${op(f.ops[1], 2)}\n)` });
-    }
-    return defs.get(key).name;
+      return { name, text: `(def-fm ${name} :fb ${f.fb & 7}${f.alg ? " :sus 1" : ""}\n  ${op(f.ops[0], 1)}\n  ${op(f.ops[1], 2)}\n)` };
+    }).name;
   };
   // `nz`: a PC Engine noise note's place in DefleMask's twelve-rate table
   // (no properNoiseLayout), where the arp macro moves the note through the
@@ -530,7 +528,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     if (waveNames?.includes(null)) waveMacroSteps++;
     const waves = waveNames?.every((n) => n) ? waveNames : null;
     const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${note == null ? "" : `:n${note}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}${vm ? `:${vm}` : ""}`;
-    if (!defs.has(key)) {
+    return defs.of(key, () => {
       const ins = t.instruments[i];
       const parts = [];
       // A macro's loop as `#sus`, its release point (Furnace's: held there
@@ -599,9 +597,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       if (vm === "ssg" && ins.duty?.values.some((x) => x !== ins.duty.values[0]))
         parts.push(`:noise-rate ${arr(ins.duty, (x) => Math.max(1, 31 - (x & 31)))}`);
       const name = uniq(`env-${slug(ins.name) || i}${note == null ? (nz == null ? "" : `-nz${nz}`) : `-${FIX_NAMES[((note % 12) + 12) % 12]}${Math.floor(note / 12)}`}${fc && fc !== "pulse" ? `-${fc}` : ""}${col == null ? "" : `-v${col}`}`);
-      defs.set(key, { name, text: `(def ${name} (macro none)${parts.length ? ` (macro ${parts.join(" ")})` : ""})` });
-    }
-    return defs.get(key).name;
+      return { name, text: `(def ${name} (macro none)${parts.length ? ` (macro ${parts.join(" ")})` : ""})` };
+    }).name;
   };
   const standIns = new Set();
   // A module wavetable as a def-wave: its steps 0..height onto −128..127,
@@ -611,7 +608,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const w = t.waves?.[i];
     if (!w || !w.values.length) return null;
     const key = `wave:${i}`;
-    if (!defs.has(key)) {
+    return defs.of(key, () => {
       if (w.values.length !== 32) waveResampled++;
       const top = Math.max(1, w.height ?? 31);
       const steps = Array.from({ length: 32 }, (_, k) => {
@@ -619,9 +616,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return Math.max(-128, Math.min(127, Math.round((Math.max(0, Math.min(top, v)) * 255) / top) - 128));
       });
       const name = uniq(`wave-${slug(w.name) || i}`);
-      defs.set(key, { name, text: `(def-wave ${name} :wave [${steps.join(" ")}])` });
-    }
-    return defs.get(key).name;
+      return { name, text: `(def-wave ${name} :wave [${steps.join(" ")}])` };
+    }).name;
   };
   let waveMacroSteps = 0, dutyMoves = 0, noiseDropped = 0, waveDropped = 0, noisePitch = 0, dutyUnderNote = 0, vrc6PcmNotes = 0;
 
@@ -645,13 +641,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const depth = Math.round((y * 127 * 100) / (16 * 128));
     const period = Math.max(1, Math.round((64 / x) * 60 / t.hz));
     const key = `vib:${x}:${y}`;
-    if (!defs.has(key)) {
+    return defs.of(key, () => {
       const name = uniq(`vib-${x.toString(16)}${y.toString(16)}`);
       // (Furnace's sine starts at the middle, rising — a quarter turn in —
       // and its first tick has already stepped it: `x` 64ths more.)
-      defs.set(key, { name, text: `(def ${name} (macro :pitch+ (sin ${-depth}..${depth} :len ${period}f :phase ${vibPhase(x)})))` });
-    }
-    return defs.get(key).name;
+      return { name, text: `(def ${name} (macro :pitch+ (sin ${-depth}..${depth} :len ${period}f :phase ${vibPhase(x)})))` };
+    }).name;
   };
   // An instrument's pitch macro as a def of the note's pitch a frame at a
   // time, in cents (a step 1/128 semitone): its delay, each step held its
@@ -661,7 +656,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const m = t.instruments[i]?.pitch;
     if (!m?.values.length || !m.values.some(Boolean)) return null;
     const key = `ipitch:${i}`;
-    if (!defs.has(key)) {
+    return defs.of(key, () => {
       const out = new Array(m.delay ?? 0).fill(0);
       const cap = Math.round(2 * t.hz); // two seconds of ticks
       let acc = 0;
@@ -674,9 +669,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         if (k === m.values.length && m.loop != null && (m.relative ? m.values.slice(m.loop).some(Boolean) : m.loop < m.values.length - 1)) k = m.loop;
       }
       const name = uniq(`pitch-${slug(t.instruments[i].name) || i}`);
-      defs.set(key, { name, text: `(def ${name} (macro :pitch+ [${out.join(" ")}]))` });
-    }
-    return defs.get(key).name;
+      return { name, text: `(def ${name} (macro :pitch+ [${out.join(" ")}]))` };
+    }).name;
   };
   let insPitchUnder = 0;
   const pitchToken = (n) => {
@@ -808,7 +802,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       }
       dpcm.rate = Math.max(dpcm.rate, Math.round(hz));
       const name = uniq(`${pcmWord}-${slug(String(sm.name ?? "").replace(/\.(wav|raw|pcm|bin)$/i, "")) || si}`);
-      defs.set(`dpcm:${key}`, { name, text: `(def-pcm ${name} :file ${qstr(wavFile)} :rate ${Math.round(hz)} :offset ${dpcm.offsets.get(si)} :frames ${sm.data.length})` });
+      defs.add(`(def-pcm ${name} :file ${qstr(wavFile)} :rate ${Math.round(hz)} :offset ${dpcm.offsets.get(si)} :frames ${sm.data.length})`);
       dpcm.defs.set(key, { name, loop: !!sm.loop });
     }
     return dpcm.defs.get(key);
@@ -1493,7 +1487,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // loaded (as the VGM and mucom imports have it).
   if (tracks.some(({ ch }) => tp.partOf(ch.dest)?.name === "rhythm"))
     header.push(`(import ${qstr(RHYTHM_KIT)})  ; the rhythm's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)`);
-  for (const d of defs.values()) header.push("", d.text);
+  for (const d of defs.texts) header.push("", d);
 
   const barTicks = (t.rowsPerBar > 0 ? t.rowsPerBar : a.rowsPerBeat * 4) * rowTicks;
   const segBars = (len) => {

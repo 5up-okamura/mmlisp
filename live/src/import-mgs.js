@@ -65,8 +65,8 @@
 //   mgsToMmlisp(mgs, options, a)  → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken } from "./import-song.js";
-import { withPre, dropIdleNones } from "./import-mdx.js";
+import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones } from "./import-song.js";
+import { defTable, sjis, frameVector } from "./import-shapes.js";
 import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
 import { envCycle } from "./chips/ssg.js";
 
@@ -83,7 +83,6 @@ export const mgsBpm = (t) => { const bpm = 14400 / Math.floor(14400 / Math.max(5
 const u16 = (u8, p) => u8[p] | (u8[p + 1] << 8);
 const s16 = (u8, p) => { const v = u16(u8, p); return v >= 0x8000 ? v - 0x10000 : v; };
 const s8 = (v) => (v >= 0x80 ? v - 0x100 : v);
-const sjis = (u8) => { try { return new TextDecoder("shift-jis").decode(u8); } catch { return String.fromCharCode(...u8); } };
 
 // ── The file ──────────────────────────────────────────────────────────────
 
@@ -520,21 +519,6 @@ function expandEnv(env) {
   return { levels, offsets, nfreqs, modes, sus, mode, nfreq, wave, moves };
 }
 
-// Frame values as a macro vector: a run of one value is the value and a wait.
-function frameVector(values, sus) {
-  const items = [];
-  for (let k = 0; k < values.length; ) {
-    if (k === sus) items.push("#sus");
-    let n = 1;
-    while (k + n < values.length && values[k + n] === values[k] && k + n !== sus) n++;
-    items.push(String(values[k]));
-    // The last value holds: a wait at the end only keeps a loop's length.
-    if (n > 1 && (k + n < values.length || sus != null)) items.push(`(wait ${n - 1}f)`);
-    k += n;
-  }
-  return `[${items.join(" ")}]`;
-}
-
 /**
  * An envelope at a level `v` as a :vol macro spec; `k` (an @e's, or none's)
  * the release after the key-off, a level step every k frames, the first k
@@ -679,26 +663,18 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   const warnings = [];
   const skipped = new Map(a.skipped);
   const skip = (k) => skipped.set(k, (skipped.get(k) ?? 0) + 1);
-  const defs = [];
+  const defs = defTable();
   const tick = (s) => s * TICKS_PER_STEP;
   // The song's tempo at a step: #tempo, then any track's t.
   const tempoLine = a.tracks.flatMap((t) => t.tempos).sort((x, y) => x.step - y.step);
   const tempoAt = (step) => { let bpm = mgs.tempo; for (const t of tempoLine) { if (t.step > step) break; bpm = t.bpm; } return mgsBpm(bpm); };
 
-  const waveDefs = new Map();
-  const waveName = (n) => {
-    if (!waveDefs.has(n)) {
-      const w = mgs.defs.waves.get(n);
-      if (!w) { waveDefs.set(n, null); warnings.push(`@s${n} is not in the file — its notes play the wave before`); }
-      else {
-        const name = `scc-${String(n).padStart(2, "0")}`;
-        defs.push(`(def-wave ${name} :wave [${w.join(" ")}])`);
-        waveDefs.set(n, name);
-      }
-    }
-    return waveDefs.get(n);
-  };
-  const envDefs = new Map();
+  const waveName = (n) => defs.of(`wave:${n}`, () => {
+    const w = mgs.defs.waves.get(n);
+    if (!w) { warnings.push(`@s${n} is not in the file — its notes play the wave before`); return null; }
+    const name = `scc-${String(n).padStart(2, "0")}`;
+    return { name, text: `(def-wave ${name} :wave [${w.join(" ")}])` };
+  })?.name ?? null;
   // `off`: the note's key-off frame, where the release starts (an envelope
   // still moving there releases from where it is: a def for each level —
   // an @e's k release, an @r's RR).
@@ -707,43 +683,28 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     const releases = env0 && (env0.type === "r" ? env0.rr > 0 : k > 0);
     const rel = releases && off != null ? releaseFrom(env0, v, off) : null;
     const relTag = rel != null && rel !== releaseFrom(env0, v, null) ? rel : null;
-    const key = `${num}:${v}:${kind === "scc" ? "scc" : "ssg"}:${k}:${relTag}`;
-    if (!envDefs.has(key)) {
+    return defs.of(`env:${num}:${v}:${kind === "scc" ? "scc" : "ssg"}:${k}:${relTag}`, () => {
       const env = env0;
-      if (!env) { envDefs.set(key, null); warnings.push(`@e${num} is not in the file — its notes play without an envelope`); }
-      else {
-        // The SCC's levels as :vel (sccVel), the others' as :vol.
-        const scc = kind === "scc";
-        const spec = envelopeSpec(env, v, scc ? sccVel : ssgVol, k, relTag != null ? off : null);
-        // One level held: the note's level, no macro.
-        const flat = /^\[([\d.]+)\]$/.exec(spec);
-        if (flat) envDefs.set(key, { level: Number(flat[1]) });
-        else {
-          // vel-/vol- name the target, as the score writer reads them (import-song.js).
-          const name = `${scc ? "env" : "vol"}-${env.type}${num}-v${v}${k ? `-k${k}` : ""}${relTag != null ? `-r${relTag}` : ""}${scc ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
-          defs.push(`(def ${name} (macro ${scc ? ":vel" : ":vol"} ${spec}))`);
-          envDefs.set(key, { name });
-        }
-      }
-    }
-    return envDefs.get(key);
+      if (!env) { warnings.push(`@e${num} is not in the file — its notes play without an envelope`); return null; }
+      // The SCC's levels as :vel (sccVel), the others' as :vol.
+      const scc = kind === "scc";
+      const spec = envelopeSpec(env, v, scc ? sccVel : ssgVol, k, relTag != null ? off : null);
+      // One level held: the note's level, no macro.
+      const flat = /^\[([\d.]+)\]$/.exec(spec);
+      if (flat) return { level: Number(flat[1]) };
+      // vel-/vol- name the target, as the score writer reads them (import-song.js).
+      const name = `${scc ? "env" : "vol"}-${env.type}${num}-v${v}${k ? `-k${k}` : ""}${relTag != null ? `-r${relTag}` : ""}${scc ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
+      return { name, text: `(def ${name} (macro ${scc ? ":vel" : ":vol"} ${spec}))` };
+    });
   };
   // An @e's pitch steps on one note, as a :pitch+ macro (a def a note).
-  const bendDefs = new Map();
-  const envBend = (num, midi, kind, x) => {
-    const key = `${num}:${midi}:${kind}`;
-    if (!bendDefs.has(key)) {
-      // + up: the period less, FM's F-number more.
-      const cents = x.offsets.map((o) => (o ? Math.round(offsetCents(kind, midi, kind === "fm" ? o : -o) / 5) * 5 : 0));
-      let name = null;
-      if (cents.some(Boolean)) {
-        name = `bend-e${num}-${NOTE_NAMES[midi % 12].replace("+", "s")}${Math.floor(midi / 12) - 1}${kind === "psg" ? "" : `-${kind}`}`;
-        defs.push(`(def ${name} (macro :pitch+ ${frameVector(cents, x.sus)}))`);
-      }
-      bendDefs.set(key, name);
-    }
-    return bendDefs.get(key);
-  };
+  const envBend = (num, midi, kind, x) => defs.of(`bend:${num}:${midi}:${kind}`, () => {
+    // + up: the period less, FM's F-number more.
+    const cents = x.offsets.map((o) => (o ? Math.round(offsetCents(kind, midi, kind === "fm" ? o : -o) / 5) * 5 : 0));
+    if (!cents.some(Boolean)) return null;
+    const name = `bend-e${num}-${NOTE_NAMES[midi % 12].replace("+", "s")}${Math.floor(midi / 12) - 1}${kind === "psg" ? "" : `-${kind}`}`;
+    return { name, text: `(def ${name} (macro :pitch+ ${frameVector(cents, x.sus)}))` };
+  })?.name ?? null;
   const expanded = new Map();
   const envX = (num) => {
     if (!expanded.has(num)) {
@@ -757,23 +718,17 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
 
   // Tone n: the ROM voice @# gives it (@0-@14 are ROM voices 1-15 to
   // start), else (ROM 0, the original) its @v as a def-fm on the OPLL's words.
-  const voiceDefs = new Map();
-  const fmVoice = (n) => {
-    if (!voiceDefs.has(n)) {
-      const rom = mgs.defs.roms.get(n) ?? (n <= 14 ? n + 1 : 0);
-      const d = mgs.defs.voices.get(n);
-      if (rom) voiceDefs.set(n, OPLL_ROM_NAMES[rom - 1]);
-      else if (d) {
-        const name = `mgs-v${String(n).padStart(2, "0")}`;
-        const op = (k, b0, ar, sl, ksl, ws, tl) => [`:am${k} ${b0 >> 7}`, `:vib${k} ${(b0 >> 6) & 1}`, `:eg${k} ${(b0 >> 5) & 1}`,
-          `:ks${k} ${(b0 >> 4) & 1}`, `:ml${k} ${b0 & 15}`, `:ksl${k} ${ksl}`, ...(tl != null ? [`:tl${k} ${tl}`] : []),
-          `:ws${k} ${ws}`, `:ar${k} ${ar >> 4}`, `:dr${k} ${ar & 15}`, `:sl${k} ${sl >> 4}`, `:rr${k} ${sl & 15}`].join(" ");
-        defs.push(`(def-fm ${name} :fb ${d[3] & 7}\n  ${op(1, d[0], d[4], d[6], d[2] >> 6, (d[3] >> 3) & 1, d[2] & 63)}\n  ${op(2, d[1], d[5], d[7], d[3] >> 6, (d[3] >> 4) & 1, null)})`);
-        voiceDefs.set(n, name);
-      } else { voiceDefs.set(n, null); warnings.push(`FM @${n} has no @v definition — its notes play the voice before`); }
-    }
-    return voiceDefs.get(n);
-  };
+  const fmVoice = (n) => defs.of(`voice:${n}`, () => {
+    const rom = mgs.defs.roms.get(n) ?? (n <= 14 ? n + 1 : 0);
+    const d = mgs.defs.voices.get(n);
+    if (rom) return { name: OPLL_ROM_NAMES[rom - 1] };
+    if (!d) { warnings.push(`FM @${n} has no @v definition — its notes play the voice before`); return null; }
+    const name = `mgs-v${String(n).padStart(2, "0")}`;
+    const op = (k, b0, ar, sl, ksl, ws, tl) => [`:am${k} ${b0 >> 7}`, `:vib${k} ${(b0 >> 6) & 1}`, `:eg${k} ${(b0 >> 5) & 1}`,
+      `:ks${k} ${(b0 >> 4) & 1}`, `:ml${k} ${b0 & 15}`, `:ksl${k} ${ksl}`, ...(tl != null ? [`:tl${k} ${tl}`] : []),
+      `:ws${k} ${ws}`, `:ar${k} ${ar >> 4}`, `:dr${k} ${ar & 15}`, `:sl${k} ${sl >> 4}`, `:rr${k} ${sl & 15}`].join(" ");
+    return { name, text: `(def-fm ${name} :fb ${d[3] & 7}\n  ${op(1, d[0], d[4], d[6], d[2] >> 6, (d[3] >> 3) & 1, d[2] & 63)}\n  ${op(2, d[1], d[5], d[7], d[3] >> 6, (d[3] >> 4) & 1, null)})` };
+  })?.name ?? null;
 
   const songOut = [];
   let endMax = 0;
@@ -985,7 +940,7 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
   const header = [`; Imported from ${options.fileName ?? "an MGS file"} (MGS${mgs.version}${mgs.opllMode ? ", #opll_mode 1" : ""})`];
   const score = [":target msx", mgs.title && `:title ${qstr(mgs.title)}`].filter(Boolean);
   header.push(`(def-score ${score.join(" ")})`);
-  for (const d of defs) header.push("", d);
+  for (const d of defs.texts) header.push("", d);
 
   const song = {
     header, bars: barEnds([], Math.max(1, endMax)), endTick: endMax, loopTick: null,

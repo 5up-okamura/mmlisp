@@ -53,6 +53,12 @@ Run from tools directory:
     files written there (and an `-lh5-` encoder written from LHA's): names,
     folders, damage; `-- <dir>` also reads every archive under a directory,
     CRC-checked (lhasa's `test/archives` held the LHA variants to it)
+19. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
+    check: the song importers (MDX, MGS, mucom88, MIDI, DMF, FUR) on a folder
+    of real songs kept outside the repo, each score and its diagnostics written
+    under `<dir>/<name>/`. Take a set before an importer change and one after,
+    then `diff -r`: a refactor leaves none, a notation change only the ones it
+    means (`--limit N` takes N files of each kind, `--only mdx,mgs` some kinds)
 
 ## i18n
 

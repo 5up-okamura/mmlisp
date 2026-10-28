@@ -33,6 +33,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM and the OKIM6258; `tools npm run check:import-vgm`), DefleMask / Furnace |
 | `import-mdx.js`, `import-mgs.js` | Driver songs played clock-exact: MDX (MXDRV, + its PDX) as `:target x68k`, MGS (MGSDRV) as `:target msx` (`tools npm run check:import-mdx-mgs`) |
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
+| `import-shapes.js`              | What the importers share before the writer: the score's defs keyed by what they hold (`defTable`), frame vectors, Shift-JIS |
 | `import-resynth.js`             | File > Import > Audio as Formants: a recording's four spectral peaks as fm3-N tracks, under CSM or as sine waves (x68k: fm1's operators; msx, pce: wave1–4) (`tools npm run check:resynth`) |
 | `voice-estimate.js` (+ `voice-estimate-worker.js`, `fm-model.js`) | File > Import > Audio as FM Voice: a patch searched for one recorded note, on a fast model of one YM2612 channel held to Nuked (`tools npm run check:voice-estimate`) |
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |

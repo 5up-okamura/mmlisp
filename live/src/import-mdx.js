@@ -48,7 +48,8 @@
 //     options: { pdx: Uint8Array | null, structure, fileName }
 // ---------------------------------------------------------------------------
 
-import { emitSong, emitStructured, barEnds, qstr, PPQN, stateChange, lenToken } from "./import-song.js";
+import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones } from "./import-song.js";
+import { defTable, sjis } from "./import-shapes.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
 import { decodeOki } from "./import-vgm.js";
 import { encodeWav } from "./export-wav.js";
@@ -76,7 +77,6 @@ const LFO_WAVES = ["saw", "square", "triangle", "noise"];
 
 const be16 = (u8, p) => (u8[p] << 8) | u8[p + 1];
 const s16 = (u8, p) => { const v = be16(u8, p); return v >= 0x8000 ? v - 0x10000 : v; };
-const sjis = (u8) => { try { return new TextDecoder("shift-jis").decode(u8); } catch { return String.fromCharCode(...u8); } };
 const round2 = (x) => (Math.abs(x - Math.round(x)) < 0.005 ? Math.round(x) : +x.toFixed(2));
 export const mdxBpm = (tb, quarter = CLOCKS_PER_QUARTER) =>
   round2((4882.8125 / (256 - Math.min(255, tb))) * (CLOCKS_PER_QUARTER / quarter));
@@ -466,25 +466,17 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
   const warnings = [];
   const skipped = new Map(a.skipped);
   const skip = (k) => skipped.set(k, (skipped.get(k) ?? 0) + 1);
-  const defs = [];
-  const usedNames = new Set();
-  const uniq = (base) => { let n = base; for (let k = 2; usedNames.has(n); k++) n = `${base}-${k}`; usedNames.add(n); return n; };
+  const defs = defTable();
 
   // Voices: one def per voice and LFO sensitivity it plays with.
-  const voiceDefs = new Map();
-  const voiceName = (num, pmsAms) => {
-    const key = `${num}:${pmsAms}`;
-    if (!voiceDefs.has(key)) {
-      const v = mdx.voices.get(num);
-      if (!v) { voiceDefs.set(key, null); warnings.push(`voice @${num} is not in the file — its notes play the voice before`); return null; }
-      const fms = (pmsAms >> 4) & 7, ams = pmsAms & 3;
-      const name = uniq(`voice-${String(num).padStart(2, "0")}${pmsAms ? `-p${fms}a${ams}` : ""}`);
-      defs.push(fmVoiceDef(name, { alg: v.alg, fb: v.fb, ams, fms, ops: v.ops }, { dt2: true }));
-      if ((v.slot & 15) !== 15) warnings.push(`voice @${num} keys only some operators (slot mask ${v.slot & 15}): it is written whole`);
-      voiceDefs.set(key, name);
-    }
-    return voiceDefs.get(key);
-  };
+  const voiceName = (num, pmsAms) => defs.of(`voice:${num}:${pmsAms}`, () => {
+    const v = mdx.voices.get(num);
+    if (!v) { warnings.push(`voice @${num} is not in the file — its notes play the voice before`); return null; }
+    const fms = (pmsAms >> 4) & 7, ams = pmsAms & 3;
+    const name = defs.uniq(`voice-${String(num).padStart(2, "0")}${pmsAms ? `-p${fms}a${ams}` : ""}`);
+    if ((v.slot & 15) !== 15) warnings.push(`voice @${num} keys only some operators (slot mask ${v.slot & 15}): it is written whole`);
+    return { name, text: fmVoiceDef(name, { alg: v.alg, fb: v.fb, ams, fms, ops: v.ops }, { dt2: true }) };
+  })?.name ?? null;
 
   // The PDX's samples: those the song plays, in one wav.
   const pdx = options.pdx ? parsePdx(options.pdx) : null;
@@ -706,7 +698,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     const db = (g) => Math.round(20 * Math.log10(g) * 10) / 10;
     for (const sm of list) {
       const fx = sm.gain > 1 ? ` :fx [(gain ${db(sm.gain)})]` : "";
-      defs.push(`(def-pcm ${sm.name} :file ${qstr(wavFile)} :rate ${sm.rate} :offset ${sm.offset} :frames ${sm.frames}${fx})`);
+      defs.add(`(def-pcm ${sm.name} :file ${qstr(wavFile)} :rate ${sm.rate} :offset ${sm.offset} :frames ${sm.frames}${fx})`);
     }
     for (const t of songOut)
       for (const nn of t.notes) {
@@ -726,7 +718,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
   const header = [`; Imported from ${options.fileName ?? "an MDX file"} (MDX${mdx.pcm8 ? ", PCM8" : ""}${mdx.pdxName ? `, ${mdx.pdxName}` : ""})`];
   const score = [":target x68k", mdx.title && `:title ${qstr(mdx.title)}`].filter(Boolean);
   header.push(`(def-score ${score.join(" ")})`);
-  for (const d of defs) header.push("", d);
+  for (const d of defs.texts) header.push("", d);
 
   const bars = barEnds([], Math.max(1, endMax));
   const song = {
@@ -735,32 +727,4 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
   };
   const source = options.structure === false ? emitSong(withPre(song)) : emitStructured(song);
   return { source, warnings, pcm };
-}
-
-// For the plain writer: each note's switches that changed, as `pre`.
-export function withPre(song) {
-  return {
-    ...song,
-    tracks: song.tracks.map((tr) => {
-      let cur = tr.notes[0]?.state ?? [];
-      const notes = tr.notes.map((n, i) => {
-        const pre = i ? stateChange(cur, n.state) : undefined;
-        cur = n.state;
-        return { ...n, pre };
-      });
-      return { ...tr, head: tr.notes[0]?.state ?? [], notes };
-    }),
-  };
-}
-
-// A macro target no note of the track sets needs no `none` either. A def
-// names its target by its prefix (import-song.js switchKind).
-const DEF_TARGET = { vol: "vol", env: "vel", bend: "pitch", vib: "pitch" };
-const macroTarget = (x) => (x.startsWith("(macro :") ? (x.endsWith(" none)") ? null : /^\(macro :([a-z]+)/.exec(x)[1])
-  : DEF_TARGET[/^([a-z]+)-/.exec(x)?.[1]] ?? null);
-export function dropIdleNones(notes) {
-  const idle = ["pitch", "vel", "vol"].filter((t) => !notes.some((n) => n.state.some((x) => macroTarget(x) === t)));
-  if (!idle.length) return notes;
-  const nones = new Set(idle.map((t) => `(macro :${t} none)`));
-  return notes.map((n) => ({ ...n, state: n.state.filter((x) => !nones.has(x)) }));
 }

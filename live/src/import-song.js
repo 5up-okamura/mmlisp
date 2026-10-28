@@ -1164,3 +1164,31 @@ function bendSpec(b) {
     return st[1].replace(/\)$/, ` :wait ${st[0].match(/\d+/)[0]}f)`);
   return st.length === 1 ? st[0] : `[${st.join(" ")}]`;
 }
+
+// For the plain writer: each note's switches that changed, as `pre`.
+export function withPre(song) {
+  return {
+    ...song,
+    tracks: song.tracks.map((tr) => {
+      let cur = tr.notes[0]?.state ?? [];
+      const notes = tr.notes.map((n, i) => {
+        const pre = i ? stateChange(cur, n.state) : undefined;
+        cur = n.state;
+        return { ...n, pre };
+      });
+      return { ...tr, head: tr.notes[0]?.state ?? [], notes };
+    }),
+  };
+}
+
+// A macro target no note of the track sets needs no `none` either. A def
+// names its target by its prefix (import-song.js switchKind).
+const DEF_TARGET = { vol: "vol", env: "vel", bend: "pitch", vib: "pitch" };
+const macroTarget = (x) => (x.startsWith("(macro :") ? (x.endsWith(" none)") ? null : /^\(macro :([a-z]+)/.exec(x)[1])
+  : DEF_TARGET[/^([a-z]+)-/.exec(x)?.[1]] ?? null);
+export function dropIdleNones(notes) {
+  const idle = ["pitch", "vel", "vol"].filter((t) => !notes.some((n) => n.state.some((x) => macroTarget(x) === t)));
+  if (!idle.length) return notes;
+  const nones = new Set(idle.map((t) => `(macro :${t} none)`));
+  return notes.map((n) => ({ ...n, state: n.state.filter((x) => !nones.has(x)) }));
+}
