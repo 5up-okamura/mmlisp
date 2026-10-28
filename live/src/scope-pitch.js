@@ -68,7 +68,7 @@ export function ssgPitch(clock) {
 
 /**
  * The SCC's (port 3, chips/k051649.js) 12-bit periods, $80-$89, onto the
- * wave lanes 10-14; a tone is `clock` / 32 / (period + 1).
+ * wave lanes 10-14; a tone is `clock` / 16 / (period + 1) (chips/k051649.js).
  */
 export function sccPitch(clock) {
   const period = new Uint16Array(5);
@@ -77,7 +77,7 @@ export function sccPitch(clock) {
       if (port !== 3 || addr < 0x80 || addr >= 0x8a) return;
       const ch = (addr - 0x80) >> 1;
       const p = (period[ch] = addr & 1 ? (period[ch] & 0xff) | ((data & 15) << 8) : (period[ch] & 0xf00) | data);
-      freq[10 + ch] = clock / (32 * (p + 1));
+      freq[10 + ch] = clock / (16 * (p + 1));
     },
   };
 }

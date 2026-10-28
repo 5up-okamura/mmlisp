@@ -60,11 +60,12 @@ const OPLL_LANES = 9;
 const OPLL_LANE = [0, 1, 2, 3, 4, 5, 15, 16, 17]; // a channel's scope lane
 
 // The K051649 (chips/k051649.js): each channel steps its 32-byte wave one
-// sample every period + 1 clocks, the step times the 4-bit volume / 16 its
-// output, silent while its key bit is clear or its period is below 9 (as
-// MAME has it). `run(clocks, out)` averages each channel over that many
-// clocks into out[0..4], so a high tone's steps do not alias at the rate
-// it is read at.
+// sample every period + 1 of its clocks (the MSX's 3.58 MHz, twice the
+// PSG's), the step times the 4-bit volume / 16 its output, silent while
+// its key bit is clear or its period is below 9 (as MAME has it).
+// `run(clocks, out)` averages each channel over that many clocks into
+// out[0..4], so a high tone's steps do not alias at the rate it is read
+// at.
 class Scc {
   constructor() {
     this.reset();
@@ -202,7 +203,7 @@ export class MsxSynth {
     this._next = swap;
     const heap = this._core.HEAP16;
     const k = (this._bufPtr >> 1) + 3 * this._batchPos++;
-    this._scc.run(32, this._sccOut);
+    this._scc.run(64, this._sccOut); // the SCC counts at twice the PSG's clock
     for (let c = 0; c < CHANNELS; c++) {
       const x = c < 3 ? heap[k + c] * SAMPLE_SCALE : this._sccOut[c - 3] * SCC_GAIN;
       const y = x - this._dcX[c] + DC_R * this._dcY[c];

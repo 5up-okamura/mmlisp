@@ -1850,14 +1850,14 @@
  "tools/tests/msx/scc-expr.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "1cc9b1ede7ea18da",
-  "regs": "573c1cf568b1e844",
-  "vgm": "4c68007898366368"
+  "regs": "1c46b9bf72831398",
+  "vgm": "53b9a207fadc332f"
  },
  "tools/tests/msx/scc.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5dbef8f70c479ae6",
-  "regs": "48b59f4097b08615",
-  "vgm": "9f70060e3a3e181d"
+  "regs": "794f7268f110d81a",
+  "vgm": "26adeabe1a2b9ee8"
  },
  "tools/tests/pc88/adpcm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

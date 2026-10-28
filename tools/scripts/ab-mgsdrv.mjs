@@ -87,7 +87,7 @@ function channel(f, id) {
   }
   if (kind === "scc") {
     const vol = f.scc.vol[i];
-    return { on: !!((f.scc.key >> i) & 1) && vol > 0, midi: midiOf(CLOCK / 32 / (f.scc.freq[i] + 1)), vol, text: "" };
+    return { on: !!((f.scc.key >> i) & 1) && vol > 0, midi: midiOf(CLOCK / 16 / (f.scc.freq[i] + 1)), vol, text: "" };
   }
   if (kind === "rh") {
     // A rhythm sound: keyed by its $0E bit or by its channel's key (a

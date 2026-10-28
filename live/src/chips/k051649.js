@@ -10,7 +10,10 @@
 // high nibble), $8A-$8E the volumes, $8F the key bits.
 import { words } from "./parts.js";
 
-const CLOCK = Math.round(3579545 / 2); // the MSX's 3.58 MHz / 2
+// The clock as VGM gives a K051649's: half the MSX's 3.58 MHz the chip
+// counts at, so a tone is this / 16 / (period + 1) — the PSG's pitch at the
+// same period.
+const CLOCK = Math.round(3579545 / 2);
 const PORT = 3;
 export const WAVE_LEN = 32;
 export const WAVE_BITS = 8;
@@ -39,8 +42,8 @@ export function sccWaveRam(ch) {
 // The SCC as the IR player's wave lanes: lane n is channel n.
 function sccEncoder() {
   return {
-    // A tone is the clock / 32 / (period + 1).
-    period: (hz) => Math.max(PERIOD_MIN, Math.min(4095, Math.round(CLOCK / (32 * hz)) - 1)),
+    // A tone is the clock / 16 / (period + 1).
+    period: (hz) => Math.max(PERIOD_MIN, Math.min(4095, Math.round(CLOCK / (16 * hz)) - 1)),
     // The player's attenuation, 0 loud .. 15 off, is the volume upside down.
     att: (ch, att) => [[PORT, 0x8a + ch, 15 - (att & 0x0f)]],
     tone: (ch, p) => [[PORT, 0x80 + 2 * ch, p & 0xff], [PORT, 0x81 + 2 * ch, (p >> 8) & 0x0f]],

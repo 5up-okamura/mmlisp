@@ -179,9 +179,10 @@ export function parseMgs(bytes) {
 const kindOf = (i) => (i <= 3 ? "psg" : i <= 8 ? "scc" : "fm");
 // MGSDRV's OPLL F-numbers, c to b: what `\` and `h` move on FM.
 const FM_FNUM = [172, 182, 193, 205, 217, 230, 244, 258, 274, 290, 307, 326];
-// o4a is 440 Hz on the PSG; MGSDRV's SCC and FM tables are an octave below
-// (held to the driver on libkss).
-const midiOf = (kind, oct, n) => 12 * (oct + (kind === "psg" ? 1 : 0)) + n;
+// o4a is 440 Hz on the PSG and on the SCC (the PSG's table: the SCC counts
+// at twice the PSG's clock, 32 steps a wave); MGSDRV's FM table is an
+// octave below (held to the driver on libkss).
+const midiOf = (kind, oct, n) => 12 * (oct + (kind === "fm" ? 0 : 1)) + n;
 
 // Bytes a command takes, its own included (0: the track ends or is unknown).
 function cmdLength(u8, p, rhythm) {
@@ -449,10 +450,10 @@ const ssgVol = (r) => (r <= 0 ? 0 : 31 - Math.round(1.5 * (15 - Math.min(15, r))
 const sccVel = (r) => (r <= 0 ? 0 : Math.round((15 + (20 * Math.log10(Math.min(15, r) / 15)) / 2) * 8) / 8);
 const MODES = [null, "tone", "noise", "both"];
 
-// A note's period on the PSG's table, which the SCC plays too (an octave
-// below: its period counts 32 clocks, the PSG's 16), and its octave there.
-const periodOf = (kind, midi) => PSG_CLOCK / 16 / (440 * 2 ** ((midi + (kind === "scc" ? 12 : 0) - 69) / 12));
-const octaveOf = (kind, midi) => Math.floor(midi / 12) - (kind === "psg" ? 1 : 0);
+// A note's period on the PSG's table, which the SCC plays too, and its
+// octave there.
+const periodOf = (midi) => PSG_CLOCK / 16 / (440 * 2 ** ((midi - 69) / 12));
+const octaveOf = (kind, midi) => Math.floor(midi / 12) - (kind === "fm" ? 0 : 1);
 // An F-number offset on FM as MGSDRV keeps it in 172-344: under, 173 more
 // and a block down; over, 173 less and a block up — not an octave but at c
 // (held to it on libkss), so a wide detune lands per pitch class.
@@ -467,7 +468,7 @@ function fmCents(midi, d) {
 // F-number offset (+ higher) on FM.
 function offsetCents(kind, midi, d) {
   if (kind === "fm") return fmCents(midi, d);
-  const p = periodOf(kind, midi);
+  const p = periodOf(midi);
   return Math.round(1200 * Math.log2(p / Math.max(1, Math.min(4095, p + d))));
 }
 // \ and @\ together on a note, as cents.

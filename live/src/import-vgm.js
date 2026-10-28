@@ -94,6 +94,7 @@ async function gunzip(u8) {
 }
 
 const pitchOf = (hz) => (hz > 0 ? 69 + 12 * Math.log2(hz / 440) : null);
+const TONE_MAX_HZ = 20000; // a tone above it is heard as none
 // A driver's writes for one note land within this of each other (samples).
 const SETUP_T = 0.002 * RATE;
 // A chip PCM hit keyed on silent takes the level a driver's next tick gives it, this soon (samples).
@@ -343,7 +344,9 @@ function ayChip(name, clock, { ev, prefix = name }) {
   // eighths), so a decay keeps its depth; the quietest levels, under :vel's
   // 30 dB, sit at its floor.
   const velAt = (c) => { const l = amp(c); return l <= 0 ? 0 : Math.max(1 / 8, Math.round((15 - ((15 - l) * 3) / VEL_DB_PER_STEP) * 8) / 8); };
-  const tone = (c) => !(r[7] & (1 << c));
+  // A tone above hearing (a period of 0 to 5) is none: a driver sets one
+  // to hear the envelope alone (Metal Gear 2's kick, a click).
+  const tone = (c) => !(r[7] & (1 << c)) && hz(c) > 0 && hz(c) <= TONE_MAX_HZ;
   const noise = (c) => !(r[7] & (8 << c));
   const ep = () => r[11] | (r[12] << 8);
   // A cycle of the envelope's shape (a triangle's is two ramps), as
@@ -371,7 +374,10 @@ function ayChip(name, clock, { ev, prefix = name }) {
     const e = last[c];
     if (!e || t - e.t > SETUP) return false;
     e.ssg = ssgOf(c);
-    if (e.ssg.mix === "env") e.pitch = pitchNow(c);
+    // (Its pitch as the mixer now has it: a note keyed on the envelope
+    // alone and given its tone a moment later is the tone's — Metal Gear 2's
+    // kick — not the envelope's rate.)
+    e.pitch = pitchNow(c);
     if (fresh) e.fresh = true;
     ssgAt[c] = sig(c);
     return true;
@@ -846,7 +852,8 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
 
 // The K051649, the SCC (chips/k051649.js), as VGM 0xD2 splits it: port 0
 // the four wave memories (channels 4 and 5 share the fourth), 1 the periods
-// (the clock / 32 / (p + 1)), 2 the 4-bit volumes, 3 the key bits.
+// (the clock / 16 / (p + 1): VGM's clock is half the one the chip counts
+// at), 2 the 4-bit volumes, 3 the key bits.
 function sccChip(clock, { ev }) {
   const N = 5;
   const ram = Array.from({ length: 4 }, () => new Int8Array(32)), period = new Uint16Array(N), volume = new Uint8Array(N);
@@ -855,12 +862,19 @@ function sccChip(clock, { ev }) {
   const key = (c) => `K051649 CH${c + 1}`;
   const audible = (c) => !!((keys >> c) & 1) && volume[c] > 0 && period[c] >= 9;
   const vel = (c) => velOfDb(volume[c] ? 20 * Math.log10(volume[c] / 15) : -96);
-  const hz = (c) => clock / (32 * (period[c] + 1));
+  const hz = (c) => clock / (16 * (period[c] + 1));
   const wave = (c) => [...ram[Math.min(c, 3)]];
+  // A key let go and taken again within a driver's setup burst is no new
+  // note: with no envelope to restart, the SCC plays on (Metal Gear 2's
+  // driver drops every channel's key for a moment whenever one starts).
+  const offEv = new Array(N).fill(null);
   const check = (c, t) => {
     const now = audible(c);
-    if (now && !on[c]) ev(key(c), { t, kind: "on", pitch: pitchOf(hz(c)), vel: vel(c), wave: wave(c), kindOf: "wave" });
-    else if (!now && on[c]) ev(key(c), { t, kind: "off" });
+    if (now && !on[c]) {
+      if (offEv[c] && t - offEv[c].t <= SETUP_T) offEv[c].kind = "held"; // (read by nothing: the note goes on)
+      else ev(key(c), { t, kind: "on", pitch: pitchOf(hz(c)), vel: vel(c), wave: wave(c), kindOf: "wave" });
+      offEv[c] = null;
+    } else if (!now && on[c]) ev(key(c), (offEv[c] = { t, kind: "off" }));
     on[c] = now;
   };
   return {
@@ -875,7 +889,11 @@ function sccChip(clock, { ev }) {
       } else if (port === 2 && a < 5) {
         const was = volume[a];
         volume[a] = d & 15;
-        if (on[a] && volume[a] && volume[a] !== was) ev(key(a), { t, kind: "vel", vel: vel(a) });
+        // A level jumping up is a new strike (a driver's next note on a
+        // channel it keeps keyed, as the SSG's); moving otherwise, the
+        // note's own.
+        if (on[a] && volume[a] > was + 2) ev(key(a), { t, kind: "retrig", pitch: pitchOf(hz(a)), vel: vel(a), wave: wave(a) });
+        else if (on[a] && volume[a] && volume[a] !== was) ev(key(a), { t, kind: "vel", vel: vel(a) });
         check(a, t);
       } else if (port === 3) {
         keys = d & 31;

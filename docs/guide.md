@@ -1823,7 +1823,10 @@ them: a key-on starts a note, a key-off ends it.
   plays every channel) — go to the target's `wave` channels, each keeping
   its number. Each distinct wave they start a note with becomes a
   `def-wave` (`wave-01` …), named where a track's wave changes; a wave
-  rewritten under a sounding note is not followed. A HuC6280 channel on
+  rewritten under a sounding note is not followed. On the SCC a key let
+  go and taken again within 2 ms is no new note (a driver dropping every
+  key for a moment as one channel starts), and a level jumping up three
+  steps or more is a new one (the next note on a channel kept keyed). A HuC6280 channel on
   its noise is a row of its own (`HuC6280 CH5 noise`) that goes to
   `noise5` / `noise6` at the rate it played, and where a channel plays
   both, the row with more notes keeps it. Its left and right levels come
@@ -1880,6 +1883,10 @@ them: a key-on starts a note, a key-off ends it.
 - An SSG level becomes `:vel` by its decibels (the SSG's steps are 3 dB,
   `:vel`'s 2 dB), so a decay keeps its depth; the quietest levels (under
   `:vel`'s 30 dB) sit at its floor.
+  A tone above hearing (a period of 0 to 5) counts as off: a driver sets
+  one to hear the hardware envelope alone (a kick's click). What a driver
+  writes within 2 ms of a key-on — the mixer, the shape — is the note's
+  own, its pitch as it then stands.
 - The YM2612's DAC comes in as a `pcm1` track (the `YM2612 DAC` row). The
   VGM's PCM data bank becomes one wav, `<song>-dac.wav`, and each place the
   driver starts a sample from is a `(def-pcm dac-NN … :offset … :frames …)`
