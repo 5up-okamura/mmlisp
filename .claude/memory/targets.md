@@ -265,10 +265,11 @@ waveCombine as long as the longest, a shorter wave held step for step; a
 part's `waveLen` (the FDS 64), a longer wave every other step on a 32-step
 chip (ir-player `_fitWave`, W_TARGET once per track and wave);
 tools/tests/pce/wave64.mmlisp. The wave-chip LFO hook also takes `+`, `*`
-and `$value` (they were dropped). Open: not heard in Live (nor the vector
-editor drawing a 64-step wave); the volume / modulation
-envelopes not emulated (the encoder writes gains direct; an imported VGM's
-envelopes would need them); the mod arithmetic is nesdev's, not held to
+and `$value` (they were dropped). Open: judged only on the test score — the user wants a real FDS song
+heard, and none comes in yet (import-vgm drops the FDS: bit 31 "left out";
+import-tracker leaves expansions out — the import session's); the hardware envelopes (synth-fc.js
+Fds, Mesen / NSFPlay: 8 × (speed+1) × $408A, not nesdev's +1) are only
+node-checked — no score or import drives them yet; the mod arithmetic is nesdev's, not held to
 NSFPlay / Mesen.
 
 **VRC6, as built** (chips/vrc6.js, targets/fc.js, synth-fc.js Vrc6,
@@ -280,7 +281,7 @@ flushed with it), scope lanes 11-13. Rulings kept: the saw's level is its
 default 63 plays wrapped, so imports keep it; `:duty` the nearest of 1-8,
 9-15 mirrored, M (100 %) unreachable; the VGM export leaves the VRC6 out
 and says so (renderVgm `leftOut`). Keyed by the level, as the 2A03's
-encoder (the enable bit stays set). Open: not heard in Live; the mix is
+encoder (the enable bit stays set). Open: the mix is
 nesdev's "a VRC6 pulse at full ≈ a 2A03 pulse at full" (held: RMS 0.120 vs
 0.119), not checked against Mesen's mixer; the saw's step order follows
 NSFPlay (6 adds of 14).

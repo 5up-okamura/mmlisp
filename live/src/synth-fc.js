@@ -451,6 +451,11 @@ class Vrc6 {
 }
 
 // The Disk System's sound (port 4: VGM 0xB4's numbering, chips/fds.js).
+// Its two envelopes — the volume's ($4080) and the modulation depth's
+// ($4084) — step their gain by 1 toward 32 or 0 every 8 × (speed + 1) ×
+// $408A CPU clocks (Mesen and NSFPlay agree on $408A, not nesdev's + 1; 0
+// stops both), while the wave runs and $4083 bit 6 is clear; a gain written
+// direct (bit 7) is the speed's six bits, over 32 heard as 32 and not raised.
 class Fds {
   constructor() {
     this.reset();
@@ -472,7 +477,45 @@ class Fds {
     this.modAcc = 0;
     this.modPos = 0; // the half-step, 0-63 (each entry twice)
     this.modTable = new Uint8Array(32);
+    // The envelopes, volume [0] and modulation [1]: speed, rising, off
+    // (direct), the clocks into the next step.
+    this.env = [0, 1].map(() => ({ speed: 0, up: false, off: false, timer: 0 }));
+    this.envHalt = false;
+    this.envMaster = 0xe8; // the BIOS's
     this.tick = 0; // CPU clocks into the next 16
+  }
+
+  // $4080 / $4084: the speed and direction always, the gain only when direct.
+  _envWrite(i, data) {
+    const e = this.env[i];
+    e.speed = data & 63;
+    e.up = !!(data & 0x40);
+    e.off = !!(data & 0x80);
+    e.timer = 0;
+    if (e.off) {
+      if (i === 0) this.gain = e.speed;
+      else this.modGain = e.speed;
+    }
+  }
+
+  // `clocks` CPU clocks of the envelopes.
+  _envRun(clocks) {
+    if (this.envHalt || this.waveHalt || !this.envMaster) return;
+    for (let i = 0; i < 2; i++) {
+      const e = this.env[i];
+      if (e.off) continue;
+      const period = 8 * (e.speed + 1) * this.envMaster;
+      for (e.timer += clocks; e.timer >= period; e.timer -= period) {
+        const g = i === 0 ? this.gain : this.modGain;
+        const next = e.up ? (g < 32 ? g + 1 : g) : g > 0 ? g - 1 : g;
+        if (i === 0) this.gain = next;
+        else this.modGain = next;
+      }
+    }
+  }
+
+  _envReset() {
+    for (const e of this.env) e.timer = 0;
   }
 
   write(addr, data) {
@@ -482,14 +525,16 @@ class Fds {
       return;
     }
     switch (reg) {
-      case 0x4080: if (data & 0x80) this.gain = data & 63; break; // direct (no envelope)
+      case 0x4080: this._envWrite(0, data); break;
       case 0x4082: this.pitch = (this.pitch & 0xf00) | data; break;
       case 0x4083:
         this.pitch = (this.pitch & 0xff) | ((data & 15) << 8);
         this.waveHalt = !!(data & 0x80);
         if (this.waveHalt) this.waveAcc = 0;
+        this.envHalt = !!(data & 0x40);
+        if (this.envHalt) this._envReset();
         break;
-      case 0x4084: if (data & 0x80) this.modGain = data & 63; break;
+      case 0x4084: this._envWrite(1, data); break;
       case 0x4085: this.modCounter = ((data & 0x7f) << 25) >> 25; break;
       case 0x4086: this.modFreq = (this.modFreq & 0xf00) | data; break;
       case 0x4087:
@@ -507,6 +552,10 @@ class Fds {
       case 0x4089:
         this.waveOpen = !!(data & 0x80);
         this.master = data & 3;
+        break;
+      case 0x408a:
+        this.envMaster = data;
+        this._envReset(); // a sudden slower speed floods no steps (NSFPlay)
         break;
       default: break;
     }
@@ -528,6 +577,7 @@ class Fds {
     this.tick += clocks;
     while (this.tick >= 16) {
       this.tick -= 16;
+      this._envRun(16);
       if (!this.modHalt && this.modFreq) {
         this.modAcc += this.modFreq;
         if (this.modAcc >= 0x1000) {
