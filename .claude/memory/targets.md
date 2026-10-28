@@ -253,9 +253,7 @@ in that order, any number in one score (as an NSF), each optional.
   `vrc6-sqr1` `vrc6-sqr2` `vrc6-saw`, `fds-wave`, `mmc5-sqr1` `mmc5-sqr2`,
   `5b-sqr1`-`5b-sqr3` `5b-noise` (as msx's noise: 5b-sqr3's mixer on
   noise), `vrc7-fm1`-`vrc7-fm6`, `n163-wave1`-`n163-wave8`; a channel's
-  `label` is its strip's (V1, FDS …). Renamed from sqr3/sqr4/saw1/wave1
-  2026-10-29; import-tracker.js (the import session's, uncommitted then)
-  still writes the old names — theirs to move.
+  `label` is its strip's (V1, FDS …).
 - **MMC5**: the two pulses only; its PCM ($5011, one game) left out.
   **Built 2026-10-29** (chips/mmc5.js on chips/queued-tone.js — the
   VRC6's encoder moved there too; synth-fc.js Mmc5; port 5; tone lanes
@@ -323,8 +321,9 @@ and `$value` (they were dropped). Open: judged only on the test score — the us
 heard. import-vgm reads a VGM's FDS onto fds-wave (2026-10-29; its gain
 envelope as a level envelope, its modulation as the LFO words where a note
 starts, a delayed vibrato a tie), Zelda II's Title BGM heard by the user
-(their VGM - NES folder has five Disk System sets); import-tracker leaves
-expansions out. The hardware envelopes (synth-fc.js
+(their VGM - NES folder has five Disk System sets); Furnace / DefleMask
+FDS channels import onto fds-wave (2026-10-29), checked only on a module
+built in node — no real FDS module heard. The hardware envelopes (synth-fc.js
 Fds, Mesen / NSFPlay: 8 × (speed+1) × $408A, not nesdev's +1) are only
 node-checked — the import writes gains direct, so no score drives them; the mod arithmetic is nesdev's, not held to
 NSFPlay / Mesen.
