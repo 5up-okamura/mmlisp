@@ -1529,6 +1529,12 @@ than approximating:
 - **Loop passes.** `)`/`(`, `D n+`, `q` and ties act on every pass of a loop,
   so a loop whose passes would differ — or one tied into or out of — is
   written out pass by pass.
+- **Bars.** mucom has no meter: a `|` (and a line break) goes at each whole
+  note of the part, as the text runs (an `(x …)` body once), where a note
+  ends on it. A part stops marking at its first macro call (`*n`, whose
+  notes take the length where it is called) or at a loop across lines kept
+  as a `#label`. A key shift's octave wrap meeting the part's own `>` / `<`
+  is written as the one move it makes.
 - **Software LFO and detune** move the raw pitch word, so their cents depend
   on the note. An LFO that keeps the word in range is a triangle, however
   slow — one `lfoN` def a setting, its depth the mean of the twelve pitch

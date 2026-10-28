@@ -1817,6 +1817,12 @@
   "regs": "74247b5874b07f28",
   "vgm": "abd0e41ad590db18"
  },
+ "tools/tests/fc/vrc7.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "1185e5fcd8bef897",
+  "regs": "cdd8f2b315d8e42b",
+  "vgm": "bd3a125b32b65643"
+ },
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "602742d8cea2f201",

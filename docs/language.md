@@ -2382,7 +2382,7 @@ those chips cannot do is a compile error, not a different sound.
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 | `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
-| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG | VGM (without the VRC6 and the MMC5), WAV |
+| `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG, the VRC7's FM | VGM (without the VRC6 and the MMC5), WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
@@ -2883,13 +2883,13 @@ the triangle; `noise`; and `pcm1`, the DMC's samples — and the expansion
 chips' (below), each named by its chip, as the Famicom has pulses on
 several and waves on two: the VRC6 cartridge's `vrc6-sqr1`, `vrc6-sqr2`
 and `vrc6-saw`, the Disk System's `fds-wave`, the MMC5's `mmc5-sqr1`
-and `mmc5-sqr2`, and the Sunsoft 5B's `5b-sqr1`–`5b-sqr3` and `5b-noise`.
+and `mmc5-sqr2`, the Sunsoft 5B's `5b-sqr1`–`5b-sqr3` and `5b-noise`, and
+the VRC7's `vrc7-fm1`–`vrc7-fm6`.
 A chip is in the song when a score names one of its channels, and any of
 them may be at once (as an NSF has them); a song-wide word only a
 cartridge has (the 5B's `:noise-rate`, the FDS's `:lfo-*`) in a score
-that names none of its channels is `E_TARGET`. There is no FM, no
-pan (the machine is mono): `fm1` and `:pan` are
-`E_TARGET`. The chip hears the song a frame (1/60 s) at
+that names none of its channels is `E_TARGET`. There is no pan (the
+machine is mono): `:pan` is `E_TARGET`. The chip hears the song a frame (1/60 s) at
 a time, as on `msx`.
 
 **Pulses.** `sqr1` and `sqr2` take every pitch move a PSG channel has —
@@ -3053,6 +3053,26 @@ as the 5B, a channel at full as loud as a 2A03 pulse at full.
 (5b-sqr1 :len 8 e g > c e < (macro :vel (linear 15..6 :len 4)) g e c e)
 (5b-sqr2 :len 4 :oct 3 :mode env :env-rate 0 :env 14 c g e c)
 (5b-noise :len 8 :noise-rate 4 c c :noise-rate 20 c c)
+```
+
+**VRC7.** Konami's FM cartridge chip is on `fc` when a score names
+**`vrc7-fm1`**–**`vrc7-fm6`**: a YM2413 cut down to six channels with
+fifteen ROM voices of its own and no rhythm, the FM-PAC's language on it
+(`msx` above) — 2-op voices, the carrier's level the channel's 4-bit
+volume, `:sus`, and the one user voice the chip shares (a `def-fm` that is
+no ROM voice; two at once say so, `W_TARGET`). Its ROM voices are built in
+by the names nesdev gives them: **`buzzy-bell` `guitar` `wurly` `flute`
+`clarinet` `synth` `trumpet` `organ` `bells` `vibes` `vibraphone` `tutti`
+`fretless` `synth-bass` `sweep`** — on `fc` these, not the YM2413's (a
+score's own def of a name is that def). VGM carries it as a YM2413 whose
+clock has bit 31 set (the VRC7's ROM); Play and WAV run ymfm's YM2413 with
+the VRC7's ROM (Nuked-OPLL's), a sine at full as loud as a 2A03 pulse at
+full.
+
+```lisp
+(def-score :target fc)
+(vrc7-fm1 wurly :len 8 e g > c e < g e c e)
+(vrc7-fm2 synth-bass :oct 2 :len 4 c (glide 8) g e c)
 ```
 
 **Effects.** `def-se` is the Mega Drive driver's; an `fc` score has none

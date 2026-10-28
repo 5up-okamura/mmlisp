@@ -69,6 +69,8 @@ export const VRC7_ROM = [
 export const OPLL_ROM = ROM;
 /** The ROM as the emulator takes it (ymfm's instrument data): 18 × 8 bytes. */
 export const OPLL_ROM_BYTES = Uint8Array.from([...ROM, ...ROM_RHYTHM].flat());
+/** The VRC7's, the same way (its rhythm patches the YM2413's: it plays none). */
+export const VRC7_ROM_BYTES = Uint8Array.from([...VRC7_ROM, ...ROM_RHYTHM].flat());
 
 // The ROM voices' built-in names (language.md §19, msx), in the ROM's order.
 export const OPLL_ROM_NAMES = [
@@ -151,15 +153,17 @@ export function opllVoiceDef(name, bytes) {
 
 /**
  * The ROM voices as built-in def-fm voices (language.md §19): name → its
- * words, the OPLL's own where `part` is the OPLL's, else the 4-op reading.
+ * words — a part with a ROM of its own (the OPLL's, the VRC7's) its own
+ * voices, else the YM2413's in the 4-op reading.
  */
 export function opllRomVoices(part) {
-  return new Map(ROM.map((b, i) => [OPLL_ROM_NAMES[i], part === opllFm ? voiceWords(b) : voiceAs4op(b)]));
+  if (part?.rom) return new Map(part.rom.map((b, i) => [part.romNames[i], voiceWords(b)]));
+  return new Map(ROM.map((b, i) => [OPLL_ROM_NAMES[i], voiceAs4op(b)]));
 }
 
-/** The ROM voice (1-15) whose registers `bytes` are, or 0: the user voice. */
-function romIndex(bytes) {
-  const i = ROM.findIndex((r) => r.every((x, k) => x === bytes[k]));
+/** The voice of `rom` (1-15) whose registers `bytes` are, or 0: the user voice. */
+function romIndex(bytes, rom = ROM) {
+  const i = rom.findIndex((r) => r.every((x, k) => x === bytes[k]));
   return i + 1;
 }
 
@@ -180,6 +184,9 @@ export const opllFm = {
   }),
   // The registers narrower than the family's (chips/fm-words.js).
   ranges: { FM_AR: [0, 15], FM_DR: [0, 15], FM_TL: [0, 63], FM_KS: [0, 1] },
+  // Its ROM voices and their built-in names (opllRomVoices).
+  rom: ROM,
+  romNames: OPLL_ROM_NAMES,
   // `init-fm` here: a sine — the modulator silent (TL 63), both operators
   // at once, held while keyed (EG 1), released at once.
   initVoice: new Map([
@@ -200,7 +207,7 @@ export const opllFm = {
     const names = new Map();
     for (const { name, kwMap } of named) {
       const b = voiceBytes((w) => kwMap.get(w));
-      if (!romIndex(b) && !names.has(key(b))) names.set(key(b), name);
+      if (!romIndex(b, this.rom) && !names.has(key(b))) names.set(key(b), name);
     }
     // Each track's notes on a user voice: [start, end, voice] in ticks, the
     // voice its registers as of the note (init-fm until it names one).
@@ -211,7 +218,7 @@ export const opllFm = {
         if (e.cmd === "PARAM_SET" && /^FM_/.test(e.args?.target ?? "")) regs.set(e.args.target, e.args.value);
         if (e.cmd !== "NOTE_ON") continue;
         const b = voiceBytes((w) => regs.get(w));
-        if (romIndex(b)) continue;
+        if (romIndex(b, this.rom)) continue;
         const len = Math.min(e.args?.length ?? 0, e.args?.gate ?? Infinity);
         out.push([e.tick, e.tick + Math.max(1, len), key(b)]);
       }
@@ -224,7 +231,7 @@ export const opllFm = {
           if (!hit) continue;
           const voice = (k) => (names.has(k) ? `'${names.get(k)}'` : "a voice of its own");
           push("warning", "W_TARGET",
-            `${spans[i].head} (${voice(va)}) and ${spans[j].head} (${voice(hit[2])}) sound two user voices at once; the OPLL has one, and the note keyed last sets it for both — a ROM voice (piano …) needs none`);
+            `${spans[i].head} (${voice(va)}) and ${spans[j].head} (${voice(hit[2])}) sound two user voices at once; the chip has one, and the note keyed last sets it for both — a ROM voice (${this.romNames[2]} …) needs none`);
           return;
         }
   },
@@ -341,19 +348,22 @@ function timeline(init) {
   };
 }
 
-function opllEncoder() {
+// `rom` the chip's voices, `channels` and `port` its (the VRC7's six, on
+// fc's port 7: chips/vrc7.js).
+export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT } = {}) {
+  const romIndexOf = (bytes) => romIndex(bytes, rom);
   let started, ops, fb, voice, vol, pitch, sus, spans, moved, latest;
   let rmode, rq, rkeys, rvols, rtune; // the rhythm: on, its queue, keys, volume bytes, channel tunings
   const reset = () => {
     started = false;
-    ops = Array.from({ length: CHANNELS }, () => [{}, {}]); // the latest operator fields
-    fb = new Array(CHANNELS).fill(0);
-    voice = Array.from({ length: CHANNELS }, () => timeline(voiceBytes(() => 0)));
-    vol = Array.from({ length: CHANNELS }, () => timeline(0));
-    pitch = Array.from({ length: CHANNELS }, () => timeline({ fnum: 0, block: 0 }));
-    sus = Array.from({ length: CHANNELS }, () => timeline(0));
-    spans = Array.from({ length: CHANNELS }, () => []);
-    moved = new Array(CHANNELS).fill(null); // the time of a voice move not yet written
+    ops = Array.from({ length: channels }, () => [{}, {}]); // the latest operator fields
+    fb = new Array(channels).fill(0);
+    voice = Array.from({ length: channels }, () => timeline(voiceBytes(() => 0)));
+    vol = Array.from({ length: channels }, () => timeline(0));
+    pitch = Array.from({ length: channels }, () => timeline({ fnum: 0, block: 0 }));
+    sus = Array.from({ length: channels }, () => timeline(0));
+    spans = Array.from({ length: channels }, () => []);
+    moved = new Array(channels).fill(null); // the time of a voice move not yet written
     latest = -Infinity; // the latest time a call has named
     rmode = false;
     rq = [];
@@ -382,17 +392,17 @@ function opllEncoder() {
     list.push({ on: t, off: Infinity });
     if (list.length > KEEP) list.shift();
   };
-  const w = (a, d, t) => (t === undefined ? [OPLL_PORT, a, d] : [OPLL_PORT, a, d, t]);
+  const w = (a, d, t) => (t === undefined ? [port, a, d] : [port, a, d, t]);
   const r2x = (ch, keyed, t) => {
     const { fnum, block } = pitch[ch].get(t);
     return (sus[ch].get(t) << 5) | (keyed ? 0x10 : 0) | (block << 1) | (fnum >> 8);
   };
-  const r3x = (ch, t) => (romIndex(voice[ch].get(t)) << 4) | vol[ch].get(t);
+  const r3x = (ch, t) => (romIndexOf(voice[ch].get(t)) << 4) | vol[ch].get(t);
   // The channel's voice into the chip at `t`: the user voice's bytes when it
   // is no ROM voice, and $30's voice and volume (`stamp`: each write's time).
   const settle = (ch, t, stamp) => {
     const b = voice[ch].get(t);
-    return [...(romIndex(b) ? [] : b.map((d, a) => w(a, d, stamp))), w(0x30 + ch, r3x(ch, t), stamp)];
+    return [...(romIndexOf(b) ? [] : b.map((d, a) => w(a, d, stamp))), w(0x30 + ch, r3x(ch, t), stamp)];
   };
   // A held voice move: written, at its time, if a note sounds then.
   const flush = (ch) => {
@@ -414,7 +424,7 @@ function opllEncoder() {
     return out;
   };
   return {
-    channels: CHANNELS,
+    channels,
     csm: false,
     carriers: [1], // op2
     reset,
@@ -471,11 +481,11 @@ function opllEncoder() {
     // A live edit (IRPlayer.setParam: the panel, a MIDI CC, the AI link) is
     // heard at once, sounding or not: the channel's voice, now.
     live(ch) {
-      if (ch < 0 || ch >= CHANNELS || !started || (rmode && ch >= 6)) return [];
+      if (ch < 0 || ch >= channels || !started || (rmode && ch >= 6)) return [];
       moved[ch] = null;
       return settle(ch, latest);
     },
-    isKeyOn: (port, addr, data) => port === OPLL_PORT && addr >= 0x20 && addr <= 0x28 && (data & 0x10) !== 0,
+    isKeyOn: (p, addr, data) => p === port && addr >= 0x20 && addr <= 0x28 && (data & 0x10) !== 0,
     lfo: () => [], // the OPLL's LFO is fixed
     rhythm: rhythmOps(),
   };

@@ -271,6 +271,15 @@ in that order, any number in one score (as an NSF), each optional.
   channel at full = a 2A03 pulse at full; nesdev only says "very loud"),
   its amplifier's nonlinearity not modelled; import-vgm's AY rows on fc
   would land on whatever tone channel is free (the import session's).
+- **VRC7 built 2026-10-29** (chips/vrc7.js: opllFm with the VRC7's ROM and
+  names, opllEncoder({rom, channels: 6, port: 7}); a part's `rom` /
+  `romNames` are its built-in voices — on fc the VRC7's, not the YM2413's;
+  synth-fc.js a second ymfm YM2413 with VRC7_ROM_BYTES, DC-blocked at
+  37 Hz (ymfm's OPLL sits ~0.4 off 0 at this gain; the block settles on its
+  first sample), scope 0-5). Open: not heard in Live; its level (a sine at
+  full = a 2A03 pulse at full) is a guess; ymfm's YM2413 with the VRC7's
+  ROM, not a DS1001 model; import-vgm still reads a VRC7 VGM as vrc7-N
+  def-fms for msx (the import session's to move onto fc's VRC7).
 - **N163**: the chip's time-multiplex as is (the 7-8-channel whine heard,
   not averaged away); wave RAM a region per channel, 32 steps while 5 or
   fewer channels fit, 16 for all at 6+ (W_TARGET); 4-bit samples.

@@ -171,18 +171,18 @@ export function mmc5Pitch(clock) {
 }
 
 /**
- * The OPLL's (port 4, chips/ym2413.js) F-numbers: $10+c the low 8 bits,
+ * The OPLL's (port 4, chips/ym2413.js; the VRC7's on `port` 7) F-numbers: $10+c the low 8 bits,
  * $20+c the top bit and the block, as the chip reads them each sample. Its
  * channels 0-5 draw on lanes 0-5, 6-8 on 15-17 (synth-msx.js); a tone is
  * fnum * 2^(block-1) * (clock / 72) / 2^18.
  */
-export function opllPitch(clock) {
+export function opllPitch(clock, port = 4) {
   const lo = new Uint8Array(9);
   const hi = new Uint8Array(9);
   const rate = clock / 72;
   return {
-    write(port, addr, data, freq) {
-      if (port !== 4 || addr < 0x10 || addr >= 0x29 || (addr & 0x0f) > 8) return;
+    write(p, addr, data, freq) {
+      if (p !== port || addr < 0x10 || addr >= 0x29 || (addr & 0x0f) > 8) return;
       const ch = addr & 0x0f;
       (addr < 0x20 ? lo : hi)[ch] = data;
       const fnum = ((hi[ch] & 1) << 8) | lo[ch];

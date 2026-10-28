@@ -60,12 +60,22 @@
 // is 64 CPU clocks, two of the 2A03's, each held for both. It is rendered
 // from its first write; a channel at full as loud as a 2A03 pulse at full
 // (nesdev gives no measure: tunable by ear); on the scope's lanes 17-19.
+//
+// The VRC7 (port 7, chips/vrc7.js) is ymfm's YM2413 (../ymfm-ym2413.js,
+// wasm/ym2413_adapter.cpp) with the VRC7's ROM, at its own rate, clock / 72,
+// interpolated to the output rate on its own, as synth-msx.js plays the
+// FM-PAC. It is rendered from its first write, its channels on the scope's
+// FM lanes 0-5; a ROM voice at full about as loud as a 2A03 pulse at full
+// (nesdev gives no measure: tunable by ear).
 // ---------------------------------------------------------------------------
 
 import createAy8910Module from "../ymfm-ay8910.js";
+import createYm2413Module from "../ymfm-ym2413.js";
 import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "./chips/rp2a03.js";
 import { sunsoft5b } from "./chips/sunsoft-5b.js";
-import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch, mmc5Pitch, ssgPitch } from "./scope-pitch.js";
+import { vrc7 } from "./chips/vrc7.js";
+import { VRC7_ROM_BYTES } from "./chips/ym2413.js";
+import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch, mmc5Pitch, ssgPitch, opllPitch } from "./scope-pitch.js";
 import { fdsRegister } from "./chips/fds.js";
 
 const CLOCK = rp2a03.clock;
@@ -93,6 +103,15 @@ const S5B_PORT = 6;
 // 0-15, and the CPU clocks one of them lasts.
 const S5B_LEVEL = 15 / 16382;
 const S5B_CLOCKS = 64;
+const VRC7_PORT = 7;
+const VRC7_RATE = vrc7.clock / 72;
+const VRC7_LANES = 6;
+// The VRC7's int16 sample on the mix's scale: a sine at volume 0 as loud
+// (RMS) as a 2A03 pulse at 15 (tunable by ear). Its DAC sits far off 0, so
+// it takes the Famicom's 37 Hz high-pass at its own rate, settled on its
+// first sample (no thump as it starts).
+const VRC7_GAIN = 1.5 / 32768;
+const VRC7_DC_R = Math.exp((-2 * Math.PI * 37) / VRC7_RATE);
 // The FDS at full (level 63, gain 32, master full) is 2.4 times a 2A03
 // pulse at full (nesdev), its polarity the 2A03's; its ~2 kHz low-pass.
 const FDS_STEP = (2.4 * 95.88) / (8128 / 15 + 100) / (63 * 32);
@@ -686,13 +705,22 @@ class Fds {
 
 export class FcSynth {
   static async create(outputSR) {
-    return new FcSynth(await createAy8910Module(), outputSR);
+    const [ay, opll] = await Promise.all([createAy8910Module(), createYm2413Module()]);
+    return new FcSynth(ay, opll, outputSR);
   }
 
-  constructor(ay, outputSR) {
+  constructor(ay, opll, outputSR) {
     this._outputSR = outputSR;
     this.pitch = pitchLatches(fcPitch(CLOCK), vrc6Pitch(CLOCK), fdsPitch(CLOCK), mmc5Pitch(CLOCK),
-      ssgPitch(sunsoft5b.clock, S5B_PORT, 17));
+      ssgPitch(sunsoft5b.clock, S5B_PORT, 17), opllPitch(vrc7.clock, VRC7_PORT));
+    this._opll = opll;
+    opll._ol_init();
+    opll.HEAPU8.set(VRC7_ROM_BYTES, opll._ol_get_rom_ptr()); // the VRC7's voices
+    opll._ol_set_rom();
+    this._olBufPtr = opll._ol_get_buffer_ptr();
+    this._olTapPtr = opll._ol_get_tap_ptr();
+    this._olRatio = VRC7_RATE / outputSR;
+    this._resetOpll();
     this._ay = ay;
     ay._a8_init();
     this._ayBufPtr = ay._a8_get_buffer_ptr();
@@ -733,6 +761,8 @@ export class FcSynth {
     this._fds.reset();
     this._mmc5.reset();
     this._ay._a8_reset();
+    this._opll._ol_reset();
+    this._resetOpll();
     this._ayOn = false;
     this._ayClocks = 0;
     this._ayOut.fill(0);
@@ -741,7 +771,8 @@ export class FcSynth {
   }
 
   // The APU's registers are port 0, $4000 + addr; the memory port 1; the
-  // VRC6's port 3; the FDS's port 4; the MMC5's port 5; the 5B's port 6.
+  // VRC6's port 3; the FDS's port 4; the MMC5's port 5; the 5B's port 6;
+  // the VRC7's port 7.
   writeYM(port, addr, data) {
     if (port === 0) this._apu.write(addr & 0xff, data & 0xff);
     else if (port === RAM_PORT) this._apu.writeRam(addr & 0xff, data & 0xff);
@@ -751,6 +782,9 @@ export class FcSynth {
     else if (port === S5B_PORT) {
       this._ayOn = true;
       this._ay._a8_write_reg(addr & 0xff, data & 0xff);
+    } else if (port === VRC7_PORT) {
+      this._opllOn = true;
+      this._opll._ol_write_reg(addr & 0xff, data & 0xff);
     }
   }
 
@@ -801,6 +835,34 @@ export class FcSynth {
     return x;
   }
 
+  _resetOpll() {
+    this._opllOn = false; // rendered from its first write
+    this._olFrac = 0;
+    this._olCur = new Float32Array(1 + VRC7_LANES); // the mix, then each channel
+    this._olNext = new Float32Array(1 + VRC7_LANES);
+    this._olDcX = null; // the high-pass's last input (null: not yet settled)
+    this._olDcY = new Float32Array(1 + VRC7_LANES);
+  }
+
+  // The VRC7's next sample into _olNext (the previous one to _olCur): the
+  // mix at 0, its channels after, on the mix's scale.
+  _opllOne() {
+    this._opll._ol_render(1);
+    const swap = this._olCur;
+    this._olCur = this._olNext;
+    this._olNext = swap;
+    const heap = this._opll.HEAP16;
+    const t = this._olTapPtr >> 1;
+    const x = [heap[this._olBufPtr >> 1], ...heap.subarray(t, t + VRC7_LANES)].map((v) => v * VRC7_GAIN);
+    this._olDcX ??= x;
+    for (let c = 0; c <= VRC7_LANES; c++) {
+      const y = x[c] - this._olDcX[c] + VRC7_DC_R * this._olDcY[c];
+      this._olDcX[c] = x[c];
+      this._olDcY[c] = y;
+      swap[c] = y;
+    }
+  }
+
   // The 5B over `clocks`: a sample of it each 64 CPU clocks, held between.
   _runAy(clocks) {
     if (!this._ayOn) return;
@@ -812,7 +874,8 @@ export class FcSynth {
   }
 
   // `getDacByte` is the contract's and unused; `scope` (SCOPE_LANES arrays)
-  // gets the channels at lanes 6-19, the others silence.
+  // gets the channels at lanes 6-19 and the VRC7's at 0-5 (silence before
+  // its first write).
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {
     if (scope) for (let c = 0; c < PSG_LANE; c++) scope[c]?.fill(0, 0, count);
     for (let i = 0; i < count; i++) {
@@ -828,6 +891,21 @@ export class FcSynth {
       while (this._frac >= 1) {
         this._frac -= 1;
         this._nativeOne();
+      }
+      // A write this sample (onFrame) may have just started the VRC7.
+      if (this._opllOn) {
+        const u = this._olFrac;
+        v += this._olCur[0] * (1 - u) + this._olNext[0] * u;
+        if (scope)
+          for (let c = 0; c < VRC7_LANES; c++) {
+            const lane = scope[c];
+            if (lane) lane[i] = (this._olCur[1 + c] * (1 - u) + this._olNext[1 + c] * u) * (SCOPE_SCALE / MASTER_OUTPUT_GAIN);
+          }
+        this._olFrac += this._olRatio;
+        while (this._olFrac >= 1) {
+          this._olFrac -= 1;
+          this._opllOne();
+        }
       }
       v = v > 1 ? 1 : v < -1 ? -1 : v;
       outL[i] = v;

@@ -280,8 +280,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   slowest of 16 rates, d#3 the fastest), `:mode white | periodic`; `pcm1`
   the DMC, one voice: a `def-pcm` at one rate a def (the highest its whole
   sample fits 4081 bytes at), each note baked at its pitch with its level
-  at key-on, a loop the whole range (`:loop-*` warns). Mono: no `:pan`; no
-  FM. VGM and WAV. Expansions, named by chip, when a
+  at key-on, a loop the whole range (`:loop-*` warns). Mono: no `:pan`.
+  VGM and WAV. Expansions, named by chip, when a
   score names them — the VRC6 cartridge's
   `vrc6-sqr1` / `vrc6-sqr2` pulses (`:duty` the nearest of 1–8 sixteenths, a wider
   one its mirror), `vrc6-saw` (`:vel` its 6-bit rate, 15 = 63; above 13.25 the
@@ -293,7 +293,10 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `mmc5-sqr1` / `mmc5-sqr2`: the 2A03's pulses with no sweep (its four
   duties); VGM leaves them out. The 5B's `5b-sqr1`–`5b-sqr3` / `5b-noise`:
   the SSG as on msx (`:mode tone|noise|both|env`, `:noise-rate`,
-  `:env-rate`, `:env`); VGM carries it (as a YM2149).
+  `:env-rate`, `:env`); VGM carries it (as a YM2149). The VRC7's
+  `vrc7-fm1`–`vrc7-fm6`: the FM-PAC's 2-op FM with its own ROM voices
+  (`buzzy-bell guitar wurly flute clarinet synth trumpet organ bells vibes
+  vibraphone tutti fretless synth-bass sweep`), no rhythm; VGM carries it.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

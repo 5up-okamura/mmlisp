@@ -1,0 +1,11 @@
+; fc: the VRC7 beside the 2A03 — its ROM voices by nesdev's names, a user
+; voice of the score's own (a def-fm on the chip's one), :sus on a release,
+; a level fade and a glide. VGM carries it (a YM2413, its clock's bit 31).
+(def-score :target fc :title "fc vrc7")
+(def-fm pluck :alg 0 :fb 5
+  :ar1 15 :dr1 4 :sl1 3 :rr1 7 :tl1 30 :ml1 2 :eg1 0
+  :ar2 15 :dr2 5 :sl2 5 :rr2 7 :ml2 1 :eg2 0)
+(sqr1 :tempo 140 :len 8 c e g > c < g e c e |)
+(vrc7-fm1 wurly :len 8 e g > c e < g e c e |)
+(vrc7-fm2 synth-bass :oct 2 :len 4 c (glide 8) g e c |)
+(vrc7-fm3 pluck :oct 4 :len 4 :sus 1 :gate 1/2 c e g (macro :vel (linear 15..5 :len 4)) e |)

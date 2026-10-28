@@ -183,6 +183,13 @@ export const REFERENCE = [
     example: '(def-score :target fc)\n(5b-sqr1 :len 8 e g > c e)\n(5b-noise :len 8 :noise-rate 4 c c :noise-rate 20 c c)',
   },
   {
+    name: 'vrc7-fm1–vrc7-fm6', aliases: ['vrc7-fm1', 'vrc7-fm2', 'vrc7-fm3', 'vrc7-fm4', 'vrc7-fm5', 'vrc7-fm6', 'vrc7', 'buzzy-bell', 'wurly', 'bells', 'vibes', 'tutti', 'fretless', 'sweep'], cat: 'channels', section: '§19', tracks: FM,
+    syntax: '(def-score :target fc) (vrc7-fm1 voice …)',
+    summary: 'fc: the VRC7, a YM2413 with six channels and no rhythm — the FM-PAC\'s 2-op FM, :sus and its one user voice. Its fifteen ROM voices are built in: buzzy-bell guitar wurly flute clarinet synth trumpet organ bells vibes vibraphone tutti fretless synth-bass sweep. VGM carries it as a YM2413 (its clock\'s bit 31).',
+    insert: '(vrc7-fm1 wurly :len 8 c e g e)',
+    example: '(def-score :target fc)\n(vrc7-fm1 wurly :len 8 e g > c e)\n(vrc7-fm2 synth-bass :oct 2 :len 4 c g e c)',
+  },
+  {
     name: ':duty', aliases: ['duty', 'pulse width'], cat: 'track', section: '§19', tracks: PSG,
     syntax: ':duty 0–16  ·  (macro :duty […])  ·  :duty (curve …)',
     summary: 'fc: a pulse\'s duty in sixteenths of its cycle (sticky, default 8). The 2A03 has 2, 4, 8 and 12 (12.5, 25, 50, 75 %; 75 sounds as 25); a value between is the nearest. The MMC5\'s pulses have the 2A03\'s four. The VRC6\'s pulses (vrc6-sqr1, vrc6-sqr2) have 1–8; a wider value is its mirror (12 sounds as 4).',
@@ -406,7 +413,7 @@ export const REFERENCE = [
     name: 'ROM voices', aliases: ['violin', 'guitar', 'piano', 'flute', 'clarinet', 'oboe', 'trumpet', 'organ', 'horn', 'synth', 'harpsichord', 'vibraphone', 'synth-bass', 'acoustic-bass', 'electric-guitar', 'fm-pac voices'],
     cat: 'fm', section: '§19', tracks: FM,
     syntax: 'violin guitar piano flute clarinet oboe trumpet organ horn synth harpsichord vibraphone synth-bass acoustic-bass electric-guitar',
-    summary: 'The YM2413\'s fifteen ROM voices, built in as init-fm is; a def of the same name is the score\'s own. On msx a channel plays the ROM\'s own; a def-fm that extends one is the chip\'s one user voice. Elsewhere each is read as a 4-op voice, op1 into op2.',
+    summary: 'The YM2413\'s fifteen ROM voices, built in as init-fm is; a def of the same name is the score\'s own. On msx a channel plays the ROM\'s own; a def-fm that extends one is the chip\'s one user voice. On fc the VRC7\'s own fifteen are built in instead (vrc7-fm1). Elsewhere each is read as a 4-op voice, op1 into op2.',
     insert: 'piano',
     example: '(def-score :target msx)\n(fm1 piano :len 8 c e g > c)\n(fm2 synth-bass :oct 2 :len 4 c c g g)',
   },
