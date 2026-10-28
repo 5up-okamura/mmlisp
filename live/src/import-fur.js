@@ -139,6 +139,7 @@ export async function parseFur(bytes) {
   p = infoSeek;
 
   let tuning = 440;
+  const grooves = []; // speed patterns 09xx selects (from version 139)
   let title, author, chans, hz, speeds, patLen, ordersLen, hilightA, hilightB, vtN = 1, vtD = 1;
   let orders, insPtr = [], patPtr = [], wavePtr = [], samplePtr = [];
   // Pitch: linear (1/128 semitone steps) unless the song says not, and the
@@ -166,7 +167,7 @@ export async function parseFur(bytes) {
     }
     const conns = i32();
     p += 4 * conns + 1; // patchbay, auto
-    const subPtr = [];
+    const subPtr = [], groovePtr = [];
     for (;;) {
       const type = c();
       if (type === 0) break;
@@ -179,6 +180,19 @@ export async function parseFur(bytes) {
       else if (type === 6) samplePtr = ptrs; // samples
       else if (type === 7) patPtr = ptrs; // patterns
       else if (type === 8) cflgPtr = ptrs[0] ?? 0; // compat flags
+      else if (type === 10) groovePtr.push(...ptrs); // grooves
+    }
+    // A groove: "GROV", a size, its length, 16 speeds (song.cpp).
+    for (const gp of groovePtr) {
+      const back = p;
+      p = gp;
+      if (magic() === "GROV") {
+        p += 8;
+        const len = c();
+        const vals = Array.from({ length: 16 }, () => u16());
+        grooves.push(vals.slice(0, Math.max(1, Math.min(16, len))));
+      }
+      p = back;
     }
     if (!subPtr.length) throw new Error("FUR: no song");
     p = subPtr[0];
@@ -191,7 +205,9 @@ export async function parseFur(bytes) {
     const nsp = c();
     const sp = [];
     for (let i = 0; i < 16; i++) sp.push(u16());
-    speeds = nsp >= 2 ? [sp[0], sp[1]] : [sp[0], sp[0]];
+    // The speed pattern: its speeds in turn, a row each (two alternating,
+    // a swing; more, a groove).
+    speeds = sp.slice(0, Math.max(1, Math.min(16, nsp)));
     str(); str();
     orders = Array.from({ length: ordersLen }, () => new Array(chans).fill(0));
     for (let j = 0; j < chans; j++) for (let o = 0; o < ordersLen; o++) orders[o][j] = c();
@@ -244,6 +260,28 @@ export async function parseFur(bytes) {
         if (version >= 59) p += 4;
         if (version >= 70) { if (version >= 94) pitchSlideSpeed = u8[p + 13] || 4; p += 28; }
         vtN = s16() || 1; vtD = s16() || 1;
+        // On to the speed pattern (fur.cpp, from version 139): the subsongs,
+        // the metadata, each system's output and the patchbay, more flags.
+        if (version >= 139) {
+          str(); str(); // the first subsong's name, notes
+          const subs = c();
+          p += 3 + 4 * subs;
+          if (version >= 103) for (let k = 0; k < 6; k++) str();
+          p += 12 * ids.filter(Boolean).length; // volume, pan, front/rear pan
+          const conns = i32();
+          p += 4 * conns; // the patchbay
+          p += 1 + 8; // its auto flag, the compatibility flags of 138-200
+          const nsp = c();
+          const sp = Array.from({ length: 16 }, () => c());
+          if (nsp > 0 && sp.slice(0, nsp).every((x) => x > 0)) speeds = sp.slice(0, Math.min(16, nsp)).map((x) => x * (timeBase + 1));
+          // The grooves 09xx picks.
+          const ng = c();
+          for (let g = 0; g < ng; g++) {
+            const len = c();
+            const vals = Array.from({ length: 16 }, () => c());
+            grooves.push(vals.slice(0, Math.max(1, Math.min(16, len))));
+          }
+        }
       } catch { vtN = vtD = 1; }
     }
   }
@@ -576,6 +614,7 @@ export async function parseFur(bytes) {
     fmVolMax: 127, psgVolMax: 15,
     linearPitch: linearPitch > 0, pitchSlideSpeed, properNoiseLayout, newVolumeScaling,
     tuning, // A-4's Hz
+    grooves,
   };
   // Furnace converts the legacy sample mode of a file before 239 on load.
   if (version < 239) convertLegacySamples(t);

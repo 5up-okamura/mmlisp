@@ -40,7 +40,8 @@ Rules:
   layer.
 - [language-open.md](language-open.md) — **the language and IR**: the rulings
   not to re-propose, why the value machine and score-written values have
-  their shape, and one known A/B divergence.
+  their shape, one known A/B divergence, and **§4 the decided-but-unbuilt
+  grid-warp `:shuffle`** (with the tracker importer's swing waiting on it).
 - [live-app.md](live-app.md) — **the live app**: what was decided against
   (not to be proposed again) and working lessons.
 - [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings

@@ -1699,7 +1699,9 @@ and drop what does not fit.
 **DefleMask and Furnace.** A DefleMask module from v5.1 on is read, and a
 module plays its order list as the tracker does
 — `0Bxx` jumps, `0Dxx` breaks, looping where it jumps back to (or to the
-start) — with a row a fixed number of ticks and the speed as `:tempo`. By
+start) — with a row a fixed number of ticks and the speed as `:tempo`
+(speeds that take turns a row each — a swing, a Furnace groove `09xx`
+picks — at their average, for now; the log names them). By
 default each pattern of each channel becomes a phrase `(def fm1-p03 …)` that
 restates its voice, octave and velocity, and each track names its phrases in
 order (`(x 2 …)` for a run); a note held into the next pattern starts that
@@ -1762,10 +1764,11 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   instrument's duty macro (a `(macro :duty …)`, starting over at each note)
   and `12xx`, from 12.5 % where nothing sets it (Furnace's), written as
   `:duty`; the volume column is the chip's linear 4-bit level, as `:vel`
-  in dB, and the volume macro a `:vol` macro in dB — scaling the column
-  (Furnace's newer modules) or adding its steps to it (a DefleMask module,
-  an older Furnace one: a def for each column level it plays at, named
-  `-v8` …). A `12xx` under a sounding note takes effect at the next note
+  in dB, and the volume macro a `:vol` macro in dB of the level Furnace
+  writes — the column times the step, rounded down (Furnace's newer
+  modules), or the two added (a DefleMask module, an older Furnace one) —
+  a def for each column level it plays at, named `-v8` … (the SCC's and
+  the VRC6's macros alike). A `12xx` under a sounding note takes effect at the next note
   (the log counts it). The triangle has no level: its notes say no `:vel`;
   its volume macro's 0 silences it, and a column of 0 only where a volume
   macro reads it. A noise note is its rate
@@ -1779,9 +1782,6 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   looping sample) — a `def-pcm` for each sample and rate, all in one wav
   (`<song>-dpcm.wav`, Save writes it beside the score). The sweep (`13xy`
   `14xy`) and the other 2A03 effects are left out.
-- **The DAC and the legacy sample mode.** A Genesis module's FM6 notes that
-  play samples go to `pcm1`, as `md` plays them. While the DAC plays, `fm6`
-  is the DAC's, so FM6's FM notes move to an `fm1`–`fm5` no channel takes,
 - A module of another machine's chips offers that machine as its
   **Target** (the default where its chips play the most notes), and md:
   `msx` for the AY-3-8910, the SCC and the YM2413, `x68k` for the YM2151,
@@ -1802,6 +1802,9 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   and channel 8's noise (`10xx`, the duty macro) is `fm8`'s `:mode noise`
   with its `:noise-rate`. The SSG's and the YM2413's volume column and
   macro are 3 dB steps, the rhythm's 0.75 dB.
+- **The DAC and the legacy sample mode.** A Genesis module's FM6 notes that
+  play samples go to `pcm1`, as `md` plays them. While the DAC plays, `fm6`
+  is the DAC's, so FM6's FM notes move to an `fm1`–`fm5` no channel takes,
   or are left out (the log says which). A sample instrument's note plays
   its sample. In a DefleMask module, or a Furnace one of a format before
   239 (which Furnace converts the same way), `17xx` turns FM6's sample mode

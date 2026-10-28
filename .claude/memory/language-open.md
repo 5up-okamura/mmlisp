@@ -106,3 +106,62 @@ score declares how the music responds.
 
 An override looping curve on a pitch macro skews the ir↔drv A/B by ±8 in the
 F-number at note boundaries, proven scale-independent.
+
+## 4. Shuffle as a grid warp — decided 2026-10-28 (plan A), not built
+
+**Why.** A Furnace / DefleMask swing is two speeds alternating a row at a
+time: the *grid* stretches, whatever the notes' lengths. `:shuffle` today
+(`resolveShuffleTicks` in mmlisp2ir.js) swings only a note or rest whose
+nominal length equals `:shuffle-base`, flipping `subBeatParity` per swung
+item; any other length plays straight, so an odd number of base units (a
+dotted eighth on a 16th base) flips every pair after it. Measured with
+`:shuffle 70 :shuffle-base 16 :len 16` (96 PPQN, a pair = 48 ticks):
+
+| Body | Onsets now | Onsets wanted |
+| --- | --- | --- |
+| `c d e f` | 0 34 48 82 | same |
+| `c8. d e f g` | 0 72 106 120 154 | 0 82 96 130 144 |
+| `c _8. d e f` | 0 106 120 154 | 0 96 130 144 |
+| `_16 c8 d e` | 34 82 96 | same (by luck: an even span) |
+
+**Decided (the user chose plan A over splitting lengths in the importer).**
+`:shuffle R` warps the time of the `:shuffle-base` grid: in each pair
+(2 × base from the pairing origin) the first half maps onto the first R %
+of the pair and the second half onto the rest, linearly within each half —
+so every onset *and* end lands on the warped grid, any length, ticks finer
+than the base in proportion (a DAW's swing). R's range widens below 50 —
+a short first beat, which a 3/7 tracker swing needs (R 30); the bounds are
+for the session to settle. A body of base-length items only must come out
+as today (check:snapshot holds it).
+
+**Grooves, not only pairs.** A Furnace speed pattern runs up to 16 speeds
+in turn, a row each, and 09xx switches between the song's grooves:
+demos/nes/christmas-fever.fur opens on `0900` = groove [7 6 3 4] (its key-ons
+at frames 0 7 13 16 20 in Furnace's VGM) and later `0901` = [4 2]. So the
+warp wants an N-step form — the base units of a cycle in those proportions
+(`:shuffle [7 6 3 4]`, say), the pair's `R` its two-step case. The import
+reads both (`t.speeds`, `t.grooves`) and today plays each at its average.
+
+**For the session to decide.** The pairing origin (the track's start, a
+`:shuffle` change restarting it as now); how loops carry the phase (today's
+`swingsOtherWay` / `W_SHUFFLE_LOOP` copy a body twice when it leaves the
+parity flipped — with a positional warp the phase is the elapsed nominal
+ticks mod the pair); the warnings and errors (`W_SHUFFLE_STRAIGHT` changes
+meaning). Docs to update: language.md §5.2, the cheatsheet, reference.js
+(and i18n).
+
+**The importer after it lands** (import-tracker.js): where the speeds
+differ, each track's head gets the warp over `:shuffle-base <a row>` —
+R = round(100 · sp0 / (sp0 + sp1)) for two, the pattern for a groove —
+restated on every track where 09xx / 0Fxx change them (speedMarks follows
+Furnace's playback.cpp for both); rows stay on the straight grid (EDxx delays and ECxx cuts
+in straight ticks, warped with it); the "imported at their average" warning
+goes. Test song: Furnace's demos/nes/christmas-fever.fur (speeds 7/3).
+An interim that laid each row at its own speed in the importer matched
+Furnace's key-on times and was backed out in favour of this.
+
+**Checking against Furnace.** Its CLI renders what the import must match:
+`/Applications/Furnace/Furnace.app/Contents/MacOS/Furnace -loops 0 -vgmout
+x.vgm song.fur` (the register writes: compare key-on times and periods with
+`IRPlayer.captureRegisterLog`) and `-outmode perchan -output x.wav` (one WAV
+a channel: levels).

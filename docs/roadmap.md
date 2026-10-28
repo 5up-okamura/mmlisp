@@ -91,7 +91,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
   MSM6258 — x68k's pcm1–pcm8 could take them), subsongs after the first, a
   module chip's own clock (the SSG's envelope rate is read on the
   target's), the AY envelope's shape moving in its macro (the first step
-  serves), a YM2413 drum note's pitch (each hit at c4). On
+  serves), a YM2413 drum note's pitch (each hit at c4), a swing or groove
+  (speeds taking turns; it waits on the grid-warp `:shuffle`). On
   the PC Engine: the LFO and DDA effects, a duty macro switching noise and
   wave under a note (its first step serves), and the phase a wave loads at
   (Furnace's anti-click carries the running phase over; a load here starts

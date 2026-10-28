@@ -257,7 +257,8 @@ function playOrder(t) {
 export function analyzeTracker(t) {
   const { seq, loopIndex } = playOrder(t);
   const rowsPerBeat = t.rowsPerBeat > 0 && PPQN % t.rowsPerBeat === 0 ? t.rowsPerBeat : 4;
-  const framesPerRow = (t.speeds[0] + t.speeds[1]) / 2 || 6;
+  // (The speeds a row each in turn: their average.)
+  const framesPerRow = t.speeds.reduce((s, x) => s + x, 0) / t.speeds.length || 6;
   const bpm = (60 * t.hz) / (framesPerRow * rowsPerBeat);
   const channels = t.channels.map((chn, c) => {
     let notes = 0, noiseNotes = 0, sampleNotes = 0, noise = false, ins = -1;
@@ -444,8 +445,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     used.push({ ...ch, dest: d });
   }
-  if (t.speeds[0] !== t.speeds[1])
-    warnings.push(`speeds ${t.speeds[0]}/${t.speeds[1]} alternate per row (a swing) — imported at their average`);
+
 
   // Segments in song ticks.
   const segStart = [];
@@ -515,7 +515,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     if (!moves) nz = null;
     if (!am?.fixed) note = null;
     // The column a macro's steps add to (no newVolumeScaling): its own def.
-    if (!fc || fc === "tri" || t.newVolumeScaling !== false || !t.instruments[i]?.vol?.values.length) col = null;
+    // Where the chip's level is the column and the step put together in
+    // whole steps (Furnace's VOL_SCALE_*: the 2A03's, the SCC's, the
+    // VRC6's, an older song's OPLL), a def for each column level it plays at.
+    const linVm = vm === "lin" || vm === "vrc6" || vm === "lin63";
+    const perCol = (fc && fc !== "tri") || linVm || (vm === "log" && t.newVolumeScaling === false);
+    if (!perCol || !t.instruments[i]?.vol?.values.length) col = null;
     const wm = t.instruments[i]?.wave;
     const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map(waveDef) : null;
     if (waveNames?.includes(null)) waveMacroSteps++;
@@ -540,10 +545,18 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       // Elsewhere a ratio of the column's level.
       if (ins.vol?.values.length && fc === "tri")
         parts.push(`:vol ${arr(ins.vol, (x) => (x > 0 ? 31 : 0))}`);
-      else if (ins.vol?.values.length && fc && col != null) {
-        // Furnace's VOL_SCALE_LOG: the column and the step added, less 15.
-        const out = (x) => Math.max(0, Math.min(15, col + Math.min(15, x) - 15));
-        parts.push(`:vol ${arr(ins.vol, (x) => (out(x) <= 0 ? 0 : Math.max(1, Math.round(31 + (linDb(out(x)) - linDb(col)) / 2))))}`);
+      else if (ins.vol?.values.length && col != null) {
+        // The level Furnace writes: VOL_SCALE_LINEAR, the column times the
+        // step over the top, rounded down (newVolumeScaling's on the 2A03,
+        // always on the SCC and the VRC6, the OPLL's without it), else
+        // VOL_SCALE_LOG, the two added less the top. As dB on the chip's
+        // own scale (linear, or the OPLL's 3 dB steps), a fader under the
+        // column's :vel.
+        const top = vm === "lin63" ? 63 : 15;
+        const linear = linVm || (fc ? t.newVolumeScaling !== false : true);
+        const out = (x) => (linear ? Math.floor((col * Math.min(top, x)) / top) : Math.max(0, Math.min(top, col + Math.min(top, x) - top)));
+        const db = (v) => (vm === "log" ? 3 * (v - top) : 20 * Math.log10(v / top));
+        parts.push(`:vol ${arr(ins.vol, (x) => (out(x) <= 0 ? 0 : Math.max(1, Math.round(31 + (db(out(x)) - db(col)) / 2))))}`);
       } else if (ins.vol?.values.length && fc)
         parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 + linDb(x) / 2))))}`);
       else if (ins.vol?.values.length && (vm === "lin" || vm === "vrc6" || vm === "lin63")) {
@@ -693,21 +706,37 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   };
 
   // The song's speed: a 09xx / 0Fxx on any channel is the song's (Furnace
-  // plays them so), its rows' tempo the two speeds' average from there.
+  // plays them so), its rows' tempo the speeds' average from there. The
+  // speeds take turns a row each (a swing, a groove); 09xx picks a groove
+  // where the song has them, else sets speed 1, as 0Fxx sets speed 2 of
+  // two (playback.cpp).
   const speedMarks = [];
+  const patternsPlayed = new Set([t.speeds.join("/")]);
   {
-    const sp = [...t.speeds];
+    let sp = [...t.speeds];
+    const grooves = t.grooves ?? [];
     a.seq.forEach(({ order, rows }, si) => {
       for (let r = 0; r < rows; r++) {
         let changed = false;
         t.channels.forEach((chn, c) => {
-          for (const [code, val] of chn.patterns.get(t.orders[order][c])?.[r]?.fx ?? [])
-            if ((code === 0x09 || code === 0x0f) && val > 0) { sp[code === 0x09 ? 0 : 1] = val; changed = true; }
+          for (const [code, val] of chn.patterns.get(t.orders[order][c])?.[r]?.fx ?? []) {
+            if (code === 0x09 && grooves.length) { if (val >= 0 && val < grooves.length) { sp = [...grooves[val]]; changed = true; } }
+            else if (code === 0x09 && val > 0) { sp[0] = val; changed = true; }
+            else if (code === 0x0f && val > 0) { sp[sp.length === 2 && !grooves.length ? 1 : 0] = val; changed = true; }
+          }
         });
-        if (changed) speedMarks.push({ tick: segStart[si] + r * rowTicks, tokens: [tempoOf((sp[0] + sp[1]) / 2)] });
+        if (changed) {
+          // (One set on the first row is the song's from the start.)
+          if (si === 0 && r === 0) patternsPlayed.clear();
+          patternsPlayed.add(sp.join("/"));
+          speedMarks.push({ tick: segStart[si] + r * rowTicks, tokens: [tempoOf(sp.reduce((s, x) => s + x, 0) / sp.length)] });
+        }
       }
     });
   }
+  for (const sp of patternsPlayed)
+    if (sp.split("/").some((x) => x !== sp.split("/")[0]))
+      warnings.push(`speeds ${sp} take turns a row each (a ${sp.split("/").length > 2 ? "groove" : "swing"}) — imported at their average`);
   // The NES's DPCM channel on fc's pcm1: a note plays its instrument's
   // sample (its note map's, or its one), at the DMC rate the note picks — an
   // NES instrument's map or the note's low four bits, else the sample's
@@ -919,12 +948,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       if (rhythmCh) {
         if (!chn.drum) return [];
         // Its instrument's volume macro, as the sound's :vol.
-        if (vm && it?.kind === "std" && it.vol?.values.length) { usedMacro = true; return [chn.drum, env(ins, null, false, null, null, null, false, vm)]; }
+        if (vm && it?.kind === "std" && it.vol?.values.length) { usedMacro = true; return [chn.drum, env(ins, null, false, null, vol < 0 ? colMax : vol, null, false, vm)]; }
         return usedMacro ? [chn.drum, "(macro none)"] : [chn.drum];
       }
       if (opllCh) {
         const v = it?.fm ? opllVoice(ins) : null;
-        if (it?.kind === "std") { usedMacro = true; return [...(v ? [v] : []), env(ins, null, false, null, null, note, false, vm)]; }
+        if (it?.kind === "std") { usedMacro = true; return [...(v ? [v] : []), env(ins, null, false, null, vol < 0 ? colMax : vol, note, false, vm)]; }
         return usedMacro ? [...(v ? [v] : []), "(macro none)"] : v ? [v] : [];
       }
       if (!it) {
@@ -938,7 +967,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return usedMacro ? ["(macro none)"] : [];
       }
       usedMacro = true;
-      const e = env(ins, nz, onWave, fcCh, vol < 0 ? 15 : vol, note, toNoise, vm);
+      const e = env(ins, nz, onWave, fcCh, vol < 0 ? colMax : vol, note, toNoise, vm);
       if (onFm) { standIns.add(standIn); return [standIn, e]; }
       return [e];
     };
@@ -1113,7 +1142,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if ((code === 0xf8 || code === 0xf9) && val >= 0) { slide = 0; jump = code === 0xf8 ? val : -val; }
           else if (code === 0xed && val > 0) delay = Math.round(val * ticksPerFrame);
           else if (code === 0xec && val >= 0) cut = Math.round(val * ticksPerFrame);
-          else if ((code === 0x09 || code === 0x0f) && val > 0) { /* the song's speed: speedMarks */ }
+          else if (code === 0x09 || code === 0x0f) { /* the song's speed: speedMarks */ }
           else if (code === 0x0b || code === 0x0d) { /* the order walk */ }
           else if (code >= 0) {
             // A tremolo stops a volume slide (the two do not run at once).
