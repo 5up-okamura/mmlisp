@@ -1531,7 +1531,9 @@ than approximating:
   written out pass by pass.
 - **Software LFO and detune** move the raw pitch word, so their cents depend
   on the note. An LFO that keeps the word in range is a triangle, however
-  slow; one that carries into the block is a sweep, drawn per pitch class from
+  slow — one `lfoN` def a setting, its depth the mean of the twelve pitch
+  classes' (a low note's swing a few cents off mucom's); one that carries
+  into the block is a sweep, drawn per pitch class from
   the exact curve as far as its longest note — counted as the part plays, so
   a note tied through a loop's passes (`[b8&)]7`) is one long note. An LFO or
   SSG envelope longer than a driver macro holds (255 steps) is sampled at a

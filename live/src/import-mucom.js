@@ -56,9 +56,6 @@ const SSG_PERIOD = [0xee8, 0xe12, 0xd48, 0xc89, 0xbd5, 0xb2b, 0xa8a, 0x9f3, 0x96
 // range, is a vibrato: a looping triangle. Otherwise it is a sweep (a dive, a
 // rise), drawn as its exact curve as far as the notes it plays on last.
 const LFO_VIBRATO_MAX_PERIOD = 96;
-// A vibrato's depth differs per pitch class (the word moves the same, the
-// pitch does not); past this spread each pitch class gets its own triangle.
-const LFO_DEPTH_SPREAD_CENTS = 12;
 const LFO_SWEEP_MAX_CLOCKS = 1536; // how far a sweep curve is drawn at most
 const LFO_SWEEP_TOLERANCE = 4; // cents, piecewise-linear fit of the curve
 // The compiler's SSG presets, `@0`-`@15` on D-F (ssgdat.asm): the soft
@@ -1206,13 +1203,12 @@ function lfoDepth(lfo, isSsg, pc) {
   return sum / 12;
 }
 
-// Is the LFO drawn per pitch class (a sweep, or a vibrato whose depth varies
-// too much across the octave) rather than one spec for every note?
+// Is the LFO drawn per pitch class (a sweep, whose curve is the pitch
+// class's own) rather than one spec for every note? A vibrato is one: its
+// depth in cents differs per pitch class (the word moves the same, the pitch
+// does not), so it takes their mean — a def as the score names it.
 function lfoPerPitchClass(lfo, isSsg) {
-  if (lfoOff(lfo)) return false;
-  if (!lfoIsVibrato(lfo, isSsg, null)) return true;
-  const d = Array.from({ length: 12 }, (_, k) => lfoDepth(lfo, isSsg, k));
-  return Math.max(...d) - Math.min(...d) > LFO_DEPTH_SPREAD_CENTS;
+  return !lfoOff(lfo) && !lfoIsVibrato(lfo, isSsg, null);
 }
 
 // How far each software LFO's notes run (`maxClocks`, the length a sweep is
@@ -1530,7 +1526,7 @@ function renderLoop(op, ctx, out, depth) {
   const varies = t1.join(" ") !== t2.join(" ");
 
   let linear = 0;
-  if (count > 1 && (varies || tiesOn)) linear = count;
+  if (count > 1 && (varies || tiesOn || ctx.unfold)) linear = count;
   else if (ctx.pendingSlur) linear = 1;
 
   let k = 0;
@@ -2211,6 +2207,7 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
   return `${macroStep((ticks / PPQN) * (60 / (bpm || 120)) * 60)}:vel* [ ${items.join(" ")} ]${mute}`;
 }
 
+
 // Before an SSG note: the envelope drawn for its `v`, if not already active.
 function envBeforeNote(ctx, out) {
   // On the hardware envelope the level is the envelope's: the driver works
@@ -2634,7 +2631,7 @@ function mucomToMmlisp(parsed) {
     const letter = key[0];
     if (!ctxByLetter.has(key)) {
       const pcmPart = letter in PCM_PARTS || letter === RHYTHM_PART;
-      ctxByLetter.set(key, { pc88: parsed.pc88, isAdpcm: letter in PCM_PARTS, pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), fm3Op: Number(/~op(\d)$/.exec(key)?.[1]) || null, vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
+      ctxByLetter.set(key, { pc88: parsed.pc88, unfold: !!parsed.unfold, isAdpcm: letter in PCM_PARTS, pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), fm3Op: Number(/~op(\d)$/.exec(key)?.[1]) || null, vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
     return ctxByLetter.get(key);
   };
@@ -2898,7 +2895,9 @@ export const MUCOM_TARGETS = ["pc88", "md"];
  * `#pcm` ADPCM bank (`*pcm.bin`) as `pcmBytes` to import part K — without it
  * K is dropped, since its `@n` would have no samples to name.
  */
-export function importMucom(bytes, datBytes = null, pcmBytes = null, { target = MUCOM_TARGETS[0] } = {}) {
+// `unfold`: every loop written out pass by pass (a score to compare note by
+// note, as tools/scripts/import-snapshot.mjs --flat takes it).
+export function importMucom(bytes, datBytes = null, pcmBytes = null, { target = MUCOM_TARGETS[0], unfold = false } = {}) {
   if (!MUCOM_TARGETS.includes(target)) throw new Error(`mucom88 writes ${MUCOM_TARGETS.join(" or ")}, not ${target}`);
   const writes = target;
   const pcm = pcmBytes ? decodeMucomPcmForImport(parseMucom(decodeMucText(bytes)).meta.pcmFile, pcmBytes) : null;
@@ -2908,6 +2907,7 @@ export function importMucom(bytes, datBytes = null, pcmBytes = null, { target = 
     if (datBytes) mergeDatVoices(parsed, parseVoiceDat(datBytes));
     if (pcm) Object.assign(parsed, { pcm, pcmDrop });
     parsed.pc88 = writes === "pc88";
+    parsed.unfold = unfold;
     return mucomToMmlisp(parsed);
   };
   // The 32 KB bank fit is the Mega Drive's soft mix; the YM2608's ADPCM-B has

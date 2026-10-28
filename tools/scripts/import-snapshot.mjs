@@ -97,7 +97,7 @@ const IMPORT = {
     const meta = (k) => text.match(new RegExp(`^#${k}\\s+(\\S+)`, "mi"))?.[1];
     const dat = beside(f, meta("voice"), ".dat") ?? beside(f, "voice.dat");
     const pcm = beside(f, meta("pcm"), ".bin");
-    return importMucom(bytes, dat, pcm);
+    return importMucom(bytes, dat, pcm, { unfold: flat });
   },
   mid(f, bytes) {
     const parsed = parseMidi(bytes);
