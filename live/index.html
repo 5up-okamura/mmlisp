@@ -6849,11 +6849,11 @@
           // scopeLane) — or where the part puts each (`kitLane`: the OPLL's
           // pairs share a channel's).
           const kitLane = target.partOf(head).kitLane;
-          Object.values(target.partOf(head).kit).forEach((sound, k) => {
+          Object.entries(target.partOf(head).kit).forEach(([role, sound], k) => {
             if (!sounds.has(sound)) return;
             // The roll's row: this sound's hits, from every rhythm track.
             const samples = new Set([...soundOf].filter(([, r]) => r === sound).map(([n]) => n));
-            model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), voice: sound, scope: target.scopeLane(head) + (kitLane?.[sound] ?? k),
+            model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), role, voice: sound, scope: target.scopeLane(head) + (kitLane?.[sound] ?? k),
               volKind: 'voice', volIndex: null, slot: null, trackIndex: rhythmTracks[0], rhythmTracks, samples });
           });
           continue;
@@ -11809,7 +11809,9 @@
           if (midi < lo) lo = midi;
           if (midi > hi) hi = midi;
         }
-        model.push({ head: entry.head, trackIndex: entry.trackIndex, notes, loMidi: lo, hiMidi: hi });
+        // A ROM rhythm row is one sound's hits, named by the score's word for it.
+        model.push({ head: entry.head, name: entry.role ?? entry.head, kit: !!entry.rhythmTracks,
+          trackIndex: entry.trackIndex, notes, loMidi: lo, hiMidi: hi });
       }
       return model;
     }
@@ -11886,10 +11888,14 @@
     // is even quarters from tick 0: MMLisp has no meter,
     // and `|` sits wherever each track's writer put it, so there are no bars.
     // Zoom is a scale (px per quarter), so a wider pane shows more time.
-    // Noise and sample tracks have no pitch lane (the target's parts).
+    // Noise and sample tracks have no pitch lane (the target's parts), nor
+    // the ROM rhythm's sounds.
     const rollUnpitched = (head) => ['noise', 'sample'].includes(channelVoice(head)?.part.kind);
     const ROLL_KEY_W = 40;      // key gutter (px)
-    const ROLL_LANE_H = 16;     // one noise / PCM lane (px)
+    const ROLL_LANE_H = 16;     // one noise / PCM lane (px), while they fit
+    const ROLL_LANE_MIN = 6;    // the thinnest a lane gets when many share the pane
+    const ROLL_LANE_SHARE = 1 / 3; // the most of the pane the lanes take
+    const ROLL_LANE_NAMED = 12; // thinner than this, only the focus lane is named
     const ROLL_HEAD_AT = 0.3;   // the playhead's place across the plot
     const ROLL_ROW_MAX = 12;    // tallest pitch row (px); a narrower span widens to fill
     const ROLL_ZOOMS = [24, 48, 96]; // px per quarter: 1×, 2×, 4×
@@ -11904,7 +11910,7 @@
     let _rollDrawnKey = null;   // what the still picture on the canvas was drawn from (drawRoll)
     let _rollSelStale = false;  // the model was rebuilt: re-match on the next frame
 
-    function rollPitched(cell) { return !rollUnpitched(cell.head); }
+    function rollPitched(cell) { return !cell.kit && !rollUnpitched(cell.head); }
     function rollNoteName(m) { return ROLL_NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
     function rollLenName(ticks) {
       const whole = vizPpqn() * 4;
@@ -12148,7 +12154,13 @@
       const plotX = ROLL_KEY_W, plotW = Math.max(1, W - ROLL_KEY_W);
       const headX = plotX + Math.round(plotW * ROLL_HEAD_AT);
       const leftTicks = (headX - plotX) / ppt, rightTicks = (W - headX) / ppt;
-      const laneTop = H - ROLL_LANE_H * lanes.length;
+      // Many lanes (x68k's pcm1–8, pc88's rhythm) thin out rather than
+      // crowd out the pitches: together they take at most a third of the pane.
+      const laneH = lanes.length
+        ? Math.max(ROLL_LANE_MIN, Math.min(ROLL_LANE_H, Math.floor(H * ROLL_LANE_SHARE / lanes.length)))
+        : ROLL_LANE_H;
+      const lanePad = Math.max(1, Math.round(laneH * 0.2)); // a mark's inset, 3px at full height
+      const laneTop = H - laneH * lanes.length;
       const avail = Math.max(1, laneTop - 4);
       const { lo, hi } = rollViewNow(focusCell, avail); // fractional while easing
       const rowH = avail / (hi - lo + 1);
@@ -12238,7 +12250,7 @@
 
       // Noise / PCM lanes: a tick at each onset, wider while it sounds.
       lanes.forEach((cell, i) => {
-        const y = laneTop + i * ROLL_LANE_H;
+        const y = laneTop + i * laneH;
         const f = cell === focusCell || !focusCell;
         ctx.globalAlpha = 0.3;
         ctx.strokeStyle = mid;
@@ -12252,9 +12264,9 @@
           const x = Math.round(headX + (s - t) * ppt);
           if (x < plotX || x > W) return;
           const sounding = s <= t && t < s + Math.max(n.gateTicks, ppq / 4);
-          if (_rollSel.has(n)) { ctx.fillStyle = fg; ctx.fillRect(x - 1, y + 2, 4, ROLL_LANE_H - 4); ctx.fillStyle = f ? fg : mid; }
-          else ctx.fillRect(x, y + 3, sounding ? 3 : 2, ROLL_LANE_H - 6);
-          _rollHits.push({ x: x - 3, y, w: 8, h: ROLL_LANE_H, n, cell });
+          if (_rollSel.has(n)) { ctx.fillStyle = fg; ctx.fillRect(x - 1, y + lanePad - 1, 4, laneH - 2 * lanePad + 2); ctx.fillStyle = f ? fg : mid; }
+          else ctx.fillRect(x, y + lanePad, sounding ? 3 : 2, laneH - 2 * lanePad);
+          _rollHits.push({ x: x - 3, y, w: 8, h: laneH, n, cell });
         });
       });
 
@@ -12275,8 +12287,9 @@
       }
       ctx.restore();
       lanes.forEach((cell, i) => {
+        if (laneH < ROLL_LANE_NAMED && cell !== focusCell) return;
         ctx.fillStyle = cell === focusCell ? fg : subText;
-        ctx.fillText(cell.head, ROLL_KEY_W - 4, laneTop + i * ROLL_LANE_H + ROLL_LANE_H / 2);
+        ctx.fillText(cell.name, ROLL_KEY_W - 4, laneTop + i * laneH + laneH / 2);
       });
       ctx.strokeStyle = mid;
       ctx.beginPath(); ctx.moveTo(ROLL_KEY_W + 0.5, 0); ctx.lineTo(ROLL_KEY_W + 0.5, H); ctx.stroke();
@@ -12293,7 +12306,7 @@
         ctx.font = '600 11px ui-monospace, monospace';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'alphabetic';
-        ctx.fillText(focusCell.head, W - zoom.width - 14, zoom.baseline);
+        ctx.fillText(focusCell.name, W - zoom.width - 14, zoom.baseline);
       }
     }
 
@@ -12338,7 +12351,7 @@
         if (!hit) { tip.hidden = true; return; }
         const { n, cell } = hit;
         const what = rollPitched(cell) ? rollNoteName(n.midi) : (n.sample ?? 'note');
-        tip.textContent = `${cell.head} · ${what} · ${rollLenName(n.lenTicks)}`;
+        tip.textContent = [cell.name, what, rollLenName(n.lenTicks)].filter((t, i, a) => a.indexOf(t) === i).join(' · ');
         tip.hidden = false;
         tip.style.left = Math.max(0, Math.min(x + 12, c.clientWidth - tip.offsetWidth - 4)) + 'px';
         tip.style.top = Math.max(2, y - 24) + 'px';

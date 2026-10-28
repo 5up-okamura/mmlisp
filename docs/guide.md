@@ -1191,8 +1191,11 @@ phone's or tablet's on-screen keyboard is up, the piano roll steps aside and
 gives its height to the text. In the piano roll, every pitched channel shares
 one pitch axis, with the keys down the left, so what the tracks play at one
 moment — the chord, the spacing, a clash — reads at a glance; noise and PCM
-tracks are rows of onset marks underneath. The playhead stands still and the
-music runs past it.
+tracks, and each sound of a ROM rhythm (`kick`, `snare` …), are rows of onset
+marks underneath. Many rows (x68k's `pcm1`–`pcm8`, pc88's rhythm) grow thinner
+rather than crowd out the pitches — together they take at most a third of the
+pane — and once too thin to name, only the focus's row is named. The playhead
+stands still and the music runs past it.
 
 One channel is in focus: the one whose form holds the editor cursor, or
 whose note you click. It is drawn bright, the others dim, its sounding keys
