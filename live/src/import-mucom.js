@@ -1131,6 +1131,8 @@ function octavesMet(text) {
 // to C1. A lower SSG note is played an octave (or two) up rather than pinned
 // to the PSG's floor, which would be a wrong pitch.
 const PSG_LOWEST_MIDI = 45;
+// A macro def's octave origin (renderOps of a `*n`): what it moves from.
+const MACRO_OCT = 100;
 
 function noteToken(letter, acc, len, ctx) {
   // K shifts the ADPCM's notes as the FM's; the rhythm (G) has no pitch.
@@ -1446,7 +1448,12 @@ function rhythmLayers(forms, warnings, pc88 = false) {
 const compileState = (ctx) => ({ oct: ctx.oct, len: ctx.len, keyShift: ctx.keyShift, lastNote: ctx.lastNote });
 
 function setCompileState(ctx, st, out) {
-  if (st.oct !== ctx.oct) { out.push(`:oct ${st.oct}`); ctx.oct = st.oct; }
+  if (st.oct !== ctx.oct) {
+    // In a macro's def the octave is the caller's, unknown: a move to it.
+    const d = st.oct - ctx.oct;
+    out.push(ctx.inMacro ? Array(Math.abs(d)).fill(d > 0 ? ">" : "<").join(" ") : `:oct ${st.oct}`);
+    ctx.oct = st.oct;
+  }
   if (st.len != null && st.len !== ctx.len) { out.push(`:len ${st.len}`); ctx.len = st.len; }
   ctx.keyShift = st.keyShift;
   ctx.lastNote = st.lastNote;
@@ -2635,7 +2642,9 @@ function mucomToMmlisp(parsed) {
     // from a macro body by name.
     const isPcm = pcmMacros.has(mn);
     const isSsg = !isPcm && ssgMacros.has(mn);
-    renderOps(mac.ops, { barPos: null, vel: null, isPcm, isAdpcm: isPcm, isSsg, pc88: parsed.pc88, octShift: isSsg ? 0 : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
+    // A macro is pasted where it is called, at the caller's octave: its
+    // octave counts from an origin no note reaches (MACRO_OCT), moves only.
+    renderOps(mac.ops, { barPos: null, inMacro: true, oct: MACRO_OCT, vel: null, isPcm, isAdpcm: isPcm, isSsg, pc88: parsed.pc88, octShift: isSsg ? 0 : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
     const content = octavesMet(toks.join(" ")).trim();
     if (!content) continue;
     usableMacros.add(mn);
