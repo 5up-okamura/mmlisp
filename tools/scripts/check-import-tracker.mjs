@@ -297,6 +297,8 @@ function dacDmf() {
 
 {
   const t = await parseDmf(dacDmf());
+  // The DAC note's row sets FM6's volume, which D-4 (FM) then plays at.
+  t.channels[5].patterns.get(0)[0].vol = 120;
   assert.deepEqual([...t.samples[0].data], [0, 0, 0.5, 0.5, -0.5, -0.5, 0, 0], "amp 100 doubles, pitch 4 reads each word twice");
   assert.deepEqual([t.samples[1].rate, t.samples[1].data.length], [16000, 4], "rate code 3, pitch 5 as stored");
   const a = analyzeTracker(t);
@@ -307,7 +309,7 @@ function dacDmf() {
   assert.match(source, /\(def-pcm dac-kick :file "t-dac\.wav" :rate 16000 :offset 0 :frames 8\)/, "the kick at its rate, its extension off its name");
   assert.match(source, /\(def-pcm dac-snare :file "t-dac\.wav" :rate 16000 :offset 8 :frames 4\)/, "the snare after it");
   assert.match(source, /\((?:def pcm1-p00|pcm1)\s+dac-kick :mode gate[^\n]*\n?\s*c dac-snare c/, "C-4 and C#-4: samples 0 and 1, on pcm1");
-  assert.match(source, /\(def fm\d-p00\s+ins-fm[^)]*_ d \|\)/, "D-4 after 1700: FM6's FM note, its rest where the DAC played");
+  assert.match(source, /\(def fm\d-p00\s+ins-fm[^)]*:vel 12[^)]*_ d \|\)/, "D-4 after 1700: FM6's FM note at the DAC row's volume, its rest where the DAC played");
   assert.deepEqual(warnings, ["FM6: fm6 is the DAC — its FM notes on fm1"], "17xx read, not skipped; FM6's FM notes off fm6");
   assert.equal(pcm?.wavFile, "t-dac.wav");
   assert.deepEqual(bad(source), [], "the DAC score compiles clean");
@@ -349,8 +351,10 @@ function dacDmf() {
 // stopped by a tremolo (0742, itself not imported); D-4 with 0310, G-4
 // with 0601 — that portamento again, with a slide. On FM (Genesis): FA0F
 // from 127 reaches 0 two and a half frames into D-4's row, which ends
-// D-4 there; a note at volume 0 is silent (the carriers at TL 127) and
-// left out.
+// D-4 there — D-4 at 37, 67.5 dB down, is :vel's floor (30 dB) and :vol
+// 12 (38 more); a note at volume 0 is silent (the carriers at TL 127) and
+// left out. FM3's volume 100 after ED03 moves its note three frames into
+// the row.
 {
   const t = await parseDmf(nesDmf());
   const e = { note: null, vol: -1, ins: -1, fx: [] };
@@ -370,10 +374,12 @@ function dacDmf() {
   const e = { note: null, vol: -1, ins: -1, fx: [] };
   t.channels[0].patterns.set(0, [{ ...e, note: 48, vol: 127, ins: 0, fx: [[0xfa, 0x0f]] }, { ...e, note: 50 }]);
   t.channels[1].patterns.set(0, [{ ...e, note: 48, vol: 0, ins: 0 }, { ...e, note: 50, vol: 100 }]);
+  t.channels[2].patterns.set(0, [{ ...e, note: 48, vol: 127, ins: 0 }, { ...e, vol: 100, fx: [[0xed, 3]] }]);
   const a = analyzeTracker(t);
   const { source, warnings } = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "md"), phrases: false, fileName: "t.dmf" }, a);
-  assert.match(source, /\(macro :vol \[\(linear 31\.\.17 :len 10t\)\]\) :vel 0 d10t _14t/, "FAxx reaching 0 ends the FM note");
+  assert.match(source, /\(macro :vol \[\(linear 12\.\.0 :len 10t\)\]\) :vel 0 d10t _14t/, "FAxx reaching 0 ends the FM note");
   assert.match(source, /\(fm2 [^\n]*\n\s+#top ins-bell :oct 5 :vel 5 _ d/, "an FM note at volume 0 left out");
+  assert.match(source, /\(macro :vol \[\(wait 36t\) \(linear 21\.\.21 :len 12t\)\]\)/, "ED03: the volume three frames in");
   assert.deepEqual(warnings, []);
   assert.deepEqual(bad(source), [], "the FM lines compile clean");
 }

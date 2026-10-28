@@ -791,7 +791,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       const onVel = n.lineOn === "vel";
       if (!onVel) n.vel = velOf(top);
       // The level in the line's units, before rounding.
-      const level = (v) => (onVel ? (fcCh && v <= 0 ? 0 : velRaw(v)) : VOL_UNITY + ((velRaw(v) - velRaw(top)) * VEL_DB_PER_STEP) / VOL_STEP_DB);
+      // (On :vol, from the :vel the note is written at: the line reaches
+      // below :vel's floor where the column does.)
+      const level = (v) => (onVel ? (fcCh && v <= 0 ? 0 : velRaw(v)) : VOL_UNITY + ((velRaw(v) - n.vel) * VEL_DB_PER_STEP) / VOL_STEP_DB);
       const unit = (v) => (onVel ? velOf(v) : Math.max(0, Math.min(VOL_UNITY, Math.round(level(v)))));
       // A slide over many rows is one line: drop a point on the line
       // through its neighbors (in level: a linear column is not one in dB).
@@ -883,13 +885,6 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           }
         }
         if (row.ins >= 0 && t.instruments[row.ins]) ins = row.ins;
-        // A sample note (the DAC's, on pcm1): FM6's note ends there.
-        if (typeof row.note === "number" && chn.legacy && (row.legacy != null || isSampleIns(t.instruments[ins]))) {
-          if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
-          sounding = null;
-          slideRow(at);
-          continue;
-        }
         // The instrument's macros start over at each of its notes: its wave
         // macro sets the wave (its first step; one that moves is the note's
         // :wave macro, env), its duty macro the noise switch (its first step).
@@ -918,10 +913,20 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (typeof row.note !== "number" && sounding && nv !== cur) {
             // (The triangle has no level: only a 0 its volume macro reads stops it.)
             const triLevel = fcCh !== "tri" || !!t.instruments[ins]?.vol?.values.length;
-            if (nv === 0 && triLevel) { sounding.end = Math.min(sounding.end ?? Infinity, at); sounding = null; }
-            else if (fcCh !== "tri") { levelTo(sounding, at, cur); levelTo(sounding, at, nv); }
+            // (After an EDxx delay: Furnace runs the whole row then.)
+            const when = at + Math.min(delay, rowTicks - 1);
+            if (nv === 0 && triLevel) { sounding.end = Math.min(sounding.end ?? Infinity, when); sounding = null; }
+            else if (fcCh !== "tri") { levelTo(sounding, when, cur); levelTo(sounding, when, nv); }
           }
           vol = colF = nv;
+        }
+        // A sample note (the DAC's, on pcm1): FM6's note ends there. (Its
+        // row's volume stays the channel's, for the FM notes after it.)
+        if (typeof row.note === "number" && chn.legacy && (row.legacy != null || isSampleIns(t.instruments[ins]))) {
+          if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
+          sounding = null;
+          slideRow(at);
+          continue;
         }
         if (row.note === "off") {
           if (sounding) sounding.end = Math.min(sounding.end ?? Infinity, at);
