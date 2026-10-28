@@ -2008,7 +2008,7 @@ rather than have samples silently resolve against an earlier sitting's folder.
 
 Opening a folder loads its first score (alphabetically) straight away — or,
 when the folder holds one file, that file; the others are listed under
-**`File > Files in Folder`** (a check marks the open score), so switching
+**`File > Files in Folder`** (a check marks the open file), so switching
 between a project's scores is one click and keeps the samples resolved. The
 list also holds the folder's songs (`.vgm` `.mdx` `.muc` …, their format beside
 them), which open converted and keep the folder (guide §22).

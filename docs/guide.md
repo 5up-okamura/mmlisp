@@ -1433,6 +1433,17 @@ itself is read from there — an MDX's `.pdx`, a mucom88 song's `#voice` and
 `#pcm` banks. Opening a folder opens its first score, or its one file when it
 holds only one; a folder of songs only lists them.
 
+The top line of Global in the panel names what is open — the folder first
+when it came from one (`pack.zip / daisy.vgm`) — and the browser's title says
+the same. A converted song keeps its own name until it is saved; `Save` then
+offers it as `.mmlisp`. A `●` after the name means edits not yet saved. With a
+folder open, the name ends in `⌄` and tapping it opens the folder's list
+there, and the two buttons at the line's end step to the previous and next
+file, round from the last to the first. A name too long for the line loses its
+middle, as much kept of its start as of its end. Moving on from edits asks first;
+a song just converted, or a score as it was opened or saved, goes without
+asking.
+
 An archive — `.zip`, `.lzh` (`.lha`) — opened with `File > Open…` or dropped
 opens as the folder it holds, in every browser, an iPhone's and iPad's too: a
 downloaded song pack needs no unpacking. It is read in memory, each file when

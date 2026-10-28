@@ -428,6 +428,35 @@
       <div class="rack-section">
         <div class="rack-title rack-title-row"><span>Global</span><span id="targetBadge"></span></div>
         <div class="rack-body">
+        <!-- The score's name — with a folder open, the folder's first: the
+             name opens File > Files in Folder here, ← → step through it
+             (updateDocName). -->
+        <div class="knob-wrap file-wrap">
+          <div class="file-row">
+            <span class="menu-wrap" id="fileMenu">
+              <button class="file-name" id="fileName" onclick="toggleMenu('fileMenu')" disabled><span class="file-text" id="fileText">untitled.mmlisp</span><span class="file-more" aria-hidden="true"></span></button>
+              <div class="menu-dropdown" id="fileList"></div>
+            </span>
+            <span class="file-steps" id="fileSteps" hidden>
+              <!-- The soft keyboard's octave buttons. -->
+              <button class="kbd-btn" onclick="stepFolderFile(-1)" title="The previous file in the folder" aria-label="Previous file">
+                <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M6.8 1.5L3.2 5L6.8 8.5L7.6 7.7L4.8 5L7.6 2.3Z"/></svg>
+              </button>
+              <button class="kbd-btn" onclick="stepFolderFile(1)" title="The next file in the folder" aria-label="Next file">
+                <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.2 1.5L2.4 2.3L5.2 5L2.4 7.7L3.2 8.5L6.8 5Z"/></svg>
+              </button>
+            </span>
+          </div>
+        </div>
+        <!-- Song position: one pass of the song (intro + one loop), the loop
+             start marked; drag or tap to seek (initTimeBar). -->
+        <div class="knob-wrap time-wrap">
+          <div class="knob-label">TIME <span class="time-val" id="val-time">0:00.0</span></div>
+          <div class="time-track">
+            <input type="range" id="sl-time" min="0" max="1" step="0.01" value="0" disabled>
+            <div class="time-loop" id="time-loop" hidden></div>
+          </div>
+        </div>
         <div class="param-grid" style="grid-template-columns: repeat(3, 1fr)">
           <div class="knob-wrap">
             <div class="knob-label">MASTER <span class="val" id="val-master">31</span></div>
@@ -460,15 +489,6 @@
           <div class="knob-wrap">
             <div class="knob-label">WAVE <span class="val" id="val-lfo-wave">saw</span></div>
             <input type="range" id="sl-lfo-wave" min="0" max="3" value="0" oninput="onOpmLfo('LFO_WAVE', this)">
-          </div>
-        </div>
-        <!-- Song position: one pass of the song (intro + one loop), the loop
-             start marked; drag or tap to seek (initTimeBar). -->
-        <div class="knob-wrap time-wrap">
-          <div class="knob-label">TIME <span class="time-val" id="val-time">0:00.0</span></div>
-          <div class="time-track">
-            <input type="range" id="sl-time" min="0" max="1" step="0.01" value="0" disabled>
-            <div class="time-loop" id="time-loop" hidden></div>
           </div>
         </div>
         </div>
@@ -3125,11 +3145,13 @@
     // is not its base.
     async function loadImportedSource(source, warnings, fileName, label, { tag, pcm = null, folder = null }) {
       _sourceHandle = null;
-      _sourceFileName = (fileName || tag).replace(/\.[^.]*$/, '') + '.mmlisp';
+      // It goes by the song's own name until saved, as the .mmlisp Save
+      // suggests; it compiles as that .mmlisp already.
+      _sourceFileName = fileName || mmlispName(tag);
       if (folder && folder === _sourceDir) forgetHeldFiles(); // the last score's, not the folder's
       else clearSourceDir();
       currentIrURL = null;
-      _lastFileName = _sourceFileName;
+      _lastFileName = mmlispName(_sourceFileName);
       _lastGoodIR = null;
       _lastSourceMap = null;
       resetForNewScore();
@@ -4410,7 +4432,7 @@
         // applies — see buildAction(). Only the param/cursor UI tracks edits.
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged) syncBracketStatus();
-        if (update.docChanged) scheduleDraftSave();
+        if (update.docChanged) { scheduleDraftSave(); markDocDirty(); }
         if (update.docChanged || update.selectionSet) syncParamUI({ repaint: false });
         auditionOnSelect(update);
       }),
@@ -4569,6 +4591,7 @@
         doc: text,
         extensions: editorExtensions,
       }));
+      markDocSaved(); // as it came: nothing of the user's in it yet
       syncBracketStatus(); // setState fires no doc-change update
       // Likewise the FM panel's def-at-cursor is this document's, not the last
       // one's — after the current task, since at startup the panel's state is
@@ -4601,6 +4624,7 @@
           src: editorView.state.doc.toString(),
           name: _sourceFileName,
           path: _lastFileName,
+          dirty: _docDirty,
         }));
       } catch (_) { /* storage off or full: the page still works, unsaved */ }
     }
@@ -4660,6 +4684,9 @@
     let _lastFileName = 'untitled.mmlisp';
     let _sourceHandle = null;
     let _sourceFileName = null;
+    let _docDirty = false; // edited since it was opened, converted or saved (FILE's ●)
+    // The name Save writes a score under: a converted song's, as .mmlisp.
+    const mmlispName = (name) => (name || 'untitled').replace(/\.[^.]*$/, '') + '.mmlisp';
     // Source folder (File > Open Folder…, or an archive opened): the base a
     // score's relative `:file` sample paths resolve against — a folder from
     // src/source-folder.js. Deliberately session-scoped — a reload
@@ -4968,6 +4995,78 @@
       currentIrURL = null;
       _lastFileName = _sourceFileName || 'untitled.mmlisp';
       scheduleDraftSave();
+      updateDocName();
+    }
+
+    // ---- FILE (Global): the score's name, and its place in the folder ----
+    // The name is the browser's title too. With a folder open, the name opens
+    // File > Files in Folder in place, and ← → go round it.
+    function folderIndexOfDoc() {
+      return _sourceDirFiles.findIndex((f) => f.name === _sourceFileName);
+    }
+    let _fileText = 'untitled.mmlisp';
+    function updateDocName() {
+      const name = _sourceFileName || 'untitled.mmlisp';
+      const mark = _docDirty ? ' ●' : '';
+      const dir = folderIndexOfDoc() >= 0 ? `${_sourceDir.name} / ` : '';
+      const el = document.getElementById('fileName');
+      if (el) {
+        _fileText = dir + name + mark;
+        el.title = _fileText;
+        fitFileText();
+        el.disabled = _sourceDirFiles.length === 0;
+      }
+      const steps = document.getElementById('fileSteps');
+      if (steps) steps.hidden = _sourceDirFiles.length === 0;
+      document.title = `${name}${mark} — MMLisp`;
+    }
+    // Too long for the line, the name loses its middle: as much of its start
+    // as of its end stays — the folder's name, and where the names in a folder
+    // differ (…bos010.muc, …bos011.muc). Measured, as CSS cuts only at the end;
+    // again whenever the line's width changes.
+    function fitFileText() {
+      const el = document.getElementById('fileText');
+      if (!el) return;
+      el.textContent = _fileText;
+      if (el.scrollWidth <= el.clientWidth) return;
+      const chars = [..._fileText];
+      const show = (n) => {
+        el.textContent = chars.slice(0, Math.ceil(n / 2)).join('') + '…' + chars.slice(chars.length - Math.floor(n / 2)).join('');
+        return el.scrollWidth <= el.clientWidth;
+      };
+      let lo = 0, hi = chars.length - 1;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (show(mid)) lo = mid;
+        else hi = mid - 1;
+      }
+      show(lo);
+    }
+    if (typeof ResizeObserver === 'function') {
+      const row = document.querySelector('.file-row');
+      if (row) new ResizeObserver(() => fitFileText()).observe(row);
+    }
+    function markDocDirty() {
+      if (_docDirty) return;
+      _docDirty = true;
+      updateDocName();
+    }
+    function markDocSaved() {
+      _docDirty = false;
+      updateDocName();
+    }
+    async function stepFolderFile(delta) {
+      const n = _sourceDirFiles.length;
+      if (!n) return;
+      const i = folderIndexOfDoc();
+      await openFolderFileAsking(i < 0 ? (delta > 0 ? 0 : n - 1) : (i + delta + n) % n);
+    }
+    window.stepFolderFile = stepFolderFile;
+    // Moving on from edits asks first — only then: a song just converted, a
+    // score opened or saved, goes without a word.
+    async function openFolderFileAsking(i) {
+      if (_docDirty && !window.confirm(`${_sourceFileName || 'untitled.mmlisp'} has unsaved edits. Open ${_sourceDirFiles[i]?.name} anyway?`)) return;
+      await openFromFolder(i);
     }
 
     async function readFileHandle(handle) {
@@ -5216,29 +5315,32 @@
       return _sourceDirFiles;
     }
 
+    // File > Files in Folder, and the same list under FILE's name (Global).
     function renderFolderFiles() {
       const wrap = document.getElementById('menuFolderFiles');
-      const list = document.getElementById('folderFilesList');
-      if (!wrap || !list) return;
-      wrap.hidden = _sourceDirFiles.length === 0;
-      list.innerHTML = '';
-      _sourceDirFiles.forEach((entry, i) => {
-        const b = document.createElement('button');
-        b.className = 'menu-item';
-        // Same shape as the other menu items: label + right-aligned marker —
-        // a check on the score that is open, a song's format beside it.
-        const name = document.createElement('span');
-        name.textContent = entry.name;
-        const mark = document.createElement('span');
-        mark.className = 'menu-item-shortcut';
-        mark.textContent = entry.kind !== 'score' ? entry.kind : entry.name === _sourceFileName ? '✓' : '';
-        b.append(name, mark);
-        b.onclick = () => {
-          openFromFolder(i);
-          closeMenus();
-        };
-        list.appendChild(b);
-      });
+      if (wrap) wrap.hidden = _sourceDirFiles.length === 0;
+      for (const list of [document.getElementById('folderFilesList'), document.getElementById('fileList')]) {
+        if (!list) continue;
+        list.innerHTML = '';
+        _sourceDirFiles.forEach((entry, i) => {
+          const b = document.createElement('button');
+          b.className = 'menu-item';
+          // Same shape as the other menu items: label + right-aligned marker —
+          // a check on the file that is open, a song's format beside the rest.
+          const name = document.createElement('span');
+          name.textContent = entry.name;
+          const mark = document.createElement('span');
+          mark.className = 'menu-item-shortcut';
+          mark.textContent = entry.name === _sourceFileName ? '✓' : entry.kind !== 'score' ? entry.kind : '';
+          b.append(name, mark);
+          b.onclick = () => {
+            closeMenus();
+            openFolderFileAsking(i);
+          };
+          list.appendChild(b);
+        });
+      }
+      updateDocName();
     }
 
     // A score opened on its own — a double-click in the Finder, File > Open… —
@@ -5806,20 +5908,32 @@
 
     async function saveFileAs() {
       if (!window.showSaveFilePicker) {
-        const name = _sourceFileName || 'untitled.mmlisp';
+        const name = mmlispName(_sourceFileName);
         const blob = new Blob([editorView.state.doc.toString()], { type: 'text/plain' });
-        if (await deliverFile(blob, name)) log('Saved ' + name, 'info');
+        if (await deliverFile(blob, name)) {
+          // Handed over, with no file kept to write back to: from now on it
+          // goes by the name it was saved under.
+          _sourceFileName = name;
+          _lastFileName = mmlispName(_lastFileName);
+          markDocSaved();
+          scheduleDraftSave();
+          log('Saved ' + name, 'info');
+        }
         return;
       }
       const handle = await window.showSaveFilePicker({
         types: [MMLISP_FILE_TYPE],
-        suggestedName: _sourceFileName || 'untitled.mmlisp',
+        suggestedName: mmlispName(_sourceFileName),
       });
       const src = editorView.state.doc.toString();
       const writable = await handle.createWritable();
       await writable.write(src);
       await writable.close();
+      _docDirty = false;
       setSourceContextFromHandle(handle);
+      // Saved into the open folder (a converted song beside its own file):
+      // the list now holds it, and FILE finds it there.
+      if (_sourceDir && (await _sourceDir.pathOf(handle))) await refreshFolderFiles();
       log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
       rememberRecent(handle);
       await offerMucomPcmWav(handle);
@@ -6361,7 +6475,7 @@
       if (!mime && !hasVideoCodecs()) { log('Video: this browser cannot record video', 'err'); return; }
       const type = hasVideoCodecs() || mime.startsWith('video/mp4') ? 'video/mp4' : mime.split(';')[0];
       const ext = type === 'video/mp4' ? 'mp4' : 'webm';
-      const title = (_sourceFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
+      const title = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
       // Where to save is asked now, on the Record click: a file picker needs a
       // user gesture, and the recording ends long after this one.
       let handle = null;
@@ -6495,6 +6609,7 @@
       const writable = await _sourceHandle.createWritable();
       await writable.write(src);
       await writable.close();
+      _docDirty = false;
       setSourceContextFromHandle(_sourceHandle);
       log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
       await offerMucomPcmWav(_sourceHandle);
@@ -6861,6 +6976,7 @@
       _lastFileName = _draft.path || _sourceFileName || 'untitled.mmlisp';
     }
     setEditorDoc(_draft ? _draft.src : DEFAULT_NEW_FILE_SOURCE);
+    if (_draft?.dirty) markDocDirty();
     queueMicrotask(() => {
       if (_draft && !location.hash) log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
       return location.hash ? loadSharedFromHash() : refreshImportsAndCompile();
@@ -9253,7 +9369,7 @@
       }
       const src = editorView.state.doc.toString();
       const { ir, ok } = await refreshImportsAndCompile();
-      _shareTitle = (_sourceFileName || _lastFileName || 'untitled.mmlisp').replace(/\.mmlisp$/i, '');
+      _shareTitle = (_sourceFileName || _lastFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
       const share = await shareFor(src, _lastFileName);
       const shortUrl = await shortShareUrl(share);
       _shareUrl = shortUrl || share.url;

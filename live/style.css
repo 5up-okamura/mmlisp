@@ -810,6 +810,47 @@
     }
     @media (hover: hover) { input[type=range]:hover { border-color: var(--high); } }
     input[type=range]:disabled { opacity: var(--off); cursor: default; }
+    /* FILE (Global): the score's name, the open folder's before it. */
+    .file-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5em;
+      font-size: 0.58rem;
+    }
+    /* The list hangs from the whole row, not from the name, so it never runs
+       past the panel's edge. */
+    .file-wrap { position: relative; }
+    .file-wrap .menu-wrap { position: static; min-width: 0; }
+    .file-name {
+      display: flex;
+      max-width: 100%;
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      color: var(--foreground);
+      white-space: nowrap;
+    }
+    /* Cut in its middle when too long (fitFileText); clipped, never wrapped. */
+    .file-text { min-width: 0; overflow: hidden; white-space: pre; }
+    .file-name:disabled { cursor: default; }
+    .file-steps { display: flex; gap: 0.35rem; margin-left: auto; flex-shrink: 0; }
+    /* Without a folder they keep their place, unseen: the row's height stays. */
+    .file-steps[hidden] { display: flex; visibility: hidden; }
+    /* The rack titles' open mark (⌄): there is a list to open. */
+    .file-more::after {
+      content: '⌄';
+      display: inline-block;
+      width: 0.8em;
+      margin-left: 0.3em;
+      text-align: center;
+    }
+    .file-name:disabled .file-more { display: none; }
+    @media (hover: hover) { .file-name:not(:disabled):hover { color: var(--high); } }
+    #fileList { left: 0; right: 0; min-width: 0; max-height: 60vh; overflow-y: auto; }
+    /* Names that differ only at their end (…01, …02) wrap rather than lose it. */
+    #fileList .menu-item { white-space: normal; }
+    #fileList .menu-item > span:first-child { min-width: 0; overflow-wrap: anywhere; }
     /* TIME (Global): the song's position, full width; the loop start marked. */
     .time-val { color: var(--foreground); font-variant-numeric: tabular-nums; }
     /* The track is exactly the range's box (block, no margin), so the mark
