@@ -1006,7 +1006,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // ex2 and 11xx-13xx, 15xx a table made of a wavetable — and 16xy's
     // speed as a ratio of the note's frequency. Said as the song's :lfo-
     // words where the channel ever modulates.
-    let modTable = null, modFreq = 0, modDepth = 0, autoModNum = 0, autoModDen = 0, lastFdsIns = -1;
+    // (Its switch, modOn — 12xy's x, an instrument's or ex1's depth, 16xy's
+    // ratio — on or off: off, the depth is none. On the chip it is $4084's
+    // bit 7, the modulation envelope's bypass, whose envelope the language
+    // does not have; Furnace shifts the instrument's and ex1's whole value
+    // into it, read here as meant, any non-zero one on.)
+    let modTable = null, modFreq = 0, modDepth = 0, modOn = false, autoModNum = 0, autoModDen = 0, lastFdsIns = -1;
     const fdsModSaid = fdsCh && ([0x11, 0x12, 0x13, 0x15, 0x16].some(uses)
       || t.instruments.some((it) => it?.fds && (it.fds.depth > 0 || it.fds.firstWave || it.fds.table.some(Boolean)) || it?.ex1?.values.some(Boolean)));
     // The hardware envelope (Furnace's AY): its shape (22xy, the ex2
@@ -1237,10 +1242,10 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             pan = p === 0 ? "center" : String(+p.toFixed(2));
           } else if (code === 0x10 && waveCh && val >= 0) wave = val;
           else if (code === 0x11 && fdsCh && val >= 0) modDepth = val & 63;
-          else if (code === 0x12 && fdsCh && val >= 0) modFreq = ((val & 15) << 8) | (modFreq & 0xff);
+          else if (code === 0x12 && fdsCh && val >= 0) { modOn = val >> 4 > 0; modFreq = ((val & 15) << 8) | (modFreq & 0xff); }
           else if (code === 0x13 && fdsCh && val >= 0) modFreq = (modFreq & 0xf00) | val;
           else if (code === 0x15 && fdsCh && val >= 0) modTable = modTableOfWave(val);
-          else if (code === 0x16 && fdsCh && val >= 0) { autoModNum = val >> 4; autoModDen = val & 15; }
+          else if (code === 0x16 && fdsCh && val >= 0) { autoModNum = val >> 4; autoModDen = val & 15; modOn = autoModNum > 0 && autoModDen > 0; }
           else if (code === 0x10 && opmNoiseCh && val >= 0) opmNoise = val;
           else if (code === 0x20 && ssgCh && val >= 0) psgMode = (val + 1) & 7;
           else if (code === 0x21 && ssgCh && val >= 0) noiseFreq = 31 - (val & 31);
@@ -1291,10 +1296,10 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           const it = t.instruments[ins];
           if (ins !== lastFdsIns && it.fds) {
             if (it.fds.firstWave) { if (wave < 0) modTable = modTableOfWave(0); }
-            else { modTable = it.fds.table; modFreq = it.fds.speed & 4095; modDepth = it.fds.depth & 63; }
+            else { modTable = it.fds.table; modFreq = it.fds.speed & 4095; modDepth = it.fds.depth & 63; modOn = it.fds.depth > 0; }
           }
           lastFdsIns = ins;
-          if (it.ex1?.values.length) { modDepth = it.ex1.values[0] & 63; if (it.ex1.values.some((x) => x !== it.ex1.values[0])) fdsMacroMoves++; }
+          if (it.ex1?.values.length) { modDepth = it.ex1.values[0] & 63; modOn = it.ex1.values[0] > 0; if (it.ex1.values.some((x) => x !== it.ex1.values[0])) fdsMacroMoves++; }
           if (it.ex2?.values.length) { modFreq = it.ex2.values[0] & 4095; if (it.ex2.values.some((x) => x !== it.ex2.values[0])) fdsMacroMoves++; }
         }
         if (waveCh && typeof row.note === "number" && t.instruments[ins]) {
@@ -1417,7 +1422,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
             tune: tuneSaid ? `:pitch ${detune}` : null,
             lfoWave: fdsModSaid && modTable ? `:lfo-wave ${modTableDef(modTable)}` : null,
             lfoFreq: fdsModSaid ? `:lfo-freq ${modFreq}` : null,
-            lfoPmd: fdsModSaid ? `:lfo-pmd ${modDepth}` : null,
+            lfoPmd: fdsModSaid ? `:lfo-pmd ${modOn ? modDepth : 0}` : null,
           };
           const pre = [];
           const voiceChanged = st.voice.join(" ") !== cur.voice.join(" ");

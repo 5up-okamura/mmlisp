@@ -387,15 +387,16 @@ function dacDmf() {
 
 // The FDS on fc: the NES module with a Disk System channel beside it (the
 // model as an NES + FDS module reads, built here): fds-wave with the
-// 64-step wavetable whole, 11xx / 13xx as the song's :lfo-pmd / :lfo-freq,
-// 15xx a modulation table made of the wavetable, 16xy the rate from the
-// note's frequency; the VRC6 rows' names are fc's.
+// 64-step wavetable whole, 11xx / 13xx as the song's :lfo-pmd / :lfo-freq
+// under 12xy's switch (12x0: x on, 1200 off — the depth none), 15xx a
+// modulation table made of the wavetable, 16xy the rate from the note's
+// frequency (and the switch on); the VRC6 rows' names are fc's.
 {
   const t = await parseDmf(nesDmf());
   const e = { note: null, vol: -1, ins: -1, fx: [] };
   t.channels.push({ kind: "wave", name: "FDS", chip: "fds", volMax: 32, patterns: new Map([[0, [
-    { ...e, note: 48, vol: 32, ins: 0, fx: [[0x10, 0], [0x11, 8], [0x13, 20]] },
-    { ...e, note: 52, vol: 20 },
+    { ...e, note: 48, vol: 32, ins: 0, fx: [[0x10, 0], [0x11, 8], [0x12, 0x10], [0x13, 20]] },
+    { ...e, note: 52, vol: 20, fx: [[0x12, 0x00], [0x13, 20]] },
     { ...e, note: 55, fx: [[0x15, 0]] },
     { ...e, note: 60, fx: [[0x16, 0x12]] }]]]) });
   t.orders = t.orders.map((o) => [...o, 0]);
@@ -407,7 +408,8 @@ function dacDmf() {
   assert.match(source, /\(def-wave wave-tri :wave \[(?:-?\d+ ){63}-124\]\)/, "the 64-step wavetable whole");
   assert.match(source, /\(fds-wave wave-tri [^\n]*:lfo-freq 20 :lfo-pmd 8/, "13xx and 11xx as the song's LFO words");
   assert.match(source, /\(def modtab \[0 0 0 0 0 1 [^\]]*reset[^\]]*-2\]\)/, "15xx: a table of the chip's steps made of the wave");
-  assert.match(source, /:lfo-wave modtab g :lfo-freq \d+ > c/, "16xy: the rate set from the note");
+  assert.match(source, /:lfo-pmd 0 (?::vel \d+ )?e/, "1200: the modulation off");
+  assert.match(source, /:lfo-wave modtab g :lfo-freq \d+ :lfo-pmd 8 > c/, "16xy: the rate set from the note, the switch on");
   assert.deepEqual(warnings, []);
   assert.deepEqual(bad(source), [], "the FDS lines compile clean");
   assert.deepEqual(trackerDests("fc").filter((d) => /^vrc6-|^fds-/.test(d)), ["vrc6-sqr1", "vrc6-sqr2", "vrc6-saw", "fds-wave"]);

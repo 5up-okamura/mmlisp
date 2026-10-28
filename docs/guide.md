@@ -1821,7 +1821,9 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   0–32 linear, and its modulation unit as the song's `:lfo-wave` (the
   instrument's table, or `15xx`'s made of a wavetable), `:lfo-freq` (its
   speed, `12xy` / `13xx`, `16xy` a ratio of each note's frequency) and
-  `:lfo-pmd` (its depth, `11xx`), set where the instrument changes; a
+  `:lfo-pmd` (its depth, `11xx`; 0 while the modulation is switched off:
+  by `12xy` with x 0, an instrument or a depth macro of depth 0, or `16xy`
+  with a 0 in its ratio), set where the instrument changes; a
   moving depth or speed macro keeps its first step (the log counts it). As `fc` the pulses go to `sqr1` / `sqr2`, the triangle to `tri`,
   the noise to `noise`, as Furnace plays them: a pulse's duty is its
   instrument's duty macro (a `(macro :duty …)`, starting over at each note)
