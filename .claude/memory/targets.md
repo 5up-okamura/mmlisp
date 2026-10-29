@@ -265,6 +265,12 @@ Open:
   arithmetic nesdev's, not held to NSFPlay / Mesen.
 - The VRC7 is ymfm's YM2413 with the VRC7's ROM, not a DS1001 model.
 - No import reads an N163 or an MMC5.
+- Bio Miracle Bokutte Upa's 11 Ending (the user's VGM - NES folder): the
+  user heard the FDS distorted at ~35 s from the top, right after a TIME
+  seek. f8d10476 carries its per-note counter reset ($4085 = 0) into the
+  import and fixes the preview's table pairing; in node the from-top and
+  seek renders were not told apart by spectrum before or after — not yet
+  heard in Live whether that was it.
 - Every fc render starts with a click, probably the DMC's $4011 init write
   (seen 2026-10-29, not checked or fixed).
 
