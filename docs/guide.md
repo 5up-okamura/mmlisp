@@ -1901,8 +1901,9 @@ them: a key-on starts a note, a key-off ends it.
   header that gives a chip no clock gets the chip's usual one (some
   arrangements leave it 0).
 - A file with a YM2608 or YM2203 can be the **PC-8801**'s score
-  (`:target pc88`), and one with an AY-3-8910 the **MSX**'s (`:target
-  msx`) — each the default when that chip plays every channel. There the
+  (`:target pc88`), and one with an AY-3-8910, an SCC or a YM2413 the
+  **MSX**'s (`:target msx`) — each the default when that chip plays every
+  channel. There the
   SSG is the machine's own: each channel keeps its noise (`:mode noise`, or
   `:mode both` with the tone) with the song's `:noise-rate`, so the shared
   noise row is not offered — a note on the noise alone struck again where
@@ -1914,12 +1915,20 @@ them: a key-on starts a note, a key-off ends it.
   sets it, with `:env-semi` / `:env-detune`), else the cycle in Hz. A note
   the driver does not start the envelope over for runs it on, slurred. On
   md the envelope has no sound — the log counts the notes on it, which play
-  at their level — and a buzzer plays as a square at its pitch. The MSX's
-  FM-PAC (YM2413) channels are not imported onto it yet.
+  at their level — and a buzzer plays as a square at its pitch. A YM2413
+  is the MSX's FM-PAC: its channels go to `fm1`–`fm9` by number, a ROM
+  voice by its name, a user voice a 2-op `def-fm` in the chip's words
+  (`opll-user-01` …). Its rhythm mode is a row per sound (`YM2413 rhythm
+  BD` … `TOM`), on the FM-PAC's `rhythm1`–`rhythm5` under its kit role at
+  the pitch its channel was tuned to: a tuning moved while it rings is a
+  `:pitch` macro (a kick's fall), a key-off before the next hit its gate
+  (`:mode gate`); its channels 7–9 give no tones then. Elsewhere the
+  sounds are the RX5 kit's, as the YM2608's below.
 - The **YM2608's rhythm** is a row per ROM sound it keys (`YM2608 rhythm
   BD` … `RIM`), its hits counted with the onsets the tempo is read from. On
   pc88 each comes back on its own `rhythm1`–`rhythm6` track under its kit
-  role (`kick`, `snare`, `ride`, `hat`, `tom4`, `rim`), its level the
+  role (`kick`, `snare`, `ride`, `hat`, `tom4`, `rim`; on msx the FM-PAC's
+  `rhythm1`–`rhythm5`, without the rim), its level the
   chip's total and own level as `:vel` and its pan the hit's; a hit lower
   than the IL reaches (23 dB down) plays at that floor. On md the sounds are
   the RX5 kit's on `pcm1`, as a mucom88 import plays part G: one `:prio`

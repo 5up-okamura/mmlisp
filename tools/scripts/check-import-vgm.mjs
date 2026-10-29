@@ -176,12 +176,13 @@ const writesOf = (source, addr) => {
   assert.equal(defaultVgmOptions(a, "md").dest["YM2608 rhythm SD"], "pcm1");
   assert.match(md, /\(import "presets\/rx5\/set\.mmlisp"\)/, "md: the kit");
   assert.match(md, /\(pcm1 :prio 1 [^(]*snare :gate \d+t/, "md: the snare's layer, its ring");
-  // Where the PCM is not the DAC's mix there is no kit to fall back on.
-  for (const t of ["msx", "pce"]) {
-    const o = defaultVgmOptions(a, t);
-    assert.equal(o.dest["YM2608 rhythm SD"], "drop", `${t}: the rhythm has no channel`);
-    imported(parsed, t);
-  }
+  // On msx the FM-PAC's rhythm plays the sounds it has (no rim). Where the
+  // PCM is not the DAC's mix there is no kit to fall back on.
+  const msx = defaultVgmOptions(a, "msx");
+  assert.deepEqual([msx.dest["YM2608 rhythm SD"], msx.dest["YM2608 rhythm RIM"]], ["rhythm2", "drop"], "msx: the FM-PAC's rhythm");
+  assert.match(imported(parsed, "msx").source, /\(rhythm2 [^(]*\bsnare\b/, "msx: the snare on rhythm2");
+  assert.equal(defaultVgmOptions(a, "pce").dest["YM2608 rhythm SD"], "drop", "pce: the rhythm has no channel");
+  imported(parsed, "pce");
 }
 
 // The 2A03: its pulses keep their numbers on fc with their :duty, the
@@ -311,16 +312,48 @@ const writesOf = (source, addr) => {
   imported(parsed, "md");
 }
 
-// The YM2413 on md: each key-on's voice — a ROM voice by its built-in name
-// (piano, guitar), the user voice as a def-fm of its registers (the 4-op
-// reading, chips/ym2413.js) — not a stand-in.
+// The YM2413 (the FM-PAC): an msx score's, its channels on fm1-fm9 by
+// number, a ROM voice by its name, the user voice a 2-op def-fm. On md
+// each key-on's voice — a ROM voice by its built-in name (piano, guitar),
+// the user voice as a def-fm of its registers (the 4-op reading,
+// chips/ym2413.js) — not a stand-in.
 {
   const parsed = await vgmOf("tools/tests/msx/fm-pac.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["msx", ["msx", "md"]]);
+  const opt = defaultVgmOptions(a, "msx");
+  for (const c of [1, 2, 3, 4, 5, 7, 8, 9]) assert.equal(opt.dest[`YM2413 FM${c}`], `fm${c}`);
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "msx", structure);
+    assert.match(source, /\(def-score :target msx/, "msx: the FM-PAC's score");
+    assert.match(source, /\(fm1[^)]*\bpiano\b/, "msx: the ROM's piano by name");
+    assert.match(source, /\bguitar g g opll-user-01\b/, "msx: a ROM voice, then the user voice");
+    assert.match(source, /\(def-fm opll-user-01 :fb \d+ :tl1 /, "msx: the user voice in 2-op words");
+  }
   const { source } = imported(parsed, "md");
   assert.match(source, /\(fm1[^)]*\bpiano\b/, "md: the ROM's piano by name");
   assert.match(source, /\bguitar g g opll-user-01\b/, "md: a ROM voice, then the user voice");
   assert.match(source, /\(def-fm opll-user-01 :alg 4 /, "md: the user voice as a def-fm");
   assert.doesNotMatch(source, /wave-saw/, "md: no stand-in");
+}
+
+// The YM2413's rhythm mode ($0E): each sound's hits a row, on msx the
+// FM-PAC's rhythm tracks at the channel's pitch — a bend while it rings,
+// its key-off a gate — and fm7-fm9 no tones; on md the RX5 kit.
+{
+  const parsed = await vgmOf("tools/tests/msx/fm-pac-rhythm-pitch.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.equal(a.target, "msx");
+  assert.ok(!a.channels.some((c) => /FM[789]$/.test(c.key)), "msx: no tones on the drums' channels");
+  const opt = defaultVgmOptions(a, "msx");
+  assert.deepEqual([opt.dest["YM2413 rhythm BD"], opt.dest["YM2413 rhythm SD"], opt.dest["YM2413 rhythm TOM"]], ["rhythm1", "rhythm2", "rhythm5"]);
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "msx", structure);
+    assert.match(source, /\(def bend-01 \(macro :pitch \(linear 0\.\.-1200 :len 12f\)\)\)/, "msx: the kick's fall");
+    assert.match(source, /\(rhythm1[^)]*kick :mode gate :gate 12t bend-01 :oct 5 /, "msx: the kick a gate long, an octave up");
+    assert.doesNotMatch(source, /rx5/, "msx: the FM-PAC's own sounds");
+  }
+  assert.match(imported(parsed, "md").source, /\(pcm\d[^)]*\bkick\b/, "md: the kit");
 }
 
 console.log("VGM import checks passed");

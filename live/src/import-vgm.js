@@ -26,8 +26,14 @@
 //                                    the FDS on a wave channel (its gain's
 //                                    envelope a level envelope, its
 //                                    modulation the song's LFO words on fc)
-//   YM2413 (and VRC7)                 notes on their voices, read on four
-//                                    operators (chips/ym2413.js)
+//   YM2413 (and VRC7)                 notes on their voices: on the
+//                                    chip's own channels (msx's fm1-fm9,
+//                                    fc's vrc7-fm1-6) a ROM voice by name,
+//                                    a user voice a 2-op def; elsewhere
+//                                    read on four operators (chips/ym2413.js);
+//                                    its rhythm as the FM-PAC's tracks
+//                                    (msx; pitch, bend and key-off kept) or
+//                                    the RX5 kit's (rhythmTracks)
 //   YM3812/3526/Y8950, YMF262 notes, on a stand-in voice
 //
 // Carrier TL is how most drivers set a channel's level, so a voice's
@@ -473,7 +479,18 @@ function ayChip(name, clock, { ev, prefix = name }) {
 // A channel's voice at its key-on (`opll`): its number ($3x's top four
 // bits) and its registers — the ROM's (the YM2413's, or the VRC7's) or the
 // user voice as it stands.
-function opllChip(clock, { ev, vrc7 = false }) {
+// The rhythm mode ($0E bit 5) gives channels 7-9 to the five ROM sounds:
+// a sound's key bit rising is a hit — {t, k, db, pan, semi}, `k` the
+// YM2608's sound of its kit role (BD SD TOP HH TOM), `db` its 4-bit volume's
+// 3 dB steps, `semi` its channel's F-number against the datasheet's tuning
+// (chips/ym2413.js), the pitch the FM-PAC's rhythm tracks play it at, and
+// `moves` the channel's tunings after it, [t, semitones], till the next hit
+// on that channel (a drum's bend), and `off` where its key bit falls.
+const OPLL_RHYTHM = [ // [$0E bit, k, channel, volume register, shift]
+  [0x10, 0, 6, 0x36, 0], [0x08, 1, 7, 0x37, 0], [0x02, 2, 8, 0x38, 0], [0x01, 3, 7, 0x37, 4], [0x04, 4, 8, 0x38, 4],
+];
+const OPLL_RHYTHM_C4 = { 6: 0x120 * 4, 7: 0x150 * 4, 8: 0x1c0 }; // F-number · 2^block
+function opllChip(clock, { ev, vrc7 = false, hits = [] }) {
   const name = vrc7 ? "VRC7" : "YM2413";
   const r = new Uint8Array(64);
   const voiceOf = (c) => {
@@ -487,12 +504,45 @@ function opllChip(clock, { ev, vrc7 = false }) {
     return (fnum * clock) / 72 / 2 ** (19 - block);
   };
   const key = (c) => `${name} FM${c + 1}`;
+  const rhythmOn = () => !vrc7 && !!(r[0x0e] & 0x20);
+  const semiOf = (ch) => 12 * Math.log2(Math.max(1, (r[0x10 + ch] | ((r[0x20 + ch] & 1) << 8)) * 2 ** ((r[0x20 + ch] >> 1) & 7)) / OPLL_RHYTHM_C4[ch]);
+  const ringing = {}; // channel → its latest hit (the pairs share one)
+  const held = {}; // key bit → its hit, while the bit is set
   return {
     name,
     write(a, d, t) {
       if (a > 0x3f) return;
+      const was = r[a];
       r[a] = d;
+      if (a === 0x0e) {
+        for (const [bit] of OPLL_RHYTHM) {
+          const h = held[bit];
+          if (h && (!rhythmOn() || !(d & bit))) { h.off = t; delete held[bit]; }
+        }
+        if (!rhythmOn()) return;
+        // Channels 7-9 keyed as tones stop where the drums take them.
+        for (let c = 6; c < 9; c++) if (keyed[c]) { ev(key(c), { t, kind: "off" }); keyed[c] = false; }
+        const rising = d & ~(was & 0x20 ? was : 0) & 31;
+        for (const [bit, k, ch, vr, shift] of OPLL_RHYTHM) {
+          if (!(rising & bit)) continue;
+          const h = { t, k, db: 3 * ((r[vr] >> shift) & 15), pan: "center", semi: Math.round(semiOf(ch)), moves: [[t, semiOf(ch)]] };
+          // (The tuning written for this hit, just before it, is not the
+          // last one's bend.)
+          const last = ringing[ch];
+          if (last) last.moves = last.moves.filter(([mt], i) => !i || mt < t - FRAME / 2);
+          hits.push(h);
+          ringing[ch] = h;
+          if (held[bit]) held[bit].off = t;
+          held[bit] = h;
+        }
+        return;
+      }
       const c = a & 15;
+      if (c > 5 && rhythmOn()) {
+        const h = ringing[c];
+        if (c < 9 && (a >> 4 === 1 || a >> 4 === 2) && h && semiOf(c) !== h.moves[h.moves.length - 1][1]) h.moves.push([t, semiOf(c)]);
+        return;
+      }
       if (c > 8) return;
       if ((a & 0xf0) === 0x20) {
         const on = !!(d & 0x10);
@@ -1102,6 +1152,7 @@ export async function parseVgm(bytes) {
     if (e.kindOf) kinds.set(k, e.kindOf);
   };
   const chips = [];
+  const opllRhythmHits = [];
   const ayFlags = 0x79 < dataStart ? u8[0x79] : 0;
   const skipped = new Map();
   const skip = (name) => skipped.set(name, (skipped.get(name) ?? 0) + 1);
@@ -1113,7 +1164,7 @@ export async function parseVgm(bytes) {
   const made = new Map();
   const CHIPS = {
     sn: [0x0c, 3579545, (c) => snChip(c, { ev })],
-    opll: [0x10, 3579545, (c) => opllChip(c, { ev, vrc7: hdr(0x10) >>> 31 === 1 })], // bit 31: the VRC7
+    opll: [0x10, 3579545, (c) => opllChip(c, { ev, vrc7: hdr(0x10) >>> 31 === 1, hits: opllRhythmHits })], // bit 31: the VRC7
     opn2: [0x2c, 7670453, (c) => opnChip("YM2612", c, 144, { ev })],
     opm: [0x30, 3579545, (c) => opmChip(c, { ev })],
     opn: [0x44, 3993600, (c) => opnChip("YM2203", c, 72, { ssgDiv: 2, channels: 3, ev })],
@@ -1430,7 +1481,7 @@ export async function parseVgm(bytes) {
   const pcmHits = pcm.finish(end, roms);
   for (const [src, n] of pcm.lost) skipped.set(`${src} (the file carries no sample data for it)`, n);
   return { chips, skipped, clockNotes, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac,
-    dacBank: bank, dacHits: hits, pcmRoms: roms, pcmHits, rhythmHits: rhythm.hits };
+    dacBank: bank, dacHits: hits, pcmRoms: roms, pcmHits, rhythmHits: rhythm.hits, opllRhythmHits };
 }
 
 // ── Notes ─────────────────────────────────────────────────────────────────
@@ -1762,13 +1813,14 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
     const ssgNoise = kind === "psg" ? notes.filter((n) => n.ssg?.mix === "noise").length : 0;
     channels.push({ key, kind, notes: notes.length, noisy, ssgNoise, label: `${key} · ${notes.length} notes${noisy ? `, ${noisy} with the noise` : ""}` });
   }
-  // The YM2608's rhythm: a row per ROM sound it keys.
-  for (let k = 0; k < 6; k++) {
-    const hs = (parsed.rhythmHits ?? []).filter((h) => h.k === k);
-    if (!hs.length) continue;
-    const key = `${RHYTHM_KEY} ${RHYTHM_ROM[k]}`;
-    channels.push({ key, kind: "rhythm", k, notes: hs.length, label: `${key} · ${hs.length} hits` });
-  }
+  // The YM2608's rhythm and the YM2413's: a row per ROM sound it keys.
+  for (const [chip, all] of [[RHYTHM_KEY, parsed.rhythmHits], ["YM2413 rhythm", parsed.opllRhythmHits]])
+    for (let k = 0; k < 6; k++) {
+      const hs = (all ?? []).filter((h) => h.k === k);
+      if (!hs.length) continue;
+      const key = `${chip} ${RHYTHM_ROM[k]}`;
+      channels.push({ key, kind: "rhythm", k, opll: chip !== RHYTHM_KEY, notes: hs.length, label: `${key} · ${hs.length} hits` });
+    }
   // The DAC: one channel of sample hits.
   if (parsed.dacHits?.length) {
     channels.push({ key: DAC_KEY, kind: "pcm", notes: parsed.dacHits.length,
@@ -1791,10 +1843,10 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   const fileLoop = parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
   // The machines it can be written for: the Mega Drive, and the machine of
   // its own chip — the X68000 for a YM2151's, the PC-8801 for a YM2608's or
-  // YM2203's, the MSX for an AY-3-8910's — by default when that chip plays
-  // every channel.
+  // YM2203's, the MSX for an AY-3-8910's, an SCC's or a YM2413's — by
+  // default when that chip plays every channel.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
-  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC7)/]]
+  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC7)/]]
     .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
   const targets = [...own.map(([t]) => t), "md"];
   // (A file of PCM alone — a YM2608's ADPCM-B — is its chip's machine's.)
@@ -1804,15 +1856,16 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
 
 /**
  * The channels `target`'s score offers an imported VGM's rows (import-song.js
- * destsFor). Not the FM-PAC's: its voices are its ROM's and one of the
- * user's, and an imported voice is a four-operator one.
+ * destsFor). The FM-PAC's (msx's fm1-fm9) are not FM's: its voices are its
+ * ROM's and one of the user's, and an imported voice is a four-operator one.
+ * They are `opll`, a YM2413's own channels.
  */
 export function vgmDests(targetName = "md") {
   const t = targetProfile(targetName);
   const d = destsFor(t);
   // Where the SSG's channels mix the noise, `noise` is one of them: not a row's.
   // The ROM rhythm's tracks (pc88's rhythm1-rhythm6) are its sounds', not a sample row's.
-  const romRhythm = (h) => t.partOf(h).name === "rhythm";
+  const romRhythm = (h) => t.partOf(h).name === "rhythm" || t.partOf(h).name === "opll-rhythm";
   // The RX5 kit stands in for it where the PCM is the DAC's mix of voices
   // (md): its first, the sounds layered on it. Not on another sample part —
   // msx's are the FM-PAC's rhythm, pce's the DDA its wave1 shares.
@@ -1821,7 +1874,8 @@ export function vgmDests(targetName = "md") {
   // (fc's 5b-noise is 5b-sqr3's mixer; its noise is the 2A03's.)
   const mixer = (h) => d.psg.some((p) => t.partOf(p).modes?.noise && t.voiceKey(p) === t.voiceKey(h));
   const noises = d.noises.filter((h) => !mixer(h));
-  return { fm: d.fm.filter((h) => t.partOf(h).name !== "opll-fm"), psg: d.psg, noise: noises[0] ?? null,
+  const opll = (h) => t.partOf(h).name === "opll-fm";
+  return { fm: d.fm.filter((h) => !opll(h)), opll: d.fm.filter(opll), psg: d.psg, noise: noises[0] ?? null,
     pcm, rhythm: d.pcm.filter(romRhythm), kit: t.hasPart("dac") ? pcm[0] ?? null : null,
     wave: d.wave, noises };
 }
@@ -1870,6 +1924,7 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   const fm = dests.fm.filter((d) => !(pcmToo && d === "fm6"));
   const sqr = [...dests.psg];
   const waves = [...dests.wave];
+  const oplls = [...dests.opll];
   let noise = dests.noise;
   const dest = {};
   const order = ["fm", "opm", "psg", "wave", "noise", "pcm", "opl", "opll"];
@@ -1882,12 +1937,13 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   // the target's fm8 cannot turn it on.
   const target = targetProfile(targetName);
   const fmNoise = dests.fm.some((d) => target.channels[d]?.modes?.noise);
-  const pools = [fm, sqr, waves];
+  const pools = [fm, sqr, waves, oplls];
   for (const ch of sorted) {
     let d = "drop";
     // A YM2151 that fits keeps its channels' own numbers: FM8 on fm8, which
-    // is where x68k's noise is.
-    const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}` : expansion(ch.key);
+    // is where x68k's noise is; so does a YM2413 on the FM-PAC's (msx).
+    const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}`
+      : /^YM2413 FM\d$/.test(ch.key) && oplls.length ? `fm${ch.key.slice(-1)}` : expansion(ch.key);
     const pool = own && pools.find((l) => l.includes(own));
     if (ch.kind === "opm" && !fmNoise && ch.noisy === ch.notes) d = "drop";
     else if (pool) { d = own; pool.splice(pool.indexOf(own), 1); }
@@ -2272,7 +2328,6 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       n.silentAfter = !tr.notes[i + 1] || tr.notes[i + 1].tick > n.tick + n.len;
     });
   const envs = assignEnvelopes(tracks.flatMap((tr) => tr.notes));
-  const bends = assignBends(tracks.flatMap((tr) => tr.notes));
   // A released note is keyed off where its release starts, to a quarter of
   // a step (its #rel plays on through the rest after it).
   for (const tr of tracks)
@@ -2344,9 +2399,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (!onRom && d !== dests.kit) { warnings.push(`${c.key}: ${d} cannot play it — dropped`); continue; }
     if (onRom && rhythmRows.some((r) => r.d === d)) { warnings.push(`${c.key}: ${d} is already taken — dropped`); continue; }
     if (!onRom && !kitVoice) { warnings.push(`${c.key}: the PCM takes every voice — the rhythm is left out`); continue; }
-    rhythmRows.push({ k: c.k, d: onRom ? d : kitVoice });
+    rhythmRows.push({ k: c.k, d: onRom ? d : kitVoice, hits: (c.opll ? parsed.opllRhythmHits : parsed.rhythmHits).filter((h) => h.k === c.k) });
   }
   const rhythmOut = rhythmRows.length ? rhythmTracks(parsed, rhythmRows, target, tickOf, endTick) : [];
+  const bends = assignBends([...tracks, ...rhythmOut].flatMap((tr) => tr.notes));
+  rhythmOut.forEach(rhythmPre);
   const kitRhythm = rhythmOut.length > 0 && !dests.rhythm.length;
   if (dacMix && (dacOut || chipOut || kitRhythm)) {
     const fm6 = tracks.findIndex((tr) => tr.d === "fm6");
@@ -2420,7 +2477,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     }
   }
 
-  const order = [...dests.fm, ...dests.psg, ...dests.wave, ...dests.noises, dests.noise];
+  const order = [...dests.fm, ...dests.opll, ...dests.psg, ...dests.wave, ...dests.noises, dests.noise];
   tracks.sort((x, y) => order.indexOf(x.d) - order.indexOf(y.d));
   const out = tracks.map((tr) => {
     const { d, notes } = tr;
@@ -2447,8 +2504,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
   if (opllDefs.size) header.push("", ...[...opllDefs.values()].map((d) => d.text));
   // The rhythm's kit: its samples on md; on pc88 the stand-in for a ROM the
-  // user has not loaded (language.md §19).
-  if (rhythmOut.length)
+  // user has not loaded (language.md §19). (The FM-PAC's sounds are its own.)
+  if (rhythmOut.length && !target.hasPart("opll-rhythm"))
     header.push(`(import ${qstr(RHYTHM_KIT)})  ; ${kitRhythm ? "the YM2608 rhythm on the RX5 kit" : "the rhythm's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)"}`);
   if (waveDefs.size) header.push("", ...[...waveDefs].map(([steps, name]) => `(def-wave ${name} :wave [${steps}])`));
   if (waveMacs.size) header.push("", ...[...waveMacs].map(([steps, name]) => `(def ${name} (macro :wave [${steps}]))`));
@@ -2468,57 +2525,88 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   return { source: emitStructured(song), warnings, pcm };
 }
 
-// ── The YM2608's rhythm ───────────────────────────────────────────────────
+// ── The YM2608's rhythm and the YM2413's ──────────────────────────────────
 
 const RHYTHM_KEY = "YM2608 rhythm";
 const RHYTHM_ROM = Object.values(rhythmRom.kit).map((s) => s.toUpperCase()); // BD SD TOP HH TOM RIM, the key bits' order
 
 /**
  * The rhythm's rows → tracks, each sound under its kit role (rhythmRom.kit,
- * in key-bit order). On a target with the ROM rhythm (pc88) a sound is a
- * rhythm track of its own, its level absolute — the IL takes vel + vol +
- * master, as the chip's total and own level did — and its pan the hit's.
- * Elsewhere the sounds are the RX5 kit's samples on one PCM track, as the
- * mucom importer plays part G (RHYTHM_SOUNDS): :prio layers, a hit dropped
- * while a higher one rings (its :gate), levels against the loudest hit.
- * `rows`: [{k, d}].
+ * in key-bit order). On a target with a ROM rhythm (pc88's, msx's FM-PAC's)
+ * a sound is a rhythm track of its own, its level absolute — the IL takes
+ * vel + vol + master, as the chip's total and own level did; the FM-PAC's
+ * 3 dB steps as :vel's eighths — and its pan the hit's; on the FM-PAC a
+ * YM2413's hit is at its channel's pitch. Elsewhere the sounds are the RX5
+ * kit's samples on one PCM track, as the mucom importer plays part G
+ * (RHYTHM_SOUNDS): :prio layers, a hit dropped while a higher one rings
+ * (its :gate), levels against the loudest hit.
+ * `rows`: [{k, d, hits}].
  */
 function rhythmTracks(parsed, rows, target, tickOf, endTick) {
   const roles = Object.keys(rhythmRom.kit);
-  const rom = target.hasPart("rhythm");
-  const keyed = new Set(rows.map((r) => r.k));
-  const hits = parsed.rhythmHits.filter((h) => keyed.has(h.k));
-  const loudest = hits.reduce((m, h) => Math.min(m, h.db), Infinity);
+  const fmPac = target.hasPart("opll-rhythm");
+  const rom = target.hasPart("rhythm") || fmPac;
+  const loudest = rows.flatMap((r) => r.hits).reduce((m, h) => Math.min(m, h.db), Infinity);
   const tracks = [];
-  for (const { k, d } of rows) {
+  for (const { k, d, hits } of rows) {
     const s = RHYTHM_SOUNDS[k];
     const notes = [];
     for (const h of hits) {
-      if (h.k !== k) continue;
       const tick = tickOf(h.t);
       if (tick >= endTick) break;
-      const vel = Math.max(rom ? 0 : 1, Math.min(15, Math.round(15 - (rom ? h.db : h.db - loudest) / VEL_DB_PER_STEP)));
+      const v = 15 - (rom ? h.db : h.db - loudest) / VEL_DB_PER_STEP;
+      const vel = Math.max(rom ? 0 : 1, Math.min(15, fmPac ? Math.round(v * 8) / 8 : Math.round(v)));
       const prev = notes[notes.length - 1];
       if (prev && prev.tick >= tick) notes.pop(); // two on one step: the later
-      notes.push({ tick, len: 1, midi: 60, vel, pan: h.pan });
+      notes.push({ tick, len: 1, midi: 60 + (fmPac ? h.semi ?? 0 : 0), vel, pan: h.pan, bend: fmPac && h.moves?.length > 1 ? hitBend(h) : null,
+        off: fmPac && h.off != null ? tickOf(h.off) : null });
     }
     if (!notes.length) continue;
-    // A hit plays out whatever its length: each lasts to the next.
-    notes.forEach((n, i) => { n.len = Math.max(1, (notes[i + 1]?.tick ?? endTick) - n.tick); });
+    // A hit plays out whatever its length: each lasts to the next. On the
+    // FM-PAC its key-off is its gate (:mode gate), where its sound releases
+    // and its bend runs on.
+    notes.forEach((n, i) => {
+      n.len = Math.max(1, (notes[i + 1]?.tick ?? endTick) - n.tick);
+      n.gate = n.off != null && n.off < n.tick + n.len ? Math.max(1, n.off - n.tick) : null;
+    });
+    const gated = notes.some((n) => n.gate);
     const panned = rom && notes.some((n) => n.pan !== "center");
     const gate = rom ? null : ringGate(s, BPM);
-    const state = (n) => [roles[k], gate, panned && `:pan ${n.pan}`].filter(Boolean);
-    let cur = null;
-    for (const n of notes) {
-      n.state = state(n);
-      n.pre = n.state.filter((t, i) => cur?.[i] !== t);
-      cur = n.state;
-    }
-    const head = notes[0].pre;
-    notes[0] = { ...notes[0], pre: undefined };
-    tracks.push({ channel: d, open: rom ? [] : [`:prio ${s.prio}`], head, notes, marks: [] });
+    tracks.push({ channel: d, open: rom ? [] : [`:prio ${s.prio}`], notes, marks: [],
+      state: (n) => [roles[k], gate, gated && ":mode gate", gated && (n.gate ? `:gate ${n.gate}t` : ":gate* 1"), panned && `:pan ${n.pan}`].filter(Boolean) });
   }
   return tracks;
+}
+
+// A YM2413 hit's bend: its channel's tuning a frame, in cents from the
+// hit's semitone, while it rings (to the next hit on that channel, a
+// second at most); null where it moves 30 cents or less.
+function hitBend(h) {
+  const { moves } = h;
+  const F = Math.max(1, Math.min(60, Math.round((moves[moves.length - 1][0] - h.t) / FRAME) + 1));
+  const p = [];
+  for (let f = 0, i = 0, v = moves[0][1]; f < F; f++) {
+    const at = h.t + (f + 0.5) * FRAME;
+    while (i < moves.length && moves[i][0] <= at) v = moves[i++][1];
+    p.push(Math.round(((v - h.semi) * 100) / 5) * 5);
+  }
+  return Math.max(...p) - Math.min(...p) > 30 ? p : null;
+}
+
+// The rhythm tracks' notes their state — the sound, its gate and pan, and
+// the bend assignBends named — and the changes between them.
+function rhythmPre(tr) {
+  const anyBend = tr.notes.some((n) => n.bendName);
+  let cur = null;
+  for (const n of tr.notes) {
+    n.state = [...tr.state(n), n.bendName ?? (anyBend ? PITCH_NONE : null)].filter(Boolean);
+    n.pre = n.state.filter((t) => !cur?.includes(t));
+    cur = n.state;
+  }
+  tr.head = tr.notes[0].pre;
+  tr.notes[0] = { ...tr.notes[0], pre: undefined };
+  delete tr.state;
+  return tr;
 }
 
 // ── The DAC ───────────────────────────────────────────────────────────────

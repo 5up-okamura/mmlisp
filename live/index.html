@@ -3416,8 +3416,10 @@
         const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', pcmMost > 1 ? `pcm1–${pcmMost}` : 'pcm1']] : ['drop'];
         // The YM2608's rhythm: the ROM's tracks, or the kit on pcm1.
         const rhythmChoices = ['drop', ...(d.rhythm.length ? d.rhythm : d.kit ? [d.kit] : [])];
+        // A YM2413's rows: the FM-PAC's channels too (msx's fm1–fm9), where its voices are.
+        const opllChoices = [...choices, ...d.opll];
         return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
-          choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : c.kind === 'rhythm' ? rhythmChoices : choices }));
+          choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : c.kind === 'rhythm' ? rhythmChoices : c.kind === 'opll' ? opllChoices : choices }));
       };
       const fields = [];
       // A file of one machine's chip can be that machine's score or the Mega Drive's.
