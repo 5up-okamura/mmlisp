@@ -884,14 +884,18 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
 // clocks between writes (synth-fc.js Fds), a level envelope on the note. The
 // wave is read where the memory closes; the modulation as the note starts
 // (its table, rate and depth: the song's :lfo-wave, :lfo-freq, :lfo-pmd),
-// its pitch the wave's own — the bend it makes is left to the chip.
+// its pitch the wave's own — the bend it makes is left to the chip. A $25
+// of 0 in the burst (the counter back to 0, as a driver starts each note's
+// vibrato alike) is the note's `reset`: its :lfo-wave written again, which
+// starts the counter over (chips/fds.js); another value is not the
+// language's (skipped).
 const FDS_MOD_OF = [0, 1, 2, 4, "reset", -4, -2, -1]; // $28's codes as :lfo-wave's steps
 const FDS_MASTER_DB = [1, 2 / 3, 2 / 4, 2 / 5].map((v) => 20 * Math.log10(v));
-function fdsChip(clock, { ev }) {
+function fdsChip(clock, { ev, skip }) {
   const KEY = "FDS";
   const wave = new Uint8Array(64), table = new Array(32).fill(0);
   let pitch = 0, waveHalt = false, envHalt = false, waveOpen = false, master = 0, envMaster = 0xe8, io = true;
-  let modFreq = 0, modHalt = true, modPos = 0;
+  let modFreq = 0, modHalt = true, modPos = 0, resetAt = -Infinity;
   // The volume envelope [0] and the modulation's [1]: its gain, speed, way,
   // whether direct, and the time of its last step.
   const env = [0, 1].map(() => ({ gain: 0, speed: 0, up: false, off: true, at: 0 }));
@@ -900,13 +904,14 @@ function fdsChip(clock, { ev }) {
   const vel = (g) => velOfDb(20 * Math.log10(g / 32) + FDS_MASTER_DB[master]);
   const pitchOfNow = () => pitchOf((clock * pitch) / 2 ** 22);
   const steps = () => waveOf([...wave], 63);
-  const lfo = () => (!modHalt && modFreq && env[1].gain ? { table: table.map((c) => FDS_MOD_OF[c]), freq: modFreq, depth: Math.min(63, env[1].gain) } : null);
+  const lfo = (t) => (!modHalt && modFreq && env[1].gain
+    ? { table: table.map((c) => FDS_MOD_OF[c]), freq: modFreq, depth: Math.min(63, env[1].gain), reset: t - resetAt <= SETUP_T } : null);
   const strike = (t, kind) => {
     on = true;
     gainNow = level();
     pitchNow = burstFrom = pitchOfNow();
     waveNow = steps();
-    ev(KEY, { t, kind, pitch: pitchNow, vel: vel(gainNow), wave: waveNow, lfo: lfo(), kindOf: "wave" });
+    ev(KEY, { t, kind, pitch: pitchNow, vel: vel(gainNow), wave: waveNow, lfo: lfo(t), kindOf: "wave" });
   };
   const running = (e) => !e.off && !envHalt && !waveHalt && envMaster > 0;
   // The envelopes' steps up to `t`, each a level the note moves to.
@@ -959,6 +964,7 @@ function fdsChip(clock, { ev }) {
         envHalt = !!(d & 0x40);
         sync(t);
       } else if (a === 0x24) envWrite(env[1]);
+      else if (a === 0x25) { if (d & 0x7f) skip("FDS modulation counter set to a value but 0 (its phase)"); else resetAt = t; }
       else if (a === 0x26) modFreq = (modFreq & 0xf00) | d;
       else if (a === 0x27) { modFreq = (modFreq & 0xff) | ((d & 15) << 8); modHalt = !!(d & 0x80); }
       else if (a === 0x28 && modHalt) { table[modPos] = d & 7; modPos = (modPos + 1) & 31; }
@@ -978,7 +984,7 @@ function fdsChip(clock, { ev }) {
       if (a >= 0x24 && a <= 0x28) {
         modAt = t;
         if (on && t - pitchAt <= SETUP_T && Math.abs(pitchNow - burstFrom) >= 0.5) strike(t, "retrig");
-        else if (on) ev(KEY, { t, kind: "lfo", lfo: lfo() });
+        else if (on) ev(KEY, { t, kind: "lfo", lfo: lfo(t) });
       }
     },
     end: (t) => advance(t),
@@ -1123,7 +1129,7 @@ export async function parseVgm(bytes) {
     scc: [0x9c, 1789773, (c) => sccChip(c, { ev })],
     pce: [0xa4, 3579545, (c) => pceChip(c, { ev, skip })],
     apu: [0x84, 1789773, (c) => apuChip(c & 0x7fffffff, { ev, skip, pcm, ram: nesRam })],
-    fds: [0x84, 1789773, (c) => fdsChip(c & 0x7fffffff, { ev })], // the 2A03's clock (bit 31: the FDS)
+    fds: [0x84, 1789773, (c) => fdsChip(c & 0x7fffffff, { ev, skip })], // the 2A03's clock (bit 31: the FDS)
   };
   const chip = (key) => {
     if (made.has(key)) return made.get(key);
@@ -2395,7 +2401,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       };
       n.pre = [];
       for (const k of ["voice", "wave", "env", "pitch", "detune", "pan", "mode", "rate", "henv", "envSemi", "envDetune", "duty", "lfoWave", "lfoFreq", "lfoPmd"])
-        if (st[k] && st[k] !== cur[k]) n.pre.push(st[k]);
+        // (The FDS's table again where the note starts its counter over.)
+        if (st[k] && (st[k] !== cur[k] || (k === "lfoWave" && n.lfo?.reset))) n.pre.push(st[k]);
+      if (n.lfo?.reset && st.lfoWave) n.again = [st.lfoWave];
       // Nothing to clear before the first envelope, wave macro or bend, nor to move.
       if (cur.env == null && st.env === ENV_NONE) n.pre = n.pre.filter((t) => t !== ENV_NONE);
       if (cur.wave == null && st.wave === WAVE_NONE) n.pre = n.pre.filter((t) => t !== WAVE_NONE);

@@ -650,8 +650,10 @@ class Fds {
     this.modFreq = 0;
     this.modHalt = false;
     this.modAcc = 0;
-    this.modPos = 0; // the half-step, 0-63 (each entry twice)
-    this.modTable = new Uint8Array(32);
+    this.modPos = 0; // the step, 0-63
+    // The table's 64 steps: a write fills two in a row from the position
+    // (Mesen's), so an entry plays twice wherever the position stood.
+    this.modTable = new Uint8Array(64);
     // The envelopes, volume [0] and modulation [1]: speed, rising, off
     // (direct), the clocks into the next step.
     this.env = [0, 1].map(() => ({ speed: 0, up: false, off: false, timer: 0 }));
@@ -720,7 +722,7 @@ class Fds {
       case 0x4088:
         // Open while the unit is halted: the entry at the position, which moves on.
         if (this.modHalt) {
-          this.modTable[this.modPos >> 1] = data & 7;
+          this.modTable[this.modPos] = this.modTable[(this.modPos + 1) & 63] = data & 7;
           this.modPos = (this.modPos + 2) & 63;
         }
         break;
@@ -757,7 +759,7 @@ class Fds {
         this.modAcc += this.modFreq;
         if (this.modAcc >= 0x1000) {
           this.modAcc &= 0xfff;
-          const d = FDS_MOD_DELTA[this.modTable[this.modPos >> 1]];
+          const d = FDS_MOD_DELTA[this.modTable[this.modPos]];
           this.modCounter = d === null ? 0 : (((this.modCounter + d) & 0x7f) << 25) >> 25;
           this.modPos = (this.modPos + 1) & 63;
         }

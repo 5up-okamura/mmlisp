@@ -598,12 +598,13 @@ function unitsOf(tr, bars, endTick, loopTick, intern = new Map()) {
       if (n.tick < a && shots(tr.channel)) continue;
       // Carried over the cut: tied on — except into the loop, which starts over.
       const tieIn = n.tick < a ? a !== loopTick : !!n.tieIn && (n.tick > a || a !== loopTick);
-      pieces.push({ tick: s - a, len: e - s, midi: n.midi, vel: n.vel, st: n.st, tieIn });
+      // (A note's `again` is its start's: not a tail's carried over the cut.)
+      pieces.push({ tick: s - a, len: e - s, midi: n.midi, vel: n.vel, st: n.st, tieIn, ...(n.tick >= a && n.again ? { again: n.again } : {}) });
     }
     const marks = (tr.marks ?? []).filter((m) => m.tick >= a && m.tick < b).map((m) => ({ ...m, tick: m.tick - a }));
     const tieHead = pieces.length > 0 && pieces[0].tick === 0 && pieces[0].tieIn;
     // What it plays, as a short id (runs of them are compared and joined).
-    const full = JSON.stringify([b - a, pieces.map((p) => [p.tick, p.len, p.midi, p.vel, p.st.join(" "), p.tieIn ? 1 : 0]),
+    const full = JSON.stringify([b - a, pieces.map((p) => [p.tick, p.len, p.midi, p.vel, p.st.join(" "), p.tieIn ? 1 : 0, p.again?.join(" ") ?? ""]),
       marks.map((m) => [m.tick, m.tokens.join(" ")])]);
     if (!intern.has(full)) intern.set(full, `u${intern.size}`);
     const key = intern.get(full);
@@ -856,7 +857,10 @@ export function bestBars(song) {
 
 /**
  * The whole score, structured. Same input as emitSong; a track's notes may
- * carry `state` (every switch in force) or only `pre` (a voice switch).
+ * carry `state` (every switch in force) or only `pre` (a voice switch), and
+ * `again`: switches written at the note though the state already holds them
+ * (an act, not a state — the FDS's table written again, which starts its
+ * counter over).
  */
 export function emitStructured(song) {
   song = songInRange(song);
@@ -878,6 +882,7 @@ export function emitStructured(song) {
       let running = st.st;
       const notes = u.pieces.map((p) => {
         const pre = stateChange(running, p.st);
+        for (const t of p.again ?? []) if (!pre.includes(t)) pre.push(t);
         running = p.st;
         return { tick: p.tick, len: p.len, midi: p.midi, vel: p.vel, tieIn: p.tieIn, pre };
       });
