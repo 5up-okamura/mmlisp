@@ -11,6 +11,7 @@ import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { parseNsf, runNsf } from "../../live/src/import-nsf.js";
 import { analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
+import { IRPlayer } from "../../live/src/ir-player.js";
 
 const CLOCK = 1789773;
 const FRAMES = 15; // a step
@@ -197,6 +198,32 @@ const near = (x, y, tol, what) => assert.ok(Math.abs(x - y) <= tol, `${what}: ${
   near(parsed.totalSamples / PERIOD, 3 * FRAMES + 1, 1, "it ends after its last step");
   const { a } = imported(parsed);
   assert.equal(a.loop ?? a.fileLoop, false);
+}
+
+// A driver's echo (Konami's): a held note dropped to a quiet tail as the duty
+// switches (a tie, which takes no :vel — the tail is the head's envelope), and
+// a jump to another pitch with the level dropped at once (a slur at its new
+// level). Played back, the import writes the tail at volume 1, as the song.
+{
+  const p = apu(69), q = apu(72);
+  const steps = [
+    [[0x4000, 0xbf], [0x4002, p & 0xff], [0x4003, (p >> 8) | 0x08]], // a4, 50 %, volume 15
+    [[0x4000, 0x71]], // the tail: 25 %, volume 1
+    [[0x4000, 0xbf], [0x4002, q & 0xff], [0x4003, (q >> 8) | 0x08]], // c5
+    [[0x4002, p & 0xff], [0x4000, 0x71]], // down to a4 and volume 1, no key-on
+    [[0x4000, 0x30]], // silent
+  ];
+  const parsed = runNsf(parseNsf(nsfFile(driver({ init: [[0x4015, 0x0f]], steps, stops: true }))));
+  const { source } = imported(parsed);
+  const { ir } = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) });
+  const writes = new IRPlayer(() => {}).loadJSON(ir).captureRegisterLog({}).writes.filter((w) => w.port === 0 && (w.addr & 0xff) === 0x00);
+  const volAt = (frame) => {
+    const last = writes.filter((w) => w.sec * 60 <= frame + 0.5).pop();
+    return last ? last.data & 15 : null;
+  };
+  assert.equal(volAt(FRAMES + 3), 1, "the tied tail plays at volume 1");
+  assert.equal(volAt(3 * FRAMES + 3), 1, "the slur down plays at volume 1");
+  assert.equal(volAt(2 * FRAMES + 3), 15, "the note between at volume 15");
 }
 
 // Banks: the program in bank 0, the DMC's samples in banks 1 and 2 switched

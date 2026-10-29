@@ -1853,9 +1853,11 @@ function pitchShape(n, endT) {
     const seg = { ...n, t: t0, end: t1, pitch: midi + (Math.abs(mid) < 50 ? mid : 0) / 100, slur: i > 0 || n.slur,
       bend: moving ? rel.map((c) => Math.round((c + off) / 5) * 5) : null };
     if (i > 0) {
-      // Its level carries on from the note before.
+      // Its level carries on from the note before (a PSG note's :vel too,
+      // as a slur's in notesOf: one whose level then stays put is written at it).
       const lv = n.levels.filter(([t]) => t <= t0);
       seg.lv0 = lv.length ? lv[lv.length - 1][1] : n.lv0;
+      if (!n.voice && seg.lv0 != null) seg.vel = seg.lv0;
       seg.levels = n.levels.filter(([t]) => t > t0 && t < t1);
     } else seg.levels = n.levels.filter(([t]) => t < t1);
     segs.push(seg);
@@ -2522,6 +2524,38 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const envWarn = ssgState(tracks);
   if (envWarn) warnings.push(envWarn);
 
+  // A note tied on (`~` to the same pitch: a duty moved under it, a slur's
+  // jump back) is one note to the language — the tie takes no :vel and
+  // starts no macro — so the level it moves to there is its head's
+  // envelope going on: the chain's levels one :vel+ macro on the head, at
+  // the loudest of them. (A driver's echo, Konami's, drops a held note to a
+  // quiet tail as it switches the duty; written as `:vel 3 ~ a`, the tail
+  // played at the head's level.)
+  for (const tr of tracks) {
+    let head = null;
+    tr.notes.forEach((n, i) => {
+      const prev = tr.notes[i - 1];
+      // (Not an FM note's: its level is its voice's TL, its :vel worked out from that.)
+      const tied = head && n.tieIn && prev && n.midi === prev.midi && n.tick === prev.tick + prev.len && n.env && !n.voiceRec;
+      if (!tied) { head = n.env && !n.voiceRec ? n : null; if (head) head.abs = head.env.map((v) => v + head.vel); return; }
+      const at = Math.round(((n.tick - head.tick) * TICK) / FRAME);
+      while (head.abs.length < at) head.abs.push(head.abs[head.abs.length - 1]);
+      head.abs.length = Math.min(head.abs.length, at);
+      head.abs.push(...n.env.map((v) => v + n.vel));
+      head.abs.length = Math.min(head.abs.length, MAX_ENV);
+      n.levelTie = head;
+    });
+    for (const n of tr.notes) {
+      if (!n.abs) continue;
+      if (tr.notes.some((m) => m.levelTie === n)) {
+        n.vel = Math.max(...n.abs);
+        n.env = n.abs.map((v) => v - n.vel);
+      }
+      delete n.abs;
+    }
+    for (const n of tr.notes) if (n.levelTie) { n.vel = n.levelTie.vel; n.env = null; }
+  }
+
   // A note slurred on into the next keeps its whole envelope; one a rest
   // follows is heard to its end (`silentAfter`).
   for (const tr of tracks)
@@ -2638,7 +2672,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         // (A wave channel's slur names the wave it goes on with.)
         voice: n.tieIn && cur.voice && !n.ownWave ? cur.voice : n.voiceRec ? n.voiceRec.name : n.stand,
         wave: n.waveMac ?? (anyWave ? WAVE_NONE : null),
-        env: n.envName ?? (anyEnv ? ENV_NONE : null),
+        // (A tie whose level is its head's envelope says none: it goes on.)
+        env: n.levelTie ? cur.env : n.envName ?? (anyEnv ? ENV_NONE : null),
         pitch: n.bendName ?? (anyBend ? PITCH_NONE : null),
         // (After the bend: a bend's macro writes the offset itself, the
         // detune within it.)

@@ -420,7 +420,9 @@ special cases.
 import-nsf.js runs each song on cpu6502.js and feeds import-vgm.js's chip
 models (`nesChips`: the VGM ones, plus vrc6Chip, n163Chip and apuChip's
 `mmc5` mode, none of which a VGM reaches). Rulings (the user, 2026-10-29):
-the VGM dialog and writer reused, a Song field that re-runs; the length is
+the VGM dialog and writer reused; an NSF's songs are files of their own
+under Files in Folder (an NSF opened alone a folder of them, folderOfFile),
+not a dialog field — the user stepping through songs with ← →; the length is
 the state coming round (RAM $0000-$07FF + $6000-$7FFF + the banks — not the
 chips' registers, which would put the loop a section late), else the
 writes' period (two periods, ≥ 1 s), else MAX_SECONDS 300; the loop point
@@ -435,8 +437,12 @@ Open:
   (the rip 14.38), the same strikes; Falsion song 1 (FDS) comes round at
   89.6 s where the rip loops at 44.7 — its driver detunes pulse 2 by one
   period step every other pass ($4006 aa/a9), so two passes are the exact
-  loop (kept: not halved to the rip's). Not A/B'd by ear or frame by frame
-  (abfc.mjs's comparison is the plan).
+  loop (kept: not halved to the rip's). Frame by frame only Parodius Da!
+  #03 (the user's Dropbox "Chip - NSF"; its own writes and the import's,
+  both on FcSynth, each APU channel's level a frame — the session's
+  scratchpad abnsf.mjs, not kept): SQ1 / SQ2 agree; TRI sounds ≤ 1 frame
+  past each linear-counter end (its sub-frame end against a frame-clocked
+  key-off); the DMC 92 frames short in runs under 4, not looked into.
 - A play call's writes land a few cycles apart, so a strike and its
   retrig in one burst (0.1 ms) count as two notes in the dialog's row
   counts (SMB3's noise 133 against the rip's 85); the score keeps the later
