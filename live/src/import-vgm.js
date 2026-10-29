@@ -672,21 +672,24 @@ function pceChip(clock, { ev, skip }) {
 // counter's mode ($4017) sets the quarter frame's length, 4-step or 5-step,
 // on the average, the sweep on its half frames (a pitch moving under the
 // note) and its mute. Not followed: a halt cleared under a held counter
-// (the counter stays held).
+// (the counter stays held). With `mmc5` it is the MMC5's two pulses
+// ($5000-$5007, $5015's low bits): the 2A03's, with no sweep (nor its mute)
+// and the envelope and length counters on the chip's own 240 Hz.
 const APU_LENGTHS = [10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30];
 const NES_RAM = 0xc2; // VGM's RAM-write block for the NES's memory
-function apuChip(clock, { ev, skip, pcm, ram }) {
+function apuChip(clock, { ev, skip, pcm, ram, mmc5 = false }) {
   // Samples a quarter frame: 4-step mode's 29830 clocks over four (~240 Hz),
   // 5-step's 37282 over four.
   let QUARTER = (RATE * 29830) / (4 * clock);
   let lastT = -Infinity; // the previous write's time: nothing is emitted before it
   const r = new Uint8Array(0x18);
-  const KEY = ["2A03 SQ1", "2A03 SQ2", "2A03 TRI", "2A03 noise"];
+  const KEY = mmc5 ? ["MMC5 SQ1", "MMC5 SQ2"] : ["2A03 SQ1", "2A03 SQ2", "2A03 TRI", "2A03 noise"];
   // The counters start at 0 (silent until a load).
   const ch = [0, 1, 2, 3].map(() => ({ on: false, lenEnd: -Infinity, linEnd: -Infinity, env: null, vel: 0, pitch: null, duty: null, mode: null, velAt: -1, pitchAt: -1 }));
   // The channels start enabled: an NSF player sets $4015 before the song
   // starts, and a rip of it often does not log that write.
-  let enable = 0x0f;
+  // (The MMC5's start off: a driver enables them.)
+  let enable = mmc5 ? 0 : 0x0f;
   const dmc = { playing: false, end: Infinity, dac: 0, dacAt: -Infinity };
   const ctlOf = (c) => r[c === 3 ? 0x0c : 4 * c];
   const haltOf = (c) => (c === 2 ? r[0x08] & 0x80 : ctlOf(c) & 0x20);
@@ -774,7 +777,7 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
     const p = period(c), d = p >> (r[4 * c + 1] & 7);
     return r[4 * c + 1] & 8 ? p - d - (c === 0 ? 1 : 0) : p + d;
   };
-  const sweepMuted = (c) => c < 2 && (period(c) < 8 || (!(r[4 * c + 1] & 8) && sweepTarget(c) > 0x7ff));
+  const sweepMuted = (c) => !mmc5 && c < 2 && (period(c) < 8 || (!(r[4 * c + 1] & 8) && sweepTarget(c) > 0x7ff));
   const sweeping = (c) => c < 2 && ch[c].on && r[4 * c + 1] & 0x80 && r[4 * c + 1] & 7;
   const sweepHalf = (c, at) => {
     const sw = sweep[c], reg = r[4 * c + 1];
@@ -836,9 +839,11 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
     ch[c].lenEnd = haltOf(c) ? Infinity : t + APU_LENGTHS[r[c === 2 ? 0x0b : c === 3 ? 0x0f : 4 * c + 3] >> 3] * 2 * QUARTER;
   };
   return {
-    name: "2A03",
+    name: mmc5 ? "MMC5" : "2A03",
     write(a, d, t) {
       if (a > 0x17) return;
+      if (mmc5 && (a === 0x10 || a === 0x11)) { skip("MMC5 PCM"); return; }
+      if (mmc5 && (a === 1 || a === 5 || (a > 7 && a !== 0x15))) return;
       if (ch[2].pendingB && t - ch[2].pendingB.t > SETUP_T) resolveB(ch[2].pendingB.t);
       advance(t);
       lastT = t;
@@ -896,8 +901,9 @@ function apuChip(clock, { ev, skip, pcm, ram }) {
         return;
       }
       if (a === 0x15) {
-        enable = d & 0x1f;
-        for (let c = 0; c < 4; c++) { if (!(d & (1 << c))) ch[c].lenEnd = -Infinity; sync(c, t); }
+        enable = d & (mmc5 ? 3 : 0x1f);
+        for (let c = 0; c < KEY.length; c++) { if (!(d & (1 << c))) ch[c].lenEnd = -Infinity; sync(c, t); }
+        if (mmc5) return;
         if (!(d & 0x10)) { if (dmc.playing) pcm.stop("DPCM", 0, t); dmc.playing = false; }
         else if (!dmc.playing) {
           // The sample is the memory as it stands now (a later block may
@@ -1038,6 +1044,193 @@ function fdsChip(clock, { ev, skip }) {
       }
     },
     end: (t) => advance(t),
+  };
+}
+
+// A channel keyed by its level, as the VRC6's and the N163's are (no key
+// bit: a driver sounds a note by its volume): what each change did to the
+// note — started, ended, struck again, or moved. A driver strikes a note by
+// writing its pitch and its level together, in either order: the level up,
+// or the pitch a semitone or more from where the burst found it — or the
+// level alone jumping up past `jumpUp` steps (a note on the same pitch).
+// `s` is the channel as it stands, null silent: {level, vel, pitch, duty?, wave?}.
+function levelKeyed(ev, key, kindOf, jumpUp) {
+  let on = false, level = 0, pitch = null, duty = null, wave = null;
+  let velAt = -Infinity, pitchAt = -Infinity, burstFrom = null;
+  const strike = (t, kind, s) => {
+    on = true;
+    ({ level, pitch, duty = null, wave = null } = s);
+    burstFrom = pitch;
+    ev(key, { t, kind, pitch, vel: s.vel, kindOf, ...(duty != null ? { duty } : {}), ...(wave ? { wave } : {}) });
+  };
+  return {
+    sync(t, s) {
+      if (!on) { if (s) strike(t, "on", s); return; }
+      if (!s) { on = false; ev(key, { t, kind: "off" }); return; }
+      const pCh = s.pitch !== pitch, lCh = s.level !== level;
+      if (pCh && t - pitchAt > SETUP_T) burstFrom = pitch;
+      if (pCh) pitchAt = t;
+      const jump = t - pitchAt <= SETUP_T && Math.abs(s.pitch - burstFrom) >= 0.5;
+      const struck = (lCh && (s.level > level + jumpUp || (t - pitchAt <= SETUP_T && (s.level > level || jump)))) ||
+        (pCh && t - velAt <= SETUP_T && (s.level > level || jump));
+      if (lCh) velAt = t;
+      if (struck) { strike(t, "retrig", s); return; }
+      if (lCh) { level = s.level; ev(key, { t, kind: "vel", vel: s.vel }); }
+      if (pCh) { pitch = s.pitch; ev(key, { t, kind: "pitch", pitch }); }
+      if (s.duty != null && s.duty !== duty) { duty = s.duty; ev(key, { t, kind: "duty", duty }); }
+      if (s.wave && s.wave.join() !== wave?.join()) { wave = s.wave; ev(key, { t, kind: "wave", wave }); }
+    },
+  };
+}
+
+// The VRC6 (chips/vrc6.js), at its CPU addresses — no VGM command writes
+// it, so only an NSF reaches it: $9000 / $A000 a pulse's duty (6-4, in
+// sixteenths less one), its volume (3-0) and bit 7 its 100 % duty (a level
+// held: no tone), $9001-$9002 / $A001-$A002 its 12-bit period and enable
+// (the clock / 16 / (period + 1)); $B000 the saw's rate (5-0), $B001-$B002
+// its period (the clock / 14 / (period + 1)); $9003 bit 0 halts all three.
+// Its levels are linear: a pulse's 4 bits, the saw's rate over 63 (past 42
+// it wraps, a harsher tone at the same level — as the language reads it).
+function vrc6Chip(clock, { ev }) {
+  const r = new Uint8Array(12); // (high nibble − 9) × 4 + the low two bits
+  const keyed = [0, 1, 2].map((c) => levelKeyed(ev, c < 2 ? `VRC6 SQ${c + 1}` : "VRC6 saw", "psg", c < 2 ? 4 : 16));
+  const velOf = (v, full) => (v > 0 ? velOfDb(20 * Math.log10(v / full)) : 0);
+  const stateOf = (c) => {
+    const ctl = r[4 * c], hi = r[4 * c + 2];
+    const period = ((hi & 15) << 8) | r[4 * c + 1];
+    const hz = clock / ((c < 2 ? 16 : 14) * (period + 1));
+    const level = c < 2 ? (ctl & 0x80 ? 0 : ctl & 15) : ctl & 63;
+    if (!(hi & 0x80) || r[3] & 1 || level === 0 || hz > TONE_MAX_HZ) return null;
+    return c < 2 ? { level, vel: velOf(level, 15), pitch: pitchOf(hz), duty: ((ctl >> 4) & 7) + 1 }
+      : { level, vel: velOf(level, 63), pitch: pitchOf(hz) };
+  };
+  return {
+    name: "VRC6",
+    write(addr, d, t) {
+      const i = (((addr >> 12) - 9) << 2) | (addr & 3);
+      if (i < 0 || i > 11) return;
+      r[i] = d;
+      if (i === 3) { for (let c = 0; c < 3; c++) keyed[c].sync(t, stateOf(c)); return; }
+      keyed[i >> 2].sync(t, stateOf(i >> 2));
+    },
+  };
+}
+
+// The N163 (chips/n163.js), at its CPU addresses — no VGM command writes it:
+// $F800 selects a byte of its 128 (bit 7 steps on after each), $4800 writes
+// (or reads) it. Channel n's registers are 8 bytes at $40 + 8 (n − 1): its
+// 18-bit frequency, its wave's length (256 − $x4 & $FC samples) and start (a
+// sample address, $x6), its volume ($x7); $7F's bits 6-4 are how many run,
+// less one, channel 8 down. A tone is the clock × f / (15 × 65536 × length
+// × count). A row is the chip's channel ("N163 CH8", on n163-wave1 — the
+// language's wave1 is the chip's channel 8). The wave is the 4-bit samples
+// as the note starts and as the memory is rewritten under it (a frame's
+// writes at once, `frame`), on 32 steps however long it is: a shorter one
+// stretched, a longer one read every few (skipped, said), the pitch its own.
+function n163Chip(clock, { ev, skip }) {
+  const ram = new Uint8Array(128);
+  let at = 0, waveDirty = false;
+  const keyed = Array.from({ length: 8 }, (_, i) => levelKeyed(ev, `N163 CH${i + 1}`, "wave", 4));
+  const count = () => ((ram[0x7f] >> 4) & 7) + 1;
+  const sample = (n) => (ram[(n >> 1) & 127] >> ((n & 1) * 4)) & 15;
+  const waveOfCh = (b) => {
+    const len = 256 - (ram[b + 4] & 0xfc), start = ram[b + 6];
+    if (len > 32) skip("N163 waves of more than 32 samples (read every few, on 32 steps)");
+    return waveOf(Array.from({ length: 32 }, (_, i) => sample((start + Math.floor((i * len) / 32)) & 0xff)), 15);
+  };
+  const stateOf = (i) => {
+    const b = 0x40 + 8 * i;
+    if (i < 8 - count()) return null; // not running
+    const f = ram[b] | (ram[b + 2] << 8) | ((ram[b + 4] & 3) << 16);
+    const len = 256 - (ram[b + 4] & 0xfc);
+    const level = ram[b + 7] & 15;
+    const hz = (clock * f) / (15 * 65536 * len * count());
+    if (!level || !f || hz > TONE_MAX_HZ) return null;
+    return { level, vel: velOfDb(20 * Math.log10(level / 15)), pitch: pitchOf(hz), wave: waveOfCh(b) };
+  };
+  const syncAll = (t) => { for (let i = 0; i < 8; i++) keyed[i].sync(t, stateOf(i)); waveDirty = false; };
+  return {
+    name: "N163",
+    write(addr, d, t) {
+      if (addr >= 0xf800) { at = d; return; }
+      const a = at & 127;
+      ram[a] = d;
+      if (at & 0x80) at = 0x80 | ((a + 1) & 127);
+      if (a === 0x7f) syncAll(t);
+      else if (a >= 0x40 && (a & 7) !== 6) keyed[(a - 0x40) >> 3].sync(t, stateOf((a - 0x40) >> 3));
+      else waveDirty = true;
+    },
+    read() {
+      const a = at & 127;
+      if (at & 0x80) at = 0x80 | ((a + 1) & 127);
+      return ram[a];
+    },
+    frame(t) { if (waveDirty) syncAll(t); },
+  };
+}
+
+/**
+ * The Famicom's sound chips at their CPU addresses, for an NSF's run
+ * (import-nsf.js): `exp` its header's expansions ({vrc6, vrc7, fds, mmc5,
+ * n163, s5b}), `ram(start, len)` the CPU's memory as it stands (a DMC
+ * hit's sample). Each chip starts at its first write, as parseVgm's do.
+ * `write(addr, d, t)` a write at sample `t`; `read(addr)` a chip register
+ * the CPU reads back (the N163's memory; else null); `frame(t)` after each
+ * play call; `finish(end, meta)` → what parseVgm returns.
+ */
+export function nesChips({ exp = {}, ram, clock = 1789773 }) {
+  const events = new Map(), kinds = new Map(), chips = [], skipped = new Map();
+  const ev = (k, e) => {
+    if (!events.has(k)) events.set(k, []);
+    events.get(k).push(e);
+    if (e.kindOf) kinds.set(k, e.kindOf);
+  };
+  const skip = (name) => skipped.set(name, (skipped.get(name) ?? 0) + 1);
+  const pcm = pcmChips({ segaClock: 4000000, segaIntf: 0, opnbClock: 8000000, opnaClock: 7987200, ramWrite: () => {} });
+  const MAKE = {
+    apu: () => apuChip(clock, { ev, skip, pcm, ram }),
+    mmc5: () => apuChip(clock, { ev, skip, pcm, ram, mmc5: true }),
+    fds: () => fdsChip(clock, { ev, skip }),
+    vrc6: () => vrc6Chip(clock, { ev }),
+    vrc7: () => opllChip(3579545, { ev, vrc7: true }),
+    n163: () => n163Chip(clock, { ev, skip }),
+    s5b: () => ayChip("5B", clock / 2, { ev }),
+  };
+  const made = new Map();
+  const chip = (k) => {
+    if (!made.has(k)) { const m = MAKE[k](); made.set(k, m); chips.push(m.name); }
+    return made.get(k);
+  };
+  let opllAt = 0, ayAt = 0;
+  return {
+    write(a, d, t) {
+      if (a >= 0x4000 && a <= 0x4017) { if (a !== 0x4014 && a !== 0x4016) chip("apu").write(a - 0x4000, d, t); }
+      else if (exp.fds && a >= 0x4040 && a <= 0x407f) chip("fds").write(a - 0x4000, d, t);
+      else if (exp.fds && a >= 0x4080 && a <= 0x409e) chip("fds").write(a - 0x4080 + 0x20, d, t);
+      else if (exp.fds && a === 0x4023) chip("fds").write(0x3f, d, t);
+      else if (exp.mmc5 && a >= 0x5000 && a <= 0x5015) chip("mmc5").write(a - 0x5000, d, t);
+      else if (exp.vrc6 && ((a >= 0x9000 && a <= 0x9003) || (a >= 0xa000 && a <= 0xa002) || (a >= 0xb000 && a <= 0xb002))) chip("vrc6").write(a, d, t);
+      else if (exp.vrc7 && a === 0x9010) opllAt = d;
+      else if (exp.vrc7 && a === 0x9030) chip("vrc7").write(opllAt, d, t);
+      else if (exp.n163 && ((a >= 0x4800 && a <= 0x4fff) || a >= 0xf800)) chip("n163").write(a >= 0xf800 ? 0xf800 : 0x4800, d, t);
+      else if (exp.s5b && a >= 0xc000 && a <= 0xdfff) ayAt = d & 15;
+      else if (exp.s5b && a >= 0xe000) chip("s5b").write(ayAt, d, t);
+    },
+    read(a) {
+      if (exp.n163 && a >= 0x4800 && a <= 0x4fff) return chip("n163").read();
+      return null;
+    },
+    frame(t) { made.get("n163")?.frame(t); },
+    finish(end, meta = {}) {
+      for (const m of made.values()) m.end?.(end);
+      // The run went on past the song's end (to see its loop come round): what it wrote there is not the song's.
+      for (const [k, evs] of events) events.set(k, evs.filter((e) => e.t < end));
+      const pcmRoms = new Map();
+      const pcmHits = pcm.finish(end, pcmRoms);
+      return { chips, skipped, clockNotes: [], events, kinds, totalSamples: end, loopSample: null, title: null, author: null,
+        game: null, system: null, dac: false, dacBank: new Uint8Array(0), dacHits: [], pcmRoms, pcmHits, rhythmHits: [],
+        opllRhythmHits: [], ...meta };
+    },
   };
 }
 
@@ -1846,7 +2039,7 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   // YM2203's, the MSX for an AY-3-8910's, an SCC's or a YM2413's — by
   // default when that chip plays every channel.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
-  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC7)/]]
+  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC6|VRC7|MMC5|N163)/]]
     .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
   const targets = [...own.map(([t]) => t), "md"];
   // (A file of PCM alone — a YM2608's ADPCM-B — is its chip's machine's.)
@@ -1882,10 +2075,17 @@ export function vgmDests(targetName = "md") {
 
 // A Famicom expansion's channel on its own name, where the target has it
 // (fc): the FDS on fds-wave, the VRC7's FM2 on vrc7-fm2, the 5B's SSGB on
-// 5b-sqr2.
+// 5b-sqr2, the VRC6's and the MMC5's on theirs, the N163's channel 8 on
+// n163-wave1 (the language counts them from the top).
 const expansion = (key) => {
-  const m = key.match(/^(?:(FDS)|VRC7 FM(\d)|5B SSG([ABC]))$/);
-  return !m ? null : m[1] ? "fds-wave" : m[2] ? `vrc7-fm${m[2]}` : `5b-sqr${" ABC".indexOf(m[3])}`;
+  const m = key.match(/^(?:(FDS)|VRC7 FM(\d)|5B SSG([ABC])|(VRC6|MMC5) SQ(\d)|(VRC6 saw)|N163 CH(\d))$/);
+  if (!m) return null;
+  if (m[1]) return "fds-wave";
+  if (m[2]) return `vrc7-fm${m[2]}`;
+  if (m[3]) return `5b-sqr${" ABC".indexOf(m[3])}`;
+  if (m[4]) return `${m[4].toLowerCase()}-sqr${m[5]}`;
+  if (m[6]) return "vrc6-saw";
+  return `n163-wave${9 - Number(m[7])}`;
 };
 
 // Whether the target's tone channels play a chip's noise themselves (the
@@ -2495,10 +2695,10 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   else warnings.push("no notes to import");
 
   if (parsed.dac && !parsed.dacHits?.length) warnings.push("YM2612 DAC written directly (not from a data bank) is not imported");
-  warnings.push(...parsed.clockNotes);
+  warnings.push(...parsed.clockNotes, ...(parsed.notes ?? []));
   for (const [k, n] of parsed.skipped) warnings.push(`${k} skipped (${n}×)`);
 
-  const header = [`; Imported from ${options.fileName ?? "a VGM file"} (VGM: ${parsed.chips.join(", ")})`];
+  const header = [`; Imported from ${options.fileName ?? "a VGM file"} (${parsed.format ?? "VGM"}: ${parsed.chips.join(", ")})`];
   const title = [parsed.title, parsed.game && parsed.title ? `(${parsed.game})` : parsed.game].filter(Boolean).join(" ");
   const score = [target.name !== "md" && `:target ${target.name}`, title && `:title ${qstr(title)}`, parsed.author && `:composer ${qstr(parsed.author)}`,
     dacMix && (dacOut || chipOut || kitRhythm) && `:pcm-voices ${pcmUsed + (kitRhythm ? 1 : 0)}`].filter(Boolean);

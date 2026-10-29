@@ -1425,7 +1425,7 @@ Open Recent brings the score back with its folder.
 ### Folders, archives and songs
 
 `File > Files in Folder` lists what the open folder holds: its scores and its
-songs — `.vgm` `.vgz` `.mid` `.dmf` `.fur` `.mdx` `.mgs` `.muc`, each with its
+songs — `.vgm` `.vgz` `.nsf` `.nsfe` `.mid` `.dmf` `.fur` `.mdx` `.mgs` `.muc`, each with its
 format beside it. A song opens as `File > Open…` opens one: converted, through
 the import dialog, as a new unsaved score. Opened from the folder, it keeps the
 folder, so the next song is one click away, and what the song names beside
@@ -1480,6 +1480,7 @@ and `Instruments…` inserts voices and drum kits at the cursor:
 | `.mid`                             | MIDI import, through the import dialog (below)             |
 | `.dmf` / `.fur`                    | DefleMask / Furnace module import, through the import dialog (below) |
 | `.vgm` / `.vgz`                    | VGM import, through the import dialog (below)              |
+| `.nsf` / `.nsfe`                   | NSF import as an `fc` score, through the import dialog (below) |
 | `.mdx` (+ `.pdx`)                  | MDX import as an `x68k` score — drop its `.pdx` alongside for the ADPCM (below) |
 | `.mgs`                             | MGS import as an `msx` score (below)                        |
 
@@ -1708,7 +1709,7 @@ neighbouring bands) rather than by lines a noise does not have. Its voice
 comes out with that note as `:key`, as the `presets/fm-drums` voices do: c4
 plays it as found, other notes retune it.
 
-### Song imports: MIDI, DefleMask / Furnace, VGM, MDX, MGS
+### Song imports: MIDI, DefleMask / Furnace, VGM, NSF, MDX, MGS
 
 **A song import opens a dialog first**: what the file holds, the timing and
 tempo (a MIDI file's), the loop, and one row per source part with its destination.
@@ -2070,6 +2071,35 @@ them: a key-on starts a note, a key-off ends it.
   log reports. (A tempo change within the song needs nothing: the notes
   keep their times.)
 
+**NSF (Famicom).** An NSF (`.nsf`, NSF2, `.nsfe`) is a song's own code —
+its driver and its data — so each song is run, on a 6502, and what it
+writes to the sound chips is read as a VGM's writes are (above): the same
+rows, the same dialog, notes at the times they were written. The dialog adds
+**Song** (by its NSFe / NSF2 name where it has one); picking another runs it
+and rebuilds the rows. Every chip the header names comes in on its own `fc`
+channels: the 2A03, the **VRC6** (`vrc6-sqr1`, `vrc6-sqr2` with their duty
+in sixteenths, `vrc6-saw`), the **VRC7**, the **FDS**, the **MMC5**'s pulses,
+the **N163** (its channel 8 on `n163-wave1`, down from there) and the
+**5B** — the VRC6, the MMC5 and the N163 come in no other way, since VGM has
+none of them. A DMC sample is the memory as the song's banks map it when the
+hit starts.
+
+- NSF has no length. The song runs until its state comes round — RAM and
+  banks as they were at an earlier frame, a loop exact by construction —
+  or, for a driver with a counter of its own, until its writes repeat for two
+  periods; the loop starts on the first frame there that writes something
+  new (a note starting, not a held one). A song whose writes stop changing
+  ends there and does not loop. With neither, it is cut at five minutes (or
+  its NSFe / NSF2 length) and the log says so. **Loop** keeps the loop the
+  run found.
+- An N163 wave is 4-bit samples of any length; on `fc` it is a 32-step
+  def-wave at the pitch the chip played — a shorter wave stretched, a longer
+  one read every few samples (the log says so) — and with six channels or
+  more the score's waves are 16 steps, as language.md §19 says.
+- Not run: an NSF2's IRQ and non-returning init (the play routine is called
+  a frame at a time), the MMC5's PCM and a `$4011` the CPU writes on and on
+  (counted in the log, as a VGM's).
+
 **MDX (X68000) and MGS (MSX).** A song compiled for MXDRV (`.mdx`) or
 MGSDRV (`.mgs`, MGSARC's compressed form too) is played as its driver plays
 it — repeats unrolled, each track up to its own loop point or its end — and
@@ -2135,7 +2165,7 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   their channel's `@`), less the sounds the `y` holds keyed. The log counts
   what was left out.
 
-**A MIDI, VGM, MDX or MGS import is structured** (a MIDI or VGM import's
+**A MIDI, VGM, NSF, MDX or MGS import is structured** (a MIDI, VGM or NSF import's
 dialog has **Fold repeats** to untick, for one bar after another): bars that
 repeat back to back become `(x n …)`, a run that comes round once more cut
 short becomes `(x n A (break) B)`, and a run that comes back elsewhere

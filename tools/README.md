@@ -46,17 +46,22 @@ Run from tools directory:
     the HuC6280's noise at the rates it played and its pan; the 2A03's duties,
     triangle and noise modes, and its DMC samples from the file's memory blocks;
     the FDS's waves, gain and modulation on `fds-wave`
-17. `npm run check:import-tracker` — a PC Engine and an NES DefleMask module
+17. `npm run check:import-nsf` — the NSF import, on NSFs built there (a small
+    6502 driver playing a table of writes): the 2A03 and all six expansions on
+    their own fc channels, the loop where the state comes round and where a
+    counter keeps it from coming round, a song that stops, banks and a DMC
+    sample as they map it; every score compiles
+18. `npm run check:import-tracker` — a PC Engine and an NES DefleMask module
     written there, byte by byte: the PC Engine's wavetables, wave macro, `10xx`,
     `08xy` and noise come back as pce; the NES's duty macro and `12xx`, linear
     volumes, triangle and noise rates and modes as fc, and a Disk System
     channel as fc's `fds-wave` (its 64-step wave, `11xx` `13xx` `15xx` `16xy`
     as the song's LFO words); every score compiles
-18. `npm run check:archive` — the archives Live opens as folders, on ZIP and LZH
+19. `npm run check:archive` — the archives Live opens as folders, on ZIP and LZH
     files written there (and an `-lh5-` encoder written from LHA's): names,
     folders, damage; `-- <dir>` also reads every archive under a directory,
     CRC-checked (lhasa's `test/archives` held the LHA variants to it)
-19. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
+20. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
     check: the song importers (MDX, MGS, mucom88, MIDI, DMF, FUR) on a folder
     of real songs kept outside the repo, each score and its diagnostics written
     under `<dir>/<name>/`. Take a set before an importer change and one after,
@@ -68,7 +73,7 @@ Run from tools directory:
     slide shows there, which the diff hides in the lines it rewrites;
     `--regs base,now` plays them and compares their register writes — a
     rewrite that must sound the same writes the same
-20. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
+21. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
     check: a mucom88 import held to the real mucom88's VGM of the song (built
     from `github.com/onitama/mucom88`, `make OS_SDL=0` with the dummy OS's two
     missing stubs; it reads the `.muc` as UTF-8 — convert from CP932, not

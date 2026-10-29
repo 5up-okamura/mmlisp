@@ -60,7 +60,8 @@ browser and exported as VGM.
   voices, nearest first, to hear against the recording and play on the
   keyboard before one goes into the score.
 - **Bring songs and voices in.** DefleMask, Furnace, TFI / VGI / OPNI,
-  mucom88, MIDI, VGM and a SoundFont's drum kit import as scores and voices.
+  mucom88, MIDI, VGM, NSF and a SoundFont's drum kit import as scores and
+  voices — an NSF's songs run on a 6502, every Famicom expansion chip with them.
   Driver songs import for their own machine as their driver plays them —
   MDX (X68000) held to MXDRV, MGS (MSX) to MGSDRV, mucom88 (PC-8801) to
   mucom88, each compared against the driver frame by frame — and come out

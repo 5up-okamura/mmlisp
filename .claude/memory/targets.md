@@ -149,7 +149,8 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   released by triggerKeyOff (DDA's the same: sample handlers do not
   register holds). A long song's VGM grows a block a hit.
 - **Songs in, ruled 2026-10-27 (the user): VGM first, then Furnace /
-  DefleMask NES modules, ppmck's MML only if wanted; no NSF.** VGM built
+  DefleMask NES modules, ppmck's MML only if wanted** (NSF came after the
+  expansions, 2026-10-29: its own section below). VGM built
   2026-10-27 (import-vgm.js apuChip): the length and linear counters and
   the envelope run between writes (`advance`), so a note ends where its
   counter ran out and an envelope is a level envelope; the sweep is only
@@ -233,9 +234,7 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
 
 All six are on fc (language.md §19 fc says what the language does): VRC6,
 FDS, MMC5, 5B, VRC7, N163 — any number in one score, each an optional chip
-started at its first write, named by chip (the user, 2026-10-29). NSF in is
-the import session's (a 6502 run, import-only; the one register-level
-source of a VRC6 song).
+started at its first write, named by chip (the user, 2026-10-29).
 
 Where things are (dev-only):
 - Ports: 0 APU, 1 DMC RAM, (2 the worklet's PSG flag), 3 VRC6, 4 FDS (VGM
@@ -264,7 +263,6 @@ Open:
   envelopes only node-checked (no score or import drives them); the mod
   arithmetic nesdev's, not held to NSFPlay / Mesen.
 - The VRC7 is ymfm's YM2413 with the VRC7's ROM, not a DS1001 model.
-- No import reads an N163 or an MMC5.
 - :lfo-wave starts the FDS's counter over, so the structured writer's
   restatements (all switches rewritten where the set of kinds changes, a
   def's or a loop's head) add resets the game did not make — a free-
@@ -416,3 +414,39 @@ special cases.
   MDX against MXDRV) stays — not to be "fixed". An import compared against
   its driver drifts that much; compare note lengths (on → off), not
   absolute times, past the first minute.
+
+## NSF in (built 2026-10-29)
+
+import-nsf.js runs each song on cpu6502.js and feeds import-vgm.js's chip
+models (`nesChips`: the VGM ones, plus vrc6Chip, n163Chip and apuChip's
+`mmc5` mode, none of which a VGM reaches). Rulings (the user, 2026-10-29):
+the VGM dialog and writer reused, a Song field that re-runs; the length is
+the state coming round (RAM $0000-$07FF + $6000-$7FFF + the banks — not the
+chips' registers, which would put the loop a section late), else the
+writes' period (two periods, ≥ 1 s), else MAX_SECONDS 300; the loop point
+settled onto the first frame that writes something new; an N163 wave on 32
+steps at its own pitch (the language keeps 32 / 16; a wave length in the
+language is a separate discussion, not proposed here).
+
+Open:
+- Held to synthesized NSFs (tools check:import-nsf), one headless run of
+  Live's dialog, and two real NSFs against their VGM rips (the import
+  session's review, 2026-10-29): SMB3 song 1 loops at 0 and ends at 14.40 s
+  (the rip 14.38), the same strikes; Falsion song 1 (FDS) comes round at
+  89.6 s where the rip loops at 44.7 — its driver detunes pulse 2 by one
+  period step every other pass ($4006 aa/a9), so two passes are the exact
+  loop (kept: not halved to the rip's). Not A/B'd by ear or frame by frame
+  (abfc.mjs's comparison is the plan).
+- A play call's writes land a few cycles apart, so a strike and its
+  retrig in one burst (0.1 ms) count as two notes in the dialog's row
+  counts (SMB3's noise 133 against the rip's 85); the score keeps the later
+  of two on one tick, so it is unchanged.
+- The 6502's cycles are base counts (+ branch and page crossing), not
+  bus-exact; $4015 and the FDS's other registers read back 0 — a driver
+  waiting on the DMC's or a length counter's status would misread.
+- VRC6 / N163 notes are keyed by level (no key bit): a pitch jump at a held
+  level is a slur, as the 5B's and the FDS's are from VGM; $9003's
+  frequency shift is not followed (its halt is).
+- The FDS's state hash leaves out its RAM above $7FFF (a driver keeping
+  its state there falls to the writes' period).
+

@@ -55,7 +55,7 @@
        only tracks the Shift state. -->
   <div id="dropOverlay" hidden aria-hidden="true">
     <div class="drop-open">Drop to open — or import by extension<br>
-      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs — or a folder, .zip, .lzh</span>
+      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs .nsf .nsfe — or a folder, .zip, .lzh</span>
     </div>
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
@@ -910,6 +910,7 @@
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmDests, vgmChannels } from './src/import-vgm.js';
     import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import-mdx.js';
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
+    import { parseNsf, runNsf, nsfSongLabel, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
     import { analyzeSound, defaultResynthOptions, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
     import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/voice-estimate.js';
@@ -3221,6 +3222,7 @@
       fur: { tag: 'Furnace', re: /\.fur$/i, exts: ['.fur'], run: async (bytes, name) => importTrackerSong(await parseFur(bytes), name) },
       mdx: { tag: 'MDX', re: /\.mdx$/i, exts: ['.mdx', '.pdx'], run: (bytes, name, { pdx } = {}) => importMdxBytes(bytes, name, pdx) },
       mgs: { tag: 'MGS', re: /\.mgs$/i, exts: ['.mgs'], run: importMgsBytes },
+      nsf: { tag: 'NSF', re: /\.(nsf|nsfe)$/i, exts: ['.nsf', '.nsfe'], run: importNsfBytes },
     };
     function songImporterFor(name) {
       return Object.values(SONG_IMPORTERS).find((imp) => imp.re.test(name)) || null;
@@ -3264,7 +3266,7 @@
       const dat = picked.find((f) => /\.dat$/i.test(f.name));
       const bin = picked.find((f) => /\.bin$/i.test(f.name));
       if (!dat && !bin) {
-        log(`${picked.map((f) => f.name).join(', ')}: not a song file (.mid .vgm .dmf .fur .mdx .mgs .muc, or a mucom88 .dat / .bin)`, 'err');
+        log(`${picked.map((f) => f.name).join(', ')}: not a song file (.mid .vgm .dmf .fur .mdx .mgs .nsf .muc, or a mucom88 .dat / .bin)`, 'err');
         return;
       }
       if (!_mucomSong) {
@@ -3401,26 +3403,29 @@
       }, a);
     }
 
+    // A register-write song's rows (a VGM's, an NSF's): one per chip
+    // channel, its choices the target's channels, at the target's defaults.
+    function writesRows(a, target) {
+      const d = vgmDests(target), dd = defaultVgmOptions(a, target);
+      const choices = ['drop', ...d.fm, ...d.psg, ...d.wave, ...new Set([...(d.noise ? [d.noise] : []), ...d.noises])];
+      const pcmChoices = d.pcm.length ? ['drop', 'pcm1'] : ['drop'];
+      // On as many voices as the machine has: the Mega Drive's engine's three, another's PCM part's all.
+      const pcmMost = targetProfile(target).hasPart('dac') ? Math.min(3, d.pcm.length) : d.pcm.length;
+      const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', pcmMost > 1 ? `pcm1–${pcmMost}` : 'pcm1']] : ['drop'];
+      // The YM2608's rhythm: the ROM's tracks, or the kit on pcm1.
+      const rhythmChoices = ['drop', ...(d.rhythm.length ? d.rhythm : d.kit ? [d.kit] : [])];
+      // A YM2413's rows: the FM-PAC's channels too (msx's fm1–fm9), where its voices are.
+      const opllChoices = [...choices, ...d.opll];
+      return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
+        choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : c.kind === 'rhythm' ? rhythmChoices : c.kind === 'opll' ? opllChoices : choices }));
+    }
+
     async function importVgmBytes(bytes, fileName) {
       const parsed = await parseVgm(bytes);
       const a = analyzeVgm(parsed);
       const def = defaultVgmOptions(a);
-      // One row per chip channel, its choices the target's channels: picking
-      // another target rebuilds them at its defaults.
-      const rowsFor = (target) => {
-        const d = vgmDests(target), dd = defaultVgmOptions(a, target);
-        const choices = ['drop', ...d.fm, ...d.psg, ...d.wave, ...new Set([...(d.noise ? [d.noise] : []), ...d.noises])];
-        const pcmChoices = d.pcm.length ? ['drop', 'pcm1'] : ['drop'];
-        // On as many voices as the machine has: the Mega Drive's engine's three, another's PCM part's all.
-        const pcmMost = targetProfile(target).hasPart('dac') ? Math.min(3, d.pcm.length) : d.pcm.length;
-        const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', pcmMost > 1 ? `pcm1–${pcmMost}` : 'pcm1']] : ['drop'];
-        // The YM2608's rhythm: the ROM's tracks, or the kit on pcm1.
-        const rhythmChoices = ['drop', ...(d.rhythm.length ? d.rhythm : d.kit ? [d.kit] : [])];
-        // A YM2413's rows: the FM-PAC's channels too (msx's fm1–fm9), where its voices are.
-        const opllChoices = [...choices, ...d.opll];
-        return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
-          choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : c.kind === 'rhythm' ? rhythmChoices : c.kind === 'opll' ? opllChoices : choices }));
-      };
+      // Picking another target rebuilds the rows at its defaults.
+      const rowsFor = (target) => writesRows(a, target);
       const fields = [];
       // A file of one machine's chip can be that machine's score or the Mega Drive's.
       if (a.targets.length > 1)
@@ -3479,6 +3484,60 @@
       log(`${fileName}: MGS${mgs.version}${mgs.title ? ' · ' + mgs.title : ''} · ${a.bpm} BPM at the start · ` +
         played.map((t) => t.label).join(' · '), 'info');
       return mgsToMmlisp(mgs, { structure: true, fileName }, a);
+    }
+
+    // NSF: each song is run — the file's own driver on a 6502 — and its
+    // writes read as a VGM's (src/import-nsf.js), so the dialog is the VGM
+    // one with the song to pick; picking another runs it and rebuilds the rows.
+    const NSF_CHIPS = [['vrc6', 'VRC6'], ['vrc7', 'VRC7'], ['fds', 'FDS'], ['mmc5', 'MMC5'], ['n163', 'N163'], ['s5b', '5B']];
+    async function importNsfBytes(bytes, fileName) {
+      const nsf = parseNsf(bytes);
+      const runs = new Map(); // song → {parsed, a}
+      const songOf = (song) => {
+        if (!runs.has(song)) { const parsed = runNsf(nsf, song); runs.set(song, { parsed, a: analyzeVgm(parsed) }); }
+        return runs.get(song);
+      };
+      const order = nsf.playlist?.filter((i) => i < nsf.songs) ?? Array.from({ length: nsf.songs }, (_, i) => i);
+      const first = songOf(nsf.start).a;
+      const def = defaultVgmOptions(first);
+      const rowsFor = (_value, _key, f = {}) => {
+        const { a } = songOf(Number(f.song ?? nsf.start));
+        return writesRows(a, f.target ?? a.target);
+      };
+      const fields = [];
+      if (nsf.songs > 1)
+        fields.push({ key: 'song', label: 'Song', type: 'select', value: String(nsf.start), rebuildsRows: true,
+          choices: order.map((i) => [String(i), nsfSongLabel(nsf, i)]) });
+      if (first.targets.length > 1)
+        fields.push({ key: 'target', label: 'Target', type: 'select', value: first.target, rebuildsRows: true,
+          choices: first.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
+          hint: 'fc keeps the Famicom’s chips; md reads them for the Mega Drive' });
+      fields.push(
+        { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
+        { key: 'loop', label: 'Loop (where the song comes round, when it does)', type: 'checkbox', value: true },
+      );
+      fields.push(STRUCTURE_FIELD);
+      const chips = ['2A03', ...NSF_CHIPS.filter(([k]) => nsf.chips[k]).map(([, name]) => name)].join(' + ');
+      const got = await showImportDialog({
+        title: `Import ${fileName}`,
+        summary: `${[nsf.name, nsf.artist].filter(Boolean).join(' · ') || 'NSF'} · ${chips} · ${nsf.songs} song${nsf.songs === 1 ? '' : 's'}. ` +
+          `Each song is run on its own driver and its notes rebuilt from what it writes, at the times it wrote them (150 BPM, a tick 1/240 s), up to its loop — or ${NSF_MAX_SECONDS / 60} min.`,
+        fields,
+        rows: writesRows(first, def.target),
+        rowsFor,
+      });
+      if (!got) return null;
+      const { parsed, a } = songOf(Number(got.fields.song ?? nsf.start));
+      return vgmToMmlisp(parsed, {
+        target: got.fields.target ?? a.target,
+        dest: got.rows,
+        followPitch: !!got.fields.followPitch,
+        // (A song that stops does not loop: the box keeps the loop the run found.)
+        loop: !!got.fields.loop && a.fileLoop,
+        pcmVoices: defaultVgmOptions(a).pcmVoices,
+        structure: !!got.fields.structure,
+        fileName,
+      }, a);
     }
 
     async function importSf2FromFile(file) {
@@ -3818,8 +3877,9 @@
     // The import dialog: a few fields, then one row per source part with its
     // destination. Resolves {fields, rows} on Import (or Enter), null on
     // Cancel (or Escape, or a click outside).
-    // `rowsFor(value)`, when given, rebuilds the rows when a field with
-    // `rebuildsRows` changes (an import's target: its channels).
+    // `rowsFor(value, key, fields)`, when given, rebuilds the rows when a
+    // field with `rebuildsRows` changes (an import's target: its channels; an
+    // NSF's song) — the field's value, its key, and every field's as it stands.
     function showImportDialog({ title, summary = '', fields = [], rows = [], rowsFor = null }) {
       const modal = document.getElementById('importModal');
       document.getElementById('importModalTitle').textContent = title;
@@ -3856,7 +3916,10 @@
           if (f.type === 'number') el.step = 'any';
         }
         inputs[f.key] = el;
-        if (f.rebuildsRows && rowsFor) el.addEventListener('change', () => renderRows(rowsFor(el.value)));
+        if (f.rebuildsRows && rowsFor) el.addEventListener('change', () => {
+          const now = Object.fromEntries(Object.entries(inputs).map(([k, e]) => [k, e.type === 'checkbox' ? e.checked : e.value]));
+          renderRows(rowsFor(el.value, f.key, now));
+        });
         label.append(span, el);
         if (f.hint) {
           const h = document.createElement('small');
@@ -5808,7 +5871,7 @@
         log(
           DROP_NON_WAV_AUDIO.test(entry.file.name)
             ? `${entry.file.name}: a sample is .wav only (the exporters read RIFF WAV); File > Import > Audio as Formants… or Audio as FM Voice… reads it as it is`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .opm .muc .mml .dat .bin .sf2 .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs .zip .lzh)`,
+            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .opm .muc .mml .dat .bin .sf2 .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs .nsf .nsfe .zip .lzh)`,
           'err',
         );
       }
