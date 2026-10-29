@@ -56,11 +56,13 @@ const ourVgm = renderVgm(player, {}, null).bytes;
 const refVgm = new Uint8Array(fs.readFileSync(refFile));
 
 // A VGM → the YM2608's registers at the middle of each 1/120 s frame, and
-// the rhythm sounds keyed in it.
+// the rhythm sounds keyed in it — played on through its loop to `until`
+// samples (ours holds its loop once, the reference is rendered out long).
 const STEP = 44100 / 120;
-function frames(u8) {
+function frames(u8, until = Infinity) {
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   let p = dv.getUint32(8, true) >= 0x150 ? 0x34 + dv.getUint32(0x34, true) : 0x40;
+  const loopAt = dv.getUint32(0x1c, true) ? 0x1c + dv.getUint32(0x1c, true) : null;
   const reg = [new Uint8Array(256), new Uint8Array(256)];
   const keyed = new Uint8Array(6); // an FM channel's slots on
   let hits = 0; // rhythm key-ons this frame
@@ -72,9 +74,9 @@ function frames(u8) {
     if (port === 0 && a === 0x28) { const ch = d & 3, hi = (d >> 2) & 1; if (ch < 3) keyed[ch + 3 * hi] = d >> 4; }
     if (port === 0 && a === 0x10 && !(d & 0x80)) hits |= d & 0x3f;
   };
-  while (p < u8.length) {
+  while (p < u8.length && t < until) {
     const c = u8[p];
-    if (c === 0x66) break;
+    if (c === 0x66) { if (loopAt == null || until === Infinity) break; p = loopAt; continue; }
     if (c === 0x56 || c === 0x57) { write(c - 0x56, u8[p + 1], u8[p + 2]); p += 3; }
     else if (c === 0x61) { wait(dv.getUint16(p + 1, true)); p += 3; }
     else if (c === 0x62) { wait(735); p++; }
@@ -83,7 +85,8 @@ function frames(u8) {
     else if (c >= 0x80 && c <= 0x8f) { wait(c & 15); p++; }
     else if (c === 0x67) p += 7 + dv.getUint32(p + 3, true);
     else if (c === 0xe0) p += 5;
-    else if (c >= 0x30 && c <= 0x3f) p += 2;
+    else if (c >= 0x90 && c <= 0x95) p += [5, 5, 6, 11, 2, 5][c - 0x90];
+    else if ((c >= 0x30 && c <= 0x3f) || c === 0x4f || c === 0x50) p += 2;
     else if (c >= 0x40 && c <= 0xbf) p += 3;
     else if (c >= 0xc0 && c <= 0xdf) p += 4;
     else if (c >= 0xe1) p += 5;
@@ -115,7 +118,7 @@ function channel(f, id) {
   return { on: !!((f.hits >> i) & 1), midi: null, vol: f.reg[0][0x18 + i] & 31, text: "" };
 }
 
-const R = frames(refVgm), O = frames(ourVgm);
+const R = frames(refVgm), O = frames(ourVgm, R.length * STEP);
 const ids = [...Array(6).keys()].map((i) => `fm:${i}`).concat([0, 1, 2].map((i) => `ssg:${i}`), [...Array(6).keys()].map((i) => `rh:${i}`));
 // Where ours lines up: an offset (frames) and a clock ratio, the pair whose
 // channels agree most often on sounding.
@@ -143,9 +146,12 @@ console.log(`${path.basename(file)}${flat ? " (flat)" : ""}: ${N} frames, the re
 let all = 0, allAgree = 0, allPitched = 0, allNear = 0, allBoth = 0, allLevel = 0;
 for (const id of ids) {
   let refOn = 0, ourOn = 0, agree = 0, both = 0, near = 0, pitched = 0, volDiff = 0;
+  // A rhythm hit is an instant: one a frame either side of the other's agrees.
+  const hitNear = (get, k) => [-1, 0, 1].some((d) => k + d >= 0 && k + d < N && channel(get(k + d), id).on);
   for (let k = 0; k < N; k++) {
     const a = channel(ref(k), id), b = channel(O[k], id);
-    refOn += a.on; ourOn += b.on; agree += a.on === b.on;
+    refOn += a.on; ourOn += b.on;
+    agree += id.startsWith("rh") ? (a.on ? hitNear((j) => O[j], k) : !b.on || hitNear(ref, k)) : a.on === b.on;
     if (a.on && b.on) {
       both++; volDiff += Math.abs(a.vol - b.vol);
       if (a.midi != null && b.midi != null) { pitched++; if (Math.abs(a.midi - b.midi) < 0.5) near++; }
