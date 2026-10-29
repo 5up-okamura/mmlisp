@@ -902,16 +902,18 @@ export function emitStructured(song) {
       for (const it of items) if ((p = firstPiece(it))) break;
       if (!p) return { tokens: [], st };
       const oct = octOf(p.midi);
-      // A glide is not stated at a head: its note writes it, where it is.
+      // A glide is not stated at a head: its note writes it, where it is —
+      // as it writes its `again`.
       const held = p.st.filter((t) => !isGlide(t));
+      const said = (toks) => toks.filter((t) => !p.again?.includes(t));
       if (whole) {
         // At the track's start there is no macro to clear.
         const sw = start ? held.filter((t) => !/^\(macro :[a-z+*-]+ none\)$/.test(t)) : held;
-        return { tokens: [...sw, `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${p.vel}`])], st: { oct, vel: p.vel, st: held } };
+        return { tokens: [...said(sw), `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${p.vel}`])], st: { oct, vel: p.vel, st: held } };
       }
       const sw = st.st.length ? stateChange(st.st, held) : held;
       const back = around ? stateChange(around.st, held).filter((t) => !baked(t)) : [];
-      const tokens = held.filter((t) => sw.includes(t) || back.includes(t));
+      const tokens = said(held.filter((t) => sw.includes(t) || back.includes(t)));
       if (oct !== st.oct) tokens.push(`:oct ${oct}`);
       return { tokens, st: { ...st, oct, st: held } };
     };
