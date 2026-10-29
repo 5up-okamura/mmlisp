@@ -67,3 +67,15 @@ lessons.
 - **WebKit reproduces iPhone issues headless**: playwright-core's WebKit
   (`npx playwright-core install webkit`, cached in ~/Library/Caches) with
   `devices['iPhone 13']` — no folder picker, touch, the iOS paths.
+
+## Small tools still to specify
+
+- **Time-unit converter:** the user wants a small panel tool. Decide its
+  inputs and conversions between score lengths, ticks, frames and milliseconds
+  before building it. This is not a request to add Hz to MMLisp's LFO rate.
+- **Note to MIDI number:** establish the helper's input/output and actual use
+  case; do not assume it means rewriting the score to `(note ...)` forms.
+- **A/B snapshots:** keep the idea minimal and unnamed. What state is captured
+  still needs discussion; no naming or snapshot-management UI.
+- **A second temporary tool on mobile:** decide how to switch small windows
+  without stacking them over the source; do not infer a multi-window design.

@@ -464,7 +464,7 @@
     /* Edit > Logical Editor: the notes its condition picks */
     .cm-logical-match { background: color-mix(in srgb, var(--accent) var(--sel), transparent); border-radius: 2px; }
     .cm-logical-shared { background: none; outline: 1px dashed var(--accent); }
-    .modal-overlay.logical-overlay { background: none; justify-content: flex-end; align-items: flex-start; pointer-events: none; }
+    .modal-overlay.logical-overlay { background: none; justify-content: flex-end; align-items: flex-start; pointer-events: none; z-index: 90; } /* below menus (100) */
     /* File > Import > Audio as FM Voice: the page stays live under it (the keys play the candidate) */
     .modal-overlay.fmv-overlay { background: none; align-items: flex-start; pointer-events: none; }
     .fmv-modal { pointer-events: auto; margin-top: 3.2rem; width: min(420px, 92vw); box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
@@ -478,14 +478,25 @@
     .fmv-row.chosen { background: color-mix(in srgb, var(--foreground) var(--fill), transparent); }
     .fmv-play { min-width: 1.8rem; }
     .fmv-note { color: var(--sub); margin: 0.75rem 0 0; }
-    .logical-modal { pointer-events: auto; margin: 3.2rem 1rem 0 0; width: min(330px, 92vw); box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
-    .logical-modal .le-pair { display: flex; gap: 0.3rem; }
-    .logical-modal input[type=text] {
+    .temporary-tool { min-width: 0; }
+    .tool-close { margin-left: auto; padding: 0 0.25rem; border: 0; background: none;
+      color: var(--foreground); font: inherit; font-size: 1rem; cursor: pointer; }
+    .logical-tool .import-field { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
+    .logical-tool select { min-width: 0; max-width: 100%; }
+    .logical-tool .le-pair > * { min-width: 0; flex: 1; }
+    .logical-tool .le-status { overflow-wrap: anywhere; }
+    .logical-overlay .logical-tool { pointer-events: auto; margin: 3.2rem 1rem 1rem;
+      width: min(330px, 92vw); max-height: calc(var(--tool-viewport-height, 100dvh) - 4.2rem); overflow-y: auto;
+      background: var(--background); border: 1px solid var(--mid); border-radius: 4px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
+    .logical-tool .le-pair { display: flex; gap: 0.3rem; }
+    .logical-tool input[type=text] {
       width: 4.5rem; background: var(--background); color: var(--foreground); border: 1px solid var(--mid);
       border-radius: 2px; padding: 0.15rem 0.3rem; font-family: inherit; font-size: 0.72rem;
     }
-    .logical-modal .le-ops { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); }
-    .logical-modal .le-status { margin-top: 0.6rem; color: var(--sub); font-size: 0.7rem; min-height: 1em; }
+    .logical-tool .le-ops { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); }
+    .logical-tool input:disabled { opacity: var(--off); }
+    .logical-tool .le-status { margin-top: 0.6rem; color: var(--sub); font-size: 0.7rem; min-height: 1em; }
     .import-field[hidden] { display: none; }
     .cm-valHover {
       border-radius: 2px;

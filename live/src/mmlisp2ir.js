@@ -895,6 +895,29 @@ function isPcmModeSymbol(value) {
   return value === "shot" || value === "loop" || value === "gate";
 }
 
+// Optional source-edit analysis stays outside the public IR. Capture notation
+// before :key and shuffle; the compiler still resolves snippets and state.
+function editableContext(state, length, note = null) {
+  return {
+    length, octave: state.defaultOct, sample: state.isPcmTrack ? state.pcmSampleName : null,
+    pitch: note == null ? null : note + state.defaultOct,
+    voice: state.isPcmTrack ? state.pcmSampleName
+      : state.part?.kind === "wave" ? (state.activeMacros.WAVE ? null : state.editWaveName ?? null)
+      : state.voiceName ?? (state.part?.kind === "fm" ? "init-fm" : null),
+  };
+}
+
+function emitEditableNote(state, name, nominal, events, diagnostics, src, trackName) {
+  const context = state.noteAnalysis ? editableContext(state, nominal, name) : null;
+  if (context && state.pendingLegato) context.tied = true;
+  const start = events.length;
+  const ticks = resolveShuffleTicks(nominal, state, diagnostics, src, trackName);
+  emitNoteForTrack(state, name, ticks, events, diagnostics, src, trackName);
+  if (context) for (let i = start; i < events.length; i++) {
+    if (["NOTE_ON", "PCM_NOTE_ON", "TIE"].includes(events[i].cmd)) events[i]._edit = context;
+  }
+}
+
 function emitNoteForTrack(
   trackState,
   noteName,
@@ -904,6 +927,12 @@ function emitNoteForTrack(
   src,
   trackName,
 ) {
+  // The right side may be a generated (note ...), not an editable token.
+  // Its connection still makes the preceding written note unsafe to edit.
+  if (trackState.noteAnalysis && trackState.pendingLegato) {
+    const head = trackState.isPcmTrack ? trackState.pcmTiedHead : trackState.tiedHead;
+    if (head?.ev?._edit) head.ev._edit.tied = true;
+  }
   // A `:key` voice moves the written note by its key − 60 (§9). Done here, at
   // the one entry every note takes, so ties, slurs, glides and echoes all see
   // the sounding pitch, as if it had been written.
@@ -1532,6 +1561,7 @@ function applyMacroEntryToState(trackState, irTarget, spec, ctx) {
     );
     return;
   }
+  if (irTarget === "WAVE") trackState.editWaveName = null;
   trackState.activeMacros[irTarget] = spec;
 }
 
@@ -2282,7 +2312,8 @@ function applyMods(events, head, mods) {
     if (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") {
       const ms = hits(ev);
       if (ms.some((m) => m.keyonOff)) {
-        out.push({ tick: ev.tick, cmd: "REST", args: { length: ev.args.length }, src: ev.src });
+        out.push({ tick: ev.tick, cmd: "REST", args: { length: ev.args.length }, src: ev.src,
+          ...(ev._edit ? { _edit: ev._edit } : {}) });
         dropped = true;
         continue;
       }
@@ -2291,7 +2322,8 @@ function applyMods(events, head, mods) {
       dropped = false;
       for (const m of ms) if (m.vel.length) applyModVel(ev.args, m.vel);
     } else if (ev.cmd === "TIE" && dropped) {
-      out.push({ tick: ev.tick, cmd: "REST", args: { length: ev.args.length }, src: ev.src });
+      out.push({ tick: ev.tick, cmd: "REST", args: { length: ev.args.length }, src: ev.src,
+        ...(ev._edit ? { _edit: ev._edit } : {}) });
       continue;
     } else if (ev.cmd === "PCM_NOTE_OFF" && hits(ev).some((m) => m.keyonOff)) {
       continue;
@@ -3947,6 +3979,7 @@ function emitWave(trackState, events, src, name, diagnostics, trackName) {
   if (index == null) return; // its def did not read
   const { part, head } = trackState;
   if (part?.words("WAVE")) {
+    trackState.editWaveName = name;
     warnWaveLen(trackState, name, trackState.waves[index].data, src, diagnostics, trackName);
     events.push({ tick: trackState.tick, cmd: "PARAM_SET", args: { target: "WAVE", value: index }, src });
     return;
@@ -4500,6 +4533,7 @@ function compileChannelBody(
                 emitWave(trackState, events, nodeSrc(node), valueNode.value, diagnostics, trackName);
                 break;
               }
+              trackState.editWaveName = null;
               const r = waveExpr(valueNode, {
                 waveOf: (name, at) => trackState.waves?.dataOf(name, at) ?? null,
                 vals, runtime: true, diagnostics, trackName,
@@ -4682,8 +4716,9 @@ function compileChannelBody(
 
       // Rest atom: "_", "_4", "_4.", "_14t", "_16f"
       if (isRestAtom(val)) {
+        const nominal = parseRestLength(val, trackState.defaultLength, trackState.currentTempo);
         const ticks = resolveShuffleTicks(
-          parseRestLength(val, trackState.defaultLength, trackState.currentTempo),
+          nominal,
           trackState, diagnostics, nodeSrc(node), trackName,
         );
         // A rest on the rate source rests the CSM buzz (language.md §15): Timer
@@ -4701,6 +4736,7 @@ function compileChannelBody(
           cmd: "REST",
           args: { length: ticks },
           src: nodeSrc(node),
+          ...(trackState.noteAnalysis ? { _edit: editableContext(trackState, nominal) } : {}),
         });
         trackState.tick += ticks;
         trackState.tiedHead = null; // a rest ends the tied group
@@ -4712,36 +4748,17 @@ function compileChannelBody(
       // Per-note length atom: c4, e8., f+12t, b-6f, a1/2
       if (isPerNoteLengthAtom(val)) {
         const { noteName, lengthStr } = parsePerNoteLength(val);
-        // The shuffle warps the written length (§5.2).
-        const perNoteTicks = resolveShuffleTicks(
+        emitEditableNote(trackState, noteName,
           parseLengthToken(lengthStr, trackState.defaultLength, trackState.currentTempo),
-          trackState, diagnostics, nodeSrc(node), trackName,
-        );
-        emitNoteForTrack(
-          trackState,
-          noteName,
-          perNoteTicks,
-          events,
-          diagnostics,
-          nodeSrc(node),
-          trackName,
-        );
+          events, diagnostics, nodeSrc(node), trackName);
         i++;
         continue;
       }
 
       // Bare note: c, d, e, f, g, a, b (with optional + or -)
       if (isNoteAtom(val)) {
-        const ticks = resolveShuffleTicks(trackState.defaultLength, trackState, diagnostics, nodeSrc(node), trackName);
-        emitNoteForTrack(
-          trackState,
-          val,
-          ticks,
-          events,
-          diagnostics,
-          nodeSrc(node),
-          trackName,
-        );
+        emitEditableNote(trackState, val, trackState.defaultLength,
+          events, diagnostics, nodeSrc(node), trackName);
         i++;
         continue;
       }
@@ -6912,6 +6929,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     hasInlineCsmRate: false,
     hasCsmOn: false,
     defaultVel: 15, // per-note velocity, KEY-ON scoped, 0-15
+    noteAnalysis: options.noteAnalysis, // optional WeakMap, never serialized
     activeMacros: {}, // the macros in force, { target: spec, ... } for all targets
     delayTicks: 0, // (delay …) tap spacing in ticks (0 = off)
     delaySpec: null, // (delay …) relative spec {mode,type,…} or null
@@ -7342,6 +7360,11 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     },
     tracks,
   });
+
+  // sortObject copies events: associate analysis with the returned instances.
+  if (options.noteAnalysis) for (const track of ir.tracks) for (const ev of track.events) {
+    if (ev._edit) { options.noteAnalysis.set(ev, ev._edit); delete ev._edit; }
+  }
 
   rejectInlineStochasticSweeps(tracks, diagnostics);
   warnInlineSweepWaits(tracks, diagnostics);

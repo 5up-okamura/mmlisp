@@ -2257,29 +2257,62 @@ step.
 
 ### The Logical Editor
 
-**Edit ▸ Logical Editor…** picks notes by a condition and acts on all of them
-at once, the way a DAW's logical editor does. Its panel sits beside the
-editor and marks every note the condition matches as you change it.
+**Edit ▸ Logical Editor** picks source notes by a condition and acts on them
+at once. On desktop it opens at the end of **Params** and scrolls into view.
+Its checked menu item toggles it closed; the heading's **×** closes it too.
+Click the heading to shrink it without closing. Existing parameter sections
+keep their places, and the keyboard stays below the scrolling panel.
+On a phone the same controls open in a small floating window so the source
+stays visible.
 
 - **Scope**: the selection, the layer the cursor is in (its channel at its
   `:prio` — every form of it, since they append), the channel with all its
   layers, or the whole score. Notes a higher `:prio` layer hides count too:
-  they are in the text even when they do not sound.
-- **Condition**: pitch (any note, a note name in any octave, a range such as
+  they are in the text even when they do not sound. The target follows the
+  current source selection or cursor, while the chosen Scope stays set.
+  An empty selection or a cursor outside a channel has no target.
+- **Condition**: written pitch (any note, a note name in any octave, a range such as
   `c4`–`b4`, or rests), length (`=`, `>` or `<` a length written as the score
-  writes one — `8`, `4.`, `96t`), and voice or sample (`snare`, `lead`).
-- **Do**: delete (leaving a rest, so nothing after it moves, or closing up),
+  writes one — `8`, `4.`, `96t`, before shuffle, not gate time), and
+  **Voice / sample / wave**: a name used by the score, including imported
+  definitions, built-in FM voices and named waves (`snare`, `lead`, `piano`,
+  `saw`). A wave expression or wave macro is not treated as one named wave;
+  select **Any** to include those notes. The condition describes the score's
+  named sound selection, not changes to the hardware's shared voice or wave
+  memory. A name removed from the source stays selected with zero matches.
+- **Do**: **Select** creates multiple source selections from the matching
+  tokens without changing the score. Shared and tied/slurred tokens can be
+  selected too; each source token is selected once. Scope **Selection** uses
+  all selected ranges, so it can narrow those selections further.
+  Other operations delete (leaving a rest, so nothing after it moves, or closing up),
   set / add to / multiply the length, **transpose** by semitones (a note that
   crosses an octave is written `> c <`, so its neighbours stay put), or **reverse** — the run from the first
   matched note to the last, rests and all, played backwards, in each layer on
   its own. A reversed note
   is written out in full (`> e+8 <`), so the notes around it keep their octave
-  and sample.
+  and sample. For reverse, all notes/rests in the affected interval are marked,
+  including those between the first and last match that do not meet the
+  condition. FM voice and wave switches stay in place.
 
 Notes in a `def` or a counted loop are **shared**: one token plays in several
 places, so editing it changes all of them. They are marked with an outline and
-left alone unless you tick *Include shared notes*; reverse never touches them.
-Tied and slurred notes are left alone too. Apply is one undo step.
+left unchanged unless you tick *Include shared notes*; reverse never touches them.
+Editing operations leave tied and slurred notes unchanged too; Select includes
+them. The status distinguishes matched
+tokens, tokens that will change, and exclusions. Only plain note/rest tokens
+in the current source are editable: generated forms such as `(note …)` and
+notes in imported files are excluded. Reverse refuses an interval containing
+unsupported notation rather than skipping it silently.
+
+On desktop, **Apply** keeps the tool and its conditions
+open. An edit is one undo step; Select focuses the source without adding a
+source-edit undo step. Source edits and Undo/Redo refresh the targets;
+an invalid score or operation disables Apply until corrected. A voice's `:key`
+does not shift a transposed note a second time. Closing dismisses the tool and its highlights;
+use Undo to revert an applied edit. On a phone, Apply closes the window.
+Build to hear the edited score, as with other source edits. Opening a different
+score closes the tool. Escape closes it while focus is inside it; source-editor
+shortcuts keep their normal meaning.
 
 ### Finding, replacing, and editing every occurrence at once
 
@@ -2383,9 +2416,9 @@ from the first keystroke. Only what a track plays reaches the song.
 
 ## 25. The Library: what the app ships
 
-The side panel (the ⚙ button) has two tabs: **Params**, the sliders and the
-mixer, and **Library**, everything that comes with the app in one list — the
-language reference (**Ref**), the **Presets** (the voice and sample sets), the
+The side panel (the ⚙ button) has two tabs: **Params**, the sliders, mixer and
+open editing tools, and **Library**, everything that comes with the app in one
+list — the language reference (**Ref**), the **Presets** (the voice and sample sets), the
 **Snippets** and the **Scores** (the examples) — so looking up a keyword,
 picking a voice or trying a technique takes one click instead of a file
 dialog. **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
@@ -2394,6 +2427,10 @@ taking the keys; **Tools ▸ Params** — **⌘J** / **Ctrl+J** — opens it on 
 and closes it again when Params is already showing. The ⚙ button reopens the
 panel on the tab it was left on; a fresh launch starts on Params, with
 Library's filters cleared.
+
+On desktop, temporary tools such as the Logical Editor (§24) appear after
+all parameter sections. Switching tabs or hiding the panel keeps them open;
+their checked menu items and heading close buttons remove them.
 
 **MMLisp ▸ Language** picks the language the reference and the snippets are
 explained in — the Ref entries' summaries and category names, the snippets'

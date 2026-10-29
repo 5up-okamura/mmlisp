@@ -309,9 +309,9 @@
           <span>Loop Selection</span>
           <span class="menu-item-shortcut" id="loopSelectionShortcut"></span>
         </button>
-        <button class="menu-item" onclick="openLogicalEditor();closeMenus()"
+        <button class="menu-item" id="logicalMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleLogicalEditor();closeMenus()"
           title="Pick the notes that meet a condition, then delete them, change their length or reverse them">
-          <span>Logical Editor…</span>
+          <span>Logical Editor</span><span class="menu-item-shortcut" id="logicalMenuCheck"></span>
         </button>
       </div>
     </div>
@@ -572,6 +572,7 @@
         </div>
       </div>
 
+      <div id="temporaryTools"></div>
       </div>
 
       <!-- Library: the preset sets, the snippets and the example scores in one
@@ -680,8 +681,12 @@
   <!-- Edit > Logical Editor: a panel beside the editor, so the matches it
        marks stay in view (openLogicalEditor) -->
   <div id="logicalModal" class="modal-overlay logical-overlay" hidden>
-    <div class="modal logical-modal" role="dialog" aria-labelledby="logicalTitle">
-      <div class="modal-title" id="logicalTitle">Logical Editor</div>
+    <section id="logicalTool" class="rack-section temporary-tool logical-tool" data-menu="logicalMenu" hidden aria-labelledby="logicalTitle">
+      <div class="rack-title rack-title-row" tabindex="0" role="button" aria-expanded="true" aria-controls="logicalBody">
+        <span id="logicalTitle">Logical Editor</span>
+        <button class="tool-close" type="button" aria-label="Close Logical Editor" onclick="event.stopPropagation();closeLogicalEditor()">×</button>
+      </div>
+      <div class="rack-body" id="logicalBody">
       <div class="import-fields">
         <label class="import-field"><span>Scope</span>
           <select id="leScope">
@@ -707,8 +712,8 @@
             <option value="eq">=</option>
             <option value="gt">&gt;</option>
             <option value="lt">&lt;</option>
-          </select><input id="leLen" type="text" value="8" placeholder="8, 4., 96t"></span></label>
-        <label class="import-field"><span>Voice / sample</span>
+          </select><input id="leLen" type="text" value="8" placeholder="8, 4., 96t" disabled></span></label>
+        <label class="import-field"><span>Voice / sample / wave</span>
           <select id="leVoice"><option value="">Any</option></select></label>
       </div>
       <div class="import-fields le-ops">
@@ -721,18 +726,19 @@
             <option value="len-mul">Length: multiply by</option>
             <option value="transpose">Transpose (semitones)</option>
             <option value="reverse">Reverse (retrograde)</option>
+            <option value="select">Select</option>
           </select></label>
         <label class="import-field" id="leArgRow"><span id="leArgLabel">Length</span>
           <input id="leArg" type="text" value="8"></label>
-        <label class="import-field"><span>Include shared notes</span>
+        <label class="import-field" id="leSharedRow"><span>Include shared notes</span>
           <input id="leShared" type="checkbox"><small>notes in a def or a counted loop: editing one changes every place it plays</small></label>
       </div>
       <div class="le-status" id="leStatus"></div>
       <div class="modal-actions">
-        <button class="tb-btn" onclick="closeLogicalEditor()">Cancel</button>
         <button class="tb-btn" id="leApply" onclick="applyLogicalEditor()">Apply</button>
       </div>
-    </div>
+      </div>
+    </section>
   </div>
 
   <!-- About -->
@@ -926,7 +932,7 @@
     import { ARCHIVE_EXT } from './src/archive.js';
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
-    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, lengthTicks, voiceDefNames, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
+    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, lengthTicks, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
@@ -947,7 +953,7 @@
     const { EditorState, EditorSelection, StateField, StateEffect } = cm;
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
     const { tags } = cm;
-    const { history, historyKeymap, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
+    const { history, historyKeymap, isolateHistory, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
     const { hoverTooltip, closeHoverTooltips, hasHoverTooltips, tooltips } = cm;
     const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
@@ -1524,7 +1530,7 @@
     const logicalField = StateField.define({
       create: () => Decoration.none,
       update(deco, tr) {
-        deco = deco.map(tr.changes);
+        deco = tr.docChanged ? Decoration.none : deco.map(tr.changes);
         for (const e of tr.effects) if (e.is(setLogicalMarks)) deco = e.value;
         return deco;
       },
@@ -4194,23 +4200,74 @@
       return true;
     }
 
-    // Edit > Logical Editor (edit-tools.js): the score is compiled once when the
-    // panel opens; each change of the condition re-matches and re-marks the
-    // notes, and Apply rewrites their tokens as one undo step.
-    let _le = null; // { text, notes, sel }
+    // Temporary tools share the end of Params on desktop and a source-visible
+    // floating host on phones. Visibility is the one source of menu state.
+    const toolMedia = matchMedia('(max-width: 480px)');
     const leEl = (id) => document.getElementById(id);
+    // On phones the software keyboard can shrink the visual viewport only.
+    const sizeToolViewport = () => document.documentElement.style.setProperty('--tool-viewport-height', `${window.visualViewport?.height ?? window.innerHeight}px`);
+    window.visualViewport?.addEventListener('resize', sizeToolViewport);
+    sizeToolViewport();
+    function placeTemporaryTool(tool) {
+      const mobile = toolMedia.matches;
+      leEl('logicalModal').hidden = !mobile || tool.hidden;
+      (mobile ? leEl('logicalModal') : leEl('temporaryTools')).append(tool);
+      tool.setAttribute('role', mobile ? 'dialog' : 'region');
+    }
+    function setTemporaryToolVisible(tool, open) {
+      tool.hidden = !open;
+      const menu = leEl(tool.dataset.menu);
+      menu.setAttribute('aria-checked', String(open));
+      menu.querySelector('.menu-item-shortcut').textContent = open ? '✓' : '';
+      if (open) {
+        tool.classList.remove('collapsed');
+        tool.querySelector('.rack-title').setAttribute('aria-expanded', 'true');
+        placeTemporaryTool(tool);
+        if (!toolMedia.matches) {
+          if (!_panelOpen) togglePanel();
+          selectPanelTab('params');
+          requestAnimationFrame(() => {
+            if (tool.hidden || toolMedia.matches) return;
+            const body = leEl('rightPanelBody');
+            body.scrollTop += tool.getBoundingClientRect().top - body.getBoundingClientRect().top;
+          });
+        } else if (_panelOpen) togglePanel();
+      } else {
+        leEl('logicalModal').hidden = true;
+        tool.remove(); // reopening appends at the end
+      }
+    }
+    // Keep the same form and values through a desktop/phone width change.
+    toolMedia.addEventListener('change', () => {
+      const tool = leEl('logicalTool') || _le?.tool;
+      if (!tool || tool.hidden) return;
+      const focus = document.activeElement;
+      placeTemporaryTool(tool);
+      if (toolMedia.matches && _panelOpen) togglePanel();
+      if (!toolMedia.matches) {
+        if (!_panelOpen) togglePanel();
+        selectPanelTab('params');
+      }
+      if (tool.contains(focus)) focus.focus({ preventScroll: true });
+    });
+
+    let _le = null;
+    let _leTimer = 0;
+    // Keep the detached element so closing it leaves no rack space.
+    const logicalTool = leEl('logicalTool');
 
     function logicalQuery() {
-      const sel = _le.sel;
+      const sel = editorView.state.selection.main;
+      const here = _le.forms.find((f) => sel.head >= f.from && sel.head <= f.to);
       const lenOp = leEl('leLenOp').value;
       return {
-        scope: leEl('leScope').value, from: sel.from, to: sel.to, channel: _le.channel, prio: _le.prio,
+        scope: leEl('leScope').value, from: sel.from, to: sel.to, channel: here?.channel ?? null, prio: here?.prio ?? null,
+        ranges: editorView.state.selection.ranges.map((r) => ({ from: r.from, to: r.to })),
         pitch: { kind: leEl('lePitch').value, name: leEl('leName').value, low: leEl('leLow').value, high: leEl('leHigh').value },
         length: { op: lenOp, ticks: lenOp === 'any' ? null : lengthTicks(leEl('leLen').value) },
         voice: leEl('leVoice').value,
       };
     }
-
     function logicalOp() {
       const type = leEl('leOp').value;
       const arg = leEl('leArg').value;
@@ -4218,105 +4275,134 @@
         type, includeShared: leEl('leShared').checked,
         ticks: type === 'len-set' || type === 'len-add' ? lengthTicks(arg) : null,
         factor: type === 'len-mul' ? Number(arg) : null,
-        semitones: type === 'transpose' ? Number(arg) : null,
+        semitones: type === 'transpose' ? (arg.trim() ? Number(arg) : NaN) : null,
       };
     }
-
+    function logicalStatus(message) {
+      leEl('leStatus').textContent = message;
+      leEl('leApply').disabled = true;
+      editorView.dispatch({ effects: setLogicalMarks.of(Decoration.none) });
+    }
+    function scheduleLogicalRefresh(delay = 0) {
+      if (!_le) return;
+      clearTimeout(_leTimer);
+      leEl('leApply').disabled = true;
+      _leTimer = setTimeout(refreshLogicalEditor, delay);
+    }
     function refreshLogicalEditor() {
       if (!_le) return;
+      clearTimeout(_leTimer);
       const p = leEl('lePitch').value;
       leEl('leNameRow').hidden = p !== 'name';
       leEl('leRangeRow').hidden = p !== 'range';
-      const op = leEl('leOp').value;
-      leEl('leArgRow').hidden = !op.startsWith('len-') && op !== 'transpose';
-      const argLabel = op === 'len-mul' ? 'Factor' : op === 'transpose' ? 'Semitones' : 'Length';
+      leEl('leLen').disabled = leEl('leLenOp').value === 'any';
+      const op = logicalOp();
+      leEl('leSharedRow').hidden = op.type === 'select';
+      leEl('leArgRow').hidden = !op.type.startsWith('len-') && op.type !== 'transpose';
+      const argLabel = op.type === 'len-mul' ? 'Factor' : op.type === 'transpose' ? 'Semitones' : 'Length';
       if (leEl('leArgLabel').textContent !== argLabel) {
         leEl('leArgLabel').textContent = argLabel;
-        leEl('leArg').value = op === 'len-mul' ? '2' : op === 'transpose' ? '12' : '8';
+        leEl('leArg').value = op.type === 'len-mul' ? '2' : op.type === 'transpose' ? '12' : '8';
       }
-      const matches = matchNotes(_le.notes, logicalQuery());
-      _le.matches = matches;
-      const shared = matches.filter((n) => n.shared).length;
-      const tied = matches.filter((n) => n.tied).length;
-      const marks = matches.map((n) => (n.shared ? logicalSharedMark : logicalMark).range(n.from, n.to));
-      editorView.dispatch({ effects: setLogicalMarks.of(Decoration.set(marks, true)) });
-      const parts = [`${matches.length} match${matches.length === 1 ? '' : 'es'}`];
-      if (shared) parts.push(`${shared} shared`);
-      if (tied) parts.push(`${tied} tied (left alone)`);
-      leEl('leStatus').textContent = parts.join(' · ');
-      leEl('leApply').disabled = matches.length === 0;
-    }
-
-    window.openLogicalEditor = () => {
       const text = editorView.state.doc.toString();
-      let ir;
       try {
-        ({ ir } = compileMMLisp(text, _lastFileName, { imports: _importSources }));
+        if (_le.text !== text || _le.imports !== _importSources) {
+          _le.notes = layeredNotes(text, { filename: _lastFileName, imports: _importSources });
+          _le.forms = channelForms(text);
+          _le.text = text;
+          _le.imports = _importSources;
+          const voiceSel = leEl('leVoice');
+          const chosen = voiceSel.value;
+          const names = new Set(_le.notes.filter((n) => n.editable).map((n) => n.voice).filter(Boolean));
+          if (chosen) names.add(chosen); // a removed sound never silently becomes Any
+          voiceSel.replaceChildren(new Option('Any', ''));
+          for (const name of [...names].sort()) voiceSel.append(new Option(name, name));
+          voiceSel.value = chosen;
+        }
+        const q = logicalQuery();
+        const currentOp = logicalOp();
+        const invalid = logicalInputError(q, currentOp);
+        if (invalid) return logicalStatus(invalid);
+        if (q.scope === 'selection' && q.ranges.every((r) => r.from === r.to)) return logicalStatus('Select notes in the source.');
+        if ((q.scope === 'channel' || q.scope === 'layer') && q.channel == null) return logicalStatus('Place the cursor inside a channel.');
+        const matches = matchNotes(_le.notes, q);
+        const affected = logicalAffected(_le.notes, matches, currentOp);
+        const result = applyLogical(text, _le.notes, matches, currentOp);
+        _le.result = result;
+        const unique = (ns) => [...new Map(ns.map((n) => [n.from, n])).values()];
+        const selecting = currentOp.type === 'select';
+        const eligible = affected.filter((n) => n.editable && (selecting || (!n.tied && (!n.shared || currentOp.includeShared))));
+        const marked = currentOp.type === 'reverse' ? unique(affected) : unique(eligible);
+        const marks = marked.map((n) => (n.shared ? logicalSharedMark : logicalMark).range(n.from, n.to));
+        editorView.dispatch({ effects: setLogicalMarks.of(Decoration.set(marks, true)) });
+        const target = q.scope === 'all' ? 'Whole score' : q.scope === 'selection' ? 'Selection'
+          : q.channel + (q.scope === 'layer' ? ` :prio ${q.prio}` : ' · all layers');
+        const parts = [target, `${unique(matches).length} matched`, result.error || `${result.done} to ${selecting ? 'select' : 'change'}`];
+        if (currentOp.type === 'reverse') parts.push(`${unique(affected).length} notes/rests in reverse span`);
+        const shared = unique(matches.filter((n) => n.shared)).length;
+        const tied = unique(matches.filter((n) => n.tied)).length;
+        if (shared) parts.push(`${shared} shared${selecting ? ' — later edits affect every use' : currentOp.includeShared ? ' — affects every use, also outside Scope' : ' excluded'}`);
+        if (tied) parts.push(`${tied} tied/slurred${selecting ? '' : ' excluded'}`);
+        parts.push('Plain source notes/rests only');
+        leEl('leStatus').textContent = parts.join(' · ');
+        leEl('leApply').disabled = !!result.error || !(result.changes?.length || result.selection?.length);
       } catch (e) {
-        log(`Logical Editor: the score does not compile — ${e.message}`, 'err');
-        return;
+        _le.text = null;
+        _le.result = null;
+        logicalStatus(`Cannot analyse this score: ${e.message}`);
       }
-      const voices = voiceDefNames([text, ...(_importSources?.values?.() ?? [])]);
-      // Every layer's notes, those a higher :prio layer hides included.
-      const notes = layeredNotes(text, (t) => (t === text ? ir : compileMMLisp(t, _lastFileName, { imports: _importSources }).ir), voices);
-      const sel = editorView.state.selection.main;
-      // The channel at the cursor: the form it sits in (a def has none).
-      const here = channelForms(text).find((f) => sel.head >= f.from && sel.head <= f.to);
-      _le = { text, notes, channel: here?.channel ?? null, prio: here?.prio ?? null, sel: { from: sel.from, to: sel.to }, matches: [] };
-      leEl('leScope').value = sel.empty ? 'channel' : 'selection';
-      const voiceSel = leEl('leVoice');
-      voiceSel.replaceChildren(new Option('Any', ''));
-      for (const v of [...new Set(notes.map((n) => n.voice).filter(Boolean))].sort()) voiceSel.append(new Option(v, v));
-      leEl('logicalModal').hidden = false;
+    }
+    window.openLogicalEditor = () => {
+      if (_le) return;
+      _le = { tool: logicalTool, text: null, imports: null, notes: [], result: null };
+      leEl('logicalModal').append(logicalTool); // reconnect the one form
+      leEl('leScope').value = editorView.state.selection.ranges.every((r) => r.empty) ? 'channel' : 'selection';
+      setTemporaryToolVisible(logicalTool, true);
       refreshLogicalEditor();
-      leEl('lePitch').focus();
+      // A phone should not summon its software keyboard merely by opening.
+      logicalTool.querySelector('.rack-title').focus({ preventScroll: true });
     };
-
     window.closeLogicalEditor = () => {
+      if (!_le) return;
+      clearTimeout(_leTimer);
+      setTemporaryToolVisible(logicalTool, false);
       _le = null;
-      leEl('logicalModal').hidden = true;
       editorView.dispatch({ effects: setLogicalMarks.of(Decoration.none) });
       editorView.focus();
     };
-
+    window.toggleLogicalEditor = () => _le ? closeLogicalEditor() : openLogicalEditor();
     window.applyLogicalEditor = () => {
       if (!_le) return;
-      if (editorView.state.doc.toString() !== _le.text) {
-        log('Logical Editor: the score changed while the panel was open — open it again', 'err');
-        return window.closeLogicalEditor();
+      refreshLogicalEditor(); // never apply a cached result to a newer source/selection
+      if (leEl('leApply').disabled) return;
+      const result = _le.result;
+      if (result.selection) {
+        editorView.dispatch({ selection: EditorSelection.create(result.selection.map((r) => EditorSelection.range(r.from, r.to))), scrollIntoView: true, userEvent: 'select.logical' });
+        editorView.focus();
+        log(`Logical Editor: ${result.done} source token${result.done === 1 ? '' : 's'} selected.`, 'info');
+      } else {
+        editorView.dispatch({ changes: result.changes, annotations: isolateHistory.of('full'), userEvent: 'input.logical' });
+        log(`Logical Editor: ${result.done} source token${result.done === 1 ? '' : 's'} changed. Build to hear it.`, 'info');
       }
-      const op = logicalOp();
-      if ((op.type === 'len-set' || op.type === 'len-add') && op.ticks == null) {
-        leEl('leStatus').textContent = 'Length: write it as the score does — 8, 4., 96t, 1/3';
-        return;
-      }
-      if (op.type === 'len-mul' && !(op.factor > 0)) {
-        leEl('leStatus').textContent = 'Factor: a positive number';
-        return;
-      }
-      if (op.type === 'transpose' && !Number.isInteger(op.semitones)) {
-        leEl('leStatus').textContent = 'Semitones: a whole number, + up or − down (12 = an octave)';
-        return;
-      }
-      const res = applyLogical(_le.text, _le.notes, _le.matches, op);
-      if (res.error) {
-        leEl('leStatus').textContent = res.error;
-        return;
-      }
-      window.closeLogicalEditor();
-      if (res.changes.length) editorView.dispatch({ changes: res.changes, userEvent: 'input.logical', scrollIntoView: true });
-      const skip = [];
-      if (res.skipped.shared) skip.push(`${res.skipped.shared} shared`);
-      if (res.skipped.tied) skip.push(`${res.skipped.tied} tied`);
-      const label = leEl('leOp').selectedOptions[0]?.textContent ?? op.type;
-      log(`Logical Editor: ${label} — ${res.done} note${res.done === 1 ? '' : 's'}${skip.length ? `; skipped ${skip.join(', ')}` : ''}. Build to hear it.`, 'info');
+      if (toolMedia.matches) closeLogicalEditor();
+      else refreshLogicalEditor();
     };
-
-    for (const id of ['leScope', 'lePitch', 'leName', 'leLow', 'leHigh', 'leLenOp', 'leLen', 'leVoice', 'leOp'])
-      document.getElementById(id)?.addEventListener('input', () => refreshLogicalEditor());
-    document.getElementById('logicalModal')?.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); window.closeLogicalEditor(); }
-      else if (e.key === 'Enter' && e.target.tagName !== 'SELECT') { e.preventDefault(); window.applyLogicalEditor(); }
+    for (const id of ['leScope', 'lePitch', 'leName', 'leLow', 'leHigh', 'leLenOp', 'leLen', 'leVoice', 'leOp', 'leArg', 'leShared'])
+      leEl(id).addEventListener('input', refreshLogicalEditor);
+    logicalTool.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeLogicalEditor(); }
+      else if (e.target.classList.contains('rack-title') && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault(); e.target.click();
+      } else if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+        e.preventDefault(); applyLogicalEditor();
+      }
+    });
+    // Mobile headings live outside the rack's delegated click listener.
+    logicalTool.querySelector('.rack-title').addEventListener('click', (e) => {
+      if (!toolMedia.matches || e.target.closest('.tool-close')) return;
+      const title = e.currentTarget;
+      logicalTool.classList.toggle('collapsed');
+      title.setAttribute('aria-expanded', String(!logicalTool.classList.contains('collapsed')));
     });
     window.undoAction = () => { undo(editorView); editorView.focus(); };
     window.redoAction = () => { redo(editorView); editorView.focus(); };
@@ -4520,8 +4606,9 @@
         ...standardKeymap,
       ]),
       EditorView.updateListener.of((update) => {
-        // Compilation is manual (Build / Cmd-Ctrl+B); editing never compiles or
-        // applies — see buildAction(). Only the param/cursor UI tracks edits.
+        // Playback compilation is manual (Build / Cmd-Ctrl+B). An open
+        // Logical Editor separately analyses source without applying/playing it.
+        if (update.docChanged || update.selectionSet) scheduleLogicalRefresh(update.docChanged ? 150 : 0);
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged) syncBracketStatus();
         if (update.docChanged) { scheduleDraftSave(); markDocDirty(); }
@@ -4704,6 +4791,7 @@
     let _docEpoch = 0;
     function setEditorDoc(text) {
       // Reset the full state so that undo history does not include the file load.
+      closeLogicalEditor();
       _docEpoch++; // a compile still running is of the score this one replaces
       editorView.setState(EditorState.create({
         doc: text,
@@ -4916,6 +5004,7 @@
 
     async function refreshImportSources(src) {
       _importSources = await readImportSources(src, _lastFileName);
+      scheduleLogicalRefresh();
       return _importSources;
     }
 
@@ -7160,6 +7249,7 @@
       const title = e.target.closest('.rack-title');
       if (!title) return;
       title.parentElement.classList.toggle('collapsed');
+      if (title.hasAttribute('aria-expanded')) title.setAttribute('aria-expanded', String(!title.parentElement.classList.contains('collapsed')));
     });
 
     // -----------------------------------------------------------------------

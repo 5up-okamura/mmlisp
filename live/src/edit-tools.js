@@ -6,7 +6,7 @@
 
 import { parse } from "./mmlisp-parser.js";
 import { AC_TRACKS } from "./completion-names.js";
-import { canonicalTarget, macroCurveSteps, waveCurveSteps } from "./mmlisp2ir.js";
+import { compileMMLisp, canonicalTarget, macroCurveSteps, waveCurveSteps } from "./mmlisp2ir.js";
 import { MACRO_TARGET_RANGE, WAVE } from "./ir-utils.js";
 
 const TRACKS = new Set(AC_TRACKS);
@@ -252,7 +252,7 @@ function splitToken(tok) {
 // token that sounds more than once or outside its channel — inside a counted
 // loop, or in a def — where one edit changes every pass; `tied` one joined by
 // ~ to its neighbour, whose length is not its own to change.
-function scoreNotes(text, ir, voiceNames = new Set()) {
+function scoreNotes(text, ir, noteAnalysis) {
   const starts = lineStarts(text);
   const forms = channelForms(text);
   const out = [];
@@ -265,27 +265,32 @@ function scoreNotes(text, ir, voiceNames = new Set()) {
       const e = evs[i];
       if (e.cmd === "LOOP_BEGIN") depth++;
       else if (e.cmd === "LOOP_END") depth = Math.max(0, depth - 1);
-      const isNote = e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON";
+      let isNote = e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON" || e.cmd === "TIE";
       if (!isNote && e.cmd !== "REST") continue;
       const src = e.src;
       if (!src || src.file || src.line == null || src.endLine !== src.line) continue;
       const from = starts[src.line - 1] + src.column - 1;
       const to = starts[src.line - 1] + src.endColumn - 1;
       const token = text.slice(from, to);
-      if (!splitToken(token)) continue; // a (note n) form or the like: not a plain token
+      const written = noteAnalysis.get(e);
+      // Echoes are generated events, not additional uses of the written token.
+      if (!written && splitToken(token)) continue;
+      if (written) isNote = written.pitch != null;
+      const editable = !!written && !!splitToken(token);
       const form = forms.find((f) => f.channel === channel && from >= f.from && to <= f.to);
       const next = evs.slice(i + 1).find((x) => x.cmd !== "PARAM_SET");
       const n = {
-        from, to, token, channel, tick: e.tick, len: e.args?.length ?? 0,
+        from, to, token, channel, editable, tick: e.tick, len: written?.length ?? e.args?.length ?? 0,
+        octave: written?.octave ?? null,
         kind: isNote ? "note" : "rest",
-        pitch: isNote ? e.args.pitch : null,
-        midi: isNote ? pitchMidi(e.args.pitch) : null,
-        sample: e.args?.sample ?? null,
-        voice: e.args?.sample ?? (form ? voiceAt(form, forms, from, voiceNames) : null),
+        pitch: isNote ? written?.pitch ?? e.args.pitch : null,
+        midi: isNote ? pitchMidi(written?.pitch ?? e.args.pitch) : null,
+        sample: written?.sample ?? e.args?.sample ?? null,
+        voice: written?.voice ?? null,
         prio: form?.prio ?? null,
         direct: !!form?.items.some((it) => it.from === from),
         shared: depth > 0 || !form,
-        tied: !!(e.args?.legato || next?.cmd === "TIE" || next?.args?.legato),
+        tied: !!(written?.tied || e.cmd === "TIE" || e.args?.legato || next?.cmd === "TIE" || next?.args?.legato),
       };
       out.push(n);
       seen.set(from, (seen.get(from) ?? 0) + 1);
@@ -299,44 +304,39 @@ function scoreNotes(text, ir, voiceNames = new Set()) {
 // compiler merges a channel's :prio layers into one stream and drops what a
 // higher layer covers, so each layer of a layered channel is compiled alone —
 // the channel's other layers blanked out, space for space, so every offset
-// stays where it is. `compile(text)` returns the IR (with the score's imports).
-export function layeredNotes(text, compile, voiceNames = new Set()) {
+// stays where it is. Analysis uses the same imports as the current score.
+export function layeredNotes(text, options = {}) {
+  const compile = (source) => {
+    const noteAnalysis = new WeakMap();
+    // Driver voice hoisting splits rests and inserts silence; these are not
+    // written tokens and must not participate in source edits.
+    const { ir, diagnostics } = compileMMLisp(source, options.filename, { ...options, voiceHoist: false, noteAnalysis });
+    const errors = diagnostics.filter((d) => d.severity === "error");
+    if (errors.length) throw new Error(errors[0].message);
+    return scoreNotes(source, ir, noteAnalysis);
+  };
   const forms = channelForms(text);
   const prios = new Map();
   for (const f of forms) prios.set(f.channel, (prios.get(f.channel) ?? new Set()).add(f.prio));
   const layered = new Set([...prios].filter(([, ps]) => ps.size > 1).map(([ch]) => ch));
-  const notes = scoreNotes(text, compile(text), voiceNames).filter((n) => !layered.has(n.channel));
+  const notes = compile(text).filter((n) => !layered.has(n.channel));
   for (const ch of layered) {
     for (const p of prios.get(ch)) {
       let alone = text;
       for (const f of forms)
         if (f.channel === ch && f.prio !== p)
           alone = alone.slice(0, f.from) + alone.slice(f.from, f.to).replace(/[^\n]/g, " ") + alone.slice(f.to);
-      notes.push(...scoreNotes(alone, compile(alone), voiceNames).filter((n) => n.channel === ch));
+      notes.push(...compile(alone).filter((n) => n.channel === ch));
     }
   }
   return notes.sort((a, b) => a.from - b.from);
-}
-
-// The voice (a def-fm / def-pcm name) in force at `offset` in a channel: the
-// last one named before it across the channel's forms, top level.
-function voiceAt(form, forms, offset, voiceNames) {
-  let voice = null;
-  for (const f of forms) {
-    if (f.channel !== form.channel || f.prio !== form.prio || f.from > offset) continue;
-    for (const it of f.items) {
-      if (it.from >= offset) break;
-      if (it.node.kind === "atom" && voiceNames.has(it.node.value)) voice = it.node.value;
-    }
-  }
-  return voice;
 }
 
 /**
  * The notes meeting a condition.
  * @param {object} q  {scope: 'selection'|'layer'|'channel'|'all', from, to, channel, prio,
  *   pitch: {kind: 'any'|'rest'|'name'|'range', name, low, high},
- *   length: {op: 'any'|'eq'|'gt'|'lt', ticks}, voice: '' | name}
+ *   ranges?: {from, to}[], length: {op: 'any'|'eq'|'gt'|'lt', ticks}, voice: '' | name}
  */
 export function matchNotes(notes, q) {
   const channel = q.scope === "channel" || q.scope === "layer" ? q.channel ?? null : null;
@@ -344,7 +344,9 @@ export function matchNotes(notes, q) {
   const lo = q.pitch?.kind === "range" ? pitchMidi(q.pitch.low) : null;
   const hi = q.pitch?.kind === "range" ? pitchMidi(q.pitch.high) : null;
   return notes.filter((n) => {
-    if (q.scope === "selection" && !(n.from < q.to && n.to > q.from)) return false;
+    if (!n.editable) return false;
+    if (q.scope === "selection" && !(q.ranges ?? [{ from: q.from, to: q.to }])
+      .some((r) => r.from < r.to && n.from < r.to && n.to > r.from)) return false;
     if (q.scope === "channel" && n.channel !== channel) return false;
     if (q.scope === "layer" && (n.channel !== channel || n.prio !== q.prio)) return false;
     const p = q.pitch?.kind ?? "any";
@@ -360,18 +362,38 @@ export function matchNotes(notes, q) {
   });
 }
 
+// Validate the same input for previews and Apply; an empty field is not zero.
+export function logicalInputError(q, op) {
+  if (q.pitch?.kind === "name" && pitchMidi(q.pitch.name) == null) return "Note name: use c, f+ or b-.";
+  if (q.pitch?.kind === "range" && [q.pitch.low, q.pitch.high].some((p) => pitchMidi(p) == null))
+    return "Pitch range: use note names with octaves, such as c4 and b4.";
+  if ((q.length?.op ?? "any") !== "any" && !(Number.isFinite(q.length?.ticks) && q.length.ticks > 0))
+    return "Length: use a positive score length, such as 8, 4. or 96t.";
+  if ((op.type === "len-set" || op.type === "len-add") && !(Number.isFinite(op.ticks) && op.ticks > 0))
+    return "Length: use a positive score length, such as 8, 4. or 96t.";
+  if (op.type === "len-mul" && !(Number.isFinite(op.factor) && op.factor > 0)) return "Factor: use a positive number.";
+  if (op.type === "transpose" && !Number.isInteger(op.semitones)) return "Semitones: use a whole number.";
+  return null;
+}
+
 /**
  * Act on matched notes. op: {type: 'rest'|'remove'|'len-set'|'len-add'|
- * 'len-mul'|'reverse', ticks, factor, includeShared}.
- * @returns {{changes, done: number, skipped: {shared, tied}} | {error}}
+ * 'len-mul'|'reverse'|'select', ticks, factor, includeShared}.
+ * @returns {{changes, selection?: {from, to}[], done: number, skipped: {shared, tied}} | {error}}
  */
 export function applyLogical(text, notes, matches, op) {
   const skipped = { shared: 0, tied: 0 };
+  if (op.type === "select") {
+    const selection = [...new Map(matches.filter((n) => n.editable).map((n) => [n.from, { from: n.from, to: n.to }])).values()]
+      .sort((a, b) => a.from - b.from);
+    return { changes: [], selection, done: selection.length, skipped };
+  }
   if (op.type === "reverse") return reverseRuns(text, notes, matches);
   if (op.type === "transpose") return transposeNotes(text, matches, op);
   const changes = [];
   const done = new Set();
   for (const n of matches) {
+    if (!n.editable) continue;
     if (n.tied) { skipped.tied++; continue; }
     if (n.shared && !op.includeShared) { skipped.shared++; continue; }
     if (done.has(n.from)) continue;
@@ -390,11 +412,21 @@ export function applyLogical(text, notes, matches, op) {
       const ticks = op.type === "len-set" ? op.ticks
         : op.type === "len-add" ? n.len + op.ticks
         : n.len * op.factor;
-      if (!(ticks >= 1)) return { error: `a length would fall to ${ticks} ticks` };
+      if (!Number.isFinite(ticks) || ticks < 1) return { error: `a length would become ${ticks} ticks` };
+      if (n.shared && op.type !== "len-set" && notes.some((other) => other.from === n.from && other.len !== n.len))
+        return { error: "a shared token inherits different lengths at its uses — set an explicit length instead" };
       changes.push({ from: n.from, to: n.to, insert: `${head}${lengthSuffix(Math.round(ticks))}` });
     }
   }
-  return { changes, done: done.size, skipped };
+  const actual = changes.filter((c) => text.slice(c.from, c.to) !== c.insert);
+  // Adjacent deletions can claim the same separating space at a form's end.
+  const merged = [];
+  for (const c of actual.sort((a, b) => a.from - b.from)) {
+    const prev = merged.at(-1);
+    if (op.type === "remove" && prev && c.from <= prev.to) prev.to = Math.max(prev.to, c.to);
+    else merged.push({ ...c });
+  }
+  return { changes: merged, done: actual.length, skipped };
 }
 
 // Move matched notes by `op.semitones`. A note's own token holds no octave —
@@ -408,34 +440,19 @@ function transposeNotes(text, matches, op) {
   const seen = new Set();
   for (const n of matches) {
     if (n.kind !== "note" || seen.has(n.from)) continue;
+    if (!n.editable) continue;
     if (n.tied) { skipped.tied++; continue; }
     if (n.shared && !op.includeShared) { skipped.shared++; continue; }
     seen.add(n.from);
+    if (semis === 0) continue;
     const { head, suffix } = splitToken(n.token);
-    const ctxOct = Math.floor(n.midi / 12) - 1;
+    if (n.midi + semis < 0 || n.midi + semis > 127) return { error: "a transposed note would be outside MIDI 0..127" };
+    const ctxOct = n.octave;
     slots.push({ from: n.from, to: n.to, insert: spellAt(n.midi + semis, ctxOct, suffix, head.includes("-")) });
   }
-  return { changes: formChanges(text, channelForms(text), slots), done: slots.length, skipped };
-}
-
-// Token rewrites, gathered into one change per form, with the octave marks
-// that now cancel — a `>` written right before a `<` — taken out. Only the
-// pair goes; the spacing around it is the writer's.
-function formChanges(text, forms, slots) {
-  const changes = [];
-  for (const f of forms) {
-    const local = slots.filter((c) => c.from >= f.from && c.to <= f.to).map((c) => ({ ...c, from: c.from - f.from, to: c.to - f.from }));
-    if (local.length === 0) continue;
-    const lo = Math.min(...local.map((c) => c.from));
-    const hi = Math.max(...local.map((c) => c.to));
-    let span = applyChanges(text.slice(f.from + lo, f.from + hi), local.map((c) => ({ ...c, from: c.from - lo, to: c.to - lo })));
-    for (let prev = null; prev !== span; ) {
-      prev = span;
-      span = span.replace(/[ \t](?:> <|< >)(?=[ \t]|$)/g, "").replace(/^(?:> <|< >)(?:[ \t]|$)/, "");
-    }
-    if (span !== text.slice(f.from + lo, f.from + hi)) changes.push({ from: f.from + lo, to: f.from + hi, insert: span });
-  }
-  return changes;
+  const actual = slots.filter((c) => text.slice(c.from, c.to) !== c.insert);
+  // Keep token edits separate so disjoint source selections map through them.
+  return { changes: actual, done: actual.length, skipped };
 }
 
 // A pitch spelled as a note token in an octave context: its name (sharps,
@@ -448,6 +465,19 @@ function spellAt(midi, ctxOct, suffix, flats = false) {
   return `${d > 0 ? "> ".repeat(d) : "< ".repeat(-d)}${name}${suffix}${d > 0 ? " <".repeat(d) : " >".repeat(-d)}`;
 }
 
+// Reverse acts on the interval between matches, not only the matching tokens.
+export function logicalAffected(notes, matches, op) {
+  if (op.type !== "reverse") return matches;
+  const out = [];
+  for (const layer of new Set(matches.filter((n) => !n.shared).map((n) => `${n.channel}/${n.prio}`))) {
+    const own = matches.filter((n) => !n.shared && `${n.channel}/${n.prio}` === layer);
+    const from = Math.min(...own.map((n) => n.from));
+    const to = Math.max(...own.map((n) => n.to));
+    out.push(...notes.filter((n) => `${n.channel}/${n.prio}` === layer && n.from >= from && n.to <= to));
+  }
+  return out;
+}
+
 // Reverse, per channel, the run from the first matched note to the last:
 // every note and rest between them trades places, so the rhythm reverses
 // too. The tokens keep their places; each takes the content of its mirror,
@@ -456,7 +486,6 @@ function spellAt(midi, ctxOct, suffix, flats = false) {
 function reverseRuns(text, notes, matches) {
   const changes = [];
   let done = 0;
-  const forms = channelForms(text);
   const key = (n) => `${n.channel}/${n.prio}`;
   for (const layer of [...new Set(matches.map(key))]) {
     // The run is set by the layer's own notes; one in a def or a loop is a
@@ -466,32 +495,12 @@ function reverseRuns(text, notes, matches) {
     const first = ms[0];
     const last = ms[ms.length - 1];
     const name = first.prio != null && first.prio !== 8 ? `${first.channel} (prio ${first.prio})` : first.channel;
-    // Forms of one layer append into one timeline, so a run may cross them.
-    const lforms = forms.filter((f) => `${f.channel}/${f.prio}` === layer && f.to > first.from && f.from < last.to);
     const run = notes.filter((n) => key(n) === layer && n.from >= first.from && n.to <= last.to);
-    const bad = run.find((n) => n.shared || n.tied || !n.direct);
+    const bad = run.find((n) => !n.editable || n.shared || n.tied || !n.direct);
     if (bad) return { error: `${name}: reverse needs plain notes and rests — "${bad.token}" sits in a loop, a def, a nested form or a tie` };
     if (run.length < 2) continue;
-    // The octave and sample in force at each element, walking the run's items.
-    const at = new Map();
-    let oct = Math.floor(run[0].midi / 12) - 1;
-    let sample = run[0].sample;
-    const items = lforms.flatMap((f) => f.items).filter((it) => it.from >= first.from && it.to <= last.to);
-    const sampleNames = new Set(run.map((n) => n.sample).filter(Boolean));
-    for (let k = 0; k < items.length; k++) {
-      const it = items[k];
-      const n = run.find((x) => x.from === it.from);
-      if (n) {
-        at.set(n.from, { oct, sample });
-        if (n.kind === "note") { oct = Math.floor(n.midi / 12) - 1; sample = n.sample ?? sample; }
-        continue;
-      }
-      const v = it.node.kind === "atom" ? it.node.value : null;
-      if (v === ">") oct++;
-      else if (v === "<") oct--;
-      else if (v === ":oct") oct = Number(items[k + 1]?.node.value ?? oct);
-      else if (v && sampleNames.has(v)) sample = v;
-    }
+    // Context comes from compilation, including rests and leading octave shifts.
+    const at = new Map(run.map((n) => [n.from, { oct: n.octave, sample: n.sample }]));
     const rev = [...run].reverse();
     const slots = run.map((slot, i) => {
       const src = rev[i];
@@ -499,50 +508,18 @@ function reverseRuns(text, notes, matches) {
       let insert;
       if (src.kind === "rest") insert = `_${lengthSuffix(src.len)}`;
       else {
-        const pname = /^([a-g][+\-#]*)/i.exec(src.pitch)[1];
-        const d = Math.floor(src.midi / 12) - 1 - ctx.oct;
-        const up = d > 0 ? "> ".repeat(d) : "< ".repeat(-d);
-        const down = d > 0 ? " <".repeat(d) : " >".repeat(-d);
-        insert = `${up}${pname}${lengthSuffix(src.len)}${down}`;
-        if (src.sample && ctx.sample && src.sample !== ctx.sample) insert = `${src.sample} ${insert} ${ctx.sample}`;
+        insert = spellAt(src.midi, ctx.oct, lengthSuffix(src.len), src.pitch.includes("-"));
+        if (src.sample && src.sample !== ctx.sample)
+          insert = `${src.sample} ${insert}${ctx.sample ? ` ${ctx.sample}` : ""}`;
       }
       return { from: slot.from, to: slot.to, insert };
     });
-    // One change per form the run crosses, with the octave marks that now
-    // cancel — a `>` written right before a `<` — taken out. Only the pair
-    // goes; the spacing around it is the writer's.
-    for (const f of lforms) {
-      const from = Math.max(f.from, first.from);
-      const to = Math.min(f.to, last.to);
-      const local = slots.filter((c) => c.from >= from && c.to <= to).map((c) => ({ ...c, from: c.from - from, to: c.to - from }));
-      if (local.length === 0) continue;
-      let span = applyChanges(text.slice(from, to), local);
-      for (let prev = null; prev !== span; ) {
-        prev = span;
-        span = span.replace(/[ \t](?:> <|< >)(?=[ \t]|$)/g, "").replace(/^(?:> <|< >)(?:[ \t]|$)/, "");
-      }
-      if (span !== text.slice(from, to)) changes.push({ from, to, insert: span });
-    }
-    done += run.length;
+    // Separate token changes preserve disjoint source selections through Apply.
+    const actual = slots.filter((c) => text.slice(c.from, c.to) !== c.insert);
+    changes.push(...actual);
+    done += actual.length;
   }
-  return { changes, done, skipped: { shared: 0, tied: 0 } };
-}
-
-// The voice and sample names the texts define (def-fm / def-pcm), for the
-// Logical Editor's voice condition: a score's own and its imports'.
-export function voiceDefNames(texts) {
-  const names = new Set();
-  for (const t of texts) {
-    let roots;
-    try { roots = parse(t); } catch { continue; }
-    for (const n of roots) {
-      if (n?.kind !== "list") continue;
-      const head = n.items[0]?.value;
-      const name = n.items[1]?.value;
-      if ((head === "def-fm" || head === "def-pcm") && typeof name === "string") names.add(name);
-    }
-  }
-  return names;
+  return { changes: changes.sort((a, b) => a.from - b.from), done, skipped: { shared: 0, tied: 0 } };
 }
 
 // ---------------------------------------------------------------------------

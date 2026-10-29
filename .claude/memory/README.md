@@ -43,7 +43,7 @@ Rules:
   their shape, one known A/B divergence, and **§4 the decided-but-unbuilt
   grid-warp `:shuffle`** (with the tracker importer's swing waiting on it).
 - [live-app.md](live-app.md) — **the live app**: what was decided against
-  (not to be proposed again) and working lessons.
+  (not to be proposed again), working lessons, and small tools still to specify.
 - [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings
   and open items per machine (pc88 … the PC Engine, the Famicom and its six
   expansion chips: their ports, lanes and what is not yet heard).
