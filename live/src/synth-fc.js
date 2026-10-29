@@ -803,6 +803,7 @@ export class FcSynth {
     this._mmc5 = new Mmc5();
     this._n163 = new N163();
     this._n163Out = new Float32Array(9); // the DAC, then each channel alone
+    this._n163Chans = this._n163Out.subarray(1); // made once: _mix runs at the native rate
     this._fdsY = 0; // the FDS's low-pass
     this._lv = new Float32Array(CHANNELS);
     this._x = new Float32Array(CHANNELS + 1);
@@ -893,7 +894,7 @@ export class FcSynth {
       this._runAy(clocks);
       lv.set(this._ayOut, 11);
       this._n163.run(clocks, this._n163Out, 0);
-      lv.set(this._n163Out.subarray(1), 14);
+      lv.set(this._n163Chans, 14);
     } else {
       lv.fill(0); // idle: the triangle's held step, the DAC
       lv[2] = TRI[this._apu.tri.seq];

@@ -82,7 +82,7 @@ export class Pc88Synth {
     this._tapDcY?.fill(0);
     this._batch = 0; // samples rendered into the core's buffer
     this._batchPos = 0;
-    this._next = this._nativeOne();
+    this._next = this._nativeOne([0, 0]);
   }
 
   reset() {
@@ -115,10 +115,12 @@ export class Pc88Synth {
   setDacSample() {}
   setLpf() {}
 
-  // The next native sample, [L, R]: from the batch rendered ahead when there
-  // is one, else rendered alone (a write may have just landed). With `taps`,
-  // its scope lanes go to _tapNext (the previous ones to _tapCur).
-  _nativeOne(taps = false) {
+  // The next native sample, [L, R] into `out` (no allocation at the native
+  // rate: the audio thread's garbage is its GC pauses): from the batch
+  // rendered ahead when there is one, else rendered alone (a write may have
+  // just landed). With `taps`, its scope lanes go to _tapNext (the previous
+  // ones to _tapCur).
+  _nativeOne(out, taps = false) {
     if (this._batchPos >= this._batch) {
       this._core._y8_render(1);
       this._batch = 1;
@@ -145,7 +147,9 @@ export class Pc88Synth {
     const ssg = s - this._dcX + SSG_DC_R * this._dcY;
     this._dcX = s;
     this._dcY = ssg;
-    return [(heap[k] + ssg * SSG_GAIN) * SAMPLE_SCALE, (heap[k + 1] + ssg * SSG_GAIN) * SAMPLE_SCALE];
+    out[0] = (heap[k] + ssg * SSG_GAIN) * SAMPLE_SCALE;
+    out[1] = (heap[k + 1] + ssg * SSG_GAIN) * SAMPLE_SCALE;
+    return out;
   }
 
   // `getDacByte` is the contract's and unused; `scope` (SCOPE_LANES arrays)
@@ -175,8 +179,9 @@ export class Pc88Synth {
       this._frac += this._ratio;
       while (this._frac >= 1) {
         this._frac -= 1;
+        const done = this._cur;
         this._cur = this._next;
-        this._next = this._nativeOne(!!scope);
+        this._next = this._nativeOne(done, !!scope);
       }
       mixL *= MASTER_OUTPUT_GAIN;
       mixR *= MASTER_OUTPUT_GAIN;

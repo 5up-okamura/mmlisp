@@ -1061,14 +1061,27 @@
     // Decoration.mark spans. Marks split the text into inline boxes, which under
     // lineWrapping can shift the soft-wrap point as highlights come and go; a
     // layer never touches the text DOM, so the layout is unaffected.
+    //
+    // A span's rectangles are kept while only the playhead moves: measuring
+    // them (RectangleMarker.forRange's coordsAtPos and posAtCoords) reads the
+    // layout, every frame of a playing song, for the same few spans over and
+    // over. Any other update — an edit, a scroll, a resize, a mark that may
+    // move a soft wrap — lets them go.
+    const _playheadRects = new Map();
+    const playheadOnly = (update) => !update.viewportChanged && !update.geometryChanged
+      && update.transactions.length > 0
+      && update.transactions.every((tr) => !tr.docChanged && !tr.selection
+        && tr.effects.every((e) => e.is(setTrackLine) || e.is(setSeq)));
     const playheadLayer = layer({
       above: true,
       class: 'cm-playheadLayer',
-      update: (update) =>
-        update.docChanged ||
-        update.viewportChanged ||
-        update.geometryChanged ||
-        update.startState.field(playheadField) !== update.state.field(playheadField),
+      update: (update) => {
+        if (!playheadOnly(update) || _playheadRects.size > 4096) _playheadRects.clear();
+        return update.docChanged ||
+          update.viewportChanged ||
+          update.geometryChanged ||
+          update.startState.field(playheadField) !== update.state.field(playheadField);
+      },
       markers: (view) => {
         const len = view.state.doc.length;
         const v = view.state.field(playheadField);
@@ -1077,11 +1090,14 @@
           const from = Math.max(0, Math.min(len, r.from));
           const to = Math.max(0, Math.min(len, r.to));
           if (from >= to) return;
-          try {
-            for (const m of RectangleMarker.forRange(view, r.cls, EditorSelection.range(from, to))) {
-              markers.push(m);
-            }
-          } catch (_) {}
+          const key = `${from}:${to}:${r.cls}`;
+          let rects = _playheadRects.get(key);
+          if (!rects) {
+            try { rects = RectangleMarker.forRange(view, r.cls, EditorSelection.range(from, to)); }
+            catch (_) { rects = []; }
+            _playheadRects.set(key, rects);
+          }
+          for (const m of rects) markers.push(m);
         };
         for (const r of v.seqs.values()) add(r);
         for (const r of v.toks.values()) add(r);
@@ -2593,25 +2609,29 @@
     // two bracket offsets), `bad` are offsets of unclosed openers and stray or
     // mismatched closers. A mismatched closer does not pop the stack — that
     // matches the parser, which reports the still-open bracket as unclosed.
+    // It runs on every keystroke, over the whole score: char codes, not
+    // one-character strings.
     function scanBrackets(src) {
       const pairs = [];
       const bad = [];
       const stack = [];
+      const QUOTE = 34, BACKSLASH = 92, SEMI = 59, NL = 10;
+      const OPEN_P = 40, CLOSE_P = 41, OPEN_B = 91, CLOSE_B = 93;
       for (let i = 0; i < src.length; i++) {
-        const ch = src[i];
-        if (ch === '"') {
+        const ch = src.charCodeAt(i);
+        if (ch === QUOTE) {
           i++;
-          while (i < src.length && src[i] !== '"') { if (src[i] === '\\') i++; i++; }
+          while (i < src.length && src.charCodeAt(i) !== QUOTE) { if (src.charCodeAt(i) === BACKSLASH) i++; i++; }
           continue; // the loop's i++ steps past the closing quote
         }
-        if (ch === ';') {
-          while (i < src.length && src[i] !== '\n') i++;
+        if (ch === SEMI) {
+          while (i < src.length && src.charCodeAt(i) !== NL) i++;
           continue;
         }
-        if (ch === '(' || ch === '[') { stack.push(i); continue; }
-        if (ch === ')' || ch === ']') {
+        if (ch === OPEN_P || ch === OPEN_B) { stack.push(i); continue; }
+        if (ch === CLOSE_P || ch === CLOSE_B) {
           const open = stack.length ? stack[stack.length - 1] : -1;
-          if (open >= 0 && src[open] === (ch === ')' ? '(' : '[')) {
+          if (open >= 0 && src.charCodeAt(open) === (ch === CLOSE_P ? OPEN_P : OPEN_B)) {
             stack.pop();
             pairs.push({ from: open, to: i });
           } else {
@@ -4444,10 +4464,36 @@
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged) syncBracketStatus();
         if (update.docChanged) { scheduleDraftSave(); markDocDirty(); }
-        if (update.docChanged || update.selectionSet) syncParamUI({ repaint: false });
+        // Typing waits for a pause (scheduleParamSync); an edit made for the
+        // panel (a slider, the vector editor), an undo, a load syncs at once.
+        const typed = update.transactions.some((tr) => tr.isUserEvent('input') || tr.isUserEvent('delete'));
+        if (update.docChanged && typed) scheduleParamSync();
+        else if (update.docChanged || update.selectionSet) syncParamUI({ repaint: false });
         auditionOnSelect(update);
       }),
     ];
+
+    // Typing's panel sync waits for a pause: it finds the cursor's def,
+    // vector and sample in a fresh parse of the whole score, which on a long
+    // one is the bulk of a keystroke. Whatever acts on the panel's subject — a
+    // press, a wheel, a key that is not typing, a MIDI note or CC — runs it
+    // first, so no control writes through a def's offsets from before the
+    // edit.
+    const PARAM_SYNC_IDLE_MS = 120;
+    let _paramSyncTimer = 0;
+    function scheduleParamSync() {
+      clearTimeout(_paramSyncTimer);
+      _paramSyncTimer = setTimeout(() => syncParamUI({ repaint: false }), PARAM_SYNC_IDLE_MS);
+    }
+    function flushParamSync() {
+      if (_paramSyncTimer) syncParamUI({ repaint: false });
+    }
+    document.addEventListener('pointerdown', flushParamSync, true);
+    document.addEventListener('wheel', flushParamSync, { capture: true, passive: true });
+    document.addEventListener('keydown', (e) => {
+      const typing = editorView.dom.contains(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (!typing) flushParamSync();
+    }, true);
 
     const editorView = new EditorView({
       state: EditorState.create({
@@ -7611,13 +7657,31 @@
     // -----------------------------------------------------------------------
     // Audio
     // -----------------------------------------------------------------------
+    // A timed register write joins the batch the worklet gets in one message
+    // a scheduler pass — port, addr, data, when, four numbers a write — not
+    // one message each: every message is a task on the audio thread. The
+    // port's postMessage sends the batch ahead of anything else (see where
+    // workletNode is made), so the worklet sees every message in order.
+    let _writeBatch = [];
+    let _postToWorklet = null; // the port's own postMessage
+    function flushWriteBatch() {
+      if (!_writeBatch.length) return;
+      const w = new Float64Array(_writeBatch);
+      _writeBatch = [];
+      _postToWorklet?.({ type: 'writes', w }, [w.buffer]);
+    }
     function writeToWorklet(portOrMsg, addr, data, when) {
       if (!workletNode) return;
       if (portOrMsg && typeof portOrMsg === 'object' && !Array.isArray(portOrMsg)) {
         workletNode.port.postMessage(portOrMsg);
         return;
       }
-      workletNode.port.postMessage({ type: 'write', port: portOrMsg, addr, data, when });
+      if (when == null) {
+        workletNode.port.postMessage({ type: 'write', port: portOrMsg, addr, data });
+        return;
+      }
+      if (!_writeBatch.length) queueMicrotask(flushWriteBatch);
+      _writeBatch.push(portOrMsg ?? 0, addr, data, when);
     }
     // A run of writes at a fixed rate (the PC Engine's DDA): one message, the
     // worklet writing each tick at its own sample.
@@ -7719,6 +7783,14 @@
         numberOfOutputs: 1,
         outputChannelCount: [2],
       });
+      // Every message, wherever it is posted, goes out behind the pending
+      // write batch (writeToWorklet): a 'flush' must not overtake the writes
+      // it is meant to drop, nor a key's audition the song's writes before it.
+      _postToWorklet = workletNode.port.postMessage.bind(workletNode.port);
+      workletNode.port.postMessage = (msg, transfer) => {
+        flushWriteBatch();
+        _postToWorklet(msg, transfer);
+      };
       workletNode.port.onmessage = (event) => {
         const msg = event.data;
         if (msg?.type === 'error') {
@@ -9920,7 +9992,9 @@
         if (!node || node.kind !== 'list') return;
         const start = node.line;
         const end = node.endLine ?? node.line;
-        if (start <= cursorLine && cursorLine <= end && isFmVoiceDefNode(node)) {
+        // Only a list spanning the cursor's line can hold one that does.
+        if (start > cursorLine || cursorLine > end) return;
+        if (isFmVoiceDefNode(node)) {
           const span = end - start;
           if (!best || span < (best.endLine - best.line)) {
             best = node;
@@ -10049,11 +10123,16 @@
     }
 
     // The song's opening tempo (its last tick-0 TEMPO_SET): what a macro
-    // curve's lengths are read at when the editor shows it as steps.
+    // curve's lengths are read at when the editor shows it as steps. Asked
+    // on every cursor move, so read once per IR (an import's runs long).
+    let _openingBpmIR, _openingBpm = 120;
     function openingBpm() {
+      if (_lastGoodIR === _openingBpmIR) return _openingBpm;
       let bpm = 120;
       for (const t of _lastGoodIR?.tracks ?? [])
         for (const e of t.events ?? []) if (e.cmd === 'TEMPO_SET' && !e.tick && e.args?.bpm > 0) bpm = e.args.bpm;
+      _openingBpmIR = _lastGoodIR;
+      _openingBpm = bpm;
       return bpm;
     }
 
@@ -11243,6 +11322,7 @@
 
     // Each held key is a voice of the polyphonic preview (previewTake).
     async function onMidiNoteOn(note, vel127) {
+      flushParamSync();
       const target = getKeyboardTargetContext();
       if (!target) return;
       const vel = _midiVelocity ? midiVelToVel(vel127) : undefined;
@@ -11308,6 +11388,7 @@
 
     function flushMidiCc() {
       _midiCcRaf = 0;
+      flushParamSync();
       for (const [key, value] of _midiCcPending) {
         const el = midiSliderByKey(key);
         // Off, or a word the score's machine lacks (applyTargetUi hides it).
@@ -11630,6 +11711,8 @@
     // when the panel's subject (mode, def, channel) changed — otherwise the
     // change detection writes just what differs.
     function syncParamUI({ repaint = true } = {}) {
+      clearTimeout(_paramSyncTimer); // this one is the sync an edit was waiting for
+      _paramSyncTimer = 0;
       // A def-fm on a target with no FM (the MSX) has nothing to audition on.
       const hasFm = !!targetProfile(_lastGoodIR?.metadata?.target).chipForKind('fm');
       // What the cursor is on: a vector (a def-wave, a macro's steps), an FM
@@ -12073,9 +12156,14 @@
           if (midi < lo) lo = midi;
           if (midi > hi) hi = midi;
         }
+        // In start order, with the longest a note sounds: the roll finds a
+        // frame's notes by search (rollEachNote).
+        notes.sort((a, b) => a.startTick - b.startTick);
+        let maxSpan = 0;
+        for (const n of notes) maxSpan = Math.max(maxSpan, n.lenTicks, n.gateTicks);
         // A ROM rhythm row is one sound's hits, named by the score's word for it.
         model.push({ head: entry.head, name: entry.role ?? entry.head, kit: !!entry.rhythmTracks,
-          trackIndex: entry.trackIndex, notes, loMidi: lo, hiMidi: hi });
+          trackIndex: entry.trackIndex, notes, maxSpan, loMidi: lo, hiMidi: hi });
       }
       return model;
     }
@@ -12286,24 +12374,47 @@
       st.last = clock.tick;
       return st;
     }
-    // Calls fn(n, start) for every pass of every note that overlaps [from, to).
+    // The first of notes[lo, hi) — sorted by start — starting at `tick` or later.
+    function rollFirstFrom(notes, lo, hi, tick) {
+      while (lo < hi) {
+        const m = (lo + hi) >> 1;
+        if (notes[m].startTick < tick) lo = m + 1;
+        else hi = m;
+      }
+      return lo;
+    }
+    // Calls fn(n, start) for every pass of every note that overlaps [from, to):
+    // the intro's notes once, the loop body's once a pass (none of the intro
+    // once the song has wrapped). A frame looks only at the notes that can
+    // reach the window — none starts more than the cell's maxSpan before it —
+    // so a long song costs no more a frame than a short one.
     function rollEachNote(cell, clock, st, from, to, fn) {
       const loop = clock?.loopTicks ?? null;
       const ls = clock?.loopStartTick ?? 0;
-      for (const n of cell.notes) {
-        const span = Math.max(n.lenTicks, n.gateTicks);
-        if (!loop || n.startTick < ls) {
-          if (st.wrapped && loop) continue;
-          if (n.startTick + span >= from && n.startTick < to) fn(n, n.startTick);
-          continue;
+      const notes = cell.notes;
+      const body = loop ? rollFirstFrom(notes, 0, notes.length, ls) : notes.length;
+      // A pass's notes start before `to`; the intro's, strictly.
+      const reach = (lo, hi, offset, strict) => {
+        for (let i = rollFirstFrom(notes, lo, hi, from - cell.maxSpan - offset); i < hi; i++) {
+          const n = notes[i], s = n.startTick + offset;
+          if (strict ? s >= to : s > to) break;
+          if (s + Math.max(n.lenTicks, n.gateTicks) >= from) fn(n, s);
         }
-        const kMin = st.wrapped ? Math.ceil((from - span - n.startTick) / loop) : 0;
-        const kMax = Math.floor((to - n.startTick) / loop);
-        for (let k = kMin; k <= kMax; k++) fn(n, n.startTick + k * loop);
-      }
+      };
+      if (!loop || !st.wrapped) reach(0, body, 0, true);
+      if (!loop || body >= notes.length) return;
+      const kMin = Math.max(st.wrapped ? -Infinity : 0,
+        Math.ceil((from - cell.maxSpan - notes[notes.length - 1].startTick) / loop));
+      const kMax = Math.floor((to - notes[body].startTick) / loop);
+      for (let k = kMin; k <= kMax; k++) reach(body, notes.length, k * loop, false);
     }
     function rollSoundingAt(cell, t) {
-      for (const n of cell.notes) if (n.startTick <= t && t < n.startTick + n.gateTicks) return n;
+      const notes = cell.notes;
+      for (let i = rollFirstFrom(notes, 0, notes.length, t - cell.maxSpan); i < notes.length; i++) {
+        const n = notes[i];
+        if (n.startTick > t) break;
+        if (t < n.startTick + n.gateTicks) return n;
+      }
       return null;
     }
 
@@ -12870,7 +12981,8 @@
           // where the window holds more samples than the pane has pixels (a
           // bass note's 40 ms), each pixel column filled from its lowest to
           // its highest sample: the same trace, and no wide stroke over a
-          // dense zigzag (which the GPU's raster spends whole frames on).
+          // dense zigzag (which the GPU's raster spends whole frames on —
+          // even at two samples a pixel, an FM tone's or the noise's).
           ctx.globalAlpha = 0.9;
           const amp = cellH / 2 - 4;
           const yOf = (i) => {
@@ -12878,7 +12990,7 @@
             return midY - Math.max(-1, Math.min(1, s * SCOPE_DISPLAY_GAIN)) * amp;
           };
           const cols = Math.max(1, Math.floor(cellW));
-          if (win <= 2 * cols) {
+          if (win <= cols) {
             ctx.strokeStyle = _vizColors.fg;
             ctx.lineWidth = 1.5;
             ctx.beginPath();

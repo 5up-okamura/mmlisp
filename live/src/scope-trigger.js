@@ -214,6 +214,7 @@ export class CorrelationTrigger {
   reset() {
     this._corrBuf.fill(0);
     this._prevWindow.fill(0);
+    this._prevWindowStd = NaN; // the std _prevWindow was drawn for
     this._slope.fill(0);
     this._kLo = 0;
     this._kHi = this.K;
@@ -418,7 +419,13 @@ export class CorrelationTrigger {
     mean /= K;
     for (let i = 0; i < K; i++) aligned[i] -= mean;
     normalize(aligned);
-    const window = gaussianWindow(K, period > 0 ? BUFFER_FALLOFF * period : 0, this._prevWindow);
+    // A held pitch keeps its window: K exps a channel a frame otherwise.
+    const std = period > 0 ? BUFFER_FALLOFF * period : 0;
+    if (std !== this._prevWindowStd) {
+      gaussianWindow(K, std, this._prevWindow);
+      this._prevWindowStd = std;
+    }
+    const window = this._prevWindow;
     for (let i = 0; i < K; i++) aligned[i] *= window[i];
     normalize(this._corrBuf);
     // Keep the buffer exactly zero outside the window's support, so the next

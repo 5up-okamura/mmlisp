@@ -90,7 +90,7 @@ export class X68kSynth {
     this._batchPos = 0;
     this._pcmAcc = 0; // the ADPCM's clock against the native one
     this._pcmVal = 0;
-    this._next = this._nativeOne();
+    this._next = this._nativeOne([0, 0]);
   }
 
   reset() {
@@ -109,10 +109,12 @@ export class X68kSynth {
   setDacSample() {}
   setLpf() {}
 
-  // The next native sample, [L, R]: from the batch rendered ahead when there
-  // is one, else rendered alone (a write may have just landed). With `taps`,
-  // its scope lanes go to _tapNext (the previous ones to _tapCur).
-  _nativeOne(taps = false) {
+  // The next native sample, [L, R] into `out` (no allocation at the native
+  // rate: the audio thread's garbage is its GC pauses): from the batch
+  // rendered ahead when there is one, else rendered alone (a write may have
+  // just landed). With `taps`, its scope lanes go to _tapNext (the previous
+  // ones to _tapCur).
+  _nativeOne(out, taps = false) {
     if (this._batchPos >= this._batch) {
       this._core._y5_render(1);
       this._batch = 1;
@@ -139,7 +141,9 @@ export class X68kSynth {
     }
     const pcm = this._pcmVal * PCM8_GAIN;
     const k = (this._bufPtr >> 1) + 2 * this._batchPos++;
-    return [heap[k] * SAMPLE_SCALE + pcm, heap[k + 1] * SAMPLE_SCALE + pcm];
+    out[0] = heap[k] * SAMPLE_SCALE + pcm;
+    out[1] = heap[k + 1] * SAMPLE_SCALE + pcm;
+    return out;
   }
 
   renderInto(outL, outR, count, onFrame = null, _getDacByte = null, scope = null) {
@@ -166,8 +170,9 @@ export class X68kSynth {
       this._frac += this._ratio;
       while (this._frac >= 1) {
         this._frac -= 1;
+        const done = this._cur;
         this._cur = this._next;
-        this._next = this._nativeOne(!!scope);
+        this._next = this._nativeOne(done, !!scope);
       }
       mixL *= MASTER_OUTPUT_GAIN;
       mixR *= MASTER_OUTPUT_GAIN;

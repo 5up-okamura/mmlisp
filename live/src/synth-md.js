@@ -131,7 +131,7 @@ export class MegaDriveSynth {
   _resetResampleState() {
     this._ymFrac = 0;
     this._ymCurrent = [0, 0];
-    this._ymNext = this._renderYmOne(null);
+    this._ymNext = this._renderYmOne(null, [0, 0]);
     this._psgTickFrac = 0;
     this._psgDcX = 0;
     this._psgDcY = 0;
@@ -205,30 +205,34 @@ export class MegaDriveSynth {
     this._lpfA = Math.max(0, Math.min(1, a));
   }
 
-  // Render one FM native stereo sample. When the DAC is enabled, getDacByte()
-  // supplies the 0-255 value streamed into register 0x2a first.
-  _renderYmOne(getDacByte) {
+  // Render one FM native stereo sample into `out` — reused, never allocated:
+  // at the native rate a fresh pair is megabytes of garbage a second, and the
+  // audio thread's GC pauses outlast a render quantum. When the DAC is
+  // enabled, getDacByte() supplies the 0-255 value streamed into register
+  // 0x2a first.
+  _renderYmOne(getDacByte, out) {
     if (this._dacEnabled && getDacByte) {
       this._ym._nopn_set_dac_sample(getDacByte());
     }
     this._ym._nopn_render(1);
     const base = this._ymBufferPtr >> 1;
     const heap = this._ym.HEAP16;
-    return [heap[base] / FM_SAMPLE_SCALE, heap[base + 1] / FM_SAMPLE_SCALE];
+    out[0] = heap[base] / FM_SAMPLE_SCALE;
+    out[1] = heap[base + 1] / FM_SAMPLE_SCALE;
+    return out;
   }
 
   // Read the next FM native sample from a block pre-rendered by one
   // _nopn_render(N) call (see renderInto's batch path). Values are identical to
   // calling _renderYmOne() that many times — the chip clocks the same either
   // way — but with a single WASM crossing instead of one per native sample.
-  _fmNextNative() {
+  _fmNextNative(out) {
     const base = this._ymBufferPtr >> 1;
     const heap = this._ym.HEAP16;
     const k = this._ymBatchPos++;
-    return [
-      heap[base + 2 * k] / FM_SAMPLE_SCALE,
-      heap[base + 2 * k + 1] / FM_SAMPLE_SCALE,
-    ];
+    out[0] = heap[base + 2 * k] / FM_SAMPLE_SCALE;
+    out[1] = heap[base + 2 * k + 1] / FM_SAMPLE_SCALE;
+    return out;
   }
 
   // Read the FM per-channel taps for native sample k of the current render
@@ -395,10 +399,11 @@ export class MegaDriveSynth {
       this._ymFrac += this._resampleRatio;
       while (this._ymFrac >= 1) {
         this._ymFrac -= 1;
+        const done = this._ymCurrent;
         this._ymCurrent = this._ymNext;
         this._ymNext = batchFM
-          ? this._fmNextNative()
-          : this._renderYmOne(getDacByte);
+          ? this._fmNextNative(done)
+          : this._renderYmOne(getDacByte, done);
         if (scope) {
           const tmp = this._ymChCur;
           this._ymChCur = this._ymChNext;

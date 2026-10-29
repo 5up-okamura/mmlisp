@@ -6,6 +6,9 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  * from the main thread and generates audio samples using the YM2612 emulator.
  *
  * Message protocol (from main thread via port.postMessage):
+ *   { type: 'writes', w: Float64Array }  — timed writes in order, four numbers
+ *       each: port (0|1|2), addr, data, when — the page batches a scheduler
+ *       pass's writes into one message
  *   { type: 'write', port: 0|1|2, addr: number, data: number, when?, preview? }
  *       — port 2 is the PSG; `when` (AudioContext seconds) schedules the
  *         write, without it the write applies at the next block; `preview`
@@ -171,24 +174,25 @@ class YM2612Processor extends AudioWorkletProcessor {
 
     this.port.onmessage = (event) => {
       const msg = event.data;
-      if (msg.type === "write") {
+      if (msg.type === "writes") {
+        // The page's timed writes for one scheduler pass, four numbers each.
+        const w = msg.w;
+        for (let i = 0; i < w.length; i += 4) {
+          const port = w[i];
+          if (port === 2) this._insertTimed(this._psgTimedQueue, w[i + 3], { data: w[i + 2] });
+          else this._insertTimed(this._timedQueue, w[i + 3], { port, addr: w[i + 1], data: w[i + 2] });
+        }
+      } else if (msg.type === "write") {
         if (msg.port === 2) {
           // PSG write (port=2 is the PSG flag)
           if (msg.when != null) {
-            this._insertTimed(this._psgTimedQueue, msg.when, {
-              data: msg.data & 0xff,
-            });
+            this._insertTimed(this._psgTimedQueue, msg.when, msg);
           } else {
             this._psgWriteQueue.push(msg.data & 0xff);
           }
         } else if (msg.when != null) {
           // Kept in scheduled-time order (see _insertTimed).
-          this._insertTimed(this._timedQueue, msg.when, {
-            port: msg.port ?? 0,
-            addr: msg.addr,
-            data: msg.data,
-            preview: !!msg.preview,
-          });
+          this._insertTimed(this._timedQueue, msg.when, msg);
         } else {
           this._writeQueue.push(msg);
         }
@@ -302,12 +306,17 @@ class YM2612Processor extends AudioWorkletProcessor {
   // operator's re-key key-off, computed while the LAST operator's note is
   // scheduled, used to land after every key-on and silence the chord. Arrival
   // order breaks only true ties. Rounding is monotonic, so a queue sorted by
-  // time is also sorted by frame, which is all the drains read.
-  _insertTimed(queue, t, payload) {
-    const frame = Math.round(t * sampleRate);
+  // time is also sorted by frame, which is all the drains read. The message
+  // itself is queued, stamped — no copy, and a push for the usual in-order
+  // arrival: what this thread allocates its GC must collect, and the pause
+  // can outlast a render quantum.
+  _insertTimed(queue, t, msg) {
+    msg.frame = Math.round(t * sampleRate);
+    msg.t = t;
     let i = queue.length;
     while (i > 0 && queue[i - 1].t > t) i--;
-    queue.splice(i, 0, { ...payload, frame, t });
+    if (i === queue.length) queue.push(msg);
+    else queue.splice(i, 0, msg);
   }
 
   // Each stream's ticks due before `endFrame`, written in order; a stream
