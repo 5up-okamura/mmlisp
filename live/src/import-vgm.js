@@ -2051,9 +2051,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // The file's loop, or (asked for, the file marking none) the whole song.
   const fileLoop = a.fileLoop;
   const loop = !!options.loop;
-  const endTick0 = tickOf(parsed.totalSamples);
-  const bars = barEnds([], Math.max(1, endTick0));
-  const endTick = bars[bars.length - 1];
+  // The song ends where the file does — its loop goes back from there — not
+  // at the bar mark after it: the last bar is cut short.
+  const endTick = Math.max(1, tickOf(parsed.totalSamples));
+  const bars = barEnds([], endTick);
+  bars[bars.length - 1] = endTick;
   // A driver marks its loop as it goes back, a moment off the notes the
   // loop starts with: the loop starts at the first of them within a frame
   // (else, a tick apart, the note before it strikes again at the top).
