@@ -3083,7 +3083,12 @@
     }
 
     function pickFileWithInput(extensions, { multiple = false } = {}) {
-      const accept = Array.isArray(extensions) ? extensions.join(',') : '';
+      // Unfiltered: on iOS any file is "data", and naming that type keeps the
+      // picker to Files — with no type at all it also offers the photo
+      // library and the camera. Elsewhere an unknown extension could be
+      // filtered out by it, so there the input stays unfiltered.
+      const accept = Array.isArray(extensions) ? extensions.join(',')
+        : isIOS() ? 'application/octet-stream' : '';
       return new Promise((resolve, reject) => {
         const input = document.createElement('input');
         input.type = 'file';
@@ -3471,6 +3476,12 @@
     // rate) serves where a sample's frame-exact read (wav-decode.js) would
     // not. Mono, every channel averaged.
     const RESYNTH_AUDIO = ['.wav', '.mp3', '.m4a', '.aac', '.mp4', '.flac', '.ogg', '.oga', '.opus', '.webm', '.aif', '.aiff', '.caf', 'audio/*'];
+    // What the picker offers: on iOS a video type or audio/* adds the photo
+    // library and the camera, and a video from there does not decode — so
+    // the audio extensions only.
+    const resynthAudioTypes = () => isIOS()
+      ? RESYNTH_AUDIO.filter((t) => t !== '.mp4' && t !== '.webm' && t !== 'audio/*')
+      : RESYNTH_AUDIO;
     async function decodeAudioFile(bytes, fileName) {
       const isRiff = bytes.length >= 12 && String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF'
         && String.fromCharCode(...bytes.subarray(8, 12)) === 'WAVE';
@@ -3505,7 +3516,7 @@
     async function importResynth() {
       let file;
       try {
-        file = await pickFileWithInput(RESYNTH_AUDIO);
+        file = await pickFileWithInput(resynthAudioTypes());
       } catch (e) {
         if (e && e.name === 'AbortError') return;
         log(`Resynthesis failed: ${e?.message || e}`, 'err');
@@ -3585,7 +3596,7 @@
     async function importAudioAsFmVoice() {
       let file;
       try {
-        file = await pickFileWithInput(RESYNTH_AUDIO);
+        file = await pickFileWithInput(resynthAudioTypes());
       } catch (e) {
         if (e && e.name === 'AbortError') return;
         log(`FM voice failed: ${e?.message || e}`, 'err');
