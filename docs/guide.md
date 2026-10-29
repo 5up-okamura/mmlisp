@@ -2074,9 +2074,12 @@ them: a key-on starts a note, a key-off ends it.
 **NSF (Famicom).** An NSF (`.nsf`, NSF2, `.nsfe`) is a song's own code —
 its driver and its data — so each song is run, on a 6502, and what it
 writes to the sound chips is read as a VGM's writes are (above): the same
-rows, the same dialog, notes at the times they were written. The dialog adds
-**Song** (by its NSFe / NSF2 name where it has one); picking another runs it
-and rebuilds the rows. Every chip the header names comes in on its own `fc`
+rows, the same dialog, notes at the times they were written. An NSF of
+several songs opens as the folder of them, as an archive does: each song is
+a file of its own under `File > Files in Folder` — `game #03 Title.nsf`, in
+the order the file plays them, its NSFe / NSF2 name where it has one — the
+one it starts on converts, and ← → go on to the next. An NSF in a folder or
+an archive lists its songs there the same way. Every chip the header names comes in on its own `fc`
 channels: the 2A03, the **VRC6** (`vrc6-sqr1`, `vrc6-sqr2` with their duty
 in sixteenths, `vrc6-saw`), the **VRC7**, the **FDS**, the **MMC5**'s pulses,
 the **N163** (its channel 8 on `n163-wave1`, down from there) and the

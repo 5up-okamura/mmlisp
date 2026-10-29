@@ -2,7 +2,8 @@
 // samples and (import …) paths resolve against, and what File > Files in
 // Folder lists. Two kinds behind one face — a directory the browser grants
 // (Chrome, Edge), and an archive (.zip .lzh) read in memory, which every
-// browser can open, a phone's too.
+// browser can open, a phone's too — or one file that holds several songs
+// (an NSF), opened as the folder of them.
 //
 //   name            shown in the File menu
 //   handle          the FileSystemDirectoryHandle, or null for an archive
@@ -114,6 +115,35 @@ export async function folderFromArchive(blob, { name = blob.name, handle = null 
       } catch {
         return false;
       }
+    },
+  };
+  return self;
+}
+
+/**
+ * A file opened as the folder it is: an NSF of several songs, each listed
+ * under Files in Folder as one of them (refreshFolderFiles), as an archive's
+ * files are. It holds that one file.
+ */
+export function folderOfFile(file) {
+  const self = {
+    name: file.name,
+    handle: null,
+    archive: null,
+    async readable() {
+      return true;
+    },
+    async files() {
+      return [{ name: file.name, handle: null, file: async () => file }];
+    },
+    async read(path) {
+      return path === file.name ? new Uint8Array(await file.arrayBuffer()) : null;
+    },
+    async pathOf() {
+      return null;
+    },
+    async same(other) {
+      return other === self;
     },
   };
   return self;

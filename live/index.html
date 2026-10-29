@@ -910,7 +910,7 @@
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmDests, vgmChannels } from './src/import-vgm.js';
     import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import-mdx.js';
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
-    import { parseNsf, runNsf, nsfSongLabel, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
+    import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
     import { analyzeSound, defaultResynthOptions, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
     import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/voice-estimate.js';
@@ -924,7 +924,7 @@
     import { SAMPLE_EFFECTS } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
     import { ARCHIVE_EXT } from './src/archive.js';
-    import { folderFromHandle, folderFromArchive } from './src/source-folder.js';
+    import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, lengthTicks, voiceDefNames, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
@@ -3303,13 +3303,25 @@
     }
 
     // `folder`: the source folder the song came from, which it keeps (openSong).
-    async function importSongFromFile(file, imp = songImporterFor(file.name), { pdx = null, folder = null } = {}) {
+    async function importSongFromFile(file, imp = songImporterFor(file.name), { pdx = null, folder = null, song = null, name = file.name } = {}) {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        const res = await imp.run(bytes, file.name, { pdx: pdx ? new Uint8Array(await pdx.arrayBuffer()) : null });
+        // An NSF of several songs opened on its own opens as the folder of
+        // them, as an archive does: each song is one under Files in Folder,
+        // ← → go from one to the next, and the one it starts on converts.
+        if (imp.tag === 'NSF' && song == null) {
+          const nsf = parseNsf(bytes);
+          if (nsf.songs > 1) {
+            await applySourceDir(folderOfFile(file));
+            const at = _sourceDirFiles.findIndex((f) => f.nsfSong === nsf.start);
+            if (at >= 0) await openFromFolder(at);
+            return;
+          }
+        }
+        const res = await imp.run(bytes, name, { pdx: pdx ? new Uint8Array(await pdx.arrayBuffer()) : null, song });
         if (!res) return; // cancelled in the dialog
-        await loadImportedSource(res.source, res.warnings, file.name,
-          `Imported ${file.name}${pdx ? ` with ${pdx.name}` : ''} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null, folder });
+        await loadImportedSource(res.source, res.warnings, name,
+          `Imported ${name}${pdx ? ` with ${pdx.name}` : ''} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null, folder });
       } catch (e) {
         log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
       }
@@ -3486,55 +3498,43 @@
       return mgsToMmlisp(mgs, { structure: true, fileName }, a);
     }
 
-    // NSF: each song is run — the file's own driver on a 6502 — and its
-    // writes read as a VGM's (src/import-nsf.js), so the dialog is the VGM
-    // one with the song to pick; picking another runs it and rebuilds the rows.
+    // NSF: a song is run — the file's own driver on a 6502 — and its writes
+    // read as a VGM's (src/import-nsf.js), so the dialog is the VGM one. Its
+    // songs are files of their own under Files in Folder (`song`, from there).
     const NSF_CHIPS = [['vrc6', 'VRC6'], ['vrc7', 'VRC7'], ['fds', 'FDS'], ['mmc5', 'MMC5'], ['n163', 'N163'], ['s5b', '5B']];
-    async function importNsfBytes(bytes, fileName) {
+    async function importNsfBytes(bytes, fileName, { song = null } = {}) {
       const nsf = parseNsf(bytes);
-      const runs = new Map(); // song → {parsed, a}
-      const songOf = (song) => {
-        if (!runs.has(song)) { const parsed = runNsf(nsf, song); runs.set(song, { parsed, a: analyzeVgm(parsed) }); }
-        return runs.get(song);
-      };
-      const order = nsf.playlist?.filter((i) => i < nsf.songs) ?? Array.from({ length: nsf.songs }, (_, i) => i);
-      const first = songOf(nsf.start).a;
-      const def = defaultVgmOptions(first);
-      const rowsFor = (_value, _key, f = {}) => {
-        const { a } = songOf(Number(f.song ?? nsf.start));
-        return writesRows(a, f.target ?? a.target);
-      };
+      const parsed = runNsf(nsf, song ?? nsf.start);
+      const a = analyzeVgm(parsed);
+      const def = defaultVgmOptions(a);
       const fields = [];
-      if (nsf.songs > 1)
-        fields.push({ key: 'song', label: 'Song', type: 'select', value: String(nsf.start), rebuildsRows: true,
-          choices: order.map((i) => [String(i), nsfSongLabel(nsf, i)]) });
-      if (first.targets.length > 1)
-        fields.push({ key: 'target', label: 'Target', type: 'select', value: first.target, rebuildsRows: true,
-          choices: first.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
+      if (a.targets.length > 1)
+        fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
+          choices: a.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
           hint: 'fc keeps the Famicom’s chips; md reads them for the Mega Drive' });
       fields.push(
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
-        { key: 'loop', label: 'Loop (where the song comes round, when it does)', type: 'checkbox', value: true },
+        { key: 'loop', label: a.fileLoop ? 'Loop (where the song comes round)' : 'Loop (the song stops: off)', type: 'checkbox', value: a.fileLoop },
       );
       fields.push(STRUCTURE_FIELD);
       const chips = ['2A03', ...NSF_CHIPS.filter(([k]) => nsf.chips[k]).map(([, name]) => name)].join(' + ');
       const got = await showImportDialog({
         title: `Import ${fileName}`,
-        summary: `${[nsf.name, nsf.artist].filter(Boolean).join(' · ') || 'NSF'} · ${chips} · ${nsf.songs} song${nsf.songs === 1 ? '' : 's'}. ` +
-          `Each song is run on its own driver and its notes rebuilt from what it writes, at the times it wrote them (150 BPM, a tick 1/240 s), up to its loop — or ${NSF_MAX_SECONDS / 60} min.`,
+        summary: `${[nsf.name, nsf.artist].filter(Boolean).join(' · ') || 'NSF'} · ${chips} · ${(parsed.totalSamples / 44100).toFixed(1)} s` +
+          `${a.fileLoop ? `, looping from ${(parsed.loopSample / 44100).toFixed(1)} s` : ''}. ` +
+          `The song is run on its own driver and its notes rebuilt from what it writes, at the times it wrote them (150 BPM, a tick 1/240 s), up to its loop — or ${NSF_MAX_SECONDS / 60} min.`,
         fields,
-        rows: writesRows(first, def.target),
-        rowsFor,
+        rows: writesRows(a, def.target),
+        rowsFor: (target) => writesRows(a, target),
       });
       if (!got) return null;
-      const { parsed, a } = songOf(Number(got.fields.song ?? nsf.start));
       return vgmToMmlisp(parsed, {
         target: got.fields.target ?? a.target,
         dest: got.rows,
         followPitch: !!got.fields.followPitch,
         // (A song that stops does not loop: the box keeps the loop the run found.)
         loop: !!got.fields.loop && a.fileLoop,
-        pcmVoices: defaultVgmOptions(a).pcmVoices,
+        pcmVoices: def.pcmVoices,
         structure: !!got.fields.structure,
         fileName,
       }, a);
@@ -3877,9 +3877,8 @@
     // The import dialog: a few fields, then one row per source part with its
     // destination. Resolves {fields, rows} on Import (or Enter), null on
     // Cancel (or Escape, or a click outside).
-    // `rowsFor(value, key, fields)`, when given, rebuilds the rows when a
-    // field with `rebuildsRows` changes (an import's target: its channels; an
-    // NSF's song) — the field's value, its key, and every field's as it stands.
+    // `rowsFor(value)`, when given, rebuilds the rows when a field with
+    // `rebuildsRows` changes (an import's target: its channels).
     function showImportDialog({ title, summary = '', fields = [], rows = [], rowsFor = null }) {
       const modal = document.getElementById('importModal');
       document.getElementById('importModalTitle').textContent = title;
@@ -3916,10 +3915,7 @@
           if (f.type === 'number') el.step = 'any';
         }
         inputs[f.key] = el;
-        if (f.rebuildsRows && rowsFor) el.addEventListener('change', () => {
-          const now = Object.fromEntries(Object.entries(inputs).map(([k, e]) => [k, e.type === 'checkbox' ? e.checked : e.value]));
-          renderRows(rowsFor(el.value, f.key, now));
-        });
+        if (f.rebuildsRows && rowsFor) el.addEventListener('change', () => renderRows(rowsFor(el.value)));
         label.append(span, el);
         if (f.hint) {
           const h = document.createElement('small');
@@ -5130,16 +5126,20 @@
     function updateDocName() {
       const name = _sourceFileName || 'untitled.mmlisp';
       const mark = _docDirty ? ' ●' : '';
-      const dir = folderIndexOfDoc() >= 0 ? `${_sourceDir.name} / ` : '';
+      const at = folderIndexOfDoc();
+      const dir = at >= 0 ? `${_sourceDir.name} / ` : '';
+      // The list and the steps only when they lead somewhere: not for a
+      // folder whose one file is the one open.
+      const elsewhere = _sourceDirFiles.length > (at >= 0 ? 1 : 0);
       const el = document.getElementById('fileName');
       if (el) {
         _fileText = dir + name + mark;
         el.title = _fileText;
         fitFileText();
-        el.disabled = _sourceDirFiles.length === 0;
+        el.disabled = !elsewhere;
       }
       const steps = document.getElementById('fileSteps');
-      if (steps) steps.hidden = _sourceDirFiles.length === 0;
+      if (steps) steps.hidden = !elsewhere;
       document.title = `${name}${mark} — MMLisp`;
     }
     // Too long for the line, the name loses its middle: as much of its start
@@ -5297,13 +5297,14 @@
     // keeps the folder: what the song names beside it — an MDX's PDX, a
     // mucom88 song's voices and drums — is read from there, and the rest of
     // the folder stays one click away. `pdx` is one handed over with it (a drop).
-    async function openSong(file, { folder = null, pdx = null } = {}) {
+    // `song` and `name`: one song of an NSF's, as Files in Folder lists it.
+    async function openSong(file, { folder = null, pdx = null, song = null, name = null } = {}) {
       if (/\.(muc|mml)$/i.test(file.name)) {
         await importMucom88FromFiles([file, ...(folder ? await mucomBanksIn(folder, file) : [])], { folder });
         return;
       }
       if (!pdx && folder && /\.mdx$/i.test(file.name)) pdx = await pdxIn(folder, file);
-      await importSongFromFile(file, undefined, { pdx, folder });
+      await importSongFromFile(file, undefined, { pdx, folder, song, name });
     }
 
     async function fileIn(folder, name) {
@@ -5420,15 +5421,28 @@
       return songImporterFor(name)?.tag ?? null;
     }
 
+    // An NSF of several songs lists each as a file of its own, in the order
+    // the file plays them (`nsfSong`); one it cannot read lists as itself.
+    async function nsfSongEntries(entry) {
+      try {
+        const nsf = parseNsf(new Uint8Array(await (await entry.file()).arrayBuffer()));
+        if (nsf.songs < 2) return [entry];
+        return nsfSongOrder(nsf).map((i) => ({ ...entry, name: nsfSongName(entry.name, nsf, i), nsfSong: i }));
+      } catch {
+        return [entry];
+      }
+    }
+
     // Enumerate the folder's files and render them into the File menu.
     async function refreshFolderFiles() {
       _sourceDirFiles = [];
       if (_sourceDir && (await _sourceDir.readable())) {
         try {
-          _sourceDirFiles = (await _sourceDir.files())
+          const listed = (await _sourceDir.files())
             .map((f) => ({ ...f, kind: folderFileKind(f.name) }))
             .filter((f) => f.kind)
             .sort((a, b) => a.name.localeCompare(b.name));
+          _sourceDirFiles = (await Promise.all(listed.map((f) => (f.kind === 'NSF' ? nsfSongEntries(f) : [f])))).flat();
         } catch {
           _sourceDirFiles = [];
         }
@@ -5710,7 +5724,7 @@
       if (!entry) return;
       try {
         if (entry.kind !== 'score') {
-          await openSong(await entry.file(), { folder: _sourceDir });
+          await openSong(await entry.file(), { folder: _sourceDir, song: entry.nsfSong ?? null, name: entry.name });
         } else if (entry.handle) {
           await readFileHandle(entry.handle);
           log(`Opened ${entry.name} (folder ${_sourceDir?.name ?? '?'})`, 'info');

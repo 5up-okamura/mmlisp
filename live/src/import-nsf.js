@@ -27,6 +27,7 @@
 // from a frame on) ends there, not looping.
 //
 //   parseNsf(bytes)                  → { songs, start, titles, times, … }
+//   nsfSongName(fileName, nsf, song) → `game #03 Title.nsf`, a song as a file
 //   runNsf(nsf, song)                → what parseVgm returns (format "NSF")
 // ---------------------------------------------------------------------------
 
@@ -133,11 +134,25 @@ export function parseNsf(bytes) {
   return nsf;
 }
 
-/** The song's name for a dialog: its NSFe / NSF2 label, else its number. */
-export const nsfSongLabel = (nsf, song) => `${song + 1}${nsf.titles[song] ? ` — ${nsf.titles[song]}` : ""}`;
+/** The songs in the order the file plays them (an NSFe playlist), 0-based. */
+export const nsfSongOrder = (nsf) => nsf.playlist?.filter((i) => i < nsf.songs) ?? Array.from({ length: nsf.songs }, (_, i) => i);
 
-/** Song `song` (0-based) run and read → what parseVgm returns, with `notes` on what the run did. */
-export function runNsf(nsf, song = nsf.start, { maxSeconds = MAX_SECONDS } = {}) {
+/**
+ * Song `song`'s name as a file of its own — what Live's folder list shows
+ * and the score is named by: `game #03 Title.nsf`, its NSFe / NSF2 label
+ * where it has one (without the characters a file name cannot hold).
+ */
+export function nsfSongName(fileName, nsf, song) {
+  const ext = fileName.match(/\.[^.]*$/)?.[0] ?? ".nsf";
+  const title = (nsf.titles[song] ?? "").replace(/[\\/:*?"<>|]/g, "").trim();
+  return `${fileName.slice(0, fileName.length - ext.length)} #${String(song + 1).padStart(2, "0")}${title ? ` ${title}` : ""}${ext}`;
+}
+
+/**
+ * Song `song` (0-based) run and read → what parseVgm returns, with `notes`
+ * on what the run did. `onWrite(addr, value, t)` sees every chip write.
+ */
+export function runNsf(nsf, song = nsf.start, { maxSeconds = MAX_SECONDS, onWrite = null } = {}) {
   const clock = nsf.pal ? CLOCK_PAL : CLOCK_NTSC;
   const speed = (nsf.pal ? nsf.speedPal : nsf.speedNtsc) || (nsf.pal ? 19997 : 16639); // µs a play call
   const period = (speed * RATE) / 1e6; // samples a frame
@@ -180,7 +195,9 @@ export function runNsf(nsf, song = nsf.start, { maxSeconds = MAX_SECONDS } = {})
   const toChip = (a, v) => {
     sig1 = Math.imul(sig1 ^ ((a << 8) | v), 16777619);
     sig2 = Math.imul(sig2 ^ ((v << 16) | a), 2246822519) ^ (sig2 >>> 13);
-    chips.write(a, v, now());
+    const t = now();
+    onWrite?.(a, v, t); // (the run's own writes, for an A/B against the import)
+    chips.write(a, v, t);
   };
   cpu.bus = {
     read(a) {
