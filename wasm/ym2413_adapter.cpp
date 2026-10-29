@@ -58,12 +58,15 @@ uint8_t g_rom[18 * 8]; // fifteen voices and three rhythm patches, $00-$07 each
 // its note is not re-attacked (wasm/ym2608_adapter.cpp). The OPLL's keys are
 // $20-$28 bit 4 (with the block and the F-number's top bit) and the rhythm's
 // $0E: a second write to one of them in the same sample waits, with every
-// write after it, for the next.
+// write after it, for the next — unless both key nothing on: a key-off on a
+// key-off changes nothing, and a seek's burst (IRPlayer.seek) is every
+// key-off the song made until there.
 struct pending { uint8_t addr, data; };
 const int OL_QUEUE = 8192;
 pending g_queue[OL_QUEUE];
 int g_qhead = 0, g_qlen = 0;
 uint16_t g_keyed = 0; // bits 0-8 the channels' $2x, bit 9 $0E, written in this sample
+uint16_t g_on = 0; // of those, the ones whose last write keyed something on
 
 void ensure_init() {
   if (g_chip) return;
@@ -75,8 +78,10 @@ bool apply_write(int addr, int data) {
   const int key = addr >= 0x20 && addr <= 0x28 ? addr - 0x20 : addr == 0x0e ? 9 : -1;
   if (key >= 0) {
     const uint16_t bit = 1u << key;
-    if (g_keyed & bit) return false;
+    const bool on = (data & (key == 9 ? 0x1f : 0x10)) != 0;
+    if ((g_keyed & bit) && (on || (g_on & bit))) return false;
     g_keyed |= bit;
+    g_on = on ? g_on | bit : g_on & ~bit;
   }
   g_chip->write_address((uint8_t)addr);
   g_chip->write_data((uint8_t)data);
@@ -107,7 +112,7 @@ void ol_reset(void) {
   ensure_init();
   g_chip->reset();
   g_qlen = 0;
-  g_keyed = 0;
+  g_keyed = g_on = 0;
 }
 
 void ol_write_reg(int addr, int data) {
@@ -140,7 +145,7 @@ int ol_render(int count) {
   for (int i = 0; i < count; i++) {
     drain_queue();
     *dst++ = clamp16(g_chip->generate1());
-    g_keyed = 0;
+    g_keyed = g_on = 0;
     for (int k = 0; k < ym2413_taps::LANES; k++) *tap++ = clamp16(g_chip->lane[k]);
   }
   return count;

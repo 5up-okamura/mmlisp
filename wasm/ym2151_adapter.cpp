@@ -49,12 +49,15 @@ int16_t g_taps[Y5_MAX_RENDER_SAMPLES * ym2151_taps::LANES];
 // ymfm applies a write at once and reads the key state once a sample, so a
 // channel keyed off and on again within one sample never sees the off, and
 // its note is not re-attacked (wasm/ym2608_adapter.cpp). A second $08 to a
-// channel in the same sample waits, with every write after it, for the next.
+// channel in the same sample waits, with every write after it, for the next —
+// unless both key nothing on: a key-off on a key-off changes nothing, and a
+// seek's burst (IRPlayer.seek) is every key-off the song made until there.
 struct pending { uint8_t addr, data; };
 const int Y5_QUEUE = 8192;
 pending g_queue[Y5_QUEUE];
 int g_qhead = 0, g_qlen = 0;
 uint8_t g_keyed = 0; // channels ($08 bits 2-0) keyed in this sample
+uint8_t g_on = 0; // of those, the ones whose last $08 keyed an operator on
 
 void ensure_init() {
   if (g_chip) return;
@@ -65,8 +68,10 @@ void ensure_init() {
 bool apply_write(int addr, int data) {
   if (addr == 0x08) {
     const uint8_t bit = 1 << (data & 7);
-    if (g_keyed & bit) return false;
+    const bool on = (data & 0x78) != 0;
+    if ((g_keyed & bit) && (on || (g_on & bit))) return false;
     g_keyed |= bit;
+    g_on = on ? g_on | bit : g_on & ~bit;
   }
   g_chip->write_address((uint8_t)addr);
   g_chip->write_data((uint8_t)data);
@@ -95,7 +100,7 @@ void y5_reset(void) {
   ensure_init();
   g_chip->reset();
   g_qlen = 0;
-  g_keyed = 0;
+  g_keyed = g_on = 0;
 }
 
 void y5_write_reg(int addr, int data) {
@@ -121,7 +126,7 @@ int y5_render(int count) {
   for (int i = 0; i < count; i++) {
     drain_queue();
     g_chip->generate1(&out);
-    g_keyed = 0;
+    g_keyed = g_on = 0;
     for (int k = 0; k < 2; k++) {
       const int32_t v = out.data[k];
       *dst++ = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);

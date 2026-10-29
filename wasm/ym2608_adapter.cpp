@@ -143,12 +143,15 @@ int16_t g_taps[Y8_MAX_RENDER_SAMPLES * ym2608_taps::LANES];
 // F-number, key-on, all at one instant) never sees the off, and its note is
 // not re-attacked. The chip sees it: its bus takes microseconds a write.
 // A second $28 to a channel in the same sample therefore waits, with every
-// write after it, for the next sample.
+// write after it, for the next sample — unless both key nothing on: a
+// key-off on a key-off changes nothing, and a seek's burst (IRPlayer.seek)
+// is every key-off the song made until there.
 struct pending { uint8_t port, addr, data; };
 const int Y8_QUEUE = 8192;
 pending g_queue[Y8_QUEUE];
 int g_qhead = 0, g_qlen = 0;
 uint8_t g_keyed = 0; // channels ($28 bits 2-0) keyed in this sample
+uint8_t g_on = 0; // of those, the ones whose last $28 keyed an operator on
 uint8_t g_b2 = 0; // FM3's $B2 as last written (the CSM key-off's rewrite)
 bool g_csm_off = false; // Timer A keyed CSM last sample: the key-off is due
 
@@ -165,8 +168,10 @@ void ensure_init() {
 bool apply_write(int port, int addr, int data) {
   if (!(port & 1) && addr == 0x28) {
     const uint8_t bit = 1 << (data & 7);
-    if (g_keyed & bit) return false;
+    const bool on = (data & 0xf0) != 0;
+    if ((g_keyed & bit) && (on || (g_on & bit))) return false;
     g_keyed |= bit;
+    g_on = on ? g_on | bit : g_on & ~bit;
   }
   if (!(port & 1) && addr == 0x10 && !g_has_rom) return true;
   if (!(port & 1) && addr == 0xb2) g_b2 = (uint8_t)data;
@@ -203,7 +208,7 @@ void y8_reset(void) {
   g_chip->reset();
   g_host.timer_left[0] = g_host.timer_left[1] = -1;
   g_qlen = 0;
-  g_keyed = 0;
+  g_keyed = g_on = 0;
   g_b2 = 0;
   g_csm_off = false;
 }
@@ -257,7 +262,7 @@ int y8_render(int count) {
     }
     g_csm_off = g_host.run_timers(144);
     g_chip->generate3(out);
-    g_keyed = 0;
+    g_keyed = g_on = 0;
     for (int k = 0; k < 3; k++)
       *dst++ = (int16_t)((out[0].data[k] + out[1].data[k] + out[2].data[k]) / 3);
     for (int k = 0; k < ym2608_taps::LANES; k++) {
