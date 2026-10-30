@@ -477,25 +477,26 @@
           </div>
           <!-- The OPN's LFO rate; the OPM has its own LFO (below), which
                reads :lfo-rate too but shows its own words -->
-          <div class="knob-wrap" data-needs="part:fm">
+          <div class="knob-wrap" data-needs="word:LFO_RATE">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
             <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onLfo(this)">
           </div>
         </div>
         <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)" data-needs="word:LFO_FREQ">
-          <div class="knob-wrap">
+          <div class="knob-wrap" data-needs="word:LFO_FREQ">
             <div class="knob-label">LFRQ <span class="val" id="val-lfo-freq">0</span></div>
             <input type="range" id="sl-lfo-freq" min="0" max="255" value="0" oninput="onOpmLfo('LFO_FREQ', this)">
           </div>
-          <div class="knob-wrap">
+          <div class="knob-wrap" data-needs="word:LFO_PMD">
             <div class="knob-label">PMD <span class="val" id="val-lfo-pmd">0</span></div>
             <input type="range" id="sl-lfo-pmd" min="0" max="127" value="0" oninput="onOpmLfo('LFO_PMD', this)">
           </div>
-          <div class="knob-wrap">
+          <div class="knob-wrap" data-needs="word:LFO_AMD">
             <div class="knob-label">AMD <span class="val" id="val-lfo-amd">0</span></div>
             <input type="range" id="sl-lfo-amd" min="0" max="127" value="0" oninput="onOpmLfo('LFO_AMD', this)">
           </div>
-          <div class="knob-wrap">
+          <!-- FDS LFO_WAVE is a step table, not the OPM waveform selector. -->
+          <div class="knob-wrap" data-needs="part:opm-fm">
             <div class="knob-label">WAVE <span class="val" id="val-lfo-wave">saw</span></div>
             <input type="range" id="sl-lfo-wave" min="0" max="3" value="0" oninput="onOpmLfo('LFO_WAVE', this)">
           </div>
@@ -7937,6 +7938,11 @@
       const regs = player?.getChRegs?.(0);
       setSliderCached('sl-lfo', 'val-lfo', regs?.lfoRate ?? 0);
       const opm = regs?.opmLfo ?? { freq: 0, pmd: 0, amd: 0, wave: 0 };
+      const wave = regs?.waveLfo;
+      if (wave) {
+        opm.freq = wave.lfoFreq ?? 0;
+        opm.pmd = wave.lfoPmd ?? 0;
+      }
       setSliderCached('sl-lfo-freq', 'val-lfo-freq', opm.freq);
       setSliderCached('sl-lfo-pmd', 'val-lfo-pmd', opm.pmd);
       setSliderCached('sl-lfo-amd', 'val-lfo-amd', opm.amd);
@@ -7947,7 +7953,7 @@
       }
     }
 
-    // The OPM's own LFO, song-wide: a knob writes its word live, as :lfo-freq
+    // The machine's LFO, song-wide: a knob writes its word live, as :lfo-freq
     // … written on a track would.
     window.onOpmLfo = function(word, slider) {
       const val = parseInt(slider.value, 10);
@@ -8357,6 +8363,10 @@
         if (el.classList.contains('menu-item')) el.disabled = !has;
         else el.hidden = !has;
       }
+      // The FDS modulation has wider rate and narrower depth registers.
+      const waveLfo = target.parts.find((p) => p.lfoTable);
+      document.getElementById('sl-lfo-freq').max = waveLfo ? 4095 : 255;
+      document.getElementById('sl-lfo-pmd').max = waveLfo ? 63 : 127;
       // The FM panel on the machine's FM part: a 2-op chain where it has no
       // algorithm (the OPLL's), each operator slider on its register's range.
       // There the diagram and FB move into the operators' free columns.

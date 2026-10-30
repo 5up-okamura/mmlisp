@@ -5316,6 +5316,14 @@ export class IRPlayer {
    * chIndex: an FM channel (default 0)
    */
   setParam(target, value, chIndex = 0) {
+    // Wave chips' song-wide LFO words use their own encoder, as score writes do.
+    const word = WAVE_LFO_WORDS[target];
+    const lane = word && this._toneEnc.findIndex((l) => l?.enc[word]);
+    if (word && lane >= 0 && word !== "lfoTable") {
+      this._waveLfo[word] = Math.round(value);
+      this._psgWrites(this._lane(lane, (e) => e[word](this._waveLfo[word])));
+      return;
+    }
     this._applyParam(chIndex, {
       cmd: "PARAM_SET",
       args: { target, value },
@@ -5342,6 +5350,7 @@ export class IRPlayer {
       fms: r.fms,
       lfoRate: this._lfoRate,
       opmLfo: { ...this._opmLfo },
+      waveLfo: this._toneEnc.some((l) => l?.enc.lfoFreq) ? { ...this._waveLfo } : null,
       ops: r.ops.map((o) => ({ ...o })),
     };
   }
