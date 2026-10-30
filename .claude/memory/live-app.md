@@ -75,7 +75,23 @@ lessons.
   before building it. This is not a request to add Hz to MMLisp's LFO rate.
 - **Note to MIDI number:** establish the helper's input/output and actual use
   case; do not assume it means rewriting the score to `(note ...)` forms.
-- **A/B snapshots:** keep the idea minimal and unnamed. What state is captured
-  still needs discussion; no naming or snapshot-management UI.
+- **MMB/driver resource information:** MD only. Define which concrete
+  production question it answers before choosing statistics or controls.
 - **A second temporary tool on mobile:** decide how to switch small windows
   without stacking them over the source; do not infer a multi-window design.
+- **Excluded from the small-tool list:** a separate length calculator (the
+  existing `| ... |` calculation is enough), and diagnostics (normal app
+  feedback, not an independent tool).
+
+## Deferred editing ideas
+
+- **PCM waveform editor:** the user sees some asymmetry beside the FM/wave
+  editors, but questions the benefit versus zooming and editing complexity.
+  Decide whether to pursue it. A whole bank-file view and a selected sample's
+  slice/range/loop view serve different purposes; do not assume a bank overview
+  is wanted or design a full sample editor from the symmetry alone.
+- **Target conversion:** retain as an idea, lower priority.
+- **Musically restructuring VGM imports:** the user wants to adjust tempo,
+  pickup and gate timing while inspecting the result. Develop a human-guided
+  workflow with score/playback feedback; do not turn this into a request for
+  automatic beat detection or an import-time conversion with no preview.

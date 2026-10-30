@@ -313,6 +313,11 @@
           title="Pick the notes that meet a condition, then delete them, change their length or reverse them">
           <span>Logical Editor</span><span class="menu-item-shortcut" id="logicalMenuCheck"></span>
         </button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" id="abCompareMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleABCompare();closeMenus()">
+          <span>A/B Compare</span><span class="menu-item-shortcut" id="abCompareCheck"></span>
+        </button>
+        <button class="menu-item" id="abCopyMenu" onclick="copyABCompare();closeMenus()" disabled>Copy A to B</button>
       </div>
     </div>
 
@@ -382,6 +387,10 @@
     <div id="leftCol">
       <div id="editorWrap">
         <canvas id="vizCanvas"></canvas>
+        <div id="abCompare" role="group" aria-label="A/B comparison" hidden>
+          <button class="tb-btn active" type="button" data-side="A" aria-pressed="true" title="A — current working copy" onclick="switchABCompare('A')" disabled>A</button>
+          <button class="tb-btn" type="button" data-side="B" aria-pressed="false" title="Switch to B (starts as a copy of A)" onclick="switchABCompare('B')">B</button>
+        </div>
         <!-- A shared link opens paused: audio needs a gesture before it may start -->
         <button id="sharedPlay" type="button" hidden onclick="playSharedScore()">
           <svg width="14" height="14" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,0 10,5 1,10"/></svg>
@@ -934,6 +943,7 @@
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, lengthTicks, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
+    import { ABSnapshots } from './src/ab-snapshots.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
@@ -950,13 +960,15 @@
     // -----------------------------------------------------------------------
     const cm = await import('./vendor/codemirror.js');
     const { EditorView, Decoration, lineNumbers, keymap, layer, RectangleMarker, drawSelection } = cm;
-    const { EditorState, EditorSelection, StateField, StateEffect } = cm;
+    const { EditorState, EditorSelection, StateField, StateEffect, Compartment, Transaction } = cm;
     const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
     const { tags } = cm;
-    const { history, historyKeymap, isolateHistory, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
+    const { history, historyField, foldState, historyKeymap, isolateHistory, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
     const { hoverTooltip, closeHoverTooltips, hasHoverTooltips, tooltips } = cm;
     const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
     const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
+
+    const abHistory = new Compartment();
 
     // Resolve a 1-based source span { line, column, endLine, endColumn } to a
     // [from, to) document offset range, clamped to the document.
@@ -4200,6 +4212,181 @@
       return true;
     }
 
+    // A/B is session-local, per document. Each side holds an immutable editor
+    // state (its own undo history) and a deliberate audition cue, not a clock
+    // that keeps advancing while listening.
+    const abSnapshots = new ABSnapshots();
+    let _abVisible = false;
+    let _abBusy = false;
+    let _abOperation = 0;
+    let _auditionCue = 0;
+    let _auditionEffect = null; // def-se name, so reordered effects stay identifiable
+    let _playEpoch = 0; // Stop/New/newer Play cancels async playback startup
+    const abButtons = document.getElementById('abCompare');
+    const sizeABButtons = () => {
+      const rect = document.getElementById('btnPlay').getBoundingClientRect();
+      abButtons.style.setProperty('--ab-button-width', `${rect.width}px`);
+      abButtons.style.setProperty('--ab-button-height', `${rect.height}px`);
+    };
+    new ResizeObserver(sizeABButtons).observe(document.getElementById('btnPlay'));
+    sizeABButtons();
+
+    function renderABCompare() {
+      abButtons.hidden = !_abVisible;
+      abButtons.setAttribute('aria-busy', String(_abBusy));
+      for (const b of abButtons.querySelectorAll('[data-side]')) {
+        const active = b.dataset.side === abSnapshots.active;
+        b.disabled = active || _abBusy;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
+        b.title = active ? `${b.dataset.side} — current working copy`
+          : `Switch to ${b.dataset.side}${abSnapshots.slots[b.dataset.side] ? '' : ' (starts as a copy of ' + abSnapshots.active + ')'}`;
+      }
+      document.getElementById('abCompareMenu').setAttribute('aria-checked', String(_abVisible));
+      document.getElementById('abCompareCheck').textContent = _abVisible ? '✓' : '';
+      const copy = document.getElementById('abCopyMenu');
+      copy.disabled = !_abVisible || _abBusy;
+      copy.textContent = `Copy ${abSnapshots.active} to ${abSnapshots.active === 'A' ? 'B' : 'A'}`;
+    }
+    function abCurrentSnapshot() {
+      return { state: editorView.state, cue: _auditionCue, effect: _auditionEffect, dynVals: { ..._dynVals } };
+    }
+    function resetABCompare() {
+      _abOperation++;
+      _abBusy = false;
+      _auditionCue = 0;
+      _auditionEffect = null;
+      if (currentIrURL && !_lastGoodIR) _abVisible = false;
+      abSnapshots.reset();
+      renderABCompare();
+    }
+    window.toggleABCompare = () => {
+      if (!_abVisible && currentIrURL && !_lastGoodIR) {
+        log('A/B Compare needs editable MMLisp source.', 'err');
+        return;
+      }
+      _abVisible = !_abVisible;
+      if (_abVisible && matchMedia('(max-width: 480px)').matches && _panelOpen) togglePanel();
+      if (_abVisible && getComputedStyle(document.getElementById('editorWrap')).display === 'none') setSource(true);
+      renderABCompare(); // hiding never discards either working copy
+    };
+    window.copyABCompare = () => {
+      if (!_abVisible || _abBusy) return;
+      const other = abSnapshots.copyToOther(abCurrentSnapshot());
+      renderABCompare();
+      log(`A/B: copied ${abSnapshots.active} to ${other}.`, 'info');
+    };
+    window.switchABCompare = async (side) => {
+      if (!_abVisible || _abBusy || side === abSnapshots.active) return;
+      const view = { state: editorView.state, doc: editorView.state.doc, selection: editorView.state.selection };
+      const next = abSnapshots.switchTo(side, abCurrentSnapshot());
+      if (!next) return;
+      const operation = ++_abOperation;
+      _abBusy = true;
+      renderABCompare();
+      const wasPlaying = !!player?.isPlaying?.();
+      clearTimeout(_hotSwapTimer);
+      onStop(); // cancel queued audio before replacing source and its target
+      const playbackEpoch = _playEpoch;
+      const epoch = ++_docEpoch;
+      const filename = _lastFileName;
+      const source = next.state.doc.toString();
+      const current = () => operation === _abOperation && epoch === _docEpoch
+        && filename === _lastFileName && editorView.state.doc.toString() === source;
+      try {
+        const changed = editorView.state.doc.toString() !== source;
+        const position = (pos) => {
+          const before = view.doc.lineAt(pos);
+          const after = next.state.doc.line(Math.min(before.number, next.state.doc.lines));
+          return after.from + Math.min(pos - before.from, after.length);
+        };
+        // Preserve cursor affinity at soft-wrap boundaries as well as its offset.
+        const selection = next.state.doc === view.doc ? view.selection
+          : EditorSelection.create(view.selection.ranges.map((r) => r.empty
+            ? EditorSelection.cursor(position(r.head), r.assoc, r.bidiLevel, r.goalColumn)
+            : EditorSelection.range(position(r.anchor), position(r.head), r.goalColumn, r.bidiLevel)), view.selection.mainIndex);
+        followHold(); // switching is a manual view operation, like scrolling
+        dropPlayheadFx();
+        // Update the existing view, keeping measured line heights and DOM.
+        // setState rebuilds those even when the source is identical, so restoring
+        // scrollTop afterwards cannot keep the same text at the same pixels.
+        const changes = [];
+        const lines = Math.min(view.doc.lines, next.state.doc.lines);
+        for (let n = 1; n <= lines; n++) {
+          const before = view.doc.line(n), after = next.state.doc.line(n);
+          if (before.text === after.text) continue;
+          let from = 0, end = 0;
+          while (from < before.length && from < after.length && before.text[from] === after.text[from]) from++;
+          while (end < before.length - from && end < after.length - from &&
+            before.text[before.length - end - 1] === after.text[after.length - end - 1]) end++;
+          changes.push({ from: before.from + from, to: before.to - end,
+            insert: after.text.slice(from, after.length - end) });
+        }
+        const tail = view.doc.line(lines).to;
+        if (view.doc.lines !== next.state.doc.lines)
+          changes.push({ from: tail, to: view.doc.length,
+            insert: next.state.doc.sliceString(next.state.doc.line(lines).to) });
+        const changeSet = view.state.changes(changes);
+        editorView.dispatch({ changes: changeSet, selection,
+          annotations: [isolateHistory.of('full'), Transaction.addToHistory.of(false)],
+          effects: [setPlayheadBase.of(null), setTrackLine.of({ trackIdx: -1 }),
+            setSeq.of({ clear: true }), setLogicalMarks.of(Decoration.none), setHover.of(null)] });
+        // Restore the destination's history after applying source changes so
+        // those changes cannot map or enter its undo stack. Only these values
+        // belong to a working copy; the measured editor view remains shared.
+        const savedHistory = next.state.field(historyField);
+        const savedFolds = next.state.field(foldState);
+        editorView.dispatch({ effects: abHistory.reconfigure([
+          history(), historyField.init(() => savedHistory), foldState.init(() => savedFolds),
+        ]), annotations: [Transaction.addToHistory.of(false), isolateHistory.of('full')] });
+        _lastHover.pos = -2;
+        _lastGoodIR = null; // failed A must never audition the last successful B
+        _lastGoodSrc = null;
+        _lastSourceMap = null;
+        _timeProbe = null;
+        refreshTimeBar(null);
+        _auditionCue = next.cue;
+        _auditionEffect = next.effect ?? null;
+        _dynVals = { ...next.dynVals };
+        _timeCue = next.cue;
+        syncBracketStatus();
+        if (changed) markDocDirty();
+        scheduleDraftSave();
+        if (!isCoarsePointerDevice()) editorView.focus(); // do not summon a phone's keyboard
+        // Incomplete source is a valid working copy. It must still be dirty
+        // and recoverable even if a contextual panel cannot parse it yet.
+        try { syncParamUI({ repaint: false }); } catch (_) { /* compiler reports it below */ }
+        scheduleLogicalRefresh();
+        const built = await refreshImportsAndCompile();
+        if (!current()) return;
+        if (!built.ok) {
+          log(`A/B ${side}: could not build this version; playback stays stopped.`, 'err');
+          return;
+        }
+        // A user Stop/Play during the compile takes precedence over auto-resume.
+        if (wasPlaying && playbackEpoch === _playEpoch) {
+          const ir = built.ir;
+          const effect = next.effect == null ? null : ir.tracks.find((t) => t.se?.name === next.effect)?.se.index;
+          if (effect === undefined) {
+            log(`A/B ${side}: effect '${next.effect}' no longer exists; playback stays stopped.`, 'err');
+            return;
+          }
+          await onPlay(null, { fromSec: next.cue, se: effect, prepared: built,
+            guard: () => current() && _lastGoodIR === ir });
+        } else if (playbackEpoch === _playEpoch) {
+          showTime(next.cue);
+          holdRollAt(built.ir, next.cue);
+        }
+      } catch (e) {
+        if (current()) log(`A/B ${side}: ${e.message}; playback stays stopped.`, 'err');
+      } finally {
+        if (operation === _abOperation) {
+          _abBusy = false;
+          renderABCompare();
+        }
+      }
+    };
+
     // Temporary tools share the end of Params on desktop and a source-visible
     // floating host on phones. Visibility is the one source of menu state.
     const toolMedia = matchMedia('(max-width: 480px)');
@@ -4527,7 +4714,7 @@
       }),
       foldGutter(),
       EditorView.lineWrapping,
-      history(),
+      abHistory.of(history()),
       // Multiple cursors: Cmd/Ctrl+D grows a selection match by match, the
       // panel's "all" button puts a cursor on every match, and
       // Cmd/Ctrl+Alt+Arrow stacks them by line — one edit, typed once, in every
@@ -4792,6 +4979,7 @@
     function setEditorDoc(text) {
       // Reset the full state so that undo history does not include the file load.
       closeLogicalEditor();
+      resetABCompare();
       _docEpoch++; // a compile still running is of the score this one replaces
       editorView.setState(EditorState.create({
         doc: text,
@@ -5003,9 +5191,13 @@
     }
 
     async function refreshImportSources(src) {
-      _importSources = await readImportSources(src, _lastFileName);
-      scheduleLogicalRefresh();
-      return _importSources;
+      const epoch = _docEpoch;
+      const imports = await readImportSources(src, _lastFileName);
+      if (epoch === _docEpoch) {
+        _importSources = imports;
+        scheduleLogicalRefresh();
+      }
+      return imports;
     }
 
     // The imported files' text for `src` compiled as `fileName` — the editor's
@@ -5136,15 +5328,17 @@
     // `target` is the IRPlayer that plays `ir`: it learns the bank's rate, so
     // its loop lengths round as the driver's do (the Library's preview has its own).
     // It also picks the synth the worklet plays on, the score's machine's.
-    async function syncPcmBankToWorklet(ir, target = player) {
-      if (!workletNode) return;
+    async function syncPcmBankToWorklet(ir, target = player, current = () => true) {
+      if (!workletNode || !current()) return;
       const machine = targetProfile(ir?.metadata?.target);
       await setWorkletMachine(machine.name);
+      if (!current()) return;
       // The YM2608's ADPCM-B plays from its own RAM: the samples baked once
       // (chips/adpcm-b.js), as the VGM and WAV exports bake them.
       // The X68000's PCM8: the samples the worklet mixes (src/chips/msm6258.js).
       if (machine.hasPart('pcm8')) {
         const blobs = await pcmSampleBlobsForMmb(ir);
+        if (!current()) return;
         const pcm8 = blobs ? bakePcm8(ir, blobs) : null;
         for (const w of pcm8?.warnings ?? []) log(w, 'warn');
         target?.setFrameBank?.(pcm8);
@@ -5155,6 +5349,7 @@
       // chip's own register writes, from the same frames.
       if (machine.parts.some((p) => p.frames)) {
         const blobs = await pcmSampleBlobsForMmb(ir);
+        if (!current()) return;
         const frames = blobs ? bakePcm8(ir, blobs) : null;
         for (const w of frames?.warnings ?? []) log(w, 'warn');
         target?.setFrameBank?.(frames);
@@ -5162,6 +5357,7 @@
       }
       if (machine.hasPart('adpcm-b')) {
         const blobs = await pcmSampleBlobsForMmb(ir);
+        if (!current()) return;
         const adpcm = blobs ? bakeAdpcmB(ir, blobs, machine) : null;
         for (const w of adpcm?.warnings ?? []) log(w, 'warn');
         target?.setAdpcmBank?.(adpcm);
@@ -5176,6 +5372,7 @@
       const pcmVoices = ir?.metadata?.pcmVoices ?? 0;
       if (!pcmVoices) return clear();
       const samples = await pcmSampleBlobsForMmb(ir);
+      if (!current()) return;
       if (!samples) return clear();
       try {
         const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
@@ -6938,10 +7135,11 @@
       if (_compileQueued) return _compileQueued;
       const run = _compileChain.then(async () => {
         if (_compileQueued === run) _compileQueued = null;
+        const epoch = _docEpoch;
         await refreshImportSources(editorView.state.doc.toString());
+        if (epoch !== _docEpoch) return { ir: null, ok: false };
         const doc = editorView.state.doc;
         const src = doc.toString();
-        const epoch = _docEpoch;
         const rec = { doc, changes: null };
         _compileRec = rec;
         try {
@@ -8281,17 +8479,21 @@
     // one, unless `exactLine`, when a line with no note plays nothing);
     // fromSec: from that far into the song. Both chase the run (IRPlayer.seek).
     // se: an effect's index, null for the song; left out, the cursor decides.
-    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride } = {}) {
+    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride, prepared = null, guard = () => true } = {}) {
+      const request = ++_playEpoch;
+      const epoch = _docEpoch;
+      const current = () => request === _playEpoch && epoch === _docEpoch && guard();
       hideSharedPlay();
       _timeCue = null; // a cue set on the time bar is spent by any Play
       const ok = await initAudio();
-      if (!ok) return;
+      if (!ok || !current()) return;
       stopLibraryScorePreview(); // one score owns the chip at a time
       // Manual-compile model: starting from stopped always rebuilds from the
       // current source, so Play reflects the latest edits. On error, compileNow
       // keeps the last good IR; only binary/URL presets with no editable source
       // (currentIrURL set, nothing compiled yet) are left to the loader below.
-      if (_lastGoodIR || !currentIrURL) await refreshImportsAndCompile();
+      if (!prepared && (_lastGoodIR || !currentIrURL)) await refreshImportsAndCompile();
+      if (!current()) return;
       if (exactLine && !_lastSourceMap?.some((e) => e.line === fromLine)) return;
       if (player) {
         player.stop();
@@ -8331,6 +8533,7 @@
             // plain array read — on hardware the Z80 engine reads the bank
             // through its window.)
             const samples = await pcmSampleBlobsForMmb(_lastGoodIR);
+            if (!current()) return;
             const { bytes, sampleBank, diagnostics } = encodeMmb(
               _lastGoodIR,
               samples ? { samples } : {},
@@ -8343,6 +8546,7 @@
             const res = await fetch(currentIrURL);
             if (!res.ok) throw new Error('HTTP ' + res.status);
             mmbBytes = new Uint8Array(await res.arrayBuffer());
+            if (!current()) return;
           } else {
             throw new Error('No compiled IR available for the current source');
           }
@@ -8358,7 +8562,11 @@
           // vol, master) goes back in from its hook, ahead of the first frame.
           const drv = player;
           player.setOnRunStart(() => applyPlayerChannelState(drv));
+          if (!current()) return;
           player.play(audioCtx, { se });
+          _auditionCue = 0;
+          _auditionEffect = seName;
+          if (prepared && fromSec > 0) log('A/B: MMLispDRV reference has no seek; playing from the beginning.', 'info');
           playingStarted();
           refreshTimeBar(player._ir ?? _lastGoodIR, false); // the reference driver cannot seek
           // After play(): the driver's reset is a power-on, reseeding every value
@@ -8385,12 +8593,15 @@
           player.loadJSON(_lastGoodIR, { se });
           _runSrc = _lastGoodSrc;
           _runSe = se;
-          await syncPcmBankToWorklet(_lastGoodIR);
+          await syncPcmBankToWorklet(_lastGoodIR, player, current);
+          if (!current()) return;
           log(se != null ? `Playing effect ${seName}` : 'Playing (compiled source)', 'info');
         } else if (currentIrURL) {
           log('Loading ' + currentIrURL + '…');
           await player.loadURL(currentIrURL);
-          await syncPcmBankToWorklet(player._ir);
+          if (!current()) return;
+          await syncPcmBankToWorklet(player._ir, player, current);
+          if (!current()) return;
           log('Playing', 'info');
         } else {
           throw new Error('No compiled IR available for the current source');
@@ -8415,12 +8626,14 @@
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
         // From a point in the song, chased; an effect always plays from its top.
         if (fromSec != null && se == null) {
-          player.seek(audioCtx, { sec: fromSec });
+          _auditionCue = player.seek(audioCtx, { sec: fromSec });
         } else if (fromLine != null && _lastSourceMap && se == null) {
-          player.playFromLine(audioCtx, fromLine, _lastSourceMap);
+          _auditionCue = player.playFromLine(audioCtx, fromLine, _lastSourceMap);
         } else {
           player.play(audioCtx);
+          _auditionCue = 0;
         }
+        _auditionEffect = seName;
         playingStarted();
         _paused = false;
         _vizFrozen = null;
@@ -8487,6 +8700,7 @@
     });
 
     function onStop() {
+      _playEpoch++;
       stopLibraryScorePreview();
       stopFmLiveLoop();
       resetChannelVu();
@@ -8783,6 +8997,7 @@
     // quiet: a pause the piano roll's drag takes and gives back, not the
     // user's — no log line.
     function onPause({ quiet = false } = {}) {
+      _playEpoch++;
       if (!player || !player.isPlaying()) return;
       // The MMLispDRV reference cannot seek; pause degrades to stop.
       if (!(player instanceof IRPlayer)) { onStop(); return; }
@@ -12136,6 +12351,7 @@
         span?.end > 0 ? `${fmtTime(pos)} / ${fmtTime(span.end)}` : fmtTime(pos);
     }
     function seekTo(sec) {
+      _auditionCue = sec;
       // The pitch trace is what sounded before the jump, laid out on the clock
       // as it ran then: it no longer lines up with the roll, so it goes.
       _rollTrace = null;

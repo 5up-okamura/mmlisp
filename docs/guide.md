@@ -2314,6 +2314,37 @@ Build to hear the edited score, as with other source edits. Opening a different
 score closes the tool. Escape closes it while focus is inside it; source-editor
 shortcuts keep their normal meaning.
 
+### Comparing two versions with A/B
+
+**Edit ▸ A/B Compare** shows two small buttons at the source's upper right.
+It reveals the source pane if hidden, and closes a phone's covering side panel.
+The selected side is lit and cannot be pressed; press the other to switch.
+The first switch to B starts it as a copy of the current A. Edit either side
+normally: switching away keeps its source, undo history, folded code and Dynamic
+Parameters values. The current cursor/selection (line and column) and visible
+source position carry across the switch, clamped if the destination is shorter.
+The editor stays in place so changed values can be compared visually; changing
+line lengths or folds can still change the source layout. Switching itself adds
+no source-edit undo step. **Edit ▸ Copy A to B** (or **Copy B to A**, when B is selected)
+replaces the other side with the current version without switching sides.
+
+Each side remembers its **audition start position**, in seconds. Setting the
+TIME bar or starting playback from a source line sets that position; listening
+does not move it forward. A switch compiles the destination. If playing, it
+restarts that version at its saved position; stopped or paused, it stays
+stopped with the saved cue ready for Play. A version with errors remains
+editable and stopped: the other side's last successful build is not played
+in its place. The MMLispDRV reference backend has no seek and plays from the
+beginning, as it does outside A/B. Mixer controls and external sample/import
+files are shared between the two versions. Each version also remembers its
+auditioned sound effect by name. If that effect no longer exists, automatic
+playback stays stopped.
+
+Unchecking **A/B Compare** only hides the buttons. Both versions remain for
+the current document while the page is open; opening another score resets
+them. Save, export and the automatic draft use the currently selected source.
+The inactive version is not saved across a page reload.
+
 ### Finding, replacing, and editing every occurrence at once
 
 `Cmd/Ctrl+F` (**Edit ▸ Find / Replace…**) opens the find/replace panel at the

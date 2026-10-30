@@ -14,6 +14,7 @@
     "check:reference": "node scripts/check-reference.mjs",
     "check:i18n": "node scripts/i18n-sync.mjs",
     "mcp": "node mcp/mmlisp-mcp.mjs",
+    "check:ab-snapshots": "node scripts/check-ab-snapshots.mjs",
     "check:edit-tools": "node scripts/check-edit-tools.mjs",
     "check:scope-trigger": "node scripts/check-scope-trigger.mjs",
     "check:snapshot": "node scripts/check-snapshot.mjs",

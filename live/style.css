@@ -292,6 +292,22 @@
       display: none;
     }
     #editorWrap.viz-on #vizCanvas { display: block; }
+    #abCompare {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.75rem;
+      z-index: 3;
+      display: flex;
+      gap: 0.25rem;
+    }
+    #abCompare[hidden] { display: none; }
+    #abCompare .tb-btn {
+      width: var(--ab-button-width);
+      height: var(--ab-button-height);
+      padding: 0;
+      font-size: 0.72rem;
+    }
+    #abCompare .tb-btn[aria-pressed=true]:disabled { opacity: 1; cursor: default; }
     /* A video take: the editor is a fixed square (--video-frame, set by the
        take) without line numbers, so its text wraps and the oscilloscope lays
        out alike on any screen; the rest of the column may overflow meanwhile. */

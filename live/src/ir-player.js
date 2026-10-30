@@ -735,7 +735,7 @@ export class IRPlayer {
       }
       if (found >= 0) line = sourceMap[found].line;
     }
-    this.seek(audioContext, line == null ? { sec: 0 } : { line });
+    return this.seek(audioContext, line == null ? { sec: 0 } : { line });
   }
 
   /**

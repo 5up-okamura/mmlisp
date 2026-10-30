@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import { ABSnapshots } from '../../live/src/ab-snapshots.js';
+import { IRPlayer } from '../../live/src/ir-player.js';
+
+const snapshot = (text, cue = 0) => Object.freeze({ state: Object.freeze({ text }), cue });
+const ab = new ABSnapshots();
+const a = snapshot('original', 1.25);
+assert.equal(ab.active, 'A');
+assert.equal(ab.switchTo('A', a), null);
+assert.equal(ab.switchTo('B', a), a);
+assert.equal(ab.slots.A, a);
+assert.equal(ab.active, 'B');
+const b = snapshot('edited B', 4.5);
+assert.equal(ab.switchTo('A', b), a);
+assert.equal(ab.slots.B, b);
+const editedA = snapshot('edited A', 2);
+assert.equal(ab.switchTo('B', editedA), b);
+assert.equal(ab.switchTo('A', b), editedA);
+assert.equal(ab.copyToOther(editedA), 'B');
+assert.equal(ab.active, 'A');
+assert.equal(ab.switchTo('B', editedA), editedA);
+assert.equal(ab.copyToOther(b), 'A');
+assert.equal(ab.switchTo('A', b), b);
+assert.equal(ab.slots.A.cue, 4.5);
+assert.throws(() => ab.switchTo('C', a), /Unknown/);
+assert.equal(ab.active, 'A');
+ab.reset();
+assert.equal(ab.active, 'A');
+assert.deepEqual(ab.slots, { A: null, B: null });
+assert.equal(ab.switchTo('B', a), a);
+// The line-play entry point must expose seek's resolved time for a snapshot.
+const linePlayer = { seek: (_ctx, at) => at.sec ?? 2.5 };
+assert.equal(IRPlayer.prototype.playFromLine.call(linePlayer, null, 5, [{ line: 3, tick: 96 }]), 2.5);
+assert.equal(IRPlayer.prototype.playFromLine.call(linePlayer, null, 1, []), 0);
+console.log('A/B checks passed: initial copy, independent edits/cues, bidirectional copy, no-op, invalid side, document reset and line-play cue.');
