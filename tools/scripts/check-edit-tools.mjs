@@ -162,6 +162,31 @@ check('a generated tie protects the written note after muting', () => {
   assert.ok(matches.every((n) => n.tied));
   assert.equal(applyLogical(text, notes, matches, { type: 'remove' }).changes.length, 0);
 });
+check('a tied use protects a shared token even outside the matching channel', () => {
+  for (const body of ['(fm1 riff ~ d) (fm2 riff e)', '(fm1 :prio 2 riff ~ d) (fm1 :prio 8 riff e)']) {
+    const text = `(def riff c) ${body}`;
+    const notes = layeredNotes(text);
+    const shared = notes.filter((n) => n.token === 'c');
+    assert.equal(shared.length, 2);
+    assert.ok(shared.every((n) => n.tied));
+    const matches = matchNotes(notes, query({ pitch: { kind: 'name', name: 'c' } }))
+      .filter((n) => n === shared[1]); // only the otherwise untied use matches
+    for (const op of [{ type: 'rest' }, { type: 'remove' }, { type: 'len-set', ticks: 48 }, { type: 'transpose', semitones: 1 }])
+      assert.deepEqual(applyLogical(text, notes, matches, { ...op, includeShared: true }).changes, []);
+    assert.equal(applyLogical(text, notes, matches, { type: 'select' }).done, 1);
+  }
+});
+check('multiline generated notes block reverse without becoming editable', () => {
+  const text = '(fm1 c (note\n 65) d e)';
+  const notes = layeredNotes(text);
+  const generated = notes.find((n) => n.token.includes('(note'));
+  assert.ok(generated);
+  assert.equal(generated.editable, false);
+  const matches = matchNotes(notes, query());
+  assert.deepEqual(matches.map((n) => n.token), ['c', 'd', 'e']);
+  assert.ok(applyLogical(text, notes, matches, { type: 'reverse' }).error);
+  assert.ok(logicalAffected(notes, matches, { type: 'reverse' }).includes(generated));
+});
 check('Select includes tied and shared tokens once without source changes', () => {
   const text = '(def riff c) (fm1 riff riff d ~ d)';
   const notes = layeredNotes(text);

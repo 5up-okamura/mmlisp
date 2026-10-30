@@ -4494,18 +4494,42 @@
       }
       const text = editorView.state.doc.toString();
       try {
-        if (_le.text !== text || _le.imports !== _importSources) {
-          _le.notes = layeredNotes(text, { filename: _lastFileName, imports: _importSources });
-          _le.forms = channelForms(text);
-          _le.text = text;
-          _le.imports = _importSources;
-          const voiceSel = leEl('leVoice');
-          const chosen = voiceSel.value;
-          const names = new Set(_le.notes.filter((n) => n.editable).map((n) => n.voice).filter(Boolean));
-          if (chosen) names.add(chosen); // a removed sound never silently becomes Any
-          voiceSel.replaceChildren(new Option('Any', ''));
-          for (const name of [...names].sort()) voiceSel.append(new Option(name, name));
-          voiceSel.value = chosen;
+        if (_le.text !== text || _le.imports !== _importSources || _le.filename !== _lastFileName) {
+          logicalStatus('Analysing source…');
+          // One analysis in flight: edits coalesce into the latest source.
+          // A stale result must never enable Apply or draw obsolete ranges.
+          if (_le.pending) return;
+          const owner = _le, imports = _importSources, epoch = _docEpoch, filename = _lastFileName;
+          owner.pending = true;
+          compileOffThread(text, filename, imports, 'logical').then(({ notes, forms }) => {
+            if (_le !== owner) return;
+            owner.pending = false;
+            if (epoch !== _docEpoch || filename !== _lastFileName || text !== editorView.state.doc.toString() || imports !== _importSources) {
+              scheduleLogicalRefresh();
+              return;
+            }
+            owner.notes = notes;
+            owner.forms = forms;
+            owner.text = text;
+            owner.imports = imports;
+            owner.filename = filename;
+            const voiceSel = leEl('leVoice');
+            const chosen = voiceSel.value;
+            const names = new Set(notes.filter((n) => n.editable).map((n) => n.voice).filter(Boolean));
+            if (chosen) names.add(chosen); // a removed sound never silently becomes Any
+            voiceSel.replaceChildren(new Option('Any', ''));
+            for (const name of [...names].sort()) voiceSel.append(new Option(name, name));
+            voiceSel.value = chosen;
+            refreshLogicalEditor();
+          }).catch((e) => {
+            if (_le !== owner) return;
+            owner.pending = false;
+            owner.result = null;
+            if (epoch !== _docEpoch || filename !== _lastFileName || text !== editorView.state.doc.toString() || imports !== _importSources)
+              scheduleLogicalRefresh();
+            else logicalStatus(`Cannot analyse this score: ${e.message}`);
+          });
+          return;
         }
         const q = logicalQuery();
         const currentOp = logicalOp();
@@ -7095,8 +7119,10 @@
     let _compileWorker;           // undefined: not tried yet; null: unavailable
     let _compileId = 0;
     const _compilePending = new Map(); // id → { resolve, reject, here }
-    function compileOffThread(src, name, imports) {
-      const here = () => compileMMLisp(src, name, { imports });
+    function compileOffThread(src, name, imports, kind = 'compile') {
+      const here = () => kind === 'logical'
+        ? { notes: layeredNotes(src, { filename: name, imports }), forms: channelForms(src) }
+        : compileMMLisp(src, name, { imports });
       if (_compileWorker === undefined) {
         try {
           _compileWorker = new Worker('./src/compile-worker.js', { type: 'module' });
@@ -7120,7 +7146,7 @@
         const id = ++_compileId;
         const p = { resolve, reject, here: () => { try { resolve(here()); } catch (e) { reject(e); } } };
         _compilePending.set(id, p);
-        try { _compileWorker.postMessage({ id, src, name, imports }); }
+        try { _compileWorker.postMessage({ id, src, name, imports, kind }); }
         catch (_) { _compilePending.delete(id); p.here(); }
       });
     }

@@ -255,12 +255,27 @@ function splitToken(tok) {
 function scoreNotes(text, ir, noteAnalysis) {
   const starts = lineStarts(text);
   const forms = channelForms(text);
+  const formsByChannel = new Map();
+  const direct = new Set();
+  for (const form of forms) {
+    if (!formsByChannel.has(form.channel)) formsByChannel.set(form.channel, []);
+    formsByChannel.get(form.channel).push(form);
+    for (const item of form.items) direct.add(item.from);
+  }
   const out = [];
-  const seen = new Map();
   for (const track of ir?.tracks ?? []) {
     const channel = track.scoreChannel ?? track.channel;
+    const ownForms = formsByChannel.get(channel) ?? [];
     let depth = 0;
     const evs = track.events;
+    // The next non-parameter event, without copying the remaining stream for
+    // every note. Long imported scores can hold tens of thousands of events.
+    const nextEvents = new Array(evs.length);
+    let nextEvent = null;
+    for (let i = evs.length - 1; i >= 0; i--) {
+      nextEvents[i] = nextEvent;
+      if (evs[i].cmd !== "PARAM_SET") nextEvent = evs[i];
+    }
     for (let i = 0; i < evs.length; i++) {
       const e = evs[i];
       if (e.cmd === "LOOP_BEGIN") depth++;
@@ -268,17 +283,25 @@ function scoreNotes(text, ir, noteAnalysis) {
       let isNote = e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON" || e.cmd === "TIE";
       if (!isNote && e.cmd !== "REST") continue;
       const src = e.src;
-      if (!src || src.file || src.line == null || src.endLine !== src.line) continue;
+      if (!src || src.file || src.line == null) continue;
       const from = starts[src.line - 1] + src.column - 1;
-      const to = starts[src.line - 1] + src.endColumn - 1;
+      const to = starts[(src.endLine ?? src.line) - 1] + src.endColumn - 1;
       const token = text.slice(from, to);
       const written = noteAnalysis.get(e);
       // Echoes are generated events, not additional uses of the written token.
       if (!written && splitToken(token)) continue;
       if (written) isNote = written.pitch != null;
-      const editable = !!written && !!splitToken(token);
-      const form = forms.find((f) => f.channel === channel && from >= f.from && to <= f.to);
-      const next = evs.slice(i + 1).find((x) => x.cmd !== "PARAM_SET");
+      const editable = !!written && src.endLine === src.line && !!splitToken(token);
+      // Forms are in source order; defs (outside every form) stay shared.
+      let lo = 0, hi = ownForms.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (ownForms[mid].from <= from) lo = mid + 1;
+        else hi = mid;
+      }
+      const candidate = ownForms[lo - 1];
+      const form = candidate && to <= candidate.to ? candidate : null;
+      const next = nextEvents[i];
       const n = {
         from, to, token, channel, editable, tick: e.tick, len: written?.length ?? e.args?.length ?? 0,
         octave: written?.octave ?? null,
@@ -288,15 +311,13 @@ function scoreNotes(text, ir, noteAnalysis) {
         sample: written?.sample ?? e.args?.sample ?? null,
         voice: written?.voice ?? null,
         prio: form?.prio ?? null,
-        direct: !!form?.items.some((it) => it.from === from),
+        direct: !!form && direct.has(from),
         shared: depth > 0 || !form,
         tied: !!(written?.tied || e.cmd === "TIE" || e.args?.legato || next?.cmd === "TIE" || next?.args?.legato),
       };
       out.push(n);
-      seen.set(from, (seen.get(from) ?? 0) + 1);
     }
   }
-  for (const n of out) if (seen.get(n.from) > 1) n.shared = true;
   return out.sort((a, b) => a.from - b.from);
 }
 
@@ -328,6 +349,20 @@ export function layeredNotes(text, options = {}) {
           alone = alone.slice(0, f.from) + alone.slice(f.from, f.to).replace(/[^\n]/g, " ") + alone.slice(f.to);
       notes.push(...compile(alone).filter((n) => n.channel === ch));
     }
+  }
+  // An edit changes every use of a source token, including uses outside the
+  // current Scope or another priority layer. Any tied use protects them all.
+  const uses = new Map();
+  for (const n of notes) {
+    const use = uses.get(n.from) ?? { count: 0, tied: false };
+    use.count++;
+    use.tied ||= n.tied;
+    uses.set(n.from, use);
+  }
+  for (const n of notes) {
+    const use = uses.get(n.from);
+    n.shared ||= use.count > 1;
+    n.tied = use.tied;
   }
   return notes.sort((a, b) => a.from - b.from);
 }
@@ -392,6 +427,14 @@ export function applyLogical(text, notes, matches, op) {
   if (op.type === "transpose") return transposeNotes(text, matches, op);
   const changes = [];
   const done = new Set();
+  const variedLengths = new Set();
+  if (op.includeShared && (op.type === "len-add" || op.type === "len-mul")) {
+    const lengths = new Map();
+    for (const n of notes) {
+      if (lengths.has(n.from) && lengths.get(n.from) !== n.len) variedLengths.add(n.from);
+      else lengths.set(n.from, n.len);
+    }
+  }
   for (const n of matches) {
     if (!n.editable) continue;
     if (n.tied) { skipped.tied++; continue; }
@@ -413,7 +456,7 @@ export function applyLogical(text, notes, matches, op) {
         : op.type === "len-add" ? n.len + op.ticks
         : n.len * op.factor;
       if (!Number.isFinite(ticks) || ticks < 1) return { error: `a length would become ${ticks} ticks` };
-      if (n.shared && op.type !== "len-set" && notes.some((other) => other.from === n.from && other.len !== n.len))
+      if (n.shared && variedLengths.has(n.from))
         return { error: "a shared token inherits different lengths at its uses — set an explicit length instead" };
       changes.push({ from: n.from, to: n.to, insert: `${head}${lengthSuffix(Math.round(ticks))}` });
     }

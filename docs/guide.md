@@ -2297,8 +2297,9 @@ stays visible.
 Notes in a `def` or a counted loop are **shared**: one token plays in several
 places, so editing it changes all of them. They are marked with an outline and
 left unchanged unless you tick *Include shared notes*; reverse never touches them.
-Editing operations leave tied and slurred notes unchanged too; Select includes
-them. The status distinguishes matched
+Editing operations leave tied and slurred notes unchanged too, including a
+shared token tied or slurred at any of its uses; Select includes them.
+The status distinguishes matched
 tokens, tokens that will change, and exclusions. Only plain note/rest tokens
 in the current source are editable: generated forms such as `(note …)` and
 notes in imported files are excluded. Reverse refuses an interval containing
@@ -2307,7 +2308,8 @@ unsupported notation rather than skipping it silently.
 On desktop, **Apply** keeps the tool and its conditions
 open. An edit is one undo step; Select focuses the source without adding a
 source-edit undo step. Source edits and Undo/Redo refresh the targets;
-an invalid score or operation disables Apply until corrected. A voice's `:key`
+Apply is unavailable while the current source is being analysed, or until an
+invalid score or operation is corrected. A voice's `:key`
 does not shift a transposed note a second time. Closing dismisses the tool and its highlights;
 use Undo to revert an applied edit. On a phone, Apply closes the window.
 Build to hear the edited score, as with other source edits. Opening a different
