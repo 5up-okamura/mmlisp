@@ -948,7 +948,8 @@
       align-items: center;
       justify-content: space-between;
     }
-    .op-col-title input[type=checkbox] {
+    .op-col-title input[type=checkbox],
+    .logical-tool input[type=checkbox] {
       appearance: none;
       -webkit-appearance: none;
       width: 0.8rem;
@@ -963,12 +964,17 @@
       border: 1px solid var(--mid);
       border-radius: 2px;
     }
-    @media (hover: hover) { .op-col-title input[type=checkbox]:not(:disabled):hover { border-color: var(--high); } }
-    .op-col-title input[type=checkbox]:focus-visible {
+    @media (hover: hover) {
+      .op-col-title input[type=checkbox]:not(:disabled):hover,
+      .logical-tool input[type=checkbox]:not(:disabled):hover { border-color: var(--high); }
+    }
+    .op-col-title input[type=checkbox]:focus-visible,
+    .logical-tool input[type=checkbox]:focus-visible {
       outline: 1px solid var(--high);
       outline-offset: 1px;
     }
-    .op-col-title input[type=checkbox]:checked::after {
+    .op-col-title input[type=checkbox]:checked::after,
+    .logical-tool input[type=checkbox]:checked::after {
       content: '';
       position: absolute;
       left: 50%;
@@ -977,6 +983,10 @@
       height: 140%; /* box diagonal (√2) — spans corner to corner */
       background: var(--background);
       transform: translate(-50%, -50%) rotate(45deg);
+    }
+    .logical-tool input[type=checkbox]:checked {
+      background: var(--foreground);
+      border-color: var(--foreground);
     }
     /* Carrier / modulator roles — default is modulator */
     .op-col { --op-color: var(--accent); display: flex; flex-direction: column; gap: 0.5rem; }
