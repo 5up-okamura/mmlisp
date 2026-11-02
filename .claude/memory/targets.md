@@ -492,6 +492,23 @@ Open:
 - The FDS's state hash leaves out its RAM above $7FFF (a driver keeping
   its state there falls to the writes' period).
 
+## Songs on another machine (built 2026-11-03)
+
+MIDI goes to any target; a VGM, NSF or module also offers any machine whose
+defaults keep half its notes (import-song.js `holdsSong`). MDX, MGS and mucom88
+were left as they are: their writers are their chips' own.
+
+x68k's quiet FM is the synth's, measured (a TL 0 carrier at −19 dBFS, X68Sound);
+the waveforms stand-ins sit 12 dB under that, hence `loud-*` (import-song.js).
+
+A 4-op voice on the OPLL / VRC7 is the nearest ROM voice (import-fm-voices.js
+`nearestRomVoice`): as user voices three voices on six channels overwrote each
+other at every key-on (Asuka 120% 07 on msx, the user's report).
+
+Open: the conversions' voices and drums are chosen, not tuned by ear (the
+nearest ROM voice's weights included); a stand-in
+beside a song's own FM on x68k keeps the preset's level.
+
 ## The Game Boy (gb; built 2026-11-03)
 
 language.md §19 gb says what the language does; chips/lr35902.js, targets/gb.js,

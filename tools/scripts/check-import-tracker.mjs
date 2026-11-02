@@ -55,7 +55,7 @@ const t = await parseDmf(pceDmf());
 assert.equal(t.waves.length, 2, "both wavetables read");
 assert.deepEqual(t.instruments[1].wave.values, [1], "the instrument's wave macro read");
 const a = analyzeTracker(t);
-assert.deepEqual(a.targets, ["pce", "md"], "a PC Engine module offers pce first");
+assert.deepEqual(a.targets.slice(0, 2), ["pce", "md"], "a PC Engine module offers pce first");
 const opt = defaultTrackerOptions(a, "pce");
 assert.equal(opt.dest[0], "wave1");
 assert.equal(opt.dest[4], "noise5", "a channel on its noise goes to the noise");
@@ -127,7 +127,7 @@ function nesDmf() {
 {
   const t = await parseDmf(nesDmf());
   const a = analyzeTracker(t);
-  assert.deepEqual(a.targets, ["fc", "md"], "an NES module offers fc first");
+  assert.deepEqual(a.targets.slice(0, 2), ["fc", "md"], "an NES module offers fc first");
   const opt = defaultTrackerOptions(a, "fc");
   assert.deepEqual([0, 1, 2, 3, 4].map((i) => opt.dest[i]), ["sqr1", "sqr2", "tri", "noise", "drop"]);
   for (const phrases of [true, false]) {
@@ -239,7 +239,7 @@ function gbDmf() {
 {
   const t = await parseDmf(gbDmf());
   const a = analyzeTracker(t);
-  assert.deepEqual(a.targets, ["gb", "md"], "a Game Boy module offers gb first");
+  assert.deepEqual(a.targets.slice(0, 2), ["gb", "md"], "a Game Boy module offers gb first");
   const opt = defaultTrackerOptions(a, "gb");
   assert.deepEqual([0, 1, 2, 3].map((i) => opt.dest[i]), ["sqr1", "sqr2", "wave", "noise"]);
   for (const phrases of [true, false]) {

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
-import { parseVgm, analyzeVgm, decodeOki, decodeK053260, decodeC140, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
+import { parseVgm, analyzeVgm, decodeOki, decodeK053260, decodeC140, defaultVgmOptions, vgmToMmlisp, vgmRows } from "../../live/src/import-vgm.js";
 import { assignBends } from "../../live/src/import-song.js";
 import { readImportSources, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
@@ -39,6 +39,41 @@ function imported(parsed, target, structure = true) {
   return { a, source };
 }
 
+// The dialog's rows: on every machine offered, each default is one of its
+// row's choices (a select shows a value it lacks as a blank).
+for (const file of ["tools/tests/x68k/fm8-noise.mmlisp", "tools/tests/gb/apu.mmlisp"]) {
+  const a = analyzeVgm(await vgmOf(file));
+  assert.ok(a.targets.length > 2, `${file}: another machine offered`);
+  for (const t of a.targets) for (const r of vgmRows(a, t))
+    assert.ok(r.choices.some((c) => (Array.isArray(c) ? c[0] : c) === r.value), `${file} on ${t}: ${r.key} defaults to ${r.value}, not a choice`);
+}
+
+// A song of stand-ins alone on a machine with no tone channels: they come up
+// to a full carrier (x68k's is its loudest FM). Beside a chip's own voices, or
+// with tone channels to sit beside, they stay as they are.
+{
+  const gb = await vgmOf("tools/tests/gb/apu.mmlisp");
+  assert.match(imported(gb, "x68k").source, /\(def-fm loud-square wave-square :tl4 0\)/, "x68k: the loud stand-in");
+  assert.doesNotMatch(imported(gb, "pc88").source, /loud-/, "pc88 has squares");
+}
+
+// 4-op voices on the FM-PAC: ROM voices, which do not meet (the one user voice
+// is every channel's at once), and no voice's def to write.
+{
+  const parsed = await vgmOf("tools/tests/x68k/fm8-noise.mmlisp");
+  const a = analyzeVgm(parsed);
+  const { source } = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, "msx"), target: "msx", structure: true, fileName: "t.vgm" }, a);
+  assert.doesNotMatch(source, /\(def-fm voice-/, "msx: no user voice");
+  const d = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) }).diagnostics;
+  assert.ok(!d.some((x) => /user voices/.test(x.message)), "msx: two sounding together do not meet");
+  // A tone row on the FM-PAC: a ROM voice too, not a stand-in's def.
+  const gb = await vgmOf("tools/tests/gb/apu.mmlisp"), g = analyzeVgm(gb), o = defaultVgmOptions(g, "msx");
+  const row = Object.keys(o.dest).find((k) => /SQ1/.test(k));
+  const onFm = vgmToMmlisp(gb, { ...o, target: "msx", dest: { ...o.dest, [row]: "fm1" }, structure: true, fileName: "t.vgm" }, g).source;
+  assert.match(onFm, /\(fm1[^)]*\bclarinet\b/, "msx: a square on the FM-PAC");
+  assert.doesNotMatch(onFm, /wave-square|presets\/waveforms/, "msx: no stand-in def");
+}
+
 // The YM2151's noise: fm8 with NE on, the voice whole. On x68k it comes back
 // as fm8's :mode noise (FM8 on fm8, the noise channel dropped), its period
 // as :noise-rate; on md the noise goes to `noise` and FM8 keeps its tone.
@@ -65,7 +100,7 @@ function imported(parsed, target, structure = true) {
 {
   const parsed = await vgmOf("tools/tests/msx/env.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["msx", ["msx", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["msx", "msx", "md"]);
   for (const structure of [true, false]) {
     const { source } = imported(parsed, "msx", structure);
     assert.match(source, /\(sqr1[\s\S]*:mode env[\s\S]*:env 8[\s\S]*:env-rate note/, "msx: the buzzer, its rate the notes'");
@@ -83,7 +118,7 @@ function imported(parsed, target, structure = true) {
 {
   const parsed = await vgmOf("tools/tests/pc88/ssg.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["pc88", ["pc88", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["pc88", "pc88", "md"]);
   const opt = defaultVgmOptions(a, "pc88");
   assert.ok(!("YM2608 SSG noise" in opt.dest), "pc88: no noise row");
   const { source } = imported(parsed, "pc88");
@@ -114,7 +149,7 @@ const writesOf = (source, addr) => {
 {
   const parsed = await vgmOf("tools/tests/pce/wave.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["pce", ["pce", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["pce", "pce", "md"]);
   assert.equal(defaultVgmOptions(a, "pce").dest["HuC6280 CH3"], "wave3", "pce: a channel keeps its number");
   const { source } = imported(parsed, "pce");
   assert.match(source, /\(def-wave wave-01 :wave \[-128 -120 /, "pce: the saw, at the chip's 5 bits");
@@ -148,7 +183,7 @@ const writesOf = (source, addr) => {
 {
   const parsed = await vgmOf("tools/tests/msx/scc.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["msx", ["msx", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["msx", "msx", "md"]);
   const opt = defaultVgmOptions(a, "msx");
   for (let c = 1; c <= 5; c++) assert.equal(opt.dest[`K051649 CH${c}`], `wave${c}`);
   const { source } = imported(parsed, "msx");
@@ -196,7 +231,7 @@ const writesOf = (source, addr) => {
 {
   const parsed = await vgmOf("tools/tests/fc/apu.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["fc", ["fc", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["fc", "fc", "md"]);
   const opt = defaultVgmOptions(a, "fc");
   assert.deepEqual([opt.dest["2A03 SQ1"], opt.dest["2A03 SQ2"], opt.dest["2A03 TRI"], opt.dest["2A03 noise"]], ["sqr1", "sqr2", "tri", "noise"]);
   for (const structure of [true, false]) {
@@ -218,7 +253,7 @@ const writesOf = (source, addr) => {
 {
   const parsed = await vgmOf("tools/tests/gb/apu.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["gb", ["gb", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["gb", "gb", "md"]);
   const opt = defaultVgmOptions(a, "gb");
   assert.deepEqual([opt.dest["GB SQ1"], opt.dest["GB SQ2"], opt.dest["GB noise"]], ["sqr1", "sqr2", "noise"]);
   const { source } = imported(parsed, "gb");
@@ -263,7 +298,7 @@ const writesOf = (source, addr) => {
 {
   const parsed = await vgmOf("tools/tests/fc/fds.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["fc", ["fc", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["fc", "fc", "md"]);
   assert.equal(defaultVgmOptions(a, "fc").dest.FDS, "fds-wave");
   for (const structure of [true, false]) {
     const { source } = imported(parsed, "fc", structure);
@@ -287,7 +322,7 @@ const writesOf = (source, addr) => {
 {
   const parsed = await vgmOf("tools/tests/fc/vrc7.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["fc", ["fc", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["fc", "fc", "md"]);
   const opt = defaultVgmOptions(a, "fc");
   for (let c = 1; c <= 3; c++) assert.equal(opt.dest[`VRC7 FM${c}`], `vrc7-fm${c}`);
   for (const structure of [true, false]) {
@@ -304,7 +339,7 @@ const writesOf = (source, addr) => {
 {
   const parsed = await vgmOf("tools/tests/fc/5b.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["fc", ["fc", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["fc", "fc", "md"]);
   const opt = defaultVgmOptions(a, "fc");
   for (const [k, d] of [["A", 1], ["B", 2], ["C", 3]]) assert.equal(opt.dest[`5B SSG${k}`], `5b-sqr${d}`);
   for (const structure of [true, false]) {
@@ -362,7 +397,7 @@ const writesOf = (source, addr) => {
 {
   const parsed = await vgmOf("tools/tests/msx/fm-pac.mmlisp");
   const a = analyzeVgm(parsed);
-  assert.deepEqual([a.target, a.targets], ["msx", ["msx", "md"]]);
+  assert.deepEqual([a.target, ...a.targets.slice(0, 2)], ["msx", "msx", "md"]);
   const opt = defaultVgmOptions(a, "msx");
   for (const c of [1, 2, 3, 4, 5, 7, 8, 9]) assert.equal(opt.dest[`YM2413 FM${c}`], `fm${c}`);
   for (const structure of [true, false]) {

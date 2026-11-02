@@ -60,6 +60,33 @@ export function destsFor(target) {
     noises: target.channelNames.filter((h) => target.partOf(h).kind === "noise"),
   };
 }
+/** A channel of the target's own board, not of a cartridge chip it lists (fc's expansions): those are the user's to name. */
+export const onBoard = (target) => (h) => !(target.listsExpansions && target.chipOf(h).optional);
+
+// The stand-in voices of presets/waveforms sit 12 dB under a full carrier,
+// beside a PSG's level. Where a song is stand-ins and nothing else on a machine
+// with no tone channels (x68k, whose carrier is its loudest FM: −19 dBFS, as
+// X68Sound's), there is nothing to sit beside: their carriers come up to TL 0.
+const LOUD_CARRIERS = { sine: ":tl4 0", square: ":tl4 0", saw: ":tl4 0", triangle: ":tl1 0 :tl2 25 :tl3 37 :tl4 45" };
+/** Whether a song of these `kinds` of row plays only stand-ins on `target`, so they take the loud form. */
+export const standInsLoud = (target, kinds) => !target.parts.some((p) => p.kind === "tone")
+  && !kinds.some((k) => ["fm", "opm", "fm3op", "opll"].includes(k));
+// On a chip of ROM voices a stand-in is a ROM voice of its shape (the one user
+// voice is every channel's at once): names both the OPLL's and the VRC7's have.
+const ROM_STAND_IN = { "wave-square": "clarinet", "wave-saw": "synth", "wave-triangle": "flute", "wave-sine": "flute" };
+/** The voice a stand-in `name` plays as on `part`, `loud` the song's standInsLoud. */
+export const standInOn = (part, name, loud) => (part?.romNames ? ROM_STAND_IN[name] : loud ? name.replace(/^wave-/, "loud-") : name);
+/** Whether the stand-ins `names` need presets/waveforms (a ROM's do not). */
+export const standInsImported = (names) => [...names].some((n) => /^(wave|loud)-/.test(n));
+/** The defs of the loud ones of `names`. */
+export const loudDefs = (names) => [...names].filter((n) => n.startsWith("loud-"))
+  .map((n) => `(def-fm ${n} ${n.replace(/^loud-/, "wave-")} ${LOUD_CARRIERS[n.slice(5)]})`);
+
+/** Whether a target's defaults `dest` ({row key or index: channel}) keep most of a song's `rows`' notes. */
+export function holdsSong(rows, dest) {
+  const notes = (list) => list.reduce((s, c) => s + c.notes, 0);
+  return notes(rows.filter((c) => (dest[c.key ?? c.index] ?? "drop") !== "drop")) * 2 >= notes(rows) && notes(rows) > 0;
+}
 const MD = destsFor(targetProfile("md"));
 export const FM_DESTS = MD.fm;
 export const PSG_DESTS = MD.psg;

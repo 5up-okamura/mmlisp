@@ -75,8 +75,8 @@
 // ---------------------------------------------------------------------------
 
 import { emitSong, emitStructured, qstr, barEnds, RATE, PPQN,
-  assignBends, PITCH_NONE, gcd, destsFor } from "./import-song.js";
-import { targetProfile } from "./targets.js";
+  assignBends, PITCH_NONE, gcd, destsFor, holdsSong, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
+import { TARGETS, targetProfile } from "./targets.js";
 import { envCycle } from "./chips/ssg.js";
 import { DUTIES, NOISE_PERIODS, NOISE_NOTE_BASE, DMC_PERIODS, DMC_RATES } from "./chips/rp2a03.js";
 import { noiseHz as gbNoiseHz, noiseNoteOfHz as gbNoiseNote } from "./chips/lr35902.js";
@@ -84,10 +84,10 @@ import { Apu as GbApu } from "./synth-gb.js";
 import { rhythmRom } from "./chips/rhythm-rom.js";
 import { PCM8_OVER_CARRIER } from "./chips/msm6258.js";
 import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./import-mucom.js";
-import { fmVoiceDef } from "./import-fm-voices.js";
+import { fmVoiceDef, nearestRomVoice } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
-import { OPLL_ROM, OPLL_ROM_NAMES, VRC7_ROM, opllVoiceDef, opllVoiceDef2op } from "./chips/ym2413.js";
+import { OPLL_ROM, OPLL_ROM_NAMES, VRC7_ROM, opllVoiceDef, opllVoiceDef2op, romVoicesAs4op } from "./chips/ym2413.js";
 import { VEL_DB_PER_STEP } from "./ir-utils.js";
 import { engineImage } from "./engine-images.js";
 import { bankedEngineImage } from "./engine-banked-images.js";
@@ -2215,14 +2215,17 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   const pcmPoly = pcmPolyphony(parsed.pcmHits ?? []);
   // A file without a loop point says it does not loop (a jingle).
   const fileLoop = parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
-  // The machines it can be written for: the Mega Drive, and the machine of
+  // The machines it can be written for: the Mega Drive, the machine of
   // its own chip — the X68000 for a YM2151's, the PC-8801 for a YM2608's or
   // YM2203's, the MSX for an AY-3-8910's, an SCC's or a YM2413's — by
   // default when that chip plays every channel.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
   const own = [["x68k", /^(YM2151|OKIM6258|OKIM6295|K053260|C140)/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC6|VRC7|MMC5|N163)/], ["gb", /^GB/]]
     .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
-  const targets = [...own.map(([t]) => t), "md"];
+  const mine = [...own.map(([t]) => t), "md"];
+  // And any other machine whose channels take most of the song.
+  const held = { channels, followPitch, fileLoop, pcmPoly };
+  const targets = [...mine, ...Object.keys(TARGETS).filter((t) => !mine.includes(t) && holdsSong(channels, defaultVgmOptions(held, t).dest))];
   // (A file of PCM alone — a YM2608's ADPCM-B, an OKIM6258, or an arcade's
   // OKIM6295, which fits PCM8 — is its chip's machine's.)
   // (And it has to hold the song's PCM as well as the Mega Drive's three do: a
@@ -2306,10 +2309,15 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   // the PCM has a part of its own.
   const pcmToo = targetProfile(targetName).hasPart("dac") && dests.pcm.length > 0 && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm" ||
     (c.kind === "rhythm" && !dests.rhythm.length && dests.kit));
-  const fm = dests.fm.filter((d) => !(pcmToo && d === "fm6"));
-  const sqr = [...dests.psg];
-  const waves = [...dests.wave];
+  const board = onBoard(targetProfile(targetName));
+  const fm = dests.fm.filter((d) => !(pcmToo && d === "fm6") && board(d));
+  const sqr = dests.psg.filter(board);
+  // A sample voice that is a wave channel's (the PC Engine's DDA) is the PCM's.
+  const pcmOn = dests.pcm.slice(0, a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm") ? Math.max(1, a.pcmPoly ?? 1) : 0);
+  const profile = targetProfile(targetName);
+  const waves = dests.wave.filter((w) => board(w) && !pcmOn.some((h) => profile.voiceKey(h) === profile.voiceKey(w)));
   const oplls = [...dests.opll];
+  const carts = [...dests.fm, ...dests.psg, ...dests.wave].filter((d) => !board(d));
   let noise = dests.noise;
   const dest = {};
   const order = ["fm", "opm", "psg", "wave", "noise", "pcm", "opl", "opll"];
@@ -2322,7 +2330,7 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   // the target's fm8 cannot turn it on.
   const target = targetProfile(targetName);
   const fmNoise = dests.fm.some((d) => target.channels[d]?.modes?.noise);
-  const pools = [fm, sqr, waves, oplls];
+  const pools = [fm, sqr, waves, oplls, carts];
   for (const ch of sorted) {
     let d = "drop";
     // A YM2151 that fits keeps its channels' own numbers: FM8 on fm8, which
@@ -2332,7 +2340,9 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     const pool = own && pools.find((l) => l.includes(own));
     if (ch.kind === "opm" && !fmNoise && ch.noisy === ch.notes) d = "drop";
     else if (pool) { d = own; pool.splice(pool.indexOf(own), 1); }
-    else if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? "drop";
+    // (A 4-op voice on the OPLL is the nearest ROM voice; on a tone or wave
+    // channel its notes alone: play what can be played.)
+    else if (ch.kind === "fm" || ch.kind === "opm") d = fm.shift() ?? oplls.shift() ?? sqr.shift() ?? waves.shift() ?? "drop";
     // An SSG channel that only plays the noise is the noise row's alone
     // where the target's channels do not mix it.
     else if (ch.kind === "psg" && !mixesNoise(target, ch.key.replace(/ SSG[ABC]$/, "")) && ch.ssgNoise === ch.notes) d = "drop";
@@ -2346,7 +2356,7 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     else if (ch.kind === "psg") {
       const own = ch.key.match(/^(?:2A03|GB) (?:SQ(\d)|(TRI))$/);
       const name = own ? dests.psg[own[2] ? 2 : own[1] - 1] : null;
-      if (name && sqr.includes(name)) { d = name; sqr.splice(sqr.indexOf(name), 1); } else d = sqr.shift() ?? fm.shift() ?? "drop";
+      if (name && sqr.includes(name)) { d = name; sqr.splice(sqr.indexOf(name), 1); } else d = sqr.shift() ?? fm.shift() ?? waves.shift() ?? "drop";
     }
     // A wavetable chip's channel on a target with wave channels: its own
     // number where it has one (the HuC6280's CH3 on wave3), else the next.
@@ -2387,6 +2397,24 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   for (const [k, r] of byVoice) if (dest[k] !== "drop" && dest[r] !== "drop") dest[(count.get(k) ?? 0) >= (count.get(r) ?? 0) ? r : k] = "drop";
   return { target: targetName, dest, followPitch: a.followPitch, loop: a.fileLoop,
     pcmVoices: Math.max(1, Math.min(3, a.pcmPoly ?? 1)) };
+}
+
+/**
+ * A register-write song's rows for the import dialog (a VGM's, an NSF's): one
+ * per chip channel, its choices the target's channels, at the target's
+ * defaults. Any tone row can take any tone channel, the FM-PAC's included.
+ */
+export function vgmRows(a, target) {
+  const d = vgmDests(target), dd = defaultVgmOptions(a, target);
+  const choices = ["drop", ...d.fm, ...d.opll, ...d.psg, ...d.wave, ...new Set([...(d.noise ? [d.noise] : []), ...d.noises])];
+  const pcmChoices = d.pcm.length ? ["drop", "pcm1"] : ["drop"];
+  // On as many voices as the machine has: the Mega Drive's engine's three, another's PCM part's all.
+  const pcmMost = targetProfile(target).hasPart("dac") ? Math.min(3, d.pcm.length) : d.pcm.length;
+  const chipPcmChoices = d.pcm.length ? ["drop", ["pcm", pcmMost > 1 ? `pcm1–${pcmMost}` : "pcm1"]] : ["drop"];
+  // The YM2608's rhythm: the ROM's tracks, or the kit on pcm1.
+  const rhythmChoices = ["drop", ...(d.rhythm.length ? d.rhythm : d.kit ? [d.kit] : [])];
+  return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
+    choices: c.kind === "pcm" ? pcmChoices : c.kind === "chip-pcm" ? chipPcmChoices : c.kind === "rhythm" ? rhythmChoices : choices }));
 }
 
 /**
@@ -2545,6 +2573,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     });
   };
   const standIns = new Set();
+  const loudStands = standInsLoud(target, vgmChannels(a, target.name).filter((c) => (dest[c.key] ?? "drop") !== "drop").map((c) => c.kind));
   // The waves the wave channels play: one def-wave each, by its steps.
   const waveDefs = new Map(); // steps → name
   const waveName = (steps) => {
@@ -2626,7 +2655,12 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         const tls = levelFrames(n, n.lv0 ?? vk.minTl, endT);
         const peak = Math.min(...tls);
         note.env = tls.map((tl) => -Math.round(((tl - peak) * 0.75) / 2));
-        if (!voices.has(vk.key)) voices.set(vk.key, { name: `voice-${String(++vn).padStart(2, "0")}`, ops: vk.ops, v: n.voice, base: peak });
+        // (A chip of ROM voices takes the nearest: nearestRomVoice says why.)
+        if (!voices.has(vk.key)) {
+          const part = target.partOf(d);
+          const rom = part?.romNames ? nearestRomVoice(n.voice, romVoicesAs4op(part), raw.reduce((s, x) => s + x.pitch, 0) / raw.length) : null;
+          voices.set(vk.key, { name: rom ?? `voice-${String(++vn).padStart(2, "0")}`, rom, ops: vk.ops, v: n.voice, base: peak });
+        }
         const rec = voices.get(vk.key);
         rec.base = Math.min(rec.base, peak);
         note.voiceRec = rec;
@@ -2641,7 +2675,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       }
       if (onFm && !n.voice && n.opll) voice = opllVoice(n.opll, target.partOf(d));
       else if (onFm && !n.voice) {
-        voice = ch.key === "2A03 TRI" ? "wave-triangle" : STAND_IN[ch.kind] ?? "wave-square";
+        voice = standInOn(target.partOf(d), ch.key === "2A03 TRI" ? "wave-triangle" : STAND_IN[ch.kind] ?? "wave-square", loudStands);
         standIns.add(voice);
       }
       note.stand = voice;
@@ -2668,7 +2702,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
           note.waveMac = waveMacName(note.waveSteps);
         }
       }
-      note.pan = (onFm || target.partOf(d)?.words?.("PAN")) && n.pan ? n.pan : null;
+      note.pan = target.partOf(d)?.words?.("PAN") && n.pan ? n.pan : null;
       note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
       // The FDS's modulation, where the channel has its table (fc's wave1).
       // (A slur's part of the note: the depth in force where it starts.)
@@ -2679,8 +2713,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       }
       // A pulse's duty, where the channel has one (fc's sqr1 / sqr2).
       note.duty = n.duty != null && target.partOf(d)?.words?.("DUTY") ? `:duty ${n.duty}` : null;
-      // A noise whose note is its rate (fc's, gb's): the nearest of its rates.
-      if (d === dests.noise && target.partOf(d)?.rateNote && n.noiseHz) note.midi = target.partOf(d).noteOfHz(n.noiseHz);
+      // A noise whose note is its rate (fc's, gb's, pce's): the nearest of its rates.
+      if (dests.noises.includes(d) && target.partOf(d)?.noteOfHz && n.noiseHz) note.midi = target.partOf(d).noteOfHz(n.noiseHz);
       note.rate = fmNoise && n.noiseHz ? noiseRate(125000, n.noiseHz) : null;
       // The SSG's noise period: the song's, written where due (songWrites).
       if (ownNoise && n.noiseHz && (n.ssg?.mix === "noise" || n.ssg?.mix === "both"))
@@ -2842,6 +2876,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // keeps the voice it slides on.
   // A track with any envelope states one for every note — `(macro :vel
   // none)` where there is none, since a macro stays until cleared.
+  const romBase = Math.min(...[...voices.values()].filter((r) => r.rom).map((r) => r.base));
   for (const tr of tracks) {
     let cur = { voice: null, wave: null, env: null, pitch: null, detune: null, pan: null, mode: null, rate: null,
       henv: null, envSemi: null, envDetune: null, duty: null, lfoWave: null, lfoFreq: null, lfoPmd: null };
@@ -2851,7 +2886,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     const anyBend = tr.notes.some((n) => n.bendName);
     const anyLfo = tr.notes.some((n) => n.lfo);
     for (const n of tr.notes) {
-      if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - n.voiceRec.base) * 0.75) / 2)));
+      // (A def holds its voice's level against the others', in its carriers'
+      // TL; a ROM voice has no def, so its notes hold it.)
+      if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - (n.voiceRec.rom ? romBase : n.voiceRec.base)) * 0.75) / 2)));
       const lfoSt = {
         lfoWave: n.lfo ? `:lfo-wave ${lfoName(n.lfo.table)}` : cur.lfoWave,
         lfoFreq: n.lfo ? `:lfo-freq ${n.lfo.freq}` : cur.lfoFreq,
@@ -2928,7 +2965,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const score = [target.name !== "md" && `:target ${target.name}`, title && `:title ${qstr(title)}`, parsed.author && `:composer ${qstr(parsed.author)}`,
     dacMix && (dacOut || chipOut || kitRhythm) && `:pcm-voices ${pcmUsed + (kitRhythm ? 1 : 0)}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
-  if (standIns.size) header.push('(import "presets/waveforms/set.mmlisp")');
+  if (standInsImported(standIns)) header.push('(import "presets/waveforms/set.mmlisp")', ...loudDefs(standIns));
   if (opllDefs.size) header.push("", ...[...opllDefs.values()].map((d) => d.text));
   // The rhythm's kit: its samples on md; on pc88 the stand-in for a ROM the
   // user has not loaded (language.md §19). (The FM-PAC's sounds are its own.)
@@ -2942,6 +2979,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   if (dacOut) header.push("", ...dacOut.defs);
   if (chipOut) header.push("", ...chipOut.defs);
   for (const rec of voices.values()) {
+    if (rec.rom) continue;
     const car = CARRIERS[rec.v.alg];
     const ops = rec.ops.map((o, s) => (car.includes(s) ? { ...o, tl: Math.min(127, o.tl + rec.base) } : o));
     header.push("", fmVoiceDef(rec.name, { alg: rec.v.alg, fb: rec.v.fb, ams: rec.v.ams, fms: rec.v.fms, ops }, { dt2: keepDt2 }));

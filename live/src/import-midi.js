@@ -6,10 +6,17 @@
 // channel 10 plays presets/gm-drums on the PCM channels. MIDI plays chords on
 // one channel and MMLisp one note a track, so each channel is split into
 // lanes (a lane is as many notes as can sound at once) and every lane gets a
-// destination: fm1-6, sqr1-3, pcm1-3 for drums, or dropped. The defaults put
-// the busiest lanes on FM, then the PSG; what does not fit is dropped and
-// reported — from the channels with the most lanes first (a channel's first
-// lane goes before any channel's second).
+// destination: a channel of the target's, or dropped. The defaults put the
+// busiest lanes on the kind of channel the machine has most of, FM first; what
+// does not fit is dropped and reported — from the channels with the most lanes
+// first (a channel's first lane goes before any channel's second).
+//
+// Any target can take a file, since a program is read by the channel it lands
+// on: a 4-op FM channel plays its gm voice, an FM channel of the chip's ROM
+// voices and a wave channel the role it is nearest (GM_ROLES: `piano`,
+// `wave-piano`), a tone channel its family's envelope. Drums play gm-drums on
+// a sample channel, the ROM rhythm's nearest sound on its tracks, and on a
+// noise channel a rate and an envelope by the kind of hit (DRUM_KINDS).
 //
 // Volume (CC7), expression (CC11) and velocity fold into `:vel`; the song's
 // loudest note lands on 15. Pan (CC10) sets an FM track's `:pan`. The
@@ -30,9 +37,9 @@
 // ---------------------------------------------------------------------------
 
 import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimateGrid, regrid,
-  assignBends, PITCH_NONE, FM_DESTS, PSG_DESTS, PCM_DESTS } from "./import-song.js";
-
-export { FM_DESTS, PSG_DESTS, PCM_DESTS };
+  assignBends, PITCH_NONE, destsFor, onBoard } from "./import-song.js";
+import { DEFAULT_TARGET, targetProfile } from "./targets.js";
+import { RHYTHM_KIT } from "./import-mucom.js";
 
 // presets/gm, in program order (README.md). The bank's note offsets live on
 // the voices themselves, as `:key` — a key is written as the MIDI file has it.
@@ -74,6 +81,46 @@ const PSG_ENV_BY_FAMILY = [
 ];
 const PSG_ENV_BY_PROGRAM = { 45: "env-pluck-long", 47: "env-bell", 55: "env-stab" }; // pizzicato, timpani, orchestra hit
 const psgEnvOf = (program) => PSG_ENV_BY_PROGRAM[program] ?? PSG_ENV_BY_FAMILY[program >> 3];
+// A GM program as the nearest of the fifteen roles: the voices of an OPLL's
+// ROM, the `wave-` macros of presets/wavetable.
+const ROLE_BY_FAMILY = [
+  "piano", "vibraphone", "organ", "guitar", "acoustic-bass", "violin", "violin", "trumpet",
+  "oboe", "flute", "synth", "synth", "synth", "guitar", "vibraphone", "synth",
+];
+const ROLE_BY_PROGRAM = {
+  6: "harpsichord", 7: "harpsichord", 27: "electric-guitar", 28: "electric-guitar", 29: "electric-guitar", 30: "electric-guitar", 31: "electric-guitar",
+  38: "synth-bass", 39: "synth-bass", 45: "guitar", 46: "guitar", 47: "acoustic-bass", 55: "horn",
+  57: "horn", 58: "horn", 60: "horn", 61: "horn", 62: "synth", 63: "synth",
+  64: "clarinet", 65: "clarinet", 66: "clarinet", 67: "clarinet", 71: "clarinet",
+  108: "vibraphone", 109: "oboe", 110: "violin", 111: "oboe",
+};
+const roleOf = (program) => ROLE_BY_PROGRAM[program] ?? ROLE_BY_FAMILY[program >> 3];
+// A role on a ROM of other names (the VRC7's): the nearest it has.
+const ROLE_NEAR = {
+  piano: ["wurly", "guitar"], harpsichord: ["guitar"], "electric-guitar": ["guitar"], "acoustic-bass": ["fretless", "synth-bass"],
+  violin: ["tutti", "flute"], horn: ["trumpet"], oboe: ["clarinet"], vibraphone: ["vibes", "bells"],
+};
+const romVoiceOf = (part, role) => (part.romNames.includes(role) ? role
+  : (ROLE_NEAR[role] ?? []).find((n) => part.romNames.includes(n)) ?? part.romNames[0]);
+
+// A GM drum as the kind of hit it is, where a chip has no sample of it: the
+// ROM rhythm's sound (the first of `kit` the kit has) and, on a noise channel,
+// its rate and envelope (presets/envelopes).
+const DRUM_KINDS = {
+  kick: { kit: ["kick"], hz: 500, env: "env-stab" },
+  tom: { kit: ["tom4", "snare"], hz: 1200, env: "env-stab" },
+  snare: { kit: ["snare"], hz: 4000, env: "env-snare" },
+  rim: { kit: ["rim", "snare"], hz: 6000, env: "env-hat" },
+  hat: { kit: ["hat"], hz: 12000, env: "env-hat" },
+  cymbal: { kit: ["ride", "hat"], hz: 9000, env: "env-pluck-long" },
+};
+const DRUM_KIND_OF = {
+  35: "kick", 36: "kick", 37: "rim", 38: "snare", 39: "snare", 40: "snare", 41: "tom", 42: "hat", 43: "tom", 44: "hat",
+  45: "tom", 46: "hat", 47: "tom", 48: "tom", 49: "cymbal", 50: "tom", 51: "cymbal", 52: "cymbal", 53: "cymbal", 55: "cymbal",
+  57: "cymbal", 59: "cymbal", 60: "tom", 61: "tom", 62: "tom", 63: "tom", 64: "tom", 65: "tom", 66: "tom",
+  75: "rim", 76: "rim", 77: "rim",
+};
+const drumKindOf = (key) => DRUM_KINDS[DRUM_KIND_OF[key] ?? "hat"];
 // Quantize grids, coarsest first: 16th, 16th triplet, 32nd, 32nd triplet, 64th…
 export const GRIDS = [24, 16, 12, 8, 6, 4, 3, 2, 1];
 
@@ -363,22 +410,75 @@ function detectGrid(analysis) {
   return { grid: 12, fits: false };
 }
 
+/** The channels a `target` score offers a file's lanes: melodic ones, a drum lane's. */
+export function midiDests(targetName = DEFAULT_TARGET) {
+  const tp = targetProfile(targetName);
+  const d = destsFor(tp);
+  return { melodic: [...d.fm, ...d.psg, ...d.wave], drums: [...d.pcm, ...d.noises] };
+}
+// What one channel is to the rest: the sounds of a kit share a voice but each
+// is a track, so a track names itself.
+const channelKey = (tp, h) => (tp.partOf(h).kit ? h : tp.voiceKey(h));
+// The channels a track on `h` takes from the melody, as their voice keys: what
+// a sample part claims (fm6), what a kit takes (the OPLL's fm7-9).
+const takenBy = (tp, h) => {
+  const part = tp.partOf(h);
+  return new Set(tp.channelNames.filter((f) => {
+    const c = tp.channels[f];
+    return !c.part.kit && ((part.claims?.kind === c.part.kind && part.claims.voice === c.voice) || part.takes?.(c));
+  }).map((f) => tp.voiceKey(f)));
+};
+
 /**
  * The dialog's defaults: lanes by importance (every channel's first lane,
- * busiest first, before any second lane) onto FM, then the PSG; drums onto
- * the PCM channels.
+ * busiest first, before any second lane) onto the machine's kinds of channel,
+ * the one it has most of first (FM first of equals); drums onto a ROM rhythm's
+ * tracks, else its sample channels, then its noise. The Mega Drive's DAC
+ * spends its rate on a voice: two at most, and no lane on the noise. A sample
+ * voice that is a wave channel's costs the melody one: the last, once. A
+ * channel the drums take (fm6, the OPLL's fm7-9) is not the melody's. A channel
+ * with no level (the 2A03's triangle) gets the lowest lane of those kept.
  */
-export function defaultMidiOptions(analysis) {
+export function defaultMidiOptions(analysis, target = DEFAULT_TARGET) {
+  const tp = targetProfile(target);
+  const d = destsFor(tp);
+  const board = onBoard(tp);
   const melodic = analysis.lanes.filter((l) => !l.drums)
     .sort((a, b) => a.lane - b.lane || b.notes - a.notes);
   const drums = analysis.lanes.filter((l) => l.drums).sort((a, b) => a.lane - b.lane);
-  const pcmVoices = Math.min(2, drums.length);
+  const kit = d.pcm.filter((h) => tp.partOf(h).kit);
+  const samples = d.pcm.filter((h) => !tp.partOf(h).kit && board(h));
+  const noises = d.noises.filter(board);
+  const ownVoice = samples.filter((h) => !d.wave.some((w) => tp.voiceKey(w) === tp.voiceKey(h)));
+  const drumDests = kit.length ? kit : tp.hasPart("dac") ? samples.slice(0, 2) : [...(ownVoice.length ? ownVoice : samples.slice(-1)), ...noises];
+  // Where the noise takes a lane, the first channel keeps the kick and the snare.
+  if (drumDests.some((h) => noises.includes(h))) {
+    const body = (l) => analysis.notes.filter((n) => n.ch === l.ch && n.lane === l.lane && [35, 36, 38, 40].includes(n.key)).length;
+    drums.sort((a, b) => body(b) - body(a));
+  }
   const dest = {};
-  drums.forEach((l, i) => { dest[l.key] = i < pcmVoices ? PCM_DESTS[i] : "drop"; });
-  const free = [...(pcmVoices ? FM_DESTS.slice(0, 5) : FM_DESTS), ...PSG_DESTS];
+  const gone = new Set();
+  const take = (h) => {
+    gone.add(channelKey(tp, h));
+    for (const k of takenBy(tp, h)) gone.add(k);
+  };
+  drums.forEach((l) => {
+    const h = drumDests.find((c) => !gone.has(channelKey(tp, c)));
+    dest[l.key] = h ?? "drop";
+    if (h) take(h);
+  });
+  const pools = [d.fm, d.psg, d.wave].map((p) => p.filter(board)).sort((a, b) => b.length - a.length);
+  const free = pools.flat().filter((h) => !gone.has(tp.voiceKey(h)));
   melodic.forEach((l) => { dest[l.key] = free.shift() ?? "drop"; });
+  // The 2A03's triangle has no level: the bass, which least needs one.
+  const flat = Object.entries(dest).find(([, h]) => h !== "drop" && tp.partOf(h).noLevel);
+  if (flat) {
+    const mean = (l) => { const ns = analysis.notes.filter((n) => `${n.ch}:${n.lane}` === l.key); return ns.reduce((s, n) => s + n.key, 0) / ns.length; };
+    const low = melodic.filter((l) => dest[l.key] !== "drop").sort((a, b) => mean(a) - mean(b))[0];
+    if (low) [dest[flat[0]], dest[low.key]] = [dest[low.key], dest[flat[0]]];
+  }
   const timing = analysis.fileGrid.fits || analysis.beat.frames ? "file" : "beats";
-  return { dest, grid: analysis.fileGrid.grid, timing, bpm: null, loop: true };
+  return { dest, grid: analysis.fileGrid.grid, timing, bpm: null, loop: true, target };
 }
 
 // ── The score ────────────────────────────────────────────────────────────
@@ -388,10 +488,12 @@ export function defaultMidiOptions(analysis) {
  *                 timing: "file" (the file's ticks and tempo map, quantized
  *                 to `grid`; `bpm` scales the map) | "beats" (the beat
  *                 estimated from the notes' times; `bpm` replaces it),
- *                 loop: bool, fileName?}
+ *                 loop: bool, target?, fileName?}
  */
 export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const warnings = [];
+  const tp = targetProfile(options.target);
+  const { melodic: melodicDests, drums: drumDests } = midiDests(tp.name);
   const k = PPQN / analysis.division;
   const beats = options.timing === "beats";
   // q: a file tick → a score tick. Either way the song starts at the first
@@ -419,22 +521,28 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   for (const l of analysis.lanes) {
     const d = dest[l.key] ?? "drop";
     if (d === "drop") continue;
-    if (taken.has(d)) { warnings.push(`${l.label}: ${d} is already taken — dropped`); continue; }
-    if (l.drums !== d.startsWith("pcm")) {
-      warnings.push(`${l.label}: ${l.drums ? "drums go on pcm1-3" : "pcm1-3 take only drums"} — dropped`);
+    if (!(l.drums ? drumDests : melodicDests).includes(d)) {
+      warnings.push(`${l.label}: ${d} ${!tp.channels[d] ? `is not the ${tp.system}'s` : l.drums ? "takes no drums" : "takes only drums"} — dropped`);
       continue;
     }
-    taken.add(d);
+    if (taken.has(channelKey(tp, d))) { warnings.push(`${l.label}: ${d} is already taken — dropped`); continue; }
+    taken.add(channelKey(tp, d));
     laneDest.set(l.key, d);
   }
   const dropped = analysis.lanes.filter((l) => !laneDest.has(l.key));
   if (dropped.length)
     warnings.push(`dropped ${dropped.length} lane(s): ${dropped.map((l) => l.label).join("; ")}`);
   // pcm2 alone still needs two voices: the count is the highest one used.
-  const pcmUsed = Math.max(0, ...[...taken].filter((d) => d.startsWith("pcm")).map((d) => +d.slice(3)));
-  if (pcmUsed && taken.has("fm6")) {
-    warnings.push("fm6 is the DAC in a score with PCM — its lane was dropped");
-    for (const [key, d] of laneDest) if (d === "fm6") laneDest.delete(key);
+  const dests = new Set(laneDest.values());
+  const dacUsed = Math.max(0, ...[...dests].filter((d) => tp.partOf(d).name === "dac").map((d) => tp.channels[d].voice + 1));
+  // A channel a sample or a kit takes: its lane gives way.
+  for (const d of dests) {
+    const gone = takenBy(tp, d);
+    for (const [key, h] of laneDest) {
+      if (tp.partOf(h).kit || !gone.has(tp.voiceKey(h))) continue;
+      warnings.push(`${h} is ${d}'s while the score plays it — its lane was dropped`);
+      laneDest.delete(key);
+    }
   }
 
   // Levels: the loudest note kept lands on :vel 15, 2 dB a step.
@@ -479,7 +587,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   }
 
   // Tracks in channel order.
-  const order = [...FM_DESTS, ...PSG_DESTS, "noise", ...PCM_DESTS];
+  const order = tp.channelNames;
   const tracks = [];
   // A note's pitch as it plays: the bend, a frame (1/60 s) each, from where
   // it is struck to where it ends — its own key moved to the semitone it
@@ -512,7 +620,27 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     if (depth > 0) note.vib = { kind: "vib", centre: 0, depth, period: 11, wait, phase: 64 };
   };
   const laneNotes = [];
-  let usedPsgEnv = false;
+  const presets = new Set();
+  const use = (set, name) => { presets.add(set); return name; };
+  // A program as the channel plays it (the header's reading of a program).
+  const voiceOf = (part, program) => {
+    if (part.kind === "fm") return part.words("FM_ALG") ? use("gm", GM_VOICES[program]) : romVoiceOf(part, roleOf(program));
+    if (part.kind === "wave") return use("wavetable", `wave-${roleOf(program)}`);
+    return part.noLevel ? null : use("envelopes", psgEnvOf(program));
+  };
+  // A drum key as the channel plays it: the sound to switch to, the note.
+  const drumOf = (part, key) => {
+    const kind = drumKindOf(key);
+    if (part.kit) return { name: kind.kit.find((k) => part.kit[k]), midi: DRUM_KEY };
+    if (part.kind === "sample") return { name: GM_DRUMS[key] && use("gm-drums", GM_DRUMS[key]), midi: DRUM_KEY };
+    const env = use("envelopes", kind.env);
+    if (part.noteOfHz) return { name: env, midi: part.noteOfHz(kind.hz) };
+    // A noise of a word, not a note: the Mega Drive's modes, the SSG's and the
+    // OPM's rate (125 kHz / rate on both).
+    const word = part.modes?.white0 ? `:mode white${kind.hz < 2000 ? 2 : kind.hz < 8000 ? 1 : 0}`
+      : part.words("NOISE_RATE") || part.songWords?.("NOISE_RATE") ? `:noise-rate ${Math.max(1, Math.min(31, Math.round(125000 / kind.hz)))}` : null;
+    return { name: word ? `${env} ${word}` : env, midi: DRUM_KEY };
+  };
   const keptByLane = new Map();
   for (const n of kept) {
     const key = `${n.ch}:${n.lane}`;
@@ -521,7 +649,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   }
   for (const [key, d] of [...laneDest].sort((a, b) => order.indexOf(a[1]) - order.indexOf(b[1]))) {
     const lane = analysis.lanes.find((l) => l.key === key);
-    const fm = d.startsWith("fm");
+    const part = tp.partOf(d);
     const src = (keptByLane.get(key) ?? []).sort((a, b) => a.tick - b.tick);
     const notes = [];
     let cur = null;
@@ -532,18 +660,17 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
       if (lane.drums) end = tick; // a drum lasts to the next hit (below)
       const note = { tick, len: Math.max(g, end - tick), vel: velOf(n) };
       if (lane.drums) {
-        const name = GM_DRUMS[n.key];
+        const { name, midi } = drumOf(part, n.key);
         if (!name) { warnings.push(`drum key ${n.key} has no sample in presets/gm-drums — dropped`); continue; }
-        note.midi = DRUM_KEY;
+        note.midi = midi;
         // The kick and snare tell where the bars go (bestBars).
         if (n.key === 35 || n.key === 36) note.drum = { id: "kick", bright: 0 };
         else if (n.key === 38 || n.key === 40) note.drum = { id: "snare", bright: 1 };
         if (name !== cur) { note.pre = [name]; cur = name; }
       } else {
         note.midi = n.key;
-        if (fm && GM_VOICES[n.program] !== cur) { note.pre = [GM_VOICES[n.program]]; cur = GM_VOICES[n.program]; }
-        // The PSG has no voice: the program's family picks its envelope.
-        if (!fm && psgEnvOf(n.program) !== cur) { cur = psgEnvOf(n.program); note.pre = [cur]; usedPsgEnv = true; }
+        const voice = voiceOf(part, n.program);
+        if (voice && voice !== cur) { note.pre = [voice]; cur = voice; }
         pitchOf(n, note);
       }
       note.voice = cur;
@@ -567,8 +694,8 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     // The first note's switch goes in the head (its pitch, below).
     const head = notes[0].pre ?? [];
     delete notes[0].pre;
-    if (fm && lane.pan != null) head.push(`:pan ${lane.pan < 43 ? "left" : lane.pan > 85 ? "right" : "center"}`);
-    tracks.push({ channel: d, head, notes, marks: [] });
+    if (part.kind === "fm" && part.words("PAN") && lane.pan != null) head.push(`:pan ${lane.pan < 43 ? "left" : lane.pan > 85 ? "right" : "center"}`);
+    tracks.push({ channel: d, head, notes, marks: [], drums: lane.drums, noVel: !!part.noLevel });
   }
   if (tracks.length) tracks[0].marks = tempoMarks;
   else warnings.push("no notes to import");
@@ -593,17 +720,19 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   if (ccs.length) warnings.push(`controllers skipped: ${ccs.join(", ")}`);
 
   const header = [`; Imported from ${options.fileName ?? "a MIDI file"} (MIDI)`];
-  const score = [analysis.title && `:title ${qstr(analysis.title)}`, pcmUsed && `:pcm-voices ${pcmUsed}`].filter(Boolean);
+  const score = [tp.name !== DEFAULT_TARGET && `:target ${tp.name}`, analysis.title && `:title ${qstr(analysis.title)}`, dacUsed && `:pcm-voices ${dacUsed}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
-  if (tracks.some((t) => t.channel.startsWith("fm"))) header.push('(import "presets/gm/set.mmlisp")');
-  if (usedPsgEnv) header.push('(import "presets/envelopes/set.mmlisp")');
-  if (pcmUsed) header.push('(import "presets/gm-drums/set.mmlisp")');
+  for (const set of ["gm", "wavetable", "envelopes", "gm-drums"]) if (presets.has(set)) header.push(`(import "presets/${set}/set.mmlisp")`);
+  // The YM2608's rhythm: the RX5 kit stands in for a ROM the user has not
+  // loaded (as the other imports have it).
+  if (tracks.some((t) => tp.partOf(t.channel).name === "rhythm"))
+    header.push(`(import ${qstr(RHYTHM_KIT)})  ; the rhythm's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)`);
   if (bendDefs.length) header.push("", ...bendDefs);
 
   // Timed by its notes, the file's bars say nothing: the meter is read
   // from how the song repeats, the downbeat from the drums (bestBars).
   const song = { header, bars, endTick, loopTick, tracks };
   const source = options.structure === false ? emitSong(song)
-    : emitStructured(beats ? { ...song, bars: bestBars({ ...song, tracks: tracks.map((tr) => ({ ...tr, drums: tr.channel.startsWith("pcm") })) }) } : song);
+    : emitStructured(beats ? { ...song, bars: bestBars(song) } : song);
   return { source, warnings };
 }

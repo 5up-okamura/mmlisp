@@ -40,6 +40,14 @@ const NOISE_LANE = (c) => 4 + CHANNELS + (c.voice - NOISE_CHANNELS[0]);
 // 31 × 64 chip clocks, 1.8 kHz), each semitone the next, up to g4 — as a
 // tracker reads a noise note, since the rates are a clock, not a pitch.
 export const NOISE_NOTE_BASE = 36;
+/** The note of the rate nearest `hz` (the LFSR's clock: CLOCK / ((31 − rate) × 64), rate 31 every 32). */
+export function noiseNoteOfHz(hz) {
+  let best = 0;
+  for (let r = 1; r < 32; r++)
+    if (Math.abs(Math.log(noiseHz(r) / hz)) < Math.abs(Math.log(noiseHz(best) / hz))) best = r;
+  return NOISE_NOTE_BASE + best;
+}
+const noiseHz = (rate) => CLOCK / (((31 - rate) << 6) || 32);
 
 // DDA's rate: the CPU's timer, 7.16 MHz / 1024 — a write a tick.
 export const DDA_RATE = (2 * CLOCK) / 1024;
@@ -79,6 +87,7 @@ export const pceNoise = {
   songWords: SONG_WORDS,
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "the PC Engine's noise has no :mode; its rate is the note, c2 to g4" },
+  noteOfHz: noiseNoteOfHz,
   toneLane: NOISE_LANE,
   sharePrio: 1,
 };

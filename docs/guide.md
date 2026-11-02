@@ -1260,7 +1260,8 @@ channel or voice brings the FM editor; a wave channel, a `def-wave` or a
 macro's step vector brings the vector editor; a `def-pcm` brings the sample
 editor. When the cursor leaves what
 it was on, a picked strip is the subject again; with none picked, the editor
-dims and keeps showing what it had, until something else is touched.
+dims and keeps showing what it had, until something else is touched or another
+score opens.
 
 **What is shown, and what can be edited.** A def in the score is edited where
 it stands. One the score does not hold is shown read only: an import's, and a
@@ -1767,18 +1768,40 @@ one; otherwise the box loops the whole song — ticked for a MIDI file (they
 rarely mark one), unticked for a VGM (one without a loop point is usually a
 jingle).
 
+**Target** is the machine the score is written for, and picking another one
+sets the rows to that machine's channels. A MIDI file names no machine, so it
+offers all of them, the Mega Drive first. A VGM, NSF or tracker module starts
+on the machine of its own chips, which keeps what they have; the Mega Drive
+is always offered, and so is any other machine whose channels hold at least
+half of the song's notes — a Game Boy song can be a PC Engine's or an X68000's,
+a Mega Drive song's FM parts the FM-PAC's (each voice becomes the nearest of
+its ROM voices, by attack, decay and brightness, since its one user voice would
+be every channel's at once) or, on a machine with no FM, plain notes on its
+squares and waves.
+A song that lands on `presets/waveforms` stand-ins and nothing else on `x68k`,
+with no squares to balance against, gets them at a full carrier (`loud-square`
+…, defined at the top of the score).
+
 **MIDI.** The dialog shows the quantize grid (the coarsest one the notes sit
 on) and the loop marked with CC111 or `loopStart` / `loopEnd` markers. MIDI
 plays chords on one channel and a track plays one note, so a channel is
-split into lanes, one a track; the defaults put each channel's first lane on
-FM before any second lane, then the PSG, with channel 10 on `pcm1`–`pcm2`,
-and drop what does not fit.
+split into lanes, one a track; the defaults put each channel's first lane
+before any second lane, on the kind of channel the machine has most of (FM
+first of equals), and drop what does not fit. Channel 10 goes on a ROM
+rhythm's tracks (`pc88`, `msx`, which then has `fm1`–`fm6`), else on sample
+channels — `pcm1`–`pcm2` on `md`, one `pcm` on `pce` and `fc` — then the noise.
+On `fc` the triangle, which has no level, takes the lowest lane.
 
-- A program names its `presets/gm` voice, played at the bank's own note
-  offset; drums play `presets/gm-drums`. A part sent to a PSG channel takes
-  the envelope of its program's family from `presets/envelopes` (piano →
-  `env-piano`, organ → `env-organ`, strings and pads → `env-pad`, brass →
-  `env-brass`, leads → `env-lead`, …).
+- A program is read by the channel it lands on. On 4-op FM it names its
+  `presets/gm` voice, played at the bank's own note offset. On the OPLL's FM
+  (`msx`) it plays the nearest ROM voice, on a wave channel the nearest
+  `wave-` macro of `presets/wavetable` (`wave-piano`, `wave-violin`, …). A
+  part sent to a square channel takes the envelope of its program's family
+  from `presets/envelopes` (piano → `env-piano`, organ → `env-organ`, strings
+  and pads → `env-pad`, brass → `env-brass`, leads → `env-lead`, …).
+- Drums play `presets/gm-drums` on a sample channel. On a ROM rhythm each hit
+  plays the nearest of its sounds; on a noise channel, a rate and an envelope
+  by the kind of hit (kick, tom, snare, hat, cymbal).
 - Velocity, volume (CC7) and expression (CC11) become `:vel`, the loudest
   note at 15; pan (CC10) sets `:pan`; the sustain pedal holds notes.
 - Pitch bend (its range from RPN 0) becomes a `:pitch` macro on the notes it

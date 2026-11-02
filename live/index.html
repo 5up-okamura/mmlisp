@@ -952,7 +952,7 @@
     import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
-    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmDests, vgmChannels } from './src/import-vgm.js';
+    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmRows } from './src/import-vgm.js';
     import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import-mdx.js';
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
     import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
@@ -961,7 +961,7 @@
     import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/voice-estimate.js';
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
-    import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
+    import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests, GRIDS } from './src/import-midi.js';
     import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain, macroFrames } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
@@ -3274,13 +3274,19 @@
       const parsed = parseMidi(bytes);
       const a = analyzeMidi(parsed);
       const def = defaultMidiOptions(a);
-      const melodic = ['drop', ...FM_DESTS, ...PSG_DESTS];
-      const drums = ['drop', ...PCM_DESTS];
+      // Picking another target rebuilds the rows at its defaults.
+      const rowsFor = (target) => {
+        const d = defaultMidiOptions(a, target), { melodic, drums } = midiDests(target);
+        return a.lanes.map((l) => ({ key: l.key, label: l.label, value: d.dest[l.key], choices: ['drop', ...(l.drums ? drums : melodic)] }));
+      };
       const round = (x) => (Math.abs(x - Math.round(x)) < 0.1 ? Math.round(x) : +x.toFixed(2));
       const fileBpm = round(a.bpm);
       const beatBpm = round(a.beat.bpm);
       const shownFor = (timing) => (timing === 'beats' ? beatBpm : fileBpm);
       const fields = [
+        { key: 'target', label: 'Target', type: 'select', value: def.target, rebuildsRows: true,
+          choices: Object.values(TARGETS).map((t) => [t.name, `${t.system} (:target ${t.name})`]),
+          hint: 'a program plays its gm voice on 4-op FM, its nearest ROM voice or wave elsewhere, its family’s envelope on a square; drums play samples, the ROM rhythm or the noise' },
         { key: 'timing', label: 'Timing', type: 'select', value: def.timing,
           choices: [['file', 'the file’s tempo map'], ['beats', 'the beat estimated from the notes']],
           hint: (a.fileGrid.fits ? '' : 'the notes do not sit on the file’s beat · ') +
@@ -3298,7 +3304,8 @@
         summary: `${a.notes.length} notes on ${new Set(a.lanes.map((l) => l.ch)).size} channels. ` +
           'A channel that plays chords is split into lanes, one a track; what does not fit is dropped.',
         fields,
-        rows: a.lanes.map((l) => ({ key: l.key, label: l.label, value: def.dest[l.key], choices: l.drums ? drums : melodic })),
+        rows: rowsFor(def.target),
+        rowsFor,
       });
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
@@ -3306,6 +3313,7 @@
       // An untouched field (either mode's default) is no override.
       const untouched = bpm === fileBpm || bpm === beatBpm || !(bpm > 0);
       return midiToMmlisp(parsed, {
+        target: got.fields.target,
         dest: got.rows,
         grid: Number(got.fields.grid),
         timing,
@@ -3317,8 +3325,8 @@
     }
 
     // A tracker module (DMF, FUR): tempo, phrases, a destination per channel
-    // — and the target (md, or the machine of the module's chips), which
-    // rebuilds the rows at that target's defaults.
+    // — and the target (the machine of the module's chips, md, or another that
+    // holds most of its notes), which rebuilds the rows at that target's defaults.
     async function importTrackerSong(t, fileName) {
       const a = analyzeTracker(t);
       const def = defaultTrackerOptions(a);
@@ -3331,7 +3339,7 @@
       if (a.targets.length > 1)
         fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
           choices: a.targets.map((tg) => [tg, `${targetProfile(tg).system} (:target ${tg})`]),
-          hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; md reads the channels for the Mega Drive' });
+          hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; another machine (md always, the rest where they hold most of its notes) reads the channels for its own' });
       fields.push(
         { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
           hint: `${a.rowsPerBeat} rows a beat at ${a.framesPerRow} frames a row, ${t.hz} Hz` },
@@ -3358,35 +3366,18 @@
       }, a);
     }
 
-    // A register-write song's rows (a VGM's, an NSF's): one per chip
-    // channel, its choices the target's channels, at the target's defaults.
-    function writesRows(a, target) {
-      const d = vgmDests(target), dd = defaultVgmOptions(a, target);
-      const choices = ['drop', ...d.fm, ...d.psg, ...d.wave, ...new Set([...(d.noise ? [d.noise] : []), ...d.noises])];
-      const pcmChoices = d.pcm.length ? ['drop', 'pcm1'] : ['drop'];
-      // On as many voices as the machine has: the Mega Drive's engine's three, another's PCM part's all.
-      const pcmMost = targetProfile(target).hasPart('dac') ? Math.min(3, d.pcm.length) : d.pcm.length;
-      const chipPcmChoices = d.pcm.length ? ['drop', ['pcm', pcmMost > 1 ? `pcm1–${pcmMost}` : 'pcm1']] : ['drop'];
-      // The YM2608's rhythm: the ROM's tracks, or the kit on pcm1.
-      const rhythmChoices = ['drop', ...(d.rhythm.length ? d.rhythm : d.kit ? [d.kit] : [])];
-      // A YM2413's rows: the FM-PAC's channels too (msx's fm1–fm9), where its voices are.
-      const opllChoices = [...choices, ...d.opll];
-      return vgmChannels(a, target).map((c) => ({ key: c.key, label: c.label, value: dd.dest[c.key],
-        choices: c.kind === 'pcm' ? pcmChoices : c.kind === 'chip-pcm' ? chipPcmChoices : c.kind === 'rhythm' ? rhythmChoices : c.kind === 'opll' ? opllChoices : choices }));
-    }
-
     async function importVgmBytes(bytes, fileName) {
       const parsed = await parseVgm(bytes);
       const a = analyzeVgm(parsed);
       const def = defaultVgmOptions(a);
       // Picking another target rebuilds the rows at its defaults.
-      const rowsFor = (target) => writesRows(a, target);
+      const rowsFor = (target) => vgmRows(a, target);
       const fields = [];
       // A file of one machine's chip can be that machine's score or the Mega Drive's.
       if (a.targets.length > 1)
         fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
           choices: a.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
-          hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); md reads them for the Mega Drive' });
+          hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); another machine (md always, the rest where they hold most of its notes) reads them for its own' });
       fields.push(
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
       );
@@ -3456,7 +3447,7 @@
       if (a.targets.length > 1)
         fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
           choices: a.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
-          hint: 'fc keeps the Famicom’s chips; md reads them for the Mega Drive' });
+          hint: 'fc keeps the Famicom’s chips; another machine reads them for its own' });
       fields.push(
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
         { key: 'loop', label: a.fileLoop ? 'Loop (where the song comes round)' : 'Loop (the song stops: off)', type: 'checkbox', value: a.fileLoop },
@@ -3469,8 +3460,8 @@
           `${a.fileLoop ? `, looping from ${(parsed.loopSample / 44100).toFixed(1)} s` : ''}. ` +
           `The song is run on its own driver and its notes rebuilt from what it writes, at the times it wrote them (150 BPM, a tick 1/240 s), up to its loop — or ${NSF_MAX_SECONDS / 60} min.`,
         fields,
-        rows: writesRows(a, def.target),
-        rowsFor: (target) => writesRows(a, target),
+        rows: vgmRows(a, def.target),
+        rowsFor: (target) => vgmRows(a, target),
       });
       if (!got) return null;
       return vgmToMmlisp(parsed, {
@@ -7089,6 +7080,11 @@
       _dynVals = {};
       selectedChannel = null;
       selectedCh = null;
+      // A dimmed editor keeps what it showed, of this score: not of the last.
+      _editorKind = null;
+      _vecSubject = _pcmSubject = _pcmWave = _pcmCompiled = _fmShownRegs = _fmCopied = _cursorSubjectKey = _paramSubjectKey = null;
+      _vecActive = _pcmActive = false;
+      document.getElementById('fmParamStatus').textContent = '';
       // The old score's channels and slots come down now; the new score's go
       // up when it compiles (buildChStrips / renderDynParams in applyCompile).
       buildChStrips(null);
@@ -7360,6 +7356,8 @@
     let _pcmSubject = null;                 // the sample editor's subject (pcmSubjectOf), shown even dimmed
     let _pcmActive = false;                 // the sample subject is the panel's now (not dimmed)
     let _pcmEditor = null;                  // the sample editor (src/pcm-editor.js), once its section is built
+    let _pcmCompiled = null;                // { doc, metadata }: the score's samples, last asked (compiledSamples)
+    let _pcmWave = null;                    // the wave it has, baked (requestPcmWave)
     let _fmShownRegs = null;                // the FM editor's last subject's registers, kept while dimmed
     let _fmCopied = null;                   // its cursor def, if it was one: what a dimmed Copy copies
     const _mutedChannels = new Set();      // muted channel names (heads)
@@ -10884,7 +10882,6 @@
     // The score's samples as the text has them now: typing does not compile,
     // so with the cursor in a def the panel asks, off the page's thread, and
     // keeps what it had until the answer comes.
-    let _pcmCompiled = null; // { doc, metadata } of the last asked
     function compiledSamples() {
       const doc = editorView.state.doc;
       if (_pcmCompiled?.doc === doc) return _pcmCompiled.metadata;
@@ -10913,7 +10910,6 @@
 
     // The wave the panel has: one sample baked, kept while its slice, rate and
     // `:fx` are. A folder opened or a cache cleared reads it again.
-    let _pcmWave = null;
     function requestPcmWave({ ir, path }) {
       const key = JSON.stringify([path, ir.offset, ir.frames, ir.rate, ir.fx]);
       const whole = _pcmSampleCache.get(path);

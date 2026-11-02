@@ -169,6 +169,11 @@ export function opllRomVoices(part) {
   return new Map(ROM.map((b, i) => [OPLL_ROM_NAMES[i], voiceAs4op(b)]));
 }
 
+/** A part's ROM voices in the 4-op reading (voiceAs4op), `{ name: its words }` as a Map: to weigh them against a 4-op voice. */
+export function romVoicesAs4op(part) {
+  return new Map((part.rom ?? ROM).map((b, i) => [part.romNames[i], voiceAs4op(b)]));
+}
+
 /** The voice of `rom` (1-15) whose registers `bytes` are, or 0: the user voice. */
 function romIndex(bytes, rom = ROM) {
   const i = rom.findIndex((r) => r.every((x, k) => x === bytes[k]));

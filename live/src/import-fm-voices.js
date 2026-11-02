@@ -4,6 +4,8 @@
 // UI glue (file pickers, editor insertion) stays in index.html, so this module
 // is unit-testable from node.
 
+import { fmCarrierOpsForAlg } from "./ir-utils.js";
+
 function readDmpU8(bytes, cursor) {
   if (cursor.i >= bytes.length) throw new Error('Unexpected end of DMP data');
   const v = bytes[cursor.i];
@@ -644,3 +646,43 @@ export {
   slugFromFileName,
   detectFmImportFormatKey,
 };
+
+// ── A 4-op voice on a chip of ROM voices ────────────────────────────────
+// The OPLL's one user voice is every channel's at once, and its two operators
+// hold little of a 4-op voice: a song's voices become the ROM's, which do not
+// meet. A voice is weighed by how it sounds, not by its operators: the main
+// carrier's attack, how it holds, how fast it falls, and how much modulation
+// reaches it.
+const BASS_VOICES = new Set(["synth-bass", "acoustic-bass", "fretless"]);
+const BASS_BELOW = 48; // c3
+
+function voiceShape({ alg, fb, ops }) {
+  const car = fmCarrierOpsForAlg(alg);
+  const main = car.map((i) => ops[i]).sort((a, b) => a.tl - b.tl)[0];
+  const falls = main.sl > 0 && main.dr > 0;
+  const mods = ops.filter((_, i) => !car.includes(i));
+  // A modulator's index: its level (0.75 dB a TL step) by its multiple.
+  const index = mods.reduce((s, o) => s + 10 ** ((-o.tl * 0.75) / 20) * Math.max(0.5, o.ml), 0) + (fb / 7) * 0.5;
+  return { attack: main.ar / 31, holds: falls ? 1 - main.sl / 15 : main.sr > 8 ? 0 : 1, fall: falls ? main.dr / 31 : 0, bright: Math.min(1, index / 2) };
+}
+const wordsAsVoice = (w) => ({ alg: w.get("FM_ALG"), fb: w.get("FM_FB"), ops: [1, 2, 3, 4].map((n) => ({
+  ar: w.get(`FM_AR${n}`), dr: w.get(`FM_DR${n}`), sr: w.get(`FM_SR${n}`), sl: w.get(`FM_SL${n}`), tl: w.get(`FM_TL${n}`), ml: w.get(`FM_ML${n}`) })) });
+
+/**
+ * The ROM voice of `roms` (romVoicesAs4op) nearest a 4-op `voice` (an importer's
+ * raw one: {alg, fb, ops} in slot order, as fmVoiceDef takes) played around the
+ * MIDI note `meanNote`: a bass voice only for a part that low, and for one that
+ * low first.
+ */
+export function nearestRomVoice(voice, roms, meanNote) {
+  const v = voiceShape({ ...voice, ops: slotToDisplayOps(voice.ops).map((o) => ({ ...o, ml: o.mul })) });
+  const low = meanNote < BASS_BELOW;
+  let best = null, bestD = Infinity;
+  for (const [name, words] of roms) {
+    const r = voiceShape(wordsAsVoice(words));
+    const d = (v.attack - r.attack) ** 2 + 2 * (v.holds - r.holds) ** 2 + (v.fall - r.fall) ** 2 + 2 * (v.bright - r.bright) ** 2
+      + (BASS_VOICES.has(name) === low ? 0 : 1);
+    if (d < bestD) { best = name; bestD = d; }
+  }
+  return best;
+}
