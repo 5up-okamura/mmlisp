@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // The sample editor: a def-pcm's wave on a canvas, its range and its loop as
 // four handles dragged along it. The upper half takes the loop's two, the
-// lower the range's, so they can share a place. What a handle may reach and
+// lower the range's, so they can share a place; a part with no loop gives the
+// range's the height. What a handle may reach and
 // what it writes are the subject's (edit-tools.js moveSamplePoint); the editor
 // only draws and reports the time under the pointer. The wave fills the height,
 // scaled to its peak (`.peak`), for its shape: the level is a number beside it.
@@ -163,13 +164,16 @@ export class PcmEditor {
     const from = X(p.start), to = X(p.end);
     for (let x = 0; x < W; x++) {
       ctx.fillStyle = x >= from && x < to ? inside : outside;
-      const top = y(hi[x]);
-      ctx.fillRect(x, top, 1, Math.max(1, y(lo[x]) - top));
+      // Reaching to the column before: a steep wave's columns need not overlap.
+      const top = y(x ? Math.max(hi[x], lo[x - 1]) : hi[x]);
+      const bottom = y(x ? Math.min(lo[x], hi[x - 1]) : lo[x]);
+      ctx.fillRect(x, top, 1, Math.max(1, bottom - top));
     }
     ctx.font = `10px ${cs.fontFamily || "monospace"}`;
     const handle = (h, top, left) => {
       const x = Math.min(W - 1, X(p[h])) + 0.5;
-      const y0 = top ? 0 : H / 2, y1 = top ? H / 2 : H;
+      // With no loop to share with, the range's take the height.
+      const y0 = top || !s.loop ? 0 : H / 2, y1 = top ? H / 2 : H;
       ctx.strokeStyle = token("--high");
       ctx.beginPath();
       ctx.moveTo(x, y0);

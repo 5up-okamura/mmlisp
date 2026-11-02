@@ -1262,15 +1262,25 @@ editor. When the cursor leaves what
 it was on, a picked strip is the subject again; with none picked, the editor
 dims and keeps showing what it had, until something else is touched.
 
+**What is shown, and what can be edited.** A def in the score is edited where
+it stands. One the score does not hold is shown read only: an import's, and a
+built-in voice's (`init-fm`, the OPLL's ROM voices). Its title says `read only`,
+its values show and do not move, and the keys play it. **Copy** in the title
+puts what the editor shows on the clipboard as text: a def as it is written,
+a built-in voice or an FM channel's sound as a `(def-fm my-… init-fm …)` of its
+values, a macro's steps as a vector; a dimmed editor still copies what it
+keeps showing. Paste an import's def anywhere at
+the score's top level and that def is the score's own — one of the same name
+wins over the import (language.md §9.2), so the tracks keep the name, and
+deleting it goes back to the import. The text reads as the import did: a
+sample's `:file` is rewritten from the score, and an `(import … :fx […])`
+chain is written ahead of its own `:fx`. Nothing is written to the score until
+you paste. An import added to the score is read at a pause in typing.
+
 **A voice in the FM editor.** The cursor's voice is the `(def-fm …)` it is
 in, or the voice whose name it is on — in a track, or a `def-mod :voice` —
-whether the score defines it or an import does, and the keyboards play it.
-The title names it, with the preset set it comes from. Moving a slider writes
-the def: in place for the score's own, and for an imported one, first a copy
-of its def, as its file writes it, under the score's imports — a def of the
-same name in the score wins over the import's (language.md §9.2), so the
-tracks keep the name. One undo takes the copy back out; deleting it goes back
-to the preset.
+and the keyboards play it. The title names it, with the preset set it comes
+from. Moving a slider writes the def.
 
 **A vector in the vector editor.** A `def-wave`'s wave, or a macro's step
 vector (`(macro :vel [15 #sus 12 10 #rel 6 0])`), drawn as bars: press and
@@ -1290,14 +1300,13 @@ a wave sounds at once on every channel playing it, so a held note changes as
 you draw; with the cursor on a `def-wave`, the keys play it on a wave
 channel. With Alt (Option) held, a stroke over a macro's steps makes them
 holds (`_`); − and + under a macro's vector take its last step off or add
-one, a copy of the last. A def-wave from an import is copied into the score
-at the first stroke, under its imports, as an imported voice is. A macro
+one, a copy of the last. A macro
 written as stages (`[(ease-in …) (wait key-off) (linear …)]`) is shown — each
 stage's steps, a looping one's cycle between `loop` and `key-off`, a
 `(wait key-off)` as a mark — but not drawn on.
 
-**A sample in the sample editor.** With the cursor in a `(def-pcm …)`, its wave
-is drawn as a note bakes it: the `:offset` / `:frames` slice, `:fx` done, on the
+**A sample in the sample editor.** With the cursor in a `(def-pcm …)`, or on a
+sample's name, its wave is drawn as a note bakes it: the `:offset` / `:frames` slice, `:fx` done, on the
 time its points are read in (`:rate`, else the file's). It fills the height,
 scaled to its peak, so a quiet sample shows its shape; the level is the `peak`
 beside it, in dB of full scale, which is where a `gain` or a `normalize` in `:fx`
@@ -2563,7 +2572,7 @@ alphabetical order of their directory names.
 | Row                | ▶                                       | Other actions |
 | ------------------ | --------------------------------------- | ------------- |
 | an FM voice (`fm`) | one `len 4` c4 on FM1 — a `:key` voice (an FM drum) at its key | **Insert** pastes the definition at the cursor, to edit as your own |
-| a sample (`pcm`)   | one c4, baked and played through the driver's own engine — what an export will sound like | **Import set** (a sample's `:file` is relative to its set, so importing is how a score reaches it) |
+| a sample (`pcm`)   | one c4, baked and played through the driver's own engine — what an export will sound like | **Insert** pastes the definition at the cursor, its `:file` written from the score |
 | a macro (`macro`)  | a half-note c4 on sqr1 shaped by it, then a rest for its release | **Insert** pastes the definition at the cursor |
 | a set (group)      | —                                       | **Import set** |
 | a Ref entry        | plays its example                       | **Insert** writes the form at the cursor |

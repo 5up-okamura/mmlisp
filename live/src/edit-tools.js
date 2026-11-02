@@ -1,4 +1,5 @@
-// Edit > Loop Selection, the Logical Editor, the vector and sample editors: text edits
+// Edit > Loop Selection, the Logical Editor, the vector and sample editors, a
+// def's text for Copy and the Library's Insert: text edits
 // the editor applies to the score, kept apart from the page so they can be run
 // (and checked) in node. Every function here takes source text and offsets and
 // returns CodeMirror-style changes ({from, to, insert}); nothing touches the
@@ -6,7 +7,7 @@
 
 import { parse } from "./mmlisp-parser.js";
 import { AC_TRACKS } from "./completion-names.js";
-import { compileMMLisp, canonicalTarget, macroCurveSteps, waveCurveSteps } from "./mmlisp2ir.js";
+import { compileMMLisp, canonicalTarget, macroCurveSteps, waveCurveSteps, dirnamePosix, importKeyOf, isAbsolutePath, resolveSamplePath } from "./mmlisp2ir.js";
 import { MACRO_TARGET_RANGE, WAVE } from "./ir-utils.js";
 
 const TRACKS = new Set(AC_TRACKS);
@@ -877,7 +878,7 @@ export function sampleDefOf(text, name, { roots = parsed(text) } = {}) {
     if (key === ":pcm-len") keys.delete(":pcm-end");
     if (key === ":loop-end") keys.delete(":loop-len");
     if (key === ":loop-len") keys.delete(":loop-end");
-    keys.set(key, { tok: val.kind === "atom" ? val.value : null, key: nodeSpan(body[k], starts), value: nodeSpan(val, starts) });
+    keys.set(key, { tok: val.kind === "atom" ? val.value : null, raw: val.value, key: nodeSpan(body[k], starts), value: nodeSpan(val, starts) });
   }
   const last = body.at(-1);
   return {
@@ -1012,4 +1013,72 @@ export function trimSampleEdits(text, def, written, { ir, rate, frames, dur }) {
     else merged.push({ ...c });
   }
   return { changes: merged, cut: frames - (tail - head) };
+}
+
+// ---- a def's text for the score ----
+// Copy and the Library's Insert: a def of another file, as text that means
+// the same in the score. A local def of the name wins over the import (language.md
+// §9.2), so the text is all it takes; what a file's place gave the def has to be
+// written into it.
+
+// `file` (relative to the score's folder's root) as the score in `dir` writes it.
+function relativeTo(file, dir) {
+  if (!dir || isAbsolutePath(file)) return file;
+  const from = dir.split("/"), to = file.split("/");
+  let i = 0;
+  while (i < from.length && i < to.length - 1 && from[i] === to[i]) i++;
+  return [...from.slice(i).map(() => ".."), ...to.slice(i)].join("/");
+}
+
+/**
+ * The bodies of the `:fx` of the imports that lead from the score to the file
+ * `file`, outermost first (mmlisp2ir.js withImportEffect): a sample def's chain
+ * that a def in the score no longer has. [] when none has one.
+ */
+export function importFxChain(score, imports, file, { fileName = "" } = {}) {
+  const walk = (text, dir, chain, seen) => {
+    const roots = parsed(text);
+    const starts = lineStarts(text);
+    const forms = (roots ?? []).filter((n) => n?.kind === "list" && n.items?.[0]?.value === "import" && n.items[1]?.kind === "string");
+    const next = forms.map((n) => {
+      const body = items(n);
+      const at = body.findIndex((b) => b.kind === "atom" && b.value === ":fx");
+      const fx = at >= 0 ? nodeSpan(body[at + 1], starts) : null;
+      return [importKeyOf(n.items[1].value, dir, imports), fx ? [text.slice(fx.from + 1, fx.to - 1).trim()] : []];
+    });
+    for (const [key, own] of next) {
+      if (key === file) return [...chain, ...own];
+      if (seen.has(key) || !imports.has(key)) continue;
+      const got = walk(imports.get(key), dirnamePosix(key), [...chain, ...own], new Set([...seen, key]));
+      if (got) return got;
+    }
+    return null;
+  };
+  return (walk(score, dirnamePosix(fileName), [], new Set()) ?? []).filter(Boolean);
+}
+
+/**
+ * The text of the def `node` of `text`, the file at `path`, as the score named
+ * `fileName` can hold it. A sample's `:file` is that file's relative path, so it
+ * is written from the score; `fx`, the imports' chain (importFxChain), goes
+ * ahead of its own — but for a def extending a base, which keeps the base's.
+ */
+export function ownDefText(text, node, path, { fileName = "", fx = [] } = {}) {
+  const span = nodeSpan(node, lineStarts(text));
+  if (node.items[0]?.value !== "def-pcm") return text.slice(span.from, span.to);
+  const def = sampleDefOf(text, items(node)[1]?.value, { roots: [node] });
+  const file = def.keys.get(":file");
+  const extended = items(node)[2]?.kind === "atom" && !items(node)[2].value.startsWith(":");
+  const edits = [];
+  if (typeof file?.raw === "string" && file.tok == null) {
+    const at = resolveSamplePath(file.raw, dirnamePosix(path));
+    edits.push({ ...file.value, insert: `"${relativeTo(at, dirnamePosix(fileName))}"` });
+  }
+  if (fx.length && !extended) {
+    const own = def.keys.get(":fx")?.value;
+    if (own) edits.push({ from: own.from + 1, to: own.from + 1, insert: `${fx.join(" ")} ` });
+    else edits.push({ from: def.end, to: def.end, insert: ` :fx [${fx.join(" ")}]` });
+  }
+  return edits.sort((a, b) => b.from - a.from).reduce((t, c) =>
+    t.slice(0, c.from - span.from) + c.insert + t.slice(c.to - span.from), text.slice(span.from, span.to));
 }

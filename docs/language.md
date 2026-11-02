@@ -2016,7 +2016,8 @@ a def written there, and the imported file for one folded in by `import` (§9.2)
 So a preset set keeps its samples next to itself: `:file "wav/kick.wav"` inside
 `presets/tr808/set.mmlisp` reads `presets/tr808/wav/kick.wav`, however deep the
 score that imports it sits. Copying such a def into a score makes it the score's
-own, so its path has to be rewritten to match.
+own, so its path has to be rewritten to match, as Live's Copy and Library
+Insert do (`guide.md` § The panel's editor).
 
 **Sample paths in the live editor.** A relative `:file` resolves against the
 score's folder, but a browser only hands the editor a *file* when you use

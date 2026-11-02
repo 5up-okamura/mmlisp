@@ -425,7 +425,7 @@ function normalizePathSeparators(path) {
   return String(path || "").replace(/\\/g, "/");
 }
 
-function isAbsolutePath(path) {
+export function isAbsolutePath(path) {
   const p = normalizePathSeparators(path);
   return (
     p.startsWith("/") ||
@@ -434,7 +434,7 @@ function isAbsolutePath(path) {
   );
 }
 
-function dirnamePosix(path) {
+export function dirnamePosix(path) {
   const p = normalizePathSeparators(path);
   const idx = p.lastIndexOf("/");
   if (idx <= 0) return idx === 0 ? "/" : "";
@@ -464,7 +464,7 @@ function normalizePosixPath(path) {
 // A sample path is relative to the FILE THAT DEFINED IT (docs/language.md §16):
 // a def written in the score resolves against the score, and one folded in by
 // `import` against the imported file, so a preset set can ship its own wav/.
-function resolveSamplePath(sampleFile, baseDir) {
+export function resolveSamplePath(sampleFile, baseDir) {
   const file = normalizePathSeparators(sampleFile);
   if (!file || isAbsolutePath(file)) return file;
   const base = normalizePathSeparators(baseDir || "");
@@ -6245,15 +6245,18 @@ function warnImportIgnored(bundle, importPath, diagnostics, importSrc) {
 
 // Resolve one imported file to its merged def bundle (its own defs winning over
 // what it in turn imports). `stack` detects cycles; `cache` dedups diamonds.
-function resolveImportFile(path, importSrc, importSources, diagnostics, cache, stack, baseDir = "") {
-  // Next to the importing file first; failing that, from the root (a served
-  // score's `presets/…`) — and the file is then where it was found, so its
-  // samples and its own imports resolve from there.
+// Next to the importing file first; failing that, from the root (a served
+// score's `presets/…`) — and the file is then where it was found, so its
+// samples and its own imports resolve from there.
+export function importKeyOf(path, baseDir, importSources) {
   const joined = importedFilePath(path, baseDir);
-  const selfPath =
-    !importSources?.has(joined) && importSources?.has(normalizePosixPath(path))
-      ? normalizePosixPath(path)
-      : joined;
+  return !importSources?.has(joined) && importSources?.has(normalizePosixPath(path))
+    ? normalizePosixPath(path)
+    : joined;
+}
+
+function resolveImportFile(path, importSrc, importSources, diagnostics, cache, stack, baseDir = "") {
+  const selfPath = importKeyOf(path, baseDir, importSources);
   const selfDir = dirnamePosix(selfPath);
   if (stack.includes(selfPath)) {
     pushDiag(

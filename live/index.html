@@ -516,7 +516,10 @@
            def / vector the cursor went into last (syncParamUI). FM's, or the
            vector editor's (a def-wave, a macro's steps). -->
       <div class="rack-section" id="fmParamSection" data-needs="kind:fm">
-        <div class="rack-title rack-title-row"><span>FM</span><span id="fmParamStatus"></span></div>
+        <div class="rack-title rack-title-row"><span>FM</span><span id="fmParamStatus"></span>
+          <button type="button" class="tb-btn tb-small" id="fmCopy" hidden
+            title="Copy what the editor shows, as text to paste into the score. An import's def pasted there is the score's own to edit: it wins over the import"
+            onclick="event.stopPropagation();copyShown()">Copy</button></div>
         <div class="rack-body">
         <div id="algHome">
         <div class="alg-grid" id="algGrid">
@@ -544,24 +547,30 @@
       </div>
 
       <div class="rack-section editor-away" id="vecSection">
-        <div class="rack-title rack-title-row"><span id="vecKind">Vector</span><span id="vecStatus"></span></div>
+        <div class="rack-title rack-title-row"><span id="vecKind">Vector</span><span id="vecStatus"></span>
+          <button type="button" class="tb-btn tb-small" id="vecCopy" hidden
+            title="Copy what the editor shows, as text to paste into the score. An import's def pasted there is the score's own to edit: it wins over the import"
+            onclick="event.stopPropagation();copyShown()">Copy</button></div>
         <div class="rack-body">
           <div class="vec-axis"><span id="vecMax"></span><span id="vecReadout"></span></div>
           <canvas id="vecCanvas" class="vec-canvas"></canvas>
           <div class="vec-axis"><span id="vecMin"></span><span><span id="vecLen"></span>
-            <span id="vecLenCtl" class="vec-len-ctl" hidden><button type="button" class="tb-btn" title="One step fewer"
-              onclick="resizeVector(-1)">−</button><button type="button" class="tb-btn" title="One step more (a copy of the last)"
+            <span id="vecLenCtl" class="vec-len-ctl" hidden><button type="button" class="tb-btn tb-small" title="One step fewer"
+              onclick="resizeVector(-1)">−</button><button type="button" class="tb-btn tb-small" title="One step more (a copy of the last)"
               onclick="resizeVector(1)">+</button></span></span></div>
         </div>
       </div>
 
       <div class="rack-section editor-away" id="pcmSection">
-        <div class="rack-title rack-title-row"><span>Sample</span><span id="pcmStatus"></span></div>
+        <div class="rack-title rack-title-row"><span>Sample</span><span id="pcmStatus"></span>
+          <button type="button" class="tb-btn tb-small" id="pcmCopy" hidden
+            title="Copy what the editor shows, as text to paste into the score. An import's def pasted there is the score's own to edit: it wins over the import"
+            onclick="event.stopPropagation();copyShown()">Copy</button></div>
         <div class="rack-body">
           <div class="vec-axis"><span id="pcmInfo"></span><span id="pcmReadout"></span></div>
           <canvas id="pcmCanvas" class="vec-canvas pcm-canvas"></canvas>
           <div class="vec-axis pcm-foot"><span id="pcmLen"></span>
-            <button type="button" class="tb-btn" id="pcmTrim"
+            <button type="button" class="tb-btn tb-small" id="pcmTrim"
               title="Cut the sample to its range: :pcm-start / :pcm-end become :offset / :frames, so the bank holds only what plays"
               onclick="trimPcmToRange()">Trim to Range</button></div>
         </div>
@@ -570,7 +579,7 @@
       <!-- Dynamic Parameters (def-val sliders, and the XY pad that plays two of them) -->
       <div class="rack-section" id="dynParamSection" hidden>
         <div class="rack-title rack-title-row"><span>Dynamic Parameters</span>
-          <button type="button" class="tb-btn dyn-pad-toggle" id="dynPadToggle" hidden
+          <button type="button" class="tb-btn tb-small dyn-pad-toggle" id="dynPadToggle" hidden
             title="XY pad: one pointer plays two values" onclick="toggleDynPad(event)">XY</button></div>
         <div class="rack-body">
           <div id="dynParamBody" class="dyn-param-body"></div>
@@ -954,7 +963,7 @@
     import { ARCHIVE_EXT } from './src/archive.js';
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
-    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits } from './src/edit-tools.js';
+    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
     import { PcmEditor } from './src/pcm-editor.js';
     import { ABSnapshots } from './src/ab-snapshots.js';
@@ -7426,10 +7435,14 @@
     let _vecSubject = null;                 // the vector editor's subject (edit-tools.js vectorAt), shown even dimmed
     let _vecActive = false;                 // the vector subject is the panel's now (not dimmed)
     let _vecEditor = null;                  // the vector editor (src/vector-editor.js), once its section is built
+    let _importList = null;                 // the score's (import …) paths as last read (syncImportList)
+    let _libLoaded = null;                  // the Library's rows, as read (showLibraryItems)
+    let _libTarget;                         // the `:target` they are marked for
     let _pcmSubject = null;                 // the sample editor's subject (pcmSubjectOf), shown even dimmed
     let _pcmActive = false;                 // the sample subject is the panel's now (not dimmed)
     let _pcmEditor = null;                  // the sample editor (src/pcm-editor.js), once its section is built
     let _fmShownRegs = null;                // the FM editor's last subject's registers, kept while dimmed
+    let _fmCopied = null;                   // its cursor def, if it was one: what a dimmed Copy copies
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, slot }] built from the current IR
@@ -9470,11 +9483,8 @@
           run: () => insertLibraryImport(set.path) };
         groupActions[set.path] = [importSet];
         for (const def of set.defs) {
-          // An FM def or a macro is self-contained text, so a copy can be
-          // pasted and then edited. A sample def is not: its `:file` is
-          // relative to the set's own folder (language.md §16), so importing
-          // the set is the only honest way to reach it from elsewhere.
-          const copy = def.kind === 'fm' || def.kind === 'macro';
+          // A voice, a macro and a sample read the same pasted (ownDefText).
+          const copy = def.kind === 'fm' || def.kind === 'macro' || def.kind === 'pcm' || def.kind === 'wave';
           items.push({
             key: `${set.path}#${def.name}`,
             source: 'presets',
@@ -9717,7 +9727,7 @@
     // envelope is for \u2014 and a rest, so a release section is heard too. It
     // plays on the Library's own player, as a score does.
     async function previewLibraryMacro(set, def) {
-      const source = defSourceText(set, def) + `\n(sqr1 :oct 4 :len 2 :vel 15 ${def.name} c _)\n`;
+      const source = ownDefText(set.text, def.node, set.path) + `\n(sqr1 :oct 4 :len 2 :vel 15 ${def.name} c _)\n`;
       if (await playLibrarySource(source, 'library-preview.mmlisp', 'macro:' + def.name))
         setLibraryNote(`${def.name} \u2014 c4 on sqr1`);
     }
@@ -9805,16 +9815,8 @@
       showInserted(0, line.length);
     }
 
-    // The def's own lines of its set's text.
-    function defSourceText(set, def) {
-      const lines = set.text.split('\n');
-      const from = (def.node.line ?? 1) - 1;
-      const to = (def.node.endLine ?? def.node.line ?? 1) - 1;
-      return lines.slice(from, to + 1).join('\n');
-    }
-
     function insertLibraryDefText(set, def) {
-      const text = defSourceText(set, def);
+      const text = ownDefText(set.text, def.node, set.path, { fileName: _lastFileName });
       const { from, to } = editorView.state.selection.main;
       editorView.dispatch({ changes: { from, to, insert: text + '\n' } });
       setLibraryNote(`Inserted ${def.name} (${text.split('\n').length} lines)`);
@@ -10397,7 +10399,7 @@
     // `lookup(name)` finds the def-fm a voice extends, so a derived voice gets
     // its base's registers under its own; a base out of reach is skipped.
     // `regs.key` is the voice's `:key`.
-    function parseFmDefRegs(defNode, lookup = null) {
+    function parseFmDefRegs(defNode, lookup = null, target) {
       const regs = defaultFmRegs();
       const kv = new Map();
       const collect = (node, seen) => {
@@ -10406,7 +10408,7 @@
         if (lookup && base?.kind === 'atom' && !base.value.startsWith(':') && !seen.has(base.value)) {
           const baseNode = lookup(base.value);
           if (baseNode) collect(baseNode, new Set([...seen, base.value]));
-          else for (const [word, v] of builtinFmVoice(base.value) ?? []) {
+          else for (const [word, v] of builtinFmVoice(base.value, target) ?? []) {
             // A built-in base (a ROM voice): its registers, as the compiler has them.
             const k = fmParamToDefKey(word);
             if (k) kv.set(k, v);
@@ -10445,36 +10447,105 @@
 
     // A built-in voice's registers on the score's machine (init-fm, the
     // part's sine, and the OPLL's ROM voices: mmlisp2ir's own), or null.
-    function builtinFmVoice(name) {
-      const part = targetProfile(_lastGoodIR?.metadata?.target).parts.find((p) => p.kind === 'fm');
+    function builtinFmVoice(name, target = _lastGoodIR?.metadata?.target) {
+      const part = targetProfile(target).parts.find((p) => p.kind === 'fm');
       if (name === 'init-fm') return fmInitVoice(part);
       return opllRomVoices(part).get(name) ?? null;
     }
 
-    // The imported files' def-fm nodes by name, each file parsed once per
+    // The imported files' defs by name and kind, each file parsed once per
     // import set; in import order, so a later one (an `:over` layer) wins.
-    const _importFmDefs = new WeakMap(); // an _importSources map -> Map(name -> { node, path, text })
-    function importedFmDefs() {
-      if (!_importSources) return new Map();
-      let defs = _importFmDefs.get(_importSources);
+    const _importDefs = new WeakMap(); // an _importSources map -> { fm, wave, pcm }: Map(name -> { node, path, text, roots }), and waveSteps
+    function importedDefs() {
+      let defs = _importDefs.get(_importSources);
       if (!defs) {
-        defs = new Map();
+        defs = { fm: new Map(), wave: new Map(), pcm: new Map() };
         for (const [path, text] of _importSources) {
           let roots = null;
           try { roots = parse(text); } catch (_) { continue; }
-          for (const n of roots) if (isFmVoiceDefNode(n) && n.items[1]?.kind === 'atom') defs.set(n.items[1].value, { node: n, path, text });
+          for (const n of roots) {
+            if (n?.kind !== 'list' || n.items[1]?.kind !== 'atom') continue;
+            const kind = isFmVoiceDefNode(n) ? 'fm' : { 'def-wave': 'wave', 'def-pcm': 'pcm' }[n.items[0]?.value];
+            if (kind) defs[kind].set(n.items[1].value, { node: n, path, text, roots });
+          }
         }
-        _importFmDefs.set(_importSources, defs);
+        defs.waveSteps = [...defs.wave].flatMap(([name, { text, roots }]) => {
+          const steps = vectorOfWave(text, name, { roots })?.values;
+          return steps ? [[name, steps]] : [];
+        });
+        _importDefs.set(_importSources, defs);
       }
       return defs;
+    }
+
+    // Copy (the title of the editor showing something): what it shows, as text
+    // the score can hold. An import's def starts an edit from there, in the
+    // score, where it wins over the import.
+    function shownText() {
+      const doc = editorView.state.doc;
+      const own = (name) => parseCached(doc)?.find((n) => n.kind === 'list' && /^def-(fm|wave|pcm)$/.test(n.items[0]?.value) && n.items[1]?.value === name);
+      const defText = (s) => {
+        const imp = s.copy;
+        if (imp) return ownDefText(imp.text, imp.node, imp.path, { fileName: _lastFileName,
+          fx: importFxChain(doc.toString(), _importSources, imp.path, { fileName: _lastFileName }) });
+        const node = s.name && own(s.name);
+        return node ? ownDefText(doc.toString(), node, '') : null;
+      };
+      // Dimmed, an editor keeps what it showed, and Copy copies that: the
+      // score may have moved on, so a def is looked up again by name and a
+      // macro's steps are its values, not its old place in the text.
+      if (_editorKind === 'pcm') return _pcmSubject ? defText(_pcmSubject) : null;
+      if (_editorKind === 'vector') {
+        const s = _vecSubject;
+        if (!s) return null;
+        if (s.kind === 'wave') return defText(s) ?? `(def-wave ${s.name} :wave [${s.values.join(' ')}])`;
+        return s.curve || !s.span || !_vecActive ? `[${s.values.map((v) => v ?? '_').join(' ')}]` : doc.sliceString(s.span.from, s.span.to);
+      }
+      const fm = _fmCursorDefContext ?? _fmCopied;
+      if (fm) return defText(fm) ?? fmPanelDefText(`my-${fm.name}`);
+      return _fmShownRegs ? fmPanelDefText('my-voice') : null;
+    }
+
+    // A voice with no def to copy (a built-in, a channel as it sounds), from
+    // the panel's values. Named apart: a built-in's own name would change every
+    // voice that extends it.
+    function fmPanelDefText(name) {
+      const target = targetProfile(_lastGoodIR?.metadata?.target);
+      const word = (param, value) => (target.hasWord(param) ? `${fmParamToDefKey(param)} ${value}` : null);
+      const value = (id) => document.getElementById(id)?.value;
+      const line = (words) => words.filter(Boolean).join(' ');
+      const head = line([word('FM_ALG', value('sl-alg')), word('FM_FB', value('sl-fb')), word('FM_AMS', value('sl-ams')), word('FM_FMS', value('sl-fms'))]);
+      const ops = [1, 2, 3, 4].map((op) => line([...OP_REG_PARAMS.map((pp) => word(pp.param(op), value(`sl-op${op}-${pp.key}`))),
+        word(`FM_AMEN${op}`, document.getElementById(`chk-amen${op}`)?.checked ? 1 : 0)]));
+      return `(def-fm ${name} init-fm\n${[head, ...ops].filter(Boolean).map((l) => `  ${l}`).join('\n')})`;
+    }
+
+    window.copyShown = async () => {
+      const text = shownText();
+      if (!text) return;
+      try {
+        await writeClipboard(text);
+        log(`Copied ${text.length > 40 ? `${text.slice(0, 40)}…` : text}`.replace(/\s+/g, ' '), 'info');
+      } catch (e) {
+        log(`Copy: the browser refused the clipboard (${e.message})`, 'err');
+      }
+    };
+
+    async function writeClipboard(text) {
+      if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+      const area = document.body.appendChild(Object.assign(document.createElement('textarea'), { value: text }));
+      area.select();
+      const ok = document.execCommand('copy');
+      area.remove();
+      if (!ok) throw new Error('no clipboard here');
     }
 
     // The FM voice the panel shows when no channel is selected, or null:
     //  - the cursor inside a (def-fm …): that def, edited in place;
     //  - else the cursor on a voice's name (a track's voice switch, a def-mod
     //    :voice): the def it names — the score's own, else an import's, as the
-    //    compiler resolves it (a local def wins). An imported one is copied into
-    //    the score on its first edit (setCursorDefParam), where it then wins.
+    //    compiler resolves it (a local def wins), or a built-in voice. The last
+    //    two are shown read only: nothing in the score to write to.
     // A voice extending another resolves its base the same way, across files.
     function findFmDefAtCursor() {
       const state = editorView.state;
@@ -10482,7 +10553,7 @@
       const cursorLine = state.doc.lineAt(head).number;
       const ast = parseCached(state.doc);
       if (!ast) return null;
-      const imported = importedFmDefs();
+      const imported = importedDefs().fm;
       const local = fmDefIn(ast);
       const lookup = (name) => local(name) ?? imported.get(name)?.node ?? null;
 
@@ -10508,8 +10579,11 @@
         best = local(name);
         if (!best) {
           const imp = imported.get(name);
-          if (!imp) return null;
-          return { name, origin: imp.path, copy: imp, regs: parseFmDefRegs(imp.node, lookup) };
+          if (imp) return { name, origin: imp.path, copy: imp, readOnly: true, regs: parseFmDefRegs(imp.node, lookup) };
+          // A def of the name is that def, whatever it is: a sample, a macro.
+          const named = ast.some((n) => n.kind === 'list' && /^def(-|$)/.test(n.items[0]?.value ?? '') && n.items[1]?.value === name);
+          if (named || importedDefs().pcm.has(name) || !builtinFmVoice(name)) return null;
+          return { name, readOnly: true, regs: parseFmDefRegs(parse(`(def-fm voice ${name})`)[0], lookup) };
         }
       }
 
@@ -10550,31 +10624,8 @@
       },
     });
 
-    // A stroke (or a length change) into the score, as one edit: in place, or
-    // for an imported def-wave, first a copy of its def under the score's
-    // imports — a def of the same name in the score wins (language.md §9.2),
-    // as an imported voice's first edit does (copyImportedVoice).
+    // A stroke (or a length change) into the score, as one edit.
     function writeVectorToScore(s, values) {
-      if (s.importCopy) {
-        const { node, text: fileText, path } = s.importCopy;
-        const lines = fileText.split('\n').slice(node.line - 1, node.endLine);
-        const defText = lines.join('\n');
-        const own = vectorOfWave(defText, s.name);
-        const edits = own ? writeVector(defText, { ...own, writable: true }, values) : [];
-        if (!edits.length) {
-          log(`${s.name}'s :wave in ${path} is not a vector or a curve read alone; copy the def into the score to draw on it`, 'info');
-          return;
-        }
-        const edited = edits.reduceRight((t, c) => t.slice(0, c.from) + c.insert + t.slice(c.to), defText);
-        const state = editorView.state;
-        const roots = parseCached(state.doc) ?? [];
-        const lastImport = roots.filter((n) => n.kind === 'list' && n.items?.[0]?.value === 'import').pop();
-        const at = lastImport ? state.doc.line(lastImport.endLine ?? lastImport.line).to : 0;
-        editorView.dispatch({ changes: { from: at, insert: lastImport ? `\n\n${edited}` : `${edited}\n\n` } });
-        log(`Copied ${s.name} from ${path} into the score to edit it (the copy wins over the import; delete it to go back)`, 'info');
-        scheduleHotSwap();
-        return;
-      }
       const changes = writeVector(editorView.state.doc.toString(), s, values);
       if (!changes.length) return;
       editorView.dispatch({ changes });
@@ -10592,33 +10643,16 @@
     }
     window.resizeVector = resizeVector;
 
-    // The def-waves the score's imports define: name → { node, path, text }.
-    let _importWaveDefs = new WeakMap();
-    function importedWaveDefs() {
-      if (!_importSources) return new Map();
-      let defs = _importWaveDefs.get(_importSources);
-      if (!defs) {
-        defs = new Map();
-        for (const [path, text] of _importSources) {
-          let roots = null;
-          try { roots = parse(text); } catch (_) { continue; }
-          for (const n of roots)
-            if (n?.kind === 'list' && n.items?.[0]?.value === 'def-wave' && n.items[1]?.kind === 'atom') defs.set(n.items[1].value, { node: n, path, text });
-        }
-        _importWaveDefs.set(_importSources, defs);
-      }
-      return defs;
-    }
-
     // The wave lanes the score's machine has (targets.js toneLaneOf).
     function waveLanes() {
       const machine = targetProfile(_lastGoodIR?.metadata?.target);
       return machine.headsOfKind('wave').map((h) => toneLaneOf(machine.channels[h]));
     }
 
-    // The compiled def-waves by name: a wave written as a curve, or imported.
+    // The def-waves by name the text alone does not give: a wave written as a
+    // curve, or imported — as the imports read, the compile's over them.
     function compiledWaves() {
-      return new Map((_lastGoodIR?.metadata?.waves ?? []).map((w) => [w.name, w.data]));
+      return new Map([...importedDefs().waveSteps, ...(_lastGoodIR?.metadata?.waves ?? []).map((w) => [w.name, w.data])]);
     }
 
     // The song's opening tempo (its last tick-0 TEMPO_SET): what a macro
@@ -10667,9 +10701,9 @@
       const strip = !cursorVec && !_fmCursorDefContext && !_pcmCursorDef ? waveStripSubject() : null;
       let subject = cursorVec ?? strip;
       const sample = subject ? null : pcmSubjectOf(_pcmCursorDef);
-      // An imported def-wave is drawn on by copying it in at the first stroke.
-      if (subject?.kind === 'wave' && !subject.writable && importedWaveDefs().has(subject.name))
-        subject = { ...subject, writable: true, importCopy: importedWaveDefs().get(subject.name) };
+      // An imported def-wave is shown read only; Copy starts an edit.
+      if (subject?.kind === 'wave' && !subject.writable)
+        subject = { ...subject, copy: importedDefs().wave.get(subject.name) };
       if (subject) _editorKind = 'vector';
       else if (sample) _editorKind = 'pcm';
       else if (_fmCursorDefContext || isFmSlot(selectedCh)) _editorKind = 'fm';
@@ -10692,9 +10726,10 @@
       document.getElementById('vecStatus').textContent = s?.name ?? '';
       document.getElementById('vecMax').textContent = s ? String(s.max) : '';
       document.getElementById('vecMin').textContent = s ? String(s.min) : '';
+      document.getElementById('vecCopy').hidden = !s;
       document.getElementById('vecLen').textContent = !s ? ''
-        : `${s.values.length} steps${s.note ? ` · ${s.note}` : s.importCopy ? ' · imported: drawing copies it in'
-          : !s.writable ? ' · imported: read only' : s.curve ? ' · a curve: drawing writes steps' : ''}`;
+        : `${s.values.length} steps${s.note ? ` · ${s.note}`
+          : !s.writable ? ' · read only' : s.curve ? ' · a curve: drawing writes steps' : ''}`;
       // A dimmed subject is not drawn on (no span to write to). A stroke in
       // progress keeps its own values; a subject that still holds them only
       // takes the new spans.
@@ -10774,8 +10809,11 @@
       const path = ir?.resolvedFile ?? ir?.file;
       if (!path) return null;
       const doc = editorView.state.doc;
-      const def = sampleDefOf(doc.toString(), name, { roots: parseCached(doc) });
-      return def ? { name, ir, path, written: writtenPoints(def, ir) } : null;
+      const own = sampleDefOf(doc.toString(), name, { roots: parseCached(doc) });
+      // An imported def is shown read only; Copy starts an edit.
+      const copy = own ? null : importedDefs().pcm.get(name);
+      const def = own ?? (copy && sampleDefOf(copy.text, name, { roots: copy.roots }));
+      return def ? { name, ir, path, copy, written: writtenPoints(def, ir) } : null;
     }
 
     // The wave the panel has: one sample baked, kept while its slice, rate and
@@ -10815,13 +10853,15 @@
       s.dur = dur;
       const parts = samplePartsOf(_pcmCompiled?.metadata?.target);
       const points = data ? samplePoints(s.written, dur) : null;
-      document.getElementById('pcmStatus').textContent = s.name;
+      document.getElementById('pcmStatus').textContent = [s.name, s.copy && librarySetName(s.copy.path), s.copy && 'read only'].filter(Boolean).join(' \u00b7 ');
+      document.getElementById('pcmCopy').hidden = false;
+      document.getElementById('pcmTrim').hidden = !!s.copy;
       const info = document.getElementById('pcmInfo');
       info.textContent = wave?.failed ? `${s.path} did not load` : 'Loading…';
       document.getElementById('pcmLen').textContent = data ? `${Math.round(points.end - points.start)} of ${Math.round(dur)}ms` : '';
       document.getElementById('pcmTrim').disabled = !_pcmActive || !data;
       if (!_pcmEditor.dragging) _pcmEditor.show({
-        data, dur, points, writable: _pcmActive && parts.length > 0,
+        data, dur, points, writable: _pcmActive && !s.copy && parts.length > 0,
         loop: parts.some((p) => !p.rangeLoops),
       });
       if (data) {
@@ -10831,8 +10871,9 @@
       }
     }
 
-    // The sample def under the cursor: `(def-pcm name …)`. What it sounds
-    // like is decided at the key, by compiling the text as it is then.
+    // The sample under the cursor: the `(def-pcm name …)` it is in, or the
+    // sample whose name it is on, the score's own or an import's. What it
+    // sounds like is decided at the key, by compiling the text as it is then.
     function findSampleDefAtCursor() {
       const state = editorView.state;
       const cursorLine = state.doc.lineAt(state.selection.main.head).number;
@@ -10843,7 +10884,10 @@
         if (it[0]?.value !== 'def-pcm') continue;
         if (root.line <= cursorLine && cursorLine <= (root.endLine ?? root.line)) return it[1]?.value ?? null;
       }
-      return null;
+      const name = findAtomAt(ast, state.doc, state.selection.main.head, null)?.node?.value;
+      if (typeof name !== 'string' || name.startsWith(':')) return null;
+      const own = ast.some((n) => n.kind === 'list' && n.items[0]?.value === 'def-pcm' && n.items[1]?.value === name);
+      return own || importedDefs().pcm.has(name) ? name : null;
     }
 
     // The (def-se name …) the cursor is in, or null: Play auditions it.
@@ -10875,8 +10919,8 @@
       if (!statusEl) return;
       // The cursor's def while the cursor leads, else the selected FM channel.
       if (_fmCursorDefContext?.name) {
-        const { name, origin } = _fmCursorDefContext;
-        statusEl.textContent = origin ? `${name} \u00b7 ${librarySetName(origin)}` : name;
+        const { name, origin, readOnly } = _fmCursorDefContext;
+        statusEl.textContent = [name, origin && librarySetName(origin), readOnly && 'read only'].filter(Boolean).join(' \u00b7 ');
         return;
       }
       if (isFmSlot(selectedCh)) {
@@ -10891,9 +10935,14 @@
       if (!section) return;
       const controls = section.querySelectorAll('input');
       const enabled = mode !== 'disabled';
+      const readOnly = !!_fmCursorDefContext?.readOnly;
       section.classList.toggle('fm-disabled', !enabled);
+      section.classList.toggle('fm-readonly', readOnly);
+      if (enabled) _fmCopied = _fmCursorDefContext;
+      document.getElementById('fmCopy').hidden = !enabled && !_fmShownRegs;
       controls.forEach((el) => {
-        el.disabled = !enabled;
+        // An operator's mute is the audition's, not the def's: it stays.
+        el.disabled = !enabled || (readOnly && !el.id.startsWith('chk-op'));
       });
     }
 
@@ -12145,7 +12194,7 @@
       const ctx = _fmCursorDefContext ?? findFmDefAtCursor();
       if (!ctx) return false;
       const text = /^FM_VEL/.test(paramName) ? velSensText(value) : String(value);
-      if (ctx.copy) return copyImportedVoice(ctx, defKey, text);
+      if (ctx.readOnly) return false;
       const state = editorView.state;
       const oldText = state.doc.sliceString(ctx.from, ctx.to);
       const next = replaceOrInsertDefParam(oldText, defKey, text, ctx.closeAt - ctx.from);
@@ -12159,25 +12208,6 @@
     // the score under the last top-level import — a local def of the same name
     // wins (language.md §9.2), so the tracks keep their name — with the edit
     // already in it. One change, so one undo takes the copy back out.
-    function copyImportedVoice(ctx, defKey, valueText) {
-      const { node, text: fileText, path } = ctx.copy;
-      const lines = fileText.split('\n').slice(node.line - 1, node.endLine);
-      const defText = lines.join('\n');
-      const closeAt = lines.slice(0, -1).reduce((n, l) => n + l.length + 1, 0) + node.endColumn - 2;
-      const edited = replaceOrInsertDefParam(defText, defKey, valueText, closeAt);
-      const state = editorView.state;
-      const roots = parseCached(state.doc) ?? [];
-      const lastImport = roots.filter((n) => n.kind === 'list' && n.items?.[0]?.value === 'import').pop();
-      const at = lastImport ? state.doc.line(lastImport.endLine ?? lastImport.line).to : 0;
-      const insert = lastImport ? `\n\n${edited}` : `${edited}\n\n`;
-      editorView.dispatch({ changes: { from: at, insert } });
-      const from = lastImport ? at + 2 : 0;
-      flashBuild({ from, to: from + edited.length });
-      log(`Copied ${ctx.name} from ${path} into the score to edit it (the copy wins over the import; delete it to go back)`, 'info');
-      scheduleHotSwap();
-      return true;
-    }
-
     function setLiveChannelParam(paramName, value) {
       return setLiveParamForChannel(paramName, value, selectedCh?.ch);
     }
@@ -12331,6 +12361,20 @@
       ctx.globalAlpha = 1;
     }
 
+    // An import written since the last compile: its defs are read now, for the
+    // panel and the completion, not at the next Build.
+    function syncImportList() {
+      const roots = parseCached(editorView.state.doc);
+      if (!roots) return;
+      const list = roots.filter((n) => n.kind === 'list' && n.items[0]?.value === 'import').map((n) => n.items[1]?.value).join('\n');
+      if (list === _importList) return;
+      _importList = list;
+      refreshImportSources(editorView.state.doc.toString()).then(() => {
+        _pcmCompiled = null; // read against the imports as they were
+        syncParamUI({ repaint: false });
+      }).catch(() => {});
+    }
+
     // ---- sync slider display from player state ----
     // A caller snapping a moved slider back passes nothing: the slider no
     // longer shows what the cache holds, so everything is repainted. The
@@ -12340,6 +12384,7 @@
     function syncParamUI({ repaint = true } = {}) {
       clearTimeout(_paramSyncTimer); // this one is the sync an edit was waiting for
       _paramSyncTimer = 0;
+      syncImportList();
       // A def-fm on a target with no FM (the MSX) has nothing to audition on.
       const hasFm = !!targetProfile(_lastGoodIR?.metadata?.target).chipForKind('fm');
       // What the cursor is on: a vector (a def-wave, a macro's steps), an FM

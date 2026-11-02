@@ -126,6 +126,8 @@
        a scroll that started on it. */
     @media (hover: hover) { .tb-btn:hover { border-color: var(--high); color: var(--high); } }
     .tb-btn:disabled { opacity: var(--off); cursor: default; }
+    /* Inside a line of text: no taller than the line it sits on. */
+    .tb-btn.tb-small { font-size: 0.58rem; padding: 0 0.4rem; line-height: 1.4; }
     .tb-btn.active { border-color: var(--foreground); color: var(--background); background: var(--foreground); }
     #topbar .spacer { flex: 1; }
     /* Transport on a touch screen: drawn at the desktop's size, but each
@@ -768,7 +770,7 @@
       font-size: 0.58rem;
       white-space: nowrap;
     }
-    #fmParamStatus {
+    #fmParamStatus, #vecStatus, #pcmStatus {
       margin-left: auto;
       color: var(--sub);
       font-size: 0.58rem;
@@ -900,7 +902,7 @@
        an area a pixel short of the right
        and bottom borders, so a value at its end sits beside the border, not
        over it (the border is --high while the pointer is there). */
-    .dyn-pad-toggle { margin-left: auto; font-size: 0.58rem; padding: 0 0.4rem; line-height: 1.4; }
+    .dyn-pad-toggle { margin-left: auto; }
     .dyn-pad { display: flex; align-items: flex-start; gap: 0.6rem; margin-top: 0.5rem; }
     .dyn-pad[hidden] { display: none; }
     /* The panel's first select: drawn as the top bar's (size, padding, corners),
@@ -1069,7 +1071,7 @@
     .pcm-canvas { cursor: default; }
     .pcm-foot { align-items: center; }
     #vecSection.vec-readonly .vec-canvas { cursor: not-allowed; }
-    .vec-len-ctl .tb-btn { font-size: 0.58rem; padding: 0 0.4rem; line-height: 1.4; margin-left: 0.25rem; }
+    .vec-len-ctl .tb-btn { margin-left: 0.25rem; }
     /* per-operator ADSR envelope graph at the bottom of each op column */
     .op-env { width: 100%; height: 30px; min-height: 30px; display: block; }
     #fmParamSection.fm-disabled .op-env { opacity: var(--off); }
@@ -1099,6 +1101,9 @@
       background: var(--mid);
       border-color: var(--mid);
     }
+
+    /* Read only: an imported or built-in voice. Its values show as ever; they just do not move. */
+    #fmParamSection.fm-readonly input:disabled { cursor: not-allowed; }
 
     /* channel strips */
     .ch-strips-row {

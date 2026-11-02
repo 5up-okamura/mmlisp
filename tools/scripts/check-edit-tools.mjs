@@ -1,7 +1,8 @@
 // Source-edit regressions: notation, target sound names and actual edit extent.
 import assert from 'node:assert/strict';
 import { compileMMLisp } from '../../live/src/mmlisp2ir.js';
-import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits } from '../../live/src/edit-tools.js';
+import { parse } from '../../live/src/mmlisp-parser.js';
+import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText } from '../../live/src/edit-tools.js';
 
 let count = 0;
 const check = (name, run) => { run(); count++; console.log(`ok ${name}`); };
@@ -407,4 +408,50 @@ check('Trim says when there is nothing it can do', () => {
   assert.match(trim('(def-pcm hit :file "a.wav")').error, /whole sample/);
   assert.match(trim('(def-pcm base :file "a.wav" :pcm-end 500ms) (def-pcm hit base)').error, /base/);
 });
+
+// Copy Def: the text, in the score, is the def it came from.
+const sampleOf = (text, fileName, imports, name = 'hit') => compileMMLisp(text, fileName, { imports }).ir.metadata.samples.find((d) => d.name === name);
+const copied = (score, fileName, imports, file, name = 'hit') => {
+  const text = imports.get(file);
+  const node = parse(text).find((n) => n.kind === 'list' && n.items[1]?.value === name);
+  return ownDefText(text, node, file, { fileName, fx: importFxChain(score, imports, file, { fileName }) });
+};
+check('a copied sample sounds as the import did', () => {
+  const imports = new Map([['presets/kit/set.mmlisp', '; a kit\n(def-pcm hit :file "wav/hit.wav" :fx [(gain 2)])\n(def-pcm tom :file "wav/tom.wav")']]);
+  const score = '(import "presets/kit/set.mmlisp" :fx [(gain 1)])\n(pcm1 hit c)';
+  const text = copied(score, 'a.mmlisp', imports, 'presets/kit/set.mmlisp');
+  assert.equal(text, '(def-pcm hit :file "presets/kit/wav/hit.wav" :fx [(gain 1) (gain 2)])');
+  const was = sampleOf(score, 'a.mmlisp', imports);
+  const now = sampleOf(`${score}\n${text}`, 'a.mmlisp', imports);
+  assert.deepEqual([now.resolvedFile, now.fx], [was.resolvedFile, was.fx]);
+});
+check('a chain goes on a sample with no :fx, through nested imports, outermost first', () => {
+  const imports = new Map([['a.mmlisp', '(import "kit/b.mmlisp" :fx [(gain 3)])'], ['kit/b.mmlisp', '(def-pcm hit :file "hit.wav")']]);
+  const score = '(import "a.mmlisp" :fx [(gain 1) (gain 2)])\n(pcm1 hit c)';
+  assert.deepEqual(importFxChain(score, imports, 'kit/b.mmlisp'), ['(gain 1) (gain 2)', '(gain 3)']);
+  const text = copied(score, 'a.mmlisp', imports, 'kit/b.mmlisp');
+  assert.equal(text, '(def-pcm hit :file "kit/hit.wav" :fx [(gain 1) (gain 2) (gain 3)])');
+  assert.deepEqual(sampleOf(`${score}\n${text}`, 'a.mmlisp', imports).fx, sampleOf(score, 'a.mmlisp', imports).fx);
+});
+check('a file is written from where the score is', () => {
+  const imports = new Map([['presets/kit/set.mmlisp', '(def-pcm hit :file "wav/hit.wav")']]);
+  const score = '(import "presets/kit/set.mmlisp")\n(pcm1 hit c)';
+  const text = copied(score, 'songs/a.mmlisp', imports, 'presets/kit/set.mmlisp');
+  assert.equal(text, '(def-pcm hit :file "../presets/kit/wav/hit.wav")');
+  assert.equal(sampleOf(`${score}\n${text}`, 'songs/a.mmlisp', imports).resolvedFile.replace(/^songs\/\.\.\//, ''), 'presets/kit/wav/hit.wav');
+});
+check('a copied sample that extends a base keeps the base\'s chain, once', () => {
+  const imports = new Map([['kit.mmlisp', '(def-pcm base :file "hit.wav")\n(def-pcm hit base :fx [(gain 2)])']]);
+  const score = '(import "kit.mmlisp" :fx [(gain 1)])\n(pcm1 hit c)';
+  const text = copied(score, 'a.mmlisp', imports, 'kit.mmlisp');
+  assert.equal(text, '(def-pcm hit base :fx [(gain 2)])');
+  assert.deepEqual(sampleOf(`${score}\n${text}`, 'a.mmlisp', imports).fx, sampleOf(score, 'a.mmlisp', imports).fx);
+});
+check('a def with nothing tied to its file is copied as it stands', () => {
+  const text = '; keep\n(def-fm lead init-fm\n  :alg 4 ; bright\n  :fb 3)\n(def-wave saw :wave [1 2])';
+  const [fm, wave] = parse(text).filter((n) => n.kind === 'list');
+  assert.equal(ownDefText(text, fm, 'x/y.mmlisp'), '(def-fm lead init-fm\n  :alg 4 ; bright\n  :fb 3)');
+  assert.equal(ownDefText(text, wave, 'x/y.mmlisp'), '(def-wave saw :wave [1 2])');
+});
+
 console.log(`Logical Editor checks passed: ${count}`);
