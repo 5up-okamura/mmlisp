@@ -12970,6 +12970,7 @@
         fg: cs.getPropertyValue('--foreground').trim() || '#cfe',
         mid: cs.getPropertyValue('--mid').trim() || '#678',
         sub: cs.getPropertyValue('--sub').trim() || '#9bc', // text: note and lane names
+        label: getComputedStyle(document.getElementById('vizCanvas')).fontSize, // the type size: canvases draw it
       };
     }
     function resizeVizCanvas() {
@@ -13405,7 +13406,7 @@
 
       // Key gutter: C names, black keys, the focus's sounding keys lit.
       ctx.clearRect(0, 0, ROLL_KEY_W, H);
-      ctx.font = '9px ui-monospace, monospace';
+      ctx.font = `${_vizColors.label} ui-monospace, monospace`;
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'right';
       clipPitched();
@@ -13436,7 +13437,7 @@
       if (focusCell) {
         const zoom = rollZoomGeometry();
         ctx.fillStyle = fg;
-        ctx.font = '600 11px ui-monospace, monospace';
+        ctx.font = `600 ${_vizColors.label} ui-monospace, monospace`;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'alphabetic';
         ctx.fillText(focusCell.name, W - zoom.width - 14, zoom.baseline);
@@ -13778,7 +13779,7 @@
         // channel name as the score writes it (bottom-right)
         ctx.globalAlpha = 0.8;
         ctx.fillStyle = _vizColors.fg;
-        ctx.font = '600 11px ui-monospace, monospace';
+        ctx.font = `600 ${_vizColors.label} ui-monospace, monospace`;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
         ctx.fillText(cell.head, x0 + cellW - 5, y0 + cellH - 4);

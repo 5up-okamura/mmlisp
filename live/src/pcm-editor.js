@@ -169,7 +169,7 @@ export class PcmEditor {
       const bottom = y(x ? Math.min(lo[x], hi[x - 1]) : lo[x]);
       ctx.fillRect(x, top, 1, Math.max(1, bottom - top));
     }
-    ctx.font = `10px ${cs.fontFamily || "monospace"}`;
+    ctx.font = `${cs.fontSize} ${cs.fontFamily || "monospace"}`;
     const handle = (h, top, left) => {
       const x = Math.min(W - 1, X(p[h])) + 0.5;
       // With no loop to share with, the range's take the height.

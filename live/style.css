@@ -10,9 +10,10 @@
       --error:      #e66;
       --contrast:   #fff;
       --high: color-mix(in srgb, var(--foreground) 45%, var(--contrast));     /* emphasis */
-      /* Text has two tones and never an opacity: --foreground for code and
-         values, --sub for names, comments and notes. --mid is for lines,
-         borders and marks — they read when faint; text does not. */
+      /* Text has two tones and never an opacity: --foreground for code,
+         values and sentences, --sub for the name beside a value and for
+         comments. --mid is for lines, borders and marks — they read when
+         faint; text does not. */
       --sub:  color-mix(in srgb, var(--foreground) 60%, var(--background));
       --mid:  color-mix(in srgb, var(--foreground) 40%, var(--background));
       /* A disabled control, its text included: plainly off, still legible. */
@@ -21,8 +22,19 @@
       --fill: 8%;
       --hover: 18%;
       --sel: 28%;
+      /* Type sizes, by use, like the tones. --text is words that are read:
+         menus, titles, names, the log, rows, dialogs. --label is what sits on
+         a control: a slider's word and value, a small button, a key's number.
+         --mark is a sign drawn in a character (×, the steppers'), sized with
+         its button. Only the editor has a size of its own (MMLisp > Font
+         Size); `tools npm run check:font-sizes` keeps it to these. */
+      --text: 0.78rem;
+      --label: 0.66rem;
+      --mark: 1rem;
     }
     * { box-sizing: border-box; }
+    /* A canvas's text takes the size it reads back from its own style. */
+    canvas { font-size: var(--label); }
     /* A field's hint is a note, so it takes the theme's --sub (the browser's own
        grey ignores the theme; Firefox also fades it, hence the opacity). */
     ::placeholder { color: var(--sub); opacity: 1; }
@@ -104,7 +116,7 @@
     .menu-btn,
     .menu-item,
     .menu-item-shortcut {
-      font-size: 0.72rem;
+      font-size: var(--text);
     }
     #topbar select {
       background: var(--background);
@@ -127,7 +139,7 @@
     @media (hover: hover) { .tb-btn:hover { border-color: var(--high); color: var(--high); } }
     .tb-btn:disabled { opacity: var(--off); cursor: default; }
     /* Inside a line of text: no taller than the line it sits on. */
-    .tb-btn.tb-small { font-size: 0.58rem; padding: 0 0.4rem; line-height: 1.4; }
+    .tb-btn.tb-small { font-size: var(--label); padding: 0 0.4rem; line-height: 1.4; }
     .tb-btn.active { border-color: var(--foreground); color: var(--background); background: var(--foreground); }
     #topbar .spacer { flex: 1; }
     /* Transport on a touch screen: drawn at the desktop's size, but each
@@ -211,7 +223,7 @@
     .menu-label {
       padding: 0.3rem 0.75rem 0.1rem;
       color: var(--sub);
-      font-size: 0.72rem;
+      font-size: var(--text);
       white-space: nowrap;
       cursor: default;
     }
@@ -307,7 +319,7 @@
       width: var(--ab-button-width);
       height: var(--ab-button-height);
       padding: 0;
-      font-size: 0.72rem;
+      font-size: var(--text);
     }
     #abCompare .tb-btn[aria-pressed=true]:disabled { opacity: 1; cursor: default; }
     /* A video take: the editor is a fixed square (--video-frame, set by the
@@ -380,7 +392,7 @@
       border: none;
       border-radius: 3px;
       font: inherit;
-      font-size: 0.7rem;
+      font-size: var(--text);
       color: var(--error);
       background: color-mix(in srgb, var(--error) var(--fill), var(--background));
       cursor: pointer;
@@ -391,7 +403,7 @@
     #editorWrap .cm-panels {
       background: var(--background);
       color: var(--foreground);
-      font-size: 0.72rem;
+      font-size: var(--text);
     }
     #editorWrap .cm-panels-bottom { border-top: 1px solid var(--mid); }
     #editorWrap .cm-panel.cm-search {
@@ -406,7 +418,7 @@
     }
     #editorWrap .cm-textfield {
       font-family: inherit;
-      font-size: 0.72rem;
+      font-size: var(--text);
       color: var(--foreground);
       background: color-mix(in srgb, var(--foreground) var(--fill), var(--background));
       border: 1px solid var(--mid);
@@ -417,7 +429,7 @@
     #editorWrap .cm-textfield:focus { outline: none; border-color: var(--foreground); }
     #editorWrap .cm-button {
       font-family: inherit;
-      font-size: 0.72rem;
+      font-size: var(--text);
       color: var(--foreground);
       background: none;
       background-image: none;
@@ -441,7 +453,7 @@
       color: var(--foreground);
       background: none;
       border: none;
-      font-size: 1rem;
+      font-size: var(--mark);
       padding: 0 0.3rem;
       cursor: pointer;
     }
@@ -491,14 +503,14 @@
     .fmv-progress-bar { height: 100%; width: 0; background: var(--mid); transition: width 0.2s; }
     .fmv-rows { display: flex; flex-direction: column; gap: 0.25rem; }
     .fmv-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.2rem 0.3rem; border-radius: 2px;
-      color: var(--foreground); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+      color: var(--foreground); font-size: var(--text); font-variant-numeric: tabular-nums; }
     .fmv-row.fmv-candidate { cursor: pointer; }
     .fmv-row.chosen { background: color-mix(in srgb, var(--foreground) var(--fill), transparent); }
     .fmv-play { min-width: 1.8rem; }
-    .fmv-note { color: var(--sub); margin: 0.75rem 0 0; }
+    .fmv-note { color: var(--foreground); margin: 0.75rem 0 0; }
     .temporary-tool { min-width: 0; }
     .tool-close { margin-left: auto; padding: 0 0.25rem; border: 0; background: none;
-      color: var(--foreground); font: inherit; font-size: 1rem; cursor: pointer; }
+      color: var(--foreground); font: inherit; font-size: var(--mark); cursor: pointer; }
     .logical-tool .import-field { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
     .logical-tool select { min-width: 0; max-width: 100%; }
     .logical-tool .le-pair > * { min-width: 0; flex: 1; }
@@ -510,11 +522,11 @@
     .logical-tool .le-pair { display: flex; gap: 0.3rem; }
     .logical-tool input[type=text] {
       width: 4.5rem; background: var(--background); color: var(--foreground); border: 1px solid var(--mid);
-      border-radius: 2px; padding: 0.15rem 0.3rem; font-family: inherit; font-size: 0.72rem;
+      border-radius: 2px; padding: 0.15rem 0.3rem; font-family: inherit; font-size: var(--text);
     }
     .logical-tool .le-ops { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); }
     .logical-tool input:disabled { opacity: var(--off); }
-    .logical-tool .le-status { margin-top: 0.6rem; color: var(--sub); font-size: 0.7rem; min-height: 1em; }
+    .logical-tool .le-status { margin-top: 0.6rem; color: var(--foreground); font-size: var(--text); min-height: 1em; }
     .import-field[hidden] { display: none; }
     .cm-valHover {
       border-radius: 2px;
@@ -531,7 +543,7 @@
       border: 1px solid var(--mid);
       border-radius: 4px;
       padding: 2px 6px;
-      font: 11px 'Open Sans', sans-serif;
+      font: var(--label) 'Open Sans', sans-serif;
       white-space: nowrap;
     }
     /* Shared popup: slider / stepper / piano / bar info. Matches the panels /
@@ -543,7 +555,7 @@
       border-radius: 2px;
       padding: 8px 10px;
       width: max-content; /* size to the content, not a fixed width */
-      font: 12px 'Open Sans', sans-serif;
+      font: var(--text) 'Open Sans', sans-serif;
       color: var(--foreground);
     }
     .val-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
@@ -551,7 +563,7 @@
     /* Steppers reuse the transport (.tb-btn) look; only the square size differs. */
     .val-step {
       width: 22px; height: 22px; flex: none;
-      padding: 0; font-size: 14px; line-height: 1;
+      padding: 0; font-size: var(--mark); line-height: 1;
     }
     .val-row input[type=range] { flex: 1; min-width: 90px; accent-color: var(--foreground); }
     .val-num {
@@ -639,7 +651,7 @@
     #rollTip {
       position: absolute;
       pointer-events: none;
-      font-size: 0.66rem;
+      font-size: var(--label);
       font-family: ui-monospace, monospace;
       color: var(--foreground);
       background: var(--background);
@@ -665,7 +677,7 @@
       min-height: 0;
       overflow-y: auto;
       padding: 0.4rem 0.6rem;
-      font-size: 0.72rem;
+      font-size: var(--text);
       color: var(--foreground);
       line-height: 1.5;
       background: var(--background);
@@ -739,7 +751,7 @@
       padding: 0.75rem;
     }
     .rack-title {
-      font-size: 0.72rem;
+      font-size: var(--text);
       font-weight: bold;
       color: var(--foreground);
       margin-bottom: 0.5rem;
@@ -767,13 +779,13 @@
     #targetBadge {
       margin-left: auto;
       color: var(--foreground);
-      font-size: 0.58rem;
+      font-size: var(--text);
       white-space: nowrap;
     }
     #fmParamStatus, #vecStatus, #pcmStatus {
       margin-left: auto;
-      color: var(--sub);
-      font-size: 0.58rem;
+      color: var(--foreground);
+      font-size: var(--text);
       font-weight: normal;
       white-space: nowrap;
       overflow: hidden;
@@ -794,7 +806,7 @@
       -webkit-touch-callout: none;
     }
     .se-btn { padding: 0.35rem 0.5rem; overflow: hidden; text-overflow: ellipsis; touch-action: none; }
-    .se-btn .se-num { color: var(--sub); margin-right: 0.4em; font-size: 0.6rem; }
+    .se-btn .se-num { color: var(--sub); margin-right: 0.4em; font-size: var(--label); }
     .se-btn.active .se-num { color: var(--background); }
     .knob-wrap { display: flex; flex-direction: column; gap: 0; }
     .knob-wrap[hidden] { display: none; } /* a word the score's machine lacks (applyTargetUi) */
@@ -802,7 +814,7 @@
     .knob-wrap.op-gap { visibility: hidden; } /* a row this operator lacks and another has: its place kept */
     .param-grid[hidden] { display: none; } /* a row of words it lacks (the OPM's LFO) */
     .knob-label {
-      font-size: 0.58rem;
+      font-size: var(--label);
       color: var(--sub);
       display: flex;
       justify-content: space-between;
@@ -844,7 +856,7 @@
       display: flex;
       align-items: center;
       gap: 0.5rem; /* the sliders' gap, from the ⌄ to the buttons */
-      font-size: 0.72rem; /* the menus' and the list's: a name is read, not glanced at */
+      font-size: var(--text); /* the menus' and the list's: a name is read, not glanced at */
     }
     /* The list hangs from the whole row, not from the name, so it never runs
        past the panel's edge. */
@@ -908,7 +920,7 @@
     /* The panel's first select: drawn as the top bar's (size, padding, corners),
        its arrow our own — the native one sits against the right border, and
        no padding moves it. */
-    .dyn-pad-axes { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.72rem; color: var(--sub); }
+    .dyn-pad-axes { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; font-size: var(--text); color: var(--sub); }
     .dyn-pad-axes label { position: relative; display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
     .dyn-pad-axes select {
       flex: 1; min-width: 0; font: inherit; border-radius: 2px; cursor: pointer;
@@ -958,7 +970,7 @@
       gap: 0.5rem;
     }
     .op-col-title {
-      font-size: 0.58rem;
+      font-size: var(--label);
       color: var(--sub);
       text-transform: uppercase;
       letter-spacing: 0.08em;
@@ -1066,7 +1078,7 @@
     /* The vector editor: a step vector drawn as bars (src/vector-editor.js). */
     .vec-canvas { width: 100%; height: 120px; display: block; cursor: crosshair; touch-action: none;
       border: 1px solid var(--mid); }
-    .vec-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--sub); }
+    .vec-axis { display: flex; justify-content: space-between; font-size: var(--label); color: var(--sub); }
     #vecSection.vec-off .vec-canvas, #pcmSection.vec-off .vec-canvas { opacity: var(--off); cursor: default; }
     .pcm-canvas { cursor: default; }
     .pcm-foot { align-items: center; }
@@ -1142,7 +1154,7 @@
       background: var(--background);
       border: 1px solid var(--mid);
       color: var(--sub);
-      font-size: 0.58rem;
+      font-size: var(--label);
       width: 100%;
       text-align: center;
     }
@@ -1166,7 +1178,7 @@
     @media (hover: hover) { .ch-knob:hover { border-color: var(--high); } }
     @media (pointer: coarse) { .ch-knob { width: 1.6rem; height: 1.6rem; } }
     .ch-vol-val {
-      font-size: 0.55rem;
+      font-size: var(--label);
       color: var(--sub);
       text-align: center;
     }
@@ -1277,7 +1289,7 @@
       border-radius: 0 0 2px 2px;
       background: var(--foreground);
       color: var(--background);
-      font-size: 0.58rem;
+      font-size: var(--label);
       display: flex;
       align-items: flex-end;
       justify-content: center;
@@ -1287,7 +1299,7 @@
       outline: none;
     }
     .kb-oct-marker {
-      font-size: 0.58rem;
+      font-size: var(--label);
       color: var(--sub);
       line-height: 1;
       pointer-events: none;
@@ -1364,15 +1376,15 @@
       background: color-mix(in srgb, var(--background) 82%, transparent);
       outline: 2px dashed var(--foreground);
       outline-offset: -10px;
-      font: 14px 'Open Sans', sans-serif;
+      font: var(--text) 'Open Sans', sans-serif;
       color: var(--foreground);
       text-align: center;
       padding: 0 1rem;
     }
     #dropOverlay[hidden] { display: none; }
-    .drop-hint { color: var(--sub); font-size: 12px; }
+    .drop-hint { color: var(--foreground); font-size: var(--text); }
     /* Shift held: the (import …) branch is the active one, so swap the emphasis. */
-    #dropOverlay.as-import .drop-open { color: var(--sub); }
+    #dropOverlay.as-import .drop-open { color: var(--foreground); }
     #dropOverlay.as-import .drop-import { color: var(--high); }
     #dropOverlay:not(.as-import) .drop-open { color: var(--high); }
 
@@ -1396,7 +1408,7 @@
     }
     .modal-title {
       color: var(--foreground);
-      font-size: 0.78rem;
+      font-size: var(--text);
       font-weight: bold;
       margin-bottom: 0.75rem;
     }
@@ -1413,7 +1425,7 @@
     .theme-field label {
       flex: 1;
       color: var(--foreground);
-      font-size: 0.72rem;
+      font-size: var(--text);
     }
     .theme-field input[type=color] {
       width: 1.5rem;
@@ -1432,7 +1444,7 @@
       border-radius: 2px;
       padding: 0.15rem 0.4rem;
       font-family: inherit;
-      font-size: 0.72rem;
+      font-size: var(--text);
     }
     .modal-actions {
       display: flex;
@@ -1442,16 +1454,16 @@
     }
     /* About / Licenses info modals */
     .info-modal { max-width: min(460px, 90vw); }
-    .info-body { color: var(--foreground); font-size: 0.72rem; line-height: 1.55; }
+    .info-body { color: var(--foreground); font-size: var(--text); line-height: 1.55; }
     .info-body p { margin: 0 0 0.6rem; }
     .info-body a { color: var(--accent); }
     .license-row { margin: 0 0 0.55rem; }
     .license-row b { color: var(--foreground); }
 
     /* A reference entry in the editor: completion info and the hover card */
-    .ref-card { max-width: 26rem; padding: 0.35rem 0.5rem; font-size: 0.72rem; line-height: 1.4; }
+    .ref-card { max-width: 26rem; padding: 0.35rem 0.5rem; font-size: var(--text); line-height: 1.4; }
     .ref-card-syntax { font-weight: bold; margin-bottom: 0.2rem; white-space: pre-wrap; }
-    .ref-card-summary { color: var(--sub); }
+    .ref-card-summary { color: var(--foreground); }
 
     /* The play mark, drawn as the toolbar's own triangle (an SVG mask) so it
        looks the same on every platform — never the colour emoji some systems
@@ -1479,7 +1491,7 @@
       border-bottom: 2px solid transparent;
       color: var(--sub);
       font: inherit;
-      font-size: 0.72rem;
+      font-size: var(--text);
       font-weight: bold;
       letter-spacing: 0.08em;
       padding: 0.45rem 0;
@@ -1508,7 +1520,7 @@
       border-radius: 3px;
       color: var(--foreground);
       font: inherit;
-      font-size: 0.8rem;
+      font-size: var(--text);
       padding: 0.35rem 0.5rem;
     }
     .lib-search:focus { outline: 1px solid var(--foreground); outline-offset: -1px; }
@@ -1530,7 +1542,7 @@
       border-left: 1px solid var(--mid);
       color: var(--foreground);
       font: inherit;
-      font-size: 0.66rem;
+      font-size: var(--text);
       padding: 0.2rem 0.25rem;
       white-space: nowrap;
       overflow: hidden;
@@ -1549,7 +1561,7 @@
       border-radius: 3px;
       color: var(--foreground);
       font: inherit;
-      font-size: 0.66rem;
+      font-size: var(--text);
       padding: 0.15rem 0.5rem;
       cursor: pointer;
     }
@@ -1587,7 +1599,7 @@
       gap: 0.4rem;
       padding: 0.3rem 0.45rem;
       color: var(--foreground);
-      font-size: 0.72rem;
+      font-size: var(--text);
       cursor: pointer;
     }
     .lib-nested { padding-left: 1.1rem; }
@@ -1601,23 +1613,23 @@
       outline-offset: -1px;
     }
     .lib-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .lib-kind { color: var(--sub); font-size: 0.64rem; font-weight: normal; white-space: nowrap; }
+    .lib-kind { color: var(--sub); font-size: var(--label); font-weight: normal; white-space: nowrap; }
     .lib-mini {
       background: none;
       border: 1px solid var(--mid);
       border-radius: 2px;
       color: var(--foreground);
       font: inherit;
-      font-size: 0.64rem;
+      font-size: var(--label);
       font-weight: normal;
       padding: 0.05rem 0.3rem;
       cursor: pointer;
     }
     @media (hover: hover) { .lib-mini:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); } }
-    .lib-empty { padding: 0.6rem; font-size: 0.72rem; color: var(--sub); }
+    .lib-empty { padding: 0.6rem; font-size: var(--text); color: var(--foreground); }
     .lib-note {
-      color: var(--sub);
-      font-size: 0.66rem;
+      color: var(--foreground);
+      font-size: var(--text);
       min-height: 2.2em;
       max-height: 32%;
       overflow-y: auto;
@@ -1626,11 +1638,11 @@
     }
     /* Fingers: taller rows and buttons. */
     @media (pointer: coarse) {
-      .lib-chip { padding: 0.35rem 0.7rem; font-size: 0.74rem; }
-      .lib-seg-btn { padding: 0.4rem 0.25rem; font-size: 0.74rem; }
-      .lib-row, .lib-group { padding: 0.6rem 0.55rem; font-size: 0.8rem; }
+      .lib-chip { padding: 0.35rem 0.6rem; }
+      .lib-seg-btn { padding: 0.4rem 0.25rem; }
+      .lib-row, .lib-group { padding: 0.6rem 0.55rem; }
       .lib-nested { padding-left: 1.2rem; }
-      .lib-mini { padding: 0.3rem 0.6rem; font-size: 0.72rem; }
+      .lib-mini { padding: 0.3rem 0.6rem; }
     }
 
     /* Share: the link modal, and the play prompt a shared link opens with */
@@ -1644,9 +1656,9 @@
       border-radius: 2px;
       padding: 0.3rem 0.4rem;
       font-family: inherit;
-      font-size: 0.72rem;
+      font-size: var(--text);
     }
-    .share-meta { color: var(--sub); margin-top: 0.4rem !important; }
+    .share-meta { color: var(--foreground); margin-top: 0.4rem !important; }
     .share-warn { color: var(--error); }
     .share-actions { flex-wrap: wrap; }
     #sharedPlay, #folderAccess {
@@ -1663,7 +1675,7 @@
       border: 1px solid var(--foreground);
       border-radius: 4px;
       font: inherit;
-      font-size: 0.85rem;
+      font-size: var(--text);
       font-weight: 600;
       color: var(--background);
       background: var(--foreground);
@@ -1692,7 +1704,7 @@
       border-radius: 4px;
       background: var(--background);
       color: var(--foreground);
-      font-size: 0.75rem;
+      font-size: var(--text);
       font-variant-numeric: tabular-nums;
     }
     #recBadge[hidden] { display: none; }
@@ -1707,16 +1719,16 @@
 
     /* Song import options (showImportDialog) */
     .import-modal { max-width: min(560px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
-    .import-summary { color: var(--foreground); font-size: 0.72rem; line-height: 1.5; margin-bottom: 0.75rem; }
+    .import-summary { color: var(--foreground); font-size: var(--text); line-height: 1.5; margin-bottom: 0.75rem; }
     .import-fields, .import-rows { display: flex; flex-direction: column; gap: 0.4rem; }
     .import-rows { overflow-y: auto; margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); min-height: 0; }
     .import-field, .import-row {
       display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.15rem 0.75rem;
-      color: var(--foreground); font-size: 0.72rem;
+      color: var(--foreground); font-size: var(--text);
     }
-    .import-field small { grid-column: 1 / -1; color: var(--sub); font-size: 0.66rem; }
+    .import-field small { grid-column: 1 / -1; color: var(--foreground); font-size: var(--text); }
     .import-field input[type=number], .import-field select, .import-row select {
       background: var(--background); color: var(--foreground); border: 1px solid var(--mid);
-      border-radius: 2px; padding: 0.15rem 0.3rem; font-family: inherit; font-size: 0.72rem;
+      border-radius: 2px; padding: 0.15rem 0.3rem; font-family: inherit; font-size: var(--text);
     }
     .import-field input[type=number] { width: 6rem; }

@@ -135,7 +135,7 @@ export class VectorEditor {
       const top = y(v);
       ctx.fillRect(i * w + (w > 4 ? 1 : 0), Math.min(top, base), Math.max(1, w - (w > 4 ? 2 : 0)), Math.max(1, Math.abs(base - top)));
     });
-    ctx.font = `10px ${cs.fontFamily || "monospace"}`;
+    ctx.font = `${cs.fontSize} ${cs.fontFamily || "monospace"}`;
     ctx.textBaseline = "top";
     for (const m of s.marks) {
       const x = Math.round(m.at * w) + 0.5;
