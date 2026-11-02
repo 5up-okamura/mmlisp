@@ -503,4 +503,18 @@ check('the wavetable set is 32 steps in range, on every machine', () => {
   for (const w of waves) { assert.equal(w.data.length, 32); assert.ok(w.data.every((v) => v >= -128 && v <= 127), w.name); }
 });
 
+// A machine's warnings are about what plays.
+const lacking = (text, imports) => compileMMLisp(text, 'a.mmlisp', { imports }).diagnostics.filter((d) => d.code === 'W_TARGET').map((d) => d.message);
+check('a voice that does not play says nothing of what the machine lacks', () => {
+  const bank = '(def-fm one :alg 4 :tl3 20 :tl4 10)\n(def-fm two :alg 4 :tl3 30)';
+  const imports = new Map([['bank.mmlisp', bank]]);
+  assert.deepEqual(lacking('(def-score :target msx)\n(import "bank.mmlisp")\n(fm1 c)', imports), []);
+  assert.deepEqual(lacking('(def-score :target msx)\n(import "bank.mmlisp")\n(fm1 one c one d)\n(fm2 one c)', imports), ["'one' plays without :alg :tl3 :tl4: the MSX has none — the FM-PAC's op1 always modulates op2"]);
+});
+check('a long list is cut, and a child says its base\'s too, unless it clears them', () => {
+  const many = '(def-fm one :alg 4 :tl3 1 :ar3 1 :dr3 1 :sl3 1 :rr3 1 :tl4 1 :ar4 1)';
+  assert.match(lacking(`(def-score :target msx)\n${many}\n(fm1 one c)`)[0], /:alg :tl3 :ar3 :dr3 :sl3 :rr3 and 2 more:/);
+  assert.deepEqual(lacking('(def-score :target msx)\n(def-fm pad :tl3 9)\n(def-fm lead pad :fb 1)\n(fm1 lead c)'), ["'lead' plays without :tl3: the MSX has none"]);
+  assert.deepEqual(lacking('(def-score :target msx)\n(def-fm pad :tl3 9)\n(def-fm lead pad :tl3 0)\n(fm1 lead c)'), []);
+});
 console.log(`Logical Editor checks passed: ${count}`);

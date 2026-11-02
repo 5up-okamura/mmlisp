@@ -12,7 +12,9 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   `def-fm2`.
 - **Play what can be played.** A voice or word a channel's part lacks is left
   out with `W_TARGET`, not refused (as SSG-EG on the OPM already was); a voice
-  on a channel with no FM keeps its `:key`.
+  on a channel with no FM keeps its `:key`. A voice says so once, in one line,
+  and only if it plays (2026-11-03: a score's gm import alone gave 2,336 lines
+  on msx).
 - **OPLL's words share the `FM_` prefix** (built: language.md §19 msx; a
   part's `words` is a closed `fmWords` list, its narrower registers its
   `ranges`). `MACRO_TARGET_RANGE` stays the family's widest: a macro is

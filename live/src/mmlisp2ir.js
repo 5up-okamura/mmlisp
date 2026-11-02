@@ -3782,6 +3782,19 @@ function createInitFmKwMap(target) {
   return fmInitVoice(target.parts.find((p) => p.kind === "fm"));
 }
 
+// What a voice that plays has and the machine does not: one line a voice, a
+// score's first use of it saying so for all.
+function voiceLacks(td, name, target, diagnostics) {
+  if (td.lacksSaid || !td.lacks?.size) return;
+  td.lacksSaid = true;
+  const words = [...td.lacks.keys()];
+  const shown = words.length > 6 ? `${words.slice(0, 6).join(" ")} and ${words.length - 6} more` : words.join(" ");
+  const hints = [...new Set(words.map((w) => target.hints?.[canonicalTarget(w)]).filter(Boolean))];
+  pushDiag(diagnostics, "warning", "W_TARGET",
+    `'${name}' plays without ${shown}: the ${target.system} has none${hints.length ? ` — ${hints.join("; ")}` : ""}`,
+    td.lacks.values().next().value, null);
+}
+
 // A def-fm voice switch: its registers as of `tick`, and the key shift its
 // :key sets on the track. The track's part takes what it has of the voice
 // (emitVoiceFromKwMap): a voice named on a channel with no FM (sqr1, pcm1)
@@ -3789,6 +3802,7 @@ function createInitFmKwMap(target) {
 function emitVoice(td, tick, events, src, trackState = null, name = null, diagnostics = null, trackName = null) {
   if (td.kwMap) {
     const dropped = emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.part, trackState?.target);
+    if (diagnostics && trackState?.part?.kind === "fm") voiceLacks(td, name, trackState.target, diagnostics);
     const said = trackState ? (trackState.voicesSaid ??= new Set()) : null;
     if (dropped && said && diagnostics && !said.has(name)) {
       said.add(name);
@@ -4036,6 +4050,7 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false,
       }
     }
     const kwMap = new Map(base);
+    const lacks = new Map(typedDefs.get(td.extends)?.lacks); // word → where it is written
     const ctx = makeEvalCtx(diagnostics, null, td.src, typedDefs);
     for (let k = 0; k < td.items.length; k += 2) {
       const kw = atomValue(td.items[k]);
@@ -4070,15 +4085,20 @@ function resolveVoices(typedDefs, defs, paramDefs, diagnostics, velSens = false,
         kwMap.set(target, Math.round(v.value));
         // A register this machine lacks: the voice plays without it here
         // (emitVoiceFromKwMap) and keeps it for the machines that have one.
-        // Said only where it would have sounded — `:ssg1 0` is no difference.
-        const lacks = machine && Math.round(v.value) !== 0 && targetLacks(target, kw, machine);
-        if (lacks) pushDiag(diagnostics, "warning", "W_TARGET", `${lacks} — '${name}' plays without it`, nodeSrc(td.items[k]), null);
+        // Said only where it would have sounded — `:ssg1 0` is no difference —
+        // and only of a voice that plays (voiceLacks): an imported bank is
+        // mostly names the score never reaches.
+        if (machine && targetLacks(target, kw, machine)) {
+          if (Math.round(v.value) !== 0) lacks.set(kw, nodeSrc(td.items[k]));
+          else lacks.delete(kw);
+        }
       }
       else if (v || expanded.length !== 1 || exprHasValRef(expanded[0]))
         err("E_VOICE_VALUE", `${kw} takes a number — a voice is fixed data`,
           nodeSrc(td.items[k + 1]));
     }
     td.kwMap = kwMap;
+    td.lacks = lacks;
     return kwMap;
   };
   for (const [name, td] of typedDefs) if (td.tag === "voice") resolve(name, new Set());

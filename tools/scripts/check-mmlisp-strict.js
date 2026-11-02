@@ -314,7 +314,7 @@ async function main() {
     {
       label: "msx has no PCM, pan or LFO rate",
       src: '(def-score :target msx)\n(def-fm v init-fm :alg 4)\n(pcm1 c)\n(sqr1 :pan left :lfo-rate 3 c)\n(noise :mode white0 c)',
-      expected: ["W_TARGET", "E_TARGET", "E_TARGET", "E_TARGET", "W_TARGET"],
+      expected: ["E_TARGET", "E_TARGET", "E_TARGET", "W_TARGET"],
     },
     {
       label: "the FM-PAC: two operators, no algorithm, no op2 level",

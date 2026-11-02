@@ -2439,7 +2439,8 @@ every channel's on every target. A channel name only another target has is
 
 A `def-fm` voice is data, not a word: named on a channel, it plays what that
 channel's part has of it. A register the target's chips lack (SSG-EG on the
-OPM, DT2 on the OPN) is left out with `W_TARGET` at the def; a voice named on
+OPM, DT2 on the OPN) is left out, with one `W_TARGET` for a voice that plays
+— a bank imported and not reached says nothing; a voice named on
 a channel with no FM (`sqr1`, `pcm1`) keeps only its `:key` there, with
 `W_TARGET` once per track and voice. A `def-wave` is data the same way: named
 on a channel with no wave memory it is left out, with `W_TARGET` once per
