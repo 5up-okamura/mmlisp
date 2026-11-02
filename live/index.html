@@ -560,10 +560,10 @@
         <div class="rack-body">
           <div class="vec-axis"><span id="pcmInfo"></span><span id="pcmReadout"></span></div>
           <canvas id="pcmCanvas" class="vec-canvas pcm-canvas"></canvas>
-          <div class="vec-axis"><span id="pcmLen"></span>
-            <span class="vec-len-ctl"><button type="button" class="tb-btn" id="pcmTrim"
+          <div class="vec-axis pcm-foot"><span id="pcmLen"></span>
+            <button type="button" class="tb-btn" id="pcmTrim"
               title="Cut the sample to its range: :pcm-start / :pcm-end become :offset / :frames, so the bank holds only what plays"
-              onclick="trimPcmToRange()">Trim to Range</button></span></div>
+              onclick="trimPcmToRange()">Trim to Range</button></div>
         </div>
       </div>
 
@@ -10738,7 +10738,7 @@
       const def = sampleDefOf(text, s.name, { roots: parseCached(editorView.state.doc) });
       const res = def && trimSampleEdits(text, def, s.written, { ir: s.ir, rate: wave.rate, frames: wave.frames, dur: s.dur });
       if (!res) return;
-      if (res.error) { log(`Trim to Range: ${res.error}`, 'err'); return; }
+      if (res.error) { log(`Trim to Range: ${res.error}`, 'info'); return; }
       editorView.dispatch({ changes: res.changes });
       scheduleHotSwap();
       log(`Trimmed ${s.name}: ${res.cut} frames out of the bank`
@@ -10819,7 +10819,7 @@
       const info = document.getElementById('pcmInfo');
       info.textContent = wave?.failed ? `${s.path} did not load` : 'Loading…';
       document.getElementById('pcmLen').textContent = data ? `${Math.round(points.end - points.start)} of ${Math.round(dur)}ms` : '';
-      document.getElementById('pcmTrim').disabled = !_pcmActive || !data || (points.start <= 0 && points.end >= dur);
+      document.getElementById('pcmTrim').disabled = !_pcmActive || !data;
       if (!_pcmEditor.dragging) _pcmEditor.show({
         data, dur, points, writable: _pcmActive && parts.length > 0,
         loop: parts.some((p) => !p.rangeLoops),
