@@ -166,9 +166,15 @@
     <div class="menu-wrap" id="menuFile">
       <button class="menu-btn" onclick="toggleMenu('menuFile')">File</button>
       <div class="menu-dropdown">
-        <button class="menu-item" onclick="newFile();closeMenus()">
-          <span>New</span>
-        </button>
+        <div class="menu-wrap submenu-wrap" id="menuNew">
+          <button class="menu-item" onclick="toggleSubmenu('menuNew')">
+            <span>New</span>
+            <span class="submenu-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="menu-dropdown submenu-dropdown" id="newMenuList">
+            <!-- one item per machine, injected by buildNewMenu() -->
+          </div>
+        </div>
         <button class="menu-item" onclick="openFile();closeMenus()">
           <span>Open…</span>
           <span class="menu-item-shortcut" id="openFileShortcut"></span>
@@ -933,7 +939,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
-    import { TARGETS, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith } from './src/targets.js';
+    import { TARGETS, DEFAULT_TARGET, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith } from './src/targets.js';
     import { fmOpWord, fmInitVoice } from './src/chips/fm-words.js';
     import { opllRomVoices } from './src/chips/ym2413.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
@@ -942,6 +948,7 @@
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
+    import { newScoreSource } from './src/new-score.js';
     import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
@@ -3002,122 +3009,6 @@
       editorView.focus();
       return true;
     }
-
-    // The preset sets are imported but not assigned: every voice and sample in
-    // them is a name the score can use, and completion lists them. Only what
-    // a track plays is baked, so the imports cost the song nothing.
-    const DEFAULT_NEW_FILE_SOURCE = String.raw`; Preset voices and samples: Tools > Library (⌘K) auditions them, and typing a
-; name (gm-, wave-, kick, snare, ...) offers them for completion.
-(import "presets/gm/set.mmlisp")
-(import "presets/waveforms/set.mmlisp")
-(import "presets/tr808/set.mmlisp") ; or "presets/gm-drums/set.mmlisp": the same names
-
-(def-score :title "" :composer "" :author "" :target md)
-
-; Score-wide modifiers — uncomment one to try it:
-; (def-mod :ch fm1 :keyon off)            ; fm1's notes rest: play the part yourself
-; (def-mod :voice [kick snare] :vel+ -2)  ; every kick and snare, quieter
-
-(def-fm voice1 init-fm
-  :alg 7 :fb 0
-  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 0 :ks1 0 :ml1 1 :dt1 0
-  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2 0 :ks2 0 :ml2 1 :dt2 0
-  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 0 :ks3 0 :ml3 1 :dt3 0
-  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4 0 :ks4 0 :ml4 1 :dt4 0
-)
-
-; Macros: name one in a track before its notes — (fm1 voice1 env c e g)
-(def env (macro :vel [15 13 11 9 7 5 3 1]))               ; a step per frame
-(def vib (macro :pitch (sin -20..20 :len 16 :wait 8)))    ; a curve: vibrato after an 8th
-
-; FM
-(fm1 :tempo 120
-  #top
-  (go top)
-)
-(fm2
-  #top
-  (go top)
-)
-(fm3
-  #top
-  (go top)
-)
-(fm4
-  #top
-  (go top)
-)
-(fm5
-  #top
-  (go top)
-)
-; fm6 is the DAC while the score plays PCM
-; (fm6
-;   #top
-;   (go top)
-; )
-
-; FM3
-; (fm3-1
-;   #top
-;   (go top)
-; )
-; (fm3-2
-;   #top
-;   (go top)
-; )
-; (fm3-3
-;   #top
-;   (go top)
-; )
-; (fm3-4
-;   #top
-;   (go top)
-; )
-
-; CSM
-; (fm3-csm
-;   #top
-;   (go top)
-; )
-; (fm3-csm-rate
-;   #top
-;   (go top)
-; )
-
-; PCM
-(pcm1
-  #top
-  (go top)
-)
-; (pcm2
-;   #top
-;   (go top)
-; )
-; (pcm3
-;   #top
-;   (go top)
-; )
-
-; SQUARE
-(sqr1
-  #top
-  (go top)
-)
-(sqr2
-  #top
-  (go top)
-)
-(sqr3
-  #top
-  (go top)
-)
-
-; NOISE
-(noise
-  #top
-  (go top)
-)`;
 
     function insertTextAtCursor(text) {
       const state = editorView.state;
@@ -7150,7 +7041,17 @@
       await offerMucomPcmWav(_sourceHandle);
     }
 
-    function newFile() {
+    // File > New: an item a machine, from the targets: the default first, the
+    // rest in alphabetical order.
+    function buildNewMenu() {
+      const rank = ([name, t]) => (name === DEFAULT_TARGET ? '' : t.system);
+      const machines = Object.entries(TARGETS).sort((a, b) => rank(a).localeCompare(rank(b), 'en'));
+      document.getElementById('newMenuList').innerHTML = machines.map(([name, t]) =>
+        `<button class="menu-item" onclick="newFile('${name}');closeMenus()"><span>${t.system}</span></button>`).join('');
+    }
+
+    function newFile(target = DEFAULT_TARGET) {
+      const source = newScoreSource(target);
       cancelResume();
       _sourceHandle = null;
       _sourceFileName = null;
@@ -7158,8 +7059,8 @@
       currentIrURL = null;
       _lastFileName = 'untitled.mmlisp';
       resetForNewScore();
-      setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
-      refreshImportsAndCompile(); // the template imports the preset sets
+      setEditorDoc(source);
+      refreshImportsAndCompile(); // a new score imports the preset sets
     }
 
     // A score replaced whole — New, Open, Open Recent, a drop, Library's Open, a
@@ -7522,7 +7423,7 @@
       _sourceFileName = _draft.name || null;
       _lastFileName = _draft.path || _sourceFileName || 'untitled.mmlisp';
     }
-    setEditorDoc(_draft ? _draft.src : DEFAULT_NEW_FILE_SOURCE);
+    setEditorDoc(_draft ? _draft.src : newScoreSource(DEFAULT_TARGET));
     if (_draft?.dirty) markDocDirty();
     queueMicrotask(() => {
       if (_draft && !location.hash) log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
@@ -9119,6 +9020,7 @@
       if (_libList) ensureLibrary();
     }
     buildLanguageMenu();
+    buildNewMenu();
     window.setUiLanguage = setUiLanguage;
     window.openThemeModal = openThemeModal;
     window.closeThemeModal = closeThemeModal;

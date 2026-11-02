@@ -24,6 +24,7 @@
     "check:resynth": "node scripts/check-resynth.mjs",
     "check:voice-estimate": "node scripts/check-voice-estimate.mjs",
     "check:import-mdx-mgs": "node scripts/check-import-mdx-mgs.mjs",
+    "check:new-score": "node scripts/check-new-score.mjs",
     "check:gb-level": "node scripts/check-gb-level.mjs",
     "check:import-vgm": "node scripts/check-import-vgm.mjs",
     "check:import-nsf": "node scripts/check-import-nsf.mjs",

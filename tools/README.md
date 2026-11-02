@@ -63,7 +63,12 @@ Run from tools directory:
     CRC-checked (lhasa's `test/archives` held the LHA variants to it)
 20. `npm run check:font-sizes` — Live's type sizes stay `--text`, `--label` and
     `--mark`: no size written as a number outside `style.css`'s `:root`
-21. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
+21. `npm run check:gb-level` — the Game Boy's level under a note, read as the
+    chip steps it and as MAME's core takes it; a stop's and a hot swap's
+    key-offs, the wave's loads
+22. `npm run check:new-score` — File > New: each machine's empty score compiles
+    clean, with its tracks, its imports and a sound on each rhythm track
+23. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
     check: the song importers (MDX, MGS, mucom88, MIDI, DMF, FUR) on a folder
     of real songs kept outside the repo, each score and its diagnostics written
     under `<dir>/<name>/`. Take a set before an importer change and one after,
@@ -75,7 +80,7 @@ Run from tools directory:
     slide shows there, which the diff hides in the lines it rewrites;
     `--regs base,now` plays them and compares their register writes — a
     rewrite that must sound the same writes the same
-22. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
+24. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
     check: a mucom88 import held to the real mucom88's VGM of the song (built
     from `github.com/onitama/mucom88`, `make OS_SDL=0` with the dummy OS's two
     missing stubs; it reads the `.muc` as UTF-8 — convert from CP932, not

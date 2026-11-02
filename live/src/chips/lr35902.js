@@ -64,7 +64,7 @@ export function noiseNoteOfHz(hz) {
 }
 
 // A −128..127 step as the wave memory's 4-bit value.
-export const waveNibble = (v) => Math.max(0, Math.min(15, (Math.round(v) + 128) >> 4));
+const waveNibble = (v) => Math.max(0, Math.min(15, (Math.round(v) + 128) >> 4));
 // The steps as the 16 bytes of the memory, high nibble first.
 const waveBytes = (data) => Array.from({ length: WAVE_LEN / 2 }, (_, i) => (waveNibble(data[2 * i]) << 4) | waveNibble(data[2 * i + 1]));
 // The wave a channel plays until its track names one: a square.

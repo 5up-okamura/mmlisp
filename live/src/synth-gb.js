@@ -29,7 +29,7 @@ import { pitchLatches, gbPitch } from "./scope-pitch.js";
 
 const CLOCK = lr35902.clock;
 const CLOCKS_PER_SAMPLE = 32;
-export const GB_NATIVE_SAMPLE_RATE = CLOCK / CLOCKS_PER_SAMPLE;
+const NATIVE_SAMPLE_RATE = CLOCK / CLOCKS_PER_SAMPLE;
 const FRAME_SEQ_CLOCKS = 8192; // 512 Hz
 const HPF = 0.999958 ** CLOCKS_PER_SAMPLE;
 const DC_R = 0.9995; // the scope's one-pole DC blocker
@@ -298,12 +298,11 @@ export class GbSynth {
   }
 
   constructor(outputSR) {
-    this._outputSR = outputSR;
     this.pitch = pitchLatches(gbPitch(CLOCK));
     this._apu = new Apu();
     this.bus = null; // no FM to hold
     this.scopeLanes = SCOPE_LANES;
-    this._ratio = GB_NATIVE_SAMPLE_RATE / outputSR;
+    this._ratio = NATIVE_SAMPLE_RATE / outputSR;
     this.pcmTaps = null; // the contract's; the Game Boy has no PCM here
     this._resetResampleState();
   }

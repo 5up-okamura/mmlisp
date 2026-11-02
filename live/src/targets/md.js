@@ -12,7 +12,8 @@ const dac = (voice) => ({ chip: "opn", part: dacMix, voice });
 
 export default {
   name: "md",
-  system: "Sega Mega Drive",
+  system: "Mega Drive",
+  gd3: "Sega Mega Drive", // the VGM tag's full name, where `system` is what the page shows,
   driver: "mmlispdrv",
   // The Model 1's analog low-pass on the output (synth-md.js), which Live
   // plays through when Analog LPF is on.

@@ -301,9 +301,10 @@ export const opllRhythm = {
     }
   },
   // The rhythm takes channels 7-9 from the FM: a score has one or the other.
+  takes: (c) => c?.part === opllFm && c.voice >= 6,
   checkScore({ target, allHeads, push }) {
     const rhythm = [...allHeads].filter((h) => target.partOf(h) === this);
-    const fm = [...allHeads].filter((h) => target.partOf(h) === opllFm && target.channels[h].voice >= 6);
+    const fm = [...allHeads].filter((h) => this.takes(target.channels[h]));
     if (rhythm.length && fm.length)
       push("error", "E_TARGET", `the FM-PAC's rhythm (${rhythm.join(", ")}) plays on its channels 7-9, so ${fm.join(", ")} cannot play beside it`);
   },

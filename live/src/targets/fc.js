@@ -30,6 +30,8 @@ export default {
   name: "fc",
   system: "Famicom",
   driver: null,
+  // Too many channels to write out in a new score: File > New lists them.
+  listsExpansions: true,
   // Its drivers run on the video frame's interrupt (60 Hz), as the MSX's do
   // (targets/msx.js): the chip hears a song a frame at a time.
   frameClock: true,

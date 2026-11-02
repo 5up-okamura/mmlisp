@@ -58,6 +58,9 @@
 //             has no loop to place
 //   claims    { kind, voice }: a channel of another part its notes take over
 //             while they sound (the Mega Drive's DAC mix, fm6)
+//   takes     (channel entry) → true for a channel of another part this part
+//             takes from a score that names it: one or the other (the OPLL's
+//             rhythm, its channels 7-9)
 //   waveRam   (voice) → the wave memory a `wave` part's channel plays, where
 //             channels share one (the SCC's 4 and 5)
 //   waveLen   a `wave` part's memory, in steps (32 by default; the FDS's 64):

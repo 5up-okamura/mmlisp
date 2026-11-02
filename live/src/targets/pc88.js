@@ -24,7 +24,8 @@ const NOISE_MODES = {
 
 export default {
   name: "pc88",
-  system: "NEC PC-8801",
+  system: "PC-8801",
+  gd3: "NEC PC-8801", // the VGM tag's full name, where `system` is what the page shows,
   driver: null,
   chips: { opna: ym2608 },
   channels: {

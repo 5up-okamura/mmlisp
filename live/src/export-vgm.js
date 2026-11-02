@@ -255,7 +255,7 @@ function encodeVgm(capture, meta = {}, dac = null, target = targetProfile(), adp
   waitUntil(endSample);
   data.push1(0x66);
 
-  const gd3 = buildGd3({ system: target.system, ...meta });
+  const gd3 = buildGd3({ system: target.gd3 ?? target.system, ...meta });
   return assembleVgm(data.bytes(), gd3, chipsOf(target, writes), {
     totalSamples: endSample,
     loopOffsetInData,

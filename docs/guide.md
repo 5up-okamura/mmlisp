@@ -2525,9 +2525,13 @@ the player beside the song (§19). Imported names are read when the score
 compiles, so a set of your own imported by hand joins the list after the next
 Play or Build; a preset set's names are there all along.
 
-A new score (**File ▸ New**) imports the `gm` and `waveforms` voice sets and
-the `tr808` kit without assigning any of them, so every preset name completes
-from the first keystroke. Only what a track plays reaches the song.
+A new score (**File ▸ New**, then the machine) has a looping track for each
+channel that machine plays at once, a rhythm track on a sound of its own, and
+names the rest in a comment: a Famicom cartridge's channels, `md`'s `fm6` and
+`pcm2`, a name that shares a track's channel. It imports the preset sets those
+tracks can play — `gm` and `waveforms`, `wavetable`, the `rx5` kit — without
+assigning any of them, so every preset name completes from the first keystroke.
+Only what a track plays reaches the song.
 
 ---
 

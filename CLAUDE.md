@@ -41,6 +41,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |
+| `new-score.js`                 | File > New: an empty score for a target, read off its channel table (`tools npm run check:new-score`) |
 | `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB, and the YM2608 rhythm ROM the user brings |
 | `source-folder.js`, `archive.js` | The source folder `:file` and imports resolve against and File > Files in Folder lists: a granted directory, or a `.zip` / `.lzh` read in memory (`tools npm run check:archive`) |
 | `catalog-list.js`              | The side panel's Library list: search, filters, groups, keys, for every source |

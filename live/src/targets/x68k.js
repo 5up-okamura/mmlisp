@@ -9,7 +9,8 @@ const pcm = (voice) => ({ chip: "adpcm", part: pcm8, voice, scope: 8 + voice });
 
 export default {
   name: "x68k",
-  system: "Sharp X68000",
+  system: "X68000",
+  gd3: "Sharp X68000", // the VGM tag's full name, where `system` is what the page shows,
   driver: null,
   chips: { opm: ym2151, adpcm: msm6258 },
   channels: {
