@@ -26,8 +26,9 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
 | `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
-| `edit-tools.js`                 | Edit > Loop Selection, the Logical Editor and the vector editor's subject (`vectorAt`): score-text edits, testable in node |
+| `edit-tools.js`                 | Edit > Loop Selection, the Logical Editor, the vector editor's subject (`vectorAt`) and the sample editor's points and Trim to Range: score-text edits, testable in node |
 | `vector-editor.js`              | The panel's vector editor: a def-wave's or a macro's steps drawn as bars, as Max/Pd arrays are |
+| `pcm-editor.js`                 | The panel's sample editor: a def-pcm's wave, its range and loop points as handles |
 | `synths.js`, `synth-md.js`, `synth-pc88.js`, `synth-x68k.js`, `synth-msx.js`, `synth-pce.js`, `synth-fc.js`, `scope-pitch.js`, `scope-trigger.js` | Chip wiring for the browser, registered by target in `synths.js` — the Mega Drive's, the PC-8801's (ymfm's YM2608), the X68000's (ymfm's YM2151), the MSX's (ymfm's SSG as the AY-3-8910, and its own SCC), the PC Engine's (its own HuC6280), the Famicom's (its own 2A03, VRC6, FDS, MMC5 and N163, ymfm's SSG as the Sunsoft 5B and YM2413 as the VRC7); everything a machine has of its own is its synth's, so the worklet names none — and the oscilloscope's pitch latches and trigger |
 | `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches, mucom88 `.muc`/`.dat` |
 | `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM, the OKIM6258 and OKIM6295; `tools npm run check:import-vgm`), DefleMask / Furnace |

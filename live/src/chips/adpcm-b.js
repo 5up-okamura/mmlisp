@@ -8,6 +8,7 @@ export const adpcmB = {
   name: "adpcm-b",
   label: "ADPCM-B",
   kind: "sample",
+  rangeLoops: true,
   words: words(/^(?:RANGE|LOOP)_/, "PAN"),
   level: { scale: "linear", steps: 256 }, // $0B, linear 0-255
   pointSweeps: false, // the range is its address registers, read at key-on

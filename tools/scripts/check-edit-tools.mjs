@@ -1,7 +1,7 @@
 // Source-edit regressions: notation, target sound names and actual edit extent.
 import assert from 'node:assert/strict';
 import { compileMMLisp } from '../../live/src/mmlisp2ir.js';
-import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy } from '../../live/src/edit-tools.js';
+import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits } from '../../live/src/edit-tools.js';
 
 let count = 0;
 const check = (name, run) => { run(); count++; console.log(`ok ${name}`); };
@@ -290,5 +290,121 @@ check('analysis never changes or leaks into public IR', () => {
     assert.deepEqual(analysed, normal);
     assert.ok(!JSON.stringify(analysed).includes('_edit'));
   }
+});
+
+// The sample editor: what it writes is what the compiler reads.
+const sampleIR = (text, name = 'hit') => compileMMLisp(text).ir.metadata.samples.find((d) => d.name === name);
+const pointsOf = (text, dur, name = 'hit') => {
+  const def = sampleDefOf(text, name);
+  return { def, written: writtenPoints(def, sampleIR(text, name)), dur };
+};
+const drag = (text, handle, at, dur = 1000) => {
+  const { def, written } = pointsOf(text, dur);
+  const m = moveSamplePoint(written, handle, at, dur);
+  return m && edit(text, samplePointEdit(def, m.key, m.ms));
+};
+const noErrors = (text) => assert.deepEqual(compileMMLisp(text).diagnostics.filter((d) => d.severity === 'error'), []);
+const trim = (text, { rate = 1000, frames = 1000, dur = frames } = {}) => {
+  const { def, written } = pointsOf(text, dur);
+  return trimSampleEdits(text, def, written, { ir: sampleIR(text), rate, frames, dur });
+};
+
+check('a dragged point lands as the key it is, and compiles', () => {
+  assert.equal(drag('(def-pcm hit :file "a.wav")', 'start', 120.4), '(def-pcm hit :file "a.wav" :pcm-start 120ms)');
+  assert.equal(drag('(def-pcm hit :file "a.wav" :loop-start 300ms)', 'loopStart', 250), '(def-pcm hit :file "a.wav" :loop-start 250ms)');
+  assert.equal(drag('(def-pcm hit :file "a.wav"\n  :loop-start 300ms)', 'end', 900), '(def-pcm hit :file "a.wav"\n  :loop-start 300ms\n  :pcm-end 900ms)');
+});
+check('a musical length stays until it is dragged, then it is ms', () => {
+  const text = '(def-pcm hit :file "a.wav" :pcm-end 2 :loop-start 4) (fm1 :tempo 120 c)';
+  assert.equal(pointsOf(text, 2000).written.end, 1000);
+  assert.equal(pointsOf(text, 2000).written.loopStart, 500);
+  assert.equal(drag(text, 'end', 900, 2000), '(def-pcm hit :file "a.wav" :pcm-end 900ms :loop-start 4) (fm1 :tempo 120 c)');
+});
+check('a -len stays one: the end handle writes the length', () => {
+  const text = '(def-pcm hit :file "a.wav" :pcm-start 100ms :pcm-len 200ms :loop-start 100ms :loop-len 50ms)';
+  assert.deepEqual(samplePoints(pointsOf(text, 1000).written, 1000), { start: 100, end: 300, loopStart: 100, loopEnd: 150 });
+  assert.match(drag(text, 'end', 500), /:pcm-len 400ms/);
+  assert.match(drag(text, 'loopEnd', 120), /:loop-len 20ms/);
+});
+check('the last of -end and -len is in force, as the compiler reads it', () => {
+  const text = '(def-pcm hit :file "a.wav" :pcm-end 900ms :pcm-len 400ms)';
+  const def = sampleDefOf(text, 'hit');
+  assert.ok(!def.keys.has(':pcm-end'));
+  assert.equal(samplePoints(writtenPoints(def, sampleIR(text)), 1000).end, 400);
+  assert.equal(sampleIR(text).endSec, 0.4);
+});
+check('a handle stops at the order the compiler demands', () => {
+  const text = '(def-pcm hit :file "a.wav" :pcm-start 100ms :loop-start 300ms :loop-end 600ms :pcm-end 900ms)';
+  for (const [h, at, key] of [['start', 500, ':pcm-start 300ms'], ['loopStart', 800, ':loop-start 599ms'],
+    ['loopStart', 0, ':loop-start 100ms'], ['loopEnd', 100, ':loop-end 301ms'], ['loopEnd', 950, ':loop-end 900ms'], ['end', 200, ':pcm-end 600ms']]) {
+    const out = drag(text, h, at);
+    assert.ok(out.includes(key), `${h} ${at}: ${out}`);
+    noErrors(out);
+  }
+});
+check('a start held by a loop that has no start of its own stops before its end', () => {
+  const text = '(def-pcm hit :file "a.wav" :loop-end 200ms)';
+  const out = drag(text, 'start', 500);
+  assert.match(out, /:pcm-start 199ms/);
+  noErrors(out);
+});
+check('a held length cannot push the range past the sample', () => {
+  const out = drag('(def-pcm hit :file "a.wav" :pcm-start 100ms :pcm-len 300ms)', 'end', 5000);
+  assert.match(out, /:pcm-len 900ms/);
+});
+check('a length off a start that is not whole ms is still whole ms', () => {
+  const text = '(def-pcm hit :file "a.wav" :pcm-start 16 :pcm-len 100ms) (fm1 :tempo 133 c)';
+  const out = drag(text, 'end', 400);
+  assert.match(out, /:pcm-len \d+ms/);
+  noErrors(out);
+});
+check('Trim moves a loop the def extends, too', () => {
+  const text = '(def-pcm base :file "a.wav" :loop-start 200ms) (def-pcm hit base :pcm-start 200ms :pcm-end 500ms)';
+  const out = edit(text, trim(text).changes);
+  assert.equal(out, '(def-pcm base :file "a.wav" :loop-start 200ms) (def-pcm hit base :offset 200 :frames 300 :loop-start 0ms)');
+  noErrors(out);
+});
+check('a child writes its own key over its base', () => {
+  const text = '(def-pcm base :file "a.wav" :pcm-end 700ms) (def-pcm hit base)';
+  assert.equal(pointsOf(text, 1000).written.end, 700);
+  assert.equal(drag(text, 'end', 500), '(def-pcm base :file "a.wav" :pcm-end 700ms) (def-pcm hit base :pcm-end 500ms)');
+});
+check('Trim folds the range into the slice', () => {
+  const out = edit('(def-pcm hit :file "a.wav" :pcm-start 100ms :pcm-end 600ms)', trim('(def-pcm hit :file "a.wav" :pcm-start 100ms :pcm-end 600ms)').changes);
+  assert.equal(out, '(def-pcm hit :file "a.wav" :offset 100 :frames 500)');
+  noErrors(out);
+});
+check('Trim counts on an existing slice and keeps the rate it is read at', () => {
+  const text = '(def-pcm hit :file "a.wav" :rate 8000 :offset 40 :frames 800 :pcm-start 10ms :pcm-len 50ms)';
+  const res = trim(text, { rate: 8000, frames: 800, dur: 100 });
+  assert.equal(edit(text, res.changes), '(def-pcm hit :file "a.wav" :rate 8000 :offset 120 :frames 400)');
+  assert.equal(res.cut, 400);
+});
+check('Trim of the head alone leaves the file to run out', () => {
+  const text = '(def-pcm hit :file "a.wav" :pcm-start 100ms)';
+  assert.equal(edit(text, trim(text).changes), '(def-pcm hit :file "a.wav" :offset 100)');
+});
+check('Trim moves the loop with the sample under it', () => {
+  const text = '(def-pcm hit :file "a.wav" :pcm-start 100ms :loop-start 300ms :loop-end 600ms :pcm-end 900ms)';
+  const out = edit(text, trim(text).changes);
+  assert.equal(out, '(def-pcm hit :file "a.wav" :offset 100 :frames 800 :loop-start 200ms :loop-end 500ms)');
+  noErrors(out);
+  const both = '(def-pcm hit :file "a.wav" :pcm-start 100ms :loop-start 100ms :loop-end 900ms :pcm-end 900ms)';
+  assert.equal(edit(both, trim(both).changes), '(def-pcm hit :file "a.wav" :offset 100 :frames 800)');
+});
+check('Trim leaves a -len loop its length', () => {
+  const text = '(def-pcm hit :file "a.wav" :pcm-start 100ms :loop-start 300ms :loop-len 50ms)';
+  assert.equal(edit(text, trim(text).changes), '(def-pcm hit :file "a.wav" :offset 100 :loop-start 200ms :loop-len 50ms)');
+});
+check('Trim takes a key off its own line, and keeps comments', () => {
+  const text = '(def-pcm hit :file "a.wav" ; the take\n  :pcm-start 100ms\n  :pcm-end 900ms)';
+  assert.equal(edit(text, trim(text).changes), '(def-pcm hit :file "a.wav" :offset 100 :frames 800 ; the take\n)');
+  noErrors(edit(text, trim(text).changes));
+  const next = '(def-pcm hit :file "a.wav"\n  :pcm-end 900ms\n  :fx [(gain 1)])';
+  assert.equal(edit(next, trim(next).changes), '(def-pcm hit :file "a.wav" :frames 900\n  :fx [(gain 1)])');
+});
+check('Trim says when there is nothing it can do', () => {
+  assert.match(trim('(def-pcm hit :file "a.wav")').error, /whole sample/);
+  assert.match(trim('(def-pcm base :file "a.wav" :pcm-end 500ms) (def-pcm hit base)').error, /base/);
 });
 console.log(`Logical Editor checks passed: ${count}`);

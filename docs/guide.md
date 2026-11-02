@@ -1257,7 +1257,8 @@ Below Channels the panel has one editor, for what you touched last: a strip
 picked in Channels, or the def or vector the cursor went into. Its title
 says what it edits — `FM`, `Wave`, `Macro :vel` — and names it. An FM
 channel or voice brings the FM editor; a wave channel, a `def-wave` or a
-macro's step vector brings the vector editor. When the cursor leaves what
+macro's step vector brings the vector editor; a `def-pcm` brings the sample
+editor. When the cursor leaves what
 it was on, a picked strip is the subject again; with none picked, the editor
 dims and keeps showing what it had, until something else is touched.
 
@@ -1294,6 +1295,37 @@ at the first stroke, under its imports, as an imported voice is. A macro
 written as stages (`[(ease-in …) (wait key-off) (linear …)]`) is shown — each
 stage's steps, a looping one's cycle between `loop` and `key-off`, a
 `(wait key-off)` as a mark — but not drawn on.
+
+**A sample in the sample editor.** With the cursor in a `(def-pcm …)`, its wave
+is drawn as a note bakes it: the `:offset` / `:frames` slice, `:fx` done, on the
+time its points are read in (`:rate`, else the file's). It fills the height,
+scaled to its peak, so a quiet sample shows its shape; the level is the `peak`
+beside it, in dB of full scale, which is where a `gain` or a `normalize` in `:fx`
+shows. Above 0 (`+3.0 dB`) the bake clips it, which the wave does not show.
+
+Four handles lie on it, the range's `:pcm-start` and `:pcm-end` along the lower
+half and the loop's `:loop-start` and `:loop-end` along the upper, so one can be
+taken where they meet; the wave outside the range is dimmed, the loop filled. A target whose
+chip repeats the whole range (`pc88`'s ADPCM-B, `fc`'s DPCM) has no loop to
+place and shows the range's alone.
+
+Letting go of a handle writes that one key into the def in whole ms, one undo:
+over its value, or as a new key where the def has none. A length written
+another way (`:loop-start 16`) stays until its handle is moved. A bound written
+as a `…-len` stays a `…-len`, so it holds the length when its start moves, as
+in the score (language.md §16). A handle stops where the order
+`pcm-start ≤ loop-start < loop-end ≤ pcm-end` would break. To take a point
+out again, delete its key. The keys play the def as the text has it, a held key
+repeating the loop when the def sets one.
+
+**Trim to Range** folds the range into the slice: `:pcm-start` and `:pcm-end` go,
+`:offset` and `:frames` take what they cut, and the loop moves with the sample
+under it, in one undo. The range alone only says what a note plays, and the
+whole slice stays in the bank; a trim takes the rest out. It rewrites this def
+and nothing else, so mind three things that count from the slice: a point
+written on a track stays at its number, a def extending this one has its own
+points read from the new start, and `:fx` now runs on what is left — its times
+from the new start, and a `normalize` on the new peak.
 
 ### Chords on the keyboards
 

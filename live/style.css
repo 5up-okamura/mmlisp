@@ -1065,7 +1065,8 @@
     .vec-canvas { width: 100%; height: 120px; display: block; cursor: crosshair; touch-action: none;
       border: 1px solid var(--mid); }
     .vec-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--sub); }
-    #vecSection.vec-off .vec-canvas { opacity: var(--off); cursor: default; }
+    #vecSection.vec-off .vec-canvas, #pcmSection.vec-off .vec-canvas { opacity: var(--off); cursor: default; }
+    .pcm-canvas { cursor: default; }
     #vecSection.vec-readonly .vec-canvas { cursor: not-allowed; }
     .vec-len-ctl .tb-btn { font-size: 0.58rem; padding: 0 0.4rem; line-height: 1.4; margin-left: 0.25rem; }
     /* per-operator ADSR envelope graph at the bottom of each op column */

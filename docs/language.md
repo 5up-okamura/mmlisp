@@ -2087,6 +2087,9 @@ far bound, `:loop-end` and `:loop-len` the loop's — one pins the end, the othe
 the length, which differ once the start moves (see below) — and the last one
 written is the one in force.
 
+On a def they can be placed on the wave in the Live panel, and Trim to Range
+turns the range into `:offset` / `:frames` (`guide.md` § The panel's editor).
+
 They belong on a `def` and on a track, and they mean the same thing in both —
 unlike `:offset` / `:frames`, which cut a sample out of a file and decide the
 bytes that go into the bank. The four points are what a note plays of those

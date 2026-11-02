@@ -1,4 +1,4 @@
-// Edit > Loop Selection, the Logical Editor and the vector editor: text edits
+// Edit > Loop Selection, the Logical Editor, the vector and sample editors: text edits
 // the editor applies to the score, kept apart from the page so they can be run
 // (and checked) in node. Every function here takes source text and offsets and
 // returns CodeMirror-style changes ({from, to, insert}); nothing touches the
@@ -853,4 +853,163 @@ export function writeVector(text, subject, values) {
     rows.push(row.join(" "));
   }
   return [{ ...subject.span, insert: `[${rows.join(`\n${" ".repeat(col + 1)}`)}]` }];
+}
+
+// ---- the sample editor's points ----
+// A def-pcm's range and loop, in ms from the slice's start: what the panel's
+// waveform drags (pcm-editor.js) and Trim to Range folds into the slice. The
+// rules are the compiler's (language.md §16): a `…-len` and its `…-end` spell
+// one bound, the last written wins; a point left out follows the range.
+
+const MS = /^\d+ms$/;
+
+/** The (def-pcm name …) of the text: its keys, last one in force, or null. */
+export function sampleDefOf(text, name, { roots = parsed(text) } = {}) {
+  const node = roots?.find((n) => n?.kind === "list" && n.items?.[0]?.value === "def-pcm" && items(n)[1]?.value === name);
+  if (!node) return null;
+  const starts = lineStarts(text);
+  const body = items(node);
+  const keys = new Map();
+  let k = body.findIndex((n, i) => i >= 2 && n.kind === "atom" && n.value.startsWith(":"));
+  for (; k > 0 && k + 1 < body.length; k += 2) {
+    const key = body[k].value, val = body[k + 1];
+    if (key === ":pcm-end") keys.delete(":pcm-len");
+    if (key === ":pcm-len") keys.delete(":pcm-end");
+    if (key === ":loop-end") keys.delete(":loop-len");
+    if (key === ":loop-len") keys.delete(":loop-end");
+    keys.set(key, { tok: val.kind === "atom" ? val.value : null, key: nodeSpan(body[k], starts), value: nodeSpan(val, starts) });
+  }
+  const last = body.at(-1);
+  return {
+    name, keys,
+    // A new key's place: after the last, on its own line where the keys have one.
+    end: nodeSpan(last, starts).to,
+    indent: last.line === node.line ? null : text.slice(starts[last.line - 1], nodeSpan(last, starts).from).match(/^\s*/)[0],
+    // The slice's keys go by what they cut: after :rate or :file, else the name.
+    sliceAt: (keys.get(":rate") ?? keys.get(":file"))?.value.to ?? nodeSpan(body[Math.min(2, body.length - 1)], starts).to,
+  };
+}
+
+/**
+ * The points as written, in ms, null where the def leaves one out: a whole
+ * `Nms` as the text has it now (the compile may be a beat behind), any other
+ * length, and a point the def extends from its base, as the compile `ir`
+ * (metadata.samples[]) read it.
+ */
+export function writtenPoints(def, ir) {
+  const ms = (sec) => (sec == null ? null : sec * 1000);
+  const own = (key) => {
+    const tok = def.keys.get(key)?.tok;
+    return tok != null && MS.test(tok) ? parseInt(tok, 10) : null;
+  };
+  const start = own(":pcm-start") ?? ms(ir?.startSec);
+  const loopStart = own(":loop-start") ?? ms(ir?.loopStartSec);
+  const len = !def.keys.has(":pcm-len") ? null : own(":pcm-len") ?? ms((ir?.endSec ?? 0) - (ir?.startSec ?? 0));
+  const loopLen = !def.keys.has(":loop-len") ? null
+    : own(":loop-len") ?? ms((ir?.loopEndSec ?? 0) - (ir?.loopStartSec ?? ir?.startSec ?? 0));
+  return {
+    start, len, loopStart, loopLen,
+    end: len != null ? null : own(":pcm-end") ?? ms(ir?.endSec),
+    loopEnd: loopLen != null ? null : own(":loop-end") ?? ms(ir?.loopEndSec),
+  };
+}
+
+/** Where the written points put the four, `dur` ms being the sample's end. */
+export function samplePoints(w, dur) {
+  const start = w.start ?? 0;
+  const end = w.end ?? (w.len != null ? start + w.len : dur);
+  const loopStart = w.loopStart ?? start;
+  return { start, end, loopStart, loopEnd: w.loopEnd ?? (w.loopLen != null ? loopStart + w.loopLen : end) };
+}
+
+const inOrder = (p, limit) => p.start >= 0 && p.start <= p.loopStart && p.loopStart < p.loopEnd
+  && p.loopEnd <= p.end && p.end <= limit;
+
+/**
+ * A handle ("start", "end", "loopStart", "loopEnd") dragged to `at` ms, in
+ * whole ms: the key it writes (a bound written as a `…-len` stays one), and
+ * the written points after it. Short of an order it cannot keep, the nearest
+ * value on the way back to where it was; null when there is none.
+ */
+export function moveSamplePoint(w, handle, at, dur) {
+  const p = samplePoints(w, dur);
+  const limit = Math.max(Math.ceil(dur), p.end);
+  const to = Math.max(0, Math.min(Math.ceil(dur), Math.round(at)));
+  const [field, key, want, now] = handle === "start" ? ["start", ":pcm-start", to, p.start]
+    : handle === "loopStart" ? ["loopStart", ":loop-start", to, p.loopStart]
+    : handle === "end" ? (w.len != null ? ["len", ":pcm-len", Math.round(to - p.start), w.len] : ["end", ":pcm-end", to, p.end])
+    : w.loopLen != null ? ["loopLen", ":loop-len", Math.round(to - p.loopStart), w.loopLen] : ["loopEnd", ":loop-end", to, p.loopEnd];
+  const by = want <= now ? 1 : -1;
+  for (let v = want; by > 0 ? v <= now : v >= now; v += by) {
+    const written = { ...w, [field]: v };
+    if (v >= 0 && inOrder(samplePoints(written, dur), limit)) return { key, ms: v, written };
+  }
+  return null;
+}
+
+// Taking a key and its value out: its line, where it has one to itself.
+function removeKey(text, slot) {
+  let from = slot.key.from, to = slot.value.to;
+  while (text[from - 1] === " " || text[from - 1] === "\t") from--;
+  if (text[from - 1] !== "\n") return { from, to, insert: "" };
+  while (text[to] === " " || text[to] === "\t") to++;
+  if (text[to] === "\n") return { from, to: to + 1, insert: "" };
+  // The def's close on the key's line goes up to the line before, past no comment.
+  const before = text.lastIndexOf("\n", from - 2) + 1;
+  if (text[to] === ")" && !text.slice(before, from).includes(";")) return { from: from - 1, to: slot.value.to, insert: "" };
+  return { from: slot.key.from, to, insert: "" };
+}
+
+const keyText = (key, value) => `${key} ${value}`;
+
+/** The change that writes `key` at `ms`: over its value, or as a new key. */
+export function samplePointEdit(def, key, ms) {
+  const insert = `${ms}ms`;
+  const slot = def.keys.get(key);
+  if (slot) return [{ from: slot.value.from, to: slot.value.to, insert }];
+  return [{ from: def.end, to: def.end, insert: `${def.indent == null ? " " : `\n${def.indent}`}${keyText(key, insert)}` }];
+}
+
+/**
+ * Trim to Range: the range folded into the slice, so the bank holds only what
+ * plays. `:pcm-*` go, `:offset` / `:frames` take what they cut, and a loop
+ * point moves with the sample under it. `ir` is the compiled def; `rate` the
+ * frames of a second (`:rate`, else the file's); `frames` the slice's now; `dur`
+ * its length in ms, `:fx` done. { changes, cut } (frames), or { error }.
+ */
+export function trimSampleEdits(text, def, written, { ir, rate, frames, dur }) {
+  const p = samplePoints(written, dur);
+  const has = (key) => def.keys.has(key);
+  if ((written.start && !has(":pcm-start")) || (written.end != null && !has(":pcm-end")))
+    return { error: "the range comes from its base; trim the base" };
+  const head = Math.round((p.start / 1000) * rate);
+  const tail = Math.min(frames, Math.round((p.end / 1000) * rate));
+  if (head === 0 && tail >= frames) return { error: "the range is the whole sample" };
+  const changes = [":pcm-start", ":pcm-end", ":pcm-len"].filter(has).map((k) => removeKey(text, def.keys.get(k)));
+  const slice = [];
+  const write = (key, value) => {
+    const slot = def.keys.get(key);
+    if (slot) changes.push({ from: slot.value.from, to: slot.value.to, insert: String(value) });
+    else slice.push(keyText(key, value));
+  };
+  if (head > 0) write(":offset", (ir?.offset ?? 0) + head);
+  if (tail < frames || has(":frames") || ir?.frames != null) write(":frames", tail - head);
+  if (slice.length) changes.push({ from: def.sliceAt, to: def.sliceAt, insert: ` ${slice.join(" ")}` });
+  // Points are from the slice's start, which moved under them.
+  const shift = (key, ms, drop) => {
+    const slot = def.keys.get(key);
+    if (drop && slot) changes.push(removeKey(text, slot));
+    else changes.push(...samplePointEdit(def, key, Math.max(0, Math.round(ms - p.start))));
+  };
+  if (written.loopStart != null && p.start > 0) shift(":loop-start", written.loopStart, written.loopStart <= p.start);
+  if (written.loopEnd != null && p.start > 0) shift(":loop-end", written.loopEnd, written.loopEnd >= p.end);
+  // Two keys taken off neighbouring lines share the newline between them, and
+  // what goes in where a key comes out is one change.
+  const merged = [];
+  for (const c of changes.sort((x, y) => x.from - y.from || x.to - y.to)) {
+    const last = merged.at(-1);
+    if (last && (c.from < last.to || (last.from === last.to && c.from === last.from))) last.to = Math.max(last.to, c.to);
+    else merged.push({ ...c });
+  }
+  return { changes: merged, cut: frames - (tail - head) };
 }

@@ -52,6 +52,9 @@
 //             as a tone lane is, on the PSG's noise lane
 //   loopIsRange true: a sample part whose loop is a note's whole range (the
 //             2A03's DMC): a :loop-* point is left out (W_TARGET)
+//   rangeLoops true: a sample part that repeats a note's whole range and
+//             nothing else (the ADPCM-B's, the 2A03's DMC): the sample editor
+//             has no loop to place
 //   claims    { kind, voice }: a channel of another part its notes take over
 //             while they sound (the Mega Drive's DAC mix, fm6)
 //   waveRam   (voice) → the wave memory a `wave` part's channel plays, where

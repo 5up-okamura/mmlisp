@@ -555,6 +555,18 @@
         </div>
       </div>
 
+      <div class="rack-section editor-away" id="pcmSection">
+        <div class="rack-title rack-title-row"><span>Sample</span><span id="pcmStatus"></span></div>
+        <div class="rack-body">
+          <div class="vec-axis"><span id="pcmInfo"></span><span id="pcmReadout"></span></div>
+          <canvas id="pcmCanvas" class="vec-canvas pcm-canvas"></canvas>
+          <div class="vec-axis"><span id="pcmLen"></span>
+            <span class="vec-len-ctl"><button type="button" class="tb-btn" id="pcmTrim"
+              title="Cut the sample to its range: :pcm-start / :pcm-end become :offset / :frames, so the bank holds only what plays"
+              onclick="trimPcmToRange()">Trim to Range</button></span></div>
+        </div>
+      </div>
+
       <!-- Dynamic Parameters (def-val sliders, and the XY pad that plays two of them) -->
       <div class="rack-section" id="dynParamSection" hidden>
         <div class="rack-title rack-title-row"><span>Dynamic Parameters</span>
@@ -937,13 +949,14 @@
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
-    import { SAMPLE_EFFECTS } from './src/sample-fx.js';
+    import { SAMPLE_EFFECTS, applySampleEffects } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
     import { ARCHIVE_EXT } from './src/archive.js';
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
-    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
+    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
+    import { PcmEditor } from './src/pcm-editor.js';
     import { ABSnapshots } from './src/ab-snapshots.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
@@ -7399,10 +7412,13 @@
     // until it leaves it, and then a selected strip leads again.
     let _subjectFrom = 'strip';             // 'strip' | 'cursor'
     let _cursorSubjectKey = null;           // the def / vector under the cursor, to see it entered
-    let _editorKind = null;                 // 'fm' | 'vector': the one editor shown (null: the target's own)
+    let _editorKind = null;                 // 'fm' | 'vector' | 'pcm': the one editor shown (null: the target's own)
     let _vecSubject = null;                 // the vector editor's subject (edit-tools.js vectorAt), shown even dimmed
     let _vecActive = false;                 // the vector subject is the panel's now (not dimmed)
     let _vecEditor = null;                  // the vector editor (src/vector-editor.js), once its section is built
+    let _pcmSubject = null;                 // the sample editor's subject (pcmSubjectOf), shown even dimmed
+    let _pcmActive = false;                 // the sample subject is the panel's now (not dimmed)
+    let _pcmEditor = null;                  // the sample editor (src/pcm-editor.js), once its section is built
     let _fmShownRegs = null;                // the FM editor's last subject's registers, kept while dimmed
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
@@ -10640,10 +10656,12 @@
       // A strip's, when no def under the cursor leads (they are set only then).
       const strip = !cursorVec && !_fmCursorDefContext && !_pcmCursorDef ? waveStripSubject() : null;
       let subject = cursorVec ?? strip;
+      const sample = subject ? null : pcmSubjectOf(_pcmCursorDef);
       // An imported def-wave is drawn on by copying it in at the first stroke.
       if (subject?.kind === 'wave' && !subject.writable && importedWaveDefs().has(subject.name))
         subject = { ...subject, writable: true, importCopy: importedWaveDefs().get(subject.name) };
       if (subject) _editorKind = 'vector';
+      else if (sample) _editorKind = 'pcm';
       else if (_fmCursorDefContext || isFmSlot(selectedCh)) _editorKind = 'fm';
       else _editorKind ??= hasFm ? 'fm' : null;
       if (subject) _vecSubject = subject;
@@ -10654,7 +10672,8 @@
       _vecActive = !!subject;
       const section = document.getElementById('vecSection');
       section.classList.toggle('editor-away', _editorKind !== 'vector' || !_vecSubject);
-      document.getElementById('fmParamSection').classList.toggle('editor-away', _editorKind === 'vector');
+      document.getElementById('fmParamSection').classList.toggle('editor-away', _editorKind === 'vector' || _editorKind === 'pcm');
+      syncPcmEditor(sample);
       section.classList.toggle('vec-off', !_vecActive);
       section.classList.toggle('vec-readonly', _vecActive && !_vecSubject?.writable);
       document.getElementById('vecLenCtl').hidden = !(_vecActive && _vecSubject?.kind === 'macro' && _vecSubject.writable);
@@ -10675,6 +10694,131 @@
         else _vecEditor.show(shown);
       }
       _vecEditor.draw(); // a section just shown has its size only now
+    }
+
+    // ---- the sample editor (src/pcm-editor.js) ----
+    // Its subject is the def-pcm the cursor is in, drawn as the note bakes it:
+    // the slice, `:fx` done, on the time its points are read in (`:rate`, else
+    // the file's). A handle let go lands in the score as one edit.
+    _pcmEditor = new PcmEditor(document.getElementById('pcmCanvas'), {
+      onDrag: (handle, ms, done) => {
+        const s = _pcmSubject;
+        const moved = s && moveSamplePoint(s.written, handle, ms, s.dur);
+        if (!moved) return;
+        _pcmEditor.points = samplePoints(moved.written, s.dur);
+        if (done) writePcmPoint(moved);
+      },
+      onHover: (text) => { document.getElementById('pcmReadout').textContent = text; },
+    });
+
+    function writePcmPoint({ key, ms }) {
+      const text = editorView.state.doc.toString();
+      const def = sampleDefOf(text, _pcmSubject.name, { roots: parseCached(editorView.state.doc) });
+      if (!def) return;
+      editorView.dispatch({ changes: samplePointEdit(def, key, ms) });
+      scheduleHotSwap();
+    }
+
+    // Trim to Range (edit-tools.js): the score's text, one undo step.
+    window.trimPcmToRange = () => {
+      const s = _pcmSubject;
+      const wave = _pcmWave;
+      if (!_pcmActive || !s || !wave?.data) return;
+      const text = editorView.state.doc.toString();
+      const def = sampleDefOf(text, s.name, { roots: parseCached(editorView.state.doc) });
+      const res = def && trimSampleEdits(text, def, s.written, { ir: s.ir, rate: wave.rate, frames: wave.frames, dur: s.dur });
+      if (!res) return;
+      if (res.error) { log(`Trim to Range: ${res.error}`, 'err'); return; }
+      editorView.dispatch({ changes: res.changes });
+      scheduleHotSwap();
+      log(`Trimmed ${s.name}: ${res.cut} frames out of the bank`
+        + (s.ir.fx?.length ? '; its :fx now runs on the trimmed slice, its times from the new start' : ''), 'info');
+    };
+
+    // What the score's sample parts do with a def's points: the part a def
+    // sounds on is the track's, so a target's parts answer together.
+    function samplePartsOf(target) {
+      return targetProfile(target).parts.filter((p) => p.kind === 'sample' && p.points !== false);
+    }
+
+    // The score's samples as the text has them now: typing does not compile,
+    // so with the cursor in a def the panel asks, off the page's thread, and
+    // keeps what it had until the answer comes.
+    let _pcmCompiled = null; // { doc, metadata } of the last asked
+    function compiledSamples() {
+      const doc = editorView.state.doc;
+      if (_pcmCompiled?.doc === doc) return _pcmCompiled.metadata;
+      const want = _pcmCompiled = { doc, metadata: _pcmCompiled?.metadata ?? _lastGoodIR?.metadata ?? null };
+      compileOffThread(doc.toString(), _lastFileName, _importSources).then(({ ir }) => {
+        if (ir) want.metadata = ir.metadata;
+        if (want === _pcmCompiled && ir) syncParamUI({ repaint: false });
+      }).catch(() => {});
+      return want.metadata;
+    }
+
+    // The def-pcm `name` as the panel shows it, or null with no file to draw
+    // (a built-in rhythm sound) or no compile of it yet.
+    function pcmSubjectOf(name) {
+      if (!name) return null;
+      const ir = compiledSamples()?.samples?.find((d) => d.name === name);
+      const path = ir?.resolvedFile ?? ir?.file;
+      if (!path) return null;
+      const doc = editorView.state.doc;
+      const def = sampleDefOf(doc.toString(), name, { roots: parseCached(doc) });
+      return def ? { name, ir, path, written: writtenPoints(def, ir) } : null;
+    }
+
+    // The wave the panel has: one sample baked, kept while its slice, rate and
+    // `:fx` are. A folder opened or a cache cleared reads it again.
+    let _pcmWave = null;
+    function requestPcmWave({ ir, path }) {
+      const key = JSON.stringify([path, ir.offset, ir.frames, ir.rate, ir.fx]);
+      const whole = _pcmSampleCache.get(path);
+      if (_pcmWave?.key === key && _pcmWave.dir === _sourceDir && _pcmWave.whole === whole) return;
+      const want = _pcmWave = { key, dir: _sourceDir, whole, data: null, failed: false };
+      decodePcmSample(path).then((decoded) => {
+        if (want !== _pcmWave) return;
+        want.whole = _pcmSampleCache.get(path); // a slice that fails is not asked for again
+        const slice = decoded && sliceDecodedSample(decoded, ir);
+        if (!slice) throw new Error('no data');
+        want.rate = Number(ir.rate) || decoded.sampleRate;
+        want.frames = slice.data.length;
+        want.data = applySampleEffects(slice.data, want.rate, ir.fx);
+      }).catch(() => { want.failed = true; }).finally(() => {
+        if (want === _pcmWave) syncParamUI({ repaint: false });
+      });
+    }
+
+    function syncPcmEditor(sample) {
+      _pcmActive = !!sample;
+      if (sample) {
+        _pcmSubject = sample;
+        requestPcmWave(sample);
+      }
+      const s = _pcmSubject, section = document.getElementById('pcmSection');
+      section.classList.toggle('editor-away', _editorKind !== 'pcm' || !s);
+      section.classList.toggle('vec-off', !_pcmActive);
+      if (!s || _editorKind !== 'pcm') return;
+      const wave = _pcmWave;
+      const data = wave?.data ?? null;
+      const dur = data ? (data.length / wave.rate) * 1000 : 0;
+      s.dur = dur;
+      const parts = samplePartsOf(_pcmCompiled?.metadata?.target);
+      const points = data ? samplePoints(s.written, dur) : null;
+      document.getElementById('pcmStatus').textContent = s.name;
+      const info = document.getElementById('pcmInfo');
+      info.textContent = wave?.failed ? `${s.path} did not load` : 'Loading…';
+      document.getElementById('pcmLen').textContent = data ? `${Math.round(points.end - points.start)} of ${Math.round(dur)}ms` : '';
+      document.getElementById('pcmTrim').disabled = !_pcmActive || !data || (points.start <= 0 && points.end >= dur);
+      if (!_pcmEditor.dragging) _pcmEditor.show({
+        data, dur, points, writable: _pcmActive && parts.length > 0,
+        loop: parts.some((p) => !p.rangeLoops),
+      });
+      if (data) {
+        const peak = _pcmEditor.peak;
+        const db = Number((20 * Math.log10(peak)).toFixed(1)) || 0; // no -0.0
+        info.textContent = `${wave.rate} Hz · ${data.length} frames · peak ${peak > 0 ? `${db > 0 ? '+' : ''}${db.toFixed(1)} dB` : 'silent'}`;
+      }
     }
 
     // The sample def under the cursor: `(def-pcm name …)`. What it sounds
@@ -10995,7 +11139,7 @@
         const one = { ...ir, metadata: { ...ir.metadata, pcmVoices: 1 } };
         const samples = await pcmSampleBlobsForMmb(one, new Set([name]));
         if (!samples) throw new Error(`"${name}" did not load`);
-        const loop = def.startSec != null || def.endSec != null;
+        const loop = def.loopStartSec != null || def.loopEndSec != null;
         if (seq !== _pcmAuditionSeq || (loop && _pcmReleasedSeq === seq)) return; // superseded or let go
         // The X68000's PCM8: the def baked as the song's are, on a voice of
         // its own (the last), mixed and through the ADPCM as the chip plays.

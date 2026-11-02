@@ -136,7 +136,8 @@ structure help (bracket auto-close, enclosing-form highlight, select by form)
 and multi-cursor find / replace. The panel's editor follows the cursor: in a
 voice it is the FM operators (four, or the FM-PAC's two), in a `def-wave` or
 a macro's steps a vector editor where the values are drawn as bars and
-written back to the score. The Library (Cmd/Ctrl+K) searches the
+written back to the score, in a `def-pcm` its wave with the range and loop
+points dragged along it. The Library (Cmd/Ctrl+K) searches the
 language reference, the preset sets, the snippets and the example scores, each
 auditionable and insertable. Edit > Loop Selection wraps notes or channels in a
 loop; Edit > Logical Editor finds notes by pitch, length or voice and changes

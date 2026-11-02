@@ -123,6 +123,7 @@ export const fcDpcm = {
   pointSweeps: false, // a note's points are read at its key-on
   frames: true, // plays the samples' frames as bakePcm8 bakes them
   loopIsRange: true,
+  rangeLoops: true,
   checkNote({ sample, sampleName, mode, once }) {
     if (mode !== "loop") return;
     const loops = (sample.loopStartSec ?? sample.startSec ?? 0) !== (sample.startSec ?? 0) ||
