@@ -1,9 +1,59 @@
-; Wavetable steps for the machines with wave channels (msx's SCC, pce, fc's
-; FDS and N163): 32 steps of -128..127, the form every one of them takes. See
-; README.md.
+; Waves for the wave channels: 32 steps of -128..127, which every machine with
+; them takes. Written by tools/scripts/gen-wavetable.mjs, from formulas; change
+; them there. See README.md.
+
+; A click, then steady.
+(def wave-organ
+  (macro :wave [pulse25 organ] :vel+ [#sus 0 #rel -5 -10 -15])
+)
+
+; A soft swell into the breath.
+(def wave-flute
+  (macro :wave [sine _ _ _ flute] :vel+ [-6 -4 -2 -1 #sus 0 #rel -4 -8 -12 -15])
+)
+
+; A hollow bite, then the reed.
+(def wave-clarinet
+  (macro :wave [square _ clarinet] :vel+ [-3 -1 #sus 0 #rel -6 -12 -15])
+)
+
+; Bright for a moment, then nasal.
+(def wave-oboe
+  (macro :wave [trumpet _ oboe] :vel+ [-2 -1 #sus 0 #rel -5 -10 -15])
+)
+
+; A bow: a slow rise from the flute's wave.
+(def wave-violin
+  (macro :wave [flute _ _ _ _ _ violin] :vel+ [(linear -8..0 :len 10f) #sus 0 #rel (linear 0..-15 :len 15f)])
+)
+
+; A brass rise, opening as it speaks.
+(def wave-trumpet
+  (macro :wave [horn _ _ violin _ trumpet] :vel+ [-5 -3 -1 #sus 0 #rel -6 -12 -15])
+)
+
+; A round swell.
+(def wave-horn
+  (macro :wave [sine _ _ horn] :vel+ [-6 -4 -3 -2 -1 #sus 0 #rel -4 -8 -12 -15])
+)
+
+; A bright strike, dying as it is held.
+(def wave-piano
+  (macro :wave [trumpet _ _ violin _ _ piano] :vel+ [(ease-out 0..-9 :len 45f) #sus -9 #rel (linear -9..-15 :len 6f)])
+)
+
+; A struck bar, ringing away to a sine.
+(def wave-vibraphone
+  (macro :wave [trumpet vibraphone _ _ _ _ _ _ _ _ _ _ sine] :vel+ [(ease-out 0..-15 :len 90f)])
+)
+
+; A saw's snap, falling to the fat low end.
+(def wave-synth-bass
+  (macro :wave [saw _ _ square _ _ synth-bass] :vel+ [(ease-out 0..-7 :len 18f) #sus -7 #rel -11 -15])
+)
 
 ; A sine.
-(def-wave wt-sine
+(def-wave sine
   :wave [
     0 25 49 71 90 106 117 125 127 125 117 106 90 71 49 25
     0 -25 -49 -71 -90 -106 -117 -125 -127 -125 -117 -106 -90 -71 -49 -25
@@ -11,15 +61,15 @@
 )
 
 ; A triangle.
-(def-wave wt-triangle
+(def-wave triangle
   :wave [
     0 16 32 48 64 79 95 111 127 111 95 79 64 48 32 16
-    0 -16 -32 -48 -64 -79 -95 -111 -127 -111 -95 -79 -64 -48 -32 -16
+    0 -16 -32 -48 -63 -79 -95 -111 -127 -111 -95 -79 -63 -48 -32 -16
   ]
 )
 
 ; A saw, up to a drop.
-(def-wave wt-saw
+(def-wave saw
   :wave [
     -128 -120 -112 -103 -95 -87 -79 -70 -62 -54 -46 -38 -29 -21 -13 -5
     4 12 20 28 37 45 53 61 69 78 86 94 102 111 119 127
@@ -27,7 +77,7 @@
 )
 
 ; A square: 1:1.
-(def-wave wt-square
+(def-wave square
   :wave [
     127 127 127 127 127 127 127 127 127 127 127 127 127 127 127 127
     -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128
@@ -35,7 +85,7 @@
 )
 
 ; A pulse: 1:3.
-(def-wave wt-pulse25
+(def-wave pulse25
   :wave [
     127 127 127 127 127 127 127 127 -128 -128 -128 -128 -128 -128 -128 -128
     -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128
@@ -43,25 +93,89 @@
 )
 
 ; A pulse: 1:7.
-(def-wave wt-pulse12
+(def-wave pulse12
   :wave [
     127 127 127 127 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128
     -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128 -128
   ]
 )
 
-; Harmonics 1, 2, 3 and 4 in falling levels.
-(def-wave wt-organ
+; Drawbars: the octaves and the third harmonic.
+(def-wave organ
   :wave [
-    0 62 108 127 120 97 71 53 45 45 45 40 29 16 6 1
-    0 -1 -6 -16 -29 -40 -45 -45 -45 -53 -71 -97 -120 -127 -108 -62
+    0 92 127 120 111 102 76 47 36 34 28 30 40 29 -7 -24
+    0 24 7 -29 -40 -30 -28 -34 -36 -47 -76 -102 -111 -120 -127 -92
   ]
 )
 
-; Harmonics 1, 3, 5 and 8: hollow and bright.
-(def-wave wt-bell
+; Nearly a sine, its second harmonic breathy.
+(def-wave flute
   :wave [
-    0 93 113 88 79 76 58 54 82 93 58 37 79 127 113 54
-    0 -54 -113 -127 -79 -37 -58 -93 -82 -54 -58 -76 -79 -88 -113 -93
+    0 41 77 104 121 127 125 117 106 94 83 73 62 50 35 18
+    0 -18 -35 -50 -62 -73 -83 -94 -106 -117 -125 -127 -121 -104 -77 -41
+  ]
+)
+
+; Odd harmonics, as a closed pipe has.
+(def-wave clarinet
+  :wave [
+    0 111 127 86 63 55 45 45 50 45 45 55 63 86 127 111
+    0 -111 -127 -86 -63 -55 -45 -45 -50 -45 -45 -55 -63 -86 -127 -111
+  ]
+)
+
+; A weak fundamental under a peak at the third.
+(def-wave oboe
+  :wave [
+    0 89 127 103 49 5 -12 -12 -9 -8 -3 8 17 15 7 0
+    0 0 -7 -15 -17 -8 3 8 9 12 12 -5 -49 -103 -127 -89
+  ]
+)
+
+; Saw-like, with a body's rise at the fifth.
+(def-wave violin
+  :wave [
+    0 108 127 80 45 45 44 31 24 24 18 6 6 15 15 7
+    0 -7 -15 -15 -6 -6 -18 -24 -24 -31 -44 -45 -45 -80 -127 -108
+  ]
+)
+
+; A bright peak at the third.
+(def-wave trumpet
+  :wave [
+    0 103 127 84 37 18 11 1 -2 2 2 -1 1 5 3 0
+    0 0 -3 -5 -1 1 -2 -2 2 -1 -11 -18 -37 -84 -127 -103
+  ]
+)
+
+; Round: falling fast from the fundamental.
+(def-wave horn
+  :wave [
+    0 58 103 126 127 112 91 71 59 51 45 37 27 16 7 2
+    0 -2 -7 -16 -27 -37 -45 -51 -59 -71 -91 -112 -127 -126 -103 -58
+  ]
+)
+
+; Falling harmonics, as a struck string's first moment.
+(def-wave piano
+  :wave [
+    0 72 117 127 116 101 91 83 72 58 47 41 37 29 19 8
+    0 -8 -19 -29 -37 -41 -47 -58 -72 -83 -91 -101 -116 -127 -117 -72
+  ]
+)
+
+; The fundamental and the bar's fourth harmonic.
+(def-wave vibraphone
+  :wave [
+    0 44 73 80 70 58 57 73 100 122 127 108 70 31 3 -5
+    0 5 -3 -31 -70 -108 -127 -122 -100 -73 -57 -58 -70 -80 -73 -44
+  ]
+)
+
+; A fat low end: the fundamental and two harmonics.
+(def-wave synth-bass
+  :wave [
+    0 53 96 122 127 114 89 59 34 18 11 13 18 21 19 11
+    0 -11 -19 -21 -18 -13 -11 -18 -34 -59 -89 -114 -127 -122 -96 -53
   ]
 )

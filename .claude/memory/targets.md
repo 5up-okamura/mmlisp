@@ -48,6 +48,20 @@ Built: the completion, the `@` picker, the Library and `mmlisp_presets` go by
   with no wave channels has no ▶ and no keys: sounding it elsewhere left the
   worklet on that machine until the next Play.
 
+## Names (rulings, 2026-11-03)
+
+- **No prefix is a role, a prefix one set's sound.** `kick`, `piano` on an FM
+  or a wave channel; `gm-piano`. gm keeps its prefix: the new-file template
+  imports it, and an import hides a ROM voice of the name. The melodic roles
+  are the 15 ROM voices' names.
+- **A voice and a wave can share a name** (`waveDefs`, as `sampleDefs`): the
+  channel's part chooses, and the panel asks the cursor's track.
+- **A wave's role is a macro** (`wave-piano`, in `presets/wavetable`): a wave
+  under a still level sounds much like any other. Its prefix keeps it from
+  hiding a ROM voice of the name, as a macro `piano` would.
+- **Maybe later:** a short set of `(def-fm piano gm-piano)` lines, to fill the
+  FM roles from gm with one import. The user has not asked for it yet.
+
 ## Rulings for what comes next (2026-10-25, not built yet)
 
 - **The editor panel** is built, the OPLL's 2-op operators too; still

@@ -2581,8 +2581,11 @@ log and the compiler's messages stay in English.
   sounds, by their roles. ▶ plays one and **Insert** writes its name; there is
   no def to copy.
 - A wave row plays on ▶ and the keys, on the machine's first wave channel; a
-  machine with none has neither for it. The keys' channels are the score's as
-  of its last Build.
+  machine with none has neither for it. ▶ plays it under its role's macro
+  (`piano`, `wave-piano`) where its set has one. The keys play that macro too,
+  held for as long as the key is, and its release when it lets go: it is the
+  one kind of macro they play. The keys' channels are the score's as of its
+  last Build.
 - Without a query the list is grouped — a preset set, a snippet topic, an
   examples folder — every group folded until opened. The line under the list
   describes the highlighted row: a preset's comment, a file's leading comment.
@@ -2664,6 +2667,16 @@ stop; the next **Play** or **Build** puts the score's bank back, and the same
 goes for a score or snippet played from the panel. A played score's
 `def-val` sliders are not shown until it is opened. Opening a score replaces
 what is in the editor, as `File ▸ Open…` does.
+
+### Names: roles, and particular sounds
+
+A name with no prefix is a **role**, and what fills it is up to the machine and
+the imports: `kick` is whichever kit is imported, `piano` on an FM channel the
+machine's ROM voice, `piano` on a wave channel the imported wave set's. A
+prefix names one set's own sound: `gm-piano` is that voice everywhere. The
+melodic roles are the ROM voices' names (§19 `msx`), and a voice, a wave and a
+sample can all have one, as the channel says which it plays. A score keeps its
+names when it moves between an FM channel and a wave channel.
 
 ### Drum kits swap
 

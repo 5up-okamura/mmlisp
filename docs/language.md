@@ -1157,7 +1157,8 @@ inline.
   untouched.
 - **Collision policy**: imported defs are overridable **defaults** — a local
   `def` of the same name **wins** silently (so you can import a bank and tweak
-  one patch inline). Two different imported files defining the same name is an
+  one patch inline); a `def-wave` and the rest are apart, as a track tells them
+  by its channel (§19). Two different imported files defining the same name is an
   error (`E_IMPORT_CONFLICT`); a diamond (two imports pulling in the same third
   file) dedups and is fine. An import cycle is `E_IMPORT_CYCLE`.
 - **`:over`**: `(import "path" :over)` lets this import's defs **replace** the
@@ -2650,7 +2651,9 @@ to play on the machine. The hardware envelope is as on `pc88`: `:env`,
 `:env-rate` and `:mode env`.
 
 **SCC.** `wave1`–`wave5` are the SCC's five channels. Each plays a wave of
-32 steps, which a `def-wave` names and a track switches to by naming it, as
+32 steps, which a `def-wave` names and a track switches to by naming it (a
+voice can have the same name: a wave channel plays the wave, an FM one the
+voice), as
 it does a voice:
 
 ```lisp

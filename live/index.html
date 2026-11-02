@@ -955,7 +955,7 @@
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, GRIDS, FM_DESTS, PSG_DESTS, PCM_DESTS } from './src/import-midi.js';
-    import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain } from './src/ir-utils.js';
+    import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain, macroFrames } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
     import { parse } from './src/mmlisp-parser.js';
@@ -9558,9 +9558,8 @@
             kind: def.kind,
             about: about.get(def.name) ?? '',
             audition: def.kind === 'def' ? null : () => previewLibraryDef(set, def),
-            markOn: (target) => assetMark(target, def.kind),
-            keys: def.kind === 'fm' || def.kind === 'pcm' ? { kind: def.kind, set, def }
-              : def.kind === 'wave' ? { kind: 'wave', def: { name: def.name, steps: vectorOfWave(set.text, def.name)?.values } } : null,
+            markOn: (target) => assetMark(target, wavesOf(set, def) ? 'wave' : def.kind),
+            keys: def.kind === 'fm' || def.kind === 'pcm' ? { kind: def.kind, set, def } : waveKeys(set, def),
             actions: copy
               ? [{ label: 'Insert', title: 'Insert the def at the cursor', run: () => insertLibraryDefText(set, def) }]
               : [importSet],
@@ -9696,17 +9695,88 @@
     function previewLibraryDef(set, def) {
       if (def.kind === 'fm') return previewLibraryFm(def);
       if (def.kind === 'pcm') return previewLibraryPcm(set, def);
+      if (wavesOf(set, def)) return previewLibraryWave(set, def);
       if (def.kind === 'macro') return previewLibraryMacro(set, def);
-      if (def.kind === 'wave') return previewLibraryWave(set, def);
       setLibraryNote(`${def.name} is not a voice, a sample or a macro \u2014 nothing to sound.`);
     }
 
-    // A wave sounds as a note on the score's machine's first wave channel.
+    // Does a def step waves: a wave, or a macro over them?
+    function wavesOf(set, def) {
+      return def.kind === 'wave' || (def.kind === 'macro' && /:wave\b/.test(ownDefText(set.text, def.node, set.path)));
+    }
+
+    // What the keys play for a wave's row: the wave, and for its role's macro
+    // (`wave-piano`) the role's wave, as the keys play no macro.
+    function waveKeys(set, def) {
+      const name = def.kind === 'wave' ? def.name : def.name.replace(/^wave-/, '');
+      const steps = wavesOf(set, def) ? vectorOfWave(set.text, name)?.values : null;
+      return steps ? { kind: 'wave', def: { name, steps, set } } : null;
+    }
+
+    // A wave's role on the keys: its macro's frames, read off a note of it on
+    // the machine the keys are on. The one kind of macro the keys play: a role
+    // is that wave's sound, and held still it is not.
+    const _keyRoles = new Map(); // `${machine}:${name}` → { level, wave, waves } | null
+    function keyRole({ name, set }) {
+      const role = `wave-${name}`;
+      if (!set.defs.some((d) => d.name === role)) return null;
+      const machine = targetProfile(_lastGoodIR?.metadata?.target);
+      const key = `${machine.name}:${name}`;
+      if (_keyRoles.has(key)) return _keyRoles.get(key);
+      const { ir } = compileMMLisp(`(def-score :target ${machine.name})\n${set.text}\n(${machine.headsOfKind('wave')[0]} ${role} c)`, set.path);
+      const note = ir?.tracks[0]?.events.find((e) => e.cmd === 'NOTE_ON')?.args;
+      const got = note ? { level: note.velMacro && macroFrames(note.velMacro), wave: note.wave && macroFrames(note.wave), waves: ir.metadata.waves } : null;
+      _keyRoles.set(key, got);
+      return got;
+    }
+
+    // The keys' wave roles, a frame at a time: lane → what it is playing.
+    const _keyVoices = new Map();
+    let _keyVoiceTimer = 0;
+    function startKeyVoice(lane, role, vel = 15) {
+      _keyVoices.set(lane, { role, vel, frame: 0, off: false, released: 0 });
+      stepKeyVoice(lane);
+      _keyVoiceTimer ||= setInterval(() => {
+        for (const l of [..._keyVoices.keys()]) stepKeyVoice(l);
+        if (!_keyVoices.size) { clearInterval(_keyVoiceTimer); _keyVoiceTimer = 0; }
+      }, 1000 / 60);
+    }
+    function stepKeyVoice(lane) {
+      const v = _keyVoices.get(lane);
+      if (!player) { _keyVoices.delete(lane); return; } // gone with a new score
+      const { level, wave, waves } = v.role;
+      const at = (f) => {
+        if (!f) return null;
+        if (v.off) return f.released[v.released] ?? null;
+        if (v.frame < f.held.length) return f.held[v.frame];
+        return f.loop == null ? null : f.held[f.loop + ((v.frame - f.loop) % (f.held.length - f.loop))];
+      };
+      const w = at(wave);
+      if (w != null) player.previewWave(lane, waves[w].data, waves[w].name);
+      const l = at(level);
+      if (l != null) player._psgSetAtt(lane, player._composePsgAtt(lane, Math.max(0, Math.round(l) - (15 - v.vel)), VOL_UNITY, VOL_UNITY), audioCtx?.currentTime);
+      if (v.off && ++v.released >= (level?.released.length ?? 0)) { _keyVoices.delete(lane); previewPsgNoteOff(lane); }
+      else if (!v.off) v.frame++;
+    }
+    // A key let go: its release plays out, and true if there was a voice.
+    function releaseKeyVoice(lane) {
+      const v = _keyVoices.get(lane);
+      if (!v) return false;
+      if (v.off) return true;
+      v.off = true;
+      if (!v.role.level?.released.length) { _keyVoices.delete(lane); return false; }
+      return true;
+    }
+
+    // A wave sounds as notes on the score's machine's first wave channel, under
+    // its role's macro where its set has one (`piano`, `wave-piano`): alone, a
+    // level that does not move, every wave is an organ.
     function previewLibraryWave(set, def) {
       const target = targetProfile(scoreTarget(editorView.state.doc));
       const [head] = target.headsOfKind('wave');
       if (!head) { setLibraryNote(`${def.name} \u2014 ${target.system} has no wave channel to sound it on`); return; }
-      const text = `(def-score :target ${target.name})\n${ownDefText(set.text, def.node, set.path)}\n(${head} ${def.name} :len 2 c)\n`;
+      const role = set.defs.find((d) => d.name === `wave-${def.name}`) ?? def;
+      const text = `(def-score :target ${target.name})\n${set.text}\n(${head} ${role.name} :len 4 c e g > c)\n`;
       return toggleLibraryScorePreview({ path: `wave/${def.name}`, snippet: true, text });
     }
 
@@ -10663,13 +10733,18 @@
       if (!best) {
         const name = findAtomAt(ast, state.doc, head, null)?.node?.value;
         if (typeof name !== 'string' || name.startsWith(':')) return null;
+        const track = cursorTrackKind();
+        const { wave, pcm } = importedDefs();
+        if ((track === 'wave' && defNamed('def-wave', name, wave)) || (track === 'sample' && defNamed('def-pcm', name, pcm))) return null;
         best = local(name);
         if (!best) {
           const imp = imported.get(name);
           if (imp) return { name, origin: imp.path, copy: imp, readOnly: true, regs: parseFmDefRegs(imp.node, lookup) };
-          // A def of the name is that def, whatever it is: a sample, a macro.
-          const named = ast.some((n) => n.kind === 'list' && /^def(-|$)/.test(n.items[0]?.value ?? '') && n.items[1]?.value === name);
-          if (named || importedDefs().pcm.has(name) || !builtinFmVoice(name)) return null;
+          // A def of the name is that def, whatever it is: on a track that
+          // plays voices, a macro; anywhere else, a sample or a wave as well.
+          const heads = track === 'voice' ? /^def$/ : /^def(-|$)/;
+          const named = ast.some((n) => n.kind === 'list' && heads.test(n.items[0]?.value ?? '') && n.items[1]?.value === name);
+          if (named || (!track && (pcm.has(name) || wave.has(name))) || !builtinFmVoice(name)) return null;
           return { name, readOnly: true, regs: parseFmDefRegs(parse(`(def-fm voice ${name})`)[0], lookup) };
         }
       }
@@ -10758,8 +10833,24 @@
 
     function findVectorAtCursor() {
       const state = editorView.state;
-      return vectorAt(state.doc.toString(), state.selection.main.head,
+      const vec = vectorAt(state.doc.toString(), state.selection.main.head,
         { waves: compiledWaves(), bpm: openingBpm(), roots: parseCached(state.doc) });
+      // A name is what the track at the cursor plays: `organ` on fm1 is a voice.
+      const track = vec?.kind === 'wave' ? cursorTrackKind() : null;
+      return track && track !== 'wave' ? null : vec;
+    }
+
+    // What kind of name the track at the cursor takes (trackKindAt), or null
+    // outside a track. A name shared by a voice, a wave and a sample is told
+    // apart by it, as the compiler tells them by the channel's part.
+    function cursorTrackKind() {
+      const { state } = editorView;
+      return trackKindAt(state.doc.toString(), state.selection.main.head);
+    }
+
+    // Is `name` a def of this head, in the score or an import's?
+    function defNamed(head, name, imported) {
+      return imported.has(name) || !!parseCached(editorView.state.doc)?.some((n) => n.kind === 'list' && n.items[0]?.value === head && n.items[1]?.value === name);
     }
 
     // A selected wave strip's subject: the def-wave its channel plays now, else
@@ -10973,8 +11064,9 @@
       }
       const name = findAtomAt(ast, state.doc, state.selection.main.head, null)?.node?.value;
       if (typeof name !== 'string' || name.startsWith(':')) return null;
-      const own = ast.some((n) => n.kind === 'list' && n.items[0]?.value === 'def-pcm' && n.items[1]?.value === name);
-      return own || importedDefs().pcm.has(name) ? name : null;
+      const track = cursorTrackKind();
+      if (track && track !== 'sample') return null;
+      return defNamed('def-pcm', name, importedDefs().pcm) ? name : null;
     }
 
     // The (def-se name …) the cursor is in, or null: Play auditions it.
@@ -11200,6 +11292,9 @@
         const wave = getKeyboardTargetContext().wave;
         if (wave && waveLanes().includes(slot.lane)) player.previewWave(slot.lane, wave.steps ?? _vecEditor.values, wave.name);
         previewPsgNoteOn(slot.lane, midi, vel);
+        _keyVoices.delete(slot.lane);
+        const role = wave?.set && waveLanes().includes(slot.lane) ? keyRole(wave) : null;
+        if (role) startKeyVoice(slot.lane, role, vel ?? 15);
         return;
       }
 
@@ -11212,7 +11307,7 @@
       slot = previewChannelOf(slot);
 
       if (isToneSlot(slot)) {
-        previewPsgNoteOff(slot.lane);
+        if (!releaseKeyVoice(slot.lane)) previewPsgNoteOff(slot.lane);
         return;
       }
 

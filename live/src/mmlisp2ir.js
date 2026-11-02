@@ -3559,7 +3559,7 @@ function makeEvalCtx(diagnostics, trackName, src, typedDefs = null, stepFrames =
     isNoteStreamToken,
     // A voice or a sample (the samples ride on the voice map, set once the
     // defs are merged); snippet names are caught at expansion (expandNode).
-    isDefName: (n) => !!typedDefs && (typedDefs.has(n) || !!typedDefs.sampleNames?.has(n)),
+    isDefName: (n) => !!typedDefs && (typedDefs.has(n) || !!typedDefs.sampleNames?.has(n) || !!typedDefs.waveNames?.has(n)),
     stepFrames, // frame :step for signal⊕signal materialization (0 = tick, unsupported)
   };
 }
@@ -3826,12 +3826,12 @@ function emitVoice(td, tick, events, src, trackState = null, name = null, diagno
 // name to its place, and a track's anonymous wave (a `:wave` expression with
 // no $slot) is added to it as the track compiles (waveIndexOf).
 const WAVE_LEN = WAVE.len;
-function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
+function resolveWaves(waveDefs, typedDefs, defs, paramDefs, diagnostics) {
   const read = new Map(); // name → steps, null when its def does not read
   const reading = new Set();
   const dataOf = (name, at) => {
-    const td = typedDefs.get(name);
-    if (td?.tag !== "wave") {
+    const td = waveDefs.get(name);
+    if (!td) {
       pushDiag(diagnostics, "error", "E_WAVE_VALUE", `${name} is not a def-wave`, nodeSrc(at), null);
       return null;
     }
@@ -3890,8 +3890,7 @@ function resolveWaves(typedDefs, defs, paramDefs, diagnostics) {
   };
   const waves = [];
   const index = new Map();
-  for (const [name, td] of typedDefs) {
-    if (td.tag !== "wave") continue;
+  for (const name of waveDefs.keys()) {
     const data = dataOf(name, null);
     if (data) index.set(name, waves.push({ name, data }) - 1);
   }
@@ -4825,8 +4824,9 @@ function compileChannelBody(
         continue;
       }
 
-      // Bare identifier: a def-wave (the wave the channel plays from here)
-      if (typedDefs?.get(val)?.tag === "wave") {
+      // Bare identifier: a def-wave (the wave the channel plays from here). A
+      // wave and a voice can share a name: the channel's part says which it is.
+      if (typedDefs?.waveNames?.has(val) && (!typedDefs.has(val) || trackState.part?.kind === "wave")) {
         emitWave(trackState, events, nodeSrc(node), val, diagnostics, trackName);
         i++;
         continue;
@@ -5693,6 +5693,7 @@ function collectDefs(roots, diagnostics) {
   const paramDefs = new Map(); // (def (name param…) body…) parametric snippets
   const typedDefs = new Map();
   const sampleDefs = new Map();
+  const waveDefs = new Map();
   // (def-se name [:prio N] [:tempo T] (channel body…)…) — a sound effect: its
   // parts are tracks the host starts by the effect's number, not the song.
   const seDefs = new Map();
@@ -5913,7 +5914,7 @@ function collectDefs(roots, diagnostics) {
           nodeSrc(root), null);
         continue;
       }
-      typedDefs.set(name, { tag: "wave", items: items.slice(2), src: nodeSrc(root) });
+      waveDefs.set(name, { items: items.slice(2), src: nodeSrc(root) });
       continue;
     }
 
@@ -5998,7 +5999,7 @@ function collectDefs(roots, diagnostics) {
   if (vals.size > 16)
     pushDiag(diagnostics, "error", "E_DEFVAL_COUNT",
       `${vals.size} def-val slots; the driver holds 16`, null, null);
-  return { defs, paramDefs, typedDefs, sampleDefs, seDefs, vals, fileMeta, imports, mods, remaining };
+  return { defs, paramDefs, typedDefs, sampleDefs, waveDefs, seDefs, vals, fileMeta, imports, mods, remaining };
 }
 
 // The channels a sound effect may play on — every one a song may but CH3.
@@ -6122,7 +6123,10 @@ function parseSeDef(root, diagnostics) {
 // slots and tracks are deliberately NOT imported (a slot's index is the
 // importing file's host-visible layout; tracks are songs, not a library) —
 // an effect is a def, so a game's set of them is one file every song shares.
-const IMPORT_DEF_KINDS = ["defs", "paramDefs", "typedDefs", "sampleDefs", "seDefs"];
+const IMPORT_DEF_KINDS = ["defs", "paramDefs", "typedDefs", "sampleDefs", "waveDefs", "seDefs"];
+// The kinds a name of `kind` hides: every one but a wave's, which a track tells
+// from the rest by its part, so the two can share a name (`piano`).
+const hiddenKinds = (kind) => IMPORT_DEF_KINDS.filter((k) => (k === "waveDefs") === (kind === "waveDefs"));
 
 // Scan source text for its top-level (import "path") forms. Exported so the host
 // can drive async file resolution (recursing through nested imports) before the
@@ -6151,7 +6155,7 @@ function mergeImportsStrict(base, incoming, diagnostics, conflictSrc, over = fal
   if (over) {
     for (const kind of IMPORT_DEF_KINDS)
       for (const name of incoming[kind].keys())
-        for (const k of IMPORT_DEF_KINDS) {
+        for (const k of hiddenKinds(kind)) {
           if (base.origin[k].get(name) === incoming.origin[kind].get(name)) continue; // diamond
           base[k].delete(name);
           base.origin[k].delete(name);
@@ -6186,7 +6190,7 @@ function overlayDefs(base, own, originPath) {
   // hides an imported snippet `pad`, not just an imported def-fm `pad`.
   for (const kind of IMPORT_DEF_KINDS)
     for (const name of own[kind].keys())
-      for (const k of IMPORT_DEF_KINDS) {
+      for (const k of hiddenKinds(kind)) {
         base[k].delete(name);
         base.origin[k].delete(name);
       }
@@ -6204,12 +6208,14 @@ function emptyImportBundle() {
     paramDefs: new Map(),
     typedDefs: new Map(),
     sampleDefs: new Map(),
+    waveDefs: new Map(),
     seDefs: new Map(),
     origin: {
       defs: new Map(),
       paramDefs: new Map(),
       typedDefs: new Map(),
       sampleDefs: new Map(),
+      waveDefs: new Map(),
       seDefs: new Map(),
     },
   };
@@ -6627,6 +6633,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     paramDefs,
     typedDefs,
     sampleDefs,
+    waveDefs,
     seDefs,
     vals,
     fileMeta,
@@ -6644,7 +6651,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
       diagnostics,
       dirnamePosix(normalizePathSeparators(filename)),
     );
-    const local = { defs, paramDefs, typedDefs, sampleDefs, seDefs };
+    const local = { defs, paramDefs, typedDefs, sampleDefs, waveDefs, seDefs };
     overlayDefs(imported, local, filename); // local wins; `imported` = the union
     for (const kind of IMPORT_DEF_KINDS) {
       local[kind].clear();
@@ -6667,7 +6674,8 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     if (!typedDefs.has(name)) typedDefs.set(name, { tag: "voice", extends: null, items: [], kwMap, src: null });
   resolveVoices(typedDefs, defs, paramDefs, diagnostics,
     writesVelSens(parsed, defs, paramDefs, typedDefs, seDefs), targetProfile(fileMeta.target));
-  const waves = resolveWaves(typedDefs, defs, paramDefs, diagnostics);
+  typedDefs.waveNames = waveDefs; // beside the voices, for a track's bare name
+  const waves = resolveWaves(waveDefs, typedDefs, defs, paramDefs, diagnostics);
   resolveSampleExtends(sampleDefs, diagnostics);
   // A target with a ROM rhythm kit names its sounds by the kit roles
   // (targets.js): a def of that name is that sound there, and one the score
@@ -6701,7 +6709,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     // among them (they take no time).
     for (let i = 1; i + 1 < node.items.length; i += 2) {
       const key = atomValue(node.items[i]);
-      if (typedDefs.has(key) || sampleDefs.has(key)) {
+      if (typedDefs.has(key) || sampleDefs.has(key) || waveDefs.has(key)) {
         i--;
         continue;
       }

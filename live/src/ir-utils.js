@@ -1131,3 +1131,27 @@ export function expandLoops(events) {
 
   return expand(events, 0).events;
 }
+
+/**
+ * A note's macro (`NOTE_ON`'s velMacro, wave) as the frames a key plays, for a
+ * note whose length nobody knows yet: `held`, a value a frame while the key is
+ * down (null: no change), going round from `loop` when it runs out (null: it
+ * stays at its last), and `released` from the key's letting go. The player
+ * schedules a note's macros ahead, to its gate; a key has none.
+ */
+export function macroFrames(spec) {
+  if (spec.type === "steps") {
+    const end = spec.releaseIndex ?? spec.steps.length;
+    return { held: spec.steps.slice(0, end), loop: spec.loopIndex ?? null, released: spec.steps.slice(end) };
+  }
+  const held = [], released = [];
+  let loop = null, out = held;
+  for (const stage of spec.stages) {
+    if (stage.waitKeyOff) { out = released; continue; }
+    if (stage.loop) loop = out.length;
+    const last = Math.max(1, stage.frames - 1);
+    for (let i = 0; i < stage.frames; i++)
+      out.push(stage.from + (stage.to - stage.from) * sampleCurveUnit(stage.curve, i / last));
+  }
+  return { held, loop, released };
+}

@@ -4,6 +4,8 @@ import { compileMMLisp } from '../../live/src/mmlisp2ir.js';
 import { parse } from '../../live/src/mmlisp-parser.js';
 import { readFileSync } from 'node:fs';
 import { TARGETS, builtinNames, assetMark, targetsWith } from '../../live/src/targets.js';
+import { IRPlayer } from '../../live/src/ir-player.js';
+import { macroFrames } from '../../live/src/ir-utils.js';
 import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText } from '../../live/src/edit-tools.js';
 
 let count = 0;
@@ -498,9 +500,63 @@ check('the wavetable set is 32 steps in range, on every machine', () => {
   const path = 'presets/wavetable/set.mmlisp';
   const imports = new Map([[path, readFileSync(new URL('../../' + path, import.meta.url), 'utf8')]]);
   for (const name of ['md', 'msx', 'pce', 'fc']) noUnknown(`(def-score :target ${name})\n(import "${path}")`, imports);
-  const waves = compileMMLisp(`(def-score :target pce)\n(import "${path}")\n(wave1 wt-sine c)`, 'a.mmlisp', { imports }).ir.metadata.waves;
-  assert.equal(waves.length, 8);
+  const waves = compileMMLisp(`(def-score :target pce)\n(import "${path}")\n(wave1 sine c)`, 'a.mmlisp', { imports }).ir.metadata.waves;
+  assert.equal(waves.length, 16);
   for (const w of waves) { assert.equal(w.data.length, 32); assert.ok(w.data.every((v) => v >= -128 && v <= 127), w.name); }
+  const roles = [...imports.get(path).matchAll(/^\(def (wave-[\w-]+)/gm)].map((m) => m[1]);
+  assert.equal(roles.length, 10);
+  for (const name of ['pce', 'msx']) for (const role of roles) noUnknown(`(def-score :target ${name})\n(import "${path}")\n(wave1 ${role} :len 2 c)`, imports);
+});
+check('a macro is frames while a key is down, and after it lets go', () => {
+  assert.deepEqual(macroFrames({ type: 'steps', steps: [9, 11, 13, 15, 8, 0], loopIndex: 3, releaseIndex: 4 }),
+    { held: [9, 11, 13, 15], loop: 3, released: [8, 0] });
+  assert.deepEqual(macroFrames({ type: 'steps', steps: [11, null, 10], loopIndex: null, releaseIndex: null }),
+    { held: [11, null, 10], loop: null, released: [] });
+  const f = macroFrames({ type: 'stages', stages: [
+    { curve: 'linear', frames: 3, from: 0, to: 10, loop: false }, { curve: 'linear', frames: 1, from: 10, to: 10, loop: true },
+    { waitKeyOff: true }, { curve: 'linear', frames: 2, from: 10, to: 0, loop: false }] });
+  assert.deepEqual(f, { held: [0, 5, 10, 10], loop: 3, released: [10, 0] });
+});
+check('a role moves the wave and the level under one note', () => {
+  const path = 'presets/wavetable/set.mmlisp';
+  const imports = new Map([[path, readFileSync(new URL('../../' + path, import.meta.url), 'utf8')]]);
+  const { ir } = compileMMLisp(`(def-score :target pce)\n(import "${path}")\n(wave1 wave-piano :len 2 c)`, 'a.mmlisp', { imports });
+  const writes = new IRPlayer(() => {}).loadJSON(ir).captureRegisterLog({}).writes;
+  const at = (addr) => writes.filter((w) => w.addr === addr);
+  assert.ok(new Set(at(4).map((w) => w.data)).size > 4, 'the level moves');
+  assert.ok(at(6).length >= 32 * 3, 'three waves are written');
+});
+
+// A name is what the channel plays: a voice, a wave and a sample can share it.
+const STEPS = `[${Array.from({ length: 32 }, (_, i) => i * 8 - 128).join(' ')}]`;
+const wrote = (r, head, target) => r.ir.tracks.find((t) => t.channel === head).events.some((e) => e.cmd === 'PARAM_SET' && e.args.target === target);
+check('a voice and a wave share a name, the channel telling them apart', () => {
+  const r = compileMMLisp(`(def-score :target msx)\n(def-fm piano :tl1 3)\n(def-wave piano :wave ${STEPS})\n(fm1 piano c)\n(wave1 piano c)`);
+  assert.deepEqual(r.diagnostics.filter((d) => d.severity !== 'info'), []);
+  assert.ok(wrote(r, 'fm1', 'FM_TL1') && !wrote(r, 'fm1', 'WAVE'));
+  assert.ok(wrote(r, 'wave1', 'WAVE') && !wrote(r, 'wave1', 'FM_TL1'));
+});
+check('a wave does not hide a ROM voice, imported or not', () => {
+  const imports = new Map([['w.mmlisp', `(def-wave piano :wave ${STEPS})`]]);
+  for (const src of ['(import "w.mmlisp")', `(def-wave piano :wave ${STEPS})`]) {
+    const r = compileMMLisp(`(def-score :target msx)\n${src}\n(fm1 piano c)\n(wave1 piano c)`, 'a.mmlisp', { imports });
+    assert.ok(wrote(r, 'fm1', 'FM_AR1') && wrote(r, 'wave1', 'WAVE'), src);
+  }
+});
+check('a wave on a channel with none is still left out', () => {
+  const r = compileMMLisp(`(def-score :target msx)\n(def-wave saw2 :wave ${STEPS})\n(fm1 saw2 c)`);
+  assert.match(r.diagnostics.find((d) => d.code === 'W_TARGET').message, /is a wave/);
+});
+check('waves and voices keep to themselves across imports', () => {
+  const imports = new Map([['v.mmlisp', '(def-fm piano :tl1 3)'], ['w.mmlisp', `(def-wave piano :wave ${STEPS})`], ['x.mmlisp', `(def-wave piano :wave ${STEPS.replace('-128', '-127')})`]]);
+  const both = compileMMLisp('(def-score :target msx)\n(import "v.mmlisp")\n(import "w.mmlisp")\n(fm1 piano c)\n(wave1 piano c)', 'a.mmlisp', { imports });
+  assert.deepEqual(both.diagnostics.filter((d) => d.severity === 'error'), []);
+  const over = compileMMLisp('(def-score :target msx)\n(import "v.mmlisp")\n(import "w.mmlisp")\n(import "x.mmlisp" :over)\n(fm1 piano c)\n(wave1 piano c)', 'a.mmlisp', { imports });
+  assert.deepEqual(over.diagnostics.filter((d) => d.severity === 'error'), []);
+  assert.ok(wrote(over, 'fm1', 'FM_TL1'));
+  assert.equal(over.ir.metadata.waves[0].data[0], -127);
+  const clash = compileMMLisp('(def-score :target msx)\n(import "w.mmlisp")\n(import "x.mmlisp")\n(wave1 piano c)', 'a.mmlisp', { imports });
+  assert.ok(clash.diagnostics.some((d) => d.code === 'E_IMPORT_CONFLICT'));
 });
 
 // A machine's warnings are about what plays.

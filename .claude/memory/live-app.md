@@ -14,8 +14,9 @@ lessons.
   scrub). No full paredit (editing here is step-vector churn). No rainbow
   parens (accent only on call heads and `:params`). No touch symbol bar
   (unstable on the user's iPad; not without a way to test there).
-- **Library and keys:** the keys never play a macro (user: not now, not
-  later). No ⌘⇧K (CodeMirror's delete-line, Firefox's console). No Tools >
+- **Library and keys:** the keys play no macro (user: not now, not later),
+  but for a wave's role macro (2026-11-03): held still, a wave is not its
+  sound. No ⌘⇧K (CodeMirror's delete-line, Firefox's console). No Tools >
   Snippets (user: "the most half-done thing"). No Library state kept across
   launches (it confused the user).
 - **Piano roll:** two colours only, no per-channel colours; no bars or bar
