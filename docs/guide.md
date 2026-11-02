@@ -2058,6 +2058,10 @@ them: a key-on starts a note, a key-off ends it.
   there and plays it as `#rel` — unless its pitch still moves there: a
   macro's loop ends at the key-off, so such a note stays keyed to its end. A
   note cut short names the shape it is the start of.
+- A YM2203 set to another prescaler ($2D–$2F, as 1943 sets its pair) sounds at
+  the pitch that gives.
+- A note held over the loop point ties into it when the song's end holds that
+  pitch too, as the file plays it; otherwise it starts over there.
 - Time is kept, not read as beats: the score runs at 150 BPM, a tick
   1/240 s (a frame four ticks), and each note sits where the driver wrote
   it and lasts as long as it sounded — a rest after it where it was keyed
@@ -2090,15 +2094,20 @@ them: a key-on starts a note, a key-off ends it.
 - An arcade, X68000 or PC-8801 chip's PCM comes in too: **SegaPCM** (System
   16, X, OutRun), the **YM2610's ADPCM-A and ADPCM-B** (Neo Geo, Taito), the
   **OKIM6295** (CPS1 and many others, whose four voices fit PCM8 beside a
-  YM2151 on `:target x68k`), the **X68000's OKIM6258** and the **YM2608's ADPCM-B** (its RAM image, data
+  YM2151 on `:target x68k`), the **K053260** (Konami) and the **C140** (Namco
+  System 2, its 24 voices fitted to PCM8's 8), the **X68000's OKIM6258** and the **YM2608's ADPCM-B** (its RAM image, data
   block 0x81, or the bytes a driver loads through the chip). Each of its
   channels is a row (`pcm1–3` or drop);
   the sample data the file carries is decoded into one wav,
-  `<song>-pcm.wav`, sliced by `(def-pcm sega-NN …)`, `pcma-NN`, `pcmb-NN`
-  or `oki-NN` defs — one gain for the song brings its loudest sample to full
+  `<song>-pcm.wav`, sliced by `(def-pcm sega-NN …)`, `pcma-NN`, `pcmb-NN`,
+  `oki-NN`, `k053-NN` or `c140-NN` defs — one gain for the song brings its loudest sample to full
   scale, though the X68000's samples still come in a little quiet (a `:fx`
-  `comp` on its defs raises them) — and each hit's level becomes `:vel` (the
-  loudest hit 15).
+  `comp` on its defs raises them), and on PCM8, beside a YM2151, at the chip's own level against the FM, far
+  enough below full scale that what sounds at once does not clip — and each
+  hit's level becomes `:vel` (the loudest hit 15). A hit stopped before its
+  sample's end is a `:mode gate` note, a level a driver moves under a hit a
+  `(def pcm-fade-NN …)`, and one sound doubled across voices (a stereo pair) is
+  one note.
   **PCM voices** picks how many of pcm1–3 the score uses — the rate the
   driver plays them at — and starts at the most that ring at once, three at
   most. With as many voices as channels, a channel is a track; with fewer,
@@ -2112,10 +2121,10 @@ them: a key-on starts a note, a key-off ends it.
   driver writes just after the key-on (level, pan, Δ-N) counts as the
   hit's; a level moved while it sounds is not followed. The YM2608's rhythm
   on md then takes the next voice.
-- QSound and the other PCM chips, and an OKIM6295's NMK112 banks, are not
-  imported — the log
-  names each VGM command it skipped — and neither is a second chip, which the
-  log reports. (A tempo change within the song needs nothing: the notes
+- QSound and the other PCM chips, a C219 (the C140's later ASIC) and an
+  OKIM6295's NMK112 banks are not imported — the log
+  names each VGM command it skipped — and neither is a second chip, a second
+  YM2203 aside, whose channels are read as more of the first's; the log reports them. (A tempo change within the song needs nothing: the notes
   keep their times.)
 
 **NSF (Famicom).** An NSF (`.nsf`, NSF2, `.nsfe`) is a song's own code —

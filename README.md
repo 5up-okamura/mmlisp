@@ -160,6 +160,7 @@ for a controller's knobs.
   score, an NES one as an `fc` score with its DPCM samples, its VRC6 and
   FDS channels), VGM (with its
   PCM: the YM2612 DAC, SegaPCM, YM2610 ADPCM, the OKIM6258 and OKIM6295,
+  the K053260, the C140,
   the 2A03's DMC;
   a YM2151's, a YM2608's, an AY-3-8910's, an SCC's, a HuC6280's or a
   2A03's as its own machine's score, the SSG's hardware envelope included;

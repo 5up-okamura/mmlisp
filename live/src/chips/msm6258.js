@@ -13,6 +13,9 @@ import { applySampleEffects } from "../sample-fx.js";
 export const MSM6258_CLOCK = 7812 * 1024;
 export const PCM8_RATE = MSM6258_CLOCK / 512; // the mix, one chip sample each
 export const PCM8_VOICES = 8;
+// PCM8 at volume 8 on a full-scale sample against the YM2151's carrier at TL 0,
+// on the real machine (synth-x68k.js): 26886 to 3660.
+export const PCM8_OVER_CARRIER = 26886 / 3660;
 
 export const pcm8 = {
   name: "pcm8",

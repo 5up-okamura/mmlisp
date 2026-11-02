@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
-import { parseVgm, analyzeVgm, decodeOki, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
+import { parseVgm, analyzeVgm, decodeOki, decodeK053260, decodeC140, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
 import { assignBends } from "../../live/src/import-song.js";
 import { readImportSources, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
@@ -550,6 +550,284 @@ assert.ok(!/#rel/.test(await ssgVibrato({ frames: 72, gap: 8,
   assert.equal(new Set(names).size, names.length, `each its own name: ${names}`);
 }
 
+// Sample chips of VGMs written here, each beside a YM2151 note: a header's
+// clock fields set, a ROM block, then what `play` writes.
+const u32le = (v) => [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, v >>> 24];
+const vgmBytes = (out, samples, fields) => {
+  const head = new Uint8Array(0x100);
+  const dv = new DataView(head.buffer);
+  head.set([0x56, 0x67, 0x6d, 0x20]);
+  dv.setUint32(0x04, 0x100 + out.length - 4, true);
+  dv.setUint32(0x08, 0x161, true);
+  dv.setUint32(0x18, samples, true);
+  dv.setUint32(0x34, 0x100 - 0x34, true);
+  for (const [at, v] of fields) dv.setUint32(at, v, true);
+  return new Uint8Array([...head, ...out]);
+};
+const arcadeVgm = (fields, type, rom, play) => {
+  const out = [0x67, 0x66, type, ...u32le(rom.length + 8), ...u32le(rom.length), ...u32le(0), ...rom];
+  for (const [a, d] of [[0x20, 0xc7], [0x60, 0], [0x28, 0x4a], [0x08, 0x08]]) out.push(0x54, a, d);
+  play(out);
+  for (let i = 0; i < 8; i++) out.push(0x61, 0x20, 0x4e);
+  out.push(0x66);
+  return parseVgm(vgmBytes(out, 163350, [[0x30, 3579545], ...fields]));
+};
+{
+  // K053260: voice 1 PCM, voice 2 KADPCM at half level.
+  const rom = new Uint8Array(0x200).fill(0x10);
+  const parsed = await arcadeVgm([[0xac, 3579545]], 0x8e, rom, (out) => {
+    const k = (a, d) => out.push(0xba, a, d);
+    for (const [a, d] of [[0x08, 0x00], [0x09, 0x00], [0x0a, 0xff], [0x0b, 0], [0x0c, 0x10], [0x0d, 0], [0x0e, 0], [0x0f, 0x7f],
+      [0x10, 0x00], [0x11, 0x0f], [0x12, 0x7f], [0x13, 0], [0x14, 0x00], [0x15, 1], [0x16, 0], [0x17, 0x3f], [0x2a, 0x20], [0x2c, 0x24]]) k(a, d);
+    k(0x28, 0x03);
+    out.push(0x61, 0x10, 0x27);
+    k(0x28, 0x02);
+  });
+  {
+    // Pan 0 is silent, a reversed voice is reported, and neither makes a hit.
+    const quiet = await arcadeVgm([[0xac, 3579545]], 0x8e, rom, (out) => {
+      for (const [a, d] of [[0x0a, 0x10], [0x0f, 0x7f], [0x17, 0x7f], [0x12, 0x10], [0x2c, 0x20], [0x28, 0x01]]) out.push(0xba, a, d);
+      for (const [a, d] of [[0x28, 0], [0x2c, 0x24], [0x28, 0x11]]) out.push(0xba, a, d);
+    });
+    assert.equal(quiet.pcmHits.length, 0);
+    assert.ok([...quiet.skipped.keys()].some((k) => /reversed/.test(k)));
+  }
+  const hits = parsed.pcmHits.filter((h) => h.src === "K053260");
+  assert.deepEqual(hits.map((h) => [h.ch, h.start, h.end, h.kadpcm]), [[0, 0x11, 0x110, false], [1, 0x101, 0x180, true]], "the byte after its start");
+  assert.ok(Math.abs(hits[0].rate - 3579545 / 4096) < 1e-6, "4096 - pitch clocks a step");
+  assert.equal(hits[0].endT, 10000, "a key off");
+  assert.ok(Math.abs(hits[1].db + 6.02) < 0.1);
+  assert.equal(analyzeVgm(parsed).target, "x68k");
+  assert.match(imported(parsed, "x68k").source, /\(def-pcm k053-01 /);
+  assert.deepEqual([...decodeK053260(new Uint8Array([0x7f, 0x80]), 0, 2, false)], [127 / 128, -1]);
+  assert.deepEqual([...decodeK053260(new Uint8Array([0x32]), 0, 1, true)].map((v) => v * 128), [2, 6], "low nibble first");
+}
+{
+  // C140: System 2's banks, an old log's clock, mu-law on a second voice.
+  const rom = new Uint8Array(0x20000).fill(0x20);
+  const parsed = await arcadeVgm([[0xa8, 21390]], 0x8d, rom, (out) => {
+    const c = (a, d) => out.push(0xd4, a >> 8, a & 255, d);
+    for (const [a, d] of [[0, 0xff], [1, 0xff], [2, 0x80], [3, 0], [4, 1], [6, 0x01], [7, 0], [8, 0x02], [9, 0], [5, 0x80]]) c(a, d);
+    for (const [a, d] of [[0x10, 0x40], [0x11, 0x40], [0x12, 0x40], [0x13, 0], [0x14, 0], [0x16, 0x10], [0x17, 0], [0x18, 0x11], [0x19, 0], [0x1a, 0x10], [0x1b, 0x80], [0x15, 0x98]]) c(a, d);
+    out.push(0x61, 0x10, 0x27);
+    c(5, 0);
+  });
+  const hits = parsed.pcmHits.filter((h) => h.src === "C140");
+  assert.deepEqual(hits.map((h) => [h.ch, h.start, h.end, h.mulaw, h.loopStart]),
+    [[0, 0x10100, 0x10200, false, null], [1, 0x1000, 0x1100, true, 0x1080]]);
+  assert.ok(Math.abs(hits[0].rate - (0x8000 * 12288000) / 288 / 65536) < 1e-6, "21390 is 12.288 MHz");
+  assert.equal(analyzeVgm(parsed).target, "x68k");
+  assert.match(imported(parsed, "x68k").source, /\(def-pcm c140-01 /);
+  assert.deepEqual([...decodeC140(new Uint8Array([0x7f, 0x80]), 0, 2, false)], [127 / 128, -1]);
+  assert.equal(decodeC140(new Uint8Array([0x13]), 0, 1, true)[0], ((0x80 << 3) + (2 << 6)) / 32768, "its log");
+}
+// Voices mixed into PCM8's one stream leave room for what they sum to: four
+// full hits at once come in at a quarter each.
+{
+  const rom = new Uint8Array(0x400);
+  rom.set([0, 1, 0, 0, 3, 0xff], 8);
+  rom.fill(0x77, 0x100); // a climb, to the rail
+  const parsed = await arcadeVgm([[0x98, (1000000 + 0x80000000) >>> 0]], 0x8b, rom, (out) => {
+    for (const d of [0x10, 0x20, 0x40, 0x80]) out.push(0xb8, 0, 0x81, 0xb8, 0, d, 0x62); // a frame apart: four sounds
+  });
+  const a = analyzeVgm(parsed);
+  const { pcm } = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, "x68k"), structure: true, fileName: "t.vgm" }, a);
+  const peak = pcm.mono.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+  assert.ok(peak < 0.3, `a mix's headroom: ${peak}`);
+}
+
+// C140 beside a YM2151: a full hit at the chip's own balance, not PCM8's full
+// scale; a hit stopped early is cut there; a stereo pair is one voice's.
+{
+  const rom = new Uint8Array(0x20000);
+  for (let i = 0x100; i < 0x200; i++) rom[i] = i & 1 ? 0x7f : 0x80;
+  const parsed = await arcadeVgm([[0xa8, 21390]], 0x8d, rom, (out) => {
+    const c = (a, d) => out.push(0xd4, a >> 8, a & 255, d);
+    for (const v of [0, 1]) {
+      const r = v << 4;
+      for (const [a, d] of [[0, 0xff], [1, 0xff], [2, 0x01], [3, 0], [4, 0], [6, 0x01], [7, 0], [8, 0x02], [9, 0]]) c(r + a, d);
+    }
+    c(0x05, 0x80);
+    c(0x15, 0x80);
+    out.push(0x61, 0x10, 0x27);
+    c(0x05, 0);
+    c(0x15, 0);
+    out.push(0x61, 0x10, 0x27, 0x61, 0x10, 0x27);
+    c(0x05, 0x80);
+  });
+  const a = analyzeVgm(parsed);
+  const { source, pcm } = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, "x68k"), structure: true, fileName: "t.vgm" }, a);
+  const peak = pcm.mono.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+  assert.ok(Math.abs(peak - 1 / (26886 / 3660)) < 0.01, `the chip's balance: ${peak}`);
+  assert.match(source, /:mode gate/, "stopped short");
+  assert.ok(!/\(pcm2\b/.test(source), "the pair is one voice");
+}
+
+// A YM2203 beside an OKIM6295's voices: the PC-8801 has one for them, so the
+// Mega Drive, where they all sound. Chosen, the PC-8801's plays them at the
+// song's own levels, not its register's.
+{
+  const rom = new Uint8Array(0x1000);
+  rom.set([0, 1, 0, 0, 2, 0], 8);
+  rom.set([0, 3, 0, 0, 4, 0], 16);
+  rom.fill(0x71, 0x100);
+  const out = [0x67, 0x66, 0x8b, ...u32le(rom.length + 8), ...u32le(rom.length), ...u32le(0), ...rom];
+  for (const [a, d] of [[0x28, 0xf0], [0xa4, 0x20], [0xa0, 0x80], [0x4c, 0], [0xb0, 7]]) out.push(0x55, a, d);
+  out.push(0xb8, 0, 0x81, 0xb8, 0, 0x14, 0xb8, 0, 0x82, 0xb8, 0, 0x24);
+  for (let i = 0; i < 8; i++) out.push(0x61, 0x20, 0x4e);
+  out.push(0x66);
+  const bytes = vgmBytes(out, 160000, [[0x44, 3993600], [0x98, 1000000]]);
+  const parsed = await parseVgm(bytes);
+  assert.equal(analyzeVgm(parsed).target, "md", "two voices at once");
+  {
+    const a = analyzeVgm(parsed);
+    const { pcm } = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, "pc88"), structure: true, fileName: "t.vgm" }, a);
+    assert.ok(pcm.mono.reduce((m, v) => Math.max(m, Math.abs(v)), 0) > 0.99, "one voice: nothing to sum");
+  }
+  const { source } = imported(parsed, "pc88");
+  assert.ok(!/:vol /.test(source), "no register level on another chip's hits");
+}
+
+// A note over the loop point, the song's end on its pitch: one note both ways in.
+{
+  const out = [];
+  const opm = (a, d) => out.push(0x54, a, d);
+  const frames = (n) => { for (let i = 0; i < n; i++) out.push(0x62); };
+  opm(0x20, 0xc7); opm(0x60, 0); opm(0x28, 0x4a); opm(0x08, 0x08);
+  frames(120);
+  const loopAt = 0x100 + out.length;
+  frames(120);
+  opm(0x08, 0x00); opm(0x28, 0x4c); opm(0x08, 0x08);
+  frames(120);
+  opm(0x08, 0x00); opm(0x28, 0x4a); opm(0x08, 0x08);
+  frames(120);
+  out.push(0x66);
+  const bytes = vgmBytes(out, 480 * 735, [[0x1c, loopAt - 0x1c], [0x20, 360 * 735], [0x30, 3579545]]);
+  const { source } = imported(await parseVgm(bytes), "x68k");
+  assert.match(source, /#top[^|]*~/, `tied over the loop point: ${source}`);
+}
+
+// Two YM2203s: the second's channels are its own.
+{
+  const out = [];
+  for (const c of [0x55, 0xa5])
+    for (const [a, d] of [[0x28, 0xf0], [0xa4, 0x20], [0xa0, 0x80], [0x4c, 0], [0xb0, 7]]) out.push(c, a, d);
+  for (let i = 0; i < 8; i++) out.push(0x61, 0x20, 0x4e);
+  out.push(0x66);
+  const bytes = vgmBytes(out, 160000, [[0x44, (3993600 + 0x40000000) >>> 0]]);
+  const parsed = await parseVgm(bytes);
+  assert.deepEqual(analyzeVgm(parsed).channels.map((c) => c.key).sort(), ["YM2203 FM1", "YM2203B FM1"]);
+  assert.equal(parsed.skipped.size, 0);
+  assert.match(imported(parsed, "pc88").source, /\(fm2\b/);
+}
+
+// Fades on samples that change, in the song's order. A level written after a
+// hit ended is the next one's; a song converted twice comes out the same; alone,
+// with no YM2151 to balance against, it reaches full scale.
+{
+  const rom = new Uint8Array(0x20000);
+  for (let i = 0x100; i < 0x1000; i++) rom[i] = i & 1 ? 0x7f : 0x80;
+  const parsed = await arcadeVgm([[0xa8, 21390]], 0x8d, rom, (out) => {
+    const c = (a, d) => out.push(0xd4, a >> 8, a & 255, d);
+    const hit = (hi, lo, last) => {
+      for (const [a, d] of [[0, lo], [1, lo], [2, 0x01], [3, 0], [4, 0], [6, hi], [7, 0], [8, last], [9, 0], [5, 0x80]]) c(a, d);
+      out.push(0x61, 0x10, 0x27);
+      c(0, lo >> 2); c(1, lo >> 2);
+      out.push(0x61, 0x10, 0x27);
+      c(5, 0);
+      out.push(0x61, 0x10, 0x27);
+    };
+    hit(0x01, 0xff, 0x08);
+    hit(0x08, 0xff, 0x0f);
+    hit(0x01, 0xff, 0x08);
+    hit(0x08, 0xff, 0x0f);
+  });
+  const { source } = imported(parsed, "x68k");
+  const { ir } = compileMMLisp(source, "t.mmlisp", { imports: new Map() });
+  const played = ir.tracks.find((t) => t.channel === "pcm1").events.filter((e) => e.cmd === "PCM_NOTE_ON").map((e) => e.args.sample);
+  assert.deepEqual(played, ["c140-01", "c140-02", "c140-01", "c140-02"], "a fade does not hide a sample");
+  assert.equal(imported(parsed, "x68k").source, source, "the same again");
+}
+{
+  const rom = new Uint8Array(0x20000);
+  for (let i = 0x100; i < 0x200; i++) rom[i] = i & 1 ? 0x7f : 0x80;
+  const parsed = await arcadeVgm([[0xa8, 21390]], 0x8d, rom, (out) => {
+    const c = (a, d) => out.push(0xd4, a >> 8, a & 255, d);
+    for (const [a, d] of [[0, 0x20], [1, 0x20], [2, 0x80], [3, 0], [4, 0], [6, 0x01], [7, 0], [8, 0x02], [9, 0], [5, 0x80]]) c(a, d);
+    out.push(0x61, 0x10, 0x27);
+    c(0, 0xff); c(1, 0xff); // it played out: the next hit's level
+    out.push(0x61, 0x10, 0x27);
+    c(5, 0x80);
+  });
+  const hit = parsed.pcmHits.find((h) => h.src === "C140");
+  assert.ok(!hit.levels?.length, "no level after its end");
+}
+{
+  const rom = new Uint8Array(0x20000);
+  for (let i = 0x100; i < 0x200; i++) rom[i] = i & 1 ? 0x7f : 0x80;
+  const parsed = await arcadeVgm([[0xa8, 21390]], 0x8d, rom, (out) => {
+    const c = (a, d) => out.push(0xd4, a >> 8, a & 255, d);
+    for (const [a, d] of [[0, 0xff], [1, 0xff], [2, 0x80], [3, 0], [4, 0], [6, 0x01], [7, 0], [8, 0x02], [9, 0], [5, 0x80]]) c(a, d);
+  });
+  const a = analyzeVgm(parsed);
+  const dest = { ...defaultVgmOptions(a, "x68k").dest };
+  for (const k of Object.keys(dest)) if (/^YM2151/.test(k)) dest[k] = "drop";
+  const { pcm } = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, "x68k"), dest, structure: true, fileName: "t.vgm" }, a);
+  assert.ok(pcm.mono.reduce((m, v) => Math.max(m, Math.abs(v)), 0) > 0.99, "no carrier to balance against");
+}
+
+// A sound stopped short lasts as long as it rang, over the bars it crosses.
+{
+  const rom = new Uint8Array(0x20000);
+  for (let i = 0x100; i < 0xff00; i++) rom[i] = i & 1 ? 0x70 : 0x90;
+  const parsed = await arcadeVgm([[0xa8, 21390]], 0x8d, rom, (out) => {
+    const c = (a, d) => out.push(0xd4, a >> 8, a & 255, d);
+    for (const [a, d] of [[0, 0xff], [1, 0xff], [2, 0x08], [3, 0], [4, 0], [6, 0x01], [7, 0], [8, 0xf0], [9, 0], [5, 0x80]]) c(a, d);
+    for (let i = 0; i < 4; i++) out.push(0x61, 0x20, 0x4e); // 1.8 s
+    c(5, 0);
+  });
+  const { source } = imported(parsed, "x68k");
+  const { ir } = compileMMLisp(source, "t.mmlisp", { imports: new Map() });
+  const ev = ir.tracks.find((t) => t.channel === "pcm1").events;
+  const on = ev.find((e) => e.cmd === "PCM_NOTE_ON"), off = ev.find((e) => e.cmd === "PCM_NOTE_OFF");
+  const heard = ((off.tick - on.tick) / 240);
+  assert.ok(Math.abs(heard - (4 * 0x4e20) / 44100) < 0.05, `its length: ${heard}s`);
+}
+
+// A YM2203 set to its 1/3 prescaler sounds an octave up, its SSG too.
+const unset = [];
+for (const [pres, octave] of [[[], 0], [[0x2d, 0x2e], 12]]) {
+  const out = [];
+  for (const a of pres) out.push(0x55, a, 0);
+  for (const [a, d] of [[0x07, 0x3e], [0x00, 0], [0x01, 1], [0x08, 12], [0xa4, 0x20], [0xa0, 0x80], [0x4c, 0], [0xb0, 7], [0x28, 0xf0]]) out.push(0x55, a, d);
+  for (let i = 0; i < 8; i++) out.push(0x61, 0x20, 0x4e);
+  out.push(0x66);
+  const bytes = vgmBytes(out, 160000, [[0x44, 1500000]]);
+  const parsed = await parseVgm(bytes);
+  const pitches = ["YM2203 FM1", "YM2203 SSGA"].map((k) => parsed.events.get(k).find((e) => e.kind === "on").pitch);
+  if (!octave) unset.push(...pitches);
+  else for (const i of [0, 1]) assert.ok(Math.abs(pitches[i] - unset[i] - octave) < 0.01, "an octave up");
+}
+
+// A driver keys a voice first and sets its level after, and fades it by hand.
+{
+  const rom = new Uint8Array(0x20000);
+  for (let i = 0x100; i < 0x8000; i++) rom[i] = i & 1 ? 0x70 : 0x90;
+  const parsed = await arcadeVgm([[0xa8, 21390]], 0x8d, rom, (out) => {
+    const c = (a, d) => out.push(0xd4, a >> 8, a & 255, d);
+    for (const [a, d] of [[2, 0x10], [3, 0], [4, 0], [6, 0x01], [7, 0], [8, 0x70], [9, 0], [5, 0x80]]) c(a, d);
+    c(0, 0xff); c(1, 0xff); // its level, a moment after its key
+    out.push(0x61, 0x10, 0x27);
+    for (const v of [0x80, 0x40, 0x20, 0x10]) { c(0, v); c(1, v); out.push(0x61, 0x10, 0x27); }
+    c(5, 0);
+  });
+  const hit = parsed.pcmHits.find((h) => h.src === "C140");
+  assert.equal(hit.db, 0, "its level, not the silence it was keyed at");
+  const { source } = imported(parsed, "x68k");
+  assert.match(source, /\(def pcm-fade-01 \(macro :vel\+ \[0 .*-\d/, `the fade: ${source.slice(0, 300)}`);
+  assert.match(source, /\(pcm1[\s\S]*pcm-fade-01/);
+}
+
 // An SCC+ (bit 31 of the header's clock): its waves on port 4, a fifth of its own.
 {
   const out = [];
@@ -561,15 +839,8 @@ assert.ok(!/#rel/.test(await ssgVibrato({ frames: 72, gap: 8,
   scc(3, 0, 0);
   for (let i = 0; i < 12; i++) out.push(0x62);
   out.push(0x66);
-  const head = new Uint8Array(0x100);
-  const dv = new DataView(head.buffer);
-  head.set([0x56, 0x67, 0x6d, 0x20]);
-  dv.setUint32(0x04, 0x100 + out.length - 4, true);
-  dv.setUint32(0x08, 0x161, true);
-  dv.setUint32(0x18, 72 * 735, true);
-  dv.setUint32(0x34, 0x100 - 0x34, true);
-  dv.setUint32(0x9c, (1789773 + 0x80000000) >>> 0, true);
-  const { source } = imported(await parseVgm(new Uint8Array([...head, ...out])), "msx");
+  const bytes = vgmBytes(out, 72 * 735, [[0x9c, (1789773 + 0x80000000) >>> 0]]);
+  const { source } = imported(await parseVgm(bytes), "msx");
   assert.match(source, /\(def-wave [\w-]+ :wave \[0 4 8 /, "channel 1's wave, from port 4");
   assert.match(source, /\(def-wave [\w-]+ :wave \[124 120 /, "channel 5's own");
 }

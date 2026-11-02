@@ -68,6 +68,10 @@ export const PCM_DESTS = MD.pcm;
 /** A track of shots — PCM, the ROM rhythm — whose hits play out whatever their length. */
 const shots = (channel) => /^(pcm|rhythm)/.test(channel);
 
+// A note over the loop point ties into it only when the song's end holds that
+// pitch too: `(go top)` arrives from there, so both ways in carry the one note.
+const heldOverLoop = (notes, n, endTick) => notes.some((m) => m.tick + m.len >= endTick && m.midi === n.midi);
+
 /** The first of the sorted `list` above `x` (`list.find((v) => v > x)`). */
 function firstAbove(list, x) {
   let lo = 0, hi = list.length;
@@ -117,10 +121,11 @@ function writeBody(notes, opts) {
   const sortedBounds = [...bounds].filter((b) => b > 0 && b <= endTick).sort((a, b) => a - b);
   // A PCM or ROM rhythm track's notes are shots, which play out whatever
   // their length, so a note there ends at the next bound rather than tie
-  // across it.
+  // across it. One a key holds (`held`: a loop, a sound stopped short) ties on,
+  // to the loop point, where it would strike again.
   if (opts.noTie) {
     notes = notes.map((n) => {
-      const b = firstAbove(sortedBounds, n.tick) ?? endTick;
+      const b = n.held ? (loopTick > n.tick ? loopTick : endTick) : firstAbove(sortedBounds, n.tick) ?? endTick;
       return n.tick + n.len > b ? { ...n, len: b - n.tick } : n;
     });
   }
@@ -155,7 +160,7 @@ function writeBody(notes, opts) {
     while (bi < sortedBounds.length && sortedBounds[bi] <= t) bi++;
     const b = bi < sortedBounds.length ? sortedBounds[bi] : endTick;
     const cont = held && held.tick + held.len > t;
-    const tie = cont && loopTick !== t;
+    const tie = cont && (loopTick !== t || heldOverLoop(notes, held, endTick));
     if (tie) line.push("~");
     if (loopTick === t) {
       // `(go top)` arrives with the end's state: restate what the loop's
@@ -541,7 +546,7 @@ const MAX_BLOCK = 16; // units in one repeated block or phrase
 const switchKind = (t) => t.startsWith(":") ? t.split(" ")[0].replace(/^:gate[*-]$/, ":gate")
   : t.startsWith("(glide") ? "glide"
   : t.startsWith("(macro") ? `macro${t.match(/^\(macro\s+(:[a-z-]+|none)/)?.[1] ?? ""}`
-    : /^(env|trem)-/.test(t) ? "macro:vel" : /^vol-/.test(t) ? "macro:vol"
+    : /^(env|trem|pcm-fade)-/.test(t) ? "macro:vel" : /^vol-/.test(t) ? "macro:vol"
       : /^(vib|bend)-/.test(t) ? "macro:pitch" : "name";
 
 // The switches a note needs written, given those in force: by kind — a
@@ -593,11 +598,12 @@ function unitsOf(tr, bars, endTick, loopTick, intern = new Map()) {
       const s = Math.max(n.tick, a);
       const e = Math.min(n.tick + n.len, b);
       if (e <= s) continue;
-      // No ties on shots (writeBody noTie): a tail over the cut is let go —
+      // No ties on shots (writeBody noTie): a tail over the cut is let go, a
+      // shot playing out by itself; what a key holds (`held`) ties on —
       // into the loop it would strike again.
-      if (n.tick < a && shots(tr.channel)) continue;
+      if (n.tick < a && shots(tr.channel) && (!n.held || a === loopTick)) continue;
       // Carried over the cut: tied on — except into the loop, which starts over.
-      const tieIn = n.tick < a ? a !== loopTick : !!n.tieIn && (n.tick > a || a !== loopTick);
+      const tieIn = n.tick < a ? a !== loopTick || heldOverLoop(notes, n, endTick) : !!n.tieIn && (n.tick > a || a !== loopTick);
       // (A note's `again` is its start's: not a tail's carried over the cut.)
       pieces.push({ tick: s - a, len: e - s, midi: n.midi, vel: n.vel, st: n.st, tieIn, ...(n.tick >= a && n.again ? { again: n.again } : {}) });
     }

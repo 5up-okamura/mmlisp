@@ -18,7 +18,7 @@
 import createYm2151Module from "../ymfm-ym2151.js";
 import { ym2151, opmHoldBus } from "./chips/ym2151.js";
 import { opmPitch } from "./scope-pitch.js";
-import { PCM8_RATE, PCM8_VOICES, Pcm8Mixer, OkiEncoder, OkiDecoder, okiOut } from "./chips/msm6258.js";
+import { PCM8_OVER_CARRIER, PCM8_RATE, PCM8_VOICES, Pcm8Mixer, OkiEncoder, OkiDecoder, okiOut } from "./chips/msm6258.js";
 
 export const YM2151_NATIVE_SAMPLE_RATE = ym2151.clock / 64;
 
@@ -29,7 +29,7 @@ const MAX_RENDER = 4096; // the adapter's cap on one y5_render()
 // on a full-scale sample at 26886 (about −2 dBFS), 17 dB above it. ymfm's
 // carrier is ±8192, a quarter of full scale; the ADPCM comes in at ±1.
 const MASTER_OUTPUT_GAIN = 3660 / 8192;
-const PCM8_GAIN = 26886 / 3660 / 4;
+const PCM8_GAIN = PCM8_OVER_CARRIER / 4;
 
 const FM_LANES = 8;
 export const SCOPE_LANES = FM_LANES + PCM8_VOICES;
