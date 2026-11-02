@@ -1017,9 +1017,9 @@ export function emitStructured(song) {
 // ── Pitch shapes: vibrato and bends ───────────────────────────────────────
 // A note's pitch as cents from its own, a frame (1/60 s) each — what a VGM
 // driver or a MIDI file's pitch bend did to it — drawn as a `:pitch` macro.
-// Structure over exactness: a wobble is a vibrato, a sine whose depth (20
-// cents) and period (the frame pair) are rounded so notes share one def; any
-// other move is a few straight lines.
+// Structure over exactness: a wobble is a vibrato, a sine whose depth (10
+// cents) is rounded so notes share one def, its period, wait and phase read
+// from the note; any other move is a few straight lines.
 
 // A wobble: swings around a centre, at least three (a cycle and a half),
 // each a like length — after a wait that may hold the note still first.
@@ -1049,13 +1049,25 @@ function vibratoOf(c) {
     peaks.push(m);
   }
   const ps = [...peaks].sort((a, b) => a - b);
-  const depth = Math.max(20, Math.round(ps[ps.length >> 1] / 20) * 20);
-  // Before the wobble: held where the note starts.
-  const wait = Math.max(0, swings[0] - Math.round(half / 2));
-  if (c.slice(0, wait).some((v) => Math.abs(v - c[0]) > 15)) return null;
+  const depth = Math.max(20, Math.round(ps[ps.length >> 1] / 10) * 10);
   const mid = Math.round(centre / 10) * 10;
-  return { kind: "vib", centre: Math.abs(mid) <= 20 ? 0 : mid, depth, period: Math.max(2, 2 * half),
-    wait: Math.round(wait / 2) * 2 };
+  // The period over all the swings: one swing's length is off by a frame or
+  // two on a high note, where a period step is 20 cents, and the sine drifts.
+  // (A note that starts in a swing has only part of it.)
+  const first = swings[0] === 0 ? 1 : 0;
+  const period = Math.max(2, Math.round((2 * (swings[swings.length - 1] - swings[first])) / (swings.length - 1 - first)));
+  // Before the wobble: held where the note starts, to the frame before the
+  // first swing, where the sine starts from its centre the way that swing
+  // goes. A note that starts in a swing starts where in the sine it is:
+  // 64 is the centre rising, 192 falling.
+  if (first) {
+    const angle = Math.asin(Math.max(-1, Math.min(1, d[0] / depth)));
+    const rising = d[1] > d[0];
+    return { kind: "vib", centre: Math.abs(mid) <= 20 ? 0 : mid, depth, period, wait: 0,
+      phase: (Math.round(64 + (128 * (rising ? angle : Math.PI - angle)) / Math.PI) + 256) % 256 };
+  }
+  return { kind: "vib", centre: Math.abs(mid) <= 20 ? 0 : mid, depth, period,
+    wait: Math.max(0, swings[0] - 1), phase: d[swings[0]] > 0 ? 64 : 192 };
 }
 
 // A few straight lines through the pitch: the fewest (up to six) within
@@ -1109,7 +1121,7 @@ export function assignBends(notes) {
     if (v) {
       const spec = bendSpec(v);
       if (!vibs.has(spec)) {
-        const name = `vib-${v.depth}-${v.period}${v.wait ? `-w${v.wait}` : ""}${v.centre ? `${v.centre > 0 ? "+" : ""}${v.centre}` : ""}`;
+        const name = `vib-${v.depth}-${v.period}${v.wait ? `-w${v.wait}` : ""}${v.centre ? `${v.centre > 0 ? "+" : ""}${v.centre}` : ""}${v.phase === 64 ? "" : v.phase === 192 ? "-down" : `-p${v.phase}`}`;
         vibs.set(spec, name);
         defs.push(`(def ${name} (macro :pitch ${spec}))`);
       }
@@ -1167,7 +1179,7 @@ export function assignBends(notes) {
 /** A bend as a `:pitch` macro spec (what follows `(macro :pitch `). */
 function bendSpec(b) {
   if (b.kind === "vib")
-    return `(sin ${b.centre - b.depth}..${b.centre + b.depth} :len ${b.period}f${b.wait ? ` :wait ${b.wait}f` : ""})`;
+    return `(sin ${b.centre - b.depth}..${b.centre + b.depth} :len ${b.period}f${b.wait ? ` :wait ${b.wait}f` : ""}${b.phase ? ` :phase ${b.phase}` : ""})`;
   if (b.kind === "steps") return `[${b.values.join(" ")}]`;
   // Lines: a stage each; a level held is a wait. A curve plays both its
   // ends, so a line on from the one before starts a frame in (`at`: the

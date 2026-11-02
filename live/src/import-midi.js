@@ -509,7 +509,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
       if (later) { m = later[1]; wait = Math.round(((later[0] - s0) * 60) / 2) * 2; }
     }
     const depth = Math.round((m / 127) * 50 / 10) * 10;
-    if (depth > 0) note.vib = { kind: "vib", centre: 0, depth, period: 11, wait };
+    if (depth > 0) note.vib = { kind: "vib", centre: 0, depth, period: 11, wait, phase: 64 };
   };
   const laneNotes = [];
   let usedPsgEnv = false;

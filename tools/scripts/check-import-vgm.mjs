@@ -10,6 +10,7 @@ import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 import { parseVgm, analyzeVgm, decodeOki, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
+import { assignBends } from "../../live/src/import-song.js";
 import { readImportSources, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { targetProfile } from "../../live/src/targets.js";
@@ -476,6 +477,59 @@ const writesOf = (source, addr) => {
   // High nibble first, from 0: 7 at step 0 is +30; the OKIM6258's low nibble 0 is +2 from -2.
   assert.equal(decodeOki(new Uint8Array([0x70]), 0, 1, { high: true })[0], 30 / 2048);
   assert.equal(decodeOki(new Uint8Array([0x70]), 0, 1)[0], 0);
+}
+
+// A vibrato on the SSG, in a VGM written here: a strike, a level held, a slow
+// fall, and another note after a rest.
+const ssgVibrato = async ({ frames, gap, tp, vol }) => {
+  const out = [];
+  const ay = (r, d) => out.push(0xa0, r, d);
+  ay(7, 0x3e);
+  ay(1, 0);
+  let lastTp = -1, lastVol = -1; // as a driver writes them: what changed
+  for (let f = 0; f < frames; f++) {
+    if (tp(f) !== lastTp) ay(0, (lastTp = tp(f)));
+    if (vol(f) !== lastVol) ay(8, (lastVol = vol(f)));
+    out.push(0x62);
+  }
+  ay(8, 0);
+  for (let i = 0; i < gap; i++) out.push(0x62);
+  ay(0, 213);
+  ay(8, 13);
+  for (let i = 0; i < 48; i++) out.push(0x62);
+  ay(8, 0);
+  out.push(0x62, 0x66);
+  const head = new Uint8Array(0x100);
+  const dv = new DataView(head.buffer);
+  head.set([0x56, 0x67, 0x6d, 0x20]);
+  dv.setUint32(0x04, 0x100 + out.length - 4, true);
+  dv.setUint32(0x08, 0x161, true);
+  dv.setUint32(0x18, (frames + gap + 49) * 735, true);
+  dv.setUint32(0x34, 0x100 - 0x34, true);
+  dv.setUint32(0x74, 1789773, true);
+  return imported(await parseVgm(new Uint8Array([...head, ...out])), "msx").source;
+};
+const swing = [0, 1, 2, 1, 0, -1, -2, -1];
+// It sounds from its centre, the way the chip went.
+for (const [dir, phase] of [[-1, 64], [1, 192]]) {
+  const source = await ssgVibrato({ frames: 96, gap: 24,
+    tp: (f) => 240 + (f < 12 ? 0 : dir * 3 * swing[(f - 11) % 8]),
+    vol: (f) => (f < 1 ? 14 : f < 5 ? 13 : f < 23 ? 12 : f < 40 ? 11 : f < 57 ? 10 : f < 74 ? 9 : 8) });
+  assert.match(source, new RegExp(`\\(sin -\\d+\\.\\.\\d+ :len 8f :wait 1\\df :phase ${phase}\\)`), "the sine from its centre, its way");
+}
+// Its level falling after a held run reads as a release, but the note stays
+// keyed to its end: a macro's loop ends at a key-off.
+assert.ok(!/#rel/.test(await ssgVibrato({ frames: 72, gap: 8,
+  tp: (f) => 240 + (f < 12 ? 0 : -3 * swing[Math.floor(((f - 11) * 8) / 10) % 8]),
+  vol: (f) => (f < 1 ? 14 : f < 5 ? 13 : f < 23 ? 12 : Math.max(1, 11 - ((f - 23) >> 3))) })), "no release while it wobbles");
+
+// A note that starts in a swing, as a driver's free-running LFO leaves it,
+// starts where in the sine it is, and reads its period past that swing.
+for (const [start, phase] of [[1, 96], [2, 128], [5, 224], [6, null]]) {
+  const note = { bend: Array.from({ length: 40 }, (_, f) => Math.round(50 * Math.sin((2 * Math.PI * (f + start)) / 8))) };
+  const [def] = assignBends([note]);
+  assert.ok(def.includes(":len 8f"), `start ${start}: its period, ${def}`);
+  assert.ok(phase == null ? !def.includes(":phase") : def.includes(`:phase ${phase}`), `start ${start}: its place in the sine, ${def}`);
 }
 
 console.log("VGM import checks passed");

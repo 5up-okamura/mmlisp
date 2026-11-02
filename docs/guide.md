@@ -2004,7 +2004,8 @@ them: a key-on starts a note, a key-off ends it.
 - A pitch moved during a note is followed — untick it to keep only the
   struck pitch. A jump it then stays at is a new note, slurred (`~`); a
   wobble is a vibrato, a shared `(def vib-40-10 (macro :pitch (sin -40..40
-  :len 10f)))` (depth to 20 cents, period to the frame); any other move — a
+  :len 10f :phase 64)))` (depth to 10 cents, period to the frame, from its
+  centre the way the note went: `vib-…-down` the other way); any other move — a
   scoop, a fall — a few `linear` lines, a `(def bend-NN …)` once two notes
   share it (a note cut short shares a longer one's).
 - A level that moves during a note — the driver's envelope on the PSG, a
@@ -2012,8 +2013,9 @@ them: a key-on starts a note, a key-off ends it.
   (`(def env-01 (macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`), the note's
   `:vel` its loudest point. A level held four frames or more is the `#sus`,
   and on the PSG what follows it is the release, so the note is keyed off
-  there and plays it as `#rel`. A note cut short names the shape it is the
-  start of.
+  there and plays it as `#rel` — unless its pitch still moves there: a
+  macro's loop ends at the key-off, so such a note stays keyed to its end. A
+  note cut short names the shape it is the start of.
 - Time is kept, not read as beats: the score runs at 150 BPM, a tick
   1/240 s (a frame four ticks), and each note sits where the driver wrote
   it and lasts as long as it sounded — a rest after it where it was keyed

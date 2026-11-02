@@ -1780,8 +1780,8 @@ function channelNotes(parsed, key, followPitch) {
 // What a driver does to a note's pitch while it sounds, read back frame by
 // frame (cents from the struck pitch). Structure over exactness: a jump the
 // pitch then stays at (four frames or more) is a new note, slurred; a wobble
-// around a level is a vibrato — a sine, its depth to 20 cents, its period and
-// wait to the frame pair, so notes share one def; anything else is a few
+// around a level is a vibrato — a sine, its depth to 10 cents so notes share
+// one def, its period, wait and phase the note's; anything else is a few
 // straight lines. A note is the semitone it spends the most frames at. A
 // pitch moved in a note's last two frames (a driver resetting it as it lets
 // go) is not kept.
@@ -2574,11 +2574,17 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     for (const n of tr.notes) if (n.levelTie) { n.vel = n.levelTie.vel; n.env = null; }
   }
 
-  // A note slurred on into the next keeps its whole envelope; one a rest
-  // follows is heard to its end (`silentAfter`).
+  // A note slurred on into the next keeps its whole envelope, and so does one
+  // whose pitch still moves where its release would start: a macro's loop ends
+  // at the key-off, and a vibrato would stop on whatever it had reached. One a
+  // rest follows is heard to its end (`silentAfter`).
   for (const tr of tracks)
     tr.notes.forEach((n, i) => {
       if (tr.notes[i + 1]?.tieIn) n.canRelease = false;
+      if (n.canRelease && n.bend && n.env?.some((v) => v !== 0)) {
+        const after = n.bend.slice(shapeOf(n.env, true).relAt ?? n.bend.length);
+        if (after.length && Math.max(...after) - Math.min(...after) > 30) n.canRelease = false;
+      }
       n.silentAfter = !tr.notes[i + 1] || tr.notes[i + 1].tick > n.tick + n.len;
     });
   const envs = assignEnvelopes(tracks.flatMap((tr) => tr.notes));
