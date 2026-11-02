@@ -59,8 +59,13 @@ Built: the completion, the `@` picker, the Library and `mmlisp_presets` go by
 - **A wave's role is a macro** (`wave-piano`, in `presets/wavetable`): a wave
   under a still level sounds much like any other. Its prefix keeps it from
   hiding a ROM voice of the name, as a macro `piano` would.
-- **Maybe later:** a short set of `(def-fm piano gm-piano)` lines, to fill the
-  FM roles from gm with one import. The user has not asked for it yet.
+- **`presets/fm-roles` fills the FM roles on 4-op machines** with gm's voices
+  (gen-fm-roles.mjs): the ROM voices read as 4-op stay as what a role is with
+  nothing imported, which the importers rely on. The voices were picked by
+  instrument, not by ear; the user took them as they are for now.
+- **Still to discuss:** a 4-bit wave set under the same names, swapped by its
+  import as a kit is (`presets/wavetable-4bit`?), and sounds past the fifteen
+  roles (`bell`), which might stay macro names only.
 
 ## Rulings for what comes next (2026-10-25, not built yet)
 

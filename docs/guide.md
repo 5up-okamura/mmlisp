@@ -2529,9 +2529,9 @@ A new score (**File ▸ New**, then the machine) has a looping track for each
 channel that machine plays at once, a rhythm track on a sound of its own, and
 names the rest in a comment: a Famicom cartridge's channels, `md`'s `fm6` and
 `pcm2`, a name that shares a track's channel. It imports the preset sets those
-tracks can play — `gm` and `waveforms`, `wavetable`, the `rx5` kit — without
+tracks can play — `gm`, `fm-roles` and `waveforms`, `wavetable`, the `rx5` kit — without
 assigning any of them, so every preset name completes from the first keystroke.
-Only what a track plays reaches the song.
+Only what a track plays reaches the song. A comment lists the names built into the machine, which need no import.
 
 ---
 
@@ -2582,7 +2582,7 @@ log and the compiler's messages stay in English.
   not have says `not pce`. **Fits track** is what leaves the presets out.
 - **Built-in** comes first among the presets: what the score's machine has
   with no def and no import — `init-fm`, its ROM voices, its rhythm kit's
-  sounds, by their roles. ▶ plays one and **Insert** writes its name; there is
+  sounds, by their roles; a voice an import hides is left out. ▶ plays one and **Insert** writes its name; there is
   no def to copy.
 - A wave row plays on ▶ and the keys, on the machine's first wave channel; a
   machine with none has neither for it. ▶ plays it under its role's macro
@@ -2676,7 +2676,10 @@ what is in the editor, as `File ▸ Open…` does.
 
 A name with no prefix is a **role**, and what fills it is up to the machine and
 the imports: `kick` is whichever kit is imported, `piano` on an FM channel the
-machine's ROM voice, `piano` on a wave channel the imported wave set's. A
+machine's ROM voice, `piano` on a wave channel the imported wave set's. On a
+machine with no OPLL the ROM voices are read as 4-op, a thin stand-in, and
+`presets/fm-roles`, which a new score there imports, fills the roles with `gm`'s
+voices instead. A
 prefix names one set's own sound: `gm-piano` is that voice everywhere. The
 melodic roles are the ROM voices' names (§19 `msx`), and a voice, a wave and a
 sample can all have one, as the channel says which it plays. A score keeps its

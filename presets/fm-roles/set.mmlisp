@@ -1,0 +1,124 @@
+; The melodic roles as FM voices, for the machines with 4-op FM: with this set
+; imported, `piano` is a voice of its own and not the OPLL's read as 4-op. A
+; machine with the OPLL has its ROM's. Written by tools/scripts/gen-fm-roles.mjs,
+; from presets/gm; choose another voice there. See README.md.
+
+; gm-piano
+(def-fm piano :alg 2 :fb 0 :ams 0 :fms 0
+  :ar1 26 :dr1  7 :sr1  4 :rr1 1 :sl1  7 :tl1 39 :ks1 1 :ml1 1 :dt1  0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 23 :sr2 15 :rr2 1 :sl2  9 :tl2  4 :ks2 3 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 24 :dr3  9 :sr3  9 :rr3 7 :sl3  6 :tl3 36 :ks3 1 :ml3 4 :dt3 -2 :ssg3 0 :am3 0
+  :ar4 27 :dr4  4 :sr4  4 :rr4 6 :sl4 10 :tl4  2 :ks4 2 :ml4 1 :dt4  3 :ssg4 0 :am4 0
+)
+
+; gm-harpsi
+(def-fm harpsichord :key 72 :alg 1 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 1 :rr1 5 :sl1 0 :tl1 38 :ks1 2 :ml1  6 :dt1  1 :ssg1 0 :am1 1
+  :ar2 31 :dr2 0 :sr2 1 :rr2 6 :sl2 0 :tl2 33 :ks2 3 :ml2 10 :dt2  3 :ssg2 0 :am2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 2 :sl3 0 :tl3 35 :ks3 3 :ml3  0 :dt3 -1 :ssg3 0 :am3 1
+  :ar4 31 :dr4 6 :sr4 6 :rr4 7 :sl4 4 :tl4  6 :ks4 0 :ml4  0 :dt4 -3 :ssg4 0 :am4 0
+)
+
+; gm-vibes
+(def-fm vibraphone :alg 6 :fb 7 :ams 2 :fms 0
+  :ar1 25 :dr1 15 :sr1 6 :rr1 6 :sl1 10 :tl1 40 :ks1 1 :ml1  8 :dt1  3 :ssg1 0 :am1 0
+  :ar2 25 :dr2  6 :sr2 5 :rr2 6 :sl2 10 :tl2  4 :ks2 1 :ml2  1 :dt2  0 :ssg2 0 :am2 1
+  :ar3 31 :dr3 16 :sr3 6 :rr3 6 :sl3  6 :tl3 35 :ks3 1 :ml3 10 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 28 :dr4 10 :sr4 5 :rr4 5 :sl4  6 :tl4  4 :ks4 2 :ml4  4 :dt4  3 :ssg4 0 :am4 0
+)
+
+; gm-organ-drawbar
+(def-fm organ :alg 7 :fb 4 :ams 0 :fms 0
+  :ar1 28 :dr1 0 :sr1  4 :rr1 10 :sl1 15 :tl1 17 :ks1 1 :ml1 4 :dt1  1 :ssg1 0 :am1 0
+  :ar2 28 :dr2 0 :sr2 27 :rr2  8 :sl2 15 :tl2 23 :ks2 1 :ml2 0 :dt2  3 :ssg2 0 :am2 0
+  :ar3 28 :dr3 0 :sr3  4 :rr3  8 :sl3 15 :tl3 15 :ks3 1 :ml3 1 :dt3 -1 :ssg3 0 :am3 0
+  :ar4 28 :dr4 0 :sr4  4 :rr4 10 :sl4 15 :tl4 23 :ks4 1 :ml4 2 :dt4 -2 :ssg4 0 :am4 0
+)
+
+; gm-guitar-nylon
+(def-fm guitar :key 72 :alg 0 :fb 3 :ams 0 :fms 0
+  :ar1 31 :dr1 18 :sr1 0 :rr1 7 :sl1 2 :tl1 48 :ks1 0 :ml1 5 :dt1 0 :ssg1 0 :am1 0
+  :ar2 31 :dr2 10 :sr2 4 :rr2 7 :sl2 2 :tl2 19 :ks2 0 :ml2 0 :dt2 3 :ssg2 0 :am2 0
+  :ar3 31 :dr3 14 :sr3 4 :rr3 7 :sl3 2 :tl3 45 :ks3 0 :ml3 1 :dt3 3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 10 :sr4 3 :rr4 7 :sl4 2 :tl4  0 :ks4 1 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; gm-guitar-clean
+(def-fm electric-guitar :alg 0 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1  7 :sr1 0 :rr1 6 :sl1 15 :tl1 39 :ks1 1 :ml1 8 :dt1 -1 :ssg1 0 :am1 0
+  :ar2 31 :dr2 10 :sr2 0 :rr2 9 :sl2 15 :tl2 29 :ks2 1 :ml2 3 :dt2  3 :ssg2 0 :am2 0
+  :ar3 31 :dr3  4 :sr3 0 :rr3 8 :sl3 15 :tl3 34 :ks3 1 :ml3 3 :dt3 -1 :ssg3 0 :am3 0
+  :ar4 31 :dr4 31 :sr4 4 :rr4 7 :sl4  1 :tl4  0 :ks4 1 :ml4 1 :dt4  3 :ssg4 0 :am4 0
+)
+
+; gm-bass-acoustic
+(def-fm acoustic-bass :key 72 :alg 2 :fb 7 :ams 0 :fms 0
+  :ar1 30 :dr1 10 :sr1  5 :rr1 4 :sl1 10 :tl1 33 :ks1 0 :ml1 0 :dt1  2 :ssg1 0 :am1 0
+  :ar2 31 :dr2 10 :sr2  7 :rr2 5 :sl2  8 :tl2 37 :ks2 0 :ml2 3 :dt2  2 :ssg2 0 :am2 0
+  :ar3 31 :dr3  8 :sr3 10 :rr3 6 :sl3  9 :tl3 40 :ks3 0 :ml3 0 :dt3 -2 :ssg3 0 :am3 0
+  :ar4 31 :dr4  7 :sr4  7 :rr4 8 :sl4  7 :tl4  0 :ks4 0 :ml4 1 :dt4  0 :ssg4 0 :am4 0
+)
+
+; gm-bass-syn1
+(def-fm synth-bass :key 48 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 21 :dr1 30 :sr1 13 :rr1 11 :sl1 0 :tl1 23 :ks1 1 :ml1 4 :dt1 0 :ssg1 0 :am1 0
+  :ar2 25 :dr2 30 :sr2 10 :rr2 10 :sl2 0 :tl2  0 :ks2 1 :ml2 4 :dt2 1 :ssg2 0 :am2 0
+  :ar3 20 :dr3 30 :sr3  9 :rr3  9 :sl3 0 :tl3  5 :ks3 1 :ml3 2 :dt3 0 :ssg3 0 :am3 0
+  :ar4 20 :dr4 30 :sr4  5 :rr4  9 :sl4 8 :tl4 24 :ks4 1 :ml4 3 :dt4 3 :ssg4 0 :am4 0
+)
+
+; gm-violin
+(def-fm violin :alg 2 :fb 7 :ams 2 :fms 3
+  :ar1 15 :dr1  4 :sr1 0 :rr1 5 :sl1 1 :tl1 30 :ks1 0 :ml1 1 :dt1  3 :ssg1 0 :am1 0
+  :ar2 13 :dr2 16 :sr2 0 :rr2 4 :sl2 0 :tl2 31 :ks2 0 :ml2 7 :dt2  3 :ssg2 0 :am2 0
+  :ar3 12 :dr3  9 :sr3 3 :rr3 7 :sl3 0 :tl3 49 :ks3 0 :ml3 0 :dt3 -3 :ssg3 0 :am3 0
+  :ar4 11 :dr4 10 :sr4 0 :rr4 5 :sl4 1 :tl4  3 :ks4 2 :ml4 2 :dt4  0 :ssg4 0 :am4 0
+)
+
+; gm-trumpet
+(def-fm trumpet :key 48 :alg 5 :fb 7 :ams 0 :fms 0
+  :ar1 16 :dr1 14 :sr1 1 :rr1  4 :sl1  1 :tl1 27 :ks1 2 :ml1 2 :dt1 0 :ssg1 0 :am1 0
+  :ar2 16 :dr2 11 :sr2 0 :rr2 13 :sl2 15 :tl2 10 :ks2 0 :ml2 4 :dt2 0 :ssg2 0 :am2 0
+  :ar3 19 :dr3 14 :sr3 0 :rr3  9 :sl3  1 :tl3 21 :ks3 0 :ml3 2 :dt3 0 :ssg3 0 :am3 0
+  :ar4 20 :dr4 13 :sr4 0 :rr4 14 :sl4  0 :tl4  9 :ks4 0 :ml4 2 :dt4 0 :ssg4 0 :am4 0
+)
+
+; gm-horn
+(def-fm horn :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 11 :dr1 4 :sr1 0 :rr1 7 :sl1 3 :tl1  34 :ks1 2 :ml1 1 :dt1 0 :ssg1 0 :am1 0
+  :ar2 20 :dr2 0 :sr2 0 :rr2 6 :sl2 0 :tl2   0 :ks2 2 :ml2 1 :dt2 0 :ssg2 0 :am2 0
+  :ar3  0 :dr3 0 :sr3 0 :rr3 0 :sl3 0 :tl3 127 :ks3 0 :ml3 0 :dt3 0 :ssg3 0 :am3 0
+  :ar4  0 :dr4 0 :sr4 0 :rr4 0 :sl4 0 :tl4 127 :ks4 0 :ml4 0 :dt4 0 :ssg4 0 :am4 0
+)
+
+; gm-oboe
+(def-fm oboe :alg 0 :fb 7 :ams 1 :fms 2
+  :ar1 24 :dr1 23 :sr1 0 :rr1 10 :sl1 0 :tl1 39 :ks1 0 :ml1 1 :dt1 0 :ssg1 0 :am1 1
+  :ar2 16 :dr2 31 :sr2 0 :rr2 10 :sl2 0 :tl2 30 :ks2 0 :ml2 1 :dt2 0 :ssg2 0 :am2 1
+  :ar3 22 :dr3 31 :sr3 0 :rr3 10 :sl3 0 :tl3 40 :ks3 0 :ml3 1 :dt3 0 :ssg3 0 :am3 0
+  :ar4 24 :dr4 31 :sr4 0 :rr4 10 :sl4 0 :tl4  0 :ks4 0 :ml4 4 :dt4 0 :ssg4 0 :am4 0
+)
+
+; gm-clarinet
+(def-fm clarinet :alg 4 :fb 1 :ams 2 :fms 3
+  :ar1 13 :dr1  0 :sr1  1 :rr1 10 :sl1 0 :tl1 30 :ks1 2 :ml1 2 :dt1  1 :ssg1 0 :am1 0
+  :ar2 18 :dr2  0 :sr2  0 :rr2 10 :sl2 0 :tl2  4 :ks2 0 :ml2 1 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 15 :dr3 11 :sr3 29 :rr3 10 :sl3 8 :tl3 18 :ks3 1 :ml3 2 :dt3 -3 :ssg3 0 :am3 1
+  :ar4 19 :dr4 15 :sr4  6 :rr4 10 :sl4 2 :tl4 12 :ks4 0 :ml4 1 :dt4  1 :ssg4 0 :am4 1
+)
+
+; gm-flute
+(def-fm flute :alg 4 :fb 6 :ams 1 :fms 0
+  :ar1 20 :dr1 10 :sr1 3 :rr1 5 :sl1 1 :tl1  0 :ks1 0 :ml1 5 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 22 :dr2 12 :sr2 2 :rr2 8 :sl2 6 :tl2 49 :ks2 1 :ml2 3 :dt2  0 :ssg2 0 :am2 0
+  :ar3 19 :dr3 13 :sr3 0 :rr3 5 :sl3 4 :tl3 22 :ks3 2 :ml3 1 :dt3  3 :ssg3 0 :am3 1
+  :ar4 14 :dr4  4 :sr4 0 :rr4 8 :sl4 1 :tl4  0 :ks4 1 :ml4 1 :dt4  0 :ssg4 0 :am4 1
+)
+
+; gm-lead-saw
+(def-fm synth :alg 4 :fb 7 :ams 0 :fms 0
+  :ar1 31 :dr1 0 :sr1 0 :rr1 15 :sl1 0 :tl1 28 :ks1 0 :ml1 1 :dt1 -3 :ssg1 0 :am1 0
+  :ar2 31 :dr2 0 :sr2 0 :rr2 15 :sl2 0 :tl2  4 :ks2 0 :ml2 2 :dt2 -3 :ssg2 0 :am2 0
+  :ar3 31 :dr3 0 :sr3 0 :rr3 15 :sl3 0 :tl3 28 :ks3 0 :ml3 1 :dt3  3 :ssg3 0 :am3 0
+  :ar4 31 :dr4 0 :sr4 0 :rr4 15 :sl4 0 :tl4  4 :ks4 0 :ml4 2 :dt4  3 :ssg4 0 :am4 0
+)

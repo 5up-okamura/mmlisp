@@ -1,9 +1,8 @@
 # wavetable
 
 Waves for the wave channels, named by role as the ROM voices are, so a score
-keeps its names between an FM channel and a wave channel: `organ` `flute`
-`clarinet` `oboe` `violin` `trumpet` `horn` `piano` `vibraphone` `synth-bass`,
-and the plain shapes `sine` `triangle` `saw` `square` `pulse25` `pulse12`. Each
+keeps its names between an FM channel and a wave channel: all fifteen, from
+`piano` and `organ` to `synth-bass` and `electric-guitar`, and the plain shapes `sine` `triangle` `saw` `square` `pulse25` `pulse12`. Each
 is a `def-wave` of 32 steps, which every machine with wave channels takes.
 
 A wave alone holds one level, and every wave held still sounds much like an

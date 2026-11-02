@@ -52,6 +52,31 @@
   (macro :wave [saw _ _ square _ _ synth-bass] :vel+ [(ease-out 0..-7 :len 18f) #sus -7 #rel -11 -15])
 )
 
+; A thumb on a string: a soft snap and a short ring.
+(def wave-acoustic-bass
+  (macro :wave [synth-bass _ _ acoustic-bass] :vel+ [(ease-out 0..-10 :len 40f) #sus -10 #rel -13 -15])
+)
+
+; A pick, then a string dying away.
+(def wave-guitar
+  (macro :wave [saw _ violin _ guitar] :vel+ [(ease-out 0..-13 :len 60f) #sus -13 #rel -15])
+)
+
+; A hard pick into a long sustain.
+(def wave-electric-guitar
+  (macro :wave [square _ electric-guitar] :vel+ [(ease-out 0..-5 :len 60f) #sus -5 #rel -10 -15])
+)
+
+; A thin, bright pluck, undamped until let go.
+(def wave-harpsichord
+  (macro :wave [pulse12 _ harpsichord] :vel+ [(ease-out 0..-12 :len 40f) #sus -12 #rel -15])
+)
+
+; A quick edge, then the lead held level.
+(def wave-synth
+  (macro :wave [pulse25 _ _ synth] :vel+ [-2 -1 #sus 0 #rel -5 -10 -15])
+)
+
 ; A sine.
 (def-wave sine
   :wave [
@@ -177,5 +202,45 @@
   :wave [
     0 53 96 122 127 114 89 59 34 18 11 13 18 21 19 11
     0 -11 -19 -21 -18 -13 -11 -18 -34 -59 -89 -114 -127 -122 -96 -53
+  ]
+)
+
+; A woody low end, the upper harmonics soon gone.
+(def-wave acoustic-bass
+  :wave [
+    0 47 87 114 127 125 113 95 75 59 47 38 33 27 20 11
+    0 -11 -20 -27 -33 -38 -47 -59 -75 -95 -113 -125 -127 -114 -87 -47
+  ]
+)
+
+; A plucked string: falling harmonics, a little nasal.
+(def-wave guitar
+  :wave [
+    0 83 127 126 103 79 59 45 40 42 40 26 10 7 15 15
+    0 -15 -15 -7 -10 -26 -40 -42 -40 -45 -59 -79 -103 -126 -127 -83
+  ]
+)
+
+; Full and even, as a pickup hears a driven string.
+(def-wave electric-guitar
+  :wave [
+    0 97 127 92 50 37 39 31 16 12 17 16 6 3 9 10
+    0 -10 -9 -3 -6 -16 -17 -12 -16 -31 -39 -37 -50 -92 -127 -97
+  ]
+)
+
+; A peak high up: a plectrum near the string's end.
+(def-wave harpsichord
+  :wave [
+    0 123 127 61 23 17 6 -2 3 4 0 6 10 4 0 2
+    0 -2 0 -4 -10 -6 0 -4 -3 2 -6 -17 -23 -61 -127 -123
+  ]
+)
+
+; A lead: a saw's run with its odd harmonics up.
+(def-wave synth
+  :wave [
+    0 94 127 101 68 59 59 49 34 30 33 30 24 29 39 32
+    0 -32 -39 -29 -24 -30 -33 -30 -34 -49 -59 -59 -68 -101 -127 -94
   ]
 )

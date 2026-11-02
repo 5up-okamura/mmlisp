@@ -501,11 +501,25 @@ check('the wavetable set is 32 steps in range, on every machine', () => {
   const imports = new Map([[path, readFileSync(new URL('../../' + path, import.meta.url), 'utf8')]]);
   for (const name of ['md', 'msx', 'pce', 'fc']) noUnknown(`(def-score :target ${name})\n(import "${path}")`, imports);
   const waves = compileMMLisp(`(def-score :target pce)\n(import "${path}")\n(wave1 sine c)`, 'a.mmlisp', { imports }).ir.metadata.waves;
-  assert.equal(waves.length, 16);
+  assert.equal(waves.length, 21);
   for (const w of waves) { assert.equal(w.data.length, 32); assert.ok(w.data.every((v) => v >= -128 && v <= 127), w.name); }
   const roles = [...imports.get(path).matchAll(/^\(def (wave-[\w-]+)/gm)].map((m) => m[1]);
-  assert.equal(roles.length, 10);
+  assert.equal(roles.length, 15);
+  for (const { name } of builtinNames(TARGETS.msx).filter((d) => d.kind === 'voice' && d.name !== 'init-fm')) {
+    assert.ok(waves.some((w) => w.name === name), `a wave for ${name}`);
+    assert.ok(roles.includes(`wave-${name}`), `a role for ${name}`);
+  }
   for (const name of ['pce', 'msx']) for (const role of roles) noUnknown(`(def-score :target ${name})\n(import "${path}")\n(wave1 ${role} :len 2 c)`, imports);
+});
+check('fm-roles fills every role on a 4-op machine, and leaves the ROM alone', () => {
+  const path = 'presets/fm-roles/set.mmlisp';
+  const imports = new Map([[path, readFileSync(new URL('../../' + path, import.meta.url), 'utf8')]]);
+  const roles = builtinNames(TARGETS.msx).filter((d) => d.kind === 'voice' && d.name !== 'init-fm').map((d) => d.name);
+  for (const role of roles) assert.ok(new RegExp(`^\\(def-fm ${role}\\b`, 'm').test(imports.get(path)), role);
+  const reg = (src, word) => compileMMLisp(src, 'a.mmlisp', { imports }).ir.tracks[0].events.find((e) => e.args?.target === word)?.args.value;
+  const set = `(import "${path}")\n(fm1 synth c)`;
+  assert.notEqual(reg(set, 'FM_AR1') + '/' + reg(set, 'FM_TL1'), reg('(fm1 synth c)', 'FM_AR1') + '/' + reg('(fm1 synth c)', 'FM_TL1'));
+  assert.equal(new Set(roles).size, 15);
 });
 check('a macro is frames while a key is down, and after it lets go', () => {
   assert.deepEqual(macroFrames({ type: 'steps', steps: [9, 11, 13, 15, 8, 0], loopIndex: 3, releaseIndex: 4 }),

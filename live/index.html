@@ -2207,8 +2207,9 @@
       const seen = new Set();
       const out = [];
       for (const d of [...scanDefNames(text, '', imports), ...importedDefNames(), ...builtinNames(targetProfile(scoreTarget(state.doc)))]) {
-        if (seen.has(d.name)) continue; // a local def overrides an imported one
-        seen.add(d.name);
+        const key = `${d.kind} ${d.name}`; // a voice and a wave can share a name
+        if (seen.has(key)) continue; // a local def overrides an imported one
+        seen.add(key);
         out.push(d);
       }
       return out;
@@ -2288,9 +2289,14 @@
       const imported = new Set();
       const seen = new Set();
       const out = [];
+      // A ROM voice read as 4-op stands aside for a preset of its name: the
+      // pick imports it (presets/fm-roles), and it is the better sound.
+      const presetVoices = new Set(_acPresetDefs.filter((d) => d.kind === 'voice').map((d) => d.name));
       for (const d of [...scoreDefNames(state, text, imported), ..._acPresetDefs]) {
-        if (seen.has(d.name)) continue;
-        seen.add(d.name);
+        if (d.from === 'ROM 4-op' && presetVoices.has(d.name)) continue;
+        const key = `${d.kind} ${d.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         const set = d.set ?? (_librarySetCache.has(d.path) ? d.path : null);
         if (fits(d)) out.push(set && !imported.has(set) ? { ...d, importSet: set } : d);
       }
@@ -7350,6 +7356,7 @@
     let _importList = null;                 // the score's (import …) paths as last read (syncImportList)
     let _libLoaded = null;                  // the Library's rows, as read (showLibraryItems)
     let _libTarget;                         // the `:target` they are marked for
+    let _libImports = null;                 // the imports that are read against
     let _pcmSubject = null;                 // the sample editor's subject (pcmSubjectOf), shown even dimmed
     let _pcmActive = false;                 // the sample subject is the panel's now (not dimmed)
     let _pcmEditor = null;                  // the sample editor (src/pcm-editor.js), once its section is built
@@ -9191,7 +9198,7 @@
       document.getElementById('libraryPane').hidden = _panelTab !== 'library';
       if (_panelTab === 'library') {
         ensureLibrary();
-        if (scoreTarget(editorView.state.doc) !== _libTarget) showLibraryItems();
+        if (libraryStale()) showLibraryItems();
         else if (_libFilter.fits) applyLibFilter(); // the cursor moved while it was away
       }
       else stopLibraryPreview();
@@ -9292,7 +9299,7 @@
 
     // The cursor moved: re-filter only when it moved into another kind of track.
     function libraryCursorMoved() {
-      if (libraryShown() && scoreTarget(editorView.state.doc) !== _libTarget) showLibraryItems();
+      if (libraryShown() && libraryStale()) showLibraryItems();
       if (!_libFilter.fits || !libraryShown()) return;
       const { state } = editorView;
       if (trackKindAt(state.doc.toString(), state.selection.main.head) !== _libFitsKind) applyLibFilter();
@@ -9393,12 +9400,18 @@
 
     // Every source as one array of items (catalog-list.js). A preset's
     // description is the comment line above its def, as the completion shows.
+    // Does the list still go by the score's machine and imports?
+    function libraryStale() {
+      return scoreTarget(editorView.state.doc) !== _libTarget || _importSources !== _libImports;
+    }
+
     // The list for the score's machine: its built-in names first, and what
     // each row lacks there as a mark. Nothing is hidden for the machine; Fits
     // track does that, when asked.
     function showLibraryItems() {
       if (!_libLoaded) return;
       _libTarget = scoreTarget(editorView.state.doc);
+      _libImports = _importSources;
       const target = targetProfile(_libTarget);
       const items = _libLoaded.items.map((it) => {
         const mark = it.markOn?.(target) ?? null;
@@ -9410,9 +9423,11 @@
     }
 
     // A built-in name is the row's whole text: a track writes it, nothing else.
+    // One an import's voice hides is not what a track of that name plays.
     function builtinLibraryItems(target) {
       const score = `(def-score :target ${target.name})`;
-      return builtinNames(target).map((d) => {
+      const hidden = importedDefs().fm;
+      return builtinNames(target).filter((d) => d.kind !== 'voice' || !hidden.has(d.name)).map((d) => {
         const voice = d.kind === 'voice';
         const name = d.name;
         const part = target.parts.find((p) => p.kit && !voice);

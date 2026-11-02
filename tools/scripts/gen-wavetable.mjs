@@ -43,6 +43,11 @@ const WAVES = [
   ["piano", "Falling harmonics, as a struck string's first moment.", additive({ 1: 1, 2: 0.5, 3: 0.3, 4: 0.15, 5: 0.1, 6: 0.06 })],
   ["vibraphone", "The fundamental and the bar's fourth harmonic.", additive({ 1: 1, 4: 0.35 })],
   ["synth-bass", "A fat low end: the fundamental and two harmonics.", additive({ 1: 1, 2: 0.8, 3: 0.5 })],
+  ["acoustic-bass", "A woody low end, the upper harmonics soon gone.", additive({ 1: 1, 2: 0.5, 3: 0.2 })],
+  ["guitar", "A plucked string: falling harmonics, a little nasal.", additive({ 1: 1, 2: 0.7, 3: 0.5, 4: 0.35, 5: 0.2, 7: 0.1 })],
+  ["electric-guitar", "Full and even, as a pickup hears a driven string.", additive({ 1: 1, 2: 0.9, 3: 0.8, 4: 0.6, 5: 0.5, 6: 0.35, 7: 0.3 })],
+  ["harpsichord", "A peak high up: a plectrum near the string's end.", additive({ 1: 0.6, 2: 0.8, 3: 1, 4: 0.9, 5: 0.7, 6: 0.6, 7: 0.4, 8: 0.3, 9: 0.2 })],
+  ["synth", "A lead: a saw's run with its odd harmonics up.", additive({ 1: 1, 2: 0.5, 3: 0.6, 4: 0.25, 5: 0.35, 6: 0.15, 7: 0.2 })],
 ];
 
 // Each role played: the waves it steps through, a frame a step (`_` holds), and
@@ -59,6 +64,11 @@ const ROLES = [
   ["piano", "A bright strike, dying as it is held.", "trumpet _ _ violin _ _ piano", "(ease-out 0..-9 :len 45f) #sus -9 #rel (linear -9..-15 :len 6f)"],
   ["vibraphone", "A struck bar, ringing away to a sine.", "trumpet vibraphone _ _ _ _ _ _ _ _ _ _ sine", "(ease-out 0..-15 :len 90f)"],
   ["synth-bass", "A saw's snap, falling to the fat low end.", "saw _ _ square _ _ synth-bass", "(ease-out 0..-7 :len 18f) #sus -7 #rel -11 -15"],
+  ["acoustic-bass", "A thumb on a string: a soft snap and a short ring.", "synth-bass _ _ acoustic-bass", "(ease-out 0..-10 :len 40f) #sus -10 #rel -13 -15"],
+  ["guitar", "A pick, then a string dying away.", "saw _ violin _ guitar", "(ease-out 0..-13 :len 60f) #sus -13 #rel -15"],
+  ["electric-guitar", "A hard pick into a long sustain.", "square _ electric-guitar", "(ease-out 0..-5 :len 60f) #sus -5 #rel -10 -15"],
+  ["harpsichord", "A thin, bright pluck, undamped until let go.", "pulse12 _ harpsichord", "(ease-out 0..-12 :len 40f) #sus -12 #rel -15"],
+  ["synth", "A quick edge, then the lead held level.", "pulse25 _ _ synth", "-2 -1 #sus 0 #rel -5 -10 -15"],
 ];
 
 const head = `; Waves for the wave channels: 32 steps of -128..127, which every machine with

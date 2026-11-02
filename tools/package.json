@@ -7,6 +7,8 @@
     "format:mmlisp": "node scripts/format-mmlisp.js ../presets/*/set.mmlisp",
     "gen:wavetable": "node scripts/gen-wavetable.mjs",
     "check:wavetable": "node scripts/gen-wavetable.mjs --check",
+    "gen:fm-roles": "node scripts/gen-fm-roles.mjs",
+    "check:fm-roles": "node scripts/gen-fm-roles.mjs --check",
     "check:format:mmlisp": "node scripts/format-mmlisp.js --check ../presets/*/set.mmlisp",
     "mmlisp2ir": "node scripts/mmlisp2ir.js",
     "verify-ir": "node scripts/verify-ir.js",

@@ -107,6 +107,8 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 The driver has gates — `cd drv && npm run verify:all` must be green — and
 `cd tools && npm run check:mmlisp-strict` (with `check:cheatsheet`,
 `check:reference` and `check:sample-fx`) checks the compiler.
+`check:wavetable` and `check:fm-roles` hold the generated preset sets to their
+scripts (`gen:wavetable`, `gen:fm-roles`).
 `npm run check:snapshot` holds the toolchain's whole output (IR, the
 preview's register log, MMB, VGM) for every test score to its baseline: a
 refactor that must not change behavior keeps it green. To write or

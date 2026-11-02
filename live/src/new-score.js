@@ -2,7 +2,7 @@
 // track it plays on, each a loop to write into, and the preset sets its parts
 // can sound. Names that only say another way of playing a channel are listed in
 // a comment, so a new machine needs nothing here.
-import { TARGETS, assetMark } from "./targets.js";
+import { TARGETS, assetMark, builtinNames } from "./targets.js";
 
 const TEMPO = 120;
 const track = (head, opening) => `(${[head, ...opening].join(" ")}\n  #top\n  (go top)\n)`;
@@ -46,7 +46,7 @@ function channelsOf(target) {
 // rhythm's track starts on, so it stands in until the user brings the ROM.
 function importsOf(target, tracks) {
   const written = (kind) => tracks.some((h) => target.partOf(h).kind === kind && !target.partOf(h).kit);
-  return [["fm", "gm", "fm"], ["fm", "waveforms", "fm"], ["wave", "wavetable", "wave"], ["pcm", "rx5", "sample"]]
+  return [["fm", "gm", "fm"], ["fm", "fm-roles", "fm"], ["fm", "waveforms", "fm"], ["wave", "wavetable", "wave"], ["pcm", "rx5", "sample"]]
     .filter(([asset, , kind]) => assetMark(target, asset) === null && written(kind))
     .map(([, set]) => `(import "presets/${set}/set.mmlisp")`);
 }
@@ -56,12 +56,16 @@ export function newScoreSource(name) {
   const target = TARGETS[name];
   const { tracks, dac, voices, others, carts } = channelsOf(target);
   const imports = importsOf(target, tracks);
+  // The OPLL's voices read as 4-op are a stand-in: the score imports fm-roles
+  // over them (importsOf), so the comment does not call them the machine's.
+  const builtin = builtinNames(target).filter((d) => d.from !== "ROM 4-op").map((d) => d.name);
   return [
-    ...(imports.length ? ["; Preset voices and samples: Tools > Library (⌘K) auditions them; typing a name offers it.", ...imports, ""] : []),
+    ...(imports.length ? ["; Preset voices, samples and waves: Tools > Library (⌘K) auditions them; typing a name offers it.", ...imports, ""] : []),
     `(def-score :title "" :composer "" :author "" :target ${name})`,
     "",
     tracks.map((head, i) => track(head, [...soundOf(target, head), ...(i === 0 ? [`:tempo ${TEMPO}`] : [])])).join("\n"),
-    ...(dac.length || others.length || carts.size ? [""] : []),
+    ...(dac.length || others.length || carts.size || builtin.length ? [""] : []),
+    ...(builtin.length ? [`; Built in, no import: ${builtin.join(" ")}`] : []),
     ...(dac.length ? [`; ${dac.join(", ")} is the DAC while the score plays PCM${voices.length ? `; more voices: ${voices.join(" ")}` : ""}`] : []),
     ...(others.length ? [`; Sharing a channel with a track above: ${others.join(" ")}`] : []),
     ...[...carts.values()].map((heads) => `; Cartridge, on when a track is named: ${heads.join(" ")}`),

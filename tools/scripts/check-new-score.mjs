@@ -17,7 +17,7 @@ const TRACKS = {
   fc: ["sqr1", "sqr2", "tri", "noise", "pcm1"],
   gb: ["sqr1", "sqr2", "noise", "wave"],
 };
-const IMPORTS = { md: ["gm", "waveforms", "rx5"], x68k: ["gm", "waveforms", "rx5"], pc88: ["gm", "waveforms", "rx5"], msx: ["wavetable"], pce: ["wavetable"], fc: ["rx5"], gb: ["wavetable"] };
+const IMPORTS = { md: ["gm", "fm-roles", "waveforms", "rx5"], x68k: ["gm", "fm-roles", "waveforms", "rx5"], pc88: ["gm", "fm-roles", "waveforms", "rx5"], msx: ["wavetable"], pce: ["wavetable"], fc: ["rx5"], gb: ["wavetable"] };
 
 for (const name of Object.keys(TARGETS)) {
   const src = newScoreSource(name);
@@ -29,6 +29,11 @@ for (const name of Object.keys(TARGETS)) {
   if (IMPORTS[name]) assert.deepEqual([...src.matchAll(/presets\/([^/]+)\/set/g)].map((m) => m[1]), IMPORTS[name], `${name}: its imports`);
   assert.doesNotMatch(src, /\(def(?!-score)/, `${name}: no defs`);
 }
+assert.match(newScoreSource("msx"), /; Built in, no import: init-fm violin[^\n]* kick /, "msx: its names");
+assert.match(newScoreSource("fc"), /; Built in, no import: init-fm buzzy-bell/, "fc: the VRC7's own");
+assert.doesNotMatch(newScoreSource("pce"), /Built in/, "pce: nothing built in");
+assert.match(newScoreSource("md"), /; Built in, no import: init-fm\n/, "md: fm-roles stands in for the 4-op readings");
+assert.match(newScoreSource("pc88"), /; Built in, no import: init-fm kick snare/, "pc88: its kit, not the 4-op readings");
 assert.match(newScoreSource("fc"), /; Cartridge[^\n]*vrc6-saw/, "fc: its cartridges listed");
 assert.match(newScoreSource("md"), /; fm6 is the DAC[^\n]*pcm2 pcm3/, "md: fm6 and the DAC");
 const sounds = (name) => [...newScoreSource(name).matchAll(/^\(rhythm\d (\S+)$/gm)].map((m) => m[1]);
