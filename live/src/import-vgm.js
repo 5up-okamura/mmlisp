@@ -42,8 +42,9 @@
 // during a note: a jump it stays at becomes a slur to a new note, a vibrato
 // or a bend a `:pitch` macro (pitchShape). The YM2612's DAC, played from a
 // data bank (seeks + 8n, or DAC stream control), is a PCM track over one wav
-// of the bank (dacTrack). SegaPCM, the YM2610's ADPCM-A / ADPCM-B and the
-// X68000's OKIM6258 (streamed) play from sample data the file carries: each
+// of the bank (dacTrack). SegaPCM, the YM2610's ADPCM-A / ADPCM-B, the
+// arcades' OKIM6295 and the X68000's OKIM6258 (streamed) play from sample data
+// the file carries: each
 // hit becomes a note on pcm1–3
 // (chipPcmTracks), the oldest sound giving way when more ring at once than
 // the score has voices; other chips' PCM is reported, not imported.
@@ -1426,7 +1427,7 @@ export async function parseVgm(bytes) {
     if (bytes > 0) hits.push({ ...h, bytes });
     st.hit = null;
   };
-  // Sample ROMs (data blocks 0x80 SegaPCM, 0x82 ADPCM-A, 0x83 ADPCM-B) and
+  // Sample ROMs (data blocks 0x80 SegaPCM, 0x82 ADPCM-A, 0x83 ADPCM-B, 0x8B OKIM6295) and
   // the chips that play from them (pcmChips).
   const roms = new Map();
   const romWrite = (type, size, start, data) => {
@@ -1447,6 +1448,7 @@ export async function parseVgm(bytes) {
   const rhythm = rhythmChip();
   const pcm = pcmChips({ segaClock: clk(0x38) || 4000000, segaIntf: hdr(0x3c), opnbClock: clk(0x4c) || 8000000,
     opnaClock: clk(0x48) || 7987200,
+    okiClock: clk(0x98) || 1000000, okiPin7: hdr(0x98) >>> 31, okiRom: () => roms.get(OKI6295_ROM),
     // The YM2608's RAM, as a driver loads it a byte at a time.
     ramWrite: (addr, d) => {
       if (addr >= OPNA_RAM) return;
@@ -1455,7 +1457,7 @@ export async function parseVgm(bytes) {
       roms.get(ADPCMB_RAM)[addr] = d;
     } });
   const typed = new Map(); // stream data blocks of a type other than 0: type → {parts, len, blocks}
-  let okiUsed = false;
+  let okiUsed = false, oki6295Used = false;
   const LEN = { 0x30: 2, 0x3f: 2, 0x4f: 2, 0x50: 2, 0x94: 2 };
   while (p < u8.length) {
     if (p === loopOffset) loopSample = t;
@@ -1503,7 +1505,9 @@ export async function parseVgm(bytes) {
         tb.blocks.push([tb.len, size]);
         tb.parts.push(u8.subarray(p + 7, p + 7 + size));
         tb.len += size;
-      } else if (type === 0x80 || type === 0x81 || type === 0x82 || type === 0x83) {
+      } else if ((type >= 0x80 && type <= 0x83 || type === OKI6295_ROM) && u32(p + 3) >>> 31) {
+        skip("a second chip's sample ROM");
+      } else if (type === 0x80 || type === 0x81 || type === 0x82 || type === 0x83 || type === OKI6295_ROM) {
         romWrite(type, u32(p + 7), u32(p + 11), u8.subarray(p + 15, p + 7 + size));
       } else if (type === NES_RAM) {
         // The NES's memory (the DMC's samples): the address, then the bytes.
@@ -1562,6 +1566,19 @@ export async function parseVgm(bytes) {
     // The OKIM6258's own registers: start/stop, pan and clock follow the
     // stream, which is what the import reads.
     if (c === 0xb7) { if (!okiUsed) { okiUsed = true; chips.push("OKIM6258"); } p += 3; continue; }
+    if (c === 0xb8) {
+      if (u8[p + 1] & 0x80) skip("second OKIM6295");
+      else {
+        if (!oki6295Used) {
+          oki6295Used = true;
+          chips.push("OKIM6295");
+          if (!clk(0x98)) clockNotes.push("the header gives no OKIM6295 clock — its usual 1000000 Hz is assumed");
+        }
+        if (u8[p + 1] === 0x0e && u8[p + 2]) skip("OKIM6295's NMK112 banks");
+        pcm.oki(u8[p + 1], u8[p + 2], t);
+      }
+      p += 3; continue;
+    }
     if (c === 0x68) { p += 12; continue; }
     if (c === 0xd2) {
       if (!(u8[p + 1] & 0x80)) chip("scc").write(u8[p + 1] & 0x7f, u8[p + 2], u8[p + 3], t);
@@ -2041,10 +2058,11 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   // YM2203's, the MSX for an AY-3-8910's, an SCC's or a YM2413's — by
   // default when that chip plays every channel.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
-  const own = [["x68k", /^YM2151/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC6|VRC7|MMC5|N163)/]]
+  const own = [["x68k", /^(YM2151|OKIM6258|OKIM6295)/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC6|VRC7|MMC5|N163)/]]
     .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
   const targets = [...own.map(([t]) => t), "md"];
-  // (A file of PCM alone — a YM2608's ADPCM-B — is its chip's machine's.)
+  // (A file of PCM alone — a YM2608's ADPCM-B, an OKIM6258, or an arcade's
+  // OKIM6295, which fits PCM8 — is its chip's machine's.)
   const target = own.find(([, re]) => (tones.length ? tones.every((c) => re.test(c.key)) : parsed.chips.some((n) => re.test(n))))?.[0] ?? "md";
   return { channels, followPitch, fileLoop, pcmPoly, targets, target };
 }
@@ -2925,20 +2943,20 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName) {
 
 // ── PCM chips with a sample ROM of their own ──────────────────────────────
 
-const SEGA_ROM = 0x80, ADPCMB_RAM = 0x81, ADPCMA_ROM = 0x82, ADPCMB_ROM = 0x83;
+const SEGA_ROM = 0x80, ADPCMB_RAM = 0x81, ADPCMA_ROM = 0x82, ADPCMB_ROM = 0x83, OKI6295_ROM = 0x8b;
 const OPNA_RAM = 0x40000; // the YM2608's ADPCM RAM, 256 KB
 const BLOB_MAX = 32512; // a baked blob's bytes, below a bank's silence page (pcm-multibank.md)
 const dbOf = (v, full) => (v > 0 ? 20 * Math.log10(v / full) : -96);
 
 /**
- * SegaPCM and the YM2610's ADPCM-A / ADPCM-B, as far as an import needs
+ * SegaPCM, the YM2610's ADPCM-A / ADPCM-B and the OKIM6295, as far as an import needs
  * them: each key-on is a hit {t, src, ch, rom, start, end, loopStart, rate,
  * db, pan, off} — `start`/`end` byte offsets into the ROM, `rate` the
  * frames a second it plays at, `db` its level (0 = full), `off` when it
  * stopped (a key-off, or the channel's next hit). Levels and pitch moved
  * during a hit are not followed.
  */
-function pcmChips({ segaClock, segaIntf, opnbClock, opnaClock, ramWrite }) {
+function pcmChips({ segaClock, segaIntf, opnbClock, opnaClock, okiClock, okiPin7, okiRom, ramWrite }) {
   const hits = [];
   const sided = (lr) => lr === 1 || lr === 2; // L/R bits: one side alone is panned
   const open = new Map(); // `${src}/${ch}` → the hit it is playing
@@ -2976,6 +2994,47 @@ function pcmChips({ segaClock, segaIntf, opnbClock, opnaClock, ramWrite }) {
     start({ t, src: "SegaPCM", ch, rom: SEGA_ROM, start: bank + (R(0x84) | (R(0x85) << 8)), end: bank + ((R(6) + 1) << 8),
       loopStart: d & 2 ? null : bank + (R(4) | (R(5) << 8)), rate: (segaClock / 128) * (R(7) / 256),
       db: dbOf(Math.max(R(2), R(3)), 127), pan: R(2) !== R(3) });
+  };
+
+  // OKIM6295: four voices at clock/132 (pin 7 high) or /165, one level each.
+  // A play is two bytes: bit 7 and the phrase, then the voices and their
+  // attenuation; a phrase is 8 bytes of table at phrase × 8, an 18-bit start
+  // and last byte, a play of a phrase that runs backwards doing nothing; bit 7
+  // clear stops the voices in bits 3-6. A play on a voice still sounding is
+  // ignored. Port 8-B the clock, C pin 7, E turns on an NMK112's banks (its
+  // plays are not read), F the bank (MAME okim6295, VGMPlay).
+  const OKI_LEVEL = [0x20, 0x16, 0x10, 0x0b, 0x08, 0x06, 0x04, 0x03, 0x02];
+  const okiClockBytes = [0, 8, 16, 24].map((shift) => (okiClock >>> shift) & 255), okiUntil = [-1, -1, -1, -1];
+  let okiPhrase = -1, okiBank = 0, okiNmk = 0, okiDivisor = okiPin7 ? 132 : 165;
+  const oki = (port, d, t) => {
+    if (port >= 0x08 && port <= 0x0b) {
+      okiClockBytes[port & 3] = port === 0x0b ? d & 0x7f : d; // bit 7: a logger's stray pin 7
+      if (port === 0x0b) okiClock = okiClockBytes.reduce((v, b, i) => v + b * 256 ** i, 0);
+    } else if (port === 0x0c) okiDivisor = d ? 132 : 165;
+    else if (port === 0x0e) okiNmk = d;
+    else if (port === 0x0f) okiBank = d * 0x40000;
+    if (port !== 0) return;
+    if (okiPhrase < 0) {
+      if (d & 0x80) { okiPhrase = d & 0x7f; return; }
+      for (let v = 0; v < 4; v++) if (d & (8 << v)) { stop("OKIM6295", v, t); okiUntil[v] = -1; }
+      return;
+    }
+    const phrase = okiPhrase;
+    okiPhrase = -1;
+    const rom = okiRom();
+    const entry = (i) => (rom?.[okiBank + phrase * 8 + i] ?? 0);
+    const read = rom && okiBank + phrase * 8 + 5 < rom.length; // else counted lost, in finish()
+    const from = ((entry(0) << 16) | (entry(1) << 8) | entry(2)) & 0x3ffff;
+    const last = ((entry(3) << 16) | (entry(4) << 8) | entry(5)) & 0x3ffff;
+    const rate = okiClock / okiDivisor;
+    if (okiNmk || !(rate > 0) || (read && from >= last)) return;
+    const level = OKI_LEVEL[d & 15] ?? 0;
+    for (let v = 0; v < 4; v++) {
+      if (!(d & (16 << v)) || t < okiUntil[v]) continue;
+      okiUntil[v] = t + ((last + 1 - from) * framesPerByte("OKIM6295") * RATE) / rate;
+      if (level) start({ t, src: "OKIM6295", ch: v, rom: read ? OKI6295_ROM : null, start: okiBank + from, end: okiBank + last + 1,
+        loopStart: null, rate, db: dbOf(level, 0x20), pan: false });
+    }
   };
 
   // YM2610: ADPCM-A (port 1, $00–$2D) — six channels at clock/432, a key-on
@@ -3062,7 +3121,7 @@ function pcmChips({ segaClock, segaIntf, opnbClock, opnaClock, ramWrite }) {
   };
 
   return {
-    sega, opnb, opna, start, stop,
+    sega, opnb, opna, oki, start, stop,
     get segaUsed() { return segaUsed; },
     /** The hits that play from a ROM the file carries, each with `endT`: when it stops sounding. */
     /** Hits whose sample data the file does not carry, counted by source (after finish). */
@@ -3106,8 +3165,9 @@ function decodeAdpcmA(rom, start, length) {
   return out;
 }
 
-// OKI ADPCM (the OKIM6258's): 4-bit, a 12-bit signal that saturates, low
-// nibble first; a play command starts the state over (MAME okim6258).
+// OKI ADPCM: 4-bit, a 12-bit signal that saturates; a play command starts the
+// state over. The OKIM6258's low nibble first (MAME okim6258), the OKIM6295's
+// high nibble first from 0 (`high`, MAME okiadpcm).
 const OKI_DIFF = (() => {
   const t = new Int16Array(49 * 16);
   for (let step = 0; step < 49; step++) {
@@ -3118,12 +3178,12 @@ const OKI_DIFF = (() => {
   return t;
 })();
 const OKI_INC = [-1, -1, -1, -1, 2, 4, 6, 8];
-export function decodeOki(rom, start, length) {
+export function decodeOki(rom, start, length, { high = false } = {}) {
   const out = new Float32Array(length * 2);
-  let signal = -2, step = 0, o = 0;
+  let signal = high ? 0 : -2, step = 0, o = 0;
   for (let i = 0; i < length; i++) {
     const byte = rom[start + i];
-    for (const nib of [byte & 15, byte >> 4]) {
+    for (const nib of high ? [byte >> 4, byte & 15] : [byte & 15, byte >> 4]) {
       signal = Math.max(-2048, Math.min(2047, signal + OKI_DIFF[step * 16 + nib]));
       step = Math.max(0, Math.min(48, step + OKI_INC[nib & 7]));
       out[o++] = signal / 2048;
@@ -3146,7 +3206,7 @@ function dcBlock(x, rate) {
   return out;
 }
 
-const PCM_SOURCES = { SegaPCM: "sega", "ADPCM-A": "pcma", "ADPCM-B": "pcmb", OKIM6258: "oki", DPCM: "dpcm" };
+const PCM_SOURCES = { SegaPCM: "sega", "ADPCM-A": "pcma", "ADPCM-B": "pcmb", OKIM6258: "oki", OKIM6295: "oki", DPCM: "dpcm" };
 // A ROM byte's frames: SegaPCM's 8 bits one, the ADPCMs' two nibbles two, the DMC's eight bits eight.
 const framesPerByte = (src) => (src === "SegaPCM" ? 1 : src === "DPCM" ? 8 : 2);
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -3216,6 +3276,7 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
     let data = h.src === "SegaPCM" ? Float32Array.from(rom.subarray(h.start, h.end), (v) => (v - 128) / 128)
       : h.src === "DPCM" ? decodeDpcm(rom, h.start, h.end - h.start, h.dac0 ?? 64)
       : h.src === "ADPCM-A" ? decodeAdpcmA(rom, h.start, h.end - h.start)
+      : h.src === "OKIM6295" ? decodeOki(rom, h.start, h.end - h.start, { high: true })
       : h.src === "OKIM6258" ? dcBlock(decodeOki(rom, h.start, h.end - h.start), h.rate) : decodeAdpcmB(rom, h.start, h.end - h.start);
     let frames = data.length;
     if (h.loopStart == null) while (frames > 1 && Math.abs(data[frames - 1]) < 1 / 256) frames--;

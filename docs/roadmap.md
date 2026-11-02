@@ -86,7 +86,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
   second chips, the MSX's FM-PAC (onto msx's fm channels), a wave rewritten
   under a sounding note (the HuC6280's; the SCC's is a `:wave` macro), the
   HuC6280's DDA and LFO, the
-  remaining PCM chips (OKI MSM6295, QSound, K054539, C140, …).
+  remaining PCM chips (QSound, K054539, C140, …).
 - **DefleMask / Furnace**: sample channels (SegaPCM, ADPCM-A/B, the
   MSM6258 — x68k's pcm1–pcm8 could take them), subsongs after the first, a
   module chip's own clock (the SSG's envelope rate is read on the

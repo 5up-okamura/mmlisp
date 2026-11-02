@@ -1888,8 +1888,8 @@ them: a key-on starts a note, a key-off ends it.
   **Target**: x68k (the default when the YM2151 is its only tone chip) keeps
   the eight channels on `fm1`–`fm8` (on their own numbers when they all
   fit), DT2 as `:dt2-N`, channel 8's noise as `fm8`'s `:mode noise` — its
-  voice whole, its period as `:noise-rate` — and the OKIM6258's samples on
-  PCM8's `pcm1`–`pcm8`, whole; md fits them to the Mega Drive, drops DT2 and reads
+  voice whole, its period as `:noise-rate` — and an OKIM6258's or OKIM6295's
+  samples on PCM8's `pcm1`–`pcm8`, whole; md fits them to the Mega Drive, drops DT2 and reads
   the noise's period as the nearest `:mode white0`–`white2`. The
   carriers' TL is taken relative to the voice's loudest use and the rest
   becomes `:vel`. The SSG and the SN76489 become `sqr` and `noise` tracks;
@@ -2045,7 +2045,8 @@ them: a key-on starts a note, a key-off ends it.
   FM6 is the DAC then, so its track is dropped.
 - An arcade, X68000 or PC-8801 chip's PCM comes in too: **SegaPCM** (System
   16, X, OutRun), the **YM2610's ADPCM-A and ADPCM-B** (Neo Geo, Taito), the
-  **X68000's OKIM6258** and the **YM2608's ADPCM-B** (its RAM image, data
+  **OKIM6295** (CPS1 and many others, whose four voices fit PCM8 beside a
+  YM2151 on `:target x68k`), the **X68000's OKIM6258** and the **YM2608's ADPCM-B** (its RAM image, data
   block 0x81, or the bytes a driver loads through the chip). Each of its
   channels is a row (`pcm1–3` or drop);
   the sample data the file carries is decoded into one wav,
@@ -2067,7 +2068,8 @@ them: a key-on starts a note, a key-off ends it.
   driver writes just after the key-on (level, pan, Δ-N) counts as the
   hit's; a level moved while it sounds is not followed. The YM2608's rhythm
   on md then takes the next voice.
-- The OKI MSM6295, QSound and the other PCM chips are not imported — the log
+- QSound and the other PCM chips, and an OKIM6295's NMK112 banks, are not
+  imported — the log
   names each VGM command it skipped — and neither is a second chip, which the
   log reports. (A tempo change within the song needs nothing: the notes
   keep their times.)

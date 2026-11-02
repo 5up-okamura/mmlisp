@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
-import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
+import { parseVgm, analyzeVgm, decodeOki, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
 import { readImportSources, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { targetProfile } from "../../live/src/targets.js";
@@ -354,6 +354,128 @@ const writesOf = (source, addr) => {
     assert.doesNotMatch(source, /rx5/, "msx: the FM-PAC's own sounds");
   }
   assert.match(imported(parsed, "md").source, /\(pcm\d[^)]*\bkick\b/, "md: the kit");
+}
+
+// The OKIM6295: a YM2151 and its sample ROM, a VGM written here as a CPS1's
+// log reads, is an X68000 score on PCM8's voices. (No third-party ROM: the
+// phrases are bytes of this test's.)
+{
+  const rom = new Uint8Array(0x40000 + 0x400);
+  const phrase = (at, n, from, last) => rom.set([from >> 16, from >> 8, from, last >> 16, last >> 8, last], at + n * 8);
+  phrase(0, 1, 0x100, 0x1ff);
+  phrase(0, 2, 0x200, 0x2ff);
+  phrase(0x40000, 1, 0x300, 0x33f); // bank 1, its addresses within the bank
+  rom.fill(0x71, 0x100, 0x400);
+  rom.fill(0x17, 0x40300, 0x40340);
+  const u32 = (v) => [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, v >>> 24];
+  let out;
+  const wait = (n) => out.push(0x61, n & 255, n >> 8);
+  const oki = (port, d) => out.push(0xb8, port, d);
+  const romBlock = () => {
+    out.push(0x67, 0x66, 0x8b, ...u32(rom.length + 8), ...u32(rom.length), ...u32(0));
+    for (const b of rom) out.push(b);
+  };
+  const file = (clock, ym2151) => {
+    out.push(0x66);
+    const head = new Uint8Array(0x100);
+    const dv = new DataView(head.buffer);
+    head.set([0x56, 0x67, 0x6d, 0x20]);
+    dv.setUint32(0x04, 0x100 + out.length - 4, true);
+    dv.setUint32(0x08, 0x161, true);
+    dv.setUint32(0x18, 163350, true);
+    if (ym2151) dv.setUint32(0x30, 3579545, true);
+    dv.setUint32(0x34, 0x100 - 0x34, true);
+    dv.setUint32(0x98, clock, true);
+    return parseVgm(new Uint8Array([...head, ...out]));
+  };
+  const okiHits = (parsed) => parsed.pcmHits.filter((h) => h.src === "OKIM6295");
+  out = [];
+  romBlock();
+  out.push(0x67, 0x66, 0x8b, ...u32((8 + 0x80000000) >>> 0), ...u32(0x40000), ...u32(0)); // the second chip's
+  for (const [a, d] of [[0x20, 0xc7], [0x60, 0], [0x28, 0x4a], [0x08, 0x08]]) out.push(0x54, a, d);
+  oki(0, 0x81); oki(0, 0x10); // phrase 1, voice 1, full: 512 frames at 7576 Hz, 2980 samples
+  wait(100);
+  oki(0, 0x82); oki(0, 0x10); // voice 1 still sounds: ignored
+  oki(0, 0x82); oki(0, 0x22); // phrase 2, voice 2, attenuation 2 (0x10 of 0x20)
+  oki(0x80, 0x81); // the second chip's
+  wait(3000);
+  oki(0, 0x82); oki(0, 0x10); // voice 1 is free again
+  wait(200);
+  oki(0, 0x08); // voice 1 stops
+  wait(50);
+  oki(0x0f, 1); oki(0, 0x81); oki(0, 0x40); // bank 1's phrase on voice 3
+  for (let i = 0; i < 8; i++) wait(20000);
+  const parsed = await file((1000000 + 0x80000000) >>> 0, true); // bit 31: pin 7 high, ÷132
+
+  assert.ok(parsed.chips.includes("OKIM6295"));
+  const hits = okiHits(parsed);
+  assert.deepEqual(hits.map((h) => [h.ch, h.start, h.end]),
+    [[0, 0x100, 0x200], [1, 0x200, 0x300], [0, 0x200, 0x300], [2, 0x40300, 0x40340]], "a busy voice ignores the play");
+  assert.ok(hits.every((h) => Math.abs(h.rate - 1000000 / 132) < 1e-6), "pin 7: ÷132");
+  assert.ok(Math.abs(hits[1].db + 6.02) < 0.01, "attenuation 2: -6 dB");
+  assert.equal(hits[2].endT, hits[2].t + 200, "a stop ends the hit");
+
+  const a = analyzeVgm(parsed);
+  assert.equal(a.target, "x68k", "a YM2151 and an OKIM6295 are an X68000's");
+  const opt = defaultVgmOptions(a, "x68k");
+  assert.deepEqual([1, 2, 3].map((v) => opt.dest[`OKIM6295 ${v}`]), ["pcm", "pcm", "pcm"]);
+  const { source } = imported(parsed, "x68k");
+  assert.match(source, /\(def-pcm oki-01 /, "x68k: its samples");
+  assert.equal(a.pcmPoly, 2, "two sound at once");
+  for (const head of ["pcm1", "pcm2"]) assert.match(source, new RegExp(`\\(${head}\\b[\\s\\S]*?oki-`), `x68k: ${head}`);
+  assert.equal(source.match(/\boki-\d+ (?!:file)/g).length, hits.length, "every hit a note");
+  assert.match(source, /oki-03 :file "[^"]*" :rate 7576 :offset 1024 :frames 128/, "the bank's phrase, 2 frames a byte");
+  assert.match(source, /:vel 12\b/, "-6 dB on the 2 dB ladder");
+
+  // Alone it is still an X68000's; pin 7 low is ÷165, and the port's clock
+  // and pin 7 replace the header's, the bytes written and only those.
+  out = [];
+  romBlock();
+  oki(0, 0x81); oki(0, 0x10);
+  wait(4000);
+  oki(0x09, 0x84); oki(0x0b, 0); oki(0x0c, 1);
+  oki(0, 0x81); oki(0, 0x10);
+  for (let i = 0; i < 8; i++) wait(20000);
+  const alone = await file(1000000, false);
+  assert.equal(analyzeVgm(alone).target, "x68k", "an OKIM6295 alone is an X68000's");
+  assert.deepEqual(okiHits(alone).map((h) => Math.round(h.rate)), [Math.round(1000000 / 165), Math.round(((1000000 & ~0xff00) | 0x8400) / 132)]);
+
+  // What plays nothing: a phrase that runs backwards leaves a sounding voice
+  // sounding, a full attenuation takes the voice and no note, and an NMK112's
+  // bank reaches what the plain ROM read cannot.
+  out = [];
+  phrase(0, 3, 0x2ff, 0x200);
+  romBlock();
+  oki(0, 0x81); oki(0, 0x10);
+  wait(10);
+  oki(0, 0x83); oki(0, 0x10);
+  wait(10);
+  oki(0, 0x81); oki(0, 0x2a); // voice 2, attenuation 10: silent
+  wait(10);
+  oki(0, 0x82); oki(0, 0x20); // voice 2 is busy, silent or not
+  wait(10);
+  oki(0x0e, 0x80); oki(0, 0x81); oki(0, 0x40);
+  for (let i = 0; i < 8; i++) wait(20000);
+  const silent = await file(1000000, false);
+  assert.deepEqual(okiHits(silent).map((h) => [h.ch, h.start]), [[0, 0x100]]);
+  assert.equal(okiHits(silent)[0].off, undefined, "the backwards phrase stopped nothing");
+
+  // A play the file gives no sample for is counted lost, never a guess: the
+  // ROM comes after it, or the bank is past its end. A header without a clock
+  // says so.
+  out = [];
+  oki(0, 0x81); oki(0, 0x10);
+  romBlock();
+  oki(0x0f, 3); oki(0, 0x81); oki(0, 0x20);
+  for (let i = 0; i < 8; i++) wait(20000);
+  const lost = await file(0, false);
+  assert.deepEqual(okiHits(lost), []);
+  assert.ok([...lost.skipped ?? []].some(([name, n]) => /OKIM6295.*no sample data/.test(name) && n === 2), "both counted");
+  assert.ok(lost.clockNotes?.some((n) => /no OKIM6295 clock/.test(n)), "the assumed clock said");
+
+  // High nibble first, from 0: 7 at step 0 is +30; the OKIM6258's low nibble 0 is +2 from -2.
+  assert.equal(decodeOki(new Uint8Array([0x70]), 0, 1, { high: true })[0], 30 / 2048);
+  assert.equal(decodeOki(new Uint8Array([0x70]), 0, 1)[0], 0);
 }
 
 console.log("VGM import checks passed");
