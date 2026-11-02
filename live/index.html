@@ -5590,7 +5590,7 @@
     // mucom88 song's voices and drums — is read from there, and the rest of
     // the folder stays one click away. `pdx` is one handed over with it (a drop).
     // `song` and `name`: one song of an NSF's, as Files in Folder lists it.
-    async function openSong(file, { folder = null, pdx = null, song = null, name = null } = {}) {
+    async function openSong(file, { folder = null, pdx = null, song = null, name } = {}) {
       if (/\.(muc|mml)$/i.test(file.name)) {
         await importMucom88FromFiles([file, ...(folder ? await mucomBanksIn(folder, file) : [])], { folder });
         return;
