@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import { compileMMLisp } from '../../live/src/mmlisp2ir.js';
 import { parse } from '../../live/src/mmlisp-parser.js';
+import { readFileSync } from 'node:fs';
+import { TARGETS, builtinNames, assetMark, targetsWith } from '../../live/src/targets.js';
 import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText } from '../../live/src/edit-tools.js';
 
 let count = 0;
@@ -452,6 +454,53 @@ check('a def with nothing tied to its file is copied as it stands', () => {
   const [fm, wave] = parse(text).filter((n) => n.kind === 'list');
   assert.equal(ownDefText(text, fm, 'x/y.mmlisp'), '(def-fm lead init-fm\n  :alg 4 ; bright\n  :fb 3)');
   assert.equal(ownDefText(text, wave, 'x/y.mmlisp'), '(def-wave saw :wave [1 2])');
+});
+
+// What a machine offers: the names the lists show are the compiler's.
+const noUnknown = (text, imports) => assert.deepEqual(compileMMLisp(text, 'a.mmlisp', { imports }).diagnostics
+  .filter((d) => d.severity === 'error').map((d) => `${d.code} ${d.message}`), []);
+check('every built-in name compiles on its machine', () => {
+  for (const [name, target] of Object.entries(TARGETS)) {
+    const [fm] = target.headsOfKind('fm');
+    const kit = target.parts.find((p) => p.kit);
+    for (const d of builtinNames(target)) {
+      const head = d.kind === 'voice' ? fm : target.headsOf(kit.name)[0];
+      noUnknown(`(def-score :target ${name})\n(${head} ${d.name} :len 4 c)`);
+    }
+  }
+});
+check('a machine lists its own: ROM voices, the kit by its roles', () => {
+  const names = (t) => builtinNames(TARGETS[t]).map((d) => d.name);
+  assert.ok(names('msx').includes('piano') && names('msx').includes('kick') && !names('msx').includes('bd') && !names('msx').includes('rim'));
+  assert.ok(names('pc88').includes('rim') && names('pc88').includes('init-fm'));
+  assert.ok(names('fc').includes('buzzy-bell') && !names('fc').includes('piano'));
+  assert.deepEqual(names('pce'), []);
+  assert.equal(builtinNames(TARGETS.md).find((d) => d.name === 'piano').from, 'ROM 4-op');
+  assert.equal(builtinNames(TARGETS.msx).find((d) => d.name === 'piano').from, 'ROM');
+});
+check('a preset is marked by what the machine lacks', () => {
+  assert.equal(assetMark(TARGETS.md, 'fm'), null);
+  assert.equal(assetMark(TARGETS.x68k, 'fm'), null);
+  assert.equal(assetMark(TARGETS.msx, 'fm'), '4-op');
+  assert.equal(assetMark(TARGETS.fc, 'fm'), '4-op');
+  assert.equal(assetMark(TARGETS.pce, 'fm'), 'no FM');
+  assert.equal(assetMark(TARGETS.md, 'wave'), 'no wave');
+  assert.equal(assetMark(TARGETS.pce, 'wave'), null);
+  assert.equal(assetMark(TARGETS.pc88, 'pcm'), null);
+  assert.equal(assetMark(TARGETS.md, 'macro'), null);
+});
+check('a file plays where its channels are', () => {
+  assert.deepEqual(targetsWith(['fm3-csm']), ['md', 'pc88']);
+  assert.deepEqual(targetsWith([]), Object.keys(TARGETS));
+  assert.ok(targetsWith(['wave1']).includes('pce') && !targetsWith(['wave1']).includes('md'));
+});
+check('the wavetable set is 32 steps in range, on every machine', () => {
+  const path = 'presets/wavetable/set.mmlisp';
+  const imports = new Map([[path, readFileSync(new URL('../../' + path, import.meta.url), 'utf8')]]);
+  for (const name of ['md', 'msx', 'pce', 'fc']) noUnknown(`(def-score :target ${name})\n(import "${path}")`, imports);
+  const waves = compileMMLisp(`(def-score :target pce)\n(import "${path}")\n(wave1 wt-sine c)`, 'a.mmlisp', { imports }).ir.metadata.waves;
+  assert.equal(waves.length, 8);
+  for (const w of waves) { assert.equal(w.data.length, 32); assert.ok(w.data.every((v) => v >= -128 && v <= 127), w.name); }
 });
 
 console.log(`Logical Editor checks passed: ${count}`);

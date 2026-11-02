@@ -625,7 +625,8 @@
             <button class="lib-chip" data-kind="fm">FM</button>
             <button class="lib-chip" data-kind="pcm">PCM</button>
             <button class="lib-chip" data-kind="macro">Macro</button>
-            <button class="lib-chip" id="libFits" title="Only what the track at the cursor can play">Fits track</button>
+            <button class="lib-chip" data-kind="wave">Wave</button>
+            <button class="lib-chip" id="libFits" title="Only what the track at the cursor can play; outside a track, what the score's machine can">Fits track</button>
             <button class="lib-chip" id="libOrder" title="One list, A to Z">A–Z</button>
           </div>
         </div>
@@ -932,7 +933,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
-    import { TARGETS, TONE_LANES, toneLaneOf, targetProfile, notYet } from './src/targets.js';
+    import { TARGETS, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith } from './src/targets.js';
     import { fmOpWord, fmInitVoice } from './src/chips/fm-words.js';
     import { opllRomVoices } from './src/chips/ym2413.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
@@ -2187,12 +2188,18 @@
     const AC_DEF_TYPE = { voice: 'type', sample: 'constant', macro: 'function', fn: 'function', val: 'variable', def: 'variable' };
     function defCompletion(d, label = d.name) {
       const detail = d.kind + (d.from ? ` \u00b7 ${d.from}` : '');
-      return { label, type: AC_DEF_TYPE[d.kind], detail, info: d.about || undefined, boost: d.from ? 0 : 1 };
+      return { label, type: AC_DEF_TYPE[d.kind], detail, info: d.about || undefined, boost: d.from && !d.builtin ? 0 : 1 };
+    }
+    // The `:target` the text names now: what a list of names goes by, a compile
+    // being as far behind as the last Build. Read off the text, as a list is
+    // asked for mid-form, where the score does not parse.
+    function scoreTarget(doc) {
+      return /^\s*\(def-score\b(?:"[^"]*"|[^)"])*?:target\s+([\w-]+)/m.exec(doc.toString())?.[1] ?? null;
     }
     function scoreDefNames(state, text = state.doc.toString(), imports = null) {
       const seen = new Set();
       const out = [];
-      for (const d of [...scanDefNames(text, '', imports), ...importedDefNames()]) {
+      for (const d of [...scanDefNames(text, '', imports), ...importedDefNames(), ...builtinNames(targetProfile(scoreTarget(state.doc)))]) {
         if (seen.has(d.name)) continue; // a local def overrides an imported one
         seen.add(d.name);
         out.push(d);
@@ -2215,7 +2222,7 @@
             .catch((e) => { log('Completion: ' + e.message, 'err'); return null; })));
           _acPresetDefs = loaded.filter(Boolean).flatMap((set) =>
             scanDefNames(set.text, librarySetName(set.path))
-              .filter((d) => d.kind === 'voice' || d.kind === 'sample' || d.kind === 'macro')
+              .filter((d) => d.kind === 'voice' || d.kind === 'sample' || d.kind === 'macro' || d.kind === 'wave')
               .map((d) => ({ ...d, set: set.path })));
         } catch (e) {
           log('Completion: ' + e.message, 'err');
@@ -9274,7 +9281,11 @@
         b.classList.toggle('active', b.dataset.pane === _panelTab);
       document.getElementById('rightPanelBody').hidden = _panelTab !== 'params';
       document.getElementById('libraryPane').hidden = _panelTab !== 'library';
-      if (_panelTab === 'library') ensureLibrary();
+      if (_panelTab === 'library') {
+        ensureLibrary();
+        if (scoreTarget(editorView.state.doc) !== _libTarget) showLibraryItems();
+        else if (_libFilter.fits) applyLibFilter(); // the cursor moved while it was away
+      }
       else stopLibraryPreview();
       updateLibraryKeys();
     }
@@ -9317,7 +9328,7 @@
 
     function libHint(item) {
       if (item) return '';
-      if (_isMobile) return '▶ plays · Insert puts it at the cursor · a voice or sample plays on the keys';
+      if (_isMobile) return '▶ plays · Insert puts it at the cursor · a voice, sample or wave plays on the keys';
       return '↑↓ select · ←→ fold · Space play · Enter insert · Esc back to the score';
     }
 
@@ -9327,17 +9338,20 @@
     }
 
     // What the track at the cursor takes: an fm… track voices, a pcm… track
-    // samples, a PSG track macros (trackKindAt, as the completion asks).
+    // samples, a PSG track macros (trackKindAt, as the completion asks), and
+    // nothing marked as lacking on the score's machine.
     function libFitsFn() {
       if (!_libFilter.fits) { _libFitsKind = undefined; return null; }
       const { state } = editorView;
       const track = trackKindAt(state.doc.toString(), state.selection.main.head);
       _libFitsKind = track;
-      if (track == null) return null;
+      // Outside a track, what the score's machine can play.
+      if (track == null) return (it) => it.source !== 'presets' || !it.mark;
       const chip = { voice: 'fm', sample: 'pcm', psg: 'psg', wave: 'wave' }[track];
       return (it) => it.source === 'ref' ? !it.tracks || it.tracks.includes(chip)
         : it.source !== 'presets' ? true
-        : it.kind === 'macro' || (track === 'voice' && it.kind === 'fm') || (track === 'sample' && it.kind === 'pcm');
+        : !it.mark && (it.kind === 'macro' || (track === 'voice' && it.kind === 'fm')
+          || (track === 'sample' && it.kind === 'pcm') || (track === 'wave' && it.kind === 'wave'));
     }
 
     // A chip that means nothing for the source picked is disabled, and its
@@ -9370,6 +9384,7 @@
 
     // The cursor moved: re-filter only when it moved into another kind of track.
     function libraryCursorMoved() {
+      if (libraryShown() && scoreTarget(editorView.state.doc) !== _libTarget) showLibraryItems();
       if (!_libFilter.fits || !libraryShown()) return;
       const { state } = editorView;
       if (trackKindAt(state.doc.toString(), state.selection.main.head) !== _libFitsKind) applyLibFilter();
@@ -9427,7 +9442,7 @@
     function ensureLibrary() {
       if (!_libList) initLibrary();
       _libLoad ??= loadLibraryItems()
-        .then(({ items, groupActions }) => _libList.setItems(items, groupActions))
+        .then((loaded) => { _libLoaded = loaded; showLibraryItems(); })
         .catch((e) => log('Library: ' + e.message, 'err'));
       return _libLoad;
     }
@@ -9470,6 +9485,49 @@
 
     // Every source as one array of items (catalog-list.js). A preset's
     // description is the comment line above its def, as the completion shows.
+    // The list for the score's machine: its built-in names first, and what
+    // each row lacks there as a mark. Nothing is hidden for the machine; Fits
+    // track does that, when asked.
+    function showLibraryItems() {
+      if (!_libLoaded) return;
+      _libTarget = scoreTarget(editorView.state.doc);
+      const target = targetProfile(_libTarget);
+      const items = _libLoaded.items.map((it) => {
+        const mark = it.markOn?.(target) ?? null;
+        // A machine with no wave channel has nothing to play a wave on.
+        return it.keys?.kind === 'wave' && mark ? { ...it, mark, keys: null, audition: null } : { ...it, mark };
+      });
+      _libList.setItems([...builtinLibraryItems(target), ...items], _libLoaded.groupActions);
+      applyLibFilter();
+    }
+
+    // A built-in name is the row's whole text: a track writes it, nothing else.
+    function builtinLibraryItems(target) {
+      const score = `(def-score :target ${target.name})`;
+      return builtinNames(target).map((d) => {
+        const voice = d.kind === 'voice';
+        const name = d.name;
+        const part = target.parts.find((p) => p.kit && !voice);
+        const head = part ? target.headsOf(part.name)[0] : null;
+        const regs = voice ? parseFmDefRegs(parse(`(def-fm voice ${name})`)[0], () => null, target.name) : null;
+        return {
+          key: `builtin#${name}`, source: 'presets', group: 'built-in', groupLabel: 'Built-in', name,
+          kind: voice ? 'fm' : 'pcm', about: d.about, detail: `${d.about} (${d.from}): needs no def and no import`,
+          audition: voice ? () => previewLibraryFm({ name, regs })
+            : () => toggleLibraryScorePreview({ path: `builtin/${name}`, snippet: true, text: `${score}\n(${head} ${name} :len 2 c)\n` }),
+          keys: voice ? { kind: 'fm', def: { name, regs } } : null,
+          actions: [{ label: 'Insert', title: 'Write the name at the cursor', run: () => insertLibraryName(name) }],
+        };
+      });
+    }
+
+    function insertLibraryName(name) {
+      const { from, to } = editorView.state.selection.main;
+      editorView.dispatch({ changes: { from, to, insert: name } });
+      setLibraryNote(`Inserted ${name}`);
+      showInserted(from, from + name.length);
+    }
+
     async function loadLibraryItems() {
       const catalog = await loadLibraryCatalog();
       const items = referenceItems();
@@ -9494,7 +9552,9 @@
             kind: def.kind,
             about: about.get(def.name) ?? '',
             audition: def.kind === 'def' ? null : () => previewLibraryDef(set, def),
-            keys: def.kind === 'fm' || def.kind === 'pcm' ? { kind: def.kind, set, def } : null,
+            markOn: (target) => assetMark(target, def.kind),
+            keys: def.kind === 'fm' || def.kind === 'pcm' ? { kind: def.kind, set, def }
+              : def.kind === 'wave' ? { kind: 'wave', def: { name: def.name, steps: vectorOfWave(set.text, def.name)?.values } } : null,
             actions: copy
               ? [{ label: 'Insert', title: 'Insert the def at the cursor', run: () => insertLibraryDefText(set, def) }]
               : [importSet],
@@ -9510,6 +9570,7 @@
         for (const f of loaded.filter(Boolean)) {
           const dir = f.path.replace(/\/[^/]*$/, '');
           const file = { path: f.path, text: f.text, snippet };
+          const plays = targetsWith(channelHeads(f.text));
           const open = { label: 'Open', title: 'Open in the editor, replacing what is there',
             run: () => openLibraryScore(f.path, libraryCompileName(file)) };
           items.push({
@@ -9521,6 +9582,7 @@
             kind: snippet ? 'snippet' : 'score',
             about: snippet ? snippetAbout(f.path, f.about) : f.about,
             audition: () => toggleLibraryScorePreview(file),
+            markOn: (target) => (plays.includes(target.name) ? null : `not ${target.name}`),
             keys: null,
             actions: snippet
               ? [{ label: 'Insert', title: 'Insert at the cursor (its imports go to the top)', run: () => insertLibrarySnippet(file) }, open]
@@ -9529,6 +9591,13 @@
         }
       }
       return { items, groupActions };
+    }
+
+    // The channels a file writes to, whatever machine has them.
+    function channelHeads(text) {
+      let roots = [];
+      try { roots = parse(text); } catch (_) { /* a broken file writes to none */ }
+      return [...new Set(roots.filter((n) => n?.kind === 'list' && ALL_CHANNEL_NAMES.has(n.items[0]?.value)).map((n) => n.items[0].value))];
     }
 
     // A set is read straight from its source: every top-level (def …) becomes a
@@ -9548,7 +9617,7 @@
       for (const node of roots) {
         if (!node || node.kind !== 'list') continue;
         const head = node.items?.[0];
-        if (!head || head.kind !== 'atom' || !/^def(-fm|-pcm)?$/.test(head.value)) continue;
+        if (!head || head.kind !== 'atom' || !/^def(-fm|-pcm|-wave)?$/.test(head.value)) continue;
         const nameNode = node.items[1];
         if (!nameNode || nameNode.kind !== 'atom') continue;
         const name = nameNode.value;
@@ -9556,6 +9625,8 @@
           defs.push({ name, kind: 'fm', regs: parseFmDefRegs(node, fmDefIn(roots)), node });
         } else if (sampleFileOfDefNode(node)) {
           defs.push({ name, kind: 'pcm', node });
+        } else if (head.value === 'def-wave') {
+          defs.push({ name, kind: 'wave', node });
         } else {
           // `(def name (macro …))` and nothing else: a named macro, an envelope.
           const body = node.items[2];
@@ -9620,7 +9691,17 @@
       if (def.kind === 'fm') return previewLibraryFm(def);
       if (def.kind === 'pcm') return previewLibraryPcm(set, def);
       if (def.kind === 'macro') return previewLibraryMacro(set, def);
+      if (def.kind === 'wave') return previewLibraryWave(set, def);
       setLibraryNote(`${def.name} is not a voice, a sample or a macro \u2014 nothing to sound.`);
+    }
+
+    // A wave sounds as a note on the score's machine's first wave channel.
+    function previewLibraryWave(set, def) {
+      const target = targetProfile(scoreTarget(editorView.state.doc));
+      const [head] = target.headsOfKind('wave');
+      if (!head) { setLibraryNote(`${def.name} \u2014 ${target.system} has no wave channel to sound it on`); return; }
+      const text = `(def-score :target ${target.name})\n${ownDefText(set.text, def.node, set.path)}\n(${head} ${def.name} :len 2 c)\n`;
+      return toggleLibraryScorePreview({ path: `wave/${def.name}`, snippet: true, text });
     }
 
     // The completion list's audition (↑ / ↓ over a voice or sample): the Library's
@@ -10955,6 +11036,8 @@
       if (lib?.kind === 'fm')
         return { slot: CURSOR_DEF_PREVIEW_CH, useCursorDef: true, defCtx: { name: lib.def.name, regs: lib.def.regs } };
       if (lib?.kind === 'pcm') return { slot: PCM_PREVIEW_CH, useCursorDef: false };
+      if (lib?.kind === 'wave' && waveLanes().length)
+        return { slot: TONE_SLOTS[waveLanes()[0]], useCursorDef: false, wave: lib.def };
       // The cursor's def while the cursor leads (its def-wave plays on the
       // first wave channel, written there with the key).
       if (_pcmCursorDef) return { slot: PCM_PREVIEW_CH, useCursorDef: false };
@@ -11109,7 +11192,7 @@
       if (isToneSlot(slot)) {
         // A def-wave the panel is on plays on the wave channel the key took.
         const wave = getKeyboardTargetContext().wave;
-        if (wave && waveLanes().includes(slot.lane)) player.previewWave(slot.lane, _vecEditor.values, wave.name);
+        if (wave && waveLanes().includes(slot.lane)) player.previewWave(slot.lane, wave.steps ?? _vecEditor.values, wave.name);
         previewPsgNoteOn(slot.lane, midi, vel);
         return;
       }

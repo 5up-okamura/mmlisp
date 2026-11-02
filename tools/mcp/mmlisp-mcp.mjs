@@ -28,7 +28,7 @@ const { formatMMLisp } = await load("mmlisp-formatter.js");
 const { IRPlayer } = await load("ir-player.js");
 const { renderWav } = await load("export-wav.js");
 const { encodeMmb } = await load("export-mmb.js");
-const { targetProfile } = await load("targets.js");
+const { targetProfile, assetMark, builtinNames } = await load("targets.js");
 const { bakeAdpcmB } = await load("chips/adpcm-b.js");
 const { bakePcm8 } = await load("chips/msm6258.js");
 const { bakeRhythmStandIn } = await load("chips/rhythm-rom.js");
@@ -344,7 +344,11 @@ function snippets({ path: p, query }) {
   return rows.length ? rows.join("\n") : "no match";
 }
 
-function presets({ set, query }) {
+const PRESET_KIND = { "def-fm": "fm", "def-pcm": "pcm", "def-wave": "wave" };
+
+function presets({ set, query, target }) {
+  const machine = target ? targetProfile(target) : null;
+  const short = (head) => (machine && assetMark(machine, PRESET_KIND[head])) || null;
   const sets = fs.readdirSync(path.join(ROOT, "presets"), { withFileTypes: true })
     .filter((d) => d.isDirectory() && fs.existsSync(path.join(ROOT, "presets", d.name, "set.mmlisp")))
     .map((d) => d.name);
@@ -355,8 +359,8 @@ function presets({ set, query }) {
       for (const m of text.matchAll(/^\((def(?:-[a-z]+)?)\s/gm)) kinds[m[1]] = (kinds[m[1]] ?? 0) + 1;
       const about = leadingComment(readText(`presets/${s}/README.md`)?.replace(/^#.*\n+/, "") ?? "") ||
         (readText(`presets/${s}/README.md`) ?? "").split("\n").find((l) => l && !l.startsWith("#")) || "";
-      return `(import "presets/${s}/set.mmlisp")  — ${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(", ")}\n    ${about.slice(0, 200)}`;
-    }).join("\n");
+      return `(import "presets/${s}/set.mmlisp")  — ${Object.entries(kinds).map(([k, n]) => `${n} ${k}${short(k) ? ` [${short(k)} on ${target}]` : ""}`).join(", ")}\n    ${about.slice(0, 200)}`;
+    }).join("\n") + (machine ? `\nBuilt in on ${target} (no def, no import): ${builtinNames(machine).map((d) => d.name).join(" ") || "none"}` : "");
   }
   if (!sets.includes(set)) throw new Error(`set must be one of: ${sets.join(", ")}`);
   const text = fs.readFileSync(path.join(ROOT, "presets", set, "set.mmlisp"), "utf8");
@@ -368,7 +372,7 @@ function presets({ set, query }) {
     if (!m) return;
     let note = "";
     for (let j = i - 1; j >= 0 && lines[j].startsWith(";"); j--) note = lines[j].replace(/^;+\s?/, "");
-    const row = `${m[2]}  (${m[1]})${note ? "  ; " + note : ""}`;
+    const row = `${m[2]}  (${m[1]}${short(m[1]) ? `, ${short(m[1])} on ${target}` : ""})${note ? "  ; " + note : ""}`;
     if (!q || row.toLowerCase().includes(q)) out.push(row);
   });
   return `(import "presets/${set}/set.mmlisp")\n` + (out.join("\n") || "no match");
@@ -795,10 +799,11 @@ const TOOLS = [
     name: "mmlisp_presets",
     description:
       "Preset voice/sample sets a score can import. No args: the sets and their import lines. " +
-      "set: list its voice/sample/macro names (e.g. gm, waveforms, tr808, tr909, gm-drums, envelopes); query: filter names.",
+      "set: list its voice/sample/macro/wave names (e.g. gm, waveforms, wavetable, tr808, tr909, gm-drums, envelopes); query: filter names. " +
+      "target: the score's machine (md, pc88, x68k, msx, pce, fc, gb): marks what it lacks for each set (4-op FM on a 2-op chip, no PCM …) and lists the names built in there, which need no import.",
     inputSchema: {
       type: "object",
-      properties: { set: { type: "string" }, query: { type: "string" } },
+      properties: { set: { type: "string" }, query: { type: "string" }, target: { type: "string" } },
     },
     run: presets,
   },

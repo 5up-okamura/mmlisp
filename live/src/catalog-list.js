@@ -6,6 +6,7 @@
 //
 // An item:
 //   { key, source, group, groupLabel, name, kind, about,
+//     mark: 'text',                                  // what the score's machine lacks for it
 //     aliases: [name …],                             // also found by these
 //     detail: 'text',                                // the note line, else about
 //     audition: () => …   | null,                    // ▶ and Space
@@ -96,7 +97,7 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
     name.textContent = it.name;
     const kind = document.createElement('span');
     kind.className = 'lib-kind';
-    kind.textContent = showGroup ? `${it.kind} · ${it.groupLabel}` : it.kind;
+    kind.textContent = [it.kind, showGroup && it.groupLabel, it.mark].filter(Boolean).join(' · ');
     el.append(name, kind);
     for (const a of it.actions) el.appendChild(button(a.label, a.title, a.run));
     return el;

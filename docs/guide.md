@@ -2478,7 +2478,9 @@ eval heads — insert just the name.
 
 Names complete too. Two characters of a word offer the voices, samples, macros
 and snippets the score can use — its own defs, everything its imports bring
-in, and every preset set's voices and samples, imported or not — each labelled
+in, the names built into the score's machine (`init-fm`, the ROM voices, a
+rhythm kit's `kick` `snare` …), and every preset set's voices, samples and
+waves, imported or not — each labelled
 with its kind and the set it comes from, and with the comment above its def as
 the description (`gm-piano` — *GM 1 / MIDI 0: GrandPiano*; a kit's sample
 shows its file). What you type is matched anywhere in the name **or** the
@@ -2520,7 +2522,7 @@ from the first keystroke. Only what a track plays reaches the song.
 
 The side panel (the ⚙ button) has two tabs: **Params**, the sliders, mixer and
 open editing tools, and **Library**, everything that comes with the app in one
-list — the language reference (**Ref**), the **Presets** (the voice and sample sets), the
+list — the language reference (**Ref**), the **Presets** (the voice, sample and wave sets), the
 **Snippets** and the **Scores** (the examples) — so looking up a keyword,
 picking a voice or trying a technique takes one click instead of a file
 dialog. **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
@@ -2546,14 +2548,28 @@ log and the compiler's messages stay in English.
   query the list is one list, ranked as the completion ranks names.
 - **All / Ref / Presets / Snippets / Scores**, the bar across the top, picks
   one source.
-- The chips under it each narrow on their own. **FM / PCM / Macro** keep
-  only those kinds of preset (any number of them; none means all). **Fits
-  track** keeps what the track at the cursor can play — voices on an fm
-  track, samples on a pcm track, macros everywhere — and follows the cursor.
+- The chips under it each narrow on their own. **FM / PCM / Macro / Wave**
+  keep only those kinds of preset (any number of them; none means all). **Fits
+  track** keeps what the track at the cursor can play on the score's machine —
+  voices on an fm track, samples on a pcm track, waves on a wave track, macros
+  everywhere, and no row marked as lacking something — and follows the cursor;
+  outside a track it keeps what the score's machine can play.
   **A–Z** shows one alphabetical list instead of groups. A chip that means
   nothing for the source picked is greyed out and rests —
-  FM / PCM / Macro apply to All and Presets, Fits track to all but Snippets
+  FM / PCM / Macro / Wave apply to All and Presets, Fits track to all but Snippets
   and Scores — and takes effect again when its source comes back.
+- Nothing is hidden for the score's machine: a row says what it lacks there
+  beside its kind. A preset says `4-op` (the machine's FM has two operators,
+  as the FM-PAC's and the VRC7's do: the voice plays what it can), `no FM`,
+  `no PCM` or `no wave`; a snippet or a score whose channels the machine does
+  not have says `not pce`. **Fits track** is what leaves the presets out.
+- **Built-in** comes first among the presets: what the score's machine has
+  with no def and no import — `init-fm`, its ROM voices, its rhythm kit's
+  sounds, by their roles. ▶ plays one and **Insert** writes its name; there is
+  no def to copy.
+- A wave row plays on ▶ and the keys, on the machine's first wave channel; a
+  machine with none has neither for it. The keys' channels are the score's as
+  of its last Build.
 - Without a query the list is grouped — a preset set, a snippet topic, an
   examples folder — every group folded until opened. The line under the list
   describes the highlighted row: a preset's comment, a file's leading comment.

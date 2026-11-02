@@ -31,6 +31,21 @@ it accepts. This file holds the rulings and the plan's state; delete each item o
   the OPN's the reverse; the user's ruling, 2026-10-26): a sine on each chip. The player's boot patch is the same map,
   so a track with no voice plays init-fm on every target.
 
+## What lists show on a machine (rulings, 2026-11-03)
+
+Built: the completion, the `@` picker, the Library and `mmlisp_presets` go by
+`builtinNames`, `assetMark` and `targetsWith` (targets.js).
+
+- **One source for names: the parts.** Built-in names are what the compiler
+  resolves on that machine; a kit's are its roles (`kick`, never `bd`).
+- **Assets are marked, not hidden.** "Play what can be played" extends to the
+  lists: hiding is for the panel's controls; Fits track hides on request.
+- **No declarations.** A set or snippet says nothing about targets: a mark
+  comes from what it is (a def's kind) or writes (its channels).
+- **An audition sounds on the score's machine.** A wave preset on a machine
+  with no wave channels has no ▶ and no keys: sounding it elsewhere left the
+  worklet on that machine until the next Play.
+
 ## Rulings for what comes next (2026-10-25, not built yet)
 
 - **The editor panel** is built, the OPLL's 2-op operators too; still

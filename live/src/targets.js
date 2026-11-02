@@ -22,6 +22,7 @@ import x68k from "./targets/x68k.js";
 import msx from "./targets/msx.js";
 import pce from "./targets/pce.js";
 import fc from "./targets/fc.js";
+import { opllRomVoices } from "./chips/ym2413.js";
 
 const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10, wave: 10 };
 
@@ -111,6 +112,44 @@ export function toneLaneOf(c) {
 /** The profile for `name` (a score's `:target`), or the Mega Drive's. */
 export function targetProfile(name) {
   return TARGETS[name ?? DEFAULT_TARGET] ?? TARGETS[DEFAULT_TARGET];
+}
+
+// What a machine offers, for whatever lists names (the completion, the Library,
+// the MCP server). The parts decide, so a new target needs nothing here.
+
+/**
+ * The names a score on `target` can use with no def and no import, as the
+ * compiler resolves them: its FM part's init-fm and ROM voices, a rhythm kit's
+ * roles. { name, kind: 'voice' | 'sample', builtin, from, about }; a ROM voice read
+ * off the OPLL by a chip with no ROM of its own is from 'ROM 4-op'.
+ */
+export function builtinNames(target) {
+  const fm = target.parts.find((p) => p.kind === "fm");
+  const voices = !fm ? [] : [
+    { name: "init-fm", kind: "voice", builtin: true, from: "built-in", about: "The blank voice: a sine" },
+    ...[...opllRomVoices(fm).keys()].map((name) => ({ name, kind: "voice", builtin: true, from: fm.rom ? "ROM" : "ROM 4-op", about: `${fm.rom ? fm.label : "The OPLL"}'s ROM voice` })),
+  ];
+  const kit = target.parts.filter((p) => p.kit).flatMap((p) =>
+    Object.entries(p.kit).map(([name, sound]) => ({ name, kind: "sample", builtin: true, from: "ROM", about: `${p.label}: ${sound.toUpperCase()}` })));
+  return [...voices, ...kit];
+}
+
+/**
+ * What a preset's `kind` ('fm', 'pcm', 'wave') is short of on `target`, as a
+ * mark to show beside it, or null: it is offered all the same, and plays what
+ * it can (language.md §19).
+ */
+export function assetMark(target, kind) {
+  const has = (test) => target.parts.some(test);
+  if (kind === "fm") return !has((p) => p.kind === "fm") ? "no FM" : target.hasWord("FM_ALG") ? null : "4-op";
+  if (kind === "pcm") return has((p) => p.kind === "sample" && !p.kit) ? null : "no PCM";
+  if (kind === "wave") return has((p) => p.kind === "wave") ? null : "no wave";
+  return null;
+}
+
+/** The targets (their names) that have every one of `heads`, channel names. */
+export function targetsWith(heads) {
+  return Object.entries(TARGETS).filter(([, t]) => heads.every((h) => t.channelNames.includes(h))).map(([name]) => name);
 }
 
 // Every part some target has: a word one of them claims is a target's own,
