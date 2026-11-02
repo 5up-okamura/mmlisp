@@ -455,7 +455,6 @@ const writesOf = (source, addr) => {
   wait(10);
   oki(0, 0x82); oki(0, 0x20); // voice 2 is busy, silent or not
   wait(10);
-  oki(0x0e, 0x80); oki(0, 0x81); oki(0, 0x40);
   for (let i = 0; i < 8; i++) wait(20000);
   const silent = await file(1000000, false);
   assert.deepEqual(okiHits(silent).map((h) => [h.ch, h.start]), [[0, 0x100]]);
@@ -661,6 +660,37 @@ const arcadeVgm = (fields, type, rom, play) => {
   assert.ok(Math.abs(peak - 1 / (26886 / 3660)) < 0.01, `the chip's balance: ${peak}`);
   assert.match(source, /:mode gate/, "stopped short");
   assert.ok(!/\(pcm2\b/.test(source), "the pair is one voice");
+}
+
+// An NMK112 (a Raizing board's): the table's and the sample's banks are each
+// the ports' own, and a sample over two windows is read from both.
+{
+  const rom = new Uint8Array(0x100000);
+  rom.set([0, 0x10, 0, 0, 0x10, 0xff], 0x20000 + 8); // table bank 2, the phrase 1 of window 0
+  rom.set([1, 0xff, 0, 2, 0x00, 0xff], 0x30000 + 0x100 + 8); // table bank 3, phrase 33 of window 1
+  rom.fill(0x71, 0x51000, 0x51100); // window 0 on bank 5
+  rom.fill(0x17, 0x3ff00, 0x40000); // window 1 on bank 3
+  rom.fill(0x71, 0x70000, 0x70100); // window 2 on bank 7
+  const out = [0x67, 0x66, 0x8b, ...u32le(rom.length + 8), ...u32le(rom.length), ...u32le(0), ...rom];
+  for (const [a, d] of [[0x20, 0xc7], [0x60, 0], [0x28, 0x4a], [0x08, 0x08]]) out.push(0x54, a, d);
+  for (const [port, d] of [[0x0e, 0x80], [0x10, 2], [0x11, 3], [0x12, 7]]) out.push(0xb8, port, d);
+  out.push(0xb8, 0, 0x81, 0xb8, 0, 0x10);
+  out.push(0x61, 0x10, 0x27);
+  for (const [port, d] of [[0x10, 5], [0x11, 3]]) out.push(0xb8, port, d);
+  out.push(0xb8, 0, 0x81, 0xb8, 0, 0x20); // the table moved: nothing at phrase 1 now
+  out.push(0x61, 0x10, 0x27);
+  for (const [port, d] of [[0x10, 2], [0x11, 3]]) out.push(0xb8, port, d);
+  out.push(0xb8, 0, 0x80 | 33, 0xb8, 0, 0x40);
+  for (let i = 0; i < 8; i++) out.push(0x61, 0x20, 0x4e);
+  out.push(0x66);
+  const parsed = await parseVgm(vgmBytes(out, 200000, [[0x30, 3579545], [0x98, 1000000]]));
+  assert.ok(![...(parsed.skipped ?? [])].some(([name]) => /NMK112/.test(name)), "banks are read, not skipped");
+  const hits = parsed.pcmHits.filter((h) => h.src === "OKIM6295");
+  assert.equal(hits.length, 2, "a play of an empty table entry plays nothing");
+  assert.deepEqual([hits[0].start, hits[0].end], [0x21000, 0x21100], "the sample's bank is window 0's at the play");
+  assert.ok(hits[1].bytes, "over two windows: its own bytes");
+  assert.equal(hits[1].bytes.length, 0x200);
+  assert.deepEqual([hits[1].bytes[0], hits[1].bytes[0xff], hits[1].bytes[0x100], hits[1].bytes[0x1ff]], [0x17, 0x17, 0x71, 0x71]);
 }
 
 // A YM2203 beside an OKIM6295's voices: the PC-8801 has one for them, so the

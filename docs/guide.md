@@ -2121,8 +2121,8 @@ them: a key-on starts a note, a key-off ends it.
   driver writes just after the key-on (level, pan, Δ-N) counts as the
   hit's; a level moved while it sounds is not followed. The YM2608's rhythm
   on md then takes the next voice.
-- QSound and the other PCM chips, a C219 (the C140's later ASIC) and an
-  OKIM6295's NMK112 banks are not imported — the log
+- QSound and the other PCM chips and a C219 (the C140's later ASIC) are not
+  imported — the log
   names each VGM command it skipped — and neither is a second chip, a second
   YM2203 aside, whose channels are read as more of the first's; the log reports them. (A tempo change within the song needs nothing: the notes
   keep their times.)

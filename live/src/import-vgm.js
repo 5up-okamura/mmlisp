@@ -1605,7 +1605,6 @@ export async function parseVgm(bytes) {
           chips.push("OKIM6295");
           if (!clk(0x98)) clockNotes.push("the header gives no OKIM6295 clock — its usual 1000000 Hz is assumed");
         }
-        if (u8[p + 1] === 0x0e && u8[p + 2]) skip("OKIM6295's NMK112 banks");
         pcm.oki(u8[p + 1], u8[p + 2], t);
       }
       p += 3; continue;
@@ -3081,11 +3080,19 @@ function pcmChips({ segaClock, segaIntf, opnbClock, opnaClock, okiClock, okiPin7
   // attenuation; a phrase is 8 bytes of table at phrase × 8, an 18-bit start
   // and last byte, a play of a phrase that runs backwards doing nothing; bit 7
   // clear stops the voices in bits 3-6. A play on a voice still sounding is
-  // ignored. Port 8-B the clock, C pin 7, E turns on an NMK112's banks (its
-  // plays are not read), F the bank (MAME okim6295, VGMPlay).
+  // ignored. Port 8-B the clock, C pin 7, F the bank. E turns on an NMK112's
+  // banks, 10-13 pick them: four 64 KB windows on the ROM, and with E's bit 7
+  // the table's four 256 bytes each in a bank of its own (VGMPlay). The banks
+  // at a play are the sample's for all of it.
   const OKI_LEVEL = [0x20, 0x16, 0x10, 0x0b, 0x08, 0x06, 0x04, 0x03, 0x02];
   const okiClockBytes = [0, 8, 16, 24].map((shift) => (okiClock >>> shift) & 255), okiUntil = [-1, -1, -1, -1];
+  const okiNmkBank = [0, 0, 0, 0];
   let okiPhrase = -1, okiBank = 0, okiNmk = 0, okiDivisor = okiPin7 ? 132 : 165;
+  const okiAt = (a) => {
+    if (!okiNmk) return okiBank + a;
+    const table = a < 0x400 && okiNmk & 0x80;
+    return (table ? a : a & 0xffff) + okiNmkBank[table ? a >> 8 : (a >> 16) & 3] * 0x10000;
+  };
   const oki = (port, d, t) => {
     if (port >= 0x08 && port <= 0x0b) {
       okiClockBytes[port & 3] = port === 0x0b ? d & 0x7f : d; // bit 7: a logger's stray pin 7
@@ -3093,6 +3100,7 @@ function pcmChips({ segaClock, segaIntf, opnbClock, opnaClock, okiClock, okiPin7
     } else if (port === 0x0c) okiDivisor = d ? 132 : 165;
     else if (port === 0x0e) okiNmk = d;
     else if (port === 0x0f) okiBank = d * 0x40000;
+    else if (port >= 0x10 && port <= 0x13) okiNmkBank[port & 3] = d;
     if (port !== 0) return;
     if (okiPhrase < 0) {
       if (d & 0x80) { okiPhrase = d & 0x7f; return; }
@@ -3102,18 +3110,22 @@ function pcmChips({ segaClock, segaIntf, opnbClock, opnaClock, okiClock, okiPin7
     const phrase = okiPhrase;
     okiPhrase = -1;
     const rom = okiRom();
-    const entry = (i) => (rom?.[okiBank + phrase * 8 + i] ?? 0);
-    const read = rom && okiBank + phrase * 8 + 5 < rom.length; // else counted lost, in finish()
+    const entry = (i) => (rom?.[okiAt(phrase * 8 + i)] ?? 0);
+    const read = rom && okiAt(phrase * 8 + 5) < rom.length; // else counted lost, in finish()
     const from = ((entry(0) << 16) | (entry(1) << 8) | entry(2)) & 0x3ffff;
     const last = ((entry(3) << 16) | (entry(4) << 8) | entry(5)) & 0x3ffff;
     const rate = okiClock / okiDivisor;
-    if (okiNmk || !(rate > 0) || (read && from >= last)) return;
+    if (!(rate > 0) || (read && from >= last)) return;
     const level = OKI_LEVEL[d & 15] ?? 0;
     for (let v = 0; v < 4; v++) {
       if (!(d & (16 << v)) || t < okiUntil[v]) continue;
       okiUntil[v] = t + ((last + 1 - from) * 2 * RATE) / rate;
-      if (level) start({ t, src: "OKIM6295", ch: v, rom: read ? OKI6295_ROM : null, start: okiBank + from, end: okiBank + last + 1,
-        loopStart: null, rate, db: dbOf(level, 0x20), pan: false });
+      if (!level) continue;
+      // A sample over two windows is two places in the ROM: its own bytes.
+      const split = read && okiNmk && from >> 16 !== last >> 16;
+      const bytes = split ? Uint8Array.from({ length: last + 1 - from }, (_, i) => rom[okiAt(from + i)] ?? 0) : undefined;
+      start({ t, src: "OKIM6295", ch: v, rom: read ? OKI6295_ROM : null, start: split ? 0 : okiAt(from), end: split ? bytes.length : okiAt(from) + last + 1 - from,
+        bytes, loopStart: null, rate, db: dbOf(level, 0x20), pan: false });
     }
   };
 
