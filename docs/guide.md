@@ -2008,6 +2008,9 @@ them: a key-on starts a note, a key-off ends it.
   centre the way the note went: `vib-…-down` the other way); any other move — a
   scoop, a fall — a few `linear` lines, a `(def bend-NN …)` once two notes
   share it (a note cut short shares a longer one's).
+- An SCC+ log (K052539) reads as an SCC's, on `wave1`–`wave5`. Its channels 4
+  and 5 have a wave each, and `:target msx`'s share one, so a song that uses
+  both differently loses one's timbre; the log says so.
 - A level that moves during a note — the driver's envelope on the PSG, a
   carrier TL it steps on the FM — becomes a `:vel+` macro in a shared def
   (`(def env-01 (macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`), the note's

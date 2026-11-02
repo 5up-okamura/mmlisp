@@ -1239,23 +1239,32 @@ export function nesChips({ exp = {}, ram, clock = 1789773 }) {
 // the four wave memories (channels 4 and 5 share the fourth), 1 the periods
 // (the clock / 16 / (p + 1): VGM's clock is half the one the chip counts
 // at), 2 the 4-bit volumes, 3 the key bits.
-function sccChip(clock, { ev }) {
+function sccChip(clock, { ev, plus = false, note = () => {} }) {
   const N = 5;
-  const ram = Array.from({ length: 4 }, () => new Int8Array(32)), period = new Uint16Array(N), volume = new Uint8Array(N);
+  // Channels 4 and 5 share a wave memory; the SCC+ (K052539, bit 31 of the
+  // header's clock) gives each its own, and reads a fifth bank of it.
+  const memory = (c) => (plus ? c : Math.min(c, 3));
+  const ram = Array.from({ length: N }, () => new Int8Array(32)), period = new Uint16Array(N), volume = new Uint8Array(N);
   let keys = 0;
   const on = new Array(N).fill(false);
   const key = (c) => `K051649 CH${c + 1}`;
   const audible = (c) => !!((keys >> c) & 1) && volume[c] > 0 && period[c] >= 9;
   const vel = (c) => velOfDb(volume[c] ? 20 * Math.log10(volume[c] / 15) : -96);
   const hz = (c) => clock / (16 * (period[c] + 1));
-  const wave = (c) => [...ram[Math.min(c, 3)]];
+  const wave = (c) => [...ram[memory(c)]];
   // A key let go and taken again within a driver's setup burst is no new
   // note: with no envelope to restart, the SCC plays on (Metal Gear 2's
   // driver drops every channel's key for a moment whenever one starts).
   const offEv = new Array(N).fill(null);
+  let warned = false;
+  const clashed = () => {
+    if (!warned) note("the SCC+ gives channels 4 and 5 a wave each; msx's wave4 and wave5 share one, so one's timbre goes");
+    warned = true;
+  };
   const check = (c, t) => {
     const now = audible(c);
     if (now && !on[c]) {
+      if (plus && c >= 3 && on[7 - c] && ram[3].some((v, i) => v !== ram[4][i])) clashed();
       if (offEv[c] && t - offEv[c].t <= SETUP_T) offEv[c].kind = "held"; // (read by nothing: the note goes on)
       else ev(key(c), { t, kind: "on", pitch: pitchOf(hz(c)), vel: vel(c), wave: wave(c), kindOf: "wave" });
       offEv[c] = null;
@@ -1265,13 +1274,15 @@ function sccChip(clock, { ev }) {
   return {
     name: "K051649",
     write(port, a, d, t) {
-      if (port === 0 && a < 0x80) {
+      // Port 4 is the waves again, as an SCC+'s log writes them (VGMPlay).
+      if ((port === 0 || port === 4) && a < (plus ? 0xa0 : 0x80)) {
         ram[a >> 5][a & 31] = (d << 24) >> 24;
+        if (plus && on[3] && on[4] && ram[3].some((v, i) => v !== ram[4][i])) clashed();
         // A wave rewritten under a sounding note: its timbre moving (a
         // driver's frame of a noisier wave for a strike on the channel) —
         // a note's still where its key is down for a moment (offEv).
         for (let c = 0; c < N; c++)
-          if ((on[c] || offEv[c]) && Math.min(c, 3) === a >> 5) ev(key(c), { t, kind: "wave", wave: wave(c) });
+          if ((on[c] || offEv[c]) && memory(c) === a >> 5) ev(key(c), { t, kind: "wave", wave: wave(c) });
       }
       else if (port === 1 && a < 10) {
         const c = a >> 1;
@@ -1371,7 +1382,7 @@ export async function parseVgm(bytes) {
     // With a 2A03 in the file the AY is the Famicom's Sunsoft 5B. A YM2149
     // with its divider pin low (flags bit 4) counts at half the clock.
     ay: [0x74, 1789773, (c) => ayChip(hdr(0x84) ? "5B" : "AY-3-8910", ayFlags & 0x10 ? c / 2 : c, { ev })],
-    scc: [0x9c, 1789773, (c) => sccChip(c, { ev })],
+    scc: [0x9c, 1789773, (c) => sccChip(c, { ev, plus: hdr(0x9c) >>> 31 === 1, note: (s) => clockNotes.push(s) })],
     pce: [0xa4, 3579545, (c) => pceChip(c, { ev, skip })],
     apu: [0x84, 1789773, (c) => apuChip(c & 0x7fffffff, { ev, skip, pcm, ram: nesRam })],
     fds: [0x84, 1789773, (c) => fdsChip(c & 0x7fffffff, { ev, skip })], // the 2A03's clock (bit 31: the FDS)

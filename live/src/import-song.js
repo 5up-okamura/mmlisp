@@ -1021,6 +1021,9 @@ export function emitStructured(song) {
 // cents) is rounded so notes share one def, its period, wait and phase read
 // from the note; any other move is a few straight lines.
 
+const MAX_SCOOP = 8; // frames of a slide into a vibrato's held pitch
+const MIN_HOLD = 8; // frames still that make what comes before them no swing
+
 // A wobble: swings around a centre, at least three (a cycle and a half),
 // each a like length — after a wait that may hold the note still first.
 function vibratoOf(c) {
@@ -1029,7 +1032,16 @@ function vibratoOf(c) {
   const d = c.map((v) => v - centre);
   const swings = []; // [frame, sign]
   let sign = 0;
-  for (let f = 0; f < d.length; f++) {
+  // What the note starts on before it holds still (a tuning step, a slur's
+  // scoop) is no swing: they are counted from the hold.
+  const still = (f) => Math.abs(d[f]) < 6;
+  let hold = 0;
+  if (!still(0)) {
+    // (Held long enough to be no slow wobble crossing its centre.)
+    const holds = (f) => f + MIN_HOLD <= d.length && d.slice(f, f + MIN_HOLD).every((_, k) => still(f + k));
+    for (let f = 1; f <= MAX_SCOOP + 1 && !hold; f++) if (holds(f)) hold = f;
+  }
+  for (let f = hold; f < d.length; f++) {
     if (Math.abs(d[f]) < 6) continue;
     const sg = Math.sign(d[f]);
     if (sg !== sign) { swings.push(f); sign = sg; }
@@ -1057,17 +1069,28 @@ function vibratoOf(c) {
   const first = swings[0] === 0 ? 1 : 0;
   const period = Math.max(2, Math.round((2 * (swings[swings.length - 1] - swings[first])) / (swings.length - 1 - first)));
   // Before the wobble: held where the note starts, to the frame before the
-  // first swing, where the sine starts from its centre the way that swing
-  // goes. A note that starts in a swing starts where in the sine it is:
+  // first swing. A scoop into the held pitch is a line ahead of the sine.
+  const held = (f) => Math.abs(d[f]) <= 20;
+  let scoop = 0;
+  while (scoop < swings[0] && !held(scoop)) scoop++;
+  for (let f = scoop; f < swings[0] - 1; f++) if (!held(f)) return null;
+  if (scoop > MAX_SCOOP) return null;
+  const lead = scoop ? { from: c[0], to: c[scoop], frames: scoop + 1 } : null; // onto the held pitch
+  // Where in the sine it starts, the note read against it over two cycles: a
+  // driver's wobble need not start at its centre, nor a note at its start.
   // 64 is the centre rising, 192 falling.
-  if (first) {
-    const angle = Math.asin(Math.max(-1, Math.min(1, d[0] / depth)));
-    const rising = d[1] > d[0];
-    return { kind: "vib", centre: Math.abs(mid) <= 20 ? 0 : mid, depth, period, wait: 0,
-      phase: (Math.round(64 + (128 * (rising ? angle : Math.PI - angle)) / Math.PI) + 256) % 256 };
-  }
+  const wait = first ? 0 : Math.max(0, swings[0] - 1);
+  const misfit = (phase) => {
+    let e = 0;
+    for (let f = wait; f < Math.min(d.length, wait + 2 * period); f++)
+      e += Math.abs(d[f] - depth * Math.sin(2 * Math.PI * ((phase - 64) / 256 + (f - wait) / period)));
+    return e;
+  };
+  // (From the ways a sine starts, so plain ones share a def.)
+  const phase = [64, 192, 0, 128, 32, 96, 160, 224, 16, 48, 80, 112, 144, 176, 208, 240]
+    .reduce((p, q) => (misfit(q) < misfit(p) - 1e-6 ? q : p));
   return { kind: "vib", centre: Math.abs(mid) <= 20 ? 0 : mid, depth, period,
-    wait: Math.max(0, swings[0] - 1), phase: d[swings[0]] > 0 ? 64 : 192 };
+    wait: Math.max(0, wait - (lead?.frames ?? 0)), phase, lead };
 }
 
 // A few straight lines through the pitch: the fewest (up to six) within
@@ -1121,7 +1144,7 @@ export function assignBends(notes) {
     if (v) {
       const spec = bendSpec(v);
       if (!vibs.has(spec)) {
-        const name = `vib-${v.depth}-${v.period}${v.wait ? `-w${v.wait}` : ""}${v.centre ? `${v.centre > 0 ? "+" : ""}${v.centre}` : ""}${v.phase === 64 ? "" : v.phase === 192 ? "-down" : `-p${v.phase}`}`;
+        const name = `vib-${v.depth}-${v.period}${v.wait ? `-w${v.wait}` : ""}${v.centre ? `${v.centre > 0 ? "+" : ""}${v.centre}` : ""}${v.phase === 64 ? "" : v.phase === 192 ? "-down" : `-p${v.phase}`}${v.lead ? `-from${v.lead.from}-to${v.lead.to}-in${v.lead.frames}` : ""}`;
         vibs.set(spec, name);
         defs.push(`(def ${name} (macro :pitch ${spec}))`);
       }
@@ -1178,8 +1201,10 @@ export function assignBends(notes) {
 
 /** A bend as a `:pitch` macro spec (what follows `(macro :pitch `). */
 function bendSpec(b) {
-  if (b.kind === "vib")
-    return `(sin ${b.centre - b.depth}..${b.centre + b.depth} :len ${b.period}f${b.wait ? ` :wait ${b.wait}f` : ""}${b.phase ? ` :phase ${b.phase}` : ""})`;
+  if (b.kind === "vib") {
+    const sine = `(sin ${b.centre - b.depth}..${b.centre + b.depth} :len ${b.period}f${b.wait ? ` :wait ${b.wait}f` : ""}${b.phase ? ` :phase ${b.phase}` : ""})`;
+    return b.lead ? `[(linear ${b.lead.from}..${b.lead.to} :len ${b.lead.frames}f) ${sine}]` : sine;
+  }
   if (b.kind === "steps") return `[${b.values.join(" ")}]`;
   // Lines: a stage each; a level held is a wait. A curve plays both its
   // ends, so a line on from the one before starts a frame in (`at`: the

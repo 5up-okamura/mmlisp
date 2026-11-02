@@ -523,6 +523,57 @@ assert.ok(!/#rel/.test(await ssgVibrato({ frames: 72, gap: 8,
   tp: (f) => 240 + (f < 12 ? 0 : -3 * swing[Math.floor(((f - 11) * 8) / 10) % 8]),
   vol: (f) => (f < 1 ? 14 : f < 5 ? 13 : f < 23 ? 12 : Math.max(1, 11 - ((f - 23) >> 3))) })), "no release while it wobbles");
 
+// A note that starts off its held pitch, a step or a scoop, before it holds
+// still and wobbles: a vibrato still, the sine fitted to where it starts.
+{
+  const sine = Array.from({ length: 96 }, (_, f) => Math.round(45 * Math.sin((2 * Math.PI * f) / 12 + Math.PI / 2)));
+  const hold = Array(17).fill(0);
+  const [step] = assignBends([{ bend: [15, ...hold, ...sine] }]);
+  assert.match(step, /\(sin -50\.\.50 :len 12f :wait 17f :phase 112\)/, `a tuning step, ${step}`);
+  const [scoop] = assignBends([{ bend: [-605, -420, -225, -35, ...hold, ...sine] }]);
+  assert.match(scoop, /\[\(linear -605\.\.0 :len 5f\) \(sin -50\.\.50 :len 12f :wait 15f :phase 112\)\]/, `a scoop, ${scoop}`);
+}
+
+// What only looks like a hold leaves the swings alone: a flat tail, a slow
+// wobble crossing its centre. And two scoops are two defs.
+{
+  const peak = Array.from({ length: 48 }, (_, f) => Math.round(40 * Math.cos((2 * Math.PI * f) / 12)));
+  const [tail] = assignBends([{ bend: [...peak, ...Array(10).fill(0)] }]);
+  assert.match(tail, /\(sin -\d+\.\.\d+ :len 12f/, `a flat tail, ${tail}`);
+  const slow = Array.from({ length: 160 }, (_, f) => Math.round(40 * Math.sin((2 * Math.PI * (f + 60)) / 80)));
+  const [lfo] = assignBends([{ bend: slow }]);
+  assert.match(lfo, /\(sin -\d+\.\.\d+ :len 80f/, `a slow wobble, ${lfo}`);
+  const wobble = Array.from({ length: 96 }, (_, f) => Math.round(45 * Math.sin((2 * Math.PI * f) / 12)));
+  const scooped = (end) => ({ bend: [-605, -420, -225, end, ...Array(17).fill(0), ...wobble] });
+  const defs = assignBends([scooped(-40), scooped(-30), { bend: [-605, -420, -225, -225, -40, ...Array(16).fill(0), ...wobble] }]);
+  const names = defs.map((d) => d.split(" ")[1]);
+  assert.equal(new Set(names).size, names.length, `each its own name: ${names}`);
+}
+
+// An SCC+ (bit 31 of the header's clock): its waves on port 4, a fifth of its own.
+{
+  const out = [];
+  const scc = (port, a, d) => out.push(0xd2, port, a, d);
+  for (let i = 0; i < 32; i++) { scc(4, i, i * 4); scc(4, 0x80 + i, 124 - i * 4); }
+  for (let c = 0; c < 5; c++) { scc(1, c * 2, 200 + c * 20); scc(2, c, 12); }
+  scc(3, 0, 0x11);
+  for (let i = 0; i < 60; i++) out.push(0x62);
+  scc(3, 0, 0);
+  for (let i = 0; i < 12; i++) out.push(0x62);
+  out.push(0x66);
+  const head = new Uint8Array(0x100);
+  const dv = new DataView(head.buffer);
+  head.set([0x56, 0x67, 0x6d, 0x20]);
+  dv.setUint32(0x04, 0x100 + out.length - 4, true);
+  dv.setUint32(0x08, 0x161, true);
+  dv.setUint32(0x18, 72 * 735, true);
+  dv.setUint32(0x34, 0x100 - 0x34, true);
+  dv.setUint32(0x9c, (1789773 + 0x80000000) >>> 0, true);
+  const { source } = imported(await parseVgm(new Uint8Array([...head, ...out])), "msx");
+  assert.match(source, /\(def-wave [\w-]+ :wave \[0 4 8 /, "channel 1's wave, from port 4");
+  assert.match(source, /\(def-wave [\w-]+ :wave \[124 120 /, "channel 5's own");
+}
+
 // A note that starts in a swing, as a driver's free-running LFO leaves it,
 // starts where in the sine it is, and reads its period past that swing.
 for (const [start, phase] of [[1, 96], [2, 128], [5, 224], [6, null]]) {
