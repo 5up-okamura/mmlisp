@@ -172,17 +172,6 @@ export function loopSelection(text, selFrom, selTo) {
   };
 }
 
-// Apply changes (sorted, non-overlapping) to a slice of text.
-function applyChanges(text, changes) {
-  let out = "";
-  let at = 0;
-  for (const c of [...changes].sort((a, b) => a.from - b.from)) {
-    out += text.slice(at, c.from) + c.insert;
-    at = c.to;
-  }
-  return out + text.slice(at);
-}
-
 // Each looping channel's loop length in ticks, from compiled IR: an infinite
 // JUMP back to its MARKER. `{channel: ticks}`.
 export function loopLengths(ir) {
@@ -251,7 +240,8 @@ function splitToken(tok) {
 // Every note and rest the IR plays, tied back to its token. `shared` marks a
 // token that sounds more than once or outside its channel — inside a counted
 // loop, or in a def — where one edit changes every pass; `tied` one joined by
-// ~ to its neighbour, whose length is not its own to change.
+// ~ to its neighbour, whose length is not its own to change; `slot` one in a
+// tuplet, whose length is its share of the tuplet (`excludedBy`).
 function scoreNotes(text, ir, noteAnalysis) {
   const starts = lineStarts(text);
   const forms = channelForms(text);
@@ -304,6 +294,8 @@ function scoreNotes(text, ir, noteAnalysis) {
       const next = nextEvents[i];
       const n = {
         from, to, token, channel, editable, tick: e.tick, len: written?.length ?? e.args?.length ?? 0,
+        dur: e.args?.length ?? 0, // in ticks as played, shuffle included
+        slot: !!written?.slot,
         octave: written?.octave ?? null,
         kind: isNote ? "note" : "rest",
         pitch: isNote ? written?.pitch ?? e.args.pitch : null,
@@ -351,18 +343,20 @@ export function layeredNotes(text, options = {}) {
     }
   }
   // An edit changes every use of a source token, including uses outside the
-  // current Scope or another priority layer. Any tied use protects them all.
+  // current Scope or another priority layer. Any tied or tuplet use protects them all.
   const uses = new Map();
   for (const n of notes) {
-    const use = uses.get(n.from) ?? { count: 0, tied: false };
+    const use = uses.get(n.from) ?? { count: 0, tied: false, slot: false };
     use.count++;
     use.tied ||= n.tied;
+    use.slot ||= n.slot;
     uses.set(n.from, use);
   }
   for (const n of notes) {
     const use = uses.get(n.from);
     n.shared ||= use.count > 1;
     n.tied = use.tied;
+    n.slot = use.slot;
   }
   return notes.sort((a, b) => a.from - b.from);
 }
@@ -397,6 +391,18 @@ export function matchNotes(notes, q) {
   });
 }
 
+// A tuplet's token has no length of its own, and taking one out re-divides the
+// others: the edits that would change its length leave it alone.
+const SLOT_LOCKED_OPS = new Set(["remove", "len-set", "len-add", "len-mul"]);
+
+// Why an edit leaves a matched note alone, one reason for each, or null.
+export function excludedBy(n, op) {
+  if (n.tied) return "tied";
+  if (n.shared && !op.includeShared) return "shared";
+  if (n.slot && SLOT_LOCKED_OPS.has(op.type)) return "tuplet";
+  return null;
+}
+
 // Validate the same input for previews and Apply; an empty field is not zero.
 export function logicalInputError(q, op) {
   if (q.pitch?.kind === "name" && pitchMidi(q.pitch.name) == null) return "Note name: use c, f+ or b-.";
@@ -414,14 +420,13 @@ export function logicalInputError(q, op) {
 /**
  * Act on matched notes. op: {type: 'rest'|'remove'|'len-set'|'len-add'|
  * 'len-mul'|'reverse'|'select', ticks, factor, includeShared}.
- * @returns {{changes, selection?: {from, to}[], done: number, skipped: {shared, tied}} | {error}}
+ * @returns {{changes, selection?: {from, to}[], done: number} | {error}}
  */
 export function applyLogical(text, notes, matches, op) {
-  const skipped = { shared: 0, tied: 0 };
   if (op.type === "select") {
     const selection = [...new Map(matches.filter((n) => n.editable).map((n) => [n.from, { from: n.from, to: n.to }])).values()]
       .sort((a, b) => a.from - b.from);
-    return { changes: [], selection, done: selection.length, skipped };
+    return { changes: [], selection, done: selection.length };
   }
   if (op.type === "reverse") return reverseRuns(text, notes, matches);
   if (op.type === "transpose") return transposeNotes(text, matches, op);
@@ -436,10 +441,7 @@ export function applyLogical(text, notes, matches, op) {
     }
   }
   for (const n of matches) {
-    if (!n.editable) continue;
-    if (n.tied) { skipped.tied++; continue; }
-    if (n.shared && !op.includeShared) { skipped.shared++; continue; }
-    if (done.has(n.from)) continue;
+    if (!n.editable || excludedBy(n, op) || done.has(n.from)) continue;
     done.add(n.from);
     const { head, suffix } = splitToken(n.token);
     if (op.type === "rest") {
@@ -469,7 +471,7 @@ export function applyLogical(text, notes, matches, op) {
     if (op.type === "remove" && prev && c.from <= prev.to) prev.to = Math.max(prev.to, c.to);
     else merged.push({ ...c });
   }
-  return { changes: merged, done: actual.length, skipped };
+  return { changes: merged, done: actual.length };
 }
 
 // Move matched notes by `op.semitones`. A note's own token holds no octave —
@@ -477,15 +479,12 @@ export function applyLogical(text, notes, matches, op) {
 // wrapped in the > / < it needs and the context is restored right after it;
 // the notes around it do not move. Spelled with flats when the note was.
 function transposeNotes(text, matches, op) {
-  const skipped = { shared: 0, tied: 0 };
   const semis = Math.round(Number(op.semitones) || 0);
   const slots = [];
   const seen = new Set();
   for (const n of matches) {
     if (n.kind !== "note" || seen.has(n.from)) continue;
-    if (!n.editable) continue;
-    if (n.tied) { skipped.tied++; continue; }
-    if (n.shared && !op.includeShared) { skipped.shared++; continue; }
+    if (!n.editable || excludedBy(n, op)) continue;
     seen.add(n.from);
     if (semis === 0) continue;
     const { head, suffix } = splitToken(n.token);
@@ -493,9 +492,24 @@ function transposeNotes(text, matches, op) {
     const ctxOct = n.octave;
     slots.push({ from: n.from, to: n.to, insert: spellAt(n.midi + semis, ctxOct, suffix, head.includes("-")) });
   }
-  const actual = slots.filter((c) => text.slice(c.from, c.to) !== c.insert);
+  const done = slots.filter((c) => text.slice(c.from, c.to) !== c.insert).length;
   // Keep token edits separate so disjoint source selections map through them.
-  return { changes: actual, done: actual.length, skipped };
+  return { changes: mergeOctaveShifts(text, slots), done };
+}
+
+// Neighbouring tokens wrapped the same way share one wrap: `> c d <`, not
+// `> c < > d <`. Each stays its own change, and one left as it was is dropped.
+function mergeOctaveShifts(text, slots) {
+  const sorted = [...slots].sort((a, b) => a.from - b.from);
+  for (let i = 1; i < sorted.length; i++) {
+    const a = sorted[i - 1], b = sorted[i];
+    if (text.slice(a.to, b.from).trim()) continue;
+    while ((a.insert.endsWith(" <") && b.insert.startsWith("> ")) || (a.insert.endsWith(" >") && b.insert.startsWith("< "))) {
+      a.insert = a.insert.slice(0, -2);
+      b.insert = b.insert.slice(2);
+    }
+  }
+  return sorted.filter((c) => text.slice(c.from, c.to) !== c.insert);
 }
 
 // A pitch spelled as a note token in an octave context: its name (sharps,
@@ -541,6 +555,9 @@ function reverseRuns(text, notes, matches) {
     const run = notes.filter((n) => key(n) === layer && n.from >= first.from && n.to <= last.to);
     const bad = run.find((n) => !n.editable || n.shared || n.tied || !n.direct);
     if (bad) return { error: `${name}: reverse needs plain notes and rests — "${bad.token}" sits in a loop, a def, a nested form or a tie` };
+    // A def's or an import's notes have no tokens here: only the time they take shows.
+    const gap = run.find((n, i) => i > 0 && n.tick !== run[i - 1].tick + run[i - 1].dur);
+    if (gap) return { error: `${name}: reverse needs plain notes and rests — something else plays before "${gap.token}"` };
     if (run.length < 2) continue;
     // Context comes from compilation, including rests and leading octave shifts.
     const at = new Map(run.map((n) => [n.from, { oct: n.octave, sample: n.sample }]));
@@ -557,12 +574,11 @@ function reverseRuns(text, notes, matches) {
       }
       return { from: slot.from, to: slot.to, insert };
     });
+    done += slots.filter((c) => text.slice(c.from, c.to) !== c.insert).length;
     // Separate token changes preserve disjoint source selections through Apply.
-    const actual = slots.filter((c) => text.slice(c.from, c.to) !== c.insert);
-    changes.push(...actual);
-    done += actual.length;
+    changes.push(...mergeOctaveShifts(text, slots));
   }
-  return { changes: changes.sort((a, b) => a.from - b.from), done, skipped: { shared: 0, tied: 0 } };
+  return { changes: changes.sort((a, b) => a.from - b.from), done };
 }
 
 // ---------------------------------------------------------------------------

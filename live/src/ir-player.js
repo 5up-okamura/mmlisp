@@ -2341,10 +2341,9 @@ export class IRPlayer {
     // optional chip (the FDS) is started before its first write.
     // `+`, `*` and a `$value` (PARAM_ADD / _MUL / _FROM_VAL) are a value
     // read off the word as last written.
-    const lfoLane = this._toneEnc.findIndex((l) => l?.enc.lfoFreq);
-    const lfoWord = lfoLane >= 0 && /^PARAM_/.test(ev.cmd) ? WAVE_LFO_WORDS[ev.args?.target] : null;
-    if (lfoWord && this._toneEnc[lfoLane].enc[lfoWord]) {
-      const write = (v, t) => this._psgWrites(this._lane(lfoLane, (e) => e[lfoWord](v)), t);
+    const waveLfo = /^PARAM_/.test(ev.cmd) ? this._waveLfoRoute(ev.args?.target) : null;
+    if (waveLfo) {
+      const { word: lfoWord, write } = waveLfo;
       const cur = this._waveLfo[lfoWord] ?? 0;
       const a = ev.args ?? {};
       if (lfoWord === "lfoTable") { if (ev.cmd === "PARAM_SET") write(a.table ?? [], when); }
@@ -5309,6 +5308,16 @@ export class IRPlayer {
     }
   }
 
+  // A song LFO word's route into a wave chip with an LFO of its own: the
+  // encoder's word and its write, or null when the chip has neither.
+  _waveLfoRoute(target) {
+    const word = WAVE_LFO_WORDS[target];
+    if (!word) return null;
+    const lane = this._toneEnc.findIndex((l) => l?.enc.lfoFreq);
+    if (lane < 0 || !this._toneEnc[lane].enc[word]) return null;
+    return { word, write: (v, t) => this._psgWrites(this._lane(lane, (e) => e[word](v)), t) };
+  }
+
   /**
    * External real-time parameter write.
    * target: e.g. 'FM_TL1', 'FM_FB', 'FM_ALG'
@@ -5317,11 +5326,9 @@ export class IRPlayer {
    */
   setParam(target, value, chIndex = 0) {
     // Wave chips' song-wide LFO words use their own encoder, as score writes do.
-    const word = WAVE_LFO_WORDS[target];
-    const lane = word && this._toneEnc.findIndex((l) => l?.enc[word]);
-    if (word && lane >= 0 && word !== "lfoTable") {
-      this._waveLfo[word] = Math.round(value);
-      this._psgWrites(this._lane(lane, (e) => e[word](this._waveLfo[word])));
+    const waveLfo = this._waveLfoRoute(target);
+    if (waveLfo && waveLfo.word !== "lfoTable") {
+      waveLfo.write((this._waveLfo[waveLfo.word] = Math.round(value)));
       return;
     }
     this._applyParam(chIndex, {

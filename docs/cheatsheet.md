@@ -211,6 +211,7 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 - A loop bakes its state: `(x 4 c >)` plays `c c c c` and leaves the octave
   up. Rebalance, `(x 4 c > c <)`.
 - `(e g a)` is not a tuplet — write `(t e g a)`.
+- A tuplet's body is a channel body whose notes each take an equal share: `:vel`, `:tl1`, voices, `~` all go in. Refused: lengths (`c8`, `:len`, `:shuffle`, `(note …)`, `(echo …)`), `(x …)`, `(t …)`, jumps, `(for …)`, `(if …)`, `(let …)` — set `:len` before it.
 - A def named like a note or length (`a`–`g`, `e8`) is `E_DEF_NAME`, as a
   `let` name is. Pick words (`riff`, `root`).
 - `:prio` goes right after the channel name, nowhere else.

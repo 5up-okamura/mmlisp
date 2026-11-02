@@ -208,12 +208,33 @@ normal note. Encoded as `NOTE_ON_EX` bit3 (opcodes.md §5.1).
   (t b > c d <))    ; octave shifts too: b4 c5 d5
 ```
 
-Elements may be notes, per-note-length atoms (their suffix is ignored — the
-slot division wins), or `_` rests; each takes an equal share. Between them go
-the state tokens that take no time — `>` `<` `o±N` `v±N` — which take no share
-and apply to the notes after them, inside the tuplet and on after it, as
-anywhere in the stream. Anything else, a nested tuplet included, is
-`E_UNKNOWN_TUPLET_ELEM`; a `(t)` with no note or rest is `E_TUPLET_EMPTY`.
+The body is an ordinary channel body, but for where a note gets its length:
+each note and `_` rest is an equal share of the slot (a `:shuffle` in force
+warps the span they divide, §5.2). Everything that takes no time goes
+between them — `>` `<` `:vel` `:tl1` `:gate`, a voice or sample, `(macro …)`,
+`(delay …)`, `~` — takes no share, and applies to what follows, inside the
+tuplet and on after it, as anywhere in the stream. A `def` of notes plays its
+notes, each a share:
+
+```lisp
+(fm1 :len 2
+  (t :vel 12 c :vel 8 d :vel 10 e)  ; accents; f below is at :vel 10
+  (t c ~ e d)                       ; a slur inside the slot
+  :len 4 f)
+```
+
+What would stop the slot dividing evenly is `E_UNKNOWN_TUPLET_ELEM`:
+
+- a length: `c8`, `_8`, `(note …)`, `(echo …)`, which takes time of its own,
+  and `:len`;
+- a change of grid, `:shuffle` or `:shuffle-base`: set it before the tuplet;
+- a loop or a nested tuplet: `(x …)` replays one pass, whose shares the next
+  pass may not divide alike, and `(t …)` is not one note's share;
+- a jump: `(go …)`, `(break)`, a `#label`;
+- `(for …)`, `(if …)`, `(let …)`: the count of notes has to be known before the
+  first one plays.
+
+A `(t)` with no note or rest is `E_TUPLET_EMPTY`.
 
 A bare note-headed list `(e g a)` is not a tuplet — it is rejected with
 `E_UNKNOWN_LIST`; the syntax is reserved.

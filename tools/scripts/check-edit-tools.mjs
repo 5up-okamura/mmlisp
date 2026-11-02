@@ -1,7 +1,7 @@
 // Source-edit regressions: notation, target sound names and actual edit extent.
 import assert from 'node:assert/strict';
 import { compileMMLisp } from '../../live/src/mmlisp2ir.js';
-import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError } from '../../live/src/edit-tools.js';
+import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy } from '../../live/src/edit-tools.js';
 
 let count = 0;
 const check = (name, run) => { run(); count++; console.log(`ok ${name}`); };
@@ -96,7 +96,7 @@ check('ties are excluded, invalid and no-op edits do not apply', () => {
   const notes = layeredNotes(text);
   const result = applyLogical(text, notes, matchNotes(notes, query()), { type: 'transpose', semitones: 0 });
   assert.equal(result.changes.length, 0);
-  assert.ok(result.skipped.tied > 0);
+  assert.ok(notes.some((n) => excludedBy(n, { type: 'transpose' }) === 'tied'));
   const sharp = '(fm1 b+)';
   const sharpNotes = layeredNotes(sharp);
   assert.equal(applyLogical(sharp, sharpNotes, sharpNotes, { type: 'transpose', semitones: 0 }).changes.length, 0);
@@ -205,11 +205,90 @@ check('Selection scope uses disjoint ranges without filling the gaps', () => {
   assert.deepEqual(matches.map((n) => n.token), ['c', 'e']);
   assert.deepEqual(applyLogical(text, notes, [], { type: 'select' }).selection, []);
 });
+check('a tuplet transposes with its neighbours and keeps its slots', () => {
+  const text = '(fm1 :len 4 c (t d e _ f) g)';
+  const notes = layeredNotes(text);
+  assert.deepEqual(notes.map((n) => n.token), ['c', 'd', 'e', '_', 'f', 'g']);
+  assert.deepEqual(pitches(edit(text, applyLogical(text, notes, notes, { type: 'transpose', semitones: 12 }).changes)),
+    ['c5', 'd5', 'e5', 'f5', 'g5']);
+  const rest = applyLogical(text, notes, notes.filter((n) => n.token === 'e'), { type: 'rest' });
+  assert.equal(edit(text, rest.changes), '(fm1 :len 4 c (t d _ _ f) g)');
+  for (const op of [{ type: 'remove' }, { type: 'len-set', ticks: 96 }, { type: 'len-mul', factor: 2 }]) {
+    const result = applyLogical(text, notes, notes.filter((n) => n.slot), op);
+    assert.deepEqual(result.changes, []);
+    assert.equal(notes.filter((n) => excludedBy(n, op) === 'tuplet').length, 4);
+  }
+});
+check('a tuplet keeps its notes editable around what takes no time', () => {
+  const text = '(fm1 :len 4 (t :vel 8 c ~ c :tl1 20 d) e)';
+  const notes = layeredNotes(text);
+  assert.deepEqual(notes.map((n) => [n.token, n.tied, n.slot]),
+    [['c', true, true], ['c', true, true], ['d', false, true], ['e', false, false]]);
+  const up = applyLogical(text, notes, notes, { type: 'transpose', semitones: 12 });
+  assert.equal(edit(text, up.changes), '(fm1 :len 4 (t :vel 8 c ~ c :tl1 20 > d <) > e <)');
+});
+check('a def played in and out of a tuplet keeps its length everywhere', () => {
+  const text = '(def riff c d) (fm1 :len 4 riff (t riff e))';
+  const notes = layeredNotes(text);
+  for (const op of [{ type: 'len-set', ticks: 48, includeShared: true }, { type: 'remove', includeShared: true }])
+    assert.deepEqual(applyLogical(text, notes, notes, op).changes.filter((c) => c.from < text.indexOf('(fm1')), []);
+});
+check('a note is excluded for one reason', () => {
+  const text = '(fm1 :len 4 c ~ (t c d) (x 2 (t e f)))';
+  const notes = layeredNotes(text);
+  assert.deepEqual(notes.map((n) => excludedBy(n, { type: 'remove' })).filter((w, i, all) => all.indexOf(w) === i), ['tied', 'tuplet', 'shared']);
+});
+check('reverse refuses a tuplet rather than skipping it', () => {
+  const text = '(fm1 :len 4 c (t d e f) g a)';
+  const notes = layeredNotes(text);
+  assert.match(applyLogical(text, notes, notes, { type: 'reverse' }).error, /"d"/);
+});
+for (const mode of ['gate', 'loop']) check(`a ${mode} PCM tie keeps both tokens`, () => {
+  const text = `(def-pcm hit :file "hit.wav") (pcm1 hit :mode ${mode} c ~ c d)`;
+  assert.deepEqual(layeredNotes(text).map((n) => [n.token, n.tied, n.shared]),
+    [['c', true, false], ['c', true, false], ['d', false, false]]);
+});
+check('a PCM gate that splits its tie stays one use of the token', () => {
+  const text = '(def-pcm hit :file "hit.wav") (pcm1 :len 4 hit :mode gate :gate* 0.75 c ~ c d)';
+  assert.ok(compileMMLisp(text).ir.tracks[0].events.filter((e) => e.cmd === 'TIE').length > 1);
+  assert.ok(layeredNotes(text).every((n) => !n.shared));
+});
+check('a token shared with a PCM tie is protected at every use', () => {
+  const text = '(def-pcm hit :file "hit.wav") (def tail c) (pcm1 hit :mode gate c ~ tail) (pcm2 hit :mode gate tail)';
+  const notes = layeredNotes(text);
+  const result = applyLogical(text, notes, notes, { type: 'transpose', semitones: 2, includeShared: true });
+  assert.deepEqual(result.changes, []);
+});
+check('reverse refuses a def that plays inside its span', () => {
+  const text = '(def riff e f) (fm1 c riff d)';
+  const notes = layeredNotes(text);
+  const own = notes.filter((n) => !n.shared);
+  assert.match(applyLogical(text, notes, own, { type: 'reverse' }).error, /something else plays before "d"/);
+});
+check('neighbouring octave shifts share one wrap', () => {
+  const text = '(fm1 c d e f g)';
+  const notes = layeredNotes(text);
+  const up = applyLogical(text, notes, notes.slice(0, 4), { type: 'transpose', semitones: 12 });
+  assert.equal(edit(text, up.changes), '(fm1 > c d e f < g)');
+  assert.equal(up.done, 4);
+  const down = applyLogical(text, notes, notes, { type: 'transpose', semitones: -24 });
+  assert.equal(edit(text, down.changes), '(fm1 < < c d e f g > >)');
+  assert.ok(down.changes.every((c) => notes.some((n) => c.from === n.from && c.to === n.to)));
+  assert.deepEqual(pitches(edit(text, up.changes)), ['c5', 'd5', 'e5', 'f5', 'g4']);
+});
+check('a wrap is not shared across anything but space', () => {
+  const text = '(fm1 c :vel 3 d)';
+  const notes = layeredNotes(text);
+  const result = applyLogical(text, notes, notes, { type: 'transpose', semitones: 12 });
+  assert.equal(edit(text, result.changes), '(fm1 > c < :vel 3 > d <)');
+});
 check('analysis never changes or leaks into public IR', () => {
-  const text = '(fm1 :len 8 c d (x 2 e f))';
-  const normal = compileMMLisp(text);
-  const analysed = compileMMLisp(text, undefined, { noteAnalysis: new WeakMap() });
-  assert.deepEqual(analysed, normal);
-  assert.ok(!JSON.stringify(analysed).includes('_edit'));
+  for (const text of ['(fm1 :len 8 c d (x 2 e f))', '(fm1 c ~ c (t d e _))',
+    '(def-pcm hit :file "hit.wav") (pcm1 hit :mode gate c ~ c d)']) {
+    const normal = compileMMLisp(text);
+    const analysed = compileMMLisp(text, undefined, { noteAnalysis: new WeakMap() });
+    assert.deepEqual(analysed, normal);
+    assert.ok(!JSON.stringify(analysed).includes('_edit'));
+  }
 });
 console.log(`Logical Editor checks passed: ${count}`);

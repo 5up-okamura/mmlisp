@@ -271,9 +271,9 @@ export const REFERENCE = [
   {
     name: '(t …) tuplet', aliases: ['t', 'tuplet', 'triplet'], cat: 'notes', section: '§3', tracks: null,
     syntax: '(t c e g)',
-    summary: 'Divides one :len slot evenly among its notes and rests.',
+    summary: 'Divides one :len slot evenly among its notes and rests, which take no length of their own. Anything that takes no time (:vel, :tl1, a voice, ~) may go between them.',
     insert: '(t c e g)',
-    example: '(fm1 :len 4 c (t e g a) f (t c _ c))',
+    example: '(fm1 :len 4 c (t e g a) f (t :vel 12 c :vel 8 _ c))',
   },
   {
     name: '| (bar)', aliases: ['|', 'bar'], cat: 'notes', section: '§18', tracks: null,

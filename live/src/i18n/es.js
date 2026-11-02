@@ -51,7 +51,7 @@ export default {
     "> < (octave)": ["a35e554b", "Octava arriba / abajo en una, o en N; persistente, como :oct."],
     "v+ v- (velocity)": ["8ffac9e7", "Velocidad arriba / abajo en N (por defecto 1); persistente, como :vel+."],
     "~ (tie, slur)": ["8c703544", "Mismo tono: ligadura de prolongación, un solo ataque sostenido (PCM también). Otro tono: ligadura de expresión, el tono se mueve sin nuevo ataque (FM / PSG)."],
-    "(t …) tuplet": ["ae55059c", "Divide un hueco de :len en partes iguales entre sus notas y silencios."],
+    "(t …) tuplet": ["2c30cade", "Divide un hueco de :len a partes iguales entre sus notas y silencios, que no llevan duración propia. Todo lo que no ocupa tiempo (:vel, :tl1, una voz, ~) puede ir entre ellos."],
     "| (bar)": ["5d3918f3", "Marca de compás al final de cada compás: no suena, y se comprueba contra las duraciones de las pistas."],
     ":oct": ["254bcb58", "La octava en que se leen las notas. Por defecto 4 (do central)."],
     ":len": ["cadb8cab", "La duración de nota por defecto. Por defecto 8; 0 sostiene la nota y la pista espera el key-off (Tools > Release Holds en el editor)."],

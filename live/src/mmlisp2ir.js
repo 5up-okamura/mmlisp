@@ -900,6 +900,7 @@ function isPcmModeSymbol(value) {
 function editableContext(state, length, note = null) {
   return {
     length, octave: state.defaultOct, sample: state.isPcmTrack ? state.pcmSampleName : null,
+    slot: !!state.tuplet,
     pitch: note == null ? null : note + state.defaultOct,
     voice: state.isPcmTrack ? state.pcmSampleName
       : state.part?.kind === "wave" ? (state.activeMacros.WAVE ? null : state.editWaveName ?? null)
@@ -912,10 +913,21 @@ function emitEditableNote(state, name, nominal, events, diagnostics, src, trackN
   if (context && state.pendingLegato) context.tied = true;
   const start = events.length;
   const ticks = resolveShuffleTicks(nominal, state, diagnostics, src, trackName);
+  // A TIE takes the context as it is made: a PCM tie moves the head's off from
+  // before it, and may split it, so it is neither at `start` nor alone after.
+  state.editing = context;
   emitNoteForTrack(state, name, ticks, events, diagnostics, src, trackName);
+  state.editing = null;
   if (context) for (let i = start; i < events.length; i++) {
-    if (["NOTE_ON", "PCM_NOTE_ON", "TIE"].includes(events[i].cmd)) events[i]._edit = context;
+    if (events[i].cmd === "NOTE_ON" || events[i].cmd === "PCM_NOTE_ON") events[i]._edit = context;
   }
+}
+
+function pushTie(state, events, length, src) {
+  const tie = { tick: state.tick, cmd: "TIE", args: { length }, src,
+    ...(state.editing ? { _edit: state.editing } : {}) };
+  events.push(tie);
+  return tie;
 }
 
 function emitNoteForTrack(
@@ -971,9 +983,7 @@ function emitNoteForTrack(
     const h = trackState.pcmTiedHead;
     const fullPitch = noteName + trackState.defaultOct;
     if (h && h.sample === trackState.pcmSampleName && pitchToMidi(h.pitch) === pitchToMidi(fullPitch)) {
-      const tie = { tick: trackState.tick, cmd: "TIE", args: { length: lengthTicks }, src };
-      events.push(tie);
-      h.segs.push(tie);
+      h.segs.push(pushTie(trackState, events, lengthTicks, src));
       h.total += lengthTicks;
       placePcmTieOff(h, events);
       trackState.tick += lengthTicks;
@@ -984,12 +994,7 @@ function emitNoteForTrack(
     const cmpPitch = noteName + trackState.defaultOct;
     const prev = trackState.lastNotePitch;
     if (prev && pitchToMidi(cmpPitch) === pitchToMidi(String(prev))) {
-      events.push({
-        tick: trackState.tick,
-        cmd: "TIE",
-        args: { length: lengthTicks },
-        src,
-      });
+      pushTie(trackState, events, lengthTicks, src);
       // Re-resolve the tied group head's gate against the full tied length. A
       // relative gate (`:gate-` / `:gate*`) means "cut/fraction of the whole
       // tied note", not of just the first segment, so the key-off must land near
@@ -2900,25 +2905,6 @@ function isOctShiftAtom(val) {
   return typeof val === "string" && /^o[+\-]\d*$/.test(val);
 }
 
-// The state tokens that take no time: `>` `<` `o±N` `v±N`. Applies one to the
-// track state and returns true, or returns false for anything else. Shared by
-// the note stream and the tuplet, where they sit between the notes without
-// taking a share of the slot (§3).
-function applyTimelessStateToken(val, trackState) {
-  if (val === ">" || val === "<" || isOctShiftAtom(val)) {
-    const delta = val === ">" ? 1 : val === "<" ? -1
-      : (val[1] === "+" ? 1 : -1) * (val.length > 2 ? parseInt(val.slice(2), 10) : 1);
-    trackState.defaultOct = Math.max(0, trackState.defaultOct + delta);
-    return true;
-  }
-  if (isVelShiftAtom(val)) {
-    const delta = (val[1] === "+" ? 1 : -1) * (val.length > 2 ? parseInt(val.slice(2), 10) : 1);
-    trackState.defaultVel = Math.max(0, Math.min(15, trackState.defaultVel + delta));
-    return true;
-  }
-  return false;
-}
-
 // Per-note length atom: note name + any valid length token suffix.
 // Examples: c4, e8., f+12t, b-6f, a1/2
 function parsePerNoteLength(val) {
@@ -4164,6 +4150,46 @@ function nodeSrc(node) {
   return src;
 }
 
+// A tuplet's next share of its slot.
+function tupletShare(state) {
+  const t = state.tuplet;
+  t.acc += t.total;
+  const share = Math.floor(t.acc / t.n);
+  t.acc -= share * t.n;
+  return share;
+}
+
+// Forms a tuplet's body refuses (language.md, Tuplets): a note with a length of
+// its own or time of its own, a loop that would replay one pass's shares, a
+// jump in or out of the slot, and what hides the count of notes until it runs.
+const TUPLET_REFUSED_FORMS = new Set(["note", "echo", "t", "x", "go", "break", "for", "if", "let"]);
+
+// The notes and rests of a tuplet's body, each a share of the slot — the
+// shares must be known before the first is played — or -1 when it can't be one.
+function tupletNotes(items, diagnostics, trackName) {
+  let n = 0, bad = false;
+  const refuse = (msg, node) => {
+    pushDiag(diagnostics, "error", "E_UNKNOWN_TUPLET_ELEM", msg, nodeSrc(node), trackName);
+    bad = true;
+  };
+  for (let k = 0; k < items.length; k++) {
+    const it = items[k], v = atomValue(it);
+    if (it.kind === "list") {
+      const head = atomValue(it.items[0]);
+      if (TUPLET_REFUSED_FORMS.has(head)) refuse(`(${head} …) cannot go in a tuplet`, it);
+      continue;
+    }
+    if (/^:len[+*-]?$/.test(v)) refuse(`${v}: a tuplet divides the :len it starts with`, it);
+    else if (/^:shuffle(-base)?$/.test(v)) refuse(`${v}: the grid has to hold through a tuplet's slot — set it before the tuplet`, it);
+    else if (v?.startsWith("#")) refuse(`${v}: a tuplet is one slot, with no label inside`, it);
+    else if (!v?.startsWith(":") && parseNumberLike(v) !== null) refuse(`${v}: a tuplet takes notes and rests`, it);
+    else if (isPerNoteLengthAtom(v) || (isRestAtom(v) && v !== "_")) refuse(`${v}: a tuplet's notes and rests take no length — each is an equal share of the :len slot`, it);
+    if (v?.startsWith(":")) k++; // its value is not a note
+    else if (v === "_" || isNoteAtom(v)) n++;
+  }
+  return bad ? -1 : n;
+}
+
 /**
  * The channel body compiler.
  * Processes notes, rests, inline modifiers, and structural forms directly
@@ -4698,7 +4724,16 @@ function compileChannelBody(
       }
 
       // Octave and velocity shifts: > < o± v±
-      if (applyTimelessStateToken(val, trackState)) {
+      if (val === ">" || val === "<" || isOctShiftAtom(val)) {
+        const delta = val === ">" ? 1 : val === "<" ? -1
+          : (val[1] === "+" ? 1 : -1) * (val.length > 2 ? parseInt(val.slice(2), 10) : 1);
+        trackState.defaultOct = Math.max(0, trackState.defaultOct + delta);
+        i++;
+        continue;
+      }
+      if (isVelShiftAtom(val)) {
+        const delta = (val[1] === "+" ? 1 : -1) * (val.length > 2 ? parseInt(val.slice(2), 10) : 1);
+        trackState.defaultVel = Math.max(0, Math.min(15, trackState.defaultVel + delta));
         i++;
         continue;
       }
@@ -4716,7 +4751,7 @@ function compileChannelBody(
 
       // Rest atom: "_", "_4", "_4.", "_14t", "_16f"
       if (isRestAtom(val)) {
-        const nominal = parseRestLength(val, trackState.defaultLength, trackState.currentTempo);
+        const nominal = trackState.tuplet ? tupletShare(trackState) : parseRestLength(val, trackState.defaultLength, trackState.currentTempo);
         const ticks = resolveShuffleTicks(
           nominal,
           trackState, diagnostics, nodeSrc(node), trackName,
@@ -4757,7 +4792,7 @@ function compileChannelBody(
 
       // Bare note: c, d, e, f, g, a, b (with optional + or -)
       if (isNoteAtom(val)) {
-        emitEditableNote(trackState, val, trackState.defaultLength,
+        emitEditableNote(trackState, val, trackState.tuplet ? tupletShare(trackState) : trackState.defaultLength,
           events, diagnostics, nodeSrc(node), trackName);
         i++;
         continue;
@@ -4846,78 +4881,20 @@ function compileChannelBody(
 
       // Tuplet: (t elem …) divides one current :len slot among its notes and
       // rests using Bresenham distribution (remainders spread evenly). The
-      // timeless state tokens (> < o± v±) sit between them and take no share.
+      // body is an ordinary channel body but for where its notes get a length.
       if (head === "t") {
-        const elems = node.items
-          .slice(1)
-          .filter((ev) => ev?.kind !== "comment");
-        const takesSlot = (ev) => {
-          const v = atomValue(ev);
-          return v === "_" || isPerNoteLengthAtom(v) || isNoteAtom(v);
-        };
-        const n = elems.filter(takesSlot).length;
+        const elems = node.items.slice(1).filter((ev) => ev?.kind !== "comment");
+        const n = tupletNotes(elems, diagnostics, trackName);
         if (n === 0) {
-          pushDiag(
-            diagnostics,
-            "error",
-            "E_TUPLET_EMPTY",
-            "(t …) needs at least one note or rest",
-            nodeSrc(node),
-            trackName,
-          );
+          pushDiag(diagnostics, "error", "E_TUPLET_EMPTY", "(t …) needs at least one note or rest", nodeSrc(node), trackName);
           i++;
           continue;
         }
-        const totalTicks = trackState.defaultLength;
-        let acc = 0;
-        for (const ev of elems) {
-          const evVal = atomValue(ev);
-          if (applyTimelessStateToken(evVal, trackState)) continue;
-          if (!takesSlot(ev)) {
-            pushUnknownDiag(
-              diagnostics,
-              "E_UNKNOWN_TUPLET_ELEM",
-              "Unknown tuplet element",
-              ev,
-              trackName,
-            );
-            continue;
-          }
-          acc += totalTicks;
-          const nominalSlot = Math.floor(acc / n);
-          acc -= nominalSlot * n;
-          const slotTicks = resolveShuffleTicks(nominalSlot, trackState, diagnostics, nodeSrc(ev), trackName);
-          if (evVal === "_") {
-            events.push({
-              tick: trackState.tick,
-              cmd: "REST",
-              args: { length: slotTicks },
-              src: nodeSrc(ev),
-            });
-            trackState.tick += slotTicks;
-          } else if (isPerNoteLengthAtom(evVal)) {
-            const { noteName } = parsePerNoteLength(evVal);
-            emitNoteForTrack(
-              trackState,
-              noteName,
-              slotTicks,
-              events,
-              diagnostics,
-              nodeSrc(ev),
-              trackName,
-            );
-          } else {
-            emitNoteForTrack(
-              trackState,
-              evVal,
-              slotTicks,
-              events,
-              diagnostics,
-              nodeSrc(ev),
-              trackName,
-            );
-          }
-        }
+        if (n > 0) {
+          trackState.tuplet = { total: trackState.defaultLength, n, acc: 0 };
+          compileChannelBody(elems, trackState, events, diagnostics, trackName, typedDefs, loopCounter, vals, evalEnv);
+          trackState.tuplet = null;
+        } else trackState.tick += trackState.defaultLength; // refused: the rest of the score stays in place
         i++;
         continue;
       }

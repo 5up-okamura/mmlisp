@@ -196,8 +196,9 @@ Shorthands:
 ```
 
 `(t e g a)` divides one `:len` slot among its notes and rests using Bresenham
-distribution. Octave and velocity shifts (`>` `<` `o±N` `v±N`) may sit between
-them and take no share: `(t b > c d <)` is b4 c5 d5 in one slot.
+distribution. Anything that takes no time may sit between them and takes no
+share — `>` `<`, `:vel`, `:tl1`, a voice, `~`: `(t b > c d <)` is b4 c5 d5 in one
+slot. What would change the division is refused, such as a length on a note.
 
 ### Counted loop
 
@@ -2286,7 +2287,8 @@ stays visible.
   all selected ranges, so it can narrow those selections further.
   Other operations delete (leaving a rest, so nothing after it moves, or closing up),
   set / add to / multiply the length, **transpose** by semitones (a note that
-  crosses an octave is written `> c <`, so its neighbours stay put), or **reverse** — the run from the first
+  crosses an octave is written `> c <`, so its neighbours stay put, and
+  neighbours that cross together share one: `> c d <`), or **reverse** — the run from the first
   matched note to the last, rests and all, played backwards, in each layer on
   its own. A reversed note
   is written out in full (`> e+8 <`), so the notes around it keep their octave
@@ -2302,8 +2304,11 @@ shared token tied or slurred at any of its uses; Select includes them.
 The status distinguishes matched
 tokens, tokens that will change, and exclusions. Only plain note/rest tokens
 in the current source are editable: generated forms such as `(note …)` and
-notes in imported files are excluded. Reverse refuses an interval containing
-unsupported notation rather than skipping it silently.
+notes in imported files are excluded. A tuplet's notes transpose and turn into
+rests, but their length is their share of the tuplet, so the length operations
+and Remove leave them alone. Reverse refuses an interval containing
+unsupported notation — a tuplet, a loop, a `def`'s notes — rather than skipping
+it silently.
 
 On desktop, **Apply** keeps the tool and its conditions
 open. An edit is one undo step; Select focuses the source without adding a

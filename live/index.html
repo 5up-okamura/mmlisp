@@ -477,7 +477,7 @@
           </div>
           <!-- The OPN's LFO rate; the OPM has its own LFO (below), which
                reads :lfo-rate too but shows its own words -->
-          <div class="knob-wrap" data-needs="word:LFO_RATE">
+          <div class="knob-wrap" data-needs="part:fm">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
             <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onLfo(this)">
           </div>
@@ -942,7 +942,7 @@
     import { ARCHIVE_EXT } from './src/archive.js';
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
-    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, lengthTicks, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
+    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
     import { ABSnapshots } from './src/ab-snapshots.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
@@ -4295,7 +4295,6 @@
       const current = () => operation === _abOperation && epoch === _docEpoch
         && filename === _lastFileName && editorView.state.doc.toString() === source;
       try {
-        const changed = editorView.state.doc.toString() !== source;
         const position = (pos) => {
           const before = view.doc.lineAt(pos);
           const after = next.state.doc.line(Math.min(before.number, next.state.doc.lines));
@@ -4350,14 +4349,11 @@
         _auditionEffect = next.effect ?? null;
         _dynVals = { ...next.dynVals };
         _timeCue = next.cue;
-        syncBracketStatus();
-        if (changed) markDocDirty();
-        scheduleDraftSave();
         if (!isCoarsePointerDevice()) editorView.focus(); // do not summon a phone's keyboard
-        // Incomplete source is a valid working copy. It must still be dirty
-        // and recoverable even if a contextual panel cannot parse it yet.
+        // The source dispatch above marked the document dirty and saved its
+        // draft (the update listener), so an incomplete working copy stays
+        // recoverable even if a contextual panel cannot parse it yet.
         try { syncParamUI({ repaint: false }); } catch (_) { /* compiler reports it below */ }
-        scheduleLogicalRefresh();
         const built = await refreshImportsAndCompile();
         if (!current()) return;
         if (!built.ok) {
@@ -4513,6 +4509,7 @@
             owner.text = text;
             owner.imports = imports;
             owner.filename = filename;
+            owner.error = null;
             const voiceSel = leEl('leVoice');
             const chosen = voiceSel.value;
             const names = new Set(notes.filter((n) => n.editable).map((n) => n.voice).filter(Boolean));
@@ -4527,10 +4524,15 @@
             owner.result = null;
             if (epoch !== _docEpoch || filename !== _lastFileName || text !== editorView.state.doc.toString() || imports !== _importSources)
               scheduleLogicalRefresh();
-            else logicalStatus(`Cannot analyse this score: ${e.message}`);
+            else {
+              // The same source fails the same way: wait for it to change.
+              Object.assign(owner, { text, imports, filename, error: e.message });
+              logicalStatus(`Cannot analyse this score: ${e.message}`);
+            }
           });
           return;
         }
+        if (_le.error) return logicalStatus(`Cannot analyse this score: ${_le.error}`);
         const q = logicalQuery();
         const currentOp = logicalOp();
         const invalid = logicalInputError(q, currentOp);
@@ -4543,7 +4545,7 @@
         _le.result = result;
         const unique = (ns) => [...new Map(ns.map((n) => [n.from, n])).values()];
         const selecting = currentOp.type === 'select';
-        const eligible = affected.filter((n) => n.editable && (selecting || (!n.tied && (!n.shared || currentOp.includeShared))));
+        const eligible = affected.filter((n) => n.editable && (selecting || !excludedBy(n, currentOp)));
         const marked = currentOp.type === 'reverse' ? unique(affected) : unique(eligible);
         const marks = marked.map((n) => (n.shared ? logicalSharedMark : logicalMark).range(n.from, n.to));
         editorView.dispatch({ effects: setLogicalMarks.of(Decoration.set(marks, true)) });
@@ -4555,6 +4557,8 @@
         const tied = unique(matches.filter((n) => n.tied)).length;
         if (shared) parts.push(`${shared} shared${selecting ? ' — later edits affect every use' : currentOp.includeShared ? ' — affects every use, also outside Scope' : ' excluded'}`);
         if (tied) parts.push(`${tied} tied/slurred${selecting ? '' : ' excluded'}`);
+        const tuplet = unique(matches.filter((n) => excludedBy(n, currentOp) === 'tuplet')).length;
+        if (tuplet) parts.push(`${tuplet} in tuplets excluded`);
         parts.push('Plain source notes/rests only');
         leEl('leStatus').textContent = parts.join(' · ');
         leEl('leApply').disabled = !!result.error || !(result.changes?.length || result.selection?.length);
@@ -5218,7 +5222,11 @@
     async function refreshImportSources(src) {
       const epoch = _docEpoch;
       const imports = await readImportSources(src, _lastFileName);
-      if (epoch === _docEpoch) {
+      // The map's identity is what follows it (analysis, completion): a
+      // rebuild that read the same files keeps it.
+      const same = imports.size === _importSources.size
+        && [...imports].every(([path, text]) => _importSources.get(path) === text);
+      if (epoch === _docEpoch && !same) {
         _importSources = imports;
         scheduleLogicalRefresh();
       }

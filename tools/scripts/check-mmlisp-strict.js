@@ -43,8 +43,29 @@ async function main() {
       expected: ["E_UNKNOWN_LIST"],
     },
     {
-      label: "unknown tuplet element",
+      label: "unknown form in a tuplet",
       src: "(fm1 :tempo 120 :len 4 (t c (foo) d))",
+      expected: ["E_UNKNOWN_LIST"],
+    },
+    {
+      label: "tuplet note with a length",
+      src: "(fm1 :tempo 120 :len 4 (t c8 d e))",
+      expected: ["E_UNKNOWN_TUPLET_ELEM"],
+    },
+    ...[":len 8", ":shuffle 70", ":shuffle-base 16", "(note c 8)", "(echo 2 :vel+ -1)", "(x 2 c)", "(t c d)",
+      "#a", "(go a)", "(for i 1..2 c)", "(if 1 c)", "(let (x 1) c)"].map((body) => ({
+      label: `tuplet refuses ${body}`,
+      src: `(fm1 :tempo 120 :len 4 (t c ${body} d) e)`,
+      expected: ["E_UNKNOWN_TUPLET_ELEM"],
+    })),
+    {
+      label: "a voice named with _ is no rest in a tuplet",
+      src: "(def-fm _lead :alg 4) (fm1 :tempo 120 :len 4 (t _lead c d) e)",
+      expected: [],
+    },
+    {
+      label: "tuplet rest with a length",
+      src: "(fm1 :tempo 120 :len 4 (t _8 d e))",
       expected: ["E_UNKNOWN_TUPLET_ELEM"],
     },
     {
