@@ -4731,6 +4731,10 @@
         { backgroundColor: 'color-mix(in srgb, var(--foreground) var(--sel), var(--background))' },
       '.cm-gutters': { backgroundColor: 'var(--background)', color: 'var(--sub)', border: 'none' },
       '.cm-foldPlaceholder': { backgroundColor: 'transparent', color: 'var(--sub)', border: 'none' },
+      // The hover card and the completion list, drawn as the panels are.
+      '.cm-tooltip': { backgroundColor: 'var(--background)', color: 'var(--foreground)', border: '1px solid var(--mid)' },
+      '.cm-tooltip-autocomplete ul li[aria-selected]':
+        { backgroundColor: 'color-mix(in srgb, var(--foreground) var(--sel), var(--background))', color: 'var(--foreground)' },
     }, { dark: true });
 
     const editorExtensions = [
