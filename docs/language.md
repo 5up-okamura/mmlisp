@@ -1338,7 +1338,7 @@ If the same target is set twice, the last one wins.
 | `:duty`    | `DUTY`       | 0–16         | A pulse's duty in sixteenths, on `fc`'s `sqr1` / `sqr2`: the chip takes the nearest of 2, 4, 8, 12 (§19) |
 | `:lfo-rate`| `LFO_RATE`   | 0–8          | Song-wide (§5): inline only, as `:master` |
 | `:noise-rate` | `NOISE_RATE` | 1–31      | Song-wide, but a macro on a `pc88` / `msx` SSG track steps it from the note (the later write wins, §19) |
-| `:wave`    | `WAVE`       | def-wave names | A wave channel's wave (`msx`, `pce`), a step vector of def-wave names alone; a step naming the wave already playing writes nothing (§19) |
+| `:wave`    | `WAVE`       | def-wave names | A wave channel's wave (`msx`, `pce`, `gb`), a step vector of def-wave names alone; a step naming the wave already playing writes nothing (§19) |
 | `:alg` `:fb` | `FM_ALG` `FM_FB` | 0–7    |                                        |
 | `:ams`     | `FM_AMS`     | 0–3          |                                        |
 | `:fms`     | `FM_FMS`     | 0–7          |                                        |
@@ -2407,6 +2407,7 @@ those chips cannot do is a compile error, not a different sound.
 | `x68k` | Sharp X68000: YM2151 (FM, its noise), PCM8 on the MSM6258 | VGM, WAV |
 | `msx` | MSX: the PSG, an AY-3-8910, and the SCC (K051649) and FM-PAC (YM2413) cartridges | VGM, WAV |
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
+| `gb` | Nintendo Game Boy: the LR35902's two pulses, wave and noise | VGM, WAV |
 | `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG, the VRC7's FM, the N163's wavetables | VGM (without the VRC6, the MMC5 and the N163), WAV |
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
@@ -2897,6 +2898,66 @@ so a drum on `pcm5` punches through a line on `wave5`.
 (def-wave saw :wave (saw -128..127))
 (wave1 saw :len 4 c e g e)
 (pcm6 :len 4 kick c c c c)
+```
+
+### `gb`
+
+**`gb` exports VGM (1.61)** with the Game Boy's APU at its 4.19 MHz, and Play
+and WAV run an APU of the toolchain's own (Pan Docs' Audio pages and SameBoy's
+`apu.c`). Its channels are `sqr1` and `sqr2`, the pulses; `wave`; and `noise`.
+There are no samples. The chip hears the song a frame (1/60 s) at a time, as on
+`msx`. `:pan` takes the left and right bits (NR51) on every channel, as on the
+OPN: a value rounds to left, both or right.
+
+**Pulses.** `sqr1` and `sqr2` take every pitch move a PSG channel has on the
+chip's 11-bit period (131072 / (2048 − n) Hz, c2 about the lowest note). The
+level is the 4-bit volume, linear, vel + vol + master composed once onto it
+(§6), and it moves under a note as freely as on `fc`: `(macro :vel …)` needs no
+new key-on. **`:duty`** is in sixteenths, as on `fc`: 2, 4, 8 and 12, the
+nearest taken. The chip's hardware envelope, sweep and length counter are not
+the language's.
+
+```lisp
+(def-score :target gb)
+(sqr1 :duty 8 :len 8 (macro :vel (linear 15..4 :len 4)) c e g > c < :duty 2 g e c e)
+(sqr2 :len 4 :oct 3 (macro :duty [2 4 8 12]) c e ~ g e)
+```
+
+A note starts with a trigger and a rest is the level at 0, the DAC left on, so
+neither pops. A level under a note is written without one: a trigger would
+start the noise's LFSR over each time. Each write of NRx2 with the envelope
+still (`$x8`) steps the chip's volume up one, wrapping at 16 (the "zombie
+mode" LSDJ and Furnace use), so a move costs up to 15 writes in the VGM, a fall
+of one step the most. The writes carry the new level in their high nibble, so
+a player that takes NRx2 at once reaches it too, and one that ignores it holds
+the note's first level.
+
+**Wave.** `wave` plays def-waves, 32 steps of the chip's 4 bits (a 64-step one
+every other step, `W_TARGET`), as `msx` and `pce` do (`:wave`, a `(macro :wave …)`),
+an octave below a pulse at the same period. Its level has three steps, 100, 50
+and 25 %: vel + vol + master take the nearest (−3 and −9 dB the edges), and
+only a fader at 0 silences it, so a quiet note is 25 %, not gone. A note does
+not start the wave over. A different wave does: the chip's memory is loaded
+with the channel stopped, a click on the hardware, and the same steps are not
+loaded twice.
+
+```lisp
+(def-score :target gb)
+(def-wave saw :wave (saw -128..127))
+(wave saw :len 4 :oct 3 c :vel 12 e :vel 8 g :vel 15 c)
+```
+
+**Noise.** The `noise` track's notes pick its rate: the chip's 60 from c2, the
+slowest (shift 13, divider 7, 6.5 Hz), each semitone the next, b6 the fastest
+(524 kHz); `:pitch` moves of less than a semitone do nothing. **`:mode white |
+periodic`** (sticky, default `white`) is the 15-bit LFSR or the 7-bit one, which
+has a pitch of its own; a change under a note starts it over, as a change
+without a trigger can lock the LFSR. The level is a pulse's. The Mega Drive's
+`white0`–`periodic3` have no reading (`E_TARGET`).
+
+```lisp
+(def-score :target gb)
+(noise :len 8 :oct 5 (macro :vel (linear 15..0 :len 8)) c c :mode periodic g c)
 ```
 
 ### `fc`

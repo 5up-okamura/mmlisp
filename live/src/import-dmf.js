@@ -27,7 +27,7 @@ const DMF_SYSTEMS = {
     ...fm(2, 4), { ...ch("fm", "FM6", "ym2612"), legacy: "toggle" }, ...sn] },
   0x03: { name: "Master System", channels: sn },
   0x43: { name: "Master System + FM", channels: [...sn, ...Array.from({ length: 9 }, (_, i) => ch("opll", `FM${i + 1}`, "opll"))] },
-  0x04: { name: "Game Boy", channels: [ch("psg", "Pulse 1"), ch("psg", "Pulse 2"), ch("wave", "Wave"), ch("noise", "Noise")] },
+  0x04: { name: "Game Boy", channels: [ch("psg", "Pulse 1", "gb"), ch("psg", "Pulse 2", "gb"), ch("wave", "Wave", "gb"), ch("noise", "Noise", "gb")] },
   // The HuC6280's channels (chips/huc6280.js): a 5-bit volume, their own
   // wavetables, 5 and 6 able to turn to noise.
   0x05: { name: "PC Engine", channels: Array.from({ length: 6 }, (_, i) => ({ ...ch("wave", `CH${i + 1}`), chip: "pce", volMax: 31 })) },
@@ -134,8 +134,9 @@ export async function parseDmf(bytes) {
       const duty = macro(); // duty, or the noise switch (the PC Engine's)
       const wave = macro(); // the wavetable each tick: an index into `waves`
       if (sysId === 0x07 || sysId === 0x47) p += version < 0x11 ? 23 : 20; // SID settings
-      if (gb && version >= 0x12) p += 4; // GB envelope
-      instruments.push({ name, kind: "std", vol, arp: readArp(arp, !!arpFixed), wave, duty });
+      // Its hardware envelope (from 0x12; before, the volume macro stands in).
+      const gbEnv = !gb ? null : version >= 0x12 ? { vol: c(), dir: c(), len: c(), soundLen: c(), soft: false, seq: [] } : { soft: true };
+      instruments.push({ name, kind: "std", vol, arp: readArp(arp, !!arpFixed), wave, duty, ...(gbEnv ? { gb: gbEnv } : {}) });
     }
   }
 

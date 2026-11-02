@@ -273,6 +273,13 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   note baked at its pitch. `waveN` / `noiseN` / `pcmN` are one channel: all
   may be written, and where notes meet, `:prio` decides, else pcm > noise > wave.
   No FM, square, `:noise-rate` or `:mode`. VGM and WAV.
+- `(def-score :target gb)` holds a score to the Game Boy's APU (§19):
+  `sqr1` / `sqr2` the pulses, 4-bit linear volume (it moves freely under a
+  note), `:duty` as on `fc`; `wave` plays def-waves at 4 bits, its level
+  100 / 50 / 25 % (the nearest; only a fader at 0 silences), a new wave a
+  click; `noise` pitched by its notes (c2 the slowest of 60 rates, b6 the
+  fastest), `:mode white | periodic`. `:pan` left / right bits on every
+  channel. No samples, no FM. VGM and WAV.
 - `(def-score :target fc)` holds a score to the Famicom's 2A03 (§19):
   `sqr1` / `sqr2` the pulses, 4-bit linear volume, `:duty` in sixteenths
   (sticky, default 8; the chip's 2 / 4 / 8 / 12, the nearest taken; a value,

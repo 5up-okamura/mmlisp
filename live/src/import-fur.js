@@ -66,7 +66,7 @@ const FUR_SYSTEMS = {
   0xa2: () => [...named("OPL", k("opl", 6, "FM")), ...k("pcm", 5, "Drum ")],
   0xa3: () => [...named("OPL2", k("opl", 6, "FM")), ...k("pcm", 5, "Drum ")],
   0xa4: () => [...named("OPL3", k("opl", 15, "FM")), ...k("pcm", 5, "Drum ")],
-  0x04: () => named("GB", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Wave" }, { kind: "noise", name: "Noise" }]),
+  0x04: () => named("GB", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Wave" }, { kind: "noise", name: "Noise" }]).map((c) => ({ ...c, chip: "gb" })),
   0x06: () => named("NES", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Triangle" }, { kind: "noise", name: "Noise" }, { kind: "pcm", name: "DPCM" }])
     .map((c, i) => ({ ...c, chip: "nes", ...(i === 4 ? { legacy: "always" } : {}) })),
   0x05: () => named("PCE", k("wave", 6, "CH")).map((c) => ({ ...c, chip: "pce", volMax: 31 })),
@@ -478,7 +478,10 @@ export async function parseFur(bytes) {
       // C64 (24) and Amiga (16) data, each macro's length and loop (pitch
       // and the extras from version 17), the arp's fixed mode (before 112),
       // three heights or reserved, then the values, 4 bytes each.
-      p += 4 + 24;
+      // (Its software-envelope flag, from 106, and its sequence lie past what
+      // is read here: a volume macro, which only that flag plays, stands in.)
+      const gb = { vol: c(), dir: c(), len: c(), soundLen: c(), soft: false, seq: [] };
+      p += 24;
       const sampleMap = { init: s16(), noteMap: null }; // the Amiga data's first word
       p += 14;
       const n = iv >= 17 ? 8 : 4;
@@ -493,7 +496,8 @@ export async function parseFur(bytes) {
       // Before version 31 a relative arp's values were stored 12 up.
       if (iv < 31 && !arpFixedOld) arp.values = arp.values.map((v) => v - 12);
       ayMode(type, wave);
-      return { name, kind: "std", type, vol, arp: readArp(arp, iv < 112 && !!arpFixedOld), wave, duty, sampleMap,
+      gb.soft = iv >= 106 && vol.values.length > 0;
+      return { name, kind: "std", type, gb, vol, arp: readArp(arp, iv < 112 && !!arpFixedOld), wave, duty, sampleMap,
         ex2, ex3, alg: none(), ex5: none(), pitch, ...(type === 13 ? { fm } : {}) };
     }
     if (m !== "INS2" && m !== "FINS") throw new Error("not an instrument");
@@ -515,6 +519,7 @@ export async function parseFur(bytes) {
     // The FDS's modulation (FD): its speed, depth, a table of 32 register
     // steps (0-7: 0 +1 +2 +4 reset -4 -2 -1), or the first wavetable's.
     let fds = null;
+    let gb = null; // the Game Boy's hardware envelope (GB)
     // The sample map (SM, and NE's DPCM rate and DAC start per note):
     // Furnace's notes from C-5 (0), C-0 at 60; files before 246 store
     // C-0 up.
@@ -549,6 +554,11 @@ export async function parseFur(bytes) {
         }
         while (ops.length < 4) ops.push({ dt: 3, mul: 1, tl: 127, rs: 0, ar: 31, am: 0, dr: 0, sr: 0, sl: 0, rr: 15, ssg: 0 });
         fm = { alg, fb, fms, ams, ops, opllPreset };
+      } else if (code === "GB") {
+        // The hardware envelope, its sequence (instrument.cpp readFeatureGB).
+        const env = c(), soundLen = c(), flags = c(), n = c();
+        gb = { len: env >> 5, dir: (env >> 4) & 1, vol: env & 15, soundLen, soft: !!(flags & 1), seq: [] };
+        for (let i = 0; i < n; i++) gb.seq.push({ cmd: c(), data: u16() });
       } else if (code === "SM") {
         sampleMap.init = s16();
         const useMap = c() & 1;
@@ -618,7 +628,7 @@ export async function parseFur(bytes) {
     if (fm && (type === 1 || type === 33)) return { name, kind: "fm", fm };
     ayMode(type, wave);
     // (An OPLL instrument keeps its voice beside its macros.)
-    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty, ex1, ex2, ex3, alg, ex5, pitch, fds,
+    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty, ex1, ex2, ex3, alg, ex5, pitch, fds, gb,
       ...(fm && type === 13 ? { fm } : {}) };
   }
 

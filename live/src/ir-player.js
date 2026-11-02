@@ -5410,6 +5410,11 @@ export class IRPlayer {
         lanes[toneLaneOf(c)] = { enc: waveEnc.get(chip).lanes[c.voice], ch: c.voice, chip, part: c.part, queue: waveEnc.get(chip) };
         continue;
       }
+      // A wave channel of the PSG's own chip (the Game Boy's): that encoder's lane.
+      if (c.part.kind === "wave" && chip.psgEncoder) {
+        lanes[toneLaneOf(c)] = { enc: psg.lanes[toneLaneOf(c)], ch: c.voice, chip: null, part: c.part };
+        continue;
+      }
       // A wave chip's channels, and its channels turned to noise (the PC
       // Engine's fifth and sixth, chips/huc6280.js): the encoder's noise
       // view, on a lane of the part's own.
@@ -5545,14 +5550,14 @@ export class IRPlayer {
   // A lane's pan, −1..1, on its chip's own resolution (chips/huc6280.js).
   _psgSetPan(psgCh, v, when) {
     this._psgPan[psgCh] = Math.max(-1, Math.min(1, Number(v) || 0));
-    this._psgWrites(this._lane(psgCh, (e, ch) => e.pan?.(ch, this._psgPan[psgCh]) ?? []), when);
+    this._psgWrites(this._lane(psgCh, (e, ch) => e.pan?.(ch, this._psgPan[psgCh], when) ?? []), when);
   }
 
   // A wave onto a lane's channel memory, where it is named — under a note
   // too (a chip that loads it with the channel off, the PC Engine's, turns it
   // back on in the same writes: the wave starts over from its first step).
   _writeLaneWave(lane, data, when) {
-    this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, this._fitWave(lane, data))), when);
+    this._psgWrites(this._lane(lane, (e, ch) => e.wave(ch, this._fitWave(lane, data), when)), when);
   }
   // A wave longer than the lane's memory (a 64-step def-wave on a 32-step
   // chip): every other step (the compiler says so, W_TARGET).
@@ -6077,7 +6082,7 @@ export class IRPlayer {
         }
         // A note starting: a chip that keys something on it hears it (the
         // PC Engine's LFO restarts on channel 2's note, heard or at :vol 0).
-        this._psgWrites(this._lane(psgCh, (e, ch) => e.keyOn?.(ch) ?? []), when);
+        this._psgWrites(this._lane(psgCh, (e, ch) => e.keyOn?.(ch, when, !!ev.args?.legato) ?? []), when);
         // A DDA note on this channel (another of its names) still sounding
         // ends here, its channel off a key-order lead before this key-on.
         if (this._toneEnc[psgCh]?.part?.sharePrio != null && this._ddaEncoder()) {

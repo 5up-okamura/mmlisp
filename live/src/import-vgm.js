@@ -78,7 +78,9 @@ import { emitSong, emitStructured, qstr, barEnds, RATE, PPQN,
   assignBends, PITCH_NONE, gcd, destsFor } from "./import-song.js";
 import { targetProfile } from "./targets.js";
 import { envCycle } from "./chips/ssg.js";
-import { DUTIES, NOISE_PERIODS, NOISE_NOTE_BASE, DMC_PERIODS, DMC_RATES, noiseNoteOfHz } from "./chips/rp2a03.js";
+import { DUTIES, NOISE_PERIODS, NOISE_NOTE_BASE, DMC_PERIODS, DMC_RATES } from "./chips/rp2a03.js";
+import { noiseHz as gbNoiseHz, noiseNoteOfHz as gbNoiseNote } from "./chips/lr35902.js";
+import { Apu as GbApu } from "./synth-gb.js";
 import { rhythmRom } from "./chips/rhythm-rom.js";
 import { PCM8_OVER_CARRIER } from "./chips/msm6258.js";
 import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./import-mucom.js";
@@ -944,6 +946,103 @@ function apuChip(clock, { ev, skip, pcm, ram, mmc5 = false }) {
   };
 }
 
+// The Game Boy's APU (chips/lr35902.js), VGM 0xB3: the chip itself is run
+// (synth-gb.js's Apu, its frame sequencer stepped between writes), so a note
+// ends where its length counter or envelope did, an envelope is a level
+// envelope, a sweep a pitch moving under the note, and zombie-mode writes are
+// level moves. A trigger is a new note, and what sounds is whatever has a DAC, a
+// level and a side. NR50 scales the level (a fade), the louder side's.
+const GB_WAVE_LEVEL = [0, 15, 7.5, 3.75]; // NR32's codes on the 4-bit scale
+function gbChip(clock, { ev }) {
+  const apu = new GbApu();
+  const r = apu.r;
+  const STEP = (RATE * 8192) / clock; // the frame sequencer's
+  const KEY = ["GB SQ1", "GB SQ2", "GB WAVE", "GB noise"];
+  const TRIGGER = { 0x04: 0, 0x09: 1, 0x0e: 2, 0x13: 3 };
+  // The registers that speak for one channel; the others ($14-$16) for all.
+  const channelOf = (a) => (a < 0x05 ? 0 : a < 0x0a ? 1 : a < 0x0f ? 2 : 3);
+  const ch = KEY.map(() => ({ on: false, level: 0, pitch: null, duty: null, pan: null, rate: null }));
+  let next = STEP;
+  const level = (c) => {
+    const v = c === 2 ? GB_WAVE_LEVEL[(r[0x0c] >> 5) & 3] : apu.env[c].volume;
+    return (v * (Math.max((r[0x14] >> 4) & 7, r[0x14] & 7) + 1)) / 8;
+  };
+  const velOf = (v) => (v > 0 ? velOfDb(20 * Math.log10(v / 15)) : 0);
+  const hz = (c) => clock / ((c === 2 ? 64 : 32) * (2048 - apu.period(c)));
+  const panOf = (c) => {
+    const left = r[0x15] & (0x10 << c), right = r[0x15] & (1 << c);
+    return left && right ? "center" : left ? "left" : right ? "right" : null;
+  };
+  const sounding = (c) => apu.on[c] && apu.dac(c) && level(c) > 0 && !!panOf(c);
+  const waveNow = () => waveOf(Array.from({ length: 32 }, (_, i) => (i & 1 ? r[0x20 + (i >> 1)] & 15 : r[0x20 + (i >> 1)] >> 4)), 15);
+  const note = (c, t, kind) => {
+    const st = ch[c];
+    st.level = level(c);
+    st.pan = panOf(c);
+    const base = { t, kind, vel: velOf(st.level), pan: st.pan };
+    if (c === 3) {
+      st.rate = r[0x12];
+      const noiseHz = gbNoiseHz(st.rate);
+      st.pitch = gbNoiseNote(noiseHz);
+      return { ...base, pitch: st.pitch, mode: st.rate & 8 ? "periodic" : "white", noiseHz, kindOf: "noise" };
+    }
+    st.pitch = pitchOf(hz(c));
+    if (c === 2) return { ...base, pitch: st.pitch, wave: waveNow(), kindOf: "wave" };
+    st.duty = DUTIES[r[c === 0 ? 0x01 : 0x06] >> 6];
+    return { ...base, pitch: st.pitch, duty: st.duty, kindOf: "psg" };
+  };
+  // What the chip's state says changed on channel `c`.
+  const sync = (c, t, strike = false) => {
+    const st = ch[c], was = st.on, now = sounding(c);
+    st.on = now;
+    if (!was && now) ev(KEY[c], note(c, t, "on"));
+    else if (was && !now) ev(KEY[c], { t, kind: "off" });
+    else if (was && strike) ev(KEY[c], note(c, t, "retrig"));
+    else if (was) {
+      if (c === 3 && r[0x12] !== st.rate) { ev(KEY[c], note(c, t, "retrig")); return; }
+      const v = level(c);
+      if (v !== st.level) { st.level = v; ev(KEY[c], { t, kind: "vel", vel: velOf(v) }); }
+      if (panOf(c) !== st.pan) { st.pan = panOf(c); ev(KEY[c], { t, kind: "pan", pan: st.pan }); }
+      if (c === 3) return;
+      const p = pitchOf(hz(c));
+      if (p !== st.pitch) { st.pitch = p; ev(KEY[c], { t, kind: "pitch", pitch: p }); }
+      if (c < 2) {
+        const d = DUTIES[r[c === 0 ? 0x01 : 0x06] >> 6];
+        if (d !== st.duty) { st.duty = d; ev(KEY[c], { t, kind: "duty", duty: d }); }
+      }
+    }
+  };
+  // A burst of writes is read as what it leaves (a zombie move runs the
+  // level through every step on its way): each channel it touched, and
+  // whether it triggered, are settled at the burst's first write.
+  const burst = { t: 0, touched: new Map() };
+  const settle = () => {
+    for (const [c, strike] of burst.touched) sync(c, burst.t, strike);
+    burst.touched.clear();
+  };
+  const touch = (c, strike) => burst.touched.set(c, strike || !!burst.touched.get(c));
+  const advance = (t) => {
+    for (; next <= t; next += STEP) {
+      settle();
+      apu.clockSequencer();
+      for (let c = 0; c < 4; c++) sync(c, next);
+    }
+  };
+  return {
+    name: "GB DMG",
+    write(a, d, t) {
+      if (t - burst.t > SETUP_T) settle();
+      advance(t);
+      apu.write(a, d);
+      if (a >= 0x20 || a === 0x00) return;
+      if (!burst.touched.size) burst.t = t;
+      if (a >= 0x14) for (let c = 0; c < 4; c++) touch(c, false);
+      else touch(channelOf(a), TRIGGER[a] !== undefined && !!(d & 0x80));
+    },
+    end: (t) => { settle(); advance(t); },
+  };
+}
+
 // The Famicom Disk System's channel (chips/fds.js), VGM 0xB4 $20-$7F (the
 // 2A03's clock with bit 31): $20 the gain (bit 7 direct, else its envelope's
 // speed and way), $22 / $23 the 12-bit pitch (bit 7 halts the wave, bit 6
@@ -1399,6 +1498,7 @@ export async function parseVgm(bytes) {
     ay: [0x74, 1789773, (c) => ayChip(hdr(0x84) ? "5B" : "AY-3-8910", ayFlags & 0x10 ? c / 2 : c, { ev })],
     scc: [0x9c, 1789773, (c) => sccChip(c, { ev, plus: hdr(0x9c) >>> 31 === 1, note: (s) => clockNotes.push(s) })],
     pce: [0xa4, 3579545, (c) => pceChip(c, { ev, skip })],
+    gb: [0x80, 4194304, (c) => gbChip(c, { ev })],
     apu: [0x84, 1789773, (c) => apuChip(c & 0x7fffffff, { ev, skip, pcm, ram: nesRam })],
     fds: [0x84, 1789773, (c) => fdsChip(c & 0x7fffffff, { ev, skip })], // the 2A03's clock (bit 31: the FDS)
   };
@@ -1644,6 +1744,11 @@ export async function parseVgm(bytes) {
     if (c === 0xb9) {
       if (!(u8[p + 1] & 0x80)) chip("pce").write(u8[p + 1], u8[p + 2], t);
       else skip("second HuC6280");
+      p += 3; continue;
+    }
+    if (c === 0xb3) {
+      if (!(u8[p + 1] & 0x80)) chip("gb").write(u8[p + 1], u8[p + 2], t);
+      else skip("second Game Boy APU");
       p += 3; continue;
     }
     if (c === 0xb4) {
@@ -2115,7 +2220,7 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   // YM2203's, the MSX for an AY-3-8910's, an SCC's or a YM2413's — by
   // default when that chip plays every channel.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
-  const own = [["x68k", /^(YM2151|OKIM6258|OKIM6295|K053260|C140)/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC6|VRC7|MMC5|N163)/]]
+  const own = [["x68k", /^(YM2151|OKIM6258|OKIM6295|K053260|C140)/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC6|VRC7|MMC5|N163)/], ["gb", /^GB/]]
     .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
   const targets = [...own.map(([t]) => t), "md"];
   // (A file of PCM alone — a YM2608's ADPCM-B, an OKIM6258, or an arcade's
@@ -2239,7 +2344,7 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     // triangle on the third tone channel (fc's tri). A tone channel past the
     // target's own plays on FM where it is free.
     else if (ch.kind === "psg") {
-      const own = ch.key.match(/^2A03 (?:SQ(\d)|(TRI))$/);
+      const own = ch.key.match(/^(?:2A03|GB) (?:SQ(\d)|(TRI))$/);
       const name = own ? dests.psg[own[2] ? 2 : own[1] - 1] : null;
       if (name && sqr.includes(name)) { d = name; sqr.splice(sqr.indexOf(name), 1); } else d = sqr.shift() ?? fm.shift() ?? "drop";
     }
@@ -2574,9 +2679,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       }
       // A pulse's duty, where the channel has one (fc's sqr1 / sqr2).
       note.duty = n.duty != null && target.partOf(d)?.words?.("DUTY") ? `:duty ${n.duty}` : null;
-      // A noise whose note is its rate (fc's): another chip's noise at the
-      // nearest of its rates.
-      if (d === dests.noise && target.partOf(d)?.rateNote && n.noiseHz && !/^2A03/.test(ch.key)) note.midi = noiseNoteOfHz(n.noiseHz);
+      // A noise whose note is its rate (fc's, gb's): the nearest of its rates.
+      if (d === dests.noise && target.partOf(d)?.rateNote && n.noiseHz) note.midi = target.partOf(d).noteOfHz(n.noiseHz);
       note.rate = fmNoise && n.noiseHz ? noiseRate(125000, n.noiseHz) : null;
       // The SSG's noise period: the song's, written where due (songWrites).
       if (ownNoise && n.noiseHz && (n.ssg?.mix === "noise" || n.ssg?.mix === "both"))

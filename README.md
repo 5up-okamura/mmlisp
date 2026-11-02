@@ -6,7 +6,7 @@ audition them instantly in a browser authoring environment running the chips'
 emulators, and compile them to a compact binary for a Mega Drive sound driver —
 with a design built around *interactive* music: tracks that start, stop, layer,
 and respond to game state at runtime. The same language writes for the
-PC-8801, the X68000, the MSX, the PC Engine and the Famicom, auditioned in the
+PC-8801, the X68000, the MSX, the PC Engine, the Famicom and the Game Boy, auditioned in the
 browser and exported as VGM.
 
 - **Try it now:** https://mmlisp.com/
@@ -35,8 +35,8 @@ browser and exported as VGM.
   fm6 DAC (`pcm1`–`pcm3`, one to three voices) — advanced YM2612 techniques
   you write, not hand-poke, in the browser and on the driver alike.
 - **Beyond the Mega Drive.** `(def-score :target pc88)`, `x68k`, `msx`,
-  `pce` or `fc` holds a score to the PC-8801, the X68000, the MSX, the PC
-  Engine or the Famicom: their chips' own
+  `pce`, `fc` or `gb` holds a score to the PC-8801, the X68000, the MSX, the PC
+  Engine, the Famicom or the Game Boy: their chips' own
   channels and words, auditioned in Live and exported as VGM — see
   [Machines](#machines).
 - **Interactive by design.** Tracks start, stop, layer and fade at runtime,
@@ -81,6 +81,7 @@ browser and exported as VGM.
 | `x68k` | X68000 | YM2151 FM, MSM6258 ADPCM (PCM8's eight voices) | ymfm | VGM, WAV |
 | `msx` | MSX + SCC + FM-PAC | AY-3-8910 PSG, Konami SCC, YM2413 FM | ymfm, the SCC's own | VGM, WAV |
 | `pce` | PC Engine | HuC6280: six wave channels, noise, LFO, DDA | its own | VGM, WAV |
+| `gb` | Game Boy | LR35902's APU: two pulses, wave, noise | its own | VGM, WAV |
 | `fc` | Famicom + its expansions | 2A03: two pulses, triangle, noise, DMC; VRC6, FDS, MMC5, Sunsoft 5B, VRC7, N163 | its own, ymfm (5B, VRC7) | VGM (without the VRC6, MMC5, N163), WAV |
 
 The Mega Drive has a driver for games (below); the other machines are

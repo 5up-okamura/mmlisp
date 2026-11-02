@@ -65,6 +65,7 @@ import { RHYTHM_KIT } from "./import-mucom.js";
 import { VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY } from "./ir-utils.js";
 import { fmVoiceDef, dtRegFromFurnace } from "./import-fm-voices.js";
 import { DMC_RATES } from "./chips/rp2a03.js";
+import { NOISE_NOTE_BASE as GB_NOISE_BASE, NOISE_TABLE as GB_NOISE_TABLE } from "./chips/lr35902.js";
 import { encodeWav } from "./export-wav.js";
 import { defTable } from "./import-shapes.js";
 
@@ -79,7 +80,7 @@ const CHANNEL_KINDS = {
 // module offers the targets whose chips play its notes, the one playing the
 // most first (a tie: this order), and md always.
 const TARGET_CHIPS = {
-  pce: ["pce"], fc: ["nes", "vrc6", "fds"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
+  pce: ["pce"], fc: ["nes", "vrc6", "fds"], gb: ["gb"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
   pc88: ["opn", "ssg", "opna-rhythm"], md: ["ym2612", "sn76489"],
 };
 // A target's channels by what they take (import-song.js destsFor), its
@@ -96,10 +97,11 @@ const VOL_MAX = { opl: 63 };
 
 // The chips whose new note stops a 00xy arpeggio (Furnace's
 // keyOffAffectsArp: the PSGs and the wave chips, not FM, the OPLL or the SCC).
-const ARP_STOPS_AT_NOTE = new Set(["nes", "vrc6", "pce", "sn76489", "ssg"]);
+const ARP_STOPS_AT_NOTE = new Set(["nes", "vrc6", "pce", "gb", "sn76489", "ssg"]);
 
 // A row's C-0 as MIDI by its channel (the model, above).
 const C0_MIDI = (chn) => (chn.chip === "sn76489" ? 36
+  : chn.chip === "gb" ? (chn.kind === "wave" ? 0 : 12) // one register, the wave's clock half the pulses'
   : ["fm", "fm3op", "opm", "opll", "opl"].includes(chn.kind) || chn.chip === "ssg" ? 12 : 24);
 
 // The effects whose empty value Furnace reads as 00 (a stop, for a slide).
@@ -126,6 +128,42 @@ const FC_NOISE_TABLE = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,
   ...FC_NOISE_UP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP]; // then 15
 const fcNoiseRate = (note, proper) => (proper ? 15 - (note & 15) : FC_NOISE_TABLE[Math.max(0, Math.min(252, note))] ?? 15);
 const FC_NOISE_BASE = 36; // chips/rp2a03.js NOISE_NOTE_BASE: c2 is the slowest (register 15)
+// The Game Boy as a gb score. Its noise's note for a module's (gb.cpp noiseTable,
+// held to Furnace's own VGM of its demos): note 9 is the table's first, shift 13
+// and divider 7 (below it shifts 14 and 15, no clock: its slowest); outside
+// 1-68 the register's 0, the fastest.
+const GB_NOISE_TOP = GB_NOISE_BASE + GB_NOISE_TABLE.length - 1;
+const gbNoiseMidi = (note) => (note <= 0 || note > 68 ? GB_NOISE_TOP : GB_NOISE_BASE + Math.max(0, note - 9));
+const GB_FX = { 0x13: "sweep time", 0x14: "sweep direction" };
+const GB_DEFAULT_ENV = { vol: 15, dir: 0, len: 2, soundLen: 64, soft: false, seq: [] };
+const GB_WAVE_COL = [0, 3.75, 7.5, 15]; // NR32's levels for the column's top two bits
+// An instrument's hardware envelope from column `col` as a level a frame,
+// 0..15, baked (the language has no hardware envelope): a step every pace /
+// 64 s from each envelope command of its sequence, a length counter's 0
+// after (soundLen + 1) / 256 s, the last frame held. [] for a flat one.
+function gbEnvLevels(gb, col) {
+  let vol = col, dir = gb.dir, pace = gb.len, at = 0, soundLen = gb.soundLen, delay = 0, pos = 0;
+  const seq = gb.seq ?? [];
+  const FRAMES = 240, out = [];
+  for (let f = 0; f < FRAMES; f++) {
+    if (--delay <= 0) {
+      delay = 0;
+      for (let n = 0; pos < seq.length && n < 4 && !delay; n++) {
+        const { cmd, data } = seq[pos++];
+        if (cmd === 0) { pace = data & 7; dir = (data >> 3) & 1; vol = (data >> 4) & 15; soundLen = data >> 8; at = f; }
+        else if (cmd === 2) delay = data + 1;
+        else if (cmd === 3) { pos--; delay = FRAMES; } // held to the release
+        else if (cmd === 4 || cmd === 5) pos = data;
+      }
+    }
+    const steps = pace ? Math.floor(((f - at) * 64) / (60 * pace)) : 0;
+    const v = Math.max(0, Math.min(15, dir ? vol + steps : vol - steps));
+    out.push(soundLen < 64 && (f - at) / 60 >= (soundLen + 1) / 256 ? 0 : v);
+  }
+  let end = out.length;
+  while (end > 1 && out[end - 1] === out[end - 2]) end--;
+  return out.slice(0, end);
+}
 // A def name's note (an env for a fixed arp at one played note).
 const FIX_NAMES = ["c", "cs", "d", "ds", "e", "f", "fs", "g", "gs", "a", "as", "b"];
 const FC_DUTIES = [2, 4, 8, 12]; // chips/rp2a03.js DUTIES: 12xx / the duty macro's 0-3
@@ -510,7 +548,10 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // 0.75 dB each of 31 (the YM2608's rhythm); "ssg" as "log", and its wave
   // macro the mixer, its duty macro the noise period, as `:mode` and
   // `:noise-rate` macros; "lin": a ratio of it (the SCC's), "lin63" of 63
-  // (the VRC6's saw), "vrc6" as "lin" with its duty macro as `:duty`.
+  // (the VRC6's saw), "vrc6" as "lin" with its duty macro as `:duty`;
+  // "gb", "gbpulse" (its duty macro) and "gbwave" (NR32's levels) as "lin",
+  // a macro only under the instrument's software envelope, else that envelope
+  // baked (gbEnvLevels), which starts from the column.
   const env = (i, nz = null, onWave = false, fc = null, col = null, note = null, pceNoise = false, vm = null) => {
     const am = t.instruments[i]?.arp;
     const moves = !!am?.fixed || !!am?.values.some((x) => x !== 0);
@@ -520,9 +561,14 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // Where the chip's level is the column and the step put together in
     // whole steps (Furnace's VOL_SCALE_*: the 2A03's, the SCC's, the
     // VRC6's, an older song's OPLL), a def for each column level it plays at.
-    const linVm = vm === "lin" || vm === "vrc6" || vm === "lin63" || vm === "fds";
+    const gbVm = vm === "gb" || vm === "gbpulse" || vm === "gbwave";
+    const linVm = vm === "lin" || vm === "vrc6" || vm === "lin63" || vm === "fds" || gbVm;
     const perCol = (fc && fc !== "tri") || linVm || (vm === "log" && t.newVolumeScaling === false);
-    if (!perCol || !t.instruments[i]?.vol?.values.length) col = null;
+    const gbEnv = gbVm ? t.instruments[i]?.gb ?? GB_DEFAULT_ENV : null;
+    const gbHw = !!gbEnv && !gbEnv.soft;
+    // (A flat envelope, and the wave's, read no column: one def for all.)
+    const gbBaked = gbHw && vm !== "gbwave" && col != null && gbEnvLevels(gbEnv, col).length > 1;
+    if (!perCol || (gbHw ? !gbBaked : !t.instruments[i]?.vol?.values.length)) col = null;
     const wm = t.instruments[i]?.wave;
     const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map((x) => waveDef(x, vm === "fds" ? 64 : 32)) : null;
     if (waveNames?.includes(null)) waveMacroSteps++;
@@ -541,11 +587,21 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return `[${v.join(" ")}]`;
       };
       const volMax = t.psgVolMax;
+      // A hardware envelope baked; its volume macro plays only under the
+      // software envelope (gb.cpp), and the wave's level is then its column.
+      if (gbHw) {
+        if (col != null) {
+          const line = gbEnvLevels(gbEnv, col);
+          const hold = (values) => ({ values, loop: values.length - 1 });
+          parts.push(`:vel ${arr(hold(line), (x) => (x > 0 ? Math.round((15 + linDb(x) / VEL_DB_PER_STEP) * 8) / 8 : 0))}`);
+          if (line.includes(0)) parts.push(`:vol ${arr(hold(line), (x) => (x > 0 ? 31 : 0))}`);
+        }
+      }
       // The PC Engine's volume is 5 bits at 1.5 dB a step, its 0 silent, and
       // its macro's attenuation adds to the volume column's (Furnace): a :vol
       // macro, the fader beside the column's :vel — 2 dB a step, 0 a mute.
       // Elsewhere a ratio of the column's level.
-      if (ins.vol?.values.length && fc === "tri")
+      else if (ins.vol?.values.length && fc === "tri")
         parts.push(`:vol ${arr(ins.vol, (x) => (x > 0 ? 31 : 0))}`);
       else if (ins.vol?.values.length && col != null) {
         // The level Furnace writes: VOL_SCALE_LINEAR, the column times the
@@ -557,8 +613,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         const top = vm === "lin63" ? 63 : vm === "fds" ? 32 : 15;
         const linear = linVm || (fc ? t.newVolumeScaling !== false : true);
         const out = (x) => (linear ? Math.floor((col * Math.min(top, x)) / top) : Math.max(0, Math.min(top, col + Math.min(top, x) - top)));
-        const db = (v) => (vm === "log" ? 3 * (v - top) : 20 * Math.log10(v / top));
-        parts.push(`:vol ${arr(ins.vol, (x) => (out(x) <= 0 ? 0 : Math.max(1, Math.round(31 + (db(out(x)) - db(col)) / 2))))}`);
+        const level = (v) => (vm === "gbwave" ? GB_WAVE_COL[v >> 2] : v);
+        const db = (v) => (vm === "log" ? 3 * (v - top) : 20 * Math.log10(level(v) / top));
+        parts.push(`:vol ${arr(ins.vol, (x) => (level(out(x)) <= 0 || level(col) <= 0 ? 0 : Math.max(1, Math.round(31 + (db(out(x)) - db(col)) / 2))))}`);
       } else if (ins.vol?.values.length && fc)
         parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 + linDb(x) / 2))))}`);
       else if (ins.vol?.values.length && (vm === "lin" || vm === "vrc6" || vm === "lin63")) {
@@ -584,6 +641,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       const fixedSemi = (f) => (fc === "noise"
         ? (t.properNoiseLayout ? (f & 15) - (note & 15) : fcNoiseRate(note, false) - fcNoiseRate(f, false))
         : pceNoise ? (t.properNoiseLayout ? (f & 31) - (note & 31) : rate(f) - rate(note))
+        : gbVm ? f + 24 - note // 24 up: gb.cpp's calcArp
         : f - note);
       const semi = (x, k) => (note != null && ins.arp.fixed[k] ? fixedSemi(x) : nz == null ? x : step(x));
       // A macro that ends holds its last step (Furnace): a `#sus` on it,
@@ -593,7 +651,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         ? { ...ins.arp, loop: ins.arp.values.length - 1 } : ins.arp;
       if (moves && ins.arp.values.some((x, k) => semi(x, k) !== 0))
         parts.push(`:semi+ ${arr(am2, semi)}`);
-      if (fc === "pulse" && ins.duty?.values.length)
+      if ((fc === "pulse" || vm === "gbpulse") && ins.duty?.values.length)
         parts.push(`:duty ${arr(ins.duty, (x) => FC_DUTIES[x & 3])}`);
       if (vm === "vrc6" && ins.duty?.values.length > 1) parts.push(`:duty ${arr(ins.duty, (x) => (x & 7) + 1)}`);
       if (waves) parts.push(`:wave ${arr(wm, (_, k) => waves[k])}`);
@@ -945,7 +1003,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // The FDS on fc's fds-wave: its wavetables 64 steps, its gain 0-32 linear,
     // its modulation unit as the song's :lfo- words.
     const fdsCh = onFc && chn.chip === "fds" && ch.dest === "fds-wave";
-    const waveCh = pceVol || sccCh || fdsCh; // a channel that plays the module's wavetables
+    // The Game Boy on gb, which of its kinds: a linear column, its volume
+    // macro or hardware envelope baked (gbEnvLevels), the wave's the column's
+    // top two bits.
+    const gbCh = chn.chip === "gb" && tg === "gb" ? (ch.kind === "psg" ? "pulse" : ch.kind) : null;
+    const waveCh = pceVol || sccCh || fdsCh || gbCh === "wave"; // a channel that plays the module's wavetables
     // The VRC6 on fc: a pulse (its eight duties) or the saw, each column
     // linear (the saw's to 63) and its volume macro a ratio of it.
     const vrc6Ch = onFc && chn.chip === "vrc6" && VRC6_DESTS.includes(ch.dest) ? (ch.dest === "vrc6-saw" ? "saw" : "pulse") : null;
@@ -956,13 +1018,14 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // (A rhythm sound's: the OPLL's 3 dB steps, the YM2608's 0.75.)
     const vm = ssgCh ? "ssg" : opllCh || (rhythmCh && chn.chip === "opll-rhythm") ? "log"
       : rhythmCh && chn.chip === "opna-rhythm" ? "log31" : sccCh ? "lin"
-      : vrc6Ch === "pulse" ? "vrc6" : vrc6Ch === "saw" ? "lin63" : fdsCh ? "fds" : null;
-    const linCh = sccCh || !!vrc6Ch || fdsCh; // a linear column (the SCC's, the VRC6's, the FDS's)
-    const fmPan = onFm && !!part?.words("PAN");
+      : vrc6Ch === "pulse" ? "vrc6" : vrc6Ch === "saw" ? "lin63" : fdsCh ? "fds"
+      : gbCh === "pulse" ? "gbpulse" : gbCh === "wave" ? "gbwave" : gbCh ? "gb" : null;
+    const linCh = sccCh || !!vrc6Ch || fdsCh || !!gbCh; // a linear column (the SCC's, the VRC6's, the FDS's, the Game Boy's)
+    const fmPan = (onFm || !!gbCh) && !!part?.words("PAN");
     const toNoise = onPce && ch.dest.startsWith("noise");
     // A 2A03 channel on fc: which of its kinds (env's `fc`).
     const fcCh = onFc && chn.chip === "nes" ? (ch.dest === "tri" ? "tri" : ch.dest === "noise" ? "noise" : "pulse") : null;
-    const noiseRow = toNoise || fcCh === "noise" || rhythmCh; // a note is a rate (a sound): no pitch effects
+    const noiseRow = toNoise || fcCh === "noise" || gbCh === "noise" || rhythmCh; // a note is a rate (a sound): no pitch effects
     // The column's top, and a level of it as a velocity, before the clamp
     // to 0-15 (in eighths where the chip's steps are finer than :vel's).
     const colMax = logStep || linCh ? chn.volMax ?? volMax : volMax;
@@ -971,8 +1034,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       : fmVol ? 15 - ((volMax - v) * 0.75) / 2
       : logStep ? 15 - (colMax - v) * logStep / VEL_DB_PER_STEP
       : (v * 15) / volMax);
-    const velOf = (v) => {
-      if (v < 0) return 15;
+    const velOf = (v0) => {
+      if (v0 < 0) return 15;
+      const v = gbCh === "wave" ? GB_WAVE_COL[Math.min(15, v0) >> 2] : v0;
       if ((fcCh || linCh) && v <= 0) return 0;
       const x = velRaw(v);
       return Math.max(0, Math.min(15, fcCh || linCh || logStep ? Math.round(x * 8) / 8 : Math.round(x)));
@@ -1084,7 +1148,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     };
     let usedArp = uses(0x00);
     let cur = { voice: voiceTokens(), pan: null, arp: null, duty: null, mode: modeSaid || opmNoiseSaid ? ":mode tone" : null, rate: null };
-    const dutyToken = () => (fcCh === "pulse" ? `:duty ${FC_DUTIES[duty & 3]}` : fcCh === "noise" ? `:mode ${duty & 1 ? "periodic" : "white"}`
+    const dutyToken = () => (fcCh === "pulse" || gbCh === "pulse" ? `:duty ${FC_DUTIES[duty & 3]}` : fcCh === "noise" || gbCh === "noise" ? `:mode ${duty & 1 ? "periodic" : "white"}`
       : vrc6Ch === "pulse" ? `:duty ${(duty & 7) + 1}` : null); // (the VRC6's: sixteenths less one)
     // Pitch effects: the vibrato and fine tune in force, and each note's
     // own (worked into a `:pitch` macro once its length is known).
@@ -1255,7 +1319,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if (code === 0x29 && ssgCh && val >= 0) { autoNum = val >> 4; autoDen = val & 15; }
           else if (code === 0x11 && pceVol && val >= 0) noise = val > 0;
           else if (code === 0x17 && vrc6Ch && val >= 0) vrc6Pcm = val > 0;
-          else if (code === 0x12 && ((fcCh && fcCh !== "tri") || vrc6Ch === "pulse") && val >= 0) {
+          else if ((code === 0x12 || (code === 0x11 && gbCh)) && ((fcCh && fcCh !== "tri") || vrc6Ch === "pulse" || gbCh === "pulse" || gbCh === "noise") && val >= 0) {
             duty = val;
             // Under a sounding note Furnace writes it at once; here it is
             // the next note's.
@@ -1277,7 +1341,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if (code >= 0) {
             // A tremolo stops a volume slide (the two do not run at once).
             if (code === 0x07 && val & 15) slide = 0;
-            const k = (pceVol ? PCE_FX[code] : fcCh ? FC_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
+            const k = (pceVol ? PCE_FX[code] : fcCh ? FC_FX[code] : gbCh ? GB_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
         }
@@ -1286,6 +1350,10 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         // delayed start.
         if (cut != null) cut = ticksIn(at, delay + cut) - ticksIn(at, delay);
         if (delay) delay = ticksIn(at, delay);
+        // A hardware-envelope instrument's change sets the column to its own
+        // (gb.cpp DIV_CMD_INSTRUMENT).
+        if (gbCh && gbCh !== "wave" && row.ins >= 0 && (row.ins !== ins || vol < 0) && t.instruments[row.ins] && !t.instruments[row.ins].gb?.soft)
+          vol = colF = (t.instruments[row.ins].gb ?? GB_DEFAULT_ENV).vol;
         if (row.ins >= 0 && t.instruments[row.ins]) ins = row.ins;
         // The instrument's macros start over at each of its notes: its wave
         // macro sets the wave (its first step; one that moves is the note's
@@ -1336,11 +1404,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         // anything over 1 is 1); a pulse's runs as the note's :duty macro,
         // its first step the note's duty.
         // (The VRC6's pulse alike, its eight duties.)
-        const dm = (fcCh || vrc6Ch === "pulse") && typeof row.note === "number" ? t.instruments[ins]?.duty : null;
-        const dutyOf = (x) => (fcCh === "noise" ? (t.properNoiseLayout ? x & 1 : Math.min(1, x)) : vrc6Ch ? x & 7 : x & 3);
+        const dm = (fcCh || vrc6Ch === "pulse" || gbCh === "pulse" || gbCh === "noise") && typeof row.note === "number" ? t.instruments[ins]?.duty : null;
+        const dutyOf = (x) => (fcCh === "noise" ? (t.properNoiseLayout ? x & 1 : Math.min(1, x)) : gbCh === "noise" ? Math.min(1, x) : vrc6Ch ? x & 7 : x & 3);
         if (dm?.values.length && fcCh !== "tri") {
           duty = dutyOf(dm.values[0]);
-          if (fcCh === "noise" && dm.values.some((y) => dutyOf(y) !== duty)) dutyMoves++;
+          if ((fcCh === "noise" || gbCh === "noise") && dm.values.some((y) => dutyOf(y) !== duty)) dutyMoves++;
         }
         if (row.vol >= 0 || jump != null) {
           const cur = colF < 0 ? colMax : colF;
@@ -1400,7 +1468,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           // The SSG's mixer: tone, noise or both (the envelope's bit read
           // as the tone; nothing on, silent).
           const ssgTone = psgMode & 1 || psgMode & 4, ssgNoise = psgMode & 2;
-          if (vol === 0 && !triOn || (ssgCh && !ssgTone && !ssgNoise)) { sounding = null; slideRow(at); continue; }
+          if (vol === 0 && !triOn || (gbCh === "wave" && vol > 0 && vol < 4) || (ssgCh && !ssgTone && !ssgNoise)) { sounding = null; slideRow(at); continue; }
           const waveName = waveCh && !toNoise && wave >= 0 ? waveDef(wave, fdsCh ? 64 : 32) : null;
           // 16xy: the modulation's speed the note's frequency register
           // (1.79 MHz × n / 2^22) times x / y.
@@ -1439,7 +1507,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           cur = st;
           // A noise note is its rate: c2 the slowest (chips/huc6280.js,
           // chips/rp2a03.js — the 2A03's register counts down).
-          const midi = fcCh === "noise" ? FC_NOISE_BASE + 15 - fcNoiseRate(row.note, t.properNoiseLayout)
+          const midi = gbCh === "noise" ? gbNoiseMidi(row.note)
+            : fcCh === "noise" ? FC_NOISE_BASE + 15 - fcNoiseRate(row.note, t.properNoiseLayout)
             : toNoise ? PCE_NOISE_BASE + (t.properNoiseLayout ? row.note & 31 : PCE_NOISE_TABLE[((row.note % 12) + 12) % 12])
             : rhythmCh ? 60 // a rhythm sound at its own tuning (c4)
             : row.note + C0_MIDI(chn);

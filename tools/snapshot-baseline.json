@@ -1835,6 +1835,18 @@
   "regs": "cdd8f2b315d8e42b",
   "vgm": "bd3a125b32b65643"
  },
+ "tools/tests/gb/apu.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "421c702cd5bbebc9",
+  "regs": "f4686abd5d40923b",
+  "vgm": "85d90cbfe9f74113"
+ },
+ "tools/tests/gb/wave.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "07727b9117630e47",
+  "regs": "52476fdd44be4c48",
+  "vgm": "ba988da9d6bcb18b"
+ },
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "602742d8cea2f201",

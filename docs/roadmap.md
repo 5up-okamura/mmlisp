@@ -140,7 +140,9 @@ and the FM-PAC (`msx`), the PC Engine (`pce`: its waves, noise, `:pan`,
 LFO and DDA, DefleMask / Furnace PCE modules and HuC6280 VGMs as `pce`
 scores) and the Famicom (`fc`: the 2A03's pulses with `:duty`, the
 triangle with no level, the noise's rates and two modes, the DMC's
-samples) — language.md §19. Next:
+samples) and the Game Boy (`gb`: its pulses, wave and noise, a level free
+under a note, VGMs and DefleMask / Furnace modules as `gb` scores) —
+language.md §19. Next:
 
 1. **Famicom: songs in.** A VGM's 2A03 and DefleMask / Furnace NES
    modules import as `fc` (guide.md), their DPCM samples with them,

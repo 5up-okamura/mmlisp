@@ -1861,6 +1861,13 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   over the wave where they meet (§19's `:prio` across a channel's names).
   The LFO (`12xx` `13xx`) and DDA (`17xx`) are left out. `08xy` is the channel's pan between its left and right
   levels, the volume column the chip's 5-bit volume (1.5 dB a step).
+- A **Game Boy** module offers `gb` or `md`. Each channel keeps its place. An
+  instrument's hardware envelope, its sequence and its sound length are baked
+  into a `:vel` macro from the column, a software envelope's volume macro is a
+  `:vol` as on `fc`; the wave's column is its top two bits, as the chip's
+  level; `12xx` and the duty macro are `:duty`, on the noise `11xx` and the
+  duty macro the `:mode`; `10xx` the wavetable, `08xy` the side. The sweep's
+  `13xy` and `14xx` are left out.
 - An **NES** module offers `fc` (the default where the 2A03 and the VRC6
   play the most notes) or `md`. The VRC6's channels go to `vrc6-sqr1`,
   `vrc6-sqr2` and `vrc6-saw`: a pulse's duty is its duty macro and `12xx` (eight, `:duty
@@ -2003,6 +2010,12 @@ them: a key-on starts a note, a key-off ends it.
   back as `:pan` with the note (a pan moving under a note is not
   followed); its LFO and DDA are counted. On md the waves play on a
   `presets/waveforms` stand-in and the busier noise on `noise`.
+- A **Game Boy** file (`:target gb` by default) goes to `sqr1`, `sqr2`, `wave`
+  and `noise`. Its hardware envelope comes back as a `:vel+` envelope, its
+  length counter as the note's end, its sweep as the pitch moving under the
+  note, a level moved without a trigger as a level under the note, and NR50's
+  fade as level. A channel taken off both sides (NR51) is a rest. A wave comes
+  back as a `def-wave` at a note; rewritten under a note it is not followed.
 - A **Famicom** file (the 2A03, `:target fc` by default) goes to `sqr1`,
   `sqr2`, `tri` and `noise`, each keeping its place. A pulse's duty comes
   back as `:duty` (12.5 / 25 / 50 / 75 % as 2 / 4 / 8 / 12), its sweep as

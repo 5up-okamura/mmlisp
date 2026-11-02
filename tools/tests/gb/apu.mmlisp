@@ -1,0 +1,8 @@
+; gb: the two pulses (:duty as a value and a macro; a slur that does not
+; trigger), a level macro under a note on a pulse and on the noise (zombie
+; writes, no trigger), and the noise picking its rate by the note, long and
+; periodic.
+(def-score :target gb :title "gb apu")
+(sqr1 :tempo 140 :duty 8 :len 8 (macro :vel (linear 15..4 :len 4)) c e g > c < :duty 2 g e c e |)
+(sqr2 :len 4 :oct 3 (macro :duty [2 4 8 12]) a1 c e ~ g a |)
+(noise :len 8 :oct 2 (macro :vel (linear 15..0 :len 8)) c c+ :vel 10 d :mode periodic d+ :mode white c _ :oct 3 d d |)

@@ -49,7 +49,8 @@
 //             triangle) — a note sounds or is halted, so a written :vel /
 //             :vol says so (W_TARGET) and only 0 silences
 //   rateNote  true: a noise whose note picks its rate (the 2A03's), pitched
-//             as a tone lane is, on the PSG's noise lane
+//             as a tone lane is, on the PSG's noise lane; `noteOfHz` the
+//             note of the nearest rate, for a noise an import read in Hz
 //   loopIsRange true: a sample part whose loop is a note's whole range (the
 //             2A03's DMC): a :loop-* point is left out (W_TARGET)
 //   rangeLoops true: a sample part that repeats a note's whole range and

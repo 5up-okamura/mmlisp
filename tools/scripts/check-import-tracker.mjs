@@ -199,6 +199,60 @@ function nesDmf() {
 // 1-byte macro values, no arp mode; the PSG's notes stored an octave up and
 // E5xx a quarter of today's range. One order of two rows: FM1 C-4 with E590,
 // SQ1 C-4 (stored as octave 5).
+// A Game Boy module (system 0x04, no volume macro from 0x12): a decaying
+// hardware envelope, a flat one, a wavetable at the column's top two bits, and
+// a noise note on Furnace's table.
+function gbDmf() {
+  const b = [];
+  const u8 = (v) => b.push(v & 0xff);
+  const s16 = (v) => b.push(v & 0xff, (v >> 8) & 0xff);
+  const i32 = (v) => b.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);
+  const pstr = (s) => { u8(s.length); for (const ch of s) u8(ch.charCodeAt(0)); };
+  const macro = (values, loop = 255) => { u8(values.length); for (const v of values) i32(v); if (values.length) u8(loop); };
+  for (const ch of ".DelekDefleMask.") u8(ch.charCodeAt(0));
+  u8(0x17); u8(0x04);
+  pstr("gb test"); pstr("mmlisp");
+  u8(4); u8(16); u8(0); u8(6); u8(6); u8(1); u8(0); for (const ch of "60\0") u8(ch.charCodeAt(0));
+  u8(4); u8(1);
+  for (let ch = 0; ch < 4; ch++) u8(0);
+  u8(2);
+  pstr("pluck"); u8(0); macro([]); u8(0); macro([1]); macro([]); u8(12); u8(0); u8(1); u8(64);
+  pstr("flat"); u8(0); macro([]); u8(0); macro([]); macro([]); u8(10); u8(0); u8(0); u8(64);
+  u8(1); i32(32); for (let i = 0; i < 32; i++) i32(i < 16 ? 15 : 0);
+  const empty = { note: 0, oct: 0, vol: -1, fx: [], ins: -1 };
+  const rows = Array.from({ length: 4 }, () => Array.from({ length: 4 }, () => ({ ...empty })));
+  rows[0][0] = { note: 12, oct: 3, vol: -1, fx: [], ins: 0 };
+  rows[1][0] = { note: 7, oct: 3, vol: -1, fx: [[0x12, 3]], ins: 1 };
+  rows[2][0] = { note: 12, oct: 3, vol: 9, fx: [[0x10, 0]], ins: 1 };
+  rows[3][0] = { note: 12, oct: 4, vol: -1, fx: [], ins: 1 };
+  for (let ch = 0; ch < 4; ch++) {
+    u8(2);
+    for (const r of rows[ch]) {
+      s16(r.note); s16(r.oct); s16(r.vol);
+      for (let k = 0; k < 2; k++) { const [code, val] = r.fx[k] ?? [-1, -1]; s16(code); s16(val); }
+      s16(r.ins);
+    }
+  }
+  return new Uint8Array(b);
+}
+
+{
+  const t = await parseDmf(gbDmf());
+  const a = analyzeTracker(t);
+  assert.deepEqual(a.targets, ["gb", "md"], "a Game Boy module offers gb first");
+  const opt = defaultTrackerOptions(a, "gb");
+  assert.deepEqual([0, 1, 2, 3].map((i) => opt.dest[i]), ["sqr1", "sqr2", "wave", "noise"]);
+  for (const phrases of [true, false]) {
+    const { source } = trackerToMmlisp(t, { ...opt, phrases, fileName: "t.dmf" }, a);
+    assert.match(source, /\(def-score :target gb/, "a gb score");
+    assert.match(source, /\(def env-pluck-v12 \(macro none\) \(macro :vel \[14 13\.625 /, "the hardware envelope baked from its volume");
+    assert.match(source, /:duty 12/, "1203 as :duty 12");
+    assert.match(source, /\(def-wave /, "the wavetable as a def-wave");
+    assert.match(source, /wave-0[^\n]*:vel 12\b/, "volume 9 on the wave: the 50 % its top two bits read");
+    assert.deepEqual(bad(source), [], `the gb score compiles clean (phrases ${phrases})`);
+  }
+}
+
 function oldDmf() {
   const b = [];
   const u8 = (v) => b.push(v & 0xff);
@@ -415,4 +469,4 @@ function dacDmf() {
   assert.deepEqual(trackerDests("fc").filter((d) => /^vrc6-|^fds-/.test(d)), ["vrc6-sqr1", "vrc6-sqr2", "vrc6-saw", "fds-wave"]);
 }
 
-console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, fixed arpeggios, an old DMF, a DMF's DAC, volume slides, an FDS channel as fc");
+console.log("Tracker import checks passed: a PC Engine module as pce and as md, an NES module as fc and as md, a Game Boy module as gb, fixed arpeggios, an old DMF, a DMF's DAC, volume slides, an FDS channel as fc");

@@ -106,6 +106,7 @@ export const fcNoise = {
   modes: { white: ["NOISE_MODE", 0b1_00], periodic: ["NOISE_MODE", 0b0_00] },
   modeError: { code: "E_PARAM_VALUE", message: "the 2A03's noise :mode is white or periodic" },
   rateNote: true,
+  noteOfHz: noiseNoteOfHz,
 };
 
 // pcm1: the DMC, one sample voice. A note's sample is baked at its pitch

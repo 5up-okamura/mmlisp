@@ -213,6 +213,47 @@ const writesOf = (source, addr) => {
   assert.match(md, /\(noise[\s\S]*:mode white\d[\s\S]*:mode periodic\d/, "md: the modes at the nearest rate");
   assert.doesNotMatch(md, /:duty/, "md: no duty");
 }
+// A Game Boy file (0xB3) is gb's: our own score comes back on its channels,
+// zombie-mode level moves as a level under the note, the width as :mode.
+{
+  const parsed = await vgmOf("tools/tests/gb/apu.mmlisp");
+  const a = analyzeVgm(parsed);
+  assert.deepEqual([a.target, a.targets], ["gb", ["gb", "md"]]);
+  const opt = defaultVgmOptions(a, "gb");
+  assert.deepEqual([opt.dest["GB SQ1"], opt.dest["GB SQ2"], opt.dest["GB noise"]], ["sqr1", "sqr2", "noise"]);
+  const { source } = imported(parsed, "gb");
+  assert.match(source, /:duty 8[\s\S]*:duty 2/, "gb: the duties");
+  assert.match(source, /\(noise[\s\S]*:mode periodic[\s\S]*:mode white/, "gb: the LFSR's widths");
+  assert.match(source, /:vel\+? \[/, "gb: a level moved by zombie writes is a level under the note");
+}
+// What a game's driver writes and our encoder does not: a hardware envelope
+// and a length counter run between the writes, and a channel taken off both
+// sides by NR51 is silent (Pokemon's wave).
+{
+  const v = [];
+  const w = (a, d) => v.push(0xb3, a, d), wait = (n) => v.push(0x61, n & 0xff, n >> 8);
+  const hdr = new Uint8Array(0x100);
+  const dv = new DataView(hdr.buffer);
+  hdr.set([0x56, 0x67, 0x6d, 0x20]);
+  dv.setUint32(8, 0x161, true); dv.setUint32(0x34, 0x100 - 0x34, true); dv.setUint32(0x80, 4194304, true);
+  w(0x16, 0x80); w(0x15, 0xff); w(0x14, 0x77);
+  w(0x01, 0x80); w(0x02, 0xf1); w(0x03, 0x00); w(0x04, 0x87); wait(22050); // decays at 1/64 s a step
+  w(0x06, 0xbf); w(0x07, 0xf0); w(0x08, 0x00); w(0x09, 0xc7); wait(22050); // (64 − 63) / 256 s long
+  w(0x0a, 0x80); for (let i = 0; i < 16; i++) w(0x20 + i, i & 1 ? 0xff : 0x00);
+  w(0x0c, 0x20); w(0x0d, 0x00); w(0x0e, 0x87); wait(11025); w(0x15, 0xbb); wait(11025);
+  v.push(0x66);
+  const bytes = new Uint8Array(0x100 + v.length);
+  bytes.set(hdr); bytes.set(v, 0x100);
+  new DataView(bytes.buffer).setUint32(0x18, 66150, true);
+  new DataView(bytes.buffer).setUint32(4, bytes.length - 4, true);
+  const parsed = await parseVgm(bytes);
+  const a = analyzeVgm(parsed);
+  assert.equal(a.channels.find((c) => c.key === "GB SQ1").notes, 1, "gb: an envelope's fall is one note");
+  const { source } = imported(parsed, "gb", false);
+  assert.match(source, /:vel\+? \[/, "gb: the envelope as a level under the note");
+  assert.equal(a.channels.find((c) => c.key === "GB SQ2").notes, 1, "gb: a length counter's note");
+  assert.equal(a.channels.find((c) => c.key === "GB WAVE").notes, 1, "gb: NR51 ends the wave's note");
+}
 // The FDS (0xB4 $20-$7F): fds-wave on fc — the 32-step wave held twice
 // back at 32 steps, the 64-step one whole, the gain as :vel, the
 // modulation's table, rate and depth as the song's LFO words where a note

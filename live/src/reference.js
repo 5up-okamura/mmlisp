@@ -83,9 +83,9 @@ export const REFERENCE = [
     example: '(def-score :target x68k)\n(fm1 :lfo-freq 200 :lfo-pmd 40 :lfo-wave triangle :fms 4 :len 2 c e)',
   },
   {
-    name: ':target', aliases: ['pc88', 'x68k', 'msx', 'pce', 'fc', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
-    syntax: '(def-score :target md | pc88 | x68k | msx | pce | fc)',
-    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV. pce is the PC Engine\'s HuC6280: six wave channels, wave1–wave6, two of them noise, as VGM and WAV. fc is the Famicom\'s 2A03: sqr1 / sqr2 the pulses, tri, noise and pcm1 (the DMC), as VGM and WAV — and its expansion chips where a score names their channels, each named by its chip (vrc6-sqr1, fds-wave …); VGM leaves out a chip it has no command for, WAV plays it.',
+    name: ':target', aliases: ['pc88', 'x68k', 'msx', 'pce', 'fc', 'gb', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
+    syntax: '(def-score :target md | pc88 | x68k | msx | pce | fc | gb)',
+    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV. pce is the PC Engine\'s HuC6280: six wave channels, wave1–wave6, two of them noise, as VGM and WAV. gb is the Game Boy\'s APU: sqr1 / sqr2 the pulses, wave and noise, as VGM and WAV. fc is the Famicom\'s 2A03: sqr1 / sqr2 the pulses, tri, noise and pcm1 (the DMC), as VGM and WAV — and its expansion chips where a score names their channels, each named by its chip (vrc6-sqr1, fds-wave …); VGM leaves out a chip it has no command for, WAV plays it.',
     insert: '(def-score :target pc88)',
     example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(rhythm1 :len 4 kick c c snare c c)',
   },
@@ -129,7 +129,7 @@ export const REFERENCE = [
   {
     name: 'sqr1–sqr3', aliases: ['sqr1', 'sqr2', 'sqr3', 'psg'], cat: 'channels', section: '§2', tracks: PSG,
     syntax: '(sqr1 …)',
-    summary: 'The PSG\'s three square-wave channels. No voice of their own: shape a note with a macro. On fc sqr1 and sqr2 are the 2A03\'s pulses, their shape :duty.',
+    summary: 'The PSG\'s three square-wave channels. No voice of their own: shape a note with a macro. On fc and gb sqr1 and sqr2 are the chip\'s pulses, their shape :duty.',
     insert: '(sqr1 :len 8 c e g e)',
     example: '(sqr1 :oct 5 :len 8 c e g e)',
   },
@@ -146,6 +146,13 @@ export const REFERENCE = [
     summary: 'pce: the HuC6280\'s channels 5 and 6 turned to noise, the same channels as wave5 / wave6 (where their notes meet, the noise wins unless a :prio says otherwise). A note picks one of the 32 rates: c2 the slowest, each semitone the next, g4 the fastest; the level is the channel\'s.',
     insert: '(noise5 :len 8 :oct 3 c c c c)',
     example: '(def-score :target pce)\n(noise5 :len 8 :oct 2 c c :vel 10 c c :oct 4 c _ c c)',
+  },
+  {
+    name: 'wave', aliases: ['gb-wave'], cat: 'channels', section: '§19', tracks: WAVE,
+    syntax: '(def-score :target gb) (wave name …)',
+    summary: 'gb: the Game Boy\'s wave channel. It plays def-waves at the chip\'s 4 bits, an octave below a pulse at the same period, at a level of 100, 50 or 25 %, the nearest of what vel, vol and master compose: only a fader at 0 silences it. A new wave stops the channel to load (a click on the hardware); the same steps do not load again.',
+    insert: '(wave saw :len 4 :oct 3 c e g e)',
+    example: '(def-score :target gb)\n(def-wave saw :wave (saw -128..127))\n(wave saw :len 4 :oct 3 c :vel 12 e :vel 8 g :vel 15 c)',
   },
   {
     name: 'tri', aliases: ['triangle'], cat: 'channels', section: '§19', tracks: PSG,
@@ -199,7 +206,7 @@ export const REFERENCE = [
   {
     name: ':duty', aliases: ['duty', 'pulse width'], cat: 'track', section: '§19', tracks: PSG,
     syntax: ':duty 0–16  ·  (macro :duty […])  ·  :duty (curve …)',
-    summary: 'fc: a pulse\'s duty in sixteenths of its cycle (sticky, default 8). The 2A03 has 2, 4, 8 and 12 (12.5, 25, 50, 75 %; 75 sounds as 25); a value between is the nearest. The MMC5\'s pulses have the 2A03\'s four. The VRC6\'s pulses (vrc6-sqr1, vrc6-sqr2) have 1–8; a wider value is its mirror (12 sounds as 4).',
+    summary: 'fc, gb: a pulse\'s duty in sixteenths of its cycle (sticky, default 8). The chip has 2, 4, 8 and 12 (12.5, 25, 50, 75 %; 75 sounds as 25); a value between is the nearest. The MMC5\'s pulses have the 2A03\'s four. The VRC6\'s pulses (vrc6-sqr1, vrc6-sqr2) have 1–8; a wider value is its mirror (12 sounds as 4).',
     insert: ':duty 4',
     example: '(def-score :target fc)\n(sqr1 :len 8 :duty 2 c e (macro :duty [2 4 8 12]) g e)',
   },
@@ -357,7 +364,7 @@ export const REFERENCE = [
     example: '(def-fm lead init-fm :alg 4 :fb 3 :tl1 30 :tl2 0 :tl3 30 :tl4 0)\n(fm1 lead :len 8 c e g > c)',
   },
   {
-    name: 'def-wave', aliases: [':wave', 'wave'], cat: 'defs', section: '§19', tracks: WAVE,
+    name: 'def-wave', aliases: [':wave'], cat: 'defs', section: '§19', tracks: WAVE,
     syntax: '(def-wave name :wave [v1 … v32])  ·  (def-wave name :wave (curve A..B))  ·  (wave1 :wave expr …)',
     summary: 'A wave for the wave channels: 32 steps (or 64, fc\'s FDS memory; every other one on a 32-step chip), each -128..127, one cycle of a curve, or + - * / over def-waves, curves and numbers. Name it in a track to switch to it; a track\'s :wave takes an expression, and one with a $value follows it as it moves; (macro :wave [a b #sus c]) steps a note through def-waves a frame at a time.',
     insert: '(def-wave soft :wave (sin -100..100))',

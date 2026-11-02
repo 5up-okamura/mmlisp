@@ -473,3 +473,59 @@ Open:
 - The FDS's state hash leaves out its RAM above $7FFF (a driver keeping
   its state there falls to the writes' period).
 
+## The Game Boy (gb; built 2026-11-03)
+
+language.md §19 gb says what the language does; chips/lr35902.js, targets/gb.js,
+synth-gb.js, tools/tests/gb, `tools npm run check:gb-level`. What the docs do not
+say:
+
+- **The level (ruled 2026-11-03, the user).** Zombie mode with the target in the
+  high nibble (chips/lr35902.js's header). SameBoy steps +1 a write whatever
+  that nibble, MAME and libvgm's gb_mame.c take it as the volume at once, so
+  both land on the target. Furnace's own sequence ends on `$08`, which reads as
+  silence on the MAME cores: not copied. Rejected: a retrigger per level (the
+  noise's LFSR goes to 0 each time, a 60 Hz loop); the hardware envelope as a
+  word (imports bake it).
+- The encoder's level is a count from the one before, so its queue is applied
+  a time at a time. A VGM's loop jumps back with the level as the end left it:
+  a move before the first key-on after the loop point lands off on SameBoy,
+  until that key-on. Not handled.
+- The wave lane is on the PSG encoder (`_toneEncodersOf`: a wave part of a chip
+  with a psgEncoder), as NR51 is one register. A note does not trigger it: only
+  a load does (Furnace's way, NR30 off at every key-on, pops).
+- The synth starts its capacitor charged (`charge`): the DACs going on at the
+  song's start are a step of up to 4 × the channel's swing, a full-scale thump.
+- gbChip runs the synth's Apu and reads its state after each burst of writes
+  (SETUP_T): a zombie move runs the level through every step on its way.
+- Furnace's noise: gb.cpp's table at the note itself (held to its VGM of the
+  demos, not `baseFreq − 60` as the source reads); a fixed arp 24 up.
+
+Held to (2026-11-03; scratch tools, not in the repo; the music stays outside):
+- The user's four vgmrips packs (Dropbox GameDev/VGM/Downloads/VGM - Game Boy:
+  Kirby, Pokemon, Quarth, Super Mario Land, 100 tracks): each VGM's writes and
+  the import's replayed on the Apu, first 30 s, a frame at a time, ±1 frame.
+  All import and compile; sounding, period (1.2 %, the noise's rate a quarter
+  octave) and level within 1 agree 99.7-100 % per channel. Left: Pokemon Healed
+  SQ1 pitch 41 % (a fall of a frame a step, a frame off); Jigglypuff level
+  32-39 % (a duty flickering every 2 frames makes short notes, each at its first
+  level: Bad Dudes' duty flicker on fc).
+- Furnace's 15 demos against the VGM its CLI writes (`furnace -vgmout`): sounding
+  98-99.7 %, level 99.4-99.8 %, pitch 92-96 % (instruments'
+  pitch macros, and a duty macro switching the noise under a note). Left:
+  Pleasure_of_Tension SQ1 22 %, spreadtro SQ2 46 %, lagtrain SQ2 55 %, freedom
+  SQ1 69 %, not looked into.
+- The user's 32 .dmf import and compile; none compared.
+
+Open:
+- Not run on a real core: the VGM on libvgm's sameboy_apu.c and gb_mame.c. The
+  zombie rule is a transcription of SameBoy, unlocked envelope assumed, the MAME
+  reading from its source; building libvgm in the scratchpad was refused by the
+  session's auto mode. `tools check:gb-level` holds both readings on our log.
+- `MASTER_OUTPUT_GAIN` puts one pulse at a 2A03 pulse's RMS: a choice, not a
+  measure.
+- `.gbs` import (an LR35902 run, as NSF's 6502) is not built.
+- A .fur in the old INST format (versions before 127): its software-envelope
+  flag and sequence are past what the reader reads, so from 106 a volume macro
+  stands in for the flag and a sequence is lost.
+- A tracker's 13xy / 14xx sweep is left out; a wave rewritten under a note, a
+  VGM's CPU PCM through the wave memory or NR50 are not followed.

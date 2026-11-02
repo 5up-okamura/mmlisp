@@ -46,4 +46,5 @@ Rules:
   (not to be proposed again), working lessons, and small tools still to specify.
 - [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings
   and open items per machine (pc88 … the PC Engine, the Famicom and its six
-  expansion chips: their ports, lanes and what is not yet heard).
+  expansion chips, the Game Boy: their ports, lanes and what is not yet
+  heard).

@@ -122,6 +122,26 @@ export function fcPitch(clock) {
 }
 
 /**
+ * The Game Boy's (port 0, chips/lr35902.js) periods: NRx3 and NRx4's low
+ * three bits, $03/$04 and $08/$09 the pulses' (the clock / 32 / (2048 − x)),
+ * onto lanes 6-7, $0D/$0E the wave's (/ 64), onto lane 10; the noise is
+ * unpitched.
+ */
+export function gbPitch(clock) {
+  const period = new Uint16Array(3);
+  const CHANNEL = { 0x03: 0, 0x04: 0, 0x08: 1, 0x09: 1, 0x0d: 2, 0x0e: 2 };
+  const LOW = new Set([0x03, 0x08, 0x0d]);
+  return {
+    write(port, addr, data, out) {
+      const ch = CHANNEL[addr];
+      if (port !== 0 || ch === undefined) return;
+      const p = (period[ch] = LOW.has(addr) ? (period[ch] & 0x700) | data : (period[ch] & 0xff) | ((data & 7) << 8));
+      out[ch === 2 ? 10 : 6 + ch] = clock / ((ch === 2 ? 64 : 32) * (2048 - p));
+    },
+  };
+}
+
+/**
  * The VRC6's (port 3, chips/vrc6.js) periods: $x001 the low byte, $x002's
  * low nibble the top; its pulses (clock / 16 / (period + 1)) and its saw
  * (clock / 14 / (period + 1)) on the scope's lanes 11-13 (synth-fc.js).
