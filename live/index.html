@@ -3197,8 +3197,6 @@
       else clearSourceDir();
       currentIrURL = null;
       _lastFileName = mmlispName(_sourceFileName);
-      _lastGoodIR = null;
-      _lastSourceMap = null;
       resetForNewScore();
       // A decoded PCM bank has no file on disk yet, and the score above has no
       // folder — so seed the decode cache under the key `:file` resolves to (a
@@ -4024,7 +4022,7 @@
         };
         const res = importMucom(_mucomSong.bytes, _mucomSong.datBytes, _mucomSong.pcmBytes, { target: _mucomSong.target });
         const withs = [datPick && `voices ${datPick.name}`, pcmPick && `PCM ${pcmPick.name}`].filter(Boolean);
-        loadMucomSource(res.source, res.warnings, file.name,
+        await loadMucomSource(res.source, res.warnings, file.name,
           `Imported ${file.name}${withs.length ? ' with ' + withs.join(' + ') : ''} (mucom88) — review and Build`,
           res.pcm);
 
@@ -5522,22 +5520,20 @@
         await importFmVoiceFromFile(file, fmImportKey);
         return;
       }
+      // Read first: a file that cannot be read replaces nothing.
+      const isMmb = /\.mmb(?:$|\?)/i.test(file.name);
+      const src = isMmb ? null : await file.text();
       resetForNewScore();
-      if (/\.mmb(?:$|\?)/i.test(file.name)) {
+      if (isMmb) {
         _sourceHandle = null;
         _sourceFileName = file.name;
           currentIrURL = URL.createObjectURL(file);
-        _lastGoodIR = null;
-        _lastSourceMap = null;
         _lastFileName = file.name;
         setEditorDoc('(binary MMB preset loaded)');
         log('Loaded ' + file.name + ' as binary preset', 'info');
         return;
       }
-      const src = await file.text();
       setSourceContextFromHandle(handle, file.name);
-      _lastGoodIR = null;
-      _lastSourceMap = null;
       setEditorDoc(src);
       if (handle) rememberRecent(handle);
       await refreshImportsAndCompile();
@@ -5585,11 +5581,48 @@
     // score converted from it, the rest as a score does. `handle` is null from
     // a plain file input (iOS, Firefox).
     async function openPickedFile(file, handle = null) {
-      if (ARCHIVE_EXT.test(file.name)) return openArchive(file, handle);
-      if (isSongFile(file.name)) return openSong(file, { folder: await folderHolding(handle) });
-      if (handle) return openScoreHandle(handle);
-      clearSourceDir();
-      return readSourceFile(file);
+      return keepingPlayback(async () => {
+        if (ARCHIVE_EXT.test(file.name)) return openArchive(file, handle);
+        if (isSongFile(file.name)) return openSong(file, { folder: await folderHolding(handle) });
+        if (handle) return openScoreHandle(handle);
+        clearSourceDir();
+        return readSourceFile(file);
+      });
+    }
+
+    // A song opened while one plays plays too; opened from silence, it stays
+    // silent, and an open that replaced nothing (cancelled, a voice imported)
+    // leaves things as they were. Opens can nest and overlap (→ → →): the
+    // intent carries through them, read when the last has finished. Stop or
+    // Pause meanwhile cancels it. (A Library preview is an audition, not a song
+    // playing: opening a score ends it.)
+    let _opensRunning = 0, _resumeOnOpen = false, _openReplaced = false, _resuming = 0, _resumeRuns = 0;
+    // The user took over (Stop, Pause, New, Library): nothing starts on its own.
+    function cancelResume() {
+      _resumeOnOpen = false;
+      _resuming = 0;
+    }
+    async function keepingPlayback(open) {
+      if (_opensRunning++ === 0) _openReplaced = false;
+      _resumeOnOpen ||= !!_resuming || (!!player?.isPlaying?.() && !player.ended?.());
+      try {
+        return await open();
+      } finally {
+        if (--_opensRunning === 0) {
+          const resume = _resumeOnOpen && _openReplaced;
+          _resumeOnOpen = false;
+          if (resume && _lastGoodIR) {
+            // (The source may have moved on since its build: a drop's imports.)
+            const built = _lastGoodSrc === editorView.state.doc.toString();
+            const run = (_resuming = ++_resumeRuns);
+            try {
+              await onPlay(null, { se: null, prepared: built ? { ir: _lastGoodIR, ok: true } : null });
+            } finally {
+              if (_resuming === run) _resuming = 0;
+            }
+          } else if (resume && !currentIrURL) log('Nothing built to play; playback stays stopped.', 'err');
+        }
+      }
     }
 
     // The open folder when `handle` is inside it, else null.
@@ -5956,7 +5989,7 @@
       }
       for (const entry of _recent) {
         const where = entry.inner ? entry.file.name : entry.dir?.name;
-        item(entry.inner ?? entry.file.name, where ? where + '/' : '', () => openRecent(entry));
+        item(entry.inner ?? entry.file.name, where ? where + '/' : '', () => keepingPlayback(() => openRecent(entry)));
       }
       const sep = document.createElement('div');
       sep.className = 'menu-sep';
@@ -6041,6 +6074,10 @@
     async function openFromFolder(i) {
       const entry = _sourceDirFiles[i];
       if (!entry) return;
+      await keepingPlayback(() => readFolderEntry(entry));
+    }
+
+    async function readFolderEntry(entry) {
       try {
         if (entry.kind !== 'score') {
           await openSong(await entry.file(), { folder: _sourceDir, song: entry.nsfSong ?? null, name: entry.name });
@@ -6311,7 +6348,7 @@
         }
         (async () => {
           try {
-            await handleDroppedEntries(await resolveDropEntries(pending), asImport);
+            await keepingPlayback(async () => handleDroppedEntries(await resolveDropEntries(pending), asImport));
           } catch (err) {
             log(`Drop failed: ${err?.message || err}`, 'err');
           }
@@ -7071,13 +7108,12 @@
     }
 
     function newFile() {
+      cancelResume();
       _sourceHandle = null;
       _sourceFileName = null;
       clearSourceDir(); // the folder belonged to the score we just left
       currentIrURL = null;
       _lastFileName = 'untitled.mmlisp';
-      _lastGoodIR = null;
-      _lastSourceMap = null;
       resetForNewScore();
       setEditorDoc(DEFAULT_NEW_FILE_SOURCE);
       refreshImportsAndCompile(); // the template imports the preset sets
@@ -7090,7 +7126,10 @@
     // the score they were set for. The caller's setEditorDoc then re-reads
     // the FM panel's def-at-cursor from the new document.
     function resetForNewScore() {
-      onStop();
+      _openReplaced = true;
+      _lastGoodIR = null; // the score it replaces must not be what plays on
+      _lastSourceMap = null;
+      stopPlayback();
       _mucomSong = null; // a .dat / .bin applied now belongs to the new document, not the song before
       _mutedChannels.clear();
       _soloChannels.clear();
@@ -8510,6 +8549,8 @@
     }
 
     function onPlayToggle() {
+      // The song stopped for a score still opening or starting: this is its Pause.
+      if (!player?.isPlaying?.() && (_resuming || (!player && _resumeOnOpen))) { onStop(); return; }
       if (!player || (!player.isPlaying() && !_paused)) {
         onPlay(null, _timeCue != null ? { fromSec: _timeCue } : {});
       } else if (_paused) {
@@ -8744,6 +8785,11 @@
     });
 
     function onStop() {
+      cancelResume();
+      stopPlayback();
+    }
+
+    function stopPlayback() {
       _playEpoch++;
       stopLibraryScorePreview();
       stopFmLiveLoop();
@@ -9041,6 +9087,7 @@
     // quiet: a pause the piano roll's drag takes and gives back, not the
     // user's — no log line.
     function onPause({ quiet = false } = {}) {
+      if (!quiet) cancelResume();
       _playEpoch++;
       if (!player || !player.isPlaying()) return;
       // The MMLispDRV reference cannot seek; pause degrades to stop.
@@ -9672,6 +9719,7 @@
     async function playLibrarySource(text, name, key) {
       if (!(await initAudio())) return null;
       stopLibraryPreview();
+      cancelResume();
       if (player) onStop();
       try {
         const imports = await readImportSources(text, name);
@@ -9778,13 +9826,12 @@
       try {
         const src = await fetchText(path);
         stopLibraryPreview();
+        cancelResume();
         resetForNewScore();
         clearSourceDir();
         _sourceHandle = null;
         _sourceFileName = path.split('/').pop();
         currentIrURL = null;
-        _lastGoodIR = null;
-        _lastSourceMap = null;
         _lastFileName = compileName;
         setEditorDoc(src);
         await refreshImportsAndCompile();
@@ -9949,8 +9996,6 @@
       _sourceFileName = name.split('/').pop();
       currentIrURL = null;
       _lastFileName = name;
-      _lastGoodIR = null;
-      _lastSourceMap = null;
       setEditorDoc(src);
       // Only looking at someone's score must not replace your own draft: it
       // becomes the draft at its first edit.

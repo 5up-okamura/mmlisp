@@ -656,6 +656,11 @@ export class IRPlayer {
     return this._playing;
   }
 
+  /** Past a song's end, which `isPlaying` outlasts; a looping song has none. */
+  ended() {
+    return this._playing && !!this._allScheduled && this._audioContext?.currentTime >= this._songEndTime();
+  }
+
   /**
    * Expanded event list for a track — counted `(x N …)` loops unrolled — for
    * visualizers. While playing returns the already-expanded scheduler events;
@@ -1387,7 +1392,8 @@ export class IRPlayer {
       this._commitSwap();
     }
 
-    if (this._scheduleStep(now, horizon)) return;
+    this._allScheduled = !!this._scheduleStep(now, horizon);
+    if (this._allScheduled) return;
 
     this._schedulerTimer = setTimeout(
       () => this._scheduleLoop(),

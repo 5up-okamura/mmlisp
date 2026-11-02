@@ -1434,6 +1434,13 @@ itself is read from there — an MDX's `.pdx`, a mucom88 song's `#voice` and
 `#pcm` banks. Opening a folder opens its first score, or its one file when it
 holds only one; a folder of songs only lists them.
 
+A song or score opened while one plays — from the folder, ← →, Open, Open
+Recent, a drop — plays too, once it has built; opened from silence it stays
+silent. Stop or Pause while it opens cancels that, and cancelling the import
+dialog leaves the song playing as it was. One that does not build stays
+stopped, and so does a binary `.mmb`. A Library preview is an audition: opening a
+score ends it.
+
 The top line of Global in the panel names what is open — the folder first
 when it came from one (`pack.zip / daisy.vgm`) — and the browser's title says
 the same. A converted song keeps its own name until it is saved; `Save` then
