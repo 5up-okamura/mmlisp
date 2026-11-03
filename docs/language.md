@@ -58,9 +58,10 @@ optional; several `def-score` forms combine, a key given twice is
   highest `pcmN` track the score uses; a `pcmM` track above the stated number
   is `E_PCM_VOICES`, and a value outside 0–3 is the same error. See §16 and
   driver.md §5.
-- **`:target md|pc88`** — the machine the score is for (§19). Default `md`,
-  the Mega Drive; `pc88` is the PC-8801 with Sound Board II (YM2608). Any
-  other value is `E_SCORE_OPTION`.
+- **`:target md|pc88|x68k|msx|pce|gb|fc`** — the machine the score is for
+  (§19). Default `md`, the Mega Drive; the others are the PC-8801 with Sound
+  Board II, the X68000, the MSX, the PC Engine, the Game Boy and the Famicom.
+  Any other value is `E_SCORE_OPTION`.
 - **`:tempo` / `:lfo-rate`** — score-global effects, written on any track
   (leading position or mid-body); they apply to the whole song regardless of
   which track carries them. `:tempo` takes a BPM number or a curve
@@ -112,6 +113,9 @@ unaffected by layering.
 ---
 
 ## 2. Channels
+
+The Mega Drive's (`md`, the default target); every other target's channels
+are in §19.
 
 | Name            | Hardware                | Notes                                             |
 | --------------- | ----------------------- | ------------------------------------------------- |
@@ -331,10 +335,10 @@ keywords at the form's first tick.
 | `:vol`     | 0–31 or curve             | Channel fader → `PARAM_SET` / `PARAM_SWEEP`              |
 | `:master`  | 0–31 or curve             | Global fader → `PARAM_SET` / `PARAM_SWEEP`               |
 | `:tempo`   | number > 0 or curve       | Global: `TEMPO_SET` / `TEMPO_SWEEP` at this tick (0 or less: `E_TEMPO_INVALID`) |
-| `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | FM stereo bits            |
+| `:pan`     | `left`/`center`/`right`, −1/0/1, curve, `none` | Stereo: FM's bits, or the part's own where it pans (§19) |
 | `:snap`    | `[pitch classes]`, mask, `$slot`, `none` | The scale every pitch write snaps onto (§5.3) |
-| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3`; on `pc88`, `sqr1`–`sqr3`: `tone`/`noise`/`both` (§19) (all sticky) |
-| `:noise-rate` | 1–31 or curve        | `pc88` only: the SSG's one noise period, song-wide like `:lfo-rate` (§19) |
+| `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3`; on other targets, the part's own — the SSG's `tone`/`noise`/`both`/`env`, `x68k` fm8's `tone`/`noise` (§19) (all sticky) |
+| `:noise-rate` | 1–31 or curve        | The SSG's (`pc88`, `msx`, `fc`'s 5B) or the OPM's (`x68k`) one noise period, song-wide like `:lfo-rate` (§19) |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:shuffle` | 1–99, `[w1 … wN]` or `none` | Grid warp: a pair's first share, or a cycle's weights (§5.2) |
 | `:shuffle-base` | length token         | One step of the warped grid (default: sixteenth, §5.2)   |
@@ -1064,8 +1068,8 @@ before.
 Nothing moves inside a slur (`c ~ lead e`), across a `#label` or `(go …)`, at a
 track's start (it is sent at load, driver.md §4.1), at a loop's head, on an
 `fm3-N` operator track or with CSM, or in an effect's part. Note onsets never
-move. The editor plays the same moved stream as the driver. A VGM target
-(`pc88`, `x68k`, `msx`) has no wire: a voice is written at its note.
+move. The editor plays the same moved stream as the driver. Every other
+target is a VGM one, with no wire: a voice is written at its note.
 
 **`:key N`** gives a voice its own pitch: c4 sounds at MIDI note `N`
 (0–127, else `E_VOICE_VALUE`), and every note written on the voice moves by
@@ -1139,8 +1143,8 @@ inline.
   its samples and its own imports. A path that cannot be read is
   `E_IMPORT_NOT_FOUND`.
 - **What is imported**: the def namespaces — plain and parametric snippets
-  (`def`), FM voices (`def-fm`), PCM samples (`def-pcm`) and sound effects
-  (`def-se`, §9.3). Imports are
+  (`def`), FM voices (`def-fm`), PCM samples (`def-pcm`), waves
+  (`def-wave`) and sound effects (`def-se`, §9.3). Imports are
   transitive (an imported file may itself `import`). An imported sample def
   keeps its own base directory, so its `:file` reads from the imported file's
   folder, not the score's (§16).
@@ -1335,11 +1339,11 @@ If the same target is set twice, the last one wins.
 | `:vol`     | `VOL`        | 0–31         |                                        |
 | `:master`  | `MASTER`     | 0–31         | Song-wide (§5): inline only — a macro is a note's (`E_MACRO_TARGET`); sweep it instead |
 | `:pan`     | `PAN`        | −1–1         | Symbols `left center right`. A chip with a left and a right bit (the OPN, the OPM) snaps it to −1 / 0 / +1; `pce` takes it whole (§19) |
-| `:mode`    | `NOISE_MODE` | 0–7          | Symbols `white0`–`white3` (4–7), `periodic0`–`periodic3` (0–3); on a `pc88` / `msx` sqr track `SSG_MIX`, symbols `tone noise both env`; on `fc`'s noise `white` (4) and `periodic` (0) (§19) |
-| `:duty`    | `DUTY`       | 0–16         | A pulse's duty in sixteenths, on `fc`'s `sqr1` / `sqr2`: the chip takes the nearest of 2, 4, 8, 12 (§19) |
+| `:mode`    | `NOISE_MODE` | 0–7          | Symbols `white0`–`white3` (4–7), `periodic0`–`periodic3` (0–3); on an SSG sqr track (`pc88`, `msx`, `fc`'s 5B) `SSG_MIX`, symbols `tone noise both env`; on `fc`'s and `gb`'s noise `white` (4) and `periodic` (0) (§19) |
+| `:duty`    | `DUTY`       | 0–16         | A pulse's duty in sixteenths, on `fc`'s and `gb`'s pulses: the chip takes the nearest it has (2, 4, 8, 12; the VRC6's 1–8) (§19) |
 | `:lfo-rate`| `LFO_RATE`   | 0–8          | Song-wide (§5): inline only, as `:master` |
-| `:noise-rate` | `NOISE_RATE` | 1–31      | Song-wide, but a macro on a `pc88` / `msx` SSG track steps it from the note (the later write wins, §19) |
-| `:wave`    | `WAVE`       | def-wave names | A wave channel's wave (`msx`, `pce`, `gb`), a step vector of def-wave names alone; a step naming the wave already playing writes nothing (§19) |
+| `:noise-rate` | `NOISE_RATE` | 1–31      | Song-wide, but a macro on an SSG track (`pc88`, `msx`, `fc`'s 5B) steps it from the note (the later write wins, §19) |
+| `:wave`    | `WAVE`       | def-wave names | A wave channel's wave (`msx`, `pce`, `gb`, `fc`'s FDS and N163), a step vector of def-wave names alone; a step naming the wave already playing writes nothing (§19) |
 | `:alg` `:fb` | `FM_ALG` `FM_FB` | 0–7    |                                        |
 | `:ams`     | `FM_AMS`     | 0–3          |                                        |
 | `:fms`     | `FM_FMS`     | 0–7          |                                        |
@@ -1350,6 +1354,8 @@ If the same target is set twice, the last one wins.
 | `:ks` (1–4) | `FM_KS`     | 0–3          |                                        |
 | `:ssg` (1–4) | `FM_SSG`   | 0–15         |                                        |
 | `:am` (1–4) | `FM_AMEN`   | 0–1          |                                        |
+| `:dt2-` (1–4) | `FM_DT2_` | 0–3        | The OPM's coarse detune (`x68k`, §19)  |
+| `:ws` `:eg` `:vib` `:ksl` (1–2), `:sus` | `FM_WS` `FM_EG` `FM_VIB` `FM_KSL` `FM_SUS` | 0–1 (`:ksl` 0–3) | The OPLL's (`msx` FM-PAC, `fc` VRC7, §19) |
 
 A keyword that is not in this table is `E_MACRO_TARGET` (`(macro :foo …)`
 and `(macro :foo none)` alike) — a typo is never a macro that silently drops.
@@ -2284,7 +2290,7 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
   rejected is every RUNTIME pitch move on a pcm track: `:pitch`, `:semi`,
   `(glide …)` and a `(macro :pitch …)` vibrato are `E_PCM_NO_PITCH` rather
   than silently dropped. (A chip that pitches its own sample voice takes
-  them: `pc88`'s ADPCM-B, §19.)
+  them: `pc88`'s ADPCM-B, `x68k`'s PCM8, `msx`'s FM-PAC rhythm, §19.)
 - **`:mode`** is sticky track state like every other parameter — it holds
   until the next `:mode` — and it is the note, not the sample, that decides:
   `shot` (the default) plays the note's range once; `loop` plays the attack,
@@ -2428,8 +2434,8 @@ is what the compiler holds a `pc88` score to.
 its chips — 4-op FM, the SN76489's square or noise, the SSG, a wavetable
 channel, the ROM rhythm, a sample voice — and a part brings its own words: the FM operator keys, the
 SN76489 noise's `white0`–`periodic3`, the SSG's `:noise-rate`, a sample
-voice's range points, `:pan` where the chip pans (FM, the ADPCM-B, the ROM
-rhythm). A part's word on another part's channel — `:tl1` on `sqr1`, `:pan`
+voice's range points, `:pan` where the chip pans (the OPN's and the OPM's FM, the ADPCM-B, the
+ROM rhythm, the HuC6280, the Game Boy). A part's word on another part's channel — `:tl1` on `sqr1`, `:pan`
 on a PSG track, `:mode white0` on `fm1` — is `E_UNSUPPORTED_TARGET`, inline,
 in a macro and in a `(param-set …)`, on every target; a word only other
 targets' parts have is `E_TARGET` (`:noise-rate` on `md`). The rest of the
