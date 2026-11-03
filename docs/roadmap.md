@@ -48,7 +48,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
   that builds a step vector after that.
   The signal-⊕ region model's first relaxation is loop⊕one-shot, which a
   baked `env × lfo` AM needs (runtime AM is the scaled macro today).
-- **OP mask** — per-channel operator enable/disable.
 - **More PCM tracks than voices** (considered, waiting for a score that
   needs it). `:pcm-voices 2` keeps the 10.1 kHz rate; pcm1–pcm3 written
   beside it would flatten by the `:prio` rule the layers already use, so
