@@ -260,9 +260,8 @@ Open:
   written keyed (the retrigger's key-offs go out after the pitch steps).
 - **Levels.** `OPLL_GAIN` is set against the PSG and SCC as libkss
   (MSXplay) mixes them, measured on an MGS song (G2_00.MGS) chip by chip.
-  Open: a dense score with the rhythm clips (ymfm doubles the rhythm
-  output; the test score clips 87 samples, the MGS demo Contrail ~30k);
-  not ruled on.
+  The rhythm's level is fine by ear (the user, 2026-11-03), clips in a
+  dense score included.
 - **Open.** The volume's floor is −45 dB
   (vol 15): `:vol 0` and a mixer mute do not silence a sounding FM-PAC note
   (the md's TL 127 does) — ruled 2026-10-26 to stay: the chip cannot, and
