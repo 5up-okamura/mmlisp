@@ -38,19 +38,31 @@ export function stepText(text) {
 const codeOnly = (src) => String(src).replace(/;[^\n]*/g, "");
 
 /**
- * Whether a compile does what the step's check asks.
+ * What a compile says of the step's check: `ok`, and when not, `why` — what
+ * the learner can act on (the error, the count so far), or "" for a pattern.
  * @param {object|null} check
  * @param {{src: string, ir: object|null, diagnostics: object[]}} compiled
  */
-export function passes(check, { src, ir, diagnostics }) {
-  if (!check || !ir) return false;
-  if ((diagnostics ?? []).some((d) => d.severity === "error")) return false;
+export function verdict(check, { src, ir, diagnostics }) {
+  const error = (diagnostics ?? []).find((d) => d.severity === "error");
+  if (error || !ir) return { ok: false, why: `the score has an error: ${error?.message ?? "it does not compile"}` };
+  if (!check) return { ok: false, why: "" };
   const events = (ir.tracks ?? []).flatMap((t) => t.events ?? []);
-  if (check.notesMin != null && events.filter((e) => e.cmd === "NOTE_ON").length < check.notesMin) return false;
-  if (check.match != null && !new RegExp(check.match).test(codeOnly(src))) return false;
-  if (check.tempoMin != null && !events.some((e) => e.cmd === "TEMPO_SET" && e.args?.bpm >= check.tempoMin)) return false;
-  return true;
+  if (check.notesMin != null) {
+    const n = events.filter((e) => e.cmd === "NOTE_ON").length;
+    if (n < check.notesMin) return { ok: false, why: `${n} notes so far; it needs ${check.notesMin}` };
+  }
+  if (check.match != null && !new RegExp(check.match).test(codeOnly(src))) return { ok: false, why: "" };
+  if (check.tempoMin != null) {
+    const set = events.filter((e) => e.cmd === "TEMPO_SET").map((e) => e.args?.bpm ?? 0);
+    const bpm = set.length ? Math.max(...set) : 120; // 120 unless the score says
+    if (bpm < check.tempoMin) return { ok: false, why: `the tempo is ${bpm}; it needs ${check.tempoMin} or more` };
+  }
+  return { ok: true, why: "" };
 }
+
+/** Whether a compile does what the step's check asks. */
+export const passes = (check, compiled) => verdict(check, compiled).ok;
 
 // Progress: the steps passed, by "lesson/step", in this browser.
 const STORE_KEY = "mmlisp.lessons";

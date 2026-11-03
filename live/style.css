@@ -1543,17 +1543,26 @@
     .lesson-about { line-height: 1.5; }
     .lesson-try {
       display: flex;
-      gap: 0.5rem;
+      flex-direction: column;
+      gap: 0.4rem;
       border: 1px solid var(--mid);
       border-radius: 3px;
-      padding: 0.4rem 0.5rem;
+      padding: 0.5rem 0.6rem;
       line-height: 1.5;
     }
     .lesson-try[hidden] { display: none; }
-    .lesson-try.done { border-color: var(--foreground); }
+    .lesson-try-label { font-weight: bold; }
     .lesson-mark { width: 1em; flex: none; font-weight: bold; }
-    #lessonTask::first-letter { text-transform: uppercase; } /* "Try: add …" reads "Add …" */
-    #lessonTask { display: inline-block; }
+    /* Whether the code does the Try: plain until edited, then said outright */
+    .lesson-status { opacity: var(--off); }
+    .lesson-try[data-state="notyet"] .lesson-status { opacity: 1; }
+    .lesson-try[data-state="correct"] {
+      border-color: var(--foreground);
+      background: color-mix(in srgb, var(--foreground) var(--sel), var(--background));
+    }
+    .lesson-try[data-state="correct"] .lesson-status { opacity: 1; font-weight: bold; font-size: 1.15em; }
+    .lesson-try[data-state="answer"] { border-style: dashed; }
+    .lesson-try[data-state="answer"] .lesson-status { opacity: 1; }
     .lesson-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; }
     #keyboardDock[hidden] { display: none; }
     #rightPanel .lib-search {

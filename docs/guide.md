@@ -2599,9 +2599,10 @@ time. A step is a few lines of text and a few of code; picking one puts its
 code in the editor, in a working copy of its own — the score you were writing
 is set aside, undo history and all, and **Leave** brings it back as it was
 (the draft a reload comes back to stays that score). A step's **Try** is an
-exercise, checked as you type; a step done is ticked in the list, in this
-browser. **Start Over** puts the step's code back, **Show Answer** one way of
-doing it; a step keeps your edits while the lesson is open. Opening another
+exercise, checked as you type: the box says **Not yet** and why (an error, the
+notes so far, the tempo) or **Correct!**, and a step done is ticked in the
+list, in this browser. **Start Over** puts the step's code back, **Show
+Answer** one way of doing it — marked as the answer, so it ticks nothing; a step keeps your edits while the lesson is open. Opening another
 score ends the lesson. The lessons' texts follow MMLisp ▸ Language. They live
 in `tutorial/` (`lessons.json` and a score per step, its leading comment the
 text, as a snippet's is), held by `cd tools && npm run check:lessons`.
