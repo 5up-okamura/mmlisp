@@ -5624,12 +5624,13 @@
       const blobs = await pcmSampleBlobsForMmb(ir);
       if (!current()) return;
       if (!blobs && kind === 'mmb') return clear();
-      let baked;
+      // A bake that fails clears the machine's bank as an empty one does, so
+      // the last score's samples do not play under this one's names.
+      let baked = { bake: null, warnings: [] };
       try {
-        baked = blobs ? bakeSampleBank(ir, blobs, machine) : { bake: null, pcm: null, warnings: [] };
+        if (blobs) baked = bakeSampleBank(ir, blobs, machine);
       } catch (e) {
         log('PCM bank: ' + e.message, 'err');
-        return clear();
       }
       for (const w of baked.warnings) log(w, 'warn');
       const { bake } = baked;
@@ -11634,7 +11635,7 @@
         if (sp?.bank === 'frames') {
           const s = bakePcm8(ir, samples, [name]).entries[name];
           if (!s) throw new Error(`"${name}" did not load`);
-          playAuditionBlob(sp.audition(s, midi), false, vel);
+          playAuditionBlob(sp.audition(s, midi, { ir, target: machine, name }), false, vel);
           return;
         }
         // The YM2608's ADPCM-B: the def baked into the chip's RAM as the song's

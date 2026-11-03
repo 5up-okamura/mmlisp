@@ -49,7 +49,7 @@ import { engineImage } from "./engine-images.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 import { PCM8_RATE, PCM8_VOICES } from "./chips/msm6258.js";
 import { DDA_RATE, ddaStep } from "./chips/huc6280.js";
-import { DMC_RATES, dmcRate, dmcEncode } from "./chips/rp2a03.js";
+import { dmcRate, dmcRates, dmcLevels, dmcEncode } from "./chips/rp2a03.js";
 // A held DDA note (:len 0) with no next note: how long its sample is written.
 const DDA_HOLD_SEC = 30;
 // The DMC's sample is loaded this far ahead of its key-on: before the
@@ -3331,28 +3331,9 @@ export class IRPlayer {
     }
   }
 
-  // The DMC's rate for each sample its notes play (chips/rp2a03.js
-  // dmcRate): the highest at which the whole sample, at the lowest pitch a
-  // note plays it, fits the DMC's 4081 bytes — one rate a def-pcm, as a
-  // driver keeps one.
+  // The DMC's rate for each sample its notes play (chips/rp2a03.js dmcRates).
   _dmcRateOf(name) {
-    if (!this._dmcRates) {
-      this._dmcRates = new Map();
-      const heads = new Set(this._target.headsOf("fc-dpcm"));
-      const lowest = new Map();
-      for (const t of this._ir?.tracks ?? []) {
-        if (!heads.has(t.scoreChannel ?? t.channel)) continue;
-        for (const e of t.events ?? [])
-          if (e.cmd === "PCM_NOTE_ON" && e.args?.sample) {
-            const midi = pitchToMidi(e.args.pitch ?? "c4");
-            lowest.set(e.args.sample, Math.min(lowest.get(e.args.sample) ?? Infinity, midi));
-          }
-      }
-      for (const [n, midi] of lowest) {
-        const entry = this._frameBank?.entries?.[n];
-        if (entry?.data.length) this._dmcRates.set(n, dmcRate(entry.data.length / (entry.rate * 2 ** ((midi - 60) / 12))));
-      }
-    }
+    this._dmcRates ??= dmcRates(this._ir, this._target.headsOf("fc-dpcm"), this._frameBank?.entries);
     return this._dmcRates.get(name) ?? dmcRate(Infinity);
   }
 
@@ -3394,13 +3375,7 @@ export class IRPlayer {
             lineEntryAt(cp.master, when)?.v ?? VOL_UNITY, this._voiceUiVol.get("dpcm") ?? VOL_UNITY],
         });
         const rate = this._dmcRateOf(name);
-        const step = perSec / DMC_RATES[rate]; // source frames a bit
-        const levels = [];
-        for (let pos = start; pos < end; pos += step) {
-          const i = Math.floor(pos), f = pos - i;
-          const x = entry.data[i] * (1 - f) + (entry.data[Math.min(i + 1, end - 1)] ?? 0) * f;
-          levels.push(Math.max(-1, Math.min(1, x * gain)));
-        }
+        const levels = dmcLevels(entry, perSec, rate, gain, start, end);
         const bytes = dmcEncode(levels, mode === "loop");
         const loadAt = (this._target.frameClock ? this._frameStart(when) : when) - DMC_LOAD_LEAD_SECS;
         // Live's worklet takes the load as one stream tick (thousands of

@@ -509,8 +509,7 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
     // A key preview on a song channel the keys hold (Live's worklet keeps the
     // song's writes off it: opllHoldBus): its voice, pitch and key written
     // past the timelines, which stay the song's. A user voice is the chip's
-    // one, so it is the song's other user-voice channels' too until the
-    // song's next key writes its own.
+    // one, so the song's user-voice channels and the key's share it.
     held: {
       patch(ch, regs, level) {
         const b = bytesOf(regs.feedback, regs.ops ?? []);
@@ -618,13 +617,16 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
 
 // The OPLL's FM in Live's worklet, for a channel the keys hold (chips/opn-fm.js
 // opnHoldBus): $10-$38's low nibble is the channel, $20-$28 its key (with the
-// pitch's top bits); written back $30 (voice, volume) and the F-number's low
-// byte, the song's key-on bringing the rest. `port` and `channels` the
+// pitch's top bits and :sus, so a key-on is the song's key bit rising, not a
+// pitch moved under a sounding note); written back $30 (voice, volume) and
+// the F-number's low byte, the song's key-on bringing the rest. The user
+// voice, $00-$07, is the chip's one and is never held: a song channel on it
+// changes a held key's, as the key's does theirs. `port` and `channels` the
 // chip's (the VRC7's: chips/vrc7.js).
 export const opllHoldBus = (port = OPLL_PORT, channels = CHANNELS) => ({
   channelOf: (p, a) => (p === port && a >= 0x10 && a < 0x40 && (a & 0x0f) < channels ? a & 0x0f : -1),
   isKey: (a) => a >= 0x20 && a < 0x20 + channels,
-  keyOn: (d) => (d & 0x10) !== 0,
+  keyOn: (d, prev) => (d & 0x10) !== 0 && !(prev > 0 && prev & 0x10),
   replay: (ch) => [[port, 0x30 + ch], [port, 0x10 + ch]],
 });
 

@@ -61,7 +61,8 @@
 //             the Mega Drive's soft-mix bank, "adpcm" the YM2608's RAM image,
 //             "pcm8" the X68000's mix, "frames" frames the player writes as
 //             the chip's registers (the DDA's, the DMC's)
-//   audition  (sample, midi) → { data, rateHz, range, loop }: a def as the
+//   audition  (sample, midi, { ir, target, name }) → { data, rateHz, range,
+//             loop }: a def as the
 //             chip sounds it, for Live's audition of a "frames" part (the
 //             sample as bakePcm8 bakes it; data Int8, 128 full scale)
 //   mixVoice  (voice) → the IR player's key for a sample part's voice that

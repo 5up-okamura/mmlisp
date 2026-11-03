@@ -21,6 +21,7 @@
 // writes (RAM_PORT): $00 / $01 an address's low and high byte, from $C000,
 // then each $02 a byte there, the address moving on — VGM's 0xC2 block.
 import { words } from "./parts.js";
+import { pitchToMidi } from "../ir-utils.js";
 
 const CLOCK = 1789773; // NTSC: the master 21.477 MHz / 12
 const PORT = 0;
@@ -124,26 +125,15 @@ export const fcDpcm = {
   pointSweeps: false, // a note's points are read at its key-on
   bank: "frames",
   mixVoice: () => "dpcm",
-  // The def at the note's pitch as the DMC plays it: at its rate, through
-  // the 1-bit delta (the player's _dispatchDpcmEvent, its level the
-  // audition's own).
-  audition(s, midi) {
+  // The def at the note's pitch as the DMC plays it: at the rate the song
+  // gives it (dmcRates; one that fits at this pitch where the song plays it
+  // nowhere), through the 1-bit delta, its level the audition's own.
+  audition(s, midi, { ir, target, name } = {}) {
     const perSec = s.rate * 2 ** ((midi - 60) / 12);
-    const rate = dmcRate(s.data.length / perSec);
-    const step = perSec / DMC_RATES[rate];
-    const levels = [];
-    for (let pos = 0; pos < s.data.length; pos += step) {
-      const i = Math.floor(pos), f = pos - i;
-      const x = s.data[i] * (1 - f) + (s.data[Math.min(i + 1, s.data.length - 1)] ?? 0) * f;
-      levels.push(Math.max(-1, Math.min(1, x)));
-    }
-    const bytes = dmcEncode(levels);
-    const data = new Int8Array(levels.length);
-    let dac = DMC_START;
-    for (let k = 0; k < levels.length; k++) {
-      if ((bytes[k >> 3] >> (k & 7)) & 1) { if (dac <= 125) dac += 2; } else if (dac >= 2) dac -= 2;
-      data[k] = Math.min(127, (dac - 64) * 2);
-    }
+    const rate = (ir && dmcRates(ir, target.headsOf("fc-dpcm"), { [name]: s }).get(name)) ?? dmcRate(s.data.length / perSec);
+    const levels = dmcLevels(s, perSec, rate);
+    const dac = dmcDac(dmcEncode(levels), levels.length);
+    const data = Int8Array.from(dac, (d) => Math.min(127, (d - DMC_START) * 2));
     return { data, rateHz: DMC_RATES[rate], range: null, loop: null };
   },
   loopIsRange: true,
@@ -164,6 +154,58 @@ export const fcDpcm = {
 export function dmcRate(sec) {
   for (let i = DMC_RATES.length - 1; i > 0; i--) if (Math.ceil((sec * DMC_RATES[i]) / 8) <= DMC_MAX_BYTES) return i;
   return 0;
+}
+
+/**
+ * The DMC's rate for each sample a score's DMC notes play: the highest at
+ * which the whole sample, at the lowest pitch a note plays it, fits the
+ * DMC's 4081 bytes — one rate a def-pcm, as a driver keeps one. `heads`
+ * the score's DMC channels, `entries` the baked samples (bakePcm8's).
+ */
+export function dmcRates(ir, heads, entries) {
+  const on = new Set(heads);
+  const lowest = new Map();
+  for (const t of ir?.tracks ?? []) {
+    if (!on.has(t.scoreChannel ?? t.channel)) continue;
+    for (const e of t.events ?? [])
+      if (e.cmd === "PCM_NOTE_ON" && e.args?.sample) {
+        const midi = pitchToMidi(e.args.pitch ?? "c4");
+        lowest.set(e.args.sample, Math.min(lowest.get(e.args.sample) ?? Infinity, midi));
+      }
+  }
+  const rates = new Map();
+  for (const [n, midi] of lowest) {
+    const entry = entries?.[n];
+    if (entry?.data.length) rates.set(n, dmcRate(entry.data.length / (entry.rate * 2 ** ((midi - 60) / 12))));
+  }
+  return rates;
+}
+
+/**
+ * A note's levels for the DMC: `entry`'s frames `start`–`end` (bakePcm8's),
+ * `perSec` of them a second as heard, read at the DMC's `rate`, times
+ * `gain` — no more than its bytes hold.
+ */
+export function dmcLevels(entry, perSec, rate, gain = 1, start = 0, end = entry.data.length) {
+  const step = perSec / DMC_RATES[rate];
+  const levels = [];
+  for (let pos = start; pos < end && levels.length < DMC_MAX_BYTES * 8; pos += step) {
+    const i = Math.floor(pos), f = pos - i;
+    const x = entry.data[i] * (1 - f) + (entry.data[Math.min(i + 1, end - 1)] ?? 0) * f;
+    levels.push(Math.max(-1, Math.min(1, x * gain)));
+  }
+  return levels;
+}
+
+/** The DAC as the DMC's `bytes` move it, `count` bits from DMC_START. */
+export function dmcDac(bytes, count) {
+  const out = new Uint8Array(Math.min(count, bytes.length * 8));
+  let dac = DMC_START;
+  for (let k = 0; k < out.length; k++) {
+    if ((bytes[k >> 3] >> (k & 7)) & 1) { if (dac <= 125) dac += 2; } else if (dac >= 2) dac -= 2;
+    out[k] = dac;
+  }
+  return out;
 }
 
 /**

@@ -306,7 +306,8 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
   const o = { ...defaultResynthOptions(a), ...opts };
   const warnings = [];
   // The machine's way (FORMANT_VOICES): only FM3 has a CSM of one channel.
-  const v = formantVoice(o.target) ?? FORMANT_VOICES.md;
+  const v = formantVoice(o.target);
+  if (!v) throw new Error(`${o.target} has no channels the formants sing on (import-resynth.js FORMANT_VOICES)`);
   const opm = v.voice === "ops";
   const waves = v.voice === "waves";
   if (v.voice !== "fm3" && o.mode === "csm") warnings.push(`${o.target} has no CSM of one channel: the formants are sine waves`);
