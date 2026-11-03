@@ -9569,7 +9569,9 @@
 
     function updateLibraryKeys() {
       const dock = document.getElementById('keyboardDock');
-      if (dock) dock.hidden = libraryShown() && !_libKeyTarget;
+      // Library without a voice or sample picked, and Lessons, play nothing of
+      // their own on the keys: the keyboard goes, and the pane has the room.
+      if (dock) dock.hidden = (libraryShown() && !_libKeyTarget) || (_panelOpen && _panelTab === 'lessons');
       updateKeyboardUiState();
     }
 
