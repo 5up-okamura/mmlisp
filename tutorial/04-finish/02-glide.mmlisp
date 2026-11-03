@@ -1,0 +1,4 @@
+; (glide N) slides into each note instead of jumping, N the slide's length;
+; (glide none) stops it.
+; Try: make the tune slide, with (glide 16).
+(fm1 c4 g4 e4 > c4)

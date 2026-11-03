@@ -1,0 +1,4 @@
+; :pan puts an FM track left, right or in the center: the stereo picture.
+; Try: put the bass on the right.
+(fm1 :pan left (x 2 c e g e))
+(fm2 :oct 2 c2 g2)

@@ -10426,6 +10426,10 @@
       catch (e) { log('Lessons: ' + e.message, 'err'); return; }
       if (_lesson.lesson) _lesson.states.set(lessonKey(_lesson.lesson, _lesson.lesson.steps[_lesson.si]), editorView.state);
       Object.assign(_lesson, { lesson, si, parsed, list: false, status: { state: 'fresh', why: '' } });
+      if (!st.check && !_lessonProgress.done.has(key)) { // a step with no Try is done once read
+        _lessonProgress.done.add(key);
+        saveLessonProgress(_lessonProgress);
+      }
       const kept = fresh || text != null ? null : _lesson.states.get(key);
       stopLibraryPreview();
       cancelResume();

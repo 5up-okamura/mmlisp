@@ -1,0 +1,4 @@
+; A curve where a value goes moves it over time: :vol (linear 31..0 :len 2/1)
+; takes the fader from full to silent over two bars.
+; Try: fade the tune out over its two bars.
+(fm1 (x 4 c e g e))

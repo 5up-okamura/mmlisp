@@ -29,5 +29,16 @@
       {"file": "03-envelopes", "title": "Envelopes", "check": {"match": "\\(fm1[^)]*\\bpluck\\b"}, "answer": "(def pluck (macro :vel [15 12 9 6 3]))\n(fm1 pluck c e g e c e g e)"},
       {"file": "04-drums", "title": "Drums", "check": {"match": "\\(pcm1[^)]*\\bsnare\\b"}, "answer": "(def-score :pcm-voices 1)\n(import \"presets/tr808/set.mmlisp\")\n(fm1 :oct 3 c e g e c e g e)\n(pcm1 kick c _ snare c _ kick c _ snare c _)"}
     ]
+  },
+  {
+    "id": "04-finish",
+    "title": "Movement and finishing",
+    "steps": [
+      {"file": "01-vibrato", "title": "Vibrato", "check": {"match": "\\b100\\b"}, "answer": "(def vib (macro :pitch (sin -100..100 :len 8f)))\n(fm1 vib c2 g2)"},
+      {"file": "02-glide", "title": "Glide", "check": {"match": "\\(glide\\s+\\d"}, "answer": "(fm1 (glide 16) c4 g4 e4 > c4)"},
+      {"file": "03-sweeps", "title": "Sweeps", "check": {"match": ":vol\\s+\\("}, "answer": "(fm1 :vol (linear 31..0 :len 2/1) (x 4 c e g e))"},
+      {"file": "04-pan", "title": "Pan", "check": {"match": "\\(fm2[^)]*:pan\\s+right"}, "answer": "(fm1 :pan left (x 2 c e g e))\n(fm2 :pan right :oct 2 c2 g2)"},
+      {"file": "05-finish", "title": "A song"}
+    ]
   }
 ]

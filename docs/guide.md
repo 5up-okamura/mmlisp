@@ -2599,7 +2599,7 @@ time. A step is a few lines of text and a few of code; picking one puts its
 code in the editor, in a working copy of its own — the score you were writing
 is set aside, undo history and all, and **Leave** (over the list) brings it
 back as it was (the draft a reload comes back to stays that score). A step's **Try** is an
-exercise, checked as you type: the box says **Not yet** and why (an error, the
+exercise (a step without one is done once read), checked as you type: the box says **Not yet** and why (an error, the
 notes so far, the tempo) or **Correct!**, and a step done is ticked in the
 list, in this browser. **Start Over** puts the step's code back, **Show
 Answer** one way of doing it — marked as the answer, so it ticks nothing

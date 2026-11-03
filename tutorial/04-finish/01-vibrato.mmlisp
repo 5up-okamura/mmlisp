@@ -1,0 +1,5 @@
+; A macro on :pitch moves the pitch while the note sounds: sin -30..30 sways
+; it 30 cents either way, once every 8 frames: a vibrato.
+; Try: make it far wider: ±100 cents, a whole semitone.
+(def vib (macro :pitch (sin -30..30 :len 8f)))
+(fm1 vib c2 g2)
