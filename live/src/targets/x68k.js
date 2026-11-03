@@ -26,5 +26,5 @@ export default {
     pcm1: pcm(0), pcm2: pcm(1), pcm3: pcm(2), pcm4: pcm(3),
     pcm5: pcm(4), pcm6: pcm(5), pcm7: pcm(6), pcm8: pcm(7),
   },
-  hints: { NOISE_MODE: "its noise is :noise-rate 1-31, song-wide" },
+  hints: { NOISE_MODE: "fm8's :mode noise / tone is written inline, with no macro form; the noise's period is :noise-rate 1-31, song-wide" },
 };
