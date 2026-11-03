@@ -12,7 +12,7 @@ asymmetries matter for the Z80 driver.
 `compileMMLisp(src, filename)` returns:
 
 ```json
-{ "ir": { ... }, "diagnostics": [ ... ], "sourceMap": [ {"line": 12, "tick": 96}, ... ] }
+{ "ir": { ... }, "diagnostics": [ ... ], "sourceMap": [ {"line": 12, "tick": 96}, ... ], "openingBpm": 120 }
 ```
 
 | Field         | Description                                                                  |
@@ -20,6 +20,7 @@ asymmetries matter for the Z80 driver.
 | `ir`          | The song object (below). All object keys recursively sorted (`sortObject`).  |
 | `diagnostics` | `{ severity, code, message, line, column, track }` — not part of the IR.     |
 | `sourceMap`   | Sorted `{ line, tick }` pairs (earliest tick per source line). Sits **beside** the IR, not inside it. |
+| `openingBpm`  | The tempo at tick 0 (a tick-0 tempo sweep's `from`; 120 when none). Beside the IR. |
 
 ## 2. Song object
 
@@ -49,8 +50,8 @@ to 120 BPM); `:lfo-rate` likewise emits a `PARAM_SET LFO_RATE` on its own
 track. The compiler injects two init events: the presence of any
 `fm3-1..fm3-4` track prepends a tick-0 `FM3_MODE { mode: "op" }` into
 `tracks[0]` (`"csm-op"` when a note-less `fm3-csm` track stands beside them) (and into an effect's first part when the effect has operator
-parts), and every noise track starts with a tick-0 `PARAM_SET NOISE_MODE 4`
-(`white0`).
+parts), and every SN76489 noise track (`md`'s `noise`) starts with a tick-0
+`PARAM_SET NOISE_MODE 4` (`white0`) — a part's `init` (`live/src/chips/`).
 
 The PARAM targets `RANGE_START` / `RANGE_END` / `RANGE_LEN` (written
 `:pcm-start` / `:pcm-end` / `:pcm-len`) and `LOOP_START` / `LOOP_END` /
@@ -58,7 +59,8 @@ The PARAM targets `RANGE_START` / `RANGE_END` / `RANGE_LEN` (written
 point of a PCM note's range or loop in **seconds**, and are the one target
 family whose IR value is not
 an integer: the MMB exporter multiplies by the engine image's rate to get the
-byte offset the driver wants. They are valid on `pcm1`–`pcm3` only.
+byte offset the driver wants. They are valid on a sample channel's tracks only
+(`pcmN`).
 
 `metadata.frameHz` is the frame clock the score was compiled for: `60` (NTSC,
 the default and the editor's preview) or `50` (PAL, `compileMMLisp`'s
@@ -68,7 +70,7 @@ never compiled for one standard and baked for the other (driver.md §3.3).
 
 `metadata.target` is the machine the score is for (`(def-score :target …)`,
 language.md §19), present only when it is not the Mega Drive: `"pc88"`,
-`"x68k"`, `"msx"`. A
+`"x68k"`, `"msx"`, `"pce"`, `"fc"`, `"gb"`. A
 consumer reads its chips from its profile (`live/src/targets.js`). The MMB exporter refuses
 any target but the Mega Drive, and the IR player one whose chips have no
 register encoder yet (`live/src/chips/`).
@@ -103,9 +105,9 @@ Notes: the player consumes `name`, `init`, `unit` and `slot`; `min`/`max`/
 | Field          | Type        | Semantics                                          |
 | -------------- | ----------- | --------------------------------------------------- |
 | `name`         | string      | Symbol referenced by `PCM_NOTE_ON.sample`.          |
-| `file`         | string\|null | As written in the source; null for a `pc88` built-in rhythm sound. |
+| `file`         | string\|null | As written in the source; null for a built-in rhythm sound (`pc88`, `msx`). |
 | `resolvedFile` | string\|null | `file` resolved against the source file's directory.|
-| `rhythm`       | string      | On `pc88`, present on the six kit roles (language.md §19): their ROM sound, `bd` `sd` `top` `hh` `tom` `rim`. A `rhythm1`–`rhythm6` note on it plays that sound. |
+| `rhythm`       | string      | On `pc88`, present on the six kit roles (language.md §19): their ROM sound, `bd` `sd` `top` `hh` `tom` `rim`; on `msx`, on the FM-PAC's five, `bd` `sd` `tom` `top` `hh`. A `rhythmN` note on it plays that sound. |
 | `rate`         | int\|null   | Source sample rate; also copied per-note as `baseRate`. |
 | `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
 | `startSec`, `endSec` | number\|null | The range a note plays (`:pcm-start` / `:pcm-end` / `:pcm-len`). In SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. Both null: the whole sample; a null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |
@@ -114,7 +116,7 @@ Notes: the player consumes `name`, `init`, `unit` and `slot`; `min`/`max`/
 
 ### 2.3 `metadata.waves[]` — wave defs (`(def-wave name …)`)
 
-Present when the score has a def-wave (language.md §19, `msx`, `pce`, `fc`); a
+Present when the score has a def-wave (language.md §19, `msx`, `pce`, `gb`, `fc`); a
 `PARAM_SET WAVE` names an entry by its index, in def order.
 
 | Field  | Type  | Semantics                                              |
@@ -159,7 +161,7 @@ each name's part and voice index). On the Mega Drive:
 | `noise`              | SN76489 noise                            | PSG 3                    |
 | `pcm1` … `pcm3`      | Software PCM worklet, keyed by track id  | (FM index fallback only) |
 
-Unknown names fall back to `min(trackIndex, 5)` on the FM side. The IR names
+Unknown names fall back to `min(trackIndex, last FM channel)` on the FM side. The IR names
 channels; the numeric channel ids 0–5 / 6–9 / 16–19 / 20–22 belong to MMB
 (`live/src/mmb.js` `CHANNEL_ID`, docs/mmb.md §6.1).
 
@@ -198,8 +200,10 @@ FM / PSG note. Also used (with extra fields) on FM3 operator tracks.
 | `keyon`      | spec (§6)  | 0/1     | no  | Retrigger gate: sampled per `:step`; value ≥ 0.5 fires key-off→key-on.         |
 | `pan`        | spec (§6)  | −1/0/+1 | no  | `PAN` macro.                                                                   |
 | `noise_mode` | spec (§6)  | 0–7     | no  | `NOISE_MODE` macro (noise channel notes only).                                 |
-| `duty`       | spec (§6)  | 0–16    | no  | `DUTY` macro: a pulse's duty in sixteenths (`fc`'s `sqr1` / `sqr2`).           |
-| `wave`       | spec (§6)  | index   | no  | `WAVE` macro: steps of `metadata.waves` indices (a wave channel's, `msx` / `pce`); a step naming the wave the channel plays writes nothing. |
+| `ssg_mix`    | spec (§6)  | 0–3     | no  | `SSG_MIX` macro: a `:mode` macro on an SSG tone track (`pc88`, `msx`, `fc`'s 5B). |
+| `noise_rate` | spec (§6)  | 1–31    | no  | `NOISE_RATE` macro on an SSG track: the song's noise period, stepped from the note. |
+| `duty`       | spec (§6)  | 0–16    | no  | `DUTY` macro: a pulse's duty in sixteenths (`fc`'s and `gb`'s pulses, the VRC6's, the MMC5's). |
+| `wave`       | spec (§6)  | index   | no  | `WAVE` macro: steps of `metadata.waves` indices (a wave channel's, `msx` / `pce` / `gb` / `fc`); a step naming the wave the channel plays writes nothing. |
 | `fm_tl1` … `fm_amen4` | spec (§6) | per target | no | FM operator-param macros: any supported target lower-cased (`FM_TL1` → `fm_tl1`). |
 | `vol`, `fm_alg`, `fm_fb`, `fm_ams`, `fm_fms` | spec (§6) | per target | no | Macros on those targets. |
 | `legato`     | bool       | —       | no  | Present (true) on the right note of a slur (`e ~ g`, language.md §3): the pitch moves without a key-off/key-on (MMB `NOTE_ON_EX` bit3). FM/PSG only. |
@@ -295,8 +299,9 @@ targets are compile diagnostics (`E_MARKER_DUP`, `E_JUMP_UNRESOLVED`).
 ```
 
 Notes: voice defs (`(def-fm name :alg …)` etc.) compile to a burst of same-tick
-`PARAM_SET`s in a fixed key order (ALG, FB, AMS, FMS, then op1–4 ×
-AR,DR,SR,RR,SL,TL,KS,ML,DT,SSG,AMEN). An unsupported target is a diagnostic,
+`PARAM_SET`s in a fixed key order, `live/src/chips/fm-words.js`'s (ALG, FB,
+AMS, FMS, then op1–4 × AR,DR,SR,RR,SL,TL,KS,ML,DT,SSG,AMEN,DT2,WS,EG,KSL,VIB),
+of the words the track's FM part has. An unsupported target is a diagnostic,
 and no event is emitted.
 
 ### 5.7 PARAM_ADD / PARAM_MUL
@@ -501,7 +506,7 @@ Emitted immediately before each `NOTE_ON` on an `fm3-N` track (same tick).
 | `baseRate` | int    | Hz      | no  | Sample's source rate (from the sample def), when known.          |
 | `vel`      | int    | 0–15    | no  | Omitted when 15.                                                 |
 | `gate`     | int    | ticks   | no  | Present only when `< length`.                                    |
-| `keyon` / `velMacro` / `vol` | spec (§6) | — | no | The note's macros, as on NOTE_ON — the only three a pcm track takes. |
+| `keyon` / `velMacro` / `vol` | spec (§6) | — | no | The note's macros, as on NOTE_ON — the only three a pcm track takes, but a part that pitches its voice (`pc88`'s pcm1, `x68k`'s PCM8), which also takes `pitchMacro` and `note_semi`. |
 
 ```json
 { "tick": 0, "cmd": "PCM_NOTE_ON", "args": { "sample": "kick", "pitch": "c4", "rate": 1,
@@ -527,7 +532,7 @@ until `PCM_NOTE_OFF`; a gate note plays once and is silenced at its
 
 There is no `NOISE_MODE` command: PSG noise mode is a `PARAM_SET` target
 (the compiler auto-emits `PARAM_SET NOISE_MODE 4` = white0 at tick 0 on the
-noise track, and inline `:mode` emits further `PARAM_SET NOISE_MODE`). It is
+SN76489 noise track, and inline `:mode` emits further `PARAM_SET NOISE_MODE`). It is
 persistent player state re-asserted on every noise `NOTE_ON`; the
 `NOTE_ON`-embedded `noise_mode` macro layers a temporary per-note override.
 
@@ -662,16 +667,19 @@ write.
 | `FM_ALG`          | 0–7            | B0 bits 2–0.                                                 |
 | `FM_FB`           | 0–7            | B0 bits 5–3.                                                 |
 | `FM_AMS`          | 0–3            | B4 bits 5–4.                                                 |
-| `FM_FMS`          | 0–7            | B4 bits 2–0.                                                 |
-| `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. |
-| `NOISE_RATE`      | 1–31           | `pc88`, `msx`: the SSG's noise period (reg 0x06); `x68k`: NFRQ = 32 − n (reg 0x0F). Song-wide as `LFO_RATE`; inline or a sweep. |
-| `SSG_MIX`         | 0–3            | `pc88`, `msx`: an SSG channel's mixer (reg 0x07), 0 tone, 1 noise, 2 both, 3 neither (the envelope alone) — sqr1–sqr3's `:mode`. |
-| `SSG_ENV`         | −1–15          | `pc88`, `msx`: an SSG channel's level on the hardware envelope (the M bit), the value its shape (reg 0x0D, written at each key-on but a slur's); −1 the 4-bit level. Inline only (`:env`). |
-| `ENV_SEMI`        | −48–48         | `pc88`, `msx`: semitones the period a channel gives (its notes', or a rate it writes) is moved. Inline only (`:env-semi`), a value; `none` is 0. |
-| `ENV_DETUNE`      | −1000–1000     | `pc88`, `msx`: register steps added to that period (+ lower). Inline only (`:env-detune`), a value; `none` is 0. |
-| `ENV_RATE`        | 0–8000         | `pc88`, `msx`: the envelope's period (regs 0x0B–0x0C) as one cycle's Hz of the writing track's shape then, a triangle's (shapes 10, 14) halved; 0 the writing track's pitch from its next note. Song-wide as `NOISE_RATE`. |
-| `WAVE`            | index          | `msx` / `pce` / `fc`: a wave channel's wave, an entry of `metadata.waves` (§2.3, 32 or 64 steps), written whole to the channel's wave memory (a 64-step wave on a 32-step chip every other step, a 32-step one on the FDS each step twice). A track naming a def-wave emits it; a folded `:wave` expression is an entry of its own, named `<channel>@<line>:<column>`. One with a `$slot` carries `expr` instead of `value`: a tree of `{n}` (a number), `{data}` (32 or 64 steps; one shorter than the longest held step for step), `{val}` (a slot's name) and `{op: "+"\|"-"\|"*"\|"/", args}`, taken step by step (`live/src/ir-utils.js` waveEval); the player writes it at once and again in every frame a slot it reads has moved, rounded and kept in −128..127. |
-| `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits). Persistent noise-channel state via `PARAM_SET` (inline `:mode` / tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
+| `FM_FMS`          | 0–7            | B4 bits 2–0. `pce`: `wave1`'s LFO control, 0 off, 1–3 ($09). |
+| `FM_SUS`          | 0–1            | The OPLL's (`msx`'s FM-PAC, `fc`'s VRC7): the channel's sustain, $20+ch bit 5. A track's word, no def-fm key. |
+| `FM_WS1`–`FM_WS2`, `FM_EG1`–`FM_EG2`, `FM_KSL1`–`FM_KSL2`, `FM_VIB1`–`FM_VIB2` | 0–1, 0–1, 0–3, 0–1 | The OPLL's operator bits: waveform ($03 bit 3 / 4), envelope type ($00/$01 bit 5), level key scale ($02/$03 bits 7–6), vibrato ($00/$01 bit 6). |
+| `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. `pce`: taken whole, on the channel's left / right levels; `gb`: NR51's sides. |
+| `DUTY`            | 0–16           | `fc`'s and `gb`'s pulses, the VRC6's and the MMC5's: the duty in sixteenths, the nearest the chip has. |
+| `NOISE_RATE`      | 1–31           | `pc88`, `msx`, `fc`'s 5B: the SSG's noise period (reg 0x06); `x68k`: NFRQ = 32 − n (reg 0x0F). Song-wide as `LFO_RATE`; inline or a sweep. |
+| `SSG_MIX`         | 0–3            | `pc88`, `msx`, `fc`'s 5B: an SSG channel's mixer (reg 0x07), 0 tone, 1 noise, 2 both, 3 neither (the envelope alone) — sqr1–sqr3's `:mode`. |
+| `SSG_ENV`         | −1–15          | `pc88`, `msx`, `fc`'s 5B: an SSG channel's level on the hardware envelope (the M bit), the value its shape (reg 0x0D, written at each key-on but a slur's); −1 the 4-bit level. Inline only (`:env`). |
+| `ENV_SEMI`        | −48–48         | `pc88`, `msx`, `fc`'s 5B: semitones the period a channel gives (its notes', or a rate it writes) is moved. Inline only (`:env-semi`), a value; `none` is 0. |
+| `ENV_DETUNE`      | −1000–1000     | `pc88`, `msx`, `fc`'s 5B: register steps added to that period (+ lower). Inline only (`:env-detune`), a value; `none` is 0. |
+| `ENV_RATE`        | 0–8000         | `pc88`, `msx`, `fc`'s 5B: the envelope's period (regs 0x0B–0x0C) as one cycle's Hz of the writing track's shape then, a triangle's (shapes 10, 14) halved; 0 the writing track's pitch from its next note. Song-wide as `NOISE_RATE`. |
+| `WAVE`            | index          | `msx` / `pce` / `gb` / `fc`: a wave channel's wave, an entry of `metadata.waves` (§2.3, 32 or 64 steps), written whole to the channel's wave memory (a 64-step wave on a 32-step chip every other step, a 32-step one on the FDS each step twice). A track naming a def-wave emits it; a folded `:wave` expression is an entry of its own, named `<channel>@<line>:<column>`. One with a `$slot` carries `expr` instead of `value`: a tree of `{n}` (a number), `{data}` (32 or 64 steps; one shorter than the longest held step for step), `{val}` (a slot's name) and `{op: "+"\|"-"\|"*"\|"/", args}`, taken step by step (`live/src/ir-utils.js` waveEval); the player writes it at once and again in every frame a slot it reads has moved, rounded and kept in −128..127. |
+| `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits); `fc`'s and `gb`'s noise read the FB bit alone, 4 white, 0 periodic. Persistent noise-channel state via `PARAM_SET` (inline `:mode` / `md`'s tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
 | `FM_TL1`–`FM_TL4` | 0–127          | 0x40+op. PARAM_SET also updates the voiced (timbre) TL base. |
 | `FM_AR1`–`FM_AR4` | 0–31           | 0x50+op bits 4–0 (shared byte with KS).                      |
 | `FM_DR1`–`FM_DR4` | 0–31           | 0x60+op bits 4–0 (shared byte with AMEN).                    |
@@ -686,9 +694,11 @@ write.
 | `FM_AMEN1`–`FM_AMEN4` | 0–1        | 0x60+op bit 7.                                               |
 | `FM_VEL1`–`FM_VEL4` | −1, 0–16     | No register: the operator's velocity sensitivity in sixteenths (`:vel1 0.5` → 8), composed into its TL; −1 is the role's own (16 on a carrier, 0 on a modulator). PARAM_SET only. A score that writes one anywhere has every voice emit all four after its other params, −1 where it sets none (language.md §6). |
 
-CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz). On
-PSG-routed tracks only `VOL`, `NOTE_PITCH`, `SNAP` and (on the noise channel)
-`NOISE_MODE` PARAM events are honored.
+CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz). A
+track takes only the targets its channel's part has (`live/src/chips/parts.js`
+`words`; another is `E_UNSUPPORTED_TARGET`): on a PSG-routed track `VOL`,
+`NOTE_PITCH`, `SNAP` and the part's own (`NOISE_MODE`, `DUTY`, `WAVE`, `PAN`,
+the SSG's).
 
 ## 8. Normalization invariants
 
@@ -731,8 +741,8 @@ PSG-routed tracks only `VOL`, `NOTE_PITCH`, `SNAP` and (on the noise channel)
   Macro schedules use a gate reference 5 ms early (`KEY_OFF_LEAD_SECS`) and are
   cut 5 ms before the next note-on on the same channel (monophonic priority).
 - **Holds.** `length: 0` or `gate: 0` = hold indefinitely; the channel is
-  parked in a hold set until the host calls `triggerKeyOff(ch)` (FM 0–5,
-  PSG `psgCh + 6`, PCM `20 + voice`). Macro budgets use the `HOLD_FRAMES` sentinel.
+  parked in a hold set until the host calls `triggerKeyOff(key)`, the held
+  channel's core and lane (`"fm:2"`, `"psg:3"`, `"sample:0"`). Macro budgets use the `HOLD_FRAMES` sentinel.
 - **TEMPO_SET re-anchoring.** Tempo changes re-anchor every track's
   tick→audio-time base so the change tick's audio time is preserved — tick
   durations before and after differ, absolute positions never jump.

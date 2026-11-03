@@ -2,7 +2,8 @@
 
 This folder holds the build scaffold for the chip cores MMLisp Live plays
 through: the Mega Drive's YM2612 (FM) and SEGA PSG, the PC-8801's YM2608,
-the X68000's YM2151, the MSX's AY-3-8910 and the FM-PAC's YM2413. The build
+the X68000's YM2151, the MSX's AY-3-8910 and the FM-PAC's YM2413 (the last
+two also the Famicom's Sunsoft 5B and VRC7). The build
 emits single-file ES modules and syncs them to `live/nuked-opn2.js`,
 `live/nuked-psg.js`, `live/ymfm-ym2608.js`, `live/ymfm-ym2151.js`,
 `live/ymfm-ay8910.js` and `live/ymfm-ym2413.js`, which are the copies the app
@@ -108,7 +109,8 @@ Integration notes:
 3. `live/src/synth-md.js` imports the generated modules (`../nuked-opn2.js`,
    `../nuked-psg.js`), `live/src/synth-pc88.js` imports
    `../ymfm-ym2608.js`, `live/src/synth-x68k.js` `../ymfm-ym2151.js` and
-   `live/src/synth-msx.js` `../ymfm-ay8910.js` and `../ymfm-ym2413.js`; the
+   `live/src/synth-msx.js` and `live/src/synth-fc.js` (the 5B, the VRC7 with
+   its ROM) `../ymfm-ay8910.js` and `../ymfm-ym2413.js`; the
    worklet and the WAV export both run the chips
    through them, the score's target picking which.
 

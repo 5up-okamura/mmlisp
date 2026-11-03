@@ -27,7 +27,7 @@ browser and exported as VGM.
 - **Hear it instantly, accurately.** [MMLisp Live](https://mmlisp.com/)
   auditions your score in the browser through the chips' emulators — a
   cycle-accurate **Nuked-OPN2** for the YM2612, **ymfm** for the other
-  machines' — fed the same register writes the real chips see, and hot-swaps
+  machines' FM and SSG, cores of its own for the rest — fed the same register writes the real chips see, and hot-swaps
   the recompiled score without stopping playback.
 - **The whole chip, as language.** Per-operator envelope and LFO macros,
   cent-accurate glide and vibrato, chiptune arpeggios (`:semi`) and drum rolls
@@ -143,7 +143,8 @@ hands its text over to paste into the score. The Library (Cmd/Ctrl+K) searches t
 language reference, the preset sets, the snippets and the example scores, each
 auditionable and insertable. Edit > Loop Selection wraps notes or channels in a
 loop; Edit > Logical Editor finds notes by pitch, length or voice and changes
-them together. The reference and snippets read in English, Japanese or Spanish.
+them together; Edit > A/B Compare keeps two versions to switch between, and
+Edit > Tap Tempo sets an imported VGM or NSF on a beat tapped by hand. The reference and snippets read in English, Japanese or Spanish.
 
 **Hearing and playing.** A Nuked-OPN2 (YM2612) WebAssembly core in an
 AudioWorklet; Build (Cmd/Ctrl+B), Play and value edits swap the recompiled
@@ -156,18 +157,21 @@ for a controller's knobs.
 
 **Bringing sounds in** (File > Import, or drop the file):
 
-- FM voices from DefleMask, Furnace, TFI, VGI, OPNI and mucom88 banks; drum
+- FM voices from DefleMask, Furnace, TFI, VGI, OPNI, OPM and mucom88 banks; drum
   samples from mucom88 PCM banks and SoundFont kits
 - Songs from MIDI, DefleMask, Furnace (a PC Engine module as a `pce`
   score, an NES one as an `fc` score with its DPCM samples, its VRC6 and
-  FDS channels), VGM (with its
+  FDS channels, a Game Boy one as a `gb` score), VGM (with its
   PCM: the YM2612 DAC, SegaPCM, YM2610 ADPCM, the OKIM6258 and OKIM6295,
   the K053260, the C140,
   the 2A03's DMC;
-  a YM2151's, a YM2608's, an AY-3-8910's, an SCC's, a HuC6280's or a
-  2A03's as its own machine's score, the SSG's hardware envelope included;
-  a YM2413's or a VRC7's notes on their own voices, read on four
-  operators) and mucom88, through a dialog for tempo and channels; MDX
+  a YM2151's, a YM2608's, an AY-3-8910's, an SCC's, a YM2413's, a
+  HuC6280's, a 2A03's (with its expansions) or a Game Boy's as its own
+  machine's score, the SSG's hardware envelope included; a YM2413's or a
+  VRC7's notes elsewhere on their own voices, read on four operators), NSF
+  (each song run on a 6502, onto `fc`'s chips) and mucom88, through a
+  dialog for tempo and channels — and, for MIDI, VGM, NSF and the modules,
+  the machine to write for (any whose channels keep half the notes); MDX
   (with its PDX) as an X68000 score and MGS as an MSX one
 - Recordings, in WAV or any format the browser decodes: **Audio as Formants**
   (a sound's spectral peaks on FM3's operators — CSM's vocoder voice, or

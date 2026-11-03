@@ -72,7 +72,15 @@ Run from tools directory:
     key-offs, the wave's loads
 23. `npm run check:new-score` — File > New: each machine's empty score compiles
     clean, with its tracks, its imports and a sound on each rhythm track
-24. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
+24. `npm run check:edit-tools` — the Logical Editor's edits on score text:
+    a transpose, a reverse, a shuffle moved once and where they should
+25. `npm run check:ab-snapshots` — A/B Compare's two working copies: switching,
+    copying across, each keeping its own state
+26. `npm run gen:wavetable` / `npm run check:wavetable` — `presets/wavetable`,
+    computed from formulas; the check fails if the set is not what it writes
+27. `npm run gen:fm-roles` / `npm run check:fm-roles` — `presets/fm-roles`, the
+    melodic roles as FM voices read off `presets/gm`; the check as above
+28. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
     check: the song importers (MDX, MGS, mucom88, MIDI, DMF, FUR) on a folder
     of real songs kept outside the repo, each score and its diagnostics written
     under `<dir>/<name>/`. Take a set before an importer change and one after,
@@ -84,12 +92,15 @@ Run from tools directory:
     slide shows there, which the diff hides in the lines it rewrites;
     `--regs base,now` plays them and compares their register writes — a
     rewrite that must sound the same writes the same
-25. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
+29. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
     check: a mucom88 import held to the real mucom88's VGM of the song (built
     from `github.com/onitama/mucom88`, `make OS_SDL=0` with the dummy OS's two
     missing stubs; it reads the `.muc` as UTF-8 — convert from CP932, not
     Shift_JIS, or `\` becomes `¥`), frame by frame on FM, SSG and the rhythm:
     sounding, pitch and level, at the offset and clock ratio that agree best
+30. `node scripts/ab-mgsdrv.mjs song.mgs [seconds] [channel]` — not a check: an
+    MGS import held to the real MGSDRV (`npm i --no-save libkss-js`, which runs
+    it on an emulated MSX), frame by frame on every PSG, SCC and FM channel
 
 ## i18n
 

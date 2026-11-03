@@ -110,8 +110,8 @@ and a hold carry a note into the next.
 (def-mod :voice [hat hat-open] :vel+ -3) ; every note on these, quieter (clamped 0–15)
 ```
 
-Naming a voice or sample in a track body switches to it. An FM voice change
-is sent in the silence before its note, so the note it follows ends about 40 ms
+Naming a voice or sample in a track body switches to it. On `md` an FM voice
+change is sent in the silence before its note, so the note it follows ends about 40 ms
 early when there is no rest between them (language §9). Preset sets:
 `presets/gm` (gm-piano … gm-gunshot), `presets/waveforms` (wave-sine,
 acid-saw, …), `presets/tr808`, `tr909`, `cr78`, `dr220`, `dx`, `rx5`,
@@ -121,7 +121,9 @@ effects: hey, glass, zap, …), `presets/band` (PCM guitar and bass:
 guitar, guitar-down, bass-finger, …), and `presets/fm-drums` (FM drums
 on an fm track: fm-kick, fm-snare, fm-hat, … and fm-analog-kick, fm-elec-tom1,
 fm-symph-snare, … — `:key` voices: at `:oct 4`, `c` is the drum as tuned, and
-other notes retune it), and `presets/envelopes` (macros that shape a PSG
+other notes retune it), `presets/fm-roles` (the melodic roles as 4-op FM
+voices: piano, organ, flute, …), `presets/wavetable` (def-waves for the wave
+channels: sine, saw, … and the roles' macros wave-piano, …), and `presets/envelopes` (macros that shape a PSG
 note — level as `:vel+`: env-pluck, env-piano, env-organ, env-pad, …; pitch:
 vib, vib-delay, slide-up, drop; combine one of each; they work on FM too).
 
@@ -148,7 +150,8 @@ vib, vib-delay, slide-up, drop; combine one of each; they work on FM too).
 ```
 
 A macro is sticky: it runs on every following note until cleared. Targets:
-`:vel :vol :pitch :semi :keyon :pan :mode`, the FM voice (`:alg :fb :ams
+`:vel :vol :pitch :semi :keyon :pan :mode`, `:duty` `:wave` `:noise-rate`
+where the channel has them (§19), the FM voice (`:alg :fb :ams
 :fms`) and the operators (`:tl1`–`:tl4`, `:ar :dr :sr :rr :sl :ml :dt :ks :ssg
 :am` 1–4). The song-wide `:master` and `:lfo-rate` are inline only (a sweep, not
 a macro). `:step` is frames (`2f`) or a note length (`16`, on the beat).
@@ -202,7 +205,7 @@ after its note-off; `:mode gate` plays the range once and is cut at the gate.
 
 A note's pitch picks a resampled copy, baked into the 32 KB bank — only what
 the score plays is baked. No pitch moves on PCM (`:pitch`, `(glide)`; pc88's
-pcm1 takes them); levels
+pcm1 and x68k's PCM8 take them); levels
 step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 `normalize` `comp` `limit` `crush` `hpf` `lpf` `drive` `fade` `reverb`.
 

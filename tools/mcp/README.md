@@ -14,7 +14,7 @@ dependencies (Node 18+).
 | `mmlisp_ir`       | Compile and return the IR JSON (optionally one track)                        |
 | `mmlisp_format`   | The editor's formatter; with `path` + `write` rewrites the file              |
 | `mmlisp_live`     | A share link that opens the score in MMLisp Live, ready to play and edit     |
-| `mmlisp_render`   | WAV (FM + PSG + PCM) and its levels — peak, RMS, clipping, silence; `lpf` applies the Mega Drive's analog low-pass |
+| `mmlisp_render`   | WAV (FM + PSG + PCM) and its levels — peak, RMS, clipping, silence; `lpf` applies the Mega Drive's analog low-pass, `rhythmRom` gives pc88 the user's YM2608 rhythm ROM |
 | `mmlisp_docs`     | `cheatsheet` whole; `language` / `guide` / `ir` / `roadmap` / `driver`: contents, one section, or a search; `reference`: one entry per feature, by word (`query`) or category (`section`) |
 | `live_status`     | Whether MMLisp Live is connected (below), and how the user connects it       |
 | `live_read`       | The score open in the user's editor: text, cursor, selection, diagnostics    |
