@@ -812,6 +812,7 @@
     .knob-wrap { display: flex; flex-direction: column; gap: 0; }
     .knob-wrap[hidden] { display: none; } /* a word the score's machine lacks (applyTargetUi) */
     .op-col[hidden] { display: none; } /* an operator it lacks (the OPLL's two) */
+    .op-col-title input[type=checkbox][hidden] { display: none; } /* its key (the OPLL has none per operator) */
     .knob-wrap.op-gap { visibility: hidden; } /* a row this operator lacks and another has: its place kept */
     .param-grid[hidden] { display: none; } /* a row of words it lacks (the OPM's LFO) */
     .knob-label {

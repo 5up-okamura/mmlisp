@@ -8725,6 +8725,12 @@
       const repaint = twoOp !== _fmTwoOp;
       _fmTwoOp = twoOp;
       document.getElementById('fmParamSection')?.classList.toggle('two-op', twoOp);
+      // An operator's key is the OPN's and the OPM's ($28's and $08's slot
+      // bits); the OPLL keys its two at once, so it has no operator toggle.
+      for (let op = 1; op <= 4; op++) {
+        const chk = document.getElementById(`chk-op${op}`);
+        if (chk) chk.hidden = chk.disabled = twoOp;
+      }
       const algGrid = document.getElementById('algGrid');
       (twoOp ? document.getElementById('opGrid') : document.getElementById('algHome'))?.appendChild(algGrid);
       // A row one operator lacks and another has (the OPLL's op2 TL) keeps
@@ -11348,8 +11354,9 @@
       if (enabled) _fmCopied = _fmCursorDefContext;
       document.getElementById('fmCopy').hidden = !enabled && !_fmShownRegs;
       controls.forEach((el) => {
-        // An operator's mute is the audition's, not the def's: it stays.
-        el.disabled = !enabled || (readOnly && !el.id.startsWith('chk-op'));
+        // An operator's mute is the audition's, not the def's: it stays,
+        // where the machine keys its operators (applyTargetUi).
+        el.disabled = !enabled || el.hidden || (readOnly && !el.id.startsWith('chk-op'));
       });
     }
 
