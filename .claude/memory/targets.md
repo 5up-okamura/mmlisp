@@ -289,6 +289,22 @@ Open:
   `PCM_SLOT`).
 - Next (optional): VGM — one data-block hook for the DAC / ADPCM-B / OKI
   special cases.
+- **Review the layering regularly** (the user, 2026-11-03): it was designed
+  when the targets were planned, and building them drifts from it — a
+  machine's ability answered where it is used (a target's or a part's name
+  compared, or an ability inferred: "no FM_ALG, so no operator keys")
+  instead of declared on its part or chip, so one output carries it and
+  another misses it. What to grep for outside `chips/` and `targets/`:
+  `=== "x68k"`-style target names, `part.name ===` / `hasPart("…")`, and a
+  capability read off something else. The 2026-11-03 pass moved these into
+  declarations: the part's `bank` (sample-bank.js, every consumer's bake),
+  `audition`, `mixVoice`, `opKeys`; a synth's hold `bus`; the formants'
+  one table (import-resynth.js FORMANT_VOICES). Open from that pass: the IR
+  player's sample voices still branch by part name (PCM8's events, the
+  ADPCM-B's voice, the DMC, the DDA: `setPcmTrackVol`, `triggerKeyOff`, the
+  stop's cuts); the Library's sample preview plays on the Mega Drive's
+  engine whatever the score's machine; import-tracker's per-chip writer
+  branches (`onPce`, `onFc`) are the module mapping's and stay.
 
 ## Song importers for msx / x68k (MGS, MDX; 2026-10-25)
 
