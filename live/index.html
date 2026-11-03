@@ -4250,6 +4250,7 @@
         return;
       }
       _abVisible = !_abVisible;
+      savePref('abCompare', _abVisible ? 'on' : 'off');
       if (_abVisible && matchMedia('(max-width: 480px)').matches && _panelOpen) togglePanel();
       if (_abVisible && getComputedStyle(document.getElementById('editorWrap')).display === 'none') setSource(true);
       renderABCompare(); // hiding never discards either working copy
@@ -4559,6 +4560,7 @@
       leEl('logicalModal').append(logicalTool); // reconnect the one form
       leEl('leScope').value = editorView.state.selection.ranges.every((r) => r.empty) ? 'channel' : 'selection';
       setTemporaryToolVisible(logicalTool, true);
+      savePref('logicalEditor', 'on');
       refreshLogicalEditor();
       // A phone should not summon its software keyboard merely by opening.
       logicalTool.querySelector('.rack-title').focus({ preventScroll: true });
@@ -4567,6 +4569,7 @@
       if (!_le) return;
       clearTimeout(_leTimer);
       setTemporaryToolVisible(logicalTool, false);
+      savePref('logicalEditor', 'off');
       _le = null;
       editorView.dispatch({ effects: setLogicalMarks.of(Decoration.none) });
       editorView.focus();
@@ -4819,6 +4822,7 @@
       if (!timingTool.hidden) return;
       leEl('logicalModal').append(timingTool);
       setTemporaryToolVisible(timingTool, true);
+      savePref('tapTempo', 'on');
       itStart();
       (_timingSong ? leEl('itTap') : timingTool.querySelector('.rack-title')).focus({ preventScroll: true });
     };
@@ -4826,6 +4830,7 @@
       if (timingTool.hidden) return;
       itStop();
       setTemporaryToolVisible(timingTool, false);
+      savePref('tapTempo', 'off');
       editorView.focus();
     };
     window.toggleImportTiming = () => timingTool.hidden ? openImportTiming() : closeImportTiming();
@@ -14276,6 +14281,13 @@
     // Restore the three views (MMLisp > View), each on or off.
     setSource(loadPref('source', 'on') !== 'off');
     setPianoRoll(loadPref('pianoRoll', 'off') === 'on');
+    // The tools come back open, not their contents. A phone's would cover the score.
+    if (loadPref('abCompare', 'off') === 'on') { _abVisible = true; renderABCompare(); }
+    if (!toolMedia.matches) {
+      if (loadPref('logicalEditor', 'off') === 'on') openLogicalEditor();
+      if (loadPref('tapTempo', 'off') === 'on') openImportTiming();
+      editorView.focus();
+    }
     setScope(loadPref('scope', 'on') === 'on');
     vizChanged(); // the checks, both off included
 

@@ -2592,7 +2592,8 @@ Library's filters cleared.
 
 On desktop, temporary tools such as the Logical Editor (§24) appear after
 all parameter sections. Switching tabs, hiding the panel or opening another
-file keeps them open; their checked menu items and heading close buttons remove them.
+file keeps them open, and they open again with the app, as A/B Compare does on
+every screen; their checked menu items and heading close buttons remove them.
 
 **MMLisp ▸ Language** picks the language the reference and the snippets are
 explained in — the Ref entries' summaries and category names, the snippets'
