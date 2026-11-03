@@ -222,7 +222,7 @@
                     title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), OPM voice banks (.opm), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2)">Instruments…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">Resynthesis</div>
-            <button class="menu-item" data-needs="kind:fm|waves:4" onclick="importResynth();closeMenus()">Audio as Formants…</button>
+            <button class="menu-item" data-needs="formants" onclick="importResynth();closeMenus()">Audio as Formants…</button>
             <button class="menu-item" onclick="importAudioAsFmVoice();closeMenus()">Audio as FM Voice…</button>
             <div class="menu-sep"></div>
             <div class="menu-label">ROMs</div>
@@ -1012,7 +1012,7 @@
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
     import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
-    import { analyzeSound, defaultResynthOptions, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
+    import { analyzeSound, defaultResynthOptions, resynthFits, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
     import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/voice-estimate.js';
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
@@ -3625,11 +3625,11 @@
       // YM2608's; on x68k the formants are sine waves on fm1's operators (the
       // hiss fm8's noise), on msx on the SCC's wave1–wave4 (the PSG's noise),
       // on pce on its wave1–wave4 (noise5). A machine with neither (the Game
-      // Boy's one wave; the menu is disabled there) a drop says so.
+      // Boy's one wave, fc's; the menu is disabled there) a drop says so.
       const target = blankScoreTarget(withTempo);
       const prof = targetProfile(target);
-      if (!prof.headsOfKind('fm').length && prof.headsOfKind('wave').length < 4)
-        throw new Error(`the ${prof.system ?? target} has no FM or wave channels to sing on`);
+      if (!resynthFits(prof))
+        throw new Error(`the ${prof.system ?? target} has no channels the formants sing on: a 4-op FM or wave1–wave4`);
       const fm3 = target !== 'x68k' && target !== 'msx' && target !== 'pce';
       const def = defaultResynthOptions(a, 'held', target);
       const fields = [
@@ -8687,12 +8687,12 @@
     // WHAT THE PAGE SHOWS IS THE SCORE'S MACHINE'S. An element names what it
     // needs in `data-needs`, read against the target's profile (targets.js):
     //   kind:K   a part of kind K (fm, tone, noise, sample)
-    //   waves:N  N wave channels
+    //   formants File > Import > Audio as Formants: a machine it writes for
     //   part:P   the part named P (rhythm, adpcm-b …)
     //   word:W   the IR word W (LFO_RATE, FM_DT2_1 …), as the compiler reads it
     //   driver   MMLispDRV: the MMB, its backend, a game's key-off
     //   analogLpf the machine's output filter (the Mega Drive Model 1's)
-    // and `a|b` either of two (Audio as Formants: FM, or wave channels).
+    // and `a|b` either of two.
     // A panel element the machine lacks is hidden; a menu item is disabled,
     // so the menus keep their places and still say what the app can do.
     // Global's title names the machine.
@@ -8700,7 +8700,7 @@
       if (need.includes('|')) return need.split('|').some((n) => targetHas(target, n));
       const [what, arg] = need.split(':');
       if (what === 'kind') return target.headsOfKind(arg).length > 0;
-      if (what === 'waves') return target.headsOfKind('wave').length >= Number(arg);
+      if (what === 'formants') return resynthFits(target);
       if (what === 'part') return target.hasPart(arg);
       if (what === 'word') return target.hasWord(arg);
       if (what === 'driver') return target.driver === 'mmlispdrv';

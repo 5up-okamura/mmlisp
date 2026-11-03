@@ -253,6 +253,14 @@ function trackFormants(frames, rate) {
 
 // ── Options and the score ──────────────────────────────────────────────────
 
+// The machines it writes for: a 4-op FM (FM3 on md and pc88, fm1's operators
+// on x68k) or wave1–wave4 (the SCC's on msx, pce's). The OPLL's two operators
+// and the Game Boy's one wave are neither, nor fc's waves (fds-wave,
+// n163-waveN): the N163 could sing on four of its eight, left unbuilt.
+export function resynthFits(target) {
+  return target.hasWord("FM_ALG") || [1, 2, 3, 4].every((n) => target.partOf(`wave${n}`)?.kind === "wave");
+}
+
 export const RESYNTH_MODES = [["csm", "CSM — the buzz through the formants (a vocoder's voice)"], ["sine", "sine waves on the formants (sine-wave speech)"]];
 // Each ring's decay: how a formant is heard. Held, the operator is a sine
 // wave whose phase Timer A resets every period — the loudest, a synthesizer's
