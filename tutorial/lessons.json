@@ -19,5 +19,15 @@
       {"file": "03-repeats", "title": "Repeats", "check": {"sameLength": true}, "answer": "(fm1 (x 4 c e g e))\n(fm2 :oct 2 (x 4 c c g g))"},
       {"file": "04-loops", "title": "Loops", "check": {"match": "\\(go\\s[\\s\\S]*\\(go\\s"}, "answer": "(fm1 #top (x 2 c e g e) (go top))\n(fm2 :oct 2 #top c2 g2 (go top))"}
     ]
+  },
+  {
+    "id": "03-song",
+    "title": "Building a song",
+    "steps": [
+      {"file": "01-defs", "title": "Defs", "check": {"match": "\\(def\\s[\\s\\S]*\\(def\\s", "notesMin": 16}, "answer": "(def riff c e g e)\n(def riff2 d f a f)\n(fm1 riff riff riff2 riff2)"},
+      {"file": "02-dynamics", "title": "Dynamics", "check": {"velsMin": 2}, "answer": "(fm1 :vel 15 c e g e :vel 9 c e g e)"},
+      {"file": "03-envelopes", "title": "Envelopes", "check": {"match": "\\(fm1[^)]*\\bpluck\\b"}, "answer": "(def pluck (macro :vel [15 12 9 6 3]))\n(fm1 pluck c e g e c e g e)"},
+      {"file": "04-drums", "title": "Drums", "check": {"match": "\\(pcm1[^)]*\\bsnare\\b"}, "answer": "(def-score :pcm-voices 1)\n(import \"presets/tr808/set.mmlisp\")\n(fm1 :oct 3 c e g e c e g e)\n(pcm1 kick c _ snare c _ kick c _ snare c _)"}
+    ]
   }
 ]

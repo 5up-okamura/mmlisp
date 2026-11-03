@@ -1,0 +1,7 @@
+; Drums are samples on pcm1, from a kit: presets/tr808 names kick, snare,
+; hat, clap … A sample is named like a voice, and c plays it.
+; Try: add a snare on 2 and 4.
+(def-score :pcm-voices 1)
+(import "presets/tr808/set.mmlisp")
+(fm1 :oct 3 c e g e c e g e)
+(pcm1 kick c _ _ _ kick c _ _ _)

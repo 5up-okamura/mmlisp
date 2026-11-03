@@ -1,0 +1,6 @@
+; A macro runs one value per frame from the note's start: :vel [15 12 9 6 3]
+; is a pluck, loud then fading. Named with def, it goes on a track like a
+; voice does.
+; Try: put pluck on the track.
+(def pluck (macro :vel [15 12 9 6 3]))
+(fm1 c e g e c e g e)

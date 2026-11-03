@@ -1,0 +1,4 @@
+; :vel is how hard a note is struck, 0 to 15, and it stays until changed;
+; v-2 and v+2 step it from where it is.
+; Try: play the second half softer.
+(fm1 :vel 15 c e g e c e g e)

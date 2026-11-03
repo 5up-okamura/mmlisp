@@ -8,6 +8,7 @@
 //   { "match": "re" }      the code (comments left out) matches the pattern
 //   { "tempoMin": 91 }     a tempo at least that fast
 //   { "tracksMin": 3 }     at least 3 tracks play notes
+//   { "velsMin": 2 }       the notes are struck at 2 velocities or more
 //   { "sameLength": true } every track that plays notes takes as long, its
 //                          repeats counted out (ir-utils.js playedTicks)
 //
@@ -66,6 +67,10 @@ export function verdict(check, { src, ir, diagnostics }) {
       const bars = (n) => `${+(n / 384).toFixed(2)} bar${n === 384 ? "" : "s"}`;
       return { ok: false, why: lens.map(([c, n]) => `${c} ${bars(n)}`).join(", ") };
     }
+  }
+  if (check.velsMin != null) {
+    const vels = new Set(events.filter((e) => e.cmd === "NOTE_ON").map((e) => e.args?.vel ?? 15));
+    if (vels.size < check.velsMin) return { ok: false, why: `every note is struck at ${[...vels].join(", ") || "15"}` };
   }
   if (check.tempoMin != null) {
     const set = events.filter((e) => e.cmd === "TEMPO_SET").map((e) => e.args?.bpm ?? 0);

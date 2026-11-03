@@ -1,0 +1,6 @@
+; def names a phrase, and the name plays it wherever it is written: the
+; tune is written once and used again, and a change in one place changes
+; them all.
+; Try: write the second half (d f a f) as a def too.
+(def riff c e g e)
+(fm1 riff riff d f a f d f a f)
