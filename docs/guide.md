@@ -1287,7 +1287,7 @@ from. Moving a slider writes the def.
 vector (`(macro :vel [15 #sus 12 10 #rel 6 0])`), drawn as bars: press and
 drag across, and every step the pointer passes takes the value under it, as
 an array is drawn in Max or Pd. The editor draws only what the score can
-hold — a wave's 32 steps at −128..127, a macro target's range (§10), and for
+hold — a wave's 32 steps (or 64, the FDS's memory) at −128..127, a macro target's range (§10), and for
 a relative one (`:pitch`, `:semi`, a `+` or `*` macro) a view around its
 values — whole numbers, so nothing it writes is out of range. `#sus` and
 `#rel` show as marks, a hold (`_`) as an empty step. Letting go writes the
@@ -1349,8 +1349,8 @@ editor, above).
 
 Every keyboard — on screen, the computer's, MIDI — is polyphonic: each held
 key takes a channel of its own, with the voice copied onto it. An FM voice
-has the six FM channels, a PSG one the three square channels; the noise
-channel plays one note. While the score is stopped all of them are free.
+has the machine's FM channels (the Mega Drive's six), a PSG one its square
+channels; the noise channel plays one note. While the score is stopped all of them are free.
 While it plays, the keys take the channels it has no track on first, then
 borrow its own: the selected channel — the part you are replacing — then the
 parts with the fewest notes, so a chord drops the quietest ones (fm6 is never
@@ -1470,7 +1470,7 @@ Open Recent brings the score back with its folder.
 `File > Files in Folder` lists what the open folder holds: its scores and its
 songs — `.vgm` `.vgz` `.nsf` `.nsfe` `.mid` `.dmf` `.fur` `.mdx` `.mgs` `.muc`, each with its
 format beside it. A song opens as `File > Open…` opens one: converted, through
-the import dialog, as a new unsaved score. Opened from the folder, it keeps the
+the import dialog where it has one, as a new unsaved score. Opened from the folder, it keeps the
 folder, so the next song is one click away, and what the song names beside
 itself is read from there — an MDX's `.pdx`, a mucom88 song's `#voice` and
 `#pcm` banks. Opening a folder opens its first score, or its one file when it
@@ -1530,7 +1530,7 @@ and `Instruments…` inserts voices and drum kits at the cursor:
 | `.mid`                             | MIDI import, through the import dialog (below)             |
 | `.dmf` / `.fur`                    | DefleMask / Furnace module import, through the import dialog (below) |
 | `.vgm` / `.vgz`                    | VGM import, through the import dialog (below)              |
-| `.nsf` / `.nsfe`                   | NSF import as an `fc` score, through the import dialog (below) |
+| `.nsf` / `.nsfe`                   | NSF import (an `fc` score by default), through the import dialog (below) |
 | `.mdx` (+ `.pdx`)                  | MDX import as an `x68k` score — drop its `.pdx` alongside for the ADPCM (below) |
 | `.mgs`                             | MGS import as an `msx` score (below)                        |
 
@@ -1761,7 +1761,8 @@ plays it as found, other notes retune it.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM, NSF, MDX, MGS
 
-**A song import opens a dialog first**: what the file holds, the timing and
+**A MIDI, DefleMask / Furnace, VGM or NSF import opens a dialog first** (an
+MDX or MGS converts straight away): what the file holds, the timing and
 tempo (a MIDI file's), the loop, and one row per source part with its destination.
 **Enter** imports with the defaults. The loop is the file's own when it marks
 one; otherwise the box loops the whole song — ticked for a MIDI file (they
@@ -1873,7 +1874,7 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   voice; sample channels are left out, but for the YM2612's DAC: FM6's
   sample notes come in on `pcm1` (below). Of a Furnace module, the first
   subsong is imported; a song on several chips lists every chip's channels.
-- A **PC Engine** module offers a **Target**: `pce` (the default) or `md`.
+- A **PC Engine** module's **Target** starts at `pce`.
   As `pce` each channel goes to its own `wave1`–`wave6`: the module's
   wavetables become `def-wave`s, and the wave a channel plays is its
   instrument's wave macro (a `(macro :wave …)` where it moves) and `10xx`.
@@ -1884,15 +1885,15 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   over the wave where they meet (§19's `:prio` across a channel's names).
   The LFO (`12xx` `13xx`) and DDA (`17xx`) are left out. `08xy` is the channel's pan between its left and right
   levels, the volume column the chip's 5-bit volume (1.5 dB a step).
-- A **Game Boy** module offers `gb` or `md`. Each channel keeps its place. An
+- A **Game Boy** module starts at `gb`. Each channel keeps its place. An
   instrument's hardware envelope, its sequence and its sound length are baked
   into a `:vel` macro from the column, a software envelope's volume macro is a
   `:vol` as on `fc`; the wave's column is its top two bits, as the chip's
   level; `12xx` and the duty macro are `:duty`, on the noise `11xx` and the
   duty macro the `:mode`; `10xx` the wavetable, `08xy` the side. The sweep's
   `13xy` and `14xx` are left out.
-- An **NES** module offers `fc` (the default where the 2A03 and the VRC6
-  play the most notes) or `md`. The VRC6's channels go to `vrc6-sqr1`,
+- An **NES** module starts at `fc` (where the 2A03, the VRC6 and the FDS
+  play the most notes). The VRC6's channels go to `vrc6-sqr1`,
   `vrc6-sqr2` and `vrc6-saw`: a pulse's duty is its duty macro and `12xx` (eight, `:duty
   1`–`8`), the columns and volume macros linear (the saw's to 63); a
   pulse's PCM mode (a sample instrument, `17xx`) is left out, as are the
@@ -1927,8 +1928,8 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   looping sample) — a `def-pcm` for each sample and rate, all in one wav
   (`<song>-dpcm.wav`, Save writes it beside the score). The sweep (`13xy`
   `14xy`) and the other 2A03 effects are left out.
-- A module of another machine's chips offers that machine as its
-  **Target** (the default where its chips play the most notes), and md:
+- A module of another machine's chips starts its **Target** at that
+  machine (where its chips play the most notes):
   `msx` for the AY-3-8910, the SCC and the YM2413, `x68k` for the YM2151,
   `pc88` for the YM2203, YM2608 and YM2610 (and an AY's songs, after
   msx). A channel goes to its own chip's part there. The SSG's mixer
@@ -2258,9 +2259,11 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   as `:mode tone | noise | both` and `n` as `:noise-rate`, `s` and `m` as
   the hardware envelope's `:env` and `:env-rate` (`v` turns it off); the SCC to
   `wave1`–`wave5`, each `@s` wave a `def-wave scc-NN`. `v` is `:vol` (the
-  SSG's and the OPLL's 3 dB steps, the SCC's linear volume; 0 until a `v`).
+  SSG's and the OPLL's 3 dB steps; 0 until a `v`), on the SCC `:vel` in
+  eighths of a step, its sixteen linear levels exact, under `:vol 31`.
   A tone's envelope — the `@e` or `@r` of its number, or the one `@e<n>`
-  puts in — is a `(def vol-… (macro :vol …))` at that `v`, frame by frame
+  puts in — is a `(def vol-… (macro :vol …))` at that `v` (on the SCC a
+  `(def env-… (macro :vel …))`), frame by frame
   (`n:c` held, `n=c` moved to, `[ ]` the sustain loop); `@r`'s RR, or `k`
   on the PSG and the SCC, is its release after `#rel`, written as its level
   steps, and an `@e`'s `\` steps a `(def bend-… (macro :pitch+ …))` — its
@@ -2568,8 +2571,8 @@ Play or Build; a preset set's names are there all along.
 
 A new score (**File ▸ New**, then the machine) has a looping track for each
 channel that machine plays at once, a rhythm track on a sound of its own, and
-names the rest in a comment: a Famicom cartridge's channels, `md`'s `fm6` and
-`pcm2`, a name that shares a track's channel. It imports the preset sets those
+names the rest in a comment: a Famicom cartridge's channels, `md`'s `fm6`,
+`pcm2` and `pcm3`, a name that shares a track's channel. It imports the preset sets those
 tracks can play — `gm`, `fm-roles` and `waveforms`, `wavetable`, the `rx5` kit — without
 assigning any of them, so every preset name completes from the first keystroke.
 Only what a track plays reaches the song. A comment lists the names built into the machine, which need no import.
