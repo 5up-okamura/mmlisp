@@ -84,7 +84,7 @@ import createYm2413Module from "../ymfm-ym2413.js";
 import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "./chips/rp2a03.js";
 import { sunsoft5b } from "./chips/sunsoft-5b.js";
 import { vrc7 } from "./chips/vrc7.js";
-import { VRC7_ROM_BYTES } from "./chips/ym2413.js";
+import { VRC7_ROM_BYTES, opllHoldBus } from "./chips/ym2413.js";
 import { pitchLatches, fcPitch, vrc6Pitch, fdsPitch, mmc5Pitch, ssgPitch, opllPitch, n163Pitch } from "./scope-pitch.js";
 import { fdsRegister } from "./chips/fds.js";
 
@@ -807,7 +807,7 @@ export class FcSynth {
     this._fdsY = 0; // the FDS's low-pass
     this._lv = new Float32Array(CHANNELS);
     this._x = new Float32Array(CHANNELS + 1);
-    this.bus = null; // no FM to hold
+    this.bus = opllHoldBus(VRC7_PORT, VRC7_LANES); // the VRC7's channels, which the keys hold
     this.scopeLanes = SCOPE_LANES;
     this._ratio = FC_NATIVE_SAMPLE_RATE / outputSR;
     this.pcmTaps = null; // the contract's; the DMC is a register-written voice here

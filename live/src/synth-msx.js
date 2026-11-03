@@ -23,7 +23,7 @@ import createAy8910Module from "../ymfm-ay8910.js";
 import createYm2413Module from "../ymfm-ym2413.js";
 import { ay8910 } from "./chips/ay8910.js";
 import { k051649, WAVE_LEN, sccWaveRam } from "./chips/k051649.js";
-import { ym2413, OPLL_PORT, OPLL_ROM_BYTES } from "./chips/ym2413.js";
+import { ym2413, OPLL_PORT, OPLL_ROM_BYTES, opllHoldBus } from "./chips/ym2413.js";
 import { pitchLatches, ssgPitch, sccPitch, opllPitch } from "./scope-pitch.js";
 
 export const AY8910_NATIVE_SAMPLE_RATE = ay8910.clock / 32;
@@ -132,7 +132,7 @@ export class MsxSynth {
     this.pitch = pitchLatches(ssgPitch(ay8910.clock), sccPitch(k051649.clock), opllPitch(ym2413.clock));
     this._scc = new Scc();
     this._sccOut = new Float32Array(SCC_CHANNELS);
-    this.bus = null; // no FM to hold
+    this.bus = opllHoldBus(); // the FM-PAC's channels, which the keys hold
     core._a8_init();
     this._bufPtr = core._a8_get_buffer_ptr();
     this.scopeLanes = SCOPE_LANES;

@@ -14,7 +14,7 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *         write, without it the write applies at the next block; `preview`
  *         marks a key's audition write, which a hold does not swallow and
  *         the song's register shadow does not record
- *   { type: 'hold-ch', ch: 0-7, on: boolean }  — the keys hold an FM channel
+ *   { type: 'hold-ch', ch: 0-15, on: boolean }  — the keys hold an FM channel
  *       over a playing song (index.html previewTake)
  *   { type: 'pcm-set-bank', bank: Uint8Array|null, pcmVoices: 0-3, entryIds: {"name|midi": id} }
  *       — the score's baked sample bank (the one an export ships), which the
@@ -152,8 +152,9 @@ class YM2612Processor extends AudioWorkletProcessor {
     // for the song's next key-on — the preview's release rings until then —
     // and that key-on lands on the song's registers replayed first.
     // 0 = the song's, 1 = held, 2 = let go (the song's at its next key-on).
-    this._chHold = new Uint8Array(8);
-    this._songRegs = [new Int16Array(256).fill(-1), new Int16Array(256).fill(-1)];
+    // By the synth's ports (the OPLL is the MSX's port 4, the VRC7 fc's 7).
+    this._chHold = new Uint8Array(16);
+    this._songRegs = Array.from({ length: 8 }, () => new Int16Array(256).fill(-1));
 
     // DAC byte provider handed to the synth, once per FM native sample: the
     // engine's current byte, stepped at the image's own rate.
@@ -203,7 +204,7 @@ class YM2612Processor extends AudioWorkletProcessor {
           per: msg.perTick ?? 1, bytes: msg.bytes, next: 0, ticks: msg.bytes.length / (2 * (msg.perTick ?? 1)) });
       } else if (msg.type === "hold-ch") {
         const ch = msg.ch | 0;
-        if (ch >= 0 && ch < 8) this._chHold[ch] = msg.on ? 1 : this._chHold[ch] ? 2 : 0;
+        if (ch >= 0 && ch < this._chHold.length) this._chHold[ch] = msg.on ? 1 : this._chHold[ch] ? 2 : 0;
       } else if (msg.type === "pcm-set-bank") {
         this._setPcmBank(msg);
       } else if (msg.type === "pcm8") {
@@ -359,7 +360,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     if (this._synth.takeWrite?.(p, a, d)) return;
     if (!preview) {
       const bus = this._synth.bus ?? NO_BUS;
-      if (!bus.isKey(a)) this._songRegs[p & 1][a] = d;
+      if (!bus.isKey(a)) this._songRegs[p & 7][a] = d;
       const ch = bus.channelOf(p, a, d);
       if (ch >= 0 && this._chHold[ch] !== 0) {
         if (this._chHold[ch] === 1 || !bus.isKey(a) || !bus.keyOn(d)) return;
@@ -375,7 +376,7 @@ class YM2612Processor extends AudioWorkletProcessor {
   // written, as the song last left it (its synth's bus order).
   _replaySongRegs(ch) {
     for (const [p, a] of (this._synth.bus ?? NO_BUS).replay(ch)) {
-      const v = this._songRegs[p][a];
+      const v = this._songRegs[p & 7][a];
       if (v < 0) continue;
       this._latchYmPitch(p, a, v);
       this._synth.writeYM(p, a, v);

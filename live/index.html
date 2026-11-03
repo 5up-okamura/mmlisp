@@ -11466,6 +11466,7 @@
       if (!player) return;
       const fm = player._fmEnc;
       const borrowed = _borrowedKeyMask.get(ch);
+      if (borrowed != null && fm.held) { writePreviews(fm.held.note(ch, midi)); return; }
       // The carriers' TL at this velocity, composed as a note's would be (a
       // borrowed channel had its level written with its patch).
       if (vel != null && borrowed == null) player._writeFmLevel(ch, audioCtx?.currentTime, { vel });
@@ -11482,7 +11483,9 @@
     }
 
     function previewFmNoteOff(ch) {
-      if (player) writePreviews(player._fmEnc.key(ch, 0));
+      if (!player) return;
+      const fm = player._fmEnc;
+      writePreviews(_borrowedKeyMask.has(ch) && fm.held ? fm.held.off(ch) : fm.key(ch, 0));
     }
 
     // The player an FM or PSG preview writes through. The MMLispDRV reference
@@ -12261,12 +12264,20 @@
     function writeBorrowedPatch(ch, regs, vel) {
       const fm = player._fmEnc;
       const carriers = player._carrierOps(regs);
-      regs.ops.forEach((o, i) => {
+      const ops = regs.ops.map((o, i) => {
         const voiced = o.voicedTl ?? o.tl ?? 0;
         const tl = vel != null && carriers.includes(i)
           ? player._carrierTl({ voicedTl: voiced }, vel, VOL_UNITY, player._masterVol ?? VOL_UNITY)
           : voiced;
-        const op = { ...o, tl: tl & 0x7f, rs: o.rs ?? 0, ar: o.ar ?? 0, d2r: o.d2r ?? 0, ssg: o.ssg ?? 0 };
+        return { ...o, tl: tl & 0x7f, rs: o.rs ?? 0, ar: o.ar ?? 0, d2r: o.d2r ?? 0, ssg: o.ssg ?? 0 };
+      });
+      // The OPLL's encoder keeps the song's voice as timelines: a held
+      // channel's patch goes past them (chips/ym2413.js `held`).
+      if (fm.held) {
+        writePreviews(fm.held.patch(ch, { ...regs, ops }, ops[carriers[0]]?.tl));
+        return;
+      }
+      ops.forEach((op, i) => {
         for (const reg of ['dt-ml', 'tl', 'ks-ar', 'am-dr', 'sr', 'sl-rr', 'ssg-eg']) writePreviews(fm.op(ch, i, reg, op));
       });
       writePreviews(fm.alg(ch, regs));

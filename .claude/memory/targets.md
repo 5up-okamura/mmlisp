@@ -267,10 +267,12 @@ Open:
   (the md's TL 127 does) — ruled 2026-10-26 to stay: the chip cannot, and
   MGSDRV's v0 is the same; a mute keys off as on md. A call with no time (a live edit, a key preview)
   is the encoder's latest time, and `IRPlayer.setParam` writes the edit at
-  once (`live`); checked in node, not by ear. The worklet has no hold bus
-  for the OPLL (the msx synth's `bus` is null; `_songRegs` is indexed
-  `port & 1`), so a key preview over a song channel is not held. A cursor
-  on a ROM voice's name (`piano`) shows nothing in the panel, as on init-fm.
+  once (`live`); checked in node, not by ear. A key held over a song
+  channel (the OPLL's and the VRC7's: `opllHoldBus`) writes its voice,
+  pitch and key past the encoder's timelines (`held`), so the song's stay
+  its own; its user voice is the chip's one, the song's other user-voice
+  channels' until the song's next key-on. Checked in node and by the
+  page's writes, not by ear.
 - **ROM voices.** The values are Nuked-OPLL's `patch_ym2413` (read from
   the die), packed into the user voice's layout in chips/ym2413.js; the
   emulator takes the same table (`ol_set_rom`), so a ROM voice and the same

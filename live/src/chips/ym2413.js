@@ -412,6 +412,22 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
     return (sus[ch].get(t) << 5) | (keyed ? 0x10 : 0) | (block << 1) | (fnum >> 8);
   };
   const r3x = (ch, t) => (romIndexOf(voice[ch].get(t)) << 4) | vol[ch].get(t);
+  // A voice's bytes from its fields: FB and the two operators' (panel shape).
+  const bytesOf = (feedback, two) => voiceBytes((word) => {
+    if (word === "FM_FB") return feedback;
+    const n = Number(word.slice(-1));
+    const field = word === "FM_TL1" ? "tl" : OP_FIELDS.find(([x]) => `${x}${n}` === word)?.[1];
+    return two[n - 1]?.[field];
+  });
+  // A (fractional) MIDI note: the lowest block whose F-number fits 9 bits.
+  const fnumOf = (midi) => {
+    const hz = 440 * 2 ** ((midi - 69) / 12);
+    let block = 0;
+    let f = Math.round((hz * 2 ** 19) / RATE);
+    while (f > 511 && block < 7) f = Math.round((hz * 2 ** 19) / (RATE * 2 ** ++block));
+    return { fnum: Math.max(0, Math.min(511, f)), block };
+  };
+  const heldPitch = new Array(channels).fill(null); // a held channel's preview note
   // The channel's voice into the chip at `t`: the user voice's bytes when it
   // is no ROM voice, and $30's voice and volume (`stamp`: each write's time).
   const settle = (ch, t, stamp) => {
@@ -428,12 +444,7 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
   // another time than the one held writes that one first.
   const voiceMoved = (ch, t) => {
     const out = moved[ch] !== null && Math.abs(moved[ch] - t) > EPS ? flush(ch) : [];
-    voice[ch].set(t, voiceBytes((word) => {
-      if (word === "FM_FB") return fb[ch];
-      const n = Number(word.slice(-1));
-      const field = word === "FM_TL1" ? "tl" : OP_FIELDS.find(([x]) => `${x}${n}` === word)?.[1];
-      return ops[ch][n - 1][field];
-    }));
+    voice[ch].set(t, bytesOf(fb[ch], ops[ch]));
     moved[ch] = t;
     return out;
   };
@@ -456,14 +467,9 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
       return voiceMoved(ch, at(when));
     },
     pan: () => [], // mono
-    // A (fractional) MIDI note: the lowest block whose F-number fits 9 bits.
     pitch(ch, midi, when) {
       const t = at(when);
-      const hz = 440 * 2 ** ((midi - 69) / 12);
-      let block = 0;
-      let f = Math.round((hz * 2 ** 19) / RATE);
-      while (f > 511 && block < 7) f = Math.round((hz * 2 ** 19) / (RATE * 2 ** ++block));
-      const fnum = Math.max(0, Math.min(511, f));
+      const { fnum, block } = fnumOf(midi);
       pitch[ch].set(t, { fnum, block });
       return [...flush(ch), ...(started ? [w(0x10 + ch, fnum & 0xff), w(0x20 + ch, r2x(ch, keyedAt(ch, t), t))] : [])];
     },
@@ -500,6 +506,28 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
       return settle(ch, latest);
     },
     isKeyOn: (p, addr, data) => p === port && addr >= 0x20 && addr <= 0x28 && (data & 0x10) !== 0,
+    // A key preview on a song channel the keys hold (Live's worklet keeps the
+    // song's writes off it: opllHoldBus): its voice, pitch and key written
+    // past the timelines, which stay the song's. A user voice is the chip's
+    // one, so it is the song's other user-voice channels' too until the
+    // song's next key writes its own.
+    held: {
+      patch(ch, regs, level) {
+        const b = bytesOf(regs.feedback, regs.ops ?? []);
+        const rom = romIndexOf(b);
+        return [...(rom ? [] : b.map((d, a) => w(a, d))), w(0x30 + ch, (rom << 4) | fit(level, 4))];
+      },
+      // Keyed off first, so a key held again starts over.
+      note(ch, midi) {
+        const p = (heldPitch[ch] = fnumOf(midi));
+        const hi = (p.block << 1) | (p.fnum >> 8);
+        return [w(0x20 + ch, hi), w(0x10 + ch, p.fnum & 0xff), w(0x20 + ch, 0x10 | hi)];
+      },
+      off(ch) {
+        const p = heldPitch[ch];
+        return p ? [w(0x20 + ch, (p.block << 1) | (p.fnum >> 8))] : [];
+      },
+    },
     lfo: () => [], // the OPLL's LFO is fixed
     rhythm: rhythmOps(),
   };
@@ -587,6 +615,18 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
     };
   }
 }
+
+// The OPLL's FM in Live's worklet, for a channel the keys hold (chips/opn-fm.js
+// opnHoldBus): $10-$38's low nibble is the channel, $20-$28 its key (with the
+// pitch's top bits); written back $30 (voice, volume) and the F-number's low
+// byte, the song's key-on bringing the rest. `port` and `channels` the
+// chip's (the VRC7's: chips/vrc7.js).
+export const opllHoldBus = (port = OPLL_PORT, channels = CHANNELS) => ({
+  channelOf: (p, a) => (p === port && a >= 0x10 && a < 0x40 && (a & 0x0f) < channels ? a & 0x0f : -1),
+  isKey: (a) => a >= 0x20 && a < 0x20 + channels,
+  keyOn: (d) => (d & 0x10) !== 0,
+  replay: (ch) => [[port, 0x30 + ch], [port, 0x10 + ch]],
+});
 
 export const ym2413 = {
   chip: "ym2413",
