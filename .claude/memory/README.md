@@ -43,7 +43,8 @@ Rules:
   their shape, one known A/B divergence, and **§4 the grid-warp `:shuffle`'s
   open ends** (built 2026-10-28).
 - [live-app.md](live-app.md) — **the live app**: what was decided against
-  (not to be proposed again), working lessons, and small tools still to specify.
+  (not to be proposed again), working lessons, small tools still to specify
+  and deferred ideas.
 - [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings
   and open items per machine (pc88 … the PC Engine, the Famicom and its six
   expansion chips, the Game Boy: their ports, lanes and what is not yet

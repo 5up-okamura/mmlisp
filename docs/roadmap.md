@@ -85,8 +85,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
   MSM6258 — x68k's pcm1–pcm8 could take them), subsongs after the first, a
   module chip's own clock (the SSG's envelope rate is read on the
   target's), the AY envelope's shape moving in its macro (the first step
-  serves), a YM2413 drum note's pitch (each hit at c4), a swing or groove
-  (speeds taking turns; it waits on the grid-warp `:shuffle`). On
+  serves), a YM2413 drum note's pitch (each hit at c4). On
   the PC Engine: the LFO and DDA effects, a duty macro switching noise and
   wave under a note (its first step serves), and the phase a wave loads at
   (Furnace's anti-click carries the running phase over; a load here starts
@@ -98,8 +97,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 - A score's own `def-pcm` is not auditioned from the voice picker: its `:file`
   is relative to the score's folder, which the picker's stand-in score lacks.
-- Dragging the piano roll's background to seek (in the mockup, left out; not
-  decided).
 
 ## Future vision
 
@@ -123,7 +120,7 @@ MSX VGMs on hardware regardless).
 A target profile is a first-class part of the language: the channel table,
 which parameters exist and their ranges (language.md §7.0's "target's base",
 `E_UNSUPPORTED_TARGET`), the pitch table for the chip's clock, the voice
-classes it can play, its PCM voices and their constraints, and its kit (below).
+classes it can play, its PCM voices and their constraints, and its kit.
 A *portable core* — notes, lengths, flow, the vel/pitch/pan curves, 4-op FM
 voices on the OPN/OPM family, square + noise — compiles for every target; a
 target's own features (FM3 special mode, SSG-EG, duty, waves) are a diagnostic
@@ -132,24 +129,14 @@ on any other, and its own settings a warning.
 Built: the PC-8801 (`pc88`), the X68000 (`x68k`), the MSX with the SCC
 and the FM-PAC (`msx`), the PC Engine (`pce`: its waves, noise, `:pan`,
 LFO and DDA, DefleMask / Furnace PCE modules and HuC6280 VGMs as `pce`
-scores) and the Famicom (`fc`: the 2A03's pulses with `:duty`, the
+scores), the Famicom (`fc`: the 2A03's pulses with `:duty`, the
 triangle with no level, the noise's rates and two modes, the DMC's
-samples) and the Game Boy (`gb`: its pulses, wave and noise, a level free
-under a note, VGMs and DefleMask / Furnace modules as `gb` scores) —
-language.md §19. Next:
+samples, and the six expansion chips — VRC6, FDS, MMC5, 5B, VRC7, N163;
+VGMs, NSFs and DefleMask / Furnace NES modules as `fc` scores) and the
+Game Boy (`gb`: its pulses, wave and noise, a level free under a note, VGMs
+and DefleMask / Furnace modules as `gb` scores) — language.md §19. Next:
 
-1. **Famicom: songs in.** A VGM's 2A03 and DefleMask / Furnace NES
-   modules import as `fc` (guide.md), their DPCM samples with them,
-   then ppmck's MML if a composer's files call for it. Expansions are
-   decided by voice class, not one by one: the 5B is the SSG profile, the
-   VRC7 the OPLL's, the FDS the wavetable class. The VRC6 is on `fc`
-   (`vrc6-sqr1`, `vrc6-sqr2`, `vrc6-saw`; WAV only, as VGM has no VRC6),
-   and Furnace's VRC6 modules import onto it (a pulse's PCM mode left
-   out). The FDS is on `fc` (`fds-wave`), and a VGM's and a Furnace
-   module's come in on it. The MMC5's pulses, the 5B, the VRC7 and the
-   N163 are on `fc` too (language.md §19); a VGM's VRC7 and 5B come in on
-   them, and an NSF (run on a 6502, import-only) brings its expansions
-   with it.
+1. **Famicom: ppmck's MML** in, if a composer's files call for it.
 
 Emulators for the preview: ymfm (BSD) covers the YM2608, YM2151, YM2413,
 Y8950 and the SSG in one library, built to WASM beside the Nuked cores.

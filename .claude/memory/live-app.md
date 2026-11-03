@@ -86,8 +86,8 @@ lessons.
 
 ## Deferred editing ideas
 
-- **Target conversion:** retain as an idea, lower priority.
-- **Musically restructuring VGM imports:** the user wants to adjust tempo,
-  pickup and gate timing while inspecting the result. Develop a human-guided
-  workflow with score/playback feedback; do not turn this into a request for
-  automatic beat detection or an import-time conversion with no preview.
+- **Target conversion** (an open score's `:target` changed; a song import
+  onto another machine is built): retain as an idea, lower priority.
+- **Restructuring VGM / NSF imports stays human-guided** (Edit > Tap Tempo,
+  built 2026-11-03): not automatic beat detection, not an import-time
+  conversion with no preview.

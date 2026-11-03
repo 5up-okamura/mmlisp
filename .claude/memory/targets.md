@@ -1,10 +1,9 @@
-# Targets beyond the Mega Drive — the restructure, and the FM-PAC
+# Targets beyond the Mega Drive — rulings and open items
 
-The toolchain grew from the Mega Drive; pc88, x68k and msx were added on the
-part / chip / target layering (`live/src/chips/parts.js`). Before 2-op FM
-(OPLL) lands, the layers below the compiler are being restructured so a
-part decides how it plays, shows and takes voices — not only which words
-it accepts. This file holds the rulings and the plan's state; delete each item once the repo records it.
+pc88, x68k, msx, pce, fc and gb sit on the part / chip / target layering
+(`live/src/chips/parts.js`, `targets/`); language.md §19 says what each
+does. This file holds the rulings, what the docs do not say, and what is
+open, per machine; delete each item once the repo records it.
 
 ## Rulings (2026-10-25)
 
@@ -67,18 +66,13 @@ Built: the completion, the `@` picker, the Library and `mmlisp_presets` go by
   import as a kit is (`presets/wavetable-4bit`?), and sounds past the fifteen
   roles (`bell`), which might stay macro names only.
 
-## Rulings for what comes next (2026-10-25, not built yet)
+## Open from the 2026-10-25 rulings
 
-- **The editor panel** is built, the OPLL's 2-op operators too; still
-  open: drawing on a stage vector. (Ruled 2026-10-26: no wait for the
-  cursor to rest before the panel swaps.)
-- **Wave expressions** are built (`+ - * /`, a track's `:wave` with
-  `$slot`s); still open: generators (`(harmonics 1 0.5 0.33)` …), once the
+- **The editor panel**: drawing on a stage vector (shown, not drawn:
+  edit-tools.js `vectorAt`). (Ruled 2026-10-26: no wait for the cursor to
+  rest before the panel swaps.)
+- **Wave expressions**: generators (`(harmonics 1 0.5 0.33)` …), once the
   expressions are in use.
-- **FM-PAC (OPLL).** The one user voice and the 15 ROM voices are built
-  (stage 2; language.md §19 msx), named with no prefix (the user's
-  ruling, 2026-10-25: `piano`, not `opll-piano`). The rhythm mode is
-  built (stage 3; language.md §19 msx), its hits' pitch moves too.
 
 ## PC Engine, then the Famicom (rulings, 2026-10-27)
 
@@ -112,62 +106,22 @@ Built: the completion, the `@` picker, the Library and `mmlisp_presets` go by
 - **Open:** Bad Dudes as imported since the `:wave` macro is not yet
   listened to in Live.
 
-## The Famicom (fc) — the design, ruled 2026-10-27; stages 1-3 built
+## The Famicom (fc; built 2026-10-27)
 
-Build it as pce was built (chips/huc6280.js, targets/pce.js, synth-pce.js,
-tools/tests/pce are the pattern), in stages: 1. pulses, triangle, noise;
-2. DPCM; 3. DefleMask / Furnace NES modules as fc (import-tracker.js
-already reads them) and VGM 0xB4. The expansions: their own section
-below. Facts are from memory: hold every table to
-nesdev and Mesen / MAME (fetch them) before writing the emulator.
+language.md §19 fc is the design (channels, `:duty` in sixteenths, the
+triangle with no level, the noise's rates and modes, DPCM's one rate a
+def-pcm); chips/rp2a03.js, targets/fc.js, synth-fc.js, tools/tests/fc. What
+the docs do not say:
 
-- Channels `sqr1` `sqr2` `tri` `noise` `pcm1`; VGM: NES APU clock at $84,
-  command 0xB4, DPCM data in block 0xC2 (writable mid-song, so no 16 KB
-  total limit); frameClock true (60 Hz vblank drivers).
-- **`:duty` in sixteenths** (a new word, macros allowed): the encoder takes
-  the nearest of the chip's steps — 2A03 2/4/8/12 (12.5/25/50/75 %; 75
-  sounds as 25), later VRC6 1–8, MMC5 as 2A03. The "a part's resolution
-  is its encoder's" ruling.
-- **Pulse / noise level** 4-bit linear (`{ scale: "linear", steps: 16 }`),
-  constant-volume mode, volume 0 the key-off. No hardware envelope, no
-  sweep in the language. The encoder writes $4001 = $08 (sweep off, negate
-  set — else notes below ~A2 are muted by the sweep's overflow check),
-  stops at a period under 8, and rewrites $4003 / $4007 only when the high
-  bits change (a write resets the phase: a click).
-- **Triangle** has no level: `:vel` / `:vol` are W_TARGET (the "play what
-  can be played" ruling). A rest halts it with the linear counter (it holds
-  its output: no click; takes effect at the next frame-sequencer tick).
-- **Noise**: the note picks one of the 16 period-table rates (from c2, as
-  pce's noise), `:mode white | periodic` (periodic = the 93-step short
-  mode); md's white0–periodic3 are E_TARGET with a hint.
-- **DPCM (pcm1, one voice)**: one rate per def-pcm — the highest of the 16
-  at which every note of it fits 4081 bytes; each note resampled to its
-  pitch at that rate. Level baked into the amplitude (`:vel`, `:vol`; no
-  change while it sounds). Loops are the whole sample only ($4012/$4013):
-  :pcm-start / :pcm-end are the sample, a different :loop-* is W_TARGET;
-  `:mode loop` works. Each hit writes $4011 to the bake's start level (64)
-  and restarts via $4015. The 1-bit delta (±2 a sample) dulls fast loud
-  attacks — say so in the reference. The nonlinear mixer (the DAC level
-  lowering tri / noise) is the emulator's, the language says nothing.
-- **Stage 1 built 2026-10-27** (chips/rp2a03.js, targets/fc.js,
-  synth-fc.js, tools/tests/fc). Tables from nesdev's APU pages (fetched):
-  duty sequences, noise periods (NTSC, CPU clocks), triangle, the mixer
-  formulas. The encoder queues its timed writes and `flush(horizon)`s them
-  in time order (as the SSG's): a pulse's $4000 holds volume and duty, which
-  the player sends out of order; a silence is written at once (level 0 is
-  silent at any duty) with its state queued. The noise sits on the PSG's
-  noise lane 3, pitched (part `rateNote`); the PSG encoder hands a view a
-  lane (`lanes`) since each channel's period differs. The triangle's
-  `:vel` / `:vol` warn through warnEnvLevel (part `noLevel`). The synth runs
-  the envelope, sweep, length and frame counter too (for the VGM import to
-  come); `MASTER_OUTPUT_GAIN` 1.6 puts one pulse's RMS at one pce channel's.
-  A review (2026-10-27) caught and fixed: the noise's length counter never
-  loaded (init writes $400F once); a stop's untimed silence deduped away
-  against the horizon's state (an untimed write bypasses `last`); nothing
-  flushed the queue while stopped (`_psgWrites` flushes when not playing);
-  the :mode macro on the pitched noise lane. Open: no VGM player has
-  checked the 0xB4 output.
-- **Stage 2 (DPCM) built 2026-10-27** (fcDpcm, `frames: true` as pce's
+- Tables are nesdev's APU pages (fetched). The encoder queues its timed
+  writes and `flush(horizon)`s them in time order (as the SSG's): a pulse's
+  $4000 holds volume and duty, which the player sends out of order; a
+  silence is written at once (level 0 is silent at any duty) with its state
+  queued. The noise sits on the PSG's noise lane 3, pitched (part
+  `rateNote`); the PSG encoder hands a view a lane (`lanes`) since each
+  channel's period differs. `MASTER_OUTPUT_GAIN` 1.6 puts one pulse's RMS at
+  one pce channel's. Open: no VGM player has checked the 0xB4 output.
+- **DPCM** (fcDpcm, `frames: true` as pce's
   DDA; ir-player `_dispatchDpcmEvent`, `_dmcRateOf`). The memory is the
   chip's port 1 (RAM_PORT: an address latch, then bytes), a VGM 0xC2 block
   a run (export-vgm `ramBlock`); Live gets a hit's load as one `stream`
@@ -189,48 +143,21 @@ nesdev and Mesen / MAME (fetch them) before writing the emulator.
   expansions, 2026-10-29: its own section below). VGM built
   2026-10-27 (import-vgm.js apuChip): the length and linear counters and
   the envelope run between writes (`advance`), so a note ends where its
-  counter ran out and an envelope is a level envelope; the sweep is only
-  counted; a DMC hit's sample is the memory as it stood (`bytes` on the
+  counter ran out and an envelope is a level envelope, the sweep on its
+  half frames (and its mute); a DMC hit's sample is the memory as it stood (`bytes` on the
   hit, identity by content) since 0xC2 blocks rewrite it (bank switches);
-  `$4011` written on and on is counted as CPU PCM, not imported. A review
-  (2026-10-27) fixed: the 5-step frame counter (QUARTER on $4017, the
-  average), a joint period + level write read as a strike only where the
-  level came up or the pitch jumped ≥ 50 cents (a volume macro under a
-  vibrato is one note), an envelope's steps never emitted before the last
-  write (event order per key), a looping envelope kept on through its 0,
-  the divider read from a $4000 written after $4003, the counters starting
-  at 0, the triangle's reload with the flag still set, a duty step within
-  4 frames of a note's start folded into it (the attack's macro: the note
-  takes the value it settles on), a note quantized onto the one before
-  keeping that one's slur, $4011 counted only on a change, a DMC hit
-  before any 0xC2 block lost. Approximations kept: a halt cleared under a
-  held counter leaves it held; the sweep's mute of a high period (negate
-  clear, target > $7FF) is not applied; $4017's immediate clock in 5-step
+  `$4011` written on and on is counted as CPU PCM, not imported.
+  Approximations kept: a halt cleared under a
+  held counter leaves it held; $4017's immediate clock in 5-step
   mode is not.
 - Held to real rips (2026-10-27, the user's vgmrips packs, kept outside
   the repo in their Dropbox: Balloon Fight, SMB3, Kirby, Contra, Super
   Contra, Fantasy Zone): scratchpad abfc.mjs renders the VGM's own writes
   and the import's on FcSynth and compares each channel a frame at a time
-  (sounding ±1 frame, the chip's own periods). What it found and fixed:
-  most rips never write $4015 (an NSF player sets it) — start enabled;
-  a length counter's sub-frame blip was a 1-tick note that keyed off in its
-  own frame before it keyed on (the encoder now queues a same-time key-off
-  behind its key-on; the import gives a note a frame at least on a
-  frame-clocked target); the triangle's reload is taken at the next quarter
-  frame from $4008 as it is then (drivers write $400B before $4008); a
-  strike is a level up or a pitch jump within a setup burst (2 ms), not at
-  the exact same sample; no tuning estimate for the 2A03; the sweep is
-  followed on half frames (and its mute); pitchShape keeps a fall that goes
-  on into the note's last two frames, and a burst's last pitch only (a
-  period written a byte at a time); the triangle's $400B is a new note but
-  in a glide (decided once the burst's low byte is in — Gimmick writes
-  $400B first); bendSpec's chained lines start a frame in (a curve plays
-  both its ends, so each joint held two frames). After those, most tracks
-  agree to a few frames (Gimmick 01 TRI pitch 59 → 87 %, Balloon Fight 07
-  SQ1 19 → 49 %: the rest is a fast fall a sub-frame off the frame grid).
-  A note that stops dead before a rest no longer takes a shared envelope
-  with a #rel (`silentAfter` in assignEnvelopes; Kirby 03 SQ1's extra
-  frames 222 → 50). Open: those 50 are a staccato note held to the grid's
+  (sounding ±1 frame, the chip's own periods). Most tracks agree to a few
+  frames (Gimmick 01 TRI pitch 87 %, Balloon Fight 07 SQ1 49 %: the rest is
+  a fast fall a sub-frame off the frame grid). Open: Kirby 03 SQ1's 50
+  extra frames are a staccato note held to the grid's
   unit (2.7 frames sounding as a 32nd's 5 at Kirby's tempo) at its
   sustain level; Kirby's DPCM not A/B'd. (A VGM's 5B and VRC7 land on
   fc's own chips: the expansions' section.)
@@ -306,13 +233,8 @@ Open:
 - Every fc render starts with a click, probably the DMC's $4011 init write
   (seen 2026-10-29, not checked or fixed).
 
-## FM-PAC: how to build it (findings, 2026-10-25)
+## FM-PAC: why it is built so (2026-10-25)
 
-- **Stages.** All four are built (1 engine, 2 language and player, 3 the
-  rhythm mode, 4 the panel: a target with FM and no `:alg` shows two
-  operator columns, op1 into op2, its rows by `data-needs`, its sliders on
-  the part's `ranges`; a def extending a ROM voice or init-fm shows the
-  base's values).
 - **The rhythm's encoder.** $0E's keys and the $36-$38 volume bytes hold
   several sounds, and hits from different tracks reach the encoder out of
   time order (each track is dispatched to the horizon in turn), so a write
@@ -322,10 +244,7 @@ Open:
   to the horizon (as `_chipPcmFrames`). A dump with no time (a stop) drops
   the queue. The player's rhythm path is the kit part's (`_rhythmEncOf`),
   not the YM2608's by name; the level is the part's ladder (il = top - att).
-  Open: a dense score with the rhythm clips (ymfm doubles the rhythm
-  output; the test score clips 87 samples) — the levels wait for a
-  listening pass; the scope shows SD with HH and TOM with TOP, one lane per
-  channel.
+  The scope shows SD with HH and TOM with TOP, one lane per channel.
 - **How the encoder works (chips/ym2413.js), and why.** The IR player does
   not send a channel's writes in time order: a note's pitch, level and op
   macros go out before its key-on, its key-off as it starts (gated) or with
@@ -340,11 +259,11 @@ Open:
   half-written. Known: a pitch step inside a `:keyon` macro's off-step is
   written keyed (the retrigger's key-offs go out after the pitch steps).
 - **Levels.** `OPLL_GAIN` is set against the PSG and SCC as libkss
-  (MSXplay) mixes them, measured on an MGS song (G2_00.MGS) chip by chip;
-  confirmed by ear 2026-10-26.
-- **Open.** The levels passed the user's listening (2026-10-26: the
-  rhythm against the melody, the clipping and the level beside the other
-  targets are fine as they are). The volume's floor is −45 dB
+  (MSXplay) mixes them, measured on an MGS song (G2_00.MGS) chip by chip.
+  Open: a dense score with the rhythm clips (ymfm doubles the rhythm
+  output; the test score clips 87 samples, the MGS demo Contrail ~30k);
+  not ruled on.
+- **Open.** The volume's floor is −45 dB
   (vol 15): `:vol 0` and a mixer mute do not silence a sounding FM-PAC note
   (the md's TL 127 does) — ruled 2026-10-26 to stay: the chip cannot, and
   MGSDRV's v0 is the same; a mute keys off as on md. A call with no time (a live edit, a key preview)
@@ -358,38 +277,17 @@ Open:
   emulator takes the same table (`ol_set_rom`), so a ROM voice and the same
   bytes as the user voice render sample-identical (checked for all 15).
 
-## Plan, in order (each keeps md/pc88/x68k/msx output: check:snapshot green)
+## The part model (rulings, 2026-10-26/27)
 
-Done (2026-10-25): one route per track in the IR player (`_routes`, cores by
-kind, SAMPLE_HANDLERS with the DAC explicit, holds keyed `core:lane`); one
-level composition (ir-utils `levelSteps` / `levelGain`) quantized on each
-part's `level`; the FM family's words in one table (`chips/fm-words.js`)
-with closed per-part lists; FM channels sized from the targets; one synth
-registry (`src/synths.js`) and a port-collision check per target.
-
-Ruled for the 2A03 / HuC6280 (2026-10-26, the user): a part's resolution
-is its encoder's, written at the write (parts.js header) — so `def-wave`
-stays 32 steps of −128..127 (the HuC6280's 5 bits are its encoder's
-shift), and `:pan` reaches the encoder unsnapped (`panSide` for the
-left/right-bit chips; the HuC6280's 4-bit L/R reads it whole). A step count
-other than 32 waits for the FDS (64): a wave repeated a whole number of
-times only, never interpolated; 64 → 32 a `W_TARGET`. A part with no level
-(the 2A03's triangle) is "play what can be played": `:vel` / `:vol` a
-`W_TARGET`, built with the 2A03. Order: the part model before the Live
-strip (node-checkable first; the strip's entry carries the part).
-
-Done (2026-10-27): the Live page's channels are slots (`FM_SLOTS`,
-`TONE_SLOTS`, `PCM_SLOT`; a strip carries `slot`), nothing reads a kind off
-a number; ruled with it: no kind-adapter registry (14 `kind` switches are
-enough), the Library's Fits and the def under the cursor already come from
-the parts.
-
-Done (2026-10-27): CH3's $27, Timer A, its operators' TL and F-numbers are
-the OPN encoder's (`mode`, `timerA`/`timerAOf`, `ch3Tl`, `ch3OpPitch`); the
-IR player keeps only their state.
-
-Next (optional): VGM — one data-block hook for the DAC / ADPCM-B / OKI
-special cases.
+- **A part's resolution is its encoder's** (the user, 2026-10-26; parts.js
+  header): `def-wave` stays −128..127 whatever the chip's bits, `:pan`
+  reaches the encoder unsnapped, a wave's other step count (the FDS's 64)
+  is a whole repeat, never interpolated.
+- **No kind-adapter registry** (2026-10-27): 14 `kind` switches are
+  enough; the Live page's channels are slots (`FM_SLOTS`, `TONE_SLOTS`,
+  `PCM_SLOT`).
+- Next (optional): VGM — one data-block hook for the DAC / ADPCM-B / OKI
+  special cases.
 
 ## Song importers for msx / x68k (MGS, MDX; 2026-10-25)
 
@@ -418,13 +316,9 @@ special cases.
 - A secondary source (an AI answer) had `/` `\` `_` in an envelope as volume
   moves or a loop and a rhythm hit's digits as its level: the reference
   says otherwise — not to be re-read from such a source.
-- The msxplay-js demo Contrail (PSG + SCC + FM + rhythm, its rhythm at v15)
-  clips the msx synth's mix by ~30k samples where it barely clips without
-  the rhythm: the OPLL rhythm's level beside the other chips is untested.
 - `import-mdx.js` follows MXDRV itself (portable_mdx's port of its 68000
   code), not mdxmini, which is wrong on volume, gates after a tie, `k`, the
-  LFO shapes and MA. Not modelled: the LFOs' free run without MD (the import
-  restarts them each note), the random shape, sync.
+  LFO shapes and MA (what it leaves out: the roadmap).
 - How an MDX import is held to MXDRV (2026-10-26, on the user's Assault
   set): clone portable_mdx, add to `Opm::OpmPoke` an `fprintf(stderr, "W
   %ld %02x %02x", tick, reg, data)` with `tick` counted up in the Timer B
