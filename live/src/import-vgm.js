@@ -53,7 +53,8 @@
 // 1/240 s, and each note sits where the driver wrote it — the import is a
 // faithful performance to listen to and take voices and pitches from, not
 // a score rebuilt (a groove, a swing, a driver's own timer would not
-// survive a beat grid).
+// survive a beat grid). A beat given by hand (import-timing.js) is the way
+// from that performance to a score: options.timing.
 //
 //   parseVgm(bytes)                  → the file's chips and channels' events
 //   analyzeVgm(parsed)               → what the import dialog shows, and the
@@ -84,6 +85,7 @@ import { Apu as GbApu } from "./synth-gb.js";
 import { rhythmRom } from "./chips/rhythm-rom.js";
 import { PCM8_OVER_CARRIER } from "./chips/msm6258.js";
 import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./import-mucom.js";
+import { beatClock, shuffleTokens, timingLine } from "./import-timing.js";
 import { fmVoiceDef, nearestRomVoice } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
@@ -2417,9 +2419,19 @@ export function vgmRows(a, target) {
     choices: c.kind === "pcm" ? pcmChoices : c.kind === "chip-pcm" ? chipPcmChoices : c.kind === "rhythm" ? rhythmChoices : choices }));
 }
 
+/** A song's key-ons and sample hits, a list per channel: what a beat is fitted to. */
+export function vgmOnsetLists(parsed) {
+  return [
+    ...[...parsed.events.values()].map((evs) => evs.filter((e) => e.kind === "on" || e.kind === "retrig").map((e) => e.t)),
+    ...[parsed.rhythmHits, parsed.opllRhythmHits, parsed.dacHits, parsed.pcmHits].map((hs) => (hs ?? []).map((h) => h.t)),
+  ].filter((list) => list.length);
+}
+export const vgmOnsets = (parsed) => vgmOnsetLists(parsed).flat().sort((x, y) => x - y);
+
 /**
  * @param options {dest: {channelKey: channel | "pcm" | "drop"}, followPitch,
- *                 loop, pcmVoices?, fileName?}
+ *                 loop, pcmVoices?, fileName?, timing?: a beat given by hand
+ *                 (import-timing.js)}
  */
 export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const warnings = [];
@@ -2457,7 +2469,12 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // where the driver wrote them — a groove, a swing, a tempo of its own
   // timer kept as it plays, to 2 ms on a timer not of the frame — and are
   // as long as they sounded; the bars are marks a 4/4 bar apart.
-  const tickOf = (t) => Math.max(0, Math.round(t / TICK));
+  // Unless a beat was given by hand (import-timing.js): then a note on the
+  // grid is on it, one off the grid stays off it, and a short gap is legato.
+  const timing = options.timing ? { grid: PPQN / 4, snap: 1, bar: 0, shuffle: null, gate: 0, ...options.timing } : null;
+  const clock = timing ? beatClock(timing, vgmOnsets(parsed)[0] ?? 0)
+    : { tickOf: (t) => Math.max(0, Math.round(t / TICK)), tickLen: TICK, bpm: BPM, bar: 4 };
+  const { tickOf, tickLen } = clock;
 
   const dest = options.dest ?? {};
   const taken = new Set();
@@ -2467,8 +2484,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // The song ends where the file does — its loop goes back from there — not
   // at the bar mark after it: the last bar is cut short.
   const endTick = Math.max(1, tickOf(parsed.totalSamples));
-  const bars = barEnds([], endTick);
-  bars[bars.length - 1] = endTick;
+  const bars = clock.bar ? barEnds([{ tick: 0, num: clock.bar, den: 4 }], endTick) : [];
+  if (bars.length) bars[bars.length - 1] = endTick;
   // A driver marks its loop as it goes back, a moment off the notes the
   // loop starts with: the loop starts at the first of them within a frame
   // (else, a tick apart, the note before it strikes again at the top).
@@ -2640,8 +2657,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       // On a machine whose driver plays a frame at a time (fc, msx, pce) a
       // note shorter than a frame — a length counter's blip — keys off in
       // the frame it keys on: it sounds its one frame.
-      const minLen = target.frameClock ? Math.round(FRAME / TICK) : 1;
-      const note = { tick, len: Math.max(minLen, end - tick),
+      const minLen = target.frameClock ? Math.round(FRAME / tickLen) : 1;
+      // (A note its start and end both snapped onto one tick: its own length.)
+      const note = { tick, len: Math.max(minLen, end > tick ? end - tick : Math.round((n.end - n.t) / tickLen)),
         midi: Math.round(n.pitch), vel: n.vel,
         // Its cents off the semitone, to 5: the pitch it played (a chip's
         // tuning, a driver's table), as :pitch — not on a noise row.
@@ -2754,7 +2772,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       // (Not an FM note's: its level is its voice's TL, its :vel worked out from that.)
       const tied = head && n.tieIn && prev && n.midi === prev.midi && n.tick === prev.tick + prev.len && n.env && !n.voiceRec;
       if (!tied) { head = n.env && !n.voiceRec ? n : null; if (head) head.abs = head.env.map((v) => v + head.vel); return; }
-      const at = Math.round(((n.tick - head.tick) * TICK) / FRAME);
+      const at = Math.round(((n.tick - head.tick) * tickLen) / FRAME);
       while (head.abs.length < at) head.abs.push(head.abs[head.abs.length - 1]);
       head.abs.length = Math.min(head.abs.length, at);
       head.abs.push(...n.env.map((v) => v + n.vel));
@@ -2789,15 +2807,21 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // A released note is keyed off where its release starts, to a quarter of
   // a step (its #rel plays on through the rest after it).
   for (const tr of tracks)
-    for (const n of tr.notes) if (n.relFrame != null) n.len = Math.min(n.len, Math.max(1, Math.round((n.relFrame * FRAME) / TICK)));
+    for (const n of tr.notes) {
+      if (n.relFrame == null) continue;
+      const rel = timing ? tickOf(n.srcT + n.relFrame * FRAME) - n.tick : Math.round((n.relFrame * FRAME) / tickLen);
+      n.len = Math.min(n.len, Math.max(1, rel));
+    }
 
   // Slurs first: one only stays one when its note runs into it.
   for (const tr of tracks) {
     for (let i = 0; i < tr.notes.length; i++) {
       const n = tr.notes[i];
       const next = i + 1 < tr.notes.length ? tr.notes[i + 1].tick : endTick;
-      // (A note slurred on into the next runs into it.)
-      if (next - (n.tick + n.len) > 0 && tr.notes[i + 1]?.tieIn) n.len = next - n.tick;
+      // (A note slurred on into the next runs into it; one keyed off for
+      // its release keeps the gap its release plays in.)
+      const gap = next - (n.tick + n.len);
+      if (gap > 0 && (tr.notes[i + 1]?.tieIn || (timing && n.relFrame == null && i + 1 < tr.notes.length && gap <= timing.grid / 2))) n.len = next - n.tick;
       if (n.tieIn && (i === 0 || tr.notes[i - 1].tick + tr.notes[i - 1].len !== n.tick)) n.tieIn = false;
     }
   }
@@ -2861,7 +2885,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     if (!onRom && !kitVoice) { warnings.push(`${c.key}: the PCM takes every voice — the rhythm is left out`); continue; }
     rhythmRows.push({ k: c.k, d: onRom ? d : kitVoice, hits: (c.opll ? parsed.opllRhythmHits : parsed.rhythmHits).filter((h) => h.k === c.k) });
   }
-  const rhythmOut = rhythmRows.length ? rhythmTracks(parsed, rhythmRows, target, tickOf, endTick) : [];
+  const rhythmOut = rhythmRows.length ? rhythmTracks(parsed, rhythmRows, target, tickOf, endTick, clock.bpm) : [];
   const bends = assignBends([...tracks, ...rhythmOut].flatMap((tr) => tr.notes));
   rhythmOut.forEach(rhythmPre);
   const kitRhythm = rhythmOut.length > 0 && !dests.rhythm.length;
@@ -2943,17 +2967,19 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
 
   const order = [...dests.fm, ...dests.opll, ...dests.psg, ...dests.wave, ...dests.noises, dests.noise];
   tracks.sort((x, y) => order.indexOf(x.d) - order.indexOf(y.d));
+  const gateCut = timing?.gate ? [`:gate- ${timing.gate}f`] : [];
   const out = tracks.map((tr) => {
     const { d, notes } = tr;
     const head = notes[0].pre;
     notes[0] = { ...notes[0], pre: undefined };
     // A channel with no level (fc's triangle, `noLevel`): its notes say no :vel.
-    return { channel: d, head, notes, marks: tr.marks ?? [], noVel: !!target.partOf(d)?.noLevel };
+    return { channel: d, open: gateCut, head, notes, marks: tr.marks ?? [], noVel: !!target.partOf(d)?.noLevel };
   });
   if (dacOut) out.push(dacOut.track);
   if (chipOut) out.push(...chipOut.tracks);
   out.push(...rhythmOut);
-  if (out.length) out[0].marks.push({ tick: 0, tokens: [`:tempo ${BPM}`] });
+  if (timing) for (const tr of out) tr.open = [...shuffleTokens(timing), ...(tr.open ?? [])];
+  if (out.length) out[0].marks.push({ tick: 0, tokens: [`:tempo ${clock.bpm}`] });
   else warnings.push("no notes to import");
 
   if (parsed.dac && !parsed.dacHits?.length) warnings.push("YM2612 DAC written directly (not from a data bank) is not imported");
@@ -2961,6 +2987,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   for (const [k, n] of parsed.skipped) warnings.push(`${k} skipped (${n}×)`);
 
   const header = [`; Imported from ${options.fileName ?? "a VGM file"} (${parsed.format ?? "VGM"}: ${parsed.chips.join(", ")})`];
+  if (timing) header.push(timingLine(timing, clock.bpm));
   const title = [parsed.title, parsed.game && parsed.title ? `(${parsed.game})` : parsed.game].filter(Boolean).join(" ");
   const score = [target.name !== "md" && `:target ${target.name}`, title && `:title ${qstr(title)}`, parsed.author && `:composer ${qstr(parsed.author)}`,
     dacMix && (dacOut || chipOut || kitRhythm) && `:pcm-voices ${pcmUsed + (kitRhythm ? 1 : 0)}`].filter(Boolean);
@@ -2984,9 +3011,10 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     const ops = rec.ops.map((o, s) => (car.includes(s) ? { ...o, tl: Math.min(127, o.tl + rec.base) } : o));
     header.push("", fmVoiceDef(rec.name, { alg: rec.v.alg, fb: rec.v.fb, ams: rec.v.ams, fms: rec.v.fms, ops }, { dt2: keepDt2 }));
   }
-  const song = { header, bars, endTick, loopTick, tracks: out };
+  // Without bars there is nothing to fold by: the lines break at every four beats.
+  const song = { header, bars, endTick, loopTick, tracks: out, ...(bars.length ? {} : { lineEvery: PPQN * 4 }) };
   const pcm = dacOut?.pcm ?? chipOut?.pcm ?? null;
-  if (options.structure === false) return { source: emitSong(song), warnings, pcm };
+  if (options.structure === false || !bars.length) return { source: emitSong(song), warnings, pcm };
   return { source: emitStructured(song), warnings, pcm };
 }
 
@@ -3007,7 +3035,7 @@ const RHYTHM_ROM = Object.values(rhythmRom.kit).map((s) => s.toUpperCase()); // 
  * (its :gate), levels against the loudest hit.
  * `rows`: [{k, d, hits}].
  */
-function rhythmTracks(parsed, rows, target, tickOf, endTick) {
+function rhythmTracks(parsed, rows, target, tickOf, endTick, bpm) {
   const roles = Object.keys(rhythmRom.kit);
   const fmPac = target.hasPart("opll-rhythm");
   const rom = target.hasPart("rhythm") || fmPac;
@@ -3036,7 +3064,7 @@ function rhythmTracks(parsed, rows, target, tickOf, endTick) {
     });
     const gated = notes.some((n) => n.gate);
     const panned = rom && notes.some((n) => n.pan !== "center");
-    const gate = rom ? null : ringGate(s, BPM);
+    const gate = rom ? null : ringGate(s, bpm);
     tracks.push({ channel: d, open: rom ? [] : [`:prio ${s.prio}`], notes, marks: [],
       state: (n) => [roles[k], gate, gated && ":mode gate", gated && (n.gate ? `:gate ${n.gate}t` : ":gate* 1"), panned && `:pan ${n.pan}`].filter(Boolean) });
   }

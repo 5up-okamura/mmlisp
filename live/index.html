@@ -319,6 +319,10 @@
           title="Pick the notes that meet a condition, then delete them, change their length or reverse them">
           <span>Logical Editor</span><span class="menu-item-shortcut" id="logicalMenuCheck"></span>
         </button>
+        <button class="menu-item" id="timingMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleImportTiming();closeMenus()"
+          title="A VGM or NSF just imported: tap its beat, and it is written again on that tempo and grid">
+          <span>Tap Tempo</span><span class="menu-item-shortcut" id="timingMenuCheck"></span>
+        </button>
         <div class="menu-sep"></div>
         <button class="menu-item" id="abCompareMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleABCompare();closeMenus()">
           <span>A/B Compare</span><span class="menu-item-shortcut" id="abCompareCheck"></span>
@@ -777,6 +781,57 @@
       </div>
       </div>
     </section>
+    <!-- Edit > Tap Tempo: beside the editor, so the song plays while it is tapped -->
+    <section id="timingTool" class="rack-section temporary-tool logical-tool" data-menu="timingMenu" hidden aria-labelledby="timingTitle">
+      <div class="rack-title rack-title-row" tabindex="0" role="button" aria-expanded="true" aria-controls="timingBody">
+        <span id="timingTitle">Tap Tempo</span>
+        <button class="tool-close" type="button" aria-label="Close Tap Tempo" onclick="event.stopPropagation();closeImportTiming()">×</button>
+      </div>
+      <div class="rack-body" id="timingBody">
+      <button class="tb-btn it-tap" id="itTap" type="button" title="While the song plays, tap at least 4 beats here (or on a MIDI key); the first tap is a beat, a bar's first with bar lines">Tap the beat</button>
+      <div class="import-fields">
+        <label class="import-field"><span>BPM</span>
+          <span class="le-pair"><input id="itBpm" type="text" inputmode="decimal"><button class="tb-btn" type="button" onclick="scaleImportTiming(2)">×2</button><button class="tb-btn" type="button" onclick="scaleImportTiming(0.5)">÷2</button></span></label>
+        <div class="import-field"><span>Move the beat</span>
+          <span class="le-pair"><button class="tb-btn" type="button" onclick="moveImportTiming(-1, 0)" title="A beat earlier">−1</button><button class="tb-btn" type="button" onclick="moveImportTiming(1, 0)" title="A beat later">+1</button><button class="tb-btn" type="button" onclick="moveImportTiming(0, -1)" title="A frame earlier">−1f</button><button class="tb-btn" type="button" onclick="moveImportTiming(0, 1)" title="A frame later">+1f</button></span></div>
+        <label class="import-field"><span>Grid</span>
+          <select id="itGrid">
+            <option value="48">Eighth</option>
+            <option value="32">Eighth triplet</option>
+            <option value="24" selected>Sixteenth</option>
+            <option value="16">Sixteenth triplet</option>
+            <option value="12">Thirty-second</option>
+          </select></label>
+        <label class="import-field"><span>Snap</span>
+          <select id="itSnap">
+            <option value="0">Off</option>
+            <option value="1" selected>±1 frame</option>
+            <option value="2">±2 frames</option>
+          </select></label>
+        <label class="import-field"><span>Bar lines</span>
+          <select id="itBar">
+            <option value="0" selected>None</option>
+            <option value="2">2 beats</option>
+            <option value="3">3 beats</option>
+            <option value="4">4 beats</option>
+            <option value="5">5 beats</option>
+            <option value="6">6 beats</option>
+            <option value="7">7 beats</option>
+          </select></label>
+        <label class="import-field"><span>Shuffle</span>
+          <input id="itShuffle" type="text" value="none" placeholder="none, 60, [8 7]"></label>
+        <label class="import-field"><span>Gate − (frames)</span>
+          <input id="itGate" type="text" inputmode="numeric" value="0"></label>
+        <label class="import-field"><span>Click</span>
+          <input id="itClick" type="checkbox"></label>
+      </div>
+      <div class="le-status" id="itStatus"></div>
+      <div class="modal-actions">
+        <button class="tb-btn" id="itLast" type="button" onclick="lastImportTiming()" disabled title="This song's settings from the last time it was set">Last settings</button>
+        <button class="tb-btn" id="itReset" type="button" onclick="resetImportTiming()" disabled>As imported</button>
+      </div>
+      </div>
+    </section>
   </div>
 
   <!-- About -->
@@ -952,7 +1007,9 @@
     import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
-    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmRows } from './src/import-vgm.js';
+    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmRows, vgmOnsets, vgmOnsetLists } from './src/import-vgm.js';
+    import { tapBeat, fitBeat, shuffleOf, beatClock, warpOf, shuffleText, shuffleOfText, timingLine, timingOfLine } from './src/import-timing.js';
+    import { RATE, PPQN } from './src/import-song.js';
     import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import-mdx.js';
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
     import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
@@ -3114,7 +3171,7 @@
     // An imported song or bank becomes a new, unsaved document. It keeps the
     // source folder only when it came from that folder (`folder`); any other
     // is not its base.
-    async function loadImportedSource(source, warnings, fileName, label, { tag, pcm = null, folder = null }) {
+    async function loadImportedSource(source, warnings, fileName, label, { tag, pcm = null, folder = null, timingSong = null }) {
       _sourceHandle = null;
       // It goes by the song's own name until saved, as the .mmlisp Save
       // suggests; it compiles as that .mmlisp already.
@@ -3134,7 +3191,7 @@
         _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate });
         log(`${pcm.tag ?? 'mucom88'}: samples play from "${pcm.wavFile}" held in memory — Save offers to write it next to the score`, 'info');
       }
-      setEditorDoc(source);
+      setEditorDoc(source, timingSong);
       await refreshImportsAndCompile(); // a song imports preset sets
       log(label, 'info');
       for (const w of warnings) log(`${tag}: ${w}`, 'info');
@@ -3264,7 +3321,8 @@
         const res = await imp.run(bytes, name, { pdx: pdx ? new Uint8Array(await pdx.arrayBuffer()) : null, song });
         if (!res) return; // cancelled in the dialog
         await loadImportedSource(res.source, res.warnings, name,
-          `Imported ${name}${pdx ? ` with ${pdx.name}` : ''} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null, folder });
+          `Imported ${name}${pdx ? ` with ${pdx.name}` : ''} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null, folder, timingSong: res.timingSong && { ...res.timingSong, name } });
+        if (res.timingSong) log(`${name}: Edit > Tap Tempo puts it on a beat you tap`, 'info');
       } catch (e) {
         log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
       }
@@ -3399,7 +3457,7 @@
         rowsFor,
       });
       if (!got) return null;
-      return vgmToMmlisp(parsed, {
+      const options = {
         target: got.fields.target ?? def.target,
         dest: got.rows,
         followPitch: !!got.fields.followPitch,
@@ -3407,7 +3465,8 @@
         pcmVoices: got.fields.pcmVoices ? Number(got.fields.pcmVoices) : def.pcmVoices,
         structure: !!got.fields.structure,
         fileName,
-      }, a);
+      };
+      return { ...vgmToMmlisp(parsed, options, a), timingSong: { parsed, a, options } };
     }
 
     // MDX (X68000, MXDRV) and MGS (MSX, MGSDRV): clock-exact, so there is no
@@ -3464,7 +3523,7 @@
         rowsFor: (target) => vgmRows(a, target),
       });
       if (!got) return null;
-      return vgmToMmlisp(parsed, {
+      const options = {
         target: got.fields.target ?? a.target,
         dest: got.rows,
         followPitch: !!got.fields.followPitch,
@@ -3473,7 +3532,8 @@
         pcmVoices: def.pcmVoices,
         structure: !!got.fields.structure,
         fileName,
-      }, a);
+      };
+      return { ...vgmToMmlisp(parsed, options, a), timingSong: { parsed, a, options } };
     }
 
     async function importSf2FromFile(file) {
@@ -4319,10 +4379,11 @@
     sizeToolViewport();
     function placeTemporaryTool(tool) {
       const mobile = toolMedia.matches;
-      leEl('logicalModal').hidden = !mobile || tool.hidden;
+      leEl('logicalModal').hidden = !mobile || !anyTemporaryTool();
       (mobile ? leEl('logicalModal') : leEl('temporaryTools')).append(tool);
       tool.setAttribute('role', mobile ? 'dialog' : 'region');
     }
+    const anyTemporaryTool = () => !logicalTool.hidden || !timingTool.hidden;
     function setTemporaryToolVisible(tool, open) {
       tool.hidden = !open;
       const menu = leEl(tool.dataset.menu);
@@ -4342,22 +4403,23 @@
           });
         } else if (_panelOpen) togglePanel();
       } else {
-        leEl('logicalModal').hidden = true;
+        leEl('logicalModal').hidden = !toolMedia.matches || !anyTemporaryTool();
         tool.remove(); // reopening appends at the end
       }
     }
     // Keep the same form and values through a desktop/phone width change.
     toolMedia.addEventListener('change', () => {
-      const tool = leEl('logicalTool') || _le?.tool;
-      if (!tool || tool.hidden) return;
-      const focus = document.activeElement;
-      placeTemporaryTool(tool);
-      if (toolMedia.matches && _panelOpen) togglePanel();
-      if (!toolMedia.matches) {
-        if (!_panelOpen) togglePanel();
-        selectPanelTab('params');
+      for (const tool of [logicalTool, timingTool]) {
+        if (tool.hidden) continue;
+        const focus = document.activeElement;
+        placeTemporaryTool(tool);
+        if (toolMedia.matches && _panelOpen) togglePanel();
+        if (!toolMedia.matches) {
+          if (!_panelOpen) togglePanel();
+          selectPanelTab('params');
+        }
+        if (tool.contains(focus)) focus.focus({ preventScroll: true });
       }
-      if (tool.contains(focus)) focus.focus({ preventScroll: true });
     });
 
     let _le = null;
@@ -4511,6 +4573,12 @@
       editorView.dispatch({ effects: setLogicalMarks.of(Decoration.none) });
       editorView.focus();
     };
+    // A new document: the query stays, but for the voice, which was the last score's.
+    function logicalNewScore() {
+      if (!_le) return;
+      leEl('leVoice').value = '';
+      scheduleLogicalRefresh();
+    }
     window.toggleLogicalEditor = () => _le ? closeLogicalEditor() : openLogicalEditor();
     window.applyLogicalEditor = () => {
       if (!_le) return;
@@ -4545,6 +4613,256 @@
       logicalTool.classList.toggle('collapsed');
       title.setAttribute('aria-expanded', String(!logicalTool.classList.contains('collapsed')));
     });
+
+    // ---- Edit > Tap Tempo (src/import-timing.js) ----
+    // A VGM's or NSF's score is written from its file again on the beat tapped
+    // here, the song held in memory as long as the score it was imported into
+    // is the one open. Each change is one edit of the whole score.
+    const timingTool = leEl('timingTool');
+    let _timingSong = null; // {parsed, a, options, name}
+    let _it = null;         // the panel: {lists, onsets, first, beat, origin, zero, taps, …}
+    // A new document: the panel stays open, as the other tools do, its controls
+    // off on a score that has no song behind it.
+    function setImportTimingSong(song) {
+      itStop();
+      _timingSong = song;
+    }
+    function itControls(on) {
+      for (const el of leEl('timingBody').querySelectorAll('button, input, select')) el.disabled = !on;
+      leEl('itLast').disabled = leEl('itReset').disabled = true;
+    }
+    const itStatus = (text) => { leEl('itStatus').textContent = text; };
+    const itKey = (song) => `${song.name}/${song.parsed.totalSamples}`; // (names repeat from game to game)
+    const itShuffle = () => shuffleOfText(leEl('itShuffle').value);
+    const itTiming = () => ({ beat: _it.beat, origin: _it.origin, grid: Number(leEl('itGrid').value), snap: Number(leEl('itSnap').value),
+      bar: Number(leEl('itBar').value), shuffle: itShuffle(), gate: Math.max(0, Math.round(Number(leEl('itGate').value)) || 0) });
+    function itForm(t) {
+      _it.beat = t.beat;
+      _it.origin = t.origin;
+      leEl('itGrid').value = String(t.grid);
+      leEl('itSnap').value = String(t.snap);
+      leEl('itBar').value = String(t.bar);
+      leEl('itShuffle').value = shuffleText(t.shuffle);
+      leEl('itGate').value = String(t.gate);
+    }
+    const itBpmText = () => { leEl('itBpm').value = _it.beat ? String(+((60 * RATE) / _it.beat).toFixed(3)) : ''; };
+    function itReport(extra = '') {
+      if (!_it.beat) { itStatus(extra || 'Play the song, then tap at least 4 beats.'); return; }
+      const c = beatClock(itTiming(), _it.first);
+      const grid = _it.onsets.filter((t) => c.tickOf(t) % c.grid === 0).length;
+      const parts = [`${c.bpm} BPM`, `${Math.round((grid * 100) / Math.max(1, _it.onsets.length))}% of the notes on the grid`];
+      if (extra) parts.push(extra);
+      itStatus(parts.join(' · '));
+    }
+    // Where the song is as heard, in the file's samples.
+    function itHeardAt() {
+      if (!player?.isPlaying?.() || !player.trackTickAt) return null; // (the A/B reference has no clock to read)
+      const at = player.trackTickAt(0, audioCtx.currentTime - (audioCtx.outputLatency || 0));
+      return at ? at.tick * player._secsPerTick * RATE + _it.zero : null;
+    }
+    // One write at a time: what is asked meanwhile is written next, the song
+    // going on from where it was once the last is built.
+    async function itApply(timing) {
+      const it = _it, song = _timingSong;
+      clearTimeout(it.timer);
+      it.want = { timing };
+      if (it.writing) return;
+      it.writing = true;
+      const heard = itHeardAt();
+      if (heard != null) stopPlayback({ quiet: true });
+      let built = null;
+      try {
+        while (it.want && _it === it) {
+          const { timing } = it.want;
+          it.want = null;
+          const { source, pcm } = vgmToMmlisp(song.parsed, timing ? { ...song.options, timing } : song.options, song.a);
+          it.zero = timing ? beatClock(timing, it.first).zero : 0;
+          it.written = source;
+          editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: source }, userEvent: 'input.timing' });
+          if (pcm) { _mucomPcm = pcm; _pcmSampleCache.set(pcm.wavFile, { data: pcm.mono, sampleRate: pcm.rate }); }
+          leEl('itReset').disabled = !timing;
+          if (timing) itRemember(song, timingLine(timing, beatClock(timing, it.first).bpm));
+          built = await refreshImportsAndCompile();
+        }
+      } catch (e) {
+        itStatus(`Cannot write the score: ${e?.message || e}`);
+        log(`Tap Tempo: ${e?.message || e}`, 'err');
+        return;
+      } finally {
+        it.writing = false;
+      }
+      // (On the score just built: Play would compile it once more.)
+      if (heard != null && _timingSong === song) onPlay(null, { fromSec: Math.max(0, (heard - it.zero) / RATE), prepared: built?.ok ? { ir: _lastGoodIR, ok: true } : null });
+    }
+    // The songs' last settings, the latest fifty of them.
+    function itRemember(song, line) {
+      const kept = Object.entries(loadPref('importTiming', {})).filter(([k]) => k !== itKey(song)).slice(-49);
+      savePref('importTiming', Object.fromEntries([...kept, [itKey(song), line]]));
+    }
+    // What the score says now, after an undo or an edit of its comment.
+    function itSync() {
+      const doc = editorView.state.doc.toString();
+      if (!_it || doc === _it.written) return;
+      _it.written = doc;
+      const t = timingOfLine(doc);
+      if (t) itForm(t);
+      else _it.beat = _it.origin = null;
+      _it.zero = t ? beatClock(t, _it.first).zero : 0;
+      leEl('itReset').disabled = !t;
+      itBpmText();
+      itReport();
+    }
+    function itChanged() {
+      if (!_it?.beat) return;
+      clearTimeout(_it.timer);
+      _it.timer = setTimeout(() => itApply(itTiming()), 250);
+      itReport();
+    }
+    // The taps, once they stop: the beat they keep, held to the onsets.
+    function itFit() {
+      const taps = _it.taps;
+      _it.taps = [];
+      if (taps.length < 4) { itReport(`${taps.length} taps — at least 4 beats`); return; }
+      const tapped = tapBeat(taps);
+      const f = fitBeat(_it.lists, tapped, { mid: taps[taps.length >> 1] });
+      _it.beat = f.beat;
+      _it.origin = f.origin;
+      itBpmText();
+      if (itShuffle() == null) leEl('itShuffle').value = shuffleText(shuffleOf(_it.onsets, itTiming(), _it.first));
+      itApply(itTiming());
+      itReport(f.kept ? 'as tapped — the notes show no clear beat there'
+        : f.held >= (_timingSong.parsed.totalSamples / RATE) * 0.9 ? 'held to the notes' : `held to the notes for ${Math.round(f.held)} s`);
+    }
+    function tapImportTiming() {
+      if (!_it) return;
+      itSync();
+      const t = itHeardAt();
+      if (t == null) { itStatus('Play the song, then tap at least 4 beats.'); return; }
+      // Round a loop the beats start over; a run ends when they stop, long
+      // enough after the last to let a slow beat, and a missed tap, through.
+      const last = _it.taps[_it.taps.length - 1];
+      if (last != null && t <= last) _it.taps = [];
+      _it.taps.push(t);
+      clearTimeout(_it.tapTimer);
+      _it.tapTimer = setTimeout(itFit, Math.max(1500, last != null && t > last ? ((t - last) / RATE) * 2500 : 0));
+      itStatus(`${_it.taps.length} tap${_it.taps.length === 1 ? '' : 's'}…`);
+    }
+    window.scaleImportTiming = (k) => { if (_it?.beat) { _it.beat /= k; itBpmText(); itChanged(); } };
+    window.moveImportTiming = (beats, frames) => {
+      if (!_it?.beat) return;
+      _it.origin += beats * _it.beat + (frames * RATE) / 60;
+      itChanged();
+    };
+    window.lastImportTiming = () => {
+      if (!_it?.last) return;
+      itForm(_it.last);
+      itBpmText();
+      itApply(_it.last);
+      itReport();
+    };
+    window.resetImportTiming = () => {
+      if (!_it) return;
+      clearTimeout(_it.timer);
+      _it.beat = _it.origin = null;
+      itBpmText();
+      itApply(null);
+      itReport();
+    };
+    // The click: on the score's beats, so it says what the score now is.
+    function itClickTick() {
+      if (!_it || !leEl('itClick').checked || !_it.beat || !player?.isPlaying?.() || !player.trackTickAt) return;
+      const now = audioCtx.currentTime;
+      const at = player.trackTickAt(0, now);
+      if (!at) return;
+      // (The score's ticks are the shuffle's, warped: the beat is where it plays.)
+      const t = itTiming(), { warp, unwarp } = warpOf(t.shuffle, t.grid);
+      const beat = Math.ceil(unwarp(at.tick) / PPQN);
+      const when = now + (warp(beat * PPQN) - at.tick) * player._secsPerTick;
+      if (when - now > 0.1 || when < _it.clickAt + 0.05) return;
+      _it.clickAt = when;
+      const bar = Number(leEl('itBar').value);
+      const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+      osc.frequency.value = bar && beat % bar === 0 ? 1600 : 1000;
+      gain.gain.setValueAtTime(0.2, when);
+      gain.gain.exponentialRampToValueAtTime(0.001, when + 0.03);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(when);
+      osc.stop(when + 0.03);
+    }
+    function itStart() {
+      itControls(!!_timingSong);
+      if (!_timingSong) {
+        leEl('itBpm').value = '';
+        itStatus('Import a VGM or NSF to set its timing.');
+        return;
+      }
+      const lists = vgmOnsetLists(_timingSong.parsed), onsets = vgmOnsets(_timingSong.parsed);
+      _it = { lists, onsets, first: onsets[0] ?? 0, beat: null, origin: null, zero: 0, taps: [], timer: 0, tapTimer: 0, clickAt: 0,
+        clock: setInterval(itClickTick, 25) };
+      // A shuffle and a gate are one song's; the grid, snap and bars go on.
+      leEl('itShuffle').value = 'none';
+      leEl('itGate').value = '0';
+      // The score says what it was set to; a song set before offers its last settings.
+      _it.written = '';
+      itSync();
+      _it.last = timingOfLine(loadPref('importTiming', {})[itKey(_timingSong)] ?? '');
+      leEl('itLast').disabled = !_it.last;
+      itBpmText();
+      itReport();
+    }
+    function itStop() {
+      if (!_it) return;
+      clearTimeout(_it.timer);
+      clearTimeout(_it.tapTimer);
+      clearInterval(_it.clock);
+      _it = null;
+    }
+    window.openImportTiming = () => {
+      if (!timingTool.hidden) return;
+      leEl('logicalModal').append(timingTool);
+      setTemporaryToolVisible(timingTool, true);
+      itStart();
+      (_timingSong ? leEl('itTap') : timingTool.querySelector('.rack-title')).focus({ preventScroll: true });
+    };
+    window.closeImportTiming = () => {
+      if (timingTool.hidden) return;
+      itStop();
+      setTemporaryToolVisible(timingTool, false);
+      editorView.focus();
+    };
+    window.toggleImportTiming = () => timingTool.hidden ? openImportTiming() : closeImportTiming();
+    const itTapKey = (e) => {
+      if (e.repeat || (e.type === 'keydown' && e.key !== ' ' && e.key !== 'Enter')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.type === 'pointerdown') e.currentTarget.focus({ preventScroll: true });
+      tapImportTiming();
+    };
+    leEl('itTap').addEventListener('pointerdown', itTapKey);
+    leEl('itTap').addEventListener('keydown', itTapKey);
+    for (const id of ['itGrid', 'itSnap', 'itBar', 'itShuffle', 'itGate']) leEl(id).addEventListener('change', itChanged);
+    leEl('itBpm').addEventListener('change', () => {
+      const bpm = Number(leEl('itBpm').value);
+      if (!_it || !(bpm >= 20 && bpm <= 400)) { if (_it) itBpmText(); return; }
+      _it.beat = (60 * RATE) / bpm;
+      _it.origin ??= _it.first;
+      itChanged();
+    });
+    timingTool.addEventListener('pointerdown', itSync, true);
+    timingTool.addEventListener('focusin', itSync); // (Tab in after an undo)
+    timingTool.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeImportTiming(); }
+      else if (e.target.classList.contains('rack-title') && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault(); e.target.click();
+      }
+    });
+    timingTool.querySelector('.rack-title').addEventListener('click', (e) => {
+      if (!toolMedia.matches || e.target.closest('.tool-close')) return;
+      const title = e.currentTarget;
+      timingTool.classList.toggle('collapsed');
+      title.setAttribute('aria-expanded', String(!timingTool.classList.contains('collapsed')));
+    });
+
     window.undoAction = () => { undo(editorView); editorView.focus(); };
     window.redoAction = () => { redo(editorView); editorView.focus(); };
     // The panel takes the focus itself, so these do not steal it back.
@@ -4571,14 +4889,14 @@
       if (key === 'Mod-b') return isMac ? '⌘B' : 'Ctrl+B';
       if (key === 'Mod-k') return isMac ? '⌘K' : 'Ctrl+K';
       if (key === 'Mod-j') return isMac ? '⌘J' : 'Ctrl+J';
-      if (key === 'Mod-Shift-Enter') return isMac ? '⌘⇧↩' : 'Ctrl+Shift+Enter';
       if (key === 'Mod-Alt-]') return isMac ? '⌘⌥]' : 'Ctrl+Alt+]';
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
+      if (key === 'Mod-Shift-Enter') return isMac ? '⌘⇧↩' : 'Ctrl+Shift+Enter';
       if (key === 'Mod-Shift-l') return isMac ? '⌘⇧L' : 'Ctrl+Shift+L';
+      if (key === 'Mod-Alt-Shift-l') return isMac ? '⌘⌥⇧L' : 'Ctrl+Alt+Shift+L';
       if (key === 'Mod-Alt-ArrowUp') return isMac ? '⌘⌥↑' : 'Ctrl+Alt+Up';
       if (key === 'Mod-Alt-ArrowDown') return isMac ? '⌘⌥↓' : 'Ctrl+Alt+Down';
-      if (key === 'Mod-Alt-Shift-l') return isMac ? '⌘⌥⇧L' : 'Ctrl+Alt+Shift+L';
       if (key === 'Mod-z') return isMac ? '⌘Z' : 'Ctrl+Z';
       if (key === 'Mod-Shift-z') return isMac ? '⌘⇧Z' : 'Ctrl+Shift+Z';
       return key;
@@ -4934,15 +5252,18 @@
     // Bumped by each new document: a compile's result for the score it
     // replaced is dropped (refreshImportsAndCompile).
     let _docEpoch = 0;
-    function setEditorDoc(text) {
+    // `timingSong`: the file a song's score was written from (Tap Tempo).
+    function setEditorDoc(text, timingSong = null) {
       // Reset the full state so that undo history does not include the file load.
-      closeLogicalEditor();
+      setImportTimingSong(timingSong);
       resetABCompare();
       _docEpoch++; // a compile still running is of the score this one replaces
       editorView.setState(EditorState.create({
         doc: text,
         extensions: editorExtensions,
       }));
+      if (!timingTool.hidden) itStart();
+      logicalNewScore();
       markDocSaved(); // as it came: nothing of the user's in it yet
       syncBracketStatus(); // setState fires no doc-change update
       // Likewise the FM panel's def-at-cursor is this document's, not the last
@@ -8747,7 +9068,7 @@
       stopPlayback();
     }
 
-    function stopPlayback() {
+    function stopPlayback({ quiet = false } = {}) {
       _playEpoch++;
       stopLibraryScorePreview();
       stopFmLiveLoop();
@@ -8765,7 +9086,7 @@
       refreshSeLit();
       _timeCue = null;
       showTime(0);
-      if (wasRunning) log('Stopped');
+      if (wasRunning && !quiet) log('Stopped');
       document.getElementById('btnPlay').classList.remove('active');
       setPlayIcon(false);
       dropPlayheadFx();
@@ -12095,6 +12416,7 @@
 
     // Each held key is a voice of the polyphonic preview (previewTake).
     async function onMidiNoteOn(note, vel127) {
+      if (_it) { tapImportTiming(); return; } // a key taps the beat
       flushParamSync();
       const target = getKeyboardTargetContext();
       if (!target) return;

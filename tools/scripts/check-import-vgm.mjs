@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
-import { parseVgm, analyzeVgm, decodeOki, decodeK053260, decodeC140, defaultVgmOptions, vgmToMmlisp, vgmRows } from "../../live/src/import-vgm.js";
+import { parseVgm, analyzeVgm, decodeOki, decodeK053260, decodeC140, defaultVgmOptions, vgmToMmlisp, vgmRows, vgmOnsets, vgmOnsetLists } from "../../live/src/import-vgm.js";
 import { assignBends } from "../../live/src/import-song.js";
+import { tapBeat, fitBeat, beatClock, timingLine, timingOfLine } from "../../live/src/import-timing.js";
 import { readImportSources, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { targetProfile } from "../../live/src/targets.js";
@@ -958,6 +959,60 @@ for (const [start, phase] of [[1, 96], [2, 128], [5, 224], [6, null]]) {
   const [def] = assignBends([note]);
   assert.ok(def.includes(":len 8f"), `start ${start}: its period, ${def}`);
   assert.ok(phase == null ? !def.includes(":phase") : def.includes(`:phase ${phase}`), `start ${start}: its place in the sine, ${def}`);
+}
+
+// A beat given by hand: a song at 132 BPM with a pickup, tapped a little off.
+// Its notes come back as the notes they were written as, in bars or without.
+{
+  const SR = 44100;
+  const song = [
+    "(fm1 :tempo 132 :len 8 _2. c d (x 8 e f g a | c d e f | c2 d2 |) (go top))",
+    "(fm2 :tempo 132 :len 4 _2. c (x 24 e g c d |))",
+  ].join("\n");
+  const { ir } = compileMMLisp(song, "t.mmlisp");
+  const v = renderVgm(new IRPlayer(() => {}).loadJSON(ir), {});
+  const parsed = await parseVgm(new Uint8Array(v.bytes ?? v));
+  const a = analyzeVgm(parsed);
+  const beat = (60 * SR) / 132;
+  const onsets = vgmOnsets(parsed);
+  // Tapped from the bar after the pickup.
+  const taps = Array.from({ length: 8 }, (_, i) => onsets[0] + beat * (i + 1) + [900, -700, 400, -1000, 600, -300, 800, -500][i]);
+  const tapped = tapBeat(taps);
+  assert.ok(Math.abs(tapped.beat / beat - 1) < 0.02, "the taps read the beat, roughly");
+  const fitted = fitBeat(vgmOnsetLists(parsed), tapped, { mid: taps[3] });
+  assert.ok(!fitted.kept && Math.abs((60 * SR) / fitted.beat - 132) < 0.05, `the onsets hold it to 132: ${(60 * SR) / fitted.beat}`);
+  assert.ok(fitted.fit > 0.99, "and every onset is on the grid");
+  const timing = { beat: fitted.beat, origin: fitted.origin, grid: 24, snap: 1, bar: 4, shuffle: null, gate: 0 };
+  const scoreOf = (t, structure = true) => {
+    const { source } = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, "md"), structure, fileName: "t.vgm", timing: t }, a);
+    const { ir, diagnostics } = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) });
+    assert.deepEqual(diagnostics.filter((d) => d.severity === "error").map((d) => d.code), [], "the adjusted score compiles clean");
+    return { source, ir };
+  };
+  const barred = scoreOf(timing);
+  assert.ok(Math.abs(Number(/:tempo ([\d.]+)/.exec(barred.source)[1]) - 132) < 0.05, "its tempo");
+  assert.match(barred.source, /_2\. c d \|/, "the pickup ends its bar");
+  assert.match(barred.source, /\(x \d+/, "bars fold");
+  assert.deepEqual(timingOfLine(barred.source).bar, 4, "the settings are in its comment");
+  assert.ok(Math.abs(timingOfLine(barred.source).origin - timing.origin) < 5, "to within a few samples");
+  const plain = scoreOf({ ...timing, bar: 0 });
+  assert.ok(!/\|/.test(plain.source.split("\n").filter((l) => !l.startsWith(";")).join("\n")), "no bar lines where none is asked for");
+  assert.ok(plain.source.split("\n").filter((l) => l.startsWith("  ")).length > 8, "the lines still break");
+  assert.ok(!/\b[a-g][+-]?\d+t\b/.test(plain.source.split("(fm1")[1]), "every note is a plain length");
+  assert.match(scoreOf({ ...timing, gate: 2 }).source, /\(fm1 :gate- 2f/, "a gate on each melody track");
+  const swung = scoreOf({ ...timing, shuffle: 60 }).source;
+  assert.match(swung, /\(fm1 :shuffle-base 16 :shuffle 60/, "a shuffle on each track");
+}
+// On a clock: a swing's second step goes back to the grid, a groove stays off it.
+{
+  const c = beatClock({ beat: 24000, origin: 0, grid: 24, snap: 1, bar: 0, shuffle: 60, gate: 0 });
+  const pair = 12000; // two sixteenths at this beat
+  assert.equal(c.tickOf(pair * 0.6), 24, "the swung step");
+  assert.equal(c.tickOf(pair), 48, "the pair's end");
+  const straight = beatClock({ beat: 24000, origin: 0, grid: 24, snap: 1, bar: 0, shuffle: null, gate: 0 });
+  assert.equal(straight.tickOf(6000 + 200), 24, "a driver's frame off: on the grid");
+  assert.equal(straight.tickOf(6000 + 2000) % 24 !== 0, true, "a groove: where it is");
+  assert.deepEqual(timingOfLine(timingLine({ origin: 441, grid: 16, snap: 0, bar: 0, shuffle: [7, 6, 3, 4], gate: 1 }, 120)).shuffle, [7, 6, 3, 4], "a cycle in the comment");
 }
 
 console.log("VGM import checks passed");

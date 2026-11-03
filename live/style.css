@@ -520,12 +520,13 @@
       background: var(--background); border: 1px solid var(--mid); border-radius: 4px;
       box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
     .logical-tool .le-pair { display: flex; gap: 0.3rem; }
+    .logical-tool .it-tap { width: 100%; margin-bottom: 0.6rem; padding-block: 0.8rem; touch-action: manipulation; }
     .logical-tool input[type=text] {
       width: 4.5rem; background: var(--background); color: var(--foreground); border: 1px solid var(--mid);
       border-radius: 2px; padding: 0.15rem 0.3rem; font-family: inherit; font-size: var(--text);
     }
     .logical-tool .le-ops { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); }
-    .logical-tool input:disabled { opacity: var(--off); }
+    .logical-tool input:disabled, .logical-tool select:disabled { opacity: var(--off); }
     .logical-tool .le-status { margin-top: 0.6rem; color: var(--foreground); font-size: var(--text); min-height: 1em; }
     .import-field[hidden] { display: none; }
     .cm-valHover {

@@ -2117,6 +2117,24 @@ them: a key-on starts a note, a key-off ends it.
   the song's. The file's loop becomes `#top … (go top)`, at the first note
   within a frame of the point the file marks (a driver marks it a moment
   off the notes it goes back to).
+- **Edit ▸ Tap Tempo** writes a VGM or NSF just imported again on a beat of
+  your own, for as long as that score is open. Play the song and tap at least
+  four beats (the button, or a MIDI key); the first tap is a beat, a bar's first
+  with bar lines, so a pickup is where you start. The onsets then hold the taps
+  to the song's tempo, near what was tapped, so a tempo is never read as its
+  double or half; ×2 and ÷2, the beat and frame moves and the BPM box correct
+  it by hand, and Click sounds the score's beats. A note within **Snap** of the
+  **Grid** lands on it, since that much is the driver's frame; one further off
+  stays where it is, so a groove is not corrected, and a gap of up to half a
+  step closes. **Shuffle** takes a `:shuffle` value, offered where it brings
+  more notes onto the grid; **Gate −** cuts every melody note by that many
+  frames. **Bar lines** are off by default, as a song may change its meter:
+  without them repeats do not fold, and with them a song folds on the bars set.
+  On a score with no such song behind it the panel's controls are off.
+  Each change writes the score again, one undo; **As imported** goes back. The
+  settings are the score's `; Timing:` comment, and a song set before offers
+  them under **Last settings**. One tempo a song: where it changes, the status says how
+  long the beat held.
 - An SSG level becomes `:vel` by its decibels (the SSG's steps are 3 dB,
   `:vel`'s 2 dB), so a decay keeps its depth; the quietest levels (under
   `:vel`'s 30 dB) sit at its floor.
@@ -2573,8 +2591,8 @@ panel on the tab it was left on; a fresh launch starts on Params, with
 Library's filters cleared.
 
 On desktop, temporary tools such as the Logical Editor (§24) appear after
-all parameter sections. Switching tabs or hiding the panel keeps them open;
-their checked menu items and heading close buttons remove them.
+all parameter sections. Switching tabs, hiding the panel or opening another
+file keeps them open; their checked menu items and heading close buttons remove them.
 
 **MMLisp ▸ Language** picks the language the reference and the snippets are
 explained in — the Ref entries' summaries and category names, the snippets'

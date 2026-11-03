@@ -170,6 +170,7 @@ function writeBody(notes, opts) {
   let held = null; // the note still sounding at t, continued with a tie
   let lastPre = opts.pre ?? []; // the voice/sample switch in force
   let lastEnd = null; // where the last note written ends
+  let nextLine = opts.lineEvery ?? 0; // a score without bars breaks its lines here
 
   const pitch = (midi) => {
     const o = octOf(midi);
@@ -229,6 +230,10 @@ function writeBody(notes, opts) {
       line.push("|");
       lines.push(line.join(" "));
       line = [];
+    } else if (opts.lineEvery && t >= nextLine) {
+      lines.push(line.join(" "));
+      line = [];
+      nextLine = (Math.floor(t / opts.lineEvery) + 1) * opts.lineEvery;
     }
   }
   if (line.length) lines.push(line.join(" "));
@@ -275,6 +280,7 @@ function trackSpan(song, tr) {
  * @param song {
  *   header: string[]        top-level lines (comments, title, imports, defs)
  *   bars: number[]          bar end ticks
+ *   lineEvery?              no bars: `|` is not written, the lines break here
  *   endTick, loopTick?
  *   tracks: [{channel, head: string[], notes, marks?, vel?,
  *             endTick?, loopTick?}]  a track's own end and loop, where its
@@ -287,14 +293,14 @@ export function emitSong(song) {
   const out = [...song.header];
   for (const tr of song.tracks) {
     const { endTick, loopTick } = trackSpan(song, tr);
-    const bars = song.bars.filter((b) => b < endTick).concat(endTick);
+    const bars = song.lineEvery ? [] : song.bars.filter((b) => b < endTick).concat(endTick);
     const notes = tr.notes;
     const first = notes.find((n) => n.midi != null);
     const oct = first ? octOf(first.midi) : 4;
     const defLen = commonLen(notes, bars, endTick);
     const vel = notes.find((n) => n.vel != null)?.vel ?? 15;
     const body = writeBody(notes, {
-      bars, endTick, loopTick,
+      bars, endTick, loopTick, lineEvery: song.lineEvery,
       marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: shots(tr.channel), noVel: tr.noVel,
     });
     const head = [tr.channel, ...(tr.open ?? []), ...tr.head, `:oct ${oct}`, `:len ${lenToken(defLen)}`];
