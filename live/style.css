@@ -1518,9 +1518,14 @@
       overflow-y: auto;
       padding: 0.6rem 0.75rem;
       font-size: var(--text);
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
     }
     #lessonPane[hidden], .lesson-step[hidden], .lesson-list[hidden] { display: none; }
+    .lesson-pane-actions { flex: none; }
     .lesson-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .lesson-row.current { background: color-mix(in srgb, var(--foreground) var(--sel), var(--background)); }
     .lesson-group-title { font-weight: bold; margin-bottom: 0.2rem; }
     .lesson-row {
       display: flex;
@@ -1539,6 +1544,17 @@
     .lesson-row .lesson-mark { width: 1em; flex: none; }
     .lesson-step { display: flex; flex-direction: column; gap: 0.6rem; }
     .lesson-head { display: flex; justify-content: space-between; gap: 0.5rem; font-weight: bold; }
+    .lesson-title {
+      background: none;
+      border: none;
+      color: var(--foreground);
+      font: inherit;
+      font-weight: bold;
+      text-align: left;
+      padding: 0;
+      cursor: pointer;
+    }
+    @media (hover: hover) { .lesson-title:hover { text-decoration: underline; } }
     .lesson-count { opacity: var(--off); font-weight: normal; white-space: nowrap; }
     .lesson-about { line-height: 1.5; }
     .lesson-try {

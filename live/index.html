@@ -659,10 +659,16 @@
       <!-- Lessons: the tutorial (tutorial/, lessons.js), each step played in a
            working copy of its own; leaving the lesson brings the score back -->
       <div id="lessonPane" hidden>
+        <!-- The lesson's own actions, over the list and the step alike -->
+        <div class="lesson-actions lesson-pane-actions">
+          <button class="lib-chip active" id="lessonGo" onclick="continueLessons()">Start</button>
+          <button class="lib-chip" id="lessonClear" onclick="clearLessonProgress()" title="Untick every step, in this browser">Clear Progress</button>
+          <button class="lib-chip" id="lessonLeave" onclick="leaveLesson()" title="Back to your score, as you left it">Leave</button>
+        </div>
         <div id="lessonList" class="lesson-list"></div>
         <div id="lessonStep" class="lesson-step" hidden>
           <div class="lesson-head">
-            <span id="lessonTitle" class="lesson-title"></span>
+            <button type="button" id="lessonTitle" class="lesson-title" onclick="showLessonList()" title="The list of lessons; this one stays open"></button>
             <span id="lessonCount" class="lesson-count"></span>
           </div>
           <div id="lessonAbout" class="lesson-about"></div>
@@ -675,7 +681,6 @@
             <button class="lib-chip" id="lessonNext" onclick="stepLesson(1)">Next</button>
             <button class="lib-chip" id="lessonReset" onclick="resetLessonStep()" title="Start this step over from its code">Start Over</button>
             <button class="lib-chip" id="lessonAnswer" onclick="showLessonAnswer()" title="Put one way of doing it in the editor">Show Answer</button>
-            <button class="lib-chip" id="lessonLeave" onclick="leaveLesson()" title="Back to your score, as you left it">Leave</button>
           </div>
         </div>
       </div>
@@ -10328,39 +10333,27 @@
       return _lessons;
     }
 
-    // The list, or the open lesson's step.
+    // The list, or the open lesson's step; the actions over both.
     async function showLessons() {
       const list = document.getElementById('lessonList');
       const step = document.getElementById('lessonStep');
-      list.hidden = !!_lesson;
-      step.hidden = !_lesson;
-      if (_lesson) return renderLessonStep();
       let lessons;
       try { lessons = await loadLessons(); }
       catch (e) { list.textContent = 'Lessons: ' + e.message; return; }
-      // Start where the learner left off: the first step not yet done.
-      const steps = lessons.flatMap((l, li) => l.steps.map((st, si) => [li, si, _lessonProgress.done.has(lessonKey(l, st))]));
-      const next = steps.find(([, , done]) => !done);
-      const head = document.createElement('div');
-      head.className = 'lesson-actions';
-      const go = document.createElement('button');
-      go.className = 'lib-chip active';
-      go.textContent = next && steps.some(([, , done]) => done) ? 'Continue' : 'Start';
+      const done = (l, st) => _lessonProgress.done.has(lessonKey(l, st));
+      const any = lessons.some((l) => l.steps.some((st) => done(l, st)));
+      const next = lessons.flatMap((l, li) => l.steps.map((st, si) => [li, si, done(l, st)])).find(([, , d]) => !d);
+      const go = document.getElementById('lessonGo');
+      go.textContent = next && any ? 'Continue' : 'Start';
       go.title = next ? 'From the first step not done yet' : 'Every step is done: from the first';
-      go.onclick = () => startLesson(...(next ?? steps[0]).slice(0, 2));
-      const clear = document.createElement('button');
-      clear.className = 'lib-chip';
-      clear.textContent = 'Clear Progress';
-      clear.title = 'Untick every step, in this browser';
-      clear.disabled = !steps.some(([, , done]) => done);
-      clear.onclick = () => {
-        if (!window.confirm('Clear every lesson step you have done?')) return;
-        _lessonProgress.done.clear();
-        saveLessonProgress(_lessonProgress);
-        showLessons();
-      };
-      head.append(go, clear);
-      list.replaceChildren(head, ...lessons.map((l, li) => {
+      document.getElementById('lessonClear').disabled = !any;
+      document.getElementById('lessonLeave').disabled = !_lesson;
+      const showStep = !!_lesson?.lesson && !_lesson.list;
+      list.hidden = showStep;
+      step.hidden = !showStep;
+      renderLessonBar(); // over the editor while the step is out of sight: the list too
+      if (showStep) return renderLessonStep();
+      list.replaceChildren(...lessons.map((l, li) => {
         const group = document.createElement('div');
         const title = document.createElement('div');
         title.className = 'lesson-group-title';
@@ -10369,9 +10362,10 @@
         l.steps.forEach((st, si) => {
           const row = document.createElement('button');
           row.className = 'lesson-row';
+          if (_lesson?.lesson === l && _lesson.si === si) row.classList.add('current');
           const mark = document.createElement('span');
           mark.className = 'lesson-mark';
-          mark.textContent = _lessonProgress.done.has(lessonKey(l, st)) ? '✓' : '';
+          mark.textContent = done(l, st) ? '✓' : '';
           const name = document.createElement('span');
           name.textContent = lessonText(lessonKey(l, st), st.title);
           row.append(mark, name);
@@ -10381,6 +10375,26 @@
         return group;
       }));
     }
+
+    // Start / Continue: the first step not done yet, else the first.
+    window.continueLessons = async () => {
+      const lessons = await loadLessons();
+      const at = lessons.flatMap((l, li) => l.steps.map((st, si) => [li, si]))
+        .find(([li, si]) => !_lessonProgress.done.has(lessonKey(lessons[li], lessons[li].steps[si])));
+      await startLesson(...(at ?? [0, 0]));
+    };
+    window.clearLessonProgress = () => {
+      if (!window.confirm('Clear every lesson step you have done?')) return;
+      _lessonProgress.done.clear();
+      saveLessonProgress(_lessonProgress);
+      showLessons();
+    };
+    // The list with the lesson still open: its step is where it was left.
+    window.showLessonList = () => {
+      if (!_lesson) return;
+      _lesson.list = true;
+      showLessons();
+    };
 
     async function openLessons() {
       if (!_panelOpen) togglePanel();
@@ -10411,7 +10425,7 @@
       try { parsed = parseStep(await fetchText(path)); }
       catch (e) { log('Lessons: ' + e.message, 'err'); return; }
       if (_lesson.lesson) _lesson.states.set(lessonKey(_lesson.lesson, _lesson.lesson.steps[_lesson.si]), editorView.state);
-      Object.assign(_lesson, { lesson, si, parsed, status: { state: 'fresh', why: '' } });
+      Object.assign(_lesson, { lesson, si, parsed, list: false, status: { state: 'fresh', why: '' } });
       const kept = fresh || text != null ? null : _lesson.states.get(key);
       stopLibraryPreview();
       cancelResume();
@@ -10448,7 +10462,7 @@
       const st = lesson.steps[si];
       const key = lessonKey(lesson, st);
       document.getElementById('lessonTitle').textContent =
-        `${lessonText(lesson.id, lesson.title)} · ${lessonText(key, st.title)}`;
+        `‹ ${lessonText(lesson.id, lesson.title)} · ${lessonText(key, st.title)}`;
       document.getElementById('lessonCount').textContent = `${si + 1} / ${lesson.steps.length}`;
       document.getElementById('lessonAbout').textContent = lessonText(`${key}.mmlisp`, parsed.about);
       const tryBox = document.getElementById('lessonTry');
@@ -10474,7 +10488,7 @@
     function renderLessonBar() {
       const bar = document.getElementById('lessonBar');
       const tab = document.getElementById('lessonPane');
-      const shows = !!_lesson?.lesson && !!_lesson.parsed.task && (!_panelOpen || tab.hidden);
+      const shows = !!_lesson?.lesson && !!_lesson.parsed.task && (!_panelOpen || tab.hidden || _lesson.list);
       bar.hidden = !shows;
       if (!shows) return;
       const tryBox = document.getElementById('lessonTry');
