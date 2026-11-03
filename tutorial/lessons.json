@@ -1,0 +1,13 @@
+[
+  {
+    "id": "01-sound",
+    "title": "Making sound",
+    "steps": [
+      {"file": "01-notes", "title": "Notes", "check": {"notesMin": 7}, "answer": "(fm1 c d e f g a b)"},
+      {"file": "02-lengths", "title": "Lengths", "check": {"match": "[a-g][+-]?1(?![\\d.])"}, "answer": "(fm1 c4 e4 g4. e8 d2 g2 c1)"},
+      {"file": "03-rests", "title": "Rests and ties", "check": {"match": "c4\\s*~"}, "answer": "(fm1 c e g _ g4 ~ g8 _ e c4 ~ c4)"},
+      {"file": "04-octaves", "title": "Octaves", "check": {"match": ":oct\\s+3(?!\\d)"}, "answer": "(fm1 :oct 3 c e g > c < g e c4)"},
+      {"file": "05-tempo", "title": "Tempo", "check": {"tempoMin": 91}, "answer": "(fm1 :tempo 150 c e g > c < g e c4)"}
+    ]
+  }
+]

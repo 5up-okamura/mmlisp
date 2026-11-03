@@ -13,7 +13,8 @@
 // one already cached is only read for its references.
 
 const ROOTS = ['./', './index.html', './worklet.js', './manifest.webmanifest',
-  './presets/index.json', './snippets/index.json', './snippets/targets.json', './examples/index.json'];
+  './presets/index.json', './snippets/index.json', './snippets/targets.json', './examples/index.json',
+  './tutorial/lessons.json'];
 const TEXT = /\.(?:html|js|css|json|webmanifest|mmlisp)$|\/$/;
 
 // Each reference is a list of candidate URLs, tried in order until one is
@@ -46,6 +47,11 @@ function references(url, text, root, listed) {
         if (href) { listed.add(href); out.push([href]); }
       }
     } catch (_) { /* not a list */ }
+  }
+  if (/\/tutorial\/lessons\.json$/.test(path)) { // MMLisp > Lessons' steps (lessons.js)
+    try {
+      for (const l of JSON.parse(text)) for (const s of l.steps) add(`${l.id}/${s.file}.mmlisp`);
+    } catch (_) { /* malformed */ }
   }
   if (/\.webmanifest$/.test(path)) {
     try { for (const icon of JSON.parse(text).icons || []) add(icon.src); } catch (_) { /* malformed */ }

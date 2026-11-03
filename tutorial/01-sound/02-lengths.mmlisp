@@ -1,0 +1,4 @@
+; A note plays for an eighth unless you say. A number after it is its own
+; length: 4 a quarter, 2 a half, 1 a whole bar; a dot adds half again.
+; Try: end on a whole note (c1).
+(fm1 c4 e4 g4. e8 d2 g2)

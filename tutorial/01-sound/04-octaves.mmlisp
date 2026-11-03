@@ -1,0 +1,4 @@
+; > goes up an octave and < down, and it stays until changed.
+; :oct sets it outright; 4 holds middle C.
+; Try: play it an octave lower with :oct 3.
+(fm1 c e g > c < g e c4)

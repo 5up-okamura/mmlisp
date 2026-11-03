@@ -1,0 +1,3 @@
+; :tempo is beats per minute, 120 unless you say.
+; Try: make it faster.
+(fm1 :tempo 90 c e g > c < g e c4)

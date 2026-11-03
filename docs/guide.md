@@ -2582,17 +2582,29 @@ Only what a track plays reaches the song. A comment lists the names built into t
 
 ## 25. The Library: what the app ships
 
-The side panel (the ⚙ button) has two tabs: **Params**, the sliders, mixer and
-open editing tools, and **Library**, everything that comes with the app in one
+The side panel (the ⚙ button) has three tabs: **Params**, the sliders, mixer and
+open editing tools, **Library**, everything that comes with the app in one
 list — the language reference (**Ref**), the **Presets** (the voice, sample and wave sets), the
 **Snippets** and the **Scores** (the examples) — so looking up a keyword,
 picking a voice or trying a technique takes one click instead of a file
-dialog. **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
+dialog — and **Lessons** (below). **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
 anywhere, the editor included — opens the panel on Library with the search box
 taking the keys; **Tools ▸ Params** — **⌘J** / **Ctrl+J** — opens it on Params,
 and closes it again when Params is already showing. The ⚙ button reopens the
 panel on the tab it was left on; a fresh launch starts on Params, with
 Library's filters cleared.
+
+**Tools ▸ Lessons** opens the panel on **Lessons**: the tutorial, a step at a
+time. A step is a few lines of text and a few of code; picking one puts its
+code in the editor, in a working copy of its own — the score you were writing
+is set aside, undo history and all, and **Leave** brings it back as it was
+(the draft a reload comes back to stays that score). A step's **Try** is an
+exercise, checked as you type; a step done is ticked in the list, in this
+browser. **Start Over** puts the step's code back, **Show Answer** one way of
+doing it; a step keeps your edits while the lesson is open. Opening another
+score ends the lesson. The lessons' texts follow MMLisp ▸ Language. They live
+in `tutorial/` (`lessons.json` and a score per step, its leading comment the
+text, as a snippet's is), held by `cd tools && npm run check:lessons`.
 
 On desktop, temporary tools such as the Logical Editor (§24) appear after
 all parameter sections. Switching tabs, hiding the panel or opening another

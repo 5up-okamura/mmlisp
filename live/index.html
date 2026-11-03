@@ -343,7 +343,7 @@
           <span>Release Holds</span>
         </button>
         <div class="menu-sep"></div>
-        <!-- The side panel's two tabs (the ⚙ button opens it as it was left) -->
+        <!-- The side panel's tabs (the ⚙ button opens it as it was left) -->
         <button class="menu-item" onclick="toggleParams();closeMenus()"
                 title="The sliders and the mixer: open the panel on Params, or close it when Params is showing">
           <span>Params</span>
@@ -353,6 +353,10 @@
                 title="The language reference, the preset voice/sample sets, the snippets and the example scores: look one up, preview it, insert it, or open it.">
           <span>Library</span>
           <span class="menu-item-shortcut" id="libraryShortcut"></span>
+        </button>
+        <button class="menu-item" onclick="openLessons();closeMenus()"
+                title="Learn MMLisp step by step, each step in a working copy of its own: your score waits until you leave">
+          <span>Lessons</span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" id="drvBackendItem" data-needs="driver" onclick="toggleDrvBackend();closeMenus()"
@@ -437,6 +441,7 @@
       <div class="panel-tabs" id="panelTabs">
         <button class="panel-tab" data-pane="params" onclick="selectPanelTab('params')">Params</button>
         <button class="panel-tab" data-pane="library" onclick="selectPanelTab('library')">Library</button>
+        <button class="panel-tab" data-pane="lessons" onclick="selectPanelTab('lessons')">Lessons</button>
       </div>
 
       <div id="rightPanelBody">
@@ -640,6 +645,30 @@
         </div>
         <div id="libList" class="lib-list" tabindex="0"></div>
         <div id="libNote" class="lib-note"></div>
+      </div>
+
+      <!-- Lessons: the tutorial (tutorial/, lessons.js), each step played in a
+           working copy of its own; leaving the lesson brings the score back -->
+      <div id="lessonPane" hidden>
+        <div id="lessonList" class="lesson-list"></div>
+        <div id="lessonStep" class="lesson-step" hidden>
+          <div class="lesson-head">
+            <span id="lessonTitle" class="lesson-title"></span>
+            <span id="lessonCount" class="lesson-count"></span>
+          </div>
+          <div id="lessonAbout" class="lesson-about"></div>
+          <div id="lessonTry" class="lesson-try">
+            <span id="lessonMark" class="lesson-mark" aria-hidden="true"></span>
+            <span id="lessonTask"></span>
+          </div>
+          <div class="lesson-actions">
+            <button class="lib-chip" id="lessonPrev" onclick="stepLesson(-1)">Back</button>
+            <button class="lib-chip" id="lessonNext" onclick="stepLesson(1)">Next</button>
+            <button class="lib-chip" id="lessonReset" onclick="resetLessonStep()" title="Start this step over from its code">Start Over</button>
+            <button class="lib-chip" id="lessonAnswer" onclick="showLessonAnswer()" title="Put one way of doing it in the editor">Show Answer</button>
+            <button class="lib-chip" id="lessonLeave" onclick="leaveLesson()" title="Back to your score, as you left it">Leave</button>
+          </div>
+        </div>
       </div>
 
       <div id="keyboardDock" class="kb-disabled">
@@ -1035,7 +1064,8 @@
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
     import { isReservedHead } from './src/mmlisp-eval.js';
-    import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout } from './src/i18n.js';
+    import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout, lessonText } from './src/i18n.js';
+    import { parseStep, passes as lessonPasses, loadProgress as loadLessonProgress, saveProgress as saveLessonProgress } from './src/lessons.js';
     import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
@@ -5072,6 +5102,7 @@
         if (update.docChanged) _lastHover.pos = -2; // stale after an edit
         if (update.docChanged) syncBracketStatus();
         if (update.docChanged) { scheduleDraftSave(); markDocDirty(); }
+        if (update.docChanged && _lesson) scheduleLessonCheck();
         // Typing waits for a pause (scheduleParamSync); an edit made for the
         // panel (a slider, the vector editor), an undo, a load syncs at once.
         const typed = update.transactions.some((tr) => tr.isUserEvent('input') || tr.isUserEvent('delete'));
@@ -5251,6 +5282,9 @@
     let _docEpoch = 0;
     // `timingSong`: the file a song's score was written from (Tap Tempo).
     function setEditorDoc(text, timingSong = null) {
+      // A score opened from anywhere but the lesson ends it: that score is
+      // the one being worked on now, not the one the lesson set aside.
+      if (_lesson && !_lessonLoading) endLesson();
       // Reset the full state so that undo history does not include the file load.
       setImportTimingSong(timingSong);
       resetABCompare();
@@ -5280,6 +5314,10 @@
     // compiles under, which for a score from the Library is its path there:
     // its imports and samples resolve against that folder.
     const DRAFT_KEY = 'mmlisp.draft';
+    // MMLisp > Lessons (showLessons): the lesson open, and whether the editor
+    // is loading one of its steps. `var`: the draft and the editor's load read
+    // them from the first document on.
+    var _lesson = null, _lessonLoading = false;
     let _draftTimer = null;
     function scheduleDraftSave() {
       clearTimeout(_draftTimer);
@@ -5289,6 +5327,7 @@
       clearTimeout(_draftTimer);
       _draftTimer = null;
       if (currentIrURL) return; // a binary .mmb: the editor holds only a placeholder
+      if (_lesson) return; // a lesson's working copy: the draft stays the score that waits
       try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify({
           src: editorView.state.doc.toString(),
@@ -7461,6 +7500,7 @@
     // strips, the time bar, the playhead's anchor. `rec` is the document it
     // was compiled from and the edits since (null: compiled just now).
     function applyCompile(src, { ir, diagnostics, sourceMap }, rec) {
+      if (_lesson) lessonCompiled(src, ir, diagnostics);
       const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
       // A preset set's samples are served from the site root, so they resolve
       // whether or not the score has been saved anywhere. So do those of a
@@ -9457,7 +9497,7 @@
 
     // The tab and Library's filters last while the app runs: the gear reopens
     // the panel as it was left, and a fresh launch starts on Params, All.
-    let _panelTab = 'params';              // 'params' or 'library'
+    let _panelTab = 'params';              // 'params', 'library' or 'lessons'
     let _libList = null;                   // catalog-list.js, made on first open
     let _libLoad = null;                   // the items, read once
     let _libKeyTarget = null;              // the highlighted voice or sample the keys play
@@ -9470,11 +9510,13 @@
     };
 
     function selectPanelTab(tab) {
-      _panelTab = tab === 'library' ? 'library' : 'params';
+      _panelTab = tab === 'library' || tab === 'lessons' ? tab : 'params';
       for (const b of document.querySelectorAll('#panelTabs .panel-tab'))
         b.classList.toggle('active', b.dataset.pane === _panelTab);
       document.getElementById('rightPanelBody').hidden = _panelTab !== 'params';
       document.getElementById('libraryPane').hidden = _panelTab !== 'library';
+      document.getElementById('lessonPane').hidden = _panelTab !== 'lessons';
+      if (_panelTab === 'lessons') showLessons();
       if (_panelTab === 'library') {
         ensureLibrary();
         if (libraryStale()) showLibraryItems();
@@ -10252,6 +10294,206 @@
         log('Library: ' + e.message, 'err');
         setLibraryNote(String(e.message));
       }
+    }
+
+    // -----------------------------------------------------------------------
+    // Lessons (Tools > Lessons, the panel's Lessons tab): the tutorial's steps,
+    // each played in a working copy of its own. Starting a lesson sets the
+    // score aside — its editor state (undo and all), its file and its name —
+    // and Leave brings it back as it was; the draft keeps the score meanwhile.
+    // A step keeps the learner's edits while the lesson is open. Opening any
+    // other score ends the lesson (setEditorDoc) and drops what was set aside,
+    // as opening it over the score would have.
+    // -----------------------------------------------------------------------
+    const LESSONS_INDEX = 'tutorial/lessons.json';
+    let _lessons = null;                    // lessons.json, read once
+    const _lessonProgress = loadLessonProgress();
+    const lessonKey = (l, st) => `${l.id}/${st.file}`;
+
+    async function loadLessons() {
+      _lessons ??= JSON.parse(await fetchText(LESSONS_INDEX));
+      return _lessons;
+    }
+
+    // The list, or the open lesson's step.
+    async function showLessons() {
+      const list = document.getElementById('lessonList');
+      const step = document.getElementById('lessonStep');
+      list.hidden = !!_lesson;
+      step.hidden = !_lesson;
+      if (_lesson) return renderLessonStep();
+      let lessons;
+      try { lessons = await loadLessons(); }
+      catch (e) { list.textContent = 'Lessons: ' + e.message; return; }
+      list.replaceChildren(...lessons.map((l, li) => {
+        const group = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'lesson-group-title';
+        title.textContent = `${li + 1}. ${lessonText(l.id, l.title)}`;
+        group.append(title);
+        l.steps.forEach((st, si) => {
+          const row = document.createElement('button');
+          row.className = 'lesson-row';
+          const mark = document.createElement('span');
+          mark.className = 'lesson-mark';
+          mark.textContent = _lessonProgress.done.has(lessonKey(l, st)) ? '✓' : '';
+          const name = document.createElement('span');
+          name.textContent = lessonText(lessonKey(l, st), st.title);
+          row.append(mark, name);
+          row.onclick = () => startLesson(li, si);
+          group.append(row);
+        });
+        return group;
+      }));
+    }
+
+    async function openLessons() {
+      if (!_panelOpen) togglePanel();
+      selectPanelTab('lessons');
+    }
+    window.openLessons = openLessons;
+
+    async function startLesson(li, si) {
+      if (currentIrURL) { log('Lessons: close the .mmb first (File > New).', 'err'); return; }
+      const lessons = await loadLessons();
+      if (!_lesson) {
+        saveDraft(); // the score as it stands is what a reload comes back to
+        _lesson = {
+          aside: { state: editorView.state, handle: _sourceHandle, name: _sourceFileName, path: _lastFileName, dirty: _docDirty },
+          states: new Map(), // step key → the learner's editor state
+        };
+      }
+      await loadLessonStep(lessons[li], si);
+    }
+
+    // The step's text and code; its working copy as the learner left it.
+    async function loadLessonStep(lesson, si, { fresh = false, text = null } = {}) {
+      const st = lesson.steps[si];
+      const key = lessonKey(lesson, st);
+      const path = `tutorial/${key}.mmlisp`;
+      let parsed;
+      try { parsed = parseStep(await fetchText(path)); }
+      catch (e) { log('Lessons: ' + e.message, 'err'); return; }
+      if (_lesson.lesson) _lesson.states.set(lessonKey(_lesson.lesson, _lesson.lesson.steps[_lesson.si]), editorView.state);
+      Object.assign(_lesson, { lesson, si, parsed, passed: false });
+      const kept = fresh || text != null ? null : _lesson.states.get(key);
+      stopLibraryPreview();
+      cancelResume();
+      resetForNewScore();
+      _sourceHandle = null; // Save never writes a step over the score's file
+      _sourceFileName = path.split('/').pop();
+      _lastFileName = path;
+      _lessonLoading = true;
+      try {
+        if (kept) restoreEditorState(kept);
+        else setEditorDoc(text ?? parsed.code);
+      } finally { _lessonLoading = false; }
+      updateDocName();
+      showLessons();
+      await refreshImportsAndCompile();
+    }
+
+    // An editor state put back as it was: setEditorDoc's housekeeping, with
+    // the state's own undo history.
+    function restoreEditorState(state) {
+      resetABCompare();
+      _docEpoch++;
+      editorView.setState(state);
+      if (!timingTool.hidden) itStart();
+      logicalNewScore();
+      syncBracketStatus();
+      queueMicrotask(syncParamUI);
+      hideSharedPlay();
+    }
+
+    function renderLessonStep() {
+      const { lesson, si, parsed, passed } = _lesson;
+      if (!lesson) return;
+      const st = lesson.steps[si];
+      const key = lessonKey(lesson, st);
+      document.getElementById('lessonTitle').textContent =
+        `${lessonText(lesson.id, lesson.title)} · ${lessonText(key, st.title)}`;
+      document.getElementById('lessonCount').textContent = `${si + 1} / ${lesson.steps.length}`;
+      document.getElementById('lessonAbout').textContent = lessonText(`${key}.mmlisp`, parsed.about);
+      const tryBox = document.getElementById('lessonTry');
+      tryBox.hidden = !parsed.task;
+      const done = passed || _lessonProgress.done.has(key);
+      tryBox.classList.toggle('done', passed);
+      document.getElementById('lessonMark').textContent = passed ? '✓' : done ? '·' : '→';
+      document.getElementById('lessonTask').textContent = lessonText(`${key}.mmlisp#try`, parsed.task);
+      const last = si === lesson.steps.length - 1 && _lessons.indexOf(lesson) === _lessons.length - 1;
+      document.getElementById('lessonPrev').disabled = si === 0 && _lessons.indexOf(lesson) === 0;
+      document.getElementById('lessonNext').disabled = last;
+      document.getElementById('lessonAnswer').hidden = !st.answer;
+    }
+
+    // Every compile of the step: does it do the Try?
+    function lessonCompiled(src, ir, diagnostics) {
+      if (!_lesson?.lesson || src !== editorView.state.doc.toString()) return; // a step left behind
+      const st = _lesson.lesson.steps[_lesson.si];
+      const passed = lessonPasses(st.check, { src, ir, diagnostics });
+      const key = lessonKey(_lesson.lesson, st);
+      if (passed && !_lessonProgress.done.has(key)) {
+        _lessonProgress.done.add(key);
+        saveLessonProgress(_lessonProgress);
+        log('Lessons: done — on to Next when you are ready.', 'info');
+      }
+      _lesson.passed = passed;
+      renderLessonStep();
+    }
+
+    // An edit in a step is checked as the learner types: a quiet compile of
+    // its own — the log and the strips wait for Play or Build, as anywhere.
+    let _lessonCheckTimer = null;
+    function scheduleLessonCheck() {
+      clearTimeout(_lessonCheckTimer);
+      _lessonCheckTimer = setTimeout(async () => {
+        const src = editorView.state.doc.toString();
+        try {
+          const r = await compileOffThread(src, _lastFileName, _importSources);
+          lessonCompiled(src, r.ir, r.diagnostics);
+        } catch (_) { /* Play or Build says what is wrong */ }
+      }, 400);
+    }
+
+    // Back / Next, across lessons.
+    window.stepLesson = async (dir) => {
+      if (!_lesson?.lesson) return;
+      let li = _lessons.indexOf(_lesson.lesson);
+      let si = _lesson.si + dir;
+      if (si < 0) { li--; si = li >= 0 ? _lessons[li].steps.length - 1 : 0; }
+      else if (si >= _lesson.lesson.steps.length) { li++; si = 0; }
+      if (li < 0 || li >= _lessons.length) return;
+      await loadLessonStep(_lessons[li], si);
+    };
+    window.resetLessonStep = () => _lesson?.lesson && loadLessonStep(_lesson.lesson, _lesson.si, { fresh: true });
+    window.showLessonAnswer = () => {
+      const st = _lesson?.lesson?.steps[_lesson.si];
+      if (st?.answer) loadLessonStep(_lesson.lesson, _lesson.si, { text: st.answer + '\n' });
+    };
+
+    // Leave: the score that was set aside, as it was.
+    window.leaveLesson = async () => {
+      if (!_lesson) return;
+      const { aside } = _lesson;
+      _lesson = null;
+      stopLibraryPreview();
+      cancelResume();
+      resetForNewScore();
+      _sourceHandle = aside.handle;
+      _sourceFileName = aside.name;
+      _lastFileName = aside.path;
+      restoreEditorState(aside.state);
+      _docDirty = aside.dirty;
+      updateDocName();
+      showLessons();
+      await refreshImportsAndCompile();
+    };
+
+    // Another score was opened over the lesson: it is the one worked on now.
+    function endLesson() {
+      _lesson = null;
+      if (_panelTab === 'lessons') showLessons();
     }
 
     // -----------------------------------------------------------------------

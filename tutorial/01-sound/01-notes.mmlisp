@@ -1,0 +1,4 @@
+; A track is a channel's name and what it plays: fm1 is the first FM
+; channel. c d e f g a b are the notes. Press Play.
+; Try: add the rest of the scale, up to b.
+(fm1 c d e f g)

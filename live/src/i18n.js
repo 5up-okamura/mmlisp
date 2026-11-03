@@ -1,9 +1,10 @@
 // The app's display language, and the texts it translates: the reference's
-// summaries and category names (reference.js) and the snippets' leading
-// comments, as the Library, the completion and the hover show them. The rest
-// of the app — the menus, the log, the compiler's diagnostics — stays in
-// English: the words of a music tool read the same everywhere, and an AI on
-// the MCP link reads the diagnostics.
+// summaries and category names (reference.js), the snippets' leading
+// comments and the tutorial's texts (lessons.js), as the Library, the
+// completion, the hover and the lessons show them. The rest of the app — the
+// menus, the log, the compiler's diagnostics — stays in English: the words of
+// a music tool read the same everywhere, and an AI on the MCP link reads the
+// diagnostics.
 //
 // A language is one pack, i18n/<lang>.js, generated from the English by
 // tools/scripts/i18n-sync.mjs (never edited by hand); each text sits beside
@@ -44,3 +45,6 @@ function pick(section, key, english) {
 export const refSummary = (entry) => pick('reference', entry.name, entry.summary);
 export const refCategoryLabel = (id, english) => pick('categories', id, english);
 export const snippetAbout = (path, english) => pick('snippets', path.replace(/^snippets\//, ''), english);
+// MMLisp > Lessons: keyed as tools/scripts/i18n-sync.mjs keys them — "01-sound"
+// a lesson's title, "01-sound/01-notes" a step's, + ".mmlisp" its text, + "#try" its Try.
+export const lessonText = (key, english) => pick('lessons', key, english);

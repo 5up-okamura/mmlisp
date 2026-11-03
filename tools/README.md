@@ -22,7 +22,7 @@ Run from tools directory:
 5. `npm run check:mmlisp-strict`
 6. `npm run check:cheatsheet` — the examples in docs/cheatsheet.md still compile
 7. `npm run mcp` — the MMLisp MCP server for AI clients (see [mcp/README.md](mcp/README.md))
-8. `npm run check:i18n` — every translation of the Live reference and snippets present and current
+8. `npm run check:i18n` — every translation of the Live reference, snippets and lessons present and current
 9. `npm run check:reference` — every example of the Live reference compiles and plays, and every completion word has an entry
 10. `npm run check:sample-fx` — a sample def's `:fx` chain and its bake
 11. `npm run check:scope-trigger` — the oscilloscope's trigger holds a stationary picture
@@ -101,15 +101,19 @@ Run from tools directory:
 30. `node scripts/ab-mgsdrv.mjs song.mgs [seconds] [channel]` — not a check: an
     MGS import held to the real MGSDRV (`npm i --no-save libkss-js`, which runs
     it on an emulated MSX), frame by frame on every PSG, SCC and FM channel
+31. `npm run check:lessons` — the tutorial (MMLisp Live's Lessons, `tutorial/`): every
+    step compiles clean, its exercise is not done before the learner starts,
+    and its answer does it
 
 ## i18n
 
 The Live app shows the reference's summaries and the snippets' descriptions
-in the user's language (MMLisp ▸ Language); the rest of the app stays in
-English. The English is the source, read from `live/src/reference.js` and the
-snippets' leading comments; each language is one generated pack,
-`live/src/i18n/<lang>.js`, that pairs every text with a hash of the English it
-translates. Nobody edits a pack:
+in the user's language (MMLisp ▸ Language), and so do the lessons; the rest of
+the app stays in English. The English is the source, read from
+`live/src/reference.js`, the snippets' leading comments and the tutorial
+(`tutorial/lessons.json`'s titles, its steps' leading comments); each language
+is one generated pack, `live/src/i18n/<lang>.js`, that pairs every text with a
+hash of the English it translates. Nobody edits a pack:
 
 1. `node scripts/i18n-sync.mjs --todo ja > /tmp/ja.json` — the texts the pack
    lacks or whose English changed, as `{"section/key": "English"}`.

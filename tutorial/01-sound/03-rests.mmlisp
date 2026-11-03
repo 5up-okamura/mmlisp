@@ -1,0 +1,4 @@
+; _ is a rest, the same length as a note; _4 a quarter rest.
+; ~ ties two notes into one held sound.
+; Try: tie the last c into a longer note.
+(fm1 c e g _ g4 ~ g8 _ e c4)
