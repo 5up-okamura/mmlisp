@@ -333,11 +333,15 @@ export function analyzeTracker(t) {
   return { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels, targets, target: targets[0] };
 }
 
-/** The channels a `target` score offers a module's rows. */
+/**
+ * The channels a `target` score offers a module's rows: its channel table's
+ * (targetDests), but on fc and pce the ones a module's channels map onto in
+ * Furnace's order (the 2A03's, the VRC6's, the FDS's, the DMC; pce's waves
+ * and its two noises) — the Famicom's other expansions are not read.
+ */
 export function trackerDests(target = "md") {
   if (target === "fc") return [...FC_DESTS, ...VRC6_DESTS, "fds-wave", "pcm1"];
   if (target === "pce") return [...PCE_WAVES, ...Object.values(PCE_NOISE)];
-  if (target === "md") return [...FM_DESTS, ...PSG_DESTS, "noise"];
   const d = targetDests(target);
   return [...d.fm, ...d.psg, ...(d.noise ? [d.noise] : []), ...d.wave, ...d.rhythm];
 }
