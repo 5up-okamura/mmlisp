@@ -30,7 +30,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
 - **Slot-fed macro-curve params, live.** A macro curve's `:from`/`:to`/
   `:rate`/`:len`, and a sweep's `:len`, bake to their slot's init on the
   driver; reading them at note-on would make them as live as an inline
-  sweep's endpoints.
+  sweep's endpoints. Shelved until a score needs it (its cost:
+  `.claude/memory/language-open.md`).
 - **The compile-time shadow fold** (parked) — folding static bases at compile
   time instead of emitting the arithmetic. A folded `:tl1+ 3` would be
   relative to the value the score wrote, missing a host write in between;

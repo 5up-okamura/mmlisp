@@ -604,9 +604,11 @@ const TOOLS = [
   {
     name: "mmlisp_render",
     description:
-      "Render a score to a 48 kHz stereo WAV the user can listen to (FM + PSG through the Nuked cores, same DSP as the " +
-      "editor's WAV export; PCM plays through the driver's engine; a :target pc88 score through ymfm's YM2608, its " +
-      "rhythm from the user's ROM, else the kit's :files cut to the ROM's lengths; a :target x68k score through ymfm's YM2151 and PCM8 on the MSM6258; a :target msx score through ymfm's SSG). A looping song plays intro + 2 loops + 4 s fade. " +
+      "Render a score to a 48 kHz stereo WAV the user can listen to, through its machine's chips as the editor plays them (same DSP as the " +
+      "editor's WAV export): md's FM + PSG through the Nuked cores, PCM through the driver's engine; pc88 through ymfm's YM2608, its " +
+      "rhythm from the user's ROM, else the kit's :files cut to the ROM's lengths; x68k through ymfm's YM2151 and PCM8 on the MSM6258; " +
+      "msx through ymfm's SSG and YM2413 (the FM-PAC) and its own SCC; pce, fc (with its expansions) and gb through their own chip models. " +
+      "A looping song plays intro + 2 loops + 4 s fade. " +
       "Returns the file path and levels (peak/RMS, clipping, silence) — a sanity check, since you cannot hear it.",
     inputSchema: {
       type: "object",
