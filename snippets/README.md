@@ -15,3 +15,21 @@ leading comment says what it shows, and the panel displays it.
   score importing any kit can take the snippet in; `tr808`, `gm-drums` and
   `rx5` also share `hat-open`, `rim`, `crash` and `tom1`–`tom6`.
 - Comments are English, and the first sentence is the summary.
+
+## Every machine
+
+Snippets are written with the Mega Drive's channel names; the Library plays,
+inserts and opens one on the score's machine by moving its tracks to that
+machine's channels (`live/src/snippet-port.js`). A track keeps its kind of
+sound — FM on FM, a sample on a sample channel, noise on noise — when the
+kind is what the snippet shows; when it shows only the language (a tuplet, a
+def, a delay, a curve) any melodic channel will do, FM, then tone, then wave,
+and an FM voice it names is left out where there is no FM. Which snippets
+keep their kind is listed in `snippet-port.js` (`KIND_DIRS`, `KIND_FILES`),
+not guessed. Channels that are another way of playing one (`fm3-1`…`fm3-4`,
+`fm3-csm`) stay their machine's.
+
+A snippet is offered on a machine when its port compiles there without an
+error: `snippets/targets.json` records it. After adding or changing a
+snippet, run `cd tools && npm run gen:snippet-targets`;
+`npm run check:snippet-targets` fails while the file is stale.

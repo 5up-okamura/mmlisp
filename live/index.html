@@ -1026,6 +1026,7 @@
     import { ARCHIVE_EXT } from './src/archive.js';
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
+    import { portSnippet, portMode, fmVoiceNames } from './src/snippet-port.js';
     import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
     import { PcmEditor } from './src/pcm-editor.js';
@@ -9454,6 +9455,9 @@
     const LIBRARY_SETS_INDEX = '/presets/index.json';
     const LIBRARY_SCORES_INDEX = '/examples/index.json';
     const LIBRARY_SNIPPETS_INDEX = '/snippets/index.json';
+    // The machines each snippet plays on, ported (snippet-port.js) — written by
+    // tools `npm run gen:snippet-targets`.
+    const LIBRARY_SNIPPET_TARGETS = '/snippets/targets.json';
 
     let _libraryCatalog = null;              // { sets, scores, snippets: [path] }
     const _libraryFileCache = new Map();     // score/snippet path -> { text, about }
@@ -9477,9 +9481,9 @@
           try { return JSON.parse(await fetchText(url)); }
           catch (e) { log('Library: ' + e.message, 'err'); return []; }
         };
-        const [sets, scores, snippets] = await Promise.all(
-          [read(LIBRARY_SETS_INDEX), read(LIBRARY_SCORES_INDEX), read(LIBRARY_SNIPPETS_INDEX)]);
-        _libraryCatalog = { sets, scores, snippets };
+        const [sets, scores, snippets, snippetTargets] = await Promise.all(
+          [read(LIBRARY_SETS_INDEX), read(LIBRARY_SCORES_INDEX), read(LIBRARY_SNIPPETS_INDEX), read(LIBRARY_SNIPPET_TARGETS)]);
+        _libraryCatalog = { sets, scores, snippets, snippetTargets };
         return _libraryCatalog;
       })();
       return _libraryCatalogLoad;
@@ -9811,9 +9815,15 @@
         for (const f of loaded.filter(Boolean)) {
           const dir = f.path.replace(/\/[^/]*$/, '');
           const file = { path: f.path, text: f.text, snippet };
-          const plays = targetsWith(channelHeads(f.text));
+          // A snippet plays where its port compiles (targets.json); a score
+          // where every channel it writes is the machine's.
+          const plays = (snippet && catalog.snippetTargets?.[f.path]) || targetsWith(channelHeads(f.text));
           const open = { label: 'Open', title: 'Open in the editor, replacing what is there',
-            run: () => openLibraryScore(f.path, libraryCompileName(file)) };
+            run: async () => {
+              if (!snippet) return openLibraryScore(f.path, libraryCompileName(file));
+              const ported = await portedSnippet(file);
+              if (ported) openLibraryScore(f.path, libraryCompileName(file), ported.score);
+            } };
           items.push({
             key: f.path,
             source,
@@ -9822,11 +9832,18 @@
             name: f.path.split('/').pop().replace(/\.mmlisp$/, ''),
             kind: snippet ? 'snippet' : 'score',
             about: snippet ? snippetAbout(f.path, f.about) : f.about,
-            audition: () => toggleLibraryScorePreview(file),
+            audition: async () => {
+              if (!snippet) return toggleLibraryScorePreview(file);
+              const ported = await portedSnippet(file);
+              if (ported) toggleLibraryScorePreview({ ...file, text: ported.score });
+            },
             markOn: (target) => (plays.includes(target.name) ? null : `not ${target.name}`),
             keys: null,
             actions: snippet
-              ? [{ label: 'Insert', title: 'Insert at the cursor (its imports go to the top)', run: () => insertLibrarySnippet(file) }, open]
+              ? [{ label: 'Insert', title: 'Insert at the cursor (its imports go to the top)', run: async () => {
+                const ported = await portedSnippet(file);
+                if (ported) insertLibrarySnippet({ ...file, text: ported.text });
+              } }, open]
               : [open],
           });
         }
@@ -9900,6 +9917,23 @@
     // example score keeps its own folder (its imports are relative to it).
     function libraryCompileName(file) {
       return file.snippet ? file.path.split('/').pop() : file.path;
+    }
+
+    // A snippet on the score's machine (snippet-port.js): its tracks moved to
+    // that machine's channels. `text` is what Insert puts in; `score` adds the
+    // machine, for playing and opening it on its own. Null when it has no
+    // port there — the note says why.
+    async function portedSnippet(file) {
+      const target = scoreTarget(editorView.state.doc) ?? 'md';
+      const name = libraryCompileName(file);
+      const imports = await readImportSources(file.text, name).catch(() => new Map());
+      const res = portSnippet(file.text, target, portMode(file.path), fmVoiceNames([file.text, ...imports.values()]), imports);
+      if (res.error) {
+        setLibraryNote(`${file.path.split('/').pop()}: ${res.error}`);
+        return null;
+      }
+      const named = /\(def-score[^)]*:target/.test(res.text);
+      return { text: res.text, score: named || target === 'md' ? res.text : `(def-score :target ${target})\n${res.text}` };
     }
 
     // The leading comment block is the file's description; the first sentence
@@ -10243,9 +10277,9 @@
     // imports and its samples' `:file` resolve against its own folder rather
     // than the site root (docs/language.md §9.2, §16). A snippet is written
     // for the root, so it opens under its bare name, like a new score.
-    async function openLibraryScore(path, compileName = path) {
+    async function openLibraryScore(path, compileName = path, text = null) {
       try {
-        const src = await fetchText(path);
+        const src = text ?? await fetchText(path);
         stopLibraryPreview();
         cancelResume();
         resetForNewScore();

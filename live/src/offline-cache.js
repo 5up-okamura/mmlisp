@@ -13,7 +13,7 @@
 // one already cached is only read for its references.
 
 const ROOTS = ['./', './index.html', './worklet.js', './manifest.webmanifest',
-  './presets/index.json', './snippets/index.json', './examples/index.json'];
+  './presets/index.json', './snippets/index.json', './snippets/targets.json', './examples/index.json'];
 const TEXT = /\.(?:html|js|css|json|webmanifest|mmlisp)$|\/$/;
 
 // Each reference is a list of candidate URLs, tried in order until one is

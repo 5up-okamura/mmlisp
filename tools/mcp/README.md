@@ -20,7 +20,7 @@ dependencies (Node 18+).
 | `live_read`       | The score open in the user's editor: text, cursor, selection, diagnostics    |
 | `live_write`      | Edit it — `{find, replace}` edits or the whole text; one undoable step, then a build |
 | `live_play` / `live_stop` | Playback in the user's editor; `live_play`'s `line` starts from a source line |
-| `mmlisp_snippets` | List the snippets with what each shows, filter, or read one                  |
+| `mmlisp_snippets` | List the snippets with what each shows, filter, or read one; with `target`, only those that play on that machine, read with their tracks moved to its channels |
 | `mmlisp_presets`  | The preset sets and their import lines, or a set's voice/sample/wave names; with `target`, what that machine lacks for each and the names built in there        |
 
 Scores are passed as `source` text or a `path`. Imports resolve as in the live

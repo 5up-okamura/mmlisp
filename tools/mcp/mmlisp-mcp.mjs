@@ -35,6 +35,7 @@ const { bakeRhythmStandIn } = await load("chips/rhythm-rom.js");
 const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
 const { pitchToMidi } = await load("ir-utils.js");
 const { REFERENCE, REFERENCE_CATEGORIES, referenceFor } = await load("reference.js");
+const { portSnippet, portMode, fmVoiceNames } = await load("snippet-port.js");
 
 const DOCS = {
   cheatsheet: "docs/cheatsheet.md",
@@ -324,14 +325,24 @@ function leadingComment(text) {
   return out.join(" ");
 }
 
-function snippets({ path: p, query }) {
+function snippets({ path: p, query, target }) {
+  const plays = JSON.parse(readText("snippets/targets.json") ?? "{}");
   if (p) {
     const rel = p.startsWith("snippets/") || p.startsWith("presets/") ? p : `snippets/${p}`;
     const abs = path.resolve(ROOT, rel);
     if (!abs.startsWith(ROOT + path.sep) || !abs.endsWith(".mmlisp")) throw new Error("not a .mmlisp file in the repository");
-    return fs.readFileSync(abs, "utf8");
+    const text = fs.readFileSync(abs, "utf8");
+    if (!target || !rel.startsWith("snippets/")) return text;
+    // On another machine: its tracks moved to that machine's channels (snippet-port.js).
+    const name = path.basename(rel);
+    const imports = readImportSources(text, name);
+    const res = portSnippet(text, target, portMode(rel), fmVoiceNames([text, ...imports.values()]), imports);
+    if (res.error) throw new Error(`${rel} has no port to ${target}: ${res.error}`);
+    if (!(plays[rel] ?? []).includes(target)) throw new Error(`${rel} does not compile on ${target}`);
+    return /\(def-score[^)]*:target/.test(res.text) ? res.text : `(def-score :target ${target})\n${res.text}`;
   }
-  const index = JSON.parse(fs.readFileSync(path.join(ROOT, "snippets/index.json"), "utf8"));
+  const index = JSON.parse(fs.readFileSync(path.join(ROOT, "snippets/index.json"), "utf8"))
+    .filter((f) => !target || (plays[f] ?? []).includes(target));
   const examples = JSON.parse(fs.readFileSync(path.join(ROOT, "examples/index.json"), "utf8"));
   const q = query?.toLowerCase();
   const rows = [...index, ...examples]
@@ -790,10 +801,15 @@ const TOOLS = [
     name: "mmlisp_snippets",
     description:
       "Working example scores, one technique each (arps, echo, curves, FM3, PCM kits, song structure…). " +
-      "No args: list them with what each shows; query: filter by name or content; path: read one.",
+      "No args: list them with what each shows; query: filter by name or content; path: read one. " +
+      "target (md, pc88, x68k, msx, pce, fc, gb): only the snippets that play there, read with their tracks moved to its channels.",
     inputSchema: {
       type: "object",
-      properties: { query: { type: "string" }, path: { type: "string", description: "e.g. \"techniques/chip-arp.mmlisp\"" } },
+      properties: {
+        query: { type: "string" },
+        path: { type: "string", description: "e.g. \"techniques/chip-arp.mmlisp\"" },
+        target: { type: "string", description: "the machine to read the snippets for" },
+      },
     },
     run: snippets,
   },

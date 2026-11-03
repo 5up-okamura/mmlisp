@@ -1,0 +1,364 @@
+{
+ "snippets/notation/song-structure.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/notation/articulation.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/notation/dynamics.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/notation/tuplets.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/echo-delay/echo-trail.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/echo-delay/delay-overlay.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/effects/sidechain.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "pce",
+  "fc"
+ ],
+ "snippets/effects/trance-gate.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/effects/rotary.mmlisp": [
+  "md",
+  "pc88",
+  "x68k"
+ ],
+ "snippets/effects/flanger.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/effects/tape-stop.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "pce",
+  "fc"
+ ],
+ "snippets/effects/stutter.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/effects/keyon-echo.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/effects/harmonizer.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/effects/room.mmlisp": [
+  "md",
+  "pc88",
+  "x68k"
+ ],
+ "snippets/effects/sub-octave.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "fc"
+ ],
+ "snippets/game-sync/trig-cues.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/game-sync/adaptive-bgm.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/game-sync/hold-release.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/game-sync/mode-switch.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/voices/fm-voice-template.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "fc"
+ ],
+ "snippets/voices/voice-family.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "fc"
+ ],
+ "snippets/voices/target-group.mmlisp": [
+  "md",
+  "pc88",
+  "x68k"
+ ],
+ "snippets/fm3-csm/fm3-chord.mmlisp": [
+  "md",
+  "pc88"
+ ],
+ "snippets/fm3-csm/fm3-detune.mmlisp": [
+  "md",
+  "pc88"
+ ],
+ "snippets/fm3-csm/csm-voice.mmlisp": [
+  "md",
+  "pc88"
+ ],
+ "snippets/fm3-csm/csm-sweep.mmlisp": [
+  "md",
+  "pc88"
+ ],
+ "snippets/curves/easing-filter.mmlisp": [
+  "md",
+  "pc88",
+  "x68k"
+ ],
+ "snippets/curves/lfo-shapes.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/curves/curve-math.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/noise-curves/perlin-timbre.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "fc"
+ ],
+ "snippets/noise-curves/random-pan.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "pce",
+  "gb"
+ ],
+ "snippets/noise-curves/random-gate.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/noise-curves/robot-talk.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/defn/chord-arp.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/defn/drum-pattern.mmlisp": [
+  "md",
+  "x68k",
+  "pce"
+ ],
+ "snippets/defn/let-transpose.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/defn/computed-lengths.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/techniques/chip-arp.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/techniques/tempo-locked-arp.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "fc",
+  "gb"
+ ],
+ "snippets/techniques/glide.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/techniques/shuffle.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/techniques/prio-layer.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "pce",
+  "fc",
+  "gb"
+ ],
+ "snippets/techniques/noise-drums.mmlisp": [
+  "md"
+ ],
+ "snippets/techniques/noise-bass.mmlisp": [
+  "md"
+ ],
+ "snippets/techniques/kit-layers.mmlisp": [
+  "md",
+  "x68k",
+  "pce"
+ ],
+ "snippets/techniques/pcm-loop.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "pce",
+  "fc"
+ ],
+ "snippets/techniques/sample-effects.mmlisp": [
+  "md",
+  "x68k",
+  "pce"
+ ],
+ "snippets/techniques/value-machine.mmlisp": [
+  "md",
+  "pc88",
+  "x68k",
+  "msx",
+  "fc"
+ ]
+}

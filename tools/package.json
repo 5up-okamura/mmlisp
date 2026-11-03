@@ -9,6 +9,8 @@
     "check:wavetable": "node scripts/gen-wavetable.mjs --check",
     "gen:fm-roles": "node scripts/gen-fm-roles.mjs",
     "check:fm-roles": "node scripts/gen-fm-roles.mjs --check",
+    "gen:snippet-targets": "node scripts/gen-snippet-targets.mjs",
+    "check:snippet-targets": "node scripts/gen-snippet-targets.mjs --check",
     "check:format:mmlisp": "node scripts/format-mmlisp.js --check ../presets/*/set.mmlisp",
     "mmlisp2ir": "node scripts/mmlisp2ir.js",
     "verify-ir": "node scripts/verify-ir.js",
