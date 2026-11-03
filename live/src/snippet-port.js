@@ -135,8 +135,20 @@ export function portSnippet(text, targetName, mode = "any", fmVoices = new Set()
     at = c.to;
   }
   out += text.slice(at);
+  out = ownModes(out, target);
   if (dropped.size && imports) out = pruneImports(out, imports);
   return { text: out, map, dropped: [...dropped] };
+}
+
+// A Mega Drive mode the target reads as its own words (pc88's SSG takes
+// `:mode white0` as `:noise-rate 9`) is written in them: the port reads as
+// that machine's score, and compiles without the reading's warning. A mode
+// with no reading, or one inside a macro's steps, stays for the compiler to say.
+function ownModes(text, target) {
+  for (const readings of Object.values(target.readsAs?.modes ?? {}))
+    for (const [sym, r] of Object.entries(readings))
+      if (r.write) text = text.replace(new RegExp(`:mode\\s+${sym}(?![\\w-])`, "g"), r.as);
+  return text;
 }
 
 // An (import "…") nothing in the text names any more — the voices it was for
