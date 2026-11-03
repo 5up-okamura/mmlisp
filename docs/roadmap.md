@@ -62,16 +62,11 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 - **The target an import is for.** A voice or sample import joins the open
   score, whatever its `:target`. A song import is a conversion, written as a
-  new document for a machine its importer knows — not for every target: an
-  importer writes only what it is built to write, and offers only that. The
-  mucom importer writes pc88 (the song's own chip, the default) or md, chosen
-  in its import dialog; VGM writes md or the machine of its chip — x68k for
-  a YM2151's, pc88 for a YM2608's or YM2203's, msx for an AY-3-8910's or
-  an SCC's, pce for a HuC6280's —
-  chosen in its dialog; DefleMask / Furnace write md or the machine of
-  their chips — pce, fc, msx, x68k, pc88 — chosen in their dialog; MIDI writes md and
-  shows no choice; MDX writes x68k and MGS msx, their songs' own machines. A target is added to an importer when a song needs it, not to fill
-  the matrix.
+  new document for the machine chosen in its dialog: MIDI for any target;
+  VGM, NSF and DefleMask / Furnace for their chips' own machine (the
+  default) or any machine whose defaults keep half the notes
+  (`import-song.js` holdsSong); mucom for pc88 (the default) or md; MDX for
+  x68k and MGS for msx, their songs' own machines.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
 - **MGS**: an envelope's wave changes as it runs (a note keeps the first),
   `#psg_tune` / `#opll_tune`, `@\` on FM.
@@ -83,7 +78,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
 - **VGM** (timed as written, not as beats): fewer shapes,
   if wanted — envelopes and bends match exactly (TwinBee gives ~26
   envelopes), and rounding near ones together is the lever;
-  second chips, the MSX's FM-PAC (onto msx's fm channels), a wave rewritten
+  second chips (a YM2203's aside: they are counted, not read), a wave rewritten
   under a sounding note (the HuC6280's; the SCC's is a `:wave` macro), the
   HuC6280's DDA and LFO, the
   remaining PCM chips (QSound, K054539, uPD7759, C219, …).
@@ -153,10 +148,9 @@ language.md §19. Next:
    and Furnace's VRC6 modules import onto it (a pulse's PCM mode left
    out). The FDS is on `fc` (`fds-wave`), and a VGM's and a Furnace
    module's come in on it. The MMC5's pulses, the 5B, the VRC7 and the
-   N163 are on `fc` too (language.md §19), no import reading them yet.
-   Next: NSF in (a 6502
-   run for its register writes, import-only — the one source of a VRC6
-   song's writes).
+   N163 are on `fc` too (language.md §19); a VGM's VRC7 and 5B come in on
+   them, and an NSF (run on a 6502, import-only) brings its expansions
+   with it.
 
 Emulators for the preview: ymfm (BSD) covers the YM2608, YM2151, YM2413,
 Y8950 and the SSG in one library, built to WASM beside the Nuked cores.
