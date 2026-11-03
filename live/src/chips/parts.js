@@ -67,6 +67,9 @@
 //   mixVoice  (voice) → the IR player's key for a sample part's voice that
 //             is the chip's own, not the Mega Drive's soft mix (muteVoice,
 //             setVoiceVol: "adpcm", "pcm8-N", "dpcm")
+//   opKeys    true: an FM part whose key-on names its operators one by one
+//             (the OPN's $28, the OPM's $08), so Live's panel can key a
+//             voice with operators off; the OPLL keys its two together
 //   claims    { kind, voice }: a channel of another part its notes take over
 //             while they sound (the Mega Drive's DAC mix, fm6)
 //   takes     (channel entry) → true for a channel of another part this part

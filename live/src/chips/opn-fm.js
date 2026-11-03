@@ -9,6 +9,7 @@ export const opnFm = {
   name: "fm",
   label: "OPN FM",
   kind: "fm",
+  opKeys: true, // $28's slot bits
   level: { stepDb: 0.75, steps: 128 },
   words: fmWords({
     channel: ["FM_ALG", "FM_FB", "FM_AMS", "FM_FMS"],

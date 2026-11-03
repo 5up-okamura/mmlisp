@@ -25,6 +25,7 @@ export const opmFm = {
   label: "OPM FM",
   unit: "opm", // the noise is the eighth channel's
   kind: "fm",
+  opKeys: true, // $08's slot bits
   level: { stepDb: 0.75, steps: 128 },
   words: fmWords({
     channel: ["FM_ALG", "FM_FB", "FM_AMS", "FM_FMS"],

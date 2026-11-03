@@ -8680,11 +8680,12 @@
       const repaint = twoOp !== _fmTwoOp;
       _fmTwoOp = twoOp;
       document.getElementById('fmParamSection')?.classList.toggle('two-op', twoOp);
-      // An operator's key is the OPN's and the OPM's ($28's and $08's slot
-      // bits); the OPLL keys its two at once, so it has no operator toggle.
+      // An operator toggle where the FM part keys its operators one by one
+      // (chips/parts.js `opKeys`: the OPN's, the OPM's; the OPLL keys its two
+      // together).
       for (let op = 1; op <= 4; op++) {
         const chk = document.getElementById(`chk-op${op}`);
-        if (chk) chk.hidden = chk.disabled = twoOp;
+        if (chk) chk.hidden = chk.disabled = !fmPart?.opKeys;
       }
       const algGrid = document.getElementById('algGrid');
       (twoOp ? document.getElementById('opGrid') : document.getElementById('algHome'))?.appendChild(algGrid);
