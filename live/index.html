@@ -1012,7 +1012,7 @@
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
     import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
-    import { analyzeSound, defaultResynthOptions, resynthFits, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
+    import { analyzeSound, defaultResynthOptions, formantVoice, resynthFits, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
     import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/voice-estimate.js';
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
@@ -3622,16 +3622,16 @@
     async function importResynthBytes(bytes, fileName, withTempo = true) {
       const { data, sampleRate } = await decodeAudioFile(bytes, fileName);
       const a = analyzeSound(data, sampleRate);
-      // For the score it goes into: FM3's modes are the YM2612's and the
-      // YM2608's; on x68k the formants are sine waves on fm1's operators (the
-      // hiss fm8's noise), on msx on the SCC's wave1–wave4 (the PSG's noise),
-      // on pce on its wave1–wave4 (noise5). A machine with neither (the Game
+      // For the score it goes into, as the machine sings them
+      // (import-resynth.js FORMANT_VOICES): FM3's modes are the YM2612's and
+      // the YM2608's; elsewhere sine waves. A machine with none (the Game
       // Boy's one wave, fc's; the menu is disabled there) a drop says so.
       const target = blankScoreTarget(withTempo);
       const prof = targetProfile(target);
-      if (!resynthFits(prof))
+      const voice = formantVoice(prof);
+      if (!voice)
         throw new Error(`the ${prof.system ?? target} has no channels the formants sing on: a 4-op FM or wave1–wave4`);
-      const fm3 = target !== 'x68k' && target !== 'msx' && target !== 'pce';
+      const fm3 = voice.voice === 'fm3';
       const def = defaultResynthOptions(a, 'held', target);
       const fields = [
         // CSM is FM3's: elsewhere the sine waves are all there is to set.
@@ -3650,9 +3650,7 @@
         title: `Import ${fileName}`,
         summary: `${a.duration.toFixed(1)} s at ${sampleRate} Hz · ${a.segments.length} phrase${a.segments.length === 1 ? '' : 's'}` +
           (a.pitchHz ? ` · pitch about ${Math.round(a.pitchHz)} Hz` : '') +
-          (target === 'x68k' ? '. Four formants, one a frame, as sine waves on fm1’s four operators; the hiss on fm8’s noise — inserted at the cursor.'
-            : target === 'msx' ? '. Four formants, one a frame, as sine waves on the SCC’s wave1–wave4; the hiss on noise — inserted at the cursor.'
-              : '. Four formants, one a frame, on fm3-1–fm3-4; the hiss on noise — inserted at the cursor.'),
+          `. Four formants, one a frame, ${voice.about} — inserted at the cursor.`,
         fields,
       });
       if (!got) return null;
