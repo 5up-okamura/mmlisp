@@ -122,7 +122,30 @@ export const fcDpcm = {
   level: { scale: "linear", steps: 64 }, // the DAC's swing about its middle
   words: words(/^(?:RANGE|LOOP)_/),
   pointSweeps: false, // a note's points are read at its key-on
-  frames: true, // plays the samples' frames as bakePcm8 bakes them
+  bank: "frames",
+  mixVoice: () => "dpcm",
+  // The def at the note's pitch as the DMC plays it: at its rate, through
+  // the 1-bit delta (the player's _dispatchDpcmEvent, its level the
+  // audition's own).
+  audition(s, midi) {
+    const perSec = s.rate * 2 ** ((midi - 60) / 12);
+    const rate = dmcRate(s.data.length / perSec);
+    const step = perSec / DMC_RATES[rate];
+    const levels = [];
+    for (let pos = 0; pos < s.data.length; pos += step) {
+      const i = Math.floor(pos), f = pos - i;
+      const x = s.data[i] * (1 - f) + (s.data[Math.min(i + 1, s.data.length - 1)] ?? 0) * f;
+      levels.push(Math.max(-1, Math.min(1, x)));
+    }
+    const bytes = dmcEncode(levels);
+    const data = new Int8Array(levels.length);
+    let dac = DMC_START;
+    for (let k = 0; k < levels.length; k++) {
+      if ((bytes[k >> 3] >> (k & 7)) & 1) { if (dac <= 125) dac += 2; } else if (dac >= 2) dac -= 2;
+      data[k] = Math.min(127, (dac - 64) * 2);
+    }
+    return { data, rateHz: DMC_RATES[rate], range: null, loop: null };
+  },
   loopIsRange: true,
   rangeLoops: true,
   checkNote({ sample, sampleName, mode, once }) {

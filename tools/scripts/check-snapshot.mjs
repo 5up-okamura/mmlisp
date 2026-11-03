@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import { buildMmb, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { targetProfile } from "../../live/src/targets.js";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
+import { sampleBankKind } from "../../live/src/sample-bank.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 
@@ -80,7 +81,7 @@ function outputs({ file, frameHz, seFile }) {
     const vgmPlayer = new IRPlayer(() => {});
     vgmPlayer.loadJSON(ir);
     const meta = { title: ir.metadata?.title, composer: ir.metadata?.composer, author: ir.metadata?.author };
-    const pcm = adpcm ? { adpcm } : frames ? (target.hasPart("pcm8") ? { pcm8: frames } : { frames }) : null;
+    const pcm = adpcm ? { adpcm } : frames ? { [sampleBankKind(target)]: frames } : null;
     return { ...out, regs: JSON.stringify(player.captureRegisterLog()), vgm: renderVgm(vgmPlayer, meta, pcm).bytes };
   }
   let built;

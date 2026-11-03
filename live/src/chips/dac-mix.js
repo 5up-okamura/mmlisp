@@ -11,6 +11,7 @@ export const dacMix = {
   // A soft-mixed voice owns no FM channel, so it has no pan lane.
   words: words(/^(?:RANGE|LOOP)_/),
   settings: [":pcm-voices"],
+  bank: "mmb",
   // The FM channel its voices sound on (fm6's DAC): busy while one plays.
   claims: { kind: "fm", voice: 5 },
   checkScore({ pcmUsed, pcmVoices, allHeads, push }) {

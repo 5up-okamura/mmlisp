@@ -7,8 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decodeWav } from "../../live/src/wav-decode.js";
-import { bakeAdpcmB } from "../../live/src/chips/adpcm-b.js";
-import { bakePcm8 } from "../../live/src/chips/msm6258.js";
+import { bakeSampleBank, sampleBankKind } from "../../live/src/sample-bank.js";
 
 // Returns { data: Float32Array (mono, -1..1), sampleRate }.
 export function loadWav(path) {
@@ -78,16 +77,15 @@ export function loadSamplesForIr(ir, diagnostics = null) {
 
 /**
  * The sample images a VGM target's chips play from, baked as Live does for
- * Play and File > Export > VGM: the YM2608's ADPCM-B RAM (`adpcm`), or the
- * samples as frames (`frames`: PCM8's, the PC Engine's DDA). Each null where
- * the target has no such part or the score names no sample file.
+ * Play and File > Export > VGM (live/src/sample-bank.js): the YM2608's
+ * ADPCM-B RAM (`adpcm`), or the samples as frames (`frames`: PCM8's, the PC
+ * Engine's DDA, the 2A03's DMC). Each null where the target has no such part
+ * or the score names no sample file.
  */
 export function bakedChipSamples(ir, target) {
+  const kind = sampleBankKind(target);
   const samples = (ir.metadata?.samples ?? []).filter((s) => s.file);
-  if (!samples.length) return { adpcm: null, frames: null };
-  const blobs = () => loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples } });
-  return {
-    adpcm: target.hasPart("adpcm-b") ? bakeAdpcmB(ir, blobs(), target) : null,
-    frames: target.parts.some((p) => p.frames) ? bakePcm8(ir, blobs()) : null,
-  };
+  if (!samples.length || !kind || kind === "mmb") return { adpcm: null, frames: null };
+  const { bake } = bakeSampleBank(ir, loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples } }), target);
+  return kind === "adpcm" ? { adpcm: bake, frames: null } : { adpcm: null, frames: bake };
 }

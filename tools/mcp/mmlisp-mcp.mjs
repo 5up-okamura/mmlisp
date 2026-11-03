@@ -27,10 +27,8 @@ const { parse } = await load("mmlisp-parser.js");
 const { formatMMLisp } = await load("mmlisp-formatter.js");
 const { IRPlayer } = await load("ir-player.js");
 const { renderWav } = await load("export-wav.js");
-const { encodeMmb } = await load("export-mmb.js");
 const { targetProfile, assetMark, builtinNames } = await load("targets.js");
-const { bakeAdpcmB } = await load("chips/adpcm-b.js");
-const { bakePcm8 } = await load("chips/msm6258.js");
+const { bakeSampleBank, hasSampleBank, sampleBankKind } = await load("sample-bank.js");
 const { bakeRhythmStandIn } = await load("chips/rhythm-rom.js");
 const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
 const { pitchToMidi } = await load("ir-utils.js");
@@ -645,24 +643,19 @@ const TOOLS = [
         if (rhythmRom.length !== 0x2000)
           return { isError: true, text: `not rendered — a YM2608 rhythm ROM is 8192 bytes; ${args.rhythmRom} is ${rhythmRom.length}` };
       }
-      if (target.hasPart("adpcm-b") && sampleDefs.some((s) => s.file)) {
-        // The YM2608's ADPCM-B: its RAM image, baked as Live bakes it; the
-        // kit stands in for a rhythm ROM the user has not given.
-        const abs = sampleDefs.filter((s) => s.file).map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
-        const blobs = loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []);
-        const adpcm = bakeAdpcmB(ir, blobs, target);
-        if (adpcm.image.length) pcm = { adpcm };
-        rhythmRom ??= bakeRhythmStandIn(ir, blobs)?.rom ?? null;
-      } else if (target.hasPart("pcm8") && sampleDefs.some((s) => s.file)) {
-        // The X68000's PCM8: the mix, encoded to the MSM6258's ADPCM.
-        const abs = sampleDefs.filter((s) => s.file).map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
-        const pcm8 = bakePcm8(ir, loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []));
-        if (Object.keys(pcm8.entries).length) pcm = { pcm8 };
-      } else if (ir.metadata?.pcmVoices && sampleDefs.length) {
-        const abs = sampleDefs.map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
-        const samples = loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []);
-        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
-        if (sampleBank) pcm = { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices: ir.metadata.pcmVoices };
+      if (hasSampleBank(ir, target)) {
+        // Baked as Live bakes them (sample-bank.js), the WAVs read from the
+        // repo: the Mega Drive's bank takes every def, a chip's own sample
+        // part the ones with a :file (pc88's kit sounds may have none).
+        const kind = sampleBankKind(target);
+        const defs = kind === "mmb" ? sampleDefs : sampleDefs.filter((s) => s.file);
+        if (defs.length) {
+          const abs = defs.map((s) => ({ ...s, resolvedFile: path.resolve(ROOT, s.resolvedFile) }));
+          const blobs = loadSamplesForIr({ ...ir, metadata: { ...ir.metadata, samples: abs } }, []);
+          pcm = bakeSampleBank(ir, blobs, target).pcm;
+          // The kit stands in for a rhythm ROM the user has not given.
+          if (kind === "adpcm") rhythmRom ??= bakeRhythmStandIn(ir, blobs)?.rom ?? null;
+        }
       }
       const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm, rhythmRom });
       const out = args.out

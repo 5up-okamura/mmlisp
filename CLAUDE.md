@@ -25,6 +25,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
 | `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
 | `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |
+| `sample-bank.js`                | A score's samples baked as its machine's sample part says (`bank`: the ADPCM-B's RAM, PCM8's mix, the DDA's / DMC's frames, the Mega Drive's bank), for Live's play and exports and the MCP render alike |
 | `mmlisp-formatter.js`           | Source formatter                                                        |
 | `edit-tools.js`                 | Edit > Loop Selection, the Logical Editor, the vector editor's subject (`vectorAt`), the sample editor's points and Trim to Range, and a def's text for Copy and the Library's Insert (`ownDefText`): score-text edits, testable in node |
 | `snippet-port.js`               | A snippet on the score's machine: its tracks moved to that machine's channels, by kind or onto any melodic one (`tools npm run gen:snippet-targets` writes where each compiles) |

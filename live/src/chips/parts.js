@@ -57,6 +57,16 @@
 //   rangeLoops true: a sample part that repeats a note's whole range and
 //             nothing else (the ADPCM-B's, the 2A03's DMC): the sample editor
 //             has no loop to place
+//   bank      how a sample part's samples are baked (sample-bank.js): "mmb"
+//             the Mega Drive's soft-mix bank, "adpcm" the YM2608's RAM image,
+//             "pcm8" the X68000's mix, "frames" frames the player writes as
+//             the chip's registers (the DDA's, the DMC's)
+//   audition  (sample, midi) → { data, rateHz, range, loop }: a def as the
+//             chip sounds it, for Live's audition of a "frames" part (the
+//             sample as bakePcm8 bakes it; data Int8, 128 full scale)
+//   mixVoice  (voice) → the IR player's key for a sample part's voice that
+//             is the chip's own, not the Mega Drive's soft mix (muteVoice,
+//             setVoiceVol: "adpcm", "pcm8-N", "dpcm")
 //   claims    { kind, voice }: a channel of another part its notes take over
 //             while they sound (the Mega Drive's DAC mix, fm6)
 //   takes     (channel entry) → true for a channel of another part this part

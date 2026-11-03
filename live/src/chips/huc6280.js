@@ -104,7 +104,14 @@ export const pceDda = {
   words: words(/^(?:RANGE|LOOP)_/, "PAN"),
   songWords: SONG_WORDS,
   pointSweeps: false, // a note's points are read at its key-on
-  frames: true, // plays the samples' frames as bakePcm8 bakes them
+  bank: "frames",
+  // The def at the note's pitch as DDA plays it: 5 bits at the timer's rate.
+  audition(s, midi) {
+    const step = (s.rate * 2 ** ((midi - 60) / 12)) / DDA_RATE;
+    const n = Math.max(1, Math.floor(s.data.length / step));
+    const data = Int8Array.from({ length: n }, (_, k) => (ddaStep(s.data[Math.floor(k * step)]) - 16) * 8);
+    return { data, rateHz: DDA_RATE, range: null, loop: null };
+  },
   sharePrio: 0,
 };
 

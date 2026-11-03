@@ -997,7 +997,7 @@
     import { opllRomVoices } from './src/chips/ym2413.js';
     import { bakeAdpcmB } from './src/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
-    import { DDA_RATE, ddaStep } from './src/chips/huc6280.js';
+    import { bakeSampleBank, hasSampleBank, sampleBankKind } from './src/sample-bank.js';
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
@@ -5615,61 +5615,44 @@
       const machine = targetProfile(ir?.metadata?.target);
       await setWorkletMachine(machine.name);
       if (!current()) return;
-      // The YM2608's ADPCM-B plays from its own RAM: the samples baked once
-      // (chips/adpcm-b.js), as the VGM and WAV exports bake them.
-      // The X68000's PCM8: the samples the worklet mixes (src/chips/msm6258.js).
-      if (machine.hasPart('pcm8')) {
-        const blobs = await pcmSampleBlobsForMmb(ir);
-        if (!current()) return;
-        const pcm8 = blobs ? bakePcm8(ir, blobs) : null;
-        for (const w of pcm8?.warnings ?? []) log(w, 'warn');
-        target?.setFrameBank?.(pcm8);
-        workletNode.port.postMessage({ type: 'pcm8-bank', bank: pcm8 });
-        return;
-      }
-      // The PC Engine's DDA: the player writes each note's samples as the
-      // chip's own register writes, from the same frames.
-      if (machine.parts.some((p) => p.frames)) {
-        const blobs = await pcmSampleBlobsForMmb(ir);
-        if (!current()) return;
-        const frames = blobs ? bakePcm8(ir, blobs) : null;
-        for (const w of frames?.warnings ?? []) log(w, 'warn');
-        target?.setFrameBank?.(frames);
-        return;
-      }
-      if (machine.hasPart('adpcm-b')) {
-        const blobs = await pcmSampleBlobsForMmb(ir);
-        if (!current()) return;
-        const adpcm = blobs ? bakeAdpcmB(ir, blobs, machine) : null;
-        for (const w of adpcm?.warnings ?? []) log(w, 'warn');
-        target?.setAdpcmBank?.(adpcm);
-        workletNode.port.postMessage({ type: 'adpcm-ram', image: adpcm?.image ?? null });
-        workletNode.port.postMessage({ type: 'rhythm-rom', rom: rhythmRomFor(ir, machine, blobs) });
-        return;
-      }
+      // The samples baked as the machine's sample part bakes them
+      // (sample-bank.js), as the VGM and WAV exports bake them.
+      const kind = sampleBankKind(machine);
       const clear = () => {
         target?.setPcmBankRate?.(null);
         workletNode.port.postMessage({ type: 'pcm-set-bank', bank: null, pcmVoices: 0 });
       };
-      const pcmVoices = ir?.metadata?.pcmVoices ?? 0;
-      if (!pcmVoices) return clear();
-      const samples = await pcmSampleBlobsForMmb(ir);
+      if (!hasSampleBank(ir, machine)) return clear();
+      const blobs = await pcmSampleBlobsForMmb(ir);
       if (!current()) return;
-      if (!samples) return clear();
+      if (!blobs && kind === 'mmb') return clear();
+      let baked;
       try {
-        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
-        configurePcmRate(target, { bank: sampleBank, pcmVoices, frameHz: ir.metadata?.frameHz ?? 60 });
-        workletNode.port.postMessage({
-          type: 'pcm-set-bank',
-          bank: sampleBank ?? null,
-          pcmVoices,
-          frameHz: ir.metadata?.frameHz ?? 60,
-          entryIds: pcmEntryIds ?? {},
-        });
+        baked = blobs ? bakeSampleBank(ir, blobs, machine) : { bake: null, pcm: null, warnings: [] };
       } catch (e) {
         log('PCM bank: ' + e.message, 'err');
-        clear();
+        return clear();
       }
+      for (const w of baked.warnings) log(w, 'warn');
+      const { bake } = baked;
+      // The X68000's PCM8: the samples the worklet mixes (src/chips/msm6258.js).
+      if (kind === 'pcm8') {
+        target?.setFrameBank?.(bake);
+        workletNode.port.postMessage({ type: 'pcm8-bank', bank: bake });
+      // The PC Engine's DDA, the 2A03's DMC: the player writes each note's
+      // samples as the chip's own register writes, from the same frames.
+      } else if (kind === 'frames') {
+        target?.setFrameBank?.(bake);
+      // The YM2608's ADPCM-B plays from its own RAM.
+      } else if (kind === 'adpcm') {
+        target?.setAdpcmBank?.(bake);
+        workletNode.port.postMessage({ type: 'adpcm-ram', image: bake?.image ?? null });
+        workletNode.port.postMessage({ type: 'rhythm-rom', rom: rhythmRomFor(ir, machine, blobs) });
+      // The Mega Drive's soft mix, on the driver's engine.
+      } else if (bake) {
+        configurePcmRate(target, { bank: bake.bank, pcmVoices: bake.pcmVoices, frameHz: bake.frameHz });
+        workletNode.port.postMessage({ type: 'pcm-set-bank', bank: bake.bank, pcmVoices: bake.pcmVoices, frameHz: bake.frameHz, entryIds: bake.entryIds });
+      } else clear();
     }
 
     // `name` covers the handle-less case (a drag & drop in a browser without
@@ -6710,41 +6693,18 @@
       return true;
     }
 
+    // The samples as the score's machine bakes them (sample-bank.js): the
+    // ADPCM-B's RAM image riding the VGM, PCM8's mix, the DDA's or the DMC's
+    // frames, the Mega Drive's soft-mix bank.
     async function exportPcmBank(ir, what) {
-      const pcmVoices = ir.metadata?.pcmVoices ?? 0;
       const target = targetProfile(ir.metadata?.target);
-      // The YM2608's ADPCM-B plays from its own RAM: the samples baked once
-      // (chips/adpcm-b.js), the image riding the VGM.
-      if (target.hasPart('adpcm-b')) {
-        const blobs = await pcmSampleBlobsForMmb(ir);
-        if (!blobs) return null;
-        const adpcm = bakeAdpcmB(ir, blobs, target);
-        for (const w of adpcm.warnings) log(`${what} export: ${w}`, 'warn');
-        return adpcm.image.length ? { adpcm } : null;
-      }
-      // The X68000's PCM8: the samples the export mixes into the MSM6258's stream.
-      if (target.hasPart('pcm8')) {
-        const blobs = await pcmSampleBlobsForMmb(ir);
-        if (!blobs) return null;
-        const pcm8 = bakePcm8(ir, blobs);
-        for (const w of pcm8.warnings) log(`${what} export: ${w}`, 'warn');
-        return Object.keys(pcm8.entries).length ? { pcm8 } : null;
-      }
-      // The PC Engine's DDA: the frames, which the player writes as registers.
-      if (target.parts.some((p) => p.frames)) {
-        const blobs = await pcmSampleBlobsForMmb(ir);
-        if (!blobs) return null;
-        const frames = bakePcm8(ir, blobs);
-        for (const w of frames.warnings) log(`${what} export: ${w}`, 'warn');
-        return Object.keys(frames.entries).length ? { frames } : null;
-      }
-      // The bank is the Mega Drive's soft mix.
-      if (!pcmVoices || !target.hasPart('dac')) return null;
+      if (!hasSampleBank(ir, target)) return null;
       try {
-        const samples = await pcmSampleBlobsForMmb(ir);
-        if (!samples) return null;
-        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
-        return sampleBank ? { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices, frameHz: ir.metadata?.frameHz ?? 60 } : null;
+        const blobs = await pcmSampleBlobsForMmb(ir);
+        if (!blobs) return null;
+        const { pcm, warnings } = bakeSampleBank(ir, blobs, target);
+        for (const w of warnings) log(`${what} export: ${w}`, 'warn');
+        return pcm;
       } catch (e) {
         log(`${what} export: PCM bank failed: ${e.message}`, 'err');
         return null;
@@ -7887,13 +7847,9 @@
         }
         const entry = { head, label: channelLabelOf(head), trackIndex: headToTrack.get(head), ...channelRouting(head) };
         // A chip's own sample voice is the IR player's voice to mute or fade
-        // (muteVoice, setVoiceVol): the ADPCM-B, a voice of PCM8.
-        if (channelVoice(head)?.part.name === 'adpcm-b')
-          Object.assign(entry, { voice: 'adpcm', volKind: 'voice' });
-        if (channelVoice(head)?.part.name === 'pcm8')
-          Object.assign(entry, { voice: `pcm8-${channelVoice(head).voice}`, volKind: 'voice' });
-        if (channelVoice(head)?.part.name === 'fc-dpcm')
-          Object.assign(entry, { voice: 'dpcm', volKind: 'voice' });
+        // (muteVoice, setVoiceVol), as its part names it (`mixVoice`).
+        const cv = channelVoice(head);
+        if (cv?.part.mixVoice) Object.assign(entry, { voice: cv.part.mixVoice(cv.voice), volKind: 'voice' });
         model.push(entry);
       }
       return model;
@@ -11656,9 +11612,12 @@
         if (!samples) throw new Error(`"${name}" did not load`);
         const loop = def.loopStartSec != null || def.loopEndSec != null;
         if (seq !== _pcmAuditionSeq || (loop && _pcmReleasedSeq === seq)) return; // superseded or let go
+        // The machine's sample part (chips/parts.js `bank`) says how its
+        // samples sound.
+        const sp = machine.parts.find((p) => p.bank);
         // The X68000's PCM8: the def baked as the song's are, on a voice of
         // its own (the last), mixed and through the ADPCM as the chip plays.
-        if (_fmLiveRaf == null && targetProfile(ir.metadata?.target).hasPart('pcm8')) {
+        if (_fmLiveRaf == null && sp?.bank === 'pcm8') {
           const bank = bakePcm8(ir, samples, [name]);
           const s = bank.entries[name];
           if (!s) throw new Error(`"${name}" did not load`);
@@ -11670,28 +11629,26 @@
           });
           return;
         }
-        // The PC Engine's DDA: the def at the note's pitch as DDA plays it —
-        // 5 bits at the timer's 6.99 kHz — on a buffer source of its own.
-        if (machine.hasPart('pce-dda')) {
+        // A part that plays frames (the PC Engine's DDA, the 2A03's DMC):
+        // the def as the chip sounds it (its part's `audition`), on a buffer
+        // source of its own.
+        if (sp?.bank === 'frames') {
           const s = bakePcm8(ir, samples, [name]).entries[name];
           if (!s) throw new Error(`"${name}" did not load`);
-          const step = (s.rate * 2 ** ((midi - 60) / 12)) / DDA_RATE;
-          const n = Math.max(1, Math.floor(s.data.length / step));
-          const data = Int8Array.from({ length: n }, (_, k) => (ddaStep(s.data[Math.floor(k * step)]) - 16) * 8);
-          playAuditionBlob({ data, rateHz: DDA_RATE, range: null, loop: null }, false, vel);
+          playAuditionBlob(sp.audition(s, midi), false, vel);
           return;
         }
         // The YM2608's ADPCM-B: the def baked into the chip's RAM as the song's
         // are, keyed at the note's Delta-N and its level (the next Play or
         // Build puts the song's RAM back).
-        if (_fmLiveRaf == null && machine.hasPart('adpcm-b')) {
-          const head = machine.headsOf('adpcm-b')[0];
+        if (_fmLiveRaf == null && sp?.bank === 'adpcm') {
+          const head = machine.headsOf(sp.name)[0];
           const solo = { ...ir, tracks: [{ channel: head, scoreChannel: head, events: [{ cmd: 'PCM_NOTE_ON', args: { sample: name } }] }] };
           const { image, entries } = bakeAdpcmB(solo, samples, machine);
           const entry = entries[name];
           if (!entry) throw new Error(`"${name}" did not load`);
           workletNode.port.postMessage({ type: 'adpcm-ram', image });
-          const enc = machine.chipFor('adpcm-b').adpcm;
+          const enc = machine.chipFor(sp.name).adpcm;
           const level = Math.round(255 * levelGain({ vel }));
           const deltaN = enc.deltaN(entry.rate * 2 ** ((midi - 60) / 12));
           for (const [p, a, d] of enc.note(entry, deltaN, level, 0, loop)) writePreview(p, a, d);
