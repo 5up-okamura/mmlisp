@@ -808,7 +808,7 @@ operation is chosen by the keyword so the argument is never ambiguous:
 (fm1 :len 0 c :len 8 > c)   ; c holds; the key-off lets it go and > c plays
 ```
 
-In both cases the key-off is the game's (`MMLisp_keyOff`); in MMLisp Live it is Tools > Release Holds (⌘⇧↩ / Ctrl+Shift+Enter).
+In both cases the key-off is the game's (`MMLisp_keyOff`); in MMLisp Live it is Tools > Release Holds.
 
 ---
 
@@ -2360,7 +2360,7 @@ then `(` to wrap it and type the head.
 
 ### Looping a selection
 
-**Edit ▸ Loop Selection** (`Cmd/Ctrl+Alt+Shift+L`) writes the loop for you. With
+**Edit ▸ Loop Selection** writes the loop for you. With
 notes of one channel selected, they become the loop: `#loop` goes in front of
 the first and `(go loop)` after the last, widened to whole notes and forms so
 nothing is split (selecting the whole channel writes `#top` instead). With a selection across channels — or just the cursor in a
@@ -2846,7 +2846,6 @@ so before recording.
 | `Cmd+B`            | `Ctrl+B`            | Build                                    |
 | `Cmd+Return`       | `Ctrl+Enter`        | Play / Pause                             |
 | `Cmd+.`            | `Ctrl+.`            | Stop                                     |
-| `Cmd+Shift+Return` | `Ctrl+Shift+Enter`  | Release Holds — the key-off a game sends: `:len 0` / `:gate 0` holds let go, a held track plays on |
 | **Side panel**     |                     |                                          |
 | `Cmd+J`            | `Ctrl+J`            | Params — open the panel on it, or close it |
 | `Cmd+K`            | `Ctrl+K`            | Library — search the reference, presets, snippets, scores |
@@ -2862,7 +2861,6 @@ so before recording.
 | `Cmd+Option+]`     | `Ctrl+Alt+]`        | Close the open brackets                  |
 | `Cmd+Shift+F`      | `Ctrl+Shift+F`      | Format current score                     |
 | `Cmd+Shift+.` / `,` | `Ctrl+Shift+.` / `,` | Nudge the value at the cursor up / down (add `Option` / `Alt` for a coarse step) |
-| `Cmd+Option+Shift+L` | `Ctrl+Alt+Shift+L` | Loop Selection — `#loop` … `(go loop)` around the selected notes, `#top` … `(go top)` around whole channels |
 | **Library list**   |                     |                                          |
 | `↑` `↓`            | `↑` `↓`             | Move through the list (from the search box too) |
 | `Return`           | `Enter`             | Insert / open the highlighted row, or fold a group |

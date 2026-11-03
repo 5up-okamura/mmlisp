@@ -313,7 +313,6 @@
         <button class="menu-item" onclick="loopSelectionAction();closeMenus()"
           title="Inside one channel: loop the selected notes. Across channels, or with no selection: loop each channel whole">
           <span>Loop Selection</span>
-          <span class="menu-item-shortcut" id="loopSelectionShortcut"></span>
         </button>
         <button class="menu-item" id="logicalMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleLogicalEditor();closeMenus()"
           title="Pick the notes that meet a condition, then delete them, change their length or reverse them">
@@ -342,7 +341,6 @@
         <button class="menu-item" id="releaseHoldsItem" data-needs="driver" onclick="releaseHoldsAction();closeMenus()"
                 title="Send the key-off a game would: every :len 0 / :gate 0 hold lets go, and a track stopped at a :len 0 note plays on">
           <span>Release Holds</span>
-          <span class="menu-item-shortcut" id="releaseHoldsShortcut"></span>
         </button>
         <div class="menu-sep"></div>
         <!-- The side panel's two tabs (the ⚙ button opens it as it was left) -->
@@ -4892,9 +4890,7 @@
       if (key === 'Mod-Alt-]') return isMac ? '⌘⌥]' : 'Ctrl+Alt+]';
       if (key === 'Mod-f') return isMac ? '⌘F' : 'Ctrl+F';
       if (key === 'Mod-d') return isMac ? '⌘D' : 'Ctrl+D';
-      if (key === 'Mod-Shift-Enter') return isMac ? '⌘⇧↩' : 'Ctrl+Shift+Enter';
       if (key === 'Mod-Shift-l') return isMac ? '⌘⇧L' : 'Ctrl+Shift+L';
-      if (key === 'Mod-Alt-Shift-l') return isMac ? '⌘⌥⇧L' : 'Ctrl+Alt+Shift+L';
       if (key === 'Mod-Alt-ArrowUp') return isMac ? '⌘⌥↑' : 'Ctrl+Alt+Up';
       if (key === 'Mod-Alt-ArrowDown') return isMac ? '⌘⌥↓' : 'Ctrl+Alt+Down';
       if (key === 'Mod-z') return isMac ? '⌘Z' : 'Ctrl+Z';
@@ -4920,8 +4916,6 @@
         ['buildShortcut', 'Mod-b'],
         ['libraryShortcut', 'Mod-k'],
         ['paramsShortcut', 'Mod-j'],
-        ['releaseHoldsShortcut', 'Mod-Shift-Enter'],
-        ['loopSelectionShortcut', 'Mod-Alt-Shift-l'],
       ];
       for (const [id, key] of shortcutLabels) {
         const el = document.getElementById(id);
@@ -5045,7 +5039,6 @@
         ...searchKeymap,
         { key: 'Mod-/', run: toggleLineComment },
         { key: 'Mod-Shift-f', run: formatDocument },
-        { key: 'Mod-Alt-Shift-l', run: loopSelectionCmd },
         // Structure: grow/shrink the selection by form, and close what is open.
         { key: 'Alt-ArrowUp', run: expandSelection },
         { key: 'Alt-ArrowDown', run: shrinkSelection },
@@ -9017,10 +9010,9 @@
     // in a game is the host's; here it is Tools > Release Holds.
     function logHold(ir, trackIdx) {
       const ch = ir?.tracks?.[trackIdx];
-      log(`${ch ? (ch.scoreChannel ?? ch.channel) + ' ' : ''}is holding (:len 0) \u2014 Tools > Release Holds (${formatShortcutLabel('Mod-Shift-Enter')}) plays on`, 'info');
+      log(`${ch ? (ch.scoreChannel ?? ch.channel) + ' ' : ''}is holding (:len 0) \u2014 Tools > Release Holds plays on`, 'info');
     }
     function releaseHoldsAction() {
-      if (document.getElementById('releaseHoldsItem')?.disabled) return; // the shortcut too
       player?.releaseHolds?.();
       _libraryScorePlayer?.releaseHolds?.(); // a Library ▶ preview holds too
     }
@@ -9355,8 +9347,8 @@
 
     // -----------------------------------------------------------------------
     // Keyboard shortcuts (Cmd on macOS, Ctrl elsewhere): O open, S save,
-    // ⇧S save as, B build, K Library, J params, Enter play/pause, ⇧Enter
-    // release holds, . full stop. The editor's own keys are its keymap.
+    // ⇧S save as, B build, K Library, J params, Enter play/pause, . full stop.
+    // The editor's own keys are its keymap.
     // -----------------------------------------------------------------------
     let _paused = false;
     let _pausedSec = 0; // where pause left the song (IRPlayer.positionSec)
@@ -9428,10 +9420,7 @@
       } else if (e.key === 'j' && !e.shiftKey) {
         e.preventDefault();
         toggleParams();
-      } else if (e.key === 'Enter' && e.shiftKey) {
-        e.preventDefault();
-        releaseHoldsAction();
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         onPlayToggle();
       } else if (e.key === '.') {

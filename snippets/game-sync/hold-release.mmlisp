@@ -2,7 +2,7 @@
 ; there. A charge-up held while the button is down, then the release shot:
 ; the notes after the hold play from the moment of the key-off
 ; (MMLisp_keyOff), while the other tracks keep time. In the live app the
-; key-off is Tools > Release Holds (Cmd/Ctrl+Shift+Enter).
+; key-off is Tools > Release Holds.
 (import "presets/gm/set.mmlisp")
 
 (fm1 :tempo 120 :oct 4 gm-lead-square

@@ -2354,7 +2354,7 @@ from it, the track's clock moved on by however long it held (driver.md §2.4)
 — a charge-up held while the button is down, then its release shot. Both
 enable game-state-driven sounds: the note holds until the host sends
 `KEY_OFF` or `STOP_TRACK`, firing any `#rel` release macros. In MMLisp Live,
-Tools > Release Holds (⌘⇧↩ / Ctrl+Shift+Enter) is that key-off.
+Tools > Release Holds is that key-off.
 
 A hold is the one place a following note does **not** re-attack on FM: the
 channel is still keyed, so the next note moves the pitch and the envelope
