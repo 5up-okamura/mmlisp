@@ -1563,6 +1563,29 @@
     .lesson-try[data-state="correct"] .lesson-status { opacity: 1; font-weight: bold; font-size: 1.15em; }
     .lesson-try[data-state="answer"] { border-style: dashed; }
     .lesson-try[data-state="answer"] .lesson-status { opacity: 1; }
+    #lessonBar {
+      flex: none;
+      flex-direction: row;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0.4rem 0.5rem;
+      font-size: var(--text);
+    }
+    #lessonBar[hidden], #lessonPane .lib-chip[hidden], #lessonBarNext[hidden] { display: none; }
+    .lesson-bar-text {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: none;
+      border: none;
+      color: var(--foreground);
+      font: inherit;
+      line-height: 1.4;
+      text-align: left;
+      padding: 0;
+      cursor: pointer;
+    }
     .lesson-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; }
     #keyboardDock[hidden] { display: none; }
     #rightPanel .lib-search {

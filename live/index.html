@@ -397,6 +397,15 @@
 
     <!-- Left column: editor + draggable divider + console -->
     <div id="leftCol">
+      <!-- A lesson's Try and how the code stands, over the editor while the
+           Lessons tab is out of sight (a phone's panel covers the editor) -->
+      <div id="lessonBar" class="lesson-try" hidden>
+        <button type="button" class="lesson-bar-text" onclick="openLessons()" title="Open the lesson">
+          <span><span class="lesson-try-label">Try:</span> <span id="lessonBarTask"></span></span>
+          <span id="lessonBarStatus" class="lesson-status"></span>
+        </button>
+        <button type="button" class="lib-chip active" id="lessonBarNext" onclick="stepLesson(1)" hidden>Next</button>
+      </div>
       <div id="editorWrap">
         <canvas id="vizCanvas"></canvas>
         <div id="abCompare" role="group" aria-label="A/B comparison" hidden>
@@ -7776,6 +7785,7 @@
 
     function applyPanelState() {
       _panelEl.classList.toggle('collapsed', !_panelOpen);
+      if (typeof renderLessonBar === 'function') renderLessonBar();
       if (!_isMobile) {
         requestAnimationFrame(() => editorView.requestMeasure());
       }
@@ -9517,6 +9527,7 @@
       document.getElementById('libraryPane').hidden = _panelTab !== 'library';
       document.getElementById('lessonPane').hidden = _panelTab !== 'lessons';
       if (_panelTab === 'lessons') showLessons();
+      renderLessonBar();
       if (_panelTab === 'library') {
         ensureLibrary();
         if (libraryStale()) showLibraryItems();
@@ -10361,6 +10372,7 @@
         _lesson = {
           aside: { state: editorView.state, handle: _sourceHandle, name: _sourceFileName, path: _lastFileName, dirty: _docDirty },
           states: new Map(), // step key → the learner's editor state
+          shown: new Set(), // step keys whose answer Show Answer put in
         };
       }
       await loadLessonStep(lessons[li], si);
@@ -10426,10 +10438,27 @@
         answer: 'This is one answer. Start Over to try it yourself.',
       }[status.state];
       document.getElementById('lessonNext').classList.toggle('active', status.state === 'correct');
+      renderLessonBar();
       const last = si === lesson.steps.length - 1 && _lessons.indexOf(lesson) === _lessons.length - 1;
       document.getElementById('lessonPrev').disabled = si === 0 && _lessons.indexOf(lesson) === 0;
       document.getElementById('lessonNext').disabled = last;
       document.getElementById('lessonAnswer').hidden = !st.answer;
+    }
+
+    // The bar over the editor: the step's Try and its status, shown while a
+    // lesson is open and its tab is out of sight — on a phone, while writing.
+    function renderLessonBar() {
+      const bar = document.getElementById('lessonBar');
+      const tab = document.getElementById('lessonPane');
+      const shows = !!_lesson?.lesson && !!_lesson.parsed.task && (!_panelOpen || tab.hidden);
+      bar.hidden = !shows;
+      if (!shows) return;
+      const tryBox = document.getElementById('lessonTry');
+      bar.dataset.state = tryBox.dataset.state;
+      document.getElementById('lessonBarTask').textContent = document.getElementById('lessonTask').textContent;
+      document.getElementById('lessonBarStatus').textContent = document.getElementById('lessonStatus').textContent;
+      document.getElementById('lessonBarNext').hidden = tryBox.dataset.state !== 'correct'
+        || document.getElementById('lessonNext').disabled;
     }
 
     // Every compile of the step: does it do the Try?
@@ -10441,7 +10470,7 @@
       // The step's own code, untouched, is not a wrong answer yet; the shown
       // answer is not the learner's, so it ticks nothing.
       const same = (a, b) => a.trim() === String(b ?? '').trim();
-      const state = same(src, st.answer) ? 'answer'
+      const state = _lesson.shown.has(key) && same(src, st.answer) ? 'answer'
         : ok ? 'correct'
         : same(src, _lesson.parsed.code) ? 'fresh' : 'notyet';
       if (state === 'correct' && !_lessonProgress.done.has(key)) {
@@ -10476,10 +10505,16 @@
       if (li < 0 || li >= _lessons.length) return;
       await loadLessonStep(_lessons[li], si);
     };
-    window.resetLessonStep = () => _lesson?.lesson && loadLessonStep(_lesson.lesson, _lesson.si, { fresh: true });
+    window.resetLessonStep = () => {
+      if (!_lesson?.lesson) return;
+      _lesson.shown.delete(lessonKey(_lesson.lesson, _lesson.lesson.steps[_lesson.si])); // trying it again, as their own
+      loadLessonStep(_lesson.lesson, _lesson.si, { fresh: true });
+    };
     window.showLessonAnswer = () => {
       const st = _lesson?.lesson?.steps[_lesson.si];
-      if (st?.answer) loadLessonStep(_lesson.lesson, _lesson.si, { text: st.answer + '\n' });
+      if (!st?.answer) return;
+      _lesson.shown.add(lessonKey(_lesson.lesson, st));
+      loadLessonStep(_lesson.lesson, _lesson.si, { text: st.answer + '\n' });
     };
 
     // Leave: the score that was set aside, as it was.
@@ -10487,6 +10522,7 @@
       if (!_lesson) return;
       const { aside } = _lesson;
       _lesson = null;
+      renderLessonBar();
       stopLibraryPreview();
       cancelResume();
       resetForNewScore();
@@ -10503,6 +10539,7 @@
     // Another score was opened over the lesson: it is the one worked on now.
     function endLesson() {
       _lesson = null;
+      renderLessonBar();
       if (_panelTab === 'lessons') showLessons();
     }
 

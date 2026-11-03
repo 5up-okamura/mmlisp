@@ -2602,7 +2602,10 @@ is set aside, undo history and all, and **Leave** brings it back as it was
 exercise, checked as you type: the box says **Not yet** and why (an error, the
 notes so far, the tempo) or **Correct!**, and a step done is ticked in the
 list, in this browser. **Start Over** puts the step's code back, **Show
-Answer** one way of doing it — marked as the answer, so it ticks nothing; a step keeps your edits while the lesson is open. Opening another
+Answer** one way of doing it — marked as the answer, so it ticks nothing
+(**Start Over** makes the step yours again);
+while the Lessons tab is out of sight (on a phone, the panel closed to write)
+the Try and its verdict sit over the editor, with **Next** once it is done; a step keeps your edits while the lesson is open. Opening another
 score ends the lesson. The lessons' texts follow MMLisp ▸ Language. They live
 in `tutorial/` (`lessons.json` and a score per step, its leading comment the
 text, as a snippet's is), held by `cd tools && npm run check:lessons`.
