@@ -1,0 +1,5 @@
+; #name marks a place and (go name) jumps back to it, so a track plays
+; forever. Looping tracks should take the same time to come round.
+; Try: make the bass loop forever too.
+(fm1 #top (x 2 c e g e) (go top))
+(fm2 :oct 2 c2 g2)

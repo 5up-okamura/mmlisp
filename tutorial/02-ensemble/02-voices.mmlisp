@@ -1,0 +1,7 @@
+; A voice is an FM channel's sound. presets/gm holds 128 of them, named after
+; the General MIDI instruments: import the set, then name a voice at the start
+; of a track.
+; Try: give fm1 another voice: gm-vibes, gm-flute, gm-brass …
+(import "presets/gm/set.mmlisp")
+(fm1 gm-piano c4 e4 g4 e4)
+(fm2 gm-bass-finger :oct 2 c2 g2)

@@ -9,5 +9,15 @@
       {"file": "04-octaves", "title": "Octaves", "check": {"match": ":oct\\s+3(?!\\d)"}, "answer": "(fm1 :oct 3 c e g > c < g e c4)"},
       {"file": "05-tempo", "title": "Tempo", "check": {"tempoMin": 91}, "answer": "(fm1 :tempo 150 c e g > c < g e c4)"}
     ]
+  },
+  {
+    "id": "02-ensemble",
+    "title": "Ensemble",
+    "steps": [
+      {"file": "01-tracks", "title": "Tracks", "check": {"tracksMin": 3}, "answer": "(fm1 c4 e4 g4 e4)\n(fm2 :oct 2 c2 g2)\n(sqr1 :oct 5 c e g e c e g e)"},
+      {"file": "02-voices", "title": "Voices", "check": {"match": "\\(fm1\\s+gm-(?!piano(?![\\w-]))"}, "answer": "(import \"presets/gm/set.mmlisp\")\n(fm1 gm-vibes c4 e4 g4 e4)\n(fm2 gm-bass-finger :oct 2 c2 g2)"},
+      {"file": "03-repeats", "title": "Repeats", "check": {"sameLength": true}, "answer": "(fm1 (x 4 c e g e))\n(fm2 :oct 2 (x 4 c c g g))"},
+      {"file": "04-loops", "title": "Loops", "check": {"match": "\\(go\\s[\\s\\S]*\\(go\\s"}, "answer": "(fm1 #top (x 2 c e g e) (go top))\n(fm2 :oct 2 #top c2 g2 (go top))"}
+    ]
   }
 ]

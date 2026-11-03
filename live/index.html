@@ -10336,7 +10336,29 @@
       let lessons;
       try { lessons = await loadLessons(); }
       catch (e) { list.textContent = 'Lessons: ' + e.message; return; }
-      list.replaceChildren(...lessons.map((l, li) => {
+      // Start where the learner left off: the first step not yet done.
+      const steps = lessons.flatMap((l, li) => l.steps.map((st, si) => [li, si, _lessonProgress.done.has(lessonKey(l, st))]));
+      const next = steps.find(([, , done]) => !done);
+      const head = document.createElement('div');
+      head.className = 'lesson-actions';
+      const go = document.createElement('button');
+      go.className = 'lib-chip active';
+      go.textContent = next && steps.some(([, , done]) => done) ? 'Continue' : 'Start';
+      go.title = next ? 'From the first step not done yet' : 'Every step is done: from the first';
+      go.onclick = () => startLesson(...(next ?? steps[0]).slice(0, 2));
+      const clear = document.createElement('button');
+      clear.className = 'lib-chip';
+      clear.textContent = 'Clear Progress';
+      clear.title = 'Untick every step, in this browser';
+      clear.disabled = !steps.some(([, , done]) => done);
+      clear.onclick = () => {
+        if (!window.confirm('Clear every lesson step you have done?')) return;
+        _lessonProgress.done.clear();
+        saveLessonProgress(_lessonProgress);
+        showLessons();
+      };
+      head.append(go, clear);
+      list.replaceChildren(head, ...lessons.map((l, li) => {
         const group = document.createElement('div');
         const title = document.createElement('div');
         title.className = 'lesson-group-title';

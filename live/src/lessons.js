@@ -7,9 +7,13 @@
 //   { "notesMin": 7 }      the score plays at least 7 notes
 //   { "match": "re" }      the code (comments left out) matches the pattern
 //   { "tempoMin": 91 }     a tempo at least that fast
+//   { "tracksMin": 3 }     at least 3 tracks play notes
+//   { "sameLength": true } every track that plays notes takes as long, its
+//                          repeats counted out (ir-utils.js playedTicks)
 //
 // A score that does not compile passes nothing. Testable in node
 // (tools `npm run check:lessons`).
+import { playedTicks } from "./ir-utils.js";
 
 /** A step's file: { about, task, code }. */
 export function parseStep(text) {
@@ -53,6 +57,16 @@ export function verdict(check, { src, ir, diagnostics }) {
     if (n < check.notesMin) return { ok: false, why: `${n} notes so far; it needs ${check.notesMin}` };
   }
   if (check.match != null && !new RegExp(check.match).test(codeOnly(src))) return { ok: false, why: "" };
+  const playing = (ir.tracks ?? []).filter((t) => (t.events ?? []).some((e) => e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON"));
+  if (check.tracksMin != null && playing.length < check.tracksMin)
+    return { ok: false, why: `${playing.length} tracks play; it needs ${check.tracksMin}` };
+  if (check.sameLength) {
+    const lens = playing.map((t) => [t.scoreChannel ?? t.channel, playedTicks(t.events)]);
+    if (new Set(lens.map(([, n]) => n)).size > 1) {
+      const bars = (n) => `${+(n / 384).toFixed(2)} bar${n === 384 ? "" : "s"}`;
+      return { ok: false, why: lens.map(([c, n]) => `${c} ${bars(n)}`).join(", ") };
+    }
+  }
   if (check.tempoMin != null) {
     const set = events.filter((e) => e.cmd === "TEMPO_SET").map((e) => e.args?.bpm ?? 0);
     const bpm = set.length ? Math.max(...set) : 120; // 120 unless the score says

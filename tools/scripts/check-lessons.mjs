@@ -7,13 +7,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { parseStep, passes } from "../../live/src/lessons.js";
+import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lessons = JSON.parse(fs.readFileSync(path.join(root, "tutorial/lessons.json"), "utf8"));
 const fails = [];
 let n = 0;
 const compile = (src, name) => {
-  const r = compileMMLisp(src, name, {});
+  const r = compileMMLisp(src, name, { imports: readImportSources(path.join(root, name), src) });
   return { src, ir: r.ir, diagnostics: r.diagnostics };
 };
 for (const lesson of lessons) {

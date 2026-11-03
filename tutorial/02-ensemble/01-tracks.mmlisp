@@ -1,0 +1,5 @@
+; Each channel is its own track, and they all play at once: fm1 plays the
+; tune, fm2 the bass. :oct 2 puts the bass two octaves down.
+; Try: add a third track, sqr1 (a square wave), playing along.
+(fm1 c4 e4 g4 e4)
+(fm2 :oct 2 c2 g2)

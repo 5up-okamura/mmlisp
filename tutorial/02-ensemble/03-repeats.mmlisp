@@ -1,0 +1,4 @@
+; (x N …) plays what it holds N times.
+; Try: make the bass as long as the tune.
+(fm1 (x 4 c e g e))
+(fm2 :oct 2 (x 2 c c g g))

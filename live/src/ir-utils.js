@@ -1155,3 +1155,33 @@ export function macroFrames(spec) {
   }
   return { held, loop, released };
 }
+
+// Ticks a track takes to play once through, counted loops unrolled: the IR
+// holds one pass of an `(x N …)` body, so its last tick undercounts. A body
+// with a `(break)` stops there on its final pass. (The MCP's mmlisp_check
+// summary, Tools > Lessons' sameLength.)
+export function playedTicks(ev) {
+  const lastTick = ev.reduce((m, e) => Math.max(m, (e.tick ?? 0) + (e.args?.length ?? 0)), 0);
+  const root = { begin: 0, end: lastTick, children: [] };
+  const stack = [root];
+  for (const e of ev) {
+    const top = stack[stack.length - 1];
+    if (e.cmd === "LOOP_BEGIN") {
+      const node = { id: e.args?.id, begin: e.tick, children: [] };
+      top.children.push(node);
+      stack.push(node);
+    } else if (e.cmd === "LOOP_END" && top.id === e.args?.id && stack.length > 1) {
+      Object.assign(top, { end: e.tick, repeat: e.args?.repeat ?? 1 });
+      stack.pop();
+    } else if (e.cmd === "LOOP_BREAK") {
+      const loop = stack.findLast((n) => n.id === e.args?.id);
+      if (loop) loop.brk = e.tick;
+    }
+  }
+  const body = (n, to) =>
+    to - n.begin + n.children
+      .filter((c) => c.end != null && c.end <= to)
+      .reduce((sum, c) => sum + loop(c) - (c.end - c.begin), 0);
+  const loop = (n) => (n.repeat - 1) * body(n, n.end) + body(n, n.brk ?? n.end);
+  return body(root, lastTick);
+}
