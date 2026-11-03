@@ -498,7 +498,7 @@ PCM voices have their own state (§14).
 | note | MIDI |
 | fnum / PSG period | current, including bend |
 | block | FM |
-| vel (0–15), vol (0–31), master (0–31) | level model, §7 |
+| vel (0–120, eighths of a step), vol (0–31), master (0–31) | level model, §7 |
 | gate (0–8) | |
 | pan (i8 −1/0/1) | |
 | key-off countdown | ticks; sentinel = none/held |
@@ -844,8 +844,9 @@ runtime stays integer-only and quantizes once, at the register. `vel` here is
 the live velocity **in eighths of a step** (0…120, §7.1).
 
 Offset tables in 68k ROM, **generated from the `ir-utils.js` constants**
-(`TL_DB_PER_STEP` 0.75, `PSG_DB_PER_STEP` 2, `VEL_DB_PER_STEP` 2,
-`VOL_STEP_DB` 2, `VOL_UNITY` 31, `VEL_FINE` 8):
+(`VEL_DB_PER_STEP` 2, `VOL_STEP_DB` 2, `VOL_UNITY` 31, `VEL_FINE` 8) on the
+Mega Drive's parts' ladders (`level.stepDb` in `live/src/chips/`: the YM2612's
+TL 0.75, the SN76489's attenuator 2):
 
 - `vel_tl4[121]` = round(4 × (15 − v/8) × 2 / 0.75) (v = 0…120, eighths)
 - `vol_tl4[32]` = round(4 × (31 − v) × 2 / 0.75) — v = 31 → 0 … v = 1 → 320;
@@ -886,13 +887,13 @@ Rules:
 
 `vel` above is really **two** per-channel bytes, on FM, PSG and PCM alike,
 both held **in eighths of a step** (0…120): the score's
-`:vel` is a whole step, scaled ×8 on its way in (`PARAM_SET VEL`,
-`NOTE_ON_EX`, a host `SET_PARAM VEL`), while a `:vel` macro's samples arrive
-in eighths already (mmb.md §MACRO_TABLE) — a computed fade moves by the
-chip's own resolution (0.75 dB on FM) instead of the 2 dB score step, and a
-PSG fade still lands on its 2 dB attenuator, and a PCM one on its 6 dB shift
-(§14). A relative write (`PARAM_ADD`, a sweep's `from` read) reads the live
-value back as whole steps, rounded.
+`:vel` (steps, to the eighth: language.md §6) and a `:vel` macro's samples
+arrive in eighths already (`PARAM_SET VEL`, `NOTE_ON_EX`, mmb.md
+§MACRO_TABLE), and a host `SET_PARAM VEL` is a whole step, scaled ×8 on its
+way in — a fade moves by the chip's own resolution (0.75 dB on FM) instead of
+a 2 dB whole step, and a PSG fade still lands on its 2 dB attenuator, and a
+PCM one on its 6 dB shift (§14). A relative write (`PARAM_ADD`, a sweep's
+`from` read) reads the live value back as whole steps, rounded.
 
 
 - **`vel_base`** — the score's sticky velocity. Written *only* by a
@@ -995,7 +996,8 @@ falls back to what `$28` holds, so each overflow is an attack and a release.
 The rate of overflows is the pitch; where the operators ring is the formant.
 
 - The compiler emits `CSM_ON` once at the start and `CSM_OFF` only at
-  **end-of-stream** of an fm3-csm track; mid-track rests do **not** toggle
+  **end-of-stream** of an fm3-csm track (none on one that ends in
+  `(go label)`, which never reaches it); mid-track rests do **not** toggle
   the CSM bit.
 - **Timer A runs while CSM is on, unless the rate source rests** (below); a
   rest on the formant track alone leaves it running. Setting
@@ -1017,17 +1019,18 @@ The rate of overflows is the pitch; where the operators ring is the formant.
   `fm3-csm` track beside `fm3-1`–`fm3-4`, each operator's F-number and level
   are its track's (§13.4) — a formant — and the `fm3-csm-rate` track is the
   voice: it carries `CSM_ON` and a held `CSM_RATE` at tick 0 and `CSM_OFF` at
-  its end, so stopping it clears CSM and the formants sound exactly while it
-  plays. `$27` holds CSM alone (the chip keys CSM in mode 2 only; bit6 would
-  cancel it), so the mode byte, not the register, says the operators are
-  tracks: `fm3_ops`. An operator's key is then its level — `$28` must hold no
-  operator for Timer A to key it — so `fm3_key_op` writes the operator's TL
-  instead of `$28`: composed on, 127 off, and `fm3_op_tl` returns 127 for an
-  operator that is not sounding (`fm3_op_sound`) whatever recomposes it (the
-  group fader, master). As on a PSG note, a `:vel` / `:vol` macro's release
-  is the decay: a key-off with a release pending leaves the operator sounding,
-  the release's samples write its TL, and a step after the last it falls
-  silent (the macro's TAIL state, as the PSG's). A rest on the rate track is
+  its end (as above, none if it ends in `(go label)`), so stopping it clears
+  CSM and the formants sound exactly while it plays. `$27` holds CSM alone
+  (the chip keys CSM in mode 2 only; bit6 would cancel it), so the mode byte,
+  not the register, says the operators are tracks: `fm3_ops`. An operator's
+  key is then its level — `$28` must hold no operator for Timer A to key it —
+  so `fm3_key_op` writes the operator's TL instead of `$28`: composed on,
+  127 off, and `fm3_op_tl` returns 127 for an operator that is not sounding
+  (`fm3_op_sound`) whatever recomposes it (the group fader, master). As on
+  a PSG note, a `:vel` / `:vol` macro's release is the decay: a key-off with
+  a release pending leaves the operator sounding, the release's samples write
+  its TL, and a step after the last it falls silent (the macro's TAIL state,
+  as the PSG's). A rest on the rate track is
   the voice's breath: with the operators as tracks the hold (`csm_hold`, LOAD A
   low) also holds every operator at 127, and the next rate recomposes them
   (`set_reg27` recomposes on a LOAD A edge). Leaving CSM (`CSM_OFF`, a stop)
@@ -1288,7 +1291,8 @@ the driver does not have.
 ### 12.6 Tables
 
 The reference computes every constant table (F-number, PSG period, level
-offsets, curve units) from `live/src/ir-utils.js`, and
+offsets on the parts' ladders in `live/src/chips/`, curve units) from
+`live/src/ir-utils.js`, and
 `tools/gen-c-tables.mjs` emits the same tables as C for the 68k
 (`drv/68k/tables.c`, and the images' rate stamps in `drv/68k/mml_rate.h`).
 Neither side re-derives a table. `npm run mirrors` checks that `mml_rate.h`, the
