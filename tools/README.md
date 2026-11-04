@@ -103,7 +103,9 @@ Run from tools directory:
     it on an emulated MSX), frame by frame on every PSG, SCC and FM channel
 31. `npm run check:lessons` — the tutorial (MMLisp Live's Lessons, `tutorial/`): every
     step compiles clean, its exercise is not done before the learner starts,
-    and its answer does it
+    and its answer does it; the walk (Next runs on through the lessons, never
+    into or out of a machine's tour; Start Lesson resumes at the first step
+    not done) and a Try's states, as `live/src/lessons.js` gives them
 
 ## i18n
 

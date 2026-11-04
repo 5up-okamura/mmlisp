@@ -1087,7 +1087,7 @@
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
     import { isReservedHead } from './src/mmlisp-eval.js';
     import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout, lessonText } from './src/i18n.js';
-    import { parseStep, verdict as lessonVerdict, loadProgress as loadLessonProgress, saveProgress as saveLessonProgress } from './src/lessons.js';
+    import { parseStep, stepKey, textKeys, firstUndone, neighbor, stepState, statusText, loadProgress as loadLessonProgress, saveProgress as saveLessonProgress } from './src/lessons.js';
     import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
@@ -5306,25 +5306,29 @@
     function setEditorDoc(text, timingSong = null) {
       // A score opened from anywhere but the lesson ends it: that score is
       // the one being worked on now, not the one the lesson set aside.
-      if (_lesson && !_lessonLoading) endLesson();
-      // Reset the full state so that undo history does not include the file load.
+      if (_lesson) dropLesson();
       setImportTimingSong(timingSong);
+      // A fresh state, so that undo history does not include the file load.
+      putEditorState(newEditorState(text));
+      markDocSaved(); // as it came: nothing of the user's in it yet
+      scheduleDraftSave();
+    }
+    const newEditorState = (text) => EditorState.create({ doc: text, extensions: editorExtensions });
+    // The editor's document replaced by `state` (a new one, or one kept with
+    // its undo history: A/B, a lesson's working copies), and what hangs on
+    // the document told.
+    function putEditorState(state) {
       resetABCompare();
       _docEpoch++; // a compile still running is of the score this one replaces
-      editorView.setState(EditorState.create({
-        doc: text,
-        extensions: editorExtensions,
-      }));
+      editorView.setState(state);
       if (!timingTool.hidden) itStart();
       logicalNewScore();
-      markDocSaved(); // as it came: nothing of the user's in it yet
       syncBracketStatus(); // setState fires no doc-change update
       // Likewise the FM panel's def-at-cursor is this document's, not the last
       // one's — after the current task, since at startup the panel's state is
       // declared further down the script.
       queueMicrotask(syncParamUI);
       hideSharedPlay(); // a shared score's prompt belongs to that score alone
-      scheduleDraftSave();
     }
 
     // The score being edited, kept in this browser so it outlives the page:
@@ -5336,10 +5340,10 @@
     // compiles under, which for a score from the Library is its path there:
     // its imports and samples resolve against that folder.
     const DRAFT_KEY = 'mmlisp.draft';
-    // MMLisp > Lessons (showLessons): the lesson open, and whether the editor
-    // is loading one of its steps. `var`: the draft and the editor's load read
-    // them from the first document on.
-    var _lesson = null, _lessonLoading = false;
+    // Tools > Lessons (renderLessons): lessons.json once read, the steps done,
+    // and the lesson open (its session). `var`: the draft, the editor's load
+    // and the panel read them from the first document on.
+    var _lessons = null, _lessonProgress = loadLessonProgress(), _lesson = null;
     let _draftTimer = null;
     function scheduleDraftSave() {
       clearTimeout(_draftTimer);
@@ -7837,7 +7841,7 @@
 
     function applyPanelState() {
       _panelEl.classList.toggle('collapsed', !_panelOpen);
-      if (typeof renderLessonBar === 'function') renderLessonBar();
+      renderLessons(); // the bar over the editor stands in for a closed panel
       if (!_isMobile) {
         requestAnimationFrame(() => editorView.requestMeasure());
       }
@@ -9406,7 +9410,7 @@
       buildLanguageMenu();
       _libLoad = null;
       if (_libList) ensureLibrary();
-      showLessons(); // the lessons' texts, the list's and the open step's (and the bar over the editor)
+      renderLessons(); // their texts, in the pane and the bar over the editor
     }
     buildLanguageMenu();
     buildNewMenu();
@@ -9579,8 +9583,7 @@
       document.getElementById('rightPanelBody').hidden = _panelTab !== 'params';
       document.getElementById('libraryPane').hidden = _panelTab !== 'library';
       document.getElementById('lessonPane').hidden = _panelTab !== 'lessons';
-      if (_panelTab === 'lessons') showLessons();
-      renderLessonBar();
+      renderLessons();
       if (_panelTab === 'library') {
         ensureLibrary();
         if (libraryStale()) showLibraryItems();
@@ -10363,233 +10366,108 @@
     }
 
     // -----------------------------------------------------------------------
-    // Lessons (Tools > Lessons, the panel's Lessons tab): the tutorial's steps,
-    // each played in a working copy of its own. Starting a lesson sets the
-    // score aside — its editor state (undo and all), its file and its name —
-    // and Leave brings it back as it was; the draft keeps the score meanwhile.
-    // A step keeps the learner's edits while the lesson is open. Opening any
-    // other score ends the lesson (setEditorDoc) and drops what was set aside,
-    // as opening it over the score would have.
+    // Lessons (Tools > Lessons, the panel's Lessons tab): the tutorial's steps
+    // (lessons.js), each played in a working copy of its own.
+    //
+    // The session (_lesson): the score set aside when it began (its editor
+    // state, undo and all, its file and its name; the draft keeps it
+    // meanwhile), the learner's working copy of each step visited, the steps
+    // whose answer was shown, and where it is: the step, its parsed file, its
+    // Try's state, and whether the list is showing over it. End Lesson puts
+    // the score back; opening any other score drops the session
+    // (setEditorDoc), as opening it over the score would have.
+    //
+    // Every change to the session or the progress ends in renderLessons(),
+    // which draws the pane and the bar over the editor from one view of them.
     // -----------------------------------------------------------------------
     const LESSONS_INDEX = 'tutorial/lessons.json';
-    let _lessons = null;                    // lessons.json, read once
-    const _lessonProgress = loadLessonProgress();
-    const lessonKey = (l, st) => `${l.id}/${st.file}`;
 
     async function loadLessons() {
       _lessons ??= JSON.parse(await fetchText(LESSONS_INDEX));
       return _lessons;
     }
-
-    // The list, or the open lesson's step; the actions over both.
-    async function showLessons() {
-      const list = document.getElementById('lessonList');
-      const step = document.getElementById('lessonStep');
-      let lessons;
-      try { lessons = await loadLessons(); }
-      catch (e) { list.textContent = 'Lessons: ' + e.message; return; }
-      const done = (l, st) => _lessonProgress.done.has(lessonKey(l, st));
-      const any = lessons.some((l) => l.steps.some((st) => done(l, st)));
-      // Continue walks the lessons; a machine's tour (a group's) is picked from the list.
-      const next = lessons.flatMap((l, li) => l.group ? [] : l.steps.map((st, si) => [li, si, done(l, st)])).find(([, , d]) => !d);
-      const go = document.getElementById('lessonGo');
-      go.textContent = _lesson ? 'End Lesson' : 'Start Lesson';
-      go.title = _lesson ? 'Back to your score, as you left it'
-        : next ? 'From the first step not done yet; your score waits until you end the lesson'
-        : 'Every step is done: from the first';
-      const showStep = !!_lesson?.lesson && !_lesson.list;
-      const clear = document.getElementById('lessonClear');
-      clear.hidden = showStep; // the record, beside the list it ticks
-      clear.disabled = !any;
-      list.hidden = showStep;
-      step.hidden = !showStep;
-      renderLessonBar(); // over the editor while the step is out of sight: the list too
-      if (showStep) return renderLessonStep();
-      // The lessons numbered; a group's (the machines' tours) under its heading.
-      let n = 0;
-      list.replaceChildren(...lessons.flatMap((l, li) => {
-        const group = document.createElement('div');
-        const title = document.createElement('div');
-        title.className = 'lesson-group-title';
-        title.textContent = l.group ? lessonText(l.id, l.title) : `${++n}. ${lessonText(l.id, l.title)}`;
-        group.append(title);
-        const heading = l.group && l.group !== lessons[li - 1]?.group ? document.createElement('div') : null;
-        if (heading) {
-          heading.className = 'lesson-heading';
-          heading.textContent = l.group;
-        }
-        l.steps.forEach((st, si) => {
-          const row = document.createElement('button');
-          row.className = 'lesson-row';
-          if (_lesson?.lesson === l && _lesson.si === si) row.classList.add('current');
-          const mark = document.createElement('span');
-          mark.className = 'lesson-mark';
-          mark.textContent = done(l, st) ? '✓' : '';
-          const name = document.createElement('span');
-          name.textContent = lessonText(lessonKey(l, st), st.title);
-          row.append(mark, name);
-          row.onclick = () => startLesson(li, si);
-          group.append(row);
-        });
-        return heading ? [heading, group] : [group];
-      }));
-    }
-
-    // Start Lesson / End Lesson: in at the first step not done yet (else the
-    // first), out back to the score.
-    window.toggleLesson = () => (_lesson ? leaveLesson() : continueLessons());
-    async function continueLessons() {
-      const lessons = await loadLessons();
-      const at = lessons.flatMap((l, li) => l.group ? [] : l.steps.map((st, si) => [li, si]))
-        .find(([li, si]) => !_lessonProgress.done.has(lessonKey(lessons[li], lessons[li].steps[si])));
-      await startLesson(...(at ?? [0, 0]));
-    }
-    window.clearLessonProgress = () => {
-      if (!window.confirm('Clear every lesson step you have done?')) return;
-      _lessonProgress.done.clear();
+    function markLessonDone(key) {
+      if (_lessonProgress.done.has(key)) return;
+      _lessonProgress.done.add(key);
       saveLessonProgress(_lessonProgress);
-      showLessons();
-    };
-    // The list with the lesson still open: its step is where it was left.
-    window.showLessonList = () => {
-      if (!_lesson) return;
-      _lesson.list = true;
-      showLessons();
-    };
-
-    async function openLessons() {
-      if (!_panelOpen) togglePanel();
-      selectPanelTab('lessons');
     }
-    window.openLessons = openLessons;
+    // The open step: its lesson, index, def in lessons.json and key.
+    function lessonAt() {
+      if (!_lesson?.lesson) return null;
+      const { lesson, si } = _lesson;
+      return { lesson, si, st: lesson.steps[si], key: stepKey(lesson, lesson.steps[si]) };
+    }
 
+    // --- the document --------------------------------------------------------
+    // What the editor holds, and holding another: the score set aside, a
+    // step's working copy, the score put back.
+    function currentDocument() {
+      return { state: editorView.state, handle: _sourceHandle, name: _sourceFileName, path: _lastFileName, dirty: _docDirty };
+    }
+    async function swapDocument({ state, handle, name, path, dirty }) {
+      stopLibraryPreview();
+      cancelResume();
+      resetForNewScore();
+      _sourceHandle = handle; // a step has none: Save never writes it over the score's file
+      _sourceFileName = name;
+      _lastFileName = path;
+      putEditorState(state);
+      _docDirty = dirty;
+      updateDocName();
+      await refreshImportsAndCompile();
+    }
+
+    // --- the session ---------------------------------------------------------
     async function startLesson(li, si) {
       if (currentIrURL) { log('Lessons: close the .mmb first (File > New).', 'err'); return; }
       const lessons = await loadLessons();
       if (!_lesson) {
         saveDraft(); // the score as it stands is what a reload comes back to
-        _lesson = {
-          aside: { state: editorView.state, handle: _sourceHandle, name: _sourceFileName, path: _lastFileName, dirty: _docDirty },
-          states: new Map(), // step key → the learner's editor state
-          shown: new Set(), // step keys whose answer Show Answer put in
-        };
+        _lesson = { aside: currentDocument(), copies: new Map(), shown: new Set() };
       }
-      await loadLessonStep(lessons[li], si);
+      await openLessonStep(lessons[li], si);
     }
-
-    // The step's text and code; its working copy as the learner left it.
-    async function loadLessonStep(lesson, si, { fresh = false, text = null } = {}) {
+    // A step's text, and its code as the learner left it (or `code`: its own
+    // again, or the answer).
+    async function openLessonStep(lesson, si, code = null) {
       const st = lesson.steps[si];
-      const key = lessonKey(lesson, st);
+      const key = stepKey(lesson, st);
       const path = `tutorial/${key}.mmlisp`;
       let parsed;
       try { parsed = parseStep(await fetchText(path)); }
       catch (e) { log('Lessons: ' + e.message, 'err'); return; }
-      if (_lesson.lesson) _lesson.states.set(lessonKey(_lesson.lesson, _lesson.lesson.steps[_lesson.si]), editorView.state);
+      const here = lessonAt();
+      if (here) _lesson.copies.set(here.key, editorView.state);
       Object.assign(_lesson, { lesson, si, parsed, list: false, status: { state: 'fresh', why: '' } });
-      if (!st.check && !_lessonProgress.done.has(key)) { // a step with no Try is done once read
-        _lessonProgress.done.add(key);
-        saveLessonProgress(_lessonProgress);
-      }
-      const kept = fresh || text != null ? null : _lesson.states.get(key);
-      stopLibraryPreview();
-      cancelResume();
-      resetForNewScore();
-      _sourceHandle = null; // Save never writes a step over the score's file
-      _sourceFileName = path.split('/').pop();
-      _lastFileName = path;
-      _lessonLoading = true;
-      try {
-        if (kept) restoreEditorState(kept);
-        else setEditorDoc(text ?? parsed.code);
-      } finally { _lessonLoading = false; }
-      updateDocName();
-      showLessons();
-      await refreshImportsAndCompile();
+      if (!st.check) markLessonDone(key); // a step with no Try is done once read
+      const kept = code == null ? _lesson.copies.get(key) : null;
+      renderLessons();
+      await swapDocument({ state: kept ?? newEditorState(code ?? parsed.code), handle: null,
+        name: path.split('/').pop(), path, dirty: !!kept });
+    }
+    async function leaveLesson() {
+      if (!_lesson) return;
+      const { aside } = _lesson;
+      _lesson = null;
+      renderLessons();
+      await swapDocument(aside);
+    }
+    // Another score was opened over the lesson: it is the one worked on now.
+    function dropLesson() {
+      _lesson = null;
+      renderLessons();
     }
 
-    // An editor state put back as it was: setEditorDoc's housekeeping, with
-    // the state's own undo history.
-    function restoreEditorState(state) {
-      resetABCompare();
-      _docEpoch++;
-      editorView.setState(state);
-      if (!timingTool.hidden) itStart();
-      logicalNewScore();
-      syncBracketStatus();
-      queueMicrotask(syncParamUI);
-      hideSharedPlay();
-    }
-
-    function renderLessonStep() {
-      const { lesson, si, parsed, status } = _lesson;
-      if (!lesson) return;
-      const st = lesson.steps[si];
-      const key = lessonKey(lesson, st);
-      document.getElementById('lessonTitle').textContent =
-        `‹ ${lessonText(lesson.id, lesson.title)} · ${lessonText(key, st.title)}`;
-      document.getElementById('lessonCount').textContent = `${si + 1} / ${lesson.steps.length}`;
-      document.getElementById('lessonAbout').textContent = lessonText(`${key}.mmlisp`, parsed.about);
-      const tryBox = document.getElementById('lessonTry');
-      tryBox.hidden = !parsed.task;
-      tryBox.dataset.state = status.state;
-      // The Try's text follows "Try:" in the file; on its own it starts a sentence.
-      const task = lessonText(`${key}.mmlisp#try`, parsed.task);
-      document.getElementById('lessonTask').textContent = task.charAt(0).toUpperCase() + task.slice(1);
-      document.getElementById('lessonStatus').textContent = {
-        fresh: _lessonProgress.done.has(key) ? '✓ Done before. Checked as you type.' : 'Checked as you type.',
-        notyet: `Not yet${status.why ? ' — ' + status.why : ''}.`,
-        correct: '✓ Correct! On to Next.',
-        answer: 'This is one answer. Start Over to try it yourself.',
-      }[status.state];
-      document.getElementById('lessonNext').classList.toggle('active', status.state === 'correct');
-      renderLessonBar();
-      // Back and Next stay among the lessons, or within a machine's tour.
-      const li = _lessons.indexOf(lesson);
-      const across = (d) => _lessons[li + d] && (_lessons[li + d].group ?? null) === (lesson.group ?? null) && !lesson.group;
-      const last = si === lesson.steps.length - 1 && !across(1);
-      document.getElementById('lessonPrev').disabled = si === 0 && !across(-1);
-      document.getElementById('lessonNext').disabled = last;
-      document.getElementById('lessonAnswer').hidden = !st.answer;
-    }
-
-    // The bar over the editor: the step's Try and its status, shown while a
-    // lesson is open and its tab is out of sight — on a phone, while writing.
-    function renderLessonBar() {
-      const bar = document.getElementById('lessonBar');
-      const tab = document.getElementById('lessonPane');
-      const shows = !!_lesson?.lesson && !!_lesson.parsed.task && (!_panelOpen || tab.hidden || _lesson.list);
-      bar.hidden = !shows;
-      if (!shows) return;
-      const tryBox = document.getElementById('lessonTry');
-      bar.dataset.state = tryBox.dataset.state;
-      document.getElementById('lessonBarTask').textContent = document.getElementById('lessonTask').textContent;
-      document.getElementById('lessonBarStatus').textContent = document.getElementById('lessonStatus').textContent;
-      document.getElementById('lessonBarNext').hidden = tryBox.dataset.state !== 'correct'
-        || document.getElementById('lessonNext').disabled;
-      document.getElementById('lessonBarAnswer').hidden = document.getElementById('lessonAnswer').hidden;
-    }
-
-    // Every compile of the step: does it do the Try?
+    // Every compile of the step, Play's and Build's or the quiet one below.
     function lessonCompiled(src, ir, diagnostics) {
-      if (!_lesson?.lesson || src !== editorView.state.doc.toString()) return; // a step left behind
-      const st = _lesson.lesson.steps[_lesson.si];
-      const { ok, why } = lessonVerdict(st.check, { src, ir, diagnostics });
-      const key = lessonKey(_lesson.lesson, st);
-      // The step's own code, untouched, is not a wrong answer yet; the shown
-      // answer is not the learner's, so it ticks nothing.
-      const same = (a, b) => a.trim() === String(b ?? '').trim();
-      const state = _lesson.shown.has(key) && same(src, st.answer) ? 'answer'
-        : ok ? 'correct'
-        : same(src, _lesson.parsed.code) ? 'fresh' : 'notyet';
-      if (state === 'correct' && !_lessonProgress.done.has(key)) {
-        _lessonProgress.done.add(key);
-        saveLessonProgress(_lessonProgress);
-      }
-      _lesson.status = { state, why };
-      renderLessonStep();
+      const at = lessonAt();
+      if (!at || src !== editorView.state.doc.toString()) return; // a step left behind
+      const { st, key } = at;
+      _lesson.status = stepState({ check: st.check, code: _lesson.parsed.code, answer: st.answer,
+        shown: _lesson.shown.has(key) }, { src, ir, diagnostics });
+      if (_lesson.status.state === 'correct') markLessonDone(key);
+      renderLessons();
     }
-
     // An edit in a step is checked as the learner types: a quiet compile of
     // its own — the log and the strips wait for Play or Build, as anywhere.
     let _lessonCheckTimer = null;
@@ -10604,53 +10482,155 @@
       }, 400);
     }
 
-    // Back / Next, across lessons.
+    // --- the buttons ---------------------------------------------------------
+    async function openLessons() {
+      if (!_panelOpen) togglePanel();
+      selectPanelTab('lessons');
+    }
+    window.openLessons = openLessons;
+    // Start Lesson / End Lesson.
+    window.toggleLesson = async () => {
+      if (_lesson) return leaveLesson();
+      const lessons = await loadLessons();
+      await startLesson(...(firstUndone(lessons, _lessonProgress.done) ?? [0, 0]));
+    };
+    window.clearLessonProgress = () => {
+      if (!window.confirm('Clear every lesson step you have done?')) return;
+      _lessonProgress.done.clear();
+      saveLessonProgress(_lessonProgress);
+      renderLessons();
+    };
+    // The list with the lesson still open: its step is where it was left.
+    window.showLessonList = () => {
+      if (!_lesson) return;
+      _lesson.list = true;
+      renderLessons();
+    };
     window.stepLesson = async (dir) => {
-      if (!_lesson?.lesson) return;
-      let li = _lessons.indexOf(_lesson.lesson);
-      let si = _lesson.si + dir;
-      if (si < 0) { li--; si = li >= 0 ? _lessons[li].steps.length - 1 : 0; }
-      else if (si >= _lesson.lesson.steps.length) { li++; si = 0; }
-      if (li < 0 || li >= _lessons.length) return;
-      if (_lessons[li] !== _lesson.lesson && (_lessons[li].group || _lesson.lesson.group)) return; // a tour stands alone
-      await loadLessonStep(_lessons[li], si);
+      const at = lessonAt();
+      const to = at && neighbor(_lessons, _lessons.indexOf(at.lesson), at.si, dir);
+      if (to) await openLessonStep(_lessons[to[0]], to[1]);
     };
     window.resetLessonStep = () => {
-      if (!_lesson?.lesson) return;
-      _lesson.shown.delete(lessonKey(_lesson.lesson, _lesson.lesson.steps[_lesson.si])); // trying it again, as their own
-      loadLessonStep(_lesson.lesson, _lesson.si, { fresh: true });
+      const at = lessonAt();
+      if (!at) return;
+      _lesson.shown.delete(at.key); // trying it again, as their own
+      openLessonStep(at.lesson, at.si, _lesson.parsed.code);
     };
     window.showLessonAnswer = () => {
-      const st = _lesson?.lesson?.steps[_lesson.si];
-      if (!st?.answer) return;
-      _lesson.shown.add(lessonKey(_lesson.lesson, st));
-      loadLessonStep(_lesson.lesson, _lesson.si, { text: st.answer + '\n' });
+      const at = lessonAt();
+      if (!at?.st.answer) return;
+      _lesson.shown.add(at.key);
+      openLessonStep(at.lesson, at.si, at.st.answer + '\n');
     };
 
-    // Leave: the score that was set aside, as it was.
-    window.leaveLesson = async () => {
-      if (!_lesson) return;
-      const { aside } = _lesson;
-      _lesson = null;
-      renderLessonBar();
-      stopLibraryPreview();
-      cancelResume();
-      resetForNewScore();
-      _sourceHandle = aside.handle;
-      _sourceFileName = aside.name;
-      _lastFileName = aside.path;
-      restoreEditorState(aside.state);
-      _docDirty = aside.dirty;
-      updateDocName();
-      showLessons();
-      await refreshImportsAndCompile();
-    };
+    // --- drawing ---------------------------------------------------------------
+    // One view of the session and the progress, for the pane and the bar.
+    function lessonView() {
+      const at = lessonAt();
+      const step = at && (() => {
+        const { lesson, si, st, key } = at;
+        const keys = textKeys(key);
+        const task = lessonText(keys.task, _lesson.parsed.task);
+        const li = _lessons.indexOf(lesson);
+        return {
+          title: `${lessonText(lesson.id, lesson.title)} · ${lessonText(keys.title, st.title)}`,
+          count: `${si + 1} / ${lesson.steps.length}`,
+          about: lessonText(keys.about, _lesson.parsed.about),
+          // The Try's text follows "Try:" in its file; alone it starts a sentence.
+          task: task.charAt(0).toUpperCase() + task.slice(1),
+          state: _lesson.status.state,
+          status: statusText(_lesson.status, _lessonProgress.done.has(key)),
+          hasAnswer: !!st.answer,
+          back: !!neighbor(_lessons, li, si, -1),
+          next: !!neighbor(_lessons, li, si, 1),
+        };
+      })();
+      return { open: !!_lesson, list: !step || _lesson.list, step };
+    }
 
-    // Another score was opened over the lesson: it is the one worked on now.
-    function endLesson() {
-      _lesson = null;
-      renderLessonBar();
-      if (_panelTab === 'lessons') showLessons();
+    async function renderLessons() {
+      const view = lessonView();
+      renderLessonBar(view);
+      const pane = document.getElementById('lessonPane');
+      if (pane.hidden) return; // drawn when the tab is shown (selectPanelTab)
+      const go = document.getElementById('lessonGo');
+      go.textContent = view.open ? 'End Lesson' : 'Start Lesson';
+      go.title = view.open ? 'Back to your score, as you left it'
+        : 'From the first step not done yet; your score waits until you end the lesson';
+      const clear = document.getElementById('lessonClear');
+      clear.hidden = !view.list; // the record, beside the list it ticks
+      clear.disabled = !_lessonProgress.done.size;
+      document.getElementById('lessonList').hidden = !view.list;
+      document.getElementById('lessonStep').hidden = view.list;
+      if (view.list) await renderLessonList();
+      else renderLessonStep(view.step);
+    }
+
+    function renderLessonStep(step) {
+      document.getElementById('lessonTitle').textContent = `‹ ${step.title}`;
+      document.getElementById('lessonCount').textContent = step.count;
+      document.getElementById('lessonAbout').textContent = step.about;
+      const tryBox = document.getElementById('lessonTry');
+      tryBox.hidden = !step.task;
+      tryBox.dataset.state = step.state;
+      document.getElementById('lessonTask').textContent = step.task;
+      document.getElementById('lessonStatus').textContent = step.status;
+      document.getElementById('lessonAnswer').hidden = !step.hasAnswer;
+      document.getElementById('lessonPrev').disabled = !step.back;
+      const next = document.getElementById('lessonNext');
+      next.disabled = !step.next;
+      next.classList.toggle('active', step.state === 'correct');
+    }
+
+    // The bar over the editor: the Try while the step is out of sight — the
+    // panel closed (a phone, writing), another tab, or the list over it.
+    function renderLessonBar(view) {
+      const bar = document.getElementById('lessonBar');
+      const step = view.step;
+      bar.hidden = !step?.task || (_panelOpen && _panelTab === 'lessons' && !view.list);
+      if (bar.hidden) return;
+      bar.dataset.state = step.state;
+      document.getElementById('lessonBarTask').textContent = step.task;
+      document.getElementById('lessonBarStatus').textContent = step.status;
+      document.getElementById('lessonBarAnswer').hidden = !step.hasAnswer;
+      document.getElementById('lessonBarNext').hidden = step.state !== 'correct' || !step.next;
+    }
+
+    // The lessons numbered; a group's (the machines' tours) under its heading.
+    async function renderLessonList() {
+      const list = document.getElementById('lessonList');
+      let lessons;
+      try { lessons = await loadLessons(); }
+      catch (e) { list.textContent = 'Lessons: ' + e.message; return; }
+      const at = lessonAt();
+      let n = 0;
+      list.replaceChildren(...lessons.flatMap((l, li) => {
+        const group = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'lesson-group-title';
+        title.textContent = l.group ? lessonText(l.id, l.title) : `${++n}. ${lessonText(l.id, l.title)}`;
+        group.append(title);
+        l.steps.forEach((st, si) => {
+          const key = stepKey(l, st);
+          const row = document.createElement('button');
+          row.className = 'lesson-row';
+          row.classList.toggle('current', at?.key === key);
+          const mark = document.createElement('span');
+          mark.className = 'lesson-mark';
+          mark.textContent = _lessonProgress.done.has(key) ? '✓' : '';
+          const name = document.createElement('span');
+          name.textContent = lessonText(textKeys(key).title, st.title);
+          row.append(mark, name);
+          row.onclick = () => startLesson(li, si);
+          group.append(row);
+        });
+        if (!l.group || l.group === lessons[li - 1]?.group) return [group];
+        const heading = document.createElement('div');
+        heading.className = 'lesson-heading';
+        heading.textContent = l.group;
+        return [heading, group];
+      }));
     }
 
     // -----------------------------------------------------------------------

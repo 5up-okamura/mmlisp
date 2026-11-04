@@ -1,4 +1,4 @@
-// MMLisp > Lessons: the tutorial's steps, read from tutorial/ — one score per
+// Tools > Lessons: the tutorial's steps, read from tutorial/ — one score per
 // step, its leading comment the text the lesson shows and the rest the code
 // the lesson's working copy starts from, as a snippet is read
 // (snippets/README.md). A step's "Try:" is an exercise, and its check
@@ -12,8 +12,12 @@
 //   { "sameLength": true } every track that plays notes takes as long, its
 //                          repeats counted out (ir-utils.js playedTicks)
 //
-// A score that does not compile passes nothing. Testable in node
-// (tools `npm run check:lessons`).
+// A score that does not compile passes nothing.
+//
+// Everything here is the lessons' logic without the page: the keys a step's
+// texts are found and translated under, which step comes next, what a
+// compile says of a Try. live/index.html draws from it; tools
+// `npm run check:lessons` and i18n-sync.mjs read it too.
 import { playedTicks } from "./ir-utils.js";
 
 /** A step's file: { about, task, code }. */
@@ -33,10 +37,34 @@ export function parseStep(text) {
   return { about, task, code: lines.slice(i).join("\n").trim() + "\n" };
 }
 
-/** The leading comment as the Library and i18n read it: about and task in one. */
-export function stepText(text) {
-  const { about, task } = parseStep(text);
-  return task ? `${about} Try: ${task}` : about;
+/** A step's key, "01-sound/01-notes": its file under tutorial/ and its progress. */
+export const stepKey = (lesson, step) => `${lesson.id}/${step.file}`;
+
+/** The keys a step's texts are translated under (i18n.js lessonText, i18n-sync.mjs). */
+export const textKeys = (key) => ({ title: key, about: `${key}.mmlisp`, task: `${key}.mmlisp#try` });
+
+// --- the walk ---------------------------------------------------------------
+// The lessons are walked in order, one into the next; a group's lesson (a
+// machine's tour) stands alone, picked from the list. A place is [li, si].
+
+/** The first step of the lessons (not the tours) not yet done, or null. */
+export function firstUndone(lessons, done) {
+  for (const [li, l] of lessons.entries()) {
+    if (l.group) continue;
+    const si = l.steps.findIndex((st) => !done.has(stepKey(l, st)));
+    if (si >= 0) return [li, si];
+  }
+  return null;
+}
+
+/** The step Back (dir -1) or Next (+1) goes to from [li, si], or null. */
+export function neighbor(lessons, li, si, dir) {
+  const lesson = lessons[li];
+  const at = si + dir;
+  if (at >= 0 && at < lesson.steps.length) return [li, at];
+  const other = lessons[li + dir];
+  if (!other || lesson.group || other.group) return null;
+  return [li + dir, dir < 0 ? other.steps.length - 1 : 0];
 }
 
 // The code without its comments: a pattern looks at what plays.
@@ -82,6 +110,31 @@ export function verdict(check, { src, ir, diagnostics }) {
 
 /** Whether a compile does what the step's check asks. */
 export const passes = (check, compiled) => verdict(check, compiled).ok;
+
+/**
+ * Where a compile leaves the step's Try: `state` is "fresh" (its own code,
+ * untouched: not a wrong answer yet), "answer" (the one Show Answer put in:
+ * not the learner's, so it ticks nothing), "correct" or "notyet"; `why` says
+ * what is missing.
+ */
+export function stepState({ check, code, answer, shown }, compiled) {
+  const same = (a, b) => String(a ?? "").trim() === String(b ?? "").trim();
+  const { ok, why } = verdict(check, compiled);
+  const state = shown && same(compiled.src, answer) ? "answer"
+    : ok ? "correct"
+    : same(compiled.src, code) ? "fresh" : "notyet";
+  return { state, why };
+}
+
+/** What the Try box says in each state (the app's words, in English). */
+export function statusText({ state, why }, doneBefore) {
+  return {
+    fresh: doneBefore ? "✓ Done before. Checked as you type." : "Checked as you type.",
+    notyet: `Not yet${why ? " — " + why : ""}.`,
+    correct: "✓ Correct! On to Next.",
+    answer: "This is one answer. Start Over to try it yourself.",
+  }[state];
+}
 
 // Progress: the steps passed, by "lesson/step", in this browser.
 const STORE_KEY = "mmlisp.lessons";

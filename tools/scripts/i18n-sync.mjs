@@ -18,7 +18,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { REFERENCE, REFERENCE_CATEGORIES } from "../../live/src/reference.js";
-import { parseStep } from "../../live/src/lessons.js";
+import { parseStep, stepKey, textKeys } from "../../live/src/lessons.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const packDir = path.join(root, "live/src/i18n");
@@ -48,11 +48,12 @@ function englishTexts() {
   for (const l of lessons) {
     items.push({ section: "lessons", key: l.id, en: l.title });
     for (const s of l.steps) {
-      const key = `${l.id}/${s.file}`;
+      const key = stepKey(l, s);
+      const keys = textKeys(key);
       const { about, task } = parseStep(fs.readFileSync(path.join(root, "tutorial", `${key}.mmlisp`), "utf8"));
-      items.push({ section: "lessons", key, en: s.title });
-      items.push({ section: "lessons", key: `${key}.mmlisp`, en: about });
-      if (task) items.push({ section: "lessons", key: `${key}.mmlisp#try`, en: task });
+      items.push({ section: "lessons", key: keys.title, en: s.title });
+      items.push({ section: "lessons", key: keys.about, en: about });
+      if (task) items.push({ section: "lessons", key: keys.task, en: task });
     }
   }
   return items;
