@@ -2595,27 +2595,31 @@ panel on the tab it was left on; a fresh launch starts on Params, with
 Library's filters cleared.
 
 **Tools ▸ Lessons** opens the panel on **Lessons**: the tutorial, a step at a
-time. A step is a few lines of text and a few of code; picking one puts its
-code in the editor, in a working copy of its own — the score you were writing
-is set aside, undo history and all, and **Leave** (over the list) brings it
-back as it was (the draft a reload comes back to stays that score). A step's **Try** is an
-exercise (a step without one is done once read), checked as you type: the box says **Not yet** and why (an error, the
-notes so far, the tempo) or **Correct!**, and a step done is ticked in the
-list, in this browser. **Start Over** puts the step's code back, **Show
-Answer** one way of doing it — marked as the answer, so it ticks nothing
-(**Start Over** makes the step yours again);
-while the Lessons tab is out of sight (on a phone, the panel closed to write)
-the Try and its verdict sit over the editor, with **Next** once it is done;
-a step keeps your edits while the lesson is open. Over the list and the
-step alike, **Continue** picks up at the first step not done yet (**Start**
-when none or all are), **Clear Progress** unticks them all, and **Leave**
-ends the lesson; a step's title leads back to the list with the lesson still
-open. Under **Machines** is a tour of each machine, only what it has
-and the others lack (the Mega Drive's FM3 operators, CSM and PCM voices, the
-PC-8801's SSG envelope and ROM rhythm, the Famicom's expansion chips …), each
-step a score for that machine; Continue and Next keep to the lessons, and a tour is picked from the
-list. Opening another score ends the lesson too. The lessons' texts follow MMLisp ▸ Language. They live
-in `tutorial/` (`lessons.json` and a score per step, its leading comment the
+time. **Start Lesson** begins at the first step not done yet (the first when
+none or all are), or pick a step in the list; its code goes in the editor, in
+a working copy of its own — the score you were writing is set aside, undo
+history and all, and the same button, now **End Lesson**, brings it back as it
+was (the draft a reload comes back to stays that score). Opening another score
+ends the lesson too. A step's title leads back to the list with the lesson
+still open; **Clear Progress**, beside the list, unticks every step.
+
+A step is a few lines of text and a few of code, and most have a **Try**: an
+exercise, checked as you type. Its box says **Not yet** and why (an error, the
+notes so far, the tempo) or **Correct!**, and holds what acts on the code:
+**Start Over** puts the step's code back, **Show Answer** one way of doing it —
+marked as the answer, so it ticks nothing until Start Over makes the step yours
+again. **Back** and **Next**, at the two ends below, move between steps; a step
+keeps your edits while the lesson is open, and one without a Try is done once
+read. A step done is ticked in the list, in this browser. While the Lessons tab
+is out of sight (on a phone, the panel closed to write) the Try and its verdict
+sit over the editor, with **Next** once it is done.
+
+Under **Machines** is a tour of each machine, only what it has and the others
+lack (the Mega Drive's FM3 operators, CSM and PCM voices, the PC-8801's SSG
+envelope and ROM rhythm, the Famicom's expansion chips …), each step a score
+for that machine; Start Lesson and Next keep to the lessons, and a tour is
+picked from the list. The lessons' texts follow MMLisp ▸ Language. They live in
+`tutorial/` (`lessons.json` and a score per step, its leading comment the
 text, as a snippet's is), held by `cd tools && npm run check:lessons`.
 
 On desktop, temporary tools such as the Logical Editor (§24) appear after

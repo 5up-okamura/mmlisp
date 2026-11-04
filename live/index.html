@@ -659,11 +659,11 @@
       <!-- Lessons: the tutorial (tutorial/, lessons.js), each step played in a
            working copy of its own; leaving the lesson brings the score back -->
       <div id="lessonPane" hidden>
-        <!-- The lesson's own actions, over the list and the step alike -->
-        <div class="lesson-actions lesson-pane-actions">
-          <button class="lib-chip active" id="lessonGo" onclick="continueLessons()">Start</button>
+        <!-- In and out of the lessons (one button, a toggle); the record of
+             steps done, apart, while the list shows -->
+        <div class="lesson-bar-row lesson-pane-actions">
+          <button class="lib-chip active" id="lessonGo" onclick="toggleLesson()"></button>
           <button class="lib-chip" id="lessonClear" onclick="clearLessonProgress()" title="Untick every step, in this browser">Clear Progress</button>
-          <button class="lib-chip" id="lessonLeave" onclick="leaveLesson()" title="Back to your score, as you left it">Leave</button>
         </div>
         <div id="lessonList" class="lesson-list"></div>
         <div id="lessonStep" class="lesson-step" hidden>
@@ -672,15 +672,19 @@
             <span id="lessonCount" class="lesson-count"></span>
           </div>
           <div id="lessonAbout" class="lesson-about"></div>
+          <!-- The exercise, with what acts on its code -->
           <div id="lessonTry" class="lesson-try">
             <div><span class="lesson-try-label">Try:</span> <span id="lessonTask"></span></div>
             <div id="lessonStatus" class="lesson-status" role="status" aria-live="polite"></div>
+            <div class="lesson-try-actions">
+              <button class="lib-chip" id="lessonReset" onclick="resetLessonStep()" title="Start this step over from its code">Start Over</button>
+              <button class="lib-chip" id="lessonAnswer" onclick="showLessonAnswer()" title="Put one way of doing it in the editor">Show Answer</button>
+            </div>
           </div>
-          <div class="lesson-actions">
+          <!-- Moving between steps, at the two ends -->
+          <div class="lesson-bar-row">
             <button class="lib-chip" id="lessonPrev" onclick="stepLesson(-1)">Back</button>
             <button class="lib-chip" id="lessonNext" onclick="stepLesson(1)">Next</button>
-            <button class="lib-chip" id="lessonReset" onclick="resetLessonStep()" title="Start this step over from its code">Start Over</button>
-            <button class="lib-chip" id="lessonAnswer" onclick="showLessonAnswer()" title="Put one way of doing it in the editor">Show Answer</button>
           </div>
         </div>
       </div>
@@ -10369,11 +10373,14 @@
       // Continue walks the lessons; a machine's tour (a group's) is picked from the list.
       const next = lessons.flatMap((l, li) => l.group ? [] : l.steps.map((st, si) => [li, si, done(l, st)])).find(([, , d]) => !d);
       const go = document.getElementById('lessonGo');
-      go.textContent = next && any ? 'Continue' : 'Start';
-      go.title = next ? 'From the first step not done yet' : 'Every step is done: from the first';
-      document.getElementById('lessonClear').disabled = !any;
-      document.getElementById('lessonLeave').disabled = !_lesson;
+      go.textContent = _lesson ? 'End Lesson' : 'Start Lesson';
+      go.title = _lesson ? 'Back to your score, as you left it'
+        : next ? 'From the first step not done yet; your score waits until you end the lesson'
+        : 'Every step is done: from the first';
       const showStep = !!_lesson?.lesson && !_lesson.list;
+      const clear = document.getElementById('lessonClear');
+      clear.hidden = showStep; // the record, beside the list it ticks
+      clear.disabled = !any;
       list.hidden = showStep;
       step.hidden = !showStep;
       renderLessonBar(); // over the editor while the step is out of sight: the list too
@@ -10408,13 +10415,15 @@
       }));
     }
 
-    // Start / Continue: the first step not done yet, else the first.
-    window.continueLessons = async () => {
+    // Start Lesson / End Lesson: in at the first step not done yet (else the
+    // first), out back to the score.
+    window.toggleLesson = () => (_lesson ? leaveLesson() : continueLessons());
+    async function continueLessons() {
       const lessons = await loadLessons();
       const at = lessons.flatMap((l, li) => l.group ? [] : l.steps.map((st, si) => [li, si]))
         .find(([li, si]) => !_lessonProgress.done.has(lessonKey(lessons[li], lessons[li].steps[si])));
       await startLesson(...(at ?? [0, 0]));
-    };
+    }
     window.clearLessonProgress = () => {
       if (!window.confirm('Clear every lesson step you have done?')) return;
       _lessonProgress.done.clear();

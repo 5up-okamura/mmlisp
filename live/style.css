@@ -1524,6 +1524,10 @@
     }
     #lessonPane[hidden], .lesson-step[hidden], .lesson-list[hidden] { display: none; }
     .lesson-pane-actions { flex: none; }
+    /* A row whose two kinds of button sit at its two ends */
+    .lesson-bar-row { display: flex; justify-content: space-between; gap: 0.25rem; }
+    .lesson-bar-row .lib-chip[hidden], .lesson-try-actions .lib-chip[hidden] { display: none; }
+    .lesson-try-actions { display: flex; justify-content: flex-end; gap: 0.25rem; }
     .lesson-list { display: flex; flex-direction: column; gap: 0.6rem; }
     .lesson-row.current { background: color-mix(in srgb, var(--foreground) var(--sel), var(--background)); }
     .lesson-group-title { font-weight: bold; margin-bottom: 0.2rem; }
