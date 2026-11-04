@@ -10517,7 +10517,9 @@
       const tryBox = document.getElementById('lessonTry');
       tryBox.hidden = !parsed.task;
       tryBox.dataset.state = status.state;
-      document.getElementById('lessonTask').textContent = lessonText(`${key}.mmlisp#try`, parsed.task);
+      // The Try's text follows "Try:" in the file; on its own it starts a sentence.
+      const task = lessonText(`${key}.mmlisp#try`, parsed.task);
+      document.getElementById('lessonTask').textContent = task.charAt(0).toUpperCase() + task.slice(1);
       document.getElementById('lessonStatus').textContent = {
         fresh: _lessonProgress.done.has(key) ? '✓ Done before. Checked as you type.' : 'Checked as you type.',
         notyet: `Not yet${status.why ? ' — ' + status.why : ''}.`,
