@@ -7547,9 +7547,15 @@
     // was compiled from and the edits since (null: compiled just now).
     function applyCompile(src, { ir, diagnostics, sourceMap }, rec) {
       if (_lesson) lessonCompiled(src, ir, diagnostics);
-      // A build for another machine (its :target changed) redraws the Library
-      // for it now, not at the cursor's next move; the same machine keeps it.
-      if (libraryShown() && scoreTarget(editorView.state.doc) !== _libTarget) showLibraryItems();
+      // The machine the panel is built for: what a build says, so the Library
+      // moves with the mixer and the FM panel, not ahead of them as the text
+      // is typed. It changes only when the machine does, and what reads it
+      // redraws then (builtTargetChanged).
+      const built = ir ? targetProfile(ir.metadata?.target).name : _builtTarget;
+      if (built !== _builtTarget) {
+        _builtTarget = built;
+        builtTargetChanged();
+      }
       const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
       // A preset set's samples are served from the site root, so they resolve
       // whether or not the score has been saved anywhere. So do those of a
@@ -7719,7 +7725,13 @@
     let _vecEditor = null;                  // the vector editor (src/vector-editor.js), once its section is built
     let _importList = null;                 // the score's (import …) paths as last read (syncImportList)
     let _libLoaded = null;                  // the Library's rows, as read (showLibraryItems)
-    let _libTarget;                         // the `:target` they are marked for
+    let _libTarget;                         // the machine they are marked for (_builtTarget)
+    let _builtTarget = DEFAULT_TARGET;      // the machine of the last good build (applyCompile)
+    // What follows the built machine: the Library's marks, its ports and its
+    // previews. A hidden Library catches up when shown (libraryStale).
+    function builtTargetChanged() {
+      if (libraryShown()) showLibraryItems();
+    }
     let _libImports = null;                 // the imports that are read against
     let _pcmSubject = null;                 // the sample editor's subject (pcmSubjectOf), shown even dimmed
     let _pcmActive = false;                 // the sample subject is the panel's now (not dimmed)
@@ -9777,7 +9789,7 @@
     // description is the comment line above its def, as the completion shows.
     // Does the list still go by the score's machine and imports?
     function libraryStale() {
-      return scoreTarget(editorView.state.doc) !== _libTarget || _importSources !== _libImports;
+      return _builtTarget !== _libTarget || _importSources !== _libImports;
     }
 
     // The list for the score's machine: its built-in names first, and what
@@ -9785,7 +9797,7 @@
     // track does that, when asked.
     function showLibraryItems() {
       if (!_libLoaded) return;
-      _libTarget = scoreTarget(editorView.state.doc);
+      _libTarget = _builtTarget;
       _libImports = _importSources;
       const target = targetProfile(_libTarget);
       const items = _libLoaded.items.map((it) => {
@@ -9976,7 +9988,7 @@
     // machine, for playing and opening it on its own. Null when it has no
     // port there — the note says why.
     async function portedSnippet(file) {
-      const target = scoreTarget(editorView.state.doc) ?? 'md';
+      const target = _builtTarget;
       const name = libraryCompileName(file);
       const imports = await readImportSources(file.text, name).catch(() => new Map());
       const res = portSnippet(file.text, target, portMode(file.path), fmVoiceNames([file.text, ...imports.values()]), imports);
@@ -10094,7 +10106,7 @@
     // its role's macro where its set has one (`piano`, `wave-piano`): alone, a
     // level that does not move, every wave is an organ.
     function previewLibraryWave(set, def) {
-      const target = targetProfile(scoreTarget(editorView.state.doc));
+      const target = targetProfile(_builtTarget);
       const [head] = target.headsOfKind('wave');
       if (!head) { setLibraryNote(`${def.name} \u2014 ${target.system} has no wave channel to sound it on`); return; }
       const role = set.defs.find((d) => d.name === `wave-${def.name}`) ?? def;

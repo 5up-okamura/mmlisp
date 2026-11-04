@@ -2650,6 +2650,9 @@ log and the compiler's messages stay in English.
   nothing for the source picked is greyed out and rests —
   FM / PCM / Macro / Wave apply to All and Presets, Fits track to all but Snippets
   and Scores — and takes effect again when its source comes back.
+- The score's machine is the one it was last built for, as the mixer's: a
+  `:target` typed in follows on the next Build or Play, and the list redraws
+  then, only when the machine changed.
 - Nothing is hidden for the score's machine: a row says what it lacks there
   beside its kind. A preset says `4-op` (the machine's FM has two operators,
   as the FM-PAC's and the VRC7's do: the voice plays what it can), `no FM`,
