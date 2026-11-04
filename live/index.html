@@ -5487,6 +5487,23 @@
     // the folder is opened.
     const _droppedImportSources = new Map();
 
+    // The preset sets the app serves, read once (presets/index.json).
+    let _servedPresetSets = null;
+    function servedPresetSets() {
+      _servedPresetSets ??= fetch('presets/index.json')
+        .then((r) => (r.ok ? r.json() : []))
+        .then((list) => new Set(list))
+        .catch(() => new Set());
+      return _servedPresetSets;
+    }
+    // An import the page holds without asking the server: the opened folder's,
+    // or a dropped file's.
+    async function importTextHeld(path) {
+      const bytes = await sampleBytesFromSourceDir(path);
+      if (bytes) return new TextDecoder().decode(bytes);
+      return _droppedImportSources.get(path) ?? null;
+    }
+
     async function importTextForPath(path) {
       const bytes = await sampleBytesFromSourceDir(path);
       if (bytes) return new TextDecoder().decode(bytes);
@@ -5549,10 +5566,17 @@
         seen.add(joined);
         // Next to the importing file, else from the root — keyed where it was
         // found, which is where the compiler then resolves its samples from.
+        // A preset set the app serves (presets/index.json) is asked for at the
+        // root straight away unless the score's own folder holds one: a step or
+        // a snippet in the served tree has no presets/ beside it, and asking
+        // there first only fetches a 404.
+        const root = joinImportPath('', spec);
         let path = joined;
-        let text = await importTextForPath(joined);
+        let text = null;
+        if (joined !== root && (await servedPresetSets()).has(root)) text = await importTextHeld(joined);
+        else text = await importTextForPath(joined);
         if (text == null) {
-          path = joinImportPath('', spec);
+          path = root;
           text = await importTextForPath(path);
         }
         if (text == null) continue; // absent → E_IMPORT_NOT_FOUND at compile
