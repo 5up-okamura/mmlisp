@@ -2612,7 +2612,8 @@ again. **Back** and **Next**, at the two ends below, move between steps; a step
 keeps your edits while the lesson is open, and one without a Try is done once
 read. A step done is ticked in the list, in this browser. While the Lessons tab
 is out of sight (on a phone, the panel closed to write) the Try and its verdict
-sit over the editor, with **Next** once it is done.
+sit over the editor, with Start Over and Show Answer, and **Next** once it is
+done.
 
 Under **Machines** is a tour of each machine, only what it has and the others
 lack (the Mega Drive's FM3 operators, CSM and PCM voices, the PC-8801's SSG

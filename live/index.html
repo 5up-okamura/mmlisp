@@ -404,7 +404,11 @@
           <span><span class="lesson-try-label">Try:</span> <span id="lessonBarTask"></span></span>
           <span id="lessonBarStatus" class="lesson-status"></span>
         </button>
-        <button type="button" class="lib-chip active" id="lessonBarNext" onclick="stepLesson(1)" hidden>Next</button>
+        <div class="lesson-try-actions">
+          <button type="button" class="lib-chip" onclick="resetLessonStep()" title="Start this step over from its code">Start Over</button>
+          <button type="button" class="lib-chip" id="lessonBarAnswer" onclick="showLessonAnswer()" title="Put one way of doing it in the editor">Show Answer</button>
+          <button type="button" class="lib-chip active" id="lessonBarNext" onclick="stepLesson(1)" hidden>Next</button>
+        </div>
       </div>
       <div id="editorWrap">
         <canvas id="vizCanvas"></canvas>
@@ -7544,8 +7548,8 @@
     function applyCompile(src, { ir, diagnostics, sourceMap }, rec) {
       if (_lesson) lessonCompiled(src, ir, diagnostics);
       // A build for another machine (its :target changed) redraws the Library
-      // for it now, not at the cursor's next move.
-      if (libraryShown() && libraryStale()) showLibraryItems();
+      // for it now, not at the cursor's next move; the same machine keeps it.
+      if (libraryShown() && scoreTarget(editorView.state.doc) !== _libTarget) showLibraryItems();
       const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
       // A preset set's samples are served from the site root, so they resolve
       // whether or not the score has been saved anywhere. So do those of a
@@ -10551,6 +10555,7 @@
       document.getElementById('lessonBarStatus').textContent = document.getElementById('lessonStatus').textContent;
       document.getElementById('lessonBarNext').hidden = tryBox.dataset.state !== 'correct'
         || document.getElementById('lessonNext').disabled;
+      document.getElementById('lessonBarAnswer').hidden = document.getElementById('lessonAnswer').hidden;
     }
 
     // Every compile of the step: does it do the Try?
