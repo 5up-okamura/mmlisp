@@ -1527,6 +1527,14 @@
     .lesson-list { display: flex; flex-direction: column; gap: 0.6rem; }
     .lesson-row.current { background: color-mix(in srgb, var(--foreground) var(--sel), var(--background)); }
     .lesson-group-title { font-weight: bold; margin-bottom: 0.2rem; }
+    .lesson-heading {
+      margin-top: 0.4rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid var(--mid);
+      opacity: var(--off);
+      font-weight: bold;
+      letter-spacing: 0.08em;
+    }
     .lesson-row {
       display: flex;
       gap: 0.5rem;

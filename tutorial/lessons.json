@@ -40,5 +40,16 @@
       {"file": "04-pan", "title": "Pan", "check": {"match": "\\(fm2[^)]*:pan\\s+right"}, "answer": "(fm1 :pan left (x 2 c e g e))\n(fm2 :pan right :oct 2 c2 g2)"},
       {"file": "05-finish", "title": "A song"}
     ]
+  },
+  {
+    "id": "pc88",
+    "group": "Machines",
+    "title": "PC-8801",
+    "steps": [
+      {"file": "01-machine", "title": "The machine"},
+      {"file": "02-envelope", "title": "SSG envelope", "check": {"match": ":env\\s+(10|14)\\b"}, "answer": "(def-score :target pc88)\n(sqr1 :env 10 :env-rate note :mode env :oct 3 c2 g2)"},
+      {"file": "03-rhythm", "title": "ROM rhythm", "check": {"match": "presets/(?!rx5/)[\\w-]+/set\\.mmlisp"}, "answer": "(def-score :target pc88)\n(import \"presets/tr808/set.mmlisp\")\n(rhythm1 kick :len 4 c c c c)\n(rhythm2 hat (x 8 c))\n(rhythm3 snare :len 2 _ c)"},
+      {"file": "04-adpcm", "title": "ADPCM-B", "check": {"match": "\\b(pizz|timpani|orch-hit2)\\b"}, "answer": "(def-score :target pc88)\n(import \"presets/orch/set.mmlisp\")\n(pcm1 pizz :len 4 c e g > c)"}
+    ]
   }
 ]

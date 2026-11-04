@@ -1,0 +1,12 @@
+; The YM2608 has six drums in its ROM: kick snare ride hat tom4 rim, a track
+; each. The ROM is Yamaha's and does not ship: File > Import > YM2608 Rhythm
+; ROM… plays your own. Without it a kit's samples stand in, cut to the ROM's
+; lengths: rx5 here, the kit the song imports (VGM, mucom88 …) use; import
+; another preset kit (tr808, tr909, gm-drums …) or a SoundFont's drums
+; (File > Import > Instruments…), and the same tracks play those.
+; Try: switch the kit to another preset.
+(def-score :target pc88)
+(import "presets/rx5/set.mmlisp")
+(rhythm1 kick :len 4 c c c c)
+(rhythm2 hat (x 8 c))
+(rhythm3 snare :len 2 _ c)

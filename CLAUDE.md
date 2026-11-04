@@ -49,7 +49,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `new-score.js`                 | File > New: an empty score for a target, read off its channel table (`tools npm run check:new-score`) |
 | `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB, and the YM2608 rhythm ROM the user brings |
 | `source-folder.js`, `archive.js` | The source folder `:file` and imports resolve against and File > Files in Folder lists: a granted directory, or a `.zip` / `.lzh` read in memory (`tools npm run check:archive`) |
-| `lessons.js` (+ `tutorial/`)    | Tools > Lessons: the tutorial, a score per step (its leading comment the text, a `Try:` its exercise) and `tutorial/lessons.json`'s checks, each step in a working copy of its own (`tools npm run check:lessons`) |
+| `lessons.js` (+ `tutorial/`)    | Tools > Lessons: the tutorial and the machines' tours (a `group` in `lessons.json`), a score per step (its leading comment the text, a `Try:` its exercise) and `tutorial/lessons.json`'s checks, each step in a working copy of its own (`tools npm run check:lessons`) |
 | `catalog-list.js`              | The side panel's Library list: search, filters, groups, keys, for every source |
 | `reference.js`                 | The language reference's entries (Library's Ref, completion info, hover, MCP) |
 | `completion-names.js`          | The words the editor's completion offers, each held to a reference entry |

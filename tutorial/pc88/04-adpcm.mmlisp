@@ -1,0 +1,6 @@
+; pcm1 is the ADPCM-B: one sample voice that plays at any pitch, so a sample
+; can play a tune.
+; Try: play the tune with another of the set's samples: pizz, timpani …
+(def-score :target pc88)
+(import "presets/orch/set.mmlisp")
+(pcm1 orch-hit :len 4 c e g > c)

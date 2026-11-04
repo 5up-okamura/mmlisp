@@ -10342,7 +10342,8 @@
       catch (e) { list.textContent = 'Lessons: ' + e.message; return; }
       const done = (l, st) => _lessonProgress.done.has(lessonKey(l, st));
       const any = lessons.some((l) => l.steps.some((st) => done(l, st)));
-      const next = lessons.flatMap((l, li) => l.steps.map((st, si) => [li, si, done(l, st)])).find(([, , d]) => !d);
+      // Continue walks the lessons; a machine's tour (a group's) is picked from the list.
+      const next = lessons.flatMap((l, li) => l.group ? [] : l.steps.map((st, si) => [li, si, done(l, st)])).find(([, , d]) => !d);
       const go = document.getElementById('lessonGo');
       go.textContent = next && any ? 'Continue' : 'Start';
       go.title = next ? 'From the first step not done yet' : 'Every step is done: from the first';
@@ -10353,12 +10354,19 @@
       step.hidden = !showStep;
       renderLessonBar(); // over the editor while the step is out of sight: the list too
       if (showStep) return renderLessonStep();
-      list.replaceChildren(...lessons.map((l, li) => {
+      // The lessons numbered; a group's (the machines' tours) under its heading.
+      let n = 0;
+      list.replaceChildren(...lessons.flatMap((l, li) => {
         const group = document.createElement('div');
         const title = document.createElement('div');
         title.className = 'lesson-group-title';
-        title.textContent = `${li + 1}. ${lessonText(l.id, l.title)}`;
+        title.textContent = l.group ? lessonText(l.id, l.title) : `${++n}. ${lessonText(l.id, l.title)}`;
         group.append(title);
+        const heading = l.group && l.group !== lessons[li - 1]?.group ? document.createElement('div') : null;
+        if (heading) {
+          heading.className = 'lesson-heading';
+          heading.textContent = l.group;
+        }
         l.steps.forEach((st, si) => {
           const row = document.createElement('button');
           row.className = 'lesson-row';
@@ -10372,14 +10380,14 @@
           row.onclick = () => startLesson(li, si);
           group.append(row);
         });
-        return group;
+        return heading ? [heading, group] : [group];
       }));
     }
 
     // Start / Continue: the first step not done yet, else the first.
     window.continueLessons = async () => {
       const lessons = await loadLessons();
-      const at = lessons.flatMap((l, li) => l.steps.map((st, si) => [li, si]))
+      const at = lessons.flatMap((l, li) => l.group ? [] : l.steps.map((st, si) => [li, si]))
         .find(([li, si]) => !_lessonProgress.done.has(lessonKey(lessons[li], lessons[li].steps[si])));
       await startLesson(...(at ?? [0, 0]));
     };
@@ -10481,8 +10489,11 @@
       }[status.state];
       document.getElementById('lessonNext').classList.toggle('active', status.state === 'correct');
       renderLessonBar();
-      const last = si === lesson.steps.length - 1 && _lessons.indexOf(lesson) === _lessons.length - 1;
-      document.getElementById('lessonPrev').disabled = si === 0 && _lessons.indexOf(lesson) === 0;
+      // Back and Next stay among the lessons, or within a machine's tour.
+      const li = _lessons.indexOf(lesson);
+      const across = (d) => _lessons[li + d] && (_lessons[li + d].group ?? null) === (lesson.group ?? null) && !lesson.group;
+      const last = si === lesson.steps.length - 1 && !across(1);
+      document.getElementById('lessonPrev').disabled = si === 0 && !across(-1);
       document.getElementById('lessonNext').disabled = last;
       document.getElementById('lessonAnswer').hidden = !st.answer;
     }
@@ -10545,6 +10556,7 @@
       if (si < 0) { li--; si = li >= 0 ? _lessons[li].steps.length - 1 : 0; }
       else if (si >= _lesson.lesson.steps.length) { li++; si = 0; }
       if (li < 0 || li >= _lessons.length) return;
+      if (_lessons[li] !== _lesson.lesson && (_lessons[li].group || _lesson.lesson.group)) return; // a tour stands alone
       await loadLessonStep(_lessons[li], si);
     };
     window.resetLessonStep = () => {

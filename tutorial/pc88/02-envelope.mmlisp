@@ -1,0 +1,6 @@
+; The SSG's hardware envelope: :env picks its shape, 8 and 12 saws, 10 and 14
+; triangles, and :env-rate note runs it at the note's pitch. With :mode env
+; the envelope is the sound: a buzz.
+; Try: make it a triangle (:env 10).
+(def-score :target pc88)
+(sqr1 :env 8 :env-rate note :mode env :oct 3 c2 g2)
