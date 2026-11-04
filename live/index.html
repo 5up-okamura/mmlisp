@@ -7543,6 +7543,9 @@
     // was compiled from and the edits since (null: compiled just now).
     function applyCompile(src, { ir, diagnostics, sourceMap }, rec) {
       if (_lesson) lessonCompiled(src, ir, diagnostics);
+      // A build for another machine (its :target changed) redraws the Library
+      // for it now, not at the cursor's next move.
+      if (libraryShown() && libraryStale()) showLibraryItems();
       const sampleDefs = Array.isArray(ir?.metadata?.samples) ? ir.metadata.samples : [];
       // A preset set's samples are served from the site root, so they resolve
       // whether or not the score has been saved anywhere. So do those of a
@@ -9387,6 +9390,7 @@
       buildLanguageMenu();
       _libLoad = null;
       if (_libList) ensureLibrary();
+      showLessons(); // the lessons' texts, the list's and the open step's (and the bar over the editor)
     }
     buildLanguageMenu();
     buildNewMenu();
