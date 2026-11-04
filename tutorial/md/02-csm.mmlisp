@@ -1,0 +1,9 @@
+; In CSM, Timer A keys FM3 again and again at the rate fm3-csm-rate plays:
+; that rate is the pitch you hear, and the operator rings at its own pitch
+; above it, a resonance. Sweep the ringing pitch with a :pitch macro and the
+; resonance moves through the bass's harmonics: a filter opening and closing,
+; as on an acid bass. :rr1 is the resonance: lower rings longer, sharper.
+; Try: turn the resonance up, :rr1 6.
+(def-fm res init-fm :alg 7 :tl1 0 :rr1 12 :tl2 127 :tl3 127 :tl4 127)
+(fm3-csm res :oct 4 :len 1 (macro :pitch (triangle 0..3600 :len 2/1)) c ~ c)
+(fm3-csm-rate :oct 2 :len 16 (x 4 c c > c < c d+ c > c < c))

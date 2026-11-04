@@ -1,0 +1,6 @@
+; The Game Boy's wave channel plays a drawn wave at 4 bits, and its level
+; has only 100, 50 and 25 % and off: :vel takes the nearest.
+; Try: play the second half at half level, :vel 8.
+(def-score :target gb)
+(def-wave saw :wave (saw -128..127))
+(wave saw :oct 3 c e g e c e g e)

@@ -1,0 +1,6 @@
+; The SCC's five channels each play a wave you draw: a def-wave of 32
+; steps, or one cycle of a curve.
+; Try: make the wave a square: (square -128..127).
+(def-score :target msx)
+(def-wave w :wave (saw -128..127))
+(wave1 w c e g > c)

@@ -1,0 +1,9 @@
+; One wave channel can shake another's pitch: wave2's wave and speed become
+; wave1's LFO, :fms 0–3 its depth and :lfo-freq its rate (larger faster).
+; wave2 stays at :vol 0, heard only through wave1.
+; Try: make the shake deeper, :fms 3.
+(def-score :target pce)
+(def-wave tri :wave (triangle -128..127))
+(def-wave saw :wave (saw -128..127))
+(wave2 tri :vol 0 :oct 5 :len 1 c)
+(wave1 saw :lfo-freq 200 :fms 1 :len 1 a)

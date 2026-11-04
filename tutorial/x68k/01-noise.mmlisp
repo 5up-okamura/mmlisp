@@ -1,0 +1,6 @@
+; The YM2151's eighth channel can swap its fourth operator for noise: the
+; noise track plays it alone, :noise-rate 0–31 its pitch, higher brighter.
+; Try: darken the hat with a low :noise-rate.
+(def-score :target x68k)
+(fm1 :len 4 c e g e)
+(noise :noise-rate 28 (x 8 c))

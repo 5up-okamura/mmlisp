@@ -1,0 +1,6 @@
+; Its rhythm is built in too, kick snare tom4 ride hat, and tuned by the
+; note: c4 is the chip's own pitch, and other notes move it.
+; Try: make the tom play c g > c.
+(def-score :target msx)
+(rhythm1 kick :len 4 c c c c)
+(rhythm2 tom4 :len 4 c c c c)

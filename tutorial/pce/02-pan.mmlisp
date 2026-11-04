@@ -1,0 +1,6 @@
+; Each channel has its own left and right levels, so :pan sits anywhere
+; from -1 (left) to 1 (right), not only left, center or right.
+; Try: move wave1 a little to the left, :pan -0.5.
+(def-score :target pce)
+(def-wave saw :wave (saw -128..127))
+(wave1 saw :pan 0 c e g e)

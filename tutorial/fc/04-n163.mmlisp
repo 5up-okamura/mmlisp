@@ -1,0 +1,8 @@
+; The N163 has up to eight wave channels, but they take turns: the highest
+; one named sets how many run, and the more run, the quieter each and the
+; louder the chip's whine. Past five they share the wave memory too, so a
+; wave plays every other step (the compiler says so).
+; Try: add n163-wave8 and hear the whine.
+(def-score :target fc)
+(def-wave saw :wave (saw -128..127))
+(n163-wave1 saw :len 2 c g)

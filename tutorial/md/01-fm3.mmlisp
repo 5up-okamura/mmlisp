@@ -1,0 +1,9 @@
+; FM3 can give each of its four operators a pitch of its own: fm3-1 to fm3-4
+; play a chord on one channel, from the voice a note-less (fm3 …) sets. The
+; channel's other mode, CSM, sings vowels (the fm3-csm snippets).
+; Try: add the fourth operator, fm3-4, under the chord.
+(def-fm sines init-fm :alg 7 :tl1 10 :tl2 10 :tl3 10 :tl4 10)
+(fm3 sines)
+(fm3-1 :len 1 c d)
+(fm3-2 :len 1 e f)
+(fm3-3 :len 1 g a)

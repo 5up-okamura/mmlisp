@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The tutorial (tutorial/lessons.json, live/src/lessons.js): every step's
 // file is there and compiles clean, its exercise is not done before the
-// learner starts, and the step's answer compiles clean and does it.
+// learner starts, and the step's answer compiles without an error and does it.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +31,9 @@ for (const lesson of lessons) {
       if (!task || !step.check || !step.answer) { fails.push(`${name}: a Try needs a check and an answer, and they a Try`); continue; }
       if (passes(step.check, start)) fails.push(`${name}: the exercise is done before it starts`);
       const done = compile(step.answer, name);
-      if (done.diagnostics.length) fails.push(`${name}: the answer: ${done.diagnostics.map((d) => d.code).join(", ")}`);
+      // An answer may draw a warning the step is about (the N163's shared memory).
+      const errs = done.diagnostics.filter((d) => d.severity === "error");
+      if (errs.length) fails.push(`${name}: the answer: ${errs.map((d) => d.code).join(", ")}`);
       if (!passes(step.check, done)) fails.push(`${name}: the answer does not pass its check`);
     }
     n++;

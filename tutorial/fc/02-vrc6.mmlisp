@@ -1,0 +1,5 @@
+; Cartridges added chips. The VRC6's vrc6-saw is a sawtooth whose :vel is
+; its rate: past 13.25 the saw wraps over, harsher rather than louder.
+; Try: push the saw to :vel 15.
+(def-score :target fc)
+(vrc6-saw :oct 2 :vel 12 :len 4 c c g g)

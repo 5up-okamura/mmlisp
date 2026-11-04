@@ -1,0 +1,7 @@
+; The Disk System's fds-wave plays a drawn wave with a modulator of its own:
+; :lfo-wave the modulator's steps, :lfo-freq its rate, :lfo-pmd its depth.
+; Try: deepen it, :lfo-pmd 30.
+(def-score :target fc)
+(def-wave tri :wave (triangle -128..127))
+(def vib [1 1 1 1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 1])
+(fds-wave tri :lfo-wave vib :lfo-freq 20 :lfo-pmd 4 :len 2 c g)

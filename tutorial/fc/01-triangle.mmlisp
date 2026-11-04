@@ -1,0 +1,5 @@
+; tri is the triangle: no volume of its own, only sounding or not, and a
+; rest stops it. It is the Famicom's bass.
+; Try: add a bass on tri under the tune.
+(def-score :target fc)
+(sqr1 :duty 4 c e g e c e g e)

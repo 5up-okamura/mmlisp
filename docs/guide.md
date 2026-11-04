@@ -2610,9 +2610,10 @@ a step keeps your edits while the lesson is open. Over the list and the
 step alike, **Continue** picks up at the first step not done yet (**Start**
 when none or all are), **Clear Progress** unticks them all, and **Leave**
 ends the lesson; a step's title leads back to the list with the lesson still
-open. Under **Machines** are tours of what one machine has of its own
-(the PC-8801's SSG envelope, ROM rhythm and ADPCM-B), each a score for that
-machine; Continue and Next keep to the lessons, and a tour is picked from the
+open. Under **Machines** is a tour of each machine, only what it has
+and the others lack (the Mega Drive's FM3 operators, CSM and PCM voices, the
+PC-8801's SSG envelope and ROM rhythm, the Famicom's expansion chips …), each
+step a score for that machine; Continue and Next keep to the lessons, and a tour is picked from the
 list. Opening another score ends the lesson too. The lessons' texts follow MMLisp ▸ Language. They live
 in `tutorial/` (`lessons.json` and a score per step, its leading comment the
 text, as a snippet's is), held by `cd tools && npm run check:lessons`.

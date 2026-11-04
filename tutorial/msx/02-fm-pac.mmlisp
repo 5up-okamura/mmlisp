@@ -1,0 +1,5 @@
+; The FM-PAC (a YM2413) has fifteen voices built in: piano, violin, guitar,
+; flute, clarinet, organ … named, with no def.
+; Try: play the tune on another of them.
+(def-score :target msx)
+(fm1 piano c e g > c)

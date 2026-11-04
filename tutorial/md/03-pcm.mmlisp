@@ -1,0 +1,7 @@
+; The Mega Drive mixes its samples in software onto one DAC: :pcm-voices says
+; how many play at once, 1 to 3, and each one more lowers the rate (14.4,
+; 10.1, 6.7 kHz).
+; Try: let a crash ring over the beat on pcm2 (:pcm-voices 2).
+(def-score :pcm-voices 1)
+(import "presets/tr808/set.mmlisp")
+(pcm1 (x 2 kick c _ snare c _))

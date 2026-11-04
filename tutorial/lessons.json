@@ -42,14 +42,70 @@
     ]
   },
   {
+    "id": "md",
+    "group": "Machines",
+    "title": "Mega Drive",
+    "steps": [
+      {"file": "01-fm3", "title": "FM3 operators", "check": {"tracksMin": 4}, "answer": "(def-fm sines init-fm :alg 7 :tl1 10 :tl2 10 :tl3 10 :tl4 10)\n(fm3 sines)\n(fm3-1 :len 1 c d)\n(fm3-2 :len 1 e f)\n(fm3-3 :len 1 g a)\n(fm3-4 :oct 3 :len 1 c f)"},
+      {"file": "02-csm", "title": "CSM filter", "check": {"match": ":rr1\\s+[0-9](?!\\d)"}, "answer": "(def-fm res init-fm :alg 7 :tl1 0 :rr1 6 :tl2 127 :tl3 127 :tl4 127)\n(fm3-csm res :oct 4 :len 1 (macro :pitch (triangle 0..3600 :len 2/1)) c ~ c)\n(fm3-csm-rate :oct 2 :len 16 (x 4 c c > c < c d+ c > c < c))"},
+      {"file": "03-pcm", "title": "PCM voices", "check": {"tracksMin": 2}, "answer": "(def-score :pcm-voices 2)\n(import \"presets/tr808/set.mmlisp\")\n(pcm1 (x 2 kick c _ snare c _))\n(pcm2 crash :len 1 c)"}
+    ]
+  },
+  {
     "id": "pc88",
     "group": "Machines",
     "title": "PC-8801",
     "steps": [
-      {"file": "01-machine", "title": "The machine"},
-      {"file": "02-envelope", "title": "SSG envelope", "check": {"match": ":env\\s+(10|14)\\b"}, "answer": "(def-score :target pc88)\n(sqr1 :env 10 :env-rate note :mode env :oct 3 c2 g2)"},
-      {"file": "03-rhythm", "title": "ROM rhythm", "check": {"match": "presets/(?!rx5/)[\\w-]+/set\\.mmlisp"}, "answer": "(def-score :target pc88)\n(import \"presets/tr808/set.mmlisp\")\n(rhythm1 kick :len 4 c c c c)\n(rhythm2 hat (x 8 c))\n(rhythm3 snare :len 2 _ c)"},
-      {"file": "04-adpcm", "title": "ADPCM-B", "check": {"match": "\\b(pizz|timpani|orch-hit2)\\b"}, "answer": "(def-score :target pc88)\n(import \"presets/orch/set.mmlisp\")\n(pcm1 pizz :len 4 c e g > c)"}
+      {"file": "01-envelope", "title": "SSG envelope", "check": {"match": ":env\\s+(10|14)\\b"}, "answer": "(def-score :target pc88)\n(sqr1 :env 10 :env-rate note :mode env :oct 3 c2 g2)"},
+      {"file": "02-rhythm", "title": "ROM rhythm", "check": {"match": "presets/(?!rx5/)[\\w-]+/set\\.mmlisp"}, "answer": "(def-score :target pc88)\n(import \"presets/tr808/set.mmlisp\")\n(rhythm1 kick :len 4 c c c c)\n(rhythm2 hat (x 8 c))\n(rhythm3 snare :len 2 _ c)"},
+      {"file": "03-adpcm", "title": "ADPCM-B", "check": {"match": "\\b(pizz|timpani|orch-hit2)\\b"}, "answer": "(def-score :target pc88)\n(import \"presets/orch/set.mmlisp\")\n(pcm1 pizz :len 4 c e g > c)"}
+    ]
+  },
+  {
+    "id": "x68k",
+    "group": "Machines",
+    "title": "X68000",
+    "steps": [
+      {"file": "01-noise", "title": "Noise", "check": {"match": ":noise-rate\\s+([0-9]|1[0-5])(?!\\d)"}, "answer": "(def-score :target x68k)\n(fm1 :len 4 c e g e)\n(noise :noise-rate 6 (x 8 c))"},
+      {"file": "02-pcm8", "title": "PCM8", "check": {"tracksMin": 3}, "answer": "(def-score :target x68k)\n(import \"presets/orch/set.mmlisp\")\n(pcm1 orch-hit :len 2 c g)\n(pcm2 timpani :oct 3 :len 4 c c g c)\n(pcm3 pizz :len 8 c e g e c e g e)"}
+    ]
+  },
+  {
+    "id": "msx",
+    "group": "Machines",
+    "title": "MSX",
+    "steps": [
+      {"file": "01-scc", "title": "SCC waves", "check": {"match": "\\(square\\s"}, "answer": "(def-score :target msx)\n(def-wave w :wave (square -128..127))\n(wave1 w c e g > c)"},
+      {"file": "02-fm-pac", "title": "FM-PAC voices", "check": {"match": "\\(fm1\\s+(?!piano(?![\\w-]))[a-z]"}, "answer": "(def-score :target msx)\n(fm1 violin c e g > c)"},
+      {"file": "03-rhythm", "title": "FM-PAC rhythm", "check": {"match": "\\(rhythm2[^)]*\\bg\\b"}, "answer": "(def-score :target msx)\n(rhythm1 kick :len 4 c c c c)\n(rhythm2 tom4 :len 4 c g > c c)"}
+    ]
+  },
+  {
+    "id": "pce",
+    "group": "Machines",
+    "title": "PC Engine",
+    "steps": [
+      {"file": "01-lfo", "title": "LFO", "check": {"match": ":fms\\s+3"}, "answer": "(def-score :target pce)\n(def-wave tri :wave (triangle -128..127))\n(def-wave saw :wave (saw -128..127))\n(wave2 tri :vol 0 :oct 5 :len 1 c)\n(wave1 saw :lfo-freq 200 :fms 3 :len 1 a)"},
+      {"file": "02-pan", "title": "Pan", "check": {"match": ":pan\\s+-0?\\.\\d"}, "answer": "(def-score :target pce)\n(def-wave saw :wave (saw -128..127))\n(wave1 saw :pan -0.5 c e g e)"}
+    ]
+  },
+  {
+    "id": "fc",
+    "group": "Machines",
+    "title": "Famicom",
+    "steps": [
+      {"file": "01-triangle", "title": "Triangle", "check": {"tracksMin": 2}, "answer": "(def-score :target fc)\n(sqr1 :duty 4 c e g e c e g e)\n(tri :oct 3 :len 2 c g)"},
+      {"file": "02-vrc6", "title": "VRC6 saw", "check": {"match": "vrc6-saw[^)]*:vel\\s+1[45]"}, "answer": "(def-score :target fc)\n(vrc6-saw :oct 2 :vel 15 :len 4 c c g g)"},
+      {"file": "03-fds", "title": "FDS modulation", "check": {"match": ":lfo-pmd\\s+([2-5]\\d|6[0-3])"}, "answer": "(def-score :target fc)\n(def-wave tri :wave (triangle -128..127))\n(def vib [1 1 1 1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 1])\n(fds-wave tri :lfo-wave vib :lfo-freq 20 :lfo-pmd 30 :len 2 c g)"},
+      {"file": "04-n163", "title": "N163", "check": {"match": "n163-wave[78]"}, "answer": "(def-score :target fc)\n(def-wave saw :wave (saw -128..127))\n(n163-wave1 saw :len 2 c g)\n(n163-wave8 saw :oct 3 :len 1 c)"}
+    ]
+  },
+  {
+    "id": "gb",
+    "group": "Machines",
+    "title": "Game Boy",
+    "steps": [
+      {"file": "01-wave", "title": "Wave channel", "check": {"velsMin": 2}, "answer": "(def-score :target gb)\n(def-wave saw :wave (saw -128..127))\n(wave saw :oct 3 c e g e :vel 8 c e g e)"}
     ]
   }
 ]

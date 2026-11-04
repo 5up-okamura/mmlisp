@@ -1,0 +1,7 @@
+; PCM8 mixes eight sample voices, pcm1–pcm8, into the MSM6258, each at
+; any pitch.
+; Try: add a third voice, pcm3.
+(def-score :target x68k)
+(import "presets/orch/set.mmlisp")
+(pcm1 orch-hit :len 2 c g)
+(pcm2 timpani :oct 3 :len 4 c c g c)
