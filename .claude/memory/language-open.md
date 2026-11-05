@@ -67,13 +67,6 @@ suffix combines with the target's base (language.md §7.0).
   exception is writable but adds a conditional rule. Wanted, but not at that
   price.
 
-## 1.1 Open
-
-- A diagnostic inside a def repeats once per expansion, at the one source
-  position: `(for [i 0..15] (rnd …))` logs the same curve error 16 times.
-  Deduping identical (code, line, column) in `pushDiag` is the fix, but
-  diagnostics are part of check:snapshot's baseline for every test score.
-
 ## 2. Why the value machine has this shape
 
 Compile-time eval was designed twice; the second round reversed two of the

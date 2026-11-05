@@ -4136,7 +4136,17 @@ function emitVoiceFromKwMap(kwMap, tick, events, src, part = null, machine = nul
 
 // A position in an imported file says which (`file`, its import path): the
 // line and column are that file's, not the score's.
+// One diagnostic per place and message: a def expanded many times (a `for`,
+// a def played on several tracks) reports its error once, at the one source
+// position, with the track that met it first.
+const diagSeen = new WeakMap(); // diagnostics array → Set of keys
+
 function pushDiag(diagnostics, severity, code, message, src, track) {
+  const key = [severity, code, message, src?.file ?? "", src?.line ?? 1, src?.column ?? 1].join("\0");
+  let seen = diagSeen.get(diagnostics);
+  if (!seen) diagSeen.set(diagnostics, (seen = new Set()));
+  if (seen.has(key)) return;
+  seen.add(key);
   diagnostics.push({
     severity,
     code,
