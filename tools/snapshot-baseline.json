@@ -1772,7 +1772,7 @@
  },
  "examples/daisy-bell.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "b89bf240be38ac7f",
+  "ir": "21611c1b820e8363",
   "regs": "420991d8a242cc42",
   "mmb": "488af072eea2abb1",
   "vgm": "04611ee69800285b"

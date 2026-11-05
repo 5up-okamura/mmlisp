@@ -2,7 +2,9 @@
 ; Lochbaum, accompaniment by Max Mathews), the first computer to sing. The
 ; voice is CSM as in the csm-voice snippet: the vowel is four formant MLs over
 ; a base, the melody is the Timer A rate, and the noise channel adds
-; consonants. The three squares play the waltz accompaniment.
+; consonants. The three squares play the waltz accompaniment. A syllable is
+; one def over the voice's three tracks and a bar of the waltz one over the
+; squares, so the song is written as its lyrics and its chords.
 
 (def-fm vox init-fm :alg 7 :fb 0
   :ar1 31 :rr1 13 :tl1 4
@@ -17,64 +19,55 @@
 (def eh :oct 4 :ml1 2 :ml2 7 :ml3 9  :ml4 12 c)
 (def oh :oct 4 :ml1 2 :ml2 3 :ml3 9  :ml4 12 c+)
 
-; each syllable swells in from a lower fader
-(def (sy v) :vol (linear 14..31 :len 16) v)
-
-(fm3-csm vox :tempo 150
-  ; Dai-sy, Dai-sy, give me your an-swer, do
-  :len 2. (sy ah) (sy ee) (sy ah) (sy ee)
-  :len 4 (sy ee) (sy ee) (sy oh) :len 2 (sy ah) :len 4 (sy eh) :len 1. (sy oo)
-  ; I'm half cra-zy, all for the love of you
-  :len 2. (sy ah) (sy ah) (sy eh) (sy ee)
-  :len 4 (sy oh) (sy oh) (sy eh) :len 2 (sy ah) :len 4 (sy oh) :len 1 (sy oo) :len 4 _
-  ; It won't be a sty-lish mar-riage
-  (sy ee) (sy oh) (sy ee) (sy ah) :len 2 (sy ah) :len 4 (sy ee) (sy ah) :len 1 (sy ee)
-  ; I can't af-ford a car-riage
-  :len 4 (sy ah) :len 2 (sy ah) :len 4 (sy ah) :len 2 (sy oh) :len 4 (sy ah) (sy ah) :len 1 (sy ee)
-  ; But you'll look sweet u-pon the seat of a bi-cy-cle built for two
-  :len 4 (sy ah) :len 2 (sy oo) :len 4 (sy oo) :len 2 (sy ee) :len 4 (sy oo)
-  :len 2 (sy oh) :len 4 (sy eh) (sy ee) (sy oh) (sy ah) (sy ah) (sy ee) (sy oh)
-  :len 2 (sy ee) :len 4 (sy oh) :len 1. (sy oo))
-
-; the melody: notes here are Timer A rates
-(fm3-csm-rate :oct 4 (glide 16)
-  :len 2. g e c < g
-  :len 4 a b > c :len 2 < a :len 4 > c :len 1. < g
-  :len 2. > d g e c
-  :len 4 < a b > c :len 2 d :len 4 e d1 ~ d4
-  :len 4 e f e d :len 2 g :len 4 e d c1
-  :len 4 d :len 2 e :len 4 c :len 2 < a :len 4 > c < a g1
-  :len 4 g :len 2 > c :len 4 e :len 2 d :len 4 < g
-  :len 2 > c :len 4 e d e f g e c :len 2 d :len 4 < g :len 1. > c)
-
 ; consonants: a hiss for s, a breath for h and f, clicks for k/t and d/b/g
-(def sh :mode white0 (macro :vel [7 9 9 9 8 7 5 3 1 0]))
-(def hh :mode white0 (macro :vel [6 5 4 2 0]))
-(def kh :mode white1 (macro :vel [13 8 3 0]))
-(def gh :mode white1 (macro :vel [8 4 0]))
+(def sh :mode white0 (macro :vel [7 9 9 9 8 7 5 3 1 0]) c)
+(def hh :mode white0 (macro :vel [6 5 4 2 0]) c)
+(def kh :mode white1 (macro :vel [13 8 3 0]) c)
+(def gh :mode white1 (macro :vel [8 4 0]) c)
 
-(noise
-  :len 2. gh c sh c gh c sh c
-  :len 4 gh c _ _ :len 2 _ :len 4 sh c :len 1. gh c
-  :len 2. _ hh c kh c sh c
-  :len 4 _ hh c _ :len 2 _ :len 4 _ :len 1 _ :len 4 _
-  :len 4 _ _ gh c _ :len 2 sh c :len 4 _ _ :len 1 _
-  :len 4 _ :len 2 kh c :len 4 _ :len 2 hh c :len 4 _ kh c :len 1 _
-  :len 4 gh c :len 2 _ :len 4 _ :len 2 sh c :len 4 _
-  :len 2 gh c :len 4 _ sh c _ _ gh c sh c kh c :len 2 gh c :len 4 hh c :len 1. kh c)
+; a syllable: its length, its vowel (swelling in from a lower fader), its
+; pitch (a Timer A rate; an octave step goes with it in an empty let) and
+; its consonant (_ for none)
+(def (sing len vowel pitch cons)
+  (fm3-csm :len len :vol (linear 14..31 :len 16) vowel)
+  (fm3-csm-rate :len len pitch)
+  (noise :len len cons))
 
-; waltz accompaniment: bass on the downbeat, the chord on two and three
-(def bC :oct 3 :len 4 c _ _)  (def mC :oct 4 :len 4 _ e e)  (def hC :oct 4 :len 4 _ g g)
-(def bF :oct 3 :len 4 f _ _)  (def mF :oct 4 :len 4 _ f f)  (def hF :oct 4 :len 4 _ a a)
-(def bG :oct 3 :len 4 g _ _)  (def mG :oct 4 :len 4 _ d d)  (def hG :oct 4 :len 4 _ f f)
-(def bD :oct 3 :len 4 d _ _)  (def mD :oct 4 :len 4 _ c c)  (def hD :oct 4 :len 4 _ f+ f+)
+(fm3-csm vox :tempo 150)
+(fm3-csm-rate :oct 4 (glide 16))                ; glide slides between the rates
+(noise)
 
-(sqr3 :vel 10
-  bC bC bF bC bF bF bC bG  bG bG bC bC bD bG bG bG
-  bG bC bC bC bC bF bC bG  bC bG bC bG bC bG bC bC)
-(sqr2 :vel 8
-  mC mC mF mC mF mF mC mG  mG mG mC mC mD mG mG mG
-  mG mC mC mC mC mF mC mG  mC mG mC mG mC mG mC mC)
-(sqr1 :vel 8
-  hC hC hF hC hF hF hC hG  hG hG hC hC hD hG hG hG
-  hG hC hC hC hC hF hC hG  hC hG hC hG hC hG hC hC)
+; Dai-sy, Dai-sy, give me your an-swer, do
+(sing 2. ah g gh) (sing 2. ee e sh) (sing 2. ah c gh) (sing 2. ee (let [] < g) sh)
+(sing 4 ee a gh) (sing 4 ee b _) (sing 4 oh (let [] > c) _) (sing 2 ah (let [] < a) _)
+(sing 4 eh (let [] > c) sh) (sing 1. oo (let [] < g) gh)
+; I'm half cra-zy, all for the love of you
+(sing 2. ah (let [] > d) _) (sing 2. ah g hh) (sing 2. eh e kh) (sing 2. ee c sh)
+(sing 4 oh (let [] < a) _) (sing 4 oh b hh) (sing 4 eh (let [] > c) _) (sing 2 ah d _)
+(sing 4 oh e _) (sing 1 oo (let [] d1 ~ d4) _) (fm3-csm :len 4 _) (noise :len 4 _)
+; It won't be a sty-lish mar-riage
+(sing 4 ee e _) (sing 4 oh f _) (sing 4 ee e gh) (sing 4 ah d _)
+(sing 2 ah g sh) (sing 4 ee e _) (sing 4 ah d _) (sing 1 ee c _)
+; I can't af-ford a car-riage
+(sing 4 ah d _) (sing 2 ah e kh) (sing 4 ah c _) (sing 2 oh (let [] < a) hh)
+(sing 4 ah (let [] > c) _) (sing 4 ah (let [] < a) kh) (sing 1 ee g _)
+; But you'll look sweet u-pon the seat of a bi-cy-cle built for two
+(sing 4 ah g gh) (sing 2 oo (let [] > c) _) (sing 4 oo e _) (sing 2 ee d sh)
+(sing 4 oo (let [] < g) _) (sing 2 oh (let [] > c) gh) (sing 4 eh e _) (sing 4 ee d sh)
+(sing 4 oh e _) (sing 4 ah f _) (sing 4 ah g gh) (sing 4 ee e sh) (sing 4 oh c kh)
+(sing 2 ee d gh) (sing 4 oh (let [] < g) hh) (sing 1. oo (let [] > c) kh)
+
+; waltz accompaniment: a bar is the bass on the downbeat, the chord on two
+; and three
+(def (waltz bass mid high)
+  (sqr3 :oct 3 :len 4 bass _ _)
+  (sqr2 :oct 4 :len 4 _ mid mid)
+  (sqr1 :oct 4 :len 4 _ high high))
+(def C (waltz c e g))
+(def F (waltz f f a))
+(def G7 (waltz g d f))
+(def D7 (waltz d c f+))
+
+(sqr3 :vel 10) (sqr2 :vel 8) (sqr1 :vel 8)
+C C F C  F F C G7   G7 G7 C C  D7 G7 G7 G7
+G7 C C C  C F C G7  C G7 C G7  C G7 C C
