@@ -228,8 +228,6 @@ export default {
     "04-finish/04-pan": ["8c9ce331", "Panorama"],
     "04-finish/04-pan.mmlisp": ["d054105f", ":pan coloca una pista FM a la izquierda, a la derecha o en el centro: la imagen estéreo."],
     "04-finish/04-pan.mmlisp#try": ["f2c72c51", "pon el bajo a la derecha."],
-    "04-finish/05-finish": ["38bfa5dd", "Una canción"],
-    "04-finish/05-finish.mmlisp": ["851598e4", "Una canción: voces, un def, glide, pan, batería y cada pista en un bucle de dos compases. File > Export > WAV escribe lo que se oye, VGM las escrituras del propio chip para reproductores VGM, y File > Share un enlace que abre la partitura. Cámbiala y hazla tuya."],
     "md": ["de356dc1", "Mega Drive"],
     "md/01-fm3": ["78377c0a", "Operadores de FM3"],
     "md/01-fm3.mmlisp": ["1a5d249d", "FM3 puede dar a cada uno de sus cuatro operadores una altura propia: fm3-1 a fm3-4 tocan un acorde en un solo canal, con la voz que fija un (fm3 …) sin notas. El otro modo del canal, CSM, canta vocales (los snippets fm3-csm)."],
