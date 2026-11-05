@@ -48,7 +48,9 @@ lessons.
   (it buries the score, the diff and an AI's context) — a ZIP beside the
   short link (`share-files.js`). No per-file opt-out in the Share dialog: it
   lists what goes, and a file left out would only come back as a missing
-  one. A long link (no server) carries no files.
+  one. A long link (no server) carries no files. The 256 KB cap stays
+  (user, 2026-11-06), though a PC-8801 VGM import's bank nears it (The
+  Scheme's largest track: ~232 KB zipped) — not to be re-proposed.
 - **The ja / es translations** stay as machine-written from the glossary
   (user, 2026-10-16: having one helps more than none; a wrong line is fixed
   when found). A fix goes through `i18n-sync.mjs --apply`, never a hand edit
