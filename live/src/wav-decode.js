@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// WAV → mono float at the file's own rate
+// WAV → mono float at the file's own rate, and the box-filtered downsample
+// the bakes and a share's files bring one to a lower rate with
 //
 // The one decoder for samples, in the browser and in the node toolchain
 // (drv/tools/wav.mjs), so both hand the bank builder (export-mmb.js) the same
@@ -62,4 +63,17 @@ export function decodeWav(bytes) {
     out[i] = acc / channels;
   }
   return { data: out, sampleRate };
+}
+
+// A box-filtered resample to `to` Hz (to < from), enough for a downsample.
+export function resample(data, from, to) {
+  if (to >= from) return data;
+  const ratio = from / to, n = Math.floor(data.length / ratio), out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = i * ratio, b = Math.min(data.length, a + ratio);
+    let sum = 0, w = 0;
+    for (let k = Math.floor(a); k < b; k++) { const c = Math.min(k + 1, b) - Math.max(k, a); sum += data[k] * c; w += c; }
+    out[i] = w ? sum / w : 0;
+  }
+  return out;
 }

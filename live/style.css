@@ -1814,7 +1814,7 @@
       font-size: var(--text);
     }
     .share-meta { color: var(--foreground); margin-top: 0.4rem !important; }
-    .share-warn { color: var(--error); }
+    .share-warn { color: var(--error); white-space: pre-line; }
     .share-actions { flex-wrap: wrap; }
     #sharedPlay, #folderAccess {
       position: absolute;

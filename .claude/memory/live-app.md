@@ -44,6 +44,11 @@ lessons.
   libarchive built to WASM, loaded on demand, if a need shows up. `File >
   Import > Song…` stays beside Open…: it is the multi-select, the only way a
   phone (no folder) brings a `.muc` with its `.dat` / `.bin`.
+- **Share links' files** (2026-11-06): not base64 inside the score's text
+  (it buries the score, the diff and an AI's context) — a ZIP beside the
+  short link (`share-files.js`). No per-file opt-out in the Share dialog: it
+  lists what goes, and a file left out would only come back as a missing
+  one. A long link (no server) carries no files.
 - **The ja / es translations** stay as machine-written from the glossary
   (user, 2026-10-16: having one helps more than none; a wrong line is fixed
   when found). A fix goes through `i18n-sync.mjs --apply`, never a hand edit
@@ -69,6 +74,14 @@ lessons.
 - **WebKit reproduces iPhone issues headless**: playwright-core's WebKit
   (`npx playwright-core install webkit`, cached in ~/Library/Caches) with
   `devices['iPhone 13']` — no folder picker, touch, the iOS paths.
+
+## Open
+
+- **Share links with files on a real iPhone**: headless WebKit as an iPhone
+  receives them, keeps them across a reload and saves the `.zip` (download
+  path); the share sheet's save of the `.zip` and a link opened from another
+  app are not yet tried on the device. Needs the Worker deployed (a push to
+  `main`).
 
 ## Small tools still to specify
 

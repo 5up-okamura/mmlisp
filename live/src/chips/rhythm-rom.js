@@ -5,7 +5,7 @@
 // does not reach it.
 import { pitchToMidi } from "../ir-utils.js";
 import { words } from "./parts.js";
-import { resample } from "./adpcm-b.js";
+import { resample } from "../wav-decode.js";
 
 export const rhythmRom = {
   name: "rhythm",

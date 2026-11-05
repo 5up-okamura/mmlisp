@@ -8,11 +8,14 @@
 // installed Chrome app can keep the grant between launches.
 //
 // The same database keeps the ROM images the user brings (File > Import > YM2608
-// Rhythm ROM…): the bytes themselves, which need no grant to read back.
+// Rhythm ROM…): the bytes themselves, which need no grant to read back — and
+// the files a shared score came with (share-files.js), beside the draft that
+// localStorage keeps, so a reload or a dropped tab brings them back too.
 
 const DB_NAME = 'mmlisp';
 const STORE = 'recent';
 const ROM_STORE = 'rom';
+const DRAFT_STORE = 'draft';
 const KEY = 'list';
 const RECENT_MAX = 10;
 
@@ -21,9 +24,9 @@ export const recentSupported = typeof indexedDB !== 'undefined'
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 2);
+    const req = indexedDB.open(DB_NAME, 3);
     req.onupgradeneeded = () => {
-      for (const name of [STORE, ROM_STORE])
+      for (const name of [STORE, ROM_STORE, DRAFT_STORE])
         if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name);
     };
     req.onsuccess = () => {
@@ -128,4 +131,21 @@ export async function saveRom(name, bytes) {
   } catch {
     return false;
   }
+}
+
+// The draft's files (the ZIP a shared score came with), or null. Never throws.
+export async function loadDraftFiles() {
+  try {
+    const bytes = await withStore('readonly', (s) => s.get('files'), DRAFT_STORE);
+    return bytes instanceof Uint8Array ? bytes : null;
+  } catch {
+    return null;
+  }
+}
+
+// Keep `bytes` as the draft's files, or forget them (null). Never throws.
+export async function saveDraftFiles(bytes) {
+  try {
+    await withStore('readwrite', (s) => (bytes ? s.put(bytes, 'files') : s.delete('files')), DRAFT_STORE);
+  } catch { /* storage off: the draft comes back without them, as it would anyway */ }
 }

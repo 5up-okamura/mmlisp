@@ -11,7 +11,7 @@
 
 export const ARCHIVE_EXT = /\.(zip|lzh|lha)$/i;
 
-/** The archive's files: [{ path, size, read(): Promise<Uint8Array> }], directories left out. */
+/** The archive's files: [{ path, size, crc?, read(): Promise<Uint8Array> }] (crc: a ZIP's), directories left out. */
 export async function readArchive(blob) {
   const head = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
   if (head[0] === 0x50 && head[1] === 0x4b) return readZip(blob);
@@ -65,6 +65,71 @@ function crc32(u8) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
+/**
+ * A ZIP of `files` ([{ path, bytes }]), each deflated where that is smaller,
+ * names in UTF-8 — what Save writes for a score that carries its files, and
+ * what a share link's files travel as. readArchive reads it back.
+ */
+export async function writeZip(files) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let at = 0;
+  for (const { path, bytes } of files) {
+    const name = enc.encode(path);
+    const crc = crc32(bytes);
+    const packed = await deflateRaw(bytes);
+    const method = packed.length < bytes.length ? 8 : 0;
+    const data = method ? packed : bytes;
+    const head = (sig, extra) => {
+      const b = new Uint8Array(extra);
+      const v = new DataView(b.buffer);
+      v.setUint32(0, sig, true);
+      return { b, v };
+    };
+    // Version 20, UTF-8 names (bit 11), no time: the content is the point.
+    const local = head(0x04034b50, 30 + name.length);
+    local.v.setUint16(4, 20, true);
+    local.v.setUint16(6, 0x0800, true);
+    local.v.setUint16(8, method, true);
+    local.v.setUint32(14, crc, true);
+    local.v.setUint32(18, data.length, true);
+    local.v.setUint32(22, bytes.length, true);
+    local.v.setUint16(26, name.length, true);
+    local.b.set(name, 30);
+    const cd = head(0x02014b50, 46 + name.length);
+    cd.v.setUint16(4, 20, true);
+    cd.v.setUint16(6, 20, true);
+    cd.v.setUint16(8, 0x0800, true);
+    cd.v.setUint16(10, method, true);
+    cd.v.setUint32(16, crc, true);
+    cd.v.setUint32(20, data.length, true);
+    cd.v.setUint32(24, bytes.length, true);
+    cd.v.setUint16(28, name.length, true);
+    cd.v.setUint32(42, at, true);
+    cd.b.set(name, 46);
+    parts.push(local.b, data);
+    central.push(cd.b);
+    at += local.b.length + data.length;
+  }
+  const cdSize = central.reduce((n, b) => n + b.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, cdSize, true);
+  ev.setUint32(16, at, true);
+  const out = new Uint8Array(at + cdSize + 22);
+  let p = 0;
+  for (const b of [...parts, ...central, end]) { out.set(b, p); p += b.length; }
+  return out;
+}
+
+async function deflateRaw(u8) {
+  const stream = new Blob([u8]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
 async function inflateRaw(u8) {
   const stream = new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -116,6 +181,7 @@ async function readZip(blob) {
     files.push({
       path,
       size,
+      crc,
       async read() {
         if (flags & 1) throw new Error(`${path}: encrypted ZIP entries are not supported`);
         if (method !== 0 && method !== 8) throw new Error(`${path}: ZIP method ${method} is not supported (stored and deflate are)`);

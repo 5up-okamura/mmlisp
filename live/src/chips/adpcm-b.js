@@ -3,6 +3,7 @@
 import { words } from "./parts.js";
 import { applySampleEffects } from "../sample-fx.js";
 import { encodeAdpcmB } from "../mucom-pcm.js";
+import { resample } from "../wav-decode.js";
 
 export const adpcmB = {
   name: "adpcm-b",
@@ -37,19 +38,6 @@ const UNIT = 4;
 // An octave above C4 still reaches the chip's top rate (Delta-N 65535, 55.5
 // kHz at 7.9872 MHz / 144), and 256 KB holds about 23 s.
 const BAKE_MAX_RATE = 22050;
-
-// A box-filtered resample to `to` Hz (to < from), enough for a downsample.
-export function resample(data, from, to) {
-  if (to >= from) return data;
-  const ratio = from / to, n = Math.floor(data.length / ratio), out = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const a = i * ratio, b = Math.min(data.length, a + ratio);
-    let sum = 0, w = 0;
-    for (let k = Math.floor(a); k < b; k++) { const c = Math.min(k + 1, b) - Math.max(k, a); sum += data[k] * c; w += c; }
-    out[i] = w ? sum / w : 0;
-  }
-  return out;
-}
 
 /**
  * The RAM image a score's ADPCM-B plays: the samples its ADPCM-B tracks name,

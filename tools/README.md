@@ -108,6 +108,11 @@ Run from tools directory:
     and its answer does it; the walk (Next runs on through the lessons, never
     into or out of a machine's tour; Start Lesson resumes at the first step
     not done) and a Try's states, as `live/src/lessons.js` gives them
+32. `npm run check:share` — share links with files (`live/worker/`,
+    `live/src/share-files.js`) against an in-memory KV: a score alone keeps its
+    id, files are stored and served, the same files get the same id however
+    they were packed, a bundle the app would not write is refused, and a wav
+    travels mono, 16-bit, at most 22.05 kHz unless a def counts its frames
 
 ## i18n
 

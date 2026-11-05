@@ -1043,6 +1043,7 @@
         <input id="shareUrl" class="share-url" type="text" readonly
           onfocus="this.select()" aria-label="Share link">
         <p class="share-meta" id="shareMeta"></p>
+        <p class="share-meta" id="shareFiles" hidden></p>
         <p class="share-warn" id="shareWarn" hidden></p>
       </div>
       <div class="modal-actions share-actions">
@@ -1152,7 +1153,8 @@
     import { parse } from './src/mmlisp-parser.js';
     import { SAMPLE_EFFECTS, applySampleEffects } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
-    import { ARCHIVE_EXT } from './src/archive.js';
+    import { ARCHIVE_EXT, readArchive, writeZip } from './src/archive.js';
+    import { shareBundle, carriedWav, wavBytes } from './src/share-files.js';
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { portSnippet, portMode, fmVoiceNames } from './src/snippet-port.js';
@@ -1170,7 +1172,7 @@
     import { defTemplates, fmDefText } from './src/def-templates.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
-    import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess, loadRom, saveRom } from './src/recent-files.js';
+    import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess, loadRom, saveRom, loadDraftFiles, saveDraftFiles } from './src/recent-files.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey, opmBankToMmlisp } from './src/import-fm-voices.js';
 
     // -----------------------------------------------------------------------
@@ -5434,17 +5436,27 @@
       clearTimeout(_draftTimer);
       _draftTimer = setTimeout(saveDraft, 500);
     }
+    // The files a shared score came with ride beside the draft, in IndexedDB
+    // (recent-files.js): written when they change, forgotten when the score
+    // that had them is replaced.
+    let _draftBundle = null;
     function saveDraft() {
       clearTimeout(_draftTimer);
       _draftTimer = null;
       if (currentIrURL) return; // a binary .mmb: the editor holds only a placeholder
       if (_lesson) return; // a lesson's working copy: the draft stays the score that waits
+      const bundle = _sourceDir?.bundle ?? null;
+      if (bundle !== _draftBundle) {
+        _draftBundle = bundle;
+        saveDraftFiles(bundle);
+      }
       try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify({
           src: editorView.state.doc.toString(),
           name: _sourceFileName,
           path: _lastFileName,
           dirty: _docDirty,
+          files: bundle?.length ?? 0, // matched on restore: the bytes land in IndexedDB after this
         }));
       } catch (_) { /* storage off or full: the page still works, unsaved */ }
     }
@@ -6806,6 +6818,10 @@
     }
 
     async function saveFileAs() {
+      if (_sourceDir?.bundle) {
+        _sourceDir.saveHandle = null; // As: asks where again
+        return saveWithFiles();
+      }
       if (!window.showSaveFilePicker) {
         const name = mmlispName(_sourceFileName);
         const blob = new Blob([editorView.state.doc.toString()], { type: 'text/plain' });
@@ -6836,6 +6852,42 @@
       log('Saved ' + (_sourceFileName || 'untitled.mmlisp'), 'info');
       rememberRecent(handle);
       await offerMucomPcmWav(handle);
+    }
+
+    // A score that came with its files (a share link's, share-files.js) saves
+    // as a .zip of itself and them, as it arrived: as text alone the files
+    // would be lost — on a phone, where there is no folder to keep them in,
+    // for good. The first Save asks where (or hands the file over); the next
+    // ones write there.
+    async function saveWithFiles() {
+      const folder = _sourceDir;
+      const name = mmlispName(_sourceFileName);
+      const others = (await readArchive(new Blob([folder.bundle]))).filter((e) => e.path !== folder.score);
+      const files = [{ path: name, bytes: new TextEncoder().encode(editorView.state.doc.toString()) },
+        ...(await Promise.all(others.map(async (e) => ({ path: e.path, bytes: await e.read() }))))];
+      const blob = new Blob([await writeZip(files)], { type: 'application/zip' });
+      const zipName = name.replace(/\.mmlisp$/i, '') + '.zip';
+      if (!folder.saveHandle && window.showSaveFilePicker) {
+        try {
+          folder.saveHandle = await window.showSaveFilePicker({
+            suggestedName: zipName,
+            types: [{ description: 'Score with its files', accept: { 'application/zip': ['.zip'] } }],
+          });
+        } catch (e) {
+          if (e?.name === 'AbortError') return log(`${zipName} not saved`, 'info');
+          throw e;
+        }
+      }
+      if (folder.saveHandle) {
+        const writable = await folder.saveHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } else if (!(await deliverFile(blob, zipName))) {
+        return;
+      }
+      markDocSaved();
+      scheduleDraftSave();
+      log(`Saved ${folder.saveHandle?.name ?? zipName}: the score and its ${others.length} file${others.length === 1 ? '' : 's'}`, 'info');
     }
 
     // The bank an .mmb would ship, for an export that plays the score's PCM
@@ -7498,6 +7550,7 @@
     window.stopVideoExport = stopVideoExport;
 
     async function saveFile() {
+      if (_sourceDir?.bundle) return saveWithFiles();
       if (!_sourceHandle) {
         await saveFileAs();
         return;
@@ -7980,21 +8033,44 @@
     }
     setEditorDoc(_draft ? _draft.src : newScoreSource(DEFAULT_TARGET));
     if (_draft?.dirty) markDocDirty();
-    queueMicrotask(() => {
+    queueMicrotask(async () => {
       if (!location.hash) {
         if (_draft) log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
         else openNewScore(); // the first launch
+        await restoreDraftFiles();
         return refreshImportsAndCompile();
       }
       // A shared link over edits not saved asks, as every open does — once
       // the page shows; kept, the draft stands and the link is let go.
-      setTimeout(() => {
+      setTimeout(async () => {
         if (mayReplaceDoc(null, 'replace-shared')) return loadSharedFromHash();
         window.history.replaceState(null, '', location.pathname + location.search); // `history` is CodeMirror's here
         log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
+        await restoreDraftFiles();
         return refreshImportsAndCompile();
       });
     });
+    // A share's files as the folder its score opens in, read in memory
+    // (share-files.js): `bundle` keeps the bytes for the draft and Save,
+    // `score` the path the score was carried at.
+    async function sharedFolder(bytes, name) {
+      const score = (name || 'untitled.mmlisp').split('/').pop();
+      const folder = await folderFromArchive(new Blob([bytes]), { name: `${score.replace(/\.mmlisp$/i, '')} (shared)` });
+      return Object.assign(folder, { bundle: bytes, score });
+    }
+    // The files the draft's shared score came with, as its folder again.
+    async function restoreDraftFiles() {
+      if (!_draft?.files) return;
+      const bytes = await loadDraftFiles();
+      if (!bytes || (typeof _draft.files === 'number' && bytes.length !== _draft.files)) return; // another score's
+      try {
+        setSourceDir(await sharedFolder(bytes, _draft.name));
+        _draftBundle = bytes;
+        await refreshFolderFiles();
+      } catch (e) {
+        log('The shared files kept with the draft could not be read (' + e.message + ')', 'err');
+      }
+    }
     window.addEventListener('hashchange', () => { if (mayReplaceDoc(null, 'replace-shared')) loadSharedFromHash(); });
 
     // -----------------------------------------------------------------------
@@ -10897,20 +10973,23 @@
       return { n, s, url: location.origin + location.pathname + '#' + (head ? head + '&' : '') + 's=' + s };
     }
 
-    // The short form (/s/<id>) from the deployment's share store (live/worker/).
-    // null wherever there is none — the dev server, offline, an unconfigured
-    // store — and the long link, which needs no server, stands in.
-    async function shortShareUrl({ n, s }) {
+    // The short form (/s/<id>) from the deployment's share store (live/worker/),
+    // `f` the files it carries (a ZIP, base64url). null wherever there is none
+    // — the dev server, offline, an unconfigured store — and the long link,
+    // which needs no server, stands in.
+    async function shortShareUrl({ n, s, f }) {
       try {
         const res = await fetch('/api/share', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ n, s }),
-          signal: AbortSignal.timeout(6000),
+          body: JSON.stringify(f ? { n, s, f } : { n, s }),
+          signal: AbortSignal.timeout(f ? 20000 : 6000), // files: a phone's upload
         });
         if (!res.ok) return null;
-        const { url } = await res.json();
-        return typeof url === 'string' ? url : null;
+        // On this page's own origin, not the server's idea of it: under
+        // `wrangler dev` that is the deployment's domain.
+        const { id } = await res.json();
+        return typeof id === 'string' && /^[A-Za-z0-9_-]+$/.test(id) ? `${location.origin}/s/${id}` : null;
       } catch {
         return null;
       }
@@ -10933,6 +11012,46 @@
       return missing;
     }
 
+    // The folder the score's paths are relative to, as the compile name says:
+    // '' for an opened folder's score (its name is bare), the served tree's
+    // folder for a Library score.
+    const scoreDir = () => (_lastFileName.includes('/') ? _lastFileName.replace(/\/[^/]*$/, '') : '');
+
+    // The files a share carries (share-files.js): each one unsharedFiles
+    // finds, read from where the page holds it — the opened folder or
+    // archive, a drop, an imported bank — and made ready to travel, at its
+    // path from the score's folder. One outside that folder stays behind, and
+    // so does one the page cannot read. A wav a def counts in frames or plays
+    // at a :rate of its own keeps its rate. [{ path, bytes }].
+    async function shareFiles(ir, paths) {
+      const dir = scoreDir();
+      const ownRate = new Set((ir?.metadata?.samples ?? [])
+        .filter((d) => d.rate != null || d.offset != null || d.frames != null)
+        .map((d) => d.resolvedFile ?? d.file));
+      const files = [];
+      for (const path of paths) {
+        const rel = !dir ? path : path.startsWith(dir + '/') ? path.slice(dir.length + 1) : null;
+        let bytes = null;
+        try {
+          if (rel == null) bytes = null;
+          else if (/\.mmlisp$/i.test(path)) {
+            const text = _importSources.get(path);
+            if (text != null) bytes = new TextEncoder().encode(text);
+          } else {
+            const held = _pcmSampleCache.get(path);
+            const file = (await sampleBytesFromSourceDir(path)) ?? (held ? wavBytes(held.data, held.sampleRate) : null);
+            if (file) bytes = carriedWav(file, { keepRate: ownRate.has(path) });
+          }
+        } catch (e) {
+          log(`Share: ${path}: ${e.message}`, 'err');
+        }
+        if (bytes) files.push({ path: rel, bytes });
+      }
+      return files;
+    }
+
+    const kb = (n) => `${Math.max(1, Math.round(n / 1024))} KB`;
+
     let _shareUrl = '';
     let _shareTitle = '';
 
@@ -10945,22 +11064,40 @@
       const { ir, ok } = await refreshImportsAndCompile();
       _shareTitle = (_sourceFileName || _lastFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
       const share = await shareFor(src, _lastFileName);
-      const shortUrl = await shortShareUrl(share);
+      // The local files go with a short link (the server keeps them beside
+      // the score); a long one carries the text alone.
+      const missing = ok ? await unsharedFiles(ir) : [];
+      const files = missing.length ? await shareFiles(ir, missing) : [];
+      const bundle = files.length ? await shareBundle(_lastFileName, src, files) : null;
+      let shortUrl = null, carried = [];
+      if (bundle?.zip) {
+        shortUrl = await shortShareUrl({ ...share, f: bytesToBase64Url(bundle.zip) });
+        if (shortUrl) carried = bundle.carried;
+      }
+      shortUrl ??= await shortShareUrl(share);
       _shareUrl = shortUrl || share.url;
       document.getElementById('shareUrl').value = _shareUrl;
       document.getElementById('shareMeta').textContent = shortUrl
         ? 'Short link — the score is stored on the server, unchanged for good.'
         : `${_shareUrl.length.toLocaleString()} characters in the link · ${src.length.toLocaleString()} in the source`;
+      const filesEl = document.getElementById('shareFiles');
+      filesEl.textContent = carried.length
+        ? 'With its files: ' + carried.map((f) => `${f.path} (${kb(f.size)})`).join(', ')
+        : '';
+      filesEl.hidden = !carried.length;
       document.getElementById('shareNativeBtn').hidden = !navigator.share;
       const warnEl = document.getElementById('shareWarn');
       const warns = [];
       if (!ok) warns.push('The score does not compile right now — it will not play for others either.');
-      const missing = ok ? await unsharedFiles(ir) : [];
-      if (missing.length) {
-        warns.push('Not included — local files the link cannot carry: ' + missing.join(', '));
+      const dir = scoreDir();
+      const carriedPaths = new Set(carried.map((f) => (dir ? `${dir}/${f.path}` : f.path)));
+      const notCarried = missing.filter((p) => !carriedPaths.has(p));
+      if (notCarried.length) {
+        warns.push((shortUrl ? 'Not included — files the link cannot carry (outside the score\'s folder, unreadable, or past its 256 KB): '
+          : 'Not included — files go only with a short link, and the share server is not reachable here: ') + notCarried.join(', '));
       }
       if (_shareUrl.length > 8000) warns.push('This link is very long; some services may cut it off.');
-      warnEl.textContent = warns.join(' ');
+      warnEl.textContent = warns.join('\n');
       warnEl.hidden = warns.length === 0;
       document.getElementById('shareCopyBtn').textContent = 'Copy link';
       window.openInfoModal('shareModal');
@@ -11005,12 +11142,29 @@
         return;
       }
       const name = params.get('n') || 'untitled.mmlisp';
+      // The files it carries (share-files.js): the folder it opens in, read in
+      // memory, the score at its root — so it compiles under its bare name.
+      let folder = null;
+      const filesId = params.get('f');
+      if (filesId) {
+        try {
+          const res = await fetch(`/api/share/${encodeURIComponent(filesId)}/files`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          folder = await sharedFolder(new Uint8Array(await res.arrayBuffer()), name);
+        } catch (e) {
+          log('Share link: its files could not be read (' + e.message + ')', 'err');
+        }
+      }
       resetForNewScore();
       clearSourceDir();
       _sourceHandle = null;
       _sourceFileName = name.split('/').pop();
       currentIrURL = null;
-      _lastFileName = name;
+      _lastFileName = folder ? _sourceFileName : name;
+      if (folder) {
+        setSourceDir(folder);
+        await refreshFolderFiles();
+      }
       setEditorDoc(src);
       // Only looking at someone's score must not replace your own draft: it
       // becomes the draft at its first edit.

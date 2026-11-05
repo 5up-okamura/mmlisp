@@ -3,9 +3,10 @@
 ; Video, the editor as the score plays, an MP4 to post. The mixer, MASTER and
 ; the TEMPO dial are for listening: an export plays the score as written.
 ; File > Share… puts the score in a link that opens it here, ready to play.
-; The link carries the text only: the preset sets travel, the wavs and imports
-; of your own folder do not, and Share names any it finds. To pass those on,
-; send the folder (or a .zip of it); whoever opens the score alone gets a
-; Load … missing files button to pick them.
+; A short link takes your folder's wavs and imports along (up to 256 KB, wavs
+; at the machines' rates) and Share lists them; whoever opens it gets them as
+; the score's folder, and Save keeps both as a .zip. What stays behind, Share
+; names: send it as a folder or a .zip, and the score alone gets a Load …
+; missing files button to pick it.
 (fm1 :oct 3 (x 2 c e g e))
 (fm2 :oct 2 c2 g2 c2 g2)

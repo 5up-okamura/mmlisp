@@ -82,7 +82,12 @@ self.addEventListener('fetch', (event) => {
   // bridge's link to 127.0.0.1, src/ai-bridge.js). Let it through untouched.
   if ((request.headers.get('accept') || '').includes('text/event-stream')) return;
 
-  const sameOrigin = new URL(request.url).origin === self.location.origin;
+  const url = new URL(request.url);
+  // The share store's answers (live/worker/): a share's files are kept by the
+  // draft that opened them (recent-files.js), not in the app's cache.
+  if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) return;
+
+  const sameOrigin = url.origin === self.location.origin;
   event.respondWith(
     request.mode === 'navigate' || sameOrigin
       ? networkFirst(event)

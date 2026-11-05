@@ -1451,7 +1451,8 @@ MIDI, and the menu is not shown there). The choice is remembered.
 
 The score being edited is kept in the browser as you type, and comes back
 when the page is opened again — after a reload, or a phone dropping the tab.
-It is one score, the one in the editor: `File > New` or opening another file
+It is one score, the one in the editor — with the files a share link brought
+it (§26), kept beside it in the browser: `File > New` or opening another file
 replaces it, and asks first when it has edits not saved — a share link opened
 over them too: keep them, and the draft stays while the link is let go. A
 share link opened over a score with nothing unsaved only shows its score; that
@@ -2879,10 +2880,24 @@ it — a browser only lets sound start after a tap; over a score of their own
 with edits not saved, it asks first (§22). From there it is an ordinary
 unsaved score: they can edit it, play it, save it, or share their own version.
 
-The link carries the score's text only. Preset sets and samples the app ships
-(`presets/…`, §25) and a Library score's own folder resolve for everyone; imports
-and `.wav`s from a folder you opened or dropped in do not, and the Share dialog
-names any it finds. A score that fails to compile is flagged too.
+Preset sets and samples the app ships (`presets/…`, §25) and a Library score's
+own folder resolve for everyone. Imports and `.wav`s from a folder you opened,
+an archive or a drop travel with a short link: the server keeps them beside
+the score, and the Share dialog lists them with their sizes. A wav goes as the
+machines play it — mono, 16-bit, at most 22.05 kHz, so a drum kit is tens of
+KB — except one a def counts in frames (`:offset`, `:frames`) or plays at a
+`:rate` of its own, which keeps its rate. Up to 256 KB of files go with one
+link; past that, the largest stay behind, and so does a file outside the
+score's folder (`../`). A long link (no server) carries the text alone. The
+dialog names whatever stays behind; a score that fails to compile is flagged
+too.
+
+Whoever opens a link with files gets them as the score's folder, read in
+memory (`song (shared)` under Global), so every sample and import resolves as
+it did for you. They stay with the score through a reload, and **Save** writes
+a `.zip` of the score and its files — on a phone, where there is no folder to
+keep them in, that `.zip` is how they are kept. Opening it again brings both
+back.
 
 ## 27. Writing with an AI
 
