@@ -6836,10 +6836,16 @@
         }
         return;
       }
-      const handle = await window.showSaveFilePicker({
-        types: [MMLISP_FILE_TYPE],
-        suggestedName: mmlispName(_sourceFileName),
-      });
+      let handle;
+      try {
+        handle = await window.showSaveFilePicker({
+          types: [MMLISP_FILE_TYPE],
+          suggestedName: mmlispName(_sourceFileName),
+        });
+      } catch (e) {
+        if (e?.name === 'AbortError') return log(`${mmlispName(_sourceFileName)} not saved`, 'info');
+        throw e;
+      }
       const src = editorView.state.doc.toString();
       const writable = await handle.createWritable();
       await writable.write(src);
