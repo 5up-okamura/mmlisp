@@ -60,6 +60,67 @@
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
 
+  <!-- The menus' icons: Material Symbols (outlined, Apache-2.0), and drawn
+       here on its 960 grid where it has none (mi-paren, -knob, -midi, -sine,
+       -tube). A menu item names one with <svg class="menu-icon"><use href="#mi-…">. -->
+  <svg class="icon-sprite" aria-hidden="true"><defs>
+      <symbol id="mi-airwave" viewBox="0 -960 960 960"><path d="M743-631q-26 26-58 38.5T619-580q-34 0-66-12.5T495-631l-75-75q-17-17-37.5-25t-42.5-8q-22 0-42.5 8T260-706l-68 68-43-43 68-68q26-26 58-38.5t65-12.5q33 0 64.5 12.5T462-749l75 75q17 17 37.5 25.5T618-640q23 0 44-8.5t38-25.5l68-68 43 43-68 68Zm0 210q-26 26-58 38.5T619-370q-34 0-66-12.5T495-421l-75-75q-17-17-37.5-25t-42.5-8q-22 0-42.5 8T260-496l-68 68-43-42 68-69q26-26 58-38.5t65-12.5q33 0 64.5 12.5T462-539l75 75q17 17 38 25.5t44 8.5q23 0 43.5-8.5T700-464l68-68 43 43-68 68Zm-1 210q-26 26-57.5 38.5T619-160q-34 0-66-12.5T495-211l-76-75q-17-17-37.5-25t-42.5-8q-22 0-42.5 8T259-286l-68 68-42-42 68-69q26-26 57.5-38.5T339-380q33 0 65 12.5t58 38.5l75 75q17 17 38 25.5t44 8.5q23 0 43.5-8.5T700-254l68-68 42 43-68 68Z"/></symbol>
+      <symbol id="mi-arrow_downward" viewBox="0 -960 960 960"><path d="M450-800v526L202-522l-42 42 320 320 320-320-42-42-248 248v-526h-60Z"/></symbol>
+      <symbol id="mi-arrow_upward" viewBox="0 -960 960 960"><path d="M450-160v-526L202-438l-42-42 320-320 320 320-42 42-248-248v526h-60Z"/></symbol>
+      <symbol id="mi-audio_file" viewBox="0 -960 960 960"><path d="M427-192q41 0 70-28.31T526-290v-202h116v-60H486v187q-11-9-26.38-14-15.39-5-32.62-5-39.27 0-66.13 27.5Q334-329 334-289.5t26.87 68.5q26.86 29 66.13 29ZM220-80q-24 0-42-18t-18-42v-680q0-24 18-42t42-18h361l219 219v521q0 24-18 42t-42 18H220Zm331-554v-186H220v680h520v-494H551ZM220-820v186-186 680-680Z"/></symbol>
+      <symbol id="mi-back_hand" viewBox="0 -960 960 960"><path d="M507-40q-93 0-171.5-47.5T209-215L60-463l20-20q16-16 38-17.5t40 11.5l122 90v-411q0-12 8.5-21t21.5-9q12 0 21 9t9 21v528L161-414l98 164q38 69 104 109.5T507-100q113 0 193-78t80-190v-402q0-12 8.5-21t21.5-9q12 0 21 9t9 21v402q0 137-97.5 232.5T507-40Zm-60-450v-400q0-12 9-21t21-9q13 0 21.5 9t8.5 21v400h-60Zm167 0v-360q0-12 8.5-21t21.5-9q12 0 21 9t9 21v360h-60ZM471-295Z"/></symbol>
+      <symbol id="mi-build" viewBox="0 -960 960 960"><path d="M705-128 447-388q-23 8-46 13t-47 5q-97.08 0-165.04-67.67Q121-505.33 121-602q0-31 8.16-60.39T152-718l145 145 92-86-149-149q25.91-15.16 54.96-23.58Q324-840 354-840q99.17 0 168.58 69.42Q592-701.17 592-602q0 24-5 47t-13 46l259 258q11 10.96 11 26.48T833-198l-76 70q-10.7 11-25.85 11Q716-117 705-128Zm28-57 40-40-273-273q16-21 24-49.5t8-54.5q0-75-55.5-127T350-782l102 104q9 9 8.5 21.5T451-635L318-510q-9.27 8-21.64 8-12.36 0-20.36-8l-98-97q3 77 54.67 127T354-430q25 0 53-8t49-24l277 277ZM476-484Z"/></symbol>
+      <symbol id="mi-comment" viewBox="0 -960 960 960"><path d="M240-400h480v-60H240v60Zm0-130h480v-60H240v60Zm0-130h480v-60H240v60ZM880-80 720-240H140q-24 0-42-18t-18-42v-520q0-24 18-42t42-18h680q24 0 42 18t18 42v740ZM140-300h606l74 80v-600H140v520Zm0 0v-520 520Z"/></symbol>
+      <symbol id="mi-compare" viewBox="0 -960 960 960"><path d="M422-40v-80H180q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h242v-80h60v880h-60ZM180-222h242v-277L180-222Zm362 102v-375l238 273v-558H542v-60h238q24 0 42 18t18 42v600q0 24-18 42t-42 18H542Z"/></symbol>
+      <symbol id="mi-content_copy" viewBox="0 -960 960 960"><path d="M300-200q-24 0-42-18t-18-42v-560q0-24 18-42t42-18h440q24 0 42 18t18 42v560q0 24-18 42t-42 18H300Zm0-60h440v-560H300v560ZM180-80q-24 0-42-18t-18-42v-620h60v620h500v60H180Zm120-180v-560 560Z"/></symbol>
+      <symbol id="mi-download" viewBox="0 -960 960 960"><path d="M480-313 287-506l43-43 120 120v-371h60v371l120-120 43 43-193 193ZM220-160q-24 0-42-18t-18-42v-143h60v143h520v-143h60v143q0 24-18 42t-42 18H220Z"/></symbol>
+      <symbol id="mi-find_replace" viewBox="0 -960 960 960"><path d="M164-572q17-100 95.5-164T440-800q65 0 121.5 30t98.5 81v-111h60v228H492v-60h134q-32-48-80.5-78T440-740q-77 0-137.5 46.5T225-572h-61Zm633 452L613-304q-37 31-81 47t-92 16q-65 0-122.5-27T220-346v106h-60v-228h228v60H249q33 48 83 77.5T440-301q75 0 133.5-47T651-468h61q-5 34-19.5 64.5T656-347l184 184-43 43Z"/></symbol>
+      <symbol id="mi-folder" viewBox="0 -960 960 960"><path d="M140-160q-24 0-42-18.5T80-220v-520q0-23 18-41.5t42-18.5h281l60 60h339q23 0 41.5 18.5T880-680v460q0 23-18.5 41.5T820-160H140Zm0-60h680v-460H456l-60-60H140v520Zm0 0v-520 520Z"/></symbol>
+      <symbol id="mi-folder_open" viewBox="0 -960 960 960"><path d="M140-160q-23 0-41.5-18.5T80-220v-520q0-23 18.5-41.5T140-800h281l60 60h339q23 0 41.5 18.5T880-680H455l-60-60H140v520l102-400h698L833-206q-6 24-22 35t-41 11H140Zm63-60h572l84-340H287l-84 340Zm0 0 84-340-84 340Zm-63-460v-60 60Z"/></symbol>
+      <symbol id="mi-format_align_left" viewBox="0 -960 960 960"><path d="M120-120v-60h720v60H120Zm0-165v-60h480v60H120Zm0-165v-60h720v60H120Zm0-165v-60h480v60H120Zm0-165v-60h720v60H120Z"/></symbol>
+      <symbol id="mi-format_size" viewBox="0 -960 960 960"><path d="M570-160v-540H360v-100h520v100H670v540H570Zm-360 0v-340H80v-100h360v100H310v340H210Z"/></symbol>
+      <symbol id="mi-history" viewBox="0 -960 960 960"><path d="M477-120q-149 0-253-105.5T120-481h60q0 125 86 213t211 88q127 0 215-89t88-216q0-124-89-209.5T477-780q-68 0-127.5 31T246-667h105v60H142v-208h60v106q52-61 123.5-96T477-840q75 0 141 28t115.5 76.5Q783-687 811.5-622T840-482q0 75-28.5 141t-78 115Q684-177 618-148.5T477-120Zm128-197L451-469v-214h60v189l137 134-43 43Z"/></symbol>
+      <symbol id="mi-info" viewBox="0 -960 960 960"><path d="M453-280h60v-240h-60v240Zm50.5-323.2q9.5-9.2 9.5-22.8 0-14.45-9.48-24.22-9.48-9.78-23.5-9.78t-23.52 9.78Q447-640.45 447-626q0 13.6 9.48 22.8 9.48 9.2 23.5 9.2t23.52-9.2ZM480.27-80q-82.74 0-155.5-31.5Q252-143 197.5-197.5t-86-127.34Q80-397.68 80-480.5t31.5-155.66Q143-709 197.5-763t127.34-85.5Q397.68-880 480.5-880t155.66 31.5Q709-817 763-763t85.5 127Q880-563 880-480.27q0 82.74-31.5 155.5Q817-252 763-197.68q-54 54.31-127 86Q563-80 480.27-80Zm.23-60Q622-140 721-239.5t99-241Q820-622 721.19-721T480-820q-141 0-240.5 98.81T140-480q0 141 99.5 240.5t241 99.5Zm-.5-340Z"/></symbol>
+      <symbol id="mi-inventory_2" viewBox="0 -960 960 960"><path d="M180-80q-24.75 0-42.37-17.63Q120-115.25 120-140v-483q-17-6-28.5-21.39T80-680v-140q0-24.75 17.63-42.38Q115.25-880 140-880h680q24.75 0 42.38 17.62Q880-844.75 880-820v140q0 20.22-11.5 35.61T840-623v483q0 24.75-17.62 42.37Q804.75-80 780-80H180Zm0-540v480h600v-480H180Zm-40-60h680v-140H140v140Zm220 260h240v-60H360v60Zm120 40Z"/></symbol>
+      <symbol id="mi-knob" viewBox="0 -960 960 960"><circle fill="none" stroke="currentColor" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" cx="480" cy="-480" r="340"/><path fill="none" stroke="currentColor" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" d="M480-710V-540"/></symbol>
+      <symbol id="mi-library_music" viewBox="0 -960 960 960"><path d="M486-333q41 0 70-28.42T585-431v-252h116v-60H545v237q-11-9-26.32-14T486-525q-39.06 0-66.03 27.37-26.97 27.36-26.97 67Q393-391 419.97-362q26.97 29 66.03 29ZM260-200q-24 0-42-18t-18-42v-560q0-24 18-42t42-18h560q24 0 42 18t18 42v560q0 24-18 42t-42 18H260Zm0-60h560v-560H260v560ZM140-80q-24 0-42-18t-18-42v-620h60v620h620v60H140Zm120-740v560-560Z"/></symbol>
+      <symbol id="mi-license" viewBox="0 -960 960 960"><path d="M402.5-482.5Q370-515 370-560t32.5-77.5Q435-670 480-670t77.5 32.5Q590-605 590-560t-32.5 77.5Q525-450 480-450t-77.5-32.5ZM244-40v-304q-45-47-64.5-103T160-560q0-136 92-228t228-92q136 0 228 92t92 228q0 57-19.5 113T716-344v304l-236-79-236 79Zm420.5-335.5Q740-451 740-560t-75.5-184.5Q589-820 480-820t-184.5 75.5Q220-669 220-560t75.5 184.5Q371-300 480-300t184.5-75.5ZM304-124l176-55 176 55v-171q-40 29-86 42t-90 13q-44 0-90-13t-86-42v171Zm176-86Z"/></symbol>
+      <symbol id="mi-link_off" viewBox="0 -960 960 960"><path d="m750-291-49-49q51-10 85-48t34-89q0-58-41-99t-99-41H525v-60h155q83 0 141.5 58.5T880-477q0 62-36 112t-94 74ZM594-447l-60-60h101v60h-41ZM814-56 63-807l43-43L857-99l-43 43ZM450-280H280q-83 0-141.5-58.5T80-480q0-72 44.5-127T238-676l56 56h-14q-58 0-99 41t-41 99q0 58 41 99t99 41h170v60ZM325-450v-60h79l60 60H325Z"/></symbol>
+      <symbol id="mi-list" viewBox="0 -960 960 960"><path d="M290-620v-60h550v60H290Zm0 170v-60h550v60H290Zm0 170v-60h550v60H290ZM150-620q-12 0-21-9t-9-21.5q0-12.5 9-21t21.5-8.5q12.5 0 21 8.62 8.5 8.63 8.5 21.38 0 12-8.62 21-8.63 9-21.38 9Zm0 170q-12 0-21-9t-9-21.5q0-12.5 9-21t21.5-8.5q12.5 0 21 8.62 8.5 8.63 8.5 21.38 0 12-8.62 21-8.63 9-21.38 9Zm0 170q-12 0-21-9t-9-21.5q0-12.5 9-21t21.5-8.5q12.5 0 21 8.62 8.5 8.63 8.5 21.38 0 12-8.62 21-8.63 9-21.38 9Z"/></symbol>
+      <symbol id="mi-manage_search" viewBox="0 -960 960 960"><path d="M80-200v-60h400v60H80Zm0-210v-60h200v60H80Zm0-210v-60h200v60H80Zm758 420L678-360q-26 20-56 30t-62 10q-83 0-141.5-58.5T360-520q0-83 58.5-141.5T560-720q83 0 141.5 58.5T760-520q0 32-10 62t-30 56l160 160-42 42ZM559.76-380Q618-380 659-420.76q41-40.77 41-99Q700-578 659.24-619q-40.77-41-99-41Q502-660 461-619.24q-41 40.77-41 99Q420-462 460.76-421q40.77 41 99 41Z"/></symbol>
+      <symbol id="mi-memory" viewBox="0 -960 960 960"><path d="M377-377v-205h205v205H377Zm60-60h85v-85h-85v85Zm-77 317v-80H260q-24 0-42-18t-18-42v-100h-80v-60h80v-124h-80v-60h80v-100q0-24 18-42t42-18h100v-76h60v76h124v-76h60v76h100q24 0 42 18t18 42v100h76v60h-76v124h76v60h-76v100q0 24-18 42t-42 18H604v80h-60v-80H420v80h-60Zm344-140v-444H260v444h444ZM480-480Z"/></symbol>
+      <symbol id="mi-midi" viewBox="0 -960 960 960"><circle fill="none" stroke="currentColor" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" cx="480" cy="-480" r="360"/><path fill="none" stroke="currentColor" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" d="M480-140V-200"/><circle cx="265" cy="-480" r="52"/><circle cx="328" cy="-632" r="52"/><circle cx="480" cy="-695" r="52"/><circle cx="632" cy="-632" r="52"/><circle cx="695" cy="-480" r="52"/></symbol>
+      <symbol id="mi-movie" viewBox="0 -960 960 960"><path d="m140-800 74 152h130l-74-152h89l74 152h130l-74-152h89l74 152h130l-74-152h112q24 0 42 18t18 42v520q0 24-18 42t-42 18H140q-24 0-42-18t-18-42v-520q0-24 18-42t42-18Zm0 212v368h680v-368H140Zm0 0v368-368Z"/></symbol>
+      <symbol id="mi-music_note" viewBox="0 -960 960 960"><path d="M286.5-163.5Q243-207 243-270t43.5-106.5Q330-420 393-420q28 0 50.5 8t39.5 22v-450h234v135H543v435q0 63-43.5 106.5T393-120q-63 0-106.5-43.5Z"/></symbol>
+      <symbol id="mi-note_add" viewBox="0 -960 960 960"><path d="M450-234h60v-129h130v-60H510v-130h-60v130H320v60h130v129ZM220-80q-24 0-42-18t-18-42v-680q0-24 18-42t42-18h361l219 219v521q0 24-18 42t-42 18H220Zm331-554v-186H220v680h520v-494H551ZM220-820v186-186 680-680Z"/></symbol>
+      <symbol id="mi-palette" viewBox="0 -960 960 960"><path d="M480-80q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-85 32-158t87.5-127q55.5-54 130-84.5T489-880q79 0 150 26.5T763.5-780q53.5 47 85 111.5T880-527q0 108-63 170.5T650-294h-75q-18 0-31 14t-13 31q0 27 14.5 46t14.5 44q0 38-21 58.5T480-80Zm0-400Zm-198 11q15-15 15-35t-15-35q-15-15-35-15t-35 15q-15 15-15 35t15 35q15 15 35 15t35-15Zm126-170q15-15 15-35t-15-35q-15-15-35-15t-35 15q-15 15-15 35t15 35q15 15 35 15t35-15Zm214 0q15-15 15-35t-15-35q-15-15-35-15t-35 15q-15 15-15 35t15 35q15 15 35 15t35-15Zm131 170q15-15 15-35t-15-35q-15-15-35-15t-35 15q-15 15-15 35t15 35q15 15 35 15t35-15ZM480-140q11 0 15.5-4.5T500-159q0-14-14.5-26T471-238q0-46 30-81t76-35h73q76 0 123-44.5T820-527q0-132-100-212.5T489-820q-146 0-247.5 98.5T140-480q0 141 99.5 240.5T480-140Z"/></symbol>
+      <symbol id="mi-paren" viewBox="0 -960 960 960"><path fill="none" stroke="currentColor" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" d="M310-860Q100-480 310-100M650-860Q860-480 650-100"/></symbol>
+      <symbol id="mi-piano" viewBox="0 -960 960 960"><path d="M180-120q-24 0-42-18t-18-42v-600q0-23 18-41.5t42-18.5h600q23 0 41.5 18.5T840-780v600q0 24-18.5 42T780-120H180Zm0-60h157v-210h-20q-12.75 0-21.37-8.63Q287-407.25 287-420v-360H180v600Zm443 0h157v-600H673v360q0 12.75-8.62 21.37Q655.75-390 643-390h-20v210Zm-246 0h206v-210h-20q-12.75 0-21.37-8.63Q533-407.25 533-420v-360H427v360q0 12.75-8.62 21.37Q409.75-390 397-390h-20v210Z"/></symbol>
+      <symbol id="mi-queue_music" viewBox="0 -960 960 960"><path d="M642.94-160q-47.94 0-81.44-33.56t-33.5-81.5q0-47.94 32.67-81.44Q593.33-390 640-390q15.97 0 30.48 3Q685-384 698-377v-343h182v71H758v375q0 47.5-33.56 80.75T642.94-160ZM120-320v-60h306v60H120Zm0-170v-60h473v60H120Zm0-170v-60h473v60H120Z"/></symbol>
+      <symbol id="mi-record_voice_over" viewBox="0 -960 960 960"><path d="m801-305-50-50q48-51 73.5-104.5T850-591q0-78-25.5-131.5T751-827l50-50q56 58 87.5 126.5T920-591q0 91-31.5 159.5T801-305ZM662-447l-50-50q18-20 28-42.5t10-51.5q0-29-10-51.5T612-685l50-50q26 28 42 65.5t16 78.5q0 41-16 78.5T662-447Zm-302 6q-66 0-108-42t-42-108q0-66 42-108t108-42q66 0 108 42t42 108q0 66-42 108t-108 42ZM40-120v-94q0-38 19-64.5t49-41.5q51-26 120.5-43T360-380q62 0 131 17t120 43q30 15 49.5 41.5T680-214v94H40Zm60-60h520v-34q0-16-8.5-29.5T587-266q-48-27-109-40.5T360-320q-57 0-118.5 14.5T132-266q-14 7-23 21.5t-9 30.5v34Zm324.5-346.5Q450-552 450-591t-25.5-64.5Q399-681 360-681t-64.5 25.5Q270-630 270-591t25.5 64.5Q321-501 360-501t64.5-25.5ZM360-591Zm0 411Z"/></symbol>
+      <symbol id="mi-redo" viewBox="0 -960 960 960"><path d="M392-200q-95 0-163.5-64T160-422q0-94 68.5-158T392-644h294L572-758l42-42 186 186-186 186-42-42 114-114H391q-70 0-120.5 46.5T220-422q0 69 50.5 115.5T391-260h310v60H392Z"/></symbol>
+      <symbol id="mi-repeat" viewBox="0 -960 960 960"><path d="M280-80 120-240l160-160 42 44-86 86h464v-160h60v220H236l86 86-42 44Zm-80-450v-220h524l-86-86 42-44 160 160-160 160-42-44 86-86H260v160h-60Z"/></symbol>
+      <symbol id="mi-save" viewBox="0 -960 960 960"><path d="M840-683v503q0 24-18 42t-42 18H180q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h503l157 157Zm-60 27L656-780H180v600h600v-476ZM553.5-275.26q30.5-30.27 30.5-73.5 0-43.24-30.26-73.74-30.27-30.5-73.5-30.5-43.24 0-73.74 30.26-30.5 30.27-30.5 73.5 0 43.24 30.26 73.74 30.27 30.5 73.5 30.5 43.24 0 73.74-30.26ZM233-584h358v-143H233v143Zm-53-72v476-600 124Z"/></symbol>
+      <symbol id="mi-save_as" viewBox="0 -960 960 960"><path d="M180-120q-24.75 0-42.37-17.63Q120-155.25 120-180v-600q0-24.75 17.63-42.38Q155.25-840 180-840h503l157 157v238q-14-8-29-11.5t-31-3.5v-196L656-780H180v600h280v60H180Zm0-660v600-600ZM520-40v-123l221-220q9-9 20-13t22-4q12 0 23 4.5t20 13.5l37 37q9 9 13 20t4 22q0 11-4.5 22.5T862.09-260L643-40H520Zm300-263-37-37 37 37ZM580-100h38l121-122-18-19-19-18-122 121v38Zm141-141-19-18 37 37-18-19ZM233-584h358v-143H233v143Zm247 339q14 0 27-3t24-10l39-40q7-11 10.5-24t3.5-27q0-43.33-30.26-73.67Q523.47-453 480.24-453q-43.24 0-73.74 30.26-30.5 30.27-30.5 73.5 0 43.24 30.33 73.74Q436.67-245 480-245Z"/></symbol>
+      <symbol id="mi-school" viewBox="0 -960 960 960"><path d="M479-120 189-279v-240L40-600l439-240 441 240v317h-60v-282l-91 46v240L479-120Zm0-308 315-172-315-169-313 169 313 172Zm0 240 230-127v-168L479-360 249-485v170l230 127Zm1-240Zm-1 74Zm0 0Z"/></symbol>
+      <symbol id="mi-select_all" viewBox="0 -960 960 960"><path d="M285-285v-390h390v390H285Zm60-60h270v-270H345v270ZM180-180v60q-24.75 0-42.37-17.63Q120-155.25 120-180h60Zm-60-105v-60h60v60h-60Zm0-165v-60h60v60h-60Zm0-165v-60h60v60h-60Zm60-165h-60q0-24.75 17.63-42.38Q155.25-840 180-840v60Zm105 660v-60h60v60h-60Zm0-660v-60h60v60h-60Zm165 660v-60h60v60h-60Zm0-660v-60h60v60h-60Zm165 660v-60h60v60h-60Zm0-660v-60h60v60h-60Zm165 660v-60h60q0 25-17.62 42.5Q804.75-120 780-120Zm0-165v-60h60v60h-60Zm0-165v-60h60v60h-60Zm0-165v-60h60v60h-60Zm0-165v-60q24.75 0 42.38 17.62Q840-804.75 840-780h-60Z"/></symbol>
+      <symbol id="mi-share" viewBox="0 -960 960 960"><path d="M686-80q-47.5 0-80.75-33.25T572-194q0-8 5-34L278-403q-16.28 17.34-37.64 27.17Q219-366 194-366q-47.5 0-80.75-33T80-480q0-48 33.25-81T194-594q24 0 45 9.3 21 9.29 37 25.7l301-173q-2-8-3.5-16.5T572-766q0-47.5 33.25-80.75T686-880q47.5 0 80.75 33.25T800-766q0 47.5-33.25 80.75T686-652q-23.27 0-43.64-9Q622-670 606-685L302-516q3 8 4.5 17.5t1.5 18q0 8.5-1 16t-3 15.5l303 173q16-15 36.09-23.5 20.1-8.5 43.07-8.5Q734-308 767-274.75T800-194q0 47.5-33.25 80.75T686-80Zm.04-60q22.96 0 38.46-15.54 15.5-15.53 15.5-38.5 0-22.96-15.54-38.46-15.53-15.5-38.5-15.5-22.96 0-38.46 15.54-15.5 15.53-15.5 38.5 0 22.96 15.54 38.46 15.53 15.5 38.5 15.5Zm-492-286q22.96 0 38.46-15.54 15.5-15.53 15.5-38.5 0-22.96-15.54-38.46-15.53-15.5-38.5-15.5-22.96 0-38.46 15.54-15.5 15.53-15.5 38.5 0 22.96 15.54 38.46 15.53 15.5 38.5 15.5ZM724.5-727.54q15.5-15.53 15.5-38.5 0-22.96-15.54-38.46-15.53-15.5-38.5-15.5-22.96 0-38.46 15.54-15.5 15.53-15.5 38.5 0 22.96 15.54 38.46 15.53 15.5 38.5 15.5 22.96 0 38.46-15.54ZM686-194ZM194-480Zm492-286Z"/></symbol>
+      <symbol id="mi-sine" viewBox="0 -960 960 960"><path fill="none" stroke="currentColor" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" d="M90-480C210-840 350-840 480-480S750-120 870-480"/></symbol>
+      <symbol id="mi-smart_toy" viewBox="0 -960 960 960"><path d="M147-376q-45 0-76-31.21T40-483q0-44.58 31.21-75.79Q102.42-590 147-590v-123q0-24 18-42t42-18h166q0-45 31-76t76-31q45 0 76 31.21T587-773h166q24 0 42 18t18 42v123q45 0 76 31.21T920-483q0 44.58-31.21 75.79Q857.58-376 813-376v196q0 24-18 42t-42 18H207q-24 0-42-18t-18-42v-196Zm224.5-111.74q11.5-11.73 11.5-28.5 0-16.76-11.74-28.26-11.73-11.5-28.5-11.5-16.76 0-28.26 11.74-11.5 11.73-11.5 28.5 0 16.76 11.74 28.26 11.73 11.5 28.5 11.5 16.76 0 28.26-11.74Zm274 0q11.5-11.73 11.5-28.5 0-16.76-11.74-28.26-11.73-11.5-28.5-11.5-16.76 0-28.26 11.74-11.5 11.73-11.5 28.5 0 16.76 11.74 28.26 11.73 11.5 28.5 11.5 16.76 0 28.26-11.74ZM312-285h336v-60H312v60ZM207-180h546v-533H207v533Zm273-267Z"/></symbol>
+      <symbol id="mi-speed" viewBox="0 -960 960 960"><path d="M473.5-303.5Q517-305 537-336l216-339-335 219q-30 20-32 64t21 67q23 23 66.5 21.5ZM478-799q57 0 119 18.5T716-717l-52 37q-45-30-96.5-44.5T477.98-739q-140.47 0-239.23 100.22Q140-538.57 140-396.02 140-351 152.5-305q12.5 46 35.5 85h579q22-36 35-84t13-94q0-42-12.5-90.5T758-578l39-52q38 56 57 112.5T875-404q2 60-12 113t-41 98q-12 23-25.5 28t-33.5 5H192q-17 0-33.5-8.5T134-193q-26-48-40-97.5T80-396q0-83 31.5-156.5t85.5-128Q251-735 323.68-767T478-799Zm-9 331Z"/></symbol>
+      <symbol id="mi-text_select_move_forward_word" viewBox="0 -960 960 960"><path d="m694-334-42-42 73-74H450v-60h275l-73-74 42-42 146 146-146 146ZM180-180h105v-600H180v600Zm-60 60v-720h225v720H120Zm330 0v-60h60v60h-60Zm0-660v-60h60v60h-60Zm165 660v-60h60v60h-60Zm0-660v-60h60v60h-60Zm165 660v-60h60v60h-60Zm0-660v-60h60v60h-60ZM180-180h105-105Z"/></symbol>
+      <symbol id="mi-touch_app" viewBox="0 -960 960 960"><path d="M445-80q-29 0-56-12t-45-35L127-403l21-23q14-15 34.5-18.5T221-438l99 53v-365q0-12.75 8.68-21.38 8.67-8.62 21.5-8.62 12.82 0 21.32 8.62 8.5 8.63 8.5 21.38v465l-144-77 156 198q10 12 23.76 18 13.76 6 29.24 6h205q38 0 64-26t26-64v-170q0-25.5-17.25-42.75T680-460H460v-60h219.65q50.14 0 85.25 35 35.1 35 35.1 85v170q0 63-43.5 106.5T650-80H445ZM203-665q-11.07-18.75-17.04-40.49-5.96-21.74-5.96-44.76 0-70.75 49.5-120.25T350-920q71 0 120.5 49.74t49.5 120.3q0 22.96-5.96 44.62Q508.07-683.68 497-665l-52-30q7-12 11-26t4-29.48Q460-796 427.88-828q-32.12-32-78-32T272-827.92q-32 32.09-32 77.92 0 15 4 29t11 26l-52 30Zm285 335Z"/></symbol>
+      <symbol id="mi-translate" viewBox="0 -960 960 960"><path d="m475-80 185-480h79L924-80h-65l-45-117H584L539-80h-64ZM162-201l-42-42 201-201q-51-53-85.5-107.5T183-660h65q16 43 43.5 85t72.5 88q46-48 85-117.5T505-740H40v-60h290v-80h60v80h290v60H567q-17 78-61.5 159.5T406-443l102 104-24 63-121-125-201 200Zm443-51h188l-94-248-94 248Z"/></symbol>
+      <symbol id="mi-tube" viewBox="0 -960 960 960"><path fill="none" stroke="currentColor" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" d="M290-270V-630A190 190 0 0 1 670-630V-270ZM230-270H730M370-270V-100M480-270V-100M590-270V-100M410-600H550V-370H410Z"/></symbol>
+      <symbol id="mi-tune" viewBox="0 -960 960 960"><path d="M427-120v-225h60v83h353v60H487v82h-60Zm-307-82v-60h247v60H120Zm187-166v-82H120v-60h187v-84h60v226h-60Zm120-82v-60h413v60H427Zm166-165v-225h60v82h187v60H653v83h-60Zm-473-83v-60h413v60H120Z"/></symbol>
+      <symbol id="mi-undo" viewBox="0 -960 960 960"><path d="M259-200v-60h310q70 0 120.5-46.5T740-422q0-69-50.5-115.5T569-584H274l114 114-42 42-186-186 186-186 42 42-114 114h294q95 0 163.5 64T800-422q0 94-68.5 158T568-200H259Z"/></symbol>
+      <symbol id="mi-upload" viewBox="0 -960 960 960"><path d="M450-313v-371L330-564l-43-43 193-193 193 193-43 43-120-120v371h-60ZM220-160q-24 0-42-18t-18-42v-143h60v143h520v-143h60v143q0 24-18 42t-42 18H220Z"/></symbol>
+      <symbol id="mi-videogame_asset" viewBox="0 -960 960 960"><path d="M140-240q-24 0-42-18t-18-42v-360q0-24 18-42t42-18h680q24 0 42 18t18 42v360q0 24-18 42t-42 18H140Zm0-60h680v-360H140v360Zm150-46h60v-104h104v-60H350v-104h-60v104H186v60h104v104Zm334.5-31.5Q638-391 638-409t-13.5-31.5Q611-454 593-454t-31.5 13.5Q548-427 548-409t13.5 31.5Q575-364 593-364t31.5-13.5Zm90-143Q728-534 728-552t-13.5-31.5Q701-597 683-597t-31.5 13.5Q638-570 638-552t13.5 31.5Q665-507 683-507t31.5-13.5ZM140-300v-360 360Z"/></symbol>
+      <symbol id="mi-view_object_track" viewBox="0 -960 960 960"><path d="M291-160q-55 0-93-39.55t-38-95.5q0-55.95 38-95.45t93-39.5h458q55 0 93 39.55t38 95.5q0 55.95-38 95.45T749-160H291Zm0-60h458q29.58 0 50.29-21.82 20.71-21.83 20.71-53Q820-326 799.29-348T749-370H291q-29.58 0-50.29 21.82-20.71 21.83-20.71 53Q220-264 240.71-242T291-220Zm-80-310q-55 0-93-39.55t-38-95.5q0-55.95 38-95.45t93-39.5h458q55 0 93 39.55t38 95.5q0 55.95-38 95.45T669-530H211Zm0-60h458q29.58 0 50.29-21.82 20.71-21.83 20.71-53Q740-696 719.29-718T669-740H211q-29.58 0-50.29 21.82-20.71 21.83-20.71 53Q140-634 160.71-612T211-590Zm309 295Zm-80-370Z"/></symbol>
+      <symbol id="mi-view_timeline" viewBox="0 -960 960 960"><path d="M250-279h220v-60H250v60Zm120-171h220v-60H370v60Zm120-171h220v-60H490v60ZM180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h600q24 0 42 18t18 42v600q0 24-18 42t-42 18H180Zm0-60h600v-600H180v600Zm0-600v600-600Z"/></symbol>
+      <symbol id="mi-visibility" viewBox="0 -960 960 960"><path d="M600.5-379.5Q650-429 650-500t-49.5-120.5Q551-670 480-670t-120.5 49.5Q310-571 310-500t49.5 120.5Q409-330 480-330t120.5-49.5Zm-200-41Q368-453 368-500t32.5-79.5Q433-612 480-612t79.5 32.5Q592-547 592-500t-32.5 79.5Q527-388 480-388t-79.5-32.5ZM216-283Q98-366 40-500q58-134 176-217t264-83q146 0 264 83t176 217q-58 134-176 217t-264 83q-146 0-264-83Zm264-217Zm222.5 174.5Q804-391 857-500q-53-109-154.5-174.5T480-740q-121 0-222.5 65.5T102-500q54 109 155.5 174.5T480-260q121 0 222.5-65.5Z"/></symbol>
+  </defs></svg>
+
   <!-- Top bar -->
   <div id="topbar">
     <!-- MMLisp menu (app info + preferences) -->
@@ -67,16 +128,16 @@
       <button class="menu-btn" onclick="toggleMenu('menuMMLisp')">MMLisp</button>
       <div class="menu-dropdown">
         <button class="menu-item" onclick="openInfoModal('aboutModal')">
-          <span>About MMLisp</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-info"/></svg><span>About MMLisp</span>
         </button>
         <button class="menu-item" onclick="openInfoModal('licenseModal')">
-          <span>Licenses</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-license"/></svg><span>Licenses</span>
         </button>
         <div class="menu-sep"></div>
         <!-- look and display -->
         <div class="menu-wrap submenu-wrap" id="menuMMLispTheme">
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispTheme')">
-            <span>Theme</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-palette"/></svg><span>Theme</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown" id="themeMenuList">
@@ -84,14 +145,14 @@
           </div>
         </div>
         <button class="menu-item" id="fontSizeItem" onclick="openFontSizePopup()">
-          <span>Font Size</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-format_size"/></svg><span>Font Size</span>
           <span class="menu-item-shortcut" id="fontSizeValue"></span>
         </button>
         <!-- the reference's and the snippets' texts; the rest stays in English -->
         <div class="menu-wrap submenu-wrap" id="menuMMLispLanguage">
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispLanguage')"
                   title="The language the Library, the completion and the hover explain the reference and the snippets in">
-            <span>Language</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-translate"/></svg><span>Language</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown" id="languageMenuList">
@@ -101,61 +162,61 @@
         <!-- the score's three views, each on or off -->
         <div class="menu-wrap submenu-wrap" id="menuMMLispView">
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispView')">
-            <span>View</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-visibility"/></svg><span>View</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="toggleSource();closeMenus()"
                     title="The score's text and its line numbers">
-              <span>Source</span>
+              <svg class="menu-icon" aria-hidden="true"><use href="#mi-paren"/></svg><span>Source</span>
               <span class="menu-item-shortcut" id="sourceCheck"></span>
             </button>
             <button class="menu-item" onclick="togglePianoRoll();closeMenus()"
                     title="A pane under the editor, linked to the score">
-              <span>Piano Roll</span>
+              <svg class="menu-icon" aria-hidden="true"><use href="#mi-view_timeline"/></svg><span>Piano Roll</span>
               <span class="menu-item-shortcut" id="pianoRollCheck"></span>
             </button>
             <button class="menu-item" onclick="toggleScope();closeMenus()"
                     title="Each channel's waveform, behind the editor text">
-              <span>Oscilloscope</span>
+              <svg class="menu-icon" aria-hidden="true"><use href="#mi-airwave"/></svg><span>Oscilloscope</span>
               <span class="menu-item-shortcut" id="scopeCheck"></span>
             </button>
           </div>
         </div>
         <button class="menu-item" onclick="toggleFollow();closeMenus()"
                 title="While playing, scroll to keep the highlighted notes in view">
-          <span>Follow Playback</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-view_object_track"/></svg><span>Follow Playback</span>
           <span class="menu-item-shortcut" id="followCheck"></span>
         </button>
         <div class="menu-sep"></div>
         <!-- sound and input -->
         <button class="menu-item" data-needs="analogLpf" onclick="toggleAnalogLpf();closeMenus()">
-          <span>Analog LPF</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-tube"/></svg><span>Analog LPF</span>
           <span class="menu-item-shortcut" id="analogLpfCheck"></span>
         </button>
         <div class="menu-wrap submenu-wrap" id="menuMMLispMidi" hidden>
           <button class="menu-item" onclick="toggleSubmenu('menuMMLispMidi')">
-            <span>MIDI</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-midi"/></svg><span>MIDI</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="toggleMidi();closeMenus()"
                     title="Play the preview from a MIDI keyboard (and step-input with it while REC is on). Every connected input listens.">
-              <span>MIDI Input</span>
+              <svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>MIDI Input</span>
               <span class="menu-item-shortcut" id="midiCheck"></span>
             </button>
             <button class="menu-item" onclick="toggleMidiVelocity();closeMenus()"
                     title="A key's velocity sets the preview's :vel, and step input writes :vel when it changes">
-              <span>Velocity</span>
+              <svg class="menu-icon" aria-hidden="true"><use href="#mi-speed"/></svg><span>Velocity</span>
               <span class="menu-item-shortcut" id="midiVelocityCheck"></span>
             </button>
             <button class="menu-item" onclick="toggleMidiLearn();closeMenus()"
                     title="Click a panel slider, then move a knob: that CC drives the slider. Delete removes the selected slider's CC; Esc ends.">
-              <span>MIDI Learn</span>
+              <svg class="menu-icon" aria-hidden="true"><use href="#mi-knob"/></svg><span>MIDI Learn</span>
               <span class="menu-item-shortcut" id="midiLearnCheck"></span>
             </button>
             <button class="menu-item" onclick="clearMidiAssignments();closeMenus()">
-              <span>Clear CC Assignments</span>
+              <svg class="menu-icon" aria-hidden="true"><use href="#mi-link_off"/></svg><span>Clear CC Assignments</span>
             </button>
           </div>
         </div>
@@ -168,7 +229,7 @@
       <div class="menu-dropdown">
         <div class="menu-wrap submenu-wrap" id="menuNew">
           <button class="menu-item" onclick="toggleSubmenu('menuNew')">
-            <span>New</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-note_add"/></svg><span>New</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown" id="newMenuList">
@@ -176,12 +237,12 @@
           </div>
         </div>
         <button class="menu-item" onclick="openFile();closeMenus()">
-          <span>Open…</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-folder_open"/></svg><span>Open…</span>
           <span class="menu-item-shortcut" id="openFileShortcut"></span>
         </button>
         <div class="menu-wrap submenu-wrap" id="menuOpenRecent" hidden>
           <button class="menu-item" onclick="toggleSubmenu('menuOpenRecent')">
-            <span>Open Recent</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-history"/></svg><span>Open Recent</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown" id="recentList"></div>
@@ -189,70 +250,70 @@
         <div class="menu-sep" id="openFolderSep"></div>
         <button class="menu-item" id="openFolderItem" onclick="openFolder();closeMenus()"
                 title="Open a score's folder so its relative :file samples (wav next to the score) load, and its scores and songs are under Files in Folder. After a reload, Open Recent brings a score back with its folder. Chrome blocks Desktop/Documents themselves; use a subfolder. A .zip or .lzh opens as a folder through Open….">
-          <span>Open Folder…</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-folder"/></svg><span>Open Folder…</span>
           <span class="menu-item-shortcut" id="sourceDirLabel"></span>
         </button>
         <div class="menu-wrap submenu-wrap" id="menuFolderFiles" hidden>
           <button class="menu-item" onclick="toggleSubmenu('menuFolderFiles')">
-            <span>Files in Folder</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-list"/></svg><span>Files in Folder</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown" id="folderFilesList"></div>
         </div>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="saveFile();closeMenus()">
-          <span>Save</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-save"/></svg><span>Save</span>
           <span class="menu-item-shortcut" id="saveFileShortcut"></span>
         </button>
         <button class="menu-item" id="saveAsItem" onclick="saveFileAs();closeMenus()">
-          <span>Save As…</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-save_as"/></svg><span>Save As…</span>
           <span class="menu-item-shortcut" id="saveFileAsShortcut"></span>
         </button>
         <div class="menu-sep"></div>
         <div class="menu-wrap submenu-wrap" id="menuImport">
           <button class="menu-item" onclick="toggleSubmenu('menuImport')">
-            <span>Import</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-download"/></svg><span>Import</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <!-- by what an import does: Song… replaces the document, Instruments… inserts at the cursor -->
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="importSongMenu();closeMenus()"
-                    title="A song as a new document: MIDI, DefleMask .dmf, Furnace .fur, VGM, mucom88 .muc (with its .dat / .bin)">Song…</button>
+                    title="A song as a new document: MIDI, DefleMask .dmf, Furnace .fur, VGM, mucom88 .muc (with its .dat / .bin)"><svg class="menu-icon" aria-hidden="true"><use href="#mi-music_note"/></svg><span>Song…</span></button>
             <button class="menu-item" onclick="importInstrumentsMenu();closeMenus()"
-                    title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), OPM voice banks (.opm), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2)">Instruments…</button>
+                    title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), OPM voice banks (.opm), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2)"><svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>Instruments…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Resynthesis</div>
-            <button class="menu-item" data-needs="formants" onclick="importResynth();closeMenus()">Audio as Formants…</button>
-            <button class="menu-item" onclick="importAudioAsFmVoice();closeMenus()">Audio as FM Voice…</button>
+            <button class="menu-item" data-needs="formants" onclick="importResynth();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-record_voice_over"/></svg><span>Audio as Formants…</span></button>
+            <button class="menu-item" onclick="importAudioAsFmVoice();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-sine"/></svg><span>Audio as FM Voice…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">ROMs</div>
             <button class="menu-item" data-needs="part:rhythm" onclick="chooseRhythmRom();closeMenus()"
                     title="Your YM2608 rhythm ROM (8 KB), kept in this browser: :target pc88's rhythm plays from it">
-              <span>YM2608 Rhythm ROM…</span>
+              <svg class="menu-icon" aria-hidden="true"><use href="#mi-memory"/></svg><span>YM2608 Rhythm ROM…</span>
               <span class="menu-item-shortcut" id="rhythmRomCheck"></span>
             </button>
           </div>
         </div>
         <div class="menu-wrap submenu-wrap" id="menuExport">
           <button class="menu-item" onclick="toggleSubmenu('menuExport')">
-            <span>Export</span>
+            <svg class="menu-icon" aria-hidden="true"><use href="#mi-upload"/></svg><span>Export</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown">
-            <button class="menu-item" data-needs="driver" onclick="exportMmb();closeMenus()">MMB…</button>
+            <button class="menu-item" data-needs="driver" onclick="exportMmb();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-videogame_asset"/></svg><span>MMB…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Recording</div>
-            <button class="menu-item" onclick="exportVgm();closeMenus()">VGM…</button>
-            <button class="menu-item" onclick="exportWav();closeMenus()">WAV…</button>
-            <button class="menu-item" onclick="openVideoExport();closeMenus()">Video…</button>
+            <button class="menu-item" onclick="exportVgm();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-queue_music"/></svg><span>VGM…</span></button>
+            <button class="menu-item" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
+            <button class="menu-item" onclick="openVideoExport();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-movie"/></svg><span>Video…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Samples</div>
-            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()">Imported…</button>
+            <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Imported…</span></button>
           </div>
         </div>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="openShare();closeMenus()">
-          <span>Share…</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-share"/></svg><span>Share…</span>
         </button>
       </div>
     </div>
@@ -263,70 +324,70 @@
       <button class="menu-btn" onclick="toggleMenu('menuEdit')">Edit</button>
       <div class="menu-dropdown">
         <button class="menu-item" onclick="undoAction();closeMenus()">
-          <span>Undo</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-undo"/></svg><span>Undo</span>
           <span class="menu-item-shortcut" id="undoShortcut"></span>
         </button>
         <button class="menu-item" onclick="redoAction();closeMenus()">
-          <span>Redo</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-redo"/></svg><span>Redo</span>
           <span class="menu-item-shortcut" id="redoShortcut"></span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="findReplaceAction();closeMenus()"
                 title="Find and replace in the score. Enter / Shift+Enter step through the matches; “all” puts a cursor on every one.">
-          <span>Find / Replace…</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-find_replace"/></svg><span>Find / Replace…</span>
           <span class="menu-item-shortcut" id="findShortcut"></span>
         </button>
         <button class="menu-item" onclick="selectNextOccurrenceAction();closeMenus()"
                 title="Add the next occurrence of the selection (or of the token at the cursor) to the selection, as a second cursor.">
-          <span>Select Next Occurrence</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-text_select_move_forward_word"/></svg><span>Select Next Occurrence</span>
           <span class="menu-item-shortcut" id="selectNextOccurrenceShortcut"></span>
         </button>
         <button class="menu-item" onclick="selectAllOccurrencesAction();closeMenus()"
                 title="Put a cursor on every occurrence of the selection, so one edit applies to all of them.">
-          <span>Select All Occurrences</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-select_all"/></svg><span>Select All Occurrences</span>
           <span class="menu-item-shortcut" id="selectAllOccurrencesShortcut"></span>
         </button>
         <button class="menu-item" onclick="addCursorAboveAction();closeMenus()"
                 title="Add a cursor on the line above the topmost one, so one edit types on several lines.">
-          <span>Add Cursor Above</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-arrow_upward"/></svg><span>Add Cursor Above</span>
           <span class="menu-item-shortcut" id="addCursorAboveShortcut"></span>
         </button>
         <button class="menu-item" onclick="addCursorBelowAction();closeMenus()"
                 title="Add a cursor on the line below the bottommost one, so one edit types on several lines.">
-          <span>Add Cursor Below</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-arrow_downward"/></svg><span>Add Cursor Below</span>
           <span class="menu-item-shortcut" id="addCursorBelowShortcut"></span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleCommentAction();closeMenus()">
-          <span>Toggle Comment</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-comment"/></svg><span>Toggle Comment</span>
           <span class="menu-item-shortcut" id="toggleCommentShortcut"></span>
         </button>
         <button class="menu-item" onclick="closeBracketsAction();closeMenus()">
-          <span>Close Open Brackets</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-paren"/></svg><span>Close Open Brackets</span>
           <span class="menu-item-shortcut" id="closeBracketsShortcut"></span>
         </button>
         <button class="menu-item" onclick="formatSource();closeMenus()">
-          <span>Format Source</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-format_align_left"/></svg><span>Format Source</span>
           <span class="menu-item-shortcut" id="formatSourceShortcut"></span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="loopSelectionAction();closeMenus()"
           title="Inside one channel: loop the selected notes. Across channels, or with no selection: loop each channel whole">
-          <span>Loop Selection</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-repeat"/></svg><span>Loop Selection</span>
         </button>
         <button class="menu-item" id="logicalMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleLogicalEditor();closeMenus()"
           title="Pick the notes that meet a condition, then delete them, change their length or reverse them">
-          <span>Logical Editor</span><span class="menu-item-shortcut" id="logicalMenuCheck"></span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-manage_search"/></svg><span>Logical Editor</span><span class="menu-item-shortcut" id="logicalMenuCheck"></span>
         </button>
         <button class="menu-item" id="timingMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleImportTiming();closeMenus()"
           title="A VGM or NSF just imported: tap its beat, and it is written again on that tempo and grid">
-          <span>Tap Tempo</span><span class="menu-item-shortcut" id="timingMenuCheck"></span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-touch_app"/></svg><span>Tap Tempo</span><span class="menu-item-shortcut" id="timingMenuCheck"></span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" id="abCompareMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleABCompare();closeMenus()">
-          <span>A/B Compare</span><span class="menu-item-shortcut" id="abCompareCheck"></span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-compare"/></svg><span>A/B Compare</span><span class="menu-item-shortcut" id="abCompareCheck"></span>
         </button>
-        <button class="menu-item" id="abCopyMenu" onclick="copyABCompare();closeMenus()" disabled>Copy A to B</button>
+        <button class="menu-item" id="abCopyMenu" onclick="copyABCompare();closeMenus()" disabled><svg class="menu-icon" aria-hidden="true"><use href="#mi-content_copy"/></svg><span id="abCopyLabel">Copy A to B</span></button>
       </div>
     </div>
 
@@ -335,39 +396,39 @@
       <button class="menu-btn" onclick="toggleMenu('menuTools')">Tools</button>
       <div class="menu-dropdown">
         <button class="menu-item" onclick="buildAction();closeMenus()">
-          <span>Build</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-build"/></svg><span>Build</span>
           <span class="menu-item-shortcut" id="buildShortcut"></span>
         </button>
         <button class="menu-item" id="releaseHoldsItem" data-needs="driver" onclick="releaseHoldsAction();closeMenus()"
                 title="Send the key-off a game would: every :len 0 / :gate 0 hold lets go, and a track stopped at a :len 0 note plays on">
-          <span>Release Holds</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-back_hand"/></svg><span>Release Holds</span>
         </button>
         <div class="menu-sep"></div>
         <!-- The side panel's tabs (the ⚙ button opens it as it was left) -->
         <button class="menu-item" onclick="toggleParams();closeMenus()"
                 title="The sliders and the mixer: open the panel on Params, or close it when Params is showing">
-          <span>Params</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-tune"/></svg><span>Params</span>
           <span class="menu-item-shortcut" id="paramsShortcut"></span>
         </button>
         <button class="menu-item" onclick="openLibrary();closeMenus()"
                 title="The language reference, the preset voice/sample sets, the snippets and the example scores: look one up, preview it, insert it, or open it.">
-          <span>Library</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-library_music"/></svg><span>Library</span>
           <span class="menu-item-shortcut" id="libraryShortcut"></span>
         </button>
         <button class="menu-item" onclick="openLessons();closeMenus()"
                 title="Learn MMLisp step by step, each step in a working copy of its own: your score waits until you leave">
-          <span>Lessons</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-school"/></svg><span>Lessons</span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" id="drvBackendItem" data-needs="driver" onclick="toggleDrvBackend();closeMenus()"
                 title="Play through the MMLispDRV reference decoder (the exported MMB) instead of the IR player">
-          <span>MMLispDRV Backend</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-videogame_asset"/></svg><span>MMLispDRV Backend</span>
           <span class="menu-item-shortcut" id="drvBackendCheck"></span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" onclick="toggleAiBridge();closeMenus()"
                 title="Let an AI client on this computer (Claude Code or Claude Desktop with the MMLisp MCP server) read and edit this score and play it. Connects to 127.0.0.1 only; every AI edit is logged and undoable.">
-          <span>Connect to AI</span>
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-smart_toy"/></svg><span>Connect to AI</span>
           <span class="menu-item-shortcut" id="aiBridgeCheck"></span>
         </button>
       </div>
@@ -910,6 +971,11 @@
         <div class="license-row">
           <b>MMLisp</b> — MIT · © 2026 Hiroshi Okamura (5&amp;UP Inc.)<br>
           <a href="https://github.com/5up-okamura/mmlisp/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+        </div>
+        <div class="license-row">
+          <b>Material Symbols</b> (the menus' icons) — Apache-2.0 · © Google<br>
+          <a href="https://github.com/google/material-design-icons/blob/master/LICENSE" target="_blank" rel="noopener">License</a> ·
+          <a href="https://github.com/google/material-design-icons" target="_blank" rel="noopener">Source</a>
         </div>
         <div class="license-row">
           <b>Nuked-OPN2</b> (YM2612 emulation) — LGPL-2.1 · © 2017–2022 Alexey Khokholov (Nuke.YKT)<br>
@@ -4288,7 +4354,7 @@
       document.getElementById('abCompareCheck').textContent = _abVisible ? '✓' : '';
       const copy = document.getElementById('abCopyMenu');
       copy.disabled = !_abVisible || _abBusy;
-      copy.textContent = `Copy ${abSnapshots.active} to ${abSnapshots.active === 'A' ? 'B' : 'A'}`;
+      document.getElementById('abCopyLabel').textContent = `Copy ${abSnapshots.active} to ${abSnapshots.active === 'A' ? 'B' : 'A'}`;
     }
     function abCurrentSnapshot() {
       return { state: editorView.state, cue: _auditionCue, effect: _auditionEffect, dynVals: { ..._dynVals } };

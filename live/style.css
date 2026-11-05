@@ -216,6 +216,11 @@
       text-align: left;
       white-space: nowrap;
     }
+    /* An item's icon, ahead of its name (the sprite at the top of index.html):
+       nearer the name than the item's gap, the name then takes the width. */
+    .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .menu-icon { flex: none; width: 1.15em; height: 1.15em; fill: currentColor; margin-right: calc(0.55em - 1rem); }
+    .menu-icon + span { flex: 1; }
     .menu-sep { height: 0; border-top: 1px solid var(--mid); margin: 0.25rem 0; }
     .menu-item[hidden], .menu-sep[hidden] { display: none; }
     .menu-item:disabled { opacity: var(--off); cursor: default; }
