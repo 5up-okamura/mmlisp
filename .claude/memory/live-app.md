@@ -80,8 +80,6 @@ lessons.
 - **Time-unit converter:** the user wants a small panel tool. Decide its
   inputs and conversions between score lengths, ticks, frames and milliseconds
   before building it. This is not a request to add Hz to MMLisp's LFO rate.
-- **Note to MIDI number:** establish the helper's input/output and actual use
-  case; do not assume it means rewriting the score to `(note ...)` forms.
 - **MMB/driver resource information:** MD only. Define which concrete
   production question it answers before choosing statistics or controls.
 - **A second temporary tool on mobile:** decide how to switch small windows
@@ -97,3 +95,22 @@ lessons.
 - **Restructuring VGM / NSF imports stays human-guided** (Edit > Tap Tempo,
   built 2026-11-03): not automatic beat detection, not an import-time
   conversion with no preview.
+- **Hiding source by kind** (user's idea, 2026-11-06; still being thought
+  over — do not build until the user decides): e.g. hide every `:vel` so a
+  dense score (VGM / NSF imports) reads easily. A view setting only: Save,
+  Copy, Share and Format see the text unchanged. Discussed so far:
+  - Unit: a keyword with its value (`:vel 90`, `:vel (linear …)`), and
+    comments; form kinds (`(macro …)`) only if needed.
+  - Fully hidden reads fine but breaks editing at a hidden range's edge:
+    `:vel` applies from where it is written, so typing between `c` and `d`
+    in `c :vel 90 d` shown as `c d` changes the sound depending on the side
+    it lands; a selection or Backspace removes what is not seen. A marker
+    (`c · d`) adds noise as dense as the notes. Proposed: hide fully, but
+    show the cursor's lines in full (search hits, diagnostic links and the
+    Logical Editor then reveal by moving the cursor). Alternatives: dim in
+    `--sub` instead of hiding; read-only while hiding.
+  - UI: proposed a strip at the editor's top (`Hide: :vel :pan ▾`, a
+    checklist with counts), absent when nothing is hidden — the panel can be
+    closed (phones), and the hiding must stay visible. Not in a lesson's
+    working copy (its text is the leading comment).
+  - Open: per user or per score; hide vs dim (or both).
