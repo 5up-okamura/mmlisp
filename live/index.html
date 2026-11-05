@@ -3223,6 +3223,7 @@
     // source folder only when it came from that folder (`folder`); any other
     // is not its base.
     async function loadImportedSource(source, warnings, fileName, label, { tag, pcm = null, folder = null, timingSong = null }) {
+      if (!mayReplaceDoc(fileName || mmlispName(tag))) return false;
       _sourceHandle = null;
       // It goes by the song's own name until saved, as the .mmlisp Save
       // suggests; it compiles as that .mmlisp already.
@@ -3371,9 +3372,9 @@
         }
         const res = await imp.run(bytes, name, { pdx: pdx ? new Uint8Array(await pdx.arrayBuffer()) : null, song });
         if (!res) return; // cancelled in the dialog
-        await loadImportedSource(res.source, res.warnings, name,
+        const opened = await loadImportedSource(res.source, res.warnings, name,
           `Imported ${name}${pdx ? ` with ${pdx.name}` : ''} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null, folder, timingSong: res.timingSong && { ...res.timingSong, name } });
-        if (res.timingSong) log(`${name}: Edit > Tap Tempo puts it on a beat you tap`, 'info');
+        if (opened !== false && res.timingSong) log(`${name}: Edit > Tap Tempo puts it on a beat you tap`, 'info');
       } catch (e) {
         log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
       }
@@ -5820,16 +5821,9 @@
       const n = _sourceDirFiles.length;
       if (!n) return;
       const i = folderIndexOfDoc();
-      await openFolderFileAsking(i < 0 ? (delta > 0 ? 0 : n - 1) : (i + delta + n) % n);
+      await openFromFolder(i < 0 ? (delta > 0 ? 0 : n - 1) : (i + delta + n) % n);
     }
     window.stepFolderFile = stepFolderFile;
-    // Moving on from edits asks first — only then: a song just converted, a
-    // score opened or saved, goes without a word.
-    async function openFolderFileAsking(i) {
-      if (_docDirty && !window.confirm(`${_sourceFileName || 'untitled.mmlisp'} has unsaved edits. Open ${_sourceDirFiles[i]?.name} anyway?`)) return;
-      await openFromFolder(i);
-    }
-
     async function readFileHandle(handle) {
       return readSourceFile(await handle.getFile(), handle);
     }
@@ -5845,6 +5839,7 @@
       // Read first: a file that cannot be read replaces nothing.
       const isMmb = /\.mmb(?:$|\?)/i.test(file.name);
       const src = isMmb ? null : await file.text();
+      if (!mayReplaceDoc(file.name)) return false; // kept: the caller goes no further
       resetForNewScore();
       if (isMmb) {
         _sourceHandle = null;
@@ -5894,9 +5889,10 @@
     // drag out of the project folder also is) is still that project, so keep the
     // folder and its samples.
     async function openScoreHandle(handle) {
+      if (!mayReplaceDoc(handle.name)) return false;
       if (_sourceDir && !(await _sourceDir.pathOf(handle))) clearSourceDir();
       else if (!_sourceDir) forgetHeldFiles();
-      await readFileHandle(handle);
+      return readFileHandle(handle);
     }
 
     // File > Open… by extension: an archive opens as a folder, a song as the
@@ -5956,6 +5952,7 @@
     // memory — so on every browser, a phone's too. `handle`, when there is one,
     // is what File > Open Recent brings it back by.
     async function openArchive(file, handle = null) {
+      if (!mayReplaceDoc(file.name)) return;
       let folder;
       try {
         folder = await folderFromArchive(file, { handle });
@@ -5973,6 +5970,7 @@
     // the folder stays one click away. `pdx` is one handed over with it (a drop).
     // `song` and `name`: one song of an NSF's, as Files in Folder lists it.
     async function openSong(file, { folder = null, pdx = null, song = null, name } = {}) {
+      if (!mayReplaceDoc(name ?? file.name)) return;
       if (/\.(muc|mml)$/i.test(file.name)) {
         await importMucom88FromFiles([file, ...(folder ? await mucomBanksIn(folder, file) : [])], { folder });
         return;
@@ -6145,7 +6143,7 @@
           b.append(name, mark);
           b.onclick = () => {
             closeMenus();
-            openFolderFileAsking(i);
+            openFromFolder(i);
           };
           list.appendChild(b);
         });
@@ -6329,6 +6327,7 @@
           log(`No access to ${entry.file.name}`, 'err');
           return;
         }
+        if (!mayReplaceDoc(entry.file.name)) return;
         if (dirOk) {
           const folder = folderFromHandle(entry.dir);
           if (!(_sourceDir && (await _sourceDir.same(folder)))) {
@@ -6378,6 +6377,7 @@
           log(`No access to ${entry.file.name}`, 'err');
           return;
         }
+        if (!mayReplaceDoc(entry.inner)) return;
         const folder = await folderFromArchive(await entry.file.getFile(), { handle: entry.file });
         if (!(_sourceDir && (await _sourceDir.same(folder)))) setSourceDir(folder);
         const files = await refreshFolderFiles();
@@ -6400,6 +6400,7 @@
     }
 
     async function readFolderEntry(entry) {
+      if (!mayReplaceDoc(entry.name)) return;
       try {
         if (entry.kind !== 'score') {
           await openSong(await entry.file(), { folder: _sourceDir, song: entry.nsfSong ?? null, name: entry.name });
@@ -6577,8 +6578,8 @@
       const opened = openable[0];
       if (opened) {
         const { entry } = opened;
-        if (entry.handle) await openScoreHandle(entry.handle);
-        else await readSourceFile(entry.file);
+        const kept = await (entry.handle ? openScoreHandle(entry.handle) : readSourceFile(entry.file)) === false;
+        if (kept) return; // the rest would land in the score kept
         log(`Opened ${entry.file.name}`, 'info');
       }
 
@@ -7415,7 +7416,23 @@
         `<button class="menu-item" onclick="newFile('${name}');closeMenus()"><span>${t.system}</span></button>`).join('');
     }
 
+    // A score about to be replaced whole asks first when it has unsaved edits
+    // — the draft follows the editor, so nothing else would bring them back.
+    // In a lesson that is the score set aside, not the step's copy. `next`:
+    // what replaces it. True: go ahead. Asked where an open starts, before it
+    // moves the folder; asked again on the way in, it remembers the edits
+    // already let go, so one open asks once.
+    let _replaceAgreed = null; // the text whose edits may go
+    function mayReplaceDoc(next) {
+      const doc = _lesson ? _lesson.aside : currentDocument();
+      if (!doc.dirty || doc.state.doc === _replaceAgreed) return true;
+      if (!window.confirm(`${doc.name || 'untitled.mmlisp'} has unsaved edits. Replace it with ${next}?`)) return false;
+      _replaceAgreed = doc.state.doc;
+      return true;
+    }
+
     function newFile(target = DEFAULT_TARGET) {
+      if (!mayReplaceDoc('a new score')) return;
       const source = newScoreSource(target);
       cancelResume();
       _sourceHandle = null;
@@ -7821,7 +7838,7 @@
       if (_draft && !location.hash) log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
       return location.hash ? loadSharedFromHash() : refreshImportsAndCompile();
     });
-    window.addEventListener('hashchange', () => loadSharedFromHash());
+    window.addEventListener('hashchange', () => { if (mayReplaceDoc('the shared score')) loadSharedFromHash(); });
 
     // -----------------------------------------------------------------------
     // Logging / status
@@ -10352,6 +10369,7 @@
     async function openLibraryScore(path, compileName = path, text = null) {
       try {
         const src = text ?? await fetchText(path);
+        if (!mayReplaceDoc(path.split('/').pop())) return;
         stopLibraryPreview();
         cancelResume();
         resetForNewScore();
