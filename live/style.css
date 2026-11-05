@@ -783,6 +783,10 @@
       font-size: var(--text);
       white-space: nowrap;
     }
+    /* A section whose edits are written to the score's text, not only heard. */
+    .rack-pencil { display: inline-flex; }
+    .rack-pencil[hidden] { display: none; }
+    .rack-pencil svg { width: 1.15em; height: 1.15em; fill: currentColor; }
     #fmParamStatus, #vecStatus, #pcmStatus {
       margin-left: auto;
       color: var(--foreground);
@@ -1530,7 +1534,10 @@
     .lesson-try-actions { display: flex; justify-content: flex-end; gap: 0.25rem; }
     .lesson-list { display: flex; flex-direction: column; gap: 0.6rem; }
     .lesson-row.current { background: color-mix(in srgb, var(--foreground) var(--sel), var(--background)); }
-    .lesson-group-title { font-weight: bold; margin-bottom: 0.2rem; }
+    /* A lesson's steps side by side, as many to a row as fit their names: the
+       columns follow the panel's width and the type size. */
+    .lesson-group { display: grid; grid-template-columns: repeat(auto-fill, minmax(8em, 1fr)); column-gap: 0.25rem; }
+    .lesson-group-title { grid-column: 1 / -1; font-weight: bold; margin-bottom: 0.2rem; }
     .lesson-heading {
       margin-top: 0.4rem;
       padding-top: 0.6rem;
@@ -1551,6 +1558,9 @@
       padding: 0.25rem 0.4rem;
       border-radius: 3px;
       cursor: pointer;
+      /* A name wraps at its spaces only: Japanese breaks at none mid-word. */
+      word-break: keep-all;
+      overflow-wrap: anywhere;
     }
     @media (hover: hover) { .lesson-row:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); } }
     .lesson-row .lesson-mark { width: 1em; flex: none; }

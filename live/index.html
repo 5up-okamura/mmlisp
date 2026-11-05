@@ -542,7 +542,7 @@
            def / vector the cursor went into last (syncParamUI). FM's, or the
            vector editor's (a def-wave, a macro's steps). -->
       <div class="rack-section" id="fmParamSection" data-needs="kind:fm">
-        <div class="rack-title rack-title-row"><span>FM</span><span id="fmParamStatus"></span>
+        <div class="rack-title rack-title-row"><span>FM</span><span class="rack-pencil" id="fmPencil" hidden title="Edits here are written to the score"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg></span><span id="fmParamStatus"></span>
           <button type="button" class="tb-btn tb-small" id="fmCopy" hidden
             title="Copy what the editor shows, as text to paste into the score. An import's def pasted there is the score's own to edit: it wins over the import"
             onclick="event.stopPropagation();copyShown()">Copy</button></div>
@@ -573,7 +573,7 @@
       </div>
 
       <div class="rack-section editor-away" id="vecSection">
-        <div class="rack-title rack-title-row"><span id="vecKind">Vector</span><span id="vecStatus"></span>
+        <div class="rack-title rack-title-row"><span id="vecKind">Vector</span><span class="rack-pencil" id="vecPencil" hidden title="Edits here are written to the score"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg></span><span id="vecStatus"></span>
           <button type="button" class="tb-btn tb-small" id="vecCopy" hidden
             title="Copy what the editor shows, as text to paste into the score. An import's def pasted there is the score's own to edit: it wins over the import"
             onclick="event.stopPropagation();copyShown()">Copy</button></div>
@@ -588,7 +588,7 @@
       </div>
 
       <div class="rack-section editor-away" id="pcmSection">
-        <div class="rack-title rack-title-row"><span>Sample</span><span id="pcmStatus"></span>
+        <div class="rack-title rack-title-row"><span>Sample</span><span class="rack-pencil" id="pcmPencil" hidden title="Edits here are written to the score"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg></span><span id="pcmStatus"></span>
           <button type="button" class="tb-btn tb-small" id="pcmCopy" hidden
             title="Copy what the editor shows, as text to paste into the score. An import's def pasted there is the score's own to edit: it wins over the import"
             onclick="event.stopPropagation();copyShown()">Copy</button></div>
@@ -6844,7 +6844,10 @@
 
       const blob = new Blob([bytes], { type: 'application/octet-stream' });
       try {
-        if (await writeExport(target, blob, suggestedName)) log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
+        if (await writeExport(target, blob, suggestedName)) {
+          log(`Exported ${suggestedName} (${bytes.length} bytes)`, 'info');
+          logPreviewOnly('VGM');
+        }
       } catch (e) {
         if (e?.name !== 'AbortError') log('VGM save failed: ' + e.message, 'err');
       }
@@ -6933,6 +6936,21 @@
       }
     }
 
+    // An export is rendered from the source: what the panel only lets you
+    // hear — the tempo fader, MASTER, the mixer — is not in it. Said when one
+    // of them is off its written value, so the file does not surprise.
+    function logPreviewOnly(kind) {
+      const off = [
+        _tempoDialled && 'TEMPO',
+        _masterVolUi !== 31 && 'MASTER',
+        (_mutedChannels.size || _soloChannels.size) && 'mute/solo',
+        [..._channelVol.values()].some((v) => v !== VOL_UNITY) && 'channel vol',
+      ].filter(Boolean);
+      if (!off.length) return;
+      const list = off.length > 1 ? `${off.slice(0, -1).join(', ')} and ${off.at(-1)}` : off[0];
+      log(`${kind}: from the source — ${list} ${off.length > 1 ? 'are' : 'is'} preview only`, 'info');
+    }
+
     async function exportWav() {
       const src = editorView.state.doc.toString();
       let ir;
@@ -6978,7 +6996,10 @@
 
       const blob = new Blob([bytes], { type: 'audio/wav' });
       try {
-        if (await writeExport(target, blob, suggestedName)) log(`Exported ${suggestedName} (${durationSec.toFixed(1)}s, ${bytes.length} bytes)`, 'info');
+        if (await writeExport(target, blob, suggestedName)) {
+          log(`Exported ${suggestedName} (${durationSec.toFixed(1)}s, ${bytes.length} bytes)`, 'info');
+          logPreviewOnly('WAV');
+        }
       } catch (e) {
         if (e?.name !== 'AbortError') log('WAV save failed: ' + e.message, 'err');
       }
@@ -7461,6 +7482,7 @@
       _soloChannels.clear();
       _channelVol.clear();
       _masterVolUi = 31;
+      _tempoDialled = false;
       setSlider('sl-master', 'val-master', 31);
       _dynVals = {};
       selectedChannel = null;
@@ -7470,6 +7492,7 @@
       _vecSubject = _pcmSubject = _pcmWave = _pcmCompiled = _fmShownRegs = _fmCopied = _cursorSubjectKey = _paramSubjectKey = null;
       _vecActive = _pcmActive = false;
       document.getElementById('fmParamStatus').textContent = '';
+      document.getElementById('fmPencil').hidden = true;
       // The old score's channels and slots come down now; the new score's go
       // up when it compiles (buildChStrips / renderDynParams in applyCompile).
       buildChStrips(null);
@@ -7783,6 +7806,7 @@
     const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
     let _chVuEls = new Map();              // head → .ch-vu element (cached for the VU loop)
     let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
+    let _tempoDialled = false;             // TEMPO moved since the run began: it shows, held after Stop, until the next Play
     let _fmCursorDefContext = null;
     let _stepInputEnabled = false;
     let _kbBaseOctave = 3;
@@ -9004,6 +9028,7 @@
             throw new Error('No compiled IR available for the current source');
           }
           player = new DrvPlayer(writeToWorklet);
+          _tempoDialled = false; // a run starts at the score's own tempo
           player.loadMMB(mmbBytes, mmbSampleBank);
           if (_lastGoodIR) {
             buildChStrips(playIr);
@@ -9040,6 +9065,7 @@
       const notPlayable = _lastGoodIR && notYet(targetProfile(_lastGoodIR.metadata?.target), 'play');
       if (notPlayable) { log(notPlayable, 'err'); return; }
       player = new IRPlayer(writeToWorklet);
+      _tempoDialled = false; // a run starts at the score's own tempo
       try {
         // Use last successfully compiled IR if available, else load from URL
         if (_lastGoodIR) {
@@ -10630,6 +10656,7 @@
       let n = 0;
       list.replaceChildren(...lessons.flatMap((l, li) => {
         const group = document.createElement('div');
+        group.className = 'lesson-group';
         const title = document.createElement('div');
         title.className = 'lesson-group-title';
         title.textContent = l.group ? lessonText(l.id, l.title) : `${++n}. ${lessonText(l.id, l.title)}`;
@@ -11530,6 +11557,7 @@
       const s = _vecSubject;
       document.getElementById('vecKind').textContent = s?.label ?? 'Vector';
       document.getElementById('vecStatus').textContent = s?.name ?? '';
+      document.getElementById('vecPencil').hidden = !(_vecActive && s?.writable);
       document.getElementById('vecMax').textContent = s ? String(s.max) : '';
       document.getElementById('vecMin').textContent = s ? String(s.min) : '';
       document.getElementById('vecCopy').hidden = !s;
@@ -11650,6 +11678,7 @@
       const s = _pcmSubject, section = document.getElementById('pcmSection');
       section.classList.toggle('editor-away', _editorKind !== 'pcm' || !s);
       section.classList.toggle('vec-off', !_pcmActive);
+      document.getElementById('pcmPencil').hidden = !(s && _pcmActive && !s.copy);
       if (!s || _editorKind !== 'pcm') return;
       const wave = _pcmWave;
       const data = wave?.data ?? null;
@@ -11722,6 +11751,8 @@
     function updateFmParamStatus() {
       const statusEl = document.getElementById('fmParamStatus');
       if (!statusEl) return;
+      // The pencil: these sliders write the def's text, not just the audition.
+      document.getElementById('fmPencil').hidden = !_fmCursorDefContext?.name || !!_fmCursorDefContext.readOnly;
       // The cursor's def while the cursor leads, else the selected FM channel.
       if (_fmCursorDefContext?.name) {
         const { name, origin, readOnly } = _fmCursorDefContext;
@@ -11729,7 +11760,9 @@
         return;
       }
       if (isFmSlot(selectedCh)) {
-        statusEl.textContent = selectedCh.label;
+        // The track's own name, as the score and the scope write it: the
+        // strips' short label is for their narrow column only.
+        statusEl.textContent = selectedChannel ?? selectedCh.label;
         return;
       }
       // Dimmed: the subject it showed last stays named.
@@ -13590,6 +13623,7 @@
     function onTempo(slider) {
       const val = parseInt(slider.value, 10);
       _tempoShown = null; // force the number to refresh to the dragged value
+      _tempoDialled = true;
       updateTempoDisplay(val);
       if (!player) initParamOnlyPlayer();
       player?.setTempo(val);
