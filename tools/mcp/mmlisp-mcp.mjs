@@ -152,9 +152,10 @@ function codeSection(code) {
 
 function formatDiagnostics(diags, src) {
   return diags.map((d) => {
-    const where = d.line ? `${d.line}:${d.column ?? 1}` : "-";
+    // One from an imported file is at its place there: the score's line is not it.
+    const where = (d.file ? `${d.file}:` : "") + (d.line ? `${d.line}:${d.column ?? 1}` : "-");
     const track = d.track ? ` [${d.track}]` : "";
-    const code = sourceLine(src, d.line);
+    const code = d.file ? null : sourceLine(src, d.line);
     const sec = codeSection(d.code);
     const see = sec ? ` (see mmlisp_docs language section "${sec}")` : "";
     return `${d.severity} ${d.code} at ${where}${track}: ${d.message}${see}` + (code ? `\n    | ${code}` : "");

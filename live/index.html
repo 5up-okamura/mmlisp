@@ -691,7 +691,7 @@
       <!-- Library: the preset sets, the snippets and the example scores in one
            searchable list (catalog-list.js) -->
       <div id="libraryPane" hidden>
-        <input id="libSearch" class="lib-search" type="search" placeholder="Search the language, voices, samples, snippets"
+        <input id="libSearch" class="lib-search" type="search" placeholder="Search the language, voices, samples, snippets, the Guide"
                autocomplete="off" autocapitalize="off" spellcheck="false">
         <div class="lib-filters">
           <!-- One source at a time (a segmented control); the chips below
@@ -7758,19 +7758,15 @@
       // the same as the last one stays quiet (a value drag recompiles every
       // 140 ms); Build clears the memory, so it always says them. An unsaved
       // score's relative sample paths are said once, above.
-      const warnLines = diagnostics
-        .filter(d => d.severity === 'warning' && d.code !== 'W_SAMPLE_BASE_UNKNOWN')
-        .map(d => `[W] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`);
-      const warnSig = warnLines.join('\n');
+      const warns = diagnostics.filter(d => d.severity === 'warning' && d.code !== 'W_SAMPLE_BASE_UNKNOWN');
+      const warnSig = warns.map(d => diagnosticText(d, 'W')).join('\n');
       if (warnSig !== _lastWarnSig) {
-        for (const line of warnLines) log(line, 'warn');
+        for (const d of warns) logDiagnostic(d, 'W', 'warn');
         _lastWarnSig = warnSig;
       }
       const errors = diagnostics.filter(d => d.severity === 'error');
       if (errors.length > 0) {
-        for (const d of errors) {
-          log(`[E] ${d.code} ${d.track || 'global'}:${d.line}:${d.column} ${d.message}`, 'err');
-        }
+        for (const d of errors) logDiagnostic(d, 'E', 'err');
         return { ir: null, ok: false };
       }
       _lastGoodIR = ir;
@@ -8012,6 +8008,25 @@
       logEl.appendChild(d);
       logEl.scrollTop = logEl.scrollHeight;
       return d;
+    }
+    // A compile's diagnostic, its place in the score a click away: the line
+    // takes the cursor there. One from an imported file names the file, and
+    // its place is that file's, not the editor's.
+    const diagnosticText = (d, tag) =>
+      `[${tag}] ${d.code} ${d.file ? d.file + ' ' : ''}${d.track || 'global'}:${d.line}:${d.column} ${d.message}`;
+    function logDiagnostic(d, tag, cls) {
+      const row = log(diagnosticText(d, tag), cls);
+      if (d.file) return;
+      row.classList.add('log-at');
+      row.title = 'Go to it in the source';
+      row.onclick = () => goToSource(d.line, d.column);
+    }
+    function goToSource(line, column) {
+      const doc = editorView.state.doc;
+      const at = doc.line(Math.min(Math.max(line, 1), doc.lines));
+      const pos = Math.min(at.from + Math.max(column, 1) - 1, at.to);
+      editorView.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+      editorView.focus();
     }
     // -----------------------------------------------------------------------
     // Panel toggle
@@ -10099,7 +10114,31 @@
           });
         }
       }
+      items.push(...await guideItems());
       return { items, groupActions };
+    }
+
+    // The Guide's steps (tutorial/), so a search finds how the app is used —
+    // `export`, `tap tempo` — as it finds the language: Open goes to the step.
+    // Under All and the search only; the Guide tab is their own list.
+    async function guideItems() {
+      let lessons;
+      try { lessons = await loadLessons(); } catch (e) { log('Library: ' + e.message, 'err'); return []; }
+      const steps = lessons.flatMap((l, li) => l.steps.map((st, si) => ({ l, li, st, si, key: stepKey(l, st) })));
+      const texts = await Promise.all(steps.map(({ key }) =>
+        fetchText(`tutorial/${key}.mmlisp`).then(parseStep).catch(() => null)));
+      return steps.flatMap(({ l, li, st, si, key }, i) => texts[i] ? [{
+        key: 'guide:' + key,
+        source: 'guide',
+        group: 'guide:' + l.id,
+        groupLabel: `Guide · ${lessonText(l.id, l.title)}`,
+        name: lessonText(textKeys(key).title, st.title),
+        kind: 'lesson',
+        about: lessonText(textKeys(key).about, texts[i].about),
+        audition: null,
+        keys: null,
+        actions: [{ label: 'Open', title: 'Open this step in the Guide', run: () => openGuideAt(li, si) }],
+      }] : []);
     }
 
     // The channels a file writes to, whatever machine has them.

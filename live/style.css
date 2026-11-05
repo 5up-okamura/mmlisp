@@ -691,6 +691,8 @@
     #log .err { color: var(--error); }
     #log .info { color: var(--foreground); }
     #log .warn { color: var(--accent); }
+    #log .log-at { cursor: pointer; }
+    @media (hover: hover) { #log .log-at:hover { text-decoration: underline; } }
 
     /* ---- right panel ---- */
     #rightPanel {

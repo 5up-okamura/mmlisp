@@ -2385,6 +2385,10 @@ open there, innermost first. Reformatting (**Edit ▸ Format Source**,
 `Cmd/Ctrl+Shift+F`) is the fastest way to see whether the structure is really
 what you meant.
 
+A compile's errors and warnings are listed in the log under the editor, each
+with its line and column: click one and the cursor goes there. One from an
+imported file names that file, and its place is in the file, not the score.
+
 ### Selecting by form
 
 `Alt+↑` grows the selection one step outward — the contents of the form the
@@ -2630,7 +2634,9 @@ open editing tools, **Library**, everything that comes with the app in one
 list — the language reference (**Ref**), the **Presets** (the voice, sample and wave sets), the
 **Snippets** and the **Scores** (the examples) — so looking up a keyword,
 picking a voice or trying a technique takes one click instead of a file
-dialog — and **Guide** (below). **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
+dialog — and **Guide** (below). Under All, the Library lists the Guide's steps
+too: a search for `export` or `tap tempo` finds how the app does it, and
+**Open** goes to the step. **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
 anywhere, the editor included — opens the panel on Library with the search box
 taking the keys; **Tools ▸ Params** — **⌘J** / **Ctrl+J** — opens it on Params,
 and closes it again when Params is already showing. The ⚙ button reopens the

@@ -4134,6 +4134,8 @@ function emitVoiceFromKwMap(kwMap, tick, events, src, part = null, machine = nul
   return dropped;
 }
 
+// A position in an imported file says which (`file`, its import path): the
+// line and column are that file's, not the score's.
 function pushDiag(diagnostics, severity, code, message, src, track) {
   diagnostics.push({
     severity,
@@ -4141,6 +4143,7 @@ function pushDiag(diagnostics, severity, code, message, src, track) {
     message,
     line: src?.line ?? 1,
     column: src?.column ?? 1,
+    ...(src?.file ? { file: src.file } : {}),
     track,
   });
 }

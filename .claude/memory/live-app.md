@@ -24,9 +24,10 @@ lessons.
   window in beats; `MMLisp > View` is a submenu, not a View menu; no edge
   markers for notes outside the focus's range; no transport and no note
   editing in the pane.
-- **Translation:** only what explains is translated — the reference and the
-  snippets' descriptions. Menus, the log and diagnostics stay English; no
-  runtime machine translation (offline, fixed glossary terms).
+- **Translation:** only what explains or asks is translated — the reference,
+  the snippets' descriptions, the Guide and the confirm dialogs
+  (`ui-texts.js`). Menus, the log and diagnostics stay English; no runtime
+  machine translation (offline, fixed glossary terms).
 - **Playback in the worklet** (2026-10-16): not now. iOS plays on behind
   another app through an `<audio>` element. If ever needed: both players
   already run off a manual clock in `captureRegisterLog`, the page reaches

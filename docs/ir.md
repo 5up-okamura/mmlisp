@@ -18,7 +18,7 @@ asymmetries matter for the Z80 driver.
 | Field         | Description                                                                  |
 | ------------- | ---------------------------------------------------------------------------- |
 | `ir`          | The song object (below). All object keys recursively sorted (`sortObject`).  |
-| `diagnostics` | `{ severity, code, message, line, column, track }` — not part of the IR.     |
+| `diagnostics` | `{ severity, code, message, line, column, file?, track }` — not part of the IR; `file` names the imported file a position is in. |
 | `sourceMap`   | Sorted `{ line, tick }` pairs (earliest tick per source line). Sits **beside** the IR, not inside it. |
 | `openingBpm`  | The tempo at tick 0 (a tick-0 tempo sweep's `from`; 120 when none). Beside the IR. |
 
