@@ -75,14 +75,6 @@ lessons.
   (`npx playwright-core install webkit`, cached in ~/Library/Caches) with
   `devices['iPhone 13']` — no folder picker, touch, the iOS paths.
 
-## Open
-
-- **Share links with files on a real iPhone**: headless WebKit as an iPhone
-  receives them, keeps them across a reload and saves the `.zip` (download
-  path); the share sheet's save of the `.zip` and a link opened from another
-  app are not yet tried on the device. Needs the Worker deployed (a push to
-  `main`).
-
 ## Small tools still to specify
 
 - **Time-unit converter:** the user wants a small panel tool. Decide its
