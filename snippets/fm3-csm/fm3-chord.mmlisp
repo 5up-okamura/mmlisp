@@ -2,6 +2,9 @@
 ; one channel. A note-less (fm3 voice) sets the shared patch; each fm3-N track
 ; plays one operator. On alg 7 every operator is a carrier, so each fm3-N is a
 ; plain sine voice with its own :vel/:vol, and the other FM channels stay free.
+; A parametric def of the four tracks is a chord, written at the top level one
+; chord at a time. An argument is one token or form; an empty let, which is
+; just its body, carries several: (let [] > c <) is c an octave up, and back.
 (import "presets/gm/set.mmlisp")
 
 (def-fm four-sines init-fm :alg 7 :fb 0
@@ -9,11 +12,11 @@
   :dr1 4 :dr2 4 :dr3 4 :dr4 4 :sl1 4 :sl2 4 :sl3 4 :sl4 4
   :rr1 6 :rr2 6 :rr3 6 :rr4 6)
 
-(fm3 four-sines)
-(fm3-1 :tempo 96 :oct 4 :len 1  c   c   d   e)
-(fm3-2 :oct 4 :len 1            e   f   f   g)
-(fm3-3 :oct 4 :len 1            g   a   b   > c)
-(fm3-4 :oct 3 :len 1            c   f   g   c)
+(def (chord s a t b) (fm3-1 s) (fm3-2 a) (fm3-3 t) (fm3-4 b))
+
+(fm3 :tempo 96 four-sines)
+(fm3-1 :len 1) (fm3-2 :len 1) (fm3-3 :len 1) (fm3-4 :oct 3 :len 1)
+(chord c e g c) (chord c f a f) (chord d f b g) (chord e g (let [] > c <) c)
 
 ; ...and a melody on fm1 over the four-note chords from a single channel.
 (fm1 :oct 5 :len 4 gm-flute :vel 12

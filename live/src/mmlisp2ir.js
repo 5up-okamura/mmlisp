@@ -3517,7 +3517,7 @@ function foldCurveValues(spec, fn) {
 
 // A name that would be a note-stream token cannot be a `let` binding name
 // (E_LET_NAME) — bindings must not shadow the literal note grammar.
-function isNoteStreamToken(name) {
+export function isNoteStreamToken(name) {
   return (
     typeof name === "string" &&
     (name === ">" ||
@@ -5558,6 +5558,15 @@ function compileChannelBody(
         continue;
       }
 
+      if (head && ALL_CHANNEL_NAMES.has(head)) {
+        // A def that holds channel forms is a section: written at the top
+        // level, not in a track (language.md §9).
+        pushDiag(diagnostics, "error", "E_UNKNOWN_LIST",
+          `(${head} …) is a channel form, not a track's item; a def that holds channel forms is written at the top level`,
+          nodeSrc(node.items[0]), trackName);
+        i++;
+        continue;
+      }
       pushUnknownDiag(
         diagnostics,
         "E_UNKNOWN_LIST",
@@ -6969,7 +6978,20 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   const loopCounter = { count: 0 };
 
   for (const node of roots) {
-    if (!node || node.kind !== "list" || node.items.length === 0) continue;
+    if (!node || node.kind === "comment") continue;
+    if (node.kind !== "list") {
+      // A token on its own at the top level. A def written there holds
+      // channel forms (language.md §9) — a note or a keyword belongs in a
+      // track, and a name that reached here unexpanded is no def.
+      const tok = node.kind === "atom" ? node.value : `"${node.value}"`;
+      pushDiag(diagnostics, "error", "E_UNKNOWN_TOPLEVEL_FORM",
+        isNoteStreamToken(tok) || tok.startsWith(":")
+          ? `'${tok}' is outside any track; a def written at the top level holds channel forms, (def intro (fm1 …) (fm2 …))`
+          : `unknown top-level name '${tok}'; expected a channel form or a def`,
+        nodeSrc(node), null);
+      continue;
+    }
+    if (node.items.length === 0) continue;
 
     const head = atomValue(node.items[0]);
     if (head && !CHANNEL_NAMES.includes(head) && ALL_CHANNEL_NAMES.has(head)) {
@@ -7061,17 +7083,21 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     // Surface bar markers (| … |) for the editor — inspection metadata only.
     if (trackState.bars?.length) trackData.bars = trackState.bars;
 
-    if (trackState.isCsmTrack && trackState.hasCsmOn && !endsInLoop(trackData.events)) {
-      trackData.events.push({
-        tick: trackState.tick,
-        cmd: "CSM_OFF",
-        args: {},
-        src: nodeSrc(node),
-      });
-    }
+    // The form that ends the fm3-csm stream so far: its CSM_OFF goes there
+    // once every form is in (below), not at the end of each form.
+    if (trackState.isCsmTrack) trackByKey.get(trackKey).lastSrc = nodeSrc(node);
     if (trackState.isCsmTrack && trackState.hasInlineCsmRate) {
       hasInlineCsmRate = true;
     }
+  }
+
+  // CSM_OFF once, at the end of the fm3-csm stream (language.md §15): forms
+  // of the channel append — a section's, a syllable's — so the mode stays on
+  // from one to the next.
+  for (const key of trackOrder) {
+    const { trackData, trackState, lastSrc } = trackByKey.get(key);
+    if (trackState.isCsmTrack && trackState.hasCsmOn && !endsInLoop(trackData.events))
+      trackData.events.push({ tick: trackState.tick, cmd: "CSM_OFF", args: {}, src: lastSrc });
   }
 
   // Beside fm3-1..fm3-4 the rate track owns CSM: it turns the mode on at tick

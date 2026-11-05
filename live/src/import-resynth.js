@@ -483,6 +483,11 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
     .map((k) => `:ar${k} 31 :dr${k} 0 :sr${k} 0 :rr${k} ${csm ? rr : 15} :sl${k} 0 :tl${k} 0 :ks${k} ${csm ? ks : 0} :ml${k} 1 :dt${k} 0`)
     .join("\n  ");
   const name = fileName.replace(/\.[^.]*$/, "");
+  // The tracks are one def, a section (language.md §9.5): its name, written
+  // at the top level, is the phrase — said again, or moved to where it goes.
+  // A name that reads as a note or a length (a, b-, e8, 4) is E_DEF_NAME.
+  let section = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!/^[a-z]/.test(section) || /^[a-g][+-]?\d*\.?$/.test(section) || /^[vo][+-]?\d+$/.test(section)) section = `say-${section}`;
   const head = csm
     ? `; ${name}: CSM with formant tracks (language.md §15). Each fm3-N follows one\n; formant of the recording — its frequency as a :pitch table, its level as a\n; :vol table, one value a frame — the fm3-csm-rate track is the voice (its\n; rates the pitch, its rests the breaths), and the noise track the consonants.`
     : opm
@@ -490,7 +495,9 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
       : waves
         ? `; ${name}: sine-wave speech. Each of wave1–wave4 plays a sine wave on one\n; formant of the recording — its frequency as a :pitch table, its level as a\n; :vol table, one value a frame — and ${v.noise === "noise" ? "the PSG's noise" : v.noise} the consonants.`
         : `; ${name}: sine-wave speech. Each fm3-N is a sine wave on one formant of the\n; recording — its frequency as a :pitch table, its level as a :vol table, one\n; value a frame — and the noise track the consonants.`;
-  const tracks = (opm ? opmFormantLine() : [0, 1, 2, 3].map(formantLine).join("\n")) + "\n" + (csm ? rateLine() + "\n" : "") + noiseLine() + "\n";
+  const tracks = (opm ? opmFormantLine() : [0, 1, 2, 3].map(formantLine).join("\n")) + "\n" + (csm ? rateLine() + "\n" : "") + noiseLine();
+  const sectionDef = `; the phrase: write \`${section}\` where it is said\n(def ${section}\n` +
+    tracks.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n") + `)\n\n${section}\n`;
   const defBlock = segs.map(([p, q], k) =>
     `; phrase ${k + 1}: ${((p + f0) / FPS).toFixed(2)}–${((q + f0) / FPS).toFixed(2)} s\n` +
     defs.filter((d) => d.k === k).map((d) => `(def ${d.name} ${d.body})`).join("\n")).join("\n\n");
@@ -500,6 +507,6 @@ export function resynthToMmlisp(a, opts, fileName = "sound.wav") {
     (opm ? `(def-fm hiss formant :tl1 127 :tl2 127 :tl3 127)\n\n` : "") +
     (defBlock ? defBlock + "\n\n" : "") +
     (opm || waves ? "" : csm ? `(fm3-csm formant)\n` : `(fm3${o.tempo ? ` :tempo ${BPM}` : ""} formant)\n`) +
-    tracks;
+    sectionDef;
   return { source, warnings };
 }

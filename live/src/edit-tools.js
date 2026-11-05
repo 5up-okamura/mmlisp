@@ -41,7 +41,11 @@ function nodeSpan(node, starts) {
 export function channelForms(text) {
   const starts = lineStarts(text);
   const forms = [];
-  for (const node of parse(text)) {
+  const roots = parse(text);
+  // A def that holds channel forms — a section, a chord on fm3-1…fm3-4
+  // (language.md §9) — has them as its items, after its name.
+  const isDef = (node) => node?.kind === "list" && node.items[0]?.kind === "atom" && node.items[0].value === "def";
+  for (const node of roots.flatMap((n) => (isDef(n) ? n.items.slice(2) : [n]))) {
     if (node?.kind !== "list" || node.bracket !== "()") continue;
     const head = node.items[0];
     if (head?.kind !== "atom" || !TRACKS.has(head.value)) continue;

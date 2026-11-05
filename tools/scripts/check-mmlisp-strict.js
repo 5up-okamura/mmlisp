@@ -399,6 +399,22 @@ async function main() {
       src: '(def-score :target pc88)\n(def-pcm k :file "/k.wav")\n(sqr1 :pan left c)\n(pcm1 k :pan left c)\n(rhythm1 kick :pan right c)',
       expected: ["E_UNSUPPORTED_TARGET"],
     },
+    {
+      label: "forms of fm3-csm append: CSM turns off once, at the stream's end",
+      src: "(def-fm v init-fm :alg 7)\n(fm3-csm v :csm-rate 220 :len 4 c)\n(fm3-csm e)\n(def s (fm3-csm g))\ns",
+      expected: [],
+      csmOffs: [288],
+    },
+    {
+      label: "a note left at the top level by a def",
+      src: "(def riff c e)\nriff\n(fm1 c)",
+      expected: ["E_UNKNOWN_TOPLEVEL_FORM", "E_UNKNOWN_TOPLEVEL_FORM"],
+    },
+    {
+      label: "a section written inside a track",
+      src: "(def s (fm1 c))\n(fm2 c s)",
+      expected: ["E_UNKNOWN_LIST"],
+    },
   ];
 
   for (const testCase of cases) {
@@ -409,6 +425,11 @@ async function main() {
       const got = (result.ir?.tracks?.[0]?.events ?? []).filter((e) => e.cmd === "NOTE_ON").map((e) => e.tick);
       if (got.join(" ") !== testCase.onsets.join(" "))
         throw new Error(`${testCase.label}: key-ons expected [${testCase.onsets.join(" ")}], got [${got.join(" ")}]`);
+    }
+    if (testCase.csmOffs) {
+      const got = (result.ir?.tracks ?? []).flatMap((t) => t.events).filter((e) => e.cmd === "CSM_OFF").map((e) => e.tick);
+      if (got.join(" ") !== testCase.csmOffs.join(" "))
+        throw new Error(`${testCase.label}: CSM_OFF expected at [${testCase.csmOffs.join(" ")}], got [${got.join(" ")}]`);
     }
   }
 

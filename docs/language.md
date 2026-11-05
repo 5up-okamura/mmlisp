@@ -23,6 +23,7 @@ source file is a sequence of top-level forms, in source order:
 | `(def-mod …)`     | Score-wide note modifier (§9.4)                  |
 | `(import "…")`    | Fold another file's defs in at compile time (§9.2) |
 | `(channel …)`     | Track form — any list whose head is a channel name (§2) |
+| `name`, `(name arg…)` | A def's name: its body spliced here — channel forms, a section (§9.5) |
 
 - `;` starts a line comment.
 - Strings use double quotes (`"…"`).
@@ -766,6 +767,14 @@ chip within the same frame; a later batched flush collapses them).
 
 - **Item position** (in the note stream): the body compiles in place — sticky
   state changes inside behave as if unwrapped.
+- **`(let [] item…)` groups items into one.** A `let` scopes names, not track
+  state, so with nothing bound it is its body written out, as `do` is in
+  Clojure — one node to the parser, several items to the track. Where one
+  item goes and several are meant — a parametric def's argument (§9.1), an
+  `if` branch (§7.6) — this is how they go: `(chord e g (let [] > c <) c)`.
+  It groups and does not scope: a `>` inside and no `<` raises the octave
+  for what follows, as unwrapped. A def names it shorter, as Clojure's word:
+  `(def do let [])`, then `(do > c <)`.
 - **Value position**: the body is one expression (`:tl1 (let [x 30] (+ x 5))`);
   a bare bound name is also a value (`:vel v`).
 - **Bindable**: numbers, curves and `$` expressions (a phrase/stream cannot be
@@ -848,8 +857,9 @@ place, with `name` bound to it — as if every pass were written out.
 - **The body** is an item position: sticky changes carry from pass to pass
   as written out (`(for [i 0..3] c >)` climbs four octaves), a tie at the end
   of a pass runs into the next, a `(break)` belongs to the `(x N …)` around
-  the `for`, and a `#label` in it would be written once a pass
-  (`E_MARKER_DUP`).
+  the `for`, and a `#label` in it is written once a pass — so it must be
+  one a counted `(go label N)` closes in the same pass (§13), else the
+  copies are `E_MARKER_DUP`.
 
 `for` and `(x N …)` differ in what they emit: `(x N …)` repeats one body as a
 loop on the driver; `for` writes each pass out, because each differs. A body
@@ -1012,6 +1022,7 @@ stream bytes is shared by the encoder's CALL/RET pass (opcodes.md §5.2). A `let
 | `(def-se name [:prio N] [:tempo T] (ch …)…)` | Sound effect: parts the game plays by number (§9.3) |
 | `(def-mod [:ch …] [:voice …] action…)` | Score-wide modifier: silence or re-level the notes it selects (§9.4) |
 | `(def name (macro :target spec …))`   | A snippet holding a macro form — written alone it applies the macro, and inside another `(macro name …)` it applies first, with its own `:step` |
+| `(def name (ch …) …)`                 | A section — channel forms; its name is written at the top level (§9.5) |
 
 A `def-fm` holds the channel's `:alg :fb :ams :fms`, the operator params
 `:ar1`…`:am4` (and the FM-PAC's `:ws1` `:eg1` `:ksl1` `:vib1`, §19 `msx`),
@@ -1112,7 +1123,8 @@ inside the body. A `let` or `for` in the body keeps its own names: one of the
 same name as a `param` shadows it inside, and an argument that mentions a
 name the body binds still means what it meant at the call
 (`(let [n 60] (tri n))` passes 60, whatever `tri` binds). A call whose argument count differs from the parameter count is
-`E_DEF_ARITY`.
+`E_DEF_ARITY`. Several items go as one argument in an empty `let`, which is
+its body written out (§7.2): `(arp (let [] > c <) e g)`.
 
 ```lisp
 (def (beat n) (x 8 > n < n))        ; one bar of n, octave-bounced ×8
@@ -1308,6 +1320,56 @@ commenting it out turns it off.
   own. Mods are compile-time only — every output (preview, WAV, VGM, MMB)
   carries their result and the driver never sees one.
 - Any other option is `E_MOD_OPTION`, as is a def-mod with no action.
+
+### 9.5 Sections — a def of channel forms
+
+A def's name may also be written at the **top level**, where its body is
+spliced as top-level forms. A def that holds channel forms is a **section**:
+written at the top level, each of its forms appends to its channel exactly as
+if it stood there (§1), so a song is arranged in one line, and a chord on
+`fm3-1`–`fm3-4` or a CSM phrase (`fm3-csm` with its rate track, §15) is one
+name.
+
+```lisp
+(def intro
+  (fm1 :tempo 132 :oct 5 :len 2 g e)
+  (fm2 :oct 1 :len 4 c g c g))
+(def verse
+  (fm1 :len 8 e d c d e e e _  d d d _ e g g _)
+  (fm2 :len 4 c g c g  g d g d))
+
+intro verse verse
+```
+
+A section is a snippet like any other — token substitution — so a parametric
+def is a chord, and a section may name other sections:
+
+```lisp
+(def (chord3 r m t) (fm3-1 r) (fm3-2 m) (fm3-3 t))
+
+(fm3 kit)                                    ; the shared patch, once
+(fm3-1 :len 2) (fm3-2 :len 2) (fm3-3 :len 2)
+(chord3 c e g) (chord3 f a c) (chord3 g b d)
+```
+
+- **Time is the append rule's.** A channel the section does not mention does
+  not move; write it a rest (`(fm3 _1)`) where it waits. The compile's track
+  lengths say whether the channels are in step.
+- **State is sticky across a section**, as across any forms: a `:len` or
+  `:oct` set before it is what its notes use, and one it changes and does not
+  restore runs on into what follows.
+- **The flow forms are a track's.** `(x N …)`, `#label` and `(go …)` go
+  inside a section's forms. A section written twice (`chorus chorus`) plays
+  twice — its bytes are shared by the encoder's CALL/RET pass (opcodes.md
+  §5.2). A `#label` a counted `(go label N)` closes inside the section may
+  be written any number of times; one an infinite `(go label)` jumps to, or
+  none closes, is written once (§13).
+- A note-less patch form, `(fm3 kit)` or `(fm3-csm vowel)`, goes outside the
+  section: inside, every reference would send the patch again.
+- `:prio` layers (§1) may be inside a section as in any form.
+- What a top-level reference leaves at the top level that is not a form — a
+  note, a keyword — is `E_UNKNOWN_TOPLEVEL_FORM`, and a section written inside
+  a track is `E_UNKNOWN_LIST`: a channel form has no place in a track's body.
 
 ---
 
@@ -1729,7 +1791,7 @@ the phrase.
 
 | Form           | IR                     | Meaning                                     |
 | -------------- | ---------------------- | ------------------------------------------- |
-| `#label`       | —                      | Position label: a compile-time jump target, no stream bytes (duplicate id = `E_MARKER_DUP`; empty = `E_LABEL_EMPTY`) |
+| `#label`       | —                      | Position label: a compile-time jump target, no stream bytes (a duplicate is `E_MARKER_DUP` unless a counted `go` closed the first; empty = `E_LABEL_EMPTY`) |
 | `(go label)`   | `JUMP {to}`            | Infinite loop back to `#label`              |
 | `(go label N)` | `LOOP_BEGIN`/`LOOP_END`| The `#label`…`go` section plays N times, then falls through |
 | `(x N body…)`  | `LOOP_BEGIN`/`LOOP_END`| Counted loop sugar                          |
@@ -1742,6 +1804,12 @@ the phrase.
   same channel. The `#label` must **precede** the counted `go` (a backward
   jump); a forward counted `(go label N)` is unsupported (`E_GO_FORWARD_COUNT`).
   Infinite `(go label)` may jump either direction.
+- **A counted `go` closes its label.** It binds to the nearest `#label` of
+  that name before it — always one, since it only jumps back — and the name
+  is free again after it: `#a c (go a 2) #a e (go a 2)` is two loops, and a
+  section or parametric def holding one may be written twice. Any other
+  duplicate — a label an infinite `(go label)` jumps to, or one nothing
+  closes — has no one place to jump to, and is `E_MARKER_DUP`.
 - `go` arity: label plus optional positive count (`E_GO_NO_LABEL`,
   `E_GO_ARITY`, `E_GO_COUNT`). A `go` without a matching label is
   `E_JUMP_UNRESOLVED`. A label is a compile-time name: the jump is a resolved

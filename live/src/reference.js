@@ -456,6 +456,13 @@ export const REFERENCE = [
     example: '(def (beat n) (x 2 > n < n))\n(fm1 :len 8 (beat c) (beat e))',
   },
   {
+    name: '(def name (ch …) …)', aliases: ['section', 'song structure', 'intro', 'verse', 'chorus'], cat: 'defs', section: '§9.5', tracks: null,
+    syntax: '(def name (channel …) …)  ·  name  ·  (name arg …)  — written at the top level',
+    summary: 'A section: a def of channel forms. Its name, written at the top level, appends each form to its channel at once — a song arranged in one line, a chord on fm3-1–fm3-4 as one name.',
+    insert: '(def intro\n  (fm1 :len 8 c e g e)\n  (fm2 :oct 2 :len 2 c))',
+    example: '(def intro (fm1 :len 8 c e g e) (fm2 :oct 2 :len 2 c))\n(def verse (fm1 :len 8 d f a f) (fm2 :oct 2 :len 2 g))\nintro verse verse',
+  },
+  {
     name: '(def-val …)', aliases: ['$', 'slot', 'runtime value', ':unit', ':public', 'variable'], cat: 'defs', section: '§8', tracks: null,
     syntax: '(def-val name init [A..B] [:public])  ·  $name  ·  :name value|curve',
     summary: 'A runtime value: $name reads it where a value goes, :name writes or sweeps it from any track, and a Live slider moves it; :public lets the game write it too.',

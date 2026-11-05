@@ -4,7 +4,9 @@
 ; formants are the vowel. So a vowel is a note (the base) plus four MLs, the
 ; melody lives on fm3-csm-rate, and the noise channel adds the consonants.
 ; A fast release (RR) keeps each ring short, which widens the formants from a
-; whistle into a vowel. Sings "a i u e o", then Sakura Sakura.
+; whistle into a vowel. A syllable is one parametric def over the three
+; tracks, so the song is written as its lyrics. Sings "a i u e o", then
+; Sakura Sakura.
 
 ; four carriers; the level falls with each formant, like a voice
 (def-fm vox init-fm :alg 7 :fb 0
@@ -20,37 +22,31 @@
 (def eh :oct 4 :ml1 2 :ml2 7 :ml3 9  :ml4 12 c)  ;  523 1831 2355 3140
 (def oh :oct 4 :ml1 2 :ml2 3 :ml3 9  :ml4 12 c+) ;  554  831 2493 3325
 
-; a syllable swells in from a lower fader: the dip at each onset is what
-; separates syllables (a CSM note keys nothing, so there is no attack of its
-; own, and a :vel macro would not run on the driver)
-(def (sy v) :vol (linear 14..31 :len 16) v)
-
-(fm3-csm vox :tempo 80
-  :len 4 (sy ah) (sy ee) (sy oo) (sy eh) :len 1 (sy oh)                  ; a i u e o
-  :len 4 (sy ah) (sy oo) :len 2 (sy ah)  :len 4 (sy ah) (sy oo) :len 2 (sy ah) ; sa ku ra, sa ku ra
-  :len 4 (sy ah) (sy oh) (sy ee) (sy oh)  (sy oh) (sy ah) :len 2 (sy ah) ; ya yo i no so ra wa
-  :len 4 (sy ee) (sy ah) (sy ah) (sy oo)  (sy ah) (sy ee) :len 2 (sy ee) ; mi wa ta su ka gi ri
-  :len 4 (sy ah) (sy oo) :len 2 (sy ah)  :len 4 (sy ah) (sy oo) :len 2 (sy ah) ; sa ku ra, sa ku ra
-  :len 4 (sy ee) (sy ee) (sy oo) (sy ah)  :len 1 (sy oo))                ; mi ni yu ka n
-
-; the melody: notes here are Timer A rates, and glide slides between them
-(fm3-csm-rate :oct 3 :len 4 (glide 32)
-  a a a a :len 1 a
-  :len 4 a a :len 2 b  :len 4 a a :len 2 b
-  :len 4 a b > c < b  a b8 a8 :len 2 f
-  :len 4 e c e f  e e8 c8 :len 2 < b >
-  :len 4 a a :len 2 b  :len 4 a a :len 2 b
-  :len 4 e f b8 a8 f  :len 1 e)
-
 ; consonants: a hiss for s, a click for k and t, a softer one for g
-(def sh :mode white0 (macro :vel [7 9 9 9 8 7 5 3 1 0]))
-(def kh :mode white1 (macro :vel [13 8 3 0]))
-(def gh :mode white1 (macro :vel [8 4 0]))
+(def sh :mode white0 (macro :vel [7 9 9 9 8 7 5 3 1 0]) c)
+(def kh :mode white1 (macro :vel [13 8 3 0]) c)
+(def gh :mode white1 (macro :vel [8 4 0]) c)
 
-(noise :len 4
-  _ _ _ _ :len 1 _
-  :len 4 sh c kh c :len 2 _  :len 4 sh c kh c :len 2 _  ; s k _, s k _
-  :len 4 _ _ _ _  sh c _ :len 2 _                  ; _ _ _ _ s _ _
-  :len 4 _ _ kh c sh c  kh c gh c :len 2 _         ; _ _ t s k g _
-  :len 4 sh c kh c :len 2 _  :len 4 sh c kh c :len 2 _
-  :len 4 _ _ _ kh c :len 1 _)                      ; _ _ _ k _
+; a syllable: its length, its vowel, its pitch (a Timer A rate) and its
+; consonant (_ for none). It swells in from a lower fader: the dip at each
+; onset is what separates syllables (a CSM note keys nothing, so there is no
+; attack of its own, and a :vel macro would not run on the driver). Two
+; pitches, or an octave step, go as one in an empty let.
+(def (sing len vowel pitch cons)
+  (fm3-csm :len len :vol (linear 14..31 :len 16) vowel)
+  (fm3-csm-rate :len len pitch)
+  (noise :len len cons))
+
+(fm3-csm vox :tempo 80)
+(fm3-csm-rate :oct 3 (glide 32))                         ; glide slides between the rates
+
+(sing 4 ah a _) (sing 4 ee a _) (sing 4 oo a _) (sing 4 eh a _) (sing 1 oh a _)  ; a i u e o
+(sing 4 ah a sh) (sing 4 oo a kh) (sing 2 ah b _)                ; sa ku ra
+(sing 4 ah a sh) (sing 4 oo a kh) (sing 2 ah b _)                ; sa ku ra
+(sing 4 ah a _) (sing 4 oh b _) (sing 4 ee (let [] > c <) _) (sing 4 oh b _)   ; ya yo i no
+(sing 4 oh a sh) (sing 4 ah (let [] b8 a8) _) (sing 2 ah f _)                   ; so ra wa
+(sing 4 ee e _) (sing 4 ah c _) (sing 4 ah e kh) (sing 4 oo f sh)               ; mi wa ta su
+(sing 4 ah e kh) (sing 4 ee (let [] e8 c8) gh) (sing 2 ee (let [] < b >) _)     ; ka gi ri
+(sing 4 ah a sh) (sing 4 oo a kh) (sing 2 ah b _)                ; sa ku ra
+(sing 4 ah a sh) (sing 4 oo a kh) (sing 2 ah b _)                ; sa ku ra
+(sing 4 ee e _) (sing 4 ee f _) (sing 4 oo (let [] b8 a8) _) (sing 4 ah f kh) (sing 1 oo e _)  ; mi ni yu ka n

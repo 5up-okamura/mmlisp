@@ -96,6 +96,9 @@ and a hold carry a note into the next.
 ```lisp
 (def riff c e g e)                      ; snippet: pasted where named
 (def (beat n) (x 4 > n < n))            ; parametric: (beat c)
+(beat (let [] > c <))                   ; an empty let is its body: several items as one argument (§7.2)
+(def intro (fm1 :len 4 c e g) (fm2 :oct 2 :len 2 c)) ; channel forms: a section (§9.5)
+intro intro                             ; at the top level: each form appends to its channel
 (def-fm lead init-fm :alg 4 :fb 3 :tl1 30 :tl2 0 :tl3 30 :tl4 0)
 (def-fm lead-dark lead :fb 1)           ; extends lead
 (def-fm thud lead :key 35)              ; c4 sounds at MIDI 35, d two above

@@ -165,13 +165,6 @@
   "fc",
   "gb"
  ],
- "snippets/voices/fm-voice-template.mmlisp": [
-  "md",
-  "pc88",
-  "x68k",
-  "msx",
-  "fc"
- ],
  "snippets/voices/voice-family.mmlisp": [
   "md",
   "pc88",

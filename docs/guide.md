@@ -270,12 +270,41 @@ body (token-level only — no arithmetic); a wrong argument count is `E_DEF_ARIT
 A `let` or `for` inside the body keeps its own names, so an argument always
 means what it meant where the call is written.
 
+An argument is one token or one form. Several items go as one in an empty
+`let` — `(let [] …)` binds nothing, so it is just its body written out:
+
+```lisp
+(def (chord s a t b) (fm3-1 s) (fm3-2 a) (fm3-3 t) (fm3-4 b))
+
+(chord e g (let [] > c <) c)    ; the third voice one octave up, then back
+```
+
 ```lisp
 (def (beat n) (x 8 > n > n <))
 
 (fm1 :oct 1
   (beat c) (beat b-) (beat a) (beat f))
 ```
+
+### Sections — a def of channel forms
+
+A def can hold whole channel forms. Its name, written at the top level, puts
+every channel's part in place at once — each form appends to its channel as
+if it stood there — so a song is arranged in one line, and a chord on
+`fm3-1`–`fm3-4` or a CSM phrase is one name (language.md §9.5).
+
+```lisp
+(def intro
+  (fm1 :len 2 g e)
+  (fm2 :oct 2 :len 4 c g c g))
+(def verse
+  (fm1 :len 8 e d c d e e e _)
+  (fm2 :oct 2 :len 4 c g c g))
+
+intro verse verse
+```
+
+A channel a section does not mention does not move: give it a rest there.
 
 ### Sharing across files — `(import "…")`
 
@@ -2750,9 +2779,7 @@ song and its mixer alone; starting one stops the song, since there is one
 chip. **Insert** moves the snippet's `(import …)` lines to the top of the score
 (skipping any already there) and puts the rest at the cursor, in one undo step.
 A snippet is written as if it sat next to a new score, so its imports read
-`presets/…` wherever it ends up. `voices/fm-voice-template` is the blank to
-start a voice from: a `def-fm` with every register written out at the chip's
-start values.
+`presets/…` wherever it ends up.
 
 A `(trig N)` cue has no sound, so the log shows it as it passes — `trig 2 —
 fm1` — whether the score is playing from the editor or from the panel.

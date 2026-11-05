@@ -1,35 +1,29 @@
-; Building a song from sections. A def names each part, forms of the same
-; channel append into one timeline, and the flow forms arrange it: (x 2 ...)
-; with (break) is a first and second ending (the second pass stops at the
-; break and goes on to what follows), #label ... (go label 2) repeats a
-; section. Write each section once per channel, in the same shape, and the
-; channels stay in step.
+; Building a song from sections. A def that holds channel forms is a section:
+; its name, written at the top level, puts every channel's part in place at
+; once, so the song is arranged in one line and the channels stay in step.
+; Inside a section the flow forms do what they do on a track: (x 2 ...) with
+; (break) is a first and second ending (the second pass stops at the break
+; and goes on to what follows), #label ... (go label 2) repeats a part.
 (import "presets/gm/set.mmlisp")
 
-; lead
-(def l-intro :len 2 g e)
-(def l-verse :len 8 e d c d e e e _  d d d _ e g g _)
-(def l-turn  :len 8 e d c d e e e e  d d e d :len 2 c)
-(def l-chorus :len 8 c c g g a a :len 4 g  :len 8 f f e e d d :len 4 c)
+(def intro
+  (fm1 :tempo 132 :oct 5 gm-lead-calliope :len 2 g e)
+  (fm2 :oct 1 gm-bass-finger :len 4 c g c g))
 
-; bass
-(def b-intro :len 4 c g c g)
-(def b-verse :len 4 c g c g  g d g d)
-(def b-turn  :len 4 c g c g  g d :len 2 c)
-(def b-chorus :len 4 c c f c  f c g c)
+; verse, turnaround, verse again, then straight on
+(def verse
+  (fm1 (x 2 :len 8 e d c d e e e _  d d d _ e g g _
+         (break) e d c d e e e e  d d e d :len 2 c))
+  (fm2 (x 2 :len 4 c g c g  g d g d
+         (break) c g c g  g d :len 2 c)))
 
-; intro
-(fm1 :tempo 132 :oct 5 gm-lead-calliope l-intro)
-(fm2 :oct 1 gm-bass-finger b-intro)
+; the chorus plays twice
+(def chorus
+  (fm1 #again :len 8 c c g g a a :len 4 g  :len 8 f f e e d d :len 4 c (go again 2))
+  (fm2 #again :len 4 c c f c  f c g c (go again 2)))
 
-; verse: verse, turnaround, verse again, then straight on
-(fm1 (x 2 l-verse (break) l-turn))
-(fm2 (x 2 b-verse (break) b-turn))
+(def ending
+  (fm1 :len 1 c)
+  (fm2 :len 1 c))
 
-; chorus, twice
-(fm1 #chorus l-chorus (go chorus 2))
-(fm2 #chorus b-chorus (go chorus 2))
-
-; ending
-(fm1 :len 1 c)
-(fm2 :len 1 c)
+intro verse chorus ending

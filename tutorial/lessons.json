@@ -28,7 +28,8 @@
       {"file": "02-dynamics", "title": "Dynamics", "check": {"velsMin": 2}, "answer": "(fm1 :vel 15 c e g e :vel 9 c e g e)"},
       {"file": "03-envelopes", "title": "Envelopes", "check": {"match": "\\(fm1[^)]*\\bpluck\\b"}, "answer": "(def pluck (macro :vel [15 12 9 6 3]))\n(fm1 pluck c e g e c e g e)"},
       {"file": "04-drums", "title": "Drums", "check": {"match": "\\(pcm1[^)]*\\bsnare\\b"}, "answer": "(def-score :pcm-voices 1)\n(import \"presets/tr808/set.mmlisp\")\n(fm1 :oct 3 c e g e c e g e)\n(pcm1 kick c _ snare c _ kick c _ snare c _)"},
-      {"file": "05-mods", "title": "Modifiers", "check": {"match": "\\(def-mod[^)]*:voice\\s+hat(?![\\w-])[^)]*:vel(\\+\\s+-\\d|\\*\\s+0?\\.\\d|\\s+(\\d|1[0-4])(?!\\d))"}, "answer": "(def-mod :voice hat :vel+ -6)\n(def-score :pcm-voices 1)\n(import \"presets/tr808/set.mmlisp\")\n(fm1 :oct 3 (x 2 c e g e c e g e))\n(pcm1 (x 2 kick c hat c snare c hat c))"}
+      {"file": "05-mods", "title": "Modifiers", "check": {"match": "\\(def-mod[^)]*:voice\\s+hat(?![\\w-])[^)]*:vel(\\+\\s+-\\d|\\*\\s+0?\\.\\d|\\s+(\\d|1[0-4])(?!\\d))"}, "answer": "(def-mod :voice hat :vel+ -6)\n(def-score :pcm-voices 1)\n(import \"presets/tr808/set.mmlisp\")\n(fm1 :oct 3 (x 2 c e g e c e g e))\n(pcm1 (x 2 kick c hat c snare c hat c))"},
+      {"file": "06-sections", "title": "Sections", "check": {"match": "\\bverse\\s+verse\\b"}, "answer": "(def verse\n  (fm1 :len 8 c e g e c e g e)\n  (fm2 :oct 2 :len 2 c g))\n(def chorus\n  (fm1 :len 8 f a > c < a g b > d < b)\n  (fm2 :oct 2 :len 2 f g))\nverse verse chorus"}
     ]
   },
   {

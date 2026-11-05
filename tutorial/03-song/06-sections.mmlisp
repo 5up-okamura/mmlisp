@@ -1,0 +1,11 @@
+; A def can hold whole channel forms: a section. Its name, written at the
+; top level, puts every channel's part in place at once, so a song is
+; arranged in one line.
+; Try: play the verse twice before the chorus.
+(def verse
+  (fm1 :len 8 c e g e c e g e)
+  (fm2 :oct 2 :len 2 c g))
+(def chorus
+  (fm1 :len 8 f a > c < a g b > d < b)
+  (fm2 :oct 2 :len 2 f g))
+verse chorus

@@ -520,13 +520,19 @@ export function formatMMLisp(source, parse) {
   // therefore adjacent and stays attached to it.
   let out = "";
   let prevEnd = 0;
+  let prevAtom = false;
   for (const root of roots) {
     const text = formatNode(root);
-    if (prevEnd > 0) {
+    // Names written on one line — a song's sections, `intro verse chorus`
+    // (language.md §9) — stay on it.
+    const sameLine = prevAtom && root.kind === "atom" && root.line === prevEnd;
+    if (sameLine) out += " ";
+    else if (prevEnd > 0) {
       out += "\n" + "\n".repeat(sourceGapBlanks(prevEnd, root.line || prevEnd));
     }
     out += text;
     prevEnd = endLineOf(root);
+    prevAtom = root.kind === "atom";
   }
 
   return `${out.trimEnd()}\n`;
