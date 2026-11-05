@@ -18,6 +18,7 @@
     "check:sample-fx": "node scripts/check-sample-fx.mjs",
     "check:cheatsheet": "node scripts/check-cheatsheet.mjs",
     "check:reference": "node scripts/check-reference.mjs",
+    "check:def-templates": "node scripts/check-def-templates.mjs",
     "check:i18n": "node scripts/i18n-sync.mjs",
     "mcp": "node mcp/mmlisp-mcp.mjs",
     "check:ab-snapshots": "node scripts/check-ab-snapshots.mjs",

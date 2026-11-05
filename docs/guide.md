@@ -2530,6 +2530,13 @@ the fields:
 | `(def-val`     | `(def-val name 0 0..127)`             |
 | any curve head | `(linear 0..100 :len 8)`              |
 
+`(def-fm`, `(def-wave` and `(def-pcm` write a def out whole, as the score's
+machine has it (the last build's `:target`): a def-fm every parameter of its
+FM chip at `init-fm`'s values — the OPN's `:ssg1`…, the OPM's `:dt2-1`…, the
+FM-PAC's two operators — a def-wave a sine of the steps its wave memory holds
+(64 on the FDS), a def-pcm a file to name. A machine with two such parts (the
+Famicom's FDS and N163) offers one each, labelled with the part.
+
 The placeholders are usable defaults, so leaving a template early (`Esc`) still
 leaves valid source. Forms whose shape genuinely varies — a track, `t`, the
 eval heads — insert just the name.

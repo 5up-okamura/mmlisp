@@ -24,6 +24,8 @@ Run from tools directory:
 7. `npm run mcp` — the MMLisp MCP server for AI clients (see [mcp/README.md](mcp/README.md))
 8. `npm run check:i18n` — every translation of the Live reference, snippets and lessons present and current
 9. `npm run check:reference` — every example of the Live reference compiles and plays, and every completion word has an entry
+   (`npm run check:def-templates`: every def the completion writes out, from each
+   machine's parts, compiles on its machine)
 10. `npm run check:sample-fx` — a sample def's `:fx` chain and its bake
 11. `npm run check:scope-trigger` — the oscilloscope's trigger holds a stationary picture
 12. `npm run check:snapshot` — the compiler's IR, the IR player's register log, the MMB
