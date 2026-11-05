@@ -1,8 +1,9 @@
 // The app's display language, and the texts it translates: the reference's
 // summaries and category names (reference.js), the snippets' leading
 // comments and the tutorial's texts (lessons.js), as the Library, the
-// completion, the hover and the lessons show them. The rest of the app — the
-// menus, the log, the compiler's diagnostics — stays in English: the words of
+// completion, the hover and the lessons show them, and the dialogs that ask
+// (ui-texts.js). The rest of the app — the menus, the log, the compiler's
+// diagnostics — stays in English: the words of
 // a music tool read the same everywhere, and an AI on the MCP link reads the
 // diagnostics.
 //
@@ -12,6 +13,7 @@
 // A text with no translation falls back to the English.
 import ja from './i18n/ja.js';
 import es from './i18n/es.js';
+import { UI_TEXTS } from './ui-texts.js';
 
 export const LANGUAGES = [['en', 'English'], ['ja', '日本語'], ['es', 'Español']];
 const PACKS = { ja, es };
@@ -45,6 +47,9 @@ function pick(section, key, english) {
 export const refSummary = (entry) => pick('reference', entry.name, entry.summary);
 export const refCategoryLabel = (id, english) => pick('categories', id, english);
 export const snippetAbout = (path, english) => pick('snippets', path.replace(/^snippets\//, ''), english);
-// MMLisp > Lessons: keyed as tools/scripts/i18n-sync.mjs keys them — "01-sound"
+// Tools > Guide: keyed as tools/scripts/i18n-sync.mjs keys them — "01-sound"
 // a lesson's title, "01-sound/01-notes" a step's, + ".mmlisp" its text, + "#try" its Try.
 export const lessonText = (key, english) => pick('lessons', key, english);
+// A dialog's text (ui-texts.js), its `{name}` marks filled from `values`.
+export const uiText = (key, values = {}) =>
+  pick('ui', key, UI_TEXTS[key]).replace(/\{(\w+)\}/g, (m, k) => values[k] ?? m);

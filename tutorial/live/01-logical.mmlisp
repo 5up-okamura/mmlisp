@@ -1,0 +1,8 @@
+; Edit > Logical Editor picks notes by a condition — their pitch, length, the
+; voice or sample they play — in the selection, the channel at the cursor or
+; the whole score, and acts on all of them at once: transpose, set or scale
+; their length, reverse the run, turn them into rests, or just select them.
+; Apply writes the score, one undo step.
+; Try: transpose fm2 up an octave with the Logical Editor: the cursor in fm2, Scope "Channel at the cursor", Do "Transpose" 12.
+(fm1 c e g e c e g e)
+(fm2 :oct 2 c2 g2)

@@ -1423,9 +1423,11 @@ MIDI, and the menu is not shown there). The choice is remembered.
 The score being edited is kept in the browser as you type, and comes back
 when the page is opened again — after a reload, or a phone dropping the tab.
 It is one score, the one in the editor: `File > New` or opening another file
-replaces it. A share link only shows its score; that score takes the place of
-yours at its first edit. The kept copy has no file behind it, so `Save` after
-a reload asks where.
+replaces it, and asks first when it has edits not saved — a share link opened
+over them too: keep them, and the draft stays while the link is let go. A
+share link opened over a score with nothing unsaved only shows its score; that
+score takes the place of yours at its first edit. The kept copy has no file
+behind it, so `Save` after a reload asks where.
 
 While a song plays the screen stays on (where the browser allows a page to
 ask: Chrome, and Safari from iOS 16.4), and the page goes on playing when it
@@ -2577,7 +2579,12 @@ the player beside the song (§19). Imported names are read when the score
 compiles, so a set of your own imported by hand joins the list after the next
 Play or Build; a preset set's names are there all along.
 
-A new score (**File ▸ New**, then the machine) has a looping track for each
+**File ▸ New…** lists the machines, the Mega Drive first, each with what it
+has (`OPN FM ×6 · SN76489 tone ×3 · SN76489 noise · DAC ×3`, the cartridges
+after a `+`); the machine clicked is the new score. **Tour** beside a machine
+opens its tour in the Guide (below), and **Tutorial** under the list the
+tutorial, from the first step not done. The app's first launch, with no score
+to come back to, opens here. A new score has a looping track for each
 channel that machine plays at once, a rhythm track on a sound of its own, and
 names the rest in a comment: a Famicom cartridge's channels, `md`'s `fm6`,
 `pcm2` and `pcm3`, a name that shares a track's channel. It imports the preset sets those
@@ -2594,14 +2601,15 @@ open editing tools, **Library**, everything that comes with the app in one
 list — the language reference (**Ref**), the **Presets** (the voice, sample and wave sets), the
 **Snippets** and the **Scores** (the examples) — so looking up a keyword,
 picking a voice or trying a technique takes one click instead of a file
-dialog — and **Lessons** (below). **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
+dialog — and **Guide** (below). **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
 anywhere, the editor included — opens the panel on Library with the search box
 taking the keys; **Tools ▸ Params** — **⌘J** / **Ctrl+J** — opens it on Params,
 and closes it again when Params is already showing. The ⚙ button reopens the
 panel on the tab it was left on; a fresh launch starts on Params, with
 Library's filters cleared.
 
-**Tools ▸ Lessons** opens the panel on **Lessons**: the tutorial, a step at a
+**Tools ▸ Guide** opens the panel on **Guide**: the tutorial, a tour of each
+machine and the app's tools, a step at a
 time. **Start Lesson** begins at the first step not done yet (the first when
 none or all are), or pick a step in the list; its code goes in the editor, in
 a working copy of its own — the score you were writing is set aside, undo
@@ -2617,7 +2625,7 @@ notes so far, the tempo) or **Correct!**, and holds what acts on the code:
 marked as the answer, so it ticks nothing until Start Over makes the step yours
 again. **Back** and **Next**, at the two ends below, move between steps; a step
 keeps your edits while the lesson is open, and one without a Try is done once
-read. A step done is ticked in the list, in this browser. While the Lessons tab
+read. A step done is ticked in the list, in this browser. While the Guide tab
 is out of sight (on a phone, the panel closed to write) the Try and its verdict
 sit over the editor, with Start Over and Show Answer, and **Next** once it is
 done.
@@ -2626,7 +2634,10 @@ Under **Machines** is a tour of each machine, only what it has and the others
 lack (the Mega Drive's FM3 operators, CSM and PCM voices, the PC-8801's SSG
 envelope and ROM rhythm, the Famicom's expansion chips …), each step a score
 for that machine; Start Lesson and Next keep to the lessons, and a tour is
-picked from the list. The lessons' texts follow MMLisp ▸ Language. They live in
+picked from the list, or opened from **File ▸ New…**. Under **Tools** the
+app's own tools are told the same way, a step each: the Logical Editor (with a
+Try), Tap Tempo, folders and archives, export and share. The lessons' texts
+follow MMLisp ▸ Language. They live in
 `tutorial/` (`lessons.json` and a score per step, its leading comment the
 text, as a snippet's is), held by `cd tools && npm run check:lessons`.
 
@@ -2637,7 +2648,8 @@ every screen; their checked menu items and heading close buttons remove them.
 
 **MMLisp ▸ Language** picks the language the reference and the snippets are
 explained in — the Ref entries' summaries and category names, the snippets'
-descriptions, in the Library, the completion's info and the hover card. The
+descriptions, in the Library, the completion's info and the hover card — and
+the dialogs that ask before something goes. The
 app starts in the browser's language when it has one (English, 日本語,
 Español) and remembers the choice. The language's own words, the menus, the
 log and the compiler's messages stay in English.
@@ -2830,7 +2842,8 @@ score compressed after the `#`; it needs nothing but the app, and still opens
 anywhere.
 
 Whoever opens the link gets the score in the editor with a **Play** button over
-it — a browser only lets sound start after a tap. From there it is an ordinary
+it — a browser only lets sound start after a tap; over a score of their own
+with edits not saved, it asks first (§22). From there it is an ordinary
 unsaved score: they can edit it, play it, save it, or share their own version.
 
 The link carries the score's text only. Preset sets and samples the app ships

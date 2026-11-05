@@ -1463,6 +1463,38 @@
       gap: 0.5rem;
       margin-top: 1rem;
     }
+    /* File > New: the machines, each a row with a tour beside it */
+    .new-modal { width: min(520px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
+    .new-machines { display: flex; flex-direction: column; gap: 0.15rem; overflow-y: auto; min-height: 0; }
+    .new-machine { display: flex; align-items: center; gap: 0.5rem; }
+    .new-machine-pick {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.1rem;
+      background: none;
+      border: none;
+      color: var(--foreground);
+      font: inherit;
+      text-align: left;
+      padding: 0.35rem 0.5rem;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .new-machine-pick span { font-size: var(--label); color: var(--sub); }
+    @media (hover: hover) { .new-machine-pick:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); } }
+    .new-guide {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid var(--mid);
+      color: var(--foreground);
+      font-size: var(--text);
+    }
     /* About / Licenses info modals */
     .info-modal { max-width: min(460px, 90vw); }
     .info-body { color: var(--foreground); font-size: var(--text); line-height: 1.55; }
@@ -1603,7 +1635,7 @@
       border-color: var(--foreground);
       background: color-mix(in srgb, var(--foreground) var(--sel), var(--background));
     }
-    .lesson-try[data-state="correct"] .lesson-status { opacity: 1; font-weight: bold; font-size: 1.15em; }
+    .lesson-try[data-state="correct"] .lesson-status { opacity: 1; font-weight: bold; font-size: var(--text); }
     .lesson-try[data-state="answer"] { border-style: dashed; }
     .lesson-try[data-state="answer"] .lesson-status { opacity: 1; }
     #lessonBar {

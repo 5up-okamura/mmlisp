@@ -4,7 +4,8 @@
 // inserted. `cd tools && npm run check:reference` compiles every example.
 //
 // An entry:
-//   name     what the list shows and the search matches first
+//   name     what the list shows and the search matches first; a form's is
+//            how it is written, `(def-fm …)`, and its head finds it too
 //   aliases  other names it is found by (`:vel+` finds :vel)
 //   prefixes word starts that belong to it (`:tl` covers :tl1–:tl4)
 //   cat      its category (REFERENCE_CATEGORIES)
@@ -41,14 +42,14 @@ const WAVE = ['wave'];
 export const REFERENCE = [
   // ---- score and song-wide -------------------------------------------------
   {
-    name: 'def-score', aliases: [':title', ':composer', ':author', ':pcm-voices'], cat: 'score', section: '§1', tracks: null,
+    name: '(def-score …)', aliases: [':title', ':composer', ':author', ':pcm-voices'], cat: 'score', section: '§1', tracks: null,
     syntax: '(def-score :title "…" :composer "…" :author "…" :pcm-voices N)',
     summary: 'The score\'s settings: its metadata, and how many PCM voices the driver plays (0–3; fewer voices, a higher DAC rate). Every key is optional.',
     insert: '(def-score :title "" :composer "" :author "")',
     example: '(def-score :title "Demo" :composer "Me")\n(fm1 c e g)',
   },
   {
-    name: 'import', aliases: [':over'], cat: 'score', section: '§9.2', tracks: null,
+    name: '(import …)', aliases: [':over'], cat: 'score', section: '§9.2', tracks: null,
     syntax: '(import "path/set.mmlisp")  ·  (import "path" :over)  ·  (import "path" :fx [...])',
     summary: 'Folds another file\'s defs in at compile time, under this file\'s own. Its def-val, def-score, def-mod and tracks are not imported. Two imports defining one name conflict, unless the later one says :over — then it replaces the earlier ones\' defs and the rest stay.',
     insert: '(import "presets/gm/set.mmlisp")',
@@ -111,7 +112,7 @@ export const REFERENCE = [
     example: '(fm1 :prio 1 :len 4 c _ _ g _ _)\n(fm1 :prio 5 :len 16 e e e e e e e e e e e e e e e e e e e e e e e e)',
   },
   {
-    name: 'def-mod', aliases: [':ch', ':voice'], cat: 'score', section: '§9.4', tracks: null,
+    name: '(def-mod …)', aliases: [':ch', ':voice'], cat: 'score', section: '§9.4', tracks: null,
     syntax: '(def-mod [:ch c|[c …]] [:voice v|[v …]] :keyon off | :vel V | :vel+ N | :vel* R)',
     summary: 'Rewrites every note it selects, score-wide: :keyon off turns them into rests (play the part yourself on the keys), the vel ops move their velocity, clamped to 0–15.',
     insert: '(def-mod :ch fm1 :keyon off)',
@@ -120,84 +121,84 @@ export const REFERENCE = [
 
   // ---- channels ------------------------------------------------------------
   {
-    name: 'fm1–fm6', aliases: ['fm1', 'fm2', 'fm3', 'fm4', 'fm5', 'fm6', 'fm7', 'fm8', 'fm9'], cat: 'channels', section: '§2', tracks: FM,
+    name: '(fm1 …)', aliases: ['fm2', 'fm3', 'fm4', 'fm5', 'fm6', 'fm7', 'fm8', 'fm9'], cat: 'channels', section: '§2', tracks: FM,
     syntax: '(fm1 …)',
     summary: 'The YM2612\'s six FM channels. A score that plays PCM owns fm6 as the DAC, so there an fm6 track is an error. On x68k the YM2151 has eight, fm1–fm8; on msx the FM-PAC\'s YM2413 nine 2-op ones, fm1–fm9.',
     insert: '(fm1 :len 8 c d e f)',
     example: '(fm1 :len 8 c d e f g a b > c)',
   },
   {
-    name: 'sqr1–sqr3', aliases: ['sqr1', 'sqr2', 'sqr3', 'psg'], cat: 'channels', section: '§2', tracks: PSG,
+    name: '(sqr1 …)', aliases: ['sqr2', 'sqr3', 'psg'], cat: 'channels', section: '§2', tracks: PSG,
     syntax: '(sqr1 …)',
     summary: 'The PSG\'s three square-wave channels. No voice of their own: shape a note with a macro. On fc and gb sqr1 and sqr2 are the chip\'s pulses, their shape :duty.',
     insert: '(sqr1 :len 8 c e g e)',
     example: '(sqr1 :oct 5 :len 8 c e g e)',
   },
   {
-    name: 'wave1–wave6', aliases: ['wave1', 'wave2', 'wave3', 'wave4', 'wave5', 'wave6', 'scc', 'wavetable'], cat: 'channels', section: '§19', tracks: WAVE,
+    name: '(wave1 …)', aliases: ['wave2', 'wave3', 'wave4', 'wave5', 'wave6', 'scc', 'wavetable'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target msx) (wave1 name …)',
     summary: 'msx: the SCC\'s five wavetable channels, wave1–wave5; pce: the HuC6280\'s six. Each plays the def-wave named in it (a square until then) — at a 4-bit volume on the SCC, where wave4 and wave5 share one wave memory; at a 5-bit one on pce, where a wave named under a note starts it over.',
     insert: '(wave1 :len 8 c e g e)',
     example: '(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(wave1 saw :len 8 c e g > c)',
   },
   {
-    name: 'noise5–noise6', aliases: ['noise5', 'noise6'], cat: 'channels', section: '§19', tracks: WAVE,
+    name: '(noise5 …)', aliases: ['noise6'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target pce) (noise5 …)',
     summary: 'pce: the HuC6280\'s channels 5 and 6 turned to noise, the same channels as wave5 / wave6 (where their notes meet, the noise wins unless a :prio says otherwise). A note picks one of the 32 rates: c2 the slowest, each semitone the next, g4 the fastest; the level is the channel\'s.',
     insert: '(noise5 :len 8 :oct 3 c c c c)',
     example: '(def-score :target pce)\n(noise5 :len 8 :oct 2 c c :vel 10 c c :oct 4 c _ c c)',
   },
   {
-    name: 'wave', aliases: ['gb-wave'], cat: 'channels', section: '§19', tracks: WAVE,
+    name: '(wave …)', aliases: ['gb-wave'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target gb) (wave name …)',
     summary: 'gb: the Game Boy\'s wave channel. It plays def-waves at the chip\'s 4 bits, an octave below a pulse at the same period, at a level of 100, 50 or 25 %, the nearest of what vel, vol and master compose: only a fader at 0 silences it. A new wave stops the channel to load (a click on the hardware); the same steps do not load again.',
     insert: '(wave saw :len 4 :oct 3 c e g e)',
     example: '(def-score :target gb)\n(def-wave saw :wave (saw -128..127))\n(wave saw :len 4 :oct 3 c :vel 12 e :vel 8 g :vel 15 c)',
   },
   {
-    name: 'tri', aliases: ['triangle'], cat: 'channels', section: '§19', tracks: PSG,
+    name: '(tri …)', aliases: ['triangle'], cat: 'channels', section: '§19', tracks: PSG,
     syntax: '(def-score :target fc) (tri …)',
     summary: 'fc: the 2A03\'s triangle, an octave below a pulse at the same period. It has no level: a note sounds, a rest halts it; :vel and :vol only silence at 0 (a warning says so).',
     insert: '(tri :len 4 :oct 3 c e g e)',
     example: '(def-score :target fc)\n(tri :len 4 :oct 3 c _ g (macro :pitch (sin -30..30 :len 8f)) g)',
   },
   {
-    name: 'vrc6-sqr1, vrc6-sqr2, vrc6-saw', aliases: ['vrc6-sqr1', 'vrc6-sqr2', 'vrc6-saw', 'vrc6', 'sawtooth'], cat: 'channels', section: '§19', tracks: PSG,
+    name: '(vrc6-sqr1 …)', aliases: ['vrc6-sqr2', 'vrc6-saw', 'vrc6', 'sawtooth'], cat: 'channels', section: '§19', tracks: PSG,
     syntax: '(def-score :target fc) (vrc6-sqr1 …)',
     summary: 'fc: the VRC6 cartridge — two pulses, their shape :duty (1–8 sixteenths; a wider value its mirror), and a sawtooth whose level is the chip\'s 6-bit rate, :vel 15 = 63; above :vel 13.25 (42) the saw wraps — harsher, not louder. All take a pulse\'s pitch moves. VGM has no VRC6: an export leaves it out; WAV plays it.',
     insert: '(vrc6-saw :len 4 :oct 3 c e g e)',
     example: '(def-score :target fc)\n(vrc6-sqr1 :len 8 :duty 1 e g > c)\n(vrc6-saw :len 4 :oct 2 :vel 13.25 c e (glide 8) g (macro :vel (linear 15..0 :len 4)) c)',
   },
   {
-    name: 'fds-wave', aliases: ['fds', 'disk system'], cat: 'channels', section: '§19', tracks: WAVE,
+    name: '(fds-wave …)', aliases: ['fds', 'disk system'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target fc) (fds-wave name …)',
     summary: 'fc: the Disk System\'s wavetable channel. It plays def-waves in 64 steps of 6 bits (a 32-step one each step twice), its gain 0–32 as :vel; its modulation unit bends the pitch, set by the song\'s :lfo-wave (a table of 32 steps of 0 1 2 4 -1 -2 -4 reset), :lfo-pmd 0–63 (depth) and :lfo-freq 0–4095 (rate).',
     insert: '(fds-wave :len 8 c e g e)',
     example: '(def-score :target fc)\n(def-wave tri :wave (triangle -128..127))\n(fds-wave tri :len 4 c e g > c)',
   },
   {
-    name: 'mmc5-sqr1, mmc5-sqr2', aliases: ['mmc5-sqr1', 'mmc5-sqr2', 'mmc5'], cat: 'channels', section: '§19', tracks: PSG,
+    name: '(mmc5-sqr1 …)', aliases: ['mmc5-sqr2', 'mmc5'], cat: 'channels', section: '§19', tracks: PSG,
     syntax: '(def-score :target fc) (mmc5-sqr1 …)',
     summary: 'fc: the MMC5\'s two pulses — the 2A03\'s in the language (:duty 2 / 4 / 8 / 12, the 4-bit volume, every pitch move), with no sweep, and the highest notes go on sounding. VGM has no MMC5: an export leaves it out; WAV plays it.',
     insert: '(mmc5-sqr1 :len 8 c e g e)',
     example: '(def-score :target fc)\n(mmc5-sqr1 :len 8 :duty 2 e g > c e < :duty 12 g e c e)',
   },
   {
-    name: '5b-sqr1–5b-sqr3, 5b-noise', aliases: ['5b-sqr1', '5b-sqr2', '5b-sqr3', '5b-noise', '5b', 'sunsoft'], cat: 'channels', section: '§19', tracks: PSG,
+    name: '(5b-sqr1 …)', aliases: ['5b-sqr2', '5b-sqr3', '5b-noise', '5b', 'sunsoft'], cat: 'channels', section: '§19', tracks: PSG,
     syntax: '(def-score :target fc) (5b-sqr1 …)',
     summary: 'fc: the Sunsoft 5B, a YM2149 in a cartridge — the SSG as on msx: :mode tone / noise / both / env, the song\'s :noise-rate and :env-rate, :env; 5b-noise is 5b-sqr3 with its mixer on noise. Its tones run at half an AY\'s speed for its clock; its level 32 steps of 1.5 dB. VGM carries it as a YM2149.',
     insert: '(5b-sqr1 :len 8 c e g e)',
     example: '(def-score :target fc)\n(5b-sqr1 :len 8 e g > c e)\n(5b-noise :len 8 :noise-rate 4 c c :noise-rate 20 c c)',
   },
   {
-    name: 'vrc7-fm1–vrc7-fm6', aliases: ['vrc7-fm1', 'vrc7-fm2', 'vrc7-fm3', 'vrc7-fm4', 'vrc7-fm5', 'vrc7-fm6', 'vrc7', 'buzzy-bell', 'wurly', 'bells', 'vibes', 'tutti', 'fretless', 'sweep'], cat: 'channels', section: '§19', tracks: FM,
+    name: '(vrc7-fm1 …)', aliases: ['vrc7-fm2', 'vrc7-fm3', 'vrc7-fm4', 'vrc7-fm5', 'vrc7-fm6', 'vrc7', 'buzzy-bell', 'wurly', 'bells', 'vibes', 'tutti', 'fretless', 'sweep'], cat: 'channels', section: '§19', tracks: FM,
     syntax: '(def-score :target fc) (vrc7-fm1 voice …)',
     summary: 'fc: the VRC7, a YM2413 with six channels and no rhythm — the FM-PAC\'s 2-op FM, :sus and its one user voice. Its fifteen ROM voices are built in: buzzy-bell guitar wurly flute clarinet synth trumpet organ bells vibes vibraphone tutti fretless synth-bass sweep. VGM carries it as a YM2413 (its clock\'s bit 31).',
     insert: '(vrc7-fm1 wurly :len 8 c e g e)',
     example: '(def-score :target fc)\n(vrc7-fm1 wurly :len 8 e g > c e)\n(vrc7-fm2 synth-bass :oct 2 :len 4 c g e c)',
   },
   {
-    name: 'n163-wave1–n163-wave8', aliases: ['n163-wave1', 'n163-wave2', 'n163-wave3', 'n163-wave4', 'n163-wave5', 'n163-wave6', 'n163-wave7', 'n163-wave8', 'n163', 'namco'], cat: 'channels', section: '§19', tracks: WAVE,
+    name: '(n163-wave1 …)', aliases: ['n163-wave2', 'n163-wave3', 'n163-wave4', 'n163-wave5', 'n163-wave6', 'n163-wave7', 'n163-wave8', 'n163', 'namco'], cat: 'channels', section: '§19', tracks: WAVE,
     syntax: '(def-score :target fc) (n163-wave1 name …)',
     summary: 'fc: the N163\'s wavetable channels — def-waves in 4-bit steps at a 4-bit volume. The highest one the score names sets how many run; the chip plays them in turn, so more channels each sound quieter, and 7–8 whine as on the chip. Up to 5 running, each wave is 32 steps; at 6 or more, 16 (a warning says so). VGM has no N163: an export leaves it out; WAV plays it.',
     insert: '(n163-wave1 :len 8 c e g e)',
@@ -211,21 +212,21 @@ export const REFERENCE = [
     example: '(def-score :target fc)\n(sqr1 :len 8 :duty 2 c e (macro :duty [2 4 8 12]) g e)',
   },
   {
-    name: 'noise', ctx: 'track', cat: 'channels', section: '§2', tracks: PSG,
+    name: '(noise …)', ctx: 'track', cat: 'channels', section: '§2', tracks: PSG,
     syntax: '(noise :mode white0 …)',
     summary: 'The PSG\'s noise channel. :mode white0–white3 or periodic0–periodic3 (sticky); 3 follows sqr3\'s pitch. On x68k it is fm8\'s fourth operator alone, its period the song\'s :noise-rate (fm8\'s :mode noise plays it with a voice). On fc a note picks one of the 2A03\'s 16 rates (c2 the slowest, d#3 the fastest), :mode white or periodic.',
     insert: '(noise :mode white2 :len 8 c c c c)',
     example: '(noise :mode white2 :len 8 (macro :vel [12 6 0]) c c c c c c c c)',
   },
   {
-    name: 'rhythm1–rhythm6', aliases: ['rhythm1', 'rhythm2', 'rhythm3', 'rhythm4', 'rhythm5', 'rhythm6', 'rhythm', 'drums'], cat: 'channels', section: '§19', tracks: PCM,
+    name: '(rhythm1 …)', aliases: ['rhythm2', 'rhythm3', 'rhythm4', 'rhythm5', 'rhythm6', 'rhythm', 'drums'], cat: 'channels', section: '§19', tracks: PCM,
     syntax: '(def-score :target pc88) (rhythm1 kick c …)',
     summary: 'pc88: the YM2608\'s ROM rhythm, its six sounds named by the kit roles (kick snare ride hat tom4 rim) with no def. A track is one line, its :prio layers competing as on any channel; sounds that ring together, each with its own :vol and :pan, go on tracks of their own. msx: the FM-PAC\'s five (no rim, no :pan) on rhythm1–rhythm5, in place of fm7–fm9; a hit\'s note tunes its sound, and :pitch, (glide …) and pitch macros move it on through its release (a kick\'s pitch-down).',
     insert: '(rhythm1 :len 4 kick c snare c)',
     example: '(def-score :target pc88)\n(rhythm1 :prio 1 :len 4 kick c c c c)\n(rhythm1 :prio 2 :len 8 hat c c c c c c c c)\n(rhythm2 :pan right :len 2 snare _ c)',
   },
   {
-    name: 'pcm1–pcm3', aliases: ['pcm1', 'pcm2', 'pcm3', 'pcm4', 'pcm5', 'pcm6', 'pcm7', 'pcm8'], cat: 'channels', section: '§16', tracks: PCM,
+    name: '(pcm1 …)', aliases: ['pcm2', 'pcm3', 'pcm4', 'pcm5', 'pcm6', 'pcm7', 'pcm8'], cat: 'channels', section: '§16', tracks: PCM,
     syntax: '(pcm1 sample c …)',
     summary: 'Samples, soft-mixed on the fm6 DAC. Name a def-pcm sample before its notes; a note\'s pitch picks a resampled copy. On x68k pcm1–pcm8 are PCM8\'s voices, mixed into the MSM6258\'s ADPCM, and take :pitch moves. On pce pcm1–pcm6 are channels 1–6 as DDA: 5 bits at 6.99 kHz, each note baked at its pitch. On fc pcm1 is the DMC: 1-bit deltas at one rate a def-pcm, each note baked at its pitch with its key-on level; a loop is the whole range.',
     insert: '(pcm1 :len 8 kick c snare c)',
@@ -276,7 +277,7 @@ export const REFERENCE = [
     example: '(fm1 :len 4 c ~ c e ~ g c2)',
   },
   {
-    name: '(t …) tuplet', aliases: ['t', 'tuplet', 'triplet'], cat: 'notes', section: '§3', tracks: null,
+    name: '(t …) tuplet', aliases: ['tuplet', 'triplet'], cat: 'notes', section: '§3', tracks: null,
     syntax: '(t c e g)',
     summary: 'Divides one :len slot evenly among its notes and rests, which take no length of their own. Anything that takes no time (:vel, :tl1, a voice, ~) may go between them.',
     insert: '(t c e g)',
@@ -357,14 +358,14 @@ export const REFERENCE = [
 
   // ---- FM voices and registers ---------------------------------------------
   {
-    name: 'def-fm', aliases: ['voice', 'patch', 'init-fm'], cat: 'fm', section: '§9', tracks: FM,
+    name: '(def-fm …)', aliases: ['voice', 'patch', 'init-fm'], cat: 'fm', section: '§9', tracks: FM,
     syntax: '(def-fm name init-fm :alg N :fb N :tl1 N …)',
     summary: 'An FM voice: the channel\'s :alg :fb :ams :fms and the operator params. A leading name is the voice it extends (init-fm is the blank one). Name it in a track to switch to it.',
     insert: '(def-fm lead init-fm :alg 4 :fb 3 :tl1 30 :tl2 0 :tl3 30 :tl4 0)',
     example: '(def-fm lead init-fm :alg 4 :fb 3 :tl1 30 :tl2 0 :tl3 30 :tl4 0)\n(fm1 lead :len 8 c e g > c)',
   },
   {
-    name: 'def-wave', aliases: [':wave'], cat: 'defs', section: '§19', tracks: WAVE,
+    name: '(def-wave …)', aliases: [':wave'], cat: 'defs', section: '§19', tracks: WAVE,
     syntax: '(def-wave name :wave [v1 … v32])  ·  (def-wave name :wave (curve A..B))  ·  (wave1 :wave expr …)',
     summary: 'A wave for the wave channels: 32 steps (or 64, fc\'s FDS memory; every other one on a 32-step chip), each -128..127, one cycle of a curve, or + - * / over def-waves, curves and numbers. Name it in a track to switch to it; a track\'s :wave takes an expression, and one with a $value follows it as it moves; (macro :wave [a b #sus c]) steps a note through def-waves a frame at a time.',
     insert: '(def-wave soft :wave (sin -100..100))',
@@ -432,7 +433,7 @@ export const REFERENCE = [
     example: '(def-score :target msx)\n(fm1 piano :len 8 c e g > c)\n(fm2 synth-bass :oct 2 :len 4 c c g g)',
   },
   {
-    name: '(param-set …)', aliases: ['param-set'], cat: 'fm', section: '§5.1', tracks: null,
+    name: '(param-set …)', cat: 'fm', section: '§5.1', tracks: null,
     syntax: '(param-set :target v :target v …)',
     summary: 'Several absolute register writes at once.',
     insert: '(param-set :tl1 20 :tl2 30)',
@@ -441,56 +442,56 @@ export const REFERENCE = [
 
   // ---- definitions and values ----------------------------------------------
   {
-    name: 'def', aliases: ['snippet', 'constant'], cat: 'defs', section: '§9', tracks: null,
+    name: '(def …)', aliases: ['snippet', 'constant'], cat: 'defs', section: '§9', tracks: null,
     syntax: '(def name item …)',
     summary: 'A snippet: its items are pasted wherever the name is written — a phrase, a macro, a constant. Don\'t name one like a note (a–g, e8): the note wins.',
     insert: '(def riff c e g e)',
     example: '(def riff c e g e)\n(fm1 :len 8 riff riff > riff <)',
   },
   {
-    name: 'def (parametric)', aliases: ['function', 'fn'], cat: 'defs', section: '§9.1', tracks: null,
+    name: '(def (name …) …)', aliases: ['function', 'fn'], cat: 'defs', section: '§9.1', tracks: null,
     syntax: '(def (name param …) item …)',
     summary: 'A snippet with parameters: (name arg …) pastes the body with each argument in place of its parameter.',
     insert: '(def (beat n) (x 4 > n < n))',
     example: '(def (beat n) (x 2 > n < n))\n(fm1 :len 8 (beat c) (beat e))',
   },
   {
-    name: 'def-val', aliases: ['$', 'slot', 'runtime value', ':unit', ':public', 'variable'], cat: 'defs', section: '§8', tracks: null,
+    name: '(def-val …)', aliases: ['$', 'slot', 'runtime value', ':unit', ':public', 'variable'], cat: 'defs', section: '§8', tracks: null,
     syntax: '(def-val name init [A..B] [:public])  ·  $name  ·  :name value|curve',
     summary: 'A runtime value: $name reads it where a value goes, :name writes or sweeps it from any track, and a Live slider moves it; :public lets the game write it too.',
     insert: '(def-val bright 20 0..40 :public)',
     example: '(def-val bright 20 0..40 :public)\n(def-val swell 0)\n(fm1 :len 8 :swell (linear 0..20 :len 1) (x 2 :tl1 (+ $bright $swell) c e g e))',
   },
   {
-    name: 'def-se', aliases: ['sound effect', 'se'], cat: 'defs', section: '§9.3', tracks: null,
+    name: '(def-se …)', aliases: ['sound effect', 'se'], cat: 'defs', section: '§9.3', tracks: null,
     syntax: '(def-se name [:prio N] [:tempo T] (channel …) …)',
     summary: 'A sound effect: parts the game starts by number, taking channels from the song while they play.',
     insert: '(def-se jump :prio 3 (sqr3 :oct 5 :len 32 c e g > c))',
     example: '(def-se jump :prio 3 (sqr3 :oct 5 :len 32 c e g > c))\n(fm1 c e g)',
   },
   {
-    name: '(let …)', aliases: ['let'], cat: 'defs', section: '§7.2', tracks: null,
+    name: '(let …)', cat: 'defs', section: '§7.2', tracks: null,
     syntax: '(let [name expr …] body …)',
     summary: 'Local values for the body, evaluated at compile time.',
     insert: '(let [root 60] (note root) (note (+ root 7)))',
     example: '(fm1 :len 8 (let [root 60] (note root) (note (+ root 4)) (note (+ root 7))))',
   },
   {
-    name: '(for …)', aliases: ['for', 'loop over', 'generate'], cat: 'defs', section: '§7.5', tracks: null,
+    name: '(for …)', aliases: ['loop over', 'generate'], cat: 'defs', section: '§7.5', tracks: null,
     syntax: '(for [name values …] body …)',
     summary: 'The body written out once for each value: a range like 0..7, or a list of numbers. Notes are MIDI numbers, so a chord is offsets from a let root.',
     insert: '(for [i 0..7] (note (+ 60 i)))',
     example: '(fm1 :len 16 (for [i 0..7] (note (+ 60 i))) (let [root 48] (for [n [0 4 7 12]] (note (+ root n)))))',
   },
   {
-    name: '(if …)', aliases: ['if', 'when', 'condition', 'compare', 'not', '=', '<', '>', '<=', '>='], cat: 'defs', section: '§7.6', tracks: null,
+    name: '(if …)', aliases: ['when', 'condition', 'compare', 'not', '=', '<', '>', '<=', '>='], cat: 'defs', section: '§7.6', tracks: null,
     syntax: '(if test then [else])',
     summary: 'A branch chosen when the score compiles: then when test is non-zero, else otherwise. Comparisons (= < > <= >=) and not give 1 or 0; a $value cannot be tested, since the driver does not branch.',
     insert: '(if (= (mod i 4) 0) (note 72) (note 60))',
     example: '(fm1 :len 16 (for [i 0..15] (if (= (mod i 4) 0) (note 72) (note 60))))',
   },
   {
-    name: '(note …)', aliases: ['note', 'midi'], cat: 'defs', section: '§7.3', tracks: null,
+    name: '(note …)', aliases: ['midi'], cat: 'defs', section: '§7.3', tracks: null,
     syntax: '(note expr [len])',
     summary: 'A note at a computed MIDI number (60 = middle C); a noise curve in it is one draw — a random key, fixed by the score.',
     insert: '(note 60)',
@@ -507,7 +508,7 @@ export const REFERENCE = [
 
   // ---- macros --------------------------------------------------------------
   {
-    name: '(macro …)', aliases: ['macro', 'envelope'], cat: 'macros', section: '§10', tracks: null,
+    name: '(macro …)', aliases: ['envelope'], cat: 'macros', section: '§10', tracks: null,
     syntax: '(macro :target spec …)  ·  (macro :target none)  ·  (macro none)',
     summary: 'Per-note automation, sticky: every following note runs it until cleared. Targets: :vel :vol :pitch :semi :keyon :pan :mode and the FM registers (not the song-wide :master / :lfo-rate).',
     insert: '(macro :vel [15 12 9 6 3])',
@@ -549,7 +550,7 @@ export const REFERENCE = [
     example: '(fm1 :len 2 (macro :step 1/16 :semi [#sus 0 4 7] :keyon 1) c f)',
   },
   {
-    name: '(wait …)', aliases: ['wait'], cat: 'macros', section: '§10', tracks: null,
+    name: '(wait …)', cat: 'macros', section: '§10', tracks: null,
     syntax: '[v (curve …) (wait L) …]  ·  (wait key-off)',
     summary: 'A stage in a macro vector: holds the value for a length, or until the note\'s key-off.',
     insert: '(wait 8)',
@@ -558,14 +559,14 @@ export const REFERENCE = [
 
   // ---- curves --------------------------------------------------------------
   {
-    name: 'linear', cat: 'curves', section: '§11', tracks: null,
+    name: '(linear …)', cat: 'curves', section: '§11', tracks: null,
     syntax: '(linear A..B :len L)',
     summary: 'A straight ramp from A to B over L. Where a value goes: inline it sweeps the register, in a macro it shapes each note.',
     insert: '(linear 0..100 :len 8)',
     example: '(fm1 :len 4 :tl1 (linear 0..60 :len 1) c e g e)',
   },
   {
-    name: 'ease-*', aliases: ['ease-in', 'ease-out', 'ease-inout', 'easing'], prefixes: ['ease-'], cat: 'curves', section: '§11', tracks: null,
+    name: '(ease-* …)', aliases: ['ease-in', 'ease-out', 'ease-inout', 'easing'], prefixes: ['ease-'], cat: 'curves', section: '§11', tracks: null,
     syntax: '(ease-out A..B :len L)  ·  ease-{in,out,inout}-{sine,quad,cubic,quart,quint,expo,circ,back,elastic,bounce}',
     summary: 'Eased ramps: slow at the start (in), the end (out) or both.',
     insert: '(ease-out 0..100 :len 8)',
@@ -597,21 +598,21 @@ export const REFERENCE = [
 
   // ---- echo, delay, glide --------------------------------------------------
   {
-    name: '(echo …)', aliases: ['echo', 'repeat', ':back'], cat: 'effects', section: '§12', tracks: null,
+    name: '(echo …)', aliases: ['repeat', ':back'], cat: 'effects', section: '§12', tracks: null,
     syntax: '(echo N :vel+ step | :vel* ratio [:back B])',
     summary: 'Replays the last note (or the one B back) N times at the current :len, each quieter — it takes time.',
     insert: '(echo 3 :vel+ -2)',
     example: '(fm1 :len 8 c (echo 3 :vel+ -3) e (echo 2 :vel* 0.6))',
   },
   {
-    name: '(delay …)', aliases: ['delay', ':time'], cat: 'effects', section: '§12', tracks: null,
+    name: '(delay …)', aliases: [':time'], cat: 'effects', section: '§12', tracks: null,
     syntax: '(delay N :vel+ step | :vel* ratio :time T)  ·  (delay none)',
     summary: 'Sticky: every following note echoes at +k·T into the gaps the part leaves, cut at the next written note; the dry note\'s :gate lets them in.',
     insert: '(delay 3 :vel+ -4 :time 1/8)',
     example: '(fm1 (delay 3 :vel+ -4 :time 1/8) :len 4 :gate 8 c _ e _)',
   },
   {
-    name: '(glide …)', aliases: ['glide', 'portamento'], cat: 'effects', section: '§14', tracks: FM_PSG,
+    name: '(glide …)', aliases: ['portamento'], cat: 'effects', section: '§14', tracks: FM_PSG,
     syntax: '(glide T)  ·  (glide from T)  ·  (glide none)',
     summary: 'Portamento into each following note over T, from the pitch sounding (a T longer than the notes lags behind them); from sets the next glide\'s start pitch.',
     insert: '(glide 8)',
@@ -620,7 +621,7 @@ export const REFERENCE = [
 
   // ---- loops and flow ------------------------------------------------------
   {
-    name: '(x …)', aliases: ['x', 'repeat'], cat: 'flow', section: '§13', tracks: null,
+    name: '(x …)', aliases: ['repeat'], cat: 'flow', section: '§13', tracks: null,
     syntax: '(x N body …)  ·  (x body …)',
     summary: 'Plays the body N times (forever without N). The body compiles once: (x 4 c >) plays c c c c.',
     insert: '(x 4 c e g e)',
@@ -634,14 +635,14 @@ export const REFERENCE = [
     example: '(fm1 :len 8 #verse c e g e (go verse 2) c2)',
   },
   {
-    name: '(break)', aliases: ['break'], cat: 'flow', section: '§13', tracks: null,
+    name: '(break)', cat: 'flow', section: '§13', tracks: null,
     syntax: '(x N … (break) …)',
     summary: 'On the last pass of the enclosing counted loop, leaves it here.',
     insert: '(break)',
     example: '(fm1 :len 8 (x 3 c e (break) g e) c2)',
   },
   {
-    name: '(trig N)', aliases: ['trig', 'cue', 'sync'], cat: 'flow', section: '§13', tracks: null,
+    name: '(trig N)', aliases: ['cue', 'sync'], cat: 'flow', section: '§13', tracks: null,
     syntax: '(trig N)',
     summary: 'A cue the game reads (N 0–63) — music-to-game sync. The Live log shows it as it passes.',
     insert: '(trig 1)',
@@ -650,14 +651,14 @@ export const REFERENCE = [
 
   // ---- FM3 and CSM ---------------------------------------------------------
   {
-    name: 'fm3-1–fm3-4', aliases: ['fm3-1', 'fm3-2', 'fm3-3', 'fm3-4', 'independent operator'], cat: 'fm3', section: '§15', tracks: FM,
+    name: '(fm3-1 …)', aliases: ['fm3-2', 'fm3-3', 'fm3-4', 'independent operator'], cat: 'fm3', section: '§15', tracks: FM,
     syntax: '(fm3 voice)  (fm3-1 …) … (fm3-4 …)',
     summary: 'FM3 with one pitch per operator: each fm3-N track plays one operator; a note-less (fm3 voice) gives the shared patch.',
     insert: '(fm3-1 :len 8 c e g e)',
     example: '(def-fm kit init-fm :alg 7 :tl1 20 :tl2 30 :tl3 25 :tl4 0)\n(fm3 kit)\n(fm3-1 :oct 5 :len 8 c c)\n(fm3-2 :oct 3 :len 4 c _)',
   },
   {
-    name: 'fm3-csm', aliases: ['csm', 'fm3-csm-rate', ':csm-rate', 'formant', 'vocoder'], cat: 'fm3', section: '§15', tracks: FM,
+    name: '(fm3-csm …)', aliases: ['csm', 'fm3-csm-rate', ':csm-rate', 'formant', 'vocoder'], cat: 'fm3', section: '§15', tracks: FM,
     syntax: '(fm3-csm voice …)  ·  (fm3-csm-rate …)  ·  :csm-rate Hz  ·  (fm3-csm voice) (fm3-1 …) … (fm3-csm-rate …)',
     summary: 'CSM: the fm3-csm note is the formant, Timer A\'s rate the buzz pitch — from :csm-rate or an fm3-csm-rate track of notes. Beside fm3-1–fm3-4 a note-less (fm3-csm voice) makes each operator a formant track and the rate track the voice.',
     insert: '(fm3-csm-rate :oct 6 :len 1 c d e f)',
@@ -666,7 +667,7 @@ export const REFERENCE = [
 
   // ---- PCM -----------------------------------------------------------------
   {
-    name: 'def-pcm', aliases: ['sample', 'wav', ':file', ':rate'], cat: 'pcm', section: '§16', tracks: PCM,
+    name: '(def-pcm …)', aliases: ['sample', 'wav', ':file', ':rate'], cat: 'pcm', section: '§16', tracks: PCM,
     syntax: '(def-pcm name :file "x.wav" [:rate Hz] …)  ·  (def-pcm name base …)',
     summary: 'A sample from a WAV, relative to the score; a leading name extends another sample. Baked to 8-bit at each pitch played.',
     insert: '(def-pcm hit :file "sounds/hit.wav")',
@@ -703,70 +704,70 @@ export const REFERENCE = [
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm loud-snare snare :fx [(comp :threshold -30 :ratio 8) (normalize)])\n(pcm1 :len 8 snare c loud-snare c)',
   },
   {
-    name: '(gain …)', aliases: ['gain', ':db'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(gain …)', aliases: [':db'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(gain dB)',
     summary: 'Scales the level by dB, positive louder. Nothing clips until the chain ends.',
     insert: '(gain 6)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm loud snare :fx [(gain 6)])\n(pcm1 :len 8 snare c loud c)',
   },
   {
-    name: '(normalize …)', aliases: ['normalize', ':peak'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(normalize …)', aliases: [':peak'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(normalize [:peak dBFS])',
     summary: 'Scales so the peak lands on :peak (default 0 dBFS).',
     insert: '(normalize)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm full clap :fx [(normalize)])\n(pcm1 :len 8 clap c full c)',
   },
   {
-    name: '(comp …)', aliases: ['comp', 'compressor', ':threshold', ':ratio', ':attack', ':release', ':knee', ':makeup'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(comp …)', aliases: ['compressor', ':threshold', ':ratio', ':attack', ':release', ':knee', ':makeup'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(comp :threshold dB :ratio R :attack L :release L :knee dB :makeup dB)',
     summary: 'A compressor: above the threshold the level rises 1/ratio as fast.',
     insert: '(comp :threshold -18 :ratio 4)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm fat kick :fx [(comp :threshold -30 :ratio 8) (normalize)])\n(pcm1 :len 8 kick c fat c)',
   },
   {
-    name: '(limit …)', aliases: ['limit', 'limiter', ':ceiling'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(limit …)', aliases: ['limiter', ':ceiling'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(limit [:ceiling dBFS])',
     summary: 'A brickwall limiter: the peak never passes the ceiling.',
     insert: '(limit)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm hot snare :fx [(gain 12) (limit)])\n(pcm1 :len 8 snare c hot c)',
   },
   {
-    name: '(crush …)', aliases: ['crush', 'bitcrush', 'lo-fi', ':bits'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(crush …)', aliases: ['bitcrush', 'lo-fi', ':bits'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(crush :bits N)',
     summary: 'Quantizes to N bits — the lo-fi step.',
     insert: '(crush :bits 4)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm lofi snare :fx [(crush :bits 3)])\n(pcm1 :len 8 snare c lofi c)',
   },
   {
-    name: '(hpf …)', aliases: ['hpf', 'high-pass', 'low cut', ':freq'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(hpf …)', aliases: ['high-pass', 'low cut', ':freq'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(hpf :freq Hz)',
     summary: 'High-pass filter, 12 dB/oct: cuts below :freq — a low cut also buys level headroom.',
     insert: '(hpf 100)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm thin snare :fx [(hpf 800)])\n(pcm1 :len 8 snare c thin c)',
   },
   {
-    name: '(lpf …)', aliases: ['lpf', 'low-pass', 'high cut', 'filter'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(lpf …)', aliases: ['low-pass', 'high cut', 'filter'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(lpf :freq Hz)',
     summary: 'Low-pass filter, 12 dB/oct: cuts above :freq — darker, duller.',
     insert: '(lpf 3000)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm dull snare :fx [(lpf 1500)])\n(pcm1 :len 8 snare c dull c)',
   },
   {
-    name: '(drive …)', aliases: ['drive', 'saturation', 'distortion', 'overdrive'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(drive …)', aliases: ['saturation', 'distortion', 'overdrive'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(drive :db N)',
     summary: 'Soft saturation (tanh): N dB into it; a full-scale peak stays full scale, quieter parts come up.',
     insert: '(drive 12)',
     example: '(import "presets/tr808/set.mmlisp")\n(def-pcm dirty snare :fx [(drive 18)])\n(pcm1 :len 8 snare c dirty c)',
   },
   {
-    name: '(fade …)', aliases: ['fade', ':at', ':curve'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(fade …)', aliases: [':at', ':curve'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(fade :at L :len L [:curve name])',
     summary: 'Fades to silence from :at over :len and cuts the sample there — it saves bank bytes.',
     insert: '(fade :at 120ms :len 80ms)',
     example: '(import "presets/orch/set.mmlisp")\n(def-pcm short orch-hit :fx [(fade :at 60ms :len 60ms)])\n(pcm1 :len 4 orch-hit c short c)',
   },
   {
-    name: '(reverb …)', aliases: ['reverb', 'room', ':size', ':damp', ':mix', ':predelay', ':tail'], cat: 'fx', section: '§16', tracks: PCM,
+    name: '(reverb …)', aliases: ['room', ':size', ':damp', ':mix', ':predelay', ':tail'], cat: 'fx', section: '§16', tracks: PCM,
     syntax: '(reverb :size :damp :mix :predelay :tail L)',
     summary: 'A Freeverb-style room; grows the sample by :tail and fades the tail out.',
     insert: '(reverb :tail 250ms)',
@@ -784,11 +785,16 @@ export const REFERENCE = [
 // caller says which it is looking at; an entry without `ctx` answers
 // anywhere, and with no `ctx` asked for, the first entry wins.
 let _index = null;
+/** The head of a form's name — `(def-fm …)` is def-fm's — or null. */
+export const formHead = (name) => /^\(([^\s(),]+)/.exec(name)?.[1] ?? null;
+/** The names an entry is found by besides its own: a form's head, its aliases. */
+export const namesOf = (e) => [...(formHead(e.name) ? [formHead(e.name)] : []), ...(e.aliases ?? [])];
+
 export function referenceFor(word, ctx = null) {
   if (!_index) {
     _index = { exact: new Map(), prefixes: [] };
     for (const e of REFERENCE) {
-      for (const n of [e.name, ...(e.aliases ?? [])]) {
+      for (const n of [e.name, ...namesOf(e)]) {
         const at = _index.exact.get(n);
         if (at) at.push(e); else _index.exact.set(n, [e]);
       }

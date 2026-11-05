@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 import { TARGETS } from "../../live/src/targets.js";
-import { newScoreSource } from "../../live/src/new-score.js";
+import { newScoreSource, machineSummary } from "../../live/src/new-score.js";
 
 const heads = (src) => [...src.matchAll(/^\(([^\s()]+)(?: [a-z0-9]+)?(?: :tempo \d+)?\n  #top\n  \(go top\)\n\)$/gm)].map((m) => m[1]);
 const TRACKS = {
@@ -45,4 +45,10 @@ for (const role of sounds("pc88"))
 for (const name of Object.keys(TARGETS))
   if (/presets\/rx5/.test(newScoreSource(name)))
     assert.ok(heads(newScoreSource(name)).some((h) => TARGETS[name].partOf(h).kind === "sample"), `${name}: a sample track for the kit it imports`);
+// File > New's line on each machine: its parts and their channels, the cartridges after a +.
+assert.equal(machineSummary("md"), "OPN FM ×6 · SN76489 tone ×3 · SN76489 noise · DAC ×3", "md: its summary");
+assert.equal(machineSummary("pce"), "wave ×6 (noise, DDA)", "pce: six channels, noise and the DDA their other modes");
+assert.equal(machineSummary("x68k"), "OPM FM ×8 (noise) · PCM8 ×8", "x68k: the noise is fm8's");
+assert.match(machineSummary("fc"), /^2A03 pulse ×2 · .* \+ VRC6, FDS, MMC5, 5B, VRC7, N163$/, "fc: its cartridges after the +");
+for (const name of Object.keys(TARGETS)) assert.ok(machineSummary(name).length, `${name}: a summary`);
 console.log(`New score checks passed: ${Object.keys(TARGETS).length} machines`);

@@ -1,0 +1,7 @@
+; File > Export writes the score out: WAV, as the preview sounds; VGM, its
+; register writes for any VGM player; MMB, the Mega Drive driver's own binary;
+; Video, the editor as the score plays, an MP4 to post. The mixer, MASTER and
+; the TEMPO dial are for listening: an export plays the score as written.
+; File > Share… puts the score in a link that opens it here, ready to play.
+(fm1 :oct 3 (x 2 c e g e))
+(fm2 :oct 2 c2 g2 c2 g2)

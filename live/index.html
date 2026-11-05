@@ -227,15 +227,10 @@
     <div class="menu-wrap" id="menuFile">
       <button class="menu-btn" onclick="toggleMenu('menuFile')">File</button>
       <div class="menu-dropdown">
-        <div class="menu-wrap submenu-wrap" id="menuNew">
-          <button class="menu-item" onclick="toggleSubmenu('menuNew')">
-            <svg class="menu-icon" aria-hidden="true"><use href="#mi-note_add"/></svg><span>New</span>
-            <span class="submenu-arrow" aria-hidden="true"></span>
-          </button>
-          <div class="menu-dropdown submenu-dropdown" id="newMenuList">
-            <!-- one item per machine, injected by buildNewMenu() -->
-          </div>
-        </div>
+        <button class="menu-item" onclick="openNewScore()"
+                title="An empty score for a machine, and the way into the Guide">
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-note_add"/></svg><span>New…</span>
+        </button>
         <button class="menu-item" onclick="openFile();closeMenus()">
           <svg class="menu-icon" aria-hidden="true"><use href="#mi-folder_open"/></svg><span>Open…</span>
           <span class="menu-item-shortcut" id="openFileShortcut"></span>
@@ -416,8 +411,8 @@
           <span class="menu-item-shortcut" id="libraryShortcut"></span>
         </button>
         <button class="menu-item" onclick="openLessons();closeMenus()"
-                title="Learn MMLisp step by step, each step in a working copy of its own: your score waits until you leave">
-          <svg class="menu-icon" aria-hidden="true"><use href="#mi-school"/></svg><span>Lessons</span>
+                title="The tutorial, a tour of each machine and the app's tools, a step at a time, each in a working copy of its own: your score waits until you leave">
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-school"/></svg><span>Guide</span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" id="drvBackendItem" data-needs="driver" onclick="toggleDrvBackend();closeMenus()"
@@ -459,7 +454,7 @@
     <!-- Left column: editor + draggable divider + console -->
     <div id="leftCol">
       <!-- A lesson's Try and how the code stands, over the editor while the
-           Lessons tab is out of sight (a phone's panel covers the editor) -->
+           Guide tab is out of sight (a phone's panel covers the editor) -->
       <div id="lessonBar" class="lesson-try" hidden>
         <button type="button" class="lesson-bar-text" onclick="openLessons()" title="Open the lesson">
           <span><span class="lesson-try-label">Try:</span> <span id="lessonBarTask"></span></span>
@@ -515,7 +510,7 @@
       <div class="panel-tabs" id="panelTabs">
         <button class="panel-tab" data-pane="params" onclick="selectPanelTab('params')">Params</button>
         <button class="panel-tab" data-pane="library" onclick="selectPanelTab('library')">Library</button>
-        <button class="panel-tab" data-pane="lessons" onclick="selectPanelTab('lessons')">Lessons</button>
+        <button class="panel-tab" data-pane="lessons" onclick="selectPanelTab('lessons')">Guide</button>
       </div>
 
       <div id="rightPanelBody">
@@ -721,8 +716,9 @@
         <div id="libNote" class="lib-note"></div>
       </div>
 
-      <!-- Lessons: the tutorial (tutorial/, lessons.js), each step played in a
-           working copy of its own; leaving the lesson brings the score back -->
+      <!-- Guide: the tutorial, the machines' tours and the app's tools
+           (tutorial/, lessons.js), each step played in a working copy of its
+           own; leaving the lesson brings the score back -->
       <div id="lessonPane" hidden>
         <!-- In and out of the lessons (one button, a toggle); the record of
              steps done, apart, while the list shows -->
@@ -1021,6 +1017,22 @@
     </div>
   </div>
 
+  <!-- File > New: the machines, each with what it has and a tour of it
+       beside, the tutorial below; the first launch opens here (openNewScore) -->
+  <div id="newModal" class="modal-overlay" hidden>
+    <div class="modal new-modal" role="dialog" aria-labelledby="newModalTitle">
+      <div class="modal-title" id="newModalTitle">New Score</div>
+      <div class="new-machines" id="newMachines"></div>
+      <div class="new-guide">
+        <span>MMLisp from the first note, a step at a time.</span>
+        <button type="button" class="lib-chip" id="newTutorial">Tutorial</button>
+      </div>
+      <div class="modal-actions">
+        <button class="tb-btn" onclick="closeInfoModal('newModal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Share: the score rides the link itself (#s=), so a post plays it live -->
   <div id="shareModal" class="modal-overlay" hidden>
     <div class="modal info-modal share-modal">
@@ -1118,7 +1130,7 @@
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
-    import { newScoreSource } from './src/new-score.js';
+    import { newScoreSource, machineSummary } from './src/new-score.js';
     import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
@@ -1150,9 +1162,9 @@
     import { ABSnapshots } from './src/ab-snapshots.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
-    import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from './src/reference.js';
+    import { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } from './src/reference.js';
     import { isReservedHead } from './src/mmlisp-eval.js';
-    import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout, lessonText } from './src/i18n.js';
+    import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout, lessonText, uiText } from './src/i18n.js';
     import { parseStep, stepKey, textKeys, firstUndone, neighbor, stepState, statusText, loadProgress as loadLessonProgress, saveProgress as saveLessonProgress } from './src/lessons.js';
     import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
     import { defTemplates, fmDefText } from './src/def-templates.js';
@@ -5413,7 +5425,7 @@
     // compiles under, which for a score from the Library is its path there:
     // its imports and samples resolve against that folder.
     const DRAFT_KEY = 'mmlisp.draft';
-    // Tools > Lessons (renderLessons): lessons.json once read, the steps done,
+    // Tools > Guide (renderLessons): lessons.json once read, the steps done,
     // and the lesson open (its session). `var`: the draft, the editor's load
     // and the panel read them from the first document on.
     var _lessons = null, _lessonProgress = loadLessonProgress(), _lesson = null;
@@ -7500,32 +7512,74 @@
       await offerMucomPcmWav(_sourceHandle);
     }
 
-    // File > New: an item a machine, from the targets: the default first, the
-    // rest in alphabetical order.
-    function buildNewMenu() {
-      const rank = ([name, t]) => (name === DEFAULT_TARGET ? '' : t.system);
-      const machines = Object.entries(TARGETS).sort((a, b) => rank(a).localeCompare(rank(b), 'en'));
-      document.getElementById('newMenuList').innerHTML = machines.map(([name, t]) =>
-        `<button class="menu-item" onclick="newFile('${name}');closeMenus()"><span>${t.system}</span></button>`).join('');
-    }
-
     // A score about to be replaced whole asks first when it has unsaved edits
     // — the draft follows the editor, so nothing else would bring them back.
     // In a lesson that is the score set aside, not the step's copy. `next`:
-    // what replaces it. True: go ahead. Asked where an open starts, before it
-    // moves the folder; asked again on the way in, it remembers the edits
-    // already let go, so one open asks once.
+    // the file that replaces it, or `text` (ui-texts.js) says what does.
+    // True: go ahead. Asked where an open starts, before it moves the
+    // folder; asked again on the way in, it remembers the edits already let
+    // go, so one open asks once.
     let _replaceAgreed = null; // the text whose edits may go
-    function mayReplaceDoc(next) {
+    function mayReplaceDoc(next, text = 'replace-file') {
       const doc = _lesson ? _lesson.aside : currentDocument();
       if (!doc.dirty || doc.state.doc === _replaceAgreed) return true;
-      if (!window.confirm(`${doc.name || 'untitled.mmlisp'} has unsaved edits. Replace it with ${next}?`)) return false;
+      if (!window.confirm(uiText(text, { name: doc.name || 'untitled.mmlisp', next }))) return false;
       _replaceAgreed = doc.state.doc;
       return true;
     }
 
+    // File > New: the machines, the default first, each with what it has
+    // (machineSummary) and a tour of it; the tutorial below. A machine
+    // clicked is the new score. The first launch, with no score to come back
+    // to, opens here: the way in for someone who has not seen the app.
+    async function openNewScore() {
+      closeMenus();
+      const rank = ([name, t]) => (name === DEFAULT_TARGET ? '' : t.system);
+      const machines = Object.entries(TARGETS).sort((a, b) => rank(a).localeCompare(rank(b), 'en'));
+      let lessons = [];
+      try { lessons = await loadLessons(); } catch (_) { /* the list stands without the tours */ }
+      const list = document.getElementById('newMachines');
+      list.replaceChildren(...machines.map(([name, t]) => {
+        const row = document.createElement('div');
+        row.className = 'new-machine';
+        const pick = document.createElement('button');
+        pick.type = 'button';
+        pick.className = 'new-machine-pick';
+        pick.append(Object.assign(document.createElement('b'), { textContent: t.system }),
+          Object.assign(document.createElement('span'), { textContent: machineSummary(name) }));
+        pick.onclick = () => { closeInfoModal('newModal'); newFile(name); };
+        row.append(pick);
+        const li = lessons.findIndex((l) => l.group && l.id === name); // its tour, under Machines
+        if (li >= 0) {
+          const tour = document.createElement('button');
+          tour.type = 'button';
+          tour.className = 'lib-chip';
+          tour.textContent = 'Tour';
+          tour.title = `What the ${t.system} has that the others lack, a step at a time`;
+          tour.onclick = () => { closeInfoModal('newModal'); openGuideAt(li, 0); };
+          row.append(tour);
+        }
+        return row;
+      }));
+      document.getElementById('newTutorial').onclick = () => {
+        closeInfoModal('newModal');
+        openGuideAt(...(firstUndone(lessons, _lessonProgress.done) ?? [0, 0]));
+      };
+      openInfoModal('newModal');
+      list.querySelector('.new-machine-pick')?.focus();
+    }
+    window.openNewScore = openNewScore;
+    document.getElementById('newModal').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); closeInfoModal('newModal'); }
+    });
+    // A step of the Guide, its tab in view.
+    async function openGuideAt(li, si) {
+      await openLessons();
+      await startLesson(li, si);
+    }
+
     function newFile(target = DEFAULT_TARGET) {
-      if (!mayReplaceDoc('a new score')) return;
+      if (!mayReplaceDoc(null, 'replace-new')) return;
       const source = newScoreSource(target);
       cancelResume();
       _sourceHandle = null;
@@ -7931,10 +7985,21 @@
     setEditorDoc(_draft ? _draft.src : newScoreSource(DEFAULT_TARGET));
     if (_draft?.dirty) markDocDirty();
     queueMicrotask(() => {
-      if (_draft && !location.hash) log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
-      return location.hash ? loadSharedFromHash() : refreshImportsAndCompile();
+      if (!location.hash) {
+        if (_draft) log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
+        else openNewScore(); // the first launch
+        return refreshImportsAndCompile();
+      }
+      // A shared link over edits not saved asks, as every open does — once
+      // the page shows; kept, the draft stands and the link is let go.
+      setTimeout(() => {
+        if (mayReplaceDoc(null, 'replace-shared')) return loadSharedFromHash();
+        window.history.replaceState(null, '', location.pathname + location.search); // `history` is CodeMirror's here
+        log('Restored ' + (_draft.name || 'the unsaved score') + ' from last time', 'info');
+        return refreshImportsAndCompile();
+      });
     });
-    window.addEventListener('hashchange', () => { if (mayReplaceDoc('the shared score')) loadSharedFromHash(); });
+    window.addEventListener('hashchange', () => { if (mayReplaceDoc(null, 'replace-shared')) loadSharedFromHash(); });
 
     // -----------------------------------------------------------------------
     // Logging / status
@@ -9509,7 +9574,7 @@
     // Generic info modals (About / Licenses): open/close by id, close on overlay click.
     window.openInfoModal = (id) => { closeMenus(); document.getElementById(id).hidden = false; };
     window.closeInfoModal = (id) => { document.getElementById(id).hidden = true; };
-    for (const id of ['aboutModal', 'licenseModal', 'shareModal', 'videoModal']) {
+    for (const id of ['aboutModal', 'licenseModal', 'shareModal', 'videoModal', 'newModal']) {
       document.getElementById(id).addEventListener('click', (e) => {
         if (e.target.id === id) window.closeInfoModal(id);
       });
@@ -9533,7 +9598,6 @@
       renderLessons(); // their texts, in the pane and the bar over the editor
     }
     buildLanguageMenu();
-    buildNewMenu();
     window.setUiLanguage = setUiLanguage;
     window.openThemeModal = openThemeModal;
     window.closeThemeModal = closeThemeModal;
@@ -9745,7 +9809,7 @@
 
     function updateLibraryKeys() {
       const dock = document.getElementById('keyboardDock');
-      // Library without a voice or sample picked, and Lessons, play nothing of
+      // Library without a voice or sample picked, and Guide, play nothing of
       // their own on the keys: the keyboard goes, and the pane has the room.
       if (dock) dock.hidden = (libraryShown() && !_libKeyTarget) || (_panelOpen && _panelTab === 'lessons');
       updateKeyboardUiState();
@@ -9879,7 +9943,7 @@
       const label = new Map(REFERENCE_CATEGORIES);
       const kindOf = (e) => e.cat === 'curves' ? 'curve' : e.cat === 'fx' ? 'effect'
         : e.cat === 'channels' ? 'channel' : e.name.startsWith(':') ? 'keyword'
-        : e.name.startsWith('(') ? 'form' : e.name.startsWith('def') ? 'def' : 'syntax';
+        : /^\(?def\b/.test(e.name) ? 'def' : e.name.startsWith('(') ? 'form' : 'syntax';
       return REFERENCE.map((e) => {
         const file = { path: `reference/${e.name}`, text: e.example, snippet: true };
         return {
@@ -9888,7 +9952,7 @@
           group: 'ref:' + e.cat,
           groupLabel: refCategoryLabel(e.cat, label.get(e.cat)),
           name: e.name,
-          aliases: e.aliases ?? [],
+          aliases: namesOf(e), // a form's head first: `x` finds (x …) by its start
           kind: kindOf(e),
           tracks: e.tracks,
           about: refSummary(e),
@@ -10487,7 +10551,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // Lessons (Tools > Lessons, the panel's Lessons tab): the tutorial's steps
+    // Guide (Tools > Guide, the panel's Guide tab): the tutorial's steps
     // (lessons.js), each played in a working copy of its own.
     //
     // The session (_lesson): the score set aside when it began (its editor
@@ -10540,7 +10604,7 @@
 
     // --- the session ---------------------------------------------------------
     async function startLesson(li, si) {
-      if (currentIrURL) { log('Lessons: close the .mmb first (File > New).', 'err'); return; }
+      if (currentIrURL) { log('Guide: close the .mmb first (File > New).', 'err'); return; }
       const lessons = await loadLessons();
       if (!_lesson) {
         saveDraft(); // the score as it stands is what a reload comes back to
@@ -10556,7 +10620,7 @@
       const path = `tutorial/${key}.mmlisp`;
       let parsed;
       try { parsed = parseStep(await fetchText(path)); }
-      catch (e) { log('Lessons: ' + e.message, 'err'); return; }
+      catch (e) { log('Guide: ' + e.message, 'err'); return; }
       const here = lessonAt();
       if (here) _lesson.copies.set(here.key, editorView.state);
       Object.assign(_lesson, { lesson, si, parsed, list: false, status: { state: 'fresh', why: '' } });
@@ -10616,7 +10680,7 @@
       await startLesson(...(firstUndone(lessons, _lessonProgress.done) ?? [0, 0]));
     };
     window.clearLessonProgress = () => {
-      if (!window.confirm('Clear every lesson step you have done?')) return;
+      if (!window.confirm(uiText('clear-progress'))) return;
       _lessonProgress.done.clear();
       saveLessonProgress(_lessonProgress);
       renderLessons();
@@ -10723,7 +10787,7 @@
       const list = document.getElementById('lessonList');
       let lessons;
       try { lessons = await loadLessons(); }
-      catch (e) { list.textContent = 'Lessons: ' + e.message; return; }
+      catch (e) { list.textContent = 'Guide: ' + e.message; return; }
       const at = lessonAt();
       let n = 0;
       list.replaceChildren(...lessons.flatMap((l, li) => {

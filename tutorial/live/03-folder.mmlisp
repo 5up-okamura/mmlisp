@@ -1,0 +1,7 @@
+; File > Open Folder… opens a folder of scores and songs — .vgm .nsf .mid
+; .dmf .fur .mdx .mgs .muc — and File > Files in Folder lists them; the two
+; buttons at the end of the panel's top line step to the previous and next
+; file. A song opens converted, as a new unsaved score, and what it names
+; beside itself (an MDX's .pdx, a mucom88 song's banks) is read from the
+; folder. A .zip or .lzh opened or dropped is a folder too, read in memory,
+; on a phone as well: a downloaded song pack needs no unpacking.

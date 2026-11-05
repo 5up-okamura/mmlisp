@@ -27,7 +27,8 @@
       {"file": "01-defs", "title": "Defs", "check": {"match": "\\(def\\s[\\s\\S]*\\(def\\s", "notesMin": 16}, "answer": "(def riff c e g e)\n(def riff2 d f a f)\n(fm1 riff riff riff2 riff2)"},
       {"file": "02-dynamics", "title": "Dynamics", "check": {"velsMin": 2}, "answer": "(fm1 :vel 15 c e g e :vel 9 c e g e)"},
       {"file": "03-envelopes", "title": "Envelopes", "check": {"match": "\\(fm1[^)]*\\bpluck\\b"}, "answer": "(def pluck (macro :vel [15 12 9 6 3]))\n(fm1 pluck c e g e c e g e)"},
-      {"file": "04-drums", "title": "Drums", "check": {"match": "\\(pcm1[^)]*\\bsnare\\b"}, "answer": "(def-score :pcm-voices 1)\n(import \"presets/tr808/set.mmlisp\")\n(fm1 :oct 3 c e g e c e g e)\n(pcm1 kick c _ snare c _ kick c _ snare c _)"}
+      {"file": "04-drums", "title": "Drums", "check": {"match": "\\(pcm1[^)]*\\bsnare\\b"}, "answer": "(def-score :pcm-voices 1)\n(import \"presets/tr808/set.mmlisp\")\n(fm1 :oct 3 c e g e c e g e)\n(pcm1 kick c _ snare c _ kick c _ snare c _)"},
+      {"file": "05-mods", "title": "Modifiers", "check": {"match": "\\(def-mod[^)]*:voice\\s+hat(?![\\w-])[^)]*:vel(\\+\\s+-\\d|\\*\\s+0?\\.\\d|\\s+(\\d|1[0-4])(?!\\d))"}, "answer": "(def-mod :voice hat :vel+ -6)\n(def-score :pcm-voices 1)\n(import \"presets/tr808/set.mmlisp\")\n(fm1 :oct 3 (x 2 c e g e c e g e))\n(pcm1 (x 2 kick c hat c snare c hat c))"}
     ]
   },
   {
@@ -38,6 +39,17 @@
       {"file": "02-glide", "title": "Glide", "check": {"match": "\\(glide\\s+\\d"}, "answer": "(fm1 (glide 16) c4 g4 e4 > c4)"},
       {"file": "03-sweeps", "title": "Sweeps", "check": {"match": ":vol\\s+\\("}, "answer": "(fm1 :vol (linear 31..0 :len 2/1) (x 4 c e g e))"},
       {"file": "04-pan", "title": "Pan", "check": {"match": "\\(fm2[^)]*:pan\\s+right"}, "answer": "(fm1 :pan left (x 2 c e g e))\n(fm2 :pan right :oct 2 c2 g2)"}
+    ]
+  },
+  {
+    "id": "live",
+    "group": "Tools",
+    "title": "MMLisp Live",
+    "steps": [
+      {"file": "01-logical", "title": "Logical Editor", "check": {"match": "\\(fm2[^)]*(:oct\\s+3|>\\s*c2)"}, "answer": "(fm1 c e g e c e g e)\n(fm2 :oct 2 > c2 g2 <)"},
+      {"file": "02-tap-tempo", "title": "Tap Tempo"},
+      {"file": "03-folder", "title": "Files in Folder"},
+      {"file": "04-export", "title": "Export and Share"}
     ]
   },
   {

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { parseStep, passes, stepKey, firstUndone, neighbor, stepState } from "../../live/src/lessons.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
+import { TARGETS } from "../../live/src/targets.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lessons = JSON.parse(fs.readFileSync(path.join(root, "tutorial/lessons.json"), "utf8"));
@@ -62,6 +63,10 @@ if (firstUndone(lessons, allPlain) !== null) fails.push("firstUndone: a tour cou
   if (state(st.answer, false) !== "correct") fails.push("stepState: the answer typed is not correct");
   if (state("(fm1 c)", false) !== "notyet") fails.push("stepState: a wrong edit is not 'not yet'");
 }
+
+// File > New opens a machine's tour by its id: each one under Machines is a target's name.
+for (const l of lessons.filter((l) => l.group === "Machines"))
+  if (!TARGETS[l.id]) fails.push(`${l.id}: a tour under Machines is named for no target`);
 
 const files = fs.readdirSync(path.join(root, "tutorial"), { recursive: true }).filter((f) => f.endsWith(".mmlisp"));
 const listed = new Set(lessons.flatMap((l) => l.steps.map((s) => `${l.id}/${s.file}.mmlisp`)));

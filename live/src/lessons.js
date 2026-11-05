@@ -1,4 +1,4 @@
-// Tools > Lessons: the tutorial's steps, read from tutorial/ — one score per
+// Tools > Guide: the tutorial's steps, read from tutorial/ — one score per
 // step, its leading comment the text the lesson shows and the rest the code
 // the lesson's working copy starts from, as a snippet is read
 // (snippets/README.md). A step's "Try:" is an exercise, and its check

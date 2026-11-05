@@ -1,0 +1,10 @@
+; A def-mod changes every note it selects, wherever it is written, without
+; touching the tracks: silence a part to play it yourself over the rest, or
+; turn down the hats of an imported song. :ch picks channels, :voice the
+; voices and samples played; :keyon off makes their notes rests, :vel+ -3
+; turns them down. It has no name: a comment says what it is for.
+; Try: turn the hats down with a def-mod on the hat sample, :vel+ -6.
+(def-score :pcm-voices 1)
+(import "presets/tr808/set.mmlisp")
+(fm1 :oct 3 (x 2 c e g e c e g e))
+(pcm1 (x 2 kick c hat c snare c hat c))

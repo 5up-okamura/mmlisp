@@ -1,0 +1,7 @@
+; A song imported from a VGM or an NSF comes in frames, not beats. Edit > Tap
+; Tempo writes it again on a beat of your own, for as long as that score is
+; open: play it and tap at least four beats on the button or a MIDI key, the
+; first one a bar's first. The song's onsets then hold the taps to its tempo;
+; ×2 and ÷2 and the BPM box correct it by hand, a note within Snap of the
+; grid lands on it, and Bar lines fold the repeats. Each change writes the
+; score again, one undo; As imported goes back.

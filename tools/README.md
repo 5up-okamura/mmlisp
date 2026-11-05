@@ -103,7 +103,7 @@ Run from tools directory:
 30. `node scripts/ab-mgsdrv.mjs song.mgs [seconds] [channel]` — not a check: an
     MGS import held to the real MGSDRV (`npm i --no-save libkss-js`, which runs
     it on an emulated MSX), frame by frame on every PSG, SCC and FM channel
-31. `npm run check:lessons` — the tutorial (MMLisp Live's Lessons, `tutorial/`): every
+31. `npm run check:lessons` — the Guide (MMLisp Live's tutorial, tours and tools, `tutorial/`): every
     step compiles clean, its exercise is not done before the learner starts,
     and its answer does it; the walk (Next runs on through the lessons, never
     into or out of a machine's tour; Start Lesson resumes at the first step
@@ -112,10 +112,12 @@ Run from tools directory:
 ## i18n
 
 The Live app shows the reference's summaries and the snippets' descriptions
-in the user's language (MMLisp ▸ Language), and so do the lessons; the rest of
-the app stays in English. The English is the source, read from
-`live/src/reference.js`, the snippets' leading comments and the tutorial
-(`tutorial/lessons.json`'s titles, its steps' leading comments); each language
+in the user's language (MMLisp ▸ Language), and so do the lessons and the
+dialogs that ask; the rest of the app stays in English. The English is the
+source, read from `live/src/reference.js`, the snippets' leading comments, the
+tutorial (`tutorial/lessons.json`'s titles, its steps' leading comments) and
+`live/src/ui-texts.js` (a dialog's `{name}` marks, which a translation keeps
+— the check says when one is lost); each language
 is one generated pack, `live/src/i18n/<lang>.js`, that pairs every text with a
 hash of the English it translates. Nobody edits a pack:
 

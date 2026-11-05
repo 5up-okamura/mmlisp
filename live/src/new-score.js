@@ -51,6 +51,49 @@ function importsOf(target, tracks) {
     .map(([, set]) => `(import "presets/${set}/set.mmlisp")`);
 }
 
+/**
+ * One line of what the machine named `name` has, for File > New's list: its
+ * parts and how many channels of each, by the parts' labels (less the
+ * machine's name, and a part's qualifier in parentheses), the cartridges
+ * after a `+` by their chips. A part played on channels an earlier part has
+ * is another mode of them, in parentheses after it: `wave ×6 (noise, DDA)`
+ * is six channels. `OPN FM ×6 · SN76489 tone ×3 · SN76489 noise · DAC ×3`;
+ * a kit's sounds are its channels.
+ */
+export function machineSummary(name) {
+  const target = TARGETS[name];
+  const labelOf = (part) => {
+    const own = part.label.startsWith(`${target.system} `) ? part.label.slice(target.system.length + 1) : part.label;
+    return own.replace(/ \(.*\)$/, "");
+  };
+  const parts = new Map(), owner = new Map(), carts = []; // label → { n, modes }; voice key → label
+  for (const part of target.parts) {
+    const heads = target.headsOf(part.name);
+    const chip = target.channels[heads[0]].chip;
+    if (target.chips[chip].optional) {
+      if (!carts.includes(chip)) carts.push(chip);
+      continue;
+    }
+    const label = labelOf(part);
+    const keys = [...new Set(heads.map((h) => target.voiceKey(h)))];
+    const host = part.kit ? null : owner.get(keys[0]);
+    if (host && host !== label && keys.every((k) => owner.has(k))) {
+      const modes = parts.get(host).modes;
+      const chip = `${host.split(" ")[0]} `; // SSG tone's SSG noise is its noise
+      const mode = label.startsWith(chip) ? label.slice(chip.length) : label;
+      if (!modes.includes(mode)) modes.push(mode);
+      continue;
+    }
+    const at = parts.get(label) ?? { n: 0, modes: [] };
+    at.n += part.kit ? heads.length : keys.length;
+    parts.set(label, at);
+    for (const k of keys) if (!owner.has(k)) owner.set(k, label);
+  }
+  const own = [...parts].map(([label, { n, modes }]) =>
+    `${n > 1 ? `${label} ×${n}` : label}${modes.length ? ` (${modes.join(", ")})` : ""}`).join(" · ");
+  return carts.length ? `${own} + ${carts.map((c) => c.toUpperCase()).join(", ")}` : own;
+}
+
 /** The source of an empty score for the target named `name`. */
 export function newScoreSource(name) {
   const target = TARGETS[name];

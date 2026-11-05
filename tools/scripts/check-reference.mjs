@@ -7,7 +7,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { compileMMLisp, collectImports } from "../../live/src/mmlisp2ir.js";
 import { parse } from "../../live/src/mmlisp-parser.js";
-import { REFERENCE, REFERENCE_CATEGORIES, referenceFor } from "../../live/src/reference.js";
+import { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } from "../../live/src/reference.js";
 import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from "../../live/src/completion-names.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -27,7 +27,7 @@ for (const e of REFERENCE) {
   if (!cats.has(e.cat)) fail(`unknown category ${e.cat}`);
   if (names.has(e.name)) fail("duplicate name");
   names.add(e.name);
-  for (const n of [e.name, ...(e.aliases ?? [])]) {
+  for (const n of [e.name, ...namesOf(e)]) {
     if (claims.has(n)) claims.get(n).push(e); else claims.set(n, [e]);
   }
   if (e.tracks != null && !(Array.isArray(e.tracks) && e.tracks.every((t) => ["fm", "psg", "pcm", "wave"].includes(t))))

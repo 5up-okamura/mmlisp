@@ -32,7 +32,7 @@ const { bakeSampleBank, hasSampleBank, sampleBankKind } = await load("sample-ban
 const { bakeRhythmStandIn } = await load("chips/rhythm-rom.js");
 const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
 const { pitchToMidi, playedTicks } = await load("ir-utils.js");
-const { REFERENCE, REFERENCE_CATEGORIES, referenceFor } = await load("reference.js");
+const { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } = await load("reference.js");
 const { portSnippet, portMode, fmVoiceNames } = await load("snippet-port.js");
 
 const DOCS = {
@@ -234,7 +234,7 @@ function readReference({ section, query }) {
     const q = query.toLowerCase();
     const exact = referenceFor(query);
     const named = REFERENCE.filter((e) => e !== exact &&
-      [e.name, ...(e.aliases ?? [])].some((n) => n.toLowerCase().includes(q)));
+      [e.name, ...namesOf(e)].some((n) => n.toLowerCase().includes(q)));
     const described = REFERENCE.filter((e) => e !== exact && !named.includes(e) &&
       `${e.syntax} ${e.summary}`.toLowerCase().includes(q));
     const hits = [exact, ...named, ...described].filter(Boolean);
