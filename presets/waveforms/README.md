@@ -31,8 +31,8 @@ For the acid voices a slide is a legato `~` plus `(glide 32)` — the pitch move
 without a key-on, so the FM envelope does not retrigger — and an accent is a
 higher `:vel` with a shorter modulator decay. At 130 BPM a 16th step is about
 115 ms and the slide about 58 ms, and slides scale with tempo, unlike a real
-303. [demo-acid.mmlisp](demo-acid.mmlisp) plays a 16-step pattern twice on
-each voice, with a slider for the modulator attenuation.
+303. For a filter that opens and closes, the Mega Drive tour's CSM step in
+Tools > Guide sweeps a resonance through a bass's harmonics.
 
 The square, saw and 25% pulse structures follow
 [Plutiedev's chiptune sounds](https://www.plutiedev.com/chiptune-sounds);

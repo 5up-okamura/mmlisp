@@ -4,9 +4,8 @@
 scores worth playing to someone. A directory cannot be listed over HTTP, so a
 song has to be named there to appear.
 
-A song that shows off a preset set lives with it, such as
-`presets/waveforms/demo-acid.mmlisp`; one that stands on its own lives here,
-such as `daisy-bell.mmlisp`. Scores that test the driver
+A song that shows off a preset set lives with it; one that stands on its own
+lives here, such as `daisy-bell.mmlisp`. Scores that test the driver
 live in `drv/tests/`, and short scores that show how a feature is used live in
 [snippets](../snippets/README.md).
 
