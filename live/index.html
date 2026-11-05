@@ -7524,13 +7524,16 @@
       const run = _compileChain.then(async () => {
         if (_compileQueued === run) _compileQueued = null;
         const epoch = _docEpoch;
-        await refreshImportSources(editorView.state.doc.toString());
-        if (epoch !== _docEpoch) return { ir: null, ok: false };
-        const doc = editorView.state.doc;
-        const src = doc.toString();
-        const rec = { doc, changes: null };
-        _compileRec = rec;
+        let rec = null;
         try {
+          // Reading the imports parses the score: an unclosed ( fails here,
+          // and says so as the compile's error.
+          await refreshImportSources(editorView.state.doc.toString());
+          if (epoch !== _docEpoch) return { ir: null, ok: false };
+          const doc = editorView.state.doc;
+          const src = doc.toString();
+          rec = { doc, changes: null };
+          _compileRec = rec;
           const result = await compileOffThread(src, _lastFileName, _importSources);
           if (epoch !== _docEpoch) return { ir: null, ok: false };
           return applyCompile(src, result, rec);
@@ -8923,8 +8926,10 @@
       // current source, so Play reflects the latest edits. On error, compileNow
       // keeps the last good IR; only binary/URL presets with no editable source
       // (currentIrURL set, nothing compiled yet) are left to the loader below.
-      if (!prepared && (_lastGoodIR || !currentIrURL)) await refreshImportsAndCompile();
+      const failed = !prepared && (_lastGoodIR || !currentIrURL) && !(await refreshImportsAndCompile()).ok;
       if (!current()) return;
+      // What plays then is not the text on screen: say so, not just the error.
+      if (failed && _lastGoodIR) log('The source has errors: playing the last version that compiled', 'warn');
       if (exactLine && !_lastSourceMap?.some((e) => e.line === fromLine)) return;
       if (player) {
         player.stop();
