@@ -58,9 +58,6 @@ suffix combines with the target's base (language.md §7.0).
   centre that follows the game every frame — then as an offset slot on the
   scaled-macro mechanism (`offset + (shape × scale) >> 8`), not as live
   endpoints.
-- **PCM levels stay on the 6 dB shift ladder** (2026-10-21). A 3 dB step in
-  the Z80 mixer or level-baked copies were weighed; the user finds 6 dB
-  enough for drums. Do not re-propose finer PCM levels.
 - **No effect (def-se) on CH3** stays (2026-10-21). An effect over the
   independent-operator or CSM mode would have to save and restore what the
   frequency registers mean, not just their values; a "normal mode only"
@@ -108,9 +105,8 @@ Built: language.md §5.2 (the warp, `[w1 … wN]`, loops k passes a turn,
 ECxx through `ticksIn`, `brokenSpeedSel` from fur/dmf). Checked against
 Furnace's VGM (YM2612 key-on intervals, same channel, ≤ ½ frame): shuffle
 97.5–100 % where the average gave 63–99.8 % (the_serenity 8/7, Kobito,
-mm5_boss, smw2yi_flower_garden, …). Script: the session's `cmpmd.mjs`
-(Furnace `-loops 0 -vgmout`, our `renderVgm`, reg $28 per channel) — not
-checked in.
+mm5_boss, smw2yi_flower_garden, …). The comparison, to redo it: Furnace's
+`-loops 0 -vgmout` against our `renderVgm`, key-ons ($28) per channel.
 
 Open:
 - **Absolute drift, not the shuffle's.** the_serenity_of_lonliness drifts

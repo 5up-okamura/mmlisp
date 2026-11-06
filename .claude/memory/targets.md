@@ -9,38 +9,16 @@ open, per machine; delete each item once the repo records it.
 
 - **`def-fm` stays the one FM voice form**, OPLL's 2 ops included — no
   `def-fm2`.
-- **Play what can be played.** A voice or word a channel's part lacks is left
-  out with `W_TARGET`, not refused (as SSG-EG on the OPM already was); a voice
-  on a channel with no FM keeps its `:key`. A voice says so once, in one line,
-  and only if it plays (2026-11-03: a score's gm import alone gave 2,336 lines
-  on msx).
-- **OPLL's words share the `FM_` prefix** (built: language.md §19 msx; a
-  part's `words` is a closed `fmWords` list, its narrower registers its
-  `ranges`). `MACRO_TARGET_RANGE` stays the family's widest: a macro is
-  clamped there, the part's range clamps at the write.
+- **Play what can be played** (language.md §19): a voice says so once, and
+  only if it plays, because a score's gm import alone gave 2,336 lines on
+  msx (2026-11-03).
 - In the Live panel, what a machine lacks is hidden; a menu item is disabled.
-- **The OPLL's one user voice is one at a time, not one a score** (the
-  user's reading of MGS songs, 2026-10-26): a key-on writes the user voice,
-  so a channel switches freely; `W_TARGET` only where notes on different
-  channels sound together on different user voices (`checkTracks`, on the
-  tracks' loops written out, init-fm counting as one).
 - **The voice hoist is the driver's alone** (`target.driver`; 2026-10-25,
   the user's reading): on a VGM target it only cut notes 40 ms and moved
   voices off their beat. No `voiceAtKey` per part.
-- **`init-fm` is the FM part's** (`initVoice`, else the family's init
-  values of the words the part has — the OPM's with DT2 0 and no SSG-EG,
-  the OPN's the reverse; the user's ruling, 2026-10-26): a sine on each chip. The player's boot patch is the same map,
-  so a track with no voice plays init-fm on every target.
 
 ## What lists show on a machine (rulings, 2026-11-03)
 
-Built: the completion, the `@` picker, the Library and `mmlisp_presets` go by
-`builtinNames`, `assetMark` and `targetsWith` (targets.js).
-
-- **One source for names: the parts.** Built-in names are what the compiler
-  resolves on that machine; a kit's are its roles (`kick`, never `bd`).
-- **Assets are marked, not hidden.** "Play what can be played" extends to the
-  lists: hiding is for the panel's controls; Fits track hides on request.
 - **No declarations.** A set or snippet says nothing about targets: a mark
   comes from what it is (a def's kind) or writes (its channels).
 - **An audition sounds on the score's machine.** A wave preset on a machine
@@ -49,36 +27,26 @@ Built: the completion, the `@` picker, the Library and `mmlisp_presets` go by
 
 ## Names (rulings, 2026-11-03)
 
-- **No prefix is a role, a prefix one set's sound.** `kick`, `piano` on an FM
-  or a wave channel; `gm-piano`. gm keeps its prefix: the new-file template
-  imports it, and an import hides a ROM voice of the name. The melodic roles
-  are the 15 ROM voices' names.
-- **A voice and a wave can share a name** (`waveDefs`, as `sampleDefs`): the
-  channel's part chooses, and the panel asks the cursor's track.
-- **A wave's role is a macro** (`wave-piano`, in `presets/wavetable`): a wave
-  under a still level sounds much like any other. Its prefix keeps it from
-  hiding a ROM voice of the name, as a macro `piano` would.
-- **`presets/fm-roles` fills the FM roles on 4-op machines** with gm's voices
-  (gen-fm-roles.mjs): the ROM voices read as 4-op stay as what a role is with
-  nothing imported, which the importers rely on. The voices were picked by
+The names themselves are guide.md §25; the reasons:
+- **gm keeps its prefix** because the new-file template imports it, and an
+  import hides a ROM voice of the name.
+- **A wave's role is a macro** (`wave-piano`): a wave under a still level
+  sounds much like any other, and the prefix keeps it from hiding a ROM
+  voice of the name, as a macro `piano` would.
+- **The ROM voices read as 4-op stay** as what a role is with nothing
+  imported — the importers rely on it. fm-roles' voices were picked by
   instrument, not by ear; the user took them as they are for now.
 - **Still to discuss:** a 4-bit wave set under the same names, swapped by its
   import as a kit is (`presets/wavetable-4bit`?), and sounds past the fifteen
   roles (`bell`), which might stay macro names only.
 
-## Open from the 2026-10-25 rulings
+## The editor panel (ruled 2026-10-26)
 
-- **The editor panel**: drawing on a stage vector (shown, not drawn:
-  edit-tools.js `vectorAt`). (Ruled 2026-10-26: no wait for the cursor to
-  rest before the panel swaps.)
-- **Wave expressions**: generators (`(harmonics 1 0.5 0.33)` …), once the
-  expressions are in use.
+- No wait for the cursor to rest before the panel swaps. (Drawing on a
+  stage vector and wave generators are on the roadmap.)
 
-## PC Engine, then the Famicom (rulings, 2026-10-27)
+## The PC Engine (pce; built 2026-10-27)
 
-- **The PC Engine came first**, the Famicom after it: the PCE fit the parts
-  as they were (a wave, a noise sharing its channel); the 2A03 brought new
-  words (`:duty`, a triangle with no level, DPCM).
 - **pce is built** (language.md §19; chips/huc6280.js, targets/pce.js,
   synth-pce.js). What the docs do not say:
   - The chip is read from MAME's c6280.cpp and Mednafen's pce_psg.cpp
@@ -138,10 +106,7 @@ the docs do not say:
   past $4011 (a DC offset, as on the chip); a `:len 0` hold on pcm1 is not
   released by triggerKeyOff (DDA's the same: sample handlers do not
   register holds). A long song's VGM grows a block a hit.
-- **Songs in, ruled 2026-10-27 (the user): VGM first, then Furnace /
-  DefleMask NES modules, ppmck's MML only if wanted** (NSF came after the
-  expansions, 2026-10-29: its own section below). VGM built
-  2026-10-27 (import-vgm.js apuChip): the length and linear counters and
+- **The VGM import** (import-vgm.js apuChip): the length and linear counters and
   the envelope run between writes (`advance`), so a note ends where its
   counter ran out and an envelope is a level envelope, the sweep on its
   half frames (and its mute); a DMC hit's sample is the memory as it stood (`bytes` on the
@@ -172,12 +137,10 @@ the docs do not say:
   flag the compat block's tenth byte, or CFLG's key), a :vol def per
   column; the triangle on while a volume macro is not 0;
   the pulses' duty 0 (12.5 %) until something sets it, and a duty macro's
-  last step held after its note. Open: Furnace's 22 NES demos
-  (/Applications/Furnace/demos/nes) import and compile clean (2026-10-27),
-  none A/B'd against Furnace's own VGM yet; 649 of the 650 real .dmf in
-  the user's Dropbox (41 NES, v5.1 on) import and compile (2026-10-28; the
-  one left, Darius II "06 War Oh!", is corrupt at instrument 131), none
-  heard against DefleMask; a fixed-pitch arpeggio (drums) is a :semi from the
+  last step held after its note. Open: Furnace's NES demos
+  (/Applications/Furnace/demos/nes) not A/B'd against Furnace's own VGM;
+  the user's real .dmf (Dropbox) not heard against DefleMask (Darius II
+  "06 War Oh!" is corrupt at instrument 131); a fixed-pitch arpeggio (drums) is a :semi from the
   played note, an env a note (2026-10-28), not heard against Furnace yet;
   module DPCM (.fur SMP2/SMPL 8/16-bit and 1-bit DPCM; DMF samples and the
   legacy sample mode as convertLegacySamples, 2026-10-28; the DAC start
@@ -191,28 +154,12 @@ the docs do not say:
   12xx on a DMF read as Furnace's (DefleMask's own NES 12xx not
   cross-checked). The curve option `:duty` is 1–255 (128 = 50 %) while the track
   word is in sixteenths, as ruled — two scales under one name; raise it if
-  it confuses. The Live page labels lanes 0-3 S1 S2 S3 N1 (tri shows S3).
+  it confuses.
 
 ## The Famicom's expansions (built 2026-10-28/29)
 
-All six are on fc (language.md §19 fc says what the language does): VRC6,
-FDS, MMC5, 5B, VRC7, N163 — any number in one score, each an optional chip
-started at its first write, named by chip (the user, 2026-10-29).
-
-Where things are (dev-only):
-- Ports: 0 APU, 1 DMC RAM, (2 the worklet's PSG flag), 3 VRC6, 4 FDS (VGM
-  0xB4's numbering), 5 MMC5, 6 5B, 7 VRC7, 8 N163 (its RAM). Tone lanes:
-  VRC6 12-14, MMC5 15-16, 5B 17-20, N163 21-28. Scope: VRC7 0-5, APU 6-10,
-  VRC6 11-13, FDS 14, MMC5 15-16, 5B 17-19, N163 20-27.
-- chips/queued-tone.js: the VRC6's and the MMC5's encoder. The 5B is
-  ssgEncoder on port 6; ir-player `_psg(encode, method, lane)` routes the
-  SSG's song words to it (the APU has no noise period / envelope) and
-  `_isNoiseLane` makes 5b-noise a noise lane. The VRC7 is opllEncoder({rom,
-  channels, port}); a part's `rom` / `romNames` are its built-in voices.
-  The N163's layout comes from the score (ir-player `_voicesOf` → the
-  encoder; its `start()` replaces the chip's static init).
-- mmlisp2ir: a song word only optional chips own, in a score naming none of
-  their channels, is E_TARGET (fc's :noise-rate, :lfo-*).
+Ports, lanes and encoders are in synth-fc.js's header and the chips' files;
+language.md §19 fc says what the language does.
 
 Open:
 - None heard in Live but the VRC6 and the FDS's test score (MMC5, 5B,
@@ -225,7 +172,6 @@ Open:
   DefleMask FDS module checked only as one built in node; its hardware
   envelopes only node-checked (no score or import drives them); the mod
   arithmetic nesdev's, not held to NSFPlay / Mesen.
-- The VRC7 is ymfm's YM2413 with the VRC7's ROM, not a DS1001 model.
 - :lfo-wave starts the FDS's counter over, so the structured writer's
   restatements (all switches rewritten where the set of kinds changes, a
   def's or a loop's head) add resets the game did not make — a free-
@@ -260,12 +206,9 @@ Open:
   written keyed (the retrigger's key-offs go out after the pitch steps).
 - **Levels.** `OPLL_GAIN` is set against the PSG and SCC as libkss
   (MSXplay) mixes them, measured on an MGS song (G2_00.MGS) chip by chip.
-  The rhythm's level is fine by ear (the user, 2026-11-03), clips in a
-  dense score included.
-- **Open.** The volume's floor is −45 dB
-  (vol 15): `:vol 0` and a mixer mute do not silence a sounding FM-PAC note
-  (the md's TL 127 does) — ruled 2026-10-26 to stay: the chip cannot, and
-  MGSDRV's v0 is the same; a mute keys off as on md. A call with no time (a live edit, a key preview)
+- **The −45 dB floor stays** (language.md §19 msx; ruled 2026-10-26: the
+  chip cannot go lower, and MGSDRV's v0 is the same).
+- **Open.** A call with no time (a live edit, a key preview)
   is the encoder's latest time, and `IRPlayer.setParam` writes the edit at
   once (`live`); checked in node, not by ear. A key held over a song
   channel (the OPLL's and the VRC7's: `opllHoldBus`) writes its voice,
@@ -276,7 +219,7 @@ Open:
 - **ROM voices.** The values are Nuked-OPLL's `patch_ym2413` (read from
   the die), packed into the user voice's layout in chips/ym2413.js; the
   emulator takes the same table (`ol_set_rom`), so a ROM voice and the same
-  bytes as the user voice render sample-identical (checked for all 15).
+  bytes as the user voice render sample-identical.
 
 ## The part model (rulings, 2026-10-26/27)
 
@@ -366,16 +309,11 @@ Open:
 
 import-nsf.js runs each song on cpu6502.js and feeds import-vgm.js's chip
 models (`nesChips`: the VGM ones, plus vrc6Chip, n163Chip and apuChip's
-`mmc5` mode, none of which a VGM reaches). Rulings (the user, 2026-10-29):
-the VGM dialog and writer reused; an NSF's songs are files of their own
-under Files in Folder (an NSF opened alone a folder of them, folderOfFile),
-not a dialog field — the user stepping through songs with ← →; the length is
-the state coming round (RAM $0000-$07FF + $6000-$7FFF + the banks — not the
-chips' registers, which would put the loop a section late), else the
-writes' period (two periods, ≥ 1 s), else MAX_SECONDS 300; the loop point
-settled onto the first frame that writes something new; an N163 wave on 32
-steps at its own pitch (the language keeps 32 / 16; a wave length in the
-language is a separate discussion, not proposed here).
+`mmc5` mode, none of which a VGM reaches). How songs and loops are found is
+guide.md §23; what it does not say: the state hash leaves out the chips'
+registers, which would put the loop a section late; an N163 wave is kept on
+32 steps at its own pitch (a wave length in the language is a separate
+discussion, not proposed here).
 
 Open:
 - Held to synthesized NSFs (tools check:import-nsf), one headless run of
@@ -404,10 +342,6 @@ Open:
   its state there falls to the writes' period).
 
 ## Songs on another machine (built 2026-11-03)
-
-MIDI goes to any target; a VGM, NSF or module also offers any machine whose
-defaults keep half its notes (import-song.js `holdsSong`). MDX, MGS and mucom88
-were left as they are: their writers are their chips' own.
 
 x68k's quiet FM is the synth's, measured (a TL 0 carrier at −19 dBFS, X68Sound);
 the waveforms stand-ins sit 12 dB under that, hence `loud-*` (import-song.js).
@@ -461,7 +395,7 @@ Held to (2026-11-03; scratch tools, not in the repo; the music stays outside):
   pitch macros, and a duty macro switching the noise under a note). Left:
   Pleasure_of_Tension SQ1 22 %, spreadtro SQ2 46 %, lagtrain SQ2 55 %, freedom
   SQ1 69 %, not looked into.
-- The user's 32 .dmf import and compile; none compared.
+- The user's .dmf: none compared.
 
 Open:
 - Not run on a real core: the VGM on libvgm's sameboy_apu.c and gb_mame.c. The
@@ -470,9 +404,6 @@ Open:
   session's auto mode. `tools check:gb-level` holds both readings on our log.
 - `MASTER_OUTPUT_GAIN` puts one pulse at a 2A03 pulse's RMS: a choice, not a
   measure.
-- `.gbs` import (an LR35902 run, as NSF's 6502) is not built.
 - A .fur in the old INST format (versions before 127): its software-envelope
   flag and sequence are past what the reader reads, so from 106 a volume macro
   stands in for the flag and a sequence is lost.
-- A tracker's 13xy / 14xx sweep is left out; a wave rewritten under a note, a
-  VGM's CPU PCM through the wave memory or NR50 are not followed.

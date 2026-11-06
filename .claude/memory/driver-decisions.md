@@ -14,8 +14,9 @@ superseded engines are tags `archive/all-z80`, `archive/ring-engine` and
 
 ## 1. Why the sequencer left the Z80 (2026-08-02)
 
-The all-Z80 PCM soft-mixer, measured on the user's 9-track song over 900 frames
-(`runTrace` cycle profiler), against a 59,659-cycle Z80 frame:
+The all-Z80 PCM soft-mixer (tag `archive/all-z80`; its `runTrace` cycle
+profiler went with it), measured on the user's 9-track song over 900 frames,
+against a 59,659-cycle Z80 frame:
 
 | | PCM on | same song, sample bank off |
 | --- | --- | --- |
@@ -181,20 +182,14 @@ M2 and M3 went into the C **with zero gate failures on the first run** —
 porting from a *validated implementation* rather than from prose is what makes
 it cheap (the C-only needs it found are `driver.md` §12.2). Also: macro binds
 are an **ordered** map and that order is the step order; a slot's **byte**
-budget can bind before its write cap once PCM commands are in play; and
-**every PCM handler must return HL untouched** — a `left += tail` in HL (the
-command cursor) corrupted everything after a STOP, and four gate scenarios
-missed it because only a real score issues STOP+START in one slot.
+budget can bind before its write cap once PCM commands are in play.
 
 ## 8. The bus grab
 
-- **Plan outside the grab.** Parsing the table with BUSREQ held cost 5,800
-  master a grab; only the index read and a straight `move.b (a0)+,(a1)+`
-  belong inside.
-- **Wait before the first grab** — the Z80's boot clears the pair page, so a
-  grab at release time is erased.
-- **The grab is asm** because C over `Z80_getAndRequestBus` was 2,835 master;
-  eight pairs as four `movep.l` is 1,100–1,320.
+- **The grab is asm** because C over `Z80_getAndRequestBus` cost 2,835
+  master clocks for what the asm pump does now (driver.md §6.6). Why the plan
+  runs outside the grab and the first grab waits for the Z80's boot is in
+  `drv/sgdk/mmlispdrv.c`'s comments.
 
 ## 9. The 68000's share
 
@@ -360,17 +355,14 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   priority the host may override. **Mine, not ruled on**: an effect is a DEF
   (so `import` carries it and "tracks are songs" stands); a part is on the
   channel it takes; an effect keeps its own tempo.
-- **Re-trigger the restored macros, not resume them.**
 - **The displaced part plays on, unheard** (2026-10-16). The earlier ruling —
   an in-flight sweep lost, kept out by authoring (a composer was to avoid
   assigning a channel with a long sweep to an effect) — was reversed: a sweep
   that does not come back on a channel an effect took is a bug. Probing it
   found the larger
   fault: a suspended part did not advance, so after an effect it was late by
-  the effect's length for the rest of the song, in both players. **Chosen**:
-  the part keeps dispatching into a per-channel ghost (`MMLGhost`) with the
-  channel's writes dropped; ghost and live state trade places only around
-  what the part does to its channel. **Not chosen**: advancing the clock and
+  the effect's length for the rest of the song, in both players. The ghost
+  (driver.md §2.5) was chosen. **Not chosen**: advancing the clock and
   catching up at SE-end — every event of the effect's span lands in one frame
   ($slot reads, trig, loops at the wrong time) and a sweep's value has to be
   computed apart. Measured (m68k-elf-gcc sizes): `MMLSeq` 15,042 → 14,402 B
@@ -379,29 +371,19 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   writes recomposes every channel but the effect's, which is stashed in the
   ghost at that moment (rare: master is song-wide and usually set at the
   head).
-- **No effect on CH3** (user, 2026-10-16), reversing "taking all of channel 3
-  is fine": a ghost for CH3 would span the shared channel, four operators,
-  the chip-wide `$27` and Timer A, and several tracks writing one ghost —
-  heavy for the driver — so the compiler refuses a CH3 part (`E_SE_PART`)
-  and the driver's CH3 hold (claim, restore, dissolve, `MMLCh3Snap`) went.
-- **Restore from the register shadow, not a voice id** — the user's ruling: go
-  back from the register copy. Partial `def-fm` voices were not rebuilt
-  otherwise.
-- **No `:master` / `:lfo-rate` in an effect** — the user's ruling: an effect
-  does not use them; the compiler refuses them. The rule for any future
-  song-wide state: refuse it in def-se, unless it belongs to a channel the
-  effect takes, in which case the channel's ghost carries it.
+- **No effect on CH3** (user, 2026-10-16; the reason is driver.md §2.5)
+  reversed an earlier "taking all of channel 3 is fine".
+- **Song-wide state in an effect** (`:master`, `:lfo-rate` are refused, the
+  user's ruling): any future song-wide state is refused in def-se too,
+  unless it belongs to a channel the effect takes, in which case the
+  channel's ghost carries it.
 - **Prime the voices of effects on free channels** (user, 2026-10-15).
   Measured on BlastEm (SGDK example + demo-se,
   2026-10-14): an FM SE that brings its voice onto a song channel sounded
   81 ms after the call = lead 33 + pump to the first pair 8 + wire 40 (its
   ~35 voice/level/pitch writes ahead of the key-on, ~1 pair/ms on the light
-  images); PSG/PCM effects, which upload nothing, ~42 ms. The rule (both
-  players' prime, `driver.md` §4.1): an effect part is primed when no song
-  track anywhere in the table uses its channel and it is the first effect
-  part there; the prime clears the setup's sweeps after it. Closed with it:
-  an effect's `:tempo` sweep drove the song's clock (now `E_SE_PART`).
-  **Not chosen**: LEAD 1 (re-measured after the
+  images); PSG/PCM effects, which upload nothing, ~42 ms. The rule is
+  driver.md §4.1. **Not chosen**: LEAD 1 (re-measured after the
   68000 pass, still slips); an SE lane running effect tracks two frames ahead
   of the song (two clocks, ownership/restore edge cases, three players +
   gates, and it does not touch the upload); a faster light-image wire (more
@@ -413,9 +395,6 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
 
 **Several songs** (behaviour: `driver.md` §2.3, `mmb.md` §10.2):
 
-- The shared bank is built (`drv/tools/bundle.mjs`). **A non-PCM song in a
-  bundle still boots the bundle's image** — a reboot-free song change is worth
-  more than the idle voice.
 - **Two scores resident at once** (roadmap Driver 3) is what a cross-file
   transition would need. The cost: the per-score state (`MMLSeq`'s stream,
   `voices`, `macro_table`, `sample_entries`, `sample_blob_base`, `increment`,
@@ -462,17 +441,6 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   every looping track wrote a phantom trigger at its loop head — invisible to
   every gate because nothing read the byte. The user chose **labels emit
   nothing**, over a separate opcode.
-- **DAC ownership is a static compile-time rule, not runtime arbitration.** The
-  "last KEY-ON wins" plan (18 B) was dropped when both its premises fell; the
-  direction is `:prio` treating fm6 and pcm1–3 as parallel layers of one
-  channel, so the driver arbitrates zero bytes. Open: `:prio`'s monophonic
-  flatten cannot yet express "fm6 vs the *group* {pcm1,pcm2,pcm3}", and runtime
-  SE cannot be flattened at compile time. Note fm6 taking the channel idles the
-  driver's most expensive routine — **the cycle saving is paid in music (the
-  drums stopped), not free.**
-- **The `$2A`/`$2B` ownership split.** The sequencer *could* predict the `$2B`
-  edges, but then both sides would have to agree on the exact frame — a coupling
-  worth avoiding when voice activity is the one piece of state the Z80 owns.
 - **Sub-tick note timing is retired** (`SLOT_SUBS = 1`, user's call: "most game
   drivers are 1/60"). Idle went 71.9% → 78.6%. **The machinery is left in the
   sources on purpose**: at SUBS=1 LTO folds it away and the SGDK host never
@@ -535,6 +503,5 @@ hoist and key-ons last — is `language.md` §9 and `driver.md` §3.5.
   export only (`--pal`; Live stays NTSC), and it needs to be correct by
   construction, not gated or run on hardware: no PAL DAC gate, no PAL
   hardware pass, no PAL UI. Do not propose them.
-- **Do not stack unproven work.** While two voices are unsettled, three voices,
-  arbitrary pitch and better interpolation are more unknowns on top of an
-  unknown.
+- **Do not stack unproven work** — a new unknown on top of one not yet
+  settled cannot be told apart from it.

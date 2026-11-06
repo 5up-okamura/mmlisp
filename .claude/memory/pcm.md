@@ -17,7 +17,9 @@ keeps the reasons the docs state as bare facts, and the open list.
 - **Levels on the 6 dB grid, as TABLES.** The user had decided bit shifts were
   enough (2026-08-12); a 15-page linear LUT then shipped without being
   flagged, and the user objected. Tables of 6 dB rungs, master folded in by
-  the host: one read a voice, constant time.
+  the host: one read a voice, constant time. A finer step (3 dB in the Z80
+  mixer, or level-baked copies) was weighed on 2026-10-21 and declined — the
+  user finds 6 dB enough for drums. Do not re-propose finer PCM levels.
 - **The Z80 keeps writing the YM.** The user wants a Z80-only driver some day
   and does not want the Z80's YM machinery thrown away. Cost measured: ~0 at
   1–2 voices, ~10% of rate at 3.

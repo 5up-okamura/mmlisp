@@ -57,6 +57,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
   was the alternative, rejected for growing the bank unseen.
 - **Dynamic performance branches** — `|` alternation, random part switching,
   random label jump.
+- **Wave generators** — a wave written as its harmonics (`(harmonics 1 0.5
+  0.33)` …), once the wave expressions are in use.
 
 ## Importers
 
@@ -93,11 +95,16 @@ Its current limits are `driver.md` §11 — keep the two in step.
   the wave from its first step).
 - **MIDI**: per-note pan (a channel's first pan serves the song), and CC7/CC11
   moving during a note (they are read at each note-on).
+- **Game Boy**: a `.gbs` import (an LR35902 run, as NSF's 6502); a tracker's
+  13xy / 14xx sweep (left out); a wave rewritten under a note, a VGM's CPU
+  PCM through the wave memory, and NR50 (not followed).
 
 ## MMLisp Live
 
 - A score's own `def-pcm` is not auditioned from the voice picker: its `:file`
   is relative to the score's folder, which the picker's stand-in score lacks.
+- **Drawing on a stage vector** in the panel's vector editor: a macro's
+  stages are shown, not drawn (edit-tools.js `vectorAt`).
 - **The panel's editors follow playback.** What is heard and what is shown
   agree: the vector editor marks the step a playing macro is at, the sample
   editor the position in the wave a playing sample is at — as the source's

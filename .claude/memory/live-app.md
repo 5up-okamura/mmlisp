@@ -51,6 +51,9 @@ lessons.
   one. A long link (no server) carries no files. The 256 KB cap stays
   (user, 2026-11-06), though a PC-8801 VGM import's bank nears it (The
   Scheme's largest track: ~232 KB zipped) — not to be re-proposed.
+- **Restructuring VGM / NSF imports stays human-guided** (Edit > Tap Tempo):
+  not automatic beat detection, not an import-time conversion with no
+  preview.
 - **The ja / es translations** stay as machine-written from the glossary
   (user, 2026-10-16: having one helps more than none; a wrong line is fixed
   when found). A fix goes through `i18n-sync.mjs --apply`, never a hand edit
@@ -94,9 +97,6 @@ lessons.
 
 - **Target conversion** (an open score's `:target` changed; a song import
   onto another machine is built): retain as an idea, lower priority.
-- **Restructuring VGM / NSF imports stays human-guided** (Edit > Tap Tempo,
-  built 2026-11-03): not automatic beat detection, not an import-time
-  conversion with no preview.
 - **Hiding source by kind** (user's idea, 2026-11-06; still being thought
   over — do not build until the user decides): e.g. hide every `:vel` so a
   dense score (VGM / NSF imports) reads easily. A view setting only: Save,
@@ -144,6 +144,6 @@ lessons.
   evaluated many times shows the first and a count. Before the parameter's
   rounding (the panel shows the rounded steps). A `$slot` curve is v2. The
   line does not move: a playing macro's position belongs to the panel
-  (roadmap, "The panel's editors follow playback"). Later: curves as a small
-  graph, `$slot` expressions in symbolic form, the record through
+  (roadmap, "The panel's editors follow playback"). Later: `$slot`
+  expressions in symbolic form, the record through
   mmlisp_check for AI; a Guide Tools step to make it known.

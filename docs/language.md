@@ -2803,7 +2803,9 @@ modulator alone — and four of its own, each `1`–`2`:
 
 They are `def-fm` keys, written inline and swept as macros as the OPN's
 are. The carrier has no TL: its level is the channel's 4-bit volume, 3 dB
-a step to −45 dB, where vel + vol + master are composed (§6); a
+a step to −45 dB, where vel + vol + master are composed (§6) — so `:vol 0`
+or a mixer mute does not silence a sounding note, as the chip cannot (a
+mute keys it off); a
 `:vel2` voice is velocity-sensitive there, a `:vel1` voice on op1's TL. A
 channel's **`:sus 1`** (sticky, 0 to start) releases its keyed-off notes
 at the slow rate 5 rather than at the voice's RR — a piano's pedal; it is
