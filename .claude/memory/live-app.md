@@ -116,3 +116,34 @@ lessons.
     closed (phones), and the hiding must stay visible. Not in a lesson's
     working copy (its text is the leading comment).
   - Open: per user or per score; hide vs dim (or both).
+- **A form's value at the cursor** (user's idea, 2026-11-06, in place of a
+  `(print …)` form — no language change): with the cursor right after a
+  compile-time `)`, or right after a bound name (`for`'s `i`, a `let`
+  name), a small tooltip above it (`--sub`, the text never shifts) shows
+  what it evaluated to; one evaluated many times shows `67, 74, 81, … (16
+  values)`. Agreed so far: bound names too; an on/off switch (proposed: View
+  > Show Values, a check like Follow Playback, on by default, remembered).
+  Rejected: showing every value on the cursor's line (too much); a hover
+  card (no hover on phones). Design notes (reviewed 2026-11-06): the hooks
+  go in mmlisp-eval.js `evalNode` — its list branch (every nested `( … )`,
+  not only the value position `evalValue` sees) and its atom branch where
+  `envLookup` resolves a bound name — recording span → values when
+  compileMMLisp is asked to (Live only; MCP, snapshots and MMB unchanged;
+  first 16 values and a count per span, plain data for the worker; spans in
+  imported files dropped). Live compiles only on Build / Play / a drag, so
+  the values are refreshed by a silent compile run when the cursor lands
+  on a candidate position and the record is older than the document — not
+  on every edit — and it must not log its diagnostics again (every cursor
+  move would repeat them) nor replace the built IR; nothing stale is shown
+  meanwhile. Literals and `$slot`s show nothing in v1; forms that make
+  notes, not a value (channel forms, sections, `(note …)`) show nothing.
+  A curve's value (2026-11-06): a small static line (fg, ~120 px) of the
+  values the evaluator sampled — after the arithmetic around it, a seeded
+  random as drawn — with its range and length (`−40 … 40 · 4f`); one with
+  no `:len` is drawn at the length it was used at, or not at all; one
+  evaluated many times shows the first and a count. Before the parameter's
+  rounding (the panel shows the rounded steps). A `$slot` curve is v2. The
+  line does not move: a playing macro's position belongs to the panel
+  (roadmap, "The panel's editors follow playback"). Later: curves as a small
+  graph, `$slot` expressions in symbolic form, the record through
+  mmlisp_check for AI; a Guide Tools step to make it known.
