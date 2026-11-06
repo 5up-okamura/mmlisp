@@ -7005,7 +7005,9 @@
       let ir;
       try {
         await refreshImportSources(src);
-        const compiled = compileMMLisp(src, _lastFileName, { imports: _importSources, voiceStamps: true });
+        // The voices kept (voiceStamps), and not hoisted: the hoist is the
+        // driver's wire, which cuts a note short for a voice change.
+        const compiled = compileMMLisp(src, _lastFileName, { imports: _importSources, voiceStamps: true, voiceHoist: false });
         const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
         if (errors.length > 0) {
           log('Cannot export MIDI: source has compile errors', 'err');

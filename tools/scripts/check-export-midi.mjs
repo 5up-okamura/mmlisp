@@ -13,6 +13,9 @@
 //               bend and its range, a slur, a hold, a kit role on channel 10,
 //               :snap, a loop to its marks, a tempo change; a role's and a
 //               ROM voice's name as its GM program, on md, msx and fc
+//   the cases   a loop point's writes, a voice after a jump, a label in a
+//               counted loop, a vol macro over its fader, a :keyon under a
+//               tick, a voice change not called a loss
 //   the import  the file read by the MIDI importer: its tempo, its lanes
 //
 // and GM_PROGRAMS is the gm preset set's voices in their order, a role the
@@ -78,7 +81,7 @@ const corpus = [
 ];
 let scores = 0, checked = 0;
 for (const file of corpus) {
-  const { ir, diagnostics } = compileScoreFile(file, { voiceStamps: true });
+  const { ir, diagnostics } = compileScoreFile(file, { voiceStamps: true, voiceHoist: false });
   if (diagnostics.some((d) => d.severity === "error")) continue; // a score of errors, on purpose
   const out = exportMidi(ir);
   const parsed = parseMidi(out.bytes);
@@ -125,7 +128,7 @@ const SRC = `
 (pcm1 :len 4 kick c snare c kick c snare c)
 `;
 const imports = new Map([["presets/gm/set.mmlisp", readFileSync("live/presets/gm/set.mmlisp", "utf8")]]);
-const { ir, diagnostics } = compileMMLisp(SRC, "midi-test.mmlisp", { imports, voiceStamps: true });
+const { ir, diagnostics } = compileMMLisp(SRC, "midi-test.mmlisp", { imports, voiceStamps: true, voiceHoist: false });
 const errors = diagnostics.filter((d) => d.severity === "error");
 assert.equal(errors.length, 0, errors.map((d) => d.message).join("; "));
 const out = exportMidi(ir);
@@ -140,7 +143,9 @@ assert.deepEqual(fm1.slice(0, 3).map((n) => [n.on, n.off, n.key]), [[0, 96, 60],
 const slur = track("fm1").filter((e) => e.tick === 96 && (e.kind === "on" || e.kind === "off")).map((e) => e.kind);
 assert.deepEqual(slur, ["on", "off"], "the slur's on goes first");
 assert.deepEqual(of("fm1", "cc", 7).map((e) => [e.tick, e.b]), [[0, 127], [288, 57]], ":vol 24 is -14 dB");
-assert.deepEqual(of("fm1", "cc", 10).map((e) => [e.tick, e.b]), [[0, 64], [384, 0]], ":pan left");
+// The loop point (576) is fm1's :pan left of its second pass: written though
+// it repeats, for a player that loops comes back to it from the right.
+assert.deepEqual(of("fm1", "cc", 10).map((e) => [e.tick, e.b]), [[0, 64], [384, 0], [576, 0]], ":pan left");
 const marks = parsed.tracks[0].filter((e) => e.kind === "marker").map((e) => [e.tick, e.text]);
 // The one-shot tracks end at 576 (fm2's hold); fm1's loop is 192 long.
 assert.deepEqual(marks, [[576, "loopStart"], [768, "loopEnd"]], "the loop, as the VGM's");
@@ -167,7 +172,7 @@ assert.deepEqual(drums.notes.map((n) => n.key), [36, 38, 36, 38], "kick 36, snar
 
 // ── A role and a ROM voice are programs ──────────────────────────────────
 const programs = (src, opts = {}) => {
-  const { ir, diagnostics } = compileMMLisp(src, "roles.mmlisp", { voiceStamps: true, ...opts });
+  const { ir, diagnostics } = compileMMLisp(src, "roles.mmlisp", { voiceStamps: true, voiceHoist: false, ...opts });
   const errs = diagnostics.filter((d) => d.severity === "error");
   assert.equal(errs.length, 0, errs.map((d) => d.message).join("; "));
   const p = parseMidi(exportMidi(ir).bytes);
@@ -181,6 +186,56 @@ assert.deepEqual(programs('(import "presets/fm-roles/set.mmlisp")\n(fm1 :len 4 o
 // The FM-PAC's ROM, and the VRC7's.
 assert.deepEqual(programs("(def-score :target msx)\n(fm1 :len 4 violin c horn d)"), [[40, 60]], "msx: the FM-PAC's ROM");
 assert.deepEqual(programs("(def-score :target fc)\n(vrc7-fm1 :len 4 wurly c fretless d sweep e)"), [[4, 35, 95]], "fc: the VRC7's ROM");
+
+// ── Loops, voices, levels, retriggers ─────────────────────────────────────
+const exported = (src) => {
+  const { ir, diagnostics } = compileMMLisp(src, "case.mmlisp", { voiceStamps: true, voiceHoist: false, imports });
+  const errs = diagnostics.filter((d) => d.severity === "error");
+  assert.equal(errs.length, 0, errs.map((d) => d.message).join("; "));
+  const out = exportMidi(ir);
+  return { out, parsed: parseMidi(out.bytes) };
+};
+{ // A write at the loop point is written though it repeats the value: a
+  // player looping between the marks comes back to it from :vol 20, 90 bpm.
+  const { parsed: p } = exported("(fm1 :tempo 120 :len 4 :vol 31 c #top :vol 31 :tempo 120 d :vol 20 :tempo 90 e (go top))");
+  const marks = p.tracks[0].filter((e) => e.kind === "marker").map((e) => e.tick);
+  assert.deepEqual(marks, [96, 288]);
+  assert.deepEqual(p.tracks[1].filter((e) => e.kind === "cc" && e.a === 7).map((e) => [e.tick, e.b]), [[0, 127], [96, 127], [192, 36]], "CC7 again at the loop");
+  assert.deepEqual(p.tracks[0].filter((e) => e.kind === "tempo").map((e) => [e.tick, e.value]), [[0, 500000], [96, 500000], [192, 666667]], "the tempo again at the loop");
+}
+{ // The voice a note plays is the channel's as it plays: after the jump, d is
+  // the flute's, as the chip plays it, not the piano the compiler had at d.
+  const { parsed: p } = exported(`(import "presets/gm/set.mmlisp")
+(fm1 gm-piano :len 4 c #top d gm-flute e (go top))
+(fm2 :len 4 #top c c c (go top))`);
+  assert.deepEqual(p.tracks[1].filter((e) => e.kind === "pc").map((e) => [e.tick, e.a]), [[0, 0], [192, 73]], "one flute, kept");
+}
+{ // A label inside (x 2 …): the loop is from its last copy.
+  const { out: o } = exported("(fm1 :len 4 (x 2 #top c) d (go top))\n(fm2 :len 4 c c c #y c (go y))");
+  assert.deepEqual(o.tracks[0].notes.map((n) => [n.on, n.key]), [[0, 60], [96, 60], [192, 62], [288, 60], [384, 62]]);
+}
+{ // A vol macro takes the fader's place: louder than :vol 16, it is CC7.
+  const { parsed: p } = exported("(fm1 :len 4 :vol 16 (macro :vol [31 28 24]) c d)");
+  const cc7 = p.tracks[1].filter((e) => e.kind === "cc" && e.a === 7);
+  assert.equal(cc7[0].b, 127, "the macro's 31");
+  assert.ok(!p.tracks[1].some((e) => e.kind === "cc" && e.a === 11), "no CC11 for a vol macro");
+}
+{ // A :keyon faster than a tick (15 bpm): whole ticks, every on goes off.
+  const { parsed: p } = exported("(fm1 :tempo 15 :len 4 (macro :keyon 1) c)");
+  notesOf(p.tracks[1]);
+}
+{ // No voice hoist: a voice change on the Mega Drive leaves the note before
+  // it its whole gate, and the fader written with it its tick.
+  const { out: o, parsed: p } = exported("(fm1 :tempo 120 :len 4 piano c d :vol 20 flute e f)");
+  assert.deepEqual(o.tracks[0].notes.map((n) => [n.on, n.off]), [[0, 96], [96, 192], [192, 288], [288, 384]]);
+  assert.deepEqual(p.tracks[1].filter((e) => e.kind === "cc" && e.a === 7).map((e) => e.tick), [0, 192]);
+}
+{ // A voice change is a program, not a machine's write left out; a voice
+  // named for no instrument is said.
+  const { out: o } = exported('(import "presets/gm/set.mmlisp")\n(def-fm lead :alg 4)\n(fm1 :len 4 gm-piano c lead d)');
+  assert.ok(!o.notes.some((n) => /left out/.test(n)), o.notes.join(" | "));
+  assert.ok(o.notes.some((n) => /no GM program for lead/.test(n)), o.notes.join(" | "));
+}
 
 // ── The import reads it back ──────────────────────────────────────────────
 const a = analyzeMidi(parsed);

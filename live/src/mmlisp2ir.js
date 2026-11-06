@@ -3806,7 +3806,11 @@ function voiceLacks(td, name, target, diagnostics) {
 // keeps only its :key there, and says so once per track and voice.
 function emitVoice(td, tick, events, src, trackState = null, name = null, diagnostics = null, trackName = null) {
   if (td.kwMap) {
+    const from = events.length;
     const dropped = emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.part, trackState?.target);
+    // The burst names its voice, as a note does (`_voice`): for an export
+    // that follows the channel's voice as it plays (voiceStamps).
+    if (name) for (let i = from; i < events.length; i++) events[i]._voiceSet = name;
     if (diagnostics && trackState?.part?.kind === "fm") voiceLacks(td, name, trackState.target, diagnostics);
     const said = trackState ? (trackState.voicesSaid ??= new Set()) : null;
     if (dropped && said && diagnostics && !said.has(name)) {
@@ -6596,7 +6600,8 @@ function expandRoots(roots, defs, paramDefs, diagnostics) {
  *   the async file I/O (recursing through nested imports via collectImports)
  *   before this synchronous compile. Absent paths surface E_IMPORT_NOT_FOUND.
  * @param {boolean} [options.voiceStamps] - keep each NOTE_ON's voice as
- *   `_voice` (ir.md §5.1), for an export that names it (export-midi.js).
+ *   `_voice` and each voice change's writes as `_voiceSet` (ir.md §5.1,
+ *   §5.6), for an export that names them (export-midi.js).
  * @returns {{ ir: object, diagnostics: array, sourceMap: array }}
  */
 export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
@@ -7301,7 +7306,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   // export that names it (export-midi.js's program change): `voiceStamps`.
   tracks.forEach((t, idx) => {
     t.id = idx;
-    if (!options.voiceStamps) for (const ev of t.events) delete ev._voice;
+    if (!options.voiceStamps) for (const ev of t.events) { delete ev._voice; delete ev._voiceSet; }
   });
   warnSongWrites(tracks.filter((t) => !t.se), diagnostics, frameHz);
 

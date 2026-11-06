@@ -2492,22 +2492,29 @@ order (10 kept for the drums, the next port's past fifteen). A note is a key
 on to its gate, a slur's key on before the note it leaves goes off, a
 `:keyon` retrigger an off and an on; `:snap` moves the note before it is
 written. `:vel` is the velocity, `:vol` and `:master` together CC7 (their
-2 dB steps read as dB, GM's 40 log₁₀), a note's vel or vol macro CC11, `:pan`
-CC10, and `:pitch`, a glide and the pitch and `:semi` macros a pitch bend
+2 dB steps read as dB, GM's 40 log₁₀) — a note's vol macro takes `:vol`'s
+place there until the next note, as it does on the chip — a note's vel
+macro CC11 below the note's velocity (its peak), `:pan` CC10, and `:pitch`, a glide and the pitch and `:semi` macros a pitch bend
 under the least range of 2, 12 or 24 semitones the track needs. The tempo and
 its sweeps are tempo events; a loop is written out once through, the tracks'
 loops to their common length as the VGM's, and marked `loopStart` /
-`loopEnd`; a `#label` is a marker and a `(trig N)` a cue point. A `gm-*`
-voice is its GM program (the `gm` set is GM's 128 in order), and so is a
+`loopEnd` — what the score writes at the loop point is written though it
+repeats the value, and the loop's first note writes its bend, CC11 and its
+macros' levels again, so a player looping between the marks starts each
+pass as the chip does; a `#label` is a marker and a `(trig N)` a cue point. A `gm-*`
+voice is its GM program (the `gm` set is GM's 128 in order) — the voice
+the channel plays, which a jump back leaves as it was — and so is a
 voice named for an instrument: a melodic role (`piano`, `flute` …, the
 `fm-roles` set's or the ROM's) is the gm voice `fm-roles` copied, and the
 VRC7's own ROM voices the nearest (`wurly` an electric piano, `fretless`
 the fretless bass, `sweep` the sweep pad …). A track
 whose every note is a kit role's sample (`kick`, `snare`, `hat` …) plays on
 channel 10 at the role's GM note, its faders in the velocity. A def-val is
-its init and what the score writes to it. The rest is a machine's own — FM
-operators, duty, waves, noise modes, the SSG's envelope, CSM — and is left
-out, said once; a def-se's parts are not in the file.
+its init and what the score writes to it. A voice named for no instrument
+has no program (said once: the player's sound plays it). The rest is a
+machine's own — FM operators written inline, duty, waves, noise modes, the
+SSG's envelope, CSM — and is left out, said once; a def-se's parts are not
+in the file.
 
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV

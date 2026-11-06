@@ -299,7 +299,9 @@ targets are compile diagnostics (`E_MARKER_DUP`, `E_JUMP_UNRESOLVED`).
 ```
 
 Notes: voice defs (`(def-fm name :alg …)` etc.) compile to a burst of same-tick
-`PARAM_SET`s in a fixed key order, `live/src/chips/fm-words.js`'s (ALG, FB,
+`PARAM_SET`s (each carrying `_voiceSet`, the voice's name, under
+`compileMMLisp`'s `voiceStamps: true` — the MIDI export follows a channel's
+voice by it; stripped otherwise) in a fixed key order, `live/src/chips/fm-words.js`'s (ALG, FB,
 AMS, FMS, then op1–4 × AR,DR,SR,RR,SL,TL,KS,ML,DT,SSG,AMEN,DT2,WS,EG,KSL,VIB),
 of the words the track's FM part has. An unsupported target is a diagnostic,
 and no event is emitted.
@@ -728,8 +730,8 @@ the SSG's).
   before its note, for the driver's wire)
   → tick-0 `FM3_MODE` unshifted into `tracks[0]` (when fm3-1..4 tracks
   exist).
-- Transient fields (`_delay`, and `_voice` but under `voiceStamps`) are
-  stripped; `src` spans are the only non-semantic payload that remains.
+- Transient fields (`_delay`, and `_voice` / `_voiceSet` but under
+  `voiceStamps`) are stripped; `src` spans are the only non-semantic payload that remains.
 
 ## 9. Playback semantics notes
 

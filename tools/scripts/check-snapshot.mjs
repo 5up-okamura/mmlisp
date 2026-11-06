@@ -64,26 +64,27 @@ function corpus() {
   return list;
 }
 
-// The score's MIDI, compiled as the export compiles it (its voices kept).
-function midiOf({ file, frameHz, seFile }) {
-  const { ir, diagnostics } = compileScoreFile(file, { frameHz, seFile, voiceStamps: true });
-  return diagnostics.some((d) => d.severity === "error") ? null : exportMidi(ir).bytes;
-}
+// The IR as compiled for the MIDI export (its voices kept, voiceStamps; no
+// voice hoist, which is the driver's alone), which every other output reads
+// as it reads the plain one: the MMB, its register log and VGM come from
+// buildMmb's own compile, and a target without the driver has no hoist, so
+// hashed without the stamps it is the plain IR.
+const plainIr = (ir) => JSON.stringify(ir, (k, v) => (k === "_voice" || k === "_voiceSet" ? undefined : v), 1);
 
 // Every output of one score, as bytes/strings ready to hash or dump.
 function outputs(item) {
-  const out = outputsOf(item);
-  const mid = out.error ? null : midiOf(item);
+  const compiled = compileScoreFile(item.file, { frameHz: item.frameHz, seFile: item.seFile, voiceStamps: true, voiceHoist: false });
+  const out = outputsOf(item, compiled);
+  const mid = out.error || compiled.diagnostics.some((d) => d.severity === "error") ? null : exportMidi(compiled.ir).bytes;
   return mid ? { ...out, mid } : out;
 }
 
-function outputsOf({ file, frameHz, seFile }) {
-  const compiled = compileScoreFile(file, { frameHz, seFile });
+function outputsOf({ file, frameHz, seFile }, compiled) {
   const target = targetProfile(compiled.ir?.metadata?.target);
   if (target.driver !== "mmlispdrv") {
     // No MMB; the IR and its diagnostics, and the rest once the chips encode.
     const { ir, diagnostics } = compiled;
-    const out = { diagnostics: diagnostics.map((d) => d.code ?? d.message).join(","), ir: JSON.stringify(ir, null, 1) };
+    const out = { diagnostics: diagnostics.map((d) => d.code ?? d.message).join(","), ir: plainIr(ir) };
     if (!target.encodes || diagnostics.some((d) => d.severity === "error")) return out;
     // The chip's own sample RAM (the YM2608's ADPCM-B) or the samples as
     // frames (PCM8's, the PC Engine's DDA), baked as Live does.

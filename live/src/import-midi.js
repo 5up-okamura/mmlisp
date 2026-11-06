@@ -40,25 +40,12 @@ import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimate
   assignBends, PITCH_NONE, destsFor, onBoard } from "./import-song.js";
 import { DEFAULT_TARGET, targetProfile } from "./targets.js";
 import { RHYTHM_KIT } from "./import-mucom.js";
+import { GM_PROGRAMS } from "./export-midi.js";
 
-// presets/gm, in program order (README.md). The bank's note offsets live on
-// the voices themselves, as `:key` — a key is written as the MIDI file has it.
-const GM_VOICES = ("gm-piano gm-piano-bright gm-piano-e-grand gm-honkytonk gm-ep1 gm-ep2 gm-harpsi " +
-  "gm-clav gm-celesta gm-glock gm-musicbox gm-vibes gm-marimba gm-xylo gm-tubular gm-dulcimer gm-organ-drawbar " +
-  "gm-organ-perc gm-organ-rock gm-organ-church gm-organ-reed gm-accordion gm-harmonica gm-bandoneon " +
-  "gm-guitar-nylon gm-guitar-steel gm-guitar-jazz gm-guitar-clean gm-guitar-mute gm-guitar-od gm-guitar-dist " +
-  "gm-guitar-harm gm-bass-acoustic gm-bass-finger gm-bass-pick gm-bass-fretless gm-bass-slap1 gm-bass-slap2 " +
-  "gm-bass-syn1 gm-bass-syn2 gm-violin gm-viola gm-cello gm-contrabass gm-str-trem gm-str-pizz gm-harp " +
-  "gm-timpani gm-strings1 gm-strings2 gm-synstr1 gm-synstr2 gm-choir gm-voice-ooh gm-synvox gm-orch-hit " +
-  "gm-trumpet gm-trombone gm-tuba gm-trumpet-mute gm-horn gm-brass gm-synbrass1 gm-synbrass2 gm-sax-soprano " +
-  "gm-sax-alto gm-sax-tenor gm-sax-bari gm-oboe gm-english-horn gm-bassoon gm-clarinet gm-piccolo gm-flute " +
-  "gm-recorder gm-panflute gm-bottle gm-shakuhachi gm-whistle gm-ocarina gm-lead-square gm-lead-saw " +
-  "gm-lead-calliope gm-lead-chiff gm-lead-charang gm-lead-voice gm-lead-fifths gm-lead-basslead gm-pad-newage " +
-  "gm-pad-warm gm-pad-poly gm-pad-choir gm-pad-bowed gm-pad-metal gm-pad-halo gm-pad-sweep gm-fx-rain " +
-  "gm-fx-soundtrack gm-fx-crystal gm-fx-atmos gm-fx-bright gm-fx-goblins gm-fx-echoes gm-fx-scifi gm-sitar " +
-  "gm-banjo gm-shamisen gm-koto gm-kalimba gm-bagpipe gm-fiddle gm-shanai gm-tinkle gm-agogo gm-steeldrum " +
-  "gm-woodblock gm-taiko gm-tom-melodic gm-syndrum gm-revcymbal gm-fretnoise gm-breath gm-seashore gm-bird " +
-  "gm-phone gm-heli gm-applause gm-gunshot").split(" ");
+// presets/gm, in program order (README.md), the MIDI export's table. The
+// bank's note offsets live on the voices themselves, as `:key` — a key is
+// written as the MIDI file has it.
+const GM_VOICES = GM_PROGRAMS;
 // presets/gm-drums by GM key; the keys the kit lacks borrow a neighbour.
 const GM_DRUMS = {
   35: "kick2", 36: "kick", 37: "rim", 38: "snare", 41: "tom1", 42: "hat", 43: "tom2", 44: "hat-pedal",

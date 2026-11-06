@@ -12,8 +12,9 @@
 //                          a slur's note on before the note it leaves goes off
 //   :keyon                 an off and an on at each retrigger
 //   :vel 0-15              the velocity, its 2 dB steps read as dB
-//   :vol + :master         CC7, the two faders' dB summed (0 is silence)
-//   a note's vel / vol macro  CC11, the note's move below where it started
+//   :vol + :master         CC7, the two faders' dB summed (0 is silence); a
+//                          note's vol macro in :vol's place to the next note
+//   a note's vel macro     CC11, below the note's velocity (its peak)
 //   :pitch, glide, the pitch and :semi macros  pitch bend, its range (RPN 0)
 //                          the least of 2 / 12 / 24 the track needs
 //   :snap                  applied to the note before it is written
@@ -21,9 +22,12 @@
 //   :tempo, its sweeps     tempo, the sweep a step a frame as the driver's
 //   (x N …), (go …)        written out; a song that loops plays once through
 //                          its loop (the tracks' loops to their common
-//                          length, as the VGM), marked loopStart / loopEnd
+//                          length, as the VGM), marked loopStart / loopEnd;
+//                          the loop point's writes kept though they repeat,
+//                          the loop's first note's bend and levels again
 //   #label, (trig N)       a marker, a cue point
-//   a gm-* voice           a program change: the gm set is GM's 128 in order;
+//   a gm-* voice           a program change, the voice the channel plays
+//                          (a voice change's `_voiceSet`): the gm set is GM's 128 in order;
 //                          a role's (piano, flute …) and a ROM voice's name
 //                          is the gm voice it stands for (NAMED_VOICES)
 //   a kit role's sample    channel 10, at the role's GM note (import-sf2.js);
@@ -135,7 +139,9 @@ function flatten(track) {
   if (jumpTick < 0) return { events: trimmed, hasLoop: false, endTick };
   const loopStartTick = best;
   // The loop resumes AT the label: what is written before it on its tick ran once.
-  let loopStartIndex = trimmed.findIndex((e) => e.tick > loopStartTick || (e.cmd === "MARKER" && e.args?.id === to));
+  // A label inside a counted loop is written out once a pass: the loop's is
+  // the copy at loopStartTick, the last (markers keeps the last).
+  let loopStartIndex = trimmed.findIndex((e) => e.tick > loopStartTick || (e.cmd === "MARKER" && e.args?.id === to && e.tick === loopStartTick));
   if (loopStartIndex < 0) loopStartIndex = trimmed.length;
   return { events: trimmed, hasLoop: true, loopStartTick, loopStartIndex, loopDuration: Math.max(1, jumpTick - loopStartTick), endTick };
 }
@@ -155,7 +161,7 @@ function unroll(f, endTick) {
 
 // ── The tempo map ───────────────────────────────────────────────────────
 // Points { tick, bpm }, each holding to the next; a sweep a point a frame.
-function tempoMap(allEvents, frameHz) {
+function tempoMap(allEvents, frameHz, loopStart = null) {
   const evs = allEvents.filter((e) => e.cmd === "TEMPO_SET" || e.cmd === "TEMPO_SWEEP").sort((a, b) => a.tick - b.tick);
   const opening = evs.find((e) => e.tick === 0 && e.cmd === "TEMPO_SET")?.args?.bpm ?? 120;
   let pts = [{ tick: 0, bpm: opening }];
@@ -163,7 +169,7 @@ function tempoMap(allEvents, frameHz) {
     pts = pts.filter((p) => p.tick < e.tick); // a set cancels what was ahead of it
     if (e.cmd === "TEMPO_SET") {
       const bpm = Number(e.args?.bpm);
-      if (bpm > 0) pts.push({ tick: e.tick, bpm });
+      if (bpm > 0) pts.push({ tick: e.tick, bpm, forced: e.tick === loopStart });
       continue;
     }
     const { from, to, len, curve = "linear", params } = e.args ?? {};
@@ -173,7 +179,7 @@ function tempoMap(allEvents, frameHz) {
     let t = e.tick;
     for (let i = 0; i < frames && t < e.tick + len; i++) {
       const bpm = from + (to - from) * sampleCurveUnit(curve, frames <= 1 ? 1 : i / (frames - 1), params);
-      pts.push({ tick: t, bpm });
+      pts.push({ tick: t, bpm, forced: i === 0 && e.tick === loopStart });
       t += (bpm * PPQN) / 60 / frameHz;
     }
     pts.push({ tick: e.tick + len, bpm: to });
@@ -182,7 +188,7 @@ function tempoMap(allEvents, frameHz) {
   // Same tick: the last write stands.
   const merged = [];
   for (const p of pts) {
-    if (merged.length && Math.abs(merged.at(-1).tick - p.tick) < 1e-9) merged[merged.length - 1] = p;
+    if (merged.length && Math.abs(merged.at(-1).tick - p.tick) < 1e-9) merged[merged.length - 1] = { ...p, forced: p.forced || merged.at(-1).forced };
     else merged.push(p);
   }
   let sec = 0;
@@ -217,18 +223,20 @@ function tempoMap(allEvents, frameHz) {
 }
 
 // ── A parameter over time ───────────────────────────────────────────────
-// [tick, value] points, each holding to the next, from a target's writes in
-// tick order (ir.md §5.6–5.10): a set, an add or a multiply on the value it
-// holds, a slot read, a sweep a frame until the next write on the target.
+// [tick, value, forced] points, each holding to the next, from a target's
+// writes in tick order (ir.md §5.6–5.10): a set, an add or a multiply on the
+// value it holds, a slot read, a sweep a frame until the next write on the
+// target. A write at the song's loop point is `forced`: kept though it
+// repeats the value, for it is what a pass after the first starts from.
 function paramLine(events, target, init, ctx, endTick) {
-  const pts = [[0, init]];
+  const pts = [[0, init, false]];
   let cur = init;
   let sweep = null;
-  const put = (tick, v) => {
+  const put = (tick, v, forced = false) => {
     v = clampForTarget(target, v);
     cur = v;
-    if (pts.length && Math.abs(pts.at(-1)[0] - tick) < 1e-9) pts[pts.length - 1] = [tick, v];
-    else if (pts.at(-1)[1] !== v) pts.push([tick, v]);
+    if (pts.length && Math.abs(pts.at(-1)[0] - tick) < 1e-9) pts[pts.length - 1] = [tick, v, forced || pts.at(-1)[2]];
+    else if (forced || pts.at(-1)[1] !== v) pts.push([tick, v, forced]);
   };
   // A sweep's frames before `until`.
   const run = (until) => {
@@ -248,12 +256,13 @@ function paramLine(events, target, init, ctx, endTick) {
     sweep = null;
     const a = e.args ?? {};
     const operand = (o) => (typeof o === "object" && o ? ctx.slotAt(o.src, e.tick) : Number(o));
-    if (e.cmd === "PARAM_SET") put(e.tick, Number(a.value));
-    else if (e.cmd === "PARAM_ADD") put(e.tick, cur + operand(a.delta));
+    const forced = e.tick === ctx.loopStart;
+    if (e.cmd === "PARAM_SET") put(e.tick, Number(a.value), forced);
+    else if (e.cmd === "PARAM_ADD") put(e.tick, cur + operand(a.delta), forced);
     else if (e.cmd === "PARAM_MUL") {
       const f = typeof a.factor === "object" ? operand(a.factor) : Math.round(Number(a.factor) * 256);
-      put(e.tick, Math.floor((cur * f) / 256));
-    } else if (e.cmd === "PARAM_FROM_VAL") put(e.tick, ctx.slotAt(a.src, e.tick));
+      put(e.tick, Math.floor((cur * f) / 256), forced);
+    } else if (e.cmd === "PARAM_FROM_VAL") put(e.tick, ctx.slotAt(a.src, e.tick), forced);
     else if (e.cmd === "PARAM_SWEEP") {
       const dyn = a.dyn ?? {};
       const from = dyn.from != null ? ctx.slotAt(dyn.from, e.tick) : a.from ?? cur;
@@ -273,8 +282,8 @@ function paramLine(events, target, init, ctx, endTick) {
   return pts;
 }
 
-// The ticks of a line's points in (a, b).
-function ticksIn(pts, a, b) {
+// The points of a line in (a, b).
+function pointsIn(pts, a, b) {
   let lo = 0, hi = pts.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
@@ -282,7 +291,7 @@ function ticksIn(pts, a, b) {
     else hi = mid;
   }
   const out = [];
-  for (let i = lo; i < pts.length && pts[i][0] < b; i++) out.push(pts[i][0]);
+  for (let i = lo; i < pts.length && pts[i][0] < b; i++) out.push(pts[i]);
   return out;
 }
 
@@ -415,20 +424,22 @@ function macroWrites(spec, note, ctx) {
   return out;
 }
 
-// The latest write of `writes` at or before `tick`, or undefined.
-function writeAt(writes, tick) {
-  let v;
-  for (const [t, x] of writes ?? []) {
-    if (t > tick + 1e-9) break;
-    v = x;
-  }
-  return v;
+// The latest write of `writes` at or before a tick, or undefined, read at
+// ticks that only move forward: one pass over the writes, however long.
+function cursor(writes) {
+  let i = -1;
+  return (tick) => {
+    while (writes && i + 1 < writes.length && writes[i + 1][0] <= tick + 1e-9) i++;
+    return i >= 0 ? writes[i][1] : undefined;
+  };
 }
 
 const macroPeak = (writes, fallback) => {
-  const vs = (writes ?? []).map(([, v]) => v).filter(Number.isFinite);
-  return vs.length ? Math.max(...vs) : fallback;
+  let peak = -Infinity;
+  for (const [, v] of writes ?? []) if (Number.isFinite(v) && v > peak) peak = v;
+  return peak === -Infinity ? fallback : peak;
 };
+const sortedTicks = (ticks) => [...new Set(ticks)].sort((x, y) => x - y);
 
 // ── One track's MIDI events ───────────────────────────────────────────────
 // { tick, order, bytes }: at one tick an off goes first, then metas, then
@@ -439,16 +450,21 @@ function trackEvents(events, ctx, chan, drums, notes) {
   const out = [];
   const st = (status) => status | chan;
   const ctrl = (tick, cc, v) => out.push({ tick, order: ORDER.ctrl, bytes: [st(0xb0), cc, v] });
-  const vol = paramLine(events.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === "VOL"), "VOL", VOL_UNITY, ctx, ctx.endTick);
-  const pan = paramLine(events.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === "PAN"), "PAN", 0, ctx, ctx.endTick);
-  const pitch = paramLine(events.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === "NOTE_PITCH"), "NOTE_PITCH", 0, ctx, ctx.endTick);
-  const snap = paramLine(events.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === "SNAP"), "SNAP", 0, ctx, ctx.endTick);
+  const line = (target, init) => paramLine(events.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === target), target, init, ctx, ctx.endTick);
+  const vol = line("VOL", VOL_UNITY), pan = line("PAN", 0), pitch = line("NOTE_PITCH", 0), snap = line("SNAP", 0);
+  const master = ctx.master;
 
-  // The notes: their spans, ties summed, a hold to the next note.
+  // The notes: their spans, ties summed, a hold to the next note; the voice
+  // each plays as the channel plays it — the last voice change before it
+  // (`_voiceSet`), which a jump back does not undo — or, on a track that
+  // writes no voice (a voice named on a channel with no FM), the note's own.
+  const followsVoices = events.some((e) => e._voiceSet);
   const idx = events.flatMap((e, i) => (e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON" ? [i] : []));
   const list = [];
+  let voiceNow = null, voiceAt = -Infinity, vi = 0;
   for (let k = 0; k < idx.length; k++) {
     const ev = events[idx[k]];
+    for (; vi < idx[k]; vi++) if (events[vi]._voiceSet) [voiceNow, voiceAt] = [events[vi]._voiceSet, events[vi].tick];
     const a = ev.args ?? {};
     let length = Number(a.length) || 0;
     for (let i = idx[k] + 1, at = ev.tick + length; i < events.length && events[i].tick <= at; i++)
@@ -459,103 +475,118 @@ function trackEvents(events, ctx, chan, drums, notes) {
     const off = held ? Infinity : ev.tick + gate;
     const end = Math.min(held ? Infinity : off, nextOn, ctx.endTick);
     if (end <= ev.tick) continue;
-    let key;
-    if (drums) key = GM_DRUM_NOTE[a.sample];
-    else key = snapNote(pitchToMidi(a.pitch ?? "c4"), lineAt(snap, ev.tick) | 0);
+    const key = drums ? GM_DRUM_NOTE[a.sample] : snapNote(pitchToMidi(a.pitch ?? "c4"), lineAt(snap, ev.tick) | 0);
     if (key == null) continue;
-    list.push({ ev, a, on: ev.tick, off, end, limit: nextOn, key: Math.max(0, Math.min(127, key)), base: pitchToMidi(a.pitch ?? "c4") });
+    list.push({
+      ev, a, on: ev.tick, off, end, limit: nextOn, key: Math.max(0, Math.min(127, key)), base: pitchToMidi(a.pitch ?? "c4"),
+      voice: followsVoices ? voiceNow : ev._voice, voiceAt,
+    });
   }
+  for (const n of list) {
+    n.velW = macroWrites(n.a.velMacro, n, ctx);
+    n.volW = macroWrites(n.a.vol, n, ctx);
+    n.panW = macroWrites(n.a.pan, n, ctx);
+  }
+  for (const v of new Set(list.map((n) => n.voice)))
+    if (v && v !== "init-fm" && !drums && programOf(v) == null) ctx.unnamed.add(v);
 
   // The pitch bend each note needs, in cents from its key, and the range.
-  const bends = [];
+  let need = 0;
   if (!drums) for (const n of list) {
     const pm = macroWrites(n.a.pitchMacro, n, ctx);
     const sm = macroWrites(n.a.note_semi, n, ctx);
+    const pAt = cursor(pm), sAt = cursor(sm);
     const mask = lineAt(snap, n.on) | 0;
-    const at = (t) => {
-      const p = writeAt(pm, t), s = writeAt(sm, t);
-      const semi = s ?? 0;
+    const ticks = sortedTicks([n.on, ...pointsIn(pitch, n.on, n.end).map(([t]) => t),
+      ...[...(pm ?? []), ...(sm ?? [])].map(([t]) => t).filter((t) => t >= n.on && t < n.end)]);
+    n.bend = ticks.map((t) => {
+      const p = pAt(t), sv = sAt(t);
       const sticky = lineAt(pitch, t);
-      const cents = p != null ? (n.a.pitchMacro.add ? sticky : 0) + p : s != null && !n.a.note_semi.add ? 0 : sticky;
-      return (snapNote(n.base + Math.round(semi), mask) - n.key) * 100 + cents;
-    };
-    const ticks = new Set([n.on]);
-    for (const t of ticksIn(pitch, n.on, n.end)) ticks.add(t);
-    for (const [t] of [...(pm ?? []), ...(sm ?? [])]) if (t >= n.on && t < n.end) ticks.add(t);
-    n.bend = [...ticks].sort((x, y) => x - y).map((t) => [t, at(t)]);
-    for (const [, c] of n.bend) bends.push(Math.abs(c));
+      const cents = p != null ? (n.a.pitchMacro.add ? sticky : 0) + p : sv != null && !n.a.note_semi.add ? 0 : sticky;
+      const c = (snapNote(n.base + Math.round(sv ?? 0), mask) - n.key) * 100 + cents;
+      need = Math.max(need, Math.abs(c) / 100);
+      return [t, c];
+    });
   }
-  const need = bends.length ? Math.max(...bends) / 100 : 0;
   const range = need > 1e-9 ? BEND_RANGES.find((r) => r >= need - 1e-9) ?? BEND_RANGES.at(-1) : 0;
   if (need > BEND_RANGES.at(-1) + 1e-9) ctx.note(`a pitch past ±${BEND_RANGES.at(-1)} semitones is held there`);
   if (range) for (const [cc, v] of [[101, 0], [100, 0], [6, range], [38, 0], [101, 127], [100, 127]]) ctrl(0, cc, v);
 
-  // The level: CC7 the faders, CC11 a note's own move; or, on the drums, the hit.
-  if (!drums) {
-    const ticks = [...new Set([...vol.map(([t]) => t), ...ctx.master.map(([t]) => t)])].sort((x, y) => x - y);
-    let last = null;
-    for (const t of ticks) {
-      const v = level7(faderDb(lineAt(vol, t)) + faderDb(lineAt(ctx.master, t)));
-      if (v !== last) ctrl(t, 7, (last = v));
-    }
-  }
-  const usesPan = pan.length > 1 || pan[0][1] !== 0 || list.some((n) => n.a.pan);
-  let cc11 = 127, cc10 = null, bendNow = 8192, program = null;
-  if (usesPan && !drums) ctrl(0, 10, (cc10 = pan7(lineAt(pan, 0))));
-  const panTicks = usesPan && !drums ? pan.map(([t]) => t) : [];
-  let pi = 0;
+  // The loop's first note: a player looping between the marks comes back to
+  // it from the end, so what a note decides for itself (its bend, its
+  // macros' levels and pan) is written there again, and so is what the
+  // score writes at the loop point (paramLine's `forced`).
+  const firstInLoop = ctx.loopStart == null ? null : list.find((n) => n.on >= ctx.loopStart) ?? null;
+  const anyVolMacro = list.some((n) => n.volW?.length);
+  const usesPan = !drums && (pan.length > 1 || pan[0][1] !== 0 || list.some((n) => n.panW?.length));
+  // The forced points are the loop point's few: gathered once, not searched.
+  const forced = new Map([vol, pan, master].map((pts) => [pts, pts.filter(([, , f]) => f).map(([t]) => t)]));
+  const forcedIn = (pts, a, b) => forced.get(pts).some((t) => t >= a && t <= b);
 
-  for (const n of list) {
-    const { a, on } = n;
-    // A pan written between notes.
-    for (; pi < panTicks.length && panTicks[pi] <= on; pi++) {
-      const v = pan7(lineAt(pan, panTicks[pi]));
-      if (v !== cc10) ctrl(panTicks[pi], 10, (cc10 = v));
+  // Each note's window, from its on to the next note's (before the first,
+  // the track's head): CC7 the faders — or the note's vol macro, which takes
+  // the fader's place until the next note (ir-player _fmLiveVolAt) — and
+  // CC10 the pan or the note's pan macro.
+  let cc7 = null, cc10 = null, cc11 = 127, bendNow = 8192, program = null;
+  const head = { on: 0, limit: list[0]?.on ?? ctx.endTick, head: true };
+  const windows = head.limit > 0 ? [head, ...list] : list;
+  for (const n of windows) {
+    const { on } = n;
+    const limit = Math.min(n.limit ?? ctx.endTick, ctx.endTick);
+    const again = n === firstInLoop;
+    if (!drums) {
+      const volAt = cursor(n.volW), panAt = cursor(n.panW);
+      const t7 = sortedTicks([on, ...pointsIn(vol, on, limit).map(([t]) => t), ...pointsIn(master, on, limit).map(([t]) => t),
+        ...(n.volW ?? []).map(([t]) => t)]);
+      for (const t of t7) {
+        const v = level7(faderDb(volAt(t) ?? lineAt(vol, t)) + faderDb(lineAt(master, t)));
+        const force = (t === on && again && (n.volW?.length || anyVolMacro || forcedIn(vol, ctx.loopStart, on) || forcedIn(master, ctx.loopStart, on)))
+          || (t !== on && (forcedIn(vol, t, t) || forcedIn(master, t, t)));
+        if (v !== cc7 || force) ctrl(t, 7, (cc7 = v));
+      }
+      if (usesPan) {
+        const t10 = sortedTicks([on, ...pointsIn(pan, on, limit).map(([t]) => t), ...(n.panW ?? []).map(([t]) => t)]);
+        for (const t of t10) {
+          const v = pan7(panAt(t) ?? lineAt(pan, t));
+          const force = (t === on && again && (n.panW?.length || forcedIn(pan, ctx.loopStart, on))) || (t !== on && forcedIn(pan, t, t));
+          if (v !== cc10 || force) ctrl(t, 10, (cc10 = v));
+        }
+      }
     }
-    const velW = macroWrites(a.velMacro, n, ctx);
-    const volW = macroWrites(a.vol, n, ctx);
-    const vel = velW?.length ? macroPeak(velW, a.vel ?? 15) : a.vel ?? 15;
+    if (n.head) continue;
+
+    const { a } = n;
+    const vel = n.velW?.length ? macroPeak(n.velW, a.vel ?? 15) : a.vel ?? 15;
     let velocity;
     if (drums) {
-      const fader = volW?.length ? volW[0][1] : lineAt(vol, on);
-      velocity = level7(velDb(vel) + faderDb(fader) + faderDb(lineAt(ctx.master, on)));
+      const fader = n.volW?.length ? n.volW[0][1] : lineAt(vol, on);
+      velocity = level7(velDb(vel) + faderDb(fader) + faderDb(lineAt(master, on)));
       if (!velocity) continue;
     } else velocity = Math.max(1, level7(velDb(vel)));
 
-    // The voice: a gm-* one, a role or a ROM voice is its program.
-    const prog = programOf(n.ev._voice);
-    if (!drums && prog != null && prog !== program) out.push({ tick: on, order: ORDER.ctrl, bytes: [st(0xc0), (program = prog)] });
-
     if (!drums) {
-      // CC11: the note's vel and vol macros, below where it starts.
-      const fader0 = lineAt(vol, on);
-      const ticks = [...new Set([on, ...(velW ?? []).map(([t]) => t), ...(volW ?? []).map(([t]) => t)])].sort((x, y) => x - y);
-      for (const t of ticks) {
-        const vw = writeAt(velW, t), fw = writeAt(volW, t);
-        const db = (vw != null ? velDb(vw) - velDb(vel) : 0) + (fw != null && fader0 > 0 ? faderDb(fw) - faderDb(fader0) : 0);
-        const v = level7(Math.min(0, db));
-        if (v !== cc11) ctrl(t, 11, (cc11 = v));
-      }
-      // CC10: the note's pan macro, and the track's pan written while it sounds.
-      if (usesPan) {
-        const pw = macroWrites(a.pan, n, ctx) ?? [];
-        const ts = [...new Set([on, ...pw.map(([t]) => t), ...ticksIn(pan, on, n.limit)])].sort((x, y) => x - y);
-        for (const t of ts) {
-          if (t >= n.limit) break;
-          const v = pan7(writeAt(pw, t) ?? lineAt(pan, t));
-          if (v !== cc10) ctrl(t, 10, (cc10 = v));
-        }
-        for (; pi < panTicks.length && panTicks[pi] < n.limit; pi++);
+      // The voice: a gm-* one, a role or a ROM voice is its program; at the
+      // loop's first note again when a voice change starts the loop.
+      const prog = programOf(n.voice);
+      if (prog != null && (prog !== program || (again && n.voiceAt >= ctx.loopStart)))
+        out.push({ tick: on, order: ORDER.ctrl, bytes: [st(0xc0), (program = prog)] });
+      // CC11: the note's vel macro, below its peak (the note's velocity).
+      const velAt = cursor(n.velW);
+      for (const t of sortedTicks([on, ...(n.velW ?? []).map(([t]) => t)])) {
+        const vw = velAt(t);
+        const v = level7(Math.min(0, vw != null ? velDb(vw) - velDb(vel) : 0));
+        if (v !== cc11 || (t === on && again)) ctrl(t, 11, (cc11 = v));
       }
       // The bend.
       for (const [t, c] of n.bend) {
         const v = Math.max(0, Math.min(16383, 8192 + Math.round((Math.max(-range, Math.min(range, c / 100)) / (range || 1)) * 8192)));
-        if (v !== bendNow) out.push({ tick: t, order: ORDER.ctrl, bytes: [st(0xe0), v & 0x7f, v >> 7] });
+        if (v !== bendNow || (t === on && again && range)) out.push({ tick: t, order: ORDER.ctrl, bytes: [st(0xe0), v & 0x7f, v >> 7] });
         bendNow = v;
       }
     }
 
-    // The keys: a slur moves the key it holds; a :keyon retriggers it.
+    // The keys: a slur moves the key it holds; a :keyon retriggers it, on
+    // whole ticks (a frame is less than one under 37.5 bpm).
     const prev = notes.at(-1);
     if (a.legato && prev && prev.open && prev.off === on) {
       if (prev.key === n.key) {
@@ -565,7 +596,8 @@ function trackEvents(events, ctx, chan, drums, notes) {
       }
       prev.extend(on, ORDER.legatoOff);
     }
-    const retrig = (macroWrites(a.keyon, n, ctx) ?? []).filter(([t, v]) => v >= 0.5 && t > on + 1e-6 && t < n.end).map(([t]) => t);
+    const retrig = sortedTicks((macroWrites(a.keyon, n, ctx) ?? [])
+      .filter(([, v]) => v >= 0.5).map(([t]) => Math.round(t)).filter((t) => t > on && t < n.end));
     let from = on;
     for (const r of [...retrig, null]) {
       const to = r ?? n.end;
@@ -609,7 +641,9 @@ function encodeTrack(events) {
  * The score as a Standard MIDI File.
  *
  * @param {object} ir  compileMMLisp's IR, compiled with `voiceStamps: true`
- *                     for the gm voices' program changes
+ *                     for the voices' program changes and `voiceHoist: false`:
+ *                     the hoist is the driver's wire (voice-hoist.js), and
+ *                     cuts a note short for the voice change after it
  * @returns {{ bytes: Uint8Array, notes: string[],
  *             tracks: Array<{ name, channel, port, drums, notes: Array<{on, off, key, velocity}> }> }}
  *          `notes`: what the file could not say, one line each
@@ -626,21 +660,21 @@ export function exportMidi(ir) {
   const flat = songTracks.map(flatten);
   const looping = flat.filter((f) => f.hasLoop);
   const oneShotEnd = flat.filter((f) => !f.hasLoop).reduce((m, f) => Math.max(m, f.endTick), 0);
-  let loopStart = null, endTick = Math.max(1, ...flat.map((f) => f.endTick));
+  let loopStart = null, endTick = flat.reduce((m, f) => Math.max(m, f.endTick), 1);
   if (looping.length) {
-    loopStart = Math.max(oneShotEnd, ...looping.map((f) => f.loopStartTick));
+    loopStart = looping.reduce((m, f) => Math.max(m, f.loopStartTick), oneShotEnd);
     let period = looping.reduce((m, f) => lcm(m, f.loopDuration), 1);
     if (period > LCM_CAP_TICKS) {
-      period = Math.max(...looping.map((f) => f.loopDuration));
+      period = looping.reduce((m, f) => Math.max(m, f.loopDuration), 1);
       note("the tracks' loops meet only after more than 1024 bars: the file holds the longest loop once");
     }
     endTick = loopStart + period;
   }
   const played = flat.map((f) => unroll(f, endTick));
 
-  const tempo = tempoMap(played.flat(), frameHz);
+  const tempo = tempoMap(played.flat(), frameHz, loopStart);
   const ctx = {
-    frameHz, endTick, note,
+    frameHz, endTick, note, loopStart, unnamed: new Set(),
     secAt: tempo.secAt,
     tickAt: tempo.tickAt,
     bpmAt: (tick) => tempo.points.findLast((p) => p.tick <= tick)?.bpm ?? 120,
@@ -672,7 +706,7 @@ export function exportMidi(ir) {
   const valTargets = new Set(vals.map((v) => `VAL${v.slot}`));
   const leftOut = new Set();
   for (const e of all) {
-    if (!e.src) continue;
+    if (!e.src || e._voiceSet) continue; // a voice is said below
     if (PARAM_CMDS.has(e.cmd)) {
       const t = e.args?.target;
       if (!READ_TARGETS.has(t) && !valTargets.has(t)) leftOut.add(t);
@@ -698,7 +732,7 @@ export function exportMidi(ir) {
     const slot = drums ? null : melodic++;
     return { i, events, drums, port: drums ? 0 : Math.floor(slot / MELODIC.length), channel: drums ? DRUM_CH : MELODIC[slot % MELODIC.length] };
   }).filter(Boolean);
-  const ports = Math.max(1, ...assigned.map((t) => t.port + 1));
+  const ports = assigned.reduce((m, t) => Math.max(m, t.port + 1), 1);
 
   // The conductor: the title, the tempo, the loop's marks.
   const conductor = [];
@@ -706,7 +740,7 @@ export function exportMidi(ir) {
   let lastUs = null;
   for (const p of tempo.points) {
     const us = Math.max(1, Math.min(0xffffff, Math.round(60e6 / p.bpm)));
-    if (us === lastUs || p.tick >= endTick) continue;
+    if ((us === lastUs && !p.forced) || p.tick >= endTick) continue;
     conductor.push({ tick: p.tick, order: ORDER.meta, bytes: meta(0x51, [(us >> 16) & 255, (us >> 8) & 255, us & 255]) });
     lastUs = us;
   }
@@ -736,6 +770,12 @@ export function exportMidi(ir) {
       name, channel: t.channel + 1, port: t.port, drums: t.drums,
       notes: evNotes.map(({ on, off, key, velocity }) => ({ on: Math.round(on), off: Math.round(off), key, velocity })),
     });
+  }
+
+  // A voice named for no instrument plays the DAW's choice.
+  if (ctx.unnamed.size) {
+    const names = [...ctx.unnamed].sort();
+    note(`no GM program for ${names.slice(0, 6).join(", ")}${names.length > 6 ? ` and ${names.length - 6} more` : ""}: its channel's sound is the player's`);
   }
 
   const header = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, (chunks.length >> 8) & 255, chunks.length & 255, 0, PPQN];
