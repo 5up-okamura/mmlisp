@@ -107,6 +107,22 @@ Its current limits are `driver.md` §11 — keep the two in step.
   shows. Where one def plays on several tracks, the newest note's position
   is shown.
 
+## Outputs
+
+The score's way out to other tools, beside the game. File > Export > MIDI is
+the first; the rest, in this order, waits for its use:
+
+1. **Stems** — File > Export > WAV a file per channel, so a DAW mixes the
+   chips' sound beside the MIDI.
+2. **Web MIDI out** — Live plays a score to a MIDI port as it plays it, the
+   MIDI export's mapping live (a slot moved, a sound module beside the
+   preview); Chromium and Firefox, as the input.
+3. **`:target midi` and a plugin** — a score written for MIDI, and the
+   machines as instruments in a DAW, are held until 1 and 2 show who uses
+   them: a target is the language's vocabulary and a preview to carry, and a
+   chip VSTi has makers already (a plugin that plays a score, its def-vals the
+   DAW's automation, is the one MMLisp would bring).
+
 ## Future vision
 
 **MMLisp as the composing tool for a Z80 stream player.** For a game that

@@ -66,10 +66,10 @@ export function withSeImport(sourcePath, src, seFile) {
 // VOICE_SET switches are `loopHoist` (driver.md §10.1) and `voiceRepeat` (§10.2).
 /* A score file compiled as buildMmb compiles it (its imports, an effects
  * file folded in), with no MMB: { ir, diagnostics }. */
-export function compileScoreFile(sourcePath, { frameHz, seFile, voiceHoist } = {}) {
+export function compileScoreFile(sourcePath, { frameHz, seFile, voiceHoist, voiceStamps } = {}) {
   const src = withSeImport(sourcePath, readFileSync(sourcePath, "utf8"), seFile);
   const imports = readImportSources(sourcePath, src);
-  return compileMMLisp(src, sourcePath, { frameHz, imports, voiceHoist });
+  return compileMMLisp(src, sourcePath, { frameHz, imports, voiceHoist, voiceStamps });
 }
 
 export function buildMmb(sourcePath, { frameHz, seFile, multibank, voiceHoist, loopHoist, voiceRepeat } = {}) {

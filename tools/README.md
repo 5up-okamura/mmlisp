@@ -28,8 +28,8 @@ Run from tools directory:
    machine's parts, compiles on its machine)
 10. `npm run check:sample-fx` — a sample def's `:fx` chain and its bake
 11. `npm run check:scope-trigger` — the oscilloscope's trigger holds a stationary picture
-12. `npm run check:snapshot` — the compiler's IR, the IR player's register log, the MMB
-    and the VGM of every score in `drv/tests` (NTSC and PAL), the SGDK example and
+12. `npm run check:snapshot` — the compiler's IR, the IR player's register log, the MMB,
+    the VGM and the MIDI of every score in `drv/tests` (NTSC and PAL), the SGDK example and
     `examples/` still hash to `snapshot-baseline.json`; a score in `tests/<target>/`
     (a target with no driver) holds what its chips have so far — its IR and
     diagnostics, the register log and VGM once they encode. A change that should not move
@@ -57,32 +57,38 @@ Run from tools directory:
     lead, drums) on every target at its defaults: each compiles clean, keeps
     the parts it has room for, and reads a program and a drum by the channel
     they land on
-19. `npm run check:import-tracker` — a PC Engine and an NES DefleMask module
+19. `npm run check:export-midi` — File > Export > MIDI on every test score:
+    the file reads back as the notes the export wrote, each key on goes off,
+    and every note of a track's first pass starts where the IR's does; one
+    score written there holds each row of the mapping (a gm voice's program,
+    the faders' CC7, a pan, a glide's bend and its range, a slur, a hold,
+    `:snap`, a kit role on channel 10, the loop's marks, a tempo change)
+20. `npm run check:import-tracker` — a PC Engine and an NES DefleMask module
     written there, byte by byte: the PC Engine's wavetables, wave macro, `10xx`,
     `08xy` and noise come back as pce; the NES's duty macro and `12xx`, linear
     volumes, triangle and noise rates and modes as fc, and a Disk System
     channel as fc's `fds-wave` (its 64-step wave, `11xx` `13xx` `15xx` `16xy`
     as the song's LFO words); every score compiles
-20. `npm run check:archive` — the archives Live opens as folders, on ZIP and LZH
+21. `npm run check:archive` — the archives Live opens as folders, on ZIP and LZH
     files written there (and an `-lh5-` encoder written from LHA's): names,
     folders, damage; `-- <dir>` also reads every archive under a directory,
     CRC-checked (lhasa's `test/archives` held the LHA variants to it)
-21. `npm run check:font-sizes` — Live's type sizes stay `--text`, `--label` and
+22. `npm run check:font-sizes` — Live's type sizes stay `--text`, `--label` and
     `--mark`: no size written as a number outside `style.css`'s `:root`
-22. `npm run check:gb-level` — the Game Boy's level under a note, read as the
+23. `npm run check:gb-level` — the Game Boy's level under a note, read as the
     chip steps it and as MAME's core takes it; a stop's and a hot swap's
     key-offs, the wave's loads
-23. `npm run check:new-score` — File > New: each machine's empty score compiles
+24. `npm run check:new-score` — File > New: each machine's empty score compiles
     clean, with its tracks, its imports and a sound on each rhythm track
-24. `npm run check:edit-tools` — the Logical Editor's edits on score text:
+25. `npm run check:edit-tools` — the Logical Editor's edits on score text:
     a transpose, a reverse, a shuffle moved once and where they should
-25. `npm run check:ab-snapshots` — A/B Compare's two working copies: switching,
+26. `npm run check:ab-snapshots` — A/B Compare's two working copies: switching,
     copying across, each keeping its own state
-26. `npm run gen:wavetable` / `npm run check:wavetable` — `presets/wavetable`,
+27. `npm run gen:wavetable` / `npm run check:wavetable` — `presets/wavetable`,
     computed from formulas; the check fails if the set is not what it writes
-27. `npm run gen:fm-roles` / `npm run check:fm-roles` — `presets/fm-roles`, the
+28. `npm run gen:fm-roles` / `npm run check:fm-roles` — `presets/fm-roles`, the
     melodic roles as FM voices read off `presets/gm`; the check as above
-28. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
+29. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
     check: the song importers (MDX, MGS, mucom88, MIDI, DMF, FUR) on a folder
     of real songs kept outside the repo, each score and its diagnostics written
     under `<dir>/<name>/`. Take a set before an importer change and one after,
@@ -103,17 +109,17 @@ Run from tools directory:
 30. `node scripts/ab-mgsdrv.mjs song.mgs [seconds] [channel]` — not a check: an
     MGS import held to the real MGSDRV (`npm i --no-save libkss-js`, which runs
     it on an emulated MSX), frame by frame on every PSG, SCC and FM channel
-31. `npm run check:lessons` — the Guide (MMLisp Live's tutorial, tours and tools, `tutorial/`): every
+32. `npm run check:lessons` — the Guide (MMLisp Live's tutorial, tours and tools, `tutorial/`): every
     step compiles clean, its exercise is not done before the learner starts,
     and its answer does it; the walk (Next runs on through the lessons, never
     into or out of a machine's tour; Start Lesson resumes at the first step
     not done) and a Try's states, as `live/src/lessons.js` gives them
-32. `npm run check:share` — share links with files (`live/worker/`,
+33. `npm run check:share` — share links with files (`live/worker/`,
     `live/src/share-files.js`) against an in-memory KV: a score alone keeps its
     id, files are stored and served, the same files get the same id however
     they were packed, a bundle the app would not write is refused, and a wav
     travels mono, 16-bit, at most 22.05 kHz unless a def counts its frames
-33. `npm run gen:snippet-targets` / `npm run check:snippet-targets` —
+34. `npm run gen:snippet-targets` / `npm run check:snippet-targets` —
     `snippets/targets.json`, the machines each snippet plays on (every
     snippet ported to every target and compiled; the Library marks by it);
     the check fails if the file is not what the snippets and compiler give

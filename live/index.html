@@ -296,6 +296,7 @@
           </button>
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" data-needs="driver" onclick="exportMmb();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-videogame_asset"/></svg><span>MMB…</span></button>
+            <button class="menu-item" onclick="exportMidiFile();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>MIDI…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Recording</div>
             <button class="menu-item" onclick="exportVgm();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-queue_music"/></svg><span>VGM…</span></button>
@@ -1122,6 +1123,7 @@
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
     import { abCompare, formatAbReport } from './src/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export-vgm.js';
+    import { exportMidi } from './src/export-midi.js';
     import { TARGETS, DEFAULT_TARGET, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith } from './src/targets.js';
     import { fmOpWord, fmInitVoice } from './src/chips/fm-words.js';
     import { opllRomVoices } from './src/chips/ym2413.js';
@@ -6995,6 +6997,50 @@
       }
     }
 
+    // The score's notes, levels, pans and bends as a Standard MIDI File, on
+    // every machine (export-midi.js); its gm-* voices are programs, so it
+    // compiles with the notes' voices kept.
+    async function exportMidiFile() {
+      const src = editorView.state.doc.toString();
+      let ir;
+      try {
+        await refreshImportSources(src);
+        const compiled = compileMMLisp(src, _lastFileName, { imports: _importSources, voiceStamps: true });
+        const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
+        if (errors.length > 0) {
+          log('Cannot export MIDI: source has compile errors', 'err');
+          return;
+        }
+        ir = compiled.ir;
+      } catch (e) {
+        log('MIDI export failed to compile: ' + e.message, 'err');
+        return;
+      }
+
+      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
+      const suggestedName = baseName + '.mid';
+      const target = await pickExportTarget(suggestedName, 'MIDI', 'audio/midi', '.mid');
+      if (!target) return;
+
+      let out;
+      try {
+        out = exportMidi(ir);
+      } catch (e) {
+        log('MIDI export failed: ' + e.message, 'err');
+        return;
+      }
+      const blob = new Blob([out.bytes], { type: 'audio/midi' });
+      try {
+        if (await writeExport(target, blob, suggestedName)) {
+          log(`Exported ${suggestedName} (${out.bytes.length} bytes)`, 'info');
+          for (const note of out.notes) log(`MIDI export: ${note}`, 'info');
+          logPreviewOnly('MIDI');
+        }
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('MIDI save failed: ' + e.message, 'err');
+      }
+    }
+
     async function exportMmb() {
       const src = editorView.state.doc.toString();
       let ir;
@@ -11352,6 +11398,7 @@
     window.saveFile     = saveFile;
     window.saveFileAs   = saveFileAs;
     window.exportVgm    = exportVgm;
+    window.exportMidiFile = exportMidiFile;
     window.exportMmb    = exportMmb;
     window.exportWav    = exportWav;
 

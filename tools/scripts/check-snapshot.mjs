@@ -11,6 +11,7 @@
 //   regs  the IR player's register log (IRPlayer.captureRegisterLog)
 //   mmb   the MMB and its sample bank (encodeMmb)
 //   vgm   File > Export > VGM's bytes (renderVgm, with the PCM)
+//   mid   File > Export > MIDI's bytes (exportMidi), on every target
 //
 // — each where the score's target has it (live/src/targets/): the MMB on a
 // target with MMLispDRV, the register log and the VGM once its chips have
@@ -36,6 +37,7 @@ import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { sampleBankKind } from "../../live/src/sample-bank.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
+import { exportMidi } from "../../live/src/export-midi.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE = join(ROOT, "tools", "snapshot-baseline.json");
@@ -62,8 +64,20 @@ function corpus() {
   return list;
 }
 
+// The score's MIDI, compiled as the export compiles it (its voices kept).
+function midiOf({ file, frameHz, seFile }) {
+  const { ir, diagnostics } = compileScoreFile(file, { frameHz, seFile, voiceStamps: true });
+  return diagnostics.some((d) => d.severity === "error") ? null : exportMidi(ir).bytes;
+}
+
 // Every output of one score, as bytes/strings ready to hash or dump.
-function outputs({ file, frameHz, seFile }) {
+function outputs(item) {
+  const out = outputsOf(item);
+  const mid = out.error ? null : midiOf(item);
+  return mid ? { ...out, mid } : out;
+}
+
+function outputsOf({ file, frameHz, seFile }) {
   const compiled = compileScoreFile(file, { frameHz, seFile });
   const target = targetProfile(compiled.ir?.metadata?.target);
   if (target.driver !== "mmlispdrv") {
@@ -120,6 +134,7 @@ function signature(out) {
   if (out.regs) sig.regs = hash(out.regs);
   if (out.mmb) sig.mmb = hash(Buffer.concat([Buffer.from(out.mmb), Buffer.from(out.bank)]));
   if (out.vgm) sig.vgm = hash(out.vgm);
+  if (out.mid) sig.mid = hash(out.mid);
   return sig;
 }
 
@@ -143,6 +158,7 @@ if (dumpAt >= 0) {
     }
     writeFileSync(`${base}.diagnostics.txt`, out.diagnostics + "\n");
     writeFileSync(`${base}.ir.json`, out.ir + "\n");
+    if (out.mid) writeFileSync(`${base}.mid`, out.mid);
     if (!out.regs) continue; // a target whose chips do not encode yet
     // One write per line, so `diff` points at the write that moved.
     const cap = JSON.parse(out.regs);

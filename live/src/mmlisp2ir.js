@@ -6595,6 +6595,8 @@ function expandRoots(roots, defs, paramDefs, diagnostics) {
  *   sources, keyed by the literal path string. Provided by the host, which does
  *   the async file I/O (recursing through nested imports via collectImports)
  *   before this synchronous compile. Absent paths surface E_IMPORT_NOT_FOUND.
+ * @param {boolean} [options.voiceStamps] - keep each NOTE_ON's voice as
+ *   `_voice` (ir.md §5.1), for an export that names it (export-midi.js).
  * @returns {{ ir: object, diagnostics: array, sourceMap: array }}
  */
 export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
@@ -7295,9 +7297,11 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
     seIndex++;
   }
 
+  // A note's voice is the compiler's alone (a def-mod :voice), but for an
+  // export that names it (export-midi.js's program change): `voiceStamps`.
   tracks.forEach((t, idx) => {
     t.id = idx;
-    for (const ev of t.events) delete ev._voice;
+    if (!options.voiceStamps) for (const ev of t.events) delete ev._voice;
   });
   warnSongWrites(tracks.filter((t) => !t.se), diagnostics, frameHz);
 

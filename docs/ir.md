@@ -208,6 +208,7 @@ FM / PSG note. Also used (with extra fields) on FM3 operator tracks.
 | `legato`     | bool       | —       | no  | Present (true) on the right note of a slur (`e ~ g`, language.md §3): the pitch moves without a key-off/key-on (MMB `NOTE_ON_EX` bit3). FM/PSG only. |
 | `fm3Op`      | int 1–4    | —       | no  | FM3 operator-track notes only: which operator this note keys.                  |
 | `opMask`     | int        | bitmask | no  | 0x28 key nibble; `0x10 << (fm3Op-1)`. Emitted together with `fm3Op`.           |
+| `_voice`     | string     | —       | no  | The def-fm voice the note plays. Only under `compileMMLisp`'s `voiceStamps: true` (the MIDI export's program change, `export-midi.js`); stripped otherwise. Beside `args`, not in it. |
 
 ```json
 { "tick": 0, "cmd": "NOTE_ON", "args": { "pitch": "c4", "length": 48, "gate": 36, "vel": 12,
@@ -727,8 +728,8 @@ the SSG's).
   before its note, for the driver's wire)
   → tick-0 `FM3_MODE` unshifted into `tracks[0]` (when fm3-1..4 tracks
   exist).
-- Transient fields (`_delay`) are stripped; `src` spans are the only
-  non-semantic payload that remains.
+- Transient fields (`_delay`, and `_voice` but under `voiceStamps`) are
+  stripped; `src` spans are the only non-semantic payload that remains.
 
 ## 9. Playback semantics notes
 

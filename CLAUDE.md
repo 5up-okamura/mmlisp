@@ -44,6 +44,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `voice-estimate.js` (+ `voice-estimate-worker.js`, `fm-model.js`) | File > Import > Audio as FM Voice: a patch searched for one recorded note, on a fast model of one YM2612 channel held to Nuked (`tools npm run check:voice-estimate`) |
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
+| `export-midi.js`                | File > Export > MIDI: the score's portable core as a Standard MIDI File, on every target (`tools npm run check:export-midi`) |
 | `ab-snapshots.js`               | Edit > A/B Compare: two working copies of the score, each with its own undo history (`tools npm run check:ab-snapshots`) |
 | `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |
 | `new-score.js`                 | File > New: an empty score for a target, read off its channel table (`tools npm run check:new-score`) |

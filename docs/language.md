@@ -2485,6 +2485,26 @@ those chips cannot do is a compile error, not a different sound.
 | `gb` | Nintendo Game Boy: the LR35902's two pulses, wave and noise | VGM, WAV |
 | `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG, the VRC7's FM, the N163's wavetables | VGM (without the VRC6, the MMC5 and the N163), WAV |
 
+**Every target exports MIDI** (File ▸ Export ▸ MIDI…, `live/src/export-midi.js`):
+a Standard MIDI File, format 1 at the IR's 96 ticks a quarter, of what the
+language has on every channel. A track is a channel of its own in score
+order (10 kept for the drums, the next port's past fifteen). A note is a key
+on to its gate, a slur's key on before the note it leaves goes off, a
+`:keyon` retrigger an off and an on; `:snap` moves the note before it is
+written. `:vel` is the velocity, `:vol` and `:master` together CC7 (their
+2 dB steps read as dB, GM's 40 log₁₀), a note's vel or vol macro CC11, `:pan`
+CC10, and `:pitch`, a glide and the pitch and `:semi` macros a pitch bend
+under the least range of 2, 12 or 24 semitones the track needs. The tempo and
+its sweeps are tempo events; a loop is written out once through, the tracks'
+loops to their common length as the VGM's, and marked `loopStart` /
+`loopEnd`; a `#label` is a marker and a `(trig N)` a cue point. A `gm-*`
+voice is its GM program (the `gm` set is GM's 128 in order), and a track
+whose every note is a kit role's sample (`kick`, `snare`, `hat` …) plays on
+channel 10 at the role's GM note, its faders in the velocity. A def-val is
+its init and what the score writes to it. The rest is a machine's own — FM
+operators, duty, waves, noise modes, the SSG's envelope, CSM — and is left
+out, said once; a def-se's parts are not in the file.
+
 **`pc88` exports VGM (1.51)**: FM, the SSG, the rhythm and the ADPCM-B, its
 samples baked into the chip's RAM image, which the VGM carries. Play and WAV
 run ymfm's YM2608. The rhythm sounds are the chip's ROM, Yamaha's, which

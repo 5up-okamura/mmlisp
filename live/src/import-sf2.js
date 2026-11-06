@@ -24,7 +24,7 @@ import { encodeWav } from "./export-wav.js";
 const KIT_RATE = 22050;
 
 // Role names by GM key: the vocabulary every preset kit shares.
-const KIT_ROLES = {
+export const KIT_ROLES = {
   35: "kick2", 36: "kick", 37: "rim", 38: "snare", 39: "clap", 40: "snare2", 41: "tom1", 42: "hat",
   43: "tom2", 44: "hat-pedal", 45: "tom3", 46: "hat-open", 47: "tom4", 48: "tom5", 49: "crash", 50: "tom6",
   51: "ride", 52: "china", 53: "ride-bell", 54: "tamb", 55: "splash", 56: "cowbell", 57: "crash2",
