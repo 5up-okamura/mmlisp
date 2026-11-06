@@ -1472,7 +1472,8 @@ Only what a track plays reaches the song. A comment lists the names built into t
 **File ▸ Export** writes the score out: **VGM…** and **WAV…** on every
 machine, **MIDI…** on every machine too — the notes, levels, pans, pitch
 bends and tempo as a Standard MIDI File for a DAW or a sound module, a
-`gm-*` voice as its GM program and a kit role's sample on channel 10
+`gm-*` voice, a role (`piano` …) or a ROM voice as its GM program and a
+kit role's sample on channel 10
 (`docs/language.md` §19) — **Video…** (§26), **Imported…** a song import's
 samples, and, on the Mega Drive, **MMB…** — the score and its sample bank
 for MMLispDRV (`docs/mmb.md`). The Mega Drive's other items are **MMLisp ▸ Analog LPF**,

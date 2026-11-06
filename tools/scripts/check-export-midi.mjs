@@ -11,17 +11,21 @@
 //   one score   written here, every row of the mapping read off the file:
 //               a gm voice's program, a fader's CC7, a pan's CC10, a glide's
 //               bend and its range, a slur, a hold, a kit role on channel 10,
-//               :snap, a loop to its marks, a tempo change
+//               :snap, a loop to its marks, a tempo change; a role's and a
+//               ROM voice's name as its GM program, on md, msx and fc
 //   the import  the file read by the MIDI importer: its tempo, its lanes
 //
-// and GM_PROGRAMS is the gm preset set's voices in their order.
+// and GM_PROGRAMS is the gm preset set's voices in their order, a role the
+// gm voice presets/fm-roles copied, and every ROM voice a GM program.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { exportMidi, GM_PROGRAMS, GM_DRUM_NOTE } from "../../live/src/export-midi.js";
+import { exportMidi, GM_PROGRAMS, GM_DRUM_NOTE, NAMED_VOICES, programOf } from "../../live/src/export-midi.js";
+import { OPLL_ROM_NAMES } from "../../live/src/chips/ym2413.js";
+import { VRC7_ROM_NAMES } from "../../live/src/chips/vrc7.js";
 import { parseMidi, analyzeMidi } from "../../live/src/import-midi.js";
 import { expandLoops, pitchToMidi } from "../../live/src/ir-utils.js";
 
@@ -31,6 +35,13 @@ process.chdir(ROOT);
 // GM's 128 are the gm set's def-fm voices, in order.
 const gmSet = [...readFileSync("live/presets/gm/set.mmlisp", "utf8").matchAll(/\(def-fm (gm-[a-z0-9-]+)/g)].map((m) => m[1]);
 assert.deepEqual(GM_PROGRAMS, gmSet, "GM_PROGRAMS is presets/gm's order");
+// A role is the gm voice presets/fm-roles copied (its "; gm-…" line); every
+// ROM voice's name, the OPLL's and the VRC7's, is a GM program.
+const roles = [...readFileSync("live/presets/fm-roles/set.mmlisp", "utf8").matchAll(/^; (gm-[a-z0-9-]+)\n\(def-fm ([a-z0-9-]+)/gm)];
+assert.equal(roles.length, 15, "fm-roles' fifteen");
+for (const [, gm, role] of roles) assert.equal(NAMED_VOICES[role], gm, `${role} is ${gm}`);
+for (const name of [...OPLL_ROM_NAMES, ...VRC7_ROM_NAMES]) assert.ok(programOf(name) != null, `${name} has a program`);
+for (const gm of Object.values(NAMED_VOICES)) assert.ok(GM_PROGRAMS.includes(gm), `${gm} is a gm voice`);
 
 // The notes a parsed track holds: an on to the off of its key.
 function notesOf(events) {
@@ -153,6 +164,23 @@ assert.deepEqual(tempos, [[0, 500000], [384, 1000000]], ":tempo 120, then 60");
 const drums = out.tracks.find((t) => t.name === "pcm1");
 assert.equal(drums.channel, 10);
 assert.deepEqual(drums.notes.map((n) => n.key), [36, 38, 36, 38], "kick 36, snare 38");
+
+// ── A role and a ROM voice are programs ──────────────────────────────────
+const programs = (src, opts = {}) => {
+  const { ir, diagnostics } = compileMMLisp(src, "roles.mmlisp", { voiceStamps: true, ...opts });
+  const errs = diagnostics.filter((d) => d.severity === "error");
+  assert.equal(errs.length, 0, errs.map((d) => d.message).join("; "));
+  const p = parseMidi(exportMidi(ir).bytes);
+  return p.tracks.slice(1).map((t) => t.filter((e) => e.kind === "pc").map((e) => e.a));
+};
+// The Mega Drive: a ROM name read as 4-op, and fm-roles' own voice.
+assert.deepEqual(programs("(fm1 :len 4 piano c flute d)"), [[0, 73]], "md: ROM names as 4-op");
+assert.deepEqual(programs('(import "presets/fm-roles/set.mmlisp")\n(fm1 :len 4 organ c synth-bass d)',
+  { imports: new Map([["presets/fm-roles/set.mmlisp", readFileSync("live/presets/fm-roles/set.mmlisp", "utf8")]]) }),
+[[16, 38]], "md: fm-roles' voices");
+// The FM-PAC's ROM, and the VRC7's.
+assert.deepEqual(programs("(def-score :target msx)\n(fm1 :len 4 violin c horn d)"), [[40, 60]], "msx: the FM-PAC's ROM");
+assert.deepEqual(programs("(def-score :target fc)\n(vrc7-fm1 :len 4 wurly c fretless d sweep e)"), [[4, 35, 95]], "fc: the VRC7's ROM");
 
 // ── The import reads it back ──────────────────────────────────────────────
 const a = analyzeMidi(parsed);

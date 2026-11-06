@@ -23,7 +23,9 @@
 //                          its loop (the tracks' loops to their common
 //                          length, as the VGM), marked loopStart / loopEnd
 //   #label, (trig N)       a marker, a cue point
-//   a gm-* voice           a program change: the gm set is GM's 128 in order
+//   a gm-* voice           a program change: the gm set is GM's 128 in order;
+//                          a role's (piano, flute …) and a ROM voice's name
+//                          is the gm voice it stands for (NAMED_VOICES)
 //   a kit role's sample    channel 10, at the role's GM note (import-sf2.js);
 //                          the track's faders go into the velocity there
 //
@@ -70,7 +72,24 @@ export const GM_PROGRAMS = [
   "gm-tinkle", "gm-agogo", "gm-steeldrum", "gm-woodblock", "gm-taiko", "gm-tom-melodic", "gm-syndrum", "gm-revcymbal",
   "gm-fretnoise", "gm-breath", "gm-seashore", "gm-bird", "gm-phone", "gm-heli", "gm-applause", "gm-gunshot",
 ];
+/**
+ * The voices named for an instrument, as the gm voice they stand for: the
+ * fifteen melodic roles (presets/fm-roles, each its gm voice's copy, and the
+ * OPLL's ROM names — the FM-PAC's and the VRC7's built in, a 4-op reading
+ * elsewhere), and the VRC7's own ROM names.
+ */
+export const NAMED_VOICES = {
+  piano: "gm-piano", harpsichord: "gm-harpsi", vibraphone: "gm-vibes", organ: "gm-organ-drawbar",
+  guitar: "gm-guitar-nylon", "electric-guitar": "gm-guitar-clean", "acoustic-bass": "gm-bass-acoustic",
+  "synth-bass": "gm-bass-syn1", violin: "gm-violin", trumpet: "gm-trumpet", horn: "gm-horn",
+  oboe: "gm-oboe", clarinet: "gm-clarinet", flute: "gm-flute", synth: "gm-lead-saw",
+  // The VRC7's ROM beside those (chips/vrc7.js VRC7_ROM_NAMES).
+  "buzzy-bell": "gm-glock", wurly: "gm-ep1", bells: "gm-tubular", vibes: "gm-vibes",
+  tutti: "gm-strings1", fretless: "gm-bass-fretless", sweep: "gm-pad-sweep",
+};
 const GM_PROGRAM_OF = new Map(GM_PROGRAMS.map((name, i) => [name, i]));
+/** The GM program a voice named `name` is, or undefined. */
+export const programOf = (name) => GM_PROGRAM_OF.get(NAMED_VOICES[name] ?? name);
 /** A kit role → its GM drum note (the inverse of import-sf2.js's table). */
 export const GM_DRUM_NOTE = Object.fromEntries(Object.entries(KIT_ROLES).map(([note, role]) => [role, Number(note)]));
 
@@ -503,8 +522,8 @@ function trackEvents(events, ctx, chan, drums, notes) {
       if (!velocity) continue;
     } else velocity = Math.max(1, level7(velDb(vel)));
 
-    // The voice: a gm-* one is its program.
-    const prog = GM_PROGRAM_OF.get(n.ev._voice);
+    // The voice: a gm-* one, a role or a ROM voice is its program.
+    const prog = programOf(n.ev._voice);
     if (!drums && prog != null && prog !== program) out.push({ tick: on, order: ORDER.ctrl, bytes: [st(0xc0), (program = prog)] });
 
     if (!drums) {

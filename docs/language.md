@@ -2498,7 +2498,11 @@ under the least range of 2, 12 or 24 semitones the track needs. The tempo and
 its sweeps are tempo events; a loop is written out once through, the tracks'
 loops to their common length as the VGM's, and marked `loopStart` /
 `loopEnd`; a `#label` is a marker and a `(trig N)` a cue point. A `gm-*`
-voice is its GM program (the `gm` set is GM's 128 in order), and a track
+voice is its GM program (the `gm` set is GM's 128 in order), and so is a
+voice named for an instrument: a melodic role (`piano`, `flute` …, the
+`fm-roles` set's or the ROM's) is the gm voice `fm-roles` copied, and the
+VRC7's own ROM voices the nearest (`wurly` an electric piano, `fretless`
+the fretless bass, `sweep` the sweep pad …). A track
 whose every note is a kit role's sample (`kick`, `snare`, `hat` …) plays on
 channel 10 at the role's GM note, its faders in the velocity. A def-val is
 its init and what the score writes to it. The rest is a machine's own — FM
