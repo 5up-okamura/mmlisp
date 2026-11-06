@@ -2487,7 +2487,9 @@ those chips cannot do is a compile error, not a different sound.
 
 **Every target exports MIDI** (File ▸ Export ▸ MIDI…, `live/src/export-midi.js`):
 a Standard MIDI File, format 1 at the IR's 96 ticks a quarter, of what the
-language has on every channel. A track is a channel of its own in score
+language has on every channel, as the score writes it (the Mega Drive's
+voice hoist, which moves a voice change into the silence before its note for
+the driver's wire, is not applied). A track is a channel of its own in score
 order (10 kept for the drums, the next port's past fifteen). A note is a key
 on to its gate, a slur's key on before the note it leaves goes off, a
 `:keyon` retrigger an off and an on; `:snap` moves the note before it is
