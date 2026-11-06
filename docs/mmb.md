@@ -450,7 +450,7 @@ The obligations:
 10. Deterministic output: recompiling the same IR yields identical bytes.
 11. Every `voice_id` (VOICE_SET) < VOICE_TABLE `entry_count`; every `macro_id`
     (MACRO_SET) < MACRO_TABLE `entry_count`; every macro
-    descriptor's `blob_offset + count × width` is in bounds and
+    descriptor's `blob_offset + count × width` (+ 1 for a scaled macro's slot byte, + `width` for a `:to` after a release from where it is, §15) is in bounds and
     `loop_start`/`release` are `0xFF` or ≤ `count`.
 
 ## 15. MACRO_TABLE Section (0x0007)

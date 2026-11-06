@@ -326,7 +326,7 @@ keywords at the form's first tick.
 
 | Keyword    | Value                     | Effect                                                   |
 | ---------- | ------------------------- | -------------------------------------------------------- |
-| `:oct`     | integer ≥ 0               | Octave (also `:oct+`, §7)                                |
+| `:oct`     | integer ≥ 0               | Octave (also `:oct+`, §7); a note it puts past MIDI 127 is `E_NOTE_RANGE` |
 | `:len`     | length token              | Default note length; `0` = hold, the track waits for the key-off (§17) |
 | `:gate`    | length token              | Absolute sounding time per slot; `0` = hold until runtime KEY-OFF |
 | `:gate*`   | ratio `0.0`–`1.0`         | Gate as a fraction of the note length (`1.0` = full; above 0 it keeps at least one tick) |

@@ -60,6 +60,7 @@ and `:vol` too.
 | `_` | rest at `:len`; `_4` a quarter rest (`r` is not a rest) |
 | `c4` `e8.` `g2/1` | note with its own length: quarter, dotted eighth, two bars |
 | `c6t` `c16f` `c125ms` | ticks (quarter = 96), frames (1/60 s), milliseconds |
+| `(ticks expr)` `(frames expr)` | a computed count as a length; a bare number is a denominator (§7.4) |
 | `>` `<` `o+2` `o-1` | octave up / down / by N — sticky |
 | `v+2` `v-1` | velocity up / down — sticky |
 | `c ~ c` | tie: one attack, held (PCM too) |
@@ -74,16 +75,17 @@ eighth), `N.` dotted, `N/M` a fraction of a whole note, `Nt` `Nf` `Nms`.
 
 | Keyword | Default | |
 | --- | --- | --- |
-| `:oct` | 4 | octave |
+| `:oct` | 4 | octave; a note past MIDI 127 (`:oct 11 c`) is `E_NOTE_RANGE` |
 | `:len` | 8 | default note length; `0` = hold; the track waits for the key-off (§17) |
 | `:gate` `:gate*` `:gate-` | full | sounding part: absolute, a ratio (`0.7`), or length minus (`12t`) |
 | `:vel` | 15 | 0–15, 2 dB a step, in eighths (`14.5`); never mutes |
 | `:vel1`–`:vel4` | role | an FM operator's velocity sensitivity, 0–1: carriers 1, modulators 0 unless set (§6) |
 | `:vol` / `:master` | 31 | 0–31 fader, `0` mutes; `:master` is song-wide |
 | `:tempo` | 120 | BPM, song-wide, from any track; a curve sweeps it |
-| `:pan` | center | `left` `center` `right` (FM) |
+| `:pan` | center | `left` `center` `right`, −1..1, a curve, `none`; a chip with pan bits snaps it (§19) |
+| `:lfo-rate` | 0 | the chip's one LFO, 0–8, song-wide; `:noise-rate` 1–31 the SSG's / OPM's noise period (§19); `:csm-rate` Hz on `fm3-csm` (§15) |
 | `:snap` | none | pitch classes every note snaps down onto: `[0 2 4 5 7 9 11]`, a `$slot`, `none` (§5.3) |
-| `:shuffle` | none | warps the sixteenth grid (`:shuffle-base`): `66` swings a pair 66:34, `[7 6 3 4]` a 4-step groove (§5.2) |
+| `:shuffle` | none | warps the sixteenth grid: `66` swings a pair 66:34, `[7 6 3 4]` a 4-step groove; `:shuffle-base 8` makes the step an eighth (§5.2) |
 | `:mode` | | `noise`: noise mode; `pcm`: `shot` / `loop` / `gate` |
 | `:alg :fb :tl1 :ar2 …` | voice | an FM register: value, curve, `none`, `$slot` (§5.1) |
 
@@ -147,6 +149,7 @@ vib, vib-delay, slide-up, drop; combine one of each; they work on FM too).
 (def pluck (macro :vel [15 12 8 4 0]))              ; one value per :step (1 frame)
 (macro :vel [15 #sus 13 #rel 8 4 0])                ; #sus loops till key-off, #rel after
 (macro :vel [(linear 15..4 :len 1) #rel (linear :to 0 :len 8f)]) ; release from where it is
+(macro :pitch [(wait 8f) (sin -30..30 :len 8f)])     ; a stage waits, then a curve
 (macro :pitch (sin -30..30 :len 8f))                ; vibrato, ±30 cents
 (macro :step 1/16 :semi [#sus 0 4 7] :keyon 1)      ; arpeggio, re-keyed each 16th
 (macro [:tl1 :tl2] (linear 40..0 :len 8))           ; one curve on two targets
@@ -196,6 +199,7 @@ same on every build (§11.1); `(midi c+4)` is 61 and `(hz a4)` 440 (§7.1).
 (def-score :pcm-voices 2)
 (def-pcm pad :file "pad.wav" :loop-start 300ms :loop-len 100ms
   :fx [(normalize) (fade :at 400ms :len 200ms)])
+(def-pcm kick :file "kit.wav" :offset 0 :frames 3904) ; a slice of a file in frames
 (pcm1 :len 8 kick c snare c)            ; name the sample before its notes
 (pcm2 pad :mode loop :len 1 c)
 ```

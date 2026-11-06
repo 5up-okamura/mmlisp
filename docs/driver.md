@@ -715,6 +715,9 @@ over as bytes in two forms:
   {port, reg, val} × n                  ; port 0/1 = YM2612, 2 = PSG; to the end
   ```
 
+  In a gate's file each record follows its `u16 len` (`gate_main --frames`,
+  `pairs-gate`'s reader).
+
 - **The slot** (`c-gate`, §12.2) — the same writes capped at 95 a frame and
   bucketed by port:
 
@@ -808,8 +811,8 @@ Every control call takes effect on the next frame rendered (§3.4).
   and the second writes **sixteen pairs** (IDLE-padded) there with two
   `movem.l` and eight `movep.l` — about 2,400 master clocks (~45 µs) of bus
   stop in all, measured on BlastEm. Everything past the index waits on the
-  wire, so the placement is the floor of every write's latency: 8 pairs is
-  5–8 ms. The write never lands behind pairs not yet read and never crosses the
+  wire, so the placement is the floor of every write's latency: about 5–9 ms
+  as measured (§3.4). The write never lands behind pairs not yet read and never crosses the
   page end. If the index read with the write shows the engine already at or
   past the destination (an interrupt landed between the two stops), the pump
   writes nothing and the pairs go back to the queue (a late grab;

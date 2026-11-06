@@ -949,15 +949,20 @@ function emitNoteForTrack(
   // the one entry every note takes, so ties, slurs, glides and echoes all see
   // the sounding pitch, as if it had been written.
   const shift = trackState.voiceKeyShift ?? 0;
-  if (shift !== 0 && !trackState.isPcmTrack && !trackState.isCsmRateTrack) {
-    const midi = pitchToMidi(noteName + trackState.defaultOct) + shift;
+  // Every written note is held to MIDI 0..127, as `(note …)` is: an octave
+  // past the range (`:oct 11 c`) would otherwise play on the chip's top block.
+  if (!trackState.isCsmRateTrack) {
+    const midi = pitchToMidi(noteName + trackState.defaultOct) + (trackState.isPcmTrack ? 0 : shift);
     if (midi < 0 || midi > 127) {
       pushDiag(diagnostics, "error", "E_NOTE_RANGE",
-        `note ${midi} out of MIDI range 0..127 (the voice's :key moves it by ${shift})`,
+        `note ${midi} out of MIDI range 0..127${shift && !trackState.isPcmTrack ? ` (the voice's :key moves it by ${shift})` : ""}`,
         src, trackName);
       trackState.tick += lengthTicks;
       return;
     }
+  }
+  if (shift !== 0 && !trackState.isPcmTrack && !trackState.isCsmRateTrack) {
+    const midi = pitchToMidi(noteName + trackState.defaultOct) + shift;
     const { name, octave } = midiToNoteParts(midi);
     const savedOct = trackState.defaultOct;
     trackState.voiceKeyShift = 0;
