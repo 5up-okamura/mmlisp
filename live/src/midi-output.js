@@ -1,0 +1,282 @@
+// ---------------------------------------------------------------------------
+// MIDI output (MMLisp > MIDI > Output): the preview played to a MIDI port as
+// it plays — a sound module, a DAW, a synth beside the chips.
+//
+// What goes out is the MIDI export's (export-midi.js midiPlan): the same
+// channels, notes, programs, levels, pans and bends a .mid of the score
+// holds, sent ahead of the audio with Web MIDI's timestamps, on the
+// preview's own clock — each track on its IR track's (IRPlayer trackTickAt),
+// so a tempo dialled in, a loop going round, a seek and a hold move it as
+// they move the chips. A plan is the song once through its loop; past its
+// end a looping song goes round from its loopStart.
+//
+//   a run's start or a seek  each channel's controllers as of the point
+//                            (program, bend range, CCs, bend), then the
+//                            notes from there
+//   a hot-swap               the outgoing plan stops at the swap's bar, its
+//                            notes off there; the incoming one goes on from
+//                            the bar, its controllers as they stand
+//   mute / solo              a track that does not sound sends no key; one
+//                            muted mid-note lets it go at once
+//   stop                     every key let go, All Notes Off on each channel
+//
+// A track past fifteen melodic channels is the file's second port: one
+// output has one, so it is not sent (`onSkip` says so once).
+//
+// `MidiOutRun` takes no browser API: `send(bytes, timestampMs)` and
+// `perfAt(audioTime)` are its caller's (Live: the MIDIOutput and the
+// AudioContext's output timestamp), so node checks it
+// (tools: check:midi-out).
+// ---------------------------------------------------------------------------
+
+import { RPN_BEND, midiPlan } from "./export-midi.js";
+import { compileMMLisp } from "./mmlisp2ir.js";
+
+export const midiOutSupported = typeof navigator !== "undefined"
+  && typeof navigator.requestMIDIAccess === "function";
+
+/**
+ * The page's MIDI outputs: `list()` [{ id, name }], `output(id)`; `onChange`
+ * when one comes or goes. Resolves null where the browser refused access.
+ */
+export async function openMidiOutputs(onChange) {
+  let access;
+  try {
+    access = await navigator.requestMIDIAccess({ sysex: false });
+  } catch {
+    return null;
+  }
+  access.addEventListener?.("statechange", () => onChange?.());
+  return {
+    list: () => [...access.outputs.values()].filter((o) => o.state !== "disconnected").map((o) => ({ id: o.id, name: o.name || "MIDI output" })),
+    output: (id) => access.outputs.get(id) ?? null,
+  };
+}
+
+/**
+ * The plan of a score's source, compiled as the MIDI export compiles it (the
+ * voices kept, no voice hoist), `vals` the def-vals' values; null on an
+ * error. Live runs it in the compile worker (kind 'midi').
+ */
+export function midiPlanOf(src, name, imports, vals) {
+  const { ir, diagnostics } = compileMMLisp(src, name, { imports, voiceStamps: true, voiceHoist: false });
+  return diagnostics.some((d) => d.severity === "error") ? null : midiPlan(ir, { vals });
+}
+
+// A note's key, by channel: what a stop lets go.
+const keyOf = (bytes) => ((bytes[0] & 0x0f) << 7) | bytes[1];
+const isOn = (b) => (b[0] & 0xf0) === 0x90 && b[2] > 0;
+const isOff = (b) => (b[0] & 0xf0) === 0x80 || ((b[0] & 0xf0) === 0x90 && b[2] === 0);
+// What a run's start chases: a channel event that is not a key, by its kind
+// (a controller by its number); the bend range's RPN goes as one block.
+const RPN_CCS = new Set([101, 100, 6, 38]);
+const chaseKey = (b) => {
+  const kind = b[0] & 0xf0;
+  if (kind === 0xb0) return RPN_CCS.has(b[1]) ? null : `cc${b[1]}`;
+  if (kind === 0xc0 || kind === 0xe0) return `k${kind}`;
+  return null;
+};
+// Grace for a plan that comes after its run began (it compiles off the
+// page's thread): notes due this recently still go, at once.
+const LATE_SEC = 0.25;
+
+export class MidiOutRun {
+  /**
+   * @param {{ send: (bytes: number[], timestampMs: number) => void,
+   *           perfAt?: (audioTime: number) => number,
+   *           clear?: () => void,
+   *           onSkip?: (what: string) => void }} io
+   *        `clear` drops what was sent ahead and not yet played (MIDIOutput
+   *        clear(), where the browser has it)
+   */
+  constructor({ send, perfAt = (t) => t * 1000, clear = null, onSkip = null }) {
+    this.send = send;
+    this.perfAt = perfAt;
+    this.clear = clear;
+    this.onSkip = onSkip;
+    this.lastAt = -Infinity; // the latest time anything was sent for
+    this.plan = null; // for this.planIr
+    this.planIr = null;
+    this.running = false;
+    this.tracks = null; // per plan track: { sent, active: Map key → bytes, audible }
+    this.runStart = null; // audio time the run began
+    this.swapAt = null; // the pending hot-swap's time, as last seen
+    this.chase = true; // the next plan starts from a point (not a swap)
+    this.offAt = null; // the swap whose keys were let go
+  }
+
+  /** The plan for the player's IR `ir` (midiPlan of the same score). */
+  setPlan(plan, ir) {
+    // The same IR planned again (a def-val moved): each track goes on from
+    // where it was sent to, its keys still held.
+    const carry = this.tracks && this.planIr === ir
+      ? new Map(this.plan.tracks.map((t, k) => [t.trackIndex, this.tracks[k]])) : null;
+    this.plan = plan;
+    this.planIr = ir;
+    this.tracks = carry ? plan.tracks.map((t) => carry.get(t.trackIndex) ?? { sent: carry.values().next().value?.sent ?? 0, active: new Map(), audible: true }) : null;
+    const skipped = plan.tracks.filter((t) => t.port > 0).map((t) => t.name);
+    if (skipped.length) this.onSkip?.(`past fifteen channels, not sent: ${skipped.join(", ")}`);
+  }
+
+  /**
+   * One pass: what falls due before `now` + the player's lookahead goes out.
+   * Call it a few times a frame's worth (Live: every 25 ms) while the output
+   * is on; it notices the run start, stop, seek and swap by itself.
+   * @param {IRPlayer} player
+   * @param {number} now  the AudioContext's time
+   */
+  pass(player, now) {
+    if (!player?.isPlaying?.()) {
+      if (this.running) this.stop(now);
+      return;
+    }
+    if (!this.running) {
+      this.running = true;
+      this.runStart = now;
+      this.chase = true;
+      this.tracks = null;
+    }
+    const ir = player.loadedIr();
+    if (this.plan && this.planIr !== ir) {
+      // A swap went in (or a new run's IR): the outgoing plan is done — its
+      // keys let go at the bar already, if it was a swap that was seen.
+      if (this.swapAt == null || this.offAt !== this.swapAt) this.allOff(this.swapAt ?? now);
+      this.offAt = null;
+      this.plan = null;
+      this.planIr = null;
+      this.tracks = null;
+      if (this.swapAt == null) this.chase = true;
+    }
+    if (!this.plan) return; // its plan is coming
+    const swap = player.pendingSwapTime();
+    if (swap != null) this.swapAt = swap;
+    const horizon = Math.min(now + Math.max(0.15, player.lookaheadSec()), swap ?? Infinity);
+
+    if (!this.tracks) this.begin(player, now);
+    const held = new Set(player.heldTracks?.() ?? []);
+    for (const [k, t] of this.plan.tracks.entries()) {
+      const st = this.tracks[k];
+      if (t.port > 0) continue;
+      // A track stopped at a `:len 0` note waits: its clock picks up from
+      // there at the key-off (IRPlayer _resumeHeldTrack).
+      if (held.has(t.trackIndex)) continue;
+      const audible = player.isTrackAudible(t.trackIndex);
+      if (st.audible && !audible) this.letGo(st, now); // muted mid-note
+      st.audible = audible;
+      const c0 = player.trackTickAt(t.trackIndex, now), c1 = player.trackTickAt(t.trackIndex, horizon);
+      if (!c0 || !c1 || !(c1.raw > c0.raw)) continue; // held, or no time ahead
+      const spt = (horizon - now) / (c1.raw - c0.raw);
+      const to = c1.raw;
+      if (st.sent >= to) continue;
+      this.window(t, st.sent, to, (e, raw) => {
+        const at = Math.max(now, now + (raw - c0.raw) * spt);
+        if (isOn(e.bytes)) {
+          if (!audible) return;
+          st.active.set(keyOf(e.bytes), { bytes: e.bytes, at });
+        } else if (isOff(e.bytes)) st.active.delete(keyOf(e.bytes));
+        this.lastAt = Math.max(this.lastAt, at);
+        this.send(e.bytes, this.perfAt(at));
+      });
+      st.sent = to;
+    }
+    // The outgoing plan's keys let go at the swap's bar, once.
+    if (swap != null && horizon >= swap && this.offAt !== swap) { this.allOff(swap); this.offAt = swap; }
+    if (swap == null) this.swapAt = null;
+  }
+
+  // A plan's first pass: each track from where it is now (or a little
+  // before, for a plan that came late), its controllers chased there unless
+  // the plan follows a swap, which leaves them as they stand.
+  begin(player, now) {
+    const from = Math.max(this.runStart ?? now, now - LATE_SEC);
+    const at = this.swapAt != null && !this.chase ? this.swapAt : from;
+    this.tracks = this.plan.tracks.map((t) => {
+      const raw = player.trackTickAt(t.trackIndex, at)?.raw ?? 0;
+      if (this.chase && t.port === 0) this.chaseTo(t, raw, now);
+      return { sent: raw, active: new Map(), audible: true };
+    });
+    this.chase = false;
+    this.swapAt = null;
+  }
+
+  // The plan's events in raw ticks [from, to) of a track's clock: round its
+  // loop past the plan's end, nothing past the end of a song that stops.
+  window(t, from, to, emit) {
+    const { endTick, loopStart } = this.plan;
+    const ev = t.events;
+    let a = from;
+    while (a < to) {
+      const ta = this.tickOf(a);
+      if (ta == null) break;
+      const segEnd = Math.min(to, a + (endTick - ta));
+      const tb = ta + (segEnd - a);
+      let lo = 0, hi = ev.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (ev[m].tick < ta) lo = m + 1; else hi = m; }
+      // Round the loop again (past the plan's end), what stood before the
+      // label at the loop point plays no more (export-midi.js `once`).
+      const again = a >= endTick;
+      for (let i = lo; i < ev.length && ev[i].tick < tb; i++)
+        if (ev[i].bytes[0] < 0xf0 && !(again && ev[i].once)) emit(ev[i], a + (ev[i].tick - ta));
+      if (segEnd <= a) break;
+      a = segEnd;
+      if (loopStart == null && a >= endTick) break;
+    }
+  }
+
+  // A raw tick's place in the plan, or null past a song that does not loop.
+  tickOf(raw) {
+    const { endTick, loopStart } = this.plan;
+    if (raw < endTick) return raw;
+    if (loopStart == null) return null;
+    return loopStart + ((raw - loopStart) % (endTick - loopStart));
+  }
+
+  // A track's controllers as they stand at raw tick `raw`, sent now.
+  chaseTo(t, raw, now) {
+    const tick = this.tickOf(raw) ?? this.plan.endTick;
+    const last = new Map();
+    for (const e of t.events) {
+      if (e.tick >= tick) break;
+      const k = chaseKey(e.bytes);
+      if (k) last.set(k, e.bytes);
+    }
+    const ch = t.channel;
+    const at = this.perfAt(now);
+    if (t.bendRange) for (const [cc, v] of RPN_BEND(t.bendRange)) this.send([0xb0 | ch, cc, v], at);
+    for (const k of ["k192", ...[...last.keys()].filter((k) => k.startsWith("cc")), "k224"])
+      if (last.has(k)) this.send(last.get(k), at);
+  }
+
+  // A track's keys let go at `when` — a key sent ahead, after its own on:
+  // what was sent ahead plays by its timestamp, so an off before it would
+  // leave the key held.
+  letGo(st, when) {
+    for (const { bytes: b, at } of st.active.values())
+      this.send([0x80 | (b[0] & 0x0f), b[1], 0], this.perfAt(Math.max(when, at + 0.001)));
+    st.active.clear();
+  }
+
+  // Every key let go at `when`, and All Notes Off on each channel the plan
+  // uses, after anything sent ahead (unless that was cleared).
+  allOff(when, cleared = false) {
+    if (!this.plan || !this.tracks) return;
+    for (const st of this.tracks) this.letGo(st, when);
+    const at = this.perfAt(cleared ? when : Math.max(when, this.lastAt + 0.001));
+    for (const ch of new Set(this.plan.tracks.filter((t) => t.port === 0).map((t) => t.channel))) this.send([0xb0 | ch, 123, 0], at);
+  }
+
+  /** The run stopped (or the output was turned off): everything let go now. */
+  stop(now) {
+    // What was sent ahead dropped, where the output can; else let go after it.
+    let cleared = false;
+    if (this.clear) {
+      try { this.clear(); cleared = true; } catch { /* not there after all */ }
+    }
+    if (cleared) for (const st of this.tracks ?? []) for (const a of st.active.values()) a.at = Math.min(a.at, now);
+    this.allOff(now, cleared);
+    this.lastAt = -Infinity;
+    this.running = false;
+    this.tracks = null;
+    this.swapAt = null;
+  }
+}

@@ -20,20 +20,13 @@
  */
 
 import { encodeWav } from "./export-wav.js";
+import { GM_KIT_ROLES } from "./export-midi.js";
 
 const KIT_RATE = 22050;
 
 // Role names by GM key: the vocabulary every preset kit shares.
-export const KIT_ROLES = {
-  35: "kick2", 36: "kick", 37: "rim", 38: "snare", 39: "clap", 40: "snare2", 41: "tom1", 42: "hat",
-  43: "tom2", 44: "hat-pedal", 45: "tom3", 46: "hat-open", 47: "tom4", 48: "tom5", 49: "crash", 50: "tom6",
-  51: "ride", 52: "china", 53: "ride-bell", 54: "tamb", 55: "splash", 56: "cowbell", 57: "crash2",
-  58: "vibraslap", 59: "ride2", 60: "bongo-hi", 61: "bongo-lo", 62: "conga-mute", 63: "conga-hi",
-  64: "conga-lo", 65: "timbale-hi", 66: "timbale-lo", 67: "agogo-hi", 68: "agogo-lo", 69: "cabasa",
-  70: "maracas", 71: "whistle", 72: "whistle-long", 73: "guiro", 74: "guiro-long", 75: "claves",
-  76: "woodblock-hi", 77: "woodblock-lo", 78: "cuica-mute", 79: "cuica", 80: "triangle-mute",
-  81: "triangle", 85: "castanets",
-};
+// The GM drum keys' kit roles: the MIDI export's table (export-midi.js).
+const KIT_ROLES = GM_KIT_ROLES;
 
 // Level (RMS of the loudest 50 ms, dBFS) and longest length (s) by role, as
 // the preset kits are baked.

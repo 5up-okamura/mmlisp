@@ -218,6 +218,9 @@
             <button class="menu-item" onclick="clearMidiAssignments();closeMenus()">
               <svg class="menu-icon" aria-hidden="true"><use href="#mi-link_off"/></svg><span>Clear CC Assignments</span>
             </button>
+            <div class="menu-sep"></div>
+            <div class="menu-label">Output</div>
+            <div id="midiOutList"></div>
           </div>
         </div>
       </div>
@@ -1176,6 +1179,7 @@
     import { defTemplates, fmDefText } from './src/def-templates.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
+    import { openMidiOutputs, MidiOutRun, midiPlanOf } from './src/midi-output.js';
     import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess, loadRom, saveRom, loadDraftFiles, saveDraftFiles } from './src/recent-files.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey, opmBankToMmlisp } from './src/import-fm-voices.js';
 
@@ -5516,6 +5520,7 @@
     // -----------------------------------------------------------------------
     let _lastGoodIR = null;     // last successfully compiled IR object
     let _lastGoodSrc = null;    // the source text _lastGoodIR was compiled from
+    const _irSource = new WeakMap(); // a compiled IR → its source text (the MIDI output's plan)
     let _lastSourceMap = null;  // source map from last compile
     let _lastFileName = 'untitled.mmlisp';
     let _sourceHandle = null;
@@ -7810,9 +7815,10 @@
     let _compileWorker;           // undefined: not tried yet; null: unavailable
     let _compileId = 0;
     const _compilePending = new Map(); // id → { resolve, reject, here }
-    function compileOffThread(src, name, imports, kind = 'compile') {
+    function compileOffThread(src, name, imports, kind = 'compile', extra = {}) {
       const here = () => kind === 'logical'
         ? { notes: layeredNotes(src, { filename: name, imports }), forms: channelForms(src) }
+        : kind === 'midi' ? { plan: midiPlanOf(src, name, imports, extra.vals) }
         : compileMMLisp(src, name, { imports });
       if (_compileWorker === undefined) {
         try {
@@ -7837,7 +7843,7 @@
         const id = ++_compileId;
         const p = { resolve, reject, here: () => { try { resolve(here()); } catch (e) { reject(e); } } };
         _compilePending.set(id, p);
-        try { _compileWorker.postMessage({ id, src, name, imports, kind }); }
+        try { _compileWorker.postMessage({ id, src, name, imports, kind, ...extra }); }
         catch (_) { _compilePending.delete(id); p.here(); }
       });
     }
@@ -7935,6 +7941,7 @@
       }
       _lastGoodIR = ir;
       _lastGoodSrc = src;
+      _irSource.set(ir, src);
       _lastSourceMap = sourceMap;
       applyTargetUi(ir);
       keysFollowTarget(ir);
@@ -8595,6 +8602,7 @@
       if (disp) disp.textContent = v;
       if (player) player.setVal(name, v);
       if (name === _dynPadAxes?.x || name === _dynPadAxes?.y) refreshDynPad();
+      midiOutReplan();
     }
 
     // Push all current slider values into a freshly (re)started player, since
@@ -13211,6 +13219,123 @@
       }, true);
       document.addEventListener('keydown', onMidiLearnKeyDown);
       if (loadPref('midi', 'off') === 'on') enableMidi();
+      renderMidiOutMenu();
+      if (loadPref('midiOut', '')) openMidiOut();
+    }
+
+    // ── MIDI output (src/midi-output.js) ────────────────────────────────────
+    // The preview played to a MIDI port as it plays: the MIDI export's plan of
+    // the score the player runs, compiled off the page's thread (the compile
+    // worker's 'midi'), sent ahead on the player's clock every 25 ms. The
+    // output is kept by name (pref 'midiOut'); Off is none.
+    let _midiOuts = null;      // openMidiOutputs(), once access is given
+    let _midiOutName = '';     // the chosen output's name, '' off
+    let _midiOutRun = null;
+    let _midiOutTimer = 0;
+    let _midiOutIr = null;     // the player's IR the newest plan was asked for
+    let _midiOutAsk = 0;
+    let _midiOutReplanTimer = 0;
+    let _perfAt = (t) => t * 1000;
+
+    async function openMidiOut() {
+      _midiOuts ??= await openMidiOutputs(() => { renderMidiOutMenu(); selectMidiOut(_midiOutName, true); });
+      if (!_midiOuts) { log('MIDI output: access refused', 'err'); return false; }
+      selectMidiOut(loadPref('midiOut', ''), true);
+      renderMidiOutMenu();
+      return true;
+    }
+
+    function renderMidiOutMenu() {
+      const el = document.getElementById('midiOutList');
+      if (!el) return;
+      const item = (label, on, action, title = '') => {
+        const b = document.createElement('button');
+        b.className = 'menu-item';
+        if (title) b.title = title;
+        b.innerHTML = '<svg class="menu-icon" aria-hidden="true"><use href="#mi-midi"/></svg><span></span><span class="menu-item-shortcut"></span>';
+        b.children[1].textContent = label;
+        b.children[2].textContent = on ? '✓' : '';
+        b.addEventListener('click', () => { action(); closeMenus(); });
+        return b;
+      };
+      el.replaceChildren();
+      if (!_midiOuts) {
+        el.append(item('Choose Output…', false, openMidiOut,
+          "Play the preview to a MIDI output too: the MIDI export's channels, notes, programs and controllers, as the song plays"));
+        return;
+      }
+      const outs = _midiOuts.list();
+      el.append(item('Off', !_midiOutName, () => selectMidiOut('')),
+        ...outs.map((o) => item(o.name, o.name === _midiOutName, () => selectMidiOut(o.name))));
+      if (!outs.length) {
+        const none = document.createElement('div');
+        none.className = 'menu-label';
+        none.textContent = 'no output connected';
+        el.append(none);
+      }
+    }
+    window.openMidiOut = openMidiOut;
+
+    function selectMidiOut(name, quiet = false) {
+      const was = _midiOutName;
+      _midiOutName = name || '';
+      savePref('midiOut', _midiOutName);
+      const out = _midiOutName && _midiOuts?.list().find((o) => o.name === _midiOutName);
+      const port = out ? _midiOuts.output(out.id) : null;
+      if (_midiOutRun) { _midiOutRun.stop(audioCtx?.currentTime ?? 0); }
+      clearInterval(_midiOutTimer);
+      _midiOutTimer = 0;
+      _midiOutRun = null;
+      _midiOutIr = null;
+      if (port) {
+        _midiOutRun = new MidiOutRun({
+          send: (bytes, ms) => { try { port.send(bytes, ms); } catch (e) { /* a port gone mid-run */ } },
+          clear: typeof port.clear === 'function' ? () => port.clear() : null,
+          perfAt: (t) => _perfAt(t),
+          onSkip: (what) => log(`MIDI output: ${what}`, 'warn'),
+        });
+        _midiOutTimer = setInterval(midiOutTick, 25);
+        if (!quiet || was !== _midiOutName) log(`MIDI output: ${_midiOutName}`, 'info');
+      } else if (!quiet && was) log('MIDI output: off', 'info');
+      renderMidiOutMenu();
+    }
+    window.selectMidiOut = selectMidiOut;
+
+    function midiOutTick() {
+      // The MMLispDRV backend's player has no IR clock to follow.
+      if (!_midiOutRun || !audioCtx || typeof player?.loadedIr !== 'function') return;
+      // Context time → the page's performance clock, where the audio is heard.
+      const ts = audioCtx.getOutputTimestamp?.();
+      if (ts?.performanceTime > 0) _perfAt = (t) => ts.performanceTime + (t - ts.contextTime) * 1000;
+      else {
+        const lead = audioCtx.outputLatency || audioCtx.baseLatency || 0, now = performance.now(), ct = audioCtx.currentTime;
+        _perfAt = (t) => now + (t - ct + lead) * 1000;
+      }
+      const ir = player.isPlaying() ? player.loadedIr() : null;
+      if (ir && ir !== _midiOutIr) requestMidiPlan(ir);
+      _midiOutRun.pass(player, audioCtx.currentTime);
+    }
+
+    // The plan of the score the player runs: its source, the sliders' values.
+    // A plan is for that IR only — its tracks, by name, the IR's.
+    function requestMidiPlan(ir) {
+      _midiOutIr = ir;
+      const src = _irSource.get(ir) ?? _lastGoodSrc;
+      if (src == null) return;
+      const ask = ++_midiOutAsk;
+      compileOffThread(src, _lastFileName, _importSources, 'midi', { vals: { ..._dynVals } }).then((r) => {
+        if (ask !== _midiOutAsk || !r?.plan || player?.loadedIr?.() !== ir) return;
+        const names = (ir.tracks ?? []).map((t) => t.scoreChannel ?? t.channel);
+        if (!r.plan.tracks.every((t) => names[t.trackIndex] === t.name)) return;
+        _midiOutRun?.setPlan(r.plan, ir);
+      }).catch(() => {});
+    }
+
+    // A slider moved: the plan made again, the output going on from where it is.
+    function midiOutReplan() {
+      if (!_midiOutRun || !_midiOutIr) return;
+      clearTimeout(_midiOutReplanTimer);
+      _midiOutReplanTimer = setTimeout(() => { if (_midiOutIr) requestMidiPlan(_midiOutIr); }, 120);
     }
 
     function updateMidiChecks() {

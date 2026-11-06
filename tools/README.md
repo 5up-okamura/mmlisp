@@ -68,32 +68,38 @@ Run from tools directory:
     sounding and none off zero; where the chips mix their channels on their
     own (the SSG, the AY, the Game Boy, the HuC6280's waves) the stems and the
     floor add up to the WAV export, sample for sample
-21. `npm run check:import-tracker` — a PC Engine and an NES DefleMask module
+21. `npm run check:midi-out` — MMLisp > MIDI > Output: on an IR player
+    stepped by hand, each note on goes out with the YM2612's key-on, through
+    a tempo change and round the loop, and a seek chases the channel's
+    program and level; on a stand-in player, mute, stop (no key left held),
+    a hot-swap at its bar, the loop leaving what stood before its label, a
+    plan made again and one that comes late
+22. `npm run check:import-tracker` — a PC Engine and an NES DefleMask module
     written there, byte by byte: the PC Engine's wavetables, wave macro, `10xx`,
     `08xy` and noise come back as pce; the NES's duty macro and `12xx`, linear
     volumes, triangle and noise rates and modes as fc, and a Disk System
     channel as fc's `fds-wave` (its 64-step wave, `11xx` `13xx` `15xx` `16xy`
     as the song's LFO words); every score compiles
-22. `npm run check:archive` — the archives Live opens as folders, on ZIP and LZH
+23. `npm run check:archive` — the archives Live opens as folders, on ZIP and LZH
     files written there (and an `-lh5-` encoder written from LHA's): names,
     folders, damage; `-- <dir>` also reads every archive under a directory,
     CRC-checked (lhasa's `test/archives` held the LHA variants to it)
-23. `npm run check:font-sizes` — Live's type sizes stay `--text`, `--label` and
+24. `npm run check:font-sizes` — Live's type sizes stay `--text`, `--label` and
     `--mark`: no size written as a number outside `style.css`'s `:root`
-24. `npm run check:gb-level` — the Game Boy's level under a note, read as the
+25. `npm run check:gb-level` — the Game Boy's level under a note, read as the
     chip steps it and as MAME's core takes it; a stop's and a hot swap's
     key-offs, the wave's loads
-25. `npm run check:new-score` — File > New: each machine's empty score compiles
+26. `npm run check:new-score` — File > New: each machine's empty score compiles
     clean, with its tracks, its imports and a sound on each rhythm track
-26. `npm run check:edit-tools` — the Logical Editor's edits on score text:
+27. `npm run check:edit-tools` — the Logical Editor's edits on score text:
     a transpose, a reverse, a shuffle moved once and where they should
-27. `npm run check:ab-snapshots` — A/B Compare's two working copies: switching,
+28. `npm run check:ab-snapshots` — A/B Compare's two working copies: switching,
     copying across, each keeping its own state
-28. `npm run gen:wavetable` / `npm run check:wavetable` — `presets/wavetable`,
+29. `npm run gen:wavetable` / `npm run check:wavetable` — `presets/wavetable`,
     computed from formulas; the check fails if the set is not what it writes
-29. `npm run gen:fm-roles` / `npm run check:fm-roles` — `presets/fm-roles`, the
+30. `npm run gen:fm-roles` / `npm run check:fm-roles` — `presets/fm-roles`, the
     melodic roles as FM voices read off `presets/gm`; the check as above
-30. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
+31. `npm run snapshot:imports -- --out <dir> --set <name> <folder>...` — not a
     check: the song importers (MDX, MGS, mucom88, MIDI, DMF, FUR) on a folder
     of real songs kept outside the repo, each score and its diagnostics written
     under `<dir>/<name>/`. Take a set before an importer change and one after,
@@ -105,26 +111,26 @@ Run from tools directory:
     slide shows there, which the diff hides in the lines it rewrites;
     `--regs base,now` plays them and compares their register writes — a
     rewrite that must sound the same writes the same
-31. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
+32. `node scripts/ab-mucom88.mjs song.muc song.vgm [--flat] [channel]` — not a
     check: a mucom88 import held to the real mucom88's VGM of the song (built
     from `github.com/onitama/mucom88`, `make OS_SDL=0` with the dummy OS's two
     missing stubs; it reads the `.muc` as UTF-8 — convert from CP932, not
     Shift_JIS, or `\` becomes `¥`), frame by frame on FM, SSG and the rhythm:
     sounding, pitch and level, at the offset and clock ratio that agree best
-32. `node scripts/ab-mgsdrv.mjs song.mgs [seconds] [channel]` — not a check: an
+33. `node scripts/ab-mgsdrv.mjs song.mgs [seconds] [channel]` — not a check: an
     MGS import held to the real MGSDRV (`npm i --no-save libkss-js`, which runs
     it on an emulated MSX), frame by frame on every PSG, SCC and FM channel
-33. `npm run check:lessons` — the Guide (MMLisp Live's tutorial, tours and tools, `tutorial/`): every
+34. `npm run check:lessons` — the Guide (MMLisp Live's tutorial, tours and tools, `tutorial/`): every
     step compiles clean, its exercise is not done before the learner starts,
     and its answer does it; the walk (Next runs on through the lessons, never
     into or out of a machine's tour; Start Lesson resumes at the first step
     not done) and a Try's states, as `live/src/lessons.js` gives them
-34. `npm run check:share` — share links with files (`live/worker/`,
+35. `npm run check:share` — share links with files (`live/worker/`,
     `live/src/share-files.js`) against an in-memory KV: a score alone keeps its
     id, files are stored and served, the same files get the same id however
     they were packed, a bundle the app would not write is refused, and a wav
     travels mono, 16-bit, at most 22.05 kHz unless a def counts its frames
-35. `npm run gen:snippet-targets` / `npm run check:snippet-targets` —
+36. `npm run gen:snippet-targets` / `npm run check:snippet-targets` —
     `snippets/targets.json`, the machines each snippet plays on (every
     snippet ported to every target and compiled; the Library marks by it);
     the check fails if the file is not what the snippets and compiler give
@@ -141,12 +147,12 @@ tutorial (`tutorial/lessons.json`'s titles, its steps' leading comments) and
 is one generated pack, `live/src/i18n/<lang>.js`, that pairs every text with a
 hash of the English it translates. Nobody edits a pack:
 
-1. `node scripts/i18n-sync.mjs --todo ja > /tmp/ja.json` — the texts the pack
+2. `node scripts/i18n-sync.mjs --todo ja > /tmp/ja.json` — the texts the pack
    lacks or whose English changed, as `{"section/key": "English"}`.
 2. Translate the values in place (an AI session does this, with
    [i18n/glossary.md](i18n/glossary.md) — the terms to keep and the ones never
    translated — in hand).
-3. `node scripts/i18n-sync.mjs --apply ja /tmp/ja.json` — merges the
+4. `node scripts/i18n-sync.mjs --apply ja /tmp/ja.json` — merges the
    translations in and drops texts the English no longer has.
 
 `npm run check:i18n` fails on anything missing, stale or orphaned, so a

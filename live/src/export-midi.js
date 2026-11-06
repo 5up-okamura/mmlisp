@@ -48,7 +48,6 @@ import {
   pitchToMidi, snapNote, expandLoops, sampleCurveUnit, clampForTarget,
   VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY, FRAME_HZ_NTSC,
 } from "./ir-utils.js";
-import { KIT_ROLES } from "./import-sf2.js";
 
 const PPQN = 96;
 const DRUM_CH = 9;
@@ -94,8 +93,22 @@ export const NAMED_VOICES = {
 const GM_PROGRAM_OF = new Map(GM_PROGRAMS.map((name, i) => [name, i]));
 /** The GM program a voice named `name` is, or undefined. */
 export const programOf = (name) => GM_PROGRAM_OF.get(NAMED_VOICES[name] ?? name);
-/** A kit role → its GM drum note (the inverse of import-sf2.js's table). */
-export const GM_DRUM_NOTE = Object.fromEntries(Object.entries(KIT_ROLES).map(([note, role]) => [role, Number(note)]));
+/**
+ * The GM drum keys and the kit roles they are (presets/gm-drums, the names
+ * a SoundFont kit is read under: import-sf2.js), and the other way round.
+ */
+export const GM_KIT_ROLES = {
+  35: "kick2", 36: "kick", 37: "rim", 38: "snare", 39: "clap", 40: "snare2", 41: "tom1", 42: "hat",
+  43: "tom2", 44: "hat-pedal", 45: "tom3", 46: "hat-open", 47: "tom4", 48: "tom5", 49: "crash", 50: "tom6",
+  51: "ride", 52: "china", 53: "ride-bell", 54: "tamb", 55: "splash", 56: "cowbell", 57: "crash2",
+  58: "vibraslap", 59: "ride2", 60: "bongo-hi", 61: "bongo-lo", 62: "conga-mute", 63: "conga-hi",
+  64: "conga-lo", 65: "timbale-hi", 66: "timbale-lo", 67: "agogo-hi", 68: "agogo-lo", 69: "cabasa",
+  70: "maracas", 71: "whistle", 72: "whistle-long", 73: "guiro", 74: "guiro-long", 75: "claves",
+  76: "woodblock-hi", 77: "woodblock-lo", 78: "cuica-mute", 79: "cuica", 80: "triangle-mute",
+  81: "triangle", 85: "castanets",
+};
+/** A kit role → its GM drum note. */
+export const GM_DRUM_NOTE = Object.fromEntries(Object.entries(GM_KIT_ROLES).map(([note, role]) => [role, Number(note)]));
 
 // The words this export reads; any other write is a machine's own.
 const READ_TARGETS = new Set(["VOL", "MASTER", "PAN", "NOTE_PITCH", "SNAP"]);
@@ -148,13 +161,15 @@ function flatten(track) {
 
 // A looping track's passes, up to `endTick`; each event knows its pass.
 function unroll(f, endTick) {
-  const out = f.events.map((e) => ({ ...e, _pass: 0 }));
+  // `_body`: the loop's, which a pass after the first plays again — not what
+  // stands before the label on its tick, which ran once.
+  const out = f.events.map((e, i) => ({ ...e, _pass: 0, _body: f.hasLoop && i >= f.loopStartIndex }));
   if (!f.hasLoop) return out;
   // (stable: a pass's events at its last tick stay ahead of the next pass's)
   const body = f.events.slice(f.loopStartIndex);
   for (let k = 1; f.loopStartTick + k * f.loopDuration < endTick; k++) {
     const shift = k * f.loopDuration;
-    for (const e of body) if (e.tick + shift < endTick) out.push({ ...e, tick: e.tick + shift, _pass: k });
+    for (const e of body) if (e.tick + shift < endTick) out.push({ ...e, tick: e.tick + shift, _pass: k, _body: true });
   }
   return out.sort((a, b) => a.tick - b.tick);
 }
@@ -169,7 +184,7 @@ function tempoMap(allEvents, frameHz, loopStart = null) {
     pts = pts.filter((p) => p.tick < e.tick); // a set cancels what was ahead of it
     if (e.cmd === "TEMPO_SET") {
       const bpm = Number(e.args?.bpm);
-      if (bpm > 0) pts.push({ tick: e.tick, bpm, forced: e.tick === loopStart });
+      if (bpm > 0) pts.push({ tick: e.tick, bpm, forced: e.tick === loopStart && !!e._body });
       continue;
     }
     const { from, to, len, curve = "linear", params } = e.args ?? {};
@@ -179,7 +194,7 @@ function tempoMap(allEvents, frameHz, loopStart = null) {
     let t = e.tick;
     for (let i = 0; i < frames && t < e.tick + len; i++) {
       const bpm = from + (to - from) * sampleCurveUnit(curve, frames <= 1 ? 1 : i / (frames - 1), params);
-      pts.push({ tick: t, bpm, forced: i === 0 && e.tick === loopStart });
+      pts.push({ tick: t, bpm, forced: i === 0 && e.tick === loopStart && !!e._body });
       t += (bpm * PPQN) / 60 / frameHz;
     }
     pts.push({ tick: e.tick + len, bpm: to });
@@ -256,7 +271,7 @@ function paramLine(events, target, init, ctx, endTick) {
     sweep = null;
     const a = e.args ?? {};
     const operand = (o) => (typeof o === "object" && o ? ctx.slotAt(o.src, e.tick) : Number(o));
-    const forced = e.tick === ctx.loopStart;
+    const forced = e.tick === ctx.loopStart && !!e._body;
     if (e.cmd === "PARAM_SET") put(e.tick, Number(a.value), forced);
     else if (e.cmd === "PARAM_ADD") put(e.tick, cur + operand(a.delta), forced);
     else if (e.cmd === "PARAM_MUL") {
@@ -445,11 +460,19 @@ const sortedTicks = (ticks) => [...new Set(ticks)].sort((x, y) => x - y);
 // { tick, order, bytes }: at one tick an off goes first, then metas, then
 // controllers, then ons; a slur's off after the on it gives way to.
 const ORDER = { off: 0, meta: 1, ctrl: 2, on: 3, legatoOff: 4 };
+/** The bend range's RPN 0, then the null RPN: [controller, value] in order. */
+export const RPN_BEND = (range) => [[101, 0], [100, 0], [6, range], [38, 0], [101, 127], [100, 127]];
 
 function trackEvents(events, ctx, chan, drums, notes) {
   const out = [];
   const st = (status) => status | chan;
-  const ctrl = (tick, cc, v) => out.push({ tick, order: ORDER.ctrl, bytes: [st(0xb0), cc, v] });
+  // A write at the loop point that is neither the loop's own (forced) nor
+  // the loop's first note's (again) is what stood before the label there —
+  // a start-up setting, the first program — and plays once: `once`, which
+  // Live's output leaves out when it goes round (the file keeps it).
+  const push = (tick, bytes, keep = false) =>
+    out.push({ tick, order: ORDER.ctrl, bytes, ...(tick === ctx.loopStart && !keep ? { once: true } : {}) });
+  const ctrl = (tick, cc, v, keep = false) => push(tick, [st(0xb0), cc, v], keep);
   const line = (target, init) => paramLine(events.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === target), target, init, ctx, ctx.endTick);
   const vol = line("VOL", VOL_UNITY), pan = line("PAN", 0), pitch = line("NOTE_PITCH", 0), snap = line("SNAP", 0);
   const master = ctx.master;
@@ -461,10 +484,10 @@ function trackEvents(events, ctx, chan, drums, notes) {
   const followsVoices = events.some((e) => e._voiceSet);
   const idx = events.flatMap((e, i) => (e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON" ? [i] : []));
   const list = [];
-  let voiceNow = null, voiceAt = -Infinity, vi = 0;
+  let voiceNow = null, voiceAt = -Infinity, vi = 0; // voiceAt: the change's tick, in the loop's body
   for (let k = 0; k < idx.length; k++) {
     const ev = events[idx[k]];
-    for (; vi < idx[k]; vi++) if (events[vi]._voiceSet) [voiceNow, voiceAt] = [events[vi]._voiceSet, events[vi].tick];
+    for (; vi < idx[k]; vi++) if (events[vi]._voiceSet) [voiceNow, voiceAt] = [events[vi]._voiceSet, events[vi]._body ? events[vi].tick : -Infinity];
     const a = ev.args ?? {};
     let length = Number(a.length) || 0;
     for (let i = idx[k] + 1, at = ev.tick + length; i < events.length && events[i].tick <= at; i++)
@@ -510,7 +533,8 @@ function trackEvents(events, ctx, chan, drums, notes) {
   }
   const range = need > 1e-9 ? BEND_RANGES.find((r) => r >= need - 1e-9) ?? BEND_RANGES.at(-1) : 0;
   if (need > BEND_RANGES.at(-1) + 1e-9) ctx.note(`a pitch past ±${BEND_RANGES.at(-1)} semitones is held there`);
-  if (range) for (const [cc, v] of [[101, 0], [100, 0], [6, range], [38, 0], [101, 127], [100, 127]]) ctrl(0, cc, v);
+  if (range) for (const [cc, v] of RPN_BEND(range)) ctrl(0, cc, v);
+  out.bendRange = range;
 
   // The loop's first note: a player looping between the marks comes back to
   // it from the end, so what a note decides for itself (its bend, its
@@ -542,14 +566,14 @@ function trackEvents(events, ctx, chan, drums, notes) {
         const v = level7(faderDb(volAt(t) ?? lineAt(vol, t)) + faderDb(lineAt(master, t)));
         const force = (t === on && again && (n.volW?.length || anyVolMacro || forcedIn(vol, ctx.loopStart, on) || forcedIn(master, ctx.loopStart, on)))
           || (t !== on && (forcedIn(vol, t, t) || forcedIn(master, t, t)));
-        if (v !== cc7 || force) ctrl(t, 7, (cc7 = v));
+        if (v !== cc7 || force) ctrl(t, 7, (cc7 = v), force);
       }
       if (usesPan) {
         const t10 = sortedTicks([on, ...pointsIn(pan, on, limit).map(([t]) => t), ...(n.panW ?? []).map(([t]) => t)]);
         for (const t of t10) {
           const v = pan7(panAt(t) ?? lineAt(pan, t));
           const force = (t === on && again && (n.panW?.length || forcedIn(pan, ctx.loopStart, on))) || (t !== on && forcedIn(pan, t, t));
-          if (v !== cc10 || force) ctrl(t, 10, (cc10 = v));
+          if (v !== cc10 || force) ctrl(t, 10, (cc10 = v), force);
         }
       }
     }
@@ -568,19 +592,19 @@ function trackEvents(events, ctx, chan, drums, notes) {
       // The voice: a gm-* one, a role or a ROM voice is its program; at the
       // loop's first note again when a voice change starts the loop.
       const prog = programOf(n.voice);
-      if (prog != null && (prog !== program || (again && n.voiceAt >= ctx.loopStart)))
-        out.push({ tick: on, order: ORDER.ctrl, bytes: [st(0xc0), (program = prog)] });
+      const anew = again && n.voiceAt >= ctx.loopStart;
+      if (prog != null && (prog !== program || anew)) push(on, [st(0xc0), (program = prog)], anew);
       // CC11: the note's vel macro, below its peak (the note's velocity).
       const velAt = cursor(n.velW);
       for (const t of sortedTicks([on, ...(n.velW ?? []).map(([t]) => t)])) {
         const vw = velAt(t);
         const v = level7(Math.min(0, vw != null ? velDb(vw) - velDb(vel) : 0));
-        if (v !== cc11 || (t === on && again)) ctrl(t, 11, (cc11 = v));
+        if (v !== cc11 || (t === on && again)) ctrl(t, 11, (cc11 = v), again);
       }
       // The bend.
       for (const [t, c] of n.bend) {
         const v = Math.max(0, Math.min(16383, 8192 + Math.round((Math.max(-range, Math.min(range, c / 100)) / (range || 1)) * 8192)));
-        if (v !== bendNow || (t === on && again && range)) out.push({ tick: t, order: ORDER.ctrl, bytes: [st(0xe0), v & 0x7f, v >> 7] });
+        if (v !== bendNow || (t === on && again && range)) push(t, [st(0xe0), v & 0x7f, v >> 7], again);
         bendNow = v;
       }
     }
@@ -625,7 +649,7 @@ const meta = (type, data) => [0xff, type, ...vlq(data.length), ...data];
 
 function encodeTrack(events) {
   const sorted = events
-    .map((e, i) => ({ ...e, tick: Math.max(0, Math.round(e.tick)), i }))
+    .map((e, i) => ({ ...e, tick: Math.max(0, Math.round(e.tick)), i: e.seq ?? i }))
     .sort((a, b) => a.tick - b.tick || a.order - b.order || a.i - b.i);
   const body = [];
   let at = 0;
@@ -649,6 +673,35 @@ function encodeTrack(events) {
  *          `notes`: what the file could not say, one line each
  */
 export function exportMidi(ir) {
+  const plan = midiPlan(ir);
+  const chunks = [encodeTrack(plan.conductor), ...plan.tracks.map((t) => encodeTrack(t.events))];
+  const header = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, (chunks.length >> 8) & 255, chunks.length & 255, 0, PPQN];
+  const bytes = new Uint8Array(header.length + chunks.reduce((m, c) => m + c.length, 0));
+  bytes.set(header, 0);
+  let p = header.length;
+  for (const c of chunks) { bytes.set(c, p); p += c.length; }
+  return {
+    bytes, notes: plan.notes,
+    tracks: plan.tracks.map(({ name, channel, port, drums, notes }) => ({ name, channel: channel + 1, port, drums, notes })),
+  };
+}
+
+/**
+ * What exportMidi writes, before it is a file: the song's MIDI, a track an IR
+ * track, each event `{ tick, order, bytes }` at the IR's ticks (unrounded),
+ * in the order they go out — what Live's MIDI output plays (midi-output.js).
+ * A track's tick 0 is its IR track's; the file holds `endTick` of them, and
+ * a looping song goes round from `loopStart`.
+ *
+ * @param {object} ir  as exportMidi's
+ * @param {{ vals?: Object<string, number> }} [opts]  def-vals' values in
+ *        place of their inits (the sliders' while Live plays)
+ * @returns {{ ppqn, loopStart: number|null, endTick, notes: string[],
+ *             conductor: Array, tracks: Array<{ name, trackIndex, channel, port,
+ *             drums, bendRange, events, notes }> }}
+ */
+export function midiPlan(ir, { vals: given = {} } = {}) {
+
   const frameHz = ir.metadata?.frameHz ?? FRAME_HZ_NTSC;
   const said = new Set();
   const note = (s) => said.add(s);
@@ -685,7 +738,7 @@ export function exportMidi(ir) {
   // The def-vals: their inits and what the score writes to them.
   const vals = ir.metadata?.vals ?? [];
   const units = Object.fromEntries(vals.map((v) => [v.name, v.unit ?? "frame"]));
-  const inits = Object.fromEntries(vals.map((v) => [v.name, v.init ?? 0]));
+  const inits = Object.fromEntries(vals.map((v) => [v.name, Number.isFinite(given[v.name]) ? given[v.name] : v.init ?? 0]));
   const lines = {};
   ctx.slotAt = (src, tick) => {
     if (src === "$time") return Math.floor(tempo.secAt(tick) * frameHz);
@@ -697,7 +750,7 @@ export function exportMidi(ir) {
     return units[src] === "tick" ? Math.max(1, Math.round((tempo.secAt(tick + raw) - tempo.secAt(tick)) * frameHz)) : Math.max(1, Math.round(raw));
   };
   const all = played.flat().sort((a, b) => a.tick - b.tick);
-  const slotLines = vals.map((v) => [v.name, paramLine(all.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === `VAL${v.slot}`), `VAL${v.slot}`, v.init ?? 0, ctx, endTick)]);
+  const slotLines = vals.map((v) => [v.name, paramLine(all.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === `VAL${v.slot}`), `VAL${v.slot}`, inits[v.name], ctx, endTick)]);
   for (const [name, pts] of slotLines) lines[name] = pts;
   ctx.master = paramLine(all.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === "MASTER"), "MASTER", VOL_UNITY, ctx, endTick);
 
@@ -750,7 +803,6 @@ export function exportMidi(ir) {
   }
 
   const tracksOut = [];
-  const chunks = [encodeTrack(conductor)];
   for (const t of assigned) {
     const track = songTracks[t.i];
     const name = track.scoreChannel ?? track.channel ?? `track ${t.i + 1}`;
@@ -765,9 +817,11 @@ export function exportMidi(ir) {
       if (e.cmd === "MARKER" && e.args?.id && !/^\(x \d+\)$/.test(e.args.id)) events.push({ tick: e.tick, order: ORDER.meta, bytes: meta(0x06, text(e.args.id)) });
       if (e.cmd === "TRIG") events.push({ tick: e.tick, order: ORDER.meta, bytes: meta(0x07, text(`trig ${e.args?.code ?? 0}`)) });
     }
-    chunks.push(encodeTrack(events));
     tracksOut.push({
-      name, channel: t.channel + 1, port: t.port, drums: t.drums,
+      name, trackIndex: ir.tracks.indexOf(track), channel: t.channel, port: t.port, drums: t.drums, bendRange: events.bendRange,
+      // `seq` the order they were made in, which the file keeps for events
+      // that round to one tick (encodeTrack).
+      events: events.map((e, seq) => ({ ...e, seq })).sort((a, b) => a.tick - b.tick || a.order - b.order || a.seq - b.seq),
       notes: evNotes.map(({ on, off, key, velocity }) => ({ on: Math.round(on), off: Math.round(off), key, velocity })),
     });
   }
@@ -778,10 +832,5 @@ export function exportMidi(ir) {
     note(`no GM program for ${names.slice(0, 6).join(", ")}${names.length > 6 ? ` and ${names.length - 6} more` : ""}: its channel's sound is the player's`);
   }
 
-  const header = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, (chunks.length >> 8) & 255, chunks.length & 255, 0, PPQN];
-  const bytes = new Uint8Array(header.length + chunks.reduce((m, c) => m + c.length, 0));
-  bytes.set(header, 0);
-  let p = header.length;
-  for (const c of chunks) { bytes.set(c, p); p += c.length; }
-  return { bytes, notes: [...said], tracks: tracksOut };
+  return { ppqn: PPQN, loopStart, endTick, notes: [...said], conductor, tracks: tracksOut };
 }

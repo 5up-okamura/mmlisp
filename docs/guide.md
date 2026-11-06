@@ -1452,6 +1452,18 @@ MIDI, and the menu is not shown there). The choice is remembered.
   unassigns the picked slider, `Esc` ends. `Clear CC Assignments` removes them
   all. Assignments belong to this browser, not to the score.
 
+`MMLisp > MIDI > Output` plays the preview to a MIDI output as well — a
+sound module, a DAW, a synthesizer beside the chips. `Choose Output…` asks
+the browser once, then lists the outputs; `Off` stops. What goes out is what
+**File ▸ Export ▸ MIDI…** writes (`docs/language.md` §19): each track its
+channel, its notes, its `gm-*` or role voice's program, its levels, pan and
+bends, sent a little ahead on the preview's clock so it lands with the
+sound. A tempo dialled in, a seek, the loop going round, a mute or solo, a
+Dynamic Parameters slider and an edit's swap at the bar all follow; a seek
+sends each channel's program and controllers first, and a stop lets every key
+go. Tracks past fifteen channels are the file's second port and are not sent.
+The chosen output is remembered by its name.
+
 ---
 
 ### New scores, exports and the Mega Drive's own items

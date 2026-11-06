@@ -883,6 +883,29 @@ export class IRPlayer {
     return Math.max(0, this._audioContext.currentTime - this._startAudioTime);
   }
 
+  /** The IR the run plays (a hot-swap replaces it at its bar), or null. */
+  loadedIr() {
+    return this._ir ?? null;
+  }
+
+  /** Whether track `ti` sounds now, as the mixer's mute and solo leave it. */
+  isTrackAudible(ti) {
+    return this._isTrackAudible(ti);
+  }
+
+  /**
+   * The AudioContext time a hot-swap waiting for its bar takes over at
+   * (swapAtNextBar), or null: what the outgoing tracks play stops there.
+   */
+  pendingSwapTime() {
+    return this._pendingSwap?.boundaryTime ?? null;
+  }
+
+  /** How far ahead of the audible position the run queues, in seconds (setLookahead). */
+  lookaheadSec() {
+    return this._schedulerLookahead;
+  }
+
   /** Toggle looping at any time. */
   setLoop(enabled) {
     this._loop = enabled;
